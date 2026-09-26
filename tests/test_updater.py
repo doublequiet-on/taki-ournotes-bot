@@ -1,5 +1,6 @@
 """Updater tests never connect to QQ, install tasks, or stop actual processes."""
 import importlib.util
+import base64
 import io
 import json
 import os
@@ -204,6 +205,18 @@ class UpdaterTests(unittest.TestCase):
         with patch.object(u, "windows_processes", return_value=[row]), patch.object(u, "argv_windows", return_value=["python", "-m", "ournotes_bot.main", "bot"]):
             with self.assertRaises(u.Paused):
                 u.processes(self.root)
+
+    def test_runtime_uses_separate_unlimited_task(self):
+        python = self.root / "python.exe"
+        python.with_name("pythonw.exe").touch()
+        with patch.object(u, "run") as command:
+            u.launch_runtime(self.root, {"python": str(python), "source": str(self.root / "source")}, "c" * 32)
+        args = command.call_args.args[0]
+        script = base64.b64decode(args[-1]).decode("utf-16-le")
+        self.assertIn("Taki-OurNotes-Runtime", script)
+        self.assertIn("([TimeSpan]::Zero)", script)
+        self.assertIn("-LogonType Interactive -RunLevel Limited", script)
+        self.assertNotIn("QQ_APP_SECRET", script)
 
     def test_git_snapshot_and_fast_forward_protect_ignored_file(self):
         def git(*args):

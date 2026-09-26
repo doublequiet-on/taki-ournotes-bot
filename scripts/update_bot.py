@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import base64
 import contextlib
 import datetime as dt
 import io
@@ -208,6 +209,35 @@ def stop(root):
         raise Paused("旧进程未完全退出，未启动第二个实例")
 
 
+def launch_runtime(root, release, token):
+    """A separate task prevents the updater task's job from owning the long-lived bot."""
+    pythonw = Path(release["python"]).with_name("pythonw.exe")
+    if not pythonw.is_file():
+        raise Paused("运行环境缺少 pythonw.exe")
+    arguments = subprocess.list2cmdline(["-B", "-u", "-X", "utf8", str(Path(__file__).resolve()),
+                                       "--project-root", str(root), "--run-bot", release["source"], "--token", token])
+    def quote(value):
+        return "'" + str(value).replace("'", "''") + "'"
+    script = f"""
+$ErrorActionPreference = 'Stop'
+$name = 'Taki-OurNotes-Runtime'
+$existing = Get-ScheduledTask -TaskName $name -ErrorAction SilentlyContinue
+if ($existing -and -not $existing.Actions[0].Arguments.Contains({quote(root)})) {{ throw 'Runtime task belongs to another checkout' }}
+if ($existing -and $existing.State -eq 'Running') {{
+    Stop-ScheduledTask -TaskName $name
+    Start-Sleep -Seconds 1
+}}
+$action = New-ScheduledTaskAction -Execute {quote(pythonw)} -Argument {quote(arguments)} -WorkingDirectory {quote(root)}
+$user = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
+$principal = New-ScheduledTaskPrincipal -UserId $user -LogonType Interactive -RunLevel Limited
+$settings = New-ScheduledTaskSettingsSet -MultipleInstances IgnoreNew -ExecutionTimeLimit ([TimeSpan]::Zero) -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
+Register-ScheduledTask -TaskName $name -Action $action -Principal $principal -Settings $settings -Description 'Taki runtime managed by the updater; no independent trigger.' -Force | Out-Null
+Start-ScheduledTask -TaskName $name
+"""
+    encoded = base64.b64encode(script.encode("utf-16-le")).decode("ascii")
+    run(["powershell.exe", "-NoProfile", "-NonInteractive", "-EncodedCommand", encoded], timeout=60)
+
+
 class Updater:
     def __init__(self, root):
         self.root = root.resolve()
@@ -267,7 +297,9 @@ class Updater:
         env = validation_env()
         run([sys.executable, "-m", "venv", str(venv)], env=env, timeout=180)
         python = venv / "Scripts/python.exe"
+        self.event("隔离环境已创建，正在安装依赖")
         run([str(python), "-m", "pip", "install", str(source)], cwd=source, env=env, timeout=600)
+        self.event("依赖已安装，正在运行离线测试与帮助检查")
         env["PYTHONPATH"] = str(source / "src")
         run([str(python), "-B", "-m", "unittest", "discover", "-s", "tests", "-q"], cwd=source, env=env, timeout=300)
         run([str(python), "-B", "-m", "ournotes_bot.main", "--help"], cwd=source, env=env)
@@ -291,19 +323,12 @@ class Updater:
             raise Paused("机器人仍在运行，拒绝启动第二个实例")
         token = uuid.uuid4().hex
         ready = self.folder / ("ready-" + token)
-        logfile = self.folder / ("runtime-" + token + ".log")
-        with logfile.open("wb") as output:
-            proc = subprocess.Popen([release["python"], "-B", "-u", "-X", "utf8", str(Path(__file__).resolve()),
-                                     "--project-root", str(self.root), "--run-bot", release["source"], "--token", token],
-                                    cwd=self.root, stdout=output, stderr=output,
-                                    creationflags=HIDDEN | (0x00000200 if os.name == "nt" else 0))
+        launch_runtime(self.root, release, token)
         deadline = time.monotonic() + 90
         while time.monotonic() < deadline:
-            if proc.poll() is not None:
-                raise Paused("新实例启动退出，准备恢复上一版")
             if ready.exists():
                 time.sleep(5)
-                if proc.poll() is None:
+                if processes(self.root):
                     return
             time.sleep(1)
         raise Paused("新实例未在 90 秒内连接 QQ，准备恢复上一版")
@@ -388,6 +413,10 @@ def run_bot(root, source, token):
         raise Paused("无效启动标识")
     import logging
     import runpy
+    # pythonw has no stdout/stderr; keep diagnostics local to the ignored data folder.
+    logfile = (root / "data/updater" / ("runtime-" + token + ".log")).open("a", encoding="utf-8", buffering=1)
+    sys.stdout = logfile
+    sys.stderr = logfile
     sys.path.insert(0, str(Path(source) / "src"))
     from ournotes_bot import config
     config.CONFIG_ROOT = root
