@@ -25,6 +25,26 @@ DEFAULT_QQ_GATEWAY_HOST = "api.bot.qq.com"
 # anyway, so one wedged batch cannot silence every later reply.
 REPLY_ORDER_TIMEOUT_SECONDS = 60.0
 
+_TRUTHY = frozenset({"1", "true", "yes", "on", "enable", "enabled"})
+_FALSY = frozenset({"0", "false", "no", "off", "disable", "disabled"})
+
+
+def read_flag(name: str, default: bool) -> bool:
+    """Read a boolean setting; an unrecognised value keeps the default.
+
+    Accepts 1/0, true/false, yes/no and on/off. Anything else (including a
+    typo) falls back to `default` rather than silently flipping the behaviour.
+    """
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    value = raw.strip().casefold()
+    if value in _TRUTHY:
+        return True
+    if value in _FALSY:
+        return False
+    return default
+
 
 def runtime_data_dir() -> Path:
     """Keep installed copies out of the package's potentially read-only directory."""
@@ -66,6 +86,9 @@ class Settings:
     ai_quota_file: Path | None = None
     multi_command_limit: int = MAX_MULTI_COMMAND_LIMIT
     qq_gateway_host: str = DEFAULT_QQ_GATEWAY_HOST
+    # Send replies in arrival order. On by default: unordered replies read as
+    # an answer to the wrong question. Turn it off to favour latency instead.
+    reply_order: bool = True
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -96,4 +119,5 @@ class Settings:
                                                          str(MAX_MULTI_COMMAND_LIMIT))))),
             qq_gateway_host=os.getenv("OURNOTES_QQ_GATEWAY_HOST",
                                       DEFAULT_QQ_GATEWAY_HOST).strip(),
+            reply_order=read_flag("OURNOTES_REPLY_ORDER", True),
         )

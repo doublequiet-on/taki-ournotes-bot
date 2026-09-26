@@ -7,11 +7,54 @@ step, which is the part a reader perceives as order.
 from __future__ import annotations
 
 import asyncio
+import os
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
+from ournotes_bot.config import Settings, read_flag
 from ournotes_bot.qq import (LEGACY_GATEWAY_HOSTS, ReplySequencer, install_gateway_host,
                              normalize_gateway_url)
+
+
+class ReplyOrderFlagTests(unittest.TestCase):
+    """The switch exists so an operator can choose order over latency."""
+
+    def settings(self, **env):
+        with patch("ournotes_bot.config.load_dotenv"), \
+             patch.dict(os.environ, env, clear=True):
+            return Settings.from_env()
+
+    def test_ordering_is_on_by_default(self):
+        self.assertTrue(self.settings().reply_order)
+
+    def test_truthy_spellings_enable_it(self):
+        for value in ("1", "true", "TRUE", " yes ", "on", "enabled"):
+            with self.subTest(value=value):
+                self.assertTrue(self.settings(OURNOTES_REPLY_ORDER=value).reply_order)
+
+    def test_falsy_spellings_disable_it(self):
+        for value in ("0", "false", "FALSE", " no ", "off", "disabled"):
+            with self.subTest(value=value):
+                self.assertFalse(self.settings(OURNOTES_REPLY_ORDER=value).reply_order)
+
+    def test_unrecognised_value_keeps_the_default(self):
+        """A typo must not silently change behaviour."""
+        for value in ("maybe", "nope", "2", "-1"):
+            with self.subTest(value=value):
+                self.assertTrue(self.settings(OURNOTES_REPLY_ORDER=value).reply_order)
+
+    def test_empty_value_keeps_the_default(self):
+        self.assertTrue(self.settings(OURNOTES_REPLY_ORDER="").reply_order)
+
+    def test_read_flag_reports_the_default_when_unset(self):
+        with patch.dict(os.environ, {}, clear=True):
+            self.assertTrue(read_flag("OURNOTES_REPLY_ORDER", True))
+            self.assertFalse(read_flag("OURNOTES_REPLY_ORDER", False))
+
+    def test_example_env_documents_the_switch(self):
+        example = Path(__file__).resolve().parents[1] / ".env.example"
+        self.assertIn("OURNOTES_REPLY_ORDER", example.read_text(encoding="utf-8"))
 
 
 class GatewayHostTests(unittest.TestCase):
@@ -156,6 +199,61 @@ class ReplySequencerTests(unittest.IsolatedAsyncioTestCase):
         sequencer = ReplySequencer(timeout=5)
         tickets = await asyncio.gather(*(sequencer.issue() for _ in range(50)))
         self.assertEqual(sorted(tickets), list(range(50)))
+
+
+class DisabledOrderingTests(unittest.IsolatedAsyncioTestCase):
+    """With ordering off the sequencer must be inert, not merely lenient."""
+
+    async def test_issue_hands_out_no_ticket(self):
+        sequencer = ReplySequencer(enabled=False)
+        self.assertIsNone(await sequencer.issue())
+        self.assertIsNone(await sequencer.issue())
+
+    async def test_none_ticket_never_blocks(self):
+        sequencer = ReplySequencer(timeout=30, enabled=False)
+        ticket = await sequencer.issue()
+        await asyncio.wait_for(sequencer.wait_turn(ticket), timeout=0.5)
+        await sequencer.release(ticket)          # must not raise
+
+    async def test_a_fast_later_batch_goes_first(self):
+        """The latency win: nothing waits on the slow earlier batch."""
+        sequencer = ReplySequencer(enabled=False)
+        sent: list[str] = []
+
+        async def batch(delay, label):
+            ticket = await sequencer.issue()
+            try:
+                await asyncio.sleep(delay)
+                await sequencer.wait_turn(ticket)
+                sent.append(label)
+            finally:
+                await sequencer.release(ticket)
+
+        await asyncio.gather(batch(0.05, "slow"), batch(0.0, "fast"))
+        self.assertEqual(sent, ["fast", "slow"])
+
+    async def test_same_ordering_still_holds_when_enabled(self):
+        """Contrast case: the same workload keeps arrival order when on."""
+        sequencer = ReplySequencer(timeout=5, enabled=True)
+        sent: list[str] = []
+
+        async def batch(delay, label):
+            ticket = await sequencer.issue()
+            try:
+                await asyncio.sleep(delay)
+                await sequencer.wait_turn(ticket)
+                sent.append(label)
+            finally:
+                await sequencer.release(ticket)
+
+        await asyncio.gather(batch(0.05, "slow"), batch(0.0, "fast"))
+        self.assertEqual(sent, ["slow", "fast"])
+
+    async def test_disabling_emits_no_timeout_warning(self):
+        sequencer = ReplySequencer(timeout=0.01, enabled=False)
+        ticket = await sequencer.issue()
+        with self.assertNoLogs("ournotes_bot.qq", level="WARNING"):
+            await sequencer.wait_turn(ticket)
 
 
 if __name__ == "__main__":

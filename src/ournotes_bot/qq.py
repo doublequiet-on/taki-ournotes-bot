@@ -192,24 +192,34 @@ class ReplySequencer:
     before sending. Preparation is untouched, so throughput is unchanged; only
     the sending order is serialized.
 
+    Ordering costs tail latency: a fast query that arrives after a slow one has
+    to wait. Set `enabled=False` to trade order back for latency — a ticket is
+    then None and every method is a no-op, so callers need no branching.
+
     Tickets are always released by the caller, and the wait is bounded, so a
-    wedged batch degrades to today's behaviour instead of blocking every later
-    reply forever.
+    wedged batch degrades to unordered behaviour instead of blocking every
+    later reply forever.
     """
 
-    def __init__(self, timeout: float = REPLY_ORDER_TIMEOUT_SECONDS) -> None:
+    def __init__(self, timeout: float = REPLY_ORDER_TIMEOUT_SECONDS, enabled: bool = True) -> None:
         self._timeout = timeout
+        self._enabled = enabled
         self._issued = 0
         self._serving = 0
         self._condition = asyncio.Condition()
 
-    async def issue(self) -> int:
+    async def issue(self) -> int | None:
+        """Take a ticket, or None when ordering is switched off."""
+        if not self._enabled:
+            return None
         async with self._condition:
             ticket = self._issued
             self._issued += 1
             return ticket
 
-    async def wait_turn(self, ticket: int) -> None:
+    async def wait_turn(self, ticket: int | None) -> None:
+        if ticket is None:
+            return
         async with self._condition:
             try:
                 await asyncio.wait_for(
@@ -220,7 +230,9 @@ class ReplySequencer:
                 logger.warning("等待发送顺序超时 %ss；本次提前发送，避免后续回复被阻塞",
                                f"{self._timeout:g}")
 
-    async def release(self, ticket: int) -> None:
+    async def release(self, ticket: int | None) -> None:
+        if ticket is None:
+            return
         async with self._condition:
             self._serving = max(self._serving, ticket + 1)
             self._condition.notify_all()
@@ -390,7 +402,10 @@ def run_bot(app_id: str, app_secret: str, repository: SongRepository, settings: 
 
     ai_parser = AIQueryParser(settings)
     query_gate = QueryGate(settings.query_concurrency, settings.query_queue_limit)
-    reply_sequencer = ReplySequencer()
+    reply_sequencer = ReplySequencer(enabled=settings.reply_order)
+    logger.info("回复顺序：%s（OURNOTES_REPLY_ORDER 可切换）",
+                "按收到顺序发送" if settings.reply_order
+                else "关闭排序，谁先算完谁先发（响应更快，但可能后问先答）")
     if settings.qq_gateway_host:
         logger.info("WebSocket 网关域名统一为 %s（可用 OURNOTES_QQ_GATEWAY_HOST 置空关闭）",
                     settings.qq_gateway_host)
@@ -410,10 +425,12 @@ def run_bot(app_id: str, app_secret: str, repository: SongRepository, settings: 
 
             A ticket is taken on arrival so this batch leaves the gate in turn,
             rather than jumping ahead of an earlier message that is still
-            working. Every send carries its own msg_seq, because QQ discards a
-            passive reply that repeats an earlier (msg_id, msg_seq) pair. The
-            total is kept within QQ_PASSIVE_REPLY_LIMIT, leaving room for the
-            notice.
+            working; that step is skipped when OURNOTES_REPLY_ORDER is off.
+            Commands inside one message are always answered in the order they
+            were written. Every send carries its own msg_seq, because QQ
+            discards a passive reply that repeats an earlier (msg_id, msg_seq)
+            pair. The total is kept within QQ_PASSIVE_REPLY_LIMIT, leaving room
+            for the notice.
             """
             channel = "群聊" if group else "单聊"
             ticket = await reply_sequencer.issue()
