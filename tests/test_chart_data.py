@@ -6,13 +6,13 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
-from PIL import Image
+from PIL import Image, ImageDraw
 
 from ournotes_bot.chart_data import ChartDataError, chart_url, load_chart_score
 from ournotes_bot.data import Chart, Song
-from ournotes_bot.visuals import render_chart
+from ournotes_bot.visuals import _draw_score, render_chart
 
 
 SCORE = {
@@ -68,6 +68,46 @@ class ChartDataTests(unittest.TestCase):
             self.assertEqual(image.width, 900)
             self.assertGreater(image.height, 2000)
             self.assertNotEqual(image.getpixel((100, 1000)), image.getpixel((100, 600)))
+
+    def test_score_reads_upwards_with_columns_and_lanes_left_to_right(self) -> None:
+        image = Image.new("RGB", (900, 1800))
+        draw = Mock(wraps=ImageDraw.Draw(image))
+        _draw_score(draw, {"notes": [
+            {"t": 0, "pos": 0, "size": 6},
+            {"t": 960, "pos": 12, "size": 6},
+            {"t": 1920, "pos": 0, "size": 6},
+        ]}, 100, "zh")
+        notes = [call.args[0] for call in draw.rounded_rectangle.call_args_list
+                 if call.kwargs.get("fill") == "#75C5E8"]
+        early, later, next_column = notes
+        self.assertGreater(early[1], later[1])
+        self.assertLess(early[0], later[0])
+        self.assertGreater(next_column[0], later[0])
+        self.assertEqual(early[1], next_column[1])
+        self.assertIn("起点 ↑", [call.args[1] for call in draw.text.call_args_list])
+
+    def test_cross_column_holds_and_flick_directions_survive_vertical_mapping(self) -> None:
+        image = Image.new("RGB", (900, 1800))
+        draw = Mock(wraps=ImageDraw.Draw(image))
+        bottom = _draw_score(draw, {"notes": [
+            {"type": "long", "node": [{"t": 1440, "pos": 0, "size": 6},
+                                       {"t": 2400, "pos": 12, "size": 6}]},
+            {"type": "flick", "t": 0, "pos": 0, "size": 6, "dir": "left"},
+            {"type": "flick", "t": 960, "pos": 12, "size": 6, "dir": "right"},
+        ]}, 100, "zh")
+        first, second = [call.args[0] for call in draw.polygon.call_args_list]
+        self.assertGreater(first[0][1], first[2][1])
+        self.assertEqual(first[2][1], 100)
+        self.assertEqual(second[0][1], bottom - 24)
+        self.assertGreater(second[0][1], second[2][1])
+        self.assertGreater(second[0][0], first[2][0])
+        arrows = [call.args[0] for call in draw.line.call_args_list
+                  if call.kwargs.get("fill") == "#68D99C"]
+        self.assertEqual(len(arrows), 2)
+        self.assertLess(arrows[0][2], arrows[0][0])
+        self.assertGreater(arrows[1][2], arrows[1][0])
+        for arrow in arrows:
+            self.assertLess(arrow[3], arrow[1])
 
 
 if __name__ == "__main__":

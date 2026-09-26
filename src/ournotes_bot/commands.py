@@ -5,6 +5,7 @@ import unicodedata
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from difflib import SequenceMatcher
+from typing import TypeVar
 
 from .data import Card, Skill, Song, SongRepository, SupportCard, character_identity, localized_text, normalize, resolve_character_alias
 from .entity_lexicon import known_alias_names, resolve_exact_alias
@@ -14,8 +15,8 @@ from .i18n import tr
 HELP_TEXT = """Our Notes 查询指令
 /查曲 [歌名或ID] [等级或lv比较式] [页N]：搜索歌曲列表，可翻页
 /查谱面 歌名或ID [难度]：查看等级与 Note 数；100001 可简写为 1
-/查卡 角色名或卡牌ID [页N]：搜索卡面，可翻页
-/查支援卡 角色名、卡名或ID [页N]：搜索支援卡，可翻页
+/查卡 [角色、乐队或ID] [SSR/SR/R] [页N]：搜索卡面，可按星级筛选
+/查支援卡 [角色、卡名或ID] [SSR/SR/R] [页N]：搜索支援卡，可翻页
 /查缩写 昵称：查看昵称对应的角色、乐队等，也可直接用于查曲或查卡
 /问 想查的内容：自然语言查询歌曲、谱面、成员卡技能或支援卡（复杂问法需配置 AI）
 /数据状态：查看进程、最近同步与缓存状态
@@ -46,8 +47,8 @@ Example: /song mygo 27, /chart 100001 EXPERT, /card tomori""",
 COMMAND_HELP = {
     "songs": "查询歌曲列表，支持歌名、乐队、曲目 ID 或等级，每页 16 首。27 与 lv27 相同，均匹配整数等级 27（含显示等级 27.5）；27.5 与 lv27.5 均精确匹配显示等级。lv>=25、lv>25、lv<=25、lv<25 按歌曲最高显示等级筛选；可追加 diff=EXPERT 等难度，只比较该难度。纯数字若恰好是曲目 ID，优先按 ID 查询。\n用法：/查曲 [歌名或ID] [等级或lv比较式] [页N]\n示例：/查曲 迷星叫、/查曲 27、/查曲 mygo lv>=25、/查曲 mygo lv>=25 diff=EXPERT 页2",
     "chart": "查询谱面等级与 Note 数，支持歌名或曲目 ID。100001 可简写为 1。可选难度：EASY、NORMAL、HARD、EXPERT；不指定时显示全部难度。\n用法：/查谱面 <歌名或ID> [难度]\n示例：/查谱面 1 EXPERT、/查谱面 100001 EXPERT",
-    "cards": "查询卡面，支持卡牌 ID、角色名、卡牌名或乐队名，每页 16 张。\n用法：/查卡 <关键词或ID> [页N]\n示例：/查卡 高松灯、/查卡 mygo 页2、/查卡 51\n找到多张卡时会显示列表，再用卡牌 ID 查看大图。",
-    "support_cards": "查询支援卡，支持支援卡 ID、角色名或卡牌名，每页 16 张。\n用法：/查支援卡 <关键词或ID> [页N]\n示例：/查支援卡 高松灯、/查支援卡 tmr 页2、/查支援卡 1\n找到多张卡时会显示列表，再用支援卡 ID 查看详情和大图。",
+    "cards": "查询卡面，支持卡牌 ID、角色名、卡牌名或乐队名，每页 16 张。SSR＝四星、SR＝三星、R＝二星；可单独筛选，也可组合角色或乐队。\n用法：/查卡 [关键词或ID] [SSR/SR/R或星级] [页N]\n示例：/查卡 SSR、/查卡 高松灯 四星、/查卡 mygo SR 页2、/查卡 51\n找到多张卡时会显示列表，再用卡牌 ID 查看大图。",
+    "support_cards": "查询支援卡，支持支援卡 ID、角色名或卡牌名，每页 16 张。SSR＝四星、SR＝三星、R＝二星。\n用法：/查支援卡 [关键词或ID] [SSR/SR/R或星级] [页N]\n示例：/查支援卡 SSR、/查支援卡 tmr 三星、/查支援卡 1\n找到多张卡时会显示列表，再用支援卡 ID 查看详情和大图。",
     "abbrev": "查询已收录的角色、乐队等昵称；也可直接用昵称查曲或查卡。\n用法：/查缩写 <昵称>\n示例：/查缩写 skk、/查缩写 茉团、/查卡 墨缇丝",
 }
 COMMAND_HELPS = {
@@ -119,7 +120,7 @@ def locale_for(content: str) -> str:
 
 
 def _split_page(query: str) -> tuple[str, int]:
-    match = re.search(r"\s+(?:页\s*(\d+)|第\s*(\d+)\s*页|p(\d+)|page\s+(\d+)|ページ\s*(\d+))\s*$", query, re.I)
+    match = re.search(r"(?:\s+|(?=第|页|ページ))(?:页\s*(\d+)|第\s*(\d+)\s*页|p(\d+)|page\s+(\d+)|ページ\s*(\d+))\s*$", query, re.I)
     if not match:
         return query, 1
     return query[:match.start()].strip(), int(next(value for value in match.groups() if value is not None))
@@ -139,7 +140,54 @@ def _song_name_matches(repository: SongRepository, term: str) -> list[Song]:
     return repository.search(term, limit=len(repository.songs))
 
 
+_RARITY_NUMBER = r"(?:\d+(?:\.\d+)?|[零〇一二两三四五六七八九十百]+)"
+_CARD_RARITY = re.compile(
+    rf"(?:星级\s*=?|rarity\s*=|[★☆])\s*(?P<prefix>{_RARITY_NUMBER})"
+    rf"|(?P<suffix>{_RARITY_NUMBER})\s*(?:星(?:级)?|[★☆]|-?stars?(?![A-Za-z]))"
+    r"|(?P<stars>[★☆]+)|(?<![A-Za-z])(?P<grade>SSR|SR|R)(?![A-Za-z])", re.I,
+)
+CARD_RARITIES = {"SSR": 4, "SR": 3, "R": 2}
+CARD_RARITY_HELP = {
+    "zh": "请指定 SSR（四星）、SR（三星）或 R（二星），例如 /查卡 SSR 或 /查卡 高松灯 四星；暂不支持星级范围。",
+    "en": "Choose SSR (4-star), SR (3-star), or R (2-star), e.g. /card SSR or /card tomori 4-star. Rarity ranges are not supported.",
+    "ja": "SSR（星4）・SR（星3）・R（星2）から1つ指定してください。例：/カード SSR、/カード ともり ★4。範囲指定には対応していません。",
+}
+_CardT = TypeVar("_CardT", Card, SupportCard)
+
+
+def split_card_rarity(query: str) -> tuple[str, int | None]:
+    """Extract one explicit rarity; bare IDs and skill levels remain untouched."""
+    text = unicodedata.normalize("NFKC", query)
+    matches = list(_CARD_RARITY.finditer(text))
+    if not matches:
+        return text, None
+    if len(matches) != 1:
+        raise ValueError("expected one card rarity")
+    match = matches[0]
+    number = match.group("prefix") or match.group("suffix")
+    rarity = (CARD_RARITIES[match.group("grade").upper()] if match.group("grade") else
+              len(match.group("stars")) if number is None else
+              int(number) if number.isdecimal() else
+              {"二": 2, "两": 2, "三": 3, "四": 4}.get(number, 0))
+    before, after = text[:match.start()], text[match.end():]
+    if (rarity not in CARD_RARITIES.values()
+            or re.search(r"(?:至少|至多|最多|不低于|不高于|超过|低于|高于|大于|小于|[<>≤≥=~～到至.\-])\s*$", before)
+            or re.match(r"\s*(?:及?以上|及?以下|以内|起|[到至~～\-])", after)):
+        raise ValueError("invalid or ranged card rarity")
+    return (before + " " + after).strip(), rarity
+
+
+def filter_card_rarity(cards: list[_CardT], rarity: int | None) -> list[_CardT]:
+    return [card for card in cards if rarity is None or card.rarity == rarity]
+
+
 def card_matches(repository: SongRepository, query: str) -> list[Card]:
+    term, rarity = split_card_rarity(query)
+    cards = list(repository.cards) if not term and rarity is not None else _card_name_matches(repository, term)
+    return filter_card_rarity(sorted(cards, key=lambda card: (-card.rarity, card.id)), rarity)
+
+
+def _card_name_matches(repository: SongRepository, query: str) -> list[Card]:
     """Use the same verified nickname match for text and QQ images."""
     built_in = resolve_character_alias(query)
     if built_in:
@@ -164,6 +212,13 @@ def card_matches(repository: SongRepository, query: str) -> list[Card]:
 
 
 def support_card_matches(repository: SongRepository, query: str) -> list[SupportCard]:
+    term, rarity = split_card_rarity(query)
+    cards = (list(repository.support_cards) if not term and rarity is not None
+             else _support_card_name_matches(repository, term))
+    return filter_card_rarity(sorted(cards, key=lambda card: (-card.rarity, card.id)), rarity)
+
+
+def _support_card_name_matches(repository: SongRepository, query: str) -> list[SupportCard]:
     built_in = resolve_character_alias(query)
     if built_in:
         cards = [card for card in repository.support_cards if any(
@@ -434,10 +489,13 @@ def resolve_command(content: str, repository: SongRepository) -> CommandResult |
     kind, query, _ = parsed
     if kind == "songs":
         return CommandResult(parsed, songs=tuple(song_matches(repository, query)))
-    if kind == "cards":
-        return CommandResult(parsed, cards=tuple(card_matches(repository, query)))
-    if kind == "support_cards":
-        return CommandResult(parsed, support_cards=tuple(support_card_matches(repository, query)))
+    if kind in {"cards", "support_cards"}:
+        try:
+            if kind == "cards":
+                return CommandResult(parsed, cards=tuple(card_matches(repository, query)))
+            return CommandResult(parsed, support_cards=tuple(support_card_matches(repository, query)))
+        except ValueError:
+            return CommandResult(parsed, hint=CARD_RARITY_HELP[locale_for(content)])
     song, hint = _choose(repository, query, locale_for(content))
     return CommandResult(parsed, songs=(song,) if song else (), hint=hint)
 
@@ -509,6 +567,8 @@ def handle_command(content: str, repository: SongRepository,
 
     selection = resolved if resolved is not None else resolve_command(content, repository)
     parsed = selection.parsed if selection else None
+    if parsed and parsed[0] in {"cards", "support_cards"} and selection.hint:
+        return selection.hint
     if parsed and parsed[0] == "songs":
         matches = selection.songs
         if not matches:

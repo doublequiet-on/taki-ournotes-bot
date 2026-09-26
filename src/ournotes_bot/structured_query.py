@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 
 from .commands import (PAGE_SIZE, _format_card_detail, _format_support_card_detail,
-                       page_notice, page_slice, rarity_text)
+                       filter_card_rarity, page_notice, page_slice, rarity_text)
 from .data import Card, Chart, Skill, Song, SongRepository, SupportCard, character_identity, localized_text, normalize
 from .entity_lexicon import EntityRef
 from .i18n import tr
@@ -22,9 +22,12 @@ class QuerySpec:
     display_name: str = ""
     skill_query: str = ""
     skill_kind: str = ""
+    rarity: int | None = None
 
     def query_label(self) -> str:
         parts = [self.display_name] if self.display_name else []
+        if self.rarity is not None:
+            parts.append(f"{self.rarity}星")
         if self.comparison and self.level is not None:
             parts.append(f"lv{self.comparison}{self.level:g}")
             if self.difficulty:
@@ -42,10 +45,12 @@ class QuerySpec:
         if self.intent == "card" and (self.skill_query or self.skill_kind):
             subject = f"{self.display_name}的" if self.display_name else ""
             kind = {"leader": "队长", "live": "Live", "gekisou": "激奏"}.get(self.skill_kind, "")
-            label = f"问 {subject}{self.skill_query}{kind}技能的成员卡"
+            rarity = f"{self.rarity}星" if self.rarity is not None else ""
+            label = f"问 {subject}{rarity}{self.skill_query}{kind}技能的成员卡"
             return label + (f" 页{self.page}" if self.page > 1 else "")
         if self.intent == "support_card" and self.subject is None:
-            label = "问 支援卡有哪些"
+            rarity = f"{self.rarity}星" if self.rarity is not None else ""
+            label = f"问 {rarity}支援卡有哪些"
             return label + (f" 页{self.page}" if self.page > 1 else "")
         name = {"song": "查曲", "chart": "查谱面", "card": "查卡",
                 "support_card": "查支援卡"}[self.intent]
@@ -159,7 +164,7 @@ def matching_skills(card: Card, spec: QuerySpec) -> tuple[Skill, ...]:
 def cards_for(spec: QuerySpec, repository: SongRepository) -> list[Card]:
     subject = spec.subject
     if subject is None:
-        matches = list(repository.cards) if spec.skill_query or spec.skill_kind else []
+        matches = list(repository.cards) if spec.skill_query or spec.skill_kind or spec.rarity is not None else []
     elif subject.kind == "card":
         matches = [card for card in repository.cards if card.id == subject.value]
     elif subject.kind == "character":
@@ -172,7 +177,7 @@ def cards_for(spec: QuerySpec, repository: SongRepository) -> list[Card]:
         return []
     if spec.skill_query or spec.skill_kind:
         matches = [card for card in matches if matching_skills(card, spec)]
-    return sorted(matches, key=lambda card: (-card.rarity, card.id))
+    return sorted(filter_card_rarity(matches, spec.rarity), key=lambda card: (-card.rarity, card.id))
 
 
 def support_cards_for(spec: QuerySpec, repository: SongRepository) -> list[SupportCard]:
@@ -188,7 +193,7 @@ def support_cards_for(spec: QuerySpec, repository: SongRepository) -> list[Suppo
         )]
     else:
         return []
-    return sorted(matches, key=lambda card: (-card.rarity, card.id))
+    return sorted(filter_card_rarity(matches, spec.rarity), key=lambda card: (-card.rarity, card.id))
 
 
 def answer_for(spec: QuerySpec, repository: SongRepository, locale: str = "zh",
@@ -223,7 +228,7 @@ def answer_for(spec: QuerySpec, repository: SongRepository, locale: str = "zh",
         matches = selected.cards
         if not matches:
             key = "not_found_skill_card" if spec.skill_query or spec.skill_kind else "not_found_card"
-            return tr(locale, key, query=spec.skill_query or spec.display_name)
+            return tr(locale, key, query=spec.query_label())
         if spec.subject and spec.subject.kind == "card":
             return _format_card_detail(repository.card_with_detail(matches[0]), locale)
         visible = page_slice(matches, spec.page)
@@ -248,7 +253,7 @@ def answer_for(spec: QuerySpec, repository: SongRepository, locale: str = "zh",
     if spec.intent == "support_card":
         matches = selected.support_cards
         if not matches:
-            return tr(locale, "not_found_support_card", query=spec.display_name or spec.query_label())
+            return tr(locale, "not_found_support_card", query=spec.query_label())
         if spec.subject and spec.subject.kind == "support_card":
             return _format_support_card_detail(repository.support_card_with_detail(matches[0]), locale)
         visible = page_slice(matches, spec.page)

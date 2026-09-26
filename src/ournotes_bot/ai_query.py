@@ -6,11 +6,13 @@ import json
 import re
 import unicodedata
 from collections import OrderedDict
+from dataclasses import replace
 from threading import RLock
 from urllib.request import Request, urlopen
 
 from .ai_quota import DailyQuota, QuotaUnavailable
-from .commands import CommandResult, handle_command, resolve_command
+from .commands import (CARD_RARITY_HELP, CommandResult, _split_page, handle_command,
+                       resolve_command, split_card_rarity)
 from .config import Settings
 from .data import SongRepository, normalize
 from .entity_lexicon import alias_version, find_anchor, mentions_outside_catalog, resolve_entity
@@ -185,6 +187,38 @@ def _local_skill_question(query: str, repository: SongRepository) -> QuerySpec |
     return None
 
 
+def _local_card_rarity_question(query: str, repository: SongRepository) -> QuerySpec | str | None:
+    """Keep explicit star filters local, including entity and skill combinations."""
+    try:
+        text, rarity = split_card_rarity(query)
+    except ValueError:
+        return CARD_RARITY_HELP["zh"]
+    if rarity is None:
+        return None
+    text, page = _split_page(text)
+    if not 1 <= page <= 100:
+        return "页码应在 1～100 之间。"
+    text = re.sub(
+        r"^(?:(?:请|帮我|给我|查询|查看|查一下|找一下|列出|看看|想看|只看|查|找|看|有没有|全部|所有)\s*)+",
+        "", text,
+    ).strip(" 的，,。？?！!")
+    spec = _local_entity_question(text, repository) or _local_skill_question(text, repository)
+    if spec and spec.intent in {"card", "support_card"}:
+        return replace(spec, rarity=rarity, page=page)
+    if re.fullmatch(r"(?:的\s*)?(?:成员卡|角色卡|卡牌|卡面|卡)?\s*(?:都?有(?:哪些|什么)|列表)?", text):
+        return QuerySpec("card", rarity=rarity, page=page)
+    if "技能" in text or "支援" in text:
+        return UNKNOWN_ENTITY
+    term = re.sub(r"\s*(?:的\s*)?(?:成员卡|角色卡|卡牌|卡面|卡)\s*(?:都?有(?:哪些|什么)|列表)?$", "", text).strip()
+    anchor = find_anchor("card", term, repository)
+    if anchor.ambiguous:
+        return AMBIGUOUS_ENTITY
+    if resolve_entity("card", term, repository) is None or anchor.entity is None:
+        return UNKNOWN_ENTITY
+    return QuerySpec("card", anchor.entity, rarity=rarity, page=page,
+                     display_name=str(anchor.entity.value))
+
+
 class AIQueryParser:
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
@@ -238,6 +272,14 @@ class AIQueryParser:
             selected = resolve_command(query, repository)
             self._remember(query, query)
             return handle_command(query, repository, resolved=selected) or UNSUPPORTED, selected
+        local_spec = _local_card_rarity_question(query, repository)
+        if isinstance(local_spec, str):
+            return local_spec, None
+        if local_spec:
+            result = resolve_query(local_spec, repository)
+            answer = answer_for(local_spec, repository, result=result)
+            self._remember(query, local_spec)
+            return answer, result
         local_spec = _local_song_filter(query, repository)
         if local_spec:
             result = resolve_query(local_spec, repository)
