@@ -3,6 +3,12 @@ $ErrorActionPreference = "Stop"
 Set-Location -LiteralPath $PSScriptRoot
 $env:PYTHONPATH = Join-Path $PSScriptRoot "src"
 
+# Managed mode shares the updater lock and checks for an existing instance.
+if (Test-Path -LiteralPath (Join-Path $PSScriptRoot "data\updater\state.json")) {
+    & (Join-Path $PSScriptRoot ".venv\Scripts\python.exe") -B -X utf8 (Join-Path $PSScriptRoot "scripts\update_bot.py") --start
+    exit $LASTEXITCODE
+}
+
 $venvPython = Join-Path $PSScriptRoot ".venv\Scripts\python.exe"
 if (-not (Test-Path -LiteralPath $venvPython)) {
     throw "尚未初始化本地环境，请先运行 .\setup-local.ps1"
