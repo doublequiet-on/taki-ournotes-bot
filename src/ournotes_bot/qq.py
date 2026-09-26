@@ -4,8 +4,10 @@ import asyncio
 import base64
 import logging
 import re
+import time
 from collections import deque
 from dataclasses import dataclass
+from urllib.parse import urlsplit
 
 from botpy.http import Route
 from botpy.message import GroupMessage
@@ -14,11 +16,15 @@ from botpy.message import GroupMessage
 Route.DOMAIN = "api.bot.qq.com"
 Route.SANDBOX_DOMAIN = "api.bot.qq.com"
 
+# The gateway endpoint still advertises the retired host for websocket upgrades.
+# Only that host is rewritten, so a future region-specific address stays intact.
+LEGACY_GATEWAY_HOSTS = frozenset({"api.sgroup.qq.com", "sandbox.api.sgroup.qq.com"})
+
 from .ai_query import AIQueryParser, is_ai_request
 from .chart_data import ChartDataError, load_chart_score
 from .commands import (ALIASES, CommandResult, handle_command, locale_for, page_notice,
                        page_slice, resolve_command, split_commands)
-from .config import QQ_PASSIVE_REPLY_LIMIT, Settings
+from .config import QQ_PASSIVE_REPLY_LIMIT, REPLY_ORDER_TIMEOUT_SECONDS, Settings
 from .data import SongRepository
 from .i18n import tr
 from .structured_query import QueryResult
@@ -26,6 +32,58 @@ from .visuals import render_card, render_card_list, render_chart, render_song_li
 
 
 logger = logging.getLogger(__name__)
+
+
+def normalize_gateway_url(url: str, host: str) -> str:
+    """Point an advertised websocket gateway at the unified QQ host.
+
+    Only legacy hosts are replaced, and the port (if any) is preserved.
+    """
+    if not host or not isinstance(url, str):
+        return url
+    try:
+        parts = urlsplit(url)
+    except ValueError:
+        return url
+    if parts.hostname not in LEGACY_GATEWAY_HOSTS:
+        return url
+    netloc = parts.netloc.replace(parts.hostname, host, 1)
+    return parts._replace(netloc=netloc).geturl()
+
+
+def install_gateway_host(host: str) -> bool:
+    """Rewrite the websocket gateway host; returns False when already applied.
+
+    qq-botpy exposes no hook for this, so the API method is wrapped once.
+    """
+    from botpy.api import BotAPI
+
+    current = BotAPI.get_ws_url
+    if getattr(current, "_ournotes_patched", False):
+        return False
+    original = current
+
+    async def get_ws_url(self):
+        payload = await original(self)
+        if isinstance(payload, dict) and isinstance(payload.get("url"), str):
+            rewritten = normalize_gateway_url(payload["url"], host)
+            if rewritten != payload["url"]:
+                logger.info("WebSocket 网关域名已指向 %s（服务端下发：%s）",
+                            host, urlsplit(payload["url"]).hostname)
+            payload["url"] = rewritten
+        return payload
+
+    get_ws_url._ournotes_patched = True
+    BotAPI.get_ws_url = get_ws_url
+    return True
+
+
+def describe(content: str) -> str:
+    """Text for the log. Direct commands are shown; /问 bodies stay out of it."""
+    cleaned = (content or "").strip()
+    if is_ai_request(cleaned):
+        return f"/问（{len(cleaned)} 字，正文不记录）"
+    return cleaned[:60]
 
 
 def _is_group_query(content: object) -> bool:
@@ -122,6 +180,52 @@ class QueryGate:
                 self._pending -= 1
 
 
+class ReplySequencer:
+    """Let replies leave in arrival order even though they finish out of order.
+
+    QueryGate leaves the gate the moment a worker frees up, so a slow query
+    started first can be overtaken by a faster query that arrived later. In a
+    chat that reads as a mix-up: the answer to question two shows up before the
+    answer to question one.
+
+    Each inbound message takes a ticket when it arrives and waits for its turn
+    before sending. Preparation is untouched, so throughput is unchanged; only
+    the sending order is serialized.
+
+    Tickets are always released by the caller, and the wait is bounded, so a
+    wedged batch degrades to today's behaviour instead of blocking every later
+    reply forever.
+    """
+
+    def __init__(self, timeout: float = REPLY_ORDER_TIMEOUT_SECONDS) -> None:
+        self._timeout = timeout
+        self._issued = 0
+        self._serving = 0
+        self._condition = asyncio.Condition()
+
+    async def issue(self) -> int:
+        async with self._condition:
+            ticket = self._issued
+            self._issued += 1
+            return ticket
+
+    async def wait_turn(self, ticket: int) -> None:
+        async with self._condition:
+            try:
+                await asyncio.wait_for(
+                    self._condition.wait_for(lambda: self._serving >= ticket),
+                    timeout=self._timeout,
+                )
+            except (asyncio.TimeoutError, TimeoutError):
+                logger.warning("等待发送顺序超时 %ss；本次提前发送，避免后续回复被阻塞",
+                               f"{self._timeout:g}")
+
+    async def release(self, ticket: int) -> None:
+        async with self._condition:
+            self._serving = max(self._serving, ticket + 1)
+            self._condition.notify_all()
+
+
 async def prepare_commands(commands: list[str], gate: "QueryGate", repository: SongRepository,
                            ai_parser: AIQueryParser, limit: int) -> tuple[list["PreparedReply"], int]:
     """Prepare several commands concurrently and return replies in asked order.
@@ -205,6 +309,11 @@ def _image_reply(content: str, repository: SongRepository, ai_parser: AIQueryPar
 
 def _prepare_reply(content: str, repository: SongRepository,
                    ai_parser: AIQueryParser) -> PreparedReply | None:
+    started = time.monotonic()
+
+    def elapsed() -> float:
+        return (time.monotonic() - started) * 1000
+
     try:
         if is_ai_request(content):
             reply, result = ai_parser.answer_with_plan(content, repository)
@@ -212,15 +321,19 @@ def _prepare_reply(content: str, repository: SongRepository,
             result = resolve_command(content, repository)
             reply = handle_command(content, repository, resolved=result)
     except Exception as exc:
-        logger.error("查询结果生成失败；错误类型=%s", type(exc).__name__)
+        logger.error("查询结果生成失败；错误类型=%s 耗时=%.0fms", type(exc).__name__, elapsed())
         return PreparedReply("查询暂时失败，请稍后重试。")
     if not reply:
+        logger.info("未识别为查询，不回复；内容=%s", describe(content))
         return None
     try:
         image = _image_from_result(result, repository, locale_for(content))
     except Exception as exc:
         logger.warning("图片生成失败，改用文字；错误类型=%s", type(exc).__name__)
         image = None
+    logger.info("查询完成；内容=%s 文本=%d字 图片=%s 耗时=%.0fms",
+                describe(content), len(reply),
+                f"{len(image):,}B" if image else "无", elapsed())
     return PreparedReply(reply, image)
 
 
@@ -257,11 +370,15 @@ async def _deliver_reply(message, target_id: str, group: bool, reply: PreparedRe
                 await send(**target, msg_type=7, media=media)
             except Exception as exc:
                 logger.error("%s图片发送失败，结果不确定，不自动重发；错误类型=%s", channel, type(exc).__name__)
+            else:
+                logger.info("%s已发送 图片 %s msg_seq=%d", channel, f"{len(reply.image):,}B", msg_seq)
             return
     try:
         await send(**target, msg_type=0, content=reply.text)
     except Exception as exc:
         logger.error("%s文字发送失败，结果不确定，不自动重发；错误类型=%s", channel, type(exc).__name__)
+    else:
+        logger.info("%s已发送 文字 %d字 msg_seq=%d", channel, len(reply.text or ""), msg_seq)
 
 
 def run_bot(app_id: str, app_secret: str, repository: SongRepository, settings: Settings) -> None:
@@ -273,6 +390,11 @@ def run_bot(app_id: str, app_secret: str, repository: SongRepository, settings: 
 
     ai_parser = AIQueryParser(settings)
     query_gate = QueryGate(settings.query_concurrency, settings.query_queue_limit)
+    reply_sequencer = ReplySequencer()
+    if settings.qq_gateway_host:
+        logger.info("WebSocket 网关域名统一为 %s（可用 OURNOTES_QQ_GATEWAY_HOST 置空关闭）",
+                    settings.qq_gateway_host)
+        install_gateway_host(settings.qq_gateway_host)
 
     class OurNotesClient(botpy.Client):
         async def bot_connect(self, session) -> None:
@@ -286,22 +408,36 @@ def run_bot(app_id: str, app_secret: str, repository: SongRepository, settings: 
                                   commands: list[str]) -> None:
             """Prepare one message's commands, then reply in the order asked.
 
-            Every send carries its own msg_seq, because QQ discards a passive
-            reply that repeats an earlier (msg_id, msg_seq) pair. The total is
-            kept within QQ_PASSIVE_REPLY_LIMIT, leaving room for the notice.
+            A ticket is taken on arrival so this batch leaves the gate in turn,
+            rather than jumping ahead of an earlier message that is still
+            working. Every send carries its own msg_seq, because QQ discards a
+            passive reply that repeats an earlier (msg_id, msg_seq) pair. The
+            total is kept within QQ_PASSIVE_REPLY_LIMIT, leaving room for the
+            notice.
             """
-            limit = settings.multi_command_limit
-            replies, overflow = await prepare_commands(
-                commands, query_gate, repository, ai_parser, limit)
-            for seq, reply in enumerate(replies, start=1):
-                await _deliver_reply(message, target_id, group, reply, msg_seq=seq)
-            if overflow and len(replies) < QQ_PASSIVE_REPLY_LIMIT:
-                logger.info("单条消息指令数超过上限：收到 %d 条，执行 %d 条",
-                            len(commands), len(replies))
-                notice = PreparedReply(tr(locale_for(commands[0]), "too_many_commands",
-                                          limit=limit, total=len(commands)))
-                await _deliver_reply(message, target_id, group, notice,
-                                     msg_seq=len(replies) + 1)
+            channel = "群聊" if group else "单聊"
+            ticket = await reply_sequencer.issue()
+            try:
+                limit = settings.multi_command_limit
+                logger.info("%s收到 %d 条指令：%s", channel, len(commands),
+                            " | ".join(describe(command) for command in commands))
+                replies, overflow = await prepare_commands(
+                    commands, query_gate, repository, ai_parser, limit)
+                await reply_sequencer.wait_turn(ticket)
+                for seq, reply in enumerate(replies, start=1):
+                    await _deliver_reply(message, target_id, group, reply, msg_seq=seq)
+                sent = len(replies)
+                if overflow and len(replies) < QQ_PASSIVE_REPLY_LIMIT:
+                    logger.info("单条消息指令数超过上限：收到 %d 条，执行 %d 条",
+                                len(commands), len(replies))
+                    notice = PreparedReply(tr(locale_for(commands[0]), "too_many_commands",
+                                              limit=limit, total=len(commands)))
+                    await _deliver_reply(message, target_id, group, notice,
+                                         msg_seq=len(replies) + 1)
+                    sent += 1
+                logger.info("%s本批处理完毕：%d 条指令，发送 %d 条回复", channel, len(commands), sent)
+            finally:
+                await reply_sequencer.release(ticket)
 
         async def _reply_group(self, message: GroupMessage) -> None:
             if not hasattr(self, "_seen_group_ids"):

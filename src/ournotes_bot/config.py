@@ -15,6 +15,16 @@ CONFIG_ROOT = SOURCE_ROOT or Path.cwd()
 QQ_PASSIVE_REPLY_LIMIT = 5
 MAX_MULTI_COMMAND_LIMIT = QQ_PASSIVE_REPLY_LIMIT - 1
 
+# QQ unified its API hostname on api.bot.qq.com but still advertises the retired
+# api.sgroup.qq.com as the websocket gateway. The unified host serves the same
+# gateway, so the advertised address is rewritten; set the variable to empty to
+# keep whatever the server sends.
+DEFAULT_QQ_GATEWAY_HOST = "api.bot.qq.com"
+
+# How long a batch waits for its turn to send before giving up and sending
+# anyway, so one wedged batch cannot silence every later reply.
+REPLY_ORDER_TIMEOUT_SECONDS = 60.0
+
 
 def runtime_data_dir() -> Path:
     """Keep installed copies out of the package's potentially read-only directory."""
@@ -55,6 +65,7 @@ class Settings:
     query_queue_limit: int = 4
     ai_quota_file: Path | None = None
     multi_command_limit: int = MAX_MULTI_COMMAND_LIMIT
+    qq_gateway_host: str = DEFAULT_QQ_GATEWAY_HOST
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -83,4 +94,6 @@ class Settings:
             multi_command_limit=min(MAX_MULTI_COMMAND_LIMIT,
                                     max(1, int(os.getenv("OURNOTES_MULTI_COMMAND_LIMIT",
                                                          str(MAX_MULTI_COMMAND_LIMIT))))),
+            qq_gateway_host=os.getenv("OURNOTES_QQ_GATEWAY_HOST",
+                                      DEFAULT_QQ_GATEWAY_HOST).strip(),
         )
