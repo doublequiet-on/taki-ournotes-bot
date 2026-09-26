@@ -36,6 +36,14 @@ class Song:
 
 
 @dataclass(frozen=True)
+class Skill:
+    kind: str
+    name: str
+    description: str
+    localized: dict[str, dict[str, str]] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
 class Card:
     id: int
     asset_id: int
@@ -52,6 +60,25 @@ class Card:
     full_url: str
     thumbnail_url: str
     localized: dict[str, dict[str, str]] = field(default_factory=dict)
+    skills: tuple[Skill, ...] = ()
+
+
+@dataclass(frozen=True)
+class SupportCard:
+    id: int
+    title: str
+    character: str
+    characters: tuple[str, ...]
+    rarity: int
+    card_type: int
+    performance: int
+    technic: int
+    visual: int
+    start_at: str
+    full_url: str
+    thumbnail_url: str
+    localized: dict[str, dict[str, str]] = field(default_factory=dict)
+    skills: tuple[Skill, ...] = ()
 
 
 class DataError(RuntimeError):
@@ -66,7 +93,7 @@ def normalize(value: str) -> str:
     return "".join(char for char in value if not char.isspace() and char not in "-_·・!！?？'\"“”‘’")
 
 
-def localized_text(item: Song | Card, field_name: str, locale: str = "zh") -> str:
+def localized_text(item: Song | Card | SupportCard | Skill, field_name: str, locale: str = "zh") -> str:
     original = str(getattr(item, field_name))
     return item.localized.get(field_name, {}).get(locale) or original
 
@@ -178,14 +205,18 @@ def character_identity(name: str) -> str:
 
 
 class SongRepository:
+    CACHE_SCHEMA = 4
+
     def __init__(self, data_base: str, cache_file: Path, cache_ttl_hours: float = 6) -> None:
         self.data_base = data_base.rstrip("/")
         self.cache_file = cache_file
         self.cache_ttl_hours = cache_ttl_hours
         self.songs: list[Song] = []
         self.cards: list[Card] = []
+        self.support_cards: list[SupportCard] = []
         self.metadata: dict[str, Any] = {}
         self._detail_cards: dict[int, Card] = {}
+        self._detail_support_cards: dict[int, SupportCard] = {}
         self.cache_state = "unknown"
         self.last_successful_sync_at: str | None = None
 
@@ -204,6 +235,14 @@ class SongRepository:
                 self.cache_state = "stale"
                 return
         self._load_cache()
+        if (self.metadata.get("schema") != self.CACHE_SCHEMA
+                or not self.metadata.get("member_skill_index_complete", False)):
+            try:
+                self.refresh()
+            except DataError:
+                if self.cache_state != "unsaved":
+                    self.cache_state = "stale"
+            return
         self.cache_state = "cached"
 
     def refresh(self) -> None:
@@ -212,21 +251,47 @@ class SongRepository:
             raise DataError("仅允许 Project Yume 作为游戏数据源")
         try:
             from concurrent.futures import ThreadPoolExecutor
-            names = ("characters", "membercards", "songs", "songsmeta")
-            with ThreadPoolExecutor(max_workers=4) as pool:
+            names = ("characters", "membercards", "songs", "songsmeta", "supportcards")
+            with ThreadPoolExecutor(max_workers=5) as pool:
                 payloads = list(pool.map(lambda name: yatta.fetch_json(f"{yatta.MASTER}/{name}.json"), names))
-            songs, cards = yatta.build_data(*payloads)
+            songs, cards = yatta.build_data(*payloads[:4])
+            support_cards = yatta.build_support_cards(payloads[0], payloads[4])
         except (OSError, ValueError, KeyError, TypeError) as exc:
             self.cache_state = "stale" if self.songs or self.cache_file.exists() else "unknown"
             raise DataError(f"Project Yume 数据同步失败，已保留原缓存：{exc}") from exc
+        previous_details = {card.id: card for card in self.cards if card.skills}
+
+        def fetch_member_detail(card: Card) -> Card:
+            try:
+                return self._merge_card_detail(card, yatta.card_detail(card.id))
+            except (OSError, ValueError, KeyError, TypeError):
+                previous = previous_details.get(card.id)
+                if previous is None:
+                    return card
+                return replace(
+                    card, performance=previous.performance, technic=previous.technic,
+                    visual=previous.visual, skill_name=previous.skill_name, skills=previous.skills,
+                    localized={**card.localized,
+                               "skill_name": previous.localized.get("skill_name", {})},
+                )
+
+        with ThreadPoolExecutor(max_workers=min(8, max(1, len(cards)))) as pool:
+            cards = list(pool.map(fetch_member_detail, cards))
+        detail_count = sum(bool(card.skills) for card in cards)
+
         self.songs = songs
         self.cards = cards
+        self.support_cards = support_cards
         self._detail_cards.clear()
+        self._detail_support_cards.clear()
         self.metadata = {
             "source": yatta.BASE, "data_version": "Project Yume public JSON",
             "upstream_fetched_at": None,
             "cached_at": datetime.now(timezone.utc).isoformat(),
-            "song_count": len(songs), "card_count": len(cards), "schema": 2,
+            "song_count": len(songs), "card_count": len(cards),
+            "support_card_count": len(support_cards), "schema": self.CACHE_SCHEMA,
+            "member_card_detail_count": detail_count,
+            "member_skill_index_complete": bool(cards) and detail_count == len(cards),
         }
         try:
             self._save_cache()
@@ -240,19 +305,47 @@ class SongRepository:
         from . import yatta
         if card.id in self._detail_cards:
             return self._detail_cards[card.id]
+        if card.skills:
+            return card
         try:
-            raw = yatta.card_detail(card.id)
-            stats = raw.get("statsMax") or []
-            if len(stats) != 3:
-                return card
-            skills = raw.get("skills") or []
-            skill = next((row for row in skills if row.get("type") == "liveSkill"), None)
-            if skill is None:
-                skill = next(iter(skills), {})
-            detailed = replace(card, performance=int(stats[0]), technic=int(stats[1]),
-                               visual=int(stats[2]), skill_name=yatta.text(skill.get("name")),
-                               localized={**card.localized, "skill_name": yatta.localized(skill.get("name"))})
+            detailed = self._merge_card_detail(card, yatta.card_detail(card.id))
             self._detail_cards[card.id] = detailed
+            return detailed
+        except (OSError, ValueError, KeyError, TypeError):
+            return card
+
+    @staticmethod
+    def _merge_card_detail(card: Card, raw: dict[str, Any]) -> Card:
+        from . import yatta
+        stats = raw.get("statsMax") or []
+        values = [int(value) for value in stats[:3]] if len(stats) >= 3 else [card.performance, card.technic, card.visual]
+        skills = yatta.build_skills(raw.get("skills"))
+        live_skill = next((skill for skill in skills if skill.kind == "liveSkill"), skills[0] if skills else None)
+        return replace(
+            card, performance=values[0], technic=values[1], visual=values[2], skills=skills,
+            skill_name=live_skill.name if live_skill else card.skill_name,
+            localized={
+                **card.localized,
+                "skill_name": live_skill.localized.get("name", {}) if live_skill else card.localized.get("skill_name", {}),
+            },
+        )
+
+    def member_skill_index_ready(self) -> bool:
+        return bool(self.cards) and all(card.skills for card in self.cards)
+
+    def support_card_with_detail(self, card: SupportCard) -> SupportCard:
+        from . import yatta
+        if card.id in self._detail_support_cards:
+            return self._detail_support_cards[card.id]
+        try:
+            raw = yatta.support_card_detail(card.id)
+            stats = raw.get("statsMax") or []
+            values = [int(value) for value in stats[:3]] if len(stats) >= 3 else [card.performance, card.technic, card.visual]
+            detailed = replace(
+                card, performance=values[0], technic=values[1], visual=values[2],
+                skills=yatta.build_skills(raw.get("skills")),
+            )
+            self._detail_support_cards[card.id] = detailed
             return detailed
         except (OSError, ValueError, KeyError, TypeError):
             return card
@@ -265,6 +358,7 @@ class SongRepository:
                 for song in self.songs
             ],
             "cards": [asdict(card) for card in self.cards],
+            "support_cards": [asdict(card) for card in self.support_cards],
         }
         self.cache_file.parent.mkdir(parents=True, exist_ok=True)
         temporary = self.cache_file.with_suffix(self.cache_file.suffix + ".tmp")
@@ -289,11 +383,20 @@ class SongRepository:
                 )
                 for row in payload["songs"]
             ]
-            self.cards = [Card(**row) for row in payload.get("cards", [])]
+            self.cards = [Card(
+                **{key: value for key, value in row.items() if key != "skills"},
+                skills=tuple(Skill(**skill) for skill in row.get("skills", [])),
+            ) for row in payload.get("cards", [])]
+            self.support_cards = [SupportCard(
+                **{key: value for key, value in row.items() if key not in {"characters", "skills"}},
+                characters=tuple(row.get("characters", [])),
+                skills=tuple(Skill(**skill) for skill in row.get("skills", [])),
+            ) for row in payload.get("support_cards", [])]
         except Exception as exc:
             raise DataError(f"本地缓存损坏：{self.cache_file} ({exc})") from exc
         from . import yatta
-        if self.metadata.get("source") != yatta.BASE or self.metadata.get("schema") != 2:
+        if (self.metadata.get("source") != yatta.BASE
+                or self.metadata.get("schema") not in {2, 3, self.CACHE_SCHEMA}):
             raise DataError("缓存来自旧数据源，请重新运行 sync")
         self.last_successful_sync_at = self.metadata.get("cached_at")
 
@@ -345,6 +448,40 @@ class SongRepository:
         for card in self.cards:
             variants = [name for fields in card.localized.values() for name in fields.values()]
             choices = [normalize(name) for name in (card.title, card.character, card.band, *variants)]
+            if needle in choices:
+                score = 1.0
+            elif any(needle in choice for choice in choices):
+                score = 0.9
+            else:
+                score = max((SequenceMatcher(None, needle, choice).ratio() for choice in choices), default=0)
+            if score >= (0.75 if len(needle) <= 3 else 0.62):
+                ranked.append((score, card))
+        ranked.sort(key=lambda pair: (-pair[0], -pair[1].rarity, pair[1].id))
+        return [card for _, card in ranked[:limit]]
+
+    def search_support_cards(self, query: str, limit: int = 8) -> list[SupportCard]:
+        alias = resolve_character_alias(query)
+        needle = normalize(query)
+        if not needle:
+            return []
+        if needle.isdigit():
+            exact = [card for card in self.support_cards if card.id == int(needle)]
+            if exact:
+                return exact
+        if alias:
+            terms = tuple(normalize(term) for term in alias.search_terms)
+            matches = [
+                card for card in self.support_cards
+                if any(term in normalize(name) for term in terms for name in (
+                    *card.characters, card.character, *card.localized.get("character", {}).values(),
+                ))
+            ]
+            matches.sort(key=lambda card: (-card.rarity, card.id))
+            return matches[:limit]
+        ranked: list[tuple[float, SupportCard]] = []
+        for card in self.support_cards:
+            variants = [name for fields in card.localized.values() for name in fields.values()]
+            choices = [normalize(name) for name in (card.title, card.character, *card.characters, *variants)]
             if needle in choices:
                 score = 1.0
             elif any(needle in choice for choice in choices):

@@ -27,8 +27,9 @@ from .commands import (ALIASES, CommandResult, handle_command, locale_for, page_
 from .config import QQ_PASSIVE_REPLY_LIMIT, REPLY_ORDER_TIMEOUT_SECONDS, Settings
 from .data import SongRepository
 from .i18n import tr
-from .structured_query import QueryResult
-from .visuals import render_card, render_card_list, render_chart, render_song_list
+from .structured_query import QueryResult, query_page_notice
+from .visuals import (render_card, render_card_list, render_chart, render_song_list,
+                      render_support_card, render_support_card_list)
 
 
 logger = logging.getLogger(__name__)
@@ -277,6 +278,8 @@ def _image_from_result(result: QueryResult | CommandResult | None,
             chart = result.chart
             return _chart_image(chart[0], chart[1], locale) if chart else None
         if spec.intent == "card":
+            if (spec.skill_query or spec.skill_kind) and not repository.member_skill_index_ready():
+                return None
             cards = result.cards
             if not cards:
                 return None
@@ -284,7 +287,18 @@ def _image_from_result(result: QueryResult | CommandResult | None,
                 return render_card(repository.card_with_detail(cards[0]), locale)
             visible = page_slice(cards, spec.page)
             return render_card_list(visible, spec.query_label(), locale,
-                                    page_notice("cards", spec.query_label(), spec.page, len(cards), locale)) if visible else None
+                                    query_page_notice(spec, len(cards), locale)) if visible else None
+        if spec.intent == "support_card":
+            cards = result.support_cards
+            if not cards:
+                return None
+            if spec.subject and spec.subject.kind == "support_card":
+                return render_support_card(repository.support_card_with_detail(cards[0]), locale)
+            visible = page_slice(cards, spec.page)
+            return render_support_card_list(
+                visible, spec.query_label(), locale,
+                query_page_notice(spec, len(cards), locale),
+            ) if visible else None
         return None
     if result is None:
         return None
@@ -307,6 +321,16 @@ def _image_from_result(result: QueryResult | CommandResult | None,
             return render_card(repository.card_with_detail(cards[0]), locale)
         visible = page_slice(cards, int(difficulty))
         return render_card_list(visible, query, locale, page_notice(kind, query, int(difficulty), len(cards), locale)) if visible else None
+    if kind == "support_cards":
+        cards = result.support_cards
+        if not cards:
+            return None
+        if query.isdigit() and cards[0].id == int(query):
+            return render_support_card(repository.support_card_with_detail(cards[0]), locale)
+        visible = page_slice(cards, int(difficulty))
+        return render_support_card_list(
+            visible, query, locale, page_notice(kind, query, int(difficulty), len(cards), locale)
+        ) if visible else None
     return None
 
 

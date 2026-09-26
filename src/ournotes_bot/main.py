@@ -39,7 +39,12 @@ def main() -> None:
         raise SystemExit(1) from exc
 
     if args.mode == "sync":
-        print(f"同步完成：{len(repository.songs)} 首曲目、{len(repository.cards)} 张成员卡，版本 {repository.metadata.get('data_version')}")
+        print(
+            f"同步完成：{len(repository.songs)} 首曲目、{len(repository.cards)} 张成员卡、"
+            f"{len(repository.support_cards)} 张支援卡；成员卡技能索引 "
+            f"{repository.metadata.get('member_card_detail_count', 0)}/{len(repository.cards)}，"
+            f"版本 {repository.metadata.get('data_version')}"
+        )
         return
     if args.mode == "query":
         reply = answer(" ".join(args.message))

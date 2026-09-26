@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from difflib import SequenceMatcher
 
-from .data import Card, Song, SongRepository, character_identity, localized_text, normalize, resolve_character_alias
+from .data import Card, Skill, Song, SongRepository, SupportCard, character_identity, localized_text, normalize, resolve_character_alias
 from .entity_lexicon import known_alias_names, resolve_exact_alias
 from .i18n import tr
 
@@ -15,27 +15,30 @@ HELP_TEXT = """Our Notes 查询指令
 /查曲 [歌名或ID] [等级或lv比较式] [页N]：搜索歌曲列表，可翻页
 /查谱面 歌名或ID [难度]：查看等级与 Note 数；100001 可简写为 1
 /查卡 角色名或卡牌ID [页N]：搜索卡面，可翻页
+/查支援卡 角色名、卡名或ID [页N]：搜索支援卡，可翻页
 /查缩写 昵称：查看昵称对应的角色、乐队等，也可直接用于查曲或查卡
-/问 想查的内容：自然语言查询（复杂问法需配置 AI）
+/问 想查的内容：自然语言查询歌曲、谱面、成员卡技能或支援卡（复杂问法需配置 AI）
 /数据状态：查看进程、最近同步与缓存状态
 /帮助：查看本说明
-示例：/查曲 mygo 27、/查曲 lv27、/查谱面 100001 EXPERT、/查卡 skk"""
+示例：/查曲 mygo 27、/查谱面 100001 EXPERT、/查卡 skk、/查支援卡 tmr"""
 HELP_TEXTS = {
     "zh": HELP_TEXT + "\n/语言：查看英文和日文指令",
     "en": """Our Notes commands
 /song [title or ID] [level or lv level] [page N]: search songs
 /chart <title or ID> [difficulty]: view level and note count
 /card <character, title or ID> [page N]: search cards
+/support <character, title or ID> [page N]: search support cards
 /abbrev <nickname>: look up a character or band nickname
-/ask <query>: natural language lookup (AI configuration needed for complex queries)
+/ask <query>: natural language song, chart, member-skill, or support-card lookup
 /status: process and data status  /language: language guide  /help: this guide
 Example: /song mygo 27, /chart 100001 EXPERT, /card tomori""",
     "ja": """Our Notes コマンド
 /曲 [曲名またはID] [レベルまたはlvレベル] [ページN]：楽曲を検索
 /譜面 <曲名またはID> [難易度]：レベルとノーツ数
 /カード <キャラクター名・カード名・ID> [ページN]：カードを検索
+/サポート <キャラクター名・カード名・ID> [ページN]：サポートカードを検索
 /略称 <略称>：キャラクター・バンドなどの略称
-/問 <内容>：自然言語検索（複雑な質問にはAI設定が必要）
+/問 <内容>：楽曲・譜面・メンバースキル・サポートカードの自然言語検索
 /状態：プロセスとデータの状態  /言語：言語案内  /ヘルプ：この案内
 例：/曲 mygo 27、/譜面 100001 EXPERT、/カード ともり""",
 }
@@ -44,6 +47,7 @@ COMMAND_HELP = {
     "songs": "查询歌曲列表，支持歌名、乐队、曲目 ID 或等级，每页 16 首。27 与 lv27 相同，均匹配整数等级 27（含显示等级 27.5）；27.5 与 lv27.5 均精确匹配显示等级。lv>=25、lv>25、lv<=25、lv<25 按歌曲最高显示等级筛选；可追加 diff=EXPERT 等难度，只比较该难度。纯数字若恰好是曲目 ID，优先按 ID 查询。\n用法：/查曲 [歌名或ID] [等级或lv比较式] [页N]\n示例：/查曲 迷星叫、/查曲 27、/查曲 mygo lv>=25、/查曲 mygo lv>=25 diff=EXPERT 页2",
     "chart": "查询谱面等级与 Note 数，支持歌名或曲目 ID。100001 可简写为 1。可选难度：EASY、NORMAL、HARD、EXPERT；不指定时显示全部难度。\n用法：/查谱面 <歌名或ID> [难度]\n示例：/查谱面 1 EXPERT、/查谱面 100001 EXPERT",
     "cards": "查询卡面，支持卡牌 ID、角色名、卡牌名或乐队名，每页 16 张。\n用法：/查卡 <关键词或ID> [页N]\n示例：/查卡 高松灯、/查卡 mygo 页2、/查卡 51\n找到多张卡时会显示列表，再用卡牌 ID 查看大图。",
+    "support_cards": "查询支援卡，支持支援卡 ID、角色名或卡牌名，每页 16 张。\n用法：/查支援卡 <关键词或ID> [页N]\n示例：/查支援卡 高松灯、/查支援卡 tmr 页2、/查支援卡 1\n找到多张卡时会显示列表，再用支援卡 ID 查看详情和大图。",
     "abbrev": "查询已收录的角色、乐队等昵称；也可直接用昵称查曲或查卡。\n用法：/查缩写 <昵称>\n示例：/查缩写 skk、/查缩写 茉团、/查卡 墨缇丝",
 }
 COMMAND_HELPS = {
@@ -52,12 +56,14 @@ COMMAND_HELPS = {
         "songs": "Search by title, band, ID, or level; 16 songs per page. 27 and lv27 match base level 27; 27.5 and lv27.5 match the displayed level exactly. An exact song ID takes priority over a bare number.\nUsage: /song [title or ID] [level or lv level] [page N]\nExample: /song mygo 27 page 2",
         "chart": "Look up level and note count by title or ID. Song 100001 can be shortened to 1. Optional difficulty: EASY, NORMAL, HARD, EXPERT.\nUsage: /chart <title or ID> [difficulty]\nExample: /chart 1 EXPERT",
         "cards": "Search by card ID, character, card title, or band, 16 per page.\nUsage: /card <query or ID> [page N]\nExample: /card tomori or /card mygo page 2",
+        "support_cards": "Search support cards by ID, character, or title, 16 per page.\nUsage: /support <query or ID> [page N]\nExample: /support tomori or /support 1",
         "abbrev": "Look up verified character and band nicknames.\nUsage: /abbrev <nickname>\nExample: /abbrev skk",
     },
     "ja": {
         "songs": "曲名・バンド・ID・レベルで検索します。1ページ16曲。27とlv27は基本レベル27、27.5とlv27.5は表示レベルを完全一致で検索します。数字が曲IDと一致する場合はIDを優先します。\n使い方：/曲 [曲名またはID] [レベルまたはlvレベル] [ページN]\n例：/曲 mygo 27 ページ2",
         "chart": "曲名またはIDでレベルとノーツ数を確認します。100001は1と省略できます。難易度省略時は全難易度を表示します。\n使い方：/譜面 <曲名またはID> [難易度]\n例：/譜面 1 EXPERT",
         "cards": "カードID、キャラクター名、カード名、バンド名で検索します。1ページ16枚。\n使い方：/カード <名前またはID> [ページN]\n例：/カード 祥子、/カード mygo ページ2、/カード 51",
+        "support_cards": "サポートカードID、キャラクター名、カード名で検索します。1ページ16枚。\n使い方：/サポート <名前またはID> [ページN]\n例：/サポート ともり、/サポート 1",
         "abbrev": "登録済みのキャラクター・バンドなどの略称を調べます。\n使い方：/略称 <略称>\n例：/略称 skk",
     },
 }
@@ -66,16 +72,18 @@ ALIASES = {
     "查曲": "songs", "song": "songs", "songs": "songs", "曲": "songs", "楽曲": "songs",
     "查谱面": "chart", "查谱": "chart", "谱面": "chart", "chart": "chart", "譜面": "chart",
     "查卡": "cards", "查卡面": "cards", "card": "cards", "cards": "cards", "カード": "cards",
+    "查支援卡": "support_cards", "支援卡": "support_cards", "support": "support_cards",
+    "supportcard": "support_cards", "supportcards": "support_cards", "サポート": "support_cards",
     "查缩写": "abbrev", "abbrev": "abbrev", "略称": "abbrev",
 }
-CANONICAL = {"songs": "/查曲", "chart": "/查谱面", "cards": "/查卡", "abbrev": "/查缩写"}
+CANONICAL = {"songs": "/查曲", "chart": "/查谱面", "cards": "/查卡", "support_cards": "/查支援卡", "abbrev": "/查缩写"}
 CANONICAL_BY_LOCALE = {
     "zh": CANONICAL,
-    "en": {"songs": "/song", "chart": "/chart", "cards": "/card", "abbrev": "/abbrev"},
-    "ja": {"songs": "/曲", "chart": "/譜面", "cards": "/カード", "abbrev": "/略称"},
+    "en": {"songs": "/song", "chart": "/chart", "cards": "/card", "support_cards": "/support", "abbrev": "/abbrev"},
+    "ja": {"songs": "/曲", "chart": "/譜面", "cards": "/カード", "support_cards": "/サポート", "abbrev": "/略称"},
 }
-ENGLISH_COMMANDS = {"song", "songs", "chart", "card", "cards", "abbrev", "help", "status", "language", "event", "gacha", "prediction"}
-JAPANESE_COMMANDS = {"曲", "楽曲", "譜面", "カード", "略称", "ヘルプ", "状態", "言語", "イベント", "ガチャ", "予想線"}
+ENGLISH_COMMANDS = {"song", "songs", "chart", "card", "cards", "support", "supportcard", "supportcards", "abbrev", "help", "status", "language", "event", "gacha", "prediction"}
+JAPANESE_COMMANDS = {"曲", "楽曲", "譜面", "カード", "サポート", "略称", "ヘルプ", "状態", "言語", "イベント", "ガチャ", "予想線"}
 UNAVAILABLE_COMMANDS = {"查活动", "查卡池", "ycx", "预测线", "查预测线", "event", "gacha", "prediction", "イベント", "ガチャ", "予想線"}
 UNAVAILABLE_REPLY = "该功能暂未上线"
 PAGE_SIZE = 16
@@ -155,6 +163,27 @@ def card_matches(repository: SongRepository, query: str) -> list[Card]:
     return repository.search_cards(query, limit=len(repository.cards))
 
 
+def support_card_matches(repository: SongRepository, query: str) -> list[SupportCard]:
+    built_in = resolve_character_alias(query)
+    if built_in:
+        cards = [card for card in repository.support_cards if any(
+            normalize(character_identity(name)) == normalize(built_in.display) for name in card.characters
+        )]
+        return sorted(cards, key=lambda card: (-card.rarity, card.id))
+    match = resolve_exact_alias("support_card", query, repository)
+    if match.ambiguous:
+        return []
+    if match.entity:
+        if match.entity.kind == "support_card":
+            return [card for card in repository.support_cards if card.id == match.entity.value]
+        cards = [card for card in repository.support_cards if any(
+            normalize(character_identity(name)) == normalize(str(match.entity.value))
+            for name in card.characters
+        )]
+        return sorted(cards, key=lambda card: (-card.rarity, card.id))
+    return repository.search_support_cards(query, limit=len(repository.support_cards))
+
+
 def song_matches(repository: SongRepository, query: str) -> list[Song]:
     """Apply an optional trailing level filter after the title/band/ID search."""
     normalized = unicodedata.normalize("NFKC", query)
@@ -211,8 +240,9 @@ def page_notice(kind: str, query: str, page: int, total: int, locale: str) -> st
         return {"zh": f"页码超出范围：共 {pages} 页。发送 {first} 查看首页。",
                 "en": f"Page out of range: {pages} page(s). Use {first} for page 1.",
                 "ja": f"ページは全{pages}ページです。{first} で1ページ目を表示します。"}[locale]
-    unit = {"zh": {"songs": "首", "cards": "张"}, "en": {"songs": " songs", "cards": " cards"},
-            "ja": {"songs": "曲", "cards": "枚"}}[locale][kind]
+    unit = {"zh": {"songs": "首", "cards": "张", "support_cards": "张"},
+            "en": {"songs": " songs", "cards": " cards", "support_cards": " support cards"},
+            "ja": {"songs": "曲", "cards": "枚", "support_cards": "枚"}}[locale][kind]
     summary = {"zh": f"第 {page}/{pages} 页 · 共 {total}{unit}",
                "en": f"Page {page}/{pages} · {total}{unit}",
                "ja": f"{page}/{pages}ページ · 全{total}{unit}"}[locale]
@@ -249,6 +279,9 @@ def parse_query(content: str) -> tuple[str, str, str | int | None] | None:
     if kind == "cards":
         query, page = _split_page(query)
         return ("cards", query, page) if query else None
+    if kind == "support_cards":
+        query, page = _split_page(query)
+        return ("support_cards", query, page) if query else None
     return None
 
 
@@ -274,15 +307,15 @@ def _command_tip(content: str) -> str | None:
             if suffix and not suffix.isalpha():
                 tail = f" {rest.strip()}" if rest.strip() else ""
                 return tr(locale, "missing_space", command=canonical[ALIASES[alias]], argument=suffix + tail) + "\n" + helps[ALIASES[alias]]
-            if suffix and alias in {"查曲", "查谱面", "查卡", "查卡面"}:
+            if suffix and alias in {"查曲", "查谱面", "查卡", "查卡面", "查支援卡", "支援卡"}:
                 if suffix in {"角色"}:
                     return tr(locale, "unknown") + "\n" + HELP_TEXTS[locale]
                 return tr(locale, "missing_space", command=canonical[ALIASES[alias]], argument=suffix) + "\n" + helps[ALIASES[alias]]
 
     candidates = {
-        "zh": ("查曲", "查谱面", "查卡", "查缩写", "查活动", "查卡池", "ycx", "数据状态", "帮助"),
-        "en": ("song", "chart", "card", "abbrev", "event", "gacha", "ycx", "status", "help"),
-        "ja": ("曲", "譜面", "カード", "略称", "イベント", "ガチャ", "予想線", "状態", "ヘルプ"),
+        "zh": ("查曲", "查谱面", "查卡", "查支援卡", "查缩写", "查活动", "查卡池", "ycx", "数据状态", "帮助"),
+        "en": ("song", "chart", "card", "support", "abbrev", "event", "gacha", "ycx", "status", "help"),
+        "ja": ("曲", "譜面", "カード", "サポート", "略称", "イベント", "ガチャ", "予想線", "状態", "ヘルプ"),
     }[locale]
     candidate = max(candidates, key=lambda name: SequenceMatcher(None, first, name).ratio())
     similarity = SequenceMatcher(None, first, candidate).ratio()
@@ -317,6 +350,57 @@ def _format_charts(song: Song) -> str:
     ) or "暂无谱面数据"
 
 
+_SKILL_LABELS = {
+    "zh": {"leaderSkill": "队长技能", "liveSkill": "Live 技能", "gekisouSkill": "激奏技能",
+           "supportSkill": "支援技能", "gekisouSupportSkill": "激奏支援技能", "skill": "技能"},
+    "en": {"leaderSkill": "Leader skill", "liveSkill": "Live skill", "gekisouSkill": "Gekisou skill",
+           "supportSkill": "Support skill", "gekisouSupportSkill": "Gekisou support", "skill": "Skill"},
+    "ja": {"leaderSkill": "リーダースキル", "liveSkill": "ライブスキル", "gekisouSkill": "激奏スキル",
+           "supportSkill": "サポートスキル", "gekisouSupportSkill": "激奏サポート", "skill": "スキル"},
+}
+
+
+def rarity_text(rarity: int) -> str:
+    return "★" * rarity if 0 < rarity <= 5 else "SPECIAL"
+
+
+def _skill_lines(skills: tuple[Skill, ...], locale: str) -> list[str]:
+    labels = _SKILL_LABELS[locale]
+    lines = []
+    for skill in skills:
+        label = labels.get(skill.kind, labels["skill"])
+        line = f"{label}：{localized_text(skill, 'name', locale)}"
+        description = localized_text(skill, "description", locale)
+        lines.append(line + (f"\n效果（Lv.5）：{description}" if description else ""))
+    return lines
+
+
+def _format_card_detail(card: Card, locale: str) -> str:
+    total = card.performance + card.technic + card.visual
+    heading = {"zh": "成员卡详情", "en": "Member card details", "ja": "メンバーカード詳細"}[locale]
+    stats_unavailable = {"zh": "数值暂不可用", "en": "Stats unavailable", "ja": "ステータスを取得できません"}[locale]
+    skills_unavailable = {"zh": "技能详情暂不可用", "en": "Skill details unavailable", "ja": "スキル詳細を取得できません"}[locale]
+    lines = [
+        f"[{heading}] {card.id}  {rarity_text(card.rarity)} {localized_text(card, 'character', locale)} · {localized_text(card, 'title', locale)}",
+        f"{tr(locale, 'stats')}：{total:,}（{tr(locale, 'performance')} {card.performance:,} / {tr(locale, 'technic')} {card.technic:,} / {tr(locale, 'visual')} {card.visual:,}）" if total else stats_unavailable,
+    ]
+    lines.extend(_skill_lines(card.skills, locale) or [skills_unavailable])
+    return "\n".join(lines)
+
+
+def _format_support_card_detail(card: SupportCard, locale: str) -> str:
+    heading = {"zh": "支援卡详情", "en": "Support card details", "ja": "サポートカード詳細"}[locale]
+    stats_unavailable = {"zh": "数值暂不可用", "en": "Stats unavailable", "ja": "ステータスを取得できません"}[locale]
+    skills_unavailable = {"zh": "技能详情暂不可用", "en": "Skill details unavailable", "ja": "スキル詳細を取得できません"}[locale]
+    values = (card.performance / 100, card.technic / 100, card.visual / 100)
+    lines = [
+        f"[{heading}] {card.id}  {rarity_text(card.rarity)} {localized_text(card, 'character', locale)} · {localized_text(card, 'title', locale)}",
+        f"{tr(locale, 'support_bonus')}：{sum(values):g}%（{tr(locale, 'performance')} {values[0]:g}% / {tr(locale, 'technic')} {values[1]:g}% / {tr(locale, 'visual')} {values[2]:g}%）" if any(values) else stats_unavailable,
+    ]
+    lines.extend(_skill_lines(card.skills, locale) or [skills_unavailable])
+    return "\n".join(lines)
+
+
 def _choose(repository: SongRepository, query: str, locale: str = "zh") -> tuple[Song | None, str | None]:
     matches = repository.search(query)
     if not matches:
@@ -338,6 +422,7 @@ class CommandResult:
     parsed: tuple[str, str, str | int | None]
     songs: tuple[Song, ...] = ()
     cards: tuple[Card, ...] = ()
+    support_cards: tuple[SupportCard, ...] = ()
     hint: str | None = None
 
 
@@ -351,6 +436,8 @@ def resolve_command(content: str, repository: SongRepository) -> CommandResult |
         return CommandResult(parsed, songs=tuple(song_matches(repository, query)))
     if kind == "cards":
         return CommandResult(parsed, cards=tuple(card_matches(repository, query)))
+    if kind == "support_cards":
+        return CommandResult(parsed, support_cards=tuple(support_card_matches(repository, query)))
     song, hint = _choose(repository, query, locale_for(content))
     return CommandResult(parsed, songs=(song,) if song else (), hint=hint)
 
@@ -385,6 +472,8 @@ def handle_command(content: str, repository: SongRepository,
             state = "unknown"
         return tr(
             locale, "version", songs=len(repository.songs), cards=len(repository.cards),
+            support_cards=len(repository.support_cards),
+            skill_index=f"{sum(bool(card.skills) for card in repository.cards)}/{len(repository.cards)}",
             time=_safe_sync_time(repository.last_successful_sync_at, locale),
             cache=tr(locale, "cache_" + state),
         )
@@ -457,11 +546,30 @@ def handle_command(content: str, repository: SongRepository,
                         for value in (card.title, card.character, card.band, *(name for fields in card.localized.values() for name in fields.values()))]
             return tr(locale, "not_found_card", query=parsed[1]) + _suggest(parsed[1], variants, locale) + "\n" + COMMAND_HELPS[locale]["cards"]
         if parsed[1].isdigit() and matches[0].id == int(parsed[1]):
-            return tr(locale, "cards") + "\n" + f"{matches[0].id}  {'★' * matches[0].rarity} {localized_text(matches[0], 'character', locale)} · {localized_text(matches[0], 'title', locale)}"
+            return _format_card_detail(repository.card_with_detail(matches[0]), locale)
         page = int(parsed[2])
         visible = page_slice(matches, page)
         if not visible:
             return page_notice("cards", parsed[1], page, len(matches), locale)
-        return tr(locale, "cards") + "\n" + "\n".join(f"{c.id}  {'★' * c.rarity} {localized_text(c, 'character', locale)} · {localized_text(c, 'title', locale)}" for c in visible) + "\n" + page_notice("cards", parsed[1], page, len(matches), locale) + "\n" + tr(locale, "next_card")
+        return tr(locale, "cards") + "\n" + "\n".join(f"{c.id}  {rarity_text(c.rarity)} {localized_text(c, 'character', locale)} · {localized_text(c, 'title', locale)}" for c in visible) + "\n" + page_notice("cards", parsed[1], page, len(matches), locale) + "\n" + tr(locale, "next_card")
+
+    if parsed and parsed[0] == "support_cards":
+        matches = selection.support_cards
+        if not matches:
+            variants = [(value, f"{localized_text(card, 'character', locale)}（{card.id}）")
+                        for card in repository.support_cards
+                        for value in (card.title, card.character, *card.characters,
+                                      *(name for fields in card.localized.values() for name in fields.values()))]
+            return tr(locale, "not_found_support_card", query=parsed[1]) + _suggest(parsed[1], variants, locale) + "\n" + COMMAND_HELPS[locale]["support_cards"]
+        if parsed[1].isdigit() and matches[0].id == int(parsed[1]):
+            return _format_support_card_detail(repository.support_card_with_detail(matches[0]), locale)
+        page = int(parsed[2])
+        visible = page_slice(matches, page)
+        if not visible:
+            return page_notice("support_cards", parsed[1], page, len(matches), locale)
+        return tr(locale, "support_cards") + "\n" + "\n".join(
+            f"{card.id}  {rarity_text(card.rarity)} {localized_text(card, 'character', locale)} · {localized_text(card, 'title', locale)}"
+            for card in visible
+        ) + "\n" + page_notice("support_cards", parsed[1], page, len(matches), locale) + "\n" + tr(locale, "next_support_card")
 
     return _command_tip(content)

@@ -17,7 +17,8 @@ class StatusTests(unittest.TestCase):
         self.path = Path(self.temp.name) / "cache.json"
         repo = SongRepository(BASE, self.path)
         repo.metadata = {
-            "source": BASE, "schema": 2, "data_version": "Bearer secret-value",
+            "source": BASE, "schema": 4, "data_version": "Bearer secret-value",
+            "member_skill_index_complete": True,
             "cached_at": "2026-09-25T12:00:00+00:00",
         }
         repo._save_cache()
@@ -53,7 +54,8 @@ class StatusTests(unittest.TestCase):
         self.assertIn("最近一次同步失败", handle_command("/数据状态", repo))
 
         with patch("ournotes_bot.yatta.fetch_json", return_value={}), \
-             patch("ournotes_bot.yatta.build_data", return_value=([], [])):
+             patch("ournotes_bot.yatta.build_data", return_value=([], [])), \
+             patch("ournotes_bot.yatta.build_support_cards", return_value=[]):
             repo.refresh()
         self.assertEqual(repo.cache_state, "fresh")
         self.assertIn("本次运行同步成功", handle_command("/数据状态", repo))
@@ -65,6 +67,7 @@ class StatusTests(unittest.TestCase):
         previous = repo.last_successful_sync_at
         with patch("ournotes_bot.yatta.fetch_json", return_value={}), \
              patch("ournotes_bot.yatta.build_data", return_value=([], [])), \
+             patch("ournotes_bot.yatta.build_support_cards", return_value=[]), \
              patch.object(repo, "_save_cache", side_effect=OSError("private path")):
             with self.assertRaises(DataError):
                 repo.refresh()
@@ -75,6 +78,19 @@ class StatusTests(unittest.TestCase):
         reply = handle_command("/数据状态", repo)
         self.assertIn("最近成功同步：未知", reply)
         self.assertNotIn("private", reply)
+
+    def test_schema_two_cache_survives_failed_upgrade(self):
+        repo = SongRepository(BASE, self.path)
+        repo._load_cache()
+        repo.metadata["schema"] = 2
+        repo._save_cache()
+
+        loaded = SongRepository(BASE, self.path)
+        with patch.object(loaded, "refresh", side_effect=DataError("offline")):
+            loaded.load()
+        self.assertEqual(loaded.cache_state, "stale")
+        self.assertEqual(loaded.support_cards, [])
+        self.assertIn("正在使用旧缓存", handle_command("/数据状态", loaded))
 
 
 if __name__ == "__main__":

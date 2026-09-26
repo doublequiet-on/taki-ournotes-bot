@@ -12,7 +12,7 @@ MENU_ITEMS = [
     {"type": "send_message", "name": "查谱面", "send_message": "/查谱面 "},
     {"type": "send_message", "name": "查曲", "send_message": "/查曲 "},
     {"type": "send_message", "name": "查卡", "send_message": "/查卡 "},
-    {"type": "send_message", "name": "智能查询", "send_message": "/问 "},
+    {"type": "send_message", "name": "查支援卡", "send_message": "/查支援卡 "},
     {"type": "send_message", "name": "帮助", "send_message": "/帮助"},
 ]
 PANEL_ITEMS = [
@@ -20,7 +20,8 @@ PANEL_ITEMS = [
     {"type": "command", "name": "查谱面", "desc": "按歌曲 ID 查询谱面资料"},
     {"type": "command", "name": "查曲", "desc": "按歌名、ID 或等级查询歌曲"},
     {"type": "command", "name": "查卡", "desc": "按角色或卡牌 ID 查询"},
-    {"type": "command", "name": "问", "desc": "自然语言查询歌曲、谱面或卡牌"},
+    {"type": "command", "name": "查支援卡", "desc": "按角色或支援卡 ID 查询"},
+    {"type": "command", "name": "问", "desc": "自然语言查歌曲、技能、支援卡"},
     {"type": "command", "name": "数据状态", "desc": "查看当前数据版本"},
     {"type": "command", "name": "帮助", "desc": "查看指令说明与示例"},
 ]
