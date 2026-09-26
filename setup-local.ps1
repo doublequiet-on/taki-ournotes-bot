@@ -1,6 +1,7 @@
 ﻿# Windows PowerShell 5.1 requires a UTF-8 BOM to decode the Chinese messages below.
 $ErrorActionPreference = "Stop"
 Set-Location -LiteralPath $PSScriptRoot
+$env:PYTHONPATH = Join-Path $PSScriptRoot "src"
 
 $venvPython = Join-Path $PSScriptRoot ".venv\Scripts\python.exe"
 if (-not (Test-Path -LiteralPath $venvPython)) {
@@ -9,8 +10,13 @@ if (-not (Test-Path -LiteralPath $venvPython)) {
 }
 
 Write-Host "[2/4] 安装项目和 QQ SDK..."
-& $venvPython -m pip install --upgrade pip
-& $venvPython -m pip install -e .
+& $venvPython -c "import ournotes_bot, botpy, aiohttp, PIL"
+if ($LASTEXITCODE -ne 0) {
+    & $venvPython -m pip install --disable-pip-version-check setuptools
+    if ($LASTEXITCODE -ne 0) { throw "安装 setuptools 失败" }
+    & $venvPython -m pip install --disable-pip-version-check --no-build-isolation -e .
+    if ($LASTEXITCODE -ne 0) { throw "安装项目依赖失败" }
+}
 
 if (-not (Test-Path -LiteralPath ".env")) {
     Write-Host "[3/4] 创建本地配置 .env..."

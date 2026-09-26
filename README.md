@@ -1,125 +1,79 @@
-# Ournotes QQ 查询机器人原型
+# Our Notes QQ 查询机器人
 
-面向《BanG Dream! Our Notes》的非官方社区查询机器人原型，使用 QQ 官方机器人接口。项目不包含任何 AppSecret、QQ 登录态或游戏素材。
+《BanG Dream! Our Notes》日服的非官方社区查询机器人。此分支以 [NeriWST/ournotes-qq-bot](https://github.com/NeriWST/ournotes-qq-bot) 为基础开发；歌曲、卡牌数据来自 [Project Yume](https://bdon.yatta.moe/)，音符谱面文件按需取自 [MoeNotes](https://github.com/StarMoe-org/moenotes) 公共资源。不包含 QQ 凭据或游戏素材。
 
-由于发布者相关经验不足，本项目最初含有大量 Vibe Coding 代码，恳请有经验的开发者指导修改，并欢迎大家提出Issue.
+目前实现 `/查曲`、`/查谱面`、`/查卡`、`/查缩写`、`/数据状态`。歌曲可按名称、乐队、ID 或等级搜索；谱面显示等级、Note 数和可获取的完整音符谱面静态图；卡牌可按角色、卡名、乐队、ID 搜索，输入 ID 显示卡图及按需获取的数值。支持中、日、英名称和部分角色缩写。`/问` 是可选的自然语言入口：AI 只识别查询条件，最终答案仍由程序在本地数据缓存中检索。它不做攻略、推荐、问答或实时档线。未配置 AI 时，普通指令照常可用。
 
-本项目以非商业社区工具的方式运营，不以游戏素材牟利；游戏素材不随本仓库分发。项目与游戏版权方、QQ 平台及数据服务均无官方关联。
+## 在本机试用
 
-目前支持：
-
-- `/查曲 [歌名或ID] [等级或lv等级] [页N]`：带封面的歌曲列表图，每页 16 首；`/查曲 27` 与 `/查曲 lv27`、`/查曲 mygo 27` 与 `/查曲 mygo lv27` 效果相同，也支持翻页。整数等级 27 包括显示为 27.5 的谱面；`27.5` 与 `lv27.5` 均精确匹配显示等级。纯数字若恰好是曲目 ID，则优先按 ID 查询。
-- `/查谱面 <歌名或ID> [难度]`：封面、等级、Note 数及真实音符位置的静态谱面图；仅此指令可将歌曲 `100001` 简写为 `1`。默认预览 EXPERT，可指定 EASY、NORMAL、HARD、EXPERT（例如 `/查谱面 1 EASY`）
-- `/查卡 <角色名或卡牌ID> [页N]`：卡牌列表每页 16 张，显示总数和下一页指令；输入卡牌 ID 可看原画、综合力和技能名称（仍兼容 `查卡面`）
-- `/查卡 skk`、`/查卡 mtm` 等：可用角色缩写查卡；`/查缩写 <缩写>` 查看对应角色。别名覆盖 Our Notes 的 25 名角色；暂无卡牌数据时会明确提示
-- `/查活动`、`/查卡池`、`/ycx`（预测线）：已接入指令与快捷入口；目前上游没有可用数据，回复“该功能暂未上线”
-- `数据状态`：当前数据版本、曲目数和上游时间
-- 群内 `@机器人` 查询，以及单聊查询
-- 本地缓存、远端异常时使用旧缓存、每 6 小时自动刷新
-- 中日英名称互通搜索、罗马字对应的假名搜索，以及全角字符归一化
-- 中／日／英回复和查询图片本地化；中文指令默认显示中文，英文或日文指令显示对应语言
-- 单聊自定义菜单，以及单聊和群聊指令面板
-- 点击无参数指令会显示用法；拼错指令或漏输空格时会提示最接近的正确写法
-
-## 数据来源
-
-原型默认读取社区维护的静态 MasterData；[MoeNotes](https://github.com/StarMoe-org/moenotes) 也使用同一数据入口。本机器人直接读取该入口，不抓取 MoeNotes 页面或复制其代码：
-
-```text
-https://metadata.bdon.moe
-```
-
-这不是 Bushiroad 或 bilibili 提供的正式公开 API。同步时按上游版本获取歌曲、谱面、成员卡、角色、乐队、文本和技能表，并读取 MoeNotes 公开的图片路径清单以定位歌曲封面和卡图；`查谱面` 按需读取其公开的 [谱面 JSON](https://storage.bdon.moe/moenotes/Live/MusicScore/0001/0001_03/0001_03.json)。网络异常会重试，缺表、缺图或同版本条数回退时保留旧缓存。仓库不包含下载的数据、封面、卡面或谱面 JSON；运行时访问上游服务并展示图片，部署者应遵守上游及素材权利方的适用要求。数据更新时间可用 `数据状态` 检查，第三方权利范围见 [THIRD_PARTY.md](THIRD_PARTY.md)。
-
-## 本地运行
-
-需要 Python 3.10 或更新版本。
+需要 Python 3.10 以上。PowerShell 进入**本项目目录**后执行：
 
 ```powershell
 python -m venv .venv
-.venv\Scripts\Activate.ps1
-pip install -e .
-
-# 下载数据并验证查询；这两步不需要 QQ 凭证
-ournotes-bot sync
-ournotes-bot query 查谱 迷星叫
-ournotes-bot repl
+.\.venv\Scripts\python.exe -m pip install -e .
+.\.venv\Scripts\ournotes-bot.exe --help
+.\.venv\Scripts\ournotes-bot.exe sync
+.\.venv\Scripts\ournotes-bot.exe query 查谱面 100001
+.\.venv\Scripts\ournotes-bot.exe query 查卡 1
+.\.venv\Scripts\ournotes-bot.exe repl
 ```
 
-不安装项目也可以这样运行：
+`--help` 可在没有 QQ 凭据和数据缓存时运行；`query`、`repl` 和 `bot` 需要先有数据，首次使用请运行 `sync`。`repl` 是本地测试台，输入 `exit` 退出。`sync` 从 Project Yume 的公开 JSON 同步角色、卡牌、歌曲和歌曲统计，保存到 `data/ournotes-cache.json`；机器人运行中每六小时尝试刷新。首次网络失败且没有缓存时无法查询；已有同源缓存时会继续使用。`/数据状态` 分别显示本次查询的进程正在响应、最近一次**成功保存**的同步时间，以及本次运行已同步、使用已有缓存、同步失败后沿用旧缓存等状态。它不表示 QQ 连接始终稳定，也不代表上游网站的数据更新时间。
+
+从源码目录安装时，`.env`、昵称表和 `data/` 仍放在项目根目录。若安装为普通 Python 包，程序从**运行命令时所在的目录**读取 `.env`，默认将缓存和 AI 额度记录写入 Windows 的 `%LOCALAPPDATA%\ournotes-qq-bot`，或 Linux/macOS 的用户数据目录；不会写进 Python 安装目录。安装包自带发布时的昵称表。需要修改昵称时，在自己的可写目录放一份 `query_aliases.json`，再在 `.env` 里设置 `OURNOTES_ALIAS_FILE=该文件的完整路径`。`OURNOTES_CACHE_FILE` 若填相对路径，则相对于 `.env` 所在的运行目录。
+
+## 连接 QQ
+
+可以复用已经用于推文推送的 QQ 官方机器人：如果 `QQ_APP_ID` 和 `QQ_APP_SECRET` 已在 Windows 用户环境变量中，直接执行下面的命令即可；推文 bot 平时通过 HTTP 推送，不会占用查询 bot 的长连接。若要使用独立的测试机器人，按照 [LOCAL_QQ_TEST.md](LOCAL_QQ_TEST.md) 创建后，在本目录复制 `.env.example` 为 `.env` 并填写这两个值。
 
 ```powershell
-$env:PYTHONPATH = "src"
-python -m ournotes_bot.main sync
-python -m ournotes_bot.main query 查曲 100001
-python -m ournotes_bot.main repl
+.\.venv\Scripts\ournotes-bot.exe bot
 ```
 
-`repl` 是不连接 QQ 的本地交互测试台，可以连续输入机器人指令；输入 `exit` 退出。
+建议先单聊验证，再在测试群 @机器人发送查询。群聊只有明确 @机器人时才回复；普通群消息中的查询指令不会触发。代码使用 QQ 官方 WebSocket 事件，兼容 `GROUP_AT_MESSAGE_CREATE` 与 `GROUP_MESSAGE_CREATE`，HTTP API 地址为 `api.bot.qq.com`。`setup-menu` 会修改 QQ 菜单和指令面板，本地测试无需安装菜单。本分支尚未完成群聊回复的端到端验证。
 
-## 多语言查询
+## 可选的自然语言查询
 
-所有指令都可使用数据源已收录的简体中文、英文或日文名称查询，曲名还支持可由上游英文罗马字推导出的假名读音。回复语言由**指令**决定，默认中文，不会因为输入了英文或假名就改变回复语言：
-
-| 中文（默认） | English | 日本語 |
-| --- | --- | --- |
-| `/查曲 迷星叫` | `/song Mayoiuta` | `/曲 まよいうた` |
-| `/查谱面 100001` | `/chart 100001 EXPERT` | `/譜面 100001 エキスパート` |
-| `/查卡 祥子` | `/card sakiko` | `/カード 祥子` |
-| `/帮助` | `/help` | `/ヘルプ` |
-
-发送 `/语言`、`/language` 或 `/言語` 可查看语言说明。若上游没有某项日文或英文文本，该字段会回退到中文；不会自动编造译名。更新旧缓存请运行 `ournotes-bot sync`。
-
-## 接入 QQ
-
-Windows 本地联调可直接按照 [LOCAL_QQ_TEST.md](LOCAL_QQ_TEST.md) 操作，或运行项目内的 `setup-local.ps1` 和 `start-bot.ps1`。
-
-1. 在 [QQ 开放平台](https://q.qq.com/) 创建机器人，取得 `AppID` 与 `AppSecret`。
-2. 在机器人后台配置群聊与单聊事件权限。原型监听 `GROUP_AT_MESSAGE_CREATE` 和 `C2C_MESSAGE_CREATE`。
-3. 将 `.env.example` 复制为 `.env`，填写：
+在 `.env` 中填写：
 
 ```dotenv
-QQ_APP_ID=你的AppID
-QQ_APP_SECRET=你的AppSecret
+AI_API_KEY=你的API密钥
+AI_MODEL=deepseek-chat
+AI_BASE_URL=https://api.deepseek.com
+AI_DAILY_LIMIT=100
+OURNOTES_QUERY_CONCURRENCY=2
+OURNOTES_QUERY_QUEUE_LIMIT=4
 ```
 
-4. 启动：
+发送 `/问 迷星叫的 EXPERT 有多少 Note`。常见等级筛选，以及 `/问 MyGO的歌有哪些`、`/问 tmr的卡有哪些` 这类已收录实体的简单列表查询，会在本地处理。其他受支持问法由模型返回 `song`、`chart`、`card` 或 `unsupported` 的结构化条件；程序从**用户原问题**中锚定歌曲、乐队、角色或卡牌，再核对模型提出的名称是否为同一对象。对象不存在、与原文不符或原文有多个对象时不执行查询。通过校验后按结构化条件直接检索本地数据，文字与图片共用同一结果，不直接转发模型自由文本。只有需要模型解析的 `/问` 会消耗 AI 请求；成功解析的重复问题有内存缓存。额度按北京时间自然日计算，计数保存在缓存目录旁的 `ai-quota.json`，重启不会清零。请求在调用 AI 前计入额度；即使提供方超时、返回错误或结果无效，也算一次，避免无法确认费用时自动重复请求。额度用尽、文件损坏或无法保存时停止调用 AI，普通指令和本地可解析的 `/问` 仍可用。不要删除或手工重置额度文件；如需改位置，可设置 `OURNOTES_AI_QUOTA_FILE`（相对路径以 `.env` 所在目录为基准）。此限制只保证单实例，不适用于多实例共享配额。发送给 AI 服务的内容是需要模型解析的 `/问` 文本，不应输入私人信息。
 
-```powershell
-ournotes-bot bot
-```
+群聊和单聊共用查询处理上限：默认同时准备 2 条回复，另有 4 条等待；达到上限的请求会立即收到“当前查询较多”提示。准备阶段包括本地查找、AI 解析及图片绘制；图片上传和发送仍按各自请求执行。可用 `OURNOTES_QUERY_CONCURRENCY`（至少 1）和 `OURNOTES_QUERY_QUEUE_LIMIT`（至少 0）调整，修改配置后需重启查询机器人生效。
 
-安装 QQ 快捷入口：
+人工确认的群内叫法可填入 [query_aliases.json](query_aliases.json)：`song`、`band`、`character`、`card` 分别对应歌曲、乐队、角色和卡牌别名，右侧必须是当前缓存中存在的原名或 ID；`outside_catalog` 放确认不属于当前曲库的叫法。词表中的昵称可用于 `/问`、`/查曲`、`/查卡` 和 `/查缩写`；别名目标不存在时不会被采用。同一类查询中有歧义的昵称不会任选一个结果。不要把未经核实的昵称猜测写进词表。具体步骤、冲突处理及升级前后对比见 [昵称词表维护规范.md](昵称词表维护规范.md)。修改后用 `python -m json.tool query_aliases.json` 检查格式，再在 QQ 验证。
 
-```powershell
-ournotes-bot setup-menu
-```
+## 当前边界
 
-安装命令会保留既有单聊菜单项，添加 `Our Notes` 和 `活动与卡池` 两组子菜单；单聊和群聊面板会按备注复用或更新。修改 QQ 菜单不需要重启机器人，修改程序代码需要重启。
+- Project Yume 的公开文件不是官方游戏 API；同步结果取决于其更新与可用性。卡图、封面仅运行时获取，素材权利不属于本仓库，见 [THIRD_PARTY.md](THIRD_PARTY.md)。
+- `/查谱面` 优先展示所选难度的音符谱面静态图；未指定难度时预览 EXPERT。谱面文件无法获取时退回等级和 Note 数；不提供实时档线或预测线。
+- 卡牌列表不预取每张卡的详情；输入卡牌 ID 才请求数值与技能名称。第三方详情暂不可用时仍显示卡面，数值会标为不可用。
+- 未接入玩家账号、代练或任何游戏操作。
 
-凭证只放在服务器的 `.env` 中，不要提交到 Git。
-
-服务器部署可参照 [deploy/README.md](deploy/README.md)。本项目只维护 QQ 官方机器人接入。
-
-## 测试
+运行测试：
 
 ```powershell
 $env:PYTHONPATH = "src"
 python -m unittest discover -s tests -v
 ```
 
-## 当前边界
+本项目代码沿用原仓库的 [MIT License](LICENSE)；游戏和第三方数据、素材不在此许可范围内。
 
-- 当前上游仍可能是测试期数据，开服后的 ID、字段和曲目数量可能变化。
-- 社区数据源可能暂时不可用；首次同步失败时应稍后重试。已有缓存时，机器人会继续使用旧缓存。
-- 没有接入玩家账户和成绩。未发现可确认的官方玩家数据接口。
-- 谱面图根据社区谱面 JSON 的音符时间、位置与宽度绘制。长条轨迹只在节点之间用直线连接，属于静态近似图，不还原游戏内动画；谱面文件暂不可用时仍会显示等级与物量。
-- 当前卡面图使用 `MasterMemberCard` 和 MoeNotes 图片路径清单定位社区静态资产；若清单未收录某张卡，数据同步会保留既有缓存。卡池、活动、觉醒前后对照等关系仍需相应数据源，当前图不展示这些字段。
-- 活动、卡池和预测线尚未实现。相应指令目前只返回“该功能暂未上线”，不会把 Bang Dream 旧游戏的榜线当作 Our Notes 数据。
-- 部署多个实例时应把缓存同步任务改成独立定时任务，避免重复拉取。
+图片回复需要系统安装可用的中日韩字体，例如 Windows 微软雅黑或 Noto Sans CJK。缺少字体时，群聊和单聊会记录原因并退回文字回复；本项目不附带字体文件。
 
-## 许可与公开仓库
+## 常见问题与发布检查
 
-本仓库自行编写的代码由 Bilibili @Adeliae 以 [MIT License](LICENSE) 授权。游戏内容、上游数据和第三方软件不属于此许可范围，详见 [THIRD_PARTY.md](THIRD_PARTY.md)。本项目的非商业运营声明不改变 MIT 对代码的授权范围。
+- `--help` 可以运行但 `query` 提示数据初始化失败：先运行 `sync`。首次同步需要能访问 Project Yume；同步失败时保留同源旧缓存，`/数据状态` 会标明是否正在使用旧缓存。
+- `bot` 提示缺少 QQ 配置：在 `.env` 或环境变量设置 `QQ_APP_ID`、`QQ_APP_SECRET`，不要把真实值提交到 Git。
+- 只收到文字，没有图片：确认系统有中日韩字体；谱面源不可用时会退回等级与 Note 数。上传或发送失败也可能导致文字回退或未送达，查看脱敏日志确认阶段。
+- `/问` 提示额度用尽或额度文件不可用：普通指令仍可使用。额度按北京时间换日；损坏文件不会被自动清零，检查文件权限或备份后再处理，避免重复付费请求。
 
-提交前检查 Git 暂存区。`.env`、虚拟环境、日志、下载缓存、登录二维码和 QQ 会话均应保持在仓库之外；若凭据曾公开，立即在对应平台轮换。
+GitHub Actions 在无真实凭据的 Ubuntu 环境运行测试、构建 wheel 与源码包，并检查昵称表随包提供且不包含运行缓存和媒体文件。本地可运行 `python scripts/check_release_artifact.py dist` 检查已构建的两种归档。自动测试不等于真实 QQ 收发验证；发布前仍需人工核对测试群回复与图片。

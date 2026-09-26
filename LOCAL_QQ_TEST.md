@@ -2,7 +2,9 @@
 
 本项目使用 QQ 官方机器人 API 的 WebSocket 长连接。程序从本机主动连接 QQ，因此本地测试无需域名、HTTPS 和路由器端口映射；运行期间电脑不能休眠或断网。
 
-## 1. 创建 QQ 测试机器人
+## 1. 选用 QQ 机器人
+
+如果推文 bot 已使用 QQ 官方机器人，查询 bot 可以复用同一组 `QQ_APP_ID`、`QQ_APP_SECRET` 用户环境变量，不必重新创建机器人。建议先单聊或在测试群中验证。只有想把测试和现有机器人身份完全隔离时，才需要新建测试机器人。以下步骤适用于新建机器人，复用时可直接跳到第 2 步。
 
 1. 登录 [QQ 开放平台](https://q.qq.com/)，创建机器人。
 2. 在机器人的“开发设置”中保存 `AppID` 和 `AppSecret`。
@@ -19,7 +21,7 @@
 
 ## 2. 准备本地环境
 
-在项目目录打开 PowerShell：
+如果本机已按 README 安装并同步数据，可直接进入项目目录运行第 3 步的 `start-bot.ps1`。新建机器人或重装环境时，在项目目录打开 PowerShell：
 
 ```powershell
 Set-ExecutionPolicy -Scope Process Bypass
@@ -27,14 +29,19 @@ Set-ExecutionPolicy -Scope Process Bypass
 notepad .env
 ```
 
-在 `.env` 中填写：
+使用独立机器人时，在 `.env` 中填写：
 
 ```dotenv
 QQ_APP_ID=开放平台中的AppID
 QQ_APP_SECRET=开放平台中的AppSecret
-OURNOTES_DATA_BASE=https://metadata.bdon.moe
 OURNOTES_CACHE_FILE=data/ournotes-cache.json
 OURNOTES_CACHE_TTL_HOURS=6
+AI_API_KEY=
+AI_MODEL=deepseek-chat
+AI_BASE_URL=https://api.deepseek.com
+AI_DAILY_LIMIT=100
+OURNOTES_QUERY_CONCURRENCY=2
+OURNOTES_QUERY_QUEUE_LIMIT=4
 ```
 
 不要把 `.env` 截图、上传或提交到 Git。项目的 `.gitignore` 已排除该文件。
@@ -59,21 +66,19 @@ OURNOTES_CACHE_TTL_HOURS=6
 帮助
 /查曲 迷星叫
 /查谱面 100001 EXPERT
-/查卡 51
+/查卡 1
 /查卡 高松灯
-/查活动
-/查卡池
-/ycx
+/问 迷星叫的EX物量
 数据状态
 ```
 
-测试群中需要明确 `@机器人`：
+测试群中需要明确 `@机器人`；单独发送 `/查卡 1` 等指令不会触发群聊回复：
 
 ```text
 @你的机器人 查谱面 100001 EXPERT
 ```
 
-预期图片回复包含 `EXPERT Lv.27 · 818 Notes`。`/查曲` 返回歌曲列表图，`/查卡 51` 返回卡牌原画和数值图。`/查活动`、`/查卡池`、`/ycx` 当前会回复“该功能暂未上线”。输入 `/查卡`、`/查谱面` 等不带参数的指令时，会收到用法说明；输入 `查谱面1` 会收到补空格提示。
+以 Project Yume 当前缓存为准，`/查谱面` 应显示等级和 Note 数；谱面源可用时附完整音符谱面图。`/查曲` 返回歌曲列表图，`/查卡 1` 返回卡图和数值图。未填写 `AI_API_KEY` 时，已收录实体的简单列表问法和常见等级筛选仍可本地处理；其他 `/问` 会提示改用普通查询指令。输入 `/查卡`、`/查谱面` 等不带参数的指令时，会收到用法说明。`/数据状态` 应分别说明进程响应、最近成功同步和当前缓存状态。
 
 ## 5. 常见问题
 
@@ -98,3 +103,11 @@ OURNOTES_CACHE_TTL_HOURS=6
 ### 私聊正常，群聊不工作
 
 通常是机器人尚未获得群聊权限，或者当前账号的沙箱没有开放测试群。先保留私聊测试；群聊能力需要按照开放平台控制台当前显示的申请或审核流程开通。
+
+### 数据状态提示正在使用旧缓存
+
+最近一次同步没有成功，机器人仍在读取此前保存的数据。检查网络和数据源可用性后运行 `ournotes-bot sync`，或等待下一次自动刷新；不要删除唯一可用的缓存。
+
+### 图片只显示文字或自然语言查询不可用
+
+图片需要可用的中日韩字体；缺字体时先安装字体再重启。`/问` 的复杂问法还需要 `AI_API_KEY` 和可写的额度记录目录，额度用尽或记录损坏时普通查询仍能使用。

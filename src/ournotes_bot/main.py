@@ -6,6 +6,7 @@ import logging
 import sys
 
 from .commands import handle_command
+from .ai_query import AIQueryParser, is_ai_request
 from .config import Settings
 from .data import DataError, SongRepository
 
@@ -26,6 +27,11 @@ def main() -> None:
     args = build_parser().parse_args()
     settings = Settings.from_env()
     repository = SongRepository(settings.data_base, settings.cache_file, settings.cache_ttl_hours)
+    ai_parser = AIQueryParser(settings)
+    def answer(message: str) -> str | None:
+        if is_ai_request(message):
+            return ai_parser.answer(message, repository)
+        return handle_command(message, repository)
     try:
         repository.load(refresh=args.mode == "sync")
     except DataError as exc:
@@ -36,7 +42,7 @@ def main() -> None:
         print(f"同步完成：{len(repository.songs)} 首曲目、{len(repository.cards)} 张成员卡，版本 {repository.metadata.get('data_version')}")
         return
     if args.mode == "query":
-        reply = handle_command(" ".join(args.message), repository)
+        reply = answer(" ".join(args.message))
         print(reply or "未识别该指令，发送“帮助”查看用法。")
         return
     if args.mode == "repl":
@@ -49,11 +55,11 @@ def main() -> None:
                 return
             if message.casefold() in {"exit", "quit", "退出"}:
                 return
-            reply = handle_command(message, repository)
+            reply = answer(message)
             print(reply or "未识别该指令，输入“帮助”查看用法。")
         return
     if not settings.app_id or not settings.app_secret:
-        print("缺少 QQ_APP_ID 或 QQ_APP_SECRET，请复制 .env.example 为 .env 后填写。", file=sys.stderr)
+        print("缺少 QQ_APP_ID 或 QQ_APP_SECRET；请设置环境变量，或在运行目录的 .env 中填写。", file=sys.stderr)
         raise SystemExit(2)
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -64,7 +70,7 @@ def main() -> None:
         return
     from .qq import run_bot
 
-    run_bot(settings.app_id, settings.app_secret, repository)
+    run_bot(settings.app_id, settings.app_secret, repository, settings)
 
 
 if __name__ == "__main__":

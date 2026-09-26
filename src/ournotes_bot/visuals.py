@@ -14,7 +14,9 @@ import aiohttp
 
 from PIL import Image, ImageDraw, ImageFont, ImageOps
 
+from .config import runtime_data_dir
 from .data import Card, Chart, Song, localized_text
+from .yatta import ASSETS, BASE
 
 
 PAPER = "#FFF9F1"
@@ -31,9 +33,9 @@ FONT_PATHS = [
     "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
 ]
 IMAGE_TEXT = {
-    "zh": {"songs": "曲目检索", "song_list": "歌曲列表", "chart": "谱面资料", "card": "卡面档案", "cards": "卡牌检索", "card_list": "卡牌列表", "composer": "作曲", "lyricist": "作词", "preview": "谱面文件暂不可用；当前展示等级与物量。", "score_title": "音符谱面 · {difficulty}", "score_note": "按音符节点绘制的静态预览；长条轨迹为节点连线。", "image_missing": "图片暂不可用", "power": "综合力", "performance": "演出", "technic": "技巧", "visual": "表现", "skill": "技能", "type": "属性"},
-    "en": {"songs": "Song search", "song_list": "Songs", "chart": "Chart details", "card": "Card details", "cards": "Card search", "card_list": "Cards", "composer": "Composer", "lyricist": "Lyrics", "preview": "Chart file unavailable; showing level and note count.", "score_title": "Note chart · {difficulty}", "score_note": "Static preview from note nodes; holds use straight node connections.", "image_missing": "Image unavailable", "power": "Total power", "performance": "Performance", "technic": "Technique", "visual": "Visual", "skill": "Skill", "type": "Type"},
-    "ja": {"songs": "楽曲検索", "song_list": "楽曲一覧", "chart": "譜面情報", "card": "カード情報", "cards": "カード検索", "card_list": "カード一覧", "composer": "作曲", "lyricist": "作詞", "preview": "譜面ファイルを取得できません。レベルとノーツ数を表示します。", "score_title": "ノーツ譜面 · {difficulty}", "score_note": "ノーツ座標による静的プレビュー。ロングは節点を直線で結びます。", "image_missing": "画像を取得できません", "power": "総合力", "performance": "パフォーマンス", "technic": "テクニック", "visual": "ビジュアル", "skill": "スキル", "type": "属性"},
+    "zh": {"songs": "曲目检索", "song_list": "歌曲列表", "chart": "谱面资料", "card": "卡面档案", "cards": "卡牌检索", "card_list": "卡牌列表", "composer": "作曲", "lyricist": "作词", "preview": "音符谱面暂不可用；当前展示等级与 Note 数。", "score_title": "音符谱面 · {difficulty}", "score_note": "按音符节点绘制的静态预览；长条轨迹为节点连线。", "image_missing": "图片暂不可用", "power": "综合力", "performance": "演出", "technic": "技巧", "visual": "表现", "skill": "技能", "type": "属性"},
+    "en": {"songs": "Song search", "song_list": "Songs", "chart": "Chart details", "card": "Card details", "cards": "Card search", "card_list": "Cards", "composer": "Composer", "lyricist": "Lyrics", "preview": "Project Yume data: levels and note counts only.", "score_title": "Note chart · {difficulty}", "score_note": "Static preview from note nodes; holds use straight node connections.", "image_missing": "Image unavailable", "power": "Total power", "performance": "Performance", "technic": "Technique", "visual": "Visual", "skill": "Skill", "type": "Type"},
+    "ja": {"songs": "楽曲検索", "song_list": "楽曲一覧", "chart": "譜面情報", "card": "カード情報", "cards": "カード検索", "card_list": "カード一覧", "composer": "作曲", "lyricist": "作詞", "preview": "Project Yume のレベルとノーツ数を表示します。", "score_title": "ノーツ譜面 · {difficulty}", "score_note": "ノーツ座標による静的プレビュー。ロングは節点を直線で結びます。", "image_missing": "画像を取得できません", "power": "総合力", "performance": "パフォーマンス", "technic": "テクニック", "visual": "ビジュアル", "skill": "スキル", "type": "属性"},
 }
 
 
@@ -48,7 +50,7 @@ def _font(size: int) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
                 return ImageFont.truetype(path, size)
         except OSError:
             continue
-    return ImageFont.load_default()
+    raise RuntimeError("未找到可用的中日韩字体；请安装 Noto Sans CJK 或微软雅黑，图片回复将退回文字。")
 
 
 def _canvas(width: int, height: int, label: str) -> tuple[Image.Image, ImageDraw.ImageDraw]:
@@ -71,15 +73,17 @@ def _write(draw: ImageDraw.ImageDraw, text: str, x: int, y: int, max_width: int,
 
 
 def _asset(url: str, size: tuple[int, int]) -> Image.Image | None:
+    if not url.startswith(ASSETS + "/"):
+        return None
     try:
-        cache = Path(__file__).resolve().parents[2] / "data" / "asset-cache"
+        cache = runtime_data_dir() / "asset-cache"
         cache.mkdir(parents=True, exist_ok=True)
         path = cache / (hashlib.sha256(url.encode()).hexdigest() + ".png")
         if path.exists():
             raw = path.read_bytes()
         else:
             try:
-                with urlopen(Request(url, headers={"User-Agent": "Mozilla/5.0"}), timeout=12) as response:
+                with urlopen(Request(url, headers={"User-Agent": "Mozilla/5.0", "Referer": BASE + "/"}), timeout=12) as response:
                     raw = response.read(6_000_000)
             except Exception:
                 async def download() -> bytes:
@@ -267,8 +271,10 @@ def render_chart(song: Song, charts: tuple[Chart, ...], locale: str = "zh", scor
     _paste_asset(image, draw, song.jacket_url, (54, 155, 284, 385), locale)
     _write(draw, localized_text(song, "title", locale), 315, 172, 520, 37)
     _write(draw, f"#{song.id}  ·  {localized_text(song, 'band', locale)}", 315, 232, 520, 24, MUTED)
-    _write(draw, f"{_label(locale, 'composer')}  {localized_text(song, 'composer', locale)}", 315, 290, 520, 21)
-    _write(draw, f"{_label(locale, 'lyricist')}  {localized_text(song, 'lyricist', locale)}", 315, 327, 520, 21)
+    if song.composer:
+        _write(draw, f"{_label(locale, 'composer')}  {localized_text(song, 'composer', locale)}", 315, 290, 520, 21)
+    if song.lyricist:
+        _write(draw, f"{_label(locale, 'lyricist')}  {localized_text(song, 'lyricist', locale)}", 315, 327, 520, 21)
     draw.line((54, 420, 846, 420), fill=BORDER, width=2)
     colors = {"EASY": BLUE, "NORMAL": MINT, "HARD": "#E7BA66", "EXPERT": PINK}
     for index, chart in enumerate(charts):
@@ -296,7 +302,7 @@ def render_card(card: Card, locale: str = "zh") -> bytes:
     draw.rounded_rectangle((63, 1370, 837, 1730), radius=22, fill="#FBF7F2", outline=BORDER, width=2)
     _write(draw, f"{'★' * card.rarity}    ID {card.id}    {_label(locale, 'type')} {card.card_type}", 88, 1393, 720, 28, PINK)
     total = card.performance + card.technic + card.visual
-    _write(draw, f"{_label(locale, 'power')}  {total:,}", 88, 1447, 720, 31)
+    _write(draw, f"{_label(locale, 'power')}  {total:,}" if total else {"zh": "数值暂不可用", "en": "Stats unavailable", "ja": "ステータス未取得"}.get(locale, "数值暂不可用"), 88, 1447, 720, 31)
     values = [(_label(locale, "performance"), card.performance, PINK), (_label(locale, "technic"), card.technic, BLUE), (_label(locale, "visual"), card.visual, MINT)]
     for index, (label, value, color) in enumerate(values):
         y = 1504 + index * 55
@@ -318,7 +324,7 @@ def render_card_list(cards: list[Card], query: str, locale: str = "zh", footer: 
         _paste_loaded_asset(image, draw, thumbnails[card.thumbnail_url], (68, top + 10, 161, top + 135), locale)
         _write(draw, localized_text(card, "character", locale), 190, top + 13, 590, 27)
         _write(draw, localized_text(card, "title", locale), 190, top + 55, 590, 22)
-        _write(draw, f"#{card.id}  ·  {'★' * card.rarity}  ·  {_label(locale, 'power')} {card.performance + card.technic + card.visual:,}", 190, top + 101, 590, 20, MUTED)
+        _write(draw, f"#{card.id}  ·  {'★' * card.rarity}", 190, top + 101, 590, 20, MUTED)
     if footer:
         for index, line in enumerate(footer.splitlines()[:2]):
             _write(draw, line, 55, height - 95 + index * 31, 790, 21, MUTED)

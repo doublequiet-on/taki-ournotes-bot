@@ -34,28 +34,30 @@ SCORE = {
 class ChartDataTests(unittest.TestCase):
     def setUp(self) -> None:
         self.chart = Chart("EXPERT", 25, 25.0, 768, "0001/0001_03")
+        self.song = Song(100001, "Test", ("Test",), "MyGO!!!!!", "", "", "",
+                         "", "", (self.chart,))
 
     def test_public_score_url_and_cache_fallback(self) -> None:
-        self.assertEqual(chart_url(self.chart),
+        self.assertEqual(chart_url(self.song, self.chart),
                          "https://storage.bdon.moe/moenotes/Live/MusicScore/0001/0001_03/0001_03.json")
         with tempfile.TemporaryDirectory() as directory:
             cache = Path(directory)
             with patch("ournotes_bot.chart_data.urlopen", return_value=io.BytesIO(json.dumps(SCORE).encode())) as fetch:
-                self.assertEqual(load_chart_score(self.chart, cache)["notes"], SCORE["score"]["notes"])
+                self.assertEqual(load_chart_score(self.song, self.chart, cache)["notes"], SCORE["score"]["notes"])
                 self.assertEqual(fetch.call_count, 1)
             with patch("ournotes_bot.chart_data.urlopen", side_effect=AssertionError("cache was not used")):
-                self.assertEqual(load_chart_score(self.chart, cache)["notes"], SCORE["score"]["notes"])
+                self.assertEqual(load_chart_score(self.song, self.chart, cache)["notes"], SCORE["score"]["notes"])
             os.utime(cache / "0001_0001_03.json", (0, 0))
             with patch("ournotes_bot.chart_data.urlopen", side_effect=OSError("offline")):
-                self.assertEqual(load_chart_score(self.chart, cache)["notes"], SCORE["score"]["notes"])
+                self.assertEqual(load_chart_score(self.song, self.chart, cache)["notes"], SCORE["score"]["notes"])
 
     def test_invalid_or_unrecognized_score_is_rejected(self) -> None:
         with self.assertRaises(ChartDataError):
-            chart_url(Chart("EXPERT", 25, 25.0, 768, "../private"))
+            chart_url(Song(999999, "Other", (), "", "", "", "", "", "", (self.chart,)), self.chart)
         with tempfile.TemporaryDirectory() as directory:
             with patch("ournotes_bot.chart_data.urlopen", return_value=io.BytesIO(b'{"score":{"notes":[]}}')):
                 with self.assertRaises(ChartDataError):
-                    load_chart_score(self.chart, Path(directory))
+                    load_chart_score(self.song, self.chart, Path(directory))
 
     def test_rendered_score_is_an_image_with_note_timeline(self) -> None:
         song = Song(100001, "Test", ("Test",), "MyGO!!!!!", "Composer", "Lyricist", "Arranger",

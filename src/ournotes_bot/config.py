@@ -5,12 +5,25 @@ from dataclasses import dataclass
 from pathlib import Path
 
 
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
+_SOURCE_CANDIDATE = Path(__file__).resolve().parents[2]
+SOURCE_ROOT = _SOURCE_CANDIDATE if (_SOURCE_CANDIDATE / "pyproject.toml").is_file() else None
+CONFIG_ROOT = SOURCE_ROOT or Path.cwd()
+
+
+def runtime_data_dir() -> Path:
+    """Keep installed copies out of the package's potentially read-only directory."""
+    if SOURCE_ROOT:
+        return SOURCE_ROOT / "data"
+    if os.name == "nt":
+        base = Path(os.getenv("LOCALAPPDATA") or Path.home() / "AppData" / "Local")
+    else:
+        base = Path(os.getenv("XDG_DATA_HOME") or Path.home() / ".local" / "share")
+    return base / "ournotes-qq-bot"
 
 
 def load_dotenv(path: Path | None = None) -> None:
     """Load a small .env file without adding another dependency."""
-    env_path = path or PROJECT_ROOT / ".env"
+    env_path = path or CONFIG_ROOT / ".env"
     if not env_path.exists():
         return
     for raw_line in env_path.read_text(encoding="utf-8").splitlines():
@@ -28,17 +41,36 @@ class Settings:
     data_base: str
     cache_file: Path
     cache_ttl_hours: float
+    ai_api_key: str = ""
+    ai_model: str = "deepseek-chat"
+    ai_base_url: str = "https://api.deepseek.com"
+    ai_daily_limit: int = 100
+    query_concurrency: int = 2
+    query_queue_limit: int = 4
+    ai_quota_file: Path | None = None
 
     @classmethod
     def from_env(cls) -> "Settings":
         load_dotenv()
-        raw_cache = Path(os.getenv("OURNOTES_CACHE_FILE", "data/ournotes-cache.json"))
-        if not raw_cache.is_absolute():
-            raw_cache = PROJECT_ROOT / raw_cache
+        configured_cache = os.getenv("OURNOTES_CACHE_FILE", "").strip()
+        raw_cache = Path(configured_cache) if configured_cache else runtime_data_dir() / "ournotes-cache.json"
+        if configured_cache and not raw_cache.is_absolute():
+            raw_cache = CONFIG_ROOT / raw_cache
+        configured_quota = os.getenv("OURNOTES_AI_QUOTA_FILE", "").strip()
+        quota_file = Path(configured_quota) if configured_quota else raw_cache.with_name("ai-quota.json")
+        if configured_quota and not quota_file.is_absolute():
+            quota_file = CONFIG_ROOT / quota_file
         return cls(
             app_id=os.getenv("QQ_APP_ID", "").strip(),
             app_secret=os.getenv("QQ_APP_SECRET", "").strip(),
-            data_base=os.getenv("OURNOTES_DATA_BASE", "https://metadata.bdon.moe").rstrip("/"),
+            data_base="https://bdon.yatta.moe",
             cache_file=raw_cache,
             cache_ttl_hours=float(os.getenv("OURNOTES_CACHE_TTL_HOURS", "6")),
+            ai_api_key=os.getenv("AI_API_KEY", "").strip(),
+            ai_model=os.getenv("AI_MODEL", "deepseek-chat").strip(),
+            ai_base_url=os.getenv("AI_BASE_URL", "https://api.deepseek.com").rstrip("/"),
+            ai_daily_limit=max(0, int(os.getenv("AI_DAILY_LIMIT", "100"))),
+            query_concurrency=max(1, int(os.getenv("OURNOTES_QUERY_CONCURRENCY", "2"))),
+            query_queue_limit=max(0, int(os.getenv("OURNOTES_QUERY_QUEUE_LIMIT", "4"))),
+            ai_quota_file=quota_file,
         )

@@ -1,16 +1,16 @@
-"""Fetch the public release score JSON referenced by MasterLiveMusicScore."""
+"""Fetch validated MoeNotes score files for songs in the Project Yume catalog."""
 
 from __future__ import annotations
 
 import json
 import os
-import re
 import time
 import uuid
 from pathlib import Path
 from urllib.request import Request, urlopen
 
-from .data import Chart
+from .config import runtime_data_dir
+from .data import Chart, Song
 
 
 CHART_BASE = "https://storage.bdon.moe/moenotes/Live/MusicScore"
@@ -22,11 +22,19 @@ class ChartDataError(RuntimeError):
     pass
 
 
-def chart_url(chart: Chart) -> str:
-    if not re.fullmatch(r"[0-9]{4}/[0-9]{4}_[0-9]{2}", chart.chart_file):
-        raise ChartDataError("Invalid score asset name")
-    name = chart.chart_file.rsplit("/", 1)[1]
-    return f"{CHART_BASE}/{chart.chart_file}/{name}.json"
+def score_name(song: Song, chart: Chart) -> str:
+    """Map the public 100000-series song ID to the release score naming scheme."""
+    music_id = song.id - 100000
+    difficulties = {"EASY": 0, "NORMAL": 1, "HARD": 2, "EXPERT": 3}
+    if not 1 <= music_id <= 9999 or chart.difficulty not in difficulties or chart not in song.charts:
+        raise ChartDataError("No verified score mapping for this chart")
+    stem = f"{music_id:04d}_{difficulties[chart.difficulty]:02d}"
+    return f"{music_id:04d}/{stem}"
+
+
+def chart_url(song: Song, chart: Chart) -> str:
+    name = score_name(song, chart)
+    return f"{CHART_BASE}/{name}/{name.rsplit('/', 1)[1]}.json"
 
 
 def _parse_score(raw: bytes) -> dict:
@@ -48,11 +56,11 @@ def _parse_score(raw: bytes) -> dict:
         raise ChartDataError("Unrecognized score asset") from exc
 
 
-def load_chart_score(chart: Chart, cache_dir: Path | None = None) -> dict:
+def load_chart_score(song: Song, chart: Chart, cache_dir: Path | None = None) -> dict:
     """Return validated score data; use a stale cache if the network is unavailable."""
-    url = chart_url(chart)
-    cache = cache_dir or Path(__file__).resolve().parents[2] / "data" / "chart-cache"
-    name = chart.chart_file.replace("/", "_") + ".json"
+    url = chart_url(song, chart)
+    cache = cache_dir or runtime_data_dir() / "chart-cache"
+    name = score_name(song, chart).replace("/", "_") + ".json"
     path = cache / name
     cached: dict | None = None
     if path.exists():
@@ -81,4 +89,4 @@ def load_chart_score(chart: Chart, cache_dir: Path | None = None) -> dict:
     except (OSError, ValueError, ChartDataError) as exc:
         if cached is not None:
             return cached
-        raise ChartDataError(f"Score asset unavailable: {chart.chart_file}") from exc
+        raise ChartDataError(f"Score asset unavailable: {name}") from exc
