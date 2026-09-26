@@ -12,7 +12,7 @@ from .data import DataError, SongRepository
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Ournotes QQ 查询机器人原型")
+    parser = argparse.ArgumentParser(description="Taki · Our Notes QQ 查询机器人")
     subparsers = parser.add_subparsers(dest="mode", required=True)
     subparsers.add_parser("sync", help="立即下载并构建数据缓存")
     query = subparsers.add_parser("query", help="在命令行测试查询")

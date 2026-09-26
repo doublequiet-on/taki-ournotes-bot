@@ -1,12 +1,12 @@
-# Our Notes QQ 查询机器人
+# taki-ournotes-bot
 
-《BanG Dream! Our Notes》日服的非官方社区查询机器人。此分支以 [NeriWST/ournotes-qq-bot](https://github.com/NeriWST/ournotes-qq-bot) 为基础开发；歌曲、卡牌数据来自 [Project Yume](https://bdon.yatta.moe/)，音符谱面文件按需取自 [MoeNotes](https://github.com/StarMoe-org/moenotes) 公共资源。不包含 QQ 凭据或游戏素材。
+Taki 是《BanG Dream! Our Notes》日服的非官方社区 QQ 查询机器人。本项目以 [NeriWST/ournotes-qq-bot](https://github.com/NeriWST/ournotes-qq-bot) 为基础开发；歌曲、卡牌数据来自 [Project Yume](https://bdon.yatta.moe/)，音符谱面文件按需取自 [MoeNotes](https://github.com/StarMoe-org/moenotes) 公共资源。不包含 QQ 凭据或游戏素材。
 
 目前实现 `/查曲`、`/查谱面`、`/查卡`、`/查缩写`、`/数据状态`。歌曲可按名称、乐队、ID 或等级搜索；谱面显示等级、Note 数和可获取的完整音符谱面静态图；卡牌可按角色、卡名、乐队、ID 搜索，输入 ID 显示卡图及按需获取的数值。支持中、日、英名称和部分角色缩写。`/问` 是可选的自然语言入口：AI 只识别查询条件，最终答案仍由程序在本地数据缓存中检索。它不做攻略、推荐、问答或实时档线。未配置 AI 时，普通指令照常可用。
 
 ## 在本机试用
 
-需要 Python 3.10 以上。PowerShell 进入**本项目目录**后执行：
+需要 Python 3.10 以上。PowerShell 进入**本项目目录**后执行。Python 发布包名为 `taki-ournotes-bot`；为兼容已有部署，命令仍叫 `ournotes-bot`，模块仍叫 `ournotes_bot`：
 
 ```powershell
 python -m venv .venv
