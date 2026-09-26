@@ -2,13 +2,15 @@ from __future__ import annotations
 
 import tempfile
 import unittest
+import json
+from dataclasses import asdict, replace
 from pathlib import Path
 from unittest.mock import patch
 
 from ournotes_bot.ai_query import AIQueryParser, UNKNOWN_ENTITY
 from ournotes_bot.commands import handle_command, parse_query
 from ournotes_bot.config import Settings
-from ournotes_bot.data import Card, SongRepository
+from ournotes_bot.data import Card, DataError, Skill, SongRepository
 from ournotes_bot.structured_query import QuerySpec, answer_for, query_page_notice
 from ournotes_bot.yatta import BASE, build_skills, build_support_cards
 
@@ -208,6 +210,92 @@ class SupportDataTests(unittest.TestCase):
         loaded._load_cache()
         self.assertTrue(loaded.member_skill_index_ready())
         self.assertEqual(loaded.cards[0].skills[0].name, "得分提升")
+
+    def test_cache_retains_legacy_card_shape_and_round_trips_extensions(self):
+        self.repo.cards = [Card(
+            id=1, asset_id=1, title="测试卡", character="高松灯", band="MyGO!!!!!",
+            rarity=2, card_type=5, performance=100, technic=200, visual=300,
+            start_at="", skill_name="得分提升", full_url="", thumbnail_url="",
+            skills=(Skill("liveSkill", "得分提升", "提升50%"),),
+        )]
+        self.repo.metadata["member_skill_index_complete"] = True
+        self.repo._save_cache()
+        payload = json.loads(self.repo.cache_file.read_text(encoding="utf-8"))
+        self.assertEqual(payload["metadata"]["schema"], 2)
+        # These are precisely the constructor fields accepted by the deployed
+        # schema-2 Card reader; extra fields prevent rollback startup.
+        self.assertEqual(set(payload["cards"][0]), {
+            "id", "asset_id", "title", "character", "band", "rarity", "card_type",
+            "performance", "technic", "visual", "start_at", "skill_name",
+            "full_url", "thumbnail_url", "localized",
+        })
+        loaded = SongRepository(BASE, self.repo.cache_file)
+        with patch.object(loaded, "refresh", side_effect=AssertionError("unneeded network refresh")):
+            loaded.load()
+        self.assertEqual(loaded.cards, self.repo.cards)
+        self.assertEqual(loaded.support_cards, self.repo.support_cards)
+
+        # A previous release can refresh and overwrite the file without
+        # extensions; the new release must still load that cache offline.
+        payload["metadata"] = {"source": BASE, "schema": 2}
+        payload.pop("member_skills")
+        payload.pop("support_cards")
+        self.repo.cache_file.write_text(json.dumps(payload), encoding="utf-8")
+        loaded = SongRepository(BASE, self.repo.cache_file)
+        with patch.object(loaded, "refresh", side_effect=DataError("offline")):
+            loaded.load()
+        self.assertEqual(loaded.cache_state, "stale")
+        self.assertEqual(loaded.cards[0].id, 1)
+        self.assertFalse(loaded.cards[0].skills)
+
+        # Continue accepting caches written by earlier PR builds too.
+        payload["metadata"]["schema"] = 4
+        payload["cards"] = [asdict(card) for card in self.repo.cards]
+        self.repo.cache_file.write_text(json.dumps(payload), encoding="utf-8")
+        loaded._load_cache()
+        self.assertEqual(loaded.cards, self.repo.cards)
+
+    def test_model_skill_numbers_do_not_select_card_ids(self):
+        card = Card(
+            id=1, asset_id=1, title="测试甲", character="高松灯", band="MyGO!!!!!",
+            rarity=2, card_type=5, performance=1, technic=1, visual=1,
+            start_at="", skill_name="", full_url="", thumbnail_url="",
+        )
+        settings = Settings("", "", BASE, self.repo.cache_file, 6,
+                            "test-key", "test-model", "https://ai.example", 50)
+        for keyword in ("持续1秒", "提升50%", "持续1.5秒", "持续１秒"):
+            with self.subTest(keyword=keyword):
+                skills = (Skill("liveSkill", "技能", keyword),)
+                self.repo.cards = [replace(card, skills=skills),
+                                   replace(card, id=2, title="测试乙", skills=skills),
+                                   replace(card, id=50, title="测试丙", skills=skills)]
+                parser = AIQueryParser(settings)
+                plan = {"intent": "card", "query": "", "skill_query": keyword}
+                with patch.object(parser, "_request", return_value=plan):
+                    _, result = parser.answer_with_plan(f"/问 哪些成员卡的技能效果{keyword}", self.repo)
+                self.assertIsNone(result.spec.subject)
+                self.assertEqual([row.id for row in result.cards], [1, 2, 50])
+
+        for subject in ("1号卡", "卡牌 ID 1", "card 1", "１号成员卡"):
+            with self.subTest(subject=subject):
+                parser = AIQueryParser(settings)
+                plan = {"intent": "card", "query": "1", "skill_query": "持续１秒"}
+                with patch.object(parser, "_request", return_value=plan):
+                    _, result = parser.answer_with_plan(f"/问 请核对{subject}的技能效果是否持续１秒", self.repo)
+                self.assertEqual(result.spec.subject.value, 1)
+                self.assertEqual([row.id for row in result.cards], [1])
+
+        parser = AIQueryParser(settings)
+        with patch.object(parser, "_request", return_value={
+                "intent": "card", "query": "高松灯", "skill_query": "持续１秒"}):
+            _, result = parser.answer_with_plan("/问 高松灯有哪些成员卡的技能效果持续１秒", self.repo)
+        self.assertEqual(result.spec.subject.kind, "character")
+        self.assertEqual(len(result.cards), 3)
+
+        # A model must not invent an ID from an unmarked number in the effect.
+        parser = AIQueryParser(settings)
+        with patch.object(parser, "_request", return_value=plan):
+            self.assertEqual(parser.answer("/问 哪些成员卡的技能效果持续１秒", self.repo), UNKNOWN_ENTITY)
 
 
 if __name__ == "__main__":

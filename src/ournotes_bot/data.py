@@ -351,13 +351,20 @@ class SongRepository:
             return card
 
     def _save_cache(self) -> None:
+        # The updater shares this file with the previous release. Its schema-2
+        # reader passes card rows straight to Card(**row), so new fields belong
+        # in top-level extensions that it safely ignores. Keep one atomic file.
         payload = {
-            "metadata": self.metadata,
+            "metadata": {**self.metadata, "schema": 2,
+                         "extended_schema": self.metadata.get("schema", self.CACHE_SCHEMA)},
             "songs": [
                 {**asdict(song), "charts": [asdict(chart) for chart in song.charts]}
                 for song in self.songs
             ],
-            "cards": [asdict(card) for card in self.cards],
+            "cards": [{key: value for key, value in asdict(card).items() if key != "skills"}
+                      for card in self.cards],
+            "member_skills": {str(card.id): [asdict(skill) for skill in card.skills]
+                              for card in self.cards},
             "support_cards": [asdict(card) for card in self.support_cards],
         }
         self.cache_file.parent.mkdir(parents=True, exist_ok=True)
@@ -374,7 +381,9 @@ class SongRepository:
     def _load_cache(self) -> None:
         try:
             payload = json.loads(self.cache_file.read_text(encoding="utf-8"))
-            self.metadata = payload["metadata"]
+            self.metadata = dict(payload["metadata"])
+            if self.metadata.get("schema") == 2:
+                self.metadata["schema"] = self.metadata.get("extended_schema", 2)
             self.songs = [
                 Song(
                     **{key: value for key, value in row.items() if key not in {"charts", "titles"}},
@@ -385,7 +394,8 @@ class SongRepository:
             ]
             self.cards = [Card(
                 **{key: value for key, value in row.items() if key != "skills"},
-                skills=tuple(Skill(**skill) for skill in row.get("skills", [])),
+                skills=tuple(Skill(**skill) for skill in row.get(
+                    "skills", payload.get("member_skills", {}).get(str(row["id"]), []))),
             ) for row in payload.get("cards", [])]
             self.support_cards = [SupportCard(
                 **{key: value for key, value in row.items() if key not in {"characters", "skills"}},

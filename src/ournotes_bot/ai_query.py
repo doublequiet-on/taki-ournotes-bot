@@ -307,7 +307,8 @@ class AIQueryParser:
                     return UNSUPPORTED, None
             elif level is not None or (intent == "song" and difficulty):
                 return UNSUPPORTED, None
-            anchor = find_anchor(intent, query, repository)
+            anchor = find_anchor(intent, query, repository,
+                                 explicit_card_ids=intent == "card" and bool(skill_query or skill_kind))
             if anchor.ambiguous:
                 return AMBIGUOUS_ENTITY, None
             if anchor.entity is None and not (intent == "card" and (skill_query or skill_kind)):

@@ -269,7 +269,16 @@ def _mentioned(text: str, name: str) -> bool:
     return needle in normalize(text)
 
 
-def find_anchor(intent: str, text: str, repository: SongRepository) -> AnchorResult:
+def _explicit_card_id(text: str, number: int) -> bool:
+    text = unicodedata.normalize("NFKC", text)
+    card = r"(?:成员卡|角色卡|卡牌|卡|card)"
+    return bool(re.search(
+        rf"(?:{card}\s*(?:ID\s*[:：]?\s*)?#?\s*|(?:\bID|编号)\s*[:：#]?\s*)"
+        rf"{number}(?![\d.%])|(?<![\d.]){number}\s*号\s*{card}", text, re.I))
+
+
+def find_anchor(intent: str, text: str, repository: SongRepository, *,
+                explicit_card_ids: bool = False) -> AnchorResult:
     """Ground a query in names or verified aliases present in the user's text."""
     allowed = {"song": {"song", "band"}, "chart": {"song"},
                "card": {"card", "character", "band"},
@@ -295,8 +304,10 @@ def find_anchor(intent: str, text: str, repository: SongRepository) -> AnchorRes
                     found.add(EntityRef("band", card.band))
     if "card" in allowed:
         for card in repository.cards:
-            if any(_mentioned(text, name) for name in
-                   {str(card.id), card.title, *card.localized.get("title", {}).values()}):
+            names = {card.title, *card.localized.get("title", {}).values()}
+            id_matches = (_explicit_card_id(text, card.id) if explicit_card_ids
+                          else _mentioned(text, str(card.id)))
+            if id_matches or any(_mentioned(text, name) for name in names):
                 found.add(EntityRef("card", card.id))
     if "support_card" in allowed:
         for card in repository.support_cards:
