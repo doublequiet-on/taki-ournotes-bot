@@ -8,7 +8,7 @@ import zipfile
 from pathlib import Path, PurePosixPath
 
 
-PRIVATE_NAMES = {".env", "ournotes-cache.json", "ai-quota.json"}
+PRIVATE_NAMES = {".env", "ournotes-cache.json", "ai-quota.json", "update-notices.sqlite3"}
 MEDIA_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".mp4", ".mp3"}
 
 
@@ -19,6 +19,9 @@ def check(path: Path) -> None:
     elif path.name.endswith(".tar.gz"):
         with tarfile.open(path, "r:gz") as archive:
             names = [member.name for member in archive.getmembers() if member.isfile()]
+            summary = next((name for name in names if PurePosixPath(name).name == "更新通知.txt"), None)
+            if summary is None or not 1 <= len(archive.extractfile(summary).read().decode("utf-8").strip()) <= 500:
+                raise ValueError("source archive requires an update summary of 1-500 characters")
     else:
         raise ValueError("unsupported release archive")
 
@@ -41,7 +44,8 @@ def check(path: Path) -> None:
     if not aliases or not code:
         raise ValueError(f"missing query aliases or bot code in {path.name}")
     if path.name.endswith(".tar.gz"):
-        needed = {"README.md", "THIRD_PARTY.md", "LOCAL_QQ_TEST.md", "昵称词表维护规范.md", ".env.example"}
+        needed = {"README.md", "THIRD_PARTY.md", "LOCAL_QQ_TEST.md", "昵称词表维护规范.md", ".env.example",
+                  "更新日志.md", "更新通知.txt"}
         if not needed.issubset(documents):
             raise ValueError(f"missing source documentation in {path.name}")
 

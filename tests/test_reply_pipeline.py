@@ -5,13 +5,13 @@ import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 from ournotes_bot.ai_query import AIQueryParser
 from ournotes_bot.commands import card_matches, song_matches, support_card_matches
 from ournotes_bot.config import Settings
 from ournotes_bot.data import Card, Chart, Song, SongRepository, SupportCard
-from ournotes_bot.qq import PreparedReply, _deliver_reply, _prepare_reply
+from ournotes_bot.qq import PreparedReply, _deliver_reply, _prepare_reply, run_bot
 from ournotes_bot.structured_query import songs_for
 from ournotes_bot.yatta import BASE
 
@@ -169,6 +169,58 @@ class ReplyPipelineTests(unittest.TestCase):
         self.assertEqual(send.await_args.kwargs["msg_type"], 0)
         self.assertEqual(send.await_args.kwargs["openid"], "fake-user")
         self.assertNotIn("secret-value", " ".join(log.output))
+
+
+class UpdateNoticeLifecycleTests(unittest.IsolatedAsyncioTestCase):
+    async def test_ready_reconnect_events_and_disable_switch(self):
+        instances = []
+        class FakeClient:
+            def __init__(self, **kwargs):
+                self.robot = SimpleNamespace(name="Taki")
+                self.api = SimpleNamespace()
+                instances.append(self)
+
+            def run(self, **kwargs):
+                pass
+
+        with tempfile.TemporaryDirectory() as folder:
+            settings = Settings("test-app", "", BASE, Path(folder) / "cache.json", 6, qq_gateway_host="")
+            notifier = Mock()
+            notifier.run = AsyncMock(side_effect=lambda api: asyncio.sleep(0))
+            # Keep the worker alive so a second READY cannot create a duplicate.
+            stopped = asyncio.Event()
+            async def worker(api):
+                await stopped.wait()
+            notifier.run.side_effect = worker
+            with patch("botpy.Client", FakeClient), patch("ournotes_bot.qq.UpdateNotifier", return_value=notifier):
+                run_bot("test-app", "", SimpleNamespace(), settings)
+                client = instances[-1]
+                try:
+                    await client.on_ready()
+                    await asyncio.sleep(0)
+                    first = client._notice_task
+                    await client.on_ready()
+                    self.assertIs(first, client._notice_task)
+                    notifier.run.assert_awaited_once_with(client.api)
+                    event = SimpleNamespace(group_openid="group", timestamp=123)
+                    for name, expected in (("add_robot", "add"), ("del_robot", "remove"),
+                                           ("msg_receive", "allow"), ("msg_reject", "reject")):
+                        await getattr(client, "on_group_" + name)(event)
+                        notifier.observe.assert_called_with("group", event=expected, timestamp=123)
+                finally:
+                    client._refresh_task.cancel()
+                    client._notice_task.cancel()
+                    await asyncio.gather(client._refresh_task, client._notice_task, return_exceptions=True)
+            with patch("botpy.Client", FakeClient), patch("ournotes_bot.qq.UpdateNotifier") as constructor:
+                settings = Settings("test-app", "", BASE, Path(folder) / "cache.json", 6,
+                                    qq_gateway_host="", update_notices=False)
+                run_bot("test-app", "", SimpleNamespace(), settings)
+                client = instances[-1]
+                await client.on_ready()
+                self.assertFalse(hasattr(client, "_notice_task"))
+                constructor.assert_not_called()
+                client._refresh_task.cancel()
+                await asyncio.gather(client._refresh_task, return_exceptions=True)
 
 
 if __name__ == "__main__":

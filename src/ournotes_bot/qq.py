@@ -25,9 +25,11 @@ from .chart_data import ChartDataError, load_chart_score
 from .commands import (ALIASES, CommandResult, handle_command, locale_for, page_notice,
                        page_slice, resolve_command, split_commands)
 from .config import QQ_PASSIVE_REPLY_LIMIT, REPLY_ORDER_TIMEOUT_SECONDS, Settings
+from . import config
 from .data import SongRepository
 from .i18n import tr
 from .structured_query import QueryResult, query_page_notice
+from .update_notice import UpdateNotifier
 from .visuals import (render_card, render_card_list, render_chart, render_song_list,
                       render_support_card, render_support_card_list)
 
@@ -112,11 +114,13 @@ def _mentions_bot(data: dict, app_id: str) -> bool:
     )
 
 
-def register_group_message_parser(parser: dict, api, dispatch, app_id: str) -> None:
+def register_group_message_parser(parser: dict, api, dispatch, app_id: str, observe=None) -> None:
     """Dispatch only self-mentioned GROUP_MESSAGE_CREATE events from the newer gateway."""
     def parse(payload):
         data = payload.get("d", {})
         author = data.get("author") if isinstance(data, dict) else None
+        if observe and isinstance(data, dict) and data.get("group_openid"):
+            observe(data["group_openid"])
         if (
             isinstance(data, dict) and data.get("group_openid")
             and not (isinstance(author, dict) and author.get("bot"))
@@ -127,8 +131,8 @@ def register_group_message_parser(parser: dict, api, dispatch, app_id: str) -> N
     parser["group_message_create"] = parse
 
 
-def install_group_parser(connection, dispatch, app_id: str) -> None:
-    register_group_message_parser(connection.parser, connection.state.api, dispatch, app_id)
+def install_group_parser(connection, dispatch, app_id: str, observe=None) -> None:
+    register_group_message_parser(connection.parser, connection.state.api, dispatch, app_id, observe)
 
 
 def _chart_image(song, charts, locale: str) -> bytes:
@@ -427,6 +431,8 @@ def run_bot(app_id: str, app_secret: str, repository: SongRepository, settings: 
     ai_parser = AIQueryParser(settings)
     query_gate = QueryGate(settings.query_concurrency, settings.query_queue_limit)
     reply_sequencer = ReplySequencer(enabled=settings.reply_order)
+    notifier = (UpdateNotifier(config.CONFIG_ROOT, settings.cache_file.with_name("update-notices.sqlite3"), app_id)
+                if settings.update_notices else None)
     logger.info("回复顺序：%s（OURNOTES_REPLY_ORDER 可切换）",
                 "按收到顺序发送" if settings.reply_order
                 else "关闭排序，谁先算完谁先发（响应更快，但可能后问先答）")
@@ -437,7 +443,8 @@ def run_bot(app_id: str, app_secret: str, repository: SongRepository, settings: 
 
     class OurNotesClient(botpy.Client):
         async def bot_connect(self, session) -> None:
-            install_group_parser(self._connection, self.ws_dispatch, app_id)
+            install_group_parser(self._connection, self.ws_dispatch, app_id,
+                                 notifier.observe if notifier else None)
             await super().bot_connect(session)
 
         async def on_ready(self) -> None:
@@ -481,6 +488,8 @@ def run_bot(app_id: str, app_secret: str, repository: SongRepository, settings: 
                 await reply_sequencer.release(ticket)
 
         async def _reply_group(self, message: GroupMessage) -> None:
+            if notifier:
+                notifier.observe(message.group_openid)
             if not hasattr(self, "_seen_group_ids"):
                 self._seen_group_ids = deque(maxlen=256)
             if message.id and message.id in self._seen_group_ids:
@@ -493,6 +502,22 @@ def run_bot(app_id: str, app_secret: str, repository: SongRepository, settings: 
 
         async def on_group_at_message_create(self, message: GroupMessage) -> None:
             await self._reply_group(message)
+
+        async def on_group_add_robot(self, event) -> None:
+            if notifier:
+                notifier.observe(event.group_openid, event="add", timestamp=event.timestamp)
+
+        async def on_group_del_robot(self, event) -> None:
+            if notifier:
+                notifier.observe(event.group_openid, event="remove", timestamp=event.timestamp)
+
+        async def on_group_msg_receive(self, event) -> None:
+            if notifier:
+                notifier.observe(event.group_openid, event="allow", timestamp=event.timestamp)
+
+        async def on_group_msg_reject(self, event) -> None:
+            if notifier:
+                notifier.observe(event.group_openid, event="reject", timestamp=event.timestamp)
 
         async def on_c2c_message_create(self, message: C2CMessage) -> None:
             commands = split_commands(message.content)
@@ -513,6 +538,8 @@ def run_bot(app_id: str, app_secret: str, repository: SongRepository, settings: 
             await super().on_ready()
             if not hasattr(self, "_refresh_task"):
                 self._refresh_task = asyncio.create_task(refresh_loop())
+            if notifier and (not hasattr(self, "_notice_task") or self._notice_task.done()):
+                self._notice_task = asyncio.create_task(notifier.run(self.api))
 
     intents = botpy.Intents(public_messages=True)
     ClientWithRefresh(intents=intents).run(appid=app_id, secret=app_secret)
