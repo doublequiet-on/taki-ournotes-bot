@@ -9,7 +9,7 @@ from typing import Any
 
 from .data import SongRepository, normalize
 from .entity_lexicon import find_anchor, resolve_entity
-from .query_capabilities import CAPABILITIES, INTENT_TO_CAPABILITY, Capability
+from .query_capabilities import CAPABILITIES, Capability
 from .structured_query import QuerySpec
 
 
@@ -56,17 +56,7 @@ _LEGACY_FIELDS = frozenset({
 
 
 def validate_route(data: dict[str, Any]) -> RouteResult:
-    """Validate a router action; legacy parse objects remain an input shim."""
-    if "intent" in data:
-        if any(key not in _LEGACY_FIELDS for key in data):
-            return RouteResult(None, OutcomeCode.INVALID_OUTPUT)
-        intent = data.get("intent")
-        if intent == "unsupported":
-            return RouteResult(None, OutcomeCode.UNSUPPORTED)
-        capability_id = INTENT_TO_CAPABILITY.get(intent)
-        if capability_id is None:
-            return RouteResult(None, OutcomeCode.INVALID_OUTPUT)
-        return RouteResult(capability_id, OutcomeCode.SUCCESS, data)
+    """Validate the router's deliberately tiny action schema."""
     if set(data) != {"action", "capability"} or data.get("action") != "route":
         return RouteResult(None, OutcomeCode.INVALID_OUTPUT)
     capability_id = data.get("capability")
@@ -122,6 +112,13 @@ def validate_capability_action(data: dict[str, Any], capability: Capability, que
             skill_query=str(arguments.get("skill_query", "")).strip(),
             skill_kind=str(arguments.get("skill_kind", "")),
         ), OutcomeCode.SUCCESS)
+    elif validated.code == OutcomeCode.INVALID_ARGUMENTS:
+        validated = replace(
+            validated,
+            invalid_fields=("arguments",),
+            allowed=capability.allowed_parameters,
+            repairable=True,
+        )
     if validated.spec is not None:
         validated = replace(validated, spec=replace(
             validated.spec,

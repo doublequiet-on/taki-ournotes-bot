@@ -8,14 +8,8 @@ from dataclasses import dataclass
 from typing import Callable
 
 from .data import SongRepository
-from .structured_query import (
-    QueryResult,
-    QuerySpec,
-    cards_for,
-    chart_for,
-    songs_for,
-    support_cards_for,
-)
+from . import structured_query
+from .structured_query import QueryResult, QuerySpec
 
 
 GLOBAL_RULES = """这是只读查询系统。不要从模型记忆回答事实，不要推荐、预测、比较强弱或执行账号操作。
@@ -67,6 +61,8 @@ class Capability:
         query = arguments.get("query", "")
         if not isinstance(query, str) or len(query.strip()) > 50:
             invalid.append("query")
+        elif not query.strip() and not self.allow_empty_subject:
+            invalid.append("query")
         if "page" in arguments and (not isinstance(arguments["page"], int)
                                      or isinstance(arguments["page"], bool)
                                      or not 1 <= arguments["page"] <= 100):
@@ -85,6 +81,13 @@ class Capability:
                                       or not isinstance(level, (int, float))
                                       or not 1 <= level <= 40):
                 invalid.append("level")
+        if self.allow_level:
+            operator = arguments.get("level_operator", "")
+            level = arguments.get("level")
+            if bool(operator) != (level is not None):
+                invalid.extend(("level_operator", "level"))
+            if self.intent == "song" and arguments.get("difficulty") and not operator:
+                invalid.append("difficulty")
         if "skill_query" in arguments and (
             not isinstance(arguments["skill_query"], str)
             or len(arguments["skill_query"].strip()) > 30
@@ -103,19 +106,21 @@ class Capability:
 
 
 def _songs(spec: QuerySpec, repository: SongRepository) -> QueryResult:
-    return QueryResult(spec, songs=tuple(songs_for(spec, repository)))
+    return QueryResult(spec, songs=tuple(structured_query.songs_for(spec, repository)))
 
 
 def _chart(spec: QuerySpec, repository: SongRepository) -> QueryResult:
-    return QueryResult(spec, chart=chart_for(spec, repository))
+    return QueryResult(spec, chart=structured_query.chart_for(spec, repository))
 
 
 def _cards(spec: QuerySpec, repository: SongRepository) -> QueryResult:
-    return QueryResult(spec, cards=tuple(cards_for(spec, repository)))
+    return QueryResult(spec, cards=tuple(structured_query.cards_for(spec, repository)))
 
 
 def _support_cards(spec: QuerySpec, repository: SongRepository) -> QueryResult:
-    return QueryResult(spec, support_cards=tuple(support_cards_for(spec, repository)))
+    return QueryResult(
+        spec, support_cards=tuple(structured_query.support_cards_for(spec, repository)),
+    )
 
 
 CAPABILITIES = {

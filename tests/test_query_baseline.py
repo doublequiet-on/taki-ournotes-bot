@@ -63,6 +63,7 @@ class QueryFacadeBaselineTests(unittest.TestCase):
             "/问 MyGO的歌有哪些",
             "/问 tmr的SSR成员卡",
             "/问 tmr的SR支援卡有哪些",
+            "/问 迷星叫和另一首歌哪个好",
             "/问 推荐最强阵容",
         )
         with patch.object(parser, "_request", side_effect=AssertionError("unexpected AI call")), \
@@ -73,6 +74,7 @@ class QueryFacadeBaselineTests(unittest.TestCase):
         self.assertIn("我们现在就在这里", replies[2])
         self.assertIn("并肩前行", replies[3])
         self.assertEqual(replies[4], UNSUPPORTED)
+        self.assertEqual(replies[5], UNSUPPORTED)
 
     def test_model_path_is_structured_and_request_owned(self) -> None:
         parser = AIQueryParser(self.settings)

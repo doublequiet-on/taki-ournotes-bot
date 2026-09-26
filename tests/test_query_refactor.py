@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import json
+import os
 import tempfile
 import threading
 import unittest
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import replace
 from pathlib import Path
 from unittest.mock import patch
 
@@ -71,9 +73,14 @@ class QueryRefactorTests(unittest.TestCase):
     def test_metrics_are_classified_without_query_text(self) -> None:
         parser = AIQueryParser(self.settings)
         secret = "私人内容-13800000000"
-        with patch.object(parser, "_request", return_value={
-            "intent": "song", "query": "不存在", "difficulty": "",
-        }):
+        with patch.object(parser, "_request", side_effect=[
+            {"action": "route", "capability": "song.search"},
+            {
+                "action": "call_tool", "capability": "song.search",
+                "arguments": {"query": "不存在", "difficulty": "",
+                              "level_operator": "", "level": None},
+            },
+        ]):
             self.assertEqual(parser.answer(f"/问 {secret}", self.repo), UNKNOWN_ENTITY)
         parser.answer("/问 MyGO的歌有哪些", self.repo)
         payload = self.metrics_path.read_text(encoding="utf-8")
@@ -82,6 +89,7 @@ class QueryRefactorTests(unittest.TestCase):
         bucket = next(iter(record["days"].values()))
         self.assertEqual(bucket["ask_total"], 2)
         self.assertEqual(bucket["ai_route_requested"], 1)
+        self.assertEqual(bucket["ai_parse_requested"], 1)
         self.assertEqual(bucket["ai_unknown_entity"], 1)
         self.assertEqual(bucket["local_success"], 1)
         self.assertEqual(parser.outcome_code_for(f"/问 {secret}"), OutcomeCode.UNKNOWN_ENTITY)
@@ -154,6 +162,221 @@ class QueryRefactorTests(unittest.TestCase):
         self.assertNotIn("skill_query", request.call_args_list[1].args[1])
         quota = json.loads(self.settings.ai_quota_file.read_text(encoding="utf-8"))
         self.assertEqual(quota["used"], 2)
+
+    def test_invalid_structured_arguments_are_repaired_once(self) -> None:
+        parser = AIQueryParser(self.settings)
+        question = "/问 迷星叫EX物量"
+        responses = [
+            {
+                "action": "call_tool", "capability": "chart.get",
+                "arguments": {"query": "迷星叫", "difficulty": "MASTER"},
+            },
+            {
+                "action": "call_tool", "capability": "chart.get",
+                "arguments": {"query": "迷星叫", "difficulty": "EXPERT"},
+            },
+        ]
+        with patch.object(parser, "_request", side_effect=responses) as request:
+            self.assertIn("768 Notes", parser.answer(question, self.repo))
+        state = parser.state_for(question)
+        self.assertEqual(request.call_count, 2)
+        self.assertEqual((state.model_calls, state.repairs, state.tool_executions), (2, 1, 1))
+        repair_prompt = request.call_args_list[1].args[1]
+        self.assertIn('"code":"INVALID_ARGUMENTS"', repair_prompt)
+        self.assertIn('"invalid_fields":["difficulty"]', repair_prompt)
+        self.assertNotIn("Traceback", repair_prompt)
+
+    def test_router_parse_and_repair_obey_three_call_hard_limit(self) -> None:
+        parser = AIQueryParser(self.settings)
+        question = "/问 迷星叫具体有多少个音符"
+        responses = [
+            {"action": "route", "capability": "chart.get"},
+            {
+                "action": "call_tool", "capability": "chart.get",
+                "arguments": {"query": "迷星叫", "difficulty": "MASTER"},
+            },
+            {
+                "action": "call_tool", "capability": "chart.get",
+                "arguments": {"query": "迷星叫", "difficulty": "EXPERT"},
+            },
+            AssertionError("fourth model call"),
+        ]
+        with patch.object(parser, "_request", side_effect=responses) as request:
+            self.assertIn("768 Notes", parser.answer(question, self.repo))
+        state = parser.state_for(question)
+        self.assertEqual(request.call_count, 3)
+        self.assertEqual((state.model_calls, state.repairs, state.tool_executions), (3, 1, 1))
+
+    def test_total_time_budget_prevents_a_late_repair(self) -> None:
+        parser = AIQueryParser(self.settings)
+        now = [0.0]
+        parser._agent.clock = lambda: now[0]
+        invalid = {
+            "action": "call_tool", "capability": "chart.get",
+            "arguments": {"query": "迷星叫", "difficulty": "MASTER"},
+        }
+
+        def late_response(*_args, **_kwargs):
+            now[0] = 19.0
+            return invalid
+
+        question = "/问 迷星叫EX物量"
+        with patch.object(parser, "_request", side_effect=late_response) as request:
+            self.assertIn("目前只能查询", parser.answer(question, self.repo))
+        state = parser.state_for(question)
+        self.assertEqual(request.call_count, 1)
+        self.assertEqual((state.model_calls, state.repairs, state.tool_executions), (1, 0, 0))
+
+    def test_second_invalid_output_stops_without_another_repair(self) -> None:
+        parser = AIQueryParser(self.settings)
+        question = "/问 迷星叫EX物量"
+        invalid = {
+            "action": "call_tool", "capability": "chart.get",
+            "arguments": {"query": "迷星叫", "difficulty": "MASTER"},
+        }
+        with patch.object(parser, "_request", side_effect=[invalid, invalid]) as request:
+            self.assertIn("目前只能查询", parser.answer(question, self.repo))
+        state = parser.state_for(question)
+        self.assertEqual(request.call_count, 2)
+        self.assertEqual((state.model_calls, state.repairs, state.tool_executions), (2, 1, 0))
+        self.assertEqual(state.final_code, OutcomeCode.INVALID_ARGUMENTS)
+
+    def test_empty_result_is_terminal_and_cached_without_relaxing_filters(self) -> None:
+        parser = AIQueryParser(self.settings)
+        question = "/问 MyGO专家谱面中级数至少要到26的歌曲"
+        action = {
+            "action": "call_tool", "capability": "song.search",
+            "arguments": {
+                "query": "MyGO", "difficulty": "EXPERT",
+                "level_operator": "gte", "level": 26,
+            },
+        }
+        with patch.object(parser, "_request", return_value=action) as request:
+            first = parser.answer(question, self.repo)
+            second = parser.answer(question, self.repo)
+        self.assertIn("没有找到", first)
+        self.assertEqual(first, second)
+        self.assertEqual(request.call_count, 1)
+        state = parser.state_for(question)
+        self.assertEqual(state.final_code, OutcomeCode.EMPTY)
+        self.assertEqual(state.repairs, 0)
+        self.assertEqual(state.model_calls, 0)  # The most recent run was a cache hit.
+        self.assertEqual(state.tool_executions, 1)
+
+    def test_deterministic_failure_is_cached_but_provider_failure_is_not(self) -> None:
+        parser = AIQueryParser(self.settings)
+        rejected = "/问 帮我分析高松灯相关的成员卡内容"
+        with patch.object(parser, "_request", return_value={
+            "action": "reject", "reason": "unsupported",
+        }) as request:
+            self.assertIn("目前只能查询", parser.answer(rejected, self.repo))
+            self.assertIn("目前只能查询", parser.answer(rejected, self.repo))
+        self.assertEqual(request.call_count, 1)
+        self.assertIsNone(parser.command_for(rejected))
+
+        transient_parser = AIQueryParser(replace(
+            self.settings,
+            ai_quota_file=Path(self.temp.name) / "transient-quota.json",
+            ai_metrics_file=Path(self.temp.name) / "transient-metrics.json",
+        ))
+        with patch.object(transient_parser, "_request", side_effect=TimeoutError("secret")) as request:
+            self.assertIn("暂不可用", transient_parser.answer("/问 迷星叫EX物量", self.repo))
+            self.assertIn("暂不可用", transient_parser.answer("/问 迷星叫EX物量", self.repo))
+        self.assertEqual(request.call_count, 2)
+
+    def test_source_change_invalidates_terminal_cache(self) -> None:
+        parser = AIQueryParser(self.settings)
+        question = "/问 帮我分析高松灯相关的成员卡内容"
+        with patch.object(parser, "_request", return_value={
+            "action": "reject", "reason": "unsupported",
+        }) as request:
+            parser.answer(question, self.repo)
+            parser.answer(question, self.repo)
+            self.repo.metadata["cached_at"] = "refactor-2"
+            parser.answer(question, self.repo)
+        self.assertEqual(request.call_count, 2)
+
+    def test_free_text_extra_fields_and_unknown_tool_are_terminal(self) -> None:
+        cases = (
+            "这里是自然语言答案",
+            {
+                "action": "call_tool", "capability": "chart.get",
+                "arguments": {"query": "迷星叫", "difficulty": "EXPERT"},
+                "extra": True,
+            },
+            {
+                "action": "call_tool", "capability": "unknown.tool",
+                "arguments": {"query": "迷星叫"},
+            },
+        )
+        for index, response in enumerate(cases):
+            with self.subTest(index=index):
+                parser = AIQueryParser(replace(
+                    self.settings,
+                    ai_quota_file=Path(self.temp.name) / f"strict-quota-{index}.json",
+                    ai_metrics_file=Path(self.temp.name) / f"strict-metrics-{index}.json",
+                ))
+                question = f"/问 迷星叫EX物量{'呀' * index}"
+                with patch.object(parser, "_request", return_value=response) as request:
+                    self.assertIn("目前只能查询", parser.answer(question, self.repo))
+                state = parser.state_for(question)
+                self.assertEqual(request.call_count, 1)
+                self.assertEqual(state.model_calls, 1)
+                self.assertEqual(state.repairs, 0)
+                self.assertEqual(state.tool_executions, 0)
+                self.assertEqual(state.final_code, OutcomeCode.INVALID_OUTPUT)
+
+    def test_second_tool_execution_only_follows_explicit_repair(self) -> None:
+        parser = AIQueryParser(self.settings)
+        question = "/问 迷星叫EX物量"
+        original = CAPABILITIES["chart.get"]
+        attempts = 0
+
+        def flaky_executor(spec, repository):
+            nonlocal attempts
+            attempts += 1
+            if attempts == 1:
+                raise ValueError("private detail")
+            return original.executor(spec, repository)
+
+        action = {
+            "action": "call_tool", "capability": "chart.get",
+            "arguments": {"query": "迷星叫", "difficulty": "EXPERT"},
+        }
+        with patch.dict(CAPABILITIES, {"chart.get": replace(original, executor=flaky_executor)}), \
+             patch.object(parser, "_request", side_effect=[action, action]) as request:
+            self.assertIn("768 Notes", parser.answer(question, self.repo))
+        state = parser.state_for(question)
+        self.assertEqual(request.call_count, 2)
+        self.assertEqual((state.model_calls, state.repairs, state.tool_executions), (2, 1, 2))
+        self.assertEqual(attempts, 2)
+
+    def test_concurrent_cache_and_metrics_updates_remain_valid(self) -> None:
+        parser = AIQueryParser(self.settings)
+        question = "/问 MyGO的歌有哪些"
+        with patch.object(parser, "_request", side_effect=AssertionError("model called")), \
+             ThreadPoolExecutor(max_workers=8) as executor:
+            replies = list(executor.map(
+                lambda _: parser.answer(question, self.repo), range(32),
+            ))
+        self.assertTrue(all("迷星叫" in reply for reply in replies))
+        self.assertLessEqual(len(parser._agent._cache), 128)
+        record = json.loads(self.metrics_path.read_text(encoding="utf-8"))
+        bucket = next(iter(record["days"].values()))
+        self.assertEqual(bucket["ask_total"], 32)
+        self.assertEqual(
+            bucket.get("local_success", 0) + bucket.get("cache_hit_success", 0), 32,
+        )
+
+    def test_metrics_path_can_be_configured_independently(self) -> None:
+        metrics = Path(self.temp.name) / "custom" / "metrics.json"
+        with patch("ournotes_bot.config.load_dotenv"), patch.dict(os.environ, {
+            "OURNOTES_CACHE_FILE": str(Path(self.temp.name) / "cache-2.json"),
+            "OURNOTES_AI_METRICS_FILE": str(metrics),
+        }, clear=True):
+            settings = Settings.from_env()
+        self.assertEqual(settings.ai_metrics_file, metrics)
+        self.assertNotEqual(settings.ai_metrics_file, settings.ai_quota_file)
 
 
 if __name__ == "__main__":

@@ -12,6 +12,10 @@ class AIClientError(Exception):
     """A provider response could not be safely used."""
 
 
+class AIInvalidResponse(AIClientError):
+    """The provider replied, but not with the required bounded JSON object."""
+
+
 @dataclass(frozen=True)
 class ModelResponse:
     data: dict[str, Any]
@@ -45,19 +49,22 @@ class AIClient:
         try:
             with urlopen(request, timeout=max(0.1, timeout)) as response:
                 raw = response.read(20_001)
-            if len(raw) > 20_000:
-                raise AIClientError("AI response too large")
+        except OSError as exc:
+            raise AIClientError("AI provider request failed") from exc
+        if len(raw) > 20_000:
+            raise AIInvalidResponse("AI response too large")
+        try:
             payload = json.loads(raw)
             result = json.loads(payload["choices"][0]["message"]["content"])
             if not isinstance(result, dict):
-                raise AIClientError("AI response is not an object")
+                raise AIInvalidResponse("AI response is not an object")
             usage = self._usage(payload.get("usage"))
             return ModelResponse(result, usage)
-        except AIClientError:
+        except AIInvalidResponse:
             raise
-        except (OSError, ValueError, KeyError, TypeError, IndexError,
+        except (ValueError, KeyError, TypeError, IndexError,
                 json.JSONDecodeError) as exc:
-            raise AIClientError("AI provider request failed") from exc
+            raise AIInvalidResponse("AI response is not valid JSON") from exc
 
     @staticmethod
     def _usage(raw: object) -> dict[str, int]:
