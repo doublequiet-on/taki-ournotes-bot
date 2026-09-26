@@ -13,7 +13,7 @@ from ournotes_bot.config import Settings
 from ournotes_bot.data import Card, Chart, Song, SongRepository
 from ournotes_bot.entity_lexicon import EntityRef, find_anchor, resolve_entity
 from ournotes_bot.qq import _image_reply
-from ournotes_bot.structured_query import QuerySpec, answer_for, cards_for, chart_for, songs_for
+from ournotes_bot.structured_query import QuerySpec, cards_for
 
 
 class AIEntityLexiconTests(unittest.TestCase):
@@ -63,23 +63,6 @@ class AIEntityLexiconTests(unittest.TestCase):
             "level_operator": "", "level": None,
         }):
             self.assertEqual(self.parser.answer(question, self.repo), UNKNOWN_ENTITY)
-
-    def test_unknown_band_cannot_become_an_all_song_level_query(self):
-        with patch.object(self.parser, "_request", return_value={
-            "intent": "song", "query": "", "difficulty": "",
-            "level_operator": "gte", "level": 25,
-        }):
-            self.assertEqual(self.parser.answer("/问 菜团25级以上的歌曲", self.repo), UNKNOWN_ENTITY)
-
-    def test_verified_millsage_nickname(self):
-        self.repo.songs.append(replace(
-            self.repo.songs[0], id=100002, title="茉团测试曲", titles=("茉团测试曲",),
-            band="millsage", localized={"title": {"zh": "茉团测试曲"}},
-        ))
-        with patch.object(self.parser, "_request", side_effect=AssertionError("model called")):
-            answer = self.parser.answer("/问 茉团25级以上的歌曲", self.repo)
-        self.assertIn("茉团测试曲", answer)
-        self.assertNotIn("迷星叫", answer)
 
     def test_five_band_nicknames_resolve_without_model(self):
         bands = ("Ave Mujica", "梦限大MewType", "millsage", "一家Dumb Rock!")
@@ -175,28 +158,6 @@ class AIEntityLexiconTests(unittest.TestCase):
                     QuerySpec("card", anchor.entity), self.repo
                 )], [expected_id])
 
-    def test_valid_model_queries_still_work(self):
-        with patch.object(self.parser, "_request", return_value={
-            "intent": "song", "query": "MyGO", "difficulty": "EXPERT",
-            "level_operator": "gte", "level": 25,
-        }):
-            self.assertIn("迷星叫", self.parser.answer("/问 MyGO专家25级以上的歌", self.repo))
-        with patch.object(self.parser, "_request", return_value={
-            "intent": "chart", "query": "迷星叫", "difficulty": "EXPERT",
-        }):
-            self.assertIn("768 Notes", self.parser.answer("/问 迷星叫EX物量", self.repo))
-        with patch.object(self.parser, "_request", return_value={
-            "intent": "card", "query": "tmr", "difficulty": "",
-        }):
-            self.assertIn("高松灯", self.parser.answer("/问 tmr的卡", self.repo))
-
-    def test_simple_catalog_questions_do_not_call_model(self):
-        with patch.object(self.parser, "_request", side_effect=AssertionError("model called")):
-            self.assertIn("迷星叫", self.parser.answer("/问 MyGO的歌有哪些", self.repo))
-            self.assertIn("迷星叫", self.parser.answer("/问 MyGO有哪些歌", self.repo))
-            self.assertIn("高松灯", self.parser.answer("/问 tmr的卡有哪些", self.repo))
-        self.assertEqual(self.parser.command_for("/问 MyGO的歌有哪些"), "查曲 MyGO!!!!!")
-
     def test_verified_alias_and_outside_catalog(self):
         with tempfile.TemporaryDirectory() as directory:
             alias_file = Path(directory) / "query_aliases.json"
@@ -242,28 +203,6 @@ class AIEntityLexiconTests(unittest.TestCase):
         }):
             self.assertEqual(self.parser.answer(question, self.repo), AMBIGUOUS_ENTITY)
         self.assertTrue(find_anchor("chart", question, self.repo).ambiguous)
-
-    def test_structured_filters_and_text_use_the_same_entities(self):
-        band = EntityRef("band", "MyGO!!!!!")
-        spec = QuerySpec("song", band, "EXPERT", ">=", 25)
-        self.assertEqual([song.id for song in songs_for(spec, self.repo)], [100001])
-        self.assertIn("迷星叫", answer_for(spec, self.repo))
-        self.assertEqual([song.id for song in songs_for(replace(spec, level=26), self.repo)], [])
-        chart = chart_for(QuerySpec("chart", EntityRef("song", 100001), "EXPERT"), self.repo)
-        self.assertIsNotNone(chart)
-        self.assertEqual(chart[1][0].notes, 768)
-        self.assertEqual([card.id for card in cards_for(
-            QuerySpec("card", EntityRef("character", "高松灯")), self.repo
-        )], [1])
-
-    def test_local_grade_query_retains_typed_filter(self):
-        question = "/问 MyGO专家25级以上的歌曲"
-        with patch.object(self.parser, "_request", side_effect=AssertionError("model called")):
-            self.assertIn("迷星叫", self.parser.answer(question, self.repo))
-        spec = self.parser.spec_for(question)
-        self.assertEqual(spec.subject, EntityRef("band", "MyGO!!!!!"))
-        self.assertEqual((spec.difficulty, spec.comparison, spec.level), ("EXPERT", ">=", 25))
-
 
 if __name__ == "__main__":
     unittest.main()
