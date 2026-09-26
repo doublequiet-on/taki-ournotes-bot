@@ -8,9 +8,9 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 from ournotes_bot.ai_query import AIQueryParser
-from ournotes_bot.commands import card_matches, song_matches
+from ournotes_bot.commands import card_matches, song_matches, support_card_matches
 from ournotes_bot.config import Settings
-from ournotes_bot.data import Card, Chart, Song, SongRepository
+from ournotes_bot.data import Card, Chart, Song, SongRepository, SupportCard
 from ournotes_bot.qq import PreparedReply, _deliver_reply, _prepare_reply
 from ournotes_bot.structured_query import songs_for
 from ournotes_bot.yatta import BASE
@@ -30,6 +30,11 @@ class ReplyPipelineTests(unittest.TestCase):
             id=1, asset_id=1, title="我们现在就在这里", character="高松灯", band="MyGO!!!!!",
             rarity=2, card_type=0, performance=0, technic=0, visual=0, start_at="",
             skill_name="", full_url="", thumbnail_url="", localized={},
+        )]
+        self.repo.support_cards = [SupportCard(
+            id=1, title="并肩前行", character="高松灯", characters=("高松灯",),
+            rarity=3, card_type=5, performance=0, technic=0, visual=0, start_at="",
+            full_url="", thumbnail_url="", localized={},
         )]
         self.repo.metadata = {"cached_at": "test"}
         settings = Settings("", "", BASE, self.repo.cache_file, 6,
@@ -72,6 +77,14 @@ class ReplyPipelineTests(unittest.TestCase):
             result = _prepare_reply("/查卡 高松灯", self.repo, self.parser)
         self.assertIn("我们现在就在这里", result.text)
         self.assertEqual(result.image, b"cards")
+        self.assertEqual(select.call_count, 1)
+        self.assertEqual([card.id for card in render.call_args.args[0]], [1])
+
+        with patch("ournotes_bot.commands.support_card_matches", wraps=support_card_matches) as select, \
+             patch("ournotes_bot.qq.render_support_card_list", return_value=b"support cards") as render:
+            result = _prepare_reply("/查支援卡 高松灯", self.repo, self.parser)
+        self.assertIn("并肩前行", result.text)
+        self.assertEqual(result.image, b"support cards")
         self.assertEqual(select.call_count, 1)
         self.assertEqual([card.id for card in render.call_args.args[0]], [1])
 

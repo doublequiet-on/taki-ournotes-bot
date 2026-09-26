@@ -78,6 +78,15 @@ def _names(item, field: str) -> set[str]:
     return {normalize(value) for value in values if value}
 
 
+def _support_character_names(card, index: int) -> set[str]:
+    names = {card.characters[index]}
+    for value in card.localized.get("character", {}).values():
+        parts = [part.strip() for part in value.split("/")]
+        if index < len(parts) and parts[index]:
+            names.add(parts[index])
+    return names
+
+
 def _resolve_source_entity(intent: str, term: str, repository: SongRepository) -> str | None:
     """Return a safe canonical query, or None when a name is absent or ambiguous.
 
@@ -97,6 +106,8 @@ def _resolve_source_entity(intent: str, term: str, repository: SongRepository) -
             return str(number) if number in song_ids else None
         if intent == "card":
             return str(number) if any(card.id == number for card in repository.cards) else None
+        if intent == "support_card":
+            return str(number) if any(card.id == number for card in repository.support_cards) else None
         return None
 
     if intent in {"song", "chart"}:
@@ -124,14 +135,30 @@ def _resolve_source_entity(intent: str, term: str, repository: SongRepository) -
             return str(next(iter(card_ids)))
         return next(iter(characters or bands))
 
+    if intent == "support_card":
+        alias = resolve_character_alias(term)
+        if alias and repository.search_support_cards(alias.display, limit=1):
+            return alias.display
+        card_ids = {card.id for card in repository.support_cards if needle in _names(card, "title")}
+        characters = {
+            character_identity(name)
+            for card in repository.support_cards
+            for index, name in enumerate(card.characters)
+            if any(needle == normalize(value) for value in _support_character_names(card, index))
+        }
+        if len(card_ids) + len(characters) != 1:
+            return None
+        return str(next(iter(card_ids))) if card_ids else next(iter(characters))
+
     return None
 
 
 def _resolve_alias_target(kind: str, target: str, repository: SongRepository) -> str | None:
     """Keep each manually edited alias in its declared entity category."""
     needle = normalize(target)
-    if kind in {"song", "card"}:
-        items = repository.songs if kind == "song" else repository.cards
+    if kind in {"song", "card", "support_card"}:
+        items = (repository.songs if kind == "song" else
+                 repository.cards if kind == "card" else repository.support_cards)
         matches = {item.id for item in items if
                    (needle.isdecimal() and item.id == int(needle)) or needle in _names(item, "title")}
         return str(next(iter(matches))) if len(matches) == 1 else None
@@ -142,6 +169,10 @@ def _resolve_alias_target(kind: str, target: str, repository: SongRepository) ->
             or needle in _names(card, "character")
             or any(needle == normalize(part.strip()) for part in card.character.split("/"))
         }
+        matches.update(
+            character_identity(name) for card in repository.support_cards for name in card.characters
+            if needle == normalize(character_identity(name)) or needle == normalize(name)
+        )
         return next(iter(matches)) if len(matches) == 1 else None
     if kind == "band":
         matches = {item.band for item in (*repository.songs, *repository.cards)
@@ -168,13 +199,22 @@ def _source_name_exists(intent: str, term: str, repository: SongRepository) -> b
             or any(needle == normalize(part.strip()) for part in card.character.split("/"))
             for card in repository.cards
         )
+    if intent == "support_card":
+        return resolve_character_alias(term) is not None or any(
+            needle == str(card.id) or needle in _names(card, "title")
+            or any(needle == normalize(value)
+                   for index in range(len(card.characters))
+                   for value in _support_character_names(card, index))
+            for card in repository.support_cards
+        )
     return False
 
 
 def resolve_exact_alias(intent: str, term: str, repository: SongRepository) -> AnchorResult:
     """Resolve one exact verified nickname; report cross-category collisions."""
     kinds = {"song": ("song", "band"), "chart": ("song",),
-             "card": ("card", "character", "band")}.get(intent, ())
+             "card": ("card", "character", "band"),
+             "support_card": ("support_card", "character")}.get(intent, ())
     needle = normalize(term)
     if not needle or _source_name_exists(intent, term, repository):
         return AnchorResult(None)
@@ -189,7 +229,7 @@ def resolve_exact_alias(intent: str, term: str, repository: SongRepository) -> A
                 continue
             canonical = _resolve_alias_target(kind, target, repository)
             if canonical is not None:
-                found.add(EntityRef(kind, int(canonical) if kind in {"song", "card"} else canonical))
+                found.add(EntityRef(kind, int(canonical) if kind in {"song", "card", "support_card"} else canonical))
     return AnchorResult(next(iter(found)) if len(found) == 1 else None, len(found) > 1)
 
 
@@ -229,10 +269,20 @@ def _mentioned(text: str, name: str) -> bool:
     return needle in normalize(text)
 
 
-def find_anchor(intent: str, text: str, repository: SongRepository) -> AnchorResult:
+def _explicit_card_id(text: str, number: int) -> bool:
+    text = unicodedata.normalize("NFKC", text)
+    card = r"(?:成员卡|角色卡|卡牌|卡|card)"
+    return bool(re.search(
+        rf"(?:{card}\s*(?:ID\s*[:：]?\s*)?#?\s*|(?:\bID|编号)\s*[:：#]?\s*)"
+        rf"{number}(?![\d.%])|(?<![\d.]){number}\s*号\s*{card}", text, re.I))
+
+
+def find_anchor(intent: str, text: str, repository: SongRepository, *,
+                explicit_card_ids: bool = False) -> AnchorResult:
     """Ground a query in names or verified aliases present in the user's text."""
     allowed = {"song": {"song", "band"}, "chart": {"song"},
-               "card": {"card", "character", "band"}}.get(intent, set())
+               "card": {"card", "character", "band"},
+               "support_card": {"support_card", "character"}}.get(intent, set())
     found: set[EntityRef] = set()
 
     if "song" in allowed:
@@ -254,18 +304,40 @@ def find_anchor(intent: str, text: str, repository: SongRepository) -> AnchorRes
                     found.add(EntityRef("band", card.band))
     if "card" in allowed:
         for card in repository.cards:
+            names = {card.title, *card.localized.get("title", {}).values()}
+            id_matches = (_explicit_card_id(text, card.id) if explicit_card_ids
+                          else _mentioned(text, str(card.id)))
+            if id_matches or any(_mentioned(text, name) for name in names):
+                found.add(EntityRef("card", card.id))
+    if "support_card" in allowed:
+        for card in repository.support_cards:
             if any(_mentioned(text, name) for name in
                    {str(card.id), card.title, *card.localized.get("title", {}).values()}):
-                found.add(EntityRef("card", card.id))
+                found.add(EntityRef("support_card", card.id))
     if "character" in allowed:
-        for card in repository.cards:
-            if any(_mentioned(text, name) for name in
-                   {card.character, *card.localized.get("character", {}).values()}):
-                found.add(EntityRef("character", character_identity(card.character)))
+        if intent == "card":
+            for card in repository.cards:
+                if any(_mentioned(text, name) for name in
+                       {card.character, *card.localized.get("character", {}).values()}):
+                    found.add(EntityRef("character", character_identity(card.character)))
+        if intent == "support_card":
+            for card in repository.support_cards:
+                for index, name in enumerate(card.characters):
+                    if any(_mentioned(text, value) for value in _support_character_names(card, index)):
+                        found.add(EntityRef("character", character_identity(name)))
         for alias_name in CHARACTER_ALIASES:
             if _mentioned(text, alias_name):
-                cards = repository.search_cards(alias_name, limit=len(repository.cards))
-                found.update(EntityRef("character", character_identity(card.character)) for card in cards)
+                if intent == "support_card":
+                    alias = resolve_character_alias(alias_name)
+                    if alias is None:
+                        continue
+                    cards = repository.search_support_cards(alias_name, limit=len(repository.support_cards))
+                    found.update(EntityRef("character", character_identity(name))
+                                 for card in cards for name in card.characters
+                                 if normalize(character_identity(name)) == normalize(alias.display))
+                else:
+                    cards = repository.search_cards(alias_name, limit=len(repository.cards))
+                    found.update(EntityRef("character", character_identity(card.character)) for card in cards)
 
     aliases = _aliases()
     for kind in allowed:
@@ -277,7 +349,7 @@ def find_anchor(intent: str, text: str, repository: SongRepository) -> AnchorRes
                 continue
             canonical = _resolve_alias_target(kind, target, repository)
             if canonical is not None:
-                found.add(EntityRef(kind, int(canonical) if kind in {"song", "card"} else canonical))
+                found.add(EntityRef(kind, int(canonical) if kind in {"song", "card", "support_card"} else canonical))
 
     # A specific song/card accompanied by its own band or character is one subject.
     for item in tuple(found):
@@ -290,6 +362,11 @@ def find_anchor(intent: str, text: str, repository: SongRepository) -> AnchorRes
             if card:
                 found.discard(EntityRef("band", card.band))
                 found.discard(EntityRef("character", character_identity(card.character)))
+        if item.kind == "support_card":
+            card = next((row for row in repository.support_cards if row.id == item.value), None)
+            if card:
+                for name in card.characters:
+                    found.discard(EntityRef("character", character_identity(name)))
         if item.kind == "character":
             for card in repository.cards:
                 if character_identity(card.character) == item.value:

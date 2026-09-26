@@ -15,7 +15,7 @@ import aiohttp
 from PIL import Image, ImageDraw, ImageFont, ImageOps
 
 from .config import runtime_data_dir
-from .data import Card, Chart, Song, localized_text
+from .data import Card, Chart, Skill, Song, SupportCard, localized_text
 from .yatta import ASSETS, BASE
 
 
@@ -33,9 +33,9 @@ FONT_PATHS = [
     "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
 ]
 IMAGE_TEXT = {
-    "zh": {"songs": "曲目检索", "song_list": "歌曲列表", "chart": "谱面资料", "card": "卡面档案", "cards": "卡牌检索", "card_list": "卡牌列表", "composer": "作曲", "lyricist": "作词", "preview": "音符谱面暂不可用；当前展示等级与 Note 数。", "score_title": "音符谱面 · {difficulty}", "score_note": "按音符节点绘制的静态预览；长条轨迹为节点连线。", "image_missing": "图片暂不可用", "power": "综合力", "performance": "演出", "technic": "技巧", "visual": "表现", "skill": "技能", "type": "属性"},
-    "en": {"songs": "Song search", "song_list": "Songs", "chart": "Chart details", "card": "Card details", "cards": "Card search", "card_list": "Cards", "composer": "Composer", "lyricist": "Lyrics", "preview": "Project Yume data: levels and note counts only.", "score_title": "Note chart · {difficulty}", "score_note": "Static preview from note nodes; holds use straight node connections.", "image_missing": "Image unavailable", "power": "Total power", "performance": "Performance", "technic": "Technique", "visual": "Visual", "skill": "Skill", "type": "Type"},
-    "ja": {"songs": "楽曲検索", "song_list": "楽曲一覧", "chart": "譜面情報", "card": "カード情報", "cards": "カード検索", "card_list": "カード一覧", "composer": "作曲", "lyricist": "作詞", "preview": "Project Yume のレベルとノーツ数を表示します。", "score_title": "ノーツ譜面 · {difficulty}", "score_note": "ノーツ座標による静的プレビュー。ロングは節点を直線で結びます。", "image_missing": "画像を取得できません", "power": "総合力", "performance": "パフォーマンス", "technic": "テクニック", "visual": "ビジュアル", "skill": "スキル", "type": "属性"},
+    "zh": {"songs": "曲目检索", "song_list": "歌曲列表", "chart": "谱面资料", "card": "成员卡档案", "cards": "成员卡检索", "card_list": "成员卡列表", "support_card": "支援卡档案", "support_cards": "支援卡检索", "support_card_list": "支援卡列表", "composer": "作曲", "lyricist": "作词", "preview": "音符谱面暂不可用；当前展示等级与 Note 数。", "score_title": "音符谱面 · {difficulty}", "score_note": "按音符节点绘制的静态预览；长条轨迹为节点连线。", "image_missing": "图片暂不可用", "power": "综合力", "support_bonus": "支援加成", "performance": "演出", "technic": "技巧", "visual": "表现", "skill": "技能", "type": "属性", "level5": "Lv.5 效果"},
+    "en": {"songs": "Song search", "song_list": "Songs", "chart": "Chart details", "card": "Member card", "cards": "Member cards", "card_list": "Member cards", "support_card": "Support card", "support_cards": "Support cards", "support_card_list": "Support cards", "composer": "Composer", "lyricist": "Lyrics", "preview": "Project Yume data: levels and note counts only.", "score_title": "Note chart · {difficulty}", "score_note": "Static preview from note nodes; holds use straight node connections.", "image_missing": "Image unavailable", "power": "Total power", "support_bonus": "Support bonus", "performance": "Performance", "technic": "Technique", "visual": "Visual", "skill": "Skill", "type": "Type", "level5": "Lv.5 effect"},
+    "ja": {"songs": "楽曲検索", "song_list": "楽曲一覧", "chart": "譜面情報", "card": "メンバーカード", "cards": "メンバーカード検索", "card_list": "メンバーカード一覧", "support_card": "サポートカード", "support_cards": "サポートカード検索", "support_card_list": "サポートカード一覧", "composer": "作曲", "lyricist": "作詞", "preview": "Project Yume のレベルとノーツ数を表示します。", "score_title": "ノーツ譜面 · {difficulty}", "score_note": "ノーツ座標による静的プレビュー。ロングは節点を直線で結びます。", "image_missing": "画像を取得できません", "power": "総合力", "support_bonus": "サポート効果", "performance": "パフォーマンス", "technic": "テクニック", "visual": "ビジュアル", "skill": "スキル", "type": "属性", "level5": "Lv.5 効果"},
 }
 
 
@@ -70,6 +70,56 @@ def _write(draw: ImageDraw.ImageDraw, text: str, x: int, y: int, max_width: int,
     while text and draw.textlength(text, font=font) > max_width:
         text = text[:-2] + "…"
     draw.text((x, y), text, font=font, fill=color)
+
+
+def _wrapped_lines(draw: ImageDraw.ImageDraw, text: str, max_width: int, size: int, max_lines: int = 3) -> list[str]:
+    font = _font(size)
+    lines: list[str] = []
+    current = ""
+    for character in text:
+        candidate = current + character
+        if current and draw.textlength(candidate, font=font) > max_width:
+            lines.append(current)
+            current = character
+            if len(lines) == max_lines:
+                break
+        else:
+            current = candidate
+    if len(lines) < max_lines and current:
+        lines.append(current)
+    if lines and "".join(lines) != text:
+        while lines[-1] and draw.textlength(lines[-1] + "…", font=font) > max_width:
+            lines[-1] = lines[-1][:-1]
+        lines[-1] += "…"
+    return lines
+
+
+def _skill_label(kind: str, locale: str) -> str:
+    labels = {
+        "zh": {"leaderSkill": "队长技能", "liveSkill": "Live 技能", "gekisouSkill": "激奏技能", "supportSkill": "支援技能", "gekisouSupportSkill": "激奏支援技能"},
+        "en": {"leaderSkill": "Leader skill", "liveSkill": "Live skill", "gekisouSkill": "Gekisou skill", "supportSkill": "Support skill", "gekisouSupportSkill": "Gekisou support"},
+        "ja": {"leaderSkill": "リーダースキル", "liveSkill": "ライブスキル", "gekisouSkill": "激奏スキル", "supportSkill": "サポートスキル", "gekisouSupportSkill": "激奏サポート"},
+    }
+    return labels.get(locale, labels["zh"]).get(kind, _label(locale, "skill"))
+
+
+def _rarity(rarity: int) -> str:
+    return "★" * rarity if 0 < rarity <= 5 else "SPECIAL"
+
+
+def _draw_skills(draw: ImageDraw.ImageDraw, skills: tuple[Skill, ...], x: int, y: int,
+                 max_width: int, locale: str) -> int:
+    for skill in skills:
+        _write(draw, f"{_skill_label(skill.kind, locale)} · {localized_text(skill, 'name', locale)}", x, y, max_width, 21, INK)
+        y += 34
+        description = localized_text(skill, "description", locale)
+        if description:
+            prefix = f"{_label(locale, 'level5')}："
+            for line in _wrapped_lines(draw, prefix + description, max_width, 18, 3):
+                _write(draw, line, x, y, max_width, 18, MUTED)
+                y += 27
+        y += 15
+    return y
 
 
 def _asset(url: str, size: tuple[int, int]) -> Image.Image | None:
@@ -294,13 +344,13 @@ def render_chart(song: Song, charts: tuple[Chart, ...], locale: str = "zh", scor
 
 
 def render_card(card: Card, locale: str = "zh") -> bytes:
-    image, draw = _canvas(900, 1810, _label(locale, "card"))
+    image, draw = _canvas(900, 2250, _label(locale, "card"))
     _write(draw, localized_text(card, "band", locale), 56, 145, 460, 27, PINK)
     _write(draw, localized_text(card, "character", locale), 56, 190, 760, 39)
     _write(draw, localized_text(card, "title", locale), 56, 250, 760, 29)
     _paste_asset(image, draw, card.full_url, (64, 315, 836, 1345), locale)
-    draw.rounded_rectangle((63, 1370, 837, 1730), radius=22, fill="#FBF7F2", outline=BORDER, width=2)
-    _write(draw, f"{'★' * card.rarity}    ID {card.id}    {_label(locale, 'type')} {card.card_type}", 88, 1393, 720, 28, PINK)
+    draw.rounded_rectangle((63, 1370, 837, 2175), radius=22, fill="#FBF7F2", outline=BORDER, width=2)
+    _write(draw, f"{_rarity(card.rarity)}    ID {card.id}    {_label(locale, 'type')} {card.card_type}", 88, 1393, 720, 28, PINK)
     total = card.performance + card.technic + card.visual
     _write(draw, f"{_label(locale, 'power')}  {total:,}" if total else {"zh": "数值暂不可用", "en": "Stats unavailable", "ja": "ステータス未取得"}.get(locale, "数值暂不可用"), 88, 1447, 720, 31)
     values = [(_label(locale, "performance"), card.performance, PINK), (_label(locale, "technic"), card.technic, BLUE), (_label(locale, "visual"), card.visual, MINT)]
@@ -309,7 +359,10 @@ def render_card(card: Card, locale: str = "zh") -> bytes:
         _write(draw, f"{label}  {value:,}", 88, y, 270, 22)
         draw.rounded_rectangle((365, y + 7, 780, y + 28), radius=10, fill="#E9E3DE")
         draw.rounded_rectangle((365, y + 7, 365 + int(415 * value / max(1, max(v for _, v, _ in values))), y + 28), radius=10, fill=color)
-    _write(draw, f"{_label(locale, 'skill')}  {localized_text(card, 'skill_name', locale)}", 88, 1671, 700, 20, MUTED)
+    if card.skills:
+        _draw_skills(draw, card.skills, 88, 1682, 690, locale)
+    elif card.skill_name:
+        _write(draw, f"{_label(locale, 'skill')}  {localized_text(card, 'skill_name', locale)}", 88, 1682, 700, 20, MUTED)
     return _bytes(image)
 
 
@@ -324,7 +377,47 @@ def render_card_list(cards: list[Card], query: str, locale: str = "zh", footer: 
         _paste_loaded_asset(image, draw, thumbnails[card.thumbnail_url], (68, top + 10, 161, top + 135), locale)
         _write(draw, localized_text(card, "character", locale), 190, top + 13, 590, 27)
         _write(draw, localized_text(card, "title", locale), 190, top + 55, 590, 22)
-        _write(draw, f"#{card.id}  ·  {'★' * card.rarity}", 190, top + 101, 590, 20, MUTED)
+        _write(draw, f"#{card.id}  ·  {_rarity(card.rarity)}", 190, top + 101, 590, 20, MUTED)
+    if footer:
+        for index, line in enumerate(footer.splitlines()[:2]):
+            _write(draw, line, 55, height - 95 + index * 31, 790, 21, MUTED)
+    return _bytes(image)
+
+
+def render_support_card(card: SupportCard, locale: str = "zh") -> bytes:
+    image, draw = _canvas(900, 2100, _label(locale, "support_card"))
+    _write(draw, localized_text(card, "character", locale), 56, 165, 760, 36, PINK)
+    _write(draw, localized_text(card, "title", locale), 56, 225, 760, 29)
+    _paste_asset(image, draw, card.full_url, (64, 290, 836, 1245), locale)
+    draw.rounded_rectangle((63, 1270, 837, 2025), radius=22, fill="#FBF7F2", outline=BORDER, width=2)
+    _write(draw, f"{_rarity(card.rarity)}    ID {card.id}    {_label(locale, 'type')} {card.card_type}", 88, 1295, 720, 28, PINK)
+    values = [(_label(locale, "performance"), card.performance / 100, PINK),
+              (_label(locale, "technic"), card.technic / 100, BLUE),
+              (_label(locale, "visual"), card.visual / 100, MINT)]
+    total = sum(value for _, value, _ in values)
+    _write(draw, f"{_label(locale, 'support_bonus')}  {total:g}%" if total else {"zh": "数值暂不可用", "en": "Stats unavailable", "ja": "ステータス未取得"}.get(locale, "数值暂不可用"), 88, 1348, 720, 31)
+    for index, (label, value, color) in enumerate(values):
+        y = 1405 + index * 55
+        _write(draw, f"{label}  {value:g}%", 88, y, 270, 22)
+        draw.rounded_rectangle((365, y + 7, 780, y + 28), radius=10, fill="#E9E3DE")
+        draw.rounded_rectangle((365, y + 7, 365 + int(415 * value / max(1, max(v for _, v, _ in values))), y + 28), radius=10, fill=color)
+    if card.skills:
+        _draw_skills(draw, card.skills, 88, 1588, 690, locale)
+    return _bytes(image)
+
+
+def render_support_card_list(cards: list[SupportCard], query: str, locale: str = "zh", footer: str = "") -> bytes:
+    height = 225 + len(cards) * 165 + (80 if footer else 0)
+    image, draw = _canvas(900, height, _label(locale, "support_cards"))
+    _write(draw, f"{_label(locale, 'support_card_list')} · {query}", 52, 142, 790, 31)
+    thumbnails = _prefetch_assets([card.thumbnail_url for card in cards], (125, 125))
+    for index, card in enumerate(cards):
+        top = 195 + index * 165
+        draw.rounded_rectangle((50, top, 850, top + 145), radius=18, fill="#FBF7F2", outline=BORDER, width=2)
+        _paste_loaded_asset(image, draw, thumbnails[card.thumbnail_url], (68, top + 10, 193, top + 135), locale)
+        _write(draw, localized_text(card, "character", locale), 220, top + 13, 560, 27)
+        _write(draw, localized_text(card, "title", locale), 220, top + 55, 560, 22)
+        _write(draw, f"#{card.id}  ·  {_rarity(card.rarity)}", 220, top + 101, 560, 20, MUTED)
     if footer:
         for index, line in enumerate(footer.splitlines()[:2]):
             _write(draw, line, 55, height - 95 + index * 31, 790, 21, MUTED)

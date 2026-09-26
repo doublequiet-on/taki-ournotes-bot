@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import tempfile
 import unittest
+from dataclasses import replace
 from pathlib import Path
 from unittest.mock import patch
 
@@ -9,7 +10,7 @@ from ournotes_bot.ai_query import AIQueryParser, UNSUPPORTED
 from ournotes_bot.commands import handle_command, parse_query, song_matches
 from ournotes_bot.config import Settings
 from ournotes_bot.data import DataError, SongRepository
-from ournotes_bot.yatta import BASE, build_data, fetch_json
+from ournotes_bot.yatta import BASE, build_data, build_skills, build_support_cards, fetch_json
 from ournotes_bot.qq import _image_reply
 
 
@@ -23,6 +24,9 @@ SONGS = {"refs": BANDS, "items": {"100001": {"id": 100001, "title": ["迷星叫"
                                               "jacket": "jkt_001_100001", "startAt": 1767225600}}}
 META = {"100001": [[9, 0, 0, "190", 342], [13, 0, 0, "190", 408],
                    [20, 0, 0, "190", 682], [25, 0, 0, "190", 768]]}
+SUPPORTS = {"items": {"1": {"id": 1, "name": ["灯的支援", "Tomori Support", "燈的支援", "灯的支援"],
+                                  "subtitle": ["并肩前行", "Side by Side", "並肩前行", "并肩前行"],
+                                  "characters": [1], "rarity": 3, "attribute": 5, "startAt": 1767225600}}}
 
 
 class QueryTests(unittest.TestCase):
@@ -30,7 +34,8 @@ class QueryTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.repo = SongRepository(BASE, Path(self.temp.name) / "cache.json")
         self.repo.songs, self.repo.cards = build_data(CHARACTERS, CARDS, SONGS, META)
-        self.repo.metadata = {"source": BASE, "schema": 2, "song_count": 1, "card_count": 1}
+        self.repo.support_cards = build_support_cards(CHARACTERS, SUPPORTS)
+        self.repo.metadata = {"source": BASE, "schema": 4, "song_count": 1, "card_count": 1, "support_card_count": 1}
 
     def tearDown(self):
         self.temp.cleanup()
@@ -39,9 +44,12 @@ class QueryTests(unittest.TestCase):
         self.assertIn("迷星叫", handle_command("/查曲 100001", self.repo))
         self.assertIn("迷星叫", handle_command("/查曲 迷星叫", self.repo))
         self.assertIn("768 Notes", handle_command("/查谱面 1 EXPERT", self.repo))
-        self.assertIn("高松灯", handle_command("/查卡 1", self.repo))
+        with patch("ournotes_bot.yatta.card_detail", return_value={}):
+            self.assertIn("高松灯", handle_command("/查卡 1", self.repo))
         self.assertIn("高松灯", handle_command("/查卡 我们现在就在这里", self.repo))
+        self.assertIn("并肩前行", handle_command("/查支援卡 高松灯", self.repo))
         self.assertEqual(parse_query("/查谱面 1 EXPERT"), ("chart", "100001", "EXPERT"))
+        self.assertEqual(parse_query("/查支援卡 tmr 页2"), ("support_cards", "tmr", 2))
 
     def test_chart_image_loads_notes_for_direct_and_natural_queries(self):
         score = {"notes": [{"t": 0, "pos": 6, "size": 6}]}
@@ -76,13 +84,55 @@ class QueryTests(unittest.TestCase):
             self.repo._load_cache()
 
     def test_details_are_loaded_only_on_demand(self):
-        detail = {"statsMax": [10156, 7442, 7179], "skills": [{"type": "liveSkill", "name": ["スコアUP", "Score Up", "分数UP", "得分提升"]}]}
+        skills = [
+            {"type": "leaderSkill", "name": ["Leader", "Leader", "隊長", "队长"],
+             "description": ["{value}%", "{value}%", "{value}%", "提升{value}%"],
+             "effects": {"3": [{"param": "value", "type": "property", "data": {"5": 1500},
+                                    "formula": {"divide": 100, "format": "F1"}}]}},
+            {"type": "liveSkill", "name": ["スコアUP", "Score Up", "分数UP", "得分提升"]},
+            {"type": "gekisouSkill", "name": ["Gekisou", "Gekisou", "激奏", "激奏"]},
+        ]
+        detail = {"statsMax": [10156, 7442, 7179], "skills": skills}
         with patch("ournotes_bot.yatta.card_detail", return_value=detail) as fetch:
             card = self.repo.card_with_detail(self.repo.cards[0])
             self.assertEqual(self.repo.card_with_detail(self.repo.cards[0]), card)
         self.assertEqual(fetch.call_count, 1)
         self.assertEqual(card.performance + card.technic + card.visual, 24777)
         self.assertEqual(card.skill_name, "得分提升")
+        self.assertEqual([skill.kind for skill in card.skills], ["leaderSkill", "liveSkill", "gekisouSkill"])
+        self.assertEqual(card.skills[0].description, "提升15.0%")
+
+    def test_support_card_details_are_loaded_only_on_demand(self):
+        detail = {"statsMax": [600, 500, 400], "skills": [
+            {"type": "supportSkill", "name": ["支援", "Support", "支援", "支援提升"],
+             "description": ["{value}%", "{value}%", "{value}%", "提升{value}%"],
+             "effects": {"3": [{"param": "value", "type": "property", "data": {"5": 2500},
+                                    "formula": {"divide": 100, "format": "F1"}}]}},
+            {"type": "gekisouSupportSkill", "name": ["激奏", "Gekisou", "激奏", "激奏支援"]},
+        ]}
+        with patch("ournotes_bot.yatta.support_card_detail", return_value=detail) as fetch:
+            card = self.repo.support_card_with_detail(self.repo.support_cards[0])
+            self.assertEqual(self.repo.support_card_with_detail(self.repo.support_cards[0]), card)
+        self.assertEqual(fetch.call_count, 1)
+        self.assertEqual((card.performance, card.technic, card.visual), (600, 500, 400))
+        self.assertEqual(card.skills[0].description, "提升25.0%")
+        with patch.object(self.repo, "support_card_with_detail", return_value=card), \
+             patch("ournotes_bot.qq.render_support_card", return_value=b"support image"):
+            self.assertEqual(_image_reply("/查支援卡 1", self.repo), b"support image")
+
+    def test_ask_skill_and_support_queries_use_regular_list_renderers(self):
+        skills = build_skills([{
+            "type": "liveSkill", "name": ["スコアUP", "Score Up", "分数UP", "得分提升"],
+            "description": ["得分提升", "Score rises", "得分提升", "得分提升50%"],
+        }])
+        self.repo.cards = [replace(self.repo.cards[0], skills=skills)]
+        parser = AIQueryParser(Settings("", "", BASE, self.repo.cache_file, 6))
+        with patch("ournotes_bot.qq.render_card_list", return_value=b"skill cards") as render:
+            self.assertEqual(_image_reply("/问 得分提升技能的成员卡有哪些", self.repo, parser), b"skill cards")
+        self.assertEqual([card.id for card in render.call_args.args[0]], [1])
+        with patch("ournotes_bot.qq.render_support_card_list", return_value=b"support cards") as render:
+            self.assertEqual(_image_reply("/问 tmr的支援卡有哪些", self.repo, parser), b"support cards")
+        self.assertEqual([card.id for card in render.call_args.args[0]], [1])
 
     def test_model_is_query_parser_only_and_budgeted(self):
         settings = Settings("", "", BASE, self.repo.cache_file, 6, "test-key", "test-model", "https://ai.example", 1)
@@ -148,7 +198,8 @@ class QueryTests(unittest.TestCase):
     def test_ai_card_query_uses_regular_image_renderer(self):
         settings = Settings("", "", BASE, self.repo.cache_file, 6, "test-key", "test-model", "https://ai.example", 2)
         parser = AIQueryParser(settings)
-        with patch.object(parser, "_request", return_value={"intent": "card", "query": "1", "difficulty": ""}):
+        with patch.object(parser, "_request", return_value={"intent": "card", "query": "1", "difficulty": ""}), \
+             patch("ournotes_bot.yatta.card_detail", return_value={}):
             self.assertIn("高松灯", parser.answer("/问 1号卡面", self.repo))
         with patch.object(self.repo, "card_with_detail", return_value=self.repo.cards[0]), \
              patch("ournotes_bot.qq.render_card", return_value=b"image"):
