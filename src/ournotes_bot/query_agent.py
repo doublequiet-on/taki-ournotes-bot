@@ -13,11 +13,12 @@ from typing import Callable
 
 from .ai_client import AIClientError, AIInvalidResponse, ModelResponse
 from .ai_quota import DailyQuota, QuotaUnavailable
-from .commands import CommandResult, handle_command, resolve_command
+from .commands import PAGE_SIZE, CommandResult, handle_command, resolve_command
 from .data import SongRepository
 from .entity_lexicon import alias_version, find_anchor, mentions_outside_catalog
-from .local_query import parse_local_query
+from .local_query import is_explicit_empty_subject_query, parse_local_query
 from .query_capabilities import CAPABILITIES, Capability, capability_for_spec, local_route, route_prompt
+from .query_debug import QUERY_DEBUG_COUNTERS
 from .query_metrics import QueryMetrics
 from .query_validation import (
     AMBIGUOUS_ENTITY,
@@ -332,9 +333,15 @@ class QueryAgent:
         else:
             data = prefetched
 
+        allow_empty_subject = is_explicit_empty_subject_query(
+            question, capability.intent, repository,
+        )
         while True:
             state.last_action = CallToolAction(capability.id, data)
-            validated = validate_capability_action(data, capability, question, repository)
+            validated = validate_capability_action(
+                data, capability, question, repository,
+                allow_empty_subject=allow_empty_subject,
+            )
             if validated.spec is None:
                 observation = self._validation_observation(validated)
                 state.last_observation = observation
@@ -392,6 +399,9 @@ class QueryAgent:
 
             self._cache_spec(question, validated.spec, outcome.code)
             self._remember_state(question, state)
+            if (outcome.code == OutcomeCode.SUCCESS
+                    and self._has_useful_result(outcome.payload)):
+                QUERY_DEBUG_COUNTERS.record_useful_query()
             if tracked:
                 metric = {
                     OutcomeCode.EMPTY: "ai_empty",
@@ -471,6 +481,7 @@ class QueryAgent:
             data = response
         if not isinstance(data, dict):
             return None, TerminalOutcome(OutcomeCode.INVALID_OUTPUT, UNSUPPORTED)
+        QUERY_DEBUG_COUNTERS.record_api_success()
         return data, None
 
     def _repair(self, state: AgentState, question: str, capability: Capability,
@@ -600,6 +611,26 @@ class QueryAgent:
         if spec.intent == "chart" and result.chart is None:
             return OutcomeCode.EMPTY
         return OutcomeCode.SUCCESS
+
+    @staticmethod
+    def _has_useful_result(result: QueryResult | CommandResult | TerminalOutcome) -> bool:
+        """Whether the final reply contains retrieved records, not an empty/page notice."""
+        if not isinstance(result, QueryResult):
+            return False
+        spec = result.spec
+        if spec.intent == "chart":
+            return result.chart is not None and bool(result.chart[1])
+        if spec.intent == "card":
+            if spec.subject is not None and spec.subject.kind == "card":
+                return bool(result.cards)
+            rows = result.cards
+        elif spec.intent == "support_card":
+            if spec.subject is not None and spec.subject.kind == "support_card":
+                return bool(result.support_cards)
+            rows = result.support_cards
+        else:
+            rows = result.songs
+        return (spec.page - 1) * PAGE_SIZE < len(rows)
 
     @staticmethod
     def _observation_code(code: OutcomeCode) -> ObservationCode:

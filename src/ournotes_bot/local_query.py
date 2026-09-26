@@ -194,3 +194,33 @@ def parse_local_query(query: str, repository: SongRepository) -> QuerySpec | str
     return (local_song_filter(query, repository)
             or local_entity_question(query, repository)
             or local_skill_question(query, repository))
+
+
+def is_explicit_empty_subject_query(query: str, intent: str,
+                                    repository: SongRepository) -> bool:
+    """Return whether deterministic parsing proves the user requested all records.
+
+    A missing catalog anchor is not enough: it may mean the user supplied an
+    unknown entity. Only the same strict local grammar used for zero-AI queries
+    may authorize a subject-less model action.
+    """
+    parsed = parse_local_query(query, repository)
+    if (isinstance(parsed, QuerySpec) and parsed.intent == intent
+            and parsed.subject is None):
+        return True
+
+    # Some legitimate skill phrasings deliberately need the model, but their
+    # syntax can still prove that "成员卡" is the collection being searched
+    # rather than an unknown character/card name. Keep this check structural:
+    # unknown subjects such as "不存在角色的……成员卡" do not start this way.
+    text = unicodedata.normalize("NFKC", query).strip()
+    text = re.sub(
+        r"^(?:(?:请|帮我|给我|查询|查看|查一下|找一下|列出|看看|想看|查|找)\s*)+",
+        "", text,
+    ).strip(" ，,。？?！!")
+    if intent == "card" and "技能" in text:
+        return bool(re.match(
+            r"^(?:有哪些|哪些)\s*(?:成员卡|角色卡|卡牌|卡)\s*的?\s*(?:技能|技能效果)",
+            text, re.I,
+        ))
+    return False

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass, replace
 from enum import Enum
 from typing import Any
@@ -68,7 +67,8 @@ def validate_route(data: dict[str, Any]) -> RouteResult:
 
 
 def validate_capability_action(data: dict[str, Any], capability: Capability, question: str,
-                               repository: SongRepository) -> ValidationResult:
+                               repository: SongRepository, *,
+                               allow_empty_subject: bool = False) -> ValidationResult:
     """Validate a capability-scoped action and apply catalog grounding."""
     if "intent" in data:
         if any(key not in _LEGACY_FIELDS for key in data):
@@ -77,7 +77,10 @@ def validate_capability_action(data: dict[str, Any], capability: Capability, que
             return ValidationResult(None, OutcomeCode.UNSUPPORTED)
         if data.get("intent") != capability.intent:
             return ValidationResult(None, OutcomeCode.INVALID_OUTPUT)
-        return validate_legacy_plan(data, question, repository)
+        return validate_legacy_plan(
+            data, question, repository,
+            allow_empty_subject=allow_empty_subject and capability.allow_empty_subject,
+        )
     if data == {"action": "reject", "reason": "unsupported"}:
         return ValidationResult(None, OutcomeCode.UNSUPPORTED)
     if (set(data) != {"action", "capability", "arguments"}
@@ -96,23 +99,11 @@ def validate_capability_action(data: dict[str, Any], capability: Capability, que
     for name in ("difficulty", "level_operator", "level", "skill_query", "skill_kind"):
         if name in arguments:
             legacy[name] = arguments[name]
-    validated = validate_legacy_plan(legacy, question, repository)
-    if (validated.code == OutcomeCode.UNKNOWN_ENTITY and not legacy["query"]
-            and _safe_empty_subject(capability, arguments, question)):
-        comparison = {"gte": ">=", "gt": ">", "lte": "<=", "lt": "<"}.get(
-            str(arguments.get("level_operator", "")), ""
-        )
-        display = "全部支援卡" if capability.intent == "support_card" else ""
-        validated = ValidationResult(QuerySpec(
-            capability.intent,
-            difficulty=str(arguments.get("difficulty", "")),
-            comparison=comparison,
-            level=(float(arguments["level"]) if comparison else None),
-            display_name=display,
-            skill_query=str(arguments.get("skill_query", "")).strip(),
-            skill_kind=str(arguments.get("skill_kind", "")),
-        ), OutcomeCode.SUCCESS)
-    elif validated.code == OutcomeCode.INVALID_ARGUMENTS:
+    validated = validate_legacy_plan(
+        legacy, question, repository,
+        allow_empty_subject=allow_empty_subject and capability.allow_empty_subject,
+    )
+    if validated.code == OutcomeCode.INVALID_ARGUMENTS:
         validated = replace(
             validated,
             invalid_fields=("arguments",),
@@ -128,22 +119,9 @@ def validate_capability_action(data: dict[str, Any], capability: Capability, que
     return validated
 
 
-def _safe_empty_subject(capability: Capability, arguments: dict[str, Any], question: str) -> bool:
-    if not capability.allow_empty_subject:
-        return False
-    if capability.intent == "song":
-        return bool(arguments.get("level_operator"))
-    if capability.intent == "card":
-        return bool(arguments.get("skill_query") or arguments.get("skill_kind")
-                    or arguments.get("rarity") is not None)
-    if capability.intent == "support_card":
-        return (arguments.get("rarity") is not None
-                or bool(re.search(r"所有|全部|有哪些|列表", question)))
-    return False
-
-
 def validate_legacy_plan(data: dict[str, Any], question: str,
-                         repository: SongRepository) -> ValidationResult:
+                         repository: SongRepository, *,
+                         allow_empty_subject: bool = False) -> ValidationResult:
     """Validate the legacy all-capabilities JSON contract without changing it."""
     intent = data.get("intent")
     term = data.get("query")
@@ -189,7 +167,7 @@ def validate_legacy_plan(data: dict[str, Any], question: str,
     )
     if anchor.ambiguous:
         return ValidationResult(None, OutcomeCode.AMBIGUOUS)
-    if anchor.entity is None and not (intent == "card" and (skill_query or skill_kind)):
+    if anchor.entity is None and not allow_empty_subject:
         return ValidationResult(None, OutcomeCode.UNKNOWN_ENTITY)
     if term.strip():
         if resolve_entity(intent, term, repository) is None:
@@ -197,10 +175,6 @@ def validate_legacy_plan(data: dict[str, Any], question: str,
         proposed = find_anchor(intent, term, repository)
         if proposed.ambiguous or proposed.entity != anchor.entity:
             return ValidationResult(None, OutcomeCode.UNKNOWN_ENTITY)
-    if intent in {"chart", "support_card"} and anchor.entity is None:
-        return ValidationResult(None, OutcomeCode.UNKNOWN_ENTITY)
-    if intent == "card" and anchor.entity is None and not (skill_query or skill_kind):
-        return ValidationResult(None, OutcomeCode.UNKNOWN_ENTITY)
     symbol = {"gte": ">=", "gt": ">", "lte": "<=", "lt": "<"}.get(comparison, "")
     display = str(anchor.entity.value) if anchor.entity else ""
     spec = QuerySpec(

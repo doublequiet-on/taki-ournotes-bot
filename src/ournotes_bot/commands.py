@@ -10,6 +10,7 @@ from typing import TypeVar
 from .data import Card, Skill, Song, SongRepository, SupportCard, character_identity, localized_text, normalize, resolve_character_alias
 from .entity_lexicon import known_alias_names, resolve_exact_alias
 from .i18n import tr
+from .query_debug import QUERY_DEBUG_COUNTERS
 
 
 HELP_TEXT = """Our Notes 查询指令
@@ -20,6 +21,7 @@ HELP_TEXT = """Our Notes 查询指令
 /查缩写 昵称：查看昵称对应的角色、乐队等，也可直接用于查曲或查卡
 /问 想查的内容：自然语言查询歌曲、谱面、成员卡技能或支援卡（复杂问法需配置 AI）
 /数据状态：查看进程、最近同步与缓存状态
+/调试数据：查看本次进程的 AI API 成功调用与有效检索次数
 /帮助：查看本说明
 示例：/查曲 mygo 27、/查谱面 100001 EXPERT、/查卡 skk、/查支援卡 tmr"""
 HELP_TEXTS = {
@@ -524,6 +526,13 @@ def handle_command(content: str, repository: SongRepository,
         return tr(locale, "language")
     if text.split(None, 1)[0].casefold() in UNAVAILABLE_COMMANDS:
         return tr(locale, "unavailable")
+    if text.casefold() == "调试数据":
+        snapshot = QUERY_DEBUG_COUNTERS.snapshot()
+        return (
+            "AI 调试数据（本次进程启动后）\n"
+            f"成功 API 调用：{snapshot.successful_api_calls} 次\n"
+            f"产生实际检索内容的 AI 查询：{snapshot.useful_ai_queries} 次"
+        )
     if text.casefold() in {"数据状态", "状态", "版本", "status", "状態"}:
         state = repository.cache_state
         if state not in {"fresh", "cached", "stale", "unsaved"}:

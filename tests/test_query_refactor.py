@@ -94,6 +94,67 @@ class QueryRefactorTests(unittest.TestCase):
         self.assertEqual(bucket["local_success"], 1)
         self.assertEqual(parser.outcome_code_for(f"/问 {secret}"), OutcomeCode.UNKNOWN_ENTITY)
 
+    def test_model_cannot_drop_an_unknown_subject_to_expand_scope(self) -> None:
+        cases = (
+            (
+                "/问 不存在乐队的25级以上歌曲",
+                {
+                    "action": "call_tool", "capability": "song.search",
+                    "arguments": {
+                        "query": "", "difficulty": "", "level_operator": "gte",
+                        "level": 25, "page": 1,
+                    },
+                },
+            ),
+            (
+                "/问 不存在角色的得分提升技能成员卡",
+                {
+                    "action": "call_tool", "capability": "member_card.search",
+                    "arguments": {
+                        "query": "", "skill_query": "得分提升", "skill_kind": "",
+                        "rarity": None, "page": 1,
+                    },
+                },
+            ),
+            (
+                "/问 不存在角色有哪些支援卡",
+                {
+                    "action": "call_tool", "capability": "support_card.search",
+                    "arguments": {"query": "", "rarity": None, "page": 1},
+                },
+            ),
+        )
+        for question, action in cases:
+            with self.subTest(question=question):
+                parser = AIQueryParser(replace(
+                    self.settings,
+                    ai_quota_file=Path(self.temp.name) / (str(abs(hash(question))) + "-quota.json"),
+                    ai_metrics_file=Path(self.temp.name) / (str(abs(hash(question))) + "-metrics.json"),
+                ))
+                with patch.object(parser, "_request", return_value=action) as request:
+                    answer, result = parser.answer_with_plan(question, self.repo)
+                self.assertEqual(answer, UNKNOWN_ENTITY)
+                self.assertIsNone(result)
+                self.assertEqual(request.call_count, 1)
+                self.assertEqual(parser.outcome_code_for(question), OutcomeCode.UNKNOWN_ENTITY)
+
+    def test_explicit_all_scope_queries_remain_local(self) -> None:
+        samples = (
+            "/问 25级以上歌曲",
+            "/问 得分提升技能的成员卡有哪些",
+            "/问 SSR成员卡有哪些",
+            "/问 支援卡有哪些",
+        )
+        for question in samples:
+            with self.subTest(question=question):
+                parser = AIQueryParser(self.settings)
+                with patch.object(
+                    parser, "_request", side_effect=AssertionError("unexpected AI call"),
+                ):
+                    _, result = parser.answer_with_plan(question, self.repo)
+                self.assertIsNotNone(result)
+                self.assertIsNone(result.spec.subject)
+
     def test_corrupt_metrics_do_not_break_or_repeat_model_calls(self) -> None:
         self.metrics_path.write_text("{broken", encoding="utf-8")
         parser = AIQueryParser(self.settings)
