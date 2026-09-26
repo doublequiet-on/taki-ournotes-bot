@@ -16,9 +16,11 @@ Route.SANDBOX_DOMAIN = "api.bot.qq.com"
 
 from .ai_query import AIQueryParser, is_ai_request
 from .chart_data import ChartDataError, load_chart_score
-from .commands import ALIASES, CommandResult, handle_command, locale_for, page_notice, page_slice, resolve_command
-from .config import Settings
+from .commands import (ALIASES, CommandResult, handle_command, locale_for, page_notice,
+                       page_slice, resolve_command, split_commands)
+from .config import QQ_PASSIVE_REPLY_LIMIT, Settings
 from .data import SongRepository
+from .i18n import tr
 from .structured_query import QueryResult
 from .visuals import render_card, render_card_list, render_chart, render_song_list
 
@@ -120,6 +122,32 @@ class QueryGate:
                 self._pending -= 1
 
 
+async def prepare_commands(commands: list[str], gate: "QueryGate", repository: SongRepository,
+                           ai_parser: AIQueryParser, limit: int) -> tuple[list["PreparedReply"], int]:
+    """Prepare several commands concurrently and return replies in asked order.
+
+    Preparation is bounded by `gate`, so a burst queues instead of swamping the
+    machine, while `gather` keeps the results aligned with `commands` — the
+    delivery order therefore follows what the user asked for rather than which
+    query happened to finish first. One failing command cannot drop the others.
+
+    Returns (replies, overflow) where overflow counts commands beyond `limit`.
+    """
+    selected = commands[:limit]
+    results = await asyncio.gather(
+        *(gate.prepare(command, repository, ai_parser) for command in selected),
+        return_exceptions=True,
+    )
+    replies: list[PreparedReply] = []
+    for result in results:
+        if isinstance(result, BaseException):
+            logger.error("查询结果准备失败；错误类型=%s", type(result).__name__)
+            continue
+        if result:
+            replies.append(result)
+    return replies, max(0, len(commands) - limit)
+
+
 def _image_from_result(result: QueryResult | CommandResult | None,
                        repository: SongRepository, locale: str) -> bytes | None:
     if isinstance(result, QueryResult):
@@ -207,9 +235,17 @@ async def _upload_image(api, target_id: str, image: bytes, group: bool):
     return {"file_info": result["file_info"]}
 
 
-async def _deliver_reply(message, target_id: str, group: bool, reply: PreparedReply) -> None:
+async def _deliver_reply(message, target_id: str, group: bool, reply: PreparedReply,
+                         msg_seq: int = 1) -> None:
+    """Send one reply as a passive reply to `message`.
+
+    QQ rejects a second passive send that reuses the same (msg_id, msg_seq)
+    pair, so every reply to one inbound message must carry a distinct, and
+    increasing, msg_seq. See `QQ_PASSIVE_REPLY_LIMIT` for the per-message cap.
+    """
     send = message._api.post_group_message if group else message._api.post_c2c_message
-    target = {"group_openid" if group else "openid": target_id, "msg_id": message.id}
+    target = {"group_openid" if group else "openid": target_id,
+              "msg_id": message.id, "msg_seq": msg_seq}
     channel = "群聊" if group else "单聊"
     if reply.image:
         try:
@@ -246,6 +282,27 @@ def run_bot(app_id: str, app_secret: str, repository: SongRepository, settings: 
         async def on_ready(self) -> None:
             logger.info("机器人 %s 已上线", self.robot.name)
 
+        async def _reply_commands(self, message, target_id: str, group: bool,
+                                  commands: list[str]) -> None:
+            """Prepare one message's commands, then reply in the order asked.
+
+            Every send carries its own msg_seq, because QQ discards a passive
+            reply that repeats an earlier (msg_id, msg_seq) pair. The total is
+            kept within QQ_PASSIVE_REPLY_LIMIT, leaving room for the notice.
+            """
+            limit = settings.multi_command_limit
+            replies, overflow = await prepare_commands(
+                commands, query_gate, repository, ai_parser, limit)
+            for seq, reply in enumerate(replies, start=1):
+                await _deliver_reply(message, target_id, group, reply, msg_seq=seq)
+            if overflow and len(replies) < QQ_PASSIVE_REPLY_LIMIT:
+                logger.info("单条消息指令数超过上限：收到 %d 条，执行 %d 条",
+                            len(commands), len(replies))
+                notice = PreparedReply(tr(locale_for(commands[0]), "too_many_commands",
+                                          limit=limit, total=len(commands)))
+                await _deliver_reply(message, target_id, group, notice,
+                                     msg_seq=len(replies) + 1)
+
         async def _reply_group(self, message: GroupMessage) -> None:
             if not hasattr(self, "_seen_group_ids"):
                 self._seen_group_ids = deque(maxlen=256)
@@ -253,19 +310,17 @@ def run_bot(app_id: str, app_secret: str, repository: SongRepository, settings: 
                 return
             if message.id:
                 self._seen_group_ids.append(message.id)
-            reply = await query_gate.prepare(message.content, repository, ai_parser)
-            if not reply:
-                return
-            await _deliver_reply(message, message.group_openid, True, reply)
+            commands = split_commands(message.content)
+            if commands:
+                await self._reply_commands(message, message.group_openid, True, commands)
 
         async def on_group_at_message_create(self, message: GroupMessage) -> None:
             await self._reply_group(message)
 
         async def on_c2c_message_create(self, message: C2CMessage) -> None:
-            reply = await query_gate.prepare(message.content, repository, ai_parser)
-            if not reply:
-                return
-            await _deliver_reply(message, message.author.user_openid, False, reply)
+            commands = split_commands(message.content)
+            if commands:
+                await self._reply_commands(message, message.author.user_openid, False, commands)
 
     async def refresh_loop() -> None:
         while True:

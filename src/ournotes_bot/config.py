@@ -9,6 +9,12 @@ _SOURCE_CANDIDATE = Path(__file__).resolve().parents[2]
 SOURCE_ROOT = _SOURCE_CANDIDATE if (_SOURCE_CANDIDATE / "pyproject.toml").is_file() else None
 CONFIG_ROOT = SOURCE_ROOT or Path.cwd()
 
+# QQ allows at most five passive replies per inbound message id. Because a
+# sixth send is rejected outright, one slot is kept aside for the over-limit
+# notice, so a message can execute at most four commands.
+QQ_PASSIVE_REPLY_LIMIT = 5
+MAX_MULTI_COMMAND_LIMIT = QQ_PASSIVE_REPLY_LIMIT - 1
+
 
 def runtime_data_dir() -> Path:
     """Keep installed copies out of the package's potentially read-only directory."""
@@ -48,6 +54,7 @@ class Settings:
     query_concurrency: int = 2
     query_queue_limit: int = 4
     ai_quota_file: Path | None = None
+    multi_command_limit: int = MAX_MULTI_COMMAND_LIMIT
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -73,4 +80,7 @@ class Settings:
             query_concurrency=max(1, int(os.getenv("OURNOTES_QUERY_CONCURRENCY", "2"))),
             query_queue_limit=max(0, int(os.getenv("OURNOTES_QUERY_QUEUE_LIMIT", "4"))),
             ai_quota_file=quota_file,
+            multi_command_limit=min(MAX_MULTI_COMMAND_LIMIT,
+                                    max(1, int(os.getenv("OURNOTES_MULTI_COMMAND_LIMIT",
+                                                         str(MAX_MULTI_COMMAND_LIMIT))))),
         )
