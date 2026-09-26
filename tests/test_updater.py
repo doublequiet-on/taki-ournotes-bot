@@ -30,6 +30,16 @@ class UpdaterTests(unittest.TestCase):
         with self.assertRaises(u.Paused):
             u.read_json(self.up.state_file)
 
+    def test_saved_git_path_works_without_terminal_path(self):
+        git = self.root / "git.exe"
+        git.touch()
+        u.atomic_json(self.up.folder / "settings.json", {"git_executable": str(git)})
+        with patch.object(u.shutil, "which", return_value=None):
+            self.assertEqual(self.up.git_path(), str(git))
+            git.unlink()
+            with self.assertRaises(u.Paused):
+                self.up.git_path()
+
     def test_atomic_state_and_exclusive_lock(self):
         u.atomic_json(self.up.state_file, {"active": A})
         self.assertEqual(u.read_json(self.up.state_file), {"active": A})

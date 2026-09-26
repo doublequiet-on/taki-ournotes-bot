@@ -11,6 +11,12 @@ if ($Disable) {
 }
 $state = Join-Path $root 'data\updater\state.json'
 if (-not (Test-Path -LiteralPath $state)) { throw 'Run update_bot.py --initialize first.' }
+$settingsFile = Join-Path $root 'data\updater\settings.json'
+$gitCommand = Get-Command git -ErrorAction SilentlyContinue
+$gitExecutable = if ($gitCommand) { $gitCommand.Source } elseif (Test-Path -LiteralPath $settingsFile) { (Get-Content -LiteralPath $settingsFile -Raw | ConvertFrom-Json).git_executable }
+if (-not $gitExecutable -or -not (Test-Path -LiteralPath $gitExecutable -PathType Leaf)) { throw 'Git not found. Install Git or run this installer from a terminal with Git available.' }
+$json = @{git_executable=$gitExecutable} | ConvertTo-Json
+[System.IO.File]::WriteAllText($settingsFile, $json, (New-Object System.Text.UTF8Encoding($false)))
 $basePython = & (Join-Path $root '.venv\Scripts\python.exe') -c 'import sys; print(sys._base_executable)'
 if ($LASTEXITCODE -ne 0) { throw 'Cannot resolve base Python.' }
 $pythonw = Join-Path (Split-Path -Parent $basePython) 'pythonw.exe'

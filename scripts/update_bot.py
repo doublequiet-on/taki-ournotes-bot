@@ -10,6 +10,7 @@ import json
 import os
 from pathlib import Path, PurePosixPath
 import re
+import shutil
 import subprocess
 import sys
 import tarfile
@@ -260,8 +261,16 @@ class Updater:
     def git(self, *args):
         env = os.environ.copy()
         env.update(GIT_TERMINAL_PROMPT="0", GCM_INTERACTIVE="Never")
-        return run(["git", "-c", "http.sslBackend=openssl", "-c", "credential.helper=", *args],
+        return run([self.git_path(), "-c", "http.sslBackend=openssl", "-c", "credential.helper=", *args],
                    cwd=self.root, env=env, timeout=180)
+
+    def git_path(self):
+        settings = self.folder / "settings.json"
+        configured = read_json(settings).get("git_executable") if settings.exists() else None
+        executable = configured or shutil.which("git")
+        if not executable or not Path(executable).is_file():
+            raise Paused("找不到 Git；请重新运行计划任务安装脚本，记录可用的 Git 位置")
+        return str(executable)
 
     def clean(self):
         if self.git("branch", "--show-current") != "main":
@@ -282,7 +291,7 @@ class Updater:
         directory = self.folder / "releases" / (commit[:12] + "-" + uuid.uuid4().hex[:8])
         source = directory / "source"
         source.mkdir(parents=True)
-        result = subprocess.run(["git", "archive", "--format=tar", commit], cwd=self.root,
+        result = subprocess.run([self.git_path(), "archive", "--format=tar", commit], cwd=self.root,
                                 capture_output=True, creationflags=HIDDEN, timeout=60)
         if result.returncode:
             raise Paused("无法生成版本快照")
@@ -295,6 +304,7 @@ class Updater:
         venv = source.parent / "venv"
         self.event("正在隔离目录安装和验证新版本；旧机器人继续运行")
         env = validation_env()
+        env["PATH"] = str(Path(self.git_path()).parent) + os.pathsep + env.get("PATH", "")
         run([sys.executable, "-m", "venv", str(venv)], env=env, timeout=180)
         python = venv / "Scripts/python.exe"
         self.event("隔离环境已创建，正在安装依赖")
