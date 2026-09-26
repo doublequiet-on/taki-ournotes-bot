@@ -71,3 +71,10 @@ class MediaTests(unittest.TestCase):
         connection = SimpleNamespace(parser={}, state=SimpleNamespace(api=FakeApi()))
         install_group_parser(connection, Mock(), "12345")
         self.assertIn("group_message_create", connection.parser)
+
+    def test_group_discovery_does_not_turn_chat_into_queries(self) -> None:
+        parser, observe, dispatch = {}, Mock(), Mock()
+        register_group_message_parser(parser, FakeApi(), dispatch, "12345", observe)
+        parser["group_message_create"]({"d": {"group_openid": "group", "content": "普通聊天"}})
+        observe.assert_called_once_with("group")
+        dispatch.assert_not_called()

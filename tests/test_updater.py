@@ -9,7 +9,11 @@ import tarfile
 import tempfile
 import subprocess
 import unittest
-from unittest.mock import patch, Mock
+import asyncio
+from types import SimpleNamespace
+from unittest.mock import patch, Mock, AsyncMock
+
+from ournotes_bot.update_notice import NoticeStore, UpdateNotifier, committed_notice
 
 SPEC = importlib.util.spec_from_file_location("taki_updater", Path(__file__).resolve().parents[1] / "scripts/update_bot.py")
 u = importlib.util.module_from_spec(SPEC)
@@ -249,6 +253,152 @@ class UpdaterTests(unittest.TestCase):
             self.up.git("merge", "--ff-only", "--no-overwrite-ignore", target)
         self.assertEqual(git("rev-parse", "HEAD"), base)
         self.assertEqual((self.root / "local.txt").read_text(), "private")
+
+
+class UpdateNoticeTests(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        self.root = Path(temp.name)
+        self.source = self.root / "data/updater/releases/candidate/source"
+        self.source.mkdir(parents=True)
+        (self.source / "更新通知.txt").write_text("Taki 更新啦！新增群更新通知。", encoding="utf-8")
+        self.state_path = self.root / "data/updater/state.json"
+        self.state = {"active": {"sha": B, "source": str(self.source)}, "previous": {"sha": A}, "rejected": None}
+        u.atomic_json(self.state_path, self.state)
+        self.notifier = self.worker()
+        self.http = SimpleNamespace(request=AsyncMock(side_effect=self.respond))
+        self.api = SimpleNamespace(_http=self.http)
+
+    def worker(self):
+        worker = UpdateNotifier(self.root, self.root / "data/update-notices.sqlite3", "app", self.source)
+        worker._pace = AsyncMock()
+        return worker
+
+    @staticmethod
+    async def respond(route, **kwargs):
+        return {"allow_proactive_msg": True} if route.method == "GET" else {"id": "receipt"}
+
+    def posts(self):
+        return [call for call in self.http.request.await_args_list if call.args[0].method == "POST"]
+
+    async def test_commit_gate_blocks_candidate_transaction_and_rollback(self):
+        self.notifier.observe("group")
+        journal = self.root / "data/updater/transaction.json"
+        journal.write_text("{}")
+        await self.notifier.deliver(self.api)
+        self.http.request.assert_not_called()
+        journal.unlink()
+        for state in (
+            {**self.state, "active": {"sha": A, "source": str(self.root / "old")}},
+            {**self.state, "rejected": A},
+            {**self.state, "previous": None},
+        ):
+            with self.subTest(state=state):
+                u.atomic_json(self.state_path, state)
+                await self.notifier.deliver(self.api)
+                self.http.request.assert_not_called()
+        u.atomic_json(self.state_path, self.state)
+        await self.notifier.deliver(self.api)
+        self.assertEqual(len(self.posts()), 1)
+
+    async def test_once_per_group_revision_across_concurrency_and_restart(self):
+        for gid in ("one", "two"):
+            self.notifier.observe(gid)
+        await asyncio.gather(self.notifier.deliver(self.api), self.notifier.deliver(self.api))
+        await self.worker().deliver(self.api)
+        self.assertEqual(len(self.posts()), 2)
+        for call in self.posts():
+            self.assertEqual(call.kwargs["retry_time"], 2)
+            self.assertEqual(call.kwargs["json"], {"msg_type": 0, "content": "Taki 更新啦！新增群更新通知。"})
+        self.state["active"]["sha"] = "c" * 40
+        u.atomic_json(self.state_path, self.state)
+        await self.worker().deliver(self.api)
+        self.assertEqual(len(self.posts()), 4)
+        other_app = NoticeStore(self.notifier.data_file, "other-app")
+        self.assertEqual(other_app.pending(B), [])
+
+    async def test_group_permission_removal_and_out_of_order_events(self):
+        for gid in ("removed", "disabled", "enabled"):
+            self.notifier.observe(gid, event="add", timestamp=10)
+        self.notifier.observe("removed", event="remove", timestamp=30)
+        self.notifier.observe("removed", event="add", timestamp=20)
+        self.notifier.observe("removed")
+        self.notifier.observe("disabled", event="reject", timestamp=30)
+        self.notifier.observe("disabled", event="allow", timestamp=20)
+        self.notifier.observe("disabled")
+        async def respond(route, **kwargs):
+            if route.method == "GET":
+                return {"allow_proactive_msg": not route.url.endswith("/disabled/bot_state")}
+            return {"id": "receipt"}
+        self.http.request.side_effect = respond
+        await self.notifier.deliver(self.api)
+        self.assertEqual(len(self.posts()), 1)
+        self.assertIn("/enabled/messages", self.posts()[0].args[0].url)
+        # A newly observed permission change wins against an in-flight stale GET.
+        self.notifier.observe("race")
+        async def race(route, **kwargs):
+            self.notifier.observe("race", event="reject", timestamp=100)
+            return {"allow_proactive_msg": True}
+        self.http.request.side_effect = race
+        await self.notifier.deliver(self.api)
+        self.assertEqual(len(self.posts()), 1)
+
+    async def test_whitelist_only_permission_endpoint_uses_true_proactive_post(self):
+        self.notifier.observe("unknown")
+        self.notifier.observe("disabled", event="reject", timestamp=10)
+        async def respond(route, **kwargs):
+            if route.method == "GET":
+                raise RuntimeError("11253: private response")
+            return {"id": "receipt"}
+        self.http.request.side_effect = respond
+        await self.notifier.deliver(self.api)
+        self.assertEqual(len(self.posts()), 1)
+        self.assertIn("/unknown/messages", self.posts()[0].args[0].url)
+        self.assertNotIn("msg_id", self.posts()[0].kwargs["json"])
+        self.assertNotIn("event_id", self.posts()[0].kwargs["json"])
+
+    async def test_uncertain_sends_do_not_repeat_or_block_other_groups(self):
+        for gid in ("a-timeout", "b-no-receipt", "c-ok"):
+            self.notifier.observe(gid)
+        async def respond(route, **kwargs):
+            if route.method == "GET":
+                return {"allow_proactive_msg": True}
+            if "/a-timeout/" in route.url:
+                raise TimeoutError("secret-response")
+            return None if "/b-no-receipt/" in route.url else {"id": "receipt"}
+        self.http.request.side_effect = respond
+        with self.assertLogs("ournotes_bot.update_notice", level="WARNING") as logs:
+            await self.notifier.deliver(self.api)
+        self.assertNotIn("secret-response", " ".join(logs.output))
+        await self.worker().deliver(self.api)
+        self.assertEqual(len(self.posts()), 3)
+        self.notifier.observe("d-interrupted")
+        async def interrupted(route, **kwargs):
+            if route.method == "GET":
+                return {"allow_proactive_msg": True}
+            raise asyncio.CancelledError()
+        self.http.request.side_effect = interrupted
+        with self.assertRaises(asyncio.CancelledError):
+            await self.notifier.deliver(self.api)
+        self.http.request.side_effect = self.respond
+        await self.worker().deliver(self.api)
+        self.assertEqual(len(self.posts()), 4)
+
+    async def test_bad_state_summary_and_storage_fail_without_sending(self):
+        self.notifier.observe("group")
+        self.state_path.write_text("{broken")
+        with self.assertRaises(ValueError):
+            await self.notifier.deliver(self.api)
+        u.atomic_json(self.state_path, self.state)
+        (self.source / "更新通知.txt").write_text("x" * 501)
+        with self.assertRaises(ValueError):
+            await self.notifier.deliver(self.api)
+        (self.source / "更新通知.txt").write_text("ok")
+        self.notifier.data_file.write_bytes(b"broken database")
+        with self.assertRaises(Exception):
+            await self.worker().deliver(self.api)
+        self.http.request.assert_not_called()
 
 
 if __name__ == "__main__":

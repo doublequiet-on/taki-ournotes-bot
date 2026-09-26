@@ -89,6 +89,7 @@ class Settings:
     # Send replies in arrival order. On by default: unordered replies read as
     # an answer to the wrong question. Turn it off to favour latency instead.
     reply_order: bool = True
+    update_notices: bool = True
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -120,4 +121,5 @@ class Settings:
             qq_gateway_host=os.getenv("OURNOTES_QQ_GATEWAY_HOST",
                                       DEFAULT_QQ_GATEWAY_HOST).strip(),
             reply_order=read_flag("OURNOTES_REPLY_ORDER", True),
+            update_notices=read_flag("OURNOTES_UPDATE_NOTICES", True),
         )
