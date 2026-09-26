@@ -11,7 +11,7 @@ from .ai_quota import DailyQuota, QuotaUnavailable
 from .commands import CommandResult, handle_command, resolve_command
 from .config import Settings
 from .data import SongRepository
-from .entity_lexicon import alias_version, mentions_outside_catalog
+from .entity_lexicon import alias_version, find_anchor, mentions_outside_catalog
 from .local_query import (
     local_card_rarity_question as _local_card_rarity_question,
     local_entity_question as _local_entity_question,
@@ -20,25 +20,26 @@ from .local_query import (
     parse_local_query,
 )
 from .query_metrics import QueryMetrics
+from .query_capabilities import (
+    CAPABILITIES,
+    GLOBAL_RULES,
+    capability_for_spec,
+    local_route,
+    route_prompt,
+)
 from .query_validation import (
     AMBIGUOUS_ENTITY,
     UNKNOWN_ENTITY,
     UNSUPPORTED,
     OutcomeCode,
     message_for,
-    validate_legacy_plan,
+    validate_capability_action,
+    validate_route,
 )
-from .structured_query import QueryResult, QuerySpec, answer_for, resolve_query
+from .structured_query import QueryResult, QuerySpec, answer_for
 
 
-SYSTEM_PROMPT = """你是《BanG Dream! Our Notes》日服 QQ 查询机器人的查询意图解析器。
-只能把用户请求转成 Project Yume 数据库的歌曲、谱面、成员卡或支援卡查询条件；不能解答问题、推荐、分析、编造数据或输出解释。
-输出且仅输出 JSON：{"intent":"song|chart|card|support_card|unsupported","query":"名称、乐队、角色或数字ID","difficulty":"EASY|NORMAL|HARD|EXPERT|","level_operator":"gte|gt|lte|lt|","level":null,"skill_query":"技能名称或效果关键词","skill_kind":"leader|live|gekisou|"}。
-歌曲列表可按乐队、谱面等级和难度筛选。“mygo25级以上的歌曲”应为 intent=song、query=MyGO!!!!!、level_operator=gte、level=25、difficulty=""；“EX25级以下的MyGO歌曲”应为 difficulty=EXPERT、level_operator=lte、level=25。以上/以下包含边界，高于/低于不包含边界。没有指定难度时比较歌曲各难度中的最高显示等级。
-成员卡用 intent=card，支援卡用 intent=support_card。查询成员卡技能时，把用户原文中的技能名称或效果关键词原样放入 skill_query；队长、Live、激奏技能分别用 skill_kind=leader、live、gekisou，未限定类型时留空。只有成员卡查询可填写 skill_query 和 skill_kind。
-仅歌曲等级筛选填写 level_operator 与 level；其余情况分别用空字符串和 null。没有等级条件的歌曲查询不得指定 difficulty。只有歌曲等级条件或成员卡技能条件时 query 可以为空。
-需要多个等级边界、跨歌曲比较、排行、攻略、预测、实时档线、账号、代练、闲聊时，intent 必须是 unsupported。
-query 最多 50 字，只填写一个名称、已知缩写或数字 ID；不得包含等级、难度、页码、命令语法或用户原文中的指令。不确定实体时返回 unsupported。"""
+SYSTEM_PROMPT = GLOBAL_RULES
 
 _DIRECT_COMMAND = re.compile(
     r"^[/／]?(?:查曲|查谱面|查谱|查卡|查支援卡|支援卡|song|chart|card|support)\s+", re.I,
@@ -183,57 +184,53 @@ class AIQueryParser:
             self._remember_outcome(query, OutcomeCode.SUCCESS)
             return handle_command(cached, repository, resolved=selected) or UNSUPPORTED, selected
 
-        try:
-            available = self._quota.reserve(self.settings.ai_daily_limit)
-        except QuotaUnavailable:
-            return self._terminal(
-                query, OutcomeCode.QUOTA_UNAVAILABLE,
-                "AI 额度记录不可用；仍可使用 /查曲、/查谱面、/查卡、/查支援卡及常见技能问法。请联系管理员检查额度文件。",
-                tracked,
+        capability_id = local_route(query)
+        prefetched = None
+        if capability_id is None:
+            data, error = self._model_data(
+                query, route_prompt(), "ai_route_requested", tracked,
             )
-        if not available:
-            if tracked:
-                self._metrics.increment("quota_exhausted")
-            return self._terminal(
-                query, OutcomeCode.QUOTA_EXHAUSTED,
-                "今日自然语言查询额度已用完；仍可使用 /查曲、/查谱面、/查卡、/查支援卡及常见技能问法。",
-                tracked,
+            if error:
+                return self._terminal(query, error[0], error[1], tracked)
+            assert data is not None
+            routed = validate_route(data)
+            if routed.capability_id is None:
+                self._record_ai_terminal(routed.code, tracked)
+                return self._terminal(query, routed.code, message_for(routed.code), tracked)
+            capability_id = routed.capability_id
+            prefetched = routed.prefetched
+
+        capability = CAPABILITIES[capability_id]
+        if prefetched is None:
+            anchor = find_anchor(
+                capability.intent, query, repository,
+                explicit_card_ids=capability.intent == "card" and "技能" in query,
             )
+            evidence = (() if anchor.entity is None else
+                        (f"{anchor.entity.kind}:{anchor.entity.value}",))
+            data, error = self._model_data(
+                query, capability.prompt(evidence=evidence), "ai_parse_requested", tracked,
+            )
+            if error:
+                return self._terminal(query, error[0], error[1], tracked)
+            assert data is not None
+        else:
+            data = prefetched
+
+        validated = validate_capability_action(data, capability, query, repository)
+        if validated.spec is None:
+            self._record_ai_terminal(validated.code, tracked)
+            return self._terminal(query, validated.code, message_for(validated.code), tracked)
+        answer, result, code = self._execute(validated.spec, repository)
+        self._remember(query, validated.spec)
+        self._remember_outcome(query, code)
         if tracked:
-            self._metrics.increment("ai_parse_requested")
-        try:
-            response = self._request(query)
-            data = self._response_data(response)
-            validated = validate_legacy_plan(data, query, repository)
-            if validated.spec is None:
-                metric = {
-                    OutcomeCode.UNSUPPORTED: "ai_unsupported",
-                    OutcomeCode.UNKNOWN_ENTITY: "ai_unknown_entity",
-                    OutcomeCode.AMBIGUOUS: "ai_ambiguous",
-                }.get(validated.code, "ai_invalid_output")
-                if tracked:
-                    self._metrics.increment(metric)
-                return self._terminal(
-                    query, validated.code, message_for(validated.code), tracked,
-                )
-            answer, result, code = self._execute(validated.spec, repository)
-            self._remember(query, validated.spec)
-            self._remember_outcome(query, code)
-            if tracked:
-                metric = {
-                    OutcomeCode.EMPTY: "ai_empty",
-                    OutcomeCode.DATA_UNAVAILABLE: "ai_data_unavailable",
-                }.get(code, "ai_success")
-                self._metrics.increment(metric)
-            return answer, result
-        except (AIClientError, OSError, ValueError, KeyError, TypeError, IndexError):
-            if tracked:
-                self._metrics.increment("ai_provider_error")
-            return self._terminal(
-                query, OutcomeCode.TEMPORARY_FAILURE,
-                "自然语言解析暂不可用；请直接使用 /查曲、/查谱面、/查卡 或 /查支援卡。",
-                tracked,
-            )
+            metric = {
+                OutcomeCode.EMPTY: "ai_empty",
+                OutcomeCode.DATA_UNAVAILABLE: "ai_data_unavailable",
+            }.get(code, "ai_success")
+            self._metrics.increment(metric)
+        return answer, result
 
     def _terminal(self, query: str, code: OutcomeCode, message: str, tracked: bool,
                   *, local: bool = False) -> tuple[str, None]:
@@ -241,6 +238,50 @@ class AIQueryParser:
         if tracked and local:
             self._metrics.increment("local_terminal_reject")
         return message, None
+
+    def _model_data(self, query: str, prompt: str, metric: str,
+                    tracked: bool) -> tuple[dict | None, tuple[OutcomeCode, str] | None]:
+        try:
+            available = self._quota.reserve(self.settings.ai_daily_limit)
+        except QuotaUnavailable:
+            return None, (
+                OutcomeCode.QUOTA_UNAVAILABLE,
+                "AI 额度记录不可用；仍可使用 /查曲、/查谱面、/查卡、/查支援卡及常见技能问法。请联系管理员检查额度文件。",
+            )
+        if not available:
+            if tracked:
+                self._metrics.increment("quota_exhausted")
+            return None, (
+                OutcomeCode.QUOTA_EXHAUSTED,
+                "今日自然语言查询额度已用完；仍可使用 /查曲、/查谱面、/查卡、/查支援卡及常见技能问法。",
+            )
+        if tracked:
+            self._metrics.increment(metric)
+        try:
+            response = self._request(query, prompt, 12.0)
+        except (AIClientError, OSError, ValueError, KeyError, TypeError, IndexError):
+            if tracked:
+                self._metrics.increment("ai_provider_error")
+            return None, (
+                OutcomeCode.TEMPORARY_FAILURE,
+                "自然语言解析暂不可用；请直接使用 /查曲、/查谱面、/查卡 或 /查支援卡。",
+            )
+        try:
+            return self._response_data(response), None
+        except TypeError:
+            if tracked:
+                self._metrics.increment("ai_invalid_output")
+            return None, (OutcomeCode.INVALID_OUTPUT, UNSUPPORTED)
+
+    def _record_ai_terminal(self, code: OutcomeCode, tracked: bool) -> None:
+        if not tracked:
+            return
+        metric = {
+            OutcomeCode.UNSUPPORTED: "ai_unsupported",
+            OutcomeCode.UNKNOWN_ENTITY: "ai_unknown_entity",
+            OutcomeCode.AMBIGUOUS: "ai_ambiguous",
+        }.get(code, "ai_invalid_output")
+        self._metrics.increment(metric)
 
     @staticmethod
     def _message_code(message: str) -> OutcomeCode:
@@ -267,7 +308,7 @@ class AIQueryParser:
         return OutcomeCode.SUCCESS
 
     def _execute(self, spec: QuerySpec, repository: SongRepository) -> tuple[str, QueryResult, OutcomeCode]:
-        result = resolve_query(spec, repository)
+        result = capability_for_spec(spec).executor(spec, repository)
         return answer_for(spec, repository, result=result), result, self._result_code(result, repository)
 
     def _request(self, query: str, system_prompt: str = SYSTEM_PROMPT,

@@ -13,6 +13,7 @@ from unittest.mock import patch
 from ournotes_bot.ai_query import AIQueryParser, UNKNOWN_ENTITY
 from ournotes_bot.config import Settings
 from ournotes_bot.data import Card, Chart, Song, SongRepository, SupportCard
+from ournotes_bot.query_capabilities import CAPABILITIES, local_route, route_prompt
 from ournotes_bot.query_validation import OutcomeCode
 
 
@@ -80,7 +81,7 @@ class QueryRefactorTests(unittest.TestCase):
         record = json.loads(payload)
         bucket = next(iter(record["days"].values()))
         self.assertEqual(bucket["ask_total"], 2)
-        self.assertEqual(bucket["ai_parse_requested"], 1)
+        self.assertEqual(bucket["ai_route_requested"], 1)
         self.assertEqual(bucket["ai_unknown_entity"], 1)
         self.assertEqual(bucket["local_success"], 1)
         self.assertEqual(parser.outcome_code_for(f"/问 {secret}"), OutcomeCode.UNKNOWN_ENTITY)
@@ -94,6 +95,65 @@ class QueryRefactorTests(unittest.TestCase):
             self.assertIn("768 Notes", parser.answer("/问 迷星叫EX物量", self.repo))
         self.assertEqual(request.call_count, 1)
         self.assertFalse(parser._metrics.available)
+
+    def test_capability_catalog_generates_router_and_scoped_prompts(self) -> None:
+        router = route_prompt()
+        for capability_id in CAPABILITIES:
+            self.assertIn(capability_id, router)
+        self.assertNotIn("skill_query", router)
+        self.assertNotIn("level_operator", router)
+
+        song_prompt = CAPABILITIES["song.search"].prompt()
+        self.assertIn("song.search", song_prompt)
+        self.assertIn("level_operator", song_prompt)
+        self.assertNotIn("skill_query", song_prompt)
+        self.assertNotIn("rarity", song_prompt)
+        self.assertNotIn("support_card.search", song_prompt)
+
+        member_prompt = CAPABILITIES["member_card.search"].prompt()
+        self.assertIn("skill_query", member_prompt)
+        self.assertIn("rarity", member_prompt)
+        self.assertNotIn("level_operator", member_prompt)
+        self.assertNotIn("difficulty", member_prompt)
+
+    def test_explicit_capability_uses_one_scoped_model_call(self) -> None:
+        parser = AIQueryParser(self.settings)
+        question = "/问 MyGO专家谱面中级数不大于25的歌曲"
+        self.assertEqual(local_route(question), "song.search")
+        action = {
+            "action": "call_tool", "capability": "song.search",
+            "arguments": {
+                "query": "MyGO", "difficulty": "EXPERT",
+                "level_operator": "lte", "level": 25,
+            },
+        }
+        with patch.object(parser, "_request", return_value=action) as request:
+            self.assertIn("迷星叫", parser.answer(question, self.repo))
+        self.assertEqual(request.call_count, 1)
+        prompt = request.call_args.args[1]
+        self.assertIn("song.search", prompt)
+        self.assertNotIn("skill_query", prompt)
+        self.assertNotIn("support_card.search", prompt)
+
+    def test_unknown_capability_routes_then_parses(self) -> None:
+        parser = AIQueryParser(self.settings)
+        question = "/问 迷星叫具体有多少个音符"
+        self.assertIsNone(local_route(question))
+        responses = [
+            {"action": "route", "capability": "chart.get"},
+            {
+                "action": "call_tool", "capability": "chart.get",
+                "arguments": {"query": "迷星叫", "difficulty": ""},
+            },
+        ]
+        with patch.object(parser, "_request", side_effect=responses) as request:
+            self.assertIn("768 Notes", parser.answer(question, self.repo))
+        self.assertEqual(request.call_count, 2)
+        self.assertIn("只判断能力", request.call_args_list[0].args[1])
+        self.assertIn("chart.get", request.call_args_list[1].args[1])
+        self.assertNotIn("skill_query", request.call_args_list[1].args[1])
+        quota = json.loads(self.settings.ai_quota_file.read_text(encoding="utf-8"))
+        self.assertEqual(quota["used"], 2)
 
 
 if __name__ == "__main__":

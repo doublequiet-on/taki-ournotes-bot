@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import re
+from dataclasses import dataclass, replace
 from enum import Enum
 from typing import Any
 
 from .data import SongRepository, normalize
 from .entity_lexicon import find_anchor, resolve_entity
+from .query_capabilities import CAPABILITIES, INTENT_TO_CAPABILITY, Capability
 from .structured_query import QuerySpec
 
 
@@ -38,6 +40,109 @@ class ValidationResult:
     invalid_fields: tuple[str, ...] = ()
     allowed: tuple[str, ...] = ()
     repairable: bool = False
+
+
+@dataclass(frozen=True)
+class RouteResult:
+    capability_id: str | None
+    code: OutcomeCode
+    prefetched: dict[str, Any] | None = None
+
+
+_LEGACY_FIELDS = frozenset({
+    "intent", "query", "difficulty", "level_operator", "level", "min_level",
+    "skill_query", "skill_kind",
+})
+
+
+def validate_route(data: dict[str, Any]) -> RouteResult:
+    """Validate a router action; legacy parse objects remain an input shim."""
+    if "intent" in data:
+        if any(key not in _LEGACY_FIELDS for key in data):
+            return RouteResult(None, OutcomeCode.INVALID_OUTPUT)
+        intent = data.get("intent")
+        if intent == "unsupported":
+            return RouteResult(None, OutcomeCode.UNSUPPORTED)
+        capability_id = INTENT_TO_CAPABILITY.get(intent)
+        if capability_id is None:
+            return RouteResult(None, OutcomeCode.INVALID_OUTPUT)
+        return RouteResult(capability_id, OutcomeCode.SUCCESS, data)
+    if set(data) != {"action", "capability"} or data.get("action") != "route":
+        return RouteResult(None, OutcomeCode.INVALID_OUTPUT)
+    capability_id = data.get("capability")
+    if capability_id == "unsupported":
+        return RouteResult(None, OutcomeCode.UNSUPPORTED)
+    if not isinstance(capability_id, str) or capability_id not in CAPABILITIES:
+        return RouteResult(None, OutcomeCode.INVALID_OUTPUT)
+    return RouteResult(capability_id, OutcomeCode.SUCCESS)
+
+
+def validate_capability_action(data: dict[str, Any], capability: Capability, question: str,
+                               repository: SongRepository) -> ValidationResult:
+    """Validate a capability-scoped action and apply catalog grounding."""
+    if "intent" in data:
+        if any(key not in _LEGACY_FIELDS for key in data):
+            return ValidationResult(None, OutcomeCode.INVALID_OUTPUT)
+        if data.get("intent") == "unsupported":
+            return ValidationResult(None, OutcomeCode.UNSUPPORTED)
+        if data.get("intent") != capability.intent:
+            return ValidationResult(None, OutcomeCode.INVALID_OUTPUT)
+        return validate_legacy_plan(data, question, repository)
+    if data == {"action": "reject", "reason": "unsupported"}:
+        return ValidationResult(None, OutcomeCode.UNSUPPORTED)
+    if (set(data) != {"action", "capability", "arguments"}
+            or data.get("action") != "call_tool"
+            or data.get("capability") != capability.id):
+        return ValidationResult(None, OutcomeCode.INVALID_OUTPUT)
+    arguments = data.get("arguments")
+    invalid = capability.invalid_fields(arguments)
+    if invalid:
+        return ValidationResult(
+            None, OutcomeCode.INVALID_ARGUMENTS, invalid,
+            capability.allowed_parameters, repairable=True,
+        )
+    assert isinstance(arguments, dict)
+    legacy = {"intent": capability.intent, "query": arguments.get("query", "")}
+    for name in ("difficulty", "level_operator", "level", "skill_query", "skill_kind"):
+        if name in arguments:
+            legacy[name] = arguments[name]
+    validated = validate_legacy_plan(legacy, question, repository)
+    if (validated.code == OutcomeCode.UNKNOWN_ENTITY and not legacy["query"]
+            and _safe_empty_subject(capability, arguments, question)):
+        comparison = {"gte": ">=", "gt": ">", "lte": "<=", "lt": "<"}.get(
+            str(arguments.get("level_operator", "")), ""
+        )
+        display = "全部支援卡" if capability.intent == "support_card" else ""
+        validated = ValidationResult(QuerySpec(
+            capability.intent,
+            difficulty=str(arguments.get("difficulty", "")),
+            comparison=comparison,
+            level=(float(arguments["level"]) if comparison else None),
+            display_name=display,
+            skill_query=str(arguments.get("skill_query", "")).strip(),
+            skill_kind=str(arguments.get("skill_kind", "")),
+        ), OutcomeCode.SUCCESS)
+    if validated.spec is not None:
+        validated = replace(validated, spec=replace(
+            validated.spec,
+            page=int(arguments.get("page", 1)),
+            rarity=arguments.get("rarity"),
+        ))
+    return validated
+
+
+def _safe_empty_subject(capability: Capability, arguments: dict[str, Any], question: str) -> bool:
+    if not capability.allow_empty_subject:
+        return False
+    if capability.intent == "song":
+        return bool(arguments.get("level_operator"))
+    if capability.intent == "card":
+        return bool(arguments.get("skill_query") or arguments.get("skill_kind")
+                    or arguments.get("rarity") is not None)
+    if capability.intent == "support_card":
+        return (arguments.get("rarity") is not None
+                or bool(re.search(r"所有|全部|有哪些|列表", question)))
+    return False
 
 
 def validate_legacy_plan(data: dict[str, Any], question: str,
