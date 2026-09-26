@@ -6,12 +6,12 @@ from dataclasses import replace
 from pathlib import Path
 from unittest.mock import patch
 
-from ournotes_bot.ai_query import AIQueryParser, UNSUPPORTED
-from ournotes_bot.commands import handle_command, parse_query, song_matches
+from ournotes_bot.ai_query import AIQueryParser, UNKNOWN_ENTITY, UNSUPPORTED
+from ournotes_bot.commands import handle_command, parse_query, resolve_command, song_matches
 from ournotes_bot.config import Settings
 from ournotes_bot.data import DataError, SongRepository
 from ournotes_bot.yatta import BASE, build_data, build_skills, build_support_cards, fetch_json
-from ournotes_bot.qq import _image_reply
+from ournotes_bot.qq import _image_from_result, _image_reply
 
 
 CHARACTERS = {"1": {"id": 1, "name": ["高松 燈", "Tomori Takamatsu", "高松燈", "高松灯"], "band": 1}}
@@ -50,6 +50,105 @@ class QueryTests(unittest.TestCase):
         self.assertIn("并肩前行", handle_command("/查支援卡 高松灯", self.repo))
         self.assertEqual(parse_query("/查谱面 1 EXPERT"), ("chart", "100001", "EXPERT"))
         self.assertEqual(parse_query("/查支援卡 tmr 页2"), ("support_cards", "tmr", 2))
+
+    def test_card_rarity_filters_entities_and_skills_without_ai(self):
+        skill = build_skills([{"type": "liveSkill", "name": "得分提升", "description": "5秒内提升50%"}])
+        base = replace(self.repo.cards[0], localized={}, skills=skill)
+        self.repo.cards = [
+            replace(base, id=1, rarity=4), replace(base, id=2, rarity=3),
+            replace(base, id=3, rarity=4, character="千早爱音"),
+            replace(base, id=4, rarity=4, character="丰川祥子", band="Ave Mujica"),
+            replace(base, id=5, rarity=0), replace(base, id=6, rarity=2),
+        ]
+        parser = AIQueryParser(Settings("", "", BASE, self.repo.cache_file, 6, "test-key"))
+        with patch.object(parser, "_request", side_effect=AssertionError("unexpected AI call")), \
+             patch.object(parser._quota, "reserve", side_effect=AssertionError("unexpected AI charge")):
+            for token in ("SSR", "ssr", "四星", "4星", "４星", "★4", "4★", "★★★★", "星级=4", "rarity=4", "4-star"):
+                with self.subTest(token=token):
+                    direct = resolve_command(f"/查卡 {token}", self.repo)
+                    _, natural = parser.answer_with_plan(f"/问 所有{token}卡有哪些", self.repo)
+                    self.assertEqual([card.id for card in direct.cards], [1, 3, 4])
+                    self.assertEqual(natural.cards, direct.cards)
+            for question, expected in (
+                ("高松灯的三星卡有哪些", [2]), ("tmr有哪些4星卡", [1]),
+                ("只看SSR的MyGO卡", [1, 3]), ("查看mygo的四星卡", [1, 3]),
+                ("SSR", [1, 3, 4]), ("SR卡有哪些", [2]), ("R卡有哪些", [6]),
+                ("高松灯的SSR卡有哪些", [1]), ("高松灯的四星Live技能的成员卡", [1]),
+                ("SSR得分提升技能的成员卡", [1, 3, 4]),
+                ("四星5秒技能的成员卡", [1, 3, 4]),
+            ):
+                with self.subTest(question=question):
+                    _, selected = parser.answer_with_plan("/问 " + question, self.repo)
+                    self.assertIsNotNone(selected)
+                    self.assertEqual([card.id for card in selected.cards], expected)
+            for command, expected in (("/查卡 tmr 三星", [2]), ("/查卡 ★4 mygo", [1, 3]),
+                                      ("/查卡 SR", [2]), ("/查卡 R", [6]),
+                                      ("/查卡 1 SSR", [1]), ("/查卡 5", [5])):
+                with self.subTest(command=command):
+                    self.assertEqual([card.id for card in resolve_command(command, self.repo).cards], expected)
+            direct = resolve_command("/查支援卡 三星", self.repo)
+            _, natural = parser.answer_with_plan("/问 tmr的SR支援卡", self.repo)
+            self.assertEqual(direct.support_cards, natural.support_cards)
+            self.assertEqual(len(natural.support_cards), 1)
+            support = self.repo.support_cards[0]
+            self.repo.support_cards = [replace(support, id=stars, rarity=stars) for stars in (2, 3, 4, 10)]
+            for grade, stars in (("SSR", 4), ("SR", 3), ("R", 2)):
+                with self.subTest(support_grade=grade):
+                    direct = resolve_command(f"/查支援卡 {grade}", self.repo)
+                    _, natural = parser.answer_with_plan(f"/问 tmr的{grade}支援卡有哪些", self.repo)
+                    self.assertEqual(direct.support_cards, natural.support_cards)
+                    self.assertEqual([card.id for card in natural.support_cards], [stars])
+
+    def test_card_rarity_rejects_invalid_filters_and_keeps_empty_results(self):
+        parser = AIQueryParser(Settings("", "", BASE, self.repo.cache_file, 6, "test-key"))
+        with patch.object(parser, "_request", side_effect=AssertionError("unexpected AI call")):
+            for condition in ("零星", "一星", "五星", "6星", "4.5星", "-4星", "SSR SR", "三到四星", "四星以上", "至少四星", "★★★★★★"):
+                with self.subTest(condition=condition):
+                    self.assertIn("请指定", handle_command("/查卡 " + condition, self.repo))
+                    answer, selected = parser.answer_with_plan("/问 " + condition + "卡", self.repo)
+                    self.assertIn("请指定", answer)
+                    self.assertIsNone(selected)
+            answer, selected = parser.answer_with_plan("/问 不存在的角色的SSR卡", self.repo)
+            self.assertEqual(answer, UNKNOWN_ENTITY)
+            self.assertIsNone(selected)
+            answer, selected = parser.answer_with_plan("/问 tmr的四星卡", self.repo)
+            self.assertEqual(selected.cards, ())
+            self.assertIn("4星", answer)
+            self.assertEqual(resolve_command("/查卡 tmr SSR", self.repo).cards, ())
+
+    def test_card_rarity_pagination_preserves_filters_and_image_selection(self):
+        base = self.repo.cards[0]
+        self.repo.cards = [replace(base, id=i, rarity=4, title=f"卡{i}") for i in range(1, 18)]
+        self.repo.cards.append(replace(base, id=99, rarity=3))
+        support = self.repo.support_cards[0]
+        self.repo.support_cards = [replace(support, id=i, rarity=3) for i in range(1, 18)]
+        self.repo.support_cards.append(replace(support, id=99, rarity=4))
+        parser = AIQueryParser(Settings("", "", BASE, self.repo.cache_file, 6))
+        for command, renderer in (
+            ("/查卡 mygo SSR 页2", "render_card_list"), ("/问 mygo的四星卡第2页", "render_card_list"),
+            ("/查支援卡 SR 页2", "render_support_card_list"), ("/问 SR支援卡第2页", "render_support_card_list"),
+        ):
+            with self.subTest(command=command):
+                if command.startswith("/问"):
+                    answer, selected = parser.answer_with_plan(command, self.repo)
+                else:
+                    selected = resolve_command(command, self.repo)
+                    answer = handle_command(command, self.repo, resolved=selected)
+                self.assertIn("第 2/2 页", answer)
+                self.assertIn("共 17张", answer)
+                with patch("ournotes_bot.qq." + renderer, return_value=b"image") as render:
+                    self.assertEqual(_image_from_result(selected, self.repo, "zh"), b"image")
+                self.assertEqual([card.id for card in render.call_args.args[0]], [17])
+        first = parser.answer("/问 mygo的SSR卡", self.repo)
+        next_command = first.split("下一页：", 1)[1].splitlines()[0]
+        self.assertIn("4星", next_command)
+        self.assertEqual([card.id for card in resolve_command(next_command, self.repo).cards], list(range(1, 18)))
+        first = parser.answer("/问 SR支援卡有哪些", self.repo)
+        next_command = first.split("下一页：", 1)[1].splitlines()[0]
+        self.assertIn("3星", next_command)
+        answer, selected = parser.answer_with_plan(next_command, self.repo)
+        self.assertIn("第 2/2 页", answer)
+        self.assertEqual([card.id for card in selected.support_cards], list(range(1, 18)))
 
     def test_chart_image_loads_notes_for_direct_and_natural_queries(self):
         score = {"notes": [{"t": 0, "pos": 6, "size": 6}]}

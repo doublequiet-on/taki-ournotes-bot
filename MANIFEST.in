@@ -1,5 +1,6 @@
 include LICENSE README.md THIRD_PARTY.md LOCAL_QQ_TEST.md .env.example query_aliases.json
 include 昵称词表维护规范.md
+include 更新日志.md
 include scripts/check_release_artifact.py
 include scripts/update_bot.py scripts/install-update-task.ps1
 include 自动更新说明.md start-bot.ps1 setup-local.ps1

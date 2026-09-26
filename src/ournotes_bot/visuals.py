@@ -212,6 +212,13 @@ def _score_point(value: dict) -> tuple[float, float, float] | None:
     return float(tick), float(pos), float(size)
 
 
+_SCORE_GUIDANCE = {
+    "zh": ("读谱：每栏从下往上，按栏号从左往右续读。", "起点 ↑"),
+    "en": ("Read each column upwards, then continue in the next column to the right.", "START ↑"),
+    "ja": ("各列は下から上へ、列番号順に左から右へ読み進めます。", "開始 ↑"),
+}
+
+
 def _draw_score(draw: ImageDraw.ImageDraw, score: dict, top: int, locale: str) -> int:
     notes = score.get("notes", [])
     points = [point for note in notes if isinstance(note, dict)
@@ -230,12 +237,14 @@ def _draw_score(draw: ImageDraw.ImageDraw, score: dict, top: int, locale: str) -
     def panel_x(index: int) -> float:
         return 55 + index * (panel_width + gap)
 
+    def time_y(tick: float, index: int) -> float:
+        return top + plot_height * (1 - (tick - (first + index * segment)) / segment)
+
     def span(point: tuple[float, float, float], index: int) -> tuple[float, float, float]:
         tick, pos, size = point
         left = panel_x(index) + 4 + max(0, pos) / 24 * (panel_width - 8)
         right = panel_x(index) + 4 + min(24, pos + size) / 24 * (panel_width - 8)
-        y = top + (tick - (first + index * segment)) / segment * plot_height
-        return left, right, y
+        return left, right, time_y(tick, index)
 
     draw.rounded_rectangle((47, top - 28, 853, top + plot_height + 24), radius=20, fill="#12202C")
     for index in range(columns):
@@ -245,10 +254,12 @@ def _draw_score(draw: ImageDraw.ImageDraw, score: dict, top: int, locale: str) -
             lx = x + 4 + lane / 24 * (panel_width - 8)
             draw.line((lx, top, lx, top + plot_height), fill="#2B4252", width=1)
         for tick in range(first + index * segment, first + (index + 1) * segment + 1, 480):
-            y = top + (tick - (first + index * segment)) / segment * plot_height
+            y = time_y(tick, index)
             draw.line((x + 2, y, x + panel_width - 2, y),
                       fill="#40566B" if tick % 1920 == 0 else "#243847", width=2 if tick % 1920 == 0 else 1)
-        draw.text((x + 6, top - 24), f"{index + 1}", fill="#8FB7CD", font=_font(17))
+        draw.text((x + 6, top - 24), f"{index + 1} ↑", fill="#8FB7CD", font=_font(17))
+    draw.text((panel_x(0) + 6, top + plot_height + 4),
+              _SCORE_GUIDANCE[locale][1], fill="#8FB7CD", font=_font(17))
 
     # Draw long-note bodies before their visible endpoints and ordinary notes.
     for note in notes:
@@ -336,6 +347,7 @@ def render_chart(song: Song, charts: tuple[Chart, ...], locale: str = "zh", scor
     draw.line((54, 675, 846, 675), fill=BORDER, width=2)
     if score_points:
         _write(draw, _label(locale, "score_title").format(difficulty=preview_difficulty or "EXPERT"), 65, 689, 760, 28, INK)
+        _write(draw, _SCORE_GUIDANCE[locale][0], 65, 730, 760, 18, MUTED)
         bottom = _draw_score(draw, score or {}, 790, locale)
         _write(draw, _label(locale, "score_note"), 65, bottom + 20, 760, 18, MUTED)
     else:
