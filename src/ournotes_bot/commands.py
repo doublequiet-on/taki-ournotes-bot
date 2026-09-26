@@ -86,6 +86,20 @@ def _clean_message(content: str) -> str:
     return content.strip().lstrip("/／").strip()
 
 
+_MULTI_COMMAND_SPLIT = re.compile(r"[\r\n]+")
+
+
+def split_commands(content: str) -> list[str]:
+    """Split one message into its individual commands, one per line.
+
+    A single-line message yields exactly one entry, so ordinary
+    single-command behaviour is untouched. Blank lines are dropped, and the
+    mention/leading-slash cleanup is applied per line so a mention on the
+    first line cannot leak into the query text of that line.
+    """
+    return [line for line in (_clean_message(part) for part in _MULTI_COMMAND_SPLIT.split(content)) if line]
+
+
 def locale_for(content: str) -> str:
     text = _clean_message(content)
     first = text.split(None, 1)[0].casefold() if text else ""
