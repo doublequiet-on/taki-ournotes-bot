@@ -90,6 +90,7 @@ class Settings:
     # an answer to the wrong question. Turn it off to favour latency instead.
     reply_order: bool = True
     update_notices: bool = True
+    ai_metrics_file: Path | None = None
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -102,6 +103,11 @@ class Settings:
         quota_file = Path(configured_quota) if configured_quota else raw_cache.with_name("ai-quota.json")
         if configured_quota and not quota_file.is_absolute():
             quota_file = CONFIG_ROOT / quota_file
+        configured_metrics = os.getenv("OURNOTES_AI_METRICS_FILE", "").strip()
+        metrics_file = (Path(configured_metrics) if configured_metrics
+                        else raw_cache.with_name("ai-metrics.json"))
+        if configured_metrics and not metrics_file.is_absolute():
+            metrics_file = CONFIG_ROOT / metrics_file
         return cls(
             app_id=os.getenv("QQ_APP_ID", "").strip(),
             app_secret=os.getenv("QQ_APP_SECRET", "").strip(),
@@ -122,4 +128,5 @@ class Settings:
                                       DEFAULT_QQ_GATEWAY_HOST).strip(),
             reply_order=read_flag("OURNOTES_REPLY_ORDER", True),
             update_notices=read_flag("OURNOTES_UPDATE_NOTICES", True),
+            ai_metrics_file=metrics_file,
         )
