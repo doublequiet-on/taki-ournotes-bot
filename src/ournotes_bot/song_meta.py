@@ -130,8 +130,10 @@ def parse_payload(identity, songs, meta, fetched_at: str) -> MetaSnapshot:
             warnings = metrics.get("metaWarnings", [])
             if not isinstance(warnings, list) or not all(isinstance(w, str) for w in warnings):
                 raise ValueError("invalid warnings")
+            display_level = next((chart.get(field) for field in ("displayLevel", "playLevel", "sortLevel")
+                                  if chart.get(field) is not None), None)
             rows.append(MetaRow(int(key), tuple(t for t in titles if isinstance(t, str) and t),
-                                DIFFICULTIES[index], number(chart.get("sortLevel")),
+                                DIFFICULTIES[index], number(display_level),
                                 eff if available else None, score if available else None,
                                 seconds, ratio if available else None,
                                 "reference" if available else "unknown", tuple(warnings)))

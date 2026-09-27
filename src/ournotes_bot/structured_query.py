@@ -26,6 +26,7 @@ class QuerySpec:
     rarity: int | None = None
     metric: str = "eff"
     order: str = "desc"
+    limit: int = 30
 
     def query_label(self) -> str:
         parts = [self.display_name] if self.display_name else []
@@ -46,11 +47,21 @@ class QuerySpec:
 
     def command_label(self) -> str:
         if self.intent == "efficiency":
-            subject = str(self.subject.value) if self.subject else ""
-            rank = "" if self.subject and self.subject.kind == "song" else "排行 "
-            level = f" lv{self.comparison}{self.level:g}" if self.comparison and self.level is not None else ""
-            return (f"查效率 {rank}{subject} {self.difficulty or 'EXPERT'}{level} "
-                    f"指标={self.metric} 排序={self.order} 页{self.page}")
+            parts = ["查分数表"]
+            if self.subject:
+                parts.append(str(self.subject.value))
+            if self.difficulty:
+                parts.append("全难度" if self.difficulty == "ALL" else self.difficulty)
+            if self.comparison and self.level is not None:
+                parts.append(f"lv{self.comparison}{self.level:g}")
+            if self.limit != 30:
+                parts.append(f"前{self.limit}")
+            if self.metric != "eff":
+                parts.append(f"指标={self.metric}")
+            if self.order != "desc":
+                parts.append(f"排序={self.order}")
+            parts.append(f"页{self.page}")
+            return " ".join(parts)
         if self.intent == "card" and (self.skill_query or self.skill_kind):
             subject = f"{self.display_name}的" if self.display_name else ""
             kind = {"leader": "队长", "live": "Live", "gekisou": "激奏"}.get(self.skill_kind, "")

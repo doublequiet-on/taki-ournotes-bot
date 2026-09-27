@@ -17,7 +17,7 @@ from .efficiency_query import MetaAnswer, HELP as EFFICIENCY_HELP
 HELP_TEXT = """Our Notes 查询指令
 /查曲 [歌名或ID] [等级或lv比较式] [页N]：搜索歌曲列表，可翻页
 /查谱面 歌名或ID [难度]：查看等级与 Note 数；100001 可简写为 1
-/查效率 [歌名或ID|排行] [乐队] [EX] [lv<=25] [页N]：Haneoka日服分析，默认EXPERT及eff降序
+/查分数表 [乐队] [EX] [lv<=25] [页N]：全难度每分钟得分效率前30条，含难度、时长和得分系数；也可指定歌名或ID
 /查卡 [角色、乐队或ID] [SSR/SR/R] [页N]：搜索卡面，可按星级筛选
 /查支援卡 [角色、卡名或ID] [SSR/SR/R] [页N]：搜索支援卡，可翻页
 /查缩写 昵称：查看昵称对应的角色、乐队等，也可直接用于查曲或查卡
@@ -75,7 +75,7 @@ COMMAND_HELPS = {
 }
 
 ALIASES = {
-    "查效率": "efficiency",
+    "查分数表": "efficiency", "查效率": "efficiency",
     "查曲": "songs", "song": "songs", "songs": "songs", "曲": "songs", "楽曲": "songs",
     "查谱面": "chart", "查谱": "chart", "谱面": "chart", "chart": "chart", "譜面": "chart",
     "查卡": "cards", "查卡面": "cards", "card": "cards", "cards": "cards", "カード": "cards",
@@ -83,7 +83,7 @@ ALIASES = {
     "supportcard": "support_cards", "supportcards": "support_cards", "サポート": "support_cards",
     "查缩写": "abbrev", "abbrev": "abbrev", "略称": "abbrev",
 }
-CANONICAL = {"efficiency": "/查效率", "songs": "/查曲", "chart": "/查谱面", "cards": "/查卡", "support_cards": "/查支援卡", "abbrev": "/查缩写"}
+CANONICAL = {"efficiency": "/查分数表", "songs": "/查曲", "chart": "/查谱面", "cards": "/查卡", "support_cards": "/查支援卡", "abbrev": "/查缩写"}
 CANONICAL_BY_LOCALE = {
     "zh": CANONICAL,
     "en": {"songs": "/song", "chart": "/chart", "cards": "/card", "support_cards": "/support", "abbrev": "/abbrev"},
@@ -368,13 +368,13 @@ def _command_tip(content: str) -> str | None:
             if suffix and not suffix.isalpha():
                 tail = f" {rest.strip()}" if rest.strip() else ""
                 return tr(locale, "missing_space", command=canonical[ALIASES[alias]], argument=suffix + tail) + "\n" + helps[ALIASES[alias]]
-            if suffix and alias in {"查曲", "查谱面", "查卡", "查卡面", "查支援卡", "支援卡"}:
+            if suffix and alias in {"查曲", "查谱面", "查卡", "查卡面", "查支援卡", "支援卡", "查分数表", "查效率"}:
                 if suffix in {"角色"}:
                     return tr(locale, "unknown") + "\n" + HELP_TEXTS[locale]
                 return tr(locale, "missing_space", command=canonical[ALIASES[alias]], argument=suffix) + "\n" + helps[ALIASES[alias]]
 
     candidates = {
-        "zh": ("查曲", "查谱面", "查卡", "查支援卡", "查缩写", "查活动", "查卡池", "ycx", "数据状态", "帮助"),
+        "zh": ("查曲", "查谱面", "查分数表", "查卡", "查支援卡", "查缩写", "查活动", "查卡池", "ycx", "数据状态", "帮助"),
         "en": ("song", "chart", "card", "support", "abbrev", "event", "gacha", "ycx", "status", "help"),
         "ja": ("曲", "譜面", "カード", "サポート", "略称", "イベント", "ガチャ", "予想線", "状態", "ヘルプ"),
     }[locale]
@@ -491,7 +491,7 @@ class CommandResult:
 def resolve_command(content: str, repository: SongRepository) -> CommandResult | None:
     """Select records once so text and image use the same request result."""
     text = _clean_message(content)
-    if re.match(r"^查效率(?:\s|$)", text):
+    if re.match(r"^查(?:分数表|效率)(?:\s|$)", text):
         from .efficiency_query import MetaAnswer, parse_efficiency, execute_efficiency
         spec = parse_efficiency(text, repository, direct=True)
         answer = MetaAnswer(spec, status="invalid_arguments") if isinstance(spec, str) else execute_efficiency(spec, repository)

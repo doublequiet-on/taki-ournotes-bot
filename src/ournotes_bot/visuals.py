@@ -16,6 +16,7 @@ from PIL import Image, ImageDraw, ImageFont, ImageOps
 
 from .config import runtime_data_dir
 from .data import Card, Chart, Skill, Song, SupportCard, localized_text
+from .efficiency_query import MetaAnswer
 from .yatta import ASSETS, BASE
 
 
@@ -360,8 +361,11 @@ def render_chart(song: Song, charts: tuple[Chart, ...], locale: str = "zh", scor
     return _bytes(image)
 
 
-def render_meta(text: str) -> bytes:
-    # Render the exact captured answer so a refresh cannot change image rankings.
+def render_meta(answer: MetaAnswer) -> bytes:
+    # Both forms use the captured answer; drawing never fetches or sorts again.
+    if answer.cells:
+        return _render_meta_table(answer)
+    text = answer.text
     _, measure = _canvas(900, 200, "歌曲效率")
     lines = [part for line in text.splitlines()
              for part in _wrapped_lines(measure, line, 792, 22, max_lines=len(line) + 1)]
@@ -370,6 +374,68 @@ def render_meta(text: str) -> bytes:
     for line in lines:
         _write(draw, line, 54, top, 792, 22, INK)
         top += 32
+    return _bytes(image)
+
+
+def _render_meta_table(answer: MetaAnswer) -> bytes:
+    # One row per song+difficulty; use the captured values, never recalculate metrics.
+    width, row_height = 1500, 86
+    edges = (40, 105, 660, 820, 960, 1180, 1460)
+    measure = ImageDraw.Draw(Image.new("RGB", (width, 200)))
+    scope = _wrapped_lines(measure, answer.scope, width - 100, 24, max_lines=4)
+    head_y = 118 + 34 * len(scope)
+    table_bottom = head_y + 60 + len(answer.cells) * row_height
+    foot_lines = [part for line in (*answer.page_notice.splitlines(), *answer.notes)
+                  for part in _wrapped_lines(measure, line, width - 108, 20, max_lines=len(line) + 1)]
+    image = Image.new("RGB", (width, table_bottom + 70 + len(foot_lines) * 29), "#FCFAFD")
+    draw = ImageDraw.Draw(image)
+    draw.text((46, 30), "日服 · 歌曲分数表", font=_font(39), fill=INK)
+    for i, line in enumerate(scope):
+        draw.text((48, 89 + i * 34), line, font=_font(24), fill=MUTED)
+    draw.rounded_rectangle((40, head_y, 1460, head_y + 60), radius=12, fill="#EEEAF2")
+    headers = ("排名", "歌曲", "难度", "时长", "得分系数", "每分钟得分效率")
+    def centered(text, left, right, y, size=25, color=INK):
+        font = _font(size)
+        draw.text(((left + right - draw.textlength(text, font=font)) / 2, y), text, font=font, fill=color)
+    for index, label in enumerate(headers):
+        if index == 1:
+            draw.text((edges[index] + 14, head_y + 17), label, font=_font(22), fill=MUTED)
+        else:
+            centered(label, edges[index], edges[index + 1], head_y + 17, 22, MUTED)
+    covers = _prefetch_assets(list(answer.jackets), (60, 60))
+    colors = {"EXPERT": ("#FADDDD", "#E68087"), "HARD": ("#FFF0D8", "#DDB568"),
+              "NORMAL": ("#DFF2E7", "#81B993"), "EASY": ("#DDEBF9", "#7AA9DE")}
+    for index, row in enumerate(answer.cells):
+        top = head_y + 60 + index * row_height
+        draw.rectangle((40, top, 1460, top + row_height), fill="#F5F1F8" if index % 2 == 0 else "#FCFAFD")
+        draw.line((40, top + row_height, 1460, top + row_height), fill="#E3DFE8", width=1)
+        centered(row[0], edges[0], edges[1], top + 28, 22, MUTED)
+        cover = covers.get(answer.jackets[index])
+        if cover is not None:
+            image.paste(cover, (118, top + 13))
+        else:
+            draw.rounded_rectangle((118, top + 13, 178, top + 73), radius=8, fill="#EEE5F2")
+            draw.ellipse((132, top + 44, 148, top + 56), fill="#A989B6")
+            draw.line((147, top + 49, 147, top + 28, 160, top + 32), fill="#A989B6", width=3)
+        lines = _wrapped_lines(draw, row[1], 451, 25, max_lines=2)
+        title_y = top + (row_height - len(lines) * 31) // 2 - 2
+        for line_index, line in enumerate(lines):
+            draw.text((192, title_y + line_index * 31), line, font=_font(25), fill=INK)
+        fill, outline = colors.get(row[2], ("#EEEAF2", BORDER))
+        draw.rounded_rectangle((694, top + 10, 786, top + 76), radius=14, fill=fill, outline=outline, width=1)
+        centered(row[2], 694, 786, top + 17, 13)
+        centered(row[3], 694, 786, top + 36, 24 if len(row[3]) <= 3 else 20)
+        for value, column in ((row[4], 3), (row[5], 4), (row[6], 5)):
+            # Normal metrics fit at 26px; bound unusually large values to their cell.
+            available = edges[column + 1] - edges[column] - 24
+            font = _font(26)
+            if draw.textlength(value, font=font) <= available:
+                centered(value, edges[column], edges[column + 1], top + 26, 26,
+                         "#6B4C9A" if column == 5 else INK)
+            else:
+                _write(draw, value, edges[column] + 12, top + 26, available, 22)
+    for i, line in enumerate(foot_lines):
+        draw.text((54, table_bottom + 24 + i * 29), line, fill=MUTED, font=_font(20))
     return _bytes(image)
 
 
