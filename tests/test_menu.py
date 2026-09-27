@@ -17,7 +17,7 @@ class MenuLimitsTests(unittest.TestCase):
     def test_panel_only_advertises_supported_commands(self):
         self.assertEqual(
             {item["name"] for item in PANEL_ITEMS},
-            {"查谱面", "查曲", "查卡", "查支援卡", "问", "数据状态", "帮助"},
+            {"查谱面", "查曲", "查分数表", "查卡", "查支援卡", "问", "数据状态", "帮助"},
         )
         for item in PANEL_ITEMS:
             self.assertLessEqual(display_width(item["name"]), 14)
