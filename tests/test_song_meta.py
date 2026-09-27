@@ -35,7 +35,7 @@ def payload(count=13):
                       "difficulty": [{"difficulty": 3, "difficultyName": "expert", "sortLevel": 25}]}
         meta[key] = {"3": {"chart": {
             "metaStatus": "available", "scoreKind": "chart-relative-factor", "absoluteScoreAvailable": False,
-            "reference": dict(REFERENCE), "eff": float(20 - index), "score": float(30 - index),
+            "reference": dict(REFERENCE), "eff": float(count + 7 - index), "score": float(count + 17 - index),
             "time": 100, "sr": 0.5,
         }}}
     return identity, songs, meta
@@ -135,7 +135,7 @@ class SongMetaTests(unittest.TestCase):
     def test_ranking_ties_filters_and_pagination_preserve_conditions(self):
         self.meta["100002"]["3"]["chart"]["eff"] = 20
         self.repo.song_meta.get.return_value = self.snapshot()
-        first = resolve_command("/查效率 排行 MyGO EX lv<=25 指标=eff 排序=desc", self.repo).meta
+        first = resolve_command("/查分数表 排行 MyGO EX lv<=25 前10 指标=eff 排序=desc", self.repo).meta
         self.assertEqual([r.song_id for r in first.rows[:2]], [100001, 100002])
         next_command = first.text.split("下一页：", 1)[1].splitlines()[0]
         second = resolve_command(next_command, self.repo).meta
@@ -165,7 +165,11 @@ class SongMetaTests(unittest.TestCase):
         pairs = [("暗黒天国的效率怎么样", "暗黒天国"),
                  ("查一下暗黒天国EX的meta", "暗黒天国 EX"),
                  ("哪些歌效率最高", "排行"),
-                 ("MyGO的EX效率前十有哪些", "排行 MyGO EX"),
+                 ("MyGO的EX效率前十有哪些", "排行 MyGO EX 前10"),
+                 ("MyGO的EX效率前二十有哪些", "排行 MyGO EX 前20"),
+                 ("查一下分数表", ""),
+                 ("得分效率最高的前30首歌曲", "排行"),
+                 ("MyGO的EX分数表", "排行 MyGO EX"),
                  ("EXPERT 25级以下的效率榜", "排行 EXPERT lv<=25")]
         with patch.object(parser, "_request", side_effect=AssertionError("paid model called")) as model:
             for natural, direct in pairs:
@@ -192,19 +196,157 @@ class SongMetaTests(unittest.TestCase):
         self.assertEqual(validate_capability_action(bad, CAPABILITIES["song.meta"], "暗黒天国效率", self.repo).code,
                          OutcomeCode.INVALID_ARGUMENTS)
         for question in ["效率配队推荐", "效率档线预测", "最强效率攻略", "歌曲排行"]:
-            self.assertNotIn("[效率榜]", parser.answer("/问 " + question, self.repo))
+            self.assertNotIn("[分数表]", parser.answer("/问 " + question, self.repo))
 
     def test_text_image_share_result_and_drawing_failure_falls_back(self):
         from ournotes_bot.qq import _prepare_reply
         parser = AIQueryParser(self.settings)
         with patch("ournotes_bot.visuals.render_meta", return_value=b"image") as render:
             reply = _prepare_reply("/查效率 暗黒天国", self.repo, parser)
-            self.assertEqual(reply.text, render.call_args.args[0])
+            self.assertEqual(reply.text, render.call_args.args[0].text)
             self.repo.song_meta.get.assert_called_once()
         with patch("ournotes_bot.visuals.render_meta", side_effect=ValueError("font")):
             reply = _prepare_reply("/问 暗黒天国效率怎么样", self.repo, parser)
             self.assertIsNone(reply.image)
             self.assertIn("eff：", reply.text)
+
+    def test_score_table_top30_alias_and_pagination(self):
+        self.identity, self.songs, self.meta = payload(35)
+        self.repo.songs = [replace(self.repo.songs[0], id=int(key), title=row["musicTitle"][0],
+                                   titles=tuple(row["musicTitle"])) for key, row in self.songs.items()]
+        self.repo.song_meta.get.return_value = self.snapshot()
+        first = resolve_command("/查分数表", self.repo).meta
+        self.assertEqual(len(first.rows), 30)
+        self.assertEqual([r.song_id for r in first.rows], list(range(100001, 100031)))
+        self.assertEqual(first, resolve_command("/查效率", self.repo).meta)
+        self.assertEqual(first.columns, ("排名", "歌曲", "难度", "等级", "时长", "得分系数", "每分钟得分效率"))
+        self.assertEqual(first.cells[0], ("1", "暗黒天国", "EXPERT", "25", "1:40", "5,200.00%", "4,200.00%"))
+        self.assertEqual(first.cells[-1][0], "30")
+        next_command = first.text.split("下一页：", 1)[1].splitlines()[0]
+        self.assertTrue(next_command.startswith("/查分数表"))
+        second = resolve_command(next_command, self.repo).meta
+        self.assertEqual(len(second.cells), 5)
+        self.assertEqual(second.cells[0][0], "31")
+        self.assertEqual(second.cells[-1][0], "35")
+        self.assertIn("超出范围", handle_command(next_command.replace("页2", "页3"), self.repo))
+        self.assertIn("默认", first.scope)
+        self.assertEqual(local_route("查一下分数表"), "song.meta")
+        self.assertIn("空格", handle_command("/查分数表MyGO", self.repo))
+        for command in ["/查分数表 前200", "/查分数表 前10 前20", "/查分数表 指标=nps"]:
+            self.assertFalse(resolve_command(command, self.repo).meta.rows)
+
+    def test_table_image_uses_captured_cells_and_text_fallback(self):
+        from PIL import Image, ImageDraw
+        from ournotes_bot.qq import _prepare_reply
+        from ournotes_bot.visuals import render_meta
+        answer = resolve_command("/查分数表", self.repo).meta
+        self.repo.song_meta.get.reset_mock()
+        drawn = []
+        original = ImageDraw.ImageDraw.text
+        def capture(draw, xy, text, *args, **kwargs):
+            drawn.append(str(text))
+            return original(draw, xy, text, *args, **kwargs)
+        with patch.object(ImageDraw.ImageDraw, "text", capture):
+            picture = render_meta(answer)
+        with Image.open(io.BytesIO(picture)) as image:
+            self.assertEqual(image.width, 1500)
+        self.repo.song_meta.get.assert_not_called()
+        for row in answer.cells:
+            for cell in row:
+                self.assertIn(cell, drawn)
+        self.assertIn("每分钟得分效率", drawn)
+        self.assertIn("EXPERT", drawn)
+        self.assertIn("时长", drawn)
+        self.assertIn("得分系数", drawn)
+        parser = AIQueryParser(self.settings)
+        with patch("ournotes_bot.visuals.render_meta", side_effect=ValueError("font")):
+            direct = _prepare_reply("/查分数表", self.repo, parser)
+            natural = _prepare_reply("/问 得分效率最高的前30首歌曲", self.repo, parser)
+        self.assertIsNone(direct.image)
+        self.assertEqual(direct.text, natural.text)
+        self.assertIn("排名 | 歌曲 | 难度 | 等级 | 时长 | 得分系数 | 每分钟得分效率", direct.text)
+
+    def test_compact_table_preserves_metric_stale_state_and_paging(self):
+        from PIL import Image
+        from ournotes_bot.visuals import render_meta
+        from ournotes_bot.structured_query import resolve_query
+        self.repo.song_meta.get.return_value = replace(self.snapshot(), stale=True)
+        spec = parse_efficiency("MyGO EX 前10 指标=score 排序=asc lv<=25", self.repo, direct=True)
+        self.assertEqual(parse_efficiency(spec.command_label(), self.repo, direct=True), spec)
+        answer = resolve_query(spec, self.repo).meta
+        self.assertEqual(len(answer.cells), 10)
+        self.assertEqual(answer.columns[-2], "得分系数")
+        self.assertEqual(answer.rows[0].song_id, 100013)
+        self.assertIn("旧缓存", "\n".join(answer.notes))
+        self.assertIn("从低到高", answer.scope)
+        # The renderer must tolerate long names and unknown levels without fetching data.
+        cells = list(answer.cells)
+        cells[0] = (cells[0][0], "长歌名" * 35, cells[0][2], "未知", *cells[0][4:])
+        with patch("ournotes_bot.visuals._prefetch_assets", return_value={}):
+            picture = render_meta(replace(answer, cells=tuple(cells)))
+        with Image.open(io.BytesIO(picture)) as image:
+            self.assertEqual(image.width, 1500)
+
+    def test_all_difficulties_share_ranking_and_display_level(self):
+        from ournotes_bot.song_meta import DIFFICULTIES
+        for key, song in self.songs.items():
+            base = copy.deepcopy(self.meta[key]["3"])
+            song["difficulty"] = [dict(difficulty=i, difficultyName=d.lower(), displayLevel=level,
+                                       playLevel=level, sortLevel=level + 0.5)
+                                  for i, (d, level) in enumerate(zip(DIFFICULTIES, (5, 10, 15, 25)))]
+            self.meta[key] = {str(i): copy.deepcopy(base) for i in range(4)}
+        self.repo.song_meta.get.return_value = self.snapshot()
+        answer = resolve_command("/查分数表", self.repo).meta
+        self.assertEqual(len(answer.rows), 30)
+        self.assertEqual([(r.song_id, r.difficulty) for r in answer.rows[:4]],
+                         [(100001, difficulty) for difficulty in DIFFICULTIES])
+        self.assertEqual([row[3] for row in answer.cells[:4]], ["5", "10", "15", "25"])
+        self.assertIn("全难度", answer.scope)
+        self.assertIn("共 52 条谱面", answer.page_notice)
+        ex = resolve_command("/查分数表 EX", self.repo).meta
+        self.assertEqual(len(ex.rows), 13)
+        self.assertEqual({r.difficulty for r in ex.rows}, {"EXPERT"})
+        below = resolve_command("/查分数表 lv<=10", self.repo).meta
+        self.assertEqual({r.difficulty for r in below.rows}, {"EASY", "NORMAL"})
+        next_command = answer.page_notice.split("下一页：")[1]
+        rest = resolve_command(next_command, self.repo).meta
+        keys = [(r.song_id, r.difficulty) for r in answer.rows + rest.rows]
+        self.assertEqual(len(keys), 52)
+        self.assertEqual(len(set(keys)), 52)
+        self.assertEqual(rest.cells[0][0], "31")
+        single_all = resolve_command("/查分数表 暗黒天国 全难度", self.repo).meta
+        self.assertEqual(len(single_all.rows), 4)
+        self.assertEqual({r.song_id for r in single_all.rows}, {100001})
+        self.assertFalse(resolve_command("/查分数表 全难度 EX", self.repo).meta.rows)
+        # Mixed difficulties are authorized; mixed reference assumptions still are not.
+        self.meta["100001"]["0"]["chart"]["reference"]["fever"] = False
+        self.meta["100001"]["1"]["chart"]["eff"] = None
+        self.meta["100001"]["2"]["chart"].update(time=None, score=None)
+        self.repo.song_meta.get.return_value = self.snapshot()
+        answer = resolve_command("/查分数表", self.repo).meta
+        self.assertEqual(answer.rows[0].difficulty, "HARD")
+        self.assertEqual(answer.cells[0][4:6], ("未知", "未知"))
+        self.assertTrue(all(r.reference == "reference" and r.eff is not None for r in answer.rows))
+
+    def test_duration_rounding_and_natural_top30(self):
+        from ournotes_bot.efficiency_query import _duration
+        self.assertEqual(_duration(92.2), "1:32")
+        self.assertEqual(_duration(59.9), "1:00")
+        self.assertEqual(_duration(None), "未知")
+        parser = AIQueryParser(self.settings)
+        with patch.object(parser, "_request", side_effect=AssertionError("paid model called")) as model:
+            for query in ("全难度的分数表", "每分钟得分效率最高的前30首歌曲", "分数表前三十条"):
+                self.assertEqual(parser.answer("/问 " + query, self.repo), handle_command("/查分数表", self.repo))
+            model.assert_not_called()
+
+    def test_single_all_missing_analysis_is_distinct_from_unknown_song(self):
+        self.meta["100001"]["3"]["chart"]["eff"] = None
+        self.repo.song_meta.get.return_value = self.snapshot()
+        result = resolve_command("/查分数表 暗黒天国 全难度", self.repo).meta
+        self.assertEqual(result.status, "empty")
+        self.assertIn("歌曲已收录", result.text)
+        self.assertFalse(result.rows)
+        self.assertIn("未找到", handle_command("/查分数表 不存在的曲名 全难度", self.repo))
 
     def test_cache_refresh_failure_retains_old_and_recovers(self):
         clock = [1790467200.0]
