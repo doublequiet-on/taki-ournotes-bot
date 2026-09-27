@@ -360,6 +360,19 @@ def render_chart(song: Song, charts: tuple[Chart, ...], locale: str = "zh", scor
     return _bytes(image)
 
 
+def render_meta(text: str) -> bytes:
+    # Render the exact captured answer so a refresh cannot change image rankings.
+    _, measure = _canvas(900, 200, "歌曲效率")
+    lines = [part for line in text.splitlines()
+             for part in _wrapped_lines(measure, line, 792, 22, max_lines=len(line) + 1)]
+    image, draw = _canvas(900, 185 + len(lines) * 32, "歌曲效率")
+    top = 145
+    for line in lines:
+        _write(draw, line, 54, top, 792, 22, INK)
+        top += 32
+    return _bytes(image)
+
+
 def render_card(card: Card, locale: str = "zh") -> bytes:
     image, draw = _canvas(900, 2250, _label(locale, "card"))
     _write(draw, localized_text(card, "band", locale), 56, 145, 460, 27, PINK)
