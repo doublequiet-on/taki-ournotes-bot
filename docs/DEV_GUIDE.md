@@ -76,6 +76,8 @@ python scripts/check_release_artifact.py dist
 
 图片样式检查可用 `PYTHONPATH=src` 执行 `python -B scripts/preview_visuals.py --cache-dir <公开缓存副本目录> --output runtime/visual-preview/round1 --stress`。输入需含 `ournotes-cache.json`，以及可选的 `asset-cache/`、`chart-cache/`、`haneoka-meta-jp.json`；不复制凭据、日志或额度。脚本只读缓存，阻止网络连接，不启动 QQ、不调用模型、不刷新资料；缺素材时保留占位。可选 `preview-details/support-<ID>.json` 是与该缓存支援卡 ID 对应的公开详情，用于离线预览。输出须在输入目录之外，含原尺寸 JPEG、430px 宽检查图、概览和输入哈希记录；`--baseline` 仅用 `git show HEAD:src/ournotes_bot/visuals.py` 读取已提交绘图代码作比较。自动检查不能代替逐张检查手机字号、长标题、分页说明及真实卡面。样图与缓存不提交仓库。
 
+绘图布局采用逻辑像素，导出默认按 `RENDER_SCALE=2` 原生绘制字体、边线及图标；素材按导出尺寸从原缓存取样。圆角、斜线和素材裁切遮罩额外采用 3 倍局部采样抗锯齿，按覆盖面积缩回，避免模糊整张图片；长谱面斜线分段绘制以控制临时内存。JPEG 使用质量 95 和 4:4:4 色彩采样。验证布局时区分逻辑坐标与实际像素，`manifest.json` 记录的是实际导出尺寸；检查高清细节请打开原图，430px 预览仅用于手机布局检查。固定背景图块随渲染倍率绘制，图案相对布局的大小不随画布宽高变化。
+
 纯 Markdown 变更检查链接、路径、符号及 `git diff --check`；新文件还要看 `git status --short`，因为普通 `git diff` 不显示未跟踪内容。不为文档跑生产服务、同步、更新器或 QQ 验收。功能变更先跑相关测试，共享接口、数据兼容或部署变更再扩大到完整测试与必要的真实链路。未执行项如实记录。
 
 ## 文档维护

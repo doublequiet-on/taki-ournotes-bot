@@ -65,9 +65,9 @@ class ChartDataTests(unittest.TestCase):
         with patch("ournotes_bot.visuals._asset", return_value=None):
             result = render_chart(song, (self.chart,), "zh", SCORE["score"], "EXPERT")
         with Image.open(io.BytesIO(result)) as image:
-            self.assertEqual(image.width, 900)
-            self.assertGreater(image.height, 2000)
-            self.assertNotEqual(image.getpixel((100, 1000)), image.getpixel((100, 600)))
+            self.assertEqual(image.width, 1800)
+            self.assertGreater(image.height, 4000)
+            self.assertNotEqual(image.getpixel((200, 2000)), image.getpixel((200, 1200)))
 
     def test_score_reads_upwards_with_columns_and_lanes_left_to_right(self) -> None:
         image = Image.new("RGB", (900, 1800))

@@ -249,7 +249,7 @@ class SongMetaTests(unittest.TestCase):
         with patch.object(ImageDraw.ImageDraw, "text", capture):
             picture = render_meta(answer)
         with Image.open(io.BytesIO(picture)) as image:
-            self.assertEqual(image.width, 1500)
+            self.assertEqual(image.width, 3000)
         self.repo.song_meta.get.assert_not_called()
         for row in answer.cells:
             for cell in row:
@@ -285,7 +285,7 @@ class SongMetaTests(unittest.TestCase):
         with patch("ournotes_bot.visuals._prefetch_assets", return_value={}):
             picture = render_meta(replace(answer, cells=tuple(cells)))
         with Image.open(io.BytesIO(picture)) as image:
-            self.assertEqual(image.width, 1500)
+            self.assertEqual(image.width, 3000)
 
     def test_all_difficulties_share_ranking_and_display_level(self):
         from ournotes_bot.song_meta import DIFFICULTIES
