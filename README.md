@@ -4,7 +4,7 @@ Taki 是《BanG Dream! Our Notes》日服的非官方社区 QQ 机器人，提�
 
 本项目基于 [NeriWST/ournotes-qq-bot](https://github.com/NeriWST/ournotes-qq-bot) 开发。歌曲和卡牌资料来自 [Project Yume](https://bdon.yatta.moe/)，完整音符谱面按需读取 [MoeNotes](https://github.com/StarMoe-org/moenotes) 的公共资源。第三方资料的完整性和更新时效不等于官方保证；仓库不包含 QQ 凭据或游戏素材。
 
-[更新日志](更新日志.md) · [QQ 接入与验收](LOCAL_QQ_TEST.md) · [自动更新与群通知](自动更新说明.md) · [昵称词表维护](昵称词表维护规范.md) · [数据与素材说明](THIRD_PARTY.md)
+[Codex 开发约定](AGENTS.md) · [开发导航](docs/DEV_GUIDE.md) · [更新日志](更新日志.md) · [QQ 接入与验收](LOCAL_QQ_TEST.md) · [自动更新与群通知](自动更新说明.md) · [昵称词表维护](昵称词表维护规范.md) · [数据与素材说明](THIRD_PARTY.md)
 
 ## 现在能做什么
 
