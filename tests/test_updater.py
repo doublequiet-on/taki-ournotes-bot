@@ -13,6 +13,7 @@ import asyncio
 from types import SimpleNamespace
 from unittest.mock import patch, Mock, AsyncMock
 
+from ournotes_bot.ai_client import ModelResponse
 from ournotes_bot.update_notice import NoticeStore, UpdateNotifier, committed_notice
 
 SPEC = importlib.util.spec_from_file_location("taki_updater", Path(__file__).resolve().parents[1] / "scripts/update_bot.py")
@@ -262,16 +263,27 @@ class UpdateNoticeTests(unittest.IsolatedAsyncioTestCase):
         self.root = Path(temp.name)
         self.source = self.root / "data/updater/releases/candidate/source"
         self.source.mkdir(parents=True)
-        (self.source / "更新通知.txt").write_text("Taki 更新啦！新增群更新通知。", encoding="utf-8")
+        self.previous_source = self.root / "data/updater/releases/previous/source"
+        self.previous_source.mkdir(parents=True)
         self.state_path = self.root / "data/updater/state.json"
-        self.state = {"active": {"sha": B, "source": str(self.source)}, "previous": {"sha": A}, "rejected": None}
+        self.state = {"active": {"sha": B, "source": str(self.source)},
+                      "previous": {"sha": A, "source": str(self.previous_source)}, "rejected": None}
         u.atomic_json(self.state_path, self.state)
+        facts = patch("ournotes_bot.update_notice.release_facts",
+                      side_effect=lambda _root, _previous, revision:
+                      json.dumps({"提交标题": revision}))
+        self.addCleanup(facts.stop)
+        facts.start()
+        self.client = Mock()
+        self.client.request.side_effect = lambda _system, query, **_kwargs: ModelResponse(
+            {"notice": "Taki 更新：" + json.loads(query)["提交标题"][:8]}, {})
         self.notifier = self.worker()
         self.http = SimpleNamespace(request=AsyncMock(side_effect=self.respond))
         self.api = SimpleNamespace(_http=self.http)
 
     def worker(self):
-        worker = UpdateNotifier(self.root, self.root / "data/update-notices.sqlite3", "app", self.source)
+        worker = UpdateNotifier(self.root, self.root / "data/update-notices.sqlite3", "app", self.source,
+                                self.client)
         worker._pace = AsyncMock()
         return worker
 
@@ -308,15 +320,37 @@ class UpdateNoticeTests(unittest.IsolatedAsyncioTestCase):
         await asyncio.gather(self.notifier.deliver(self.api), self.notifier.deliver(self.api))
         await self.worker().deliver(self.api)
         self.assertEqual(len(self.posts()), 2)
+        self.assertEqual(self.client.request.call_count, 1)
         for call in self.posts():
             self.assertEqual(call.kwargs["retry_time"], 2)
-            self.assertEqual(call.kwargs["json"], {"msg_type": 0, "content": "Taki 更新啦！新增群更新通知。"})
+            self.assertEqual(call.kwargs["json"], {"msg_type": 0, "content": "Taki 更新：bbbbbbbb"})
         self.state["active"]["sha"] = "c" * 40
         u.atomic_json(self.state_path, self.state)
         await self.worker().deliver(self.api)
         self.assertEqual(len(self.posts()), 4)
+        self.assertEqual(self.client.request.call_count, 2)
+        self.assertEqual(self.posts()[-1].kwargs["json"]["content"], "Taki 更新：cccccccc")
         other_app = NoticeStore(self.notifier.data_file, "other-app")
         self.assertEqual(other_app.pending(B), [])
+
+    async def test_no_api_key_does_not_announce(self):
+        self.notifier.observe("group")
+        self.notifier.ai_client = None
+        await self.notifier.deliver(self.api)
+        self.http.request.assert_not_called()
+
+    async def test_repeated_generated_text_does_not_broadcast(self):
+        self.notifier.observe("group")
+        await self.notifier.deliver(self.api)
+        self.state["previous"]["sha"] = B
+        self.state["active"]["sha"] = "c" * 40
+        u.atomic_json(self.state_path, self.state)
+        self.client.request.side_effect = None
+        self.client.request.return_value = ModelResponse({"notice": "Taki 更新：bbbbbbbb"}, {})
+        with self.assertLogs("ournotes_bot.update_notice", level="ERROR"):
+            await self.worker().deliver(self.api)
+        self.assertEqual(len(self.posts()), 1)
+        self.assertEqual(self.client.request.call_count, 2)
 
     async def test_group_permission_removal_and_out_of_order_events(self):
         for gid in ("removed", "disabled", "enabled"):
@@ -385,16 +419,18 @@ class UpdateNoticeTests(unittest.IsolatedAsyncioTestCase):
         await self.worker().deliver(self.api)
         self.assertEqual(len(self.posts()), 4)
 
-    async def test_bad_state_summary_and_storage_fail_without_sending(self):
+    async def test_bad_state_report_and_storage_fail_without_sending(self):
         self.notifier.observe("group")
         self.state_path.write_text("{broken")
         with self.assertRaises(ValueError):
             await self.notifier.deliver(self.api)
         u.atomic_json(self.state_path, self.state)
-        (self.source / "更新通知.txt").write_text("x" * 501)
-        with self.assertRaises(ValueError):
+        self.client.request.side_effect = None
+        self.client.request.return_value = ModelResponse({"notice": "x" * 351}, {})
+        with self.assertLogs("ournotes_bot.update_notice", level="ERROR"):
             await self.notifier.deliver(self.api)
-        (self.source / "更新通知.txt").write_text("ok")
+        await self.worker().deliver(self.api)
+        self.assertEqual(self.client.request.call_count, 1)
         self.notifier.data_file.write_bytes(b"broken database")
         with self.assertRaises(Exception):
             await self.worker().deliver(self.api)

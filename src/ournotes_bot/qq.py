@@ -29,6 +29,7 @@ from . import config
 from .data import SongRepository
 from .i18n import tr
 from .structured_query import QueryResult, query_page_notice
+from .ai_client import AIClient
 from .update_notice import UpdateNotifier
 from .visuals import (render_card, render_card_list, render_chart, render_song_list,
                       render_support_card, render_support_card_list)
@@ -431,7 +432,12 @@ def run_bot(app_id: str, app_secret: str, repository: SongRepository, settings: 
     ai_parser = AIQueryParser(settings)
     query_gate = QueryGate(settings.query_concurrency, settings.query_queue_limit)
     reply_sequencer = ReplySequencer(enabled=settings.reply_order)
-    notifier = (UpdateNotifier(config.CONFIG_ROOT, settings.cache_file.with_name("update-notices.sqlite3"), app_id)
+    notice_ai = (AIClient(settings.ai_base_url, settings.ai_api_key, settings.ai_model)
+                 if settings.ai_api_key else None)
+    if settings.update_notices and notice_ai is None:
+        logger.warning("更新通知缺少 AI_API_KEY；不会生成或发送群公告")
+    notifier = (UpdateNotifier(config.CONFIG_ROOT, settings.cache_file.with_name("update-notices.sqlite3"),
+                               app_id, ai_client=notice_ai)
                 if settings.update_notices else None)
     logger.info("回复顺序：%s（OURNOTES_REPLY_ORDER 可切换）",
                 "按收到顺序发送" if settings.reply_order
