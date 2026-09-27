@@ -39,7 +39,7 @@ class ChartDataTests(unittest.TestCase):
 
     def test_public_score_url_and_cache_fallback(self) -> None:
         self.assertEqual(chart_url(self.song, self.chart),
-                         "https://storage.bdon.moe/moenotes/Live/MusicScore/0001/0001_03/0001_03.json")
+                         "https://assets.bdon.moe/zh-Hans/Live/MusicScore/0001/0001_03/0001_03.json")
         with tempfile.TemporaryDirectory() as directory:
             cache = Path(directory)
             with patch("ournotes_bot.chart_data.urlopen", return_value=io.BytesIO(json.dumps(SCORE).encode())) as fetch:
