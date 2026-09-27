@@ -17,7 +17,7 @@
 |---|---|---|---|
 | 成员卡、支援卡、稀有度 | `commands.py::card_matches`、`support_card_matches`、`split_card_rarity`；`data.py::card_with_detail`、`support_card_with_detail`；`visuals.py::render_card`、`render_support_card` | `test_query.py`、`test_support_data.py`、`test_reply_pipeline.py` | [卡牌详情说明](../更新说明-成员卡与支援卡查询.md) |
 | 成员技能反查 | `local_query.py::local_skill_question`；`structured_query.py::matching_skills`、`cards_for`；`yatta.py::build_skills`、`skill_description`；`SongRepository.member_skill_index_ready` | `test_support_data.py`、`test_ai_lexicon.py` | 同上；[昵称规范](../昵称词表维护规范.md) |
-| 歌曲条件、谱面与绘图 | `commands.py::song_matches`；`structured_query.py::songs_for`、`chart_for`；`qq.py::_chart_image`；`chart_data.py::load_chart_score`；`visuals.py::_draw_score`、`render_chart` | `test_query.py`、`test_chart_data.py`、`test_reply_pipeline.py` | [README 谱面说明](../README.md#谱面怎么看)、[第三方资料](../THIRD_PARTY.md) |
+| 歌曲条件、谱面与绘图 | `commands.py::song_matches`；`structured_query.py::songs_for`、`chart_for`；`qq.py::_chart_image`；`chart_data.py::load_chart_score`；`visuals.py::_draw_score`、`render_chart`；本地样图 `scripts/preview_visuals.py` | `test_query.py`、`test_chart_data.py`、`test_visuals.py`、`test_reply_pipeline.py` | [README 谱面说明](../README.md#谱面怎么看)、[第三方资料](../THIRD_PARTY.md) |
 | Haneoka 歌曲分数表 | `song_meta.py::MetaRepository`、`parse_payload`；`efficiency_query.py::parse_efficiency`、`execute_efficiency`；共用 `QuerySpec` / `CommandResult` / `QueryResult` 和 `visuals.py::render_meta`（`MetaAnswer` 捕获数据，全难度逐行表格；默认前 30 条，同曲不同难度分别计数） | `test_song_meta.py`；修改共享路由后跑完整离线测试 | [README 歌曲效率](../README.md#歌曲效率怎么看)、[第三方资料](../THIRD_PARTY.md)；独立缓存，不改主缓存 schema |
 | 自然语言、同义问法 | `local_query.py::parse_local_query`；`query_agent.py::QueryAgent.run`；`query_capabilities.py::local_route`；`query_validation.py::validate_capability_action`；`structured_query.py::QuerySpec`、`QueryResult` | `test_query.py`、`test_ai_lexicon.py`、`test_query_refactor.py` | [Agent 专项方案](../自然语言查询Agent重构方案.md)（含重构前背景，以代码确认现状） |
 | AI 额度、统计、超时 | `ai_client.py::AIClient.request`；`ai_quota.py::DailyQuota.reserve`；`query_metrics.py::QueryMetrics`；`query_debug.py::QueryDebugCounters` | `test_stage5_limits.py`、`test_query_refactor.py`、`test_query_debug.py`、`test_observability.py` | [README 自然语言与设置](../README.md#自然语言数据与运行设置) |
@@ -73,6 +73,8 @@ python scripts/check_release_artifact.py dist
 ```
 
 使用已安装项目依赖和 `setuptools>=68` 的 Python；命令生成 `dist` 等构建产物，不属于普通文档检查。`MANIFEST.in` 当前未列入本开发指南和 AGENTS，它们面向 Git 源码开发；如将来要求随包分发，再单独调整打包规则。
+
+图片样式检查可用 `PYTHONPATH=src` 执行 `python -B scripts/preview_visuals.py --cache-dir <公开缓存副本目录> --output runtime/visual-preview/round1 --stress`。输入需含 `ournotes-cache.json`，以及可选的 `asset-cache/`、`chart-cache/`、`haneoka-meta-jp.json`；不复制凭据、日志或额度。脚本只读缓存，阻止网络连接，不启动 QQ、不调用模型、不刷新资料；缺素材时保留占位。可选 `preview-details/support-<ID>.json` 是与该缓存支援卡 ID 对应的公开详情，用于离线预览。输出须在输入目录之外，含原尺寸 JPEG、430px 宽检查图、概览和输入哈希记录；`--baseline` 仅用 `git show HEAD:src/ournotes_bot/visuals.py` 读取已提交绘图代码作比较。自动检查不能代替逐张检查手机字号、长标题、分页说明及真实卡面。样图与缓存不提交仓库。
 
 纯 Markdown 变更检查链接、路径、符号及 `git diff --check`；新文件还要看 `git status --short`，因为普通 `git diff` 不显示未跟踪内容。不为文档跑生产服务、同步、更新器或 QQ 验收。功能变更先跑相关测试，共享接口、数据兼容或部署变更再扩大到完整测试与必要的真实链路。未执行项如实记录。
 
