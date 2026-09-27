@@ -1,4 +1,4 @@
-"""Notebook styled image replies using the existing Our Notes assets."""
+"""Rounded, high-contrast image replies using the existing Our Notes assets."""
 
 from __future__ import annotations
 
@@ -7,6 +7,7 @@ import asyncio
 import hashlib
 import math
 from concurrent.futures import ThreadPoolExecutor
+from functools import lru_cache
 from pathlib import Path
 from urllib.request import Request, urlopen
 
@@ -20,13 +21,21 @@ from .efficiency_query import MetaAnswer
 from .yatta import ASSETS, BASE
 
 
-PAPER = "#FFF9F1"
-INK = "#353D4B"
-MUTED = "#7B8190"
-PINK = "#EE718F"
-MINT = "#70C9B0"
-BLUE = "#7AA9DE"
-BORDER = "#E9DCCF"
+PAPER = "#F5F5FA"
+INK = "#27304C"
+MUTED = "#525B77"
+ACCENT = "#566599"
+STAT_COLORS = ("#697DA6", "#8887B2", "#A0A6BF")
+BORDER = "#BDC3D9"
+SURFACE = "#E8E9F3"
+MOTIF_INK = "#A0A8C7"
+MOTIF_MUTED = "#BBC1D7"
+DIFFICULTY_COLORS = {
+    "EASY": ("#DEE6F2", "#A6B6CE"),
+    "NORMAL": ("#DFE8E8", "#ABBFC1"),
+    "HARD": ("#EEE8DC", "#C4B9A2"),
+    "EXPERT": ("#EBDDE6", "#C7AFC2"),
+}
 FONT_PATHS = [
     "C:/Windows/Fonts/msyh.ttc",
     "C:/Windows/Fonts/simhei.ttf",
@@ -45,7 +54,12 @@ def _label(locale: str, key: str) -> str:
 
 
 def _font(size: int) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
-    for path in FONT_PATHS:
+    return _cached_font(size, tuple(FONT_PATHS))
+
+
+@lru_cache(maxsize=64)
+def _cached_font(size: int, paths: tuple[str, ...]) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
+    for path in paths:
         try:
             if Path(path).is_absolute() and Path(path).exists():
                 return ImageFont.truetype(path, size)
@@ -54,23 +68,107 @@ def _font(size: int) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
     raise RuntimeError("未找到可用的中日韩字体；请安装 Noto Sans CJK 或微软雅黑，图片回复将退回文字。")
 
 
-def _canvas(width: int, height: int, label: str) -> tuple[Image.Image, ImageDraw.ImageDraw]:
+def _motif(draw: ImageDraw.ImageDraw, kind: str, x: int, y: int, size: int,
+           color: str = MOTIF_INK) -> None:
+    """Small deterministic line art; never baked into a downloaded game asset."""
+    def points(values):
+        return [(x + a * size, y + b * size) for a, b in values]
+
+    stroke = max(2, size // 18)
+    if kind == "meteor":
+        # A directional four-point star echoes the official compass motif.
+        star = [(0.25 + (0.24 if i % 2 == 0 else 0.08) * math.sin(i * math.pi / 4),
+                 0.70 - (0.24 if i % 2 == 0 else 0.08) * math.cos(i * math.pi / 4)) for i in range(8)]
+        draw.line(points(star + star[:1]), fill=color, width=stroke, joint="curve")
+        draw.line(points([(0.45, 0.43), (0.95, 0.05)]), fill=color, width=stroke)
+        draw.line(points([(0.56, 0.54), (1.06, 0.16)]), fill=color, width=stroke)
+    elif kind == "moon":
+        curve = []
+        for controls in (((.35, .05), (1.10, .27), (1.02, .90), (.20, .96)),
+                         ((.20, .96), (.75, .63), (.71, .35), (.35, .05))):
+            for step in range(21):
+                t = step / 20
+                weights = ((1 - t) ** 3, 3 * (1 - t) ** 2 * t, 3 * (1 - t) * t ** 2, t ** 3)
+                curve.append(tuple(sum(weight * point[axis] for weight, point in zip(weights, controls)) for axis in (0, 1)))
+        draw.line(points(curve), fill=color, width=stroke, joint="curve")
+    elif kind == "stone":
+        curve = [(0.13, 0.68), (0.19, 0.42), (0.41, 0.19), (0.63, 0.17),
+                 (0.88, 0.37), (0.93, 0.56), (0.78, 0.78), (0.45, 0.88),
+                 (0.24, 0.83), (0.13, 0.68)]
+        draw.line(points(curve), fill=color, width=stroke, joint="curve")
+        draw.line(points([(0.28, 0.76), (0.44, 0.48), (0.65, 0.26)]), fill=color, width=stroke)
+    else:
+        # Rounded fourfold petals borrow the rhythm, not the official SVG artwork.
+        petals = []
+        for step in range(97):
+            angle = step * math.tau / 96
+            radius = .30 + .12 * math.cos(4 * angle)
+            petals.append((.5 + radius * math.cos(angle), .5 + radius * math.sin(angle)))
+        draw.line(points(petals), fill=color, width=stroke, joint="curve")
+        draw.line(points([(.5, .41), (.59, .5), (.5, .59), (.41, .5), (.5, .41)]),
+                  fill=color, width=stroke, joint="curve")
+
+
+def _decoration_layout(width: int, height: int) -> list[tuple[str, int, int, int, str]]:
+    """Scale against the short side; long replies add repeats, not giant symbols."""
+    unit = min(width, height)
+    large = max(12, round(unit * .058))
+    small = max(8, round(unit * .025))
+    inset = max(3, round(unit * .004))
+    motifs = []
+    for index, kind in enumerate(("meteor", "flower", "moon")):
+        x = width - round(large * (4.15 - index * 1.35))
+        motifs.append((kind, x, round(unit * .018), large, MOTIF_INK))
+    step = max(42, round(unit * .26))
+    kinds = ("stone", "moon", "flower", "meteor")
+    for index, y in enumerate(range(max(170, round(unit * .19)), height - 2 * small, step)):
+        motifs.append((kinds[index % 4], inset, y, small, MOTIF_MUTED))
+        right_y = y + step // 2
+        if right_y + small < height - small:
+            motifs.append((kinds[(index + 2) % 4], width - small - 2 * inset, right_y, small, MOTIF_MUTED))
+    motifs.extend((("flower", inset, height - small - inset, small, MOTIF_INK),
+                   ("stone", width - small - 2 * inset, height - small - inset, small, MOTIF_INK)))
+    return motifs
+
+
+def _background(width: int, height: int) -> tuple[Image.Image, ImageDraw.ImageDraw]:
     image = Image.new("RGB", (width, height), PAPER)
     draw = ImageDraw.Draw(image)
-    draw.rounded_rectangle((24, 24, width - 24, height - 24), radius=32, fill="#FFFFFF", outline=BORDER, width=3)
-    draw.rounded_rectangle((48, 45, 260, 95), radius=23, fill=PINK)
-    draw.text((72, 50), label, fill="white", font=_font(27))
+    for kind, x, y, size, color in _decoration_layout(width, height):
+        _motif(draw, kind, x, y, size, color)
+    return image, draw
+
+
+def _canvas(width: int, height: int, label: str) -> tuple[Image.Image, ImageDraw.ImageDraw]:
+    image, draw = _background(width, height)
+    # Keep the title as the only heading; reserve the right-hand band for motifs.
+    reserved = max(335, round(min(width, height) * .058 * 4.15) + 75)
+    _write(draw, label, 50, 40, width - reserved, 36)
     draw.line((50, 126, width - 50, 126), fill=BORDER, width=2)
-    draw.ellipse((width - 112, 48, width - 85, 75), fill=MINT)
-    draw.ellipse((width - 80, 75, width - 60, 95), fill="#F3D28C")
     return image, draw
 
 
 def _write(draw: ImageDraw.ImageDraw, text: str, x: int, y: int, max_width: int, size: int, color: str = INK) -> None:
     font = _font(size)
-    while text and draw.textlength(text, font=font) > max_width:
-        text = text[:-2] + "…"
+    if max_width <= 0:
+        return
+    if draw.textlength(text, font=font) > max_width:
+        while text and draw.textlength(text + "…", font=font) > max_width:
+            text = text[:-1]
+        text += "…" if draw.textlength("…", font=font) <= max_width else ""
     draw.text((x, y), text, font=font, fill=color)
+
+
+def _difficulty_badge(draw: ImageDraw.ImageDraw, difficulty: str, value: str,
+                      box: tuple[int, int, int, int]) -> None:
+    x0, y0, x1, y1 = box
+    fill, outline = DIFFICULTY_COLORS.get(difficulty, (SURFACE, BORDER))
+    draw.rounded_rectangle(box, radius=min(24, (y1 - y0) // 2), fill=fill, outline=outline, width=2)
+    for text, size, y in ((difficulty, 15, y0 + 7), (value, 28, y0 + 28)):
+        while size > 10 and draw.textlength(text, font=_font(size)) > x1 - x0 - 12:
+            size -= 1
+        _write(draw, text, int((x0 + x1 - min(draw.textlength(text, font=_font(size)), x1 - x0 - 12)) / 2),
+               y, x1 - x0 - 12, size)
 
 
 def _wrapped_lines(draw: ImageDraw.ImageDraw, text: str, max_width: int, size: int, max_lines: int = 3) -> list[str]:
@@ -108,18 +206,26 @@ def _rarity(rarity: int) -> str:
     return "★" * rarity if 0 < rarity <= 5 else "SPECIAL"
 
 
-def _draw_skills(draw: ImageDraw.ImageDraw, skills: tuple[Skill, ...], x: int, y: int,
-                 max_width: int, locale: str) -> int:
+def _skill_rows(draw: ImageDraw.ImageDraw, skills: tuple[Skill, ...],
+                max_width: int, locale: str) -> list[tuple[str, int, str, int]]:
+    rows = []
     for skill in skills:
-        _write(draw, f"{_skill_label(skill.kind, locale)} · {localized_text(skill, 'name', locale)}", x, y, max_width, 21, INK)
-        y += 34
+        title = f"{_skill_label(skill.kind, locale)} · {localized_text(skill, 'name', locale)}"
+        rows.extend((line, 24, INK, 36) for line in _wrapped_lines(draw, title, max_width, 24, len(title) + 1))
         description = localized_text(skill, "description", locale)
         if description:
-            prefix = f"{_label(locale, 'level5')}："
-            for line in _wrapped_lines(draw, prefix + description, max_width, 18, 3):
-                _write(draw, line, x, y, max_width, 18, MUTED)
-                y += 27
-        y += 15
+            text = f"{_label(locale, 'level5')}：{description}"
+            rows.extend((line, 22, MUTED, 33) for line in _wrapped_lines(draw, text, max_width, 22, len(text) + 1))
+        rows.append(("", 22, MUTED, 18))
+    return rows
+
+
+def _draw_skills(draw: ImageDraw.ImageDraw, skills: tuple[Skill, ...], x: int, y: int,
+                 max_width: int, locale: str) -> int:
+    for text, size, color, advance in _skill_rows(draw, skills, max_width, locale):
+        if text:
+            _write(draw, text, x, y, max_width, size, color)
+        y += advance
     return y
 
 
@@ -161,11 +267,17 @@ def _prefetch_assets(urls: list[str], size: tuple[int, int]) -> dict[str, Image.
 def _paste_loaded_asset(canvas: Image.Image, draw: ImageDraw.ImageDraw, image: Image.Image | None,
                         box: tuple[int, int, int, int], locale: str = "zh") -> None:
     x0, y0, x1, y1 = box
+    radius = min(26, (x1 - x0) // 4, (y1 - y0) // 4)
     if image:
-        canvas.paste(image, (x0, y0))
+        mask = Image.new("L", image.size)
+        ImageDraw.Draw(mask).rounded_rectangle((0, 0, image.width - 1, image.height - 1), radius=radius, fill=255)
+        canvas.paste(image, (x0, y0), mask)
     else:
-        draw.rounded_rectangle(box, radius=12, fill="#F5EEE7")
-        _write(draw, _label(locale, "image_missing"), x0 + 14, y0 + 14, x1 - x0 - 28, 20, MUTED)
+        draw.rounded_rectangle(box, radius=radius, fill="#DEE3F2")
+        size = min(40, (x1 - x0) // 2, (y1 - y0) // 2)
+        _motif(draw, "meteor", (x0 + x1 - size) // 2, (y0 + y1 - size) // 2, size, ACCENT)
+        if x1 - x0 >= 200:
+            _write(draw, _label(locale, "image_missing"), x0 + 18, y1 - 44, x1 - x0 - 36, 20, MUTED)
 
 
 def _paste_asset(canvas: Image.Image, draw: ImageDraw.ImageDraw, url: str, box: tuple[int, int, int, int], locale: str = "zh") -> None:
@@ -180,26 +292,31 @@ def _bytes(image: Image.Image) -> bytes:
 
 
 def render_song_list(songs: list[Song], query: str, locale: str = "zh", footer: str = "") -> bytes:
-    width = 900
-    height = 260 + len(songs) * 125 + (80 if footer else 0)
+    width, row_height = 1100, 132
+    footer_lines = footer.splitlines()[:2]
+    height = 218 + len(songs) * row_height + len(footer_lines) * 31
     image, draw = _canvas(width, height, _label(locale, "songs"))
-    _write(draw, f"{_label(locale, 'song_list')} · {query}", 50, 146, width - 100, 32)
-    jackets = _prefetch_assets([song.jacket_url for song in songs], (86, 86))
+    _write(draw, query, 50, 142, width - 100, 23, MUTED)
+    jackets = _prefetch_assets([song.jacket_url for song in songs], (92, 92))
     for index, song in enumerate(songs):
-        top = 208 + index * 125
-        draw.rounded_rectangle((48, top, width - 48, top + 110), radius=18, fill="#FBF7F2", outline=BORDER, width=2)
-        _paste_loaded_asset(image, draw, jackets[song.jacket_url], (64, top + 12, 150, top + 98), locale)
-        _write(draw, localized_text(song, "title", locale), 170, top + 14, 470, 27)
-        _write(draw, f"#{song.id}  ·  {localized_text(song, 'band', locale)}", 170, top + 55, 470, 20, MUTED)
-        xs = (670, 720, 770, 820)
-        colors = (BLUE, MINT, "#F3D28C", PINK)
-        for x, chart, color in zip(xs, song.charts, colors):
-            draw.ellipse((x - 18, top + 38, x + 18, top + 74), fill=color)
-            value = f"{chart.display_level:g}"
-            draw.text((x - draw.textlength(value, font=_font(19)) / 2, top + 42), value, fill=INK, font=_font(19))
-    if footer:
-        for index, line in enumerate(footer.splitlines()[:2]):
-            _write(draw, line, 55, height - 95 + index * 31, width - 110, 21, MUTED)
+        top = 190 + index * row_height
+        draw.rounded_rectangle((38, top, width - 38, top + 120), radius=38,
+                               fill=SURFACE if index % 2 else "#FFFFFF")
+        _write(draw, f"{index + 1:02d}", 53, top + 43, 40, 23, ACCENT)
+        _paste_loaded_asset(image, draw, jackets[song.jacket_url], (102, top + 14, 194, top + 106), locale)
+        title = _wrapped_lines(draw, localized_text(song, "title", locale), 446, 32, 2)
+        for line_index, line in enumerate(title):
+            _write(draw, line, 214, top + 9 + line_index * 37, 446, 32)
+        _write(draw, f"#{song.id}  ·  {localized_text(song, 'band', locale)}", 214, top + 87, 446, 20, MUTED)
+        # Match by identity, not tuple position: filtered/missing charts keep their labels and colors.
+        charts = {chart.difficulty: chart for chart in song.charts}
+        for column, difficulty in enumerate(DIFFICULTY_COLORS):
+            chart = charts.get(difficulty)
+            value = f"{chart.display_level:g}" if chart else "—"
+            x = 680 + column * 94
+            _difficulty_badge(draw, difficulty, value, (x, top + 27, x + 86, top + 93))
+    for index, line in enumerate(footer_lines):
+        _write(draw, line, 55, 195 + len(songs) * row_height + index * 31, width - 110, 21, MUTED)
     return _bytes(image)
 
 
@@ -343,13 +460,11 @@ def render_chart(song: Song, charts: tuple[Chart, ...], locale: str = "zh", scor
     if song.lyricist:
         _write(draw, f"{_label(locale, 'lyricist')}  {localized_text(song, 'lyricist', locale)}", 315, 327, 520, 21)
     draw.line((54, 420, 846, 420), fill=BORDER, width=2)
-    colors = {"EASY": BLUE, "NORMAL": MINT, "HARD": "#E7BA66", "EXPERT": PINK}
     for index, chart in enumerate(charts):
-        top = 443 + index * 54
-        draw.rounded_rectangle((58, top, 240, top + 42), radius=18, fill=colors.get(chart.difficulty, BLUE))
-        _write(draw, chart.difficulty, 82, top + 5, 160, 22, "white")
-        _write(draw, f"Lv.{chart.display_level:g}", 298, top + 3, 150, 27)
-        _write(draw, f"{chart.notes} Notes", 535, top + 5, 250, 23)
+        top = 449
+        x = 65 + index * 200
+        _difficulty_badge(draw, chart.difficulty, f"{chart.display_level:g}", (x, top, x + 170, top + 78))
+        _write(draw, f"{chart.notes} Notes", x + 5, top + 94, 168, 22)
     draw.line((54, 675, 846, 675), fill=BORDER, width=2)
     if score_points:
         _write(draw, _label(locale, "score_title").format(difficulty=preview_difficulty or "EXPERT"), 65, 689, 760, 28, INK)
@@ -383,16 +498,14 @@ def _render_meta_table(answer: MetaAnswer) -> bytes:
     edges = (40, 105, 660, 820, 960, 1180, 1460)
     measure = ImageDraw.Draw(Image.new("RGB", (width, 200)))
     scope = _wrapped_lines(measure, answer.scope, width - 100, 24, max_lines=4)
-    head_y = 118 + 34 * len(scope)
+    head_y = 158 + 34 * len(scope)
     table_bottom = head_y + 60 + len(answer.cells) * row_height
     foot_lines = [part for line in (*answer.page_notice.splitlines(), *answer.notes)
                   for part in _wrapped_lines(measure, line, width - 108, 20, max_lines=len(line) + 1)]
-    image = Image.new("RGB", (width, table_bottom + 70 + len(foot_lines) * 29), "#FCFAFD")
-    draw = ImageDraw.Draw(image)
-    draw.text((46, 30), "日服 · 歌曲分数表", font=_font(39), fill=INK)
+    image, draw = _canvas(width, table_bottom + 70 + len(foot_lines) * 29, "日服 · 歌曲分数表")
     for i, line in enumerate(scope):
-        draw.text((48, 89 + i * 34), line, font=_font(24), fill=MUTED)
-    draw.rounded_rectangle((40, head_y, 1460, head_y + 60), radius=12, fill="#EEEAF2")
+        draw.text((48, 142 + i * 34), line, font=_font(24), fill=MUTED)
+    draw.rounded_rectangle((40, head_y, 1460, head_y + 56), radius=26, fill="#DCE1F0")
     headers = ("排名", "歌曲", "难度", "时长", "得分系数", "每分钟得分效率")
     def centered(text, left, right, y, size=25, color=INK):
         font = _font(size)
@@ -403,35 +516,25 @@ def _render_meta_table(answer: MetaAnswer) -> bytes:
         else:
             centered(label, edges[index], edges[index + 1], head_y + 17, 22, MUTED)
     covers = _prefetch_assets(list(answer.jackets), (60, 60))
-    colors = {"EXPERT": ("#FADDDD", "#E68087"), "HARD": ("#FFF0D8", "#DDB568"),
-              "NORMAL": ("#DFF2E7", "#81B993"), "EASY": ("#DDEBF9", "#7AA9DE")}
     for index, row in enumerate(answer.cells):
         top = head_y + 60 + index * row_height
-        draw.rectangle((40, top, 1460, top + row_height), fill="#F5F1F8" if index % 2 == 0 else "#FCFAFD")
-        draw.line((40, top + row_height, 1460, top + row_height), fill="#E3DFE8", width=1)
-        centered(row[0], edges[0], edges[1], top + 28, 22, MUTED)
+        draw.rounded_rectangle((40, top + 3, 1460, top + row_height - 3), radius=28,
+                               fill=SURFACE if index % 2 == 0 else "#FFFFFF")
+        centered(row[0], edges[0], edges[1], top + 28, 22, ACCENT)
         cover = covers.get(answer.jackets[index])
-        if cover is not None:
-            image.paste(cover, (118, top + 13))
-        else:
-            draw.rounded_rectangle((118, top + 13, 178, top + 73), radius=8, fill="#EEE5F2")
-            draw.ellipse((132, top + 44, 148, top + 56), fill="#A989B6")
-            draw.line((147, top + 49, 147, top + 28, 160, top + 32), fill="#A989B6", width=3)
+        _paste_loaded_asset(image, draw, cover, (118, top + 13, 178, top + 73))
         lines = _wrapped_lines(draw, row[1], 451, 25, max_lines=2)
         title_y = top + (row_height - len(lines) * 31) // 2 - 2
         for line_index, line in enumerate(lines):
             draw.text((192, title_y + line_index * 31), line, font=_font(25), fill=INK)
-        fill, outline = colors.get(row[2], ("#EEEAF2", BORDER))
-        draw.rounded_rectangle((694, top + 10, 786, top + 76), radius=14, fill=fill, outline=outline, width=1)
-        centered(row[2], 694, 786, top + 17, 13)
-        centered(row[3], 694, 786, top + 36, 24 if len(row[3]) <= 3 else 20)
+        _difficulty_badge(draw, row[2], row[3], (694, top + 10, 786, top + 76))
         for value, column in ((row[4], 3), (row[5], 4), (row[6], 5)):
             # Normal metrics fit at 26px; bound unusually large values to their cell.
             available = edges[column + 1] - edges[column] - 24
             font = _font(26)
             if draw.textlength(value, font=font) <= available:
                 centered(value, edges[column], edges[column + 1], top + 26, 26,
-                         "#6B4C9A" if column == 5 else INK)
+                         ACCENT if column == 5 else INK)
             else:
                 _write(draw, value, edges[column] + 12, top + 26, available, 22)
     for i, line in enumerate(foot_lines):
@@ -440,25 +543,34 @@ def _render_meta_table(answer: MetaAnswer) -> bytes:
 
 
 def render_card(card: Card, locale: str = "zh") -> bytes:
-    image, draw = _canvas(900, 2250, _label(locale, "card"))
-    _write(draw, localized_text(card, "band", locale), 56, 145, 460, 27, PINK)
+    measure = ImageDraw.Draw(Image.new("RGB", (900, 1)))
+    title = localized_text(card, "title", locale)
+    title_lines = _wrapped_lines(measure, title, 760, 29, len(title) + 1)
+    extra = max(0, len(title_lines) - 1) * 39
+    skill_height = sum(row[3] for row in _skill_rows(measure, card.skills, 690, locale))
+    panel_bottom = 1682 + extra + max(60, skill_height) + 24
+    image, draw = _canvas(900, panel_bottom + 65, _label(locale, "card"))
+    _write(draw, localized_text(card, "band", locale), 56, 145, 460, 27, ACCENT)
     _write(draw, localized_text(card, "character", locale), 56, 190, 760, 39)
-    _write(draw, localized_text(card, "title", locale), 56, 250, 760, 29)
-    _paste_asset(image, draw, card.full_url, (64, 315, 836, 1345), locale)
-    draw.rounded_rectangle((63, 1370, 837, 2175), radius=22, fill="#FBF7F2", outline=BORDER, width=2)
-    _write(draw, f"{_rarity(card.rarity)}    ID {card.id}    {_label(locale, 'type')} {card.card_type}", 88, 1393, 720, 28, PINK)
+    for index, line in enumerate(title_lines):
+        _write(draw, line, 56, 250 + index * 39, 760, 29)
+    _paste_asset(image, draw, card.full_url, (64, 315 + extra, 836, 1345 + extra), locale)
+    draw.rounded_rectangle((63, 1370 + extra, 837, panel_bottom), radius=34, fill=SURFACE)
+    _write(draw, f"{_rarity(card.rarity)}    ID {card.id}    {_label(locale, 'type')} {card.card_type}", 88, 1393 + extra, 720, 28, ACCENT)
     total = card.performance + card.technic + card.visual
-    _write(draw, f"{_label(locale, 'power')}  {total:,}" if total else {"zh": "数值暂不可用", "en": "Stats unavailable", "ja": "ステータス未取得"}.get(locale, "数值暂不可用"), 88, 1447, 720, 31)
-    values = [(_label(locale, "performance"), card.performance, PINK), (_label(locale, "technic"), card.technic, BLUE), (_label(locale, "visual"), card.visual, MINT)]
+    _write(draw, f"{_label(locale, 'power')}  {total:,}" if total else {"zh": "数值暂不可用", "en": "Stats unavailable", "ja": "ステータス未取得"}.get(locale, "数值暂不可用"), 88, 1447 + extra, 720, 31)
+    values = [(_label(locale, "performance"), card.performance, STAT_COLORS[0]),
+              (_label(locale, "technic"), card.technic, STAT_COLORS[1]),
+              (_label(locale, "visual"), card.visual, STAT_COLORS[2])]
     for index, (label, value, color) in enumerate(values):
-        y = 1504 + index * 55
+        y = 1504 + extra + index * 55
         _write(draw, f"{label}  {value:,}", 88, y, 270, 22)
-        draw.rounded_rectangle((365, y + 7, 780, y + 28), radius=10, fill="#E9E3DE")
+        draw.rounded_rectangle((365, y + 7, 780, y + 28), radius=10, fill="#D2D9EA")
         draw.rounded_rectangle((365, y + 7, 365 + int(415 * value / max(1, max(v for _, v, _ in values))), y + 28), radius=10, fill=color)
     if card.skills:
-        _draw_skills(draw, card.skills, 88, 1682, 690, locale)
+        _draw_skills(draw, card.skills, 88, 1682 + extra, 690, locale)
     elif card.skill_name:
-        _write(draw, f"{_label(locale, 'skill')}  {localized_text(card, 'skill_name', locale)}", 88, 1682, 700, 20, MUTED)
+        _write(draw, f"{_label(locale, 'skill')}  {localized_text(card, 'skill_name', locale)}", 88, 1682 + extra, 700, 22, MUTED)
     return _bytes(image)
 
 
@@ -469,7 +581,8 @@ def render_card_list(cards: list[Card], query: str, locale: str = "zh", footer: 
     thumbnails = _prefetch_assets([card.thumbnail_url for card in cards], (93, 125))
     for index, card in enumerate(cards):
         top = 195 + index * 165
-        draw.rounded_rectangle((50, top, 850, top + 145), radius=18, fill="#FBF7F2", outline=BORDER, width=2)
+        draw.rounded_rectangle((50, top, 850, top + 145), radius=34,
+                               fill=SURFACE if index % 2 else "#FFFFFF")
         _paste_loaded_asset(image, draw, thumbnails[card.thumbnail_url], (68, top + 10, 161, top + 135), locale)
         _write(draw, localized_text(card, "character", locale), 190, top + 13, 590, 27)
         _write(draw, localized_text(card, "title", locale), 190, top + 55, 590, 22)
@@ -481,24 +594,34 @@ def render_card_list(cards: list[Card], query: str, locale: str = "zh", footer: 
 
 
 def render_support_card(card: SupportCard, locale: str = "zh") -> bytes:
-    image, draw = _canvas(900, 2100, _label(locale, "support_card"))
-    _write(draw, localized_text(card, "character", locale), 56, 165, 760, 36, PINK)
-    _write(draw, localized_text(card, "title", locale), 56, 225, 760, 29)
-    _paste_asset(image, draw, card.full_url, (64, 290, 836, 1245), locale)
-    draw.rounded_rectangle((63, 1270, 837, 2025), radius=22, fill="#FBF7F2", outline=BORDER, width=2)
-    _write(draw, f"{_rarity(card.rarity)}    ID {card.id}    {_label(locale, 'type')} {card.card_type}", 88, 1295, 720, 28, PINK)
-    values = [(_label(locale, "performance"), card.performance / 100, PINK),
-              (_label(locale, "technic"), card.technic / 100, BLUE),
-              (_label(locale, "visual"), card.visual / 100, MINT)]
+    measure = ImageDraw.Draw(Image.new("RGB", (900, 1)))
+    characters, title = localized_text(card, "character", locale), localized_text(card, "title", locale)
+    names = _wrapped_lines(measure, characters, 760, 32, len(characters) + 1)
+    titles = _wrapped_lines(measure, title, 760, 29, len(title) + 1)
+    name_extra = max(0, len(names) - 1) * 44
+    extra = name_extra + max(0, len(titles) - 1) * 39
+    skill_height = sum(row[3] for row in _skill_rows(measure, card.skills, 690, locale))
+    panel_bottom = 1588 + extra + max(40, skill_height) + 24
+    image, draw = _canvas(900, panel_bottom + 65, _label(locale, "support_card"))
+    for index, line in enumerate(names):
+        _write(draw, line, 56, 165 + index * 44, 760, 32, ACCENT)
+    for index, line in enumerate(titles):
+        _write(draw, line, 56, 225 + name_extra + index * 39, 760, 29)
+    _paste_asset(image, draw, card.full_url, (64, 290 + extra, 836, 1245 + extra), locale)
+    draw.rounded_rectangle((63, 1270 + extra, 837, panel_bottom), radius=34, fill=SURFACE)
+    _write(draw, f"{_rarity(card.rarity)}    ID {card.id}    {_label(locale, 'type')} {card.card_type}", 88, 1295 + extra, 720, 28, ACCENT)
+    values = [(_label(locale, "performance"), card.performance / 100, STAT_COLORS[0]),
+              (_label(locale, "technic"), card.technic / 100, STAT_COLORS[1]),
+              (_label(locale, "visual"), card.visual / 100, STAT_COLORS[2])]
     total = sum(value for _, value, _ in values)
-    _write(draw, f"{_label(locale, 'support_bonus')}  {total:g}%" if total else {"zh": "数值暂不可用", "en": "Stats unavailable", "ja": "ステータス未取得"}.get(locale, "数值暂不可用"), 88, 1348, 720, 31)
+    _write(draw, f"{_label(locale, 'support_bonus')}  {total:g}%" if total else {"zh": "数值暂不可用", "en": "Stats unavailable", "ja": "ステータス未取得"}.get(locale, "数值暂不可用"), 88, 1348 + extra, 720, 31)
     for index, (label, value, color) in enumerate(values):
-        y = 1405 + index * 55
+        y = 1405 + extra + index * 55
         _write(draw, f"{label}  {value:g}%", 88, y, 270, 22)
-        draw.rounded_rectangle((365, y + 7, 780, y + 28), radius=10, fill="#E9E3DE")
+        draw.rounded_rectangle((365, y + 7, 780, y + 28), radius=10, fill="#D2D9EA")
         draw.rounded_rectangle((365, y + 7, 365 + int(415 * value / max(1, max(v for _, v, _ in values))), y + 28), radius=10, fill=color)
     if card.skills:
-        _draw_skills(draw, card.skills, 88, 1588, 690, locale)
+        _draw_skills(draw, card.skills, 88, 1588 + extra, 690, locale)
     return _bytes(image)
 
 
@@ -509,7 +632,8 @@ def render_support_card_list(cards: list[SupportCard], query: str, locale: str =
     thumbnails = _prefetch_assets([card.thumbnail_url for card in cards], (125, 125))
     for index, card in enumerate(cards):
         top = 195 + index * 165
-        draw.rounded_rectangle((50, top, 850, top + 145), radius=18, fill="#FBF7F2", outline=BORDER, width=2)
+        draw.rounded_rectangle((50, top, 850, top + 145), radius=34,
+                               fill=SURFACE if index % 2 else "#FFFFFF")
         _paste_loaded_asset(image, draw, thumbnails[card.thumbnail_url], (68, top + 10, 193, top + 135), locale)
         _write(draw, localized_text(card, "character", locale), 220, top + 13, 560, 27)
         _write(draw, localized_text(card, "title", locale), 220, top + 55, 560, 22)
