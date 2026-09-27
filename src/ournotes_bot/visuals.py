@@ -21,13 +21,13 @@ from .efficiency_query import MetaAnswer
 from .yatta import ASSETS, BASE
 
 
-PAPER = "#F5F5FA"
-INK = "#27304C"
-MUTED = "#525B77"
-ACCENT = "#566599"
+PAPER = "#F1F2F8"
+INK = "#202B49"
+MUTED = "#45516F"
+ACCENT = "#475B96"
 STAT_COLORS = ("#697DA6", "#8887B2", "#A0A6BF")
-BORDER = "#BDC3D9"
-SURFACE = "#E8E9F3"
+BORDER = "#AAB5D0"
+SURFACE = "#E6EAF4"
 MOTIF_INK = "#A0A8C7"
 MOTIF_MUTED = "#BBC1D7"
 DIFFICULTY_COLORS = {
@@ -301,7 +301,8 @@ def render_song_list(songs: list[Song], query: str, locale: str = "zh", footer: 
     for index, song in enumerate(songs):
         top = 190 + index * row_height
         draw.rounded_rectangle((38, top, width - 38, top + 120), radius=38,
-                               fill=SURFACE if index % 2 else "#FFFFFF")
+                               fill=SURFACE if index % 2 else "#FFFFFF", outline=BORDER, width=2)
+        draw.line((666, top + 17, 666, top + 103), fill=BORDER, width=2)
         _write(draw, f"{index + 1:02d}", 53, top + 43, 40, 23, ACCENT)
         _paste_loaded_asset(image, draw, jackets[song.jacket_url], (102, top + 14, 194, top + 106), locale)
         title = _wrapped_lines(draw, localized_text(song, "title", locale), 446, 32, 2)
@@ -505,7 +506,10 @@ def _render_meta_table(answer: MetaAnswer) -> bytes:
     image, draw = _canvas(width, table_bottom + 70 + len(foot_lines) * 29, "日服 · 歌曲分数表")
     for i, line in enumerate(scope):
         draw.text((48, 142 + i * 34), line, font=_font(24), fill=MUTED)
-    draw.rounded_rectangle((40, head_y, 1460, head_y + 56), radius=26, fill="#DCE1F0")
+    draw.rounded_rectangle((40, head_y, 1460, head_y + 56), radius=26,
+                           fill="#D9E0EF", outline=BORDER, width=2)
+    for x in (105, 660, 820, 960, 1180):
+        draw.line((x, head_y + 8, x, head_y + 48), fill=BORDER, width=1)
     headers = ("排名", "歌曲", "难度", "时长", "得分系数", "每分钟得分效率")
     def centered(text, left, right, y, size=25, color=INK):
         font = _font(size)
@@ -519,7 +523,9 @@ def _render_meta_table(answer: MetaAnswer) -> bytes:
     for index, row in enumerate(answer.cells):
         top = head_y + 60 + index * row_height
         draw.rounded_rectangle((40, top + 3, 1460, top + row_height - 3), radius=28,
-                               fill=SURFACE if index % 2 == 0 else "#FFFFFF")
+                               fill=SURFACE if index % 2 == 0 else "#FFFFFF", outline=BORDER, width=2)
+        for x in (105, 660, 820, 960, 1180):
+            draw.line((x, top + 10, x, top + row_height - 10), fill=BORDER, width=1)
         centered(row[0], edges[0], edges[1], top + 28, 22, ACCENT)
         cover = covers.get(answer.jackets[index])
         _paste_loaded_asset(image, draw, cover, (118, top + 13, 178, top + 73))
@@ -555,10 +561,12 @@ def render_card(card: Card, locale: str = "zh") -> bytes:
     for index, line in enumerate(title_lines):
         _write(draw, line, 56, 250 + index * 39, 760, 29)
     _paste_asset(image, draw, card.full_url, (64, 315 + extra, 836, 1345 + extra), locale)
-    draw.rounded_rectangle((63, 1370 + extra, 837, panel_bottom), radius=34, fill=SURFACE)
+    draw.rounded_rectangle((63, 1370 + extra, 837, panel_bottom), radius=34,
+                           fill=SURFACE, outline=BORDER, width=2)
     _write(draw, f"{_rarity(card.rarity)}    ID {card.id}    {_label(locale, 'type')} {card.card_type}", 88, 1393 + extra, 720, 28, ACCENT)
     total = card.performance + card.technic + card.visual
     _write(draw, f"{_label(locale, 'power')}  {total:,}" if total else {"zh": "数值暂不可用", "en": "Stats unavailable", "ja": "ステータス未取得"}.get(locale, "数值暂不可用"), 88, 1447 + extra, 720, 31)
+    draw.line((88, 1490 + extra, 812, 1490 + extra), fill=BORDER, width=2)
     values = [(_label(locale, "performance"), card.performance, STAT_COLORS[0]),
               (_label(locale, "technic"), card.technic, STAT_COLORS[1]),
               (_label(locale, "visual"), card.visual, STAT_COLORS[2])]
@@ -582,7 +590,8 @@ def render_card_list(cards: list[Card], query: str, locale: str = "zh", footer: 
     for index, card in enumerate(cards):
         top = 195 + index * 165
         draw.rounded_rectangle((50, top, 850, top + 145), radius=34,
-                               fill=SURFACE if index % 2 else "#FFFFFF")
+                               fill=SURFACE if index % 2 else "#FFFFFF", outline=BORDER, width=2)
+        draw.line((178, top + 12, 178, top + 133), fill=BORDER, width=2)
         _paste_loaded_asset(image, draw, thumbnails[card.thumbnail_url], (68, top + 10, 161, top + 135), locale)
         _write(draw, localized_text(card, "character", locale), 190, top + 13, 590, 27)
         _write(draw, localized_text(card, "title", locale), 190, top + 55, 590, 22)
@@ -608,13 +617,15 @@ def render_support_card(card: SupportCard, locale: str = "zh") -> bytes:
     for index, line in enumerate(titles):
         _write(draw, line, 56, 225 + name_extra + index * 39, 760, 29)
     _paste_asset(image, draw, card.full_url, (64, 290 + extra, 836, 1245 + extra), locale)
-    draw.rounded_rectangle((63, 1270 + extra, 837, panel_bottom), radius=34, fill=SURFACE)
+    draw.rounded_rectangle((63, 1270 + extra, 837, panel_bottom), radius=34,
+                           fill=SURFACE, outline=BORDER, width=2)
     _write(draw, f"{_rarity(card.rarity)}    ID {card.id}    {_label(locale, 'type')} {card.card_type}", 88, 1295 + extra, 720, 28, ACCENT)
     values = [(_label(locale, "performance"), card.performance / 100, STAT_COLORS[0]),
               (_label(locale, "technic"), card.technic / 100, STAT_COLORS[1]),
               (_label(locale, "visual"), card.visual / 100, STAT_COLORS[2])]
     total = sum(value for _, value, _ in values)
     _write(draw, f"{_label(locale, 'support_bonus')}  {total:g}%" if total else {"zh": "数值暂不可用", "en": "Stats unavailable", "ja": "ステータス未取得"}.get(locale, "数值暂不可用"), 88, 1348 + extra, 720, 31)
+    draw.line((88, 1392 + extra, 812, 1392 + extra), fill=BORDER, width=2)
     for index, (label, value, color) in enumerate(values):
         y = 1405 + extra + index * 55
         _write(draw, f"{label}  {value:g}%", 88, y, 270, 22)
@@ -633,7 +644,8 @@ def render_support_card_list(cards: list[SupportCard], query: str, locale: str =
     for index, card in enumerate(cards):
         top = 195 + index * 165
         draw.rounded_rectangle((50, top, 850, top + 145), radius=34,
-                               fill=SURFACE if index % 2 else "#FFFFFF")
+                               fill=SURFACE if index % 2 else "#FFFFFF", outline=BORDER, width=2)
+        draw.line((208, top + 12, 208, top + 133), fill=BORDER, width=2)
         _paste_loaded_asset(image, draw, thumbnails[card.thumbnail_url], (68, top + 10, 193, top + 135), locale)
         _write(draw, localized_text(card, "character", locale), 220, top + 13, 560, 27)
         _write(draw, localized_text(card, "title", locale), 220, top + 55, 560, 22)
