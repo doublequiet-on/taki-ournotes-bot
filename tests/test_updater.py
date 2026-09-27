@@ -352,6 +352,35 @@ class UpdateNoticeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(self.posts()), 1)
         self.assertEqual(self.client.request.call_count, 2)
 
+    async def test_internal_release_copy_is_rejected_before_sending(self):
+        self.notifier.observe("group")
+        self.client.request.side_effect = None
+        self.client.request.return_value = ModelResponse(
+            {"notice": "使用现有 DeepSeek API 配置，依据提交标题、变动文件和更新日志生成公告。"}, {})
+        with self.assertLogs("ournotes_bot.update_notice", level="ERROR"):
+            await self.notifier.deliver(self.api)
+        self.http.request.assert_not_called()
+        self.assertEqual(self.notifier.store.report(B)[0], "failed")
+
+    async def test_internal_only_release_is_skipped(self):
+        self.notifier.observe("group")
+        self.client.request.side_effect = None
+        self.client.request.return_value = ModelResponse({"notice": ""}, {})
+        await self.notifier.deliver(self.api)
+        self.http.request.assert_not_called()
+        self.assertEqual(self.notifier.store.report(B)[0], "skipped")
+        await self.worker().deliver(self.api)
+        self.assertEqual(self.client.request.call_count, 1)
+
+    async def test_short_group_facing_copy_is_sent_without_heading(self):
+        self.notifier.observe("group")
+        self.client.request.side_effect = None
+        self.client.request.return_value = ModelResponse(
+            {"notice": "【更新公告】\n群公告现在更简短，重点说清大家能用到的变化。"}, {})
+        await self.notifier.deliver(self.api)
+        self.assertEqual(self.posts()[0].kwargs["json"]["content"],
+                         "群公告现在更简短，重点说清大家能用到的变化。")
+
     async def test_group_permission_removal_and_out_of_order_events(self):
         for gid in ("removed", "disabled", "enabled"):
             self.notifier.observe(gid, event="add", timestamp=10)
