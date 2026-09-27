@@ -219,6 +219,11 @@ _SCORE_GUIDANCE = {
 }
 
 
+def _score_plot_height(segment: int) -> int:
+    # Keep a 120-tick gap legible next to an eight-pixel note, even in long songs.
+    return max(2900, min(4800, int(segment / 480 * 52)))
+
+
 def _draw_score(draw: ImageDraw.ImageDraw, score: dict, top: int, locale: str) -> int:
     notes = score.get("notes", [])
     points = [point for note in notes if isinstance(note, dict)
@@ -230,7 +235,7 @@ def _draw_score(draw: ImageDraw.ImageDraw, score: dict, top: int, locale: str) -
     last = (int(max(point[0] for point in points)) // 1920 + 2) * 1920
     segment = max(1920, math.ceil((last - first) / (4 * 1920)) * 1920)
     columns = min(4, math.ceil((last - first) / segment))
-    plot_height = max(1450, min(2400, int(segment / 480 * 26)))
+    plot_height = _score_plot_height(segment)
     gap = 12
     panel_width = (790 - gap * (columns - 1)) / columns
 
@@ -325,7 +330,7 @@ def render_chart(song: Song, charts: tuple[Chart, ...], locale: str = "zh", scor
         first = max(0, (int(min(point[0] for point in score_points)) // 1920 - 1) * 1920)
         last = (int(max(point[0] for point in score_points)) // 1920 + 2) * 1920
         segment = max(1920, math.ceil((last - first) / (4 * 1920)) * 1920)
-        image_height = 790 + max(1450, min(2400, int(segment / 480 * 26))) + 100
+        image_height = 790 + _score_plot_height(segment) + 100
     else:
         image_height = 760
     image, draw = _canvas(900, image_height, _label(locale, "chart"))

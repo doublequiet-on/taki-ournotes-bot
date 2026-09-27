@@ -86,6 +86,22 @@ class ChartDataTests(unittest.TestCase):
         self.assertEqual(early[1], next_column[1])
         self.assertIn("起点 ↑", [call.args[1] for call in draw.text.call_args_list])
 
+    def test_dense_notes_have_room_and_canvas_contains_the_timeline(self) -> None:
+        score = {"notes": [
+            {"t": 0, "pos": 0, "size": 6},
+            {"t": 120, "pos": 0, "size": 6},
+            {"t": 180000, "pos": 0, "size": 6},
+        ]}
+        draw = Mock()
+        bottom = _draw_score(draw, score, 790, "zh")
+        notes = [call.args[0] for call in draw.rounded_rectangle.call_args_list
+                 if call.kwargs.get("fill") == "#75C5E8"]
+        self.assertGreaterEqual(notes[0][1] - notes[1][1], 10)
+        with patch("ournotes_bot.visuals._asset", return_value=None):
+            result = render_chart(self.song, (self.chart,), "zh", score, "EXPERT")
+        with Image.open(io.BytesIO(result)) as image:
+            self.assertGreaterEqual(image.height, bottom + 60)
+
     def test_cross_column_holds_and_flick_directions_survive_vertical_mapping(self) -> None:
         image = Image.new("RGB", (900, 1800))
         draw = Mock(wraps=ImageDraw.Draw(image))
