@@ -8,7 +8,10 @@ import zipfile
 from pathlib import Path, PurePosixPath
 
 
-PRIVATE_NAMES = {".env", "ournotes-cache.json", "ai-quota.json", "update-notices.sqlite3"}
+PRIVATE_NAMES = {
+    ".env", "ournotes-cache.json", "ai-quota.json", "ai-metrics.json",
+    "update-notices.sqlite3",
+}
 MEDIA_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".mp4", ".mp3"}
 
 

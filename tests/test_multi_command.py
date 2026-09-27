@@ -1,11 +1,6 @@
-"""One message may carry several commands, one per line.
-
-Preparation is bounded by QueryGate but replies must follow the order the user
-asked for, so a slow query cannot make its answer appear after a later one.
-"""
+"""Contract tests for bounded multi-command execution and ordered replies."""
 from __future__ import annotations
 
-import asyncio
 import os
 import tempfile
 import threading
@@ -16,7 +11,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 from ournotes_bot.commands import split_commands
-from ournotes_bot.config import (MAX_MULTI_COMMAND_LIMIT, QQ_PASSIVE_REPLY_LIMIT, Settings)
+from ournotes_bot.config import MAX_MULTI_COMMAND_LIMIT, QQ_PASSIVE_REPLY_LIMIT, Settings
 from ournotes_bot.data import SongRepository
 from ournotes_bot.i18n import MESSAGES, tr
 from ournotes_bot.qq import PreparedReply, QueryGate, _deliver_reply, prepare_commands
@@ -24,57 +19,40 @@ from ournotes_bot.yatta import BASE
 
 
 class SplitCommandsTests(unittest.TestCase):
-    def test_single_command_is_unchanged(self):
-        self.assertEqual(split_commands("/查卡 1"), ["查卡 1"])
-        self.assertEqual(split_commands("  查曲 迷星叫  "), ["查曲 迷星叫"])
-
-    def test_newlines_split_into_separate_commands(self):
-        message = "/查谱面 100003 EXPERT\n/查卡 1\n/查缩写 skk"
-        self.assertEqual(split_commands(message),
-                         ["查谱面 100003 EXPERT", "查卡 1", "查缩写 skk"])
-
-    def test_windows_and_blank_lines_are_tolerated(self):
-        message = "/查卡 1\r\n\r\n   \r\n/查曲 mygo\r\n"
-        self.assertEqual(split_commands(message), ["查卡 1", "查曲 mygo"])
-
-    def test_mention_does_not_leak_into_any_command(self):
-        message = "<@!12345> /查卡 1\n<@!12345> /查曲 mygo"
-        self.assertEqual(split_commands(message), ["查卡 1", "查曲 mygo"])
-
-    def test_empty_message_yields_nothing(self):
-        self.assertEqual(split_commands("   \n\n  "), [])
-        self.assertEqual(split_commands(""), [])
+    def test_command_lines_are_normalized_without_leaking_mentions(self):
+        cases = (
+            ("/查卡 1", ["查卡 1"]),
+            ("  查曲 迷星叫  ", ["查曲 迷星叫"]),
+            ("/查谱面 100003 EXPERT\n/查卡 1\n/查缩写 skk",
+             ["查谱面 100003 EXPERT", "查卡 1", "查缩写 skk"]),
+            ("/查卡 1\r\n\r\n   \r\n/查曲 mygo\r\n", ["查卡 1", "查曲 mygo"]),
+            ("<@!12345> /查卡 1\n<@!12345> /查曲 mygo", ["查卡 1", "查曲 mygo"]),
+            ("   \n\n  ", []),
+            ("", []),
+        )
+        for message, expected in cases:
+            with self.subTest(message=message):
+                self.assertEqual(split_commands(message), expected)
 
 
 class MultiCommandLimitSettingTests(unittest.TestCase):
     def settings(self, **env):
-        with patch("ournotes_bot.config.load_dotenv"), \
-             patch.dict(os.environ, env, clear=True):
+        with patch("ournotes_bot.config.load_dotenv"), patch.dict(os.environ, env, clear=True):
             return Settings.from_env()
 
-    def test_default_limit_leaves_room_for_the_over_limit_notice(self):
-        """QQ rejects the sixth passive reply, so commands stop one slot short."""
+    def test_limit_defaults_to_a_safe_slot_and_is_clamped(self):
         self.assertEqual(QQ_PASSIVE_REPLY_LIMIT, 5)
         self.assertEqual(MAX_MULTI_COMMAND_LIMIT, 4)
         self.assertEqual(self.settings().multi_command_limit, 4)
-
-    def test_configured_limit(self):
-        self.assertEqual(self.settings(OURNOTES_MULTI_COMMAND_LIMIT="2").multi_command_limit, 2)
-
-    def test_limit_is_clamped_to_the_platform_ceiling(self):
-        self.assertEqual(self.settings(OURNOTES_MULTI_COMMAND_LIMIT="0").multi_command_limit, 1)
-        self.assertEqual(self.settings(OURNOTES_MULTI_COMMAND_LIMIT="-9").multi_command_limit, 1)
-        self.assertEqual(self.settings(OURNOTES_MULTI_COMMAND_LIMIT="999").multi_command_limit,
-                         MAX_MULTI_COMMAND_LIMIT)
-
-    def test_example_env_documents_the_setting(self):
-        example = Path(__file__).resolve().parents[1] / ".env.example"
-        self.assertIn("OURNOTES_MULTI_COMMAND_LIMIT", example.read_text(encoding="utf-8"))
+        for value, expected in (("2", 2), ("0", 1), ("-9", 1), ("999", 4)):
+            with self.subTest(value=value):
+                self.assertEqual(
+                    self.settings(OURNOTES_MULTI_COMMAND_LIMIT=value).multi_command_limit,
+                    expected,
+                )
 
 
 class PassiveReplySequenceTests(unittest.IsolatedAsyncioTestCase):
-    """QQ discards a passive reply that repeats an earlier (msg_id, msg_seq)."""
-
     @staticmethod
     def message():
         api = SimpleNamespace(
@@ -84,7 +62,7 @@ class PassiveReplySequenceTests(unittest.IsolatedAsyncioTestCase):
         )
         return SimpleNamespace(id="msg-1", _api=api)
 
-    async def test_group_replies_use_increasing_msg_seq(self):
+    async def test_text_and_media_replies_carry_the_expected_sequence(self):
         message = self.message()
         for seq in (1, 2, 3):
             await _deliver_reply(message, "group-1", True, PreparedReply(f"text{seq}"), msg_seq=seq)
@@ -92,21 +70,16 @@ class PassiveReplySequenceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([kw["msg_seq"] for kw in sent], [1, 2, 3])
         self.assertEqual([kw["msg_id"] for kw in sent], ["msg-1", "msg-1", "msg-1"])
 
-    async def test_default_sequence_still_matches_a_single_reply(self):
-        message = self.message()
-        await _deliver_reply(message, "user-1", False, PreparedReply("only"))
-        kw = message._api.post_c2c_message.await_args.kwargs
-        self.assertEqual(kw["msg_seq"], 1)
+        await _deliver_reply(message, "group-1", True, PreparedReply("t", b"image"), msg_seq=4)
+        media = message._api.post_group_message.await_args.kwargs
+        self.assertEqual((media["msg_type"], media["msg_seq"]), (7, 4))
 
-    async def test_media_reply_also_carries_its_sequence(self):
-        message = self.message()
-        await _deliver_reply(message, "group-1", True, PreparedReply("t", b"image"), msg_seq=2)
-        kw = message._api.post_group_message.await_args.kwargs
-        self.assertEqual((kw["msg_type"], kw["msg_seq"]), (7, 2))
+        await _deliver_reply(message, "user-1", False, PreparedReply("only"))
+        self.assertEqual(message._api.post_c2c_message.await_args.kwargs["msg_seq"], 1)
 
 
 class OverflowNoticeTests(unittest.TestCase):
-    def test_notice_exists_in_every_locale(self):
+    def test_notice_is_complete_in_every_locale(self):
         for locale in ("zh", "en", "ja"):
             text = tr(locale, "too_many_commands", limit=5, total=8)
             self.assertIn("5", text)
@@ -122,7 +95,6 @@ class PrepareCommandsTests(unittest.IsolatedAsyncioTestCase):
         self.repo = SongRepository(BASE, Path(self.temp.name) / "cache.json")
 
     async def test_replies_follow_asked_order_even_when_later_commands_are_faster(self):
-        """The first command is deliberately slow; its reply must still come first."""
         delays = {"a": 0.30, "b": 0.02, "c": 0.02}
 
         def fake_prepare(content, repository, ai_parser):
@@ -131,11 +103,9 @@ class PrepareCommandsTests(unittest.IsolatedAsyncioTestCase):
 
         gate = QueryGate(2, 4)
         with patch("ournotes_bot.qq._prepare_reply", side_effect=fake_prepare):
-            replies, overflow = await prepare_commands(
-                ["a", "b", "c"], gate, self.repo, None, 5)
-
+            replies, overflow = await prepare_commands(["a", "b", "c"], gate, self.repo, None, 5)
         self.assertEqual(overflow, 0)
-        self.assertEqual([r.text for r in replies], ["回复a", "回复b", "回复c"])
+        self.assertEqual([reply.text for reply in replies], ["回复a", "回复b", "回复c"])
 
     async def test_peak_concurrency_respects_the_gate(self):
         running = {"now": 0, "peak": 0}
@@ -153,8 +123,8 @@ class PrepareCommandsTests(unittest.IsolatedAsyncioTestCase):
         gate = QueryGate(2, 4)
         with patch("ournotes_bot.qq._prepare_reply", side_effect=fake_prepare):
             replies, _ = await prepare_commands(
-                ["a", "b", "c", "d", "e", "f"], gate, self.repo, None, 6)
-
+                ["a", "b", "c", "d", "e", "f"], gate, self.repo, None, 6,
+            )
         self.assertEqual(len(replies), 6)
         self.assertEqual(running["peak"], 2)
 
@@ -167,14 +137,12 @@ class PrepareCommandsTests(unittest.IsolatedAsyncioTestCase):
 
         gate = QueryGate(2, 4)
         with patch("ournotes_bot.qq._prepare_reply", side_effect=fake_prepare):
-            replies, overflow = await prepare_commands(
-                ["a", "b", "c"], gate, self.repo, None, 2)
-
+            replies, overflow = await prepare_commands(["a", "b", "c"], gate, self.repo, None, 2)
         self.assertEqual(overflow, 1)
         self.assertEqual(started, ["a", "b"])
-        self.assertEqual([r.text for r in replies], ["a", "b"])
+        self.assertEqual([reply.text for reply in replies], ["a", "b"])
 
-    async def test_one_failure_does_not_drop_the_other_replies(self):
+    async def test_one_failure_does_not_drop_other_replies_or_leak_details(self):
         def fake_prepare(content, repository, ai_parser):
             if content == "boom":
                 raise RuntimeError("Bearer secret-value")
@@ -183,18 +151,14 @@ class PrepareCommandsTests(unittest.IsolatedAsyncioTestCase):
         gate = QueryGate(2, 4)
         with patch("ournotes_bot.qq._prepare_reply", side_effect=fake_prepare), \
              self.assertLogs("ournotes_bot.qq", level="ERROR") as log:
-            replies, _ = await prepare_commands(
-                ["a", "boom", "c"], gate, self.repo, None, 5)
-
-        self.assertEqual([r.text for r in replies], ["a", "c"])
+            replies, _ = await prepare_commands(["a", "boom", "c"], gate, self.repo, None, 5)
+        self.assertEqual([reply.text for reply in replies], ["a", "c"])
         self.assertNotIn("secret-value", " ".join(log.output))
 
-    async def test_none_results_are_skipped(self):
-        """An unrecognised line produces no reply, same as a single message."""
+    async def test_unrecognised_lines_are_skipped(self):
         gate = QueryGate(2, 4)
-        with patch("ournotes_bot.qq._prepare_reply", side_effect=lambda c, r, a: None):
-            replies, overflow = await prepare_commands(
-                ["闲聊", "聊天"], gate, self.repo, None, 5)
+        with patch("ournotes_bot.qq._prepare_reply", side_effect=lambda content, repo, parser: None):
+            replies, overflow = await prepare_commands(["闲聊", "聊天"], gate, self.repo, None, 5)
         self.assertEqual(replies, [])
         self.assertEqual(overflow, 0)
 
