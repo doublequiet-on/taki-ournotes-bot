@@ -2,6 +2,13 @@
 
 本指南导航到代码和已有专项说明，不替代实现核实，也不是 bot 运行时提示词。按任务选一行，再补读相关调用方和测试即可。以下现状以 2026-09-27 本仓库 `eddee55` 为核实基线，不表示线上版本或上游数据已现场验证。
 
+## 项目共同边界
+
+- 本项目仅服务 Our Notes 日服；独立的官方 X 推文翻译机器人不在此仓库。其他游戏机制、研究假设和路线图不能直接当作已验证的 ON 规则或已实现功能。
+- 直接查询不调用大模型；`/问` 本地优先，模型只提取受限条件，事实由数据检索产生。攻略资料须审核后才能进入正式资料库。
+- 新功能尽量让游戏业务使用明确输入和结果结构，QQ 接入层负责事件、平台权限、上传和发送；按实际任务小步调整，不为设想中的其他平台全仓重构。
+- Windows 自动更新跟随 `main`，合并可能触发部署；版本共享缓存和额度，代码回退不回退数据。发布前依照[自动更新说明](../自动更新说明.md)验证兼容性及回退。
+
 ## 调用链
 
 路径均相对仓库根目录；下表模块名位于 `src/ournotes_bot/`，测试位于 `tests/`。
@@ -22,7 +29,7 @@
 | AI 额度、统计、超时 | `ai_client.py::AIClient.request`；`ai_quota.py::DailyQuota.reserve`；`query_metrics.py::QueryMetrics`；`query_debug.py::QueryDebugCounters` | `test_stage5_limits.py`、`test_query_refactor.py`、`test_query_debug.py`、`test_observability.py` | [README 自然语言与设置](../README.md#自然语言数据与运行设置) |
 | 数据接入、缓存、别名 | `yatta.py::fetch_json`、`build_data`、`build_support_cards`；`data.py::SongRepository.load`、`refresh`、`_save_cache`、`_load_cache`；`entity_lexicon.py::resolve_exact_alias`；`query_aliases.json` | `test_query.py`、`test_support_data.py`、`test_status.py`、`test_ai_lexicon.py` | [第三方资料](../THIRD_PARTY.md)、[昵称规范](../昵称词表维护规范.md) |
 | QQ 触发、回复顺序、媒体 | `qq.py::register_group_message_parser`、`QueryGate`、`ReplySequencer`、`_prepare_reply`、`_deliver_reply`；`menu.py::setup_menu` | `test_media.py`、`test_multi_command.py`、`test_reply_order.py`、`test_reply_pipeline.py`、`test_menu.py` | [QQ 接入与验收](../LOCAL_QQ_TEST.md) |
-| 游戏业务与平台边界 | `commands.py::CommandResult`；`structured_query.py::QuerySpec`、`QueryResult`；`ai_query.py::AIQueryParser`；`visuals.py::render_song_list` | `test_platform_boundary.py`（独立进程禁止导入 QQ SDK/接入模块，使用临时数据验证查询与绘图） | [开发边界约定](../AGENTS.md#边界与生产安全)；`qq.py::_prepare_reply` 不接收消息对象，但导入所在模块仍加载 QQ SDK；核心业务不依赖它，暂留原位，有实际复用需要时再局部提取 |
+| 游戏业务与平台边界 | `commands.py::CommandResult`；`structured_query.py::QuerySpec`、`QueryResult`；`ai_query.py::AIQueryParser`；`visuals.py::render_song_list` | `test_platform_boundary.py`（独立进程禁止导入 QQ SDK/接入模块，使用临时数据验证查询与绘图） | [项目共同边界](#项目共同边界)；`qq.py::_prepare_reply` 不接收消息对象，但导入所在模块仍加载 QQ SDK；核心业务不依赖它，暂留原位，有实际复用需要时再局部提取 |
 | 配置与安装路径 | `config.py::Settings.from_env`、`CONFIG_ROOT`、`runtime_data_dir`；`main.py::build_parser`；`.env.example`、`pyproject.toml` | `test_install_paths.py`、`test_stage5_limits.py` | [README 快速开始](../README.md#快速开始) |
 | Windows 更新、回退、群通知 | `scripts/update_bot.py::Updater`、`ci_passed`、`validation_env`；`scripts/install-update-task.ps1`、`start-bot.ps1`；`update_notice.py::NoticeStore`、`UpdateNotifier` | `test_updater.py`、`test_reply_pipeline.py` | [自动更新说明](../自动更新说明.md)；`deploy/README.md` 仅通用模板，不能代替 Windows 流程 |
 
@@ -71,10 +78,10 @@ python -c "from setuptools.build_meta import build_sdist; build_sdist('dist')"
 python scripts/check_release_artifact.py dist
 ```
 
-使用已安装项目依赖和 `setuptools>=68` 的 Python；命令生成 `dist` 等构建产物，不属于普通文档检查。`MANIFEST.in` 当前未列入本开发指南和 AGENTS，它们面向 Git 源码开发；如将来要求随包分发，再单独调整打包规则。
+使用已安装项目依赖和 `setuptools>=68` 的 Python；命令生成 `dist` 等构建产物，不属于普通文档检查。`MANIFEST.in` 当前未将本开发指南纳入安装包；本指南面向 Git 源码开发。如将来要求随包分发，再单独调整打包规则。
 
 纯 Markdown 变更检查链接、路径、符号及 `git diff --check`；新文件还要看 `git status --short`，因为普通 `git diff` 不显示未跟踪内容。不为文档跑生产服务、同步、更新器或 QQ 验收。功能变更先跑相关测试，共享接口、数据兼容或部署变更再扩大到完整测试与必要的真实链路。未执行项如实记录。
 
 ## 文档维护
 
-根 [AGENTS.md](../AGENTS.md) 是短入口；本指南维护任务映射；[README](../README.md) 维护用户能力与路线图；[交接文档](../交接文档.md) 保留交接入口；本机 `项目日志.md`（未随仓库发布）仅供需要历史证据且文件存在时查阅。不每次追加开发流水账，不复制专项规格。入口、接口、来源、关键约束或验证方式变化时，才更新对应段落。旧方案中的基线描述与代码不符应明确区分，产品要求继续有效。
+本指南维护项目共同边界与任务映射；个人 Codex 工作约定由各自在本地配置；[README](../README.md) 维护用户能力与路线图；[交接文档](../交接文档.md) 保留交接入口；本机 `项目日志.md`（未随仓库发布）仅供需要历史证据且文件存在时查阅。不每次追加开发流水账，不复制专项规格。入口、接口、来源、关键约束或验证方式变化时，才更新对应段落。旧方案中的基线描述与代码不符应明确区分，产品要求继续有效。
