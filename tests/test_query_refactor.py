@@ -16,7 +16,7 @@ from ournotes_bot.ai_query import AIQueryParser, UNKNOWN_ENTITY
 from ournotes_bot.config import Settings
 from ournotes_bot.data import Card, Chart, Song, SongRepository, SupportCard
 from ournotes_bot.query_capabilities import CAPABILITIES, local_route, route_prompt
-from ournotes_bot.query_validation import OutcomeCode
+from ournotes_bot.query_validation import OutcomeCode, validate_capability_action
 
 
 class QueryRefactorTests(unittest.TestCase):
@@ -246,6 +246,53 @@ class QueryRefactorTests(unittest.TestCase):
         self.assertIn('"code":"INVALID_ARGUMENTS"', repair_prompt)
         self.assertIn('"invalid_fields":["difficulty"]', repair_prompt)
         self.assertNotIn("Traceback", repair_prompt)
+
+    def test_model_must_preserve_page_and_rarity_from_question(self) -> None:
+        capability = CAPABILITIES["support_card.search"]
+        cases = (
+            ("高松灯的支援卡有哪些", 4, 1, "rarity"),
+            ("高松灯的支援卡有哪些 4星", None, 1, "rarity"),
+            ("高松灯的支援卡有哪些", None, 3, "page"),
+            ("高松灯的支援卡有哪些 页2", None, 1, "page"),
+        )
+        for question, rarity, page, field in cases:
+            with self.subTest(question=question, rarity=rarity, page=page):
+                action = {
+                    "action": "call_tool", "capability": capability.id,
+                    "arguments": {"query": "高松灯", "rarity": rarity, "page": page},
+                }
+                validated = validate_capability_action(
+                    action, capability, question, self.repo,
+                )
+                self.assertIsNone(validated.spec)
+                self.assertEqual(validated.code, OutcomeCode.INVALID_ARGUMENTS)
+                self.assertEqual(validated.invalid_fields, (field,))
+                self.assertTrue(validated.repairable)
+
+        action = {
+            "action": "call_tool", "capability": capability.id,
+            "arguments": {"query": "高松灯", "rarity": 4, "page": 2},
+        }
+        validated = validate_capability_action(
+            action, capability, "高松灯的支援卡有哪些 4星 页2", self.repo,
+        )
+        self.assertEqual(validated.code, OutcomeCode.SUCCESS)
+        self.assertEqual((validated.spec.rarity, validated.spec.page), (4, 2))
+
+    def test_model_cannot_drop_skill_filter_from_empty_subject_query(self) -> None:
+        parser = AIQueryParser(self.settings)
+        question = "/问 哪些成员卡的技能效果带有得分提升"
+        action = {
+            "action": "call_tool", "capability": "member_card.search",
+            "arguments": {"query": "", "skill_query": "", "skill_kind": "",
+                          "rarity": None, "page": 1},
+        }
+        with patch.object(parser, "_request", side_effect=[action, action]) as request:
+            answer, result = parser.answer_with_plan(question, self.repo)
+        self.assertIsNone(result)
+        self.assertIn("目前只能查询", answer)
+        self.assertEqual(request.call_count, 2)
+        self.assertEqual(parser.outcome_code_for(question), OutcomeCode.INVALID_ARGUMENTS)
 
     def test_router_parse_and_repair_obey_three_call_hard_limit(self) -> None:
         parser = AIQueryParser(self.settings)

@@ -6,6 +6,7 @@ from dataclasses import dataclass, replace
 from enum import Enum
 from typing import Any
 
+from .commands import _split_page, split_card_rarity
 from .data import SongRepository, normalize
 from .entity_lexicon import find_anchor, resolve_entity
 from .query_capabilities import CAPABILITIES, Capability
@@ -95,6 +96,25 @@ def validate_capability_action(data: dict[str, Any], capability: Capability, que
             capability.allowed_parameters, repairable=True,
         )
     assert isinstance(arguments, dict)
+    # The model must preserve explicit page/rarity filters and cannot invent
+    # either one. Both are parsed from the user's own question, independently
+    # of the model's proposed arguments.
+    expected_page = _split_page(question)[1]
+    if arguments.get("page", 1) != expected_page:
+        return ValidationResult(
+            None, OutcomeCode.INVALID_ARGUMENTS, ("page",),
+            capability.allowed_parameters, repairable=True,
+        )
+    if capability.allow_rarity:
+        try:
+            expected_rarity = split_card_rarity(question)[1]
+        except ValueError:
+            return ValidationResult(None, OutcomeCode.INVALID_ARGUMENTS)
+        if arguments.get("rarity") != expected_rarity:
+            return ValidationResult(
+                None, OutcomeCode.INVALID_ARGUMENTS, ("rarity",),
+                capability.allowed_parameters, repairable=True,
+            )
     legacy = {"intent": capability.intent, "query": arguments.get("query", "")}
     for name in ("difficulty", "level_operator", "level", "skill_query", "skill_kind"):
         if name in arguments:
@@ -169,6 +189,11 @@ def validate_legacy_plan(data: dict[str, Any], question: str,
         return ValidationResult(None, OutcomeCode.AMBIGUOUS)
     if anchor.entity is None and not allow_empty_subject:
         return ValidationResult(None, OutcomeCode.UNKNOWN_ENTITY)
+    if (intent == "card" and anchor.entity is None and "技能" in question
+            and not (skill_query or skill_kind)):
+        # A structurally valid "which cards' skill ..." question cannot be
+        # turned into an unfiltered catalog listing by omitting its predicate.
+        return ValidationResult(None, OutcomeCode.INVALID_ARGUMENTS)
     if term.strip():
         if resolve_entity(intent, term, repository) is None:
             return ValidationResult(None, OutcomeCode.UNKNOWN_ENTITY)
