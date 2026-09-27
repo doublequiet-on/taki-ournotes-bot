@@ -5,7 +5,7 @@
 发布者 Bilibili @Adeliae 将本机器人作为非商业社区工具运营，不以游戏素材牟利。该声明不代表本仓库向他人授予游戏素材或数据的使用许可，也不改变代码的 MIT 许可证；使用者应分别遵守相关权利方及上游服务的要求。
 
 - **Project Yume**：歌曲、卡牌资料与图片从 [bdon.yatta.moe](https://bdon.yatta.moe/) 的公开文件读取。仓库不附带下载结果；网站可访问不等于授予素材再分发许可，部署者应确认上游的使用规则与素材权利。
-- **MoeNotes**：查询完整音符谱面图时，从 [MoeNotes](https://github.com/StarMoe-org/moenotes) 的公开资源服务器按需读取谱面 JSON，并在本机短期缓存；无法读取时只显示等级和 Note 数。谱面文件及游戏内容的权利仍归原权利方。
+- **MoeNotes**：查询完整音符谱面图时，从 [MoeNotes](https://github.com/StarMoe-org/moenotes) 当前公开资产服务 `assets.bdon.moe` 按需读取谱面 JSON，并在本机短期缓存；无法读取时只显示等级和 Note 数。谱面文件及游戏内容的权利仍归原权利方。
 - **Haneoka**：`/查分数表` 使用其日服公开预计算分析，回复注明“Haneoka分析数据”。核实源码版本 `c6087abe91fc2b19066d9829febf793e4da47665` 的 `src/lit/catalog-screen.ts`、`scripts/build/api.py` 与服务器配置；源码仓库为 [haneoka-gakuen/haneoka](https://github.com/haneoka-gakuen/haneoka)。指定页面的 `intl` 是国际服，日服使用 `/jp/zh-CN/song-meta/`。未复制或移植其算分算法；上游自有代码采用 MPL-2.0，若将来复制需另行履行文件级许可义务。
   - 公开接口基址 `https://haneoka.org/api/v1/servers/jp/`：先读取 `release?projection=identity`，再读取 `songs?projection=4&release=<releaseId>` 与 `song-meta?release=<releaseId>`。两个集合都是完整 ID 字典，无分页；拒绝分页包装、缺失集合、重复 JSON 键、非有限值和错误页面。`releaseId` 固定同一版资料，`sourceId` 保留来源版本；未发现可当作上游更新时间的字段。
   - `musicId` 与 meta 顶层 ID 相连，难度索引 0/1/2/3 对应 EASY/NORMAL/HARD/EXPERT；与 Project Yume 的 ID 及已收录标题再次核验。已现场核对 100001《迷星叫》、100008《詩超絆》、100070《everscape》，不依靠模糊匹配合并。等级优先读取 `displayLevel`，缺失时回退 `playLevel`、`sortLevel`，不把小数排序等级冒充展示等级。

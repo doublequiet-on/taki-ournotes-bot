@@ -13,7 +13,7 @@ from .config import runtime_data_dir
 from .data import Chart, Song
 
 
-CHART_BASE = "https://storage.bdon.moe/moenotes/Live/MusicScore"
+CHART_BASE = "https://assets.bdon.moe/zh-Hans/Live/MusicScore"
 CHART_CACHE_TTL = 6 * 3600
 MAX_CHART_BYTES = 2_000_000
 
