@@ -1,4 +1,4 @@
-"""Single registry for the four supported read-only query capabilities."""
+"""Single registry for the supported read-only query capabilities."""
 
 from __future__ import annotations
 
@@ -36,6 +36,7 @@ class Capability:
             "query": '""', "difficulty": '""', "level_operator": '""',
             "level": "null", "page": "1", "skill_query": '""',
             "skill_kind": '""', "rarity": "null",
+            "metric": '"eff"', "order": '"desc"',
         }
         fields = ",".join(
             f'"{name}":{defaults[name]}' for name in self.allowed_parameters
@@ -125,6 +126,12 @@ def _support_cards(spec: QuerySpec, repository: SongRepository) -> QueryResult:
 
 
 CAPABILITIES = {
+    "song.meta": Capability(
+        "song.meta", "efficiency", "Haneoka日服歌曲效率与相同难度参考口径排序",
+        ("query", "difficulty", "level_operator", "level", "page", "metric", "order"),
+        ("只查询上游既有分析；不生成分数、ID、URL或推荐。参数必须与原文的本地解析完全一致。",),
+        True, False, False, True, True, structured_query.resolve_query,
+    ),
     "song.search": Capability(
         "song.search", "song", "按单一歌曲或乐队、难度和一个等级边界查询歌曲",
         ("query", "difficulty", "level_operator", "level", "page"),
@@ -181,6 +188,9 @@ def route_prompt() -> str:
 def local_route(question: str) -> str | None:
     """Route only when the question contains explicit capability evidence."""
     text = question.casefold()
+    from .efficiency_query import MARKER
+    if MARKER.search(text):
+        return "song.meta"
     if re.search(r"支援卡|支援卡牌|支援内容", text):
         return "support_card.search"
     if re.search(r"成员卡|角色卡|卡牌|卡面|(?<!支援)卡(?:片|有哪些|有|详情|$)|技能", text):

@@ -188,6 +188,10 @@ def local_card_rarity_question(query: str, repository: SongRepository) -> QueryS
 
 
 def parse_local_query(query: str, repository: SongRepository) -> QuerySpec | str | None:
+    from .efficiency_query import parse_efficiency
+    efficiency = parse_efficiency(query, repository)
+    if efficiency is not None:
+        return efficiency
     rarity = local_card_rarity_question(query, repository)
     if rarity is not None:
         return rarity

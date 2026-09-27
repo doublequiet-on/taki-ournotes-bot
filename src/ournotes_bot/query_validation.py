@@ -13,7 +13,7 @@ from .query_capabilities import CAPABILITIES, Capability
 from .structured_query import QuerySpec
 
 
-UNSUPPORTED = "目前只能查询歌曲、谱面等级与 Note 数、成员卡和支援卡。试试 /查曲、/查谱面、/查卡 或 /查支援卡。"
+UNSUPPORTED = "目前只能查询歌曲、谱面、Haneoka歌曲效率、成员卡和支援卡。试试 /查曲、/查谱面、/查效率、/查卡 或 /查支援卡；不支持泛攻略、配队或预测。"
 UNKNOWN_ENTITY = "当前数据中无法确认这个查询对象。请用歌曲、乐队、角色、成员卡或支援卡的原名或 ID 重试。"
 AMBIGUOUS_ENTITY = "这句话提到了多个可查询对象，请只保留一个歌曲、乐队、角色、成员卡或支援卡名称。"
 
@@ -71,6 +71,17 @@ def validate_capability_action(data: dict[str, Any], capability: Capability, que
                                repository: SongRepository, *,
                                allow_empty_subject: bool = False) -> ValidationResult:
     """Validate a capability-scoped action and apply catalog grounding."""
+    if capability.intent == "efficiency":
+        from .efficiency_query import parse_efficiency
+        spec = parse_efficiency(question, repository)
+        if not isinstance(spec, QuerySpec):
+            return ValidationResult(None, OutcomeCode.INVALID_ARGUMENTS)
+        expected = {"query": str(spec.subject.value) if spec.subject else "",
+                    "difficulty": spec.difficulty, "level_operator": {">=": "gte", ">": "gt", "<=": "lte", "<": "lt"}.get(spec.comparison, ""),
+                    "level": spec.level, "page": spec.page, "metric": spec.metric, "order": spec.order}
+        if data != {"action": "call_tool", "capability": "song.meta", "arguments": expected}:
+            return ValidationResult(None, OutcomeCode.INVALID_ARGUMENTS)
+        return ValidationResult(spec, OutcomeCode.SUCCESS)
     if "intent" in data:
         if any(key not in _LEGACY_FIELDS for key in data):
             return ValidationResult(None, OutcomeCode.INVALID_OUTPUT)

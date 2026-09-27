@@ -256,7 +256,9 @@ class QueryAgent:
                 state, OutcomeCode.UNKNOWN_ENTITY, UNKNOWN_ENTITY,
                 tracked=tracked, local=True, cache=True,
             )
-        if _UNSUPPORTED_TERMS.search(question):
+        from .efficiency_query import MARKER, FORBIDDEN
+        if (_UNSUPPORTED_TERMS.search(question)
+                and (not MARKER.search(question) or FORBIDDEN.search(question))):
             return self._finish_terminal(
                 state, OutcomeCode.UNSUPPORTED, UNSUPPORTED,
                 tracked=tracked, local=True, cache=True,
@@ -599,6 +601,8 @@ class QueryAgent:
     @staticmethod
     def _result_code(result: QueryResult, repository: SongRepository) -> OutcomeCode:
         spec = result.spec
+        if spec.intent == "efficiency":
+            return OutcomeCode(result.meta.status)
         if ((spec.skill_query or spec.skill_kind) and spec.intent == "card"
                 and not repository.member_skill_index_ready()):
             return OutcomeCode.DATA_UNAVAILABLE
@@ -618,6 +622,8 @@ class QueryAgent:
         if not isinstance(result, QueryResult):
             return False
         spec = result.spec
+        if spec.intent == "efficiency":
+            return bool(result.meta and result.meta.rows)
         if spec.intent == "chart":
             return result.chart is not None and bool(result.chart[1])
         if spec.intent == "card":

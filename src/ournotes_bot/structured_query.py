@@ -9,6 +9,7 @@ from .commands import (PAGE_SIZE, _format_card_detail, _format_support_card_deta
 from .data import Card, Chart, Skill, Song, SongRepository, SupportCard, character_identity, localized_text, normalize
 from .entity_lexicon import EntityRef
 from .i18n import tr
+from .efficiency_query import MetaAnswer, execute_efficiency
 
 
 @dataclass(frozen=True)
@@ -23,6 +24,8 @@ class QuerySpec:
     skill_query: str = ""
     skill_kind: str = ""
     rarity: int | None = None
+    metric: str = "eff"
+    order: str = "desc"
 
     def query_label(self) -> str:
         parts = [self.display_name] if self.display_name else []
@@ -42,6 +45,12 @@ class QuerySpec:
         return " ".join(parts)
 
     def command_label(self) -> str:
+        if self.intent == "efficiency":
+            subject = str(self.subject.value) if self.subject else ""
+            rank = "" if self.subject and self.subject.kind == "song" else "排行 "
+            level = f" lv{self.comparison}{self.level:g}" if self.comparison and self.level is not None else ""
+            return (f"查效率 {rank}{subject} {self.difficulty or 'EXPERT'}{level} "
+                    f"指标={self.metric} 排序={self.order} 页{self.page}")
         if self.intent == "card" and (self.skill_query or self.skill_kind):
             subject = f"{self.display_name}的" if self.display_name else ""
             kind = {"leader": "队长", "live": "Live", "gekisou": "激奏"}.get(self.skill_kind, "")
@@ -69,6 +78,7 @@ class QueryResult:
     cards: tuple[Card, ...] = ()
     support_cards: tuple[SupportCard, ...] = ()
     chart: tuple[Song, tuple[Chart, ...]] | None = None
+    meta: MetaAnswer | None = None
 
 
 def query_page_notice(spec: QuerySpec, total: int, locale: str) -> str:
@@ -94,6 +104,8 @@ def query_page_notice(spec: QuerySpec, total: int, locale: str) -> str:
 
 def resolve_query(spec: QuerySpec, repository: SongRepository) -> QueryResult:
     """Capture records for both answer text and image within one request."""
+    if spec.intent == "efficiency":
+        return QueryResult(spec, meta=execute_efficiency(spec, repository))
     if spec.intent == "song":
         return QueryResult(spec, songs=tuple(songs_for(spec, repository)))
     if spec.intent == "card":
@@ -199,6 +211,8 @@ def support_cards_for(spec: QuerySpec, repository: SongRepository) -> list[Suppo
 def answer_for(spec: QuerySpec, repository: SongRepository, locale: str = "zh",
                result: QueryResult | None = None) -> str:
     selected = result if result is not None else resolve_query(spec, repository)
+    if spec.intent == "efficiency":
+        return selected.meta.text
     if spec.intent == "song":
         matches = selected.songs
         if not matches:

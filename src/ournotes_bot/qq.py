@@ -272,6 +272,9 @@ async def prepare_commands(commands: list[str], gate: "QueryGate", repository: S
 
 def _image_from_result(result: QueryResult | CommandResult | None,
                        repository: SongRepository, locale: str) -> bytes | None:
+    if result is not None and result.meta is not None:
+        from .visuals import render_meta
+        return render_meta(result.meta.text) if result.meta.rows else None
     if isinstance(result, QueryResult):
         spec = result.spec
         if spec.intent == "song":

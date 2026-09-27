@@ -11,15 +11,17 @@ from .data import Card, Skill, Song, SongRepository, SupportCard, character_iden
 from .entity_lexicon import known_alias_names, resolve_exact_alias
 from .i18n import tr
 from .query_debug import QUERY_DEBUG_COUNTERS
+from .efficiency_query import MetaAnswer, HELP as EFFICIENCY_HELP
 
 
 HELP_TEXT = """Our Notes 查询指令
 /查曲 [歌名或ID] [等级或lv比较式] [页N]：搜索歌曲列表，可翻页
 /查谱面 歌名或ID [难度]：查看等级与 Note 数；100001 可简写为 1
+/查效率 [歌名或ID|排行] [乐队] [EX] [lv<=25] [页N]：Haneoka日服分析，默认EXPERT及eff降序
 /查卡 [角色、乐队或ID] [SSR/SR/R] [页N]：搜索卡面，可按星级筛选
 /查支援卡 [角色、卡名或ID] [SSR/SR/R] [页N]：搜索支援卡，可翻页
 /查缩写 昵称：查看昵称对应的角色、乐队等，也可直接用于查曲或查卡
-/问 想查的内容：自然语言查询歌曲、谱面、成员卡技能或支援卡（复杂问法需配置 AI）
+/问 想查的内容：自然语言查询歌曲、谱面、歌曲效率、成员卡技能或支援卡（复杂问法需配置 AI）
 /数据状态：查看进程、最近同步与缓存状态
 /调试数据：查看本次进程的 AI API 成功调用与有效检索次数
 /帮助：查看本说明
@@ -47,6 +49,7 @@ Example: /song mygo 27, /chart 100001 EXPERT, /card tomori""",
 }
 
 COMMAND_HELP = {
+    "efficiency": EFFICIENCY_HELP,
     "songs": "查询歌曲列表，支持歌名、乐队、曲目 ID 或等级，每页 16 首。27 与 lv27 相同，均匹配整数等级 27（含显示等级 27.5）；27.5 与 lv27.5 均精确匹配显示等级。lv>=25、lv>25、lv<=25、lv<25 按歌曲最高显示等级筛选；可追加 diff=EXPERT 等难度，只比较该难度。纯数字若恰好是曲目 ID，优先按 ID 查询。\n用法：/查曲 [歌名或ID] [等级或lv比较式] [页N]\n示例：/查曲 迷星叫、/查曲 27、/查曲 mygo lv>=25、/查曲 mygo lv>=25 diff=EXPERT 页2",
     "chart": "查询谱面等级与 Note 数，支持歌名或曲目 ID。100001 可简写为 1。可选难度：EASY、NORMAL、HARD、EXPERT；不指定时显示全部难度。\n用法：/查谱面 <歌名或ID> [难度]\n示例：/查谱面 1 EXPERT、/查谱面 100001 EXPERT",
     "cards": "查询卡面，支持卡牌 ID、角色名、卡牌名或乐队名，每页 16 张。SSR＝四星、SR＝三星、R＝二星；可单独筛选，也可组合角色或乐队。\n用法：/查卡 [关键词或ID] [SSR/SR/R或星级] [页N]\n示例：/查卡 SSR、/查卡 高松灯 四星、/查卡 mygo SR 页2、/查卡 51\n找到多张卡时会显示列表，再用卡牌 ID 查看大图。",
@@ -72,6 +75,7 @@ COMMAND_HELPS = {
 }
 
 ALIASES = {
+    "查效率": "efficiency",
     "查曲": "songs", "song": "songs", "songs": "songs", "曲": "songs", "楽曲": "songs",
     "查谱面": "chart", "查谱": "chart", "谱面": "chart", "chart": "chart", "譜面": "chart",
     "查卡": "cards", "查卡面": "cards", "card": "cards", "cards": "cards", "カード": "cards",
@@ -79,7 +83,7 @@ ALIASES = {
     "supportcard": "support_cards", "supportcards": "support_cards", "サポート": "support_cards",
     "查缩写": "abbrev", "abbrev": "abbrev", "略称": "abbrev",
 }
-CANONICAL = {"songs": "/查曲", "chart": "/查谱面", "cards": "/查卡", "support_cards": "/查支援卡", "abbrev": "/查缩写"}
+CANONICAL = {"efficiency": "/查效率", "songs": "/查曲", "chart": "/查谱面", "cards": "/查卡", "support_cards": "/查支援卡", "abbrev": "/查缩写"}
 CANONICAL_BY_LOCALE = {
     "zh": CANONICAL,
     "en": {"songs": "/song", "chart": "/chart", "cards": "/card", "support_cards": "/support", "abbrev": "/abbrev"},
@@ -481,10 +485,17 @@ class CommandResult:
     cards: tuple[Card, ...] = ()
     support_cards: tuple[SupportCard, ...] = ()
     hint: str | None = None
+    meta: MetaAnswer | None = None
 
 
 def resolve_command(content: str, repository: SongRepository) -> CommandResult | None:
     """Select records once so text and image use the same request result."""
+    text = _clean_message(content)
+    if re.match(r"^查效率(?:\s|$)", text):
+        from .efficiency_query import MetaAnswer, parse_efficiency, execute_efficiency
+        spec = parse_efficiency(text, repository, direct=True)
+        answer = MetaAnswer(spec, status="invalid_arguments") if isinstance(spec, str) else execute_efficiency(spec, repository)
+        return CommandResult(("efficiency", text, None), meta=answer)
     parsed = parse_query(content)
     if not parsed:
         return None
@@ -576,6 +587,8 @@ def handle_command(content: str, repository: SongRepository,
 
     selection = resolved if resolved is not None else resolve_command(content, repository)
     parsed = selection.parsed if selection else None
+    if selection and selection.meta is not None:
+        return selection.meta.text
     if parsed and parsed[0] in {"cards", "support_cards"} and selection.hint:
         return selection.hint
     if parsed and parsed[0] == "songs":

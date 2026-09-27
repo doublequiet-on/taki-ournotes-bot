@@ -219,6 +219,8 @@ class SongRepository:
         self._detail_support_cards: dict[int, SupportCard] = {}
         self.cache_state = "unknown"
         self.last_successful_sync_at: str | None = None
+        from .song_meta import MetaRepository
+        self.song_meta = MetaRepository(cache_file.with_name("haneoka-meta-jp.json"))
 
     def load(self, refresh: bool = False) -> None:
         if refresh:
