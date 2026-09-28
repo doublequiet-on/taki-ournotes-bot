@@ -20,21 +20,30 @@ class VisualTests(unittest.TestCase):
 
     def capture(self, render):
         calls = []
+        canvas_sizes = []
         original = ImageDraw.ImageDraw.text
+        encoder = visuals._bytes
+
+        def encode(image):
+            canvas_sizes.append(image.size)
+            return encoder(image)
 
         def text(draw, xy, value, *args, **kwargs):
             box = draw.textbbox(xy, value, font=kwargs["font"])
             calls.append((str(value), box))
             return original(draw, xy, value, *args, **kwargs)
 
-        with patch.object(ImageDraw.ImageDraw, "text", text), patch.object(visuals, "_asset", return_value=None):
+        with patch.object(ImageDraw.ImageDraw, "text", text), patch.object(visuals, "_asset", return_value=None), \
+             patch.object(visuals, "_bytes", side_effect=encode):
             raw = render()
         image = Image.open(io.BytesIO(raw))
         for value, (left, top, right, bottom) in calls:
             self.assertGreaterEqual(left, 0, value)
             self.assertGreaterEqual(top, 0, value)
-            self.assertLessEqual(right, image.width, value)
-            self.assertLessEqual(bottom, image.height - 32, value)
+            # Text coordinates belong to the drawing canvas, before the shared
+            # upload encoder uniformly scales oversized images.
+            self.assertLessEqual(right, canvas_sizes[-1][0], value)
+            self.assertLessEqual(bottom, canvas_sizes[-1][1] - 32, value)
         image.close()
         return calls
 

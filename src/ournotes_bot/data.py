@@ -61,6 +61,7 @@ class Card:
     thumbnail_url: str
     localized: dict[str, dict[str, str]] = field(default_factory=dict)
     skills: tuple[Skill, ...] = ()
+    catalog: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -79,6 +80,7 @@ class SupportCard:
     thumbnail_url: str
     localized: dict[str, dict[str, str]] = field(default_factory=dict)
     skills: tuple[Skill, ...] = ()
+    catalog: dict[str, Any] = field(default_factory=dict)
 
 
 class DataError(RuntimeError):
@@ -238,7 +240,8 @@ class SongRepository:
                 return
         self._load_cache()
         if (self.metadata.get("schema") != self.CACHE_SCHEMA
-                or not self.metadata.get("member_skill_index_complete", False)):
+                or not self.metadata.get("member_skill_index_complete", False)
+                or self.metadata.get("card_catalog_version") != 1):
             try:
                 self.refresh()
             except DataError:
@@ -257,7 +260,7 @@ class SongRepository:
             with ThreadPoolExecutor(max_workers=5) as pool:
                 payloads = list(pool.map(lambda name: yatta.fetch_json(f"{yatta.MASTER}/{name}.json"), names))
             songs, cards = yatta.build_data(*payloads[:4])
-            support_cards = yatta.build_support_cards(payloads[0], payloads[4])
+            support_cards = yatta.build_support_cards(payloads[0], payloads[4], payloads[1].get("refs", {}).get("musicTags", {}))
         except (OSError, ValueError, KeyError, TypeError) as exc:
             self.cache_state = "stale" if self.songs or self.cache_file.exists() else "unknown"
             raise DataError(f"Project Yume 数据同步失败，已保留原缓存：{exc}") from exc
@@ -273,6 +276,7 @@ class SongRepository:
                 return replace(
                     card, performance=previous.performance, technic=previous.technic,
                     visual=previous.visual, skill_name=previous.skill_name, skills=previous.skills,
+                    catalog={**previous.catalog, **card.catalog, "detail_stale": True},
                     localized={**card.localized,
                                "skill_name": previous.localized.get("skill_name", {})},
                 )
@@ -280,6 +284,17 @@ class SongRepository:
         with ThreadPoolExecutor(max_workers=min(8, max(1, len(cards)))) as pool:
             cards = list(pool.map(fetch_member_detail, cards))
         detail_count = sum(bool(card.skills) for card in cards)
+
+        previous_support = {card.id: card for card in self.support_cards if card.skills}
+        def fetch_support_detail(card: SupportCard) -> SupportCard:
+            try:
+                return self._merge_support_detail(card, yatta.support_card_detail(card.id))
+            except (OSError, ValueError, KeyError, TypeError):
+                old = previous_support.get(card.id)
+                return replace(card, skills=old.skills,
+                               catalog={**old.catalog, **card.catalog, "detail_stale": True}) if old else card
+        with ThreadPoolExecutor(max_workers=min(8, max(1, len(support_cards)))) as pool:
+            support_cards = list(pool.map(fetch_support_detail, support_cards))
 
         self.songs = songs
         self.cards = cards
@@ -294,6 +309,7 @@ class SongRepository:
             "support_card_count": len(support_cards), "schema": self.CACHE_SCHEMA,
             "member_card_detail_count": detail_count,
             "member_skill_index_complete": bool(cards) and detail_count == len(cards),
+            "card_catalog_version": 1 if all(c.catalog.get("detail_loaded") for c in cards + support_cards) else 0,
         }
         try:
             self._save_cache()
@@ -319,12 +335,15 @@ class SongRepository:
     @staticmethod
     def _merge_card_detail(card: Card, raw: dict[str, Any]) -> Card:
         from . import yatta
+        if not isinstance(raw, dict) or raw.get("id", card.id) != card.id:
+            raise ValueError("member detail ID mismatch")
         stats = raw.get("statsMax") or []
         values = [int(value) for value in stats[:3]] if len(stats) >= 3 else [card.performance, card.technic, card.visual]
         skills = yatta.build_skills(raw.get("skills"))
         live_skill = next((skill for skill in skills if skill.kind == "liveSkill"), skills[0] if skills else None)
         return replace(
             card, performance=values[0], technic=values[1], visual=values[2], skills=skills,
+            catalog={**card.catalog, **yatta.detail_catalog(raw)},
             skill_name=live_skill.name if live_skill else card.skill_name,
             localized={
                 **card.localized,
@@ -339,18 +358,26 @@ class SongRepository:
         from . import yatta
         if card.id in self._detail_support_cards:
             return self._detail_support_cards[card.id]
+        if card.catalog.get("detail_loaded"):
+            return card
         try:
             raw = yatta.support_card_detail(card.id)
-            stats = raw.get("statsMax") or []
-            values = [int(value) for value in stats[:3]] if len(stats) >= 3 else [card.performance, card.technic, card.visual]
-            detailed = replace(
-                card, performance=values[0], technic=values[1], visual=values[2],
-                skills=yatta.build_skills(raw.get("skills")),
-            )
+            detailed = self._merge_support_detail(card, raw)
             self._detail_support_cards[card.id] = detailed
             return detailed
         except (OSError, ValueError, KeyError, TypeError):
             return card
+
+    @staticmethod
+    def _merge_support_detail(card: SupportCard, raw: dict[str, Any]) -> SupportCard:
+        from . import yatta
+        if not isinstance(raw, dict) or raw.get("id", card.id) != card.id:
+            raise ValueError("support detail ID mismatch")
+        stats = raw.get("statsMax") or []
+        values = [int(v) for v in stats[:3]] if len(stats) >= 3 else [card.performance, card.technic, card.visual]
+        return replace(card, performance=values[0], technic=values[1], visual=values[2],
+                       skills=yatta.build_skills(raw.get("skills")),
+                       catalog={**card.catalog, **yatta.detail_catalog(raw)})
 
     def _save_cache(self) -> None:
         # The updater shares this file with the previous release. Its schema-2
@@ -363,11 +390,13 @@ class SongRepository:
                 {**asdict(song), "charts": [asdict(chart) for chart in song.charts]}
                 for song in self.songs
             ],
-            "cards": [{key: value for key, value in asdict(card).items() if key != "skills"}
+            "cards": [{key: value for key, value in asdict(card).items() if key not in {"skills", "catalog"}}
                       for card in self.cards],
             "member_skills": {str(card.id): [asdict(skill) for skill in card.skills]
                               for card in self.cards},
-            "support_cards": [asdict(card) for card in self.support_cards],
+            "support_cards": [{k: v for k, v in asdict(card).items() if k != "catalog"} for card in self.support_cards],
+            "card_catalog": {"member": {str(c.id): c.catalog for c in self.cards},
+                             "support": {str(c.id): c.catalog for c in self.support_cards}},
         }
         self.cache_file.parent.mkdir(parents=True, exist_ok=True)
         temporary = self.cache_file.with_suffix(self.cache_file.suffix + ".tmp")
@@ -395,13 +424,15 @@ class SongRepository:
                 for row in payload["songs"]
             ]
             self.cards = [Card(
-                **{key: value for key, value in row.items() if key != "skills"},
+                **{key: value for key, value in row.items() if key not in {"skills", "catalog"}},
+                catalog=row.get("catalog", payload.get("card_catalog", {}).get("member", {}).get(str(row["id"]), {})),
                 skills=tuple(Skill(**skill) for skill in row.get(
                     "skills", payload.get("member_skills", {}).get(str(row["id"]), []))),
             ) for row in payload.get("cards", [])]
             self.support_cards = [SupportCard(
-                **{key: value for key, value in row.items() if key not in {"characters", "skills"}},
+                **{key: value for key, value in row.items() if key not in {"characters", "skills", "catalog"}},
                 characters=tuple(row.get("characters", [])),
+                catalog=row.get("catalog", payload.get("card_catalog", {}).get("support", {}).get(str(row["id"]), {})),
                 skills=tuple(Skill(**skill) for skill in row.get("skills", [])),
             ) for row in payload.get("support_cards", [])]
         except Exception as exc:

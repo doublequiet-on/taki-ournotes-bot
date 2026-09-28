@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import copy
 import logging
 import re
 import time
@@ -9,7 +10,7 @@ from collections import deque
 from dataclasses import dataclass
 from urllib.parse import urlsplit
 
-from botpy.http import Route
+from botpy.http import BotHttp, Route
 from botpy.message import GroupMessage
 
 # qq-botpy 1.2.1 still ships the retired hostname; QQ API v2 now uses this host.
@@ -272,6 +273,19 @@ async def prepare_commands(commands: list[str], gate: "QueryGate", repository: S
 
 def _image_from_result(result: QueryResult | CommandResult | None,
                        repository: SongRepository, locale: str) -> bytes | None:
+    if result is not None and result.catalog is not None:
+        answer = result.catalog
+        if answer.error or not answer.cards:
+            return None
+        req = answer.request
+        if req.mode == "art":
+            from .card_visuals import art
+            return art(answer.cards[0])
+        if req.mode == "detail":
+            render = render_support_card if req.support else render_card
+            return render(answer.cards[0], locale)
+        render = render_support_card_list if req.support else render_card_list
+        return render(answer.visible, req.query, locale, answer.footer) if answer.visible else None
     if result is not None and result.meta is not None:
         from .visuals import render_meta
         return render_meta(result.meta) if result.meta.rows else None
@@ -375,6 +389,9 @@ def _prepare_reply(content: str, repository: SongRepository,
     except Exception as exc:
         logger.warning("图片生成失败，改用文字；错误类型=%s", type(exc).__name__)
         image = None
+    if (image is None and result is not None and result.catalog is not None
+            and result.catalog.request.mode == "art" and not result.catalog.error):
+        reply += "\n卡面图片暂不可用，请稍后重试。"
     logger.info("查询完成；内容=%s 文本=%d字 图片=%s 耗时=%.0fms",
                 describe(content), len(reply),
                 f"{len(image):,}B" if image else "无", elapsed())
@@ -382,13 +399,34 @@ def _prepare_reply(content: str, repository: SongRepository,
 
 
 async def _upload_image(api, target_id: str, image: bytes, group: bool):
+    from .image_output import MAX_IMAGE_BYTES
+    if len(image) > MAX_IMAGE_BYTES:
+        raise ValueError("Image exceeds the upload budget")
     path = "/v2/groups/{target_id}/files" if group else "/v2/users/{target_id}/files"
-    result = await api._http.request(
-        Route("POST", path, target_id=target_id),
-        json={"file_type": 1, "file_data": base64.b64encode(image).decode("ascii"), "srv_send_msg": False},
-    )
+    http = api._http
+    if isinstance(http, BotHttp):
+        # qq-botpy 1.2.1 hardcodes self.timeout inside request; a timeout kwarg
+        # would be passed twice. Reuse the initialized session/token through a
+        # shallow per-upload copy, without mutating concurrent message requests.
+        await http.check_session()
+        http = copy.copy(http)
+        http.timeout = 30
+    try:
+        result = await http.request(
+            Route("POST", path, target_id=target_id),
+            json={"file_type": 1, "file_data": base64.b64encode(image).decode("ascii"), "srv_send_msg": False},
+        )
+    finally:
+        if http is not api._http:
+            # BotHttp.__del__ closes its session. The copy never owns the
+            # shared connection; detach even on cancellation or an exception.
+            session = http._session
+            http._session = None
+            if session is not api._http._session and session is not None and not session.closed:
+                await session.close()
     if not isinstance(result, dict) or not result.get("file_info"):
-        raise RuntimeError("QQ 图片上传未返回 file_info")
+        # SDK timeouts return None. Never log response bodies, headers or IDs.
+        raise RuntimeError("QQ 图片上传超时或未返回 file_info")
     return {"file_info": result["file_info"]}
 
 

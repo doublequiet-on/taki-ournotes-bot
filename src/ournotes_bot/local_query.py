@@ -188,6 +188,9 @@ def local_card_rarity_question(query: str, repository: SongRepository) -> QueryS
 
 
 def parse_local_query(query: str, repository: SongRepository) -> QuerySpec | str | None:
+    catalog = local_card_catalog(query, repository)
+    if catalog is not None:
+        return catalog
     from .efficiency_query import parse_efficiency
     efficiency = parse_efficiency(query, repository)
     if efficiency is not None:
@@ -198,6 +201,37 @@ def parse_local_query(query: str, repository: SongRepository) -> QuerySpec | str
     return (local_song_filter(query, repository)
             or local_entity_question(query, repository)
             or local_skill_question(query, repository))
+
+
+def local_card_catalog(query: str, repository: SongRepository) -> QuerySpec | str | None:
+    """Explicit catalog dimensions use the same parser as direct commands, without AI."""
+    from .card_catalog import parse_card_request
+    text = unicodedata.normalize("NFKC", query).strip()
+    generic_id = re.fullmatch(r"(?:查一下|查询|查看|查)?\s*(?:卡牌?\s*)?(?:ID\s*[:=]?\s*)?(\d+)(?:号卡(?:牌)?|卡(?:牌)?(?:详情)?)?", text, re.I)
+    if generic_id:
+        number = int(generic_id[1])
+        member = any(c.id == number for c in repository.cards)
+        support_id = any(c.id == number for c in repository.support_cards)
+        if member and support_id:
+            return f"ID {number} 同时存在于角色卡与 SNAP，请指定 /查卡 {number} 或 /查支援卡 {number}。"
+    obj = re.search(r"SNAP|支援卡|角色卡|成员卡|卡牌|卡", text, re.I)
+    if not obj or (obj[0].lower() != "snap" and not re.search(r"[=：:]|[红蓝绿黄紫黑白橙青灰]色|JUST|COMBO|LUCK|LIVE\s*(?:分数提升|LIFE回复|判定强化|技能延长)|得意|(?<![A-Za-z])(?:BD|EX)(?![A-Za-z])|(?:SSR|SR|R)[,，或 /]+(?:SSR|SR|R)", text, re.I)):
+        return None
+    support = obj[0].lower() in {"snap", "支援卡"}
+    text = text[:obj.start()] + " " + text[obj.end():]
+    text = re.sub(r"^(?:(?:请|帮我|给我|查一下|查询|查看|找一下|列出|看看|想看|查|找)\s*)+", "", text)
+    text = re.sub(r"(?:有哪些|有哪几张|列表|所有|的|[？?。])", " ", text).strip()
+    # Split common unspaced Chinese colour/rarity phrases before field parsing.
+    if not re.search(r"[=：:]", text):
+        text = re.sub(r"([红蓝绿黄紫]色)", r" \1 ", text)
+        text = re.sub(r"(?<![A-Za-z])(SSR|SR|R|BD|EX)(?![A-Za-z])", r" \1 ", text, flags=re.I)
+    text = re.sub(r"(?i)(LIVE)\s*(?![=：:])(?=分数提升|LIFE回复|判定强化|技能延长)", r"LIVE=", text)
+    text = re.sub(r"(?:击奏|激奏)\s*(?![=：:])(?=JUST|COMBO|LUCK)", "击奏=", text, flags=re.I)
+    try:
+        req = parse_card_request(text, repository, support=support)
+    except ValueError as exc:
+        return str(exc)
+    return QuerySpec("support_card" if support else "card", page=req.page, card_query=text)
 
 
 def is_explicit_empty_subject_query(query: str, intent: str,

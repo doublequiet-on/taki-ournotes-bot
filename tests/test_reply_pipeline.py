@@ -1,4 +1,5 @@
 from __future__ import annotations
+from ournotes_bot.card_catalog import query_cards
 
 import asyncio
 import tempfile
@@ -72,7 +73,7 @@ class ReplyPipelineTests(unittest.TestCase):
         self.assertEqual(select.call_count, 1)
         self.assertEqual(render.call_args.args[0].id, 100001)
 
-        with patch("ournotes_bot.commands.card_matches", wraps=card_matches) as select, \
+        with patch("ournotes_bot.commands.query_cards", wraps=query_cards) as select, \
              patch("ournotes_bot.qq.render_card_list", return_value=b"cards") as render:
             result = _prepare_reply("/查卡 高松灯", self.repo, self.parser)
         self.assertIn("我们现在就在这里", result.text)
@@ -80,7 +81,7 @@ class ReplyPipelineTests(unittest.TestCase):
         self.assertEqual(select.call_count, 1)
         self.assertEqual([card.id for card in render.call_args.args[0]], [1])
 
-        with patch("ournotes_bot.commands.support_card_matches", wraps=support_card_matches) as select, \
+        with patch("ournotes_bot.commands.query_cards", wraps=query_cards) as select, \
              patch("ournotes_bot.qq.render_support_card_list", return_value=b"support cards") as render:
             result = _prepare_reply("/查支援卡 高松灯", self.repo, self.parser)
         self.assertIn("并肩前行", result.text)

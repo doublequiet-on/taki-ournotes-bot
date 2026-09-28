@@ -87,7 +87,7 @@ class AIEntityLexiconTests(unittest.TestCase):
                 self.assertEqual({song.band for song in song_matches(self.repo, f"{nickname} lv>=25")}, {expected})
                 self.assertEqual({card.band for card in card_matches(self.repo, nickname)}, {expected})
                 self.assertIn(expected, handle_command(f"/查曲 {nickname}", self.repo))
-                self.assertIn("卡牌列表", handle_command(f"/查卡 {nickname}", self.repo))
+                self.assertIn("角色卡列表", handle_command(f"/查卡 {nickname}", self.repo))
                 self.assertIn(expected, handle_command(f"/查缩写 {nickname}", self.repo))
                 with patch.object(self.parser, "_request", side_effect=AssertionError("model called")):
                     self.assertIn(expected, self.parser.answer(f"/问 {nickname}的歌有哪些", self.repo))

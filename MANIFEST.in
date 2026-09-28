@@ -6,3 +6,5 @@ include scripts/update_bot.py scripts/install-update-task.ps1
 include 自动更新说明.md start-bot.ps1 setup-local.ps1
 prune data
 global-exclude *.log *.pyc
+
+include docs/RELEASE_2026-09-28.md

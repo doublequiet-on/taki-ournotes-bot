@@ -65,7 +65,8 @@ class ChartDataTests(unittest.TestCase):
         with patch("ournotes_bot.visuals._asset", return_value=None):
             result = render_chart(song, (self.chart,), "zh", SCORE["score"], "EXPERT")
         with Image.open(io.BytesIO(result)) as image:
-            self.assertEqual(image.width, 1800)
+            self.assertLessEqual(image.width, 1800)
+            self.assertLessEqual(image.height, 8192)
             self.assertGreater(image.height, 4000)
             self.assertNotEqual(image.getpixel((200, 2000)), image.getpixel((200, 1200)))
 

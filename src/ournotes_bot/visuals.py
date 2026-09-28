@@ -337,8 +337,9 @@ def _draw_skills(draw: ImageDraw.ImageDraw, skills: tuple[Skill, ...], x: int, y
     return y
 
 
-def _asset(url: str, size: tuple[int, int]) -> Image.Image | None:
-    if not url.startswith(ASSETS + "/"):
+def _asset(url: str, size: tuple[int, int], *, contain: bool = False) -> Image.Image | None:
+    icons = {f"{BASE}/images/CardType{i}.webp" for i in range(1, 6)}
+    if not url.startswith(ASSETS + "/") and url not in icons:
         return None
     try:
         cache = runtime_data_dir() / "asset-cache"
@@ -361,6 +362,8 @@ def _asset(url: str, size: tuple[int, int]) -> Image.Image | None:
                 return None
             path.write_bytes(raw)
         with Image.open(io.BytesIO(raw)) as image:
+            if contain:
+                return ImageOps.contain(image.convert("RGBA"), size, method=Image.Resampling.LANCZOS)
             return ImageOps.fit(image.convert("RGB"), size, method=Image.Resampling.LANCZOS)
     except Exception:
         return None
@@ -403,9 +406,8 @@ def _paste_asset(canvas: Image.Image, draw: ImageDraw.ImageDraw, url: str, box: 
 
 
 def _bytes(image: Image.Image) -> bytes:
-    out = io.BytesIO()
-    image.save(out, format="JPEG", quality=95, subsampling=0, optimize=True)
-    return out.getvalue()
+    from .image_output import encode_image
+    return encode_image(image)
 
 
 def render_song_list(songs: list[Song], query: str, locale: str = "zh", footer: str = "") -> bytes:
@@ -681,114 +683,32 @@ def _render_meta_table(answer: MetaAnswer) -> bytes:
 
 
 def render_card(card: Card, locale: str = "zh") -> bytes:
-    measure = ImageDraw.Draw(Image.new("RGB", (900, 1)))
-    title = localized_text(card, "title", locale)
-    title_lines = _wrapped_lines(measure, title, 760, 29, len(title) + 1)
-    extra = max(0, len(title_lines) - 1) * 39
-    skill_height = sum(row[3] for row in _skill_rows(measure, card.skills, 690, locale))
-    panel_bottom = 1682 + extra + max(60, skill_height) + 24
-    image, draw = _canvas(900, panel_bottom + 65, _label(locale, "card"))
-    draw.rounded_rectangle((38, 136, 862, 300 + extra), radius=24, fill=PAPER)
-    _write(draw, localized_text(card, "band", locale), 56, 145, 460, 27, ACCENT)
-    _write(draw, localized_text(card, "character", locale), 56, 190, 760, 39)
-    for index, line in enumerate(title_lines):
-        _write(draw, line, 56, 250 + index * 39, 760, 29)
-    _paste_asset(image, draw, card.full_url, (64, 315 + extra, 836, 1345 + extra), locale)
-    draw.rounded_rectangle((63, 1370 + extra, 837, panel_bottom), radius=34,
-                           fill=SURFACE, outline=BORDER, width=2)
-    _write(draw, f"{_rarity(card.rarity)}    ID {card.id}    {_label(locale, 'type')} {card.card_type}", 88, 1393 + extra, 720, 28, ACCENT)
-    total = card.performance + card.technic + card.visual
-    _write(draw, f"{_label(locale, 'power')}  {total:,}" if total else {"zh": "数值暂不可用", "en": "Stats unavailable", "ja": "ステータス未取得"}.get(locale, "数值暂不可用"), 88, 1447 + extra, 720, 31)
-    draw.line((88, 1490 + extra, 812, 1490 + extra), fill=BORDER, width=2)
-    values = [(_label(locale, "performance"), card.performance, STAT_COLORS[0]),
-              (_label(locale, "technic"), card.technic, STAT_COLORS[1]),
-              (_label(locale, "visual"), card.visual, STAT_COLORS[2])]
-    for index, (label, value, color) in enumerate(values):
-        y = 1504 + extra + index * 55
-        _write(draw, f"{label}  {value:,}", 88, y, 270, 22)
-        draw.rounded_rectangle((365, y + 7, 780, y + 28), radius=10, fill="#D2D9EA")
-        draw.rounded_rectangle((365, y + 7, 365 + int(415 * value / max(1, max(v for _, v, _ in values))), y + 28), radius=10, fill=color)
-    if card.skills:
-        _draw_skills(draw, card.skills, 88, 1682 + extra, 690, locale)
-    elif card.skill_name:
-        _write(draw, f"{_label(locale, 'skill')}  {localized_text(card, 'skill_name', locale)}", 88, 1682 + extra, 700, 22, MUTED)
-    return _bytes(image)
+    from .card_visuals import detail
+    return detail(card, locale)
 
 
-def render_card_list(cards: list[Card], query: str, locale: str = "zh", footer: str = "") -> bytes:
-    height = 225 + len(cards) * 165 + (80 if footer else 0)
-    image, draw = _canvas(900, height, _label(locale, "cards"))
-    _write(draw, f"{_label(locale, 'card_list')} · {query}", 52, 142, 790, 31)
-    thumbnails = _prefetch_assets([card.thumbnail_url for card in cards], (93, 125))
-    for index, card in enumerate(cards):
-        top = 195 + index * 165
-        draw.rounded_rectangle((44, top - 6, 856, top + 151), radius=40, fill=PAPER)
-        draw.rounded_rectangle((50, top, 850, top + 145), radius=34,
-                               fill=SURFACE if index % 2 else "#FFFFFF", outline=BORDER, width=2)
-        draw.line((178, top + 12, 178, top + 133), fill=BORDER, width=2)
-        _paste_loaded_asset(image, draw, thumbnails[card.thumbnail_url], (68, top + 10, 161, top + 135), locale)
-        _write(draw, localized_text(card, "character", locale), 190, top + 13, 590, 27)
-        _write(draw, localized_text(card, "title", locale), 190, top + 55, 590, 22)
-        _write(draw, f"#{card.id}  ·  {_rarity(card.rarity)}", 190, top + 101, 590, 20, MUTED)
-    if footer:
-        draw.rounded_rectangle((48, height - 98, 852, height - 28), radius=20, fill=PAPER)
-        for index, line in enumerate(footer.splitlines()[:2]):
-            _write(draw, line, 55, height - 95 + index * 31, 790, 21, MUTED)
-    return _bytes(image)
+def render_card_list(cards, query: str, locale: str = "zh", footer: str = "") -> bytes:
+    from .card_visuals import grid
+    return grid(cards, query, locale, footer)
 
 
 def render_support_card(card: SupportCard, locale: str = "zh") -> bytes:
-    measure = ImageDraw.Draw(Image.new("RGB", (900, 1)))
-    characters, title = localized_text(card, "character", locale), localized_text(card, "title", locale)
-    names = _wrapped_lines(measure, characters, 760, 32, len(characters) + 1)
-    titles = _wrapped_lines(measure, title, 760, 29, len(title) + 1)
-    name_extra = max(0, len(names) - 1) * 44
-    extra = name_extra + max(0, len(titles) - 1) * 39
-    skill_height = sum(row[3] for row in _skill_rows(measure, card.skills, 690, locale))
-    panel_bottom = 1588 + extra + max(40, skill_height) + 24
-    image, draw = _canvas(900, panel_bottom + 65, _label(locale, "support_card"))
-    draw.rounded_rectangle((38, 136, 862, 275 + extra), radius=24, fill=PAPER)
-    for index, line in enumerate(names):
-        _write(draw, line, 56, 165 + index * 44, 760, 32, ACCENT)
-    for index, line in enumerate(titles):
-        _write(draw, line, 56, 225 + name_extra + index * 39, 760, 29)
-    _paste_asset(image, draw, card.full_url, (64, 290 + extra, 836, 1245 + extra), locale)
-    draw.rounded_rectangle((63, 1270 + extra, 837, panel_bottom), radius=34,
-                           fill=SURFACE, outline=BORDER, width=2)
-    _write(draw, f"{_rarity(card.rarity)}    ID {card.id}    {_label(locale, 'type')} {card.card_type}", 88, 1295 + extra, 720, 28, ACCENT)
-    values = [(_label(locale, "performance"), card.performance / 100, STAT_COLORS[0]),
-              (_label(locale, "technic"), card.technic / 100, STAT_COLORS[1]),
-              (_label(locale, "visual"), card.visual / 100, STAT_COLORS[2])]
-    total = sum(value for _, value, _ in values)
-    _write(draw, f"{_label(locale, 'support_bonus')}  {total:g}%" if total else {"zh": "数值暂不可用", "en": "Stats unavailable", "ja": "ステータス未取得"}.get(locale, "数值暂不可用"), 88, 1348 + extra, 720, 31)
-    draw.line((88, 1392 + extra, 812, 1392 + extra), fill=BORDER, width=2)
-    for index, (label, value, color) in enumerate(values):
-        y = 1405 + extra + index * 55
-        _write(draw, f"{label}  {value:g}%", 88, y, 270, 22)
-        draw.rounded_rectangle((365, y + 7, 780, y + 28), radius=10, fill="#D2D9EA")
-        draw.rounded_rectangle((365, y + 7, 365 + int(415 * value / max(1, max(v for _, v, _ in values))), y + 28), radius=10, fill=color)
-    if card.skills:
-        _draw_skills(draw, card.skills, 88, 1588 + extra, 690, locale)
-    return _bytes(image)
+    from .card_visuals import detail
+    return detail(card, locale)
 
 
-def render_support_card_list(cards: list[SupportCard], query: str, locale: str = "zh", footer: str = "") -> bytes:
-    height = 225 + len(cards) * 165 + (80 if footer else 0)
-    image, draw = _canvas(900, height, _label(locale, "support_cards"))
-    _write(draw, f"{_label(locale, 'support_card_list')} · {query}", 52, 142, 790, 31)
-    thumbnails = _prefetch_assets([card.thumbnail_url for card in cards], (125, 125))
-    for index, card in enumerate(cards):
-        top = 195 + index * 165
-        draw.rounded_rectangle((44, top - 6, 856, top + 151), radius=40, fill=PAPER)
-        draw.rounded_rectangle((50, top, 850, top + 145), radius=34,
-                               fill=SURFACE if index % 2 else "#FFFFFF", outline=BORDER, width=2)
-        draw.line((208, top + 12, 208, top + 133), fill=BORDER, width=2)
-        _paste_loaded_asset(image, draw, thumbnails[card.thumbnail_url], (68, top + 10, 193, top + 135), locale)
-        _write(draw, localized_text(card, "character", locale), 220, top + 13, 560, 27)
-        _write(draw, localized_text(card, "title", locale), 220, top + 55, 560, 22)
-        _write(draw, f"#{card.id}  ·  {_rarity(card.rarity)}", 220, top + 101, 560, 20, MUTED)
-    if footer:
-        draw.rounded_rectangle((48, height - 98, 852, height - 28), radius=20, fill=PAPER)
-        for index, line in enumerate(footer.splitlines()[:2]):
-            _write(draw, line, 55, height - 95 + index * 31, 790, 21, MUTED)
-    return _bytes(image)
+def render_support_card_list(cards, query: str, locale: str = "zh", footer: str = "") -> bytes:
+    from .card_visuals import grid
+    return grid(cards, query, locale, footer, support=True)
+
+
+def render_catalog(answer, locale: str = "zh") -> bytes | None:
+    if answer.error or not answer.cards:
+        return None
+    from .card_visuals import art, detail, grid
+    if answer.request.mode == "art":
+        return art(answer.cards[0])
+    if answer.request.mode == "detail":
+        return detail(answer.cards[0], locale)
+    return grid(answer.visible, answer.request.query, locale, answer.footer,
+                support=answer.request.support) if answer.visible else None

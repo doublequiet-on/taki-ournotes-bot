@@ -18,7 +18,7 @@ class StatusTests(unittest.TestCase):
         repo = SongRepository(BASE, self.path)
         repo.metadata = {
             "source": BASE, "schema": 4, "data_version": "Bearer secret-value",
-            "member_skill_index_complete": True,
+            "member_skill_index_complete": True, "card_catalog_version": 1,
             "cached_at": "2026-09-25T12:00:00+00:00",
         }
         repo._save_cache()

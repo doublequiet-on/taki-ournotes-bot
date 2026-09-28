@@ -10,6 +10,7 @@ from .data import Card, Chart, Skill, Song, SongRepository, SupportCard, charact
 from .entity_lexicon import EntityRef
 from .i18n import tr
 from .efficiency_query import MetaAnswer, execute_efficiency
+from .card_catalog import CardAnswer, query_cards
 
 
 @dataclass(frozen=True)
@@ -27,6 +28,7 @@ class QuerySpec:
     metric: str = "eff"
     order: str = "desc"
     limit: int = 30
+    card_query: str | None = None
 
     def query_label(self) -> str:
         parts = [self.display_name] if self.display_name else []
@@ -46,6 +48,8 @@ class QuerySpec:
         return " ".join(parts)
 
     def command_label(self) -> str:
+        if self.card_query is not None:
+            return ("查支援卡 " if self.intent == "support_card" else "查卡 ") + self.card_query
         if self.intent == "efficiency":
             parts = ["查分数表"]
             if self.subject:
@@ -90,6 +94,7 @@ class QueryResult:
     support_cards: tuple[SupportCard, ...] = ()
     chart: tuple[Song, tuple[Chart, ...]] | None = None
     meta: MetaAnswer | None = None
+    catalog: CardAnswer | None = None
 
 
 def query_page_notice(spec: QuerySpec, total: int, locale: str) -> str:
@@ -115,8 +120,23 @@ def query_page_notice(spec: QuerySpec, total: int, locale: str) -> str:
 
 def resolve_query(spec: QuerySpec, repository: SongRepository) -> QueryResult:
     """Capture records for both answer text and image within one request."""
+    if spec.card_query is not None:
+        answer = query_cards(spec.card_query, repository, support=spec.intent == "support_card")
+        return QueryResult(spec, catalog=answer, cards=answer.cards if spec.intent == "card" else (),
+                           support_cards=answer.cards if spec.intent == "support_card" else ())
     if spec.intent == "efficiency":
         return QueryResult(spec, meta=execute_efficiency(spec, repository))
+    if spec.intent in {"card", "support_card"} and not (spec.skill_query or spec.skill_kind):
+        query = ""
+        if spec.rarity is not None:
+            query = f"{spec.rarity}星 "
+        if spec.subject:
+            prefix = {"character": "角色=", "band": "乐队="}.get(spec.subject.kind, "")
+            query += prefix + str(spec.subject.value)
+        query += f" 页{spec.page}"
+        answer = query_cards(query, repository, support=spec.intent == "support_card")
+        return QueryResult(spec, catalog=answer, cards=answer.cards if spec.intent == "card" else (),
+                           support_cards=answer.cards if spec.intent == "support_card" else ())
     if spec.intent == "song":
         return QueryResult(spec, songs=tuple(songs_for(spec, repository)))
     if spec.intent == "card":
@@ -222,6 +242,8 @@ def support_cards_for(spec: QuerySpec, repository: SongRepository) -> list[Suppo
 def answer_for(spec: QuerySpec, repository: SongRepository, locale: str = "zh",
                result: QueryResult | None = None) -> str:
     selected = result if result is not None else resolve_query(spec, repository)
+    if selected.catalog is not None:
+        return selected.catalog.text(locale)
     if spec.intent == "efficiency":
         return selected.meta.text
     if spec.intent == "song":
