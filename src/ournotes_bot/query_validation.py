@@ -10,6 +10,8 @@ from .commands import _split_page, split_card_rarity
 from .data import SongRepository, normalize
 from .entity_lexicon import find_anchor, resolve_entity
 from .query_capabilities import CAPABILITIES, Capability
+from .query_terms import is_skill_placeholder
+from .song_conditions import extract_song_conditions
 from .structured_query import QuerySpec
 
 
@@ -53,6 +55,30 @@ _LEGACY_FIELDS = frozenset({
     "intent", "query", "difficulty", "level_operator", "level", "min_level",
     "skill_query", "skill_kind",
 })
+
+_LEVEL_OPERATOR_NAMES = {">=": "gte", ">": "gt", "<=": "lte", "<": "lt"}
+
+
+def _song_condition_mismatches(arguments: dict[str, Any], question: str) -> tuple[str, ...]:
+    evidence = extract_song_conditions(question)
+    invalid = []
+    if evidence.level_conflict:
+        invalid.extend(("level_operator", "level"))
+    elif evidence.has_level:
+        if arguments.get("level_operator", "") != _LEVEL_OPERATOR_NAMES[evidence.comparison]:
+            invalid.append("level_operator")
+        proposed_level = arguments.get("level")
+        if (isinstance(proposed_level, bool) or not isinstance(proposed_level, (int, float))
+                or float(proposed_level) != evidence.level):
+            invalid.append("level")
+    if evidence.difficulty_conflict:
+        invalid.append("difficulty")
+    elif evidence.has_difficulty:
+        if arguments.get("difficulty", "") != evidence.difficulty:
+            invalid.append("difficulty")
+    elif evidence.has_level and arguments.get("difficulty", ""):
+        invalid.append("difficulty")
+    return tuple(dict.fromkeys(invalid))
 
 
 def validate_route(data: dict[str, Any]) -> RouteResult:
@@ -126,6 +152,13 @@ def validate_capability_action(data: dict[str, Any], capability: Capability, que
                 None, OutcomeCode.INVALID_ARGUMENTS, ("rarity",),
                 capability.allowed_parameters, repairable=True,
             )
+    if capability.id == "song.search":
+        invalid = _song_condition_mismatches(arguments, question)
+        if invalid:
+            return ValidationResult(
+                None, OutcomeCode.INVALID_ARGUMENTS, invalid,
+                capability.allowed_parameters, repairable=True,
+            )
     legacy = {"intent": capability.intent, "query": arguments.get("query", "")}
     for name in ("difficulty", "level_operator", "level", "skill_query", "skill_kind"):
         if name in arguments:
@@ -169,6 +202,7 @@ def validate_legacy_plan(data: dict[str, Any], question: str,
             or not isinstance(term, str) or len(term.strip()) > 50):
         return ValidationResult(None, OutcomeCode.INVALID_OUTPUT)
     if (not isinstance(skill_query, str) or len(skill_query.strip()) > 30
+            or is_skill_placeholder(skill_query)
             or skill_kind not in {"", "leader", "live", "gekisou"}):
         return ValidationResult(None, OutcomeCode.INVALID_ARGUMENTS)
     if (skill_query or skill_kind) and intent != "card":
@@ -211,6 +245,16 @@ def validate_legacy_plan(data: dict[str, Any], question: str,
         proposed = find_anchor(intent, term, repository)
         if proposed.ambiguous or proposed.entity != anchor.entity:
             return ValidationResult(None, OutcomeCode.UNKNOWN_ENTITY)
+    # Ground the proposed entity first. Quoted examples in the user's message
+    # may contain level tokens, but cannot authorize an unrelated model query.
+    condition_arguments = {
+        **data,
+        "difficulty": difficulty,
+        "level_operator": comparison,
+        "level": level,
+    }
+    if intent == "song" and _song_condition_mismatches(condition_arguments, question):
+        return ValidationResult(None, OutcomeCode.INVALID_ARGUMENTS)
     symbol = {"gte": ">=", "gt": ">", "lte": "<=", "lt": "<"}.get(comparison, "")
     display = str(anchor.entity.value) if anchor.entity else ""
     spec = QuerySpec(

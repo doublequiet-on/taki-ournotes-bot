@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 
 from .data import Song, normalize
 from .entity_lexicon import EntityRef, find_anchor, resolve_entity
+from .song_conditions import extract_song_conditions, remove_song_conditions
 from .song_meta import DIFFICULTIES, MetaRow
 from .song_traits import describe as describe_song
 
@@ -21,7 +22,6 @@ FORBIDDEN = re.compile(r"推荐|攻略|预测|档线|代练|代肝|账号|编成
 
 def parse_efficiency(query: str, repository, *, direct=False):
     from .commands import _split_page
-    from .local_query import _DIFFICULTY, _DIFFICULTY_NAMES, _LEVEL_PHRASES
     from .structured_query import QuerySpec
     if not direct and not MARKER.search(query):
         return None
@@ -44,29 +44,17 @@ def parse_efficiency(query: str, repository, *, direct=False):
             else:
                 order = found[0].group(1).lower()
             text = text[:found[0].start()] + " " + text[found[0].end():]
-    comparison, level = "", None
-    explicit = re.search(r"lv\s*(>=|<=|>|<)\s*(\d+(?:\.\d+)?)", text, re.I)
-    found = [(m, op) for pattern, op in _LEVEL_PHRASES if (m := pattern.search(text))] if not explicit else []
-    if explicit:
-        comparison, level = explicit.group(1), float(explicit.group(2))
-        text = text[:explicit.start()] + " " + text[explicit.end():]
-    elif len(found) == 1:
-        match, comparison = found[0]
-        level = float(match.group("level"))
-        text = text[:match.start()] + " " + text[match.end():]
-    elif found:
+    evidence = extract_song_conditions(text, include_explicit_lv=True)
+    if evidence.level_conflict:
         return "目前只支持一个等级边界。\n" + HELP
+    comparison, level = evidence.comparison, evidence.level
     if level is not None and not 1 <= level <= 40:
         return "等级需为 1～40。\n" + HELP
-    difficulties = list(_DIFFICULTY.finditer(text))
     all_difficulties = bool(re.search(r"全难度|所有难度", text))
-    if len(difficulties) > 1 or (all_difficulties and difficulties):
+    if evidence.difficulty_conflict or (all_difficulties and evidence.has_difficulty):
         return "可省略难度查看全难度榜，或指定一种难度筛选。\n" + HELP
-    difficulty = ""
-    if difficulties:
-        match = difficulties[0]
-        difficulty = _DIFFICULTY_NAMES[re.sub(r"难度$", "", match.group().upper())]
-        text = text[:match.start()] + " " + text[match.end():]
+    difficulty = evidence.difficulty
+    text = remove_song_conditions(text, evidence)
     limits = list(re.finditer(r"前\s*([\d一二三四五六七八九十百]+)\s*(?:首(?:歌曲|歌)?|条)?", text))
     limit = PAGE_SIZE
     if limits:
