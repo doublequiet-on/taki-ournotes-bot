@@ -93,3 +93,5 @@ python scripts/check_release_artifact.py dist
 - SNAP视觉入口 `support_visuals.py::render_list/render_detail`，由 `card_visuals.py` 按列表/详情分流；共用主题、条件标签、稀有度框及分区布局。保留EX重复演出支援、明确激奏不适用，不合计百分比属性为综合力。离线检查 `test_support_visuals.py`，本地QQ命令见验收文档。
 
 - `support_summary.py` 从现有Lv.5中文技能效果做完整模板匹配，仅输出基础效果及触发/上限，条件加成留详情；新措辞必须先核实。`member_detail_visuals._panel` 是两类详情共用的白底/标题带绘制，不影响列表或数据逻辑。
+
+- 所有渲染器经 `visuals._bytes` → `image_output.encode_image` 统一编码预算（1.5MB/8192边长/1200万像素），不在各命令复制压缩代码。`qq._upload_image` 单次上传30秒，HTTP临时副本必须解除共享会话引用；测试 `test_image_output.py`、`test_media.py`、`test_reply_pipeline.py`。发布依据与可溯源说明见 [2026-09-28报告](RELEASE_2026-09-28.md)。
