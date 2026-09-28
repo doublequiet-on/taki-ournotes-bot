@@ -272,6 +272,19 @@ async def prepare_commands(commands: list[str], gate: "QueryGate", repository: S
 
 def _image_from_result(result: QueryResult | CommandResult | None,
                        repository: SongRepository, locale: str) -> bytes | None:
+    if result is not None and result.catalog is not None:
+        answer = result.catalog
+        if answer.error or not answer.cards:
+            return None
+        req = answer.request
+        if req.mode == "art":
+            from .card_visuals import art
+            return art(answer.cards[0])
+        if req.mode == "detail":
+            render = render_support_card if req.support else render_card
+            return render(answer.cards[0], locale)
+        render = render_support_card_list if req.support else render_card_list
+        return render(answer.visible, req.query, locale, answer.footer) if answer.visible else None
     if result is not None and result.meta is not None:
         from .visuals import render_meta
         return render_meta(result.meta) if result.meta.rows else None
@@ -375,6 +388,9 @@ def _prepare_reply(content: str, repository: SongRepository,
     except Exception as exc:
         logger.warning("图片生成失败，改用文字；错误类型=%s", type(exc).__name__)
         image = None
+    if (image is None and result is not None and result.catalog is not None
+            and result.catalog.request.mode == "art" and not result.catalog.error):
+        reply += "\n卡面图片暂不可用，请稍后重试。"
     logger.info("查询完成；内容=%s 文本=%d字 图片=%s 耗时=%.0fms",
                 describe(content), len(reply),
                 f"{len(image):,}B" if image else "无", elapsed())

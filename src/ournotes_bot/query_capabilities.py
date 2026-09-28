@@ -116,13 +116,11 @@ def _chart(spec: QuerySpec, repository: SongRepository) -> QueryResult:
 
 
 def _cards(spec: QuerySpec, repository: SongRepository) -> QueryResult:
-    return QueryResult(spec, cards=tuple(structured_query.cards_for(spec, repository)))
+    return structured_query.resolve_query(spec, repository)
 
 
 def _support_cards(spec: QuerySpec, repository: SongRepository) -> QueryResult:
-    return QueryResult(
-        spec, support_cards=tuple(structured_query.support_cards_for(spec, repository)),
-    )
+    return structured_query.resolve_query(spec, repository)
 
 
 CAPABILITIES = {

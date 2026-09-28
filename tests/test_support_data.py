@@ -97,20 +97,22 @@ class SupportDataTests(unittest.TestCase):
             "statsMax": [10156, 7442, 7179], "skills": member_skills,
         }):
             member = handle_command("/查卡 1", self.repo)
-        self.assertIn("[成员卡详情]", member)
-        self.assertIn("综合力：24,777", member)
-        self.assertIn("队长技能：队长", member)
-        self.assertIn("Live 技能：Live", member)
-        self.assertIn("激奏技能：激奏", member)
+        self.assertIn("成员卡详情", member)
+        self.assertIn("数值状态未核实", member)
+        self.assertNotIn("24,777", member)
+        self.assertIn("队长技能 · 队长", member)
+        self.assertIn("LIVE技能 · Live", member)
+        self.assertIn("击奏技能 · 激奏", member)
 
         with patch("ournotes_bot.yatta.support_card_detail", return_value={
             "statsMax": [600, 500, 400], "skills": support_skills,
         }):
             support = handle_command("/查支援卡 7", self.repo)
-        self.assertIn("[支援卡详情]", support)
-        self.assertIn("支援加成：15%", support)
-        self.assertIn("支援技能：支援", support)
-        self.assertIn("激奏支援技能：激奏支援", support)
+        self.assertIn("支援卡详情", support)
+        self.assertIn("数值状态未核实", support)
+        self.assertNotIn("15%", support)
+        self.assertIn("LIVE支援 · 支援", support)
+        self.assertIn("击奏支援 · 激奏支援", support)
 
     def test_ask_handles_skill_filters_and_support_cards_locally(self):
         score_skill = build_skills([{
@@ -144,7 +146,7 @@ class SupportDataTests(unittest.TestCase):
         parser = AIQueryParser(Settings("", "", BASE, self.repo.cache_file, 6))
         answer = parser.answer("/问 支援卡有哪些 页2", self.repo)
         self.assertIn("页码超出范围", answer)
-        self.assertIn("/问 支援卡有哪些", answer)
+        self.assertIn("/查支援卡", answer)
         self.assertEqual(
             query_page_notice(QuerySpec("support_card", display_name="全部支援卡"), 17, "zh"),
             "第 1/2 页 · 共 17张\n下一页：/问 支援卡有哪些 页2",
@@ -219,6 +221,7 @@ class SupportDataTests(unittest.TestCase):
             skills=(Skill("liveSkill", "得分提升", "提升50%"),),
         )]
         self.repo.metadata["member_skill_index_complete"] = True
+        self.repo.metadata["card_catalog_version"] = 1
         self.repo._save_cache()
         payload = json.loads(self.repo.cache_file.read_text(encoding="utf-8"))
         self.assertEqual(payload["metadata"]["schema"], 2)

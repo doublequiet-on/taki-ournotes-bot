@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+import math
 import time
 from datetime import datetime, timezone
 from typing import Any
@@ -67,20 +68,30 @@ def _effect_value(effect: dict[str, Any], locale: str, level: int) -> str:
     if not isinstance(value, (int, float)) or isinstance(value, bool):
         return str(value) if value is not None else ""
     formula = effect.get("formula") or {}
-    divide = formula.get("divide") or 1
-    number = value / divide if isinstance(divide, (int, float)) and divide else value
+    divide = formula.get("divide", 1)
+    if not isinstance(divide, (int, float)) or not divide:
+        return "参数未确认"
+    number = value * formula.get("multiply", 1) / divide
+    if not math.isfinite(number):
+        return "参数未确认"
     digits = {"F0": 0, "F1": 1, "F2": 2}.get(formula.get("format"))
     rendered = f"{number:.{digits}f}" if digits is not None else f"{number:g}"
     condition = effect.get("condition") or {}
     if condition:
-        if value:
-            return f"{condition.get('prefix', '')}{rendered if condition.get('withParam') else ''}{condition.get('ifTrue', '')}"
+        if value > 0:
+            return (f"{condition.get('prefix', '')}{rendered}{condition.get('ifTrue', '')}"
+                    if condition.get("withParam") else str(condition.get("ifTrue", "")))
         return str(condition.get("ifFalse", ""))
     return rendered
 
 
 def skill_description(raw: dict[str, Any], locale: str = "zh", level: int = 5) -> str:
-    description = text(raw.get("description"), locale)
+    descriptions = raw.get("description")
+    if isinstance(descriptions, list):
+        index = next((i for i in (LANGUAGES.get(locale, 3), 0, 1)
+                      if i < len(descriptions) and descriptions[i]), 0)
+        locale = next((key for key, value in LANGUAGES.items() if value == index), "ja")
+    description = text(descriptions, locale)
     effects = raw.get("effects") or {}
     rows = effects.get(str(LANGUAGES.get(locale, 3)), []) if isinstance(effects, dict) else []
     if not rows and isinstance(effects, dict):
@@ -91,7 +102,7 @@ def skill_description(raw: dict[str, Any], locale: str = "zh", level: int = 5) -
         description = description.replace("{" + str(effect["param"]) + "}", _effect_value(effect, locale, level))
     description = re.sub(r"</?color(?:=[^>]*)?>", "", description, flags=re.I)
     description = re.sub(r"\{[^{}]+}", "?", description)
-    return " ".join(description.replace("\r", "\n").split())
+    return "\n".join(" ".join(line.split()) for line in description.replace("\r\n", "\n").splitlines() if line.strip())
 
 
 def build_skills(payload: Any):
@@ -126,7 +137,7 @@ def build_data(characters: Any, card_payload: Any, song_payload: Any, song_meta:
     for raw in cards_raw.values():
         card_id = int(raw["id"])
         character = characters.get(str(raw.get("character")), {})
-        band_id = character.get("band") or next(iter(raw.get("musicTags") or []), 0)
+        band_id = character.get("band")
         band_names = card_bands.get(str(band_id), [])
         cards.append(Card(
             id=card_id, asset_id=card_id, title=text(raw.get("subtitle")) or f"卡牌 {card_id}",
@@ -138,6 +149,10 @@ def build_data(characters: Any, card_payload: Any, song_payload: Any, song_meta:
             thumbnail_url=f"{ASSETS}/MemberCard/{card_id}/member_thumbnail.webp",
             localized={"title": localized(raw.get("subtitle")), "character": localized(raw.get("name")),
                        "band": localized(band_names)},
+            catalog={"character_ids": [raw.get("character")], "band_ids": [character.get("band")],
+                     "character_links_complete": bool(character and text(character.get("name"))),
+                     "bands": [text(band_names)] if text(band_names) else [],
+                     "tags": {str(k): localized(card_bands.get(str(k), [])) for k in raw.get("musicTags", [])}},
         ))
     songs = []
     for raw in songs_raw.values():
@@ -165,7 +180,7 @@ def build_data(characters: Any, card_payload: Any, song_payload: Any, song_meta:
     return sorted(songs, key=lambda item: item.id), sorted(cards, key=lambda item: item.id)
 
 
-def build_support_cards(characters: Any, support_payload: Any):
+def build_support_cards(characters: Any, support_payload: Any, band_refs: dict | None = None):
     from .data import SupportCard
 
     if not isinstance(characters, dict):
@@ -189,6 +204,11 @@ def build_support_cards(characters: Any, support_payload: Any):
             thumbnail_url=f"{ASSETS}/SupportCard/{card_id}/snap_thumbnail.webp",
             localized={"title": localized(raw.get("subtitle") or raw.get("name")),
                        "character": {locale: value for locale, value in localized_characters.items() if value}},
+            catalog={"character_ids": list(raw.get("characters", [])),
+                     "character_links_complete": isinstance(raw.get("characters"), list) and all(text(row.get("name")) for row in character_rows),
+                     "band_ids": list(dict.fromkeys(row.get("band") for row in character_rows if row.get("band"))),
+                     "bands": list(dict.fromkeys(text((band_refs or {}).get(str(row.get("band")), []))
+                                                  for row in character_rows if text((band_refs or {}).get(str(row.get("band")), []))))},
         ))
     if not cards:
         raise ValueError("Project Yume returned an empty support card list")
@@ -197,6 +217,60 @@ def build_support_cards(characters: Any, support_payload: Any):
 
 def card_detail(card_id: int) -> dict[str, Any]:
     return fetch_json(f"{MASTER}/membercards/{card_id}.json")
+
+
+def detail_catalog(raw: dict[str, Any]) -> dict[str, Any]:
+    """Verified Yume skill names, not icon guesses (EX 61 has a score icon for duration)."""
+    if not isinstance(raw.get("skills"), list):
+        raise ValueError("missing skills array")
+    categories = {}
+    evidence = []
+    unknown_kinds = []
+    for skill in raw["skills"]:
+        if not isinstance(skill, dict):
+            raise ValueError("invalid skill record")
+        kind = skill.get("type")
+        name = text(skill.get("name"), "ja")
+        category = None
+        if kind in {"liveSkill", "supportSkill"}:
+            for prefix, value in (("スコアUP", "score"), ("LIFE回復", "life"),
+                                  ("判定サポート", "judgement"), ("判定強化", "judgement"),
+                                  ("ライブスキル延長", "duration")):
+                if name.startswith(prefix):
+                    category = value
+                    break
+            dimension = "live"
+        elif kind in {"gekisouSkill", "gekisouSupportSkill"}:
+            match = re.match(r"(?:撃奏)?(JUST|COMBO|LUCK)", name)
+            category = match.group(1) if match else None
+            dimension = "gekisou"
+        else:
+            if kind != "leaderSkill":
+                unknown_kinds.append(kind)
+            continue
+        categories.setdefault(dimension, []).append(category)
+        evidence.append({"kind": kind, "id": skill.get("id"), "name_ja": name,
+                         "icon": skill.get("icon"), "category": category})
+    # Reproduce only the source's explicitly selectable Lv.1 / rank 1 / awake 0 state.
+    stats = None
+    try:
+        base = raw["statsMax"]
+        level = next(row for row in raw["levelGroup"] if row["level"] == 1)["stats"]
+        support = "characters" in raw
+        rank = raw["rankGroup"][0].get("stats") or [0, 0, 0]
+        stats = [math.floor((level[i] + (0 if support else rank[i])) * base[i] / 10000)
+                 / (100 if support else 1) for i in range(3)]
+        if not all(math.isfinite(v) for v in stats):
+            stats = None
+    except (KeyError, TypeError, ValueError, IndexError, StopIteration, OverflowError):
+        pass
+    for dimension in ("live", "gekisou"):
+        categories[dimension] = list(dict.fromkeys(categories.get(dimension, [None if unknown_kinds else "not_applicable"])))
+    return {"detail_loaded": True, "detail_stale": False, "categories": categories,
+            "skill_evidence": evidence, "unknown_skill_kinds": unknown_kinds, "stats_level1": stats,
+            "skill_languages": {s.get("type"): "zh" if isinstance(s.get("description"), list)
+                                and len(s["description"]) > 3 and s["description"][3] else "ja/en"
+                                for s in raw["skills"]}}
 
 
 def support_card_detail(card_id: int) -> dict[str, Any]:

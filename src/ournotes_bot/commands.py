@@ -12,14 +12,16 @@ from .entity_lexicon import known_alias_names, resolve_exact_alias
 from .i18n import tr
 from .query_debug import QUERY_DEBUG_COUNTERS
 from .efficiency_query import MetaAnswer, HELP as EFFICIENCY_HELP
+from .card_catalog import CardAnswer, query_cards
 
 
 HELP_TEXT = """Our Notes 查询指令
 /查曲 [歌名或ID] [等级或lv比较式] [页N]：搜索歌曲列表，可翻页
 /查谱面 歌名或ID [难度]：查看等级与 Note 数；100001 可简写为 1
 /查分数表 [乐队] [EX] [lv<=25] [页N]：全难度每分钟得分效率前30条，含难度、时长和得分系数；也可指定歌名或ID
-/查卡 [角色、乐队或ID] [SSR/SR/R] [页N]：搜索卡面，可按星级筛选
-/查支援卡 [角色、卡名或ID] [SSR/SR/R] [页N]：搜索支援卡，可翻页
+/查卡 [SSR/SR/R] [颜色=红色] [角色=tmr] [乐队=MyGO] [LIVE=分数提升] [击奏=JUST] [页N]：条件卡牌列表；指定ID看详情
+/查支援卡（或 /查SNAP）：同上筛选，另支持 EX、LIVE=技能延长
+/查卡面 ID、/查支援卡面 ID：只输出卡面；条件多选用逗号，同维度任选、跨维度同时满足
 /查缩写 昵称：查看昵称对应的角色、乐队等，也可直接用于查曲或查卡
 /问 想查的内容：自然语言查询歌曲、谱面、歌曲效率、成员卡技能或支援卡（复杂问法需配置 AI）
 /数据状态：查看进程、最近同步与缓存状态
@@ -52,8 +54,8 @@ COMMAND_HELP = {
     "efficiency": EFFICIENCY_HELP,
     "songs": "查询歌曲列表，支持歌名、乐队、曲目 ID 或等级，每页 16 首。27 与 lv27 相同，均匹配整数等级 27（含显示等级 27.5）；27.5 与 lv27.5 均精确匹配显示等级。lv>=25、lv>25、lv<=25、lv<25 按歌曲最高显示等级筛选；可追加 diff=EXPERT 等难度，只比较该难度。纯数字若恰好是曲目 ID，优先按 ID 查询。\n用法：/查曲 [歌名或ID] [等级或lv比较式] [页N]\n示例：/查曲 迷星叫、/查曲 27、/查曲 mygo lv>=25、/查曲 mygo lv>=25 diff=EXPERT 页2",
     "chart": "查询谱面等级与 Note 数，支持歌名或曲目 ID。100001 可简写为 1。可选难度：EASY、NORMAL、HARD、EXPERT；不指定时显示全部难度。\n用法：/查谱面 <歌名或ID> [难度]\n示例：/查谱面 1 EXPERT、/查谱面 100001 EXPERT",
-    "cards": "查询卡面，支持卡牌 ID、角色名、卡牌名或乐队名，每页 16 张。SSR＝四星、SR＝三星、R＝二星；可单独筛选，也可组合角色或乐队。\n用法：/查卡 [关键词或ID] [SSR/SR/R或星级] [页N]\n示例：/查卡 SSR、/查卡 高松灯 四星、/查卡 mygo SR 页2、/查卡 51\n找到多张卡时会显示列表，再用卡牌 ID 查看大图。",
-    "support_cards": "查询支援卡，支持支援卡 ID、角色名或卡牌名，每页 16 张。SSR＝四星、SR＝三星、R＝二星。\n用法：/查支援卡 [关键词或ID] [SSR/SR/R或星级] [页N]\n示例：/查支援卡 SSR、/查支援卡 tmr 三星、/查支援卡 1\n找到多张卡时会显示列表，再用支援卡 ID 查看详情和大图。",
+    "cards": "角色卡条件查询始终返回列表，每页16张，完整总数和翻页指令可见。ID精确查详情，/查卡面 ID 只发公开full卡面。\n用法：/查卡 [SSR/SR/R] [颜色=红色,蓝色] [角色=tmr,skk] [乐队=MyGO] [LIVE=分数提升] [击奏=JUST] [得意=MyGO] [页N]\n不同维度AND、同维度多选OR，得意标签全部包含。BD映射尚未核实；旧二/三/四星别名保留。",
+    "support_cards": "SNAP条件查询始终返回列表，每页16张；ID精确查详情，/查支援卡面 ID 只发卡面。\n用法：/查SNAP [SSR/EX/SR/R] [颜色=红色,蓝色] [角色=tmr,skk] [乐队=MyGO] [LIVE=技能延长] [击奏=LUCK] [页N]\nLIVE可选分数提升、LIFE回复、判定强化、技能延长；以实际资料为准。角色任选且去重，乐队另行筛选；不支持得意标签。BD映射尚未核实。",
     "abbrev": "查询已收录的角色、乐队等昵称；也可直接用昵称查曲或查卡。\n用法：/查缩写 <昵称>\n示例：/查缩写 skk、/查缩写 茉团、/查卡 墨缇丝",
 }
 COMMAND_HELPS = {
@@ -78,8 +80,8 @@ ALIASES = {
     "查分数表": "efficiency", "查效率": "efficiency",
     "查曲": "songs", "song": "songs", "songs": "songs", "曲": "songs", "楽曲": "songs",
     "查谱面": "chart", "查谱": "chart", "谱面": "chart", "chart": "chart", "譜面": "chart",
-    "查卡": "cards", "查卡面": "cards", "card": "cards", "cards": "cards", "カード": "cards",
-    "查支援卡": "support_cards", "支援卡": "support_cards", "support": "support_cards",
+    "查卡": "cards", "查角色卡": "cards", "查卡面": "cards", "card": "cards", "cards": "cards", "カード": "cards",
+    "查支援卡": "support_cards", "查snap": "support_cards", "snap": "support_cards", "查支援卡面": "support_cards", "查snap卡面": "support_cards", "支援卡": "support_cards", "support": "support_cards",
     "supportcard": "support_cards", "supportcards": "support_cards", "サポート": "support_cards",
     "查缩写": "abbrev", "abbrev": "abbrev", "略称": "abbrev",
 }
@@ -422,7 +424,7 @@ _SKILL_LABELS = {
 
 
 def rarity_text(rarity: int) -> str:
-    return "★" * rarity if 0 < rarity <= 5 else "SPECIAL"
+    return {2: "R", 3: "SR", 4: "SSR"}.get(rarity, f"未知稀有度({rarity})")
 
 
 def _skill_lines(skills: tuple[Skill, ...], locale: str) -> list[str]:
@@ -437,29 +439,13 @@ def _skill_lines(skills: tuple[Skill, ...], locale: str) -> list[str]:
 
 
 def _format_card_detail(card: Card, locale: str) -> str:
-    total = card.performance + card.technic + card.visual
-    heading = {"zh": "成员卡详情", "en": "Member card details", "ja": "メンバーカード詳細"}[locale]
-    stats_unavailable = {"zh": "数值暂不可用", "en": "Stats unavailable", "ja": "ステータスを取得できません"}[locale]
-    skills_unavailable = {"zh": "技能详情暂不可用", "en": "Skill details unavailable", "ja": "スキル詳細を取得できません"}[locale]
-    lines = [
-        f"[{heading}] {card.id}  {rarity_text(card.rarity)} {localized_text(card, 'character', locale)} · {localized_text(card, 'title', locale)}",
-        f"{tr(locale, 'stats')}：{total:,}（{tr(locale, 'performance')} {card.performance:,} / {tr(locale, 'technic')} {card.technic:,} / {tr(locale, 'visual')} {card.visual:,}）" if total else stats_unavailable,
-    ]
-    lines.extend(_skill_lines(card.skills, locale) or [skills_unavailable])
-    return "\n".join(lines)
+    from .card_catalog import detail_text
+    return detail_text(card, locale)
 
 
 def _format_support_card_detail(card: SupportCard, locale: str) -> str:
-    heading = {"zh": "支援卡详情", "en": "Support card details", "ja": "サポートカード詳細"}[locale]
-    stats_unavailable = {"zh": "数值暂不可用", "en": "Stats unavailable", "ja": "ステータスを取得できません"}[locale]
-    skills_unavailable = {"zh": "技能详情暂不可用", "en": "Skill details unavailable", "ja": "スキル詳細を取得できません"}[locale]
-    values = (card.performance / 100, card.technic / 100, card.visual / 100)
-    lines = [
-        f"[{heading}] {card.id}  {rarity_text(card.rarity)} {localized_text(card, 'character', locale)} · {localized_text(card, 'title', locale)}",
-        f"{tr(locale, 'support_bonus')}：{sum(values):g}%（{tr(locale, 'performance')} {values[0]:g}% / {tr(locale, 'technic')} {values[1]:g}% / {tr(locale, 'visual')} {values[2]:g}%）" if any(values) else stats_unavailable,
-    ]
-    lines.extend(_skill_lines(card.skills, locale) or [skills_unavailable])
-    return "\n".join(lines)
+    from .card_catalog import detail_text
+    return detail_text(card, locale)
 
 
 def _choose(repository: SongRepository, query: str, locale: str = "zh") -> tuple[Song | None, str | None]:
@@ -486,11 +472,23 @@ class CommandResult:
     support_cards: tuple[SupportCard, ...] = ()
     hint: str | None = None
     meta: MetaAnswer | None = None
+    catalog: CardAnswer | None = None
 
 
 def resolve_command(content: str, repository: SongRepository) -> CommandResult | None:
     """Select records once so text and image use the same request result."""
     text = _clean_message(content)
+    parts = text.split(None, 1)
+    head = parts[0].casefold() if parts else ""
+    kind = ALIASES.get(head)
+    if kind in {"cards", "support_cards"} or head in {"查角色卡", "查snap", "snap", "查支援卡面", "查snap卡面"}:
+        support = kind == "support_cards" or head in {"查snap", "snap", "查支援卡面", "查snap卡面"}
+        query = parts[1] if len(parts) > 1 else ""
+        answer = query_cards(query, repository, support=support, art=head in {"查卡面", "查支援卡面", "查snap卡面"})
+        kind = "support_cards" if support else "cards"
+        return CommandResult((kind, answer.request.query, answer.request.page),
+                             cards=() if support else answer.cards,
+                             support_cards=answer.cards if support else (), catalog=answer)
     if re.match(r"^查(?:分数表|效率)(?:\s|$)", text):
         from .efficiency_query import MetaAnswer, parse_efficiency, execute_efficiency
         spec = parse_efficiency(text, repository, direct=True)
@@ -587,6 +585,8 @@ def handle_command(content: str, repository: SongRepository,
 
     selection = resolved if resolved is not None else resolve_command(content, repository)
     parsed = selection.parsed if selection else None
+    if selection and selection.catalog is not None:
+        return selection.catalog.text(locale)
     if selection and selection.meta is not None:
         return selection.meta.text
     if parsed and parsed[0] in {"cards", "support_cards"} and selection.hint:

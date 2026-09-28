@@ -42,7 +42,7 @@ TERMINAL_CACHE_TTL_SECONDS = 300.0
 CACHE_CAPACITY = 128
 
 _DIRECT_COMMAND = re.compile(
-    r"^[/／]?(?:查曲|查谱面|查谱|查卡|查支援卡|支援卡|song|chart|card|support)\s+", re.I,
+    r"^[/／]?(?:查曲|查谱面|查谱|查卡|查角色卡|查卡面|查支援卡面|查SNAP卡面|查SNAP|SNAP|查支援卡|支援卡|song|chart|card|support)\s+", re.I,
 )
 _UNSUPPORTED_TERMS = re.compile(
     r"推荐|最强|排行|攻略|预测|档线|代练|代肝|账号|抽卡建议|编成|怎么打|如何打|"
@@ -601,6 +601,8 @@ class QueryAgent:
     @staticmethod
     def _result_code(result: QueryResult, repository: SongRepository) -> OutcomeCode:
         spec = result.spec
+        if result.catalog is not None and result.catalog.error:
+            return OutcomeCode.INVALID_ARGUMENTS
         if spec.intent == "efficiency":
             return OutcomeCode(result.meta.status)
         if ((spec.skill_query or spec.skill_kind) and spec.intent == "card"

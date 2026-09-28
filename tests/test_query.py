@@ -102,7 +102,7 @@ class QueryTests(unittest.TestCase):
     def test_card_rarity_rejects_invalid_filters_and_keeps_empty_results(self):
         parser = AIQueryParser(Settings("", "", BASE, self.repo.cache_file, 6, "test-key"))
         with patch.object(parser, "_request", side_effect=AssertionError("unexpected AI call")):
-            for condition in ("零星", "一星", "五星", "6星", "4.5星", "-4星", "SSR SR", "三到四星", "四星以上", "至少四星", "★★★★★★"):
+            for condition in ("零星", "一星", "五星", "6星", "4.5星", "-4星", "三到四星", "四星以上", "至少四星", "★★★★★★"):
                 with self.subTest(condition=condition):
                     self.assertIn("请指定", handle_command("/查卡 " + condition, self.repo))
                     answer, selected = parser.answer_with_plan("/问 " + condition + "卡", self.repo)
@@ -135,7 +135,7 @@ class QueryTests(unittest.TestCase):
                     selected = resolve_command(command, self.repo)
                     answer = handle_command(command, self.repo, resolved=selected)
                 self.assertIn("第 2/2 页", answer)
-                self.assertIn("共 17张", answer)
+                self.assertIn("共17张", answer.replace(" ", ""))
                 with patch("ournotes_bot.qq." + renderer, return_value=b"image") as render:
                     self.assertEqual(_image_from_result(selected, self.repo, "zh"), b"image")
                 self.assertEqual([card.id for card in render.call_args.args[0]], [17])
