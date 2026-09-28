@@ -108,7 +108,7 @@ class Capability:
 
 
 def _songs(spec: QuerySpec, repository: SongRepository) -> QueryResult:
-    return QueryResult(spec, songs=tuple(structured_query.songs_for(spec, repository)))
+    return structured_query.resolve_query(spec, repository)
 
 
 def _chart(spec: QuerySpec, repository: SongRepository) -> QueryResult:

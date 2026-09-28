@@ -70,6 +70,38 @@ class VisualTests(unittest.TestCase):
                 self.capture(lambda: visuals.render_song_list([self.song], "MyGO!!!!!", locale))
                 self.capture(lambda: visuals.render_song_list([], "MyGO!!!!!", locale))
 
+    def test_song_header_hierarchy_and_native_mark_fallback(self):
+        from ournotes_bot.song_traits import SongTraits
+        song = replace(self.song, traits=SongTraits(2, ("JUST", "JUST", "COMBO")))
+        for render in (lambda: visuals.render_song_list([song], "蓝色"),
+                       lambda: visuals.render_chart(song, song.charts)):
+            # With a real asset-shaped RGBA mark, no color words replace the icon.
+            native = Image.new("RGBA", (76, 76), "blue")
+            length = ImageDraw.ImageDraw.textlength
+            def fractional(draw, text, *args, **kwargs):
+                return length(draw, text, *args, **kwargs) + 0.25
+            # Noto on Linux yields fractional advances; a rounded-down chip must not clip its last glyph.
+            with patch.object(visuals, "_song_marks", return_value={2: native}), \
+                 patch.object(ImageDraw.ImageDraw, "textlength", fractional):
+                calls = self.capture(render)
+            title = next(box for text, box in calls if text == song.title)
+            chip = next(box for text, box in calls if "JUST → JUST → COMBO" in text)
+            identity = next(box for text, box in calls if text.startswith("ID "))
+            self.assertLess(title[3], chip[1])
+            self.assertLess(chip[3], identity[1])
+            self.assertFalse(any("属性：" in text or "颜色：" in text for text, _ in calls))
+        missing = self.capture(lambda: visuals.render_chart(song, song.charts))
+        self.assertTrue(any("蓝色（图标暂缺）" in text for text, _ in missing))
+
+    def test_long_mission_sequence_and_title_keep_identity_below(self):
+        from ournotes_bot.song_traits import SongTraits
+        song = replace(self.song, title="长标题" * 20, traits=SongTraits(1, ("COMBO",) * 16, True))
+        calls = self.capture(lambda: visuals.render_song_list([song], "激奏测试"))
+        identity = next(box for text, box in calls if text.startswith("ID "))
+        mission = [(text, box) for text, box in calls if "COMBO" in text or "旧缓存" in text]
+        self.assertEqual("".join(text for text, _ in calls).count("COMBO"), 16)
+        self.assertTrue(all(box[3] < identity[1] for _, box in mission))
+
     def test_tiny_text_area_terminates_without_overflow(self):
         draw = ImageDraw.Draw(Image.new("RGB", (50, 50)))
         with patch.object(draw, "text") as text:

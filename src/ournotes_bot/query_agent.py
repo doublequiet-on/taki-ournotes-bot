@@ -163,13 +163,14 @@ class QueryAgent:
         self._lock = RLock()
         self._cache: OrderedDict[str, CachedOutcome] = OrderedDict()
         self._states: OrderedDict[str, AgentState] = OrderedDict()
-        self._cache_source: tuple[object, int, int, int, int, int | None] | None = None
+        self._cache_source: tuple[object, ...] | None = None
 
     @staticmethod
-    def _source(repository: SongRepository) -> tuple[object, int, int, int, int, int | None]:
+    def _source(repository: SongRepository) -> tuple[object, ...]:
         return (
             repository.metadata.get("cached_at"), len(repository.songs), len(repository.cards),
             len(repository.support_cards), int(repository.member_skill_index_ready()), alias_version(),
+            (repository.song_traits.saved or {}).get("fetched_at"), repository.song_traits.stale,
         )
 
     def _sync_cache(self, repository: SongRepository) -> None:
@@ -601,6 +602,8 @@ class QueryAgent:
     @staticmethod
     def _result_code(result: QueryResult, repository: SongRepository) -> OutcomeCode:
         spec = result.spec
+        if result.song_selection and result.song_selection.unavailable:
+            return OutcomeCode.DATA_UNAVAILABLE
         if result.catalog is not None and result.catalog.error:
             return OutcomeCode.INVALID_ARGUMENTS
         if spec.intent == "efficiency":

@@ -17,14 +17,15 @@ MENU_ITEMS = [
 ]
 PANEL_ITEMS = [
     # QQ stores the command name without '/', then adds the slash in the client UI.
-    {"type": "command", "name": "查谱面", "desc": "按歌曲 ID 查询谱面资料"},
-    {"type": "command", "name": "查曲", "desc": "按歌名、ID 或等级查询歌曲"},
+    {"type": "command", "name": "查谱面", "desc": "查完整谱面、颜色与激奏"},
+    {"type": "command", "name": "查曲", "desc": "按颜色、激奏、乐队查歌曲"},
     {"type": "command", "name": "查分数表", "desc": "查看全难度得分效率前30条"},
-    {"type": "command", "name": "查卡", "desc": "按角色或卡牌 ID 查询"},
-    {"type": "command", "name": "查支援卡", "desc": "按角色或支援卡 ID 查询"},
+    {"type": "command", "name": "查卡", "desc": "条件查列表，卡牌ID看详情"},
+    {"type": "command", "name": "查支援卡", "desc": "SNAP列表与完整技能详情"},
     {"type": "command", "name": "问", "desc": "自然语言查歌曲、技能、支援卡"},
     {"type": "command", "name": "数据状态", "desc": "查看当前数据版本"},
     {"type": "command", "name": "帮助", "desc": "查看指令说明与示例"},
+    {"type": "command", "name": "介绍", "desc": "了解Taki与资料来源"},
 ]
 
 

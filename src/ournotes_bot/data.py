@@ -3,12 +3,15 @@ from __future__ import annotations
 import json
 import re
 import time
+from threading import RLock
 import unicodedata
 from dataclasses import asdict, dataclass, field, replace
 from datetime import datetime, timezone
 from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Any
+
+from .song_traits import SongTraits, SongTraitsRepository
 
 
 @dataclass(frozen=True)
@@ -33,6 +36,7 @@ class Song:
     jacket_url: str
     charts: tuple[Chart, ...]
     localized: dict[str, dict[str, str]] = field(default_factory=dict)
+    traits: SongTraits | None = None
 
 
 @dataclass(frozen=True)
@@ -213,6 +217,7 @@ class SongRepository:
         self.data_base = data_base.rstrip("/")
         self.cache_file = cache_file
         self.cache_ttl_hours = cache_ttl_hours
+        self._song_lock = RLock()
         self.songs: list[Song] = []
         self.cards: list[Card] = []
         self.support_cards: list[SupportCard] = []
@@ -223,6 +228,13 @@ class SongRepository:
         self.last_successful_sync_at: str | None = None
         from .song_meta import MetaRepository
         self.song_meta = MetaRepository(cache_file.with_name("haneoka-meta-jp.json"))
+        self.song_traits = SongTraitsRepository(cache_file.with_name("haneoka-song-traits-jp.json"))
+
+    def refresh_song_traits(self) -> None:
+        """Run off the QQ event loop; source failure cannot invalidate the main catalog."""
+        self.song_traits.refresh()
+        with self._song_lock:
+            self.songs = self.song_traits.apply(self.songs)
 
     def load(self, refresh: bool = False) -> None:
         if refresh:
@@ -296,7 +308,8 @@ class SongRepository:
         with ThreadPoolExecutor(max_workers=min(8, max(1, len(support_cards)))) as pool:
             support_cards = list(pool.map(fetch_support_detail, support_cards))
 
-        self.songs = songs
+        with self._song_lock:
+            self.songs = self.song_traits.apply(songs)
         self.cards = cards
         self.support_cards = support_cards
         self._detail_cards.clear()
@@ -387,7 +400,8 @@ class SongRepository:
             "metadata": {**self.metadata, "schema": 2,
                          "extended_schema": self.metadata.get("schema", self.CACHE_SCHEMA)},
             "songs": [
-                {**asdict(song), "charts": [asdict(chart) for chart in song.charts]}
+                {**{k: v for k, v in asdict(song).items() if k != "traits"},
+                 "charts": [asdict(chart) for chart in song.charts]}
                 for song in self.songs
             ],
             "cards": [{key: value for key, value in asdict(card).items() if key not in {"skills", "catalog"}}
@@ -442,6 +456,8 @@ class SongRepository:
                 or self.metadata.get("schema") not in {2, 3, self.CACHE_SCHEMA}):
             raise DataError("缓存来自旧数据源，请重新运行 sync")
         self.last_successful_sync_at = self.metadata.get("cached_at")
+        with self._song_lock:
+            self.songs = self.song_traits.apply(self.songs)
 
     def search(self, query: str, limit: int = 5) -> list[Song]:
         needle = normalize(query)

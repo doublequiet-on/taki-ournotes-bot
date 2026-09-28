@@ -286,6 +286,10 @@ def _image_from_result(result: QueryResult | CommandResult | None,
             return render(answer.cards[0], locale)
         render = render_support_card_list if req.support else render_card_list
         return render(answer.visible, req.query, locale, answer.footer) if answer.visible else None
+    if result is not None and result.song_selection is not None:
+        answer = result.song_selection
+        visible = page_slice(answer.songs, answer.page)
+        return render_song_list(visible, answer.request.query, locale, answer.footer) if visible else None
     if result is not None and result.meta is not None:
         from .visuals import render_meta
         return render_meta(result.meta) if result.meta.rows else None
@@ -571,6 +575,14 @@ def run_bot(app_id: str, app_secret: str, repository: SongRepository, settings: 
             if commands:
                 await self._reply_commands(message, message.author.user_openid, False, commands)
 
+    async def song_traits_loop() -> None:
+        while True:
+            try:
+                await asyncio.to_thread(repository.refresh_song_traits)
+            except Exception:
+                logger.exception("歌曲属性刷新失败，保留主资料和旧属性缓存")
+            await asyncio.sleep(300)
+
     async def refresh_loop() -> None:
         while True:
             await asyncio.sleep(6 * 3600)
@@ -585,6 +597,8 @@ def run_bot(app_id: str, app_secret: str, repository: SongRepository, settings: 
             await super().on_ready()
             if not hasattr(self, "_refresh_task"):
                 self._refresh_task = asyncio.create_task(refresh_loop())
+            if not hasattr(self, "_song_traits_task") or self._song_traits_task.done():
+                self._song_traits_task = asyncio.create_task(song_traits_loop())
             if notifier and (not hasattr(self, "_notice_task") or self._notice_task.done()):
                 self._notice_task = asyncio.create_task(notifier.run(self.api))
 
