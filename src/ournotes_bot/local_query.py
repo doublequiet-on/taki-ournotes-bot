@@ -188,6 +188,10 @@ def local_card_rarity_question(query: str, repository: SongRepository) -> QueryS
 
 
 def parse_local_query(query: str, repository: SongRepository) -> QuerySpec | str | None:
+    from .song_query import local_query as local_song_traits
+    song = local_song_traits(query)
+    if song is not None:
+        return song
     catalog = local_card_catalog(query, repository)
     if catalog is not None:
         return catalog

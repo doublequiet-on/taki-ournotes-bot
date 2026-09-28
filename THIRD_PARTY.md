@@ -17,6 +17,14 @@
 
 本项目为非官方社区工具，与游戏版权方、QQ 平台及上述数据服务均无隶属关系。如需就素材展示提出调整，可通过 Bilibili @Adeliae 联系维护者。
 
+## 歌曲颜色与激奏顺序
+
+2026-09-28 核实 Haneoka 日服版本 `r-039641cd908372f8eaba`，来源版本 `v10050-4f54449965f4-22d176330341-mb9f5318479c8-n15b0b051`。公开接口基址 `https://haneoka.org/api/v1/servers/jp/`：先取 `release?projection=identity`，再用同一个 `release` 参数读取 `songs`、`songs/{ID}` 和 `gekisou`。列表为完整ID对象，无分页字段；详情与列表必须逐ID吻合，缺一份详情不替换有效快照。现场取得84首完整详情，查询侧还须和主歌曲库的ID、已有标题及封面标识同时匹配；未映射歌曲不自动并入主库。
+
+依据上游源码提交 [6dbd3368](https://github.com/haneoka-gakuen/haneoka/blob/6dbd3368c2e00eb7f9b8a3049ed705bbcd922857/scripts/build/api.py)：`MasterLiveMusic._musicType` 对应 `musicType`；`_gekisouMission1/2/3` 按顺序对应详情 `gekisou.missionTypes`，属于歌曲而非难度。`gekisou.enums.missionType` 确认 1=Combo、2=Luck、3=JustCount；0=None 与4=All不是可直接替换成三类的标签。颜色图标映射见同提交 `src/lit/shared/song-tile.ts`：1红、2蓝、3绿、4黄、5紫；中文颜色是识别别名，非猜测的官方属性名。
+
+`song_traits.py` 独立适配与缓存，未复制上游程序。`tests/fixtures/haneoka-song-traits.json` 仅保存3条可追溯的必要事实样例（ID、标题、属性、序列、封面标识），其余测试为合成数据；不打包全量上游数据、游戏图片或算法。署名与公开接口使用要求沿用上文。本机 `fetched_at` 不是上游更新时间。
+
 ## 角色卡与 SNAP 的资源核实
 
 2026-09-28核对 Project Yume 的公开 MasterParsed 列表和122份成员/SNAP详情，以及网站 `useFilter-BIvyqgQJ.js`、`NonoCard-aiXKXz-b.js`、`cardSkill-B40radPu.js`。用来确认稀有度、类型图标URL、技能名称分类和指定状态的属性展示；没有复制上游JS代码或引入算分算法。各映射与实际样例见[卡牌说明](更新说明-成员卡与支援卡查询.md)。上游没有在本次核实材料中给出可据此再分发游戏素材的授权；资源仍按需读取、缓存，不随源码提交。原生稀有度框和正式属性名称未确认，不能从截图猜资源或枚举。

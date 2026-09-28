@@ -11,6 +11,8 @@ from .entity_lexicon import EntityRef
 from .i18n import tr
 from .efficiency_query import MetaAnswer, execute_efficiency
 from .card_catalog import CardAnswer, query_cards
+from .song_query import SongAnswer, parse_filter, execute as execute_song_filter
+from .song_traits import describe as describe_song
 
 
 @dataclass(frozen=True)
@@ -29,8 +31,11 @@ class QuerySpec:
     order: str = "desc"
     limit: int = 30
     card_query: str | None = None
+    song_query: str | None = None
 
     def query_label(self) -> str:
+        if self.song_query is not None:
+            return self.song_query
         parts = [self.display_name] if self.display_name else []
         if self.rarity is not None:
             parts.append(f"{self.rarity}星")
@@ -95,6 +100,7 @@ class QueryResult:
     chart: tuple[Song, tuple[Chart, ...]] | None = None
     meta: MetaAnswer | None = None
     catalog: CardAnswer | None = None
+    song_selection: SongAnswer | None = None
 
 
 def query_page_notice(spec: QuerySpec, total: int, locale: str) -> str:
@@ -120,6 +126,9 @@ def query_page_notice(spec: QuerySpec, total: int, locale: str) -> str:
 
 def resolve_query(spec: QuerySpec, repository: SongRepository) -> QueryResult:
     """Capture records for both answer text and image within one request."""
+    if spec.song_query is not None:
+        answer = execute_song_filter(parse_filter(spec.song_query), repository, spec.page)
+        return QueryResult(spec, songs=answer.songs, song_selection=answer)
     if spec.card_query is not None:
         answer = query_cards(spec.card_query, repository, support=spec.intent == "support_card")
         return QueryResult(spec, catalog=answer, cards=answer.cards if spec.intent == "card" else (),
@@ -242,6 +251,8 @@ def support_cards_for(spec: QuerySpec, repository: SongRepository) -> list[Suppo
 def answer_for(spec: QuerySpec, repository: SongRepository, locale: str = "zh",
                result: QueryResult | None = None) -> str:
     selected = result if result is not None else resolve_query(spec, repository)
+    if selected.song_selection is not None:
+        return selected.song_selection.text(locale)
     if selected.catalog is not None:
         return selected.catalog.text(locale)
     if spec.intent == "efficiency":
@@ -256,7 +267,7 @@ def answer_for(spec: QuerySpec, repository: SongRepository, locale: str = "zh",
         return tr(locale, "songs") + "\n" + "\n".join(
             f"{song.id}  {localized_text(song, 'title', locale)} · {localized_text(song, 'band', locale)}  "
             + " / ".join(f"{chart.display_level:g}" for chart in song.charts)
-            for song in visible
+            + "\n" + describe_song(song) for song in visible
         ) + "\n" + page_notice("songs", spec.query_label(), spec.page, len(matches), locale) + "\n" + tr(locale, "next_chart")
 
     if spec.intent == "chart":
@@ -264,7 +275,7 @@ def answer_for(spec: QuerySpec, repository: SongRepository, locale: str = "zh",
         if chart is None:
             return tr(locale, "not_found_chart", query=spec.display_name)
         song, charts = chart
-        return f"[{tr(locale, 'chart')}] {localized_text(song, 'title', locale)}（ID {song.id}）\n" + (
+        return f"[{tr(locale, 'chart')}] {localized_text(song, 'title', locale)}（ID {song.id}）\n{describe_song(song)}\n" + (
             "\n".join(f"{chart.difficulty} Lv.{chart.display_level:g} · {chart.notes} Notes" for chart in charts)
             or tr(locale, "no_charts")
         )

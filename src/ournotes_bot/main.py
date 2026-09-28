@@ -26,6 +26,15 @@ def build_parser() -> argparse.ArgumentParser:
 def main() -> None:
     args = build_parser().parse_args()
     settings = Settings.from_env()
+    if args.mode == "setup-menu":
+        # Publishing command metadata must not refresh game caches or initialize AI.
+        if not settings.app_id or not settings.app_secret:
+            print("缺少 QQ_APP_ID 或 QQ_APP_SECRET", file=sys.stderr)
+            raise SystemExit(2)
+        from .menu import setup_menu
+        for result in asyncio.run(setup_menu(settings.app_id, settings.app_secret)):
+            print(result)
+        return
     repository = SongRepository(settings.data_base, settings.cache_file, settings.cache_ttl_hours)
     ai_parser = AIQueryParser(settings)
     def answer(message: str) -> str | None:
@@ -39,6 +48,7 @@ def main() -> None:
         raise SystemExit(1) from exc
 
     if args.mode == "sync":
+        repository.refresh_song_traits()
         print(
             f"同步完成：{len(repository.songs)} 首曲目、{len(repository.cards)} 张成员卡、"
             f"{len(repository.support_cards)} 张支援卡；成员卡技能索引 "
@@ -68,11 +78,6 @@ def main() -> None:
         raise SystemExit(2)
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
-    if args.mode == "setup-menu":
-        from .menu import setup_menu
-        for result in asyncio.run(setup_menu(settings.app_id, settings.app_secret)):
-            print(result)
-        return
     from .qq import run_bot
 
     run_bot(settings.app_id, settings.app_secret, repository, settings)

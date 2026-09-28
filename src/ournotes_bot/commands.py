@@ -12,11 +12,17 @@ from .entity_lexicon import known_alias_names, resolve_exact_alias
 from .i18n import tr
 from .query_debug import QUERY_DEBUG_COUNTERS
 from .efficiency_query import MetaAnswer, HELP as EFFICIENCY_HELP
+from .song_query import SongAnswer, parse_filter, execute as execute_song_filter
+from .song_traits import describe as describe_song
 from .card_catalog import CardAnswer, query_cards
+from .bot_info import INTRO
 
 
-HELP_TEXT = """Our Notes 查询指令
-/查曲 [歌名或ID] [等级或lv比较式] [页N]：搜索歌曲列表，可翻页
+HELP_TEXT = """Taki · Our Notes 日服资料查询
+群内请先 @机器人，再发送以下指令。
+/查曲 [歌名/ID/乐队] [颜色] [激奏=类型] [EX] [lv<=25] [页N]：歌曲列表
+颜色：红、蓝、绿、黄、紫；例 /查曲 颜色=蓝/绿
+激奏=JUST 表示包含；激奏=纯JUST 表示全段同类；激奏=混合；激奏=JUST/JUST/COMBO 按顺序匹配
 /查谱面 歌名或ID [难度]：查看等级与 Note 数；100001 可简写为 1
 /查分数表 [乐队] [EX] [lv<=25] [页N]：全难度每分钟得分效率前30条，含难度、时长和得分系数；也可指定歌名或ID
 /查卡 [SSR/SR/R] [颜色=红色] [角色=tmr] [乐队=MyGO] [LIVE=分数提升] [击奏=JUST] [页N]：条件卡牌列表；指定ID看详情
@@ -27,7 +33,9 @@ HELP_TEXT = """Our Notes 查询指令
 /数据状态：查看进程、最近同步与缓存状态
 /调试数据：查看本次进程的 AI API 成功调用与有效检索次数
 /帮助：查看本说明
-示例：/查曲 mygo 27、/查谱面 100001 EXPERT、/查卡 skk、/查支援卡 tmr"""
+/介绍：了解 Taki 与数据来源
+示例：/查曲 蓝色 MyGO EX 激奏=JUST；/问 哪些歌是纯COMBO；/查谱面 100001 EX
+歌曲颜色／激奏来自 Haneoka 日服缓存；未获取与旧缓存会明确标注。"""
 HELP_TEXTS = {
     "zh": HELP_TEXT + "\n/语言：查看英文和日文指令",
     "en": """Our Notes commands
@@ -52,7 +60,7 @@ Example: /song mygo 27, /chart 100001 EXPERT, /card tomori""",
 
 COMMAND_HELP = {
     "efficiency": EFFICIENCY_HELP,
-    "songs": "查询歌曲列表，支持歌名、乐队、曲目 ID 或等级，每页 16 首。27 与 lv27 相同，均匹配整数等级 27（含显示等级 27.5）；27.5 与 lv27.5 均精确匹配显示等级。lv>=25、lv>25、lv<=25、lv<25 按歌曲最高显示等级筛选；可追加 diff=EXPERT 等难度，只比较该难度。纯数字若恰好是曲目 ID，优先按 ID 查询。\n用法：/查曲 [歌名或ID] [等级或lv比较式] [页N]\n示例：/查曲 迷星叫、/查曲 27、/查曲 mygo lv>=25、/查曲 mygo lv>=25 diff=EXPERT 页2",
+    "songs": "查询歌曲列表，每页16首。支持歌名、昵称、乐队、ID、等级；27包含27.5，lv比较式未指定难度时按最高等级。可加颜色=蓝/绿、激奏=JUST、激奏=纯COMBO、激奏=混合或激奏=JUST/JUST/COMBO，并与EX、lv<=25、页N组合。同颜色多选任选，不同维度同时满足；包含全部用 激奏=包含全部JUST/COMBO。\n例：/查曲 蓝色 MyGO EX 激奏=JUST 页2",
     "chart": "查询谱面等级与 Note 数，支持歌名或曲目 ID。100001 可简写为 1。可选难度：EASY、NORMAL、HARD、EXPERT；不指定时显示全部难度。\n用法：/查谱面 <歌名或ID> [难度]\n示例：/查谱面 1 EXPERT、/查谱面 100001 EXPERT",
     "cards": "角色卡条件查询始终返回列表，每页16张，完整总数和翻页指令可见。ID精确查详情，/查卡面 ID 只发公开full卡面。\n用法：/查卡 [SSR/SR/R] [颜色=红色,蓝色] [角色=tmr,skk] [乐队=MyGO] [LIVE=分数提升] [击奏=JUST] [得意=MyGO] [页N]\n不同维度AND、同维度多选OR，得意标签全部包含。BD映射尚未核实；旧二/三/四星别名保留。",
     "support_cards": "SNAP条件查询始终返回列表，每页16张；ID精确查详情，/查支援卡面 ID 只发卡面。\n用法：/查SNAP [SSR/EX/SR/R] [颜色=红色,蓝色] [角色=tmr,skk] [乐队=MyGO] [LIVE=技能延长] [击奏=LUCK] [页N]\nLIVE可选分数提升、LIFE回复、判定强化、技能延长；以实际资料为准。角色任选且去重，乐队另行筛选；不支持得意标签。BD映射尚未核实。",
@@ -473,6 +481,7 @@ class CommandResult:
     hint: str | None = None
     meta: MetaAnswer | None = None
     catalog: CardAnswer | None = None
+    song_selection: SongAnswer | None = None
 
 
 def resolve_command(content: str, repository: SongRepository) -> CommandResult | None:
@@ -499,6 +508,13 @@ def resolve_command(content: str, repository: SongRepository) -> CommandResult |
         return None
     kind, query, _ = parsed
     if kind == "songs":
+        try:
+            request = parse_filter(query)
+            if request is not None:
+                answer = execute_song_filter(request, repository, int(parsed[2]))
+                return CommandResult(parsed, songs=answer.songs, song_selection=answer)
+        except ValueError as exc:
+            return CommandResult(parsed, hint=str(exc))
         return CommandResult(parsed, songs=tuple(song_matches(repository, query)))
     if kind in {"cards", "support_cards"}:
         try:
@@ -527,6 +543,8 @@ def handle_command(content: str, repository: SongRepository,
                    resolved: CommandResult | None = None) -> str | None:
     text = _clean_message(content)
     locale = locale_for(content)
+    if text.casefold() in {"介绍", "about", "简介"}:
+        return INTRO
     if not text:
         return HELP_TEXTS[locale]
     if text.casefold() in {"帮助", "help", "菜单", "指令", "ヘルプ"}:
@@ -546,13 +564,19 @@ def handle_command(content: str, repository: SongRepository,
         state = repository.cache_state
         if state not in {"fresh", "cached", "stale", "unsaved"}:
             state = "unknown"
-        return tr(
+        status = tr(
             locale, "version", songs=len(repository.songs), cards=len(repository.cards),
             support_cards=len(repository.support_cards),
             skill_index=f"{sum(bool(card.skills) for card in repository.cards)}/{len(repository.cards)}",
             time=_safe_sync_time(repository.last_successful_sync_at, locale),
             cache=tr(locale, "cache_" + state),
         )
+        traits = repository.song_traits
+        saved = traits.saved
+        count = sum(bool(s.traits and s.traits.color and s.traits.missions) for s in repository.songs)
+        return (status + f"\n歌曲颜色／激奏：{count}/{len(repository.songs)} · Haneoka 日服 · "
+                + ("旧缓存" if traits.stale else "有效缓存" if saved else "等待后台获取")
+                + (f"\n属性版本：{saved['release']}\n本机获取：{_safe_sync_time(saved['fetched_at'], locale)}" if saved else ""))
 
     if text.casefold() in {"查缩写", "abbrev", "略称"}:
         return COMMAND_HELPS[locale]["abbrev"]
@@ -589,7 +613,9 @@ def handle_command(content: str, repository: SongRepository,
         return selection.catalog.text(locale)
     if selection and selection.meta is not None:
         return selection.meta.text
-    if parsed and parsed[0] in {"cards", "support_cards"} and selection.hint:
+    if selection and selection.song_selection is not None:
+        return selection.song_selection.text(locale)
+    if parsed and parsed[0] in {"songs", "cards", "support_cards"} and selection.hint:
         return selection.hint
     if parsed and parsed[0] == "songs":
         matches = selection.songs
@@ -603,7 +629,7 @@ def handle_command(content: str, repository: SongRepository,
             return page_notice("songs", parsed[1], page, len(matches), locale)
         return tr(locale, "songs") + "\n" + "\n".join(
             f"{song.id}  {localized_text(song, 'title', locale)} · {localized_text(song, 'band', locale)}  " + " / ".join(f"{chart.display_level:g}" for chart in song.charts)
-            for song in visible
+            + "\n" + describe_song(song) for song in visible
         ) + "\n" + page_notice("songs", parsed[1], page, len(matches), locale) + "\n" + tr(locale, "next_chart")
 
     if parsed and parsed[0] == "chart":
@@ -616,6 +642,7 @@ def handle_command(content: str, repository: SongRepository,
             return tr(locale, "not_found_chart", query=query) + _suggest(query, variants, locale) + "\n" + COMMAND_HELPS[locale]["chart"]
         charts = song.charts if parsed[2] is None else tuple(c for c in song.charts if c.difficulty == parsed[2])
         result = f"[{tr(locale, 'chart')}] {localized_text(song, 'title', locale)}（ID {song.id}）\n" + ("\n".join(f"{c.difficulty} Lv.{c.display_level:g} · {c.notes} Notes" for c in charts) or tr(locale, "no_charts"))
+        result += "\n" + describe_song(song)
         return f"{result}\n{hint}" if hint else result
 
     if parsed and parsed[0] == "cards":

@@ -29,6 +29,9 @@
 
 ## 数据、配置与易错点
 
+- 歌曲颜色／激奏扩展：`song_traits.py::SongTraitsRepository` 从 Haneoka 日服按release取完整详情，独立缓存，不改变旧主缓存歌曲行；`Song.traits` 是内存关联。`song_query.py::parse_filter/execute/local_query` 共用于直接命令和 `/问`；`QuerySpec.song_query` 仅本地解析产生，不向模型开放任意新字段。新语法经 `CommandResult/QueryResult.song_selection` 捕获同一份结果和覆盖提示，图文不二次查询。QQ在独立后台任务每5分钟检查、快照TTL24小时；来源故障不阻塞原有数据刷新或消息处理。相关测试 `test_song_traits.py`；事实样例和字段依据见 THIRD_PARTY。
+- `bot_info.py` 是消息内介绍文案，`/帮助` 在 commands.py，QQ面板描述在 menu.py；修改源代码不会自动修改QQ平台资料页简介。`setup-menu` 不再初始化游戏缓存或 AI，仅在新版本已上线后安装相应菜单。
+
 - 基础歌曲/卡牌资料：`yatta.py` 的 `BASE`、`MASTER`；`SongRepository.refresh` 校验 Project Yume 来源，并构建成员技能索引。完整音符另由 `chart_data.py::CHART_BASE` 读取 MoeNotes 公共资源，`score_name` 限定已知 ID/难度映射。本次不扩展来源，不把外部研究目录当正式接口。
 - 主缓存由 `OURNOTES_CACHE_FILE` 指定；`CACHE_SCHEMA`、旧字段兼容、详情失败回退见 `data.py`。TTL 由 `OURNOTES_CACHE_TTL_HOURS` 控制；QQ 后台刷新间隔目前在 `qq.py::refresh_loop` 固定为六小时，不由此变量控制。
 - 谱面缓存默认 `runtime_data_dir()/chart-cache`，不一定随自定义主缓存路径移动；图片素材缓存见 `visuals.py::_asset`，字体选择见 `_font`。长图自下向上、各栏从左向右；节点数不能直接当判定数或算分公式依据。
@@ -95,3 +98,5 @@ python scripts/check_release_artifact.py dist
 - `support_summary.py` 从现有Lv.5中文技能效果做完整模板匹配，仅输出基础效果及触发/上限，条件加成留详情；新措辞必须先核实。`member_detail_visuals._panel` 是两类详情共用的白底/标题带绘制，不影响列表或数据逻辑。
 
 - 所有渲染器经 `visuals._bytes` → `image_output.encode_image` 统一编码预算（1.5MB/8192边长/1200万像素），不在各命令复制压缩代码。`qq._upload_image` 单次上传30秒，HTTP临时副本必须解除共享会话引用；测试 `test_image_output.py`、`test_media.py`、`test_reply_pipeline.py`。发布依据与可溯源说明见 [2026-09-28报告](RELEASE_2026-09-28.md)。
+
+歌曲信息图共用 `visuals._song_heading`（属性图标＋标题）、`_mission_chip`（顺序与缓存提示），先测量再排版；缺图只退文字，不改变筛选。列表和谱面身份区置于左下角，分数表读取同一 `MetaAnswer.song_records` 快照。发布依据见 [歌曲更新报告](RELEASE_2026-09-28_SONGS.md)。

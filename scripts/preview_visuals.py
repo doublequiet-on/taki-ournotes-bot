@@ -55,7 +55,8 @@ def main() -> None:
         exec(compile(code, "<baseline-visuals>", "exec"), module.__dict__)
         visuals = module
 
-    cache_files = [source / "ournotes-cache.json", source / "haneoka-meta-jp.json"]
+    cache_files = [source / "ournotes-cache.json", source / "haneoka-meta-jp.json",
+                   source / "haneoka-song-traits-jp.json", source / "haneoka-member-list-jp.json"]
     before = {p.name: hashlib.sha256(p.read_bytes()).hexdigest() for p in cache_files if p.exists()}
     repo = SongRepository(BASE, cache_files[0])
     repo._load_cache()  # Explicitly avoid load(), which may refresh and write.
@@ -66,7 +67,7 @@ def main() -> None:
     repo.song_meta = MetaRepository(cache_files[1], fetch=no_fetch)
     asset_reads, missing = set(), set()
 
-    def asset(url, size):
+    def asset(url, size, *, contain=False):
         filename = hashlib.sha256(url.encode()).hexdigest() + ".png"
         path = source / "asset-cache" / filename
         if not path.is_file():
@@ -74,6 +75,8 @@ def main() -> None:
             return None
         asset_reads.add(url)
         with Image.open(path) as picture:
+            if contain:
+                return ImageOps.contain(picture.convert("RGBA"), size, method=Image.Resampling.LANCZOS)
             return ImageOps.fit(picture.convert("RGB"), size, method=Image.Resampling.LANCZOS)
 
     samples = {}
@@ -104,7 +107,9 @@ def main() -> None:
     chart_path = source / "chart-cache" / "0001_0001_03.json"
     score = json.loads(chart_path.read_text(encoding="utf-8"))["score"] if chart_path.exists() else None
 
-    with patch.object(visuals, "_asset", side_effect=asset):
+    from ournotes_bot.haneoka_members import parse as parse_members
+    member_snapshot = parse_members(json.loads(cache_files[3].read_text(encoding="utf-8"))) if cache_files[3].exists() else None
+    with patch.object(visuals, "_asset", side_effect=asset), patch("ournotes_bot.member_list_visuals.get_snapshot", return_value=member_snapshot):
         save("01-songs", lambda: visuals.render_song_list(songs[:8], "MyGO!!!!!", footer="本地样例 · 展示前 8 首"))
         save("02-cards", lambda: visuals.render_card_list(cards, "立希"))
         save("03-card-detail", lambda: visuals.render_card(card))
@@ -116,6 +121,14 @@ def main() -> None:
         answer = resolve_command("/查分数表", repo).meta
         if answer and answer.cells:
             save("08-score-table", lambda: visuals.render_meta(answer))
+        for name, command in (("13-song-filter", "/查曲 蓝色 激奏=JUST"),
+                              ("14-song-page2", "/查曲 激奏=JUST 页2"),
+                              ("15-song-mixed", "/查曲 激奏=混合")):
+            result = resolve_command(command, repo).song_selection
+            if result and result.songs:
+                from ournotes_bot.commands import page_slice
+                save(name, lambda result=result: visuals.render_song_list(page_slice(result.songs, result.page),
+                     result.request.query, footer=result.footer))
         if args.stress:
             for locale in ("en", "ja"):
                 save("09-songs-" + locale, lambda locale=locale: visuals.render_song_list(songs[:8], "MyGO!!!!!", locale))
@@ -134,14 +147,16 @@ def main() -> None:
               "missing_assets": sorted(missing), "samples": samples}
     (output / "manifest.json").write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
     # The overview uses crops for review; the originals above always retain all data.
-    names = [name for name in samples if name in {"01-songs", "02-cards", "06-chart", "08-score-table"}]
-    sheet = Image.new("RGB", (580 * len(names), 960), "#F4F5FA")
+    names = [name for name in ("01-songs", "13-song-filter", "08-score-table", "02-cards", "03-card-detail",
+                              "04-supports", "05-support-detail", "06-chart", "07-note-chart") if name in samples]
+    sheet = Image.new("RGB", (1740, 960 * ((len(names) + 2) // 3)), "#F4F5FA")
     draw = ImageDraw.Draw(sheet)
     for index, name in enumerate(names):
-        draw.text((index * 580 + 20, 12), name, font=visuals._font(22), fill="#202B4A")
+        x, y = (index % 3) * 580, (index // 3) * 960
+        draw.text((x + 20, y + 12), name, font=visuals._font(22), fill="#202B4A")
         with Image.open(output / (name + ".jpg")) as picture:
             picture = picture.resize((550, round(picture.height * 550 / picture.width)), Image.Resampling.LANCZOS)
-            sheet.paste(picture.crop((0, 0, 550, min(900, picture.height))), (index * 580 + 15, 52))
+            sheet.paste(picture.crop((0, 0, 550, min(900, picture.height))), (x + 15, y + 52))
     sheet.save(output / "overview.png")
     print(json.dumps({"output": str(output), "samples": len(samples), "assets": len(asset_reads),
                       "missing_assets": len(missing), "inputs_unchanged": True}, ensure_ascii=False))

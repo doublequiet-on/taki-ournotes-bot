@@ -1,0 +1,48 @@
+{
+  "source": "https://haneoka.org/jp/zh-CN/songs/",
+  "release": "r-039641cd908372f8eaba",
+  "source_version": "v10050-4f54449965f4-22d176330341-mb9f5318479c8-n15b0b051",
+  "fetched_at": "2026-09-28T09:49:57.417129+00:00",
+  "source_commit": "6dbd3368c2e00eb7f9b8a3049ed705bbcd922857",
+  "rows": {
+    "100001": {
+      "id": 100001,
+      "titles": [
+        "迷星叫"
+      ],
+      "jacket": "jkt_001_100001",
+      "color": 1,
+      "missions": [
+        1,
+        1,
+        1
+      ]
+    },
+    "100017": {
+      "id": 100017,
+      "titles": [
+        "証命讃歌"
+      ],
+      "jacket": "jkt_001_100017",
+      "color": 2,
+      "missions": [
+        2,
+        1,
+        3
+      ]
+    },
+    "100018": {
+      "id": 100018,
+      "titles": [
+        "ないものねだり"
+      ],
+      "jacket": "jkt_001_100018",
+      "color": 4,
+      "missions": [
+        2,
+        1,
+        3
+      ]
+    }
+  }
+}

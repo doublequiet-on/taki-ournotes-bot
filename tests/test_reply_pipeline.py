@@ -194,14 +194,16 @@ class UpdateNoticeLifecycleTests(unittest.IsolatedAsyncioTestCase):
                 await stopped.wait()
             notifier.run.side_effect = worker
             with patch("botpy.Client", FakeClient), patch("ournotes_bot.qq.UpdateNotifier", return_value=notifier):
-                run_bot("test-app", "", SimpleNamespace(), settings)
+                run_bot("test-app", "", SimpleNamespace(refresh_song_traits=Mock()), settings)
                 client = instances[-1]
                 try:
                     await client.on_ready()
                     await asyncio.sleep(0)
                     first = client._notice_task
+                    first_traits = client._song_traits_task
                     await client.on_ready()
                     self.assertIs(first, client._notice_task)
+                    self.assertIs(first_traits, client._song_traits_task)
                     notifier.run.assert_awaited_once_with(client.api)
                     event = SimpleNamespace(group_openid="group", timestamp=123)
                     for name, expected in (("add_robot", "add"), ("del_robot", "remove"),
@@ -211,17 +213,19 @@ class UpdateNoticeLifecycleTests(unittest.IsolatedAsyncioTestCase):
                 finally:
                     client._refresh_task.cancel()
                     client._notice_task.cancel()
-                    await asyncio.gather(client._refresh_task, client._notice_task, return_exceptions=True)
+                    client._song_traits_task.cancel()
+                    await asyncio.gather(client._refresh_task, client._notice_task, client._song_traits_task, return_exceptions=True)
             with patch("botpy.Client", FakeClient), patch("ournotes_bot.qq.UpdateNotifier") as constructor:
                 settings = Settings("test-app", "", BASE, Path(folder) / "cache.json", 6,
                                     qq_gateway_host="", update_notices=False)
-                run_bot("test-app", "", SimpleNamespace(), settings)
+                run_bot("test-app", "", SimpleNamespace(refresh_song_traits=Mock()), settings)
                 client = instances[-1]
                 await client.on_ready()
                 self.assertFalse(hasattr(client, "_notice_task"))
                 constructor.assert_not_called()
                 client._refresh_task.cancel()
-                await asyncio.gather(client._refresh_task, return_exceptions=True)
+                client._song_traits_task.cancel()
+                await asyncio.gather(client._refresh_task, client._song_traits_task, return_exceptions=True)
 
 
 if __name__ == "__main__":

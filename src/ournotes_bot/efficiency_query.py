@@ -6,9 +6,10 @@ import unicodedata
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 
-from .data import normalize
+from .data import Song, normalize
 from .entity_lexicon import EntityRef, find_anchor, resolve_entity
 from .song_meta import DIFFICULTIES, MetaRow
+from .song_traits import describe as describe_song
 
 PAGE_SIZE = 30
 HELP = ("用法：/查分数表；/查分数表 [乐队] [EX] [lv<=25] [页2]；/查分数表 歌名或ID [EX]。\n"
@@ -116,6 +117,7 @@ class MetaAnswer:
     page_notice: str = ""
     notes: tuple[str, ...] = ()
     jackets: tuple[str, ...] = ()
+    song_records: tuple[Song, ...] = ()
 
 
 def execute_efficiency(spec, repository) -> MetaAnswer:
@@ -175,7 +177,7 @@ def execute_efficiency(spec, repository) -> MetaAnswer:
                 f"eff：{percentage(row.eff)}；score：{percentage(row.score)}\n"
                 f"末判定点时长：{row.seconds if row.seconds is not None else '未知'} 秒；技能覆盖贡献比 sr：{percentage(row.skill_ratio)}\n"
                 f"同难度有效映射样本中的排序位置：{rank}/{len(eligible)}\n{footer}")
-        return MetaAnswer(text, (row,))
+        return MetaAnswer(text + "\n" + describe_song(song[0]), (row,))
     filtered = [r for r in eligible if (not subject or (subject.kind == "song" and r.song_id == subject.value)
                 or (subject.kind == "band" and normalize(names[r.song_id][0].band) == normalize(str(subject.value))))
                 and (not spec.comparison or _level_matches(r.level, spec.comparison, spec.level))]
@@ -213,12 +215,13 @@ def execute_efficiency(spec, repository) -> MetaAnswer:
     if any(r.warnings for r in eligible):
         notes += ("上游含参数默认值或谱面差异警告，详见来源页。",)
     text = f"[分数表]\n{table_scope}\n"
-    text += (" | ".join(columns) + "\n" + "\n".join(" | ".join(row) for row in cells)
+    traits = tuple(describe_song(names[r.song_id][0]) for r in visible)
+    text += (" | ".join(columns) + "\n" + "\n".join(" | ".join(row) + "\n" + trait for row, trait in zip(cells, traits))
              if visible else "没有符合条件的有效效率数据。")
     text += "\n" + page_notice + "\n" + metric_note + "\n" + footer
     return MetaAnswer(text, tuple(visible), "success" if visible else "empty",
                       columns=columns, cells=cells, scope=table_scope, page_notice=page_notice, notes=notes,
-                      jackets=tuple(names[r.song_id][0].jacket_url for r in visible))
+                      jackets=tuple(names[r.song_id][0].jacket_url for r in visible), song_records=tuple(names[r.song_id][0] for r in visible))
 
 
 def _percentage(value):

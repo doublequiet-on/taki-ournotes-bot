@@ -97,11 +97,16 @@ class ChartDataTests(unittest.TestCase):
         bottom = _draw_score(draw, score, 790, "zh")
         notes = [call.args[0] for call in draw.rounded_rectangle.call_args_list
                  if call.kwargs.get("fill") == "#75C5E8"]
-        self.assertGreaterEqual(notes[0][1] - notes[1][1], 10)
+        gap = notes[0][1] - notes[1][1]
+        self.assertGreaterEqual(gap, 18)
         with patch("ournotes_bot.visuals._asset", return_value=None):
             result = render_chart(self.song, (self.chart,), "zh", score, "EXPERT")
         with Image.open(io.BytesIO(result)) as image:
             self.assertGreaterEqual(image.height, bottom + 60)
+            # Verify spacing after actual upload-budget resizing, not just on canvas.
+            logical_height = bottom + 76
+            self.assertGreaterEqual(gap * image.height / logical_height, 22)
+            self.assertLessEqual(len(result), 1_500_000)
 
     def test_cross_column_holds_and_flick_directions_survive_vertical_mapping(self) -> None:
         image = Image.new("RGB", (900, 1800))
