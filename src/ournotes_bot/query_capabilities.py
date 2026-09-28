@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from typing import Callable
 
 from .data import SongRepository
+from .query_terms import is_skill_placeholder
 from . import structured_query
 from .structured_query import QueryResult, QuerySpec
 
@@ -93,6 +94,7 @@ class Capability:
         if "skill_query" in arguments and (
             not isinstance(arguments["skill_query"], str)
             or len(arguments["skill_query"].strip()) > 30
+            or is_skill_placeholder(arguments["skill_query"])
         ):
             invalid.append("skill_query")
         if "skill_kind" in arguments and arguments["skill_kind"] not in {
