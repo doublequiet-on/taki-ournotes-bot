@@ -406,9 +406,8 @@ def _paste_asset(canvas: Image.Image, draw: ImageDraw.ImageDraw, url: str, box: 
 
 
 def _bytes(image: Image.Image) -> bytes:
-    out = io.BytesIO()
-    image.save(out, format="JPEG", quality=95, subsampling=0, optimize=True)
-    return out.getvalue()
+    from .image_output import encode_image
+    return encode_image(image)
 
 
 def render_song_list(songs: list[Song], query: str, locale: str = "zh", footer: str = "") -> bytes:

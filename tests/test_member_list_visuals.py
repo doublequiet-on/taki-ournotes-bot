@@ -41,7 +41,8 @@ class MemberListVisualTests(unittest.TestCase):
         footer = "共 30 张 · 第 1/2 页 · 本页 1–16\n下一页：/查卡 SSR SR 页2\n部分详情使用上次有效缓存。"
         with patch("ournotes_bot.visuals._asset", return_value=None), patch.object(ImageDraw.ImageDraw, "text", capture):
             raw = grid(cards, "SSR SR", footer=footer)
-        self.assertEqual(Image.open(io.BytesIO(raw)).width, 2000)
+        self.assertLessEqual(Image.open(io.BytesIO(raw)).width, 2000)
+        self.assertLessEqual(len(raw), 1_500_000)
         for text in ("数据暂不可用", *map(str, range(1, 17)), *footer.splitlines()):
             self.assertIn(text, drawn)
         self.assertFalse({"SSR", "SR", "R"}.intersection(drawn))
