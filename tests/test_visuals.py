@@ -77,7 +77,12 @@ class VisualTests(unittest.TestCase):
                        lambda: visuals.render_chart(song, song.charts)):
             # With a real asset-shaped RGBA mark, no color words replace the icon.
             native = Image.new("RGBA", (76, 76), "blue")
-            with patch.object(visuals, "_song_marks", return_value={2: native}):
+            length = ImageDraw.ImageDraw.textlength
+            def fractional(draw, text, *args, **kwargs):
+                return length(draw, text, *args, **kwargs) + 0.25
+            # Noto on Linux yields fractional advances; a rounded-down chip must not clip its last glyph.
+            with patch.object(visuals, "_song_marks", return_value={2: native}), \
+                 patch.object(ImageDraw.ImageDraw, "textlength", fractional):
                 calls = self.capture(render)
             title = next(box for text, box in calls if text == song.title)
             chip = next(box for text, box in calls if "JUST → JUST → COMBO" in text)

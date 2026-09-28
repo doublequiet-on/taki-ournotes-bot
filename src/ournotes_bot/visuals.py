@@ -439,7 +439,7 @@ def _mission_chip(draw, traits, x, y, width, size=21, *, mark_available=True, me
     if traits and traits.stale:
         text += " · 旧缓存"
     lines = _wrapped_lines(draw, text, width - 26, size, len(text) + 1)
-    chip_width = min(width, round(max(draw.textlength(line, font=_font(size)) for line in lines)) + 26)
+    chip_width = min(width, math.ceil(max(draw.textlength(line, font=_font(size)) for line in lines)) + 26)
     height = len(lines) * (size + 6) + 10
     if not measure_only:
         draw.rounded_rectangle((x, y, x + chip_width, y + height), radius=10,
