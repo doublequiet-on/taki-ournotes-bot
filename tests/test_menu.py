@@ -2,7 +2,8 @@ import unittest
 from unittest.mock import patch, AsyncMock, Mock
 from types import SimpleNamespace
 
-from ournotes_bot.menu import MENU_ITEMS, MENU_NAME, PANEL_ITEMS
+from ournotes_bot.commands import HELP_TEXTS
+from ournotes_bot.menu import GROUP_PANEL_ITEMS, MENU_ITEMS, MENU_NAME, PANEL_ITEMS
 
 
 def display_width(value: str) -> int:
@@ -34,6 +35,20 @@ class MenuLimitsTests(unittest.TestCase):
             {"查谱面", "查曲", "查分数表", "查卡", "查支援卡", "问", "数据状态", "帮助", "介绍"},
         )
         for item in PANEL_ITEMS:
+            self.assertLessEqual(display_width(item["name"]), 14)
+            self.assertLessEqual(display_width(item["desc"]), 30)
+
+    def test_group_panel_covers_chinese_help_within_qq_limits(self):
+        names = [item["name"] for item in GROUP_PANEL_ITEMS]
+        self.assertEqual(len(names), len(set(names)))
+        self.assertLessEqual(len(names), 20)
+        self.assertEqual(set(names), {
+            "查曲", "查谱面", "查分数表", "查卡", "查支援卡", "查卡面",
+            "查支援卡面", "查缩写", "问", "数据状态", "调试数据",
+            "帮助", "介绍", "语言",
+        })
+        for item in GROUP_PANEL_ITEMS:
+            self.assertIn("/" + item["name"], HELP_TEXTS["zh"])
             self.assertLessEqual(display_width(item["name"]), 14)
             self.assertLessEqual(display_width(item["desc"]), 30)
 
