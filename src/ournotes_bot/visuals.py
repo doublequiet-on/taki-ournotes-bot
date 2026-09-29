@@ -38,6 +38,11 @@ DIFFICULTY_COLORS = {
     "HARD": ("#F3E4BC", "#B59A57"),
     "EXPERT": ("#EED3E0", "#B77D9B"),
 }
+MISSION_ICON_URLS = {
+    kind: ("https://haneoka.org/assets/jp/Assets/AddressableResources/"
+           f"UI/Texture/Tmp1/BattleLive/Icon_gekisou_{kind.lower()}.png")
+    for kind in ("JUST", "COMBO", "LUCK")
+}
 FONT_PATHS = [
     "C:/Windows/Fonts/msyh.ttc",
     "C:/Windows/Fonts/simhei.ttf",
@@ -339,7 +344,7 @@ def _draw_skills(draw: ImageDraw.ImageDraw, skills: tuple[Skill, ...], x: int, y
 
 def _asset(url: str, size: tuple[int, int], *, contain: bool = False) -> Image.Image | None:
     icons = {f"{BASE}/images/CardType{i}.webp" for i in range(1, 6)}
-    if not url.startswith(ASSETS + "/") and url not in icons:
+    if not url.startswith(ASSETS + "/") and url not in icons and url not in MISSION_ICON_URLS.values():
         return None
     try:
         cache = runtime_data_dir() / "asset-cache"
@@ -349,7 +354,8 @@ def _asset(url: str, size: tuple[int, int], *, contain: bool = False) -> Image.I
             raw = path.read_bytes()
         else:
             try:
-                with urlopen(Request(url, headers={"User-Agent": "Mozilla/5.0", "Referer": BASE + "/"}), timeout=12) as response:
+                referer = "https://haneoka.org/" if url in MISSION_ICON_URLS.values() else BASE + "/"
+                with urlopen(Request(url, headers={"User-Agent": "Mozilla/5.0", "Referer": referer}), timeout=12) as response:
                     raw = response.read(6_000_000)
             except Exception:
                 async def download() -> bytes:
@@ -416,6 +422,13 @@ def _song_marks(songs):
         return dict(zip(colors, pool.map(lambda c: _asset(f"{BASE}/images/CardType{c}.webp", (76, 76), contain=True), colors)))
 
 
+def _mission_marks(songs):
+    kinds = sorted({kind for song in songs if song.traits and song.traits.missions
+                    for kind in song.traits.missions if kind in MISSION_ICON_URLS})
+    with ThreadPoolExecutor(max_workers=3) as pool:
+        return dict(zip(kinds, pool.map(lambda kind: _asset(MISSION_ICON_URLS[kind], (64, 64), contain=True), kinds)))
+
+
 def _song_heading(image, draw, song, x, y, width, size=32, locale="zh", marks=None, measure_only=False):
     """Native attribute mark and title share a baseline; no color word on success."""
     from .song_traits import COLORS
@@ -433,19 +446,74 @@ def _song_heading(image, draw, song, x, y, width, size=32, locale="zh", marks=No
     return y + len(lines) * (size + 5), mark is not None
 
 
-def _mission_chip(draw, traits, x, y, width, size=21, *, mark_available=True, measure_only=False):
+def _mission_icon(image, draw, mission: str, native: Image.Image, x: int, y: int, size: int) -> None:
+    """Tint the game's white mission silhouette for the current reply palette."""
+    colors = {"JUST": "#7459A7", "COMBO": "#416FAD", "LUCK": "#43876C"}
+    color = colors.get(mission)
+    if color is None:
+        return
+    draw.rounded_rectangle((x, y, x + size, y + size), radius=max(3, size // 4), fill=color)
+    scale = image.info.get("render_scale", 1)
+    inset = max(2, size // 8)
+    side = (size - inset * 2) * scale
+    sprite = native.resize((side, side), Image.Resampling.LANCZOS)
+    image.paste(sprite, ((x + inset) * scale, (y + inset) * scale), sprite)
+
+
+def _mission_chip(image, draw, traits, x, y, width, size=21, *,
+                  icons=None, mark_available=True, measure_only=False):
     from .song_traits import COLORS
-    text = "激奏  " + (" → ".join(traits.missions) if traits and traits.missions else "未获取")
+    font = _font(size)
+    icon_size = min(size, 20)
+    rows: list[list[tuple[str, str, int]]] = [[]]
+    row_widths = [0]
+    available = max(1, width - 26)
+
+    def add(kind: str, label: str, item_width: int) -> None:
+        if rows[-1] and row_widths[-1] + item_width > available:
+            rows.append([])
+            row_widths.append(0)
+        rows[-1].append((kind, label, item_width))
+        row_widths[-1] += item_width
+
+    add("text", "激奏  ", math.ceil(draw.textlength("激奏  ", font=font)))
+    if traits and traits.missions:
+        for index, mission in enumerate(traits.missions):
+            arrow = " → " if index else ""
+            native = (icons or {}).get(mission)
+            item_width = (math.ceil(draw.textlength(arrow, font=font))
+                          + (icon_size + 5 if native else 0)
+                          + math.ceil(draw.textlength(mission, font=font)))
+            add("mission", arrow + mission, item_width)
+    else:
+        add("text", "未获取", math.ceil(draw.textlength("未获取", font=font)))
     if traits and traits.stale:
-        text += " · 旧缓存"
-    lines = _wrapped_lines(draw, text, width - 26, size, len(text) + 1)
-    chip_width = min(width, math.ceil(max(draw.textlength(line, font=_font(size)) for line in lines)) + 26)
-    height = len(lines) * (size + 6) + 10
+        add("text", " · 旧缓存", math.ceil(draw.textlength(" · 旧缓存", font=font)))
+    chip_width = min(width, max(row_widths) + 26)
+    height = len(rows) * (size + 6) + 10
     if not measure_only:
         draw.rounded_rectangle((x, y, x + chip_width, y + height), radius=10,
                                fill=SURFACE, outline="#C7CFE2", width=1)
-        for i, line in enumerate(lines):
-            _write(draw, line, x + 13, y + 5 + i * (size + 6), chip_width - 26, size, ACCENT)
+        for i, row in enumerate(rows):
+            cursor = x + 13
+            top = y + 5 + i * (size + 6)
+            for kind, label, item_width in row:
+                left = cursor
+                if kind == "mission":
+                    mission = label.rsplit(" ", 1)[-1]
+                    arrow = label[:-len(mission)]
+                    if arrow:
+                        _write(draw, arrow, cursor, top, item_width, size, ACCENT)
+                        cursor += math.ceil(draw.textlength(arrow, font=font))
+                    native = (icons or {}).get(mission)
+                    if native:
+                        _mission_icon(image, draw, mission, native, cursor,
+                                      top + (size - icon_size) // 2, icon_size)
+                        cursor += icon_size + 5
+                    _write(draw, mission, cursor, top, item_width, size, ACCENT)
+                else:
+                    _write(draw, label, cursor, top, item_width, size, ACCENT)
+                cursor = left + item_width
     if not mark_available:
         label = COLORS.get(traits.color, "未获取") if traits else "未获取"
         if not measure_only:
@@ -465,11 +533,13 @@ def render_song_list(songs: list[Song], query: str, locale: str = "zh", footer: 
     probe, probe_draw = _background(width, 1)
     layouts = []
     marks = _song_marks(songs)
+    mission_marks = _mission_marks(songs)
     for song in songs:
-        bottom, mark = _song_heading(probe, probe_draw, song, 224, 13, 426, locale=locale, marks=marks, measure_only=True)
-        bottom = _mission_chip(probe_draw, song.traits, 224, max(65, bottom + 10), 426, mark_available=mark, measure_only=True)
-        layouts.append(max(162, bottom + 60))
-    height = rows_y + sum(h + 12 for h in layouts) + 24 + len(footer_lines) * 31
+        bottom, mark = _song_heading(probe, probe_draw, song, 212, 10, 438, locale=locale, marks=marks, measure_only=True)
+        bottom = _mission_chip(probe, probe_draw, song.traits, 212, max(53, bottom + 6), 438, 19,
+                               icons=mission_marks, mark_available=mark, measure_only=True)
+        layouts.append(max(140, bottom + 40))
+    height = rows_y + sum(h + 10 for h in layouts) + 24 + len(footer_lines) * 31
     image, draw = _canvas(width, height, _label(locale, "songs"))
     for i, line in enumerate(conditions):
         _write(draw, line, 50, 142 + i * 31, width - 100, 23, MUTED)
@@ -478,10 +548,11 @@ def render_song_list(songs: list[Song], query: str, locale: str = "zh", footer: 
     for index, (song, row_height) in enumerate(zip(songs, layouts)):
         draw.rounded_rectangle((38, top, width - 38, top + row_height), radius=18,
                                fill="#FFFFFF", outline=BORDER, width=2)
-        _write(draw, f"{index + 1:02d}", 53, top + 55, 36, 22, ACCENT)
-        _paste_loaded_asset(image, draw, jackets[song.jacket_url], (96, top + 16, 204, top + 124), locale)
-        bottom, mark = _song_heading(image, draw, song, 224, top + 13, 426, locale=locale, marks=marks)
-        _mission_chip(draw, song.traits, 224, max(top + 65, bottom + 10), 426, mark_available=mark)
+        _write(draw, f"{index + 1:02d}", 53, top + 45, 36, 22, ACCENT)
+        _paste_loaded_asset(image, draw, jackets[song.jacket_url], (96, top + 12, 192, top + 108), locale)
+        bottom, mark = _song_heading(image, draw, song, 212, top + 10, 438, locale=locale, marks=marks)
+        _mission_chip(image, draw, song.traits, 212, max(top + 53, bottom + 6), 438, 19,
+                      icons=mission_marks, mark_available=mark)
         _write(draw, f"ID {song.id}  ·  {localized_text(song, 'band', locale)}",
                96, top + row_height - 28, 554, 19, MUTED)
         draw.line((666, top + 30, 666, top + row_height - 32), fill=BORDER, width=1)
@@ -492,7 +563,7 @@ def render_song_list(songs: list[Song], query: str, locale: str = "zh", footer: 
             x = 680 + column * 94
             y = top + (row_height - 66) // 2
             _difficulty_badge(draw, difficulty, value, (x, y, x + 86, y + 66))
-        top += row_height + 12
+        top += row_height + 10
     for i, line in enumerate(footer_lines):
         _write(draw, line, 55, top + i * 31, width - 110, 21, MUTED)
     return _bytes(image)
@@ -631,29 +702,32 @@ def render_chart(song: Song, charts: tuple[Chart, ...], locale: str = "zh", scor
                     if isinstance(value, dict) for point in [_score_point(value)] if point] if score else []
     width = _score_layout(score_points)[4] if score_points else 900
     marks = _song_marks([song])
+    mission_marks = _mission_marks([song])
     probe, pd = _background(width, 1)
-    heading_bottom, mark = _song_heading(probe, pd, song, 315, 166, width - 369, 37, locale, marks, measure_only=True)
-    chip_y = max(231, heading_bottom + 12)
-    chip_bottom = _mission_chip(pd, song.traits, 315, chip_y, width - 369, mark_available=mark, measure_only=True)
-    credits_y = chip_bottom + 22
-    header_bottom = max(444, credits_y + 105)
+    heading_bottom, mark = _song_heading(probe, pd, song, 214, 154, width - 268, 34, locale, marks, measure_only=True)
+    chip_y = max(201, heading_bottom + 8)
+    chip_bottom = _mission_chip(probe, pd, song.traits, 214, chip_y, width - 268,
+                                icons=mission_marks, mark_available=mark, measure_only=True)
+    credits = [(key, localized_text(song, key, locale))
+               for key in ("composer", "lyricist") if getattr(song, key)]
+    credits_y = chip_bottom + 12
+    header_bottom = max(320, credits_y + len(credits) * 30 + 42)
     shift = header_bottom - 402
     if score_points:
         segment = _score_layout(score_points)[2]
-        image_height = 790 + shift + _score_plot_height(segment) + 100
+        image_height = 724 + shift + _score_plot_height(segment) + 100
     else:
-        image_height = 760 + shift
+        image_height = 694 + shift
     image, draw = _canvas(width, image_height, _label(locale, "chart"))
     draw.rounded_rectangle((38, 140, width - 38, header_bottom), radius=18, fill="#FFFFFF", outline=BORDER, width=2)
-    draw.rounded_rectangle((38, 432 + shift, width - 38, 643 + shift), radius=18, fill=SURFACE, outline=BORDER, width=2)
-    _paste_asset(image, draw, song.jacket_url, (54, 155, 284, 385), locale)
-    _song_heading(image, draw, song, 315, 166, width - 369, 37, locale, marks)
-    _mission_chip(draw, song.traits, 315, chip_y, width - 369, mark_available=mark)
-    if song.composer:
-        _write(draw, f"{_label(locale, 'composer')}  {localized_text(song, 'composer', locale)}", 315, credits_y, width - 369, 21)
-    if song.lyricist:
-        _write(draw, f"{_label(locale, 'lyricist')}  {localized_text(song, 'lyricist', locale)}", 315, credits_y + 34, width - 369, 21)
-    _write(draw, f"ID {song.id}  ·  {localized_text(song, 'band', locale)}", 54, header_bottom - 36, width - 108, 23, MUTED)
+    draw.rounded_rectangle((38, 432 + shift, width - 38, 584 + shift), radius=18, fill=SURFACE, outline=BORDER, width=2)
+    _paste_asset(image, draw, song.jacket_url, (54, 154, 190, 290), locale)
+    _song_heading(image, draw, song, 214, 154, width - 268, 34, locale, marks)
+    _mission_chip(image, draw, song.traits, 214, chip_y, width - 268,
+                  icons=mission_marks, mark_available=mark)
+    for index, (key, value) in enumerate(credits):
+        _write(draw, f"{_label(locale, key)}  {value}", 214, credits_y + index * 30, width - 268, 21)
+    _write(draw, f"ID {song.id}  ·  {localized_text(song, 'band', locale)}", 214, header_bottom - 36, width - 268, 23, MUTED)
     draw.line((54, 420 + shift, width - 54, 420 + shift), fill=BORDER, width=2)
     for index, chart in enumerate(charts):
         top = 449 + shift
@@ -663,15 +737,15 @@ def render_chart(song: Song, charts: tuple[Chart, ...], locale: str = "zh", scor
         _difficulty_badge(draw, chart.difficulty, f"{chart.display_level:g}", (x, top, x + badge_width, top + 78))
         note_text = f"{chart.notes} Notes"
         note_x = x + max(0, (badge_width - draw.textlength(note_text, font=_font(22))) // 2)
-        _write(draw, note_text, note_x, top + 94, badge_width, 22)
-    draw.line((54, 675 + shift, width - 54, 675 + shift), fill=BORDER, width=2)
+        _write(draw, note_text, note_x, top + 86, badge_width, 22)
+    draw.line((54, 609 + shift, width - 54, 609 + shift), fill=BORDER, width=2)
     if score_points:
-        _write(draw, _label(locale, "score_title").format(difficulty=preview_difficulty or "EXPERT"), 65, 689 + shift, 760, 28, INK)
-        _write(draw, _SCORE_GUIDANCE[locale][0], 65, 730 + shift, 760, 18, MUTED)
-        bottom = _draw_score(draw, score or {}, 790 + shift, locale)
+        _write(draw, _label(locale, "score_title").format(difficulty=preview_difficulty or "EXPERT"), 65, 623 + shift, 760, 28, INK)
+        _write(draw, _SCORE_GUIDANCE[locale][0], 65, 664 + shift, 760, 18, MUTED)
+        bottom = _draw_score(draw, score or {}, 724 + shift, locale)
         _write(draw, _label(locale, "score_note"), 65, bottom + 20, 760, 18, MUTED)
     else:
-        _write(draw, _label(locale, "preview"), 65, 687 + shift, 760, 18, MUTED)
+        _write(draw, _label(locale, "preview"), 65, 621 + shift, 760, 18, MUTED)
     return _bytes(image)
 
 
@@ -694,12 +768,13 @@ def render_meta(answer: MetaAnswer) -> bytes:
 
 def _render_meta_table(answer: MetaAnswer) -> bytes:
     # One row per song+difficulty; use the captured values, never recalculate metrics.
-    width, row_height = 1500, 166
+    width, row_height = 1500, 112
     edges = (40, 105, 660, 820, 960, 1180, 1460)
     measure = ImageDraw.Draw(Image.new("RGB", (width, 200)))
     scope = _wrapped_lines(measure, answer.scope, width - 100, 24, max_lines=4)
     rows_y = 158 + 34 * len(scope)
     marks = _song_marks(answer.song_records)
+    mission_marks = _mission_marks(answer.song_records)
     heights = []
     probe, pd = _background(width, 1)
     for i in range(len(answer.cells)):
@@ -707,9 +782,9 @@ def _render_meta_table(answer: MetaAnswer) -> bytes:
         if i < len(answer.song_records):
             song = answer.song_records[i]
             title_end, mark = _song_heading(probe, pd, song, 202, 10, 442, 28, marks=marks, measure_only=True)
-            bottom = _mission_chip(pd, song.traits, 202, max(86, title_end + 8), 442, 17,
-                                   mark_available=mark, measure_only=True)
-        heights.append(max(row_height, bottom + 16))
+            bottom = _mission_chip(probe, pd, song.traits, 202, max(50, title_end + 6), 442, 17,
+                                   icons=mission_marks, mark_available=mark, measure_only=True)
+        heights.append(max(row_height, bottom + 12))
     table_bottom = rows_y + sum(heights)
     page_lines = [part for line in answer.page_notice.splitlines()
                   for part in _wrapped_lines(measure, line, width - 136, 25, len(line) + 1)]
@@ -741,21 +816,22 @@ def _render_meta_table(answer: MetaAnswer) -> bytes:
                                fill=SURFACE if index % 2 == 0 else "#FFFFFF", outline=BORDER, width=2)
         for x in (105, 660, 820, 960, 1180):
             draw.line((x, top + 20, x, top + row_height - 20), fill=BORDER, width=2)
-        centered(row[0], edges[0], edges[1], top + 52, 23, ACCENT)
+        centered(row[0], edges[0], edges[1], top + row_height / 2, 23, ACCENT)
         cover = covers.get(answer.jackets[index])
-        _paste_loaded_asset(image, draw, cover, (118, top + 18, 186, top + 86))
+        _paste_loaded_asset(image, draw, cover, (118, top + (row_height - 68) // 2, 186, top + (row_height + 68) // 2))
         if index < len(answer.song_records):
             song = answer.song_records[index]
             bottom, mark = _song_heading(image, draw, song, 202, top + 10, 442, 28, marks=marks)
-            _mission_chip(draw, song.traits, 202, max(top + 86, bottom + 8), 442, 17, mark_available=mark)
+            _mission_chip(image, draw, song.traits, 202, max(top + 50, bottom + 6), 442, 17,
+                          icons=mission_marks, mark_available=mark)
         else:
             for i, line in enumerate(_wrapped_lines(draw, row[1], 442, 28, max_lines=2)):
                 _write(draw, line, 202, top + 10 + i * 35, 442, 28)
-        _difficulty_badge(draw, row[2], row[3], (694, top + 19, 786, top + 85))
+        _difficulty_badge(draw, row[2], row[3], (694, top + (row_height - 66) // 2, 786, top + (row_height + 66) // 2))
         for value, column, label in ((row[4], 3, "时长"), (row[5], 4, "得分系数"),
                                      (row[6], 5, "每分钟得分效率")):
-            centered(label, edges[column], edges[column + 1], top + 30, 18, MUTED)
-            centered(value, edges[column], edges[column + 1], top + 64, 28,
+            centered(label, edges[column], edges[column + 1], top + row_height / 2 - 18, 18, MUTED)
+            centered(value, edges[column], edges[column + 1], top + row_height / 2 + 16, 28,
                      ACCENT if column == 5 else INK)
         top += row_height
     draw.rounded_rectangle((40, page_y, 1460, notes_y - 18), radius=24,

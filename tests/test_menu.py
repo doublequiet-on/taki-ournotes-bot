@@ -53,5 +53,42 @@ class MenuLimitsTests(unittest.TestCase):
             self.assertLessEqual(display_width(item["desc"]), 30)
 
 
+class PanelUpdateTests(unittest.IsolatedAsyncioTestCase):
+    async def test_existing_install_updates_only_group_then_is_idempotent(self):
+        from ournotes_bot import menu
+        calls = []
+        panels = {scope: {"panel_id": scope, "panel": {
+            "remark": "ournotes-qq-bot-" + scope, "items": list(PANEL_ITEMS)}}
+            for scope in ("c2c", "group")}
+        class Response:
+            status = 200
+            def __init__(self, body): self.body = body
+            async def __aenter__(self): return self
+            async def __aexit__(self, *args): pass
+            async def json(self, **kwargs): return self.body
+        class Session:
+            async def __aenter__(self): return self
+            async def __aexit__(self, *args): pass
+            def request(self, method, url, **kwargs):
+                calls.append((method, url, kwargs))
+                if method == "PUT":
+                    panels["group"]["panel"] = kwargs["json"]["panel"]
+                    return Response({})
+                if url.endswith("/v2/panels"):
+                    return Response({"records": [panels[kwargs["params"]["scope"]]]})
+                return Response({"menu": {"items": [{"type": "menu", "name": MENU_NAME,
+                                                    "sub_menu_items": MENU_ITEMS}]}})
+        token = Mock(update_access_token=AsyncMock(), get_string=Mock(return_value="fake"))
+        with patch.object(menu, "Token", return_value=token), \
+             patch.object(menu.aiohttp, "ClientSession", return_value=Session()):
+            await menu.setup_menu("fake", "fake")
+            await menu.setup_menu("fake", "fake")
+        writes = [(method, url, kwargs) for method, url, kwargs in calls if method != "GET"]
+        self.assertEqual(len(writes), 1)
+        self.assertEqual(writes[0][:2], ("PUT", menu.BASE + "/v2/panels/group"))
+        self.assertEqual(writes[0][2]["json"]["panel"]["items"], GROUP_PANEL_ITEMS)
+        self.assertEqual(panels["c2c"]["panel"]["items"], PANEL_ITEMS)
+
+
 if __name__ == "__main__":
     unittest.main()
