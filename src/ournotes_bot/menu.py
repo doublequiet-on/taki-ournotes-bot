@@ -27,6 +27,23 @@ PANEL_ITEMS = [
     {"type": "command", "name": "帮助", "desc": "查看指令说明与示例"},
     {"type": "command", "name": "介绍", "desc": "了解Taki与资料来源"},
 ]
+GROUP_PANEL_ITEMS = [
+    # Follow the Chinese /帮助 order; QQ inserts '/' before the command name.
+    {"type": "command", "name": "查曲", "desc": "歌名、颜色、激奏、等级筛选"},
+    {"type": "command", "name": "查谱面", "desc": "歌名或ID，可选难度"},
+    {"type": "command", "name": "查分数表", "desc": "效率榜：乐队、等级、难度"},
+    {"type": "command", "name": "查卡", "desc": "成员卡列表或ID详情"},
+    {"type": "command", "name": "查支援卡", "desc": "SNAP列表或ID详情"},
+    {"type": "command", "name": "查卡面", "desc": "输入成员卡ID，只看卡面"},
+    {"type": "command", "name": "查支援卡面", "desc": "输入支援卡ID，只看卡面"},
+    {"type": "command", "name": "查缩写", "desc": "查角色或乐队的常用昵称"},
+    {"type": "command", "name": "问", "desc": "用自然语言查询资料"},
+    {"type": "command", "name": "数据状态", "desc": "查看数据同步和缓存状态"},
+    {"type": "command", "name": "调试数据", "desc": "查看本次进程AI调用次数"},
+    {"type": "command", "name": "帮助", "desc": "全部指令、条件与示例"},
+    {"type": "command", "name": "介绍", "desc": "Taki简介和资料来源"},
+    {"type": "command", "name": "语言", "desc": "查看英文、日文指令"},
+]
 
 
 async def setup_menu(app_id: str, app_secret: str) -> list[str]:
@@ -47,9 +64,10 @@ async def setup_menu(app_id: str, app_secret: str) -> list[str]:
             records = listing.get("records") or []
             remark = f"ournotes-qq-bot-{scope}"
             current = next((row for row in records if (row.get("panel") or {}).get("remark") == remark), None)
-            panel = {"items": PANEL_ITEMS, "remark": remark}
+            panel_items = GROUP_PANEL_ITEMS if scope == "group" else PANEL_ITEMS
+            panel = {"items": panel_items, "remark": remark}
             if current:
-                if current.get("panel", {}).get("items") != PANEL_ITEMS:
+                if current.get("panel", {}).get("items") != panel_items:
                     await api("PUT", f"/v2/panels/{current['panel_id']}", json={"panel": panel})
                     messages.append(f"{scope} 指令面板已更新")
                 else:

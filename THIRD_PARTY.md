@@ -25,6 +25,8 @@
 
 `song_traits.py` 独立适配与缓存，未复制上游程序。`tests/fixtures/haneoka-song-traits.json` 仅保存3条可追溯的必要事实样例（ID、标题、属性、序列、封面标识），其余测试为合成数据；不打包全量上游数据、游戏图片或算法。署名与公开接口使用要求沿用上文。本机 `fetched_at` 不是上游更新时间。
 
+激奏类型小图标采用游戏资源中的 `UI/Texture/Tmp1/BattleLive/Icon_gekisou_{just,combo,luck}.png`。已逐一核对 [Haneoka 日服公开资源树](https://haneoka.org/api/v1/servers/jp/sources/tree) 与各文件的资源描述；三张 `Texture2D` 均为白色透明轮廓。回复图片仅给原轮廓添加本项目配色底框，并保留类型文字。素材在运行时按需读取并本机缓存，不提交到仓库；上游缺图时只显示文字。公开可访问不代表素材可再分发，游戏美术权利仍归原权利方。
+
 ## 角色卡与 SNAP 的资源核实
 
 2026-09-28核对 Project Yume 的公开 MasterParsed 列表和122份成员/SNAP详情，以及网站 `useFilter-BIvyqgQJ.js`、`NonoCard-aiXKXz-b.js`、`cardSkill-B40radPu.js`。用来确认稀有度、类型图标URL、技能名称分类和指定状态的属性展示；没有复制上游JS代码或引入算分算法。各映射与实际样例见[卡牌说明](更新说明-成员卡与支援卡查询.md)。上游没有在本次核实材料中给出可据此再分发游戏素材的授权；资源仍按需读取、缓存，不随源码提交。原生稀有度框和正式属性名称未确认，不能从截图猜资源或枚举。

@@ -81,17 +81,85 @@ class VisualTests(unittest.TestCase):
             def fractional(draw, text, *args, **kwargs):
                 return length(draw, text, *args, **kwargs) + 0.25
             # Noto on Linux yields fractional advances; a rounded-down chip must not clip its last glyph.
+            mission_native = Image.new("RGBA", (64, 64), "white")
             with patch.object(visuals, "_song_marks", return_value={2: native}), \
-                 patch.object(ImageDraw.ImageDraw, "textlength", fractional):
+                 patch.object(visuals, "_mission_marks", return_value={
+                     "JUST": mission_native, "COMBO": mission_native,
+                 }), \
+                 patch.object(ImageDraw.ImageDraw, "textlength", fractional), \
+                 patch.object(visuals, "_mission_icon", wraps=visuals._mission_icon) as icons:
                 calls = self.capture(render)
             title = next(box for text, box in calls if text == song.title)
-            chip = next(box for text, box in calls if "JUST → JUST → COMBO" in text)
+            labels = [(text, box) for text, box in calls if text in {"JUST", "COMBO"}]
+            self.assertEqual([text for text, _ in labels], ["JUST", "JUST", "COMBO"])
+            self.assertEqual([call.args[2] for call in icons.call_args_list],
+                             ["JUST", "JUST", "COMBO"])
+            chip_top = min(box[1] for _, box in labels)
+            chip_bottom = max(box[3] for _, box in labels)
             identity = next(box for text, box in calls if text.startswith("ID "))
-            self.assertLess(title[3], chip[1])
-            self.assertLess(chip[3], identity[1])
+            self.assertLess(title[3], chip_top)
+            self.assertLess(chip_bottom, identity[1])
             self.assertFalse(any("属性：" in text or "颜色：" in text for text, _ in calls))
         missing = self.capture(lambda: visuals.render_chart(song, song.charts))
         self.assertTrue(any("蓝色（图标暂缺）" in text for text, _ in missing))
+
+    def test_three_mission_marks_have_distinct_pixels_and_keep_labels(self):
+        from ournotes_bot.song_traits import SongTraits
+
+        sample = Image.new("RGB", (78, 26), visuals.SURFACE)
+        draw = ImageDraw.Draw(sample)
+        native = Image.new("RGBA", (64, 64), "white")
+        for index, mission in enumerate(("JUST", "COMBO", "LUCK")):
+            visuals._mission_icon(sample, draw, mission, native, index * 26, 2, 20)
+        tiles = [sample.crop((index * 26, 2, index * 26 + 20, 22)).tobytes()
+                 for index in range(3)]
+        self.assertEqual(len(set(tiles)), 3)
+
+        song = replace(self.song, traits=SongTraits(2, ("JUST", "COMBO", "LUCK")))
+        marks = {kind: native for kind in ("JUST", "COMBO", "LUCK")}
+        with patch.object(visuals, "_mission_marks", return_value=marks):
+            calls = self.capture(lambda: visuals.render_song_list([song], "激奏"))
+        self.assertEqual([text for text, _ in calls if text in {"JUST", "COMBO", "LUCK"}],
+                         ["JUST", "COMBO", "LUCK"])
+
+        answer = MetaAnswer("", cells=(("1", song.title, "EXPERT", "25.5", "1:35",
+                                       "1,164.72%", "560.25%"),),
+                            scope="全难度", jackets=("",), song_records=(song,))
+        for render in (lambda: visuals.render_chart(song, song.charts),
+                       lambda: visuals.render_meta(answer)):
+            with patch.object(visuals, "_mission_marks", return_value=marks), \
+                 patch.object(visuals, "_mission_icon", wraps=visuals._mission_icon) as icons:
+                calls = self.capture(render)
+            self.assertEqual([call.args[2] for call in icons.call_args_list],
+                             ["JUST", "COMBO", "LUCK"])
+            self.assertEqual([text for text, _ in calls if text in {"JUST", "COMBO", "LUCK"}],
+                             ["JUST", "COMBO", "LUCK"])
+
+    def test_mission_marks_use_game_assets_and_missing_icon_keeps_label(self):
+        from ournotes_bot.song_traits import SongTraits
+
+        song = replace(self.song, traits=SongTraits(2, ("JUST", "COMBO", "LUCK")))
+        native = Image.new("RGBA", (64, 64), "white")
+
+        def load(url, size, *, contain=False):
+            self.assertIn(url, visuals.MISSION_ICON_URLS.values())
+            self.assertTrue(url.endswith(("Icon_gekisou_just.png",
+                                           "Icon_gekisou_combo.png",
+                                           "Icon_gekisou_luck.png")))
+            self.assertEqual(size, (64, 64))
+            self.assertTrue(contain)
+            return None if url.endswith("_luck.png") else native
+
+        with patch.object(visuals, "_asset", side_effect=load) as assets:
+            marks = visuals._mission_marks([song, song])
+        self.assertEqual(assets.call_count, 3)
+        self.assertIsNone(marks["LUCK"])
+        with patch.object(visuals, "_mission_marks", return_value=marks), \
+             patch.object(visuals, "_mission_icon", wraps=visuals._mission_icon) as icons:
+            calls = self.capture(lambda: visuals.render_song_list([song], "激奏"))
+        self.assertEqual([call.args[2] for call in icons.call_args_list], ["JUST", "COMBO"])
+        self.assertEqual([text for text, _ in calls if text in {"JUST", "COMBO", "LUCK"}],
+                         ["JUST", "COMBO", "LUCK"])
 
     def test_long_mission_sequence_and_title_keep_identity_below(self):
         from ournotes_bot.song_traits import SongTraits
@@ -101,6 +169,54 @@ class VisualTests(unittest.TestCase):
         mission = [(text, box) for text, box in calls if "COMBO" in text or "旧缓存" in text]
         self.assertEqual("".join(text for text, _ in calls).count("COMBO"), 16)
         self.assertTrue(all(box[3] < identity[1] for _, box in mission))
+
+    def test_compact_chart_header_keeps_credits_and_identity_separate(self):
+        from ournotes_bot.song_traits import SongTraits
+        for composer, lyricist in (("", ""), ("作者甲", ""), ("", "作者乙"), ("作者甲", "作者乙")):
+            song = replace(self.song, title="长歌名" * 12, composer=composer,
+                           lyricist=lyricist, traits=SongTraits(2, ("COMBO",) * 3))
+            with self.subTest(composer=composer, lyricist=lyricist):
+                calls = self.capture(lambda: visuals.render_chart(song, song.charts))
+                identity = next(box for text, box in calls if text.startswith("ID "))
+                credits = [(text, box) for text, box in calls if "作者" in text]
+                self.assertEqual(len(credits), bool(composer) + bool(lyricist))
+                labels = [box for text, box in calls if text == "COMBO" or "图标暂缺" in text]
+                for _, box in credits:
+                    self.assertLess(max(label[3] for label in labels), box[1])
+                self.assertTrue(all(box[3] < identity[1] for _, box in credits))
+                self.assertTrue(all(box[3] < identity[1] for box in labels))
+
+    def test_compact_score_rows_preserve_values_and_expand_for_fallbacks(self):
+        from ournotes_bot.song_traits import SongTraits
+        short = replace(self.song, title="紧凑样例", traits=SongTraits(2, ("COMBO",) * 3))
+        long = replace(self.song, title="长标题测试" * 12,
+                       traits=SongTraits(2, ("COMBO",) * 16, True))
+        native = Image.new("RGBA", (64, 64), "white")
+        for song, marks in ((short, {2: native}), (long, {})):
+            answer = MetaAnswer("", cells=tuple(
+                (str(i + 1), song.title, "EXPERT", "25.5", "1:35", "1,164.72%", "560.25%")
+                for i in range(2)), scope="测试资料", jackets=("", ""),
+                song_records=(song, song), page_notice="第1页，共2条", notes=("固定参考条件",))
+            before = repr(answer)
+            with self.subTest(long=song is long), \
+                 patch.object(visuals, "_song_marks", return_value=marks), \
+                 patch.object(visuals, "_mission_marks", return_value={"COMBO": native}):
+                calls = self.capture(lambda: visuals.render_meta(answer))
+            self.assertEqual(repr(answer), before)
+            for value in ("1:35", "1,164.72%", "560.25%", "25.5"):
+                self.assertEqual(sum(text == value for text, _ in calls), 2)
+            self.assertEqual(sum(text == "COMBO" for text, _ in calls), len(song.traits.missions) * 2)
+            self.assertTrue(any("共2条" in text for text, _ in calls))
+            self.assertTrue(any("固定参考条件" in text for text, _ in calls))
+            titles = [box for text, box in calls if text.startswith(song.title[:5])]
+            self.assertGreaterEqual(len(titles), 2)
+            labels = [box for text, box in calls if text == "COMBO"]
+            self.assertLess(max(box[3] for box in labels[:len(song.traits.missions)]), titles[len(titles)//2][1])
+            if song is short:
+                self.assertLess(titles[1][1] - titles[0][1], 130 * visuals.RENDER_SCALE)
+            else:
+                self.assertEqual(sum("旧缓存" in text for text, _ in calls), 2)
+                self.assertEqual(sum("图标暂缺" in text for text, _ in calls), 2)
 
     def test_tiny_text_area_terminates_without_overflow(self):
         draw = ImageDraw.Draw(Image.new("RGB", (50, 50)))

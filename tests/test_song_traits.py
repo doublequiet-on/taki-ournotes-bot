@@ -155,7 +155,8 @@ class SongTraitsTests(unittest.TestCase):
         with patch('ournotes_bot.visuals._asset', return_value=None), patch.object(ImageDraw.ImageDraw, 'text', text):
             raw = render_song_list(answer.songs, answer.request.query, footer=answer.footer)
         self.assertLessEqual(len(raw), 1500000)
-        self.assertTrue(any('JUST → JUST → COMBO' in value for value in drawn))
+        self.assertEqual([value for value in drawn if value in {'JUST', 'COMBO'}][:3],
+                         ['JUST', 'JUST', 'COMBO'])
         self.assertTrue(any('缺少' in value for value in drawn))
         self.assertIn('JUST → JUST → COMBO', answer.text())
 
