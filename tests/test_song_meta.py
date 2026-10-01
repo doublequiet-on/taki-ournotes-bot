@@ -1,4 +1,4 @@
-"""Synthetic fixtures only; network, QQ and paid models are never used."""
+"""Offline synthetic fixtures and a small attributed public upstream sample."""
 from __future__ import annotations
 
 import copy
@@ -68,6 +68,87 @@ class SongMetaTests(unittest.TestCase):
         self.assertIsNone(result.eff)
         self.assertIsNone(result.seconds)
         self.assertEqual(result.score, 30)
+
+    def test_supported_reference_contracts_and_strict_types(self):
+        from ournotes_bot.sources.haneoka.song_meta import reference_kind
+        for fever, expected in [(True, "reference"), (False, "reference-no-fever")]:
+            self.assertEqual(reference_kind({**REFERENCE, "fever": fever}), expected)
+        for change in ({"fever": 0}, {"fever": 1}, {"fever": "false"},
+                       {"intervalEndInclusive": 1}, {"intervalEndInclusive": False},
+                       {"perfectRate": True}, {"perfectRate": 0.9},
+                       {"scoreUpMultiplier": 3}, {"skillDurationSeconds": 12},
+                       {"downtimeSeconds": 0}, {"newParameter": 1}):
+            with self.subTest(change=change):
+                self.assertEqual(reference_kind({**REFERENCE, **change}), "unknown")
+        for reference in (None, [], {}, {k: v for k, v in REFERENCE.items() if k != "fever"}):
+            self.assertEqual(reference_kind(reference), "unknown")
+
+    def test_no_fever_ranking_text_and_image_share_truthful_assumptions(self):
+        from PIL import ImageDraw
+        from ournotes_bot.visuals import render_meta
+        for entry in self.meta.values():
+            entry["3"]["chart"]["reference"]["fever"] = False
+            entry["3"]["chart"]["metaWarnings"] = ["setting-defaulted:fever_bonus_percent=0"]
+        self.repo.song_meta.get.return_value = self.snapshot()
+        answer = resolve_command("/查分数表", self.repo).meta
+        self.assertEqual(len(answer.rows), 13)
+        self.assertEqual(answer.rows[0].eff, 20)
+        self.assertEqual({row.reference for row in answer.rows}, {"reference-no-fever"})
+        self.assertIn("不含 Fever 加成", answer.text)
+        self.assertIn("不含 Fever 加成", "\n".join(answer.notes))
+        self.assertIn("参数默认值", answer.text)
+        drawn = []
+        original = ImageDraw.ImageDraw.text
+        def capture(draw, xy, text, *args, **kwargs):
+            drawn.append(str(text))
+            return original(draw, xy, text, *args, **kwargs)
+        with patch.object(ImageDraw.ImageDraw, "text", capture):
+            self.assertTrue(render_meta(answer))
+        self.assertIn("不含 Fever 加成", "".join(drawn))
+        single = resolve_command("/查分数表 暗黒天国 EX", self.repo).meta
+        self.assertEqual(len(single.rows), 1)
+        self.assertIn("不含 Fever 加成", single.text)
+
+    def test_unknown_and_mixed_references_fail_closed_before_filtering(self):
+        for entry in self.meta.values():
+            entry["3"]["chart"]["reference"]["scoreUpMultiplier"] = 3
+        self.repo.song_meta.get.return_value = self.snapshot()
+        unknown = resolve_command("/查分数表", self.repo).meta
+        self.assertEqual(unknown.status, "data_unavailable")
+        self.assertIn("上游数据口径变化", unknown.text)
+        self.assertIn("联系维护者", unknown.text)
+        self.assertNotIn("没有符合条件", unknown.text)
+        self.assertFalse(unknown.rows)
+        self.identity, self.songs, self.meta = payload()
+        self.meta["100001"]["3"]["chart"]["reference"]["fever"] = False
+        self.repo.song_meta.get.return_value = self.snapshot()
+        for command in ("/查分数表", "/查分数表 暗黒天国 EX", "/查分数表 lv<10"):
+            answer = resolve_command(command, self.repo).meta
+            self.assertEqual(answer.status, "data_unavailable")
+            self.assertIn("不能混合排名", answer.text)
+            self.assertFalse(answer.rows)
+
+    def test_current_upstream_sample_and_existing_raw_cache_recover_without_fetch(self):
+        from ournotes_bot.sources.haneoka.song_meta import SOURCE
+        fixture = json.loads((Path(__file__).parent / "fixtures" / "song_meta_no_fever.json").read_text(encoding="utf-8"))
+        snapshot = parse_payload(fixture["identity"], fixture["songs"], fixture["meta"], STAMP)
+        self.assertEqual(len(snapshot.rows), 4)
+        self.assertTrue(all(row.reference == "reference-no-fever" and row.eff is not None for row in snapshot.rows))
+        for row in snapshot.rows:
+            raw = fixture["meta"][str(row.song_id)][str(("EASY", "NORMAL", "HARD", "EXPERT").index(row.difficulty))]["chart"]
+            self.assertEqual(row.eff, raw["eff"])
+            self.assertEqual(row.score, raw["score"])
+        saved = {"schema": 1, "source": SOURCE, "identity": fixture["identity"],
+                 "songs": fixture["songs"], "meta": fixture["meta"], "fetched_at": STAMP}
+        path = self.root / "old-raw-cache.json"
+        path.write_text(json.dumps(saved), encoding="utf-8")
+        original = path.read_bytes()
+        fetcher = Mock(side_effect=AssertionError("fresh raw cache should not fetch"))
+        from datetime import datetime
+        cache = MetaRepository(path, fetch=fetcher, clock=lambda: datetime.fromisoformat(STAMP).timestamp() + 60)
+        self.assertEqual(cache.get(), snapshot)
+        fetcher.assert_not_called()
+        self.assertEqual(path.read_bytes(), original)
 
     def test_reject_invalid_response_empty_incomplete_duplicate_and_nonfinite(self):
         for songs, meta in [("<html>error</html>", self.meta), ({}, {}),
@@ -148,7 +229,7 @@ class SongMetaTests(unittest.TestCase):
         self.assertEqual(ascending.rows[0].song_id, 100013)
 
     def test_mixed_conditions_unknown_metrics_and_mapping_conflicts_are_excluded(self):
-        self.meta["100001"]["3"]["chart"]["reference"]["fever"] = False
+        self.meta["100001"]["3"]["chart"]["reference"]["scoreUpMultiplier"] = 3.0
         self.meta["100002"]["3"]["chart"]["eff"] = None
         self.repo.songs[2] = replace(self.repo.songs[2], title="另一个标题", titles=("另一个标题",))
         self.repo.songs.append(self.repo.songs[3])
@@ -323,7 +404,7 @@ class SongMetaTests(unittest.TestCase):
         self.assertEqual({r.song_id for r in single_all.rows}, {100001})
         self.assertFalse(resolve_command("/查分数表 全难度 EX", self.repo).meta.rows)
         # Mixed difficulties are authorized; mixed reference assumptions still are not.
-        self.meta["100001"]["0"]["chart"]["reference"]["fever"] = False
+        self.meta["100001"]["0"]["chart"]["reference"]["scoreUpMultiplier"] = 3.0
         self.meta["100001"]["1"]["chart"]["eff"] = None
         self.meta["100001"]["2"]["chart"].update(time=None, score=None)
         self.repo.song_meta.get.return_value = self.snapshot()

@@ -1,0 +1,187 @@
+{
+  "provenance": {
+    "retrievedAt": "2026-09-30",
+    "description": "One song with four charts; only parser-relevant public upstream fields retained unchanged. Catalog truncated for offline contract regression.",
+    "urls": [
+      "https://haneoka.org/api/v1/servers/jp/release?projection=identity",
+      "https://haneoka.org/api/v1/servers/jp/songs?projection=4&release=r-e5d86042ccd40903a3b6",
+      "https://haneoka.org/api/v1/servers/jp/song-meta?release=r-e5d86042ccd40903a3b6"
+    ]
+  },
+  "identity": {
+    "schema": "haneoka-resource-release-identity-v1",
+    "server": "jp",
+    "releaseId": "r-e5d86042ccd40903a3b6",
+    "sourceId": "v10053-d85981059b90-b0dec4ddb72e-md2c127880530-ncd8654cc"
+  },
+  "songs": {
+    "100001": {
+      "musicId": 100001,
+      "musicTitle": [
+        "迷星叫",
+        "",
+        "",
+        "",
+        ""
+      ],
+      "difficulty": [
+        {
+          "difficulty": 0,
+          "difficultyName": "easy",
+          "displayLevel": 9,
+          "file": "/assets/jp/Assets/AddressableResources/Live/MusicScore/0001/0001_00.bytes",
+          "noteCount": 342,
+          "playLevel": 9,
+          "publishedAt": [
+            1767193200000,
+            null,
+            null,
+            null,
+            null
+          ],
+          "sortLevel": 9.0
+        },
+        {
+          "difficulty": 1,
+          "difficultyName": "normal",
+          "displayLevel": 13,
+          "file": "/assets/jp/Assets/AddressableResources/Live/MusicScore/0001/0001_01.bytes",
+          "noteCount": 408,
+          "playLevel": 13,
+          "publishedAt": [
+            1767193200000,
+            null,
+            null,
+            null,
+            null
+          ],
+          "sortLevel": 13.0
+        },
+        {
+          "difficulty": 2,
+          "difficultyName": "hard",
+          "displayLevel": 20,
+          "file": "/assets/jp/Assets/AddressableResources/Live/MusicScore/0001/0001_02.bytes",
+          "noteCount": 682,
+          "playLevel": 20,
+          "publishedAt": [
+            1767193200000,
+            null,
+            null,
+            null,
+            null
+          ],
+          "sortLevel": 20.5
+        },
+        {
+          "difficulty": 3,
+          "difficultyName": "expert",
+          "displayLevel": 25,
+          "file": "/assets/jp/Assets/AddressableResources/Live/MusicScore/0001/0001_03.bytes",
+          "noteCount": 768,
+          "playLevel": 25,
+          "publishedAt": [
+            1767193200000,
+            null,
+            null,
+            null,
+            null
+          ],
+          "sortLevel": 25.0
+        }
+      ]
+    }
+  },
+  "meta": {
+    "100001": {
+      "0": {
+        "chart": {
+          "absoluteScoreAvailable": false,
+          "metaStatus": "available",
+          "metaWarnings": [
+            "setting-defaulted:fever_bonus_percent=0"
+          ],
+          "scoreKind": "chart-relative-factor",
+          "reference": {
+            "downtimeSeconds": 30.0,
+            "fever": false,
+            "intervalEndInclusive": true,
+            "perfectRate": 1,
+            "scoreUpMultiplier": 2.5,
+            "skillDurationSeconds": 10.0
+          },
+          "score": 5.84389386,
+          "eff": 2.8110059,
+          "time": 94.736,
+          "sr": 0.5041283
+        }
+      },
+      "1": {
+        "chart": {
+          "absoluteScoreAvailable": false,
+          "metaStatus": "available",
+          "metaWarnings": [
+            "setting-defaulted:fever_bonus_percent=0"
+          ],
+          "scoreKind": "chart-relative-factor",
+          "reference": {
+            "downtimeSeconds": 30.0,
+            "fever": false,
+            "intervalEndInclusive": true,
+            "perfectRate": 1,
+            "scoreUpMultiplier": 2.5,
+            "skillDurationSeconds": 10.0
+          },
+          "score": 6.73540052,
+          "eff": 3.23983478,
+          "time": 94.736,
+          "sr": 0.63385806
+        }
+      },
+      "2": {
+        "chart": {
+          "absoluteScoreAvailable": false,
+          "metaStatus": "available",
+          "metaWarnings": [
+            "setting-defaulted:fever_bonus_percent=0"
+          ],
+          "scoreKind": "chart-relative-factor",
+          "reference": {
+            "downtimeSeconds": 30.0,
+            "fever": false,
+            "intervalEndInclusive": true,
+            "perfectRate": 1,
+            "scoreUpMultiplier": 2.5,
+            "skillDurationSeconds": 10.0
+          },
+          "score": 7.43596913,
+          "eff": 3.57681943,
+          "time": 94.736,
+          "sr": 0.63385344
+        }
+      },
+      "3": {
+        "chart": {
+          "absoluteScoreAvailable": false,
+          "metaStatus": "available",
+          "metaWarnings": [
+            "setting-defaulted:fever_bonus_percent=0"
+          ],
+          "scoreKind": "chart-relative-factor",
+          "reference": {
+            "downtimeSeconds": 30.0,
+            "fever": false,
+            "intervalEndInclusive": true,
+            "perfectRate": 1,
+            "scoreUpMultiplier": 2.5,
+            "skillDurationSeconds": 10.0
+          },
+          "score": 7.78400582,
+          "eff": 3.74423061,
+          "time": 94.736,
+          "sr": 0.64355464
+        }
+      }
+    }
+  }
+}

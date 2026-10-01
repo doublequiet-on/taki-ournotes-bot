@@ -27,6 +27,27 @@ DIFFICULTIES = ("EASY", "NORMAL", "HARD", "EXPERT")
 REFERENCE = {"downtimeSeconds": 30.0, "fever": True, "intervalEndInclusive": True,
              "perfectRate": 1, "scoreUpMultiplier": 2.5, "skillDurationSeconds": 10.0}
 
+NO_FEVER_REFERENCE = {**REFERENCE, "fever": False}
+REFERENCE_LABELS = {"reference": "含 Fever 加成", "reference-no-fever": "不含 Fever 加成"}
+
+
+def reference_kind(reference):
+    """Only the two verified upstream contracts; reject bool/numeric aliases."""
+    if not isinstance(reference, dict) or set(reference) != set(REFERENCE):
+        return "unknown"
+    for key, expected in REFERENCE.items():
+        value = reference[key]
+        if isinstance(expected, bool):
+            if type(value) is not bool:
+                return "unknown"
+        elif type(value) not in (int, float):
+            return "unknown"
+    if reference == REFERENCE:
+        return "reference"
+    if reference == NO_FEVER_REFERENCE:
+        return "reference-no-fever"
+    return "unknown"
+
 
 def unique_object(pairs):
     result = {}
@@ -127,12 +148,12 @@ def parse_payload(identity, songs, meta, fetched_at: str) -> MetaSnapshot:
             metrics = entry["chart"]
             eff, score = number(metrics.get("eff")), number(metrics.get("score"))
             seconds, ratio = number(metrics.get("time")), number(metrics.get("sr"), ratio=True)
-            reference = metrics.get("reference")
+            reference = reference_kind(metrics.get("reference"))
             # Unknown models remain visible as unavailable, never enter this ranking.
             available = (metrics.get("metaStatus") == "available"
                          and metrics.get("scoreKind") == "chart-relative-factor"
                          and metrics.get("absoluteScoreAvailable") is False
-                         and isinstance(reference, dict) and reference == REFERENCE)
+                         and reference in REFERENCE_LABELS)
             warnings = metrics.get("metaWarnings", [])
             if not isinstance(warnings, list) or not all(isinstance(w, str) for w in warnings):
                 raise ValueError("invalid warnings")
@@ -142,7 +163,7 @@ def parse_payload(identity, songs, meta, fetched_at: str) -> MetaSnapshot:
                                 DIFFICULTIES[index], number(display_level),
                                 eff if available else None, score if available else None,
                                 seconds, ratio if available else None,
-                                "reference" if available else "unknown", tuple(warnings)))
+                                reference if available else "unknown", tuple(warnings)))
     if not rows:
         raise ValueError("empty analysis")
     return MetaSnapshot(tuple(rows), identity["releaseId"], identity["sourceId"], fetched_at)

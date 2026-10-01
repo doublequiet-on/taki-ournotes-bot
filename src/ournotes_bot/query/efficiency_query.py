@@ -15,12 +15,12 @@ from datetime import datetime, timezone
 from ..data import Song, normalize
 from .entity_lexicon import EntityRef, find_anchor, resolve_entity
 from .song_conditions import extract_song_conditions, remove_song_conditions
-from ..sources.haneoka.song_meta import DIFFICULTIES, MetaRow
+from ..sources.haneoka.song_meta import DIFFICULTIES, REFERENCE_LABELS, MetaRow
 from ..sources.haneoka.song_traits import describe as describe_song
 
 PAGE_SIZE = 30
 HELP = ("用法：/查分数表；/查分数表 [乐队] [EX] [lv<=25] [页2]；/查分数表 歌名或ID [EX]。\n"
-        "默认全难度、每分钟得分效率从高到低，每页 30 条（同曲不同难度分别列出）；支持 前10/前20、指标=eff/score、排序=asc/desc。单曲默认 EXPERT。仅支持日服固定理想参考条件，不能指定队伍或其他模式。")
+        "默认全难度、每分钟得分效率从高到低，每页 30 条（同曲不同难度分别列出）；支持 前10/前20、指标=eff/score、排序=asc/desc。单曲默认 EXPERT。仅支持日服已核实的上游理想参考条件，不能指定队伍或其他模式。")
 META_WORD = r"(?<![A-Za-z])meta(?=$|[\s?？。！!，,])"
 MARKER = re.compile(r"分数表|效率|" + META_WORD, re.I)
 FORBIDDEN = re.compile(r"推荐|攻略|预测|档线|代练|代肝|账号|编成|配队|抽卡|怎么打|如何打|最强|哪个好|哪个更好|比较强弱")
@@ -118,6 +118,15 @@ def execute_efficiency(spec, repository) -> MetaAnswer:
     snapshot = repository.song_meta.get()
     if snapshot is None:
         return MetaAnswer("效率数据暂不可用，请稍后重试；歌曲、卡牌查询仍可使用。", status="data_unavailable")
+    references = {row.reference for row in snapshot.rows if row.reference in REFERENCE_LABELS}
+    if not references or len(references) > 1:
+        reason = "上游数据口径变化，尚无已确认的参考条件" if not references else "上游包含不同 Fever 参考条件，不能混合排名"
+        return MetaAnswer(f"效率数据暂不可用：{reason}。请联系维护者核对 Haneoka 数据口径后更新；"
+                          f"调整筛选条件无法解决。\n上游版本：{snapshot.release} / {snapshot.source_version}",
+                          status="data_unavailable")
+    reference = next(iter(references))
+    assumptions = (f"模式：上游理想参考；全 PERFECT、{REFERENCE_LABELS[reference]}、"
+                   "技能×2.5/10秒、曲间30秒。非官方结论或实得分保证。")
     subject = spec.subject
     difficulty = spec.difficulty or ("EXPERT" if subject and subject.kind == "song" else "")
     if difficulty == "ALL":
@@ -138,13 +147,12 @@ def execute_efficiency(spec, repository) -> MetaAnswer:
                                         *local[0].localized.get("title", {}).values()) if t}
         if titles.intersection(normalize(t) for t in row.titles):
             mapped.append(row)
-    eligible = [r for r in mapped if (not difficulty or r.difficulty == difficulty) and r.reference == "reference"
+    eligible = [r for r in mapped if (not difficulty or r.difficulty == difficulty) and r.reference == reference
                 and getattr(r, metric) is not None]
     # Numeric song ID breaks ties deterministically; no missing value becomes zero.
     eligible.sort(key=lambda r: ((-1 if spec.order == "desc" else 1) * getattr(r, metric), r.song_id,
                                  DIFFICULTIES.index(r.difficulty)))
     scope = f"{difficulty_label}{'（默认）' if not spec.difficulty else ''} · {'eff 每分钟得分效率' if metric == 'eff' else 'score 得分系数'} {'降序' if spec.order == 'desc' else '升序'}"
-    assumptions = "模式：上游理想参考；全 PERFECT、Fever、技能×2.5/10秒、曲间30秒。非官方结论或实得分保证。"
     footer = (f"Haneoka分析数据 · 日服 · {'旧缓存（刷新失败或过期）' if snapshot.stale else '有效缓存'}\n"
               f"本机获取：{snapshot.fetched_at}；上游版本：{snapshot.release} / {snapshot.source_version}\n"
               f"覆盖：{len(eligible)} 条{difficulty_label}有效谱面样本；同曲不同难度分别计数，非完整全曲榜。\n{assumptions}")
@@ -202,7 +210,7 @@ def execute_efficiency(spec, repository) -> MetaAnswer:
     notes = (f"Haneoka分析数据 · 日服 · {'旧缓存（刷新失败或过期）' if snapshot.stale else '有效缓存'} · "
              f"{len(eligible)} 条{difficulty_label}有效谱面样本（非完整全曲榜）",
              metric_note,
-             "参考：全 PERFECT、含 Fever、技能×2.5/10秒、曲间30秒；非官方结论或实得分保证。",
+             assumptions,
              "同曲不同难度分别排名；时长为上游末判定点时长，不含曲间30秒，显示到秒。",
              "本机获取：" + datetime.fromisoformat(snapshot.fetched_at).astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
              + f" · 版本：{snapshot.release}")
