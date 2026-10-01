@@ -10,8 +10,8 @@ from ournotes_bot.ai_query import AIQueryParser, UNKNOWN_ENTITY, UNSUPPORTED
 from ournotes_bot.commands import handle_command, parse_query, resolve_command, song_matches
 from ournotes_bot.config import Settings
 from ournotes_bot.data import DataError, SongRepository
-from ournotes_bot.yatta import BASE, build_data, build_skills, build_support_cards, fetch_json
-from ournotes_bot.qq import _image_from_result, _image_reply
+from ournotes_bot.sources.yatta import BASE, build_data, build_skills, build_support_cards, fetch_json
+from ournotes_bot.platforms.qq.qq import _image_from_result, _image_reply
 
 
 CHARACTERS = {"1": {"id": 1, "name": ["高松 燈", "Tomori Takamatsu", "高松燈", "高松灯"], "band": 1}}
@@ -44,7 +44,7 @@ class QueryTests(unittest.TestCase):
         self.assertIn("迷星叫", handle_command("/查曲 100001", self.repo))
         self.assertIn("迷星叫", handle_command("/查曲 迷星叫", self.repo))
         self.assertIn("768 Notes", handle_command("/查谱面 1 EXPERT", self.repo))
-        with patch("ournotes_bot.yatta.card_detail", return_value={}):
+        with patch("ournotes_bot.sources.yatta.card_detail", return_value={}):
             self.assertIn("高松灯", handle_command("/查卡 1", self.repo))
         self.assertIn("高松灯", handle_command("/查卡 我们现在就在这里", self.repo))
         self.assertIn("并肩前行", handle_command("/查支援卡 高松灯", self.repo))
@@ -136,7 +136,7 @@ class QueryTests(unittest.TestCase):
                     answer = handle_command(command, self.repo, resolved=selected)
                 self.assertIn("第 2/2 页", answer)
                 self.assertIn("共17张", answer.replace(" ", ""))
-                with patch("ournotes_bot.qq." + renderer, return_value=b"image") as render:
+                with patch("ournotes_bot.platforms.qq.qq." + renderer, return_value=b"image") as render:
                     self.assertEqual(_image_from_result(selected, self.repo, "zh"), b"image")
                 self.assertEqual([card.id for card in render.call_args.args[0]], [17])
         first = parser.answer("/问 mygo的SSR卡", self.repo)
@@ -152,16 +152,16 @@ class QueryTests(unittest.TestCase):
 
     def test_chart_image_loads_notes_for_direct_and_natural_queries(self):
         score = {"notes": [{"t": 0, "pos": 6, "size": 6}]}
-        with patch("ournotes_bot.qq.load_chart_score", return_value=score) as load, \
-             patch("ournotes_bot.qq.render_chart", return_value=b"full chart") as render:
+        with patch("ournotes_bot.platforms.qq.qq.load_chart_score", return_value=score) as load, \
+             patch("ournotes_bot.platforms.qq.qq.render_chart", return_value=b"full chart") as render:
             self.assertEqual(_image_reply("/查谱面 1 EXPERT", self.repo), b"full chart")
             load.assert_called_with(self.repo.songs[0], self.repo.songs[0].charts[-1])
             self.assertIs(render.call_args.args[3], score)
         settings = Settings("", "", BASE, self.repo.cache_file, 6, "test-key", "test-model", "https://ai.example", 4)
         parser = AIQueryParser(settings)
         with patch.object(parser, "_request", return_value={"intent": "chart", "query": "迷星叫", "difficulty": "EXPERT"}), \
-             patch("ournotes_bot.qq.load_chart_score", return_value=score) as load, \
-             patch("ournotes_bot.qq.render_chart", return_value=b"full chart"):
+             patch("ournotes_bot.platforms.qq.qq.load_chart_score", return_value=score) as load, \
+             patch("ournotes_bot.platforms.qq.qq.render_chart", return_value=b"full chart"):
             parser.answer("/问 迷星叫EX物量", self.repo)
             self.assertEqual(_image_reply("/问 迷星叫EX物量", self.repo, parser), b"full chart")
             load.assert_called_with(self.repo.songs[0], self.repo.songs[0].charts[-1])
@@ -192,7 +192,7 @@ class QueryTests(unittest.TestCase):
             {"type": "gekisouSkill", "name": ["Gekisou", "Gekisou", "激奏", "激奏"]},
         ]
         detail = {"statsMax": [10156, 7442, 7179], "skills": skills}
-        with patch("ournotes_bot.yatta.card_detail", return_value=detail) as fetch:
+        with patch("ournotes_bot.sources.yatta.card_detail", return_value=detail) as fetch:
             card = self.repo.card_with_detail(self.repo.cards[0])
             self.assertEqual(self.repo.card_with_detail(self.repo.cards[0]), card)
         self.assertEqual(fetch.call_count, 1)
@@ -209,14 +209,14 @@ class QueryTests(unittest.TestCase):
                                     "formula": {"divide": 100, "format": "F1"}}]}},
             {"type": "gekisouSupportSkill", "name": ["激奏", "Gekisou", "激奏", "激奏支援"]},
         ]}
-        with patch("ournotes_bot.yatta.support_card_detail", return_value=detail) as fetch:
+        with patch("ournotes_bot.sources.yatta.support_card_detail", return_value=detail) as fetch:
             card = self.repo.support_card_with_detail(self.repo.support_cards[0])
             self.assertEqual(self.repo.support_card_with_detail(self.repo.support_cards[0]), card)
         self.assertEqual(fetch.call_count, 1)
         self.assertEqual((card.performance, card.technic, card.visual), (600, 500, 400))
         self.assertEqual(card.skills[0].description, "提升25.0%")
         with patch.object(self.repo, "support_card_with_detail", return_value=card), \
-             patch("ournotes_bot.qq.render_support_card", return_value=b"support image"):
+             patch("ournotes_bot.platforms.qq.qq.render_support_card", return_value=b"support image"):
             self.assertEqual(_image_reply("/查支援卡 1", self.repo), b"support image")
 
     def test_ask_skill_and_support_queries_use_regular_list_renderers(self):
@@ -226,10 +226,10 @@ class QueryTests(unittest.TestCase):
         }])
         self.repo.cards = [replace(self.repo.cards[0], skills=skills)]
         parser = AIQueryParser(Settings("", "", BASE, self.repo.cache_file, 6))
-        with patch("ournotes_bot.qq.render_card_list", return_value=b"skill cards") as render:
+        with patch("ournotes_bot.platforms.qq.qq.render_card_list", return_value=b"skill cards") as render:
             self.assertEqual(_image_reply("/问 得分提升技能的成员卡有哪些", self.repo, parser), b"skill cards")
         self.assertEqual([card.id for card in render.call_args.args[0]], [1])
-        with patch("ournotes_bot.qq.render_support_card_list", return_value=b"support cards") as render:
+        with patch("ournotes_bot.platforms.qq.qq.render_support_card_list", return_value=b"support cards") as render:
             self.assertEqual(_image_reply("/问 tmr的支援卡有哪些", self.repo, parser), b"support cards")
         self.assertEqual([card.id for card in render.call_args.args[0]], [1])
 
@@ -276,7 +276,7 @@ class QueryTests(unittest.TestCase):
         self.assertEqual(len(song_matches(self.repo, "mygo lv<=25")), 1)
         self.assertEqual(song_matches(self.repo, "mygo lv<25"), [])
         self.assertEqual(song_matches(self.repo, "mygo lv>=25.5 diff=EXPERT"), [])
-        with patch("ournotes_bot.qq.render_song_list", return_value=b"song image"):
+        with patch("ournotes_bot.platforms.qq.qq.render_song_list", return_value=b"song image"):
             self.assertEqual(_image_reply("/问 mygo25级以上的歌曲", self.repo, parser), b"song image")
 
     def test_model_can_return_bounded_song_level_filter(self):
@@ -298,10 +298,10 @@ class QueryTests(unittest.TestCase):
         settings = Settings("", "", BASE, self.repo.cache_file, 6, "test-key", "test-model", "https://ai.example", 2)
         parser = AIQueryParser(settings)
         with patch.object(parser, "_request", return_value={"intent": "card", "query": "1", "difficulty": ""}), \
-             patch("ournotes_bot.yatta.card_detail", return_value={}):
+             patch("ournotes_bot.sources.yatta.card_detail", return_value={}):
             self.assertIn("高松灯", parser.answer("/问 1号卡面", self.repo))
         with patch.object(self.repo, "card_with_detail", return_value=self.repo.cards[0]), \
-             patch("ournotes_bot.qq.render_card", return_value=b"image"):
+             patch("ournotes_bot.platforms.qq.qq.render_card", return_value=b"image"):
             self.assertEqual(_image_reply("/问 1号卡面", self.repo, parser), b"image")
 
 

@@ -9,7 +9,7 @@ from unittest.mock import patch
 from PIL import Image, ImageChops, ImageDraw
 
 from ournotes_bot.data import Card, Chart, Skill, Song, SupportCard
-from ournotes_bot.efficiency_query import MetaAnswer
+from ournotes_bot.query.efficiency_query import MetaAnswer
 from ournotes_bot import visuals
 
 
@@ -71,7 +71,7 @@ class VisualTests(unittest.TestCase):
                 self.capture(lambda: visuals.render_song_list([], "MyGO!!!!!", locale))
 
     def test_song_header_hierarchy_and_native_mark_fallback(self):
-        from ournotes_bot.song_traits import SongTraits
+        from ournotes_bot.sources.haneoka.song_traits import SongTraits
         song = replace(self.song, traits=SongTraits(2, ("JUST", "JUST", "COMBO")))
         for render in (lambda: visuals.render_song_list([song], "蓝色"),
                        lambda: visuals.render_chart(song, song.charts)):
@@ -104,7 +104,7 @@ class VisualTests(unittest.TestCase):
         self.assertTrue(any("蓝色（图标暂缺）" in text for text, _ in missing))
 
     def test_three_mission_marks_have_distinct_pixels_and_keep_labels(self):
-        from ournotes_bot.song_traits import SongTraits
+        from ournotes_bot.sources.haneoka.song_traits import SongTraits
 
         sample = Image.new("RGB", (78, 26), visuals.SURFACE)
         draw = ImageDraw.Draw(sample)
@@ -136,7 +136,7 @@ class VisualTests(unittest.TestCase):
                              ["JUST", "COMBO", "LUCK"])
 
     def test_mission_marks_use_game_assets_and_missing_icon_keeps_label(self):
-        from ournotes_bot.song_traits import SongTraits
+        from ournotes_bot.sources.haneoka.song_traits import SongTraits
 
         song = replace(self.song, traits=SongTraits(2, ("JUST", "COMBO", "LUCK")))
         native = Image.new("RGBA", (64, 64), "white")
@@ -162,7 +162,7 @@ class VisualTests(unittest.TestCase):
                          ["JUST", "COMBO", "LUCK"])
 
     def test_long_mission_sequence_and_title_keep_identity_below(self):
-        from ournotes_bot.song_traits import SongTraits
+        from ournotes_bot.sources.haneoka.song_traits import SongTraits
         song = replace(self.song, title="长标题" * 20, traits=SongTraits(1, ("COMBO",) * 16, True))
         calls = self.capture(lambda: visuals.render_song_list([song], "激奏测试"))
         identity = next(box for text, box in calls if text.startswith("ID "))
@@ -171,7 +171,7 @@ class VisualTests(unittest.TestCase):
         self.assertTrue(all(box[3] < identity[1] for _, box in mission))
 
     def test_compact_chart_header_keeps_credits_and_identity_separate(self):
-        from ournotes_bot.song_traits import SongTraits
+        from ournotes_bot.sources.haneoka.song_traits import SongTraits
         for composer, lyricist in (("", ""), ("作者甲", ""), ("", "作者乙"), ("作者甲", "作者乙")):
             song = replace(self.song, title="长歌名" * 12, composer=composer,
                            lyricist=lyricist, traits=SongTraits(2, ("COMBO",) * 3))
@@ -187,7 +187,7 @@ class VisualTests(unittest.TestCase):
                 self.assertTrue(all(box[3] < identity[1] for box in labels))
 
     def test_compact_score_rows_preserve_values_and_expand_for_fallbacks(self):
-        from ournotes_bot.song_traits import SongTraits
+        from ournotes_bot.sources.haneoka.song_traits import SongTraits
         short = replace(self.song, title="紧凑样例", traits=SongTraits(2, ("COMBO",) * 3))
         long = replace(self.song, title="长标题测试" * 12,
                        traits=SongTraits(2, ("COMBO",) * 16, True))

@@ -3,7 +3,7 @@ from unittest.mock import patch, AsyncMock, Mock
 from types import SimpleNamespace
 
 from ournotes_bot.commands import HELP_TEXTS
-from ournotes_bot.menu import GROUP_PANEL_ITEMS, MENU_ITEMS, MENU_NAME, PANEL_ITEMS
+from ournotes_bot.platforms.qq.menu import GROUP_PANEL_ITEMS, MENU_ITEMS, MENU_NAME, PANEL_ITEMS
 
 
 def display_width(value: str) -> int:
@@ -17,7 +17,7 @@ class MenuLimitsTests(unittest.TestCase):
              patch('ournotes_bot.main.Settings.from_env', return_value=SimpleNamespace(app_id='fake', app_secret='fake')), \
              patch('ournotes_bot.main.SongRepository') as repository, \
              patch('ournotes_bot.main.AIQueryParser') as ai, \
-             patch('ournotes_bot.menu.setup_menu', new_callable=AsyncMock, return_value=[]) as setup:
+             patch('ournotes_bot.platforms.qq.menu.setup_menu', new_callable=AsyncMock, return_value=[]) as setup:
             main()
         setup.assert_awaited_once_with('fake', 'fake')
         repository.assert_not_called()
@@ -55,7 +55,7 @@ class MenuLimitsTests(unittest.TestCase):
 
 class PanelUpdateTests(unittest.IsolatedAsyncioTestCase):
     async def test_existing_install_updates_only_group_then_is_idempotent(self):
-        from ournotes_bot import menu
+        from ournotes_bot.platforms.qq import menu
         calls = []
         panels = {scope: {"panel_id": scope, "panel": {
             "remark": "ournotes-qq-bot-" + scope, "items": list(PANEL_ITEMS)}}

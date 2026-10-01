@@ -9,9 +9,9 @@ from unittest.mock import patch
 
 from PIL import Image
 
-from ournotes_bot import yatta
+from ournotes_bot.sources import yatta
 from ournotes_bot.ai_query import AIQueryParser
-from ournotes_bot.card_catalog import query_cards, labels
+from ournotes_bot.query.card_catalog import query_cards, labels
 from ournotes_bot.commands import resolve_command, handle_command
 from ournotes_bot.config import Settings
 from ournotes_bot.data import Card, SupportCard, SongRepository
@@ -33,7 +33,7 @@ def raw_detail(support=False, live="スコアUP", gek="JUST数獲得量UP"):
 
 class CardCatalogTests(unittest.TestCase):
     def setUp(self):
-        source = patch("ournotes_bot.member_list_visuals.get_snapshot", return_value=None)
+        source = patch("ournotes_bot.rendering.member_list_visuals.get_snapshot", return_value=None)
         self.source = source.start()
         self.addCleanup(source.stop)
         self.tmp = tempfile.TemporaryDirectory()
@@ -88,7 +88,7 @@ class CardCatalogTests(unittest.TestCase):
             result = resolve_command(cmd + " 1", self.repo)
             self.assertEqual(result.catalog.request.mode, "art")
             self.assertTrue(resolve_command(cmd + " tmr", self.repo).catalog.error)
-        from ournotes_bot.local_query import parse_local_query
+        from ournotes_bot.natural_query.local_query import parse_local_query
         self.assertIn("同时存在", parse_local_query("ID1", self.repo))
 
     def test_unknown_values_and_unverified_rarity_are_errors(self):
@@ -225,7 +225,7 @@ class CardCatalogTests(unittest.TestCase):
             model.assert_not_called()
 
     def test_visual_single_list_detail_missing_and_long_text(self):
-        from ournotes_bot.card_visuals import _lines
+        from ournotes_bot.rendering.card_visuals import _lines
         from ournotes_bot.visuals import _font
         title = "很长的标题" * 12
         long = replace(self.base, title=title, skills=yatta.build_skills([{

@@ -1,3 +1,9 @@
+# L3
+# Input: 命令文本、SongRepository；handle_command 可复用已捕获的 CommandResult。
+# Output: resolve_command → CommandResult | None；handle_command → str | None，含确定性查询、帮助或状态文本。
+# Pos: Query / Deterministic 的直接命令入口与结果契约；见 query/L2-2.md。
+# Effects/Dependencies: 依赖 query 专项模块、文案与进程内调试计数；实体解析可读别名，详情／效率可经 Data 联网或读写缓存，不调用模型。
+
 from __future__ import annotations
 
 import re
@@ -8,13 +14,13 @@ from difflib import SequenceMatcher
 from typing import TypeVar
 
 from .data import Card, Skill, Song, SongRepository, SupportCard, character_identity, localized_text, normalize, resolve_character_alias
-from .entity_lexicon import known_alias_names, resolve_exact_alias
+from .query.entity_lexicon import known_alias_names, resolve_exact_alias
 from .i18n import tr
-from .query_debug import QUERY_DEBUG_COUNTERS
-from .efficiency_query import MetaAnswer, HELP as EFFICIENCY_HELP
-from .song_query import SongAnswer, parse_filter, execute as execute_song_filter
-from .song_traits import describe as describe_song
-from .card_catalog import CardAnswer, query_cards
+from .natural_query.query_debug import QUERY_DEBUG_COUNTERS
+from .query.efficiency_query import MetaAnswer, HELP as EFFICIENCY_HELP
+from .query.song_query import SongAnswer, parse_filter, execute as execute_song_filter
+from .sources.haneoka.song_traits import describe as describe_song
+from .query.card_catalog import CardAnswer, query_cards
 from .bot_info import INTRO
 
 
@@ -447,12 +453,12 @@ def _skill_lines(skills: tuple[Skill, ...], locale: str) -> list[str]:
 
 
 def _format_card_detail(card: Card, locale: str) -> str:
-    from .card_catalog import detail_text
+    from .query.card_catalog import detail_text
     return detail_text(card, locale)
 
 
 def _format_support_card_detail(card: SupportCard, locale: str) -> str:
-    from .card_catalog import detail_text
+    from .query.card_catalog import detail_text
     return detail_text(card, locale)
 
 
@@ -499,7 +505,7 @@ def resolve_command(content: str, repository: SongRepository) -> CommandResult |
                              cards=() if support else answer.cards,
                              support_cards=answer.cards if support else (), catalog=answer)
     if re.match(r"^查(?:分数表|效率)(?:\s|$)", text):
-        from .efficiency_query import MetaAnswer, parse_efficiency, execute_efficiency
+        from .query.efficiency_query import MetaAnswer, parse_efficiency, execute_efficiency
         spec = parse_efficiency(text, repository, direct=True)
         answer = MetaAnswer(spec, status="invalid_arguments") if isinstance(spec, str) else execute_efficiency(spec, repository)
         return CommandResult(("efficiency", text, None), meta=answer)

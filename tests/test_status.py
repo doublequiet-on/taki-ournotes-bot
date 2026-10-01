@@ -8,7 +8,7 @@ from unittest.mock import patch
 
 from ournotes_bot.commands import handle_command
 from ournotes_bot.data import DataError, SongRepository
-from ournotes_bot.yatta import BASE
+from ournotes_bot.sources.yatta import BASE
 
 
 class StatusTests(unittest.TestCase):
@@ -47,15 +47,15 @@ class StatusTests(unittest.TestCase):
     def test_live_refresh_failure_and_success_update_status(self):
         repo = SongRepository(BASE, self.path)
         repo.load()
-        with patch("ournotes_bot.yatta.fetch_json", side_effect=OSError("offline")):
+        with patch("ournotes_bot.sources.yatta.fetch_json", side_effect=OSError("offline")):
             with self.assertRaises(DataError):
                 repo.refresh()
         self.assertEqual(repo.cache_state, "stale")
         self.assertIn("最近一次同步失败", handle_command("/数据状态", repo))
 
-        with patch("ournotes_bot.yatta.fetch_json", return_value={}), \
-             patch("ournotes_bot.yatta.build_data", return_value=([], [])), \
-             patch("ournotes_bot.yatta.build_support_cards", return_value=[]):
+        with patch("ournotes_bot.sources.yatta.fetch_json", return_value={}), \
+             patch("ournotes_bot.sources.yatta.build_data", return_value=([], [])), \
+             patch("ournotes_bot.sources.yatta.build_support_cards", return_value=[]):
             repo.refresh()
         self.assertEqual(repo.cache_state, "fresh")
         self.assertIn("本次运行同步成功", handle_command("/数据状态", repo))
@@ -65,9 +65,9 @@ class StatusTests(unittest.TestCase):
         repo = SongRepository(BASE, self.path)
         repo.load()
         previous = repo.last_successful_sync_at
-        with patch("ournotes_bot.yatta.fetch_json", return_value={}), \
-             patch("ournotes_bot.yatta.build_data", return_value=([], [])), \
-             patch("ournotes_bot.yatta.build_support_cards", return_value=[]), \
+        with patch("ournotes_bot.sources.yatta.fetch_json", return_value={}), \
+             patch("ournotes_bot.sources.yatta.build_data", return_value=([], [])), \
+             patch("ournotes_bot.sources.yatta.build_support_cards", return_value=[]), \
              patch.object(repo, "_save_cache", side_effect=OSError("private path")):
             with self.assertRaises(DataError):
                 repo.refresh()

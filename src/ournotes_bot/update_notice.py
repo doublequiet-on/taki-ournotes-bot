@@ -1,3 +1,9 @@
+# L3
+# Input: 更新器提交状态文件、源码／Git 版本事实、群发现／许可事件、通知账本、可选 AIClient；run／deliver 接收 QQ API 对象。
+# Output: 更新公告文本及通知 SQLite 中的群／报告／发送占位与回执或失败状态；run 为后台轮询协程。
+# Pos: 已提交部署的运行时公告模块；机制见 ../../docs/更新通知机制.md，QQ 负责事件与后台任务接线。
+# Effects/Dependencies: Git 子进程、状态文件读取、SQLite 持久写入、可选 AI 请求；内部使用 botpy Route／HTTP 主动查询许可与发送，不走被动回复路径。
+
 """Announce committed deployments; persist group discovery and send reservations.
 
 The live QQ connection owns this worker. Candidate readiness alone is insufficient:

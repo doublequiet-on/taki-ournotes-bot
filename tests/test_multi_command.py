@@ -14,8 +14,8 @@ from ournotes_bot.commands import split_commands
 from ournotes_bot.config import MAX_MULTI_COMMAND_LIMIT, QQ_PASSIVE_REPLY_LIMIT, Settings
 from ournotes_bot.data import SongRepository
 from ournotes_bot.i18n import MESSAGES, tr
-from ournotes_bot.qq import PreparedReply, QueryGate, _deliver_reply, prepare_commands
-from ournotes_bot.yatta import BASE
+from ournotes_bot.platforms.qq.qq import PreparedReply, QueryGate, _deliver_reply, prepare_commands
+from ournotes_bot.sources.yatta import BASE
 
 
 class SplitCommandsTests(unittest.TestCase):
@@ -102,7 +102,7 @@ class PrepareCommandsTests(unittest.IsolatedAsyncioTestCase):
             return PreparedReply(f"回复{content}")
 
         gate = QueryGate(2, 4)
-        with patch("ournotes_bot.qq._prepare_reply", side_effect=fake_prepare):
+        with patch("ournotes_bot.platforms.qq.qq._prepare_reply", side_effect=fake_prepare):
             replies, overflow = await prepare_commands(["a", "b", "c"], gate, self.repo, None, 5)
         self.assertEqual(overflow, 0)
         self.assertEqual([reply.text for reply in replies], ["回复a", "回复b", "回复c"])
@@ -121,7 +121,7 @@ class PrepareCommandsTests(unittest.IsolatedAsyncioTestCase):
             return PreparedReply(content)
 
         gate = QueryGate(2, 4)
-        with patch("ournotes_bot.qq._prepare_reply", side_effect=fake_prepare):
+        with patch("ournotes_bot.platforms.qq.qq._prepare_reply", side_effect=fake_prepare):
             replies, _ = await prepare_commands(
                 ["a", "b", "c", "d", "e", "f"], gate, self.repo, None, 6,
             )
@@ -136,7 +136,7 @@ class PrepareCommandsTests(unittest.IsolatedAsyncioTestCase):
             return PreparedReply(content)
 
         gate = QueryGate(2, 4)
-        with patch("ournotes_bot.qq._prepare_reply", side_effect=fake_prepare):
+        with patch("ournotes_bot.platforms.qq.qq._prepare_reply", side_effect=fake_prepare):
             replies, overflow = await prepare_commands(["a", "b", "c"], gate, self.repo, None, 2)
         self.assertEqual(overflow, 1)
         self.assertEqual(started, ["a", "b"])
@@ -149,7 +149,7 @@ class PrepareCommandsTests(unittest.IsolatedAsyncioTestCase):
             return PreparedReply(content)
 
         gate = QueryGate(2, 4)
-        with patch("ournotes_bot.qq._prepare_reply", side_effect=fake_prepare), \
+        with patch("ournotes_bot.platforms.qq.qq._prepare_reply", side_effect=fake_prepare), \
              self.assertLogs("ournotes_bot.qq", level="ERROR") as log:
             replies, _ = await prepare_commands(["a", "boom", "c"], gate, self.repo, None, 5)
         self.assertEqual([reply.text for reply in replies], ["a", "c"])
@@ -157,7 +157,7 @@ class PrepareCommandsTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_unrecognised_lines_are_skipped(self):
         gate = QueryGate(2, 4)
-        with patch("ournotes_bot.qq._prepare_reply", side_effect=lambda content, repo, parser: None):
+        with patch("ournotes_bot.platforms.qq.qq._prepare_reply", side_effect=lambda content, repo, parser: None):
             replies, overflow = await prepare_commands(["闲聊", "聊天"], gate, self.repo, None, 5)
         self.assertEqual(replies, [])
         self.assertEqual(overflow, 0)

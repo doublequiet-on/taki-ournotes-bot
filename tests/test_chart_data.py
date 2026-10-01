@@ -10,7 +10,7 @@ from unittest.mock import Mock, patch
 
 from PIL import Image, ImageDraw
 
-from ournotes_bot.chart_data import ChartDataError, chart_url, load_chart_score
+from ournotes_bot.sources.chart_data import ChartDataError, chart_url, load_chart_score
 from ournotes_bot.data import Chart, Song
 from ournotes_bot.visuals import _draw_score, render_chart
 
@@ -42,20 +42,20 @@ class ChartDataTests(unittest.TestCase):
                          "https://assets.bdon.moe/zh-Hans/Live/MusicScore/0001/0001_03/0001_03.json")
         with tempfile.TemporaryDirectory() as directory:
             cache = Path(directory)
-            with patch("ournotes_bot.chart_data.urlopen", return_value=io.BytesIO(json.dumps(SCORE).encode())) as fetch:
+            with patch("ournotes_bot.sources.chart_data.urlopen", return_value=io.BytesIO(json.dumps(SCORE).encode())) as fetch:
                 self.assertEqual(load_chart_score(self.song, self.chart, cache)["notes"], SCORE["score"]["notes"])
                 self.assertEqual(fetch.call_count, 1)
-            with patch("ournotes_bot.chart_data.urlopen", side_effect=AssertionError("cache was not used")):
+            with patch("ournotes_bot.sources.chart_data.urlopen", side_effect=AssertionError("cache was not used")):
                 self.assertEqual(load_chart_score(self.song, self.chart, cache)["notes"], SCORE["score"]["notes"])
             os.utime(cache / "0001_0001_03.json", (0, 0))
-            with patch("ournotes_bot.chart_data.urlopen", side_effect=OSError("offline")):
+            with patch("ournotes_bot.sources.chart_data.urlopen", side_effect=OSError("offline")):
                 self.assertEqual(load_chart_score(self.song, self.chart, cache)["notes"], SCORE["score"]["notes"])
 
     def test_invalid_or_unrecognized_score_is_rejected(self) -> None:
         with self.assertRaises(ChartDataError):
             chart_url(Song(999999, "Other", (), "", "", "", "", "", "", (self.chart,)), self.chart)
         with tempfile.TemporaryDirectory() as directory:
-            with patch("ournotes_bot.chart_data.urlopen", return_value=io.BytesIO(b'{"score":{"notes":[]}}')):
+            with patch("ournotes_bot.sources.chart_data.urlopen", return_value=io.BytesIO(b'{"score":{"notes":[]}}')):
                 with self.assertRaises(ChartDataError):
                     load_chart_score(self.song, self.chart, Path(directory))
 

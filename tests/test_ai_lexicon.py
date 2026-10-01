@@ -11,8 +11,8 @@ from ournotes_bot.ai_query import AIQueryParser, AMBIGUOUS_ENTITY, UNKNOWN_ENTIT
 from ournotes_bot.commands import card_matches, handle_command, song_matches
 from ournotes_bot.config import Settings
 from ournotes_bot.data import Card, Chart, Song, SongRepository
-from ournotes_bot.entity_lexicon import EntityRef, find_anchor, resolve_entity
-from ournotes_bot.qq import _image_reply
+from ournotes_bot.query.entity_lexicon import EntityRef, find_anchor, resolve_entity
+from ournotes_bot.platforms.qq.qq import _image_reply
 from ournotes_bot.structured_query import QuerySpec, cards_for
 
 
@@ -121,7 +121,7 @@ class AIEntityLexiconTests(unittest.TestCase):
                 with patch.object(self.parser, "_request", side_effect=AssertionError("model called")):
                     self.assertIn("睦卡2", self.parser.answer(f"/问 {term}的卡有哪些", self.repo))
         self.assertIn("墨缇丝 →", handle_command("/查缩写 墨缇丝", self.repo))
-        with patch("ournotes_bot.qq.render_card_list", return_value=b"cards") as render:
+        with patch("ournotes_bot.platforms.qq.qq.render_card_list", return_value=b"cards") as render:
             self.assertEqual(_image_reply("/查卡 墨缇丝", self.repo), b"cards")
             self.assertEqual([card.id for card in render.call_args.args[0]], expected)
 
@@ -135,7 +135,7 @@ class AIEntityLexiconTests(unittest.TestCase):
             alias_file.write_text(json.dumps({
                 "song": {"撞名": "100001"}, "band": {"撞名": "Ave Mujica"},
             }, ensure_ascii=False), encoding="utf-8")
-            with patch("ournotes_bot.entity_lexicon.ALIAS_FILE", alias_file):
+            with patch("ournotes_bot.query.entity_lexicon.ALIAS_FILE", alias_file):
                 self.assertEqual(song_matches(self.repo, "撞名"), [])
                 self.assertIn("没有找到", handle_command("/查曲 撞名", self.repo))
                 self.assertIn("多个对象", handle_command("/查缩写 撞名", self.repo))
@@ -165,7 +165,7 @@ class AIEntityLexiconTests(unittest.TestCase):
                 "band": {"测试别名": "MyGO!!!!!"},
                 "outside_catalog": ["未收录昵称"],
             }, ensure_ascii=False), encoding="utf-8")
-            with patch("ournotes_bot.entity_lexicon.ALIAS_FILE", alias_file), \
+            with patch("ournotes_bot.query.entity_lexicon.ALIAS_FILE", alias_file), \
                  patch.object(self.parser, "_request", side_effect=AssertionError("model called")):
                 self.assertIn("迷星叫", self.parser.answer("/问 测试别名的歌有哪些", self.repo))
                 self.assertEqual(self.parser.answer("/问 未收录昵称的歌有哪些", self.repo), UNKNOWN_ENTITY)
@@ -176,7 +176,7 @@ class AIEntityLexiconTests(unittest.TestCase):
             alias_file.write_text(json.dumps({
                 "band": {"错误别名": "Morfonica", "类型不符": "迷星叫"},
             }, ensure_ascii=False), encoding="utf-8")
-            with patch("ournotes_bot.entity_lexicon.ALIAS_FILE", alias_file):
+            with patch("ournotes_bot.query.entity_lexicon.ALIAS_FILE", alias_file):
                 self.assertIsNone(resolve_entity("song", "错误别名", self.repo))
                 self.assertIsNone(resolve_entity("song", "类型不符", self.repo))
 

@@ -1,3 +1,9 @@
+# L3
+# Input: 已选歌曲／单卡／当前页列表、Song／Chart 与可选谱面 score dict、MetaAnswer、条件／locale／页脚；render_catalog 消费 CardAnswer。
+# Output: 公开 render 入口主要返回编码 bytes，render_catalog 可返回 None；Pillow Image／画布为内部对象。
+# Pos: Rendering 的共享主题／素材、歌曲绘图与卡牌委托入口；见 rendering/L2-2-Core.md、rendering/L2-2-Song.md、rendering/L2-2-Card.md。
+# Effects/Dependencies: 字体／素材读取、允许来源下载与素材缓存写入；委托 rendering 绘图器，成员列表可间接刷新 Haneoka；不调用模型或上传 QQ。
+
 """Rounded, high-contrast image replies using the existing Our Notes assets."""
 
 from __future__ import annotations
@@ -17,8 +23,8 @@ from PIL import Image, ImageDraw, ImageFont, ImageOps
 
 from .config import runtime_data_dir
 from .data import Card, Chart, Skill, Song, SupportCard, localized_text
-from .efficiency_query import MetaAnswer
-from .yatta import ASSETS, BASE
+from .query.efficiency_query import MetaAnswer
+from .sources.yatta import ASSETS, BASE
 
 
 PAPER = "#F1F2F8"
@@ -412,7 +418,7 @@ def _paste_asset(canvas: Image.Image, draw: ImageDraw.ImageDraw, url: str, box: 
 
 
 def _bytes(image: Image.Image) -> bytes:
-    from .image_output import encode_image
+    from .rendering.image_output import encode_image
     return encode_image(image)
 
 
@@ -431,7 +437,7 @@ def _mission_marks(songs):
 
 def _song_heading(image, draw, song, x, y, width, size=32, locale="zh", marks=None, measure_only=False):
     """Native attribute mark and title share a baseline; no color word on success."""
-    from .song_traits import COLORS
+    from .sources.haneoka.song_traits import COLORS
     traits = song.traits
     color = traits.color if traits else None
     mark = (marks or {}).get(color)
@@ -462,7 +468,7 @@ def _mission_icon(image, draw, mission: str, native: Image.Image, x: int, y: int
 
 def _mission_chip(image, draw, traits, x, y, width, size=21, *,
                   icons=None, mark_available=True, measure_only=False):
-    from .song_traits import COLORS
+    from .sources.haneoka.song_traits import COLORS
     font = _font(size)
     icon_size = min(size, 20)
     rows: list[list[tuple[str, str, int]]] = [[]]
@@ -848,29 +854,29 @@ def _render_meta_table(answer: MetaAnswer) -> bytes:
 
 
 def render_card(card: Card, locale: str = "zh") -> bytes:
-    from .card_visuals import detail
+    from .rendering.card_visuals import detail
     return detail(card, locale)
 
 
 def render_card_list(cards, query: str, locale: str = "zh", footer: str = "") -> bytes:
-    from .card_visuals import grid
+    from .rendering.card_visuals import grid
     return grid(cards, query, locale, footer)
 
 
 def render_support_card(card: SupportCard, locale: str = "zh") -> bytes:
-    from .card_visuals import detail
+    from .rendering.card_visuals import detail
     return detail(card, locale)
 
 
 def render_support_card_list(cards, query: str, locale: str = "zh", footer: str = "") -> bytes:
-    from .card_visuals import grid
+    from .rendering.card_visuals import grid
     return grid(cards, query, locale, footer, support=True)
 
 
 def render_catalog(answer, locale: str = "zh") -> bytes | None:
     if answer.error or not answer.cards:
         return None
-    from .card_visuals import art, detail, grid
+    from .rendering.card_visuals import art, detail, grid
     if answer.request.mode == "art":
         return art(answer.cards[0])
     if answer.request.mode == "detail":

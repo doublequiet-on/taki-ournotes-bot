@@ -24,7 +24,9 @@ class PlatformBoundaryTests(unittest.TestCase):
             class NoQQ(importlib.abc.MetaPathFinder):
                 def find_spec(self, fullname, path=None, target=None):
                     if fullname == 'botpy' or fullname.startswith('botpy.') or fullname in {
-                        'ournotes_bot.qq', 'ournotes_bot.menu', 'ournotes_bot.update_notice',
+                        'ournotes_bot.qq', 'ournotes_bot.menu',
+                        'ournotes_bot.platforms', 'ournotes_bot.platforms.qq',
+                        'ournotes_bot.platforms.qq.qq', 'ournotes_bot.platforms.qq.menu', 'ournotes_bot.update_notice',
                     }:
                         raise AssertionError('Core imported QQ integration: ' + fullname)
 
@@ -37,7 +39,7 @@ class PlatformBoundaryTests(unittest.TestCase):
             sys.addaudithook(offline)
             from PIL import Image
             from ournotes_bot.ai_query import AIQueryParser
-            from ournotes_bot.chart_data import score_name
+            from ournotes_bot.sources.chart_data import score_name
             from ournotes_bot.commands import CommandResult, handle_command, resolve_command
             from ournotes_bot.config import Settings
             from ournotes_bot.data import Chart, Song, SongRepository

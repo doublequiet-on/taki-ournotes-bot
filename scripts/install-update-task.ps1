@@ -1,3 +1,9 @@
+# L3
+# Input: -Disable; installation requires updater state, local Git/Python and the current Windows user.
+# Output: Registers or disables the update task; installation records the Git executable.
+# Pos: Explicit task-management entry described in L2.md.
+# Effects/Dependencies: Windows Task Scheduler and data/updater/settings.json; settings may remain after installation failure. Disabling does not stop the bot.
+
 # Run only after update_bot.py --initialize succeeds.
 [CmdletBinding()]
 param([switch]$Disable)

@@ -15,8 +15,8 @@ from unittest.mock import patch
 from ournotes_bot.ai_query import AIQueryParser, UNKNOWN_ENTITY
 from ournotes_bot.config import Settings
 from ournotes_bot.data import Card, Chart, Song, SongRepository, SupportCard
-from ournotes_bot.query_capabilities import CAPABILITIES, local_route, route_prompt
-from ournotes_bot.query_validation import OutcomeCode, validate_capability_action
+from ournotes_bot.natural_query.query_capabilities import CAPABILITIES, local_route, route_prompt
+from ournotes_bot.natural_query.query_validation import OutcomeCode, validate_capability_action
 
 
 class QueryRefactorTests(unittest.TestCase):

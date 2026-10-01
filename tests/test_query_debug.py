@@ -12,7 +12,7 @@ from ournotes_bot.ai_query import AIQueryParser
 from ournotes_bot.commands import handle_command
 from ournotes_bot.config import Settings
 from ournotes_bot.data import Card, Chart, Song, SongRepository, SupportCard
-from ournotes_bot.query_debug import QUERY_DEBUG_COUNTERS, QueryDebugCounters
+from ournotes_bot.natural_query.query_debug import QUERY_DEBUG_COUNTERS, QueryDebugCounters
 
 
 class QueryDebugTests(unittest.TestCase):

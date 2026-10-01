@@ -1,22 +1,28 @@
+# L3
+# Input: Settings、用户问题及 SongRepository。
+# Output: answer → str；answer_with_plan → tuple[str, QueryResult | CommandResult | None]；answer_with_outcome → AgentOutcome。
+# Pos: Query / Natural 的公共兼容门面与组件组装入口；见 natural_query/L2-2.md。
+# Effects/Dependencies: 经 QueryAgent 使用内存查询缓存、持久额度与指标，必要时调用 AI；本地解析／执行也可间接读取别名或触发 Data I/O。
+
 """Backward-compatible facade for the bounded natural-language query agent."""
 
 from __future__ import annotations
 
 from .ai_client import AIClient, ModelResponse
-from .ai_quota import DailyQuota
+from .natural_query.ai_quota import DailyQuota
 from .commands import CommandResult
 from .config import Settings
 from .data import SongRepository
-from .local_query import (
+from .natural_query.local_query import (
     local_card_rarity_question as _local_card_rarity_question,
     local_entity_question as _local_entity_question,
     local_skill_question as _local_skill_question,
     local_song_filter as _local_song_filter,
 )
-from .query_agent import AgentOutcome, AgentState, QueryAgent, is_ai_request, query_text
-from .query_capabilities import GLOBAL_RULES
-from .query_metrics import QueryMetrics
-from .query_validation import AMBIGUOUS_ENTITY, UNKNOWN_ENTITY, UNSUPPORTED, OutcomeCode
+from .natural_query.query_agent import AgentOutcome, AgentState, QueryAgent, is_ai_request, query_text
+from .natural_query.query_capabilities import GLOBAL_RULES
+from .natural_query.query_metrics import QueryMetrics
+from .natural_query.query_validation import AMBIGUOUS_ENTITY, UNKNOWN_ENTITY, UNSUPPORTED, OutcomeCode
 from .structured_query import QueryResult, QuerySpec
 
 

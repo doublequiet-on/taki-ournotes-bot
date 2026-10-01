@@ -1,3 +1,9 @@
+# L3
+# Input: 模型端点、密钥、模型名、系统／用户提示及请求超时、token 上限。
+# Output: request 返回 ModelResponse(data, usage)；传输错误为 AIClientError，格式错误为 AIInvalidResponse。
+# Pos: Application 的共享 AI HTTP 传输叶子，供 Query 与 Operations 使用；见 ../L2-Application.md。
+# Effects/Dependencies: 直接 HTTPS 请求；响应读取大小由内部限制，不决定业务事实。
+
 """Small, bounded client for one structured AI request."""
 
 from __future__ import annotations

@@ -1,3 +1,9 @@
+# L3
+# Input: 公开资料／素材缓存副本、独立输出目录及预览参数。
+# Output: 样图、手机检查图、概览及 manifest.json（含选定 JSON 缓存的哈希与样图元数据）。
+# Pos: L2.md 的离线视觉验收工具；绘图语义见 ../src/L2-Rendering.md。
+# Effects/Dependencies: 只读输入、写入输出，清空凭据并阻断网络；依赖查询／渲染代码和 Pillow，基线模式用 git show 读取已提交绘图实现。
+
 """Render local visual-review samples without QQ, credentials or network access.
 
 Run with PYTHONPATH=src, --cache-dir pointing at public cached game data, and
@@ -43,13 +49,21 @@ def main() -> None:
     from ournotes_bot import visuals
     from ournotes_bot.commands import resolve_command, page_notice
     from ournotes_bot.data import SongRepository
-    from ournotes_bot.song_meta import MetaRepository
-    from ournotes_bot import yatta
-    from ournotes_bot.yatta import BASE
+    from ournotes_bot.sources.haneoka.song_meta import MetaRepository
+    from ournotes_bot.sources import yatta
+    from ournotes_bot.sources.yatta import BASE
 
     if args.baseline:
         root = Path(__file__).resolve().parents[1]
         code = subprocess.check_output(["git", "show", "HEAD:src/ournotes_bot/visuals.py"], cwd=root)
+        # The committed renderer may predate the directory migration. Keep its
+        # implementation and comparison path, adapting only moved dependencies.
+        for old, new in (("yatta", "sources.yatta"),
+                         ("song_traits", "sources.haneoka.song_traits"),
+                         ("efficiency_query", "query.efficiency_query"),
+                         ("image_output", "rendering.image_output"),
+                         ("card_visuals", "rendering.card_visuals")):
+            code = code.replace(f"from .{old} import ".encode(), f"from .{new} import ".encode())
         module = types.ModuleType("ournotes_bot._baseline_visuals")
         module.__package__ = "ournotes_bot"
         exec(compile(code, "<baseline-visuals>", "exec"), module.__dict__)
@@ -107,9 +121,9 @@ def main() -> None:
     chart_path = source / "chart-cache" / "0001_0001_03.json"
     score = json.loads(chart_path.read_text(encoding="utf-8"))["score"] if chart_path.exists() else None
 
-    from ournotes_bot.haneoka_members import parse as parse_members
+    from ournotes_bot.sources.haneoka.haneoka_members import parse as parse_members
     member_snapshot = parse_members(json.loads(cache_files[3].read_text(encoding="utf-8"))) if cache_files[3].exists() else None
-    with patch.object(visuals, "_asset", side_effect=asset), patch("ournotes_bot.member_list_visuals.get_snapshot", return_value=member_snapshot):
+    with patch.object(visuals, "_asset", side_effect=asset), patch("ournotes_bot.rendering.member_list_visuals.get_snapshot", return_value=member_snapshot):
         save("01-songs", lambda: visuals.render_song_list(songs[:8], "MyGO!!!!!", footer="本地样例 · 展示前 8 首"))
         save("02-cards", lambda: visuals.render_card_list(cards, "立希"))
         save("03-card-detail", lambda: visuals.render_card(card))

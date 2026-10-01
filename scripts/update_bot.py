@@ -1,3 +1,9 @@
+# L3
+# Input: 命令行模式、仓库 Git 状态、候选提交与 CI 结果、版本状态、本地环境及运行进程。
+# Output: 按模式产生检查记录、隔离版本环境、部署／事务状态或启动与恢复后的实例。
+# Pos: L2.md 的 Windows 更新与受管运行入口；部署状态协议的写入方。
+# Effects/Dependencies: Git/GitHub、安装与文件写入、Windows 任务／进程控制及工作树快进；隔离验证清空 QQ/AI 凭据，受管运行会连接 QQ。
+
 """Windows single-instance updater. No QQ messages are sent by validation."""
 from __future__ import annotations
 

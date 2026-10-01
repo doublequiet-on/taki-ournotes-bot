@@ -7,10 +7,35 @@ from pathlib import Path
 from unittest.mock import patch
 
 from ournotes_bot.config import Settings, runtime_data_dir
+from ournotes_bot.query import entity_lexicon
 from ournotes_bot.visuals import _font
 
 
 class InstallPathTests(unittest.TestCase):
+    def test_source_aliases_still_use_repository_file(self):
+        expected = Path(__file__).resolve().parents[1] / "query_aliases.json"
+        self.assertEqual(entity_lexicon._default_alias_file(), expected)
+
+    def test_installed_aliases_use_target_or_prefix_share(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            module_file = root / "target/ournotes_bot/query/entity_lexicon.py"
+            for base in (root / "target", root / "prefix"):
+                candidate = base / "share/ournotes-qq-bot/query_aliases.json"
+                candidate.parent.mkdir(parents=True)
+                candidate.write_text('{}', encoding="utf-8")
+                with patch.object(entity_lexicon, "__file__", str(module_file)), \
+                     patch.object(entity_lexicon.sys, "prefix", str(root / "prefix")):
+                    self.assertEqual(entity_lexicon._default_alias_file(), candidate)
+                candidate.unlink()
+
+    def test_configured_alias_file_still_overrides_default(self):
+        with tempfile.TemporaryDirectory() as directory:
+            configured = Path(directory) / "aliases.json"
+            configured.write_text('{}', encoding="utf-8")
+            with patch.dict(os.environ, {"OURNOTES_ALIAS_FILE": str(configured)}):
+                self.assertEqual(entity_lexicon._alias_file(), configured.resolve())
+
     def test_installed_copy_uses_user_data_directory(self):
         data_home_variable = "LOCALAPPDATA" if os.name == "nt" else "XDG_DATA_HOME"
         with tempfile.TemporaryDirectory() as directory, \

@@ -10,9 +10,9 @@ from unittest.mock import patch
 from ournotes_bot.ai_query import AIQueryParser
 from ournotes_bot.config import Settings
 from ournotes_bot.data import Card, Chart, Skill, Song, SongRepository, SupportCard
-from ournotes_bot.local_query import parse_local_query
-from ournotes_bot.query_capabilities import CAPABILITIES, local_route
-from ournotes_bot.query_validation import (
+from ournotes_bot.natural_query.local_query import parse_local_query
+from ournotes_bot.natural_query.query_capabilities import CAPABILITIES, local_route
+from ournotes_bot.natural_query.query_validation import (
     OutcomeCode,
     validate_capability_action,
     validate_legacy_plan,

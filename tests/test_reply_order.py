@@ -7,7 +7,7 @@ import unittest
 from unittest.mock import patch
 
 from ournotes_bot.config import Settings, read_flag
-from ournotes_bot.qq import ReplySequencer, install_gateway_host, normalize_gateway_url
+from ournotes_bot.platforms.qq.qq import ReplySequencer, install_gateway_host, normalize_gateway_url
 
 
 class ReplyOrderFlagTests(unittest.TestCase):
