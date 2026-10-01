@@ -1,3 +1,9 @@
+# L3
+# Input: tr 的 locale、消息 key 与格式化 values。
+# Output: str：已有 zh／en／ja 文案；未知 locale 回退 zh，未知 key 抛 KeyError。
+# Pos: Application 的多语言文案查找与格式化叶子；见 ../L2-Application.md。
+# Effects/Dependencies: 只读取内存语言表并格式化，无外部 I/O。
+
 """User-facing text for the official QQ bot. Chinese remains the default."""
 
 from __future__ import annotations

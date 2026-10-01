@@ -1,3 +1,9 @@
+# L3
+# Input: 来源记录／详情、主缓存、数据基址与缓存路径、加载／刷新请求及名称检索词。
+# Output: Song／Chart／Card／SupportCard／Skill、名称规则、SongRepository 聚合记录与缓存／完整度状态。
+# Pos: Data / Catalog 的领域记录、主资料聚合、详情与主缓存实现；见 L2-2-Catalog.md。
+# Effects/Dependencies: 调用 Sources，调度并发详情并读写主缓存；查询可惰性触发详情／效率 I/O；frozen 记录含 dict，不是深度不可变快照。
+
 from __future__ import annotations
 
 import json
@@ -11,7 +17,7 @@ from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Any
 
-from .song_traits import SongTraits, SongTraitsRepository
+from .sources.haneoka.song_traits import SongTraits, SongTraitsRepository
 
 
 @dataclass(frozen=True)
@@ -226,7 +232,7 @@ class SongRepository:
         self._detail_support_cards: dict[int, SupportCard] = {}
         self.cache_state = "unknown"
         self.last_successful_sync_at: str | None = None
-        from .song_meta import MetaRepository
+        from .sources.haneoka.song_meta import MetaRepository
         self.song_meta = MetaRepository(cache_file.with_name("haneoka-meta-jp.json"))
         self.song_traits = SongTraitsRepository(cache_file.with_name("haneoka-song-traits-jp.json"))
 
@@ -263,7 +269,7 @@ class SongRepository:
         self.cache_state = "cached"
 
     def refresh(self) -> None:
-        from . import yatta
+        from .sources import yatta
         if self.data_base != yatta.BASE:
             raise DataError("仅允许 Project Yume 作为游戏数据源")
         try:
@@ -333,7 +339,7 @@ class SongRepository:
         self.cache_state = "fresh"
 
     def card_with_detail(self, card: Card) -> Card:
-        from . import yatta
+        from .sources import yatta
         if card.id in self._detail_cards:
             return self._detail_cards[card.id]
         if card.skills:
@@ -347,7 +353,7 @@ class SongRepository:
 
     @staticmethod
     def _merge_card_detail(card: Card, raw: dict[str, Any]) -> Card:
-        from . import yatta
+        from .sources import yatta
         if not isinstance(raw, dict) or raw.get("id", card.id) != card.id:
             raise ValueError("member detail ID mismatch")
         stats = raw.get("statsMax") or []
@@ -368,7 +374,7 @@ class SongRepository:
         return bool(self.cards) and all(card.skills for card in self.cards)
 
     def support_card_with_detail(self, card: SupportCard) -> SupportCard:
-        from . import yatta
+        from .sources import yatta
         if card.id in self._detail_support_cards:
             return self._detail_support_cards[card.id]
         if card.catalog.get("detail_loaded"):
@@ -383,7 +389,7 @@ class SongRepository:
 
     @staticmethod
     def _merge_support_detail(card: SupportCard, raw: dict[str, Any]) -> SupportCard:
-        from . import yatta
+        from .sources import yatta
         if not isinstance(raw, dict) or raw.get("id", card.id) != card.id:
             raise ValueError("support detail ID mismatch")
         stats = raw.get("statsMax") or []
@@ -451,7 +457,7 @@ class SongRepository:
             ) for row in payload.get("support_cards", [])]
         except Exception as exc:
             raise DataError(f"本地缓存损坏：{self.cache_file} ({exc})") from exc
-        from . import yatta
+        from .sources import yatta
         if (self.metadata.get("source") != yatta.BASE
                 or self.metadata.get("schema") not in {2, 3, self.CACHE_SCHEMA}):
             raise DataError("缓存来自旧数据源，请重新运行 sync")

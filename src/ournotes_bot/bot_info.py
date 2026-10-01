@@ -1,3 +1,9 @@
+# L3
+# Input: 无运行时业务输入。
+# Output: 固定机器人介绍文本。
+# Pos: Query / Deterministic 的直接介绍命令内容叶子，供 commands 使用；见 query/L2-2.md。
+# Effects/Dependencies: 只定义固定文案，无外部 I/O。
+
 """User-facing introduction shared by help and the introduction command."""
 
 INTRO = ("Taki · BanG Dream! Our Notes 日服资料查询助手\n"

@@ -1,5 +1,5 @@
 from __future__ import annotations
-from ournotes_bot.card_catalog import query_cards
+from ournotes_bot.query.card_catalog import query_cards
 
 import asyncio
 import tempfile
@@ -12,9 +12,9 @@ from ournotes_bot.ai_query import AIQueryParser
 from ournotes_bot.commands import card_matches, song_matches, support_card_matches
 from ournotes_bot.config import Settings
 from ournotes_bot.data import Card, Chart, Song, SongRepository, SupportCard
-from ournotes_bot.qq import PreparedReply, _deliver_reply, _prepare_reply, run_bot
+from ournotes_bot.platforms.qq.qq import PreparedReply, _deliver_reply, _prepare_reply, run_bot
 from ournotes_bot.structured_query import songs_for
-from ournotes_bot.yatta import BASE
+from ournotes_bot.sources.yatta import BASE
 
 
 class ReplyPipelineTests(unittest.TestCase):
@@ -47,7 +47,7 @@ class ReplyPipelineTests(unittest.TestCase):
 
     def test_direct_and_natural_text_images_share_one_selection(self):
         with patch("ournotes_bot.commands.song_matches", wraps=song_matches) as select, \
-             patch("ournotes_bot.qq.render_song_list", return_value=b"image") as render:
+             patch("ournotes_bot.platforms.qq.qq.render_song_list", return_value=b"image") as render:
             result = _prepare_reply("/查曲 迷星叫", self.repo, self.parser)
         self.assertEqual(result.image, b"image")
         self.assertIn("100001", result.text)
@@ -56,7 +56,7 @@ class ReplyPipelineTests(unittest.TestCase):
 
         with patch("ournotes_bot.structured_query.songs_for", wraps=songs_for) as select, \
              patch.object(self.parser, "_request", side_effect=AssertionError("AI should not be called")), \
-             patch("ournotes_bot.qq.render_song_list", return_value=b"natural image") as render:
+             patch("ournotes_bot.platforms.qq.qq.render_song_list", return_value=b"natural image") as render:
             result = _prepare_reply("/问 MyGO的歌有哪些", self.repo, self.parser)
         self.assertEqual(result.image, b"natural image")
         self.assertIn("100001", result.text)
@@ -65,8 +65,8 @@ class ReplyPipelineTests(unittest.TestCase):
 
     def test_chart_and_card_text_images_share_one_selection(self):
         with patch.object(self.repo, "search", wraps=self.repo.search) as select, \
-             patch("ournotes_bot.qq.load_chart_score", return_value={"notes": []}), \
-             patch("ournotes_bot.qq.render_chart", return_value=b"chart") as render:
+             patch("ournotes_bot.platforms.qq.qq.load_chart_score", return_value={"notes": []}), \
+             patch("ournotes_bot.platforms.qq.qq.render_chart", return_value=b"chart") as render:
             result = _prepare_reply("/查谱面 100001 EXPERT", self.repo, self.parser)
         self.assertIn("768 Notes", result.text)
         self.assertEqual(result.image, b"chart")
@@ -74,7 +74,7 @@ class ReplyPipelineTests(unittest.TestCase):
         self.assertEqual(render.call_args.args[0].id, 100001)
 
         with patch("ournotes_bot.commands.query_cards", wraps=query_cards) as select, \
-             patch("ournotes_bot.qq.render_card_list", return_value=b"cards") as render:
+             patch("ournotes_bot.platforms.qq.qq.render_card_list", return_value=b"cards") as render:
             result = _prepare_reply("/查卡 高松灯", self.repo, self.parser)
         self.assertIn("我们现在就在这里", result.text)
         self.assertEqual(result.image, b"cards")
@@ -82,7 +82,7 @@ class ReplyPipelineTests(unittest.TestCase):
         self.assertEqual([card.id for card in render.call_args.args[0]], [1])
 
         with patch("ournotes_bot.commands.query_cards", wraps=query_cards) as select, \
-             patch("ournotes_bot.qq.render_support_card_list", return_value=b"support cards") as render:
+             patch("ournotes_bot.platforms.qq.qq.render_support_card_list", return_value=b"support cards") as render:
             result = _prepare_reply("/查支援卡 高松灯", self.repo, self.parser)
         self.assertIn("并肩前行", result.text)
         self.assertEqual(result.image, b"support cards")
@@ -97,14 +97,14 @@ class ReplyPipelineTests(unittest.TestCase):
         self.assertNotIn("secret-value", result.text)
 
     def test_answer_and_render_failures_do_not_leak_raw_errors(self):
-        with patch("ournotes_bot.qq.handle_command", side_effect=RuntimeError("Bearer secret-value")), \
+        with patch("ournotes_bot.platforms.qq.qq.handle_command", side_effect=RuntimeError("Bearer secret-value")), \
              self.assertLogs("ournotes_bot.qq", level="ERROR") as log:
             result = _prepare_reply("/查曲 迷星叫", self.repo, self.parser)
         self.assertEqual(result.text, "查询暂时失败，请稍后重试。")
         self.assertIsNone(result.image)
         self.assertNotIn("secret-value", " ".join(log.output))
 
-        with patch("ournotes_bot.qq.render_song_list", side_effect=RuntimeError("Bearer secret-value")), \
+        with patch("ournotes_bot.platforms.qq.qq.render_song_list", side_effect=RuntimeError("Bearer secret-value")), \
              self.assertLogs("ournotes_bot.qq", level="WARNING") as log:
             result = _prepare_reply("/查曲 迷星叫", self.repo, self.parser)
         self.assertIn("迷星叫", result.text)
@@ -193,7 +193,7 @@ class UpdateNoticeLifecycleTests(unittest.IsolatedAsyncioTestCase):
             async def worker(api):
                 await stopped.wait()
             notifier.run.side_effect = worker
-            with patch("botpy.Client", FakeClient), patch("ournotes_bot.qq.UpdateNotifier", return_value=notifier):
+            with patch("botpy.Client", FakeClient), patch("ournotes_bot.platforms.qq.qq.UpdateNotifier", return_value=notifier):
                 run_bot("test-app", "", SimpleNamespace(refresh_song_traits=Mock()), settings)
                 client = instances[-1]
                 try:
@@ -215,7 +215,7 @@ class UpdateNoticeLifecycleTests(unittest.IsolatedAsyncioTestCase):
                     client._notice_task.cancel()
                     client._song_traits_task.cancel()
                     await asyncio.gather(client._refresh_task, client._notice_task, client._song_traits_task, return_exceptions=True)
-            with patch("botpy.Client", FakeClient), patch("ournotes_bot.qq.UpdateNotifier") as constructor:
+            with patch("botpy.Client", FakeClient), patch("ournotes_bot.platforms.qq.qq.UpdateNotifier") as constructor:
                 settings = Settings("test-app", "", BASE, Path(folder) / "cache.json", 6,
                                     qq_gateway_host="", update_notices=False)
                 run_bot("test-app", "", SimpleNamespace(refresh_song_traits=Mock()), settings)

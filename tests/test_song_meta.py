@@ -16,11 +16,11 @@ from ournotes_bot.ai_query import AIQueryParser
 from ournotes_bot.commands import handle_command, resolve_command
 from ournotes_bot.config import Settings
 from ournotes_bot.data import Chart, Song, SongRepository
-from ournotes_bot.efficiency_query import parse_efficiency
-from ournotes_bot.local_query import parse_local_query
-from ournotes_bot.query_capabilities import CAPABILITIES, local_route
-from ournotes_bot.query_validation import OutcomeCode, validate_capability_action
-from ournotes_bot.song_meta import MetaRepository, REFERENCE, fetch_json, parse_payload, unique_object
+from ournotes_bot.query.efficiency_query import parse_efficiency
+from ournotes_bot.natural_query.local_query import parse_local_query
+from ournotes_bot.natural_query.query_capabilities import CAPABILITIES, local_route
+from ournotes_bot.natural_query.query_validation import OutcomeCode, validate_capability_action
+from ournotes_bot.sources.haneoka.song_meta import MetaRepository, REFERENCE, fetch_json, parse_payload, unique_object
 
 STAMP = "2026-09-27T00:00:00+00:00"
 
@@ -94,7 +94,7 @@ class SongMetaTests(unittest.TestCase):
     def test_json_transport_rejects_html_and_arbitrary_urls(self):
         response = io.BytesIO(b"<html>error</html>")
         response.headers = {"Content-Type": "text/html"}
-        with patch("ournotes_bot.song_meta.urlopen", return_value=response), self.assertRaises(ValueError):
+        with patch("ournotes_bot.sources.haneoka.song_meta.urlopen", return_value=response), self.assertRaises(ValueError):
             fetch_json("release?projection=identity")
         with self.assertRaises(ValueError):
             fetch_json("https://invalid.example/")
@@ -122,7 +122,7 @@ class SongMetaTests(unittest.TestCase):
     def test_existing_song_alias_short_id_and_no_expert_fallback(self):
         alias = self.root / "aliases.json"
         alias.write_text(json.dumps({"song": {"合成昵称": "100001"}}), encoding="utf-8")
-        with patch("ournotes_bot.entity_lexicon.ALIAS_FILE", alias):
+        with patch("ournotes_bot.query.entity_lexicon.ALIAS_FILE", alias):
             self.assertEqual(handle_command("/查效率 合成昵称 EX", self.repo), handle_command("/查效率 1 EX", self.repo))
         self.songs["100001"]["difficulty"] = [{"difficulty": 2, "difficultyName": "hard", "sortLevel": 20}]
         self.meta["100001"]["2"] = self.meta["100001"].pop("3")
@@ -199,7 +199,7 @@ class SongMetaTests(unittest.TestCase):
             self.assertNotIn("[分数表]", parser.answer("/问 " + question, self.repo))
 
     def test_text_image_share_result_and_drawing_failure_falls_back(self):
-        from ournotes_bot.qq import _prepare_reply
+        from ournotes_bot.platforms.qq.qq import _prepare_reply
         parser = AIQueryParser(self.settings)
         with patch("ournotes_bot.visuals.render_meta", return_value=b"image") as render:
             reply = _prepare_reply("/查效率 暗黒天国", self.repo, parser)
@@ -237,7 +237,7 @@ class SongMetaTests(unittest.TestCase):
 
     def test_table_image_uses_captured_cells_and_text_fallback(self):
         from PIL import Image, ImageDraw
-        from ournotes_bot.qq import _prepare_reply
+        from ournotes_bot.platforms.qq.qq import _prepare_reply
         from ournotes_bot.visuals import render_meta
         answer = resolve_command("/查分数表", self.repo).meta
         self.repo.song_meta.get.reset_mock()
@@ -292,7 +292,7 @@ class SongMetaTests(unittest.TestCase):
             self.assertLessEqual(len(picture), 1_500_000)
 
     def test_all_difficulties_share_ranking_and_display_level(self):
-        from ournotes_bot.song_meta import DIFFICULTIES
+        from ournotes_bot.sources.haneoka.song_meta import DIFFICULTIES
         for key, song in self.songs.items():
             base = copy.deepcopy(self.meta[key]["3"])
             song["difficulty"] = [dict(difficulty=i, difficultyName=d.lower(), displayLevel=level,
@@ -333,7 +333,7 @@ class SongMetaTests(unittest.TestCase):
         self.assertTrue(all(r.reference == "reference" and r.eff is not None for r in answer.rows))
 
     def test_duration_rounding_and_natural_top30(self):
-        from ournotes_bot.efficiency_query import _duration
+        from ournotes_bot.query.efficiency_query import _duration
         self.assertEqual(_duration(92.2), "1:32")
         self.assertEqual(_duration(59.9), "1:00")
         self.assertEqual(_duration(None), "未知")

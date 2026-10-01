@@ -12,10 +12,10 @@ from pathlib import Path
 from unittest.mock import patch
 
 from ournotes_bot.ai_query import AIQueryParser
-from ournotes_bot.ai_quota import BEIJING, DailyQuota, QuotaUnavailable
+from ournotes_bot.natural_query.ai_quota import BEIJING, DailyQuota, QuotaUnavailable
 from ournotes_bot.config import Settings
 from ournotes_bot.data import Chart, Song, SongRepository
-from ournotes_bot.qq import PreparedReply, QueryGate
+from ournotes_bot.platforms.qq.qq import PreparedReply, QueryGate
 
 
 class DailyQuotaTests(unittest.TestCase):
@@ -120,7 +120,7 @@ class QueryGateTests(unittest.IsolatedAsyncioTestCase):
                 state["active"] -= 1
             return PreparedReply(content, content.encode())
 
-        with patch("ournotes_bot.qq._prepare_reply", side_effect=prepare):
+        with patch("ournotes_bot.platforms.qq.qq._prepare_reply", side_effect=prepare):
             tasks = [asyncio.create_task(gate.prepare(str(i), None, None)) for i in range(2)]
             try:
                 for _ in range(100):
@@ -154,7 +154,7 @@ class QueryGateTests(unittest.IsolatedAsyncioTestCase):
             release.wait(timeout=5)
             return PreparedReply(content)
 
-        with patch("ournotes_bot.qq._prepare_reply", side_effect=prepare):
+        with patch("ournotes_bot.platforms.qq.qq._prepare_reply", side_effect=prepare):
             task = asyncio.create_task(gate.prepare("first", None, None))
             try:
                 for _ in range(100):

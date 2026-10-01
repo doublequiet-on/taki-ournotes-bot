@@ -1,3 +1,9 @@
+# L3
+# Input: QuerySpec、SongRepository；answer_for 可复用已捕获的 QueryResult。
+# Output: resolve_query 返回 QueryResult，保存专项选择供文字／图片消费；answer_for 返回确定性 str。
+# Pos: Query / Deterministic 的共享结构化契约与执行入口；见 query/L2-2.md。
+# Effects/Dependencies: 调用 query 专项模块及根 commands；详情／效率可经 Data 联网或读写缓存，不绘图或导入 QQ。
+
 """Execute /问 query conditions without reparsing a generated command string."""
 
 from __future__ import annotations
@@ -7,12 +13,12 @@ from dataclasses import dataclass, replace
 from .commands import (PAGE_SIZE, _format_card_detail, _format_support_card_detail,
                        filter_card_rarity, page_notice, page_slice, rarity_text)
 from .data import Card, Chart, Skill, Song, SongRepository, SupportCard, character_identity, localized_text, normalize
-from .entity_lexicon import EntityRef
+from .query.entity_lexicon import EntityRef
 from .i18n import tr
-from .efficiency_query import MetaAnswer, execute_efficiency
-from .card_catalog import CardAnswer, query_cards
-from .song_query import SongAnswer, parse_filter, execute as execute_song_filter
-from .song_traits import describe as describe_song
+from .query.efficiency_query import MetaAnswer, execute_efficiency
+from .query.card_catalog import CardAnswer, query_cards
+from .query.song_query import SongAnswer, parse_filter, execute as execute_song_filter
+from .sources.haneoka.song_traits import describe as describe_song
 
 
 @dataclass(frozen=True)

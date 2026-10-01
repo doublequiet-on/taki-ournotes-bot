@@ -1,0 +1,52 @@
+# L2-2 Song Rendering
+
+## Purpose
+
+把歌曲及谱面/效率结果投影为图片，复用歌曲身份、颜色和激奏展示。这三类画面共享同一歌曲语义和来源状态，合为一个稳定子域，无需三个对称节点。
+
+## Position inside parent L2
+
+属于 [Rendering](../../L2-Rendering.md) 的歌曲业务视图；使用 Core 的视觉基础，消费 Query/Data 结果。
+
+## Inputs
+
+已选歌曲及分页文本、Song/Chart 和可选 score 字典、`MetaAnswer` 捕获的 cells/notes/song_records。当前 `render_song_list` 接收歌曲列表，不直接接收整个 SongAnswer。
+
+## Outputs
+
+歌曲列表、谱面和效率表的编码图片字节；不输出查询计划，不获取完整谱面，不发消息。
+
+## Core Flow
+
+用歌曲身份区域保留标题/颜色/激奏信息 → 按列表、谱面时间线或效率表布局 → Core 统一编码。
+效率图使用已捕获的表格和歌曲记录，不再次读取效率仓库。
+完整谱面由 `qq._chart_image → chart_data.load_chart_score` 准备，取不到时可绘制不含完整音符的资料图。
+
+## Dependencies
+
+Data 的 Song/Chart/traits、Query 的 MetaAnswer、[Core](L2-2-Core.md) 画布/素材/编码。
+Current 直接引用 song_traits 的显示常量；这属于领域表现依赖，不是独立来源刷新器。
+
+## Boundary with sibling L2-2 modules
+
+与 [Card](L2-2-Card.md) 共用 Core，但不共享卡牌模式分派或技能详情语义。歌曲激奏图标属于本子域业务表现，下载机制归 Core。
+不把缺失谱面或分析数据用模型补成可视化内容。
+
+## Files belonging to this subdomain
+
+[visuals.py](../visuals.py) 中 `render_song_list/render_chart/render_meta`、歌曲身份/激奏辅助、谱面绘制及效率表布局。
+对应 [visuals.py 的唯一文件头 L3](../visuals.py)；本能力的主体实现保留在该文件。
+`chart_data.py` 归 Sources，`song_query.py/efficiency_query.py` 归 Query。
+
+## Relevant Tests
+
+[test_visuals.py](../../../tests/test_visuals.py)：歌曲身份、长标题、原生标记缺图回退、效率行动态布局；
+[test_chart_data.py](../../../tests/test_chart_data.py)：时间线、跨栏长键及难度身份；
+[test_song_meta.py](../../../tests/test_song_meta.py)：`test_table_image_uses_captured_cells_and_text_fallback`；
+[test_song_traits.py](../../../tests/test_song_traits.py)：图文 traits 同源及预算。
+
+## 当前实现与边界
+
+全部歌曲/谱面/效率主体仍在根 visuals.py；本地图放在 rendering/ 只是能力导航。该文件同时服务 Core 与卡牌入口，只有一个文件头 L3。素材可按需读取，图片失败由 QQ 退原文字；本域不发送替代消息。
+
+向上阅读：[仓库 L1](../../../L1.md)。源码文件头提供唯一 L3，具体行为与字段以实现为准。

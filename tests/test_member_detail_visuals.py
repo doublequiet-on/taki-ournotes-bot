@@ -6,9 +6,9 @@ import unittest
 from PIL import Image, ImageDraw
 
 from ournotes_bot.data import Card, Skill, SupportCard
-from ournotes_bot.card_visuals import detail
-from ournotes_bot.member_detail_visuals import render, _time
-from ournotes_bot.member_list_visuals import _frame
+from ournotes_bot.rendering.card_visuals import detail
+from ournotes_bot.rendering.member_detail_visuals import render, _time
+from ournotes_bot.rendering.member_list_visuals import _frame
 from ournotes_bot.visuals import _background
 
 
@@ -26,9 +26,9 @@ class MemberDetailVisualTests(unittest.TestCase):
         d.rectangle((200, 0, 399, 399), fill="green")
         d.rectangle((0, 400, 199, 799), fill="blue")
         d.rectangle((200, 400, 399, 799), fill="yellow")
-        from ournotes_bot.card_visuals import _paste
+        from ournotes_bot.rendering.card_visuals import _paste
         with patch("ournotes_bot.visuals._asset", side_effect=lambda url, size, **kw: art if url == "full" else None) as asset, \
-             patch("ournotes_bot.member_detail_visuals._paste", wraps=_paste) as paste, \
+             patch("ournotes_bot.rendering.member_detail_visuals._paste", wraps=_paste) as paste, \
              patch("ournotes_bot.visuals._bytes", side_effect=lambda image: image):
             picture = render(self.card)
         asset.assert_any_call("full", (1520, 2040), contain=True)
@@ -71,7 +71,7 @@ class MemberDetailVisualTests(unittest.TestCase):
     def test_snap_keeps_its_existing_renderer_and_time_requires_zone(self):
         support = SupportCard(1, "SNAP", "角色", (), 4, 1, 1, 1, 1, "", "", "", catalog={})
         with patch("ournotes_bot.visuals._asset", return_value=None), \
-             patch("ournotes_bot.member_detail_visuals.render", side_effect=AssertionError("member only")):
+             patch("ournotes_bot.rendering.member_detail_visuals.render", side_effect=AssertionError("member only")):
             self.assertTrue(detail(support))
         self.assertEqual(_time("2026-01-01T00:00:00Z"), "2026-01-01 09:00（日本时间）")
         self.assertEqual(_time("2026-01-01T00:00:00"), "时间未确认")

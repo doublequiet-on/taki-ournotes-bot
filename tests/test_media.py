@@ -7,7 +7,7 @@ from types import SimpleNamespace
 from unittest.mock import Mock
 
 from botpy.message import GroupMessage
-from ournotes_bot.qq import _upload_image, install_group_parser, register_group_message_parser
+from ournotes_bot.platforms.qq.qq import _upload_image, install_group_parser, register_group_message_parser
 
 
 class FakeHttp:

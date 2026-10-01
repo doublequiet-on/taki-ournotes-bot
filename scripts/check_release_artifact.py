@@ -1,3 +1,9 @@
+# L3
+# Input: 含 wheel／sdist 的发布目录，或 check(path) 接收的单个归档路径。
+# Output: CLI 输出通过提示或失败；check(path) 成功返回 None，失败抛异常；检查 commands.py、别名及 sdist 必需文档的存在性，并排查禁止条目。
+# Pos: L2.md 的发布包内容检查入口，由 CI 和人工发布验证调用。
+# Effects/Dependencies: 使用标准库只读归档并输出结果；通过检查不证明业务运行正常。
+
 """Check that release archives carry aliases but no local runtime data."""
 
 from __future__ import annotations

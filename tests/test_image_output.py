@@ -7,15 +7,15 @@ from unittest.mock import patch, AsyncMock
 
 from PIL import Image
 from botpy.http import BotHttp
-from ournotes_bot.image_output import encode_image, MAX_IMAGE_BYTES, MAX_IMAGE_EDGE, MAX_IMAGE_PIXELS
-from ournotes_bot.qq import _upload_image
+from ournotes_bot.rendering.image_output import encode_image, MAX_IMAGE_BYTES, MAX_IMAGE_EDGE, MAX_IMAGE_PIXELS
+from ournotes_bot.platforms.qq.qq import _upload_image
 from types import SimpleNamespace
 
 
 class ImageOutputTests(unittest.TestCase):
     def test_oversized_noise_is_bounded_and_remains_complete(self):
         im = Image.frombytes("RGB", (1400, 1000), random.Random(7).randbytes(1400 * 1000 * 3))
-        with patch("ournotes_bot.image_output.MAX_IMAGE_BYTES", 120_000):
+        with patch("ournotes_bot.rendering.image_output.MAX_IMAGE_BYTES", 120_000):
             blob = encode_image(im)
         self.assertLessEqual(len(blob), 120_000)
         with Image.open(io.BytesIO(blob)) as result:

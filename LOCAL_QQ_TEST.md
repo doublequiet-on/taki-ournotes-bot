@@ -21,11 +21,11 @@
 
 ## 2. 准备本地环境
 
-如果本机已按 README 安装并同步数据，可直接进入项目目录运行第 3 步的 `start-bot.ps1`。新建机器人或重装环境时，在项目目录打开 PowerShell：
+如果本机已按 README 安装并同步数据，可直接进入项目目录运行第 3 步的 `deploy/start-bot.ps1`。新建机器人或重装环境时，在项目目录打开 PowerShell：
 
 ```powershell
 Set-ExecutionPolicy -Scope Process Bypass
-.\setup-local.ps1
+.\deploy\setup-local.ps1
 notepad .env
 ```
 
@@ -49,7 +49,7 @@ OURNOTES_QUERY_QUEUE_LIMIT=4
 ## 3. 启动机器人
 
 ```powershell
-.\start-bot.ps1
+.\deploy\start-bot.ps1
 ```
 
 看到类似“机器人 xxx 已上线”的日志后保持终端开启。首次设置快捷按钮可另开 PowerShell 执行：
@@ -88,7 +88,7 @@ OURNOTES_QUERY_QUEUE_LIMIT=4
 
 ```powershell
 .\.venv\Scripts\ournotes-bot.exe sync
-.\start-bot.ps1
+.\deploy\start-bot.ps1
 ```
 
 在测试群明确 `@机器人`，用一条多行消息发送：

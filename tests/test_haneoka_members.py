@@ -7,7 +7,7 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
 
-from ournotes_bot.haneoka_members import MemberRepository, parse, fetch_json, UNKNOWN
+from ournotes_bot.sources.haneoka.haneoka_members import MemberRepository, parse, fetch_json, UNKNOWN
 
 
 class HaneokaMemberTests(unittest.TestCase):
@@ -133,7 +133,7 @@ class HaneokaMemberTests(unittest.TestCase):
             manager = Mock()
             manager.__enter__ = Mock(return_value=response)
             manager.__exit__ = Mock(return_value=False)
-            with patch("ournotes_bot.haneoka_members.urlopen", return_value=manager):
+            with patch("ournotes_bot.sources.haneoka.haneoka_members.urlopen", return_value=manager):
                 with self.assertRaises(ValueError):
                     fetch_json("cards?release=r-test")
         with self.assertRaises(ValueError):

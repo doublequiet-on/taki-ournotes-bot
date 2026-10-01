@@ -1,3 +1,9 @@
+# L3
+# Input: 环境变量、可选 dotenv 路径、安装位置和当前工作目录。
+# Output: frozen Settings、配置根目录及运行数据 Path；load_dotenv 返回 None。
+# Pos: Application 的配置与运行路径边界；见 ../L2-Application.md。
+# Effects/Dependencies: 读取环境及 dotenv 文件，并用 os.environ.setdefault 补入尚未设置的进程变量。
+
 from __future__ import annotations
 
 import os

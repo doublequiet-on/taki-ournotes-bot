@@ -10,8 +10,8 @@ from unittest.mock import AsyncMock
 from ournotes_bot.ai_query import AIQueryParser
 from ournotes_bot.config import Settings
 from ournotes_bot.data import Chart, Song, SongRepository
-from ournotes_bot.qq import PreparedReply, _deliver_reply, _prepare_reply, describe
-from ournotes_bot.yatta import BASE
+from ournotes_bot.platforms.qq.qq import PreparedReply, _deliver_reply, _prepare_reply, describe
+from ournotes_bot.sources.yatta import BASE
 
 
 class DescribeTests(unittest.TestCase):

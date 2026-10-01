@@ -1,3 +1,9 @@
+# L3
+# Input: 命令行参数、环境配置和交互终端输入。
+# Output: build_parser 返回 ArgumentParser；main 返回 None，终端输出查询／同步／菜单操作消息，启动失败可 SystemExit。
+# Pos: Application 的模式分流与进程组合入口；见 ../L2-Application.md。
+# Effects/Dependencies: setup-menu 提前分流，不构造曲库或 AI 门面，但可更新 QQ 菜单；其他模式加载仓库可联网／写缓存，并按模式进入终端或 QQ 长运行任务。
+
 from __future__ import annotations
 
 import argparse
@@ -31,7 +37,7 @@ def main() -> None:
         if not settings.app_id or not settings.app_secret:
             print("缺少 QQ_APP_ID 或 QQ_APP_SECRET", file=sys.stderr)
             raise SystemExit(2)
-        from .menu import setup_menu
+        from .platforms.qq.menu import setup_menu
         for result in asyncio.run(setup_menu(settings.app_id, settings.app_secret)):
             print(result)
         return
@@ -78,7 +84,7 @@ def main() -> None:
         raise SystemExit(2)
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
-    from .qq import run_bot
+    from .platforms.qq.qq import run_bot
 
     run_bot(settings.app_id, settings.app_secret, repository, settings)
 

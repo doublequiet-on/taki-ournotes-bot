@@ -7,13 +7,13 @@ from unittest.mock import patch, Mock
 from PIL import Image, ImageDraw
 
 from ournotes_bot.data import Card, Skill
-from ournotes_bot.card_visuals import grid
-from ournotes_bot.member_list_visuals import condition_tags, tag_layout
+from ournotes_bot.rendering.card_visuals import grid
+from ournotes_bot.rendering.member_list_visuals import condition_tags, tag_layout
 
 
 class MemberListVisualTests(unittest.TestCase):
     def setUp(self):
-        source = patch("ournotes_bot.member_list_visuals.get_snapshot", return_value=None)
+        source = patch("ournotes_bot.rendering.member_list_visuals.get_snapshot", return_value=None)
         self.source = source.start()
         self.addCleanup(source.stop)
         self.card = Card(51, 1, "合成卡", "角色", "乐队", 4, 1, 0, 0, 0,
@@ -78,7 +78,7 @@ class MemberListVisualTests(unittest.TestCase):
     def test_single_condition_match_stays_list_and_snap_bypasses_new_renderer(self):
         with patch("ournotes_bot.visuals._asset", return_value=None):
             self.assertTrue(grid([self.card], "SSR"))
-            with patch("ournotes_bot.member_list_visuals.render", side_effect=AssertionError("member only")):
+            with patch("ournotes_bot.rendering.member_list_visuals.render", side_effect=AssertionError("member only")):
                 self.assertTrue(grid([self.card], "SSR", support=True))
 
 

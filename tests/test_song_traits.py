@@ -14,9 +14,9 @@ from ournotes_bot.ai_query import AIQueryParser
 from ournotes_bot.commands import handle_command, resolve_command
 from ournotes_bot.config import Settings
 from ournotes_bot.data import Song, Chart, SongRepository
-from ournotes_bot.song_traits import SongTraits, SongTraitsRepository, SOURCE, collect, validate, fetch_json
-from ournotes_bot.song_query import parse_filter, execute
-from ournotes_bot.yatta import BASE
+from ournotes_bot.sources.haneoka.song_traits import SongTraits, SongTraitsRepository, SOURCE, collect, validate, fetch_json
+from ournotes_bot.query.song_query import parse_filter, execute
+from ournotes_bot.sources.yatta import BASE
 
 
 def snapshot():
@@ -119,7 +119,7 @@ class SongTraitsTests(unittest.TestCase):
         from datetime import datetime, timezone
         current['fetched_at'] = datetime.now(timezone.utc).isoformat()
         repo = SongTraitsRepository(self.path)
-        with patch('ournotes_bot.song_traits.collect', return_value=current) as collect_mock:
+        with patch('ournotes_bot.sources.haneoka.song_traits.collect', return_value=current) as collect_mock:
             with ThreadPoolExecutor(4) as pool:
                 list(pool.map(lambda _: repo.refresh(), range(4)))
             self.assertEqual(collect_mock.call_count, 1)
@@ -138,7 +138,7 @@ class SongTraitsTests(unittest.TestCase):
         response = Mock()
         response.headers = {'Content-Type': 'text/html'}
         response.__enter__ = Mock(return_value=response); response.__exit__ = Mock(return_value=False)
-        with patch('ournotes_bot.song_traits.urlopen', return_value=response):
+        with patch('ournotes_bot.sources.haneoka.song_traits.urlopen', return_value=response):
             with self.assertRaises(ValueError): fetch_json('songs?release=r-test')
             response.headers = {'Content-Type': 'application/json'}
             response.read.return_value = b'{"a":1,"a":2}'

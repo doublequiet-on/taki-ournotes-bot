@@ -12,7 +12,7 @@ from ournotes_bot.commands import handle_command, parse_query
 from ournotes_bot.config import Settings
 from ournotes_bot.data import Card, DataError, Skill, SongRepository
 from ournotes_bot.structured_query import QuerySpec, answer_for, query_page_notice
-from ournotes_bot.yatta import BASE, build_skills, build_support_cards
+from ournotes_bot.sources.yatta import BASE, build_skills, build_support_cards
 
 
 CHARACTERS = {
@@ -93,7 +93,7 @@ class SupportDataTests(unittest.TestCase):
             {"type": "supportSkill", "name": ["支援", "Support", "支援", "支援"]},
             {"type": "gekisouSupportSkill", "name": ["激奏", "Gekisou", "激奏", "激奏支援"]},
         ]
-        with patch("ournotes_bot.yatta.card_detail", return_value={
+        with patch("ournotes_bot.sources.yatta.card_detail", return_value={
             "statsMax": [10156, 7442, 7179], "skills": member_skills,
         }):
             member = handle_command("/查卡 1", self.repo)
@@ -104,7 +104,7 @@ class SupportDataTests(unittest.TestCase):
         self.assertIn("LIVE技能 · Live", member)
         self.assertIn("击奏技能 · 激奏", member)
 
-        with patch("ournotes_bot.yatta.support_card_detail", return_value={
+        with patch("ournotes_bot.sources.yatta.support_card_detail", return_value={
             "statsMax": [600, 500, 400], "skills": support_skills,
         }):
             support = handle_command("/查支援卡 7", self.repo)
@@ -198,10 +198,10 @@ class SupportDataTests(unittest.TestCase):
             "type": "liveSkill", "name": ["スコアUP", "Score Up", "分数UP", "得分提升"],
             "description": ["得分提升", "Score rises", "得分提升", "得分提升50%"],
         }]}
-        with patch("ournotes_bot.yatta.fetch_json", return_value={}), \
-             patch("ournotes_bot.yatta.build_data", return_value=([], [base_card])), \
-             patch("ournotes_bot.yatta.build_support_cards", return_value=self.repo.support_cards), \
-             patch("ournotes_bot.yatta.card_detail", return_value=detail) as fetch:
+        with patch("ournotes_bot.sources.yatta.fetch_json", return_value={}), \
+             patch("ournotes_bot.sources.yatta.build_data", return_value=([], [base_card])), \
+             patch("ournotes_bot.sources.yatta.build_support_cards", return_value=self.repo.support_cards), \
+             patch("ournotes_bot.sources.yatta.card_detail", return_value=detail) as fetch:
             self.repo.refresh()
         self.assertEqual(fetch.call_count, 1)
         self.assertTrue(self.repo.member_skill_index_ready())

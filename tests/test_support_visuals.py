@@ -5,9 +5,9 @@ import unittest
 from PIL import Image, ImageDraw
 
 from ournotes_bot.data import SupportCard, Skill
-from ournotes_bot.card_visuals import grid, detail
-from ournotes_bot.support_visuals import render_detail, render_list
-from ournotes_bot.support_summary import summarize, entries
+from ournotes_bot.rendering.card_visuals import grid, detail
+from ournotes_bot.rendering.support_visuals import render_detail, render_list
+from ournotes_bot.rendering.support_summary import summarize, entries
 
 
 class SupportVisualTests(unittest.TestCase):
@@ -62,18 +62,18 @@ class SupportVisualTests(unittest.TestCase):
         self.assertIn("数值状态未核实", result)
 
     def test_single_condition_stays_list_and_id_stays_detail(self):
-        with patch("ournotes_bot.support_visuals.render_list", return_value=b'list') as listing, \
-             patch("ournotes_bot.support_visuals.render_detail", return_value=b'detail') as details:
+        with patch("ournotes_bot.rendering.support_visuals.render_list", return_value=b'list') as listing, \
+             patch("ournotes_bot.rendering.support_visuals.render_detail", return_value=b'detail') as details:
             self.assertEqual(grid([self.card], "EX", support=True), b'list')
             self.assertEqual(detail(self.card), b'detail')
             listing.assert_called_once()
             details.assert_called_once()
 
     def test_full_landscape_is_contained_and_list_does_not_fetch_full(self):
-        from ournotes_bot.card_visuals import _paste
+        from ournotes_bot.rendering.card_visuals import _paste
         art = Image.new('RGBA', (900, 450), 'red')
         with patch('ournotes_bot.visuals._asset', return_value=art) as asset, \
-             patch('ournotes_bot.support_visuals._paste', wraps=_paste) as paste:
+             patch('ournotes_bot.rendering.support_visuals._paste', wraps=_paste) as paste:
             render_detail(self.card)
             asset.assert_called_once_with('full', (1800, 1800), contain=True)
             self.assertEqual(paste.call_args.args[2][2:], (450, 225))
