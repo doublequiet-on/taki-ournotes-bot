@@ -32,7 +32,7 @@ HELP_TEXT = """Taki · Our Notes 日服资料查询
 激奏=JUST 表示包含；激奏=纯JUST 表示全段同类；激奏=混合；激奏=JUST/JUST/COMBO 按顺序匹配
 /查谱面 歌名或ID [难度]：查看等级与 Note 数；100001 可简写为 1
 /查分数表 [乐队] [EX] [lv<=25] [页N]：全难度每分钟得分效率前30条，含难度、时长和得分系数；也可指定歌名或ID
-/榜线 [jp/tw/kr/en] [歌名] [T1～T100]：活动挑战歌曲榜；默认日服、全部歌曲的 T1/2/3/10/100
+/查榜线 [jp/tw/kr/en] [歌名] [T1～T100]：活动挑战歌曲榜；默认日服、全部歌曲的 T1/2/3/10/100
 /查卡 [SSR/SR/R] [颜色=红色] [角色=tmr] [乐队=MyGO] [LIVE=分数提升] [击奏=JUST] [页N]：条件卡牌列表；指定ID看详情
 /查支援卡（或 /查SNAP）：同上筛选，另支持 EX、LIVE=技能延长
 /查卡面 ID、/查支援卡面 ID：只输出卡面；条件多选用逗号，同维度任选、跨维度同时满足
@@ -93,7 +93,7 @@ COMMAND_HELPS = {
 }
 
 ALIASES = {
-    "榜线": "event_cutoff",
+    "查榜线": "event_cutoff", "榜线": "event_cutoff",
     "查分数表": "efficiency", "查效率": "efficiency",
     "查曲": "songs", "song": "songs", "songs": "songs", "曲": "songs", "楽曲": "songs",
     "查谱面": "chart", "查谱": "chart", "谱面": "chart", "chart": "chart", "譜面": "chart",
@@ -499,7 +499,7 @@ def resolve_command(content: str, repository: SongRepository) -> CommandResult |
     text = _clean_message(content)
     parts = text.split(None, 1)
     head = parts[0].casefold() if parts else ""
-    if head == "榜线":
+    if head in {"查榜线", "榜线"}:
         answer = execute_cutoff(parse_cutoff(text), repository)
         return CommandResult(("event_cutoff", answer.request.query, answer.request.rank), cutoff=answer)
     kind = ALIASES.get(head)

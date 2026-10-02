@@ -185,7 +185,7 @@ def _expand_replies(replies: list[PreparedReply], reserve: int = 0) -> list[Prep
             if len(chunks) <= available:
                 expanded.extend(PreparedReply(chunk) for chunk in chunks)
             else:
-                expanded.append(PreparedReply("本次完整榜线结果超过回复预算，无法完整发送；请将 /榜线 单独发送，或指定一首歌曲。"))
+                expanded.append(PreparedReply("本次完整榜线结果超过回复预算，无法完整发送；请将 /查榜线 单独发送，或指定一首歌曲。"))
         else:
             expanded.append(reply)
     return expanded

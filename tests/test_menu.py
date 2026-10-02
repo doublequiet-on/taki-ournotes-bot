@@ -32,7 +32,7 @@ class MenuLimitsTests(unittest.TestCase):
     def test_panel_only_advertises_supported_commands(self):
         self.assertEqual(
             {item["name"] for item in PANEL_ITEMS},
-            {"查谱面", "查曲", "查分数表", "查卡", "查支援卡", "问", "数据状态", "帮助", "介绍"},
+            {"查谱面", "查曲", "查分数表", "查榜线", "查卡", "查支援卡", "问", "数据状态", "帮助", "介绍"},
         )
         for item in PANEL_ITEMS:
             self.assertLessEqual(display_width(item["name"]), 14)
@@ -43,7 +43,7 @@ class MenuLimitsTests(unittest.TestCase):
         self.assertEqual(len(names), len(set(names)))
         self.assertLessEqual(len(names), 20)
         self.assertEqual(set(names), {
-            "查曲", "查谱面", "查分数表", "查卡", "查支援卡", "查卡面",
+            "查曲", "查谱面", "查分数表", "查榜线", "查卡", "查支援卡", "查卡面",
             "查支援卡面", "查缩写", "问", "数据状态", "调试数据",
             "帮助", "介绍", "语言",
         })
@@ -54,11 +54,13 @@ class MenuLimitsTests(unittest.TestCase):
 
 
 class PanelUpdateTests(unittest.IsolatedAsyncioTestCase):
-    async def test_existing_install_updates_only_group_then_is_idempotent(self):
+    async def test_existing_install_adds_cutoff_to_both_panels_then_is_idempotent(self):
         from ournotes_bot.platforms.qq import menu
         calls = []
         panels = {scope: {"panel_id": scope, "panel": {
-            "remark": "ournotes-qq-bot-" + scope, "items": list(PANEL_ITEMS)}}
+            "remark": "ournotes-qq-bot-" + scope, "items": [
+                item for item in (GROUP_PANEL_ITEMS if scope == "group" else PANEL_ITEMS)
+                if item["name"] != "查榜线"]}}
             for scope in ("c2c", "group")}
         class Response:
             status = 200
@@ -72,7 +74,7 @@ class PanelUpdateTests(unittest.IsolatedAsyncioTestCase):
             def request(self, method, url, **kwargs):
                 calls.append((method, url, kwargs))
                 if method == "PUT":
-                    panels["group"]["panel"] = kwargs["json"]["panel"]
+                    panels[url.rsplit("/", 1)[1]]["panel"] = kwargs["json"]["panel"]
                     return Response({})
                 if url.endswith("/v2/panels"):
                     return Response({"records": [panels[kwargs["params"]["scope"]]]})
@@ -84,9 +86,11 @@ class PanelUpdateTests(unittest.IsolatedAsyncioTestCase):
             await menu.setup_menu("fake", "fake")
             await menu.setup_menu("fake", "fake")
         writes = [(method, url, kwargs) for method, url, kwargs in calls if method != "GET"]
-        self.assertEqual(len(writes), 1)
-        self.assertEqual(writes[0][:2], ("PUT", menu.BASE + "/v2/panels/group"))
-        self.assertEqual(writes[0][2]["json"]["panel"]["items"], GROUP_PANEL_ITEMS)
+        self.assertEqual(len(writes), 2)
+        self.assertEqual(writes[0][:2], ("PUT", menu.BASE + "/v2/panels/c2c"))
+        self.assertEqual(writes[1][:2], ("PUT", menu.BASE + "/v2/panels/group"))
+        self.assertEqual(writes[0][2]["json"]["panel"]["items"], PANEL_ITEMS)
+        self.assertEqual(writes[1][2]["json"]["panel"]["items"], GROUP_PANEL_ITEMS)
         self.assertEqual(panels["c2c"]["panel"]["items"], PANEL_ITEMS)
 
 
