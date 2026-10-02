@@ -63,7 +63,7 @@ class QuerySpec:
     def command_label(self) -> str:
         if self.cutoff_request is not None:
             req = self.cutoff_request
-            return f"榜线 {req.server} {req.query}" + (f" T{req.rank}" if req.rank is not None else "")
+            return f"查榜线 {req.server} {req.query}" + (f" T{req.rank}" if req.rank is not None else "")
         if self.card_query is not None:
             return ("查支援卡 " if self.intent == "support_card" else "查卡 ") + self.card_query
         if self.intent == "efficiency":
