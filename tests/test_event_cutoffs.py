@@ -9,6 +9,7 @@ import asyncio
 import hashlib
 import io
 import json
+import os
 import tempfile
 import threading
 import unittest
@@ -83,7 +84,8 @@ class PublicFixture:
                             "endAt": 1791460799000, "rankingDisabled": True,
                             "pointRanking": {"enabled": False, "collectStatus": "disabled"},
                             "challengeRankings": [{"challengeMusicId": str(i), "musicId": str(100 + i),
-                               "rankingEnabled": True, "collectStatus": "collecting", "positionSource": "responseOrder"} for i in range(1, 4)]}), {}
+                               "rankingEnabled": True, "collectStatus": "collecting", "positionSource": "responseOrder",
+                               "effectiveStartAt": 1790758800000, "effectiveEndAt": 1791460799000} for i in range(1, 4)]}), {}
         if path.endswith("/ranking"):
             return encoded({"players": self.players}), {"x-fetched-at": str(int(self.now * 1000) - 40000),
                     "x-server-time": str(int(self.now * 1000)), "x-position-source": "responseOrder", **self.headers}
@@ -163,6 +165,133 @@ class CutoffTests(unittest.TestCase):
         self.assertIn("T100：暂无数据", answer.text)
         self.assertTrue(board.song.enabled)
         self.assertNotIn("player", "".join(p.read_text(encoding="utf-8") for p in (self.root / "cutoff").glob("*.json")))
+
+    def test_current_song_matching_excludes_inactive_partial_and_alias_targets(self):  # A06
+        inactive = self.http.table_rows["jp"]["MasterText"][-1]
+        inactive.update(japanese="夢我夢中 外传 37", simplifiedChinese="夢我夢中 外传 37")
+        self.assertEqual(self.ask("/榜线 夢我").boards[0].song.music_id, "101")
+        with patch("ournotes_bot.query.entity_lexicon._aliases", return_value={"song": {"共用别名": [101, 104]}}):
+            self.assertEqual(self.ask("/榜线 共用别名").boards[0].song.music_id, "101")
+        outside = self.ask("/榜线 夢我夢中 外传 37")
+        self.assertEqual(outside.status, "empty")
+        self.assertIsNone(outside.request.rank)
+        self.assertIn("不是本期", outside.text)
+        with patch("ournotes_bot.query.entity_lexicon._aliases", return_value={"song": {"真正歧义": [101, 102, 104]}}):
+            ambiguous = self.ask("/榜线 真正歧义")
+        self.assertEqual(ambiguous.status, "ambiguous")
+        self.assertIn("长歌名 37", ambiguous.text)
+        self.assertNotIn("外传", ambiguous.text)
+
+    def test_ascii_titles_and_aliases_resolve_before_unknown_server(self):  # A05/A06/A19
+        active = self.http.table_rows["jp"]["MasterText"][1]
+        active.update(japanese="GO WAY GO", simplifiedChinese="GO WAY GO")
+        with patch("ournotes_bot.query.entity_lexicon._aliases", return_value={"song": {"my song": 101}}):
+            for title in ("GO WAY GO", "my song"):
+                for server in ("", "jp "):
+                    answer = self.ask(f"/榜线 {server}{title} T37")
+                    self.assertEqual(answer.boards[0].song.music_id, "101")
+                    self.assertEqual(answer.ranks, (37,))
+                request = parse_natural_cutoff(title + "100线多少")
+                answer = execute_cutoff(request, self.repo)
+                self.assertEqual(answer.boards[0].song.music_id, "101")
+                self.assertEqual(answer.ranks, (100,))
+            before = len(self.http.calls)
+            unknown = execute_cutoff(parse_natural_cutoff("cn GO WAY GO100线多少"), self.repo)
+            self.assertEqual(unknown.status, "invalid_arguments")
+            self.assertIn("未知服务器", unknown.text)
+            self.assertEqual(len(self.http.calls), before)
+            self.assertEqual(self.ask("/榜线 jp my missing song").status, "unknown_entity")
+
+    def test_duplicate_activity_response_preserves_valid_cache_then_recovers(self):  # A16
+        first = self.ask()
+        cache_path = self.source._path("current:jp")
+        valid_cache = cache_path.read_bytes()
+        broken = True
+        def transport(url, timeout):
+            raw, headers = self.http(url, timeout)
+            if broken and url.endswith("/events/current"):
+                body = json.loads(raw)
+                body["challengeRankings"][1]["challengeMusicId"] = "1"
+                raw = encoded(body)
+            return raw, headers
+        self.source.transport = transport
+        self.advance(301)
+        fallback = self.ask()
+        self.assertEqual(fallback.event.songs, first.event.songs)
+        self.assertIn("短期旧快照", fallback.text)
+        self.assertEqual(cache_path.read_bytes(), valid_cache)
+        before = len(self.http.calls)
+        self.ask()
+        self.assertEqual(len(self.http.calls), before)
+        broken = False
+        self.advance(31)
+        recovered = self.ask()
+        self.assertEqual(len(recovered.boards), 3)
+        self.assertNotIn("短期旧快照", recovered.text)
+        self.assertEqual(sum(u.endswith("/events/current") for u in self.http.calls), 3)
+
+    def test_duplicate_activity_disk_cache_is_refetched_after_restart(self):  # A16
+        self.ask()
+        path = self.source._path("current:jp")
+        cache = json.loads(path.read_text(encoding="utf-8"))
+        cache["payload"]["challengeRankings"][1]["challengeMusicId"] = "1"
+        path.write_text(json.dumps(cache), encoding="utf-8")
+        self.repo.event_cutoffs = EventCutoffRepository(self.source.cache_dir, transport=self.http,
+                    clock=lambda: self.http.now, monotonic=lambda: self.tick)
+        answer = self.ask()
+        self.assertEqual(len(answer.boards), 3)
+        self.assertEqual(len({s.challenge_id for s in answer.event.songs}), 3)
+        self.assertEqual(sum(u.endswith("/events/current") for u in self.http.calls), 2)
+
+    def test_distinct_song_period_is_captured_in_all_views_and_text_fallback(self):  # A10/A12
+        def transport(url, timeout):
+            raw, headers = self.http(url, timeout)
+            if url.endswith("/events/current"):
+                body = json.loads(raw)
+                body["challengeRankings"][0].update(effectiveStartAt=1790845200000, effectiveEndAt=1791287999000)
+                raw = encoded(body)
+            return raw, headers
+        self.source.transport = transport
+        answers = (self.ask(), self.ask("/榜线 夢我夢中"), self.ask("/榜线 夢我夢中 T37"))
+        for answer in answers:
+            self.assertEqual(answer.event.start_ms, 1790758800000)
+            self.assertEqual(answer.event.end_ms, 1791460799000)
+            self.assertEqual(answer.boards[0].song.effective_start_ms, 1790845200000)
+            self.assertEqual(answer.boards[0].song.effective_end_ms, 1791287999000)
+            self.assertIn("本曲榜单有效开始：2026-10-01 18:00:00 UTC+09:00", answer.text)
+            self.assertIn("本曲榜单有效结束：2026-10-06 20:59:59 UTC+09:00", answer.text)
+        before = len(self.http.calls)
+        for answer in answers:
+            pages = render_cutoff(answer)
+            self.assertEqual(len(pages), 1)
+            self.assertEqual(pages[0].text, answer.text)
+        self.assertEqual(len(self.http.calls), before)
+
+    def test_missing_invalid_and_conflicted_song_periods_remain_unknown(self):  # A10/A12
+        def transport(url, timeout):
+            raw, headers = self.http(url, timeout)
+            if url.endswith("/jp/events/current"):
+                body = json.loads(raw)
+                rows = body["challengeRankings"]
+                rows[0].pop("effectiveStartAt")
+                rows[0].pop("effectiveEndAt")
+                rows[1].update(effectiveStartAt=True, effectiveEndAt=-1)
+                rows[2].update(effectiveStartAt=1791460799000, effectiveEndAt=1790758800000)
+                raw = encoded(body)
+            return raw, headers
+        self.source.transport = transport
+        answer = self.ask()
+        for board in answer.boards:
+            self.assertIsNone(board.song.effective_start_ms)
+            self.assertIsNone(board.song.effective_end_ms)
+        self.assertEqual(answer.text.count("本曲榜单有效开始：未知"), 3)
+        self.assertEqual(answer.text.count("本曲榜单有效结束：未知"), 3)
+        conflicted = self.ask("/榜线 tw")
+        self.assertIsNone(conflicted.event.start_ms)
+        self.assertIsNone(conflicted.event.end_ms)
+        for song in conflicted.event.songs:
+            self.assertIsNone(song.effective_start_ms)
+            self.assertIsNone(song.effective_end_ms)
 
     def test_lifecycle_time_conflicts_and_event_switch(self):  # A10/A11/A12
         first = self.ask()
@@ -312,6 +441,30 @@ class CutoffTests(unittest.TestCase):
         self.assertEqual(transport.call_count, 2)
         transport.side_effect = SourceError("network")
         self.assertIsNone(load_artwork(self.source, replace(event, asset_version="new"), (event.banner,))[event.banner])
+
+    def test_artwork_retry_after_applies_to_same_url_across_versions(self):  # A16/A17
+        event = self.ask().event
+        transport = Mock(side_effect=SourceError("rate_limited", 120))
+        self.source.transport = transport
+        with ThreadPoolExecutor(max_workers=3) as pool:
+            pictures = list(pool.map(lambda _: load_artwork(self.source, event, (event.banner,)), range(3)))
+        self.assertTrue(all(p[event.banner] is None for p in pictures))
+        self.assertEqual(transport.call_count, 1)
+        self.advance(119)
+        revised = replace(event, asset_version="new")
+        self.assertIsNone(load_artwork(self.source, revised, (event.banner,))[event.banner])
+        self.assertEqual(transport.call_count, 1)
+        raw = io.BytesIO()
+        Image.new("RGB", (20, 20), "blue").save(raw, format="WEBP")
+        transport.side_effect = None
+        transport.return_value = (raw.getvalue(), {"content-type": "image/webp"})
+        self.advance(2)
+        self.assertIsNotNone(load_artwork(self.source, revised, (event.banner,))[event.banner])
+        self.assertEqual(transport.call_count, 2)
+        for path in (self.source.cache_dir / "assets").glob("*.webp"):
+            os.utime(path, (self.http.now, self.http.now))
+        self.assertIsNotNone(load_artwork(self.source, revised, (event.banner,))[event.banner])
+        self.assertEqual(transport.call_count, 2)
 
     def test_untrusted_model_cannot_route_to_local_only_cutoff_capability(self):
         from ournotes_bot.natural_query.query_validation import validate_route, OutcomeCode

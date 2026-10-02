@@ -34,7 +34,7 @@ Current 直接引用 song_traits 的显示常量；这属于领域表现依赖�
 
 ## Files belonging to this subdomain
 
-[event_cutoff_visuals.py](event_cutoff_visuals.py)：活动榜线三视图，复用 Core 主题和编码器，按完整歌曲分张，返回 `CutoffPage(image, text)` 供平台预算分配；只加载来源白名单素材，不重新取榜。[test_event_cutoffs.py](../../../tests/test_event_cutoffs.py) 与 [preview_event_cutoffs.py](../../../scripts/preview_event_cutoffs.py) 验证三视图、缺图、长名、完整整数及多曲分张。
+[event_cutoff_visuals.py](event_cutoff_visuals.py)：活动榜线三视图，复用 Core 主题和编码器，按完整歌曲分张，返回 `CutoffPage(image, text)` 供平台预算分配；只加载来源白名单素材，同 URL 合并请求并遵守限流退避，不重新取榜。[test_event_cutoffs.py](../../../tests/test_event_cutoffs.py) 与 [preview_event_cutoffs.py](../../../scripts/preview_event_cutoffs.py) 验证三视图、单曲有效区间、缺图、长名、完整整数及多曲分张。
 
 [visuals.py](../visuals.py) 中 `render_song_list/render_chart/render_meta`、歌曲身份/激奏辅助、谱面绘制及效率表布局。
 对应 [visuals.py 的唯一文件头 L3](../visuals.py)；本能力的主体实现保留在该文件。

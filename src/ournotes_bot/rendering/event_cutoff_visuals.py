@@ -2,7 +2,7 @@
 # Input: a captured CutoffAnswer and a bounded/injectable artwork loader.
 # Output: complete, ordered image pages with matching per-page text fallbacks.
 # Pos: Rendering / Song challenge-cutoff views; see L2-2-Song.md.
-# Effects: Pillow rendering using existing theme/encoder; optional isolated asset-cache I/O.
+# Effects: Pillow rendering using existing theme/encoder; bounded asset-cache I/O and per-URL failure backoff.
 from __future__ import annotations
 
 import hashlib
@@ -17,8 +17,8 @@ from dataclasses import dataclass, replace
 from PIL import Image, ImageOps
 
 from .. import visuals as v
-from ..query.event_cutoff_query import CutoffAnswer, event_status
-from ..sources.moenotes_events import ASSETS, SERVERS, display_time, zone_label
+from ..query.event_cutoff_query import CutoffAnswer, event_status, song_period_lines
+from ..sources.moenotes_events import ASSETS, SERVERS, SourceError, display_time, zone_label
 
 WIDTH = 720
 PAGE_HEIGHT = 2300  # At 2x this remains under the shared pixel/edge budgets.
@@ -40,14 +40,27 @@ def load_artwork(source, event, urls: tuple[str, ...]) -> dict[str, Image.Image 
             return None
         key = f"{event.server}:{event.event_id}:{event.metadata_version}:{event.asset_version}:{url}"
         path = source.cache_dir / "assets" / (hashlib.sha256(key.encode()).hexdigest() + ".webp")
-        with source._lock("asset:" + key):
+        request_key = "asset:" + url
+        lock = source._lock(request_key)
+        if not lock.acquire(timeout=max(0, deadline - source.monotonic())):
+            return None
+        try:
             try:
                 raw = None
                 if path.is_file() and path.stat().st_size <= 8_000_000 and 0 <= source.clock() - path.stat().st_mtime < 3600:
                     raw = path.read_bytes()
                 downloaded = raw is None
                 if downloaded:
-                    raw, headers = source._get(url, deadline)
+                    negative = source._negative.get(request_key)
+                    if negative and negative[0] > source.monotonic():
+                        return None
+                    try:
+                        raw, headers = source._get(url, deadline)
+                    except SourceError as exc:
+                        if exc.code != "budget":
+                            source._negative[request_key] = (source.monotonic() + exc.retry_after, exc)
+                        return None
+                    source._negative.pop(request_key, None)
                     if not headers.get("content-type", "").lower().startswith("image/"):
                         return None
                 with Image.open(io.BytesIO(raw)) as original:
@@ -68,6 +81,8 @@ def load_artwork(source, event, urls: tuple[str, ...]) -> dict[str, Image.Image 
                 return image
             except Exception:
                 return None
+        finally:
+            lock.release()
     unique = tuple(dict.fromkeys(url for url in urls if url))
     with ThreadPoolExecutor(max_workers=3) as pool:
         return dict(zip(unique, pool.map(load, unique)))
@@ -120,7 +135,9 @@ def render_cutoff(answer: CutoffAnswer, *, asset_loader=None, preview_label: str
         if longest > 604:
             raise ValueError("Full integer does not fit legibly; use captured text")
         rows = math.ceil(len(values) / columns)
-        state_lines = _lines(measure, board.status + (" · " + "；".join(board.notes) if board.notes else ""), 620, 18)
+        details = (board.status + (" · " + "；".join(board.notes) if board.notes else ""),
+                   *song_period_lines(event, board.song))
+        state_lines = [line for detail in details for line in _lines(measure, detail, 620, 18)]
         height = titles_height + rows * 90 + 76 + len(state_lines) * 27
         layouts.append((board, name_lines, titles_height, columns, size, state_lines, height))
 

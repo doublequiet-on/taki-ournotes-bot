@@ -1,6 +1,6 @@
 # L3
 # Input: server, public MoeNotes endpoints, an isolated cache directory and injectable transport/clocks.
-# Output: immutable event/song/board snapshots; scores preserve response positions.
+# Output: immutable event/song/board snapshots with effective song periods; scores preserve response positions.
 # Pos: Data / MoeNotes challenge rankings; see L2-2.md.
 # Effects: bounded anonymous HTTPS GETs and atomic writes in moenotes-cutoff-v1 only; no startup I/O or QQ.
 """On-demand challenge rankings. Event points and permanent song records are never read."""
@@ -120,6 +120,8 @@ class EventSong:
     enabled: bool = True
     collect_status: str = "unknown"
     position_source: str = ""
+    effective_start_ms: int | None = None
+    effective_end_ms: int | None = None
 
 
 @dataclass(frozen=True)
@@ -216,8 +218,10 @@ class EventCutoffRepository:
             try:
                 _id(payload.get("eventId"))
                 rows = payload["challengeRankings"]
-                return isinstance(rows, list) and all(isinstance(row, dict) and
-                    _id(row.get("challengeMusicId")) and _id(row.get("musicId")) for row in rows)
+                if not isinstance(rows, list) or any(not isinstance(row, dict) for row in rows):
+                    return False
+                identities = [(_id(row.get("challengeMusicId")), _id(row.get("musicId"))) for row in rows]
+                return len({challenge for challenge, _ in identities}) == len(identities)
             except (KeyError, SourceError):
                 return False
         if key.startswith("board:"):
@@ -361,11 +365,13 @@ class EventCutoffRepository:
             if not isinstance(row, dict):
                 raise SourceError("invalid_event")
             challenge, music = _id(row.get("challengeMusicId")), _id(row.get("musicId"))
+            start, end = _ms(row.get("effectiveStartAt")), _ms(row.get("effectiveEndAt"))
+            if start is not None and end is not None and start >= end:
+                start = end = None
             songs.append(EventSong(challenge, music, f"歌曲 {music}", enabled=row.get("rankingEnabled") is True,
                                    collect_status=str(row.get("collectStatus", "unknown")),
-                                   position_source=str(row.get("positionSource", ""))))
-        if len({s.challenge_id for s in songs}) != len(songs):
-            raise SourceError("invalid_event")
+                                   position_source=str(row.get("positionSource", "")),
+                                   effective_start_ms=start, effective_end_ms=end))
         notes = ["当前活动接口暂不可用，使用短期旧快照"] if entry.fallback else []
         if data.get("stale") is True:
             notes.append("来源将活动快照标记为陈旧")
@@ -417,6 +423,11 @@ class EventCutoffRepository:
                 except (ValueError, TypeError):
                     notes.append("Master 活动时间格式未知")
         title = names(master.get("nameTextId"))
+        # A song sharing a conflicted global boundary shares its unknown value as well.
+        songs = [replace(song,
+                         effective_start_ms=times[0] if song.effective_start_ms == event.start_ms else song.effective_start_ms,
+                         effective_end_ms=times[1] if song.effective_end_ms == event.end_ms else song.effective_end_ms)
+                 for song in songs]
         return replace(event, title=title[0] if title else event.title, songs=tuple(songs), start_ms=times[0], end_ms=times[1],
                        banner=asset_url(event.server, "banner", str(chapter.get("banner", ""))),
                        metadata_version=data["version"], asset_version=data.get("asset_version", "unknown"),

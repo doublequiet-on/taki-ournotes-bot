@@ -42,7 +42,9 @@ def main():
     release = read("asset-version.json")["regions"]["jp"]
     tables["asset_version"] = release["resource_version"] + ":" + release["locales"]["ja"]["snapshot"]
     event = EventSnapshot("jp", body["eventId"], "", body["eventStatus"], body["startAt"], body["endAt"],
-                          tuple(EventSong(row["challengeMusicId"], row["musicId"], "") for row in body["challengeRankings"]))
+                          tuple(EventSong(row["challengeMusicId"], row["musicId"], "",
+                                          effective_start_ms=row.get("effectiveStartAt"),
+                                          effective_end_ms=row.get("effectiveEndAt")) for row in body["challengeRankings"]))
     event = EventCutoffRepository._enrich(event, tables)
     boards = []
     for song in event.songs:
@@ -67,7 +69,9 @@ def main():
                 ("rank37", replace(overview, request=CutoffRequest(query=boards[0].song.title, rank=37), boards=(boards[0],)))]
     stress = replace(overview, event=replace(event, title="合成压力样例 · 中文と日本語 / 长标题换行验收", banner="", notes=("合成分数和名称，仅用于排版验收。",)),
                      boards=tuple(replace(boards[i % 3], song=replace(boards[i % 3].song,
-                        title=f"合成歌曲 {i + 1} · これはぼくたちの生存のあらすじ / 中文长名称 37", jacket=""),
+                        title=f"合成歌曲 {i + 1} · これはぼくたちの生存のあらすじ / 中文长名称 37", jacket="",
+                        effective_start_ms=event.start_ms + 86400000 if i == 0 else boards[i % 3].song.effective_start_ms,
+                        effective_end_ms=event.end_ms - 172800000 if i == 0 else boards[i % 3].song.effective_end_ms),
                         scores=(12345678901234567890,) * 100 if i != 2 else (), status="合成测试" if i != 2 else "本曲来源暂不可用") for i in range(8)))
     variants.append(("synthetic-stress", stress))
     outputs = []
