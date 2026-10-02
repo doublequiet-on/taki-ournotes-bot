@@ -19,7 +19,7 @@
 ## Core Contracts
 
 - 领域身份：`Song/Chart/Card/SupportCard/Skill` 由 [data.py](ournotes_bot/data.py) 定义；`Song.traits` 当前引用来源文件中的 `SongTraits`。
-- 资料访问：`SongRepository.load/refresh`、按需详情、`song_meta` 和 `song_traits` 是当前消费入口。
+- 资料访问：`SongRepository.load/refresh`、按需详情、`song_meta`、`song_traits` 和惰性 `event_cutoffs` 是当前消费入口；榜线独立故障不影响主资料启动与缓存。
 - 来源契约由 [Sources](ournotes_bot/sources/L2-2.md) 维护；不得把列表技能摘要当作完整详情，也不得把效率指标当作本项目算分结果。
 
 ## Internal Subsystems
@@ -42,7 +42,7 @@ Haneoka 是 Sources 内的实现簇，不增加第三层地图；三个缓存没
 
 ## Navigation to L2-2 / L3
 
-源码范围为 `data.py` 与六个来源文件；精确所有权见 下层源码入口。从两个子域进入 文件头 L3，不在本层展开每个文件的字段。
+源码范围为 `data.py` 与七个来源文件（含新增活动榜适配器）；精确所有权见下层源码入口。从两个子域进入文件头 L3，不在本层展开每个文件的字段。
 
 ## Relevant Tests
 

@@ -34,6 +34,8 @@ Current 直接引用 song_traits 的显示常量；这属于领域表现依赖�
 
 ## Files belonging to this subdomain
 
+[event_cutoff_visuals.py](event_cutoff_visuals.py)：活动榜线三视图，复用 Core 主题和编码器，按完整歌曲分张，返回 `CutoffPage(image, text)` 供平台预算分配；只加载来源白名单素材，不重新取榜。[test_event_cutoffs.py](../../../tests/test_event_cutoffs.py) 与 [preview_event_cutoffs.py](../../../scripts/preview_event_cutoffs.py) 验证三视图、缺图、长名、完整整数及多曲分张。
+
 [visuals.py](../visuals.py) 中 `render_song_list/render_chart/render_meta`、歌曲身份/激奏辅助、谱面绘制及效率表布局。
 对应 [visuals.py 的唯一文件头 L3](../visuals.py)；本能力的主体实现保留在该文件。
 `chart_data.py` 归 Sources，`song_query.py/efficiency_query.py` 归 Query。
@@ -47,6 +49,6 @@ Current 直接引用 song_traits 的显示常量；这属于领域表现依赖�
 
 ## 当前实现与边界
 
-全部歌曲/谱面/效率主体仍在根 visuals.py；本地图放在 rendering/ 只是能力导航。该文件同时服务 Core 与卡牌入口，只有一个文件头 L3。素材可按需读取，图片失败由 QQ 退原文字；本域不发送替代消息。
+原歌曲/谱面/效率主体仍在根 visuals.py；榜线视图独立位于 rendering/event_cutoff_visuals.py。visuals 同时服务 Core 与卡牌入口，只有一个文件头 L3。素材可按需读取，图片失败由 QQ 退捕获的文字；本域不发送替代消息。
 
 向上阅读：[仓库 L1](../../../L1.md)。源码文件头提供唯一 L3，具体行为与字段以实现为准。

@@ -67,6 +67,27 @@ def _aliases(path: Path | None = None) -> dict:
         return {}
 
 
+def scoped_song_matches(term: str, catalog: tuple, *, partial: bool = False) -> tuple[str, ...]:
+    """Resolve names/aliases only against the requested server's Master catalog."""
+    needle = normalize(term)
+    if not needle:
+        return ()
+    exact = tuple(key for key, names in catalog if needle == key or needle in {normalize(n) for n in names})
+    if exact:
+        return exact
+    entries = _aliases().get("song", {})
+    targets = []
+    if isinstance(entries, dict):
+        for alias, target in entries.items():
+            if normalize(alias) == needle:
+                targets.extend(target if isinstance(target, list) else [target])
+    targets = {normalize(str(t)) for t in targets if isinstance(t, (str, int))}
+    found = tuple(key for key, names in catalog if targets.intersection({key, *(normalize(n) for n in names)}))
+    if found or not partial:
+        return found
+    return tuple(key for key, names in catalog if any(needle in normalize(n) for n in names))
+
+
 def mentions_outside_catalog(query: str) -> bool:
     """Known unsupported nicknames are resolved before asking the model."""
     text = normalize(query)

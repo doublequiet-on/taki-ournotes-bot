@@ -10,3 +10,4 @@ global-exclude *.log *.pyc
 include docs/RELEASE_2026-09-28.md
 
 include docs/RELEASE_2026-09-28_SONGS.md
+include docs/EVENT_CUTOFFS.md scripts/preview_event_cutoffs.py

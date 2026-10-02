@@ -158,6 +158,37 @@ def _chart_image(song, charts, locale: str) -> bytes:
 class PreparedReply:
     text: str
     image: bytes | None = None
+    pages: tuple[PreparedReply, ...] = ()
+    complete_text: bool = False
+
+
+def _expand_replies(replies: list[PreparedReply], reserve: int = 0) -> list[PreparedReply]:
+    """Budget all pages before any send. Text fallback uses the captured complete result."""
+    expanded = []
+    for index, reply in enumerate(replies):
+        available = QQ_PASSIVE_REPLY_LIMIT - reserve - len(expanded) - (len(replies) - index - 1)
+        if reply.pages and len(reply.pages) <= available:
+            expanded.extend(reply.pages)
+        elif reply.pages or reply.complete_text:
+            # Conservative local text budget, not a claim about QQ's platform hard limit.
+            chunks, current = [], ""
+            for line in reply.text.splitlines(keepends=True):
+                if current and len(current) + len(line) > 1800:
+                    chunks.append(current)
+                    current = ""
+                while len(line) > 1800:
+                    chunks.append(line[:1800])
+                    line = line[1800:]
+                current += line
+            if current:
+                chunks.append(current)
+            if len(chunks) <= available:
+                expanded.extend(PreparedReply(chunk) for chunk in chunks)
+            else:
+                expanded.append(PreparedReply("本次完整榜线结果超过回复预算，无法完整发送；请将 /榜线 单独发送，或指定一首歌曲。"))
+        else:
+            expanded.append(reply)
+    return expanded
 
 
 class QueryGate:
@@ -274,7 +305,8 @@ async def prepare_commands(commands: list[str], gate: "QueryGate", repository: S
             continue
         if result:
             replies.append(result)
-    return replies, max(0, len(commands) - limit)
+    overflow = max(0, len(commands) - limit)
+    return _expand_replies(replies, reserve=int(bool(overflow))), overflow
 
 
 def _image_from_result(result: QueryResult | CommandResult | None,
@@ -395,6 +427,14 @@ def _prepare_reply(content: str, repository: SongRepository,
         logger.info("未识别为查询，不回复；内容=%s", describe(content))
         return None
     try:
+        if result is not None and result.cutoff is not None:
+            from ...rendering.event_cutoff_visuals import render_cutoff, load_artwork
+            pages = render_cutoff(result.cutoff, asset_loader=lambda event, urls: load_artwork(repository.event_cutoffs, event, urls))
+            if len(pages) == 1:
+                return PreparedReply(reply, pages[0].image)
+            if pages:
+                return PreparedReply(reply, pages=tuple(PreparedReply(page.text, page.image) for page in pages))
+            return PreparedReply(reply, complete_text=True)
         image = _image_from_result(result, repository, locale_for(content))
     except Exception as exc:
         logger.warning("图片生成失败，改用文字；错误类型=%s", type(exc).__name__)
@@ -405,7 +445,7 @@ def _prepare_reply(content: str, repository: SongRepository,
     logger.info("查询完成；内容=%s 文本=%d字 图片=%s 耗时=%.0fms",
                 describe(content), len(reply),
                 f"{len(image):,}B" if image else "无", elapsed())
-    return PreparedReply(reply, image)
+    return PreparedReply(reply, image, complete_text=result is not None and result.cutoff is not None)
 
 
 async def _upload_image(api, target_id: str, image: bytes, group: bool):
