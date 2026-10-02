@@ -18,6 +18,7 @@ from .i18n import tr
 from .query.efficiency_query import MetaAnswer, execute_efficiency
 from .query.card_catalog import CardAnswer, query_cards
 from .query.song_query import SongAnswer, parse_filter, execute as execute_song_filter
+from .query.event_cutoff_query import CutoffRequest, CutoffAnswer, execute_cutoff
 from .sources.haneoka.song_traits import describe as describe_song
 
 
@@ -38,6 +39,7 @@ class QuerySpec:
     limit: int = 30
     card_query: str | None = None
     song_query: str | None = None
+    cutoff_request: CutoffRequest | None = None
 
     def query_label(self) -> str:
         if self.song_query is not None:
@@ -59,6 +61,9 @@ class QuerySpec:
         return " ".join(parts)
 
     def command_label(self) -> str:
+        if self.cutoff_request is not None:
+            req = self.cutoff_request
+            return f"榜线 {req.server} {req.query}" + (f" T{req.rank}" if req.rank is not None else "")
         if self.card_query is not None:
             return ("查支援卡 " if self.intent == "support_card" else "查卡 ") + self.card_query
         if self.intent == "efficiency":
@@ -107,6 +112,7 @@ class QueryResult:
     meta: MetaAnswer | None = None
     catalog: CardAnswer | None = None
     song_selection: SongAnswer | None = None
+    cutoff: CutoffAnswer | None = None
 
 
 def query_page_notice(spec: QuerySpec, total: int, locale: str) -> str:
@@ -132,6 +138,8 @@ def query_page_notice(spec: QuerySpec, total: int, locale: str) -> str:
 
 def resolve_query(spec: QuerySpec, repository: SongRepository) -> QueryResult:
     """Capture records for both answer text and image within one request."""
+    if spec.cutoff_request is not None:
+        return QueryResult(spec, cutoff=execute_cutoff(spec.cutoff_request, repository))
     if spec.song_query is not None:
         answer = execute_song_filter(parse_filter(spec.song_query), repository, spec.page)
         return QueryResult(spec, songs=answer.songs, song_selection=answer)
@@ -257,6 +265,8 @@ def support_cards_for(spec: QuerySpec, repository: SongRepository) -> list[Suppo
 def answer_for(spec: QuerySpec, repository: SongRepository, locale: str = "zh",
                result: QueryResult | None = None) -> str:
     selected = result if result is not None else resolve_query(spec, repository)
+    if selected.cutoff is not None:
+        return selected.cutoff.text
     if selected.song_selection is not None:
         return selected.song_selection.text(locale)
     if selected.catalog is not None:

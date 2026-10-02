@@ -181,6 +181,10 @@ def local_card_rarity_question(query: str, repository: SongRepository) -> QueryS
 
 
 def parse_local_query(query: str, repository: SongRepository) -> QuerySpec | str | None:
+    from ..query.event_cutoff_query import parse_natural_cutoff
+    cutoff = parse_natural_cutoff(query)
+    if cutoff is not None:
+        return QuerySpec("event_cutoff", cutoff_request=cutoff)
     from ..query.song_query import local_query as local_song_traits
     song = local_song_traits(query)
     if song is not None:

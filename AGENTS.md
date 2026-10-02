@@ -1,6 +1,6 @@
 # Codex 开发入口
 
-Taki 是 `doublequiet-on/taki-ournotes-bot`，服务《BanG Dream! Our Notes》日服 QQ 查询。其他游戏机制不能直接作为 ON 事实。独立的官方 X 推文翻译机器人不属于本项目，不得擅自修改、合并或停止。当前不支持账号操作、代练、攻略推荐、实时档线与预测；规划不代表已实现。
+Taki 是 `doublequiet-on/taki-ournotes-bot`，服务《BanG Dream! Our Notes》日服 QQ 查询，并提供四服活动挑战歌曲 Top 100 观测。其他游戏机制不能直接作为 ON 事实。独立的官方 X 推文翻译机器人不属于本项目，不得擅自修改、合并或停止。当前不支持账号操作、代练、攻略推荐、积分档线与预测；歌曲榜快照不代表确认终榜，规划不代表已实现。
 
 ## 边界与生产安全
 

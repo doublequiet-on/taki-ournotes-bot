@@ -254,6 +254,16 @@ class QueryAgent:
                 tracked=tracked, local=True, cache=False,
             )
 
+        # Cutoffs are live source snapshots: bypass stale plan/terminal caches and AI quotas.
+        from ..query.event_cutoff_query import parse_natural_cutoff
+        cutoff = parse_natural_cutoff(question)
+        if cutoff is not None:
+            outcome = self._execute_spec(state, QuerySpec("event_cutoff", cutoff_request=cutoff), repository)
+            if tracked:
+                self.metrics.increment("local_success" if outcome.code == OutcomeCode.SUCCESS else "local_terminal_reject")
+            self._remember_state(question, state)
+            return outcome
+
         cached = self._cache_get(question)
         if cached is not None:
             return self._from_cache(state, cached, repository, tracked)
@@ -608,6 +618,8 @@ class QueryAgent:
     @staticmethod
     def _result_code(result: QueryResult, repository: SongRepository) -> OutcomeCode:
         spec = result.spec
+        if result.cutoff is not None:
+            return OutcomeCode(result.cutoff.status)
         if result.song_selection and result.song_selection.unavailable:
             return OutcomeCode.DATA_UNAVAILABLE
         if result.catalog is not None and result.catalog.error:
@@ -633,6 +645,8 @@ class QueryAgent:
         if not isinstance(result, QueryResult):
             return False
         spec = result.spec
+        if result.cutoff is not None:
+            return any(board.scores for board in result.cutoff.boards)
         if spec.intent == "efficiency":
             return bool(result.meta and result.meta.rows)
         if spec.intent == "chart":

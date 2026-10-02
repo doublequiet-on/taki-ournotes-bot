@@ -21,7 +21,7 @@ from ..query.song_conditions import extract_song_conditions
 from ..structured_query import QuerySpec
 
 
-UNSUPPORTED = "目前只能查询歌曲、谱面、Haneoka歌曲分数表、成员卡和支援卡。试试 /查曲、/查谱面、/查分数表、/查卡 或 /查支援卡；不支持泛攻略、配队或预测。"
+UNSUPPORTED = "目前只能查询歌曲、谱面、Haneoka歌曲分数表、活动歌曲榜线、成员卡和支援卡。试试 /查曲、/查谱面、/查分数表、/榜线、/查卡 或 /查支援卡；不支持泛攻略、配队或预测。"
 UNKNOWN_ENTITY = "当前数据中无法确认这个查询对象。请用歌曲、乐队、角色、成员卡或支援卡的原名或 ID 重试。"
 AMBIGUOUS_ENTITY = "这句话提到了多个可查询对象，请只保留一个歌曲、乐队、角色、成员卡或支援卡名称。"
 

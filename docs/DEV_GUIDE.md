@@ -21,6 +21,8 @@
 
 ## 任务导航
 
+活动歌曲榜线：`sources/moenotes_events.py::EventCutoffRepository` → `query/event_cutoff_query.py::execute_cutoff` → `rendering/event_cutoff_visuals.py::render_cutoff`；直接入口与自然语言本地分支共享捕获结果，QQ `_expand_replies` 预先分配整批回复预算。目标测试 `test_event_cutoffs.py`；离线三视图脚本 `scripts/preview_event_cutoffs.py`，格式、边界和 A01–A22 对应见 [功能说明](EVENT_CUTOFFS.md)。修改这些共享契约后需要完整离线回归与实际查看样图；QQ 真机验收另行授权。
+
 | 任务 | 入口文件＋关键符号 | 相关测试文件 | 按需补读 |
 |---|---|---|---|
 | 成员卡、支援卡、稀有度 | `query/card_catalog.py::query_cards`、`parse_card_request`；`data.py::card_with_detail`、`support_card_with_detail`；`visuals.py::render_card`、`render_support_card` | `test_card_catalog.py`、`test_query.py`、`test_support_data.py`、`test_reply_pipeline.py` | [卡牌详情说明](更新说明-成员卡与支援卡查询.md) |
@@ -55,7 +57,7 @@
 | 卡牌/技能查询 | 已实现两类卡条件网格、精确ID详情、独立卡面及多维分类筛选；BD映射和原生框素材仍缺依据。见 `structured_query.py::cards_for`、`support_cards_for` 与数据索引。 |
 | 谱面 | 已实现静态完整音符绘图和缺失回退；局部放大、播放模拟未实现。见 `render_chart`。 |
 | 直接查询与 AI 分工 | 已实现直接查询不调用模型、本地优先的受限 `/问`；不是自由问答。见 `_prepare_reply`、`QueryAgent.run`。 |
-| 档线、预测、活动/卡池 | 当前/历史档线与预测未实现；活动、卡池、预测命令为未开放占位，见 `commands.py::UNAVAILABLE_COMMANDS`。 |
+| 活动歌曲榜线、预测、活动/卡池 | `/榜线` 已实现四服当前／最近活动挑战歌曲 Top 100 观测；不提供历史选择、积分档线或预测。活动、卡池、预测命令仍为未开放占位，见 `commands.py::UNAVAILABLE_COMMANDS`；榜线约束见 [专题](EVENT_CUTOFFS.md)。 |
 | 算分、配队计算 | 未发现可用命令或计算模块；卡牌数值/技能展示不能视为计算器，也不能证明公式正确。候选规则与实测假设须另行验证，本次不研究。 |
 | 攻略资料与知识库 | 审核后入库是产品约束；正式审核库、采集和审核流程未实现，见 README 长期方向。未来回答须用可靠数据及审核资料，不能把规划写成已落地。 |
 

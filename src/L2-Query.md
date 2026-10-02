@@ -18,6 +18,8 @@
 
 ## Core Contracts
 
+活动榜线以 `QuerySpec.cutoff_request` 和结果的可选 `cutoff: CutoffAnswer` 接入，图文共用不可变快照。直接与自然语言入口均保留服务器／歌曲／名次，不使用旧自然语言终态缓存；详见 [Deterministic](ournotes_bot/query/L2-2.md) 与 [Natural](ournotes_bot/natural_query/L2-2.md)。
+
 `QuerySpec/QueryResult` 的当前位置是 [structured_query.py](ournotes_bot/structured_query.py)，`CommandResult` 在 [commands.py](ournotes_bot/commands.py)。专项选择为 `SongAnswer/CardAnswer/MetaAnswer`；实体坐标为 `EntityRef`。这些契约的所有者均是 Query，不因被 QQ/Rendering 使用而归入一个 Shared 域。
 
 `AIQueryParser.answer_with_plan` 返回文本与结果；不是已渲染图片，也不是模型自由文本。

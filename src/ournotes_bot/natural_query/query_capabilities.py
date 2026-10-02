@@ -211,4 +211,8 @@ def local_route(question: str) -> str | None:
 
 
 def capability_for_spec(spec: QuerySpec) -> Capability:
+    if spec.intent == "event_cutoff":
+        # Local-only capability: model route/action validators cannot invent event IDs or scores.
+        return Capability("event.cutoff", "event_cutoff", "活动挑战歌曲 Top 100", (), (),
+                          True, False, False, False, False, structured_query.resolve_query)
     return CAPABILITIES[INTENT_TO_CAPABILITY[spec.intent]]

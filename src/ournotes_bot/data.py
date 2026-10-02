@@ -235,6 +235,8 @@ class SongRepository:
         from .sources.haneoka.song_meta import MetaRepository
         self.song_meta = MetaRepository(cache_file.with_name("haneoka-meta-jp.json"))
         self.song_traits = SongTraitsRepository(cache_file.with_name("haneoka-song-traits-jp.json"))
+        from .sources.moenotes_events import EventCutoffRepository
+        self.event_cutoffs = EventCutoffRepository(cache_file.parent / "moenotes-cutoff-v1")
 
     def refresh_song_traits(self) -> None:
         """Run off the QQ event loop; source failure cannot invalidate the main catalog."""
