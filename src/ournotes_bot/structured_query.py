@@ -43,6 +43,14 @@ class QuerySpec:
     song_filter: SongFilter | None = None
     field: str = ""
 
+    def __post_init__(self):
+        if self.card_query is not None:
+            from .commands import _split_page
+            query, page = _split_page(self.card_query)
+            object.__setattr__(self, "card_query", query)
+            if self.page == 1 and page != 1:
+                object.__setattr__(self, "page", page)
+
     def query_label(self) -> str:
         if self.song_query is not None:
             return self.song_query
@@ -78,7 +86,8 @@ class QuerySpec:
             return (f"查榜线 {server} {req.query}" + (" " + " ".join(f"T{r}" for r in req.ranks) if req.ranks else "")
                     + (" 仅数值" if req.numeric_only else "")).strip()
         if self.card_query is not None:
-            return ("查支援卡 " if self.intent == "support_card" else "查卡 ") + self.card_query
+            return (("查支援卡 " if self.intent == "support_card" else "查卡 ")
+                    + self.card_query + (f" 页{self.page}" if self.page > 1 else ""))
         if self.intent == "efficiency":
             parts = ["查分数表"]
             if self.song_filter:
@@ -178,7 +187,7 @@ def resolve_query(spec: QuerySpec, repository: SongRepository) -> QueryResult:
         answer = execute_song_filter(parse_filter(spec.song_query, repository, force=True), repository, spec.page)
         return QueryResult(spec, songs=answer.songs, song_selection=answer)
     if spec.card_query is not None:
-        answer = query_cards(spec.card_query, repository, support=spec.intent == "support_card")
+        answer = query_cards(f"{spec.card_query} 页{spec.page}", repository, support=spec.intent == "support_card")
         return QueryResult(spec, catalog=answer, cards=answer.cards if spec.intent == "card" else (),
                            support_cards=answer.cards if spec.intent == "support_card" else ())
     if spec.intent == "efficiency":
@@ -371,8 +380,8 @@ def answer_for(spec: QuerySpec, repository: SongRepository, locale: str = "zh",
         if not visible:
             return query_page_notice(spec, len(matches), locale)
         return tr(locale, "support_cards") + "\n" + "\n".join(
-            f"{card.id}  {rarity_text(card.rarity)} {localized_text(card, 'character', locale)} · "
-            f"{localized_text(card, 'title', locale)}" for card in visible
+            f"{index:02d}. ID {card.id}  {rarity_text(card.rarity)} {localized_text(card, 'character', locale)} · "
+            f"{localized_text(card, 'title', locale)}" for index, card in enumerate(visible, 1)
         ) + "\n" + query_page_notice(spec, len(matches), locale) + "\n" + tr(locale, "next_support_card")
 
     raise ValueError("unsupported query intent")

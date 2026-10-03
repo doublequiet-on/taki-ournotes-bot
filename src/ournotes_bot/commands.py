@@ -39,6 +39,8 @@ HELP_TEXT = """Taki · Our Notes 日服资料查询
 /查缩写 昵称：查看昵称对应的角色、乐队等，也可直接用于查曲或查卡
 /问 想查的内容：自然语言查询歌曲、谱面、歌曲效率、成员卡技能或支援卡（复杂问法需配置 AI）
 /问 迷星叫 EX 物量：等级、Note、颜色、激奏、难度、数量及明确卡牌类型与ID的技能可本地短答
+/下一页、/上一页：继续上次列表；/选 2、/详情、/难度 EX：选择或切换难度
+续查也支持 /问 下一页、第 N 个、看详情、换成 EX；10 分钟未成功续查失效，请单独发送
 /数据状态：查看进程、最近同步与缓存状态
 /调试数据：查看本次进程的 AI API 成功调用与有效检索次数
 /帮助：查看本说明
@@ -494,6 +496,7 @@ class CommandResult:
     cutoff: CutoffAnswer | None = None
     status: str = "success"
     candidates: tuple[Song, ...] = ()
+    query_spec: object | None = None
 
     def __post_init__(self):
         for answer in (self.cutoff, self.meta, self.catalog, self.song_selection):
@@ -526,7 +529,8 @@ def resolve_command(content: str, repository: SongRepository) -> CommandResult |
         from .query.efficiency_query import MetaAnswer, parse_efficiency, execute_efficiency
         spec = parse_efficiency(text, repository, direct=True)
         answer = MetaAnswer(spec, status=getattr(spec, "status", "invalid_arguments")) if isinstance(spec, str) else execute_efficiency(spec, repository)
-        return CommandResult(("efficiency", text, None), meta=answer)
+        return CommandResult(("efficiency", text, None), meta=answer,
+                             query_spec=None if isinstance(spec, str) else spec)
     parsed = parse_query(content)
     if kind == "chart" and len(parts) > 1:
         from .query.song_identity import exact_songs
@@ -584,6 +588,9 @@ def handle_command(content: str, repository: SongRepository,
         return INTRO
     if not text:
         return HELP_TEXTS[locale]
+    from .query.continuation import parse_operation, MISSING
+    if parse_operation(text) is not None:
+        return MISSING
     if text.casefold() in {"帮助", "help", "菜单", "指令", "ヘルプ"}:
         return HELP_TEXTS[locale]
     if text.casefold() in {"语言", "language", "言語"}:

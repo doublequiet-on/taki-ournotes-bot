@@ -254,6 +254,11 @@ class QueryAgent:
                 tracked=tracked, local=True, cache=False,
             )
 
+        from ..query.continuation import parse_operation, MISSING
+        if parse_operation(question) is not None:
+            return self._finish_terminal(state, OutcomeCode.INVALID_ARGUMENTS, MISSING,
+                                         tracked=tracked, local=True, cache=False)
+
         # Cutoffs are live source snapshots: bypass stale plan/terminal caches and AI quotas.
         from ..query.event_cutoff_query import parse_natural_cutoff
         cutoff = parse_natural_cutoff(question)
