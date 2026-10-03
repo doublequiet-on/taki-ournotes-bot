@@ -12,7 +12,7 @@ from dataclasses import replace
 
 from ..data import localized_text, note_text
 from ..sources.haneoka.song_traits import COLORS
-from .song_identity import exact_songs, unique_candidates, candidate_text, QueryProblem
+from .song_identity import exact_songs, unique_candidates, candidate_text, literal_song_match, QueryProblem
 from .song_query import parse_filter, execute as filter_songs
 from .entity_lexicon import EntityRef
 
@@ -75,6 +75,11 @@ def parse_field_question(question, repository):
                 difficulty, term = DIFFICULTY_NAMES[diff[0].upper()], term[:diff.start()].rstrip("的 ")
         if not term:
             return QueryProblem("请指定歌曲名称或 ID。")
+        if not exact_songs(repository, term):
+            if re.search(r"[=:<>]", term):
+                return QueryProblem("字段短答含无法识别的条件；请使用明确歌曲名称、难度和字段。")
+            if term.isdecimal() and 1 <= int(term) < 100000:
+                term = str(100000 + int(term))
         return QuerySpec("chart", difficulty=difficulty, display_name=term, field=field)
     return None
 
@@ -128,7 +133,7 @@ def answer_field(spec, repository):
             lines.append("使用上次有效详情缓存。")
         return result("\n".join(lines))
     matches = unique_candidates(repository, spec.display_name)
-    if len(matches) != 1:
+    if len(matches) != 1 or not literal_song_match(repository, spec.display_name, matches[0]):
         return result(candidate_text(matches, spec.difficulty) if matches else f"未找到歌曲「{spec.display_name}」。",
                       "ambiguous" if matches else "unknown_entity")
     song = matches[0]

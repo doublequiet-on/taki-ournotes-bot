@@ -53,6 +53,10 @@ class FieldTests(unittest.TestCase):
         self.assertIn("0 Notes", self.ask("迷星叫 EX Note"))
         self.assertIn("未找到", self.ask("不存在歌曲 EX Note"))
 
+    def test_short_id_and_unknown_conditions_do_not_change_entity(self):
+        self.assertIn("ID 100001", self.ask("1 EX Note"))
+        self.assertIn("无法识别", self.ask("迷星叫 foo=1 EX Note"))
+
     def test_ambiguous_short_field_never_selects_first(self):
         self.repo.songs.append(replace(self.repo.songs[0], id=100002))
         text = self.ask("迷星叫 EX Note")

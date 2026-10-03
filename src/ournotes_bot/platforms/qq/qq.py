@@ -1,6 +1,6 @@
 # L3
 # Input: QQ 事件／消息、Settings、SongRepository、AIQueryParser 及 CommandResult／QueryResult。
-# Output: PreparedReply 文字与可选图片；外部为被动回复，批内按命令顺序交付，批间排序可配置且超时可提前发送。
+# Output: PreparedReply 文字、图片与选择快照；DeliveryOutcome 明确回执；外部为被动回复，批内顺序固定，批间排序可配置。
 # Pos: Platform / QQ 的事件接入、回复准备／交付与后台任务接线；见 ../../../L2-QQ.md。
 # Effects/Dependencies: botpy 连接、上传／发送、线程与 asyncio 任务、去重／队列状态；经业务模块联网及读写缓存；固定 logger ournotes_bot.qq 供更新器识别就绪。
 

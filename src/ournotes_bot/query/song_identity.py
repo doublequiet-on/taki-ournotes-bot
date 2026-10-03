@@ -46,11 +46,20 @@ def unique_candidates(repository, term: str):
 
 def candidate_text(songs, difficulty: str | None = None) -> str:
     suffix = f" {difficulty}" if difficulty else ""
-    rows = ["匹配到多首歌曲，请用 ID 选择："]
+    rows = ["匹配到多首歌曲，请用 ID 选择：" if len(songs) > 1 else "未确认完整歌曲名称，请核对候选并用 ID 选择："]
     rows.extend(f"{s.title}（ID {s.id}）→ /查谱面 {s.id}{suffix}" for s in songs[:10])
     if len(songs) > 10:
         rows.append(f"共 {len(songs)} 个候选，请补充完整名称缩小范围。")
     return "\n".join(rows)
+
+
+def literal_song_match(repository, term, song):
+    """A unique substring may resolve; edit-distance suggestions need confirmation."""
+    if song in exact_songs(repository, term):
+        return True
+    needle = normalize(term)
+    names = (song.title, *song.titles, *song.localized.get("title", {}).values())
+    return bool(needle and any(needle in normalize(name) for name in names))
 
 
 def protect_entity(text, repository):

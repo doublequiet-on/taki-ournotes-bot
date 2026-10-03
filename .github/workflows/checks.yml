@@ -41,3 +41,11 @@ jobs:
           python -m pip wheel . --no-deps --no-build-isolation -w dist
           python -c "from setuptools.build_meta import build_sdist; build_sdist('dist')"
           python scripts/check_release_artifact.py dist
+      - name: Verify isolated wheel and source installations
+        run: |
+          for package in "$GITHUB_WORKSPACE"/dist/*.whl "$GITHUB_WORKSPACE"/dist/*.tar.gz; do
+            install_dir=$(mktemp -d "$RUNNER_TEMP/taki-install.XXXXXX")
+            python -m venv "$install_dir/venv"
+            "$install_dir/venv/bin/python" -m pip install "$package"
+            (cd "$install_dir" && "$install_dir/venv/bin/python" -I "$GITHUB_WORKSPACE/scripts/check_installed_query_upgrade.py")
+          done

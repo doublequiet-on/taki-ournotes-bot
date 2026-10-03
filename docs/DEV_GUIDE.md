@@ -21,6 +21,8 @@
 
 ## 任务导航
 
+查询升级 v1 的完整 55 项映射见 [实现与验收](QUERY_UPGRADE_V1.md)。共享歌曲条件在 `query/song_query.py`，字段短答在 `query/field_query.py`，有限续查在 `query/continuation.py`；QQ 的 `reply_commands` 管同用户顺序和发送确认。历史、采样、趋势分别位于 `sources/cutoff_history.py`、`sources/cutoff_sampler.py`、`rendering/cutoff_trends.py`，发布开关和长期保留见 [历史运维](CUTOFF_HISTORY.md)。
+
 活动歌曲榜线：`sources/moenotes_events.py::EventCutoffRepository` → `query/event_cutoff_query.py::execute_cutoff` → `rendering/event_cutoff_visuals.py::render_cutoff`；直接入口与自然语言本地分支共享捕获结果，QQ `_expand_replies` 预先分配整批回复预算。目标测试 `test_event_cutoffs.py`；离线三视图脚本 `scripts/preview_event_cutoffs.py`，格式、边界和 A01–A22 对应见 [功能说明](EVENT_CUTOFFS.md)。修改这些共享契约后需要完整离线回归与实际查看样图；QQ 真机验收另行授权。
 
 | 任务 | 入口文件＋关键符号 | 相关测试文件 | 按需补读 |
@@ -77,7 +79,7 @@ $env:PYTHONPATH = 'src'
 
 单模块测试替换 `pattern` 为导航表对应文件；入口依据为 CI 的 `unittest discover -s tests -q`，这里用等价 loader 在 Python 进程内清空凭据，避免 Windows PowerShell 空环境变量处理差异。测试使用桩和临时数据；新增测试同样不得依赖生产缓存或收费服务。不要把 `query`/`repl` 当纯只读离线验证：启动会 `SongRepository.load`，可能刷新缓存；`/问` 还可能调用模型。
 
-CI 完整配置在 [.github/workflows/checks.yml](../.github/workflows/checks.yml)：Python 3.10/3.12、离线测试、构建并检查包。涉及打包时，在隔离开发环境执行现有命令：
+CI 完整配置在 [.github/workflows/checks.yml](../.github/workflows/checks.yml)：Python 3.10/3.12、离线测试、构建并检查包，以及 wheel／sdist 分别隔离安装后的模块、别名、运维说明和临时历史库检查。涉及打包时，在隔离开发环境执行现有命令：
 
 ```powershell
 python -m pip wheel . --no-deps --no-build-isolation -w dist

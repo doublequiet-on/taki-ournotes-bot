@@ -45,6 +45,11 @@ class PlatformBoundaryTests(unittest.TestCase):
             from ournotes_bot.data import Chart, Song, SongRepository
             from ournotes_bot.structured_query import QueryResult, QuerySpec, resolve_query
             from ournotes_bot.visuals import render_song_list
+            from ournotes_bot.query.continuation import capture_context, execute_followup, Operation
+            from ournotes_bot.query.field_query import parse_field_question
+            from ournotes_bot.sources.cutoff_history import CutoffHistory
+            from ournotes_bot.sources.cutoff_sampler import HistorySampler
+            from ournotes_bot.rendering.cutoff_trends import segments
 
             with tempfile.TemporaryDirectory() as folder:
                 repo = SongRepository('https://bdon.yatta.moe', Path(folder) / 'cache.json')
@@ -54,6 +59,12 @@ class PlatformBoundaryTests(unittest.TestCase):
                 direct = resolve_command('/查曲 迷星叫', repo)
                 assert isinstance(direct, CommandResult)
                 assert list(direct.songs) == [song]
+                context = capture_context(direct, repo)
+                detail, _ = execute_followup(context, Operation('select', 1), repo)
+                assert detail.chart[0].id == song.id
+                short = resolve_query(parse_field_question('迷星叫 EX Note', repo), repo)
+                assert '768 Notes' in short.short_text
+                assert HistorySampler(repo.event_cutoffs).task is None
                 assert '迷星叫' in handle_command('/查曲 迷星叫', repo, resolved=direct)
                 result = resolve_query(QuerySpec(intent='song', difficulty='EXPERT',
                                                  comparison='>=', level=25), repo)

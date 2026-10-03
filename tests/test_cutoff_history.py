@@ -9,7 +9,7 @@ from dataclasses import replace
 from contextlib import closing
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 from ournotes_bot.sources.cutoff_history import CutoffHistory
 from ournotes_bot.sources.cutoff_sampler import HistorySampler
@@ -128,6 +128,20 @@ class HistoryTests(unittest.TestCase):
         self.assertIn("预算", view.warning)
         self.assertEqual(self.store.status()["points"], 4)
 
+    def test_write_failure_preserves_existing_bytes_and_current_query(self):
+        self.store.record(self.evt, board(self.evt))
+        before = self.path.read_bytes()
+        fixture = PublicFixture()
+        source = EventCutoffRepository(Path(self.tmp.name) / "current", transport=fixture,
+                                      clock=lambda: fixture.now, monotonic=lambda: fixture.now)
+        source.history = self.store
+        with patch.object(self.store, "_connect", side_effect=OSError("disk write failed")):
+            self.assertEqual(self.store.record(self.evt, board(self.evt, NOW + 300000)), "storage_error")
+            evt = source.event("jp", source.deadline())
+            current = source.board(evt, evt.songs[0], source.deadline())
+            self.assertIsNotNone(current.score(1))
+        self.assertEqual(self.path.read_bytes(), before)
+
     def test_source_records_query_snapshots_and_keeps_newer_current(self):
         fixture = PublicFixture()
         source = EventCutoffRepository(Path(self.tmp.name) / "current", transport=fixture,
@@ -144,6 +158,21 @@ class HistoryTests(unittest.TestCase):
 
 
 class SamplerTests(unittest.TestCase):
+    def test_cycle_cadence_excludes_work_time_and_skips_missed_ticks(self):
+        async def check(duration, expected):
+            now, delays = [0], []
+            sampler = HistorySampler(SimpleNamespace(history=None), clock=lambda: now[0])
+            def work(): now[0] += duration
+            async def sleep(delay):
+                delays.append(delay)
+                sampler.stopping.set()
+            sampler.sample_once = work
+            with patch("ournotes_bot.sources.cutoff_sampler.asyncio.sleep", side_effect=sleep):
+                await sampler.run()
+            self.assertEqual(delays, [expected])
+        asyncio.run(check(10, 290))
+        asyncio.run(check(610, 290))
+
     def test_cancelled_worker_cannot_restart_while_thread_is_in_flight(self):
         async def run():
             sampler = HistorySampler(SimpleNamespace(history=None))

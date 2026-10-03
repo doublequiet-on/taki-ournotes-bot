@@ -32,10 +32,12 @@ class HistorySampler:
         if not history or not history.writable():
             self.last_state = "历史写入关闭或暂停"
             return
-        for server in self.servers:
+        for index, server in enumerate(self.servers):
             if self.stopping.is_set():
                 return
             if self.source.foreground_active:
+                for skipped in self.servers[index:]:
+                    history.failure(skipped, code="foreground_yield")
                 self.last_state = "让位于前台查询"
                 return
             if self.discovery_after.get(server, 0) > self.clock():
@@ -48,6 +50,9 @@ class HistorySampler:
                     self.discovery_after[server] = self.clock() + max(900, self.interval)
                 for song in songs:
                     if self.stopping.is_set() or self.source.foreground_active or not history.writable():
+                        if self.source.foreground_active:
+                            for skipped in self.servers[index:]:
+                                history.failure(skipped, code="foreground_yield")
                         self.last_state = "采样暂停"
                         return
                     self.source.board(event, song, deadline)
@@ -61,6 +66,7 @@ class HistorySampler:
                 self.last_state = "采样失败，等待下一周期"
 
     async def run(self):
+        next_tick = self.clock()
         try:
             while not self.stopping.is_set():
                 work = asyncio.create_task(asyncio.to_thread(self.sample_once))
@@ -70,8 +76,13 @@ class HistorySampler:
                     self.stopping.set()
                     await work
                     raise
-                # Do not queue missed ticks or manufacture downtime observations.
-                await asyncio.sleep(self.interval)
+                # Keep a 300s cadence without adding network duration each cycle.
+                # Skip missed ticks instead of queueing catch-up observations.
+                next_tick += self.interval
+                now = self.clock()
+                if next_tick <= now:
+                    next_tick += (int((now - next_tick) // self.interval) + 1) * self.interval
+                await asyncio.sleep(max(0, next_tick - now))
         finally:
             self.stopping.set()
             self.last_state = "已停止"

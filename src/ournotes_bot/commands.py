@@ -478,7 +478,8 @@ def _choose(repository: SongRepository, query: str, locale: str = "zh") -> tuple
     matches = unique_candidates(repository, query)
     if not matches:
         return None, tr(locale, "not_found_generic", query=query)
-    if len(matches) > 1:
+    from .query.song_identity import literal_song_match
+    if len(matches) > 1 or (matches and not literal_song_match(repository, query, matches[0])):
         return None, candidate_text(matches)
     return matches[0], None
 
@@ -536,6 +537,10 @@ def resolve_command(content: str, repository: SongRepository) -> CommandResult |
         from .query.song_identity import exact_songs
         if exact_songs(repository, parts[1]):
             parsed = ("chart", parts[1], None)
+        elif parsed and parsed[2] is not None:
+            original = parts[1].rsplit(None, 1)[0]
+            if exact_songs(repository, original):
+                parsed = ("chart", original, parsed[2])
     if not parsed:
         return None
     kind, query, _ = parsed
@@ -557,9 +562,9 @@ def resolve_command(content: str, repository: SongRepository) -> CommandResult |
             return CommandResult(parsed, support_cards=tuple(support_card_matches(repository, query)))
         except ValueError:
             return CommandResult(parsed, hint=CARD_RARITY_HELP[locale_for(content)])
-    from .query.song_identity import unique_candidates, candidate_text
+    from .query.song_identity import unique_candidates, candidate_text, literal_song_match
     matches = unique_candidates(repository, query)
-    if len(matches) > 1:
+    if len(matches) > 1 or (matches and not literal_song_match(repository, query, matches[0])):
         return CommandResult(parsed, hint=candidate_text(matches, parsed[2]),
                              status="ambiguous", candidates=matches)
     song = matches[0] if matches else None

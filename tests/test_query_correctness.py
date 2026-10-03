@@ -60,6 +60,19 @@ class CorrectnessTests(unittest.TestCase):
         self.repo._load_cache()
         self.assertEqual([c.notes for c in self.repo.songs[0].charts][:2], [None, None])
 
+    def test_numeric_title_before_short_id_and_fuzzy_tail_not_ignored(self):
+        original = self.repo.songs[0]
+        song = replace(original, title="123", titles=("123",), localized={})
+        self.repo.songs = [song, replace(original, id=100123)]
+        self.assertEqual(resolve_command("/查谱面 123 EX", self.repo).songs, (song,))
+        title = "A very long verified song title"
+        self.repo.songs = [replace(original, title=title, titles=(title,), localized={})]
+        query = f"/查谱面 {title} foo=1 EX"
+        result = resolve_command(query, self.repo)
+        self.assertEqual(result.status, "ambiguous")
+        self.assertFalse(result.songs)
+        self.assertIn("/查谱面 100001 EXPERT", handle_command(query, self.repo, result))
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -161,14 +161,19 @@ class CutoffHistory:
         """Record a missing collection attempt, without fabricating a score/time point."""
         if not self.writable():
             return
+        if not self._lock.acquire(timeout=0.15):
+            self.last_error = "busy"
+            return
         try:
-            with self._lock, closing(self._connect(write=True)) as db, db:
+            with closing(self._connect(write=True)) as db, db:
                 now = int(self.clock() * 1000)
                 db.execute("INSERT OR IGNORE INTO gaps VALUES(?,?,?,?,?)", (server, str(event), str(challenge), now, code))
                 db.execute("INSERT OR REPLACE INTO health VALUES('last_failure',?)", (str(now),))
                 db.execute("INSERT OR REPLACE INTO health VALUES('last_quality',?)", (code,))
         except (sqlite3.Error, OSError):
             self.last_error = "storage_error"
+        finally:
+            self._lock.release()
 
     def read(self, event, song, ranks, *, max_points=20000, gap_ms=900000):
         if not self.enabled:

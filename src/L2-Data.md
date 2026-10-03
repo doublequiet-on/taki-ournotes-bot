@@ -34,6 +34,8 @@ Haneoka 是 Sources 内的实现簇，不增加第三层地图；三个缓存没
 
 ## State / Side Effects
 
+榜线历史独立保存于 SQLite，以服／活动／挑战 ID 隔离，原始分数向量使用无损 JSON 整数。历史长期保留，低磁盘暂停，不改变现有缓存 schema；仅机器人运行入口按开关启动受控采样，详见 [运维说明](../docs/CUTOFF_HISTORY.md)。
+
 主缓存、详情内存缓存、各来源快照和锁分开管理。仓库初始化可读专项缓存；`load` 可联网刷新；查询调用详情或效率入口也可引发网络和写缓存。跨来源不保证同一时刻更新，不能写成“纯内存只读仓库”。
 
 ## Failure / Degradation Boundaries
