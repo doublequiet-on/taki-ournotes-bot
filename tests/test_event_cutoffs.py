@@ -592,7 +592,9 @@ class CutoffTests(unittest.TestCase):
         expanded = _expand_replies(batch)
         self.assertEqual([p.text for p in expanded], ["song0", "song1", "song2", "song3", "next"])
         expanded = _expand_replies(batch + [PreparedReply("last")])
-        self.assertEqual([p.text for p in expanded], ["all songs", "next", "last"])
+        self.assertEqual([p.text for p in expanded][1:], ["next", "last"])
+        self.assertTrue(expanded[0].text.startswith("all songs\n"))
+        self.assertIn("容量不足", expanded[0].text)
         send = AsyncMock(side_effect=TimeoutError("unknown"))
         message = SimpleNamespace(id="fake", _api=SimpleNamespace(post_group_message=send))
         with patch("ournotes_bot.platforms.qq.qq._upload_image", new=AsyncMock(return_value={"file_info": "fake"})):
