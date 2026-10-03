@@ -6,7 +6,7 @@
 
 `linux-cp312.lock` 固定直接、传递依赖及构建／安装工具版本和 wheel SHA256。`pyproject.toml` 保留跨平台支持范围；生产 Linux 安装必须使用锁文件。更新依赖时有意重新解析并审查锁的差异，不能在定时更新时解析浮动版本。
 
-Checks 的 `offline-linux-bundle` 在 Ubuntu 24.04 / Python 3.12 下载锁定 wheel，构建应用 wheel，并从完整提交导出源码。包内只有源码归档、完整安装锁、wheelhouse 和逐文件 SHA256 清单，不包含运行配置、私有审批策略或 `local-ops`。应用 wheel 与源码都来自该提交。
+Checks 的 `offline-linux-bundle` 在 Ubuntu 24.04 / Python 3.12 从完整提交导出源码归档，在临时目录解包，使用归档内的依赖锁下载 wheel 并构建应用 wheel。构建不读取工作目录内的未跟踪源码或遗留构建产物。包内只有源码归档、完整安装锁、wheelhouse 和逐文件 SHA256 清单，不包含运行配置、私有审批策略或 `local-ops`。应用 wheel 与源码都来自该提交。
 
 `check_offline_release.py` 在 `unshare --net` 环境中创建全新 venv，执行 `pip install --no-index --find-links ... --require-hashes --no-deps`、`pip check`、安装后资源检查及源码全量回归。Windows 本地通过不能替代这个 Linux 检查。
 

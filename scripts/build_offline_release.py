@@ -17,6 +17,7 @@ import zipfile
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from deploy.offline_bundle import ASSET, TARGET, digest, inspect_bundle, require_target
+from deploy.linux_backend import extract_archive
 
 
 def run(*args, cwd=ROOT, env=None):
@@ -35,9 +36,14 @@ def build(output: Path):
     env = dict(os.environ, SOURCE_DATE_EPOCH=epoch, PIP_DISABLE_PIP_VERSION_CHECK="1")
     with tempfile.TemporaryDirectory() as temporary:
         staging = Path(temporary)
+        source_archive = staging / "source.tar.gz"
+        run("git", "archive", "--format=tar.gz", "--prefix=taki-ournotes-bot-" + commit + "/",
+            "--output=" + str(source_archive), commit)
+        source = staging / "source"
+        extract_archive(source_archive, source, commit)
         wheels = staging / "wheelhouse"
         wheels.mkdir()
-        lock = ROOT / "deploy/linux-cp312.lock"
+        lock = source / "deploy/linux-cp312.lock"
         run(sys.executable, "-m", "pip", "download", "--require-hashes", "--no-deps", "--only-binary=:all:",
             "--platform", "manylinux2014_x86_64", "--platform", "manylinux_2_28_x86_64",
             "--implementation", "cp", "--python-version", "3.12", "--abi", "cp312",
@@ -48,18 +54,16 @@ def build(output: Path):
         run(python, "-m", "pip", "install", "--no-index", "--find-links", wheels,
             "--require-hashes", "--no-deps", "-r", lock, env=env)
         run(python, "-m", "pip", "check", env=env)
-        run(python, "-m", "pip", "wheel", ROOT, "--no-index", "--no-deps", "--no-build-isolation", "-w", wheels, env=env)
+        run(python, "-m", "pip", "wheel", source, "--no-index", "--no-deps", "--no-build-isolation", "-w", wheels, env=env)
         application = list(wheels.glob("taki_ournotes_bot-*.whl"))
         if len(application) != 1:
             raise SystemExit("Expected one application wheel")
-        from check_release_artifact import check
+        from scripts.check_release_artifact import check
         check(application[0])
         version = application[0].name.split("-")[1]
         requirements = lock.read_text(encoding="utf-8") + "\ntaki-ournotes-bot==" + version + " --hash=sha256:" + digest(application[0]) + "\n"
         (staging / "requirements.lock").write_text(requirements, encoding="utf-8")
-        run("git", "archive", "--format=tar.gz", "--prefix=taki-ournotes-bot-" + commit + "/",
-            "--output=" + str(staging / "source.tar.gz"), commit)
-        files = {"source.tar.gz": staging / "source.tar.gz", "requirements.lock": staging / "requirements.lock"}
+        files = {"source.tar.gz": source_archive, "requirements.lock": staging / "requirements.lock"}
         files.update({"wheelhouse/" + path.name: path for path in wheels.glob("*.whl")})
         manifest = {"version": 1, "commit": commit, "target": TARGET,
                     "files": {name: digest(path) for name, path in files.items()}}

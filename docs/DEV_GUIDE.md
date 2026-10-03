@@ -47,7 +47,7 @@
 - 基础歌曲/卡牌资料：`sources/yatta.py` 的 `BASE`、`MASTER`；`SongRepository.refresh` 校验 Project Yume 来源，并构建成员技能索引。完整音符另由 `sources/chart_data.py::CHART_BASE` 读取 MoeNotes 公共资源，`score_name` 限定已知 ID/难度映射。本次不扩展来源，不把外部研究目录当正式接口。
 - 主缓存由 `OURNOTES_CACHE_FILE` 指定；`CACHE_SCHEMA`、旧字段兼容、详情失败回退见 `data.py`。TTL 由 `OURNOTES_CACHE_TTL_HOURS` 控制；QQ 后台刷新间隔目前在 `platforms/qq/qq.py::refresh_loop` 固定为六小时，不由此变量控制。
 - 谱面缓存默认 `runtime_data_dir()/chart-cache`，不一定随自定义主缓存路径移动；图片素材缓存见 `visuals.py::_asset`，字体选择见 `_font`。长图自下向上、各栏从左向右；节点数不能直接当判定数或算分公式依据。
-- 卡牌映射 SSR=四星、SR=三星、R=二星，数字 ID 不当星级；技能按 `sources/yatta.py::skill_description` 的 Lv.5 默认值展示，不代表玩家培养状态。技能索引不完整须保留提示；两类详情同步构建分类索引，`card_catalog_version` 控制旧缓存升级，顶层 `card_catalog` 保持旧卡牌行兼容。
+- 卡牌映射 SSR=四星、SR=三星、R=二星；成员生日卡 BD=后台稀有度20，仅用于成员卡，不扩展 SNAP 映射，数字 ID 不当星级。技能按 `sources/yatta.py::skill_description` 的 Lv.5 默认值展示，不代表玩家培养状态。技能索引不完整须保留提示；两类详情同步构建分类索引，`card_catalog_version` 控制旧缓存升级，顶层 `card_catalog` 保持旧卡牌行兼容。
 - `.env.example` 列出变量用途；`QQ_APP_ID`/`QQ_APP_SECRET` 用于 QQ，`AI_API_KEY`/`AI_BASE_URL`/`AI_MODEL` 为可选模型设置。源码配置根与普通安装包启动目录有区别，见 `CONFIG_ROOT`。不要为文档读取真实 `.env`。
 - `OURNOTES_AI_QUOTA_FILE` 是持久额度，按北京时间自然日、每次真实模型请求前计数；`OURNOTES_AI_METRICS_FILE` 是匿名分类统计；调试计数仅进程内。三者不可混淆，也不可删记录来“修复额度”。依据：`DailyQuota.reserve`、`QueryMetrics`、`QueryDebugCounters`。
 - 更新器共享配置、主缓存、额度及通知数据库；代码回退不会还原这些数据。状态记录不能证明进程在线或 QQ 送达；详见自动更新说明，真实验收只在获得对应授权后执行。
@@ -56,7 +56,7 @@
 
 | 范围 | 当前状态与依据 |
 |---|---|
-| 卡牌/技能查询 | 已实现两类卡条件网格、精确ID详情、独立卡面及多维分类筛选；BD映射和原生框素材仍缺依据。见 `structured_query.py::cards_for`、`support_cards_for` 与数据索引。 |
+| 卡牌/技能查询 | 已实现两类卡条件网格、精确ID详情、独立卡面及多维分类筛选；成员 BD 映射已核实，列表与详情使用参考截图的渐变框，未取得原生框素材。见 `structured_query.py::cards_for`、`support_cards_for` 与数据索引。 |
 | 谱面 | 已实现静态完整音符绘图和缺失回退；局部放大、播放模拟未实现。见 `render_chart`。 |
 | 直接查询与 AI 分工 | 已实现直接查询不调用模型、本地优先的受限 `/问`；不是自由问答。见 `_prepare_reply`、`QueryAgent.run`。 |
 | 活动歌曲榜线、预测、活动/卡池 | `/查榜线` 已实现四服当前／最近活动挑战歌曲 Top 100 观测；不提供历史选择、积分档线或预测。活动、卡池、预测命令仍为未开放占位，见 `commands.py::UNAVAILABLE_COMMANDS`；榜线约束见 [专题](EVENT_CUTOFFS.md)。 |
