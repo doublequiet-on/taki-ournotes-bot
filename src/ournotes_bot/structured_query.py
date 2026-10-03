@@ -17,7 +17,7 @@ from .query.entity_lexicon import EntityRef
 from .i18n import tr
 from .query.efficiency_query import MetaAnswer, execute_efficiency
 from .query.card_catalog import CardAnswer, query_cards
-from .query.song_query import SongAnswer, parse_filter, execute as execute_song_filter
+from .query.song_query import SongAnswer, SongFilter, parse_filter, execute as execute_song_filter
 from .query.event_cutoff_query import CutoffRequest, CutoffAnswer, execute_cutoff
 from .sources.haneoka.song_traits import describe as describe_song
 
@@ -40,6 +40,7 @@ class QuerySpec:
     card_query: str | None = None
     song_query: str | None = None
     cutoff_request: CutoffRequest | None = None
+    song_filter: SongFilter | None = None
 
     def query_label(self) -> str:
         if self.song_query is not None:
@@ -69,11 +70,13 @@ class QuerySpec:
             return ("查支援卡 " if self.intent == "support_card" else "查卡 ") + self.card_query
         if self.intent == "efficiency":
             parts = ["查分数表"]
-            if self.subject:
+            if self.song_filter:
+                parts.append(self.song_filter.query)
+            elif self.subject:
                 parts.append(str(self.subject.value))
-            if self.difficulty:
+            if self.difficulty and not self.song_filter:
                 parts.append("全难度" if self.difficulty == "ALL" else self.difficulty)
-            if self.comparison and self.level is not None:
+            if self.comparison and self.level is not None and not self.song_filter:
                 parts.append(f"lv{self.comparison}{self.level:g}")
             if self.limit != 30:
                 parts.append(f"前{self.limit}")
@@ -155,7 +158,7 @@ def resolve_query(spec: QuerySpec, repository: SongRepository) -> QueryResult:
     if spec.cutoff_request is not None:
         return QueryResult(spec, cutoff=execute_cutoff(spec.cutoff_request, repository))
     if spec.song_query is not None:
-        answer = execute_song_filter(parse_filter(spec.song_query), repository, spec.page)
+        answer = execute_song_filter(parse_filter(spec.song_query, repository, force=True), repository, spec.page)
         return QueryResult(spec, songs=answer.songs, song_selection=answer)
     if spec.card_query is not None:
         answer = query_cards(spec.card_query, repository, support=spec.intent == "support_card")

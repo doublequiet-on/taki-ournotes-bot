@@ -283,9 +283,9 @@ class QueryAgent:
         if _DIRECT_COMMAND.match(question):
             selected = resolve_command(question, repository)
             text = handle_command(question, repository, resolved=selected) or UNSUPPORTED
-            state.final_code = OutcomeCode.SUCCESS
+            state.final_code = OutcomeCode(selected.status) if selected else OutcomeCode.UNSUPPORTED
             self._cache_put(question, CachedOutcome(
-                "command", OutcomeCode.SUCCESS, command=question,
+                "command", state.final_code, command=question,
             ))
             self._remember_state(question, state)
             if tracked:
@@ -445,7 +445,7 @@ class QueryAgent:
             return outcome
         assert cached.command is not None
         selected = resolve_command(cached.command, repository)
-        state.final_code = OutcomeCode.SUCCESS
+        state.final_code = OutcomeCode(selected.status) if selected else OutcomeCode.UNSUPPORTED
         self._remember_state(state.question, state)
         return AgentOutcome(
             handle_command(cached.command, repository, resolved=selected) or UNSUPPORTED,
@@ -609,6 +609,8 @@ class QueryAgent:
 
     @staticmethod
     def _message_code(message: str) -> OutcomeCode:
+        if hasattr(message, "status"):
+            return OutcomeCode(message.status)
         if message == UNKNOWN_ENTITY:
             return OutcomeCode.UNKNOWN_ENTITY
         if message == AMBIGUOUS_ENTITY:

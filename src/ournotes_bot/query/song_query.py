@@ -11,7 +11,8 @@ import re
 import unicodedata
 from dataclasses import dataclass
 
-from ..data import localized_text
+from ..data import localized_text, normalize
+from .song_identity import protect_entity
 from ..sources.haneoka.song_traits import COLORS, describe
 
 MARKER = re.compile(r"颜色|属性|[红蓝绿黄紫黑白橙青灰]色|激奏|击奏|纯(?:JUST|COMBO|LUCK)", re.I)
@@ -30,13 +31,32 @@ class SongFilter:
     comparison: str = ""
     level: float | None = None
     integer_level: bool = False
+    band: str = ""
 
 
-def parse_filter(query):
+def parse_filter(query, repository=None, *, force=False, efficiency=False):
     text = unicodedata.normalize("NFKC", query).strip()
-    if not MARKER.search(text):
+    if not force and not MARKER.search(text):
         return None
+    text, protected = protect_entity(text, repository)
     text = re.sub(r"\s*([=/,])\s*", r"\1", text)
+    band = ""
+    bands = list(re.finditer(r"乐队=([^\s]+)", text))
+    if len(bands) > 1:
+        raise ValueError("一次查询请指定一个乐队条件。")
+    if bands:
+        m = bands[0]
+        from .entity_lexicon import resolve_exact_alias
+        match = resolve_exact_alias("song", m[1], repository) if repository else None
+        direct_bands = {s.band for s in repository.songs if normalize(m[1]) in {
+            normalize(s.band), *(normalize(v) for v in s.localized.get("band", {}).values())}} if repository else set()
+        if len(direct_bands) == 1:
+            band = next(iter(direct_bands))
+        elif match and match.entity and match.entity.kind == "band" and not match.ambiguous:
+            band = str(match.entity.value)
+        else:
+            raise ValueError(f"无法识别乐队「{m[1]}」，未忽略此条件。")
+        text = text[:m.start()] + " " + text[m.end():]
     colors, missions, mode, difficulty, comparison, level = (), (), "", "", "", None
     level_text = ""
     # Remove recognized fields; never erase arbitrary remaining words.
@@ -67,12 +87,12 @@ def parse_filter(query):
                     or mode in {"pure", "contains"} and len(missions) != 1):
                 raise ValueError("激奏条件无法识别。" + HELP)
         text = text[:m.start()] + " " + text[m.end():]
-    diffs = list(re.finditer(r"(?<![A-Za-z])(?:diff=)?(EXPERT|NORMAL|EASY|HARD|EX|NM|EZ|HD)(?![A-Za-z])", text, re.I))
+    diffs = list(re.finditer(r"(?<![A-Za-z])(?:diff=)?(EXPERT|NORMAL|EASY|HARD|EX|NM|EZ|HD|ALL|全难度)(?![A-Za-z])", text, re.I))
     if len(diffs) > 1:
         raise ValueError("一次查询请指定一个难度。")
     if diffs:
         m = diffs[0]
-        difficulty = DIFFS[m[1].upper()]
+        difficulty = "ALL" if m[1].upper() in {"ALL", "全难度"} else DIFFS[m[1].upper()]
         text = text[:m.start()] + " " + text[m.end():]
     levels = list(re.finditer(r"lv\.?\s*(>=|<=|>|<|=)?\s*(\d+(?:\.\d+)?)", text, re.I))
     if len(levels) > 1:
@@ -80,11 +100,13 @@ def parse_filter(query):
     if levels:
         m = levels[0]
         comparison, level = m[1] or "=", float(m[2])
+        if efficiency and comparison == "=":
+            raise ValueError("分数表等级请用 lv>=、lv>、lv<= 或 lv<；数字 ID 不作等级。")
         level_text = m[2]
         if not 1 <= level <= 40:
             raise ValueError("等级须在 1～40 之间。")
         text = text[:m.start()] + " " + text[m.end():]
-    elif (re.search(r"(?:^|\s)\d+(?:\.\d+)?$", text.strip())
+    elif (not efficiency and re.search(r"(?:^|\s)\d+(?:\.\d+)?$", text.strip())
           and float(re.search(r"(\d+(?:\.\d+)?)$", text.strip())[1]) <= 40):
         m = re.search(r"(?:^|\s)(\d+(?:\.\d+)?)$", text.strip())
         comparison, level = "=", float(m[1])
@@ -92,10 +114,12 @@ def parse_filter(query):
         text = text.strip()[:m.start()]
         if not 1 <= level <= 40:
             raise ValueError("等级须在 1～40 之间。")
-    if not colors and not mode or MARKER.search(text) or re.search(r"[=:<>]|\blv\b", text, re.I):
+    if (not force and not colors and not mode) or MARKER.search(text) or re.search(r"[=:<>]|\blv\b", text, re.I):
         raise ValueError("无法识别全部歌曲条件，请使用明确字段。" + HELP)
-    term = text.strip()
+    term = text.replace("TAKIENTITYTOKEN", protected).strip()
     pieces = [term] if term else []
+    if band:
+        pieces.append("乐队=" + band)
     if colors:
         pieces.append("颜色=" + "/".join(COLORS[c] for c in colors))
     if mode:
@@ -106,7 +130,41 @@ def parse_filter(query):
     if level is not None:
         pieces.append(f"lv{comparison}{level_text}")
     return SongFilter(" ".join(pieces), term, colors, mode, missions, difficulty, comparison, level,
-                      comparison == "=" and "." not in level_text)
+                      comparison == "=" and "." not in level_text, band)
+
+
+def serialize_filter(request):
+    parts = [request.term] if request.term else []
+    if request.band:
+        parts.append("乐队=" + request.band)
+    if request.colors:
+        parts.append("颜色=" + "/".join(COLORS[c] for c in request.colors))
+    if request.mode:
+        value = "混合" if request.mode == "mixed" else ("纯" if request.mode == "pure" else "包含全部" if request.mode == "all" else "") + "/".join(request.missions)
+        parts.append("激奏=" + value)
+    if request.difficulty:
+        parts.append(request.difficulty)
+    if request.level is not None:
+        value = str(int(request.level)) if request.integer_level else str(float(request.level))
+        parts.append(f"lv{request.comparison}{value}")
+    return " ".join(parts)
+
+
+def traits_match(request, song):
+    """True/False/None means match/non-match/missing required evidence."""
+    if request.band and normalize(song.band) != normalize(request.band):
+        return False
+    if not (request.colors or request.mode):
+        return True
+    t = song.traits
+    if not t or (request.colors and t.color is None) or (request.mode and not t.missions):
+        return None
+    if request.colors and t.color not in request.colors:
+        return False
+    seq, wanted = t.missions or (), request.missions
+    return not request.mode or {"contains": bool(set(wanted) & set(seq)), "all": set(wanted) <= set(seq),
+        "pure": bool(seq) and set(seq) == set(wanted), "mixed": len(set(seq)) > 1,
+        "exact": seq == wanted}[request.mode]
 
 
 @dataclass(frozen=True)
@@ -116,10 +174,11 @@ class SongAnswer:
     page: int = 1
     warning: str = ""
     unavailable: bool = False
+    unknown_entity: bool = False
 
     @property
     def status(self):
-        return "data_unavailable" if self.unavailable else "success" if self.songs else "empty"
+        return "unknown_entity" if self.unknown_entity else "data_unavailable" if self.unavailable else "success" if self.songs else "empty"
 
     @property
     def footer(self):
@@ -140,15 +199,17 @@ class SongAnswer:
 def execute(request, repository, page=1):
     from ..commands import _song_name_matches
     candidates = _song_name_matches(repository, request.term) if request.term else list(repository.songs)
+    if request.term and not candidates:
+        return SongAnswer(request, page=page, unknown_entity=True)
     def charts_match(song):
-        charts = [c for c in song.charts if not request.difficulty or c.difficulty == request.difficulty]
+        charts = [c for c in song.charts if request.difficulty in {"", "ALL"} or c.difficulty == request.difficulty]
         if not charts:
             return False
         if request.level is None:
             return True
         values = [c.level if request.integer_level else c.display_level for c in charts]
         # Retain existing range semantics: unspecified difficulty uses hardest chart.
-        if not request.difficulty and request.comparison != "=":
+        if request.difficulty in {"", "ALL"} and request.comparison != "=":
             values = [max(values)]
         target = request.level
         return any({"=": v == target,
@@ -156,17 +217,11 @@ def execute(request, repository, page=1):
     candidates = [s for s in candidates if charts_match(s)]
     unknown, matches = 0, []
     for song in candidates:
-        t = song.traits
-        if not t or request.colors and t.color is None or request.mode and not t.missions:
+        keep = traits_match(request, song)
+        if keep is None:
             unknown += 1
             continue
-        if request.colors and t.color not in request.colors:
-            continue
-        seq = t.missions or ()
-        wanted = request.missions
-        if request.mode and not {"contains": bool(set(wanted) & set(seq)), "all": set(wanted) <= set(seq),
-                "pure": bool(seq) and set(seq) == set(wanted), "mixed": len(set(seq)) > 1,
-                "exact": seq == wanted}[request.mode]:
+        if not keep:
             continue
         matches.append(song)
     warning = f"有 {unknown} 首歌曲缺少所需颜色／激奏数据，未参与筛选。" if unknown else ""
@@ -177,7 +232,7 @@ def execute(request, repository, page=1):
     return SongAnswer(request, tuple(matches), page, warning, bool(candidates and unknown == len(candidates)))
 
 
-def local_query(query):
+def local_query(query, repository=None):
     """Translate a small, bounded Chinese grammar, rejecting leftover conditions."""
     if not MARKER.search(query) or re.search(r"卡|SNAP|推荐|攻略|排行|分数表|效率|谱面", query, re.I):
         return None
@@ -200,7 +255,7 @@ def local_query(query):
     if not 1 <= page <= 100:
         return "页码应在 1～100 之间。"
     try:
-        request = parse_filter(text)
+        request = parse_filter(text, repository)
         if request is None:
             return HELP
         from ..structured_query import QuerySpec

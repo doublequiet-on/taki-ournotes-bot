@@ -36,6 +36,8 @@ class SongTraits:
     color: int | None = None
     missions: tuple[str, ...] | None = None
     stale: bool = False
+    release: str = ""
+    source_version: str = ""
 
 
 def describe(song) -> str:
@@ -159,6 +161,7 @@ class SongTraitsRepository:
             if (row and {normalize(t) for t in song.titles + (song.title,)} & {normalize(t) for t in row["titles"]}
                     and Path(urlsplit(song.jacket_url).path).stem == row["jacket"]):
                 seq = row.get("missions")
-                traits = SongTraits(row.get("color"), tuple(MISSIONS[v] for v in seq) if seq else None, self.stale)
+                traits = SongTraits(row.get("color"), tuple(MISSIONS[v] for v in seq) if seq else None, self.stale,
+                                    str(saved.get("release", "")), str(saved.get("source_version", "")))
             result.append(replace(song, traits=traits))
         return result

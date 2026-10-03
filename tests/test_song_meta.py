@@ -428,7 +428,7 @@ class SongMetaTests(unittest.TestCase):
         self.meta["100001"]["3"]["chart"]["eff"] = None
         self.repo.song_meta.get.return_value = self.snapshot()
         result = resolve_command("/查分数表 暗黒天国 全难度", self.repo).meta
-        self.assertEqual(result.status, "empty")
+        self.assertEqual(result.status, "data_unavailable")
         self.assertIn("歌曲已收录", result.text)
         self.assertFalse(result.rows)
         self.assertIn("未找到", handle_command("/查分数表 不存在的曲名 全难度", self.repo))

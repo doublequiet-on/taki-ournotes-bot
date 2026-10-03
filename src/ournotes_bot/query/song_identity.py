@@ -6,8 +6,18 @@
 """Entity-first song resolution, shared by unique-object and list queries."""
 from __future__ import annotations
 
+import re
+
 from ..data import normalize
 from .entity_lexicon import scoped_song_matches, resolve_exact_alias
+
+
+class QueryProblem(str):
+    """String-compatible parse diagnostic with a machine-readable terminal code."""
+    def __new__(cls, message, status="invalid_arguments"):
+        instance = super().__new__(cls, message)
+        instance.status = status
+        return instance
 
 
 def exact_songs(repository, term: str):
@@ -41,3 +51,17 @@ def candidate_text(songs, difficulty: str | None = None) -> str:
     if len(songs) > 10:
         rows.append(f"共 {len(songs)} 个候选，请补充完整名称缩小范围。")
     return "\n".join(rows)
+
+
+def protect_entity(text, repository):
+    """Protect the longest complete entity span before consuming condition tokens."""
+    if repository is None:
+        return text, ""
+    words = list(re.finditer(r"\S+", text))
+    for size in range(len(words), 0, -1):
+        for start in range(len(words) - size + 1):
+            left, right = words[start].start(), words[start + size - 1].end()
+            value = text[left:right]
+            if exact_songs(repository, value):
+                return text[:left] + "TAKIENTITYTOKEN" + text[right:], value
+    return text, ""
