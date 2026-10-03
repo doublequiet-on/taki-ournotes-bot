@@ -64,7 +64,8 @@ class ReplyPipelineTests(unittest.TestCase):
         self.assertEqual([song.id for song in render.call_args.args[0]], [100001])
 
     def test_chart_and_card_text_images_share_one_selection(self):
-        with patch.object(self.repo, "search", wraps=self.repo.search) as select, \
+        from ournotes_bot.query.song_identity import unique_candidates
+        with patch("ournotes_bot.query.song_identity.unique_candidates", wraps=unique_candidates) as select, \
              patch("ournotes_bot.platforms.qq.qq.load_chart_score", return_value={"notes": []}), \
              patch("ournotes_bot.platforms.qq.qq.render_chart", return_value=b"chart") as render:
             result = _prepare_reply("/查谱面 100001 EXPERT", self.repo, self.parser)

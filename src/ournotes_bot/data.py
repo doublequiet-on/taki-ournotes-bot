@@ -25,8 +25,17 @@ class Chart:
     difficulty: str
     level: int
     display_level: float
-    notes: int
+    notes: int | None
     chart_file: str
+
+
+def note_text(notes: int | None) -> str:
+    return f"{notes} Notes" if notes is not None else "Note：暂无资料"
+
+
+def known_notes(value: object) -> int | None:
+    """Only the source can establish a real zero; missing data is not zero."""
+    return value if type(value) is int and value >= 0 else None
 
 
 @dataclass(frozen=True)
@@ -409,9 +418,12 @@ class SongRepository:
                          "extended_schema": self.metadata.get("schema", self.CACHE_SCHEMA)},
             "songs": [
                 {**{k: v for k, v in asdict(song).items() if k != "traits"},
-                 "charts": [asdict(chart) for chart in song.charts]}
+                 "charts": [{**asdict(chart), "notes": chart.notes if chart.notes is not None else 0}
+                            for chart in song.charts]}
                 for song in self.songs
             ],
+            "chart_notes_known": {str(song.id): {chart.difficulty: chart.notes is not None
+                                                for chart in song.charts} for song in self.songs},
             "cards": [{key: value for key, value in asdict(card).items() if key not in {"skills", "catalog"}}
                       for card in self.cards],
             "member_skills": {str(card.id): [asdict(skill) for skill in card.skills]
@@ -441,7 +453,8 @@ class SongRepository:
                 Song(
                     **{key: value for key, value in row.items() if key not in {"charts", "titles"}},
                     titles=tuple(row["titles"]),
-                    charts=tuple(Chart(**chart) for chart in row["charts"]),
+                    charts=tuple(Chart(**{**chart, "notes": self._cached_notes(payload, row["id"], chart)})
+                                 for chart in row["charts"]),
                 )
                 for row in payload["songs"]
             ]
@@ -466,6 +479,14 @@ class SongRepository:
         self.last_successful_sync_at = self.metadata.get("cached_at")
         with self._song_lock:
             self.songs = self.song_traits.apply(self.songs)
+
+    @staticmethod
+    def _cached_notes(payload: dict, song_id: int, chart: dict) -> int | None:
+        value = known_notes(chart.get("notes"))
+        state = payload.get("chart_notes_known", {}).get(str(song_id), {}).get(chart["difficulty"])
+        if state is False or (value == 0 and state is not True):
+            return None
+        return value
 
     def search(self, query: str, limit: int = 5) -> list[Song]:
         needle = normalize(query)

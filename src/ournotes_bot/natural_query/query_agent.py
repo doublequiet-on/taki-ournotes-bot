@@ -622,8 +622,8 @@ class QueryAgent:
             return OutcomeCode(result.cutoff.status)
         if result.song_selection and result.song_selection.unavailable:
             return OutcomeCode.DATA_UNAVAILABLE
-        if result.catalog is not None and result.catalog.error:
-            return OutcomeCode.INVALID_ARGUMENTS
+        if result.catalog is not None:
+            return OutcomeCode(result.catalog.status)
         if spec.intent == "efficiency":
             return OutcomeCode(result.meta.status)
         if ((spec.skill_query or spec.skill_kind) and spec.intent == "card"

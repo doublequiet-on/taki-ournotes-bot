@@ -12,7 +12,7 @@ from dataclasses import dataclass, replace
 
 from .commands import (PAGE_SIZE, _format_card_detail, _format_support_card_detail,
                        filter_card_rarity, page_notice, page_slice, rarity_text)
-from .data import Card, Chart, Skill, Song, SongRepository, SupportCard, character_identity, localized_text, normalize
+from .data import Card, Chart, Skill, Song, SongRepository, SupportCard, character_identity, localized_text, normalize, note_text
 from .query.entity_lexicon import EntityRef
 from .i18n import tr
 from .query.efficiency_query import MetaAnswer, execute_efficiency
@@ -114,6 +114,19 @@ class QueryResult:
     catalog: CardAnswer | None = None
     song_selection: SongAnswer | None = None
     cutoff: CutoffAnswer | None = None
+    status: str = "success"
+
+    def __post_init__(self):
+        for answer in (self.cutoff, self.meta, self.catalog, self.song_selection):
+            if answer is not None:
+                object.__setattr__(self, "status", answer.status)
+                return
+        if self.spec.intent == "chart" and self.chart is None:
+            object.__setattr__(self, "status", "unknown_entity")
+        elif self.spec.intent == "chart" and not self.chart[1]:
+            object.__setattr__(self, "status", "data_unavailable")
+        elif self.spec.intent != "chart" and not (self.songs or self.cards or self.support_cards):
+            object.__setattr__(self, "status", "empty")
 
 
 def query_page_notice(spec: QuerySpec, total: int, locale: str) -> str:
@@ -203,9 +216,10 @@ def songs_for(spec: QuerySpec, repository: SongRepository) -> list[Song]:
 def chart_for(spec: QuerySpec, repository: SongRepository) -> tuple[Song, tuple[Chart, ...]] | None:
     if spec.subject is None or spec.subject.kind != "song":
         return None
-    song = next((row for row in repository.songs if row.id == spec.subject.value), None)
-    if song is None:
+    matches = [row for row in repository.songs if row.id == spec.subject.value]
+    if len(matches) != 1:
         return None
+    song = matches[0]
     charts = tuple(chart for chart in song.charts
                    if not spec.difficulty or chart.difficulty == spec.difficulty)
     return song, charts
@@ -293,7 +307,7 @@ def answer_for(spec: QuerySpec, repository: SongRepository, locale: str = "zh",
             return tr(locale, "not_found_chart", query=spec.display_name)
         song, charts = chart
         return f"[{tr(locale, 'chart')}] {localized_text(song, 'title', locale)}（ID {song.id}）\n{describe_song(song)}\n" + (
-            "\n".join(f"{chart.difficulty} Lv.{chart.display_level:g} · {chart.notes} Notes" for chart in charts)
+            "\n".join(f"{chart.difficulty} Lv.{chart.display_level:g} · {note_text(chart.notes)}" for chart in charts)
             or tr(locale, "no_charts")
         )
 
