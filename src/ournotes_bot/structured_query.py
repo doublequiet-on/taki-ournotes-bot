@@ -65,7 +65,8 @@ class QuerySpec:
         if self.cutoff_request is not None:
             req = self.cutoff_request
             server = "hk" if req.server == "tw" else req.server
-            return f"查榜线 {server} {req.query}" + (f" T{req.rank}" if req.rank is not None else "")
+            return (f"查榜线 {server} {req.query}" + (" " + " ".join(f"T{r}" for r in req.ranks) if req.ranks else "")
+                    + (" 仅数值" if req.numeric_only else "")).strip()
         if self.card_query is not None:
             return ("查支援卡 " if self.intent == "support_card" else "查卡 ") + self.card_query
         if self.intent == "efficiency":

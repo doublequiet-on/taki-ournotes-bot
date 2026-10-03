@@ -172,7 +172,8 @@ def _expand_replies(replies: list[PreparedReply], reserve: int = 0) -> list[Prep
         elif reply.pages or reply.complete_text:
             # Conservative local text budget, not a claim about QQ's platform hard limit.
             chunks, current = [], ""
-            for line in reply.text.splitlines(keepends=True):
+            fallback = reply.text + ("\n本次容量不足，未附曲线，请单独查询歌曲。" if reply.pages else "")
+            for line in fallback.splitlines(keepends=True):
                 if current and len(current) + len(line) > 1800:
                     chunks.append(current)
                     current = ""

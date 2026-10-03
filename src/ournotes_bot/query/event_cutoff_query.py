@@ -12,9 +12,10 @@ from dataclasses import dataclass, replace
 from ..sources.moenotes_events import (BoardSnapshot, EventSnapshot, EventSong, SERVERS, SourceError,
                                       display_time, zone_label)
 from .entity_lexicon import scoped_song_matches
+from ..sources.cutoff_history import HistoryView
 
 NODES = (1, 2, 3, 10, 100)
-HELP = "/查榜线 [jp/hk/kr/en] [歌名] [T1～T100]；省略歌名查全部歌曲，省略名次显示 T1/2/3/10/100；例如 /查榜线 100。"
+HELP = "/查榜线 [jp/hk/kr/en] [歌名] [T1 T10 T37] [仅数值]；最多五个不同排名（1～100），多个排名须各带 T；省略名次显示 T1/2/3/10/100；例如 /查榜线 100。"
 SERVER_ALIASES = {"jp": "jp", "日服": "jp", "hk": "tw", "国服": "tw", "國服": "tw",
                   "tw": "tw", "台服": "tw", "臺服": "tw",
                   "kr": "kr", "韩服": "kr", "韓服": "kr", "en": "en", "英服": "en", "国际服": "en", "國際服": "en"}
@@ -23,14 +24,31 @@ MARKER = re.compile(r"榜线|榜線|档线|檔線|歌曲榜|(?:前\s*[+-]?\d+(?:
 _RANK = re.compile(r"(?:(?:[tT])?)([+-]?\d+(?:\.\d+)?)$")
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, init=False)
 class CutoffRequest:
     server: str = "jp"
     query: str = ""
-    rank: int | None = None
+    ranks: tuple[int, ...] = ()
     error: str = ""
     code: str = "invalid_arguments"
     server_hint: str = ""  # Ambiguous two-letter prefix; resolve the whole entity before rejecting it.
+    numeric_only: bool = False
+
+    def __init__(self, server="jp", query="", rank=None, error="", code="invalid_arguments",
+                 server_hint="", *, ranks=(), numeric_only=False):
+        values = tuple(ranks) + ((rank,) if rank is not None else ())
+        if any(type(r) is not int or not 1 <= r <= 100 for r in values):
+            error, values = "名次必须为 1～100 的整数。", ()
+        elif len(set(values)) > 5:
+            error, values = "一次最多指定五个不同排名。", ()
+        for name, value in (("server", server), ("query", query), ("ranks", tuple(sorted(set(values)))),
+                            ("error", error), ("code", code), ("server_hint", server_hint), ("numeric_only", numeric_only)):
+            object.__setattr__(self, name, value)
+
+    @property
+    def rank(self):
+        """Compatibility accessor; canonical internal state is always a rank tuple."""
+        return self.ranks[0] if len(self.ranks) == 1 else None
 
 
 def parse_cutoff(text: str) -> CutoffRequest:
@@ -100,10 +118,14 @@ class CutoffAnswer:
     boards: tuple[BoardSnapshot, ...] = ()
     message: str = ""
     status: str = "success"
+    histories: tuple[tuple[str, HistoryView], ...] = ()
 
     @property
     def ranks(self) -> tuple[int, ...]:
-        return (self.request.rank,) if self.request.rank is not None else NODES
+        return self.request.ranks or NODES
+
+    def history_for(self, board):
+        return next((view for key, view in self.histories if key == board.song.challenge_id), HistoryView())
 
     @property
     def text(self) -> str:
@@ -119,6 +141,13 @@ class CutoffAnswer:
                           " / ".join(f"T{rank}：{board.score(rank) if board.score(rank) is not None else '暂无数据'}" for rank in self.ranks),
                           f"{board.status} · 源采集 {display_time(board.fetched_ms, event.server)}",
                           *board.notes])
+            history = self.history_for(board)
+            if history.warning:
+                lines.append(history.warning)
+            if history.points:
+                lines.append("历史末次观测：" + display_time(history.points[-1].time_ms, event.server))
+                if len(history.points) == 1:
+                    lines.append("仅 1 个历史点，不足以形成曲线。")
         lines.extend(["", *event.notes, "来源：MoeNotes（非官方）· 活动挑战歌曲 Top 100",
                       "分数按来源响应位置；不代表预测或确认终榜。"])
         return "\n".join(lines)
@@ -134,8 +163,6 @@ def _execute_cutoff(request: CutoffRequest, repository) -> CutoffAnswer:
         return CutoffAnswer(request, message=request.error, status=request.code)
     if request.server not in SERVERS:
         return CutoffAnswer(request, message="未知服务器。" + HELP, status="invalid_arguments")
-    if request.rank is not None and (type(request.rank) is not int or not 1 <= request.rank <= 100):
-        return CutoffAnswer(request, message="名次必须为 1～100 的整数。", status="invalid_arguments")
     source = repository.event_cutoffs
     deadline = source.deadline()
     try:
@@ -145,23 +172,41 @@ def _execute_cutoff(request: CutoffRequest, repository) -> CutoffAnswer:
         return CutoffAnswer(request, message=SERVERS[request.server][0] + "：" + message, status="data_unavailable")
     if not event.songs:
         return CutoffAnswer(request, event, message="本活动没有挑战歌曲榜。", status="empty")
-    query, rank = request.query.strip(), request.rank
+    query, ranks = request.query.strip(), request.ranks
     full_catalog = event.catalog or tuple((s.music_id, s.names + (s.title,)) for s in event.songs)
     event_ids = {s.music_id for s in event.songs}
     catalog = tuple((key, names) for key, names in full_catalog if key in event_ids)
     matches = scoped_song_matches(query, catalog) if query else ()
     outside = scoped_song_matches(query, full_catalog) if query and not matches else ()
-    if query and not matches and not outside and rank is None:
-        head, space, tail = query.rpartition(" ")
-        number = _RANK.fullmatch(tail if space else query)
-        if number:
-            value = number[1]
-            if not re.fullmatch(r"\d+", value) or not 1 <= int(value) <= 100:
+    if not matches and not outside and re.search(r"(?:^|\s)仅数值$", query):
+        query = re.sub(r"(?:^|\s)仅数值$", "", query).strip()
+        request = replace(request, numeric_only=True)
+        matches = scoped_song_matches(query, catalog) if query else ()
+        outside = scoped_song_matches(query, full_catalog) if query and not matches else ()
+    if query and not matches and not outside and not ranks:
+        tokens = list(re.finditer(r"[^\s,，]+", query))
+        suffix = []
+        boundary = len(query)
+        for token in reversed(tokens):
+            if not _RANK.fullmatch(token[0]):
+                break
+            suffix.insert(0, token[0])
+            boundary = token.start()
+            head = query[:boundary].rstrip(" ,，")
+            if head and scoped_song_matches(head, full_catalog):
+                break
+        if suffix:
+            if len(suffix) > 1 and any(not v.lower().startswith("t") for v in suffix):
+                return CutoffAnswer(request, event, message="多个排名必须各自带 T，例如 T1 T10 T37。", status="invalid_arguments")
+            raw = [v.lstrip("tT") for v in suffix]
+            if any(not re.fullmatch(r"\d+", value) or not 1 <= int(value) <= 100 for value in raw):
                 return CutoffAnswer(request, event, message="名次必须为 1～100 的整数。", status="invalid_arguments")
-            rank, query = int(value), head.strip()
+            ranks, query = tuple(sorted({int(v) for v in raw})), query[:boundary].rstrip(" ,，")
+            if len(ranks) > 5:
+                return CutoffAnswer(request, event, message="一次最多指定五个不同排名。", status="invalid_arguments")
             matches = scoped_song_matches(query, catalog) if query else ()
             outside = scoped_song_matches(query, full_catalog) if query and not matches else ()
-    request = replace(request, query=query, rank=rank)
+    request = replace(request, query=query, ranks=ranks)
     songs = event.songs
     if query:
         if not matches and not outside:
@@ -181,4 +226,8 @@ def _execute_cutoff(request: CutoffRequest, repository) -> CutoffAnswer:
         if not songs:
             return CutoffAnswer(request, event, message="这首歌不是本期活动的挑战歌曲。", status="empty")
     boards = source.boards(event, songs, deadline)
-    return CutoffAnswer(request, event, boards, status="success" if any(b.scores for b in boards) else "data_unavailable")
+    histories = ()
+    if not request.numeric_only:
+        histories = tuple((b.song.challenge_id, source.history.read(event, b.song, ranks or NODES) if source.history
+                           else HistoryView(warning="历史记录未配置；当前值仍可查询。")) for b in boards)
+    return CutoffAnswer(request, event, boards, status="success" if any(b.scores for b in boards) else "data_unavailable", histories=histories)
