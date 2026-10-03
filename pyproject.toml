@@ -18,3 +18,5 @@ where = ["src"]
 
 [tool.setuptools.data-files]
 "share/ournotes-qq-bot" = ["query_aliases.json"]
+"share/ournotes-qq-bot/docs" = ["docs/CUTOFF_HISTORY.md", "docs/QUERY_UPGRADE_V1.md"]
+"share/ournotes-qq-bot/deploy" = ["deploy/query-upgrade-v1.env.example"]

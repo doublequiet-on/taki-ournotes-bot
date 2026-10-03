@@ -8,6 +8,7 @@ prune data
 global-exclude *.log *.pyc
 global-exclude *.sqlite3 *.sqlite3-journal *.sqlite3-wal *.sqlite3-shm
 include docs/QUERY_UPGRADE_V1.md docs/CUTOFF_HISTORY.md
+include deploy/query-upgrade-v1.env.example
 include scripts/preview_cutoff_trends.py
 
 include docs/RELEASE_2026-09-28.md

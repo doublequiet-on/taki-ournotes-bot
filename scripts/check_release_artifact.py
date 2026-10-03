@@ -44,11 +44,15 @@ def check(path: Path) -> None:
                        or ("data" in parts and not path.name.endswith(".whl")))
         private_env = leaf.startswith(".env.") and leaf != ".env.example"
         if (leaf in PRIVATE_NAMES or private_env or (leaf.endswith(".json") and leaf != "query_aliases.json")
-                or leaf.endswith((".log", ".pyc", ".sqlite", ".db"))
+                or leaf.endswith((".log", ".pyc", ".sqlite", ".db", ".sqlite3", ".sqlite3-journal", ".sqlite3-wal", ".sqlite3-shm"))
                 or PurePosixPath(leaf).suffix.lower() in MEDIA_SUFFIXES or runtime_dir):
             raise ValueError(f"runtime or private file in {path.name}: {name}")
     if not aliases or not code:
         raise ValueError(f"missing query aliases or bot code in {path.name}")
+    required = {"continuation.py", "field_query.py", "cutoff_history.py", "cutoff_sampler.py", "cutoff_trends.py",
+                "CUTOFF_HISTORY.md", "QUERY_UPGRADE_V1.md", "query-upgrade-v1.env.example"}
+    if not required.issubset(documents):
+        raise ValueError(f"missing query upgrade modules or instructions in {path.name}")
     if path.name.endswith(".tar.gz"):
         needed = {"README.md", "THIRD_PARTY.md", "LOCAL_QQ_TEST.md", "昵称词表维护规范.md", ".env.example",
                   "更新日志.md"}

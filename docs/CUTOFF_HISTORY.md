@@ -6,6 +6,8 @@
 
 安装默认历史写入开启、周期采样关闭。查询可记录新快照；只有机器人运行入口启动周期任务，CLI、导入模块和构造仓库不会启动任务。发布时将以下配置合入服务器已有配置，不覆盖其他配置或密钥：
 
+可复制的发布预设位于 [query-upgrade-v1.env.example](../deploy/query-upgrade-v1.env.example)；合并 GitHub main 本身不会改写服务器已有环境变量。
+
 ```dotenv
 OURNOTES_CUTOFF_HISTORY=1
 OURNOTES_CUTOFF_SAMPLING=1
