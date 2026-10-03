@@ -413,17 +413,22 @@ class SongRepository:
         # The updater shares this file with the previous release. Its schema-2
         # reader passes card rows straight to Card(**row), so new fields belong
         # in top-level extensions that it safely ignores. Keep one atomic file.
+        notes_known = {str(song.id): {chart.difficulty: chart.notes is not None
+                                     for chart in song.charts} for song in self.songs}
         payload = {
             "metadata": {**self.metadata, "schema": 2,
-                         "extended_schema": self.metadata.get("schema", self.CACHE_SCHEMA)},
+                         "extended_schema": self.metadata.get("schema", self.CACHE_SCHEMA),
+                         # The previous release preserves metadata on load/save,
+                         # but drops unknown top-level extensions. A full legacy
+                         # refresh rebuilds metadata, so its zero stays unverified.
+                         "chart_notes_known": notes_known},
             "songs": [
                 {**{k: v for k, v in asdict(song).items() if k != "traits"},
                  "charts": [{**asdict(chart), "notes": chart.notes if chart.notes is not None else 0}
                             for chart in song.charts]}
                 for song in self.songs
             ],
-            "chart_notes_known": {str(song.id): {chart.difficulty: chart.notes is not None
-                                                for chart in song.charts} for song in self.songs},
+            "chart_notes_known": notes_known,
             "cards": [{key: value for key, value in asdict(card).items() if key not in {"skills", "catalog"}}
                       for card in self.cards],
             "member_skills": {str(card.id): [asdict(skill) for skill in card.skills]
@@ -483,7 +488,9 @@ class SongRepository:
     @staticmethod
     def _cached_notes(payload: dict, song_id: int, chart: dict) -> int | None:
         value = known_notes(chart.get("notes"))
-        state = payload.get("chart_notes_known", {}).get(str(song_id), {}).get(chart["difficulty"])
+        states = payload.get("chart_notes_known",
+                             payload.get("metadata", {}).get("chart_notes_known", {}))
+        state = states.get(str(song_id), {}).get(chart["difficulty"])
         if state is False or (value == 0 and state is not True):
             return None
         return value
