@@ -38,3 +38,11 @@
 2026-09-28核对 Project Yume 的公开 MasterParsed 列表和122份成员/SNAP详情，以及网站 `useFilter-BIvyqgQJ.js`、`NonoCard-aiXKXz-b.js`、`cardSkill-B40radPu.js`。用来确认稀有度、类型图标URL、技能名称分类和指定状态的属性展示；没有复制上游JS代码或引入算分算法。各映射与实际样例见[卡牌说明](docs/更新说明-成员卡与支援卡查询.md)。上游没有在本次核实材料中给出可据此再分发游戏素材的授权；资源仍按需读取、缓存，不随源码提交。原生稀有度框和正式属性名称未确认，不能从截图猜资源或枚举。
 
 成员列表技能摘要另使用 [Haneoka 日服成员卡](https://haneoka.org/jp/zh-CN/member-cards/) 的公开 `api/v1/servers/jp/{cards,leader-skills,skills,gekisou-skills,skill-reference}`，按release固定版本；来源与条件结构参考其公开 `scripts/build_api.py` 和 `src/lit/shared/skill-text.ts`。未复制上游程序代码；只保存少量注明来源的数值/描述测试样例及机制指纹，不打包游戏图像或全量数据。代码MPL许可不等于游戏素材再分发许可，继续遵守上述公开接口使用限制与署名要求。
+
+### 新成员卡摘要与 BD（2026-10-04 核验）
+
+Haneoka JP release `r-d82e1e0581c690d38a27` 的 `cards`、`leader-skills`、`gekisou-skills`、`skill-reference`，与 Project Yume `membercards/61.json`、`62.json`、`64.json` 交叉核对身份。生日卡64的后台rarity=20，标题 HAPPY BIRTHDAY 26-27；映射仅用于成员，SNAP仍独立。
+
+Lv.5：61队长为蓝色成员表演+102%、夢限大みゅーたいぷ成员表演+48%；62为该乐队成员表现+132%、JUST激奏成员表现+18%；64为一家Dumb Rock!成员表演+85%、紫色成员表演+40%。每项按自己的目标生效，不把两项之和当成无条件加成。64的LUCK激奏技能为期间条增量+200%、BAD以下扣血减少20%。受限摘要签名包含目标和机制，未知或变更仍拒绝。
+
+短事实夹具 `tests/fixtures/haneoka_member_new_cards.json` 保留本次卡牌、Lv.5效果及所引用的公开条件，不含第三方实现代码。BD框配色参考用户提供的生日卡截图，为自行绘制渐变，不复制官方卡框资产。

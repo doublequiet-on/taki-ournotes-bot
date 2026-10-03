@@ -21,6 +21,73 @@ class HaneokaMemberTests(unittest.TestCase):
     def fetch(self, path):
         return self.saved["identity"] if path.startswith("release?") else self.saved["documents"][path.split("?")[0]]
 
+    def new_cards(self):
+        return json.loads((Path(__file__).parent / "fixtures/haneoka_member_new_cards.json").read_text(encoding="utf-8"))
+
+    def local_card(self, saved, key="64"):
+        row = saved["documents"]["cards"][key]
+        yume = saved["project_yume_identities"][key]
+        return SimpleNamespace(id=yume["id"], asset_id=yume["id"], rarity=yume["rarity"],
+            card_type=yume["attribute"], catalog={"character_ids": [yume["character"]],
+            "skill_evidence": [{"kind": "liveSkill", "id": row["liveSkillId"]},
+                               {"kind": "gekisouSkill", "id": row["gekisouSkillId"]}]})
+
+    def test_new_leaders_keep_independent_targets_and_birthday_dual_effect(self):
+        saved = self.new_cards()
+        snapshot = parse(saved)
+        self.assertEqual(snapshot.summaries["61"][0],
+            ("表演值提升", "蓝色成员 +102%\n夢限大みゅーたいぷ成员 +48%"))
+        self.assertEqual(snapshot.summaries["62"][0],
+            ("表现值提升", "夢限大みゅーたいぷ成员 +132%\nJUST激奏成员 +18%"))
+        self.assertEqual(snapshot.summaries["64"], (
+            ("表演值提升", "一家Dumb Rock!成员 +85%\n紫色成员 +40%"),
+            ("得分 +115%", "5秒 · 无额外条件"),
+            ("LUCK条增量 +200%", "LUCK激奏期间\nBAD以下扣血 -20%")))
+        for key in ("61", "62", "64"):
+            self.assertEqual(snapshot.for_card(self.local_card(saved, key)), snapshot.summaries[key])
+
+    def test_new_contracts_reject_changed_targets_and_damage_mechanics(self):
+        saved = self.new_cards()
+        next(row for row in saved["documents"]["skill-reference"]["targets"]
+             if row["raw"]["_id"] == 9)["raw"]["_cardType"] = 5
+        self.assertEqual(parse(saved).summaries["61"][0], UNKNOWN)
+        saved = self.new_cards()
+        saved["documents"]["gekisou-skills"]["22"]["effects"][1]["raw"]["_skillEffectType"] = 999
+        self.assertEqual(parse(saved).summaries["64"][2], UNKNOWN)
+
+    def test_new_card_refreshes_recent_snapshot_without_relaxing_identity(self):
+        complete = self.new_cards()
+        recent = copy.deepcopy(complete)
+        recent["fetched_at"] = 1000
+        del recent["documents"]["cards"]["64"]
+        self.path.write_text(json.dumps(recent), encoding="utf-8")
+        self.saved = complete
+        fetch = Mock(side_effect=self.fetch)
+        repo = MemberRepository(self.path, fetch=fetch, clock=lambda: 1100)
+        card = self.local_card(complete)
+        snapshot = repo.get([card])
+        self.assertEqual(fetch.call_count, 6)
+        self.assertEqual(snapshot.for_card(card), snapshot.summaries["64"])
+        card.asset_id = 1
+        self.assertEqual(repo.get([card]).for_card(card)[0][0], "映射未确认")
+        self.assertEqual(fetch.call_count, 6)  # shared 300-second retry throttle
+
+    def test_missing_new_card_refresh_failure_keeps_old_cards_and_retries_bounded(self):
+        complete = self.new_cards()
+        recent = copy.deepcopy(complete)
+        recent["fetched_at"] = 1000
+        del recent["documents"]["cards"]["64"]
+        self.path.write_text(json.dumps(recent), encoding="utf-8")
+        fetch = Mock(side_effect=OSError("offline"))
+        repo = MemberRepository(self.path, fetch=fetch, clock=lambda: 1100)
+        card = self.local_card(complete)
+        snapshot = repo.get([card])
+        self.assertTrue(snapshot.stale)
+        self.assertIn("61", snapshot.cards)
+        self.assertEqual(snapshot.for_card(card)[0][0], "映射未确认")
+        repo.get([card])
+        fetch.assert_called_once()
+
     def test_public_samples_and_units(self):
         rows = parse(self.saved).summaries
         self.assertEqual(rows["51"][1:], (("得分 +120→140%", "5秒 · LIFE≥700取后值"), ("JUST +2→4", "第1次起 · LIFE≥700取后值")))

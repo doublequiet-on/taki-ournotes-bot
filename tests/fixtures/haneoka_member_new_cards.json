@@ -1,0 +1,1132 @@
+{
+  "schema": 1,
+  "source": "https://haneoka.org/jp/zh-CN/member-cards/",
+  "identity": {
+    "schema": "haneoka-resource-release-identity-v1",
+    "server": "jp",
+    "releaseId": "r-d82e1e0581c690d38a27",
+    "sourceId": "v10053-d85981059b90-88e9845e2f37-md02c96d9368c-n7ba0928c"
+  },
+  "documents": {
+    "cards": {
+      "61": {
+        "cardId": 61,
+        "assetId": 61,
+        "characterId": 15,
+        "rarity": 4,
+        "cardType": 2,
+        "leaderSkillId": 53,
+        "liveSkillId": 5,
+        "gekisouSkillId": 11
+      },
+      "62": {
+        "cardId": 62,
+        "assetId": 62,
+        "characterId": 12,
+        "rarity": 4,
+        "cardType": 2,
+        "leaderSkillId": 54,
+        "liveSkillId": 3,
+        "gekisouSkillId": 3
+      },
+      "64": {
+        "cardId": 64,
+        "assetId": 64,
+        "characterId": 22,
+        "rarity": 20,
+        "cardType": 5,
+        "leaderSkillId": 59,
+        "liveSkillId": 8,
+        "gekisouSkillId": 22
+      }
+    },
+    "skills": {
+      "3": {
+        "categories": [
+          1
+        ],
+        "description": [
+          "【シンプル】{effects[0].time:F1}秒間 スコア<color=#66FF8C>{effects[0].value/100:F1}%UP</color>",
+          "",
+          "",
+          "",
+          ""
+        ],
+        "effects": [
+          {
+            "activationTimeSecond": 5.0,
+            "conditionGroup": 0,
+            "cumulativeConditionId": 0,
+            "effectId": 15,
+            "effectLimitCount": 0,
+            "effectType": 2000,
+            "effectValue": 13000,
+            "executeLimitCount": 0,
+            "executeLimitResetConditionGroup": 0,
+            "level": 5,
+            "maxEffectValue": 0,
+            "raw": {
+              "_activationTimeSecond": 5.0,
+              "_effectExecuteLimitCount": 0,
+              "_effectExecuteLimitResetConditionGroup": 0,
+              "_effectLimitCount": 0,
+              "_effectValue": 13000,
+              "_icon": "",
+              "_id": 15,
+              "_level": 5,
+              "_liveSkillID": 3,
+              "_maxEffectValue": 0,
+              "_skillConditionGroup": 0,
+              "_skillCumulativeConditionID": 0,
+              "_skillEffectType": 2000,
+              "_skillReleaseConditionGroup": 0,
+              "_skillTargetIDs": []
+            },
+            "releaseConditionGroup": 0,
+            "sourceTable": "MasterLiveSkillEffect"
+          }
+        ],
+        "icon": "/assets/jp/Assets/AddressableResources/Character/Skill/icon_skill_scoreup.png",
+        "id": 3,
+        "liveSkillId": 3,
+        "raw": {
+          "_descriptionTextFormatID": "Live_Skill_Name_Description_3",
+          "_displaySkillCategories": [
+            1
+          ],
+          "_id": 3,
+          "_nameTextID": "Live_Skill_Name_3",
+          "_skillCategories": [
+            1
+          ],
+          "_skillDisplayCategories": [
+            1
+          ],
+          "_skillIconID": 7
+        },
+        "skillIconAssetName": "icon_skill_scoreup",
+        "skillIconId": 7,
+        "skillName": [
+          "スコアUP",
+          "",
+          "",
+          "",
+          ""
+        ],
+        "sourceTable": "MasterLiveSkill"
+      },
+      "5": {
+        "categories": [
+          3
+        ],
+        "description": [
+          "【判定】{effects[0].time:F1}秒間PERFECT以上のスコア<color=#66FF8C>{effects[0].value/100:F1}%</color>UP",
+          "",
+          "",
+          "",
+          ""
+        ],
+        "effects": [
+          {
+            "activationTimeSecond": 5.0,
+            "conditionGroup": 0,
+            "cumulativeConditionId": 0,
+            "effectId": 25,
+            "effectLimitCount": 0,
+            "effectType": 2004,
+            "effectValue": 15000,
+            "executeLimitCount": 0,
+            "executeLimitResetConditionGroup": 0,
+            "level": 5,
+            "maxEffectValue": 0,
+            "raw": {
+              "_activationTimeSecond": 5.0,
+              "_effectExecuteLimitCount": 0,
+              "_effectExecuteLimitResetConditionGroup": 0,
+              "_effectLimitCount": 0,
+              "_effectValue": 15000,
+              "_icon": "",
+              "_id": 25,
+              "_level": 5,
+              "_liveSkillID": 5,
+              "_maxEffectValue": 0,
+              "_skillConditionGroup": 0,
+              "_skillCumulativeConditionID": 0,
+              "_skillEffectType": 2004,
+              "_skillReleaseConditionGroup": 0,
+              "_skillTargetIDs": [
+                41,
+                46
+              ]
+            },
+            "releaseConditionGroup": 0,
+            "sourceTable": "MasterLiveSkillEffect",
+            "targetIds": [
+              41,
+              46
+            ]
+          }
+        ],
+        "icon": "/assets/jp/Assets/AddressableResources/Character/Skill/icon_skill_scoreup.png",
+        "id": 5,
+        "liveSkillId": 5,
+        "raw": {
+          "_descriptionTextFormatID": "Live_Skill_Name_Description_5",
+          "_displaySkillCategories": [
+            1
+          ],
+          "_id": 5,
+          "_nameTextID": "Live_Skill_Name_5",
+          "_skillCategories": [
+            3
+          ],
+          "_skillDisplayCategories": [
+            3
+          ],
+          "_skillIconID": 7
+        },
+        "skillIconAssetName": "icon_skill_scoreup",
+        "skillIconId": 7,
+        "skillName": [
+          "スコアUP(PERFECT)",
+          "",
+          "",
+          "",
+          ""
+        ],
+        "sourceTable": "MasterLiveSkill"
+      },
+      "8": {
+        "categories": [
+          1
+        ],
+        "description": [
+          "【シンプル】{effects[0].time:F1}秒間 スコア<color=#66FF8C>{effects[0].value/100:F1}%UP</color>",
+          "",
+          "",
+          "",
+          ""
+        ],
+        "effects": [
+          {
+            "activationTimeSecond": 5.0,
+            "conditionGroup": 0,
+            "cumulativeConditionId": 0,
+            "effectId": 50,
+            "effectLimitCount": 0,
+            "effectType": 2000,
+            "effectValue": 11500,
+            "executeLimitCount": 0,
+            "executeLimitResetConditionGroup": 0,
+            "level": 5,
+            "maxEffectValue": 0,
+            "raw": {
+              "_activationTimeSecond": 5.0,
+              "_effectExecuteLimitCount": 0,
+              "_effectExecuteLimitResetConditionGroup": 0,
+              "_effectLimitCount": 0,
+              "_effectValue": 11500,
+              "_icon": "",
+              "_id": 50,
+              "_level": 5,
+              "_liveSkillID": 8,
+              "_maxEffectValue": 0,
+              "_skillConditionGroup": 0,
+              "_skillCumulativeConditionID": 0,
+              "_skillEffectType": 2000,
+              "_skillReleaseConditionGroup": 0,
+              "_skillTargetIDs": []
+            },
+            "releaseConditionGroup": 0,
+            "sourceTable": "MasterLiveSkillEffect"
+          }
+        ],
+        "icon": "/assets/jp/Assets/AddressableResources/Character/Skill/icon_skill_scoreup.png",
+        "id": 8,
+        "liveSkillId": 8,
+        "raw": {
+          "_descriptionTextFormatID": "Live_Skill_Name_Description_8",
+          "_displaySkillCategories": [
+            1
+          ],
+          "_id": 8,
+          "_nameTextID": "Live_Skill_Name_8",
+          "_skillCategories": [
+            1
+          ],
+          "_skillDisplayCategories": [
+            1
+          ],
+          "_skillIconID": 7
+        },
+        "skillIconAssetName": "icon_skill_scoreup",
+        "skillIconId": 7,
+        "skillName": [
+          "スコアUP",
+          "",
+          "",
+          "",
+          ""
+        ],
+        "sourceTable": "MasterLiveSkill"
+      }
+    },
+    "gekisou-skills": {
+      "11": {
+        "categories": [
+          3
+        ],
+        "description": [
+          "JUST撃奏中 JUST数<color=#66FF8C>{effects[0].cCon.values[0]}</color>ごとに\nJUST数獲得量{effects[0].value}ずつUP(5回まで)",
+          "",
+          "",
+          "",
+          ""
+        ],
+        "effects": [
+          {
+            "activationTimeSecond": 9999.0,
+            "conditionGroup": 0,
+            "cumulativeConditionId": 56,
+            "effectId": 55,
+            "effectLimitCount": 0,
+            "effectType": 13002,
+            "effectValue": 1,
+            "executeLimitCount": 0,
+            "executeLimitResetConditionGroup": 0,
+            "level": 5,
+            "maxEffectValue": 0,
+            "raw": {
+              "_activationTimeSecond": 9999.0,
+              "_effectExecuteLimitCount": 0,
+              "_effectExecuteLimitResetConditionGroup": 0,
+              "_effectLimitCount": 0,
+              "_effectValue": 1,
+              "_gekisouSkillID": 11,
+              "_icon": "",
+              "_id": 55,
+              "_level": 5,
+              "_maxEffectValue": 0,
+              "_skillConditionGroup": 0,
+              "_skillCumulativeConditionID": 56,
+              "_skillEffectType": 13002,
+              "_skillReleaseConditionGroup": 258,
+              "_skillTargetIDs": [],
+              "_skillTriggerConditionGroup": 253,
+              "_skillTriggerType": 1
+            },
+            "releaseConditionGroup": 258,
+            "sourceTable": "MasterGekisouSkillEffect",
+            "triggerConditionGroup": 253,
+            "triggerType": 1
+          }
+        ],
+        "gekisouMissionType": 3,
+        "gekisouMissionTypeName": "JustCount",
+        "gekisouSkillId": 11,
+        "icon": "/assets/jp/Assets/AddressableResources/Character/Skill/icon_skill_just_count.png",
+        "id": 11,
+        "raw": {
+          "_descriptionTextFormatID": "Gekisou_Skill_Description_11",
+          "_displaySkillCategories": [
+            3
+          ],
+          "_gekisouMissionType": 3,
+          "_id": 11,
+          "_nameTextID": "Gekisou_Skill_Name_11",
+          "_skillCategories": [
+            3
+          ],
+          "_skillDisplayCategories": [
+            3
+          ],
+          "_skillIconID": 13
+        },
+        "skillIconAssetName": "icon_skill_just_count",
+        "skillIconId": 13,
+        "skillName": [
+          "JUST数獲得量UP",
+          "",
+          "",
+          "",
+          ""
+        ],
+        "sourceTable": "MasterGekisouSkill"
+      },
+      "22": {
+        "categories": [
+          2
+        ],
+        "description": [
+          "{0 < effects[0].time ? \"LUCK撃奏開始から\" : \"\"}<color=#66FF8C>{0 < effects[0].time ? effects[0].time ~ \"秒間\" : \"LUCK撃奏中\"}</color>\n抽選ゲージ獲得量{effects[0].value/100:F1}%UP\nBAD以下のライフ減少を{effects[1].value/100:F1}%軽減する",
+          "",
+          "",
+          "",
+          ""
+        ],
+        "effects": [
+          {
+            "activationTimeSecond": 0.0,
+            "conditionGroup": 0,
+            "cumulativeConditionId": 0,
+            "effectId": 140,
+            "effectLimitCount": 0,
+            "effectType": 11001,
+            "effectValue": 20000,
+            "executeLimitCount": 0,
+            "executeLimitResetConditionGroup": 0,
+            "level": 5,
+            "maxEffectValue": 0,
+            "raw": {
+              "_activationTimeSecond": 0.0,
+              "_effectExecuteLimitCount": 0,
+              "_effectExecuteLimitResetConditionGroup": 0,
+              "_effectLimitCount": 0,
+              "_effectValue": 20000,
+              "_gekisouSkillID": 22,
+              "_icon": "",
+              "_id": 140,
+              "_level": 5,
+              "_maxEffectValue": 0,
+              "_skillConditionGroup": 0,
+              "_skillCumulativeConditionID": 0,
+              "_skillEffectType": 11001,
+              "_skillReleaseConditionGroup": 258,
+              "_skillTargetIDs": [],
+              "_skillTriggerConditionGroup": 260,
+              "_skillTriggerType": 2
+            },
+            "releaseConditionGroup": 258,
+            "sourceTable": "MasterGekisouSkillEffect",
+            "triggerConditionGroup": 260,
+            "triggerType": 2
+          },
+          {
+            "activationTimeSecond": 0.0,
+            "conditionGroup": 0,
+            "cumulativeConditionId": 0,
+            "effectId": 145,
+            "effectLimitCount": 0,
+            "effectType": 3004,
+            "effectValue": 2000,
+            "executeLimitCount": 0,
+            "executeLimitResetConditionGroup": 0,
+            "level": 5,
+            "maxEffectValue": 0,
+            "raw": {
+              "_activationTimeSecond": 0.0,
+              "_effectExecuteLimitCount": 0,
+              "_effectExecuteLimitResetConditionGroup": 0,
+              "_effectLimitCount": 0,
+              "_effectValue": 2000,
+              "_gekisouSkillID": 22,
+              "_icon": "",
+              "_id": 145,
+              "_level": 5,
+              "_maxEffectValue": 0,
+              "_skillConditionGroup": 0,
+              "_skillCumulativeConditionID": 0,
+              "_skillEffectType": 3004,
+              "_skillReleaseConditionGroup": 258,
+              "_skillTargetIDs": [],
+              "_skillTriggerConditionGroup": 260,
+              "_skillTriggerType": 2
+            },
+            "releaseConditionGroup": 258,
+            "sourceTable": "MasterGekisouSkillEffect",
+            "triggerConditionGroup": 260,
+            "triggerType": 2
+          }
+        ],
+        "gekisouMissionType": 2,
+        "gekisouMissionTypeName": "Luck",
+        "gekisouSkillId": 22,
+        "icon": "/assets/jp/Assets/AddressableResources/Character/Skill/icon_skill_luck_gauge.png",
+        "id": 22,
+        "raw": {
+          "_descriptionTextFormatID": "Gekisou_Skill_Description_22",
+          "_displaySkillCategories": [
+            2
+          ],
+          "_gekisouMissionType": 2,
+          "_id": 22,
+          "_nameTextID": "Gekisou_Skill_Name_22",
+          "_skillCategories": [
+            2
+          ],
+          "_skillDisplayCategories": [
+            2
+          ],
+          "_skillIconID": 8
+        },
+        "skillIconAssetName": "icon_skill_luck_gauge",
+        "skillIconId": 8,
+        "skillName": [
+          "LUCK抽選ゲージ獲得量UP＆BAD以下ライフ減少軽減",
+          "",
+          "",
+          "",
+          ""
+        ],
+        "sourceTable": "MasterGekisouSkill"
+      },
+      "3": {
+        "categories": [
+          1
+        ],
+        "description": [
+          "{0 < effects[0].time ? \"JUST撃奏開始から\" : \"\"}<color=#66FF8C>{0 < effects[0].time ? effects[0].time ~ \"秒間\" : \"JUST撃奏中\"}</color>\nJUST数獲得量{effects[0].value}UP",
+          "",
+          "",
+          "",
+          ""
+        ],
+        "effects": [
+          {
+            "activationTimeSecond": 0.0,
+            "conditionGroup": 0,
+            "cumulativeConditionId": 0,
+            "effectId": 15,
+            "effectLimitCount": 0,
+            "effectType": 13000,
+            "effectValue": 3,
+            "executeLimitCount": 0,
+            "executeLimitResetConditionGroup": 0,
+            "level": 5,
+            "maxEffectValue": 0,
+            "raw": {
+              "_activationTimeSecond": 0.0,
+              "_effectExecuteLimitCount": 0,
+              "_effectExecuteLimitResetConditionGroup": 0,
+              "_effectLimitCount": 0,
+              "_effectValue": 3,
+              "_gekisouSkillID": 3,
+              "_icon": "",
+              "_id": 15,
+              "_level": 5,
+              "_maxEffectValue": 0,
+              "_skillConditionGroup": 0,
+              "_skillCumulativeConditionID": 0,
+              "_skillEffectType": 13000,
+              "_skillReleaseConditionGroup": 0,
+              "_skillTargetIDs": [],
+              "_skillTriggerConditionGroup": 261,
+              "_skillTriggerType": 2
+            },
+            "releaseConditionGroup": 0,
+            "sourceTable": "MasterGekisouSkillEffect",
+            "triggerConditionGroup": 261,
+            "triggerType": 2
+          }
+        ],
+        "gekisouMissionType": 3,
+        "gekisouMissionTypeName": "JustCount",
+        "gekisouSkillId": 3,
+        "icon": "/assets/jp/Assets/AddressableResources/Character/Skill/icon_skill_just_count.png",
+        "id": 3,
+        "raw": {
+          "_descriptionTextFormatID": "Gekisou_Skill_Description_3",
+          "_displaySkillCategories": [
+            1
+          ],
+          "_gekisouMissionType": 3,
+          "_id": 3,
+          "_nameTextID": "Gekisou_Skill_Name_3",
+          "_skillCategories": [
+            1
+          ],
+          "_skillDisplayCategories": [
+            1
+          ],
+          "_skillIconID": 13
+        },
+        "skillIconAssetName": "icon_skill_just_count",
+        "skillIconId": 13,
+        "skillName": [
+          "JUST数獲得量UP",
+          "",
+          "",
+          "",
+          ""
+        ],
+        "sourceTable": "MasterGekisouSkill"
+      }
+    },
+    "skill-reference": {
+      "conditions": [
+        {
+          "raw": {
+            "_conditionTargetIDs": [
+              57
+            ],
+            "_conditionType": 7010,
+            "_conditionValues": [],
+            "_id": 252,
+            "_isPositive": true
+          },
+          "sourceTable": "MasterSkillCondition"
+        },
+        {
+          "raw": {
+            "_conditionTargetIDs": [],
+            "_conditionType": 7013,
+            "_conditionValues": [],
+            "_id": 257,
+            "_isPositive": true
+          },
+          "sourceTable": "MasterSkillCondition"
+        },
+        {
+          "raw": {
+            "_conditionTargetIDs": [
+              56
+            ],
+            "_conditionType": 7020,
+            "_conditionValues": [],
+            "_id": 259,
+            "_isPositive": true
+          },
+          "sourceTable": "MasterSkillCondition"
+        },
+        {
+          "raw": {
+            "_conditionTargetIDs": [
+              57
+            ],
+            "_conditionType": 7020,
+            "_conditionValues": [],
+            "_id": 260,
+            "_isPositive": true
+          },
+          "sourceTable": "MasterSkillCondition"
+        }
+      ],
+      "cumulativeConditions": [
+        {
+          "raw": {
+            "_conditionTargetIDs": [
+              46
+            ],
+            "_conditionValues": [
+              1
+            ],
+            "_id": 56,
+            "_maxCumulativeCount": 5,
+            "_skillCumulativeConditionType": 1000
+          },
+          "sourceTable": "MasterSkillCumulativeCondition"
+        }
+      ],
+      "conditionSets": [
+        {
+          "raw": {
+            "_conditionIds": [
+              252
+            ],
+            "_group": 253,
+            "_id": 263
+          },
+          "sourceTable": "MasterSkillConditionSet"
+        },
+        {
+          "raw": {
+            "_conditionIds": [
+              257
+            ],
+            "_group": 258,
+            "_id": 268
+          },
+          "sourceTable": "MasterSkillConditionSet"
+        },
+        {
+          "raw": {
+            "_conditionIds": [
+              259
+            ],
+            "_group": 260,
+            "_id": 270
+          },
+          "sourceTable": "MasterSkillConditionSet"
+        },
+        {
+          "raw": {
+            "_conditionIds": [
+              260
+            ],
+            "_group": 261,
+            "_id": 271
+          },
+          "sourceTable": "MasterSkillConditionSet"
+        }
+      ],
+      "targets": [
+        {
+          "name": [
+            "夢限大みゅーたいぷ",
+            "Mugendai Myu-Type",
+            "",
+            "",
+            ""
+          ],
+          "raw": {
+            "_bandID": 3,
+            "_cardType": 0,
+            "_characterID": 0,
+            "_gekisouMissionType": 0,
+            "_gekisouSkillCategories": [],
+            "_id": 5,
+            "_judgement": -1,
+            "_liveMusicType": 0,
+            "_liveSkillCategories": [],
+            "_skillTargetType": 3,
+            "_tagID": 0
+          },
+          "sourceTable": "MasterSkillTarget"
+        },
+        {
+          "name": [
+            "一家Dumb Rock!",
+            "Ikka Dumb Rock!",
+            "",
+            "",
+            ""
+          ],
+          "raw": {
+            "_bandID": 5,
+            "_cardType": 0,
+            "_characterID": 0,
+            "_gekisouMissionType": 0,
+            "_gekisouSkillCategories": [],
+            "_id": 7,
+            "_judgement": -1,
+            "_liveMusicType": 0,
+            "_liveSkillCategories": [],
+            "_skillTargetType": 3,
+            "_tagID": 0
+          },
+          "sourceTable": "MasterSkillTarget"
+        },
+        {
+          "raw": {
+            "_bandID": 0,
+            "_cardType": 2,
+            "_characterID": 0,
+            "_gekisouMissionType": 0,
+            "_gekisouSkillCategories": [],
+            "_id": 9,
+            "_judgement": -1,
+            "_liveMusicType": 0,
+            "_liveSkillCategories": [],
+            "_skillTargetType": 3,
+            "_tagID": 0
+          },
+          "sourceTable": "MasterSkillTarget"
+        },
+        {
+          "raw": {
+            "_bandID": 0,
+            "_cardType": 5,
+            "_characterID": 0,
+            "_gekisouMissionType": 0,
+            "_gekisouSkillCategories": [],
+            "_id": 12,
+            "_judgement": -1,
+            "_liveMusicType": 0,
+            "_liveSkillCategories": [],
+            "_skillTargetType": 3,
+            "_tagID": 0
+          },
+          "sourceTable": "MasterSkillTarget"
+        },
+        {
+          "raw": {
+            "_bandID": 0,
+            "_cardType": 0,
+            "_characterID": 0,
+            "_gekisouMissionType": 0,
+            "_gekisouSkillCategories": [],
+            "_id": 41,
+            "_judgement": 5,
+            "_liveMusicType": 0,
+            "_liveSkillCategories": [],
+            "_skillTargetType": 4,
+            "_tagID": 0
+          },
+          "sourceTable": "MasterSkillTarget"
+        },
+        {
+          "raw": {
+            "_bandID": 0,
+            "_cardType": 0,
+            "_characterID": 0,
+            "_gekisouMissionType": 0,
+            "_gekisouSkillCategories": [],
+            "_id": 46,
+            "_judgement": 6,
+            "_liveMusicType": 0,
+            "_liveSkillCategories": [],
+            "_skillTargetType": 4,
+            "_tagID": 0
+          },
+          "sourceTable": "MasterSkillTarget"
+        },
+        {
+          "raw": {
+            "_bandID": 0,
+            "_cardType": 0,
+            "_characterID": 0,
+            "_gekisouMissionType": 3,
+            "_gekisouSkillCategories": [],
+            "_id": 53,
+            "_judgement": -1,
+            "_liveMusicType": 0,
+            "_liveSkillCategories": [],
+            "_skillTargetType": 3,
+            "_tagID": 0
+          },
+          "sourceTable": "MasterSkillTarget"
+        },
+        {
+          "raw": {
+            "_bandID": 0,
+            "_cardType": 0,
+            "_characterID": 0,
+            "_gekisouMissionType": 2,
+            "_gekisouSkillCategories": [],
+            "_id": 56,
+            "_judgement": -1,
+            "_liveMusicType": 0,
+            "_liveSkillCategories": [],
+            "_skillTargetType": 5,
+            "_tagID": 0
+          },
+          "sourceTable": "MasterSkillTarget"
+        },
+        {
+          "raw": {
+            "_bandID": 0,
+            "_cardType": 0,
+            "_characterID": 0,
+            "_gekisouMissionType": 3,
+            "_gekisouSkillCategories": [],
+            "_id": 57,
+            "_judgement": -1,
+            "_liveMusicType": 0,
+            "_liveSkillCategories": [],
+            "_skillTargetType": 5,
+            "_tagID": 0
+          },
+          "sourceTable": "MasterSkillTarget"
+        }
+      ]
+    },
+    "leader-skills": {
+      "53": {
+        "description": [
+          "紺碧のメンバーはパフォーマンス<color=#66FF8C>{effects[0].value/100:F1}%UP</color> さらに夢限大みゅーたいぷメンバーのパフォーマンス<color=#66FF8C>{effects[1].value/100:F1}%UP</color>",
+          "",
+          "",
+          "",
+          ""
+        ],
+        "effects": [
+          {
+            "conditionGroup": 0,
+            "cumulativeConditionId": 0,
+            "effectId": 285,
+            "effectType": 1003,
+            "effectValue": 10200,
+            "executeLimitCount": 0,
+            "executeLimitResetConditionGroup": 0,
+            "level": 5,
+            "raw": {
+              "_effectExecuteLimitCount": 0,
+              "_effectExecuteLimitResetConditionGroup": 0,
+              "_effectValue": 10200,
+              "_icon": "",
+              "_id": 285,
+              "_leaderSkillID": 53,
+              "_level": 5,
+              "_skillConditionGroup": 0,
+              "_skillCumulativeConditionID": 0,
+              "_skillEffectType": 1003,
+              "_skillTargetIDs": [
+                9
+              ]
+            },
+            "sourceTable": "MasterLeaderSkillEffect",
+            "targetIds": [
+              9
+            ]
+          },
+          {
+            "conditionGroup": 0,
+            "cumulativeConditionId": 0,
+            "effectId": 290,
+            "effectType": 1003,
+            "effectValue": 4800,
+            "executeLimitCount": 0,
+            "executeLimitResetConditionGroup": 0,
+            "level": 5,
+            "raw": {
+              "_effectExecuteLimitCount": 0,
+              "_effectExecuteLimitResetConditionGroup": 0,
+              "_effectValue": 4800,
+              "_icon": "",
+              "_id": 290,
+              "_leaderSkillID": 53,
+              "_level": 5,
+              "_skillConditionGroup": 0,
+              "_skillCumulativeConditionID": 0,
+              "_skillEffectType": 1003,
+              "_skillTargetIDs": [
+                5
+              ]
+            },
+            "sourceTable": "MasterLeaderSkillEffect",
+            "targetIds": [
+              5
+            ]
+          }
+        ],
+        "icon": "/assets/jp/Assets/AddressableResources/Character/Skill/icon_skill_parameter_blue_1.png",
+        "id": 53,
+        "leaderSkillId": 53,
+        "raw": {
+          "_descriptionTextFormatID": "Leader_Skill_Name_Description_53",
+          "_id": 53,
+          "_nameTextID": "Leader_Skill_Name_53",
+          "_skillIconID": 28
+        },
+        "skillIconAssetName": "icon_skill_parameter_blue_1",
+        "skillIconId": 28,
+        "skillName": [
+          "紺碧&夢限大みゅーたいぷパフォーマンスUP",
+          "",
+          "",
+          "",
+          ""
+        ],
+        "sourceTable": "MasterLeaderSkill"
+      },
+      "54": {
+        "description": [
+          "夢限大みゅーたいぷメンバーのビジュアル<color=#66FF8C>{effects[0].value/100:F1}%UP</color> さらに撃奏スキル【JUST】のメンバーはビジュアル<color=#66FF8C>{effects[1].value/100:F1}%UP</color>",
+          "",
+          "",
+          "",
+          ""
+        ],
+        "effects": [
+          {
+            "conditionGroup": 0,
+            "cumulativeConditionId": 0,
+            "effectId": 295,
+            "effectType": 1002,
+            "effectValue": 13200,
+            "executeLimitCount": 0,
+            "executeLimitResetConditionGroup": 0,
+            "level": 5,
+            "raw": {
+              "_effectExecuteLimitCount": 0,
+              "_effectExecuteLimitResetConditionGroup": 0,
+              "_effectValue": 13200,
+              "_icon": "",
+              "_id": 295,
+              "_leaderSkillID": 54,
+              "_level": 5,
+              "_skillConditionGroup": 0,
+              "_skillCumulativeConditionID": 0,
+              "_skillEffectType": 1002,
+              "_skillTargetIDs": [
+                5
+              ]
+            },
+            "sourceTable": "MasterLeaderSkillEffect",
+            "targetIds": [
+              5
+            ]
+          },
+          {
+            "conditionGroup": 0,
+            "cumulativeConditionId": 0,
+            "effectId": 300,
+            "effectType": 1002,
+            "effectValue": 1800,
+            "executeLimitCount": 0,
+            "executeLimitResetConditionGroup": 0,
+            "level": 5,
+            "raw": {
+              "_effectExecuteLimitCount": 0,
+              "_effectExecuteLimitResetConditionGroup": 0,
+              "_effectValue": 1800,
+              "_icon": "",
+              "_id": 300,
+              "_leaderSkillID": 54,
+              "_level": 5,
+              "_skillConditionGroup": 0,
+              "_skillCumulativeConditionID": 0,
+              "_skillEffectType": 1002,
+              "_skillTargetIDs": [
+                53
+              ]
+            },
+            "sourceTable": "MasterLeaderSkillEffect",
+            "targetIds": [
+              53
+            ]
+          }
+        ],
+        "icon": "/assets/jp/Assets/AddressableResources/Character/Skill/icon_skill_parameter_yumemita_3.png",
+        "id": 54,
+        "leaderSkillId": 54,
+        "raw": {
+          "_descriptionTextFormatID": "Leader_Skill_Name_Description_54",
+          "_id": 54,
+          "_nameTextID": "Leader_Skill_Name_54",
+          "_skillIconID": 26
+        },
+        "skillIconAssetName": "icon_skill_parameter_yumemita_3",
+        "skillIconId": 26,
+        "skillName": [
+          "夢限大みゅーたいぷ&撃奏スキル【JUST】ビジュアルUP",
+          "",
+          "",
+          "",
+          ""
+        ],
+        "sourceTable": "MasterLeaderSkill"
+      },
+      "59": {
+        "description": [
+          "一家Dumb Rock!メンバーのパフォーマンスが<color=#66FF8C>{effects[0].value/100:F1}%UP</color> さらに紫苑のメンバーはパフォーマンスが{effects[1].value/100:F1}%UP",
+          "",
+          "",
+          "",
+          ""
+        ],
+        "effects": [
+          {
+            "conditionGroup": 0,
+            "cumulativeConditionId": 0,
+            "effectId": 345,
+            "effectType": 1003,
+            "effectValue": 8500,
+            "executeLimitCount": 0,
+            "executeLimitResetConditionGroup": 0,
+            "level": 5,
+            "raw": {
+              "_effectExecuteLimitCount": 0,
+              "_effectExecuteLimitResetConditionGroup": 0,
+              "_effectValue": 8500,
+              "_icon": "",
+              "_id": 345,
+              "_leaderSkillID": 59,
+              "_level": 5,
+              "_skillConditionGroup": 0,
+              "_skillCumulativeConditionID": 0,
+              "_skillEffectType": 1003,
+              "_skillTargetIDs": [
+                7
+              ]
+            },
+            "sourceTable": "MasterLeaderSkillEffect",
+            "targetIds": [
+              7
+            ]
+          },
+          {
+            "conditionGroup": 0,
+            "cumulativeConditionId": 0,
+            "effectId": 350,
+            "effectType": 1003,
+            "effectValue": 4000,
+            "executeLimitCount": 0,
+            "executeLimitResetConditionGroup": 0,
+            "level": 5,
+            "raw": {
+              "_effectExecuteLimitCount": 0,
+              "_effectExecuteLimitResetConditionGroup": 0,
+              "_effectValue": 4000,
+              "_icon": "",
+              "_id": 350,
+              "_leaderSkillID": 59,
+              "_level": 5,
+              "_skillConditionGroup": 0,
+              "_skillCumulativeConditionID": 0,
+              "_skillEffectType": 1003,
+              "_skillTargetIDs": [
+                12
+              ]
+            },
+            "sourceTable": "MasterLeaderSkillEffect",
+            "targetIds": [
+              12
+            ]
+          }
+        ],
+        "icon": "/assets/jp/Assets/AddressableResources/Character/Skill/icon_skill_parameter.png",
+        "id": 59,
+        "leaderSkillId": 59,
+        "raw": {
+          "_descriptionTextFormatID": "Leader_Skill_Name_Description_59",
+          "_id": 59,
+          "_nameTextID": "Leader_Skill_Name_59",
+          "_skillIconID": 16
+        },
+        "skillIconAssetName": "icon_skill_parameter",
+        "skillIconId": 16,
+        "skillName": [
+          "一家Dumb Rock!&紫苑パフォーマンスUP",
+          "",
+          "",
+          "",
+          ""
+        ],
+        "sourceTable": "MasterLeaderSkill"
+      }
+    }
+  },
+  "fetched_at": 1791050849.816495,
+  "project_yume_identities": {
+    "61": {
+      "id": 61,
+      "character": 15,
+      "rarity": 4,
+      "attribute": 2,
+      "subtitle": [
+        "ハート・リブート",
+        "Heart Reboot",
+        "Heart·Reboot",
+        "Heart・Reboot",
+        "하트 리부트"
+      ]
+    },
+    "62": {
+      "id": 62,
+      "character": 12,
+      "rarity": 4,
+      "attribute": 2,
+      "subtitle": [
+        "きゅーと・ふろーと",
+        "Floating Cutie",
+        "Cute·Float",
+        "Cute・Float",
+        "큐트 플로트"
+      ]
+    },
+    "64": {
+      "id": 64,
+      "character": 22,
+      "rarity": 20,
+      "attribute": 5,
+      "subtitle": [
+        "HAPPY BIRTHDAY 26-27",
+        "HAPPY BIRTHDAY 26-27",
+        "HAPPY BIRTHDAY 26-27",
+        "HAPPY BIRTHDAY 26-27",
+        "HAPPY BIRTHDAY 26-27"
+      ]
+    }
+  }
+}

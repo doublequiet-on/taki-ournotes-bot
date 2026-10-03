@@ -57,13 +57,13 @@ class MemberDetailVisualTests(unittest.TestCase):
         self.assertEqual("".join(texts).count("详情未获取，不代表无技能。"), 3)
 
     def test_resizing_shared_frame_preserves_rarity_colors_and_leaves_interior(self):
-        for rarity in (2, 3, 4):
+        for rarity in (2, 3, 4, 20):
             image, draw = _background(500, 500, 2)
             center = image.getpixel((400, 400))
             _frame(image, draw, 20, 20, rarity, 400, 440)
             self.assertEqual(image.getpixel((400, 400)), center)
             upper, lower = image.getpixel((44, 150)), image.getpixel((44, 650))
-            if rarity == 4:
+            if rarity in (4, 20):
                 self.assertNotEqual(upper, lower)
             else:
                 self.assertEqual(upper, lower)
