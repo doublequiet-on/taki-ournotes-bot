@@ -56,9 +56,49 @@ class CorrectnessTests(unittest.TestCase):
         self.assertIn("Note：暂无资料", text)
         self.assertIn("0 Notes", text)
         del payload["chart_notes_known"]
+        del payload["metadata"]["chart_notes_known"]
         self.repo.cache_file.write_text(json.dumps(payload), encoding="utf-8")
         self.repo._load_cache()
         self.assertEqual([c.notes for c in self.repo.songs[0].charts][:2], [None, None])
+
+    def test_metadata_keeps_provenance_after_legacy_top_level_rewrite(self):
+        meta = deepcopy(META)
+        meta["100001"][0][4] = None
+        meta["100001"][1][4] = 0
+        meta["100001"][2][4] = 123
+        self.repo.songs, self.repo.cards = build_data(CHARACTERS, CARDS, SONGS, meta)
+        self.repo._save_cache()
+        payload = json.loads(self.repo.cache_file.read_text(encoding="utf-8"))
+        # The complete 8ae reader/writer also runs in the offline rollback probe;
+        # this fixture is its stable schema-2 shape with metadata passed through.
+        del payload["chart_notes_known"]
+        self.repo.cache_file.write_text(json.dumps(payload), encoding="utf-8")
+        self.repo._load_cache()
+        self.assertEqual([c.notes for c in self.repo.songs[0].charts][:3], [None, 0, 123])
+
+    def test_save_replaces_obsolete_metadata_provenance(self):
+        meta = deepcopy(META)
+        meta["100001"][0][4] = 0
+        self.repo.songs, self.repo.cards = build_data(CHARACTERS, CARDS, SONGS, meta)
+        self.repo._save_cache()
+        self.repo._load_cache()
+        song = self.repo.songs[0]
+        charts = (replace(song.charts[0], notes=None), *song.charts[1:])
+        self.repo.songs[0] = replace(song, charts=charts)
+        self.repo._save_cache()
+        self.repo._load_cache()
+        self.assertIsNone(self.repo.songs[0].charts[0].notes)
+
+    def test_current_unknown_is_not_overridden_by_legacy_zero_marker(self):
+        meta = deepcopy(META)
+        meta["100001"][0][4] = None
+        self.repo.songs, self.repo.cards = build_data(CHARACTERS, CARDS, SONGS, meta)
+        self.repo._save_cache()
+        payload = json.loads(self.repo.cache_file.read_text(encoding="utf-8"))
+        payload["metadata"]["chart_notes_known"]["100001"]["EASY"] = True
+        self.repo.cache_file.write_text(json.dumps(payload), encoding="utf-8")
+        self.repo._load_cache()
+        self.assertIsNone(self.repo.songs[0].charts[0].notes)
 
     def test_numeric_title_before_short_id_and_fuzzy_tail_not_ignored(self):
         original = self.repo.songs[0]
