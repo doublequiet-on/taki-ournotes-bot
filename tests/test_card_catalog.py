@@ -56,6 +56,15 @@ class CardCatalogTests(unittest.TestCase):
         self.assertFalse(answer.error, answer.error)
         return [c.id for c in answer.cards]
 
+    def test_birthday_rarity_is_member_only_and_named_bd(self):
+        from ournotes_bot.query.card_catalog import rarity_name
+        card = replace(self.base, id=64, rarity=20)
+        self.repo.cards.append(card)
+        self.assertEqual(self.ids("BD"), [64])
+        self.assertEqual(self.ids("稀有度=BD"), [64])
+        self.assertEqual(rarity_name(card), "BD")
+        self.assertTrue(query_cards("BD", self.repo, support=True).error)
+
     def test_and_or_dimensions_and_same_character_dedup(self):
         self.assertEqual(self.ids("Ave Mujica SSR"), [3])
         self.assertEqual(self.ids("SSR,SR 颜色=红色或蓝色 乐队=MyGO 角色=tmr LIVE=分数提升 击奏=JUST"), [1, 2])
@@ -92,7 +101,7 @@ class CardCatalogTests(unittest.TestCase):
         self.assertIn("同时存在", parse_local_query("ID1", self.repo))
 
     def test_unknown_values_and_unverified_rarity_are_errors(self):
-        for q in ("颜色=黑色", "LIVE=超强", "击奏=FEVER", "稀有度=BD", "EX", "未知=1", "乐队=不存在", "角色=不存在", "得意=不存在", "页0"):
+        for q in ("颜色=黑色", "LIVE=超强", "击奏=FEVER", "EX", "未知=1", "乐队=不存在", "角色=不存在", "得意=不存在", "页0"):
             self.assertTrue(query_cards(q, self.repo).error, q)
         self.assertTrue(query_cards("得意=MyGO", self.repo, support=True).error)
         self.repo.support_cards += [replace(self.support, id=61, rarity=10)]

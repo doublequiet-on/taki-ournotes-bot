@@ -5,11 +5,13 @@
 # Effects/Dependencies: 只定义签名常量，无外部 I/O 或运行时指纹计算。
 
 """Verified JP skill-mechanics fingerprints, not numeric results.
-Source: Haneoka public JP release r-544e9e1285777b600e3f, 2026-09-28.
+Sources: Haneoka JP r-544e9e1285777b600e3f (2026-09-28),
+r-d82e1e0581c690d38a27 (2026-10-04: cards 61/62/64).
 Each SHA256 covers the Japanese template, Lv.5 effect mechanics and referenced
 conditions. Effect magnitudes alone vary; unknown contracts stay unavailable.
 """
-PROFILES = {'5c16d2efd49abf61e1279ad50425be8e962708d57777c5180ef54a0eeb0eab82': 'live_plain',
+PROFILES = {'be104665194da04ef265f0a7d926aa91f956d272ad6b89f89d62b8767d9e1658': 'gauge_life_guard',
+    '5c16d2efd49abf61e1279ad50425be8e962708d57777c5180ef54a0eeb0eab82': 'live_plain',
     '1ea2ce831ab39698593642dc99c137bb6edcfa662b3b5cc21cc9ec2f0b95b841': 'live_perfect',
     '106726848063cb7fa62a169373ac7373359d06b96b5fbe4edff7c941f73631af': 'live_life',
     '0def1a832a5633f5f0fb99cbb62b05308ec2f1c9c2e6ed72e244ac51757cc4e9': 'just',
@@ -49,4 +51,12 @@ LEADER_PROFILES = {
     'f0ce96a79ab8606770f85026a85b9847c26efc6ae257d998ec6bddcb5a9acab7',
     'f4a81a278cf687a4eaf2962c23dd0116a4c9137c2aca48045108b3ed3aedfc46',
     'feaa1ccff5bb4e2850ae916a80af21b84dad5fe1817db717f61db2663b41c920',
+}
+
+# Verified JP release r-d82e1e0581c690d38a27, 2026-10-04; card IDs 61/62/64.
+# Ordered, independently targeted effects (not an unconditional combined bonus).
+LEADER_COMBINATIONS = {
+    "2f055492d033851b96895dbc3b0296e467d6563bf0727eea84fadb1b49524ab8": ("color", "band"),
+    "cc7846a2bcfd8f6a02445c42ca5f262ef2add8fce59ae0dab00f9b697bfba93a": ("band", "gekisou"),
+    "4d4cc313b7de262d777fd49c272d24b6d062c2986dc232e0489c05fc4e8323a2": ("band", "color"),
 }

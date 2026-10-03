@@ -135,6 +135,9 @@ def summarize_skill(skill, index):
         return text, f"{name}激奏期间" if seconds == "0" else f"{name}激奏开始后{seconds}秒"
     if mode == "points":
         return f"LUCK点数 +{v[0]}pt", "触发LUCKY RUSH时"
+    if mode == "gauge_life_guard":
+        return (f"LUCK条增量 +{fmt(values[0]/100)}%",
+                f"LUCK激奏期间\nBAD以下扣血 -{fmt(values[1]/100)}%")
     if mode == "stack":
         cumulative = index["cumulativeConditions"][rows[0]["cumulativeConditionId"]]
         return f"JUST 每{fmt(cumulative['_conditionValues'][0])}次 +{v[0]}", f"JUST激奏 · 最多{fmt(cumulative['_maxCumulativeCount'])}次"
@@ -154,8 +157,26 @@ def summarize_skill(skill, index):
 
 
 def summarize_leader(skill, index):
-    from .haneoka_member_contracts import LEADER_PROFILES
+    from .haneoka_member_contracts import LEADER_PROFILES, LEADER_COMBINATIONS
     signature, rows = contract(skill, index)
+    if signature in LEADER_COMBINATIONS:
+        # Each effect has its own target. Do not turn independent bonuses into
+        # an intersection, or display their sum as an unconditional bonus.
+        attribute = {1002: "表现值", 1003: "表演值"}[rows[0]["effectType"]]
+        lines = []
+        for row, kind in zip(rows, LEADER_COMBINATIONS[signature]):
+            target_id = row["targetIds"][0]
+            target = index["targets"][target_id]
+            if kind == "color":
+                label = {2: "蓝色", 5: "紫色"}[target["_cardType"]]
+            elif kind == "band":
+                label = index["target_names"][target_id]
+                if not label:
+                    return UNKNOWN
+            else:
+                label = "JUST激奏"
+            lines.append(f"{label}成员 +{fmt(row['effectValue']/100)}%")
+        return f"{attribute}提升", "\n".join(lines)
     if signature not in LEADER_PROFILES:
         return UNKNOWN
     attribute = {1000: "全属性", 1001: "技巧值", 1002: "表现值", 1003: "表演值"}[rows[0]["effectType"]]
@@ -180,7 +201,7 @@ class Snapshot:
     stale: bool = False
     leader_ready: bool = True
 
-    def for_card(self, card):
+    def matches_card(self, card):
         row = self.cards.get(str(card.id))
         evidence = {e["kind"]: e["id"] for e in card.catalog.get("skill_evidence", [])}
         if (not row or (row["cardId"], row["assetId"], row["rarity"], row["cardType"]) !=
@@ -188,6 +209,11 @@ class Snapshot:
                 card.catalog.get("character_ids") != [row["characterId"]] or
                 evidence.get("liveSkill") != row["liveSkillId"] or
                 evidence.get("gekisouSkill") != row["gekisouSkillId"]):
+            return False
+        return True
+
+    def for_card(self, card):
+        if not self.matches_card(card):
             return (("映射未确认", "未合并其他来源数值"),) * 3
         return self.summaries[str(card.id)]
 
@@ -232,7 +258,7 @@ class MemberRepository:
         self.path, self.fetch, self.clock = path, fetch, clock
         self.lock, self.snapshot, self.loaded, self.retry = threading.Lock(), None, False, 0
 
-    def get(self):
+    def get(self, required_cards=()):
         with self.lock:
             if not self.loaded:
                 self.loaded = True
@@ -241,7 +267,9 @@ class MemberRepository:
                 except (OSError, ValueError, TypeError, KeyError, IndexError):
                     pass
             now = self.clock()
-            if self.snapshot and self.snapshot.leader_ready and not self.snapshot.stale and 0 <= now - self.snapshot.fetched_at < 86400:
+            if (self.snapshot and self.snapshot.leader_ready and not self.snapshot.stale
+                    and 0 <= now - self.snapshot.fetched_at < 86400
+                    and all(self.snapshot.matches_card(card) for card in required_cards)):
                 return self.snapshot
             if now < self.retry:
                 return self.snapshot
@@ -281,5 +309,5 @@ def _repository():
     return MemberRepository(runtime_data_dir() / "haneoka-member-list-jp.json")
 
 
-def get_snapshot():
-    return _repository().get()
+def get_snapshot(required_cards=()):
+    return _repository().get(required_cards)

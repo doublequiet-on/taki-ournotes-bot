@@ -14,7 +14,7 @@ from dataclasses import dataclass, field
 from ..data import Card, SupportCard, localized_text, normalize, character_identity
 from .entity_lexicon import resolve_exact_alias
 
-RARITIES = {"R": 2, "SR": 3, "SSR": 4, "EX": 10}
+RARITIES = {"R": 2, "SR": 3, "SSR": 4, "EX": 10, "BD": 20}
 # Public /images/CardType{attribute}.webp, inspected against the five actual icons.
 # These are Chinese colour aliases, not invented official attribute names.
 TYPES = {1: "红色（日轮）", 2: "蓝色（星球）", 3: "绿色（流星）", 4: "黄色（闪光）", 5: "紫色（月亮）"}
@@ -26,6 +26,8 @@ def rarity_name(card):
     names = {2: "R", 3: "SR", 4: "SSR"}
     if isinstance(card, SupportCard):
         names[10] = "EX"
+    else:
+        names[20] = "BD"
     return names.get(card.rarity, f"未知稀有度({card.rarity})")
 
 
@@ -198,8 +200,6 @@ def parse_card_request(query, repository, *, support=False, art=False):
                 continue
             upper = value.upper()
             if key == "rarity" or (key is None and (upper in {*RARITIES, "BD"} or re.search(r"星|[★☆]|-?stars?$", value, re.I))):
-                if upper == "BD":
-                    raise ValueError("BD 的后台稀有度映射尚未核实，暂不能筛选；可用 SSR/SR/R，SNAP 另支持 EX。")
                 if key == "rarity" and value in {"2", "3", "4"}:
                     rarity = int(value)
                 elif upper in RARITIES:
@@ -210,9 +210,11 @@ def parse_card_request(query, repository, *, support=False, art=False):
                     except ValueError:
                         raise ValueError("请指定 SSR/SR/R（兼容四/三/二星旧别名）；不支持稀有度范围。") from None
                     if rest or rarity is None:
-                        raise ValueError("未知稀有度；可用 SSR/SR/R，SNAP 另支持 EX。")
+                        raise ValueError("未知稀有度；角色卡可用 BD/SSR/SR/R，SNAP 可用 EX/SSR/SR/R。")
                 if rarity == 10 and not support:
                     raise ValueError("EX 仅在 SNAP 数据中已核实，角色卡不支持 EX 筛选。")
+                if rarity == 20 and support:
+                    raise ValueError("BD 仅在角色卡数据中已核实，SNAP 不支持 BD 筛选。")
                 add("rarity", rarity)
             elif key == "type" or (key is None and (re.fullmatch(r"[红蓝绿黄紫]色?", value) or (value.endswith("色") and not value.endswith("角色")))):
                 color = {"红": 1, "蓝": 2, "绿": 3, "黄": 4, "紫": 5}.get(value.removesuffix("色"))

@@ -29,7 +29,7 @@ def condition_tags(query):
     # Keep multiword names/values intact. Split only at explicit field boundaries.
     parts = re.split(r"\s+(?=[^\s=：:]+\s*[=：:])", query.strip())
     return [("稀有度：" + " / ".join(part.split())
-             if re.fullmatch(r"(?:SSR|SR|R)(?:\s+(?:SSR|SR|R))*", part)
+             if re.fullmatch(r"(?:BD|SSR|SR|R)(?:\s+(?:BD|SSR|SR|R))*", part)
              else part.replace("=", "：", 1)) for part in parts]
 
 
@@ -51,11 +51,16 @@ def _frame(image, draw, x, y, rarity, width=CARD_W, height=CARD_H, *, support=Fa
     mask = Image.new("L", (w + 1, h + 1))
     md = ImageDraw.Draw(mask)
     md.rounded_rectangle((0, 0, w, h), radius=8 * scale, outline=255, width=6 * scale)
-    if rarity == 4 or (support and rarity == 10):
+    if rarity == 4 or (support and rarity == 10) or (not support and rarity == 20):
         # Approximate the unobscured border colours in user screenshots
         # IMG_0479 (member) / IMG_0481 (SNAP), not official frame assets.
         # Two independent edge profiles retain their different hue directions.
-        if support and rarity == 10:
+        if not support and rarity == 20:
+            # BD member frame: pink/lilac at the top, coral-red at the bottom.
+            # Reference: user-provided birthday card screenshot (2026-10-04).
+            left = ((0, "#DEA9DB"), (.5, "#EF9CCF"), (1, "#EF5B79"))
+            right = ((0, "#E8A6D9"), (.5, "#F396C7"), (1, "#F15D78"))
+        elif support and rarity == 10:
             left = ((0, "#91FFC7"), (1, "#9DFDDF"))
             right = ((0, "#9FFDE3"), (1, "#A9FBFB"))
         elif support:
@@ -89,14 +94,15 @@ def _frame(image, draw, x, y, rarity, width=CARD_W, height=CARD_H, *, support=Fa
 def _skill_panel(image, draw, x, y, summaries):
     # One integrated gradient over the artwork, not two opaque sticker backgrounds.
     scale = RENDER_SCALE
-    width, height = CARD_W - 16, 188
+    extra = max(0, len(summaries[2][1].splitlines()) - 1) * 23
+    width, height = CARD_W - 16, 188 + extra
     layer = Image.new("RGBA", (width * scale, height * scale))
     ld = ImageDraw.Draw(layer)
     for yy in range(height * scale):
         alpha = round(205 * min(1, yy / (20 * scale)))
         ld.line((0, yy, layer.width, yy), fill=(24, 34, 61, alpha))
     image.paste(layer, ((x + 8) * scale, (y + CARD_H - height - 8) * scale), layer)
-    start = y + CARD_H - 180
+    start = y + CARD_H - 180 - extra
     for index, title in enumerate(("队长", "演出", "激奏")):
         primary, qualifier = summaries[index]
         # Keep type/value and conditions separate; never shrink into illegibility.
@@ -116,7 +122,7 @@ def _skill_panel(image, draw, x, y, summaries):
 
 def render(cards, query, locale="zh", footer=""):
     from ..visuals import _asset, _bytes
-    snapshot = get_snapshot()
+    snapshot = get_snapshot(cards)
     tags, top = tag_layout(query)
     top += 12
     footer_lines = _lines(footer, 912, 23) if footer else []
