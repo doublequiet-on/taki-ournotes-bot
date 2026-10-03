@@ -92,7 +92,7 @@ class ReplyPipelineTests(unittest.TestCase):
 
     def test_ai_timeout_returns_safe_text_without_image(self):
         with patch.object(self.parser, "_request", side_effect=TimeoutError("Bearer secret-value")):
-            result = _prepare_reply("/问 迷星叫EX物量", self.repo, self.parser)
+            result = _prepare_reply("/问 展示迷星叫 EXPERT 完整谱面资料", self.repo, self.parser)
         self.assertIn("自然语言解析暂不可用", result.text)
         self.assertIsNone(result.image)
         self.assertNotIn("secret-value", result.text)

@@ -264,6 +264,17 @@ class QueryAgent:
             self._remember_state(question, state)
             return outcome
 
+        from ..query.field_query import parse_field_question
+        field = parse_field_question(question, repository)
+        if isinstance(field, str):
+            return self._finish_terminal(state, self._message_code(field), field, tracked=tracked, local=True, cache=False)
+        if field is not None:
+            outcome = self._execute_spec(state, field, repository)
+            if tracked:
+                self.metrics.increment("local_success" if outcome.code == OutcomeCode.SUCCESS else "local_terminal_reject")
+            self._remember_state(question, state)
+            return outcome
+
         cached = self._cache_get(question)
         if cached is not None:
             return self._from_cache(state, cached, repository, tracked)
@@ -539,7 +550,11 @@ class QueryAgent:
             raise OSError("agent budget exhausted")
         state.tool_executions += 1
         state.steps += 1
-        result = capability_for_spec(spec).executor(spec, repository)
+        if spec.field:
+            from ..structured_query import resolve_query
+            result = resolve_query(spec, repository)
+        else:
+            result = capability_for_spec(spec).executor(spec, repository)
         code = self._result_code(result, repository)
         state.last_observation = Observation(self._observation_code(code))
         state.final_code = code
@@ -620,6 +635,8 @@ class QueryAgent:
     @staticmethod
     def _result_code(result: QueryResult, repository: SongRepository) -> OutcomeCode:
         spec = result.spec
+        if result.short_text is not None:
+            return OutcomeCode(result.status)
         if result.cutoff is not None:
             return OutcomeCode(result.cutoff.status)
         if result.song_selection and result.song_selection.unavailable:

@@ -191,8 +191,8 @@ class SongAnswer:
         if not self.songs:
             return "没有符合条件的歌曲。\n" + (self.warning + "\n" if self.warning else "") + HELP
         lines = ["歌曲筛选 · " + self.request.query]
-        for song in page_slice(self.songs, self.page):
-            lines.append(f"{song.id}  {localized_text(song, 'title', locale)} · {localized_text(song, 'band', locale)}\n{describe(song)}")
+        for index, song in enumerate(page_slice(self.songs, self.page), 1):
+            lines.append(f"{index:02d}. ID {song.id}  {localized_text(song, 'title', locale)} · {localized_text(song, 'band', locale)}\n{describe(song)}")
         return "\n".join(lines) + "\n" + self.footer
 
 
