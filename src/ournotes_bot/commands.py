@@ -266,6 +266,10 @@ def _support_card_name_matches(repository: SongRepository, query: str) -> list[S
 
 def song_matches(repository: SongRepository, query: str) -> list[Song]:
     """Apply an optional trailing level filter after the title/band/ID search."""
+    from .query.song_identity import exact_songs
+    exact = exact_songs(repository, query)
+    if exact:
+        return list(exact)
     normalized = unicodedata.normalize("NFKC", query)
     level_range = re.search(
         r"(?:^|\s)lv\s*(>=|>|<=|<)\s*(\d+(?:\.\d+)?)"
@@ -466,18 +470,12 @@ def _format_support_card_detail(card: SupportCard, locale: str) -> str:
 
 
 def _choose(repository: SongRepository, query: str, locale: str = "zh") -> tuple[Song | None, str | None]:
-    matches = repository.search(query)
+    from .query.song_identity import unique_candidates, candidate_text
+    matches = unique_candidates(repository, query)
     if not matches:
         return None, tr(locale, "not_found_generic", query=query)
-    is_exact = query.strip().isdigit() or any(
-        normalize(query) == normalize(title) for title in
-        (*matches[0].titles, *matches[0].localized.get("title", {}).values())
-    )
-    if len(matches) > 1 and not is_exact:
-        first = matches[0]
-        alternatives = "、".join(f"{localized_text(song, 'title', locale)}({song.id})" for song in matches[1:4])
-        if alternatives:
-            return first, tr(locale, "maybe", names=alternatives)
+    if len(matches) > 1:
+        return None, candidate_text(matches)
     return matches[0], None
 
 
@@ -492,6 +490,17 @@ class CommandResult:
     catalog: CardAnswer | None = None
     song_selection: SongAnswer | None = None
     cutoff: CutoffAnswer | None = None
+    status: str = "success"
+    candidates: tuple[Song, ...] = ()
+
+    def __post_init__(self):
+        for answer in (self.cutoff, self.meta, self.catalog, self.song_selection):
+            if answer is not None:
+                object.__setattr__(self, "status", answer.status)
+                return
+        if self.status == "success" and self.parsed[0] in {"songs", "cards", "support_cards"}:
+            if not (self.songs or self.cards or self.support_cards):
+                object.__setattr__(self, "status", "empty")
 
 
 def resolve_command(content: str, repository: SongRepository) -> CommandResult | None:
@@ -517,6 +526,10 @@ def resolve_command(content: str, repository: SongRepository) -> CommandResult |
         answer = MetaAnswer(spec, status="invalid_arguments") if isinstance(spec, str) else execute_efficiency(spec, repository)
         return CommandResult(("efficiency", text, None), meta=answer)
     parsed = parse_query(content)
+    if kind == "chart" and len(parts) > 1:
+        from .query.song_identity import exact_songs
+        if exact_songs(repository, parts[1]):
+            parsed = ("chart", parts[1], None)
     if not parsed:
         return None
     kind, query, _ = parsed
@@ -527,7 +540,7 @@ def resolve_command(content: str, repository: SongRepository) -> CommandResult |
                 answer = execute_song_filter(request, repository, int(parsed[2]))
                 return CommandResult(parsed, songs=answer.songs, song_selection=answer)
         except ValueError as exc:
-            return CommandResult(parsed, hint=str(exc))
+            return CommandResult(parsed, hint=str(exc), status="invalid_arguments")
         return CommandResult(parsed, songs=tuple(song_matches(repository, query)))
     if kind in {"cards", "support_cards"}:
         try:
@@ -536,8 +549,15 @@ def resolve_command(content: str, repository: SongRepository) -> CommandResult |
             return CommandResult(parsed, support_cards=tuple(support_card_matches(repository, query)))
         except ValueError:
             return CommandResult(parsed, hint=CARD_RARITY_HELP[locale_for(content)])
-    song, hint = _choose(repository, query, locale_for(content))
-    return CommandResult(parsed, songs=(song,) if song else (), hint=hint)
+    from .query.song_identity import unique_candidates, candidate_text
+    matches = unique_candidates(repository, query)
+    if len(matches) > 1:
+        return CommandResult(parsed, hint=candidate_text(matches, parsed[2]),
+                             status="ambiguous", candidates=matches)
+    song = matches[0] if matches else None
+    hint = None if song else tr(locale_for(content), "not_found_generic", query=query)
+    return CommandResult(parsed, songs=(song,) if song else (), hint=hint,
+                         status="success" if song else "unknown_entity")
 
 
 def _safe_sync_time(value: object, locale: str) -> str:
@@ -622,6 +642,8 @@ def handle_command(content: str, repository: SongRepository,
 
     selection = resolved if resolved is not None else resolve_command(content, repository)
     parsed = selection.parsed if selection else None
+    if selection and selection.status in {"ambiguous", "invalid_arguments"} and selection.hint:
+        return selection.hint
     if selection and selection.cutoff is not None:
         return selection.cutoff.text
     if selection and selection.catalog is not None:
@@ -656,7 +678,8 @@ def handle_command(content: str, repository: SongRepository,
                         for title in (*item.titles, *item.localized.get("title", {}).values())]
             return tr(locale, "not_found_chart", query=query) + _suggest(query, variants, locale) + "\n" + COMMAND_HELPS[locale]["chart"]
         charts = song.charts if parsed[2] is None else tuple(c for c in song.charts if c.difficulty == parsed[2])
-        result = f"[{tr(locale, 'chart')}] {localized_text(song, 'title', locale)}（ID {song.id}）\n" + ("\n".join(f"{c.difficulty} Lv.{c.display_level:g} · {c.notes} Notes" for c in charts) or tr(locale, "no_charts"))
+        from .data import note_text
+        result = f"[{tr(locale, 'chart')}] {localized_text(song, 'title', locale)}（ID {song.id}）\n" + ("\n".join(f"{c.difficulty} Lv.{c.display_level:g} · {note_text(c.notes)}" for c in charts) or tr(locale, "no_charts"))
         result += "\n" + describe_song(song)
         return f"{result}\n{hint}" if hint else result
 

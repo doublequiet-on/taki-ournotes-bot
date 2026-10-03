@@ -741,7 +741,7 @@ def render_chart(song: Song, charts: tuple[Chart, ...], locale: str = "zh", scor
         x = 65 + index * column_width
         badge_width = column_width - 30
         _difficulty_badge(draw, chart.difficulty, f"{chart.display_level:g}", (x, top, x + badge_width, top + 78))
-        note_text = f"{chart.notes} Notes"
+        note_text = f"{chart.notes} Notes" if chart.notes is not None else "Note：暂无资料"
         note_x = x + max(0, (badge_width - draw.textlength(note_text, font=_font(22))) // 2)
         _write(draw, note_text, note_x, top + 86, badge_width, 22)
     draw.line((54, 609 + shift, width - 54, 609 + shift), fill=BORDER, width=2)

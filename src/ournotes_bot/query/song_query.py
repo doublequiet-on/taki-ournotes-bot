@@ -118,6 +118,10 @@ class SongAnswer:
     unavailable: bool = False
 
     @property
+    def status(self):
+        return "data_unavailable" if self.unavailable else "success" if self.songs else "empty"
+
+    @property
     def footer(self):
         from ..commands import page_notice
         value = page_notice("songs", self.request.query, self.page, len(self.songs), "zh")

@@ -168,7 +168,9 @@ def build_data(characters: Any, card_payload: Any, song_payload: Any, song_meta:
         levels = raw.get("difficulties") or []
         metadata = song_meta.get(str(song_id)) or []
         charts = tuple(Chart(difficulty=name, level=int(level), display_level=float(level),
-                             notes=int(metadata[i][4]) if i < len(metadata) and len(metadata[i]) > 4 else 0,
+                             notes=(metadata[i][4] if i < len(metadata) and isinstance(metadata[i], list)
+                                    and len(metadata[i]) > 4 and type(metadata[i][4]) is int
+                                    and metadata[i][4] >= 0 else None),
                              chart_file="")
                        for i, (name, level) in enumerate(zip(DIFFICULTIES, levels)))
         jacket = str(raw.get("jacket") or "")
