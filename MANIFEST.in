@@ -6,6 +6,8 @@ include scripts/update_bot.py scripts/install-update-task.ps1
 include 自动更新说明.md deploy/start-bot.ps1 deploy/setup-local.ps1 deploy/requirements.txt
 prune data
 global-exclude *.log *.pyc
+global-exclude *.sqlite3 *.sqlite3-journal *.sqlite3-wal *.sqlite3-shm
+include docs/QUERY_UPGRADE_V1.md docs/CUTOFF_HISTORY.md
 
 include docs/RELEASE_2026-09-28.md
 

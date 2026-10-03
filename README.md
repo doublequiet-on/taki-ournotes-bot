@@ -130,6 +130,8 @@ LIVE分类与击奏JUST/COMBO/LUCK独立。当前真实成员卡均为分数提�
 
 ## 快速开始
 
+榜线历史与周期采样配置见 [历史采样运维说明](docs/CUTOFF_HISTORY.md)。默认开启查询历史写入，周期采样需显式启用；四服发布配置为每 300 秒采样、长期保留，磁盘可用空间低于 512 MiB 时暂停。数据从启用后积累，不补造过去。
+
 需要 **Python 3.10 以上**。图片绘制还需要可用的中日韩字体，例如 Windows 微软雅黑或 Noto Sans CJK；缺少字体时会记录原因并退回文字。本项目不附带字体文件。
 
 以下命令适用于 Windows PowerShell，在项目根目录执行。发布包名为 `taki-ournotes-bot`，兼容命令名 `ournotes-bot` 和模块名 `ournotes_bot`。

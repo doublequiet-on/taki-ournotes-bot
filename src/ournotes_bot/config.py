@@ -97,6 +97,12 @@ class Settings:
     reply_order: bool = True
     update_notices: bool = True
     ai_metrics_file: Path | None = None
+    cutoff_history_enabled: bool = True
+    cutoff_history_file: Path | None = None
+    cutoff_sampling_enabled: bool = False
+    cutoff_sampling_servers: tuple[str, ...] = ("jp", "tw", "kr", "en")
+    cutoff_sampling_interval: int = 300
+    cutoff_history_min_free_mb: int = 512
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -114,6 +120,14 @@ class Settings:
                         else raw_cache.with_name("ai-metrics.json"))
         if configured_metrics and not metrics_file.is_absolute():
             metrics_file = CONFIG_ROOT / metrics_file
+        configured_history = os.getenv("OURNOTES_CUTOFF_HISTORY_FILE", "").strip()
+        history_file = Path(configured_history) if configured_history else raw_cache.with_name("moenotes-history-v1.sqlite3")
+        if configured_history and not history_file.is_absolute():
+            history_file = CONFIG_ROOT / history_file
+        servers = tuple(dict.fromkeys("tw" if s.strip().lower() == "hk" else s.strip().lower()
+                                      for s in os.getenv("OURNOTES_CUTOFF_SAMPLING_SERVERS", "jp,hk,kr,en").split(",")))
+        if not servers or any(s not in {"jp", "tw", "kr", "en"} for s in servers):
+            raise ValueError("OURNOTES_CUTOFF_SAMPLING_SERVERS must use jp,hk,kr,en")
         return cls(
             app_id=os.getenv("QQ_APP_ID", "").strip(),
             app_secret=os.getenv("QQ_APP_SECRET", "").strip(),
@@ -135,4 +149,10 @@ class Settings:
             reply_order=read_flag("OURNOTES_REPLY_ORDER", True),
             update_notices=read_flag("OURNOTES_UPDATE_NOTICES", True),
             ai_metrics_file=metrics_file,
+            cutoff_history_enabled=read_flag("OURNOTES_CUTOFF_HISTORY", True),
+            cutoff_history_file=history_file,
+            cutoff_sampling_enabled=read_flag("OURNOTES_CUTOFF_SAMPLING", False),
+            cutoff_sampling_servers=servers,
+            cutoff_sampling_interval=max(60, int(os.getenv("OURNOTES_CUTOFF_SAMPLING_INTERVAL", "300"))),
+            cutoff_history_min_free_mb=max(0, int(os.getenv("OURNOTES_CUTOFF_MIN_FREE_MB", "512"))),
         )
