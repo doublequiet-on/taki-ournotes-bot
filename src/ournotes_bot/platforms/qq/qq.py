@@ -312,6 +312,8 @@ async def prepare_commands(commands: list[str], gate: "QueryGate", repository: S
 
 def _image_from_result(result: QueryResult | CommandResult | None,
                        repository: SongRepository, locale: str) -> bytes | None:
+    if isinstance(result, QueryResult) and result.spec.field:
+        return None
     if result is not None and result.catalog is not None:
         answer = result.catalog
         if answer.error or not answer.cards:

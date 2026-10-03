@@ -96,9 +96,9 @@ class CardAnswer:
         if req.mode == "art":
             return f"{title} ID {self.cards[0].id} · 卡面（公开 full 版本）"
         lines = [f"{title}列表 · 条件：{req.query or '不限'}"]
-        for card in self.visible:
+        for index, card in enumerate(self.visible, 1):
             live, gek = labels(card)
-            lines.append(f"ID {card.id} · {rarity_name(card)} · {TYPES.get(card.card_type, '未知类型')} · "
+            lines.append(f"{index:02d}. ID {card.id} · {rarity_name(card)} · {TYPES.get(card.card_type, '未知类型')} · "
                          f"{localized_text(card, 'character', locale)} · {localized_text(card, 'title', locale)}\n  LIVE {live} / 击奏 {gek}")
         lines.append(self.footer)
         if any(not c.catalog.get("detail_loaded") for c in self.cards):

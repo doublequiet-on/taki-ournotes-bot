@@ -38,6 +38,7 @@ HELP_TEXT = """Taki · Our Notes 日服资料查询
 /查卡面 ID、/查支援卡面 ID：只输出卡面；条件多选用逗号，同维度任选、跨维度同时满足
 /查缩写 昵称：查看昵称对应的角色、乐队等，也可直接用于查曲或查卡
 /问 想查的内容：自然语言查询歌曲、谱面、歌曲效率、成员卡技能或支援卡（复杂问法需配置 AI）
+/问 迷星叫 EX 物量：等级、Note、颜色、激奏、难度、数量及明确卡牌类型与ID的技能可本地短答
 /数据状态：查看进程、最近同步与缓存状态
 /调试数据：查看本次进程的 AI API 成功调用与有效检索次数
 /帮助：查看本说明
@@ -672,8 +673,8 @@ def handle_command(content: str, repository: SongRepository,
         if not visible:
             return page_notice("songs", parsed[1], page, len(matches), locale)
         return tr(locale, "songs") + "\n" + "\n".join(
-            f"{song.id}  {localized_text(song, 'title', locale)} · {localized_text(song, 'band', locale)}  " + " / ".join(f"{chart.display_level:g}" for chart in song.charts)
-            + "\n" + describe_song(song) for song in visible
+            f"{index:02d}. ID {song.id}  {localized_text(song, 'title', locale)} · {localized_text(song, 'band', locale)}  " + " / ".join(f"{chart.display_level:g}" for chart in song.charts)
+            + "\n" + describe_song(song) for index, song in enumerate(visible, 1)
         ) + "\n" + page_notice("songs", parsed[1], page, len(matches), locale) + "\n" + tr(locale, "next_chart")
 
     if parsed and parsed[0] == "chart":

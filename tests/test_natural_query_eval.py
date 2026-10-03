@@ -70,7 +70,7 @@ class NaturalQueryEvaluationTests(unittest.TestCase):
     def test_l1_routes_representative_capabilities(self) -> None:
         cases = (
             ("MyGO中级数不大于25的歌曲", "song.search"),
-            ("迷星叫EX物量", "chart.get"),
+            ("展示迷星叫 EXPERT 完整谱面资料", "chart.get"),
             ("高松灯相关的成员卡内容", "member_card.search"),
             ("tmr的支援卡有哪些", "support_card.search"),
             ("MyGO的EX效率前十有哪些", "song.meta"),
@@ -82,7 +82,7 @@ class NaturalQueryEvaluationTests(unittest.TestCase):
     def test_l2_validates_scoped_actions_and_song_meta_exactly(self) -> None:
         cases = (
             (
-                "迷星叫EX物量",
+                "展示迷星叫 EXPERT 完整谱面资料",
                 "chart.get",
                 {
                     "action": "call_tool", "capability": "chart.get",
@@ -161,7 +161,7 @@ class NaturalQueryEvaluationTests(unittest.TestCase):
             "arguments": {"query": "迷星叫", "difficulty": "EXPERT"},
         }
         with patch.object(parser, "_request", return_value=action) as request:
-            outcome = parser.answer_with_outcome("/问 迷星叫EX物量", self.repo)
+            outcome = parser.answer_with_outcome("/问 展示迷星叫 EXPERT 完整谱面资料", self.repo)
         self.assertEqual(outcome.code, OutcomeCode.SUCCESS)
         self.assertEqual(request.call_count, 1)
         self.assertEqual(outcome.state.model_calls, 1)

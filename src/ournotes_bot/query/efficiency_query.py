@@ -235,12 +235,14 @@ def execute_efficiency(spec, repository) -> MetaAnswer:
     if spec.page > pages:
         return MetaAnswer(f"页码超出范围，共 {pages} 页。\n/" + replace(spec, page=1).command_label(), status="empty")
     visible = filtered[(spec.page - 1) * spec.limit:spec.page * spec.limit]
-    columns = ("排名", "歌曲", "难度", "等级", "时长", "得分系数", "每分钟得分效率")
+    columns = ("序号", "歌曲", "难度", "等级", "时长", "得分系数", "每分钟得分效率")
     cells = tuple((str(i), names[r.song_id][0].title, r.difficulty,
                    f"{r.level:g}" if r.level is not None else "未知", _duration(r.seconds),
                    _percentage(r.score), _percentage(r.eff))
-                  for i, r in enumerate(visible, (spec.page - 1) * spec.limit + 1))
+                  for i, r in enumerate(visible, 1))
     page_notice = f"筛选内排序 · 第 {spec.page}/{pages} 页 · 共 {len(filtered)} 条谱面"
+    if visible:
+        page_notice += f" · 本页排序 {(spec.page - 1) * spec.limit + 1}～{(spec.page - 1) * spec.limit + len(visible)}"
     if spec.page < pages:
         page_notice += "\n下一页：/" + replace(spec, page=spec.page + 1).command_label()
     metric_note = "得分系数 = score；每分钟得分效率 = eff，均为上游参考系数，百分数显示，不是实际得分。"

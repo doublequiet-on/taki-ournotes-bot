@@ -76,7 +76,7 @@ def render_list(cards, query, locale="zh", footer=""):
             _text(draw, lines, x + 20, sy + 27, 21)
             _text(draw, more, x + 20, sy + 27 + len(lines) * 28, 18, MUTED)
             sy += block_h
-        draw.text((x + 20, y + height - 36), f"ID  {card.id}", font=_font(25), fill=INK)
+        draw.text((x + 20, y + height - 36), f"{index + 1:02d} · ID {card.id}", font=_font(25), fill=INK)
     _text(draw, notes, 40, bottom + 8, 23, MUTED)
     return _bytes(image)
 

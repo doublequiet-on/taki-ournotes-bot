@@ -155,8 +155,8 @@ def render(cards, query, locale="zh", footer=""):
             _text(draw, [value], x + 8, y + 6, 18)
         summaries = snapshot.for_card(card) if snapshot else (("数据暂不可用", "稍后重试技能摘要"),) * 3
         _skill_panel(image, draw, x, y, summaries)
-        draw.text((x + 12, y + CARD_H + 5), "ID", font=_font(21), fill="#45516F")
-        draw.text((x + 47, y + CARD_H + 2), str(card.id), font=_font(25), fill=INK)
+        draw.text((x + 12, y + CARD_H + 5), f"{i + 1:02d} · ID", font=_font(21), fill="#45516F")
+        draw.text((x + 100, y + CARD_H + 2), str(card.id), font=_font(25), fill=INK)
     if footer_lines:
         draw.rounded_rectangle((24, bottom, 976, height - 16), radius=16, fill=PAPER)
         _text(draw, footer_lines, 40, bottom + 8, 23)
