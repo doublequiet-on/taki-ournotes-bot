@@ -101,6 +101,36 @@ class TrendTests(unittest.TestCase):
             self.assertIn(b.song.title, text)
             self.assertIn(str(b.score(100)), text)
 
+    def test_trend_preserves_activity_and_song_effective_periods(self):
+        from ournotes_bot.rendering import cutoff_trends
+        from ournotes_bot.query.event_cutoff_query import song_period_lines
+        from ournotes_bot.sources.moenotes_events import display_time
+        answer = self.query("夢我夢中")
+        board = answer.boards[0]
+        song = replace(board.song, effective_start_ms=answer.event.start_ms + 3600000,
+                       effective_end_ms=answer.event.end_ms - 3600000)
+        answer = replace(answer, boards=(replace(board, song=song),))
+        with patch.object(cutoff_trends, "_text", wraps=cutoff_trends._text) as draw:
+            page = render_cutoff(answer)[0]
+        rendered = "\n".join(line for call in draw.call_args_list for line in call.args[1])
+        for line in song_period_lines(answer.event, song):
+            self.assertIn(line, rendered)
+            self.assertIn(line, page.text)
+        self.assertIn(display_time(answer.event.start_ms, answer.event.server), rendered)
+        self.assertIn("进行中", rendered)
+
+    def test_overlapping_history_names_every_coincident_rank(self):
+        from ournotes_bot.rendering import cutoff_trends
+        answer = self.query("夢我夢中")
+        board = answer.boards[0]
+        points = tuple(HistoryPoint(board.fetched_ms + i * 300000, (100 + i,) * 5,
+                                    board.received_ms + i * 300000) for i in range(288))
+        answer = replace(answer, histories=((board.song.challenge_id, HistoryView(points)),))
+        with patch.object(cutoff_trends, "_text", wraps=cutoff_trends._text) as draw:
+            render_cutoff(answer)
+        rendered = "\n".join(line for call in draw.call_args_list for line in call.args[1])
+        self.assertIn("同值历史重叠：T1 / T2 / T3 / T10 / T100", rendered)
+
 
 if __name__ == "__main__":
     unittest.main()

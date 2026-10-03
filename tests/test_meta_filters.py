@@ -98,6 +98,40 @@ class MetaFilterTests(unittest.TestCase):
         self.assertIsNotNone(result, text)
         self.assertEqual(result.meta.rows, self.answer("MyGO 颜色=蓝 激奏=JUST EX").rows)
 
+    def test_numeric_title_is_not_rewritten_to_another_short_id(self):
+        song = replace(self.repo.songs[0], title="123", titles=("123",))
+        self.repo.songs[0] = song
+        self.repo.songs.append(replace(song, id=100123, title="其他歌曲", titles=("其他歌曲",)))
+        for suffix in ("", " EX", " 全难度", " 颜色=蓝 前10"):
+            with self.subTest(suffix=suffix):
+                spec = parse_efficiency("/查分数表 123" + suffix, self.repo, direct=True)
+                self.assertEqual(spec.subject.value, song.id)
+        self.repo.songs.append(replace(song, id=100124))
+        ambiguous = parse_efficiency("/查分数表 123 EX", self.repo, direct=True)
+        self.assertIsInstance(ambiguous, str)
+        self.assertEqual(ambiguous.status, "ambiguous")
+
+    def test_spaced_band_keeps_generated_commands_and_continuation_valid(self):
+        from ournotes_bot.query.continuation import capture_context, execute_followup, Operation
+        self.repo.songs = [replace(song, band="Ave Mujica") for song in self.repo.songs]
+        for command in ("/查曲 乐队=母鸡卡 颜色=蓝", "/查分数表 乐队=母鸡卡 颜色=蓝 前10"):
+            with self.subTest(command=command):
+                first = resolve_command(command, self.repo)
+                self.assertEqual(first.status, "success")
+                if first.meta:
+                    next_command = first.meta.text.split("下一页：", 1)[1].splitlines()[0]
+                else:
+                    next_command = "/查曲 " + first.song_selection.request.query + " 页2"
+                second = resolve_command(next_command, self.repo)
+                self.assertEqual(second.status, "success", next_command)
+                if first.song_selection:
+                    context = capture_context(first, self.repo)
+                    result, next_context = execute_followup(context, Operation("page", 1), self.repo)
+                    self.assertEqual(next_context.page, 2)
+                    self.assertEqual(result.status, "success")
+        invalid = self.answer("乐队=Ave Mujica 未知=1")
+        self.assertEqual(invalid.status, "invalid_arguments")
+
 
 if __name__ == "__main__":
     unittest.main()

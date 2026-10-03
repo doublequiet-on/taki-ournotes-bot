@@ -15,7 +15,7 @@ from datetime import datetime, timezone
 from ..data import Song, normalize
 from .entity_lexicon import EntityRef, find_anchor, resolve_entity
 from .song_conditions import extract_song_conditions, remove_song_conditions
-from .song_identity import protect_entity, QueryProblem
+from .song_identity import exact_songs, protect_entity, QueryProblem
 from .song_query import parse_filter, serialize_filter, traits_match
 from ..sources.haneoka.song_meta import DIFFICULTIES, REFERENCE_LABELS, MetaRow
 from ..sources.haneoka.song_traits import describe as describe_song
@@ -83,7 +83,13 @@ def parse_efficiency(query: str, repository, *, direct=False):
     term = shared.term
     subject = None
     if term:
-        if term.isdecimal() and 1 <= int(term) < 100000 and not ranking:
+        exact = exact_songs(repository, term)
+        if len(exact) > 1:
+            return QueryProblem("匹配到多首候选歌曲，请用 ID 选择：\n" + "\n".join(
+                f"{song.title} → /查分数表 {song.id}" for song in exact), "ambiguous")
+        if exact:
+            term = str(exact[0].id)
+        elif term.isdecimal() and 1 <= int(term) < 100000 and not ranking:
             term = str(100000 + int(term))
         canonical = resolve_entity("song", term, repository)
         anchor = find_anchor("song", term, repository) if canonical else None

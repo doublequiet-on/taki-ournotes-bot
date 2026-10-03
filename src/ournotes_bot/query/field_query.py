@@ -55,10 +55,11 @@ def parse_field_question(question, repository):
         skill_kind = {"队长": "leader", "live": "live", "激奏": "gekisou", "击奏": "gekisou", "支援": "live"}.get((part or "").lower(), "")
         return QuerySpec(intent, EntityRef(intent, int(ident)), field="skills", skill_kind=skill_kind)
     patterns = (
+        ("notes", r"(.+?)(?:有)?多少\s*(?:个)?\s*(?:Notes?|音符)"),
         ("notes", r"(.+?)(?:的)?(?:Notes?|物量|音符数)(?:是多少|有多少|多少|是什么)?"),
-        ("notes", r"(.+?)(?:有)?多少(?:个)?(?:Notes?|音符)"),
         ("level", r"(.+?)(?:的)?(?:等级|难度等级)(?:是多少|多少|是什么)?"),
         ("level", r"(.+?)(?:是)?几级"),
+        ("color", r"(.+?)(?:是)?(?:什么|啥)(?:颜色|属性)"),
         ("color", r"(.+?)(?:的)?(?:颜色|属性)(?:是什么|是啥)?"),
         ("missions", r"(.+?)(?:的)?(?:激奏|击奏)(?:类型|顺序)?(?:是什么|是啥|有哪些)?"),
         ("difficulties", r"(.+?)(?:的)?(?:已收录难度|难度有哪些|有哪些难度|收录了哪些难度)"),

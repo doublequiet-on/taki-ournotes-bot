@@ -41,22 +41,29 @@ def parse_filter(query, repository=None, *, force=False, efficiency=False):
     text, protected = protect_entity(text, repository)
     text = re.sub(r"\s*([=/,])\s*", r"\1", text)
     band = ""
-    bands = list(re.finditer(r"乐队=([^\s]+)", text))
+    bands = list(re.finditer(r"乐队=", text))
     if len(bands) > 1:
         raise ValueError("一次查询请指定一个乐队条件。")
     if bands:
         m = bands[0]
         from .entity_lexicon import resolve_exact_alias
-        match = resolve_exact_alias("song", m[1], repository) if repository else None
-        direct_bands = {s.band for s in repository.songs if normalize(m[1]) in {
-            normalize(s.band), *(normalize(v) for v in s.localized.get("band", {}).values())}} if repository else set()
-        if len(direct_bands) == 1:
-            band = next(iter(direct_bands))
-        elif match and match.entity and match.entity.kind == "band" and not match.ambiguous:
-            band = str(match.entity.value)
-        else:
-            raise ValueError(f"无法识别乐队「{m[1]}」，未忽略此条件。")
-        text = text[:m.start()] + " " + text[m.end():]
+        remainder = text[m.end():]
+        # Canonical names such as Ave Mujica contain spaces. Consume only a
+        # complete verified name/alias; leave all remaining conditions intact.
+        for token in reversed(list(re.finditer(r"\S+", remainder))):
+            value = remainder[:token.end()]
+            match = resolve_exact_alias("song", value, repository) if repository else None
+            direct_bands = {s.band for s in repository.songs if normalize(value) in {
+                normalize(s.band), *(normalize(v) for v in s.localized.get("band", {}).values())}} if repository else set()
+            if len(direct_bands) == 1:
+                band = next(iter(direct_bands))
+            elif match and match.entity and match.entity.kind == "band" and not match.ambiguous:
+                band = str(match.entity.value)
+            if band:
+                text = text[:m.start()] + " " + remainder[token.end():]
+                break
+        if not band:
+            raise ValueError(f"无法识别乐队「{remainder.split()[0] if remainder.split() else ''}」，未忽略此条件。")
     colors, missions, mode, difficulty, comparison, level = (), (), "", "", "", None
     level_text = ""
     # Remove recognized fields; never erase arbitrary remaining words.

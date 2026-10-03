@@ -2,6 +2,8 @@
 
 实施基线为 PR #30 `131c54ae4c846ae06ba134d110230fb3bdad36ba`。分批分支用于审查；全部集成后统一发布，分批实现不代表已部署或真实 QQ 送达。
 
+统一发布入口为 [PR #37](https://github.com/doublequiet-on/taki-ournotes-bot/pull/37)，相对 main 的完整基线为 `8ae548beada0c84458b1b8fe1f619e82ee14dda1`。独立审查从 `ad30f2b7875c47a0f6c507a1110e56024a5b3645` 的完整 76 文件差异开始，补齐数字歌名优先、含空格乐队名翻页、短答问句词序及趋势卡活动／单曲有效期，并改善同值历史重叠的可读性。新增回归位于 `test_meta_filters`、`test_field_queries`、`test_cutoff_trends`；原始失败证据与修复后结果分别保存。最终准确 head 的全套回归、wheel／sdist 及隔离安装结果见该 PR 的 Checks；下方批次数量为历史记录，不累加作最终结果。
+
 ## 批次
 
 | 批次 | 内容 | 进度 |

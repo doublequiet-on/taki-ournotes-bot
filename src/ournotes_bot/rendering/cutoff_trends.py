@@ -12,6 +12,7 @@ from dataclasses import replace
 from PIL import ImageDraw
 
 from .. import visuals as v
+from ..query.event_cutoff_query import event_status, song_period_lines
 from ..sources.moenotes_events import SERVERS, display_time, zone_label
 from .event_cutoff_visuals import CutoffPage, _art, _lines, _text
 
@@ -62,9 +63,22 @@ def _card(answer, board, assets, preview_label):
             raise ValueError("full score exceeds readable card width")
     values = [value for p in view.points for value in p.scores if value is not None]
     plot_height = 396
-    details = [board.status, f"当前源采集：{display_time(board.fetched_ms, event.server)} {zone_label(event.server)}"]
+    zone = zone_label(event.server)
+    details = [f"活动状态：{event_status(event)}",
+               f"活动开始：{display_time(event.start_ms, event.server)} {zone}",
+               f"活动结束：{display_time(event.end_ms, event.server)} {zone}",
+               *song_period_lines(event, board.song), board.status,
+               f"当前源采集：{display_time(board.fetched_ms, event.server)} {zone}"]
     if view.points:
         details.append(f"历史末次观测：{display_time(view.points[-1].time_ms, event.server)} {zone_label(event.server)}")
+    coincident = {}
+    for index, rank in enumerate(ranks):
+        series = tuple(point.scores[index] for point in view.points)
+        if any(value is not None for value in series):
+            coincident.setdefault(series, []).append(f"T{rank}")
+    for labels in coincident.values():
+        if len(labels) > 1:
+            details.append("同值历史重叠：" + " / ".join(labels) + "；各排名均保留。")
     details += [view.warning, *board.notes, *event.notes]
     if preview_label:
         details.insert(0, preview_label)
@@ -126,7 +140,10 @@ def _card(answer, board, assets, preview_label):
                     native.line(scaled, fill=COLORS[index], width=2 * factor)
                 # Nested outlines remain identifiable when ranks overlap exactly.
                 radius = (2 + index) * factor
-                for x, py in set(scaled):
+                # Dense nested markers obscure the inner ranks. Keep the line
+                # through every observation, with at most eight marker positions.
+                marker_indices = {i * (len(scaled) - 1) // 7 for i in range(8)}
+                for x, py in (scaled[i] for i in sorted(marker_indices)):
                     native.rectangle((x - radius, py - radius, x + radius, py + radius),
                                      outline=COLORS[index], width=factor)
         _text(draw, [display_time(first, event.server)[5:16]], 135, chart_top + 250, 17, v.MUTED)

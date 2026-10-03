@@ -53,6 +53,14 @@ class FieldTests(unittest.TestCase):
         self.assertIn("0 Notes", self.ask("迷星叫 EX Note"))
         self.assertIn("未找到", self.ask("不存在歌曲 EX Note"))
 
+    def test_documented_question_word_order_stays_local(self):
+        for question, expected in (("迷星叫 EX 多少 Note", "768 Notes"),
+                                   ("迷星叫EX有多少个音符", "768 Notes"),
+                                   ("迷星叫是什么颜色", "蓝色"),
+                                   ("迷星叫是什么属性", "蓝色")):
+            with self.subTest(question=question):
+                self.assertIn(expected, self.ask(question))
+
     def test_short_id_and_unknown_conditions_do_not_change_entity(self):
         self.assertIn("ID 100001", self.ask("1 EX Note"))
         self.assertIn("无法识别", self.ask("迷星叫 foo=1 EX Note"))

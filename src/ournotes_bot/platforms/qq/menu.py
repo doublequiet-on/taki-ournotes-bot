@@ -50,7 +50,7 @@ GROUP_PANEL_ITEMS = [
     {"type": "command", "name": "查卡面", "desc": "输入成员卡ID，只看卡面"},
     {"type": "command", "name": "查支援卡面", "desc": "输入支援卡ID，只看卡面"},
     {"type": "command", "name": "查缩写", "desc": "查角色或乐队的常用昵称"},
-    {"type": "command", "name": "问", "desc": "用自然语言查询资料"},
+    {"type": "command", "name": "问", "desc": "资料查询、字段短答与续查"},
     {"type": "command", "name": "下一页", "desc": "继续上一份查询列表"},
     {"type": "command", "name": "上一页", "desc": "返回上一页列表"},
     {"type": "command", "name": "选", "desc": "输入当前页编号看详情"},
