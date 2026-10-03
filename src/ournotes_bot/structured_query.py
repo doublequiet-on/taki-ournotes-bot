@@ -12,12 +12,12 @@ from dataclasses import dataclass, replace
 
 from .commands import (PAGE_SIZE, _format_card_detail, _format_support_card_detail,
                        filter_card_rarity, page_notice, page_slice, rarity_text)
-from .data import Card, Chart, Skill, Song, SongRepository, SupportCard, character_identity, localized_text, normalize
+from .data import Card, Chart, Skill, Song, SongRepository, SupportCard, character_identity, localized_text, normalize, note_text
 from .query.entity_lexicon import EntityRef
 from .i18n import tr
 from .query.efficiency_query import MetaAnswer, execute_efficiency
 from .query.card_catalog import CardAnswer, query_cards
-from .query.song_query import SongAnswer, parse_filter, execute as execute_song_filter
+from .query.song_query import SongAnswer, SongFilter, parse_filter, execute as execute_song_filter
 from .query.event_cutoff_query import CutoffRequest, CutoffAnswer, execute_cutoff
 from .sources.haneoka.song_traits import describe as describe_song
 
@@ -40,6 +40,16 @@ class QuerySpec:
     card_query: str | None = None
     song_query: str | None = None
     cutoff_request: CutoffRequest | None = None
+    song_filter: SongFilter | None = None
+    field: str = ""
+
+    def __post_init__(self):
+        if self.card_query is not None:
+            from .commands import _split_page
+            query, page = _split_page(self.card_query)
+            object.__setattr__(self, "card_query", query)
+            if self.page == 1 and page != 1:
+                object.__setattr__(self, "page", page)
 
     def query_label(self) -> str:
         if self.song_query is not None:
@@ -61,18 +71,32 @@ class QuerySpec:
         return " ".join(parts)
 
     def command_label(self) -> str:
+        if self.field:
+            if self.field == "count":
+                query = self.song_filter.query if self.song_filter else self.card_query or ""
+                label = {"song": "歌曲", "card": "成员卡", "support_card": "SNAP"}[self.intent]
+                return f"问 {query or '全部'} {label}有多少{'首' if self.intent == 'song' else '张'}"
+            if self.field == "skills":
+                return f"问 {'SNAP' if self.intent == 'support_card' else '成员卡'} {self.subject.value} 技能"
+            from .query.field_query import FIELD_LABELS
+            return f"问 {self.display_name} {self.difficulty} {FIELD_LABELS[self.field]}".replace("  ", " ")
         if self.cutoff_request is not None:
             req = self.cutoff_request
-            return f"查榜线 {req.server} {req.query}" + (f" T{req.rank}" if req.rank is not None else "")
+            server = "hk" if req.server == "tw" else req.server
+            return (f"查榜线 {server} {req.query}" + (" " + " ".join(f"T{r}" for r in req.ranks) if req.ranks else "")
+                    + (" 仅数值" if req.numeric_only else "")).strip()
         if self.card_query is not None:
-            return ("查支援卡 " if self.intent == "support_card" else "查卡 ") + self.card_query
+            return (("查支援卡 " if self.intent == "support_card" else "查卡 ")
+                    + self.card_query + (f" 页{self.page}" if self.page > 1 else ""))
         if self.intent == "efficiency":
             parts = ["查分数表"]
-            if self.subject:
+            if self.song_filter:
+                parts.append(self.song_filter.query)
+            elif self.subject:
                 parts.append(str(self.subject.value))
-            if self.difficulty:
+            if self.difficulty and not self.song_filter:
                 parts.append("全难度" if self.difficulty == "ALL" else self.difficulty)
-            if self.comparison and self.level is not None:
+            if self.comparison and self.level is not None and not self.song_filter:
                 parts.append(f"lv{self.comparison}{self.level:g}")
             if self.limit != 30:
                 parts.append(f"前{self.limit}")
@@ -113,6 +137,22 @@ class QueryResult:
     catalog: CardAnswer | None = None
     song_selection: SongAnswer | None = None
     cutoff: CutoffAnswer | None = None
+    status: str = "success"
+    short_text: str | None = None
+
+    def __post_init__(self):
+        if self.short_text is not None:
+            return
+        for answer in (self.cutoff, self.meta, self.catalog, self.song_selection):
+            if answer is not None:
+                object.__setattr__(self, "status", answer.status)
+                return
+        if self.spec.intent == "chart" and self.chart is None:
+            object.__setattr__(self, "status", "unknown_entity")
+        elif self.spec.intent == "chart" and not self.chart[1]:
+            object.__setattr__(self, "status", "data_unavailable")
+        elif self.spec.intent != "chart" and not (self.songs or self.cards or self.support_cards):
+            object.__setattr__(self, "status", "empty")
 
 
 def query_page_notice(spec: QuerySpec, total: int, locale: str) -> str:
@@ -138,13 +178,16 @@ def query_page_notice(spec: QuerySpec, total: int, locale: str) -> str:
 
 def resolve_query(spec: QuerySpec, repository: SongRepository) -> QueryResult:
     """Capture records for both answer text and image within one request."""
+    if spec.field:
+        from .query.field_query import answer_field
+        return answer_field(spec, repository)
     if spec.cutoff_request is not None:
         return QueryResult(spec, cutoff=execute_cutoff(spec.cutoff_request, repository))
     if spec.song_query is not None:
-        answer = execute_song_filter(parse_filter(spec.song_query), repository, spec.page)
+        answer = execute_song_filter(parse_filter(spec.song_query, repository, force=True), repository, spec.page)
         return QueryResult(spec, songs=answer.songs, song_selection=answer)
     if spec.card_query is not None:
-        answer = query_cards(spec.card_query, repository, support=spec.intent == "support_card")
+        answer = query_cards(f"{spec.card_query} 页{spec.page}", repository, support=spec.intent == "support_card")
         return QueryResult(spec, catalog=answer, cards=answer.cards if spec.intent == "card" else (),
                            support_cards=answer.cards if spec.intent == "support_card" else ())
     if spec.intent == "efficiency":
@@ -202,9 +245,10 @@ def songs_for(spec: QuerySpec, repository: SongRepository) -> list[Song]:
 def chart_for(spec: QuerySpec, repository: SongRepository) -> tuple[Song, tuple[Chart, ...]] | None:
     if spec.subject is None or spec.subject.kind != "song":
         return None
-    song = next((row for row in repository.songs if row.id == spec.subject.value), None)
-    if song is None:
+    matches = [row for row in repository.songs if row.id == spec.subject.value]
+    if len(matches) != 1:
         return None
+    song = matches[0]
     charts = tuple(chart for chart in song.charts
                    if not spec.difficulty or chart.difficulty == spec.difficulty)
     return song, charts
@@ -265,6 +309,8 @@ def support_cards_for(spec: QuerySpec, repository: SongRepository) -> list[Suppo
 def answer_for(spec: QuerySpec, repository: SongRepository, locale: str = "zh",
                result: QueryResult | None = None) -> str:
     selected = result if result is not None else resolve_query(spec, repository)
+    if selected.short_text is not None:
+        return selected.short_text
     if selected.cutoff is not None:
         return selected.cutoff.text
     if selected.song_selection is not None:
@@ -281,9 +327,9 @@ def answer_for(spec: QuerySpec, repository: SongRepository, locale: str = "zh",
         if not visible:
             return page_notice("songs", spec.query_label(), spec.page, len(matches), locale)
         return tr(locale, "songs") + "\n" + "\n".join(
-            f"{song.id}  {localized_text(song, 'title', locale)} · {localized_text(song, 'band', locale)}  "
+            f"{index:02d}. ID {song.id}  {localized_text(song, 'title', locale)} · {localized_text(song, 'band', locale)}  "
             + " / ".join(f"{chart.display_level:g}" for chart in song.charts)
-            + "\n" + describe_song(song) for song in visible
+            + "\n" + describe_song(song) for index, song in enumerate(visible, 1)
         ) + "\n" + page_notice("songs", spec.query_label(), spec.page, len(matches), locale) + "\n" + tr(locale, "next_chart")
 
     if spec.intent == "chart":
@@ -292,7 +338,7 @@ def answer_for(spec: QuerySpec, repository: SongRepository, locale: str = "zh",
             return tr(locale, "not_found_chart", query=spec.display_name)
         song, charts = chart
         return f"[{tr(locale, 'chart')}] {localized_text(song, 'title', locale)}（ID {song.id}）\n{describe_song(song)}\n" + (
-            "\n".join(f"{chart.difficulty} Lv.{chart.display_level:g} · {chart.notes} Notes" for chart in charts)
+            "\n".join(f"{chart.difficulty} Lv.{chart.display_level:g} · {note_text(chart.notes)}" for chart in charts)
             or tr(locale, "no_charts")
         )
 
@@ -309,8 +355,8 @@ def answer_for(spec: QuerySpec, repository: SongRepository, locale: str = "zh",
         if not visible:
             return query_page_notice(spec, len(matches), locale)
         rows = []
-        for card in visible:
-            row = (f"{card.id}  {rarity_text(card.rarity)} {localized_text(card, 'character', locale)} · "
+        for index, card in enumerate(visible, 1):
+            row = (f"{index:02d}. ID {card.id}  {rarity_text(card.rarity)} {localized_text(card, 'character', locale)} · "
                    f"{localized_text(card, 'title', locale)}")
             if spec.skill_query or spec.skill_kind:
                 skill = matching_skills(card, spec)[0]
@@ -334,8 +380,8 @@ def answer_for(spec: QuerySpec, repository: SongRepository, locale: str = "zh",
         if not visible:
             return query_page_notice(spec, len(matches), locale)
         return tr(locale, "support_cards") + "\n" + "\n".join(
-            f"{card.id}  {rarity_text(card.rarity)} {localized_text(card, 'character', locale)} · "
-            f"{localized_text(card, 'title', locale)}" for card in visible
+            f"{index:02d}. ID {card.id}  {rarity_text(card.rarity)} {localized_text(card, 'character', locale)} · "
+            f"{localized_text(card, 'title', locale)}" for index, card in enumerate(visible, 1)
         ) + "\n" + query_page_notice(spec, len(matches), locale) + "\n" + tr(locale, "next_support_card")
 
     raise ValueError("unsupported query intent")

@@ -185,8 +185,12 @@ def parse_local_query(query: str, repository: SongRepository) -> QuerySpec | str
     cutoff = parse_natural_cutoff(query)
     if cutoff is not None:
         return QuerySpec("event_cutoff", cutoff_request=cutoff)
+    from ..query.field_query import parse_field_question
+    field = parse_field_question(query, repository)
+    if field is not None:
+        return field
     from ..query.song_query import local_query as local_song_traits
-    song = local_song_traits(query)
+    song = local_song_traits(query, repository)
     if song is not None:
         return song
     catalog = local_card_catalog(query, repository)

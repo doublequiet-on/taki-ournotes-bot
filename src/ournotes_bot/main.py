@@ -42,6 +42,10 @@ def main() -> None:
             print(result)
         return
     repository = SongRepository(settings.data_base, settings.cache_file, settings.cache_ttl_hours)
+    from .sources.cutoff_history import CutoffHistory
+    repository.event_cutoffs.history = CutoffHistory(
+        settings.cutoff_history_file or settings.cache_file.with_name("moenotes-history-v1.sqlite3"),
+        enabled=settings.cutoff_history_enabled, min_free_mb=settings.cutoff_history_min_free_mb)
     ai_parser = AIQueryParser(settings)
     def answer(message: str) -> str | None:
         if is_ai_request(message):

@@ -24,6 +24,7 @@
 `ReplySequencer` 管批间次序，等待超时可退化为无序；
 `_prepare_reply` 捕获文字/图片；
 `_deliver_reply` 区分上传失败与发送不确定性。
+`DeliveryOutcome` 只有有效消息 ID 的平台回执才为 success；异常或缺失回执为 uncertain，明确错误码为 failure。`reply_commands` 提取普通身份键，串行处理同用户续查，并在发送确认后提交 `PreparedReply.context`。新完整查询立即清除旧上下文，批内多列表不建立默认上下文；取消和迟到代次不提交。
 [menu.py](ournotes_bot/platforms/qq/menu.py) 的 `setup_menu` 是独立管理入口。
 
 ## Internal Subsystems

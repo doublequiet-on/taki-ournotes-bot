@@ -59,6 +59,11 @@ class CardAnswer:
     request: CardRequest
     cards: tuple = ()
     error: str = ""
+    status: str = "success"
+
+    def __post_init__(self):
+        if self.status == "success" and not self.cards:
+            object.__setattr__(self, "status", "invalid_arguments" if self.error else "empty")
 
     @property
     def visible(self):
@@ -91,9 +96,9 @@ class CardAnswer:
         if req.mode == "art":
             return f"{title} ID {self.cards[0].id} · 卡面（公开 full 版本）"
         lines = [f"{title}列表 · 条件：{req.query or '不限'}"]
-        for card in self.visible:
+        for index, card in enumerate(self.visible, 1):
             live, gek = labels(card)
-            lines.append(f"ID {card.id} · {rarity_name(card)} · {TYPES.get(card.card_type, '未知类型')} · "
+            lines.append(f"{index:02d}. ID {card.id} · {rarity_name(card)} · {TYPES.get(card.card_type, '未知类型')} · "
                          f"{localized_text(card, 'character', locale)} · {localized_text(card, 'title', locale)}\n  LIVE {live} / 击奏 {gek}")
         lines.append(self.footer)
         if any(not c.catalog.get("detail_loaded") for c in self.cards):
@@ -267,8 +272,10 @@ def execute_card_request(req, repository):
     cards = repository.support_cards if req.support else repository.cards
     if req.card_id is not None:
         matches = [c for c in cards if c.id == req.card_id]
+        if len(matches) > 1:
+            return CardAnswer(req, error="卡牌 ID 映射冲突，请等待数据核对。", status="ambiguous")
         if not matches:
-            return CardAnswer(req, error=f"未找到{'SNAP' if req.support else '角色卡'} ID {req.card_id}，没有改查其他对象。")
+            return CardAnswer(req, error=f"未找到{'SNAP' if req.support else '角色卡'} ID {req.card_id}，没有改查其他对象。", status="unknown_entity")
         if req.mode == "art":
             return CardAnswer(req, (matches[0],))
         detail = repository.support_card_with_detail if req.support else repository.card_with_detail
@@ -307,7 +314,7 @@ def execute_card_request(req, repository):
         if keep:
             selected.append(card)
     if missing:
-        return CardAnswer(req, error="卡牌索引不完整（" + "、".join(sorted(missing)) + "），不能保证完整筛选；请等待数据同步后重试，未将未知分类当作无技能。")
+        return CardAnswer(req, error="卡牌索引不完整（" + "、".join(sorted(missing)) + "），不能保证完整筛选；请等待数据同步后重试，未将未知分类当作无技能。", status="data_unavailable")
     if req.mode == "detail" and selected:
         detail = repository.support_card_with_detail if req.support else repository.card_with_detail
         selected = [detail(selected[0])]

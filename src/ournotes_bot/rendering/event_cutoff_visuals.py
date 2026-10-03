@@ -113,8 +113,13 @@ def _art(canvas, draw, picture, box, label):
 def render_cutoff(answer: CutoffAnswer, *, asset_loader=None, preview_label: str = "") -> tuple[CutoffPage, ...]:
     if answer.event is None or answer.message or not answer.boards:
         return ()
+    if answer.request.numeric_only:
+        return ()
     event = answer.event
     assets = asset_loader(event, (event.banner, *(b.song.jacket for b in answer.boards))) if asset_loader else {}
+    if answer.histories and (len(answer.boards) == 1 or any(view.points for _, view in answer.histories)):
+        from .cutoff_trends import render_trends
+        return render_trends(answer, assets, preview_label)
     _, measure = v._background(WIDTH, 20, v.RENDER_SCALE)
     title_lines = _lines(measure, event.title, 652, 28)
     header_height = 282 + len(title_lines) * 40 + (34 if preview_label else 0)
@@ -136,7 +141,7 @@ def render_cutoff(answer: CutoffAnswer, *, asset_loader=None, preview_label: str
             raise ValueError("Full integer does not fit legibly; use captured text")
         rows = math.ceil(len(values) / columns)
         details = (board.status + (" · " + "；".join(board.notes) if board.notes else ""),
-                   *song_period_lines(event, board.song))
+                   *song_period_lines(event, board.song), answer.history_for(board).warning)
         state_lines = [line for detail in details for line in _lines(measure, detail, 620, 18)]
         height = titles_height + rows * 90 + 76 + len(state_lines) * 27
         layouts.append((board, name_lines, titles_height, columns, size, state_lines, height))

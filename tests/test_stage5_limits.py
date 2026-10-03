@@ -74,8 +74,8 @@ class DailyQuotaTests(unittest.TestCase):
                             ai_quota_file=self.path)
         parser = AIQueryParser(settings)
         with patch.object(parser, "_request", side_effect=TimeoutError("secret")) as request:
-            self.assertIn("暂不可用", parser.answer("/问 迷星叫EX物量", repository))
-            self.assertIn("额度", parser.answer("/问 迷星叫的专家谱面物量", repository))
+            self.assertIn("暂不可用", parser.answer("/问 展示迷星叫 EXPERT 完整谱面资料", repository))
+            self.assertIn("额度", parser.answer("/问 列出迷星叫 EXPERT 完整谱面资料", repository))
         self.assertEqual(request.call_count, 1)
         self.assertEqual(json.loads(self.path.read_text(encoding="utf-8"))["used"], 1)
         self.assertIn("迷星叫", parser.answer("/问 MyGO的歌有哪些", repository))
@@ -83,13 +83,13 @@ class DailyQuotaTests(unittest.TestCase):
         self.path.write_text('{not json', encoding="utf-8")
         broken_parser = AIQueryParser(settings)
         with patch.object(broken_parser, "_request") as request:
-            self.assertIn("额度记录不可用", broken_parser.answer("/问 迷星叫EX物量", repository))
+            self.assertIn("额度记录不可用", broken_parser.answer("/问 展示迷星叫 EXPERT 完整谱面资料", repository))
         request.assert_not_called()
         self.assertIn("迷星叫", AIQueryParser(settings).answer("/问 MyGO的歌有哪些", repository))
         no_ai = AIQueryParser(Settings("", "", repository.data_base, repository.cache_file, 6))
         self.assertIn("迷星叫", no_ai.answer("/查曲 迷星叫", repository))
         self.assertIn("迷星叫", no_ai.answer("/问 MyGO的歌有哪些", repository))
-        self.assertIn("尚未配置 AI", no_ai.answer("/问 迷星叫EX物量", repository))
+        self.assertIn("尚未配置 AI", no_ai.answer("/问 展示迷星叫 EXPERT 完整谱面资料", repository))
 
     def test_configured_limits_and_quota_path(self):
         with patch("ournotes_bot.config.load_dotenv"), patch.dict(os.environ, {

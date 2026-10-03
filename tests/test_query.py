@@ -162,8 +162,8 @@ class QueryTests(unittest.TestCase):
         with patch.object(parser, "_request", return_value={"intent": "chart", "query": "迷星叫", "difficulty": "EXPERT"}), \
              patch("ournotes_bot.platforms.qq.qq.load_chart_score", return_value=score) as load, \
              patch("ournotes_bot.platforms.qq.qq.render_chart", return_value=b"full chart"):
-            parser.answer("/问 迷星叫EX物量", self.repo)
-            self.assertEqual(_image_reply("/问 迷星叫EX物量", self.repo, parser), b"full chart")
+            parser.answer("/问 展示迷星叫 EXPERT 完整谱面资料", self.repo)
+            self.assertEqual(_image_reply("/问 展示迷星叫 EXPERT 完整谱面资料", self.repo, parser), b"full chart")
             load.assert_called_with(self.repo.songs[0], self.repo.songs[0].charts[-1])
 
     def test_only_yatta_assets_and_localized_data(self):
@@ -237,8 +237,8 @@ class QueryTests(unittest.TestCase):
         settings = Settings("", "", BASE, self.repo.cache_file, 6, "test-key", "test-model", "https://ai.example", 1)
         parser = AIQueryParser(settings)
         with patch.object(parser, "_request", return_value={"intent": "chart", "query": "迷星叫", "difficulty": "EXPERT"}) as request:
-            self.assertIn("768 Notes", parser.answer("/问 迷星叫的ex物量", self.repo))
-            self.assertIn("768 Notes", parser.answer("/问 迷星叫的ex物量", self.repo))
+            self.assertIn("768 Notes", parser.answer("/问 展示迷星叫 EXPERT 完整谱面资料", self.repo))
+            self.assertIn("768 Notes", parser.answer("/问 展示迷星叫 EXPERT 完整谱面资料", self.repo))
             self.assertEqual(request.call_count, 1)
             self.assertIn("额度", parser.answer("/问 另一首歌的谱面", self.repo))
         with patch.object(parser, "_request", return_value={"intent": "unsupported", "query": "", "difficulty": ""}):

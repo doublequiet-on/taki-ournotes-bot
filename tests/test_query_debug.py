@@ -49,7 +49,7 @@ class QueryDebugTests(unittest.TestCase):
 
     def test_router_and_parser_calls_count_once_as_a_useful_query(self) -> None:
         parser = AIQueryParser(self.settings)
-        question = "/问 迷星叫具体有多少个音符"
+        question = "/问 迷星叫的完整信息请展开"
         responses = [
             {"action": "route", "capability": "chart.get"},
             {
@@ -86,7 +86,7 @@ class QueryDebugTests(unittest.TestCase):
         }):
             self.assertIn("没有找到", parser.answer(empty, self.repo))
 
-        failed = "/问 迷星叫EX物量"
+        failed = "/问 展示迷星叫 EXPERT 完整谱面资料"
         with patch.object(parser, "_request", side_effect=TimeoutError("offline")):
             self.assertIn("暂不可用", parser.answer(failed, self.repo))
 

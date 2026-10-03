@@ -64,7 +64,8 @@ class ReplyPipelineTests(unittest.TestCase):
         self.assertEqual([song.id for song in render.call_args.args[0]], [100001])
 
     def test_chart_and_card_text_images_share_one_selection(self):
-        with patch.object(self.repo, "search", wraps=self.repo.search) as select, \
+        from ournotes_bot.query.song_identity import unique_candidates
+        with patch("ournotes_bot.query.song_identity.unique_candidates", wraps=unique_candidates) as select, \
              patch("ournotes_bot.platforms.qq.qq.load_chart_score", return_value={"notes": []}), \
              patch("ournotes_bot.platforms.qq.qq.render_chart", return_value=b"chart") as render:
             result = _prepare_reply("/查谱面 100001 EXPERT", self.repo, self.parser)
@@ -91,7 +92,7 @@ class ReplyPipelineTests(unittest.TestCase):
 
     def test_ai_timeout_returns_safe_text_without_image(self):
         with patch.object(self.parser, "_request", side_effect=TimeoutError("Bearer secret-value")):
-            result = _prepare_reply("/问 迷星叫EX物量", self.repo, self.parser)
+            result = _prepare_reply("/问 展示迷星叫 EXPERT 完整谱面资料", self.repo, self.parser)
         self.assertIn("自然语言解析暂不可用", result.text)
         self.assertIsNone(result.image)
         self.assertNotIn("secret-value", result.text)
@@ -194,7 +195,7 @@ class UpdateNoticeLifecycleTests(unittest.IsolatedAsyncioTestCase):
                 await stopped.wait()
             notifier.run.side_effect = worker
             with patch("botpy.Client", FakeClient), patch("ournotes_bot.platforms.qq.qq.UpdateNotifier", return_value=notifier):
-                run_bot("test-app", "", SimpleNamespace(refresh_song_traits=Mock()), settings)
+                run_bot("test-app", "", SimpleNamespace(refresh_song_traits=Mock(), event_cutoffs=SimpleNamespace(history=None)), settings)
                 client = instances[-1]
                 try:
                     await client.on_ready()
@@ -218,7 +219,7 @@ class UpdateNoticeLifecycleTests(unittest.IsolatedAsyncioTestCase):
             with patch("botpy.Client", FakeClient), patch("ournotes_bot.platforms.qq.qq.UpdateNotifier") as constructor:
                 settings = Settings("test-app", "", BASE, Path(folder) / "cache.json", 6,
                                     qq_gateway_host="", update_notices=False)
-                run_bot("test-app", "", SimpleNamespace(refresh_song_traits=Mock()), settings)
+                run_bot("test-app", "", SimpleNamespace(refresh_song_traits=Mock(), event_cutoffs=SimpleNamespace(history=None)), settings)
                 client = instances[-1]
                 await client.on_ready()
                 self.assertFalse(hasattr(client, "_notice_task"))

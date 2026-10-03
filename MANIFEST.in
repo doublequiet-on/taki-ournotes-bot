@@ -2,10 +2,15 @@ include LICENSE README.md THIRD_PARTY.md LOCAL_QQ_TEST.md .env.example query_ali
 include 昵称词表维护规范.md
 include 更新日志.md
 include scripts/check_release_artifact.py
+include scripts/check_installed_query_upgrade.py
 include scripts/update_bot.py scripts/install-update-task.ps1
 include 自动更新说明.md deploy/start-bot.ps1 deploy/setup-local.ps1 deploy/requirements.txt
 prune data
 global-exclude *.log *.pyc
+global-exclude *.sqlite3 *.sqlite3-journal *.sqlite3-wal *.sqlite3-shm
+include docs/QUERY_UPGRADE_V1.md docs/CUTOFF_HISTORY.md
+include deploy/query-upgrade-v1.env.example
+include scripts/preview_cutoff_trends.py
 
 include docs/RELEASE_2026-09-28.md
 

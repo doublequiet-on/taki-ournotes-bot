@@ -300,15 +300,16 @@ class SongMetaTests(unittest.TestCase):
         self.assertEqual(len(first.rows), 30)
         self.assertEqual([r.song_id for r in first.rows], list(range(100001, 100031)))
         self.assertEqual(first, resolve_command("/查效率", self.repo).meta)
-        self.assertEqual(first.columns, ("排名", "歌曲", "难度", "等级", "时长", "得分系数", "每分钟得分效率"))
+        self.assertEqual(first.columns, ("序号", "歌曲", "难度", "等级", "时长", "得分系数", "每分钟得分效率"))
         self.assertEqual(first.cells[0], ("1", "暗黒天国", "EXPERT", "25", "1:40", "5,200.00%", "4,200.00%"))
         self.assertEqual(first.cells[-1][0], "30")
         next_command = first.text.split("下一页：", 1)[1].splitlines()[0]
         self.assertTrue(next_command.startswith("/查分数表"))
         second = resolve_command(next_command, self.repo).meta
         self.assertEqual(len(second.cells), 5)
-        self.assertEqual(second.cells[0][0], "31")
-        self.assertEqual(second.cells[-1][0], "35")
+        self.assertEqual(second.cells[0][0], "1")
+        self.assertEqual(second.cells[-1][0], "5")
+        self.assertIn("本页排序 31～35", second.page_notice)
         self.assertIn("超出范围", handle_command(next_command.replace("页2", "页3"), self.repo))
         self.assertIn("默认", first.scope)
         self.assertEqual(local_route("查一下分数表"), "song.meta")
@@ -347,7 +348,7 @@ class SongMetaTests(unittest.TestCase):
             natural = _prepare_reply("/问 得分效率最高的前30首歌曲", self.repo, parser)
         self.assertIsNone(direct.image)
         self.assertEqual(direct.text, natural.text)
-        self.assertIn("排名 | 歌曲 | 难度 | 等级 | 时长 | 得分系数 | 每分钟得分效率", direct.text)
+        self.assertIn("序号 | 歌曲 | 难度 | 等级 | 时长 | 得分系数 | 每分钟得分效率", direct.text)
 
     def test_compact_table_preserves_metric_stale_state_and_paging(self):
         from PIL import Image
@@ -398,7 +399,8 @@ class SongMetaTests(unittest.TestCase):
         keys = [(r.song_id, r.difficulty) for r in answer.rows + rest.rows]
         self.assertEqual(len(keys), 52)
         self.assertEqual(len(set(keys)), 52)
-        self.assertEqual(rest.cells[0][0], "31")
+        self.assertEqual(rest.cells[0][0], "1")
+        self.assertIn("本页排序 31～", rest.page_notice)
         single_all = resolve_command("/查分数表 暗黒天国 全难度", self.repo).meta
         self.assertEqual(len(single_all.rows), 4)
         self.assertEqual({r.song_id for r in single_all.rows}, {100001})
@@ -428,7 +430,7 @@ class SongMetaTests(unittest.TestCase):
         self.meta["100001"]["3"]["chart"]["eff"] = None
         self.repo.song_meta.get.return_value = self.snapshot()
         result = resolve_command("/查分数表 暗黒天国 全难度", self.repo).meta
-        self.assertEqual(result.status, "empty")
+        self.assertEqual(result.status, "data_unavailable")
         self.assertIn("歌曲已收录", result.text)
         self.assertFalse(result.rows)
         self.assertIn("未找到", handle_command("/查分数表 不存在的曲名 全难度", self.repo))

@@ -185,7 +185,7 @@ class AIEntityLexiconTests(unittest.TestCase):
             self.repo.songs[0], id=100002, title="第二首", titles=("第二首",),
             band="Ave Mujica", localized={"title": {"zh": "第二首"}},
         ))
-        question = "/问 迷星叫EX物量"
+        question = "/问 展示迷星叫 EXPERT 完整谱面资料"
         with patch.object(self.parser, "_request", return_value={
             "intent": "chart", "query": "第二首", "difficulty": "EXPERT",
         }):

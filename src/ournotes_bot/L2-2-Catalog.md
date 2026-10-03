@@ -36,6 +36,7 @@ Project Yume 的并发详情调度位于 Catalog，不应按“网络相关”�
 ## Files belonging to this subdomain
 
 唯一主实现：[data.py](data.py)。
+`Chart.notes` 在内存中允许 `None`。持久缓存的旧歌曲行仍保留整数 Note，顶层 `chart_notes_known` 记录可信状态；没有该扩展的旧零视为未核实。来源明确的真实零可以往返保存，文本和图片使用相同语义。
 从 [data.py 文件头 L3](data.py) 继续；来源适配器不重复列为本域所有文件。
 
 ## Relevant Tests

@@ -1,6 +1,6 @@
 # L3
 # Input: sanitized read-only snapshot JSONs plus independently saved public artwork.
-# Output: three real-snapshot views, synthetic stress pages, mobile previews and a manifest.
+# Output: overview, song and exact-rank views, synthetic stress pages, mobile previews and a manifest.
 # Pos: Scripts / offline visual acceptance; see L2.md.
 # Effects: reads explicit inputs, writes only the requested output directory; never fetches or sends.
 """Offline preview. Requires the sanitized 2026-10-02 investigation snapshot format."""
@@ -66,7 +66,8 @@ def main():
                     result[url] = image.convert("RGB")
         return result
     variants = [("overview", overview), ("song", replace(overview, request=CutoffRequest(query=boards[0].song.title), boards=(boards[0],))),
-                ("rank37", replace(overview, request=CutoffRequest(query=boards[0].song.title, rank=37), boards=(boards[0],)))]
+                ("rank37", replace(overview, request=CutoffRequest(query=boards[0].song.title, rank=37), boards=(boards[0],))),
+                ("rank100-all", replace(overview, request=CutoffRequest(rank=100)))]
     stress = replace(overview, event=replace(event, title="合成压力样例 · 中文と日本語 / 长标题换行验收", banner="", notes=("合成分数和名称，仅用于排版验收。",)),
                      boards=tuple(replace(boards[i % 3], song=replace(boards[i % 3].song,
                         title=f"合成歌曲 {i + 1} · これはぼくたちの生存のあらすじ / 中文长名称 37", jacket="",

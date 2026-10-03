@@ -60,8 +60,8 @@ class DeliverLoggingTests(unittest.IsolatedAsyncioTestCase):
     def message():
         api = SimpleNamespace(
             _http=SimpleNamespace(request=AsyncMock(return_value={"file_info": "f"})),
-            post_group_message=AsyncMock(),
-            post_c2c_message=AsyncMock(),
+            post_group_message=AsyncMock(return_value={"id": "ack"}),
+            post_c2c_message=AsyncMock(return_value={"id": "ack"}),
         )
         return SimpleNamespace(id="msg-1", _api=api)
 
@@ -69,7 +69,7 @@ class DeliverLoggingTests(unittest.IsolatedAsyncioTestCase):
         message = self.message()
         with self.assertLogs("ournotes_bot.qq", level="INFO") as text_log:
             await _deliver_reply(message, "group-1", True, PreparedReply("文字回复"), msg_seq=2)
-        self.assertIn("已发送", "\n".join(text_log.output))
+        self.assertIn("文字发送回执=success", "\n".join(text_log.output))
         self.assertIn("msg_seq=2", "\n".join(text_log.output))
 
         with self.assertLogs("ournotes_bot.qq", level="INFO") as image_log:

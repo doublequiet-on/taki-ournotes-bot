@@ -31,13 +31,17 @@ HELP_TEXT = """Taki · Our Notes 日服资料查询
 颜色：红、蓝、绿、黄、紫；例 /查曲 颜色=蓝/绿
 激奏=JUST 表示包含；激奏=纯JUST 表示全段同类；激奏=混合；激奏=JUST/JUST/COMBO 按顺序匹配
 /查谱面 歌名或ID [难度]：查看等级与 Note 数；100001 可简写为 1
-/查分数表 [乐队] [EX] [lv<=25] [页N]：全难度每分钟得分效率前30条，含难度、时长和得分系数；也可指定歌名或ID
-/查榜线 [jp/tw/kr/en] [歌名] [T1～T100]：活动挑战歌曲榜；默认日服、全部歌曲的 T1/2/3/10/100
+/查分数表 [乐队] [颜色=蓝/绿] [激奏=JUST] [EX] [lv<=25] [页N]：先筛选后排序；默认全难度效率前30条，也可指定歌名或ID
+/查榜线 [jp/hk/kr/en] [歌名] [T1 T10 T37] [仅数值]：四服挑战歌曲榜，默认日服；排名1～100，最多五个；省略歌名查全部歌曲，省略名次显示T1/2/3/10/100；如 /查榜线 100
+四服：日服（jp）、国服（hk）、韩服（kr）、英服（en）；仅数值不画曲线
 /查卡 [SSR/SR/R] [颜色=红色] [角色=tmr] [乐队=MyGO] [LIVE=分数提升] [击奏=JUST] [页N]：条件卡牌列表；指定ID看详情
 /查支援卡（或 /查SNAP）：同上筛选，另支持 EX、LIVE=技能延长
 /查卡面 ID、/查支援卡面 ID：只输出卡面；条件多选用逗号，同维度任选、跨维度同时满足
 /查缩写 昵称：查看昵称对应的角色、乐队等，也可直接用于查曲或查卡
 /问 想查的内容：自然语言查询歌曲、谱面、歌曲效率、成员卡技能或支援卡（复杂问法需配置 AI）
+/问 迷星叫 EX 物量：等级、Note、颜色、激奏、难度、数量及明确卡牌类型与ID的技能可本地短答
+/下一页、/上一页：继续上次列表；/选 2、/详情、/难度 EX：选择或切换难度
+续查也支持 /问 下一页、第 N 个、看详情、换成 EX；10 分钟未成功续查失效，请单独发送
 /数据状态：查看进程、最近同步与缓存状态
 /调试数据：查看本次进程的 AI API 成功调用与有效检索次数
 /帮助：查看本说明
@@ -266,6 +270,10 @@ def _support_card_name_matches(repository: SongRepository, query: str) -> list[S
 
 def song_matches(repository: SongRepository, query: str) -> list[Song]:
     """Apply an optional trailing level filter after the title/band/ID search."""
+    from .query.song_identity import exact_songs
+    exact = exact_songs(repository, query)
+    if exact:
+        return list(exact)
     normalized = unicodedata.normalize("NFKC", query)
     level_range = re.search(
         r"(?:^|\s)lv\s*(>=|>|<=|<)\s*(\d+(?:\.\d+)?)"
@@ -424,8 +432,9 @@ def _suggest(query: str, values: list[tuple[str, str]], locale: str) -> str:
 
 
 def _format_charts(song: Song) -> str:
+    from .data import note_text
     return "\n".join(
-        f"{chart.difficulty:<6} Lv.{chart.display_level:g} · {chart.notes} Notes"
+        f"{chart.difficulty:<6} Lv.{chart.display_level:g} · {note_text(chart.notes)}"
         for chart in song.charts
     ) or "暂无谱面数据"
 
@@ -466,18 +475,13 @@ def _format_support_card_detail(card: SupportCard, locale: str) -> str:
 
 
 def _choose(repository: SongRepository, query: str, locale: str = "zh") -> tuple[Song | None, str | None]:
-    matches = repository.search(query)
+    from .query.song_identity import unique_candidates, candidate_text
+    matches = unique_candidates(repository, query)
     if not matches:
         return None, tr(locale, "not_found_generic", query=query)
-    is_exact = query.strip().isdigit() or any(
-        normalize(query) == normalize(title) for title in
-        (*matches[0].titles, *matches[0].localized.get("title", {}).values())
-    )
-    if len(matches) > 1 and not is_exact:
-        first = matches[0]
-        alternatives = "、".join(f"{localized_text(song, 'title', locale)}({song.id})" for song in matches[1:4])
-        if alternatives:
-            return first, tr(locale, "maybe", names=alternatives)
+    from .query.song_identity import literal_song_match
+    if len(matches) > 1 or (matches and not literal_song_match(repository, query, matches[0])):
+        return None, candidate_text(matches)
     return matches[0], None
 
 
@@ -492,6 +496,18 @@ class CommandResult:
     catalog: CardAnswer | None = None
     song_selection: SongAnswer | None = None
     cutoff: CutoffAnswer | None = None
+    status: str = "success"
+    candidates: tuple[Song, ...] = ()
+    query_spec: object | None = None
+
+    def __post_init__(self):
+        for answer in (self.cutoff, self.meta, self.catalog, self.song_selection):
+            if answer is not None:
+                object.__setattr__(self, "status", answer.status)
+                return
+        if self.status == "success" and self.parsed[0] in {"songs", "cards", "support_cards"}:
+            if not (self.songs or self.cards or self.support_cards):
+                object.__setattr__(self, "status", "empty")
 
 
 def resolve_command(content: str, repository: SongRepository) -> CommandResult | None:
@@ -514,20 +530,31 @@ def resolve_command(content: str, repository: SongRepository) -> CommandResult |
     if re.match(r"^查(?:分数表|效率)(?:\s|$)", text):
         from .query.efficiency_query import MetaAnswer, parse_efficiency, execute_efficiency
         spec = parse_efficiency(text, repository, direct=True)
-        answer = MetaAnswer(spec, status="invalid_arguments") if isinstance(spec, str) else execute_efficiency(spec, repository)
-        return CommandResult(("efficiency", text, None), meta=answer)
+        answer = MetaAnswer(spec, status=getattr(spec, "status", "invalid_arguments")) if isinstance(spec, str) else execute_efficiency(spec, repository)
+        return CommandResult(("efficiency", text, None), meta=answer,
+                             query_spec=None if isinstance(spec, str) else spec)
     parsed = parse_query(content)
+    if kind == "chart" and len(parts) > 1:
+        from .query.song_identity import exact_songs
+        if exact_songs(repository, parts[1]):
+            parsed = ("chart", parts[1], None)
+        elif parsed and parsed[2] is not None:
+            original = parts[1].rsplit(None, 1)[0]
+            if exact_songs(repository, original):
+                parsed = ("chart", original, parsed[2])
     if not parsed:
         return None
     kind, query, _ = parsed
     if kind == "songs":
         try:
-            request = parse_filter(query)
+            from .query.song_identity import exact_songs
+            has_conditions = re.search(r"颜色|属性|激奏|击奏|乐队=|\blv|[<>=]|(?:^|\s)(?:EX|HD|NM|EZ|EXPERT|HARD|NORMAL|EASY)(?:\s|$)", query, re.I)
+            request = None if exact_songs(repository, query) else parse_filter(query, repository, force=bool(has_conditions))
             if request is not None:
                 answer = execute_song_filter(request, repository, int(parsed[2]))
                 return CommandResult(parsed, songs=answer.songs, song_selection=answer)
         except ValueError as exc:
-            return CommandResult(parsed, hint=str(exc))
+            return CommandResult(parsed, hint=str(exc), status="invalid_arguments")
         return CommandResult(parsed, songs=tuple(song_matches(repository, query)))
     if kind in {"cards", "support_cards"}:
         try:
@@ -536,8 +563,15 @@ def resolve_command(content: str, repository: SongRepository) -> CommandResult |
             return CommandResult(parsed, support_cards=tuple(support_card_matches(repository, query)))
         except ValueError:
             return CommandResult(parsed, hint=CARD_RARITY_HELP[locale_for(content)])
-    song, hint = _choose(repository, query, locale_for(content))
-    return CommandResult(parsed, songs=(song,) if song else (), hint=hint)
+    from .query.song_identity import unique_candidates, candidate_text, literal_song_match
+    matches = unique_candidates(repository, query)
+    if len(matches) > 1 or (matches and not literal_song_match(repository, query, matches[0])):
+        return CommandResult(parsed, hint=candidate_text(matches, parsed[2]),
+                             status="ambiguous", candidates=matches)
+    song = matches[0] if matches else None
+    hint = None if song else tr(locale_for(content), "not_found_generic", query=query)
+    return CommandResult(parsed, songs=(song,) if song else (), hint=hint,
+                         status="success" if song else "unknown_entity")
 
 
 def _safe_sync_time(value: object, locale: str) -> str:
@@ -560,6 +594,9 @@ def handle_command(content: str, repository: SongRepository,
         return INTRO
     if not text:
         return HELP_TEXTS[locale]
+    from .query.continuation import parse_operation, MISSING
+    if parse_operation(text) is not None:
+        return MISSING
     if text.casefold() in {"帮助", "help", "菜单", "指令", "ヘルプ"}:
         return HELP_TEXTS[locale]
     if text.casefold() in {"语言", "language", "言語"}:
@@ -587,9 +624,13 @@ def handle_command(content: str, repository: SongRepository,
         traits = repository.song_traits
         saved = traits.saved
         count = sum(bool(s.traits and s.traits.color and s.traits.missions) for s in repository.songs)
+        history = repository.event_cutoffs.history
+        history_text = "\n" + history.status_text() if history else "\n榜线历史：未配置"
+        sampler = getattr(repository, "cutoff_sampler", None)
+        history_text += "\n周期采样：" + (sampler.last_state if sampler else "未启动")
         return (status + f"\n歌曲颜色／激奏：{count}/{len(repository.songs)} · Haneoka 日服 · "
                 + ("旧缓存" if traits.stale else "有效缓存" if saved else "等待后台获取")
-                + (f"\n属性版本：{saved['release']}\n本机获取：{_safe_sync_time(saved['fetched_at'], locale)}" if saved else ""))
+                + (f"\n属性版本：{saved['release']}\n本机获取：{_safe_sync_time(saved['fetched_at'], locale)}" if saved else "") + history_text)
 
     if text.casefold() in {"查缩写", "abbrev", "略称"}:
         return COMMAND_HELPS[locale]["abbrev"]
@@ -622,6 +663,8 @@ def handle_command(content: str, repository: SongRepository,
 
     selection = resolved if resolved is not None else resolve_command(content, repository)
     parsed = selection.parsed if selection else None
+    if selection and selection.status in {"ambiguous", "invalid_arguments"} and selection.hint:
+        return selection.hint
     if selection and selection.cutoff is not None:
         return selection.cutoff.text
     if selection and selection.catalog is not None:
@@ -643,8 +686,8 @@ def handle_command(content: str, repository: SongRepository,
         if not visible:
             return page_notice("songs", parsed[1], page, len(matches), locale)
         return tr(locale, "songs") + "\n" + "\n".join(
-            f"{song.id}  {localized_text(song, 'title', locale)} · {localized_text(song, 'band', locale)}  " + " / ".join(f"{chart.display_level:g}" for chart in song.charts)
-            + "\n" + describe_song(song) for song in visible
+            f"{index:02d}. ID {song.id}  {localized_text(song, 'title', locale)} · {localized_text(song, 'band', locale)}  " + " / ".join(f"{chart.display_level:g}" for chart in song.charts)
+            + "\n" + describe_song(song) for index, song in enumerate(visible, 1)
         ) + "\n" + page_notice("songs", parsed[1], page, len(matches), locale) + "\n" + tr(locale, "next_chart")
 
     if parsed and parsed[0] == "chart":
@@ -656,7 +699,8 @@ def handle_command(content: str, repository: SongRepository,
                         for title in (*item.titles, *item.localized.get("title", {}).values())]
             return tr(locale, "not_found_chart", query=query) + _suggest(query, variants, locale) + "\n" + COMMAND_HELPS[locale]["chart"]
         charts = song.charts if parsed[2] is None else tuple(c for c in song.charts if c.difficulty == parsed[2])
-        result = f"[{tr(locale, 'chart')}] {localized_text(song, 'title', locale)}（ID {song.id}）\n" + ("\n".join(f"{c.difficulty} Lv.{c.display_level:g} · {c.notes} Notes" for c in charts) or tr(locale, "no_charts"))
+        from .data import note_text
+        result = f"[{tr(locale, 'chart')}] {localized_text(song, 'title', locale)}（ID {song.id}）\n" + ("\n".join(f"{c.difficulty} Lv.{c.display_level:g} · {note_text(c.notes)}" for c in charts) or tr(locale, "no_charts"))
         result += "\n" + describe_song(song)
         return f"{result}\n{hint}" if hint else result
 

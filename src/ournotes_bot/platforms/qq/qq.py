@@ -1,6 +1,6 @@
 # L3
 # Input: QQ 事件／消息、Settings、SongRepository、AIQueryParser 及 CommandResult／QueryResult。
-# Output: PreparedReply 文字与可选图片；外部为被动回复，批内按命令顺序交付，批间排序可配置且超时可提前发送。
+# Output: PreparedReply 文字、图片与选择快照；DeliveryOutcome 明确回执；外部为被动回复，批内顺序固定，批间排序可配置。
 # Pos: Platform / QQ 的事件接入、回复准备／交付与后台任务接线；见 ../../../L2-QQ.md。
 # Effects/Dependencies: botpy 连接、上传／发送、线程与 asyncio 任务、去重／队列状态；经业务模块联网及读写缓存；固定 logger ournotes_bot.qq 供更新器识别就绪。
 
@@ -36,6 +36,8 @@ from ... import config
 from ...data import SongRepository
 from ...i18n import tr
 from ...structured_query import QueryResult, query_page_notice
+from ...query.continuation import (ContextKey, ContextStore, QueryContext, MISSING, catalog_version,
+                                  capture_context, execute_followup, parse_operation)
 from ...ai_client import AIClient
 from ...update_notice import UpdateNotifier
 from ...visuals import (render_card, render_card_list, render_chart, render_song_list,
@@ -106,7 +108,8 @@ def _is_group_query(content: object) -> bool:
     if cleaned.startswith(("/", "／")) or is_ai_request(cleaned):
         return True
     first = cleaned.split(None, 1)[0].casefold()
-    return first in ALIASES or first in {"帮助", "help", "ヘルプ", "数据状态", "状态", "status", "状態"}
+    return (first in ALIASES or parse_operation(cleaned) is not None
+            or first in {"帮助", "help", "ヘルプ", "数据状态", "状态", "status", "状態"})
 
 
 def _mentions_bot(data: dict, app_id: str) -> bool:
@@ -160,6 +163,7 @@ class PreparedReply:
     image: bytes | None = None
     pages: tuple[PreparedReply, ...] = ()
     complete_text: bool = False
+    context: QueryContext | None = None
 
 
 def _expand_replies(replies: list[PreparedReply], reserve: int = 0) -> list[PreparedReply]:
@@ -172,7 +176,8 @@ def _expand_replies(replies: list[PreparedReply], reserve: int = 0) -> list[Prep
         elif reply.pages or reply.complete_text:
             # Conservative local text budget, not a claim about QQ's platform hard limit.
             chunks, current = [], ""
-            for line in reply.text.splitlines(keepends=True):
+            fallback = reply.text + ("\n本次容量不足，未附曲线，请单独查询歌曲。" if reply.pages else "")
+            for line in fallback.splitlines(keepends=True):
                 if current and len(current) + len(line) > 1800:
                     chunks.append(current)
                     current = ""
@@ -204,13 +209,19 @@ class QueryGate:
 
     async def prepare(self, content: str, repository: SongRepository,
                       ai_parser: AIQueryParser) -> PreparedReply | None:
+        return await self._run(_prepare_reply, content, repository, ai_parser)
+
+    async def prepare_followup(self, context, operation, repository):
+        return await self._run(_prepare_followup, context, operation, repository)
+
+    async def _run(self, function, *args):
         async with self._lock:
             if self._pending >= self._capacity:
                 return PreparedReply("当前查询较多，请稍后重试。")
             self._pending += 1
         try:
             async with self._workers:
-                work = asyncio.create_task(asyncio.to_thread(_prepare_reply, content, repository, ai_parser))
+                work = asyncio.create_task(asyncio.to_thread(function, *args))
                 try:
                     return await asyncio.shield(work)
                 except asyncio.CancelledError:
@@ -294,8 +305,12 @@ async def prepare_commands(commands: list[str], gate: "QueryGate", repository: S
     Returns (replies, overflow) where overflow counts commands beyond `limit`.
     """
     selected = commands[:limit]
+    async def prepare_one(command):
+        if len(commands) > 1 and parse_operation(command) is not None:
+            return PreparedReply("连续查询请单独发送；同一条消息中的新查询和续查不会按依赖链执行。")
+        return await gate.prepare(command, repository, ai_parser)
     results = await asyncio.gather(
-        *(gate.prepare(command, repository, ai_parser) for command in selected),
+        *(prepare_one(command) for command in selected),
         return_exceptions=True,
     )
     replies: list[PreparedReply] = []
@@ -311,6 +326,8 @@ async def prepare_commands(commands: list[str], gate: "QueryGate", repository: S
 
 def _image_from_result(result: QueryResult | CommandResult | None,
                        repository: SongRepository, locale: str) -> bytes | None:
+    if isinstance(result, QueryResult) and result.spec.field:
+        return None
     if result is not None and result.catalog is not None:
         answer = result.catalog
         if answer.error or not answer.cards:
@@ -415,6 +432,7 @@ def _prepare_reply(content: str, repository: SongRepository,
         return (time.monotonic() - started) * 1000
 
     try:
+        before = catalog_version(repository)
         if is_ai_request(content):
             reply, result = ai_parser.answer_with_plan(content, repository)
         else:
@@ -426,6 +444,32 @@ def _prepare_reply(content: str, repository: SongRepository,
     if not reply:
         logger.info("未识别为查询，不回复；内容=%s", describe(content))
         return None
+    candidate = capture_context(result, repository, catalog_before=before)
+    prepared = _render_prepared(reply, result, repository, locale_for(content), candidate)
+    logger.info("查询完成；内容=%s 文本=%d字 图片=%s 耗时=%.0fms",
+                describe(content), len(reply),
+                f"{len(prepared.image):,}B" if prepared.image else "无", elapsed())
+    return prepared
+
+
+def _prepare_followup(context, operation, repository):
+    from ...structured_query import answer_for
+    try:
+        outcome = execute_followup(context, operation, repository)
+        if isinstance(outcome, str):
+            return PreparedReply(outcome)
+        result, candidate = outcome
+        if isinstance(result, QueryResult):
+            text = answer_for(result.spec, repository, result=result)
+        else:
+            text = handle_command("/查曲", repository, resolved=result)
+        return _render_prepared(text, result, repository, "zh", candidate)
+    except Exception as exc:
+        logger.error("续查准备失败；错误类型=%s", type(exc).__name__)
+        return PreparedReply("查询暂时失败，请稍后重试。")
+
+
+def _render_prepared(reply, result, repository, locale, candidate=None):
     try:
         if result is not None and result.cutoff is not None:
             from ...rendering.event_cutoff_visuals import render_cutoff, load_artwork
@@ -435,17 +479,15 @@ def _prepare_reply(content: str, repository: SongRepository,
             if pages:
                 return PreparedReply(reply, pages=tuple(PreparedReply(page.text, page.image) for page in pages))
             return PreparedReply(reply, complete_text=True)
-        image = _image_from_result(result, repository, locale_for(content))
+        image = _image_from_result(result, repository, locale)
     except Exception as exc:
         logger.warning("图片生成失败，改用文字；错误类型=%s", type(exc).__name__)
         image = None
     if (image is None and result is not None and result.catalog is not None
             and result.catalog.request.mode == "art" and not result.catalog.error):
         reply += "\n卡面图片暂不可用，请稍后重试。"
-    logger.info("查询完成；内容=%s 文本=%d字 图片=%s 耗时=%.0fms",
-                describe(content), len(reply),
-                f"{len(image):,}B" if image else "无", elapsed())
-    return PreparedReply(reply, image, complete_text=result is not None and result.cutoff is not None)
+    return PreparedReply(reply, image, complete_text=result is not None and result.cutoff is not None,
+                         context=candidate)
 
 
 async def _upload_image(api, target_id: str, image: bytes, group: bool):
@@ -480,8 +522,26 @@ async def _upload_image(api, target_id: str, image: bytes, group: bool):
     return {"file_info": result["file_info"]}
 
 
+@dataclass(frozen=True)
+class DeliveryOutcome:
+    status: str
+
+    @property
+    def confirmed(self):
+        return self.status == "success"
+
+
+def _receipt(payload):
+    if isinstance(payload, dict):
+        if payload.get("code") not in (None, 0):
+            return DeliveryOutcome("failure")
+        if isinstance(payload.get("id"), str) and payload["id"].strip():
+            return DeliveryOutcome("success")
+    return DeliveryOutcome("uncertain")
+
+
 async def _deliver_reply(message, target_id: str, group: bool, reply: PreparedReply,
-                         msg_seq: int = 1) -> None:
+                         msg_seq: int = 1) -> DeliveryOutcome:
     """Send one reply as a passive reply to `message`.
 
     QQ rejects a second passive send that reuses the same (msg_id, msg_seq)
@@ -499,18 +559,72 @@ async def _deliver_reply(message, target_id: str, group: bool, reply: PreparedRe
             logger.warning("%s图片上传失败，改用文字；错误类型=%s", channel, type(exc).__name__)
         else:
             try:
-                await send(**target, msg_type=7, media=media)
+                outcome = _receipt(await send(**target, msg_type=7, media=media))
             except Exception as exc:
                 logger.error("%s图片发送失败，结果不确定，不自动重发；错误类型=%s", channel, type(exc).__name__)
+                return DeliveryOutcome("uncertain")
             else:
-                logger.info("%s已发送 图片 %s msg_seq=%d", channel, f"{len(reply.image):,}B", msg_seq)
-            return
+                logger.info("%s图片发送回执=%s 大小=%s msg_seq=%d", channel, outcome.status, f"{len(reply.image):,}B", msg_seq)
+            return outcome
     try:
-        await send(**target, msg_type=0, content=reply.text)
+        outcome = _receipt(await send(**target, msg_type=0, content=reply.text))
     except Exception as exc:
         logger.error("%s文字发送失败，结果不确定，不自动重发；错误类型=%s", channel, type(exc).__name__)
+        return DeliveryOutcome("uncertain")
     else:
-        logger.info("%s已发送 文字 %d字 msg_seq=%d", channel, len(reply.text or ""), msg_seq)
+        logger.info("%s文字发送回执=%s 字数=%d msg_seq=%d", channel, outcome.status, len(reply.text or ""), msg_seq)
+        return outcome
+
+
+def context_key(message, target_id, group):
+    author = getattr(message, "author", None)
+    user = getattr(author, "member_openid" if group else "user_openid", None)
+    try:
+        return ContextKey("qq", "group" if group else "c2c", target_id, user)
+    except ValueError:
+        return None
+
+
+async def reply_commands(message, target_id, group, commands, *, gate, repository,
+                         ai_parser, limit, sequencer, contexts):
+    """Coordinate arrivals and explicit receipts; SDK objects stay in this module."""
+    key = context_key(message, target_id, group)
+    operation = parse_operation(commands[0]) if len(commands) == 1 else None
+    arrival_lineage = contexts.lineage(key) if key is not None and operation is not None else None
+    lease = contexts.begin(key) if key is not None and operation is None else None
+    ticket = await sequencer.issue()
+    try:
+        if operation is not None:
+            async def followup():
+                current = (contexts.get(key) if key is not None and arrival_lineage is not None
+                           and contexts.lineage(key) == arrival_lineage else None)
+                # Do not invalidate a still-pending full query when no result was displayed.
+                followup_lease = contexts.begin(key, clear=False) if current is not None else None
+                reply = (await gate.prepare_followup(current, operation, repository)
+                         if current is not None else PreparedReply(MISSING))
+                await sequencer.wait_turn(ticket)
+                outcome = await _deliver_reply(message, target_id, group, reply)
+                contexts.commit(followup_lease, reply.context, confirmed=outcome.confirmed)
+            if key is None:
+                await followup()
+            else:
+                async with contexts.lock(key):
+                    await followup()
+            return
+        replies, overflow = await prepare_commands(commands, gate, repository, ai_parser, limit)
+        await sequencer.wait_turn(ticket)
+        candidates = [r for r in replies if r.context is not None]
+        confirmed_candidate = None
+        for seq, reply in enumerate(replies, start=1):
+            outcome = await _deliver_reply(message, target_id, group, reply, msg_seq=seq)
+            if len(candidates) == 1 and outcome.confirmed and reply.context is not None:
+                confirmed_candidate = reply.context
+        if overflow and len(replies) < QQ_PASSIVE_REPLY_LIMIT:
+            notice = PreparedReply(tr(locale_for(commands[0]), "too_many_commands", limit=limit, total=len(commands)))
+            await _deliver_reply(message, target_id, group, notice, msg_seq=len(replies) + 1)
+        contexts.commit(lease, confirmed_candidate, confirmed=confirmed_candidate is not None)
+    finally:
+        await sequencer.release(ticket)
 
 
 def run_bot(app_id: str, app_secret: str, repository: SongRepository, settings: Settings) -> None:
@@ -522,7 +636,17 @@ def run_bot(app_id: str, app_secret: str, repository: SongRepository, settings: 
 
     ai_parser = AIQueryParser(settings)
     query_gate = QueryGate(settings.query_concurrency, settings.query_queue_limit)
+    from ...sources.cutoff_history import CutoffHistory
+    from ...sources.cutoff_sampler import HistorySampler
+    if repository.event_cutoffs.history is None:
+        repository.event_cutoffs.history = CutoffHistory(
+            settings.cutoff_history_file or settings.cache_file.with_name("moenotes-history-v1.sqlite3"),
+            enabled=settings.cutoff_history_enabled, min_free_mb=settings.cutoff_history_min_free_mb)
+    sampler = HistorySampler(repository.event_cutoffs, servers=settings.cutoff_sampling_servers,
+                             interval=settings.cutoff_sampling_interval) if settings.cutoff_sampling_enabled else None
+    repository.cutoff_sampler = sampler
     reply_sequencer = ReplySequencer(enabled=settings.reply_order)
+    contexts = ContextStore()
     notice_ai = (AIClient(settings.ai_base_url, settings.ai_api_key, settings.ai_model)
                  if settings.ai_api_key else None)
     if settings.update_notices and notice_ai is None:
@@ -560,29 +684,12 @@ def run_bot(app_id: str, app_secret: str, repository: SongRepository, settings: 
             pair. The total is kept within QQ_PASSIVE_REPLY_LIMIT, leaving room
             for the notice.
             """
-            channel = "群聊" if group else "单聊"
-            ticket = await reply_sequencer.issue()
-            try:
-                limit = settings.multi_command_limit
-                logger.info("%s收到 %d 条指令：%s", channel, len(commands),
-                            " | ".join(describe(command) for command in commands))
-                replies, overflow = await prepare_commands(
-                    commands, query_gate, repository, ai_parser, limit)
-                await reply_sequencer.wait_turn(ticket)
-                for seq, reply in enumerate(replies, start=1):
-                    await _deliver_reply(message, target_id, group, reply, msg_seq=seq)
-                sent = len(replies)
-                if overflow and len(replies) < QQ_PASSIVE_REPLY_LIMIT:
-                    logger.info("单条消息指令数超过上限：收到 %d 条，执行 %d 条",
-                                len(commands), len(replies))
-                    notice = PreparedReply(tr(locale_for(commands[0]), "too_many_commands",
-                                              limit=limit, total=len(commands)))
-                    await _deliver_reply(message, target_id, group, notice,
-                                         msg_seq=len(replies) + 1)
-                    sent += 1
-                logger.info("%s本批处理完毕：%d 条指令，发送 %d 条回复", channel, len(commands), sent)
-            finally:
-                await reply_sequencer.release(ticket)
+            logger.info("%s收到 %d 条指令：%s", "群聊" if group else "单聊", len(commands),
+                        " | ".join(describe(command) for command in commands))
+            await reply_commands(message, target_id, group, commands, gate=query_gate,
+                                 repository=repository, ai_parser=ai_parser,
+                                 limit=settings.multi_command_limit,
+                                 sequencer=reply_sequencer, contexts=contexts)
 
         async def _reply_group(self, message: GroupMessage) -> None:
             if notifier:
@@ -645,8 +752,14 @@ def run_bot(app_id: str, app_secret: str, repository: SongRepository, settings: 
                 self._refresh_task = asyncio.create_task(refresh_loop())
             if not hasattr(self, "_song_traits_task") or self._song_traits_task.done():
                 self._song_traits_task = asyncio.create_task(song_traits_loop())
+            if sampler:
+                sampler.start()
             if notifier and (not hasattr(self, "_notice_task") or self._notice_task.done()):
                 self._notice_task = asyncio.create_task(notifier.run(self.api))
 
     intents = botpy.Intents(public_messages=True)
-    ClientWithRefresh(intents=intents).run(appid=app_id, secret=app_secret)
+    try:
+        ClientWithRefresh(intents=intents).run(appid=app_id, secret=app_secret)
+    finally:
+        if sampler:
+            sampler.stop()

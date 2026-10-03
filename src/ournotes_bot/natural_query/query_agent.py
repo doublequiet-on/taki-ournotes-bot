@@ -254,11 +254,27 @@ class QueryAgent:
                 tracked=tracked, local=True, cache=False,
             )
 
+        from ..query.continuation import parse_operation, MISSING
+        if parse_operation(question) is not None:
+            return self._finish_terminal(state, OutcomeCode.INVALID_ARGUMENTS, MISSING,
+                                         tracked=tracked, local=True, cache=False)
+
         # Cutoffs are live source snapshots: bypass stale plan/terminal caches and AI quotas.
         from ..query.event_cutoff_query import parse_natural_cutoff
         cutoff = parse_natural_cutoff(question)
         if cutoff is not None:
             outcome = self._execute_spec(state, QuerySpec("event_cutoff", cutoff_request=cutoff), repository)
+            if tracked:
+                self.metrics.increment("local_success" if outcome.code == OutcomeCode.SUCCESS else "local_terminal_reject")
+            self._remember_state(question, state)
+            return outcome
+
+        from ..query.field_query import parse_field_question
+        field = parse_field_question(question, repository)
+        if isinstance(field, str):
+            return self._finish_terminal(state, self._message_code(field), field, tracked=tracked, local=True, cache=False)
+        if field is not None:
+            outcome = self._execute_spec(state, field, repository)
             if tracked:
                 self.metrics.increment("local_success" if outcome.code == OutcomeCode.SUCCESS else "local_terminal_reject")
             self._remember_state(question, state)
@@ -283,9 +299,9 @@ class QueryAgent:
         if _DIRECT_COMMAND.match(question):
             selected = resolve_command(question, repository)
             text = handle_command(question, repository, resolved=selected) or UNSUPPORTED
-            state.final_code = OutcomeCode.SUCCESS
+            state.final_code = OutcomeCode(selected.status) if selected else OutcomeCode.UNSUPPORTED
             self._cache_put(question, CachedOutcome(
-                "command", OutcomeCode.SUCCESS, command=question,
+                "command", state.final_code, command=question,
             ))
             self._remember_state(question, state)
             if tracked:
@@ -445,7 +461,7 @@ class QueryAgent:
             return outcome
         assert cached.command is not None
         selected = resolve_command(cached.command, repository)
-        state.final_code = OutcomeCode.SUCCESS
+        state.final_code = OutcomeCode(selected.status) if selected else OutcomeCode.UNSUPPORTED
         self._remember_state(state.question, state)
         return AgentOutcome(
             handle_command(cached.command, repository, resolved=selected) or UNSUPPORTED,
@@ -539,7 +555,11 @@ class QueryAgent:
             raise OSError("agent budget exhausted")
         state.tool_executions += 1
         state.steps += 1
-        result = capability_for_spec(spec).executor(spec, repository)
+        if spec.field:
+            from ..structured_query import resolve_query
+            result = resolve_query(spec, repository)
+        else:
+            result = capability_for_spec(spec).executor(spec, repository)
         code = self._result_code(result, repository)
         state.last_observation = Observation(self._observation_code(code))
         state.final_code = code
@@ -609,6 +629,8 @@ class QueryAgent:
 
     @staticmethod
     def _message_code(message: str) -> OutcomeCode:
+        if hasattr(message, "status"):
+            return OutcomeCode(message.status)
         if message == UNKNOWN_ENTITY:
             return OutcomeCode.UNKNOWN_ENTITY
         if message == AMBIGUOUS_ENTITY:
@@ -618,12 +640,14 @@ class QueryAgent:
     @staticmethod
     def _result_code(result: QueryResult, repository: SongRepository) -> OutcomeCode:
         spec = result.spec
+        if result.short_text is not None:
+            return OutcomeCode(result.status)
         if result.cutoff is not None:
             return OutcomeCode(result.cutoff.status)
         if result.song_selection and result.song_selection.unavailable:
             return OutcomeCode.DATA_UNAVAILABLE
-        if result.catalog is not None and result.catalog.error:
-            return OutcomeCode.INVALID_ARGUMENTS
+        if result.catalog is not None:
+            return OutcomeCode(result.catalog.status)
         if spec.intent == "efficiency":
             return OutcomeCode(result.meta.status)
         if ((spec.skill_query or spec.skill_kind) and spec.intent == "card"

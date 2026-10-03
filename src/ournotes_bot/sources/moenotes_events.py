@@ -2,7 +2,7 @@
 # Input: server, public MoeNotes endpoints, an isolated cache directory and injectable transport/clocks.
 # Output: immutable event/song/board snapshots with effective song periods; scores preserve response positions.
 # Pos: Data / MoeNotes challenge rankings; see L2-2.md.
-# Effects: bounded anonymous HTTPS GETs and atomic writes in moenotes-cutoff-v1 only; no startup I/O or QQ.
+# Effects: bounded anonymous HTTPS GETs, isolated current-cache writes and optional history records; no startup I/O or QQ.
 """On-demand challenge rankings. Event points and permanent song records are never read."""
 from __future__ import annotations
 
@@ -16,6 +16,7 @@ import threading
 import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
@@ -26,8 +27,9 @@ from urllib.parse import quote, urlsplit
 API = "https://api.bdon.moe/api/v1"
 META = "https://metadata.bdon.moe"
 ASSETS = "https://assets.bdon.moe"
-SERVERS = {"jp": ("日服", 9, "jp", "ja"), "tw": ("台服", 8, "hk-tw-mo", "zh-Hant"),
-           "kr": ("韩服", 9, "kr", "ko"), "en": ("国际服", 0, "en", "en")}
+# Internal keys follow the upstream API/assets/cache; public hk maps to tw at query entry.
+SERVERS = {"jp": ("日服", 9, "jp", "ja"), "tw": ("国服", 8, "hk-tw-mo", "zh-Hant"),
+           "kr": ("韩服", 9, "kr", "ko"), "en": ("英服", 0, "en", "en")}
 _NETWORK_SLOTS = threading.BoundedSemaphore(3)
 _TABLES = ("MasterEvent", "MasterChallengeMusic", "MasterLiveMusic", "MasterText", "MasterStoryChapter")
 
@@ -150,6 +152,8 @@ class BoardSnapshot:
     age_seconds: float | None = None
     status: str = "暂无数据"
     notes: tuple[str, ...] = ()
+    observed_scores: tuple[int | None, ...] | None = None
+    quality: str = "valid"
 
     def score(self, rank: int) -> int | None:
         return self.scores[rank - 1] if 1 <= rank <= len(self.scores) else None
@@ -162,6 +166,7 @@ class _Entry:
     received: float
     tick: float
     fallback: bool = False
+    late: _Entry | None = None
 
 
 def asset_url(server: str, kind: str, name: str) -> str:
@@ -181,6 +186,23 @@ class EventCutoffRepository:
         self._locks: dict[str, threading.Lock] = {}
         self._entries: dict[str, _Entry] = {}
         self._negative: dict[str, tuple[float, SourceError]] = {}
+        self.history = None
+        self._foreground = 0
+
+    @contextmanager
+    def foreground(self):
+        with self._guard:
+            self._foreground += 1
+        try:
+            yield
+        finally:
+            with self._guard:
+                self._foreground -= 1
+
+    @property
+    def foreground_active(self):
+        with self._guard:
+            return self._foreground > 0
 
     def deadline(self) -> float:
         return self.monotonic() + 12
@@ -266,6 +288,11 @@ class EventCutoffRepository:
                     raise SourceError("budget")
                 payload, headers = loader()
                 entry = _Entry(payload, headers, self.clock(), self.monotonic())
+                if key.startswith("board:") and old:
+                    before, after = _ms(old.headers.get("x-fetched-at")), _ms(headers.get("x-fetched-at"))
+                    if before and after and after < before:
+                        self._negative[key] = (self.monotonic() + 30, SourceError("late_snapshot"))
+                        return replace(old, late=entry)
                 self._entries[key] = entry
                 self._negative.pop(key, None)
                 self._save(key, entry)
@@ -450,7 +477,23 @@ class EventCutoffRepository:
             entry = self._cached(f"board:{event.server}:{event.event_id}:{song.challenge_id}", 60, 600, load, deadline)
         except SourceError as exc:
             messages = {"pending": "来源采集中", "rate_limited": "来源限流，稍后重试", "not_found": "本曲暂无榜单", "budget": "本次查询预算已用尽"}
+            if self.history:
+                self.history.failure(event.server, event.event_id, song.challenge_id, exc.code)
             return BoardSnapshot(song, status=messages.get(exc.code, "本曲来源暂不可用"))
+        if self.history and entry.late:
+            self.history.record(event, self._snapshot(event, song, entry.late))
+        board = self._snapshot(event, song, entry)
+        if self.history:
+            if entry.fallback:
+                self.history.failure(event.server, event.event_id, song.challenge_id, "source_fallback")
+            stored = self.history.record(event, board)
+            if stored == "conflict":
+                board = replace(board, scores=(), status="同一源时刻分数冲突，暂无可信当前值", quality="conflict")
+            elif stored in {"storage_error", "busy", "low_disk", "disk_unavailable"}:
+                board = replace(board, notes=board.notes + ("历史保存暂停或失败；当前分数仍可查询。",))
+        return board
+
+    def _snapshot(self, event, song, entry):
         headers = entry.headers
         fetched, server = _ms(headers.get("x-fetched-at")), _ms(headers.get("x-server-time"))
         elapsed = max(0, self.monotonic() - entry.tick)
@@ -461,6 +504,12 @@ class EventCutoffRepository:
             notes.append("来源时钟与本机有偏差")
         position = headers.get("x-position-source", song.position_source)
         scores = tuple(n if type(n) is int and n >= 0 else None for n in entry.payload.get("scores", []))
+        observed = scores
+        quality = "valid" if position == "responseOrder" else "unknown_position"
+        if headers.get("x-collect-status") == "disabled":
+            quality = "disabled"
+        if entry.fallback:
+            quality = "fallback"
         status = "源榜单快照"
         if headers.get("x-collect-status") == "disabled":
             scores, status = (), "本曲挑战榜未开放"
@@ -484,7 +533,7 @@ class EventCutoffRepository:
                 scores, status = (), "旧缓存超限，暂无分数"
             else:
                 status = "来源故障，暂用旧快照"
-        return BoardSnapshot(song, scores, fetched, server, int(entry.received * 1000), age, status, tuple(notes))
+        return BoardSnapshot(song, scores, fetched, server, int(entry.received * 1000), age, status, tuple(notes), observed, quality)
 
     def boards(self, event: EventSnapshot, songs: tuple[EventSong, ...], deadline: float) -> tuple[BoardSnapshot, ...]:
         with ThreadPoolExecutor(max_workers=3) as pool:

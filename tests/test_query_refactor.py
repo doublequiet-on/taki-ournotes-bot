@@ -60,7 +60,7 @@ class QueryRefactorTests(unittest.TestCase):
 
         with patch.object(parser, "_request", side_effect=slow_request), \
              ThreadPoolExecutor(max_workers=2) as executor:
-            slow = executor.submit(parser.answer, "/问 迷星叫EX物量", self.repo)
+            slow = executor.submit(parser.answer, "/问 展示迷星叫 EXPERT 完整谱面资料", self.repo)
             self.assertTrue(started.wait(timeout=1))
             local = executor.submit(parser.answer, "/问 MyGO的歌有哪些", self.repo)
             try:
@@ -161,7 +161,7 @@ class QueryRefactorTests(unittest.TestCase):
         with patch.object(parser, "_request", return_value={
             "intent": "chart", "query": "迷星叫", "difficulty": "EXPERT",
         }) as request:
-            self.assertIn("768 Notes", parser.answer("/问 迷星叫EX物量", self.repo))
+            self.assertIn("768 Notes", parser.answer("/问 展示迷星叫 EXPERT 完整谱面资料", self.repo))
         self.assertEqual(request.call_count, 1)
         self.assertFalse(parser._metrics.available)
 
@@ -206,7 +206,7 @@ class QueryRefactorTests(unittest.TestCase):
 
     def test_unknown_capability_routes_then_parses(self) -> None:
         parser = AIQueryParser(self.settings)
-        question = "/问 迷星叫具体有多少个音符"
+        question = "/问 迷星叫的完整信息请展开"
         self.assertIsNone(local_route(question))
         responses = [
             {"action": "route", "capability": "chart.get"},
@@ -226,7 +226,7 @@ class QueryRefactorTests(unittest.TestCase):
 
     def test_invalid_structured_arguments_are_repaired_once(self) -> None:
         parser = AIQueryParser(self.settings)
-        question = "/问 迷星叫EX物量"
+        question = "/问 展示迷星叫 EXPERT 完整谱面资料"
         responses = [
             {
                 "action": "call_tool", "capability": "chart.get",
@@ -296,7 +296,7 @@ class QueryRefactorTests(unittest.TestCase):
 
     def test_router_parse_and_repair_obey_three_call_hard_limit(self) -> None:
         parser = AIQueryParser(self.settings)
-        question = "/问 迷星叫具体有多少个音符"
+        question = "/问 迷星叫的完整信息请展开"
         responses = [
             {"action": "route", "capability": "chart.get"},
             {
@@ -328,7 +328,7 @@ class QueryRefactorTests(unittest.TestCase):
             now[0] = 19.0
             return invalid
 
-        question = "/问 迷星叫EX物量"
+        question = "/问 展示迷星叫 EXPERT 完整谱面资料"
         with patch.object(parser, "_request", side_effect=late_response) as request:
             self.assertIn("目前只能查询", parser.answer(question, self.repo))
         state = parser.state_for(question)
@@ -337,7 +337,7 @@ class QueryRefactorTests(unittest.TestCase):
 
     def test_second_invalid_output_stops_without_another_repair(self) -> None:
         parser = AIQueryParser(self.settings)
-        question = "/问 迷星叫EX物量"
+        question = "/问 展示迷星叫 EXPERT 完整谱面资料"
         invalid = {
             "action": "call_tool", "capability": "chart.get",
             "arguments": {"query": "迷星叫", "difficulty": "MASTER"},
@@ -388,8 +388,8 @@ class QueryRefactorTests(unittest.TestCase):
             ai_metrics_file=Path(self.temp.name) / "transient-metrics.json",
         ))
         with patch.object(transient_parser, "_request", side_effect=TimeoutError("secret")) as request:
-            self.assertIn("暂不可用", transient_parser.answer("/问 迷星叫EX物量", self.repo))
-            self.assertIn("暂不可用", transient_parser.answer("/问 迷星叫EX物量", self.repo))
+            self.assertIn("暂不可用", transient_parser.answer("/问 展示迷星叫 EXPERT 完整谱面资料", self.repo))
+            self.assertIn("暂不可用", transient_parser.answer("/问 展示迷星叫 EXPERT 完整谱面资料", self.repo))
         self.assertEqual(request.call_count, 2)
 
     def test_source_change_invalidates_terminal_cache(self) -> None:
@@ -424,7 +424,7 @@ class QueryRefactorTests(unittest.TestCase):
                     ai_quota_file=Path(self.temp.name) / f"strict-quota-{index}.json",
                     ai_metrics_file=Path(self.temp.name) / f"strict-metrics-{index}.json",
                 ))
-                question = f"/问 迷星叫EX物量{'呀' * index}"
+                question = f"/问 展示迷星叫 EXPERT 完整谱面资料{'呀' * index}"
                 with patch.object(parser, "_request", return_value=response) as request:
                     self.assertIn("目前只能查询", parser.answer(question, self.repo))
                 state = parser.state_for(question)
@@ -436,7 +436,7 @@ class QueryRefactorTests(unittest.TestCase):
 
     def test_second_tool_execution_only_follows_explicit_repair(self) -> None:
         parser = AIQueryParser(self.settings)
-        question = "/问 迷星叫EX物量"
+        question = "/问 展示迷星叫 EXPERT 完整谱面资料"
         original = CAPABILITIES["chart.get"]
         attempts = 0
 
