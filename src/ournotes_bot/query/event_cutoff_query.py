@@ -125,6 +125,11 @@ class CutoffAnswer:
 
 
 def execute_cutoff(request: CutoffRequest, repository) -> CutoffAnswer:
+    with repository.event_cutoffs.foreground():
+        return _execute_cutoff(request, repository)
+
+
+def _execute_cutoff(request: CutoffRequest, repository) -> CutoffAnswer:
     if request.error:
         return CutoffAnswer(request, message=request.error, status=request.code)
     if request.server not in SERVERS:

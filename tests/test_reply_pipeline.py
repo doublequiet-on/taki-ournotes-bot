@@ -195,7 +195,7 @@ class UpdateNoticeLifecycleTests(unittest.IsolatedAsyncioTestCase):
                 await stopped.wait()
             notifier.run.side_effect = worker
             with patch("botpy.Client", FakeClient), patch("ournotes_bot.platforms.qq.qq.UpdateNotifier", return_value=notifier):
-                run_bot("test-app", "", SimpleNamespace(refresh_song_traits=Mock()), settings)
+                run_bot("test-app", "", SimpleNamespace(refresh_song_traits=Mock(), event_cutoffs=SimpleNamespace(history=None)), settings)
                 client = instances[-1]
                 try:
                     await client.on_ready()
@@ -219,7 +219,7 @@ class UpdateNoticeLifecycleTests(unittest.IsolatedAsyncioTestCase):
             with patch("botpy.Client", FakeClient), patch("ournotes_bot.platforms.qq.qq.UpdateNotifier") as constructor:
                 settings = Settings("test-app", "", BASE, Path(folder) / "cache.json", 6,
                                     qq_gateway_host="", update_notices=False)
-                run_bot("test-app", "", SimpleNamespace(refresh_song_traits=Mock()), settings)
+                run_bot("test-app", "", SimpleNamespace(refresh_song_traits=Mock(), event_cutoffs=SimpleNamespace(history=None)), settings)
                 client = instances[-1]
                 await client.on_ready()
                 self.assertFalse(hasattr(client, "_notice_task"))

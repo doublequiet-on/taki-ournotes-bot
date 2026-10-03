@@ -522,6 +522,15 @@ def run_bot(app_id: str, app_secret: str, repository: SongRepository, settings: 
 
     ai_parser = AIQueryParser(settings)
     query_gate = QueryGate(settings.query_concurrency, settings.query_queue_limit)
+    from ...sources.cutoff_history import CutoffHistory
+    from ...sources.cutoff_sampler import HistorySampler
+    if repository.event_cutoffs.history is None:
+        repository.event_cutoffs.history = CutoffHistory(
+            settings.cutoff_history_file or settings.cache_file.with_name("moenotes-history-v1.sqlite3"),
+            enabled=settings.cutoff_history_enabled, min_free_mb=settings.cutoff_history_min_free_mb)
+    sampler = HistorySampler(repository.event_cutoffs, servers=settings.cutoff_sampling_servers,
+                             interval=settings.cutoff_sampling_interval) if settings.cutoff_sampling_enabled else None
+    repository.cutoff_sampler = sampler
     reply_sequencer = ReplySequencer(enabled=settings.reply_order)
     notice_ai = (AIClient(settings.ai_base_url, settings.ai_api_key, settings.ai_model)
                  if settings.ai_api_key else None)
@@ -645,8 +654,14 @@ def run_bot(app_id: str, app_secret: str, repository: SongRepository, settings: 
                 self._refresh_task = asyncio.create_task(refresh_loop())
             if not hasattr(self, "_song_traits_task") or self._song_traits_task.done():
                 self._song_traits_task = asyncio.create_task(song_traits_loop())
+            if sampler:
+                sampler.start()
             if notifier and (not hasattr(self, "_notice_task") or self._notice_task.done()):
                 self._notice_task = asyncio.create_task(notifier.run(self.api))
 
     intents = botpy.Intents(public_messages=True)
-    ClientWithRefresh(intents=intents).run(appid=app_id, secret=app_secret)
+    try:
+        ClientWithRefresh(intents=intents).run(appid=app_id, secret=app_secret)
+    finally:
+        if sampler:
+            sampler.stop()
