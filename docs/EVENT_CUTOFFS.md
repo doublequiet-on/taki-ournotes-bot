@@ -10,6 +10,8 @@
 
 接口和素材证据见 [THIRD_PARTY](../THIRD_PARTY.md)。活动积分榜关闭不关闭歌曲榜；每曲使用自身 `rankingEnabled` 与 `collectStatus`。`feature/nowOn/aggregation/result/end` 分别显示未开始、进行中、结算中、结束公示、结束。`lastSeen` 和归档仅表示最后观测，不宣称确认终榜。
 
+歌名与名次均可独立省略：无歌名选择全部挑战歌曲，无名次显示 T1／2／3／10／100。`/查榜线 100`、`/查榜线 t100` 查询全部挑战歌曲的 T100，也支持指定服务器；有歌名时仅查该曲。完整名称／曲目 ID 仍优先于纯数字名次，发生歧义时用 `T100` 表示名次。
+
 `players` 原始响应位置就是名次；只保存前 100 个位置的非负整数或 null，不排序、去重或前移。缺值、布尔值、数字字符串、负分数均不当成有效分数，整数零保留。源位置依据未知时停止展示分数。持久缓存不保留玩家 ID、昵称、队伍或卡组。
 
 每首歌分别保存源采集时间、来源时钟、本机接收时间。优先用来源两时钟计算接收时的数据年龄，再增加本机单调时钟经过的时间；不会把本机抓取时间冒充源采集时间。来源时钟与本机偏差超过 60 秒会提示。未知时间或异常时钟如实显示，失败回退时没有可核对年龄的旧分数不展示。
@@ -47,7 +49,7 @@
 
 | 需求编号 | 测试覆盖 |
 |---|---|
-| A01、A04、A13 | `test_overview_single_rank_and_integer_output`，三种视图和长整数测试 |
+| A01、A04、A13 | `test_overview_single_rank_and_integer_output`、`test_rank_only_queries_select_all_event_songs`，总览／单曲／全曲指定名次视图和长整数测试 |
 | A02、A03 | `test_servers_aliases_and_no_fallback`，同服元数据与素材键 |
 | A05、A06 | `test_invalid_conditions_and_names`，本期部分匹配与别名消歧、英文歌名／别名、完整数字歌名、末尾数字、非本期歌曲 |
 | A07、A08、A09 | `test_positions_holes_ties_invalid_scores_and_partial_board` |
@@ -67,6 +69,6 @@
 python -B scripts/preview_event_cutoffs.py --snapshot-dir <脱敏取样目录> --art-dir <已下载公开素材目录> --output-dir runtime/event-cutoff-preview
 ```
 
-脚本只读本轮脱敏 JSON 格式及本地素材，生成总览、单曲、T37、合成压力分张、430px 宽检查图与哈希清单。真实取样图带日期和“离线预览”；压力样例明确标合成，包含与活动不同的单曲有效区间。样图、素材和取样不提交。不能用这些证据替代即时 API 状态、真实 QQ 送达或生产验收。
+脚本只读本轮脱敏 JSON 格式及本地素材，生成总览、单曲、单曲 T37、全曲 T100、合成压力分张、430px 宽检查图与哈希清单。真实取样图带日期和“离线预览”；压力样例明确标合成，包含与活动不同的单曲有效区间。样图、素材和取样不提交。不能用这些证据替代即时 API 状态、真实 QQ 送达或生产验收。
 
 代码回退不等于数据回退。本功能新增独立目录，旧版本无需读取它；没有执行回退、发布、启动生产进程或发送 QQ。

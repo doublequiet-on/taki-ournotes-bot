@@ -14,7 +14,7 @@ from ..sources.moenotes_events import (BoardSnapshot, EventSnapshot, EventSong, 
 from .entity_lexicon import scoped_song_matches
 
 NODES = (1, 2, 3, 10, 100)
-HELP = "/查榜线 [jp/tw/kr/en] [歌名] [T1～T100]；省略歌名查全部歌曲的 T1/2/3/10/100。"
+HELP = "/查榜线 [jp/tw/kr/en] [歌名] [T1～T100]；省略歌名查全部歌曲，省略名次显示 T1/2/3/10/100；例如 /查榜线 100。"
 SERVER_ALIASES = {"jp": "jp", "日服": "jp", "tw": "tw", "台服": "tw", "臺服": "tw",
                   "kr": "kr", "韩服": "kr", "韓服": "kr", "en": "en", "英服": "en", "国际服": "en", "國際服": "en"}
 FORBIDDEN = re.compile(r"预测|預測|推荐|推薦|配队|配隊|编成|攻略|代练|代肝|账号|帐号|賬號|最强|怎么打|如何打|抽卡建议")
@@ -156,8 +156,6 @@ def execute_cutoff(request: CutoffRequest, repository) -> CutoffAnswer:
             matches = scoped_song_matches(query, catalog) if query else ()
             outside = scoped_song_matches(query, full_catalog) if query and not matches else ()
     request = replace(request, query=query, rank=rank)
-    if rank is not None and not query:
-        return CutoffAnswer(request, event, message="请指定歌曲，例如 /查榜线 歌名 T37。", status="invalid_arguments")
     songs = event.songs
     if query:
         if not matches and not outside:
