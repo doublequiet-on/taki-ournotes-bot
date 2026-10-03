@@ -26,8 +26,9 @@ from urllib.parse import quote, urlsplit
 API = "https://api.bdon.moe/api/v1"
 META = "https://metadata.bdon.moe"
 ASSETS = "https://assets.bdon.moe"
-SERVERS = {"jp": ("日服", 9, "jp", "ja"), "tw": ("台服", 8, "hk-tw-mo", "zh-Hant"),
-           "kr": ("韩服", 9, "kr", "ko"), "en": ("国际服", 0, "en", "en")}
+# Internal keys follow the upstream API/assets/cache; public hk maps to tw at query entry.
+SERVERS = {"jp": ("日服", 9, "jp", "ja"), "tw": ("国服", 8, "hk-tw-mo", "zh-Hant"),
+           "kr": ("韩服", 9, "kr", "ko"), "en": ("英服", 0, "en", "en")}
 _NETWORK_SLOTS = threading.BoundedSemaphore(3)
 _TABLES = ("MasterEvent", "MasterChallengeMusic", "MasterLiveMusic", "MasterText", "MasterStoryChapter")
 

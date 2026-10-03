@@ -14,8 +14,9 @@ from ..sources.moenotes_events import (BoardSnapshot, EventSnapshot, EventSong, 
 from .entity_lexicon import scoped_song_matches
 
 NODES = (1, 2, 3, 10, 100)
-HELP = "/查榜线 [jp/tw/kr/en] [歌名] [T1～T100]；省略歌名查全部歌曲，省略名次显示 T1/2/3/10/100；例如 /查榜线 100。"
-SERVER_ALIASES = {"jp": "jp", "日服": "jp", "tw": "tw", "台服": "tw", "臺服": "tw",
+HELP = "/查榜线 [jp/hk/kr/en] [歌名] [T1～T100]；省略歌名查全部歌曲，省略名次显示 T1/2/3/10/100；例如 /查榜线 100。"
+SERVER_ALIASES = {"jp": "jp", "日服": "jp", "hk": "tw", "国服": "tw", "國服": "tw",
+                  "tw": "tw", "台服": "tw", "臺服": "tw",
                   "kr": "kr", "韩服": "kr", "韓服": "kr", "en": "en", "英服": "en", "国际服": "en", "國際服": "en"}
 FORBIDDEN = re.compile(r"预测|預測|推荐|推薦|配队|配隊|编成|攻略|代练|代肝|账号|帐号|賬號|最强|怎么打|如何打|抽卡建议")
 MARKER = re.compile(r"榜线|榜線|档线|檔線|歌曲榜|(?:前\s*[+-]?\d+(?:\.\d+)?|[+-]?\d+(?:\.\d+)?\s*线).*?(?:多少|分)|T\d+.*多少", re.I)
@@ -41,7 +42,7 @@ def parse_cutoff(text: str) -> CutoffRequest:
     if server:
         return CutoffRequest(server, rest.strip())
     if re.match(r"^(?:\S{1,4}服(?:\s|$)|server=|服务器[=:])", text, re.I):
-        return CutoffRequest(error="未知服务器。仅支持 jp（日服）、tw（台服）、kr（韩服）、en（国际服）。")
+        return CutoffRequest(error="未知服务器。仅支持日服（jp）、国服（hk）、韩服（kr）、英服（en）。")
     hint = first.casefold() if re.fullmatch(r"[a-z]{2}", first, re.I) else ""
     return CutoffRequest(query=text, server_hint=hint)
 
@@ -63,7 +64,7 @@ def parse_natural_cutoff(question: str) -> CutoffRequest | None:
             break
     # Keep unfamiliar explicit regions visible as an error; never fall back to JP.
     if re.match(r"^(?:\S{1,4}服|server=|服务器[=:])", text, re.I):
-        return CutoffRequest(error="未知服务器。仅支持日服、台服、韩服、国际服。")
+        return CutoffRequest(error="未知服务器。仅支持日服（jp）、国服（hk）、韩服（kr）、英服（en）。")
     first = text.split(None, 1)[0] if text else ""
     hint = first.casefold() if not explicit_server and re.fullmatch(r"[a-z]{2}", first, re.I) else ""
     overview = re.sub(r"[\s?？。的]", "", text)
@@ -167,7 +168,7 @@ def execute_cutoff(request: CutoffRequest, repository) -> CutoffAnswer:
             if outside:
                 return CutoffAnswer(request, event, message="这首歌不是本期活动的挑战歌曲。", status="empty")
             if request.server_hint:
-                return CutoffAnswer(request, event, message="未知服务器。仅支持 jp（日服）、tw（台服）、kr（韩服）、en（国际服）。", status="invalid_arguments")
+                return CutoffAnswer(request, event, message="未知服务器。仅支持日服（jp）、国服（hk）、韩服（kr）、英服（en）。", status="invalid_arguments")
             if not event.catalog:
                 return CutoffAnswer(request, event, message="该服务器歌曲元数据暂不可用，无法核对名称；请稍后重试或使用已知曲目 ID。", status="data_unavailable")
             return CutoffAnswer(request, event, message=f"该服务器未找到歌曲「{query}」。请使用完整歌名或已配置别名。", status="unknown_entity")

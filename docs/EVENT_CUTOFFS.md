@@ -8,6 +8,8 @@
 
 身份固定为 `server → eventId → challengeMusicId → musicId`。活动身份与挑战 ID 唯一性在缓存发布和旧缓存读取时校验，坏响应保留可用旧快照并在退避结束后重取。四服命名空间独立，省略服务器每次都取 JP。名字从同服 MasterText 与 MasterLiveMusic 解析，消歧与部分匹配只使用本期挑战歌曲，别名也只保留本期目标；完整名称优先于末尾数字名次及两字母服务器猜测。完整的非本期歌名仍明确说明不在本期。未知名称不丢条件、不变成全曲查询。元数据不可用时总览仍保留歌曲 ID 与分数；名称查询明确说无法核对。
 
+用户名称与命令代码统一为日服（jp）、国服（hk）、韩服（kr）、英服（en）。国服输入 `hk`／`国服`／`國服` 在查询入口映射到上游 `tw`；内部结果、API、元数据、素材和缓存继续使用上游身份 `tw`，命令标签输出 `hk`。旧 `tw`／`台服`／`臺服` 及 `国际服`／`國際服` 仅作为输入兼容别名，图文和帮助均使用新的四服名称。
+
 接口和素材证据见 [THIRD_PARTY](../THIRD_PARTY.md)。活动积分榜关闭不关闭歌曲榜；每曲使用自身 `rankingEnabled` 与 `collectStatus`。`feature/nowOn/aggregation/result/end` 分别显示未开始、进行中、结算中、结束公示、结束。`lastSeen` 和归档仅表示最后观测，不宣称确认终榜。
 
 歌名与名次均可独立省略：无歌名选择全部挑战歌曲，无名次显示 T1／2／3／10／100。`/查榜线 100`、`/查榜线 t100` 查询全部挑战歌曲的 T100，也支持指定服务器；有歌名时仅查该曲。完整名称／曲目 ID 仍优先于纯数字名次，发生歧义时用 `T100` 表示名次。
@@ -16,7 +18,7 @@
 
 每首歌分别保存源采集时间、来源时钟、本机接收时间。优先用来源两时钟计算接收时的数据年龄，再增加本机单调时钟经过的时间；不会把本机抓取时间冒充源采集时间。来源时钟与本机偏差超过 60 秒会提示。未知时间或异常时钟如实显示，失败回退时没有可核对年龄的旧分数不展示。
 
-展示时区：JP UTC+09:00、TW UTC+08:00、KR UTC+09:00、EN UTC。Master 的无时区时间按已核实来源配置解析（JP +9，其余 +8），与 API 毫秒时间交叉核对。2026-10-02 的非日服取样相差一小时，冲突字段显示未知并附两项观测；不擅自纠正。结束时间不使用 `displayEndAt`。
+展示时区：日服（jp）UTC+09:00、国服（hk）UTC+08:00、韩服（kr）UTC+09:00、英服（en）UTC。Master 的无时区时间按已核实来源配置解析（JP +9，其余 +8），与 API 毫秒时间交叉核对。2026-10-02 的非日服取样相差一小时，冲突字段显示未知并附两项观测；不擅自纠正。结束时间不使用 `displayEndAt`。
 
 每曲保留来源的 `effectiveStartAt/effectiveEndAt`。与活动起止不同或缺失时，图文逐曲展示榜单有效开始／结束，缺失、无效或倒置区间显示未知；与活动共享的边界出现 Master/API 冲突时也显示未知。三种视图与文字回退共用同一份时间字段。
 
@@ -50,7 +52,7 @@
 | 需求编号 | 测试覆盖 |
 |---|---|
 | A01、A04、A13 | `test_overview_single_rank_and_integer_output`、`test_rank_only_queries_select_all_event_songs`，总览／单曲／全曲指定名次视图和长整数测试 |
-| A02、A03 | `test_servers_aliases_and_no_fallback`，同服元数据与素材键 |
+| A02、A03 | `test_servers_aliases_and_no_fallback`、`test_public_server_names_and_codes_preserve_source_identity`，用户服名／代码与上游映射、同服元数据与素材键、兼容别名缓存复用 |
 | A05、A06 | `test_invalid_conditions_and_names`，本期部分匹配与别名消歧、英文歌名／别名、完整数字歌名、末尾数字、非本期歌曲 |
 | A07、A08、A09 | `test_positions_holes_ties_invalid_scores_and_partial_board` |
 | A10、A11、A12 | 生命周期／时间冲突／切期测试，单曲有效时间的三视图与文字回退、缺失／无效／冲突时间；已捕获活动在中途切期时保持身份 |
