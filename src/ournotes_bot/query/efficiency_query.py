@@ -15,6 +15,8 @@ from datetime import datetime, timezone
 from ..data import Song, normalize
 from .entity_lexicon import EntityRef, find_anchor, resolve_entity
 from .song_conditions import extract_song_conditions, remove_song_conditions
+from .song_identity import protect_entity, QueryProblem
+from .song_query import parse_filter, serialize_filter, traits_match
 from ..sources.haneoka.song_meta import DIFFICULTIES, REFERENCE_LABELS, MetaRow
 from ..sources.haneoka.song_traits import describe as describe_song
 
@@ -31,10 +33,11 @@ def parse_efficiency(query: str, repository, *, direct=False):
     from ..structured_query import QuerySpec
     if not direct and not MARKER.search(query):
         return None
-    if FORBIDDEN.search(query):
-        return "效率查询不支持攻略、配队、推荐、账号操作或预测。\n" + HELP
     text = unicodedata.normalize("NFKC", query).strip().strip("?？。！!")
     text = re.sub(r"^/?查(?:分数表|效率)\s*", "", text)
+    text, protected = protect_entity(text, repository)
+    if FORBIDDEN.search(text):
+        return "效率查询不支持攻略、配队、推荐、账号操作或预测。\n" + HELP
     text, page = _split_page(text)
     if not 1 <= page <= 100:
         return "页码需为 1～100。\n" + HELP
@@ -56,7 +59,7 @@ def parse_efficiency(query: str, repository, *, direct=False):
     comparison, level = evidence.comparison, evidence.level
     if level is not None and not 1 <= level <= 40:
         return "等级需为 1～40。\n" + HELP
-    all_difficulties = bool(re.search(r"全难度|所有难度", text))
+    all_difficulties = bool(re.search(r"全难度|所有难度|\bALL\b", text, re.I))
     if evidence.difficulty_conflict or (all_difficulties and evidence.has_difficulty):
         return "可省略难度查看全难度榜，或指定一种难度筛选。\n" + HELP
     difficulty = evidence.difficulty
@@ -71,8 +74,13 @@ def parse_efficiency(query: str, repository, *, direct=False):
         text = text[:limits[0].start()] + " " + text[limits[0].end():]
     ranking = bool(limits or re.search(r"排行|排名|效率榜|分数表|最高|最低|哪些歌", text))
     text = re.sub(r"查一下|查询|查看|请|帮我|有哪些|哪些歌|怎么样|如何|排行榜|排行|排名|分数表|效率榜|每分钟得分效率|得分效率|效率|全难度|所有难度|"
-                  + META_WORD + r"|最高|最低", "", text, flags=re.I)
-    term = text.strip(" 的，,。？?！! ").strip()
+                  + META_WORD + r"|\bALL\b|最高|最低", "", text, flags=re.I)
+    term = text.strip(" 的，,。？?！! ").strip().replace("TAKIENTITYTOKEN", protected)
+    try:
+        shared = parse_filter(term, repository, force=True, efficiency=True)
+    except ValueError as exc:
+        return str(exc)
+    term = shared.term
     subject = None
     if term:
         if term.isdecimal() and 1 <= int(term) < 100000 and not ranking:
@@ -90,14 +98,18 @@ def parse_efficiency(query: str, repository, *, direct=False):
                     subject = EntityRef("song", matches[0].id)
             if subject is None:
                 if matches:
-                    return "请明确歌曲或条件；候选：\n" + "\n".join(f"{s.id} {s.title}" for s in matches) + "\n" + HELP
-                return f"未找到歌曲或乐队「{term}」，也可能包含不支持的条件；未忽略任何条件。\n" + HELP
+                    return QueryProblem("请明确歌曲或条件；候选：\n" + "\n".join(f"{s.title} → /查分数表 {s.id}" for s in matches) + "\n" + HELP, "ambiguous")
+                return QueryProblem(f"未找到歌曲或乐队「{term}」，也可能包含不支持的条件；未忽略任何条件。\n" + HELP, "unknown_entity")
     if subject and subject.kind not in {"song", "band"}:
         return "效率查询只支持歌曲或乐队。\n" + HELP
     if all_difficulties and subject and subject.kind == "song":
         difficulty = "ALL"
+    shared = replace(shared, term=str(subject.value) if subject else "", difficulty=difficulty,
+                     comparison=comparison, level=level)
+    shared = replace(shared, query=serialize_filter(shared))
     return QuerySpec("efficiency", subject, difficulty, comparison, level, page,
-                     str(subject.value) if subject else "", metric=metric, order=order, limit=limit)
+                     str(subject.value) if subject else "", metric=metric, order=order, limit=limit,
+                     song_filter=shared)
 
 
 @dataclass(frozen=True)
@@ -112,9 +124,17 @@ class MetaAnswer:
     notes: tuple[str, ...] = ()
     jackets: tuple[str, ...] = ()
     song_records: tuple[Song, ...] = ()
+    total: int = 0
+    unknown_songs: int = 0
+    unknown_rows: int = 0
+    versions: tuple[str, ...] = ()
 
 
 def execute_efficiency(spec, repository) -> MetaAnswer:
+    with repository._song_lock:
+        songs = tuple(repository.songs)
+        traits_version = "/".join(sorted({s.traits.release for s in songs if s.traits and s.traits.release}))
+        catalog_version = str(repository.metadata.get("cached_at", ""))
     snapshot = repository.song_meta.get()
     if snapshot is None:
         return MetaAnswer("效率数据暂不可用，请稍后重试；歌曲、卡牌查询仍可使用。", status="data_unavailable")
@@ -136,7 +156,7 @@ def execute_efficiency(spec, repository) -> MetaAnswer:
     if metric not in {"eff", "score"} or spec.order not in {"asc", "desc"} or spec.limit not in {10, 20, 30}:
         return MetaAnswer("不支持此排序口径。\n" + HELP, status="invalid_arguments")
     names = {}
-    for song in repository.songs:
+    for song in songs:
         names.setdefault(song.id, []).append(song)
     mapped = []
     for row in snapshot.rows:
@@ -158,17 +178,34 @@ def execute_efficiency(spec, repository) -> MetaAnswer:
               f"覆盖：{len(eligible)} 条{difficulty_label}有效谱面样本；同曲不同难度分别计数，非完整全曲榜。\n{assumptions}")
     if any(r.warnings for r in eligible):
         footer += "\n上游含参数默认值或谱面差异警告，请以来源页说明为准。"
+    scoped = [r for r in eligible if (not subject or (subject.kind == "song" and r.song_id == subject.value)
+                or (subject.kind == "band" and normalize(names[r.song_id][0].band) == normalize(str(subject.value))))
+                and (not spec.comparison or _level_matches(r.level, spec.comparison, spec.level))]
+    flags = {r.song_id: traits_match(spec.song_filter, names[r.song_id][0]) if spec.song_filter else True for r in scoped}
+    unknown_ids = {key for key, value in flags.items() if value is None}
+    unknown_rows = sum(r.song_id in unknown_ids for r in scoped)
+    filtered = [r for r in scoped if flags[r.song_id] is True]
+    coverage = (f"有 {len(unknown_ids)} 首歌曲／{unknown_rows} 条谱面缺少所需颜色或激奏资料，未参与筛选。" if unknown_ids else "")
+    versions = (catalog_version, traits_version, snapshot.release, snapshot.source_version)
+    if coverage:
+        footer += "\n" + coverage
+    if scoped and unknown_rows == len(scoped):
+        return MetaAnswer("所需歌曲属性资料暂不可用，不能判断筛选结果。\n" + footer,
+                          status="data_unavailable", unknown_songs=len(unknown_ids), unknown_rows=unknown_rows,
+                          versions=versions)
     if subject and subject.kind == "song" and difficulty:
         song = names.get(subject.value, [])
         if len(song) != 1:
-            return MetaAnswer("歌曲不存在或 ID 冲突。", status="empty")
+            return MetaAnswer("歌曲不存在或 ID 冲突。", status="unknown_entity" if not song else "ambiguous")
         row = next((r for r in mapped if r.song_id == subject.value and r.difficulty == difficulty), None)
         if row is None or getattr(row, metric) is None:
             options = sorted({r.difficulty for r in mapped if r.song_id == subject.value and getattr(r, metric) is not None})
             return MetaAnswer(f"{song[0].title}（{subject.value}）已收录，但 {difficulty} 效率数据缺失、口径未确认或 ID 映射未确认。\n"
-                              f"可用难度：{'、'.join(options) or '暂无'}；未自动更换难度。\n" + footer, status="empty")
+                              f"可用难度：{'、'.join(options) or '暂无'}；未自动更换难度。\n" + footer, status="data_unavailable")
         if spec.comparison and not _level_matches(row.level, spec.comparison, spec.level):
             return MetaAnswer("该曲不符合等级条件。\n" + footer, status="empty")
+        if row not in filtered:
+            return MetaAnswer("该曲不符合乐队、颜色或激奏条件。\n" + footer, status="empty")
         if spec.page != 1:
             return MetaAnswer("单曲结果只有 1 页。", status="empty")
         def percentage(value):
@@ -179,21 +216,21 @@ def execute_efficiency(spec, repository) -> MetaAnswer:
                 f"eff：{percentage(row.eff)}；score：{percentage(row.score)}\n"
                 f"末判定点时长：{row.seconds if row.seconds is not None else '未知'} 秒；技能覆盖贡献比 sr：{percentage(row.skill_ratio)}\n"
                 f"同难度有效映射样本中的排序位置：{rank}/{len(eligible)}\n{footer}")
-        return MetaAnswer(text + "\n" + describe_song(song[0]), (row,))
-    filtered = [r for r in eligible if (not subject or (subject.kind == "song" and r.song_id == subject.value)
-                or (subject.kind == "band" and normalize(names[r.song_id][0].band) == normalize(str(subject.value))))
-                and (not spec.comparison or _level_matches(r.level, spec.comparison, spec.level))]
+        return MetaAnswer(text + "\n" + describe_song(song[0]), (row,), song_records=(song[0],),
+                          total=1, versions=versions)
     if subject and subject.kind == "song" and not filtered:
         available = any(r.song_id == subject.value for r in eligible)
         explanation = ("该曲不符合等级条件。" if available else
                        "歌曲已收录，但全难度分析数据缺失、口径未确认或 ID 映射未确认。")
-        return MetaAnswer(explanation + "\n" + footer, status="empty")
+        return MetaAnswer(explanation + "\n" + footer, status="empty" if available else "data_unavailable")
     pages = max(1, (len(filtered) + spec.limit - 1) // spec.limit)
     subject_label = (names[subject.value][0].title if subject and subject.kind == "song" else
                      str(subject.value) if subject else "全部已映射歌曲")
     table_scope = f"{difficulty_label}{'（默认）' if not spec.difficulty else ''} · {subject_label}"
     if spec.comparison:
         table_scope += f" · 等级{spec.comparison}{spec.level:g}"
+    if spec.song_filter and spec.song_filter.query:
+        table_scope += " · " + spec.song_filter.query
     table_scope += f" · {'每分钟得分效率' if metric == 'eff' else '得分系数'}{'从高到低' if spec.order == 'desc' else '从低到高'}"
     if spec.page > pages:
         return MetaAnswer(f"页码超出范围，共 {pages} 页。\n/" + replace(spec, page=1).command_label(), status="empty")
@@ -216,6 +253,10 @@ def execute_efficiency(spec, repository) -> MetaAnswer:
              + f" · 版本：{snapshot.release}")
     if any(r.warnings for r in eligible):
         notes += ("上游含参数默认值或谱面差异警告，详见来源页。",)
+    if coverage:
+        notes += (coverage,)
+    if spec.song_filter and (spec.song_filter.colors or spec.song_filter.mode):
+        notes += (f"属性版本：{traits_version or '未获取'}；主资料版本：{catalog_version or '未标注'}",)
     text = f"[分数表]\n{table_scope}\n"
     traits = tuple(describe_song(names[r.song_id][0]) for r in visible)
     text += (" | ".join(columns) + "\n" + "\n".join(" | ".join(row) + "\n" + trait for row, trait in zip(cells, traits))
@@ -223,7 +264,8 @@ def execute_efficiency(spec, repository) -> MetaAnswer:
     text += "\n" + page_notice + "\n" + metric_note + "\n" + footer
     return MetaAnswer(text, tuple(visible), "success" if visible else "empty",
                       columns=columns, cells=cells, scope=table_scope, page_notice=page_notice, notes=notes,
-                      jackets=tuple(names[r.song_id][0].jacket_url for r in visible), song_records=tuple(names[r.song_id][0] for r in visible))
+                      jackets=tuple(names[r.song_id][0].jacket_url for r in visible), song_records=tuple(names[r.song_id][0] for r in visible),
+                      total=len(filtered), unknown_songs=len(unknown_ids), unknown_rows=unknown_rows, versions=versions)
 
 
 def _percentage(value):

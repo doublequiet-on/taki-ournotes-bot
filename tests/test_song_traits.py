@@ -182,7 +182,8 @@ class SongTraitsTests(unittest.TestCase):
         self.assertEqual(saved['rows'], rows)
         repo = SongTraitsRepository(self.path); repo.saved = saved
         mapped = repo.apply([replace(self.repo.songs[0], traits=None)])
-        self.assertEqual(mapped[0].traits, SongTraits(1, ('COMBO', 'COMBO', 'COMBO'), repo.stale))
+        self.assertEqual(mapped[0].traits, SongTraits(1, ('COMBO', 'COMBO', 'COMBO'), repo.stale,
+                                                     repo.saved['release'], repo.saved['source_version']))
         def incomplete(path):
             if path.startswith('songs/'): raise OSError('missing detail')
             return fetch(path)

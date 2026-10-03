@@ -31,7 +31,7 @@ HELP_TEXT = """Taki · Our Notes 日服资料查询
 颜色：红、蓝、绿、黄、紫；例 /查曲 颜色=蓝/绿
 激奏=JUST 表示包含；激奏=纯JUST 表示全段同类；激奏=混合；激奏=JUST/JUST/COMBO 按顺序匹配
 /查谱面 歌名或ID [难度]：查看等级与 Note 数；100001 可简写为 1
-/查分数表 [乐队] [EX] [lv<=25] [页N]：全难度每分钟得分效率前30条，含难度、时长和得分系数；也可指定歌名或ID
+/查分数表 [乐队] [颜色=蓝/绿] [激奏=JUST] [EX] [lv<=25] [页N]：先筛选后排序；默认全难度效率前30条，也可指定歌名或ID
 /查榜线 [jp/hk/kr/en] [歌名] [T1～T100]：日服（jp）、国服（hk）、韩服（kr）、英服（en），默认日服；省略歌名查全部歌曲，省略名次显示 T1/2/3/10/100；如 /查榜线 100
 /查卡 [SSR/SR/R] [颜色=红色] [角色=tmr] [乐队=MyGO] [LIVE=分数提升] [击奏=JUST] [页N]：条件卡牌列表；指定ID看详情
 /查支援卡（或 /查SNAP）：同上筛选，另支持 EX、LIVE=技能延长
@@ -428,8 +428,9 @@ def _suggest(query: str, values: list[tuple[str, str]], locale: str) -> str:
 
 
 def _format_charts(song: Song) -> str:
+    from .data import note_text
     return "\n".join(
-        f"{chart.difficulty:<6} Lv.{chart.display_level:g} · {chart.notes} Notes"
+        f"{chart.difficulty:<6} Lv.{chart.display_level:g} · {note_text(chart.notes)}"
         for chart in song.charts
     ) or "暂无谱面数据"
 
@@ -523,7 +524,7 @@ def resolve_command(content: str, repository: SongRepository) -> CommandResult |
     if re.match(r"^查(?:分数表|效率)(?:\s|$)", text):
         from .query.efficiency_query import MetaAnswer, parse_efficiency, execute_efficiency
         spec = parse_efficiency(text, repository, direct=True)
-        answer = MetaAnswer(spec, status="invalid_arguments") if isinstance(spec, str) else execute_efficiency(spec, repository)
+        answer = MetaAnswer(spec, status=getattr(spec, "status", "invalid_arguments")) if isinstance(spec, str) else execute_efficiency(spec, repository)
         return CommandResult(("efficiency", text, None), meta=answer)
     parsed = parse_query(content)
     if kind == "chart" and len(parts) > 1:
@@ -535,7 +536,9 @@ def resolve_command(content: str, repository: SongRepository) -> CommandResult |
     kind, query, _ = parsed
     if kind == "songs":
         try:
-            request = parse_filter(query)
+            from .query.song_identity import exact_songs
+            has_conditions = re.search(r"颜色|属性|激奏|击奏|乐队=|\blv|[<>=]|(?:^|\s)(?:EX|HD|NM|EZ|EXPERT|HARD|NORMAL|EASY)(?:\s|$)", query, re.I)
+            request = None if exact_songs(repository, query) else parse_filter(query, repository, force=bool(has_conditions))
             if request is not None:
                 answer = execute_song_filter(request, repository, int(parsed[2]))
                 return CommandResult(parsed, songs=answer.songs, song_selection=answer)
