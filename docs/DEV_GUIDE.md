@@ -112,3 +112,5 @@ python scripts/check_release_artifact.py dist
 - 所有渲染器经 `visuals._bytes` → `image_output.encode_image` 统一编码预算（1.5MB/8192边长/1200万像素），不在各命令复制压缩代码。`qq._upload_image` 单次上传30秒，HTTP临时副本必须解除共享会话引用；测试 `test_image_output.py`、`test_media.py`、`test_reply_pipeline.py`。发布依据与可溯源说明见 [2026-09-28报告](RELEASE_2026-09-28.md)。
 
 歌曲信息图共用 `visuals._song_heading`（属性图标＋标题）、`_mission_marks` / `_mission_chip`（原生激奏图标、顺序与缓存提示），先测量再排版；缺图只退文字，不改变筛选。列表和谱面身份区置于左下角，分数表读取同一 `MetaAnswer.song_records` 快照，以 112 逻辑像素为基础行高并按标题、激奏内容自动增高。歌曲筛选与统一布局的发布依据见 [歌曲更新报告](RELEASE_2026-09-28_SONGS.md)；原生激奏图标、紧凑分数表与群聊面板的后续实现以 `5ea0f08`（PR #25）为准。
+
+Linux 离线发布／更新任务：从 [部署协议](../deploy/LINUX_OFFLINE.md) 进入 `deploy/linux_backend.py`、`linux_updater.py`、`offline_bundle.py` 和 `scripts/*offline_release.py`，目标测试 `test_linux_backend.py`、`test_linux_updater.py`、`test_offline_bundle.py`；涉及部署契约时执行完整回归与 Linux 断网安装 CI。

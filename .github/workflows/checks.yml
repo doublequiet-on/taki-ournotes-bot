@@ -49,3 +49,52 @@ jobs:
             "$install_dir/venv/bin/python" -m pip install "$package"
             (cd "$install_dir" && "$install_dir/venv/bin/python" -I "$GITHUB_WORKSPACE/scripts/check_installed_query_upgrade.py")
           done
+
+  offline-linux-bundle:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - name: Install system font
+        run: sudo apt-get update && sudo apt-get install -y fonts-noto-cjk
+      - name: Build locked Linux bundle
+        run: python scripts/build_offline_release.py --output "$RUNNER_TEMP/offline-release"
+      - name: Prove installation and regression with networking disabled
+        run: |
+          sudo unshare --net -- "$(command -v python)" scripts/check_offline_release.py \
+            "$RUNNER_TEMP/offline-release/taki-linux-x86_64-cp312.zip" "$(git rev-parse HEAD)"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-offline-release
+          path: ${{ runner.temp }}/offline-release/
+          if-no-files-found: error
+          retention-days: 14
+
+  publish-linux-bundle:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [test-and-package, offline-linux-bundle]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    concurrency:
+      group: linux-release-${{ github.sha }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - uses: actions/download-artifact@v4
+        with:
+          name: linux-offline-release
+          path: ${{ runner.temp }}/offline-release
+      - name: Publish exact commit bundle without replacing existing assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python scripts/publish_offline_release.py "$RUNNER_TEMP/offline-release/taki-linux-x86_64-cp312.zip" "$GITHUB_SHA"
