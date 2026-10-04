@@ -14,7 +14,7 @@ from unittest.mock import Mock, patch
 from deploy.linux_backend import (GIB, JOBS, LinuxBackend, Rejected, Deferred,
                                  extract_archive, fingerprints, tree_digest)
 from deploy.linux_backend import environment_digest, recover_engine, validate_config
-from deploy.linux_backend import run_bounded, freeze_release
+from deploy.linux_backend import run_bounded, freeze_release, status_document, human_status, main
 from deploy.linux_updater import Engine, Release, RunResult, atomic_json
 
 
@@ -53,6 +53,63 @@ class LinuxBackendTests(unittest.TestCase):
             "release": asdict(release), "owner": "taki-linux-updater-v1", "prepared": True,
             "digest": tree_digest(root / "code"), "environment_digest": environment_digest(root / "venv")})
         return release
+
+    def test_read_only_status_includes_progress_without_backend_or_state_writes(self):
+        self.state(transaction=dict(phase="preparing", commit=B, previous=asdict(self.baseline), candidate=None))
+        cache = self.backend.state / "bundle-cache"
+        cache.mkdir()
+        row = dict(version=1, commit=B, stage="downloading", route="asset_api",
+                   received_bytes=1048576, expected_bytes=4194304, at="2026-10-04T00:00:00+00:00")
+        atomic_json(cache / (B + ".download.json"), row)
+        before = (self.backend.state / "state.json").read_bytes()
+        backend = Mock()
+        with patch("deploy.linux_backend.trusted"):
+            result = status_document(Engine(self.backend.state, backend))
+        backend.assert_not_called()
+        self.assertFalse(backend.mock_calls)
+        self.assertEqual((self.backend.state / "state.json").read_bytes(), before)
+        self.assertEqual(result["observed_target"], B)
+        self.assertEqual(result["download"]["received_bytes"], 1048576)
+        output = human_status(result)
+        self.assertIn("1.00 MB / 4.00 MB", output)
+        self.assertIn("官方资产 API", output)
+        self.assertIn("准备候选版本", output)
+        self.assertIn("实际进程版本和 QQ 功能另行核验", output)
+
+    def test_status_explains_waiting_for_retry_and_preserves_legacy_failure(self):
+        self.state(download_retries={B: dict(attempts=3, after=1791073800)},
+                   events=[dict(status="deferred", commit=B, reason="bundle_network_unavailable")])
+        engine = Engine(self.backend.state, backend=None)
+        output = human_status(status_document(engine))
+        self.assertIn("等待下次重试，旧版未切换", output)
+        self.assertIn("最早再次尝试（UTC）", output)
+        self.state(failed={B: dict(reason="bundle_retry_exhausted")},
+                   events=[dict(status="rejected", commit=B)])
+        self.assertIn("该版本被阻止", human_status(status_document(engine)))
+        self.assertIn(B, engine.load_state()["failed"])
+
+    def test_status_invalid_or_symlink_progress_is_rejected_without_mutation(self):
+        self.state(events=[dict(status="deferred", commit=B)])
+        cache = self.backend.state / "bundle-cache"
+        cache.mkdir()
+        path = cache / (B + ".download.json")
+        atomic_json(path, dict(version=1, commit=B, stage="downloading", route="untrusted",
+                              received_bytes=0, expected_bytes=10, at="2026-10-04T00:00:00Z"))
+        before = path.read_bytes()
+        with patch("deploy.linux_backend.trusted"):
+            with self.assertRaisesRegex(Rejected, "download_progress_invalid"):
+                status_document(Engine(self.backend.state, backend=None))
+        self.assertEqual(path.read_bytes(), before)
+        with patch("deploy.linux_backend.trusted", side_effect=Rejected("controller_path_not_trusted")):
+            with self.assertRaisesRegex(Rejected, "controller_path_not_trusted"):
+                status_document(Engine(self.backend.state, backend=None))
+
+    def test_human_option_cannot_trigger_update_and_uninitialized_is_clear(self):
+        self.assertIn("尚未初始化", human_status({"status": "uninitialized"}))
+        with patch("deploy.linux_backend.LinuxBackend") as backend, patch("builtins.print") as printer:
+            self.assertEqual(main(["check", "--human"]), 1)
+        backend.assert_not_called()
+        self.assertIn("human_status_only", printer.call_args.args[0])
 
     def ci_rows(self):
         return {"workflow_runs": [{"id": 123, "run_number": 12, "run_attempt": 2,
@@ -267,10 +324,12 @@ class LinuxBackendTests(unittest.TestCase):
             self.backend.activate(release)
         self.assertFalse(self.calls)
 
-    def state(self, *, previous=None, transaction=None):
-        atomic_json(self.backend.state / "state.json", dict(version=1, current=asdict(self.baseline),
-                    previous=asdict(previous) if previous else None, transaction=transaction,
-                    paused=None, failed={}, events=[]))
+    def state(self, *, previous=None, transaction=None, **fields):
+        state = dict(version=1, current=asdict(self.baseline),
+                     previous=asdict(previous) if previous else None, transaction=transaction,
+                     paused=None, failed={}, events=[])
+        state.update(fields)
+        atomic_json(self.backend.state / "state.json", state)
 
     def test_explicit_retry_rebuilds_only_owned_unprotected_candidate(self):
         release = self.candidate()
@@ -374,15 +433,21 @@ class LinuxBackendTests(unittest.TestCase):
         self.assertFalse(self.calls)
 
     def test_candidate_preparation_uses_only_verified_bundle_and_offline_steps(self):
-        self.state()
+        self.state(transaction=dict(phase="preparing", commit=B, previous=asdict(self.baseline), candidate=None))
         self.backend.current_release = lambda: self.baseline
         def unpack(archive, payload, commit, expected):
+            self.assertEqual(json.loads((self.backend.state / "state.json").read_text())["transaction"]["preparation_step"],
+                             "offline_preparation")
             payload.mkdir()
         def extract(archive, code, commit):
             code.mkdir()
             (code / 'critical.py').write_text('original')
+        def bundle(*args, **kwargs):
+            self.assertEqual(json.loads((self.backend.state / "state.json").read_text())["transaction"]["preparation_step"],
+                             "downloading")
+            return self.root / 'bundle.zip', 'f' * 64
         with patch('deploy.linux_backend.require_target'), \
-                patch('deploy.linux_backend.get_bundle', return_value=(self.root / 'bundle.zip', 'f' * 64)), \
+                patch('deploy.linux_backend.get_bundle', side_effect=bundle), \
                 patch('deploy.linux_backend.unpack_bundle', side_effect=unpack), \
                 patch('deploy.linux_backend.extract_archive', side_effect=extract), \
                 patch('deploy.linux_backend.freeze_release'), \

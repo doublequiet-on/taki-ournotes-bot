@@ -44,6 +44,7 @@ from typing import Callable, Protocol
 
 SHA_RE = re.compile(r"[0-9a-f]{40}\Z")
 SAFE_PHASES = frozenset({"preparing", "verifying", "backing_up"})
+NETWORK_RETRY_CODES = frozenset({"bundle_network_unavailable", "bundle_not_published", "github_unavailable"})
 MUTATING_PHASES = frozenset({
     "stopping", "activating", "starting", "checking_health",
     "rollback_stopping", "rollback_activating", "rollback_starting", "rollback_health",
@@ -231,6 +232,9 @@ class Engine:
                     raise ValueError("download retries")
             transaction = state.get("transaction")
             if transaction is not None:
+                if (transaction.get("preparation_step") is not None and
+                        transaction["preparation_step"] not in {"downloading", "offline_preparation"}):
+                    raise ValueError("preparation step")
                 if transaction["phase"] not in SAFE_PHASES | MUTATING_PHASES:
                     raise ValueError("phase")
                 if not SHA_RE.fullmatch(transaction["commit"]):
@@ -267,6 +271,14 @@ class Engine:
     def _failed(self, state: dict, commit: str, reason: str):
         # Keep failures, including superseded SHAs: main can move backwards too.
         state["failed"][commit] = dict(at=_now(), reason=reason)
+
+    def _record_retry(self, state: dict, commit: str, *, network: bool) -> int:
+        retries = state.setdefault("download_retries", {})
+        attempts = retries.get(commit, {}).get("attempts", 0) + 1
+        delay = (300, 900, 1800)[min(attempts, 3) - 1] if network else 300 * 3 ** (attempts - 1)
+        # Saturation keeps v1 state readable by the previous controller.
+        retries[commit] = dict(attempts=min(attempts, 3), after=time.time() + delay)
+        return attempts
 
     def _pause(self, state: dict, reason: str, commit=None) -> RunResult:
         state["paused"] = reason
@@ -331,12 +343,20 @@ class Engine:
                 # earlier phases cannot have changed service pointers/processes.
                 if self.backend.current_release() != Release(**state["current"]):
                     return self._pause(state, "release_drift_during_preparation")
-                self._failed(state, transaction["commit"], "interrupted_preparation")
-                self._event(state, "abandoned", transaction["commit"], "interrupted_preparation")
+                downloading = (transaction["phase"] == "preparing" and
+                               transaction.get("preparation_step") == "downloading")
+                reason = "interrupted_download" if downloading else "interrupted_preparation"
+                if downloading:
+                    # The backend writes the next marker before unpacking or
+                    # executing any candidate, so this is only network recovery.
+                    self._record_retry(state, transaction["commit"], network=True)
+                else:
+                    self._failed(state, transaction["commit"], reason)
+                self._event(state, "deferred" if downloading else "abandoned", transaction["commit"], reason)
                 state["transaction"] = None
                 self._save(state)
                 self._cleanup(state)
-                return RunResult("recovered", transaction["commit"], "interrupted_preparation")
+                return RunResult("recovered", transaction["commit"], reason)
             # Recovery is its own invocation: never fetch another candidate before
             # rollback health is proven and its commit is durably recorded.
             return self._rollback(state, "interrupted_transaction")
@@ -395,11 +415,10 @@ class Engine:
                 self._failed(state, commit, _code(exc))
                 status, reason = "rejected", _code(exc)
             else:
-                retries = state.setdefault("download_retries", {})
-                attempts = retries.get(commit, {}).get("attempts", 0) + 1
-                retries[commit] = {"attempts": attempts, "after": time.time() + 300 * 3 ** (attempts - 1)}
+                network = _code(exc) in NETWORK_RETRY_CODES
+                attempts = self._record_retry(state, commit, network=network)
                 status, reason = "deferred", _code(exc)
-                if attempts >= 3:
+                if attempts >= 3 and not network:
                     status, reason = "rejected", "bundle_retry_exhausted"
                     self._failed(state, commit, reason)
             state["transaction"] = None
@@ -433,6 +452,7 @@ class Engine:
             raise
         except Exception as exc:
             return self._rollback(state, _code(exc))
+        state.get("download_retries", {}).pop(commit, None)
         state["previous"] = asdict(previous)
         state["current"] = asdict(candidate)
         state["transaction"] = None

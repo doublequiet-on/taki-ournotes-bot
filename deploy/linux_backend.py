@@ -1,7 +1,8 @@
 """Linux effects for the durable updater; run the installed controller as root.
 
 L3 Input: root-owned JSON configuration, public GitHub, systemd and reviewed policy.
-Output: isolated releases, bounded logs, recovery snapshots and current symlink.
+Output: isolated releases, bounded logs, recovery snapshots, current symlink and
+read-only status including download progress; status --human uses Chinese text.
 Pos: deployment backend for linux_updater; see deploy/L2.md.
 Effects: HTTPS, disk writes and service control; candidate code only runs as ubuntu.
 """
@@ -23,6 +24,7 @@ import tarfile
 import time
 import urllib.error
 import urllib.request
+from datetime import datetime, timezone
 
 try:
     from .offline_bundle import get_bundle, require_target, unpack_bundle
@@ -377,6 +379,17 @@ class LinuxBackend:
                 pass  # Already collected units also return nonzero.
             raise
 
+    def _preparation_step(self, commit: str, step: str) -> None:
+        """Persist the download/execution boundary under the engine's lock."""
+        path = self.state / "state.json"
+        state = json.loads(path.read_text())
+        transaction = state.get("transaction")
+        if not transaction or transaction.get("commit") != commit or transaction.get("phase") != "preparing":
+            raise Rejected("preparation_transaction_changed")
+        transaction["preparation_step"] = step
+        state["updated_at"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        atomic_json(path, state, mode=0o644)
+
     def prepare(self, commit: str) -> Release:
         if not SHA_RE.fullmatch(commit):
             raise Rejected("invalid_commit")
@@ -390,8 +403,10 @@ class LinuxBackend:
         release = Release(commit, str(root / "code"), str(root / "venv"))
         atomic_json(self.manifests / (commit + ".json"), {"owner": "taki-linux-updater-v1", "release": asdict(release), "prepared": False})
         require_target()
+        self._preparation_step(commit, "downloading")
         bundle, bundle_hash = get_bundle(self.state / "bundle-cache", commit,
                                         lambda suffix: self._json(API + suffix))
+        self._preparation_step(commit, "offline_preparation")
         payload = root / "payload"
         unpack_bundle(bundle, payload, commit, bundle_hash)
         extract_archive(payload / "source.tar.gz", Path(release.code_dir), commit)
@@ -720,13 +735,89 @@ def validate_config(config: dict) -> None:
         raise Rejected("controller_configuration_invalid")
 
 
+def status_document(engine: Engine) -> dict:
+    """Read recorded state/progress only; never resolve main or run the updater."""
+    state = engine.load_state()
+    if state is None:
+        return {"status": "uninitialized"}
+    transaction = state.get("transaction")
+    target = transaction["commit"] if transaction else next(
+        (event["commit"] for event in reversed(state["events"])
+         if event.get("status") in {"deferred", "rejected", "updated"}
+         and isinstance(event.get("commit"), str) and SHA_RE.fullmatch(event["commit"])),
+        state["current"]["commit"])
+    result = dict(state, observed_target=target)
+    path = engine.state_dir / "bundle-cache" / (target + ".download.json")
+    if path.exists() or path.is_symlink():
+        trusted(path)
+        if path.stat().st_size > 4096:
+            raise Rejected("download_progress_invalid")
+        row = json.loads(path.read_text())
+        if (not isinstance(row, dict) or row.get("version") != 1 or row.get("commit") != target
+                or row.get("stage") not in {"downloading", "verifying_digest", "digest_verified",
+                                             "verified", "waiting_for_retry", "rejected"}
+                or row.get("route") not in {"release", "asset_api", "cache"}
+                or type(row.get("received_bytes")) is not int or not 0 <= row["received_bytes"] <= 128 * 1024 * 1024
+                or (row.get("expected_bytes") is not None and
+                    (type(row["expected_bytes"]) is not int or not 0 < row["expected_bytes"] <= 128 * 1024 * 1024))
+                or not isinstance(row.get("at"), str) or len(row["at"]) > 40):
+            raise Rejected("download_progress_invalid")
+        result["download"] = {key: row[key] for key in
+                              ("stage", "route", "received_bytes", "expected_bytes", "at")}
+    return result
+
+
+def human_status(state: dict) -> str:
+    """Explain recorded updater state without claiming live process/QQ health."""
+    if state.get("status") == "uninitialized":
+        return "更新控制器尚未初始化。"
+    target = state["observed_target"]
+    lines = ["控制器记录的运行版本：" + state["current"]["commit"], "观察目标版本：" + target]
+    transaction = state.get("transaction")
+    retry = state.get("download_retries", {}).get(target)
+    if state.get("paused"):
+        lines.append("更新状态：已暂停（" + state["paused"] + "）")
+    elif target in state["failed"]:
+        lines.append("更新状态：该版本被阻止（" + state["failed"][target]["reason"] + "）")
+    elif transaction:
+        phases = {"preparing": "准备候选版本", "verifying": "检查兼容性", "backing_up": "备份",
+                  "stopping": "停止旧进程", "activating": "切换版本", "starting": "启动新版",
+                  "checking_health": "验收新版"}
+        phase = "下载候选安装包" if (transaction["phase"] == "preparing" and
+                                      transaction.get("preparation_step") == "downloading") else phases.get(transaction["phase"], "正在回退")
+        lines.append("更新状态：" + phase)
+    elif retry and target != state["current"]["commit"]:
+        lines.append("更新状态：等待下次重试，旧版未切换")
+    else:
+        lines.append("更新状态：无活动事务，等待定时检查")
+    download = state.get("download")
+    if download:
+        total = download["expected_bytes"]
+        amount = f'{download["received_bytes"] / 1048576:.2f} MB'
+        if total is not None:
+            amount += f" / {total / 1048576:.2f} MB"
+        stages = {"downloading": "下载中", "verifying_digest": "校验摘要中", "digest_verified": "摘要通过",
+                  "verified": "安装包验证通过", "waiting_for_retry": "下载等待重试", "rejected": "下载被拒绝"}
+        routes = {"release": "Release 主线路", "asset_api": "官方资产 API", "cache": "已验证缓存"}
+        lines.append("目标包：" + stages[download["stage"]] + "；" + amount + "；" + routes[download["route"]])
+        lines.append("下载记录时间（UTC）：" + download["at"])
+    if retry and target != state["current"]["commit"]:
+        next_at = datetime.fromtimestamp(retry["after"], timezone.utc).isoformat(timespec="seconds")
+        lines.append("最早再次尝试（UTC）：" + next_at + "；实际由定时器触发")
+    lines.append("此处为控制器记录；实际进程版本和 QQ 功能另行核验。")
+    return "\n".join(lines)
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description="Taki reviewed public-main Linux updater")
     parser.add_argument("--config", default="/etc/taki-updater.json")
     parser.add_argument("command", choices=("check", "recover", "status", "resume", "rollback"))
     parser.add_argument("--retry-commit")
+    parser.add_argument("--human", action="store_true", help="Chinese read-only status (status only)")
     args = parser.parse_args(argv)
     try:
+        if args.human and args.command != "status":
+            raise Rejected("human_status_only")
         if os.name != "posix" or os.geteuid() != 0:
             raise Rejected("controller_requires_root")
         path = Path(args.config)
@@ -740,17 +831,23 @@ def main(argv=None) -> int:
             if json.loads(marker.read_text()).get("phase") != "installed":
                 print(json.dumps({"status": "deferred", "reason": "installation_incomplete"}))
                 return 0
-        engine = Engine(config["state_dir"], LinuxBackend(config))
         if args.command == "status":
-            result = engine.load_state() or {"status": "uninitialized"}
-        elif args.command == "resume":
-            result = asdict(engine.resume(retry_commit=args.retry_commit))
-        elif args.command == "rollback":
-            result = asdict(engine.rollback())
-        elif args.command == "recover":
-            result = asdict(recover_engine(engine))
+            # Loading state does not need a backend; its constructor creates
+            # preparation folders, which a read-only status must not do.
+            result = status_document(Engine(config["state_dir"], backend=None))
+            if args.human:
+                print(human_status(result))
+                return 0
         else:
-            result = asdict(engine.run(recover_only=args.command == "recover"))
+            engine = Engine(config["state_dir"], LinuxBackend(config))
+            if args.command == "resume":
+                result = asdict(engine.resume(retry_commit=args.retry_commit))
+            elif args.command == "rollback":
+                result = asdict(engine.rollback())
+            elif args.command == "recover":
+                result = asdict(recover_engine(engine))
+            else:
+                result = asdict(engine.run())
         print(json.dumps(result, ensure_ascii=True, sort_keys=True))
         if args.command == "rollback":
             return 0 if result.get("status") == "rolled_back" and result.get("reason") == "operator_requested" else 1

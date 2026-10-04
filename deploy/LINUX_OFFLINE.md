@@ -21,11 +21,27 @@ Checks 的 `offline-linux-bundle` 在 Ubuntu 24.04 / Python 3.12 从完整提交
 
 ## 失败与重试
 
-下载的连接故障、超时、HTTP 408/429/500/502/503/504 每轮最多尝试三次，间隔 2、4 秒，每次有连接、总时长和体积上限。其他 HTTP 错误、摘要不符、归档结构错误直接拒绝。
+下载先使用 Release 主线路，遇到连接故障、超时或 HTTP 408/500/502/503/504 时切换同一资产的 GitHub 官方 API；不使用第三方镜像、凭据或不同版本的安装包。官方 API 请求使用 `Accept: application/octet-stream`，接受直接二进制响应和官方 CDN 跳转。CDN 签名只在内存中使用，后续分段复用，过期时重新取得，不写入日志或状态。
 
-准备阶段的暂时故障持久保存计数，跨进程最多三轮；下次最早在 300、900 秒后开始。第三轮失败后阻止该提交，只有显式指定提交的 `resume --retry-commit` 才重置计数。已有的旧版 `command_failed` 记录不会自动删除。GitHub 版本解析或 CI 尚未完成仍按原定时器等待，不执行候选代码。
+每轮最多三个临时故障、总下载预算 180 秒、单次连接／读取超时最多 15 秒，故障间隔 2、4 秒；HTTP 429 或明确的 API 配额耗尽交给定时器退避。收到的数据保存为提交专属 `.part`，下轮按已收到的字节继续请求，不因断线或进程中断清空。服务器忽略 Range 并返回完整文件时从头覆盖，绝不把完整文件追加到旧前缀。Range 起点、终点、总长及资产长度必须一致；最终整个包仍须通过已锁定的 SHA256 和归档清单校验，未验证的分段不能安装。普通权限错误、无效 Range、体积／摘要不符和归档结构错误直接拒绝，不用备用线路绕过。
+
+事务会在下载开始前持久标记 `preparation_step=downloading`，在解包／离线安装前先改为 `offline_preparation`。只有仍处于下载阶段的中断能恢复为网络退避，旧进程和代码指针须仍匹配；安装／测试／兼容／备份期间的中断继续阻止目标版本。旧事务没有该标记时沿用保守恢复，不据猜测解封。
+
+准备阶段仅 `bundle_network_unavailable`、`bundle_not_published`、`github_unavailable` 按 300、900、1800 秒退避，之后保持最多每 1800 秒一轮，由原定时器触发；这三类暂时故障不再在第三轮后永久阻止提交。v1 重试计数饱和到 3，兼容已有状态格式；成功更新后清理本提交的重试项。其他准备阶段 Deferred 仍有三轮上限，安装／测试／兼容／启动失败仍阻止提交。已存在的失败记录（包括旧控制器的 `bundle_retry_exhausted`）不会被自动删除；必要时仅对已经查明的具体提交显式 `resume --retry-commit`。版本解析或 CI 尚未完成仍按原定时器等待，不执行候选代码。
 
 网络下载和验证均在停止旧进程之前。候选安装与测试保持无网络、无真实凭据、独立数据目录、资源限制和非 root 用户。共享数据前向／回退兼容审批、停服前备份、进程健康检查与事务回退继续生效。代码回退不还原共享游戏缓存、额度或历史数据库。
+
+## 只读查看进度
+
+新版控制器安装后，在服务器终端执行：
+
+```bash
+sudo /usr/bin/python3 -E -s -B /usr/local/lib/taki-updater/linux_backend.py status --human
+```
+
+输出中文阶段、控制器记录的运行版本、观察目标、已收到／总字节和最早重试时间（UTC，实际执行由定时器触发）。命令不触发下载、状态写入、恢复或服务操作；`status` 不加 `--human` 仍输出 JSON，额外含经过筛选的下载摘要。缓存下的 `<SHA>.download.json` 只保存阶段、线路名、字节数和时间，不包含签名 URL、凭据或 QQ 数据。
+
+这里显示控制器的状态快照，不联网判断远端最新版，也不代替实际进程路径、当前启动日志和 QQ 功能验收。旧控制器不支持这个选项；仅合并源码不能让上述命令在线上生效。
 
 ## 现有服务器的控制器迁移
 
@@ -44,4 +60,4 @@ Checks 的 `offline-linux-bundle` 在 Ubuntu 24.04 / Python 3.12 从完整提交
 3. 新版验收通过后，按用户已授权范围启用四服 300 秒采样；配置合入现有环境，不覆盖密钥，不清历史数据。以实际进程环境、SQLite 四服观测及多轮时间戳作为证据，不把配置文件存在视为已启用。
 4. 更新 QQ 控制台面板属于外部操作，需核对实际面板内容及回执；机器人上线不等于面板更新，也不等于消息已经送达。
 
-离线包用法依据 [pip 可重复安装](https://pip.pypa.io/en/stable/topics/repeatable-installs/)；资产摘要依据 [GitHub Release assets API](https://docs.github.com/en/rest/releases/assets)。
+离线包用法依据 [pip 可重复安装](https://pip.pypa.io/en/stable/topics/repeatable-installs/)；资产下载与摘要依据 [GitHub Release assets API](https://docs.github.com/en/rest/releases/assets)，分段语义依据 [HTTP Range 协议](https://www.rfc-editor.org/rfc/rfc9110.html#name-range)。

@@ -118,26 +118,101 @@ class LinuxUpdaterTests(unittest.TestCase):
         self.backend.remote = B
         self.backend.calls.clear()
 
-    def test_download_retry_budget_survives_restart_and_keeps_old_process(self):
+    def test_network_backoff_survives_restarts_and_recovers_after_more_than_three_rounds(self):
         self.initialize()
-        for attempt, now in enumerate((1000, 1300, 2200), start=1):
+        for attempt, now in enumerate((1000, 1300, 2200, 4000, 5800), start=1):
             self.backend.failures["install:" + B] = u.Deferred("bundle_network_unavailable")
             with patch.object(u.time, "time", return_value=now):
                 result = self.engine.run()
-            self.assertEqual(result.status, "rejected" if attempt == 3 else "deferred")
+            self.assertEqual(result.status, "deferred")
             self.assertTrue(self.backend.running)
             self.assertEqual(self.backend.current.commit, A)
             self.assertNotIn("stop", self.backend.calls)
-            self.assertIsNone(self.engine.load_state()["transaction"])
+            state = self.engine.load_state()
+            self.assertIsNone(state["transaction"])
+            self.assertNotIn(B, state["failed"])
+            self.assertEqual(state["download_retries"][B]["after"], now + (300, 900, 1800)[min(attempt, 3) - 1])
             self.engine = u.Engine(self.folder, self.backend)
-            if attempt < 3:
-                with patch.object(u.time, "time", return_value=now + 1):
-                    self.assertEqual(self.engine.run().reason, "bundle_retry_backoff")
+            with patch.object(u.time, "time", return_value=now + 1):
+                self.assertEqual(self.engine.run().reason, "bundle_retry_backoff")
+        with patch.object(u.time, "time", return_value=7600):
+            self.assertEqual(self.engine.run().status, "updated")
+        self.assertNotIn(B, self.engine.load_state()["download_retries"])
+
+    def test_other_preparation_deferrals_keep_finite_budget(self):
+        self.initialize()
+        for attempt, now in enumerate((1000, 1300, 2200), start=1):
+            self.backend.failures["install:" + B] = u.Deferred("unknown_preparation_failure")
+            with patch.object(u.time, "time", return_value=now):
+                result = self.engine.run()
+            self.assertEqual(result.status, "rejected" if attempt == 3 else "deferred")
+            self.assertNotIn("stop", self.backend.calls)
         self.assertEqual(self.engine.run().status, "blocked")
         self.assertEqual(self.engine.load_state()["failed"][B]["reason"], "bundle_retry_exhausted")
         self.engine.resume(retry_commit=B)
         self.assertNotIn(B, self.engine.load_state()["download_retries"])
         self.assertEqual(self.engine.run().status, "updated")
+
+    def test_legacy_failed_records_are_never_cleared_by_network_retry_change(self):
+        self.initialize()
+        state = self.engine.load_state()
+        state["failed"][B] = dict(reason="bundle_retry_exhausted", at="2026-10-04T00:00:00Z")
+        state["download_retries"] = {B: dict(attempts=3, after=1000)}
+        self.engine._save(state)
+        result = self.engine.run()
+        self.assertEqual((result.status, result.reason), ("blocked", "bundle_retry_exhausted"))
+        self.assertIn(B, self.engine.load_state()["failed"])
+        self.assertNotIn("install:" + B, self.backend.calls)
+
+    def test_interrupted_download_recovers_and_retries_without_stopping_old_process(self):
+        self.initialize()
+        def killed_download(commit):
+            state = self.engine.load_state()
+            state["transaction"]["preparation_step"] = "downloading"
+            self.engine._save(state)
+            raise PowerLoss()
+        with patch.object(self.backend, "prepare", side_effect=killed_download):
+            with self.assertRaises(PowerLoss):
+                self.engine.run()
+        self.engine = u.Engine(self.folder, self.backend)
+        with patch.object(u.time, "time", return_value=1000):
+            recovered = self.engine.run()
+        self.assertEqual(recovered.reason, "interrupted_download")
+        self.assertNotIn(B, self.engine.load_state()["failed"])
+        self.assertIsNone(self.engine.load_state()["transaction"])
+        self.assertTrue(self.backend.running)
+        self.assertNotIn("stop", self.backend.calls)
+        with patch.object(u.time, "time", return_value=1001):
+            self.assertEqual(self.engine.run().reason, "bundle_retry_backoff")
+        with patch.object(u.time, "time", return_value=1300):
+            self.assertEqual(self.engine.run().status, "updated")
+
+    def test_interrupted_offline_preparation_still_blocks_the_candidate(self):
+        self.initialize()
+        def killed_install(commit):
+            state = self.engine.load_state()
+            state["transaction"]["preparation_step"] = "offline_preparation"
+            self.engine._save(state)
+            raise PowerLoss()
+        with patch.object(self.backend, "prepare", side_effect=killed_install):
+            with self.assertRaises(PowerLoss):
+                self.engine.run()
+        self.assertEqual(self.engine.run().reason, "interrupted_preparation")
+        self.assertIn(B, self.engine.load_state()["failed"])
+        self.assertEqual(self.engine.run().status, "blocked")
+        self.assertNotIn("stop", self.backend.calls)
+
+    def test_missing_bundle_and_metadata_network_failures_keep_retrying(self):
+        for reason in ("bundle_not_published", "github_unavailable"):
+            with self.subTest(reason=reason):
+                self.initialize()
+                for now in (1000, 1300, 2200, 4000):
+                    self.backend.failures["install:" + B] = u.Deferred(reason)
+                    with patch.object(u.time, "time", return_value=now):
+                        self.assertEqual(self.engine.run().status, "deferred")
+                    self.assertNotIn(B, self.engine.load_state()["failed"])
+                    self.assertNotIn("stop", self.backend.calls)
+                self.engine.resume(retry_commit=B)
 
     def test_compatibility_deferred_is_not_a_retryable_download(self):
         self.initialize()
