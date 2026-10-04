@@ -33,8 +33,8 @@ class TrendTests(unittest.TestCase):
         return execute_cutoff(parse_cutoff("/查榜线 " + query), self.repo)
 
     def test_matrix_and_canonical_public_server(self):
-        for query, count, ranks in (("", 3, (1, 2, 3, 10, 100)), ("100", 3, (100,)),
-                                    ("t37", 3, (37,)), ("夢我夢中", 1, (1, 2, 3, 10, 100)),
+        for query, count, ranks in (("", 3, (1, 2, 3, 10, 100)), ("100", 3, tuple(range(90,101))),
+                                    ("t37", 3, tuple(range(27,48))), ("夢我夢中", 1, (1, 2, 3, 10, 100)),
                                     ("夢我夢中 t37,T10，T1 T37", 1, (1, 10, 37)),
                                     ("hk 夢我夢中 T100 T50 T3 T2 T1", 1, (1, 2, 3, 50, 100))):
             with self.subTest(query=query):
@@ -55,11 +55,12 @@ class TrendTests(unittest.TestCase):
         self.assertEqual(execute_cutoff(CutoffRequest(ranks=(37, 1, 37)), self.repo).ranks, (1, 37))
 
     def test_entity_precedence_with_numeric_name(self):
-        answer = self.query("123 T1 T37")
+        answer = self.query('歌名="123" T1 T37')
         self.assertEqual(len(answer.boards), 1)
         self.assertEqual(answer.boards[0].song.title, "123")
         self.assertEqual(self.query("长歌名 37 T100").boards[0].song.title, "长歌名 37")
-        self.assertEqual(self.query("123").ranks, (1, 2, 3, 10, 100))
+        self.assertEqual(self.query('歌名="123"').ranks, (1, 2, 3, 10, 100))
+        self.assertEqual(self.query('123').status, 'invalid_arguments')
 
     def test_numeric_only_skips_history_read_and_all_drawing(self):
         with patch.object(self.source.history, "read", side_effect=AssertionError("history read")):
@@ -77,10 +78,10 @@ class TrendTests(unittest.TestCase):
         base = 10**40
         self.assertEqual(coordinates(20, base + 1, (0, 100, base, base + 2), (0, 0, 100, 100)), (20, 50))
 
-    def test_default_per_song_cards_and_single_point_are_complete(self):
+    def test_default_combined_card_and_single_points_are_complete(self):
         answer = self.query()
         pages = render_cutoff(answer, preview_label="合成历史测试")
-        self.assertEqual(len(pages), 3)
+        self.assertEqual(len(pages), 1)
         for page in pages:
             self.assertIn("不足以形成曲线", page.text)
             with Image.open(io.BytesIO(page.image)) as image:
@@ -96,7 +97,8 @@ class TrendTests(unittest.TestCase):
         replies = _expand_replies([prepared, PreparedReply("other"), PreparedReply("other2")], reserve=1)
         self.assertLessEqual(len(replies), 4)
         text = "\n".join(p.text for p in replies)
-        self.assertIn("容量不足", text)
+        self.assertNotIn("容量不足", text)
+        self.assertIsNotNone(replies[0].image)
         for b in answer.boards:
             self.assertIn(b.song.title, text)
             self.assertIn(str(b.score(100)), text)

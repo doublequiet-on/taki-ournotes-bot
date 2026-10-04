@@ -104,101 +104,134 @@ def _art(canvas, draw, picture, box, label):
     scale = v.RENDER_SCALE
     draw.rounded_rectangle((x, y, x + w, y + h), radius=12, fill=v.SURFACE, outline=v.BORDER, width=1)
     if picture is None:
-        v._write(draw, label, x + 12, y + h // 2 - 12, w - 24, 18, v.MUTED)
+        size = 16 if w < 96 else 18
+        lines = _lines(draw, label, w - 16, size)
+        step = math.ceil(size * 1.4)
+        _text(draw, lines, x + 8, y + (h - len(lines) * step) // 2, size, v.MUTED, step)
         return
     fitted = ImageOps.contain(picture, (w * scale, h * scale), Image.Resampling.LANCZOS)
     canvas.paste(fitted, (x * scale + (w * scale - fitted.width) // 2, y * scale + (h * scale - fitted.height) // 2))
 
 
-def render_cutoff(answer: CutoffAnswer, *, asset_loader=None, preview_label: str = "") -> tuple[CutoffPage, ...]:
-    if answer.event is None or answer.message or not answer.boards:
-        return ()
-    if answer.request.numeric_only:
+
+def _header_layout(answer, width, measure, preview_label):
+    title = _lines(measure, answer.event.title, width - 76, 26)
+    mode = _lines(measure, answer.rank_label, width - 76, 22)
+    height = 222 + len(title) * 36 + len(mode) * 32 + (30 if preview_label else 0)
+    return title, mode, height
+
+
+def _draw_header(canvas, draw, answer, assets, width, layout, preview_label, heading):
+    title, mode, height = layout
+    event = answer.event
+    draw.rounded_rectangle((20, 20, width - 20, height - 12), radius=22, fill=v.PAPER)
+    _text(draw, [heading], 36, 32, 32)
+    _art(canvas, draw, assets.get(event.banner), (width - 268, 28, 232, 90), '活动图暂缺')
+    _text(draw, [f'{SERVERS[event.server][0]} · {event_status(event)} · 活动 {event.event_id}'], 38, 92, 20, v.ACCENT)
+    y = _text(draw, title, 38, 134, 26, step=36)
+    y = _text(draw, [f'开始 {display_time(event.start_ms, event.server)}  {zone_label(event.server)}',
+                    f'结束 {display_time(event.end_ms, event.server)}  {zone_label(event.server)}'], 38, y + 5, 20, v.MUTED, 30)
+    y = _text(draw, mode, 38, y + 8, 22, v.ACCENT, 32)
+    if preview_label:
+        _text(draw, [preview_label], 38, y + 4, 18, v.MUTED, 26)
+
+
+def _footer_lines(answer, measure, width):
+    notes = [*answer.event.notes, '来源 MoeNotes · 非官方 · 活动挑战歌曲 Top 100',
+             '按来源响应位置；非预测、非确认终榜']
+    return [line for note in notes if note for line in _lines(measure, note, width - 76, 18)]
+
+
+def _table_details(answer, board, measure, width):
+    details = [board.status, '源采集：', display_time(board.fetched_ms, answer.event.server), zone_label(answer.event.server),
+               *song_period_lines(answer.event, board.song), *board.notes]
+    return [line for item in details if item for line in _lines(measure, item, width, 18)]
+
+
+def _tables(answer, assets, preview_label):
+    # Every page has all selected songs. Only the requested rank axis is paged.
+    width = max(720, min(1800, 124 + len(answer.boards) * 268))
+    _, measure = v._background(width, 20, v.RENDER_SCALE)
+    layout = _header_layout(answer, width, measure, preview_label)
+    rank_width = 76
+    cell_width = (width - 40 - rank_width) / len(answer.boards)
+    titles = [_lines(measure, answer.song_label(board).partition(' · ')[2], cell_width - 24, 24) for board in answer.boards]
+    column_height = 102 + max(len(lines) for lines in titles) * 34
+    details = [_table_details(answer, board, measure, cell_width - 24) for board in answer.boards]
+    detail_height = 30 + max(len(lines) for lines in details) * 27
+    footer = _footer_lines(answer, measure, width)
+    footer_height = 65 + len(footer) * 28
+    rows = []
+    for rank in answer.ranks:
+        cells = [_lines(measure, str(board.score(rank)) if board.score(rank) is not None else '暂无数据', cell_width - 24, 24)
+                 for board in answer.boards]
+        rows.append((rank, cells, max(42, 14 + max(map(len, cells)) * 32)))
+    if any(len(lines) > 1 for _, cells, _ in rows for lines in cells):
+        footer.insert(0, '超长整数分行显示；同一格内按从上到下的数字顺序读取。')
+        footer_height = 65 + len(footer) * 28
+    max_height = min(PAGE_HEIGHT, 12_000_000 // (v.RENDER_SCALE**2 * width))
+    fixed_height = layout[2] + column_height + detail_height + footer_height
+    groups, current, height = [], [], fixed_height
+    for row in rows:
+        ranks = tuple(r[0] for r in (*current, row))
+        projected = replace(answer, display_ranks=ranks if ranks != answer.request.ranks else ())
+        too_large = height + row[2] > max_height or len(projected.text) > 1700 or len(current) >= 25
+        if too_large and current:
+            groups.append(current)
+            current, height = [], fixed_height
+        if height + row[2] > max_height or len(replace(answer, display_ranks=(row[0],)).text) > 1700:
+            raise ValueError('complete table row or metadata exceeds existing output budget')
+        current.append(row)
+        height += row[2]
+    if current:
+        groups.append(current)
+    pages = []
+    for page_number, group in enumerate(groups, 1):
+        height = fixed_height + sum(r[2] for r in group)
+        canvas, draw = v._background(width, height, v.RENDER_SCALE)
+        _draw_header(canvas, draw, answer, assets, width, layout, preview_label, '歌曲榜线 · 排名分数表')
+        top = layout[2]
+        draw.rectangle((20, top, width - 20, top + column_height), fill=v.PAPER)
+        _text(draw, ['排名'], 32, top + 28, 24, v.ACCENT)
+        for index, board in enumerate(answer.boards):
+            x = 20 + rank_width + index * cell_width
+            _art(canvas, draw, assets.get(board.song.jacket), (int(x + 12), top + 12, 64, 64), '封面暂缺')
+            _text(draw, [answer.song_label(board).partition(' · ')[0]], x + 88, top + 22, 26, v.ACCENT)
+            _text(draw, titles[index], x + 12, top + 92, 24, step=34)
+        y = top + column_height
+        for rank, cells, row_height in group:
+            selected = answer.request.mode == 'near' and rank == answer.request.target_rank
+            draw.rectangle((20, y, width - 20, y + row_height), fill='#efe2ef' if selected else v.PAPER)
+            if selected:
+                draw.rectangle((20, y, 26, y + row_height), fill=v.ACCENT)
+            draw.line((20, y + row_height, width - 20, y + row_height), fill=v.BORDER, width=1)
+            _text(draw, [f'T{rank}'], 32, y + 6, 24, v.ACCENT if selected else v.INK)
+            for index, lines in enumerate(cells):
+                right = 20 + rank_width + (index + 1) * cell_width - 12
+                for offset, line in enumerate(lines):
+                    x = right - measure.textlength(line, font=v._font(24))
+                    _text(draw, [line], x, y + 6 + offset * 32, 24, v.ACCENT if selected else v.INK)
+            y += row_height
+        for index, lines in enumerate(details):
+            x = 20 + rank_width + index * cell_width + 12
+            _text(draw, lines, x, y + 15, 18, v.MUTED, 27)
+        y += detail_height
+        y = _text(draw, footer, 38, y + 8, 18, v.MUTED, 28)
+        page_ranks = tuple(row[0] for row in group)
+        _text(draw, [f'第 {page_number}/{len(groups)} 页 · 本页 T{page_ranks[0]}～T{page_ranks[-1]} · 完整请求 {answer.rank_label}'],
+              38, y + 10, 18, v.ACCENT)
+        subset = replace(answer, display_ranks=page_ranks if page_ranks != answer.request.ranks else ())
+        text = (f'第 {page_number}/{len(groups)} 页\n' if len(groups) > 1 else '') + subset.text
+        pages.append(CutoffPage(v._bytes(canvas), text))
+    return tuple(pages)
+
+
+def render_cutoff(answer: CutoffAnswer, *, asset_loader=None, preview_label: str = '') -> tuple[CutoffPage, ...]:
+    if answer.event is None or answer.message or not answer.boards or answer.request.numeric_only:
         return ()
     event = answer.event
     assets = asset_loader(event, (event.banner, *(b.song.jacket for b in answer.boards))) if asset_loader else {}
-    if answer.histories and (len(answer.boards) == 1 or any(view.points for _, view in answer.histories)):
+    if answer.request.mode == 'trend':
         from .cutoff_trends import render_trends
         return render_trends(answer, assets, preview_label)
-    _, measure = v._background(WIDTH, 20, v.RENDER_SCALE)
-    title_lines = _lines(measure, event.title, 652, 28)
-    header_height = 282 + len(title_lines) * 40 + (34 if preview_label else 0)
-    note_lines = [line for note in event.notes for line in _lines(measure, note, 644, 18)]
-    footer_height = 112 + len(note_lines) * 27
-
-    layouts = []
-    for board in answer.boards:
-        name_lines = _lines(measure, board.song.title, 510, 26)
-        titles_height = max(100, len(name_lines) * 38 + 48)
-        values = [str(board.score(r)) if board.score(r) is not None else "暂无数据" for r in answer.ranks]
-        size = 40 if len(values) == 1 else 32
-        longest = max(measure.textlength(value, font=v._font(size)) for value in values)
-        columns = 3 if len(values) > 1 and longest <= 174 else 2 if len(values) > 1 and longest <= 282 else 1
-        if longest > 604:
-            size = 28
-            longest = max(measure.textlength(value, font=v._font(size)) for value in values)
-        if longest > 604:
-            raise ValueError("Full integer does not fit legibly; use captured text")
-        rows = math.ceil(len(values) / columns)
-        details = (board.status + (" · " + "；".join(board.notes) if board.notes else ""),
-                   *song_period_lines(event, board.song), answer.history_for(board).warning)
-        state_lines = [line for detail in details for line in _lines(measure, detail, 620, 18)]
-        height = titles_height + rows * 90 + 76 + len(state_lines) * 27
-        layouts.append((board, name_lines, titles_height, columns, size, state_lines, height))
-
-    groups, current, height = [], [], header_height + footer_height
-    for layout in layouts:
-        candidate_text = replace(answer, boards=tuple(row[0] for row in (*current, layout))).text
-        if (height + layout[-1] + 16 > PAGE_HEIGHT or len(candidate_text) > 1600) and current:
-            groups.append(current)
-            current, height = [], header_height + footer_height
-        if height + layout[-1] + 16 > PAGE_HEIGHT:
-            raise ValueError("Unbounded source text; use captured text")
-        if len(replace(answer, boards=(layout[0],)).text) > 1600:
-            raise ValueError("Per-page text fallback exceeds budget")
-        current.append(layout)
-        height += layout[-1] + 16
-    if current:
-        groups.append(current)
-
-    pages = []
-    for page_number, group in enumerate(groups, 1):
-        height = header_height + footer_height + sum(layout[-1] + 16 for layout in group)
-        canvas, draw = v._background(WIDTH, height, v.RENDER_SCALE)
-        draw.rounded_rectangle((20, 20, WIDTH - 20, header_height - 12), radius=22, fill=v.PAPER)
-        _text(draw, ["歌曲榜线"], 36, 33, 38)
-        mode = f"精确名次 T{answer.ranks[0]}" if len(answer.ranks) == 1 else "全部挑战歌曲" if len(answer.boards) > 1 else "单曲关键名次"
-        _text(draw, [mode], 38, 92, 22, v.ACCENT)
-        _art(canvas, draw, assets.get(event.banner), (438, 32, 246, 105), "活动图暂缺")
-        y = _text(draw, title_lines, 36, 150, 28, step=40)
-        _text(draw, [f"{SERVERS[event.server][0]} · {event_status(event)} · 活动 {event.event_id}"], 38, y + 4, 21, v.ACCENT)
-        y += 42
-        _text(draw, [f"开始 {display_time(event.start_ms, event.server)}", f"结束 {display_time(event.end_ms, event.server)}  {zone_label(event.server)}"], 38, y, 20, v.MUTED, 30)
-        if preview_label:
-            _text(draw, [preview_label], 38, y + 64, 18, v.ACCENT)
-        top = header_height
-        for board, name_lines, titles_height, columns, size, state_lines, card_height in group:
-            draw.rounded_rectangle((20, top, WIDTH - 20, top + card_height), radius=20, fill=v.PAPER, outline=v.BORDER, width=1)
-            _art(canvas, draw, assets.get(board.song.jacket), (36, top + 18, 90, 90), "封面暂缺")
-            _text(draw, name_lines, 146, top + 16, 26, step=38)
-            _text(draw, [f"曲目 {board.song.music_id} · 挑战 {board.song.challenge_id}"], 148, top + titles_height - 24, 17, v.MUTED)
-            grid_y = top + titles_height + 16
-            gap, inner = 12, 632
-            cell_width = (inner - gap * (columns - 1)) / columns
-            for index, rank in enumerate(answer.ranks):
-                x = 36 + (index % columns) * (cell_width + gap)
-                y = grid_y + index // columns * 90
-                draw.rounded_rectangle((x, y, x + cell_width, y + 80), radius=12, fill=v.SURFACE)
-                _text(draw, [f"T{rank}"], x + 14, y + 5, 17, v.ACCENT)
-                value = str(board.score(rank)) if board.score(rank) is not None else "暂无数据"
-                _text(draw, [value], x + 14, y + 27, size if value != "暂无数据" else 26)
-            y = grid_y + math.ceil(len(answer.ranks) / columns) * 90
-            _text(draw, state_lines, 38, y + 5, 18, v.MUTED, 27)
-            _text(draw, [f"源采集 {display_time(board.fetched_ms, event.server)}  {zone_label(event.server)}"], 38, y + len(state_lines) * 27 + 10, 18, v.MUTED)
-            top += card_height + 16
-        y = _text(draw, note_lines, 38, top + 2, 18, v.MUTED, 27)
-        _text(draw, ["来源 MoeNotes · 非官方 · 活动挑战歌曲 Top 100", "按来源响应位置；非预测，非确认终榜"], 38, y + 8, 18, v.MUTED, 28)
-        v._write(draw, f"TAKI  ·  {page_number}/{len(groups)}", 38, y + 69, 644, 16, v.ACCENT)
-        subset = replace(answer, boards=tuple(layout[0] for layout in group))
-        pages.append(CutoffPage(v._bytes(canvas), subset.text))
-    return tuple(pages)
+    return _tables(answer, assets, preview_label)

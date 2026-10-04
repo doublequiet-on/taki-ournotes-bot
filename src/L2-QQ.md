@@ -15,7 +15,7 @@
 ## Inputs / Outputs
 
 输入为 QQ 事件、Settings、SongRepository；内部 `PreparedReply(text, image)` 输出文字及可选图片字节；外部输出为被动回复或显式菜单变更。群标识、消息 ID 和 `msg_seq` 不进入 Query 事实模型。
-榜线准备结果还可带完整 `pages` 与文字回退标记；`_expand_replies` 在任何发送前核算分张和剩余被动回复数量，必要时改用同一份完整文字。上传失败退当前页文字；媒体发送不确定时仍不重发。既有 QueryGate／ReplySequencer 与上限保持不变。
+榜线准备结果还可带完整 `pages` 与文字回退标记；`_expand_replies` 在任何发送前核算趋势／排名分页和剩余被动回复数量，必要时改用同一份有界完整文字；放不下时明确拒绝完整发送，不先发送部分表。上传失败退当前页文字；媒体发送不确定时仍不重发。既有 QueryGate／ReplySequencer 与上限保持不变。
 
 ## Core Contracts
 

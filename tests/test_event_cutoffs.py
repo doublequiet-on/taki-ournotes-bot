@@ -121,7 +121,7 @@ class CutoffTests(unittest.TestCase):
         self.assertEqual(one.ranks, answer.ranks)
         for value in (1, 37, 100):
             precise = self.ask(f"/查榜线 夢我夢中 T{value}")
-            self.assertEqual(precise.ranks, (value,))
+            self.assertEqual(precise.ranks, tuple(range(max(1, value-10), min(100, value+10)+1)))
             self.assertIn(str(self.http.players[value - 1]["score"]), precise.text)
         self.assertEqual(sum(url.endswith("/ranking") for url in self.http.calls), 3)
 
@@ -133,11 +133,12 @@ class CutoffTests(unittest.TestCase):
                     self.assertEqual(answer.status, "success")
                     self.assertEqual(answer.request.server, "tw" if server == "hk " else server.strip() or "jp")
                     self.assertEqual(answer.request.query, "")
-                    self.assertEqual(answer.ranks, (rank,))
+                    window = tuple(range(max(1,rank-10),min(100,rank+10)+1))
+                    self.assertEqual(answer.ranks, window)
                     self.assertEqual([b.song.music_id for b in answer.boards], ["101", "102", "103"])
                     score = self.http.players[rank - 1]["score"]
                     self.assertEqual(answer.text.count(f"T{rank}：{score}"), 3)
-                    for other in {1, 2, 3, 10, 100} - {rank}:
+                    for other in {1, 2, 3, 10, 100} - set(window):
                         self.assertNotIn(f"T{other}：", answer.text)
         self.assertEqual(sum(url.endswith("/ranking") for url in self.http.calls), 12)
         explicit = execute_cutoff(CutoffRequest(rank=100), self.repo)
@@ -146,14 +147,14 @@ class CutoffTests(unittest.TestCase):
     def test_renamed_command_matches_natural_route_and_uses_new_help_label(self):
         from ournotes_bot.structured_query import QuerySpec
         direct = self.ask("/查榜线 jp 夢我夢中 T37")
-        self.assertEqual(direct.ranks, (37,))
+        self.assertEqual(direct.ranks, tuple(range(27,48)))
         self.assertEqual(direct.boards[0].song.music_id, "101")
         for command in ("/查榜线 jp 夢我夢中 T37", "/榜线 jp 夢我夢中 T37"):
             natural = execute_cutoff(parse_natural_cutoff(command), self.repo)
             self.assertEqual(natural.text, direct.text)
             self.assertEqual(self.ask(command).text, direct.text)
         label = QuerySpec("event_cutoff", cutoff_request=direct.request).command_label()
-        self.assertEqual(label, "查榜线 jp 夢我夢中 T37")
+        self.assertEqual(label, '查榜线 jp 歌名="夢我夢中" 37')
         help_text = handle_command("/帮助", self.repo)
         self.assertIn("/查榜线 [jp/hk/kr/en]", help_text)
         self.assertNotIn("/榜线 ", help_text)
@@ -179,7 +180,7 @@ class CutoffTests(unittest.TestCase):
             natural = execute_cutoff(parse_natural_cutoff(name + "夢我夢中前50现在多少分"), self.repo)
             self.assertEqual(natural.text, direct.text)
             label = QuerySpec("event_cutoff", cutoff_request=direct.request).command_label()
-            self.assertEqual(label, f"查榜线 {code} 夢我夢中 T50")
+            self.assertEqual(label, f'查榜线 {code} 歌名="夢我夢中" 50')
             self.assertEqual(self.ask("/" + label).text, direct.text)
         calls = len(self.http.calls)
         current = self.ask("/查榜线 hk 夢我夢中 T50")
@@ -202,7 +203,8 @@ class CutoffTests(unittest.TestCase):
         self.assertEqual(self.ask("/查榜线 非本期歌曲").status, "empty")
         for token in ("0", "-1", "1.5", "T0", "T101", "t101"):
             self.assertEqual(self.ask("/查榜线 " + token).status, "invalid_arguments", token)
-        self.assertIsNone(self.ask("/查榜线 123").request.rank)
+        self.assertEqual(self.ask("/查榜线 123").status, "invalid_arguments")
+        self.assertIsNone(self.ask('/查榜线 歌名="123"').request.rank)
         self.assertEqual(self.ask("/查榜线 长歌名 37").boards[0].song.music_id, "102")
         self.assertIsNone(self.ask("/查榜线 长歌名 37").request.rank)
         self.assertEqual(self.ask("/查榜线 长歌名 37 T37").request.rank, 37)
@@ -245,11 +247,11 @@ class CutoffTests(unittest.TestCase):
                 for server in ("", "jp "):
                     answer = self.ask(f"/查榜线 {server}{title} T37")
                     self.assertEqual(answer.boards[0].song.music_id, "101")
-                    self.assertEqual(answer.ranks, (37,))
+                    self.assertEqual(answer.ranks, tuple(range(27,48)))
                 request = parse_natural_cutoff(title + "100线多少")
                 answer = execute_cutoff(request, self.repo)
                 self.assertEqual(answer.boards[0].song.music_id, "101")
-                self.assertEqual(answer.ranks, (100,))
+                self.assertEqual(answer.ranks, tuple(range(90,101)))
             before = len(self.http.calls)
             unknown = execute_cutoff(parse_natural_cutoff("cn GO WAY GO100线多少"), self.repo)
             self.assertEqual(unknown.status, "invalid_arguments")
@@ -457,7 +459,8 @@ class CutoffTests(unittest.TestCase):
         self.assertEqual(len(answer.boards), 3)
         self.assertIn("元数据暂不可用", answer.text)
         self.assertEqual(self.ask("/查榜线 夢我夢中").status, "data_unavailable")
-        self.assertEqual(len(self.ask("/查榜线 101").boards), 1)
+        self.assertEqual(len(self.ask("/查榜线 歌曲ID=101").boards), 1)
+        self.assertEqual(self.ask('/查榜线 歌曲2').boards[0].song.music_id, '102')
 
     def test_bad_typed_cache_is_refetched_and_no_event_negatively_cached(self):
         self.source.cache_dir.mkdir()
@@ -577,7 +580,8 @@ class CutoffTests(unittest.TestCase):
             self.assertLessEqual(max(image.size), MAX_IMAGE_EDGE)
             self.assertLessEqual(image.width * image.height, MAX_IMAGE_PIXELS)
         big = replace(overview, boards=tuple(replace(overview.boards[0], song=replace(overview.boards[0].song,
-                      title=f"测试歌曲 {i} 中文／日本語・长名称 37 " * 3), scores=(12345678901234567890,) * 100) for i in range(8)))
+                      challenge_id=str(i+1), music_id=str(201+i), title=f"测试歌曲 {i} 中文／日本語・长名称 37 " * 3), scores=(12345678901234567890,) * 100) for i in range(8)))
+        big = replace(big,event=replace(big.event,songs=tuple(b.song for b in big.boards)))
         pages = render_cutoff(big, preview_label="合成压力测试")
         self.assertGreater(len(pages), 1)
         texts = "\n".join(page.text for page in pages)

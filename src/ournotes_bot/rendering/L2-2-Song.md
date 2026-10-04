@@ -20,7 +20,7 @@
 
 用歌曲身份区域保留标题/颜色/激奏信息 → 按列表、谱面时间线或效率表布局 → Core 统一编码。
 效率图使用已捕获的表格和歌曲记录，不再次读取效率仓库。
-榜线由 [cutoff_trends.py](cutoff_trends.py) 消费捕获的当前值和历史，每首歌曲一张卡，绘图并发限制为一个。真实时间、线性整数坐标、缺口及相同分数均保留；零点／单点、完全同值的重叠排名、活动与单曲有效期明确标注。折线保留全部观测，仅稀疏显示方点标记以免遮挡。复用原图片编码预算，不能清楚展示时退完整文字。合成手机宽度样图脚本为 `scripts/preview_cutoff_trends.py`。
+榜线由 [cutoff_trends.py](cutoff_trends.py) 消费捕获的当前值和历史，默认三曲横排一张总览，指定一曲保留单曲卡；非常规数量按活动原序号完整分页，绘图并发限制为一个。真实时间、线性整数坐标、缺口及相同分数均保留；零点／单点、完全同值的重叠排名、活动与单曲有效期明确标注。折线保留全部观测，仅稀疏显示方点标记以免遮挡。复用原图片编码预算，不能清楚展示时退完整文字。合成手机宽度样图脚本为 `scripts/preview_cutoff_trends.py`。
 完整谱面由 `qq._chart_image → chart_data.load_chart_score` 准备，取不到时可绘制不含完整音符的资料图。
 
 ## Dependencies
@@ -35,7 +35,7 @@ Current 直接引用 song_traits 的显示常量；这属于领域表现依赖�
 
 ## Files belonging to this subdomain
 
-[event_cutoff_visuals.py](event_cutoff_visuals.py)：活动榜线三视图，复用 Core 主题和编码器，按完整歌曲分张，返回 `CutoffPage(image, text)` 供平台预算分配；只加载来源白名单素材，同 URL 合并请求并遵守限流退避，不重新取榜。[test_event_cutoffs.py](../../../tests/test_event_cutoffs.py) 与 [preview_event_cutoffs.py](../../../scripts/preview_event_cutoffs.py) 验证三视图、单曲有效区间、缺图、长名、完整整数及多曲分张。
+[event_cutoff_visuals.py](event_cutoff_visuals.py)：活动榜线趋势／排名表视图，复用 Core 主题和编码器；排名表共享排名列和全部选定歌曲，最多25行一页，按高度与文字回退预算可减少行数，返回 `CutoffPage(image, text)` 供平台预算分配；只加载来源白名单素材，同 URL 合并请求并遵守限流退避，不重新取榜。[test_event_cutoffs.py](../../../tests/test_event_cutoffs.py) 与 [preview_event_cutoffs.py](../../../scripts/preview_event_cutoffs.py) 验证视图、单曲有效区间、缺图、长名、完整整数及多曲分页；`preview_cutoff_trends.py` 可生成固定合成的三曲趋势、附近表和完整100名分页。
 
 [visuals.py](../visuals.py) 中 `render_song_list/render_chart/render_meta`、歌曲身份/激奏辅助、谱面绘制及效率表布局。
 对应 [visuals.py 的唯一文件头 L3](../visuals.py)；本能力的主体实现保留在该文件。

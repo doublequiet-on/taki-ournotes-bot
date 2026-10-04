@@ -23,7 +23,7 @@
 
 查询升级 v1 的完整 55 项映射见 [实现与验收](QUERY_UPGRADE_V1.md)。共享歌曲条件在 `query/song_query.py`，字段短答在 `query/field_query.py`，有限续查在 `query/continuation.py`；QQ 的 `reply_commands` 管同用户顺序和发送确认。历史、采样、趋势分别位于 `sources/cutoff_history.py`、`sources/cutoff_sampler.py`、`rendering/cutoff_trends.py`，发布开关和长期保留见 [历史运维](CUTOFF_HISTORY.md)。
 
-活动歌曲榜线：`sources/moenotes_events.py::EventCutoffRepository` → `query/event_cutoff_query.py::execute_cutoff` → `rendering/event_cutoff_visuals.py::render_cutoff`；直接入口与自然语言本地分支共享捕获结果，QQ `_expand_replies` 预先分配整批回复预算。目标测试 `test_event_cutoffs.py`；离线三视图脚本 `scripts/preview_event_cutoffs.py`，格式、边界和 A01–A22 对应见 [功能说明](EVENT_CUTOFFS.md)。修改这些共享契约后需要完整离线回归与实际查看样图；QQ 真机验收另行授权。
+活动歌曲榜线：`sources/moenotes_events.py::EventCutoffRepository` → `query/event_cutoff_query.py::execute_cutoff` → `rendering/event_cutoff_visuals.py::render_cutoff`；直接入口与自然语言本地分支共享捕获结果，QQ `_expand_replies` 预先分配整批回复预算。目标测试 `test_event_cutoffs.py`、`test_cutoff_query_v2.py`、`test_cutoff_trends.py`；脱敏素材脚本 `scripts/preview_event_cutoffs.py` 及固定合成脚本 `scripts/preview_cutoff_trends.py`，格式、边界和本轮 A01–A28 对应见 [功能说明](EVENT_CUTOFFS.md)。修改这些共享契约后需要完整离线回归与实际查看样图；QQ 真机验收另行授权。
 
 | 任务 | 入口文件＋关键符号 | 相关测试文件 | 按需补读 |
 |---|---|---|---|

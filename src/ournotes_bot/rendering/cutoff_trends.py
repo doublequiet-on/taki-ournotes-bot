@@ -1,6 +1,6 @@
 # L3
 # Input: Captured current scores, selected ranks and immutable local history views.
-# Output: One complete trend card per challenge song, with matching text fallback.
+# Output: A shared multi-song overview or a single-song card, with captured text fallback.
 # Pos: Rendering / Song challenge trends; see L2-2-Song.md.
 # Effects: Serialized Pillow rendering and existing encoder; no source/history queries.
 """Observed points on a real time axis, with explicit gaps and integer arithmetic."""
@@ -14,7 +14,8 @@ from PIL import ImageDraw
 from .. import visuals as v
 from ..query.event_cutoff_query import event_status, song_period_lines
 from ..sources.moenotes_events import SERVERS, display_time, zone_label
-from .event_cutoff_visuals import CutoffPage, _art, _lines, _text
+from .event_cutoff_visuals import (CutoffPage, _art, _lines, _text, _header_layout,
+                                    _draw_header, _footer_lines)
 
 COLORS = ("#bd4769", "#367fb0", "#3c896d", "#9c69ba", "#a36d25")
 _DRAW_SLOT = threading.BoundedSemaphore(1)
@@ -46,14 +47,16 @@ def coordinates(stamp, score, bounds, box):
 
 def render_trends(answer, assets, preview_label=""):
     with _DRAW_SLOT:
-        return tuple(_card(answer, board, assets, preview_label) for board in answer.boards)
+        if len(answer.boards) == 1:
+            return (_card(answer, answer.boards[0], assets, preview_label),)
+        return _overview(answer, assets, preview_label)
 
 
 def _card(answer, board, assets, preview_label):
     event = answer.event
     view = answer.history_for(board)
     _, measure = v._background(720, 20, v.RENDER_SCALE)
-    title = _lines(measure, board.song.title, 492, 28)
+    title = _lines(measure, answer.song_label(board), 492, 28)
     event_lines = _lines(measure, event.title, 642, 22)
     header = 198 + 32 * len(event_lines) + max(90, len(title) * 40)
     ranks = answer.ranks
@@ -154,3 +157,127 @@ def _card(answer, board, assets, preview_label):
     y = _text(draw, detail_lines, 38, y + 12, 18, v.MUTED, 28)
     _text(draw, ["各排名独立保留；同值曲线会重叠。", "来源 MoeNotes · 非官方 · 活动挑战歌曲 Top 100", "非预测、非确认终榜；历史末值不代替当前值。"], 38, y + 18, 18, v.MUTED, 28)
     return CutoffPage(v._bytes(canvas), subset.text)
+
+
+def _column_layout(answer, board, measure, width):
+    inner = width - 32
+    title = _lines(measure, answer.song_label(board).partition(' · ')[2], inner, 24)
+    rows = []
+    for rank in answer.ranks:
+        value = str(board.score(rank)) if board.score(rank) is not None else '暂无数据'
+        inline = measure.textlength(value, font=v._font(25)) <= inner - 66
+        lines = [value] if inline else _lines(measure, value, inner, 22)
+        rows.append((rank, lines, inline, 44 if inline else 30 + len(lines) * 32))
+    view = answer.history_for(board)
+    values = [score for p in view.points for score in p.scores if score is not None]
+    axis = []
+    if values:
+        base = min(values) if len(str(max(values))) > 9 else 0
+        axis = _lines(measure, f'纵轴 = {base} + 刻度差值' if base else '纵轴：观测分数（线性）', inner, 17)
+    valid_times = {p.time_ms for p in view.points if any(n is not None for n in p.scores)}
+    caption = ('暂无历史曲线，上方为当前值。' if not values else
+               '仅 1 个有效观测点，不足以形成曲线。' if len(valid_times) == 1 else
+               '方点为真实观测，缺口处断线；不外推。')
+    caption = _lines(measure, caption, inner, 18)
+    details = [board.status, '当前源采集：', display_time(board.fetched_ms, answer.event.server), zone_label(answer.event.server),
+               *song_period_lines(answer.event, board.song), view.warning, *board.notes]
+    if view.points:
+        details.extend(('历史末次观测：', display_time(view.points[-1].time_ms, answer.event.server)))
+    coincident = {}
+    for index, rank in enumerate(answer.ranks):
+        series = tuple(point.scores[index] for point in view.points)
+        if any(value is not None for value in series):
+            coincident.setdefault(series, []).append(f'T{rank}')
+    for labels in coincident.values():
+        if len(labels) > 1:
+            details.extend(('同值历史重叠：', ' / '.join(labels), '各排名均保留。'))
+    lines = [line for item in details if item for line in _lines(measure, item, inner, 18)]
+    title_height = 112 + len(title) * 34
+    plot_height = len(axis) * 25 + 288 + len(caption) * 27 + 18
+    height = title_height + sum(row[3] for row in rows) + plot_height + len(lines) * 27 + 30
+    return title, rows, axis, caption, lines, title_height, height
+
+
+def _column_plot(canvas, draw, answer, board, x, top, width, axis, caption, bounds):
+    view = answer.history_for(board)
+    top = _text(draw, axis, x + 16, top + 6, 17, v.MUTED, 25)
+    box = (x + 100, top + 18, width - 118, 218)
+    draw.rectangle((box[0], box[1], box[0] + box[2], box[1] + box[3]), outline=v.BORDER, width=1)
+    values = [score for p in view.points for score in p.scores if score is not None]
+    if values:
+        first, last = bounds
+        low, high = min(values), max(values)
+        base = low if len(str(high)) > 9 else 0
+        if low == high:
+            low, high = max(0, low - 1), high + 1
+        if len(str(high - base)) > 9:
+            raise ValueError('integer axis exceeds readable overview budget')
+        for part in (0, 1, 2):
+            value = low + (high - low) * part // 2
+            _, y = coordinates(first, value, (first, last, low, high), box)
+            draw.line((box[0], y, box[0] + box[2], y), fill=v.BORDER, width=1)
+            delta = value - base
+            _text(draw, [('+' if base and delta >= 0 else '') + str(delta)], x + 16, y - 10, 16, v.MUTED)
+        native = ImageDraw.Draw(canvas)
+        factor = v.RENDER_SCALE
+        for index, rank in enumerate(answer.ranks):
+            for group in segments(view, index):
+                points = [coordinates(t, n, (first, last, low, high), box) for t, n in group]
+                scaled = [(px * factor, py * factor) for px, py in points]
+                if len(scaled) > 1:
+                    native.line(scaled, fill=COLORS[index], width=2 * factor)
+                radius = (2 + index) * factor
+                markers = {i * (len(scaled) - 1) // 7 for i in range(8)}
+                for px, py in (scaled[i] for i in sorted(markers)):
+                    native.rectangle((px - radius, py - radius, px + radius, py + radius), outline=COLORS[index], width=factor)
+        _text(draw, ['始 ' + display_time(first, answer.event.server)[5:16],
+                     '末 ' + display_time(last, answer.event.server)[5:16]], x + 100, top + 240, 17, v.MUTED, 24)
+    else:
+        _text(draw, ['暂无历史'], x + 110, top + 105, 18, v.MUTED)
+    return _text(draw, caption, x + 16, top + 288, 18, v.MUTED, 27)
+
+
+def _overview(answer, assets, preview_label):
+    width = 960
+    _, measure = v._background(width, 20, v.RENDER_SCALE)
+    header = _header_layout(answer, width, measure, preview_label)
+    footer = _footer_lines(answer, measure, width)
+    times = [p.time_ms for _, view in answer.histories for p in view.points]
+    bounds = (min(times), max(times)) if times else (0, 0)
+    groups = [answer.boards[index:index + 3] for index in range(0, len(answer.boards), 3)]
+    pages = []
+    for page_number, group in enumerate(groups, 1):
+        column_width = (width - 40 - 16 * (len(group) - 1)) // len(group)
+        layouts = [_column_layout(answer, board, measure, column_width) for board in group]
+        column_height = max(layout[-1] for layout in layouts)
+        height = header[2] + column_height + len(footer) * 28 + 72
+        subset = replace(answer, boards=tuple(group))
+        text = (f'第 {page_number}/{len(groups)} 页\n' if len(groups) > 1 else '') + subset.text
+        if height > 2300 or width * height * v.RENDER_SCALE**2 > 12_000_000 or len(text) > 1800:
+            raise ValueError('complete overview exceeds existing image/text budget')
+        canvas, draw = v._background(width, height, v.RENDER_SCALE)
+        _draw_header(canvas, draw, answer, assets, width, header, preview_label, '歌曲榜线 · 观测趋势')
+        for index, (board, layout) in enumerate(zip(group, layouts)):
+            x, top = 20 + index * (column_width + 16), header[2]
+            title, rows, axis, caption, details, title_height, _ = layout
+            draw.rounded_rectangle((x, top, x + column_width, top + column_height), radius=18, fill=v.PAPER, outline=v.BORDER, width=1)
+            _art(canvas, draw, assets.get(board.song.jacket), (x + 16, top + 14, 72, 72), '封面暂缺')
+            _text(draw, [answer.song_label(board).partition(' · ')[0]], x + 106, top + 22, 26, v.ACCENT)
+            _text(draw, title, x + 16, top + 100, 24, step=34)
+            y = top + title_height
+            for color_index, (rank, lines, inline, row_height) in enumerate(rows):
+                color = COLORS[color_index]
+                draw.rectangle((x + 16, y + 10, x + 24, y + 24), fill=color)
+                _text(draw, [f'T{rank}'], x + 34, y + 2, 22, color)
+                if inline:
+                    right = x + column_width - 16
+                    _text(draw, lines, right - measure.textlength(lines[0], font=v._font(25)), y, 25)
+                else:
+                    _text(draw, lines, x + 16, y + 30, 22, step=32)
+                y += row_height
+            y = _column_plot(canvas, draw, answer, board, x, y, column_width, axis, caption, bounds)
+            _text(draw, details, x + 16, y + 16, 18, v.MUTED, 27)
+        y = _text(draw, footer, 38, header[2] + column_height + 14, 18, v.MUTED, 28)
+        _text(draw, [f'TAKI · 第 {page_number}/{len(groups)} 页 · 各曲独立纵轴，当前值与历史分开'], 38, y + 12, 18, v.ACCENT)
+        pages.append(CutoffPage(v._bytes(canvas), text))
+    return tuple(pages)
