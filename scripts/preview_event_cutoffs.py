@@ -1,6 +1,6 @@
 # L3
 # Input: sanitized read-only snapshot JSONs plus independently saved public artwork.
-# Output: overview, song and exact-rank views, synthetic stress pages, mobile previews and a manifest.
+# Output: overview, song and nearby-rank views, synthetic stress pages, mobile previews and a manifest.
 # Pos: Scripts / offline visual acceptance; see L2.md.
 # Effects: reads explicit inputs, writes only the requested output directory; never fetches or sends.
 """Offline preview. Requires the sanitized 2026-10-02 investigation snapshot format."""
@@ -70,10 +70,12 @@ def main():
                 ("rank100-all", replace(overview, request=CutoffRequest(rank=100)))]
     stress = replace(overview, event=replace(event, title="合成压力样例 · 中文と日本語 / 长标题换行验收", banner="", notes=("合成分数和名称，仅用于排版验收。",)),
                      boards=tuple(replace(boards[i % 3], song=replace(boards[i % 3].song,
+                        challenge_id=str(i+1), music_id=str(200+i),
                         title=f"合成歌曲 {i + 1} · これはぼくたちの生存のあらすじ / 中文长名称 37", jacket="",
                         effective_start_ms=event.start_ms + 86400000 if i == 0 else boards[i % 3].song.effective_start_ms,
                         effective_end_ms=event.end_ms - 172800000 if i == 0 else boards[i % 3].song.effective_end_ms),
                         scores=(12345678901234567890,) * 100 if i != 2 else (), status="合成测试" if i != 2 else "本曲来源暂不可用") for i in range(8)))
+    stress = replace(stress, event=replace(stress.event, songs=tuple(b.song for b in stress.boards)))
     variants.append(("synthetic-stress", stress))
     outputs = []
     for name, answer in variants:

@@ -173,10 +173,10 @@ def _expand_replies(replies: list[PreparedReply], reserve: int = 0) -> list[Prep
         available = QQ_PASSIVE_REPLY_LIMIT - reserve - len(expanded) - (len(replies) - index - 1)
         if reply.pages and len(reply.pages) <= available:
             expanded.extend(reply.pages)
-        elif reply.pages or reply.complete_text:
+        elif reply.pages or (reply.complete_text and reply.image is None):
             # Conservative local text budget, not a claim about QQ's platform hard limit.
             chunks, current = [], ""
-            fallback = reply.text + ("\n本次容量不足，未附曲线，请单独查询歌曲。" if reply.pages else "")
+            fallback = reply.text + ("\n本次容量不足，改用完整数值；可拆开命令或缩小排名区间。" if reply.pages else "")
             for line in fallback.splitlines(keepends=True):
                 if current and len(current) + len(line) > 1800:
                     chunks.append(current)
@@ -190,7 +190,7 @@ def _expand_replies(replies: list[PreparedReply], reserve: int = 0) -> list[Prep
             if len(chunks) <= available:
                 expanded.extend(PreparedReply(chunk) for chunk in chunks)
             else:
-                expanded.append(PreparedReply("本次完整榜线结果超过回复预算，无法完整发送；请将 /查榜线 单独发送，或指定一首歌曲。"))
+                expanded.append(PreparedReply("本次完整榜线结果超过回复预算，无法完整发送；请将 /查榜线 单独发送、指定一首歌曲或缩小排名区间。"))
         else:
             expanded.append(reply)
     return expanded
@@ -475,7 +475,7 @@ def _render_prepared(reply, result, repository, locale, candidate=None):
             from ...rendering.event_cutoff_visuals import render_cutoff, load_artwork
             pages = render_cutoff(result.cutoff, asset_loader=lambda event, urls: load_artwork(repository.event_cutoffs, event, urls))
             if len(pages) == 1:
-                return PreparedReply(reply, pages[0].image)
+                return PreparedReply(pages[0].text, pages[0].image, complete_text=True)
             if pages:
                 return PreparedReply(reply, pages=tuple(PreparedReply(page.text, page.image) for page in pages))
             return PreparedReply(reply, complete_text=True)

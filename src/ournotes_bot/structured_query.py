@@ -81,10 +81,7 @@ class QuerySpec:
             from .query.field_query import FIELD_LABELS
             return f"问 {self.display_name} {self.difficulty} {FIELD_LABELS[self.field]}".replace("  ", " ")
         if self.cutoff_request is not None:
-            req = self.cutoff_request
-            server = "hk" if req.server == "tw" else req.server
-            return (f"查榜线 {server} {req.query}" + (" " + " ".join(f"T{r}" for r in req.ranks) if req.ranks else "")
-                    + (" 仅数值" if req.numeric_only else "")).strip()
+            return self.cutoff_request.command_label()
         if self.card_query is not None:
             return (("查支援卡 " if self.intent == "support_card" else "查卡 ")
                     + self.card_query + (f" 页{self.page}" if self.page > 1 else ""))
