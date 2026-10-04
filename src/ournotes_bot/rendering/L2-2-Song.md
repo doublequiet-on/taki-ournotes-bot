@@ -43,6 +43,8 @@ Current 直接引用 song_traits 的显示常量；这属于领域表现依赖�
 
 ## Relevant Tests
 
+榜线当前值与玩家ID使用同一份 `BoardSnapshot`；趋势的当前值与排名表均完整显示ID，缺失ID明确标注，长ID按单格分行，历史曲线不携带玩家身份。`CutoffPage.text` 保存同一批排名／分数／ID，图片失败后无需重新取榜；回归见 [test_cutoff_player_ids.py](../../../tests/test_cutoff_player_ids.py)。
+
 [test_visuals.py](../../../tests/test_visuals.py)：歌曲身份、长标题、原生标记缺图回退、效率行动态布局；
 [test_chart_data.py](../../../tests/test_chart_data.py)：时间线、跨栏长键及难度身份；
 [test_song_meta.py](../../../tests/test_song_meta.py)：`test_table_image_uses_captured_cells_and_text_fallback`；

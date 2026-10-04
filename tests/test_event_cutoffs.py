@@ -137,7 +137,7 @@ class CutoffTests(unittest.TestCase):
                     self.assertEqual(answer.ranks, window)
                     self.assertEqual([b.song.music_id for b in answer.boards], ["101", "102", "103"])
                     score = self.http.players[rank - 1]["score"]
-                    self.assertEqual(answer.text.count(f"T{rank}：{score}"), 3)
+                    self.assertIn(f"T{rank}：" + '｜'.join([f'{score}/未获取'] * 3), answer.text)
                     for other in {1, 2, 3, 10, 100} - set(window):
                         self.assertNotIn(f"T{other}：", answer.text)
         self.assertEqual(sum(url.endswith("/ranking") for url in self.http.calls), 12)
@@ -221,7 +221,9 @@ class CutoffTests(unittest.TestCase):
         self.assertIsNone(board.score(100))
         self.assertIn("T100：暂无数据", answer.text)
         self.assertTrue(board.song.enabled)
-        self.assertNotIn("player", "".join(p.read_text(encoding="utf-8") for p in (self.root / "cutoff").glob("*.json")))
+        cached = "".join(p.read_text(encoding="utf-8") for p in (self.root / "cutoff").glob("*.json"))
+        self.assertNotIn('playerData', cached)
+        self.assertNotIn('highScoreDeck', cached)
 
     def test_current_song_matching_excludes_inactive_partial_and_alias_targets(self):  # A06
         inactive = self.http.table_rows["jp"]["MasterText"][-1]
@@ -565,7 +567,7 @@ class CutoffTests(unittest.TestCase):
         for command in ("/查榜线", "/查榜线 t100"):
             with patch("ournotes_bot.rendering.event_cutoff_visuals.render_cutoff", side_effect=ValueError("render failure")):
                 reply = _prepare_reply(command, self.repo, None)
-            self.assertEqual(reply.text.count("T100："), 3)
+            self.assertEqual(reply.text.count("T100："), 3 if command == '/查榜线' else 1)
             self.assertIsNone(reply.image)
         self.assertEqual(sum(u.endswith("/ranking") for u in self.http.calls), 3)
 

@@ -1,6 +1,6 @@
 # L3
 # Input: server, public MoeNotes endpoints, an isolated cache directory and injectable transport/clocks.
-# Output: immutable event/song/board snapshots with effective song periods; scores preserve response positions.
+# Output: immutable event/song/board snapshots; current scores and public player IDs preserve response positions.
 # Pos: Data / MoeNotes challenge rankings; see L2-2.md.
 # Effects: bounded anonymous HTTPS GETs, isolated current-cache writes and optional history records; no startup I/O or QQ.
 """On-demand challenge rankings. Event points and permanent song records are never read."""
@@ -100,6 +100,13 @@ def _ms(value) -> int | None:
     return value if type(value) is int and 0 < value < 253402300799000 else None
 
 
+def _player_id(value) -> str | None:
+    """Keep the public decimal ID losslessly, never coerce floats or booleans."""
+    if type(value) is int:
+        value = str(value)
+    return value if isinstance(value, str) and re.fullmatch(r"[0-9]{1,20}", value) and int(value) > 0 else None
+
+
 def display_time(value: int | None, server: str, *, date: bool = True) -> str:
     if value is None:
         return "未知"
@@ -154,9 +161,16 @@ class BoardSnapshot:
     notes: tuple[str, ...] = ()
     observed_scores: tuple[int | None, ...] | None = None
     quality: str = "valid"
+    player_ids: tuple[str | None, ...] = ()
 
     def score(self, rank: int) -> int | None:
         return self.scores[rank - 1] if 1 <= rank <= len(self.scores) else None
+
+    def player_id(self, rank: int) -> str | None:
+        # An untrusted/expired/missing score must not expose a seemingly current owner.
+        if self.score(rank) is None or not 1 <= rank <= len(self.player_ids):
+            return None
+        return _player_id(self.player_ids[rank - 1])
 
 
 @dataclass(frozen=True)
@@ -247,7 +261,10 @@ class EventCutoffRepository:
             except (KeyError, SourceError):
                 return False
         if key.startswith("board:"):
-            return isinstance(payload.get("scores"), list) and len(payload["scores"]) <= 100
+            scores, ids = payload.get("scores"), payload.get("player_ids")
+            return (isinstance(scores, list) and len(scores) <= 100
+                    and (ids is None or isinstance(ids, list) and len(ids) == len(scores)
+                         and all(value is None or isinstance(value, str) and _player_id(value) == value for value in ids)))
         if key.startswith("table:"):
             return isinstance(payload.get("rows"), list) and all(isinstance(row, dict) for row in payload["rows"])
         if key.startswith("metadata:"):
@@ -470,9 +487,11 @@ class EventCutoffRepository:
             players = body.get("players")
             if not isinstance(players, list):
                 raise SourceError("invalid_board")
-            # Persist only scores, including null holes. Never persist player identities/decks.
+            # Retain only current scores and public IDs, including null holes; no names/decks.
             scores = [p.get("score") if isinstance(p, dict) else None for p in players[:100]]
-            return {"scores": [n if type(n) is int and n >= 0 else None for n in scores]}, headers
+            ids = [_player_id(p["playerData"].get("id"))
+                   if isinstance(p, dict) and isinstance(p.get("playerData"), dict) else None for p in players[:100]]
+            return {"scores": [n if type(n) is int and n >= 0 else None for n in scores], "player_ids": ids}, headers
         try:
             entry = self._cached(f"board:{event.server}:{event.event_id}:{song.challenge_id}", 60, 600, load, deadline)
         except SourceError as exc:
@@ -533,7 +552,9 @@ class EventCutoffRepository:
                 scores, status = (), "旧缓存超限，暂无分数"
             else:
                 status = "来源故障，暂用旧快照"
-        return BoardSnapshot(song, scores, fetched, server, int(entry.received * 1000), age, status, tuple(notes), observed, quality)
+        ids = entry.payload.get("player_ids")
+        player_ids = tuple(_player_id(n) for n in ids) if isinstance(ids, list) and len(ids) == len(observed) else ()
+        return BoardSnapshot(song, scores, fetched, server, int(entry.received * 1000), age, status, tuple(notes), observed, quality, player_ids)
 
     def boards(self, event: EventSnapshot, songs: tuple[EventSong, ...], deadline: float) -> tuple[BoardSnapshot, ...]:
         with ThreadPoolExecutor(max_workers=3) as pool:

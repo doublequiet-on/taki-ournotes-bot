@@ -42,7 +42,8 @@ def main():
     latest = [None] * 100
     for rank, value in zip((1, 2, 3, 10, 100), series[-1].scores):
         latest[rank - 1] = value
-    board = BoardSnapshot(song, tuple(latest), series[-1].time_ms, series[-1].time_ms, series[-1].time_ms, 0, "合成当前值")
+    board = BoardSnapshot(song, tuple(latest), series[-1].time_ms, series[-1].time_ms, series[-1].time_ms, 0, "合成当前值",
+                          player_ids=tuple(str(11000000001 + rank) for rank in range(100)))
     base = CutoffAnswer(CutoffRequest(), event, (board,), histories=((song.challenge_id, HistoryView(series)),))
     variants = {"five-ranks": base,
                 "zero-points": replace(base, histories=(("1", HistoryView(warning="暂无历史，从启用后采集。")),)),
@@ -58,6 +59,7 @@ def main():
                   for i, title in enumerate(('夢我夢中 · 合成样例', 'Dumb Rock! · 合成样例', '長い名前の楽曲 · 合成样例'), 1))
     event3 = replace(event, songs=songs)
     boards = tuple(replace(board, song=s, scores=tuple(20_000_000 + i * 300_000 - r * 12345 for r in range(100)),
+                           player_ids=tuple(str(11000000001 + i * 100 + rank) for rank in range(100)),
                            fetched_ms=series[-1].time_ms - i * 20000, status='合成当前观测') for i,s in enumerate(songs))
     histories = tuple((s.challenge_id, HistoryView(tuple(replace(p, scores=tuple(
         boards[i].score(rank) - (len(series)-1-index)*1500 for rank in (1,2,3,10,100)))
@@ -78,6 +80,8 @@ def main():
                                status='合成当前值' if i != 1 else '本曲来源暂不可用') for i,b in enumerate(boards))
     variants['stress-table'] = replace(triple,event=replace(event3,songs=long_songs),boards=long_boards,
                                       request=CutoffRequest(rank=50),histories=())
+    variants['long-player-id'] = replace(triple,boards=tuple(replace(b,player_ids=tuple('12345678901234567890' for _ in b.scores))
+                                                          for b in boards),request=CutoffRequest(rank=50),histories=())
     flat_points = tuple(replace(p, scores=(10**15,) * 5) for p in series)
     variants['three-flat-large-integers'] = replace(triple, histories=tuple(
         (s.challenge_id, HistoryView(flat_points)) for s in songs))

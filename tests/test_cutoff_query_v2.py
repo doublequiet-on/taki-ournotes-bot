@@ -139,22 +139,24 @@ class CutoffQueryV2Tests(unittest.TestCase):
         for rank in range(40,61):
             self.assertIn(f'T{rank}：',pages[0].text)
 
-    def test_full_100_rows_four_rank_pages_complete_before_budget(self):  # A09/A24
+    def test_full_100_rows_rank_pages_complete_before_budget(self):  # A09/A24
         import re
         answer = self.ask('1-100')
         pages = render_cutoff(answer)
-        self.assertEqual(len(pages),4)
+        self.assertLessEqual(len(pages),5)
         rows = []
         for page in pages:
-            per_song = re.findall(r'T(\d+)：',page.text)
-            self.assertEqual(len(per_song)%3,0)
-            rows += list(map(int,per_song[:len(per_song)//3]))
+            per_rank = re.findall(r'^T(\d+)：',page.text,re.M)
+            rows += list(map(int,per_rank))
+            for line in page.text.splitlines():
+                if re.match(r'^T\d+：',line):
+                    self.assertEqual(len(line.split('：',1)[1].split('｜')),3)
             self.assertLessEqual(len(page.text),1800)
             for number in range(1,4):
                 self.assertIn(f'歌曲{number}',page.text)
         self.assertEqual(rows,list(range(1,101)))
         expanded = _expand_replies([PreparedReply(answer.text,pages=tuple(PreparedReply(p.text,p.image) for p in pages))])
-        self.assertEqual(len(expanded),4)
+        self.assertEqual(len(expanded),len(pages))
         self.assertTrue(all(p.image for p in expanded))
 
     def test_render_failure_or_capacity_never_sends_a_truncated_table(self):  # A24
