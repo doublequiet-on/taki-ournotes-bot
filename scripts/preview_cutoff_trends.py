@@ -43,7 +43,8 @@ def main():
     for rank, value in zip((1, 2, 3, 10, 100), series[-1].scores):
         latest[rank - 1] = value
     board = BoardSnapshot(song, tuple(latest), series[-1].time_ms, series[-1].time_ms, series[-1].time_ms, 0, "合成当前值",
-                          player_ids=tuple(str(11000000001 + rank) for rank in range(100)))
+                          player_ids=tuple(str(11000000001 + rank) for rank in range(100)),
+                          player_names=tuple(f'合成玩家{rank + 1}' for rank in range(100)))
     base = CutoffAnswer(CutoffRequest(), event, (board,), histories=((song.challenge_id, HistoryView(series)),))
     variants = {"five-ranks": base,
                 "zero-points": replace(base, histories=(("1", HistoryView(warning="暂无历史，从启用后采集。")),)),
@@ -60,6 +61,7 @@ def main():
     event3 = replace(event, songs=songs)
     boards = tuple(replace(board, song=s, scores=tuple(20_000_000 + i * 300_000 - r * 12345 for r in range(100)),
                            player_ids=tuple(str(11000000001 + i * 100 + rank) for rank in range(100)),
+                           player_names=tuple(f'玩家{rank + 1}' for rank in range(100)),
                            fetched_ms=series[-1].time_ms - i * 20000, status='合成当前观测') for i,s in enumerate(songs))
     histories = tuple((s.challenge_id, HistoryView(tuple(replace(p, scores=tuple(
         boards[i].score(rank) - (len(series)-1-index)*1500 for rank in (1,2,3,10,100)))

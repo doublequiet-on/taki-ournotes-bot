@@ -1,6 +1,6 @@
 # L3
 # Input: direct/NL query text and the server-scoped EventCutoffRepository.
-# Output: CutoffRequest and captured CutoffAnswer with stable song numbers and same-row score/player-ID projections.
+# Output: CutoffRequest/CutoffAnswer with stable song numbers and same-row score/digital-ID/username projections.
 # Pos: Query / Deterministic challenge-song cutoffs; see L2-2.md.
 # Effects: alias-file reads and bounded Data calls/history writes; history reads only for trends; no model/QQ.
 from __future__ import annotations
@@ -16,7 +16,7 @@ from .entity_lexicon import scoped_song_matches
 from ..sources.cutoff_history import HistoryView
 
 NODES = (1, 2, 3, 10, 100)
-HELP = '/查榜线 [jp/hk/kr/en] [歌曲1或歌名] [50或20-40] [仅数值]；参数顺序不限。无排名看五档趋势，单排名看前后十名，区间看每行分数与玩家ID；例如 /查榜线 100 hk 歌曲一。'
+HELP = '/查榜线 [jp/hk/kr/en] [歌曲1或歌名] [50或20-40] [仅数值]；参数顺序不限。无排名看五档趋势，单排名看前后十名，区间看每行分数、数字ID与用户名；例如 /查榜线 100 hk 歌曲一。'
 SERVER_ALIASES = {"jp": "jp", "日服": "jp", "hk": "tw", "国服": "tw", "國服": "tw",
                   "tw": "tw", "台服": "tw", "臺服": "tw",
                   "kr": "kr", "韩服": "kr", "韓服": "kr", "en": "en", "英服": "en", "国际服": "en", "國際服": "en"}
@@ -305,7 +305,7 @@ class CutoffAnswer:
                 lines.append('')
             lines.extend([self.song_label(board), *song_period_lines(event, board.song)])
             if self.request.mode == 'trend':
-                lines.append(" / ".join(f"T{rank}：{self.score_label(board, rank)}（ID：{self.id_label(board, rank)}）" for rank in self.ranks))
+                lines.append(" / ".join(f"T{rank}：{self.score_label(board, rank)}（ID：{self.id_label(board, rank)}；用户名：{self.name_label(board, rank)}）" for rank in self.ranks))
             lines.extend([f"{board.status} · 源采集 {display_time(board.fetched_ms, event.server)}", *board.notes])
             history = self.history_for(board)
             if history.warning:
@@ -316,8 +316,8 @@ class CutoffAnswer:
                     lines.append("仅 1 个历史点，不足以形成曲线。")
         if self.request.mode != 'trend':
             lines.append('列：' + '｜'.join(self.song_label(board).partition(' · ')[0] for board in self.boards)
-                         + '（分数/玩家ID；缺ID为未获取）')
-            lines.extend(f'T{rank}：' + '｜'.join(f'{self.score_label(board, rank)}/{self.id_label(board, rank)}'
+                         + '（分数/数字ID/用户名；缺失为未获取）')
+            lines.extend(f'T{rank}：' + '｜'.join(f'{self.score_label(board, rank)}/{self.id_label(board, rank)}/{self.table_name(board, rank)}'
                                                 for board in self.boards) for rank in self.ranks)
         lines.extend(["", *event.notes, "MoeNotes（非官方）· 挑战歌曲Top100 · 按响应位置，非预测或确认终榜。"])
         return "\n".join(lines)
@@ -329,6 +329,14 @@ class CutoffAnswer:
     @staticmethod
     def id_label(board, rank):
         return board.player_id(rank) or '未获取'
+
+    @staticmethod
+    def name_label(board, rank):
+        return board.player_name(rank) or '未获取'
+
+    def table_name(self, board, rank):
+        name = self.name_label(board, rank)
+        return json.dumps(name, ensure_ascii=False) if any(c in name for c in '/｜"') else name
 
 
 def execute_cutoff(request: CutoffRequest, repository) -> CutoffAnswer:

@@ -13,6 +13,7 @@
   - 上游 2026-09-27 使用条款允许在规定限制内合理使用公开接口，禁止绕过认证、限流、robots 或加重负担的自动化；本次核实 robots 允许公开访问。游戏数据与素材没有因代码开源而自动取得再分发许可。本功能低频查询并署名，不发布上游原始数据包，不将分析数据发送给模型；运营者仍需遵守权利方与上游的使用要求。条款见上游 `public/i18n/zh-CN.json` 的 `termsPage`，开源代码许可不覆盖游戏数据。
 - **MoeNotes 活动挑战歌曲榜**：`/查榜线` 使用 [MoeNotes](https://bdon.moe/events/tracker?server=jp) 的公开 `/{server}/events/current` 和 `/{server}/events/{eventId}/challenges/{challengeMusicId}/ranking`，基址为 `https://api.bdon.moe/api/v1`。2026-10-02 匿名取样确认四服当前活动及各服挑战榜；JP 三曲和其他服一曲均返回 100 个位置，`X-Position-Source: responseOrder`。只保存分数／缺值，不保存玩家身份。接口可用性与覆盖范围不是 SLA，也不代表实时无延迟。
   - 查询升级 v1 的历史来自启用后本机记录的同一挑战榜快照；没有接入积分或永久排行榜历史。完整数据长期保留，未知时间、冲突和失采不造点；曲线显示真实观测，不能作为预测。四服采样与容量开关见 [历史运维](docs/CUTOFF_HISTORY.md)。
+  - 2026-10-04 起，按维护者要求，当前榜单图文同时显示公开 `playerData.id` 数字ID及 `playerData.name` 用户名；当前缓存仅保存经过校验的这两个字段与分数，不保存队伍、卡组或完整profile；上述历史库仍不记录玩家身份。旧分数缓存或数字ID缓存保留可读，缺失字段明确标注。
   - 按 [上游固定版本](https://github.com/StarMoe-org/moenotes/tree/720112a252f92c97dce694355dd30f992b2f9d80) 核对路由、状态和时间语义；MoeNotes 源码采用 AGPL，Taki 独立实现接口适配，未复制其前端或算法。API 正式公开使用合同／速率保证仍未知，不将公开可读误述为无限授权。
   - 同服元数据来自 `metadata.bdon.moe/index.json` 及其版本化 MasterEvent／MasterChallengeMusic／MasterLiveMusic／MasterText／MasterStoryChapter，核对表哈希后使用。封面和活动 Banner 从同服 `assets.bdon.moe/{server}/{locale}/Image/Jacket/…` 与 `Story/Banner/Chapter/…` 按元数据名称构造；素材发布版本独立于 Master，版本不一致不冒充素材完整。
   - 图文注明 MoeNotes、非官方、逐曲源采集时间与状态；来源时钟可能偏差，`lastSeen` 仅是最后观测。取样中非日服 API 时间与按来源时区解析的 Master 时间相差一小时，因此冲突时间留待核实。实现与缓存策略见 [功能说明](docs/EVENT_CUTOFFS.md)。

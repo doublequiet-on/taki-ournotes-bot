@@ -1,5 +1,5 @@
 # L3
-# Input: Captured current scores/player IDs, selected ranks and score-only local history views.
+# Input: Captured current scores/digital IDs/usernames, selected ranks and score-only local history views.
 # Output: A shared multi-song overview or a single-song card, with captured text fallback.
 # Pos: Rendering / Song challenge trends; see L2-2-Song.md.
 # Effects: Serialized Pillow rendering and existing encoder; no source/history queries.
@@ -61,6 +61,7 @@ def _card(answer, board, assets, preview_label):
     header = 198 + 32 * len(event_lines) + max(90, len(title) * 40)
     ranks = answer.ranks
     id_lines = [_lines(measure, 'ID：' + answer.id_label(board, rank), 530, 18) for rank in ranks]
+    name_lines = [_lines(measure, '用户名：' + answer.name_label(board, rank), 530, 18) for rank in ranks]
     for rank in ranks:
         value = str(board.score(rank)) if board.score(rank) is not None else "暂无数据"
         if measure.textlength(value, font=v._font(24)) > 530:
@@ -87,7 +88,7 @@ def _card(answer, board, assets, preview_label):
     if preview_label:
         details.insert(0, preview_label)
     detail_lines = [line for item in details if item for line in _lines(measure, item, 640, 18)]
-    height = header + sum(46 + len(lines) * 24 for lines in id_lines) + plot_height + len(detail_lines) * 28 + 172
+    height = header + sum(46 + (len(ids) + len(names)) * 24 for ids, names in zip(id_lines, name_lines)) + plot_height + len(detail_lines) * 28 + 172
     if height > 2300:
         raise ValueError("trend card exceeds existing image budget")
     subset = replace(answer, boards=(board,))
@@ -109,8 +110,9 @@ def _card(answer, board, assets, preview_label):
         _text(draw, [f"T{rank}"], 60, y, 22, color)
         value = str(board.score(rank)) if board.score(rank) is not None else "暂无数据"
         _text(draw, [value], 146, y - 2, 24)
-        _text(draw, id_lines[index], 146, y + 30, 18, v.MUTED, 24)
-        y += 46 + len(id_lines[index]) * 24
+        _text(draw, name_lines[index], 146, y + 30, 18, v.INK, 24)
+        _text(draw, id_lines[index], 146, y + 30 + len(name_lines[index]) * 24, 18, v.MUTED, 24)
+        y += 46 + (len(id_lines[index]) + len(name_lines[index])) * 24
     chart_top = y + 60
     box = (140, chart_top, 526, 240)
     draw.rectangle((box[0], box[1], box[0] + box[2], box[1] + box[3]), outline=v.BORDER, width=1)
@@ -170,7 +172,8 @@ def _column_layout(answer, board, measure, width):
         inline = measure.textlength(value, font=v._font(25)) <= inner - 66
         lines = [value] if inline else _lines(measure, value, inner, 22)
         ids = _lines(measure, 'ID：' + answer.id_label(board, rank), inner, 18)
-        rows.append((rank, lines, inline, ids, (44 if inline else 30 + len(lines) * 32) + len(ids) * 24))
+        names = _lines(measure, '用户名：' + answer.name_label(board, rank), inner, 18)
+        rows.append((rank, lines, inline, names, ids, (44 if inline else 30 + len(lines) * 32) + (len(names) + len(ids)) * 24))
     view = answer.history_for(board)
     values = [score for p in view.points for score in p.scores if score is not None]
     axis = []
@@ -197,7 +200,7 @@ def _column_layout(answer, board, measure, width):
     lines = [line for item in details if item for line in _lines(measure, item, inner, 18)]
     title_height = 112 + len(title) * 34
     plot_height = len(axis) * 25 + 288 + len(caption) * 27 + 18
-    height = title_height + sum(row[4] for row in rows) + plot_height + len(lines) * 27 + 30
+    height = title_height + sum(row[5] for row in rows) + plot_height + len(lines) * 27 + 30
     return title, rows, axis, caption, lines, title_height, height
 
 
@@ -268,7 +271,7 @@ def _overview(answer, assets, preview_label):
             _text(draw, [answer.song_label(board).partition(' · ')[0]], x + 106, top + 22, 26, v.ACCENT)
             _text(draw, title, x + 16, top + 100, 24, step=34)
             y = top + title_height
-            for color_index, (rank, lines, inline, ids, row_height) in enumerate(rows):
+            for color_index, (rank, lines, inline, names, ids, row_height) in enumerate(rows):
                 color = COLORS[color_index]
                 draw.rectangle((x + 16, y + 10, x + 24, y + 24), fill=color)
                 _text(draw, [f'T{rank}'], x + 34, y + 2, 22, color)
@@ -277,6 +280,7 @@ def _overview(answer, assets, preview_label):
                     _text(draw, lines, right - measure.textlength(lines[0], font=v._font(25)), y, 25)
                 else:
                     _text(draw, lines, x + 16, y + 30, 22, step=32)
+                _text(draw, names, x + 16, y + row_height - (len(names) + len(ids)) * 24 - 4, 18, v.INK, 24)
                 _text(draw, ids, x + 16, y + row_height - len(ids) * 24 - 4, 18, v.MUTED, 24)
                 y += row_height
             y = _column_plot(canvas, draw, answer, board, x, y, column_width, axis, caption, bounds)

@@ -137,7 +137,7 @@ class CutoffTests(unittest.TestCase):
                     self.assertEqual(answer.ranks, window)
                     self.assertEqual([b.song.music_id for b in answer.boards], ["101", "102", "103"])
                     score = self.http.players[rank - 1]["score"]
-                    self.assertIn(f"T{rank}：" + '｜'.join([f'{score}/未获取'] * 3), answer.text)
+                    self.assertIn(f"T{rank}：" + '｜'.join([f'{score}/未获取/未获取'] * 3), answer.text)
                     for other in {1, 2, 3, 10, 100} - set(window):
                         self.assertNotIn(f"T{other}：", answer.text)
         self.assertEqual(sum(url.endswith("/ranking") for url in self.http.calls), 12)

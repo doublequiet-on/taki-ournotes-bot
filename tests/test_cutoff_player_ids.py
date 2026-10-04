@@ -29,7 +29,7 @@ class PlayerIdTests(unittest.TestCase):
         self.root = Path(tmp.name)
         self.fx = PublicFixture()
         self.fx.players = [dict(p, playerData={'id':str(11000000001+i), 'profileId':'99999999999',
-                                             'name':'synthetic-private-name'}, highScoreDeck={'private':'deck'})
+                                             'name':f'玩家{i+1}'}, highScoreDeck={'private':'deck'})
                            for i,p in enumerate(self.fx.players)]
         self.source = EventCutoffRepository(self.root/'current',transport=self.fx,
                                            clock=lambda:self.fx.now,monotonic=lambda:self.fx.now)
@@ -61,28 +61,31 @@ class PlayerIdTests(unittest.TestCase):
 
     def test_current_cache_reload_keeps_ids_but_history_has_only_scores(self):
         answer = self.ask('歌曲1 50-50')
-        body = json.loads(self.source._path('board:jp:1:1').read_text())['payload']
-        self.assertEqual(set(body),{'scores','player_ids'})
+        body = json.loads(self.source._path('board:jp:1:1').read_text(encoding='utf-8'))['payload']
+        self.assertEqual(set(body),{'scores','player_ids','player_names'})
         self.assertEqual(body['player_ids'][49],'11000000050')
         serialized = json.dumps(body)
-        for unwanted in ('playerData','profileId','name','highScoreDeck','private'):
+        self.assertEqual(body['player_names'][49],'玩家50')
+        for unwanted in ('playerData','profileId','highScoreDeck','private'):
             self.assertNotIn(unwanted,serialized)
         reloaded = EventCutoffRepository(self.source.cache_dir,transport=Mock(side_effect=AssertionError('network')),
                                         clock=lambda:self.fx.now,monotonic=lambda:self.fx.now)
         self.repo.event_cutoffs = reloaded
         self.assertEqual(self.ask('歌曲1 50-50').text,answer.text)
         self.assertNotIn(b'11000000050',(self.root/'history.sqlite3').read_bytes())
+        self.assertNotIn('玩家50'.encode(),(self.root/'history.sqlite3').read_bytes())
 
     def test_old_score_only_cache_remains_usable_with_unknown_id(self):
         self.ask('歌曲1')
         path = self.source._path('board:jp:1:1')
-        body = json.loads(path.read_text()); del body['payload']['player_ids']
+        body = json.loads(path.read_text(encoding='utf-8')); del body['payload']['player_ids']; del body['payload']['player_names']
         path.write_text(json.dumps(body))
         self.repo.event_cutoffs = EventCutoffRepository(self.source.cache_dir,transport=Mock(side_effect=AssertionError('network')),
                                                       clock=lambda:self.fx.now,monotonic=lambda:self.fx.now)
         answer = self.ask('歌曲1 50-50')
         self.assertEqual(answer.boards[0].score(50),self.fx.players[49]['score'])
         self.assertIsNone(answer.boards[0].player_id(50))
+        self.assertIsNone(answer.boards[0].player_name(50))
         self.assertIn('/未获取',answer.text)
 
     def test_expired_unknown_position_and_history_conflict_hide_ids(self):
@@ -101,7 +104,7 @@ class PlayerIdTests(unittest.TestCase):
         self.ask('歌曲1')
         path = self.source._path('board:jp:1:1')
         for ids in (['123'], ['bad']*100):
-            body=json.loads(path.read_text()); body['payload']['player_ids']=ids
+            body=json.loads(path.read_text(encoding='utf-8')); body['payload']['player_ids']=ids
             path.write_text(json.dumps(body))
             self.repo.event_cutoffs=EventCutoffRepository(self.source.cache_dir,transport=self.fx,
                                                         clock=lambda:self.fx.now,monotonic=lambda:self.fx.now)
@@ -115,14 +118,18 @@ class PlayerIdTests(unittest.TestCase):
         original=self.ask('歌曲1 50-50')
         self.fx.now+=61
         self.fx.players[49]['playerData']['id']='22000000050'
+        self.fx.players[49]['playerData']['name']='新用户名'
         current=self.ask('歌曲1 50-50')
         self.assertEqual(original.boards[0].player_id(50),'11000000050')
         self.assertEqual(current.boards[0].player_id(50),'22000000050')
+        self.assertEqual(original.boards[0].player_name(50),'玩家50')
+        self.assertEqual(current.boards[0].player_name(50),'新用户名')
         self.fx.now+=61
         self.fx.errors['/jp/events/1/challenges/1/ranking']=SourceError('network')
         fallback=self.ask('歌曲1 50-50')
         self.assertEqual(fallback.boards[0].player_id(50),'22000000050')
         self.assertIn('旧快照',fallback.text)
+        self.assertEqual(fallback.boards[0].player_name(50),'新用户名')
         for server in ('hk','kr','en'):
             self.assertEqual(self.ask(server+' 歌曲1 50-50').boards[0].player_id(50),'22000000050')
 
@@ -133,10 +140,10 @@ class PlayerIdTests(unittest.TestCase):
                     'ournotes_bot.rendering.event_cutoff_visuals',fromlist=['_text'])._text) as draw:
                 pages = render_cutoff(answer)
             self.assertTrue(pages,query)
-            self.assertLessEqual(len(pages),5,query)
             self.assertTrue(all(len(p.text)<=1800 for p in pages),query)
             expanded = _expand_replies([PreparedReply(answer.text,pages=tuple(PreparedReply(p.text,p.image) for p in pages))])
-            self.assertTrue(all(p.image for p in expanded),query)
+            self.assertLessEqual(len(expanded),5,query)
+            self.assertIn('T100：' if query=='1-100' else f'T{answer.ranks[0]}：','\n'.join(p.text for p in expanded))
             self.assertIn(answer.boards[0].player_id(answer.ranks[0]),'\n'.join(p.text for p in pages))
             for page in pages:
                 with Image.open(io.BytesIO(page.image)) as img:
@@ -153,6 +160,41 @@ class PlayerIdTests(unittest.TestCase):
         self.assertIn('T100：',joined)
         for row in self.fx.players:
             self.assertIn(row['playerData']['id'],joined)
+            self.assertIn(row['playerData']['name'],joined)
+
+    def test_names_are_independent_bounded_unicode_and_safe_for_table_text(self):
+        self.fx.players=[{'score':0,'playerData':{'id':'123','name':'夏天 / "A｜B"'}},
+                         {'score':1,'playerData':{'name':'  姓名\n第二行\u202e  '}},
+                         {'score':2,'playerData':{'id':'456','name':False}},
+                         {'score':3,'playerData':{'id':'789','name':'很'*81}},None]
+        answer=self.ask('歌曲1 1-5'); b=answer.boards[0]
+        self.assertEqual(b.player_name(1),'夏天 / "A｜B"')
+        self.assertEqual(b.player_name(2),'姓名 第二行')
+        self.assertIsNone(b.player_id(2))
+        self.assertIsNone(b.player_name(3)); self.assertIsNone(b.player_name(4)); self.assertIsNone(b.player_name(5))
+        self.assertIn('T1：0/123/'+json.dumps(b.player_name(1),ensure_ascii=False),answer.text)
+        self.assertNotIn('\u202e',answer.text)
+        for query in ('歌曲1','歌曲1 1-5'):
+            result=self.ask(query)
+            self.assertIn(b.player_name(1),result.text if result.request.mode=='trend' else json.loads(
+                result.text.split('T1：0/123/',1)[1].splitlines()[0]))
+        self.assertTrue(render_cutoff(answer))
+
+    def test_old_numeric_id_cache_has_missing_name_and_current_images_draw_both(self):
+        answer=self.ask('歌曲1 50-50')
+        from ournotes_bot.rendering import event_cutoff_visuals,cutoff_trends
+        for query,module in (('歌曲1 50-50',event_cutoff_visuals),('歌曲1',cutoff_trends),('',cutoff_trends)):
+            with patch.object(module,'_text',wraps=module._text) as draw:
+                render_cutoff(self.ask(query))
+            text='\n'.join(line for call in draw.call_args_list for line in call.args[1])
+            self.assertIn('ID：11000000050' if query=='歌曲1 50-50' else 'ID：11000000001',text)
+            self.assertIn('玩家50' if query=='歌曲1 50-50' else '玩家1',text)
+        path=self.source._path('board:jp:1:1'); body=json.loads(path.read_text(encoding='utf-8')); del body['payload']['player_names']
+        path.write_text(json.dumps(body))
+        self.repo.event_cutoffs=EventCutoffRepository(self.source.cache_dir,transport=Mock(side_effect=AssertionError('network')),
+                                                    clock=lambda:self.fx.now,monotonic=lambda:self.fx.now)
+        b=self.ask('歌曲1 50-50').boards[0]
+        self.assertEqual(b.player_id(50),'11000000050'); self.assertIsNone(b.player_name(50))
 
 
 if __name__=='__main__':

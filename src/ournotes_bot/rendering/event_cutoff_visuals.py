@@ -1,6 +1,6 @@
 # L3
 # Input: a captured CutoffAnswer and a bounded/injectable artwork loader.
-# Output: complete image pages with same-row scores/player IDs and matching captured text fallbacks.
+# Output: complete image pages with same-row scores/digital IDs/usernames and captured text fallbacks.
 # Pos: Rendering / Song challenge-cutoff views; see L2-2-Song.md.
 # Effects: Pillow rendering using existing theme/encoder; bounded asset-cache I/O and per-URL failure backoff.
 from __future__ import annotations
@@ -165,9 +165,10 @@ def _tables(answer, assets, preview_label):
     rows = []
     for rank in answer.ranks:
         cells = [(_lines(measure, answer.score_label(board, rank), cell_width - 24, 24),
+                  _lines(measure, answer.name_label(board, rank), cell_width - 24, 18),
                   _lines(measure, 'ID：' + answer.id_label(board, rank), cell_width - 24, 18)) for board in answer.boards]
-        rows.append((rank, cells, 12 + max(len(scores) * 32 + len(ids) * 24 for scores, ids in cells)))
-    if any(len(scores) > 1 or len(ids) > 1 for _, cells, _ in rows for scores, ids in cells):
+        rows.append((rank, cells, 6 + max(len(scores) * 28 + (len(names) + len(ids)) * 20 for scores, names, ids in cells)))
+    if any(len(scores) > 1 or len(ids) > 1 for _, cells, _ in rows for scores, _, ids in cells):
         footer.insert(0, '超长整数分行显示；同一格内按从上到下的数字顺序读取。')
         footer_height = 65 + len(footer) * 28
     max_height = min(PAGE_HEIGHT, 12_000_000 // (v.RENDER_SCALE**2 * width))
@@ -207,14 +208,17 @@ def _tables(answer, assets, preview_label):
                 draw.rectangle((20, y, 26, y + row_height), fill=v.ACCENT)
             draw.line((20, y + row_height, width - 20, y + row_height), fill=v.BORDER, width=1)
             _text(draw, [f'T{rank}'], 32, y + 6, 24, v.ACCENT if selected else v.INK)
-            for index, (lines, ids) in enumerate(cells):
+            for index, (lines, names, ids) in enumerate(cells):
                 right = 20 + rank_width + (index + 1) * cell_width - 12
                 for offset, line in enumerate(lines):
                     x = right - measure.textlength(line, font=v._font(24))
-                    _text(draw, [line], x, y + 6 + offset * 32, 24, v.ACCENT if selected else v.INK)
+                    _text(draw, [line], x, y + 3 + offset * 28, 24, v.ACCENT if selected else v.INK)
+                for offset, line in enumerate(names):
+                    x = right - measure.textlength(line, font=v._font(18))
+                    _text(draw, [line], x, y + 3 + len(lines) * 28 + offset * 20, 18, v.INK)
                 for offset, line in enumerate(ids):
                     x = right - measure.textlength(line, font=v._font(18))
-                    _text(draw, [line], x, y + 6 + len(lines) * 32 + offset * 24, 18, v.MUTED)
+                    _text(draw, [line], x, y + 3 + len(lines) * 28 + (len(names) + offset) * 20, 18, v.MUTED)
             y += row_height
         for index, lines in enumerate(details):
             x = 20 + rank_width + index * cell_width + 12

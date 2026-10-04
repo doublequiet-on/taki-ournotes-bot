@@ -1,6 +1,6 @@
 # L3
 # Input: server, public MoeNotes endpoints, an isolated cache directory and injectable transport/clocks.
-# Output: immutable event/song/board snapshots; current scores and public player IDs preserve response positions.
+# Output: immutable snapshots; current scores, public player IDs and usernames preserve response positions.
 # Pos: Data / MoeNotes challenge rankings; see L2-2.md.
 # Effects: bounded anonymous HTTPS GETs, isolated current-cache writes and optional history records; no startup I/O or QQ.
 """On-demand challenge rankings. Event points and permanent song records are never read."""
@@ -15,6 +15,7 @@ import re
 import threading
 import time
 import uuid
+import unicodedata
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
@@ -107,6 +108,17 @@ def _player_id(value) -> str | None:
     return value if isinstance(value, str) and re.fullmatch(r"[0-9]{1,20}", value) and int(value) > 0 else None
 
 
+def _player_name(value) -> str | None:
+    """Accept a bounded public name; neutralize line/control injection without guessing."""
+    if not isinstance(value, str) or len(value) > 80:
+        return None
+    value = ''.join(' ' if ch.isspace() else ch for ch in value
+                    if unicodedata.category(ch) not in {'Cs'} and unicodedata.bidirectional(ch) not in
+                    {'LRE','RLE','LRO','RLO','PDF','LRI','RLI','FSI','PDI'}
+                    and (ch.isspace() or unicodedata.category(ch) != 'Cc'))
+    return re.sub(r'\s+', ' ', value).strip() or None
+
+
 def display_time(value: int | None, server: str, *, date: bool = True) -> str:
     if value is None:
         return "未知"
@@ -162,6 +174,7 @@ class BoardSnapshot:
     observed_scores: tuple[int | None, ...] | None = None
     quality: str = "valid"
     player_ids: tuple[str | None, ...] = ()
+    player_names: tuple[str | None, ...] = ()
 
     def score(self, rank: int) -> int | None:
         return self.scores[rank - 1] if 1 <= rank <= len(self.scores) else None
@@ -171,6 +184,11 @@ class BoardSnapshot:
         if self.score(rank) is None or not 1 <= rank <= len(self.player_ids):
             return None
         return _player_id(self.player_ids[rank - 1])
+
+    def player_name(self, rank: int) -> str | None:
+        if self.score(rank) is None or not 1 <= rank <= len(self.player_names):
+            return None
+        return _player_name(self.player_names[rank - 1])
 
 
 @dataclass(frozen=True)
@@ -262,9 +280,12 @@ class EventCutoffRepository:
                 return False
         if key.startswith("board:"):
             scores, ids = payload.get("scores"), payload.get("player_ids")
+            names = payload.get('player_names')
             return (isinstance(scores, list) and len(scores) <= 100
                     and (ids is None or isinstance(ids, list) and len(ids) == len(scores)
-                         and all(value is None or isinstance(value, str) and _player_id(value) == value for value in ids)))
+                         and all(value is None or isinstance(value, str) and _player_id(value) == value for value in ids))
+                    and (names is None or isinstance(names, list) and len(names) == len(scores)
+                         and all(value is None or _player_name(value) == value for value in names)))
         if key.startswith("table:"):
             return isinstance(payload.get("rows"), list) and all(isinstance(row, dict) for row in payload["rows"])
         if key.startswith("metadata:"):
@@ -487,11 +508,14 @@ class EventCutoffRepository:
             players = body.get("players")
             if not isinstance(players, list):
                 raise SourceError("invalid_board")
-            # Retain only current scores and public IDs, including null holes; no names/decks.
+            # Retain current scores and public IDs/usernames, including null holes; no decks/profile data.
             scores = [p.get("score") if isinstance(p, dict) else None for p in players[:100]]
             ids = [_player_id(p["playerData"].get("id"))
                    if isinstance(p, dict) and isinstance(p.get("playerData"), dict) else None for p in players[:100]]
-            return {"scores": [n if type(n) is int and n >= 0 else None for n in scores], "player_ids": ids}, headers
+            names = [_player_name(p["playerData"].get("name"))
+                     if isinstance(p, dict) and isinstance(p.get("playerData"), dict) else None for p in players[:100]]
+            return {"scores": [n if type(n) is int and n >= 0 else None for n in scores],
+                    "player_ids": ids, "player_names": names}, headers
         try:
             entry = self._cached(f"board:{event.server}:{event.event_id}:{song.challenge_id}", 60, 600, load, deadline)
         except SourceError as exc:
@@ -554,7 +578,10 @@ class EventCutoffRepository:
                 status = "来源故障，暂用旧快照"
         ids = entry.payload.get("player_ids")
         player_ids = tuple(_player_id(n) for n in ids) if isinstance(ids, list) and len(ids) == len(observed) else ()
-        return BoardSnapshot(song, scores, fetched, server, int(entry.received * 1000), age, status, tuple(notes), observed, quality, player_ids)
+        names = entry.payload.get('player_names')
+        player_names = tuple(_player_name(n) for n in names) if isinstance(names, list) and len(names) == len(observed) else ()
+        return BoardSnapshot(song, scores, fetched, server, int(entry.received * 1000), age, status, tuple(notes), observed, quality,
+                             player_ids, player_names)
 
     def boards(self, event: EventSnapshot, songs: tuple[EventSong, ...], deadline: float) -> tuple[BoardSnapshot, ...]:
         with ThreadPoolExecutor(max_workers=3) as pool:
