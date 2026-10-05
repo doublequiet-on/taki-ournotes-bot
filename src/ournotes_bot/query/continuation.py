@@ -1,6 +1,6 @@
 # L3
 # Input: 普通平台／会话／用户键、已捕获查询结果和有限续查操作；不接受 SDK 消息。
-# Output: 不可变可见选择快照、规范查询、版本校验及有代次的上下文提交。
+# Output: 可见 ID／scoreId／难度、完整规范条件与版本校验；仅确认全部回复成功才提交上下文。
 # Pos: Query / Deterministic 的有界连续查询；见 L2-2.md。
 # Effects/Dependencies: 最多 1024 个内存上下文，10 分钟 TTL；执行复用查询器，可按 ID 获取详情；无模型、发送或持久化。
 """Small, receipt-committed conversations over actually displayed query results."""
@@ -84,6 +84,7 @@ class Choice:
     kind: str
     entity_id: int
     difficulty: str = ""
+    score_id: int | None = None
 
 
 @dataclass(frozen=True)
@@ -110,6 +111,10 @@ def catalog_version(repository) -> str:
 def dependency_version(repository, query) -> tuple[str, str]:
     meta = ""
     if isinstance(query, QuerySpec) and query.intent == "efficiency":
+        if query.meta_request is not None:
+            from .meta_model import EVALUATOR_VERSION
+            snapshot = repository.music_data.peek()
+            return str(alias_version()), (snapshot.version + "/" + EVALUATOR_VERSION) if snapshot else ""
         snapshot = getattr(getattr(repository, "song_meta", None), "_snapshot", None)
         if snapshot is not None:
             meta = hashlib.sha256(repr((snapshot.release, snapshot.source_version, snapshot.rows)).encode("utf-8")).hexdigest()
@@ -139,7 +144,7 @@ def capture_context(result, repository, *, catalog_before=None) -> QueryContext 
         if spec is None:
             return None
         page, pages = spec.page, max(1, (result.meta.total + spec.limit - 1) // spec.limit)
-        visible = tuple(Choice("efficiency", r.song_id, r.difficulty) for r in result.meta.rows)
+        visible = tuple(Choice("efficiency", r.song_id, r.difficulty, getattr(r, "score_id", None)) for r in result.meta.rows)
         if not result.meta.columns and len(visible) == 1:
             selected = visible[0]
     elif result.song_selection is not None:
@@ -179,7 +184,10 @@ def capture_context(result, repository, *, catalog_before=None) -> QueryContext 
     if not visible or len(visible) > 30:
         return None
     version = dependency_version(repository, spec)
-    if catalog_before is not None and version[0] != catalog_before:
+    new_meta = isinstance(spec, QuerySpec) and spec.meta_request is not None
+    if new_meta and (version[0] != result.meta.versions[2] or version[1] != "/".join(result.meta.versions[:2])):
+        return None
+    if not new_meta and catalog_before is not None and version[0] != catalog_before:
         return None
     return QueryContext(spec, visible, page, pages, version, selected)
 
@@ -221,6 +229,11 @@ def execute_followup(context: QueryContext, operation: Operation, repository):
             spec = replace(query, subject=EntityRef("song", selected.entity_id),
                            difficulty=selected.difficulty, page=1, song_filter=shared,
                            display_name=str(selected.entity_id))
+            if query.meta_request is not None:
+                request = replace(query.meta_request, song_id=selected.entity_id,
+                                  difficulties=(selected.difficulty,),
+                                  score_id=None if operation.kind == "difficulty" else selected.score_id)
+                spec = replace(spec, meta_request=request)
         elif selected.kind == "song":
             spec = QuerySpec("chart", EntityRef("song", selected.entity_id),
                              selected.difficulty if selected.difficulty not in {"", "ALL"} else "EXPERT",

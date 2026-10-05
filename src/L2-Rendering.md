@@ -22,6 +22,7 @@
 ## Core Contracts
 
 Query 的 `MetaAnswer` 捕获表格数据和歌曲记录；卡牌入口接收单卡或已分页列表；歌曲入口接收已选歌曲与页脚。`visuals._bytes → image_output.encode_image` 汇总编码预算。预算常量是项目保守策略，不宣称是 QQ 官方硬限制。
+分数表模式使用已有三处数值区域与动态标签，保留画布、字号和行布局；条件超出 scope 容量时进入既有说明区。绘图及图片失败的文字都消费同一捕获结果，新快照不触发第二次事实查询。
 
 ## Internal Subsystems
 

@@ -1,7 +1,7 @@
 # L3
 # Input: 命令行参数、环境配置和交互终端输入。
 # Output: build_parser 返回 ArgumentParser；main 返回 None，终端输出查询／同步／菜单操作消息，启动失败可 SystemExit。
-# Pos: Application 的模式分流与进程组合入口；见 ../L2-Application.md。
+# Pos: Application 的模式分流与独立资料／榜线来源组合入口；见 ../L2-Application.md。
 # Effects/Dependencies: setup-menu 提前分流，不构造曲库或 AI 门面，但可更新 QQ 菜单；其他模式加载仓库可联网／写缓存，并按模式进入终端或 QQ 长运行任务。
 
 from __future__ import annotations
@@ -41,11 +41,10 @@ def main() -> None:
         for result in asyncio.run(setup_menu(settings.app_id, settings.app_secret)):
             print(result)
         return
-    repository = SongRepository(settings.data_base, settings.cache_file, settings.cache_ttl_hours)
-    from .sources.cutoff_history import CutoffHistory
-    repository.event_cutoffs.history = CutoffHistory(
-        settings.cutoff_history_file or settings.cache_file.with_name("moenotes-history-v1.sqlite3"),
-        enabled=settings.cutoff_history_enabled, min_free_mb=settings.cutoff_history_min_free_mb)
+    repository = SongRepository(settings.data_base, settings.cache_file, settings.cache_ttl_hours,
+                                meta_source=settings.meta_source)
+    from .sources.cutoff_history import configure_sources
+    configure_sources(repository, settings)
     ai_parser = AIQueryParser(settings)
     def answer(message: str) -> str | None:
         if is_ai_request(message):

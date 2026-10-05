@@ -1,6 +1,6 @@
 # L3
 # Input: server, public MoeNotes endpoints, an isolated cache directory and injectable transport/clocks.
-# Output: immutable snapshots; current scores, public player IDs and usernames preserve response positions.
+# Output: captured snapshots with source/time-kind; current scores, public player IDs and usernames preserve response positions.
 # Pos: Data / MoeNotes challenge rankings; see L2-2.md.
 # Effects: bounded anonymous HTTPS GETs, isolated current-cache writes and optional history records; no startup I/O or QQ.
 """On-demand challenge rankings. Event points and permanent song records are never read."""
@@ -175,6 +175,9 @@ class BoardSnapshot:
     quality: str = "valid"
     player_ids: tuple[str | None, ...] = ()
     player_names: tuple[str | None, ...] = ()
+    source: str = "tracker"
+    time_kind: str = "tracker_observed"
+    contract_version: str = "tracker/1"
 
     def score(self, rank: int) -> int | None:
         return self.scores[rank - 1] if 1 <= rank <= len(self.scores) else None

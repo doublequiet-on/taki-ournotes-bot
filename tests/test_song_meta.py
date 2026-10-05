@@ -46,7 +46,7 @@ class SongMetaTests(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         self.root = Path(self.tmp.name)
-        self.repo = SongRepository("https://bdon.yatta.moe", self.root / "songs.json")
+        self.repo = SongRepository("https://bdon.yatta.moe", self.root / "songs.json", meta_source="haneoka")
         self.identity, self.songs, self.meta = payload()
         self.repo.songs = [Song(int(key), row["musicTitle"][0], tuple(row["musicTitle"]), "MyGO!!!!!",
                                "", "", "", "", "", (Chart("EXPERT", 25, 25, 100, ""),))

@@ -5,7 +5,9 @@ from __future__ import annotations
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
+
+from test_moenotes_meta import make_snapshot
 
 from ournotes_bot.ai_query import AIQueryParser
 from ournotes_bot.config import Settings
@@ -26,6 +28,9 @@ class NaturalQueryEvaluationTests(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         root = Path(self.temp.name)
         self.repo = SongRepository("https://invalid.example", root / "cache.json")
+        snapshot = make_snapshot(now=self.repo.music_data.clock())
+        self.repo.music_data._snapshot = snapshot
+        self.repo.music_data.get = Mock(return_value=snapshot)
         self.repo.songs = [Song(
             id=100001, title="迷星叫", titles=("迷星叫",), band="MyGO!!!!!",
             composer="", lyricist="", arranger="", start_at="", jacket_url="",

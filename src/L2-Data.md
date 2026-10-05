@@ -19,8 +19,8 @@
 ## Core Contracts
 
 - 领域身份：`Song/Chart/Card/SupportCard/Skill` 由 [data.py](ournotes_bot/data.py) 定义；`Song.traits` 当前引用来源文件中的 `SongTraits`。
-- 资料访问：`SongRepository.load/refresh`、按需详情、`song_meta`、`song_traits` 和惰性 `event_cutoffs` 是当前消费入口；榜线独立故障不影响主资料启动与缓存。
-- 来源契约由 [Sources](ournotes_bot/sources/L2-2.md) 维护；不得把列表技能摘要当作完整详情，也不得把效率指标当作本项目算分结果。
+- 资料访问：`SongRepository.load/refresh`、按需详情、独立 `music_data`、旧 `song_meta`、`song_traits` 和惰性 `event_cutoffs`；分数表和榜线来源分别配置，独立故障不影响主资料缓存。
+- 来源契约由 [Sources](ournotes_bot/sources/L2-2.md) 维护；不得把列表技能摘要当作完整详情，有限统计求值也不证明游戏实际得分。正式榜线保留公开发现／素材和本地历史例外。
 
 ## Internal Subsystems
 

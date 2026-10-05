@@ -133,9 +133,9 @@ def _support_cards(spec: QuerySpec, repository: SongRepository) -> QueryResult:
 
 CAPABILITIES = {
     "song.meta": Capability(
-        "song.meta", "efficiency", "Haneoka日服歌曲效率与相同难度参考口径排序",
+        "song.meta", "efficiency", "Moenotes公开分数表的确定性参数查询；旧来源可显式回退",
         ("query", "difficulty", "level_operator", "level", "page", "metric", "order"),
-        ("只查询上游既有分析；不生成分数、ID、URL或推荐。参数必须与原文的本地解析完全一致。",),
+        ("由原文本地解析及有限统计模型执行；不生成游戏事实、ID、URL或推荐。参数必须与原文的本地解析完全一致。",),
         True, False, False, True, True, structured_query.resolve_query,
     ),
     "song.search": Capability(

@@ -1,8 +1,8 @@
 # L3
-# Input: Captured challenge-board snapshots and explicit history configuration.
-# Output: Lossless observations, bounded history views and storage health.
-# Pos: Data / MoeNotes history; see L2-2.md and docs/QUERY_UPGRADE_V1.md.
-# Effects: Lazy independent SQLite storage; no network, worker or platform imports.
+# Input: Captured challenge boards, explicit source/configuration and independent v1/v2 paths.
+# Output: Lossless score-only observations, source-separated history views and storage health.
+# Pos: Data / Sources history and source composition; see L2-2.md and docs/META_OPEN.md.
+# Effects: Lazy SQLite, source/minute-state composition without requests; no credentials-file, worker or platform imports.
 """Append-only observed scores. Never reconstruct unobserved game history."""
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ import sqlite3
 import threading
 import time
 from contextlib import closing
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 SCHEMA = """
@@ -42,6 +42,8 @@ class HistoryPoint:
     received_ms: int
     break_before: bool = False
     quality: str = "valid"
+    source: str = "tracker"
+    time_kind: str = "tracker_observed"
 
 
 @dataclass(frozen=True)
@@ -105,6 +107,8 @@ class CutoffHistory:
         return value if type(value) is int and 0 < value < 253402300799000 else None
 
     def record(self, event, board):
+        if getattr(board, "source", "tracker") != ("open" if isinstance(self, OpenCutoffHistory) else "tracker"):
+            return "wrong_source"
         if not self.writable():
             return "disabled" if not self.enabled else self.last_error
         if not self._lock.acquire(timeout=0.15):
@@ -236,3 +240,127 @@ class CutoffHistory:
                 f"覆盖：{display_time(state['first_ms'], 'tw')} ～ {display_time(state['last_ms'], 'tw')} UTC+08:00\n"
                 f"最近成功：{display_time(int(state['last_success']) if state['last_success'] else None, 'tw')}；"
                 f"最近失败：{display_time(int(state['last_failure']) if state['last_failure'] else None, 'tw')} UTC+08:00")
+
+
+class OpenCutoffHistory(CutoffHistory):
+    """Independent schema2 file; old code continues to use its untouched v1 file."""
+    def _connect(self, *, write=False):
+        if write:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            db = sqlite3.connect(self.path, timeout=.15)
+        else:
+            db = sqlite3.connect(self.path.as_uri() + "?mode=ro", uri=True, timeout=.15)
+        try:
+            version = db.execute("PRAGMA user_version").fetchone()[0]
+            if version not in ({0, 2} if write else {2}):
+                raise sqlite3.DatabaseError("unsupported formal history version")
+            if write:
+                if version == 0:
+                    # This happens only in the independent file. A v1 file is
+                    # rejected before DDL and is never migrated in place.
+                    db.executescript("BEGIN IMMEDIATE;\n" + SCHEMA)
+                    if db.execute("PRAGMA user_version").fetchone()[0] == 0:
+                        if db.execute("SELECT count(*) FROM observations").fetchone()[0]:
+                            raise sqlite3.DatabaseError("unidentified existing observations")
+                        columns = {r[1] for r in db.execute("PRAGMA table_info(observations)")}
+                        for name, default in (("source", "open"), ("time_kind", "upstream_fetched"),
+                                              ("contract_version", "moenotes:challenge-ranking/1")):
+                            if name not in columns:
+                                db.execute(f"ALTER TABLE observations ADD COLUMN {name} TEXT NOT NULL DEFAULT '{default}'")
+                    db.execute("PRAGMA user_version=2")
+                    db.commit()
+                columns = {r[1] for r in db.execute("PRAGMA table_info(observations)")}
+                if not {"source", "time_kind", "contract_version"} <= columns:
+                    raise sqlite3.DatabaseError("missing formal provenance")
+            return db
+        except BaseException:
+            db.close()
+            raise
+
+    def record(self, event, board):
+        if (getattr(board, "source", "") != "open" or getattr(board, "time_kind", "") != "upstream_fetched"
+                or getattr(board, "contract_version", "") != "moenotes:challenge-ranking/1"):
+            return "wrong_source"
+        if not self._ms(board.fetched_ms):
+            self.failure(event.server, event.event_id, board.song.challenge_id, "unknown_time")
+            return "unknown_time"
+        return super().record(event, board)
+
+    def read(self, event, song, ranks, **kwargs):
+        view = super().read(event, song, ranks, **kwargs)
+        return replace(view, points=tuple(replace(p, source="open", time_kind="upstream_fetched") for p in view.points))
+
+
+class SourceHistory:
+    """Route new writes by source, read bounded source segments across both files."""
+    def __init__(self, legacy, formal, *, active="tracker"):
+        if legacy.path.resolve() == formal.path.resolve() or active not in {"tracker", "open"}:
+            raise ValueError("history source paths must be independent")
+        self.legacy, self.formal, self.active = legacy, formal, active
+
+    @property
+    def writer(self):
+        return self.formal if self.active == "open" else self.legacy
+
+    @property
+    def enabled(self):
+        return self.writer.enabled
+
+    @property
+    def last_error(self):
+        return self.writer.last_error
+
+    def writable(self):
+        return self.writer.writable()
+
+    def record(self, event, board):
+        source = getattr(board, "source", "tracker")
+        if source != self.active:
+            return "wrong_source"
+        return self.writer.record(event, board)
+
+    def failure(self, *args, **kwargs):
+        return self.writer.failure(*args, **kwargs)
+
+    def read(self, event, song, ranks, *, max_points=20000, **kwargs):
+        old, new = (h.read(event, song, ranks, max_points=max_points, **kwargs) for h in (self.legacy, self.formal))
+        total = old.total + new.total
+        if total > max_points:
+            return HistoryView(warning="两来源历史点超出本次绘图预算，仅展示当前值；原始历史完整保留。", total=total)
+        ordered = sorted((*old.points, *new.points), key=lambda p: (p.time_ms, p.source))
+        points, switched = [], False
+        for p in ordered:
+            change = bool(points and points[-1].source != p.source)
+            switched |= change
+            points.append(replace(p, break_before=p.break_before or change))
+        warnings = [v.warning for v in (old, new) if v.warning and (v.points or not ordered)]
+        if switched:
+            warnings.append("历史包含 tracker观测与正式源上游获取两种来源段，切换处断线，口径不可等同。")
+        return HistoryView(tuple(points), " ".join(dict.fromkeys(warnings)), total)
+
+    def status(self):
+        return self.writer.status()
+
+    def status_text(self):
+        return f"当前历史来源：{self.active}；旧库保留，新旧来源查询时断线。\n" + self.writer.status_text()
+
+
+def configure_sources(repository, settings):
+    """Composition only. No secret-file access, source requests or sampler start."""
+    from .moenotes_open import OpenClient, OpenEventCutoffRepository
+    source = repository.event_cutoffs
+    if settings.cutoff_source == "open" and not isinstance(source, OpenEventCutoffRepository):
+        source = OpenEventCutoffRepository(settings.cache_file.parent / "moenotes-open-cutoff-v1",
+                                          client=OpenClient(settings.moenotes_open_secret,
+                                                            state_file=settings.cache_file.with_name("moenotes-open-admission-v1.json")))
+        repository.event_cutoffs = source
+    elif settings.cutoff_source == "open":
+        source.client.configure(settings.moenotes_open_secret)
+    elif isinstance(source, OpenEventCutoffRepository):
+        from .moenotes_events import EventCutoffRepository
+        source = repository.event_cutoffs = EventCutoffRepository(settings.cache_file.parent / "moenotes-cutoff-v1")
+    legacy = CutoffHistory(settings.cutoff_history_file or settings.cache_file.with_name("moenotes-history-v1.sqlite3"),
+                          enabled=settings.cutoff_history_enabled, min_free_mb=settings.cutoff_history_min_free_mb)
+    formal = OpenCutoffHistory(settings.moenotes_open_history_file or settings.cache_file.with_name("moenotes-open-history-v2.sqlite3"),
+                              enabled=settings.cutoff_history_enabled, min_free_mb=settings.cutoff_history_min_free_mb)
+    source.history = SourceHistory(legacy, formal, active=settings.cutoff_source)

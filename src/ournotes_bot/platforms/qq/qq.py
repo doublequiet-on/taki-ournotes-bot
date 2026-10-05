@@ -1,6 +1,6 @@
 # L3
 # Input: QQ 事件／消息、Settings、SongRepository、AIQueryParser 及 CommandResult／QueryResult。
-# Output: PreparedReply 文字、图片与选择快照；DeliveryOutcome 明确回执；外部为被动回复，批内顺序固定，批间排序可配置。
+# Output: PreparedReply 同捕获图片／完整文字、预算与选择快照；DeliveryOutcome 明确全部交付回执；批内顺序固定。
 # Pos: Platform / QQ 的事件接入、回复准备／交付与后台任务接线；见 ../../../L2-QQ.md。
 # Effects/Dependencies: botpy 连接、上传／发送、线程与 asyncio 任务、去重／队列状态；经业务模块联网及读写缓存；固定 logger ournotes_bot.qq 供更新器识别就绪。
 
@@ -13,7 +13,7 @@ import logging
 import re
 import time
 from collections import deque
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from urllib.parse import urlsplit
 
 from botpy.http import BotHttp, Route
@@ -164,13 +164,36 @@ class PreparedReply:
     pages: tuple[PreparedReply, ...] = ()
     complete_text: bool = False
     context: QueryContext | None = None
+    budget_label: str = "查榜线"
+    fallback_texts: tuple[str, ...] = ()
+
+    @property
+    def passive_slots(self):
+        return max(1, len(self.fallback_texts))
 
 
 def _expand_replies(replies: list[PreparedReply], reserve: int = 0) -> list[PreparedReply]:
     """Budget all pages before any send. Text fallback uses the captured complete result."""
     expanded = []
     for index, reply in enumerate(replies):
-        available = QQ_PASSIVE_REPLY_LIMIT - reserve - len(expanded) - (len(replies) - index - 1)
+        available = QQ_PASSIVE_REPLY_LIMIT - reserve - sum(r.passive_slots for r in expanded) - (len(replies) - index - 1)
+        if reply.complete_text and reply.budget_label == "查分数表":
+            chunks, current = [], ""
+            for line in reply.text.splitlines(keepends=True):
+                if current and len(current) + len(line) > 1800:
+                    chunks.append(current)
+                    current = ""
+                while len(line) > 1800:
+                    chunks.append(line[:1800])
+                    line = line[1800:]
+                current += line
+            if current:
+                chunks.append(current)
+            if len(chunks) <= available:
+                expanded.append(replace(reply, fallback_texts=tuple(chunks)))
+            else:
+                expanded.append(PreparedReply("本次完整分数表结果超过回复预算，无法完整发送；请将 /查分数表 单独发送或使用前10、缩短搜索条件。"))
+            continue
         if reply.pages and len(reply.pages) <= available:
             expanded.extend(reply.pages)
         elif reply.pages or (reply.complete_text and reply.image is None):
@@ -190,7 +213,8 @@ def _expand_replies(replies: list[PreparedReply], reserve: int = 0) -> list[Prep
             if len(chunks) <= available:
                 expanded.extend(PreparedReply(chunk) for chunk in chunks)
             else:
-                expanded.append(PreparedReply("本次完整榜线结果超过回复预算，无法完整发送；请将 /查榜线 单独发送、指定一首歌曲或缩小排名区间。"))
+                label = reply.budget_label
+                expanded.append(PreparedReply(f"本次完整{label.removeprefix('查')}结果超过回复预算，无法完整发送；请将 /{label} 单独发送或缩小单次输出范围。"))
         else:
             expanded.append(reply)
     return expanded
@@ -486,8 +510,9 @@ def _render_prepared(reply, result, repository, locale, candidate=None):
     if (image is None and result is not None and result.catalog is not None
             and result.catalog.request.mode == "art" and not result.catalog.error):
         reply += "\n卡面图片暂不可用，请稍后重试。"
-    return PreparedReply(reply, image, complete_text=result is not None and result.cutoff is not None,
-                         context=candidate)
+    meta_complete = result is not None and getattr(result, "meta", None) is not None and result.meta.complete_text
+    return PreparedReply(reply, image, complete_text=(result is not None and result.cutoff is not None) or meta_complete,
+                         context=candidate, budget_label="查分数表" if meta_complete else "查榜线")
 
 
 async def _upload_image(api, target_id: str, image: bytes, group: bool):
@@ -566,14 +591,16 @@ async def _deliver_reply(message, target_id: str, group: bool, reply: PreparedRe
             else:
                 logger.info("%s图片发送回执=%s 大小=%s msg_seq=%d", channel, outcome.status, f"{len(reply.image):,}B", msg_seq)
             return outcome
-    try:
-        outcome = _receipt(await send(**target, msg_type=0, content=reply.text))
-    except Exception as exc:
-        logger.error("%s文字发送失败，结果不确定，不自动重发；错误类型=%s", channel, type(exc).__name__)
-        return DeliveryOutcome("uncertain")
-    else:
-        logger.info("%s文字发送回执=%s 字数=%d msg_seq=%d", channel, outcome.status, len(reply.text or ""), msg_seq)
-        return outcome
+    for offset, chunk in enumerate(reply.fallback_texts or (reply.text,)):
+        try:
+            outcome = _receipt(await send(**{**target, "msg_seq": msg_seq + offset}, msg_type=0, content=chunk))
+        except Exception as exc:
+            logger.error("%s文字发送失败，结果不确定，不自动重发；错误类型=%s", channel, type(exc).__name__)
+            return DeliveryOutcome("uncertain")
+        logger.info("%s文字发送回执=%s 字数=%d msg_seq=%d", channel, outcome.status, len(chunk or ""), msg_seq + offset)
+        if not outcome.confirmed:
+            return outcome
+    return DeliveryOutcome("success")
 
 
 def context_key(message, target_id, group):
@@ -602,6 +629,8 @@ async def reply_commands(message, target_id, group, commands, *, gate, repositor
                 followup_lease = contexts.begin(key, clear=False) if current is not None else None
                 reply = (await gate.prepare_followup(current, operation, repository)
                          if current is not None else PreparedReply(MISSING))
+                if reply.complete_text and reply.budget_label == "查分数表":
+                    reply = _expand_replies([reply])[0]
                 await sequencer.wait_turn(ticket)
                 outcome = await _deliver_reply(message, target_id, group, reply)
                 contexts.commit(followup_lease, reply.context, confirmed=outcome.confirmed)
@@ -615,13 +644,15 @@ async def reply_commands(message, target_id, group, commands, *, gate, repositor
         await sequencer.wait_turn(ticket)
         candidates = [r for r in replies if r.context is not None]
         confirmed_candidate = None
-        for seq, reply in enumerate(replies, start=1):
+        seq = 1
+        for reply in replies:
             outcome = await _deliver_reply(message, target_id, group, reply, msg_seq=seq)
+            seq += reply.passive_slots
             if len(candidates) == 1 and outcome.confirmed and reply.context is not None:
                 confirmed_candidate = reply.context
-        if overflow and len(replies) < QQ_PASSIVE_REPLY_LIMIT:
+        if overflow and seq <= QQ_PASSIVE_REPLY_LIMIT:
             notice = PreparedReply(tr(locale_for(commands[0]), "too_many_commands", limit=limit, total=len(commands)))
-            await _deliver_reply(message, target_id, group, notice, msg_seq=len(replies) + 1)
+            await _deliver_reply(message, target_id, group, notice, msg_seq=seq)
         contexts.commit(lease, confirmed_candidate, confirmed=confirmed_candidate is not None)
     finally:
         await sequencer.release(ticket)
@@ -636,12 +667,10 @@ def run_bot(app_id: str, app_secret: str, repository: SongRepository, settings: 
 
     ai_parser = AIQueryParser(settings)
     query_gate = QueryGate(settings.query_concurrency, settings.query_queue_limit)
-    from ...sources.cutoff_history import CutoffHistory
+    from ...sources.cutoff_history import configure_sources
     from ...sources.cutoff_sampler import HistorySampler
     if repository.event_cutoffs.history is None:
-        repository.event_cutoffs.history = CutoffHistory(
-            settings.cutoff_history_file or settings.cache_file.with_name("moenotes-history-v1.sqlite3"),
-            enabled=settings.cutoff_history_enabled, min_free_mb=settings.cutoff_history_min_free_mb)
+        configure_sources(repository, settings)
     sampler = HistorySampler(repository.event_cutoffs, servers=settings.cutoff_sampling_servers,
                              interval=settings.cutoff_sampling_interval) if settings.cutoff_sampling_enabled else None
     repository.cutoff_sampler = sampler

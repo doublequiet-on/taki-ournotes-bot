@@ -50,7 +50,8 @@ def check(path: Path) -> None:
     if not aliases or not code:
         raise ValueError(f"missing query aliases or bot code in {path.name}")
     required = {"continuation.py", "field_query.py", "cutoff_history.py", "cutoff_sampler.py", "cutoff_trends.py",
-                "CUTOFF_HISTORY.md", "QUERY_UPGRADE_V1.md", "query-upgrade-v1.env.example"}
+                "CUTOFF_HISTORY.md", "QUERY_UPGRADE_V1.md", "query-upgrade-v1.env.example",
+                "moenotes_music_data.py", "moenotes_open.py", "meta_parameters.py", "meta_model.py", "META_OPEN.md", "THIRD_PARTY.md"}
     if not required.issubset(documents):
         raise ValueError(f"missing query upgrade modules or instructions in {path.name}")
     if path.name.endswith(".tar.gz"):

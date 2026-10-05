@@ -1,6 +1,6 @@
 # L3
 # Input: 已选歌曲／单卡／当前页列表、Song／Chart 与可选谱面 score dict、MetaAnswer、条件／locale／页脚；render_catalog 消费 CardAnswer。
-# Output: 公开 render 入口主要返回编码 bytes，render_catalog 可返回 None；Pillow Image／画布为内部对象。
+# Output: 公开 render 入口返回编码 bytes（render_catalog 可为 None）；分数表保留现有布局，以捕获的列标签和值适配模式。
 # Pos: Rendering 的共享主题／素材、歌曲绘图与卡牌委托入口；见 rendering/L2-2-Core.md、rendering/L2-2-Song.md、rendering/L2-2-Card.md。
 # Effects/Dependencies: 字体／素材读取、允许来源下载与素材缓存写入；委托 rendering 绘图器，成员列表可间接刷新 Haneoka；不调用模型或上传 QQ。
 
@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import io
+import re
 import asyncio
 import hashlib
 import math
@@ -350,7 +351,8 @@ def _draw_skills(draw: ImageDraw.ImageDraw, skills: tuple[Skill, ...], x: int, y
 
 def _asset(url: str, size: tuple[int, int], *, contain: bool = False) -> Image.Image | None:
     icons = {f"{BASE}/images/CardType{i}.webp" for i in range(1, 6)}
-    if not url.startswith(ASSETS + "/") and url not in icons and url not in MISSION_ICON_URLS.values():
+    music_jacket = re.fullmatch(r"https://assets\.bdon\.moe/ja/Image/Jacket/([A-Za-z0-9_-]+)/\1\.webp", url)
+    if not url.startswith(ASSETS + "/") and not music_jacket and url not in icons and url not in MISSION_ICON_URLS.values():
         return None
     try:
         cache = runtime_data_dir() / "asset-cache"
@@ -760,10 +762,11 @@ def render_meta(answer: MetaAnswer) -> bytes:
     if answer.cells:
         return _render_meta_table(answer)
     text = answer.text
-    _, measure = _canvas(900, 200, "歌曲效率")
+    title = answer.title if answer.complete_text else "歌曲效率"
+    _, measure = _canvas(900, 200, title)
     lines = [part for line in text.splitlines()
              for part in _wrapped_lines(measure, line, 792, 22, max_lines=len(line) + 1)]
-    image, draw = _canvas(900, 185 + len(lines) * 32, "歌曲效率")
+    image, draw = _canvas(900, 185 + len(lines) * 32, title)
     draw.rounded_rectangle((38, 136, 862, image.height // RENDER_SCALE - 24), radius=18, fill="#FFFFFF", outline=BORDER, width=2)
     top = 145
     for line in lines:
@@ -777,7 +780,8 @@ def _render_meta_table(answer: MetaAnswer) -> bytes:
     width, row_height = 1500, 112
     edges = (40, 105, 660, 820, 960, 1180, 1460)
     measure = ImageDraw.Draw(Image.new("RGB", (width, 200)))
-    scope = _wrapped_lines(measure, answer.scope, width - 100, 24, max_lines=4)
+    full_scope = _wrapped_lines(measure, answer.scope, width - 100, 24, max_lines=len(answer.scope) + 1)
+    scope = full_scope[:4]
     rows_y = 158 + 34 * len(scope)
     marks = _song_marks(answer.song_records)
     mission_marks = _mission_marks(answer.song_records)
@@ -794,14 +798,14 @@ def _render_meta_table(answer: MetaAnswer) -> bytes:
     table_bottom = rows_y + sum(heights)
     page_lines = [part for line in answer.page_notice.splitlines()
                   for part in _wrapped_lines(measure, line, width - 136, 25, len(line) + 1)]
-    note_lines = [part for line in answer.notes
+    note_lines = [part for line in ((*full_scope[4:], *answer.notes) if len(full_scope) > 4 else answer.notes)
                   for part in (*_wrapped_lines(measure, line, width - 136, 23, len(line) + 1), "")]
     if note_lines:
         note_lines.pop()
     page_y = table_bottom + 20
     notes_y = page_y + 36 + len(page_lines) * 38 + 18
     notes_bottom = notes_y + 52 + sum(18 if not line else 34 for line in note_lines)
-    image, draw = _canvas(width, notes_bottom + 46, "日服 · 歌曲分数表")
+    image, draw = _canvas(width, notes_bottom + 46, answer.title)
     draw.rounded_rectangle((36, 132, width - 36, rows_y - 8), radius=18, fill=PAPER)
     for i, line in enumerate(scope):
         draw.text((48, 142 + i * 34), line, font=_font(24), fill=MUTED)
@@ -834,8 +838,9 @@ def _render_meta_table(answer: MetaAnswer) -> bytes:
             for i, line in enumerate(_wrapped_lines(draw, row[1], 442, 28, max_lines=2)):
                 _write(draw, line, 202, top + 10 + i * 35, 442, 28)
         _difficulty_badge(draw, row[2], row[3], (694, top + (row_height - 66) // 2, 786, top + (row_height + 66) // 2))
-        for value, column, label in ((row[4], 3, "时长"), (row[5], 4, "得分系数"),
-                                     (row[6], 5, "每分钟得分效率")):
+        labels = answer.columns[4:7] if len(answer.columns) == 7 else ("时长", "得分系数", "每分钟得分效率")
+        for value, column, label in ((row[4], 3, labels[0]), (row[5], 4, labels[1]),
+                                     (row[6], 5, labels[2])):
             centered(label, edges[column], edges[column + 1], top + row_height / 2 - 18, 18, MUTED)
             centered(value, edges[column], edges[column + 1], top + row_height / 2 + 16, 28,
                      ACCENT if column == 5 else INK)

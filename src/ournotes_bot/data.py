@@ -2,7 +2,7 @@
 # Input: 来源记录／详情、主缓存、数据基址与缓存路径、加载／刷新请求及名称检索词。
 # Output: Song／Chart／Card／SupportCard／Skill、名称规则、SongRepository 聚合记录与缓存／完整度状态。
 # Pos: Data / Catalog 的领域记录、主资料聚合、详情与主缓存实现；见 L2-2-Catalog.md。
-# Effects/Dependencies: 调用 Sources，调度并发详情并读写主缓存；查询可惰性触发详情／效率 I/O；frozen 记录含 dict，不是深度不可变快照。
+# Effects/Dependencies: 调用 Sources，调度并发详情并读写主缓存；分数表 music_data 独立惰性读取，不参加主目录事务；frozen 记录含 dict。
 
 from __future__ import annotations
 
@@ -228,7 +228,7 @@ def character_identity(name: str) -> str:
 class SongRepository:
     CACHE_SCHEMA = 4
 
-    def __init__(self, data_base: str, cache_file: Path, cache_ttl_hours: float = 6) -> None:
+    def __init__(self, data_base: str, cache_file: Path, cache_ttl_hours: float = 6, *, meta_source="moenotes") -> None:
         self.data_base = data_base.rstrip("/")
         self.cache_file = cache_file
         self.cache_ttl_hours = cache_ttl_hours
@@ -243,6 +243,11 @@ class SongRepository:
         self.last_successful_sync_at: str | None = None
         from .sources.haneoka.song_meta import MetaRepository
         self.song_meta = MetaRepository(cache_file.with_name("haneoka-meta-jp.json"))
+        from .sources.moenotes_music_data import MusicDataRepository
+        if meta_source not in {"moenotes", "haneoka"}:
+            raise ValueError("unsupported meta source")
+        self.meta_source = meta_source
+        self.music_data = MusicDataRepository(cache_file.with_name("moenotes-music-data-v1.json"))
         self.song_traits = SongTraitsRepository(cache_file.with_name("haneoka-song-traits-jp.json"))
         from .sources.moenotes_events import EventCutoffRepository
         self.event_cutoffs = EventCutoffRepository(cache_file.parent / "moenotes-cutoff-v1")

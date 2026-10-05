@@ -19,7 +19,7 @@ class MetaFilterTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
-        self.repo = SongRepository("https://bdon.yatta.moe", Path(self.tmp.name) / "cache.json")
+        self.repo = SongRepository("https://bdon.yatta.moe", Path(self.tmp.name) / "cache.json", meta_source="haneoka")
         ident, songs, meta = payload(35)
         self.repo.songs = [Song(int(k), s["musicTitle"][0], tuple(s["musicTitle"]), "MyGO!!!!!", "", "", "", "", "",
                                (Chart("EXPERT", 25, 25, 100, ""),), traits=SongTraits(2, ("JUST", "JUST", "COMBO")))

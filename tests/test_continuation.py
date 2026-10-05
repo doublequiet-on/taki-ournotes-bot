@@ -27,7 +27,7 @@ class Fixture:
     def setup_repo(self):
         temp = tempfile.TemporaryDirectory()
         self.addCleanup(temp.cleanup)
-        self.repo = SongRepository("https://bdon.yatta.moe", Path(temp.name) / "cache.json")
+        self.repo = SongRepository("https://bdon.yatta.moe", Path(temp.name) / "cache.json", meta_source="haneoka")
         ident, songs, meta = payload(35)
         self.repo.songs = [Song(int(k), s["musicTitle"][0], tuple(s["musicTitle"]), "MyGO!!!!!", "", "", "", "", "",
                               (Chart("HARD", 20, 20, 100, ""), Chart("EXPERT", 25, 25, 200, "")),

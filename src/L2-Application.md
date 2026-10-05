@@ -37,6 +37,8 @@ CLI 模式与组合、配置根/数据路径、包身份；为多个系统域提
 
 ## State / Side Effects
 
+`OURNOTES_META_SOURCE` 默认公开 Moenotes 快照，`OURNOTES_CUTOFF_SOURCE` 默认 tracker；两条来源独立回退。可选 `MOENOTES_OPEN_SECRET` 或 `BDON_OPENPLATFORM` 由安全配置提供，前者非空优先，Settings repr 隐去，最低 rankings 权限；正式历史独立路径必须与旧库分开。组合来源不联网或启动采样，既有四服与300秒采样配置保持。
+
 配置加载读取 dotenv 并通过 `setdefault` 补入进程环境，不能描述为完全无写状态。
 除 setup-menu 外，模式都会构造仓库/AI 门面并调用 `load`，可能网络与缓存写入；setup-menu 提前分流但有远端管理副作用。
 bot 模式在 `qq.run_bot` 内重新组装实际使用的 AI/限流/通知组件，Current 并非单一集中组合根。

@@ -18,6 +18,8 @@
 
 ## Core Contracts
 
+分数表通过可选 `QuerySpec.meta_request` 保存完整规范状态，以公开快照事实和有限 Python 统计求值生成 `MetaAnswer`；八类排行与单局排序、四难度共池、缺值与原始值排序均为确定性行为。模型只可提出其他受限资料条件，不能生成计算指标。合同见 [分数表与开放平台](../docs/META_OPEN.md)。
+
 活动榜线以 `QuerySpec.cutoff_request` 和结果的可选 `cutoff: CutoffAnswer` 接入，图文共用不可变快照。直接与自然语言入口均保留服务器／歌曲原序号、趋势／附近／区间／离散模式及目标排名；只有趋势读取曲线历史，查询观测写入仍由来源负责，不使用旧自然语言终态缓存；详见 [Deterministic](ournotes_bot/query/L2-2.md) 与 [Natural](ournotes_bot/natural_query/L2-2.md)。
 
 `QuerySpec/QueryResult` 的当前位置是 [structured_query.py](ournotes_bot/structured_query.py)，`CommandResult` 在 [commands.py](ournotes_bot/commands.py)。专项选择为 `SongAnswer/CardAnswer/MetaAnswer`；实体坐标为 `EntityRef`。这些契约的所有者均是 Query，不因被 QQ/Rendering 使用而归入一个 Shared 域。
@@ -39,7 +41,7 @@ Rendering 消费结果契约，不应由 Query 导入 Rendering。根入口与�
 
 ## State / Side Effects
 
-有限连续查询单独保存有界内存上下文：只复制可见 ID／难度、条件和版本；按平台、会话类型、会话及用户隔离，600 秒无成功续查过期，重启清空。上下文不含 SDK 消息、图片或完整历史库；提交成功与否由平台明确回执决定。
+有限连续查询单独保存有界内存上下文：复制可见 ID／scoreId／难度、完整条件和版本，分数表引用捕获快照；按平台、会话类型、会话及用户隔离，600 秒无成功续查过期，重启清空。上下文不含 SDK 消息、图片或历史库；提交成功与否由平台明确完整交付回执决定。
 
 确定性路径主要计算与读取，但详情补全和效率快照可能联网；别名解析读取本地 JSON。Natural 另有内存计划/终态缓存、持久额度和匿名指标；这三类状态独立于发布通知。
 

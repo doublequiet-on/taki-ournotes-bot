@@ -1,5 +1,5 @@
 # L3
-# Input: QuerySpec、SongRepository；answer_for 可复用已捕获的 QueryResult。
+# Input: QuerySpec（可选分数表 MetaRequest／榜线专项请求）、SongRepository；answer_for 复用捕获结果。
 # Output: resolve_query 返回 QueryResult，保存专项选择供文字／图片消费；answer_for 返回确定性 str。
 # Pos: Query / Deterministic 的共享结构化契约与执行入口；见 query/L2-2.md。
 # Effects/Dependencies: 调用 query 专项模块及根 commands；详情／效率可经 Data 联网或读写缓存，不绘图或导入 QQ。
@@ -20,6 +20,7 @@ from .query.card_catalog import CardAnswer, query_cards
 from .query.song_query import SongAnswer, SongFilter, parse_filter, execute as execute_song_filter
 from .query.event_cutoff_query import CutoffRequest, CutoffAnswer, execute_cutoff
 from .sources.haneoka.song_traits import describe as describe_song
+from .query.meta_parameters import MetaRequest
 
 
 @dataclass(frozen=True)
@@ -42,6 +43,7 @@ class QuerySpec:
     cutoff_request: CutoffRequest | None = None
     song_filter: SongFilter | None = None
     field: str = ""
+    meta_request: MetaRequest | None = None
 
     def __post_init__(self):
         if self.card_query is not None:
@@ -82,6 +84,8 @@ class QuerySpec:
             return f"问 {self.display_name} {self.difficulty} {FIELD_LABELS[self.field]}".replace("  ", " ")
         if self.cutoff_request is not None:
             return self.cutoff_request.command_label()
+        if self.meta_request is not None:
+            return self.meta_request.command_label(limit=self.limit, page=self.page)
         if self.card_query is not None:
             return (("查支援卡 " if self.intent == "support_card" else "查卡 ")
                     + self.card_query + (f" 页{self.page}" if self.page > 1 else ""))

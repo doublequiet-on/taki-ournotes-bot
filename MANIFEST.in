@@ -9,6 +9,8 @@ prune data
 global-exclude *.log *.pyc
 global-exclude *.sqlite3 *.sqlite3-journal *.sqlite3-wal *.sqlite3-shm
 include docs/QUERY_UPGRADE_V1.md docs/CUTOFF_HISTORY.md
+include docs/META_OPEN.md scripts/verify_meta_reference.py
+exclude tests/fixtures/moenotes_meta_minimal.json tests/fixtures/moenotes_meta_reference.json
 include deploy/query-upgrade-v1.env.example
 include scripts/preview_cutoff_trends.py
 

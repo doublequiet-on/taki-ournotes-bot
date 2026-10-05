@@ -2,7 +2,7 @@
 # Input: 自然语言问题与 SongRepository 中的实体记录。
 # Output: QuerySpec | str | None：可信条件、确定性澄清／拒绝提示，或交回上层继续解析。
 # Pos: Query / Natural 的零模型本地解析与能力分流；见 L2-2.md。
-# Effects/Dependencies: 不调用模型、无直接网络；经实体／别名解析可读取本地别名 JSON。
+# Effects/Dependencies: 不调用模型；经实体／别名可读文件，分数表入口经 Data 惰性取得公开快照，解析与执行共用该视图。
 
 """Deterministic, zero-AI parsing for common /问 queries."""
 
@@ -181,6 +181,10 @@ def local_card_rarity_question(query: str, repository: SongRepository) -> QueryS
 
 
 def parse_local_query(query: str, repository: SongRepository) -> QuerySpec | str | None:
+    from ..query.efficiency_query import parse_efficiency
+    efficiency = parse_efficiency(query, repository)
+    if efficiency is not None:
+        return efficiency
     from ..query.event_cutoff_query import parse_natural_cutoff
     cutoff = parse_natural_cutoff(query)
     if cutoff is not None:
@@ -196,10 +200,6 @@ def parse_local_query(query: str, repository: SongRepository) -> QuerySpec | str
     catalog = local_card_catalog(query, repository)
     if catalog is not None:
         return catalog
-    from ..query.efficiency_query import parse_efficiency
-    efficiency = parse_efficiency(query, repository)
-    if efficiency is not None:
-        return efficiency
     rarity = local_card_rarity_question(query, repository)
     if rarity is not None:
         return rarity

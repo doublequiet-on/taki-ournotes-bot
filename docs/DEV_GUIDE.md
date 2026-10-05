@@ -29,10 +29,11 @@
 
 | 任务 | 入口文件＋关键符号 | 相关测试文件 | 按需补读 |
 |---|---|---|---|
+| 分数表／开放平台 | `sources/moenotes_music_data.py::MusicDataRepository`；`query/meta_parameters.py::MetaRequest`、`parse_meta`；`query/meta_model.py::evaluate`、`frontier`；`sources/moenotes_open.py::OpenClient`、`OpenEventCutoffRepository`；`sources/cutoff_history.py::configure_sources`、`SourceHistory` | `test_moenotes_meta.py`、`test_meta_reference.py`、`test_moenotes_open.py`；共享查询／QQ变更跑完整回归 | [META_OPEN](META_OPEN.md)：完整参数、来源例外、两库、认证门槛；默认四难度混合30条，美工冻结，日额度不降频 |
 | 成员卡、支援卡、稀有度 | `query/card_catalog.py::query_cards`、`parse_card_request`；`data.py::card_with_detail`、`support_card_with_detail`；`visuals.py::render_card`、`render_support_card` | `test_card_catalog.py`、`test_query.py`、`test_support_data.py`、`test_reply_pipeline.py` | [卡牌详情说明](更新说明-成员卡与支援卡查询.md) |
 | 成员技能反查 | `natural_query/local_query.py::local_skill_question`；`structured_query.py::matching_skills`、`cards_for`；`sources/yatta.py::build_skills`、`skill_description`；`SongRepository.member_skill_index_ready` | `test_support_data.py`、`test_ai_lexicon.py` | 同上；[昵称规范](../昵称词表维护规范.md) |
 | 歌曲条件、谱面与绘图 | `commands.py::song_matches`；`structured_query.py::songs_for`、`chart_for`；`platforms/qq/qq.py::_chart_image`；`sources/chart_data.py::load_chart_score`；`visuals.py::_draw_score`、`render_chart`；本地样图 `scripts/preview_visuals.py` | `test_query.py`、`test_chart_data.py`、`test_visuals.py`、`test_reply_pipeline.py` | [README 谱面说明](../README.md#谱面怎么看)、[第三方资料](../THIRD_PARTY.md) |
-| Haneoka 歌曲分数表 | `sources/haneoka/song_meta.py::MetaRepository`、`parse_payload`；`query/efficiency_query.py::parse_efficiency`、`execute_efficiency`；共用 `QuerySpec` / `CommandResult` / `QueryResult` 和 `visuals.py::render_meta`、`_render_meta_table`（`MetaAnswer` 捕获数据，全难度逐行表格；默认前 30 条，同曲不同难度分别计数；基础行高紧凑，长标题或多段激奏按内容增高） | `test_song_meta.py`、`test_visuals.py`；修改共享路由后跑完整离线测试 | [README 歌曲效率](../README.md#歌曲效率怎么看)、[第三方资料](../THIRD_PARTY.md)；独立缓存，不改主缓存 schema |
+| Haneoka 分数表显式旧来源 | `sources/haneoka/song_meta.py::MetaRepository`、`parse_payload`；`query/efficiency_query.py::parse_efficiency`、`execute_efficiency`；共用 `QuerySpec` / `CommandResult` / `QueryResult` 和 `visuals.py::render_meta`、`_render_meta_table`（`MetaAnswer` 捕获数据，全难度逐行表格；默认前 30 条，同曲不同难度分别计数；基础行高紧凑，长标题或多段激奏按内容增高） | `test_song_meta.py`、`test_visuals.py`；修改共享路由后跑完整离线测试 | [README 歌曲效率](../README.md#歌曲效率怎么看)、[第三方资料](../THIRD_PARTY.md)；`OURNOTES_META_SOURCE=haneoka`回退，独立缓存，不改主缓存 schema |
 | 自然语言、同义问法 | `natural_query/local_query.py::parse_local_query`；`natural_query/query_agent.py::QueryAgent.run`；`natural_query/query_capabilities.py::local_route`；`natural_query/query_validation.py::validate_capability_action`；`natural_query/query_terms.py::is_skill_placeholder`；`query/song_conditions.py::extract_song_conditions`；`structured_query.py::QuerySpec`、`QueryResult` | `test_query.py`、`test_ai_lexicon.py`、`test_query_refactor.py`、`test_natural_query_eval.py` | [Agent 专项方案](自然语言查询Agent重构方案.md)（含重构前背景，以代码确认现状） |
 | AI 额度、统计、超时 | `ai_client.py::AIClient.request`；`natural_query/ai_quota.py::DailyQuota.reserve`；`natural_query/query_metrics.py::QueryMetrics`；`natural_query/query_debug.py::QueryDebugCounters` | `test_stage5_limits.py`、`test_query_refactor.py`、`test_query_debug.py`、`test_observability.py` | [README 自然语言与设置](../README.md#自然语言数据与运行设置) |
 | 数据接入、缓存、别名 | `sources/yatta.py::fetch_json`、`build_data`、`build_support_cards`；`data.py::SongRepository.load`、`refresh`、`_save_cache`、`_load_cache`；`query/entity_lexicon.py::resolve_exact_alias`；`query_aliases.json` | `test_query.py`、`test_support_data.py`、`test_status.py`、`test_ai_lexicon.py` | [第三方资料](../THIRD_PARTY.md)、[昵称规范](../昵称词表维护规范.md) |
@@ -46,7 +47,7 @@
 - 歌曲颜色／激奏扩展：`sources/haneoka/song_traits.py::SongTraitsRepository` 从 Haneoka 日服按release取完整详情，独立缓存，不改变旧主缓存歌曲行；`Song.traits` 是内存关联。`query/song_query.py::parse_filter/execute/local_query` 共用于直接命令和 `/问`；`QuerySpec.song_query` 仅本地解析产生，不向模型开放任意新字段。新语法经 `CommandResult/QueryResult.song_selection` 捕获同一份结果和覆盖提示，图文不二次查询。QQ在独立后台任务每5分钟检查、快照TTL24小时；来源故障不阻塞原有数据刷新或消息处理。`visuals.py::MISSION_ICON_URLS`、`_mission_marks` 运行时按需读取游戏原生 JUST／COMBO／LUCK 轮廓图标并复用普通素材缓存，缺图只退类型文字。相关测试 `test_song_traits.py`、`test_visuals.py`；事实样例、图标路径和字段依据见 THIRD_PARTY。
 - `bot_info.py` 是消息内介绍文案，`/帮助` 在 commands.py，QQ面板描述在 platforms/qq/menu.py；修改源代码不会自动修改QQ平台资料页简介。`setup-menu` 不再初始化游戏缓存或 AI，仅在新版本已上线后分别核对并安装单聊、群聊面板；内容未变时不重复写入，面板发布仍属于真实 QQ 外部操作。
 
-- 基础歌曲/卡牌资料：`sources/yatta.py` 的 `BASE`、`MASTER`；`SongRepository.refresh` 校验 Project Yume 来源，并构建成员技能索引。完整音符另由 `sources/chart_data.py::CHART_BASE` 读取 MoeNotes 公共资源，`score_name` 限定已知 ID/难度映射。本次不扩展来源，不把外部研究目录当正式接口。
+- 基础歌曲/卡牌资料：`sources/yatta.py` 的 `BASE`、`MASTER`；`SongRepository.refresh` 校验 Project Yume 来源，并构建成员技能索引。完整音符由 `sources/chart_data.py::CHART_BASE` 读取 MoeNotes 公共资源，`score_name` 限定已知 ID/难度。新分数表用独立公开快照视图，旧Haneoka仅显式回退；不把研究目录当生产接口。
 - 主缓存由 `OURNOTES_CACHE_FILE` 指定；`CACHE_SCHEMA`、旧字段兼容、详情失败回退见 `data.py`。TTL 由 `OURNOTES_CACHE_TTL_HOURS` 控制；QQ 后台刷新间隔目前在 `platforms/qq/qq.py::refresh_loop` 固定为六小时，不由此变量控制。
 - 谱面缓存默认 `runtime_data_dir()/chart-cache`，不一定随自定义主缓存路径移动；图片素材缓存见 `visuals.py::_asset`，字体选择见 `_font`。长图自下向上、各栏从左向右；节点数不能直接当判定数或算分公式依据。
 - 卡牌映射 SSR=四星、SR=三星、R=二星；成员生日卡 BD=后台稀有度20，仅用于成员卡，不扩展 SNAP 映射，数字 ID 不当星级。技能按 `sources/yatta.py::skill_description` 的 Lv.5 默认值展示，不代表玩家培养状态。技能索引不完整须保留提示；两类详情同步构建分类索引，`card_catalog_version` 控制旧缓存升级，顶层 `card_catalog` 保持旧卡牌行兼容。
@@ -62,7 +63,7 @@
 | 谱面 | 已实现静态完整音符绘图和缺失回退；局部放大、播放模拟未实现。见 `render_chart`。 |
 | 直接查询与 AI 分工 | 已实现直接查询不调用模型、本地优先的受限 `/问`；不是自由问答。见 `_prepare_reply`、`QueryAgent.run`。 |
 | 活动歌曲榜线、预测、活动/卡池 | `/查榜线` 已实现四服当前／最近活动挑战歌曲 Top 100 观测；不提供历史选择、积分档线或预测。活动、卡池、预测命令仍为未开放占位，见 `commands.py::UNAVAILABLE_COMMANDS`；榜线约束见 [专题](EVENT_CUTOFFS.md)。 |
-| 算分、配队计算 | 未发现可用命令或计算模块；卡牌数值/技能展示不能视为计算器，也不能证明公式正确。候选规则与实测假设须另行验证，本次不研究。 |
+| 算分、配队计算 | 分数表已实现普通五技能的有限统计求值、活动同分模型与数学前沿；不是实际队伍优化、真实积分或游戏公式实证。卡牌展示仍不作为配队计算，见META_OPEN。 |
 | 攻略资料与知识库 | 审核后入库是产品约束；正式审核库、采集和审核流程未实现，见 README 长期方向。未来回答须用可靠数据及审核资料，不能把规划写成已落地。 |
 
 ## 开发与验证命令
@@ -78,6 +79,8 @@ $env:PYTHONPATH = 'src'
 # CLI 参数冒烟：解析帮助后退出，不加载配置/数据
 .\.venv\Scripts\python.exe -B -m ournotes_bot.main --help
 ```
+
+分数表对拍不依赖生产Node／Bun：`python scripts/verify_meta_reference.py <固定快照> <独立上游生成参考>`。清空测试凭据时同时将`MOENOTES_OPEN_SECRET`和`BDON_OPENPLATFORM`置空；真实Secret不从聊天或生产配置读取。最小参考回归在`test_meta_reference.py`，全量参考文件及样图留在仓库外。
 
 单模块测试替换 `pattern` 为导航表对应文件；入口依据为 CI 的 `unittest discover -s tests -q`，这里用等价 loader 在 Python 进程内清空凭据，避免 Windows PowerShell 空环境变量处理差异。测试使用桩和临时数据；新增测试同样不得依赖生产缓存或收费服务。不要把 `query`/`repl` 当纯只读离线验证：启动会 `SongRepository.load`，可能刷新缓存；`/问` 还可能调用模型。
 

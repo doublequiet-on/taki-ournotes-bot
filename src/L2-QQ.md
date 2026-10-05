@@ -19,6 +19,8 @@
 
 ## Core Contracts
 
+分数表 `PreparedReply` 预分配完整文字回退所需的被动回复槽；图片成功仍只发一张，上传失败才按已捕获分片发送。总预算仍最多五条，超过预算明确要求前10或拆开命令；不截数据、不重复取源。分片未全部确认时不提交续查上下文，后续命令的 msg_seq 按预分配槽推进。
+
 [qq.py](ournotes_bot/platforms/qq/qq.py) 中：
 `QueryGate` 管容量，取消请求后仍等待后台线程释放容量；
 `ReplySequencer` 管批间次序，等待超时可退化为无序；

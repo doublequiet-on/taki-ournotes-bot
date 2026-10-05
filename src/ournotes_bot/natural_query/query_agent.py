@@ -247,7 +247,9 @@ class QueryAgent:
         if tracked:
             self.metrics.increment("ask_total")
 
-        if not question or len(question) > 100:
+        from ..query.efficiency_query import MARKER, FORBIDDEN, parse_efficiency
+        meta_question = bool(MARKER.search(question))
+        if not question or len(question) > (1024 if meta_question else 100):
             return self._finish_terminal(
                 state, OutcomeCode.INVALID_ARGUMENTS,
                 "用法：/问 <想查的歌曲、谱面、成员卡、技能或支援卡>，最多 100 字。",
@@ -258,6 +260,20 @@ class QueryAgent:
         if parse_operation(question) is not None:
             return self._finish_terminal(state, OutcomeCode.INVALID_ARGUMENTS, MISSING,
                                          tracked=tracked, local=True, cache=False)
+
+        # Explicit meta intent owns 前N/技能/等级 groups. Use the captured public
+        # view before cutoff/field/card routing and bypass the agent's plan cache.
+        if meta_question and not FORBIDDEN.search(question):
+            meta = parse_efficiency(question, repository)
+            if isinstance(meta, str):
+                return self._finish_terminal(state, self._message_code(meta), meta,
+                                             tracked=tracked, local=True, cache=False)
+            if meta is not None:
+                outcome = self._execute_spec(state, meta, repository)
+                if tracked:
+                    self.metrics.increment("local_success" if outcome.code == OutcomeCode.SUCCESS else "local_terminal_reject")
+                self._remember_state(question, state)
+                return outcome
 
         # Cutoffs are live source snapshots: bypass stale plan/terminal caches and AI quotas.
         from ..query.event_cutoff_query import parse_natural_cutoff
