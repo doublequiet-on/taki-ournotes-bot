@@ -364,6 +364,8 @@ def _execute_moenotes(spec, repository):
     if not 0 <= age <= MAX_STALE:
         return MetaAnswer("分数表捕获快照已过期，请重新查询。", status="data_unavailable")
     snapshot = replace(snapshot, stale=snapshot.stale or age >= TTL)
+    if request.ranking in {"efficiency", "score", "event"} and not snapshot.model_supported:
+        return MetaAnswer("上游计算模型未验证兼容，计算排行暂不可用；请稍后重查或使用基础事实排行。", status="data_unavailable")
     if spec.limit not in {10, 20, 30} or not 1 <= spec.page <= 100:
         return MetaAnswer("数量或页码不正确。", status="invalid_arguments")
     versions = (snapshot.version, EVALUATOR_VERSION, str(alias_version()))
@@ -465,6 +467,8 @@ def _execute_moenotes(spec, repository):
     notes += (f"本机获取：{fetched} UTC+8（非数据生成时间）",)
     diagnostics = (f"正文SHA：{snapshot.version}；模型：{model_format} · {EVALUATOR_VERSION}",
                    f"HTTP发布头：{snapshot.last_modified or '未提供'}（不是生成时间）")
+    if snapshot.model_warning:
+        notes += (snapshot.model_warning,)
     if not snapshot.model_supported:
         notes += ("模型未支持，计算指标不可用；基础事实排行仍可使用。",)
     absent_difficulties = ()

@@ -22,6 +22,10 @@
 
 依据：[公开快照](https://storage.bdon.moe/moenotes/music-data/music-data.json)、[OpenAPI](https://bdon.moe/api/open/openapi.json)、[catalog](https://bdon.moe/api/open/catalog)、[固定模型](https://github.com/empty-sekai/ournotes-deck/tree/e27d289d549aff74955977659e1bee5c72d6a4f5)、[排名合同](https://github.com/StarMoe-org/moenotes-api/blob/d094de568c570889b318e9490574da678fddf26d/docs/rankings.md)。来源许可另见 [THIRD_PARTY](../THIRD_PARTY.md)。
 
+当前兼容策略保留上述无源码指纹的旧提交，并支持 [0.0.3 模型](https://github.com/empty-sekai/ournotes-deck/tree/31d74487c4fd9e5dc3c1d4f34be8dee8f1a75b0e)的 `sourceSha256=6f8353c73e9bfe33349d5d65a1c8a9c9ad1eadeb8f80e462a18e894b66b1f7c3`。已按上游 `build.rs` 的有序路径及内容长度前缀重算并核对源码摘要；其 chart-stats/2 既有统计计算合同保持，新增幸运表不参与本求值器。当前348谱面的独立前端参考对拍通过，模型仍是有限统计参考，不等于游戏实测。
+
+提供源码指纹时以已验证指纹及格式为准，同指纹的不同版本／提交自动兼容；未知或非法指纹不能借旧提交通过校验。没有指纹时仅允许原固定提交，不凭格式名称接受未知计算规则。验证工具要求参考模型提交与输入快照一致，并通过同一兼容校验，保留旧参考回归。
+
 ## 配置、启用与回退
 
 | 配置 | 默认／作用 |
@@ -114,6 +118,10 @@ efficiency = unit_score × 60000 / (实际音乐长度ms + 曲外耗时ms)
 ## 缓存、预算和视觉
 
 快照TTL300秒，ETag／Last-Modified条件重验证；304只更新验证时刻，保留原成功获取时刻。传输8MiB、解压32MiB分别流式限额，gzip截断／拼接／坏JSON拒绝。只保留求值必要投影，丢弃aptitude／SNAP／回放大对象。校验成功后原子写入新命名空间，写盘失败仅内存可用且标未落盘；格式／身份异常保留上次版本。失败退避30→60→120→300秒并加有限抖动，同源旧快照最长24小时，明确旧缓存。
+
+默认 Moenotes 来源由 QQ 运行时显式启动一个 `MusicDataRefresher`：上线立即读取，此后每300秒检查；重连复用未结束的任务，退出取消任务并等待进行中的有界获取。来源初始化、Haneoka回退和菜单入口不启动它，后台任务不发送消息；查询与后台共用刷新锁、条件请求和退避。意外异常记录类型后等待下一周期，无忙重试。
+
+当前事实仍写 `moenotes-music-data-v1.json`；最后兼容计算快照独立写 `moenotes-music-data-v1-compatible.json`，沿用原schema1封装，不迁移或覆盖其他数据。兼容快照在发布新当前缓存前原子保存；重启后校验身份、投影摘要、时间和模型。未知模型不会续期兼容快照，包括未知当前快照的304重验证。计算查询的实体、属性和统计全部取同一份兼容快照并注明上游模型变化；基础事实排行取当前快照，禁止拼接。超过24小时或首次安装没有有效兼容快照时返回data_unavailable，不把模型失效显示为0条排行。之后出现已验证兼容的数据自动恢复。
 
 求值LRU至多64组，按完整规范参数、快照SHA与求值器版本隔离，页码作为完整结果投影；缓存状态加锁，计算可在锁外执行。完整求值／前沿预算8秒，种子和前沿循环内检查截止时间，超时不给部分排行。捕获快照超过24小时、版本变化或续查失效均明确终止。
 

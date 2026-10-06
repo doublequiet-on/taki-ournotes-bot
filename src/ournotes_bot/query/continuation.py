@@ -115,6 +115,8 @@ def dependency_version(repository, query) -> tuple[str, str]:
         if query.meta_request is not None:
             from .meta_model import EVALUATOR_VERSION
             snapshot = repository.music_data.peek()
+            if snapshot and query.meta_request.ranking in {"efficiency", "score", "event"}:
+                snapshot = repository.music_data.for_calculation(snapshot)
             return str(alias_version()), (snapshot.version + "/" + EVALUATOR_VERSION) if snapshot else ""
         snapshot = getattr(getattr(repository, "song_meta", None), "_snapshot", None)
         if snapshot is not None:

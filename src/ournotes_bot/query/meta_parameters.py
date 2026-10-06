@@ -2,7 +2,7 @@
 # Input: 分数表命令／确定性问句及一份已验证的 Moenotes 视图。
 # Output: MetaRequest/QuerySpec 或 QueryProblem；默认自由／激奏双榜、裸颜色／任务词及完整条件。
 # Pos: Query / Deterministic 的分数表专用参数合同；见 L2-2.md。
-# Effects/Dependencies: 入口惰性取得公开快照并读取审核别名；后续解析无平台／模型调用。
+# Effects/Dependencies: 入口取得公开快照，计算模型变化时用完整兼容快照重解析；读取审核别名，无平台／模型调用。
 """Strict, order-independent parameter groups for the finite music model."""
 from __future__ import annotations
 
@@ -121,10 +121,18 @@ def numeric(text, lo, hi, *, places=0):
 
 
 def parse_meta(query, repository, *, natural=False):
-    from ..structured_query import QuerySpec
     snapshot = repository.music_data.get()
     if snapshot is None:
         return QueryProblem("分数表公开快照暂不可用，请稍后重试；其他查询仍可使用。", "data_unavailable")
+    compatible = repository.music_data.for_calculation(snapshot)
+    result = _parse_meta(query, repository, compatible, natural=natural)
+    if compatible is not snapshot and (isinstance(result, str) or result.meta_request.ranking not in {"efficiency", "score", "event"}):
+        return _parse_meta(query, repository, snapshot, natural=natural)
+    return result
+
+
+def _parse_meta(query, repository, snapshot, *, natural=False):
+    from ..structured_query import QuerySpec
     songs = snapshot.songs()
     view = SimpleNamespace(songs=songs, cards=(), support_cards=())
     text = unicodedata.normalize("NFKC", query).strip().strip("?？。!！")
@@ -309,6 +317,8 @@ def parse_meta(query, repository, *, natural=False):
             song_id = candidates[0].id
         limit, page = values.pop("limit", 30), values.pop("page", 1)
         rank = values.get("ranking", "efficiency")
+        if rank in {"efficiency", "score", "event"} and not snapshot.model_supported:
+            return QueryProblem("上游计算模型已变化，暂无有效兼容快照；分数／效率排行暂不可用，Notes、等级、速度、长度等基础事实排行仍可使用。", "data_unavailable")
         values.setdefault("scene", "battle" if filters.mode else "free")
         values["compare_scenes"] = rank in {"efficiency", "score", "event"} and "scene" not in explicit and not filters.mode
         if rank not in {"efficiency", "score", "event"} and "scene" in explicit:

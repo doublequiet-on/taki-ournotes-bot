@@ -669,11 +669,13 @@ def run_bot(app_id: str, app_secret: str, repository: SongRepository, settings: 
     query_gate = QueryGate(settings.query_concurrency, settings.query_queue_limit)
     from ...sources.cutoff_history import configure_sources
     from ...sources.cutoff_sampler import HistorySampler
+    from ...sources.moenotes_music_data import MusicDataRefresher
     if repository.event_cutoffs.history is None:
         configure_sources(repository, settings)
     sampler = HistorySampler(repository.event_cutoffs, servers=settings.cutoff_sampling_servers,
                              interval=settings.cutoff_sampling_interval) if settings.cutoff_sampling_enabled else None
     repository.cutoff_sampler = sampler
+    music_refresher = MusicDataRefresher(repository.music_data) if repository.meta_source == "moenotes" else None
     reply_sequencer = ReplySequencer(enabled=settings.reply_order)
     contexts = ContextStore()
     notice_ai = (AIClient(settings.ai_base_url, settings.ai_api_key, settings.ai_model)
@@ -783,6 +785,8 @@ def run_bot(app_id: str, app_secret: str, repository: SongRepository, settings: 
                 self._song_traits_task = asyncio.create_task(song_traits_loop())
             if sampler:
                 sampler.start()
+            if music_refresher:
+                music_refresher.start()
             if notifier and (not hasattr(self, "_notice_task") or self._notice_task.done()):
                 self._notice_task = asyncio.create_task(notifier.run(self.api))
 
@@ -790,5 +794,7 @@ def run_bot(app_id: str, app_secret: str, repository: SongRepository, settings: 
     try:
         ClientWithRefresh(intents=intents).run(appid=app_id, secret=app_secret)
     finally:
+        if music_refresher:
+            music_refresher.stop()
         if sampler:
             sampler.stop()
