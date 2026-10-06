@@ -1,6 +1,6 @@
 # L3
 # Input: 已选歌曲／单卡／当前页列表、Song／Chart 与可选谱面 score dict、MetaAnswer、条件／locale／页脚；render_catalog 消费 CardAnswer。
-# Output: render 返回编码 bytes；分数表沿用单表样式，双榜并列绘制后统一编码，不再次求值。
+# Output: render 返回编码 bytes；分数表串行绘图，双榜逐表合成后统一编码，不再次求值。
 # Pos: Rendering 的共享主题／素材、歌曲绘图与卡牌委托入口；见 rendering/L2-2-Core.md、rendering/L2-2-Song.md、rendering/L2-2-Card.md。
 # Effects/Dependencies: 字体／素材读取、允许来源下载；素材完整解码后原子缓存，旧坏缓存有限重取；委托 rendering 绘图器，成员列表可间接刷新 Haneoka；不调用模型或上传 QQ。
 
@@ -41,6 +41,7 @@ MOTIF_INK = "#A0A8C7"
 MOTIF_MUTED = "#BBC1D7"
 FABRIC_TILE_SIZE = 640
 RENDER_SCALE = 2
+_META_RENDER_EXECUTOR = ThreadPoolExecutor(max_workers=1, thread_name_prefix="taki-meta-render")
 DIFFICULTY_COLORS = {
     "EASY": ("#D4E2F5", "#799CC8"),
     "NORMAL": ("#D3E8DF", "#78A793"),
@@ -778,30 +779,53 @@ def render_chart(song: Song, charts: tuple[Chart, ...], locale: str = "zh", scor
 
 
 def render_meta(answer: MetaAnswer) -> bytes:
+    # Reuse one worker's allocator arena as well as bounding concurrent canvases.
+    return _META_RENDER_EXECUTOR.submit(_render_meta, answer).result()
+
+
+def _render_meta(answer: MetaAnswer) -> bytes:
     if answer.panels:
-        panels = [_meta_image(panel) for panel in answer.panels]
+        # Capture native marks once so measuring and drawing use the same assets.
+        songs = tuple(song for panel in answer.panels for song in panel.song_records)
+        marks = _song_marks(songs)
+        mission_marks = _mission_marks(songs)
+        dimensions = [_meta_image(panel, size_only=True, marks=marks, mission_marks=mission_marks)
+                      for panel in answer.panels]
         gap = 20 * RENDER_SCALE
-        panel_width = max(p.width for p in panels)
-        width = panel_width * len(panels) + gap * (len(panels) - 1)
-        height = max(p.height for p in panels)
+        panel_width = max(size[0] for size in dimensions)
+        width = panel_width * len(answer.panels) + gap * (len(answer.panels) - 1)
+        height = max(size[1] for size in dimensions)
         image, _ = _background(width // RENDER_SCALE, math.ceil(height / RENDER_SCALE), scale=RENDER_SCALE)
-        x = 0
-        for panel in panels:
-            image.paste(panel, (x, 0))
-            x += panel_width + gap
+        try:
+            x = 0
+            for panel in answer.panels:
+                rendered = _meta_image(panel, marks=marks, mission_marks=mission_marks)
+                try:
+                    image.paste(rendered, (x, 0))
+                finally:
+                    rendered.close()
+                x += panel_width + gap
+            return _bytes(image)
+        finally:
+            image.close()
+    image = _meta_image(answer)
+    try:
         return _bytes(image)
-    return _bytes(_meta_image(answer))
+    finally:
+        image.close()
 
 
-def _meta_image(answer: MetaAnswer) -> Image.Image:
+def _meta_image(answer: MetaAnswer, *, size_only=False, marks=None, mission_marks=None) -> Image.Image | tuple[int, int]:
     # Both forms use the captured answer; drawing never fetches or sorts again.
     if answer.cells:
-        return _render_meta_table(answer, raw=True)
+        return _render_meta_table(answer, raw=True, size_only=size_only, marks=marks, mission_marks=mission_marks)
     text = answer.text
     title = answer.title if answer.complete_text else "歌曲效率"
     _, measure = _canvas(900, 200, title)
     lines = [part for line in text.splitlines()
              for part in _wrapped_lines(measure, line, 792, 22, max_lines=len(line) + 1)]
+    if size_only:
+        return 900 * RENDER_SCALE, (185 + len(lines) * 32) * RENDER_SCALE
     image, draw = _canvas(900, 185 + len(lines) * 32, title)
     draw.rounded_rectangle((38, 136, 862, image.height // RENDER_SCALE - 24), radius=18, fill="#FFFFFF", outline=BORDER, width=2)
     top = 145
@@ -811,7 +835,7 @@ def _meta_image(answer: MetaAnswer) -> Image.Image:
     return image
 
 
-def _render_meta_table(answer: MetaAnswer, *, raw=False) -> bytes | Image.Image:
+def _render_meta_table(answer: MetaAnswer, *, raw=False, size_only=False, marks=None, mission_marks=None) -> bytes | Image.Image | tuple[int, int]:
     # One row per song+difficulty; use the captured values, never recalculate metrics.
     width, row_height = 1500, 112
     edges = (40, 105, 660, 820, 960, 1180, 1460)
@@ -819,8 +843,8 @@ def _render_meta_table(answer: MetaAnswer, *, raw=False) -> bytes | Image.Image:
     full_scope = _wrapped_lines(measure, answer.scope, width - 100, 24, max_lines=len(answer.scope) + 1)
     scope = full_scope[:4]
     rows_y = 158 + 34 * len(scope)
-    marks = _song_marks(answer.song_records)
-    mission_marks = _mission_marks(answer.song_records)
+    marks = _song_marks(answer.song_records) if marks is None else marks
+    mission_marks = _mission_marks(answer.song_records) if mission_marks is None else mission_marks
     heights = []
     probe, pd = _background(width, 1)
     for i in range(len(answer.cells)):
@@ -841,6 +865,8 @@ def _render_meta_table(answer: MetaAnswer, *, raw=False) -> bytes | Image.Image:
     page_y = table_bottom + 20
     notes_y = page_y + 36 + len(page_lines) * 38 + 18
     notes_bottom = notes_y + 52 + sum(18 if not line else 34 for line in note_lines)
+    if size_only:
+        return width * RENDER_SCALE, (notes_bottom + 46) * RENDER_SCALE
     image, draw = _canvas(width, notes_bottom + 46, answer.title)
     draw.rounded_rectangle((36, 132, width - 36, rows_y - 8), radius=18, fill=PAPER)
     for i, line in enumerate(scope):
