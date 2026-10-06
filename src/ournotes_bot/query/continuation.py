@@ -228,7 +228,7 @@ def execute_followup(context: QueryContext, operation: Operation, repository):
                 return QueryProblem("只有歌曲或分数表结果可以切换难度。", "invalid_arguments")
             if not operation.value:
                 return QueryProblem("难度支持 EASY / NORMAL / HARD / EXPERT（EZ / NM / HD / EX）。", "invalid_arguments")
-            selected = replace(selected, difficulty=operation.value)
+            selected = replace(selected, difficulty=operation.value, score_id=None)
         if selected.kind == "efficiency":
             query = context.query
             shared = query.song_filter
@@ -252,6 +252,12 @@ def execute_followup(context: QueryContext, operation: Operation, repository):
         else:
             spec = QuerySpec(selected.kind, card_query=str(selected.entity_id))
         result = resolve_query(spec, repository)
+        if result.status == "success" and selected.kind == "efficiency" and result.meta is not None:
+            ids = {getattr(row, "score_id", None) for row in result.meta.rows}
+            if len(ids) == 1:
+                # A difficulty change resolves a new chart. Commit that chart's
+                # identity, including when one chart is displayed in two scenes.
+                selected = replace(selected, score_id=ids.pop())
         candidate = replace(context, selected=selected) if result.status == "success" else None
     else:
         return QueryProblem("用法：/下一页、/上一页、/选 2、/详情、/难度 EX。", "invalid_arguments")
