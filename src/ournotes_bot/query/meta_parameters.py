@@ -1,6 +1,6 @@
 # L3
 # Input: 分数表命令／确定性问句及一份已验证的 Moenotes 视图。
-# Output: MetaRequest/QuerySpec 或 QueryProblem；完整命令可复制，可读摘要保留有效条件，引号内文本不改写。
+# Output: MetaRequest/QuerySpec 或 QueryProblem；默认自由／激奏双榜、裸颜色／任务词及完整条件。
 # Pos: Query / Deterministic 的分数表专用参数合同；见 L2-2.md。
 # Effects/Dependencies: 入口惰性取得公开快照并读取审核别名；后续解析无平台／模型调用。
 """Strict, order-independent parameter groups for the finite music model."""
@@ -20,15 +20,25 @@ from .song_identity import QueryProblem, exact_songs
 from .song_query import DIFFS, SongFilter, parse_filter, serialize_filter
 
 HELP = ("用法：/查分数表 [歌曲或乐队] [HD,EX] [排行=效率/活动/速度/等级/Notes/最长/最短/跳过得分] [前10/20/30] [页2]。\n"
-        "默认四难度混合效率榜、激奏、三段第1、Great=0、Just=100、五技能100%、BGM、曲外30秒；单曲默认EX。\n"
-        "可用：场景=自由/激奏 激奏排名=1,2,3 技能=150,130,120,100,100 时长=谱面 额外耗时=30 前沿；"
-        "活动另支持目标=SS 综合力=300000 人数=5；旧颜色、激奏任务、lv边界、指标=eff/score和排序保留。")
+        "默认同图并列自由／激奏四难度效率榜；单曲默认EX。单人=自由，多人=激奏，明确场景只显示一榜。\n"
+        "颜色可直接写红/蓝/绿/黄/紫；任务可写JUST、纯COMBO、混合、JUST/JUST/COMBO、包含全部JUST/COMBO，"
+        "任务词未指定场景时默认激奏；英文难度与任务词不区分大小写。指标=eff/score和排序保留。")
 RANKS = {"效率": "efficiency", "eff": "efficiency", "efficiency": "efficiency", "单局": "score", "score": "score",
          "活动": "event", "event": "event", "速度": "speed", "speed": "speed", "等级": "level", "level": "level",
          "notes": "notes", "note": "notes", "最长": "longest", "longest": "longest", "最短": "shortest", "shortest": "shortest",
          "跳过得分": "skip", "跳过": "skip", "skip": "skip"}
 RANK_LABELS = {v: k for k, v in RANKS.items() if k in ("效率", "单局", "活动", "速度", "等级", "Notes", "最长", "最短", "跳过得分")}
 RANK_LABELS["notes"] = "Notes"
+SCENES = {"自由": "free", "单人": "free", "free": "free",
+          "激奏": "battle", "多人": "battle", "battle": "battle"}
+TASK_WORD = re.compile(r"(?:纯|包含全部|包含)?(?:JUST|COMBO|LUCK)(?:[/,+](?:JUST|COMBO|LUCK))*|混合", re.I)
+REMOVED_FIELDS = {"激奏排名", "great", "just", "技能", "时长", "额外耗时", "前沿", "目标", "综合力", "人数"}
+
+
+def filter_label(filters):
+    """Keep shared song filters intact; meta commands use the shorter task words."""
+    text = serialize_filter(replace(filters, query="", term="", band="", difficulty=""))
+    return re.sub(r"(?<!\S)激奏=", "", text)
 
 
 @dataclass(frozen=True)
@@ -40,7 +50,8 @@ class MetaRequest:
     difficulties: tuple[str, ...] = DIFFICULTIES
     ranking: str = "efficiency"
     speed: str = "density"
-    scene: str = "battle"
+    scene: str = "free"
+    compare_scenes: bool = False
     ranks: tuple[int, ...] = (1, 1, 1)
     great: int = 0
     just: int = 100
@@ -67,22 +78,10 @@ class MetaRequest:
         if self.search:
             parts.append("搜索：" + self.search)
         if self.ranking in {"efficiency", "score", "event"}:
-            parts += ["激奏" if self.scene == "battle" else "自由", f"Great {self.great}%"]
-            if self.scene == "battle":
-                parts += [f"Just {self.just}%", "三段名次 " + "/".join(map(str, self.ranks))]
-            skills = (f"全{self.skills[0]:g}%" if len(set(self.skills)) == 1
-                      else "/".join(f"{v:g}" for v in self.skills) + "%")
-            parts += ["技能 " + skills, f"曲外 {self.overhead_ms / 1000:g}秒"]
+            parts.append("自由／激奏双榜" if self.compare_scenes else "多人（激奏）" if self.scene == "battle" else "单人（自由）")
         if self.ranking == "speed":
             parts.append({"density": "N/s", "bpm": "主要BPM", "bpm_max": "最大BPM"}[self.speed])
-        parts.append("时长 " + ("BGM" if self.duration == "bgm" else "谱面"))
-        if self.ranking in {"efficiency", "event"}:
-            parts.append("仅前沿" if self.front else "不限前沿")
-        if self.ranking == "event":
-            parts += ["目标 " + self.target, f"综合力 {self.power}" if self.power else "综合力未设"]
-            if self.scene == "battle":
-                parts.append(f"{self.people}人同分房间")
-        legacy = serialize_filter(replace(self.filters, query="", term="", band="", difficulty=""))
+        legacy = filter_label(self.filters)
         if legacy:
             parts.append(legacy)
         return " · ".join(parts)
@@ -96,22 +95,11 @@ class MetaRequest:
         if self.band:
             parts.append("乐队=" + shlex.quote(self.band))
         parts += [",".join(self.difficulties), "排行=" + RANK_LABELS[self.ranking]]
-        if self.ranking in {"efficiency", "score", "event"}:
-            parts += ["场景=" + ("激奏" if self.scene == "battle" else "自由"), f"Great={self.great}",
-                      "技能=" + ",".join(f"{v:g}" for v in self.skills)]
-            if self.scene == "battle":
-                parts += ["激奏排名=" + ",".join(map(str, self.ranks)), f"Just={self.just}"]
-            parts.append(f"额外耗时={self.overhead_ms / 1000:g}")
+        if self.ranking in {"efficiency", "score", "event"} and not self.compare_scenes:
+            parts.append("场景=" + ("多人" if self.scene == "battle" else "单人"))
         if self.ranking == "speed":
             parts.append("速度=" + {"density": "N/s", "bpm": "BPM", "bpm_max": "最大BPM"}[self.speed])
-        parts.append("时长=" + ("BGM" if self.duration == "bgm" else "谱面"))
-        if self.ranking in {"efficiency", "event"}:
-            parts.append("前沿=" + ("是" if self.front else "否"))
-        if self.ranking == "event":
-            parts += [f"目标={self.target}", f"综合力={self.power}"]
-            if self.scene == "battle":
-                parts.append(f"人数={self.people}")
-        legacy = serialize_filter(replace(self.filters, query="", term="", band="", difficulty=""))
+        legacy = filter_label(self.filters)
         if legacy:
             parts.append(legacy)
         parts += [f"排序={self.order}", f"前{limit}", f"页{page}"]
@@ -155,6 +143,10 @@ def parse_meta(query, repository, *, natural=False):
     names.update(known_alias_names(view))
     placeholders = {}
     for name in sorted(names, key=len, reverse=True):
+        # Newly introduced bare words are parameters. Explicit/quoted song and
+        # band fields still resolve entities with these exact names.
+        if name in {"单人", "多人", "红", "蓝", "绿", "黄", "紫"} or TASK_WORD.fullmatch(name):
+            continue
         left = r"(?<![A-Za-z0-9_])" if name[0].isascii() and name[0].isalnum() else ""
         right = r"(?![A-Za-z0-9_])" if name[-1].isascii() and name[-1].isalnum() else ""
         pattern = re.compile(left + re.escape(name) + right, re.I)
@@ -224,6 +216,10 @@ def parse_meta(query, repository, *, natural=False):
             lower = t.casefold()
             if token in placeholders or token in quoted:
                 bare.append(t)
+            elif sep and key in REMOVED_FIELDS or lower == "前沿":
+                raise ValueError(f"「{key}」参数已移除")
+            elif re.match(r"^lv\.?(?:[<>=]|\d)", lower):
+                raise ValueError("分数表等级筛选已移除；等级排行仍可使用")
             elif sep and key in {"歌曲", "搜索", "乐队"}:
                 if not value:
                     raise ValueError(f"{key}不能为空")
@@ -241,42 +237,11 @@ def parse_meta(query, repository, *, natural=False):
                     raise ValueError("速度支持 N/s、BPM、最大BPM")
                 set_value("speed", v)
                 set_value("ranking", "speed")
-            elif (sep and key == "场景") or t in {"激奏", "自由"}:
-                scene = {"激奏": "battle", "自由": "free", "battle": "battle", "free": "free"}.get(value.casefold() if sep else t)
+            elif (sep and key == "场景") or t in {"激奏", "自由", "单人", "多人"}:
+                scene = SCENES.get(value.casefold() if sep else t)
                 if scene is None:
-                    raise ValueError("场景支持激奏／自由")
+                    raise ValueError("场景支持单人／自由、多人／激奏")
                 set_value("scene", scene)
-            elif sep and key == "激奏排名":
-                ranks = tuple(numeric(v, 1, 5) for v in value.split(","))
-                if len(ranks) not in {1, 3}:
-                    raise ValueError("激奏排名需为一个或三个整数")
-                set_value("ranks", ranks * 3 if len(ranks) == 1 else ranks)
-            elif sep and key in {"great", "just"}:
-                set_value(key, numeric(value.removesuffix("%"), 0, 100))
-            elif sep and key == "技能":
-                preset = {"全150": (150,) * 5, "全100": (100,) * 5, "无": (0,) * 5}.get(value)
-                skills = preset if preset is not None else tuple(numeric(v.removesuffix("%"), 0, 150, places=2) for v in value.split(","))
-                if len(skills) != 5:
-                    raise ValueError("技能必须恰好五值")
-                set_value("skills", skills)
-            elif sep and key == "时长":
-                v = {"bgm": "bgm", "谱面": "chart", "chart": "chart"}.get(value.casefold())
-                if v is None:
-                    raise ValueError("时长支持 BGM／谱面")
-                set_value("duration", v)
-            elif sep and key == "额外耗时":
-                set_value("overhead_ms", int(Decimal(value) * 1000) if numeric(value, 0, 600, places=2) >= 0 else 0)
-            elif t == "前沿" or sep and key == "前沿":
-                v = {"是": True, "否": False, "true": True, "false": False}.get(value.casefold() if sep else "是")
-                if v is None:
-                    raise ValueError("前沿支持是／否")
-                set_value("front", v)
-            elif sep and key == "目标":
-                if value.upper() not in {"D", "C", "B", "A", "S", "SS"}:
-                    raise ValueError("目标支持 D/C/B/A/S/SS")
-                set_value("target", value.upper())
-            elif sep and key in {"综合力", "人数"}:
-                set_value("power" if key == "综合力" else "people", numeric(value, 0 if key == "综合力" else 1, 2**31 - 1 if key == "综合力" else 5))
             elif (sep and key in {"排序", "sort"}) or t in {"最高", "最低"}:
                 v = value.casefold() if sep else "asc" if t == "最低" else "desc"
                 if v not in {"asc", "desc"}:
@@ -297,9 +262,11 @@ def parse_meta(query, repository, *, natural=False):
                     else:
                         raise ValueError("难度无法识别")
                 explicit.add("difficulties")
-            elif key in {"颜色", "属性"} and sep or re.fullmatch(r"[红蓝绿黄紫]色(?:[/,或][红蓝绿黄紫]色)*", t):
-                colors.update(parse_filter(t, view, force=True, efficiency=True).colors)
-            elif re.match(r"^(?:激奏|击奏|纯(?:JUST|COMBO|LUCK)|lv)", t, re.I):
+            elif key in {"颜色", "属性"} and sep or re.fullmatch(r"[红蓝绿黄紫](?:色)?(?:[/,或][红蓝绿黄紫](?:色)?)*", t):
+                colors.update(parse_filter("颜色=" + t if not sep else t, view, force=True, efficiency=True).colors)
+            elif TASK_WORD.fullmatch(t):
+                rest.append("激奏=" + t)
+            elif re.match(r"^(?:激奏|击奏)", t, re.I):
                 rest.append(t)
             elif t in {"分数表", "排行", "排行榜", "排名", "效率榜", "meta", "哪些歌", "有哪些", "查看", "查一下", "请", "帮我", "的"}:
                 continue
@@ -312,11 +279,11 @@ def parse_meta(query, repository, *, natural=False):
             f = parse_filter(t, view, force=True, efficiency=True)
             if f.term:
                 raise ValueError("无法识别全部条件")
-            for key in ("mode", "missions", "comparison", "level"):
+            for key in ("mode", "missions"):
                 v = getattr(f, key)
                 if v not in ("", (), None):
                     if key in legacy_values and legacy_values[key] != v:
-                        raise ValueError("任务或等级条件冲突")
+                        raise ValueError("任务条件冲突")
                     legacy_values[key] = v
         filters = SongFilter("", colors=tuple(sorted(colors)), **legacy_values)
         filters = replace(filters, query=serialize_filter(filters))
@@ -342,15 +309,10 @@ def parse_meta(query, repository, *, natural=False):
             song_id = candidates[0].id
         limit, page = values.pop("limit", 30), values.pop("page", 1)
         rank = values.get("ranking", "efficiency")
-        scene = values.get("scene", "battle")
-        if rank not in {"efficiency", "score", "event"} and explicit & {"scene", "ranks", "great", "just", "skills", "overhead_ms"}:
-            raise ValueError("此排行不适用场景／准度／技能／曲外耗时")
-        if rank != "event" and explicit & {"target", "power", "people"}:
-            raise ValueError("目标、综合力、人数仅适用活动排行")
-        if rank not in {"efficiency", "event"} and "front" in explicit:
-            raise ValueError("前沿仅适用效率及活动排行")
-        if scene == "free" and explicit & {"just", "ranks", "people"}:
-            raise ValueError("自由场景不适用 Just、激奏排名或人数")
+        values.setdefault("scene", "battle" if filters.mode else "free")
+        values["compare_scenes"] = rank in {"efficiency", "score", "event"} and "scene" not in explicit and not filters.mode
+        if rank not in {"efficiency", "score", "event"} and "scene" in explicit:
+            raise ValueError("此排行不适用计算场景")
         if "order" not in values:
             values["order"] = "asc" if rank == "shortest" or rank == "event" and not values.get("power") else "desc"
         ds = tuple(d for d in DIFFICULTIES if d in difficulty_set) if difficulty_set else ("EXPERT",) if song_id is not None else DIFFICULTIES

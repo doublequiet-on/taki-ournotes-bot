@@ -171,7 +171,7 @@ class MetaModelTests(unittest.TestCase):
         self.chart = self.song["charts"][0]
 
     def test_hand_calculated_units_and_scenes(self):
-        req = MetaRequest()
+        req = MetaRequest(scene="battle")
         r = evaluate(self.song, self.chart, self.snapshot, req)
         self.assertAlmostEqual(r.score, 2.5)
         self.assertAlmostEqual(r.eff, 2.5 * 60 / 130)
@@ -224,15 +224,15 @@ class MetaModelTests(unittest.TestCase):
         self.assertTrue(r.warnings)
         c = copy.deepcopy(self.chart)
         c["deck"]["unplayable"] = "four fever ranges"
-        self.assertIsNone(figures(c, self.snapshot, MetaRequest()))
+        self.assertIsNone(figures(c, self.snapshot, MetaRequest(scene="battle")))
         self.assertIsNotNone(figures(c, self.snapshot, MetaRequest(scene="free")))
         c = copy.deepcopy(self.chart)
         c["deck"]["positions"] = 6
-        self.assertIsNone(figures(c, self.snapshot, MetaRequest()))
+        self.assertIsNone(figures(c, self.snapshot, MetaRequest(scene="battle")))
         self.assertIsNone(evaluate(self.song, c, self.snapshot, MetaRequest(ranking="skip")).metric)
         c["deck"]["seeds"][0]["weights"][0][0] = None
         c["deck"]["unplayable"] = None
-        self.assertIsNone(figures(c, self.snapshot, MetaRequest()))
+        self.assertIsNone(figures(c, self.snapshot, MetaRequest(scene="battle")))
 
     def test_six_grades_rooms_and_120_identity_orders(self):
         self.assertEqual(len(ORDERS), 120)
@@ -274,15 +274,21 @@ class MetaQueryTests(unittest.TestCase):
 
     def test_default_mixed_30_new_only_and_exact_ex(self):
         a = self.answer()
-        self.assertEqual((a.status, a.total, len(a.rows)), ("success", 48, 30))
+        self.assertEqual((a.status, a.total, len(a.rows)), ("success", 48, 60))
+        self.assertEqual([len(p.rows) for p in a.panels], [30, 30])
+        spec = parse_efficiency("/查分数表", self.repo, direct=True)
+        self.assertEqual((spec.meta_request.scene, spec.meta_request.ranking, spec.order), ("free", "efficiency", "desc"))
+        self.assertTrue(spec.meta_request.compare_scenes)
+        self.assertAlmostEqual(self.answer("迷星叫").rows[0].score, .6)
+        self.assertAlmostEqual(self.answer("迷星叫 JUST").rows[0].score, 2.8)
         all_rows = (*a.rows, *self.answer("页2").rows)
         self.assertEqual({r.difficulty for r in all_rows}, {"EASY", "NORMAL", "HARD", "EXPERT"})
-        self.assertEqual(len(self.answer("100107").rows), 1)
+        self.assertEqual(len(self.answer("100107").rows), 2)
         self.assertEqual(self.answer("100107").rows[0].difficulty, "EXPERT")
         self.assertFalse(self.answer("100107").cells, "precise one-chart query keeps the existing text card")
         multi = self.answer("迷星叫 HD,EX")
-        self.assertEqual(len(multi.rows), 2)
-        self.assertEqual(len(multi.cells), 2, "explicit multiple difficulties retain the list table")
+        self.assertEqual(len(multi.rows), 4)
+        self.assertEqual([len(p.cells) for p in multi.panels], [2, 2], "both scenes retain their list tables")
         self.assertEqual(self.repo.songs, [])
         data = payload()
         unique = next(s for s in data["songs"] if s["id"] == 100107)
@@ -297,7 +303,7 @@ class MetaQueryTests(unittest.TestCase):
         self.assertIn("已收录难度：EASY、NORMAL、HARD", missing.text)
 
     def test_free_group_permutations_roundtrip_and_conflicts(self):
-        chunks = ["前10", "技能=全150", "自由", "HD,EX", "MyGO"]
+        chunks = ["前10", "红", "单人", "hD,eX", "MyGO"]
         expected = parse_efficiency("/查分数表 " + " ".join(chunks), self.repo, direct=True)
         for groups in permutations(chunks):
             spec = parse_efficiency("/查分数表 " + " ".join(groups), self.repo, direct=True)
@@ -310,6 +316,101 @@ class MetaQueryTests(unittest.TestCase):
             with self.subTest(text=text):
                 self.assertEqual(self.answer(text).status, "invalid_arguments")
 
+    def test_scenes_bare_colors_case_and_explicit_scene_precedence(self):
+        for word in ("单人", "自由", "场景=单人", "场景=自由", "场景=FREE"):
+            self.assertEqual(self.answer(word).rows, self.answer("单人").rows)
+        for word in ("多人", "激奏", "场景=多人", "场景=激奏", "场景=BATTLE"):
+            self.assertEqual(self.answer(word).rows, self.answer("场景=激奏").rows)
+        for color in "红蓝绿黄紫":
+            self.assertEqual(self.answer(color).rows, self.answer("颜色=" + color).rows)
+        self.assertEqual(self.answer("红 蓝").rows, self.answer("颜色=红/蓝").rows)
+        self.assertEqual(self.answer("红/蓝").rows, self.answer("颜色=红/蓝").rows)
+        for difficulty in ("eZ", "EaSy", "nM", "Normal", "hD", "hArD", "eX", "Expert", "aLl"):
+            self.assertEqual(self.answer(difficulty).rows, self.answer(difficulty.upper()).rows)
+        for groups in permutations(("just", "单人", "HD,EX", "红", "前10")):
+            spec = parse_efficiency("/查分数表 " + " ".join(groups), self.repo, direct=True)
+            self.assertEqual(spec.meta_request.scene, "free")
+            self.assertEqual(spec, parse_efficiency("/" + spec.command_label(), self.repo, direct=True))
+        for query in ("单人 多人", "自由 场景=多人", "JUST COMBO"):
+            self.assertEqual(self.answer(query).status, "invalid_arguments")
+
+    def test_removed_parameters_reject_even_valid_old_values(self):
+        for term in ("lv<25", "lv<=25.5", "lv>25", "lv>=25", "lv=25", "激奏排名=1", "Great=0", "Just=100",
+                     "技能=全100", "时长=BGM", "额外耗时=30", "前沿", "前沿=否", "目标=SS", "综合力=0", "人数=5"):
+            with self.subTest(term=term):
+                answer = self.answer(term)
+                self.assertEqual(answer.status, "invalid_arguments")
+                self.assertIn("已移除", answer.text)
+        self.assertEqual(self.answer("等级").status, "success")
+
+    def test_comparison_same_snapshot_independent_order_and_scene_bound_selection(self):
+        from ournotes_bot.query.continuation import capture_context, execute_followup, Operation, parse_operation
+        before = self.repo.music_data.get.call_count
+        result = resolve_command("/查分数表 前10 HD,EX", self.repo)
+        self.assertEqual(self.repo.music_data.get.call_count, before + 1)
+        answer = result.meta
+        self.assertEqual(len(answer.panels), 2)
+        self.assertEqual(answer.panels[0].rows, self.answer("前10 HD,EX 单人").rows)
+        self.assertEqual(answer.panels[1].rows, self.answer("前10 HD,EX 多人").rows)
+        self.assertEqual(answer.panels[0].selection_numbers, tuple(range(1, 11)))
+        self.assertEqual(answer.panels[1].selection_numbers, tuple(range(11, 21)))
+        self.assertEqual(parse_efficiency("/" + result.query_spec.command_label(), self.repo, direct=True), result.query_spec)
+        context = capture_context(result, self.repo)
+        self.assertEqual(len(context.visible), 20)
+        for number, scene in ((2, "free"), (12, "battle")):
+            selected, next_context = execute_followup(context, Operation("select", number), self.repo)
+            self.assertEqual(selected.spec.meta_request.scene, scene)
+            self.assertFalse(selected.spec.meta_request.compare_scenes)
+            self.assertEqual(selected.meta.rows[0].score_id, answer.rows[number - 1].score_id)
+            detail, _ = execute_followup(next_context, Operation("difficulty", "HARD"), self.repo)
+            self.assertEqual(detail.spec.meta_request.scene, scene)
+        page, new_context = execute_followup(context, Operation("page", 1), self.repo)
+        self.assertTrue(page.spec.meta_request.compare_scenes)
+        self.assertEqual(new_context.page, 2)
+        default_result = resolve_command("/查分数表", self.repo)
+        default_context = capture_context(default_result, self.repo)
+        selected, _ = execute_followup(default_context, parse_operation("/选 32"), self.repo)
+        self.assertEqual(selected.spec.meta_request.scene, "battle")
+        self.assertEqual(selected.meta.rows[0].score_id, default_result.meta.panels[1].rows[1].score_id)
+        self.assertTrue(self.answer("JUST").rows)
+        self.assertFalse(self.answer("JUST").panels)
+        exact = resolve_command("/查分数表 迷星叫", self.repo)
+        exact_context = capture_context(exact, self.repo)
+        detail, _ = execute_followup(exact_context, Operation("detail"), self.repo)
+        self.assertTrue(detail.spec.meta_request.compare_scenes)
+        changed, _ = execute_followup(exact_context, Operation("difficulty", "HARD"), self.repo)
+        self.assertEqual([p.rows[0].difficulty for p in changed.meta.panels], ["HARD", "HARD"])
+
+    def test_comparison_when_one_scene_is_unavailable_or_shorter(self):
+        data = payload()
+        for song in data["songs"]:
+            for chart in song["charts"]:
+                chart["deck"]["unplayable"] = "unsupported battle ranges"
+        snapshot = make_snapshot(data, now=time.time())
+        self.repo.music_data._snapshot = snapshot
+        self.repo.music_data.get.return_value = snapshot
+        answer = self.answer("前10")
+        self.assertEqual(answer.status, "success")
+        self.assertEqual(len(answer.panels[0].rows), 10)
+        self.assertEqual(answer.panels[1].status, "data_unavailable")
+        self.assertFalse(answer.panels[1].rows)
+        self.assertIn("激奏场景", answer.text)
+        data = payload()
+        for song in data["songs"][3:]:
+            for chart in song["charts"]:
+                chart["deck"]["unplayable"] = "unsupported battle ranges"
+        snapshot = make_snapshot(data, now=time.time())
+        self.repo.music_data._snapshot = snapshot
+        self.repo.music_data.get.return_value = snapshot
+        answer = self.answer("前10 页2")
+        self.assertEqual([len(p.rows) for p in answer.panels], [10, 2])
+        self.assertEqual(answer.panels[1].selection_numbers, (11, 12))
+        answer = self.answer("前10 页3")
+        self.assertEqual([len(p.rows) for p in answer.panels], [10, 0])
+        self.assertEqual([p.total for p in answer.panels], [48, 12])
+        self.assertEqual(answer.total, 48)
+        self.assertIn("页码超出范围，共 2 页", answer.panels[1].text)
+
     def test_single_card_has_readable_facts_and_keeps_diagnostics_out_of_picture(self):
         from ournotes_bot import visuals
         answer = self.answer("迷星叫 Notes")
@@ -321,7 +422,7 @@ class MetaQueryTests(unittest.TestCase):
         with patch.object(visuals, "_canvas", wraps=visuals._canvas) as canvas:
             visuals.render_meta(answer)
         self.assertEqual([call.args[2] for call in canvas.call_args_list], [answer.title, answer.title])
-        efficiency = self.answer("迷星叫")
+        efficiency = self.answer("迷星叫 单人")
         self.assertEqual(efficiency.text.count("分/综合力/分钟："), 1)
         self.assertIn("相对所选比较池最高效率", efficiency.text)
 
@@ -331,25 +432,18 @@ class MetaQueryTests(unittest.TestCase):
         snapshot = make_snapshot(data, now=time.time())
         self.repo.music_data._snapshot = snapshot
         self.repo.music_data.get.return_value = snapshot
-        answer = self.answer("迷星叫 HD,EX")
+        answer = self.answer("迷星叫 HD,EX 单人")
         self.assertTrue(all(cell[4] == "80.0秒*" for cell in answer.cells))
         self.assertIn("* 本页第1、2条：时长回退为谱面长度。", answer.notes)
-        data = payload()
-        for chart in data["songs"][0]["charts"]:
-            chart.pop("musicLengthMs")
-        snapshot = make_snapshot(data, now=time.time())
-        self.repo.music_data._snapshot = snapshot
-        self.repo.music_data.get.return_value = snapshot
-        self.assertIn("* 本页第1、2条：时长回退为BGM长度。", self.answer("迷星叫 HD,EX 时长=谱面").notes)
 
     def test_readable_summary_preserves_all_applicable_conditions(self):
-        spec = parse_efficiency("/查分数表 HD,EX 激奏排名=1,2,3 Great=5 Just=90 技能=150,130,120,100,100 "
-                                "时长=谱面 额外耗时=600 活动 目标=S 综合力=300000 人数=3 "
-                                "前沿=否 排序=asc 颜色=红 lv<=25 搜索=迷", self.repo, direct=True)
+        spec = parse_efficiency("/查分数表 HD,EX 多人 单局 排序=asc 红 just 搜索=迷", self.repo, direct=True)
         summary = spec.meta_request.display_summary()
-        for text in ("HD/EX", "活动升序", "1/2/3", "Great 5%", "Just 90%", "150/130/120/100/100%",
-                     "时长 谱面", "曲外 600秒", "目标 S", "综合力 300000", "3人同分", "不限前沿", "红", "25", "搜索：迷"):
+        for text in ("HD/EX", "单局升序", "多人（激奏）", "红", "JUST", "搜索：迷"):
             self.assertIn(text, summary)
+        for field in ("Great", "Just=", "技能", "时长", "曲外", "前沿", "目标", "综合力", "人数"):
+            self.assertNotIn(field, summary)
+            self.assertNotIn(field, spec.command_label())
         self.assertEqual(parse_efficiency("/" + spec.command_label(), self.repo, direct=True), spec)
         basic = self.answer("Notes")
         self.assertNotIn("技能", basic.scope)
@@ -373,10 +467,11 @@ class MetaQueryTests(unittest.TestCase):
         for mode in ("效率", "单局", "活动", "速度", "等级", "Notes", "最长", "最短", "跳过得分"):
             a = self.answer(mode)
             self.assertEqual(a.status, "success", a.text)
-            values = [r.metric for r in a.rows]
-            self.assertEqual(values, sorted(values, reverse=mode not in {"活动", "最短"}))
+            for panel in a.panels or (a,):
+                values = [r.metric for r in panel.rows]
+                self.assertEqual(values, sorted(values, reverse=mode not in {"活动", "最短"}))
         self.assertEqual(self.answer("搜索='Synthetic Composer'").total, 48)
-        self.assertEqual(self.answer("颜色=红 属性=蓝 激奏=包含全部JUST/COMBO HD,EX lv<=25").total, 6)
+        self.assertEqual(self.answer("颜色=红 属性=蓝 激奏=包含全部JUST/COMBO HD,EX").total, 12)
         self.assertEqual(self.answer("100001 颜色=蓝").status, "empty")
         self.assertEqual(self.answer("速度=最大BPM").rows[0].metric, 200)
 
@@ -404,17 +499,16 @@ class MetaQueryTests(unittest.TestCase):
             self.assertEqual(self.answer("乐队='Ave Mujica'").total, 4)
             self.assertEqual(self.answer("狗团").total, 48)
 
-    def test_all_task_modes_unknown_coverage_decimal_and_frontier_search(self):
-        for task, count in (("JUST", 48), ("纯JUST", 0), ("混合", 48),
+    def test_all_task_modes_case_aliases_and_unknown_coverage(self):
+        for task, count in (("JUST", 48), ("COMBO", 48), ("LUCK", 48), ("纯JUST", 0), ("纯COMBO", 0), ("纯LUCK", 0), ("混合", 48),
                             ("COMBO/LUCK/JUST", 48), ("包含全部JUST/COMBO", 48)):
             a = self.answer("激奏=" + task)
             self.assertEqual(a.total, count, a.text)
-        q = parse_efficiency("/查分数表 额外耗时=1.13 技能=99.99,150,0,100,100", self.repo, direct=True)
-        self.assertEqual(q.meta_request.overhead_ms, 1130)
-        self.assertEqual(q.meta_request.skills[0], 99.99)
-        a = self.answer("前沿")
-        song_id = a.rows[0].song_id
-        self.assertEqual(self.answer(f"前沿 搜索={song_id}").rows, tuple(r for r in a.rows if r.song_id == song_id))
+            for token in (task, task.lower(), task.swapcase(), "击奏=" + task.lower()):
+                self.assertEqual(self.answer(token).rows, a.rows)
+                spec = parse_efficiency("/查分数表 " + token, self.repo, direct=True)
+                self.assertEqual(spec.meta_request.scene, "battle")
+                self.assertEqual(spec, parse_efficiency("/" + spec.command_label(), self.repo, direct=True))
         data = payload()
         data["songs"][0].pop("musicType")
         data["songs"][1]["scoreRanks"] = [data["songs"][1]["scoreRanks"][-1]]
@@ -423,28 +517,30 @@ class MetaQueryTests(unittest.TestCase):
         self.repo.music_data.get.return_value = snapshot
         unknown = self.answer("颜色=红")
         self.assertEqual((unknown.unknown_songs, unknown.unknown_rows), (1, 4))
-        self.assertFalse(any(r.song_id == 100002 for r in self.answer("活动 前沿").rows))
-        self.assertEqual(self.answer("Notes lv<20").status, "success")
+        self.assertEqual(self.answer("Notes").status, "success")
 
     def test_result_lru_concurrent_queries_and_captured_expiry(self):
         with ThreadPoolExecutor(max_workers=4) as pool:
-            answers = list(pool.map(lambda i: self.answer(f"Great={i % 80}"), range(80)))
+            answers = list(pool.map(lambda i: self.answer(
+                f"{('效率', '单局')[i % 2]} {('EZ', 'NM', 'HD', 'EX')[(i // 2) % 4]} "
+                f"颜色={('红', '蓝', '红/蓝')[(i // 8) % 3]} 排序={('asc', 'desc')[(i // 24) % 2]} "
+                f"{('单人', '多人')[(i // 48) % 2]}"), range(80)))
         self.assertTrue(all(a.status == "success" for a in answers))
-        self.assertLessEqual(len(self.repo.music_data._results), 64)
+        self.assertEqual(len(self.repo.music_data._results), 64)
         spec = parse_efficiency("/查分数表", self.repo, direct=True)
         with patch.object(self.repo.music_data, "clock", return_value=self.snapshot.checked_at + MAX_STALE + 1):
             self.assertEqual(execute_efficiency(spec, self.repo).status, "data_unavailable")
 
     def test_complete_continuation_source_version_and_identity(self):
         from ournotes_bot.query.continuation import capture_context, execute_followup, Operation, CHANGED
-        result = resolve_command("/查分数表 HD,EX 前10 技能=全150 自由 搜索=合成", self.repo)
+        result = resolve_command("/查分数表 HD,EX 前10 单人 JUST 搜索=合成", self.repo)
         context = capture_context(result, self.repo)
         self.assertIsNotNone(context)
         page, next_context = execute_followup(context, Operation("page", 1), self.repo)
         self.assertEqual(page.spec.meta_request, context.query.meta_request)
         selected, _ = execute_followup(context, Operation("select", 2), self.repo)
         self.assertEqual(selected.meta.rows[0].score_id, context.visible[1].score_id)
-        self.assertEqual(selected.spec.meta_request.skills, (150,) * 5)
+        self.assertEqual(selected.spec.meta_request.skills, (100,) * 5)
         self.repo.music_data._snapshot = replace(self.snapshot, body_sha="changed")
         self.assertEqual(execute_followup(context, Operation("page", 1), self.repo), CHANGED)
 
@@ -453,16 +549,20 @@ class MetaQueryTests(unittest.TestCase):
         from ournotes_bot.config import Settings
         parser = AIQueryParser(Settings("", "", self.repo.data_base, self.repo.cache_file, 6))
         with patch.object(parser, "_request", side_effect=AssertionError("model called")):
-            text, result = parser.answer_with_plan("/问 前10 技能=全150 自由 HD,EX MyGO 分数表", self.repo)
-        self.assertEqual(result.meta.rows, self.answer("前10 技能=全150 自由 HD,EX MyGO").rows)
+            text, result = parser.answer_with_plan("/问 前10 红 单人 HD,EX MyGO 分数表", self.repo)
+        self.assertEqual(result.meta.rows, self.answer("前10 红 单人 HD,EX MyGO").rows)
         self.assertEqual(text, result.meta.text)
         for natural, direct in [("迷星叫的效率怎么样", "迷星叫"), ("查一下迷星叫EX的meta", "迷星叫 EX"),
                                 ("MyGO的EX效率前十有哪些", "MyGO EX 前10"), ("全难度的分数表", ""),
-                                ("每分钟得分效率最高的前30首歌曲", ""), ("EXPERT 25级以下的效率榜", "EXPERT lv<=25")]:
+                                ("每分钟得分效率最高的前30首歌曲", ""), ("just HD,EX 分数表", "JUST HD,EX")]:
             with self.subTest(natural=natural), patch.object(parser, "_request", side_effect=AssertionError("model called")):
                 t, result = parser.answer_with_plan("/问 " + natural, self.repo)
                 self.assertIsNotNone(result.meta, t)
                 self.assertEqual(result.meta.rows, self.answer(direct).rows)
+        for question in ("EXPERT 25级以下的效率榜", "分数表 技能=全100", "分数表 Just=100"):
+            with patch.object(parser, "_request", side_effect=AssertionError("model called")):
+                text, _ = parser.answer_with_plan("/问 " + question, self.repo)
+                self.assertIn("已移除", text)
 
     def test_image_and_full_upload_fallback_share_capture_and_budget(self):
         import asyncio
