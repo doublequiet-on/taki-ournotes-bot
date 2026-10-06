@@ -15,16 +15,17 @@ from pathlib import Path
 
 from ournotes_bot.query.meta_model import evaluate, frontier
 from ournotes_bot.query.meta_parameters import MetaRequest
-from ournotes_bot.sources.moenotes_music_data import MusicSnapshot, project, MODEL_COMMIT
+from ournotes_bot.sources.moenotes_music_data import MusicSnapshot, project
 
 FRONTEND = "d102787016b0f162bb414093f3cfa00058a9000c"
 
 
 def verify(data, reference, *, sha=None):
-    assert reference["frontend"] == FRONTEND and reference["model"] == MODEL_COMMIT, "reference version"
+    assert reference["frontend"] == FRONTEND and reference["model"] == data["provenance"]["deck"]["commit"], "reference version"
     if sha:
         assert reference["sha"] == sha, "reference snapshot digest"
     snapshot = MusicSnapshot(project(data), reference["sha"], 1, 1)
+    assert snapshot.model_supported, "unverified reference model"
     comparisons = orders = frontiers = 0
     attributes = {"rate": "score", "eff": "eff", "need": "need", "chance": "chance", "perHour": "per_hour",
                   "goal": "goal", "length": "seconds", "density": "density", "notes": "notes", "bpm": "bpm",

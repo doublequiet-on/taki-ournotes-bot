@@ -82,6 +82,8 @@ $env:PYTHONPATH = 'src'
 
 分数表对拍不依赖生产Node／Bun：`python scripts/verify_meta_reference.py <固定快照> <独立上游生成参考>`。清空测试凭据时同时将`MOENOTES_OPEN_SECRET`和`BDON_OPENPLATFORM`置空；真实Secret不从聊天或生产配置读取。最小参考回归在`test_meta_reference.py`，全量参考文件及样图留在仓库外。
 
+自动数据更新改动同时运行`test_meta_refresh.py`、`test_moenotes_meta.py`和`test_reply_pipeline.py`；新计算源码指纹需核对上游源码摘要和统计合同，并用独立参考对拍后再加入兼容集合，不以格式相同替代验证。
+
 单模块测试替换 `pattern` 为导航表对应文件；入口依据为 CI 的 `unittest discover -s tests -q`，这里用等价 loader 在 Python 进程内清空凭据，避免 Windows PowerShell 空环境变量处理差异。测试使用桩和临时数据；新增测试同样不得依赖生产缓存或收费服务。不要把 `query`/`repl` 当纯只读离线验证：启动会 `SongRepository.load`，可能刷新缓存；`/问` 还可能调用模型。
 
 CI 完整配置在 [.github/workflows/checks.yml](../.github/workflows/checks.yml)：Python 3.10/3.12、离线测试、构建并检查包，以及 wheel／sdist 分别隔离安装后的模块、别名、运维说明和临时历史库检查。涉及打包时，在隔离开发环境执行现有命令：
