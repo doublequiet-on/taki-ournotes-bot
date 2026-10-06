@@ -1,6 +1,6 @@
 # L3
 # Input: 分数表问题或含 MetaRequest 的 QuerySpec、SongRepository；旧来源开关保留旧请求。
-# Output: MetaAnswer 捕获同份事实、排行、可读图文及逐行时长回退；版本诊断独立保存，供续查和审计。
+# Output: MetaAnswer 捕获同份事实与自由／激奏独立榜、场景选择号、图文及回退；版本供续查核对。
 # Pos: Query / Deterministic 的分数表入口与结果捕获；参数和有限求值见同域模块。
 # Effects/Dependencies: 入口惰性取得公开快照、审核别名；有界本地计算和结果缓存；显式回退才读旧分析。
 
@@ -146,12 +146,49 @@ class MetaAnswer:
     complete_text: bool = False
     title: str = "日服 · 歌曲分数表"
     diagnostics: tuple[str, ...] = ()
+    panels: tuple[MetaAnswer, ...] = ()
+    selection_numbers: tuple[int, ...] = ()
 
 
 def execute_efficiency(spec, repository) -> MetaAnswer:
     if spec.meta_request is not None:
+        if spec.meta_request.compare_scenes:
+            return _execute_comparison(spec, repository)
         return _execute_moenotes(spec, repository)
     return _execute_legacy(spec, repository)
+
+
+def _execute_comparison(spec, repository):
+    """Capture one source view and independently sort both scenes before rendering."""
+    snapshot = spec.meta_request.snapshot or repository.music_data.get()
+    if snapshot is None:
+        return MetaAnswer("分数表公开快照暂不可用。", status="data_unavailable")
+    panels, texts, choice = [], [], 1
+    for scene, label in (("free", "自由场景"), ("battle", "激奏场景")):
+        request = replace(spec.meta_request, scene=scene, compare_scenes=False, snapshot=snapshot)
+        panel = _execute_moenotes(replace(spec, meta_request=request), repository)
+        numbers = tuple(range(choice, choice + len(panel.rows)))
+        notice = (f"页内选择：/选 {numbers[0]}～{numbers[-1]}；左榜自由、右榜激奏。" if numbers else "本场景没有可选择的谱面。")
+        panel = replace(panel, title=label + " · 歌曲分数表", selection_numbers=numbers,
+                        page_notice=panel.page_notice + "\n" + notice)
+        if panel.cells:
+            body = "选择号 | " + " | ".join(panel.columns) + "\n"
+            body += "\n".join(str(n) + " | " + " | ".join(c) for n, c in zip(numbers, panel.cells))
+            text = f"[{label}]\n{panel.scope}\n{body}\n{panel.page_notice}\n" + "\n".join(panel.notes)
+        else:
+            text = f"[{label}]\n{panel.text}\n{notice}"
+            if numbers:
+                panel = replace(panel, text=panel.text + "\n" + notice)
+        panels.append(panel)
+        texts.append(text)
+        choice += len(panel.rows)
+    rows = tuple(row for panel in panels for row in panel.rows)
+    available = next((p for p in panels if p.versions), panels[0])
+    status = "success" if rows else "empty" if all(p.status == "empty" for p in panels) else "data_unavailable"
+    return MetaAnswer("\n\n".join(texts), rows, status, total=max(p.total for p in panels),
+                      unknown_songs=max(p.unknown_songs for p in panels), unknown_rows=max(p.unknown_rows for p in panels),
+                      versions=available.versions, complete_text=True, panels=tuple(panels),
+                      diagnostics=available.diagnostics, title="自由／激奏 · 歌曲分数表")
 
 
 def _execute_legacy(spec, repository) -> MetaAnswer:
@@ -407,7 +444,8 @@ def _execute_moenotes(spec, repository):
     if request.song_id is not None:
         pages = 1
     if spec.page > pages:
-        return MetaAnswer(f"页码超出范围，共 {pages} 页。\n/" + replace(spec, page=1).command_label(), status="empty")
+        return MetaAnswer(f"页码超出范围，共 {pages} 页。\n/" + replace(spec, page=1).command_label(),
+                          status="empty", total=total, versions=versions, complete_text=True)
     visible = selected if request.song_id is not None else selected[(spec.page - 1) * spec.limit:spec.page * spec.limit]
     conditions = request.display_summary()
     source = (f"来源：Moenotes · TW共通参考 · {'旧缓存' if snapshot.stale else '有效缓存'}"

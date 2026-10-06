@@ -1,6 +1,6 @@
 # L3
 # Input: 已选歌曲／单卡／当前页列表、Song／Chart 与可选谱面 score dict、MetaAnswer、条件／locale／页脚；render_catalog 消费 CardAnswer。
-# Output: 公开 render 入口返回编码 bytes（render_catalog 可为 None）；分数表保留现有布局，以捕获的列标签和值适配模式。
+# Output: render 返回编码 bytes；分数表沿用单表样式，双榜并列绘制后统一编码，不再次求值。
 # Pos: Rendering 的共享主题／素材、歌曲绘图与卡牌委托入口；见 rendering/L2-2-Core.md、rendering/L2-2-Song.md、rendering/L2-2-Card.md。
 # Effects/Dependencies: 字体／素材读取、允许来源下载与素材缓存写入；委托 rendering 绘图器，成员列表可间接刷新 Haneoka；不调用模型或上传 QQ。
 
@@ -758,9 +758,25 @@ def render_chart(song: Song, charts: tuple[Chart, ...], locale: str = "zh", scor
 
 
 def render_meta(answer: MetaAnswer) -> bytes:
+    if answer.panels:
+        panels = [_meta_image(panel) for panel in answer.panels]
+        gap = 20 * RENDER_SCALE
+        panel_width = max(p.width for p in panels)
+        width = panel_width * len(panels) + gap * (len(panels) - 1)
+        height = max(p.height for p in panels)
+        image, _ = _background(width // RENDER_SCALE, math.ceil(height / RENDER_SCALE), scale=RENDER_SCALE)
+        x = 0
+        for panel in panels:
+            image.paste(panel, (x, 0))
+            x += panel_width + gap
+        return _bytes(image)
+    return _bytes(_meta_image(answer))
+
+
+def _meta_image(answer: MetaAnswer) -> Image.Image:
     # Both forms use the captured answer; drawing never fetches or sorts again.
     if answer.cells:
-        return _render_meta_table(answer)
+        return _render_meta_table(answer, raw=True)
     text = answer.text
     title = answer.title if answer.complete_text else "歌曲效率"
     _, measure = _canvas(900, 200, title)
@@ -772,10 +788,10 @@ def render_meta(answer: MetaAnswer) -> bytes:
     for line in lines:
         _write(draw, line, 54, top, 792, 22, INK)
         top += 32
-    return _bytes(image)
+    return image
 
 
-def _render_meta_table(answer: MetaAnswer) -> bytes:
+def _render_meta_table(answer: MetaAnswer, *, raw=False) -> bytes | Image.Image:
     # One row per song+difficulty; use the captured values, never recalculate metrics.
     width, row_height = 1500, 112
     edges = (40, 105, 660, 820, 960, 1180, 1460)
@@ -826,7 +842,11 @@ def _render_meta_table(answer: MetaAnswer) -> bytes:
                                fill=SURFACE if index % 2 == 0 else "#FFFFFF", outline=BORDER, width=2)
         for x in (105, 660, 820, 960, 1180):
             draw.line((x, top + 20, x, top + row_height - 20), fill=BORDER, width=2)
-        centered(row[0], edges[0], edges[1], top + row_height / 2, 23, ACCENT)
+        if answer.selection_numbers:
+            centered(row[0], edges[0], edges[1], top + row_height / 2 - 14, 23, ACCENT)
+            centered("选" + str(answer.selection_numbers[index]), edges[0], edges[1], top + row_height / 2 + 18, 17, MUTED)
+        else:
+            centered(row[0], edges[0], edges[1], top + row_height / 2, 23, ACCENT)
         cover = covers.get(answer.jackets[index])
         _paste_loaded_asset(image, draw, cover, (118, top + (row_height - 68) // 2, 186, top + (row_height + 68) // 2))
         if index < len(answer.song_records):
@@ -855,7 +875,7 @@ def _render_meta_table(answer: MetaAnswer) -> bytes:
         if line:
             _write(draw, line, 68, y, width - 136, 23, MUTED)
         y += 18 if not line else 34
-    return _bytes(image)
+    return image if raw else _bytes(image)
 
 
 def render_card(card: Card, locale: str = "zh") -> bytes:

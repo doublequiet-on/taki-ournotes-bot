@@ -261,7 +261,7 @@ class QueryAgent:
             return self._finish_terminal(state, OutcomeCode.INVALID_ARGUMENTS, MISSING,
                                          tracked=tracked, local=True, cache=False)
 
-        # Explicit meta intent owns 前N/技能/等级 groups. Use the captured public
+        # Explicit meta intent owns its accepted and removed parameters. Use the captured public
         # view before cutoff/field/card routing and bypass the agent's plan cache.
         if meta_question and not FORBIDDEN.search(question):
             meta = parse_efficiency(question, repository)

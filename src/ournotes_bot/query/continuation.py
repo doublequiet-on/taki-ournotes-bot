@@ -1,6 +1,6 @@
 # L3
 # Input: 普通平台／会话／用户键、已捕获查询结果和有限续查操作；不接受 SDK 消息。
-# Output: 可见 ID／scoreId／难度、完整规范条件与版本校验；仅确认全部回复成功才提交上下文。
+# Output: 可见 ID／scoreId／难度／场景、完整规范条件；双榜至多60个选择，仅成功发送后提交上下文。
 # Pos: Query / Deterministic 的有界连续查询；见 L2-2.md。
 # Effects/Dependencies: 最多 1024 个内存上下文，10 分钟 TTL；执行复用查询器，可按 ID 获取详情；无模型、发送或持久化。
 """Small, receipt-committed conversations over actually displayed query results."""
@@ -85,6 +85,7 @@ class Choice:
     entity_id: int
     difficulty: str = ""
     score_id: int | None = None
+    scene: str = ""
 
 
 @dataclass(frozen=True)
@@ -144,9 +145,16 @@ def capture_context(result, repository, *, catalog_before=None) -> QueryContext 
         if spec is None:
             return None
         page, pages = spec.page, max(1, (result.meta.total + spec.limit - 1) // spec.limit)
-        visible = tuple(Choice("efficiency", r.song_id, r.difficulty, getattr(r, "score_id", None)) for r in result.meta.rows)
+        visible = (tuple(Choice("efficiency", r.song_id, r.difficulty, getattr(r, "score_id", None), scene)
+                         for panel, scene in zip(result.meta.panels, ("free", "battle")) for r in panel.rows)
+                   if result.meta.panels else
+                   tuple(Choice("efficiency", r.song_id, r.difficulty, getattr(r, "score_id", None)) for r in result.meta.rows))
         if not result.meta.columns and len(visible) == 1:
             selected = visible[0]
+        elif result.meta.panels and len({(c.entity_id, c.difficulty, c.score_id) for c in visible}) == 1:
+            # An exact chart shown in two scenes is still one selected chart.
+            # /详情 and /难度 keep the comparison until /选 explicitly picks a side.
+            selected = replace(visible[0], scene="")
     elif result.song_selection is not None:
         answer = result.song_selection
         spec = QuerySpec("song", song_query=answer.request.query, page=answer.page)
@@ -181,7 +189,8 @@ def capture_context(result, repository, *, catalog_before=None) -> QueryContext 
                              display_name=str(selected.entity_id))
     else:
         return None
-    if not visible or len(visible) > 30:
+    choice_limit = 60 if result.meta is not None and result.meta.panels else 30
+    if not visible or len(visible) > choice_limit:
         return None
     version = dependency_version(repository, spec)
     new_meta = isinstance(spec, QuerySpec) and spec.meta_request is not None
@@ -219,7 +228,7 @@ def execute_followup(context: QueryContext, operation: Operation, repository):
                 return QueryProblem("只有歌曲或分数表结果可以切换难度。", "invalid_arguments")
             if not operation.value:
                 return QueryProblem("难度支持 EASY / NORMAL / HARD / EXPERT（EZ / NM / HD / EX）。", "invalid_arguments")
-            selected = replace(selected, difficulty=operation.value)
+            selected = replace(selected, difficulty=operation.value, score_id=None)
         if selected.kind == "efficiency":
             query = context.query
             shared = query.song_filter
@@ -233,6 +242,8 @@ def execute_followup(context: QueryContext, operation: Operation, repository):
                 request = replace(query.meta_request, song_id=selected.entity_id,
                                   difficulties=(selected.difficulty,),
                                   score_id=None if operation.kind == "difficulty" else selected.score_id)
+                if selected.scene:
+                    request = replace(request, scene=selected.scene, compare_scenes=False)
                 spec = replace(spec, meta_request=request)
         elif selected.kind == "song":
             spec = QuerySpec("chart", EntityRef("song", selected.entity_id),
@@ -241,6 +252,12 @@ def execute_followup(context: QueryContext, operation: Operation, repository):
         else:
             spec = QuerySpec(selected.kind, card_query=str(selected.entity_id))
         result = resolve_query(spec, repository)
+        if result.status == "success" and selected.kind == "efficiency" and result.meta is not None:
+            ids = {getattr(row, "score_id", None) for row in result.meta.rows}
+            if len(ids) == 1:
+                # A difficulty change resolves a new chart. Commit that chart's
+                # identity, including when one chart is displayed in two scenes.
+                selected = replace(selected, score_id=ids.pop())
         candidate = replace(context, selected=selected) if result.status == "success" else None
     else:
         return QueryProblem("用法：/下一页、/上一页、/选 2、/详情、/难度 EX。", "invalid_arguments")
