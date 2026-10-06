@@ -48,6 +48,7 @@ Current 直接引用 song_traits 的显示常量；这属于领域表现依赖�
 榜线当前值、数字ID与用户名使用同一份 `BoardSnapshot`；趋势当前值及排名表均显示两者，缺失字段独立标注，长数字或名字按单格换行，历史不携带玩家身份。`CutoffPage.text` 保存同一批排名／分数／ID／用户名，图片失败后无需取榜；回归见 [test_cutoff_player_ids.py](../../../tests/test_cutoff_player_ids.py)。
 
 [test_visuals.py](../../../tests/test_visuals.py)：歌曲身份、长标题、原生标记缺图回退、效率行动态布局；
+[test_meta_render_memory.py](../../../tests/test_meta_render_memory.py)：不同高度双榜的完整输出一致性、临时画布释放和同源标记捕获；
 [test_chart_data.py](../../../tests/test_chart_data.py)：时间线、跨栏长键及难度身份；
 [test_song_meta.py](../../../tests/test_song_meta.py)：`test_table_image_uses_captured_cells_and_text_fallback`；
 [test_song_traits.py](../../../tests/test_song_traits.py)：图文 traits 同源及预算。
@@ -56,6 +57,6 @@ Current 直接引用 song_traits 的显示常量；这属于领域表现依赖�
 
 原歌曲/谱面/效率主体仍在根 visuals.py；榜线视图独立位于 rendering/event_cutoff_visuals.py。visuals 同时服务 Core 与卡牌入口，只有一个文件头 L3。素材可按需读取，图片失败由 QQ 退捕获的文字；本域不发送替代消息。
 
-分数表双榜消费 `MetaAnswer.panels`，保留各自完整行与数值，左右并列后只编码一次；列内标记选择号，与续查场景对应。单榜原画布、行高及样式保持，统一1.5MB／8192边长／1200万像素预算不增加。
+分数表双榜消费 `MetaAnswer.panels`，捕获同一份属性／激奏标记并测量布局，逐表绘制、合成后立即释放临时画布，只编码一次；分数表绘图复用进程内同一工作线程，避免多个查询同时占用大画布或各自保留绘图分配器内存。保留各自完整行、数值和列内选择号，与续查场景对应。单榜原画布、行高及样式保持，统一1.5MB／8192边长／1200万像素预算不增加。
 
 向上阅读：[仓库 L1](../../../L1.md)。源码文件头提供唯一 L3，具体行为与字段以实现为准。

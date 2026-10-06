@@ -117,6 +117,7 @@ python scripts/check_release_artifact.py dist
 - `rendering/support_summary.py` 从现有Lv.5中文技能效果做完整模板匹配，仅输出基础效果及触发/上限，条件加成留详情；新措辞必须先核实。`member_detail_visuals._panel` 是两类详情共用的白底/标题带绘制，不影响列表或数据逻辑。
 
 - 所有渲染器经 `visuals._bytes` → `image_output.encode_image` 统一编码预算（1.5MB/8192边长/1200万像素），不在各命令复制压缩代码。`qq._upload_image` 单次上传30秒，HTTP临时副本必须解除共享会话引用；测试 `test_image_output.py`、`test_media.py`、`test_reply_pipeline.py`。发布依据与可溯源说明见 [2026-09-28报告](RELEASE_2026-09-28.md)。
+- 分数表绘图复用固定工作线程，双榜先测量同源标记的布局，再逐表合成、释放临时画布；完整行、数值和图片预算保持。并发线程复用、不同高度双榜输出一致性与资源释放见 `test_meta_render_memory.py`。
 
 歌曲信息图共用 `visuals._song_heading`（属性图标＋标题）、`_mission_marks` / `_mission_chip`（原生激奏图标、顺序与缓存提示），先测量再排版；缺图只退文字，不改变筛选。列表和谱面身份区置于左下角，分数表读取同一 `MetaAnswer.song_records` 快照，以 112 逻辑像素为基础行高并按标题、激奏内容自动增高。歌曲筛选与统一布局的发布依据见 [歌曲更新报告](RELEASE_2026-09-28_SONGS.md)；原生激奏图标、紧凑分数表与群聊面板的后续实现以 `5ea0f08`（PR #25）为准。
 
