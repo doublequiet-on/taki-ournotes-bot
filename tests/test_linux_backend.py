@@ -1,6 +1,7 @@
 """Offline Linux backend contracts: no real network, service, or credentials."""
 from dataclasses import asdict
 import hashlib
+import http.client
 import io
 import json
 import os
@@ -143,6 +144,43 @@ class LinuxBackendTests(unittest.TestCase):
         with patch.object(self.backend, "_json", side_effect=[runs, jobs]):
             with self.assertRaisesRegex(Rejected, "ci_required_jobs_missing"):
                 self.backend.check_ci(B)
+
+    def test_ci_read_interruption_never_permanently_blocks_target(self):
+        class Broken(io.BytesIO):
+            def read(self, *args):
+                raise http.client.IncompleteRead(b"", 30)
+        self.state()
+        engine = Engine(self.backend.state, self.backend)
+        with patch.object(self.backend, "current_release", return_value=self.baseline), \
+             patch.object(self.backend, "resolve_main", return_value=B), \
+             patch.object(self.backend, "prepare", side_effect=Deferred("bundle_not_published")) as prepare, \
+             patch("deploy.linux_backend.urllib.request.urlopen", side_effect=lambda *a, **k: Broken()) as fetch:
+            for _ in range(2):
+                result = engine.run()
+                self.assertEqual((result.status, result.reason), ("deferred", "github_unavailable"))
+                self.assertNotIn(B, engine.load_state()["failed"])
+            self.assertEqual(fetch.call_count, 2)
+            prepare.assert_not_called()
+            runs, jobs = self.ci_rows()
+            fetch.side_effect = [io.BytesIO(json.dumps(runs).encode()), io.BytesIO(json.dumps(jobs).encode())]
+            result = engine.run()
+            self.assertEqual((result.status, result.reason), ("deferred", "bundle_not_published"))
+            prepare.assert_called_once_with(B)
+            self.assertNotIn(B, engine.load_state()["failed"])
+
+    def test_actual_failed_ci_stays_blocked_after_transport_fix(self):
+        runs, _ = self.ci_rows()
+        runs["workflow_runs"][0]["conclusion"] = "failure"
+        self.state()
+        engine = Engine(self.backend.state, self.backend)
+        with patch.object(self.backend, "current_release", return_value=self.baseline), \
+             patch.object(self.backend, "resolve_main", return_value=B), \
+             patch.object(self.backend, "prepare") as prepare, \
+             patch("deploy.linux_backend.urllib.request.urlopen", return_value=io.BytesIO(json.dumps(runs).encode())) as fetch:
+            self.assertEqual(engine.run().reason, "ci_failed")
+            self.assertEqual(engine.run().status, "blocked")
+            fetch.assert_called_once()
+            prepare.assert_not_called()
 
     def test_ci_rejects_other_sha_even_if_workflow_green(self):
         runs, jobs = self.ci_rows()

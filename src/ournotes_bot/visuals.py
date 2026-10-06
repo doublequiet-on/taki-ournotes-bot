@@ -2,7 +2,7 @@
 # Input: 已选歌曲／单卡／当前页列表、Song／Chart 与可选谱面 score dict、MetaAnswer、条件／locale／页脚；render_catalog 消费 CardAnswer。
 # Output: render 返回编码 bytes；分数表沿用单表样式，双榜并列绘制后统一编码，不再次求值。
 # Pos: Rendering 的共享主题／素材、歌曲绘图与卡牌委托入口；见 rendering/L2-2-Core.md、rendering/L2-2-Song.md、rendering/L2-2-Card.md。
-# Effects/Dependencies: 字体／素材读取、允许来源下载与素材缓存写入；委托 rendering 绘图器，成员列表可间接刷新 Haneoka；不调用模型或上传 QQ。
+# Effects/Dependencies: 字体／素材读取、允许来源下载；素材完整解码后原子缓存，旧坏缓存有限重取；委托 rendering 绘图器，成员列表可间接刷新 Haneoka；不调用模型或上传 QQ。
 
 """Rounded, high-contrast image replies using the existing Our Notes assets."""
 
@@ -13,6 +13,8 @@ import re
 import asyncio
 import hashlib
 import math
+import os
+import tempfile
 from concurrent.futures import ThreadPoolExecutor
 from functools import lru_cache
 from pathlib import Path
@@ -354,31 +356,49 @@ def _asset(url: str, size: tuple[int, int], *, contain: bool = False) -> Image.I
     music_jacket = re.fullmatch(r"https://assets\.bdon\.moe/ja/Image/Jacket/([A-Za-z0-9_-]+)/\1\.webp", url)
     if not url.startswith(ASSETS + "/") and not music_jacket and url not in icons and url not in MISSION_ICON_URLS.values():
         return None
+    def decode(raw):
+        if len(raw) > 6_000_000:
+            raise ValueError("asset size limit")
+        with Image.open(io.BytesIO(raw)) as image:
+            image.load()  # Decode the full source before it becomes reusable cache.
+            if contain:
+                return ImageOps.contain(image.convert("RGBA"), size, method=Image.Resampling.LANCZOS)
+            return ImageOps.fit(image.convert("RGB"), size, method=Image.Resampling.LANCZOS)
     try:
         cache = runtime_data_dir() / "asset-cache"
         cache.mkdir(parents=True, exist_ok=True)
         path = cache / (hashlib.sha256(url.encode()).hexdigest() + ".png")
         if path.exists():
-            raw = path.read_bytes()
-        else:
             try:
-                referer = "https://haneoka.org/" if url in MISSION_ICON_URLS.values() else BASE + "/"
-                with urlopen(Request(url, headers={"User-Agent": "Mozilla/5.0", "Referer": referer}), timeout=12) as response:
-                    raw = response.read(6_000_000)
+                if path.stat().st_size <= 6_000_000:
+                    return decode(path.read_bytes())
             except Exception:
-                async def download() -> bytes:
-                    async with aiohttp.ClientSession() as session:
-                        async with session.get(url, timeout=aiohttp.ClientTimeout(total=18)) as response:
-                            response.raise_for_status()
-                            return await response.read()
-                raw = asyncio.run(download())
-            if len(raw) > 6_000_000:
-                return None
-            path.write_bytes(raw)
-        with Image.open(io.BytesIO(raw)) as image:
-            if contain:
-                return ImageOps.contain(image.convert("RGBA"), size, method=Image.Resampling.LANCZOS)
-            return ImageOps.fit(image.convert("RGB"), size, method=Image.Resampling.LANCZOS)
+                pass  # Old bad cache is retried once through the existing fetch path.
+        try:
+            referer = "https://haneoka.org/" if url in MISSION_ICON_URLS.values() else BASE + "/"
+            with urlopen(Request(url, headers={"User-Agent": "Mozilla/5.0", "Referer": referer}), timeout=12) as response:
+                raw = response.read(6_000_001)
+        except Exception:
+            async def download() -> bytes:
+                async with aiohttp.ClientSession() as session:
+                    async with session.get(url, timeout=aiohttp.ClientTimeout(total=18)) as response:
+                        response.raise_for_status()
+                        return await response.read()
+            raw = asyncio.run(download())
+        decoded = decode(raw)
+        temporary = None
+        try:
+            with tempfile.NamedTemporaryFile(dir=cache, prefix=path.name + ".", suffix=".tmp", delete=False) as stream:
+                temporary = Path(stream.name)
+                stream.write(raw)
+            os.replace(temporary, path)
+        except Exception:
+            decoded.close()
+            raise
+        finally:
+            if temporary is not None:
+                temporary.unlink(missing_ok=True)
+        return decoded
     except Exception:
         return None
 

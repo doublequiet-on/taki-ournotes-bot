@@ -2,7 +2,7 @@
 # Input: 来源记录／详情、主缓存、数据基址与缓存路径、加载／刷新请求及名称检索词。
 # Output: Song／Chart／Card／SupportCard／Skill、名称规则、SongRepository 聚合记录与缓存／完整度状态。
 # Pos: Data / Catalog 的领域记录、主资料聚合、详情与主缓存实现；见 L2-2-Catalog.md。
-# Effects/Dependencies: 调用 Sources，调度并发详情并读写主缓存；分数表 music_data 独立惰性读取，不参加主目录事务；frozen 记录含 dict。
+# Effects/Dependencies: 调用 Sources，冷启动刷新前校验旧缓存以回退详情，调度并发详情并原子读写兼容主缓存；分数表 music_data 独立惰性读取；frozen 记录含 dict。
 
 from __future__ import annotations
 
@@ -288,6 +288,12 @@ class SongRepository:
         from .sources import yatta
         if self.data_base != yatta.BASE:
             raise DataError("仅允许 Project Yume 作为游戏数据源")
+        if not (self.songs or self.cards or self.support_cards) and self.cache_file.exists():
+            # Prime cold-start detail fallback only from a completely valid cache.
+            try:
+                self._load_cache()
+            except DataError:
+                pass  # A damaged/foreign cache cannot prevent a successful refresh.
         try:
             from concurrent.futures import ThreadPoolExecutor
             names = ("characters", "membercards", "songs", "songsmeta", "supportcards")
@@ -456,10 +462,10 @@ class SongRepository:
     def _load_cache(self) -> None:
         try:
             payload = json.loads(self.cache_file.read_text(encoding="utf-8"))
-            self.metadata = dict(payload["metadata"])
-            if self.metadata.get("schema") == 2:
-                self.metadata["schema"] = self.metadata.get("extended_schema", 2)
-            self.songs = [
+            metadata = dict(payload["metadata"])
+            if metadata.get("schema") == 2:
+                metadata["schema"] = metadata.get("extended_schema", 2)
+            songs = [
                 Song(
                     **{key: value for key, value in row.items() if key not in {"charts", "titles"}},
                     titles=tuple(row["titles"]),
@@ -468,13 +474,13 @@ class SongRepository:
                 )
                 for row in payload["songs"]
             ]
-            self.cards = [Card(
+            cards = [Card(
                 **{key: value for key, value in row.items() if key not in {"skills", "catalog"}},
                 catalog=row.get("catalog", payload.get("card_catalog", {}).get("member", {}).get(str(row["id"]), {})),
                 skills=tuple(Skill(**skill) for skill in row.get(
                     "skills", payload.get("member_skills", {}).get(str(row["id"]), []))),
             ) for row in payload.get("cards", [])]
-            self.support_cards = [SupportCard(
+            support_cards = [SupportCard(
                 **{key: value for key, value in row.items() if key not in {"characters", "skills", "catalog"}},
                 characters=tuple(row.get("characters", [])),
                 catalog=row.get("catalog", payload.get("card_catalog", {}).get("support", {}).get(str(row["id"]), {})),
@@ -483,12 +489,15 @@ class SongRepository:
         except Exception as exc:
             raise DataError(f"本地缓存损坏：{self.cache_file} ({exc})") from exc
         from .sources import yatta
-        if (self.metadata.get("source") != yatta.BASE
-                or self.metadata.get("schema") not in {2, 3, self.CACHE_SCHEMA}):
+        if (metadata.get("source") != yatta.BASE
+                or metadata.get("schema") not in {2, 3, self.CACHE_SCHEMA}):
             raise DataError("缓存来自旧数据源，请重新运行 sync")
+        self.metadata = metadata
+        self.cards = cards
+        self.support_cards = support_cards
         self.last_successful_sync_at = self.metadata.get("cached_at")
         with self._song_lock:
-            self.songs = self.song_traits.apply(self.songs)
+            self.songs = self.song_traits.apply(songs)
 
     @staticmethod
     def _cached_notes(payload: dict, song_id: int, chart: dict) -> int | None:

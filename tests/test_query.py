@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import tempfile
+import http.client
+import io
+import os
 import unittest
 from dataclasses import replace
 from pathlib import Path
@@ -293,6 +296,48 @@ class QueryTests(unittest.TestCase):
     def test_fetch_rejects_other_hosts(self):
         with self.assertRaises(ValueError):
             fetch_json("https://example.com/data.json")
+
+    def test_interrupted_http_read_retries_and_becomes_transport_error(self):
+        class Broken(io.BytesIO):
+            def read(self, *args):
+                raise http.client.IncompleteRead(b"", 20)
+        with patch("ournotes_bot.sources.yatta.urlopen", side_effect=lambda *a, **k: Broken()) as fetch, \
+             patch("ournotes_bot.sources.yatta.time.sleep"):
+            with self.assertRaises(OSError) as caught:
+                fetch_json(BASE + "/Resources/en/MasterParsed/characters.json")
+        self.assertIsInstance(caught.exception.__cause__, http.client.IncompleteRead)
+        self.assertEqual(fetch.call_count, 3)
+
+    def test_interrupted_http_read_uses_old_cache_or_reports_no_cache(self):
+        self.repo._save_cache()
+        before = self.repo.cache_file.read_bytes()
+        os.utime(self.repo.cache_file, (0, 0))
+        class Broken(io.BytesIO):
+            def read(self, *args):
+                raise http.client.IncompleteRead(b"", 20)
+        for has_cache in (True, False):
+            path = self.repo.cache_file if has_cache else self.repo.cache_file.with_name("missing.json")
+            cold = SongRepository(BASE, path)
+            with patch("ournotes_bot.sources.yatta.urlopen", side_effect=lambda *a, **k: Broken()), \
+                 patch("ournotes_bot.sources.yatta.time.sleep"):
+                if has_cache:
+                    cold.load()
+                    self.assertEqual(cold.cache_state, "stale")
+                    self.assertEqual(cold.songs[0].id, self.repo.songs[0].id)
+                else:
+                    with self.assertRaises(DataError):
+                        cold.load()
+                    self.assertFalse(path.exists())
+        self.assertEqual(self.repo.cache_file.read_bytes(), before)
+
+    def test_interrupted_http_detail_read_keeps_member_and_support(self):
+        class Broken(io.BytesIO):
+            def read(self, *args):
+                raise http.client.IncompleteRead(b"", 20)
+        with patch("ournotes_bot.sources.yatta.urlopen", side_effect=lambda *a, **k: Broken()), \
+             patch("ournotes_bot.sources.yatta.time.sleep"):
+            self.assertEqual(self.repo.card_with_detail(self.repo.cards[0]), self.repo.cards[0])
+            self.assertEqual(self.repo.support_card_with_detail(self.repo.support_cards[0]), self.repo.support_cards[0])
 
     def test_ai_card_query_uses_regular_image_renderer(self):
         settings = Settings("", "", BASE, self.repo.cache_file, 6, "test-key", "test-model", "https://ai.example", 2)

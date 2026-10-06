@@ -3,6 +3,9 @@ from __future__ import annotations
 
 from dataclasses import replace
 import io
+import hashlib
+import tempfile
+from pathlib import Path
 import unittest
 from unittest.mock import patch
 
@@ -17,6 +20,53 @@ class VisualTests(unittest.TestCase):
     def setUp(self):
         self.song = Song(100001, "迷星叫", ("迷星叫",), "MyGO!!!!!", "", "", "", "", "",
                          (Chart("EXPERT", 25, 25.5, 768, ""),))
+
+    def test_invalid_download_is_not_cached_and_next_call_recovers(self):
+        raw = io.BytesIO()
+        Image.new("RGB", (8, 8), "red").save(raw, format="WEBP")
+        url = visuals.ASSETS + "/MemberCard/1/member_full.webp"
+        with tempfile.TemporaryDirectory() as tmp, \
+             patch.object(visuals, "runtime_data_dir", return_value=Path(tmp)), \
+             patch.object(visuals, "urlopen", side_effect=[io.BytesIO(b"<html>error</html>"), io.BytesIO(raw.getvalue())]) as fetch:
+            self.assertIsNone(visuals._asset(url, (8, 8)))
+            self.assertFalse(list((Path(tmp) / "asset-cache").iterdir()))
+            image = visuals._asset(url, (8, 8))
+            self.assertIsNotNone(image)
+            image.close()
+            cached = visuals._asset(url, (8, 8))
+            cached.close()
+            self.assertEqual(fetch.call_count, 2)
+
+    def test_existing_bad_asset_is_retried_without_losing_transparency(self):
+        raw = io.BytesIO()
+        Image.new("RGBA", (8, 4), (255, 0, 0, 100)).save(raw, format="PNG")
+        url = visuals.ASSETS + "/MemberCard/1/member_full.webp"
+        with tempfile.TemporaryDirectory() as tmp, patch.object(visuals, "runtime_data_dir", return_value=Path(tmp)):
+            cache = Path(tmp) / "asset-cache"
+            cache.mkdir()
+            path = cache / (hashlib.sha256(url.encode()).hexdigest() + ".png")
+            path.write_bytes(b"<html>old error</html>")
+            with patch.object(visuals, "urlopen", return_value=io.BytesIO(raw.getvalue())) as fetch:
+                image = visuals._asset(url, (8, 8), contain=True)
+            self.assertEqual(image.mode, "RGBA")
+            self.assertEqual(image.size, (8, 4))
+            self.assertEqual(image.getpixel((0, 0))[3], 100)
+            image.close()
+            self.assertEqual(path.read_bytes(), raw.getvalue())
+            self.assertEqual(fetch.call_count, 1)
+            self.assertFalse(list(cache.glob("*.tmp")))
+
+    def test_truncated_image_does_not_publish_and_failed_replace_cleans_up(self):
+        raw = io.BytesIO()
+        Image.new("RGB", (16, 16), "red").save(raw, format="PNG")
+        url = visuals.ASSETS + "/MemberCard/1/member_full.webp"
+        with tempfile.TemporaryDirectory() as tmp, patch.object(visuals, "runtime_data_dir", return_value=Path(tmp)):
+            with patch.object(visuals, "urlopen", return_value=io.BytesIO(raw.getvalue()[:45])):
+                self.assertIsNone(visuals._asset(url, (8, 8)))
+            with patch.object(visuals, "urlopen", return_value=io.BytesIO(raw.getvalue())), \
+                 patch.object(visuals.os, "replace", side_effect=OSError("disk failure")):
+                self.assertIsNone(visuals._asset(url, (8, 8)))
+            self.assertFalse(list((Path(tmp) / "asset-cache").iterdir()))
 
     def capture(self, render):
         calls = []

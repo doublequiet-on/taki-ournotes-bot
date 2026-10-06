@@ -1,6 +1,6 @@
 # L3
 # Input: 允许的 Project Yume MasterParsed JSON 地址／响应、卡牌 ID 与解析所需引用表。
-# Output: 受限 JSON、Song／Card／SupportCard 等规范记录及详情 dict；素材 URL 仅作为记录字段。
+# Output: 受限 JSON、规范记录及详情 dict；有界重试后 HTTP 传输中断转为 OSError 供缓存回退；素材 URL 仅作为记录字段。
 # Pos: Data / Sources 的 Project Yume 受限获取与字段转换适配器；见 L2-2.md。
 # Effects/Dependencies: 直接 HTTPS、请求重试与结构校验；并发详情调度由 data.SongRepository.refresh 承担，本模块不下载图片。
 
@@ -12,6 +12,7 @@ import json
 import re
 import math
 import time
+from http.client import HTTPException
 from datetime import datetime, timezone
 from typing import Any
 from urllib.request import Request, urlopen
@@ -31,8 +32,10 @@ def fetch_json(url: str, attempts: int = 3) -> Any:
         try:
             with urlopen(request, timeout=20) as response:
                 return json.load(response)
-        except Exception:
+        except Exception as exc:
             if attempt + 1 == attempts:
+                if isinstance(exc, HTTPException):
+                    raise OSError("Project Yume HTTP response interrupted") from exc
                 raise
             time.sleep(0.5 * (attempt + 1))
 

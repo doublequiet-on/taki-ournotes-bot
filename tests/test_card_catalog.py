@@ -1,6 +1,7 @@
 """Offline synthetic catalog; short factual Yume samples are identified in mapping tests."""
 import io
 import json
+import os
 import tempfile
 import unittest
 from dataclasses import replace
@@ -134,6 +135,61 @@ class CardCatalogTests(unittest.TestCase):
         self.assertIn("索引不完整", answer.error)
         self.assertIn("分类未确认", labels(self.repo.cards[1]))
         self.assertEqual(len(query_cards("", self.repo).cards), 3)
+
+    def test_excluded_unknown_card_does_not_block_either_filter_order(self):
+        self.repo.cards[2] = replace(self.repo.cards[2], skills=(), catalog={})
+        for text in ("角色=高松灯 LIVE=分数提升", "LIVE=分数提升 角色=高松灯"):
+            self.assertEqual(self.ids(text), [1, 2])
+        self.repo.cards[1] = replace(self.repo.cards[1], skills=(), catalog={})
+        self.assertEqual(query_cards("角色=高松灯 LIVE=分数提升", self.repo).status, "data_unavailable")
+
+    def test_known_mismatch_excludes_unknown_tags_and_snap_links(self):
+        self.repo.cards[2] = replace(self.repo.cards[2], catalog={})
+        for text in ("角色=高松灯 得意=MyGO", "得意=MyGO 角色=高松灯"):
+            self.assertEqual(self.ids(text), [1, 2])
+        unknown = replace(self.support, id=2, card_type=2, catalog={"character_links_complete": False})
+        self.repo.support_cards.append(unknown)
+        for text in ("角色=高松灯 颜色=红色", "颜色=红色 角色=高松灯"):
+            self.assertEqual(self.ids(text, True), [1])
+        self.assertEqual(query_cards("角色=高松灯", self.repo, support=True).status, "data_unavailable")
+
+    def test_cold_refresh_preserves_valid_expired_details_and_legacy_rows(self):
+        self.repo.metadata = dict(source=yatta.BASE, schema=self.repo.CACHE_SCHEMA)
+        self.repo._save_cache()
+        os.utime(self.repo.cache_file, (0, 0))
+        cold = SongRepository(yatta.BASE, self.repo.cache_file)
+        with patch.object(yatta, "fetch_json", return_value={}), \
+             patch.object(yatta, "build_data", return_value=([], [replace(self.base, skills=(), catalog={})])), \
+             patch.object(yatta, "build_support_cards", return_value=[replace(self.support, skills=(), catalog={})]), \
+             patch.object(yatta, "card_detail", side_effect=OSError("offline")), \
+             patch.object(yatta, "support_card_detail", side_effect=OSError("offline")):
+            cold.load()
+        for actual, previous in ((cold.cards[0], self.base), (cold.support_cards[0], self.support)):
+            self.assertEqual(actual.skills, previous.skills)
+            self.assertTrue(actual.catalog["detail_stale"])
+        saved = json.loads(cold.cache_file.read_text(encoding="utf-8"))
+        self.assertEqual(len(saved["member_skills"]["1"]), 2)
+        self.assertEqual(len(saved["support_cards"][0]["skills"]), 2)
+        self.assertEqual(Card(**saved["cards"][0]).id, 1)
+
+    def test_bad_or_foreign_cache_cannot_supply_details_to_refresh(self):
+        for foreign in (False, True):
+            self.repo.metadata = dict(source=yatta.BASE, schema=self.repo.CACHE_SCHEMA)
+            self.repo._save_cache()
+            raw = json.loads(self.repo.cache_file.read_text(encoding="utf-8"))
+            if foreign:
+                raw["metadata"]["source"] = "https://other.invalid"
+            else:
+                raw["support_cards"] = [{"id": 1}]
+            self.repo.cache_file.write_text(json.dumps(raw), encoding="utf-8")
+            cold = SongRepository(yatta.BASE, self.repo.cache_file)
+            with patch.object(yatta, "fetch_json", return_value={}), \
+                 patch.object(yatta, "build_data", return_value=([], [replace(self.base, skills=(), catalog={})])), \
+                 patch.object(yatta, "build_support_cards", return_value=[]), \
+                 patch.object(yatta, "card_detail", side_effect=OSError("offline")):
+                cold.refresh()
+            self.assertEqual(cold.cards[0].skills, ())
+            self.assertFalse(cold.cards[0].catalog.get("detail_stale"))
 
     def test_source_mapping_samples_and_ex_multiple_live(self):
         # Project Yume /Resources/en/MasterParsed/supportcards/61.json, read 2026-09-28:

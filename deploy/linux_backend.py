@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 from dataclasses import asdict
 import hashlib
+import http.client
 import json
 import os
 from pathlib import Path, PurePosixPath
@@ -264,7 +265,7 @@ class LinuxBackend:
             if not isinstance(result, dict):
                 raise ValueError("object expected")
             return result
-        except (OSError, ValueError, urllib.error.URLError) as exc:
+        except (OSError, ValueError, urllib.error.URLError, http.client.HTTPException) as exc:
             raise Deferred("github_unavailable") from exc
 
     def resolve_main(self) -> str:

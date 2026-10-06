@@ -286,7 +286,9 @@ def execute_card_request(req, repository):
     missing = set()
     for card in {c.id: c for c in cards}.values():
         keep = True
+        card_missing = set()
         for key, values in req.filters.items():
+            unknown = False
             if key == "rarity":
                 match = card.rarity in values
             elif key == "type":
@@ -295,26 +297,36 @@ def execute_card_request(req, repository):
                 match = card.id in values
             elif key == "character":
                 if card.catalog.get("character_links_complete") is False:
-                    missing.add("角色关联")
+                    card_missing.add("角色关联")
+                    unknown = True
                 names = card.characters if isinstance(card, SupportCard) else (card.character,)
                 match = bool({normalize(character_identity(n)) for n in names} & {normalize(character_identity(n)) for n in values})
             elif key == "band":
                 bands = card.catalog.get("bands", []) if isinstance(card, SupportCard) else [card.band]
                 if not bands or "未知乐队" in bands or card.catalog.get("character_links_complete") is False:
-                    missing.add("乐队关联")
+                    card_missing.add("乐队关联")
+                    unknown = True
                 match = bool({normalize(n) for n in bands} & {normalize(n) for n in values})
             elif key == "tags":
                 if "tags" not in card.catalog:
-                    missing.add("得意乐曲")
+                    card_missing.add("得意乐曲")
+                    unknown = True
                 match = set(values) <= set(card.catalog.get("tags", {}))
             else:
                 actual = card.catalog.get("categories", {}).get(key, [])
                 if not actual or None in actual:
-                    missing.add("LIVE/击奏分类")
+                    card_missing.add("LIVE/击奏分类")
+                    unknown = True
                 match = bool(set(actual) & set(values))
-            keep = keep and match
+            # Unknown is not a proven mismatch; evaluate every dimension before
+            # deciding whether this card could still belong to the result.
+            if not match and not unknown:
+                keep = False
         if keep:
-            selected.append(card)
+            if card_missing:
+                missing.update(card_missing)
+            else:
+                selected.append(card)
     if missing:
         return CardAnswer(req, error="卡牌索引不完整（" + "、".join(sorted(missing)) + "），不能保证完整筛选；请等待数据同步后重试，未将未知分类当作无技能。", status="data_unavailable")
     if req.mode == "detail" and selected:
