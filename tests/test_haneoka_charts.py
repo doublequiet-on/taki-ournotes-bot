@@ -8,6 +8,7 @@ import tempfile
 import threading
 import unittest
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import ExitStack
 from dataclasses import replace
 from pathlib import Path
 from unittest.mock import patch
@@ -79,8 +80,10 @@ class HaneokaChartTests(unittest.TestCase):
         self.chart = self.charts[-1]
         self.responses = Responses()
         self.now = 100_000
-        self.fetch = self.enterContext(patch.object(source, "public_get", side_effect=self.responses))
-        self.enterContext(patch.object(source.time, "time", side_effect=lambda: self.now))
+        patches = ExitStack()
+        self.addCleanup(patches.close)
+        self.fetch = patches.enter_context(patch.object(source, "public_get", side_effect=self.responses))
+        patches.enter_context(patch.object(source.time, "time", side_effect=lambda: self.now))
 
     def load(self, chart=None):
         return load_chart_data(self.song, chart or self.chart, self.root, source="haneoka")
