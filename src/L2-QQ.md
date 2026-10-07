@@ -24,7 +24,7 @@
 [qq.py](ournotes_bot/platforms/qq/qq.py) 中：
 `QueryGate` 管容量，取消请求后仍等待后台线程释放容量；
 `ReplySequencer` 管批间次序，等待超时可退化为无序；
-`_prepare_reply` 捕获文字/图片；
+`_prepare_reply` 优先将完整 `/查卡 947`（含既有去斜线／@清理及空白兼容）路由到固定图片彩蛋，不访问资料、AI 或续查选择；图片位于 `ournotes_bot/platforms/qq/assets/card-947.jpg`，随包携带；缺图退明确文字，其余命令沿原流程捕获文字/图片；
 `_deliver_reply` 区分上传失败与发送不确定性。
 `DeliveryOutcome` 只有有效消息 ID 的平台回执才为 success；异常或缺失回执为 uncertain，明确错误码为 failure。`reply_commands` 提取普通身份键，串行处理同用户续查，并在发送确认后提交 `PreparedReply.context`。新完整查询立即清除旧上下文，批内多列表不建立默认上下文；取消和迟到代次不提交。
 [menu.py](ournotes_bot/platforms/qq/menu.py) 的 `setup_menu` 是独立管理入口。
@@ -51,7 +51,7 @@
 
 ## Relevant Tests
 
-- [test_reply_pipeline.py](../tests/test_reply_pipeline.py)：同源选择、回退、不盲重发、通知重连接线。
+- [test_reply_pipeline.py](../tests/test_reply_pipeline.py)：同源选择、固定图片彩蛋隔离、回退、不盲重发、通知重连接线。
 - [test_multi_command.py](../tests/test_multi_command.py)、[test_reply_order.py](../tests/test_reply_order.py)、[test_stage5_limits.py](../tests/test_stage5_limits.py)：容量、顺序、超时与取消。
 - [test_media.py](../tests/test_media.py)、[test_menu.py](../tests/test_menu.py)、[test_observability.py](../tests/test_observability.py)：事件/菜单/日志隐私。
 - [test_platform_boundary.py](../tests/test_platform_boundary.py)：核心独立性。

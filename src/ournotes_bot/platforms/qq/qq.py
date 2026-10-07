@@ -2,7 +2,7 @@
 # Input: QQ 事件／消息、Settings、SongRepository、AIQueryParser 及 CommandResult／QueryResult。
 # Output: PreparedReply 同捕获图片／完整文字、预算与选择快照；DeliveryOutcome 明确全部交付回执；批内顺序固定。
 # Pos: Platform / QQ 的事件接入、回复准备／交付与后台任务接线；见 ../../../L2-QQ.md。
-# Effects/Dependencies: botpy 连接、上传／发送、线程与 asyncio 任务、去重／队列状态；经业务模块联网及读写缓存；固定 logger ournotes_bot.qq 供更新器识别就绪。
+# Effects/Dependencies: botpy 连接、上传／发送、线程与 asyncio 任务、去重／队列状态；经业务模块联网及读写缓存；彩蛋读取随包静态图片；固定 logger ournotes_bot.qq 供更新器识别就绪。
 
 from __future__ import annotations
 
@@ -14,6 +14,7 @@ import re
 import time
 from collections import deque
 from dataclasses import dataclass, replace
+from importlib.resources import files
 from urllib.parse import urlsplit
 
 from botpy.http import BotHttp, Route
@@ -439,8 +440,24 @@ def _image_from_result(result: QueryResult | CommandResult | None,
     return None
 
 
+def _easter_egg_reply(content: str) -> PreparedReply | None:
+    """Route only the complete card-947 command, independently of game queries."""
+    commands = split_commands(content)
+    if len(commands) != 1 or re.fullmatch(r"查卡\s+947", commands[0]) is None:
+        return None
+    try:
+        image = files(__package__).joinpath("assets/card-947.jpg").read_bytes()
+    except OSError as exc:
+        logger.warning("彩蛋图片读取失败；错误类型=%s", type(exc).__name__)
+        return PreparedReply("彩蛋图片暂时不可用，请稍后重试。")
+    return PreparedReply("彩蛋图片发送失败，请稍后重试。", image)
+
+
 def _image_reply(content: str, repository: SongRepository, ai_parser: AIQueryParser | None = None) -> bytes | None:
     """Compatibility helper for local previews; live replies use _prepare_reply."""
+    easter_egg = _easter_egg_reply(content)
+    if easter_egg is not None:
+        return easter_egg.image
     if ai_parser and is_ai_request(content):
         _, result = ai_parser.answer_with_plan(content, repository)
     else:
@@ -450,6 +467,9 @@ def _image_reply(content: str, repository: SongRepository, ai_parser: AIQueryPar
 
 def _prepare_reply(content: str, repository: SongRepository,
                    ai_parser: AIQueryParser) -> PreparedReply | None:
+    easter_egg = _easter_egg_reply(content)
+    if easter_egg is not None:
+        return easter_egg
     started = time.monotonic()
 
     def elapsed() -> float:

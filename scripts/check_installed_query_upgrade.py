@@ -26,6 +26,11 @@ def main():
     for name in modules:
         module = importlib.import_module("ournotes_bot." + name)
         assert not Path(module.__file__).resolve().is_relative_to(root), "imported source checkout"
+    from ournotes_bot.platforms.qq.qq import _prepare_reply
+    import hashlib
+    reply = _prepare_reply("/查卡 947", None, None)
+    assert hashlib.sha256(reply.image).hexdigest() == "ed23f7f33a54c01b5b636cb312f606662d177cfb3d74cdb459d0b6c1315aa81c"
+    assert reply.context is None
     distribution = importlib.metadata.distribution("taki-ournotes-bot")
     from ournotes_bot.query.entity_lexicon import _default_alias_file
     alias_file = _default_alias_file().resolve()
