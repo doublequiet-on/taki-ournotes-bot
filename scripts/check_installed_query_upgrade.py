@@ -41,7 +41,9 @@ def main():
     # pip --target relocates data-files without rewriting their RECORD paths.
     # Verify actual installed resources through the runtime's resource locator.
     resources = ("query_aliases.json", "THIRD_PARTY.md", "docs/CUTOFF_HISTORY.md",
-                 "docs/QUERY_UPGRADE_V1.md", "docs/META_OPEN.md", "docs/HANEOKA_CATALOG.md", "docs/HANEOKA_CUTOFFS.md", "deploy/query-upgrade-v1.env.example")
+                 "docs/QUERY_UPGRADE_V1.md", "docs/META_OPEN.md", "docs/HANEOKA_CATALOG.md", "docs/HANEOKA_CUTOFFS.md",
+                 "docs/HANEOKA_META_CONTRACT.md", "docs/HANEOKA_RETIREMENT.md", "docs/HANEOKA_RESEARCH.md",
+                 "deploy/query-upgrade-v1.env.example")
     for relative in resources:
         assert (alias_file.parent / relative).is_file(), f"missing installed resource: {relative}"
     from ournotes_bot.sources.cutoff_history import CutoffHistory, OpenCutoffHistory

@@ -251,6 +251,20 @@ class CatalogTests(unittest.TestCase):
         repo.data_source = "yume"
         self.assertNotEqual(before, catalog_version(repo))
 
+    def test_missing_second_snap_skill_keeps_category_filter_incomplete(self):
+        row = self.saved["documents"]["jp"]["support-cards"]["1"]
+        for missing in (999999, None):
+            with self.subTest(slot=missing):
+                row["raw"]["_supportSkillId02"] = missing
+                repo = self.main_repo()
+                repo.support_cards = [c for c in self.records()[2] if c.id == 1]
+                self.assertFalse(repo.support_cards[0].catalog["detail_loaded"])
+                answer = query_cards("LIVE=分数提升", repo, support=True)
+                self.assertEqual(answer.status, "data_unavailable")
+                self.assertIn("索引不完整", answer.error)
+                # The separate, fully resolved gekisou slot remains usable.
+                self.assertEqual(len(query_cards("击奏=LUCK", repo, support=True).cards), 1)
+
     def test_config_defaults_and_switches_are_independent(self):
         with patch("ournotes_bot.config.load_dotenv"), patch.dict(os.environ, {}, clear=True):
             self.assertEqual(Settings.from_env().data_source, "yume")

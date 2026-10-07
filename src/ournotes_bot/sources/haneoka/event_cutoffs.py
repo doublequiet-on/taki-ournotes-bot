@@ -142,7 +142,7 @@ class HaneokaEventCutoffRepository(EventCutoffRepository):
                 kind = error.get("kind") if isinstance(error, dict) else None
                 raise SourceError(kind if kind in {"not_found", "pending", "rate_limited"} else "upstream")
             return data, headers
-        except (ValueError, UnicodeError) as exc:
+        except (ValueError, UnicodeError, RecursionError) as exc:
             raise SourceError("invalid_json") from exc
 
     def _valid_payload(self, key, payload):
@@ -178,7 +178,7 @@ class HaneokaEventCutoffRepository(EventCutoffRepository):
             entry = _Entry(data["payload"], self._time_headers(data["payload"]), received, self.monotonic() - age)
             self._entries[key] = entry
             return entry
-        except (OSError, ValueError, TypeError, KeyError):
+        except (OSError, ValueError, TypeError, KeyError, RecursionError):
             return None
 
     @staticmethod
