@@ -42,7 +42,8 @@ def main() -> None:
             print(result)
         return
     repository = SongRepository(settings.data_base, settings.cache_file, settings.cache_ttl_hours,
-                                meta_source=settings.meta_source)
+                                meta_source=settings.meta_source, chart_source=settings.chart_source,
+                                data_source=settings.data_source)
     from .sources.cutoff_history import configure_sources
     configure_sources(repository, settings)
     ai_parser = AIQueryParser(settings)

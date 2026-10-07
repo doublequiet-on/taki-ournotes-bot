@@ -56,7 +56,8 @@ def render(card, locale="zh"):
     facts = [(f"ID  {card.id}       稀有度  {rarity_name(card)}", 27, INK),
              ("类型：" + TYPES.get(card.card_type, "未确认"), 25, INK)]
     tags = card.catalog.get("tags") or {}
-    facts.append(("得意乐曲：" + (" / ".join(n.get(locale) or n.get("ja") or str(k) for k, n in tags.items()) if tags else "未获取"), 25, INK))
+    facts.append(("得意乐曲：" + ("映射未确认" if card.catalog.get("tags_complete") is False else
+                              " / ".join(n.get(locale) or n.get("ja") or str(k) for k, n in tags.items()) if tags else "未获取"), 25, INK))
     blocks = [_section("基本资料", facts)]
     raw_stats = card.catalog.get("stats_level1")
     stats = raw_stats if (isinstance(raw_stats, (list, tuple)) and len(raw_stats) == 3 and
@@ -87,7 +88,7 @@ def render(card, locale="zh"):
                  if titles.get(lang) and titles[lang] != localized_text(card, "title", locale)]
     alternate.append(("上游收录时间：" + _time(card.start_at), 23, MUTED))
     blocks.append(_section("名称与时间", alternate))
-    note = "资料与完整卡面：Project Yume"
+    note = "资料与完整卡面：" + ("Haneoka JP" if card.catalog.get("source") == "haneoka" else "Project Yume")
     if card.catalog.get("detail_stale"):
         note += "\n详情使用上次有效缓存。"
     notes = _lines(note, 896, 22)

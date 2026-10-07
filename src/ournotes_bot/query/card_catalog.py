@@ -308,7 +308,7 @@ def execute_card_request(req, repository):
                     unknown = True
                 match = bool({normalize(n) for n in bands} & {normalize(n) for n in values})
             elif key == "tags":
-                if "tags" not in card.catalog:
+                if "tags" not in card.catalog or card.catalog.get("tags_complete") is False:
                     card_missing.add("得意乐曲")
                     unknown = True
                 match = set(values) <= set(card.catalog.get("tags", {}))
@@ -362,7 +362,8 @@ def detail_text(card, locale="zh"):
         lines.append("数值状态未核实，暂不展示培养数值。")
     if not support:
         tags = card.catalog.get("tags")
-        lines.append("得意乐曲：" + (" / ".join(n.get(locale) or n.get("ja") or k for k, n in tags.items()) if tags else "标签未获取"))
+        lines.append("得意乐曲：" + ("映射未确认" if card.catalog.get("tags_complete") is False else
+                                    " / ".join(n.get(locale) or n.get("ja") or k for k, n in tags.items()) if tags else "标签未获取"))
     names = {"leaderSkill": "队长技能", "liveSkill": "LIVE技能", "gekisouSkill": "击奏技能",
              "supportSkill": "LIVE支援", "gekisouSupportSkill": "击奏支援"}
     for skill in card.skills:
@@ -371,7 +372,8 @@ def detail_text(card, locale="zh"):
                   "效果（Lv.5；来源语言 " + lang + "）：" + (localized_text(skill, "description", locale) or "详情未获取")]
     if not card.skills:
         lines.append("技能详情暂不可用；不代表无技能。")
-    lines.append("Project Yume 公开资料 · 卡面为公开 full 版本")
+    source = "Haneoka JP" if card.catalog.get("source") == "haneoka" else "Project Yume"
+    lines.append(source + " 公开资料 · 卡面为公开 full 版本")
     if card.catalog.get("detail_stale"):
         lines.append("详情使用上次有效缓存。")
     return "\n".join(lines)

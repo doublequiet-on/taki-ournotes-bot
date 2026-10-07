@@ -1,8 +1,8 @@
 # L3
-# Input: Song／Chart 身份、可选缓存目录与 MoeNotes 谱面响应。
-# Output: load_chart_score 返回校验后的谱面 score dict，外层 meta 仅用于校验；不可用时抛 ChartDataError。
-# Pos: Data / Sources 的 MoeNotes 完整谱面读取与缓存适配器；见 L2-2.md。
-# Effects/Dependencies: 直接联网并读写独立谱面缓存；网络／响应失败可回退有效旧缓存，不下载图片或计算游戏得分。
+# Input: Song／Chart 身份、可选缓存目录、显式来源与完整谱面响应。
+# Output: load_chart_score 返回原 score dict；load_chart_data 另带来源、版本与缓存状态；不可用时抛 ChartDataError。
+# Pos: Data / Sources 的完整谱面入口与旧 MoeNotes 适配；Haneoka 实现在 haneoka/chart_data.py；见 L2-2.md。
+# Effects/Dependencies: 按所选来源联网并读写独立缓存；失败仅回退该来源的有效旧缓存，不自动切源。
 
 """Fetch validated MoeNotes score files for songs in the Project Yume catalog."""
 
@@ -12,6 +12,7 @@ import json
 import os
 import time
 import uuid
+from dataclasses import dataclass
 from pathlib import Path
 from urllib.request import Request, urlopen
 
@@ -26,6 +27,30 @@ MAX_CHART_BYTES = 2_000_000
 
 class ChartDataError(RuntimeError):
     pass
+
+
+@dataclass(frozen=True)
+class ChartData:
+    score: dict
+    source: str
+    release_id: str = ""
+    source_id: str = ""
+    cache_state: str = ""
+
+    def notice(self, locale: str) -> str:
+        if self.source != "haneoka":
+            return ""
+        suffix = {"zh": "（旧缓存）", "ja": "（旧キャッシュ）", "en": " (stale cache)"}
+        return "Haneoka JP" + (suffix.get(locale, suffix["zh"]) if self.cache_state == "stale" else "")
+
+
+def load_chart_data(song: Song, chart: Chart, cache_dir: Path | None = None, *, source="moenotes") -> ChartData:
+    if source == "haneoka":
+        from .haneoka.chart_data import load_chart
+        return load_chart(song, chart, cache_dir)
+    if source == "moenotes":
+        return ChartData(load_chart_score(song, chart, cache_dir), source)
+    raise ChartDataError("Unsupported chart source")
 
 
 def score_name(song: Song, chart: Chart) -> str:
@@ -62,8 +87,10 @@ def _parse_score(raw: bytes) -> dict:
         raise ChartDataError("Unrecognized score asset") from exc
 
 
-def load_chart_score(song: Song, chart: Chart, cache_dir: Path | None = None) -> dict:
+def load_chart_score(song: Song, chart: Chart, cache_dir: Path | None = None, *, source="moenotes") -> dict:
     """Return validated score data; use a stale cache if the network is unavailable."""
+    if source != "moenotes":
+        return load_chart_data(song, chart, cache_dir, source=source).score
     url = chart_url(song, chart)
     cache = cache_dir or runtime_data_dir() / "chart-cache"
     name = score_name(song, chart).replace("/", "_") + ".json"

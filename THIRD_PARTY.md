@@ -1,11 +1,16 @@
 # 第三方服务与素材
 
+Haneoka Game Records 可选挑战榜由 Haneoka 转接 MoeNotes tracker（api.bdon.moe）。本项目独立实现 DTO 校验，不复制上游 MPL 代码；展示同时署名 Haneoka / MoeNotes，历史明确记录转接观测口径。更换入口不改变真实数据血缘或游戏数据权利。合同、精度与静态关联限制见 [Haneoka 榜线](docs/HANEOKA_CUTOFFS.md)。
+
+Haneoka 可选主资料：`OURNOTES_DATA_SOURCE=haneoka` 使用[公开 Catalog 合同](https://docs.haneoka.org/openapi.json)的固定 JP 版本，以及核对实体／日文／技能机制一致的 intl 文本；完整技能有限模板转换为本项目原创，不复制上游 MPL 实现。14 个成员／SNAP 测试样本的必要字段与中日文、属性参考来自 2026-10-07 的公开 Haneoka 和 Project Yume 接口，仅用于对拍，不随 wheel／sdist 再分发。游戏素材、Master 与真实来源权利不因更换镜像而改变。图片按需读取，不打包；旧装饰图标入口暂时保留。版本、缓存及剩余标签映射限制见 [主资料说明](docs/HANEOKA_CATALOG.md)。
+
 本仓库只授权本项目自行编写的代码。MIT 许可证不涵盖游戏名称、商标、美术、音视频、歌词、谱面、上游 MasterData、QQ 平台或第三方软件。
 
 发布者 Bilibili @Adeliae 将本机器人作为非商业社区工具运营，不以游戏素材牟利。该声明不代表本仓库向他人授予游戏素材或数据的使用许可，也不改变代码的 MIT 许可证；使用者应分别遵守相关权利方及上游服务的要求。
 
 - **Project Yume**：歌曲、卡牌资料与图片从 [bdon.yatta.moe](https://bdon.yatta.moe/) 的公开文件读取。仓库不附带下载结果；网站可访问不等于授予素材再分发许可，部署者应确认上游的使用规则与素材权利。
 - **MoeNotes**：查询完整音符谱面图时，从 [MoeNotes](https://github.com/StarMoe-org/moenotes) 当前公开资产服务 `assets.bdon.moe` 按需读取谱面 JSON，并在本机短期缓存；无法读取时只显示等级和 Note 数。谱面文件及游戏内容的权利仍归原权利方。
+- **Haneoka 完整谱面（可选）**：`OURNOTES_CHART_SOURCE=haneoka` 按 [公开接口合同](https://docs.haneoka.org/openapi.json) 读取 JP release identity、固定版本的歌曲实体和该实体返回的 `.bytes` 文件；原始 JSON 直接交给现有解析器与绘图层，不复制上游解析／绘图实现。文件、实体和 release/source 身份在独立目录缓存，失败不自动访问 MoeNotes。图片页脚保留 Haneoka JP 署名；游戏谱面权利及真实上游血缘不因改用镜像而改变，原始谱面和验收图片不随发行包再分发。主资料、封面与其他模块仍按各自来源获取。
 - **Moenotes 分数表与开放平台**：默认分数表使用[同生态公开统计快照](https://storage.bdon.moe/moenotes/music-data/music-data.json)，真实TW标为共通参考。有限Python求值器为本项目原创，使用[ournotes-deck固定模型](https://github.com/empty-sekai/ournotes-deck/tree/e27d289d549aff74955977659e1bee5c72d6a4f5)及[已验证0.0.3模型](https://github.com/empty-sekai/ournotes-deck/tree/31d74487c4fd9e5dc3c1d4f34be8dee8f1a75b0e)的统计及数学合同，按已验证源码指纹兼容后续同源发布；模型采用MIT OR Apache-2.0，许可不自动授权游戏Master、谱面或素材。前端固定`d102787016b0f162bb414093f3cfa00058a9000c`仅作外部行为参照，[AGPL许可](https://github.com/StarMoe-org/moenotes/blob/d102787016b0f162bb414093f3cfa00058a9000c/LICENSE)及播放器浏览器dist例外不用于服务端移植，没有复制或逐行转译前端／播放器。
   - 全量快照、游戏图片、aptitude／SNAP／回放大对象和第三方实现不随wheel／sdist／离线包发布。源码测试仅保留4首／16谱面的必要参考样例`moenotes_meta_minimal.json`和独立上游环境生成的`moenotes_meta_reference.json`，发布归档不收录这些JSON。固定SHA、版本、参数及近似边界见[META_OPEN](docs/META_OPEN.md)；模型复现不等于游戏公式实证。仓库外参考环境运行上游原生导出供比较，Taki只收录原创比较脚本与最小结果。
   - 新封面按公开jacket键匿名访问`assets.bdon.moe/ja/Image/Jacket/{key}/{key}.webp`，按需缓存，不附游戏图像。冻结现有美工所需任务图标继续沿用下文已有素材入口，不为新分数表提供统计或事实。

@@ -1,6 +1,6 @@
 # L3
 # Input: 环境变量、可选 dotenv 路径、安装位置和当前工作目录。
-# Output: frozen Settings、独立分数表／榜线来源开关及历史路径；Secret 不进入 repr；load_dotenv 返回 None。
+# Output: frozen Settings、独立主资料／谱面／分数表／榜线来源开关及历史路径；Secret 不进入 repr；load_dotenv 返回 None。
 # Pos: Application 的配置与运行路径边界；见 ../L2-Application.md。
 # Effects/Dependencies: 读取环境及 dotenv；开放平台接受 MOENOTES_OPEN_SECRET 或 BDON_OPENPLATFORM，前者非空优先，密钥不进入repr。
 
@@ -107,6 +107,8 @@ class Settings:
     cutoff_source: str = "tracker"
     moenotes_open_secret: str = field(default="", repr=False)
     moenotes_open_history_file: Path | None = None
+    chart_source: str = "moenotes"
+    data_source: str = "yume"
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -134,7 +136,13 @@ class Settings:
             raise ValueError("OURNOTES_CUTOFF_SAMPLING_SERVERS must use jp,hk,kr,en")
         meta_source = os.getenv("OURNOTES_META_SOURCE", "moenotes").strip()
         cutoff_source = os.getenv("OURNOTES_CUTOFF_SOURCE", "tracker").strip()
-        if meta_source not in {"moenotes", "haneoka"} or cutoff_source not in {"tracker", "open"}:
+        chart_source = os.getenv("OURNOTES_CHART_SOURCE", "moenotes").strip()
+        data_source = os.getenv("OURNOTES_DATA_SOURCE", "yume").strip()
+        if data_source not in {"yume", "haneoka"}:
+            raise ValueError("unsupported main data source")
+        if chart_source not in {"moenotes", "haneoka"}:
+            raise ValueError("unsupported chart source")
+        if meta_source not in {"moenotes", "haneoka"} or cutoff_source not in {"tracker", "open", "haneoka"}:
             raise ValueError("unsupported music/ranking source")
         configured_open_history = os.getenv("OURNOTES_OPEN_HISTORY_FILE", "").strip()
         open_history = Path(configured_open_history) if configured_open_history else raw_cache.with_name("moenotes-open-history-v2.sqlite3")
@@ -172,4 +180,6 @@ class Settings:
             moenotes_open_secret=(os.getenv("MOENOTES_OPEN_SECRET", "").strip()
                                   or os.getenv("BDON_OPENPLATFORM", "").strip()),
             moenotes_open_history_file=open_history,
+            chart_source=chart_source,
+            data_source=data_source,
         )

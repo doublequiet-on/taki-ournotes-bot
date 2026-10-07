@@ -169,6 +169,24 @@ class QueryTests(unittest.TestCase):
             self.assertEqual(_image_reply("/问 展示迷星叫 EXPERT 完整谱面资料", self.repo, parser), b"full chart")
             load.assert_called_with(self.repo.songs[0], self.repo.songs[0].charts[-1])
 
+    def test_haneoka_chart_source_is_used_for_direct_and_structured_queries(self):
+        from ournotes_bot.sources.chart_data import ChartData
+        self.repo.chart_source = "haneoka"
+        score = {"notes": [{"t": 0, "pos": 6, "size": 6}]}
+        result = ChartData(score, "haneoka", cache_state="stale")
+        settings = Settings("", "", BASE, self.repo.cache_file, 6, "test-key", "test-model", "https://ai.example")
+        parser = AIQueryParser(settings)
+        with patch("ournotes_bot.platforms.qq.qq.load_chart_data", return_value=result) as load, \
+             patch("ournotes_bot.platforms.qq.qq.load_chart_score", side_effect=AssertionError("old source")), \
+             patch("ournotes_bot.platforms.qq.qq.render_chart", return_value=b"chart") as render:
+            self.assertEqual(_image_reply("/查谱面 1 EXPERT", self.repo), b"chart")
+            load.assert_called_with(self.repo.songs[0], self.repo.songs[0].charts[-1], source="haneoka")
+            self.assertIs(render.call_args.args[3], score)
+            self.assertIn("旧缓存", render.call_args.kwargs["source_notice"])
+            with patch.object(parser, "_request", return_value={"intent": "chart", "query": "迷星叫", "difficulty": "EXPERT"}):
+                self.assertEqual(_image_reply("/问 展示迷星叫 EXPERT 完整谱面资料", self.repo, parser), b"chart")
+                load.assert_called_with(self.repo.songs[0], self.repo.songs[0].charts[-1], source="haneoka")
+
     def test_only_yatta_assets_and_localized_data(self):
         card = self.repo.cards[0]
         song = self.repo.songs[0]

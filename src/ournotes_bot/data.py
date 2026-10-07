@@ -1,8 +1,8 @@
 # L3
-# Input: 来源记录／详情、主缓存、数据基址与缓存路径、加载／刷新请求及名称检索词。
+# Input: 来源记录／详情、主缓存、数据基址与缓存路径、独立主资料／谱面来源配置、加载／刷新请求及名称检索词。
 # Output: Song／Chart／Card／SupportCard／Skill、名称规则、SongRepository 聚合记录与缓存／完整度状态。
 # Pos: Data / Catalog 的领域记录、主资料聚合、详情与主缓存实现；见 L2-2-Catalog.md。
-# Effects/Dependencies: 调用 Sources，冷启动刷新前校验旧缓存以回退详情，调度并发详情并原子读写兼容主缓存；分数表 music_data 独立惰性读取；frozen 记录含 dict。
+# Effects/Dependencies: 调用 Sources；Yume 保留兼容缓存与详情回退，Haneoka 使用独立完整快照且不跨源补全；分数表 music_data 独立惰性读取；frozen 记录含 dict。
 
 from __future__ import annotations
 
@@ -228,7 +228,15 @@ def character_identity(name: str) -> str:
 class SongRepository:
     CACHE_SCHEMA = 4
 
-    def __init__(self, data_base: str, cache_file: Path, cache_ttl_hours: float = 6, *, meta_source="moenotes") -> None:
+    def __init__(self, data_base: str, cache_file: Path, cache_ttl_hours: float = 6, *, meta_source="moenotes",
+                 chart_source="moenotes", data_source="yume") -> None:
+        if data_source not in {"yume", "haneoka"}:
+            raise ValueError("unsupported main data source")
+        self.data_source = data_source
+        self._catalog_repository = None
+        if chart_source not in {"moenotes", "haneoka"}:
+            raise ValueError("unsupported chart source")
+        self.chart_source = chart_source
         self.data_base = data_base.rstrip("/")
         self.cache_file = cache_file
         self.cache_ttl_hours = cache_ttl_hours
@@ -254,11 +262,16 @@ class SongRepository:
 
     def refresh_song_traits(self) -> None:
         """Run off the QQ event loop; source failure cannot invalidate the main catalog."""
+        if self.data_source == "haneoka":
+            return  # Traits already belong to the complete main snapshot.
         self.song_traits.refresh()
         with self._song_lock:
             self.songs = self.song_traits.apply(self.songs)
 
     def load(self, refresh: bool = False) -> None:
+        if self.data_source == "haneoka":
+            self._load_haneoka(refresh)
+            return
         if refresh:
             self.refresh()
             return
@@ -285,6 +298,9 @@ class SongRepository:
         self.cache_state = "cached"
 
     def refresh(self) -> None:
+        if self.data_source == "haneoka":
+            self._load_haneoka(True)
+            return
         from .sources import yatta
         if self.data_base != yatta.BASE:
             raise DataError("仅允许 Project Yume 作为游戏数据源")
@@ -360,7 +376,24 @@ class SongRepository:
         self.last_successful_sync_at = self.metadata["cached_at"]
         self.cache_state = "fresh"
 
+    def _load_haneoka(self, refresh=False):
+        from .sources.haneoka.catalog import CatalogRepository
+        with self._song_lock:
+            if self._catalog_repository is None:
+                self._catalog_repository = CatalogRepository(
+                    self.cache_file.with_name("haneoka-catalog-jp-v1.json"), self.cache_ttl_hours)
+            records, metadata = self._catalog_repository.load(refresh)
+            self.songs, self.cards, self.support_cards = records
+            self.metadata = metadata
+            self.cache_state = self._catalog_repository.state
+            if self.cache_state != "unsaved":
+                self.last_successful_sync_at = metadata["cached_at"]
+            self._detail_cards.clear()
+            self._detail_support_cards.clear()
+
     def card_with_detail(self, card: Card) -> Card:
+        if self.data_source == "haneoka":
+            return card
         from .sources import yatta
         if card.id in self._detail_cards:
             return self._detail_cards[card.id]
@@ -393,9 +426,12 @@ class SongRepository:
         )
 
     def member_skill_index_ready(self) -> bool:
-        return bool(self.cards) and all(card.skills for card in self.cards)
+        return bool(self.cards) and all(card.skills and (self.data_source != "haneoka" or
+                                       card.catalog.get("skill_index_complete")) for card in self.cards)
 
     def support_card_with_detail(self, card: SupportCard) -> SupportCard:
+        if self.data_source == "haneoka":
+            return card
         from .sources import yatta
         if card.id in self._detail_support_cards:
             return self._detail_support_cards[card.id]

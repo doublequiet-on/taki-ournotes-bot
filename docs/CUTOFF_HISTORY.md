@@ -1,5 +1,7 @@
 # 榜线历史采样与运维
 
+Haneoka 预览来源另用 `haneoka-cutoff-history-v3.sqlite3`，schema 3；新代码读取 tracker／open／haneoka 三来源段，切换处断线，不改写原库。时间口径与未通过的生产切换条件见 [Haneoka 榜线](HANEOKA_CUTOFFS.md)。
+
 正式开放平台适配使用独立`moenotes-open-history-v2.sqlite3`（可配`OURNOTES_OPEN_HISTORY_FILE`），旧v1保留且不原位迁移。新代码可读两个来源段，在tracker观测／正式上游获取切换处断线；历史仍只存分数，不记录ID或姓名。默认来源tracker，启用open前另行完成认证覆盖／时间验收；日额度不形成拒绝或采样降频。配置、schema、回退见[META_OPEN](META_OPEN.md)，下文旧库操作继续适用于tracker文件。
 
 历史是本机从启用后保存的真实挑战歌曲观测。不补造部署前或停机期间的数据，不是积分档线、永久榜或确认终榜。每次保存前 100 个原始响应位置，只存整数／空值、身份、时间和质量状态，不存玩家、队伍或聊天身份。

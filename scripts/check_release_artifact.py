@@ -58,6 +58,8 @@ def check(path: Path) -> None:
                 "moenotes_music_data.py", "moenotes_open.py", "meta_parameters.py", "meta_model.py", "META_OPEN.md", "THIRD_PARTY.md"}
     if not required.issubset(documents):
         raise ValueError(f"missing query upgrade modules or instructions in {path.name}")
+    if not {"event_cutoffs.py", "HANEOKA_CUTOFFS.md"} <= documents:
+        raise ValueError(f"missing Haneoka cutoff preview resources in {path.name}")
     if path.name.endswith(".tar.gz"):
         needed = {"README.md", "THIRD_PARTY.md", "LOCAL_QQ_TEST.md", "昵称词表维护规范.md", ".env.example",
                   "更新日志.md"}

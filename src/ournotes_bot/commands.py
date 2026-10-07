@@ -625,13 +625,18 @@ def handle_command(content: str, repository: SongRepository,
         )
         traits = repository.song_traits
         saved = traits.saved
+        main_catalog = getattr(repository, "data_source", "yume") == "haneoka"
+        if main_catalog:
+            status = status.replace("Project Yume", "Haneoka JP")
+            saved = {"release": repository.metadata.get("data_version", "未知"),
+                     "fetched_at": repository.metadata.get("cached_at")}
         count = sum(bool(s.traits and s.traits.color and s.traits.missions) for s in repository.songs)
         history = repository.event_cutoffs.history
         history_text = "\n" + history.status_text() if history else "\n榜线历史：未配置"
         sampler = getattr(repository, "cutoff_sampler", None)
         history_text += "\n周期采样：" + (sampler.last_state if sampler else "未启动")
         return (status + f"\n歌曲颜色／激奏：{count}/{len(repository.songs)} · Haneoka 日服 · "
-                + ("旧缓存" if traits.stale else "有效缓存" if saved else "等待后台获取")
+                + ("旧缓存" if (repository.cache_state == "stale" if main_catalog else traits.stale) else "有效缓存" if saved else "等待后台获取")
                 + (f"\n属性版本：{saved['release']}\n本机获取：{_safe_sync_time(saved['fetched_at'], locale)}" if saved else "") + history_text)
 
     if text.casefold() in {"查缩写", "abbrev", "略称"}:
