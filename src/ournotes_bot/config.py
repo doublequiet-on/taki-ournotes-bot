@@ -142,7 +142,7 @@ class Settings:
             raise ValueError("unsupported main data source")
         if chart_source not in {"moenotes", "haneoka"}:
             raise ValueError("unsupported chart source")
-        if meta_source not in {"moenotes", "haneoka"} or cutoff_source not in {"tracker", "open"}:
+        if meta_source not in {"moenotes", "haneoka"} or cutoff_source not in {"tracker", "open", "haneoka"}:
             raise ValueError("unsupported music/ranking source")
         configured_open_history = os.getenv("OURNOTES_OPEN_HISTORY_FILE", "").strip()
         open_history = Path(configured_open_history) if configured_open_history else raw_cache.with_name("moenotes-open-history-v2.sqlite3")
