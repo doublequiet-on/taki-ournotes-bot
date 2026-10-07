@@ -268,6 +268,8 @@ class CutoffAnswer:
         return self.display_ranks or self.request.ranks or NODES
 
     def song_label(self, board):
+        if not self.event.challenge_order_verified:
+            return f'挑战ID {board.song.challenge_id} · {board.song.title}'
         number = next((i for i, song in enumerate(self.event.songs, 1)
                        if (song.challenge_id, song.music_id) == (board.song.challenge_id, board.song.music_id)), None)
         title = board.song.title
@@ -319,8 +321,12 @@ class CutoffAnswer:
                          + '（分数/数字ID/用户名；缺失为未获取）')
             lines.extend(f'T{rank}：' + '｜'.join(f'{self.score_label(board, rank)}/{self.id_label(board, rank)}/{self.table_name(board, rank)}'
                                                 for board in self.boards) for rank in self.ranks)
-        lines.extend(["", *event.notes, "MoeNotes（非官方）· 挑战歌曲Top100 · 按响应位置，非预测或确认终榜。"])
+        lines.extend(["", *event.notes, f"{self.source_label}（非官方）· 挑战歌曲Top100 · 按响应位置，非预测或确认终榜。"])
         return "\n".join(lines)
+
+    @property
+    def source_label(self):
+        return "Haneoka / MoeNotes" if self.event and self.event.source == "haneoka" else "MoeNotes"
 
     @staticmethod
     def score_label(board, rank):
@@ -396,6 +402,8 @@ def _execute_cutoff(request: CutoffRequest, repository) -> CutoffAnswer:
     request = replace(request, query=query, extra_queries=tuple(names[1:]), literal_query=bool(query))
     selected = []
     if request.song_number is not None:
+        if not event.challenge_order_verified:
+            return CutoffAnswer(request, event, message='来源挑战原序号尚未核实，歌曲N暂不可用；请使用 歌曲ID=… 。', status='data_unavailable')
         if request.song_number > len(event.songs):
             return CutoffAnswer(request, event, message=f'本服本期有 {len(event.songs)} 首挑战歌曲，请使用 歌曲1～歌曲{len(event.songs)}。', status='invalid_arguments')
         selected.append(event.songs[request.song_number - 1].music_id)
@@ -415,7 +423,8 @@ def _execute_cutoff(request: CutoffRequest, repository) -> CutoffAnswer:
             if outside:
                 return CutoffAnswer(request, event, message='这首歌不是本期活动的挑战歌曲。', status='empty')
             if not event.catalog:
-                return CutoffAnswer(request, event, message='该服务器歌曲元数据暂不可用，无法核对名称；请稍后重试或使用 歌曲N／歌曲ID=… 。', status='data_unavailable')
+                selector = '歌曲N／歌曲ID=…' if event.challenge_order_verified else '歌曲ID=…'
+                return CutoffAnswer(request, event, message=f'该服务器歌曲元数据暂不可用，无法核对名称；请稍后重试或使用 {selector} 。', status='data_unavailable')
             return CutoffAnswer(request, event, message=f'该服务器未找到歌曲「{name}」。请使用完整歌名或已配置别名。', status='unknown_entity')
         selected.append(matches[0])
     if len(set(selected)) > 1:
@@ -425,6 +434,8 @@ def _execute_cutoff(request: CutoffRequest, repository) -> CutoffAnswer:
         # An ordinal selects the exact challenge entry, even when a music ID repeats.
         songs = (event.songs[request.song_number - 1],)
     elif selected and len(songs) > 1:
+        if not event.challenge_order_verified:
+            return CutoffAnswer(request, event, message='本期同一曲目有多个挑战榜，原序号尚未核实；请查询本期全部挑战榜。', status='ambiguous')
         choices = '\n'.join(f'歌曲{i} · {song.title}' for i, song in enumerate(event.songs, 1)
                             if song.music_id == selected[0])
         return CutoffAnswer(request, event, message='本期同一曲目有多个挑战榜，请使用歌曲编号指定：\n' + choices, status='ambiguous')

@@ -23,7 +23,8 @@ def main():
     modules = ("query.continuation", "query.field_query", "query.efficiency_query", "sources.cutoff_history",
                "sources.cutoff_sampler", "rendering.cutoff_trends", "platforms.qq.qq", "query.meta_parameters",
                "query.meta_model", "sources.moenotes_music_data", "sources.moenotes_open",
-               "sources.haneoka.chart_data")
+               "sources.haneoka.chart_data", "sources.haneoka.catalog", "sources.haneoka.catalog_records",
+               "sources.haneoka.catalog_text", "sources.haneoka.catalog_assets", "sources.haneoka.event_cutoffs")
     for name in modules:
         module = importlib.import_module("ournotes_bot." + name)
         assert not Path(module.__file__).resolve().is_relative_to(root), "imported source checkout"
@@ -40,7 +41,9 @@ def main():
     # pip --target relocates data-files without rewriting their RECORD paths.
     # Verify actual installed resources through the runtime's resource locator.
     resources = ("query_aliases.json", "THIRD_PARTY.md", "docs/CUTOFF_HISTORY.md",
-                 "docs/QUERY_UPGRADE_V1.md", "docs/META_OPEN.md", "deploy/query-upgrade-v1.env.example")
+                 "docs/QUERY_UPGRADE_V1.md", "docs/META_OPEN.md", "docs/HANEOKA_CATALOG.md", "docs/HANEOKA_CUTOFFS.md",
+                 "docs/HANEOKA_META_CONTRACT.md", "docs/HANEOKA_RETIREMENT.md", "docs/HANEOKA_RESEARCH.md",
+                 "deploy/query-upgrade-v1.env.example")
     for relative in resources:
         assert (alias_file.parent / relative).is_file(), f"missing installed resource: {relative}"
     from ournotes_bot.sources.cutoff_history import CutoffHistory, OpenCutoffHistory
@@ -65,6 +68,11 @@ def main():
         captured = replace(board, source="open", time_kind=TIME_KIND, contract_version=CONTRACT)
         assert formal.record(event, captured) == "valid"
         assert formal.read(event, song, (1, 2)).points[0].source == "open"
+        from ournotes_bot.sources.cutoff_history import HaneokaCutoffHistory
+        from ournotes_bot.sources.haneoka.event_cutoffs import CONTRACT as HC, TIME_KIND as HT
+        haneoka = HaneokaCutoffHistory(Path(folder) / "haneoka.sqlite3", min_free_mb=0)
+        assert haneoka.record(event, replace(board, scores=(100, 0), source="haneoka", time_kind=HT, contract_version=HC)) == "valid"
+        assert haneoka.read(event, song, (1, 2)).points[0].source == "haneoka"
         data = {"format": FORMAT, "provenance": {"region": "tw"}, "bands": [], "songs": [
             {"id": 100107, "title": {"ja": "合成安装测试"}, "charts": [
                 {"scoreId": 10700, "difficulty": "easy", "notes": {"judged": 0}}]}]}

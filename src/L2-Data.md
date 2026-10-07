@@ -26,7 +26,7 @@
 
 [Catalog](ournotes_bot/L2-2-Catalog.md) 持有统一领域视图；[Sources](ournotes_bot/sources/L2-2.md) 将外部结构变为可信记录或快照。两者值得分开是因为本地持有/兼容策略与第三方 schema/获取策略有不同变化原因。
 
-Haneoka 是 Sources 内的实现簇，不增加第三层地图；三个缓存没有共同事务或统一生命周期。
+Haneoka 是 Sources 内的实现簇，不增加第三层地图；谱面、旧分数表等专项缓存仍独立。可选主资料 Catalog 的歌曲／成员／SNAP、属性和成员摘要共享一个固定版本事务，与旧主缓存分开。
 
 ## Dependencies
 

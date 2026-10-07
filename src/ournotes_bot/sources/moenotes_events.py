@@ -159,6 +159,8 @@ class EventSnapshot:
     asset_version: str = "unknown"
     catalog: tuple[tuple[str, tuple[str, ...]], ...] = ()
     notes: tuple[str, ...] = ()
+    source: str = "tracker"
+    challenge_order_verified: bool = True
 
 
 @dataclass(frozen=True)

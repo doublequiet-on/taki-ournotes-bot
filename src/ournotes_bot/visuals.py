@@ -353,9 +353,11 @@ def _draw_skills(draw: ImageDraw.ImageDraw, skills: tuple[Skill, ...], x: int, y
 
 
 def _asset(url: str, size: tuple[int, int], *, contain: bool = False) -> Image.Image | None:
+    from .sources.haneoka.catalog_assets import is_catalog_asset, download_asset
+    catalog_asset = is_catalog_asset(url)
     icons = {f"{BASE}/images/CardType{i}.webp" for i in range(1, 6)}
     music_jacket = re.fullmatch(r"https://assets\.bdon\.moe/ja/Image/Jacket/([A-Za-z0-9_-]+)/\1\.webp", url)
-    if not url.startswith(ASSETS + "/") and not music_jacket and url not in icons and url not in MISSION_ICON_URLS.values():
+    if not catalog_asset and not url.startswith(ASSETS + "/") and not music_jacket and url not in icons and url not in MISSION_ICON_URLS.values():
         return None
     def decode(raw):
         if len(raw) > 6_000_000:
@@ -366,7 +368,7 @@ def _asset(url: str, size: tuple[int, int], *, contain: bool = False) -> Image.I
                 return ImageOps.contain(image.convert("RGBA"), size, method=Image.Resampling.LANCZOS)
             return ImageOps.fit(image.convert("RGB"), size, method=Image.Resampling.LANCZOS)
     try:
-        cache = runtime_data_dir() / "asset-cache"
+        cache = runtime_data_dir() / ("haneoka-asset-cache" if catalog_asset else "asset-cache")
         cache.mkdir(parents=True, exist_ok=True)
         path = cache / (hashlib.sha256(url.encode()).hexdigest() + ".png")
         if path.exists():
@@ -376,10 +378,17 @@ def _asset(url: str, size: tuple[int, int], *, contain: bool = False) -> Image.I
             except Exception:
                 pass  # Old bad cache is retried once through the existing fetch path.
         try:
+            if catalog_asset:
+                raw = download_asset(url)
+            else:
+                raw = None
             referer = "https://haneoka.org/" if url in MISSION_ICON_URLS.values() else BASE + "/"
-            with urlopen(Request(url, headers={"User-Agent": "Mozilla/5.0", "Referer": referer}), timeout=12) as response:
-                raw = response.read(6_000_001)
+            if raw is None:
+                with urlopen(Request(url, headers={"User-Agent": "Mozilla/5.0", "Referer": referer}), timeout=12) as response:
+                    raw = response.read(6_000_001)
         except Exception:
+            if catalog_asset:
+                raise
             async def download() -> bytes:
                 async with aiohttp.ClientSession() as session:
                     async with session.get(url, timeout=aiohttp.ClientTimeout(total=18)) as response:
@@ -775,7 +784,11 @@ def render_chart(song: Song, charts: tuple[Chart, ...], locale: str = "zh", scor
         footer = _label(locale, "score_note") + (" · " + source_notice if source_notice else "")
         _write(draw, footer, 65, bottom + 20, 760, 18, MUTED)
     else:
-        _write(draw, _label(locale, "preview"), 65, 621 + shift, 760, 18, MUTED)
+        from .sources.haneoka.catalog_assets import is_catalog_asset
+        preview_label = _label(locale, "preview")
+        if is_catalog_asset(song.jacket_url):
+            preview_label = preview_label.replace("Project Yume", "Haneoka JP")
+        _write(draw, preview_label, 65, 621 + shift, 760, 18, MUTED)
     return _bytes(image)
 
 

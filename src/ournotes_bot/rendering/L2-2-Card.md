@@ -21,7 +21,7 @@ Current 成员列表内部取得 Haneoka Snapshot，并不是已经支持外部�
 
 QQ 从 `CardAnswer.request` 选列表/详情/原卡面 → visuals 兼容入口或 card_visuals → 成员/SNAP 绘制器 → Core 编码。
 条件只命中一张仍保持列表语义；ID 才进入详情。
-成员列表通过 Haneoka 身份匹配取得保守技能摘要，详情保留 Project Yume 完整字段；SNAP 摘要从已有 Lv.5 文本严格模板投影，不猜数值。
+旧主来源的成员列表通过 Haneoka 身份匹配取得保守技能摘要，详情使用 Project Yume 完整字段；新 Haneoka Catalog 的摘要和详情随主快照捕获，绘图不重取版本，来源页脚对应实际来源。SNAP 摘要从已有 Lv.5 文本严格模板投影，不猜数值。
 
 ## Dependencies
 

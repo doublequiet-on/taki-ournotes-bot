@@ -46,7 +46,8 @@ def render_list(cards, query, locale="zh", footer=""):
         layouts.append(groups)
     row_heights = [max(242 + sum(g[3] for g in groups) for groups in layouts[i:i+3]) for i in range(0, len(cards), 3)]
     bottom = top + sum(h + 20 for h in row_heights)
-    notes = _lines(footer, 912, 23) + ["技能 Lv.5 · 本页仅展示基础效果，成员条件加成见 ID 详情", "资料与卡面：Project Yume"]
+    source = "Haneoka JP" if cards and all(c.catalog.get("source") == "haneoka" for c in cards) else "Project Yume"
+    notes = _lines(footer, 912, 23) + ["技能 Lv.5 · 本页仅展示基础效果，成员条件加成见 ID 详情", "资料与卡面：" + source]
     image, draw = _canvas(1000, bottom + len(notes) * 33 + 40, "SNAP · 支援卡列表")
     _text(draw, [footer.splitlines()[0] if footer else f"本页 {len(cards)} 张"], 40, 148, 25)
     for text, x, y, w in tags:
@@ -120,7 +121,8 @@ def render_detail(card, locale="zh"):
         [("上游收录时间：" + _time(card.start_at), 23, MUTED)]))
     art_top = 148 + heading[2] + 24
     start = art_top + ah + 52
-    note = ["资料与完整卡面：Project Yume"] + (["详情使用上次有效缓存。"] if card.catalog.get("detail_stale") else [])
+    source = "Haneoka JP" if card.catalog.get("source") == "haneoka" else "Project Yume"
+    note = ["资料与完整卡面：" + source] + (["详情使用上次有效缓存。"] if card.catalog.get("detail_stale") else [])
     height = start + sum(b[2] + 20 for b in blocks) + len(note) * 32 + 48
     if height > 12000:
         raise ValueError("detail exceeds image limit; use complete text fallback")
