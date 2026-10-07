@@ -138,7 +138,7 @@ def _draw_header(canvas, draw, answer, assets, width, layout, preview_label, hea
 
 
 def _footer_lines(answer, measure, width):
-    notes = [*answer.event.notes, '来源 MoeNotes · 非官方 · 活动挑战歌曲 Top 100',
+    notes = [*answer.event.notes, f'来源 {answer.source_label} · 非官方 · 活动挑战歌曲 Top 100',
              '按来源响应位置；非预测、非确认终榜']
     return [line for note in notes if note for line in _lines(measure, note, width - 76, 18)]
 

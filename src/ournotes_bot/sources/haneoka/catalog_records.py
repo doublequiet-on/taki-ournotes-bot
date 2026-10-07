@@ -233,10 +233,13 @@ def convert(documents, identity_jp, fetched_at, *, stale=False):
             else:
                 kinds = (("leader", "leaderSkill", "_leaderSkillID"), ("live", "liveSkill", "_liveSkillID"), ("gekisou", "gekisouSkill", "_gekisouSkillID"))
             for slot_name, kind, raw_field in kinds:
+                category_key = "gekisou" if "gekisou" in kind else "live"
                 slot_values = [raw.get(raw_field + suffix) for suffix in ("01", "02")] if support else [raw.get(raw_field)]
                 slots[kind] = slot_values
                 if any(type(v) is not int or v < 0 for v in slot_values):
                     complete = False
+                    if kind != "leaderSkill":
+                        cats[category_key].append(None)
                     continue
                 values = resolved.get(slot_name, []) if support else [resolved.get(slot_name)]
                 peers = peer_resolved.get(slot_name, []) if support else [peer_resolved.get(slot_name)]
@@ -246,6 +249,8 @@ def convert(documents, identity_jp, fetched_at, *, stale=False):
                     raise ValueError("duplicate resolved skill")
                 if set(by_id) != {v for v in slot_values if v}:
                     complete = False
+                    if kind != "leaderSkill":
+                        cats[category_key].append(None)
                 for skill_id in slot_values:
                     if not skill_id:
                         continue
@@ -258,7 +263,7 @@ def convert(documents, identity_jp, fetched_at, *, stale=False):
                     skill_languages[kind] = lang
                     cat = category(kind, skill)
                     if kind != "leaderSkill":
-                        cats["gekisou" if "gekisou" in kind else "live"].append(cat)
+                        cats[category_key].append(cat)
                     evidence.append({"kind": kind, "id": skill_id, "name_ja": language(skill["skillName"], "ja"), "category": cat})
             for name in cats:
                 cats[name] = list(dict.fromkeys(cats[name])) or (["not_applicable"] if complete else [None])

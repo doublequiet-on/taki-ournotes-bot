@@ -1,5 +1,5 @@
 # L3
-# Input: Captured challenge boards, explicit source/configuration and independent v1/v2 paths.
+# Input: Captured challenge boards, explicit source/configuration and independent v1/v2/v3 paths.
 # Output: Lossless score-only observations, source-separated history views and storage health.
 # Pos: Data / Sources history and source composition; see L2-2.md and docs/META_OPEN.md.
 # Effects: Lazy SQLite, source/minute-state composition without requests; no credentials-file, worker or platform imports.
@@ -54,6 +54,8 @@ class HistoryView:
 
 
 class CutoffHistory:
+    source = "tracker"
+
     def __init__(self, path: Path, *, enabled=True, min_free_mb=512,
                  disk_usage=shutil.disk_usage, clock=time.time):
         self.path = Path(path).resolve()
@@ -107,7 +109,7 @@ class CutoffHistory:
         return value if type(value) is int and 0 < value < 253402300799000 else None
 
     def record(self, event, board):
-        if getattr(board, "source", "tracker") != ("open" if isinstance(self, OpenCutoffHistory) else "tracker"):
+        if getattr(board, "source", "tracker") != self.source:
             return "wrong_source"
         if not self.writable():
             return "disabled" if not self.enabled else self.last_error
@@ -244,6 +246,11 @@ class CutoffHistory:
 
 class OpenCutoffHistory(CutoffHistory):
     """Independent schema2 file; old code continues to use its untouched v1 file."""
+    source = "open"
+    time_kind = "upstream_fetched"
+    contract_version = "moenotes:challenge-ranking/1"
+    schema_version = 2
+
     def _connect(self, *, write=False):
         if write:
             self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -252,7 +259,7 @@ class OpenCutoffHistory(CutoffHistory):
             db = sqlite3.connect(self.path.as_uri() + "?mode=ro", uri=True, timeout=.15)
         try:
             version = db.execute("PRAGMA user_version").fetchone()[0]
-            if version not in ({0, 2} if write else {2}):
+            if version not in ({0, self.schema_version} if write else {self.schema_version}):
                 raise sqlite3.DatabaseError("unsupported formal history version")
             if write:
                 if version == 0:
@@ -263,11 +270,11 @@ class OpenCutoffHistory(CutoffHistory):
                         if db.execute("SELECT count(*) FROM observations").fetchone()[0]:
                             raise sqlite3.DatabaseError("unidentified existing observations")
                         columns = {r[1] for r in db.execute("PRAGMA table_info(observations)")}
-                        for name, default in (("source", "open"), ("time_kind", "upstream_fetched"),
-                                              ("contract_version", "moenotes:challenge-ranking/1")):
+                        for name, default in (("source", self.source), ("time_kind", self.time_kind),
+                                              ("contract_version", self.contract_version)):
                             if name not in columns:
                                 db.execute(f"ALTER TABLE observations ADD COLUMN {name} TEXT NOT NULL DEFAULT '{default}'")
-                    db.execute("PRAGMA user_version=2")
+                    db.execute(f"PRAGMA user_version={self.schema_version}")
                     db.commit()
                 columns = {r[1] for r in db.execute("PRAGMA table_info(observations)")}
                 if not {"source", "time_kind", "contract_version"} <= columns:
@@ -278,8 +285,8 @@ class OpenCutoffHistory(CutoffHistory):
             raise
 
     def record(self, event, board):
-        if (getattr(board, "source", "") != "open" or getattr(board, "time_kind", "") != "upstream_fetched"
-                or getattr(board, "contract_version", "") != "moenotes:challenge-ranking/1"):
+        if (getattr(board, "source", "") != self.source or getattr(board, "time_kind", "") != self.time_kind
+                or getattr(board, "contract_version", "") != self.contract_version):
             return "wrong_source"
         if not self._ms(board.fetched_ms):
             self.failure(event.server, event.event_id, board.song.challenge_id, "unknown_time")
@@ -288,19 +295,30 @@ class OpenCutoffHistory(CutoffHistory):
 
     def read(self, event, song, ranks, **kwargs):
         view = super().read(event, song, ranks, **kwargs)
-        return replace(view, points=tuple(replace(p, source="open", time_kind="upstream_fetched") for p in view.points))
+        return replace(view, points=tuple(replace(p, source=self.source, time_kind=self.time_kind) for p in view.points))
+
+
+class HaneokaCutoffHistory(OpenCutoffHistory):
+    """Independent schema3 file, never upgrades tracker or formal-source files."""
+    source = "haneoka"
+    time_kind = "tracker_observed_via_haneoka"
+    contract_version = "haneoka:challenge-ranking/1"
+    schema_version = 3
 
 
 class SourceHistory:
-    """Route new writes by source, read bounded source segments across both files."""
-    def __init__(self, legacy, formal, *, active="tracker"):
-        if legacy.path.resolve() == formal.path.resolve() or active not in {"tracker", "open"}:
+    """Route new writes by source, read bounded segments across independent files."""
+    def __init__(self, legacy, formal, *, active="tracker", haneoka=None):
+        self.stores = {"tracker": legacy, "open": formal}
+        if haneoka is not None:
+            self.stores["haneoka"] = haneoka
+        if len({h.path.resolve() for h in self.stores.values()}) != len(self.stores) or active not in self.stores:
             raise ValueError("history source paths must be independent")
         self.legacy, self.formal, self.active = legacy, formal, active
 
     @property
     def writer(self):
-        return self.formal if self.active == "open" else self.legacy
+        return self.stores[self.active]
 
     @property
     def enabled(self):
@@ -323,19 +341,19 @@ class SourceHistory:
         return self.writer.failure(*args, **kwargs)
 
     def read(self, event, song, ranks, *, max_points=20000, **kwargs):
-        old, new = (h.read(event, song, ranks, max_points=max_points, **kwargs) for h in (self.legacy, self.formal))
-        total = old.total + new.total
+        views = [h.read(event, song, ranks, max_points=max_points, **kwargs) for h in self.stores.values()]
+        total = sum(view.total for view in views)
         if total > max_points:
-            return HistoryView(warning="两来源历史点超出本次绘图预算，仅展示当前值；原始历史完整保留。", total=total)
-        ordered = sorted((*old.points, *new.points), key=lambda p: (p.time_ms, p.source))
+            return HistoryView(warning="多来源历史点超出本次绘图预算，仅展示当前值；原始历史完整保留。", total=total)
+        ordered = sorted((p for view in views for p in view.points), key=lambda p: (p.time_ms, p.source))
         points, switched = [], False
         for p in ordered:
             change = bool(points and points[-1].source != p.source)
             switched |= change
             points.append(replace(p, break_before=p.break_before or change))
-        warnings = [v.warning for v in (old, new) if v.warning and (v.points or not ordered)]
+        warnings = [v.warning for v in views if v.warning and (v.points or not ordered)]
         if switched:
-            warnings.append("历史包含 tracker观测与正式源上游获取两种来源段，切换处断线，口径不可等同。")
+            warnings.append("历史包含不同来源段（" + "、".join(sorted({p.source for p in points})) + "），切换处断线，时间口径不可等同。")
         return HistoryView(tuple(points), " ".join(dict.fromkeys(warnings)), total)
 
     def status(self):
@@ -348,19 +366,25 @@ class SourceHistory:
 def configure_sources(repository, settings):
     """Composition only. No secret-file access, source requests or sampler start."""
     from .moenotes_open import OpenClient, OpenEventCutoffRepository
+    from .haneoka.event_cutoffs import HaneokaEventCutoffRepository
     source = repository.event_cutoffs
-    if settings.cutoff_source == "open" and not isinstance(source, OpenEventCutoffRepository):
+    if settings.cutoff_source == "haneoka":
+        if not isinstance(source, HaneokaEventCutoffRepository):
+            source = repository.event_cutoffs = HaneokaEventCutoffRepository(settings.cache_file.parent / "haneoka-cutoff-v1")
+    elif settings.cutoff_source == "open" and not isinstance(source, OpenEventCutoffRepository):
         source = OpenEventCutoffRepository(settings.cache_file.parent / "moenotes-open-cutoff-v1",
                                           client=OpenClient(settings.moenotes_open_secret,
                                                             state_file=settings.cache_file.with_name("moenotes-open-admission-v1.json")))
         repository.event_cutoffs = source
     elif settings.cutoff_source == "open":
         source.client.configure(settings.moenotes_open_secret)
-    elif isinstance(source, OpenEventCutoffRepository):
+    elif isinstance(source, (OpenEventCutoffRepository, HaneokaEventCutoffRepository)):
         from .moenotes_events import EventCutoffRepository
         source = repository.event_cutoffs = EventCutoffRepository(settings.cache_file.parent / "moenotes-cutoff-v1")
     legacy = CutoffHistory(settings.cutoff_history_file or settings.cache_file.with_name("moenotes-history-v1.sqlite3"),
                           enabled=settings.cutoff_history_enabled, min_free_mb=settings.cutoff_history_min_free_mb)
     formal = OpenCutoffHistory(settings.moenotes_open_history_file or settings.cache_file.with_name("moenotes-open-history-v2.sqlite3"),
                               enabled=settings.cutoff_history_enabled, min_free_mb=settings.cutoff_history_min_free_mb)
-    source.history = SourceHistory(legacy, formal, active=settings.cutoff_source)
+    haneoka = HaneokaCutoffHistory(settings.cache_file.with_name("haneoka-cutoff-history-v3.sqlite3"),
+                                  enabled=settings.cutoff_history_enabled, min_free_mb=settings.cutoff_history_min_free_mb)
+    source.history = SourceHistory(legacy, formal, active=settings.cutoff_source, haneoka=haneoka)

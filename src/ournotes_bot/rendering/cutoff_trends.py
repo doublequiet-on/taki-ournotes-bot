@@ -159,7 +159,7 @@ def _card(answer, board, assets, preview_label):
         _text(draw, [caption], 38, chart_top + 284, 18, v.MUTED)
     y += plot_height
     y = _text(draw, detail_lines, 38, y + 12, 18, v.MUTED, 28)
-    _text(draw, ["各排名独立保留；同值曲线会重叠。", "来源 MoeNotes · 非官方 · 活动挑战歌曲 Top 100", "非预测、非确认终榜；历史末值不代替当前值。"], 38, y + 18, 18, v.MUTED, 28)
+    _text(draw, ["各排名独立保留；同值曲线会重叠。", f"来源 {answer.source_label} · 非官方 · 活动挑战歌曲 Top 100", "非预测、非确认终榜；历史末值不代替当前值。"], 38, y + 18, 18, v.MUTED, 28)
     return CutoffPage(v._bytes(canvas), subset.text)
 
 

@@ -23,6 +23,12 @@
 
 主资料独立来源：`data.py::SongRepository._load_haneoka` → `sources/haneoka/catalog.py`，由 `OURNOTES_DATA_SOURCE` 选择，默认 Yume。目标测试 `test_haneoka_catalog.py`，共享接口修改后完整离线回归及安装检查；字段、缓存、样图和切换门槛见 [主资料说明](HANEOKA_CATALOG.md)。
 
+Haneoka 榜线预览：`sources/haneoka/event_cutoffs.py` → 既有查询／绘图；`cutoff_history.py` 组合独立三来源历史。目标测试 `test_haneoka_cutoffs.py`，共享历史修改后完整回归及安装检查。尚未核实原序号和静态关联，默认来源不变，见 [榜线说明](HANEOKA_CUTOFFS.md)。
+
+Haneoka 第4批分数表尚缺 TW 等价统计合同，先阅读 [输入需求与验收门槛](HANEOKA_META_CONTRACT.md)。合同成立前不注册新来源或改写旧 `haneoka` 分支；继续使用当前有限求值器和独立对拍工具。
+
+旧联网退役前运行 `test_source_egress.py` 的 HTTP 调用边界探针，并核对 [网络出口与退役门槛](HANEOKA_RETIREMENT.md)。主资料／谱面／榜线开关独立，图标、分数表封面和后台刷新仍有旧源依赖；不能只检查主请求或按文件名删除共享工具。
+
 完整谱面独立来源：`sources/chart_data.py::load_chart_data` → `sources/haneoka/chart_data.py::load_chart`，由 `OURNOTES_CHART_SOURCE` 选择，默认保持 MoeNotes。目标回归 `test_haneoka_charts.py`、`test_chart_data.py`、`test_query.py`、`test_continuation.py`；共享配置／QQ 接线修改后运行完整离线回归。真实样本检查四难度、变速及完整节点，并对比同输入图片；联网样本与合成测试、真实 QQ 送达分别记录。安装检查包含新适配模块。
 
 查询升级 v1 的完整 55 项映射见 [实现与验收](QUERY_UPGRADE_V1.md)。共享歌曲条件在 `query/song_query.py`，字段短答在 `query/field_query.py`，有限续查在 `query/continuation.py`；QQ 的 `reply_commands` 管同用户顺序和发送确认。历史、采样、趋势分别位于 `sources/cutoff_history.py`、`sources/cutoff_sampler.py`、`rendering/cutoff_trends.py`，发布开关和长期保留见 [历史运维](CUTOFF_HISTORY.md)。
