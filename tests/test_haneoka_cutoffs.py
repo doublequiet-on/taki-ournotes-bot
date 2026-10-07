@@ -133,6 +133,22 @@ class HaneokaCutoffTests(unittest.TestCase):
         self.fixture.failure = True
         self.assertEqual(self.board()[1].score(1), 100)
 
+    def test_deep_json_response_falls_back_and_bad_disk_cache_is_ignored(self):
+        # Python 3.12's C JSON decoder has a separate recursion budget.
+        depth = 10000
+        raw = b'{"nested":' + b'[' * depth + b'0' + b']' * depth + b'}'
+        event, first = self.board()
+        self.fixture.now += 61
+        self.source.transport = lambda *args: (raw, {})
+        board = self.source.board(event, event.songs[0], self.source.deadline())
+        self.assertEqual(board.scores, first.scores)
+        self.assertEqual(board.quality, "fallback")
+        current = self.source.event("jp", self.source.deadline())
+        self.assertEqual(current.event_id, event.event_id)
+        for path in (self.path / "cache").glob("*.json"):
+            path.write_bytes(raw)
+        self.assertEqual(self.board(self.repository())[1].scores, first.scores)
+
     def test_late_response_does_not_replace_newer_snapshot(self):
         first = self.board()[1]
         self.fixture.now += 61
