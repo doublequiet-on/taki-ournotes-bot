@@ -263,5 +263,56 @@ class UpdateNoticeLifecycleTests(unittest.IsolatedAsyncioTestCase):
                 await asyncio.gather(client._refresh_task, client._song_traits_task, return_exceptions=True)
 
 
+class EasterEggTests(unittest.TestCase):
+    def test_original_image_without_repository_or_ai(self):
+        import hashlib
+        from ournotes_bot.platforms.qq.qq import _image_reply
+        for content in ("/查卡 947", "查卡 947", "／查卡 947", "<@!12345> /查卡  947", " /查卡\t947 "):
+            with self.subTest(content=content), patch(
+                "ournotes_bot.platforms.qq.qq.resolve_command", side_effect=AssertionError("normal query called")
+            ), patch("ournotes_bot.platforms.qq.qq.catalog_version", side_effect=AssertionError("catalog called")):
+                reply = _prepare_reply(content, None, None)
+                self.assertEqual(hashlib.sha256(reply.image).hexdigest(),
+                                 "ed23f7f33a54c01b5b636cb312f606662d177cfb3d74cdb459d0b6c1315aa81c")
+                self.assertEqual(_image_reply(content, None), reply.image)
+                self.assertIsNone(reply.context)
+
+    def test_other_queries_keep_the_normal_route(self):
+        from ournotes_bot.platforms.qq.qq import _easter_egg_reply
+        for content in ("/查卡 1", "/查卡 9470", "/查卡 0947", "/查卡 947 SSR",
+                        "/查卡面 947", "/查角色卡 947", "/card 947", "/查支援卡 947",
+                        "/问 查卡 947", "/查卡947", "/查卡 947\n/查曲 MyGO"):
+            with self.subTest(content=content):
+                self.assertIsNone(_easter_egg_reply(content))
+        with patch("ournotes_bot.platforms.qq.qq.resolve_command", side_effect=RuntimeError("normal route")) as resolve:
+            reply = _prepare_reply("/查卡 947 SSR", None, None)
+        resolve.assert_called_once()
+        self.assertIsNone(reply.image)
+
+    def test_missing_asset_does_not_fall_through_to_card_query(self):
+        with patch("ournotes_bot.platforms.qq.qq.files") as resources, patch(
+            "ournotes_bot.platforms.qq.qq.resolve_command", side_effect=AssertionError("normal query called")
+        ):
+            resources.return_value.joinpath.return_value.read_bytes.side_effect = FileNotFoundError()
+            reply = _prepare_reply("/查卡 947", None, None)
+        self.assertIn("彩蛋图片暂时不可用", reply.text)
+        self.assertIsNone(reply.image)
+
+    def test_media_delivery_and_upload_fallback(self):
+        reply = _prepare_reply("/查卡 947", None, None)
+        for group in (True, False):
+            with self.subTest(group=group):
+                message = ReplyPipelineTests.message()
+                asyncio.run(_deliver_reply(message, "target", group, reply))
+                send = message._api.post_group_message if group else message._api.post_c2c_message
+                self.assertEqual(send.await_count, 1)
+                self.assertEqual(send.await_args.kwargs["msg_type"], 7)
+                self.assertNotIn("content", send.await_args.kwargs)
+        message = ReplyPipelineTests.message(upload_error=TimeoutError())
+        asyncio.run(_deliver_reply(message, "target", True, reply))
+        self.assertEqual(message._api.post_group_message.await_count, 1)
+        self.assertEqual(message._api.post_group_message.await_args.kwargs["content"], reply.text)
+
+
 if __name__ == "__main__":
     unittest.main()

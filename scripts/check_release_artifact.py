@@ -1,6 +1,6 @@
 # L3
 # Input: 含 wheel／sdist 的发布目录，或 check(path) 接收的单个归档路径。
-# Output: CLI 输出通过提示或失败；check(path) 成功返回 None，失败抛异常；检查 commands.py、别名及 sdist 必需文档的存在性，并排查禁止条目。
+# Output: CLI 输出通过提示或失败；check(path) 成功返回 None，失败抛异常；检查 commands.py、别名及 sdist 必需文档的存在性，并排查禁止条目；仅允许指定彩蛋静态图片。
 # Pos: L2.md 的发布包内容检查入口，由 CI 和人工发布验证调用。
 # Effects/Dependencies: 使用标准库只读归档并输出结果；通过检查不证明业务运行正常。
 
@@ -18,6 +18,7 @@ PRIVATE_NAMES = {
     ".env", "ournotes-cache.json", "ai-quota.json", "ai-metrics.json",
     "update-notices.sqlite3",
 }
+BUNDLED_MEDIA = ("ournotes_bot", "platforms", "qq", "assets", "card-947.jpg")
 MEDIA_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".mp4", ".mp3"}
 
 
@@ -45,8 +46,11 @@ def check(path: Path) -> None:
         private_env = leaf.startswith(".env.") and leaf != ".env.example"
         if (leaf in PRIVATE_NAMES or private_env or (leaf.endswith(".json") and leaf != "query_aliases.json")
                 or leaf.endswith((".log", ".pyc", ".sqlite", ".db", ".sqlite3", ".sqlite3-journal", ".sqlite3-wal", ".sqlite3-shm"))
-                or PurePosixPath(leaf).suffix.lower() in MEDIA_SUFFIXES or runtime_dir):
+                or (PurePosixPath(leaf).suffix.lower() in MEDIA_SUFFIXES
+                    and parts[-len(BUNDLED_MEDIA):] != BUNDLED_MEDIA) or runtime_dir):
             raise ValueError(f"runtime or private file in {path.name}: {name}")
+    if not any(PurePosixPath(name).parts[-len(BUNDLED_MEDIA):] == BUNDLED_MEDIA for name in names):
+        raise ValueError(f"missing bundled card-947 image in {path.name}")
     if not aliases or not code:
         raise ValueError(f"missing query aliases or bot code in {path.name}")
     required = {"continuation.py", "field_query.py", "cutoff_history.py", "cutoff_sampler.py", "cutoff_trends.py",
