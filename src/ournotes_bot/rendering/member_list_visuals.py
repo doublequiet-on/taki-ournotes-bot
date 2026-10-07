@@ -1,8 +1,8 @@
 # L3
-# Input: 当前页成员卡列表、条件文本、locale 与页脚；Haneoka Snapshot 由内部取得。
+# Input: 当前页成员卡列表、条件文本、locale 与页脚；新 Catalog 使用随卡捕获的同版本摘要。
 # Output: render 返回成员列表图编码 bytes，保留摘要缺失／未确认状态。
 # Pos: Rendering / Card 的成员卡列表展示；见 L2-2-Card.md。
-# Effects/Dependencies: 调用 get_snapshot 可联网刷新并读写 Haneoka 独立缓存；经根 visuals 读字体、下载素材及写缓存，并进行 CPU／内存绘图。
+# Effects/Dependencies: 旧主来源调用 get_snapshot 可联网刷新独立缓存；新 Catalog 不重取摘要；经根 visuals 读字体、下载素材及写缓存，并进行 CPU／内存绘图。
 
 """Member condition-list presentation only; selection and pagination stay upstream."""
 import math
@@ -122,13 +122,15 @@ def _skill_panel(image, draw, x, y, summaries):
 
 def render(cards, query, locale="zh", footer=""):
     from ..visuals import _asset, _bytes
-    snapshot = get_snapshot(cards)
+    captured = bool(cards) and all(c.catalog.get("source") == "haneoka" for c in cards)
+    snapshot = None if captured else get_snapshot(cards)
+    stale = any(c.catalog.get("detail_stale") for c in cards) if captured else bool(snapshot and snapshot.stale)
     tags, top = tag_layout(query)
     top += 12
     footer_lines = _lines(footer, 912, 23) if footer else []
     footer_lines += ["技能 Lv.5 · 箭头后值仅在所列条件成立时适用"]
-    footer_lines += ["技能来源：Haneoka 日服" + (" · 使用旧缓存" if snapshot and snapshot.stale else
-                                            "" if snapshot else " · 数据暂不可用")]
+    footer_lines += ["技能来源：Haneoka 日服" + (" · 使用旧缓存" if stale else
+                                            "" if captured or snapshot else " · 数据暂不可用")]
     rows = math.ceil(len(cards) / 3)
     bottom = top + rows * STEP_Y
     height = bottom + len(footer_lines) * 33 + 44
@@ -160,6 +162,8 @@ def render(cards, query, locale="zh", footer=""):
             draw.rounded_rectangle((x + 4, y + 4, x + 114, y + 32), radius=6, fill=PAPER)
             _text(draw, [value], x + 8, y + 6, 18)
         summaries = snapshot.for_card(card) if snapshot else (("数据暂不可用", "稍后重试技能摘要"),) * 3
+        if captured:
+            summaries = card.catalog.get("member_summary", summaries)
         _skill_panel(image, draw, x, y, summaries)
         draw.text((x + 12, y + CARD_H + 5), f"{i + 1:02d} · ID", font=_font(21), fill="#45516F")
         draw.text((x + 100, y + CARD_H + 2), str(card.id), font=_font(25), fill=INK)

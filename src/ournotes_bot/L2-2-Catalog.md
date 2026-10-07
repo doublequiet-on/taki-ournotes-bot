@@ -18,6 +18,8 @@
 
 ## Core Flow
 
+主资料由 `OURNOTES_DATA_SOURCE` 独立选择，默认 `yume`。`haneoka` 分支委托 Sources 的 CatalogRepository，完整验证后替换歌曲／成员／SNAP 与元数据；属性、摘要和详情来自捕获的 JP 快照，中文仅补核对一致的文本。新缓存独立，详情不跨源补全，失败只回退 Haneoka 快照。下述兼容主缓存及详情补全流程仍属于 Yume 分支。详见 [主资料说明](../../docs/HANEOKA_CATALOG.md)。
+
 `load` 检查主缓存有效性和扩展完整度，必要时 `refresh` 调 Sources 获取基础表及并发详情；仓库组合记录、附加已持有 traits，再保存兼容格式。
 冷启动刷新前先完整解析并校验旧缓存，只有成功后才发布到内存以供详情故障回退；损坏或其他来源的旧缓存不阻止成功刷新，也不能提供部分旧技能。磁盘 schema 和旧读者行结构不变。
 卡牌详情可在请求时按需补全并留内存缓存；效率仓库只在相关消费时加载/刷新。
@@ -42,6 +44,8 @@ Project Yume 的并发详情调度位于 Catalog，不应按“网络相关”�
 从 [data.py 文件头 L3](data.py) 继续；来源适配器不重复列为本域所有文件。
 
 ## Relevant Tests
+
+- [test_haneoka_catalog.py](../../tests/test_haneoka_catalog.py)：完整快照、中文关联、技能、属性单位、图片／缓存隔离与来源边界。
 
 - [test_status.py](../../tests/test_status.py)：`test_untrusted_timestamp_and_failed_save_do_not_claim_success` 区分 unsaved 与同步成功。
 - [test_support_data.py](../../tests/test_support_data.py)、[test_card_catalog.py](../../tests/test_card_catalog.py)：旧卡牌行、扩展字段往返、缺索引升级失败。

@@ -23,7 +23,8 @@ def main():
     modules = ("query.continuation", "query.field_query", "query.efficiency_query", "sources.cutoff_history",
                "sources.cutoff_sampler", "rendering.cutoff_trends", "platforms.qq.qq", "query.meta_parameters",
                "query.meta_model", "sources.moenotes_music_data", "sources.moenotes_open",
-               "sources.haneoka.chart_data")
+               "sources.haneoka.chart_data", "sources.haneoka.catalog", "sources.haneoka.catalog_records",
+               "sources.haneoka.catalog_text", "sources.haneoka.catalog_assets")
     for name in modules:
         module = importlib.import_module("ournotes_bot." + name)
         assert not Path(module.__file__).resolve().is_relative_to(root), "imported source checkout"
@@ -40,7 +41,7 @@ def main():
     # pip --target relocates data-files without rewriting their RECORD paths.
     # Verify actual installed resources through the runtime's resource locator.
     resources = ("query_aliases.json", "THIRD_PARTY.md", "docs/CUTOFF_HISTORY.md",
-                 "docs/QUERY_UPGRADE_V1.md", "docs/META_OPEN.md", "deploy/query-upgrade-v1.env.example")
+                 "docs/QUERY_UPGRADE_V1.md", "docs/META_OPEN.md", "docs/HANEOKA_CATALOG.md", "deploy/query-upgrade-v1.env.example")
     for relative in resources:
         assert (alias_file.parent / relative).is_file(), f"missing installed resource: {relative}"
     from ournotes_bot.sources.cutoff_history import CutoffHistory, OpenCutoffHistory

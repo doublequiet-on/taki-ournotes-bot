@@ -1,5 +1,7 @@
 # 第三方服务与素材
 
+Haneoka 可选主资料：`OURNOTES_DATA_SOURCE=haneoka` 使用[公开 Catalog 合同](https://docs.haneoka.org/openapi.json)的固定 JP 版本，以及核对实体／日文／技能机制一致的 intl 文本；完整技能有限模板转换为本项目原创，不复制上游 MPL 实现。14 个成员／SNAP 测试样本的必要字段与中日文、属性参考来自 2026-10-07 的公开 Haneoka 和 Project Yume 接口，仅用于对拍，不随 wheel／sdist 再分发。游戏素材、Master 与真实来源权利不因更换镜像而改变。图片按需读取，不打包；旧装饰图标入口暂时保留。版本、缓存及剩余标签映射限制见 [主资料说明](docs/HANEOKA_CATALOG.md)。
+
 本仓库只授权本项目自行编写的代码。MIT 许可证不涵盖游戏名称、商标、美术、音视频、歌词、谱面、上游 MasterData、QQ 平台或第三方软件。
 
 发布者 Bilibili @Adeliae 将本机器人作为非商业社区工具运营，不以游戏素材牟利。该声明不代表本仓库向他人授予游戏素材或数据的使用许可，也不改变代码的 MIT 许可证；使用者应分别遵守相关权利方及上游服务的要求。

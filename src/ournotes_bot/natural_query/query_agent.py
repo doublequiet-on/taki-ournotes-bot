@@ -174,6 +174,7 @@ class QueryAgent:
     @staticmethod
     def _source(repository: SongRepository) -> tuple[object, ...]:
         return (
+            getattr(repository, "data_source", "yume"), repository.metadata.get("data_version"),
             repository.metadata.get("cached_at"), len(repository.songs), len(repository.cards),
             len(repository.support_cards), int(repository.member_skill_index_ready()), alias_version(),
             (repository.song_traits.saved or {}).get("fetched_at"), repository.song_traits.stale,
