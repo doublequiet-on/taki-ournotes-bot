@@ -275,7 +275,7 @@ class Engine:
     def _record_retry(self, state: dict, commit: str, *, network: bool) -> int:
         retries = state.setdefault("download_retries", {})
         attempts = retries.get(commit, {}).get("attempts", 0) + 1
-        delay = (300, 900, 1800)[min(attempts, 3) - 1] if network else 300 * 3 ** (attempts - 1)
+        delay = 300 if network else 300 * 3 ** (attempts - 1)
         # Saturation keeps v1 state readable by the previous controller.
         retries[commit] = dict(attempts=min(attempts, 3), after=time.time() + delay)
         return attempts

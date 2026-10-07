@@ -120,7 +120,7 @@ class LinuxUpdaterTests(unittest.TestCase):
 
     def test_network_backoff_survives_restarts_and_recovers_after_more_than_three_rounds(self):
         self.initialize()
-        for attempt, now in enumerate((1000, 1300, 2200, 4000, 5800), start=1):
+        for attempt, now in enumerate((1000, 1300, 1600, 1900, 2200), start=1):
             self.backend.failures["install:" + B] = u.Deferred("bundle_network_unavailable")
             with patch.object(u.time, "time", return_value=now):
                 result = self.engine.run()
@@ -131,11 +131,11 @@ class LinuxUpdaterTests(unittest.TestCase):
             state = self.engine.load_state()
             self.assertIsNone(state["transaction"])
             self.assertNotIn(B, state["failed"])
-            self.assertEqual(state["download_retries"][B]["after"], now + (300, 900, 1800)[min(attempt, 3) - 1])
+            self.assertEqual(state["download_retries"][B]["after"], now + 300)
             self.engine = u.Engine(self.folder, self.backend)
             with patch.object(u.time, "time", return_value=now + 1):
                 self.assertEqual(self.engine.run().reason, "bundle_retry_backoff")
-        with patch.object(u.time, "time", return_value=7600):
+        with patch.object(u.time, "time", return_value=2500):
             self.assertEqual(self.engine.run().status, "updated")
         self.assertNotIn(B, self.engine.load_state()["download_retries"])
 

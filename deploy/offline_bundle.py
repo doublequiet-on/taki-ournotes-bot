@@ -36,7 +36,7 @@ EXPANDED_LIMIT = 256 * 1024 * 1024
 SHA256 = re.compile(r"[0-9a-f]{64}\Z")
 FILE = re.compile(r"(?:source\.tar\.gz|requirements\.lock|wheelhouse/[A-Za-z0-9_.+-]+\.whl)\Z")
 CHUNK = 1024 * 1024
-DOWNLOAD_SECONDS = 180
+DOWNLOAD_SECONDS = 600
 
 
 def digest(path: Path) -> str:

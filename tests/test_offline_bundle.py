@@ -308,6 +308,14 @@ class BundleTests(unittest.TestCase):
                                opener=opener, sleep=sleeper)
                 sleeper.assert_not_called()
 
+    def test_slow_transfer_can_finish_after_three_minutes(self):
+        contents, target = b"slow but complete", self.root / "cache.zip"
+        ticks = iter((0,))
+        b.download("https://example.invalid", target, hashlib.sha256(contents).hexdigest(),
+                   size=len(contents), clock=lambda: next(ticks, 200),
+                   opener=lambda *args, **kwargs: range_response(contents, 0))
+        self.assertEqual(target.read_bytes(), contents)
+
     def test_total_time_budget_preserves_prefix_and_exposes_waiting_state(self):
         target, progress = self.root / "cache.zip", []
         target.with_suffix(".part").write_bytes(b"abcd")
