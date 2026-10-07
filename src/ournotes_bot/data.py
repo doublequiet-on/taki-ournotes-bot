@@ -1,5 +1,5 @@
 # L3
-# Input: 来源记录／详情、主缓存、数据基址与缓存路径、加载／刷新请求及名称检索词。
+# Input: 来源记录／详情、主缓存、数据基址与缓存路径、独立谱面来源配置、加载／刷新请求及名称检索词。
 # Output: Song／Chart／Card／SupportCard／Skill、名称规则、SongRepository 聚合记录与缓存／完整度状态。
 # Pos: Data / Catalog 的领域记录、主资料聚合、详情与主缓存实现；见 L2-2-Catalog.md。
 # Effects/Dependencies: 调用 Sources，冷启动刷新前校验旧缓存以回退详情，调度并发详情并原子读写兼容主缓存；分数表 music_data 独立惰性读取；frozen 记录含 dict。
@@ -228,7 +228,11 @@ def character_identity(name: str) -> str:
 class SongRepository:
     CACHE_SCHEMA = 4
 
-    def __init__(self, data_base: str, cache_file: Path, cache_ttl_hours: float = 6, *, meta_source="moenotes") -> None:
+    def __init__(self, data_base: str, cache_file: Path, cache_ttl_hours: float = 6, *, meta_source="moenotes",
+                 chart_source="moenotes") -> None:
+        if chart_source not in {"moenotes", "haneoka"}:
+            raise ValueError("unsupported chart source")
+        self.chart_source = chart_source
         self.data_base = data_base.rstrip("/")
         self.cache_file = cache_file
         self.cache_ttl_hours = cache_ttl_hours

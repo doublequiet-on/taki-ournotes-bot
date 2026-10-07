@@ -22,7 +22,8 @@ def main():
     root = Path(__file__).resolve().parents[1]
     modules = ("query.continuation", "query.field_query", "query.efficiency_query", "sources.cutoff_history",
                "sources.cutoff_sampler", "rendering.cutoff_trends", "platforms.qq.qq", "query.meta_parameters",
-               "query.meta_model", "sources.moenotes_music_data", "sources.moenotes_open")
+               "query.meta_model", "sources.moenotes_music_data", "sources.moenotes_open",
+               "sources.haneoka.chart_data")
     for name in modules:
         module = importlib.import_module("ournotes_bot." + name)
         assert not Path(module.__file__).resolve().is_relative_to(root), "imported source checkout"

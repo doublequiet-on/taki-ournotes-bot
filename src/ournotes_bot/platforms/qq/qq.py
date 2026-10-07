@@ -29,7 +29,7 @@ Route.SANDBOX_DOMAIN = "api.bot.qq.com"
 LEGACY_GATEWAY_HOSTS = frozenset({"api.sgroup.qq.com", "sandbox.api.sgroup.qq.com"})
 
 from ...ai_query import AIQueryParser, is_ai_request
-from ...sources.chart_data import ChartDataError, load_chart_score
+from ...sources.chart_data import ChartDataError, load_chart_data, load_chart_score
 from ...commands import (ALIASES, CommandResult, handle_command, locale_for, page_notice,
                        page_slice, resolve_command, split_commands)
 from ...config import QQ_PASSIVE_REPLY_LIMIT, REPLY_ORDER_TIMEOUT_SECONDS, Settings
@@ -147,14 +147,22 @@ def install_group_parser(connection, dispatch, app_id: str, observe=None) -> Non
     register_group_message_parser(connection.parser, connection.state.api, dispatch, app_id, observe)
 
 
-def _chart_image(song, charts, locale: str) -> bytes:
+def _chart_image(song, charts, locale: str, *, source="moenotes") -> bytes:
     preview = next((chart for chart in charts if chart.difficulty == "EXPERT"), charts[-1] if charts else None)
     score = None
+    notice = ""
     if preview:
         try:
-            score = load_chart_score(song, preview)
+            if source == "moenotes":
+                score = load_chart_score(song, preview)
+            else:
+                result = load_chart_data(song, preview, source=source)
+                score, notice = result.score, result.notice(locale)
         except ChartDataError:
             logger.warning("音符谱面暂不可用：歌曲 %s，难度 %s", song.id, preview.difficulty)
+    if notice:
+        return render_chart(song, charts, locale, score, preview.difficulty if preview else None,
+                            source_notice=notice)
     return render_chart(song, charts, locale, score, preview.difficulty if preview else None)
 
 
@@ -382,7 +390,7 @@ def _image_from_result(result: QueryResult | CommandResult | None,
                                     page_notice("songs", spec.query_label(), spec.page, len(songs), locale)) if visible else None
         if spec.intent == "chart":
             chart = result.chart
-            return _chart_image(chart[0], chart[1], locale) if chart else None
+            return _chart_image(chart[0], chart[1], locale, source=repository.chart_source) if chart else None
         if spec.intent == "card":
             if (spec.skill_query or spec.skill_kind) and not repository.member_skill_index_ready():
                 return None
@@ -418,7 +426,7 @@ def _image_from_result(result: QueryResult | CommandResult | None,
         if not songs:
             return None
         charts = tuple(chart for chart in songs[0].charts if difficulty is None or chart.difficulty == difficulty)
-        return _chart_image(songs[0], charts, locale)
+        return _chart_image(songs[0], charts, locale, source=repository.chart_source)
     if kind == "cards":
         cards = result.cards
         if not cards:
@@ -686,6 +694,7 @@ def run_bot(app_id: str, app_secret: str, repository: SongRepository, settings: 
         raise RuntimeError("缺少 qq-botpy，请在仓库根目录运行 python -m pip install -e .") from exc
 
     ai_parser = AIQueryParser(settings)
+    repository.chart_source = settings.chart_source
     query_gate = QueryGate(settings.query_concurrency, settings.query_queue_limit)
     from ...sources.cutoff_history import configure_sources
     from ...sources.cutoff_sampler import HistorySampler

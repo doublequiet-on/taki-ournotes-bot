@@ -94,6 +94,11 @@ class ContinuationCoreTests(Fixture, unittest.TestCase):
         with patch("ournotes_bot.query.continuation.alias_version", return_value=-999):
             self.assertEqual(execute_followup(current, Operation("page", 1), self.repo), CHANGED)
 
+    def test_chart_source_change_invalidates_previous_selection(self):
+        context = self.context()
+        self.repo.chart_source = "haneoka"
+        self.assertEqual(execute_followup(context, Operation("select", 1), self.repo), CHANGED)
+
     def test_meta_selection_keeps_row_and_filters_and_version(self):
         source = self.repo.song_meta._snapshot
         hard = replace(source.rows[0], difficulty="HARD", eff=99, level=20)

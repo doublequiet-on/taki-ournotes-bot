@@ -103,7 +103,8 @@ def catalog_version(repository) -> str:
     # as well as release labels, since replaced records may keep a release label.
     digest = hashlib.sha256()
     for value in (getattr(repository, "metadata", {}), getattr(repository, "songs", ()),
-                  getattr(repository, "cards", ()), getattr(repository, "support_cards", ())):
+                  getattr(repository, "cards", ()), getattr(repository, "support_cards", ()),
+                  getattr(repository, "chart_source", "moenotes")):
         digest.update(repr(value).encode("utf-8"))
     digest.update(str(alias_version()).encode("ascii"))
     return digest.hexdigest()

@@ -725,7 +725,7 @@ def _draw_score(draw: ImageDraw.ImageDraw, score: dict, top: int, locale: str) -
 
 
 def render_chart(song: Song, charts: tuple[Chart, ...], locale: str = "zh", score: dict | None = None,
-                 preview_difficulty: str | None = None) -> bytes:
+                 preview_difficulty: str | None = None, *, source_notice: str = "") -> bytes:
     score_points = [point for note in score.get("notes", []) if isinstance(note, dict)
                     for value in (note.get("node", []) if isinstance(note.get("node"), list) else [note])
                     if isinstance(value, dict) for point in [_score_point(value)] if point] if score else []
@@ -772,7 +772,8 @@ def render_chart(song: Song, charts: tuple[Chart, ...], locale: str = "zh", scor
         _write(draw, _label(locale, "score_title").format(difficulty=preview_difficulty or "EXPERT"), 65, 623 + shift, 760, 28, INK)
         _write(draw, _SCORE_GUIDANCE[locale][0], 65, 664 + shift, 760, 18, MUTED)
         bottom = _draw_score(draw, score or {}, 724 + shift, locale)
-        _write(draw, _label(locale, "score_note"), 65, bottom + 20, 760, 18, MUTED)
+        footer = _label(locale, "score_note") + (" · " + source_notice if source_notice else "")
+        _write(draw, footer, 65, bottom + 20, 760, 18, MUTED)
     else:
         _write(draw, _label(locale, "preview"), 65, 621 + shift, 760, 18, MUTED)
     return _bytes(image)
