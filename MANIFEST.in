@@ -12,6 +12,7 @@ include docs/QUERY_UPGRADE_V1.md docs/CUTOFF_HISTORY.md
 include docs/META_OPEN.md scripts/verify_meta_reference.py
 include docs/HANEOKA_CATALOG.md
 include docs/HANEOKA_CUTOFFS.md
+include docs/HANEOKA_META_CONTRACT.md
 exclude tests/fixtures/haneoka_catalog.json
 exclude tests/fixtures/moenotes_meta_minimal.json tests/fixtures/moenotes_meta_reference.json
 include deploy/query-upgrade-v1.env.example
