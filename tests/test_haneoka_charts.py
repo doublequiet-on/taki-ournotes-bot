@@ -7,6 +7,7 @@ import os
 import tempfile
 import threading
 import unittest
+import weakref
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import ExitStack
 from dataclasses import replace
@@ -41,9 +42,10 @@ def encoded(value):
 
 
 class Responses:
-    def __init__(self):
+    def __init__(self, music_id=100014):
+        self.music_id = music_id
         self.identity = copy.deepcopy(IDENTITY)
-        self.song = {"musicId": 100014, "musicTitle": ["テスト", "Test", "", "测试曲", ""],
+        self.song = {"musicId": music_id, "musicTitle": ["テスト", "Test", "", "测试曲", ""],
                      "jacketUrl": "/assets/jp/Assets/AddressableResources/Image/Jacket/jkt_test.png",
                      "difficulty": [{"difficulty": index, "difficultyName": name.lower(),
                                      "playLevel": 6 + index, "noteCount": 20 + index, "scoreId": 543210 + index,
@@ -61,7 +63,7 @@ class Responses:
             headers["x-haneoka-source-id"] = "wrong-source"
         if url == source.API + "release?projection=identity":
             return encoded(self.identity), headers
-        if url == source.API + f"songs/100014?release={self.identity['releaseId']}":
+        if url == source.API + f"songs/{self.music_id}?release={self.identity['releaseId']}":
             return encoded(self.song), headers
         if url.startswith(source.ORIGIN + source.ASSET_PREFIX + "returned_path/chart_"):
             return self.raw, headers
@@ -277,22 +279,146 @@ class HaneokaChartTests(unittest.TestCase):
         with patch("ournotes_bot.sources.chart_data.urlopen", side_effect=AssertionError("warm cache")):
             self.assertEqual(load_chart_score(self.song, self.chart, self.root), SCORE["score"])
 
-    def test_concurrent_same_chart_requests_share_the_completed_cache(self):
+    def assert_load_completes_while_fetch_blocked(self, first_load, second_load,
+                                                first_responses, second_responses):
         started, proceed = threading.Event(), threading.Event()
+        state = threading.local()
+
         def fetch(url, limit, timeout):
-            if not self.responses.requests:
+            if state.blocked:
+                state.blocked = False
                 started.set()
-                self.assertTrue(proceed.wait(5))
-            return self.responses(url, limit, timeout)
+                self.assertTrue(proceed.wait(10), "blocked fetch was not released")
+            return state.responses(url, limit, timeout)
+
+        def load(callback, responses, blocked):
+            state.responses, state.blocked = responses, blocked
+            return callback()
+
         self.fetch.side_effect = fetch
         with ThreadPoolExecutor(max_workers=2) as pool:
+            first = pool.submit(load, first_load, first_responses, True)
+            try:
+                self.assertTrue(started.wait(10), "first fetch did not start")
+                second = pool.submit(load, second_load, second_responses, False)
+                # The first fetch stays blocked until the unrelated load completes.
+                # These timeouts only guard against deadlocks; no latency is compared.
+                second_result = second.result(timeout=5)
+            finally:
+                proceed.set()
+            return first.result(timeout=10), second_result
+
+    def test_unrelated_cold_requests_do_not_serialize(self):
+        for index, kind in enumerate(("song", "difficulty", "cache_directory")):
+            with self.subTest(kind=kind):
+                root = self.root / str(index)
+                other_song, other_chart, other_root = self.song, self.chart, root
+                other_responses = Responses()
+                if kind == "song":
+                    other_song = replace(self.song, id=self.song.id + 1)
+                    other_responses = Responses(other_song.id)
+                elif kind == "difficulty":
+                    other_chart = self.charts[0]
+                else:
+                    other_root = root / "other"
+                first_responses = Responses()
+                first, second = self.assert_load_completes_while_fetch_blocked(
+                    lambda: source.load_chart(self.song, self.chart, root),
+                    lambda: source.load_chart(other_song, other_chart, other_root),
+                    first_responses, other_responses)
+                self.assertEqual((first.cache_state, second.cache_state), ("fresh", "fresh"))
+                self.assertEqual(first.score, second.score)
+                self.assertEqual((len(first_responses.requests), len(other_responses.requests)), (3, 3))
+
+    def test_warm_cache_does_not_wait_for_an_unrelated_cold_fetch(self):
+        warm_chart = self.charts[0]
+        self.load(warm_chart)
+        first_responses, second_responses = Responses(), Responses()
+        first, second = self.assert_load_completes_while_fetch_blocked(
+            self.load, lambda: self.load(warm_chart), first_responses, second_responses)
+        self.assertEqual((first.cache_state, second.cache_state), ("fresh", "cached"))
+        self.assertEqual(len(first_responses.requests), 3)
+        self.assertEqual(second_responses.requests, [])
+
+    def run_same_key_requests(self, second_load, first_error=None):
+        started, proceed, second_registered = (threading.Event() for _ in range(3))
+        locks = []
+        cache_lock = source._cache_lock
+
+        def observe_lock(path):
+            lock = cache_lock(path)
+            locks.append(weakref.ref(lock))
+            if len(locks) == 2:
+                second_registered.set()
+            return lock
+
+        def fetch(url, limit, timeout):
+            if not started.is_set():
+                started.set()
+                self.assertTrue(proceed.wait(10), "blocked fetch was not released")
+                if first_error is not None:
+                    raise first_error
+            return self.responses(url, limit, timeout)
+
+        self.fetch.side_effect = fetch
+        with patch.object(source, "_cache_lock", side_effect=observe_lock), ThreadPoolExecutor(max_workers=2) as pool:
             first = pool.submit(self.load)
-            self.assertTrue(started.wait(5))
-            second = pool.submit(self.load)
-            proceed.set()
-            results = [first.result(), second.result()]
-        self.assertEqual([result.cache_state for result in results], ["fresh", "cached"])
+            try:
+                self.assertTrue(started.wait(10), "first fetch did not start")
+                second = pool.submit(second_load)
+                self.assertTrue(second_registered.wait(10), "same-key waiter did not register")
+                self.assertIs(locks[0](), locks[1]())
+                self.assertEqual(len(source._LOCKS), 1)
+                self.assertFalse(second.done())
+            finally:
+                proceed.set()
+            second_result = second.result(timeout=10)
+        self.assertTrue(all(reference() is None for reference in locks))
+        self.assertEqual(len(source._LOCKS), 0, "completed or failed requests leaked a cache lock")
+        return first, second_result
+
+    def test_concurrent_same_chart_requests_share_the_completed_cache(self):
+        first, second = self.run_same_key_requests(self.load)
+        self.assertEqual((first.result().cache_state, second.cache_state), ("fresh", "cached"))
         self.assertEqual(self.fetch.call_count, 3)
+
+    def test_same_cache_path_aliases_share_the_inflight_request(self):
+        (self.root / "alias").mkdir()
+        alias = self.root / "alias" / ".."
+        first, second = self.run_same_key_requests(lambda: source.load_chart(self.song, self.chart, alias))
+        self.assertEqual((first.result().cache_state, second.cache_state), ("fresh", "cached"))
+        self.assertEqual(self.fetch.call_count, 3)
+
+    def test_failed_owner_releases_waiter_and_allows_retry(self):
+        for error, expected in ((OSError("offline"), ChartDataError), (RuntimeError("interrupted"), RuntimeError)):
+            with self.subTest(error=type(error).__name__):
+                self.responses.requests.clear()
+                self.fetch.reset_mock()
+                first, second = self.run_same_key_requests(self.load, first_error=error)
+                with self.assertRaises(expected):
+                    first.result()
+                self.assertEqual(second.cache_state, "fresh")
+                self.assertEqual(self.fetch.call_count, 4)
+                self.assertEqual(self.load().cache_state, "cached")
+                self.assertEqual(self.fetch.call_count, 4)
+                self.path().unlink()
+
+    def test_stale_fallback_releases_waiter_for_successful_refresh(self):
+        self.load()
+        original = self.path().read_bytes()
+        self.now += source.CHART_CACHE_TTL + 1
+        self.responses.requests.clear()
+        self.fetch.reset_mock()
+        first, second = self.run_same_key_requests(self.load, first_error=OSError("offline"))
+        self.assertEqual((first.result().cache_state, second.cache_state), ("stale", "fresh"))
+        self.assertEqual(first.result().score, second.score)
+        self.assertEqual(self.fetch.call_count, 4)
+        self.assertNotEqual(self.path().read_bytes(), original)
+
+    def test_completed_distinct_keys_do_not_accumulate_locks(self):
+        for index in range(16):
+            self.assertEqual(source.load_chart(self.song, self.chart, self.root / str(index)).cache_state, "fresh")
+            self.assertEqual(len(source._LOCKS), 0)
 
     def test_renderer_is_identical_for_equal_inputs_and_only_adds_source_footer(self):
         actual = self.load()

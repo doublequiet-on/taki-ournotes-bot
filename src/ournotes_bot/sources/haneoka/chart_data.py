@@ -18,6 +18,7 @@ import re
 import threading
 import time
 import uuid
+import weakref
 from dataclasses import replace
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -35,7 +36,19 @@ MAX_CATALOG_BYTES = 512_000
 MAX_CACHE_BYTES = 3_000_000
 TIMEOUT = 12
 DIFFICULTIES = ("EASY", "NORMAL", "HARD", "EXPERT")
-_LOCK = threading.RLock()
+_LOCKS_GUARD = threading.Lock()
+_LOCKS = weakref.WeakValueDictionary()
+
+
+def _cache_lock(path):
+    key = os.path.normcase(str(path.resolve()))
+    with _LOCKS_GUARD:
+        lock = _LOCKS.get(key)
+        if lock is None:
+            lock = threading.RLock()
+            _LOCKS[key] = lock
+        # Owners and waiters keep this lock alive; idle paths leave no registry entry.
+        return lock
 
 
 def _unique_object(pairs):
@@ -195,7 +208,7 @@ def load_chart(song: Song, chart: Chart, cache_dir: Path | None = None) -> Chart
             or chart.difficulty not in DIFFICULTIES or chart not in song.charts):
         raise ChartDataError("Invalid requested chart identity")
     path = (cache_dir or runtime_data_dir()) / CACHE_NAME / f"{song.id}_{chart.difficulty}.json"
-    with _LOCK:
+    with _cache_lock(path):
         now = time.time()
         cached = None
         try:
