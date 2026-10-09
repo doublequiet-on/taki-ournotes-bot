@@ -240,6 +240,68 @@ class CatalogRefreshScheduleTests(unittest.IsolatedAsyncioTestCase):
                                       [1080, 1740, 1800], fail_first=True)
 
 
+class SDKStartupLoopTests(unittest.TestCase):
+    def setUp(self):
+        policy = asyncio.get_event_loop_policy()
+        self.addCleanup(asyncio.set_event_loop_policy, policy)
+        asyncio.set_event_loop_policy(asyncio.DefaultEventLoopPolicy())
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.settings = Settings("test-app", "", BASE, Path(self.temp.name)/"cache.json", 6,
+                                 qq_gateway_host="", update_notices=False)
+        self.repository = SimpleNamespace(meta_source="haneoka", event_cutoffs=SimpleNamespace(history=True))
+        self.seen = []
+
+    def start_without_login(self, *, fail=False):
+        def run(client, **kwargs):
+            self.seen.append(client.loop)
+            self.assertFalse(client.loop.is_closed())
+            self.assertIs(asyncio.get_event_loop(), client.loop)
+            client.loop.run_until_complete(asyncio.sleep(0))
+            if fail:
+                raise RuntimeError("synthetic SDK failure")
+
+        # Keep the actual SDK constructor. Block network/login and SDK log files.
+        with patch("botpy.Client.run", autospec=True, side_effect=run) as run_mock, \
+             patch("botpy.Client.start", side_effect=AssertionError("login forbidden")), \
+             patch("botpy.logging.configure_logging"), \
+             patch("aiohttp.ClientSession", side_effect=AssertionError("network forbidden")):
+            run_bot("test-app", "", self.repository, self.settings)
+            run_mock.assert_called_once()
+
+    def test_actual_sdk_starts_after_asyncio_run_and_releases_owned_loop(self):
+        asyncio.run(asyncio.sleep(0))
+        self.start_without_login()
+        self.assertTrue(self.seen[0].is_closed())
+        with self.assertRaises(RuntimeError):
+            asyncio.get_event_loop()
+
+    def test_actual_sdk_replaces_a_closed_current_loop(self):
+        closed = asyncio.new_event_loop()
+        asyncio.set_event_loop(closed)
+        closed.close()
+        self.start_without_login()
+        self.assertIsNot(self.seen[0], closed)
+        self.assertTrue(self.seen[0].is_closed())
+
+    def test_actual_sdk_preserves_an_existing_usable_loop(self):
+        existing = asyncio.new_event_loop()
+        self.addCleanup(existing.close)
+        asyncio.set_event_loop(existing)
+        self.start_without_login()
+        self.assertIs(self.seen[0], existing)
+        self.assertFalse(existing.is_closed())
+        self.assertIs(asyncio.get_event_loop(), existing)
+
+    def test_sdk_failure_releases_only_the_owned_loop(self):
+        asyncio.set_event_loop(None)
+        with self.assertRaisesRegex(RuntimeError, "synthetic SDK failure"):
+            self.start_without_login(fail=True)
+        self.assertTrue(self.seen[0].is_closed())
+        with self.assertRaises(RuntimeError):
+            asyncio.get_event_loop()
+
+
 class UpdateNoticeLifecycleTests(unittest.IsolatedAsyncioTestCase):
     async def test_music_data_worker_is_wired_only_for_moenotes_and_stops_on_exit(self):
         instances = []
