@@ -38,6 +38,7 @@ class SongTraits:
     stale: bool = False
     release: str = ""
     source_version: str = ""
+    attribute_icon: str = ""
 
 
 def describe(song) -> str:

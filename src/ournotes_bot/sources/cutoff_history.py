@@ -370,7 +370,10 @@ def configure_sources(repository, settings):
     source = repository.event_cutoffs
     if settings.cutoff_source == "haneoka":
         if not isinstance(source, HaneokaEventCutoffRepository):
-            source = repository.event_cutoffs = HaneokaEventCutoffRepository(settings.cache_file.parent / "haneoka-cutoff-v1")
+            from .haneoka.event_metadata import EventMetadataRepository
+            metadata = EventMetadataRepository(settings.cache_file.parent / "haneoka-event-metadata-v1")
+            source = repository.event_cutoffs = HaneokaEventCutoffRepository(
+                settings.cache_file.parent / "haneoka-cutoff-v1", metadata=metadata)
     elif settings.cutoff_source == "open" and not isinstance(source, OpenEventCutoffRepository):
         source = OpenEventCutoffRepository(settings.cache_file.parent / "moenotes-open-cutoff-v1",
                                           client=OpenClient(settings.moenotes_open_secret,

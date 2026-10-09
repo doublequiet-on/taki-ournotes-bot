@@ -241,6 +241,8 @@ def execute_followup(context: QueryContext, operation: Operation, repository):
             spec = replace(query, subject=EntityRef("song", selected.entity_id),
                            difficulty=selected.difficulty, page=1, song_filter=shared,
                            display_name=str(selected.entity_id))
+            if query.meta_scene and selected.scene:
+                spec = replace(spec, meta_scene={"free": "normal", "battle": "gekisou"}.get(selected.scene, selected.scene))
             if query.meta_request is not None:
                 request = replace(query.meta_request, song_id=selected.entity_id,
                                   difficulties=(selected.difficulty,),

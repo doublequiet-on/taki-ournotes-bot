@@ -39,7 +39,7 @@
 
 ## State / Side Effects
 
-连接、后台任务、队列/信号量、排序票号和进程内群消息去重；网络上传/发送和菜单写入。主资料、歌曲属性及默认Moenotes分数表刷新由当前 QQ 运行时调度；分数表上线立即检查、此后300秒一次，重连复用任务、退出停止，Haneoka来源不启动。没有已实现的独立通用后台调度服务。
+连接、后台任务、队列/信号量、排序票号和进程内群消息去重；网络上传/发送和菜单写入。主资料、歌曲属性及默认Moenotes分数表刷新由当前 QQ 运行时调度；主资料对齐香港时间整点／半点，刷新结束后重新对齐，错过时点不补跑；分数表上线立即检查、此后300秒一次，重连复用任务、退出停止，Haneoka来源不启动。没有已实现的独立通用后台调度服务。
 
 ## Failure / Degradation Boundaries
 
@@ -51,7 +51,7 @@
 
 ## Relevant Tests
 
-- [test_reply_pipeline.py](../tests/test_reply_pipeline.py)：同源选择、固定图片彩蛋隔离、回退、不盲重发、通知重连接线。
+- [test_reply_pipeline.py](../tests/test_reply_pipeline.py)：同源选择、固定图片彩蛋隔离、回退、不盲重发、通知重连接线及主资料定点刷新（耗时、跨日、失败后继续）。
 - [test_multi_command.py](../tests/test_multi_command.py)、[test_reply_order.py](../tests/test_reply_order.py)、[test_stage5_limits.py](../tests/test_stage5_limits.py)：容量、顺序、超时与取消。
 - [test_media.py](../tests/test_media.py)、[test_menu.py](../tests/test_menu.py)、[test_observability.py](../tests/test_observability.py)：事件/菜单/日志隐私。
 - [test_platform_boundary.py](../tests/test_platform_boundary.py)：核心独立性。

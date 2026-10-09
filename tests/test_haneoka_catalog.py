@@ -28,6 +28,7 @@ class CatalogTests(unittest.TestCase):
     def setUp(self):
         fixture = json.loads(FIXTURE.read_bytes())
         self.saved, self.expected = fixture["snapshot"], fixture["expected_yume"]
+        self.saved["documents"]["jp"].setdefault("ui-marks", {})
         self.now, self.calls = 1100, []
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
@@ -267,10 +268,10 @@ class CatalogTests(unittest.TestCase):
 
     def test_config_defaults_and_switches_are_independent(self):
         with patch("ournotes_bot.config.load_dotenv"), patch.dict(os.environ, {}, clear=True):
-            self.assertEqual(Settings.from_env().data_source, "yume")
+            self.assertEqual(Settings.from_env().data_source, "haneoka")
             os.environ["OURNOTES_DATA_SOURCE"] = "haneoka"
             settings = Settings.from_env()
-            self.assertEqual((settings.data_source,settings.chart_source,settings.meta_source,settings.cutoff_source), ("haneoka","moenotes","moenotes","tracker"))
+            self.assertEqual((settings.data_source,settings.chart_source,settings.meta_source,settings.cutoff_source), ("haneoka","haneoka","haneoka-site","haneoka"))
             os.environ["OURNOTES_DATA_SOURCE"] = "unknown"
             with self.assertRaises(ValueError): Settings.from_env()
 

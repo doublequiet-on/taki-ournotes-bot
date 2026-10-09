@@ -1,0 +1,164 @@
+{
+  "source": "https://haneoka.org/api/v1/servers/jp/song-meta",
+  "identity": {
+    "releaseId": "r-073d884b07d594061fd6",
+    "schema": "haneoka-resource-release-identity-v1",
+    "server": "jp",
+    "sourceId": "v10059-d946d6c87a3c-b8f8aee87ee1-mbff61896f054-n080fe116"
+  },
+  "fetched_at": "2026-10-09T07:40:00+00:00",
+  "songs": {
+    "100001": {
+      "musicId": 100001,
+      "musicTitle": [
+        "迷星叫",
+        "",
+        "",
+        "",
+        ""
+      ],
+      "difficulty": [
+        {
+          "difficulty": 3,
+          "difficultyEstimate": {
+            "components": {
+              "chords": 3.1086627570294114,
+              "density": 10.087926639538454,
+              "flick": 2.6779687143726445,
+              "handMovement": 0.38663801069743775,
+              "holdConstraints": 0.8048270988591395,
+              "reading": 2.3356546284338893,
+              "rhythm": 1.0726253465795759,
+              "stamina": 4.803827194721317
+            },
+            "estimatedConstant": null,
+            "pin": {
+              "algorithmSha256": "c01254441a0ee3af86d93e192f5c375d57adaf93c76e6e3f2a6a8b35c5c5cf8d",
+              "calibrationSha256": "51e6e168905d4b9fe355a671b2802e360f7e4835b2032bef8e697b5780d14969",
+              "canonicalConverterSha256": "00683b20a767ef6fb0e2e6844400388fc3b19583b7c73c75f56190de082862a0",
+              "chartSha256": "e1c6853d7c8ceed4b9cbffe251f0dc33e3b3929417a790d5332b0db2db83395a",
+              "sourceId": "v10059-d946d6c87a3c-b8f8aee87ee1-mbff61896f054-n080fe116"
+            },
+            "quality": {
+              "canonicalJudgedCount": 768,
+              "confidence": null,
+              "downCount": 384,
+              "flickCount": 89,
+              "generatedScoreTicks": 236,
+              "masterJudgedCount": 768,
+              "operationCount": 532,
+              "status": "unavailable",
+              "strategyContactStarts": 0,
+              "tailCheckCount": 58,
+              "traceCheckCount": 1,
+              "warnings": [
+                "greedy-contact-cover-no-timing-window-search",
+                "heuristic-no-player-validation",
+                "player-validation-pending",
+                "reading-visibility-proxy",
+                "two-contact-continuous-phase-approximation",
+                "calibration-feature-profile-mismatch"
+              ]
+            },
+            "target": "fc-operation-load",
+            "units": "relative-strain",
+            "version": "ournotes-fc-operation-v3"
+          },
+          "difficultyName": "expert",
+          "displayLevel": 25,
+          "file": "/assets/jp/Assets/AddressableResources/Live/MusicScore/0001/0001_03.bytes",
+          "noteCount": 768,
+          "playLevel": 25,
+          "publishedAt": [
+            1767193200000,
+            null,
+            null,
+            null,
+            null
+          ],
+          "scoreId": 10000103,
+          "sortLevel": 25
+        }
+      ]
+    }
+  },
+  "meta": {
+    "100001": {
+      "3": {
+        "chart": {
+          "eff": 3.74423061,
+          "metaStatus": "available",
+          "metaWarnings": [
+            "setting-defaulted:fever_bonus_percent=0"
+          ],
+          "mode": "normal",
+          "reference": {
+            "deckLegalityVerified": false,
+            "downtimeSeconds": 30.0,
+            "durationBasis": "maximum-last-judged-note-time-across-song-difficulties",
+            "durationSeconds": 94.736,
+            "efficiencyDenominatorSeconds": 124.736,
+            "equipmentAssignmentVerified": false,
+            "fever": false,
+            "intervalEndInclusive": true,
+            "members": null,
+            "perfectRate": 1,
+            "playerInventoryApplied": false,
+            "scoreUpMultiplier": 2.5,
+            "settingDefaults": {
+              "fever_bonus_percent": 0.0
+            },
+            "skillActivationSeconds": 5.0,
+            "skillDurationSeconds": 10.0,
+            "skillModel": "pooled-top-level-effects-and-shared-duration-reference",
+            "skillTimesMs": [
+              7578.0,
+              27789.0,
+              37894.0,
+              51789.0,
+              74526.0
+            ],
+            "snapshots": null,
+            "supportExtensionSeconds": 5.0
+          },
+          "referenceId": "legacy-normal-theory-relative-v1",
+          "score": 7.78400582,
+          "scoreKind": "chart-relative-factor",
+          "sr": 0.64355464,
+          "time": 94.736
+        },
+        "gekisou": {
+          "eff": 6.88687921,
+          "metaStatus": "available",
+          "mode": "gekisou",
+          "reference": {
+            "comboOrder": "canonical-events",
+            "convertedNoteCount": 555,
+            "difficultyFactorApplied": false,
+            "downtimeSeconds": 30.0,
+            "durationBasis": "maximum-last-judged-note-time-across-song-difficulties",
+            "durationSeconds": 94.736,
+            "efficiencyDenominatorSeconds": 124.736,
+            "judgementPolicy": "legacy-type-eligible-JUST-without-mission-gating",
+            "justTypeMultiplier": 2.3,
+            "luckGaugeMax": 140.0,
+            "luckGaugeMaxRush": 70.0,
+            "members": null,
+            "ordinarySkillsApplied": false,
+            "scoreAdjustment": 3.0,
+            "scoreTopSegmentRank": 1,
+            "segmentRank": 3,
+            "settingDefaults": {
+              "fever_bonus_percent": 0.0
+            },
+            "snapshots": null,
+            "standingRushMultiplier": 1.1
+          },
+          "referenceId": "legacy-gekisou-fixed-rank3-chronological-v2",
+          "score": 14.31736276,
+          "scoreKind": "gekisou-relative"
+        }
+      }
+    }
+  }
+}

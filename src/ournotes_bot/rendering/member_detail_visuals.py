@@ -5,6 +5,7 @@
 # Effects/Dependencies: 经共享工具读取字体、下载素材及写素材缓存，并复用列表布局／卡牌 helpers；不执行详情查询。
 
 """Member ID detail: full artwork, rarity frame, facts, stats and complete skills."""
+from ..sources.haneoka.catalog_assets import record_attribute_url
 from datetime import datetime, timezone, timedelta
 import math
 
@@ -126,7 +127,7 @@ def render(card, locale="zh"):
                 draw.text((62, ly), line, font=_font(size), fill=color)
                 ly += size + 10
         if title == "基本资料" and card.card_type in TYPES:
-            icon = _asset(f"{BASE}/images/CardType{card.card_type}.webp", (100, 100), contain=True)
+            icon = _asset(record_attribute_url(card), (100, 100), contain=True)
             if icon:
                 _paste(image, icon, (888, y + 14, 50, 50))
         y += block_h + 20

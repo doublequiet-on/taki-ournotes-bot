@@ -173,6 +173,73 @@ class ReplyPipelineTests(unittest.TestCase):
         self.assertNotIn("secret-value", " ".join(log.output))
 
 
+class CatalogRefreshScheduleTests(unittest.IsolatedAsyncioTestCase):
+    async def check_schedule(self, start, durations, expected, *, fail_first=False):
+        from datetime import datetime
+
+        clock = [datetime.fromisoformat(start).timestamp()]
+        waits = []
+        instances = []
+
+        class FakeClient:
+            def __init__(self, **kwargs):
+                self.robot = SimpleNamespace(name="Taki")
+                self._song_traits_task = Mock(done=Mock(return_value=False))
+                instances.append(self)
+
+            def run(self, **kwargs):
+                pass
+
+        async def sleep(seconds):
+            waits.append(seconds)
+            if len(waits) == len(expected):
+                raise asyncio.CancelledError
+            clock[0] += seconds
+
+        def refresh():
+            clock[0] += durations.pop(0)
+            if fail_first and repository.refresh.call_count == 1:
+                raise OSError("synthetic refresh failure")
+
+        async def to_thread(func):
+            return func()
+
+        repository = SimpleNamespace(meta_source="haneoka", songs=[], refresh=Mock(side_effect=refresh),
+                                     event_cutoffs=SimpleNamespace(history=True))
+        with tempfile.TemporaryDirectory() as folder:
+            settings = Settings("test-app", "", BASE, Path(folder)/"cache.json", 6,
+                                qq_gateway_host="", update_notices=False)
+            with patch("botpy.Client", FakeClient), \
+                 patch("ournotes_bot.platforms.qq.qq.time", SimpleNamespace(time=lambda: clock[0])), \
+                 patch("ournotes_bot.platforms.qq.qq.asyncio.sleep", side_effect=sleep), \
+                 patch("ournotes_bot.platforms.qq.qq.asyncio.to_thread", side_effect=to_thread):
+                run_bot("test-app", "", repository, settings)
+                client = instances[-1]
+                await client.on_ready()
+                task = client._refresh_task
+                await client.on_ready()
+                self.assertIs(client._refresh_task, task)
+                with self.assertRaises(asyncio.CancelledError):
+                    await task
+        self.assertEqual(waits, expected)
+        self.assertEqual(repository.refresh.call_count, len(expected) - 1)
+
+    async def test_refresh_duration_does_not_shift_half_hour_slots(self):
+        await self.check_schedule("2026-10-09T14:12:00+08:00", [60, 1900], [1080, 1740, 1700])
+
+    async def test_boundary_and_midnight_wait_for_next_slot(self):
+        for start, delay in (("2026-10-09T14:00:00+08:00", 1800),
+                             ("2026-10-09T14:30:00+08:00", 1800),
+                             ("2026-10-09T23:59:59.500+08:00", .5)):
+            with self.subTest(start=start):
+                await self.check_schedule(start, [0], [delay, 1800])
+
+    async def test_failed_refresh_resumes_at_next_boundary(self):
+        with self.assertLogs("ournotes_bot.qq", level="ERROR"):
+            await self.check_schedule("2026-10-09T14:12:00+08:00", [60, 0],
+                                      [1080, 1740, 1800], fail_first=True)
+
+
 class UpdateNoticeLifecycleTests(unittest.IsolatedAsyncioTestCase):
     async def test_music_data_worker_is_wired_only_for_moenotes_and_stops_on_exit(self):
         instances = []

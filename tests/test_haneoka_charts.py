@@ -468,11 +468,11 @@ class TransportTests(unittest.TestCase):
 class ChartConfigurationTests(unittest.TestCase):
     def test_source_is_explicit_and_does_not_change_other_sources(self):
         with patch("ournotes_bot.config.load_dotenv"), patch.dict(os.environ, {}, clear=True):
-            self.assertEqual(Settings.from_env().chart_source, "moenotes")
+            self.assertEqual(Settings.from_env().chart_source, "haneoka")
             os.environ["OURNOTES_CHART_SOURCE"] = "haneoka"
             settings = Settings.from_env()
             self.assertEqual((settings.chart_source, settings.meta_source, settings.cutoff_source),
-                             ("haneoka", "moenotes", "tracker"))
+                             ("haneoka", "haneoka-site", "haneoka"))
             os.environ["OURNOTES_CHART_SOURCE"] = "typo"
             with self.assertRaises(ValueError):
                 Settings.from_env()

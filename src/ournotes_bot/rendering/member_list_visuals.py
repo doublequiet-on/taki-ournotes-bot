@@ -7,6 +7,7 @@
 """Member condition-list presentation only; selection and pagination stay upstream."""
 import math
 import re
+from ..sources.haneoka.catalog_assets import record_attribute_url
 from concurrent.futures import ThreadPoolExecutor
 
 from PIL import Image, ImageDraw, ImageColor
@@ -145,7 +146,7 @@ def render(cards, query, locale="zh", footer=""):
     types = list(dict.fromkeys(c.card_type for c in cards if c.card_type in TYPES))
     with ThreadPoolExecutor(max_workers=6) as pool:
         arts = dict(zip(urls, pool.map(lambda url: _asset(url, ((CARD_W - 16) * RENDER_SCALE, 376 * RENDER_SCALE), contain=True), urls)))
-        icons = dict(zip(types, pool.map(lambda t: _asset(f"{BASE}/images/CardType{t}.webp", (92, 92), contain=True), types)))
+        icons = dict(zip(types, pool.map(lambda t: _asset(record_attribute_url(next(c for c in cards if c.card_type == t)), (92, 92), contain=True), types)))
     for i, card in enumerate(cards):
         x, y = 35 + i % 3 * STEP_X, top + i // 3 * STEP_Y
         # ID is a frame attachment outside the art, aligned consistently per cell.

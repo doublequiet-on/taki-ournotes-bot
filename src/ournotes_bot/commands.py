@@ -31,9 +31,10 @@ HELP_TEXT = """Taki · Our Notes 日服资料查询
 颜色：红、蓝、绿、黄、紫；例 /查曲 颜色=蓝/绿
 激奏=JUST 表示包含；激奏=纯JUST 表示全段同类；激奏=混合；激奏=JUST/JUST/COMBO 按顺序匹配
 /查谱面 歌名或ID [难度]：查看等级与 Note 数；100001 可简写为 1
-/查分数表 [歌曲/乐队] [HD,EX] [颜色=蓝/绿] [激奏=JUST] [lv<=25] [前10/20/30] [页N]：默认四难度混合效率前30条；支持排行、场景、技能、准度、时长及活动评级参数，完整参数组顺序不限
-/查榜线 [jp/hk/kr/en] [歌曲1或歌名] [50或20-40] [仅数值]：顺序不限，默认日服全部歌曲；无排名看三曲合图趋势，有排名看分数表；50看40～60名，20-40看区间，50-50查一名，1-100查完整榜
-歌曲1／歌曲一按本期原顺序选曲；如 /查榜线 100 hk 歌曲一；旧T50也查附近，旧多T排名最多五个
+/查分数表 [普通/激奏] [歌曲/乐队] [EX] [颜色=蓝/绿] [激奏=JUST] [指标=eff或score] [前10/20/30] [页N]：默认并列两场景，Haneoka 日服参考效率／倍率
+/查榜线 [jp/hk/kr/en] [歌名或歌曲ID=100001] [50或20-40] [仅数值]：顺序不限，默认日服全部歌曲；无排名看三曲合图趋势，有排名看分数表；50看40～60名，20-40看区间，50-50查一名，1-100查完整榜
+Haneoka 未确认原始歌曲序号，请用歌名或歌曲ID；旧T50也查附近，旧多T排名最多五个
+/查活动 [jp/hk/kr/en]：当前／最近活动信息、起止时间与挑战歌曲
 榜线当前排名同时显示分数、数字ID与用户名；缺失会标注，历史曲线仅记录分数。
 四服：日服（jp）、国服（hk）、韩服（kr）、英服（en）；仅数值只回文字
 /查卡 [BD/SSR/SR/R] [颜色=红色] [角色=tmr] [乐队=MyGO] [LIVE=分数提升] [击奏=JUST] [页N]：条件卡牌列表；指定ID看详情
@@ -116,7 +117,7 @@ CANONICAL_BY_LOCALE = {
 }
 ENGLISH_COMMANDS = {"song", "songs", "chart", "card", "cards", "support", "supportcard", "supportcards", "abbrev", "help", "status", "language", "event", "gacha", "prediction"}
 JAPANESE_COMMANDS = {"曲", "楽曲", "譜面", "カード", "サポート", "略称", "ヘルプ", "状態", "言語", "イベント", "ガチャ", "予想線"}
-UNAVAILABLE_COMMANDS = {"查活动", "查卡池", "ycx", "预测线", "查预测线", "event", "gacha", "prediction", "イベント", "ガチャ", "予想線"}
+UNAVAILABLE_COMMANDS = {"查卡池", "ycx", "预测线", "查预测线", "gacha", "prediction", "ガチャ", "予想線"}
 UNAVAILABLE_REPLY = "该功能暂未上线"
 PAGE_SIZE = 16
 
@@ -501,9 +502,10 @@ class CommandResult:
     status: str = "success"
     candidates: tuple[Song, ...] = ()
     query_spec: object | None = None
+    activity: object | None = None
 
     def __post_init__(self):
-        for answer in (self.cutoff, self.meta, self.catalog, self.song_selection):
+        for answer in (self.cutoff, self.meta, self.catalog, self.song_selection, self.activity):
             if answer is not None:
                 object.__setattr__(self, "status", answer.status)
                 return
@@ -517,6 +519,10 @@ def resolve_command(content: str, repository: SongRepository) -> CommandResult |
     text = _clean_message(content)
     parts = text.split(None, 1)
     head = parts[0].casefold() if parts else ""
+    if head in {"查活动", "event", "イベント"}:
+        from .query.activity_query import execute_activity
+        answer = execute_activity(parts[1] if len(parts) > 1 else "", repository)
+        return CommandResult(("activity", text, None), activity=answer)
     if head in {"查榜线", "榜线"}:
         answer = execute_cutoff(parse_cutoff(text), repository)
         return CommandResult(("event_cutoff", answer.request.query, answer.request.rank), cutoff=answer)
@@ -670,6 +676,8 @@ def handle_command(content: str, repository: SongRepository,
 
     selection = resolved if resolved is not None else resolve_command(content, repository)
     parsed = selection.parsed if selection else None
+    if selection and selection.activity is not None:
+        return selection.activity.text
     if selection and selection.status in {"ambiguous", "invalid_arguments"} and selection.hint:
         return selection.hint
     if selection and selection.cutoff is not None:

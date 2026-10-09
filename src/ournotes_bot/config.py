@@ -134,15 +134,15 @@ class Settings:
                                       for s in os.getenv("OURNOTES_CUTOFF_SAMPLING_SERVERS", "jp,hk,kr,en").split(",")))
         if not servers or any(s not in {"jp", "tw", "kr", "en"} for s in servers):
             raise ValueError("OURNOTES_CUTOFF_SAMPLING_SERVERS must use jp,hk,kr,en")
-        meta_source = os.getenv("OURNOTES_META_SOURCE", "moenotes").strip()
-        cutoff_source = os.getenv("OURNOTES_CUTOFF_SOURCE", "tracker").strip()
-        chart_source = os.getenv("OURNOTES_CHART_SOURCE", "moenotes").strip()
-        data_source = os.getenv("OURNOTES_DATA_SOURCE", "yume").strip()
+        meta_source = os.getenv("OURNOTES_META_SOURCE", "haneoka-site").strip()
+        cutoff_source = os.getenv("OURNOTES_CUTOFF_SOURCE", "haneoka").strip()
+        chart_source = os.getenv("OURNOTES_CHART_SOURCE", "haneoka").strip()
+        data_source = os.getenv("OURNOTES_DATA_SOURCE", "haneoka").strip()
         if data_source not in {"yume", "haneoka"}:
             raise ValueError("unsupported main data source")
         if chart_source not in {"moenotes", "haneoka"}:
             raise ValueError("unsupported chart source")
-        if meta_source not in {"moenotes", "haneoka"} or cutoff_source not in {"tracker", "open", "haneoka"}:
+        if meta_source not in {"moenotes", "haneoka", "haneoka-site"} or cutoff_source not in {"tracker", "open", "haneoka"}:
             raise ValueError("unsupported music/ranking source")
         configured_open_history = os.getenv("OURNOTES_OPEN_HISTORY_FILE", "").strip()
         open_history = Path(configured_open_history) if configured_open_history else raw_cache.with_name("moenotes-open-history-v2.sqlite3")
@@ -153,7 +153,7 @@ class Settings:
             app_secret=os.getenv("QQ_APP_SECRET", "").strip(),
             data_base="https://bdon.yatta.moe",
             cache_file=raw_cache,
-            cache_ttl_hours=float(os.getenv("OURNOTES_CACHE_TTL_HOURS", "6")),
+            cache_ttl_hours=float(os.getenv("OURNOTES_CACHE_TTL_HOURS", "0.5")),
             ai_api_key=os.getenv("AI_API_KEY", "").strip(),
             ai_model=os.getenv("AI_MODEL", "deepseek-chat").strip(),
             ai_base_url=os.getenv("AI_BASE_URL", "https://api.deepseek.com").rstrip("/"),

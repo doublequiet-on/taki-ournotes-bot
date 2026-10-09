@@ -23,7 +23,7 @@
 
 主资料独立来源：`data.py::SongRepository._load_haneoka` → `sources/haneoka/catalog.py`，由 `OURNOTES_DATA_SOURCE` 选择，默认 Yume。目标测试 `test_haneoka_catalog.py`，共享接口修改后完整离线回归及安装检查；字段、缓存、样图和切换门槛见 [主资料说明](HANEOKA_CATALOG.md)。
 
-Haneoka 榜线预览：`sources/haneoka/event_cutoffs.py` → 既有查询／绘图；`cutoff_history.py` 组合独立三来源历史。目标测试 `test_haneoka_cutoffs.py`，共享历史修改后完整回归及安装检查。尚未核实原序号和静态关联，默认来源不变，见 [榜线说明](HANEOKA_CUTOFFS.md)。
+Haneoka 默认来源与场景：`sources/haneoka/site_meta.py` → `query/haneoka_meta_query.py`；`event_metadata.py` → `event_cutoffs.py`／`query/activity_query.py`；素材身份经 `catalog_assets.py`。测试 `test_haneoka_site_meta.py`、`test_haneoka_event_metadata.py`、`test_source_egress.py`；完整范围与实源门槛见 [统一来源说明](HANEOKA_UNIFIED.md)。
 
 Haneoka 第4批分数表尚缺 TW 等价统计合同，先阅读 [输入需求与验收门槛](HANEOKA_META_CONTRACT.md)。合同成立前不注册新来源或改写旧 `haneoka` 分支；继续使用当前有限求值器和独立对拍工具。
 
@@ -58,7 +58,7 @@ Haneoka 第4批分数表尚缺 TW 等价统计合同，先阅读 [输入需求�
 - `bot_info.py` 是消息内介绍文案，`/帮助` 在 commands.py，QQ面板描述在 platforms/qq/menu.py；修改源代码不会自动修改QQ平台资料页简介。`setup-menu` 不再初始化游戏缓存或 AI，仅在新版本已上线后分别核对并安装单聊、群聊面板；内容未变时不重复写入，面板发布仍属于真实 QQ 外部操作。
 
 - 基础歌曲/卡牌资料：`sources/yatta.py` 的 `BASE`、`MASTER`；`SongRepository.refresh` 校验 Project Yume 来源，并构建成员技能索引。完整音符由 `sources/chart_data.py::CHART_BASE` 读取 MoeNotes 公共资源，`score_name` 限定已知 ID/难度。新分数表用独立公开快照视图，旧Haneoka仅显式回退；不把研究目录当生产接口。
-- 主缓存由 `OURNOTES_CACHE_FILE` 指定；`CACHE_SCHEMA`、旧字段兼容、详情失败回退见 `data.py`。TTL 由 `OURNOTES_CACHE_TTL_HOURS` 控制；QQ 后台刷新间隔目前在 `platforms/qq/qq.py::refresh_loop` 固定为六小时，不由此变量控制。
+- 主缓存由 `OURNOTES_CACHE_FILE` 指定；`CACHE_SCHEMA`、旧字段兼容、详情失败回退见 `data.py`。TTL 由 `OURNOTES_CACHE_TTL_HOURS` 控制；QQ 后台主资料刷新由 `platforms/qq/qq.py::refresh_loop` 对齐香港时间整点／半点，就绪后等待下一时点，每次刷新后重新计算等待时间，跨过的时点不补跑；不由此变量控制。
 - 谱面缓存默认 `runtime_data_dir()/chart-cache`，不一定随自定义主缓存路径移动；图片素材缓存见 `visuals.py::_asset`，字体选择见 `_font`。长图自下向上、各栏从左向右；节点数不能直接当判定数或算分公式依据。
 - 卡牌映射 SSR=四星、SR=三星、R=二星；成员生日卡 BD=后台稀有度20，仅用于成员卡，不扩展 SNAP 映射，数字 ID 不当星级。技能按 `sources/yatta.py::skill_description` 的 Lv.5 默认值展示，不代表玩家培养状态。技能索引不完整须保留提示；两类详情同步构建分类索引，`card_catalog_version` 控制旧缓存升级，顶层 `card_catalog` 保持旧卡牌行兼容。
 - `.env.example` 列出变量用途；`QQ_APP_ID`/`QQ_APP_SECRET` 用于 QQ，`AI_API_KEY`/`AI_BASE_URL`/`AI_MODEL` 为可选模型设置。源码配置根与普通安装包启动目录有区别，见 `CONFIG_ROOT`。不要为文档读取真实 `.env`。
@@ -126,7 +126,7 @@ python scripts/check_release_artifact.py dist
 
 - `rendering/support_summary.py` 从现有Lv.5中文技能效果做完整模板匹配，仅输出基础效果及触发/上限，条件加成留详情；新措辞必须先核实。`member_detail_visuals._panel` 是两类详情共用的白底/标题带绘制，不影响列表或数据逻辑。
 
-- 所有渲染器经 `visuals._bytes` → `image_output.encode_image` 统一编码预算（1.5MB/8192边长/1200万像素），不在各命令复制压缩代码。`qq._upload_image` 单次上传30秒，HTTP临时副本必须解除共享会话引用；测试 `test_image_output.py`、`test_media.py`、`test_reply_pipeline.py`。发布依据与可溯源说明见 [2026-09-28报告](RELEASE_2026-09-28.md)。
+- 所有渲染器经 `visuals._bytes` → `image_output.encode_image` 统一编码预算（1.5MB/8192边长/1200万像素）；`_bytes` 接管并关闭最终画布，编码器关闭自建临时图像。字节输出绘图入口使用 `reclaim_after_render`，等绘图句柄退出后才尝试归还 Linux 大图空闲内存；缺少接口时降级，新增入口须保留此作用域。`qq._upload_image` 单次上传30秒，HTTP临时副本必须解除共享会话引用；测试 `test_image_output.py`（含生命周期、并发和失败）、`test_media.py`、`test_reply_pipeline.py`。发布依据与可溯源说明见 [2026-09-28报告](RELEASE_2026-09-28.md)。
 - 分数表绘图复用固定工作线程，双榜先测量同源标记的布局，再逐表合成、释放临时画布；完整行、数值和图片预算保持。并发线程复用、不同高度双榜输出一致性与资源释放见 `test_meta_render_memory.py`。
 
 歌曲信息图共用 `visuals._song_heading`（属性图标＋标题）、`_mission_marks` / `_mission_chip`（原生激奏图标、顺序与缓存提示），先测量再排版；缺图只退文字，不改变筛选。列表和谱面身份区置于左下角，分数表读取同一 `MetaAnswer.song_records` 快照，以 112 逻辑像素为基础行高并按标题、激奏内容自动增高。歌曲筛选与统一布局的发布依据见 [歌曲更新报告](RELEASE_2026-09-28_SONGS.md)；原生激奏图标、紧凑分数表与群聊面板的后续实现以 `5ea0f08`（PR #25）为准。
