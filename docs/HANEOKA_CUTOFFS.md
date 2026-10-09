@@ -1,5 +1,7 @@
 # Haneoka 挑战榜预览接入
 
+> 阶段记录：本文保留接入／研究时的合同与证据。2026-10-09 已确认的默认来源、原生普通／激奏参考分数表、活动静态关联及时间策略见 [当前统一说明](HANEOKA_UNIFIED.md)；本文旧默认值和当时待办不直接代表现状。
+
 > 2026-10-09：本地默认入口及用户确认的 Haneoka 普通／激奏原生 meta 改用见 [统一来源说明](HANEOKA_UNIFIED.md)。本文保留先前合同／研究及显式旧源说明；其中原默认值、静态关联未实现及必须复现 Moenotes 模型的结论不再表示当前默认行为。生产发布须另行验收。
 
 这是迁移第 3 批的可审查实现，**尚未通过生产切换门槛**。默认 `OURNOTES_CUTOFF_SOURCE=tracker` 不变。显式设置 `haneoka` 后，仅请求 `https://haneoka.org/api/v1/game/records/{jp|tw|kr|en}/events/current` 及捕获活动的 `/events/{eventId}/challenges/{challengeId}/ranking`，不请求积分榜、永久歌曲榜或旧来源补全。配置模板不会自动修改运行配置。

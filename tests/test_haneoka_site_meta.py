@@ -2,6 +2,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from ournotes_bot.commands import resolve_command
 from ournotes_bot.data import SongRepository, Song, Chart
@@ -99,6 +100,78 @@ class SiteMetaTests(unittest.TestCase):
         self.assertEqual(spec.meta_scene, 'gekisou')
         self.assertEqual(parse_efficiency(spec.command_label(), bot, direct=True).meta_scene, 'gekisou')
         self.assertIn('JUST', spec.song_filter.query)
+
+    def test_normal_difficulty_survives_scene_and_command_roundtrip(self):
+        from ournotes_bot.query.efficiency_query import parse_efficiency
+        from ournotes_bot.structured_query import QuerySpec
+        bot = self.bot()
+        for scene, expected in (('', 'both'), ('普通', 'normal'), ('激奏', 'gekisou')):
+            for difficulty in ('NORMAL', 'normal', 'NM'):
+                with self.subTest(scene=scene, difficulty=difficulty):
+                    spec = parse_efficiency(f'/查分数表 {scene} {difficulty}', bot, direct=True)
+                    self.assertIsInstance(spec, QuerySpec)
+                    self.assertEqual((spec.meta_scene, spec.difficulty), (expected, 'NORMAL'))
+                    self.assertEqual(parse_efficiency(spec.command_label(), bot, direct=True), spec)
+
+    def test_ambiguous_candidates_and_unknown_status_are_preserved(self):
+        bot = self.bot()
+        result = resolve_command('/查分数表 合成曲', bot)
+        self.assertEqual(result.status, 'ambiguous')
+        for song in bot.songs:
+            self.assertIn(f'{song.title} → /查分数表 {song.id}', result.meta.text)
+        self.assertNotIn('排行=活动', result.meta.text)
+        result = resolve_command('/查分数表 完全不存在的歌曲', bot)
+        self.assertEqual(result.status, 'unknown_entity')
+
+    def test_revalidation_survives_restart_without_changing_download_time(self):
+        first = self.repo.get()
+        self.clock[0] += 90000
+        again = self.repo.get()
+        self.assertEqual(len(self.calls), 4)
+        self.assertEqual(again.fetched_at, first.fetched_at)
+        checked = self.clock[0]
+        offline = lambda *args: (_ for _ in ()).throw(OSError('offline'))
+        self.clock[0] += 301
+        restored = SiteMetaRepository(self.repo.path, fetch=offline, clock=lambda: self.clock[0])
+        stale = restored.get()
+        self.assertIsNotNone(stale)
+        self.assertTrue(stale.stale)
+        self.assertEqual(stale.fetched_at, first.fetched_at)
+        self.assertEqual(stale.rows, first.rows)
+        self.clock[0] = checked + 86401
+        self.assertIsNone(restored.get())
+
+    def test_legacy_cache_and_invalid_check_times(self):
+        first = self.repo.get()
+        saved = json.loads(self.repo.path.read_text(encoding='utf8'))
+        saved.pop('checked_at', None)
+        offline = lambda *args: (_ for _ in ()).throw(OSError('offline'))
+        for checked in ('legacy', True, None, 'bad', 999, 1001, float('nan')):
+            candidate = dict(saved)
+            if checked != 'legacy':
+                candidate['checked_at'] = checked
+            self.repo.path.write_text(json.dumps(candidate), encoding='utf8')
+            restored = SiteMetaRepository(self.repo.path, fetch=offline, clock=lambda: self.clock[0])
+            with self.subTest(checked=checked):
+                result = restored.get()
+                if checked == 'legacy':
+                    self.assertEqual(result.rows, first.rows)
+                else:
+                    self.assertIsNone(result)
+
+    def test_failed_revalidation_save_keeps_old_file_and_recovers(self):
+        first = self.repo.get()
+        old_bytes = self.repo.path.read_bytes()
+        self.clock[0] += 300
+        with patch.object(Path, 'replace', side_effect=OSError('disk unavailable')):
+            result = self.repo.get()
+        self.assertTrue(result.unsaved)
+        self.assertEqual(result.rows, first.rows)
+        self.assertEqual(self.repo.path.read_bytes(), old_bytes)
+        self.assertFalse(list(self.repo.path.parent.glob('*.tmp')))
+        self.clock[0] += 300
+        self.assertFalse(self.repo.get().unsaved)
+        self.assertEqual(len(self.calls), 5)
 
     def test_unknown_and_missing_metrics_are_not_zero_or_other_scene(self):
         self.meta['100001']['3']['gekisou']['eff'] = None

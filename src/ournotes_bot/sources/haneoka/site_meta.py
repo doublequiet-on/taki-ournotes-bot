@@ -2,11 +2,12 @@
 # Input: Anonymous release-pinned Haneoka JP songs and song-meta, independent cache and clock.
 # Output: Both ordinary and gekisou site reference results; missing metrics stay unknown.
 # Pos: Data / Sources Haneoka site meta; see ../L2-2.md.
-# Effects: Bounded Haneoka-only requests, version checks and atomic cache; no local scoring or QQ.
+# Effects: Bounded Haneoka-only requests; atomically persist data and last successful check separately; no local scoring or QQ.
 """Read the two reference scenarios published by the Haneoka song-meta page."""
 from __future__ import annotations
 
 import json
+import math
 import threading
 import time
 import uuid
@@ -106,6 +107,7 @@ class SiteMetaRepository:
         self.path, self.fetch, self.clock = Path(path), fetch, clock
         self._lock = threading.Lock()
         self._snapshot = None
+        self._saved = None
         self._loaded = False
         self._checked_at = self._retry_at = 0.0
 
@@ -122,6 +124,21 @@ class SiteMetaRepository:
             return None
         return replace(snapshot, stale=stale or snapshot.stale)
 
+    def _save(self, saved):
+        temporary = self.path.with_name(self.path.name + "." + uuid.uuid4().hex + ".tmp")
+        try:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            temporary.write_text(json.dumps(saved, ensure_ascii=False, allow_nan=False), encoding="utf-8")
+            temporary.replace(self.path)
+            return True
+        except OSError:
+            return False
+        finally:
+            try:
+                temporary.unlink(missing_ok=True)
+            except OSError:
+                pass
+
     def get(self):
         with self._lock:
             if not self._loaded:
@@ -133,9 +150,12 @@ class SiteMetaRepository:
                     if saved["schema"] != 1 or saved["source"] != SOURCE:
                         raise ValueError("foreign site meta cache")
                     candidate = parse(saved["identity"], saved["songs"], saved["meta"], saved["fetched_at"])
-                    checked = datetime.fromisoformat(saved["fetched_at"]).timestamp()
-                    if not 0 < checked <= self.clock():
+                    fetched = datetime.fromisoformat(saved["fetched_at"]).timestamp()
+                    checked = saved.get("checked_at", fetched)
+                    if (type(checked) not in (int, float) or not math.isfinite(checked)
+                            or not 0 < fetched <= checked <= self.clock()):
                         raise ValueError("invalid site meta cache time")
+                    self._saved = saved
                     self._snapshot, self._checked_at = candidate, checked
                 except (OSError, ValueError, KeyError, TypeError, AttributeError):
                     pass
@@ -149,25 +169,16 @@ class SiteMetaRepository:
                 if (self._snapshot and identity["releaseId"] == self._snapshot.release
                         and identity["sourceId"] == self._snapshot.source_version):
                     self._checked_at = now
-                    self._snapshot = replace(self._snapshot, stale=False)
+                    self._saved = {**self._saved, "checked_at": now}
+                    self._snapshot = replace(self._snapshot, stale=False, unsaved=not self._save(self._saved))
                     return self._snapshot
                 songs = self._document("songs", identity)
                 meta = self._document("song-meta", identity)
                 fetched_at = datetime.fromtimestamp(self.clock(), timezone.utc).isoformat()
                 snapshot = parse(identity, songs, meta, fetched_at)
-                saved = dict(schema=1, source=SOURCE, identity=identity, songs=songs, meta=meta, fetched_at=fetched_at)
-                temporary = self.path.with_name(self.path.name + "." + uuid.uuid4().hex + ".tmp")
-                try:
-                    self.path.parent.mkdir(parents=True, exist_ok=True)
-                    temporary.write_text(json.dumps(saved, ensure_ascii=False, allow_nan=False), encoding="utf-8")
-                    temporary.replace(self.path)
-                except OSError:
-                    snapshot = replace(snapshot, unsaved=True)
-                finally:
-                    try:
-                        temporary.unlink(missing_ok=True)
-                    except OSError:
-                        pass
+                self._saved = dict(schema=1, source=SOURCE, identity=identity, songs=songs, meta=meta,
+                                   fetched_at=fetched_at, checked_at=self.clock())
+                snapshot = replace(snapshot, unsaved=not self._save(self._saved))
                 self._snapshot, self._checked_at, self._retry_at = snapshot, self.clock(), 0
                 return snapshot
             except (OSError, ValueError, KeyError, TypeError, RuntimeError, AttributeError):

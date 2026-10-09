@@ -16,14 +16,17 @@ LABELS = {"normal": "普通", "gekisou": "激奏"}
 
 def parse_site_meta(query, repository, *, direct=False):
     from .efficiency_query import _parse_legacy
+    from .meta_parameters import HELP as LEGACY_HELP
+    from .song_identity import QueryProblem
     from ..structured_query import QuerySpec
-    aliases = {"普通": "normal", "自由": "normal", "单人": "normal", "normal": "normal",
+    # NORMAL is a chart difficulty, including in generated continuation commands.
+    aliases = {"普通": "normal", "自由": "normal", "单人": "normal",
                "激奏": "gekisou", "击奏": "gekisou", "gekisou": "gekisou"}
-    found = list(re.finditer(r"(?<!\S)(普通|自由|单人|激奏|击奏|normal|gekisou)(?!\S)", query, re.I))
+    found = list(re.finditer(r"(?<!\S)(普通|自由|单人|激奏|击奏|gekisou)(?!\S)", query, re.I))
     scenes = {aliases[m[1].lower()] for m in found}
     if len(scenes) > 1:
         return "一次可选普通或激奏；省略场景查看双榜。\n" + HELP
-    text = re.sub(r"(?<!\S)(普通|自由|单人|激奏|击奏|normal|gekisou)(?!\S)", " ", query, flags=re.I)
+    text = re.sub(r"(?<!\S)(普通|自由|单人|激奏|击奏|gekisou)(?!\S)", " ", query, flags=re.I)
     for old, new in (("排行=效率", "指标=eff"), ("排行=分数", "指标=score"), ("排行=倍率", "指标=score")):
         text = text.replace(old, new)
     if "排行=" in text or any(token in text for token in ("积分", "跳过", "加成=", "技能=")):
@@ -32,7 +35,10 @@ def parse_site_meta(query, repository, *, direct=False):
     if isinstance(result, QuerySpec):
         return replace(result, meta_scene=next(iter(scenes), "both"))
     if isinstance(result, str):
-        return result.split("\n", 1)[0] + "\n" + HELP
+        message = str(result).replace(LEGACY_HELP, HELP)
+        if HELP not in message:
+            message += "\n" + HELP
+        return QueryProblem(message, result.status) if isinstance(result, QueryProblem) else message
     return result
 
 
