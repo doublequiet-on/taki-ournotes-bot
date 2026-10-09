@@ -149,6 +149,7 @@ class CatalogRepository:
             docs["catalog"] = catalog
             docs["skill-reference"] = get(server, "skill-reference", ident)
             if server == "jp":
+                docs["ui-marks"] = get(server, "ui-marks", ident)
                 progression = get(server, "progression", ident)
                 docs["progression"] = {k: progression[k] for k in ("memberCardLevels", "memberCardRanks", "supportCardLevels", "supportCardRanks")}
             documents[server] = docs

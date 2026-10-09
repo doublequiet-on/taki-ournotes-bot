@@ -44,6 +44,7 @@ class QuerySpec:
     song_filter: SongFilter | None = None
     field: str = ""
     meta_request: MetaRequest | None = None
+    meta_scene: str = ""  # Haneoka site's normal / gekisou / both reference results.
 
     def __post_init__(self):
         if self.card_query is not None:
@@ -91,6 +92,8 @@ class QuerySpec:
                     + self.card_query + (f" 页{self.page}" if self.page > 1 else ""))
         if self.intent == "efficiency":
             parts = ["查分数表"]
+            if self.meta_scene in {"normal", "gekisou"}:
+                parts.append("普通" if self.meta_scene == "normal" else "激奏")
             if self.song_filter:
                 parts.append(self.song_filter.query)
             elif self.subject:

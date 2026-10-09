@@ -64,8 +64,9 @@ class SourceEgressTests(unittest.TestCase):
         self.addCleanup(folder.cleanup)
         self.root = Path(folder.name)
         self.calls = []
-        self.fail = False
+        self.transport_failed = False
         self.saved = json.loads((Path(__file__).parent / 'fixtures/haneoka_catalog.json').read_bytes())['snapshot']
+        self.saved['documents']['jp']['ui-marks'] = {f'CardType-{name}.png': f'runtime/unity/Assets/AddressableResources/UI/Atlas/FixUiSpriteAtlas.spriteatlasv2/CardType-{name}--Sprite-123.png' for name in ('Red','Blue','Green','Yellow','Purple')}
         self.stack = ExitStack()
         self.addCleanup(self.stack.close)
         self.external_attempts = []
@@ -119,7 +120,7 @@ class SourceEgressTests(unittest.TestCase):
         self.calls.append({'url': url, 'transport': transport})
         if urlsplit(url).netloc == 'haneoka.org' and transport == 'aiohttp':
             self.assertIs(options.get('allow_redirects'), False)
-        if self.fail:
+        if self.transport_failed:
             raise OSError('synthetic source outage')
         raw, headers = self.handler(url)
         return Response(raw, headers)
@@ -159,7 +160,7 @@ class SourceEgressTests(unittest.TestCase):
         self.assertIs(repo.card_with_detail(card), card)
         self.assertIs(repo.support_card_with_detail(snap), snap)
         self.assertEqual(len(self.calls), before)
-        self.fail = True
+        self.transport_failed = True
         repo.refresh()
         self.assertEqual(repo.cache_state, 'stale')
         self.assertEqual(self.hosts(), {'haneoka.org'})
@@ -184,9 +185,9 @@ class SourceEgressTests(unittest.TestCase):
             self.assertIsNotNone(result)
             result.close()
             path.write_bytes(b'broken image cache')
-            self.fail = True
+            self.transport_failed = True
             self.assertIsNone(visuals._asset(url, (32, 32)))
-            self.fail = False
+            self.transport_failed = False
         self.assertEqual(self.hosts(), {'haneoka.org'})
         self.assertEqual(len(self.calls), 6)
         self.assertTrue(all(c['transport'] == 'aiohttp' for c in self.calls))
@@ -200,7 +201,7 @@ class SourceEgressTests(unittest.TestCase):
         old.write_bytes(chart_fixture.encoded(chart_fixture.SCORE))
         original = old.read_bytes()
         self.assertEqual(load_chart_data(song, chart, self.root, source='haneoka').source, 'haneoka')
-        self.fail = True
+        self.transport_failed = True
         with patch.object(chart_data, 'CHART_CACHE_TTL', 0):
             stale = load_chart_data(song, chart, self.root, source='haneoka')
         self.assertEqual(stale.cache_state, 'stale')
@@ -213,7 +214,9 @@ class SourceEgressTests(unittest.TestCase):
 
     def test_four_server_sampler_and_outage_never_call_tracker(self):
         fixture = cutoff_fixture.Fixture()
-        self.handler = lambda url: fixture(url, 4)
+        from test_haneoka_event_metadata import StaticFixture
+        metadata = StaticFixture()
+        self.handler = lambda url: fixture(url, 4) if '/game/records/' in url else metadata(url, 512000, 4)
         repo = self.repository()
         settings = SimpleNamespace(cutoff_source='haneoka', cache_file=repo.cache_file,
                                    cutoff_history_file=None, moenotes_open_history_file=None,
@@ -221,19 +224,20 @@ class SourceEgressTests(unittest.TestCase):
         configure_sources(repo, settings)
         source = repo.event_cutoffs
         source.clock = source.monotonic = lambda: fixture.now
+        source.metadata.clock = source.metadata.monotonic = lambda: fixture.now
         sampler = HistorySampler(source)
         sampler.sample_once()
         self.assertEqual(source.history.status()['points'], 4)
-        self.assertEqual({urlsplit(c['url']).path.split('/')[5] for c in self.calls}, {'jp', 'tw', 'kr', 'en'})
-        self.assertEqual(len(self.calls), 8)
+        self.assertEqual({urlsplit(c['url']).path.split('/')[5] for c in self.calls if '/game/records/' in c['url']}, {'jp', 'tw', 'kr', 'en'})
+        self.assertEqual(len(self.calls), 14)
         fixture.now += 61
-        self.fail = True
+        self.transport_failed = True
         sampler.sample_once()
         self.assertEqual(self.hosts(), {'haneoka.org'})
         self.assertEqual(source.history.status()['points'], 4)
         self.assertFalse((self.root / 'moenotes-history-v1.sqlite3').exists())
 
-    def test_haneoka_rendering_still_needs_yume_color_icons(self):
+    def test_haneoka_rendering_uses_only_captured_haneoka_art(self):
         songs, cards, snaps = catalog.validate(self.saved, 1100)[0]
         def asset(url):
             parts = urlsplit(url)
@@ -249,10 +253,9 @@ class SourceEgressTests(unittest.TestCase):
                            visuals.render_support_card_list(snaps[:1], ''), visuals.render_support_card(snaps[0])):
                 self.assertTrue(output)
             summary.assert_not_called()
-        self.assertEqual(self.hosts(), {'haneoka.org', 'bdon.yatta.moe'})
+        self.assertEqual(self.hosts(), {'haneoka.org'})
         old_urls = [c['url'] for c in self.calls if urlsplit(c['url']).netloc == 'bdon.yatta.moe']
-        self.assertTrue(old_urls)
-        self.assertTrue(all('/images/CardType' in url for url in old_urls))
+        self.assertFalse(old_urls)
 
     def test_current_meta_query_and_background_refresh_retain_old_statistics(self):
         data = music_fixture.payload(2)
@@ -289,3 +292,31 @@ class SourceEgressTests(unittest.TestCase):
         board = source.board(event, event.songs[0], source.deadline())
         self.assertIsNotNone(board.score(1))
         self.assertEqual(self.hosts(), {'api.bdon.moe', 'metadata.bdon.moe', 'assets.bdon.moe'})
+
+    def test_site_meta_query_and_background_refresh_use_only_haneoka(self):
+        from test_haneoka_site_meta import documents
+        from ournotes_bot.sources.haneoka.site_meta import SiteMetaRepository
+        from ournotes_bot.data import Song, Chart
+        ident, songs, meta = documents()
+        def response(url):
+            value = ident if '/release?' in url else songs if '/songs?' in url else meta
+            return json.dumps(value).encode(), {'x-haneoka-release-id': ident['releaseId'],
+                'x-haneoka-source-id': ident['sourceId']}
+        self.handler = response
+        repo = self.repository()
+        repo.meta_source = 'haneoka-site'
+        repo.song_meta = SiteMetaRepository(self.root/'site-meta.json')
+        repo.songs = [Song(int(key), s['musicTitle'][0], tuple(s['musicTitle']), 'MyGO!!!!!', '', '', '', '', '',
+            (Chart('EXPERT',25,25,100,''),)) for key,s in songs.items()]
+        request = parse_efficiency('/查分数表', repo, direct=True)
+        answer = execute_efficiency(request, repo)
+        self.assertEqual(len(answer.panels), 2)
+        self.assertTrue(all(panel.rows for panel in answer.panels))
+        fresh = SiteMetaRepository(self.root/'site-background.json')
+        worker = music.MusicDataRefresher(fresh)
+        async def one_cycle(_):
+            worker.stopping.set()
+        with patch('ournotes_bot.sources.moenotes_music_data.asyncio.sleep', side_effect=one_cycle):
+            asyncio.run(worker.run())
+        self.assertEqual(self.hosts(), {'haneoka.org'})
+        self.assertEqual(len(self.calls), 6)

@@ -18,9 +18,9 @@
 
 ## Core Contracts
 
-分数表通过 `QuerySpec.meta_request` 保存完整规范状态，默认共用一份快照生成自由／激奏独立双榜；任务词默认激奏，单人／多人显式场景优先。裸颜色／任务词、大小写难度、排序和分页确定性解析；等级边界及可调计算参数移除并明确拒绝。八类排行和单局保持，合同见 [分数表与开放平台](../docs/META_OPEN.md)。
+默认分数表通过 `QuerySpec.meta_scene` 与原有歌曲筛选字段，读取 Haneoka 原生普通／激奏效率和倍率；双榜独立排名，选择号跨榜连续。旧 `meta_request` 仅供显式 Moenotes 使用。`/查活动` 通过 `CommandResult.activity` 返回当前活动文本，不请求排行。合同见 [统一来源说明](../docs/HANEOKA_UNIFIED.md)。
 
-活动榜线以 `QuerySpec.cutoff_request` 和结果的可选 `cutoff: CutoffAnswer` 接入，图文共用不可变快照。直接与自然语言入口均保留服务器／歌曲原序号、趋势／附近／区间／离散模式及目标排名；只有趋势读取曲线历史，查询观测写入仍由来源负责，不使用旧自然语言终态缓存；详见 [Deterministic](ournotes_bot/query/L2-2.md) 与 [Natural](ournotes_bot/natural_query/L2-2.md)。
+活动榜线以 `QuerySpec.cutoff_request` 和结果的可选 `cutoff: CutoffAnswer` 接入，图文共用不可变快照。直接与自然语言入口均保留服务器／歌曲选择（Haneoka 原序号未确认则拒绝）、趋势／附近／区间／离散模式及目标排名；只有趋势读取曲线历史，查询观测写入仍由来源负责，不使用旧自然语言终态缓存；详见 [Deterministic](ournotes_bot/query/L2-2.md) 与 [Natural](ournotes_bot/natural_query/L2-2.md)。
 
 `QuerySpec/QueryResult` 的当前位置是 [structured_query.py](ournotes_bot/structured_query.py)，`CommandResult` 在 [commands.py](ournotes_bot/commands.py)。专项选择为 `SongAnswer/CardAnswer/MetaAnswer`；实体坐标为 `EntityRef`。这些契约的所有者均是 Query，不因被 QQ/Rendering 使用而归入一个 Shared 域。
 

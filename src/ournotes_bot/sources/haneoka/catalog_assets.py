@@ -1,5 +1,5 @@
 # L3
-# Input: Catalog asset paths and a verified JP release identity, or a pinned image URL.
+# Input: Catalog/static UI paths and a verified JP/intl release identity, or a pinned image URL.
 # Output: Allowlisted pinned image URLs and bounded, release-checked image bytes.
 # Pos: Sources / Haneoka Catalog assets; see ../L2-2.md.
 # Effects/Dependencies: Anonymous Haneoka GET only; no redirects or other-source retry.
@@ -10,11 +10,41 @@ import re
 from .chart_data import ORIGIN, public_get
 
 PREFIX = "/assets/jp/Assets/AddressableResources/"
-IMAGE_PATH = re.compile(re.escape(PREFIX) + r"(?:Image/Jacket/[A-Za-z0-9_-]+|MemberCard/[0-9]+/member_(?:full|thumbnail)|SupportCard/[0-9]+/snap_(?:full|thumbnail))\.(?:png|webp)")
+IMAGE_PATH = re.compile(r"/assets/(?:jp|intl)/Assets/AddressableResources/"
+    r"(?:Image/Jacket/(?:small/)?[A-Za-z0-9_-]+|MemberCard/[0-9]+/member_(?:full|thumbnail)|"
+    r"SupportCard/[0-9]+/snap_(?:full|thumbnail)|Story/Banner/Chapter/[A-Za-z0-9_-]+)\.(?:png|webp)")
+ICON_PATH = re.compile(r"/runtime/jp/unity/Assets/AddressableResources/UI/Atlas/"
+    r"FixUiSpriteAtlas\.spriteatlasv2/CardType-(?:Red|Blue|Green|Yellow|Purple)--Sprite--?[0-9]+\.png")
+
+
+def attribute_url(marks, color, release):
+    name = {1: "Red", 2: "Blue", 3: "Green", 4: "Yellow", 5: "Purple"}.get(color)
+    path = marks.get(f"CardType-{name}.png") if isinstance(marks, dict) else None
+    if not isinstance(path, str) or not path.startswith("runtime/"):
+        return ""
+    try:
+        return asset_url("/runtime/jp/" + path.removeprefix("runtime/"), release)
+    except ValueError:
+        return ""
+
+
+def record_attribute_url(record):
+    """Captured source art only; a missing Haneoka mark stays a text/color fallback."""
+    catalog = getattr(record, "catalog", {})
+    if catalog.get("source") == "haneoka":
+        return catalog.get("attribute_icon", "")
+    if hasattr(record, "jacket_url"):
+        if is_catalog_asset(record.jacket_url):
+            return getattr(record.traits, "attribute_icon", "")
+        color = record.traits.color if record.traits else None
+    else:
+        color = record.card_type
+    return f"https://bdon.yatta.moe/images/CardType{color}.webp" if color in range(1, 6) else ""
 
 
 def asset_url(path, release):
-    if not isinstance(path, str) or not IMAGE_PATH.fullmatch(path) or not re.fullmatch(r"r-[a-f0-9]{20}", release):
+    if (not isinstance(path, str) or not (IMAGE_PATH.fullmatch(path) or ICON_PATH.fullmatch(path))
+            or not re.fullmatch(r"r-[a-f0-9]{20}", release)):
         raise ValueError("unverified Haneoka Catalog asset")
     return ORIGIN + path + "?release=" + release
 

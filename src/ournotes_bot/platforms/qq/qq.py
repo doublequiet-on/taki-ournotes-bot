@@ -704,7 +704,8 @@ def run_bot(app_id: str, app_secret: str, repository: SongRepository, settings: 
     sampler = HistorySampler(repository.event_cutoffs, servers=settings.cutoff_sampling_servers,
                              interval=settings.cutoff_sampling_interval) if settings.cutoff_sampling_enabled else None
     repository.cutoff_sampler = sampler
-    music_refresher = MusicDataRefresher(repository.music_data) if repository.meta_source == "moenotes" else None
+    music_refresher = (MusicDataRefresher(repository.music_data) if repository.meta_source == "moenotes" else
+                       MusicDataRefresher(repository.song_meta) if repository.meta_source == "haneoka-site" else None)
     reply_sequencer = ReplySequencer(enabled=settings.reply_order)
     contexts = ContextStore()
     notice_ai = (AIClient(settings.ai_base_url, settings.ai_api_key, settings.ai_model)
@@ -798,7 +799,9 @@ def run_bot(app_id: str, app_secret: str, repository: SongRepository, settings: 
 
     async def refresh_loop() -> None:
         while True:
-            await asyncio.sleep(6 * 3600)
+            # Unix half-hours also align with Hong Kong's UTC+8 wall clock.
+            # Recalculate after each refresh; skip missed slots without catch-up.
+            await asyncio.sleep(1800 - time.time() % 1800)
             try:
                 await asyncio.to_thread(repository.refresh)
                 logger.info("Ournotes 数据刷新成功，共 %d 首曲目", len(repository.songs))

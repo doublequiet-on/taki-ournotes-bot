@@ -15,6 +15,7 @@ include docs/HANEOKA_CUTOFFS.md
 include docs/HANEOKA_META_CONTRACT.md
 include docs/HANEOKA_RETIREMENT.md
 include docs/HANEOKA_RESEARCH.md
+include docs/HANEOKA_UNIFIED.md
 exclude tests/fixtures/haneoka_catalog.json
 exclude tests/fixtures/moenotes_meta_minimal.json tests/fixtures/moenotes_meta_reference.json
 include deploy/query-upgrade-v1.env.example

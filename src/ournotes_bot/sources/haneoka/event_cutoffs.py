@@ -78,7 +78,7 @@ def decode_current(data, region):
     if not isinstance(status, str) or len(status) > 40:
         raise SourceError("invalid_event")
     return EventSnapshot(region, ident, f"活动 {ident}", status, start, end, tuple(songs),
-                         source="haneoka", challenge_order_verified=False)
+                         source="haneoka", challenge_order_verified=False, metadata_version="")
 
 
 def decode_board(data, event, song):
@@ -110,9 +110,10 @@ def decode_board(data, event, song):
 class HaneokaEventCutoffRepository(EventCutoffRepository):
     source = "haneoka"
 
-    def __init__(self, cache_dir, *, transport=None, **kwargs):
+    def __init__(self, cache_dir, *, transport=None, metadata=None, **kwargs):
         super().__init__(cache_dir, transport=transport or self._transport, **kwargs)
         self._event_identities = {}
+        self.metadata = metadata
 
     @staticmethod
     def _transport(url, timeout):
@@ -196,13 +197,17 @@ class HaneokaEventCutoffRepository(EventCutoffRepository):
             return body, {}
         entry = self._cached(f"current:{server}", 30, 600, load, deadline)
         event = decode_current(entry.payload, server)
-        notes = ["挑战原序号尚未核实；请使用歌曲ID，歌曲N暂不可用。",
-                 "四服与静态资源的正式关联待核实，暂不显示歌名与素材。"]
+        notes = ["挑战原序号尚未核实；请使用歌曲ID，歌曲N暂不可用。"]
         if entry.fallback or entry.payload["stale"]:
             notes.append("当前活动使用同源旧快照，活动状态可能变化。")
         with self._guard:
             self._event_identities[server] = event_identity(event)
-        return replace(event, notes=tuple(notes))
+        event = replace(event, notes=tuple(notes))
+        if self.metadata is not None:
+            event = self.metadata.enrich(event, deadline)
+        if not event.metadata_version:
+            event = replace(event, notes=event.notes + ("静态活动身份尚未匹配，名称与素材暂不可用。",))
+        return event
 
     def board(self, event, song, deadline):
         empty = BoardSnapshot(song, source=self.source, time_kind=TIME_KIND, contract_version=CONTRACT)
@@ -246,12 +251,16 @@ class HaneokaEventCutoffRepository(EventCutoffRepository):
 
     def _snapshot(self, event, song, entry):
         board = super()._snapshot(event, song, entry)
-        fetched, server, received = board.fetched_ms, board.server_ms, board.received_ms
-        notes = list(board.notes)
+        fetched, server = board.fetched_ms, board.server_ms
+        # An absolute clock offset does not invalidate source-relative freshness.
+        # Keep the raw timestamps; HaneokaCutoffHistory excludes skewed points.
+        notes = [note for note in board.notes if note != "来源时钟与本机有偏差"]
         quality = board.quality
         scores, status = board.scores, board.status
-        if not fetched or not server or abs(server - received) > 60000 or fetched > server + 1000:
+        if not fetched or not server:
             scores, status, quality = (), "来源时间或参考时钟未知，暂无可信当前值", "clock_unknown"
+        elif fetched > server + 1000:
+            scores, status, quality = (), "来源时钟异常，暂无可信当前值", "clock_unknown"
         elif ((song.effective_start_ms and fetched < song.effective_start_ms)
               or (song.effective_end_ms and fetched > song.effective_end_ms)):
             scores, status, quality = (), "快照不在挑战期内，暂无可信当前值", "outside_period"

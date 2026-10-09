@@ -6,6 +6,7 @@
 
 """SNAP-only list and detail presentation; querying remains in card_catalog."""
 import math
+from ..sources.haneoka.catalog_assets import record_attribute_url
 from concurrent.futures import ThreadPoolExecutor
 
 from ..query.card_catalog import labels, rarity_name, TYPES
@@ -57,7 +58,7 @@ def render_list(cards, query, locale="zh", footer=""):
     types = list(dict.fromkeys(c.card_type for c in cards if c.card_type in TYPES))
     with ThreadPoolExecutor(max_workers=6) as pool:
         arts = dict(zip(urls, pool.map(lambda u: _asset(u, (508, 292), contain=True), urls)))
-        icons = dict(zip(types, pool.map(lambda t: _asset(f"{BASE}/images/CardType{t}.webp", (84, 84), contain=True), types)))
+        icons = dict(zip(types, pool.map(lambda t: _asset(record_attribute_url(next(c for c in cards if c.card_type == t)), (84, 84), contain=True), types)))
     for index, card in enumerate(cards):
         row = index // 3
         x, y = 35 + index % 3 * 318, top + sum(h + 20 for h in row_heights[:row])

@@ -31,6 +31,9 @@ FORBIDDEN = re.compile(r"推荐|攻略|预测|档线|代练|代肝|账号|编成
 def parse_efficiency(query: str, repository, *, direct=False):
     if not direct and not MARKER.search(query):
         return None
+    if getattr(repository, "meta_source", "") == "haneoka-site":
+        from .haneoka_meta_query import parse_site_meta
+        return parse_site_meta(query, repository, direct=direct)
     if getattr(repository, "meta_source", "haneoka") == "moenotes":
         from .meta_parameters import parse_meta
         return parse_meta(query, repository, natural=not direct)
@@ -151,6 +154,9 @@ class MetaAnswer:
 
 
 def execute_efficiency(spec, repository) -> MetaAnswer:
+    if spec.meta_scene:
+        from .haneoka_meta_query import execute_site_meta
+        return execute_site_meta(spec, repository)
     if spec.meta_request is not None:
         if spec.meta_request.compare_scenes:
             return _execute_comparison(spec, repository)

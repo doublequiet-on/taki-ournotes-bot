@@ -457,9 +457,11 @@ def _bytes(image: Image.Image) -> bytes:
 
 
 def _song_marks(songs):
+    from .sources.haneoka.catalog_assets import record_attribute_url
     colors = sorted({s.traits.color for s in songs if s.traits and s.traits.color in range(1, 6)})
+    urls = {s.traits.color: record_attribute_url(s) for s in songs if s.traits}
     with ThreadPoolExecutor(max_workers=5) as pool:
-        return dict(zip(colors, pool.map(lambda c: _asset(f"{BASE}/images/CardType{c}.webp", (76, 76), contain=True), colors)))
+        return dict(zip(colors, pool.map(lambda c: _asset(urls[c], (76, 76), contain=True), colors)))
 
 
 def _mission_marks(songs):

@@ -1,6 +1,6 @@
 # L3
 # Input: Captured challenge boards, explicit source/configuration and independent v1/v2/v3 paths.
-# Output: Lossless score-only observations, source-separated history views and storage health.
+# Output: Score-only observations, source-separated history views and clock-gap/storage health.
 # Pos: Data / Sources history and source composition; see L2-2.md and docs/META_OPEN.md.
 # Effects: Lazy SQLite, source/minute-state composition without requests; no credentials-file, worker or platform imports.
 """Append-only observed scores. Never reconstruct unobserved game history."""
@@ -299,11 +299,23 @@ class OpenCutoffHistory(CutoffHistory):
 
 
 class HaneokaCutoffHistory(OpenCutoffHistory):
-    """Independent schema3 file, never upgrades tracker or formal-source files."""
+    """Independent schema3 file; clock-offset observations leave only a gap."""
     source = "haneoka"
     time_kind = "tracker_observed_via_haneoka"
     contract_version = "haneoka:challenge-ranking/1"
     schema_version = 3
+
+    def record(self, event, board):
+        if (getattr(board, "source", "") != self.source or getattr(board, "time_kind", "") != self.time_kind
+                or getattr(board, "contract_version", "") != self.contract_version):
+            return "wrong_source"
+        server, received = self._ms(board.server_ms), self._ms(board.received_ms)
+        if server and received and abs(server - received) > 60000:
+            # Queries may show these scores, but raw source times would shift the
+            # trend. Record a local gap only, including late/fallback samples.
+            self.failure(event.server, event.event_id, board.song.challenge_id, "clock_skew")
+            return "clock_skew"
+        return super().record(event, board)
 
 
 class SourceHistory:
@@ -370,7 +382,10 @@ def configure_sources(repository, settings):
     source = repository.event_cutoffs
     if settings.cutoff_source == "haneoka":
         if not isinstance(source, HaneokaEventCutoffRepository):
-            source = repository.event_cutoffs = HaneokaEventCutoffRepository(settings.cache_file.parent / "haneoka-cutoff-v1")
+            from .haneoka.event_metadata import EventMetadataRepository
+            metadata = EventMetadataRepository(settings.cache_file.parent / "haneoka-event-metadata-v1")
+            source = repository.event_cutoffs = HaneokaEventCutoffRepository(
+                settings.cache_file.parent / "haneoka-cutoff-v1", metadata=metadata)
     elif settings.cutoff_source == "open" and not isinstance(source, OpenEventCutoffRepository):
         source = OpenEventCutoffRepository(settings.cache_file.parent / "moenotes-open-cutoff-v1",
                                           client=OpenClient(settings.moenotes_open_secret,

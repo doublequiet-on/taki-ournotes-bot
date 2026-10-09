@@ -9,7 +9,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 from ...data import Card, Chart, Skill, Song, SupportCard
-from .catalog_assets import asset_url
+from .catalog_assets import asset_url, attribute_url
 from .catalog_text import (UNKNOWN, LANGUAGES, description, effect_context, language, localized,
                            mechanics, original, references, translated)
 from .chart_data import _asset_url
@@ -182,7 +182,8 @@ def convert(documents, identity_jp, fetched_at, *, stale=False):
                           stamp(row.get("publishedAt")), asset_url(row["jacketUrl"], release),
                           tuple(sorted(charts, key=lambda c: ("EASY", "NORMAL", "HARD", "EXPERT").index(c.difficulty))),
                           {"title": localized(title), "band": band, **{k: localized(v) for k, v in credits.items()}},
-                          SongTraits(color, tuple(MISSIONS[m] for m in missions) if missions else None, stale, release, source_id)))
+                          SongTraits(color, tuple(MISSIONS[m] for m in missions) if missions else None, stale, release, source_id,
+                                     attribute_url(jp.get("ui-marks", {}), color, release))))
 
     member_refs = None
     try:
@@ -272,6 +273,7 @@ def convert(documents, identity_jp, fetched_at, *, stale=False):
                 raise ValueError("card stat identity mismatch")
             lv1 = level1(row, jp["progression"], support)
             catalog = {"source": "haneoka", "release": release, "source_id": source_id, "fetched_at": fetched_at,
+                       "attribute_icon": attribute_url(jp.get("ui-marks", {}), row.get("cardType"), release),
                        "character_ids": char_ids, "character_links_complete": links_ready, "band_ids": band_ids,
                        "bands": [language(b) for b in band_names], "categories": cats, "skill_evidence": evidence,
                        "skill_languages": skill_languages, "stats_level1": lv1, "skill_slots": slots,

@@ -251,8 +251,11 @@ class SongRepository:
         self.last_successful_sync_at: str | None = None
         from .sources.haneoka.song_meta import MetaRepository
         self.song_meta = MetaRepository(cache_file.with_name("haneoka-meta-jp.json"))
+        if meta_source == "haneoka-site":
+            from .sources.haneoka.site_meta import SiteMetaRepository
+            self.song_meta = SiteMetaRepository(cache_file.with_name("haneoka-site-meta-jp-v1.json"))
         from .sources.moenotes_music_data import MusicDataRepository
-        if meta_source not in {"moenotes", "haneoka"}:
+        if meta_source not in {"moenotes", "haneoka", "haneoka-site"}:
             raise ValueError("unsupported meta source")
         self.meta_source = meta_source
         self.music_data = MusicDataRepository(cache_file.with_name("moenotes-music-data-v1.json"))

@@ -21,15 +21,15 @@
 
 ## 任务导航
 
-主资料独立来源：`data.py::SongRepository._load_haneoka` → `sources/haneoka/catalog.py`，由 `OURNOTES_DATA_SOURCE` 选择，默认 Yume。目标测试 `test_haneoka_catalog.py`，共享接口修改后完整离线回归及安装检查；字段、缓存、样图和切换门槛见 [主资料说明](HANEOKA_CATALOG.md)。
+主资料独立来源：`data.py::SongRepository._load_haneoka` → `sources/haneoka/catalog.py`，由 `OURNOTES_DATA_SOURCE` 选择，默认 Haneoka；Yume 保留显式选择。目标测试 `test_haneoka_catalog.py`，共享接口修改后完整离线回归及安装检查；字段、缓存、样图和切换门槛见 [主资料说明](HANEOKA_CATALOG.md)。
 
-Haneoka 榜线预览：`sources/haneoka/event_cutoffs.py` → 既有查询／绘图；`cutoff_history.py` 组合独立三来源历史。目标测试 `test_haneoka_cutoffs.py`，共享历史修改后完整回归及安装检查。尚未核实原序号和静态关联，默认来源不变，见 [榜线说明](HANEOKA_CUTOFFS.md)。
+Haneoka 默认来源与场景：`sources/haneoka/site_meta.py` → `query/haneoka_meta_query.py`；`event_metadata.py` → `event_cutoffs.py`／`query/activity_query.py`；素材身份经 `catalog_assets.py`。测试 `test_haneoka_site_meta.py`、`test_haneoka_event_metadata.py`、`test_source_egress.py`；完整范围与实源门槛见 [统一来源说明](HANEOKA_UNIFIED.md)。
 
-Haneoka 第4批分数表尚缺 TW 等价统计合同，先阅读 [输入需求与验收门槛](HANEOKA_META_CONTRACT.md)。合同成立前不注册新来源或改写旧 `haneoka` 分支；继续使用当前有限求值器和独立对拍工具。
+旧 Moenotes TW 等价统计合同仍见 [输入需求与验收门槛](HANEOKA_META_CONTRACT.md)。用户已确认默认改用 Haneoka 自身普通／激奏参考 meta；旧有限求值器只在显式选择旧源时使用，不将参考 meta 当成旧模型等价实现。
 
-旧联网退役前运行 `test_source_egress.py` 的 HTTP 调用边界探针，并核对 [网络出口与退役门槛](HANEOKA_RETIREMENT.md)。主资料／谱面／榜线开关独立，图标、分数表封面和后台刷新仍有旧源依赖；不能只检查主请求或按文件名删除共享工具。
+旧联网退役前运行 `test_source_egress.py` 的 HTTP 调用边界探针，并核对 [网络出口与退役门槛](HANEOKA_RETIREMENT.md)。主资料／谱面／榜线开关独立；默认 Haneoka 的图标、分数表封面和后台刷新均已切换，显式旧源配置仍可请求旧来源；不能只检查主请求或按文件名删除共享工具。
 
-完整谱面独立来源：`sources/chart_data.py::load_chart_data` → `sources/haneoka/chart_data.py::load_chart`，由 `OURNOTES_CHART_SOURCE` 选择，默认保持 MoeNotes。目标回归 `test_haneoka_charts.py`、`test_chart_data.py`、`test_query.py`、`test_continuation.py`；共享配置／QQ 接线修改后运行完整离线回归。真实样本检查四难度、变速及完整节点，并对比同输入图片；联网样本与合成测试、真实 QQ 送达分别记录。安装检查包含新适配模块。
+完整谱面独立来源：`sources/chart_data.py::load_chart_data` → `sources/haneoka/chart_data.py::load_chart`，由 `OURNOTES_CHART_SOURCE` 选择，默认 Haneoka；MoeNotes 保留显式选择。目标回归 `test_haneoka_charts.py`、`test_chart_data.py`、`test_query.py`、`test_continuation.py`；共享配置／QQ 接线修改后运行完整离线回归。真实样本检查四难度、变速及完整节点，并对比同输入图片；联网样本与合成测试、真实 QQ 送达分别记录。安装检查包含新适配模块。
 
 查询升级 v1 的完整 55 项映射见 [实现与验收](QUERY_UPGRADE_V1.md)。共享歌曲条件在 `query/song_query.py`，字段短答在 `query/field_query.py`，有限续查在 `query/continuation.py`；QQ 的 `reply_commands` 管同用户顺序和发送确认。历史、采样、趋势分别位于 `sources/cutoff_history.py`、`sources/cutoff_sampler.py`、`rendering/cutoff_trends.py`，发布开关和长期保留见 [历史运维](CUTOFF_HISTORY.md)。
 
@@ -57,8 +57,8 @@ Haneoka 第4批分数表尚缺 TW 等价统计合同，先阅读 [输入需求�
 - 歌曲颜色／激奏扩展：`sources/haneoka/song_traits.py::SongTraitsRepository` 从 Haneoka 日服按release取完整详情，独立缓存，不改变旧主缓存歌曲行；`Song.traits` 是内存关联。`query/song_query.py::parse_filter/execute/local_query` 共用于直接命令和 `/问`；`QuerySpec.song_query` 仅本地解析产生，不向模型开放任意新字段。新语法经 `CommandResult/QueryResult.song_selection` 捕获同一份结果和覆盖提示，图文不二次查询。QQ在独立后台任务每5分钟检查、快照TTL24小时；来源故障不阻塞原有数据刷新或消息处理。`visuals.py::MISSION_ICON_URLS`、`_mission_marks` 运行时按需读取游戏原生 JUST／COMBO／LUCK 轮廓图标并复用普通素材缓存，缺图只退类型文字。相关测试 `test_song_traits.py`、`test_visuals.py`；事实样例、图标路径和字段依据见 THIRD_PARTY。
 - `bot_info.py` 是消息内介绍文案，`/帮助` 在 commands.py，QQ面板描述在 platforms/qq/menu.py；修改源代码不会自动修改QQ平台资料页简介。`setup-menu` 不再初始化游戏缓存或 AI，仅在新版本已上线后分别核对并安装单聊、群聊面板；内容未变时不重复写入，面板发布仍属于真实 QQ 外部操作。
 
-- 基础歌曲/卡牌资料：`sources/yatta.py` 的 `BASE`、`MASTER`；`SongRepository.refresh` 校验 Project Yume 来源，并构建成员技能索引。完整音符由 `sources/chart_data.py::CHART_BASE` 读取 MoeNotes 公共资源，`score_name` 限定已知 ID/难度。新分数表用独立公开快照视图，旧Haneoka仅显式回退；不把研究目录当生产接口。
-- 主缓存由 `OURNOTES_CACHE_FILE` 指定；`CACHE_SCHEMA`、旧字段兼容、详情失败回退见 `data.py`。TTL 由 `OURNOTES_CACHE_TTL_HOURS` 控制；QQ 后台刷新间隔目前在 `platforms/qq/qq.py::refresh_loop` 固定为六小时，不由此变量控制。
+- 基础歌曲/卡牌资料：`SongRepository.refresh` 按所选来源校验并构建成员技能索引，默认走 `sources/haneoka/catalog.py`。`sources/chart_data.py` 路由完整谱面，默认 Haneoka；显式旧源仍保留 Yume 主资料及 MoeNotes 谱面。默认分数表是独立 Haneoka 页面参考 meta；不把研究目录当生产接口。
+- 主缓存由 `OURNOTES_CACHE_FILE` 指定；`CACHE_SCHEMA`、旧字段兼容、详情失败回退见 `data.py`。TTL 由 `OURNOTES_CACHE_TTL_HOURS` 控制；QQ 后台主资料刷新由 `platforms/qq/qq.py::refresh_loop` 对齐香港时间整点／半点，就绪后等待下一时点，每次刷新后重新计算等待时间，跨过的时点不补跑；不由此变量控制。
 - 谱面缓存默认 `runtime_data_dir()/chart-cache`，不一定随自定义主缓存路径移动；图片素材缓存见 `visuals.py::_asset`，字体选择见 `_font`。长图自下向上、各栏从左向右；节点数不能直接当判定数或算分公式依据。
 - 卡牌映射 SSR=四星、SR=三星、R=二星；成员生日卡 BD=后台稀有度20，仅用于成员卡，不扩展 SNAP 映射，数字 ID 不当星级。技能按 `sources/yatta.py::skill_description` 的 Lv.5 默认值展示，不代表玩家培养状态。技能索引不完整须保留提示；两类详情同步构建分类索引，`card_catalog_version` 控制旧缓存升级，顶层 `card_catalog` 保持旧卡牌行兼容。
 - `.env.example` 列出变量用途；`QQ_APP_ID`/`QQ_APP_SECRET` 用于 QQ，`AI_API_KEY`/`AI_BASE_URL`/`AI_MODEL` 为可选模型设置。源码配置根与普通安装包启动目录有区别，见 `CONFIG_ROOT`。不要为文档读取真实 `.env`。
@@ -72,8 +72,8 @@ Haneoka 第4批分数表尚缺 TW 等价统计合同，先阅读 [输入需求�
 | 卡牌/技能查询 | 已实现两类卡条件网格、精确ID详情、独立卡面及多维分类筛选；成员 BD 映射已核实，列表与详情使用参考截图的渐变框，未取得原生框素材。见 `structured_query.py::cards_for`、`support_cards_for` 与数据索引。 |
 | 谱面 | 已实现静态完整音符绘图和缺失回退；局部放大、播放模拟未实现。见 `render_chart`。 |
 | 直接查询与 AI 分工 | 已实现直接查询不调用模型、本地优先的受限 `/问`；不是自由问答。见 `_prepare_reply`、`QueryAgent.run`。 |
-| 活动歌曲榜线、预测、活动/卡池 | `/查榜线` 已实现四服当前／最近活动挑战歌曲 Top 100 观测；不提供历史选择、积分档线或预测。活动、卡池、预测命令仍为未开放占位，见 `commands.py::UNAVAILABLE_COMMANDS`；榜线约束见 [专题](EVENT_CUTOFFS.md)。 |
-| 算分、配队计算 | 分数表已实现普通五技能的有限统计求值、活动同分模型与数学前沿；不是实际队伍优化、真实积分或游戏公式实证。卡牌展示仍不作为配队计算，见META_OPEN。 |
+| 活动歌曲榜线、预测、活动/卡池 | `/查榜线` 已实现四服当前／最近活动挑战歌曲 Top 100 观测；不提供历史选择、积分档线或预测。`/查活动` 已提供当前／最近活动信息；卡池、预测命令仍为未开放占位，见 `commands.py::UNAVAILABLE_COMMANDS`；榜线约束见 [专题](EVENT_CUTOFFS.md)。 |
+| 算分、配队计算 | 默认分数表展示 Haneoka 普通／激奏参考结果；显式 Moenotes 旧源保留普通五技能有限统计及数学前沿。两者都不代表实际队伍优化或游戏公式实证；卡牌展示不作为配队计算。 |
 | 攻略资料与知识库 | 审核后入库是产品约束；正式审核库、采集和审核流程未实现，见 README 长期方向。未来回答须用可靠数据及审核资料，不能把规划写成已落地。 |
 
 ## 开发与验证命令
@@ -120,7 +120,7 @@ python scripts/check_release_artifact.py dist
 
 - 角色卡条件列表专用视觉位于 `rendering/member_list_visuals.py`（`card_visuals.grid` 的成员卡分支）：技能摘要为框内队长/演出/激奏三项渐变信息层，ID 为框外附属栏；稀有度边框是设计处理，并非已取得官方卡框素材。正式列表不放资源/实现说明；保留分页与旧缓存提示。`test_member_list_visuals.py` 验证信息完整、长条件换行及 SNAP 分流不变。数据入口 `sources/haneoka/haneoka_members.py` / 已核实机制指纹 `sources/haneoka/haneoka_member_contracts.py`，单独缓存 `haneoka-member-list-jp.json`；`test_haneoka_members.py` 验证数值、条件、映射及缓存故障。未知机制先核实再扩充指纹，不能直接接受新摘要。
 
-- 成员ID详情图入口为 `rendering/member_detail_visuals.py::render`，仅由 `card_visuals.detail` 的成员卡分支调用。完整full卡面按比例放入列表共用的可变尺寸稀有度框，下方分区展示基本资料、已确认状态的属性条、三类完整技能和多语言标题；SNAP由 `rendering/support_visuals.py` 独立绘制列表/详情。详情仍使用现有Project Yume完整字段，不把列表Haneoka摘要当完整技能；`test_member_detail_visuals.py` 检查卡面四角不裁切、完整文本、未知值和SNAP分流。
+- 成员ID详情图入口为 `rendering/member_detail_visuals.py::render`，仅由 `card_visuals.detail` 的成员卡分支调用。完整full卡面按比例放入列表共用的可变尺寸稀有度框，下方分区展示基本资料、已确认状态的属性条、三类完整技能和多语言标题；SNAP由 `rendering/support_visuals.py` 独立绘制列表/详情。详情使用所选主资料来源的完整字段，默认 Haneoka Catalog；不把列表摘要当完整技能；`test_member_detail_visuals.py` 检查卡面四角不裁切、完整文本、未知值和SNAP分流。
 
 - SNAP视觉入口 `rendering/support_visuals.py::render_list/render_detail`，由 `rendering/card_visuals.py` 按列表/详情分流；共用主题、条件标签、稀有度框及分区布局。保留EX重复演出支援、明确激奏不适用，不合计百分比属性为综合力。离线检查 `test_support_visuals.py`，本地QQ命令见验收文档。
 

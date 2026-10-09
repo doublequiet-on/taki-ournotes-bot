@@ -34,11 +34,18 @@ class CutoffPage:
 
 def load_artwork(source, event, urls: tuple[str, ...]) -> dict[str, Image.Image | None]:
     """Only source-derived artwork paths; no redirects, huge images or retry chain."""
+    from urllib.parse import parse_qs, urlsplit
+    from ..sources.haneoka.catalog_assets import is_catalog_asset
+    from ..sources.haneoka.chart_data import public_get
     deadline = source.monotonic() + 6
     prefix = f"{ASSETS}/{event.server}/{SERVERS[event.server][3]}/"
     def load(url):
-        if not url.startswith(prefix) or not re.fullmatch(
-                r"(?:Story/Banner/Chapter|Image/Jacket)/([A-Za-z0-9_-]{1,120})/\1\.webp", url[len(prefix):]):
+        haneoka = event.source == "haneoka" and is_catalog_asset(url)
+        if event.source == "haneoka" and (not haneoka or
+                parse_qs(urlsplit(url).query)['release'][0] != event.metadata_version):
+            return None
+        if not haneoka and (not url.startswith(prefix) or not re.fullmatch(
+                r"(?:Story/Banner/Chapter|Image/Jacket)/([A-Za-z0-9_-]{1,120})/\1\.webp", url[len(prefix):])):
             return None
         key = f"{event.server}:{event.event_id}:{event.metadata_version}:{event.asset_version}:{url}"
         path = source.cache_dir / "assets" / (hashlib.sha256(key.encode()).hexdigest() + ".webp")
@@ -57,7 +64,16 @@ def load_artwork(source, event, urls: tuple[str, ...]) -> dict[str, Image.Image 
                     if negative and negative[0] > source.monotonic():
                         return None
                     try:
-                        raw, headers = source._get(url, deadline)
+                        if haneoka:
+                            remaining = deadline - source.monotonic()
+                            if remaining <= 0:
+                                return None
+                            raw, headers = public_get(url, 6_000_000, remaining)
+                            if (headers.get('x-haneoka-release-id') != event.metadata_version
+                                    or not headers.get('x-haneoka-source-id')):
+                                return None
+                        else:
+                            raw, headers = source._get(url, deadline)
                     except SourceError as exc:
                         if exc.code != "budget":
                             source._negative[request_key] = (source.monotonic() + exc.retry_after, exc)

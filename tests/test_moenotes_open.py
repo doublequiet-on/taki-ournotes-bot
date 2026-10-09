@@ -53,7 +53,7 @@ class OpenContractTests(unittest.TestCase):
                 settings = Settings.from_env()
                 self.assertEqual(settings.moenotes_open_secret, expected)
                 self.assertNotIn("moenotes_open_secret=", repr(settings))
-                self.assertEqual(settings.cutoff_source, "tracker")
+                self.assertEqual(settings.cutoff_source, "haneoka")
 
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()

@@ -395,7 +395,7 @@ class MusicDataRefresher:
                 except Exception as exc:
                     logger.warning("分数表后台刷新异常：%s；等待下一周期", type(exc).__name__)
                 else:
-                    state = "不可用" if snapshot is None else "模型待验证" if not snapshot.model_supported else "旧缓存" if snapshot.stale else "正常"
+                    state = "不可用" if snapshot is None else "模型待验证" if not getattr(snapshot, "model_supported", True) else "旧缓存" if snapshot.stale else "正常"
                     if state != last_state:
                         logger.info("分数表自动刷新：%s", state)
                         last_state = state
