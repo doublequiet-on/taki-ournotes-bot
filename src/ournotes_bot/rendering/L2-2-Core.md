@@ -10,7 +10,7 @@
 
 ## Inputs
 
-画布/文字/几何参数、允许的素材 URL、素材尺寸与内部 Pillow Image。字体和编码参数直接由实现维护，不在架构文档复制参数表。
+画布/文字/几何参数、允许的素材 URL、素材尺寸与内部 Pillow Image。`encode_image` 默认借用输入；`visuals._bytes` 接管最终画布。字体和编码参数直接由实现维护。
 
 ## Outputs
 
@@ -18,7 +18,8 @@
 
 ## Core Flow
 
-创建主题画布 → 业务绘图消费字体/素材/通用原语 → `_bytes` 调统一 `encode_image` → 整图缩放/编码直到满足预算。
+创建主题画布 → 业务绘图消费字体/素材/通用原语 → `_bytes` 接管画布并调统一 `encode_image` → 整图缩放/编码直到满足预算 → 关闭临时图像和最终画布。
+字节输出的绘图入口使用 `reclaim_after_render`：大图编码后记录需要回收，等待整个绘图函数退出、绘图句柄释放，再尝试归还 Linux 分配器空闲页。嵌套调用仅在最外层回收，各线程独立；分数表在复用工作线程内结束作用域。缺少原生接口时降级，回收失败不覆盖编码结果或原始异常。
 素材缓存与业务 JSON 缓存不同；缺图产生占位或无素材结果。编码优先保留内容完整性，不删除业务行来压缩图片。
 素材完整解码成功后才通过独立临时文件原子发布；旧坏文件每次调用最多沿既有下载路径重取一次，不把 HTML／截断内容固化为可复用缓存。合法旧素材继续复用，尺寸及透明度语义不变。
 
@@ -41,7 +42,7 @@ Current 同一 `visuals.py` 还导入业务结果和来源常量；纯基础文�
 
 ## Relevant Tests
 
-[test_image_output.py](../../../tests/test_image_output.py)：完整性、透明度、尺寸/字节预算；
+[test_image_output.py](../../../tests/test_image_output.py)：完整性、透明度、尺寸/字节预算、画布所有权、失败清理及绘图退出后的并发回收；
 [test_visuals.py](../../../tests/test_visuals.py)：背景、抗锯齿、缩放和源素材细节；
 [test_install_paths.py](../../../tests/test_install_paths.py)：缺字体行为。
 上传前预算检查仍归 [QQ](../../L2-QQ.md) 的交付边界。

@@ -2,7 +2,7 @@
 # Input: 已选歌曲／单卡／当前页列表、Song／Chart 与可选谱面 score dict、MetaAnswer、条件／locale／页脚；render_catalog 消费 CardAnswer。
 # Output: render 返回编码 bytes；分数表串行绘图，双榜逐表合成后统一编码，不再次求值。
 # Pos: Rendering 的共享主题／素材、歌曲绘图与卡牌委托入口；见 rendering/L2-2-Core.md、rendering/L2-2-Song.md、rendering/L2-2-Card.md。
-# Effects/Dependencies: 字体／素材读取、允许来源下载；素材完整解码后原子缓存，旧坏缓存有限重取；委托 rendering 绘图器，成员列表可间接刷新 Haneoka；不调用模型或上传 QQ。
+# Effects/Dependencies: 字体／素材读取、允许来源下载；素材原子缓存及坏缓存有限重取；_bytes 接管并关闭画布，Linux 大图在绘图任务退出后尝试归还空闲内存；成员列表可间接刷新 Haneoka；不调用模型或上传 QQ。
 
 """Rounded, high-contrast image replies using the existing Our Notes assets."""
 
@@ -28,6 +28,7 @@ from .config import runtime_data_dir
 from .data import Card, Chart, Skill, Song, SupportCard, localized_text
 from .query.efficiency_query import MetaAnswer
 from .sources.yatta import ASSETS, BASE
+from .rendering.image_output import reclaim_after_render
 
 
 PAPER = "#F1F2F8"
@@ -450,8 +451,9 @@ def _paste_asset(canvas: Image.Image, draw: ImageDraw.ImageDraw, url: str, box: 
 
 
 def _bytes(image: Image.Image) -> bytes:
+    """Consume a renderer-owned canvas and release it after encoding."""
     from .rendering.image_output import encode_image
-    return encode_image(image)
+    return encode_image(image, close_input=True)
 
 
 def _song_marks(songs):
@@ -563,6 +565,7 @@ def _mission_chip(image, draw, traits, x, y, width, size=21, *,
     return y + height
 
 
+@reclaim_after_render
 def render_song_list(songs: list[Song], query: str, locale: str = "zh", footer: str = "") -> bytes:
     width = 1100
     measure = ImageDraw.Draw(Image.new("RGB", (width, 1)))
@@ -735,6 +738,7 @@ def _draw_score(draw: ImageDraw.ImageDraw, score: dict, top: int, locale: str) -
     return top + plot_height + 24
 
 
+@reclaim_after_render
 def render_chart(song: Song, charts: tuple[Chart, ...], locale: str = "zh", score: dict | None = None,
                  preview_difficulty: str | None = None, *, source_notice: str = "") -> bytes:
     score_points = [point for note in score.get("notes", []) if isinstance(note, dict)
@@ -799,6 +803,7 @@ def render_meta(answer: MetaAnswer) -> bytes:
     return _META_RENDER_EXECUTOR.submit(_render_meta, answer).result()
 
 
+@reclaim_after_render
 def _render_meta(answer: MetaAnswer) -> bytes:
     if answer.panels:
         # Capture native marks once so measuring and drawing use the same assets.
@@ -940,26 +945,31 @@ def _render_meta_table(answer: MetaAnswer, *, raw=False, size_only=False, marks=
     return image if raw else _bytes(image)
 
 
+@reclaim_after_render
 def render_card(card: Card, locale: str = "zh") -> bytes:
     from .rendering.card_visuals import detail
     return detail(card, locale)
 
 
+@reclaim_after_render
 def render_card_list(cards, query: str, locale: str = "zh", footer: str = "") -> bytes:
     from .rendering.card_visuals import grid
     return grid(cards, query, locale, footer)
 
 
+@reclaim_after_render
 def render_support_card(card: SupportCard, locale: str = "zh") -> bytes:
     from .rendering.card_visuals import detail
     return detail(card, locale)
 
 
+@reclaim_after_render
 def render_support_card_list(cards, query: str, locale: str = "zh", footer: str = "") -> bytes:
     from .rendering.card_visuals import grid
     return grid(cards, query, locale, footer, support=True)
 
 
+@reclaim_after_render
 def render_catalog(answer, locale: str = "zh") -> bytes | None:
     if answer.error or not answer.cards:
         return None

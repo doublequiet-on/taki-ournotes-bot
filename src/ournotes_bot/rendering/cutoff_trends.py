@@ -2,7 +2,7 @@
 # Input: Captured current scores/digital IDs/usernames, selected ranks and score-only local history views.
 # Output: A shared multi-song overview or a single-song card, with captured text fallback.
 # Pos: Rendering / Song challenge trends; see L2-2-Song.md.
-# Effects: Serialized Pillow rendering and existing encoder; no source/history queries.
+# Effects: Serialized Pillow rendering and owned encoder; reclaim large-image memory after rendering exits; no source/history queries.
 """Observed points on a real time axis, with explicit gaps and integer arithmetic."""
 from __future__ import annotations
 
@@ -10,6 +10,7 @@ import threading
 from dataclasses import replace
 
 from PIL import ImageDraw
+from .image_output import reclaim_after_render
 
 from .. import visuals as v
 from ..query.event_cutoff_query import event_status, song_period_lines
@@ -45,6 +46,7 @@ def coordinates(stamp, score, bounds, box):
     return x, y
 
 
+@reclaim_after_render
 def render_trends(answer, assets, preview_label=""):
     with _DRAW_SLOT:
         if len(answer.boards) == 1:
