@@ -2,7 +2,7 @@
 # Input: 已选单卡或当前页卡牌列表、条件文本、locale 与页脚。
 # Output: grid／detail 返回编码 bytes；art 返回保留比例的卡面 bytes，素材不可用时为 None。
 # Pos: Rendering / Card 的成员／SNAP 分派与卡牌共享辅助；见 L2-2-Card.md。
-# Effects/Dependencies: 经根 visuals 读字体、下载素材并写缓存；成员列表分支经绘制器取得 Haneoka 快照，可能发生来源网络／缓存 I/O。
+# Effects/Dependencies: 经根 visuals 读字体、下载素材并写缓存；编码接管画布，原卡面作用域退出后尝试归还空闲内存；成员列表可取得 Haneoka 快照。
 
 """ON catalog layouts. Neutral frame fallback; never claim a hand-drawn native frame."""
 from PIL import Image, ImageOps
@@ -10,6 +10,7 @@ from PIL import Image, ImageOps
 from ..data import SupportCard
 
 from ..visuals import INK, SURFACE, _ScaledDraw
+from .image_output import reclaim_after_render
 
 
 def _lines(text, width, size):
@@ -69,6 +70,7 @@ def detail(card, locale="zh"):
     return render_detail(card, locale)
 
 
+@reclaim_after_render
 def art(card):
     from ..visuals import _asset, _bytes
     asset = _asset(card.full_url, (1800, 2400), contain=True)

@@ -2,7 +2,7 @@
 # Input: a captured CutoffAnswer and a bounded/injectable artwork loader.
 # Output: complete image pages with same-row scores/digital IDs/usernames and captured text fallbacks.
 # Pos: Rendering / Song challenge-cutoff views; see L2-2-Song.md.
-# Effects: Pillow rendering using existing theme/encoder; bounded asset-cache I/O and per-URL failure backoff.
+# Effects: Shared Pillow theme/owned encoder; reclaim large-image memory after rendering exits; bounded asset-cache I/O and per-URL backoff.
 from __future__ import annotations
 
 import hashlib
@@ -15,6 +15,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, replace
 
 from PIL import Image, ImageOps
+from .image_output import reclaim_after_render
 
 from .. import visuals as v
 from ..query.event_cutoff_query import CutoffAnswer, event_status, song_period_lines
@@ -234,6 +235,7 @@ def _tables(answer, assets, preview_label):
     return tuple(pages)
 
 
+@reclaim_after_render
 def render_cutoff(answer: CutoffAnswer, *, asset_loader=None, preview_label: str = '') -> tuple[CutoffPage, ...]:
     if answer.event is None or answer.message or not answer.boards or answer.request.numeric_only:
         return ()
