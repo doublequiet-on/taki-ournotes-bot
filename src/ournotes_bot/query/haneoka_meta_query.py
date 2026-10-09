@@ -54,12 +54,13 @@ def execute_site_meta(spec, repository):
     for scene in scenes:
         selected = []
         unknown = set()
+        missing = 0
         difficulty = spec.difficulty or ("EXPERT" if spec.subject and spec.subject.kind == "song" else "")
         if difficulty == "ALL":
             difficulty = ""
         for row in snapshot.rows:
             song = songs.get(row.song_id)
-            if row.scene != scene or song is None or getattr(row, spec.metric) is None:
+            if row.scene != scene or song is None:
                 continue
             if not {normalize(t) for t in row.titles} & {normalize(t) for t in (song.title, *song.titles)}:
                 continue
@@ -74,7 +75,10 @@ def execute_site_meta(spec, repository):
             if matches is None:
                 unknown.add(song.id)
             if matches is True:
-                selected.append(row)
+                if getattr(row, spec.metric) is None:
+                    missing += 1
+                else:
+                    selected.append(row)
         references = {row.reference_id for row in selected}
         if len(references) > 1:
             panels.append(MetaAnswer(f"{LABELS[scene]}参考口径不一致，暂不混合排名。", status="data_unavailable",
@@ -106,9 +110,11 @@ def execute_site_meta(spec, repository):
             notes += ("主资料与分析版本不同，仅展示已核对身份的歌曲。",)
         if unknown:
             notes += (f"{len(unknown)} 首歌曲缺少所需属性，未参与筛选。",)
+        if missing:
+            notes += (f"{missing} 条谱面的本场景指标缺失或口径未确认，未参与排名。",)
         if any(r.warnings for r in visible):
             notes += ("上游参考含默认参数或近似条件，详见 Haneoka 乐曲分析说明。",)
-        status = "success" if visible else "data_unavailable" if unknown else "empty"
+        status = "success" if visible else "data_unavailable" if unknown or missing else "empty"
         body = "\n".join(str(n) + " | " + " | ".join(c) for n,c in zip(numbers,cells)) if cells else "本场景暂无符合条件的有效数据。"
         text = f"[{scope}]\n选择号 | " + " | ".join(columns) + "\n" + body + "\n" + page_notice + "\n" + "\n".join(notes)
         panels.append(MetaAnswer(text, tuple(visible), status, columns=columns, cells=cells, scope=scope,

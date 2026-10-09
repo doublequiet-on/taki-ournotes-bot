@@ -105,6 +105,8 @@ class SiteMetaTests(unittest.TestCase):
         self.meta['100002']['3']['gekisou']['scoreKind'] = 'new-unknown-model'
         answer = resolve_command('/查分数表 激奏', self.bot()).meta
         self.assertFalse(answer.rows)
+        self.assertEqual(answer.status, 'data_unavailable')
+        self.assertIn('2 条谱面', answer.text)
         self.assertNotIn('300%', answer.text)
 
     def test_source_header_mismatch_rejected(self):
