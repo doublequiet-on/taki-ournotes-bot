@@ -823,10 +823,25 @@ def run_bot(app_id: str, app_secret: str, repository: SongRepository, settings: 
                 self._notice_task = asyncio.create_task(notifier.run(self.api))
 
     intents = botpy.Intents(public_messages=True)
+    # Synchronous source downloads use asyncio.run(), which clears the current
+    # loop. botpy requires one while constructing its client, before run().
+    try:
+        loop = asyncio.get_event_loop()
+    except RuntimeError:
+        loop = None
+    owns_loop = loop is None or loop.is_closed()
+    if owns_loop:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
     try:
         ClientWithRefresh(intents=intents).run(appid=app_id, secret=app_secret)
     finally:
-        if music_refresher:
-            music_refresher.stop()
-        if sampler:
-            sampler.stop()
+        try:
+            if music_refresher:
+                music_refresher.stop()
+            if sampler:
+                sampler.stop()
+        finally:
+            if owns_loop:
+                loop.close()
+                asyncio.set_event_loop(None)
