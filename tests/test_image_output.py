@@ -2,12 +2,17 @@
 import asyncio
 import io
 import random
+import weakref
 import unittest
-from unittest.mock import patch, AsyncMock
+from concurrent.futures import ThreadPoolExecutor
+from threading import Barrier
+from unittest.mock import patch, AsyncMock, Mock
 
-from PIL import Image
+from PIL import Image, ImageDraw
 from botpy.http import BotHttp
 from ournotes_bot.rendering.image_output import encode_image, MAX_IMAGE_BYTES, MAX_IMAGE_EDGE, MAX_IMAGE_PIXELS
+from ournotes_bot.rendering import image_output
+from ournotes_bot import visuals
 from ournotes_bot.platforms.qq.qq import _upload_image
 from types import SimpleNamespace
 
@@ -39,6 +44,153 @@ class ImageOutputTests(unittest.TestCase):
         with Image.open(io.BytesIO(blob)) as result:
             self.assertEqual(result.size, (80, 80))
             self.assertEqual(result.getpixel((40, 40)), (255, 255, 255))
+
+    def test_borrowed_canvas_remains_usable_and_temporary_images_close(self):
+        image = Image.new("RGBA", (80, 80), (255, 0, 0, 100))
+        created = []
+        original_new = Image.new
+
+        def new(*args, **kwargs):
+            result = original_new(*args, **kwargs)
+            created.append(result)
+            return result
+
+        with patch.object(image_output.Image, "new", side_effect=new):
+            blob = encode_image(image)
+        self.assertTrue(blob)
+        self.assertEqual(image.getpixel((0, 0)), (255, 0, 0, 100))
+        for temporary in created:
+            with self.assertRaises(ValueError):
+                temporary.getpixel((0, 0))
+        image.close()
+
+    def test_resized_canvas_closes_on_success_and_encoding_failure(self):
+        original_resize = Image.Image.resize
+        for failure in (False, True):
+            image = Image.new("RGB", (100, 200), "white")
+            created = []
+
+            def resize(*args, **kwargs):
+                result = original_resize(*args, **kwargs)
+                created.append(result)
+                return result
+
+            with self.subTest(failure=failure), \
+                 patch.object(image_output, "MAX_IMAGE_EDGE", 100), \
+                 patch.object(Image.Image, "resize", side_effect=resize, autospec=True):
+                if failure:
+                    with patch.object(Image.Image, "save", side_effect=RuntimeError("synthetic")):
+                        with self.assertRaisesRegex(RuntimeError, "synthetic"):
+                            encode_image(image)
+                else:
+                    self.assertTrue(encode_image(image))
+            self.assertEqual(image.getpixel((0, 0)), (255, 255, 255))
+            self.assertTrue(created)
+            for temporary in created:
+                with self.assertRaises(ValueError):
+                    temporary.getpixel((0, 0))
+            image.close()
+
+    def test_owned_large_canvas_is_closed_before_allocator_reclamation(self):
+        image = Image.new("RGB", (2000, 1000), "white")
+
+        def trim(pad):
+            self.assertEqual(pad, 0)
+            with self.assertRaises(ValueError):
+                image.getpixel((0, 0))
+            return 0
+
+        native = Mock(side_effect=trim)
+        with patch.object(image_output, "_malloc_trim", return_value=native):
+            blob = visuals._bytes(image)
+        native.assert_called_once_with(0)
+        with Image.open(io.BytesIO(blob)) as result:
+            self.assertEqual(result.size, (2000, 1000))
+
+    def test_owned_canvas_closes_when_encoding_fails(self):
+        image = Image.new("RGB", (80, 80), "white")
+        with patch.object(Image.Image, "save", side_effect=RuntimeError("synthetic")):
+            with self.assertRaisesRegex(RuntimeError, "synthetic"):
+                visuals._bytes(image)
+        with self.assertRaises(ValueError):
+            image.getpixel((0, 0))
+
+    def test_small_canvas_skips_native_reclamation(self):
+        with patch.object(image_output, "_malloc_trim") as load:
+            visuals._bytes(Image.new("RGB", (80, 80), "white"))
+        load.assert_not_called()
+
+    def test_optional_allocator_failure_does_not_hide_encoded_image(self):
+        for native in (None, Mock(side_effect=OSError("unavailable"))):
+            with self.subTest(native=native), patch.object(image_output, "_malloc_trim", return_value=native):
+                blob = visuals._bytes(Image.new("RGB", (2000, 1000), "white"))
+            self.assertTrue(blob)
+
+    def test_platform_without_malloc_trim_does_not_load_a_native_library(self):
+        image_output._malloc_trim.cache_clear()
+        self.addCleanup(image_output._malloc_trim.cache_clear)
+        with patch.object(image_output.sys, "platform", "win32"), patch.object(image_output.ctypes, "CDLL") as load:
+            self.assertIsNone(image_output._malloc_trim())
+        load.assert_not_called()
+
+    def test_linux_without_exported_trim_symbol_is_supported(self):
+        image_output._malloc_trim.cache_clear()
+        self.addCleanup(image_output._malloc_trim.cache_clear)
+        with patch.object(image_output.sys, "platform", "linux"), \
+             patch.object(image_output.ctypes, "CDLL", return_value=SimpleNamespace()):
+            self.assertIsNone(image_output._malloc_trim())
+
+    def test_reclamation_waits_until_drawing_handle_leaves_scope(self):
+        drawing_handles = []
+
+        @image_output.reclaim_after_render
+        def render():
+            image = Image.new("RGB", (2000, 1000), "white")
+            draw = ImageDraw.Draw(image)
+            drawing_handles.append(weakref.ref(draw))
+            return visuals._bytes(image)
+
+        def trim(pad):
+            self.assertIsNone(drawing_handles[0]())
+            return 1
+
+        native = Mock(side_effect=trim)
+        with patch.object(image_output, "_malloc_trim", return_value=native):
+            self.assertTrue(render())
+        native.assert_called_once_with(0)
+
+    def test_nested_rendering_reclaims_once_and_error_does_not_leak_scope(self):
+        @image_output.reclaim_after_render
+        def inner():
+            return visuals._bytes(Image.new("RGB", (2000, 1000), "white"))
+
+        @image_output.reclaim_after_render
+        def outer(fail=False):
+            blob = inner()
+            if fail:
+                raise RuntimeError("synthetic")
+            return blob
+
+        native = Mock(return_value=1)
+        with patch.object(image_output, "_malloc_trim", return_value=native):
+            self.assertTrue(outer())
+            with self.assertRaisesRegex(RuntimeError, "synthetic"):
+                outer(True)
+            self.assertTrue(outer())
+        self.assertEqual(native.call_count, 3)
+
+    def test_concurrent_rendering_keeps_each_threads_canvas_budget(self):
+        ready = Barrier(2)
+
+        @image_output.reclaim_after_render
+        def render(width):
+            blob = visuals._bytes(Image.new("RGB", (width, 1000), "white"))
+            ready.wait(timeout=5)
+            return blob
+
+        with patch.object(image_output, "_release_image_memory") as reclaim, ThreadPoolExecutor(max_workers=2) as workers:
+            self.assertTrue(all(workers.map(render, (2000, 3000))))
+        self.assertEqual(sorted(c.args[0] for c in reclaim.call_args_list), [2000000, 3000000])
 
     def test_upload_budget_rejects_before_network(self):
         asyncio.run(self._reject())
