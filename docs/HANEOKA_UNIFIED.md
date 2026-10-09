@@ -18,6 +18,8 @@
 
 默认主资料、谱面、meta、榜线和各自素材的应用网络出口为 Haneoka。图标缺失退回现有文字／颜色展示，不从旧源补图。历史读取保留本地旧源库，来源切换断线；这不产生旧源联网请求。显式旧源配置仍可联网到旧提供方。
 
+成员摘要在启动解析原始缓存和每次资料同步时重建，与卡牌一同发布。常见队长属性加成除原精确指纹外，支持经过完整日文模板、Lv.5原始效果和同版本乐队／目标核对的参数化规则；新ID、数值和已知目标组合不再需要逐卡登记。仍拒绝额外条件、混合属性、缺失效果和未识别目标，不自动批准新机制。默认主资料已有所需字段，不增加下载；显式旧主资料的摘要源增加一次同release的bands请求，旧schema 1无该字段仍可读，并在有网络时升级。
+
 ## 普通与激奏分数表
 
 `site_meta.py` 固定同一 JP release 获取 songs 与 song-meta，核对响应 release/source 身份、歌曲 ID、难度及数值。普通读取 `chart`（mode=normal、scoreKind=chart-relative-factor），激奏读取 `gekisou`（mode=gekisou、scoreKind=gekisou-relative）；必须 metaStatus=available 且有 referenceId。缺失值不当成 0，不借另一场景补齐。同榜混有多个 referenceId 时拒绝混排。

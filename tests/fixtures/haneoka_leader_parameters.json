@@ -1,0 +1,232 @@
+{
+  "provenance": {
+    "source": "https://haneoka.org/api/v1/servers/jp/",
+    "release": "r-aab17ad7c67686ea5637",
+    "source_id": "v10059-d946d6c87a3c-b8f8aee87ee1-mbff61896f054-n4ef33ce3",
+    "retrieved": "2026-10-09",
+    "scope": "Cards 65/66 leader Lv.5, referenced targets and JP band identities only"
+  },
+  "leaders": {
+    "65": {
+      "id": 55,
+      "description": [
+        "紅赤のメンバーはビジュアル<color=#66FF8C>{effects[0].value/100:F1}%UP</color> さらにmillsageメンバーのビジュアル<color=#66FF8C>{effects[1].value/100:F1}%UP</color>"
+      ],
+      "effects": [
+        {
+          "conditionGroup": 0,
+          "cumulativeConditionId": 0,
+          "effectId": 305,
+          "effectType": 1002,
+          "effectValue": 10200,
+          "executeLimitCount": 0,
+          "executeLimitResetConditionGroup": 0,
+          "level": 5,
+          "raw": {
+            "_effectExecuteLimitCount": 0,
+            "_effectExecuteLimitResetConditionGroup": 0,
+            "_effectValue": 10200,
+            "_icon": "",
+            "_id": 305,
+            "_leaderSkillID": 55,
+            "_level": 5,
+            "_skillConditionGroup": 0,
+            "_skillCumulativeConditionID": 0,
+            "_skillEffectType": 1002,
+            "_skillTargetIDs": [
+              8
+            ]
+          },
+          "sourceTable": "MasterLeaderSkillEffect",
+          "targetIds": [
+            8
+          ]
+        },
+        {
+          "conditionGroup": 0,
+          "cumulativeConditionId": 0,
+          "effectId": 310,
+          "effectType": 1002,
+          "effectValue": 4800,
+          "executeLimitCount": 0,
+          "executeLimitResetConditionGroup": 0,
+          "level": 5,
+          "raw": {
+            "_effectExecuteLimitCount": 0,
+            "_effectExecuteLimitResetConditionGroup": 0,
+            "_effectValue": 4800,
+            "_icon": "",
+            "_id": 310,
+            "_leaderSkillID": 55,
+            "_level": 5,
+            "_skillConditionGroup": 0,
+            "_skillCumulativeConditionID": 0,
+            "_skillEffectType": 1002,
+            "_skillTargetIDs": [
+              6
+            ]
+          },
+          "sourceTable": "MasterLeaderSkillEffect",
+          "targetIds": [
+            6
+          ]
+        }
+      ]
+    },
+    "66": {
+      "id": 56,
+      "description": [
+        "millsageメンバーのテクニック<color=#66FF8C>{effects[0].value/100:F1}%UP</color> さらに撃奏スキル【COMBO】のメンバーはテクニック<color=#66FF8C>{effects[1].value/100:F1}%UP</color>"
+      ],
+      "effects": [
+        {
+          "conditionGroup": 0,
+          "cumulativeConditionId": 0,
+          "effectId": 315,
+          "effectType": 1001,
+          "effectValue": 13200,
+          "executeLimitCount": 0,
+          "executeLimitResetConditionGroup": 0,
+          "level": 5,
+          "raw": {
+            "_effectExecuteLimitCount": 0,
+            "_effectExecuteLimitResetConditionGroup": 0,
+            "_effectValue": 13200,
+            "_icon": "",
+            "_id": 315,
+            "_leaderSkillID": 56,
+            "_level": 5,
+            "_skillConditionGroup": 0,
+            "_skillCumulativeConditionID": 0,
+            "_skillEffectType": 1001,
+            "_skillTargetIDs": [
+              6
+            ]
+          },
+          "sourceTable": "MasterLeaderSkillEffect",
+          "targetIds": [
+            6
+          ]
+        },
+        {
+          "conditionGroup": 0,
+          "cumulativeConditionId": 0,
+          "effectId": 320,
+          "effectType": 1001,
+          "effectValue": 1800,
+          "executeLimitCount": 0,
+          "executeLimitResetConditionGroup": 0,
+          "level": 5,
+          "raw": {
+            "_effectExecuteLimitCount": 0,
+            "_effectExecuteLimitResetConditionGroup": 0,
+            "_effectValue": 1800,
+            "_icon": "",
+            "_id": 320,
+            "_leaderSkillID": 56,
+            "_level": 5,
+            "_skillConditionGroup": 0,
+            "_skillCumulativeConditionID": 0,
+            "_skillEffectType": 1001,
+            "_skillTargetIDs": [
+              52
+            ]
+          },
+          "sourceTable": "MasterLeaderSkillEffect",
+          "targetIds": [
+            52
+          ]
+        }
+      ]
+    }
+  },
+  "targets": [
+    {
+      "name": [
+        "millsage",
+        "millsage",
+        "",
+        "",
+        ""
+      ],
+      "raw": {
+        "_bandID": 4,
+        "_cardType": 0,
+        "_characterID": 0,
+        "_gekisouMissionType": 0,
+        "_gekisouSkillCategories": [],
+        "_id": 6,
+        "_judgement": -1,
+        "_liveMusicType": 0,
+        "_liveSkillCategories": [],
+        "_skillTargetType": 3,
+        "_tagID": 0
+      },
+      "sourceTable": "MasterSkillTarget"
+    },
+    {
+      "raw": {
+        "_bandID": 0,
+        "_cardType": 1,
+        "_characterID": 0,
+        "_gekisouMissionType": 0,
+        "_gekisouSkillCategories": [],
+        "_id": 8,
+        "_judgement": -1,
+        "_liveMusicType": 0,
+        "_liveSkillCategories": [],
+        "_skillTargetType": 3,
+        "_tagID": 0
+      },
+      "sourceTable": "MasterSkillTarget"
+    },
+    {
+      "raw": {
+        "_bandID": 0,
+        "_cardType": 0,
+        "_characterID": 0,
+        "_gekisouMissionType": 1,
+        "_gekisouSkillCategories": [],
+        "_id": 52,
+        "_judgement": -1,
+        "_liveMusicType": 0,
+        "_liveSkillCategories": [],
+        "_skillTargetType": 3,
+        "_tagID": 0
+      },
+      "sourceTable": "MasterSkillTarget"
+    }
+  ],
+  "bands": {
+    "1": {
+      "bandId": 1,
+      "bandName": [
+        "MyGO!!!!!"
+      ]
+    },
+    "2": {
+      "bandId": 2,
+      "bandName": [
+        "Ave Mujica"
+      ]
+    },
+    "3": {
+      "bandId": 3,
+      "bandName": [
+        "夢限大みゅーたいぷ"
+      ]
+    },
+    "4": {
+      "bandId": 4,
+      "bandName": [
+        "millsage"
+      ]
+    },
+    "5": {
+      "bandId": 5,
+      "bandName": [
+        "一家Dumb Rock!"
+      ]
+    }
+  }
+}

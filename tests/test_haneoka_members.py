@@ -7,13 +7,19 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
 
-from ournotes_bot.sources.haneoka.haneoka_members import MemberRepository, parse, fetch_json, UNKNOWN
+from ournotes_bot.sources.haneoka.haneoka_members import (MemberRepository, parse, fetch_json, UNKNOWN,
+                                                       reference_index, summarize_leader)
+
+
+def leader_parameters():
+    return json.loads((Path(__file__).parent / "fixtures/haneoka_leader_parameters.json").read_text(encoding="utf8"))
 
 
 class HaneokaMemberTests(unittest.TestCase):
     def setUp(self):
         self.saved = json.loads((Path(__file__).parent / "fixtures/haneoka_member_list.json").read_text(encoding="utf-8"))
         self.saved["fetched_at"] = 1000
+        self.saved["documents"]["bands"] = leader_parameters()["bands"]
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.path = Path(self.temp.name) / "member.json"
@@ -22,7 +28,9 @@ class HaneokaMemberTests(unittest.TestCase):
         return self.saved["identity"] if path.startswith("release?") else self.saved["documents"][path.split("?")[0]]
 
     def new_cards(self):
-        return json.loads((Path(__file__).parent / "fixtures/haneoka_member_new_cards.json").read_text(encoding="utf-8"))
+        saved = json.loads((Path(__file__).parent / "fixtures/haneoka_member_new_cards.json").read_text(encoding="utf-8"))
+        saved["documents"]["bands"] = leader_parameters()["bands"]
+        return saved
 
     def local_card(self, saved, key="64"):
         row = saved["documents"]["cards"][key]
@@ -66,11 +74,11 @@ class HaneokaMemberTests(unittest.TestCase):
         repo = MemberRepository(self.path, fetch=fetch, clock=lambda: 1100)
         card = self.local_card(complete)
         snapshot = repo.get([card])
-        self.assertEqual(fetch.call_count, 6)
+        self.assertEqual(fetch.call_count, 7)
         self.assertEqual(snapshot.for_card(card), snapshot.summaries["64"])
         card.asset_id = 1
         self.assertEqual(repo.get([card]).for_card(card)[0][0], "映射未确认")
-        self.assertEqual(fetch.call_count, 6)  # shared 300-second retry throttle
+        self.assertEqual(fetch.call_count, 7)  # shared 300-second retry throttle
 
     def test_missing_new_card_refresh_failure_keeps_old_cards_and_retries_bounded(self):
         complete = self.new_cards()
@@ -136,6 +144,8 @@ class HaneokaMemberTests(unittest.TestCase):
     def test_invalid_empty_nonfinite_wrong_server_and_duplicates(self):
         mutations = [lambda s: s["identity"].update(server="intl"),
                      lambda s: s["documents"].update(cards={}),
+                     lambda s: s["documents"].update(bands={}),
+                     lambda s: s["documents"]["bands"]["4"].update(bandName=[]),
                      lambda s: s["documents"]["cards"]["51"].update(cardId=52),
                      lambda s: s["documents"]["skills"]["7"]["effects"][0].update(effectValue=float("inf")),
                      lambda s: s["documents"]["skills"]["7"]["effects"].append(s["documents"]["skills"]["7"]["effects"][0]),
@@ -163,7 +173,7 @@ class HaneokaMemberTests(unittest.TestCase):
         repo = MemberRepository(self.path, fetch=fetch, clock=clock)
         with ThreadPoolExecutor(max_workers=4) as pool:
             snapshots = list(pool.map(lambda _: repo.get(), range(4)))
-        self.assertEqual(fetch.call_count, 6)
+        self.assertEqual(fetch.call_count, 7)
         self.assertTrue(all(s.release == snapshots[0].release for s in snapshots))
         before = self.path.read_bytes()
         reopened = MemberRepository(self.path, fetch=Mock(side_effect=AssertionError("cache hit")), clock=clock)
@@ -205,6 +215,74 @@ class HaneokaMemberTests(unittest.TestCase):
                     fetch_json("cards?release=r-test")
         with self.assertRaises(ValueError):
             fetch_json("support-cards?release=r-test")
+
+    def leader_sample(self, key):
+        sample = leader_parameters()
+        references = copy.deepcopy(self.saved["documents"]["skill-reference"])
+        targets = {row["raw"]["_id"]: row for row in references["targets"]}
+        targets.update({row["raw"]["_id"]: row for row in sample["targets"]})
+        references["targets"] = list(targets.values())
+        return sample["leaders"][key], reference_index(references, sample["bands"])
+
+    def test_new_card_leader_parameters_match_independent_source(self):
+        skill, index = self.leader_sample("65")
+        self.assertEqual(summarize_leader(skill, index),
+                         ("表现值提升", "红色成员 +102%\nmillsage成员 +48%"))
+        skill, index = self.leader_sample("66")
+        self.assertEqual(summarize_leader(skill, index),
+                         ("技巧值提升", "millsage成员 +132%\nCOMBO激奏成员 +18%"))
+
+    def test_new_ids_band_and_values_do_not_require_a_new_registered_hash(self):
+        skill, index = self.leader_sample("65")
+        skill["id"] = 900
+        skill["description"][0] = skill["description"][0].replace("millsage", "合成新乐队")
+        index["bands"][99] = index["target_names"][6] = "合成新乐队"
+        index["targets"][6]["_bandID"] = 99
+        for row, value in zip(skill["effects"], (12300, 5600)):
+            row["effectId"] += 1000
+            row["effectValue"] = row["raw"]["_effectValue"] = value
+            row["raw"]["_id"] = row["effectId"]
+            row["raw"]["_leaderSkillID"] = 900
+        self.assertEqual(summarize_leader(skill, index),
+                         ("表现值提升", "红色成员 +123%\n合成新乐队成员 +56%"))
+
+    def test_new_leader_unknown_conditions_targets_and_incomplete_effects_stay_unknown(self):
+        changes = [lambda s, i: s["effects"][0].update(executeLimitCount=1),
+                   lambda s, i: s["effects"][0]["raw"].update(_skillEffectType=999),
+                   lambda s, i: s["effects"][0].update(effectType=True),
+                   lambda s, i: s["effects"][0].update(extraMechanic=0),
+                   lambda s, i: i["targets"][6].update(_characterID=1),
+                   lambda s, i: i["targets"][6].update(_bandID=2),
+                   lambda s, i: i["bands"].pop(4),
+                   lambda s, i: s["effects"].pop(),
+                   lambda s, i: s["description"].__setitem__(0, s["description"][0] + " LIFE条件あり")]
+        for change in changes:
+            skill, index = self.leader_sample("65")
+            change(skill, index)
+            with self.subTest(change=changes.index(change)):
+                self.assertEqual(summarize_leader(skill, index), UNKNOWN)
+
+    def test_old_summary_cache_upgrades_references_once_and_survives_failure(self):
+        old = copy.deepcopy(self.saved)
+        del old["documents"]["bands"]
+        self.path.write_text(json.dumps(old), encoding="utf8")
+        fetch = Mock(side_effect=OSError("offline"))
+        now = [1100]
+        repo = MemberRepository(self.path, fetch=fetch, clock=lambda: now[0])
+        snapshot = repo.get()
+        self.assertTrue(snapshot.stale)
+        self.assertFalse(snapshot.targets_ready)
+        self.assertNotEqual(snapshot.summaries["51"][0], UNKNOWN)
+        repo.get()
+        fetch.assert_called_once()
+        now[0] += 301
+        fetch.side_effect = self.fetch
+        snapshot = repo.get()
+        self.assertTrue(snapshot.targets_ready)
+        self.assertFalse(snapshot.stale)
+        self.assertEqual(fetch.call_count, 8)
+        reopened = MemberRepository(self.path, fetch=Mock(side_effect=AssertionError("fresh cache")), clock=lambda: now[0])
+        self.assertTrue(reopened.get().targets_ready)
 
 
 if __name__ == "__main__":

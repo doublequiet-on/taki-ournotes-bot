@@ -188,7 +188,7 @@ def convert(documents, identity_jp, fetched_at, *, stale=False):
     member_refs = None
     try:
         from .haneoka_members import reference_index
-        member_refs = reference_index(jp["skill-reference"])
+        member_refs = reference_index(jp["skill-reference"], jp["bands"])
     except (KeyError, ValueError, TypeError):
         pass
     cards, supports = [], []
