@@ -251,13 +251,15 @@ class HaneokaEventCutoffRepository(EventCutoffRepository):
 
     def _snapshot(self, event, song, entry):
         board = super()._snapshot(event, song, entry)
-        fetched, server, received = board.fetched_ms, board.server_ms, board.received_ms
-        notes = list(board.notes)
+        fetched, server = board.fetched_ms, board.server_ms
+        # An absolute clock offset does not invalidate source-relative freshness.
+        # Keep the raw timestamps; HaneokaCutoffHistory excludes skewed points.
+        notes = [note for note in board.notes if note != "来源时钟与本机有偏差"]
         quality = board.quality
         scores, status = board.scores, board.status
         if not fetched or not server:
             scores, status, quality = (), "来源时间或参考时钟未知，暂无可信当前值", "clock_unknown"
-        elif abs(server - received) > 60000 or fetched > server + 1000:
+        elif fetched > server + 1000:
             scores, status, quality = (), "来源时钟异常，暂无可信当前值", "clock_unknown"
         elif ((song.effective_start_ms and fetched < song.effective_start_ms)
               or (song.effective_end_ms and fetched > song.effective_end_ms)):

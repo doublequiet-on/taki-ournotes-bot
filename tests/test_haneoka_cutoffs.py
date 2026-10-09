@@ -33,6 +33,7 @@ class Fixture:
         self.music = "101"
         self.fetched = int(self.now * 1000)
         self.stale = False
+        self.clock_offset = 0
         self.rows = [{"rank": 1, "score": 100, "profileId": "1234567890123456789",
                       "playerId": "opaque-private-id", "name": "synthetic user"},
                      None, {"rank": 3, "score": 0, "profileId": "3", "name": "zero"}]
@@ -54,7 +55,7 @@ class Fixture:
         else:
             body = {"region": "bad" if self.wrong_region else region, "eventId": self.event_id,
                     "challengeId": "11", "fetchedAtMs": self.fetched,
-                    "serverTimeMs": int(self.now * 1000), "stale": self.stale, "rows": self.rows}
+                    "serverTimeMs": int(self.now * 1000) + self.clock_offset, "stale": self.stale, "rows": self.rows}
             if self.change:
                 self.change()
         return json.dumps(body).encode(), {}
@@ -182,6 +183,74 @@ class HaneokaCutoffTests(unittest.TestCase):
             path.unlink()
         self.fixture.fetched, self.fixture.stale = int(self.fixture.now * 1000), True
         self.assertEqual(self.board()[1].quality, "stale")
+
+    def test_clock_offset_displays_four_regions_without_warning_and_keeps_raw_time(self):
+        for offset in (124000, -124000):
+            self.fixture.now += 300
+            self.fixture.clock_offset = offset
+            self.fixture.fetched = int(self.fixture.now * 1000) + offset - 2000
+            for region in ("jp", "tw", "kr", "en"):
+                with self.subTest(offset=offset, region=region):
+                    _, board = self.board(region=region)
+                    self.assertEqual(board.scores, (100, None, 0))
+                    self.assertEqual(board.player_id(1), "1234567890123456789")
+                    self.assertEqual(board.fetched_ms, self.fixture.fetched)
+                    self.assertEqual(board.age_seconds, 2)
+                    self.assertEqual(board.status, "源榜单快照")
+                    self.assertFalse(any("时钟" in note for note in board.notes))
+            answer = execute_cutoff(parse_cutoff("日服 歌曲ID=101 T1"),
+                                    SimpleNamespace(event_cutoffs=self.source, aliases={}))
+            self.assertEqual(answer.status, "success")
+            self.assertNotIn("时钟", answer.text)
+            self.assertTrue(render_cutoff(answer)[0].image)
+
+    def test_clock_offset_skips_history_in_sampler_and_breaks_on_recovery(self):
+        from ournotes_bot.sources.cutoff_sampler import HistorySampler
+        history = HaneokaCutoffHistory(self.path / "history.db", min_free_mb=0,
+                                      clock=lambda: self.fixture.now)
+        self.source.history = history
+        event, first = self.board()
+        self.assertEqual(history.status()["points"], 1)
+        self.fixture.now += 61
+        self.fixture.clock_offset = 124000
+        self.fixture.fetched = int(self.fixture.now * 1000) + 122000
+        HistorySampler(self.source, clock=lambda: self.fixture.now).sample_once()
+        self.assertEqual(history.status()["points"], 1)
+        with closing(sqlite3.connect(history.path)) as db:
+            self.assertEqual(db.execute("SELECT count(*) FROM gaps WHERE code='clock_skew'").fetchone()[0], 4)
+        # Recovery advances beyond the old skewed sample; source time is never rewritten.
+        self.fixture.now += 300
+        self.fixture.clock_offset = 0
+        self.fixture.fetched = int(self.fixture.now * 1000) - 2000
+        self.board()
+        points = history.read(event, first.song, (1,)).points
+        self.assertEqual([point.time_ms for point in points], [first.fetched_ms, self.fixture.fetched])
+        self.assertEqual([point.break_before for point in points], [False, True])
+
+    def test_clock_offset_cache_restart_fallback_expiry_and_late_history(self):
+        self.fixture.clock_offset = 124000
+        self.fixture.fetched += 122000
+        event, first = self.board()
+        history = HaneokaCutoffHistory(self.path / "history.db", min_free_mb=0,
+                                      clock=lambda: self.fixture.now)
+        restored = self.repository()
+        restored.history = history
+        self.fixture.now += 61
+        self.fixture.failure = True
+        _, fallback = self.board(restored)
+        self.assertEqual(fallback.scores, first.scores)
+        self.assertEqual(fallback.quality, "fallback")
+        self.assertEqual(fallback.age_seconds, 63)
+        self.assertEqual(history.status()["points"], 0)
+        self.assertFalse(any("时钟" in note for note in fallback.notes))
+        self.fixture.now += 61
+        self.fixture.failure = False
+        self.fixture.fetched -= 1000  # late and still clock-skewed
+        self.assertEqual(self.board(restored)[1].fetched_ms, first.fetched_ms)
+        self.assertEqual(history.status()["points"], 0)
+        self.fixture.now += 601
+        self.fixture.failure = True
+        self.assertFalse(restored.board(event, event.songs[0], restored.deadline()).scores)
 
     def test_strict_json_and_size_and_route_guards(self):
         for raw in (b'{"region":"jp","region":"jp"}', b'{"x":NaN}', b' ' * 524289):
