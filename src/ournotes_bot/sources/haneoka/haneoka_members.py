@@ -1,5 +1,5 @@
 # L3
-# Input: Haneoka release／成员／技能响应、缓存路径与可选 fetch／clock；for_card 接收本地卡牌作身份核对。
+# Input: Haneoka 同 release 的成员／技能／目标／乐队响应、缓存路径与可选 fetch／clock；for_card 核对卡牌身份。
 # Output: get／get_snapshot 返回 Snapshot 或 None；for_card 返回技能摘要元组，身份不匹配时返回保守未确认说明。
 # Pos: Data / Sources 的 Haneoka 日服成员卡技能摘要适配器，供成员列表绘图消费；见 ../L2-2.md。
 # Effects/Dependencies: 直接 HTTPS、独立 JSON 缓存、锁内刷新与重试退避；失败保留旧快照及陈旧状态，不替代完整卡牌详情。
@@ -7,8 +7,9 @@
 """Public JP Haneoka skill data, isolated to member-list summaries.
 
 No upstream code is copied. Verified effect contracts fail closed when their
-semantics change; only effectValue is variable within a contract. Source Lv.5
-is selected explicitly, never a player's current skill level.
+semantics change; known leader families additionally validate parameterized
+targets against same-release bands and the full JP template. Source Lv.5 is
+selected explicitly, never a player's current skill level.
 """
 from concurrent.futures import ThreadPoolExecutor
 from copy import deepcopy
@@ -30,12 +31,12 @@ from .song_meta import unique_object
 
 BASE = "https://haneoka.org/api/v1/servers/jp/"
 SOURCE = "https://haneoka.org/jp/zh-CN/member-cards/"
-RESOURCES = ("cards", "skills", "gekisou-skills", "skill-reference", "leader-skills")
+RESOURCES = ("cards", "skills", "gekisou-skills", "skill-reference", "leader-skills", "bands")
 UNKNOWN = ("摘要未确认", "请按ID查看完整技能")
 
 
 def fetch_json(path):
-    if not re.fullmatch(r"release\?projection=identity|(?:cards|skills|gekisou-skills|skill-reference|leader-skills)\?release=r-[\w-]+", path):
+    if not re.fullmatch(r"release\?projection=identity|(?:cards|skills|gekisou-skills|skill-reference|leader-skills|bands)\?release=r-[\w-]+", path):
         raise ValueError("unexpected member resource")
     with urlopen(Request(BASE + path, headers={"Accept": "application/json", "User-Agent": "Taki-member-list/1"}), timeout=5) as response:
         if "application/json" not in response.headers.get("Content-Type", ""):
@@ -56,7 +57,7 @@ def fmt(value):
     return f"{number(value):g}"
 
 
-def reference_index(reference):
+def reference_index(reference, bands=None):
     result = {}
     for name, key in (("conditions", "_id"), ("cumulativeConditions", "_id"), ("conditionSets", "_id")):
         rows = reference[name]
@@ -76,6 +77,16 @@ def reference_index(reference):
             raise ValueError("duplicate target")
         result["targets"][row["_id"]] = row
         result["target_names"][row["_id"]] = (item.get("name") or [""])[0]
+    result["bands"] = {}
+    if bands is not None and not isinstance(bands, dict):
+        raise ValueError("invalid summary band index")
+    for key, band in (bands or {}).items():
+        band_id = band["bandId"]
+        names = band["bandName"]
+        if (type(band_id) is not int or band_id <= 0 or str(band_id) != key
+                or not isinstance(names, list) or not names or not isinstance(names[0], str) or not names[0].strip()):
+            raise ValueError("invalid summary band identity")
+        result["bands"][band_id] = names[0]
     return result
 
 
@@ -178,7 +189,8 @@ def summarize_leader(skill, index):
             lines.append(f"{label}成员 +{fmt(row['effectValue']/100)}%")
         return f"{attribute}提升", "\n".join(lines)
     if signature not in LEADER_PROFILES:
-        return UNKNOWN
+        from .leader_summary import summarize
+        return summarize(skill, rows, index) or UNKNOWN
     attribute = {1000: "全属性", 1001: "技巧值", 1002: "表现值", 1003: "表演值"}[rows[0]["effectType"]]
     band = index["target_names"][rows[0]["targetIds"][0]]
     if not band:
@@ -200,6 +212,7 @@ class Snapshot:
     fetched_at: float
     stale: bool = False
     leader_ready: bool = True
+    targets_ready: bool = False
 
     def matches_card(self, card):
         row = self.cards.get(str(card.id))
@@ -225,12 +238,14 @@ def parse(saved):
             not re.fullmatch(r"r-[\w-]+", identity.get("releaseId", ""))):
         raise ValueError("member cache/source identity")
     docs = saved["documents"]
-    if not all(isinstance(docs.get(key), dict) and docs[key] for key in RESOURCES if key != "leader-skills"):
+    if not all(isinstance(docs.get(key), dict) and docs[key] for key in RESOURCES if key not in {"leader-skills", "bands"}):
         raise ValueError("incomplete member data")
     leader_ready = "leader-skills" in docs
     if leader_ready and (not isinstance(docs["leader-skills"], dict) or not docs["leader-skills"]):
         raise ValueError("incomplete leader data")
-    index = reference_index(docs["skill-reference"])
+    if "bands" in docs and (not isinstance(docs["bands"], dict) or not docs["bands"]):
+        raise ValueError("incomplete summary band data")
+    index = reference_index(docs["skill-reference"], docs.get("bands"))
     summaries = {}
     for key, card in docs["cards"].items():
         if key != str(card["cardId"]) or any(type(card.get(k)) is not int for k in
@@ -250,7 +265,8 @@ def parse(saved):
                 raise ValueError("skill identity")
             pair.append(summarize_skill(skill, index))
         summaries[key] = tuple(pair)
-    return Snapshot(deepcopy(docs["cards"]), summaries, identity["releaseId"], number(saved["fetched_at"]), leader_ready=leader_ready)
+    return Snapshot(deepcopy(docs["cards"]), summaries, identity["releaseId"], number(saved["fetched_at"]),
+                    leader_ready=leader_ready, targets_ready=bool(index["bands"]))
 
 
 class MemberRepository:
@@ -267,7 +283,7 @@ class MemberRepository:
                 except (OSError, ValueError, TypeError, KeyError, IndexError):
                     pass
             now = self.clock()
-            if (self.snapshot and self.snapshot.leader_ready and not self.snapshot.stale
+            if (self.snapshot and self.snapshot.leader_ready and self.snapshot.targets_ready and not self.snapshot.stale
                     and 0 <= now - self.snapshot.fetched_at < 86400
                     and all(self.snapshot.matches_card(card) for card in required_cards)):
                 return self.snapshot

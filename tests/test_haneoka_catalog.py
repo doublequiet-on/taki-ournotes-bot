@@ -86,6 +86,66 @@ class CatalogTests(unittest.TestCase):
         self.assertEqual(snap.catalog["categories"]["gekisou"], ["not_applicable"])
         self.assertEqual(len(snap.characters), 5)
 
+    def install_parameterized_leader(self, card_key, sample_key):
+        sample = json.loads((FIXTURE.parent / "haneoka_leader_parameters.json").read_text(encoding="utf8"))
+        jp = self.saved["documents"]["jp"]
+        skill = sample["leaders"][sample_key]
+        skill["skillName"] = ["合成测试队长技能"]
+        card = jp["cards"][card_key]
+        card["resolvedSkills"]["leader"] = skill
+        card["raw"]["_leaderSkillID"] = card["leaderSkillId"] = skill["id"]
+        targets = {r["raw"]["_id"]: r for r in jp["skill-reference"]["targets"]}
+        targets.update({r["raw"]["_id"]: r for r in sample["targets"]})
+        jp["skill-reference"]["targets"] = list(targets.values())
+        jp["bands"].update(sample["bands"])
+        jp["catalog"]["resources"]["bands"]["count"] = len(jp["bands"])
+        return skill
+
+    def test_data_refresh_automatically_rebuilds_summaries_in_the_same_snapshot(self):
+        bot = self.main_repo()
+        bot.load(refresh=True)
+        previous = bot.cards[0]
+        skill = self.install_parameterized_leader(str(previous.id), "65")
+        self.now += 1800
+        bot.refresh()
+        current = next(c for c in bot.cards if c.id == previous.id)
+        self.assertEqual(current.catalog["member_summary"][0],
+                         ("表现值提升", "红色成员 +102%\nmillsage成员 +48%"))
+        self.assertNotEqual(previous.catalog["member_summary"][0], current.catalog["member_summary"][0])
+        skill["effects"][0]["effectValue"] = skill["effects"][0]["raw"]["_effectValue"] = 11000
+        self.now += 1800
+        bot.refresh()
+        current = next(c for c in bot.cards if c.id == previous.id)
+        self.assertIn("红色成员 +110%", current.catalog["member_summary"][0][1])
+        self.assertEqual(current.catalog["release"], bot.metadata["data_version"])
+
+    def test_startup_rebuilds_new_summary_from_raw_cache_without_network(self):
+        key = next(iter(self.saved["documents"]["jp"]["cards"]))
+        self.install_parameterized_leader(key, "66")
+        self.repo.load(refresh=True)
+        fresh = source.CatalogRepository(self.path, fetch=Mock(side_effect=AssertionError("no download")), clock=lambda: self.now)
+        bot = self.main_repo()
+        bot._catalog_repository = fresh
+        bot.load()
+        current = next(c for c in bot.cards if c.id == int(key))
+        self.assertEqual(current.catalog["member_summary"][0],
+                         ("技巧值提升", "millsage成员 +132%\nCOMBO激奏成员 +18%"))
+
+    def test_failed_refresh_keeps_last_verified_summary_and_marks_stale(self):
+        key = next(iter(self.saved["documents"]["jp"]["cards"]))
+        self.install_parameterized_leader(key, "65")
+        bot = self.main_repo()
+        bot.load(refresh=True)
+        before = next(c for c in bot.cards if c.id == int(key)).catalog["member_summary"]
+        old_cache = self.path.read_bytes()
+        self.now += 1800
+        self.fetch.side_effect = OSError("offline")
+        bot.refresh()
+        current = next(c for c in bot.cards if c.id == int(key))
+        self.assertEqual(current.catalog["member_summary"], before)
+        self.assertTrue(current.catalog["detail_stale"])
+        self.assertEqual(self.path.read_bytes(), old_cache)
+
     def test_fresh_stale_and_unsaved_cache_never_overwrite_old_source(self):
         old = self.path.with_name("old.json")
         old.write_bytes(b"old source cache")

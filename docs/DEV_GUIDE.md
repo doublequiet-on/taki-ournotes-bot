@@ -118,7 +118,7 @@ python scripts/check_release_artifact.py dist
 
 - 卡牌列表与详情通过 `rendering/card_visuals.py` 复用 `visuals.py::_canvas` 的统一布纹、圆角边框、配色与两倍分辨率绘制；不得另建独立主题。纯卡面输出保持原图比例。共享视觉基线来自主线 `6d7f489`（PR #18–20）；后续集成需保留主线样式更新。相关离线检查：`test_visuals.py`、`test_card_catalog.py`。
 
-- 角色卡条件列表专用视觉位于 `rendering/member_list_visuals.py`（`card_visuals.grid` 的成员卡分支）：技能摘要为框内队长/演出/激奏三项渐变信息层，ID 为框外附属栏；稀有度边框是设计处理，并非已取得官方卡框素材。正式列表不放资源/实现说明；保留分页与旧缓存提示。`test_member_list_visuals.py` 验证信息完整、长条件换行及 SNAP 分流不变。数据入口 `sources/haneoka/haneoka_members.py` / 已核实机制指纹 `sources/haneoka/haneoka_member_contracts.py`，单独缓存 `haneoka-member-list-jp.json`；`test_haneoka_members.py` 验证数值、条件、映射及缓存故障。未知机制先核实再扩充指纹，不能直接接受新摘要。
+- 角色卡条件列表专用视觉位于 `rendering/member_list_visuals.py`（`card_visuals.grid` 的成员卡分支）：技能摘要为框内队长/演出/激奏三项渐变信息层，ID 为框外附属栏；稀有度边框是设计处理，并非已取得官方卡框素材。正式列表不放资源/实现说明；保留分页与旧缓存提示。`test_member_list_visuals.py` 验证信息完整、长条件换行及 SNAP 分流不变。默认 Catalog 在启动／刷新时使用同版资源重建摘要；旧源由 `sources/haneoka/haneoka_members.py` 管 `haneoka-member-list-jp.json`。`haneoka_member_contracts.py` 保留已核实指纹，`leader_summary.py` 对已知队长机制参数化校验完整描述、原始效果及同版乐队／目标；无需逐新卡登记，但未知条件或机制仍拒绝。`test_haneoka_members.py` 与 `test_haneoka_catalog.py` 验证数值、条件、身份、自动重建和缓存故障。
 
 - 成员ID详情图入口为 `rendering/member_detail_visuals.py::render`，仅由 `card_visuals.detail` 的成员卡分支调用。完整full卡面按比例放入列表共用的可变尺寸稀有度框，下方分区展示基本资料、已确认状态的属性条、三类完整技能和多语言标题；SNAP由 `rendering/support_visuals.py` 独立绘制列表/详情。详情使用所选主资料来源的完整字段，默认 Haneoka Catalog；不把列表摘要当完整技能；`test_member_detail_visuals.py` 检查卡面四角不裁切、完整文本、未知值和SNAP分流。
 
