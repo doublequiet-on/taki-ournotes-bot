@@ -260,7 +260,7 @@ class QueryAgent:
             return self._finish_terminal(state, OutcomeCode.INVALID_ARGUMENTS, MISSING,
                                          tracked=tracked, local=True, cache=False)
 
-        if re.search(r"分数表|效率|效率榜|每分钟得分", question):
+        if re.search(r"分数表|效率|每分钟得分|(?<![A-Za-z0-9_])meta(?![A-Za-z0-9_])", question, re.I):
             return self._finish_terminal(state, OutcomeCode.UNSUPPORTED, UNSUPPORTED,
                                          tracked=tracked, local=True, cache=False)
 
