@@ -7,7 +7,6 @@ import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
 
-from test_moenotes_meta import make_snapshot
 
 from ournotes_bot.ai_query import AIQueryParser
 from ournotes_bot.config import Settings
@@ -28,9 +27,6 @@ class NaturalQueryEvaluationTests(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         root = Path(self.temp.name)
         self.repo = SongRepository("https://invalid.example", root / "cache.json")
-        snapshot = make_snapshot(now=self.repo.music_data.clock())
-        self.repo.music_data._snapshot = snapshot
-        self.repo.music_data.get = Mock(return_value=snapshot)
         self.repo.songs = [Song(
             id=100001, title="迷星叫", titles=("迷星叫",), band="MyGO!!!!!",
             composer="", lyricist="", arranger="", start_at="", jacket_url="",
@@ -78,13 +74,12 @@ class NaturalQueryEvaluationTests(unittest.TestCase):
             ("展示迷星叫 EXPERT 完整谱面资料", "chart.get"),
             ("高松灯相关的成员卡内容", "member_card.search"),
             ("tmr的支援卡有哪些", "support_card.search"),
-            ("MyGO的EX效率前十有哪些", "song.meta"),
         )
         for question, expected in cases:
             with self.subTest(question=question):
                 self.assertEqual(local_route(question), expected)
 
-    def test_l2_validates_scoped_actions_and_song_meta_exactly(self) -> None:
+    def test_l2_validates_scoped_actions(self) -> None:
         cases = (
             (
                 "展示迷星叫 EXPERT 完整谱面资料",
@@ -94,32 +89,6 @@ class NaturalQueryEvaluationTests(unittest.TestCase):
                     "arguments": {"query": "迷星叫", "difficulty": "EXPERT"},
                 },
                 OutcomeCode.SUCCESS,
-            ),
-            (
-                "MyGO的EX效率前十有哪些",
-                "song.meta",
-                {
-                    "action": "call_tool", "capability": "song.meta",
-                    "arguments": {
-                        "query": "MyGO!!!!!", "difficulty": "EXPERT",
-                        "level_operator": "", "level": None, "page": 1,
-                        "metric": "eff", "order": "desc",
-                    },
-                },
-                OutcomeCode.SUCCESS,
-            ),
-            (
-                "MyGO的EX效率前十有哪些",
-                "song.meta",
-                {
-                    "action": "call_tool", "capability": "song.meta",
-                    "arguments": {
-                        "query": "MyGO!!!!!", "difficulty": "EXPERT",
-                        "level_operator": "", "level": None, "page": 1,
-                        "metric": "score", "order": "desc",
-                    },
-                },
-                OutcomeCode.INVALID_ARGUMENTS,
             ),
         )
         for question, capability_id, action, expected in cases:
@@ -174,12 +143,6 @@ class NaturalQueryEvaluationTests(unittest.TestCase):
         self.assertEqual(outcome.result.chart[0].id, 100001)
 
     def test_new_queryspec_fields_and_local_parser_priority_are_preserved(self) -> None:
-        efficiency = parse_local_query("MyGO的EX效率前十有哪些", self.repo)
-        self.assertIsInstance(efficiency, QuerySpec)
-        self.assertEqual(
-            (efficiency.intent, efficiency.metric, efficiency.order, efficiency.limit),
-            ("efficiency", "eff", "desc", 10),
-        )
         catalog = parse_local_query("MyGO的红色SSR角色卡有哪些", self.repo)
         self.assertIsInstance(catalog, QuerySpec)
         self.assertEqual(catalog.intent, "card")

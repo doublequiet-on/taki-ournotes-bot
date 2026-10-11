@@ -12,7 +12,6 @@ from unittest.mock import patch
 from PIL import Image, ImageChops, ImageDraw
 
 from ournotes_bot.data import Card, Chart, Skill, Song, SupportCard
-from ournotes_bot.query.efficiency_query import MetaAnswer
 from ournotes_bot import visuals
 
 
@@ -172,11 +171,7 @@ class VisualTests(unittest.TestCase):
         self.assertEqual([text for text, _ in calls if text in {"JUST", "COMBO", "LUCK"}],
                          ["JUST", "COMBO", "LUCK"])
 
-        answer = MetaAnswer("", cells=(("1", song.title, "EXPERT", "25.5", "1:35",
-                                       "1,164.72%", "560.25%"),),
-                            scope="全难度", jackets=("",), song_records=(song,))
-        for render in (lambda: visuals.render_chart(song, song.charts),
-                       lambda: visuals.render_meta(answer)):
+        for render in (lambda: visuals.render_chart(song, song.charts),):
             with patch.object(visuals, "_mission_marks", return_value=marks), \
                  patch.object(visuals, "_mission_icon", wraps=visuals._mission_icon) as icons:
                 calls = self.capture(render)
@@ -236,37 +231,6 @@ class VisualTests(unittest.TestCase):
                 self.assertTrue(all(box[3] < identity[1] for _, box in credits))
                 self.assertTrue(all(box[3] < identity[1] for box in labels))
 
-    def test_compact_score_rows_preserve_values_and_expand_for_fallbacks(self):
-        from ournotes_bot.sources.haneoka.song_traits import SongTraits
-        short = replace(self.song, title="紧凑样例", traits=SongTraits(2, ("COMBO",) * 3))
-        long = replace(self.song, title="长标题测试" * 12,
-                       traits=SongTraits(2, ("COMBO",) * 16, True))
-        native = Image.new("RGBA", (64, 64), "white")
-        for song, marks in ((short, {2: native}), (long, {})):
-            answer = MetaAnswer("", cells=tuple(
-                (str(i + 1), song.title, "EXPERT", "25.5", "1:35", "1,164.72%", "560.25%")
-                for i in range(2)), scope="测试资料", jackets=("", ""),
-                song_records=(song, song), page_notice="第1页，共2条", notes=("固定参考条件",))
-            before = repr(answer)
-            with self.subTest(long=song is long), \
-                 patch.object(visuals, "_song_marks", return_value=marks), \
-                 patch.object(visuals, "_mission_marks", return_value={"COMBO": native}):
-                calls = self.capture(lambda: visuals.render_meta(answer))
-            self.assertEqual(repr(answer), before)
-            for value in ("1:35", "1,164.72%", "560.25%", "25.5"):
-                self.assertEqual(sum(text == value for text, _ in calls), 2)
-            self.assertEqual(sum(text == "COMBO" for text, _ in calls), len(song.traits.missions) * 2)
-            self.assertTrue(any("共2条" in text for text, _ in calls))
-            self.assertTrue(any("固定参考条件" in text for text, _ in calls))
-            titles = [box for text, box in calls if text.startswith(song.title[:5])]
-            self.assertGreaterEqual(len(titles), 2)
-            labels = [box for text, box in calls if text == "COMBO"]
-            self.assertLess(max(box[3] for box in labels[:len(song.traits.missions)]), titles[len(titles)//2][1])
-            if song is short:
-                self.assertLess(titles[1][1] - titles[0][1], 130 * visuals.RENDER_SCALE)
-            else:
-                self.assertEqual(sum("旧缓存" in text for text, _ in calls), 2)
-                self.assertEqual(sum("图标暂缺" in text for text, _ in calls), 2)
 
     def test_tiny_text_area_terminates_without_overflow(self):
         draw = ImageDraw.Draw(Image.new("RGB", (50, 50)))
@@ -306,22 +270,6 @@ class VisualTests(unittest.TestCase):
                     samples.append(canvas.crop((34, 12, width - 14, height + 8)))
                 self.assertIsNone(ImageChops.difference(*samples).getbbox())
 
-    def test_meta_rows_have_no_header_and_keep_values_and_notes(self):
-        cells = (("1", "迷星叫", "EXPERT", "25", "1:35", "1,164.72%", "560.25%"),
-                 ("2", "影色舞", "HARD", "22", "1:30", "1,106.39%", "552.37%"))
-        answer = MetaAnswer("", cells=cells, scope="全难度 · 每分钟得分效率从高到低",
-                            page_notice="第 1/2 页\n下一页：/查分数表 页2",
-                            notes=("旧缓存（刷新失败或过期）", "保留参考条件和来源说明"), jackets=("", ""))
-        calls = self.capture(lambda: visuals.render_meta(answer))
-        texts = [text for text, _ in calls]
-        for text in ("排名", "歌曲", "难度"):
-            self.assertNotIn(text, texts)
-        for row in cells:
-            for value in row:
-                self.assertIn(value, texts)
-        self.assertEqual(texts.count("得分系数"), len(cells))
-        self.assertIn("下一页：/查分数表 页2", texts)
-        self.assertIn("旧缓存（刷新失败或过期）", texts)
 
     def test_rounded_art_preserves_center_and_source_pixels(self):
         source = Image.new("RGB", (80, 80), "#ff0000")

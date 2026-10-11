@@ -20,15 +20,12 @@ from PIL import Image
 
 from ournotes_bot import visuals
 from ournotes_bot.data import SongRepository, Chart, Song, DataError
-from ournotes_bot.query.efficiency_query import parse_efficiency, execute_efficiency
-from ournotes_bot.sources import moenotes_music_data as music
 from ournotes_bot.sources.chart_data import load_chart_data
 from ournotes_bot.sources.haneoka import catalog, chart_data
 from ournotes_bot.sources.cutoff_history import configure_sources
 from ournotes_bot.sources.cutoff_sampler import HistorySampler
 import test_haneoka_charts as chart_fixture
 import test_haneoka_cutoffs as cutoff_fixture
-import test_moenotes_meta as music_fixture
 import test_event_cutoffs as tracker_fixture
 
 
@@ -104,7 +101,6 @@ class SourceEgressTests(unittest.TestCase):
         # Imported urllib functions must also be caught at their actual consumers.
         for target in ('ournotes_bot.visuals.urlopen', 'ournotes_bot.sources.yatta.urlopen',
                        'ournotes_bot.sources.chart_data.urlopen',
-                       'ournotes_bot.sources.haneoka.song_meta.urlopen',
                        'ournotes_bot.sources.haneoka.song_traits.urlopen',
                        'ournotes_bot.sources.haneoka.haneoka_members.urlopen'):
             self.stack.enter_context(patch(target, side_effect=lambda req, **kw: self.request(req.full_url, 'urllib', kw)))
@@ -257,31 +253,6 @@ class SourceEgressTests(unittest.TestCase):
         old_urls = [c['url'] for c in self.calls if urlsplit(c['url']).netloc == 'bdon.yatta.moe']
         self.assertFalse(old_urls)
 
-    def test_current_meta_query_and_background_refresh_retain_old_statistics(self):
-        data = music_fixture.payload(2)
-        self.handler = lambda url: (json.dumps(data).encode(), {'content-type': 'application/json'})
-        repo = self.repository()
-        request = parse_efficiency('/查分数表', repo, direct=True)
-        answer = execute_efficiency(request, repo)
-        self.assertTrue(request.meta_request.compare_scenes)
-        self.assertTrue(answer.text)
-        self.assertEqual(self.hosts(), {'storage.bdon.moe'})
-        snapshot = repo.music_data.get()
-        jacket = snapshot.records[0].jacket_url
-        self.assertEqual(urlsplit(jacket).netloc, 'assets.bdon.moe')
-        self.handler = lambda url: (self.png, {'content-type': 'image/png'})
-        picture = visuals._asset(jacket, (32, 32))
-        self.assertIsNotNone(picture)
-        picture.close()
-        self.handler = lambda url: (json.dumps(data).encode(), {'content-type': 'application/json'})
-        fresh = music.MusicDataRepository(self.root / 'background.json')
-        worker = music.MusicDataRefresher(fresh)
-        async def one_cycle(_):
-            worker.stopping.set()
-        with patch('ournotes_bot.sources.moenotes_music_data.asyncio.sleep', side_effect=one_cycle):
-            asyncio.run(worker.run())
-        self.assertEqual(self.hosts(), {'storage.bdon.moe', 'assets.bdon.moe'})
-        self.assertEqual(sum(c['url'] == music.URL for c in self.calls), 2)
 
     def test_cutoff_default_is_independent_of_haneoka_catalog_selection(self):
         fixture = tracker_fixture.PublicFixture()
@@ -292,31 +263,3 @@ class SourceEgressTests(unittest.TestCase):
         board = source.board(event, event.songs[0], source.deadline())
         self.assertIsNotNone(board.score(1))
         self.assertEqual(self.hosts(), {'api.bdon.moe', 'metadata.bdon.moe', 'assets.bdon.moe'})
-
-    def test_site_meta_query_and_background_refresh_use_only_haneoka(self):
-        from test_haneoka_site_meta import documents
-        from ournotes_bot.sources.haneoka.site_meta import SiteMetaRepository
-        from ournotes_bot.data import Song, Chart
-        ident, songs, meta = documents()
-        def response(url):
-            value = ident if '/release?' in url else songs if '/songs?' in url else meta
-            return json.dumps(value).encode(), {'x-haneoka-release-id': ident['releaseId'],
-                'x-haneoka-source-id': ident['sourceId']}
-        self.handler = response
-        repo = self.repository()
-        repo.meta_source = 'haneoka-site'
-        repo.song_meta = SiteMetaRepository(self.root/'site-meta.json')
-        repo.songs = [Song(int(key), s['musicTitle'][0], tuple(s['musicTitle']), 'MyGO!!!!!', '', '', '', '', '',
-            (Chart('EXPERT',25,25,100,''),)) for key,s in songs.items()]
-        request = parse_efficiency('/查分数表', repo, direct=True)
-        answer = execute_efficiency(request, repo)
-        self.assertEqual(len(answer.panels), 2)
-        self.assertTrue(all(panel.rows for panel in answer.panels))
-        fresh = SiteMetaRepository(self.root/'site-background.json')
-        worker = music.MusicDataRefresher(fresh)
-        async def one_cycle(_):
-            worker.stopping.set()
-        with patch('ournotes_bot.sources.moenotes_music_data.asyncio.sleep', side_effect=one_cycle):
-            asyncio.run(worker.run())
-        self.assertEqual(self.hosts(), {'haneoka.org'})
-        self.assertEqual(len(self.calls), 6)

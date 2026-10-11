@@ -1,6 +1,6 @@
 # L3
 # Input: Song／Chart 身份、可选缓存目录、显式来源与完整谱面响应。
-# Output: load_chart_score 返回原 score dict；load_chart_data 另带来源、版本与缓存状态；不可用时抛 ChartDataError。
+# Output: load_chart_score 返回原 score dict；load_chart_data 另带来源、版本与缓存状态；重新导出单份 ChartDataError。
 # Pos: Data / Sources 的完整谱面入口与旧 MoeNotes 适配；Haneoka 实现在 haneoka/chart_data.py；见 L2-2.md。
 # Effects/Dependencies: 按所选来源联网并读写独立缓存；失败仅回退该来源的有效旧缓存，不自动切源。
 
@@ -18,15 +18,12 @@ from urllib.request import Request, urlopen
 
 from ..config import runtime_data_dir
 from ..data import Chart, Song
+from .errors import ChartDataError
 
 
 CHART_BASE = "https://assets.bdon.moe/zh-Hans/Live/MusicScore"
 CHART_CACHE_TTL = 6 * 3600
 MAX_CHART_BYTES = 2_000_000
-
-
-class ChartDataError(RuntimeError):
-    pass
 
 
 @dataclass(frozen=True)

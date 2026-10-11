@@ -248,9 +248,7 @@ class QueryAgent:
         if tracked:
             self.metrics.increment("ask_total")
 
-        from ..query.efficiency_query import MARKER, FORBIDDEN, parse_efficiency
-        meta_question = bool(MARKER.search(question))
-        if not question or len(question) > (1024 if meta_question else 100):
+        if not question or len(question) > 100:
             return self._finish_terminal(
                 state, OutcomeCode.INVALID_ARGUMENTS,
                 "用法：/问 <想查的歌曲、谱面、成员卡、技能或支援卡>，最多 100 字。",
@@ -262,19 +260,9 @@ class QueryAgent:
             return self._finish_terminal(state, OutcomeCode.INVALID_ARGUMENTS, MISSING,
                                          tracked=tracked, local=True, cache=False)
 
-        # Explicit meta intent owns its accepted and removed parameters. Use the captured public
-        # view before cutoff/field/card routing and bypass the agent's plan cache.
-        if meta_question and not FORBIDDEN.search(question):
-            meta = parse_efficiency(question, repository)
-            if isinstance(meta, str):
-                return self._finish_terminal(state, self._message_code(meta), meta,
-                                             tracked=tracked, local=True, cache=False)
-            if meta is not None:
-                outcome = self._execute_spec(state, meta, repository)
-                if tracked:
-                    self.metrics.increment("local_success" if outcome.code == OutcomeCode.SUCCESS else "local_terminal_reject")
-                self._remember_state(question, state)
-                return outcome
+        if re.search(r"分数表|效率|效率榜|每分钟得分", question):
+            return self._finish_terminal(state, OutcomeCode.UNSUPPORTED, UNSUPPORTED,
+                                         tracked=tracked, local=True, cache=False)
 
         # Cutoffs are live source snapshots: bypass stale plan/terminal caches and AI quotas.
         from ..query.event_cutoff_query import parse_natural_cutoff
@@ -306,9 +294,7 @@ class QueryAgent:
                 state, OutcomeCode.UNKNOWN_ENTITY, UNKNOWN_ENTITY,
                 tracked=tracked, local=True, cache=True,
             )
-        from ..query.efficiency_query import MARKER, FORBIDDEN
-        if (_UNSUPPORTED_TERMS.search(question)
-                and (not MARKER.search(question) or FORBIDDEN.search(question))):
+        if _UNSUPPORTED_TERMS.search(question):
             return self._finish_terminal(
                 state, OutcomeCode.UNSUPPORTED, UNSUPPORTED,
                 tracked=tracked, local=True, cache=True,
@@ -665,8 +651,6 @@ class QueryAgent:
             return OutcomeCode.DATA_UNAVAILABLE
         if result.catalog is not None:
             return OutcomeCode(result.catalog.status)
-        if spec.intent == "efficiency":
-            return OutcomeCode(result.meta.status)
         if ((spec.skill_query or spec.skill_kind) and spec.intent == "card"
                 and not repository.member_skill_index_ready()):
             return OutcomeCode.DATA_UNAVAILABLE
@@ -688,8 +672,6 @@ class QueryAgent:
         spec = result.spec
         if result.cutoff is not None:
             return any(board.scores for board in result.cutoff.boards)
-        if spec.intent == "efficiency":
-            return bool(result.meta and result.meta.rows)
         if spec.intent == "chart":
             return result.chart is not None and bool(result.chart[1])
         if spec.intent == "card":

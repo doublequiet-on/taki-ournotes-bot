@@ -8,6 +8,24 @@ permissions:
   contents: read
 
 jobs:
+  architecture:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ['3.10', '3.12']
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Check architecture boundaries and negative cases
+        run: |
+          python -B scripts/check_architecture.py
+          python -B -m unittest discover -s tests -p 'test_architecture.py' -v
+
   test-and-package:
     runs-on: ubuntu-latest
     strategy:
@@ -76,7 +94,7 @@ jobs:
 
   publish-linux-bundle:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    needs: [test-and-package, offline-linux-bundle]
+    needs: [architecture, test-and-package, offline-linux-bundle]
     runs-on: ubuntu-24.04
     permissions:
       contents: write

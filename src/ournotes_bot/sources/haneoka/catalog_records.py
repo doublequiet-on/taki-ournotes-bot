@@ -12,7 +12,7 @@ from ...data import Card, Chart, Skill, Song, SupportCard
 from .catalog_assets import asset_url, attribute_url
 from .catalog_text import (UNKNOWN, LANGUAGES, description, effect_context, language, localized,
                            mechanics, original, references, translated)
-from .chart_data import _asset_url
+from .chart_paths import chart_asset_url
 from .song_traits import SongTraits, MISSIONS, COLORS
 
 
@@ -167,7 +167,7 @@ def convert(documents, identity_jp, fetched_at, *, stale=False):
             if note_count is not None:
                 integer(note_count, 0, 1_000_000)
             charts.append(Chart(("EASY", "NORMAL", "HARD", "EXPERT")[index], integer(entry["playLevel"], 1, 99),
-                                float(display), note_count, _asset_url(entry["file"], release)))
+                                float(display), note_count, chart_asset_url(entry["file"], release)))
         if seen != {0, 1, 2, 3}:
             raise ValueError("incomplete song difficulties")
         color = row.get("musicType")

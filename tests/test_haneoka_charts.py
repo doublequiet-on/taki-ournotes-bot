@@ -471,15 +471,14 @@ class ChartConfigurationTests(unittest.TestCase):
             self.assertEqual(Settings.from_env().chart_source, "haneoka")
             os.environ["OURNOTES_CHART_SOURCE"] = "haneoka"
             settings = Settings.from_env()
-            self.assertEqual((settings.chart_source, settings.meta_source, settings.cutoff_source),
-                             ("haneoka", "haneoka-site", "haneoka"))
+            self.assertEqual((settings.chart_source, settings.cutoff_source),
+                             ("haneoka", "haneoka"))
             os.environ["OURNOTES_CHART_SOURCE"] = "typo"
             with self.assertRaises(ValueError):
                 Settings.from_env()
         with tempfile.TemporaryDirectory() as directory:
             repo = SongRepository("", Path(directory) / "cache.json", chart_source="haneoka")
             self.assertEqual(repo.chart_source, "haneoka")
-            self.assertEqual(repo.meta_source, "moenotes")
             with self.assertRaises(ValueError):
                 SongRepository("", Path(directory) / "cache.json", chart_source="typo")
 

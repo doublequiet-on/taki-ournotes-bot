@@ -186,23 +186,6 @@ def _expand_replies(replies: list[PreparedReply], reserve: int = 0) -> list[Prep
     expanded = []
     for index, reply in enumerate(replies):
         available = QQ_PASSIVE_REPLY_LIMIT - reserve - sum(r.passive_slots for r in expanded) - (len(replies) - index - 1)
-        if reply.complete_text and reply.budget_label == "查分数表":
-            chunks, current = [], ""
-            for line in reply.text.splitlines(keepends=True):
-                if current and len(current) + len(line) > 1800:
-                    chunks.append(current)
-                    current = ""
-                while len(line) > 1800:
-                    chunks.append(line[:1800])
-                    line = line[1800:]
-                current += line
-            if current:
-                chunks.append(current)
-            if len(chunks) <= available:
-                expanded.append(replace(reply, fallback_texts=tuple(chunks)))
-            else:
-                expanded.append(PreparedReply("本次完整分数表结果超过回复预算，无法完整发送；请将 /查分数表 单独发送或使用前10、缩短搜索条件。"))
-            continue
         if reply.pages and len(reply.pages) <= available:
             expanded.extend(reply.pages)
         elif reply.pages or (reply.complete_text and reply.image is None):
@@ -378,9 +361,6 @@ def _image_from_result(result: QueryResult | CommandResult | None,
         answer = result.song_selection
         visible = page_slice(answer.songs, answer.page)
         return render_song_list(visible, answer.request.query, locale, answer.footer) if visible else None
-    if result is not None and result.meta is not None:
-        from ...visuals import render_meta
-        return render_meta(result.meta) if result.meta.rows else None
     if isinstance(result, QueryResult):
         spec = result.spec
         if spec.intent == "song":
@@ -538,9 +518,8 @@ def _render_prepared(reply, result, repository, locale, candidate=None):
     if (image is None and result is not None and result.catalog is not None
             and result.catalog.request.mode == "art" and not result.catalog.error):
         reply += "\n卡面图片暂不可用，请稍后重试。"
-    meta_complete = result is not None and getattr(result, "meta", None) is not None and result.meta.complete_text
-    return PreparedReply(reply, image, complete_text=(result is not None and result.cutoff is not None) or meta_complete,
-                         context=candidate, budget_label="查分数表" if meta_complete else "查榜线")
+    return PreparedReply(reply, image, complete_text=result is not None and result.cutoff is not None,
+                         context=candidate)
 
 
 async def _upload_image(api, target_id: str, image: bytes, group: bool):
@@ -657,8 +636,6 @@ async def reply_commands(message, target_id, group, commands, *, gate, repositor
                 followup_lease = contexts.begin(key, clear=False) if current is not None else None
                 reply = (await gate.prepare_followup(current, operation, repository)
                          if current is not None else PreparedReply(MISSING))
-                if reply.complete_text and reply.budget_label == "查分数表":
-                    reply = _expand_replies([reply])[0]
                 await sequencer.wait_turn(ticket)
                 outcome = await _deliver_reply(message, target_id, group, reply)
                 contexts.commit(followup_lease, reply.context, confirmed=outcome.confirmed)
@@ -698,14 +675,11 @@ def run_bot(app_id: str, app_secret: str, repository: SongRepository, settings: 
     query_gate = QueryGate(settings.query_concurrency, settings.query_queue_limit)
     from ...sources.cutoff_history import configure_sources
     from ...sources.cutoff_sampler import HistorySampler
-    from ...sources.moenotes_music_data import MusicDataRefresher
     if repository.event_cutoffs.history is None:
         configure_sources(repository, settings)
     sampler = HistorySampler(repository.event_cutoffs, servers=settings.cutoff_sampling_servers,
                              interval=settings.cutoff_sampling_interval) if settings.cutoff_sampling_enabled else None
     repository.cutoff_sampler = sampler
-    music_refresher = (MusicDataRefresher(repository.music_data) if repository.meta_source == "moenotes" else
-                       MusicDataRefresher(repository.song_meta) if repository.meta_source == "haneoka-site" else None)
     reply_sequencer = ReplySequencer(enabled=settings.reply_order)
     contexts = ContextStore()
     notice_ai = (AIClient(settings.ai_base_url, settings.ai_api_key, settings.ai_model)
@@ -817,8 +791,6 @@ def run_bot(app_id: str, app_secret: str, repository: SongRepository, settings: 
                 self._song_traits_task = asyncio.create_task(song_traits_loop())
             if sampler:
                 sampler.start()
-            if music_refresher:
-                music_refresher.start()
             if notifier and (not hasattr(self, "_notice_task") or self._notice_task.done()):
                 self._notice_task = asyncio.create_task(notifier.run(self.api))
 
@@ -837,8 +809,6 @@ def run_bot(app_id: str, app_secret: str, repository: SongRepository, settings: 
         ClientWithRefresh(intents=intents).run(appid=app_id, secret=app_secret)
     finally:
         try:
-            if music_refresher:
-                music_refresher.stop()
             if sampler:
                 sampler.stop()
         finally:

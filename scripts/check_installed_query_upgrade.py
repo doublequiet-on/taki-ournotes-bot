@@ -20,13 +20,14 @@ def main():
             raise AssertionError("installed smoke check must stay offline")
     sys.addaudithook(offline)
     root = Path(__file__).resolve().parents[1]
-    modules = ("query.continuation", "query.field_query", "query.efficiency_query", "sources.cutoff_history",
-               "sources.cutoff_sampler", "rendering.cutoff_trends", "platforms.qq.qq", "query.meta_parameters",
-               "query.meta_model", "sources.moenotes_music_data", "sources.moenotes_open",
+    modules = ("query.continuation", "query.field_query", "sources.cutoff_history",
+               "sources.cutoff_sampler", "rendering.cutoff_trends", "platforms.qq.qq",
+               "sources.moenotes_open",
                "sources.haneoka.chart_data", "sources.haneoka.catalog", "sources.haneoka.catalog_records",
                "sources.haneoka.catalog_text", "sources.haneoka.catalog_assets", "sources.haneoka.event_cutoffs",
-               "sources.haneoka.site_meta", "sources.haneoka.event_metadata",
-               "query.haneoka_meta_query", "query.activity_query")
+               "sources.haneoka.event_metadata",
+               "query.activity_query", "sources.errors", "sources.json_validation",
+               "sources.haneoka.transport", "sources.haneoka.identity", "sources.haneoka.chart_paths")
     for name in modules:
         module = importlib.import_module("ournotes_bot." + name)
         assert not Path(module.__file__).resolve().is_relative_to(root), "imported source checkout"
@@ -50,11 +51,14 @@ def main():
         assert (alias_file.parent / relative).is_file(), f"missing installed resource: {relative}"
     from ournotes_bot.sources.cutoff_history import CutoffHistory, OpenCutoffHistory
     from ournotes_bot.sources.moenotes_open import OpenClient, CONTRACT, TIME_KIND
-    from ournotes_bot.query.meta_parameters import MetaRequest
-    from ournotes_bot.query.meta_model import evaluate
-    from ournotes_bot.sources.moenotes_music_data import MusicSnapshot, project, FORMAT
     from ournotes_bot.sources.moenotes_events import EventSnapshot, EventSong, BoardSnapshot
     from ournotes_bot.query.continuation import parse_operation, ContextStore
+    from ournotes_bot.sources.errors import ChartDataError
+    from ournotes_bot.sources.chart_data import ChartDataError as ExistingChartDataError
+    from ournotes_bot.sources.haneoka.identity import release_identity
+    assert ChartDataError is ExistingChartDataError
+    assert release_identity({"schema": "haneoka-resource-release-identity-v1", "server": "intl",
+                             "releaseId": "r-0123456789abcdef0123", "sourceId": "installed-smoke"}, "intl")["server"] == "intl"
     assert parse_operation("/问 第三个").value == 3
     assert ContextStore().capacity == 1024
     with tempfile.TemporaryDirectory() as folder:
@@ -75,12 +79,6 @@ def main():
         haneoka = HaneokaCutoffHistory(Path(folder) / "haneoka.sqlite3", min_free_mb=0)
         assert haneoka.record(event, replace(board, scores=(100, 0), source="haneoka", time_kind=HT, contract_version=HC)) == "valid"
         assert haneoka.read(event, song, (1, 2)).points[0].source == "haneoka"
-        data = {"format": FORMAT, "provenance": {"region": "tw"}, "bands": [], "songs": [
-            {"id": 100107, "title": {"ja": "合成安装测试"}, "charts": [
-                {"scoreId": 10700, "difficulty": "easy", "notes": {"judged": 0}}]}]}
-        snapshot = MusicSnapshot(project(data), "0" * 64, 1, 1)
-        row = evaluate(snapshot.data["songs"][0], snapshot.data["songs"][0]["charts"][0], snapshot, MetaRequest(ranking="notes"))
-        assert row.metric == 0 and row.score is None
         assert "configured=False" in repr(OpenClient())
     print(json.dumps({"installed_version": distribution.version, "modules": len(modules),
                       "isolated": True, "network": False, "resources": True, "history": True}))

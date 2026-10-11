@@ -2,19 +2,17 @@
 # Input: Song／Chart 身份、Haneoka JP release／歌曲实体／原始谱面，以及可选缓存目录。
 # Output: ChartData 保留完整 score、release/source 身份和 fresh/cached/stale/unsaved 状态。
 # Pos: Data / Sources 的日服完整谱面适配；见 ../L2-2.md。
-# Effects/Dependencies: 有界匿名 GET、拒绝重定向、固定版本、原子写独立缓存；失败不访问其他来源，不调用 QQ。
+# Effects/Dependencies: 公共 transport/identity/JSON、谱面专属路径权限、固定版本及原子独立缓存；失败不访问其他来源，不调用 QQ。
 
 """Read release-pinned chart bytes without changing the renderer's score format."""
 
 from __future__ import annotations
 
-import asyncio
 import base64
 import hashlib
 import json
 import math
 import os
-import re
 import threading
 import time
 import uuid
@@ -25,12 +23,15 @@ from urllib.parse import urlsplit
 
 from ...config import runtime_data_dir
 from ...data import Chart, Song, normalize
-from ..chart_data import CHART_CACHE_TTL, MAX_CHART_BYTES, ChartData, ChartDataError, _parse_score
+from ..chart_data import CHART_CACHE_TTL, MAX_CHART_BYTES, ChartData, _parse_score
+from ..errors import ChartDataError
+from ..json_validation import decode_json
+from .transport import ORIGIN, public_get
+from .identity import release_identity, check_headers
+from .chart_paths import ASSET_PREFIX, chart_asset_url
 
 
-ORIGIN = "https://haneoka.org"
 API = ORIGIN + "/api/v1/servers/jp/"
-ASSET_PREFIX = "/assets/jp/Assets/AddressableResources/Live/MusicScore/"
 CACHE_NAME = "haneoka-chart-jp-v1"
 MAX_CATALOG_BYTES = 512_000
 MAX_CACHE_BYTES = 3_000_000
@@ -49,81 +50,6 @@ def _cache_lock(path):
             _LOCKS[key] = lock
         # Owners and waiters keep this lock alive; idle paths leave no registry entry.
         return lock
-
-
-def _unique_object(pairs):
-    result = {}
-    for key, value in pairs:
-        if key in result:
-            raise ValueError("Duplicate JSON key")
-        result[key] = value
-    return result
-
-
-def _finite_float(value):
-    number = float(value)
-    if not math.isfinite(number):
-        raise ValueError("Non-finite JSON number")
-    return number
-
-
-def _json(raw):
-    def invalid_constant(value):
-        raise ValueError("Non-finite JSON constant")
-    return json.loads(raw, object_pairs_hook=_unique_object, parse_float=_finite_float,
-                      parse_constant=invalid_constant)
-
-
-def public_get(url, limit, timeout):
-    parts = urlsplit(url)
-    if parts.scheme != "https" or parts.netloc != "haneoka.org" or parts.fragment:
-        raise ChartDataError("Invalid Haneoka URL")
-
-    async def read():
-        import aiohttp
-        try:
-            async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=timeout),
-                                             trust_env=False) as session:
-                async with session.get(url, allow_redirects=False,
-                                       headers={"User-Agent": "Taki-chart/1", "Accept-Encoding": "identity"}) as response:
-                    if response.status != 200:
-                        raise ChartDataError(f"Haneoka HTTP {response.status}")
-                    chunks, size = [], 0
-                    async for chunk in response.content.iter_chunked(65536):
-                        size += len(chunk)
-                        if size > limit:
-                            raise ChartDataError("Haneoka response is too large")
-                        chunks.append(chunk)
-                    return b"".join(chunks), {key.lower(): value for key, value in response.headers.items()}
-        except (aiohttp.ClientError, asyncio.TimeoutError, OSError) as exc:
-            raise ChartDataError("Haneoka request failed") from exc
-
-    return asyncio.run(read())
-
-
-def _identity(value):
-    if (not isinstance(value, dict) or value.get("schema") != "haneoka-resource-release-identity-v1"
-            or value.get("server") != "jp"
-            or not isinstance(value.get("releaseId"), str)
-            or not re.fullmatch(r"r-[a-f0-9]{20}", value["releaseId"])
-            or not isinstance(value.get("sourceId"), str)
-            or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,255}", value["sourceId"])):
-        raise ChartDataError("Invalid Haneoka release identity")
-    return value
-
-
-def _headers(headers, identity):
-    if (headers.get("x-haneoka-release-id") != identity["releaseId"]
-            or headers.get("x-haneoka-source-id") != identity["sourceId"]):
-        raise ChartDataError("Haneoka response identity mismatch")
-
-
-def _asset_url(path, release):
-    if (not isinstance(path, str) or len(path) > 1024 or not path.startswith(ASSET_PREFIX)
-            or any(segment in {".", "..", ""} or not re.fullmatch(r"[A-Za-z0-9_.-]+", segment)
-                   for segment in path[1:].split("/"))):
-        raise ChartDataError("Invalid Haneoka chart asset path")
-    return ORIGIN + path + "?release=" + release
 
 
 def _select(row, song, chart):
@@ -165,19 +91,19 @@ def _select(row, song, chart):
 def _snapshot(saved, song, chart, now):
     if not isinstance(saved, dict) or saved.get("schema") != 1 or saved.get("source") != "haneoka":
         raise ChartDataError("Invalid Haneoka chart cache")
-    identity = _identity(saved.get("identity"))
+    identity = release_identity(saved.get("identity"), "jp")
     fetched_at = saved.get("fetched_at")
     if type(fetched_at) not in (float, int) or not 0 < fetched_at <= now or not math.isfinite(fetched_at):
         raise ChartDataError("Invalid Haneoka chart cache time")
     entry = _select(saved.get("song"), song, chart)
-    _asset_url(entry.get("file"), identity["releaseId"])
+    chart_asset_url(entry.get("file"), identity["releaseId"])
     encoded = saved.get("raw_chart")
     if not isinstance(encoded, str) or len(encoded) > (MAX_CHART_BYTES + 2) // 3 * 4:
         raise ChartDataError("Invalid Haneoka chart cache body")
     raw = base64.b64decode(encoded, validate=True)
     if hashlib.sha256(raw).hexdigest() != saved.get("sha256"):
         raise ChartDataError("Haneoka chart cache checksum mismatch")
-    _json(raw)
+    decode_json(raw)
     score = _parse_score(raw)
     return ChartData(score, "haneoka", identity["releaseId"], identity["sourceId"], "cached")
 
@@ -187,7 +113,7 @@ def _read(path):
         raw = stream.read(MAX_CACHE_BYTES + 1)
     if len(raw) > MAX_CACHE_BYTES:
         raise ChartDataError("Haneoka chart cache is too large")
-    return _json(raw)
+    return decode_json(raw)
 
 
 def _save(path, saved):
@@ -231,14 +157,14 @@ def load_chart(song: Song, chart: Chart, cache_dir: Path | None = None) -> Chart
 
         try:
             raw, headers = get(API + "release?projection=identity", 4096)
-            identity = _identity(_json(raw))
-            _headers(headers, identity)
+            identity = release_identity(decode_json(raw), "jp")
+            check_headers(headers, identity)
             raw, headers = get(API + f"songs/{song.id}?release={identity['releaseId']}", MAX_CATALOG_BYTES)
-            _headers(headers, identity)
-            row = _json(raw)
+            check_headers(headers, identity)
+            row = decode_json(raw)
             entry = _select(row, song, chart)
-            raw, headers = get(_asset_url(entry.get("file"), identity["releaseId"]), MAX_CHART_BYTES)
-            _headers(headers, identity)
+            raw, headers = get(chart_asset_url(entry.get("file"), identity["releaseId"]), MAX_CHART_BYTES)
+            check_headers(headers, identity)
             saved = {"schema": 1, "source": "haneoka", "identity": identity, "fetched_at": now,
                      "song": {"musicId": row["musicId"], "musicTitle": row["musicTitle"],
                               "jacketUrl": row["jacketUrl"],

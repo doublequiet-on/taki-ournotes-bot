@@ -120,7 +120,7 @@ class ActivityTests(unittest.TestCase):
         stream = io.BytesIO()
         Image.new('RGB',(10,10),'red').save(stream,format='PNG')
         headers = {'content-type':'image/png','x-haneoka-release-id':event.metadata_version,'x-haneoka-source-id':'synthetic'}
-        with patch('ournotes_bot.sources.haneoka.chart_data.public_get', return_value=(stream.getvalue(),headers)) as fetch:
+        with patch('ournotes_bot.sources.haneoka.transport.public_get', return_value=(stream.getvalue(),headers)) as fetch:
             art = load_artwork(self.source,event,(event.banner, 'https://assets.bdon.moe/old.webp'))
             self.assertIsNotNone(art[event.banner])
             art[event.banner].close()

@@ -27,7 +27,7 @@ from urllib.request import Request, urlopen
 from http.client import HTTPException
 
 from ...config import runtime_data_dir
-from .song_meta import unique_object
+from ..json_validation import unique_object
 
 BASE = "https://haneoka.org/api/v1/servers/jp/"
 SOURCE = "https://haneoka.org/jp/zh-CN/member-cards/"

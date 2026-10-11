@@ -20,11 +20,11 @@
 
 主资料由 `OURNOTES_DATA_SOURCE` 独立选择，默认 `yume`。`haneoka` 分支委托 Sources 的 CatalogRepository，完整验证后替换歌曲／成员／SNAP 与元数据；属性、摘要和详情来自捕获的 JP 快照，中文仅补核对一致的文本。新缓存独立，详情不跨源补全，失败只回退 Haneoka 快照。下述兼容主缓存及详情补全流程仍属于 Yume 分支。详见 [主资料说明](../../docs/HANEOKA_CATALOG.md)。
 
+
 `load` 检查主缓存有效性和扩展完整度，必要时 `refresh` 调 Sources 获取基础表及并发详情；仓库组合记录、附加已持有 traits，再保存兼容格式。
 冷启动刷新前先完整解析并校验旧缓存，只有成功后才发布到内存以供详情故障回退；损坏或其他来源的旧缓存不阻止成功刷新，也不能提供部分旧技能。磁盘 schema 和旧读者行结构不变。
-卡牌详情可在请求时按需补全并留内存缓存；效率仓库只在相关消费时加载/刷新。
+卡牌详情可在请求时按需补全并留内存缓存。
 `event_cutoffs` 持有独立活动榜仓库，构造不联网也不创建缓存；查询时再按请求服获取当前活动及整榜，不参加主资料 `load/refresh` 事务。
-`music_data` 同样惰性独立；分数表解析、求值和绘图记录由它的一份 TW 快照投影，不要求歌曲已存在于 Project Yume 主目录。`meta_source` 可显式回退旧 `song_meta`，主目录与其他来源使用方不合并生命周期。
 磁盘布局刻意保留旧读者兼容形状；traits 只关联到内存歌曲，不直接写入旧歌曲行。
 
 ## Dependencies
@@ -46,6 +46,7 @@ Project Yume 的并发详情调度位于 Catalog，不应按“网络相关”�
 ## Relevant Tests
 
 - [test_haneoka_catalog.py](../../tests/test_haneoka_catalog.py)：完整快照、中文关联、技能、属性单位、图片／缓存隔离与来源边界。
+- [test_catalog_concurrency.py](../../tests/test_catalog_concurrency.py)：慢刷新／落盘时热读、完整发布的一致读取、刷新顺序、单次初始化及失败恢复；版本哈希不持发布锁，已捕获的嵌套记录不被后续刷新改写。
 
 - [test_status.py](../../tests/test_status.py)：`test_untrusted_timestamp_and_failed_save_do_not_claim_success` 区分 unsaved 与同步成功。
 - [test_support_data.py](../../tests/test_support_data.py)、[test_card_catalog.py](../../tests/test_card_catalog.py)：旧卡牌行、扩展字段往返、缺索引升级失败。
@@ -57,3 +58,5 @@ Project Yume 的并发详情调度位于 Catalog，不应按“网络相关”�
 data.py 是唯一主体实现，类、名称规则、聚合仓库及缓存职责均保留。其来源引用指向 sources/；data 与来源的现有延迟回边保持，不新增 models/names/repository 文件或 re-export 空壳。字段和持久格式由代码维护，不随目录变化迁移缓存。
 
 向上阅读：[仓库 L1](../../L1.md)。源码文件头提供唯一 L3，具体行为与字段以实现为准。
+
+Haneoka 主资料准备由 `_catalog_refresh_lock` 串行化，HTTP、转换和写盘在 `_song_lock` 外完成；短发布锁同时替换记录、metadata、缓存状态和成功时间。`capture_catalog()` 在同一短锁内借用这些引用，读者在锁外做统计和哈希；旧记录不原地修改。该视图不深冻结，不扩展 Yume 刷新原子性。测试 `test_catalog_concurrency.py`。

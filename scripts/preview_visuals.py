@@ -13,6 +13,7 @@ mode loads only the committed renderer via git show; it never switches branches.
 from __future__ import annotations
 
 import argparse
+import ast
 from dataclasses import replace
 import hashlib
 import io
@@ -49,7 +50,6 @@ def main() -> None:
     from ournotes_bot import visuals
     from ournotes_bot.commands import resolve_command, page_notice
     from ournotes_bot.data import SongRepository
-    from ournotes_bot.sources.haneoka.song_meta import MetaRepository
     from ournotes_bot.sources import yatta
     from ournotes_bot.sources.yatta import BASE
 
@@ -60,25 +60,31 @@ def main() -> None:
         # implementation and comparison path, adapting only moved dependencies.
         for old, new in (("yatta", "sources.yatta"),
                          ("song_traits", "sources.haneoka.song_traits"),
-                         ("efficiency_query", "query.efficiency_query"),
                          ("image_output", "rendering.image_output"),
                          ("card_visuals", "rendering.card_visuals")):
             code = code.replace(f"from .{old} import ".encode(), f"from .{new} import ".encode())
         module = types.ModuleType("ournotes_bot._baseline_visuals")
         module.__package__ = "ournotes_bot"
-        exec(compile(code, "<baseline-visuals>", "exec"), module.__dict__)
+        # Compare retained renderers even when HEAD still contained the retired
+        # score-table renderer and imported its now-removed result type.
+        tree = ast.parse(code)
+        tree.body = [node for node in tree.body if not (
+            isinstance(node, ast.FunctionDef) and node.name in
+            {"render_meta", "_render_meta", "_meta_image", "_render_meta_table"}
+            or isinstance(node, ast.ImportFrom) and node.module in
+            {"query.efficiency_query", "efficiency_query"}
+            or isinstance(node, ast.Assign) and any(
+                isinstance(target, ast.Name) and target.id == "_META_RENDER_EXECUTOR"
+                for target in node.targets))]
+        exec(compile(tree, "<baseline-visuals>", "exec"), module.__dict__)
         visuals = module
 
-    cache_files = [source / "ournotes-cache.json", source / "haneoka-meta-jp.json",
+    cache_files = [source / "ournotes-cache.json",
                    source / "haneoka-song-traits-jp.json", source / "haneoka-member-list-jp.json"]
     before = {p.name: hashlib.sha256(p.read_bytes()).hexdigest() for p in cache_files if p.exists()}
     repo = SongRepository(BASE, cache_files[0])
     repo._load_cache()  # Explicitly avoid load(), which may refresh and write.
 
-    def no_fetch(_path):
-        raise OSError("Offline preview uses the existing snapshot only")
-
-    repo.song_meta = MetaRepository(cache_files[1], fetch=no_fetch)
     asset_reads, missing = set(), set()
 
     def asset(url, size, *, contain=False):
@@ -122,7 +128,7 @@ def main() -> None:
     score = json.loads(chart_path.read_text(encoding="utf-8"))["score"] if chart_path.exists() else None
 
     from ournotes_bot.sources.haneoka.haneoka_members import parse as parse_members
-    member_snapshot = parse_members(json.loads(cache_files[3].read_text(encoding="utf-8"))) if cache_files[3].exists() else None
+    member_snapshot = parse_members(json.loads(cache_files[2].read_text(encoding="utf-8"))) if cache_files[2].exists() else None
     with patch.object(visuals, "_asset", side_effect=asset), patch("ournotes_bot.rendering.member_list_visuals.get_snapshot", return_value=member_snapshot):
         save("01-songs", lambda: visuals.render_song_list(songs[:8], "MyGO!!!!!", footer="本地样例 · 展示前 8 首"))
         save("02-cards", lambda: visuals.render_card_list(cards, "立希"))
@@ -132,9 +138,6 @@ def main() -> None:
         save("06-chart", lambda: visuals.render_chart(chart_song, chart_song.charts))
         if score:
             save("07-note-chart", lambda: visuals.render_chart(chart_song, chart_song.charts, score=score))
-        answer = resolve_command("/查分数表", repo).meta
-        if answer and answer.cells:
-            save("08-score-table", lambda: visuals.render_meta(answer))
         for name, command in (("13-song-filter", "/查曲 蓝色 激奏=JUST"),
                               ("14-song-page2", "/查曲 激奏=JUST 页2"),
                               ("15-song-mixed", "/查曲 激奏=混合")):

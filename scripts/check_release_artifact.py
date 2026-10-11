@@ -55,7 +55,15 @@ def check(path: Path) -> None:
         raise ValueError(f"missing query aliases or bot code in {path.name}")
     required = {"continuation.py", "field_query.py", "cutoff_history.py", "cutoff_sampler.py", "cutoff_trends.py",
                 "CUTOFF_HISTORY.md", "QUERY_UPGRADE_V1.md", "query-upgrade-v1.env.example",
-                "moenotes_music_data.py", "moenotes_open.py", "meta_parameters.py", "meta_model.py", "META_OPEN.md", "THIRD_PARTY.md"}
+                "moenotes_open.py", "META_OPEN.md", "THIRD_PARTY.md",
+                "transport.py", "identity.py", "chart_paths.py", "errors.py", "json_validation.py"}
+    retired = {"efficiency_query.py", "haneoka_meta_query.py", "meta_parameters.py", "meta_model.py",
+               "song_meta.py", "site_meta.py", "moenotes_music_data.py", "verify_meta_reference.py"}
+    if retired & documents:
+        raise ValueError(f"retired score-table modules in {path.name}: {sorted(retired & documents)}")
+    development_gate = {"check_architecture.py", "test_architecture.py", "architecture_exceptions.json"}
+    if development_gate & documents:
+        raise ValueError(f"development architecture gate in {path.name}")
     if not required.issubset(documents):
         raise ValueError(f"missing query upgrade modules or instructions in {path.name}")
     if not {"event_cutoffs.py", "HANEOKA_CUTOFFS.md"} <= documents:

@@ -23,7 +23,9 @@ from pathlib import Path
 from urllib.parse import urlsplit
 from urllib.request import Request, urlopen
 
-from .song_meta import BASE, unique_object
+from ..json_validation import unique_object
+
+BASE = "https://haneoka.org/api/v1/servers/jp/"
 
 SOURCE = "https://haneoka.org/jp/zh-CN/songs/"
 COLORS = {1: "红色", 2: "蓝色", 3: "绿色", 4: "黄色", 5: "紫色"}

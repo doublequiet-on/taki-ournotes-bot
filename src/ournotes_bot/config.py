@@ -1,6 +1,6 @@
 # L3
 # Input: 环境变量、可选 dotenv 路径、安装位置和当前工作目录。
-# Output: frozen Settings、独立主资料／谱面／分数表／榜线来源开关及历史路径；Secret 不进入 repr；load_dotenv 返回 None。
+# Output: frozen Settings、独立主资料／谱面／榜线来源开关及历史路径；Secret 不进入 repr；load_dotenv 返回 None。
 # Pos: Application 的配置与运行路径边界；见 ../L2-Application.md。
 # Effects/Dependencies: 读取环境及 dotenv；开放平台接受 MOENOTES_OPEN_SECRET 或 BDON_OPENPLATFORM，前者非空优先，密钥不进入repr。
 
@@ -103,7 +103,6 @@ class Settings:
     cutoff_sampling_servers: tuple[str, ...] = ("jp", "tw", "kr", "en")
     cutoff_sampling_interval: int = 300
     cutoff_history_min_free_mb: int = 512
-    meta_source: str = "moenotes"
     cutoff_source: str = "tracker"
     moenotes_open_secret: str = field(default="", repr=False)
     moenotes_open_history_file: Path | None = None
@@ -134,7 +133,6 @@ class Settings:
                                       for s in os.getenv("OURNOTES_CUTOFF_SAMPLING_SERVERS", "jp,hk,kr,en").split(",")))
         if not servers or any(s not in {"jp", "tw", "kr", "en"} for s in servers):
             raise ValueError("OURNOTES_CUTOFF_SAMPLING_SERVERS must use jp,hk,kr,en")
-        meta_source = os.getenv("OURNOTES_META_SOURCE", "haneoka-site").strip()
         cutoff_source = os.getenv("OURNOTES_CUTOFF_SOURCE", "haneoka").strip()
         chart_source = os.getenv("OURNOTES_CHART_SOURCE", "haneoka").strip()
         data_source = os.getenv("OURNOTES_DATA_SOURCE", "haneoka").strip()
@@ -142,8 +140,8 @@ class Settings:
             raise ValueError("unsupported main data source")
         if chart_source not in {"moenotes", "haneoka"}:
             raise ValueError("unsupported chart source")
-        if meta_source not in {"moenotes", "haneoka", "haneoka-site"} or cutoff_source not in {"tracker", "open", "haneoka"}:
-            raise ValueError("unsupported music/ranking source")
+        if cutoff_source not in {"tracker", "open", "haneoka"}:
+            raise ValueError("unsupported ranking source")
         configured_open_history = os.getenv("OURNOTES_OPEN_HISTORY_FILE", "").strip()
         open_history = Path(configured_open_history) if configured_open_history else raw_cache.with_name("moenotes-open-history-v2.sqlite3")
         if configured_open_history and not open_history.is_absolute():
@@ -175,7 +173,6 @@ class Settings:
             cutoff_sampling_servers=servers,
             cutoff_sampling_interval=max(60, int(os.getenv("OURNOTES_CUTOFF_SAMPLING_INTERVAL", "300"))),
             cutoff_history_min_free_mb=max(0, int(os.getenv("OURNOTES_CUTOFF_MIN_FREE_MB", "512"))),
-            meta_source=meta_source,
             cutoff_source=cutoff_source,
             moenotes_open_secret=(os.getenv("MOENOTES_OPEN_SECRET", "").strip()
                                   or os.getenv("BDON_OPENPLATFORM", "").strip()),

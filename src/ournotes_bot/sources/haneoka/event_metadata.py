@@ -12,15 +12,16 @@ import time
 from dataclasses import replace
 from pathlib import Path
 
-from .catalog import identity
+from .identity import resource_identity, check_headers
 from .catalog_assets import asset_url
-from .chart_data import ORIGIN, _headers, _json, public_get
+from ..json_validation import decode_json
+from .transport import ORIGIN, public_get
 
 
 def validate(saved, server, now):
     if saved['schema'] != 1 or saved['server'] != server:
         raise ValueError('foreign metadata')
-    identity(saved['identity'], server)
+    resource_identity(saved['identity'], server)
     checked = saved['checked_at']
     if type(checked) not in (int, float) or not math.isfinite(checked) or not 0 < checked <= now:
         raise ValueError('invalid metadata time')
@@ -48,7 +49,7 @@ class EventMetadataRepository:
                     target = self.path / (server + '.json')
                     if target.stat().st_size > 1_100_000:
                         raise ValueError('metadata size limit')
-                    saved = validate(_json(target.read_bytes()), server, now)
+                    saved = validate(decode_json(target.read_bytes()), server, now)
                     self.saved[server] = saved
                 except (OSError, ValueError, KeyError, TypeError):
                     saved = None
@@ -63,10 +64,10 @@ class EventMetadataRepository:
                         query = 'release=' + ident['releaseId'] if ident else 'projection=identity'
                         raw, headers = self.fetch(f'{ORIGIN}/api/v1/servers/{server}/{resource}?{query}',
                                                    512_000, min(4, remaining))
-                        value = _json(raw)
-                        _headers(headers, ident or identity(value, server))
+                        value = decode_json(raw)
+                        check_headers(headers, ident or resource_identity(value, server))
                         return value
-                    ident = identity(get('release'), server)
+                    ident = resource_identity(get('release'), server)
                     if saved and saved['identity'] == ident:
                         saved = {**saved, 'checked_at': now}
                     else:

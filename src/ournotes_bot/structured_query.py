@@ -1,8 +1,8 @@
 # L3
-# Input: QuerySpec（可选分数表 MetaRequest／榜线专项请求）、SongRepository；answer_for 复用捕获结果。
+# Input: QuerySpec（可选榜线专项请求）、SongRepository；answer_for 复用捕获结果。
 # Output: resolve_query 返回 QueryResult，保存专项选择供文字／图片消费；answer_for 返回确定性 str。
 # Pos: Query / Deterministic 的共享结构化契约与执行入口；见 query/L2-2.md。
-# Effects/Dependencies: 调用 query 专项模块及根 commands；详情／效率可经 Data 联网或读写缓存，不绘图或导入 QQ。
+# Effects/Dependencies: 调用 query 专项模块及根 commands；详情可经 Data 联网或读写缓存，不绘图或导入 QQ。
 
 """Execute /问 query conditions without reparsing a generated command string."""
 
@@ -15,12 +15,10 @@ from .commands import (PAGE_SIZE, _format_card_detail, _format_support_card_deta
 from .data import Card, Chart, Skill, Song, SongRepository, SupportCard, character_identity, localized_text, normalize, note_text
 from .query.entity_lexicon import EntityRef
 from .i18n import tr
-from .query.efficiency_query import MetaAnswer, execute_efficiency
 from .query.card_catalog import CardAnswer, query_cards
 from .query.song_query import SongAnswer, SongFilter, parse_filter, execute as execute_song_filter
 from .query.event_cutoff_query import CutoffRequest, CutoffAnswer, execute_cutoff
 from .sources.haneoka.song_traits import describe as describe_song
-from .query.meta_parameters import MetaRequest
 
 
 @dataclass(frozen=True)
@@ -35,16 +33,11 @@ class QuerySpec:
     skill_query: str = ""
     skill_kind: str = ""
     rarity: int | None = None
-    metric: str = "eff"
-    order: str = "desc"
-    limit: int = 30
     card_query: str | None = None
     song_query: str | None = None
     cutoff_request: CutoffRequest | None = None
     song_filter: SongFilter | None = None
     field: str = ""
-    meta_request: MetaRequest | None = None
-    meta_scene: str = ""  # Haneoka site's normal / gekisou / both reference results.
 
     def __post_init__(self):
         if self.card_query is not None:
@@ -85,31 +78,9 @@ class QuerySpec:
             return f"问 {self.display_name} {self.difficulty} {FIELD_LABELS[self.field]}".replace("  ", " ")
         if self.cutoff_request is not None:
             return self.cutoff_request.command_label()
-        if self.meta_request is not None:
-            return self.meta_request.command_label(limit=self.limit, page=self.page)
         if self.card_query is not None:
             return (("查支援卡 " if self.intent == "support_card" else "查卡 ")
                     + self.card_query + (f" 页{self.page}" if self.page > 1 else ""))
-        if self.intent == "efficiency":
-            parts = ["查分数表"]
-            if self.meta_scene in {"normal", "gekisou"}:
-                parts.append("普通" if self.meta_scene == "normal" else "激奏")
-            if self.song_filter:
-                parts.append(self.song_filter.query)
-            elif self.subject:
-                parts.append(str(self.subject.value))
-            if self.difficulty and not self.song_filter:
-                parts.append("全难度" if self.difficulty == "ALL" else self.difficulty)
-            if self.comparison and self.level is not None and not self.song_filter:
-                parts.append(f"lv{self.comparison}{self.level:g}")
-            if self.limit != 30:
-                parts.append(f"前{self.limit}")
-            if self.metric != "eff":
-                parts.append(f"指标={self.metric}")
-            if self.order != "desc":
-                parts.append(f"排序={self.order}")
-            parts.append(f"页{self.page}")
-            return " ".join(parts)
         if self.intent == "card" and (self.skill_query or self.skill_kind):
             subject = f"{self.display_name}的" if self.display_name else ""
             kind = {"leader": "队长", "live": "Live", "gekisou": "激奏"}.get(self.skill_kind, "")
@@ -137,7 +108,6 @@ class QueryResult:
     cards: tuple[Card, ...] = ()
     support_cards: tuple[SupportCard, ...] = ()
     chart: tuple[Song, tuple[Chart, ...]] | None = None
-    meta: MetaAnswer | None = None
     catalog: CardAnswer | None = None
     song_selection: SongAnswer | None = None
     cutoff: CutoffAnswer | None = None
@@ -147,7 +117,7 @@ class QueryResult:
     def __post_init__(self):
         if self.short_text is not None:
             return
-        for answer in (self.cutoff, self.meta, self.catalog, self.song_selection):
+        for answer in (self.cutoff, self.catalog, self.song_selection):
             if answer is not None:
                 object.__setattr__(self, "status", answer.status)
                 return
@@ -194,8 +164,6 @@ def resolve_query(spec: QuerySpec, repository: SongRepository) -> QueryResult:
         answer = query_cards(f"{spec.card_query} 页{spec.page}", repository, support=spec.intent == "support_card")
         return QueryResult(spec, catalog=answer, cards=answer.cards if spec.intent == "card" else (),
                            support_cards=answer.cards if spec.intent == "support_card" else ())
-    if spec.intent == "efficiency":
-        return QueryResult(spec, meta=execute_efficiency(spec, repository))
     if spec.intent in {"card", "support_card"} and not (spec.skill_query or spec.skill_kind):
         query = ""
         if spec.rarity is not None:
@@ -321,8 +289,6 @@ def answer_for(spec: QuerySpec, repository: SongRepository, locale: str = "zh",
         return selected.song_selection.text(locale)
     if selected.catalog is not None:
         return selected.catalog.text(locale)
-    if spec.intent == "efficiency":
-        return selected.meta.text
     if spec.intent == "song":
         matches = selected.songs
         if not matches:

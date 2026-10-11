@@ -9,7 +9,7 @@ prune data
 global-exclude *.log *.pyc
 global-exclude *.sqlite3 *.sqlite3-journal *.sqlite3-wal *.sqlite3-shm
 include docs/QUERY_UPGRADE_V1.md docs/CUTOFF_HISTORY.md
-include docs/META_OPEN.md scripts/verify_meta_reference.py
+include docs/META_OPEN.md
 include docs/HANEOKA_CATALOG.md
 include docs/HANEOKA_CUTOFFS.md
 include docs/HANEOKA_META_CONTRACT.md
@@ -25,3 +25,6 @@ include docs/RELEASE_2026-09-28.md
 
 include docs/RELEASE_2026-09-28_SONGS.md
 include docs/EVENT_CUTOFFS.md scripts/preview_event_cutoffs.py
+
+# Architecture policy is a checkout/CI development gate, not installed bot code.
+exclude architecture_exceptions.json scripts/check_architecture.py tests/test_architecture.py
