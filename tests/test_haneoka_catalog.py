@@ -331,7 +331,7 @@ class CatalogTests(unittest.TestCase):
             self.assertEqual(Settings.from_env().data_source, "haneoka")
             os.environ["OURNOTES_DATA_SOURCE"] = "haneoka"
             settings = Settings.from_env()
-            self.assertEqual((settings.data_source,settings.chart_source,settings.meta_source,settings.cutoff_source), ("haneoka","haneoka","haneoka-site","haneoka"))
+            self.assertEqual((settings.data_source,settings.chart_source,settings.cutoff_source), ("haneoka","haneoka","haneoka"))
             os.environ["OURNOTES_DATA_SOURCE"] = "unknown"
             with self.assertRaises(ValueError): Settings.from_env()
 

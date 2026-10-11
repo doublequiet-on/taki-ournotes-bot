@@ -1,6 +1,6 @@
 # L3
 # Input: 普通平台／会话／用户键、已捕获查询结果和有限续查操作；不接受 SDK 消息。
-# Output: 可见 ID／scoreId／难度／场景、完整规范条件；双榜至多60个选择，仅成功发送后提交上下文。
+# Output: 可见 ID／难度、完整规范条件；至多30个选择，仅成功发送后提交上下文。
 # Pos: Query / Deterministic 的有界连续查询；见 L2-2.md。
 # Effects/Dependencies: 最多 1024 个内存上下文，10 分钟 TTL；执行复用查询器，可按 ID 获取详情；无模型、发送或持久化。
 """Small, receipt-committed conversations over actually displayed query results."""
@@ -19,7 +19,7 @@ from ..commands import CommandResult, PAGE_SIZE, page_slice, resolve_command
 from ..structured_query import QueryResult, QuerySpec, resolve_query
 from .entity_lexicon import EntityRef, alias_version
 from .song_identity import QueryProblem
-from .song_query import DIFFS, serialize_filter
+from .song_query import DIFFS
 
 MISSING = "没有可继续的查询，或上次结果已过期。请重新发送完整查询。"
 CHANGED = "资料或昵称版本已更新，请重新发送完整查询后再选择或翻页。"
@@ -84,8 +84,6 @@ class Choice:
     kind: str
     entity_id: int
     difficulty: str = ""
-    score_id: int | None = None
-    scene: str = ""
 
 
 @dataclass(frozen=True)
@@ -101,9 +99,11 @@ class QueryContext:
 def catalog_version(repository) -> str:
     # No refresh/get() here: version checks must not cause source I/O. Hash content
     # as well as release labels, since replaced records may keep a release label.
+    capture = getattr(repository, "capture_catalog", None)
+    catalog = capture() if capture is not None else repository
     digest = hashlib.sha256()
-    for value in (getattr(repository, "metadata", {}), getattr(repository, "songs", ()),
-                  getattr(repository, "cards", ()), getattr(repository, "support_cards", ()),
+    for value in (getattr(catalog, "metadata", {}), getattr(catalog, "songs", ()),
+                  getattr(catalog, "cards", ()), getattr(catalog, "support_cards", ()),
                   getattr(repository, "chart_source", "moenotes"), getattr(repository, "data_source", "yume")):
         digest.update(repr(value).encode("utf-8"))
     digest.update(str(alias_version()).encode("ascii"))
@@ -111,18 +111,7 @@ def catalog_version(repository) -> str:
 
 
 def dependency_version(repository, query) -> tuple[str, str]:
-    meta = ""
-    if isinstance(query, QuerySpec) and query.intent == "efficiency":
-        if query.meta_request is not None:
-            from .meta_model import EVALUATOR_VERSION
-            snapshot = repository.music_data.peek()
-            if snapshot and query.meta_request.ranking in {"efficiency", "score", "event"}:
-                snapshot = repository.music_data.for_calculation(snapshot)
-            return str(alias_version()), (snapshot.version + "/" + EVALUATOR_VERSION) if snapshot else ""
-        snapshot = getattr(getattr(repository, "song_meta", None), "_snapshot", None)
-        if snapshot is not None:
-            meta = hashlib.sha256(repr((snapshot.release, snapshot.source_version, snapshot.rows)).encode("utf-8")).hexdigest()
-    return catalog_version(repository), meta
+    return catalog_version(repository), ""
 
 
 def capture_context(result, repository, *, catalog_before=None) -> QueryContext | None:
@@ -144,20 +133,6 @@ def capture_context(result, repository, *, catalog_before=None) -> QueryContext 
         visible = tuple(Choice(kind, c.id) for c in answer.visible)
         if req.mode == "detail" and len(visible) == 1:
             selected = visible[0]
-    elif result.meta is not None:
-        if spec is None:
-            return None
-        page, pages = spec.page, max(1, (result.meta.total + spec.limit - 1) // spec.limit)
-        visible = (tuple(Choice("efficiency", r.song_id, r.difficulty, getattr(r, "score_id", None), scene)
-                         for panel, scene in zip(result.meta.panels, ("free", "battle")) for r in panel.rows)
-                   if result.meta.panels else
-                   tuple(Choice("efficiency", r.song_id, r.difficulty, getattr(r, "score_id", None)) for r in result.meta.rows))
-        if not result.meta.columns and len(visible) == 1:
-            selected = visible[0]
-        elif result.meta.panels and len({(c.entity_id, c.difficulty, c.score_id) for c in visible}) == 1:
-            # An exact chart shown in two scenes is still one selected chart.
-            # /详情 and /难度 keep the comparison until /选 explicitly picks a side.
-            selected = replace(visible[0], scene="")
     elif result.song_selection is not None:
         answer = result.song_selection
         spec = QuerySpec("song", song_query=answer.request.query, page=answer.page)
@@ -192,14 +167,10 @@ def capture_context(result, repository, *, catalog_before=None) -> QueryContext 
                              display_name=str(selected.entity_id))
     else:
         return None
-    choice_limit = 60 if result.meta is not None and result.meta.panels else 30
-    if not visible or len(visible) > choice_limit:
+    if not visible or len(visible) > 30:
         return None
     version = dependency_version(repository, spec)
-    new_meta = isinstance(spec, QuerySpec) and spec.meta_request is not None
-    if new_meta and (version[0] != result.meta.versions[2] or version[1] != "/".join(result.meta.versions[:2])):
-        return None
-    if not new_meta and catalog_before is not None and version[0] != catalog_before:
+    if catalog_before is not None and version[0] != catalog_before:
         return None
     return QueryContext(spec, visible, page, pages, version, selected)
 
@@ -227,42 +198,18 @@ def execute_followup(context: QueryContext, operation: Operation, repository):
                 return QueryProblem("当前页有多个结果，请先发送 /选 编号，例如 /选 2。", "ambiguous")
             selected = context.visible[0]
         if operation.kind == "difficulty":
-            if selected.kind not in {"song", "efficiency"}:
-                return QueryProblem("只有歌曲或分数表结果可以切换难度。", "invalid_arguments")
+            if selected.kind != "song":
+                return QueryProblem("只有歌曲结果可以切换难度。", "invalid_arguments")
             if not operation.value:
                 return QueryProblem("难度支持 EASY / NORMAL / HARD / EXPERT（EZ / NM / HD / EX）。", "invalid_arguments")
-            selected = replace(selected, difficulty=operation.value, score_id=None)
-        if selected.kind == "efficiency":
-            query = context.query
-            shared = query.song_filter
-            if shared:
-                shared = replace(shared, term=str(selected.entity_id), difficulty=selected.difficulty)
-                shared = replace(shared, query=serialize_filter(shared))
-            spec = replace(query, subject=EntityRef("song", selected.entity_id),
-                           difficulty=selected.difficulty, page=1, song_filter=shared,
-                           display_name=str(selected.entity_id))
-            if query.meta_scene and selected.scene:
-                spec = replace(spec, meta_scene={"free": "normal", "battle": "gekisou"}.get(selected.scene, selected.scene))
-            if query.meta_request is not None:
-                request = replace(query.meta_request, song_id=selected.entity_id,
-                                  difficulties=(selected.difficulty,),
-                                  score_id=None if operation.kind == "difficulty" else selected.score_id)
-                if selected.scene:
-                    request = replace(request, scene=selected.scene, compare_scenes=False)
-                spec = replace(spec, meta_request=request)
-        elif selected.kind == "song":
+            selected = replace(selected, difficulty=operation.value)
+        if selected.kind == "song":
             spec = QuerySpec("chart", EntityRef("song", selected.entity_id),
                              selected.difficulty if selected.difficulty not in {"", "ALL"} else "EXPERT",
                              display_name=str(selected.entity_id))
         else:
             spec = QuerySpec(selected.kind, card_query=str(selected.entity_id))
         result = resolve_query(spec, repository)
-        if result.status == "success" and selected.kind == "efficiency" and result.meta is not None:
-            ids = {getattr(row, "score_id", None) for row in result.meta.rows}
-            if len(ids) == 1:
-                # A difficulty change resolves a new chart. Commit that chart's
-                # identity, including when one chart is displayed in two scenes.
-                selected = replace(selected, score_id=ids.pop())
         candidate = replace(context, selected=selected) if result.status == "success" else None
     else:
         return QueryProblem("用法：/下一页、/上一页、/选 2、/详情、/难度 EX。", "invalid_arguments")

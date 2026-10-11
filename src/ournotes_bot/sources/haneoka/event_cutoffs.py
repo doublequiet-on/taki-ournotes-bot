@@ -13,7 +13,9 @@ import re
 from dataclasses import replace
 from urllib.parse import urlsplit
 
-from .chart_data import public_get, _json as strict_json
+from .transport import public_get
+from .identity import matches_game_region
+from ..json_validation import decode_json as strict_json
 from ..moenotes_events import (
     BoardSnapshot, EventCutoffRepository, EventSnapshot, EventSong, SERVERS,
     SourceError, _Entry, _ms, _player_id, _player_name,
@@ -45,7 +47,7 @@ def event_identity(event):
 
 
 def decode_current(data, region):
-    if data.get("region") != region or type(data.get("stale")) is not bool:
+    if not matches_game_region(data.get("region"), region) or type(data.get("stale")) is not bool:
         raise SourceError("invalid_event")
     timestamp(data.get("fetchedAtMs"))
     row = data.get("event")
@@ -82,7 +84,7 @@ def decode_current(data, region):
 
 
 def decode_board(data, event, song):
-    if (data.get("region") != event.server or data.get("eventId") != event.event_id
+    if (not matches_game_region(data.get("region"), event.server) or data.get("eventId") != event.event_id
             or data.get("challengeId") != song.challenge_id or type(data.get("stale")) is not bool):
         raise SourceError("invalid_identity")
     fetched, server = timestamp(data.get("fetchedAtMs")), timestamp(data.get("serverTimeMs"))

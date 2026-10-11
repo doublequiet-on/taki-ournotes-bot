@@ -19,20 +19,15 @@ from urllib.parse import urlencode
 
 from ...data import DataError
 from .catalog_records import convert, integer
-from .chart_data import ORIGIN, _headers, _identity, _json, public_get
+from ..json_validation import decode_json
+from .transport import ORIGIN, public_get
+from .identity import resource_identity as identity, check_headers
 
 SOURCE = ORIGIN + "/api/v1/servers/jp/"
 ENTITIES = {"songs": "musicId", "cards": "cardId", "support-cards": "supportCardId",
             "characters": "characterId", "bands": "bandId"}
 MAX_BYTES = 24_000_000
 ERRORS = (OSError, ValueError, TypeError, KeyError, IndexError, RuntimeError, OverflowError, AttributeError)
-
-
-def identity(value, server):
-    if not isinstance(value, dict) or value.get("server") != server:
-        raise ValueError("Catalog server mismatch")
-    _identity({**value, "server": "jp"})
-    return value
 
 
 def encoded(value):
@@ -78,7 +73,7 @@ class CatalogRepository:
     def _read(self):
         if self.path.stat().st_size > MAX_BYTES:
             raise ValueError("Catalog cache size limit")
-        envelope = _json(self.path.read_bytes())
+        envelope = decode_json(self.path.read_bytes())
         saved = envelope["snapshot"]
         if hashlib.sha256(encoded(saved)).hexdigest() != envelope["sha256"]:
             raise ValueError("Catalog cache checksum mismatch")
@@ -115,8 +110,8 @@ class CatalogRepository:
                 total += len(raw)
                 if len(raw) > 8_000_000 or total > MAX_BYTES:
                     raise ValueError("Catalog download budget")
-            value = _json(raw)
-            _headers(headers, ident or identity(value, server))
+            value = decode_json(raw)
+            check_headers(headers, ident or identity(value, server))
             return value
 
         for server in ("jp", "intl"):

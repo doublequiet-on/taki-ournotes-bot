@@ -32,7 +32,7 @@ class MenuLimitsTests(unittest.TestCase):
     def test_panel_only_advertises_supported_commands(self):
         self.assertEqual(
             {item["name"] for item in PANEL_ITEMS},
-            {"查谱面", "查曲", "查分数表", "查榜线", "查卡", "查支援卡", "问", "数据状态", "帮助", "介绍",
+            {"查谱面", "查曲", "查榜线", "查卡", "查支援卡", "问", "数据状态", "帮助", "介绍",
              "下一页", "上一页", "选", "详情", "难度"},
         )
         for item in PANEL_ITEMS:
@@ -44,7 +44,7 @@ class MenuLimitsTests(unittest.TestCase):
         self.assertEqual(len(names), len(set(names)))
         self.assertLessEqual(len(names), 20)
         self.assertEqual(set(names), {
-            "查曲", "查谱面", "查分数表", "查榜线", "查卡", "查支援卡", "查卡面",
+            "查曲", "查谱面", "查榜线", "查卡", "查支援卡", "查卡面",
             "查支援卡面", "查缩写", "问", "数据状态", "调试数据",
             "帮助", "介绍", "语言",
             "下一页", "上一页", "选", "详情", "难度",

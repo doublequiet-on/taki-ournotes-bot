@@ -34,7 +34,7 @@ class SongFilter:
     band: str = ""
 
 
-def parse_filter(query, repository=None, *, force=False, efficiency=False):
+def parse_filter(query, repository=None, *, force=False):
     text = unicodedata.normalize("NFKC", query).strip()
     if not force and not MARKER.search(text):
         return None
@@ -107,13 +107,11 @@ def parse_filter(query, repository=None, *, force=False, efficiency=False):
     if levels:
         m = levels[0]
         comparison, level = m[1] or "=", float(m[2])
-        if efficiency and comparison == "=":
-            raise ValueError("分数表等级请用 lv>=、lv>、lv<= 或 lv<；数字 ID 不作等级。")
         level_text = m[2]
         if not 1 <= level <= 40:
             raise ValueError("等级须在 1～40 之间。")
         text = text[:m.start()] + " " + text[m.end():]
-    elif (not efficiency and re.search(r"(?:^|\s)\d+(?:\.\d+)?$", text.strip())
+    elif (re.search(r"(?:^|\s)\d+(?:\.\d+)?$", text.strip())
           and float(re.search(r"(\d+(?:\.\d+)?)$", text.strip())[1]) <= 40):
         m = re.search(r"(?:^|\s)(\d+(?:\.\d+)?)$", text.strip())
         comparison, level = "=", float(m[1])

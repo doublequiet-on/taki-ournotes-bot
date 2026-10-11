@@ -24,7 +24,7 @@ from pathlib import Path
 
 from .moenotes_events import (EventCutoffRepository, BoardSnapshot, SourceError, _Entry,
                              _NETWORK_SLOTS, _ms, _id, _player_id, _player_name, _retry_after)
-from .moenotes_music_data import decode_json
+from .json_validation import decode_json
 
 ORIGIN = "https://bdon.moe"
 CONTRACT = "moenotes:challenge-ranking/1"

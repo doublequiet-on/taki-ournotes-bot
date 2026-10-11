@@ -19,14 +19,12 @@
 ## Core Contracts
 
 - 领域身份：`Song/Chart/Card/SupportCard/Skill` 由 [data.py](ournotes_bot/data.py) 定义；`Song.traits` 当前引用来源文件中的 `SongTraits`。
-- 资料访问：`SongRepository.load/refresh`、按需详情、独立 `music_data`、`song_meta`（Haneoka 原生／旧参考）、`song_traits` 和惰性 `event_cutoffs`；分数表和榜线来源分别配置，独立故障不影响主资料缓存。
 - 来源契约由 [Sources](ournotes_bot/sources/L2-2.md) 维护；不得把列表技能摘要当作完整详情，有限统计求值也不证明游戏实际得分。正式榜线保留公开发现／素材和本地历史例外。
 
 ## Internal Subsystems
 
 [Catalog](ournotes_bot/L2-2-Catalog.md) 持有统一领域视图；[Sources](ournotes_bot/sources/L2-2.md) 将外部结构变为可信记录或快照。两者值得分开是因为本地持有/兼容策略与第三方 schema/获取策略有不同变化原因。
 
-Haneoka 是 Sources 内的实现簇，不增加第三层地图；谱面、旧分数表等专项缓存仍独立。默认 Haneoka 主资料 Catalog 的歌曲／成员／SNAP、属性和成员摘要共享一个固定版本事务，与旧主缓存分开。
 
 ## Dependencies
 
@@ -38,7 +36,6 @@ Haneoka 是 Sources 内的实现簇，不增加第三层地图；谱面、旧分
 
 主缓存、详情内存缓存、各来源快照和锁分开管理。仓库初始化可读专项缓存；`load` 可联网刷新；查询调用详情或效率入口也可引发网络和写缓存。跨来源不保证同一时刻更新，不能写成“纯内存只读仓库”。
 
-当前默认 Haneoka `site_meta` 在运行时每300秒核对版本，普通／激奏读取同一固定版本的上游参考结果；同源失败回退最长24小时。显式 Moenotes 仍保留源码指纹与完整兼容计算快照流程。主资料每整点／半点刷新；见 [统一来源说明](../docs/HANEOKA_UNIFIED.md)。
 
 ## Failure / Degradation Boundaries
 
@@ -58,3 +55,5 @@ Haneoka 是 Sources 内的实现簇，不增加第三层地图；谱面、旧分
 Catalog 的主体实现保留在根 data.py；六个来源文件整移到 sources/，Haneoka 位于其内部簇。领域类型、名称规则和既有延迟回边保留，不创建 catalog/ 或新的契约模块。主缓存和各来源缓存仍保持原位置、格式与独立生命周期。
 
 向上阅读：[仓库 L1](../L1.md)。源码文件头提供唯一 L3，具体行为与字段以实现为准。
+
+资料访问：`SongRepository.load/refresh`、按需详情、`song_traits` 和 `event_cutoffs`。主资料、完整谱面与榜线独立配置；主资料后台对齐整点／半点刷新。歌曲分数表数据源已移除。

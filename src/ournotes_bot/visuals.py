@@ -1,6 +1,6 @@
 # L3
-# Input: 已选歌曲／单卡／当前页列表、Song／Chart 与可选谱面 score dict、MetaAnswer、条件／locale／页脚；render_catalog 消费 CardAnswer。
-# Output: render 返回编码 bytes；分数表串行绘图，双榜逐表合成后统一编码，不再次求值。
+# Input: 已选歌曲／单卡／当前页列表、Song／Chart 与可选谱面 score dict、条件／locale／页脚；render_catalog 消费 CardAnswer。
+# Output: render 返回歌曲、谱面及卡牌图片的编码 bytes。
 # Pos: Rendering 的共享主题／素材、歌曲绘图与卡牌委托入口；见 rendering/L2-2-Core.md、rendering/L2-2-Song.md、rendering/L2-2-Card.md。
 # Effects/Dependencies: 字体／素材读取、允许来源下载；素材原子缓存及坏缓存有限重取；_bytes 接管并关闭画布，Linux 大图在绘图任务退出后尝试归还空闲内存；成员列表可间接刷新 Haneoka；不调用模型或上传 QQ。
 
@@ -26,7 +26,6 @@ from PIL import Image, ImageDraw, ImageFont, ImageOps
 
 from .config import runtime_data_dir
 from .data import Card, Chart, Skill, Song, SupportCard, localized_text
-from .query.efficiency_query import MetaAnswer
 from .sources.yatta import ASSETS, BASE
 from .rendering.image_output import reclaim_after_render
 
@@ -42,7 +41,6 @@ MOTIF_INK = "#A0A8C7"
 MOTIF_MUTED = "#BBC1D7"
 FABRIC_TILE_SIZE = 640
 RENDER_SCALE = 2
-_META_RENDER_EXECUTOR = ThreadPoolExecutor(max_workers=1, thread_name_prefix="taki-meta-render")
 DIFFICULTY_COLORS = {
     "EASY": ("#D4E2F5", "#799CC8"),
     "NORMAL": ("#D3E8DF", "#78A793"),
@@ -798,151 +796,12 @@ def render_chart(song: Song, charts: tuple[Chart, ...], locale: str = "zh", scor
     return _bytes(image)
 
 
-def render_meta(answer: MetaAnswer) -> bytes:
-    # Reuse one worker's allocator arena as well as bounding concurrent canvases.
-    return _META_RENDER_EXECUTOR.submit(_render_meta, answer).result()
 
 
-@reclaim_after_render
-def _render_meta(answer: MetaAnswer) -> bytes:
-    if answer.panels:
-        # Capture native marks once so measuring and drawing use the same assets.
-        songs = tuple(song for panel in answer.panels for song in panel.song_records)
-        marks = _song_marks(songs)
-        mission_marks = _mission_marks(songs)
-        dimensions = [_meta_image(panel, size_only=True, marks=marks, mission_marks=mission_marks)
-                      for panel in answer.panels]
-        gap = 20 * RENDER_SCALE
-        panel_width = max(size[0] for size in dimensions)
-        width = panel_width * len(answer.panels) + gap * (len(answer.panels) - 1)
-        height = max(size[1] for size in dimensions)
-        image, _ = _background(width // RENDER_SCALE, math.ceil(height / RENDER_SCALE), scale=RENDER_SCALE)
-        try:
-            x = 0
-            for panel in answer.panels:
-                rendered = _meta_image(panel, marks=marks, mission_marks=mission_marks)
-                try:
-                    image.paste(rendered, (x, 0))
-                finally:
-                    rendered.close()
-                x += panel_width + gap
-            return _bytes(image)
-        finally:
-            image.close()
-    image = _meta_image(answer)
-    try:
-        return _bytes(image)
-    finally:
-        image.close()
 
 
-def _meta_image(answer: MetaAnswer, *, size_only=False, marks=None, mission_marks=None) -> Image.Image | tuple[int, int]:
-    # Both forms use the captured answer; drawing never fetches or sorts again.
-    if answer.cells:
-        return _render_meta_table(answer, raw=True, size_only=size_only, marks=marks, mission_marks=mission_marks)
-    text = answer.text
-    title = answer.title if answer.complete_text else "歌曲效率"
-    _, measure = _canvas(900, 200, title)
-    lines = [part for line in text.splitlines()
-             for part in _wrapped_lines(measure, line, 792, 22, max_lines=len(line) + 1)]
-    if size_only:
-        return 900 * RENDER_SCALE, (185 + len(lines) * 32) * RENDER_SCALE
-    image, draw = _canvas(900, 185 + len(lines) * 32, title)
-    draw.rounded_rectangle((38, 136, 862, image.height // RENDER_SCALE - 24), radius=18, fill="#FFFFFF", outline=BORDER, width=2)
-    top = 145
-    for line in lines:
-        _write(draw, line, 54, top, 792, 22, INK)
-        top += 32
-    return image
 
 
-def _render_meta_table(answer: MetaAnswer, *, raw=False, size_only=False, marks=None, mission_marks=None) -> bytes | Image.Image | tuple[int, int]:
-    # One row per song+difficulty; use the captured values, never recalculate metrics.
-    width, row_height = 1500, 112
-    edges = (40, 105, 660, 820, 960, 1180, 1460)
-    measure = ImageDraw.Draw(Image.new("RGB", (width, 200)))
-    full_scope = _wrapped_lines(measure, answer.scope, width - 100, 24, max_lines=len(answer.scope) + 1)
-    scope = full_scope[:4]
-    rows_y = 158 + 34 * len(scope)
-    marks = _song_marks(answer.song_records) if marks is None else marks
-    mission_marks = _mission_marks(answer.song_records) if mission_marks is None else mission_marks
-    heights = []
-    probe, pd = _background(width, 1)
-    for i in range(len(answer.cells)):
-        bottom = 0
-        if i < len(answer.song_records):
-            song = answer.song_records[i]
-            title_end, mark = _song_heading(probe, pd, song, 202, 10, 442, 28, marks=marks, measure_only=True)
-            bottom = _mission_chip(probe, pd, song.traits, 202, max(50, title_end + 6), 442, 17,
-                                   icons=mission_marks, mark_available=mark, measure_only=True)
-        heights.append(max(row_height, bottom + 12))
-    table_bottom = rows_y + sum(heights)
-    page_lines = [part for line in answer.page_notice.splitlines()
-                  for part in _wrapped_lines(measure, line, width - 136, 25, len(line) + 1)]
-    note_lines = [part for line in ((*full_scope[4:], *answer.notes) if len(full_scope) > 4 else answer.notes)
-                  for part in (*_wrapped_lines(measure, line, width - 136, 23, len(line) + 1), "")]
-    if note_lines:
-        note_lines.pop()
-    page_y = table_bottom + 20
-    notes_y = page_y + 36 + len(page_lines) * 38 + 18
-    notes_bottom = notes_y + 52 + sum(18 if not line else 34 for line in note_lines)
-    if size_only:
-        return width * RENDER_SCALE, (notes_bottom + 46) * RENDER_SCALE
-    image, draw = _canvas(width, notes_bottom + 46, answer.title)
-    draw.rounded_rectangle((36, 132, width - 36, rows_y - 8), radius=18, fill=PAPER)
-    for i, line in enumerate(scope):
-        draw.text((48, 142 + i * 34), line, font=_font(24), fill=MUTED)
-
-    def centered(text, left, right, center_y, size=28, color=INK):
-        font = _font(size)
-        bounds = draw.textbbox((0, 0), text, font=font)
-        _write(draw, text, int((left + right - min(draw.textlength(text, font=font), right - left - 24)) / 2),
-               round(center_y - (bounds[1] + bounds[3]) / 2), right - left - 24, size, color)
-
-    covers = _prefetch_assets(list(answer.jackets), (68, 68))
-    top = rows_y
-    for index, row in enumerate(answer.cells):
-        row_height = heights[index]
-        # A small clear margin separates the fabric from the content outline.
-        draw.rounded_rectangle((34, top, 1466, top + row_height), radius=22, fill=PAPER)
-        draw.rounded_rectangle((40, top + 6, 1460, top + row_height - 6), radius=18,
-                               fill=SURFACE if index % 2 == 0 else "#FFFFFF", outline=BORDER, width=2)
-        for x in (105, 660, 820, 960, 1180):
-            draw.line((x, top + 20, x, top + row_height - 20), fill=BORDER, width=2)
-        if answer.selection_numbers:
-            centered(row[0], edges[0], edges[1], top + row_height / 2 - 14, 23, ACCENT)
-            centered("选" + str(answer.selection_numbers[index]), edges[0], edges[1], top + row_height / 2 + 18, 17, MUTED)
-        else:
-            centered(row[0], edges[0], edges[1], top + row_height / 2, 23, ACCENT)
-        cover = covers.get(answer.jackets[index])
-        _paste_loaded_asset(image, draw, cover, (118, top + (row_height - 68) // 2, 186, top + (row_height + 68) // 2))
-        if index < len(answer.song_records):
-            song = answer.song_records[index]
-            bottom, mark = _song_heading(image, draw, song, 202, top + 10, 442, 28, marks=marks)
-            _mission_chip(image, draw, song.traits, 202, max(top + 50, bottom + 6), 442, 17,
-                          icons=mission_marks, mark_available=mark)
-        else:
-            for i, line in enumerate(_wrapped_lines(draw, row[1], 442, 28, max_lines=2)):
-                _write(draw, line, 202, top + 10 + i * 35, 442, 28)
-        _difficulty_badge(draw, row[2], row[3], (694, top + (row_height - 66) // 2, 786, top + (row_height + 66) // 2))
-        labels = answer.columns[4:7] if len(answer.columns) == 7 else ("时长", "得分系数", "每分钟得分效率")
-        for value, column, label in ((row[4], 3, labels[0]), (row[5], 4, labels[1]),
-                                     (row[6], 5, labels[2])):
-            centered(label, edges[column], edges[column + 1], top + row_height / 2 - 18, 18, MUTED)
-            centered(value, edges[column], edges[column + 1], top + row_height / 2 + 16, 28,
-                     ACCENT if column == 5 else INK)
-        top += row_height
-    draw.rounded_rectangle((40, page_y, 1460, notes_y - 18), radius=24,
-                           fill="#FFFFFF", outline=BORDER, width=2)
-    for i, line in enumerate(page_lines):
-        _write(draw, line, 68, page_y + 14 + i * 38, width - 136, 25, INK)
-    draw.rounded_rectangle((40, notes_y, 1460, notes_bottom), radius=24, fill=SURFACE)
-    y = notes_y + 20
-    for line in note_lines:
-        if line:
-            _write(draw, line, 68, y, width - 136, 23, MUTED)
-        y += 18 if not line else 34
-    return image if raw else _bytes(image)
 
 
 @reclaim_after_render

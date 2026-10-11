@@ -1,8 +1,8 @@
 # L3
 # Input: 来源记录／详情、主缓存、数据基址与缓存路径、独立主资料／谱面来源配置、加载／刷新请求及名称检索词。
-# Output: Song／Chart／Card／SupportCard／Skill、名称规则、SongRepository 聚合记录与缓存／完整度状态。
+# Output: Song／Chart／Card／SupportCard／Skill、名称规则、SongRepository 聚合记录与缓存／完整度状态、CatalogView 一致捕获。
 # Pos: Data / Catalog 的领域记录、主资料聚合、详情与主缓存实现；见 L2-2-Catalog.md。
-# Effects/Dependencies: 调用 Sources；Yume 保留兼容缓存与详情回退，Haneoka 使用独立完整快照且不跨源补全；分数表 music_data 独立惰性读取；frozen 记录含 dict。
+# Effects/Dependencies: 调用 Sources；Yume 保留兼容缓存与详情回退，Haneoka 使用独立完整快照且不跨源补全；Haneoka 刷新串行、IO 不持发布锁；frozen 记录含 dict。
 
 from __future__ import annotations
 
@@ -225,10 +225,22 @@ def character_identity(name: str) -> str:
     return name.strip()
 
 
+@dataclass(frozen=True)
+class CatalogView:
+    """Borrowed catalog references; consumers must not mutate records or mappings."""
+
+    songs: list[Song]
+    cards: list[Card]
+    support_cards: list[SupportCard]
+    metadata: dict[str, Any]
+    cache_state: str
+    last_successful_sync_at: str | None
+
+
 class SongRepository:
     CACHE_SCHEMA = 4
 
-    def __init__(self, data_base: str, cache_file: Path, cache_ttl_hours: float = 6, *, meta_source="moenotes",
+    def __init__(self, data_base: str, cache_file: Path, cache_ttl_hours: float = 6, *,
                  chart_source="moenotes", data_source="yume") -> None:
         if data_source not in {"yume", "haneoka"}:
             raise ValueError("unsupported main data source")
@@ -241,6 +253,7 @@ class SongRepository:
         self.cache_file = cache_file
         self.cache_ttl_hours = cache_ttl_hours
         self._song_lock = RLock()
+        self._catalog_refresh_lock = RLock()
         self.songs: list[Song] = []
         self.cards: list[Card] = []
         self.support_cards: list[SupportCard] = []
@@ -249,16 +262,6 @@ class SongRepository:
         self._detail_support_cards: dict[int, SupportCard] = {}
         self.cache_state = "unknown"
         self.last_successful_sync_at: str | None = None
-        from .sources.haneoka.song_meta import MetaRepository
-        self.song_meta = MetaRepository(cache_file.with_name("haneoka-meta-jp.json"))
-        if meta_source == "haneoka-site":
-            from .sources.haneoka.site_meta import SiteMetaRepository
-            self.song_meta = SiteMetaRepository(cache_file.with_name("haneoka-site-meta-jp-v1.json"))
-        from .sources.moenotes_music_data import MusicDataRepository
-        if meta_source not in {"moenotes", "haneoka", "haneoka-site"}:
-            raise ValueError("unsupported meta source")
-        self.meta_source = meta_source
-        self.music_data = MusicDataRepository(cache_file.with_name("moenotes-music-data-v1.json"))
         self.song_traits = SongTraitsRepository(cache_file.with_name("haneoka-song-traits-jp.json"))
         from .sources.moenotes_events import EventCutoffRepository
         self.event_cutoffs = EventCutoffRepository(cache_file.parent / "moenotes-cutoff-v1")
@@ -381,18 +384,35 @@ class SongRepository:
 
     def _load_haneoka(self, refresh=False):
         from .sources.haneoka.catalog import CatalogRepository
-        with self._song_lock:
+        # Serialize preparation AND publication, so a delayed earlier load cannot
+        # publish after a newer one. Readers never take this slow refresh lock.
+        with self._catalog_refresh_lock:
             if self._catalog_repository is None:
                 self._catalog_repository = CatalogRepository(
                     self.cache_file.with_name("haneoka-catalog-jp-v1.json"), self.cache_ttl_hours)
             records, metadata = self._catalog_repository.load(refresh)
-            self.songs, self.cards, self.support_cards = records
-            self.metadata = metadata
-            self.cache_state = self._catalog_repository.state
-            if self.cache_state != "unsaved":
-                self.last_successful_sync_at = metadata["cached_at"]
-            self._detail_cards.clear()
-            self._detail_support_cards.clear()
+            state = self._catalog_repository.state
+            # Conversion returns new records/mappings; never update a published
+            # view in place. HTTP, validation and persistence have already ended.
+            with self._song_lock:
+                self.songs, self.cards, self.support_cards = records
+                self.metadata = metadata
+                self.cache_state = state
+                if state != "unsaved":
+                    self.last_successful_sync_at = metadata["cached_at"]
+                self._detail_cards.clear()
+                self._detail_support_cards.clear()
+
+    def capture_catalog(self) -> CatalogView:
+        """Capture related Haneoka publication fields without source I/O.
+
+        Hashing, indexing and presentation happen after releasing the lock.
+        Haneoka writers replace these references; this is not a deep freeze or
+        a new atomic-publication guarantee for the legacy Yume refresh path.
+        """
+        with self._song_lock:
+            return CatalogView(self.songs, self.cards, self.support_cards, self.metadata,
+                               self.cache_state, self.last_successful_sync_at)
 
     def card_with_detail(self, card: Card) -> Card:
         if self.data_source == "haneoka":

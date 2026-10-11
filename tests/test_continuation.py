@@ -15,11 +15,9 @@ from ournotes_bot.query.continuation import (ContextKey, ContextStore, Operation
     catalog_version, execute_followup, parse_operation, CHANGED, MISSING)
 from ournotes_bot.platforms.qq.qq import (PreparedReply, QueryGate, ReplySequencer, _prepare_reply,
     _prepare_followup, _deliver_reply, context_key, reply_commands)
-from ournotes_bot.sources.haneoka.song_meta import parse_payload
 from ournotes_bot.sources.haneoka.song_traits import SongTraits
 from ournotes_bot.sources.yatta import build_data, build_support_cards
 from ournotes_bot.structured_query import QuerySpec, resolve_query
-from test_song_meta import payload, STAMP
 from test_query import CHARACTERS, CARDS, SONGS, META, SUPPORTS
 
 
@@ -27,13 +25,10 @@ class Fixture:
     def setup_repo(self):
         temp = tempfile.TemporaryDirectory()
         self.addCleanup(temp.cleanup)
-        self.repo = SongRepository("https://bdon.yatta.moe", Path(temp.name) / "cache.json", meta_source="haneoka")
-        ident, songs, meta = payload(35)
-        self.repo.songs = [Song(int(k), s["musicTitle"][0], tuple(s["musicTitle"]), "MyGO!!!!!", "", "", "", "", "",
+        self.repo = SongRepository("https://bdon.yatta.moe", Path(temp.name) / "cache.json")
+        self.repo.songs = [Song(i, f"合成曲{i}", (f"合成曲{i}",), "MyGO!!!!!", "", "", "", "", "",
                               (Chart("HARD", 20, 20, 100, ""), Chart("EXPERT", 25, 25, 200, "")),
-                              traits=SongTraits(2, ("JUST", "COMBO"))) for k, s in songs.items()]
-        snapshot = parse_payload(ident, songs, meta, STAMP)
-        self.repo.song_meta = SimpleNamespace(_snapshot=snapshot, get=Mock(return_value=snapshot))
+                              traits=SongTraits(2, ("JUST", "COMBO"))) for i in range(100001, 100036)]
         self.parser = AIQueryParser(Settings("", "", self.repo.data_base, self.repo.cache_file, 6, ""))
         self.key = ContextKey("qq", "group", "g1", "u1")
 
@@ -99,23 +94,6 @@ class ContinuationCoreTests(Fixture, unittest.TestCase):
         self.repo.chart_source = "haneoka"
         self.assertEqual(execute_followup(context, Operation("select", 1), self.repo), CHANGED)
 
-    def test_meta_selection_keeps_row_and_filters_and_version(self):
-        source = self.repo.song_meta._snapshot
-        hard = replace(source.rows[0], difficulty="HARD", eff=99, level=20)
-        snapshot = replace(source, rows=(hard, *source.rows))
-        self.repo.song_meta._snapshot = snapshot
-        self.repo.song_meta.get.return_value = snapshot
-        context = self.context("/查分数表 乐队=MyGO 颜色=蓝 激奏=JUST lv<=25 前10")
-        self.assertEqual(context.visible[0].difficulty, "HARD")
-        result, chosen = execute_followup(context, Operation("select", 1), self.repo)
-        self.assertEqual(result.meta.rows[0].difficulty, "HARD")
-        self.assertEqual(result.spec.song_filter.colors, (2,))
-        self.assertEqual(result.spec.song_filter.mode, "contains")
-        result, next_page = execute_followup(chosen, Operation("page", 1), self.repo)
-        self.assertEqual(next_page.query.limit, 10)
-        self.assertIn("颜色=蓝", next_page.query.command_label())
-        self.repo.song_meta._snapshot = replace(snapshot, source_version="changed")
-        self.assertEqual(execute_followup(next_page, Operation("select", 1), self.repo), CHANGED)
 
     def test_card_page_normalization_and_typed_selection(self):
         _, cards = build_data(CHARACTERS, CARDS, SONGS, META)

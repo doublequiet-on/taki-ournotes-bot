@@ -7,7 +7,7 @@
 from urllib.parse import parse_qs, urlsplit
 import re
 
-from .chart_data import ORIGIN, public_get
+from .transport import ORIGIN, public_get
 
 PREFIX = "/assets/jp/Assets/AddressableResources/"
 IMAGE_PATH = re.compile(r"/assets/(?:jp|intl)/Assets/AddressableResources/"

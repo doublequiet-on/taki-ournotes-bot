@@ -18,11 +18,11 @@
 
 ## Core Contracts
 
-默认分数表通过 `QuerySpec.meta_scene` 与原有歌曲筛选字段，读取 Haneoka 原生普通／激奏效率和倍率；双榜独立排名，选择号跨榜连续。旧 `meta_request` 仅供显式 Moenotes 使用。`/查活动` 通过 `CommandResult.activity` 返回当前活动文本，不请求排行。合同见 [统一来源说明](../docs/HANEOKA_UNIFIED.md)。
+`/查活动` 通过 `CommandResult.activity` 返回当前活动文本，不请求排行。合同见 [统一来源说明](../docs/HANEOKA_UNIFIED.md)。
 
 活动榜线以 `QuerySpec.cutoff_request` 和结果的可选 `cutoff: CutoffAnswer` 接入，图文共用不可变快照。直接与自然语言入口均保留服务器／歌曲选择（Haneoka 原序号未确认则拒绝）、趋势／附近／区间／离散模式及目标排名；只有趋势读取曲线历史，查询观测写入仍由来源负责，不使用旧自然语言终态缓存；详见 [Deterministic](ournotes_bot/query/L2-2.md) 与 [Natural](ournotes_bot/natural_query/L2-2.md)。
 
-`QuerySpec/QueryResult` 的当前位置是 [structured_query.py](ournotes_bot/structured_query.py)，`CommandResult` 在 [commands.py](ournotes_bot/commands.py)。专项选择为 `SongAnswer/CardAnswer/MetaAnswer`；实体坐标为 `EntityRef`。这些契约的所有者均是 Query，不因被 QQ/Rendering 使用而归入一个 Shared 域。
+`QuerySpec/QueryResult` 的当前位置是 [structured_query.py](ournotes_bot/structured_query.py)，`CommandResult` 在 [commands.py](ournotes_bot/commands.py)。专项选择为 `SongAnswer/CardAnswer`；实体坐标为 `EntityRef`。这些契约的所有者均是 Query，不因被 QQ/Rendering 使用而归入一个 Shared 域。
 
 `AIQueryParser.answer_with_plan` 返回文本与结果；不是已渲染图片，也不是模型自由文本。
 
@@ -41,9 +41,9 @@ Rendering 消费结果契约，不应由 Query 导入 Rendering。根入口与�
 
 ## State / Side Effects
 
-有限连续查询保存可见 ID／scoreId／难度及分数表场景、完整条件和版本；双榜至多60个选择，按图片选择号锁定对应场景，翻页仍保留两榜。平台／会话／用户隔离、600秒过期及完整发送确认规则保持，重启清空；不保存SDK消息、图片或历史库。
+有限连续查询保存可见 ID／难度、完整条件和版本，至多30个选择。平台／会话／用户隔离、600秒过期及完整发送确认规则保持，重启清空；不保存SDK消息、图片或历史库。
 
-确定性路径主要计算与读取，但详情补全和效率快照可能联网；别名解析读取本地 JSON。Natural 另有内存计划/终态缓存、持久额度和匿名指标；这三类状态独立于发布通知。
+确定性路径主要计算与读取，但详情补全可能联网；别名解析读取本地 JSON。Natural 另有内存计划/终态缓存、持久额度和匿名指标；这三类状态独立于发布通知。
 
 ## Failure / Degradation Boundaries
 

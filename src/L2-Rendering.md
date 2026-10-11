@@ -21,8 +21,7 @@
 
 ## Core Contracts
 
-Query 的 `MetaAnswer` 捕获表格数据和歌曲记录；卡牌入口接收单卡或已分页列表；歌曲入口接收已选歌曲与页脚。`visuals._bytes → image_output.encode_image` 汇总编码预算。预算常量是项目保守策略，不宣称是 QQ 官方硬限制。
-分数表每榜沿用已有三处数值区域、字号和行布局；双榜并列共图后统一执行图片预算，增加场景标题和选择号，单榜样式保持。scope超长进入既有说明区；图文消费同一捕获结果，绘图不重新查询或排序。
+卡牌入口接收单卡或已分页列表；歌曲入口接收已选歌曲与页脚。`visuals._bytes → image_output.encode_image` 汇总编码预算。预算常量是项目保守策略，不宣称是 QQ 官方硬限制。
 
 ## Internal Subsystems
 

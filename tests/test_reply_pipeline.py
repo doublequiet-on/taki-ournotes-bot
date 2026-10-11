@@ -204,7 +204,7 @@ class CatalogRefreshScheduleTests(unittest.IsolatedAsyncioTestCase):
         async def to_thread(func):
             return func()
 
-        repository = SimpleNamespace(meta_source="haneoka", songs=[], refresh=Mock(side_effect=refresh),
+        repository = SimpleNamespace(songs=[], refresh=Mock(side_effect=refresh),
                                      event_cutoffs=SimpleNamespace(history=True))
         with tempfile.TemporaryDirectory() as folder:
             settings = Settings("test-app", "", BASE, Path(folder)/"cache.json", 6,
@@ -249,7 +249,7 @@ class SDKStartupLoopTests(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         self.settings = Settings("test-app", "", BASE, Path(self.temp.name)/"cache.json", 6,
                                  qq_gateway_host="", update_notices=False)
-        self.repository = SimpleNamespace(meta_source="haneoka", event_cutoffs=SimpleNamespace(history=True))
+        self.repository = SimpleNamespace(event_cutoffs=SimpleNamespace(history=True))
         self.seen = []
 
     def start_without_login(self, *, fail=False):
@@ -303,39 +303,6 @@ class SDKStartupLoopTests(unittest.TestCase):
 
 
 class UpdateNoticeLifecycleTests(unittest.IsolatedAsyncioTestCase):
-    async def test_music_data_worker_is_wired_only_for_moenotes_and_stops_on_exit(self):
-        instances = []
-        class FakeClient:
-            def __init__(self, **kwargs):
-                self.robot = SimpleNamespace(name="Taki")
-                self.api = SimpleNamespace()
-                instances.append(self)
-            def run(self, **kwargs):
-                pass
-
-        with tempfile.TemporaryDirectory() as folder:
-            settings = Settings("test-app", "", BASE, Path(folder)/"cache.json", 6,
-                                qq_gateway_host="", update_notices=False)
-            repository = SimpleNamespace(meta_source="moenotes", music_data=Mock(),
-                                         refresh_song_traits=Mock(), event_cutoffs=SimpleNamespace(history=True))
-            with patch("botpy.Client", FakeClient), patch("ournotes_bot.sources.moenotes_music_data.MusicDataRefresher") as factory:
-                run_bot("test-app", "", repository, settings)
-                factory.assert_called_once_with(repository.music_data)
-                factory.return_value.stop.assert_called_once()
-                client = instances[-1]
-                try:
-                    await client.on_ready()
-                    await client.on_ready()
-                    self.assertEqual(factory.return_value.start.call_count, 2)
-                    factory.assert_called_once()
-                finally:
-                    client._refresh_task.cancel()
-                    client._song_traits_task.cancel()
-                    await asyncio.gather(client._refresh_task, client._song_traits_task, return_exceptions=True)
-                repository.meta_source = "haneoka"
-                factory.reset_mock()
-                run_bot("test-app", "", repository, settings)
-                factory.assert_not_called()
 
     async def test_ready_reconnect_events_and_disable_switch(self):
         instances = []
@@ -358,7 +325,7 @@ class UpdateNoticeLifecycleTests(unittest.IsolatedAsyncioTestCase):
                 await stopped.wait()
             notifier.run.side_effect = worker
             with patch("botpy.Client", FakeClient), patch("ournotes_bot.platforms.qq.qq.UpdateNotifier", return_value=notifier):
-                run_bot("test-app", "", SimpleNamespace(meta_source="haneoka", refresh_song_traits=Mock(), event_cutoffs=SimpleNamespace(history=None)), settings)
+                run_bot("test-app", "", SimpleNamespace(refresh_song_traits=Mock(), event_cutoffs=SimpleNamespace(history=None)), settings)
                 client = instances[-1]
                 try:
                     await client.on_ready()
@@ -382,7 +349,7 @@ class UpdateNoticeLifecycleTests(unittest.IsolatedAsyncioTestCase):
             with patch("botpy.Client", FakeClient), patch("ournotes_bot.platforms.qq.qq.UpdateNotifier") as constructor:
                 settings = Settings("test-app", "", BASE, Path(folder) / "cache.json", 6,
                                     qq_gateway_host="", update_notices=False)
-                run_bot("test-app", "", SimpleNamespace(meta_source="haneoka", refresh_song_traits=Mock(), event_cutoffs=SimpleNamespace(history=None)), settings)
+                run_bot("test-app", "", SimpleNamespace(refresh_song_traits=Mock(), event_cutoffs=SimpleNamespace(history=None)), settings)
                 client = instances[-1]
                 await client.on_ready()
                 self.assertFalse(hasattr(client, "_notice_task"))

@@ -36,7 +36,7 @@ def load_artwork(source, event, urls: tuple[str, ...]) -> dict[str, Image.Image 
     """Only source-derived artwork paths; no redirects, huge images or retry chain."""
     from urllib.parse import parse_qs, urlsplit
     from ..sources.haneoka.catalog_assets import is_catalog_asset
-    from ..sources.haneoka.chart_data import public_get
+    from ..sources.haneoka.transport import public_get
     deadline = source.monotonic() + 6
     prefix = f"{ASSETS}/{event.server}/{SERVERS[event.server][3]}/"
     def load(url):

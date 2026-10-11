@@ -132,12 +132,6 @@ def _support_cards(spec: QuerySpec, repository: SongRepository) -> QueryResult:
 
 
 CAPABILITIES = {
-    "song.meta": Capability(
-        "song.meta", "efficiency", "Haneoka普通／激奏参考效率与倍率查询；旧来源可显式选择",
-        ("query", "difficulty", "page", "metric", "order"),
-        ("由原文本地解析及有限统计模型执行；不生成游戏事实、ID、URL或推荐。参数必须与原文的本地解析完全一致。",),
-        True, False, False, True, True, structured_query.resolve_query,
-    ),
     "song.search": Capability(
         "song.search", "song", "按单一歌曲或乐队、难度和一个等级边界查询歌曲",
         ("query", "difficulty", "level_operator", "level", "page"),
@@ -194,9 +188,6 @@ def route_prompt() -> str:
 def local_route(question: str) -> str | None:
     """Route only when the question contains explicit capability evidence."""
     text = question.casefold()
-    from ..query.efficiency_query import MARKER
-    if MARKER.search(text):
-        return "song.meta"
     if re.search(r"支援卡|支援卡牌|支援内容", text):
         return "support_card.search"
     if re.search(r"成员卡|角色卡|卡牌|卡面|(?<!支援)卡(?:片|有哪些|有|详情|$)|技能", text):

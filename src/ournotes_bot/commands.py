@@ -2,7 +2,7 @@
 # Input: 命令文本、SongRepository；handle_command 可复用已捕获的 CommandResult。
 # Output: resolve_command → CommandResult | None；handle_command → str | None，含确定性查询、帮助或状态文本。
 # Pos: Query / Deterministic 的直接命令入口与结果契约；见 query/L2-2.md。
-# Effects/Dependencies: 依赖 query 专项模块、文案与进程内调试计数；实体解析可读别名，详情／效率可经 Data 联网或读写缓存，不调用模型。
+# Effects/Dependencies: 依赖 query 专项模块、文案与进程内调试计数；实体解析可读别名，详情可经 Data 联网或读写缓存，不调用模型。
 
 from __future__ import annotations
 
@@ -17,7 +17,6 @@ from .data import Card, Skill, Song, SongRepository, SupportCard, character_iden
 from .query.entity_lexicon import known_alias_names, resolve_exact_alias
 from .i18n import tr
 from .natural_query.query_debug import QUERY_DEBUG_COUNTERS
-from .query.efficiency_query import MetaAnswer, HELP as EFFICIENCY_HELP
 from .query.song_query import SongAnswer, parse_filter, execute as execute_song_filter
 from .sources.haneoka.song_traits import describe as describe_song
 from .query.card_catalog import CardAnswer, query_cards
@@ -31,7 +30,6 @@ HELP_TEXT = """Taki · Our Notes 日服资料查询
 颜色：红、蓝、绿、黄、紫；例 /查曲 颜色=蓝/绿
 激奏=JUST 表示包含；激奏=纯JUST 表示全段同类；激奏=混合；激奏=JUST/JUST/COMBO 按顺序匹配
 /查谱面 歌名或ID [难度]：查看等级与 Note 数；100001 可简写为 1
-/查分数表 [普通/激奏] [歌曲/乐队] [EX] [颜色=蓝/绿] [激奏=JUST] [指标=eff或score] [前10/20/30] [页N]：默认并列两场景，Haneoka 日服参考效率／倍率
 /查榜线 [jp/hk/kr/en] [歌名或歌曲ID=100001] [50或20-40] [仅数值]：顺序不限，默认日服全部歌曲；无排名看三曲合图趋势，有排名看分数表；50看40～60名，20-40看区间，50-50查一名，1-100查完整榜
 Haneoka 未确认原始歌曲序号，请用歌名或歌曲ID；旧T50也查附近，旧多T排名最多五个
 /查活动 [jp/hk/kr/en]：当前／最近活动信息、起止时间与挑战歌曲
@@ -41,7 +39,7 @@ Haneoka 未确认原始歌曲序号，请用歌名或歌曲ID；旧T50也查附�
 /查支援卡（或 /查SNAP）：同上筛选，另支持 EX、LIVE=技能延长
 /查卡面 ID、/查支援卡面 ID：只输出卡面；条件多选用逗号，同维度任选、跨维度同时满足
 /查缩写 昵称：查看昵称对应的角色、乐队等，也可直接用于查曲或查卡
-/问 想查的内容：自然语言查询歌曲、谱面、歌曲效率、成员卡技能或支援卡（复杂问法需配置 AI）
+/问 想查的内容：自然语言查询歌曲、谱面、成员卡技能或支援卡（复杂问法需配置 AI）
 /问 迷星叫 EX 物量：等级、Note、颜色、激奏、难度、数量及明确卡牌类型与ID的技能可本地短答
 /下一页、/上一页：继续上次列表；/选 2、/详情、/难度 EX：选择或切换难度
 续查也支持 /问 下一页、第 N 个、看详情、换成 EX；10 分钟未成功续查失效，请单独发送
@@ -74,7 +72,6 @@ Example: /song mygo 27, /chart 100001 EXPERT, /card tomori""",
 }
 
 COMMAND_HELP = {
-    "efficiency": EFFICIENCY_HELP,
     "songs": "查询歌曲列表，每页16首。支持歌名、昵称、乐队、ID、等级；27包含27.5，lv比较式未指定难度时按最高等级。可加颜色=蓝/绿、激奏=JUST、激奏=纯COMBO、激奏=混合或激奏=JUST/JUST/COMBO，并与EX、lv<=25、页N组合。同颜色多选任选，不同维度同时满足；包含全部用 激奏=包含全部JUST/COMBO。\n例：/查曲 蓝色 MyGO EX 激奏=JUST 页2",
     "chart": "查询谱面等级与 Note 数，支持歌名或曲目 ID。100001 可简写为 1。可选难度：EASY、NORMAL、HARD、EXPERT；不指定时显示全部难度。\n用法：/查谱面 <歌名或ID> [难度]\n示例：/查谱面 1 EXPERT、/查谱面 100001 EXPERT",
     "cards": "角色卡条件查询始终返回列表，每页16张，完整总数和翻页指令可见。ID精确查详情，/查卡面 ID 只发公开full卡面。\n用法：/查卡 [BD/SSR/SR/R] [颜色=红色,蓝色] [角色=tmr,skk] [乐队=MyGO] [LIVE=分数提升] [击奏=JUST] [得意=MyGO] [页N]\n不同维度AND、同维度多选OR，得意标签全部包含。BD为生日卡；旧二/三/四星别名保留。",
@@ -101,7 +98,6 @@ COMMAND_HELPS = {
 
 ALIASES = {
     "查榜线": "event_cutoff", "榜线": "event_cutoff",
-    "查分数表": "efficiency", "查效率": "efficiency",
     "查曲": "songs", "song": "songs", "songs": "songs", "曲": "songs", "楽曲": "songs",
     "查谱面": "chart", "查谱": "chart", "谱面": "chart", "chart": "chart", "譜面": "chart",
     "查卡": "cards", "查角色卡": "cards", "查卡面": "cards", "card": "cards", "cards": "cards", "カード": "cards",
@@ -109,7 +105,7 @@ ALIASES = {
     "supportcard": "support_cards", "supportcards": "support_cards", "サポート": "support_cards",
     "查缩写": "abbrev", "abbrev": "abbrev", "略称": "abbrev",
 }
-CANONICAL = {"efficiency": "/查分数表", "songs": "/查曲", "chart": "/查谱面", "cards": "/查卡", "support_cards": "/查支援卡", "abbrev": "/查缩写"}
+CANONICAL = {"songs": "/查曲", "chart": "/查谱面", "cards": "/查卡", "support_cards": "/查支援卡", "abbrev": "/查缩写"}
 CANONICAL_BY_LOCALE = {
     "zh": CANONICAL,
     "en": {"songs": "/song", "chart": "/chart", "cards": "/card", "support_cards": "/support", "abbrev": "/abbrev"},
@@ -398,13 +394,13 @@ def _command_tip(content: str) -> str | None:
             if suffix and not suffix.isalpha():
                 tail = f" {rest.strip()}" if rest.strip() else ""
                 return tr(locale, "missing_space", command=canonical[ALIASES[alias]], argument=suffix + tail) + "\n" + helps[ALIASES[alias]]
-            if suffix and alias in {"查曲", "查谱面", "查卡", "查卡面", "查支援卡", "支援卡", "查分数表", "查效率"}:
+            if suffix and alias in {"查曲", "查谱面", "查卡", "查卡面", "查支援卡", "支援卡"}:
                 if suffix in {"角色"}:
                     return tr(locale, "unknown") + "\n" + HELP_TEXTS[locale]
                 return tr(locale, "missing_space", command=canonical[ALIASES[alias]], argument=suffix) + "\n" + helps[ALIASES[alias]]
 
     candidates = {
-        "zh": ("查曲", "查谱面", "查分数表", "查卡", "查支援卡", "查缩写", "查活动", "查卡池", "ycx", "数据状态", "帮助"),
+        "zh": ("查曲", "查谱面", "查卡", "查支援卡", "查缩写", "查活动", "查卡池", "ycx", "数据状态", "帮助"),
         "en": ("song", "chart", "card", "support", "abbrev", "event", "gacha", "ycx", "status", "help"),
         "ja": ("曲", "譜面", "カード", "サポート", "略称", "イベント", "ガチャ", "予想線", "状態", "ヘルプ"),
     }[locale]
@@ -495,7 +491,6 @@ class CommandResult:
     cards: tuple[Card, ...] = ()
     support_cards: tuple[SupportCard, ...] = ()
     hint: str | None = None
-    meta: MetaAnswer | None = None
     catalog: CardAnswer | None = None
     song_selection: SongAnswer | None = None
     cutoff: CutoffAnswer | None = None
@@ -505,7 +500,7 @@ class CommandResult:
     activity: object | None = None
 
     def __post_init__(self):
-        for answer in (self.cutoff, self.meta, self.catalog, self.song_selection, self.activity):
+        for answer in (self.cutoff, self.catalog, self.song_selection, self.activity):
             if answer is not None:
                 object.__setattr__(self, "status", answer.status)
                 return
@@ -535,12 +530,6 @@ def resolve_command(content: str, repository: SongRepository) -> CommandResult |
         return CommandResult((kind, answer.request.query, answer.request.page),
                              cards=() if support else answer.cards,
                              support_cards=answer.cards if support else (), catalog=answer)
-    if re.match(r"^查(?:分数表|效率)(?:\s|$)", text):
-        from .query.efficiency_query import MetaAnswer, parse_efficiency, execute_efficiency
-        spec = parse_efficiency(text, repository, direct=True)
-        answer = MetaAnswer(spec, status=getattr(spec, "status", "invalid_arguments")) if isinstance(spec, str) else execute_efficiency(spec, repository)
-        return CommandResult(("efficiency", text, None), meta=answer,
-                             query_spec=None if isinstance(spec, str) else spec)
     parsed = parse_query(content)
     if kind == "chart" and len(parts) > 1:
         from .query.song_identity import exact_songs
@@ -619,14 +608,15 @@ def handle_command(content: str, repository: SongRepository,
             f"产生实际检索内容的 AI 查询：{snapshot.useful_ai_queries} 次"
         )
     if text.casefold() in {"数据状态", "状态", "版本", "status", "状態"}:
-        state = repository.cache_state
+        catalog = repository.capture_catalog()
+        state = catalog.cache_state
         if state not in {"fresh", "cached", "stale", "unsaved"}:
             state = "unknown"
         status = tr(
-            locale, "version", songs=len(repository.songs), cards=len(repository.cards),
-            support_cards=len(repository.support_cards),
-            skill_index=f"{sum(bool(card.skills) for card in repository.cards)}/{len(repository.cards)}",
-            time=_safe_sync_time(repository.last_successful_sync_at, locale),
+            locale, "version", songs=len(catalog.songs), cards=len(catalog.cards),
+            support_cards=len(catalog.support_cards),
+            skill_index=f"{sum(bool(card.skills) for card in catalog.cards)}/{len(catalog.cards)}",
+            time=_safe_sync_time(catalog.last_successful_sync_at, locale),
             cache=tr(locale, "cache_" + state),
         )
         traits = repository.song_traits
@@ -634,15 +624,15 @@ def handle_command(content: str, repository: SongRepository,
         main_catalog = getattr(repository, "data_source", "yume") == "haneoka"
         if main_catalog:
             status = status.replace("Project Yume", "Haneoka JP")
-            saved = {"release": repository.metadata.get("data_version", "未知"),
-                     "fetched_at": repository.metadata.get("cached_at")}
-        count = sum(bool(s.traits and s.traits.color and s.traits.missions) for s in repository.songs)
+            saved = {"release": catalog.metadata.get("data_version", "未知"),
+                     "fetched_at": catalog.metadata.get("cached_at")}
+        count = sum(bool(s.traits and s.traits.color and s.traits.missions) for s in catalog.songs)
         history = repository.event_cutoffs.history
         history_text = "\n" + history.status_text() if history else "\n榜线历史：未配置"
         sampler = getattr(repository, "cutoff_sampler", None)
         history_text += "\n周期采样：" + (sampler.last_state if sampler else "未启动")
-        return (status + f"\n歌曲颜色／激奏：{count}/{len(repository.songs)} · Haneoka 日服 · "
-                + ("旧缓存" if (repository.cache_state == "stale" if main_catalog else traits.stale) else "有效缓存" if saved else "等待后台获取")
+        return (status + f"\n歌曲颜色／激奏：{count}/{len(catalog.songs)} · Haneoka 日服 · "
+                + ("旧缓存" if (catalog.cache_state == "stale" if main_catalog else traits.stale) else "有效缓存" if saved else "等待后台获取")
                 + (f"\n属性版本：{saved['release']}\n本机获取：{_safe_sync_time(saved['fetched_at'], locale)}" if saved else "") + history_text)
 
     if text.casefold() in {"查缩写", "abbrev", "略称"}:
@@ -684,8 +674,6 @@ def handle_command(content: str, repository: SongRepository,
         return selection.cutoff.text
     if selection and selection.catalog is not None:
         return selection.catalog.text(locale)
-    if selection and selection.meta is not None:
-        return selection.meta.text
     if selection and selection.song_selection is not None:
         return selection.song_selection.text(locale)
     if parsed and parsed[0] in {"songs", "cards", "support_cards"} and selection.hint:
