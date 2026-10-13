@@ -39,8 +39,21 @@ def digest(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def git(*args):
-    return subprocess.check_output(["git", *args], cwd=ROOT, text=True, encoding="utf-8").strip()
+def git(*args, optional=False):
+    result = subprocess.run(["git", *args], cwd=ROOT, text=True, encoding="utf-8",
+                            stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    if result.returncode:
+        if optional:
+            return None
+        raise subprocess.CalledProcessError(result.returncode,result.args,result.stdout,result.stderr)
+    return result.stdout.strip()
+
+
+def version_info():
+    version=git("rev-parse","HEAD",optional=True)
+    available=bool(version and git("rev-parse","--verify",BASELINE+"^{commit}",optional=True))
+    changes=git("diff","--stat",BASELINE,version) if available else None
+    return version,available,changes
 
 
 def guard_paths(output, inputs):
@@ -62,7 +75,8 @@ class Gallery:
         self.font = font
         self.datasets = {}
         self.expected_families = set(FAMILIES)
-        self.version = git("rev-parse", "HEAD")
+        version,self.baseline_available,self.baseline_changes = version_info()
+        self.version = version or "源码归档（Git 版本不可用；以文件哈希追溯）"
         self.code_hashes = {str(p.relative_to(ROOT)).replace("\\", "/"): digest(p)
                             for p in (ROOT / "src/ournotes_bot").rglob("*.py")}
 
@@ -170,7 +184,8 @@ class Gallery:
         if not self.only and present != self.expected_families:
             raise AssertionError("missing output families: " + repr(self.expected_families - present))
         manifest = {"schema": 1, "preview_only": True, "code_version": self.version,
-                    "review_baseline": BASELINE, "changes_since_baseline": git("diff", "--stat", BASELINE, self.version),
+                    "review_baseline": BASELINE, "baseline_available": self.baseline_available,
+                    "changes_since_baseline": self.baseline_changes,
                     "production_code_sha256": self.code_hashes, "tool_sha256": digest(Path(__file__)),
                     "fixed_clock_utc": "2026-10-12T00:00:00Z", "font": {"path": str(self.font), "sha256": digest(self.font)},
                     "environment": {"python": sys.version, "platform": platform.platform(), "pillow": Image.__version__},

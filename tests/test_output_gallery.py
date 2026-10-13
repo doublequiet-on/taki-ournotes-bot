@@ -7,6 +7,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from PIL import Image
 
@@ -17,6 +18,18 @@ SPEC.loader.exec_module(MODULE)
 
 
 class OutputGalleryTests(unittest.TestCase):
+    def test_source_archive_has_explicitly_unavailable_git_metadata(self):
+        with tempfile.TemporaryDirectory() as directory, patch.object(MODULE,'ROOT',Path(directory)):
+            self.assertEqual(MODULE.version_info(),(None,False,None))
+
+    def test_missing_baseline_does_not_prevent_export_version_capture(self):
+        with patch.object(MODULE,'BASELINE','0'*40):
+            version,available,changes=MODULE.version_info()
+        self.assertFalse(available)
+        self.assertIsNone(changes)
+        # An archive has no HEAD either; a shallow checkout retains its HEAD.
+        self.assertEqual(version,MODULE.git('rev-parse','HEAD',optional=True))
+
     def test_output_cannot_overlap_read_only_inputs(self):
         source = Path(tempfile.gettempdir()) / "gallery-input"
         for output in (source, source / "output", source.parent):
