@@ -146,7 +146,7 @@ class SupportDataTests(unittest.TestCase):
         parser = AIQueryParser(Settings("", "", BASE, self.repo.cache_file, 6))
         answer = parser.answer("/问 支援卡有哪些 页2", self.repo)
         self.assertIn("页码超出范围", answer)
-        self.assertIn("/查支援卡", answer)
+        self.assertIn("/查留影卡", answer)
         self.assertEqual(
             query_page_notice(QuerySpec("support_card", display_name="全部支援卡"), 17, "zh"),
             "第 1/2 页 · 共 17张\n下一页：/问 支援卡有哪些 页2",

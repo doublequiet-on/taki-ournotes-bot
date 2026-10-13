@@ -23,6 +23,7 @@ data/*
 /QQ/
 /napcat-data/
 /runtime/
+/artifacts/output-gallery*/
 *qrcode*.png
 *login-qr*.png
 *.sqlite3

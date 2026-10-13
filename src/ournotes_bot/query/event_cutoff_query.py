@@ -262,6 +262,7 @@ class CutoffAnswer:
     status: str = "success"
     histories: tuple[tuple[str, HistoryView], ...] = ()
     display_ranks: tuple[int, ...] = ()  # A page projection of the same captured boards.
+    history_ranks: tuple[int, ...] = ()
 
     @property
     def ranks(self) -> tuple[int, ...]:
@@ -444,7 +445,9 @@ def _execute_cutoff(request: CutoffRequest, repository) -> CutoffAnswer:
         request = replace(request, query=songs[0].title, extra_queries=(), literal_query=True)
     boards = source.boards(event, songs, deadline)
     histories = ()
-    if request.mode == 'trend' and not request.numeric_only:
-        histories = tuple((b.song.challenge_id, source.history.read(event, b.song, NODES) if source.history
+    ranks=request.ranks or NODES
+    history_ranks=tuple(dict.fromkeys(ranks[round(i*(len(ranks)-1)/4)] for i in range(5)))
+    if not request.numeric_only:
+        histories = tuple((b.song.challenge_id, source.history.read(event, b.song, history_ranks) if source.history
                            else HistoryView(warning="历史记录未配置；当前值仍可查询。")) for b in boards)
-    return CutoffAnswer(request, event, boards, status="success" if any(b.scores for b in boards) else "data_unavailable", histories=histories)
+    return CutoffAnswer(request, event, boards, status="success" if any(b.scores for b in boards) else "data_unavailable", histories=histories,history_ranks=history_ranks)

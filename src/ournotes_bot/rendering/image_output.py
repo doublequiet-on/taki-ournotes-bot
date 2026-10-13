@@ -71,7 +71,12 @@ def reclaim_after_render(render):
     return wrapped
 
 
-def encode_image(image: Image.Image, *, close_input: bool = False) -> bytes:
+class ImageBudgetError(ValueError):
+    """The readable layout needs another image, not smaller text."""
+
+
+def encode_image(image: Image.Image, *, close_input: bool = False,
+                 preserve_size: bool = False) -> bytes:
     """Borrow the input by default; owned renderer canvases are always released."""
     original = image.size
     working = image
@@ -84,6 +89,8 @@ def encode_image(image: Image.Image, *, close_input: bool = False) -> bytes:
             else:
                 working.paste(image)
         factor = min(1, MAX_IMAGE_EDGE / max(working.size), math.sqrt(MAX_IMAGE_PIXELS / (working.width * working.height)))
+        if preserve_size and factor < 1:
+            raise ImageBudgetError("Readable canvas exceeds the dimension budget")
         if factor < 1:
             resized = working.resize((max(1, int(working.width * factor)), max(1, int(working.height * factor))), Image.Resampling.LANCZOS)
             if working is not image:
@@ -103,6 +110,8 @@ def encode_image(image: Image.Image, *, close_input: bool = False) -> bytes:
                 if len(blob) <= MAX_IMAGE_BYTES:
                     logger.debug("图片编码 %sx%s -> %sx%s quality=%d bytes=%d", *original, *working.size, quality, len(blob))
                     return blob
+            if preserve_size:
+                raise ImageBudgetError("Readable canvas exceeds the byte budget")
             # Scaling is uniform; never crop content, drop rows or split sends.
             ratio = min(.85, math.sqrt(MAX_IMAGE_BYTES / len(blob)) * .95)
             resized = working.resize((max(1, int(working.width * ratio)), max(1, int(working.height * ratio))), Image.Resampling.LANCZOS)

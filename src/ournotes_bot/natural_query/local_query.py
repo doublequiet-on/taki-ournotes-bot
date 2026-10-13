@@ -214,7 +214,7 @@ def local_card_catalog(query: str, repository: SongRepository) -> QuerySpec | st
         member = any(c.id == number for c in repository.cards)
         support_id = any(c.id == number for c in repository.support_cards)
         if member and support_id:
-            return f"ID {number} 同时存在于角色卡与 SNAP，请指定 /查卡 {number} 或 /查支援卡 {number}。"
+            return f"ID {number} 同时存在于角色卡与 SNAP，请指定 /查卡 {number} 或 /查留影卡 {number}。"
     obj = re.search(r"SNAP|支援卡|角色卡|成员卡|卡牌|卡", text, re.I)
     if not obj or (obj[0].lower() != "snap" and not re.search(r"[=：:]|[红蓝绿黄紫黑白橙青灰]色|JUST|COMBO|LUCK|LIVE\s*(?:分数提升|LIFE回复|判定强化|技能延长)|得意|(?<![A-Za-z])(?:BD|EX)(?![A-Za-z])|(?:SSR|SR|R)[,，或 /]+(?:SSR|SR|R)", text, re.I)):
         return None

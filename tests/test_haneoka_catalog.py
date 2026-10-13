@@ -29,6 +29,8 @@ class CatalogTests(unittest.TestCase):
         fixture = json.loads(FIXTURE.read_bytes())
         self.saved, self.expected = fixture["snapshot"], fixture["expected_yume"]
         self.saved["documents"]["jp"].setdefault("ui-marks", {})
+        self.saved["documents"]["intl"].setdefault("ui-marks", {})
+        self.saved["documents"]["intl"].setdefault("progression", {k:[] for k in ("memberCardLevels","memberCardRanks","supportCardLevels","supportCardRanks")})
         self.now, self.calls = 1100, []
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
@@ -50,7 +52,7 @@ class CatalogTests(unittest.TestCase):
             value = ident
         else:
             self.assertEqual(query["release"], [ident["releaseId"]])
-            value = self.saved["documents"][server][resource]
+            value = ({"entries": {}} if resource in {"events","gacha"} else self.saved["documents"][server][resource])
             if "id" in query:
                 self.assertLessEqual(len(query["id"]), 100)
                 value = {"items": {k: value[k] for k in query["id"]}, "missing": []}

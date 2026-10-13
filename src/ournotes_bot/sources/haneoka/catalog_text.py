@@ -95,7 +95,7 @@ def mechanics(skill, refs):
             "mission": skill.get("gekisouMissionType"), "timing": skill.get("gekisouSupportSkillExecTiming")}
 
 
-def effect_context(skill, refs, locale):
+def effect_context(skill, refs, locale, level=5):
     def condition(row):
         return {"values": row["_conditionValues"],
                 "targets": [{"name": language(refs["targets"][key].get("name", []), locale)}
@@ -109,7 +109,7 @@ def effect_context(skill, refs, locale):
             raise ValueError("missing condition group")
         return [[condition(refs["conditions"][key]["raw"]) for key in row["_conditionIds"]] for row in sets]
 
-    rows = [effect for effect in skill["effects"] if effect.get("level") == 5]
+    rows = [effect for effect in skill["effects"] if effect.get("level") == level]
     if not rows or len(rows) > 16 or len({r["effectId"] for r in rows}) != len(rows):
         raise ValueError("missing or duplicate Lv.5 effects")
     result = []

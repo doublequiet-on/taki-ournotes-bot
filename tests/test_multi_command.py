@@ -125,7 +125,8 @@ class PrepareCommandsTests(unittest.IsolatedAsyncioTestCase):
             replies, _ = await prepare_commands(
                 ["a", "b", "c", "d", "e", "f"], gate, self.repo, None, 6,
             )
-        self.assertEqual(len(replies), 6)
+        self.assertEqual(len(replies), 5)
+        self.assertEqual(replies[-1].context.remaining[0].text, "f")
         self.assertEqual(running["peak"], 2)
 
     async def test_overflow_is_reported_and_not_run(self):

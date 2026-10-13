@@ -180,6 +180,12 @@ class BoardSnapshot:
     source: str = "tracker"
     time_kind: str = "tracker_observed"
     contract_version: str = "tracker/1"
+    player_details: tuple[dict | None, ...] = ()
+
+    def player_detail(self, rank: int) -> dict | None:
+        if self.score(rank) is None or not 1 <= rank <= len(self.player_details):
+            return None
+        return self.player_details[rank - 1]
 
     def score(self, rank: int) -> int | None:
         return self.scores[rank - 1] if 1 <= rank <= len(self.scores) else None

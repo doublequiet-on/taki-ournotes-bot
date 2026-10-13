@@ -36,8 +36,8 @@ Haneoka 未确认原始歌曲序号，请用歌名或歌曲ID；旧T50也查附�
 榜线当前排名同时显示分数、数字ID与用户名；缺失会标注，历史曲线仅记录分数。
 四服：日服（jp）、国服（hk）、韩服（kr）、英服（en）；仅数值只回文字
 /查卡 [BD/SSR/SR/R] [颜色=红色] [角色=tmr] [乐队=MyGO] [LIVE=分数提升] [击奏=JUST] [页N]：条件卡牌列表；指定ID看详情
-/查支援卡（或 /查SNAP）：同上筛选，另支持 EX、LIVE=技能延长
-/查卡面 ID、/查支援卡面 ID：只输出卡面；条件多选用逗号，同维度任选、跨维度同时满足
+/查留影卡（兼容 /查支援卡、/查SNAP）：同上筛选，另支持 EX、LIVE=技能延长
+/查卡面 ID、/查留影卡面 ID：只输出卡面；条件多选用逗号，同维度任选、跨维度同时满足
 /查缩写 昵称：查看昵称对应的角色、乐队等，也可直接用于查曲或查卡
 /问 想查的内容：自然语言查询歌曲、谱面、成员卡技能或支援卡（复杂问法需配置 AI）
 /问 迷星叫 EX 物量：等级、Note、颜色、激奏、难度、数量及明确卡牌类型与ID的技能可本地短答
@@ -72,10 +72,10 @@ Example: /song mygo 27, /chart 100001 EXPERT, /card tomori""",
 }
 
 COMMAND_HELP = {
-    "songs": "查询歌曲列表，每页16首。支持歌名、昵称、乐队、ID、等级；27包含27.5，lv比较式未指定难度时按最高等级。可加颜色=蓝/绿、激奏=JUST、激奏=纯COMBO、激奏=混合或激奏=JUST/JUST/COMBO，并与EX、lv<=25、页N组合。同颜色多选任选，不同维度同时满足；包含全部用 激奏=包含全部JUST/COMBO。\n例：/查曲 蓝色 MyGO EX 激奏=JUST 页2",
+    "songs": "查询歌曲列表，QQ单图优先，超限完整续发。支持歌名、昵称、乐队、ID、等级；27包含27.5，lv比较式未指定难度时按最高等级。可加颜色=蓝/绿、激奏=JUST、激奏=纯COMBO、激奏=混合或激奏=JUST/JUST/COMBO，并与EX、lv<=25、页N组合。同颜色多选任选，不同维度同时满足；包含全部用 激奏=包含全部JUST/COMBO。\n例：/查曲 蓝色 MyGO EX 激奏=JUST 页2",
     "chart": "查询谱面等级与 Note 数，支持歌名或曲目 ID。100001 可简写为 1。可选难度：EASY、NORMAL、HARD、EXPERT；不指定时显示全部难度。\n用法：/查谱面 <歌名或ID> [难度]\n示例：/查谱面 1 EXPERT、/查谱面 100001 EXPERT",
-    "cards": "角色卡条件查询始终返回列表，每页16张，完整总数和翻页指令可见。ID精确查详情，/查卡面 ID 只发公开full卡面。\n用法：/查卡 [BD/SSR/SR/R] [颜色=红色,蓝色] [角色=tmr,skk] [乐队=MyGO] [LIVE=分数提升] [击奏=JUST] [得意=MyGO] [页N]\n不同维度AND、同维度多选OR，得意标签全部包含。BD为生日卡；旧二/三/四星别名保留。",
-    "support_cards": "SNAP条件查询始终返回列表，每页16张；ID精确查详情，/查支援卡面 ID 只发卡面。\n用法：/查SNAP [SSR/EX/SR/R] [颜色=红色,蓝色] [角色=tmr,skk] [乐队=MyGO] [LIVE=技能延长] [击奏=LUCK] [页N]\nLIVE可选分数提升、LIFE回复、判定强化、技能延长；以实际资料为准。角色任选且去重，乐队另行筛选；不支持得意标签；BD仅适用于角色卡。",
+    "cards": "角色卡条件查询始终返回列表，QQ单图优先，超限完整续发，完整总数和翻页指令可见。ID精确查详情，/查卡面 ID 只发公开full卡面。\n用法：/查卡 [BD/SSR/SR/R] [颜色=红色,蓝色] [角色=tmr,skk] [乐队=MyGO] [LIVE=分数提升] [击奏=JUST] [得意=MyGO] [页N]\n不同维度AND、同维度多选OR，得意标签全部包含。BD为生日卡；旧二/三/四星别名保留。",
+    "support_cards": "留影卡条件查询返回完整列表，QQ单图优先；ID精确查详情，/查留影卡面 ID 只发卡面。\n用法：/查SNAP [SSR/EX/SR/R] [颜色=红色,蓝色] [角色=tmr,skk] [乐队=MyGO] [LIVE=技能延长] [击奏=LUCK] [页N]\nLIVE可选分数提升、LIFE回复、判定强化、技能延长；以实际资料为准。角色任选且去重，乐队另行筛选；不支持得意标签；BD仅适用于角色卡。",
     "abbrev": "查询已收录的角色、乐队等昵称；也可直接用昵称查曲或查卡。\n用法：/查缩写 <昵称>\n示例：/查缩写 skk、/查缩写 茉团、/查卡 墨缇丝",
 }
 COMMAND_HELPS = {
@@ -101,11 +101,11 @@ ALIASES = {
     "查曲": "songs", "song": "songs", "songs": "songs", "曲": "songs", "楽曲": "songs",
     "查谱面": "chart", "查谱": "chart", "谱面": "chart", "chart": "chart", "譜面": "chart",
     "查卡": "cards", "查角色卡": "cards", "查卡面": "cards", "card": "cards", "cards": "cards", "カード": "cards",
-    "查支援卡": "support_cards", "查snap": "support_cards", "snap": "support_cards", "查支援卡面": "support_cards", "查snap卡面": "support_cards", "支援卡": "support_cards", "support": "support_cards",
+    "查留影卡": "support_cards", "查留影卡面": "support_cards", "查支援卡": "support_cards", "查snap": "support_cards", "snap": "support_cards", "查支援卡面": "support_cards", "查snap卡面": "support_cards", "支援卡": "support_cards", "support": "support_cards",
     "supportcard": "support_cards", "supportcards": "support_cards", "サポート": "support_cards",
     "查缩写": "abbrev", "abbrev": "abbrev", "略称": "abbrev",
 }
-CANONICAL = {"songs": "/查曲", "chart": "/查谱面", "cards": "/查卡", "support_cards": "/查支援卡", "abbrev": "/查缩写"}
+CANONICAL = {"songs": "/查曲", "chart": "/查谱面", "cards": "/查卡", "support_cards": "/查留影卡", "abbrev": "/查缩写"}
 CANONICAL_BY_LOCALE = {
     "zh": CANONICAL,
     "en": {"songs": "/song", "chart": "/chart", "cards": "/card", "support_cards": "/support", "abbrev": "/abbrev"},
@@ -394,13 +394,13 @@ def _command_tip(content: str) -> str | None:
             if suffix and not suffix.isalpha():
                 tail = f" {rest.strip()}" if rest.strip() else ""
                 return tr(locale, "missing_space", command=canonical[ALIASES[alias]], argument=suffix + tail) + "\n" + helps[ALIASES[alias]]
-            if suffix and alias in {"查曲", "查谱面", "查卡", "查卡面", "查支援卡", "支援卡"}:
+            if suffix and alias in {"查曲", "查谱面", "查卡", "查卡面", "查留影卡", "查留影卡面", "查支援卡", "支援卡"}:
                 if suffix in {"角色"}:
                     return tr(locale, "unknown") + "\n" + HELP_TEXTS[locale]
                 return tr(locale, "missing_space", command=canonical[ALIASES[alias]], argument=suffix) + "\n" + helps[ALIASES[alias]]
 
     candidates = {
-        "zh": ("查曲", "查谱面", "查卡", "查支援卡", "查缩写", "查活动", "查卡池", "ycx", "数据状态", "帮助"),
+        "zh": ("查曲", "查谱面", "查卡", "查留影卡", "查缩写", "查活动", "查卡池", "ycx", "数据状态", "帮助"),
         "en": ("song", "chart", "card", "support", "abbrev", "event", "gacha", "ycx", "status", "help"),
         "ja": ("曲", "譜面", "カード", "サポート", "略称", "イベント", "ガチャ", "予想線", "状態", "ヘルプ"),
     }[locale]
@@ -525,7 +525,7 @@ def resolve_command(content: str, repository: SongRepository) -> CommandResult |
     if kind in {"cards", "support_cards"} or head in {"查角色卡", "查snap", "snap", "查支援卡面", "查snap卡面"}:
         support = kind == "support_cards" or head in {"查snap", "snap", "查支援卡面", "查snap卡面"}
         query = parts[1] if len(parts) > 1 else ""
-        answer = query_cards(query, repository, support=support, art=head in {"查卡面", "查支援卡面", "查snap卡面"})
+        answer = query_cards(query, repository, support=support, art=head in {"查留影卡面", "查卡面", "查支援卡面", "查snap卡面"})
         kind = "support_cards" if support else "cards"
         return CommandResult((kind, answer.request.query, answer.request.page),
                              cards=() if support else answer.cards,

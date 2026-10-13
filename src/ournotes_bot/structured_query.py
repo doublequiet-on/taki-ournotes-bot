@@ -79,7 +79,7 @@ class QuerySpec:
         if self.cutoff_request is not None:
             return self.cutoff_request.command_label()
         if self.card_query is not None:
-            return (("查支援卡 " if self.intent == "support_card" else "查卡 ")
+            return (("查留影卡 " if self.intent == "support_card" else "查卡 ")
                     + self.card_query + (f" 页{self.page}" if self.page > 1 else ""))
         if self.intent == "card" and (self.skill_query or self.skill_kind):
             subject = f"{self.display_name}的" if self.display_name else ""
@@ -92,7 +92,7 @@ class QuerySpec:
             label = f"问 {rarity}支援卡有哪些"
             return label + (f" 页{self.page}" if self.page > 1 else "")
         name = {"song": "查曲", "chart": "查谱面", "card": "查卡",
-                "support_card": "查支援卡"}[self.intent]
+                "support_card": "查留影卡"}[self.intent]
         query = self.query_label()
         if self.intent == "chart" and self.difficulty:
             query += f" {self.difficulty}"

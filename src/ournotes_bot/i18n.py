@@ -27,7 +27,7 @@ MESSAGES = {
         "no_charts": "该难度暂无数据",
         "next_chart": "发送“查谱面 <ID> [难度]”查看详情。",
         "next_card": "发送“查卡面 <卡牌ID>”查看大图。",
-        "next_support_card": "发送“查支援卡 <支援卡ID>”查看详情和大图。",
+        "next_support_card": "发送“查留影卡 <支援卡ID>”查看详情和大图。",
         "stats": "综合力",
         "support_bonus": "支援加成",
         "performance": "演出",

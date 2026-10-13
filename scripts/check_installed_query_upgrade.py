@@ -44,7 +44,7 @@ def main():
     # pip --target relocates data-files without rewriting their RECORD paths.
     # Verify actual installed resources through the runtime's resource locator.
     resources = ("query_aliases.json", "THIRD_PARTY.md", "docs/CUTOFF_HISTORY.md",
-                 "docs/QUERY_UPGRADE_V1.md", "docs/META_OPEN.md", "docs/HANEOKA_CATALOG.md", "docs/HANEOKA_CUTOFFS.md",
+                 "docs/IMAGE_OUTPUT.md", "docs/QUERY_UPGRADE_V1.md", "docs/META_OPEN.md", "docs/HANEOKA_CATALOG.md", "docs/HANEOKA_CUTOFFS.md",
                  "docs/HANEOKA_META_CONTRACT.md", "docs/HANEOKA_RETIREMENT.md", "docs/HANEOKA_RESEARCH.md", "docs/HANEOKA_UNIFIED.md",
                  "deploy/query-upgrade-v1.env.example")
     for relative in resources:
@@ -80,6 +80,15 @@ def main():
         assert haneoka.record(event, replace(board, scores=(100, 0), source="haneoka", time_kind=HT, contract_version=HC)) == "valid"
         assert haneoka.read(event, song, (1, 2)).points[0].source == "haneoka"
         assert "configured=False" in repr(OpenClient())
+    from ournotes_bot.rendering.haneoka_theme import font
+    from ournotes_bot.rendering.song_layout import render_list
+    from ournotes_bot.sources.haneoka.game_assets import MANIFEST
+    from ournotes_bot.sources.haneoka.visual_skill_contracts import contracts
+    from ournotes_bot.data import Song
+    assert font(24).getlength('完整图片')>0 and font(24,numeric=True).getlength('100')>0
+    assert 'skin001.png' in MANIFEST and contracts()
+    parts,ranges=render_list((Song(1,'安装测试',('安装测试',),'乐队','','','','','',()),),'安装测试',load=lambda *a:None)
+    assert parts[0].image and ranges==((0,1),)
     print(json.dumps({"installed_version": distribution.version, "modules": len(modules),
                       "isolated": True, "network": False, "resources": True, "history": True}))
 

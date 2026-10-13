@@ -16,7 +16,7 @@
 
 - 启动：`main.py::main` → `Settings.from_env` → `SongRepository.load` → `platforms/qq/qq.py::run_bot`。命令行 `query` 走文字分支，不能验证 QQ 图文发送。
 - QQ：`run_bot` 内 `OurNotesClient.on_group_at_message_create` / `on_c2c_message_create` → `commands.py::split_commands` → `_reply_commands` → `prepare_commands` / `QueryGate.prepare` → `_prepare_reply`。群聊仅明确 @ 触发；兼容事件入口见 `register_group_message_parser`。
-- 直接查询：`commands.py::resolve_command` / `handle_command` → `SongRepository`；`_prepare_reply` 将同份结果交给 `_image_from_result` → `visuals.py` → `_deliver_reply` 上传发送。绘图失败退文字，发送结果不明不自动重发。
+- 直接查询：`commands.py::resolve_command` / `handle_command` → `SongRepository`；`_prepare_reply` 将同份结果交给 `_render_prepared` → `rendering/*_layout.py`（原卡面／彩蛋沿用旧入口） → `_deliver_reply` 上传发送。绘图失败退文字，发送结果不明不自动重发。
 - `/问`：`AIQueryParser.answer_with_plan` → `QueryAgent.run` → 缓存及本地命令/`parse_local_query`；未命中才走能力路由、模型结构化动作、`natural_query/query_validation.py` 校验 → `structured_query.py::resolve_query`。歌曲等级与难度先由 `query/song_conditions.py` 从用户原文提取证据，再校验模型动作；模型自由文本不能成为事实答案。
 
 ## 任务导航
@@ -109,6 +109,8 @@ python scripts/check_release_artifact.py dist
 
 ## 文档维护
 
+完整现状图片盘点使用 `python -B scripts/export_output_gallery.py --output artifacts/output-gallery`；公开素材缓存可选，参数、来源和基础计时范围见 [画廊说明](OUTPUT_GALLERY.md)。当前分页全部保留，图片点击查看编码原图；对应 `test_output_gallery.py`。
+
 根 [AGENTS.md](../AGENTS.md) 是短入口；本指南维护任务映射；[README](../README.md) 维护用户能力与路线图；[交接文档](../交接文档.md) 保留交接入口；本机 `项目日志.md`（未随仓库发布）仅供需要历史证据且文件存在时查阅。不每次追加开发流水账，不复制专项规格。入口、接口、来源、关键约束或验证方式变化时，才更新对应段落。旧方案中的基线描述与代码不符应明确区分，产品要求继续有效。
 
 - 卡牌列表与详情通过 `rendering/card_visuals.py` 复用 `visuals.py::_canvas` 的统一布纹、圆角边框、配色与两倍分辨率绘制；不得另建独立主题。纯卡面输出保持原图比例。共享视觉基线来自主线 `6d7f489`（PR #18–20）；后续集成需保留主线样式更新。相关离线检查：`test_visuals.py`、`test_card_catalog.py`。
@@ -133,3 +135,5 @@ Moenotes 可选 open 榜线：`sources/moenotes_open.py::OpenClient`、`OpenEven
 歌曲分数表已彻底移除；算分与配队计算仍未实现。直接查询不调用模型，已退役的效率问法在本地拒绝。测试凭据须清空，包括 `MOENOTES_OPEN_SECRET` 和 `BDON_OPENPLATFORM`。
 
 歌曲列表与谱面复用 `visuals._song_heading`、`_mission_marks` / `_mission_chip`；测试 `test_visuals.py`、`test_song_traits.py`。
+
+统一美工与单图优先实现、验证和性能：[IMAGE_OUTPUT](IMAGE_OUTPUT.md)。

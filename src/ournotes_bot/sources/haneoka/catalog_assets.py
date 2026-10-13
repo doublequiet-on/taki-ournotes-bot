@@ -12,18 +12,19 @@ from .transport import ORIGIN, public_get
 PREFIX = "/assets/jp/Assets/AddressableResources/"
 IMAGE_PATH = re.compile(r"/assets/(?:jp|intl)/Assets/AddressableResources/"
     r"(?:Image/Jacket/(?:small/)?[A-Za-z0-9_-]+|MemberCard/[0-9]+/member_(?:full|thumbnail)|"
-    r"SupportCard/[0-9]+/snap_(?:full|thumbnail)|Story/Banner/Chapter/[A-Za-z0-9_-]+)\.(?:png|webp)")
-ICON_PATH = re.compile(r"/runtime/jp/unity/Assets/AddressableResources/UI/Atlas/"
+    r"SupportCard/[0-9]+/snap_(?:full|thumbnail)|Story/Banner/Chapter/[A-Za-z0-9_-]+|"
+    r"Item/[A-Za-z0-9_-]+/item_icon_[A-Za-z0-9_-]+|Gacha/Banner/[A-Za-z0-9_-]+|Character/Skill/icon_skill_[A-Za-z0-9_]+|Band/[0-9]+/band_(?:logo|small_Icon)|Character/Image/[0-9]+/character_face_icon)\.(?:png|webp)")
+ICON_PATH = re.compile(r"/runtime/(?:jp|intl)/unity/Assets/AddressableResources/UI/Atlas/"
     r"FixUiSpriteAtlas\.spriteatlasv2/CardType-(?:Red|Blue|Green|Yellow|Purple)--Sprite--?[0-9]+\.png")
 
 
-def attribute_url(marks, color, release):
+def attribute_url(marks, color, release, server="jp"):
     name = {1: "Red", 2: "Blue", 3: "Green", 4: "Yellow", 5: "Purple"}.get(color)
     path = marks.get(f"CardType-{name}.png") if isinstance(marks, dict) else None
     if not isinstance(path, str) or not path.startswith("runtime/"):
         return ""
     try:
-        return asset_url("/runtime/jp/" + path.removeprefix("runtime/"), release)
+        return asset_url(f"/runtime/{server}/" + path.removeprefix("runtime/"), release)
     except ValueError:
         return ""
 

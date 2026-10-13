@@ -83,6 +83,35 @@ def decode_current(data, region):
                          source="haneoka", challenge_order_verified=False, metadata_version="")
 
 
+def player_detail(row):
+    """Optional public roster fields; never expose opaque IDs or arbitrary URLs."""
+    def value(v):
+        return v if type(v) is int and 0 <= v <= MAX_SCORE else None
+    fields = ('rankExp', 'favoriteMemberCardId', 'totalPower')
+    detail = {k: value(row.get(k)) for k in fields}
+    if detail['favoriteMemberCardId']==0:detail['favoriteMemberCardId']=None
+    cards = row.get('cards')
+    detail['cards'] = []
+    if isinstance(cards, list) and len(cards) <= 5:
+        seen = set()
+        for card in cards:
+            if (not isinstance(card, dict) or type(card.get('slot')) is not int
+                    or not 0 <= card['slot'] < 5 or card['slot'] in seen):
+                detail['cards'] = []
+                break
+            seen.add(card['slot'])
+            detail['cards'].append({k: value(card.get(k)) for k in
+                ('slot', 'memberCardId', 'memberExp', 'memberAwakeCount', 'memberRank',
+                 'supportCardId', 'supportExp', 'supportRank')})
+        for card in detail['cards']:
+            for key in ('memberAwakeCount','supportRank'):
+                if card[key] is not None and card[key]>5:card[key]=None
+            for key in ('memberCardId','supportCardId'):
+                if card[key]==0:card[key]=None
+        detail['cards'].sort(key=lambda c: c['slot'])
+    return detail
+
+
 def decode_board(data, event, song):
     if (not matches_game_region(data.get("region"), event.server) or data.get("eventId") != event.event_id
             or data.get("challengeId") != song.challenge_id or type(data.get("stale")) is not bool):
@@ -91,7 +120,7 @@ def decode_board(data, event, song):
     rows = data.get("rows")
     if not isinstance(rows, list) or len(rows) > 100:
         raise SourceError("invalid_board")
-    scores, ids, names = [], [], []
+    scores, ids, names, details = [], [], [], []
     unsafe = False
     for position, row in enumerate(rows, 1):
         # Null/non-object rows occupy their original slot. Never compact or sort.
@@ -105,7 +134,8 @@ def decode_board(data, event, song):
         public_id = row.get("profileId")  # Never substitute opaque playerId.
         ids.append(_player_id(public_id) if valid and isinstance(public_id, str) else None)
         names.append(_player_name(row.get("name")) if valid else None)
-    return {"scores": scores, "player_ids": ids, "player_names": names,
+        details.append(player_detail(row) if valid else None)
+    return {"scores": scores, "player_ids": ids, "player_names": names, "player_details": details,
             "fetched": fetched, "server": server, "stale": data["stale"], "unsafe": unsafe}
 
 
@@ -156,6 +186,9 @@ class HaneokaEventCutoffRepository(EventCutoffRepository):
             if key.startswith("board:"):
                 return (super()._valid_payload(key, payload)
                         and all(n is None or type(n) is int and 0 <= n <= MAX_SCORE for n in payload["scores"])
+                        and ("player_details" not in payload or isinstance(payload["player_details"],list)
+                             and len(payload["player_details"])==len(payload["scores"])
+                             and all(v is None or isinstance(v,dict) and player_detail(v)==v for v in payload["player_details"]))
                         and type(payload.get("stale")) is bool and type(payload.get("unsafe")) is bool
                         and timestamp(payload.get("fetched")) == payload.get("fetched")
                         and timestamp(payload.get("server")) == payload.get("server"))
@@ -272,5 +305,8 @@ class HaneokaEventCutoffRepository(EventCutoffRepository):
             notes.append("部分分数格式或安全整数精度未通过校验，保留原位空槽。")
         if entry.payload["stale"]:
             quality = "stale"
-        return replace(board, scores=scores, status=status, quality=quality, notes=tuple(notes),
+        details = entry.payload.get('player_details', [])
+        details = tuple(player_detail(d) if isinstance(d, dict) else None for d in details) if (
+            isinstance(details, list) and len(details) == len(board.observed_scores or ())) else ()
+        return replace(board, scores=scores, status=status, quality=quality, notes=tuple(notes), player_details=details,
                        source=self.source, time_kind=TIME_KIND, contract_version=CONTRACT)

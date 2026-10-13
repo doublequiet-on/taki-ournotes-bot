@@ -19,6 +19,10 @@ PRIVATE_NAMES = {
     "update-notices.sqlite3",
 }
 BUNDLED_MEDIA = ("ournotes_bot", "platforms", "qq", "assets", "card-947.jpg")
+BUNDLED_JSON = {
+    ("ournotes_bot", "sources", "haneoka", "visual_skill_contracts.json"),
+    ("ournotes_bot", "sources", "haneoka", "game_assets.json"),
+}
 MEDIA_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".mp4", ".mp3"}
 
 
@@ -44,7 +48,7 @@ def check(path: Path) -> None:
         runtime_dir = ("asset-cache" in parts or "runtime" in parts
                        or ("data" in parts and not path.name.endswith(".whl")))
         private_env = leaf.startswith(".env.") and leaf != ".env.example"
-        if (leaf in PRIVATE_NAMES or private_env or (leaf.endswith(".json") and leaf != "query_aliases.json")
+        if (leaf in PRIVATE_NAMES or private_env or (leaf.endswith(".json") and leaf != "query_aliases.json" and parts[-4:] not in BUNDLED_JSON)
                 or leaf.endswith((".log", ".pyc", ".sqlite", ".db", ".sqlite3", ".sqlite3-journal", ".sqlite3-wal", ".sqlite3-shm"))
                 or (PurePosixPath(leaf).suffix.lower() in MEDIA_SUFFIXES
                     and parts[-len(BUNDLED_MEDIA):] != BUNDLED_MEDIA) or runtime_dir):
@@ -56,7 +60,9 @@ def check(path: Path) -> None:
     required = {"continuation.py", "field_query.py", "cutoff_history.py", "cutoff_sampler.py", "cutoff_trends.py",
                 "CUTOFF_HISTORY.md", "QUERY_UPGRADE_V1.md", "query-upgrade-v1.env.example",
                 "moenotes_open.py", "META_OPEN.md", "THIRD_PARTY.md",
-                "transport.py", "identity.py", "chart_paths.py", "errors.py", "json_validation.py"}
+                "transport.py", "identity.py", "chart_paths.py", "errors.py", "json_validation.py",
+                "NotoSansSC.ttf", "Roboto.ttf", "NotoSansSC-OFL.txt", "Roboto-OFL.txt",
+                "game_assets.json", "visual_skill_contracts.json"}
     retired = {"efficiency_query.py", "haneoka_meta_query.py", "meta_parameters.py", "meta_model.py",
                "song_meta.py", "site_meta.py", "moenotes_music_data.py", "verify_meta_reference.py"}
     if retired & documents:

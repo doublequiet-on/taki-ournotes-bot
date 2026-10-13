@@ -42,7 +42,7 @@ def field(row, other, name, matched=True):
     return translated(row.get(name, []), (other or {}).get(name), matched=matched)
 
 
-def skill_record(kind, jp, other, jp_refs, other_refs):
+def skill_record(kind, jp, other, jp_refs, other_refs, level=5):
     matched = False
     try:
         matched = (isinstance(other, dict) and jp.get("id") == other.get("id")
@@ -67,13 +67,13 @@ def skill_record(kind, jp, other, jp_refs, other_refs):
             continue
         actual_locale = next((key for key, i in LANGUAGES.items() if i == selected), "ja")
         try:
-            value, valid = description(templates[selected], effect_context(jp, refs, actual_locale))
+            value, valid = description(templates[selected], effect_context(jp, refs, actual_locale, level))
         except (ValueError, KeyError, TypeError, IndexError):
             value, valid = UNKNOWN, False
         if not valid and selected != 0 and templates and templates[0]:
             selected = 0
             try:
-                value, valid = description(templates[0], effect_context(jp, refs, "ja"))
+                value, valid = description(templates[0], effect_context(jp, refs, "ja", level))
             except (ValueError, KeyError, TypeError, IndexError):
                 value, valid = UNKNOWN, False
         descriptions[locale] = value
@@ -183,7 +183,8 @@ def convert(documents, identity_jp, fetched_at, *, stale=False):
                           tuple(sorted(charts, key=lambda c: ("EASY", "NORMAL", "HARD", "EXPERT").index(c.difficulty))),
                           {"title": localized(title), "band": band, **{k: localized(v) for k, v in credits.items()}},
                           SongTraits(color, tuple(MISSIONS[m] for m in missions) if missions else None, stale, release, source_id,
-                                     attribute_url(jp.get("ui-marks", {}), color, release))))
+                                     attribute_url(jp.get("ui-marks", {}), color, release)),
+                          song_visual_fields(row,jp,release)))
 
     member_refs = None
     try:
@@ -226,6 +227,9 @@ def convert(documents, identity_jp, fetched_at, *, stale=False):
                     links_ready &= valid
             skills, evidence, skill_languages, cats = [], [], {}, {"live": [], "gekisou": []}
             complete = True
+            compact_skills = []
+            skill_levels = []
+            skill_icons = []
             slots = {}
             resolved = row.get("resolvedSkills", {})
             peer_resolved = (peer or {}).get("resolvedSkills", {}) if linked else {}
@@ -261,6 +265,10 @@ def convert(documents, identity_jp, fetched_at, *, stale=False):
                     converted, valid, lang = skill_record(kind, skill, peer_by_id.get(skill_id), refs, other_refs)
                     complete &= valid
                     skills.append(converted)
+                    from .visual_skill_contracts import summary as reviewed_summary
+                    compact_skills.append(reviewed_summary(skill, refs))
+                    skill_levels.append([skill_record(kind,skill,peer_by_id.get(skill_id),refs,other_refs,lv)[0].localized['description'] for lv in range(1,6)])
+                    skill_icons.append(asset_url(skill['icon'],release) if skill.get('icon') else '')
                     skill_languages[kind] = lang
                     cat = category(kind, skill)
                     if kind != "leaderSkill":
@@ -278,6 +286,45 @@ def convert(documents, identity_jp, fetched_at, *, stale=False):
                        "bands": [language(b) for b in band_names], "categories": cats, "skill_evidence": evidence,
                        "skill_languages": skill_languages, "stats_level1": lv1, "skill_slots": slots,
                        "detail_loaded": complete, "detail_stale": stale, "skill_index_complete": complete}
+            # Capture presentation references with the same release as the card.
+            # Renderers must not look up mutable character ordering or skill data.
+            people = []
+            for ident in char_ids:
+                person = jp['characters'].get(str(ident))
+                if person:
+                    person_names, _ = names('characters', ident, 'characterName', 'characterId')
+                    people.append({'id': ident, 'name': localized(person_names),
+                                   'band': person.get('bandId'), 'order': person.get('displayOrder'),
+                                   'face': asset_url(person['faceImage'], release) if person.get('faceImage') else ''})
+            catalog['people'] = people
+            catalog['band_logos'] = [asset_url(jp['bands'][str(b)]['logo'], release)
+                                     for b in band_ids if jp['bands'].get(str(b), {}).get('logo')]
+            catalog['resolved_skills'] = resolved
+            catalog['compact_skills'] = compact_skills
+            catalog['skill_levels'] = skill_levels
+            catalog['skill_icons'] = skill_icons
+            group = row.get('supportCardLevelGroup' if support else 'memberCardLevelGroup')
+            catalog['level_curve'] = [dict(level=e['level'], exp=e['exp'])
+                                      for e in jp['progression'].get('supportCardLevels' if support else 'memberCardLevels', [])
+                                      if e.get('group') == group]
+            catalog['level_limits'] = [e.get('raw',e) for e in jp['progression'].get('supportCardRanks' if support else 'memberCardLevelLimits', [])
+                                        if (e.get('raw',e).get('_group') == row.get('supportCardRankGroup') if support else
+                                            e.get('raw',e).get('_rarity') == row['rarity'])]
+            catalog['player_levels'] = [dict(rank=e['rank'],exp=e['exp']) for e in jp['progression'].get('playerRanks',[])]
+            relations=[]
+            for relation_resource,label in (('events','相关活动'),('gacha','相关卡池')):
+                for rid,entry in jp.get(relation_resource,{}).items():
+                    linked = (any(e.get('raw',{}).get('_supportCardId' if support else '_memberCardId')==card_id
+                                  for e in entry.get('effects',[])) if relation_resource=='events' else
+                              any(e.get('resourceId')==card_id and e.get('resourceType')==(3 if support else 2)
+                                  and e.get('pickup') is True for e in entry.get('featured',[])))
+                    if linked:
+                        peer_entry=other.get(relation_resource,{}).get(rid,{})
+                        title_names=field(entry,peer_entry,'title',original(entry.get('title'))==original(peer_entry.get('title')))
+                        relations.append({'kind':label,'id':rid,'name':localized(title_names),
+                                          'image':asset_url(entry['image'],release) if entry.get('image') else '',
+                                          'start':stamp(entry.get('startAt')),'end':stamp(entry.get('endAt'))})
+            catalog['relations']=relations
             # Tags need a confirmed name association; numeric band IDs are not automatically tag IDs.
             if not support:
                 catalog["tags"] = {str(integer(t, 1)): {} for t in row.get("bestMusicTagIds", [])}
@@ -304,3 +351,19 @@ def convert(documents, identity_jp, fetched_at, *, stale=False):
                 loc["skill_name"] = live.localized["name"] if live else {}
                 cards.append(Card(**common, asset_id=integer(row["assetId"], 1), band=loc["band"]["zh"], skill_name=live.name if live else ""))
     return sorted(songs, key=lambda r: r.id), sorted(cards, key=lambda r: r.id), sorted(supports, key=lambda r: r.id)
+
+
+def song_visual_fields(row, documents, release):
+    """Captured public presentation facts; no inferred score formula."""
+    def reward(value):
+        resolved=value.get('resolved',{})
+        return {'label':localized(resolved.get('name',[])),
+                'count':integer(value['resourceCount'],0),
+                'image':asset_url(resolved['image'],release) if resolved.get('image') else '',
+                'tier':value.get('liveScoreRank',value.get('comboRateType'))}
+    return {'duration_ms':row.get('musicSound',{}).get('durationMs'),
+            'band_logos':[asset_url(documents['bands'][str(b)]['logo'],release)
+                          for b in row.get('bandIds',[]) if documents['bands'].get(str(b),{}).get('logo')],
+            'score_ranks':[{k:v[k] for k in ('scoreRank','requiredScore')} for v in row.get('scoreRanks',[])],
+            'score_rewards':[reward(v) for v in row.get('scoreRewards',[])],
+            'combo_rewards':{key:[reward(v) for v in values] for key,values in row.get('comboRewards',{}).items()}}

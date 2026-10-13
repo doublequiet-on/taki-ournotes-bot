@@ -52,8 +52,8 @@ class CardRequest:
     @property
     def command(self):
         if self.mode == "art":
-            return "/查支援卡面" if self.support else "/查卡面"
-        return "/查支援卡" if self.support else "/查卡"
+            return "/查留影卡面" if self.support else "/查卡面"
+        return "/查留影卡" if self.support else "/查卡"
 
 
 @dataclass(frozen=True)
@@ -151,7 +151,7 @@ def parse_card_request(query, repository, *, support=False, art=False):
     if ident:
         return CardRequest(support, "art" if art else "detail", int(ident[1]), page, query)
     if art:
-        raise ValueError("只输出卡面需要明确卡牌ID；请先用 /查卡 或 /查支援卡 按条件查列表。")
+        raise ValueError("只输出卡面需要明确卡牌ID；请先用 /查卡 或 /查留影卡 按条件查列表。")
     filters = {}
     explicit_id = None
     def add(key, value):

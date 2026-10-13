@@ -71,7 +71,10 @@ class PlayerIdTests(unittest.TestCase):
         reloaded = EventCutoffRepository(self.source.cache_dir,transport=Mock(side_effect=AssertionError('network')),
                                         clock=lambda:self.fx.now,monotonic=lambda:self.fx.now)
         self.repo.event_cutoffs = reloaded
-        self.assertEqual(self.ask('歌曲1 50-50').text,answer.text)
+        recovered=self.ask('歌曲1 50-50')
+        self.assertEqual(recovered.boards[0].scores,answer.boards[0].scores)
+        self.assertEqual(recovered.boards[0].player_ids,answer.boards[0].player_ids)
+        self.assertIn('11000000050',recovered.text)
         self.assertNotIn(b'11000000050',(self.root/'history.sqlite3').read_bytes())
         self.assertNotIn('玩家50'.encode(),(self.root/'history.sqlite3').read_bytes())
 
@@ -143,7 +146,7 @@ class PlayerIdTests(unittest.TestCase):
             self.assertTrue(all(len(p.text)<=1800 for p in pages),query)
             expanded = _expand_replies([PreparedReply(answer.text,pages=tuple(PreparedReply(p.text,p.image) for p in pages))])
             self.assertLessEqual(len(expanded),5,query)
-            self.assertIn('T100：' if query=='1-100' else f'T{answer.ranks[0]}：','\n'.join(p.text for p in expanded))
+            self.assertIn('T100：' if query=='1-100' else f'T{answer.ranks[0]}：','\n'.join(p.text for p in expanded + list(expanded[-1].context.remaining)))
             self.assertIn(answer.boards[0].player_id(answer.ranks[0]),'\n'.join(p.text for p in pages))
             for page in pages:
                 with Image.open(io.BytesIO(page.image)) as img:
@@ -155,7 +158,7 @@ class PlayerIdTests(unittest.TestCase):
     def test_full_table_render_failure_keeps_all_ids_within_reply_budget(self):
         answer = self.ask('1-100')
         replies = _expand_replies([PreparedReply(answer.text,complete_text=True)])
-        joined = '\n'.join(p.text for p in replies)
+        joined = '\n'.join(p.text for p in replies + list(replies[-1].context.remaining))
         self.assertLessEqual(len(replies),5)
         self.assertIn('T100：',joined)
         for row in self.fx.players:

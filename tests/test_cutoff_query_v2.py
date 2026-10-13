@@ -106,9 +106,11 @@ class CutoffQueryV2Tests(unittest.TestCase):
         self.assertEqual(self.ask('123').status,'invalid_arguments')
         self.assertEqual(self.ask('歌曲ID=103 50-50').boards[0].song.music_id,'103')
 
-    def test_ranked_queries_skip_history_reads_but_still_record_boards(self):  # A20/A21
-        with patch.object(self.source.history,'read',side_effect=AssertionError('history read')):
+    def test_ranked_queries_read_five_representative_ranks_and_record_boards(self):  # A20/A21
+        with patch.object(self.source.history,'read',wraps=self.source.history.read) as read:
             answer = self.ask('1-100')
+        self.assertEqual(read.call_count,3)
+        self.assertEqual(answer.history_ranks,(1,26,51,75,100))
         self.assertEqual(len(answer.ranks),100)
         self.assertEqual(self.source.history.read(answer.event,answer.boards[0].song,(50,)).total,1)
         self.assertEqual(sum(u.endswith('/ranking') for u in self.fx.calls),3)
@@ -163,18 +165,19 @@ class CutoffQueryV2Tests(unittest.TestCase):
         from ournotes_bot.platforms.qq.qq import _render_prepared
         answer = self.ask('1-100')
         result = SimpleNamespace(cutoff=answer,catalog=None)
-        with patch('ournotes_bot.rendering.event_cutoff_visuals.render_cutoff',side_effect=ValueError('render')):
+        with patch('ournotes_bot.rendering.ranking_layout.render',side_effect=ValueError('render')):
             prepared = _render_prepared(answer.text,result,self.repo,'zh')
         expanded = _expand_replies([prepared])
         self.assertLessEqual(len(expanded),5)
-        self.assertIn('T100：','\n'.join(p.text for p in expanded))
+        self.assertIn('T100：','\n'.join(p.text for p in expanded + list(getattr(expanded[-1].context,"remaining",()))))
         self.assertTrue(all(len(p.text)<=1800 for p in expanded))
         pages = render_cutoff(answer)
         batch = [PreparedReply(answer.text,pages=tuple(PreparedReply(p.text,p.image) for p in pages))] + [PreparedReply('other')]*4
         constrained = _expand_replies(batch)
         self.assertEqual(len(constrained),5)
-        self.assertIn('无法完整发送',constrained[0].text)
-        self.assertFalse(constrained[0].image)
+        self.assertTrue(constrained[0].image)
+        self.assertTrue(constrained[-1].context.remaining)
+        self.assertEqual(sum(p.text=='other' for p in constrained[-1].context.remaining),4)
 
     def test_names_and_equivalent_repeated_selectors_match_actual_identity(self):  # A17/A19
         with patch('ournotes_bot.query.entity_lexicon._aliases',return_value={'song':{'同曲别名':'夢我夢中'}}):

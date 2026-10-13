@@ -52,6 +52,7 @@ class Song:
     charts: tuple[Chart, ...]
     localized: dict[str, dict[str, str]] = field(default_factory=dict)
     traits: SongTraits | None = None
+    catalog: dict = field(default_factory=dict)
 
 
 @dataclass(frozen=True)

@@ -40,6 +40,11 @@ class CatalogConcurrencyTests(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         self.saved = json.loads((Path(__file__).parent / "fixtures/haneoka_catalog.json").read_bytes())["snapshot"]
         self.saved["documents"]["jp"].setdefault("ui-marks", {})
+        for doc in self.saved['documents'].values():
+            doc.setdefault('ui-marks', {})
+            doc.setdefault('progression', {key: [] for key in ('memberCardLevels','memberCardRanks','supportCardLevels','supportCardRanks')})
+            doc.setdefault('events', {'entries': {}})
+            doc.setdefault('gacha', {'entries': {}})
         self.now = 1100.
         self.catalog_calls, self.meta_calls = [], []
         self.source = catalog.CatalogRepository(Path(self.temp.name) / "catalog.json",
