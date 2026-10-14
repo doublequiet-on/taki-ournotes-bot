@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import math
 
 from ...data import Card, Chart, Skill, Song, SupportCard
 from .catalog_assets import asset_url, attribute_url
@@ -353,6 +354,29 @@ def convert(documents, identity_jp, fetched_at, *, stale=False):
     return sorted(songs, key=lambda r: r.id), sorted(cards, key=lambda r: r.id), sorted(supports, key=lambda r: r.id)
 
 
+def song_reference_metrics(row,documents):
+    source=documents.get('song-meta',{}).get(str(row['musicId']),{})
+    if not isinstance(source,dict):raise ValueError('Invalid song metadata')
+    result={}
+    for i,name in enumerate(('EASY','NORMAL','HARD','EXPERT')):
+        entry=source.get(str(i),{})
+        if not isinstance(entry,dict):raise ValueError('Invalid chart metadata')
+        metric=entry.get('chart',{})
+        if not isinstance(metric,dict):raise ValueError('Invalid chart metric')
+        if not metric:continue
+        if metric.get('referenceId')!='legacy-normal-theory-relative-v1':continue
+        values={k:metric.get(k) for k in ('sr','score','eff')}
+        if any(v is not None and (type(v) not in (int,float) or not math.isfinite(v) or v<0) for v in values.values()):
+            raise ValueError('Invalid reference score metric')
+        if values['sr'] is not None and values['sr']>1:raise ValueError('Invalid skill coverage')
+        warnings=metric.get('metaWarnings',[])
+        if not isinstance(warnings,list) or any(not isinstance(w,str) for w in warnings):raise ValueError('Invalid metric warnings')
+        reference=metric.get('reference',{})
+        if not isinstance(reference,dict) or reference.get('downtimeSeconds')!=30:continue
+        result[name]={**values,'reference_id':metric['referenceId'],'warnings':warnings,'downtime_seconds':30}
+    return result
+
+
 def song_visual_fields(row, documents, release):
     """Captured public presentation facts; no inferred score formula."""
     def reward(value):
@@ -361,7 +385,8 @@ def song_visual_fields(row, documents, release):
                 'count':integer(value['resourceCount'],0),
                 'image':asset_url(resolved['image'],release) if resolved.get('image') else '',
                 'tier':value.get('liveScoreRank',value.get('comboRateType'))}
-    return {'duration_ms':row.get('musicSound',{}).get('durationMs'),
+    return {'reference_metrics':song_reference_metrics(row,documents),
+            'duration_ms':row.get('musicSound',{}).get('durationMs'),
             'band_logos':[asset_url(documents['bands'][str(b)]['logo'],release)
                           for b in row.get('bandIds',[]) if documents['bands'].get(str(b),{}).get('logo')],
             'score_ranks':[{k:v[k] for k in ('scoreRank','requiredScore')} for v in row.get('scoreRanks',[])],

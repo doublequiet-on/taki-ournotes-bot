@@ -692,7 +692,7 @@ def _render_prepared_inner(reply, result, repository, locale, candidate=None):
         if result is not None and result.cutoff is not None:
             from ...rendering.event_cutoff_visuals import load_artwork
             from ...rendering.ranking_layout import render
-            from ...sources.haneoka.ranking_art import cards_for, event_marks
+            from ...sources.haneoka.ranking_art import cards_for, event_marks, bands_for
             answer=result.cutoff
             source=getattr(repository,'_catalog_repository',None)
             saved=source.saved if source else None
@@ -702,7 +702,7 @@ def _render_prepared_inner(reply, result, repository, locale, candidate=None):
             catalogs=tuple({key:cls(**value) for key,value in rows.items()} for cls,rows in zip((Card,SupportCard),records))
             assets=load_artwork(repository.event_cutoffs,answer.event,(answer.event.banner,*(b.song.jacket for b in answer.boards))) if answer.event and not answer.request.numeric_only else {}
             try:
-                pages=render(answer,assets=assets,load=_visual_asset,catalogs=catalogs,bonus_marks=event_marks(saved,answer.event) if answer.event else (),display_time=display_time,server_label=SERVERS[answer.event.server][0] if answer.event else "",timezone_label=zone_label(answer.event.server) if answer.event else "")
+                pages=render(answer,assets=assets,load=_visual_asset,catalogs=catalogs,song_bands=bands_for(saved,answer.event.server) if answer.event else {},bonus_marks=event_marks(saved,answer.event) if answer.event else (),display_time=display_time,server_label=SERVERS[answer.event.server][0] if answer.event else "",timezone_label=zone_label(answer.event.server) if answer.event else "")
             finally:
                 for asset in assets.values():
                     if asset is not None:asset.close()

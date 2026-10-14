@@ -22,7 +22,7 @@ def cards_for(saved,server):
                 (v['raw'].get('_group')==row.get('supportCardRankGroup') if support else v['raw'].get('_rarity')==row['rarity'])],
               'player_levels':progress.get('playerRanks',[])}
             values=dict(id=int(key),title=language(row.get('prefix',[])),character='',rarity=row['rarity'],card_type=row['cardType'],
-              performance=0,technic=0,visual=0,start_at='',full_url='',thumbnail_url=asset_url(row['images']['thumbnail'],release),catalog=catalog)
+              performance=0,technic=0,visual=0,start_at='',full_url=asset_url(row['images']['full'],release),thumbnail_url=asset_url(row['images']['thumbnail'],release),catalog=catalog)
             records[int(key)]={**values,**({'characters':()} if support else {'asset_id':row['assetId'],'band':'','skill_name':''})}
         result.append(records)
     return tuple(result)
@@ -48,3 +48,11 @@ def event_marks(saved, event):
     marks = [('加成属性', attribute_url(doc.get('ui-marks', {}), color, release, source)) for color in colors]
     marks += [('加成乐队', asset_url(doc['bands'][str(b)]['logo'], release)) for b in bands if doc['bands'].get(str(b), {}).get('logo')]
     return tuple((label, url) for label, url in marks if url)
+
+
+def bands_for(saved,server):
+    """Band labels from the same captured regional catalogue as the ranking art."""
+    if not saved:return {}
+    doc=saved['documents']['jp' if server=='jp' else 'intl']
+    return {str(key):language(doc.get('bands',{}).get(str(row.get('bandId')),{}).get('bandName',[]))
+            for key,row in doc.get('songs',{}).items()}

@@ -349,7 +349,7 @@ class CatalogTests(unittest.TestCase):
             after = render(cards, "")
             get.assert_not_called()
         self.assertEqual(before, after)
-        self.assertLessEqual(len(after), 1_500_000)
+        self.assertLessEqual(len(after), 3_000_000)
 
     def test_images_are_pinned_bounded_isolated_and_do_not_fall_back(self):
         from ournotes_bot.visuals import _asset

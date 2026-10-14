@@ -74,5 +74,29 @@
   "RarityIconCenter_EX.png": {
     "url": "https://haneoka.org/runtime/jp/unity/Assets/AddressableResources/UI/Atlas/FixUiSpriteAtlas.spriteatlasv2/RarityIconCenter_EX--Sprite-794418242220251623.png?release=r-d9e6e6e773a4bd9e090b",
     "sha256": "9716c38bcf1ee109eefee9909a1d2995f8e1b5440fd4eab9e05c192d2a97ec24"
+  },
+  "ImageRanking1st.png": {
+    "url": "https://haneoka.org/runtime/jp/unity/Assets/AddressableResources/UI/Atlas/FixUiSpriteAtlas.spriteatlasv2/ImageRanking1st--Sprite--4994961733966281499.png?release=r-c2a3e188e947bc7e8f4a",
+    "sha256": "ec6ef81a5b0f17f95b5b2fdc6d1c505ffbfac8c720094cced1fe0700408ce5a3"
+  },
+  "ImageRanking2ng.png": {
+    "url": "https://haneoka.org/runtime/jp/unity/Assets/AddressableResources/UI/Atlas/FixUiSpriteAtlas.spriteatlasv2/ImageRanking2ng--Sprite-7495644695250857230.png?release=r-c2a3e188e947bc7e8f4a",
+    "sha256": "e7b42e2468b9b7fc496fb6eaae4dd8d427c01ed0fab07d99da8d8dd3002bcfc8"
+  },
+  "ImageRanking3rd.png": {
+    "url": "https://haneoka.org/runtime/jp/unity/Assets/AddressableResources/UI/Atlas/FixUiSpriteAtlas.spriteatlasv2/ImageRanking3rd--Sprite-8912231632815603492.png?release=r-c2a3e188e947bc7e8f4a",
+    "sha256": "4f53e9e3a0255a0c72b87205205bcc411fa7fc504c5a3df7add0b2220e6601e9"
+  },
+  "gekisou-combo.png": {
+    "url": "https://haneoka.org/runtime/jp/unity/Assets/AddressableResources/Live/Images/Atlas/LiveAtlas.spriteatlasv2/Icon_gekisou_combo--Sprite--4606487073464403413.png?release=r-d9e6e6e773a4bd9e090b",
+    "sha256": "47e626d38134e61b13ca897ba227acf49020650156bdc85e1c440d0d43d64201"
+  },
+  "gekisou-just.png": {
+    "url": "https://haneoka.org/runtime/jp/unity/Assets/AddressableResources/Live/Images/Atlas/LiveAtlas.spriteatlasv2/Icon_gekisou_just--Sprite-6890704544408101313.png?release=r-d9e6e6e773a4bd9e090b",
+    "sha256": "0dc1cc1c606dd7b34090a70dd38abb90751651143b097ee2ce84bc5486e6a2c1"
+  },
+  "gekisou-luck.png": {
+    "url": "https://haneoka.org/runtime/jp/unity/Assets/AddressableResources/Live/Images/Atlas/LiveAtlas.spriteatlasv2/Icon_gekisou_luck--Sprite-3766599716790863797.png?release=r-d9e6e6e773a4bd9e090b",
+    "sha256": "9197c15c74949b3257b92932bfe847c752460fd3fe42ba0f3f4c3776f77c85cc"
   }
 }

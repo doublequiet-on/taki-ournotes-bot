@@ -19,7 +19,7 @@ from functools import lru_cache, wraps
 
 from PIL import Image
 
-MAX_IMAGE_BYTES = 1_500_000  # base64 <= 2 MB before small JSON envelope
+MAX_IMAGE_BYTES = 3_000_000  # base64 <= 4 MB before small JSON envelope
 MAX_IMAGE_EDGE = 8192
 MAX_IMAGE_PIXELS = 12_000_000
 RECLAIM_MIN_PIXELS = 2_000_000

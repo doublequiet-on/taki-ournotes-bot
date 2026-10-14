@@ -142,6 +142,12 @@ class CatalogRepository:
             with ThreadPoolExecutor(max_workers=3) as pool:
                 docs = dict(pool.map(collection, ENTITIES))
             docs["catalog"] = catalog
+            if server=="jp" and "song-meta" in catalog["resources"]:
+                meta=get(server,"song-meta",ident)
+                expected=integer(catalog["resources"]["song-meta"]["count"],1,5000)
+                if not isinstance(meta,dict) or len(meta)!=expected or any(key not in docs["songs"] for key in meta):
+                    raise ValueError("Incomplete song metadata")
+                docs["song-meta"]=meta
             docs["skill-reference"] = get(server, "skill-reference", ident)
             docs["ui-marks"] = get(server, "ui-marks", ident)
             progression = get(server, "progression", ident)

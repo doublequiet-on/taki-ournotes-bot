@@ -11,7 +11,7 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from io import BytesIO
 
-from PIL import Image, ImageColor, ImageDraw, ImageFont, ImageOps
+from PIL import Image, ImageChops, ImageColor, ImageDraw, ImageFont, ImageOps
 
 ASSETS = Path(__file__).with_name('assets')
 BG, INK, MUTED, ACCENT = '#fcf8fd', '#1b1b1f', '#46464f', '#555994'
@@ -85,6 +85,29 @@ def icon(name, width, height):
     return _icon(raw, width, height) if raw else None
 
 
+def mission_label(canvas, x, cy, value, size=29, symbol=36, bold=False):
+    """Original game silhouettes; preview palette pending in-game colour verification."""
+    colors = {'COMBO': '#bd528b', 'JUST': '#328faf', 'LUCK': '#a87822'}
+    art = icon(f'gekisou-{value.lower()}.png', symbol, symbol) if value in colors else None
+    if art is not None:
+        tinted = Image.new('RGBA', art.size, colors[value])
+        tinted.putalpha(art.getchannel('A'))
+        canvas.paste(tinted, x, round(cy-symbol/2), symbol, symbol, True)
+        tinted.close()
+    canvas.text(x+symbol+8, cy, value, size, MUTED, bold)
+
+
+def left_logo(canvas, image, x, cy, width, height):
+    """Align the visible logo edge, returning the next text position."""
+    if image is None:return x
+    cropped=image.crop(image.getbbox())
+    scaled=ImageOps.contain(cropped,(width,height),Image.Resampling.LANCZOS)
+    canvas.paste(scaled,x,round(cy-scaled.height/2),scaled.width,scaled.height)
+    end=x+scaled.width+14
+    scaled.close();cropped.close()
+    return end
+
+
 @lru_cache(maxsize=48)
 def frame(width, height, rarity):
     colors = {2:['#567eaf','#d5eaff','#749ecc','#e0efff','#567eaf'],
@@ -134,12 +157,18 @@ class Canvas:
     def line(self,x,y,right,color=LINE):
         self.draw.line((x,y,right,y),fill=color,width=1)
 
-    def paste(self,image,x,y,width,height,contain=False):
+    def paste(self,image,x,y,width,height,contain=False,radius=0,trim=False):
         if image is None:
             self.box((x,y,x+width,y+height))
             self.text(x+width/2,y+height/2,'暂无图片',min(20,width//5),MUTED,align='center')
             return
+        if trim and image.mode=='RGBA' and image.getbbox():image=image.crop(image.getbbox())
         fitted=(ImageOps.contain if contain else ImageOps.fit)(image,(width,height),Image.Resampling.LANCZOS)
+        if radius:
+            fitted=fitted.convert('RGBA')
+            mask=Image.new('L',fitted.size)
+            ImageDraw.Draw(mask).rounded_rectangle((0,0,fitted.width-1,fitted.height-1),radius,fill=255)
+            fitted.putalpha(ImageChops.darker(mask,fitted.getchannel('A')))
         self.image.paste(fitted,(round(x+(width-fitted.width)/2),round(y+(height-fitted.height)/2)),
                          fitted if fitted.mode=='RGBA' else None)
 
@@ -153,4 +182,6 @@ class Canvas:
 
     def header(self,title,subtitle):
         self.text(52,65,title,48,bold=True)
+        self.box((self.width-154,51,self.width-52,91),SOFT,20)
+        self.text(self.width-103,71,'Taki',22,'#3d417b',True,'center')
         return self.paragraph(54,102,subtitle,self.width-108,24,color=MUTED)+24

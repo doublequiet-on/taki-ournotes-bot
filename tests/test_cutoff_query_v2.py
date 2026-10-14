@@ -130,7 +130,7 @@ class CutoffQueryV2Tests(unittest.TestCase):
                 self.assertIn(f'歌曲{number}',pages[0].text)
             with Image.open(io.BytesIO(pages[0].image)) as image:
                 self.assertLessEqual(image.width*image.height,12_000_000)
-            self.assertLessEqual(len(pages[0].image),1_500_000)
+            self.assertLessEqual(len(pages[0].image),3_000_000)
 
     def test_rank_table_does_not_enter_trend_renderer(self):  # A04/A05/A20
         with patch('ournotes_bot.rendering.cutoff_trends.render_trends',side_effect=AssertionError('trend drawing')):

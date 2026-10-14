@@ -154,7 +154,7 @@ class SongTraitsTests(unittest.TestCase):
         answer = execute(parse_filter('蓝色 激奏=JUST'), self.repo)
         with patch('ournotes_bot.visuals._asset', return_value=None), patch.object(ImageDraw.ImageDraw, 'text', text):
             raw = render_song_list(answer.songs, answer.request.query, footer=answer.footer)
-        self.assertLessEqual(len(raw), 1500000)
+        self.assertLessEqual(len(raw), 3_000_000)
         self.assertEqual([value for value in drawn if value in {'JUST', 'COMBO'}][:3],
                          ['JUST', 'JUST', 'COMBO'])
         self.assertTrue(any('缺少' in value for value in drawn))
