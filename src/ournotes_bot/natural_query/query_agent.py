@@ -251,12 +251,12 @@ class QueryAgent:
         if not question or len(question) > 100:
             return self._finish_terminal(
                 state, OutcomeCode.INVALID_ARGUMENTS,
-                "用法：/问 <想查的歌曲、谱面、成员卡、技能或支援卡>，最多 100 字。",
+                "用法：/问 <想查的歌曲、谱面、成员卡、技能或留影卡>，最多 100 字。",
                 tracked=tracked, local=True, cache=False,
             )
 
         from ..query.continuation import parse_operation, MISSING
-        if parse_operation(question) is not None:
+        if parse_operation("/问 " + question) is not None:
             return self._finish_terminal(state, OutcomeCode.INVALID_ARGUMENTS, MISSING,
                                          tracked=tracked, local=True, cache=False)
 

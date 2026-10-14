@@ -61,6 +61,8 @@ def _number(text):
 
 def parse_operation(content: str) -> Operation | None:
     text = unicodedata.normalize("NFKC", content).strip().lstrip("/")
+    if not re.match(r"^(?:问|ask)\s+", text, re.I) and re.match(r"^(?:下一页|上一页|选|难度)", text):
+        return None
     text = re.sub(r"^(?:问|ask)\s+", "", text, flags=re.I).strip(" ?？。!")
     if text in {"下一页", "上一页"}:
         return Operation("page", 1 if text == "下一页" else -1)
@@ -210,7 +212,7 @@ def execute_followup(context: QueryContext, operation: Operation, repository):
             selected = context.visible[operation.value - 1]
         elif selected is None:
             if len(context.visible) != 1:
-                return QueryProblem("已展示的结果有多个，请先发送 /选 编号，例如 /选 2。", "ambiguous")
+                return QueryProblem("已展示的结果有多个，请按列表中的 ID 重新查询详情。", "ambiguous")
             selected = context.visible[0]
         if operation.kind == "difficulty":
             if selected.kind != "song":
@@ -227,7 +229,7 @@ def execute_followup(context: QueryContext, operation: Operation, repository):
         result = resolve_query(spec, repository)
         candidate = replace(context, selected=selected) if result.status == "success" else None
     else:
-        return QueryProblem("用法：/下一页、/上一页、/选 2、/详情、/难度 EX。", "invalid_arguments")
+        return QueryProblem("用法：/继续、/详情；也可按 ID 重新查询。", "invalid_arguments")
     if context.version != dependency_version(repository, context.query):
         return QueryProblem(CHANGED, "invalid_arguments")
     return result, candidate

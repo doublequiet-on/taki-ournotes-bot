@@ -25,7 +25,7 @@ from .bot_info import INTRO
 
 
 HELP_TEXT = """Taki · Our Notes 日服资料查询
-群内请先 @机器人，再发送以下指令。
+群内请先 @机器人，再发送以下指令；回复会 @ 发出指令的用户。
 /查曲 [歌名/ID/乐队] [颜色] [激奏=类型] [EX] [lv<=25] [页N]：歌曲列表
 颜色：红、蓝、绿、黄、紫；例 /查曲 颜色=蓝/绿
 激奏=JUST 表示包含；激奏=纯JUST 表示全段同类；激奏=混合；激奏=JUST/JUST/COMBO 按顺序匹配
@@ -39,10 +39,10 @@ Haneoka 未确认原始歌曲序号，请用歌名或歌曲ID；旧T50也查附�
 /查留影卡（兼容 /查支援卡、/查SNAP）：同上筛选，另支持 EX、LIVE=技能延长
 /查卡面 ID、/查留影卡面 ID：只输出卡面；条件多选用逗号，同维度任选、跨维度同时满足
 /查缩写 昵称：查看昵称对应的角色、乐队等，也可直接用于查曲或查卡
-/问 想查的内容：自然语言查询歌曲、谱面、成员卡技能或支援卡（复杂问法需配置 AI）
+/问 想查的内容：自然语言查询歌曲、谱面、成员卡技能或留影卡（复杂问法需配置 AI）
 /问 迷星叫 EX 物量：等级、Note、颜色、激奏、难度、数量及明确卡牌类型与ID的技能可本地短答
-/下一页、/上一页：继续上次列表；/选 2、/详情、/难度 EX：选择或切换难度
-续查也支持 /问 下一页、第 N 个、看详情、换成 EX；10 分钟未成功续查失效，请单独发送
+/继续：续发未发送完的结果；/详情：查看单项或已选结果；列表详情请按ID查询
+自然续查支持 /问 第 N 个、看详情、换成 EX；10 分钟未成功续查失效，请单独发送
 /数据状态：查看进程、最近同步与缓存状态
 /调试数据：查看本次进程的 AI API 成功调用与有效检索次数
 /帮助：查看本说明
@@ -74,24 +74,24 @@ Example: /song mygo 27, /chart 100001 EXPERT, /card tomori""",
 COMMAND_HELP = {
     "songs": "查询歌曲列表，QQ单图优先，超限完整续发。支持歌名、昵称、乐队、ID、等级；27包含27.5，lv比较式未指定难度时按最高等级。可加颜色=蓝/绿、激奏=JUST、激奏=纯COMBO、激奏=混合或激奏=JUST/JUST/COMBO，并与EX、lv<=25、页N组合。同颜色多选任选，不同维度同时满足；包含全部用 激奏=包含全部JUST/COMBO。\n例：/查曲 蓝色 MyGO EX 激奏=JUST 页2",
     "chart": "查询谱面等级与 Note 数，支持歌名或曲目 ID。100001 可简写为 1。可选难度：EASY、NORMAL、HARD、EXPERT；不指定时显示全部难度。\n用法：/查谱面 <歌名或ID> [难度]\n示例：/查谱面 1 EXPERT、/查谱面 100001 EXPERT",
-    "cards": "角色卡条件查询始终返回列表，QQ单图优先，超限完整续发，完整总数和翻页指令可见。ID精确查详情，/查卡面 ID 只发公开full卡面。\n用法：/查卡 [BD/SSR/SR/R] [颜色=红色,蓝色] [角色=tmr,skk] [乐队=MyGO] [LIVE=分数提升] [击奏=JUST] [得意=MyGO] [页N]\n不同维度AND、同维度多选OR，得意标签全部包含。BD为生日卡；旧二/三/四星别名保留。",
-    "support_cards": "留影卡条件查询返回完整列表，QQ单图优先；ID精确查详情，/查留影卡面 ID 只发卡面。\n用法：/查SNAP [SSR/EX/SR/R] [颜色=红色,蓝色] [角色=tmr,skk] [乐队=MyGO] [LIVE=技能延长] [击奏=LUCK] [页N]\nLIVE可选分数提升、LIFE回复、判定强化、技能延长；以实际资料为准。角色任选且去重，乐队另行筛选；不支持得意标签；BD仅适用于角色卡。",
+    "cards": "角色卡条件查询始终返回列表，QQ单图优先，超限完整续发，显示完整总数，剩余内容用 /继续。ID精确查详情，/查卡面 ID 只发公开full卡面。\n用法：/查卡 [BD/SSR/SR/R] [颜色=红色,蓝色] [角色=tmr,skk] [乐队=MyGO] [LIVE=分数提升] [击奏=JUST] [得意=MyGO] [页N]\n不同维度AND、同维度多选OR，得意标签全部包含。BD为生日卡；旧二/三/四星别名保留。",
+    "support_cards": "留影卡条件查询返回完整列表，QQ单图优先；ID精确查详情，/查留影卡面 ID 只发卡面。\n用法：/查留影卡 [SSR/EX/SR/R] [颜色=红色,蓝色] [角色=tmr,skk] [乐队=MyGO] [LIVE=技能延长] [击奏=LUCK] [页N]\nLIVE可选分数提升、LIFE回复、判定强化、技能延长；以实际资料为准。角色任选且去重，乐队另行筛选；不支持得意标签；BD仅适用于角色卡。",
     "abbrev": "查询已收录的角色、乐队等昵称；也可直接用昵称查曲或查卡。\n用法：/查缩写 <昵称>\n示例：/查缩写 skk、/查缩写 茉团、/查卡 墨缇丝",
 }
 COMMAND_HELPS = {
     "zh": COMMAND_HELP,
     "en": {
-        "songs": "Search by title, band, ID, or level; 16 songs per page. 27 and lv27 match base level 27; 27.5 and lv27.5 match the displayed level exactly. An exact song ID takes priority over a bare number.\nUsage: /song [title or ID] [level or lv level] [page N]\nExample: /song mygo 27 page 2",
+        "songs": "Search by title, band, ID, or level; QQ shows complete results; use /继续 for unsent parts. 27 and lv27 match base level 27; 27.5 and lv27.5 match the displayed level exactly. An exact song ID takes priority over a bare number.\nUsage: /song [title or ID] [level or lv level] [page N]\nExample: /song mygo 27 page 2",
         "chart": "Look up level and note count by title or ID. Song 100001 can be shortened to 1. Optional difficulty: EASY, NORMAL, HARD, EXPERT.\nUsage: /chart <title or ID> [difficulty]\nExample: /chart 1 EXPERT",
-        "cards": "Search by card ID, character, card title, or band, 16 per page.\nUsage: /card <query or ID> [page N]\nExample: /card tomori or /card mygo page 2",
-        "support_cards": "Search support cards by ID, character, or title, 16 per page.\nUsage: /support <query or ID> [page N]\nExample: /support tomori or /support 1",
+        "cards": "Search by card ID, character, card title, or band, QQ shows complete results; use /继续 for unsent parts.\nUsage: /card <query or ID> [page N]\nExample: /card tomori or /card mygo page 2",
+        "support_cards": "Search support cards by ID, character, or title, QQ shows complete results; use /继续 for unsent parts.\nUsage: /support <query or ID> [page N]\nExample: /support tomori or /support 1",
         "abbrev": "Look up verified character and band nicknames.\nUsage: /abbrev <nickname>\nExample: /abbrev skk",
     },
     "ja": {
-        "songs": "曲名・バンド・ID・レベルで検索します。1ページ16曲。27とlv27は基本レベル27、27.5とlv27.5は表示レベルを完全一致で検索します。数字が曲IDと一致する場合はIDを優先します。\n使い方：/曲 [曲名またはID] [レベルまたはlvレベル] [ページN]\n例：/曲 mygo 27 ページ2",
+        "songs": "曲名・バンド・ID・レベルで検索します。QQでは全件表示し、未送信分は /继续 で受け取れます。27とlv27は基本レベル27、27.5とlv27.5は表示レベルを完全一致で検索します。数字が曲IDと一致する場合はIDを優先します。\n使い方：/曲 [曲名またはID] [レベルまたはlvレベル] [ページN]\n例：/曲 mygo 27 ページ2",
         "chart": "曲名またはIDでレベルとノーツ数を確認します。100001は1と省略できます。難易度省略時は全難易度を表示します。\n使い方：/譜面 <曲名またはID> [難易度]\n例：/譜面 1 EXPERT",
-        "cards": "カードID、キャラクター名、カード名、バンド名で検索します。1ページ16枚。\n使い方：/カード <名前またはID> [ページN]\n例：/カード 祥子、/カード mygo ページ2、/カード 51",
-        "support_cards": "サポートカードID、キャラクター名、カード名で検索します。1ページ16枚。\n使い方：/サポート <名前またはID> [ページN]\n例：/サポート ともり、/サポート 1",
+        "cards": "カードID、キャラクター名、カード名、バンド名で検索します。QQでは全件表示し、未送信分は /继续 で受け取れます。\n使い方：/カード <名前またはID> [ページN]\n例：/カード 祥子、/カード mygo ページ2、/カード 51",
+        "support_cards": "サポートカードID、キャラクター名、カード名で検索します。QQでは全件表示し、未送信分は /继续 で受け取れます。\n使い方：/サポート <名前またはID> [ページN]\n例：/サポート ともり、/サポート 1",
         "abbrev": "登録済みのキャラクター・バンドなどの略称を調べます。\n使い方：/略称 <略称>\n例：/略称 skk",
     },
 }

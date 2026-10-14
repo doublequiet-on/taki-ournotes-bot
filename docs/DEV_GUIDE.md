@@ -15,7 +15,7 @@
 路径均相对仓库根目录；下表模块名位于 `src/ournotes_bot/`，测试位于 `tests/`。
 
 - 启动：`main.py::main` → `Settings.from_env` → `SongRepository.load` → `platforms/qq/qq.py::run_bot`。命令行 `query` 走文字分支，不能验证 QQ 图文发送。
-- QQ：`run_bot` 内 `OurNotesClient.on_group_at_message_create` / `on_c2c_message_create` → `commands.py::split_commands` → `_reply_commands` → `prepare_commands` / `QueryGate.prepare` → `_prepare_reply`。群聊仅明确 @ 触发；兼容事件入口见 `register_group_message_parser`。
+- QQ：`run_bot` 内 `OurNotesClient.on_group_at_message_create` / `on_c2c_message_create` → `commands.py::split_commands` → `_reply_commands` → `prepare_commands` / `QueryGate.prepare` → `_prepare_reply`。群聊仅明确 @ 触发，回复由 `_deliver_reply` 在文字／图片说明中 @ 发令用户；兼容事件入口见 `register_group_message_parser`。
 - 直接查询：`commands.py::resolve_command` / `handle_command` → `SongRepository`；`_prepare_reply` 将同份结果交给 `_render_prepared` → `rendering/*_layout.py`（原卡面／彩蛋沿用旧入口） → `_deliver_reply` 上传发送。绘图失败退文字，发送结果不明不自动重发。
 - `/问`：`AIQueryParser.answer_with_plan` → `QueryAgent.run` → 缓存及本地命令/`parse_local_query`；未命中才走能力路由、模型结构化动作、`natural_query/query_validation.py` 校验 → `structured_query.py::resolve_query`。歌曲等级与难度先由 `query/song_conditions.py` 从用户原文提取证据，再校验模型动作；模型自由文本不能成为事实答案。
 
@@ -38,7 +38,7 @@ Haneoka 公共设施：`sources/haneoka/transport.py`、`identity.py` 与 `sourc
 
 | 任务 | 入口文件＋关键符号 | 相关测试文件 | 按需补读 |
 |---|---|---|---|
-| 成员卡、支援卡、稀有度 | `query/card_catalog.py::query_cards`、`parse_card_request`；`data.py::card_with_detail`、`support_card_with_detail`；`visuals.py::render_card`、`render_support_card` | `test_card_catalog.py`、`test_query.py`、`test_support_data.py`、`test_reply_pipeline.py` | [卡牌详情说明](更新说明-成员卡与支援卡查询.md) |
+| 成员卡、支援卡、稀有度 | `query/card_catalog.py::query_cards`、`parse_card_request`；`data.py::card_with_detail`、`support_card_with_detail`；`visuals.py::render_card`、`render_support_card` | `test_card_catalog.py`、`test_query.py`、`test_support_data.py`、`test_reply_pipeline.py`、`test_pr60_regressions.py` | [卡牌详情说明](更新说明-成员卡与支援卡查询.md) |
 | 成员技能反查 | `natural_query/local_query.py::local_skill_question`；`structured_query.py::matching_skills`、`cards_for`；`sources/yatta.py::build_skills`、`skill_description`；`SongRepository.member_skill_index_ready` | `test_support_data.py`、`test_ai_lexicon.py` | 同上；[昵称规范](../昵称词表维护规范.md) |
 | 歌曲条件、谱面与绘图 | `commands.py::song_matches`；`structured_query.py::songs_for`、`chart_for`；`platforms/qq/qq.py::_chart_image`；`sources/chart_data.py::load_chart_score`；`visuals.py::_draw_score`、`render_chart`；本地样图 `scripts/preview_visuals.py` | `test_query.py`、`test_chart_data.py`、`test_visuals.py`、`test_reply_pipeline.py` | [README 谱面说明](../README.md#谱面怎么看)、[第三方资料](../THIRD_PARTY.md) |
 | 自然语言、同义问法 | `natural_query/local_query.py::parse_local_query`；`natural_query/query_agent.py::QueryAgent.run`；`natural_query/query_capabilities.py::local_route`；`natural_query/query_validation.py::validate_capability_action`；`natural_query/query_terms.py::is_skill_placeholder`；`query/song_conditions.py::extract_song_conditions`；`structured_query.py::QuerySpec`、`QueryResult` | `test_query.py`、`test_ai_lexicon.py`、`test_query_refactor.py`、`test_natural_query_eval.py` | [Agent 专项方案](自然语言查询Agent重构方案.md)（含重构前背景，以代码确认现状） |
@@ -113,7 +113,9 @@ python scripts/check_release_artifact.py dist
 
 根 [AGENTS.md](../AGENTS.md) 是短入口；本指南维护任务映射；[README](../README.md) 维护用户能力与路线图；[交接文档](../交接文档.md) 保留交接入口；本机 `项目日志.md`（未随仓库发布）仅供需要历史证据且文件存在时查阅。不每次追加开发流水账，不复制专项规格。入口、接口、来源、关键约束或验证方式变化时，才更新对应段落。旧方案中的基线描述与代码不符应明确区分，产品要求继续有效。
 
-- 卡牌列表与详情通过 `rendering/card_visuals.py` 复用 `visuals.py::_canvas` 的统一布纹、圆角边框、配色与两倍分辨率绘制；不得另建独立主题。纯卡面输出保持原图比例。共享视觉基线来自主线 `6d7f489`（PR #18–20）；后续集成需保留主线样式更新。相关离线检查：`test_visuals.py`、`test_card_catalog.py`。
+- 以下 `card_visuals`、`member_list_visuals`、`member_detail_visuals`、`support_visuals` 为保留的旧渲染入口与测试。QQ 当前完整结果入口使用 `catalog_layout`、`card_detail_layout`、`song_layout`；视觉规则见 [图片输出说明](IMAGE_OUTPUT.md)。角色及留影卡详情图文统一满级基础值，列表保留旧缓存／缺资料状态。
+
+- 旧卡牌列表与详情通过 `rendering/card_visuals.py` 复用 `visuals.py::_canvas` 的统一布纹、圆角边框、配色与两倍分辨率绘制；不得另建独立主题。纯卡面输出保持原图比例。共享视觉基线来自主线 `6d7f489`（PR #18–20）；后续集成需保留主线样式更新。相关离线检查：`test_visuals.py`、`test_card_catalog.py`。
 
 - 角色卡条件列表专用视觉位于 `rendering/member_list_visuals.py`（`card_visuals.grid` 的成员卡分支）：技能摘要为框内队长/演出/激奏三项渐变信息层，ID 为框外附属栏；稀有度边框是设计处理，并非已取得官方卡框素材。正式列表不放资源/实现说明；保留分页与旧缓存提示。`test_member_list_visuals.py` 验证信息完整、长条件换行及 SNAP 分流不变。默认 Catalog 在启动／刷新时使用同版资源重建摘要；旧源由 `sources/haneoka/haneoka_members.py` 管 `haneoka-member-list-jp.json`。`haneoka_member_contracts.py` 保留已核实指纹，`leader_summary.py` 对已知队长机制参数化校验完整描述、原始效果及同版乐队／目标；无需逐新卡登记，但未知条件或机制仍拒绝。`test_haneoka_members.py` 与 `test_haneoka_catalog.py` 验证数值、条件、身份、自动重建和缓存故障。
 
@@ -123,7 +125,7 @@ python scripts/check_release_artifact.py dist
 
 - `rendering/support_summary.py` 从现有Lv.5中文技能效果做完整模板匹配，仅输出基础效果及触发/上限，条件加成留详情；新措辞必须先核实。`member_detail_visuals._panel` 是两类详情共用的白底/标题带绘制，不影响列表或数据逻辑。
 
-- 所有渲染器经 `visuals._bytes` → `image_output.encode_image` 统一编码预算（1.5MB/8192边长/1200万像素）；`_bytes` 接管并关闭最终画布，编码器关闭自建临时图像。字节输出绘图入口使用 `reclaim_after_render`，等绘图句柄退出后才尝试归还 Linux 大图空闲内存；缺少接口时降级，新增入口须保留此作用域。`qq._upload_image` 单次上传30秒，HTTP临时副本必须解除共享会话引用；测试 `test_image_output.py`（含生命周期、并发和失败）、`test_media.py`、`test_reply_pipeline.py`。发布依据与可溯源说明见 [2026-09-28报告](RELEASE_2026-09-28.md)。
+- 渲染器统一使用 `image_output.encode_image`（旧入口经 `visuals._bytes`） 统一编码预算（3,000,000字节/8192边长/1200万像素）；`_bytes` 接管并关闭最终画布，编码器关闭自建临时图像。字节输出绘图入口使用 `reclaim_after_render`，等绘图句柄退出后才尝试归还 Linux 大图空闲内存；缺少接口时降级，新增入口须保留此作用域。`qq._upload_image` 单次上传30秒，HTTP临时副本必须解除共享会话引用；测试 `test_image_output.py`（含生命周期、并发和失败）、`test_media.py`、`test_reply_pipeline.py`。发布依据与可溯源说明见 [2026-09-28报告](RELEASE_2026-09-28.md)。
 
 
 Linux 离线发布／更新任务：从 [部署协议](../deploy/LINUX_OFFLINE.md) 进入 `deploy/linux_backend.py`、`linux_updater.py`、`offline_bundle.py` 和 `scripts/*offline_release.py`，目标测试 `test_linux_backend.py`、`test_linux_updater.py`、`test_offline_bundle.py`；涉及部署契约时执行完整回归与 Linux 断网安装 CI。

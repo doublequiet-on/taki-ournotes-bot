@@ -47,6 +47,8 @@ def render(card,locale='zh',*,load):
     ah=round(972*picture.height/picture.width) if picture else (547 if support else 1296)
     blocks.append(('art',ah+34,None))
     stats=tuple(v/100 if support else v for v in (card.performance,card.technic,card.visual))
+    if card.catalog.get('source') != 'haneoka' and not any(stats):
+        stats = None
     people=sorted(card.catalog.get('people',[]),key=lambda p:(p.get('band') or 999,p.get('order',999),p['id']))
     if support and len(people)>1:
         blocks.append(('people',126,people))
@@ -141,7 +143,7 @@ def render(card,locale='zh',*,load):
 
                     if not support:c.text(1026,y+48,f'{sum(data):,}',48,bold=True,align='right')
                     if support:c.text(1026,y+48,'满级基础值',32,MUTED,align='right')
-                    else:c.text(54,y+108,'基础数值',34,MUTED)
+                    else:c.text(54,y+108,'满级基础值',34,MUTED)
                     for i,(name,value,color) in enumerate(zip(('表演值','技巧值','形象值'),data,('#d2518b','#248ba6','#b97913'))):
                         cy=y+(104 if support else 165)+i*54;c.text(54,cy,name,36,color);right=900 if support else 850;c.box((194,cy-11,right,cy+11),'#eeebf0',11)
                         if value:c.box((194,cy-10,194+max(1,round((right-194)*value/(max(data)*1.1 or 1))),cy+11),color,11)

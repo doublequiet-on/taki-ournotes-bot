@@ -1,5 +1,6 @@
 # 主题参考
 
+当前交互与属性口径以 [图片输出说明](../IMAGE_OUTPUT.md) 为准：按 ID 查详情、`/继续` 续发，角色与留影卡详情展示满级基础值；下文保留原设计记录。
 Taki主题：src/ournotes_bot/visuals.py；PAPER #F1F2F8、INK #202B49、MUTED #45516F、ACCENT #475B96、BORDER #AAB5D0、SURFACE #E6EAF4。共用布纹背景、RENDER_SCALE=2；卡框/难度/属性属于语义色。本次字体文件哈希在manifest，不交付字体文件。
 
 Haneoka锁定434afb7a598d43e6a8d78e07560577b44643c2e2；design-tokens锁定7a7d83edc24bc9bb55a9d35526b4f7b61d31d643。

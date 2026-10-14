@@ -584,12 +584,15 @@ def _complete_list_reply(result,repository,locale,candidate):
                         if hasattr(r,'skills') else localized_text(r,'band',locale)+' · '+' / '.join(f'{ch.difficulty} {ch.display_level:g} ({ch.notes if ch.notes is not None else "?"} Note)' for ch in r.charts))
                        for i,r in enumerate(records[start:stop],start))
         text+=f'\n共 {len(records)} 条，本图 {start+1}–{stop}。'
+        if cards:
+            from ...query.card_catalog import catalog_notice
+            text += catalog_notice(records)
         ctx=replace(candidate,visible=candidate.visible[:stop]) if candidate else None
         pages.append(PreparedReply(text,part.image,context=ctx))
     return pages[0] if len(pages)==1 else PreparedReply('',pages=tuple(pages),context=candidate)
 
 
-def _complete_detail_reply(result,repository,locale,candidate):
+def _detail_card(result, repository):
     if result is None or result.status!='success':return None
     card=None
     if result.catalog is not None and result.catalog.request.mode=='detail':
@@ -601,22 +604,18 @@ def _complete_detail_reply(result,repository,locale,candidate):
     elif result.parsed[0] in {'cards','support_cards'} and result.parsed[1].isdigit():
         if result.cards:card=repository.card_with_detail(result.cards[0])
         elif result.support_cards:card=repository.support_card_with_detail(result.support_cards[0])
-    if card is None:return None
-    from ...rendering.card_detail_layout import render
-    parts=render(card,locale,load=_visual_asset)
-    from ...data import localized_text
-    text=f'ID {card.id} '+localized_text(card,'title',locale)+' · '+localized_text(card,'character',locale)
-    text+='\n表演／技巧／形象（Lv.1）：'+str(card.catalog.get('stats_level1') or '未获取')
-    for index,skill in enumerate(card.skills):
-        text+='\n'+localized_text(skill,'name',locale)+'：'+localized_text(skill,'description',locale)
-        levels=card.catalog.get('skill_levels',[])
-        if index<len(levels):
-            text+='\n'+'\n'.join(f'Lv.{i+1} '+(d.get(locale) or d.get('ja') or '未知') for i,d in enumerate(levels[index]))
-    for relation in card.catalog.get('relations',[]):
-        text+='\n'+relation['kind']+' ID '+str(relation['id'])+' '+(relation['name'].get(locale) or relation['name'].get('ja') or '未知')
+    return card
 
-    pages=tuple(PreparedReply(text,p.image,context=candidate) for p in parts)
-    return pages[0] if len(pages)==1 else PreparedReply(text,pages=pages,context=candidate)
+
+def _complete_detail_reply(result,repository,locale,candidate):
+    card = _detail_card(result, repository)
+    if card is None:return None
+    from ...query.card_catalog import detail_text
+    from ...rendering.card_detail_layout import render
+    text = detail_text(card, locale)
+    parts = render(card, locale, load=_visual_asset)
+    pages = tuple(PreparedReply(text, p.image, context=candidate) for p in parts)
+    return pages[0] if len(pages) == 1 else PreparedReply(text, pages=pages, context=candidate)
 
 
 def _complete_chart_reply(result,repository,locale,candidate):
@@ -715,7 +714,7 @@ def _render_prepared_inner(reply, result, repository, locale, candidate=None):
     except Exception as exc:
         logger.warning("图片生成失败，改用文字；错误类型=%s", type(exc).__name__)
         image = None
-        reply, candidate = _complete_fallback(reply, result, locale, candidate)
+        reply, candidate = _complete_fallback(reply, result, locale, candidate, repository)
     if (image is None and result is not None and result.catalog is not None
             and result.catalog.request.mode == "art" and not result.catalog.error):
         reply += "\n卡面图片暂不可用，请稍后重试。"
@@ -723,7 +722,7 @@ def _render_prepared_inner(reply, result, repository, locale, candidate=None):
                          context=candidate)
 
 
-def _complete_fallback(reply, result, locale, candidate):
+def _complete_fallback(reply, result, locale, candidate, repository):
     """A failed renderer must not restore the former first-page truncation."""
     if result is not None and result.cutoff is not None:
         return result.cutoff.text, candidate
@@ -733,6 +732,10 @@ def _complete_fallback(reply, result, locale, candidate):
         return reply, candidate
     if result.cutoff is not None:
         return result.cutoff.text, candidate
+    card = _detail_card(result, repository)
+    if card is not None:
+        from ...query.card_catalog import detail_text
+        return detail_text(card, locale), candidate
     from ...data import localized_text
     cards = result.cards or result.support_cards
     songs = result.songs
@@ -760,7 +763,8 @@ def _complete_fallback(reply, result, locale, candidate):
     if candidate is not None:
         choices = {choice.entity_id:choice for choice in candidate.visible}
         candidate = replace(candidate,visible=tuple(choices[r.id] for r in records))
-    return '\n\n'.join(rows)+f'\n共 {len(records)} 条。', candidate
+    from ...query.card_catalog import catalog_notice
+    return '\n\n'.join(rows)+f'\n共 {len(records)} 条。'+(catalog_notice(records) if cards else ''), candidate
 
 
 async def _upload_image(api, target_id: str, image: bytes, group: bool):
@@ -825,6 +829,12 @@ async def _deliver_reply(message, target_id: str, group: bool, reply: PreparedRe
     target = {"group_openid" if group else "openid": target_id,
               "msg_id": message.id, "msg_seq": msg_seq}
     channel = "群聊" if group else "单聊"
+    user = getattr(getattr(message, "author", None), "member_openid", None) if group else None
+    def addressed(text):
+        if not user:
+            return text
+        from html import escape
+        return f'<qqbot-at-user id="{escape(user, quote=True)}" /> ' + (text or "")
     if reply.image:
         try:
             media = await _upload_image(message._api, target_id, reply.image, group)
@@ -832,7 +842,7 @@ async def _deliver_reply(message, target_id: str, group: bool, reply: PreparedRe
             logger.warning("%s图片上传失败，改用文字；错误类型=%s", channel, type(exc).__name__)
             if len(reply.text)>1800:
                 try:
-                    receipt=_receipt(await send(**target,msg_type=0,content='图片上传失败，完整文字已保留；发送 /继续 查看。'))
+                    receipt=_receipt(await send(**target,msg_type=0,content=addressed('图片上传失败，完整文字已保留；发送 /继续 查看。')))
                 except Exception as error:
                     logger.error('%s失败提示发送回执不确定；错误类型=%s',channel,type(error).__name__)
                     return DeliveryOutcome('uncertain')
@@ -843,6 +853,8 @@ async def _deliver_reply(message, target_id: str, group: bool, reply: PreparedRe
                 if isinstance(reply.context,DeliveryCursor):
                     cursor=reply.context
                     caption['content']=f'图片 {cursor.sent}/{cursor.total}'+('；/继续 发送其余图片。' if cursor.remaining else '；本次已全部发送。')
+                if user:
+                    caption["content"] = addressed(caption.get("content", ""))
                 outcome = _receipt(await send(**target, msg_type=7, media=media, **caption))
             except Exception as exc:
                 logger.error("%s图片发送失败，结果不确定，不自动重发；错误类型=%s", channel, type(exc).__name__)
@@ -852,7 +864,7 @@ async def _deliver_reply(message, target_id: str, group: bool, reply: PreparedRe
             return outcome
     for offset, chunk in enumerate(reply.fallback_texts or (reply.text,)):
         try:
-            outcome = _receipt(await send(**{**target, "msg_seq": msg_seq + offset}, msg_type=0, content=chunk))
+            outcome = _receipt(await send(**{**target, "msg_seq": msg_seq + offset}, msg_type=0, content=addressed(chunk)))
         except Exception as exc:
             logger.error("%s文字发送失败，结果不确定，不自动重发；错误类型=%s", channel, type(exc).__name__)
             return DeliveryOutcome("uncertain")

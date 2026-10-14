@@ -34,13 +34,13 @@ def parse_field_question(question, repository):
             except ValueError as exc:
                 return QueryProblem(str(exc))
             return QuerySpec("song", field="count", song_filter=shared)
-        support = bool(re.search(r"SNAP|支援卡", term, re.I))
-        term = re.sub(r"(?:的)?(?:成员卡|角色卡|卡牌|卡|SNAP|支援卡)$", "", term, flags=re.I).strip()
+        support = bool(re.search(r"SNAP|留影卡|支援卡", term, re.I))
+        term = re.sub(r"(?:的)?(?:成员卡|角色卡|卡牌|卡|SNAP|留影卡|支援卡)$", "", term, flags=re.I).strip()
         term = "" if term in {"全部", "所有", "全库"} else term
         return QuerySpec("support_card" if support else "card", field="count", card_query=term)
-    skill = re.fullmatch(r"(成员卡|角色卡|SNAP|支援卡|卡牌|卡)\s*(?:ID\s*[:=]?)?(\d+)\s*(?:的)?\s*(队长|LIVE|激奏|击奏|支援)?技能(?:效果)?(?:是什么|有哪些)?", text, re.I)
+    skill = re.fullmatch(r"(成员卡|角色卡|SNAP|留影卡|支援卡|卡牌|卡)\s*(?:ID\s*[:=]?)?(\d+)\s*(?:的)?\s*(队长|LIVE|激奏|击奏|支援)?技能(?:效果)?(?:是什么|有哪些)?", text, re.I)
     if not skill:
-        reversed_id = re.fullmatch(r"(\d+)号?(?:的)?\s*(成员卡|角色卡|SNAP|支援卡|卡牌|卡)\s*(?:的)?(队长|LIVE|激奏|击奏|支援)?技能(?:效果)?(?:是什么|有哪些)?", text, re.I)
+        reversed_id = re.fullmatch(r"(\d+)号?(?:的)?\s*(成员卡|角色卡|SNAP|留影卡|支援卡|卡牌|卡)\s*(?:的)?(队长|LIVE|激奏|击奏|支援)?技能(?:效果)?(?:是什么|有哪些)?", text, re.I)
         if reversed_id:
             kind, ident, part = reversed_id[2], reversed_id[1], reversed_id[3]
         else:
@@ -50,7 +50,7 @@ def parse_field_question(question, repository):
     if ident:
         if kind in {"卡", "卡牌"}:
             return QueryProblem(f"请明确卡牌类型：/问 成员卡 {ident} 技能 或 /问 SNAP {ident} 技能。", "ambiguous")
-        support = kind.lower() in {"snap", "支援卡"}
+        support = kind.lower() in {"snap", "留影卡", "支援卡"}
         intent = "support_card" if support else "card"
         skill_kind = {"队长": "leader", "live": "live", "激奏": "gekisou", "击奏": "gekisou", "支援": "live"}.get((part or "").lower(), "")
         return QuerySpec(intent, EntityRef(intent, int(ident)), field="skills", skill_kind=skill_kind)

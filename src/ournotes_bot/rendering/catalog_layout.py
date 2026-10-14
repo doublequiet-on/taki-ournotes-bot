@@ -146,6 +146,14 @@ def render_list(cards,query,locale='zh',*,load):
     columns=max(len(r.cards) for r in rows);width=max(284,132+columns*pitch+24)
     title='留影卡列表' if support else '角色卡列表'
     subtitle=f'{query} · Lv.5'+(f' · 演{duration}s' if duration else '')+(f' · →{target}强化' if target else '')
+    notices = []
+    if any(c.catalog.get('detail_stale') for c in cards):
+        notices.append('部分详情使用上次有效缓存。')
+    if any(not c.catalog.get('detail_loaded') for c in cards):
+        notices.append('部分技能资料未获取，未知分类不会当作无技能。')
+    notice = ' '.join(notices)
+    footer_lines = lines(notice, width-56, 16) if notice else []
+    footer_h = 38 + len(footer_lines)*22
     head=124+len(lines(subtitle,width-60,20))*28
     assets={}
     def cached(url,size):
@@ -186,12 +194,14 @@ def render_list(cards,query,locale='zh',*,load):
                     cy=base+row.offsets[i]+10;c.text(x,cy,label,16,color,True)
                     for n,line in enumerate(wrapped):c.text(x+22,cy+n*20,line,16)
             y+=row.height
-        c.text(28,height-18,f'{rows[start].cards[0][0]+1}–{rows[stop-1].cards[-1][0]+1} / {len(cards)} · /选 编号',16,MUTED)
+        c.text(28,height-18,f'{rows[start].cards[0][0]+1}–{rows[stop-1].cards[-1][0]+1} / {len(cards)} · 按 ID 查详情',16,MUTED)
+        for n, text in enumerate(footer_lines):
+            c.text(28,height-footer_h+18+n*22,text,16,MUTED)
         return c.image
     try:
         with ThreadPoolExecutor(max_workers=3) as pool:
             for key,image in zip(sorted(requests),pool.map(lambda key:load(*key),sorted(requests))):assets[key]=image
-        parts=render_parts(tuple(r.height for r in rows),width,head+38,paint)
+        parts=render_parts(tuple(r.height for r in rows),width,head+footer_h,paint)
         ranges=tuple((rows[p.start].cards[0][0],rows[p.stop-1].cards[-1][0]+1) for p in parts)
         return parts,cards,ranges
     finally:

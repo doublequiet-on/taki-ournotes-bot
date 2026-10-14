@@ -62,7 +62,7 @@ def render_list(songs,query,locale='zh',*,load):
                 else:c.text(x+148,y+titleh+bandheight+33,'激奏资料未确认',29,MUTED)
                 c.line(x,y+heights[ri]-10,x+796)
             y+=heights[ri]
-        c.text(54,height-22,f'{start+1}–{stop} / {len(songs)} · /选 编号',22,MUTED)
+        c.text(54,height-22,f'{start+1}–{stop} / {len(songs)} · /查谱面 ID 难度',22,MUTED)
         return c.image
     parts=[];start=0
     limit=min(MAX_IMAGE_EDGE,MAX_IMAGE_PIXELS//width)

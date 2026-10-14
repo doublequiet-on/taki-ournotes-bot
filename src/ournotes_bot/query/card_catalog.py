@@ -90,7 +90,7 @@ class CardAnswer:
         if self.error:
             return self.error
         req = self.request
-        title = "SNAP（支援卡）" if req.support else "角色卡"
+        title = "留影卡（SNAP）" if req.support else "角色卡"
         if not self.cards:
             return f"{title}：未找到符合条件的卡牌。条件：{req.query or '不限'}（未放宽筛选）"
         if req.mode == "detail":
@@ -347,17 +347,17 @@ def detail_text(card, locale="zh"):
     support = isinstance(card, SupportCard)
     live, gek = labels(card)
     bands = card.catalog.get("bands", []) if support else [localized_text(card, "band", locale)]
-    lines = [f"{'SNAP 支援卡详情' if support else '成员卡详情'} · ID {card.id}",
+    lines = [f"{'留影卡详情' if support else '成员卡详情'} · ID {card.id}",
              localized_text(card, "title", locale), localized_text(card, "character", locale),
              "乐队：" + (" / ".join(bands) or "关联未获取"),
              f"{rarity_name(card)} · {TYPES.get(card.card_type, f'未知类型({card.card_type})')}",
              f"LIVE{'支援' if support else '技能'}：{live} · 击奏{'支援' if support else '技能'}：{gek}"]
-    stats = card.catalog.get("stats_level1")
-    state = "Lv.1 / Rank 1" + ("" if support else " / 觉醒0次")
-    if stats is not None:
+    stats = tuple(v / 100 if support else v for v in (card.performance, card.technic, card.visual))
+    state = "满级基础值"
+    if card.catalog.get("source") == "haneoka" or any(stats):
         unit = "%" if support else ""
         lines.append(f"资料展示状态：{state}（非玩家培养状态）")
-        lines.append(" / ".join(f"{name} {value:g}{unit}" for name, value in zip(("演出", "技巧", "表现"), stats)))
+        lines.append(" / ".join(f"{name} {value:g}{unit}" for name, value in zip(("表演", "技巧", "形象"), stats)))
     else:
         lines.append("数值状态未核实，暂不展示培养数值。")
     if not support:
@@ -366,10 +366,17 @@ def detail_text(card, locale="zh"):
                                     " / ".join(n.get(locale) or n.get("ja") or k for k, n in tags.items()) if tags else "标签未获取"))
     names = {"leaderSkill": "队长技能", "liveSkill": "LIVE技能", "gekisouSkill": "击奏技能",
              "supportSkill": "LIVE支援", "gekisouSupportSkill": "击奏支援"}
-    for skill in card.skills:
+    for index, skill in enumerate(card.skills):
         lang = card.catalog.get("skill_languages", {}).get(skill.kind, "未知")
         lines += [f"{names.get(skill.kind, skill.kind)} · {localized_text(skill, 'name', locale)}",
                   "效果（Lv.5；来源语言 " + lang + "）：" + (localized_text(skill, "description", locale) or "详情未获取")]
+        levels = card.catalog.get("skill_levels", [])
+        if index < len(levels):
+            lines.extend(f"Lv.{i + 1} " + (d.get(locale) or d.get("ja") or "未知")
+                         for i, d in enumerate(levels[index]))
+    for relation in card.catalog.get("relations", []):
+        lines.append(relation["kind"] + " ID " + str(relation["id"]) + " " +
+                     (relation["name"].get(locale) or relation["name"].get("ja") or "未知"))
     if not card.skills:
         lines.append("技能详情暂不可用；不代表无技能。")
     source = "Haneoka JP" if card.catalog.get("source") == "haneoka" else "Project Yume"
@@ -377,3 +384,13 @@ def detail_text(card, locale="zh"):
     if card.catalog.get("detail_stale"):
         lines.append("详情使用上次有效缓存。")
     return "\n".join(lines)
+
+
+def catalog_notice(cards):
+    """Status retained by every complete-list image and text fallback."""
+    notices = []
+    if any(c.catalog.get("detail_stale") for c in cards):
+        notices.append("部分详情使用上次有效缓存。")
+    if any(not c.catalog.get("detail_loaded") for c in cards):
+        notices.append("部分技能资料未获取，未知分类不会当作无技能。")
+    return "\n" + "\n".join(notices) if notices else ""
