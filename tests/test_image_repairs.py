@@ -34,6 +34,28 @@ class ArtRoutingTests(unittest.TestCase):
         with Image.open(io.BytesIO(raw)) as image:self.assertEqual(image.size,(1440,1920))
 
 
+class LocalizedDurationTests(unittest.TestCase):
+    def test_audited_whole_fever_duration_has_no_chinese_in_english_table(self):
+        from dataclasses import replace
+        from ournotes_bot.rendering import card_detail_layout
+        from ournotes_bot.rendering.haneoka_theme import Canvas
+        from test_pr60_regressions import ReviewRegressionTests
+        fixture=ReviewRegressionTests();fixture.setUp()
+        self.addCleanup(fixture.doCleanups)
+        card=fixture.repo.cards[0]
+        values=['COMBO获取 · 开场2秒','COMBO获取 · 开场3秒','COMBO获取 · 开场4秒','COMBO获取 · 开场5秒','COMBO获取']
+        card=replace(card,catalog={**card.catalog,'compact_skills':[{'levels':{str(i+1):v for i,v in enumerate(values)}}],
+            'skill_levels':[[{'en':'Combo boost'} for _ in range(5)]]})
+        drawn=[];original=Canvas.text
+        def capture(c,x,y,value,*args,**kwargs):
+            drawn.append(str(value));return original(c,x,y,value,*args,**kwargs)
+        with patch.object(Canvas,'text',capture):card_detail_layout.render(card,'en',load=lambda *a:None)
+        self.assertIn('Full fever',drawn)
+        self.assertIn('2s',drawn)
+        self.assertNotIn('整个激奏',drawn)
+        self.assertFalse(any('秒' in value for value in drawn))
+
+
 class JudgmentVectorTests(unittest.TestCase):
     def test_captured_guide_auto_and_merged_judgments_match_independent_reference(self):
         vectors=json.loads((Path(__file__).parent/'fixtures/chart_judgment_vectors.json').read_text('utf-8'))

@@ -79,12 +79,16 @@ def render(card,locale='zh',*,load):
                 extracted=[('',[re.search(r'开场(.+)',v).group(1) if '开场' in v else '整个激奏' for v in brief])]
             for label,values in extracted:
                 values=[re.sub(r'\d+\.\d+',lambda m:f'{float(m.group()):g}',v) for v in values]
+                values=[ui_label(v,locale) if v=='整个激奏' else re.sub(r'([0-9.]+)秒',r'\1s',v) if locale=='en' else v for v in values]
                 if len(extracted)==1 and label.startswith('效果'):label=''
                 if label=='基础效果':label='通常'
-                if label=='条件成立' and contract:
+                if label=='条件成立' and contract and locale=='zh':
                     last=contract['levels']['5'];label=last.get('enhanced_target','条件成立') if isinstance(last,dict) else label
+                if label.startswith('效果 '):label=label.replace('效果',ui_label('效果',locale),1)
                 wrapped=[lines(v,150 if label else 182,32 if support else 36) for v in values]
-                rows.append((label,wrapped,max(map(len,wrapped))*50+2))
+                label=ui_label(label,locale)
+                row_height=max(max(map(len,wrapped))*50,len(lines(label,150,28))*36+6 if label else 0)+2
+                rows.append((label,wrapped,row_height))
         name=localized_text(skill,'name',locale)
         contracts=card.catalog.get('compact_skills',[])
         contract=contracts[index] if index<len(contracts) else None
@@ -185,7 +189,7 @@ def render(card,locale='zh',*,load):
                         dt=datetime.fromisoformat(value).astimezone(timezone(timedelta(hours=9)))
                         return dt.strftime('%m/%d %H:%M') if dt.year>1970 else ui_label('未获取',locale)
                     except (ValueError,TypeError):return ui_label('未获取',locale)
-                c.text(498,y+218,ui_label('活动加成卡',locale) if relation['kind']=='相关活动' else 'Pick Up',32,ACCENT)
+                c.text(498,y+max(218,90+len(lines(name,528,40))*52+24),ui_label('活动加成卡',locale) if relation['kind']=='相关活动' else 'Pick Up',32,ACCENT)
                 c.text(54,y+bh-40,date(relation['start'])+' — '+date(relation['end'])+'  (UTC+09:00)',32,MUTED)
             else:c.text(54,y+40,ui_label('技能详情未获取',locale),32,MUTED)
             y+=bh
