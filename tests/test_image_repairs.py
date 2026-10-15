@@ -124,3 +124,43 @@ class RankingPreparationTests(unittest.TestCase):
         with patch.object(preparation,'check_headers',side_effect=ValueError('foreign release')):
             with self.assertRaises(ValueError):
                 preparation.ranking_urls({'identities':{'intl':{'releaseId':'r-'+('a'*20)}}},fetch=lambda *a:(b'{"entries":{}}',{}))
+
+
+class RankingPreparedCacheTests(unittest.TestCase):
+    def test_ranking_reads_persistent_prepared_art_without_network_after_restart(self):
+        import os,threading,time
+        from types import SimpleNamespace
+        from ournotes_bot.rendering.event_cutoff_visuals import load_artwork
+        from ournotes_bot import visuals
+        release='r-'+('a'*20)
+        url='https://haneoka.org/assets/intl/Assets/AddressableResources/Image/Jacket/small/jkt_004_100111.png?release='+release
+        event=SimpleNamespace(source='haneoka',server='tw',event_id='2',metadata_version=release,asset_version='v')
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory);cache=root/'haneoka-asset-cache';cache.mkdir()
+            path=cache/(hashlib.sha256(url.encode()).hexdigest()+'.png')
+            Image.new('RGB',(20,30),'blue').save(path);os.utime(path,(1,1))
+            with patch.object(visuals,'runtime_data_dir',return_value=root),patch('ournotes_bot.sources.haneoka.transport.public_get',side_effect=AssertionError('prepared artwork fetched again')):
+                for version in ('before-restart','after-restart'):
+                    source=SimpleNamespace(cache_dir=root/version,monotonic=time.monotonic,clock=time.time,_lock=lambda key:threading.Lock(),_negative={})
+                    images=load_artwork(source,event,(url,))
+                    self.assertEqual(images[url].size,(20,30));images[url].close()
+                    self.assertFalse(source.cache_dir.exists())
+
+    def test_corrupt_prepared_art_uses_existing_bounded_fetch(self):
+        import threading,time
+        from types import SimpleNamespace
+        from ournotes_bot.rendering.event_cutoff_visuals import load_artwork
+        from ournotes_bot import visuals
+        release='r-'+('a'*20)
+        url='https://haneoka.org/assets/intl/Assets/AddressableResources/Image/Jacket/small/jkt_004_100111.png?release='+release
+        event=SimpleNamespace(source='haneoka',server='tw',event_id='2',metadata_version=release,asset_version='v')
+        raw=io.BytesIO();Image.new('RGB',(20,30),'blue').save(raw,'PNG')
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory);cache=root/'haneoka-asset-cache';cache.mkdir()
+            (cache/(hashlib.sha256(url.encode()).hexdigest()+'.png')).write_bytes(b'corrupt')
+            source=SimpleNamespace(cache_dir=root/'business',monotonic=time.monotonic,clock=time.time,_lock=lambda key:threading.Lock(),_negative={})
+            with patch.object(visuals,'runtime_data_dir',return_value=root),patch('ournotes_bot.sources.haneoka.transport.public_get',return_value=(raw.getvalue(),{'x-haneoka-release-id':release,'x-haneoka-source-id':'fixture','content-type':'image/png'})) as fetch:
+                image=load_artwork(source,event,(url,))[url]
+            self.assertEqual(image.size,(20,30));image.close()
+            self.assertEqual(fetch.call_count,1)
+            self.assertLessEqual(fetch.call_args.args[2],6)

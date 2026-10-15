@@ -39,6 +39,12 @@ def load_artwork(source, event, urls: tuple[str, ...]) -> dict[str, Image.Image 
     from ..sources.haneoka.transport import public_get
     deadline = source.monotonic() + 6
     prefix = f"{ASSETS}/{event.server}/{SERVERS[event.server][3]}/"
+    def decode(raw):
+        with Image.open(io.BytesIO(raw)) as original:
+            if original.width * original.height > 8_000_000:
+                raise ValueError('Artwork pixel limit')
+            original.load()
+            return original.convert('RGB')
     def load(url):
         haneoka = event.source == "haneoka" and is_catalog_asset(url)
         if event.source == "haneoka" and (not haneoka or
@@ -47,6 +53,13 @@ def load_artwork(source, event, urls: tuple[str, ...]) -> dict[str, Image.Image 
         if not haneoka and (not url.startswith(prefix) or not re.fullmatch(
                 r"(?:Story/Banner/Chapter|Image/Jacket)/([A-Za-z0-9_-]{1,120})/\1\.webp", url[len(prefix):])):
             return None
+        if haneoka:
+            prepared=v.runtime_data_dir()/'haneoka-asset-cache'/(hashlib.sha256(url.encode()).hexdigest()+'.png')
+            try:
+                if prepared.is_file() and prepared.stat().st_size <= 6_000_000:
+                    return decode(prepared.read_bytes())
+            except (OSError,ValueError):
+                pass  # A damaged/missing prepared file follows the existing bounded fetch path.
         key = f"{event.server}:{event.event_id}:{event.metadata_version}:{event.asset_version}:{url}"
         path = source.cache_dir / "assets" / (hashlib.sha256(key.encode()).hexdigest() + ".webp")
         request_key = "asset:" + url
@@ -81,11 +94,7 @@ def load_artwork(source, event, urls: tuple[str, ...]) -> dict[str, Image.Image 
                     source._negative.pop(request_key, None)
                     if not headers.get("content-type", "").lower().startswith("image/"):
                         return None
-                with Image.open(io.BytesIO(raw)) as original:
-                    if original.width * original.height > 8_000_000:
-                        return None
-                    original.load()
-                    image = original.convert("RGB")
+                image = decode(raw)
                 if downloaded:
                     temp = path.with_suffix(f".{uuid.uuid4().hex}.tmp")
                     try:
