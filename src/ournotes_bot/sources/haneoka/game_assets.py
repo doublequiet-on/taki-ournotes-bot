@@ -52,10 +52,10 @@ def _fetch(url, timeout=8):
 NOTE_ASSETS = ('skin001.json', 'skin001.png')
 
 
-def prepare_note_assets(cache_dir, source_dir=None):
+def prepare_note_assets(cache_dir, source_dir=None, *, names=NOTE_ASSETS):
     """Verify and persist note artwork before queries; optional offline import."""
     prepared = []
-    for name in NOTE_ASSETS:
+    for name in names:
         spec = MANIFEST[name]
         filename = spec['sha256'] + Path(name).suffix
         path = Path(cache_dir) / filename

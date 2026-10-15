@@ -4,6 +4,7 @@
 # Pos: Rendering / Song; approved sparse full-chart layout.
 # Effects: Pillow and injected artwork; measured native-size encoding, no data queries.
 import math
+from .labels import label as ui_label
 from PIL import Image,ImageDraw
 from ..data import localized_text
 from .haneoka_theme import Canvas,MUTED,DIFFICULTIES,ACCENT,lines,font,mission_label,left_logo,prepare_assets
@@ -80,7 +81,7 @@ def render(song,charts,score,preview,locale='zh',*,load,notice=''):
         extra=(len(titlelines)-1)*126
         header=1000+extra;tracktop=header+110;trackbottom=tracktop+3840
         height=trackbottom+112 if nodes else header+130
-        c=Canvas(width,height);c.text(88,78,'谱面详情',50,bold=True);c.text(width-84,78,'Taki',40,ACCENT,True,'right')
+        c=Canvas(width,height);c.text(88,78,ui_label('谱面详情',locale),50,bold=True);c.text(width-84,78,'Taki',40,ACCENT,True,'right')
         c.paste(art(song.jacket_url,(300,300)),88,164,300,300,radius=20)
         for i,line in enumerate(titlelines):c.text(452,239+i*126,line,108,bold=True)
         by=365+extra;logos=song.catalog.get('band_logos',[])
@@ -98,13 +99,13 @@ def render(song,charts,score,preview,locale='zh',*,load,notice=''):
         from .song_detail_layout import seconds_at
         bpms=(score or {}).get('events',{}).get('bpm',[])
         vals=[e['bpm'] for e in bpms if e.get('bpm')]
-        bpm=(f'{min(vals):g}' if min(vals)==max(vals) else f'{min(vals):.2f}–{max(vals):.2f}') if vals else '未获取'
+        bpm=(f'{min(vals):g}' if min(vals)==max(vals) else f'{min(vals):.2f}–{max(vals):.2f}') if vals else ui_label('未获取',locale)
         duration=seconds_at(max((v['t'] for v in nodes),default=0),bpms)
-        metrics=[('谱面时长',f'{int(duration)//60}:{int(duration)%60:02}' if duration else '未获取'),('BPM',bpm),
-                 ('音符数',str(selected.notes) if selected and selected.notes is not None else '未获取'),
-                 ('每秒音符数',f'{selected.notes/duration:.1f}' if selected and selected.notes and duration else '未获取')]
+        metrics=[('谱面时长',f'{int(duration)//60}:{int(duration)%60:02}' if duration else ui_label('未获取',locale)),('BPM',bpm),
+                 ('音符数',str(selected.notes) if selected and selected.notes is not None else ui_label('未获取',locale)),
+                 ('每秒音符数',f'{selected.notes/duration:.1f}' if selected and selected.notes and duration else ui_label('未获取',locale))]
         for i,(label,value) in enumerate(metrics):
-            x=88+i*(width-176)/4;c.text(x,610+extra,label,44,MUTED)
+            x=88+i*(width-176)/4;c.text(x,610+extra,ui_label(label,locale),44,MUTED)
             value_size=64 if label=='BPM' else 72
             # Measure the full value before placing adjacent metric columns.
             value_size=min(value_size,int(value_size*((width-176)/4-28)/max(1,font(value_size,True,value.isascii()).getlength(value))))
@@ -112,24 +113,24 @@ def render(song,charts,score,preview,locale='zh',*,load,notice=''):
         reference=song.catalog.get('reference_metrics',{}).get(preview,{})
         for i,(label,key) in enumerate((('技能覆盖率 · 参考','sr'),('倍率 · 参考','score'),('效率 · 参考','eff'))):
             value=reference.get(key);x=88+i*(width-176)/4
-            c.text(x,772+extra,label,36,MUTED)
-            c.text(x,841+extra,f'{math.floor(value*100+.5)}%' if value is not None else '未获取',64,bold=True)
-        x=88+3*(width-176)/4;c.text(x,772+extra,'激奏类型',36,MUTED)
+            c.text(x,772+extra,ui_label(label,locale),36,MUTED)
+            c.text(x,841+extra,f'{math.floor(value*100+.5)}%' if value is not None else ui_label('未获取',locale),64,bold=True)
+        x=88+3*(width-176)/4;c.text(x,772+extra,ui_label('激奏类型',locale),36,MUTED)
         missions=song.traits.missions if song.traits else None
         if missions:
             for i,value in enumerate(missions):mission_label(c,x+i*(width-176)/12,841+extra,value,32 if width>=2200 else 24,40 if width>=2200 else 30)
-        else:c.text(x,841+extra,'未获取',36,MUTED)
-        note='Haneoka 理论参考 · 效率含 30 秒间隔'
-        if 'canonical-full-combo-mismatch' in reference.get('warnings',[]):note+=' · 源数据音符数不一致'
+        else:c.text(x,841+extra,ui_label('未获取',locale),36,MUTED)
+        note=ui_label('Haneoka 理论参考 · 效率含 30 秒间隔',locale)
+        if 'canonical-full-combo-mismatch' in reference.get('warnings',[]):note+=ui_label(' · 源数据音符数不一致',locale)
         c.text(width-88,901+extra,note,26,MUTED,align='right')
-        c.line(88,932+extra,width-88);c.text(88,987+extra,'完整谱面',48,bold=True)
-        c.text(width-88,987+extra,'每列 32 拍 · 下 → 上 · 左 → 右',36,MUTED,align='right')
+        c.line(88,932+extra,width-88);c.text(88,987+extra,ui_label('完整谱面',locale),48,bold=True)
+        c.text(width-88,987+extra,ui_label('每列 32 拍 · 下 → 上 · 左 → 右',locale),36,MUTED,align='right')
         if not nodes:
-            c.text(60,header+98,'完整谱面暂不可用',30,MUTED);return c.image
-        c.text(88,1044+extra,'技能 5 秒 · ▲ 开始 / ━ 结束',27,ACCENT);c.text(610,1044+extra,'粉色侧线：激奏段 · 数字对应激奏顺序',27,'#bf568f')
+            c.text(60,header+98,ui_label('完整谱面暂不可用',locale),30,MUTED);return c.image
+        c.text(88,1044+extra,ui_label('技能 5 秒 · ▲ 开始 / ━ 结束',locale),27,ACCENT);c.text(610,1044+extra,ui_label('粉色侧线：激奏段 · 数字对应激奏顺序',locale),27,'#bf568f')
         for local,col in enumerate(range(first,first+count)):
             x=100+local*pitch;w=pitch-108;lo=col*8*1920;hi=(col+1)*8*1920
-            c.text(x,tracktop-28,f'{col+1:02} / 拍 {col*32+1}–{(col+1)*32}',26,MUTED)
+            c.text(x,tracktop-28,f"{col+1:02} / {ui_label('拍',locale)} {col*32+1}–{(col+1)*32}",26,MUTED)
             c.box((x-12,tracktop-4,x+w+12,trackbottom+14),'#141723',12)
             draw_markers(c,(score or {}).get('events',{}),x,w,tracktop,trackbottom,lo,hi)
             for lane in range(7):c.draw.line((x+lane*w/6,tracktop,x+lane*w/6,trackbottom),fill='#2c3145',width=1)
@@ -160,7 +161,7 @@ def render(song,charts,score,preview,locale='zh',*,load,notice=''):
                     if node.get('type')=='flick' or n.get('type')=='flick':
                         direction=node.get('dir',n.get('dir'));kind='flick-left' if direction=='left' else 'flick-right' if direction=='right' else 'flick'
                     draw_note(c,x+(node['pos']+node['size']/2)/24*w,trackbottom-(node['t']-lo)/1920*480,node['size']/24*w,kind,node['size'])
-        c.text(60,trackbottom+66,f'列 {first+1}–{first+count} / {columns} · '+notice,24,MUTED)
+        c.text(60,trackbottom+66,f"{ui_label('列',locale)} {first+1}–{first+count} / {columns} · "+notice,24,MUTED)
         return c.image
     result=[];first=0
     try:

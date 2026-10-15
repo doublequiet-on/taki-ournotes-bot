@@ -73,9 +73,12 @@ def detail(card, locale="zh"):
 @reclaim_after_render
 def art(card):
     from ..visuals import _asset, _bytes
-    asset = _asset(card.full_url, (1800, 2400), contain=True)
+    asset = _asset(card.full_url, (1800, 2400), contain=True, native=True)
     if asset is None:
         return None
     image = Image.new("RGB", asset.size, "white")
-    image.paste(asset, (0, 0), asset)
-    return _bytes(image)
+    try:
+        image.paste(asset, (0, 0), asset)
+        return _bytes(image)
+    finally:
+        asset.close()

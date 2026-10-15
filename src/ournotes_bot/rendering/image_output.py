@@ -97,7 +97,7 @@ def encode_image(image: Image.Image, *, close_input: bool = False,
                 working.close()
             working = resized
         for attempt in range(8):
-            for quality, subsampling in ((95, 0), (88, 0), (82, 1), (76, 1)):
+            for quality, subsampling in (((95, 0), (90, 0), (88, 0)) if preserve_size else ((95, 0), (88, 0), (82, 1), (76, 1))):
                 with io.BytesIO() as out:
                     try:
                         working.save(out, format="JPEG", quality=quality, subsampling=subsampling, optimize=True)

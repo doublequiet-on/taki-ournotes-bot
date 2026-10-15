@@ -4,6 +4,7 @@
 # Pos: Rendering / Card; approved 1080px details and shared header alignment.
 # Effects: Pillow and injected artwork I/O only.
 import re
+from .labels import label as ui_label
 from datetime import datetime, timedelta, timezone
 from PIL import ImageOps
 from ..data import SupportCard, localized_text
@@ -65,7 +66,7 @@ def render(card,locale='zh',*,load):
         body=lines(desc,972,36 if support else 38)
         rows=[]
         if index<len(levels):
-            descriptions=[v.get(locale) or v.get('ja') or '未知' for v in levels[index]]
+            descriptions=[v.get(locale) or v.get('ja') or ui_label('未知',locale) for v in levels[index]]
             contracts=card.catalog.get('compact_skills',[])
             contract=contracts[index] if index<len(contracts) else None
             brief=[contract['levels'].get(str(lv)) for lv in range(1,6)] if contract else []
@@ -96,18 +97,18 @@ def render(card,locale='zh',*,load):
                 desc=last.replace('红属性','绯红成员').replace(params[0]+'+',' +').replace('；','； ')+'。'
                 body=lines(desc,972,38)
         if locale=='zh' and last and skill.kind=='gekisouSkill' and 'COMBO获取' in str(last):name='COMBO'
-        heading=NAMES.get(skill.kind,'其他技能').replace('激奏支援技能','激奏支援')+' · '+name
+        heading=ui_label(NAMES.get(skill.kind,'其他技能').replace('激奏支援技能','激奏支援'),locale)+' · '+name
         hh=len(lines(heading,890,40,True))*52
         height=hh+len(body)*50+94+(56+sum(r[2] for r in rows) if rows else 0)
         blocks.append(('skill',height,(index,heading,body,rows,hh)))
     if not card.skills:blocks.append(('unknown',100,None))
     for relation in card.catalog.get('relations',[]):
-        name=relation.get('name',{}).get(locale) or relation.get('name',{}).get('ja') or '未知'
+        name=relation.get('name',{}).get(locale) or relation.get('name',{}).get('ja') or ui_label('未知',locale)
         rh=max(364,100+len(lines(name,528,40,True))*52+160)
         blocks.append(('related',rh,(relation,name)))
     head=160+header_h+24
     def paint(start,stop,height):
-        c=Canvas(1080,height);c.header('留影卡详情' if support else '角色卡详情',f"/{'查留影卡' if support else '查卡'} {card.id}")
+        c=Canvas(1080,height);c.header(ui_label('留影卡详情',locale) if support else ui_label('角色卡详情',locale),f"/{'查留影卡' if support else '查卡'} {card.id}")
         c.box((30,160,1050,160+header_h),SURFACE,24)
         for i,line in enumerate(titlelines):c.text(54,208+i*56,line,44,bold=True)
         cy=160+header_h-45
@@ -120,7 +121,7 @@ def render(card,locale='zh',*,load):
                 fitted.close();trimmed.close()
             else:c.paste(None,54,cy-24,164,48)
             if not support or len(people)==1:c.paragraph(54+logo_width+14,cy-22,identity,806-logo_width-14,34,44,color=MUTED)
-        else:c.text(54,cy,f'跨乐队 · {len(card.catalog.get("people",[]))} 位成员' if support else identity,30,MUTED)
+        else:c.text(54,cy,ui_label('跨乐队 · {n} 位成员',locale).format(n=len(card.catalog.get('people',[]))) if support else identity,30,MUTED)
         attr=card.catalog.get('attribute_icon')
         if attr:c.paste(art(attr,(64,64)),962,176,64,64,True,trim=True)
         c.text(1026,cy,f'ID {card.id}',30,ACCENT,align='right')
@@ -138,21 +139,21 @@ def render(card,locale='zh',*,load):
                 badge=f'RarityIconCenter_{rarity}.png'
                 if rarity:c.badge(badge,902 if support else 880,y+ah-45 if support else y+ah-58,100 if support else 126,70 if support else 92)
             elif kind=='stats':
-                c.text(54,y+48,'属性加成' if support else '综合力',40,bold=True)
+                c.text(54,y+48,ui_label('属性加成',locale) if support else ui_label('综合力',locale),40,bold=True)
                 if isinstance(data,(list,tuple)) and len(data)==3:
 
                     if not support:c.text(1026,y+48,f'{sum(data):,}',48,bold=True,align='right')
-                    if support:c.text(1026,y+48,'满级基础值',32,MUTED,align='right')
-                    else:c.text(54,y+108,'满级基础值',34,MUTED)
-                    for i,(name,value,color) in enumerate(zip(('表演值','技巧值','形象值'),data,('#d2518b','#248ba6','#b97913'))):
+                    if support:c.text(1026,y+48,ui_label('满级基础值',locale),32,MUTED,align='right')
+                    else:c.text(54,y+108,ui_label('满级基础值',locale),34,MUTED)
+                    for i,(name,value,color) in enumerate(zip((ui_label('表演值',locale),ui_label('技巧值',locale),ui_label('形象值',locale)),data,('#d2518b','#248ba6','#b97913'))):
                         cy=y+(104 if support else 165)+i*54;c.text(54,cy,name,36,color);right=900 if support else 850;c.box((194,cy-11,right,cy+11),'#eeebf0',11)
                         if value:c.box((194,cy-10,194+max(1,round((right-194)*value/(max(data)*1.1 or 1))),cy+11),color,11)
                         c.text(1026,cy,f'{value:g}%' if support else f'{value:,}',38,align='right')
-                else:c.text(54,y+112,'基础数值未确认',30,MUTED)
+                else:c.text(54,y+112,ui_label('基础数值未确认',locale),30,MUTED)
             elif kind=='people':
                 for i,p in enumerate(data):
                     cx=54+(i+.5)*972/len(data);c.paste(art(p.get('face'),(72,72)),round(cx-36),y-12,72,72,True,radius=36)
-                    name=p.get('name',{}).get(locale) or '未知'
+                    name=p.get('name',{}).get(locale) or ui_label('未知',locale)
                     if p.get('band')==2:name=name.rsplit(' / ',1)[-1]
                     c.text(cx,y+84,name,28,align='center')
             elif kind=='skill':
@@ -170,25 +171,25 @@ def render(card,locale='zh',*,load):
                     ty+=56
                     for label,values,rh in rows:
                         offset=0
-                        if label:c.paragraph(70,ty+6,label,150,28,36,color=MUTED)
+                        if label:c.paragraph(70,ty+6,ui_label(label,locale),150,28,36,color=MUTED)
                         for k,wrapped in enumerate(values):
                             for n,line in enumerate(wrapped):c.text(stub+(k+.5)*cw,ty+offset+24+n*50,line,32 if support else 36,ACCENT if k==4 else '#1b1b1f',k==4,'center')
                         ty+=rh
             elif kind=='related':
-                relation,name=data;c.line(54,y,1026);c.text(54,y+40,relation['kind'],38,bold=True)
+                relation,name=data;c.line(54,y,1026);c.text(54,y+40,ui_label(relation['kind'],locale),38,bold=True)
                 c.text(1026,y+40,'ID '+str(relation['id']),34,MUTED,align='right')
                 c.paste(art(relation['image'],(420,180)),54,y+84,420,180,False,radius=10)
                 c.paragraph(498,y+90,name,528,40,52,bold=True)
                 def date(value):
                     try:
                         dt=datetime.fromisoformat(value).astimezone(timezone(timedelta(hours=9)))
-                        return dt.strftime('%m/%d %H:%M') if dt.year>1970 else '未获取'
-                    except (ValueError,TypeError):return '未获取'
-                c.text(498,y+218,'活动加成卡' if relation['kind']=='相关活动' else 'Pick Up',32,ACCENT)
+                        return dt.strftime('%m/%d %H:%M') if dt.year>1970 else ui_label('未获取',locale)
+                    except (ValueError,TypeError):return ui_label('未获取',locale)
+                c.text(498,y+218,ui_label('活动加成卡',locale) if relation['kind']=='相关活动' else 'Pick Up',32,ACCENT)
                 c.text(54,y+bh-40,date(relation['start'])+' — '+date(relation['end'])+'  (UTC+09:00)',32,MUTED)
-            else:c.text(54,y+40,'技能详情未获取',32,MUTED)
+            else:c.text(54,y+40,ui_label('技能详情未获取',locale),32,MUTED)
             y+=bh
-        if card.catalog.get('detail_stale'):c.text(54,height-24,'使用上次有效资料',22,MUTED)
+        if card.catalog.get('detail_stale'):c.text(54,height-24,ui_label('使用上次有效资料',locale),22,MUTED)
         return c.image
     try:return render_parts(tuple(b[1] for b in blocks),1080,head+48,paint)
     finally:

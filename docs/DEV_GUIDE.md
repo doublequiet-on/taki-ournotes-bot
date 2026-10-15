@@ -147,3 +147,5 @@ Moenotes 可选 open 榜线：`sources/moenotes_open.py::OpenClient`、`OpenEven
 歌曲列表与谱面复用 `visuals._song_heading`、`_mission_marks` / `_mission_chip`；测试 `test_visuals.py`、`test_song_traits.py`。
 
 统一美工与单图优先实现、验证和性能：[IMAGE_OUTPUT](IMAGE_OUTPUT.md)。
+
+查询素材准备入口为 `python -B scripts/prepare_query_assets.py --cache-dir <数据目录> --catalog <Catalog路径>`，受管部署在停旧实例前自动调用；完整校验、目录隔离和失败行为见 [Linux 离线部署](../deploy/LINUX_OFFLINE.md)。绘图修复验收须同时保存服务器原尺寸图片、命令、源码摘要和耗时；覆盖列表/详情、独立卡面、各难度谱面，单独复现 `/查曲 odd dice`、`/查谱面 odd dice`，不能以单元测试替代实际图片检查。

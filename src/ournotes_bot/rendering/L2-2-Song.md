@@ -57,4 +57,4 @@ Current 直接引用 song_traits 的显示常量；这属于领域表现依赖�
 `visuals.py` 保留 `render_song_list/render_chart` 与歌曲身份／激奏辅助；完整谱面来源由 `sources/chart_data.py` 路由，条件由 `query/song_query.py` 解析。回归 `test_visuals.py`、`test_chart_data.py`。
 
 QQ 新入口为 [song_layout.py](song_layout.py)、[song_detail_layout.py](song_detail_layout.py)、[chart_layout.py](chart_layout.py)、[ranking_layout.py](ranking_layout.py)。[note_skin.py](note_skin.py) 只消费注入的原版 atlas；数据获取在来源层。
-歌曲详情的技能事件按时间排序，判定统计按来源拍号与 binary32 小节时钟生成长条八分拍点，支持变拍及全隐藏数值坐标 guide；恢复密度、五秒覆盖数、占比和排序。未核对的可见／自动 guide 格式仍只显示来源技能时间，不补造音符数。谱面使用 trace 原生贴图；固定节拍列以“拍”标注，不能将变拍谱面标作固定八小节。歌曲时长优先主资料音频长度，谱面时长按末节点计。
+歌曲详情的技能事件按时间排序，判定统计按来源拍号与 binary32 小节时钟生成长条八分拍点，通过 [chart_judgments.py](chart_judgments.py) 支持变拍、隐藏/可见 guide、自动控制点、重合单点吸收和合并端点；恢复密度、五秒覆盖数、占比和排序。固定公开谱面参考向量见 `test_image_repairs.py`，不把判定统计等同于算分模型。谱面使用 trace 原生贴图；固定节拍列以“拍”标注，不能将变拍谱面标作固定八小节。歌曲时长优先主资料音频长度，谱面时长按末节点计。

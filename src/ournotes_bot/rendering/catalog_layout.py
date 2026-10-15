@@ -4,6 +4,7 @@
 # Pos: Rendering / Card; approved role and memory list layout.
 # Effects: Pillow rendering only; assets loaded through the supplied callback.
 """Colour rows flow left; rarity never reserves an empty column."""
+from .labels import label as ui_label
 from collections import defaultdict
 from dataclasses import dataclass
 import re
@@ -145,13 +146,13 @@ def render_list(cards,query,locale='zh',*,load):
             # Each complete row repeats its person heading, including after a split.
             rows.append(CardRow(tuple(items),offsets,texts,100+arth+92+sum(heights)))
     width=1080
-    title='留影卡列表' if support else '角色卡列表'
+    title=ui_label('留影卡列表',locale) if support else ui_label('角色卡列表',locale)
     subtitle=f'{query} · Lv.5'+(f' · 演{duration}s' if duration else '')+(f' · →{target}强化' if target else '')
     notices = []
     if any(c.catalog.get('detail_stale') for c in cards):
-        notices.append('部分详情使用上次有效缓存。')
+        notices.append(ui_label('部分详情使用上次有效缓存。',locale))
     if any(not c.catalog.get('detail_loaded') for c in cards):
-        notices.append('部分技能资料未获取，未知分类不会当作无技能。')
+        notices.append(ui_label('部分技能资料未获取，未知分类不会当作无技能。',locale))
     notice = ' '.join(notices)
     footer_lines = lines(notice, width-72, 26) if notice else []
     footer_h = 58 + len(footer_lines)*36
@@ -189,10 +190,10 @@ def render_list(cards,query,locale='zh',*,load):
                 c.text(x,base,f'ID {card.id}',26,MUTED)
                 base+=28
                 for i,(label,color,wrapped) in enumerate(text):
-                    cy=base+row.offsets[i]+18;c.text(x,cy,label,26,color,True)
+                    cy=base+row.offsets[i]+18;c.text(x,cy,ui_label(label,locale),26,color,True)
                     for n,line in enumerate(wrapped):c.text(x+36,cy+n*36,line,26)
             y+=row.height
-        c.text(36,height-26,f'{rows[start].cards[0][0]+1}–{rows[stop-1].cards[-1][0]+1} / {len(cards)} · 按 ID 查详情',26,MUTED)
+        c.text(36,height-26,f'{rows[start].cards[0][0]+1}–{rows[stop-1].cards[-1][0]+1} / {len(cards)} · '+ui_label('按 ID 查详情',locale),26,MUTED)
         for n, text in enumerate(footer_lines):
             c.text(36,height-footer_h+20+n*36,text,26,MUTED)
         return c.image
@@ -200,7 +201,7 @@ def render_list(cards,query,locale='zh',*,load):
         rarities={2:'R',3:'SR',4:'SSR',20:'BD',10:'EX'}
         badges={f'RarityIconCenter_{rarities[c.rarity]}.png' for c in cards if c.rarity in rarities}
         assets.update(prepare_assets(requests,load,badges))
-        parts=render_parts(tuple(r.height for r in rows),width,head+footer_h,paint)
+        parts=render_parts(tuple(r.height for r in rows),width,head+footer_h,paint,max_height=3200)
         ranges=tuple((rows[p.start].cards[0][0],rows[p.stop-1].cards[-1][0]+1) for p in parts)
         return parts,cards,ranges
     finally:

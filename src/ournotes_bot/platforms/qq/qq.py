@@ -595,8 +595,8 @@ def _complete_list_reply(result,repository,locale,candidate):
 def _detail_card(result, repository):
     if result is None or result.status!='success':return None
     card=None
-    if result.catalog is not None and result.catalog.request.mode=='detail':
-        card=result.catalog.cards[0]
+    if result.catalog is not None:
+        return result.catalog.cards[0] if result.catalog.request.mode=='detail' else None
     elif isinstance(result,QueryResult):
         if result.spec.field or not result.spec.subject:return None
         if result.spec.intent=='card' and result.cards:card=repository.card_with_detail(result.cards[0])

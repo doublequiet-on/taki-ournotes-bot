@@ -351,7 +351,7 @@ def _draw_skills(draw: ImageDraw.ImageDraw, skills: tuple[Skill, ...], x: int, y
     return y
 
 
-def _asset(url: str, size: tuple[int, int], *, contain: bool = False) -> Image.Image | None:
+def _asset(url: str, size: tuple[int, int], *, contain: bool = False, native: bool = False) -> Image.Image | None:
     from .sources.haneoka.catalog_assets import is_catalog_asset, download_asset
     catalog_asset = is_catalog_asset(url)
     icons = {f"{BASE}/images/CardType{i}.webp" for i in range(1, 6)}
@@ -362,7 +362,11 @@ def _asset(url: str, size: tuple[int, int], *, contain: bool = False) -> Image.I
         if len(raw) > 6_000_000:
             raise ValueError("asset size limit")
         with Image.open(io.BytesIO(raw)) as image:
+            if image.width * image.height > 20_000_000:
+                raise ValueError("asset pixel limit")
             image.load()  # Decode the full source before it becomes reusable cache.
+            if native:
+                return image.convert("RGBA")
             if contain:
                 return ImageOps.contain(image.convert("RGBA"), size, method=Image.Resampling.LANCZOS)
             return ImageOps.fit(image.convert("RGB"), size, method=Image.Resampling.LANCZOS)

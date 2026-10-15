@@ -3,8 +3,9 @@
 # Output: Approved song detail layout with source skill timing on a real time axis.
 # Pos: Rendering / Song details.
 # Effects: Pillow and injected asset loading only.
+from .labels import label as ui_label
 from ..data import localized_text
-from .haneoka_theme import Canvas,MUTED,DIFFICULTIES,SURFACE,ACCENT,lines,mission_label,left_logo,prepare_assets
+from .haneoka_theme import Canvas,MUTED,DIFFICULTIES,SURFACE,ACCENT,lines,mission_label,left_logo,prepare_assets,font
 from .image_output import encode_image
 
 
@@ -27,18 +28,13 @@ def seconds_at(tick,bpms):
 def judged_times(score):
     """Count eighth-beat judgments using the source meter and binary32 clock.
 
-    Purely hidden guides add no judgments. Visible/automatic guide formats remain
-    outside this counter until their judgment conversion has been verified.
+    Visible/automatic guides use the same source conversion as merged slide
+    endpoints; hidden guide nodes remain structural.
     """
     import math
     import struct
     events=(score or {}).get('events',{});bpms=events.get('bpm',[])
     if not bpms:return None
-    guides=[n for n in (score or {}).get('notes',[]) if n.get('type')=='guide']
-    if any(v.get('visible') is not False or type(v.get('pos')) not in (int,float)
-           or type(v.get('size')) not in (int,float) for n in guides for v in n.get('node',[])):return None
-    if any(type(v.get('size')) not in (int,float) or type(v.get('pos')) not in (int,float)
-           for n in (score or {}).get('notes',[]) if n.get('type')!='guide' for v in (n.get('node',[]) if n.get('type')=='long' else [n])):return None
     f=lambda value:struct.unpack('f',struct.pack('f',value))[0]
     bases=[];elapsed=0.0;previous=0;tempo=120.0
     for row in sorted(bpms,key=lambda r:r['t']):
@@ -85,26 +81,9 @@ def judged_times(score):
             now=ms_position(bar,f(progress))
             if now>=ms(end):return
             yield now
-    result=[];merged=set()
-    for note in (score or {}).get('notes',[]):
-        if note.get('type')=='guide':continue
-        if note.get('type')!='long':result.append(ms(note['t']));continue
-        nodes=note['node']
-        for i,node in enumerate(nodes):
-            if node.get('visible') is False:continue
-            key=(node['t'],node.get('pos'),node['size'],i==0,i==len(nodes)-1,node.get('type'),node.get('dir'),node.get('crit',False))
-            if i in (0,len(nodes)-1) and key in merged:continue
-            merged.add(key);result.append(ms(node['t']))
-        anchors=[nodes[0]]+[v for v in nodes[1:-1] if v.get('visible') is not False]+[nodes[-1]]
-        ticks=[now for a,b in zip(anchors,anchors[1:]) for now in eighths(a['t'],b['t'])]
-        visible=[ms(v['t']) for v in nodes[1:-1] if v.get('visible') is not False]
-        for i,tick in enumerate(ticks):
-            now=tick;bpm=next((v[2] for v in reversed(bases) if v[1]<=now),bases[0][2]);guard=15000/bpm
-            if any(t-guard<=now<t for t in visible):continue
-            if i==0 and guard>now-ms(nodes[0]['t']):continue
-            if i==len(ticks)-1 and guard>ms(nodes[-1]['t'])-now:continue
-            result.append(now)
-    return [v/1000 for v in sorted(result)]
+    from .chart_judgments import judgments
+    return judgments((score or {}).get('notes',[]), position, ms_position, bases, eighths)
+
 
 
 
@@ -141,12 +120,15 @@ def render(song,score,locale='zh',*,load,band_logos=()):
     title=localized_text(song,'title',locale);tl=lines(title,862,58,True)
     band=localized_text(song,'band',locale);bl=lines(band,570,38)
     extra=max(0,len(tl)-1)*74+max(0,len(bl)-1)*50
+    credits=[(label,localized_text(song,key,locale) or ui_label('未获取',locale)) for label,key in ((ui_label('作曲',locale),'composer'),(ui_label('作词',locale),'lyricist'),(ui_label('编曲',locale),'arranger'))]
+    credit_heights=[max(58,len(lines(value,404,30))*38+18) for _,value in credits]
+    credit_extra=sum(credit_heights)-174
     data=timeline(score);events=(score or {}).get('events',{});bpms=events.get('bpm',[])
     windows=data['windows'] if data else []
     timing_extra=max(0,math.ceil(len(windows)/3)-2)*86
     reward_rows=max(len(song.catalog.get('score_rewards',[])),len(song.catalog.get('combo_rewards',{}).get('expert',[])))
-    height=2080+extra+timing_extra+max(0,reward_rows-5)*60
-    c=Canvas(1400,height);c.header('歌曲详情',f'/查曲 {song.id}')
+    height=2080+extra+credit_extra+timing_extra+max(0,reward_rows-5)*60
+    c=Canvas(1400,height);c.header(ui_label('歌曲详情',locale),f'/查曲 {song.id}')
     logos=band_logos or song.catalog.get('band_logos',[])
     requests={(song.jacket_url,(386,386))}
     if logos:requests.add((logos[0],(190,68)))
@@ -168,37 +150,39 @@ def render(song,score,locale='zh',*,load,band_logos=()):
         bx=left_logo(c,art(logos[0],(190,68)),484,by,190,68) if logos else 484
         for i,b in enumerate(bl):c.text(bx,by+i*50,b,38)
         if song.traits and song.traits.attribute_icon:
-            from .haneoka_theme import font
             ax=min(1292,bx+font(38,False,band.isascii()).getlength(bl[-1])+24)
             c.paste(art(song.traits.attribute_icon,(54,54)),round(ax),by+(len(bl)-1)*50-27,54,54,True,trim=True)
-        for i,(label,key) in enumerate((('作曲','composer'),('作词','lyricist'),('编曲','arranger'))):
-            c.text(484,348+extra+i*58,label,30,MUTED)
-            c.paragraph(584,329+extra+i*58,localized_text(song,key,locale) or '未获取',404,30,38)
-        c.text(484,522+extra,'发布',30,MUTED);c.text(584,522+extra,str(song.start_at or '未获取')[:10].replace('-','/'),32)
+        cy=329+extra
+        for (label,value),row_height in zip(credits,credit_heights):
+            c.text(484,cy+19,label,30,MUTED)
+            c.paragraph(584,cy,value,404,30,38)
+            cy+=row_height
+        c.text(484,cy+19,ui_label('发布',locale),30,MUTED);c.text(584,cy+19,str(song.start_at or ui_label('未获取',locale))[:10].replace('-','/'),32)
         duration=(song.catalog.get('duration_ms') or 0)/1000 or (data['duration']-2 if data else 0)
-        c.text(1004,348+extra,'时长',30,MUTED);c.text(1346,348+extra,f'{int(duration)//60}:{int(duration)%60:02}' if duration else '未获取',34,align='right')
-        vals=[v['bpm'] for v in bpms];bpm=f'{min(vals):.2f}–{max(vals):.2f}' if vals and min(vals)!=max(vals) else f'{vals[0]:g}' if vals else '未获取'
+        c.text(1004,348+extra,ui_label('时长',locale),30,MUTED);c.text(1346,348+extra,f'{int(duration)//60}:{int(duration)%60:02}' if duration else ui_label('未获取',locale),34,align='right')
+        vals=[v['bpm'] for v in bpms];bpm=f'{min(vals):.2f}–{max(vals):.2f}' if vals and min(vals)!=max(vals) else f'{vals[0]:g}' if vals else ui_label('未获取',locale)
         c.text(1004,406+extra,'BPM',30,MUTED);c.text(1346,406+extra,bpm,32,align='right')
-        section(663+extra,'难度与 Note')
+        extra+=credit_extra
+        section(663+extra,ui_label('难度与 Note',locale))
         for i,(name,(bg,fg)) in enumerate(DIFFICULTIES.items()):
             ch=next((v for v in song.charts if v.difficulty==name),None);cx=216+i*322
             c.box((cx-80,708+extra,cx+80,808+extra),bg,18)
             c.text(cx,758+extra,f'{ch.level}' if ch else '—',58,fg,True,'center')
-            c.text(cx,850+extra,f'{ch.notes} Note' if ch and ch.notes is not None else 'Note 未获取',32,MUTED,align='center')
-        section(938+extra,'技能点位');c.text(282,938+extra,'EXPERT · 5秒',28,'#bb4f81')
+            c.text(cx,850+extra,f'{ch.notes} Note' if ch and ch.notes is not None else ui_label('Note 未获取',locale),32,MUTED,align='center')
+        section(938+extra,ui_label('技能点位',locale));c.text(max(282,78+font(38,True).getlength(ui_label('技能点位',locale))),938+extra,ui_label('EXPERT · 5秒',locale),28,'#bb4f81')
         left,right=54,1346;py=984+extra;pb=1204+extra
         c.box((left,py,right,pb),'#f6f3f8',16)
         if data:
             tx=lambda t:left+(right-left)*t/data['duration']
             for i,(a,b) in enumerate(data['fever']):
                 if a is None or b is None:continue
-                x0,x1=round(tx(a)),round(tx(b));c.draw.rectangle((x0,py,x1,pb),fill='#eee1ec');c.text(x0+12,py+22,f'激奏段 {i+1}',25,'#77536e')
+                x0,x1=round(tx(a)),round(tx(b));c.draw.rectangle((x0,py,x1,pb),fill='#eee1ec');c.text(x0+12,py+22,ui_label('激奏段 {n}',locale).format(n=i+1),25,'#77536e')
             density=data['density']
             if density:
                 peak=max(density) or 1
                 pts=[(left,1118+extra)]+[(min(right,tx(i/2)),1118+extra-v/peak*86) for i,v in enumerate(density)]+[(right,1118+extra)]
                 c.draw.polygon(pts,fill='#c0bdc6')
-            else:c.text(78,1090+extra,'已获取技能时间 · 此谱面的音符统计暂未支持',28,MUTED)
+            else:c.text(78,1090+extra,ui_label('已获取技能时间 · 此谱面的音符统计暂未支持',locale),28,MUTED)
             for i,w in enumerate(windows):
                 x0,x1=round(tx(w['start'])),round(tx(w['end']));c.box((x0,1132+extra,x1,1188+extra),ACCENT,7);c.text(x0+12,1160+extra,str(i+1),28,'white',True)
             for sec in range(0,math.ceil(data['duration']),30):c.text(tx(sec),1240+extra,f'{sec//60}:{sec%60:02}',26,MUTED,align='left' if sec==0 else 'center')
@@ -207,13 +191,13 @@ def render(song,score,locale='zh',*,load,band_logos=()):
                 c.text(x+56,y,f"{w['start']:.3f}s",29)
                 if w['count'] is not None:
                     c.text(x+394,y,f"{w['count']} Note",28,MUTED,align='right')
-                    c.text(x+56,y+37,f"占比 {w['percent']:.1f}% · #{w['rank']}",28,MUTED)
-        else:c.text(54,1100+extra,'技能点位资料未获取',32,MUTED)
-        offset=extra+timing_extra;section(1500+offset,'激奏段')
+                    c.text(x+56,y+37,ui_label('占比 {percent:.1f}% · #{rank}',locale).format(**w),28,MUTED)
+        else:c.text(54,1100+extra,ui_label('技能点位资料未获取',locale),32,MUTED)
+        offset=extra+timing_extra;section(1500+offset,ui_label('激奏段',locale))
         missions=song.traits.missions if song.traits else None
-        for i,value in enumerate(missions or ('未获取',)):
+        for i,value in enumerate(missions or (ui_label('未获取',locale),)):
             x=54+i*440;c.box((x,1540+offset,x+412,1604+offset),SURFACE,12);c.text(x+28,1572+offset,f'{i+1:02}',30,MUTED);mission_label(c,x+110,1572+offset,value,40,48,True)
-        section(1660+offset,'奖励');c.text(54,1722+offset,'得分系数奖励',34,bold=True);c.text(752,1722+offset,'连击奖励',34,bold=True);c.text(916,1722+offset,'EXPERT',28,'#bb4f81')
+        section(1660+offset,ui_label('奖励',locale));c.text(54,1722+offset,ui_label('得分系数奖励',locale),34,bold=True);c.text(752,1722+offset,ui_label('连击奖励',locale),34,bold=True);c.text(max(916,776+font(34,True).getlength(ui_label('连击奖励',locale))),1722+offset,'EXPERT',28,'#bb4f81')
         ranks={v['scoreRank']:v['requiredScore'] for v in song.catalog.get('score_ranks',[])}
         expert=next((v for v in song.charts if v.difficulty=='EXPERT'),None)
         for col,values in enumerate((song.catalog.get('score_rewards',[]),song.catalog.get('combo_rewards',{}).get('expert',[]))):
@@ -221,7 +205,7 @@ def render(song,score,locale='zh',*,load,band_logos=()):
                 x=54 if col==0 else 752;y=1784+offset+i*60;tier=row['tier']
                 label=({3:'C',4:'B',5:'A',6:'S',7:'SS'} if col==0 else {0:'25%',1:'50%',2:'75%',3:'FULL COMBO'}).get(tier,str(tier));c.text(x,y,label,28,ACCENT,col==0)
                 value=ranks.get(tier) if col==0 else math.ceil(expert.notes*(tier+1)/4) if expert and expert.notes and 0<=tier<=3 else None
-                c.text(410 if col==0 else 1030,y,f'{value:,}' if value is not None else '未知',32,align='right')
+                c.text(410 if col==0 else 1030,y,f'{value:,}' if value is not None else ui_label('未知',locale),32,align='right')
                 if row['image']:c.paste(art(row['image'],(42,42)),532 if col==0 else 1186,y-21,42,42,True,trim=True)
                 c.text(636 if col==0 else 1346,y,f'×{row["count"]:,}',30,align='right')
         return encode_image(c.image,close_input=True,preserve_size=True)

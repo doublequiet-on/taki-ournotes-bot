@@ -21,6 +21,7 @@ exclude tests/fixtures/moenotes_meta_minimal.json tests/fixtures/moenotes_meta_r
 include deploy/query-upgrade-v1.env.example
 include scripts/preview_cutoff_trends.py
 include scripts/prepare_note_assets.py
+include scripts/prepare_query_assets.py
 
 include docs/RELEASE_2026-09-28.md
 

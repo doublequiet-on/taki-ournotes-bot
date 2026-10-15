@@ -73,3 +73,9 @@ sudo /usr/bin/python3 -E -s -B /usr/local/lib/taki-updater/linux_backend.py stat
 4. 更新 QQ 控制台面板属于外部操作，需核对实际面板内容及回执；机器人上线不等于面板更新，也不等于消息已经送达。
 
 离线包用法依据 [pip 可重复安装](https://pip.pypa.io/en/stable/topics/repeatable-installs/)；资产下载与摘要依据 [GitHub Release assets API](https://docs.github.com/en/rest/releases/assets)，分段语义依据 [HTTP Range 协议](https://www.rfc-editor.org/rfc/rfc9110.html#name-range)。
+
+## 查询素材准备
+
+同一候选准备阶段还执行 `scripts/prepare_query_assets.py`：取同版公开 Catalog，预下载角色立绘、卡面、缩略图、封面、活动/卡池及乐队图标，并校验全部固定游戏素材。只允许 release 固定的来源 URL；图片须完整解码且符合字节/像素预算。`prepared-artwork-v1.json` 保存来源身份及每张图片的 SHA-256，全部成功后原子发布；损坏或缺失文件重新获取，失败阻止候选完成准备，旧服务继续运行。
+
+素材仍存于 `<base>/data/game-assets` 和 `<base>/data/haneoka-asset-cache`。该步骤只额外挂载这两个目录，不开放整个共享数据目录；候选 Catalog 保存在候选 `test-data` 中，不覆盖正在运行的资料快照。更新、回退和重启沿现有 URL 哈希缓存读取已准备素材。诊断可运行 `python -B scripts/prepare_query_assets.py --cache-dir <隔离数据目录> --catalog <隔离Catalog文件>`；`--snapshot` 只校验指定已有快照。准备耗时应与首次查询、热缓存查询耗时分别记录。

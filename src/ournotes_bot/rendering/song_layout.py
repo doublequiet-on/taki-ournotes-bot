@@ -3,6 +3,7 @@
 # Output: Readable Haneoka-style song-list image parts with continuous numbering.
 # Pos: Rendering / Song; approved paired-column list.
 # Effects: Pillow only; no query or platform operations.
+from .labels import label as ui_label
 from ..data import localized_text
 from .haneoka_theme import Canvas, MUTED, DIFFICULTIES, lines, font, mission_label
 from .readable_pages import ImagePart
@@ -22,11 +23,11 @@ def render_list(songs,query,locale='zh',*,load):
         heights=tuple(max(68,max(len(lines(localized_text(s,'title',locale),342,36,True))*44 for _,s in row))+
                       max(48,max(len(lines(localized_text(s,'band',locale),550,34))*42 for _,s in row))+80 for row in rows)
         return rows,heights
-    subtitle=f'{query} · 共 {len(songs)} 首'
+    subtitle=query+' · '+ui_label('共 {n} 首',locale).format(n=len(songs))
     head=136+len(lines(subtitle,width-108,24))*34
     def paint(start,stop,height):
         rows,heights=page_rows(start,stop)
-        c=Canvas(width,height);c.header('歌曲列表',subtitle);y=head
+        c=Canvas(width,height);c.header(ui_label('歌曲列表',locale),subtitle);y=head
         for col in range(cols):c.box((28+col*868,head-22,864+col*868,height-42),'white',24)
         for ri in range(len(rows)):
             row=rows[ri];titleh=max(68,max(len(lines(localized_text(s,'title',locale),342,36,True))*44 for _,s in row))
@@ -59,13 +60,13 @@ def render_list(songs,query,locale='zh',*,load):
                         if j<len(missions)-1:
                             c.text(round(mx+10),my,'→',26,MUTED)
                             mx+=20+font(26).getlength('→')
-                else:c.text(x+148,y+titleh+bandheight+33,'激奏资料未确认',29,MUTED)
+                else:c.text(x+148,y+titleh+bandheight+33,ui_label('激奏资料未确认',locale),29,MUTED)
                 c.line(x,y+heights[ri]-10,x+796)
             y+=heights[ri]
-        c.text(54,height-22,f'{start+1}–{stop} / {len(songs)} · /查谱面 ID 难度',22,MUTED)
+        c.text(54,height-22,f'{start+1}–{stop} / {len(songs)} · '+ui_label('/查谱面 ID 难度',locale),22,MUTED)
         return c.image
     parts=[];start=0
-    limit=min(MAX_IMAGE_EDGE,MAX_IMAGE_PIXELS//width)
+    limit=min(3600,MAX_IMAGE_EDGE,MAX_IMAGE_PIXELS//width)
     while start<len(songs):
         # A complete row is at least 196px. Test candidates from largest to smallest:
         # moving the column break can change which long titles share a row.

@@ -61,9 +61,9 @@ class SampleFidelityTests(unittest.TestCase):
         self.assertEqual(song_detail_layout.judged_times(score),
                          [0,.25,.5,.75,1,1.25,1.5,1.75,2,2.25,2.437,3.124])
 
-    def test_unverified_guide_format_does_not_claim_judgment_counts(self):
-        self.assertIsNone(song_detail_layout.judged_times({'events':{'bpm':[{'t':0,'bpm':120}]},
-            'notes':[{'type':'guide','node':[{'t':0},{'t':480}]}]}))
+    def test_structural_guide_without_trace_has_no_judgments(self):
+        self.assertEqual(song_detail_layout.judged_times({'events':{'bpm':[{'t':0,'bpm':120}]},
+            'notes':[{'type':'guide','node':[{'t':0},{'t':480}]}]}), [])
 
     def test_odd_meter_and_guide_keep_chronological_skill_times_without_counts(self):
         score={'events':{'bpm':[{'t':0,'bpm':165},{'t':48000,'bpm':230}],

@@ -61,10 +61,10 @@ def is_catalog_asset(url):
         return False
 
 
-def download_asset(url):
+def download_asset(url, *, timeout=12):
     if not is_catalog_asset(url):
         raise ValueError("unverified Haneoka image URL")
-    raw, headers = public_get(url, 6_000_000, 12)
+    raw, headers = public_get(url, 6_000_000, timeout)
     release = parse_qs(urlsplit(url).query)["release"][0]
     if headers.get("x-haneoka-release-id") != release or not headers.get("x-haneoka-source-id"):
         raise ValueError("Haneoka image release mismatch")
