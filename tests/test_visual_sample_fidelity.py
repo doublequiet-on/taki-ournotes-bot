@@ -33,6 +33,34 @@ class SampleFidelityTests(unittest.TestCase):
         self.assertEqual(data['windows'][0]['count'],9)
         self.assertEqual(data['windows'][0]['percent'],100)
 
+    def test_hidden_guides_do_not_disable_judgments_and_density(self):
+        score={'events':{'bpm':[{'t':0,'bpm':120}],'skill':[0]},
+               'notes':[{'t':0,'pos':0,'size':6},{'t':480,'pos':6,'size':6},
+                        {'type':'guide','node':[{'t':0,'pos':0,'size':6,'visible':False},
+                                                {'t':960,'pos':6,'size':6,'visible':False}]}]}
+        self.assertEqual(song_detail_layout.judged_times(score),[0,0.5])
+        data=song_detail_layout.timeline(score)
+        self.assertEqual(data['windows'][0]['count'],2)
+        self.assertEqual(sum(data['density']),2)
+
+    def test_variable_meter_preserves_the_judgment_clock_and_eighths(self):
+        score={'events':{'bpm':[{'t':0,'bpm':120}],
+                         'sig':[{'t':0,'sig':[4,4]},{'t':1920,'sig':[5,4]}]},
+               'notes':[{'type':'long','node':[{'t':0,'pos':0,'size':6},
+                                               {'t':4320,'pos':0,'size':6}]}]}
+        self.assertEqual(song_detail_layout.judged_times(score),[i/4 for i in range(19)])
+
+    def test_short_measure_boundaries_keep_native_rounding_and_generated_judgments(self):
+        score={'events':{'bpm':[{'t':0,'bpm':120}],
+                         'sig':[{'t':0,'sig':[4,4]},{'t':1920,'sig':[1,8]},
+                                {'t':2160,'sig':[1,16]},{'t':2280,'sig':[1,32]},
+                                {'t':2340,'sig':[6,4]}]},
+               'notes':[{'type':'long','node':[{'t':0,'pos':0,'size':6},
+                                               {'t':3000,'pos':0,'size':6}]}]}
+        # Captured reference conversion: fractional bars are not a fixed 240-tick grid.
+        self.assertEqual(song_detail_layout.judged_times(score),
+                         [0,.25,.5,.75,1,1.25,1.5,1.75,2,2.25,2.437,3.124])
+
     def test_unverified_guide_format_does_not_claim_judgment_counts(self):
         self.assertIsNone(song_detail_layout.judged_times({'events':{'bpm':[{'t':0,'bpm':120}]},
             'notes':[{'type':'guide','node':[{'t':0},{'t':480}]}]}))
