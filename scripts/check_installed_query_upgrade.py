@@ -26,7 +26,9 @@ def main():
                "sources.haneoka.chart_data", "sources.haneoka.catalog", "sources.haneoka.catalog_records",
                "sources.haneoka.catalog_text", "sources.haneoka.catalog_assets", "sources.haneoka.event_cutoffs",
                "sources.haneoka.event_metadata",
-               "query.activity_query", "sources.errors", "sources.json_validation",
+               "query.activity_query", "query.character_query", "query.gacha_query", "query.info_query",
+               "query.contracts.info", "domain.info_catalog", "sources.haneoka.info_catalog",
+               "rendering.info_layout", "sources.errors", "sources.json_validation",
                "sources.haneoka.transport", "sources.haneoka.identity", "sources.haneoka.chart_paths")
     for name in modules:
         module = importlib.import_module("ournotes_bot." + name)
@@ -89,6 +91,11 @@ def main():
     assert 'skin001.png' in MANIFEST and contracts()
     parts,ranges=render_list((Song(1,'安装测试',('安装测试',),'乐队','','','','','',()),),'安装测试',load=lambda *a:None)
     assert parts[0].image and ranges==((0,1),)
+    from ournotes_bot.query.contracts.info import InfoAnswer, InfoView, InfoRow, info_text
+    from ournotes_bot.rendering.info_layout import render_info
+    views = (InfoView('资料安装测试', rows=(InfoRow('完整结果', ('离线正文',), command='/查角色 1'),)),)
+    pages = render_info(InfoAnswer(info_text(views), views=views), load=lambda *a: None)
+    assert len(pages) == 1 and pages[0].image and '/查角色 1' in pages[0].text
     print(json.dumps({"installed_version": distribution.version, "modules": len(modules),
                       "isolated": True, "network": False, "resources": True, "history": True}))
 
