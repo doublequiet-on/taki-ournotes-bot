@@ -10,7 +10,7 @@ from unittest.mock import patch
 from ournotes_bot.ai_query import AIQueryParser, UNKNOWN_ENTITY
 from ournotes_bot.commands import handle_command, parse_query
 from ournotes_bot.config import Settings
-from ournotes_bot.data import Card, DataError, Skill, SongRepository
+from ournotes_bot.data import Card, Chart, DataError, Skill, Song, SongRepository
 from ournotes_bot.structured_query import QuerySpec, answer_for, query_page_notice
 from ournotes_bot.sources.yatta import BASE, build_skills, build_support_cards
 
@@ -54,6 +54,32 @@ class SupportDataTests(unittest.TestCase):
         loaded = SongRepository(BASE, self.repo.cache_file)
         loaded._load_cache()
         self.assertEqual(loaded.support_cards[0], card)
+
+    def test_song_catalog_keeps_rollback_constructor_shape(self):
+        song = Song(1, "song", ("song",), "band", "", "", "", "", "",
+                    tuple(Chart(d, 25, 25.0, n, "") for d, n in
+                          (("easy", None), ("normal", 0), ("expert", 7))),
+                    catalog={"duration": 123, "resources": {"jacket": "test"}})
+        self.repo.songs = [song]
+        self.repo._save_cache()
+        payload = json.loads(self.repo.cache_file.read_text(encoding="utf-8"))
+        self.assertEqual(set(payload["songs"][0]), {
+            "id", "title", "titles", "band", "composer", "lyricist", "arranger",
+            "start_at", "jacket_url", "charts", "localized",
+        })
+        loaded = SongRepository(BASE, self.repo.cache_file)
+        loaded._load_cache()
+        self.assertEqual(loaded.songs, [song])
+        # A rollback write drops unknown extensions; the new reader still works.
+        payload.pop("song_catalog")
+        self.repo.cache_file.write_text(json.dumps(payload), encoding="utf-8")
+        loaded._load_cache()
+        self.assertEqual(loaded.songs, [replace(song, catalog={})])
+        # Also accept the inline field emitted by the first visual-upgrade build.
+        payload["songs"][0]["catalog"] = song.catalog
+        self.repo.cache_file.write_text(json.dumps(payload), encoding="utf-8")
+        loaded._load_cache()
+        self.assertEqual(loaded.songs, [song])
 
     def test_skill_effects_render_at_level_five(self):
         skills = build_skills([
