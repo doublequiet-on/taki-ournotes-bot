@@ -21,6 +21,7 @@ from .query.song_query import SongAnswer, parse_filter, execute as execute_song_
 from .sources.haneoka.song_traits import describe as describe_song
 from .query.card_catalog import CardAnswer, query_cards
 from .query.event_cutoff_query import CutoffAnswer, parse_cutoff, execute_cutoff
+from .query.contracts.info import InfoAnswer
 from .bot_info import INTRO
 
 
@@ -32,7 +33,9 @@ HELP_TEXT = """Taki · Our Notes 日服资料查询
 /查谱面 歌名或ID [难度]：查看等级与 Note 数；100001 可简写为 1
 /查榜线 [jp/hk/kr/en] [歌名或歌曲ID=100001] [50或20-40] [仅数值]：顺序不限，默认日服全部歌曲；无排名看三曲合图趋势，有排名看分数表；50看40～60名，20-40看区间，50-50查一名，1-100查完整榜
 Haneoka 未确认原始歌曲序号，请用歌名或歌曲ID；旧T50也查附近，旧多T排名最多五个
-/查活动 [jp/hk/kr/en]：当前／最近活动信息、起止时间与挑战歌曲
+/查活动 [jp/hk/kr/en]：当前／最近活动详情；/查活动 列表、/查活动 ID或名称 查询日服收录资料
+/查卡池 [ID或名称]：日服当前卡池与UP卡；/查卡池 历史 查看已结束卡池
+/查角色 [姓名/昵称/ID/乐队]：人物档案、乐队目录与关联卡；无参数查看角色目录
 榜线当前排名同时显示分数、数字ID与用户名；缺失会标注，历史曲线仅记录分数。
 四服：日服（jp）、国服（hk）、韩服（kr）、英服（en）；仅数值只回文字
 /查卡 [BD/SSR/SR/R] [颜色=红色] [角色=tmr] [乐队=MyGO] [LIVE=分数提升] [击奏=JUST] [页N]：条件卡牌列表；指定ID看详情
@@ -56,6 +59,7 @@ HELP_TEXTS = {
 /chart <title or ID> [difficulty]: view level and note count
 /card <character, title or ID> [page N]: search cards
 /support <character, title or ID> [page N]: search support cards
+/查活动 [ID or title], /查卡池 [ID or title], /查角色 [name or ID]: JP information in Chinese
 /abbrev <nickname>: look up a character or band nickname
 /ask <query>: natural language song, chart, member-skill, or support-card lookup
 /status: process and data status  /language: language guide  /help: this guide
@@ -65,6 +69,7 @@ Example: /song mygo 27, /chart 100001 EXPERT, /card tomori""",
 /譜面 <曲名またはID> [難易度]：レベルとノーツ数
 /カード <キャラクター名・カード名・ID> [ページN]：カードを検索
 /サポート <キャラクター名・カード名・ID> [ページN]：サポートカードを検索
+/查活动 [ID・名称]、/查卡池 [ID・名称]、/查角色 [名前・ID]：日本版資料（中国語表示）
 /略称 <略称>：キャラクター・バンドなどの略称
 /問 <内容>：楽曲・譜面・メンバースキル・サポートカードの自然言語検索
 /状態：プロセスとデータの状態  /言語：言語案内  /ヘルプ：この案内
@@ -113,7 +118,7 @@ CANONICAL_BY_LOCALE = {
 }
 ENGLISH_COMMANDS = {"song", "songs", "chart", "card", "cards", "support", "supportcard", "supportcards", "abbrev", "help", "status", "language", "event", "gacha", "prediction"}
 JAPANESE_COMMANDS = {"曲", "楽曲", "譜面", "カード", "サポート", "略称", "ヘルプ", "状態", "言語", "イベント", "ガチャ", "予想線"}
-UNAVAILABLE_COMMANDS = {"查卡池", "ycx", "预测线", "查预测线", "gacha", "prediction", "ガチャ", "予想線"}
+UNAVAILABLE_COMMANDS = {"ycx", "预测线", "查预测线", "gacha", "prediction", "ガチャ", "予想線"}
 UNAVAILABLE_REPLY = "该功能暂未上线"
 PAGE_SIZE = 16
 
@@ -381,6 +386,10 @@ def _command_tip(content: str) -> str | None:
     canonical = CANONICAL_BY_LOCALE[locale]
     parts = text.split(None, 1)
     first, rest = parts[0], parts[1] if len(parts) > 1 else ""
+    for name in ("查活动", "查卡池", "查角色"):
+        if first.startswith(name) and first != name and not first.startswith("查角色卡"):
+            argument = first[len(name):] + (" " + rest if rest else "")
+            return tr(locale, "missing_space", command="/" + name, argument=argument)
     if any(first.casefold().startswith(name) for name in UNAVAILABLE_COMMANDS):
         return tr(locale, "unavailable")
     kind = ALIASES.get(first.casefold())
@@ -400,7 +409,7 @@ def _command_tip(content: str) -> str | None:
                 return tr(locale, "missing_space", command=canonical[ALIASES[alias]], argument=suffix) + "\n" + helps[ALIASES[alias]]
 
     candidates = {
-        "zh": ("查曲", "查谱面", "查卡", "查留影卡", "查缩写", "查活动", "查卡池", "ycx", "数据状态", "帮助"),
+        "zh": ("查曲", "查谱面", "查卡", "查留影卡", "查缩写", "查活动", "查卡池", "查角色", "ycx", "数据状态", "帮助"),
         "en": ("song", "chart", "card", "support", "abbrev", "event", "gacha", "ycx", "status", "help"),
         "ja": ("曲", "譜面", "カード", "サポート", "略称", "イベント", "ガチャ", "予想線", "状態", "ヘルプ"),
     }[locale]
@@ -498,9 +507,10 @@ class CommandResult:
     candidates: tuple[Song, ...] = ()
     query_spec: object | None = None
     activity: object | None = None
+    info: InfoAnswer | None = None
 
     def __post_init__(self):
-        for answer in (self.cutoff, self.catalog, self.song_selection, self.activity):
+        for answer in (self.cutoff, self.catalog, self.song_selection, self.activity, self.info):
             if answer is not None:
                 object.__setattr__(self, "status", answer.status)
                 return
@@ -514,6 +524,14 @@ def resolve_command(content: str, repository: SongRepository) -> CommandResult |
     text = _clean_message(content)
     parts = text.split(None, 1)
     head = parts[0].casefold() if parts else ""
+    if head == "查角色":
+        from .query.character_query import execute_character
+        answer = execute_character(parts[1] if len(parts) > 1 else "", repository)
+        return CommandResult(("character", text, None), info=answer)
+    if head == "查卡池":
+        from .query.gacha_query import execute_gacha
+        answer = execute_gacha(parts[1] if len(parts) > 1 else "", repository)
+        return CommandResult(("gacha", text, None), info=answer)
     if head in {"查活动", "event", "イベント"}:
         from .query.activity_query import execute_activity
         answer = execute_activity(parts[1] if len(parts) > 1 else "", repository)
@@ -666,6 +684,8 @@ def handle_command(content: str, repository: SongRepository,
 
     selection = resolved if resolved is not None else resolve_command(content, repository)
     parsed = selection.parsed if selection else None
+    if selection and selection.info is not None:
+        return selection.info.text
     if selection and selection.activity is not None:
         return selection.activity.text
     if selection and selection.status in {"ambiguous", "invalid_arguments"} and selection.hint:

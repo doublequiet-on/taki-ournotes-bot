@@ -682,6 +682,14 @@ def _render_prepared(reply, result, repository, locale, candidate=None):
 
 def _render_prepared_inner(reply, result, repository, locale, candidate=None):
     try:
+        if isinstance(result, CommandResult) and (result.info is not None or result.activity is not None):
+            from ...rendering.info_layout import render_info
+            answer = result.info if result.info is not None else result.activity
+            pages = tuple(PreparedReply(page.text, page.image, complete_text=True)
+                          for page in render_info(answer, load=_visual_asset))
+            if pages:
+                return pages[0] if len(pages) == 1 else PreparedReply(reply, pages=pages, complete_text=True)
+            return PreparedReply(answer.text, complete_text=True)
         full = None if result is not None and result.cutoff is not None else (_song_detail_reply(result, repository, locale, candidate) or
                 _complete_list_reply(result, repository, locale, candidate) or
                 _complete_detail_reply(result, repository, locale, candidate) or
@@ -718,12 +726,17 @@ def _render_prepared_inner(reply, result, repository, locale, candidate=None):
     if (image is None and result is not None and result.catalog is not None
             and result.catalog.request.mode == "art" and not result.catalog.error):
         reply += "\n卡面图片暂不可用，请稍后重试。"
-    return PreparedReply(reply, image, complete_text=result is not None and result.cutoff is not None,
+    is_info = isinstance(result, CommandResult) and (result.info is not None or result.activity is not None)
+    return PreparedReply(reply, image, complete_text=is_info or result is not None and result.cutoff is not None,
                          context=candidate)
 
 
 def _complete_fallback(reply, result, locale, candidate, repository):
     """A failed renderer must not restore the former first-page truncation."""
+    if isinstance(result, CommandResult):
+        answer = result.info if result.info is not None else result.activity
+        if answer is not None:
+            return answer.text, candidate
     if result is not None and result.cutoff is not None:
         return result.cutoff.text, candidate
     if result is None or result.status != 'success':
