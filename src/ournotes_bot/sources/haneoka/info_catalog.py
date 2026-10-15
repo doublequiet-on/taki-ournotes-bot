@@ -149,9 +149,12 @@ def convert_info(documents, identity_jp, fetched_at):
             matched = (str(peer.get("id")) == key and row.get("kind") == peer.get("kind")
                        and original(row.get("title")) == original(peer.get("title")))
             names = _text(row, peer, "title", matched)
+            start_at, end_at = _time(row.get("startAt")), _time(row.get("endAt"))
+            if start_at is not None and end_at is not None and start_at >= end_at:
+                raise ValueError("invalid information catalog time interval")
             base = dict(id=ident, title=names["zh"] or f"{ident}", names=names,
-                        image_url=_image(row.get("image"), release), start_at=_time(row.get("startAt")),
-                        end_at=_time(row.get("endAt")), description=_text(row, peer, "description", matched), **common)
+                        image_url=_image(row.get("image"), release), start_at=start_at,
+                        end_at=end_at, description=_text(row, peer, "description", matched), **common)
             relations = set()
             if resource == "gacha":
                 featured, known = _sequence(row, "featured")

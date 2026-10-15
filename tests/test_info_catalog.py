@@ -131,6 +131,23 @@ class InfoConversionTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     self.convert()
 
+    def test_inverted_or_empty_known_intervals_are_rejected_without_inventing_zero_dates(self):
+        for resource, key in (("gacha", "9"), ("events", "2")):
+            for start, end in ((3000000, 1000000), (1000000, 1000000)):
+                with self.subTest(resource=resource, start=start, end=end):
+                    self.docs = documents()
+                    self.docs["jp"][resource][key].update(startAt=[start], endAt=[end])
+                    with self.assertRaisesRegex(ValueError, "time interval"):
+                        self.convert()
+            for start, end in ((0, 1000000), (1000000, 0)):
+                with self.subTest(resource=resource, start=start, end=end):
+                    self.docs = documents()
+                    self.docs["jp"][resource][key].update(startAt=[start], endAt=[end])
+                    info = self.convert()
+                    record = info.gachas[0] if resource == "gacha" else info.activities[0]
+                    self.assertEqual(record.start_at, start / 1000 if start else None)
+                    self.assertEqual(record.end_at, end / 1000 if end else None)
+
     def test_optional_unapproved_art_is_not_downloadable(self):
         self.docs["jp"]["characters"]["1"]["profileImage"] = "https://foreign.test/a.png"
         self.assertEqual(self.convert().characters[0].image_url, "")
