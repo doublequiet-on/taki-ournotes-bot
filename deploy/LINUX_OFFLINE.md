@@ -33,6 +33,16 @@ main／CI 元数据的 HTTP 响应读取中断（含 IncompleteRead）由适配�
 
 网络下载和验证均在停止旧进程之前。候选安装与测试保持无网络、无真实凭据、独立数据目录、资源限制和非 root 用户。共享数据前向／回退兼容审批、停服前备份、进程健康检查与事务回退继续生效。代码回退不还原共享游戏缓存、额度或历史数据库。
 
+## 固定谱面素材准备
+
+依赖安装与完整离线验证通过后，`LinuxBackend.prepare` 自动执行 `scripts/prepare_note_assets.py`，在停旧实例、切换 current 之前完成固定 atlas/config 的下载和 SHA-256 校验。大 atlas 的准备下载使用固定 Git blob 的 GitHub 官方 API 原始媒体响应，避开已复现的 raw CDN 慢链路；URL 与 blob 固定在清单中，最终仍核对原来的 SHA-256，不接受可变分支、跳转或凭据。端点语义见 [GitHub Git blobs](https://docs.github.com/en/rest/git/blobs#get-a-blob)。
+
+持久目录是启动器实际使用的 `<base>/data/game-assets`，不放进某次 release 或发行包；现存正确文件直接复用，新哈希文件原子写入，旧哈希保留，更新、回退和普通重启均可读本地素材。无需上线时人工导入。
+
+该独立素材步骤允许匿名网络并以 ubuntu 运行，单文件下载预算 180 秒；只把候选目录和这一个游戏素材目录挂载可写，`ProtectHome=tmpfs` 继续隐藏其他共享数据，生产配置、日志、凭据仍明确不可访问。依赖安装、测试、打包及兼容验证维持断网。素材失败按既有准备失败路径拒绝候选，旧服务不停止；不清失败记录或放宽兼容门禁。步骤结束后再次检查候选源码摘要，防止准备程序改变待运行代码。
+
+如需人工诊断仍可使用同一工具，但正常受管部署不依赖手动导入。控制器迁移仍按下文操作，禁止应用候选自行改写受信控制器；本改动的上线包括受审控制器的安装，不能只合并应用后声称已经启用。
+
 ## 只读查看进度
 
 新版控制器安装后，在服务器终端执行：
@@ -63,3 +73,9 @@ sudo /usr/bin/python3 -E -s -B /usr/local/lib/taki-updater/linux_backend.py stat
 4. 更新 QQ 控制台面板属于外部操作，需核对实际面板内容及回执；机器人上线不等于面板更新，也不等于消息已经送达。
 
 离线包用法依据 [pip 可重复安装](https://pip.pypa.io/en/stable/topics/repeatable-installs/)；资产下载与摘要依据 [GitHub Release assets API](https://docs.github.com/en/rest/releases/assets)，分段语义依据 [HTTP Range 协议](https://www.rfc-editor.org/rfc/rfc9110.html#name-range)。
+
+## 查询素材准备
+
+同一候选准备阶段还执行 `scripts/prepare_query_assets.py`：取同版公开 Catalog，预下载角色立绘、卡面、缩略图、封面、活动/卡池及乐队图标，从同版活动／挑战索引补齐榜线小封面和章节横幅，同时校验全部固定游戏素材。只允许 release 固定的来源 URL；图片须完整解码且符合字节/像素预算。`prepared-artwork-v1.json` 保存来源身份及每张图片的 SHA-256，全部成功后原子发布；损坏或缺失文件重新获取，失败阻止候选完成准备，旧服务继续运行。
+
+素材仍存于 `<base>/data/game-assets` 和 `<base>/data/haneoka-asset-cache`。该步骤只额外挂载这两个目录，不开放整个共享数据目录；候选 Catalog 保存在候选 `test-data` 中，不覆盖正在运行的资料快照。更新、回退和重启沿现有 URL 哈希缓存读取已准备素材。诊断可运行 `python -B scripts/prepare_query_assets.py --cache-dir <隔离数据目录> --catalog <隔离Catalog文件>`；`--snapshot` 固定使用指定已有 Catalog 快照，仍会按其 release 身份请求活动／挑战索引并下载缺失素材；它不是断网开关。榜线绘图读取同一持久图片缓存，不受独立榜线小时缓存是否为空影响。准备耗时应与首次查询、热缓存查询耗时分别记录。

@@ -5,7 +5,7 @@
 # Effects: Pillow rendering; no ranking/history queries or platform operations.
 from dataclasses import replace
 import math
-from .haneoka_theme import Canvas,MUTED,ACCENT,SOFT,SURFACE,lines,font,icon
+from .haneoka_theme import Canvas,MUTED,ACCENT,SOFT,SURFACE,lines,font,icon,prepare_assets
 from .catalog_layout import card_face, card_level as level
 from .readable_pages import render_parts
 from .cutoff_trends import segments,coordinates,COLORS
@@ -30,7 +30,9 @@ def chart(c,answer,board,box,display_time,heading=True):
     c.text(x+w,y+(22 if heading else 53),'分数（百万）',32 if w>1500 else 24,MUTED,align='right')
     values=[v for p in view.points for v in p.scores if v is not None]
     if not values:
-        c.text(x+w/2,y+h/2,view.warning or '暂无历史观测',28,MUTED,align='center');return
+        message=lines('暂无历史观测',w-24,26)
+        c.paragraph(x+12,y+max(72,(h-len(message)*36)/2),'暂无历史观测',w-24,26,36,color=MUTED)
+        return
     first,last=view.points[0].time_ms,view.points[-1].time_ms
     low,high=min(values),max(values);pad=max(1,(high-low)//8);low=max(0,low-pad);high+=pad
     plot=(x if w>1500 else x+76,y+(58 if w>1500 else 76),w if w>1500 else w-86,h-(126 if w>1500 else 172));bounds=(first,last,low,high)
@@ -78,6 +80,7 @@ def render(answer,*,assets,load,display_time,server_label,timezone_label,catalog
     footer=[' · '.join((b.song.title,b.status,'采集 '+display_time(b.fetched_ms,event.server))) for b in boards]
     footer += [n for b in boards for n in b.notes]+list(event.notes)
     footer += [answer.history_for(b).warning for b in boards if answer.history_for(b).warning]
+    footer=list(dict.fromkeys(footer))
     footer += [answer.source_label+' · 非官方 · 挑战歌曲 Top 100 · 非预测、非确认终榜']
     footlines=tuple(l for v in footer for l in lines(v,width-108,24));footheight=len(footlines)*32+38
     def score_text(board,rank):
@@ -127,7 +130,8 @@ def render(answer,*,assets,load,display_time,server_label,timezone_label,catalog
             blocks.append(('chart',780 if answer.history_for(board).points else 180,board))
     else:
         cw=(width-200)/len(boards)
-        columns=max(max(len(lines(answer.song_label(b),int(cw)-28,30,True)) for b in boards)*40+30,126)
+        title_heights={b.song.music_id:len(lines(song_title(b),int(cw)-110,30,True))*40 for b in boards}
+        columns=max(max(title_heights.values())+60,126)
         def name_width(board,rank):
             score_width=font(32,True,True).getlength(score_text(board,rank))
             return max(90,int(cw)-144-int(score_width))
@@ -146,7 +150,7 @@ def render(answer,*,assets,load,display_time,server_label,timezone_label,catalog
                 c.paste(assets.get(b.song.jacket),round(x),event_head+8,72,72,radius=10)
                 c.paragraph(x+86,event_head+8,song_title(b),int(cw)-110,30,40,bold=True)
                 band=song_bands.get(str(b.song.music_id),'')
-                if band:c.text(x+86,event_head+72,band,26,MUTED)
+                if band:c.text(x+86,event_head+title_heights[b.song.music_id]+32,band,26,MUTED)
                 chart(c,answer,b,(x,event_head+columns,int(cw)-34,plot_height),display_time,heading=width!=1080)
             ranks=chart_ranks(answer)
             span=min(174,(width-200)/len(ranks));left=(width-span*len(ranks))/2
@@ -201,7 +205,32 @@ def render(answer,*,assets,load,display_time,server_label,timezone_label,catalog
         c.line(54,y+10,width-54)
         for i,line in enumerate(footlines):c.text(54,y+34+i*32,line,24,MUTED)
         return c.image
+    requests=set();badges={'ImageRanking1st.png','ImageRanking2ng.png','ImageRanking3rd.png'}
+    def request_card(card,w,h):
+        requests.add((card.full_url if w<h else card.thumbnail_url,(w,h)))
+        attr=card.catalog.get('attribute_icon')
+        if attr:
+            side=max(18,min(40,w//4));requests.add((attr,(side,side)))
+    for board in boards:
+        for rank in answer.ranks:
+            detail=board.player_detail(rank) or {}
+            favorite=member.get(detail.get('favoriteMemberCardId'))
+            side=96 if trend else 84 if width==1080 else 76
+            if favorite:request_card(favorite,side,side)
+            if trend:
+                for slot in detail.get('cards',[]):
+                    mc=member.get(slot.get('memberCardId'));sc=support.get(slot.get('supportCardId'))
+                    if mc:request_card(mc,90,120)
+                    if sc:request_card(sc,176,99)
+            for slot in detail.get('cards',[]):
+                for prefix,key in (('CardRank','memberAwakeCount'),('snaplimit_','supportRank')):
+                    value=slot.get(key)
+                    if type(value) is int and 0<=value<=5:badges.add(f'{prefix}{value}.png')
+    for label,url in bonus_marks:
+        bw=(102 if trend else 64) if label=='加成属性' else (420 if trend else 300 if width==1080 else 210)
+        requests.add((url,(bw,114 if trend else 72)))
     try:
+        cache.update(prepare_assets(requests,load,badges))
         groups=[i for i,b in enumerate(blocks) if b[0]=='song']+[len(blocks)] if trend else []
         from .image_output import MAX_IMAGE_EDGE,MAX_IMAGE_PIXELS
         if trend:
@@ -214,9 +243,9 @@ def render(answer,*,assets,load,display_time,server_label,timezone_label,catalog
                 blocks[i]=(kind,bh-cut,data);excess-=cut
         sizes=tuple(sum(b[1] for b in blocks[a:z]) for a,z in zip(groups,groups[1:]))
         if sizes and max(sizes)+head+footheight<=min(MAX_IMAGE_EDGE,MAX_IMAGE_PIXELS//width):
-            parts=render_parts(sizes,width,head+footheight,lambda a,z,h:paint(groups[a],groups[z],h))
+            parts=render_parts(sizes,width,head+footheight,lambda a,z,h:paint(groups[a],groups[z],h),max_height=4200)
         else:
-            parts=render_parts(tuple(b[1] for b in blocks),width,head+footheight,paint)
+            parts=render_parts(tuple(b[1] for b in blocks),width,head+footheight,paint,max_height=3600)
         return tuple(CutoffPage(p.image,answer.text if trend else replace(answer,display_ranks=tuple(b[2] for b in blocks[p.start:p.stop])).text) for p in parts)
     finally:
         for image in cache.values():

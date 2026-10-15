@@ -1,6 +1,8 @@
 # 单图优先与统一美工
 
-QQ 图片回复使用已确认的 Haneoka 风格：浅底、Noto Sans SC／Roboto、原尺寸字号、紧凑分组和游戏图标。原卡面与固定彩蛋保留原输出。`/查留影卡` 为正式名称；旧 `/查支援卡`、英文／日文别名继续兼容。群聊文字、图文、续发及上传失败回退统一 @ 指令发出用户；单聊不加 @。
+QQ 图片回复使用已确认的 Haneoka 风格：浅底、Noto Sans SC／Roboto、原尺寸字号、紧凑分组和游戏图标。独立卡面保持来源原始像素尺寸，固定彩蛋保留原输出。`/查留影卡` 为正式名称；旧 `/查支援卡`、英文／日文别名继续兼容。群聊文字、图文、续发及上传失败回退统一 @ 指令发出用户；单聊不加 @。
+
+`/查活动`、`/查卡池`、`/查角色` 的列表及详情复用同一主题与预算。角色目录按乐队和来源顺序完整排列；活动／卡池用横幅，人物详情用资料图，关联卡沿用稀有度边框。长简介按段落或完整文字行拆图，列表按完整条目拆图；图片与回退文字共享同一份 `InfoAnswer`，续发不重新查询。
 
 @ 标签按 [QQ 官方文本交互](https://bot.q.qq.com/wiki/develop/api-v2/server-inter/message/trans/text-chain.html) 使用 `<qqbot-at-user id="…" />`，ID 来自入站群消息作者。远端菜单安装和真实 QQ 送达需单独验收。
 
@@ -19,10 +21,11 @@ QQ 图片回复使用已确认的 Haneoka 风格：浅底、Noto Sans SC／Robot
 ## 模块与素材
 
 - QQ `_render_prepared` 向新 `*_layout.py` 传入同次查询数据及素材回调。`readable_pages.render_parts` 负责完整分段，`encode_image(preserve_size=True)` 禁止降尺寸。
+- `info_layout.py` 接收纯 `InfoView`／`InfoRow` 与素材回调，不访问查询仓库。`scripts/preview_info_catalog.py` 可生成三类信息的合成离线样图；相关测试为 `test_info_layout.py` 与 `test_info_command_pipeline.py`。
 - `visual_skill_contracts.json` 保存人工确认摘要与机制／日文模板指纹，匹配失败退完整技能；条件增强与等级成长分别展示。
 - 等级按对应服务器成长曲线和觉醒上限计算，缺资料不猜；玩家头像、角色卡和留影卡使用属性、等级、觉醒角标与稀有度渐变框。渐变框为本项目绘制，稀有度与觉醒图标为游戏原图。
-- 字体按 OFL 随包分发。游戏图标与 note atlas 不打包；`game_assets.json` 固定来源和 SHA-256，运行时按需匿名加载到 `runtime_data_dir()/game-assets`。失败暂缓 60 秒再试，角标退文字；原版 note 不可用时完整谱面退资料文字。其他卡图继续既有受限素材缓存。
-- 字体、测量和 note 重建使用有界缓存；解码缩略图 LRU 上限 32 MB，调用者拿独立副本。列表素材并发最多 3。
+- 字体按 OFL 随包分发。游戏图标与 note atlas 不打包；`game_assets.json` 固定来源和 SHA-256。受管部署在停旧实例前自动准备 `game-assets` 与 `haneoka-asset-cache`，完整解码资料图片并记录摘要；损坏／缺失素材重取，准备失败阻止切换。榜线读取同一持久图片缓存，具体目录隔离见 [部署协议](../deploy/LINUX_OFFLINE.md#查询素材准备)。自行运行仍支持既有受限按需加载，原版 note 不可用时完整谱面退资料文字。
+- 字体、测量和 note 重建使用有界缓存；解码缩略图 LRU 上限 32 MB，调用者拿独立副本。新布局按 URL／尺寸去重并发预取，最多6个工作线程；调用者负责释放自己的图像副本。
 
 ## 验证与性能口径
 

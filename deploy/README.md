@@ -12,6 +12,8 @@
 
 遇到 `compatibility_review_required`，先核对具体代码／数据变化及旧版本可读性，按协议记录审核；不要清空缓存、额度或失败状态来绕过门槛。应用更新不会替换 `/usr/local/lib/taki-updater` 中的独立控制器。生产配置、控制器安装、手动重启及 QQ 操作按各自授权执行。
 
+新候选的素材准备入口为 `scripts/prepare_query_assets.py`，在停旧实例前校验固定游戏资源及同版资料图片，结果写入跨版本的 `data/game-assets`、`data/haneoka-asset-cache`；缺件／损坏重取，失败阻止切换。必须确认已安装控制器包含此准备步骤，不能仅凭新应用文件存在判断预下载已启用。
+
 ## 自行部署与配置
 
 自行部署时创建仅本机可读的 `.env`，填写自己的 QQ 凭据，再按进程管理器的方式运行 `ournotes-bot bot`；不要和受管实例并行启动。切勿把 `.env`、日志或缓存加入 Git。

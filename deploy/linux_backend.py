@@ -343,14 +343,19 @@ class LinuxBackend:
         self._manifest(release)
         return release
 
-    def _sandbox(self, release: Release, argv: list[str], step: str, *, offline: bool = True):
+    def _sandbox(self, release: Release, argv: list[str], step: str, *, offline: bool = True,
+                 note_cache: bool = False, query_cache: bool = False):
         root = Path(release.code_dir).parent
         runtime_seconds = 1800 if step == "install" else 900
         unit = "taki-prepare-" + release.commit + "-" + step
+        cache = self.base / "data/game-assets"
+        writable = str(root) + (" " + str(cache) if note_cache or query_cache else "")
+        if query_cache:
+            writable += " " + str(self.base / "data/haneoka-asset-cache")
         options = ["/usr/bin/systemd-run", "--quiet", "--wait", "--pipe", "--collect", "--unit=" + unit,
             "-p", "User=ubuntu", "-p", "Group=ubuntu", "-p", "NoNewPrivileges=yes",
             "-p", "ProtectSystem=strict", "-p", "ProtectHome=tmpfs",
-            "-p", "BindPaths=" + str(root), "-p", "ReadWritePaths=" + str(root),
+            "-p", "BindPaths=" + writable, "-p", "ReadWritePaths=" + writable,
             "-p", "TemporaryFileSystem=/tmp:rw,size=256M /var/tmp:rw,size=64M",
             "-p", "PrivateDevices=yes", "-p", "UMask=0077",
             "-p", "SystemCallFilter=~ptrace process_vm_readv process_vm_writev",
@@ -360,7 +365,10 @@ class LinuxBackend:
         if offline:
             options += ["-p", "PrivateNetwork=yes"]
         # One list assignment avoids resetting an earlier InaccessiblePaths list.
-        hidden = ["/proc", "-/run/user", "-/run/dbus"] + ["-" + p for p in self.config.get("credential_paths", [])]
+        # ProtectHome still hides all other shared data; expose only the artwork cache.
+        hidden = ["/proc", "-/run/user", "-/run/dbus"] + [
+            "-" + p for p in self.config.get("credential_paths", [])
+            if not ((note_cache or query_cache) and Path(p) == self.base / "data")]
         options += ["-p", "InaccessiblePaths=" + " ".join(hidden)]
         env = ["/usr/bin/env", "-i", "PATH=" + release.venv_dir + "/bin:/usr/bin:/bin",
             "HOME=" + str(root / "home"), "TMPDIR=" + str(root / "tmp"), "LANG=C.UTF-8",
@@ -430,6 +438,8 @@ class LinuxBackend:
         self._sandbox(release, [python, "-m", "pip", "wheel", ".", "--no-deps", "--no-build-isolation", "-w", "dist"], "wheel", offline=True)
         self._sandbox(release, [python, "-c", "from setuptools.build_meta import build_sdist; build_sdist('dist')"], "sdist", offline=True)
         self._sandbox(release, [python, "scripts/check_release_artifact.py", "dist"], "artifacts", offline=True)
+        self._prepare_note_assets(release)
+        self._prepare_query_assets(release)
         if tree_digest(Path(release.code_dir)) != digest:
             raise Rejected("candidate_source_changed")
         freeze_release(root)
@@ -437,6 +447,33 @@ class LinuxBackend:
                     "digest": digest, "environment_digest": environment_digest(Path(release.venv_dir)),
                     "bundle_sha256": bundle_hash, "prepared": True})
         return release
+
+    def _prepare_note_assets(self, release: Release) -> None:
+        """Before stop/switch, verify fixed note art in the launcher's persistent cache."""
+        cache = self.base / "data/game-assets"
+        for directory in (cache.parent, cache):
+            if directory.is_symlink() or directory.resolve() != directory:
+                raise Rejected("note_cache_path_not_canonical")
+            if not directory.exists():
+                directory.mkdir(mode=0o700)
+                self.run(["/usr/bin/chown", "ubuntu:ubuntu", str(directory)], timeout=30)
+        self.run(["/usr/bin/chown", "ubuntu:ubuntu", str(cache)], timeout=30)
+        python = str(Path(release.venv_dir) / "bin/python")
+        self._sandbox(release, [python, "-B", "scripts/prepare_note_assets.py",
+                      "--cache-dir", str(cache)], "note-assets", offline=False, note_cache=True)
+
+    def _prepare_query_assets(self, release: Release) -> None:
+        """Verify public catalog images before stopping the previous instance."""
+        cache = self.base / "data/haneoka-asset-cache"
+        if cache.parent.is_symlink() or cache.is_symlink() or cache.resolve() != cache:
+            raise Rejected("query_cache_path_not_canonical")
+        cache.mkdir(mode=0o700, exist_ok=True)
+        self.run(["/usr/bin/chown", "ubuntu:ubuntu", str(cache)], timeout=30)
+        python = str(Path(release.venv_dir) / "bin/python")
+        self._sandbox(release, [python, "-B", "scripts/prepare_query_assets.py",
+                      "--cache-dir", str(cache.parent), "--catalog",
+                      str(Path(release.code_dir).parent / "test-data/asset-catalog.json")],
+                      "query-assets", offline=False, query_cache=True)
 
     def _quiesce_preparations(self) -> None:
         """An interrupted controller may leave a separately managed test unit."""

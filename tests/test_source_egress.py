@@ -66,8 +66,8 @@ class SourceEgressTests(unittest.TestCase):
         for doc in self.saved['documents'].values():
             doc.setdefault('ui-marks', {})
             doc.setdefault('progression', {key: [] for key in ('memberCardLevels','memberCardRanks','supportCardLevels','supportCardRanks')})
-            doc.setdefault('events', {'entries': {}})
-            doc.setdefault('gacha', {'entries': {}})
+            doc.setdefault('events', {})
+            doc.setdefault('gacha', {})
         self.saved['documents']['jp']['ui-marks'] = {f'CardType-{name}.png': f'runtime/unity/Assets/AddressableResources/UI/Atlas/FixUiSpriteAtlas.spriteatlasv2/CardType-{name}--Sprite-123.png' for name in ('Red','Blue','Green','Yellow','Purple')}
         self.stack = ExitStack()
         self.addCleanup(self.stack.close)
@@ -138,6 +138,8 @@ class SourceEgressTests(unittest.TestCase):
         else:
             self.assertEqual(query['release'], [ident['releaseId']])
             value = self.saved['documents'][server][resource]
+            if resource in {'events', 'gacha'}:
+                value = {'entries': value}
             if 'id' in query:
                 value = {'items': {key: value[key] for key in query['id']}, 'missing': []}
         return catalog.encoded(value), {'x-haneoka-release-id': ident['releaseId'],

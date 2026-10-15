@@ -185,7 +185,11 @@ def convert(documents, identity_jp, fetched_at, *, stale=False):
                           {"title": localized(title), "band": band, **{k: localized(v) for k, v in credits.items()}},
                           SongTraits(color, tuple(MISSIONS[m] for m in missions) if missions else None, stale, release, source_id,
                                      attribute_url(jp.get("ui-marks", {}), color, release)),
-                          song_visual_fields(row,jp,release)))
+                          {**song_visual_fields(row,jp,release), 'chart_source': {
+                              'identity': dict(identity_jp),
+                              'song': {**{key:row[key] for key in ('musicId','musicTitle','jacketUrl')},
+                                       'difficulty':[{key:entry.get(key) for key in ('difficulty','difficultyName','scoreId','playLevel','noteCount','file')}
+                                                     for entry in row['difficulty']]}}}))
 
     member_refs = None
     try:

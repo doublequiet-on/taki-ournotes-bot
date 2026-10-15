@@ -282,6 +282,69 @@ class LinuxBackendTests(unittest.TestCase):
         self.assertEqual(len(self.calls), 1)  # Collected successful units need no second stop.
         self.assertEqual(options["budget_root"], Path(release.code_dir).parent)
 
+    def test_note_preparation_exposes_only_persistent_artwork_not_other_shared_data(self):
+        release = self.candidate()
+        self.config['credential_paths'] = [str(self.base / 'config'), str(self.base / 'data'), str(self.base / 'logs')]
+        self.backend._prepare_note_assets(release)
+        command = next(argv for argv, _ in self.calls if argv[0] == '/usr/bin/systemd-run')
+        mounted = next(v for v in command if v.startswith('BindPaths=')).split('=',1)[1].split()
+        writable = next(v for v in command if v.startswith('ReadWritePaths=')).split('=',1)[1].split()
+        self.assertEqual(mounted, [str(Path(release.code_dir).parent), str(self.base / 'data/game-assets')])
+        self.assertEqual(writable, mounted)
+        self.assertNotIn('BindPaths=' + str(self.base / 'data'), command)
+        hidden = next(v for v in command if v.startswith('InaccessiblePaths='))
+        self.assertIn(str(self.base / 'config'), hidden)
+        self.assertIn(str(self.base / 'logs'), hidden)
+        self.assertNotIn('-' + str(self.base / 'data'), hidden.split())
+        self.assertIn('ProtectHome=tmpfs', command)
+        self.assertIn('User=ubuntu', command)
+        for option in ('QQ_APP_ID=', 'QQ_APP_SECRET=', 'AI_API_KEY='):
+            self.assertIn(option, command)
+        self.assertNotIn('PrivateNetwork=yes', command)
+        self.assertFalse(any(argv[:2] == ['/usr/bin/systemctl', 'stop'] for argv, _ in self.calls))
+
+    def test_different_release_preparations_keep_the_same_persistent_note_cache(self):
+        cache=self.base/'data/game-assets'
+        cache.mkdir(parents=True)
+        existing=cache/'old-version-hash.png'
+        existing.write_bytes(b'previous verified version')
+        for sha in (B,'c'*40):
+            self.backend._prepare_note_assets(self.candidate(sha))
+        commands=[argv for argv,_ in self.calls if argv[0]=='/usr/bin/systemd-run']
+        self.assertEqual(len(commands),2)
+        self.assertTrue(all(argv[-2:]==['--cache-dir',str(cache)] for argv in commands))
+        self.assertEqual(existing.read_bytes(),b'previous verified version')
+
+    def test_failed_note_preparation_aborts_update_before_service_stop(self):
+        self.state()
+        release = self.candidate()
+        with patch.object(self.backend, 'current_release', return_value=self.baseline), \
+             patch.object(self.backend, 'resolve_main', return_value=B), \
+             patch.object(self.backend, 'check_ci'), \
+             patch.object(self.backend, 'prepare', side_effect=Rejected('note_assets_unavailable')), \
+             patch.object(self.backend, 'stop') as stop, \
+             patch.object(self.backend, 'activate') as activate:
+            result = Engine(self.backend.state, self.backend).run()
+        self.assertEqual(result.status, 'rejected')
+        self.assertEqual(result.reason, 'note_assets_unavailable')
+        stop.assert_not_called()
+        activate.assert_not_called()
+
+    def test_query_asset_sandbox_exposes_only_candidate_and_two_cache_directories(self):
+        release = self.candidate()
+        self.config['credential_paths'] = [str(self.base / 'config'), str(self.base / 'data')]
+        self.backend._sandbox(release, ['python', 'prepare_query_assets.py'], 'query-assets', offline=False, query_cache=True)
+        argv = self.calls[-1][0]
+        allowed = str(Path(release.code_dir).parent) + ' ' + str(self.base / 'data/game-assets') + ' ' + str(self.base / 'data/haneoka-asset-cache')
+        self.assertIn('BindPaths=' + allowed, argv)
+        self.assertIn('ReadWritePaths=' + allowed, argv)
+        self.assertIn('ProtectHome=tmpfs', argv)
+        self.assertNotIn('PrivateNetwork=yes', argv)
+        hidden = next(v for v in argv if v.startswith('InaccessiblePaths='))
+        self.assertIn(str(self.base / 'config'), hidden)
+        self.assertIn('QQ_APP_ID=', argv)
+        self.assertIn('QQ_APP_SECRET=', argv)
+
     def test_failed_sandbox_stops_transient_service_and_keeps_original_failure(self):
         self.backend.run = lambda *args, **kwargs: (_ for _ in ()).throw(Rejected("command_timeout"))
         with self.assertRaisesRegex(Rejected, "command_timeout"):
@@ -470,7 +533,7 @@ class LinuxBackendTests(unittest.TestCase):
                 self.backend.verify_compatibility(self.baseline, candidate)
         self.assertFalse(self.calls)
 
-    def test_candidate_preparation_uses_only_verified_bundle_and_offline_steps(self):
+    def test_candidate_preparation_keeps_install_offline_and_prepares_note_cache_before_freeze(self):
         self.state(transaction=dict(phase="preparing", commit=B, previous=asdict(self.baseline), candidate=None))
         self.backend.current_release = lambda: self.baseline
         def unpack(archive, payload, commit, expected):
@@ -492,7 +555,14 @@ class LinuxBackendTests(unittest.TestCase):
                 patch.object(self.backend, '_check_reviewed_fingerprints'), \
                 patch.object(self.backend, '_sandbox') as sandbox:
             release = self.backend.prepare(B)
-        self.assertTrue(all(call.kwargs.get('offline') is True for call in sandbox.call_args_list))
+        note_step = next(call for call in sandbox.call_args_list if call.args[2] == 'note-assets')
+        self.assertEqual(note_step.kwargs, {'offline': False, 'note_cache': True})
+        self.assertEqual(note_step.args[1][-2:], ['--cache-dir', str(self.base / 'data/game-assets')])
+        self.assertTrue(all(call.kwargs.get('offline') is True for call in sandbox.call_args_list
+                            if call.args[2] not in ('note-assets','query-assets')))
+        query_step = next(call for call in sandbox.call_args_list if call.args[2] == 'query-assets')
+        self.assertEqual(query_step.kwargs, {'offline': False, 'query_cache': True})
+        self.assertIn(str(self.base / 'data'), query_step.args[1])
         install = next(call.args[1] for call in sandbox.call_args_list if call.args[2] == 'install')
         for option in ('--no-index', '--require-hashes', '--no-deps', '--find-links'):
             self.assertIn(option, install)

@@ -67,6 +67,20 @@ def _aliases(path: Path | None = None) -> dict:
         return {}
 
 
+def information_alias_targets(term: str) -> tuple[tuple[str, str], ...]:
+    """Read exact profile/band aliases; callers verify targets against the roster."""
+    needle = normalize(term)
+    entries = _aliases()
+    targets = []
+    for kind in ("character", "band"):
+        aliases = entries.get(kind, {})
+        if not isinstance(aliases, dict):
+            continue
+        targets.extend((kind, target) for alias, target in aliases.items()
+                       if isinstance(alias, str) and isinstance(target, str) and normalize(alias) == needle)
+    return tuple(targets)
+
+
 def scoped_song_matches(term: str, catalog: tuple, *, partial: bool = False) -> tuple[str, ...]:
     """Resolve names/aliases only against the requested server's Master catalog."""
     needle = normalize(term)

@@ -28,6 +28,8 @@ QQ 新卡牌／歌曲入口接收完整捕获结果；旧兼容入口仍接受�
 - [Rendering Core](ournotes_bot/rendering/L2-2-Core.md)：共享主题、素材、布局原语和编码。
 - [Song Rendering](ournotes_bot/rendering/L2-2-Song.md)：歌曲身份、谱面时间线、效率表的业务投影。
 - [Card Rendering](ournotes_bot/rendering/L2-2-Card.md)：成员/SNAP、列表/详情/原卡面的分派及视觉语义。
+- [info_layout.py](ournotes_bot/rendering/info_layout.py)：活动、卡池、人物目录及详情，共用 Haneoka 主题和完整内容分图；只消费纯展示视图与注入素材，返回每图对应的文字和图片字节。
+  人物目录按乐队显示五人行，档案立绘与事实并排、简介在下方；卡牌关联保持成员／留影卡比例并使用同一原生稀有度及属性图标。展示契约中的 `group/kind` 决定分组与字段位置，绘图不从文案猜测业务类别；素材经注入加载器去重并发准备。
 
 Core 与 Song 目前同在 `visuals.py`，是已存在的职责切面，还不是独立可导入子包。三个子域无需再按“列表/详情/编码器”机械分层。
 

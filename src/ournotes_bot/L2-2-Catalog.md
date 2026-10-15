@@ -14,6 +14,8 @@
 
 ## Outputs
 
+`capture_catalog()` 同时捕获 `characters/gachas/activities` 与歌曲、两类卡牌及来源 metadata。新资料使用 `domain/info_catalog.py` 的纯记录，`metadata.info_catalog_available` 分别标记集合是否取得；旧缓存缺集合不等于空集合。转换在主快照发布前校验，沿用现有原子发布与同源缓存回退，不新增缓存文件或定时任务。
+
 `Song/Chart/Card/SupportCard/Skill`、名称规范化与角色身份、`SongRepository` 的资料集合、技能/分类完整度、同步与缓存状态。dataclass 虽为 frozen，部分字段仍含 dict，不能推导为深度不可变的全局快照。
 
 ## Core Flow

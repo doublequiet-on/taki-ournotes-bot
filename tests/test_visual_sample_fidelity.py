@@ -33,9 +33,48 @@ class SampleFidelityTests(unittest.TestCase):
         self.assertEqual(data['windows'][0]['count'],9)
         self.assertEqual(data['windows'][0]['percent'],100)
 
-    def test_unverified_guide_format_does_not_claim_judgment_counts(self):
-        self.assertIsNone(song_detail_layout.judged_times({'events':{'bpm':[{'t':0,'bpm':120}]},
-            'notes':[{'type':'guide','node':[{'t':0},{'t':480}]}]}))
+    def test_hidden_guides_do_not_disable_judgments_and_density(self):
+        score={'events':{'bpm':[{'t':0,'bpm':120}],'skill':[0]},
+               'notes':[{'t':0,'pos':0,'size':6},{'t':480,'pos':6,'size':6},
+                        {'type':'guide','node':[{'t':0,'pos':0,'size':6,'visible':False},
+                                                {'t':960,'pos':6,'size':6,'visible':False}]}]}
+        self.assertEqual(song_detail_layout.judged_times(score),[0,0.5])
+        data=song_detail_layout.timeline(score)
+        self.assertEqual(data['windows'][0]['count'],2)
+        self.assertEqual(sum(data['density']),2)
+
+    def test_variable_meter_preserves_the_judgment_clock_and_eighths(self):
+        score={'events':{'bpm':[{'t':0,'bpm':120}],
+                         'sig':[{'t':0,'sig':[4,4]},{'t':1920,'sig':[5,4]}]},
+               'notes':[{'type':'long','node':[{'t':0,'pos':0,'size':6},
+                                               {'t':4320,'pos':0,'size':6}]}]}
+        self.assertEqual(song_detail_layout.judged_times(score),[i/4 for i in range(19)])
+
+    def test_short_measure_boundaries_keep_native_rounding_and_generated_judgments(self):
+        score={'events':{'bpm':[{'t':0,'bpm':120}],
+                         'sig':[{'t':0,'sig':[4,4]},{'t':1920,'sig':[1,8]},
+                                {'t':2160,'sig':[1,16]},{'t':2280,'sig':[1,32]},
+                                {'t':2340,'sig':[6,4]}]},
+               'notes':[{'type':'long','node':[{'t':0,'pos':0,'size':6},
+                                               {'t':3000,'pos':0,'size':6}]}]}
+        # Captured reference conversion: fractional bars are not a fixed 240-tick grid.
+        self.assertEqual(song_detail_layout.judged_times(score),
+                         [0,.25,.5,.75,1,1.25,1.5,1.75,2,2.25,2.437,3.124])
+
+    def test_structural_guide_without_trace_has_no_judgments(self):
+        self.assertEqual(song_detail_layout.judged_times({'events':{'bpm':[{'t':0,'bpm':120}]},
+            'notes':[{'type':'guide','node':[{'t':0},{'t':480}]}]}), [])
+
+    def test_odd_meter_and_guide_keep_chronological_skill_times_without_counts(self):
+        score={'events':{'bpm':[{'t':0,'bpm':165},{'t':48000,'bpm':230}],
+                         'sig':[{'t':0,'sig':[5,4]}], 'skill':[83040,19680,39840]},
+               'notes':[{'type':'guide','node':[{'t':0},{'t':96000}]}]}
+        data=song_detail_layout.timeline(score)
+        self.assertEqual([w['start'] for w in data['windows']],
+                         [song_detail_layout.seconds_at(t,score['events']['bpm']) for t in sorted(score['events']['skill'])])
+        self.assertEqual(len(data['windows']),3)
+        self.assertTrue(all(w['count'] is None and w['percent'] is None and w['rank'] is None for w in data['windows']))
+        self.assertEqual(data['density'],[])
 
     def test_song_retains_approved_sections_and_compact_difficulty_tiles(self):
         song=Song(1,'测试',('测试',),'乐队','','','','','',tuple(Chart(name,7,7,100,'') for name in ('EASY','NORMAL','HARD','EXPERT')))
@@ -49,6 +88,26 @@ class SampleFidelityTests(unittest.TestCase):
 
 
 class AlignmentTests(unittest.TestCase):
+    def test_band_name_keeps_its_exclamation_marks_when_wrapping(self):
+        from ournotes_bot.rendering.haneoka_theme import lines
+        wrapped=lines('×4 · MyGO!!!!!',180,26)
+        self.assertIn('MyGO!!!!!',wrapped)
+        self.assertFalse(any(v and set(v)<=set('!！') for v in wrapped))
+
+    def test_multi_member_heading_matches_canonical_group_and_text_is_readable(self):
+        from ournotes_bot.rendering import catalog_layout
+        people=[dict(id=2,name={'zh':'第二人'},band=1,order=2),dict(id=1,name={'zh':'首人'},band=1,order=1)]
+        card=SupportCard(51,'多人卡','第二人',('第二人',),4,1,3100,4000,3100,'','','',catalog={'people':people})
+        drawn=[];original=Canvas.text
+        def capture(canvas,x,y,value,size,*args,**kwargs):
+            drawn.append((str(value),size));return original(canvas,x,y,value,size,*args,**kwargs)
+        with patch.object(Canvas,'text',capture):parts,_,_=catalog_layout.render_list([card],'全部',load=lambda *a:None)
+        self.assertIn(('首人',32),drawn)
+        self.assertNotIn(('第二人',32),drawn)
+        self.assertIn(('ID 51',26),drawn)
+        self.assertIn(('未知',26),drawn)
+        with Image.open(io.BytesIO(parts[0].image)) as im:self.assertEqual(im.width,1080)
+
     def test_memory_ids_share_row_with_different_portrait_counts(self):
         from ournotes_bot.rendering import catalog_layout
         people=[dict(id=i,name={'zh':'灯' if i==1 else str(i)},band=1,order=i) for i in range(1,10)]
@@ -66,6 +125,30 @@ class AlignmentTests(unittest.TestCase):
 
 
 class FullChartTests(unittest.TestCase):
+    def test_trace_uses_original_trace_sprite_and_bpm_stays_in_metric_cell(self):
+        from ournotes_bot.rendering import chart_layout
+        from ournotes_bot.rendering.haneoka_theme import font
+        song=Song(1,'Odd Dice',('Odd Dice',),'millsage','','','','','',(Chart('EXPERT',28,28,965,''),))
+        score={'events':{'bpm':[{'t':0,'bpm':165},{'t':1920,'bpm':230}]},
+               'notes':[{'type':'trace','t':960,'pos':0,'size':6}]}
+        drawn=[];original=Canvas.text
+        def capture(canvas,x,y,value,size,*args,**kwargs):
+            drawn.append((x,y,str(value),size));return original(canvas,x,y,value,size,*args,**kwargs)
+        with patch.object(chart_layout,'draw_note') as draw,patch.object(Canvas,'text',capture):
+            chart_layout.render(song,song.charts,score,'EXPERT',load=lambda *a:None)
+        self.assertEqual(draw.call_args.args[4],'trace')
+        x,_,value,size=next(r for r in drawn if r[2]=='165.00–230.00')
+        next_x=88+2*(1800-176)/4
+        self.assertLess(x+font(size,True,True).getlength(value),next_x)
+
+    def test_source_auto_control_points_do_not_break_chart_or_skill_times(self):
+        from ournotes_bot.rendering import chart_layout
+        from test_haneoka_charts import SCORE
+        song=Song(1,'测试',('测试',),'乐队','','','','','',(Chart('EXPERT',24,24,62,''),))
+        with patch.object(chart_layout,'draw_note'):
+            self.assertTrue(chart_layout.render(song,song.charts,SCORE['score'],'EXPERT',load=lambda *a:None))
+        self.assertEqual(len(song_detail_layout.timeline(SCORE['score'])['windows']),2)
+
     def test_eight_columns_fit_one_image_without_losing_notes(self):
         from ournotes_bot.rendering import chart_layout
         song=Song(1,'测试',('测试',),'乐队','','','','','',(Chart('EXPERT',24,24,62,''),))

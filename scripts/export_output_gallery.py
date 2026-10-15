@@ -84,7 +84,7 @@ class Gallery:
         self.inputs[str(path)] = digest(path)
         return json.loads(path.read_bytes())
 
-    def asset(self, url, size, *, contain=False):
+    def asset(self, url, size, *, contain=False, native=False):
         path = self.cache / "asset-cache" / (hashlib.sha256(url.encode()).hexdigest() + ".png") if self.cache else None
         if not path or not path.is_file():
             self.missing.add(url)
@@ -93,6 +93,7 @@ class Gallery:
         self.assets.add(url)
         with Image.open(path) as picture:
             picture = picture.convert("RGBA" if contain else "RGB")
+            if native:return picture
             transform = ImageOps.contain if contain else ImageOps.fit
             return transform(picture, size, method=Image.Resampling.LANCZOS)
 
@@ -422,8 +423,8 @@ def export_cutoffs(g, repo):
         variants["server-"+server] = replace(base,event=replace(event,server=server),request=CutoffRequest(server=server))
     with patch.object(cv,"load_artwork",return_value={}):
         with patch.object(repo.event_cutoffs,"event",return_value=event):
-            g.sample("text","activity","/查活动",lambda:g.qq._prepare_reply("/查活动",repo,None),expected="text",
-                     synthetic=("活动", "歌曲", "时间"),source="合成活动，由真实activity_query生成文字",route="_prepare_reply → execute_activity → 纯文字")
+            g.sample("text","activity","/查活动",lambda:g.qq._prepare_reply("/查活动",repo,None),expected="image",
+                     synthetic=("活动", "歌曲", "时间"),source="合成活动，由真实活动查询生成图片",route="_prepare_reply → execute_activity → 活动图片")
         for name, answer in variants.items():
             family = "cutoff-trend" if answer.request.mode=="trend" else "cutoff-ranks"
             result = CommandResult(("cutoff","",None),cutoff=answer)

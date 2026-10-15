@@ -20,7 +20,7 @@ class ImagePart:
 
 
 def render_parts(heights: tuple[int, ...], width: int, fixed_height: int,
-                 paint: Callable[[int, int, int], Image.Image]) -> tuple[ImagePart, ...]:
+                 paint: Callable[[int, int, int], Image.Image], *, max_height: int | None = None) -> tuple[ImagePart, ...]:
     """Largest fitting ordered prefix, with byte-budget checks before publication.
 
     Row positions refer to the captured input, not record IDs. The painter owns
@@ -33,6 +33,9 @@ def render_parts(heights: tuple[int, ...], width: int, fixed_height: int,
     if width <= 0 or width > MAX_IMAGE_EDGE or fixed_height < 0 or any(h <= 0 for h in heights):
         raise ValueError("invalid measured layout")
     limit = min(MAX_IMAGE_EDGE, MAX_IMAGE_PIXELS // width)
+    if max_height is not None:
+        # A single complete content block may exceed the preferred page height.
+        limit = min(limit, max(max_height, fixed_height + max(heights)))
     parts, start = [], 0
     while start < len(heights):
         stop, height = start, fixed_height

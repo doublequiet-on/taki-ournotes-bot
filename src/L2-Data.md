@@ -19,6 +19,7 @@
 ## Core Contracts
 
 - 领域身份：`Song/Chart/Card/SupportCard/Skill` 由 [data.py](ournotes_bot/data.py) 定义；`Song.traits` 当前引用来源文件中的 `SongTraits`。
+- 人物、卡池与活动基础资料由纯类型 [domain/info_catalog.py](ournotes_bot/domain/info_catalog.py) 定义，与 Haneoka 卡牌在同次 Catalog 发布和捕获；不从卡牌集合反推人物目录。
 - 来源契约由 [Sources](ournotes_bot/sources/L2-2.md) 维护；不得把列表技能摘要当作完整详情，有限统计求值也不证明游戏实际得分。正式榜线保留公开发现／素材和本地历史例外。
 
 ## Internal Subsystems
@@ -52,7 +53,7 @@
 
 ## 当前实现与边界
 
-Catalog 的主体实现保留在根 data.py；六个来源文件整移到 sources/，Haneoka 位于其内部簇。领域类型、名称规则和既有延迟回边保留，不创建 catalog/ 或新的契约模块。主缓存和各来源缓存仍保持原位置、格式与独立生命周期。
+Catalog 的主体实现保留在根 data.py；Haneoka 适配器位于 sources/ 内部簇。既有领域类型、名称规则和延迟回边保留；新增资料记录放在纯 domain 模块。主缓存和各来源缓存仍保持原位置、格式与独立生命周期。
 
 向上阅读：[仓库 L1](../L1.md)。源码文件头提供唯一 L3，具体行为与字段以实现为准。
 
