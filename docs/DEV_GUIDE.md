@@ -33,7 +33,9 @@ Haneoka 公共设施：`sources/haneoka/transport.py`、`identity.py` 与 `sourc
 真实指令出图与耗时：`python -B scripts/verify_query_outputs.py --snapshot <公开的haneoka-catalog-jp-v1.json副本> --runtime <隔离缓存目录> --output runtime/query-output-check` 默认执行 `/查曲 odd dice`、`/查谱面 odd dice`，各两次并保存实际图片与报告。空 runtime 的首轮包含公开素材下载；已有缓存可加 `--offline` 检查磁盘／内存路径。首轮耗时不能直接称为冷网络耗时，应同时核对报告中的初始缓存数量；此工具不上传或发送 QQ。
 若机器必须通过代理访问 Haneoka 或固定谱面皮肤，可显式设置 `OURNOTES_PUBLIC_HTTP_PROXY`（HTTP(S) 地址，不带用户名／密码）。公开下载不自动采用系统代理；验收进程与实际 Taki 服务应分别核对网络配置。该选项不修改系统设置，不影响 QQ 或 AI SDK。
 
-固定谱面素材应在提供查询前准备好：`python -B scripts/prepare_note_assets.py --cache-dir <实际runtime_data_dir>/game-assets` 下载固定提交的 atlas/config，逐项验证 SHA-256 后原子写入。准备阶段每文件预算 180 秒，普通查询仍为 8 秒；已有正确缓存直接复用。服务器下载慢时，可先在能访问上游的机器准备，再复制哈希文件到暂存目录，用 `--source-dir <暂存目录>` 离线校验导入；缺件或哈希不符即失败，不联网补齐。素材不进入 Git 或发行包，目标须为服务跨版本保留的素材缓存；工具不加载生产凭据、不启动 QQ。验收须区分完全空缓存与素材预置后的业务冷缓存，两条指令分别使用独立 runtime。
+Linux 受管更新器在安装／离线验证结束、停止旧服务之前自动准备固定谱面素材，写入启动器共用的 `<base>/data/game-assets`。缺件会下载，已有正确文件只校验；下载或校验失败中止更新，旧服务继续运行，哈希文件随更新／回退和重启保留。临时素材步骤以 ubuntu 运行，只额外开放这个缓存目录，仍隔离生产配置、其他数据、日志及凭据；安装／测试继续断网。控制器源码须按 [部署协议](../deploy/LINUX_OFFLINE.md) 审核安装，不能靠合并应用自动替换受信控制器。
+
+需要独立检查时可执行：`python -B scripts/prepare_note_assets.py --cache-dir <实际runtime_data_dir>/game-assets` 下载固定提交的 atlas/config，逐项验证 SHA-256 后原子写入。准备阶段每文件预算 180 秒，普通查询仍为 8 秒；已有正确缓存直接复用。普通部署自动准备；人工排查时也可用 `--source-dir <暂存目录>` 离线校验导入；缺件或哈希不符即失败，不联网补齐。素材不进入 Git 或发行包，目标须为服务跨版本保留的素材缓存；工具不加载生产凭据、不启动 QQ。验收须区分完全空缓存与素材预置后的业务冷缓存，两条指令分别使用独立 runtime。
 
 查询升级 v1 的完整 55 项映射见 [实现与验收](QUERY_UPGRADE_V1.md)。共享歌曲条件在 `query/song_query.py`，字段短答在 `query/field_query.py`，有限续查在 `query/continuation.py`；QQ 的 `reply_commands` 管同用户顺序和发送确认。历史、采样、趋势分别位于 `sources/cutoff_history.py`、`sources/cutoff_sampler.py`、`rendering/cutoff_trends.py`，发布开关和长期保留见 [历史运维](CUTOFF_HISTORY.md)。
 

@@ -25,18 +25,20 @@ def seconds_at(tick,bpms):
 
 
 def judged_times(score):
-    """ON long notes include eighth-beat ticks, with quarter-beat suppression.
+    """Count eighth-beat judgments using the source meter and binary32 clock.
 
-    Match the published Haneoka runtime's float32 clock at judgment boundaries.
-    Other meter/guide formats retain the chart but do not claim these counts.
+    Purely hidden guides add no judgments. Visible/automatic guide formats remain
+    outside this counter until their judgment conversion has been verified.
     """
     import math
     import struct
     events=(score or {}).get('events',{});bpms=events.get('bpm',[])
-    if not bpms or any(v.get('sig')!=[4,4] for v in events.get('sig',[])):return None
-    if any(n.get('type')=='guide' for n in (score or {}).get('notes',[])):return None
+    if not bpms:return None
+    guides=[n for n in (score or {}).get('notes',[]) if n.get('type')=='guide']
+    if any(v.get('visible') is not False or type(v.get('pos')) not in (int,float)
+           or type(v.get('size')) not in (int,float) for n in guides for v in n.get('node',[])):return None
     if any(type(v.get('size')) not in (int,float) or type(v.get('pos')) not in (int,float)
-           for n in (score or {}).get('notes',[]) for v in (n.get('node',[]) if n.get('type')=='long' else [n])):return None
+           for n in (score or {}).get('notes',[]) if n.get('type')!='guide' for v in (n.get('node',[]) if n.get('type')=='long' else [n])):return None
     f=lambda value:struct.unpack('f',struct.pack('f',value))[0]
     bases=[];elapsed=0.0;previous=0;tempo=120.0
     for row in sorted(bpms,key=lambda r:r['t']):
@@ -44,14 +46,48 @@ def judged_times(score):
         elapsed+=(row['t']-previous)*60000/f(f(tempo)*480)
         bases.append((row['t'],round(elapsed),f(row['bpm'])))
         previous,tempo=row['t'],row['bpm']
-    def ms(tick):
-        t,base,bpm=next((r for r in reversed(bases) if r[0]<tick),bases[0])
-        bar,part=divmod(tick,1920);basebar,basepart=divmod(t,1920)
-        bar_seconds=f(f(4*60)/bpm)
-        seconds=f(f(bar_seconds*f(bar-basebar))+f(bar_seconds*f(f(part/1920)-f(basepart/1920))))
-        return base+math.floor(f(seconds*1000))
+    meters=[];bar=0;previous=0;measure=1920
+    for row in sorted(events.get('sig',[]) or [{'t':0,'sig':[4,4]}],key=lambda r:r['t']):
+        t=row['t'];num,den=row['sig']
+        if num<=0 or den<=0 or num*1920//den<=0:return None
+        bar+=(t-previous)//measure
+        measure=num*1920//den
+        meters.append((t,bar,measure,f(f(num*4)/den)))
+        previous=t
+    if meters[0][0]>0:meters.insert(0,(0,0,1920,4.0))
+    def position(tick):
+        t,bar,unit,_=next((r for r in reversed(meters) if r[0]<=tick),meters[0])
+        offset,part=divmod(tick-t,unit)
+        return bar+offset,f(f(part)/f(unit))
+    def source_ms(tick):
+        t,base,bpm=next((r for r in reversed(bases) if r[0]<=tick),bases[0])
+        return math.floor((tick-t)*60000/f(bpm*480)+base)
+    tempo_changes=[(position(t),source_ms(t),bpm) for t,_,bpm in bases]
+    meter_changes=[(position(t),source_ms(t),beats) for t,_,_,beats in meters]
+    def ms_position(bar,progress):
+        target=(bar,progress)
+        met=next((r for r in reversed(meter_changes) if r[0]<target),((0,0),0,4.0))
+        bpm=next((r for r in reversed(tempo_changes) if r[0]<target),((0,0),0,160.0))
+        (basebar,baseprogress),base_ms,_=met if met[1]>bpm[1] else bpm
+        seconds_per_bar=f(f(met[2]*60)/bpm[2])
+        elapsed=f(f(seconds_per_bar*f(bar-basebar))+f(seconds_per_bar*f(progress-baseprogress)))
+        return base_ms+math.floor(f(elapsed*1000))
+    def ms(tick):return ms_position(*position(tick))
+    def beats_in_bar(bar):
+        return next((beats for _,start,_,beats in reversed(meters) if start<=bar),4.0)
+    def eighths(start,end):
+        bar,progress=position(start)
+        step=1/(2*beats_in_bar(bar))
+        while True:
+            progress+=step
+            if progress>=1:
+                bar+=1;progress-=1;step=1/(2*beats_in_bar(bar))
+            now=ms_position(bar,f(progress))
+            if now>=ms(end):return
+            yield now
     result=[];merged=set()
     for note in (score or {}).get('notes',[]):
+        if note.get('type')=='guide':continue
         if note.get('type')!='long':result.append(ms(note['t']));continue
         nodes=note['node']
         for i,node in enumerate(nodes):
@@ -60,15 +96,16 @@ def judged_times(score):
             if i in (0,len(nodes)-1) and key in merged:continue
             merged.add(key);result.append(ms(node['t']))
         anchors=[nodes[0]]+[v for v in nodes[1:-1] if v.get('visible') is not False]+[nodes[-1]]
-        ticks=[t for a,b in zip(anchors,anchors[1:]) for t in range(a['t']+240,b['t'],240)]
+        ticks=[now for a,b in zip(anchors,anchors[1:]) for now in eighths(a['t'],b['t'])]
         visible=[ms(v['t']) for v in nodes[1:-1] if v.get('visible') is not False]
         for i,tick in enumerate(ticks):
-            now=ms(tick);bpm=next((v[2] for v in reversed(bases) if v[1]<=now),bases[0][2]);guard=15000/bpm
+            now=tick;bpm=next((v[2] for v in reversed(bases) if v[1]<=now),bases[0][2]);guard=15000/bpm
             if any(t-guard<=now<t for t in visible):continue
             if i==0 and guard>now-ms(nodes[0]['t']):continue
             if i==len(ticks)-1 and guard>ms(nodes[-1]['t'])-now:continue
             result.append(now)
     return [v/1000 for v in sorted(result)]
+
 
 
 def fever_spans(events):

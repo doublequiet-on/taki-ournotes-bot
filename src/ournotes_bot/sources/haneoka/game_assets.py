@@ -30,7 +30,9 @@ def _fetch(url, timeout=8):
     async def read():
         import aiohttp
         async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=timeout), trust_env=False) as session:
-            async with session.get(url, allow_redirects=False, **public_proxy_options()) as response:
+            headers = ({"Accept": "application/vnd.github.raw+json", "X-GitHub-Api-Version": "2022-11-28"}
+                       if url.startswith("https://api.github.com/") else {})
+            async with session.get(url, allow_redirects=False, headers=headers, **public_proxy_options()) as response:
                 if response.status != 200:
                     raise ChartDataError('Game asset unavailable')
                 chunks = []; size = 0
@@ -61,7 +63,7 @@ def prepare_note_assets(cache_dir, source_dir=None):
         if hashlib.sha256(raw).hexdigest() != spec['sha256']:
             if source_dir is None:
                 # Preparation tolerates slow upstream; the normal query budget stays 8s.
-                raw = _fetch(spec['url'], timeout=180)
+                raw = _fetch(spec.get('prepare_url', spec['url']), timeout=180)
             else:
                 source = Path(source_dir) / filename
                 if source.stat().st_size > 4_000_000:

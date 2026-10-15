@@ -78,6 +78,17 @@ class HaneokaFacilityTests(unittest.TestCase):
         self.assertIs(create.call_args.kwargs['trust_env'],False)
         self.assertEqual(create.call_args.kwargs['timeout'].total,180)
 
+    def test_note_preparation_blob_route_requests_raw_bytes_without_credentials_or_redirects(self):
+        from ournotes_bot.sources.haneoka.game_assets import _fetch,MANIFEST
+        response=Session()
+        with patch.dict(os.environ,{'OURNOTES_PUBLIC_HTTP_PROXY':''}),patch('aiohttp.ClientSession',return_value=response) as create:
+            self.assertEqual(_fetch(MANIFEST['skin001.png']['prepare_url'],timeout=180),b'1234')
+        self.assertEqual(response.options['headers']['Accept'],'application/vnd.github.raw+json')
+        self.assertNotIn('Authorization',response.options['headers'])
+        self.assertIs(response.options['allow_redirects'],False)
+        self.assertIs(create.call_args.kwargs['trust_env'],False)
+        self.assertEqual(create.call_args.kwargs['timeout'].total,180)
+
     def test_public_get_preserves_budget_headers_redirect_and_proxy_policy(self):
         response = Session()
         with patch("aiohttp.ClientSession", return_value=response) as create:

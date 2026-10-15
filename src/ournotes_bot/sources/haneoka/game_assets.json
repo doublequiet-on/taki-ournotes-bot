@@ -65,7 +65,8 @@
   },
   "skin001.png": {
     "url": "https://raw.githubusercontent.com/haneoka-gakuen/cassiopeia-plugin-our-notes/cb2b6e470b6e99f30bfa81a88520cbd1c26055dd/src/assets/note-skins/skin001.png",
-    "sha256": "340e4af0bff294346d1603a73384eb9b916139e3d941c2d5f76bd1c23ef9e434"
+    "sha256": "340e4af0bff294346d1603a73384eb9b916139e3d941c2d5f76bd1c23ef9e434",
+    "prepare_url": "https://api.github.com/repos/haneoka-gakuen/cassiopeia-plugin-our-notes/git/blobs/4f433a39ce0ada200007ecf3b6ff7aa6eb95ebbf"
   },
   "skin001.json": {
     "url": "https://raw.githubusercontent.com/haneoka-gakuen/cassiopeia-plugin-our-notes/cb2b6e470b6e99f30bfa81a88520cbd1c26055dd/src/assets/note-skins/skin001.json",
