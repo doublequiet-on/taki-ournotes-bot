@@ -11,7 +11,7 @@ from pathlib import Path
 import threading
 import time
 
-from .transport import public_get
+from .transport import public_get, public_proxy_options
 from ..errors import ChartDataError
 
 MANIFEST = json.loads(Path(__file__).with_suffix('.json').read_text('utf-8'))
@@ -28,7 +28,7 @@ def _fetch(url):
     async def read():
         import aiohttp
         async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=8), trust_env=False) as session:
-            async with session.get(url, allow_redirects=False) as response:
+            async with session.get(url, allow_redirects=False, **public_proxy_options()) as response:
                 if response.status != 200:
                     raise ChartDataError('Game asset unavailable')
                 chunks = []; size = 0

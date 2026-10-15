@@ -31,6 +31,7 @@ Haneoka 公共设施：`sources/haneoka/transport.py`、`identity.py` 与 `sourc
 完整谱面独立来源：`sources/chart_data.py::load_chart_data` → `sources/haneoka/chart_data.py::load_chart`，由 `OURNOTES_CHART_SOURCE` 选择，默认 Haneoka；MoeNotes 保留显式选择。目标回归 `test_haneoka_charts.py`、`test_chart_data.py`、`test_query.py`、`test_continuation.py`；共享配置／QQ 接线修改后运行完整离线回归。真实样本检查四难度、变速及完整节点，并对比同输入图片；联网样本与合成测试、真实 QQ 送达分别记录。安装检查包含新适配模块。
 
 真实指令出图与耗时：`python -B scripts/verify_query_outputs.py --snapshot <公开的haneoka-catalog-jp-v1.json副本> --runtime <隔离缓存目录> --output runtime/query-output-check` 默认执行 `/查曲 odd dice`、`/查谱面 odd dice`，各两次并保存实际图片与报告。空 runtime 的首轮包含公开素材下载；已有缓存可加 `--offline` 检查磁盘／内存路径。首轮耗时不能直接称为冷网络耗时，应同时核对报告中的初始缓存数量；此工具不上传或发送 QQ。
+若机器必须通过代理访问 Haneoka 或固定谱面皮肤，可显式设置 `OURNOTES_PUBLIC_HTTP_PROXY`（HTTP(S) 地址，不带用户名／密码）。公开下载不自动采用系统代理；验收进程与实际 Taki 服务应分别核对网络配置。该选项不修改系统设置，不影响 QQ 或 AI SDK。
 
 查询升级 v1 的完整 55 项映射见 [实现与验收](QUERY_UPGRADE_V1.md)。共享歌曲条件在 `query/song_query.py`，字段短答在 `query/field_query.py`，有限续查在 `query/continuation.py`；QQ 的 `reply_commands` 管同用户顺序和发送确认。历史、采样、趋势分别位于 `sources/cutoff_history.py`、`sources/cutoff_sampler.py`、`rendering/cutoff_trends.py`，发布开关和长期保留见 [历史运维](CUTOFF_HISTORY.md)。
 
