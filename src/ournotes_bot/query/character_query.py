@@ -8,7 +8,7 @@ import re
 from ..data import character_identity, normalize, resolve_character_alias
 from .contracts.info import InfoAnswer, InfoRow, InfoView
 from .entity_lexicon import information_alias_targets
-from .info_query import answer, available, footer, list_view, text_value, unavailable
+from .info_query import answer, available, footer, text_value, unavailable
 
 HELP = '/查角色：按乐队列出角色；/查角色 名称、昵称或ID；/查角色 乐队名或乐队=MyGO。'
 FIELD_LABELS = {
@@ -54,9 +54,11 @@ def _directory(people, catalog, *, candidate=False):
     if len(bands) == 1:
         title += ' · ' + next(iter(bands))
     rows = (InfoRow(_display_name(p), (f'角色 ID {p.id}',), p.face_url or p.image_url,
-                    f'/查角色 {p.id}', label=' · '.join(v for v in (p.band, text_value(p.fields.get('bandPart', {}))) if v),
+                    f'/查角色 {p.id}', label=' · '.join(v for v in (p.band if candidate else '',text_value(p.fields.get('bandPart', {}))) if v),
+                    group='' if candidate else p.band,
                     image_kind='square' if p.face_url else 'portrait') for p in people)
-    return answer((list_view(title, rows, subtitle=f'按乐队排列 · 共 {len(people)} 位', notes=footer(catalog)),))
+    return answer((InfoView(title, f'按乐队排列 · 共 {len(people)} 位', rows=tuple(rows), footer=footer(catalog),
+                            layout='list' if candidate else 'directory'),))
 
 
 def _card_count(records, ident):
@@ -67,19 +69,22 @@ def _card_count(records, ident):
 
 def _detail(person, catalog):
     display = _display_name(person)
-    rows = [InfoRow('基本资料', (f'角色 ID {person.id}', f'乐队：{person.band}'))]
+    rows = [InfoRow('基本资料', (f'角色 ID {person.id}', f'乐队：{person.band}'),kind='fact')]
+    prose=[]
     if display != person.name:
-        rows.append(InfoRow('艺名', (person.name.rsplit(' / ', 1)[0],)))
+        rows.append(InfoRow('艺名', (person.name.rsplit(' / ', 1)[0],),kind='fact'))
     if person.birthday:
         month, day = person.birthday
-        rows.append(InfoRow('生日', (f'{month}月{day}日',)))
+        rows.append(InfoRow('生日', (f'{month}月{day}日',),kind='fact'))
     for key, label in FIELD_LABELS.items():
         value = text_value(person.fields.get(key, {}))
         if value:
-            rows.append(InfoRow(label, (value,)))
-    rows.extend((InfoRow('成员卡', (_card_count(catalog.cards, person.id),), command=f'/查卡 {display}'),
+            (prose if key in ('catchCopy','description') else rows).append(InfoRow(label, (value,),
+                kind='prose' if key in ('catchCopy','description') else 'fact'))
+    rows.extend(prose)
+    rows.extend((InfoRow('成员卡', (_card_count(catalog.cards, person.id),), command=f'/查卡 {display}',kind='links'),
                  InfoRow('留影卡', (_card_count(catalog.support_cards, person.id), '含多人留影卡；每张卡只计一次。'),
-                         command=f'/查留影卡 {display}')))
+                         command=f'/查留影卡 {display}',kind='links')))
     return answer((InfoView(display, f'日服 · {person.band}', person.image_url or person.face_url,
                             tuple(rows), footer(catalog), 'character'),))
 

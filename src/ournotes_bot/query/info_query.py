@@ -92,5 +92,7 @@ def card_rows(refs, catalog, label):
             result.append(InfoRow(f'{kind} ID {ref.id}', ('当前快照缺少卡牌详情。',), command=command, label=label))
         else:
             result.append(InfoRow(f'{kind} {card.id} · {card.title}', (card.character,),
-                                  card.thumbnail_url, command, label, card.rarity))
+                                  card.thumbnail_url, command, label, card.rarity,
+                                  image_kind='wide' if ref.resource_type==3 else 'square',
+                                  attribute_url=card.catalog.get('attribute_icon','')))
     return tuple(result)

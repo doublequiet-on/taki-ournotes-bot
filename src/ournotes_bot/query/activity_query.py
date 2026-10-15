@@ -4,6 +4,7 @@
 # Pos: Query / Deterministic activity information; see L2-2.md.
 # Effects: Current requests read event metadata only; no ranking, model or QQ calls.
 import time
+from dataclasses import replace
 
 from ..data import normalize
 from .contracts.info import InfoAnswer, InfoRow, InfoView
@@ -16,10 +17,16 @@ HELP = '/查活动 [jp/hk/kr/en]：当前／最近活动；/查活动 列表；/
 
 
 def _related_rows(record, catalog):
-    rows = []
+    cards = {}
+    notes = []
     for field, label in (('bonus_cards', '指定加成卡'), ('reward_cards', '卡牌奖励'), ('pickup_cards', '活动展示卡')):
-        if field in record.available_relations:
-            rows.extend(card_rows(getattr(record, field), catalog, label))
+        for ref in getattr(record, field):
+            labels=cards.setdefault(ref,[])
+            if label not in labels:labels.append(label)
+        if field not in record.available_relations:
+            notes.append(label+'关联不完整；这里只列已确认的卡牌。')
+    rows=[replace(card_rows((ref,),catalog,'')[0],label=' · '.join(labels)) for ref,labels in sorted(cards.items())]
+    if notes:rows.append(InfoRow('关联资料说明',tuple(notes)))
     songs = {song.id: song for song in catalog.songs}
     for ident in dict.fromkeys(record.song_ids):
         song = songs.get(ident)

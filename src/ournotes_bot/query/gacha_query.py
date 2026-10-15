@@ -49,7 +49,9 @@ def execute_gacha(query, repository, *, now=None):
         if record.display_condition not in (None, 0):
             rows.append(InfoRow('展示条件', ('该卡池有展示条件；是否符合条件请以游戏内为准。',)))
         rows.extend(card_rows(record.pickup_cards, catalog, 'UP'))
-        if not record.pickup_cards:
+        if record.pickup_cards and 'pickup_cards' not in record.available_relations:
+            rows.append(InfoRow('UP 卡资料说明', ('部分 UP 标记未确认；这里只列已明确标记的 UP 卡。',)))
+        elif not record.pickup_cards:
             message = '当前资料没有标记 UP 卡。' if 'pickup_cards' in record.available_relations else '当前资料未提供 UP 卡关联。'
             rows.append(InfoRow('UP 卡', (message,)))
         return answer((InfoView(record.title, '日服 · 卡池详情', record.image_url,

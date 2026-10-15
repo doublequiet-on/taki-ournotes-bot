@@ -77,6 +77,40 @@ class CurrentSource:
 
 
 class InformationQueryTests(unittest.TestCase):
+    def test_activity_merges_roles_by_card_type_and_id_and_keeps_known_partial_rewards(self):
+        ref=CardRef(2,7)
+        record=activity(1,'活动',bonus_cards=(ref,),reward_cards=(ref,CardRef(3,7)),pickup_cards=(ref,),
+                        available_relations=frozenset({'bonus_cards','pickup_cards'}))
+        repo=Repository(catalog(activities=(record,),cards=(card(7),),support_cards=(card(7,support=True),)))
+        result=execute_activity('1',repo,now=NOW)
+        self.assertEqual(result.text.count('/查卡 7'),1)
+        self.assertEqual(result.text.count('/查留影卡 7'),1)
+        member=next(r for r in result.views[0].rows if r.command=='/查卡 7')
+        self.assertEqual(member.label,'指定加成卡 · 卡牌奖励 · 活动展示卡')
+        support=next(r for r in result.views[0].rows if r.command=='/查留影卡 7')
+        self.assertEqual(support.image_kind,'wide')
+        self.assertIn('卡牌奖励关联不完整',result.text)
+        self.assert_same_text(result)
+
+    def test_partly_known_up_cards_remain_visible_with_incomplete_notice(self):
+        record=gacha(1,'卡池',pickup_cards=(CardRef(2,7),),available_relations=frozenset({'featured_cards'}))
+        result=execute_gacha('1',Repository(catalog(gachas=(record,),cards=(card(7),))),now=NOW)
+        self.assertIn('/查卡 7',result.text)
+        self.assertIn('部分 UP 标记未确认',result.text)
+        self.assertNotIn('没有标记 UP 卡',result.text)
+        self.assert_same_text(result)
+
+    def test_directory_captures_band_groups_and_profile_separates_prose(self):
+        entry=person(1,'高松灯',fields={'height':{'zh':'155cm'},'description':{'zh':'完整简介'}})
+        repo=Repository(catalog(characters=(entry,person(2,'三角初华','Ave Mujica'))))
+        directory=execute_character('',repo).views[0]
+        self.assertEqual(directory.layout,'directory')
+        self.assertEqual([r.group for r in directory.rows],['MyGO!!!!!','Ave Mujica'])
+        profile=execute_character('1',repo).views[0]
+        self.assertEqual(next(r for r in profile.rows if r.title=='身高').kind,'fact')
+        self.assertEqual(next(r for r in profile.rows if r.title=='简介').kind,'prose')
+        self.assertEqual(next(r for r in profile.rows if r.title=='成员卡').kind,'links')
+
     def assert_same_text(self, result):
         self.assertEqual(result.text, info_text(result.views))
 
@@ -164,6 +198,7 @@ class InformationQueryTests(unittest.TestCase):
         self.assertIn('/查角色 1', result.text)
         self.assertIn('/查角色 2', result.text)
         self.assertEqual(result.views[0].layout, 'list')
+        self.assertTrue(all('MyGO!!!!!' in row.label for row in result.views[0].rows))
 
     def test_character_numeric_lookup_is_not_prefix_or_name(self):
         repo = Repository(catalog(characters=(person(11, '1'),)))

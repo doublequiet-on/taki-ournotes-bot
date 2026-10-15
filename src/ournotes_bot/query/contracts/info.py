@@ -17,6 +17,9 @@ class InfoRow:
     label: str = ""
     rarity: int | None = None
     image_kind: Literal["square", "wide", "portrait"] = "square"
+    group: str = ""
+    kind: Literal["row", "fact", "prose", "links"] = "row"
+    attribute_url: str = ""
 
 
 @dataclass(frozen=True)
@@ -26,7 +29,7 @@ class InfoView:
     hero_url: str = ""
     rows: tuple[InfoRow, ...] = ()
     footer: tuple[str, ...] = ()
-    layout: Literal["list", "detail", "character"] = "list"
+    layout: Literal["list", "detail", "character", "directory"] = "list"
 
 
 @dataclass(frozen=True)
@@ -37,7 +40,7 @@ class InfoAnswer:
 
 
 def row_text(row: InfoRow) -> str:
-    return "\n".join(value for value in (row.title, row.label, *row.body, row.command) if value)
+    return "\n".join(value for value in (row.group, row.title, row.label, *row.body, row.command) if value)
 
 
 def view_text(view: InfoView) -> str:

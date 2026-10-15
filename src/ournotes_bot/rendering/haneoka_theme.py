@@ -77,9 +77,18 @@ def prepare_assets(requests, load, game_names=()):
     requests = sorted(set(requests))
     with ThreadPoolExecutor(max_workers=6) as pool:
         icons = [pool.submit(loader, name) for name in sorted(set(game_names))] if loader else []
-        assets = dict(zip(requests, pool.map(lambda key: load(*key), requests)))
-        for job in icons:
-            job.result()
+        jobs = [pool.submit(load,*key) for key in requests]
+        try:
+            assets = dict(zip(requests,(job.result() for job in jobs)))
+            for job in icons:
+                job.result()
+        except BaseException:
+            # Even an injected loader failure leaves ownership with this call.
+            for job in jobs:
+                try:image=job.result()
+                except BaseException:continue
+                if image is not None:image.close()
+            raise
     return assets
 
 

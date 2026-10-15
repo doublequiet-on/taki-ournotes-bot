@@ -11,6 +11,50 @@ from ournotes_bot.rendering.image_output import MAX_IMAGE_BYTES, MAX_IMAGE_PIXEL
 
 
 class InformationLayoutTests(unittest.TestCase):
+    def test_roster_has_band_headers_and_five_member_rows_with_every_command(self):
+        rows=tuple(InfoRow(f'角色{i}',(f'角色 ID {i}',),image_url=f'synthetic:{i}',
+                          command=f'/查角色 {i}',group=f'乐队{i//5}') for i in range(25))
+        view=InfoView('角色目录',rows=rows,layout='directory')
+        drawn=[];original=info_layout.Canvas.text
+        def capture(canvas,x,y,value,*args,**kwargs):
+            drawn.append(str(value));return original(canvas,x,y,value,*args,**kwargs)
+        with patch.object(info_layout.Canvas,'text',capture):pages=info_layout.render_info(self.answer(view))
+        self.assertEqual(len(pages),1)
+        with Image.open(io.BytesIO(pages[0].image)) as im:self.assertLess(im.height,3000)
+        for group in range(5):self.assertEqual(drawn.count(f'乐队{group}'),1)
+        for row in rows:self.assertEqual(pages[0].text.splitlines().count(row.command),1)
+        with patch.object(readable_pages,'MAX_IMAGE_EDGE',1200):parts=info_layout.render_info(self.answer(view))
+        self.assertGreater(len(parts),1)
+        for row in rows:self.assertEqual(sum(p.text.splitlines().count(row.command) for p in parts),1)
+
+    def test_profile_places_portrait_beside_facts_and_prose_below(self):
+        rows=tuple(InfoRow(f'字段{i}',(f'资料{i}',),kind='fact') for i in range(10))+(InfoRow('简介',('完整介绍。',),kind='prose'),)
+        view=InfoView('角色详情',hero_url='synthetic:portrait',rows=rows,layout='character')
+        calls=[]
+        def load(url,size):calls.append((url,size));return Image.new('RGBA',(300,900),'red')
+        pages=info_layout.render_info(self.answer(view),load=load)
+        self.assertEqual(calls,[('synthetic:portrait',(330,860))])
+        with Image.open(io.BytesIO(pages[0].image)) as im:self.assertLess(im.height,1600)
+        self.assertIn('完整介绍。',pages[0].text)
+        for row in rows:self.assertEqual(pages[0].text.splitlines().count(row.title),1)
+
+    def test_profile_without_source_art_uses_full_width_instead_of_an_empty_column(self):
+        view=InfoView('角色',rows=(InfoRow('基本资料',('角色 ID 1',),kind='fact'),),layout='character')
+        pages=info_layout.render_info(self.answer(view))
+        with Image.open(io.BytesIO(pages[0].image)) as im:self.assertLess(im.height,500)
+        self.assertIn('角色 ID 1',pages[0].text)
+
+    def test_support_art_preserves_landscape_ratio_and_native_rarity_mark(self):
+        from ournotes_bot.rendering.haneoka_theme import game_assets
+        row=InfoRow('留影卡',image_url='synthetic:wide',image_kind='wide',rarity=4)
+        names=[]
+        def game(name):names.append(name);return None
+        calls=[]
+        def load(url,size):calls.append((url,size));return Image.new('RGBA',size,'red')
+        with game_assets(game):info_layout.render_info(self.answer(InfoView('卡池',rows=(row,),layout='detail')),load=load)
+        self.assertIn(('synthetic:wide',(290,164)),calls)
+        self.assertIn('RarityIconCenter_SSR.png',names)
+
     def answer(self, *views):
         return InfoAnswer(info_text(views), views=views)
 
