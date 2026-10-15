@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Any
 
 from .sources.haneoka.song_traits import SongTraits, SongTraitsRepository
+from .domain.info_catalog import ActivityInfo, CharacterInfo, GachaInfo
 
 
 @dataclass(frozen=True)
@@ -236,6 +237,9 @@ class CatalogView:
     metadata: dict[str, Any]
     cache_state: str
     last_successful_sync_at: str | None
+    characters: tuple[CharacterInfo, ...] = ()
+    gachas: tuple[GachaInfo, ...] = ()
+    activities: tuple[ActivityInfo, ...] = ()
 
 
 class SongRepository:
@@ -258,6 +262,9 @@ class SongRepository:
         self.songs: list[Song] = []
         self.cards: list[Card] = []
         self.support_cards: list[SupportCard] = []
+        self.characters: tuple[CharacterInfo, ...] = ()
+        self.gachas: tuple[GachaInfo, ...] = ()
+        self.activities: tuple[ActivityInfo, ...] = ()
         self.metadata: dict[str, Any] = {}
         self._detail_cards: dict[int, Card] = {}
         self._detail_support_cards: dict[int, SupportCard] = {}
@@ -391,12 +398,13 @@ class SongRepository:
             if self._catalog_repository is None:
                 self._catalog_repository = CatalogRepository(
                     self.cache_file.with_name("haneoka-catalog-jp-v1.json"), self.cache_ttl_hours)
-            records, metadata = self._catalog_repository.load(refresh)
+            records, metadata, info = self._catalog_repository.load_with_info(refresh)
             state = self._catalog_repository.state
             # Conversion returns new records/mappings; never update a published
             # view in place. HTTP, validation and persistence have already ended.
             with self._song_lock:
                 self.songs, self.cards, self.support_cards = records
+                self.characters, self.gachas, self.activities = info.characters, info.gachas, info.activities
                 self.metadata = metadata
                 self.cache_state = state
                 if state != "unsaved":
@@ -413,7 +421,8 @@ class SongRepository:
         """
         with self._song_lock:
             return CatalogView(self.songs, self.cards, self.support_cards, self.metadata,
-                               self.cache_state, self.last_successful_sync_at)
+                               self.cache_state, self.last_successful_sync_at,
+                               self.characters, self.gachas, self.activities)
 
     def card_with_detail(self, card: Card) -> Card:
         if self.data_source == "haneoka":

@@ -19,6 +19,7 @@ from urllib.parse import urlencode
 
 from ...data import DataError
 from .catalog_records import convert, integer
+from .info_catalog import convert_info
 from ..json_validation import decode_json
 from .transport import ORIGIN, public_get
 from .identity import resource_identity as identity, check_headers
@@ -55,11 +56,14 @@ def validate(saved, now, *, stale=False):
                     raise ValueError("Catalog row identity mismatch")
     stamp = datetime.fromtimestamp(fetched, timezone.utc).isoformat()
     records = convert(saved["documents"], saved["identities"]["jp"], stamp, stale=stale)
+    info = convert_info(saved["documents"], saved["identities"]["jp"], stamp)
     return records, {"source": SOURCE, "data_source": "haneoka", "data_version": saved["identities"]["jp"]["releaseId"],
                      "text_version": saved["identities"]["intl"]["releaseId"], "cached_at": stamp,
                      "song_count": len(records[0]), "card_count": len(records[1]), "support_card_count": len(records[2]),
                      "member_skill_index_complete": bool(records[1]) and all(c.catalog["skill_index_complete"] for c in records[1]),
-                     "card_catalog_version": 1}
+                     "card_catalog_version": 1,
+                     "info_catalog_available": {key: key in info.available
+                                                for key in ("characters", "gachas", "activities")}}
 
 
 class CatalogRepository:
@@ -160,6 +164,13 @@ class CatalogRepository:
             docs['gacha']=get(server,'gacha',ident)['entries']
             documents[server] = docs
         return {"schema": 1, "source": SOURCE, "fetched_at": self.clock(), "identities": identities, "documents": documents}
+
+    def load_with_info(self, refresh=False):
+        """Capture converted facts from the same committed source snapshot as cards."""
+        with self.lock:
+            records, metadata = self.load(refresh)
+            info = convert_info(self.saved["documents"], self.saved["identities"]["jp"], metadata["cached_at"])
+            return records, metadata, info
 
     def load(self, refresh=False):
         with self.lock:
