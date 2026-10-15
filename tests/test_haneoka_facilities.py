@@ -72,10 +72,11 @@ class HaneokaFacilityTests(unittest.TestCase):
         from ournotes_bot.sources.haneoka.game_assets import _fetch,MANIFEST
         response=Session()
         with patch.dict(os.environ,{'OURNOTES_PUBLIC_HTTP_PROXY':'http://127.0.0.1:7890'}),patch('aiohttp.ClientSession',return_value=response) as create:
-            self.assertEqual(_fetch(MANIFEST['skin001.json']['url']),b'1234')
+            self.assertEqual(_fetch(MANIFEST['skin001.json']['url'],timeout=180),b'1234')
         self.assertEqual(response.options['proxy'],'http://127.0.0.1:7890')
         self.assertIs(response.options['allow_redirects'],False)
         self.assertIs(create.call_args.kwargs['trust_env'],False)
+        self.assertEqual(create.call_args.kwargs['timeout'].total,180)
 
     def test_public_get_preserves_budget_headers_redirect_and_proxy_policy(self):
         response = Session()
