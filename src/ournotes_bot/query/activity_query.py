@@ -16,7 +16,7 @@ from ..sources.moenotes_events import SERVERS, SourceError, display_time, zone_l
 HELP = '/查活动 [jp/hk/kr/en]：当前／最近活动；/查活动 列表；/查活动 历史 [名称]；/查活动 ID或名称（日服）。'
 
 
-def _related_rows(record, catalog):
+def _related_rows(record, catalog, *, challenge_song_ids=()):
     cards = {}
     notes = []
     for field, label in (('bonus_cards', '指定加成卡'), ('reward_cards', '卡牌奖励'), ('pickup_cards', '活动展示卡')):
@@ -29,6 +29,8 @@ def _related_rows(record, catalog):
     if notes:rows.append(InfoRow('关联资料说明',tuple(notes)))
     songs = {song.id: song for song in catalog.songs}
     for ident in dict.fromkeys(record.song_ids):
+        if str(ident) in challenge_song_ids:
+            continue
         song = songs.get(ident)
         rows.append(InfoRow(song.title if song else f'歌曲 ID {ident}',
                             ('活动关联歌曲；不据此判断是否为挑战歌曲。',),
@@ -96,7 +98,8 @@ def _current(server, repository):
                           and round(record.start_at * 1000) == event.start_ms
                           and round(record.end_at * 1000) == event.end_ms), None)
             if match:
-                rows.extend(_related_rows(match, catalog))
+                rows.extend(_related_rows(match, catalog,
+                    challenge_song_ids={song.music_id for song in event.songs}))
                 notes.extend(footer(catalog))
     notes.append('资料来源：' + ('Haneoka（实时观测经 MoeNotes tracker）' if event.source == 'haneoka' else event.source))
     return answer((InfoView(f'[{SERVERS[server][0]} · 活动信息]', hero_url=event.banner,

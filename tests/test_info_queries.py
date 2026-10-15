@@ -336,6 +336,16 @@ class InformationQueryTests(unittest.TestCase):
         self.assertIn('/查卡 7', result.text)
         self.assert_same_text(result)
 
+    def test_current_activity_does_not_repeat_live_challenge_as_static_related_song(self):
+        record = activity(1, '活动', song_ids=(101, 102))
+        repo, _ = self._current_repository(record)
+        result = execute_activity('', repo)
+        self.assertEqual(result.text.count('歌曲 ID 101'), 1)
+        self.assertIn('/查榜线 jp 歌曲ID=101', result.text)
+        self.assertNotIn('/查曲 101', result.text)
+        self.assertIn('/查曲 102', result.text)
+        self.assert_same_text(result)
+
     def test_current_activity_mismatched_window_does_not_attach_wrong_cards(self):
         record = activity(1, '旧复刻', start=NOW - 1000, bonus_cards=(CardRef(2, 7),),
                           available_relations=frozenset({'bonus_cards'}))
