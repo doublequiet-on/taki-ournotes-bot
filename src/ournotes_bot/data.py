@@ -494,12 +494,13 @@ class SongRepository:
                          # refresh rebuilds metadata, so its zero stays unverified.
                          "chart_notes_known": notes_known},
             "songs": [
-                {**{k: v for k, v in asdict(song).items() if k != "traits"},
+                {**{k: v for k, v in asdict(song).items() if k not in {"traits", "catalog"}},
                  "charts": [{**asdict(chart), "notes": chart.notes if chart.notes is not None else 0}
                             for chart in song.charts]}
                 for song in self.songs
             ],
             "chart_notes_known": notes_known,
+            "song_catalog": {str(song.id): song.catalog for song in self.songs},
             "cards": [{key: value for key, value in asdict(card).items() if key not in {"skills", "catalog"}}
                       for card in self.cards],
             "member_skills": {str(card.id): [asdict(skill) for skill in card.skills]
@@ -527,7 +528,8 @@ class SongRepository:
                 metadata["schema"] = metadata.get("extended_schema", 2)
             songs = [
                 Song(
-                    **{key: value for key, value in row.items() if key not in {"charts", "titles"}},
+                    **{key: value for key, value in row.items() if key not in {"charts", "titles", "catalog"}},
+                    catalog=row.get("catalog", payload.get("song_catalog", {}).get(str(row["id"]), {})),
                     titles=tuple(row["titles"]),
                     charts=tuple(Chart(**{**chart, "notes": self._cached_notes(payload, row["id"], chart)})
                                  for chart in row["charts"]),
