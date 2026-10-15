@@ -85,10 +85,12 @@ def _detail(person, catalog):
 
 
 def execute_character(query, repository):
+    query = query.strip()
+    if query and not normalize(query):
+        return InfoAnswer(HELP, 'invalid_arguments')
     catalog = repository.capture_catalog()
     if not available(catalog, 'characters'):
         return unavailable('角色')
-    query = query.strip()
     people = catalog.characters
     if not people:
         return answer((InfoView('角色目录', '当前资料没有角色记录。', footer=footer(catalog)),), 'no_results')

@@ -8,6 +8,7 @@ from ournotes_bot.query.activity_query import execute_activity
 from ournotes_bot.query.character_query import execute_character
 from ournotes_bot.query.contracts.info import info_text
 from ournotes_bot.query.gacha_query import execute_gacha
+from ournotes_bot.query.info_query import named_matches
 from ournotes_bot.sources.moenotes_events import EventSnapshot, EventSong
 
 NOW = 1_790_000_000
@@ -78,6 +79,50 @@ class CurrentSource:
 class InformationQueryTests(unittest.TestCase):
     def assert_same_text(self, result):
         self.assertEqual(result.text, info_text(result.views))
+
+    def test_symbol_only_queries_are_invalid_before_catalog_reads(self):
+        for execute, command in ((execute_character, '/查角色'), (execute_gacha, '/查卡池'), (execute_activity, '/查活动')):
+            for term in ('!!!', '--', '??', '！ ？ -'):
+                with self.subTest(command=command, term=term):
+                    repo = Repository(catalog())
+                    result = execute(term, repo)
+                    self.assertEqual(result.status, 'invalid_arguments')
+                    self.assertIn(command, result.text)
+                    self.assertEqual(result.views, ())
+                    self.assertEqual(repo.captures, 0)
+
+    def test_history_symbol_only_terms_are_invalid_not_all_history(self):
+        for execute in (execute_gacha, execute_activity):
+            for term in ('历史 !!!', '历史 --', '历史 ??'):
+                with self.subTest(execute=execute.__name__, term=term):
+                    repo = Repository(catalog(gachas=(gacha(1, '旧池', end=NOW),),
+                                              activities=(activity(1, '旧活动', end=NOW),)))
+                    result = execute(term, repo, now=NOW)
+                    self.assertEqual(result.status, 'invalid_arguments')
+                    self.assertEqual(result.views, ())
+                    self.assertEqual(repo.captures, 0)
+
+    def test_jp_activity_symbol_term_does_not_request_current_event(self):
+        result = execute_activity('jp !!!', Repository(catalog()))
+        self.assertEqual(result.status, 'invalid_arguments')
+        self.assertIn('/查活动', result.text)
+
+    def test_name_matcher_rejects_empty_normalized_terms(self):
+        records = (gacha(1, '当前池'), gacha(2, '未来池', start=NOW + 1))
+        for term in ('', '  ', '!!!', '--', '??'):
+            with self.subTest(term=term), self.assertRaises(ValueError):
+                named_matches(records, term)
+
+    def test_real_empty_arguments_keep_directory_and_current_modes(self):
+        repo = Repository(catalog(characters=(person(1, '高松灯'),),
+                                  gachas=(gacha(1, '当前池'), gacha(2, '未来池', start=NOW + 1))))
+        self.assertIn('/查角色 1', execute_character('  ', repo).text)
+        result = execute_gacha('  ', repo, now=NOW)
+        self.assertIn('/查卡池 1', result.text)
+        self.assertNotIn('/查卡池 2', result.text)
+        live, source = self._current_repository(activity(1, '当前活动'))
+        self.assertEqual(execute_activity('  ', live).status, 'success')
+        self.assertEqual(source.calls, ['jp'])
 
     def test_character_directory_groups_all_roster_even_without_cards(self):
         repo = Repository(catalog(characters=(person(1, '高松灯'), person(2, '千早爱音'), person(3, '三角初华', 'Ave Mujica'))))

@@ -5,6 +5,7 @@
 # Effects: Current requests read event metadata only; no ranking, model or QQ calls.
 import time
 
+from ..data import normalize
 from .contracts.info import InfoAnswer, InfoRow, InfoView
 from .event_cutoff_query import SERVER_ALIASES
 from .info_query import (answer, available, card_rows, footer, named_matches,
@@ -29,14 +30,16 @@ def _related_rows(record, catalog):
 
 
 def _static(query, repository, now):
-    catalog = repository.capture_catalog()
-    if not available(catalog, 'activities'):
-        return unavailable('活动')
     mode, term = 'search', query
     if query in {'列表', '全部'}:
         mode, term = 'list', ''
     elif query == '历史' or query.startswith('历史 '):
         mode, term = 'history', query[2:].strip()
+    if term and not normalize(term):
+        return InfoAnswer(HELP, 'invalid_arguments')
+    catalog = repository.capture_catalog()
+    if not available(catalog, 'activities'):
+        return unavailable('活动')
     records = catalog.activities
     if mode == 'history':
         records = tuple(r for r in records if r.end_at is not None and r.end_at <= now)
@@ -100,6 +103,8 @@ def execute_activity(query, repository, *, now=None):
     if tokens and tokens[0] in SERVER_ALIASES:
         server = SERVER_ALIASES[tokens[0]]
         query = query.split(None, 1)[1].strip() if len(tokens) > 1 else ''
+    if query and not normalize(query):
+        return InfoAnswer(HELP, 'invalid_arguments')
     if not query or query in {'当前', '最近'}:
         return _current(server, repository)
     if server != 'jp':

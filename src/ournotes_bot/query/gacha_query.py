@@ -5,7 +5,8 @@
 # Effects: None; no model, source fetch, account or QQ calls.
 import time
 
-from .contracts.info import InfoRow, InfoView
+from ..data import normalize
+from .contracts.info import InfoAnswer, InfoRow, InfoView
 from .info_query import (answer, available, card_rows, footer, named_matches, list_view,
                          period, state, text_value, unavailable)
 
@@ -13,16 +14,18 @@ HELP = '/查卡池：日服当前卡池资料；/查卡池 ID或名称；/查卡
 
 
 def execute_gacha(query, repository, *, now=None):
-    catalog = repository.capture_catalog()
-    if not available(catalog, 'gachas'):
-        return unavailable('卡池')
-    now = time.time() if now is None else now
     query = query.strip()
     mode, term = 'search', query
     if query in {'', '当前', '列表'}:
         mode, term = 'current', ''
     elif query == '历史' or query.startswith('历史 '):
         mode, term = 'history', query[2:].strip()
+    if term and not normalize(term):
+        return InfoAnswer(HELP, 'invalid_arguments')
+    catalog = repository.capture_catalog()
+    if not available(catalog, 'gachas'):
+        return unavailable('卡池')
+    now = time.time() if now is None else now
     records = catalog.gachas
     if mode == 'current':
         records = tuple(r for r in records if r.start_at is not None and r.end_at is not None and r.start_at <= now < r.end_at)

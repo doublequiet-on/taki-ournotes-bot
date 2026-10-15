@@ -65,6 +65,8 @@ def list_view(title, rows, *, subtitle='', notes=()):
 
 def named_matches(records, query):
     needle = normalize(query)
+    if not needle:
+        raise ValueError('Information name matching requires a nonempty normalized term')
     if needle.isdecimal():
         return tuple(r for r in records if needle == str(r.id))
     exact = tuple(r for r in records if needle in {normalize(r.title), *(normalize(n) for n in r.names.values() if n)})
