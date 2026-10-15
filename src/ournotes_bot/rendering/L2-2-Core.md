@@ -54,3 +54,4 @@ image_output 位于 rendering/，主题、素材、通用原语及 _bytes 仍在
 向上阅读：[仓库 L1](../../../L1.md)。源码文件头提供唯一 L3，具体行为与字段以实现为准。
 
 新增 [haneoka_theme.py](haneoka_theme.py) 的主题与有界缓存、[readable_pages.py](readable_pages.py) 的完整行分段；QQ 新布局使用 `preserve_size=True`，编码超限抛错而不缩字。旧入口仍保留旧编码行为。
+主题的 `prepare_assets` 使用同一捕获的注入加载器，以六路并发准备去重的卡面／UI 素材；不自行访问网络或查询游戏资料。

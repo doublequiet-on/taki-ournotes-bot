@@ -18,6 +18,34 @@ from ournotes_bot.platforms.qq.qq import PreparedReply, _deliver_reply, _fallbac
 
 
 class VisualSourceTests(unittest.TestCase):
+    def test_unrelated_game_downloads_and_warm_reads_do_not_wait_for_cold_icon(self):
+        import threading
+        from concurrent.futures import ThreadPoolExecutor
+        payloads={name:name.encode() for name in ('a','b','warm')}
+        manifest={n:{'url':n,'sha256':hashlib.sha256(raw).hexdigest()} for n,raw in payloads.items()}
+        both=threading.Barrier(2)
+        def fetch(name):
+            both.wait(timeout=2)
+            self.assertEqual(game_assets.asset_bytes('warm',directory),payloads['warm'])
+            return payloads[name]
+        with tempfile.TemporaryDirectory() as directory,patch.dict(game_assets.MANIFEST,manifest),patch.dict(game_assets._MEMORY,{'warm':payloads['warm']},clear=True),patch.dict(game_assets._FAILED,clear=True),patch.object(game_assets,'_fetch',fetch):
+            with ThreadPoolExecutor(max_workers=2) as pool:
+                jobs=[pool.submit(game_assets.asset_bytes,n,directory) for n in ('a','b')]
+                self.assertEqual([j.result(timeout=3) for j in jobs],[b'a',b'b'])
+
+    def test_failed_artwork_backs_off_across_sizes_but_preserves_warm_images(self):
+        from ournotes_bot import visuals
+        url='https://haneoka.org/assets/jp/Assets/AddressableResources/MemberCard/1/member_thumbnail.png?release=r-1234567890abcdef1234'
+        with patch.dict(visuals._NATIVE_ASSETS,clear=True),patch.dict(visuals._NATIVE_ASSET_FAILED,clear=True),patch.object(visuals,'_NATIVE_ASSET_BYTES',0),patch.object(visuals.time,'monotonic',return_value=100) as clock,patch.object(visuals,'_asset',side_effect=[Image.new('RGBA',(8,8),'red'),None,Image.new('RGBA',(16,16),'blue')]) as fetch:
+            visuals.load_visual_asset(url,(8,8)).close()
+            self.assertIsNone(visuals.load_visual_asset(url,(16,16)))
+            self.assertIsNone(visuals.load_visual_asset(url,(32,32)))
+            visuals.load_visual_asset(url,(8,8)).close()
+            self.assertEqual(fetch.call_count,2)
+            clock.return_value=131
+            visuals.load_visual_asset(url,(16,16)).close()
+            self.assertEqual(fetch.call_count,3)
+
     def test_game_asset_checksum_cache_and_unknown_names(self):
         raw=b'controlled public bytes';sha=hashlib.sha256(raw).hexdigest()
         with tempfile.TemporaryDirectory() as directory, patch.dict(game_assets.MANIFEST, {'test.png':{'sha256':sha,'url':'https://haneoka.org/test'}}), patch.dict(game_assets._MEMORY, clear=True), patch.dict(game_assets._FAILED, clear=True), patch.object(game_assets,'_fetch',return_value=raw) as fetch:

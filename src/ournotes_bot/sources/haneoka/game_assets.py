@@ -18,6 +18,7 @@ MANIFEST = json.loads(Path(__file__).with_suffix('.json').read_text('utf-8'))
 _MEMORY = {}
 _FAILED = {}
 _LOCK = threading.Lock()
+_ASSET_LOCKS = {name: threading.Lock() for name in MANIFEST}
 
 
 def _fetch(url):
@@ -48,7 +49,10 @@ def asset_bytes(name, cache_dir):
     spec = MANIFEST.get(name)
     if spec is None:
         raise ValueError('Unknown built-in game asset')
+    # A slow/cold icon must not block unrelated assets or warm reads.
     with _LOCK:
+        asset_lock = _ASSET_LOCKS.setdefault(name, threading.Lock())
+    with asset_lock:
         if name in _MEMORY:
             return _MEMORY[name]
         if time.monotonic() < _FAILED.get(name, 0):

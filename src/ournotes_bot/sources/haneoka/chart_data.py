@@ -134,13 +134,20 @@ def load_chart(song: Song, chart: Chart, cache_dir: Path | None = None) -> Chart
             or chart.difficulty not in DIFFICULTIES or chart not in song.charts):
         raise ChartDataError("Invalid requested chart identity")
     path = (cache_dir or runtime_data_dir()) / CACHE_NAME / f"{song.id}_{chart.difficulty}.json"
+    captured = song.catalog.get('chart_source')
+    if captured is not None:
+        identity = release_identity(captured['identity'], 'jp')
+        row = captured['song']
+        entry = _select(row, song, chart)
+        chart_asset_url(entry.get('file'), identity['releaseId'])
     with _cache_lock(path):
         now = time.time()
         cached = None
         try:
             saved = _read(path)
             cached = _snapshot(saved, song, chart, now)
-            if now - saved["fetched_at"] < CHART_CACHE_TTL:
+            if (now - saved["fetched_at"] < CHART_CACHE_TTL
+                    and (captured is None or cached.release_id == identity['releaseId'])):
                 return cached
         except (OSError, ValueError, TypeError, RecursionError, ChartDataError):
             pass
@@ -156,13 +163,16 @@ def load_chart(song: Song, chart: Chart, cache_dir: Path | None = None) -> Chart
             return raw, headers
 
         try:
-            raw, headers = get(API + "release?projection=identity", 4096)
-            identity = release_identity(decode_json(raw), "jp")
-            check_headers(headers, identity)
-            raw, headers = get(API + f"songs/{song.id}?release={identity['releaseId']}", MAX_CATALOG_BYTES)
-            check_headers(headers, identity)
-            row = decode_json(raw)
-            entry = _select(row, song, chart)
+            # Catalog queries already captured this exact release and chart path.
+            # Older/Yume songs still use the independently verified discovery flow.
+            if captured is None:
+                raw, headers = get(API + "release?projection=identity", 4096)
+                identity = release_identity(decode_json(raw), "jp")
+                check_headers(headers, identity)
+                raw, headers = get(API + f"songs/{song.id}?release={identity['releaseId']}", MAX_CATALOG_BYTES)
+                check_headers(headers, identity)
+                row = decode_json(raw)
+                entry = _select(row, song, chart)
             raw, headers = get(chart_asset_url(entry.get("file"), identity["releaseId"]), MAX_CHART_BYTES)
             check_headers(headers, identity)
             saved = {"schema": 1, "source": "haneoka", "identity": identity, "fetched_at": now,

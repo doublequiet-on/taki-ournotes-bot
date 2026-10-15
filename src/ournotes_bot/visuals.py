@@ -845,14 +845,32 @@ def render_catalog(answer, locale: str = "zh") -> bytes | None:
 # copies so concurrent callers can close/paste without mutating cached images.
 from collections import OrderedDict
 import threading
+import time
+import weakref
 _NATIVE_ASSETS = OrderedDict()
 _NATIVE_ASSET_BYTES = 0
 _NATIVE_ASSET_LOCK = threading.Lock()
 _NATIVE_ASSET_LIMIT = 32_000_000
+_NATIVE_ASSET_FAILED = {}
+_NATIVE_ASSET_FLIGHTS = weakref.WeakValueDictionary()
 
 
 def load_visual_asset(url, size):
     """Validated transparent artwork; caller owns the returned image."""
+    with _NATIVE_ASSET_LOCK:
+        key = (url, size)
+        if key in _NATIVE_ASSETS:
+            _NATIVE_ASSETS.move_to_end(key)
+            return _NATIVE_ASSETS[key].copy()
+        lock = _NATIVE_ASSET_FLIGHTS.get(url)
+        if lock is None:
+            lock = threading.Lock()
+            _NATIVE_ASSET_FLIGHTS[url] = lock
+    with lock:
+        return _load_visual_asset(url, size)
+
+
+def _load_visual_asset(url, size):
     from .sources.haneoka.catalog_assets import is_catalog_asset
     global _NATIVE_ASSET_BYTES
     pinned = is_catalog_asset(url)
@@ -862,7 +880,24 @@ def load_visual_asset(url, size):
             if key in _NATIVE_ASSETS:
                 _NATIVE_ASSETS.move_to_end(key)
                 return _NATIVE_ASSETS[key].copy()
+            if time.monotonic() < _NATIVE_ASSET_FAILED.get(url, 0):
+                return None
     image = _asset(url, size, contain=True)
+    if pinned:
+        with _NATIVE_ASSET_LOCK:
+            if image is None:
+                # The same failed URL is shared across render sizes. Briefly
+                # back off instead of repeating a full timeout on every command.
+                _NATIVE_ASSET_FAILED[url] = time.monotonic() + 30
+                if len(_NATIVE_ASSET_FAILED) > 256:
+                    now = time.monotonic()
+                    for failed in list(_NATIVE_ASSET_FAILED):
+                        if _NATIVE_ASSET_FAILED[failed] <= now:
+                            del _NATIVE_ASSET_FAILED[failed]
+                    while len(_NATIVE_ASSET_FAILED) > 256:
+                        _NATIVE_ASSET_FAILED.pop(next(iter(_NATIVE_ASSET_FAILED)))
+            else:
+                _NATIVE_ASSET_FAILED.pop(url, None)
     cost = image.width * image.height * 4 if image is not None else 0
     if pinned and image is not None and cost <= _NATIVE_ASSET_LIMIT:
         with _NATIVE_ASSET_LOCK:

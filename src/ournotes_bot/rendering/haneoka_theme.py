@@ -9,6 +9,7 @@ from pathlib import Path
 import re
 from contextlib import contextmanager
 from contextvars import ContextVar
+from concurrent.futures import ThreadPoolExecutor
 from io import BytesIO
 
 from PIL import Image, ImageChops, ImageColor, ImageDraw, ImageFont, ImageOps
@@ -35,7 +36,7 @@ def lines(text, width, size, bold=False):
     result = []
     for paragraph in str(text).split('\n'):
         current = ''
-        for token in re.findall(r'[+≥×]?\d+(?:\.\d+)?(?:→\d+(?:\.\d+)?)?(?:%|秒|s|pt)?|[A-Za-z]+|.', paragraph):
+        for token in re.findall(r'[+≥×]?\d+(?:\.\d+)?(?:→\d+(?:\.\d+)?)?(?:%|秒|s|pt)?|[A-Za-z]+[!！?？]*|.', paragraph):
             pieces = [token] if f.getlength(token) <= width else list(token)
             for piece in pieces:
                 if current and f.getlength(current+piece) > width:
@@ -68,6 +69,18 @@ def game_assets(loader):
 def game_asset(name):
     loader = _GAME_ASSETS.get()
     return loader(name) if loader else None
+
+
+def prepare_assets(requests, load, game_names=()):
+    """Load a render's unique artwork concurrently, using its captured UI loader."""
+    loader = _GAME_ASSETS.get()
+    requests = sorted(set(requests))
+    with ThreadPoolExecutor(max_workers=6) as pool:
+        icons = [pool.submit(loader, name) for name in sorted(set(game_names))] if loader else []
+        assets = dict(zip(requests, pool.map(lambda key: load(*key), requests)))
+        for job in icons:
+            job.result()
+    return assets
 
 
 @lru_cache(maxsize=96)
