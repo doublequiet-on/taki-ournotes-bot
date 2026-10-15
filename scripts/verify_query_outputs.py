@@ -30,11 +30,18 @@ def main():
     from ournotes_bot.platforms.qq import qq
     from ournotes_bot.sources.haneoka import chart_data
     from ournotes_bot.sources.haneoka.catalog import CatalogRepository
+    from ournotes_bot.sources.cutoff_history import configure_sources
 
     snapshot = json.loads(args.snapshot.read_text('utf-8'))['snapshot']
     args.output.mkdir(parents=True, exist_ok=True)
     runtime = args.runtime.resolve()
-    repository = SongRepository('', args.output / 'catalog.json', data_source='haneoka', chart_source='haneoka')
+    cache_file = runtime / 'catalog.json'
+    repository = SongRepository('', cache_file, data_source='haneoka', chart_source='haneoka')
+    # Match the normal public-source composition without loading production .env,
+    # credentials, history sampling, or a QQ client. Keep all source caches in runtime.
+    settings = config.Settings('', '', '', cache_file, 24, cutoff_source='haneoka',
+                               cutoff_history_enabled=False, cutoff_sampling_enabled=False)
+    configure_sources(repository, settings)
     def no_refresh(*_):
         raise OSError('verification uses the captured public catalog')
     repository._catalog_repository = CatalogRepository(args.snapshot, clock=lambda: snapshot['fetched_at'] + 1, fetch=no_refresh)
