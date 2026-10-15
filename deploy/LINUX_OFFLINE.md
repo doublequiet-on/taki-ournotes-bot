@@ -76,6 +76,6 @@ sudo /usr/bin/python3 -E -s -B /usr/local/lib/taki-updater/linux_backend.py stat
 
 ## 查询素材准备
 
-同一候选准备阶段还执行 `scripts/prepare_query_assets.py`：取同版公开 Catalog，预下载角色立绘、卡面、缩略图、封面、活动/卡池及乐队图标，并校验全部固定游戏素材。只允许 release 固定的来源 URL；图片须完整解码且符合字节/像素预算。`prepared-artwork-v1.json` 保存来源身份及每张图片的 SHA-256，全部成功后原子发布；损坏或缺失文件重新获取，失败阻止候选完成准备，旧服务继续运行。
+同一候选准备阶段还执行 `scripts/prepare_query_assets.py`：取同版公开 Catalog，预下载角色立绘、卡面、缩略图、封面、活动/卡池及乐队图标，从同版活动／挑战索引补齐榜线小封面和章节横幅，同时校验全部固定游戏素材。只允许 release 固定的来源 URL；图片须完整解码且符合字节/像素预算。`prepared-artwork-v1.json` 保存来源身份及每张图片的 SHA-256，全部成功后原子发布；损坏或缺失文件重新获取，失败阻止候选完成准备，旧服务继续运行。
 
-素材仍存于 `<base>/data/game-assets` 和 `<base>/data/haneoka-asset-cache`。该步骤只额外挂载这两个目录，不开放整个共享数据目录；候选 Catalog 保存在候选 `test-data` 中，不覆盖正在运行的资料快照。更新、回退和重启沿现有 URL 哈希缓存读取已准备素材。诊断可运行 `python -B scripts/prepare_query_assets.py --cache-dir <隔离数据目录> --catalog <隔离Catalog文件>`；`--snapshot` 只校验指定已有快照。准备耗时应与首次查询、热缓存查询耗时分别记录。
+素材仍存于 `<base>/data/game-assets` 和 `<base>/data/haneoka-asset-cache`。该步骤只额外挂载这两个目录，不开放整个共享数据目录；候选 Catalog 保存在候选 `test-data` 中，不覆盖正在运行的资料快照。更新、回退和重启沿现有 URL 哈希缓存读取已准备素材。诊断可运行 `python -B scripts/prepare_query_assets.py --cache-dir <隔离数据目录> --catalog <隔离Catalog文件>`；`--snapshot` 固定使用指定已有 Catalog 快照，仍会按其 release 身份请求活动／挑战索引并下载缺失素材；它不是断网开关。榜线绘图读取同一持久图片缓存，不受独立榜线小时缓存是否为空影响。准备耗时应与首次查询、热缓存查询耗时分别记录。
