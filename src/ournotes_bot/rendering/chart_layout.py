@@ -6,7 +6,7 @@
 import math
 from PIL import Image,ImageDraw
 from ..data import localized_text
-from .haneoka_theme import Canvas,MUTED,DIFFICULTIES,ACCENT,lines,font,mission_label,left_logo
+from .haneoka_theme import Canvas,MUTED,DIFFICULTIES,ACCENT,lines,font,mission_label,left_logo,prepare_assets
 from .image_output import encode_image,ImageBudgetError,MAX_IMAGE_PIXELS,MAX_IMAGE_EDGE
 from .note_skin import draw_note
 
@@ -28,14 +28,15 @@ def skill_end_tick(start, bpms, duration=5):
 def draw_markers(c, events, x, w, top, bottom, lo, hi):
     """Use source ticks and half-open columns; fever spans continue across columns."""
     y=lambda tick:bottom-(tick-lo)/1920*480
-    for i,(start,end) in enumerate(events.get('fever',[]),1):
+    from .song_detail_layout import fever_spans
+    for i,(start,end) in enumerate(fever_spans(events),1):
         a,b=max(start,lo),min(end,hi)
         if a>=b:continue
         ya,yb=y(b),y(a)
         c.draw.line((x+w+17,ya,x+w+17,yb),fill='#bf568f',width=6)
         for yy in (ya,yb):c.draw.line((x+w+13,yy,x+w+23,yy),fill='#bf568f',width=3)
         c.text(x+w+33,(ya+yb)/2,str(i),30,'#bf568f',True,'center')
-    for i,tick in enumerate(events.get('skill',[]),1):
+    for i,tick in enumerate(sorted(events.get('skill',[])),1):
         end=skill_end_tick(tick,events.get('bpm',[]))
         if end is not None and max(tick,lo)<min(end,hi):
             c.draw.line((x-16,y(min(end,hi)),x-16,y(max(tick,lo))),fill=ACCENT,width=3)
@@ -53,12 +54,22 @@ def draw_markers(c, events, x, w, top, bottom, lo, hi):
 
 
 def render(song,charts,score,preview,locale='zh',*,load,notice=''):
-    notes=(score or {}).get('notes',[])
+    # Auto control points have no drawable lane/width. As in the legacy chart
+    # renderer, connect the surrounding positioned anchors and omit that glyph.
+    def positioned(node):return all(type(node.get(k)) in (int,float) for k in ('t','pos','size'))
+    notes=[{**n,'node':[v for v in n.get('node',[]) if positioned(v)]} if n.get('type') in ('long','guide') else n
+           for n in (score or {}).get('notes',[]) if n.get('type') in ('long','guide') or positioned(n)]
     nodes=[v for n in notes for v in (n.get('node',[]) if n.get('type') in ('long','guide') else [n])]
     bars=math.ceil(max((v['t'] for v in nodes),default=0)/1920)+1
     columns=math.ceil(bars/8) if nodes else 0
     selected=next((c for c in charts if c.difficulty==preview),charts[-1] if charts else None)
-    assets={}
+    requests={(song.jacket_url,(300,300))}
+    logos=song.catalog.get('band_logos',[])
+    if len(logos)==1:requests.add((logos[0],(230,100)))
+    if song.traits and song.traits.attribute_icon:requests.add((song.traits.attribute_icon,(64,64)))
+    icons=('skin001.json','skin001.png') if nodes else ()
+    missions=tuple(f'gekisou-{v.lower()}.png' for v in (song.traits.missions or ()) if v in ('COMBO','JUST','LUCK')) if song.traits else ()
+    assets=prepare_assets(requests,load,icons+missions)
     def art(url,size):
         key=(url,size)
         if key not in assets:assets[key]=load(url,size)
@@ -89,11 +100,15 @@ def render(song,charts,score,preview,locale='zh',*,load,notice=''):
         vals=[e['bpm'] for e in bpms if e.get('bpm')]
         bpm=(f'{min(vals):g}' if min(vals)==max(vals) else f'{min(vals):.2f}–{max(vals):.2f}') if vals else '未获取'
         duration=seconds_at(max((v['t'] for v in nodes),default=0),bpms)
-        metrics=[('乐曲时长',f'{int(duration)//60}:{int(duration)%60:02}' if duration else '未获取'),('BPM',bpm),
+        metrics=[('谱面时长',f'{int(duration)//60}:{int(duration)%60:02}' if duration else '未获取'),('BPM',bpm),
                  ('音符数',str(selected.notes) if selected and selected.notes is not None else '未获取'),
                  ('每秒音符数',f'{selected.notes/duration:.1f}' if selected and selected.notes and duration else '未获取')]
         for i,(label,value) in enumerate(metrics):
-            x=88+i*(width-176)/4;c.text(x,610+extra,label,44,MUTED);c.text(x,699+extra,value,64 if label=='BPM' else 72,bold=True)
+            x=88+i*(width-176)/4;c.text(x,610+extra,label,44,MUTED)
+            value_size=64 if label=='BPM' else 72
+            # Measure the full value before placing adjacent metric columns.
+            value_size=min(value_size,int(value_size*((width-176)/4-28)/max(1,font(value_size,True,value.isascii()).getlength(value))))
+            c.text(x,699+extra,value,value_size,bold=True)
         reference=song.catalog.get('reference_metrics',{}).get(preview,{})
         for i,(label,key) in enumerate((('技能覆盖率 · 参考','sr'),('倍率 · 参考','score'),('效率 · 参考','eff'))):
             value=reference.get(key);x=88+i*(width-176)/4
@@ -108,13 +123,13 @@ def render(song,charts,score,preview,locale='zh',*,load,notice=''):
         if 'canonical-full-combo-mismatch' in reference.get('warnings',[]):note+=' · 源数据音符数不一致'
         c.text(width-88,901+extra,note,26,MUTED,align='right')
         c.line(88,932+extra,width-88);c.text(88,987+extra,'完整谱面',48,bold=True)
-        c.text(width-88,987+extra,'每列 8 小节 · 下 → 上 · 左 → 右',36,MUTED,align='right')
+        c.text(width-88,987+extra,'每列 32 拍 · 下 → 上 · 左 → 右',36,MUTED,align='right')
         if not nodes:
             c.text(60,header+98,'完整谱面暂不可用',30,MUTED);return c.image
         c.text(88,1044+extra,'技能 5 秒 · ▲ 开始 / ━ 结束',27,ACCENT);c.text(610,1044+extra,'粉色侧线：激奏段 · 数字对应激奏顺序',27,'#bf568f')
         for local,col in enumerate(range(first,first+count)):
             x=100+local*pitch;w=pitch-108;lo=col*8*1920;hi=(col+1)*8*1920
-            c.text(x,tracktop-28,f'{col+1:02} / 小节 {col*8+1:02}–{min((col+1)*8,bars):02}',26,MUTED)
+            c.text(x,tracktop-28,f'{col+1:02} / 拍 {col*32+1}–{(col+1)*32}',26,MUTED)
             c.box((x-12,tracktop-4,x+w+12,trackbottom+14),'#141723',12)
             draw_markers(c,(score or {}).get('events',{}),x,w,tracktop,trackbottom,lo,hi)
             for lane in range(7):c.draw.line((x+lane*w/6,tracktop,x+lane*w/6,trackbottom),fill='#2c3145',width=1)
@@ -140,7 +155,7 @@ def render(song,charts,score,preview,locale='zh',*,load,notice=''):
                 seq=n['node'] if n.get('type')=='long' else [n]
                 for i,node in enumerate(seq):
                     if not lo<=node['t']<hi or node.get('visible') is False:continue
-                    kind='tap'
+                    kind='trace' if n.get('type')=='trace' else 'tap'
                     if n.get('type')=='long':kind='slide-start' if i==0 else 'slide-end' if i==len(seq)-1 else 'slide-node'
                     if node.get('type')=='flick' or n.get('type')=='flick':
                         direction=node.get('dir',n.get('dir'));kind='flick-left' if direction=='left' else 'flick-right' if direction=='right' else 'flick'

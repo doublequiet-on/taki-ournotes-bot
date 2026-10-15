@@ -16,6 +16,7 @@ from ournotes_bot.query.continuation import (ContextKey, ContextStore, Operation
 from ournotes_bot.platforms.qq.qq import (PreparedReply, QueryGate, ReplySequencer, _prepare_reply,
     _prepare_followup, _deliver_reply, context_key, reply_commands)
 from ournotes_bot.sources.haneoka.song_traits import SongTraits
+from ournotes_bot.sources.chart_data import ChartDataError
 from ournotes_bot.sources.yatta import build_data, build_support_cards
 from ournotes_bot.structured_query import QuerySpec, resolve_query
 from test_query import CHARACTERS, CARDS, SONGS, META, SUPPORTS
@@ -144,9 +145,15 @@ class ContinuationDeliveryTests(Fixture, unittest.IsolatedAsyncioTestCase):
         self.store = ContextStore()
         self.gate = QueryGate(2, 4)
         self.sequencer = ReplySequencer(enabled=False)
-        rendering = patch("ournotes_bot.platforms.qq.qq._image_from_result", return_value=None)
-        rendering.start()
-        self.addCleanup(rendering.stop)
+        # Exercise native complete-list preparation and receipts without fetching
+        # real assets for the synthetic song IDs used by this fixture.
+        for target, options in (
+            ('ournotes_bot.platforms.qq.qq._visual_asset', {'return_value':None}),
+            ('ournotes_bot.sources.haneoka.game_assets.asset_bytes', {'return_value':None}),
+            ('ournotes_bot.platforms.qq.qq.load_chart_data', {'side_effect':ChartDataError('fixture has no chart')})):
+            source=patch(target,**options)
+            source.start()
+            self.addCleanup(source.stop)
         ai = patch.object(self.parser, "_request", side_effect=AssertionError("model called"))
         ai.start()
         self.addCleanup(ai.stop)
@@ -192,8 +199,7 @@ class ContinuationDeliveryTests(Fixture, unittest.IsolatedAsyncioTestCase):
     async def test_upload_fallback_confirms_the_same_captured_selection(self):
         message = self.message()
         message._api._http.request.side_effect = TimeoutError()
-        with patch("ournotes_bot.platforms.qq.qq._image_from_result", return_value=b"image"):
-            await self.send(["/查曲 MyGO"], message)
+        await self.send(["/查曲 MyGO"], message)
         self.assertEqual(self.store.get(self.key).sent, 0)
         await self.send(['/继续'])
         self.assertEqual(self.store.get(self.key).query_context.visible[0].entity_id, self.repo.songs[0].id)

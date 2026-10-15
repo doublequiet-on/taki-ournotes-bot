@@ -1,67 +1,67 @@
 {
   "RarityIconCenter_BD.png": {
     "url": "https://haneoka.org/runtime/jp/unity/Assets/AddressableResources/UI/Atlas/FixUiSpriteAtlas.spriteatlasv2/RarityIconCenter_BD--Sprite--4866403557233305093.png?release=r-d9e6e6e773a4bd9e090b",
-    "sha256": "25b47911cb640b536e410d356620b7709744b97546d383d2b5d7e4fd22cd4e00"
+    "sha256": "ae8564eaa8c928afede742202fadacf4eaf32c5dd3b7e1bc92f84f5aa2c6f248"
   },
   "RarityIconCenter_R.png": {
     "url": "https://haneoka.org/runtime/jp/unity/Assets/AddressableResources/UI/Atlas/FixUiSpriteAtlas.spriteatlasv2/RarityIconCenter_R--Sprite--4984197320711555452.png?release=r-d9e6e6e773a4bd9e090b",
-    "sha256": "82f6c80c13307fd2bbc48509298d6d39f00720d7a25187ea0bc7ec440ce576b9"
+    "sha256": "fa849f48156eb373b6674dc332d45dc6104b4abab1d86cf8dc133ba6b690d9ab"
   },
   "RarityIconCenter_SR.png": {
     "url": "https://haneoka.org/runtime/jp/unity/Assets/AddressableResources/UI/Atlas/FixUiSpriteAtlas.spriteatlasv2/RarityIconCenter_SR--Sprite-8699131816429684678.png?release=r-d9e6e6e773a4bd9e090b",
-    "sha256": "634a92fe8c55f266289f84cffa563d107b25fb59f027d375c755f9c962313701"
+    "sha256": "13e17bc4e3f5d7ebda0ff53af70b911a85a401563a682f8a21c39e6fa6665a5c"
   },
   "RarityIconCenter_SSR.png": {
     "url": "https://haneoka.org/runtime/jp/unity/Assets/AddressableResources/UI/Atlas/FixUiSpriteAtlas.spriteatlasv2/RarityIconCenter_SSR--Sprite--4859392036282087881.png?release=r-d9e6e6e773a4bd9e090b",
-    "sha256": "0ebba01d200b9849dd59a08184367158b3b0ac15b87dd60c3c1de97ca9313254"
+    "sha256": "e46edac19e3c52c1116cdcf6eee127174e6a6e8337904d777de2d7b422b30fe2"
   },
   "CardRank0.png": {
     "url": "https://haneoka.org/runtime/jp/unity/Assets/AddressableResources/UI/Atlas/FixUiSpriteAtlas.spriteatlasv2/CardRank0--Sprite--8422217246051553994.png?release=r-d9e6e6e773a4bd9e090b",
-    "sha256": "caa0e286fd28aa810fdd8d2ff1aceb19c4e70e23db282141bac8c80321ad89a0"
+    "sha256": "cac4ab346f50ad879e0c29b4e9c0fb6659e1946fffabd5fc38a819ed88b00cda"
   },
   "CardRank1.png": {
     "url": "https://haneoka.org/runtime/jp/unity/Assets/AddressableResources/UI/Atlas/FixUiSpriteAtlas.spriteatlasv2/CardRank1--Sprite-3280773496640357830.png?release=r-d9e6e6e773a4bd9e090b",
-    "sha256": "c4c457786c86f79ca20b91def224675f417210422513fa78b2d2d9d494947fbd"
+    "sha256": "c6803f2d4a621faed69631b93720509a496b5243f8c25f89da169faa6366819d"
   },
   "CardRank2.png": {
     "url": "https://haneoka.org/runtime/jp/unity/Assets/AddressableResources/UI/Atlas/FixUiSpriteAtlas.spriteatlasv2/CardRank2--Sprite--4380619658607154788.png?release=r-d9e6e6e773a4bd9e090b",
-    "sha256": "0f87945e3f8e40005844fda79a0e0aeb016bd92cbe66fc26edc5cedddab4e6f0"
+    "sha256": "0cc5f8a6135cb4546259194c86700ae8a4178a8e2315c4884313ed608fa1629c"
   },
   "CardRank3.png": {
     "url": "https://haneoka.org/runtime/jp/unity/Assets/AddressableResources/UI/Atlas/FixUiSpriteAtlas.spriteatlasv2/CardRank3--Sprite--1785066534992597512.png?release=r-d9e6e6e773a4bd9e090b",
-    "sha256": "cb11a2826379896c84d4d105728663d9a587fca6343d61cf27bd9ccd7ec33eb6"
+    "sha256": "9d41152f0aa9c1920c2e610283f9d5c2d63cd740f17dfe46c05aa1306043b696"
   },
   "CardRank4.png": {
     "url": "https://haneoka.org/runtime/jp/unity/Assets/AddressableResources/UI/Atlas/FixUiSpriteAtlas.spriteatlasv2/CardRank4--Sprite--3900313534116023190.png?release=r-d9e6e6e773a4bd9e090b",
-    "sha256": "ded803c87b4d34cd9d226d75c737cd931cd2d33f797c50dc3c9ab5b415d5a278"
+    "sha256": "00b242f657edf5d217787df7d8074c084b2bac453af6b07ddba5edcf385491a4"
   },
   "CardRank5.png": {
     "url": "https://haneoka.org/runtime/jp/unity/Assets/AddressableResources/UI/Atlas/FixUiSpriteAtlas.spriteatlasv2/CardRank5--Sprite--2362644793679910523.png?release=r-d9e6e6e773a4bd9e090b",
-    "sha256": "ea8a2ed19eb4afdb9d961493d8bfb1b1d299f1288d29e90f8c30e34a35cd168d"
+    "sha256": "7a3bd2a8ae82574e2601f1d5c94e8f18cf05f0ed85cfae6e7f6368e4ec3cde1f"
   },
   "snaplimit_0.png": {
     "url": "https://haneoka.org/runtime/jp/unity/Assets/AddressableResources/UI/Atlas/FixUiSpriteAtlas.spriteatlasv2/snaplimit_0--Sprite--5030113214353105399.png?release=r-d9e6e6e773a4bd9e090b",
-    "sha256": "f73b2374b912a6cabaf06b5a37733d5720c69d3814899cd5da2e9bb3d21a3616"
+    "sha256": "d2e38c2cc9f4efcfb2bf93f1e0075f1f7c9eeca5d55893cfebcb6748dec8595e"
   },
   "snaplimit_1.png": {
     "url": "https://haneoka.org/runtime/jp/unity/Assets/AddressableResources/UI/Atlas/FixUiSpriteAtlas.spriteatlasv2/snaplimit_1--Sprite--1293815744543492928.png?release=r-d9e6e6e773a4bd9e090b",
-    "sha256": "2fe8d029d2489db441c653f3e11b5ae5812f21b3dff52c1d331aaa33a270d2c6"
+    "sha256": "e48c39ef6cc9af992be29814218b2e861ac5707a4fe8fbc69d98884be32b9efa"
   },
   "snaplimit_2.png": {
     "url": "https://haneoka.org/runtime/jp/unity/Assets/AddressableResources/UI/Atlas/FixUiSpriteAtlas.spriteatlasv2/snaplimit_2--Sprite-5398787427045724687.png?release=r-d9e6e6e773a4bd9e090b",
-    "sha256": "822e1a760ea2f97e6769c71fd4e429ef469d3d2237997c6d095a2d2a10e8a4b7"
+    "sha256": "dbf157824208b4d745dc7b9970561e163b24ce9a7a4b59567ad15a78f8fe3780"
   },
   "snaplimit_3.png": {
     "url": "https://haneoka.org/runtime/jp/unity/Assets/AddressableResources/UI/Atlas/FixUiSpriteAtlas.spriteatlasv2/snaplimit_3--Sprite--7112923827510211331.png?release=r-d9e6e6e773a4bd9e090b",
-    "sha256": "ec04fc885af7c1b1ddf2c8954d41d36010043f27f2ae50e5e184bb577a3f28c7"
+    "sha256": "33ee0f9e8833cb697adcd1658aa4ed1cc5b5b56e79811bd9eb57a0e0446b1cc3"
   },
   "snaplimit_4.png": {
     "url": "https://haneoka.org/runtime/jp/unity/Assets/AddressableResources/UI/Atlas/FixUiSpriteAtlas.spriteatlasv2/snaplimit_4--Sprite--1036347039892349916.png?release=r-d9e6e6e773a4bd9e090b",
-    "sha256": "213a49bb495133e69233540d4d52a65bb04e6d9f6392a81a2d510dac5374fb99"
+    "sha256": "d94803a38e4d23697b35da004cb563ff78ec3a067afc1a3bcd350486edd1229b"
   },
   "snaplimit_5.png": {
     "url": "https://haneoka.org/runtime/jp/unity/Assets/AddressableResources/UI/Atlas/FixUiSpriteAtlas.spriteatlasv2/snaplimit_5--Sprite-958169405609672889.png?release=r-d9e6e6e773a4bd9e090b",
-    "sha256": "3757e56693cec36c7ecf0246e7e5fd7d765a13cf6e04019a8b27991be6488f9c"
+    "sha256": "a09311e2701e13133fc65e687e1e2d1ad641d04070cf18b25a15740af28953f2"
   },
   "skin001.png": {
     "url": "https://raw.githubusercontent.com/haneoka-gakuen/cassiopeia-plugin-our-notes/cb2b6e470b6e99f30bfa81a88520cbd1c26055dd/src/assets/note-skins/skin001.png",
@@ -73,7 +73,7 @@
   },
   "RarityIconCenter_EX.png": {
     "url": "https://haneoka.org/runtime/jp/unity/Assets/AddressableResources/UI/Atlas/FixUiSpriteAtlas.spriteatlasv2/RarityIconCenter_EX--Sprite-794418242220251623.png?release=r-d9e6e6e773a4bd9e090b",
-    "sha256": "9716c38bcf1ee109eefee9909a1d2995f8e1b5440fd4eab9e05c192d2a97ec24"
+    "sha256": "d5ae4fa97b0437d951812d7a5e2e914aab84a98fbf0a4c0a10a44bda54609e08"
   },
   "ImageRanking1st.png": {
     "url": "https://haneoka.org/runtime/jp/unity/Assets/AddressableResources/UI/Atlas/FixUiSpriteAtlas.spriteatlasv2/ImageRanking1st--Sprite--4994961733966281499.png?release=r-c2a3e188e947bc7e8f4a",

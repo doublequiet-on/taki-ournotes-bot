@@ -71,6 +71,16 @@ class Responses:
 
 
 class HaneokaChartTests(unittest.TestCase):
+    def test_captured_catalog_release_loads_only_pinned_chart_bytes(self):
+        self.song=replace(self.song,catalog={'chart_source':{'identity':self.responses.identity,'song':self.responses.song}})
+        result=self.load()
+        self.assertEqual(result.cache_state,'fresh')
+        self.assertEqual(len(self.responses.requests),1)
+        self.assertIn('/returned_path/chart_3.bytes?release=',self.responses.requests[0][0])
+        # New source caches are readable by the existing snapshot contract.
+        self.assertEqual(self.load().cache_state,'cached')
+        self.assertEqual(len(self.responses.requests),1)
+
     def setUp(self):
         directory = tempfile.TemporaryDirectory()
         self.addCleanup(directory.cleanup)

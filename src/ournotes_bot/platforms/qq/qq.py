@@ -666,7 +666,7 @@ def _song_detail_reply(result,repository,locale,candidate):
         from ...rendering.song_detail_layout import seconds_at
         events=score.get('events',{});bpms=events.get('bpm',[])
         text+='\nBPM：'+', '.join(str(v['bpm']) for v in bpms)
-        text+='\n技能点位（秒）：'+', '.join(str(seconds_at(t,bpms)) for t in events.get('skill',[]))
+        text+='\n技能点位（秒）：'+', '.join(str(seconds_at(t,bpms)) for t in sorted(events.get('skill',[])))
     for label,rows in [('得分奖励',song.catalog.get('score_rewards',[])),('EXPERT 连击奖励',song.catalog.get('combo_rewards',{}).get('expert',[]))]:
         text+='\n'+label+'：'+' / '.join(str(row['tier'])+' '+(row['label'].get(locale) or row['label'].get('ja') or '道具')+' ×'+str(row['count']) for row in rows)
     return PreparedReply(text,render(song,score,locale,load=_visual_asset,band_logos=logos),context=candidate)

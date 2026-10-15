@@ -55,3 +55,4 @@ Haneoka 结构指纹/身份校验仍归 Sources；support_summary 属于此处�
 成员稀有度20（BD）采用粉紫到珊瑚红渐变框，列表和详情共享；SNAP不复用该映射。双效果激奏摘要增加一行条件空间，仍保留完整限制。
 
 QQ 新入口为 [catalog_layout.py](catalog_layout.py)、[card_detail_layout.py](card_detail_layout.py)，捕获完整记录、三种技能与本排对齐；原卡面沿用旧入口。
+列表按规范人物分组，每行至多四张、正文 26px、宽 1080px；完整行超预算才分图，不缩字。多人留影卡标题与规范归组人物一致，缩略图、属性与原生稀有度素材经注入加载器并发准备。
