@@ -5,7 +5,7 @@ from pathlib import Path
 import sys
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'src'))
 from ournotes_bot.sources.haneoka.catalog import CatalogRepository
-from ournotes_bot.sources.haneoka.prepare_catalog_assets import prepare
+from ournotes_bot.sources.haneoka.prepare_catalog_assets import prepare,ranking_urls
 from ournotes_bot.sources.haneoka.game_assets import MANIFEST,prepare_note_assets
 
 
@@ -22,7 +22,7 @@ def main():
     else:
         repository.load(refresh=True)
         if repository.state not in ('fresh','cached'):raise RuntimeError('Catalog preparation did not obtain a fresh snapshot')
-    report=prepare(repository.saved,args.cache_dir/'haneoka-asset-cache',time.time())
+    report=prepare(repository.saved,args.cache_dir/'haneoka-asset-cache',time.time(),extra_urls=ranking_urls(repository.saved))
     print(f"Prepared {len(report['assets'])} catalog images and {len(MANIFEST)} game assets")
 
 

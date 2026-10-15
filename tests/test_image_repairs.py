@@ -96,3 +96,31 @@ class PreparationIntegrityTests(unittest.TestCase):
     def test_invalid_download_is_not_cached(self):
         with self.assertRaises(OSError):preparation.prepare(self.saved,self.cache,0,download=lambda *a,**k:b'invalid')
         self.assertFalse(list(self.cache.glob('*.png')))
+
+
+class RankingPreparationTests(unittest.TestCase):
+    def test_index_specific_small_jacket_and_chapter_banner_are_prepared(self):
+        release='r-'+('a'*20)
+        ident={'server':'intl','releaseId':release,'sourceId':'fixture'}
+        saved={'identities':{'intl':ident}}
+        paths=['/assets/intl/Assets/AddressableResources/Story/Banner/Chapter/ui_banner_chapter_7.png',
+               '/assets/intl/Assets/AddressableResources/Image/Jacket/small/jkt_004_100111.png']
+        calls=[]
+        def fetch(url,limit,timeout):
+            calls.append(url)
+            return json.dumps({'entries':{'1':{'image':paths[len(calls)-1]}}}).encode(),{}
+        with patch.object(preparation,'check_headers') as headers:
+            urls=preparation.ranking_urls(saved,fetch=fetch)
+        self.assertEqual(set(urls),{'https://haneoka.org'+p+'?release='+release for p in paths})
+        self.assertEqual(len(headers.call_args_list),2)
+        self.assertTrue(all('release='+release in url for url in calls))
+        with tempfile.TemporaryDirectory() as directory, patch.object(preparation,'catalog_urls',return_value=()):
+            raw=io.BytesIO();Image.new('RGB',(20,30),'red').save(raw,'PNG')
+            manifest=preparation.prepare(saved,directory,0,extra_urls=urls,download=lambda *a,**k:raw.getvalue())
+            self.assertEqual(set(manifest['assets']),set(urls))
+            preparation.prepare(saved,directory,0,extra_urls=urls,download=lambda *a,**k:self.fail('local artwork downloaded again'))
+
+    def test_foreign_release_index_is_rejected(self):
+        with patch.object(preparation,'check_headers',side_effect=ValueError('foreign release')):
+            with self.assertRaises(ValueError):
+                preparation.ranking_urls({'identities':{'intl':{'releaseId':'r-'+('a'*20)}}},fetch=lambda *a:(b'{"entries":{}}',{}))

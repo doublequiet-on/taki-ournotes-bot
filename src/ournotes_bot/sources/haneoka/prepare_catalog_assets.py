@@ -19,6 +19,9 @@ from .catalog_assets import is_catalog_asset, download_asset, asset_url
 from .info_catalog import convert_info
 from .ranking_art import cards_for
 from ..errors import ChartDataError
+from ..json_validation import decode_json
+from .identity import check_headers
+from .transport import ORIGIN, public_get
 
 
 def catalog_urls(saved, now):
@@ -52,6 +55,23 @@ def catalog_urls(saved, now):
     return tuple(sorted(urls))
 
 
+def ranking_urls(saved, *, fetch=public_get):
+    """Use the exact event/challenge index images consumed by ranking metadata."""
+    urls=set()
+    for server,ident in saved['identities'].items():
+        for resource in ('events','challenge'):
+            raw,headers=fetch(f"{ORIGIN}/api/v1/servers/{server}/{resource}?release={ident['releaseId']}",512_000,20)
+            check_headers(headers,ident)
+            entries=decode_json(raw)['entries']
+            if not isinstance(entries,dict):raise ValueError('Invalid ranking image index')
+            for row in entries.values():
+                path=row.get('image')
+                if not path:continue
+                try:urls.add(asset_url(path,ident['releaseId']))
+                except ValueError:continue  # Ranking enrichment also omits unsupported image paths.
+    return tuple(sorted(urls))
+
+
 def _check(raw):
     if not raw or len(raw)>6_000_000:raise ValueError('Artwork byte budget')
     with Image.open(io.BytesIO(raw)) as image:
@@ -68,14 +88,15 @@ def _atomic(path,raw):
     finally:Path(name).unlink(missing_ok=True)
 
 
-def prepare(saved,cache_dir,now,*,download=download_asset,workers=6):
+def prepare(saved,cache_dir,now,*,download=download_asset,workers=6,extra_urls=()):
     cache=Path(cache_dir);cache.mkdir(parents=True,exist_ok=True)
     manifest=cache/'prepared-artwork-v1.json'
     prior={}
     if manifest.is_file():
         try:prior=json.loads(manifest.read_text('utf-8')).get('assets',{})
         except (OSError,ValueError):pass
-    urls=catalog_urls(saved,now)
+    urls=tuple(sorted(set(catalog_urls(saved,now)) | set(extra_urls)))
+    if not all(is_catalog_asset(url) for url in urls):raise ValueError("Unsupported preparation image")
     def one(url):
         path=cache/(hashlib.sha256(url.encode()).hexdigest()+'.png')
         if path.is_file() and path.stat().st_size<=6_000_000:
