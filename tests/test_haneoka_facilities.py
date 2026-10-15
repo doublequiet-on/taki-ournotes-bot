@@ -48,6 +48,35 @@ class Session(Response):
 
 
 class HaneokaFacilityTests(unittest.TestCase):
+    def test_public_proxy_is_explicit_and_preserves_request_security(self):
+        response=Session()
+        with patch.dict(os.environ,{'OURNOTES_PUBLIC_HTTP_PROXY':'http://127.0.0.1:7890'}),patch('aiohttp.ClientSession',return_value=response) as create:
+            self.assertEqual(transport.public_get(transport.ORIGIN+'/test',4,2)[0],b'1234')
+        self.assertEqual(response.options['proxy'],'http://127.0.0.1:7890')
+        self.assertIs(response.options['allow_redirects'],False)
+        self.assertIs(create.call_args.kwargs['trust_env'],False)
+
+    def test_ambient_proxy_is_not_implicitly_used(self):
+        with patch.dict(os.environ,{'OURNOTES_PUBLIC_HTTP_PROXY':'','HTTPS_PROXY':'http://user:private@ambient.invalid'}):
+            self.assertEqual(transport.public_proxy_options(),{})
+
+    def test_public_proxy_rejects_credentials_paths_and_unsupported_routes(self):
+        for value in ('socks5://localhost:1080','http://user:private@proxy','http://user@proxy',
+                      'http://proxy/path','http://proxy?token=private','http://proxy/#private',
+                      'http://proxy:0','http://proxy:65536','http://','http://bad host'):
+            with self.subTest(proxy=value),patch.dict(os.environ,{'OURNOTES_PUBLIC_HTTP_PROXY':value}):
+                with self.assertRaises(ChartDataError) as caught:transport.public_proxy_options()
+                self.assertNotIn('private',str(caught.exception))
+
+    def test_fixed_note_skin_uses_same_explicit_proxy_without_redirects(self):
+        from ournotes_bot.sources.haneoka.game_assets import _fetch,MANIFEST
+        response=Session()
+        with patch.dict(os.environ,{'OURNOTES_PUBLIC_HTTP_PROXY':'http://127.0.0.1:7890'}),patch('aiohttp.ClientSession',return_value=response) as create:
+            self.assertEqual(_fetch(MANIFEST['skin001.json']['url']),b'1234')
+        self.assertEqual(response.options['proxy'],'http://127.0.0.1:7890')
+        self.assertIs(response.options['allow_redirects'],False)
+        self.assertIs(create.call_args.kwargs['trust_env'],False)
+
     def test_public_get_preserves_budget_headers_redirect_and_proxy_policy(self):
         response = Session()
         with patch("aiohttp.ClientSession", return_value=response) as create:
