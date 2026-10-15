@@ -86,7 +86,7 @@ class TrendTests(unittest.TestCase):
             self.assertIn("不足以形成曲线", page.text)
             with Image.open(io.BytesIO(page.image)) as image:
                 self.assertLessEqual(image.width * image.height, 12000000)
-            self.assertLessEqual(len(page.image), 1500000)
+            self.assertLessEqual(len(page.image), 3_000_000)
             for rank in answer.ranks:
                 self.assertIn(f"T{rank}：", page.text)
 

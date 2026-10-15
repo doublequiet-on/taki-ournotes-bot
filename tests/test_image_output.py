@@ -1,5 +1,6 @@
 """Offline large-image and upload timeout regressions, no QQ credentials."""
 import asyncio
+import base64
 import io
 import random
 import weakref
@@ -198,6 +199,25 @@ class ImageOutputTests(unittest.TestCase):
     async def _reject(self):
         with self.assertRaises(ValueError):
             await _upload_image(None, "fake", b"x" * (MAX_IMAGE_BYTES + 1), True)
+
+    def test_three_mb_upload_boundary_keeps_complete_payload(self):
+        async def run():
+            for group in (True, False):
+                with self.subTest(group=group):
+                    request = AsyncMock(return_value={"file_info": "safe"})
+                    api = SimpleNamespace(_http=SimpleNamespace(request=request))
+                    payload = b"x" * 3_000_000
+                    result = await _upload_image(api, "fake", payload, group)
+                    self.assertEqual(result, {"file_info": "safe"})
+                    body = request.call_args.kwargs["json"]
+                    self.assertEqual(base64.b64decode(body["file_data"]), payload)
+                    self.assertEqual(len(body["file_data"]), 4_000_000)
+                    self.assertFalse(body["srv_send_msg"])
+                    request.reset_mock()
+                    with self.assertRaisesRegex(ValueError, "upload budget"):
+                        await _upload_image(api, "fake", payload + b"x", group)
+                    request.assert_not_called()
+        asyncio.run(run())
 
     def test_upload_timeout_is_scoped_and_session_reused(self):
         class FakeSdk(BotHttp):

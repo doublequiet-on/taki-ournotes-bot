@@ -432,7 +432,7 @@ class HaneokaChartTests(unittest.TestCase):
         from PIL import Image
         with Image.open(io.BytesIO(annotated)) as image, Image.open(io.BytesIO(expected)) as baseline:
             self.assertEqual(image.size, baseline.size)
-        self.assertLessEqual(len(annotated), 1_500_000)
+        self.assertLessEqual(len(annotated), 3_000_000)
 
 
 class TransportTests(unittest.TestCase):

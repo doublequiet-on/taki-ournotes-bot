@@ -55,3 +55,5 @@ Current 直接引用 song_traits 的显示常量；这属于领域表现依赖�
 向上阅读：[仓库 L1](../../../L1.md)。源码文件头提供唯一 L3，具体行为与字段以实现为准。
 
 `visuals.py` 保留 `render_song_list/render_chart` 与歌曲身份／激奏辅助；完整谱面来源由 `sources/chart_data.py` 路由，条件由 `query/song_query.py` 解析。回归 `test_visuals.py`、`test_chart_data.py`。
+
+QQ 新入口为 [song_layout.py](song_layout.py)、[song_detail_layout.py](song_detail_layout.py)、[chart_layout.py](chart_layout.py)、[ranking_layout.py](ranking_layout.py)。[note_skin.py](note_skin.py) 只消费注入的原版 atlas；数据获取在来源层。

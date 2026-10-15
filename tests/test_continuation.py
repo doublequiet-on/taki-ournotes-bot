@@ -41,17 +41,17 @@ class ContinuationCoreTests(Fixture, unittest.TestCase):
         self.setup_repo()
 
     def test_explicit_and_bounded_chinese_grammar(self):
-        for text, kind, value in (("/下一页", "page", 1), ("/问 上一页", "page", -1),
-                                 ("/选 2", "select", 2), ("/问 第十二个", "select", 12),
+        for text, kind, value in (("/问 下一页", "page", 1), ("/问 上一页", "page", -1),
+                                 ("/问 选 2", "select", 2), ("/问 第十二个", "select", 12),
                                  ("/问 选二十", "select", 20), ("/详情", "detail", ""),
-                                 ("/问 看详情", "detail", ""), ("/难度 EX", "difficulty", "EXPERT"),
+                                 ("/问 看详情", "detail", ""), ("/问 难度 EX", "difficulty", "EXPERT"),
                                  ("/问 换成困难", "difficulty", "HARD")):
             self.assertEqual(parse_operation(text), Operation(kind, value))
         self.assertIsNone(parse_operation("帮我看看第一个最适合什么队伍"))
         with patch.object(self.parser, "_request", side_effect=AssertionError("model called")):
             for command in ("/问 下一页", "/问 第三个", "/问 看详情", "/问 换成 EX"):
                 self.assertIn("重新发送", self.parser.answer_with_plan(command, self.repo)[0])
-        self.assertEqual(handle_command("/下一页", self.repo), MISSING)
+        self.assertEqual(handle_command("/问 下一页", self.repo), MISSING)
 
     def test_visible_snapshot_page_select_detail_difficulty(self):
         first = self.context()
@@ -168,11 +168,11 @@ class ContinuationDeliveryTests(Fixture, unittest.IsolatedAsyncioTestCase):
         await self.send(["/查曲 MyGO"])
         self.assertEqual(self.store.get(self.key).page, 1)
         other = await self.send(["/问 下一页"], self.message("u2"))
-        self.assertEqual(other._api.post_group_message.await_args.kwargs["content"], MISSING)
-        await self.send(["/下一页"])
-        self.assertEqual(self.store.get(self.key).page, 2)
+        self.assertEqual(other._api.post_group_message.await_args.kwargs["content"].split(" /> ", 1)[-1], MISSING)
+        await self.send(["/问 下一页"])
+        self.assertEqual(self.store.get(self.key).page, 1)
         await self.send(["/问 选二"])
-        self.assertEqual(self.store.get(self.key).selected.entity_id, self.repo.songs[17].id)
+        self.assertEqual(self.store.get(self.key).selected.entity_id, self.repo.songs[1].id)
 
     async def test_missing_failure_and_exception_receipts_do_not_commit(self):
         for receipt in ({}, {"code": 1}, {"id": ""}):
@@ -181,12 +181,12 @@ class ContinuationDeliveryTests(Fixture, unittest.IsolatedAsyncioTestCase):
         await self.send(["/查曲 MyGO"])
         message = self.message()
         message._api.post_group_message.side_effect = TimeoutError("private")
-        await self.send(["/下一页"], message)
+        await self.send(["/问 下一页"], message)
         self.assertEqual(self.store.get(self.key).page, 1)
         message._api.post_group_message.assert_awaited_once()
         message = self.message()
         message._api.post_group_message.return_value = None
-        await self.send(["/下一页"], message)
+        await self.send(["/问 下一页"], message)
         self.assertEqual(self.store.get(self.key).page, 1)
 
     async def test_upload_fallback_confirms_the_same_captured_selection(self):
@@ -194,14 +194,16 @@ class ContinuationDeliveryTests(Fixture, unittest.IsolatedAsyncioTestCase):
         message._api._http.request.side_effect = TimeoutError()
         with patch("ournotes_bot.platforms.qq.qq._image_from_result", return_value=b"image"):
             await self.send(["/查曲 MyGO"], message)
-        self.assertEqual(self.store.get(self.key).visible[0].entity_id, self.repo.songs[0].id)
+        self.assertEqual(self.store.get(self.key).sent, 0)
+        await self.send(['/继续'])
+        self.assertEqual(self.store.get(self.key).query_context.visible[0].entity_id, self.repo.songs[0].id)
         self.assertEqual(message._api.post_group_message.await_args.kwargs["msg_type"], 0)
 
     async def test_multiple_lists_and_same_message_chain(self):
         await self.send(["/查曲 MyGO", "/查曲 100001"])
         self.assertIsNone(self.store.get(self.key))
-        message = await self.send(["/查曲 MyGO", "/下一页"])
-        self.assertEqual(self.store.get(self.key).page, 1)
+        message = await self.send(["/查曲 MyGO", "/问 下一页"])
+        self.assertIsNone(self.store.get(self.key))
         self.assertIn("不会按依赖链", message._api.post_group_message.await_args.kwargs["content"])
 
     async def test_late_full_result_does_not_replace_newer_query(self):
@@ -231,7 +233,7 @@ class ContinuationDeliveryTests(Fixture, unittest.IsolatedAsyncioTestCase):
             await release.wait()
             return {"id": "ack"}
         message._api.post_group_message.side_effect = send
-        pending = asyncio.create_task(self.send(["/下一页"], message))
+        pending = asyncio.create_task(self.send(["/问 下一页"], message))
         await entered.wait()
         await self.send(["/查曲 100002"])
         release.set()
@@ -240,8 +242,8 @@ class ContinuationDeliveryTests(Fixture, unittest.IsolatedAsyncioTestCase):
 
     async def test_same_user_next_pages_are_serial_and_cancel_keeps_previous(self):
         await self.send(["/查曲 MyGO"])
-        await asyncio.gather(self.send(["/下一页"]), self.send(["/问 下一页"]))
-        self.assertEqual(self.store.get(self.key).page, 3)
+        await asyncio.gather(self.send(["/问 下一页"]), self.send(["/问 下一页"]))
+        self.assertEqual(self.store.get(self.key).page, 1)
 
     async def test_queued_old_followup_cannot_attach_to_new_full_query(self):
         await self.send(["/查曲 MyGO"])
@@ -252,15 +254,15 @@ class ContinuationDeliveryTests(Fixture, unittest.IsolatedAsyncioTestCase):
             await release.wait()
             return {"id": "ack"}
         first._api.post_group_message.side_effect = sending
-        running = asyncio.create_task(self.send(["/下一页"], first))
+        running = asyncio.create_task(self.send(["/问 下一页"], first))
         await entered.wait()
         queued_message = self.message()
-        queued = asyncio.create_task(self.send(["/下一页"], queued_message))
+        queued = asyncio.create_task(self.send(["/问 下一页"], queued_message))
         await asyncio.sleep(0)
         await self.send(["/查曲 100002"])
         release.set()
         await asyncio.gather(running, queued)
-        self.assertEqual(queued_message._api.post_group_message.await_args.kwargs["content"], MISSING)
+        self.assertEqual(queued_message._api.post_group_message.await_args.kwargs["content"].split(" /> ", 1)[-1], MISSING)
         self.assertEqual(self.store.get(self.key).visible[0].entity_id, 100002)
 
     async def test_followup_while_new_query_pending_cannot_invalidate_it(self):
@@ -272,8 +274,8 @@ class ContinuationDeliveryTests(Fixture, unittest.IsolatedAsyncioTestCase):
             return reply
         pending = asyncio.create_task(self.send(["full"], gate=SimpleNamespace(prepare=prepare)))
         await entered.wait()
-        message = await self.send(["/下一页"])
-        self.assertEqual(message._api.post_group_message.await_args.kwargs["content"], MISSING)
+        message = await self.send(["/问 下一页"])
+        self.assertEqual(message._api.post_group_message.await_args.kwargs["content"].split(" /> ", 1)[-1], MISSING)
         release.set()
         await pending
         self.assertEqual(self.store.get(self.key).page, 1)
@@ -286,12 +288,12 @@ class ContinuationDeliveryTests(Fixture, unittest.IsolatedAsyncioTestCase):
             entered.set()
             await asyncio.Event().wait()
         message._api.post_group_message.side_effect = send
-        pending = asyncio.create_task(self.send(["/上一页"], message))
+        pending = asyncio.create_task(self.send(["/问 上一页"], message))
         await entered.wait()
         pending.cancel()
         with self.assertRaises(asyncio.CancelledError):
             await pending
-        self.assertEqual(self.store.get(self.key).page, 3)
+        self.assertEqual(self.store.get(self.key).page, 1)
 
     async def test_identity_missing_fails_closed_and_current_query_independent(self):
         message = self.message()

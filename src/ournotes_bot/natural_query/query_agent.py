@@ -48,7 +48,7 @@ TERMINAL_CACHE_TTL_SECONDS = 300.0
 CACHE_CAPACITY = 128
 
 _DIRECT_COMMAND = re.compile(
-    r"^[/／]?(?:查曲|查谱面|查谱|查卡|查角色卡|查卡面|查支援卡面|查SNAP卡面|查SNAP|SNAP|查支援卡|支援卡|song|chart|card|support)\s+", re.I,
+    r"^[/／]?(?:查曲|查谱面|查谱|查卡|查角色卡|查卡面|查留影卡面|查留影卡|查支援卡面|查SNAP卡面|查SNAP|SNAP|查支援卡|支援卡|song|chart|card|support)\s+", re.I,
 )
 _UNSUPPORTED_TERMS = re.compile(
     r"推荐|最强|排行|攻略|预测|档线|代练|代肝|账号|抽卡建议|编成|怎么打|如何打|"
@@ -251,12 +251,12 @@ class QueryAgent:
         if not question or len(question) > 100:
             return self._finish_terminal(
                 state, OutcomeCode.INVALID_ARGUMENTS,
-                "用法：/问 <想查的歌曲、谱面、成员卡、技能或支援卡>，最多 100 字。",
+                "用法：/问 <想查的歌曲、谱面、成员卡、技能或留影卡>，最多 100 字。",
                 tracked=tracked, local=True, cache=False,
             )
 
         from ..query.continuation import parse_operation, MISSING
-        if parse_operation(question) is not None:
+        if parse_operation("/问 " + question) is not None:
             return self._finish_terminal(state, OutcomeCode.INVALID_ARGUMENTS, MISSING,
                                          tracked=tracked, local=True, cache=False)
 
@@ -328,7 +328,7 @@ class QueryAgent:
         if not self.ai_enabled:
             return self._finish_terminal(
                 state, OutcomeCode.NOT_CONFIGURED,
-                "自然语言查询尚未配置 AI；请用 /查曲、/查谱面、/查卡 或 /查支援卡。",
+                "自然语言查询尚未配置 AI；请用 /查曲、/查谱面、/查卡 或 /查留影卡。",
                 tracked=tracked, cache=False,
             )
 
@@ -431,7 +431,7 @@ class QueryAgent:
                     self.metrics.increment("ai_provider_error")
                 return self._finish_terminal(
                     state, OutcomeCode.TEMPORARY_FAILURE,
-                    "自然语言解析暂不可用；请直接使用 /查曲、/查谱面、/查卡 或 /查支援卡。",
+                    "自然语言解析暂不可用；请直接使用 /查曲、/查谱面、/查卡 或 /查留影卡。",
                     tracked=tracked, cache=False,
                 )
 
@@ -478,21 +478,21 @@ class QueryAgent:
                 or state.steps >= MAX_STEPS):
             return None, TerminalOutcome(
                 OutcomeCode.TEMPORARY_FAILURE,
-                "自然语言解析暂不可用；请直接使用 /查曲、/查谱面、/查卡 或 /查支援卡。",
+                "自然语言解析暂不可用；请直接使用 /查曲、/查谱面、/查卡 或 /查留影卡。",
             )
         try:
             available = self.quota.reserve(self.daily_limit)
         except QuotaUnavailable:
             return None, TerminalOutcome(
                 OutcomeCode.QUOTA_UNAVAILABLE,
-                "AI 额度记录不可用；仍可使用 /查曲、/查谱面、/查卡、/查支援卡及常见技能问法。请联系管理员检查额度文件。",
+                "AI 额度记录不可用；仍可使用 /查曲、/查谱面、/查卡、/查留影卡及常见技能问法。请联系管理员检查额度文件。",
             )
         if not available:
             if tracked:
                 self.metrics.increment("quota_exhausted")
             return None, TerminalOutcome(
                 OutcomeCode.QUOTA_EXHAUSTED,
-                "今日自然语言查询额度已用完；仍可使用 /查曲、/查谱面、/查卡、/查支援卡及常见技能问法。",
+                "今日自然语言查询额度已用完；仍可使用 /查曲、/查谱面、/查卡、/查留影卡及常见技能问法。",
             )
         state.model_calls += 1
         state.steps += 1
@@ -507,7 +507,7 @@ class QueryAgent:
                 self.metrics.increment("ai_provider_error")
             return None, TerminalOutcome(
                 OutcomeCode.TEMPORARY_FAILURE,
-                "自然语言解析暂不可用；请直接使用 /查曲、/查谱面、/查卡 或 /查支援卡。",
+                "自然语言解析暂不可用；请直接使用 /查曲、/查谱面、/查卡 或 /查留影卡。",
             )
         if isinstance(response, ModelResponse):
             if response.usage:

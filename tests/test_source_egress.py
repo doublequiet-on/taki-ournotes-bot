@@ -63,6 +63,11 @@ class SourceEgressTests(unittest.TestCase):
         self.calls = []
         self.transport_failed = False
         self.saved = json.loads((Path(__file__).parent / 'fixtures/haneoka_catalog.json').read_bytes())['snapshot']
+        for doc in self.saved['documents'].values():
+            doc.setdefault('ui-marks', {})
+            doc.setdefault('progression', {key: [] for key in ('memberCardLevels','memberCardRanks','supportCardLevels','supportCardRanks')})
+            doc.setdefault('events', {'entries': {}})
+            doc.setdefault('gacha', {'entries': {}})
         self.saved['documents']['jp']['ui-marks'] = {f'CardType-{name}.png': f'runtime/unity/Assets/AddressableResources/UI/Atlas/FixUiSpriteAtlas.spriteatlasv2/CardType-{name}--Sprite-123.png' for name in ('Red','Blue','Green','Yellow','Purple')}
         self.stack = ExitStack()
         self.addCleanup(self.stack.close)

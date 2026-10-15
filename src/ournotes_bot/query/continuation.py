@@ -47,7 +47,7 @@ class Operation:
 
 def _number(text):
     if text.isascii() and text.isdigit():
-        return int(text) if len(text) < 4 else 999
+        return int(text) if len(text) <= 6 else 0
     digits = {char: index for index, char in enumerate("零一二三四五六七八九")}
     digits["两"] = 2
     if text in digits:
@@ -61,9 +61,13 @@ def _number(text):
 
 def parse_operation(content: str) -> Operation | None:
     text = unicodedata.normalize("NFKC", content).strip().lstrip("/")
+    if not re.match(r"^(?:问|ask)\s+", text, re.I) and re.match(r"^(?:下一页|上一页|选|难度)", text):
+        return None
     text = re.sub(r"^(?:问|ask)\s+", "", text, flags=re.I).strip(" ?？。!")
     if text in {"下一页", "上一页"}:
         return Operation("page", 1 if text == "下一页" else -1)
+    if text == "继续":
+        return Operation("continue")
     if text in {"详情", "看详情"}:
         return Operation("detail")
     match = re.fullmatch(r"(?:选\s*([\d零一二两三四五六七八九十]+)|第\s*([\d零一二两三四五六七八九十]+)\s*(?:个|首|张|条))", text)
@@ -94,6 +98,7 @@ class QueryContext:
     pages: int
     version: tuple[str, str]
     selected: Choice | None = None
+    complete: bool = False
 
 
 def catalog_version(repository) -> str:
@@ -114,7 +119,8 @@ def dependency_version(repository, query) -> tuple[str, str]:
     return catalog_version(repository), ""
 
 
-def capture_context(result, repository, *, catalog_before=None) -> QueryContext | None:
+def capture_context(result, repository, *, catalog_before=None, complete=False,
+                    choices=None) -> QueryContext | None:
     """Copy IDs in exactly the text/image page order; never rerun the selection."""
     if result is None or result.status != "success" or result.cutoff is not None:
         return None
@@ -130,14 +136,15 @@ def capture_context(result, repository, *, catalog_before=None) -> QueryContext 
         kind = "support_card" if req.support else "card"
         spec = QuerySpec(kind, card_query=req.query, page=req.page)
         page, pages = req.page, max(1, (len(answer.cards) + PAGE_SIZE - 1) // PAGE_SIZE)
-        visible = tuple(Choice(kind, c.id) for c in answer.visible)
+        visible = tuple(Choice(kind, c.id) for c in (answer.cards if complete else answer.visible))
         if req.mode == "detail" and len(visible) == 1:
             selected = visible[0]
     elif result.song_selection is not None:
         answer = result.song_selection
         spec = QuerySpec("song", song_query=answer.request.query, page=answer.page)
         page, pages = answer.page, max(1, (len(answer.songs) + PAGE_SIZE - 1) // PAGE_SIZE)
-        visible = tuple(Choice("song", s.id, answer.request.difficulty) for s in page_slice(answer.songs, page))
+        visible = tuple(Choice("song", s.id, answer.request.difficulty) for s in
+                        (answer.songs if complete else page_slice(answer.songs, page)))
     elif isinstance(result, QueryResult):
         page = spec.page
         if spec.intent == "chart":
@@ -148,7 +155,8 @@ def capture_context(result, repository, *, catalog_before=None) -> QueryContext 
         else:
             records = result.songs or result.cards or result.support_cards
             pages = max(1, (len(records) + PAGE_SIZE - 1) // PAGE_SIZE)
-            visible = tuple(Choice(spec.intent, r.id, spec.difficulty) for r in page_slice(records, page))
+            visible = tuple(Choice(spec.intent, r.id, spec.difficulty) for r in
+                            (records if complete else page_slice(records, page)))
     elif result.parsed[0] in {"songs", "chart"}:
         kind, query, value = result.parsed
         if kind == "songs":
@@ -156,7 +164,8 @@ def capture_context(result, repository, *, catalog_before=None) -> QueryContext 
             # Preserve the established bare-integer level grammar for legacy lists.
             spec = f"/查曲 {query}"
             pages = max(1, (len(result.songs) + PAGE_SIZE - 1) // PAGE_SIZE)
-            visible = tuple(Choice("song", s.id) for s in page_slice(result.songs, page))
+            visible = tuple(Choice("song", s.id) for s in
+                            (result.songs if complete else page_slice(result.songs, page)))
         else:
             page, pages = 1, 1
             visible = tuple(Choice("song", s.id, value or "") for s in result.songs)
@@ -167,12 +176,18 @@ def capture_context(result, repository, *, catalog_before=None) -> QueryContext 
                              display_name=str(selected.entity_id))
     else:
         return None
-    if not visible or len(visible) > 30:
+    if choices is not None:
+        if not complete or sorted((v.kind, v.entity_id, v.difficulty) for v in choices) != sorted(
+                (v.kind, v.entity_id, v.difficulty) for v in visible):
+            raise ValueError("display choices do not match the captured result")
+        visible = tuple(choices)
+    if not visible or (not complete and len(visible) > 30):
         return None
     version = dependency_version(repository, spec)
     if catalog_before is not None and version[0] != catalog_before:
         return None
-    return QueryContext(spec, visible, page, pages, version, selected)
+    return QueryContext(spec, visible, 1 if complete else page, 1 if complete else pages,
+                        version, selected, complete)
 
 
 def execute_followup(context: QueryContext, operation: Operation, repository):
@@ -180,6 +195,8 @@ def execute_followup(context: QueryContext, operation: Operation, repository):
     if context.version != dependency_version(repository, context.query):
         return QueryProblem(CHANGED, "invalid_arguments")
     if operation.kind == "page":
+        if context.complete:
+            return QueryProblem("结果已按完整查询展示；尚有未发送图片时请用 /继续。", "invalid_arguments")
         page = context.page + operation.value
         if not 1 <= page <= context.pages:
             return QueryProblem(f"页码超出范围，当前第 {context.page}/{context.pages} 页。", "invalid_arguments")
@@ -191,11 +208,11 @@ def execute_followup(context: QueryContext, operation: Operation, repository):
         selected = context.selected
         if operation.kind == "select":
             if not 1 <= operation.value <= len(context.visible):
-                return QueryProblem(f"请选择当前页的 1～{len(context.visible)} 号。", "invalid_arguments")
+                return QueryProblem(f"请选择已展示的 1～{len(context.visible)} 号。", "invalid_arguments")
             selected = context.visible[operation.value - 1]
         elif selected is None:
             if len(context.visible) != 1:
-                return QueryProblem("当前页有多个结果，请先发送 /选 编号，例如 /选 2。", "ambiguous")
+                return QueryProblem("已展示的结果有多个，请按列表中的 ID 重新查询详情。", "ambiguous")
             selected = context.visible[0]
         if operation.kind == "difficulty":
             if selected.kind != "song":
@@ -212,7 +229,7 @@ def execute_followup(context: QueryContext, operation: Operation, repository):
         result = resolve_query(spec, repository)
         candidate = replace(context, selected=selected) if result.status == "success" else None
     else:
-        return QueryProblem("用法：/下一页、/上一页、/选 2、/详情、/难度 EX。", "invalid_arguments")
+        return QueryProblem("用法：/继续、/详情；也可按 ID 重新查询。", "invalid_arguments")
     if context.version != dependency_version(repository, context.query):
         return QueryProblem(CHANGED, "invalid_arguments")
     return result, candidate
@@ -282,4 +299,7 @@ class ContextStore:
             return False
         self._entries[ticket.key] = _Entry(ticket.generation, entry.lineage, context, self.clock())
         self._entries.move_to_end(ticket.key)
-        return True
+        # Encoded continuation images are bounded separately from the entry count.
+        while len(self._entries) > 1 and sum(getattr(e.context, 'retained_bytes', 0) for e in self._entries.values()) > 128_000_000:
+            self._entries.popitem(last=False)
+        return ticket.key in self._entries

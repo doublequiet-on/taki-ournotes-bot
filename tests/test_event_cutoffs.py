@@ -565,7 +565,7 @@ class CutoffTests(unittest.TestCase):
     def test_capture_and_render_failure_never_refetches(self):  # A18
         from ournotes_bot.platforms.qq.qq import _prepare_reply
         for command in ("/查榜线", "/查榜线 t100"):
-            with patch("ournotes_bot.rendering.event_cutoff_visuals.render_cutoff", side_effect=ValueError("render failure")):
+            with patch("ournotes_bot.rendering.ranking_layout.render", side_effect=ValueError("render failure")):
                 reply = _prepare_reply(command, self.repo, None)
             self.assertEqual(reply.text.count("T100："), 3 if command == '/查榜线' else 1)
             self.assertIsNone(reply.image)
@@ -596,11 +596,11 @@ class CutoffTests(unittest.TestCase):
         pages = tuple(PreparedReply(f"song{i}", b"image") for i in range(4))
         batch = [PreparedReply("all songs", pages=pages), PreparedReply("next")]
         expanded = _expand_replies(batch)
-        self.assertEqual([p.text for p in expanded], ["song0", "song1", "song2", "song3", "next"])
+        self.assertEqual([p.text.splitlines()[0] for p in expanded], ["song0", "song1", "song2", "song3", "next"])
         expanded = _expand_replies(batch + [PreparedReply("last")])
-        self.assertEqual([p.text for p in expanded][1:], ["next", "last"])
-        self.assertTrue(expanded[0].text.startswith("all songs\n"))
-        self.assertIn("容量不足", expanded[0].text)
+        self.assertEqual([p.text.splitlines()[0] for p in expanded], ["song0", "song1", "song2", "song3", "next"])
+        self.assertEqual([p.text for p in expanded[-1].context.remaining], ["last"])
+        self.assertIn("/继续", expanded[-1].text)
         send = AsyncMock(side_effect=TimeoutError("unknown"))
         message = SimpleNamespace(id="fake", _api=SimpleNamespace(post_group_message=send))
         with patch("ournotes_bot.platforms.qq.qq._upload_image", new=AsyncMock(return_value={"file_info": "fake"})):

@@ -839,3 +839,38 @@ def render_catalog(answer, locale: str = "zh") -> bytes | None:
         return detail(answer.cards[0], locale)
     return grid(answer.visible, answer.request.query, locale, answer.footer,
                 support=answer.request.support) if answer.visible else None
+
+
+# Native-scale renderers reuse small decoded release-pinned artwork. Return owned
+# copies so concurrent callers can close/paste without mutating cached images.
+from collections import OrderedDict
+import threading
+_NATIVE_ASSETS = OrderedDict()
+_NATIVE_ASSET_BYTES = 0
+_NATIVE_ASSET_LOCK = threading.Lock()
+_NATIVE_ASSET_LIMIT = 32_000_000
+
+
+def load_visual_asset(url, size):
+    """Validated transparent artwork; caller owns the returned image."""
+    from .sources.haneoka.catalog_assets import is_catalog_asset
+    global _NATIVE_ASSET_BYTES
+    pinned = is_catalog_asset(url)
+    key = (url, size)
+    if pinned:
+        with _NATIVE_ASSET_LOCK:
+            if key in _NATIVE_ASSETS:
+                _NATIVE_ASSETS.move_to_end(key)
+                return _NATIVE_ASSETS[key].copy()
+    image = _asset(url, size, contain=True)
+    cost = image.width * image.height * 4 if image is not None else 0
+    if pinned and image is not None and cost <= _NATIVE_ASSET_LIMIT:
+        with _NATIVE_ASSET_LOCK:
+            if key not in _NATIVE_ASSETS:
+                while _NATIVE_ASSETS and _NATIVE_ASSET_BYTES + cost > _NATIVE_ASSET_LIMIT:
+                    _, old = _NATIVE_ASSETS.popitem(last=False)
+                    _NATIVE_ASSET_BYTES -= old.width * old.height * 4
+                    old.close()
+                _NATIVE_ASSETS[key] = image.copy()
+                _NATIVE_ASSET_BYTES += cost
+    return image

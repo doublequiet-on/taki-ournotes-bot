@@ -56,3 +56,12 @@ Lv.5：61队长为蓝色成员表演+102%、夢限大みゅーたいぷ成员表
 ### 维护者提供的彩蛋图片
 
 `src/ournotes_bot/platforms/qq/assets/card-947.jpg` 为维护者在本次需求中提供的原始截图，仅用于 QQ 完整指令 `/查卡 947` 的固定图片回复，不进入 Our Notes 卡牌目录或查询事实。截图中的游戏角色与素材权利归原权利方，不代表本项目的代码许可覆盖这些素材。
+
+
+## 统一美工素材
+
+Noto Sans SC 与 Roboto 字体以 SIL Open Font License 1.1 分发，许可证在 `rendering/assets/*-OFL.txt`。仅字体随包分发；字体来源分别为 Google Fonts 的 ofl/notosanssc 与 ofl/roboto。
+
+游戏稀有度、觉醒图标固定于 Haneoka JP release `r-d9e6e6e773a4bd9e090b`；原 note atlas/config 来自公开 `haneoka-gakuen/cassiopeia-plugin-our-notes` 提交 `cb2b6e470b6e99f30bfa81a88520cbd1c26055dd` 的 `src/assets/note-skins/skin001.*`。该上游代码为 MPL-2.0，不能据此推定游戏素材授权。项目仅保存 URL／校验和，运行时下载，不将游戏图片、atlas 或上游配置加入发行包。本地 note 绘制器为独立实现。
+
+`visual_skill_contracts.json` 为本项目确认的中文短摘要及机制指纹，不包含上游 Master 或上游程序实现。机制变化不沿用旧摘要。字体缓存、原创渐变边框及布局由本项目实现。

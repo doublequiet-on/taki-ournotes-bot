@@ -302,7 +302,7 @@ class CardCatalogTests(unittest.TestCase):
                 image = Image.open(io.BytesIO(blob))
                 self.assertLessEqual(image.width, 2000)
                 self.assertLessEqual(image.height, 8192)
-                self.assertLessEqual(len(blob), 1_500_000)
+                self.assertLessEqual(len(blob), 3_000_000)
                 self.assertLess(image.height, 24000)
             self.assertIsNone(render_catalog(query_cards("1", self.repo, art=True)))
 

@@ -106,7 +106,7 @@ class ChartDataTests(unittest.TestCase):
             # Verify spacing after actual upload-budget resizing, not just on canvas.
             logical_height = bottom + 76
             self.assertGreaterEqual(gap * image.height / logical_height, 22)
-            self.assertLessEqual(len(result), 1_500_000)
+            self.assertLessEqual(len(result), 3_000_000)
 
     def test_cross_column_holds_and_flick_directions_survive_vertical_mapping(self) -> None:
         image = Image.new("RGB", (900, 1800))

@@ -1,0 +1,171 @@
+"""Regressions caught by comparing the approved art with native output."""
+import io
+import unittest
+from dataclasses import replace
+from unittest.mock import patch
+from PIL import Image
+from ournotes_bot.data import SupportCard, Song, Chart
+from ournotes_bot.rendering import card_detail_layout, song_detail_layout
+from ournotes_bot.rendering.haneoka_theme import Canvas
+
+
+class SampleFidelityTests(unittest.TestCase):
+    def test_memory_uses_max_level_percent_and_continuous_white_surface(self):
+        card=SupportCard(51,'多人卡','灯',('灯',),4,1,3100,4000,3100,'','','')
+        text=[];original=Canvas.text
+        def capture(canvas,x,y,value,*args,**kwargs):
+            text.append(str(value));return original(canvas,x,y,value,*args,**kwargs)
+        with patch.object(Canvas,'text',capture):
+            parts=card_detail_layout.render(card,load=lambda *args:None)
+        self.assertIn('31%',text);self.assertIn('40%',text)
+        self.assertNotIn('3100%',text)
+        with Image.open(io.BytesIO(parts[0].image)) as im:
+            # First stats block: same broad white information surface as the sample.
+            self.assertTrue(all(v>245 for v in im.getpixel((40,980))))
+
+    def test_long_note_ticks_count_and_five_second_window_share_clock(self):
+        score={'events':{'bpm':[{'t':0,'bpm':120}], 'sig':[{'t':0,'sig':[4,4]}],
+                         'skill':[0], 'fever':[[0,1920]]},
+               'notes':[{'type':'long','node':[{'t':0,'pos':0,'size':6},{'t':1920,'pos':0,'size':6}]}]}
+        times=song_detail_layout.judged_times(score)
+        self.assertEqual(times,[0,.25,.5,.75,1,1.25,1.5,1.75,2])
+        data=song_detail_layout.timeline(score)
+        self.assertEqual(data['windows'][0]['count'],9)
+        self.assertEqual(data['windows'][0]['percent'],100)
+
+    def test_unverified_guide_format_does_not_claim_judgment_counts(self):
+        self.assertIsNone(song_detail_layout.judged_times({'events':{'bpm':[{'t':0,'bpm':120}]},
+            'notes':[{'type':'guide','node':[{'t':0},{'t':480}]}]}))
+
+    def test_song_retains_approved_sections_and_compact_difficulty_tiles(self):
+        song=Song(1,'测试',('测试',),'乐队','','','','','',tuple(Chart(name,7,7,100,'') for name in ('EASY','NORMAL','HARD','EXPERT')))
+        drawn=[];original=Canvas.box
+        def capture(canvas,box,*args,**kwargs):
+            drawn.append(tuple(box));return original(canvas,box,*args,**kwargs)
+        with patch.object(Canvas,'box',capture):
+            raw=song_detail_layout.render(song,None,load=lambda *args:None)
+        self.assertIn((136,708,296,808),drawn)
+        with Image.open(io.BytesIO(raw)) as im:self.assertEqual(im.size,(1400,2080))
+
+
+class AlignmentTests(unittest.TestCase):
+    def test_memory_ids_share_row_with_different_portrait_counts(self):
+        from ournotes_bot.rendering import catalog_layout
+        people=[dict(id=i,name={'zh':'灯' if i==1 else str(i)},band=1,order=i) for i in range(1,10)]
+        card=SupportCard(51,'多人卡','灯',('灯',),4,1,3100,4000,3100,'','','')
+        a=replace(card,catalog={'people':people[:1],'character_ids':[1]})
+        b=replace(card,id=52,catalog={'people':people,'character_ids':list(range(1,10))})
+        positions={};original=Canvas.text
+        def capture(canvas,x,y,value,*args,**kwargs):
+            if str(value) in ('ID 51','ID 52'):positions[str(value)]=y
+            return original(canvas,x,y,value,*args,**kwargs)
+        with patch.object(Canvas,'text',capture):
+            catalog_layout.render_list([a,b],'灯',load=lambda *args:None)
+        self.assertEqual(set(positions),{'ID 51','ID 52'})
+        self.assertEqual(positions['ID 51'],positions['ID 52'])
+
+
+class FullChartTests(unittest.TestCase):
+    def test_eight_columns_fit_one_image_without_losing_notes(self):
+        from ournotes_bot.rendering import chart_layout
+        song=Song(1,'测试',('测试',),'乐队','','','','','',(Chart('EXPERT',24,24,62,''),))
+        score={'events':{'bpm':[{'t':0,'bpm':120}]},
+               'notes':[{'type':'tap','t':i*1920,'pos':0,'size':6} for i in range(62)]}
+        with patch.object(chart_layout,'draw_note') as draw:
+            parts=chart_layout.render(song,song.charts,score,'EXPERT',load=lambda *args:None)
+        self.assertEqual(len(parts),1)
+        self.assertEqual(draw.call_count,62)
+        with Image.open(io.BytesIO(parts[0])) as im:
+            self.assertEqual(im.size,(2364,5062))
+        # Original vertical time scale: each bar still occupies 480 pixels.
+        ys=[call.args[2] for call in draw.call_args_list[:8]]
+        self.assertEqual([ys[i]-ys[i+1] for i in range(7)],[480]*7)
+
+
+class RemainingFidelityTests(unittest.TestCase):
+    def test_song_columns_keep_query_numbers_across_parts(self):
+        from ournotes_bot.rendering import song_layout
+        songs=[Song(i,str(i),(str(i),),'乐队','','','','','',()) for i in range(1,6)]
+        labels={};original=Canvas.text
+        def capture(canvas,x,y,value,*args,**kwargs):
+            if ' · ' in str(value) and str(value).split(' · ')[0].isdigit():labels[str(value)]=(x,y)
+            return original(canvas,x,y,value,*args,**kwargs)
+        with patch.object(Canvas,'text',capture),patch.object(song_layout,'MAX_IMAGE_PIXELS',1760*650):
+            parts,ranges=song_layout.render_list(songs,'测试',load=lambda *args:None)
+        self.assertEqual(ranges,((0,4),(4,5)))
+        self.assertEqual(len(parts),2)
+        self.assertEqual(set(labels),{f'{i} · {i}' for i in range(1,6)})
+        self.assertEqual(labels['1 · 1'][0],labels['2 · 2'][0])
+        self.assertLess(labels['2 · 2'][0],labels['3 · 3'][0])
+        self.assertEqual(labels['1 · 1'][1],labels['3 · 3'][1])
+
+    def test_reference_metrics_preserve_warning_and_reject_nonfinite(self):
+        from ournotes_bot.sources.haneoka.catalog_records import song_reference_metrics
+        metric={'referenceId':'legacy-normal-theory-relative-v1','reference':{'downtimeSeconds':30},
+                'sr':.46534359,'score':6.72562192,'eff':2.81324379,'metaWarnings':['canonical-full-combo-mismatch']}
+        docs={'song-meta':{'100104':{'3':{'chart':metric}}}}
+        result=song_reference_metrics({'musicId':100104},docs)['EXPERT']
+        self.assertEqual(result['warnings'],['canonical-full-combo-mismatch'])
+        self.assertEqual(result['downtime_seconds'],30)
+        self.assertEqual(song_reference_metrics({'musicId':100104},{}),{})
+        metric['score']=float('nan')
+        with self.assertRaises(ValueError):song_reference_metrics({'musicId':100104},docs)
+
+
+class ChartMarkerTests(unittest.TestCase):
+    def test_column_boundary_skill_once_and_fever_continues(self):
+        from ournotes_bot.rendering.chart_layout import draw_markers
+        from unittest.mock import Mock
+        c=Mock();events={'skill':[0,15360], 'fever':[[15000,16000]]}
+        draw_markers(c,events,100,200,100,3940,0,15360)
+        labels=[call.args[2] for call in c.text.call_args_list]
+        self.assertIn('S1',labels);self.assertNotIn('S2',labels);self.assertIn('1',labels)
+        c.reset_mock()
+        draw_markers(c,events,100,200,100,3940,15360,30720)
+        labels=[call.args[2] for call in c.text.call_args_list]
+        self.assertIn('S2',labels);self.assertNotIn('S1',labels);self.assertIn('1',labels)
+        skill=next(call for call in c.text.call_args_list if call.args[2]=='S2')
+        self.assertEqual(skill.args[1],3940)
+
+    def test_all_song_images_use_game_integer_level(self):
+        from ournotes_bot.rendering import song_layout,chart_layout
+        song=Song(1,'测试',('测试',),'乐队','','','','','',(Chart('EXPERT',25,25.5,100,''),))
+        labels=[];original=Canvas.text
+        def capture(canvas,x,y,value,*args,**kwargs):
+            labels.append(str(value));return original(canvas,x,y,value,*args,**kwargs)
+        for render in [lambda:song_layout.render_list([song],'测试',load=lambda *a:None),
+                       lambda:song_detail_layout.render(song,None,load=lambda *a:None),
+                       lambda:chart_layout.render(song,song.charts,None,'EXPERT',load=lambda *a:None)]:
+            labels.clear()
+            with patch.object(Canvas,'text',capture):render()
+            self.assertIn('25',labels);self.assertNotIn('25.5',labels)
+
+
+class SkillWindowMarkerTests(unittest.TestCase):
+    def test_end_time_accounts_for_tempo_change(self):
+        from ournotes_bot.rendering.chart_layout import skill_end_tick
+        self.assertEqual(skill_end_tick(0,[{'t':0,'bpm':120},{'t':1920,'bpm':240}]),7680)
+        self.assertEqual(skill_end_tick(1920,[{'t':0,'bpm':120}]),6720)
+        self.assertIsNone(skill_end_tick(0,[]))
+
+    def test_window_end_in_next_column_is_drawn_at_correct_height(self):
+        from ournotes_bot.rendering.chart_layout import draw_markers
+        from unittest.mock import Mock
+        c=Mock();events={'skill':[15000],'bpm':[{'t':0,'bpm':120}]}
+        draw_markers(c,events,100,200,100,3940,0,15360)
+        self.assertEqual(sum(v.args[2]=='S1' for v in c.text.call_args_list),1)
+        c.reset_mock()
+        draw_markers(c,events,100,200,100,3940,15360,30720)
+        label=c.text.call_args_list[0]
+        self.assertEqual(label.args[2],'S1')
+        self.assertEqual(label.args[1],2830)
+        self.assertEqual(c.box.call_count,2)  # Outlined end marker.
+
+
+class DetailTableLabelsTests(unittest.TestCase):
+    def test_conditional_score_growth_labels_preserve_all_values(self):
+        from ournotes_bot.rendering.card_detail_layout import table_rows
+        descriptions=[f'在COMBO激奏中，每达成10次激奏COMBO 得分提升{v}%（最高{v*10}%）若为「Ave Mujica」成员 则得分提升{v*2}%' for v in (2,2.5,3,3.5,5)]
+        rows=table_rows(descriptions)
+        self.assertEqual([r[0] for r in rows],['每次增幅','累计上限','乐队增幅'])
+        self.assertEqual([r[1][-1] for r in rows],['5%','50%','10%'])

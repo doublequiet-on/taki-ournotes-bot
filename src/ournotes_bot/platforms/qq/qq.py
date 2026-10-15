@@ -172,7 +172,7 @@ class PreparedReply:
     image: bytes | None = None
     pages: tuple[PreparedReply, ...] = ()
     complete_text: bool = False
-    context: QueryContext | None = None
+    context: QueryContext | DeliveryCursor | None = None
     budget_label: str = "查榜线"
     fallback_texts: tuple[str, ...] = ()
 
@@ -181,34 +181,57 @@ class PreparedReply:
         return max(1, len(self.fallback_texts))
 
 
+@dataclass(frozen=True)
+class DeliveryCursor:
+    query_context: QueryContext | None
+    remaining: tuple[PreparedReply, ...]
+    sent: int
+    total: int
+    uncertain: bool = False
+
+    @property
+    def retained_bytes(self):
+        return sum(len(p.image or b'') + len(p.text.encode('utf-8')) for p in self.remaining)
+
+
+def _fallback_cursor(reply):
+    previous=reply.context if isinstance(reply.context,DeliveryCursor) else None
+    query=previous.query_context if previous else reply.context
+    chunks=_text_chunks(reply.text)
+    pages=tuple(PreparedReply(t,context=query if i==len(chunks)-1 else None) for i,t in enumerate(chunks))
+    pages+=previous.remaining if previous else ()
+    return DeliveryCursor(None,pages,0,len(pages))
+
+
+def _text_chunks(text,limit=1700):
+    return tuple(text[i:i+limit] for i in range(0,len(text),limit)) or ('',)
+
+
 def _expand_replies(replies: list[PreparedReply], reserve: int = 0) -> list[PreparedReply]:
-    """Budget all pages before any send. Text fallback uses the captured complete result."""
-    expanded = []
-    for index, reply in enumerate(replies):
-        available = QQ_PASSIVE_REPLY_LIMIT - reserve - sum(r.passive_slots for r in expanded) - (len(replies) - index - 1)
-        if reply.pages and len(reply.pages) <= available:
-            expanded.extend(reply.pages)
-        elif reply.pages or (reply.complete_text and reply.image is None):
-            # Conservative local text budget, not a claim about QQ's platform hard limit.
-            chunks, current = [], ""
-            fallback = reply.text + ("\n本次容量不足，改用完整数值；可拆开命令或缩小排名区间。" if reply.pages else "")
-            for line in fallback.splitlines(keepends=True):
-                if current and len(current) + len(line) > 1800:
-                    chunks.append(current)
-                    current = ""
-                while len(line) > 1800:
-                    chunks.append(line[:1800])
-                    line = line[1800:]
-                current += line
-            if current:
-                chunks.append(current)
-            if len(chunks) <= available:
-                expanded.extend(PreparedReply(chunk) for chunk in chunks)
+    """Budget a single ordered captured batch, including multi-command overflow."""
+    pages=[]
+    base=replies[0].context if len(replies)==1 and isinstance(replies[0].context,DeliveryCursor) else None
+    for reply in replies:
+        for part in reply.pages or (reply,):
+            if part.fallback_texts:
+                part=replace(part,text='\n'.join(part.fallback_texts),fallback_texts=())
+            if part.image is None and len(part.text)>1800:
+                chunks=_text_chunks(part.text)
+                pages.extend(PreparedReply(t,context=part.context if i==len(chunks)-1 else None) for i,t in enumerate(chunks))
             else:
-                label = reply.budget_label
-                expanded.append(PreparedReply(f"本次完整{label.removeprefix('查')}结果超过回复预算，无法完整发送；请将 /{label} 单独发送或缩小单次输出范围。"))
-        else:
-            expanded.append(reply)
+                pages.append(part)
+    available=max(1,QQ_PASSIVE_REPLY_LIMIT-reserve)
+    prior=base.sent if base else 0
+    total=base.total if base else len(pages)
+    keep=bool(base or len(pages)>available or any(r.pages for r in replies))
+    expanded=[]
+    for offset,page in enumerate(pages[:available]):
+        if keep:
+            query=(page.context if isinstance(page.context,QueryContext) else base.query_context if base else None) if len(replies)==1 else None
+            cursor=DeliveryCursor(query,tuple(pages[offset+1:]),prior+offset+1,total)
+            suffix=f'\n结果 {cursor.sent}/{total}'+('；/继续 发送剩余结果。' if cursor.remaining else '')
+            page=replace(page,text=page.text+suffix,context=cursor)
+        expanded.append(page)
     return expanded
 
 
@@ -476,7 +499,7 @@ def _prepare_reply(content: str, repository: SongRepository,
     if not reply:
         logger.info("未识别为查询，不回复；内容=%s", describe(content))
         return None
-    candidate = capture_context(result, repository, catalog_before=before)
+    candidate = capture_context(result, repository, catalog_before=before, complete=True)
     prepared = _render_prepared(reply, result, repository, locale_for(content), candidate)
     logger.info("查询完成；内容=%s 文本=%d字 图片=%s 耗时=%.0fms",
                 describe(content), len(reply),
@@ -486,6 +509,17 @@ def _prepare_reply(content: str, repository: SongRepository,
 
 def _prepare_followup(context, operation, repository):
     from ...structured_query import answer_for
+    if isinstance(context,DeliveryCursor):
+        if context.uncertain:
+            return PreparedReply('上一张图片的发送回执不确定，暂不自动重发，请重新查询。')
+        if operation.kind == 'continue':
+            return (PreparedReply('',pages=context.remaining,context=context) if context.remaining
+                    else PreparedReply('本次查询的图片已经全部发送。',context=context))
+        context=context.query_context
+        if context is None:
+            return PreparedReply('此结果支持 /继续；选择卡牌或歌曲请先查询对应列表。')
+    if operation.kind == 'continue':
+        return PreparedReply('本次查询的图片已经全部发送。',context=context)
     try:
         outcome = execute_followup(context, operation, repository)
         if isinstance(outcome, str):
@@ -501,11 +535,176 @@ def _prepare_followup(context, operation, repository):
         return PreparedReply("查询暂时失败，请稍后重试。")
 
 
+def _visual_asset(url,size):
+    from ...visuals import load_visual_asset
+    return load_visual_asset(url,size)
+
+
+def _complete_list_reply(result,repository,locale,candidate):
+    if result is None or result.status != 'success':
+        return None
+    if isinstance(result,QueryResult) and result.spec.field:
+        return None
+    cards=();songs=();label=''
+    if result.catalog is not None:
+        answer=result.catalog
+        if answer.request.mode != 'list':return None
+        cards=answer.cards;label=answer.request.query
+    elif result.song_selection is not None:
+        songs=result.song_selection.songs;label=result.song_selection.request.query
+    elif isinstance(result,QueryResult):
+        if result.spec.intent == 'chart' or (result.spec.subject and result.spec.subject.kind in {'song','card','support_card'}):return None
+        cards=result.cards or result.support_cards;songs=result.songs;label=result.spec.query_label()
+    elif result.parsed[0] in {'songs','cards','support_cards'}:
+        kind,label,_=result.parsed
+        if kind!='songs' and label.isdigit():return None
+        cards=result.cards or result.support_cards;songs=result.songs
+    else:return None
+    page=(result.catalog.request.page if result.catalog else result.song_selection.page if result.song_selection else
+          result.spec.page if isinstance(result,QueryResult) else int(result.parsed[2] or 1))
+    if page<1 or page>max(1,(len(cards or songs)+15)//16):return None
+    if cards:
+        from ...rendering.catalog_layout import render_list
+        parts,records,ranges=render_list(cards,label,locale,load=_visual_asset)
+    elif songs:
+        from ...rendering.song_layout import render_list
+        parts,ranges=render_list(songs,label,locale,load=_visual_asset);records=tuple(songs)
+    else:return None
+    if candidate is not None and not candidate.complete:
+        candidate=capture_context(result,repository,catalog_before=candidate.version[0],complete=True)
+    if candidate is not None:
+        # Preserve the original difficulty/selection metadata while aligning IDs.
+        by_id={v.entity_id:v for v in candidate.visible}
+        candidate=replace(candidate,visible=tuple(by_id[r.id] for r in records))
+    pages=[]
+    from ...data import localized_text
+    for part,(start,stop) in zip(parts,ranges):
+        text='\n'.join(f'{i+1}. ID {r.id} '+localized_text(r,'title',locale)+' · '+
+                       (localized_text(r,'character',locale)+'\n'+'\n'.join(localized_text(skill,'description',locale) for skill in r.skills)
+                        if hasattr(r,'skills') else localized_text(r,'band',locale)+' · '+' / '.join(f'{ch.difficulty} {ch.display_level:g} ({ch.notes if ch.notes is not None else "?"} Note)' for ch in r.charts))
+                       for i,r in enumerate(records[start:stop],start))
+        text+=f'\n共 {len(records)} 条，本图 {start+1}–{stop}。'
+        if cards:
+            from ...query.card_catalog import catalog_notice
+            text += catalog_notice(records)
+        ctx=replace(candidate,visible=candidate.visible[:stop]) if candidate else None
+        pages.append(PreparedReply(text,part.image,context=ctx))
+    return pages[0] if len(pages)==1 else PreparedReply('',pages=tuple(pages),context=candidate)
+
+
+def _detail_card(result, repository):
+    if result is None or result.status!='success':return None
+    card=None
+    if result.catalog is not None and result.catalog.request.mode=='detail':
+        card=result.catalog.cards[0]
+    elif isinstance(result,QueryResult):
+        if result.spec.field or not result.spec.subject:return None
+        if result.spec.intent=='card' and result.cards:card=repository.card_with_detail(result.cards[0])
+        if result.spec.intent=='support_card' and result.support_cards:card=repository.support_card_with_detail(result.support_cards[0])
+    elif result.parsed[0] in {'cards','support_cards'} and result.parsed[1].isdigit():
+        if result.cards:card=repository.card_with_detail(result.cards[0])
+        elif result.support_cards:card=repository.support_card_with_detail(result.support_cards[0])
+    return card
+
+
+def _complete_detail_reply(result,repository,locale,candidate):
+    card = _detail_card(result, repository)
+    if card is None:return None
+    from ...query.card_catalog import detail_text
+    from ...rendering.card_detail_layout import render
+    text = detail_text(card, locale)
+    parts = render(card, locale, load=_visual_asset)
+    pages = tuple(PreparedReply(text, p.image, context=candidate) for p in parts)
+    return pages[0] if len(pages) == 1 else PreparedReply(text, pages=pages, context=candidate)
+
+
+def _complete_chart_reply(result,repository,locale,candidate):
+    if result is None:return None
+    if isinstance(result,QueryResult):
+        if result.spec.field or result.spec.intent!='chart' or result.chart is None:return None
+        song,charts=result.chart
+    else:
+        if result.parsed[0]!='chart' or not result.songs:return None
+        song=result.songs[0];difficulty=result.parsed[2]
+        charts=tuple(c for c in song.charts if difficulty is None or c.difficulty==difficulty)
+    preview=next((c for c in charts if c.difficulty=='EXPERT'),charts[-1] if charts else None)
+    score=None;notice=''
+    if preview:
+        try:
+            if repository.chart_source=='moenotes':score=load_chart_score(song,preview)
+            else:
+                captured=load_chart_data(song,preview,source=repository.chart_source);score=captured.score;notice=captured.notice(locale)
+        except ChartDataError:
+            notice='谱面暂不可用'
+    from ...rendering.chart_layout import render
+    pages=render(song,charts,score,preview.difficulty if preview else None,locale,load=_visual_asset,notice=notice)
+    text=f'{song.title} · ID {song.id} · '+notice+'\n'+' / '.join(f'{c.difficulty} {c.display_level:g} · {c.notes} Notes' for c in charts)
+    replies=tuple(PreparedReply(text,image,context=candidate) for image in pages)
+    return replies[0] if len(replies)==1 else PreparedReply('',pages=replies,context=candidate)
+
+
+def _song_detail_reply(result,repository,locale,candidate):
+    if result is None or len(result.songs)!=1 or result.catalog or result.song_selection:return None
+    from ...data import normalize
+    song=result.songs[0]
+    if isinstance(result,QueryResult):
+        if result.spec.intent!='song' or result.spec.field or not result.spec.subject or result.spec.subject.kind!='song':return None
+    elif result.parsed[0]!='songs' or (result.parsed[1]!=str(song.id) and normalize(result.parsed[1]) not in {normalize(t) for t in song.titles+(song.title,)}):return None
+    score=None;selected=next((c for c in song.charts if c.difficulty=='EXPERT'),None)
+    if selected:
+        try:
+            score=load_chart_score(song,selected) if repository.chart_source=='moenotes' else load_chart_data(song,selected,source=repository.chart_source).score
+        except ChartDataError:pass
+    logos=song.catalog.get('band_logos',[])
+    from ...rendering.song_detail_layout import render
+    from ...data import localized_text
+    text=f'{localized_text(song,"title",locale)} · ID {song.id} · '+localized_text(song,'band',locale)
+    text+='\n'+' / '.join(f'{ch.difficulty} {ch.display_level:g} · {ch.notes if ch.notes is not None else "?"} Note' for ch in song.charts)
+    if song.traits:text+='\n激奏：'+' → '.join(song.traits.missions or ())
+    text+='\n乐曲时长（毫秒）：'+str(song.catalog.get('duration_ms') or '未获取')
+    if score:
+        from ...rendering.song_detail_layout import seconds_at
+        events=score.get('events',{});bpms=events.get('bpm',[])
+        text+='\nBPM：'+', '.join(str(v['bpm']) for v in bpms)
+        text+='\n技能点位（秒）：'+', '.join(str(seconds_at(t,bpms)) for t in events.get('skill',[]))
+    for label,rows in [('得分奖励',song.catalog.get('score_rewards',[])),('EXPERT 连击奖励',song.catalog.get('combo_rewards',{}).get('expert',[]))]:
+        text+='\n'+label+'：'+' / '.join(str(row['tier'])+' '+(row['label'].get(locale) or row['label'].get('ja') or '道具')+' ×'+str(row['count']) for row in rows)
+    return PreparedReply(text,render(song,score,locale,load=_visual_asset,band_logos=logos),context=candidate)
+
+
 def _render_prepared(reply, result, repository, locale, candidate=None):
+    from ...rendering.haneoka_theme import game_assets
+    from ...sources.haneoka.game_assets import asset_bytes
+    from ...config import runtime_data_dir
+    with game_assets(lambda name: asset_bytes(name, runtime_data_dir() / 'game-assets')):
+        return _render_prepared_inner(reply, result, repository, locale, candidate)
+
+
+def _render_prepared_inner(reply, result, repository, locale, candidate=None):
     try:
+        full = None if result is not None and result.cutoff is not None else (_song_detail_reply(result, repository, locale, candidate) or
+                _complete_list_reply(result, repository, locale, candidate) or
+                _complete_detail_reply(result, repository, locale, candidate) or
+                _complete_chart_reply(result, repository, locale, candidate))
+        if full is not None:
+            return full
         if result is not None and result.cutoff is not None:
-            from ...rendering.event_cutoff_visuals import render_cutoff, load_artwork
-            pages = render_cutoff(result.cutoff, asset_loader=lambda event, urls: load_artwork(repository.event_cutoffs, event, urls))
+            from ...rendering.event_cutoff_visuals import load_artwork
+            from ...rendering.ranking_layout import render
+            from ...sources.haneoka.ranking_art import cards_for, event_marks, bands_for
+            answer=result.cutoff
+            source=getattr(repository,'_catalog_repository',None)
+            saved=source.saved if source else None
+            from ...data import Card, SupportCard
+            from ...sources.moenotes_events import SERVERS, display_time, zone_label
+            records=cards_for(saved,answer.event.server) if answer.event and not answer.request.numeric_only else ({},{})
+            catalogs=tuple({key:cls(**value) for key,value in rows.items()} for cls,rows in zip((Card,SupportCard),records))
+            assets=load_artwork(repository.event_cutoffs,answer.event,(answer.event.banner,*(b.song.jacket for b in answer.boards))) if answer.event and not answer.request.numeric_only else {}
+            try:
+                pages=render(answer,assets=assets,load=_visual_asset,catalogs=catalogs,song_bands=bands_for(saved,answer.event.server) if answer.event else {},bonus_marks=event_marks(saved,answer.event) if answer.event else (),display_time=display_time,server_label=SERVERS[answer.event.server][0] if answer.event else "",timezone_label=zone_label(answer.event.server) if answer.event else "")
+            finally:
+                for asset in assets.values():
+                    if asset is not None:asset.close()
             if len(pages) == 1:
                 return PreparedReply(pages[0].text, pages[0].image, complete_text=True)
             if pages:
@@ -515,11 +714,57 @@ def _render_prepared(reply, result, repository, locale, candidate=None):
     except Exception as exc:
         logger.warning("图片生成失败，改用文字；错误类型=%s", type(exc).__name__)
         image = None
+        reply, candidate = _complete_fallback(reply, result, locale, candidate, repository)
     if (image is None and result is not None and result.catalog is not None
             and result.catalog.request.mode == "art" and not result.catalog.error):
         reply += "\n卡面图片暂不可用，请稍后重试。"
     return PreparedReply(reply, image, complete_text=result is not None and result.cutoff is not None,
                          context=candidate)
+
+
+def _complete_fallback(reply, result, locale, candidate, repository):
+    """A failed renderer must not restore the former first-page truncation."""
+    if result is not None and result.cutoff is not None:
+        return result.cutoff.text, candidate
+    if result is None or result.status != 'success':
+        return reply, candidate
+    if isinstance(result, QueryResult) and result.spec.field:
+        return reply, candidate
+    if result.cutoff is not None:
+        return result.cutoff.text, candidate
+    card = _detail_card(result, repository)
+    if card is not None:
+        from ...query.card_catalog import detail_text
+        return detail_text(card, locale), candidate
+    from ...data import localized_text
+    cards = result.cards or result.support_cards
+    songs = result.songs
+    if result.catalog is not None:
+        if result.catalog.request.mode == 'art':
+            return reply, candidate
+        cards = result.catalog.cards
+    if result.song_selection is not None:
+        songs = result.song_selection.songs
+    if cards:
+        from ...rendering.catalog_layout import ordered
+        records = ordered(cards)
+        rows = [f'{i}. ID {card.id} '+localized_text(card,'title',locale)+' · '+
+                localized_text(card,'character',locale)+'\n'+'\n'.join(
+                    localized_text(skill,'name',locale)+'：'+localized_text(skill,'description',locale)
+                    for skill in card.skills) for i,card in enumerate(records,1)]
+    elif songs:
+        records = songs
+        rows = [f'{i}. ID {song.id} '+localized_text(song,'title',locale)+' · '+
+                localized_text(song,'band',locale)+'\n'+' / '.join(
+                    f'{chart.difficulty} {chart.display_level:g} · {chart.notes if chart.notes is not None else "?"} Note'
+                    for chart in song.charts) for i,song in enumerate(records,1)]
+    else:
+        return reply, candidate
+    if candidate is not None:
+        choices = {choice.entity_id:choice for choice in candidate.visible}
+        candidate = replace(candidate,visible=tuple(choices[r.id] for r in records))
+    from ...query.card_catalog import catalog_notice
+    return '\n\n'.join(rows)+f'\n共 {len(records)} 条。'+(catalog_notice(records) if cards else ''), candidate
 
 
 async def _upload_image(api, target_id: str, image: bytes, group: bool):
@@ -584,14 +829,33 @@ async def _deliver_reply(message, target_id: str, group: bool, reply: PreparedRe
     target = {"group_openid" if group else "openid": target_id,
               "msg_id": message.id, "msg_seq": msg_seq}
     channel = "群聊" if group else "单聊"
+    user = getattr(getattr(message, "author", None), "member_openid", None) if group else None
+    def addressed(text):
+        if not user:
+            return text
+        from html import escape
+        return f'<qqbot-at-user id="{escape(user, quote=True)}" /> ' + (text or "")
     if reply.image:
         try:
             media = await _upload_image(message._api, target_id, reply.image, group)
         except Exception as exc:
             logger.warning("%s图片上传失败，改用文字；错误类型=%s", channel, type(exc).__name__)
+            if len(reply.text)>1800:
+                try:
+                    receipt=_receipt(await send(**target,msg_type=0,content=addressed('图片上传失败，完整文字已保留；发送 /继续 查看。')))
+                except Exception as error:
+                    logger.error('%s失败提示发送回执不确定；错误类型=%s',channel,type(error).__name__)
+                    return DeliveryOutcome('uncertain')
+                return DeliveryOutcome('fallback_pending' if receipt.confirmed else receipt.status)
         else:
             try:
-                outcome = _receipt(await send(**target, msg_type=7, media=media))
+                caption={}
+                if isinstance(reply.context,DeliveryCursor):
+                    cursor=reply.context
+                    caption['content']=f'图片 {cursor.sent}/{cursor.total}'+('；/继续 发送其余图片。' if cursor.remaining else '；本次已全部发送。')
+                if user:
+                    caption["content"] = addressed(caption.get("content", ""))
+                outcome = _receipt(await send(**target, msg_type=7, media=media, **caption))
             except Exception as exc:
                 logger.error("%s图片发送失败，结果不确定，不自动重发；错误类型=%s", channel, type(exc).__name__)
                 return DeliveryOutcome("uncertain")
@@ -600,7 +864,7 @@ async def _deliver_reply(message, target_id: str, group: bool, reply: PreparedRe
             return outcome
     for offset, chunk in enumerate(reply.fallback_texts or (reply.text,)):
         try:
-            outcome = _receipt(await send(**{**target, "msg_seq": msg_seq + offset}, msg_type=0, content=chunk))
+            outcome = _receipt(await send(**{**target, "msg_seq": msg_seq + offset}, msg_type=0, content=addressed(chunk)))
         except Exception as exc:
             logger.error("%s文字发送失败，结果不确定，不自动重发；错误类型=%s", channel, type(exc).__name__)
             return DeliveryOutcome("uncertain")
@@ -637,8 +901,18 @@ async def reply_commands(message, target_id, group, commands, *, gate, repositor
                 reply = (await gate.prepare_followup(current, operation, repository)
                          if current is not None else PreparedReply(MISSING))
                 await sequencer.wait_turn(ticket)
-                outcome = await _deliver_reply(message, target_id, group, reply)
-                contexts.commit(followup_lease, reply.context, confirmed=outcome.confirmed)
+                seq=1
+                for part in _expand_replies([reply]):
+                    outcome = await _deliver_reply(message, target_id, group, part, msg_seq=seq)
+                    seq += part.passive_slots
+                    if outcome.confirmed:
+                        contexts.commit(followup_lease, part.context, confirmed=True)
+                    else:
+                        if outcome.status == 'fallback_pending':
+                            contexts.commit(followup_lease,_fallback_cursor(part),confirmed=True)
+                        if outcome.status == 'uncertain' and isinstance(part.context,DeliveryCursor):
+                            contexts.commit(followup_lease, replace(part.context,uncertain=True), confirmed=True)
+                        break
             if key is None:
                 await followup()
             else:
@@ -653,8 +927,14 @@ async def reply_commands(message, target_id, group, commands, *, gate, repositor
         for reply in replies:
             outcome = await _deliver_reply(message, target_id, group, reply, msg_seq=seq)
             seq += reply.passive_slots
-            if len(candidates) == 1 and outcome.confirmed and reply.context is not None:
+            if (len(commands) == 1 or isinstance(reply.context,DeliveryCursor)) and outcome.confirmed and reply.context is not None:
                 confirmed_candidate = reply.context
+            if not outcome.confirmed:
+                if outcome.status == 'fallback_pending':
+                    confirmed_candidate=_fallback_cursor(reply)
+                if outcome.status == 'uncertain' and isinstance(reply.context,DeliveryCursor):
+                    confirmed_candidate = replace(reply.context,uncertain=True)
+                break
         if overflow and seq <= QQ_PASSIVE_REPLY_LIMIT:
             notice = PreparedReply(tr(locale_for(commands[0]), "too_many_commands", limit=limit, total=len(commands)))
             await _deliver_reply(message, target_id, group, notice, msg_seq=seq)

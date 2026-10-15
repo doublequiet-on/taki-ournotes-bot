@@ -15,6 +15,7 @@ from ournotes_bot.data import Card, Chart, Song, SongRepository, SupportCard
 from ournotes_bot.platforms.qq.qq import PreparedReply, _deliver_reply, _prepare_reply, run_bot
 from ournotes_bot.structured_query import songs_for
 from ournotes_bot.sources.yatta import BASE
+from ournotes_bot.rendering.readable_pages import ImagePart
 
 
 class ReplyPipelineTests(unittest.TestCase):
@@ -47,16 +48,16 @@ class ReplyPipelineTests(unittest.TestCase):
 
     def test_direct_and_natural_text_images_share_one_selection(self):
         with patch("ournotes_bot.commands.song_matches", wraps=song_matches) as select, \
-             patch("ournotes_bot.platforms.qq.qq.render_song_list", return_value=b"image") as render:
+             patch("ournotes_bot.rendering.song_detail_layout.render", return_value=b"image") as render:
             result = _prepare_reply("/查曲 迷星叫", self.repo, self.parser)
         self.assertEqual(result.image, b"image")
         self.assertIn("100001", result.text)
         self.assertEqual(select.call_count, 1)
-        self.assertEqual([song.id for song in render.call_args.args[0]], [100001])
+        self.assertEqual(render.call_args.args[0].id, 100001)
 
         with patch("ournotes_bot.structured_query.songs_for", wraps=songs_for) as select, \
              patch.object(self.parser, "_request", side_effect=AssertionError("AI should not be called")), \
-             patch("ournotes_bot.platforms.qq.qq.render_song_list", return_value=b"natural image") as render:
+             patch("ournotes_bot.rendering.song_layout.render_list", return_value=((ImagePart(b"natural image",0,1),),((0,1),))) as render:
             result = _prepare_reply("/问 MyGO的歌有哪些", self.repo, self.parser)
         self.assertEqual(result.image, b"natural image")
         self.assertIn("100001", result.text)
@@ -67,7 +68,7 @@ class ReplyPipelineTests(unittest.TestCase):
         from ournotes_bot.query.song_identity import unique_candidates
         with patch("ournotes_bot.query.song_identity.unique_candidates", wraps=unique_candidates) as select, \
              patch("ournotes_bot.platforms.qq.qq.load_chart_score", return_value={"notes": []}), \
-             patch("ournotes_bot.platforms.qq.qq.render_chart", return_value=b"chart") as render:
+             patch("ournotes_bot.rendering.chart_layout.render", return_value=(b"chart",)) as render:
             result = _prepare_reply("/查谱面 100001 EXPERT", self.repo, self.parser)
         self.assertIn("768 Notes", result.text)
         self.assertEqual(result.image, b"chart")
@@ -75,7 +76,7 @@ class ReplyPipelineTests(unittest.TestCase):
         self.assertEqual(render.call_args.args[0].id, 100001)
 
         with patch("ournotes_bot.commands.query_cards", wraps=query_cards) as select, \
-             patch("ournotes_bot.platforms.qq.qq.render_card_list", return_value=b"cards") as render:
+             patch("ournotes_bot.rendering.catalog_layout.render_list", return_value=((ImagePart(b"cards",0,1),),tuple(self.repo.cards),((0,1),))) as render:
             result = _prepare_reply("/查卡 高松灯", self.repo, self.parser)
         self.assertIn("我们现在就在这里", result.text)
         self.assertEqual(result.image, b"cards")
@@ -83,7 +84,7 @@ class ReplyPipelineTests(unittest.TestCase):
         self.assertEqual([card.id for card in render.call_args.args[0]], [1])
 
         with patch("ournotes_bot.commands.query_cards", wraps=query_cards) as select, \
-             patch("ournotes_bot.platforms.qq.qq.render_support_card_list", return_value=b"support cards") as render:
+             patch("ournotes_bot.rendering.catalog_layout.render_list", return_value=((ImagePart(b"support cards",0,1),),tuple(self.repo.support_cards),((0,1),))) as render:
             result = _prepare_reply("/查支援卡 高松灯", self.repo, self.parser)
         self.assertIn("并肩前行", result.text)
         self.assertEqual(result.image, b"support cards")
@@ -105,7 +106,7 @@ class ReplyPipelineTests(unittest.TestCase):
         self.assertIsNone(result.image)
         self.assertNotIn("secret-value", " ".join(log.output))
 
-        with patch("ournotes_bot.platforms.qq.qq.render_song_list", side_effect=RuntimeError("Bearer secret-value")), \
+        with patch("ournotes_bot.rendering.song_detail_layout.render", side_effect=RuntimeError("Bearer secret-value")), \
              self.assertLogs("ournotes_bot.qq", level="WARNING") as log:
             result = _prepare_reply("/查曲 迷星叫", self.repo, self.parser)
         self.assertIn("迷星叫", result.text)

@@ -98,7 +98,8 @@ class SupportDataTests(unittest.TestCase):
         }):
             member = handle_command("/查卡 1", self.repo)
         self.assertIn("成员卡详情", member)
-        self.assertIn("数值状态未核实", member)
+        self.assertIn("满级基础值", member)
+        self.assertIn("表演 10156 / 技巧 7442 / 形象 7179", member)
         self.assertNotIn("24,777", member)
         self.assertIn("队长技能 · 队长", member)
         self.assertIn("LIVE技能 · Live", member)
@@ -108,8 +109,9 @@ class SupportDataTests(unittest.TestCase):
             "statsMax": [600, 500, 400], "skills": support_skills,
         }):
             support = handle_command("/查支援卡 7", self.repo)
-        self.assertIn("支援卡详情", support)
-        self.assertIn("数值状态未核实", support)
+        self.assertIn("留影卡详情", support)
+        self.assertIn("满级基础值", support)
+        self.assertIn("表演 6% / 技巧 5% / 形象 4%", support)
         self.assertNotIn("15%", support)
         self.assertIn("LIVE支援 · 支援", support)
         self.assertIn("击奏支援 · 激奏支援", support)
@@ -146,7 +148,7 @@ class SupportDataTests(unittest.TestCase):
         parser = AIQueryParser(Settings("", "", BASE, self.repo.cache_file, 6))
         answer = parser.answer("/问 支援卡有哪些 页2", self.repo)
         self.assertIn("页码超出范围", answer)
-        self.assertIn("/查支援卡", answer)
+        self.assertIn("/查留影卡", answer)
         self.assertEqual(
             query_page_notice(QuerySpec("support_card", display_name="全部支援卡"), 17, "zh"),
             "第 1/2 页 · 共 17张\n下一页：/问 支援卡有哪些 页2",

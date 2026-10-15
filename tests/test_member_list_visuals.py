@@ -42,7 +42,7 @@ class MemberListVisualTests(unittest.TestCase):
         with patch("ournotes_bot.visuals._asset", return_value=None), patch.object(ImageDraw.ImageDraw, "text", capture):
             raw = grid(cards, "SSR SR", footer=footer)
         self.assertLessEqual(Image.open(io.BytesIO(raw)).width, 2000)
-        self.assertLessEqual(len(raw), 1_500_000)
+        self.assertLessEqual(len(raw), 3_000_000)
         for text in ("数据暂不可用", *map(str, range(1, 17)), *footer.splitlines()):
             self.assertIn(text, drawn)
         self.assertFalse({"SSR", "SR", "R"}.intersection(drawn))

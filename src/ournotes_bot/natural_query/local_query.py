@@ -35,12 +35,12 @@ _SONG_FILLERS = re.compile(
 _ENTITY_QUESTIONS = (
     ("song", re.compile(r"^(?P<term>.+?)\s*的?\s*(?:歌曲|曲目|歌)\s*(?:都?有(?:哪些|什么)|列表)?[?？]?$")),
     ("song", re.compile(r"^(?P<term>.+?)\s*有(?:哪些|什么)\s*(?:歌曲|曲目|歌)[?？]?$")),
-    ("support_card", re.compile(r"^(?P<term>.+?)\s*(?:号)?\s*的?\s*(?:支援卡|支援卡牌)\s*(?:详情|都?有(?:哪些|什么)|列表)?[?？]?$")),
-    ("support_card", re.compile(r"^(?P<term>.+?)\s*有(?:哪些|什么)\s*(?:支援卡|支援卡牌)[?？]?$")),
+    ("support_card", re.compile(r"^(?P<term>.+?)\s*(?:号)?\s*的?\s*(?:留影卡|支援卡|支援卡牌)\s*(?:详情|都?有(?:哪些|什么)|列表)?[?？]?$")),
+    ("support_card", re.compile(r"^(?P<term>.+?)\s*有(?:哪些|什么)\s*(?:留影卡|支援卡|支援卡牌)[?？]?$")),
     ("card", re.compile(r"^(?P<term>.+?)\s*的?\s*(?:成员卡|角色卡|卡牌|卡面|(?<!支援)卡)\s*(?:都?有(?:哪些|什么)|列表)?[?？]?$")),
     ("card", re.compile(r"^(?P<term>.+?)\s*有(?:哪些|什么)\s*(?:成员卡|角色卡|卡牌|卡面|(?<!支援)卡)[?？]?$")),
 )
-_ALL_SUPPORT_CARDS = re.compile(r"^(?:所有|全部)?\s*(?:支援卡|支援卡牌)\s*(?:都?有(?:哪些|什么)|列表)?[?？]?$", re.I)
+_ALL_SUPPORT_CARDS = re.compile(r"^(?:所有|全部)?\s*(?:留影卡|支援卡|支援卡牌)\s*(?:都?有(?:哪些|什么)|列表)?[?？]?$", re.I)
 _SKILL_QUESTIONS = (
     re.compile(r"^(?:(?P<term>.+?)\s*的\s*)?(?P<skill>.+?)技能(?:所属|对应)?的?\s*(?:成员卡|角色卡|卡牌|卡)\s*(?:都?有(?:哪些|什么)|列表)?[?？]?$", re.I),
     re.compile(r"^(?:有哪些|哪些)\s*(?:(?P<term>.+?)\s*的\s*)?(?:成员卡|角色卡|卡牌|卡)\s*(?:有|带有|包含)\s*(?P<skill>.+?)技能[?？]?$", re.I),
@@ -88,7 +88,7 @@ def local_entity_question(query: str, repository: SongRepository) -> QuerySpec |
     if page_match:
         text = text[:page_match.start()].strip()
     if _ALL_SUPPORT_CARDS.fullmatch(text):
-        return QuerySpec("support_card", page=page, display_name="全部支援卡")
+        return QuerySpec("support_card", page=page, display_name="全部留影卡")
     for intent, pattern in _ENTITY_QUESTIONS:
         match = pattern.fullmatch(text)
         if match:
@@ -214,11 +214,11 @@ def local_card_catalog(query: str, repository: SongRepository) -> QuerySpec | st
         member = any(c.id == number for c in repository.cards)
         support_id = any(c.id == number for c in repository.support_cards)
         if member and support_id:
-            return f"ID {number} 同时存在于角色卡与 SNAP，请指定 /查卡 {number} 或 /查支援卡 {number}。"
-    obj = re.search(r"SNAP|支援卡|角色卡|成员卡|卡牌|卡", text, re.I)
+            return f"ID {number} 同时存在于角色卡与 SNAP，请指定 /查卡 {number} 或 /查留影卡 {number}。"
+    obj = re.search(r"SNAP|留影卡|支援卡|角色卡|成员卡|卡牌|卡", text, re.I)
     if not obj or (obj[0].lower() != "snap" and not re.search(r"[=：:]|[红蓝绿黄紫黑白橙青灰]色|JUST|COMBO|LUCK|LIVE\s*(?:分数提升|LIFE回复|判定强化|技能延长)|得意|(?<![A-Za-z])(?:BD|EX)(?![A-Za-z])|(?:SSR|SR|R)[,，或 /]+(?:SSR|SR|R)", text, re.I)):
         return None
-    support = obj[0].lower() in {"snap", "支援卡"}
+    support = obj[0].lower() in {"snap", "留影卡", "支援卡"}
     text = text[:obj.start()] + " " + text[obj.end():]
     text = re.sub(r"^(?:(?:请|帮我|给我|查一下|查询|查看|找一下|列出|看看|想看|查|找)\s*)+", "", text)
     text = re.sub(r"(?:有哪些|有哪几张|列表|所有|的|[？?。])", " ", text).strip()

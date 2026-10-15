@@ -52,3 +52,5 @@ Current 同一 `visuals.py` 还导入业务结果和来源常量；纯基础文�
 image_output 位于 rendering/，主题、素材、通用原语及 _bytes 仍在根 visuals.py。素材允许表与来源常量、文件/网络副作用均保留。公开 bytes API 和编码策略不变；编码器 logger 继续使用 ournotes_bot.image_output。
 
 向上阅读：[仓库 L1](../../../L1.md)。源码文件头提供唯一 L3，具体行为与字段以实现为准。
+
+新增 [haneoka_theme.py](haneoka_theme.py) 的主题与有界缓存、[readable_pages.py](readable_pages.py) 的完整行分段；QQ 新布局使用 `preserve_size=True`，编码超限抛错而不缩字。旧入口仍保留旧编码行为。

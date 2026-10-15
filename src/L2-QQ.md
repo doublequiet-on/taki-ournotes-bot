@@ -15,7 +15,7 @@
 ## Inputs / Outputs
 
 输入为 QQ 事件、Settings、SongRepository；内部 `PreparedReply(text, image)` 输出文字及可选图片字节；外部输出为被动回复或显式菜单变更。群标识、消息 ID 和 `msg_seq` 不进入 Query 事实模型。
-榜线准备结果还可带完整 `pages` 与文字回退标记；`_expand_replies` 在任何发送前核算趋势／排名分页和剩余被动回复数量，必要时改用同一份有界完整文字；放不下时明确拒绝完整发送，不先发送部分表。上传失败退当前页文字；媒体发送不确定时仍不重发。既有 QueryGate／ReplySequencer 与上限保持不变。
+`PreparedReply.pages` 保存完整结果；`_expand_replies` 按被动回复容量发送当前批次，`DeliveryCursor` 保存剩余编码结果供 `/继续`，不重新查询。上传失败退文字，长文字保留续发；媒体发送不确定时阻止自动重发。QueryGate／ReplySequencer 与平台上限保持不变。
 
 ## Core Contracts
 
@@ -29,6 +29,8 @@
 `_deliver_reply` 区分上传失败与发送不确定性。
 `DeliveryOutcome` 只有有效消息 ID 的平台回执才为 success；异常或缺失回执为 uncertain，明确错误码为 failure。`reply_commands` 提取普通身份键，串行处理同用户续查，并在发送确认后提交 `PreparedReply.context`。新完整查询立即清除旧上下文，批内多列表不建立默认上下文；取消和迟到代次不提交。
 [menu.py](ournotes_bot/platforms/qq/menu.py) 的 `setup_menu` 是独立管理入口。
+
+群聊交付由 `_deliver_reply` 使用消息作者的 `member_openid` 在文字和图文内容中加入 QQ 官方 @ 标签；单聊不加。包括续发与失败回退，消息序号、回执和防重复语义保持。独立翻页、选择和难度命令已移除；详情按 ID 查询，待发结果用 `/继续`。菜单定义同步，安装远端菜单仍为显式管理动作。
 
 ## Internal Subsystems
 

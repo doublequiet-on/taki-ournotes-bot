@@ -53,3 +53,5 @@ Haneoka 结构指纹/身份校验仍归 Sources；support_summary 属于此处�
 向上阅读：[仓库 L1](../../../L1.md)。源码文件头提供唯一 L3，具体行为与字段以实现为准。
 
 成员稀有度20（BD）采用粉紫到珊瑚红渐变框，列表和详情共享；SNAP不复用该映射。双效果激奏摘要增加一行条件空间，仍保留完整限制。
+
+QQ 新入口为 [catalog_layout.py](catalog_layout.py)、[card_detail_layout.py](card_detail_layout.py)，捕获完整记录、三种技能与本排对齐；原卡面沿用旧入口。
