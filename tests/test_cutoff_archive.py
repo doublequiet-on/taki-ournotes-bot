@@ -54,7 +54,7 @@ class ArchiveTests(unittest.TestCase):
                 self.assertEqual(answer.status, 'success', answer.text)
                 self.assertEqual(len(answer.boards), 2)
                 self.assertEqual(answer.boards[0].scores[:3], (90, None, 0))
-                self.assertIn('本地历史末次观测', answer.text)
+                self.assertIn('最近一次有效观测', answer.text)
                 self.assertIn('非实时榜', answer.text)
                 self.assertFalse(answer.boards[0].player_ids)
                 self.assertEqual(answer.histories[0][1].total, 2)
@@ -164,7 +164,7 @@ class ArchiveTests(unittest.TestCase):
         event = replace(self.event, songs=(song, self.event.songs[1]))
         self.record(self.history, event, song, (123,), STAMP + 1000)
         self.repo.capture_catalog = lambda: SimpleNamespace(activities=(), songs=(
-            SimpleNamespace(id=101, title='本地中文歌名',
+            SimpleNamespace(id=101, title='本地中文歌名', jacket_url='',
                             titles=('本地中文歌名', 'Catalog English', 'カタログ曲名')),))
         for name in ('記録された曲名', 'Recorded English', '本地中文歌名', 'Catalog English', 'カタログ曲名'):
             with self.subTest(name=name):
@@ -173,12 +173,13 @@ class ArchiveTests(unittest.TestCase):
                 self.assertEqual(answer.boards[0].score(1), 123)
                 self.assertEqual(answer.boards[0].song.title, '本地中文歌名')
 
-    def test_latest_conflict_is_not_hidden_by_older_or_larger_scores(self):
+    def test_latest_conflict_uses_older_whole_observation_and_reports_conflict(self):
         self.record(self.history, self.event, self.event.songs[0], (200,), STAMP + 1000)
         self.record(self.history, self.event, self.event.songs[0], (300,), STAMP + 1000)
         answer = self.ask('活动ID=12 歌曲ID=101')
-        self.assertFalse(answer.boards[0].scores)
-        self.assertIn('质量不可用', answer.text)
+        self.assertEqual(answer.boards[0].scores[:3], (100, None, 0))
+        self.assertEqual(answer.boards[0].fetched_ms, STAMP)
+        self.assertIn('同一时间分数冲突', answer.text)
 
     def test_three_sources_and_region_isolation(self):
         formal = OpenCutoffHistory(self.root / 'open.sqlite3', min_free_mb=0)
@@ -193,7 +194,10 @@ class ArchiveTests(unittest.TestCase):
         self.record(haneoka, self.event, self.event.songs[0], (10,), STAMP + 1000)
         self.assertEqual(self.ask().boards[0].score(1), 10)
         self.record(formal, self.event, self.event.songs[0], (20,), STAMP + 1000)
-        self.assertFalse(self.ask().boards[0].scores)
+        answer = self.ask()
+        self.assertEqual(answer.boards[0].score(1), 100)
+        self.assertEqual(answer.boards[0].fetched_ms, STAMP)
+        self.assertIn('多来源历史冲突', answer.text)
 
     def test_history_budget_does_not_hide_last_snapshot(self):
         with patch.object(self.history, 'read', wraps=lambda e, s, r: CutoffHistory.read(self.history, e, s, r, max_points=0)):
@@ -223,4 +227,108 @@ class ArchiveTests(unittest.TestCase):
             self.assertTrue(pages)
             for page in pages:
                 Image.open(io.BytesIO(page.image)).verify()
-                self.assertIn('本地历史末次观测', page.text)
+                self.assertIn('最近一次有效观测', page.text)
+
+    def test_expired_tail_uses_last_valid_time_scores_and_keeps_database(self):
+        song = self.event.songs[0]
+        self.record(self.history, self.event, song, (90, None, 0), STAMP + 1000)
+        self.record(self.history, self.event, replace(song, effective_end_ms=self.event.end_ms), (999, 888, 777), STAMP + 20000)
+        answer = self.ask('id12 歌曲ID=101 1-3')
+        self.assertEqual(answer.boards[0].scores[:3], (90, None, 0))
+        self.assertEqual(answer.boards[0].fetched_ms, STAMP + 1000)
+        self.assertIn('超出榜单有效期', answer.text)
+        self.assertNotIn('/未获取', answer.text)
+        with closing(sqlite3.connect(self.history.path)) as db:
+            self.assertEqual(db.execute("SELECT count(*) FROM observations WHERE challenge='7'").fetchone()[0], 3)
+
+    def test_no_valid_observation_returns_short_explanation_without_image(self):
+        with closing(sqlite3.connect(self.history.path)) as db, db:
+            db.execute("UPDATE observations SET quality='outside_period'")
+        answer = self.ask('id12 80-100')
+        self.assertEqual(answer.status, 'data_unavailable')
+        self.assertIn('暂无有效历史分数', answer.message)
+        self.assertIn('超出榜单有效期', answer.message)
+        self.assertEqual(render_cutoff(answer), ())
+
+    def test_empty_or_corrupt_tail_is_skipped_without_combining_ranks(self):
+        song = self.event.songs[0]
+        self.record(self.history, self.event, song, (90, None, 0), STAMP + 1000)
+        self.record(self.history, self.event, song, (None,), STAMP + 2000)
+        self.record(self.history, self.event, song, (200,), STAMP + 3000)
+        with closing(sqlite3.connect(self.history.path)) as db, db:
+            db.execute('UPDATE observations SET scores=? WHERE source_ms=?', ('[true,"100"]', STAMP + 3000))
+        board = self.ask('id12 歌曲ID=101').boards[0]
+        self.assertEqual(board.scores[:3], (90, None, 0))
+        self.assertEqual(board.fetched_ms, STAMP + 1000)
+        self.assertIn('分数记录损坏', ' '.join(board.notes))
+
+    def test_old_metadata_enriches_period_banner_and_jacket(self):
+        with closing(sqlite3.connect(self.history.path)) as db, db:
+            db.execute('DROP TABLE event_metadata')
+        self.repo.capture_catalog = lambda: SimpleNamespace(
+            activities=(ActivityInfo(12, '旧活动名', {'ja': 'Old Event'}, 'https://example.org/banner.png',
+                                     (STAMP - 10000) / 1000, (STAMP + 10000) / 1000),),
+            songs=(SimpleNamespace(id=101, title='歌曲甲', titles=('歌曲甲',), jacket_url='https://example.org/song.png'),))
+        event = self.ask().event
+        self.assertEqual((event.start_ms, event.end_ms), (STAMP - 10000, STAMP + 10000))
+        self.assertEqual(event.banner, 'https://example.org/banner.png')
+        self.assertEqual(event.songs[0].jacket, 'https://example.org/song.png')
+
+    def test_actual_ranking_renderer_shows_scores_time_without_player_placeholders(self):
+        from ournotes_bot.rendering import ranking_layout
+        from ournotes_bot.rendering.haneoka_theme import Canvas
+        from ournotes_bot.sources.moenotes_events import display_time, zone_label
+        original = Canvas.text
+        seen = []
+        def capture(canvas, x, y, value, *args, **kwargs):
+            seen.append(str(value))
+            return original(canvas, x, y, value, *args, **kwargs)
+        with patch.object(Canvas, 'text', capture):
+            for query in ('id12 1-3', 'id12', 'id12 歌曲ID=101 1-3'):
+                answer = self.ask(query)
+                pages = ranking_layout.render(answer, assets={}, load=lambda *args: None, display_time=display_time,
+                                              server_label='日服', timezone_label=zone_label('jp'))
+                self.assertTrue(pages)
+        text = ' '.join(seen)
+        self.assertIn('100', seen)
+        self.assertIn(display_time(STAMP, 'jp'), text)
+        for missing in ('玩家', '未获取', '卡组未获取'):
+            self.assertNotIn(missing, seen)
+
+    def test_legacy_history_uses_allowlisted_catalog_art_with_release_checks(self):
+        import io
+        from PIL import Image
+        from ournotes_bot.rendering.event_cutoff_visuals import load_artwork
+        url = 'https://haneoka.org/assets/jp/Assets/AddressableResources/Image/Jacket/test.png?release=r-' + 'a' * 20
+        image = Image.new('RGB', (20, 20))
+        raw = io.BytesIO()
+        image.save(raw, format='PNG')
+        headers = {'content-type': 'image/png', 'x-haneoka-release-id': 'r-' + 'a' * 20, 'x-haneoka-source-id': 'fixture'}
+        with patch('ournotes_bot.sources.haneoka.transport.public_get', return_value=(raw.getvalue(), headers)):
+            result = load_artwork(self.source, self.event, (url,))
+            self.assertIsNotNone(result[url])
+            result[url].close()
+        url2 = url.replace('test.png', 'other.png')
+        with patch('ournotes_bot.sources.haneoka.transport.public_get', return_value=(raw.getvalue(), {**headers, 'x-haneoka-release-id': 'wrong'})):
+            self.assertIsNone(load_artwork(self.source, self.event, (url2,))[url2])
+
+    def test_saved_history_players_appear_in_actual_text_and_rendered_table(self):
+        from ournotes_bot.rendering import ranking_layout
+        from ournotes_bot.rendering.haneoka_theme import Canvas
+        from ournotes_bot.sources.moenotes_events import display_time
+        for song in self.event.songs:
+            self.record(self.history, self.event, song, (100, None, 0),
+                        player_ids=('12345678901234567890', None, '3'), player_names=('合成玩家🌸', None, '零分玩家'))
+        answer = self.ask('id12 1-3')
+        self.assertIn('100/12345678901234567890/合成玩家🌸', answer.text)
+        original, seen = Canvas.text, []
+        def capture(canvas, x, y, value, *args, **kwargs):
+            seen.append(str(value))
+            return original(canvas, x, y, value, *args, **kwargs)
+        with patch.object(Canvas, 'text', capture):
+            pages=ranking_layout.render(answer, assets={}, load=lambda *args: None, display_time=display_time,
+                                        server_label='日服', timezone_label='UTC+09:00')
+        self.assertTrue(pages)
+        self.assertIn('合成玩家🌸', seen)
+        self.assertIn('ID 12345678901234567890', seen)
+        self.assertNotIn('卡组未获取', seen)
