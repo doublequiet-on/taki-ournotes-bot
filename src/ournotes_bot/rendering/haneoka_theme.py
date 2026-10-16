@@ -202,6 +202,16 @@ class Canvas:
             return
         self.image.paste(image,(round(x),round(cy-image.height/2)),image)
 
+    def rarity_badge(self,rarity,right,bottom,width,height):
+        """Anchor each rarity's visible glyph to the card's inner bottom right."""
+        name={2:'R',3:'SR',4:'SSR',20:'BD',10:'EX'}.get(rarity)
+        if name is None:return
+        image=icon(f'RarityIconCenter_{name}.png',width,height)
+        if image is None:
+            self.text(right,bottom-height/2,name,min(18,height),ACCENT,True,'right')
+            return
+        self.image.paste(image,(round(right-image.width),round(bottom-image.height)),image)
+
     def header(self,title,subtitle):
         self.text(52,65,title,48,bold=True)
         self.box((self.width-154,51,self.width-52,91),SOFT,20)

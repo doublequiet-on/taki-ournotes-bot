@@ -66,7 +66,7 @@ def render_list(songs,query,locale='zh',*,load):
         c.text(54,height-22,f'{start+1}–{stop} / {len(songs)} · '+ui_label('/查谱面 ID 难度',locale),22,MUTED)
         return c.image
     parts=[];start=0
-    limit=min(3600,MAX_IMAGE_EDGE,MAX_IMAGE_PIXELS//width)
+    limit=min(MAX_IMAGE_EDGE,MAX_IMAGE_PIXELS//width)
     while start<len(songs):
         # A complete row is at least 196px. Test candidates from largest to smallest:
         # moving the column break can change which long titles share a row.

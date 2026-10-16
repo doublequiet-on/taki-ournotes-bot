@@ -10,6 +10,27 @@ from ournotes_bot.rendering.haneoka_theme import Canvas
 
 
 class SampleFidelityTests(unittest.TestCase):
+    def test_stat_bars_keep_original_fixed_scale_across_different_cards(self):
+        for values in ((1400,1200,1300),(1400,4000,1300)):
+            card=SupportCard(61,'测试','灯',('灯',),10,1,*values,'','','',catalog={'source':'haneoka'})
+            boxes=[];original=Canvas.box
+            def capture(c,box,fill='#f0edf1',*args,**kwargs):
+                if fill=='#d2518b':boxes.append(box)
+                return original(c,box,fill,*args,**kwargs)
+            with patch.object(Canvas,'box',capture):card_detail_layout.render(card,load=lambda *a:None)
+            self.assertEqual(boxes[0][2],194+round(706*14/45))
+
+    def test_reference_skill_table_retains_single_effect_row_meaning(self):
+        from ournotes_bot.data import Skill
+        card=SupportCard(61,'EX','灯',('灯',),10,1,1400,1200,1300,'','','',
+            skills=(Skill('supportSkill','延时','演出技能延长3秒'),),
+            catalog={'skill_levels':[[{'zh':f'演出技能延长{n}秒'} for n in (0.5,1,1.5,2,3)]],
+                     'compact_skills':[{'levels':{str(lv):{'family':'演出延时','short':f'延时{n}秒'} for lv,n in enumerate((0.5,1,1.5,2,3),1)}}]})
+        drawn=[];original=Canvas.text
+        def capture(c,x,y,value,*a,**kw):drawn.append(str(value));return original(c,x,y,value,*a,**kw)
+        with patch.object(Canvas,'text',capture):card_detail_layout.render(card,load=lambda *a:None)
+        self.assertIn('延长时间',drawn)
+
     def test_memory_uses_max_level_percent_and_continuous_white_surface(self):
         card=SupportCard(51,'多人卡','灯',('灯',),4,1,3100,4000,3100,'','','')
         text=[];original=Canvas.text

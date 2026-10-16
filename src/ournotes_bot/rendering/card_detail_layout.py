@@ -80,7 +80,12 @@ def render(card,locale='zh',*,load):
             for label,values in extracted:
                 values=[re.sub(r'\d+\.\d+',lambda m:f'{float(m.group()):g}',v) for v in values]
                 values=[ui_label(v,locale) if v=='整个激奏' else re.sub(r'([0-9.]+)秒',r'\1s',v) if locale=='en' else v for v in values]
-                if len(extracted)==1 and label.startswith('效果'):label=''
+                if len(extracted)==1 and label.startswith('效果'):
+                    last=contract['levels'].get('5') if contract and locale=='zh' else None
+                    label={'演出延时':'延长时间','LIFE回复':'回复量'}.get(last.get('family'),'') if isinstance(last,dict) else ''
+                    if isinstance(last,str) and skill.kind=='leaderSkill' and '；' in last:
+                        condition=re.match(r'(.*?)\s*(?:表演|技巧|形象|全参数)\+',last)
+                        if condition:label=condition[1].replace('红属性','绯红成员').strip()
                 if label=='基础效果':label='通常'
                 if label=='条件成立' and contract and locale=='zh':
                     last=contract['levels']['5'];label=last.get('enhanced_target','条件成立') if isinstance(last,dict) else label
@@ -139,9 +144,7 @@ def render(card,locale='zh',*,load):
         for kind,bh,data in visible:
             if kind=='art':
                 border=frame(972,ah,card.rarity);c.image.paste(border,(50,y-4),border);c.paste(picture,54,y,972,ah,True,radius=16)
-                rarity={2:'R',3:'SR',4:'SSR',20:'BD',10:'EX'}.get(card.rarity)
-                badge=f'RarityIconCenter_{rarity}.png'
-                if rarity:c.badge(badge,902 if support else 880,y+ah-45 if support else y+ah-58,100 if support else 126,70 if support else 92)
+                c.rarity_badge(card.rarity,1002 if support else 1006,y+ah-10 if support else y+ah-12,100 if support else 126,70 if support else 92)
             elif kind=='stats':
                 c.text(54,y+48,ui_label('属性加成',locale) if support else ui_label('综合力',locale),40,bold=True)
                 if isinstance(data,(list,tuple)) and len(data)==3:
@@ -151,7 +154,9 @@ def render(card,locale='zh',*,load):
                     else:c.text(54,y+108,ui_label('满级基础值',locale),34,MUTED)
                     for i,(name,value,color) in enumerate(zip((ui_label('表演值',locale),ui_label('技巧值',locale),ui_label('形象值',locale)),data,('#d2518b','#248ba6','#b97913'))):
                         cy=y+(104 if support else 165)+i*54;c.text(54,cy,name,36,color);right=900 if support else 850;c.box((194,cy-11,right,cy+11),'#eeebf0',11)
-                        if value:c.box((194,cy-10,194+max(1,round((right-194)*value/(max(data)*1.1 or 1))),cy+11),color,11)
+                        # Fixed reference scales preserve comparison across cards.
+                        scale=45 if support else 44000
+                        if value:c.box((194,cy-11,194+max(1,round((right-194)*min(value/scale,1))),cy+11),color,11)
                         c.text(1026,cy,f'{value:g}%' if support else f'{value:,}',38,align='right')
                 else:c.text(54,y+112,ui_label('基础数值未确认',locale),30,MUTED)
             elif kind=='people':

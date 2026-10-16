@@ -207,10 +207,9 @@ def _draw_block(c, block, y, load, *, left=LEFT, right=RIGHT):
             border = frame(w, h, block.rarity)
             c.image.paste(border, (x - 4, cy - 4), border)
         c.paste(load(block.image_url, (w, h)), x, cy, w, h, True, radius=8)
-        rarity={2:'R',3:'SR',4:'SSR',20:'BD',10:'EX'}.get(block.rarity)
-        if rarity:
+        if block.rarity is not None:
             bw=max(40,min(72,w//3));bh=round(bw*.72)
-            c.badge(f'RarityIconCenter_{rarity}.png',x+w-bw,cy+h-bh//2,bw,bh)
+            c.rarity_badge(block.rarity,x+w-6,cy+h-6,bw,bh)
         if block.attribute_url:
             c.paste(load(block.attribute_url,(32,32)),x+2,cy+2,32,32,True)
         x += w + 28
