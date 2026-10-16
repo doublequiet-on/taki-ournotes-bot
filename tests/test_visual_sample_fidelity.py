@@ -149,7 +149,7 @@ class FullChartTests(unittest.TestCase):
             self.assertTrue(chart_layout.render(song,song.charts,SCORE['score'],'EXPERT',load=lambda *a:None))
         self.assertEqual(len(song_detail_layout.timeline(SCORE['score'])['windows']),2)
 
-    def test_eight_columns_keep_lane_width_in_one_wrapped_image(self):
+    def test_eight_columns_keep_lane_width_in_one_horizontal_image(self):
         from ournotes_bot.rendering import chart_layout
         song=Song(1,'测试',('测试',),'乐队','','','','','',(Chart('EXPERT',24,24,62,''),))
         score={'events':{'bpm':[{'t':0,'bpm':120}]},
@@ -159,11 +159,14 @@ class FullChartTests(unittest.TestCase):
         self.assertEqual(len(parts),1)
         self.assertEqual(draw.call_count,62)
         with Image.open(io.BytesIO(parts[0])) as im:
-            self.assertEqual(im.size,(2332,9092))
+            self.assertEqual(im.size,(3712,5092))
         self.assertTrue(all(call.args[3]==78 for call in draw.call_args_list))
         # Original vertical time scale: each bar still occupies 480 pixels.
         ys=[call.args[2] for call in draw.call_args_list[:8]]
         self.assertEqual([ys[i]-ys[i+1] for i in range(7)],[480]*7)
+        starts=draw.call_args_list[::8]
+        self.assertEqual(len({call.args[2] for call in starts}),1)
+        self.assertEqual([call.args[1] for call in starts],[139+i*460 for i in range(8)])
 
 
 class RemainingFidelityTests(unittest.TestCase):

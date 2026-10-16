@@ -17,9 +17,8 @@ COLUMN_PITCH = 460
 TRACK_LEFT = 100
 FEVER = '#bf568f'
 INTERVAL_WIDTH = 8
-CHART_MAX_PIXELS = 48_000_000
-CHART_MAX_EDGE = 20_000
-ROW_PITCH = 4000
+CHART_MAX_PIXELS = 96_000_000
+CHART_MAX_EDGE = 30_000
 
 
 @lru_cache(maxsize=4)
@@ -29,10 +28,10 @@ def endpoint_sprite(kind, is_end):
     mask=Image.new('L',(64*scale,64*scale));d=ImageDraw.Draw(mask)
     box=lambda a:tuple(round((v+32)*scale) for v in a)
     if kind=='skill':
-        d.rounded_rectangle(box((-28,-22,28,22)),11*scale,fill=255)
-        if is_end:d.rounded_rectangle(box((-24,-18,24,18)),7*scale,fill=0)
+        d.rounded_rectangle(box((-28,-22,28,22)),16*scale,fill=255)
+        if is_end:d.rounded_rectangle(box((-24,-18,24,18)),12*scale,fill=0)
     elif is_end:
-        d.rounded_rectangle(box((-14,-14,14,14)),4*scale,fill=255)
+        d.rounded_rectangle(box((-14,-14,14,14)),6*scale,fill=255)
     else:
         points=[(32*scale,17*scale),(21*scale,43*scale),(43*scale,43*scale)]
         d.polygon(points,fill=255)
@@ -40,6 +39,12 @@ def endpoint_sprite(kind, is_end):
         for x,y in points:d.ellipse((x-3*scale,y-3*scale,x+3*scale,y+3*scale),fill=255)
     alpha=mask.resize((64,64),Image.Resampling.BOX);mask.close()
     tile=Image.new('RGBA',(64,64),ACCENT if kind=='skill' else FEVER)
+    # A restrained top highlight gives all endpoint silhouettes the same finish.
+    base=tile.getpixel((32,32))[:3];surface=ImageDraw.Draw(tile)
+    for row in range(64):
+        light=.16*(1-row/63)
+        color=tuple(round(v+(255-v)*light) for v in base)
+        surface.line((0,row,63,row),fill=color+(255,))
     tile.putalpha(alpha);alpha.close()
     return tile
 
@@ -187,13 +192,12 @@ def render(song,charts,score,preview,locale='zh',*,load,notice=''):
     bpms=(score or {}).get('events',{}).get('bpm',[])
     times=time_markers(bpms,end_tick) if nodes else ()
     def paint():
-        count=min(columns,5)
+        count=columns
         width=max(1800,TRACK_LEFT+max(0,count-1)*COLUMN_PITCH+TRACK_WIDTH+80);title=localized_text(song,'title',locale)
         titlewidth=width-1180;titlelines=lines(title,max(620,titlewidth),108,True)
         extra=(len(titlelines)-1)*126
         header=1000+extra;tracktop=header+140;trackbottom=tracktop+3840
-        rows=max(1,math.ceil(columns/5))
-        height=trackbottom+(rows-1)*ROW_PITCH+112 if nodes else header+130
+        height=trackbottom+112 if nodes else header+130
         if width>CHART_MAX_EDGE or height>CHART_MAX_EDGE or width*height>CHART_MAX_PIXELS:
             raise ImageBudgetError("Complete chart exceeds its native-size budget")
         c=Canvas(width,height);c.text(88,78,ui_label('谱面详情',locale),50,bold=True);c.text(width-84,78,'Taki',40,ACCENT,True,'right')
@@ -239,14 +243,12 @@ def render(song,charts,score,preview,locale='zh',*,load,notice=''):
         if 'canonical-full-combo-mismatch' in reference.get('warnings',[]):note+=ui_label(' · 源数据音符数不一致',locale)
         c.text(width-88,901+extra,note,26,MUTED,align='right')
         c.line(88,932+extra,width-88);c.text(88,987+extra,ui_label('完整谱面',locale),48,bold=True)
-        c.text(width-88,987+extra,ui_label('下 → 上 · 左 → 右 · 逐排向下',locale),36,MUTED,align='right')
+        c.text(width-88,987+extra,ui_label('下 → 上 · 左 → 右',locale),36,MUTED,align='right')
         if not nodes:
             c.text(60,header+98,ui_label('完整谱面暂不可用',locale),30,MUTED);return c.image
         draw_legend(c,extra,locale)
         for col in range(columns):
-            row,local=divmod(col,5)
-            tracktop=header+140+row*ROW_PITCH;trackbottom=tracktop+3840
-            x=TRACK_LEFT+local*COLUMN_PITCH;w=TRACK_WIDTH;lo=col*8*1920;hi=(col+1)*8*1920
+            x=TRACK_LEFT+col*COLUMN_PITCH;w=TRACK_WIDTH;lo=col*8*1920;hi=(col+1)*8*1920
             c.text(x,tracktop-28,f'{col+1:02}',26,MUTED)
             c.box((x-12,tracktop-4,x+w+12,trackbottom+14),'#141723',12)
             draw_markers(c,(score or {}).get('events',{}),x,w,tracktop,trackbottom,lo,hi,end_tick=end_tick)
