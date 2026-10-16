@@ -1,5 +1,5 @@
 # L3
-# Input: 内部 Pillow Image.Image；close_input 明确是否接管画布。
+# Input: 内部 Pillow Image.Image、可选视图尺寸／质量档；close_input 明确是否接管画布，字节上限共享。
 # Output: encode_image 返回预算内 JPEG bytes；无法满足预算时抛 ValueError；接管的画布在成功／失败后关闭。
 # Pos: Rendering / Core 的统一整图编码器；见 L2-2-Core.md。
 # Effects/Dependencies: CPU／内存缩放与编码；临时图像及时关闭，Linux 大图在绘图作用域结束后尝试归还空闲页；不可用时降级；不落盘或上传图片。
@@ -72,12 +72,13 @@ def reclaim_after_render(render):
 
 
 class ImageBudgetError(ValueError):
-    """The readable layout needs another image, not smaller text."""
+    """The native layout cannot fit its configured dimensions or byte budget."""
 
 
 def encode_image(image: Image.Image, *, close_input: bool = False,
-                 preserve_size: bool = False) -> bytes:
-    """Borrow the input by default; owned renderer canvases are always released."""
+                 preserve_size: bool = False, max_pixels: int | None = None,
+                 max_edge: int | None = None, quality_steps: tuple[int, ...] = (95, 90, 88)) -> bytes:
+    """Borrow by default; per-render dimensions never relax the shared byte cap."""
     original = image.size
     working = image
     try:
@@ -88,7 +89,8 @@ def encode_image(image: Image.Image, *, close_input: bool = False,
                     working.paste(image, mask=alpha)
             else:
                 working.paste(image)
-        factor = min(1, MAX_IMAGE_EDGE / max(working.size), math.sqrt(MAX_IMAGE_PIXELS / (working.width * working.height)))
+        factor = min(1, (MAX_IMAGE_EDGE if max_edge is None else max_edge) / max(working.size),
+                     math.sqrt((MAX_IMAGE_PIXELS if max_pixels is None else max_pixels) / (working.width * working.height)))
         if preserve_size and factor < 1:
             raise ImageBudgetError("Readable canvas exceeds the dimension budget")
         if factor < 1:
@@ -97,7 +99,7 @@ def encode_image(image: Image.Image, *, close_input: bool = False,
                 working.close()
             working = resized
         for attempt in range(8):
-            for quality, subsampling in (((95, 0), (90, 0), (88, 0)) if preserve_size else ((95, 0), (88, 0), (82, 1), (76, 1))):
+            for quality, subsampling in (tuple((q, 0) for q in quality_steps) if preserve_size else ((95, 0), (88, 0), (82, 1), (76, 1))):
                 with io.BytesIO() as out:
                     try:
                         working.save(out, format="JPEG", quality=quality, subsampling=subsampling, optimize=True)
