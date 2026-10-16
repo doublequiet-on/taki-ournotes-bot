@@ -1,6 +1,6 @@
 # 榜线历史采样与运维
 
-默认 Haneoka 来源使用 `haneoka-cutoff-history-v3.sqlite3`，schema 3；代码读取 tracker／open／haneoka 三来源段，切换处断线，不改写原库。上游参考时钟与接收时间偏差超过60秒时只记缺口，不入库分数和源时间点；恢复后继续记录并断线，当前值仍可查。当前时间与来源合同见 [统一来源说明](HANEOKA_UNIFIED.md)。
+默认 Haneoka 来源使用 `haneoka-cutoff-history-v3.sqlite3`，schema 3；代码读取 tracker／open／haneoka 三来源段，切换处断线，不改写原库。上游参考时钟与接收时间偏差超过60秒时，若同一响应的 HTTP Date 距接收时间不超过5秒，以 `HTTP Date - (serverTimeMs - fetchedAtMs)` 校准历史时间，并在新增的 `clock_calibrations` 表中原子保存原始两项时间和 HTTP 锚点；查询提示秒精度及网络误差。没有可信锚点则只留缺口，恢复后断线续记，当前值仍可查。原表及 schema3 不变，支持旧版本继续读写；不回填历史缺口。当前时间与来源合同见 [统一来源说明](HANEOKA_UNIFIED.md)。
 
 可选开放平台适配使用独立 `moenotes-open-history-v2.sqlite3`（可配 `OURNOTES_OPEN_HISTORY_FILE`），旧 tracker v1 保留且不原位迁移。历史仍只存分数，不记录 ID 或姓名。启用 `open` 前另行完成认证覆盖／时间验收；日额度不形成拒绝或采样降频。配置、schema、回退见 [META_OPEN](META_OPEN.md)。
 

@@ -11,6 +11,7 @@ import json
 import math
 import re
 from dataclasses import replace
+from email.utils import parsedate_to_datetime
 from urllib.parse import urlsplit
 
 from .transport import public_get
@@ -258,8 +259,14 @@ class HaneokaEventCutoffRepository(EventCutoffRepository):
         digest = hashlib.sha256(json.dumps(expected).encode()).hexdigest()
         key = f"board:{event.server}:{event.event_id}:{song.challenge_id}:{digest}"
         def load():
-            data, _ = self._json(f"{API}/{event.server}/events/{event.event_id}/challenges/{song.challenge_id}/ranking", deadline)
+            data, headers = self._json(f"{API}/{event.server}/events/{event.event_id}/challenges/{song.challenge_id}/ranking", deadline)
             payload = decode_board(data, event, song)
+            try:
+                date = parsedate_to_datetime(headers.get("date", ""))
+                if date.tzinfo is not None:
+                    payload["http_date_ms"] = int(date.timestamp() * 1000)
+            except (ValueError, TypeError, OverflowError):
+                pass  # Missing or malformed Date cannot authorize clock calibration.
             if not matches():
                 raise SourceError("identity_changed")
             return payload, self._time_headers(payload)
@@ -287,8 +294,11 @@ class HaneokaEventCutoffRepository(EventCutoffRepository):
     def _snapshot(self, event, song, entry):
         board = super()._snapshot(event, song, entry)
         fetched, server = board.fetched_ms, board.server_ms
+        date = entry.payload.get("http_date_ms")
+        date = date if type(date) is int and board.received_ms and abs(date - board.received_ms) <= 5000 else None
+        period_time = fetched + date - server if fetched and server and date and abs(server - board.received_ms) > 60000 else fetched
         # An absolute clock offset does not invalidate source-relative freshness.
-        # Keep the raw timestamps; HaneokaCutoffHistory excludes skewed points.
+        # Keep raw timestamps; history calibrates only with a verified HTTP Date.
         notes = [note for note in board.notes if note != "来源时钟与本机有偏差"]
         quality = board.quality
         scores, status = board.scores, board.status
@@ -296,8 +306,8 @@ class HaneokaEventCutoffRepository(EventCutoffRepository):
             scores, status, quality = (), "来源时间或参考时钟未知，暂无可信当前值", "clock_unknown"
         elif fetched > server + 1000:
             scores, status, quality = (), "来源时钟异常，暂无可信当前值", "clock_unknown"
-        elif ((song.effective_start_ms and fetched < song.effective_start_ms)
-              or (song.effective_end_ms and fetched > song.effective_end_ms)):
+        elif ((song.effective_start_ms and period_time < song.effective_start_ms)
+              or (song.effective_end_ms and period_time > song.effective_end_ms)):
             scores, status, quality = (), "快照不在挑战期内，暂无可信当前值", "outside_period"
         elif board.age_seconds is not None and board.age_seconds > 600 and song.collect_status != "archived":
             scores, status, quality = (), "快照过期，暂无当前分数", "stale"
@@ -309,4 +319,4 @@ class HaneokaEventCutoffRepository(EventCutoffRepository):
         details = tuple(player_detail(d) if isinstance(d, dict) else None for d in details) if (
             isinstance(details, list) and len(details) == len(board.observed_scores or ())) else ()
         return replace(board, scores=scores, status=status, quality=quality, notes=tuple(notes), player_details=details,
-                       source=self.source, time_kind=TIME_KIND, contract_version=CONTRACT)
+                       source=self.source, time_kind=TIME_KIND, contract_version=CONTRACT, http_date_ms=date)

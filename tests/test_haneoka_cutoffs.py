@@ -227,6 +227,63 @@ class HaneokaCutoffTests(unittest.TestCase):
         self.assertEqual([point.time_ms for point in points], [first.fetched_ms, self.fixture.fetched])
         self.assertEqual([point.break_before for point in points], [False, True])
 
+    def test_http_date_calibrates_four_regions_and_preserves_audit_and_rollback(self):
+        from email.utils import formatdate
+        from ournotes_bot.sources.cutoff_sampler import HistorySampler
+        original = self.fixture.__call__
+        def transport(url, timeout):
+            raw, headers = original(url, timeout)
+            return raw, {"Date": formatdate(self.fixture.now, usegmt=True)}
+        self.source.transport = transport
+        history = HaneokaCutoffHistory(self.path / "history.db", min_free_mb=0,
+                                      clock=lambda: self.fixture.now)
+        self.source.history = history
+        for offset in (130000, -130000, 0):
+            self.fixture.now += 300
+            self.fixture.clock_offset = offset
+            self.fixture.fetched = int(self.fixture.now * 1000) + offset - 30000
+            HistorySampler(self.source, clock=lambda: self.fixture.now).sample_once()
+        self.assertEqual(history.status()["points"], 12)
+        with closing(sqlite3.connect(history.path)) as db:
+            rows = db.execute("SELECT source_ms,received_ms,quality FROM observations").fetchall()
+            self.assertTrue(all(received - stamp == 30000 and quality == "valid" for stamp, received, quality in rows))
+            audit = db.execute("SELECT raw_source_ms,raw_server_ms,http_date_ms,source_ms FROM clock_calibrations").fetchall()
+            self.assertEqual(len(audit), 8)
+            self.assertTrue(all(raw_server - raw_source == date - stamp == 30000 for raw_source, raw_server, date, stamp in audit))
+            self.assertEqual(db.execute("PRAGMA user_version").fetchone()[0], 3)
+        event, board = self.board()
+        # Existing schema3 readers can still read/write, without dropping audit.
+        old = OpenCutoffHistory(history.path, min_free_mb=0)
+        old.source, old.time_kind, old.contract_version, old.schema_version = history.source, history.time_kind, history.contract_version, 3
+        self.assertEqual(len(old.read(event, board.song, (1,)).points), 3)
+        self.assertEqual(old.record(event, board), "duplicate")
+        self.assertEqual(len(history.read(event, board.song, (1,)).points), 3)
+
+    def test_http_date_must_be_current_and_keeps_raw_cache_times(self):
+        from email.utils import formatdate
+        original = self.fixture.__call__
+        self.fixture.clock_offset = 130000
+        self.fixture.fetched = int(self.fixture.now * 1000) + 100000
+        for header in ("bad", formatdate(self.fixture.now + 130, usegmt=True),
+                       formatdate(self.fixture.now - 30, usegmt=True)):
+            source = self.repository()
+            source.transport = lambda url, timeout: (original(url, timeout)[0], {"Date": header})
+            history = HaneokaCutoffHistory(self.path / "history.db", min_free_mb=0)
+            source.history = history
+            self.assertEqual(self.board(source)[1].http_date_ms, None)
+            self.assertEqual(history.status()["points"], 0)
+            source._entries.clear()
+            for path in (self.path / "cache").glob("*.json"):
+                path.unlink()
+        source = self.repository()
+        source.transport = lambda url, timeout: (original(url, timeout)[0], {"Date": formatdate(self.fixture.now, usegmt=True)})
+        event, board = self.board(source)
+        restored = self.repository()
+        cached = self.board(restored)[1]
+        self.assertEqual((cached.fetched_ms, cached.server_ms, cached.http_date_ms),
+                         (board.fetched_ms, board.server_ms, int(self.fixture.now * 1000)))
+        self.assertEqual(cached.fetched_ms, self.fixture.fetched)
+
     def test_clock_offset_cache_restart_fallback_expiry_and_late_history(self):
         self.fixture.clock_offset = 124000
         self.fixture.fetched += 122000
