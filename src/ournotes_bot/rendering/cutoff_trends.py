@@ -75,7 +75,7 @@ def _card(answer, board, assets, preview_label):
                f"活动开始：{display_time(event.start_ms, event.server)} {zone}",
                f"活动结束：{display_time(event.end_ms, event.server)} {zone}",
                *song_period_lines(event, board.song), board.status,
-               f"当前源采集：{display_time(board.fetched_ms, event.server)} {zone}"]
+               f"{answer.capture_label}：{display_time(board.fetched_ms, event.server)} {zone}"]
     if view.points:
         details.append(f"历史末次观测：{display_time(view.points[-1].time_ms, event.server)} {zone_label(event.server)}")
     coincident = {}
@@ -120,7 +120,7 @@ def _card(answer, board, assets, preview_label):
     draw.rectangle((box[0], box[1], box[0] + box[2], box[1] + box[3]), outline=v.BORDER, width=1)
     valid_times = {p.time_ms for p in view.points if any(n is not None for n in p.scores)}
     if not values:
-        _text(draw, ["暂无历史曲线", "启用采集后逐步积累；上方为当前值。"], 160, chart_top + 84, 20, v.MUTED)
+        _text(draw, ["暂无历史曲线", f"上方为{answer.value_label}。"], 160, chart_top + 84, 20, v.MUTED)
     else:
         first, last = min(p.time_ms for p in view.points), max(p.time_ms for p in view.points)
         low, high = min(values), max(values)
@@ -161,7 +161,7 @@ def _card(answer, board, assets, preview_label):
         _text(draw, [caption], 38, chart_top + 284, 18, v.MUTED)
     y += plot_height
     y = _text(draw, detail_lines, 38, y + 12, 18, v.MUTED, 28)
-    _text(draw, ["各排名独立保留；同值曲线会重叠。", f"来源 {answer.source_label} · 非官方 · 活动挑战歌曲 Top 100", "非预测、非确认终榜；历史末值不代替当前值。"], 38, y + 18, 18, v.MUTED, 28)
+    _text(draw, ["各排名独立保留；同值曲线会重叠。", f"来源 {answer.source_label} · 非官方 · 活动挑战歌曲 Top 100", '非预测、非确认终榜。' if answer.historical else '非预测、非确认终榜；历史末值不代替当前值。'], 38, y + 18, 18, v.MUTED, 28)
     return CutoffPage(v._bytes(canvas), subset.text)
 
 
@@ -183,11 +183,11 @@ def _column_layout(answer, board, measure, width):
         base = min(values) if len(str(max(values))) > 9 else 0
         axis = _lines(measure, f'纵轴 = {base} + 刻度差值' if base else '纵轴：观测分数（线性）', inner, 17)
     valid_times = {p.time_ms for p in view.points if any(n is not None for n in p.scores)}
-    caption = ('暂无历史曲线，上方为当前值。' if not values else
+    caption = (f'暂无历史曲线，上方为{answer.value_label}。' if not values else
                '仅 1 个有效观测点，不足以形成曲线。' if len(valid_times) == 1 else
                '方点为真实观测，缺口处断线；不外推。')
     caption = _lines(measure, caption, inner, 18)
-    details = [board.status, '当前源采集：', display_time(board.fetched_ms, answer.event.server), zone_label(answer.event.server),
+    details = [board.status, answer.capture_label + '：', display_time(board.fetched_ms, answer.event.server), zone_label(answer.event.server),
                *song_period_lines(answer.event, board.song), view.warning, *board.notes]
     if view.points:
         details.extend(('历史末次观测：', display_time(view.points[-1].time_ms, answer.event.server)))
@@ -288,6 +288,6 @@ def _overview(answer, assets, preview_label):
             y = _column_plot(canvas, draw, answer, board, x, y, column_width, axis, caption, bounds)
             _text(draw, details, x + 16, y + 16, 18, v.MUTED, 27)
         y = _text(draw, footer, 38, header[2] + column_height + 14, 18, v.MUTED, 28)
-        _text(draw, [f'TAKI · 第 {page_number}/{len(groups)} 页 · 各曲独立纵轴，当前值与历史分开'], 38, y + 12, 18, v.ACCENT)
+        _text(draw, [f'TAKI · 第 {page_number}/{len(groups)} 页 · 各曲独立纵轴，{answer.value_label}与趋势分开'], 38, y + 12, 18, v.ACCENT)
         pages.append(CutoffPage(v._bytes(canvas), text))
     return tuple(pages)
