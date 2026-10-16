@@ -456,6 +456,18 @@ class LinuxBackendTests(unittest.TestCase):
             self.backend._discard_candidate(B)
         self.assertTrue(Path(release.code_dir).exists())
 
+    def test_code_backup_scopes_budget_to_its_own_archive(self):
+        release = self.candidate()
+        def runner(argv, **kwargs):
+            self.calls.append((argv, kwargs))
+            Path(next(v.removeprefix('--file=') for v in argv if v.startswith('--file='))).write_bytes(b'code archive')
+        self.backend.run = runner
+        with patch('deploy.linux_backend.shutil.disk_usage', return_value=Mock(free=8 * GIB)):
+            archive = Path(self.backend.backup(self.baseline, release))
+        self.assertEqual(archive.read_bytes(), b'code archive')
+        self.assertEqual(self.calls[0][1]['budget_root'], self.backend.backups)
+        self.assertEqual(self.calls[0][1]['budget_file'], archive)
+
     def test_stopped_data_snapshot_is_separate_and_never_restored(self):
         archive = self.backend.backups / "owned.tar"
         archive.write_bytes(b"code and venv")
@@ -473,6 +485,7 @@ class LinuxBackendTests(unittest.TestCase):
         self.assertFalse(row['shared_data_restore'])
         self.assertEqual((self.base / 'data/cache.json').read_text(), 'live data')
         self.assertNotIn('--extract', self.calls[0][0])
+        self.assertEqual(self.calls[0][1]['budget_file'], self.backend.backups / 'owned-data.tar')
         self.state(transaction=dict(phase="rollback_stopping", backup=str(archive)))
         self.backend._snapshot_stopped_data()
         self.assertEqual(len(self.calls), 1)
@@ -634,6 +647,41 @@ class ArchiveTests(unittest.TestCase):
 
 @unittest.skipUnless(os.name == 'posix', 'Linux process groups and nonblocking pipes require POSIX')
 class BoundedProcessTests(unittest.TestCase):
+    def test_archive_budget_excludes_retained_backups_and_preserves_them(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            retained, current = root / 'retained.tar', root / 'current.tar'
+            retained.write_bytes(b'old' * 1024)
+            original = retained.read_bytes()
+            with patch('deploy.linux_backend.GIB', 1024):
+                run_bounded([sys.executable, '-c',
+                    "import pathlib,sys; pathlib.Path(sys.argv[1]).write_bytes(b'new' * 128)", str(current)],
+                    timeout=5, budget_root=root, budget_file=current)
+            self.assertEqual(retained.read_bytes(), original)
+            self.assertEqual(current.read_bytes(), b'new' * 128)
+
+    def test_archive_size_and_free_space_limits_remain_enforced(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            current = root / 'current.tar'
+            command = [sys.executable, '-c',
+                       "import pathlib,sys,time; print('started',flush=True); time.sleep(.1); pathlib.Path(sys.argv[1]).write_bytes(b'x' * 4096)", str(current)]
+            with patch('deploy.linux_backend.GIB', 1024):
+                with self.assertRaisesRegex(Rejected, 'candidate_disk_budget'):
+                    run_bounded(command, timeout=5, budget_root=root, budget_file=current)
+            with patch('deploy.linux_backend.shutil.disk_usage', return_value=Mock(free=0)):
+                with self.assertRaisesRegex(Rejected, 'candidate_disk_budget'):
+                    run_bounded([sys.executable, '-c', 'pass'], timeout=5,
+                                budget_root=root, budget_file=root / 'not-created.tar')
+
+    def test_candidate_directory_still_has_a_total_size_budget(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            (root / 'large').write_bytes(b'x' * 4096)
+            with patch('deploy.linux_backend.GIB', 1024):
+                with self.assertRaisesRegex(Rejected, 'candidate_disk_budget'):
+                    run_bounded([sys.executable, '-c', 'pass'], timeout=5, budget_root=root)
+
     def test_normal_output_and_nonzero_exit(self):
         self.assertEqual(run_bounded([sys.executable, '-c', "print('bounded')"], timeout=5).strip(), 'bounded')
         with self.assertRaisesRegex(Rejected, 'command_failed'):

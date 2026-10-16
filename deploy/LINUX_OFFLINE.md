@@ -33,6 +33,8 @@ main／CI 元数据的 HTTP 响应读取中断（含 IncompleteRead）由适配�
 
 网络下载和验证均在停止旧进程之前。候选安装与测试保持无网络、无真实凭据、独立数据目录、资源限制和非 root 用户。共享数据前向／回退兼容审批、停服前备份、进程健康检查与事务回退继续生效。代码回退不还原共享游戏缓存、额度或历史数据库。
 
+备份大小预算分别约束本次代码／环境归档和停服后的共享数据归档，每个文件最多 2 GiB；历史归档不计入本次文件预算，仍按现有保留策略管理。备份前至少保留 4 GiB 可用空间，写入期间至少保留 2 GiB，命令结束时再次核对大小和剩余空间。候选准备目录仍按整目录计算 2 GiB 预算。
+
 ## 固定谱面素材准备
 
 依赖安装与完整离线验证通过后，`LinuxBackend.prepare` 自动执行 `scripts/prepare_note_assets.py`，在停旧实例、切换 current 之前完成固定 atlas/config 的下载和 SHA-256 校验。大 atlas 的准备下载使用固定 Git blob 的 GitHub 官方 API 原始媒体响应，避开已复现的 raw CDN 慢链路；URL 与 blob 固定在清单中，最终仍核对原来的 SHA-256，不接受可变分支、跳转或凭据。端点语义见 [GitHub Git blobs](https://docs.github.com/en/rest/git/blobs#get-a-blob)。
