@@ -123,7 +123,7 @@ class ChartAnnotationRenderTests(unittest.TestCase):
                'notes':[{'type':'tap','t':3000,'pos':0,'size':6}]}
         with patch.object(layout,'draw_note'),patch.object(layout,'draw_times',wraps=layout.draw_times) as times:
             layout.render(song,song.charts,score,'EXPERT',load=lambda *a:None)
-        self.assertIn((4260,44),times.call_args.kwargs['occupied'])
+        self.assertIn((3960,44),times.call_args.kwargs['occupied'])
 
     def test_plain_time_label_avoids_skill_icon_without_a_background(self):
         c=Mock();y=4980-14400/4

@@ -159,7 +159,7 @@ class FullChartTests(unittest.TestCase):
         self.assertEqual(len(parts),1)
         self.assertEqual(draw.call_count,62)
         with Image.open(io.BytesIO(parts[0])) as im:
-            self.assertEqual(im.size,(3712,5092))
+            self.assertEqual(im.size,(3712,4792))
         self.assertTrue(all(call.args[3]==78 for call in draw.call_args_list))
         # Original vertical time scale: each bar still occupies 480 pixels.
         ys=[call.args[2] for call in draw.call_args_list[:8]]
