@@ -330,6 +330,9 @@ class CutoffAnswer:
     def history_for(self, board):
         return next((view for key, view in self.histories if key == board.song.challenge_id), HistoryView())
 
+    def has_players(self, board):
+        return not self.historical or any(board.player_id(r) or board.player_name(r) for r in self.ranks)
+
     @property
     def text(self) -> str:
         if self.message:
@@ -347,7 +350,7 @@ class CutoffAnswer:
             lines.extend([self.song_label(board), *song_period_lines(event, board.song)])
             if self.request.mode == 'trend':
                 lines.append(" / ".join(f"T{rank}：{self.score_label(board, rank)}" +
-                             ('' if self.historical else f"（ID：{self.id_label(board, rank)}；用户名：{self.name_label(board, rank)}）") for rank in self.ranks))
+                             (f"（ID：{self.id_label(board, rank)}；用户名：{self.name_label(board, rank)}）" if self.has_players(board) else '') for rank in self.ranks))
             lines.extend([f"{board.status} · 源采集 {display_time(board.fetched_ms, event.server)}", *board.notes])
             history = self.history_for(board)
             if history.warning:
@@ -358,8 +361,8 @@ class CutoffAnswer:
                     lines.append("仅 1 个历史点，不足以形成曲线。")
         if self.request.mode != 'trend':
             lines.append('列：' + '｜'.join(self.song_label(board).partition(' · ')[0] for board in self.boards)
-                         + ('（分数）' if self.historical else '（分数/数字ID/用户名；缺失为未获取）'))
-            lines.extend(f'T{rank}：' + '｜'.join(self.score_label(board, rank) if self.historical else f'{self.score_label(board, rank)}/{self.id_label(board, rank)}/{self.table_name(board, rank)}'
+                         + ('（分数/数字ID/用户名；缺失为未获取）' if any(self.has_players(b) for b in self.boards) else '（分数）'))
+            lines.extend(f'T{rank}：' + '｜'.join(f'{self.score_label(board, rank)}/{self.id_label(board, rank)}/{self.table_name(board, rank)}' if self.has_players(board) else self.score_label(board, rank)
                                                 for board in self.boards) for rank in self.ranks)
         lines.extend(["", *event.notes, f"{self.source_label}（非官方）· 挑战歌曲Top100 · 按响应位置，非预测或确认终榜。"])
         return "\n".join(lines)

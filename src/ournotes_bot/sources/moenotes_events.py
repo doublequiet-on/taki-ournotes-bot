@@ -119,6 +119,11 @@ def _player_name(value) -> str | None:
     return re.sub(r'\s+', ' ', value).strip() or None
 
 
+def player_identity(ident, name) -> tuple[str | None, str | None]:
+    """Normalize the public ID/name pair for live snapshots and persisted observations."""
+    return _player_id(ident), _player_name(name)
+
+
 def display_time(value: int | None, server: str, *, date: bool = True) -> str:
     if value is None:
         return "未知"

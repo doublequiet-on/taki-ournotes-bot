@@ -127,7 +127,7 @@ def render(answer,*,assets,load,display_time,server_label,timezone_label,catalog
             for rank in answer.ranks:
                 name=lines(answer.name_label(board,rank),450,42)
                 identity=lines('ID '+answer.id_label(board,rank),650,26)
-                blocks.append(('rank',100 if historical else max(156,24+len(name)*50+len(identity)*38), (board,rank)))
+                blocks.append(('rank',100 if historical and not answer.has_players(board) else max(156,24+len(name)*50+len(identity)*38), (board,rank)))
             blocks.append(('chart',780 if answer.history_for(board).points else 180,board))
     else:
         cw=(width-200)/len(boards)
@@ -135,9 +135,9 @@ def render(answer,*,assets,load,display_time,server_label,timezone_label,catalog
         columns=max(max(title_heights.values())+(122 if historical else 60),188 if historical else 126)
         def name_width(board,rank):
             score_width=font(32,True,True).getlength(score_text(board,rank))
-            return max(90,int(cw)-144-int(score_width))
+            return max(90,int(cw)-(40 if historical else 144)-int(score_width))
         for rank in answer.ranks:
-            rh=72 if historical else max(max(len(lines(answer.name_label(b,rank),name_width(b,rank),36 if width==1080 else 28))*36+
+            rh=72 if historical and not any(answer.has_players(b) for b in boards) else max(max(len(lines(answer.name_label(b,rank),name_width(b,rank),36 if width==1080 else 28))*36+
                        len(lines('ID '+answer.id_label(b,rank),int(cw)-124,24))*32+44 for b in boards),112)
             blocks.append(('table',rh,rank))
         plot_height=404 if any(answer.history_for(b).points for b in boards) else 180
@@ -164,7 +164,7 @@ def render(answer,*,assets,load,display_time,server_label,timezone_label,catalog
                 c.text(x+38,ly,f'#{rank}',26,MUTED)
             c.text(100,head-18,'排名',26,MUTED,align='center')
             for i in range(len(boards)):
-                if not historical:c.text(156+i*cw,head-18,'玩家',26,MUTED)
+                if answer.has_players(boards[i]):c.text(156+i*cw,head-18,'玩家',26,MUTED)
                 c.text(156+(i+1)*cw-24,head-18,'分数',26,MUTED,align='right')
         elif start and blocks[start][0] not in ('song',):
             board=blocks[start][2][0] if blocks[start][0]=='rank' else blocks[start][2]
@@ -179,6 +179,9 @@ def render(answer,*,assets,load,display_time,server_label,timezone_label,catalog
             elif kind=='rank':
                 board,rank=data;detail=board.player_detail(rank) or {};color=COLORS[answer.ranks.index(rank)%5]
                 if historical:
+                    if answer.has_players(board):
+                        c.paragraph(148,y+23,answer.name_label(board,rank),450,42,50,bold=True)
+                        c.paragraph(148,y+bh-65,'ID '+answer.id_label(board,rank),650,32,38,color=MUTED)
                     c.text(94,y+48,f'#{rank}',32,color,align='center')
                     c.text(1030,y+48,score_text(board,rank),50,bold=True,align='right')
                     c.text(1120,y+48,'观测 '+display_time(board.fetched_ms,event.server),32,MUTED)
@@ -203,6 +206,10 @@ def render(answer,*,assets,load,display_time,server_label,timezone_label,catalog
                 else:rank_marker(c,rank,100,y+42,64)
                 for i,b in enumerate(boards):
                     if historical:
+                        if answer.has_players(b):
+                            tx=156+i*cw
+                            ty=c.paragraph(tx,y+14,answer.name_label(b,rank),name_width(b,rank),36 if width==1080 else 28,40,bold=True)
+                            c.paragraph(tx,ty,'ID '+answer.id_label(b,rank),int(cw)-40,28 if width==1080 else 24,32,color=MUTED)
                         c.text(156+(i+1)*cw-24,y+34,score_text(b,rank),42 if width==1080 else 32,bold=True,align='right')
                         continue
                     x=156+i*cw;avatar(c,b,rank,round(x),y+14,84 if width==1080 else 76)

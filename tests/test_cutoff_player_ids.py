@@ -59,7 +59,7 @@ class PlayerIdTests(unittest.TestCase):
         self.assertEqual(board.scores,tuple(range(len(bad))))
         self.assertEqual(board.player_ids,(None,)*len(bad))
 
-    def test_current_cache_reload_keeps_ids_but_history_has_only_scores(self):
+    def test_current_cache_reload_and_history_keep_same_snapshot_players(self):
         answer = self.ask('歌曲1 50-50')
         body = json.loads(self.source._path('board:jp:1:1').read_text(encoding='utf-8'))['payload']
         self.assertEqual(set(body),{'scores','player_ids','player_names'})
@@ -75,8 +75,10 @@ class PlayerIdTests(unittest.TestCase):
         self.assertEqual(recovered.boards[0].scores,answer.boards[0].scores)
         self.assertEqual(recovered.boards[0].player_ids,answer.boards[0].player_ids)
         self.assertIn('11000000050',recovered.text)
-        self.assertNotIn(b'11000000050',(self.root/'history.sqlite3').read_bytes())
-        self.assertNotIn('玩家50'.encode(),(self.root/'history.sqlite3').read_bytes())
+        historical = self.source.history.latest(answer.event, answer.boards[0].song)
+        self.assertEqual(historical.player_id(50), '11000000050')
+        self.assertEqual(historical.player_name(50), '玩家50')
+        self.assertEqual(historical.fetched_ms, answer.boards[0].fetched_ms)
 
     def test_old_score_only_cache_remains_usable_with_unknown_id(self):
         self.ask('歌曲1')

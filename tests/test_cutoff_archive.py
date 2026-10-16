@@ -311,3 +311,24 @@ class ArchiveTests(unittest.TestCase):
         url2 = url.replace('test.png', 'other.png')
         with patch('ournotes_bot.sources.haneoka.transport.public_get', return_value=(raw.getvalue(), {**headers, 'x-haneoka-release-id': 'wrong'})):
             self.assertIsNone(load_artwork(self.source, self.event, (url2,))[url2])
+
+    def test_saved_history_players_appear_in_actual_text_and_rendered_table(self):
+        from ournotes_bot.rendering import ranking_layout
+        from ournotes_bot.rendering.haneoka_theme import Canvas
+        from ournotes_bot.sources.moenotes_events import display_time
+        for song in self.event.songs:
+            self.record(self.history, self.event, song, (100, None, 0),
+                        player_ids=('12345678901234567890', None, '3'), player_names=('合成玩家🌸', None, '零分玩家'))
+        answer = self.ask('id12 1-3')
+        self.assertIn('100/12345678901234567890/合成玩家🌸', answer.text)
+        original, seen = Canvas.text, []
+        def capture(canvas, x, y, value, *args, **kwargs):
+            seen.append(str(value))
+            return original(canvas, x, y, value, *args, **kwargs)
+        with patch.object(Canvas, 'text', capture):
+            pages=ranking_layout.render(answer, assets={}, load=lambda *args: None, display_time=display_time,
+                                        server_label='日服', timezone_label='UTC+09:00')
+        self.assertTrue(pages)
+        self.assertIn('合成玩家🌸', seen)
+        self.assertIn('ID 12345678901234567890', seen)
+        self.assertNotIn('卡组未获取', seen)

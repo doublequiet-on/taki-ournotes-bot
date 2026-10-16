@@ -41,7 +41,7 @@ Linux 受管更新器在安装／离线验证结束、停止旧服务之前自�
 
 活动歌曲榜线：`sources/moenotes_events.py::EventCutoffRepository` → `query/event_cutoff_query.py::execute_cutoff` → `rendering/event_cutoff_visuals.py::render_cutoff`；直接入口与自然语言本地分支共享捕获结果，QQ `_expand_replies` 预先分配整批回复预算。往期查询通过 `id1`（兼容 `活动ID=1`）／`活动="名称"` 只读本地历史，目标测试增加 `test_cutoff_archive.py`；目标测试 `test_event_cutoffs.py`、`test_cutoff_query_v2.py`、`test_cutoff_trends.py`；脱敏素材脚本 `scripts/preview_event_cutoffs.py` 及固定合成脚本 `scripts/preview_cutoff_trends.py`，格式、边界和本轮 A01–A28 对应见 [功能说明](EVENT_CUTOFFS.md)。修改这些共享契约后需要完整离线回归与实际查看样图；QQ 真机验收另行授权。
 
-榜线数字ID／用户名来自同一行 `playerData.id`／`playerData.name`，仅进入当前缓存和捕获结果；字段缺失、Unicode名字、旧缓存、分页与历史无身份边界由 `test_cutoff_player_ids.py` 验证。合成预览覆盖11位／20位ID与中文用户名，不使用真实玩家身份作为测试素材。
+榜线数字ID／用户名来自同一行 `playerData.id`／`playerData.name`，进入当前缓存、捕获结果与按观测关联的历史附表；字段缺失、Unicode名字、旧缓存、分页由 `test_cutoff_player_ids.py` 验证；历史原位保存、精确缓存回填、重复补全／冲突、三来源及旧版兼容由 `test_cutoff_player_history.py` 验证。合成预览覆盖11位／20位ID与中文用户名，不使用真实玩家身份作为测试素材。
 
 | 任务 | 入口文件＋关键符号 | 相关测试文件 | 按需补读 |
 |---|---|---|---|
