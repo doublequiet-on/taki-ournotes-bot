@@ -287,6 +287,8 @@ class HaneokaEventCutoffRepository(EventCutoffRepository):
             stored = self.history.record(event, board)
             if stored == "conflict":
                 board = replace(board, scores=(), quality="conflict", status="同一源时刻分数冲突，暂无可信当前值")
+            elif stored == "clock_skew":
+                board = replace(board, notes=board.notes + ("历史采集告警：来源时钟异常，本次原始观测已隔离保留，待核验后才能用于曲线。",))
             elif stored in {"storage_error", "busy", "low_disk", "disk_unavailable"}:
                 board = replace(board, notes=board.notes + ("历史保存暂停或失败；当前分数仍可查询。",))
         return board

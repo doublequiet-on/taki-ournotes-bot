@@ -1,6 +1,6 @@
 # 榜线历史采样与运维
 
-默认 Haneoka 来源使用 `haneoka-cutoff-history-v3.sqlite3`，schema 3；代码读取 tracker／open／haneoka 三来源段，切换处断线，不改写原库。上游参考时钟与接收时间偏差超过60秒时，若同一响应的 HTTP Date 距接收时间不超过5秒，以 `HTTP Date - (serverTimeMs - fetchedAtMs)` 校准历史时间，并在新增的 `clock_calibrations` 表中原子保存原始两项时间和 HTTP 锚点；查询提示秒精度及网络误差。没有可信锚点则只留缺口，恢复后断线续记，当前值仍可查。原表及 schema3 不变，支持旧版本继续读写；不回填历史缺口。当前时间与来源合同见 [统一来源说明](HANEOKA_UNIFIED.md)。
+默认 Haneoka 来源使用 `haneoka-cutoff-history-v3.sqlite3`，schema 3；代码读取 tracker／open／haneoka 三来源段，切换处断线，不改写原库。上游参考时钟与接收时间偏差超过60秒时，若同一响应的 HTTP Date 距接收时间不超过5秒，以 `HTTP Date - (serverTimeMs - fetchedAtMs)` 校准历史时间，并在新增的 `clock_calibrations` 表中原子保存原始两项时间和 HTTP 锚点；查询提示秒精度及网络误差。没有可信锚点则记录缺口，同时将分数、原始采集／参考／接收时间、HTTP Date、来源合同及质量状态保存到独立的 `clock_quarantine` 隔离表，不进入曲线或往期有效快照。`clock_pending` 按服／活动／挑战记录持续异常起止时间；同一挑战收到不早于异常末次接收时间的有效观测后解除当前告警，隔离记录继续保留，不自动回填。查询明确提示本次隔离，`/数据状态` 与周期采样状态显示待核验告警，服务器日志记录隔离及恢复，不主动发送 QQ 消息。新表为兼容附表，旧版继续读写原历史；旧版不维护告警状态，新版恢复有效写入时更新。原表及 schema3 不变，支持旧版本继续读写；不回填历史缺口。当前时间与来源合同见 [统一来源说明](HANEOKA_UNIFIED.md)。
 
 可选开放平台适配使用独立 `moenotes-open-history-v2.sqlite3`（可配 `OURNOTES_OPEN_HISTORY_FILE`），旧 tracker v1 保留且不原位迁移。三来源均通过兼容附表保存同次观测的公开玩家ID和用户名，不保存队伍、卡组或完整profile。启用 `open` 前另行完成认证覆盖／时间验收；日额度不形成拒绝或采样降频。配置、schema、回退见 [META_OPEN](META_OPEN.md)。
 
