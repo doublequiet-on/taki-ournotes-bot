@@ -14,7 +14,7 @@ from .note_skin import draw_note
 
 TRACK_WIDTH = 312
 COLUMN_PITCH = 460
-TRACK_LEFT = 100
+TRACK_LEFT = 860
 FEVER = '#bf568f'
 INTERVAL_WIDTH = 8
 CHART_MAX_PIXELS = 96_000_000
@@ -66,15 +66,17 @@ def continuation(c, cx, y, label, color, at_top, label_x=None):
 
 
 def draw_legend(c, extra, locale):
-    y=744+extra
-    c.text(88,y,ui_label('技能 · 5秒参考',locale),26,ACCENT)
-    c.text(850,y,ui_label('激奏',locale),26,FEVER)
+    y=104+extra
+    offset=760
+    c.text(offset+88,y,ui_label('技能 · 5秒参考',locale),26,ACCENT)
+    c.text(offset+850,y,ui_label('激奏',locale),26,FEVER)
     for kind,label,centers in (('skill','S1',(360,590)),('fever','G1',(1020,1250))):
         for cx,is_end in zip(centers,(False,True)):
+            cx+=offset
             endpoint(c,cx,y,label,kind,is_end)
             c.text(cx+44,y,ui_label('结束' if is_end else '开始',locale),26,MUTED)
-    continuation(c,1480,y,'',MUTED,True)
-    c.text(1510,y,ui_label('跨栏延续',locale),26,MUTED)
+    continuation(c,offset+1480,y,'',MUTED,True)
+    c.text(offset+1510,y,ui_label('跨栏延续',locale),26,MUTED)
 
 
 def time_markers(bpms, end_tick):
@@ -192,31 +194,36 @@ def render(song,charts,score,preview,locale='zh',*,load,notice=''):
     bpms=(score or {}).get('events',{}).get('bpm',[])
     times=time_markers(bpms,end_tick) if nodes else ()
     def paint():
-        count=columns
-        width=max(1800,TRACK_LEFT+max(0,count-1)*COLUMN_PITCH+TRACK_WIDTH+80);title=localized_text(song,'title',locale)
-        # Metadata has a bounded reading width even on very wide score canvases.
-        meta_width=min(width,2600)
-        titlelines=lines(title,meta_width-920,76,True)
-        extra=(len(titlelines)-1)*90
-        header=700+extra;tracktop=header+140;trackbottom=tracktop+3840
-        height=trackbottom+112 if nodes else header+130
+        width=max(2560,TRACK_LEFT+max(0,columns-1)*COLUMN_PITCH+TRACK_WIDTH+80)
+        titlelines=lines(localized_text(song,'title',locale),600,58,True)
+        bandlines=lines(localized_text(song,'band',locale),540,38)
+        tracktop=200;trackbottom=tracktop+3840
+        height=max(trackbottom+112,2400+len(titlelines)*72+len(bandlines)*50)
         if width>CHART_MAX_EDGE or height>CHART_MAX_EDGE or width*height>CHART_MAX_PIXELS:
             raise ImageBudgetError("Complete chart exceeds its native-size budget")
-        c=Canvas(width,height);c.text(88,56,ui_label('谱面详情',locale),36,bold=True);c.text(meta_width-88,56,'Taki',30,ACCENT,True,'right')
-        c.paste(art(song.jacket_url,(300,300)),88,110,220,220,radius=16)
-        for i,line in enumerate(titlelines):c.text(344,164+i*90,line,76,bold=True)
-        by=250+extra;logos=song.catalog.get('band_logos',[])
-        bx=left_logo(c,art(logos[0],(230,100)),344,by,160,64) if len(logos)==1 else 344
-        band=localized_text(song,'band',locale)
-        c.text(bx,by,band,44)
-        if song.traits and song.traits.attribute_icon:
-            ax=bx+font(44,False,band.isascii()).getlength(band)+14
-            c.paste(art(song.traits.attribute_icon,(64,64)),round(ax),by-24,48,48,True,trim=True)
-        c.text(344,312+extra,f'ID {song.id}',28,MUTED)
+        c=Canvas(width,height)
+        c.text(64,64,ui_label('谱面详情',locale),36,bold=True)
+        c.text(684,64,'Taki',30,ACCENT,True,'right')
+        c.paste(art(song.jacket_url,(300,300)),64,124,300,300,radius=20)
+        y=486
+        for line in titlelines:
+            c.text(64,y,line,58,bold=True);y+=72
+        logos=song.catalog.get('band_logos',[])
+        if len(logos)==1:
+            left_logo(c,art(logos[0],(230,100)),64,y+22,184,80);y+=90
+        for i,line in enumerate(bandlines):
+            c.text(64,y,line,38)
+            if i==0 and song.traits and song.traits.attribute_icon:
+                ax=64+font(38,False,line.isascii()).getlength(line)+14
+                c.paste(art(song.traits.attribute_icon,(64,64)),round(ax),y-24,48,48,True,trim=True)
+            y+=50
+        c.text(64,y+6,f'ID {song.id}',28,MUTED);y+=72
         if selected:
-            bg,fg=DIFFICULTIES[selected.difficulty];x=meta_width-460;c.box((x,110,meta_width-88,330),bg,22)
-            c.text(meta_width-274,162,selected.difficulty,42,fg,True,'center');c.text(meta_width-274,258,f'{selected.level}',100,fg,True,'center')
-        c.line(88,365+extra,meta_width-88)
+            bg,fg=DIFFICULTIES[selected.difficulty]
+            c.box((64,y,684,y+100),bg,18)
+            c.text(88,y+50,selected.difficulty,38,fg,True)
+            c.text(654,y+50,f'{selected.level}',64,fg,True,'right');y+=140
+        c.line(64,y,684);y+=58
         from .song_detail_layout import seconds_at
         bpms=(score or {}).get('events',{}).get('bpm',[])
         vals=[e['bpm'] for e in bpms if e.get('bpm')]
@@ -225,30 +232,30 @@ def render(song,charts,score,preview,locale='zh',*,load,notice=''):
         metrics=[('谱面时长',f'{int(duration)//60}:{int(duration)%60:02}' if duration else ui_label('未获取',locale)),('BPM',bpm),
                  ('音符数',str(selected.notes) if selected and selected.notes is not None else ui_label('未获取',locale)),
                  ('每秒音符数',f'{selected.notes/duration:.1f}' if selected and selected.notes and duration else ui_label('未获取',locale))]
-        for i,(label,value) in enumerate(metrics):
-            x=88+i*(meta_width-176)/4;c.text(x,410+extra,ui_label(label,locale),30,MUTED)
-            value_size=48 if label=='BPM' else 52
-            # Measure the full value before placing adjacent metric columns.
-            value_size=min(value_size,int(value_size*((meta_width-176)/4-28)/max(1,font(value_size,True,value.isascii()).getlength(value))))
-            c.text(x,460+extra,value,value_size,bold=True)
         reference=song.catalog.get('reference_metrics',{}).get(preview,{})
-        for i,(label,key) in enumerate((('技能覆盖率 · 参考','sr'),('倍率 · 参考','score'),('效率 · 参考','eff'))):
-            value=reference.get(key);x=88+i*(meta_width-176)/4
-            c.text(x,520+extra,ui_label(label,locale),28,MUTED)
-            c.text(x,565+extra,f'{math.floor(value*100+.5)}%' if value is not None else ui_label('未获取',locale),44,bold=True)
-        x=88+3*(meta_width-176)/4;c.text(x,520+extra,ui_label('激奏类型',locale),28,MUTED)
+        for label,key in (('技能覆盖率 · 参考','sr'),('倍率 · 参考','score'),('效率 · 参考','eff')):
+            value=reference.get(key)
+            metrics.append((label,f'{math.floor(value*100+.5)}%' if value is not None else ui_label('未获取',locale)))
+        for label,value in metrics:
+            c.text(64,y,ui_label(label,locale),28,MUTED)
+            c.text(64,y+52,value,48,bold=True);y+=132
+        c.text(64,y,ui_label('激奏类型',locale),28,MUTED);y+=52
         missions=song.traits.missions if song.traits else None
         if missions:
-            for i,value in enumerate(missions):mission_label(c,x+i*(meta_width-176)/12,565+extra,value,32 if meta_width>=2200 else 24,40 if meta_width>=2200 else 30)
-        else:c.text(x,565+extra,ui_label('未获取',locale),28,MUTED)
+            for value in missions:
+                mission_label(c,64,y,value,28,36);y+=52
+        else:c.text(64,y,ui_label('未获取',locale),38,MUTED);y+=52
         note=ui_label('Haneoka 理论参考 · 效率含 30 秒间隔',locale)
         if 'canonical-full-combo-mismatch' in reference.get('warnings',[]):note+=ui_label(' · 源数据音符数不一致',locale)
-        c.text(meta_width-88,610+extra,note,26,MUTED,align='right')
-        c.line(88,640+extra,width-88);c.text(88,687+extra,ui_label('完整谱面',locale),48,bold=True)
-        c.text(width-88,687+extra,ui_label('下 → 上 · 左 → 右',locale),28,MUTED,align='right')
+        y+=24
+        for line in lines(note,620,24):
+            c.text(64,y,line,24,MUTED);y+=36
+        c.draw.line((744,48,744,height-64),fill='#ded8e2',width=2)
+        c.text(TRACK_LEFT-12,46,ui_label('完整谱面',locale),36,bold=True)
+        c.text(width-88,46,ui_label('下 → 上 · 左 → 右',locale),28,MUTED,align='right')
         if not nodes:
-            c.text(60,header+98,ui_label('完整谱面暂不可用',locale),30,MUTED);return c.image
-        draw_legend(c,extra,locale)
+            c.text(TRACK_LEFT,tracktop+98,ui_label('完整谱面暂不可用',locale),30,MUTED);return c.image
+        draw_legend(c,0,locale)
         for col in range(columns):
             x=TRACK_LEFT+col*COLUMN_PITCH;w=TRACK_WIDTH;lo=col*8*1920;hi=(col+1)*8*1920
             c.text(x,tracktop-28,f'{col+1:02}',26,MUTED)
@@ -291,7 +298,7 @@ def render(song,charts,score,preview,locale='zh',*,load,notice=''):
                     if node.get('type')=='flick' or n.get('type')=='flick':
                         direction=node.get('dir',n.get('dir'));kind='flick-left' if direction=='left' else 'flick-right' if direction=='right' else 'flick'
                     draw_note(c,x+(node['pos']+node['size']/2)/24*w,trackbottom-(node['t']-lo)/1920*480,node['size']/24*w,kind,node['size'])
-        c.text(60,trackbottom+66,f"{ui_label('列',locale)} 1–{columns} / {columns} · "+notice,24,MUTED)
+        c.text(TRACK_LEFT,trackbottom+66,f"{ui_label('列',locale)} 1–{columns} / {columns} · "+notice,24,MUTED)
         return c.image
     try:
         return (encode_image(paint(),close_input=True,preserve_size=True,
