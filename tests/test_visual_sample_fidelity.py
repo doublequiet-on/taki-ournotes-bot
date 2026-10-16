@@ -149,17 +149,17 @@ class FullChartTests(unittest.TestCase):
             self.assertTrue(chart_layout.render(song,song.charts,SCORE['score'],'EXPERT',load=lambda *a:None))
         self.assertEqual(len(song_detail_layout.timeline(SCORE['score'])['windows']),2)
 
-    def test_eight_columns_keep_lane_width_across_readable_pages(self):
+    def test_eight_columns_keep_lane_width_in_one_wrapped_image(self):
         from ournotes_bot.rendering import chart_layout
         song=Song(1,'测试',('测试',),'乐队','','','','','',(Chart('EXPERT',24,24,62,''),))
         score={'events':{'bpm':[{'t':0,'bpm':120}]},
                'notes':[{'type':'tap','t':i*1920,'pos':0,'size':6} for i in range(62)]}
         with patch.object(chart_layout,'draw_note') as draw:
             parts=chart_layout.render(song,song.charts,score,'EXPERT',load=lambda *args:None)
-        self.assertEqual(len(parts),2)
+        self.assertEqual(len(parts),1)
         self.assertEqual(draw.call_count,62)
         with Image.open(io.BytesIO(parts[0])) as im:
-            self.assertEqual(im.size,(2284,5182))
+            self.assertEqual(im.size,(2332,9092))
         self.assertTrue(all(call.args[3]==78 for call in draw.call_args_list))
         # Original vertical time scale: each bar still occupies 480 pixels.
         ys=[call.args[2] for call in draw.call_args_list[:8]]
@@ -245,7 +245,7 @@ class SkillWindowMarkerTests(unittest.TestCase):
             self.assertEqual(endpoints.call_count,1)
             self.assertTrue(endpoints.call_args.args[-1])
             self.assertEqual(endpoints.call_args.args[2],2830)
-            self.assertEqual(c.box.call_count,2)  # Outlined end marker.
+            self.assertEqual(endpoints.call_args.args[3],'S1')
 
 
 class DetailTableLabelsTests(unittest.TestCase):

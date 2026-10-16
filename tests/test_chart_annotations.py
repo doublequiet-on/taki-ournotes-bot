@@ -42,24 +42,44 @@ class ChartClockTests(unittest.TestCase):
         layout.draw_times(c,markers,180,312,1230,5070,15360,30720,'zh')
         labels=[v.args[2] for v in c.text.call_args_list]
         self.assertEqual(labels.count('0:15'),1)
-        self.assertEqual(labels.count('结束'),1)
+        self.assertEqual(labels.count('0:16'),1)
+        c.box.assert_not_called()
 
     def test_close_final_label_moves_but_its_tick_line_stays_exact(self):
         c=Mock();markers=((14400,15,False),(14500,15,True))
         layout.draw_times(c,markers,180,312,1230,5070,0,15360,'en')
-        boxes=[call.args[0] for call in c.box.call_args_list]
-        centers=[(box[1]+box[3])/2 for box in boxes]
-        self.assertGreaterEqual(abs(centers[0]-centers[1]),76)
+        centers=[call.args[1] for call in c.text.call_args_list]
+        self.assertGreaterEqual(abs(centers[0]-centers[1]),38)
+        c.box.assert_not_called()
         lines=[v.args[0] for v in c.draw.line.call_args_list if len(v.args[0])==4]
         self.assertIn((180,1470,492,1470),lines)
         self.assertIn((180,1445,492,1445),lines)
-        self.assertIn('End',[v.args[2] for v in c.text.call_args_list])
+        self.assertEqual([v.args[2] for v in c.text.call_args_list],['0:15','0:15'])
 
     def test_time_font_has_tabular_digits(self):
         self.assertEqual(len({font(28,False,True).getlength(str(i)) for i in range(10)}),1)
 
 
 class IntervalEdgeTests(unittest.TestCase):
+    def test_rounded_icons_have_antialiased_edges_and_hollow_skill_end(self):
+        for kind in ('skill','fever'):
+            for is_end in (False,True):
+                alpha=layout.endpoint_sprite(kind,is_end).getchannel('A')
+                values=set(alpha.tobytes())
+                self.assertTrue(any(0<v<255 for v in values))
+                self.assertEqual(alpha.getpixel((0,0)),0)
+                self.assertEqual(alpha.getpixel((32,32)),0 if kind=='skill' and is_end else 255)
+                alpha.close()
+
+    def test_real_endpoint_glyphs_do_not_overlap_their_vertical_rails(self):
+        events={'bpm':[{'t':0,'bpm':120}],'skill':[1000],'fever':[[1000,2000]]}
+        with patch.object(layout,'endpoint') as endpoints:
+            layout.draw_markers(Mock(),events,100,312,1140,4980,0,15360)
+        for call in endpoints.call_args_list:
+            _,cx,_,_,kind,_=call.args
+            if kind=='skill':self.assertLessEqual(cx+28,100-16-4-8)
+            else:self.assertGreaterEqual(cx-14,100+312+18+4+8)
+
     def test_skill_and_fever_have_only_two_real_edges_across_columns(self):
         events={'bpm':[{'t':0,'bpm':120}],'skill':[15000],'fever':[[15000,19800]]}
         c=Mock()
@@ -97,7 +117,21 @@ class IntervalEdgeTests(unittest.TestCase):
 
 
 class ChartAnnotationRenderTests(unittest.TestCase):
-    def test_three_locales_remove_beats_and_repeat_the_actual_legend(self):
+    def test_final_time_avoids_the_label_of_a_clipped_skill_window(self):
+        song=Song(1,'Test',('Test',),'Band','','','','','',(Chart('EXPERT',25,25,1,''),))
+        score={'events':{'bpm':[{'t':0,'bpm':120}],'skill':[1000]},
+               'notes':[{'type':'tap','t':3000,'pos':0,'size':6}]}
+        with patch.object(layout,'draw_note'),patch.object(layout,'draw_times',wraps=layout.draw_times) as times:
+            layout.render(song,song.charts,score,'EXPERT',load=lambda *a:None)
+        self.assertIn((4260,44),times.call_args.kwargs['occupied'])
+
+    def test_plain_time_label_avoids_skill_icon_without_a_background(self):
+        c=Mock();y=4980-14400/4
+        layout.draw_times(c,((14400,15,False),),100,312,1140,4980,0,15360,'zh',occupied=((y,44),))
+        self.assertGreaterEqual(abs(c.text.call_args.args[1]-y),44)
+        c.box.assert_not_called()
+
+    def test_three_locales_keep_whole_song_and_one_compact_legend(self):
         song=Song(1,'Test',('Test',),'Band','','','','','',(Chart('EXPERT',25,25,2,''),))
         score={'events':{'bpm':[{'t':0,'bpm':120}]},
                'notes':[{'type':'tap','t':0,'pos':0,'size':6},
@@ -108,14 +142,14 @@ class ChartAnnotationRenderTests(unittest.TestCase):
                 texts.append(str(value));return original(c,x,y,value,*args,**kwargs)
             with patch.object(Canvas,'text',capture),patch.object(layout,'draw_note'):
                 pages=layout.render(song,song.charts,score,'EXPERT',locale,load=lambda *a:None)
-            self.assertEqual(len(pages),3)
+            self.assertEqual(len(pages),1)
             self.assertFalse(any('拍' in t or 'beats' in t for t in texts))
             self.assertEqual(texts.count(start),2*len(pages))
-            self.assertEqual(texts.count(end),2*len(pages)+1)
+            self.assertEqual(texts.count(end),2*len(pages))
             self.assertEqual(texts.count('0:00'),1)
             for page in pages:
                 self.assertLessEqual(len(page),3_000_000)
-                with Image.open(io.BytesIO(page)) as im:self.assertLessEqual(im.width*im.height,12_000_000)
+                with Image.open(io.BytesIO(page)) as im:self.assertLessEqual(im.width*im.height,layout.CHART_MAX_PIXELS)
 
     def test_unavailable_chart_has_no_time_axis_or_legend(self):
         song=Song(1,'Test',('Test',),'Band','','','','','',())

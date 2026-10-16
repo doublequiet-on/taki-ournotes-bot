@@ -4,31 +4,53 @@
 # Pos: Rendering / Song; bottom-to-top, left-to-right with independent annotation gutters.
 # Effects: Pillow and injected artwork; measured native-size encoding, no data queries.
 import math
+from functools import lru_cache
 from .labels import label as ui_label
 from PIL import Image,ImageDraw
 from ..data import localized_text
 from .haneoka_theme import Canvas,MUTED,DIFFICULTIES,ACCENT,lines,font,mission_label,left_logo,prepare_assets
-from .image_output import encode_image,ImageBudgetError,MAX_IMAGE_PIXELS,MAX_IMAGE_EDGE
+from .image_output import encode_image,ImageBudgetError
 from .note_skin import draw_note
 
 TRACK_WIDTH = 312
-COLUMN_PITCH = 568
-TRACK_LEFT = 180
+COLUMN_PITCH = 460
+TRACK_LEFT = 100
 FEVER = '#bf568f'
 INTERVAL_WIDTH = 8
+CHART_MAX_PIXELS = 48_000_000
+CHART_MAX_EDGE = 20_000
+ROW_PITCH = 4000
+
+
+@lru_cache(maxsize=4)
+def endpoint_sprite(kind, is_end):
+    """Local 4x coverage antialiasing keeps rounded contours crisp at native size."""
+    scale=4
+    mask=Image.new('L',(64*scale,64*scale));d=ImageDraw.Draw(mask)
+    box=lambda a:tuple(round((v+32)*scale) for v in a)
+    if kind=='skill':
+        d.rounded_rectangle(box((-28,-22,28,22)),11*scale,fill=255)
+        if is_end:d.rounded_rectangle(box((-24,-18,24,18)),7*scale,fill=0)
+    elif is_end:
+        d.rounded_rectangle(box((-14,-14,14,14)),4*scale,fill=255)
+    else:
+        points=[(32*scale,17*scale),(21*scale,43*scale),(43*scale,43*scale)]
+        d.polygon(points,fill=255)
+        d.line(points+[points[0]],fill=255,width=6*scale,joint='curve')
+        for x,y in points:d.ellipse((x-3*scale,y-3*scale,x+3*scale,y+3*scale),fill=255)
+    alpha=mask.resize((64,64),Image.Resampling.BOX);mask.close()
+    tile=Image.new('RGBA',(64,64),ACCENT if kind=='skill' else FEVER)
+    tile.putalpha(alpha);alpha.close()
+    return tile
 
 
 def endpoint(c, cx, y, label, kind, is_end):
-    """One endpoint vocabulary, also used by the legend."""
-    color = ACCENT if kind == 'skill' else FEVER
-    if kind == 'skill':
-        c.box((cx-28,y-22,cx+28,y+22),color,9)
-        if is_end:c.box((cx-24,y-18,cx+24,y+18),'#fcf8fd',6)
-        c.text(cx,y,label,26,color if is_end else 'white',True,'center')
-    else:
-        if is_end:c.draw.rectangle((cx-14,y-14,cx+14,y+14),fill=color)
-        else:c.draw.polygon(((cx,y-18),(cx-16,y+14),(cx+16,y+14)),fill=color)
-        c.text(cx+20,y,label,26,color,True)
+    """Glyphs stay outside the rail; only their short leader touches the rail."""
+    color=ACCENT if kind=='skill' else FEVER
+    tile=endpoint_sprite(kind,is_end)
+    c.image.paste(tile,(round(cx)-32,round(y)-32),tile)
+    if kind=='skill':c.text(cx,y,label,26,color if is_end else 'white',True,'center')
+    else:c.text(cx,y+31,label,24,color,True,'center')
 
 
 def continuation(c, cx, y, label, color, at_top, label_x=None):
@@ -39,15 +61,15 @@ def continuation(c, cx, y, label, color, at_top, label_x=None):
 
 
 def draw_legend(c, extra, locale):
-    for y,kind,label,key in ((1044+extra,'skill','S1','技能 · 5 秒参考窗口'),
-                             (1100+extra,'fever','G1','激奏 · 来源实际区间')):
-        color=ACCENT if kind=='skill' else FEVER
-        c.text(88,y,ui_label(key,locale),28,color)
-        for cx,is_end,key in ((640,False,'开始'),(960,True,'结束')):
+    y=1044+extra
+    c.text(88,y,ui_label('技能 · 5秒参考',locale),26,ACCENT)
+    c.text(850,y,ui_label('激奏',locale),26,FEVER)
+    for kind,label,centers in (('skill','S1',(360,590)),('fever','G1',(1020,1250))):
+        for cx,is_end in zip(centers,(False,True)):
             endpoint(c,cx,y,label,kind,is_end)
-            c.text(cx+90,y,ui_label(key,locale),28,MUTED)
-        continuation(c,1270,y,label,color,True)
-        c.text(1320,y,ui_label('跨栏延续',locale),28,MUTED)
+            c.text(cx+44,y,ui_label('结束' if is_end else '开始',locale),26,MUTED)
+    continuation(c,1480,y,'',MUTED,True)
+    c.text(1510,y,ui_label('跨栏延续',locale),26,MUTED)
 
 
 def time_markers(bpms, end_tick):
@@ -71,23 +93,29 @@ def time_markers(bpms, end_tick):
     return tuple(result)
 
 
-def draw_times(c, markers, x, w, top, bottom, lo, hi, locale):
+def draw_times(c, markers, x, w, top, bottom, lo, hi, locale, *, occupied=()):
     visible=[v for v in markers if lo<=v[0]<hi]
     if not visible:return
     ys=[bottom-(tick-lo)/4 for tick,_,_ in visible]
-    # Label placement is independent of its exact tick, retained by a leader.
-    centers=[min(bottom-34,max(top+34,y)) for y in ys]
-    for i in range(1,len(centers)):centers[i]=min(centers[i],centers[i-1]-76)
-    if centers[-1]<top+34:
-        centers[-1]=top+34
-        for i in range(len(centers)-2,-1,-1):centers[i]=max(centers[i],centers[i+1]+76)
-    for (_,seconds,is_end),y,cy in zip(visible,ys,centers):
+    centers=[]
+    for y in ys:
+        cy=y
+        # Share the left gutter without covering endpoint or continuation labels.
+        blocked=list(occupied)+[(v,38) for v in centers]
+        for _ in range(len(blocked)+1):
+            conflicts=[(pos,gap) for pos,gap in blocked if abs(cy-pos)<gap]
+            if not conflicts:break
+            cy=min(pos-gap for pos,gap in conflicts)
+        if cy<top+18:
+            cy=max(top+18,y)
+            for pos,gap in sorted(blocked):
+                if abs(cy-pos)<gap:cy=pos+gap
+        centers.append(cy)
+    for (_,seconds,_),y,cy in zip(visible,ys,centers):
         c.draw.line((x,y,x+w,y),fill='#646a7b',width=2)
-        c.draw.line((x-78,cy,x-74,cy,x-74,y,x-4,y),fill='#777985',width=2)
-        c.box((x-166,cy-32,x-78,cy+32),'#efedf2',8)
-        text=f'{seconds//60}:{seconds%60:02}'
-        c.text(x-122,cy-(12 if is_end else 0),text,28,MUTED,False,'center')
-        if is_end:c.text(x-122,cy+18,ui_label('结束',locale),22,MUTED,False,'center')
+        c.text(x-24,cy,f'{seconds//60}:{seconds%60:02}',28,MUTED,False,'right')
+        if abs(cy-y)>1:
+            c.draw.line((x-20,cy,x-18,cy,x-18,y,x-16,y),fill='#777985',width=1)
 
 
 def skill_end_tick(start, bpms, duration=5):
@@ -112,7 +140,7 @@ def draw_markers(c, events, x, w, top, bottom, lo, hi, *, end_tick=None):
     for kind,prefix,spans in (('skill','S',skills),('fever','G',fever_spans(events))):
         color=ACCENT if kind=='skill' else FEVER
         rail=x-16 if kind=='skill' else x+w+18
-        cx=x-40 if kind=='skill' else x+w+30
+        cx=x-56 if kind=='skill' else x+w+44
         edge=x if kind=='skill' else x+w
         limit=min(hi,end_tick) if end_tick is not None else hi
         for i,(start,end) in enumerate(spans,1):
@@ -125,11 +153,12 @@ def draw_markers(c, events, x, w, top, bottom, lo, hi, *, end_tick=None):
                         if not start<cut<end:continue
                         nearby=any(lo<=p<hi and (end_tick is None or p<=end_tick) and abs(y(p)-y(cut))<76 for p in (start,end))
                         continuation(c,rail,y(cut),'' if nearby else label,color,at_top,
-                                     cx if kind=='skill' else cx+20)
+                                     cx)
             for point,is_end in ((start,False),(end,True)):
                 if point is None or not lo<=point<hi or (end_tick is not None and point>end_tick):continue
                 yy=y(point)
-                c.draw.line((rail,yy,edge,yy),fill=color,width=3)
+                tip=cx+28 if kind=='skill' else cx-14
+                c.draw.line((tip,yy,edge,yy),fill=color,width=3)
                 endpoint(c,cx,yy,label,kind,is_end)
 
 
@@ -157,12 +186,16 @@ def render(song,charts,score,preview,locale='zh',*,load,notice=''):
         return assets[key]
     bpms=(score or {}).get('events',{}).get('bpm',[])
     times=time_markers(bpms,end_tick) if nodes else ()
-    def paint(first,count):
-        width=max(1800,TRACK_LEFT+max(0,count-1)*COLUMN_PITCH+TRACK_WIDTH+88);title=localized_text(song,'title',locale)
+    def paint():
+        count=min(columns,5)
+        width=max(1800,TRACK_LEFT+max(0,count-1)*COLUMN_PITCH+TRACK_WIDTH+80);title=localized_text(song,'title',locale)
         titlewidth=width-1180;titlelines=lines(title,max(620,titlewidth),108,True)
         extra=(len(titlelines)-1)*126
-        header=1000+extra;tracktop=header+230;trackbottom=tracktop+3840
-        height=trackbottom+112 if nodes else header+130
+        header=1000+extra;tracktop=header+140;trackbottom=tracktop+3840
+        rows=max(1,math.ceil(columns/5))
+        height=trackbottom+(rows-1)*ROW_PITCH+112 if nodes else header+130
+        if width>CHART_MAX_EDGE or height>CHART_MAX_EDGE or width*height>CHART_MAX_PIXELS:
+            raise ImageBudgetError("Complete chart exceeds its native-size budget")
         c=Canvas(width,height);c.text(88,78,ui_label('谱面详情',locale),50,bold=True);c.text(width-84,78,'Taki',40,ACCENT,True,'right')
         c.paste(art(song.jacket_url,(300,300)),88,164,300,300,radius=20)
         for i,line in enumerate(titlelines):c.text(452,239+i*126,line,108,bold=True)
@@ -206,19 +239,29 @@ def render(song,charts,score,preview,locale='zh',*,load,notice=''):
         if 'canonical-full-combo-mismatch' in reference.get('warnings',[]):note+=ui_label(' · 源数据音符数不一致',locale)
         c.text(width-88,901+extra,note,26,MUTED,align='right')
         c.line(88,932+extra,width-88);c.text(88,987+extra,ui_label('完整谱面',locale),48,bold=True)
-        c.text(width-88,987+extra,ui_label('下 → 上 · 左 → 右',locale),36,MUTED,align='right')
+        c.text(width-88,987+extra,ui_label('下 → 上 · 左 → 右 · 逐排向下',locale),36,MUTED,align='right')
         if not nodes:
             c.text(60,header+98,ui_label('完整谱面暂不可用',locale),30,MUTED);return c.image
         draw_legend(c,extra,locale)
-        for local,col in enumerate(range(first,first+count)):
+        for col in range(columns):
+            row,local=divmod(col,5)
+            tracktop=header+140+row*ROW_PITCH;trackbottom=tracktop+3840
             x=TRACK_LEFT+local*COLUMN_PITCH;w=TRACK_WIDTH;lo=col*8*1920;hi=(col+1)*8*1920
-            c.text(x,tracktop-60,f'{col+1:02}',26,MUTED)
+            c.text(x,tracktop-28,f'{col+1:02}',26,MUTED)
             c.box((x-12,tracktop-4,x+w+12,trackbottom+14),'#141723',12)
             draw_markers(c,(score or {}).get('events',{}),x,w,tracktop,trackbottom,lo,hi,end_tick=end_tick)
             for lane in range(7):c.draw.line((x+lane*w/6,tracktop,x+lane*w/6,trackbottom),fill='#2c3145',width=1)
             for beat in range(33):
                 yy=trackbottom-beat*120;c.draw.line((x,yy,x+w,yy),fill='#4b5066' if beat%4==0 else '#252b3c',width=2 if beat%4==0 else 1)
-            draw_times(c,times,x,w,tracktop,trackbottom,lo,hi,locale)
+            occupied=[]
+            for tick in sorted((score or {}).get('events',{}).get('skill',[])):
+                end=skill_end_tick(tick,bpms)
+                occupied.extend((trackbottom-(p-lo)/4,44) for p in (tick,end) if p is not None and lo<=p<hi and p<=end_tick)
+                if end is not None:
+                    if tick<lo<end:occupied.append((trackbottom-30,44))
+                    limit=min(hi,end_tick)
+                    if tick<limit<end:occupied.append((trackbottom-(limit-lo)/4+30,44))
+            draw_times(c,times,x,w,tracktop,trackbottom,lo,hi,locale,occupied=occupied)
             # A per-column ribbon avoids allocating an entire multi-megapixel
             # transparent canvas for every column.
             ribbon=Image.new('RGBA',(w,3841));rd=ImageDraw.Draw(ribbon)
@@ -244,25 +287,12 @@ def render(song,charts,score,preview,locale='zh',*,load,notice=''):
                     if node.get('type')=='flick' or n.get('type')=='flick':
                         direction=node.get('dir',n.get('dir'));kind='flick-left' if direction=='left' else 'flick-right' if direction=='right' else 'flick'
                     draw_note(c,x+(node['pos']+node['size']/2)/24*w,trackbottom-(node['t']-lo)/1920*480,node['size']/24*w,kind,node['size'])
-        c.text(60,trackbottom+66,f"{ui_label('列',locale)} {first+1}–{first+count} / {columns} · "+notice,24,MUTED)
+        c.text(60,trackbottom+66,f"{ui_label('列',locale)} 1–{columns} / {columns} · "+notice,24,MUTED)
         return c.image
-    result=[];first=0
     try:
-        if not columns:return (encode_image(paint(0,0),close_input=True,preserve_size=True),)
-        # Keep readable lanes and independent annotation gutters on every page.
-        while first<columns:
-            count=min(columns-first,4)
-            while count:
-                width=max(1800,TRACK_LEFT+(count-1)*COLUMN_PITCH+TRACK_WIDTH+88)
-                title_count=len(lines(localized_text(song,'title',locale),max(620,width-1180),108,True))
-                height=5182+(title_count-1)*126
-                if width>MAX_IMAGE_EDGE or height>MAX_IMAGE_EDGE or width*height>MAX_IMAGE_PIXELS:
-                    count-=1;continue
-                try:raw=encode_image(paint(first,count),close_input=True,preserve_size=True)
-                except ImageBudgetError:count-=1
-                else:result.append(raw);first+=count;break
-            else:raise ImageBudgetError('One complete chart column exceeds the readable budget')
-        return tuple(result)
+        return (encode_image(paint(),close_input=True,preserve_size=True,
+                             max_pixels=CHART_MAX_PIXELS,max_edge=CHART_MAX_EDGE,
+                             quality_steps=(95,90,88,84,80,76,72)),)
     finally:
         for image in assets.values():
             if image is not None:image.close()

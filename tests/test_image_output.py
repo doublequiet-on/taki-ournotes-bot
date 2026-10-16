@@ -19,6 +19,22 @@ from types import SimpleNamespace
 
 
 class ImageOutputTests(unittest.TestCase):
+    def test_explicit_chart_dimensions_do_not_raise_other_views_budgets(self):
+        with patch.object(image_output,'MAX_IMAGE_PIXELS',10_000),patch.object(image_output,'MAX_IMAGE_EDGE',100):
+            with self.assertRaises(image_output.ImageBudgetError):
+                encode_image(Image.new('RGB',(120,100)),close_input=True,preserve_size=True)
+            blob=encode_image(Image.new('RGB',(120,100)),close_input=True,preserve_size=True,
+                              max_pixels=12_000,max_edge=120)
+            with Image.open(io.BytesIO(blob)) as result:self.assertEqual(result.size,(120,100))
+            self.assertEqual(image_output.MAX_IMAGE_PIXELS,10_000)
+            self.assertEqual(image_output.MAX_IMAGE_EDGE,100)
+
+    def test_explicit_chart_profile_still_respects_the_upload_byte_budget(self):
+        with patch.object(image_output,'MAX_IMAGE_BYTES',100):
+            with self.assertRaises(image_output.ImageBudgetError):
+                encode_image(Image.new('RGB',(120,100)),close_input=True,preserve_size=True,
+                             max_pixels=12_000,max_edge=120,quality_steps=(95,72))
+
     def test_oversized_noise_is_bounded_and_remains_complete(self):
         im = Image.frombytes("RGB", (1400, 1000), random.Random(7).randbytes(1400 * 1000 * 3))
         with patch("ournotes_bot.rendering.image_output.MAX_IMAGE_BYTES", 120_000):
