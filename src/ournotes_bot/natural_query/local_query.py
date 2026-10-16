@@ -225,7 +225,9 @@ def local_card_catalog(query: str, repository: SongRepository) -> QuerySpec | st
     # Split common unspaced Chinese colour/rarity phrases before field parsing.
     if not re.search(r"[=：:]", text):
         text = re.sub(r"([红蓝绿黄紫]色)", r" \1 ", text)
-        text = re.sub(r"(?<![A-Za-z])(SSR|SR|R|BD|EX)(?![A-Za-z])", r" \1 ", text, flags=re.I)
+        text = re.sub(
+            r"(?<![A-Za-z])(?:SSR|SR|R|BD|EX)(?:\s*(?:或|[,，、|/])\s*(?:SSR|SR|R|BD|EX))*(?![A-Za-z])",
+            lambda match: " " + re.sub(r"\s+", "", match[0]) + " ", text, flags=re.I)
     text = re.sub(r"(?i)(LIVE)\s*(?![=：:])(?=分数提升|LIFE回复|判定强化|技能延长)", r"LIVE=", text)
     text = re.sub(r"(?:击奏|激奏)\s*(?![=：:])(?=JUST|COMBO|LUCK)", "击奏=", text, flags=re.I)
     try:
