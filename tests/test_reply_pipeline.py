@@ -151,7 +151,7 @@ class ReplyPipelineTests(unittest.TestCase):
         self.assertEqual(send.await_count, 1)
         self.assertEqual(send.await_args.kwargs["msg_type"], 7)
         self.assertEqual(send.await_args.kwargs["openid"], "fake-user")
-        self.assertNotIn("content", send.await_args.kwargs)
+        self.assertEqual(send.await_args.kwargs["content"], " ")
 
     def test_media_send_timeout_is_not_blindly_retried_as_text(self):
         message = self.message(send_error=TimeoutError("Bearer secret-value"))
@@ -404,7 +404,7 @@ class EasterEggTests(unittest.TestCase):
                 send = message._api.post_group_message if group else message._api.post_c2c_message
                 self.assertEqual(send.await_count, 1)
                 self.assertEqual(send.await_args.kwargs["msg_type"], 7)
-                self.assertNotIn("content", send.await_args.kwargs)
+                self.assertEqual(send.await_args.kwargs["content"], " ")
         message = ReplyPipelineTests.message(upload_error=TimeoutError())
         asyncio.run(_deliver_reply(message, "target", True, reply))
         self.assertEqual(message._api.post_group_message.await_count, 1)

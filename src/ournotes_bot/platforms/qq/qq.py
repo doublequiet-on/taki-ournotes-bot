@@ -842,12 +842,8 @@ async def _deliver_reply(message, target_id: str, group: bool, reply: PreparedRe
     target = {"group_openid" if group else "openid": target_id,
               "msg_id": message.id, "msg_seq": msg_seq}
     channel = "群聊" if group else "单聊"
-    user = getattr(getattr(message, "author", None), "member_openid", None) if group else None
-    def addressed(text):
-        if not user:
-            return text
-        from html import escape
-        return f'<qqbot-at-user id="{escape(user, quote=True)}" /> ' + (text or "")
+    # msg_id binds the passive reply to its sender; QQ displays the native @.
+    # Explicit mention markup is displayed literally by the reported client.
     if reply.image:
         try:
             media = await _upload_image(message._api, target_id, reply.image, group)
@@ -855,19 +851,17 @@ async def _deliver_reply(message, target_id: str, group: bool, reply: PreparedRe
             logger.warning("%s图片上传失败，改用文字；错误类型=%s", channel, type(exc).__name__)
             if len(reply.text)>1800:
                 try:
-                    receipt=_receipt(await send(**target,msg_type=0,content=addressed('图片上传失败，完整文字已保留；发送 /继续 查看。')))
+                    receipt=_receipt(await send(**target,msg_type=0,content='图片上传失败，完整文字已保留；发送 /继续 查看。'))
                 except Exception as error:
                     logger.error('%s失败提示发送回执不确定；错误类型=%s',channel,type(error).__name__)
                     return DeliveryOutcome('uncertain')
                 return DeliveryOutcome('fallback_pending' if receipt.confirmed else receipt.status)
         else:
             try:
-                caption={}
+                caption={"content": " "}
                 if isinstance(reply.context,DeliveryCursor):
                     cursor=reply.context
                     caption['content']=f'图片 {cursor.sent}/{cursor.total}'+('；/继续 发送其余图片。' if cursor.remaining else '；本次已全部发送。')
-                if user:
-                    caption["content"] = addressed(caption.get("content", ""))
                 outcome = _receipt(await send(**target, msg_type=7, media=media, **caption))
             except Exception as exc:
                 logger.error("%s图片发送失败，结果不确定，不自动重发；错误类型=%s", channel, type(exc).__name__)
@@ -877,7 +871,7 @@ async def _deliver_reply(message, target_id: str, group: bool, reply: PreparedRe
             return outcome
     for offset, chunk in enumerate(reply.fallback_texts or (reply.text,)):
         try:
-            outcome = _receipt(await send(**{**target, "msg_seq": msg_seq + offset}, msg_type=0, content=addressed(chunk)))
+            outcome = _receipt(await send(**{**target, "msg_seq": msg_seq + offset}, msg_type=0, content=chunk))
         except Exception as exc:
             logger.error("%s文字发送失败，结果不确定，不自动重发；错误类型=%s", channel, type(exc).__name__)
             return DeliveryOutcome("uncertain")
