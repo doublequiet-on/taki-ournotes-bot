@@ -214,10 +214,24 @@ class HaneokaCutoffTests(unittest.TestCase):
         self.fixture.now += 61
         self.fixture.clock_offset = 124000
         self.fixture.fetched = int(self.fixture.now * 1000) + 122000
-        HistorySampler(self.source, clock=lambda: self.fixture.now).sample_once()
+        sampler = HistorySampler(self.source, clock=lambda: self.fixture.now)
+        with self.assertLogs('ournotes_bot.sources.cutoff_history', level='WARNING') as logs:
+            sampler.sample_once()
+        self.assertEqual(len(logs.output), 4)
+        self.assertIn('采样告警', sampler.last_state)
         self.assertEqual(history.status()["points"], 1)
         with closing(sqlite3.connect(history.path)) as db:
             self.assertEqual(db.execute("SELECT count(*) FROM gaps WHERE code='clock_skew'").fetchone()[0], 4)
+            rows = db.execute('SELECT source_ms,server_ms,received_ms,scores,source,time_kind,contract_version FROM clock_quarantine').fetchall()
+            self.assertEqual(len(rows), 4)
+            self.assertTrue(all(json.loads(row[3]) == [100, None, 0] for row in rows))
+            self.assertTrue(all(row[0] == self.fixture.fetched and row[1] - row[2] == 124000 for row in rows))
+        restarted = HaneokaCutoffHistory(history.path, min_free_mb=0)
+        self.assertEqual(len(restarted.status()['clock_pending']), 4)
+        self.assertIn('告警', restarted.status_text())
+        self.assertIn('隔离保留', restarted.status_text())
+        self.assertIn('隔离保留', ' '.join(self.board()[1].notes))
+        self.assertEqual(restarted.status()['quarantined'], 4)
         # Recovery advances beyond the old skewed sample; source time is never rewritten.
         self.fixture.now += 300
         self.fixture.clock_offset = 0
@@ -226,6 +240,62 @@ class HaneokaCutoffTests(unittest.TestCase):
         points = history.read(event, first.song, (1,)).points
         self.assertEqual([point.time_ms for point in points], [first.fetched_ms, self.fixture.fetched])
         self.assertEqual([point.break_before for point in points], [False, True])
+        # Success for JP must not hide the other three regions' outstanding failures.
+        self.assertEqual(len(restarted.status()['clock_pending']), 3)
+        sampler.sample_once()
+        self.assertFalse(restarted.status()['clock_pending'])
+        self.assertNotIn('告警', restarted.status_text())
+        self.assertEqual(restarted.status()['quarantined'], 4)
+
+    def test_clock_quarantine_rollback_storage_failure_and_disabled(self):
+        event, board = self.board()
+        skewed = replace(board, server_ms=board.received_ms + 130000,
+                         fetched_ms=board.received_ms + 128000, http_date_ms=None)
+        history = HaneokaCutoffHistory(self.path / 'quarantine.db', min_free_mb=0)
+        self.assertEqual(history.record(event, skewed), 'clock_skew')
+        self.assertEqual(history.record(event, skewed), 'clock_skew')
+        self.assertEqual(history.status()['quarantined'], 1)
+        self.assertFalse(history.read(event, board.song, (1,)).points)
+        # An old schema3 writer still reads/writes its tables and preserves isolation.
+        old = OpenCutoffHistory(history.path, min_free_mb=0)
+        old.source, old.time_kind, old.contract_version, old.schema_version = history.source, history.time_kind, history.contract_version, 3
+        self.assertFalse(old.read(event, board.song, (1,)).points)
+        self.assertEqual(old.record(event, board), 'valid')
+        self.assertEqual(history.status()['quarantined'], 1)
+        self.assertEqual(history.read(event, board.song, (1,)).points[0].scores, (100,))
+        with patch.object(history, '_connect', side_effect=sqlite3.OperationalError('locked')):
+            self.assertEqual(history.record(event, skewed), 'storage_error')
+        history.enabled = False
+        self.assertEqual(history.record(event, skewed), 'disabled')
+        history.enabled = True
+        history.disk_usage = lambda _: SimpleNamespace(free=0)
+        history.min_free_bytes = 1
+        self.assertEqual(history.record(event, skewed), 'low_disk')
+
+    def test_late_valid_observation_does_not_clear_newer_clock_alarm(self):
+        event, board = self.board()
+        history = HaneokaCutoffHistory(self.path / 'late.db', min_free_mb=0)
+        skewed = replace(board, received_ms=board.received_ms + 300000,
+                         server_ms=board.received_ms + 430000, fetched_ms=None, http_date_ms=None)
+        history.record(event, skewed)
+        history.record(event, skewed)
+        self.assertEqual(history.status()['quarantined'], 1)
+        history.record(event, board)
+        self.assertEqual(len(history.status()['clock_pending']), 1)
+
+    def test_quarantine_and_gap_are_atomic_on_write_failure(self):
+        event, board = self.board()
+        history = HaneokaCutoffHistory(self.path / 'atomic.db', min_free_mb=0)
+        history.record(event, board)
+        with closing(sqlite3.connect(history.path)) as db, db:
+            db.execute("CREATE TRIGGER reject_gap BEFORE INSERT ON gaps BEGIN SELECT RAISE(ABORT, 'test write failure'); END")
+        skewed = replace(board, server_ms=board.received_ms + 130000,
+                         fetched_ms=board.received_ms + 128000, http_date_ms=None)
+        self.assertEqual(history.record(event, skewed), 'storage_error')
+        state = history.status()
+        self.assertEqual(state['quarantined'], 0)
+        self.assertFalse(state['clock_pending'])
+        self.assertIn('历史库不可用', history.status_text())
 
     def test_http_date_calibrates_four_regions_and_preserves_audit_and_rollback(self):
         from email.utils import formatdate
@@ -299,7 +369,7 @@ class HaneokaCutoffTests(unittest.TestCase):
         self.assertEqual(fallback.quality, "fallback")
         self.assertEqual(fallback.age_seconds, 63)
         self.assertEqual(history.status()["points"], 0)
-        self.assertFalse(any("时钟" in note for note in fallback.notes))
+        self.assertTrue(any("历史采集告警" in note for note in fallback.notes))
         self.fixture.now += 61
         self.fixture.failure = False
         self.fixture.fetched -= 1000  # late and still clock-skewed

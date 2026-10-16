@@ -9,6 +9,7 @@ from __future__ import annotations
 import bisect
 import hashlib
 import json
+import logging
 import shutil
 import sqlite3
 import threading
@@ -37,6 +38,18 @@ CREATE TABLE IF NOT EXISTS health (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 # Additive table, deliberately retaining schema versions and old reader compatibility.
 EVENT_METADATA = "CREATE TABLE IF NOT EXISTS event_metadata (server TEXT, event TEXT, payload TEXT NOT NULL, PRIMARY KEY(server,event))"
 PLAYER_SCHEMA = "CREATE TABLE IF NOT EXISTS observation_players (observation_id INTEGER PRIMARY KEY, players TEXT NOT NULL, quality TEXT NOT NULL)"
+QUARANTINE_SCHEMA = """
+CREATE TABLE IF NOT EXISTS clock_quarantine (
+ server TEXT, event TEXT, challenge TEXT, music TEXT, received_ms INTEGER,
+ source_ms INTEGER, server_ms INTEGER, http_date_ms INTEGER, scores TEXT,
+ source TEXT, time_kind TEXT, contract_version TEXT, quality TEXT, collect_status TEXT);
+CREATE UNIQUE INDEX IF NOT EXISTS clock_quarantine_identity ON clock_quarantine
+ (server,event,challenge,received_ms,coalesce(source_ms,-1),coalesce(server_ms,-1),coalesce(http_date_ms,-1),scores);
+CREATE TABLE IF NOT EXISTS clock_pending (
+ server TEXT, event TEXT, challenge TEXT, first_ms INTEGER, last_ms INTEGER,
+ PRIMARY KEY(server,event,challenge));
+"""
+_LOGGER = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -231,7 +244,14 @@ class CutoffHistory:
                     db.execute("INSERT OR IGNORE INTO gaps VALUES(?,?,?,?,?)", (*key, received, quality))
                 db.execute("INSERT OR REPLACE INTO health VALUES(?,?)", ("last_success" if quality == "valid" else "last_failure", str(received)))
                 db.execute("INSERT OR REPLACE INTO health VALUES('last_quality',?)", (quality,))
+                if quality == "valid" and db.execute("SELECT 1 FROM sqlite_master WHERE name='clock_pending' AND type='table'").fetchone():
+                    recovered = db.execute("DELETE FROM clock_pending WHERE server=? AND event=? AND challenge=? AND last_ms<=?",
+                                           (*key, received)).rowcount
+                else:
+                    recovered = 0
             self.last_error = ""
+            if recovered:
+                _LOGGER.warning("History clock sampling recovered: server=%s event=%s challenge=%s; quarantined records retained", *key)
             return quality if quality == "conflict" else "duplicate" if duplicate else quality
         except (sqlite3.Error, OSError, ValueError, OverflowError):
             self.last_error = "storage_error"
@@ -305,6 +325,9 @@ class CutoffHistory:
                 count, first, last = db.execute("SELECT count(*), min(nullif(source_ms,-1)), max(nullif(source_ms,-1)) FROM observations").fetchone()
                 result.update(points=count, first_ms=first, last_ms=last)
                 result.update(dict(db.execute("SELECT key,value FROM health")))
+                if db.execute("SELECT 1 FROM sqlite_master WHERE name='clock_pending' AND type='table'").fetchone():
+                    result['clock_pending'] = db.execute("SELECT server,event,challenge,first_ms,last_ms FROM clock_pending ORDER BY server,event,challenge").fetchall()
+                    result['quarantined'] = db.execute("SELECT count(*) FROM clock_quarantine").fetchone()[0]
         except (sqlite3.Error, OSError):
             result["error"] = "storage_error"
         return result
@@ -403,10 +426,17 @@ class CutoffHistory:
         state = self.status()
         label = {"low_disk": "磁盘不足，暂停历史写入与周期采样", "disk_unavailable": "磁盘状态不可用，已暂停采样",
                  "storage_error": "历史库不可用，当前查询仍可使用", "busy": "历史库繁忙"}.get(state["error"], "正常")
+        pending = state.get('clock_pending', ())
+        if pending:
+            label = (label + " · " if state['error'] else "") + "告警：时钟异常，历史观测隔离待核验"
+        details = ''.join(f"\n时钟异常：{server} 活动 {event} 挑战 {challenge} · 自 {display_time(first, 'tw')} 至 {display_time(last, 'tw')} UTC+08:00"
+                          for server, event, challenge, first, last in pending)
+        if state.get('quarantined'):
+            details += f"\n隔离保留：{state['quarantined']} 条原始观测，不入曲线；恢复采样不自动回填。"
         return (f"榜线历史：{'启用' if self.enabled else '关闭'} · {label} · {state['bytes'] / 1048576:.2f} MiB · {state['points']} 条观测\n"
                 f"覆盖：{display_time(state['first_ms'], 'tw')} ～ {display_time(state['last_ms'], 'tw')} UTC+08:00\n"
                 f"最近成功：{display_time(int(state['last_success']) if state['last_success'] else None, 'tw')}；"
-                f"最近失败：{display_time(int(state['last_failure']) if state['last_failure'] else None, 'tw')} UTC+08:00")
+                f"最近失败：{display_time(int(state['last_failure']) if state['last_failure'] else None, 'tw')} UTC+08:00" + details)
 
 
 class OpenCutoffHistory(CutoffHistory):
@@ -470,6 +500,41 @@ class HaneokaCutoffHistory(OpenCutoffHistory):
     contract_version = "haneoka:challenge-ranking/1"
     schema_version = 3
 
+    def _quarantine_clock(self, event, board):
+        """Keep rejected observations separately; never reinterpret their timestamps."""
+        if not self.writable():
+            return "disabled" if not self.enabled else self.last_error
+        if not self._lock.acquire(timeout=0.15):
+            self.last_error = "busy"
+            return "busy"
+        try:
+            key = self._key(event, board.song)
+            if key[0] not in {"jp", "tw", "kr", "en"}:
+                return "invalid_identity"
+            received = self._ms(board.received_ms) or int(self.clock() * 1000)
+            raw = board.observed_scores if board.observed_scores is not None else board.scores
+            scores = json.dumps([n if type(n) is int and n >= 0 else None for n in raw[:100]], separators=(',', ':'))
+            with closing(self._connect(write=True)) as db, db:
+                db.executescript(QUARANTINE_SCHEMA)
+                db.execute("INSERT OR IGNORE INTO clock_quarantine VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                           (*key, str(board.song.music_id), received, board.fetched_ms, board.server_ms,
+                            board.http_date_ms, scores, board.source, board.time_kind, board.contract_version,
+                            board.quality, board.song.collect_status))
+                db.execute("INSERT INTO clock_pending VALUES(?,?,?,?,?) ON CONFLICT(server,event,challenge) DO UPDATE SET first_ms=min(first_ms,excluded.first_ms),last_ms=max(last_ms,excluded.last_ms)",
+                           (*key, received, received))
+                db.execute("INSERT OR IGNORE INTO gaps VALUES(?,?,?,?,?)", (*key, received, 'clock_skew'))
+                db.execute("INSERT OR REPLACE INTO health VALUES('last_failure',?)", (str(received),))
+                db.execute("INSERT OR REPLACE INTO health VALUES('last_quality','clock_skew')")
+            self.last_error = ""
+            _LOGGER.warning("History clock_skew: server=%s event=%s challenge=%s; raw observation quarantined, excluded from trends", *key)
+            return "clock_skew"
+        except (sqlite3.Error, OSError, ValueError, OverflowError):
+            self.last_error = "storage_error"
+            _LOGGER.error("History clock quarantine storage failed: server=%s event=%s challenge=%s", *key)
+            return "storage_error"
+        finally:
+            self._lock.release()
+
     def record(self, event, board):
         if (getattr(board, "source", "") != self.source or getattr(board, "time_kind", "") != self.time_kind
                 or getattr(board, "contract_version", "") != self.contract_version):
@@ -480,8 +545,7 @@ class HaneokaCutoffHistory(OpenCutoffHistory):
             # Only the same HTTPS response's Date, independently close to local
             # receipt, may anchor the source-relative age. Never hard-code 130s.
             if not date or abs(date - received) > 5000 or not fetched or fetched > server + 1000:
-                self.failure(event.server, event.event_id, board.song.challenge_id, "clock_skew")
-                return "clock_skew"
+                return self._quarantine_clock(event, board)
             adjusted = replace(board, fetched_ms=fetched + date - server, server_ms=date)
             return super().record(event, adjusted, _clock_provenance=(fetched, server, date))
         return super().record(event, board)

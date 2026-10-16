@@ -64,6 +64,8 @@ class HistorySampler:
             except Exception:
                 history.failure(server, code="sampling_error")
                 self.last_state = "采样失败，等待下一周期"
+        if history.status().get('clock_pending'):
+            self.last_state = "采样告警：存在时钟异常待核验观测，详见榜线历史状态"
 
     async def run(self):
         next_tick = self.clock()
