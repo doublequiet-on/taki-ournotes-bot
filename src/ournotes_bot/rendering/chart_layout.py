@@ -220,9 +220,12 @@ def render(song,charts,score,preview,locale='zh',*,load,notice=''):
         c.text(48,y+6,f'ID {song.id}',26,MUTED);y+=58
         if selected:
             bg,fg=DIFFICULTIES[selected.difficulty]
-            c.box((48,y,500,y+84),bg,18)
-            c.text(68,y+42,selected.difficulty,32,fg,True)
-            c.text(480,y+42,f'{selected.level}',56,fg,True,'right');y+=114
+            level=str(selected.level)
+            name_width=font(30,True,True).getlength(selected.difficulty)
+            badge_width=round(name_width+font(40,True,True).getlength(level)+64)
+            c.box((48,y,48+badge_width,y+68),bg,16)
+            c.text(68,y+34,selected.difficulty,30,fg,True)
+            c.text(48+badge_width-20,y+34,level,40,fg,True,'right');y+=98
         c.line(48,y,500);y+=46
         from .song_detail_layout import seconds_at
         bpms=(score or {}).get('events',{}).get('bpm',[])
