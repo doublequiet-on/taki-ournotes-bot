@@ -15,9 +15,8 @@ from .image_output import ImageBudgetError
 LEFT, RIGHT, GAP = 54, 1026, 20
 WIDTH = RIGHT - LEFT
 OVERVIEW_WIDTH = 474
-# Card title, character names and activity roles; query commands stay in text.
-CAPTION_STYLES = ((22, 32, INK, True), (20, 28, MUTED, False),
-                  (20, 28, MUTED, False))
+# Only card titles and character names are shown beneath the artwork.
+CAPTION_STYLES = ((22, 32, INK, True), (20, 28, MUTED, False))
 
 
 @dataclass(frozen=True)
@@ -55,8 +54,7 @@ def _captions(row):
     width = _caption_width(row)
     title = _name_lines(row.display_title, width)
     people = tuple(line for value in row.body for line in _name_lines(value, width, 20, False))
-    tags = lines('/'.join(row.tags), width, 20) if row.tags else ()
-    return title, people, tags
+    return title, people
 
 
 def _caption_heights(rows):

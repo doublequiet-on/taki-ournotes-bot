@@ -82,9 +82,11 @@ class RotatingLayoutTests(unittest.TestCase):
         finally:
             picture.close();canvas.image.close()
 
-    def test_three_role_labels_fit_the_member_card_without_splitting_a_word(self):
-        row=InfoRow('成员卡',image_kind='portrait',tags=('加成','奖励','展示'))
-        self.assertEqual(rotating_layout._captions(row)[2],('加成/奖励/展示',))
+    def test_relationship_labels_stay_in_text_instead_of_card_captions(self):
+        row=InfoRow('成员卡',('琴平凪',),display_title='划破黎明',image_kind='portrait',
+                    label='指定加成卡 · 卡牌奖励 · 活动展示卡',tags=('加成','奖励','展示'),group='成员卡')
+        self.assertEqual(rotating_layout._captions(row),(('划破黎明',),('琴平凪',)))
+        self.assertIn(row.label,rotating_layout._card_panels((row,),'activity')[0].text)
 
     def test_member_titles_use_wider_text_cells_and_avoid_a_lone_final_character(self):
         row=InfoRow('成员卡',display_title='微笑，隐于幽暗',image_kind='portrait')
@@ -124,8 +126,9 @@ class RotatingLayoutTests(unittest.TestCase):
                             self.assertIn(card.display_title,''.join(values))
                             self.assertIn(card.body[0],''.join(values))
                             self.assertNotIn(card.command,values)
-                        tag_y=[y for value,x,y in drawn if value=='加成/奖励/展示']
-                        self.assertEqual(len(set(tag_y)),1)
+                        people_y=[y for value,x,y in drawn if value.startswith('琴平凪')]
+                        self.assertEqual(len(set(people_y)),1)
+                        self.assertNotIn('加成/奖励/展示',[value for value,x,y in drawn])
 
     def test_activity_and_gacha_images_hide_commands_but_keep_text_query_entries(self):
         card=InfoRow('成员卡',('琴平凪',),command='/查卡 65',display_title='划破黎明',
