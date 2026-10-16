@@ -84,7 +84,37 @@ class RotatingLayoutTests(unittest.TestCase):
 
     def test_three_role_labels_fit_the_member_card_without_splitting_a_word(self):
         row=InfoRow('成员卡',image_kind='portrait',tags=('加成','奖励','展示'))
-        self.assertEqual(rotating_layout._captions(row)[1],('加成/奖励/展示',))
+        self.assertEqual(rotating_layout._captions(row)[3],('加成/奖励/展示',))
+
+    def test_card_titles_and_all_character_names_are_drawn_without_truncation(self):
+        title='在光芒之下迎接全新的一天'
+        people='琴平凪 / 伊泽枣 / 和泉朋花'
+        for presentation in ('activity','gacha'):
+            for kind,shape in (('成员卡','portrait'),('留影卡','wide')):
+                with self.subTest(presentation=presentation,kind=kind):
+                    cards=tuple(InfoRow(f'{kind} {i}',(people if i else '琴平凪',),
+                        display_title=title if i else '划破黎明',command=f'/查卡 {i}',
+                        image_kind=shape,kind='card',group=kind,tags=('加成','奖励','展示'))
+                        for i in range(2))
+                    entry=InfoRow('活动或卡池',kind='banner',command='/查活动 2',
+                        schedule=InfoSchedule('ID 2','已结束','未确认','未确认'),children=cards)
+                    for rows in (cards,(entry,)):
+                        drawn=[];original=Canvas.text
+                        def text(c,x,y,value,*args,**kw):
+                            self.assertLess(y,c.height-12)
+                            drawn.append((str(value),x,y))
+                            return original(c,x,y,value,*args,**kw)
+                        with patch.object(Canvas,'text',text):
+                            self.render(InfoView('查询',rows=rows,presentation=presentation))
+                        for index,card in enumerate(cards):
+                            x=54+index*((228 if shape=='wide' else 144)+20)
+                            values=[value for value,px,y in drawn if px==x]
+                            # Rejoin actual drawn lines to check the complete source facts.
+                            self.assertIn(card.display_title,''.join(values))
+                            self.assertIn(card.body[0],''.join(values))
+                            self.assertIn(card.command,values)
+                        command_y=[y for value,x,y in drawn if value in ('/查卡 0','/查卡 1')]
+                        self.assertEqual(len(set(command_y)),1)
 
     def test_vertical_entries_keep_banner_and_cards_together_and_text_once(self):
         rows=tuple(InfoRow(f'活动{i}',command=f'/查活动 {i}',kind='banner',

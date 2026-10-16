@@ -15,6 +15,9 @@ from .image_output import ImageBudgetError
 LEFT, RIGHT, GAP = 54, 1026, 20
 WIDTH = RIGHT - LEFT
 OVERVIEW_WIDTH = 474
+# Card title, character names, query command and activity roles.
+CAPTION_STYLES = ((22, 32, INK, True), (20, 28, MUTED, False),
+                  (22, 30, ACCENT, False), (20, 28, MUTED, False))
 
 
 @dataclass(frozen=True)
@@ -37,10 +40,17 @@ def _card_size(row):
 
 def _captions(row):
     width, _ = _card_size(row)
+    title = lines(row.display_title, width, 22, True) if row.display_title else ()
+    people = tuple(line for value in row.body for line in lines(value, width, 20))
     command = lines(row.command, width, 22) if row.command else ()
     tags = lines('/'.join(row.tags), width, 20) if row.tags else ()
-    missing = tuple(line for value in row.body for line in lines(value,width,20)) if not row.image_url and not row.display_title else ()
-    return command, tags, missing
+    return title, people, command, tags
+
+
+def _caption_heights(rows):
+    captions = tuple(_captions(row) for row in rows)
+    return tuple(max(len(caption[i]) for caption in captions) * style[1]
+                 for i, style in enumerate(CAPTION_STYLES))
 
 
 def _card_panels(rows, presentation):
@@ -53,7 +63,7 @@ def _card_panels(rows, presentation):
             title=('UP · ' if presentation=='gacha' else '关联')+kind+f' · {len(group)}'
             if start:title+='（续）'
             height=62+max(_card_size(r)[1] for r in chunk)+16
-            height+=max(sum(len(v)*step for v,step in zip(_captions(r),(30,28,28))) for r in chunk)+20
+            height+=sum(_caption_heights(chunk))+20
             requests=tuple((r.image_url,_card_size(r)) for r in chunk if r.image_url)
             requests+=tuple((r.attribute_url,(28,28)) for r in chunk if r.attribute_url)
             badges=tuple(f'RarityIconCenter_{name}.png' for r in chunk
@@ -177,12 +187,14 @@ def draw(c,panel,y,load):
     elif panel.kind=='cards':
         c.text(LEFT,y+26,panel.title,26,INK,True)
         art_h=max(_card_size(r)[1] for r in panel.rows)
+        caption_heights=_caption_heights(panel.rows)
         for i,row in enumerate(panel.rows):
             w,h=_card_size(row);x=LEFT+i*(w+GAP)
             _card_art(c,row,x,y+62,load)
             cy=y+62+art_h+16
-            for values,size,step,color in zip(_captions(row),(22,20,20),(30,28,28),(ACCENT,MUTED,MUTED)):
-                for value in values:c.text(x,cy+step/2,value,size,color);cy+=step
+            for values,(size,step,color,bold),height in zip(_captions(row),CAPTION_STYLES,caption_heights):
+                for index,value in enumerate(values):c.text(x,cy+step/2+index*step,value,size,color,bold)
+                cy+=height
     elif panel.kind in {'footer','copy'}:
         if panel.kind=='footer':c.line(LEFT,y+4,RIGHT,'#e1dce7')
         for i,value in enumerate(panel.body):c.text(LEFT,y+30+i*32,value,22,MUTED)
