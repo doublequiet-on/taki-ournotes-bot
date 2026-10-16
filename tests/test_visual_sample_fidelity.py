@@ -149,17 +149,18 @@ class FullChartTests(unittest.TestCase):
             self.assertTrue(chart_layout.render(song,song.charts,SCORE['score'],'EXPERT',load=lambda *a:None))
         self.assertEqual(len(song_detail_layout.timeline(SCORE['score'])['windows']),2)
 
-    def test_eight_columns_fit_one_image_without_losing_notes(self):
+    def test_eight_columns_keep_lane_width_across_readable_pages(self):
         from ournotes_bot.rendering import chart_layout
         song=Song(1,'测试',('测试',),'乐队','','','','','',(Chart('EXPERT',24,24,62,''),))
         score={'events':{'bpm':[{'t':0,'bpm':120}]},
                'notes':[{'type':'tap','t':i*1920,'pos':0,'size':6} for i in range(62)]}
         with patch.object(chart_layout,'draw_note') as draw:
             parts=chart_layout.render(song,song.charts,score,'EXPERT',load=lambda *args:None)
-        self.assertEqual(len(parts),1)
+        self.assertEqual(len(parts),2)
         self.assertEqual(draw.call_count,62)
         with Image.open(io.BytesIO(parts[0])) as im:
-            self.assertEqual(im.size,(2364,5062))
+            self.assertEqual(im.size,(2284,5182))
+        self.assertTrue(all(call.args[3]==78 for call in draw.call_args_list))
         # Original vertical time scale: each bar still occupies 480 pixels.
         ys=[call.args[2] for call in draw.call_args_list[:8]]
         self.assertEqual([ys[i]-ys[i+1] for i in range(7)],[480]*7)
@@ -202,11 +203,11 @@ class ChartMarkerTests(unittest.TestCase):
         c=Mock();events={'skill':[0,15360], 'fever':[[15000,16000]]}
         draw_markers(c,events,100,200,100,3940,0,15360)
         labels=[call.args[2] for call in c.text.call_args_list]
-        self.assertIn('S1',labels);self.assertNotIn('S2',labels);self.assertIn('1',labels)
+        self.assertIn('S1',labels);self.assertNotIn('S2',labels);self.assertIn('G1',labels)
         c.reset_mock()
         draw_markers(c,events,100,200,100,3940,15360,30720)
         labels=[call.args[2] for call in c.text.call_args_list]
-        self.assertIn('S2',labels);self.assertNotIn('S1',labels);self.assertIn('1',labels)
+        self.assertIn('S2',labels);self.assertNotIn('S1',labels);self.assertIn('G1',labels)
         skill=next(call for call in c.text.call_args_list if call.args[2]=='S2')
         self.assertEqual(skill.args[1],3940)
 
@@ -232,17 +233,19 @@ class SkillWindowMarkerTests(unittest.TestCase):
         self.assertIsNone(skill_end_tick(0,[]))
 
     def test_window_end_in_next_column_is_drawn_at_correct_height(self):
-        from ournotes_bot.rendering.chart_layout import draw_markers
+        from ournotes_bot.rendering import chart_layout
         from unittest.mock import Mock
         c=Mock();events={'skill':[15000],'bpm':[{'t':0,'bpm':120}]}
-        draw_markers(c,events,100,200,100,3940,0,15360)
-        self.assertEqual(sum(v.args[2]=='S1' for v in c.text.call_args_list),1)
-        c.reset_mock()
-        draw_markers(c,events,100,200,100,3940,15360,30720)
-        label=c.text.call_args_list[0]
-        self.assertEqual(label.args[2],'S1')
-        self.assertEqual(label.args[1],2830)
-        self.assertEqual(c.box.call_count,2)  # Outlined end marker.
+        with patch.object(chart_layout,'endpoint',wraps=chart_layout.endpoint) as endpoints:
+            chart_layout.draw_markers(c,events,100,200,100,3940,0,15360)
+            self.assertEqual(endpoints.call_count,1)
+            self.assertFalse(endpoints.call_args.args[-1])
+            endpoints.reset_mock();c.reset_mock()
+            chart_layout.draw_markers(c,events,100,200,100,3940,15360,30720)
+            self.assertEqual(endpoints.call_count,1)
+            self.assertTrue(endpoints.call_args.args[-1])
+            self.assertEqual(endpoints.call_args.args[2],2830)
+            self.assertEqual(c.box.call_count,2)  # Outlined end marker.
 
 
 class DetailTableLabelsTests(unittest.TestCase):
