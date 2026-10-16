@@ -137,6 +137,11 @@ def blocks(view, limit, prose_blocks):
     for start in range(0,max(1,len(wrapped)),capacity):
         chunk=wrapped[start:start+capacity]
         result.append(Panel(32+len(chunk)*32,'footer','\n'.join(view.footer) if start==0 else '',body=chunk))
+    # The final source note belongs with the last list entry, never on a page
+    # of its own after shorter captions let one more entry fit the prior page.
+    if len(result)>1 and result[-1].kind=='footer' and result[-2].kind=='entry':
+        joined=_entry((*result[-2].children,result[-1]))
+        if joined.height<=limit:result[-2:]=[joined]
     if any(p.height>limit for p in result):
         raise ImageBudgetError('One activity/recruitment section exceeds the readable page budget')
     return tuple(result)

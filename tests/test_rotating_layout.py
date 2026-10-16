@@ -186,5 +186,18 @@ class RotatingLayoutTests(unittest.TestCase):
         self.assertIn(('开始',54),drawn)
         self.assertNotIn('暂无图片',[v for v,x in drawn])
 
+    def test_list_source_notes_do_not_become_a_footer_only_page(self):
+        card=InfoRow('卡牌',('角色名',),display_title='卡牌',kind='card',group='成员卡',image_kind='portrait')
+        support=InfoRow('留影',('角色名',),display_title='留影',kind='card',group='留影卡',image_kind='wide')
+        rows=tuple(InfoRow(f'条目{i}',kind='banner',command=f'/查卡池 {i}',
+                    schedule=InfoSchedule(f'ID {i}','已结束','未确认','未确认'),
+                    children=(card,support) if i==0 else ()) for i in range(2))
+        with patch.object(readable_pages,'MAX_IMAGE_EDGE',1300):
+            pages=self.render(InfoView('历史卡池',rows=rows,presentation='gacha',footer=('资料来源 Haneoka','完整条件说明')))
+        self.assertGreater(len(pages),1)
+        for page in pages:self.assertTrue(any(row.title in page.text for row in rows))
+        self.assertIn('条目1',pages[-1].text)
+        self.assertIn('完整条件说明',pages[-1].text)
+
 
 if __name__=='__main__':unittest.main()
