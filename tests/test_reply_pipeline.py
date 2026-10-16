@@ -206,7 +206,8 @@ class CatalogRefreshScheduleTests(unittest.IsolatedAsyncioTestCase):
             return func()
 
         repository = SimpleNamespace(songs=[], refresh=Mock(side_effect=refresh),
-                                     event_cutoffs=SimpleNamespace(history=True))
+                                     event_cutoffs=SimpleNamespace(history=True),
+                                     capture_catalog=lambda: SimpleNamespace(songs=[], cache_state="fresh"))
         with tempfile.TemporaryDirectory() as folder:
             settings = Settings("test-app", "", BASE, Path(folder)/"cache.json", 6,
                                 qq_gateway_host="", update_notices=False)

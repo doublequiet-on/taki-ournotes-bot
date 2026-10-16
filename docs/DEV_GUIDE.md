@@ -68,7 +68,7 @@ Linux 受管更新器在安装／离线验证结束、停止旧服务之前自�
 - 谱面缓存默认 `runtime_data_dir()/chart-cache`，不一定随自定义主缓存路径移动；图片素材缓存见 `visuals.py::_asset`，字体选择见 `_font`。长图自下向上、各栏从左向右；节点数不能直接当判定数或算分公式依据。
 - 卡牌映射 SSR=四星、SR=三星、R=二星；成员生日卡 BD=后台稀有度20，仅用于成员卡，不扩展 SNAP 映射，数字 ID 不当星级。技能按 `sources/yatta.py::skill_description` 的 Lv.5 默认值展示，不代表玩家培养状态。技能索引不完整须保留提示；两类详情同步构建分类索引，`card_catalog_version` 控制旧缓存升级，顶层 `card_catalog` 保持旧卡牌行兼容。
 - `.env.example` 列出变量用途；`QQ_APP_ID`/`QQ_APP_SECRET` 用于 QQ，`AI_API_KEY`/`AI_BASE_URL`/`AI_MODEL` 为可选模型设置。源码配置根与普通安装包启动目录有区别，见 `CONFIG_ROOT`。不要为文档读取真实 `.env`。
-- `OURNOTES_AI_QUOTA_FILE` 是持久额度，按北京时间自然日、每次真实模型请求前计数；`OURNOTES_AI_METRICS_FILE` 是匿名分类统计；调试计数仅进程内。三者不可混淆，也不可删记录来“修复额度”。依据：`DailyQuota.reserve`、`QueryMetrics`、`QueryDebugCounters`。
+- `OURNOTES_AI_QUOTA_FILE` 是持久额度，按北京时间自然日、每次真实模型请求前计数；`OURNOTES_AI_METRICS_FILE` 指定匿名统计基础路径，新版在扩展名前加 `.v2` 写 schema 2，不迁移旧文件；调试计数仅进程内。三者不可混淆，也不可删记录来“修复额度”。统计口径及回退见 [Natural Query](../src/ournotes_bot/natural_query/L2-2.md#统计口径与回退)，验证 `test_query_metrics.py`。
 - 更新器共享配置、主缓存、额度及通知数据库；代码回退不会还原这些数据。状态记录不能证明进程在线或 QQ 送达；详见自动更新说明，真实验收只在获得对应授权后执行。
 
 ## 功能状态与产品要求

@@ -120,6 +120,8 @@ class AgentState:
     last_action: AgentAction | None = None
     last_observation: Observation | None = None
     final_code: OutcomeCode | None = None
+    processing_route: str = "local"
+    local_parsed: bool = False
 
 
 @dataclass(frozen=True)
@@ -240,6 +242,30 @@ class QueryAgent:
         return state.final_code if state is not None else None
 
     def run(self, content: str, repository: SongRepository) -> AgentOutcome:
+        outcome = self._run(content, repository)
+        if is_ai_request(content):
+            # One returned outcome per request, including cache re-execution.
+            # Request/token counters below describe work, not final outcomes.
+            state, code = outcome.state, outcome.code
+            if code == OutcomeCode.INVALID_ARGUMENTS:
+                state.local_parsed = False
+            changes = {"outcome_" + code.value: 1, "route_" + state.processing_route: 1}
+            if state.processing_route == "local":
+                changes["local_handled"] = 1
+                if state.local_parsed:
+                    changes["local_parsed"] = 1
+                else:
+                    changes["local_terminal_reject"] = 1
+                if code == OutcomeCode.SUCCESS:
+                    changes["local_success"] = 1
+            elif state.processing_route == "cache":
+                changes["cache_hit_success" if code == OutcomeCode.SUCCESS else "cache_hit_terminal"] = 1
+            else:
+                changes["ai_" + code.value] = 1
+            self.metrics.increment_many(changes)
+        return outcome
+
+    def _run(self, content: str, repository: SongRepository) -> AgentOutcome:
         self._sync_cache(repository)
         question = query_text(content)
         tracked = is_ai_request(content)
@@ -252,75 +278,71 @@ class QueryAgent:
             return self._finish_terminal(
                 state, OutcomeCode.INVALID_ARGUMENTS,
                 "用法：/问 <想查的歌曲、谱面、成员卡、技能或留影卡>，最多 100 字。",
-                tracked=tracked, local=True, cache=False,
+                cache=False,
             )
 
         from ..query.continuation import parse_operation, MISSING
         if parse_operation("/问 " + question) is not None:
             return self._finish_terminal(state, OutcomeCode.INVALID_ARGUMENTS, MISSING,
-                                         tracked=tracked, local=True, cache=False)
+                                         cache=False)
 
         if re.search(r"分数表|效率|每分钟得分|(?<![A-Za-z0-9_])meta(?![A-Za-z0-9_])", question, re.I):
             return self._finish_terminal(state, OutcomeCode.UNSUPPORTED, UNSUPPORTED,
-                                         tracked=tracked, local=True, cache=False)
+                                         cache=False)
 
         # Cutoffs are live source snapshots: bypass stale plan/terminal caches and AI quotas.
         from ..query.event_cutoff_query import parse_natural_cutoff
         cutoff = parse_natural_cutoff(question)
         if cutoff is not None:
+            state.local_parsed = not cutoff.error
             outcome = self._execute_spec(state, QuerySpec("event_cutoff", cutoff_request=cutoff), repository)
-            if tracked:
-                self.metrics.increment("local_success" if outcome.code == OutcomeCode.SUCCESS else "local_terminal_reject")
             self._remember_state(question, state)
             return outcome
 
         from ..query.field_query import parse_field_question
         field = parse_field_question(question, repository)
         if isinstance(field, str):
-            return self._finish_terminal(state, self._message_code(field), field, tracked=tracked, local=True, cache=False)
+            return self._finish_terminal(state, self._message_code(field), field, cache=False)
         if field is not None:
+            state.local_parsed = True
             outcome = self._execute_spec(state, field, repository)
-            if tracked:
-                self.metrics.increment("local_success" if outcome.code == OutcomeCode.SUCCESS else "local_terminal_reject")
             self._remember_state(question, state)
             return outcome
 
         cached = self._cache_get(question)
         if cached is not None:
-            return self._from_cache(state, cached, repository, tracked)
+            return self._from_cache(state, cached, repository)
 
         if mentions_outside_catalog(question):
             return self._finish_terminal(
                 state, OutcomeCode.UNKNOWN_ENTITY, UNKNOWN_ENTITY,
-                tracked=tracked, local=True, cache=True,
+                cache=True,
             )
         if _UNSUPPORTED_TERMS.search(question):
             return self._finish_terminal(
                 state, OutcomeCode.UNSUPPORTED, UNSUPPORTED,
-                tracked=tracked, local=True, cache=True,
+                cache=True,
             )
         if _DIRECT_COMMAND.match(question):
             selected = resolve_command(question, repository)
             text = handle_command(question, repository, resolved=selected) or UNSUPPORTED
             state.final_code = OutcomeCode(selected.status) if selected else OutcomeCode.UNSUPPORTED
+            state.local_parsed = selected is not None and state.final_code != OutcomeCode.INVALID_ARGUMENTS
             self._cache_put(question, CachedOutcome(
                 "command", state.final_code, command=question,
             ))
             self._remember_state(question, state)
-            if tracked:
-                self.metrics.increment("local_success")
             return AgentOutcome(text, selected, state)
 
         local = parse_local_query(question, repository)
         if isinstance(local, str):
             code = self._message_code(local)
             return self._finish_terminal(
-                state, code, local, tracked=tracked, local=True, cache=True,
+                state, code, local, cache=True,
             )
         if local is not None:
+            state.local_parsed = True
             outcome = self._execute_spec(state, local, repository)
-            if tracked:
-                self.metrics.increment("local_success")
             self._cache_spec(question, local, outcome.code)
             self._remember_state(question, state)
             return outcome
@@ -329,9 +351,10 @@ class QueryAgent:
             return self._finish_terminal(
                 state, OutcomeCode.NOT_CONFIGURED,
                 "自然语言查询尚未配置 AI；请用 /查曲、/查谱面、/查卡 或 /查留影卡。",
-                tracked=tracked, cache=False,
+                cache=False,
             )
 
+        state.processing_route = "model"
         capability_id = local_route(question)
         prefetched = None
         if capability_id is None:
@@ -339,14 +362,13 @@ class QueryAgent:
                 state, question, route_prompt(), "ai_route_requested", tracked,
             )
             if terminal is not None:
-                return self._finish_model_terminal(state, terminal, tracked)
+                return self._finish_model_terminal(state, terminal)
             assert data is not None
             routed = validate_route(data)
             if routed.capability_id is None:
                 state.last_action = RejectAction(routed.code)
-                self._record_ai_terminal(routed.code, tracked)
                 return self._finish_terminal(
-                    state, routed.code, message_for(routed.code), tracked=tracked,
+                    state, routed.code, message_for(routed.code),
                     cache=self._cacheable(routed.code),
                 )
             action = RouteAction(routed.capability_id)
@@ -366,7 +388,7 @@ class QueryAgent:
                 "ai_parse_requested", tracked,
             )
             if terminal is not None:
-                return self._finish_model_terminal(state, terminal, tracked)
+                return self._finish_model_terminal(state, terminal)
             assert data is not None
         else:
             data = prefetched
@@ -388,7 +410,7 @@ class QueryAgent:
                         state, question, capability, evidence, observation, tracked,
                     )
                     if terminal is not None:
-                        return self._finish_model_terminal(state, terminal, tracked)
+                        return self._finish_model_terminal(state, terminal)
                     assert data is not None
                     continue
                 action: AgentAction
@@ -397,9 +419,8 @@ class QueryAgent:
                 else:
                     action = RejectAction(validated.code)
                 state.last_action = action
-                self._record_ai_terminal(validated.code, tracked)
                 return self._finish_terminal(
-                    state, validated.code, message_for(validated.code), tracked=tracked,
+                    state, validated.code, message_for(validated.code),
                     cache=self._cacheable(validated.code),
                 )
 
@@ -417,22 +438,19 @@ class QueryAgent:
                         state, question, capability, evidence, observation, tracked,
                     )
                     if terminal is not None:
-                        return self._finish_model_terminal(state, terminal, tracked)
+                        return self._finish_model_terminal(state, terminal)
                     assert data is not None
                     continue
-                self._record_ai_terminal(OutcomeCode.INVALID_ARGUMENTS, tracked)
                 return self._finish_terminal(
                     state, OutcomeCode.INVALID_ARGUMENTS, UNSUPPORTED,
-                    tracked=tracked, cache=True,
+                    cache=True,
                 )
             except (OSError, KeyError, TypeError, IndexError):
                 state.last_observation = Observation(ObservationCode.TEMPORARY_FAILURE)
-                if tracked:
-                    self.metrics.increment("ai_provider_error")
                 return self._finish_terminal(
                     state, OutcomeCode.TEMPORARY_FAILURE,
                     "自然语言解析暂不可用；请直接使用 /查曲、/查谱面、/查卡 或 /查留影卡。",
-                    tracked=tracked, cache=False,
+                    cache=False,
                 )
 
             self._cache_spec(question, validated.spec, outcome.code)
@@ -440,23 +458,15 @@ class QueryAgent:
             if (outcome.code == OutcomeCode.SUCCESS
                     and self._has_useful_result(outcome.payload)):
                 QUERY_DEBUG_COUNTERS.record_useful_query()
-            if tracked:
-                metric = {
-                    OutcomeCode.EMPTY: "ai_empty",
-                    OutcomeCode.DATA_UNAVAILABLE: "ai_data_unavailable",
-                }.get(outcome.code, "ai_success")
-                self.metrics.increment(metric)
             return outcome
 
     def _from_cache(self, state: AgentState, cached: CachedOutcome,
-                    repository: SongRepository, tracked: bool) -> AgentOutcome:
-        metric = "cache_hit_success" if cached.code == OutcomeCode.SUCCESS else "cache_hit_terminal"
-        if tracked:
-            self.metrics.increment(metric)
+                    repository: SongRepository) -> AgentOutcome:
+        state.processing_route = "cache"
         if cached.kind == "terminal":
             return self._finish_terminal(
                 state, cached.code, cached.message or UNSUPPORTED,
-                tracked=tracked, cache=False,
+                cache=False,
             )
         if cached.spec is not None:
             outcome = self._execute_spec(state, cached.spec, repository)
@@ -510,7 +520,7 @@ class QueryAgent:
                 "自然语言解析暂不可用；请直接使用 /查曲、/查谱面、/查卡 或 /查留影卡。",
             )
         if isinstance(response, ModelResponse):
-            if response.usage:
+            if tracked and response.usage:
                 self.metrics.increment_many({
                     "ai_" + key: value for key, value in response.usage.items()
                 })
@@ -568,20 +578,15 @@ class QueryAgent:
         state.final_code = code
         return AgentOutcome(answer_for(spec, repository, result=result), result, state)
 
-    def _finish_model_terminal(self, state: AgentState, terminal: TerminalOutcome,
-                               tracked: bool) -> AgentOutcome:
-        if terminal.code == OutcomeCode.INVALID_OUTPUT:
-            self._record_ai_terminal(terminal.code, tracked)
+    def _finish_model_terminal(self, state: AgentState, terminal: TerminalOutcome) -> AgentOutcome:
         return self._finish_terminal(
-            state, terminal.code, terminal.message, tracked=tracked,
+            state, terminal.code, terminal.message,
             cache=self._cacheable(terminal.code),
         )
 
     def _finish_terminal(self, state: AgentState, code: OutcomeCode, message: str, *,
-                         tracked: bool, local: bool = False, cache: bool) -> AgentOutcome:
+                         cache: bool) -> AgentOutcome:
         state.final_code = code
-        if local and tracked:
-            self.metrics.increment("local_terminal_reject")
         if cache:
             self._cache_put(state.question, CachedOutcome(
                 "terminal", code, message=message,
@@ -611,16 +616,6 @@ class QueryAgent:
         return (state.repairs < MAX_REPAIRS and state.model_calls < MAX_MODEL_CALLS
                 and state.tool_executions < MAX_TOOL_EXECUTIONS
                 and state.steps < MAX_STEPS and self.clock() < state.deadline)
-
-    def _record_ai_terminal(self, code: OutcomeCode, tracked: bool) -> None:
-        if not tracked:
-            return
-        metric = {
-            OutcomeCode.UNSUPPORTED: "ai_unsupported",
-            OutcomeCode.UNKNOWN_ENTITY: "ai_unknown_entity",
-            OutcomeCode.AMBIGUOUS: "ai_ambiguous",
-        }.get(code, "ai_invalid_output")
-        self.metrics.increment(metric)
 
     @staticmethod
     def _validation_observation(validated: ValidationResult) -> Observation:

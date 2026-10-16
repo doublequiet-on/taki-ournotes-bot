@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 
 from ournotes_bot.ai_query import AIQueryParser
 from ournotes_bot.config import Settings
@@ -42,7 +42,9 @@ class PrepareLoggingTests(unittest.TestCase):
         self.parser = AIQueryParser(Settings("", "", BASE, self.repo.cache_file, 6))
 
     def test_handled_and_ignored_messages_leave_clear_completion_logs(self):
-        with self.assertLogs("ournotes_bot.qq", level="INFO") as handled_log:
+        with self.assertLogs("ournotes_bot.qq", level="INFO") as handled_log, \
+             patch("ournotes_bot.platforms.qq.qq._render_prepared",
+                   side_effect=lambda text, *args: PreparedReply(text)):
             reply = _prepare_reply("/查曲 迷星叫", self.repo, self.parser)
         self.assertIsNotNone(reply)
         handled = "\n".join(handled_log.output)

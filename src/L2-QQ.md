@@ -27,6 +27,7 @@
 `ReplySequencer` 管批间次序，等待超时可退化为无序；
 `_prepare_reply` 优先将完整 `/查卡 947`（含既有去斜线／@清理及空白兼容）路由到固定图片彩蛋，不访问资料、AI 或续查选择；图片位于 `ournotes_bot/platforms/qq/assets/card-947.jpg`，随包携带；缺图退明确文字，其余命令沿原流程捕获文字/图片；
 `_deliver_reply` 区分上传失败与发送不确定性。
+`_refresh_catalog` 在后台刷新后读取 `capture_catalog()`，与状态命令共用已发布的 `fresh/cached/stale/unsaved/unknown` 事实；来源回退不记为刷新成功，保存失败保留“资料可用、未落盘”含义。半小时调度不变，验证见 `test_refresh_observability.py` 与 `test_reply_pipeline.py`。
 `DeliveryOutcome` 只有有效消息 ID 的平台回执才为 success；异常或缺失回执为 uncertain，明确错误码为 failure。`reply_commands` 提取普通身份键，串行处理同用户续查，并在发送确认后提交 `PreparedReply.context`。新完整查询立即清除旧上下文，批内多列表不建立默认上下文；取消和迟到代次不提交。
 [menu.py](ournotes_bot/platforms/qq/menu.py) 的 `setup_menu` 是独立管理入口。
 
