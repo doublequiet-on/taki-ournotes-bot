@@ -94,7 +94,7 @@ class AlignmentTests(unittest.TestCase):
         self.assertIn('MyGO!!!!!',wrapped)
         self.assertFalse(any(v and set(v)<=set('!！') for v in wrapped))
 
-    def test_multi_member_heading_matches_canonical_group_and_text_is_readable(self):
+    def test_multi_member_appears_under_each_related_person_as_in_approved_sample(self):
         from ournotes_bot.rendering import catalog_layout
         people=[dict(id=2,name={'zh':'第二人'},band=1,order=2),dict(id=1,name={'zh':'首人'},band=1,order=1)]
         card=SupportCard(51,'多人卡','第二人',('第二人',),4,1,3100,4000,3100,'','','',catalog={'people':people})
@@ -102,11 +102,11 @@ class AlignmentTests(unittest.TestCase):
         def capture(canvas,x,y,value,size,*args,**kwargs):
             drawn.append((str(value),size));return original(canvas,x,y,value,size,*args,**kwargs)
         with patch.object(Canvas,'text',capture):parts,_,_=catalog_layout.render_list([card],'全部',load=lambda *a:None)
-        self.assertIn(('首人',32),drawn)
-        self.assertNotIn(('第二人',32),drawn)
-        self.assertIn(('ID 51',26),drawn)
-        self.assertIn(('未知',26),drawn)
-        with Image.open(io.BytesIO(parts[0].image)) as im:self.assertEqual(im.width,1080)
+        self.assertIn(('首人',34),drawn)
+        self.assertIn(('第二人',34),drawn)
+        self.assertIn(('ID 51',30),drawn)
+        self.assertIn(('未知',32),drawn)
+        with Image.open(io.BytesIO(parts[0].image)) as im:self.assertEqual(im.width,1168)
 
     def test_memory_ids_share_row_with_different_portrait_counts(self):
         from ournotes_bot.rendering import catalog_layout

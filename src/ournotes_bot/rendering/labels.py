@@ -4,6 +4,8 @@
 # Pos: Rendering / Core; source names and descriptions keep their own translations.
 # Effects: None.
 LABELS = {
+ '全部':('All','すべて'),'张':('cards','枚'),'技能':('Skills','スキル'),
+ '展示位置':('Displayed entries','表示位置'),
  '整个激奏':('Full fever','激奏全体'),'效果':('Effect','効果'),
  '歌曲详情':('Song details','楽曲詳細'),'歌曲列表':('Songs','楽曲一覧'),
  '角色卡详情':('Member card','メンバーカード詳細'),'留影卡详情':('Memory card','サポートカード詳細'),
