@@ -14,7 +14,7 @@ from .note_skin import draw_note
 
 TRACK_WIDTH = 312
 COLUMN_PITCH = 460
-TRACK_LEFT = 860
+TRACK_LEFT = 660
 FEVER = '#bf568f'
 INTERVAL_WIDTH = 8
 CHART_MAX_PIXELS = 96_000_000
@@ -67,7 +67,7 @@ def continuation(c, cx, y, label, color, at_top, label_x=None):
 
 def draw_legend(c, extra, locale):
     y=104+extra
-    offset=760
+    offset=560
     c.text(offset+88,y,ui_label('技能 · 5秒参考',locale),26,ACCENT)
     c.text(offset+850,y,ui_label('激奏',locale),26,FEVER)
     for kind,label,centers in (('skill','S1',(360,590)),('fever','G1',(1020,1250))):
@@ -194,36 +194,36 @@ def render(song,charts,score,preview,locale='zh',*,load,notice=''):
     bpms=(score or {}).get('events',{}).get('bpm',[])
     times=time_markers(bpms,end_tick) if nodes else ()
     def paint():
-        width=max(2560,TRACK_LEFT+max(0,columns-1)*COLUMN_PITCH+TRACK_WIDTH+80)
-        titlelines=lines(localized_text(song,'title',locale),600,58,True)
-        bandlines=lines(localized_text(song,'band',locale),540,38)
+        width=max(2360,TRACK_LEFT+max(0,columns-1)*COLUMN_PITCH+TRACK_WIDTH+80)
+        titlelines=lines(localized_text(song,'title',locale),452,50,True)
+        bandlines=lines(localized_text(song,'band',locale),390,34)
         tracktop=200;trackbottom=tracktop+3840
         height=max(trackbottom+112,2400+len(titlelines)*72+len(bandlines)*50)
         if width>CHART_MAX_EDGE or height>CHART_MAX_EDGE or width*height>CHART_MAX_PIXELS:
             raise ImageBudgetError("Complete chart exceeds its native-size budget")
         c=Canvas(width,height)
-        c.text(64,64,ui_label('谱面详情',locale),36,bold=True)
-        c.text(684,64,'Taki',30,ACCENT,True,'right')
-        c.paste(art(song.jacket_url,(300,300)),64,124,300,300,radius=20)
-        y=486
+        c.text(48,64,ui_label('谱面详情',locale),36,bold=True)
+        c.text(500,64,'Taki',30,ACCENT,True,'right')
+        c.paste(art(song.jacket_url,(300,300)),48,110,240,240,radius=18)
+        y=406
         for line in titlelines:
-            c.text(64,y,line,58,bold=True);y+=72
+            c.text(48,y,line,50,bold=True);y+=62
         logos=song.catalog.get('band_logos',[])
         if len(logos)==1:
-            left_logo(c,art(logos[0],(230,100)),64,y+22,184,80);y+=90
+            left_logo(c,art(logos[0],(230,100)),48,y+18,156,64);y+=74
         for i,line in enumerate(bandlines):
-            c.text(64,y,line,38)
+            c.text(48,y,line,34)
             if i==0 and song.traits and song.traits.attribute_icon:
-                ax=64+font(38,False,line.isascii()).getlength(line)+14
+                ax=48+font(34,False,line.isascii()).getlength(line)+14
                 c.paste(art(song.traits.attribute_icon,(64,64)),round(ax),y-24,48,48,True,trim=True)
-            y+=50
-        c.text(64,y+6,f'ID {song.id}',28,MUTED);y+=72
+            y+=44
+        c.text(48,y+6,f'ID {song.id}',26,MUTED);y+=58
         if selected:
             bg,fg=DIFFICULTIES[selected.difficulty]
-            c.box((64,y,684,y+100),bg,18)
-            c.text(88,y+50,selected.difficulty,38,fg,True)
-            c.text(654,y+50,f'{selected.level}',64,fg,True,'right');y+=140
-        c.line(64,y,684);y+=58
+            c.box((48,y,500,y+84),bg,18)
+            c.text(68,y+42,selected.difficulty,32,fg,True)
+            c.text(480,y+42,f'{selected.level}',56,fg,True,'right');y+=114
+        c.line(48,y,500);y+=46
         from .song_detail_layout import seconds_at
         bpms=(score or {}).get('events',{}).get('bpm',[])
         vals=[e['bpm'] for e in bpms if e.get('bpm')]
@@ -237,20 +237,20 @@ def render(song,charts,score,preview,locale='zh',*,load,notice=''):
             value=reference.get(key)
             metrics.append((label,f'{math.floor(value*100+.5)}%' if value is not None else ui_label('未获取',locale)))
         for label,value in metrics:
-            c.text(64,y,ui_label(label,locale),28,MUTED)
-            c.text(64,y+52,value,48,bold=True);y+=132
-        c.text(64,y,ui_label('激奏类型',locale),28,MUTED);y+=52
+            c.text(48,y,ui_label(label,locale),26,MUTED)
+            c.text(48,y+42,value,44,bold=True);y+=108
+        c.text(48,y,ui_label('激奏类型',locale),26,MUTED);y+=52
         missions=song.traits.missions if song.traits else None
         if missions:
             for value in missions:
-                mission_label(c,64,y,value,28,36);y+=52
-        else:c.text(64,y,ui_label('未获取',locale),38,MUTED);y+=52
+                mission_label(c,48,y,value,28,36);y+=52
+        else:c.text(48,y,ui_label('未获取',locale),38,MUTED);y+=52
         note=ui_label('Haneoka 理论参考 · 效率含 30 秒间隔',locale)
         if 'canonical-full-combo-mismatch' in reference.get('warnings',[]):note+=ui_label(' · 源数据音符数不一致',locale)
         y+=24
-        for line in lines(note,620,24):
-            c.text(64,y,line,24,MUTED);y+=36
-        c.draw.line((744,48,744,height-64),fill='#ded8e2',width=2)
+        for line in lines(note,452,24):
+            c.text(48,y,line,24,MUTED);y+=36
+        c.draw.line((544,48,544,height-64),fill='#ded8e2',width=2)
         c.text(TRACK_LEFT-12,46,ui_label('完整谱面',locale),36,bold=True)
         c.text(width-88,46,ui_label('下 → 上 · 左 → 右',locale),28,MUTED,align='right')
         if not nodes:
