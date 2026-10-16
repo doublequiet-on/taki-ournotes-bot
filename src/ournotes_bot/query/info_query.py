@@ -98,11 +98,11 @@ def card_rows(refs, catalog, label):
         if card is None:
             result.append(InfoRow(f'{kind} ID {ref.id}', ('当前快照缺少卡牌详情。',), command=command,
                                   label=label, kind='card', group=kind,
-                                  image_kind='wide' if ref.resource_type == 3 else 'square'))
+                                  image_kind='wide' if ref.resource_type == 3 else 'portrait',tags=(label,) if label else ()))
         else:
             result.append(InfoRow(f'{kind} {card.id} · {card.title}', (card.character,),
                                   card.thumbnail_url, command, label, card.rarity,
-                                  image_kind='wide' if ref.resource_type==3 else 'square',
+                                  image_kind='wide' if ref.resource_type==3 else 'portrait',
                                   attribute_url=card.catalog.get('attribute_icon',''),kind='card',group=kind,
-                                  display_title=card.title))
+                                  display_title=card.title,tags=(label,) if label else ()))
     return tuple(result)

@@ -60,6 +60,7 @@ def execute_gacha(query, repository, *, now=None):
                                 tuple(rows), notes, 'detail', presentation='gacha', visual_footer=visual_notes),))
     title = '日服 · 历史卡池' if mode == 'history' else '日服 · 当前卡池' if mode == 'current' else '日服 · 卡池候选'
     rows = (InfoRow(r.title, (f'卡池 ID {r.id}', *period(r), f'资料状态：{state(r, now)}'),
-                    r.image_url, f'/查卡池 {r.id}', image_kind='wide',kind='banner',schedule=schedule(r,now,'卡池')) for r in records)
+                    r.image_url, f'/查卡池 {r.id}', image_kind='wide',kind='banner',schedule=schedule(r,now,'卡池'),
+                    children=card_rows(r.pickup_cards,catalog,'UP')) for r in records)
     return answer((list_view(title, rows, subtitle=f'共 {len(records)} 个 · 日本时间 UTC+9', notes=notes,
                             presentation='gacha',visual_footer=visual_notes),))

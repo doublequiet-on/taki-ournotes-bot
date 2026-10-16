@@ -16,7 +16,7 @@ from ..sources.moenotes_events import SERVERS, SourceError, display_time, zone_l
 HELP = '/查活动 [jp/hk/kr/en]：当前／最近活动；/查活动 列表；/查活动 历史 [名称]；/查活动 ID或名称（日服）。'
 
 
-def _related_rows(record, catalog, *, challenge_song_ids=()):
+def _related_rows(record, catalog, *, challenge_song_ids=(), include_songs=True):
     cards = {}
     notes = []
     for field, label in (('bonus_cards', '指定加成卡'), ('reward_cards', '卡牌奖励'), ('pickup_cards', '活动展示卡')):
@@ -25,15 +25,19 @@ def _related_rows(record, catalog, *, challenge_song_ids=()):
             if label not in labels:labels.append(label)
         if field not in record.available_relations:
             notes.append(label+'关联不完整；这里只列已确认的卡牌。')
-    rows=[replace(card_rows((ref,),catalog,'')[0],label=' · '.join(labels)) for ref,labels in sorted(cards.items())]
+    tags={'指定加成卡':'加成','卡牌奖励':'奖励','活动展示卡':'展示'}
+    rows=[replace(card_rows((ref,),catalog,'')[0],label=' · '.join(labels),
+                  tags=tuple(tags[label] for label in labels)) for ref,labels in sorted(cards.items())]
     if notes:rows.append(InfoRow('关联资料说明',tuple(notes)))
+    if not include_songs:
+        return tuple(rows)
     songs = {song.id: song for song in catalog.songs}
     for ident in dict.fromkeys(record.song_ids):
         if str(ident) in challenge_song_ids:
             continue
         song = songs.get(ident)
         rows.append(InfoRow(song.title if song else f'歌曲 ID {ident}',
-                            ('活动关联歌曲；不据此判断是否为挑战歌曲。',),
+                            (),
                             song.jacket_url if song else '', f'/查曲 {ident}', '关联歌曲',kind='song'))
     return tuple(rows)
 
@@ -70,7 +74,8 @@ def _static(query, repository, now):
                                 presentation='activity',visual_footer=footer(catalog,diagnostics=False),
                                 hero_kind='event' if record.detail_image_url else 'banner',hero_logo_url=record.logo_url),))
     rows = (InfoRow(r.title, (f'活动 ID {r.id}', *period(r), f'资料状态：{state(r, now)}'),
-                    r.image_url, f'/查活动 {r.id}', image_kind='wide',kind='banner',schedule=schedule(r,now,'活动')) for r in records)
+                    r.image_url, f'/查活动 {r.id}', image_kind='wide',kind='banner',schedule=schedule(r,now,'活动'),
+                    children=_related_rows(r,catalog,include_songs=False)) for r in records)
     title = '日服 · 历史活动' if mode == 'history' else '日服 · 活动列表' if mode == 'list' else '日服 · 活动候选'
     return answer((list_view(title, rows, subtitle=f'共 {len(records)} 个 · 日本时间 UTC+9', notes=notes,
                             presentation='activity',visual_footer=footer(catalog,diagnostics=False)),))

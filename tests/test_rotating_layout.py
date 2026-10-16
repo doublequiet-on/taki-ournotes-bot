@@ -6,8 +6,8 @@ from unittest.mock import patch
 from PIL import Image
 
 from ournotes_bot.query.contracts.info import InfoAnswer, InfoRow, InfoSchedule, InfoView, info_text
-from ournotes_bot.rendering import info_layout, readable_pages
-from ournotes_bot.rendering.haneoka_theme import Canvas
+from ournotes_bot.rendering import info_layout, readable_pages, rotating_layout
+from ournotes_bot.rendering.haneoka_theme import Canvas, BG, frame
 
 
 class RotatingLayoutTests(unittest.TestCase):
@@ -41,13 +41,65 @@ class RotatingLayoutTests(unittest.TestCase):
         with patch.object(Canvas,'rarity_badge',badge):
             pages=self.render(InfoView('活动',rows=rows,presentation='activity'),load=load)
         self.assertEqual(len(pages),1)
-        self.assertEqual({size for url,size in requests if '成员卡' in url},{(192,192)})
-        self.assertEqual({size for url,size in requests if '留影卡' in url},{(308,173)})
+        self.assertEqual({size for url,size in requests if '成员卡' in url},{(144,192)})
+        self.assertEqual({size for url,size in requests if '留影卡' in url},{(228,128)})
         self.assertEqual([r for r,x,y in anchors],[4,3,2,4,3,2])
         self.assertEqual(len({y for r,x,y in anchors}),2)
         for row in rows:
             self.assertEqual(pages[0].text.splitlines().count(row.command),1)
             self.assertIn(row.label,pages[0].text)
+
+    def test_portrait_card_frame_has_no_square_gradient_letterbox(self):
+        from PIL import ImageColor
+        canvas=Canvas(1080,500)
+        picture=Image.new('RGB',(384,512),'red')
+        try:
+            anchors=[]
+            with patch.object(rotating_layout,'frame',wraps=frame) as border, \
+                 patch.object(Canvas,'rarity_badge',side_effect=lambda rarity,right,bottom,*a:anchors.append((right,bottom))):
+                for index,rarity in enumerate((4,3,2)):
+                    x=54+index*164
+                    row=InfoRow('成员卡',image_url='native:384x512',rarity=rarity,image_kind='portrait')
+                    rotating_layout._card_art(canvas,row,x,62,lambda *a:picture)
+                    self.assertEqual(canvas.image.getpixel((x+1,150)),(255,0,0))
+                    self.assertEqual(canvas.image.getpixel((x+143,150)),(255,0,0))
+                    self.assertEqual(canvas.image.getpixel((x+150,150)),ImageColor.getrgb(BG))
+                self.assertEqual([call.args[:2] for call in border.call_args_list],[(144,192)]*3)
+            self.assertEqual(anchors,[(193,249),(357,249),(521,249)])
+            # Source ownership stays with the caller; fitting must not close it.
+            self.assertEqual(picture.size,(384,512))
+        finally:
+            picture.close();canvas.image.close()
+
+    def test_nonstandard_source_ratio_anchors_border_to_actual_fitted_art(self):
+        canvas=Canvas(1080,500);picture=Image.new('RGB',(320,512),'red')
+        try:
+            row=InfoRow('成员卡',image_url='native:narrow',rarity=3,image_kind='portrait')
+            with patch.object(rotating_layout,'frame',wraps=frame) as border,patch.object(Canvas,'rarity_badge') as badge:
+                rotating_layout._card_art(canvas,row,54,62,lambda *a:picture)
+            self.assertEqual(border.call_args.args[:2],(120,192))
+            self.assertEqual(badge.call_args.args[1:3],(169,249))
+        finally:
+            picture.close();canvas.image.close()
+
+    def test_three_role_labels_fit_the_member_card_without_splitting_a_word(self):
+        row=InfoRow('成员卡',image_kind='portrait',tags=('加成','奖励','展示'))
+        self.assertEqual(rotating_layout._captions(row)[1],('加成/奖励/展示',))
+
+    def test_vertical_entries_keep_banner_and_cards_together_and_text_once(self):
+        rows=tuple(InfoRow(f'活动{i}',command=f'/查活动 {i}',kind='banner',
+                  schedule=InfoSchedule(f'活动 ID {i}','已结束','2026-10-01 15:00','2026-10-10 14:59'),
+                  children=(InfoRow(f'卡牌{i}',command=f'/查卡 {i}',kind='card',group='成员卡',
+                                    image_kind='portrait',display_title=f'卡牌{i}'),)) for i in range(4))
+        with patch.object(readable_pages,'MAX_IMAGE_EDGE',1300):
+            pages=self.render(InfoView('活动列表',rows=rows,presentation='activity'))
+        self.assertGreater(len(pages),1)
+        combined='\n'.join(p.text for p in pages)
+        for row in rows:
+            owners=[p for p in pages if row.command in p.text.splitlines()]
+            self.assertEqual(len(owners),1)
+            self.assertIn(row.children[0].command,owners[0].text)
+            self.assertEqual(combined.splitlines().count(row.children[0].command),1)
 
     def test_history_grid_paginates_complete_entries_without_clipping_commands(self):
         rows=tuple(InfoRow(f'很长的历史卡池名称 {i}',command=f'/查卡池 {i}',kind='banner',

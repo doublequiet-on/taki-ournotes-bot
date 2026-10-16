@@ -31,6 +31,8 @@ class InfoRow:
     attribute_url: str = ""
     schedule: InfoSchedule | None = None
     display_title: str = ""
+    tags: tuple[str, ...] = ()
+    children: tuple['InfoRow', ...] = ()
 
 
 @dataclass(frozen=True)
@@ -55,7 +57,8 @@ class InfoAnswer:
 
 
 def row_text(row: InfoRow) -> str:
-    return "\n".join(value for value in (row.group, row.title, row.label, *row.body, row.command) if value)
+    return "\n".join(value for value in (row.group, row.title, row.label, *row.body, row.command,
+                                         *(row_text(child) for child in row.children)) if value)
 
 
 def view_text(view: InfoView) -> str:
