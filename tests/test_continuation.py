@@ -179,7 +179,7 @@ class ContinuationDeliveryTests(Fixture, unittest.IsolatedAsyncioTestCase):
         await self.send(["/查曲 MyGO"])
         self.assertEqual(self.current_query().page, 1)
         other = await self.send(["/问 下一页"], self.message("u2"))
-        self.assertEqual(other._api.post_group_message.await_args.kwargs["content"].split(" /> ", 1)[-1], MISSING)
+        self.assertEqual(other._api.post_group_message.await_args.kwargs["content"], MISSING)
         await self.send(["/问 下一页"])
         self.assertEqual(self.current_query().page, 1)
         await self.send(["/问 选二"])
@@ -280,7 +280,7 @@ class ContinuationDeliveryTests(Fixture, unittest.IsolatedAsyncioTestCase):
         await self.send(["/查曲 100002"])
         release.set()
         await asyncio.gather(running, queued)
-        self.assertEqual(queued_message._api.post_group_message.await_args.kwargs["content"].split(" /> ", 1)[-1], MISSING)
+        self.assertEqual(queued_message._api.post_group_message.await_args.kwargs["content"], MISSING)
         self.assertEqual(self.store.get(self.key).visible[0].entity_id, 100002)
 
     async def test_followup_while_new_query_pending_cannot_invalidate_it(self):
@@ -293,7 +293,7 @@ class ContinuationDeliveryTests(Fixture, unittest.IsolatedAsyncioTestCase):
         pending = asyncio.create_task(self.send(["full"], gate=SimpleNamespace(prepare=prepare)))
         await entered.wait()
         message = await self.send(["/问 下一页"])
-        self.assertEqual(message._api.post_group_message.await_args.kwargs["content"].split(" /> ", 1)[-1], MISSING)
+        self.assertEqual(message._api.post_group_message.await_args.kwargs["content"], MISSING)
         release.set()
         await pending
         self.assertEqual(self.current_query().page, 1)

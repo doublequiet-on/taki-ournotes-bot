@@ -30,7 +30,7 @@
 `DeliveryOutcome` 只有有效消息 ID 的平台回执才为 success；异常或缺失回执为 uncertain，明确错误码为 failure。`reply_commands` 提取普通身份键，串行处理同用户续查，并在发送确认后提交 `PreparedReply.context`。新完整查询立即清除旧上下文，批内多列表不建立默认上下文；取消和迟到代次不提交。
 [menu.py](ournotes_bot/platforms/qq/menu.py) 的 `setup_menu` 是独立管理入口。
 
-群聊交付由 `_deliver_reply` 使用消息作者的 `member_openid` 在文字和图文内容中加入 QQ 官方 @ 标签；单聊不加。包括续发与失败回退，消息序号、回执和防重复语义保持。独立翻页、选择和难度命令已移除；详情按 ID 查询，待发结果用 `/继续`。菜单定义同步，安装远端菜单仍为显式管理动作。
+群聊交付由 `_deliver_reply` 保留原消息 `msg_id`，使用 QQ 被动回复的原生发送者 @；不在正文或图片附文中手工拼接 @ 标签。用户实图中原生 `@昵称` 已存在，而 `<qqbot-at-user>` 被原样显示，因此移除额外标签，不替换为另一种标签。无附文的媒体消息保留一个空格作为 `content`，符合发送接口要求。包括续发与失败回退，消息序号、回执和防重复语义保持。`test_qq_mentions.py` 通过真实 SDK 捕获请求验证原消息目标与序号，不代替客户端展示验收。独立翻页、选择和难度命令已移除；详情按 ID 查询，待发结果用 `/继续`。菜单定义同步，安装远端菜单仍为显式管理动作。
 
 ## Internal Subsystems
 

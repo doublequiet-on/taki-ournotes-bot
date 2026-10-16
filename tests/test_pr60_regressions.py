@@ -104,7 +104,8 @@ class MentionTests(unittest.IsolatedAsyncioTestCase):
             with patch('ournotes_bot.platforms.qq.qq._upload_image', new=AsyncMock(side_effect=TimeoutError() if failure else None, return_value={'file_info': 'image'})):
                 await _deliver_reply(message, 'group', True, PreparedReply(text, image), msg_seq=3)
             payload = api.post_group_message.await_args.kwargs
-            self.assertTrue(payload['content'].startswith('<qqbot-at-user id="issuer" /> '))
+            self.assertNotIn('<qqbot-at-user', payload['content'])
+            self.assertNotIn('<@', payload['content'])
             self.assertEqual((payload['msg_id'], payload['msg_seq'], payload['group_openid']), ('event', 3, 'group'))
             api.post_group_message.assert_awaited_once()
 
