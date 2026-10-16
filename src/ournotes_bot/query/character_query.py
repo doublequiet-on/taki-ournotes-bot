@@ -58,7 +58,7 @@ def _directory(people, catalog, *, candidate=False):
                     group='' if candidate else p.band,
                     image_kind='square' if p.face_url else 'portrait') for p in people)
     return answer((InfoView(title, f'按乐队排列 · 共 {len(people)} 位', rows=tuple(rows), footer=footer(catalog),
-                            layout='list' if candidate else 'directory'),))
+                            layout='list' if candidate else 'directory',presentation='character'),))
 
 
 def _card_count(records, ident):
@@ -86,7 +86,7 @@ def _detail(person, catalog):
                  InfoRow('留影卡', (_card_count(catalog.support_cards, person.id), '含多人留影卡；每张卡只计一次。'),
                          command=f'/查留影卡 {display}',kind='links')))
     return answer((InfoView(display, f'日服 · {person.band}', person.image_url or person.face_url,
-                            tuple(rows), footer(catalog), 'character'),))
+                            tuple(rows), footer(catalog), 'character',presentation='character'),))
 
 
 def execute_character(query, repository):

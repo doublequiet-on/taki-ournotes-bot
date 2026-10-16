@@ -138,7 +138,7 @@ def _blocks(view, limit):
         for row in rows:groups.setdefault(row.group,[]).append(row)
         for group,people in groups.items():
             for start in range(0,len(people),5):
-                children=tuple(_row(row,width=166,force_image=True) for row in people[start:start+5])
+                children=tuple(_row(row,width=166,force_image=True,command=False) for row in people[start:start+5])
                 art_h=max(180 if b.image_kind=='portrait' else 120 for b in children)
                 result.append(_Block(art_h+max(b.height for b in children)+72,
                     '\n'.join(b.text for b in children),title=(group or '未分组',),kind='directory',children=children))
@@ -148,9 +148,10 @@ def _blocks(view, limit):
     links=tuple(row for row in rows if row.kind=='links') if view.layout=='character' else ()
     for row in rows:
         if row in links:continue
-        result.extend(_row_blocks(row, limit, force_image=view.layout == "list"))
+        result.extend(_row_blocks(row, limit, force_image=view.layout == "list",
+                                  show_command=view.layout!='character' and view.presentation!='character'))
     for start in range(0,len(links),2):
-        children=tuple(_row(row,width=468) for row in links[start:start+2])
+        children=tuple(_row(row,width=468,command=False) for row in links[start:start+2])
         result.append(_Block(max(b.height for b in children),'\n'.join(b.text for b in children),kind='links',children=children))
     # Footnotes can be long (source warnings, aliases). Measure them as content,
     # so they never consume the fixed page frame or overlap the last item.

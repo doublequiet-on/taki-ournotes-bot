@@ -43,7 +43,7 @@ class InfoView:
     rows: tuple[InfoRow, ...] = ()
     footer: tuple[str, ...] = ()
     layout: Literal["list", "detail", "character", "directory"] = "list"
-    presentation: Literal["", "activity", "gacha"] = ""
+    presentation: Literal["", "activity", "gacha", "character"] = ""
     visual_footer: tuple[str, ...] | None = None
     hero_kind: Literal['banner', 'event'] = 'banner'
     hero_logo_url: str = ''

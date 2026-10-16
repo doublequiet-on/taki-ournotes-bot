@@ -11,7 +11,7 @@ from ournotes_bot.rendering.image_output import MAX_IMAGE_BYTES, MAX_IMAGE_PIXEL
 
 
 class InformationLayoutTests(unittest.TestCase):
-    def test_roster_has_band_headers_and_five_member_rows_with_every_command(self):
+    def test_roster_keeps_band_headers_and_names_but_commands_only_in_text(self):
         rows=tuple(InfoRow(f'角色{i}',(f'角色 ID {i}',),image_url=f'synthetic:{i}',
                           command=f'/查角色 {i}',group=f'乐队{i//5}') for i in range(25))
         view=InfoView('角色目录',rows=rows,layout='directory')
@@ -22,7 +22,10 @@ class InformationLayoutTests(unittest.TestCase):
         self.assertEqual(len(pages),1)
         with Image.open(io.BytesIO(pages[0].image)) as im:self.assertLess(im.height,3000)
         for group in range(5):self.assertEqual(drawn.count(f'乐队{group}'),1)
-        for row in rows:self.assertEqual(pages[0].text.splitlines().count(row.command),1)
+        for row in rows:
+            self.assertEqual(pages[0].text.splitlines().count(row.command),1)
+            self.assertNotIn(row.command,drawn)
+            self.assertIn(row.title,drawn)
         with patch.object(readable_pages,'MAX_IMAGE_EDGE',1200):parts=info_layout.render_info(self.answer(view))
         self.assertGreater(len(parts),1)
         for row in rows:self.assertEqual(sum(p.text.splitlines().count(row.command) for p in parts),1)
@@ -37,6 +40,37 @@ class InformationLayoutTests(unittest.TestCase):
         with Image.open(io.BytesIO(pages[0].image)) as im:self.assertLess(im.height,1600)
         self.assertIn('完整介绍。',pages[0].text)
         for row in rows:self.assertEqual(pages[0].text.splitlines().count(row.title),1)
+
+    def test_profile_hides_card_links_and_prose_commands_without_losing_text(self):
+        rows=(InfoRow('成员卡',('3张',),kind='links',command='/查卡 高松灯'),
+              InfoRow('留影卡',('5张',),kind='links',command='/查留影卡 高松灯'),
+              InfoRow('角色介绍',('完整资料。'*180,),kind='prose',command='/查角色 1'))
+        drawn=[];original=info_layout.Canvas.text
+        def capture(canvas,x,y,value,*args,**kw):
+            drawn.append(str(value));return original(canvas,x,y,value,*args,**kw)
+        with patch.object(readable_pages,'MAX_IMAGE_EDGE',1300),patch.object(info_layout.Canvas,'text',capture):
+            pages=info_layout.render_info(self.answer(InfoView('高松灯',rows=rows,layout='character')))
+        self.assertGreater(len(pages),1)
+        combined='\n'.join(p.text for p in pages)
+        for row in rows:
+            self.assertNotIn(row.command,drawn)
+            self.assertEqual(combined.splitlines().count(row.command),1)
+            self.assertIn(row.title,drawn)
+        self.assertIn('3张',drawn)
+        self.assertIn('5张',drawn)
+
+    def test_character_candidates_hide_commands_and_keep_names_and_ids(self):
+        rows=tuple(InfoRow(f'候选角色{i}',(f'角色 ID {i}',),command=f'/查角色 {i}') for i in range(3))
+        drawn=[];original=info_layout.Canvas.text
+        def capture(canvas,x,y,value,*args,**kw):
+            drawn.append(str(value));return original(canvas,x,y,value,*args,**kw)
+        with patch.object(info_layout.Canvas,'text',capture):
+            pages=info_layout.render_info(self.answer(InfoView('角色候选',rows=rows,layout='list',presentation='character')))
+        for row in rows:
+            self.assertIn(row.title,drawn)
+            self.assertIn(row.body[0],drawn)
+            self.assertNotIn(row.command,drawn)
+            self.assertIn(row.command,pages[0].text)
 
     def test_profile_without_source_art_uses_full_width_instead_of_an_empty_column(self):
         view=InfoView('角色',rows=(InfoRow('基本资料',('角色 ID 1',),kind='fact'),),layout='character')
