@@ -7,7 +7,7 @@
 from dataclasses import dataclass, replace
 
 from ..query.contracts.info import InfoAnswer, InfoRow, row_text
-from . import readable_pages
+from . import readable_pages, rotating_layout
 from .haneoka_theme import Canvas, ACCENT, INK, MUTED, SOFT, SURFACE, frame, lines, prepare_assets
 from .image_output import ImageBudgetError, reclaim_after_render
 
@@ -68,9 +68,9 @@ def _row(row, *, width=None, body=None, title=True, image=True, command=True, co
                   row.rarity, show_image=image and bool(row.image_url or force_image),attribute_url=row.attribute_url)
 
 
-def _row_blocks(row, limit, *, force_image=False):
+def _row_blocks(row, limit, *, force_image=False, show_command=True):
     """Keep a list item whole when possible; split unusually long prose by lines."""
-    whole = _row(row, force_image=force_image)
+    whole = _row(row, force_image=force_image, command=show_command)
     if whole.height <= limit:
         return (whole,)
     # This is a single very long item, not a reason to crop it or shrink fonts.
@@ -101,7 +101,7 @@ def _row_blocks(row, limit, *, force_image=False):
         first = False
     if not result:
         raise ImageBudgetError("Information item exceeds the readable page budget")
-    if row.command:
+    if row.command and show_command:
         last = result[-1]
         command = lines(row.command, width, 24)
         addition = len(command) * 34 + 12
@@ -110,10 +110,14 @@ def _row_blocks(row, limit, *, force_image=False):
                 text=last.text + "\n" + row.command, command=command)
         else:
             result.append(_row(InfoRow(row.title, command=row.command), body=(), image=False, continued=True))
+    elif row.command:
+        result[-1]=replace(result[-1],text=result[-1].text+'\n'+row.command)
     return tuple(result)
 
 
 def _blocks(view, limit):
+    if view.presentation in {'activity', 'gacha'}:
+        return rotating_layout.blocks(view, limit, _row_blocks)
     result = []
     rows=view.rows
     if view.layout=='character':
@@ -134,7 +138,7 @@ def _blocks(view, limit):
         for row in rows:groups.setdefault(row.group,[]).append(row)
         for group,people in groups.items():
             for start in range(0,len(people),5):
-                children=tuple(_row(row,width=166,force_image=True) for row in people[start:start+5])
+                children=tuple(_row(row,width=166,force_image=True,command=False) for row in people[start:start+5])
                 art_h=max(180 if b.image_kind=='portrait' else 120 for b in children)
                 result.append(_Block(art_h+max(b.height for b in children)+72,
                     '\n'.join(b.text for b in children),title=(group or '未分组',),kind='directory',children=children))
@@ -144,9 +148,10 @@ def _blocks(view, limit):
     links=tuple(row for row in rows if row.kind=='links') if view.layout=='character' else ()
     for row in rows:
         if row in links:continue
-        result.extend(_row_blocks(row, limit, force_image=view.layout == "list"))
+        result.extend(_row_blocks(row, limit, force_image=view.layout == "list",
+                                  show_command=view.layout!='character' and view.presentation!='character'))
     for start in range(0,len(links),2):
-        children=tuple(_row(row,width=468) for row in links[start:start+2])
+        children=tuple(_row(row,width=468,command=False) for row in links[start:start+2])
         result.append(_Block(max(b.height for b in children),'\n'.join(b.text for b in children),kind='links',children=children))
     # Footnotes can be long (source warnings, aliases). Measure them as content,
     # so they never consume the fixed page frame or overlap the last item.
@@ -162,6 +167,9 @@ def _blocks(view, limit):
 
 
 def _draw_block(c, block, y, load, *, left=LEFT, right=RIGHT):
+    if isinstance(block, rotating_layout.Panel):
+        rotating_layout.draw(c, block, y, load)
+        return
     if block.kind=='profile':
         if block.image_url:
             h=min(860,block.height-24)
@@ -207,10 +215,9 @@ def _draw_block(c, block, y, load, *, left=LEFT, right=RIGHT):
             border = frame(w, h, block.rarity)
             c.image.paste(border, (x - 4, cy - 4), border)
         c.paste(load(block.image_url, (w, h)), x, cy, w, h, True, radius=8)
-        rarity={2:'R',3:'SR',4:'SSR',20:'BD',10:'EX'}.get(block.rarity)
-        if rarity:
+        if block.rarity is not None:
             bw=max(40,min(72,w//3));bh=round(bw*.72)
-            c.badge(f'RarityIconCenter_{rarity}.png',x+w-bw,cy+h-bh//2,bw,bh)
+            c.rarity_badge(block.rarity,x+w-6,cy+h-6,bw,bh)
         if block.attribute_url:
             c.paste(load(block.attribute_url,(32,32)),x+2,cy+2,32,32,True)
         x += w + 28
@@ -257,6 +264,10 @@ def render_info(answer: InfoAnswer, *, load=None) -> tuple[InfoPage, ...]:
             blocks = _blocks(view, limit)
             requests=set();badges=set()
             def collect(block):
+                if isinstance(block, rotating_layout.Panel):
+                    requests.update(block.requests)
+                    badges.update(block.badges)
+                    return
                 if block.image_url:
                     if block.kind=='profile':size=(330,min(860,block.height-24))
                     elif block.kind=='hero':size=(972,block.height-48)
@@ -297,7 +308,8 @@ def render_info(answer: InfoAnswer, *, load=None) -> tuple[InfoPage, ...]:
                     c.image.close()
                     raise
 
-            parts = readable_pages.render_parts(tuple(block.height for block in blocks), WIDTH, fixed, paint)
+            parts = readable_pages.render_parts(tuple(block.height for block in blocks), WIDTH, fixed, paint,
+                                                max_height=2800 if view.presentation in {'activity','gacha'} else None)
             for part in parts:
                 text = '\n'.join(v for v in (view.title, view.subtitle,
                     *(block.text for block in blocks[part.start:part.stop])) if v)

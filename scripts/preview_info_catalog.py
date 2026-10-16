@@ -9,7 +9,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'src'))
 
 from PIL import Image, ImageDraw
 
-from ournotes_bot.query.contracts.info import InfoAnswer, InfoRow, InfoView, info_text
+from dataclasses import replace
+from ournotes_bot.query.contracts.info import InfoAnswer, InfoRow, InfoSchedule, InfoView, info_text
 from ournotes_bot.rendering.haneoka_theme import font
 from ournotes_bot.rendering.info_layout import render_info
 
@@ -24,7 +25,7 @@ def samples():
         image_url=f'synthetic:banner:{i}', image_kind='wide', command=f'/查卡池 {i}') for i in range(1, 4))
     people = tuple(InfoRow(f'合成角色 {i}', ('合成乐队 · Guitar',),
         image_url=f'synthetic:portrait:{i}', command=f'/查角色 {i}') for i in range(1, 5))
-    return {
+    views = {
         'activity-list': InfoView('活动列表', '日服 · 按 ID 或名称查详情', rows=activity, footer=note),
         'activity-detail': InfoView('活动详情', '合成活动 1 · 日服', 'synthetic:banner:1',
             (InfoRow('活动时间', ('开始：2026-10-01 15:00（UTC+09:00）', '结束：2026-10-10 20:59（UTC+09:00）'), label='已结束'),
@@ -41,6 +42,20 @@ def samples():
              InfoRow('角色介绍', ('与乐队成员一起努力，把想传达的心情写进旋律。', '这里的每个段落会完整保留。介绍较长时按段落接到后续图片，字体保持一致。')),
              InfoRow('相关查询', ('查看该角色的角色卡和留影卡。',), command='/查卡 合成角色1\n/查留影卡 合成角色1')), note, 'character'),
     }
+    for name in ('activity-list','gacha-list'):
+        kind='活动' if name.startswith('activity') else '卡池'
+        view=views[name]
+        rows=tuple(replace(row,kind='banner',schedule=InfoSchedule(f'{kind} ID {i}','已结束',
+                   '2026-10-01 15:00','2026-10-10 20:59')) for i,row in enumerate(view.rows,1))
+        views[name]=replace(view,rows=rows,presentation='activity' if kind=='活动' else 'gacha')
+    for name in ('activity-detail','gacha-detail'):
+        view=views[name];kind='活动' if name.startswith('activity') else '卡池'
+        rows=list(view.rows)
+        rows[0]=replace(rows[0],kind='schedule',schedule=InfoSchedule(f'{kind} ID 1','已结束',
+                        '2026-10-01 15:00','2026-10-10 20:59'))
+        rows[1]=replace(rows[1],kind='song' if kind=='活动' else 'card',group='' if kind=='活动' else '成员卡')
+        views[name]=replace(view,rows=tuple(rows),presentation='activity' if kind=='活动' else 'gacha')
+    return views
 
 
 def artwork(url, size):

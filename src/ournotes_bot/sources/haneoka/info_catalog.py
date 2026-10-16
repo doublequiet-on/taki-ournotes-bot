@@ -198,6 +198,7 @@ def convert_info(documents, identity_jp, fetched_at):
                 if music_id is not None:
                     music_id = _integer(music_id)
                 activities.append(ActivityInfo(**base, display_end_at=_time(row.get("displayEndAt")),
+                    detail_image_url=_image(row.get('backgroundImage'),release),logo_url=_image(row.get('logo'),release),
                     bonus_cards=_card_refs(targets), reward_cards=_card_refs(rewards),
                     pickup_cards=_card_refs(pickups), song_ids=(music_id,) if music_id else (),
                     available_relations=frozenset(relations)))

@@ -243,9 +243,9 @@ def render(answer,*,assets,load,display_time,server_label,timezone_label,catalog
                 blocks[i]=(kind,bh-cut,data);excess-=cut
         sizes=tuple(sum(b[1] for b in blocks[a:z]) for a,z in zip(groups,groups[1:]))
         if sizes and max(sizes)+head+footheight<=min(MAX_IMAGE_EDGE,MAX_IMAGE_PIXELS//width):
-            parts=render_parts(sizes,width,head+footheight,lambda a,z,h:paint(groups[a],groups[z],h),max_height=4200)
+            parts=render_parts(sizes,width,head+footheight,lambda a,z,h:paint(groups[a],groups[z],h))
         else:
-            parts=render_parts(tuple(b[1] for b in blocks),width,head+footheight,paint,max_height=3600)
+            parts=render_parts(tuple(b[1] for b in blocks),width,head+footheight,paint)
         return tuple(CutoffPage(p.image,answer.text if trend else replace(answer,display_ranks=tuple(b[2] for b in blocks[p.start:p.stop])).text) for p in parts)
     finally:
         for image in cache.values():

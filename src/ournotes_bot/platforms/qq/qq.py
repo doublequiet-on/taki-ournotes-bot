@@ -565,7 +565,9 @@ def _complete_list_reply(result,repository,locale,candidate):
     if page<1 or page>max(1,(len(cards or songs)+15)//16):return None
     if cards:
         from ...rendering.catalog_layout import render_list
-        parts,records,ranges=render_list(cards,label,locale,load=_visual_asset)
+        characters=result.catalog.request.filters.get('character',()) if result.catalog else ()
+        bands=result.catalog.request.filters.get('band',()) if result.catalog else ()
+        parts,records,ranges=render_list(cards,label,locale,load=_visual_asset,characters=characters,bands=bands)
     elif songs:
         from ...rendering.song_layout import render_list
         parts,ranges=render_list(songs,label,locale,load=_visual_asset);records=tuple(songs)
@@ -583,7 +585,10 @@ def _complete_list_reply(result,repository,locale,candidate):
                        (localized_text(r,'character',locale)+'\n'+'\n'.join(localized_text(skill,'description',locale) for skill in r.skills)
                         if hasattr(r,'skills') else localized_text(r,'band',locale)+' · '+' / '.join(f'{ch.difficulty} {ch.display_level:g} ({ch.notes if ch.notes is not None else "?"} Note)' for ch in r.charts))
                        for i,r in enumerate(records[start:stop],start))
-        text+=f'\n共 {len(records)} 条，本图 {start+1}–{stop}。'
+        total=len({r.id for r in records})
+        text+=f'\n共 {total} 条，本图 {start+1}–{stop}。'
+        if len(records)>total:
+            text+='\n多人留影按相关角色分别展示，同一卡牌不重复计入总数；本图区间为展示位置。'
         if cards:
             from ...query.card_catalog import catalog_notice
             text += catalog_notice(records)

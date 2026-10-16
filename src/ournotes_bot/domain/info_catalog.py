@@ -72,6 +72,8 @@ class ActivityInfo:
     release: str = ""
     source_id: str = ""
     fetched_at: str = ""
+    detail_image_url: str = ""
+    logo_url: str = ""
 
 
 @dataclass(frozen=True)

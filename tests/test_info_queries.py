@@ -86,6 +86,8 @@ class InformationQueryTests(unittest.TestCase):
         self.assertEqual(result.text.count('/查卡 7'),1)
         self.assertEqual(result.text.count('/查留影卡 7'),1)
         member=next(r for r in result.views[0].rows if r.command=='/查卡 7')
+        self.assertEqual(member.image_kind,'portrait')
+        self.assertEqual(member.tags,('加成','奖励','展示'))
         self.assertEqual(member.label,'指定加成卡 · 卡牌奖励 · 活动展示卡')
         support=next(r for r in result.views[0].rows if r.command=='/查留影卡 7')
         self.assertEqual(support.image_kind,'wide')
@@ -307,7 +309,22 @@ class InformationQueryTests(unittest.TestCase):
         self.assertIn('/查卡 7', result.text)
         self.assertIn('/查曲 101', result.text)
         self.assertNotIn('/查榜线', result.text)
-        self.assertIn('不据此判断是否为挑战歌曲', result.text)
+        self.assertIn('关联歌曲', result.text)
+        self.assertNotIn('不据此判断是否为挑战歌曲', result.text)
+        self.assert_same_text(result)
+
+    def test_activity_list_embeds_typed_card_strips_and_partial_relation_notice(self):
+        record=activity(1,'活动',bonus_cards=(CardRef(2,7),),reward_cards=(CardRef(3,7),),
+                        available_relations=frozenset({'bonus_cards'}))
+        result=execute_activity('列表',Repository(catalog(activities=(record,),cards=(card(7),),
+                                support_cards=(card(7,support=True),))),now=NOW)
+        entry=result.views[0].rows[0]
+        self.assertEqual(entry.kind,'banner')
+        cards=[r for r in entry.children if r.kind=='card']
+        self.assertEqual([r.image_kind for r in cards],['portrait','wide'])
+        self.assertIn('/查卡 7',result.text)
+        self.assertIn('/查留影卡 7',result.text)
+        self.assertIn('卡牌奖励关联不完整',result.text)
         self.assert_same_text(result)
 
     def test_activity_history_uses_end_not_display_end(self):

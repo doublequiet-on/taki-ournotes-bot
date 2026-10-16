@@ -18,13 +18,14 @@ from ournotes_bot.platforms.qq.qq import PreparedReply,DeliveryCursor,_expand_re
 
 class FullResultTests(unittest.TestCase):
     def test_song_counts_never_drop_the_seventeenth_or_tail(self):
-        for count in (1,16,17,31):
+        for count in (1,16,17,31,35):
             songs=tuple(Song(i,'歌名','歌名','MyGO!!!!!','','','','','',()) for i in range(count))
             parts,ranges=songs_image(songs,'全部',load=lambda u,s:None)
             self.assertEqual([i for start,stop in ranges for i in range(start,stop)],list(range(count)))
             self.assertEqual(len(parts),1)
             with Image.open(io.BytesIO(parts[0].image)) as im:
                 self.assertEqual(im.width,892 if count==1 else 1760)
+                if count==35:self.assertGreater(im.height,3600)
 
     def test_sort_keeps_colours_vertical_and_skips_empty_rarity_columns(self):
         base=Card(1,1,'卡','角色','MyGO',4,1,1,1,1,'','','','',catalog={'people':[{'id':1,'band':1,'order':2}]})

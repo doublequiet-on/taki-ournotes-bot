@@ -148,6 +148,9 @@ class ContinuationDeliveryTests(Fixture, unittest.IsolatedAsyncioTestCase):
         # Exercise native complete-list preparation and receipts without fetching
         # real assets for the synthetic song IDs used by this fixture.
         for target, options in (
+            # Force a real pixel-budget split instead of depending on an
+            # implementation-specific preferred page height.
+            ('ournotes_bot.rendering.song_layout.MAX_IMAGE_PIXELS', {'new':1760*3600}),
             ('ournotes_bot.platforms.qq.qq._visual_asset', {'return_value':None}),
             ('ournotes_bot.sources.haneoka.game_assets.asset_bytes', {'return_value':None}),
             ('ournotes_bot.platforms.qq.qq.load_chart_data', {'side_effect':ChartDataError('fixture has no chart')})):

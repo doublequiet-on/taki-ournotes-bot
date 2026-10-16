@@ -9,7 +9,7 @@ from collections import defaultdict
 from dataclasses import dataclass
 import re
 
-from ..data import SupportCard, localized_text
+from ..data import SupportCard, localized_text, normalize, character_identity
 from .haneoka_theme import Canvas, BG, INK, MUTED, frame, lines, prepare_assets
 from .readable_pages import render_parts
 
@@ -41,6 +41,31 @@ def compact(text):
     return text
 
 
+def memory_summary(value):
+    """The approved comparison keeps the normal value and names its condition."""
+    text=compact(value['short']);target=value.get('enhanced_target','').removesuffix('!!!!!')
+    if not target:return text
+    family=value.get('family')
+    if family in {'演出延时','LIFE回复','LUCK得分'}:
+        match=re.fullmatch(r'(.*?)(\d+(?:\.\d+)?)→(\d+(?:\.\d+)?)(.*)',text)
+        if match:
+            prefix,normal,enhanced,suffix=match.groups()
+            return prefix+normal+suffix+'\n'+target+'：'+enhanced+suffix
+    if family=='PERFECT转JUST':
+        match=re.fullmatch(r'每(\d+)→(\d+)P转J×(\d+)',text)
+        if match:
+            normal,enhanced,limit=match.groups()
+            return f'每{normal}P转J×{limit}\n{target}：每{enhanced}P'
+    if family in {'演出判定强化','COMBO判定强化'}:
+        match=re.fullmatch(r'(?:COMBO )?G→G/GOOD转P×(\d+)',text)
+        if match:
+            prefix='COMBO判强' if family=='COMBO判定强化' else '判强'
+            duration=value.get('duration_seconds',0)
+            duration=f'/{duration:g}s' if duration else ''
+            return f'{prefix}G×{match[1]}{duration}\n{target}：含GOOD'
+    return text+('\n'+target if '→' in text or 'enhanced_target' in value else '')
+
+
 def summaries(card,locale='zh',*,shared_duration=None,shared_target=None):
     contracts=card.catalog.get('compact_skills',[])
     result=[]
@@ -49,12 +74,10 @@ def summaries(card,locale='zh',*,shared_duration=None,shared_target=None):
         contract=contracts[i] if i<len(contracts) else None
         value=contract.get('levels',{}).get('5') if contract and locale=='zh' else None
         if isinstance(value,dict):
-            text=value['short']
-            if value.get('family')=='演出判定强化' and shared_target==value.get('enhanced_target'):text='判G→含GD×'+text.rsplit('×',1)[-1]
-            if value.get('family')=='COMBO判定强化' and shared_target==value.get('enhanced_target'):text='C判G→含GD×'+text.rsplit('×',1)[-1]
+            text=memory_summary(value) if isinstance(card,SupportCard) else value['short']
             # Arrow means the stated target bonus, never skill level growth.
             target=value.get('enhanced_target')
-            if target and target!=shared_target and '→' in text:
+            if not isinstance(card,SupportCard) and target and target!=shared_target and '→' in text:
                 text+=f' · {target}'
         elif isinstance(value,str):
             text=value
@@ -65,7 +88,7 @@ def summaries(card,locale='zh',*,shared_duration=None,shared_target=None):
             if skill.kind=='leaderSkill':
                 band=getattr(card,'band','')
                 if band and text.startswith(band+' '):text=text[len(band)+1:]
-                text=re.sub(r'(血判|简型) ([表技形])(?=\+)',r'\1',text).replace('；','\n')
+                text=re.sub(r'(血判|简型)\s*([表技形])(?=\+)',r'\1',text).replace('；','\n')
             if skill.kind=='liveSkill':
                 if shared_duration:text=text.removesuffix(' · '+shared_duration+'秒')
                 text=text.replace(' · ','\n')
@@ -79,6 +102,8 @@ def summaries(card,locale='zh',*,shared_duration=None,shared_target=None):
     for kind in expected:
         if kind not in present:
             label,color=LABELS[kind];result.append((label,color,'未知'))
+    if isinstance(card,SupportCard):
+        return sorted(result,key=lambda item:item[0]=='激') or [('技',MUTED,'未知')]
     grouped={}
     for label,color,text in result:
         if label in grouped:grouped[label]=(color,grouped[label][1]+'\n'+text)
@@ -94,11 +119,11 @@ def card_face(canvas,card,x,y,w,h,load,*,level=None,awake=None):
     if attr:
         side=max(18,min(40,w//4))
         canvas.paste(load(attr,(side,side)),x+2,y+2,side,side,True)
-    rarity={2:'R',3:'SR',4:'SSR',20:'BD',10:'EX'}.get(card.rarity)
-    badge=f'RarityIconCenter_{rarity}.png'
-    if awake is None and rarity:
-        bw=max(40,min(72,w//3));bh=round(bw*.72)
-        canvas.badge(badge,x+w-bw,y+h-bh//2,bw,bh)
+    if awake is None:
+        support=isinstance(card,SupportCard)
+        bw=max(40,min(72,w//4)) if support else max(40,min(80,round(w*5/12)))
+        bh=round(bw*2/3) if support else round(bw*.725)
+        canvas.rarity_badge(card.rarity,x+w-6,y+h-6,bw,bh)
     if level is not None:
         canvas.text(x+3,y+h-10,f'Lv.{level}',max(14,w//7),'white',True,stroke=1)
     if awake is not None and 0<=awake<=5:
@@ -109,16 +134,24 @@ def card_face(canvas,card,x,y,w,h,load,*,level=None,awake=None):
 @dataclass(frozen=True)
 class CardRow:
     cards: tuple
+    person: dict
+    group_start: bool
     offsets: tuple
     texts: tuple
     height: int
 
 
-def render_list(cards,query,locale='zh',*,load):
+def render_list(cards,query,locale='zh',*,load,characters=(),bands=()):
     cards=ordered(cards)
     if not cards:return (),cards,()
     support=isinstance(cards[0],SupportCard)
-    pitch,artw,arth,textw=252,220 if support else 176,124 if support else 176,180
+    # Approved member-list growth V3 and SNAP-list V4, rendered at 2x scale.
+    # The left person gutter and each attribute's own row are intentional.
+    pitch,artw,arth,textw=(432,288,162,280) if support else (256,192,192,196)
+    if support:
+        portrait_columns=(max(len(c.catalog.get('people',[])) for c in cards)+2)//3
+        pitch=max(pitch,artw+20+portrait_columns*48+28)
+    left=260 if support else 264
     durations=set();targets=set()
     for card in cards:
         for contract in card.catalog.get('compact_skills',[]):
@@ -128,35 +161,60 @@ def render_list(cards,query,locale='zh',*,load):
                 m=re.search(r' · ([0-9.]+)秒$',value)
                 durations.add(m.group(1) if m else None)
             if isinstance(value,dict) and value.get('enhanced_target'):targets.add(value['enhanced_target'])
-    duration=next(iter(durations)) if len(durations)==1 else None
-    target=next(iter(targets)) if len(targets)==1 else None
-    common=set.intersection(*(set(c.catalog.get('character_ids',[])) for c in cards)) if support else set()
-    shared_person=next((p for p in cards[0].catalog.get('people',[]) if p['id'] in common and (p.get('name',{}).get(locale) or '') in query),None)
-    def group_key(card):return (0,0,shared_person['id']) if shared_person else person_key(card)
-    cards=tuple(sorted(cards,key=lambda c:(group_key(c),c.card_type,RARITIES.get(c.rarity,9),c.id)))
+    duration=next(iter(durations)) if len(durations)==1 and not support else None
+    target=next(iter(targets)) if len(targets)==1 and not support else None
+    requested={normalize(character_identity(n)) for n in characters or (query,)}
+    people={p['id']:p for card in cards for p in card.catalog.get('people',[])}
+    selected={pid for pid,p in people.items() if requested & {normalize(character_identity(n)) for n in p.get('name',{}).values()}}
+    requested_bands={normalize(name) for name in bands}
+    selected_bands={ident for card in cards for ident,name in zip(card.catalog.get('band_ids',()),card.catalog.get('bands',())) if normalize(name) in requested_bands}
     groups=defaultdict(list)
-    for index,card in enumerate(cards):groups[group_key(card)].append((index,card))
-    rows=[]
-    for group in groups.values():
-        for start in range(0,len(group),4):
-            items=group[start:start+4]
-            texts=tuple(tuple((label,color,lines(text,textw,26)) for label,color,text in summaries(c,locale,shared_duration=duration,shared_target=target)) for _,c in items)
-            slots=max(map(len,texts)); heights=[max((len(t[i][2]) if i<len(t) else 0 for t in texts),default=1)*36+8 for i in range(slots)]
-            offsets=tuple(sum(heights[:i]) for i in range(slots))
-            # Each complete row repeats its person heading, including after a split.
-            rows.append(CardRow(tuple(items),offsets,texts,100+arth+92+sum(heights)))
-    width=1080
+    for card in cards:
+        related=card.catalog.get('people',[])
+        if related:
+            for p in related:
+                if (not selected or p['id'] in selected) and (selected or not selected_bands or p.get('band') in selected_bands):
+                    key=(p.get('band') or 999,p.get('order') if p.get('order') is not None else 999,p['id'])
+                    groups[key].append(card)
+        else:
+            groups[person_key(card)].append(card)
+    rows=[];records=[]
+    for key,group in sorted(groups.items()):
+        person=people.get(key[2],{'name':{locale:group[0].character}})
+        attributes=defaultdict(list)
+        for card in sorted(group,key=lambda c:(c.card_type,RARITIES.get(c.rarity,9),c.id)):
+            attributes[card.card_type].append(card)
+        first=True
+        for same_colour in attributes.values():
+            for start in range(0,len(same_colour),8):
+                batch=same_colour[start:start+8]
+                items=tuple((len(records)+i,card) for i,card in enumerate(batch))
+                records.extend(batch)
+                texts=tuple(tuple((label,color,lines(text,textw,32)) for label,color,text in summaries(c,locale,shared_duration=duration,shared_target=target)) for c in batch)
+                slots=max(map(len,texts)); heights=[max((len(t[i][2]) if i<len(t) else 0 for t in texts),default=1)*40 for i in range(slots)]
+                offsets=tuple(sum(heights[:i]) for i in range(slots))
+                rows.append(CardRow(items,person,first,offsets,texts,(224 if support else 254)+sum(heights)+36+(36 if first else 0)))
+                first=False
+    unique_count=len(cards)
+    cards=tuple(records)
+    width=max(1168 if support else 568,left+max(len(r.cards) for r in rows)*pitch+(44 if support else 48))
     title=ui_label('留影卡列表',locale) if support else ui_label('角色卡列表',locale)
-    subtitle=f'{query} · Lv.5'+(f' · 演{duration}s' if duration else '')+(f' · →{target}强化' if target else '')
+    title_lines=lines(title,width-112,80,True)
+    title_extra=(len(title_lines)-1)*96
+    query_label=f'{query or ui_label("全部",locale)} · {unique_count} '+ui_label('张',locale)
+    skill_label=ui_label('技能',locale)+' Lv.5'+(f' · 演{duration}s' if duration else '')+(f' · →{target}强化' if target else '')
+    subtitle=query_label+' · '+skill_label
+    if len(lines(subtitle,width-112,42))>1:
+        subtitle=query_label+'\n'+skill_label
     notices = []
     if any(c.catalog.get('detail_stale') for c in cards):
         notices.append(ui_label('部分详情使用上次有效缓存。',locale))
     if any(not c.catalog.get('detail_loaded') for c in cards):
         notices.append(ui_label('部分技能资料未获取，未知分类不会当作无技能。',locale))
     notice = ' '.join(notices)
-    footer_lines = lines(notice, width-72, 26) if notice else []
-    footer_h = 58 + len(footer_lines)*36
-    head=144+len(lines(subtitle,width-72,28))*40
+    footer_lines = lines(notice, width-96, 28) if notice else []
+    footer_h = 112 + len(footer_lines)*40
+    head=252+title_extra+len(lines(subtitle,width-112,42))*52
     assets={}
     def cached(url,size):
         key=(url,size)
@@ -169,39 +227,46 @@ def render_list(cards,query,locale='zh',*,load):
             side=max(18,min(40,artw//4));requests.add((card.catalog['attribute_icon'],(side,side)))
         for person in card.catalog.get('people',[]):
             if person.get('face'):
-                requests.add((person['face'],(56,56)))
+                requests.add((person['face'],(96,96)))
+                requests.add((person['face'],(44,44)))
     def paint(start,stop,height):
-        c=Canvas(width,height);c.text(36,58,title,44,bold=True)
-        c.paragraph(36,108,subtitle,width-72,28,40,color=MUTED)
+        c=Canvas(width,height)
+        for n,line in enumerate(title_lines):c.text(56,72+n*96,line,80,bold=True)
+        c.paragraph(56,176+title_extra,subtitle,width-112,42,52,color=MUTED)
         y=head
-        for row in rows[start:stop]:
-            first=row.cards[0][1]
-            person=shared_person or next((p for p in first.catalog.get('people',[]) if p['id']==group_key(first)[2]),{})
-            c.line(36,y,width-36,'#e1dce7')
-            if person.get('face'):c.paste(cached(person['face'],(56,56)),36,y+18,56,56,True,radius=28)
-            name=person.get('name',{}).get(locale) or first.character
-            c.text(110,y+46,name,32,bold=True)
+        for row_index,row in enumerate(rows[start:stop],start):
+            person=row.person
+            if row.group_start:
+                if row_index!=start:c.line(48,y,width-48,'#e1dce7')
+                y+=36
+            if row.group_start or row_index==start:
+                if person.get('face'):c.paste(cached(person['face'],(96,96)),86,y+8,96,96,True,radius=48)
+                name=person.get('name',{}).get(locale) or row.cards[0][1].character
+                for n,line in enumerate(lines(name,208,34,True)):
+                    c.text(134,y+152+n*44,line,34,bold=True,align='center')
             for col,((index,card),text) in enumerate(zip(row.cards,row.texts)):
-                x=36+col*pitch;card_face(c,card,x,y+100,artw,arth,cached)
+                x=left+col*pitch;card_face(c,card,x,y+8,artw,arth,cached)
                 if support and len(card.catalog.get('people',[]))>1:
-                    for j,p in enumerate(sorted(card.catalog.get('people',[]),key=lambda p:(p.get('band') or 999,p.get('order',999),p['id']))):
-                        if p.get('face'):c.paste(cached(p['face'],(56,56)),x+(j%6)*34,y+100+arth+8+(j//6)*34,30,30,True,radius=15)
-                base=y+100+arth+64
-                c.text(x,base,f'ID {card.id}',26,MUTED)
-                base+=28
+                    related=sorted(card.catalog['people'],key=lambda p:(p.get('band') or 999,p.get('order') if p.get('order') is not None else 999,p['id']))
+                    portrait_rows=min(3,len(related));py=y+8+(arth-(portrait_rows*48-4))//2
+                    for j,p in enumerate(related):
+                        if p.get('face'):c.paste(cached(p['face'],(44,44)),x+artw+20+(j//3)*48,py+(j%3)*48,44,44,True,radius=22)
+                c.text(x,y+(202 if support else 230),f'ID {card.id}',30 if support else 32,MUTED)
+                base=y+(224 if support else 254)
                 for i,(label,color,wrapped) in enumerate(text):
-                    cy=base+row.offsets[i]+18;c.text(x,cy,ui_label(label,locale),26,color,True)
-                    for n,line in enumerate(wrapped):c.text(x+36,cy+n*36,line,26)
-            y+=row.height
-        c.text(36,height-26,f'{rows[start].cards[0][0]+1}–{rows[stop-1].cards[-1][0]+1} / {len(cards)} · '+ui_label('按 ID 查详情',locale),26,MUTED)
+                    cy=base+row.offsets[i]+18;c.text(x,cy,ui_label(label,locale),32,color,True)
+                    for n,line in enumerate(wrapped):c.text(x+44,cy+n*40,line,32)
+            y+=row.height-(36 if row.group_start else 0)
+        c.text(48,height-footer_h+28,ui_label('展示位置',locale)+f' {rows[start].cards[0][0]+1}–{rows[stop-1].cards[-1][0]+1} / {len(cards)}',28,MUTED)
+        c.text(48,height-30,ui_label('按 ID 查详情',locale),28,MUTED)
         for n, text in enumerate(footer_lines):
-            c.text(36,height-footer_h+20+n*36,text,26,MUTED)
+            c.text(48,height-footer_h+68+n*40,text,28,MUTED)
         return c.image
     try:
         rarities={2:'R',3:'SR',4:'SSR',20:'BD',10:'EX'}
         badges={f'RarityIconCenter_{rarities[c.rarity]}.png' for c in cards if c.rarity in rarities}
         assets.update(prepare_assets(requests,load,badges))
-        parts=render_parts(tuple(r.height for r in rows),width,head+footer_h,paint,max_height=3200)
+        parts=render_parts(tuple(r.height for r in rows),width,head+footer_h,paint)
         ranges=tuple((rows[p.start].cards[0][0],rows[p.stop-1].cards[-1][0]+1) for p in parts)
         return parts,cards,ranges
     finally:

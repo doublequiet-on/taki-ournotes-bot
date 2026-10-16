@@ -9,6 +9,15 @@ from typing import Literal
 
 
 @dataclass(frozen=True)
+class InfoSchedule:
+    identity: str
+    status: str
+    start: str
+    end: str
+    zone: str = '日本时间 UTC+9'
+
+
+@dataclass(frozen=True)
 class InfoRow:
     title: str
     body: tuple[str, ...] = ()
@@ -18,8 +27,12 @@ class InfoRow:
     rarity: int | None = None
     image_kind: Literal["square", "wide", "portrait"] = "square"
     group: str = ""
-    kind: Literal["row", "fact", "prose", "links"] = "row"
+    kind: Literal["row", "fact", "prose", "links", "card", "song", "schedule", "banner"] = "row"
     attribute_url: str = ""
+    schedule: InfoSchedule | None = None
+    display_title: str = ""
+    tags: tuple[str, ...] = ()
+    children: tuple['InfoRow', ...] = ()
 
 
 @dataclass(frozen=True)
@@ -30,6 +43,10 @@ class InfoView:
     rows: tuple[InfoRow, ...] = ()
     footer: tuple[str, ...] = ()
     layout: Literal["list", "detail", "character", "directory"] = "list"
+    presentation: Literal["", "activity", "gacha", "character"] = ""
+    visual_footer: tuple[str, ...] | None = None
+    hero_kind: Literal['banner', 'event'] = 'banner'
+    hero_logo_url: str = ''
 
 
 @dataclass(frozen=True)
@@ -40,7 +57,8 @@ class InfoAnswer:
 
 
 def row_text(row: InfoRow) -> str:
-    return "\n".join(value for value in (row.group, row.title, row.label, *row.body, row.command) if value)
+    return "\n".join(value for value in (row.group, row.title, row.label, *row.body, row.command,
+                                         *(row_text(child) for child in row.children)) if value)
 
 
 def view_text(view: InfoView) -> str:
