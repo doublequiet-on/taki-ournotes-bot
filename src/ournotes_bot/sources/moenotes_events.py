@@ -181,6 +181,7 @@ class BoardSnapshot:
     time_kind: str = "tracker_observed"
     contract_version: str = "tracker/1"
     player_details: tuple[dict | None, ...] = ()
+    http_date_ms: int | None = None
 
     def player_detail(self, rank: int) -> dict | None:
         if self.score(rank) is None or not 1 <= rank <= len(self.player_details):

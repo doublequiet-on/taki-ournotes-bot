@@ -111,7 +111,7 @@ class CutoffHistory:
     def _ms(value):
         return value if type(value) is int and 0 < value < 253402300799000 else None
 
-    def record(self, event, board):
+    def record(self, event, board, *, _clock_provenance=None):
         if getattr(board, "source", "tracker") != self.source:
             return "wrong_source"
         if not self.writable():
@@ -157,6 +157,10 @@ class CutoffHistory:
                 duplicate = any(row[0] == digest for row in previous)
                 db.execute("INSERT OR IGNORE INTO observations(server,event,challenge,music,source_ms,server_ms,received_ms,scores,digest,quality,collect_status) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
                            (*key, str(board.song.music_id), source or -1, server, received, encoded, digest, quality, board.song.collect_status))
+                if _clock_provenance is not None:
+                    db.execute("CREATE TABLE IF NOT EXISTS clock_calibrations (server TEXT, event TEXT, challenge TEXT, source_ms INTEGER, received_ms INTEGER, raw_source_ms INTEGER, raw_server_ms INTEGER, http_date_ms INTEGER, PRIMARY KEY(server,event,challenge,source_ms,received_ms))")
+                    db.execute("INSERT OR IGNORE INTO clock_calibrations VALUES(?,?,?,?,?,?,?,?)",
+                               (*key, source, received, *_clock_provenance))
                 if quality != "valid":
                     db.execute("INSERT OR IGNORE INTO gaps VALUES(?,?,?,?,?)", (*key, received, quality))
                 db.execute("INSERT OR REPLACE INTO health VALUES(?,?)", ("last_success" if quality == "valid" else "last_failure", str(received)))
@@ -352,14 +356,14 @@ class OpenCutoffHistory(CutoffHistory):
             db.close()
             raise
 
-    def record(self, event, board):
+    def record(self, event, board, *, _clock_provenance=None):
         if (getattr(board, "source", "") != self.source or getattr(board, "time_kind", "") != self.time_kind
                 or getattr(board, "contract_version", "") != self.contract_version):
             return "wrong_source"
         if not self._ms(board.fetched_ms):
             self.failure(event.server, event.event_id, board.song.challenge_id, "unknown_time")
             return "unknown_time"
-        return super().record(event, board)
+        return super().record(event, board, _clock_provenance=_clock_provenance)
 
     def read(self, event, song, ranks, **kwargs):
         view = super().read(event, song, ranks, **kwargs)
@@ -367,7 +371,7 @@ class OpenCutoffHistory(CutoffHistory):
 
 
 class HaneokaCutoffHistory(OpenCutoffHistory):
-    """Independent schema3 file; clock-offset observations leave only a gap."""
+    """Schema3 history with auditable HTTP-Date clock calibration; old readers remain compatible."""
     source = "haneoka"
     time_kind = "tracker_observed_via_haneoka"
     contract_version = "haneoka:challenge-ranking/1"
@@ -379,11 +383,31 @@ class HaneokaCutoffHistory(OpenCutoffHistory):
             return "wrong_source"
         server, received = self._ms(board.server_ms), self._ms(board.received_ms)
         if server and received and abs(server - received) > 60000:
-            # Queries may show these scores, but raw source times would shift the
-            # trend. Record a local gap only, including late/fallback samples.
-            self.failure(event.server, event.event_id, board.song.challenge_id, "clock_skew")
-            return "clock_skew"
+            date, fetched = self._ms(board.http_date_ms), self._ms(board.fetched_ms)
+            # Only the same HTTPS response's Date, independently close to local
+            # receipt, may anchor the source-relative age. Never hard-code 130s.
+            if not date or abs(date - received) > 5000 or not fetched or fetched > server + 1000:
+                self.failure(event.server, event.event_id, board.song.challenge_id, "clock_skew")
+                return "clock_skew"
+            adjusted = replace(board, fetched_ms=fetched + date - server, server_ms=date)
+            return super().record(event, adjusted, _clock_provenance=(fetched, server, date))
         return super().record(event, board)
+
+    def read(self, event, song, ranks, **kwargs):
+        view = super().read(event, song, ranks, **kwargs)
+        if not view.points:
+            return view
+        try:
+            with closing(self._connect()) as db:
+                exists = db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='clock_calibrations'").fetchone()
+                calibrated = exists and db.execute("SELECT 1 FROM clock_calibrations WHERE server=? AND event=? AND challenge=? LIMIT 1",
+                                                  self._key(event, song)).fetchone()
+            if calibrated:
+                return replace(view, warning="；".join(filter(None, (view.warning,
+                    "部分历史时间按 HTTP Date 与来源相对年龄校准，含秒精度及网络误差。"))))
+        except (sqlite3.Error, OSError):
+            return replace(view, warning="；".join(filter(None, (view.warning, "时钟校准记录暂不可读。"))))
+        return view
 
 
 class SourceHistory:
