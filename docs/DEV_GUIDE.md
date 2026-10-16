@@ -21,6 +21,8 @@
 
 ## 任务导航
 
+查询字段与入口能力核对见 [查询规格](QUERY_SPEC.md)，固定跨入口样例为 `tests/test_query_spec.py`；具体行为仍以所绑定版本的源码和测试为准。
+
 Haneoka 公共设施：`sources/haneoka/transport.py`、`identity.py` 与 `sources/json_validation.py`；单份异常 `sources/errors.py`，谱面路径权限 `haneoka/chart_paths.py`。测试 `test_haneoka_facilities.py`、`test_architecture.py` 及调用方 `test_haneoka_catalog.py`、`test_haneoka_charts.py`、`test_haneoka_event_metadata.py`、`test_source_egress.py`；涉及公共传输时扩大到完整离线回归和隔离安装。聚合预算/缓存/回退仍由各适配器负责。
 
 主资料独立来源：`data.py::SongRepository._load_haneoka` → `sources/haneoka/catalog.py`，由 `OURNOTES_DATA_SOURCE` 选择，默认 Haneoka；Yume 保留显式选择。Haneoka 候选准备与短发布分锁，相关读者用 `capture_catalog()` 捕获同次发布引用。目标测试 `test_haneoka_catalog.py`、`test_catalog_concurrency.py`，共享接口修改后完整离线回归及安装检查；字段、缓存、样图和切换门槛见 [主资料说明](HANEOKA_CATALOG.md)。
