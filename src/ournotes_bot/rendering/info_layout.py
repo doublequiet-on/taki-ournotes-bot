@@ -309,7 +309,7 @@ def render_info(answer: InfoAnswer, *, load=None) -> tuple[InfoPage, ...]:
                     raise
 
             parts = readable_pages.render_parts(tuple(block.height for block in blocks), WIDTH, fixed, paint,
-                                                max_height=2800 if view.presentation else None)
+                                                max_height=2800 if view.presentation in {'activity','gacha'} else None)
             for part in parts:
                 text = '\n'.join(v for v in (view.title, view.subtitle,
                     *(block.text for block in blocks[part.start:part.stop])) if v)
