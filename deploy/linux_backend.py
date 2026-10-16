@@ -182,8 +182,21 @@ def extract_archive(archive: Path, target: Path, expected_commit: str | None = N
 
 
 def run_bounded(argv: list[str], *, timeout: int = 120, log: Path | None = None,
-                budget_root: Path | None = None, success_codes: tuple[int, ...] = (0,)) -> str:
+                budget_root: Path | None = None, budget_file: Path | None = None,
+                success_codes: tuple[int, ...] = (0,)) -> str:
     """Drain output with a fixed memory/log cap and kill timed-out process groups."""
+    if budget_file is not None and (budget_root is None or budget_file.parent != budget_root):
+        raise ValueError("Budget file must belong to its budget directory")
+
+    def over_budget():
+        if budget_root is None:
+            return False
+        if budget_file is None:
+            used = directory_bytes(budget_root)
+        else:
+            used = budget_file.stat().st_size if budget_file.exists() else 0
+        return used > 2 * GIB or shutil.disk_usage(budget_root).free < 2 * GIB
+
     process = subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                stdin=subprocess.DEVNULL, start_new_session=True,
                                env={"PATH": "/usr/sbin:/usr/bin:/sbin:/bin", "LANG": "C.UTF-8"})
@@ -213,8 +226,7 @@ def run_bounded(argv: list[str], *, timeout: int = 120, log: Path | None = None,
                 break
             if budget_root is not None and time.monotonic() >= next_budget_check:
                 next_budget_check = time.monotonic() + 1
-                used = directory_bytes(budget_root)
-                if used > 2 * GIB or shutil.disk_usage(budget_root).free < 2 * GIB:
+                if over_budget():
                     failure = "candidate_disk_budget"
                     break
     finally:
@@ -228,6 +240,9 @@ def run_bounded(argv: list[str], *, timeout: int = 120, log: Path | None = None,
         process.stdout.close()
         if log is not None:
             log.write_bytes(result)
+    # A fast writer can finish between periodic checks; inspect its final size.
+    if failure is None and over_budget():
+        failure = "candidate_disk_budget"
     if failure or process.returncode not in success_codes:
         raise Rejected(failure or "command_failed")
     return result.decode("utf-8", "replace")
@@ -566,7 +581,8 @@ class LinuxBackend:
         try:
             self.run(["/usr/bin/tar", "--create", "--file=" + str(path), "--exclude=.env",
                       "--exclude=" + previous.code_dir.lstrip("/") + "/data", "--exclude=__pycache__", "--directory=/",
-                      previous.code_dir.lstrip("/"), previous.venv_dir.lstrip("/")], timeout=120, budget_root=self.backups)
+                      previous.code_dir.lstrip("/"), previous.venv_dir.lstrip("/")], timeout=120,
+                     budget_root=self.backups, budget_file=path)
             if path.stat().st_size > 2 * GIB:
                 raise Rejected("backup_disk_budget")
             atomic_json(self.backups / (name + ".json"), {"owner": "taki-linux-updater-v1", "archive": path.name,
@@ -610,7 +626,8 @@ class LinuxBackend:
         snapshot = archive.with_name(archive.stem + "-data.tar")
         try:
             self.run(["/usr/bin/tar", "--create", "--file=" + str(snapshot), "--directory=" + str(self.base),
-                      "--exclude=.env", "data"], timeout=120, budget_root=self.backups)
+                      "--exclude=.env", "data"], timeout=120,
+                     budget_root=self.backups, budget_file=snapshot)
             row["data_archive"] = snapshot.name
             row["shared_data_restore"] = False
             atomic_json(manifest, row)
