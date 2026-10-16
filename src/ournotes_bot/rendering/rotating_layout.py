@@ -42,9 +42,9 @@ def _caption_width(row):
     return 228 if row.image_kind == 'wide' else 176
 
 
-def _title_lines(title, width):
-    wrapped = lines(title, width, 22, True) if title else ()
-    # Avoid leaving a lone final character while preserving every title glyph.
+def _name_lines(title, width, size=22, bold=True):
+    wrapped = lines(title, width, size, bold) if title else ()
+    # Avoid leaving a lone final character while preserving every name glyph.
     if len(wrapped)>1 and len(wrapped[-1].strip())==1 and len(wrapped[-2])>2 and '\n' not in title:
         count=2 if wrapped[-2][-1] in '，。、；：！？）】」』〉》)]}%' else 1
         wrapped=(*wrapped[:-2],wrapped[-2][:-count],wrapped[-2][-count:]+wrapped[-1])
@@ -53,8 +53,8 @@ def _title_lines(title, width):
 
 def _captions(row):
     width = _caption_width(row)
-    title = _title_lines(row.display_title, width)
-    people = tuple(line for value in row.body for line in lines(value, width, 20))
+    title = _name_lines(row.display_title, width)
+    people = tuple(line for value in row.body for line in _name_lines(value, width, 20, False))
     tags = lines('/'.join(row.tags), width, 20) if row.tags else ()
     return title, people, tags
 

@@ -90,9 +90,12 @@ class RotatingLayoutTests(unittest.TestCase):
         row=InfoRow('成员卡',display_title='微笑，隐于幽暗',image_kind='portrait')
         self.assertEqual(rotating_layout._captions(row)[0],('微笑，隐于幽暗',))
         for title in ('迎着光芒走向新的明天','微笑，隐于幽暗之中'):
-            wrapped=rotating_layout._title_lines(title,176)
+            wrapped=rotating_layout._name_lines(title,176)
             self.assertEqual(''.join(wrapped),title)
             self.assertGreater(len(wrapped[-1]),1)
+        people=rotating_layout._name_lines('Oblivionis / 丰川祥子',176,20,False)
+        self.assertEqual(''.join(people),'Oblivionis / 丰川祥子')
+        self.assertGreater(len(people[-1]),1)
 
     def test_card_titles_and_all_character_names_are_drawn_without_truncation(self):
         title='在光芒之下迎接全新的一天'
