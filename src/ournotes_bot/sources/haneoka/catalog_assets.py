@@ -13,7 +13,7 @@ PREFIX = "/assets/jp/Assets/AddressableResources/"
 IMAGE_PATH = re.compile(r"/assets/(?:jp|intl)/Assets/AddressableResources/"
     r"(?:Image/Jacket/(?:small/)?[A-Za-z0-9_-]+|MemberCard/[0-9]+/member_(?:full|thumbnail)|"
     r"SupportCard/[0-9]+/snap_(?:full|thumbnail)|Story/Banner/Chapter/[A-Za-z0-9_-]+|"
-    r"Item/[A-Za-z0-9_-]+/item_icon_[A-Za-z0-9_-]+|Gacha/(?:Banner|Logo)/[A-Za-z0-9_-]+|Image/Event/[A-Za-z0-9_-]+|Character/Skill/icon_skill_[A-Za-z0-9_]+|Band/[0-9]+/band_(?:logo|small_Icon)|Character/Image/[0-9]+/character_(?:face_icon|thumbnail|sprite))\.(?:png|webp)")
+    r"Item/[A-Za-z0-9_-]+/item_icon_[A-Za-z0-9_-]+|Gacha/(?:Banner|Logo)/[A-Za-z0-9_-]+|Image/Event/(?:[0-9]+/(?:Top|Logo)/)?[A-Za-z0-9_-]+|Character/Skill/icon_skill_[A-Za-z0-9_]+|Band/[0-9]+/band_(?:logo|small_Icon)|Character/Image/[0-9]+/character_(?:face_icon|thumbnail|sprite))\.(?:png|webp)")
 ICON_PATH = re.compile(r"/runtime/(?:jp|intl)/unity/Assets/AddressableResources/UI/Atlas/"
     r"FixUiSpriteAtlas\.spriteatlasv2/CardType-(?:Red|Blue|Green|Yellow|Purple)--Sprite--?[0-9]+\.png")
 

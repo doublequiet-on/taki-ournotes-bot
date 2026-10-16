@@ -8,7 +8,7 @@ import time
 from ..data import normalize
 from .contracts.info import InfoAnswer, InfoRow, InfoView
 from .info_query import (answer, available, card_rows, footer, named_matches, list_view,
-                         period, state, text_value, unavailable)
+                         period, schedule, state, text_value, unavailable)
 
 HELP = '/查卡池：日服当前卡池资料；/查卡池 ID或名称；/查卡池 历史 [名称]。'
 
@@ -35,6 +35,7 @@ def execute_gacha(query, repository, *, now=None):
         records = named_matches(records, term)
     records = tuple(sorted(records, key=lambda r: (r.end_at if r.end_at is not None else float('inf'), r.id), reverse=mode == 'history'))
     notes = (*footer(catalog), '部分卡池有账号或展示条件；时间窗内不代表所有玩家当前可抽。')
+    visual_notes = (*footer(catalog, diagnostics=False), notes[-1])
     if not records:
         label = '当前时间窗内没有卡池资料。' if mode == 'current' else '没有找到符合条件的卡池。'
         if mode == 'current' and any(r.start_at is None or r.end_at is None for r in catalog.gachas):
@@ -42,7 +43,8 @@ def execute_gacha(query, repository, *, now=None):
         return answer((InfoView('日服 · 卡池', label, footer=(*notes, HELP)),), 'no_results')
     if mode == 'search' and len(records) == 1:
         record = records[0]
-        rows = [InfoRow(f'卡池 ID {record.id}', (*period(record), f'资料状态：{state(record, now)}'))]
+        rows = [InfoRow(f'卡池 ID {record.id}', (*period(record), f'资料状态：{state(record, now)}'),
+                        kind='schedule', schedule=schedule(record, now, '卡池'))]
         description = text_value(record.description)
         if description:
             rows.append(InfoRow('卡池说明', (description,)))
@@ -55,8 +57,9 @@ def execute_gacha(query, repository, *, now=None):
             message = '当前资料没有标记 UP 卡。' if 'pickup_cards' in record.available_relations else '当前资料未提供 UP 卡关联。'
             rows.append(InfoRow('UP 卡', (message,)))
         return answer((InfoView(record.title, '日服 · 卡池详情', record.image_url,
-                                tuple(rows), notes, 'detail'),))
+                                tuple(rows), notes, 'detail', presentation='gacha', visual_footer=visual_notes),))
     title = '日服 · 历史卡池' if mode == 'history' else '日服 · 当前卡池' if mode == 'current' else '日服 · 卡池候选'
     rows = (InfoRow(r.title, (f'卡池 ID {r.id}', *period(r), f'资料状态：{state(r, now)}'),
-                    r.image_url, f'/查卡池 {r.id}', image_kind='wide') for r in records)
-    return answer((list_view(title, rows, subtitle=f'共 {len(records)} 个', notes=notes),))
+                    r.image_url, f'/查卡池 {r.id}', image_kind='wide',kind='banner',schedule=schedule(r,now,'卡池')) for r in records)
+    return answer((list_view(title, rows, subtitle=f'共 {len(records)} 个 · 日本时间 UTC+9', notes=notes,
+                            presentation='gacha',visual_footer=visual_notes),))

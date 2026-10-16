@@ -51,6 +51,31 @@ class InfoConversionTests(unittest.TestCase):
     def convert(self):
         return convert_info(self.docs, IDENTITY, "2026-10-15T00:00:00+00:00")
 
+    def test_event_detail_art_is_release_pinned_and_prepared_before_deployment(self):
+        from dataclasses import asdict
+        row=self.docs['jp']['events']['2']
+        row['image']=PREFIX+'Story/Banner/Chapter/ui_banner_chapter_7.png'
+        row['backgroundImage']=PREFIX+'Image/Event/02/Top/event_top_01_0002.png'
+        row['logo']=PREFIX+'Image/Event/02/Logo/event_logo_01_0002.png'
+        record=self.convert().activities[0]
+        self.assertNotEqual(record.image_url,record.detail_image_url)
+        for key in ('detail_image_url','logo_url'):
+            url=asdict(record)[key]
+            self.assertTrue(is_catalog_asset(url))
+            self.assertTrue(url.endswith('?release='+RELEASE))
+        # Asset preparation walks the converted dataclass tree, including these fields.
+        from ournotes_bot.sources.haneoka.prepare_catalog_assets import catalog_urls
+        saved={'documents':self.docs,'identities':{'jp':IDENTITY,'intl':IDENTITY}}
+        with patch('ournotes_bot.sources.haneoka.prepare_catalog_assets.validate',return_value=((),{})), \
+             patch('ournotes_bot.sources.haneoka.prepare_catalog_assets.cards_for',return_value=()):
+            urls=catalog_urls(saved,1_790_000_000)
+        self.assertIn(record.detail_image_url,urls)
+        self.assertIn(record.logo_url,urls)
+        row['backgroundImage']='https://example.invalid/art.png'
+        row['logo']=PREFIX+'Image/Event/../../secret.png'
+        unsafe=self.convert().activities[0]
+        self.assertEqual((unsafe.detail_image_url,unsafe.logo_url),('',''))
+
     def test_roster_does_not_depend_on_cards_and_uses_source_fields(self):
         info = self.convert()
         person = info.characters[0]

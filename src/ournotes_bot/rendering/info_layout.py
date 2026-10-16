@@ -7,7 +7,7 @@
 from dataclasses import dataclass, replace
 
 from ..query.contracts.info import InfoAnswer, InfoRow, row_text
-from . import readable_pages
+from . import readable_pages, rotating_layout
 from .haneoka_theme import Canvas, ACCENT, INK, MUTED, SOFT, SURFACE, frame, lines, prepare_assets
 from .image_output import ImageBudgetError, reclaim_after_render
 
@@ -114,6 +114,8 @@ def _row_blocks(row, limit, *, force_image=False):
 
 
 def _blocks(view, limit):
+    if view.presentation in {'activity', 'gacha'}:
+        return rotating_layout.blocks(view, limit, _row_blocks)
     result = []
     rows=view.rows
     if view.layout=='character':
@@ -162,6 +164,9 @@ def _blocks(view, limit):
 
 
 def _draw_block(c, block, y, load, *, left=LEFT, right=RIGHT):
+    if isinstance(block, rotating_layout.Panel):
+        rotating_layout.draw(c, block, y, load)
+        return
     if block.kind=='profile':
         if block.image_url:
             h=min(860,block.height-24)
@@ -256,6 +261,10 @@ def render_info(answer: InfoAnswer, *, load=None) -> tuple[InfoPage, ...]:
             blocks = _blocks(view, limit)
             requests=set();badges=set()
             def collect(block):
+                if isinstance(block, rotating_layout.Panel):
+                    requests.update(block.requests)
+                    badges.update(block.badges)
+                    return
                 if block.image_url:
                     if block.kind=='profile':size=(330,min(860,block.height-24))
                     elif block.kind=='hero':size=(972,block.height-48)
@@ -296,7 +305,8 @@ def render_info(answer: InfoAnswer, *, load=None) -> tuple[InfoPage, ...]:
                     c.image.close()
                     raise
 
-            parts = readable_pages.render_parts(tuple(block.height for block in blocks), WIDTH, fixed, paint)
+            parts = readable_pages.render_parts(tuple(block.height for block in blocks), WIDTH, fixed, paint,
+                                                max_height=2800 if view.presentation else None)
             for part in parts:
                 text = '\n'.join(v for v in (view.title, view.subtitle,
                     *(block.text for block in blocks[part.start:part.stop])) if v)

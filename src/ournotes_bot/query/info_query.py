@@ -6,7 +6,7 @@
 from datetime import datetime, timezone, timedelta
 
 from ..data import normalize
-from .contracts.info import InfoAnswer, InfoRow, InfoView, info_text
+from .contracts.info import InfoAnswer, InfoRow, InfoSchedule, InfoView, info_text
 
 JP_ZONE = timezone(timedelta(hours=9))
 
@@ -41,10 +41,16 @@ def state(record, now):
     return '开放时间未确认'
 
 
-def footer(catalog):
-    notes = ['资料来源：Haneoka 日服', f"资料版本：{catalog.metadata.get('data_version', '未确认')}"]
+def schedule(record, now, kind):
+    return InfoSchedule(f'{kind} ID {record.id}', state(record, now), moment(record.start_at), moment(record.end_at))
+
+
+def footer(catalog, *, diagnostics=True):
+    notes = ['资料来源：Haneoka 日服']
+    if diagnostics:
+        notes.append(f"资料版本：{catalog.metadata.get('data_version', '未确认')}")
     fetched = catalog.metadata.get('cached_at') or catalog.last_successful_sync_at
-    if fetched:
+    if fetched and diagnostics:
         notes.append(f'本机获取：{fetched}')
     if catalog.cache_state == 'stale':
         notes.append('当前使用旧缓存；开放状态仅按该缓存中的时间判断。')
@@ -58,9 +64,10 @@ def answer(views, status='success'):
     return InfoAnswer(info_text(views), status, views)
 
 
-def list_view(title, rows, *, subtitle='', notes=()):
+def list_view(title, rows, *, subtitle='', notes=(), presentation='', visual_footer=None):
     # The renderer owns actual height/byte budgets; queries retain the full list.
-    return InfoView(title, subtitle, rows=tuple(rows), footer=tuple(notes))
+    return InfoView(title, subtitle, rows=tuple(rows), footer=tuple(notes),
+                    presentation=presentation, visual_footer=visual_footer)
 
 
 def named_matches(records, query):
@@ -89,10 +96,13 @@ def card_rows(refs, catalog, label):
         kind = '成员卡' if ref.resource_type == 2 else '留影卡'
         command = f"/查卡 {ref.id}" if ref.resource_type == 2 else f"/查留影卡 {ref.id}"
         if card is None:
-            result.append(InfoRow(f'{kind} ID {ref.id}', ('当前快照缺少卡牌详情。',), command=command, label=label))
+            result.append(InfoRow(f'{kind} ID {ref.id}', ('当前快照缺少卡牌详情。',), command=command,
+                                  label=label, kind='card', group=kind,
+                                  image_kind='wide' if ref.resource_type == 3 else 'square'))
         else:
             result.append(InfoRow(f'{kind} {card.id} · {card.title}', (card.character,),
                                   card.thumbnail_url, command, label, card.rarity,
                                   image_kind='wide' if ref.resource_type==3 else 'square',
-                                  attribute_url=card.catalog.get('attribute_icon','')))
+                                  attribute_url=card.catalog.get('attribute_icon',''),kind='card',group=kind,
+                                  display_title=card.title))
     return tuple(result)
