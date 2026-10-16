@@ -483,12 +483,41 @@ class LinuxBackendTests(unittest.TestCase):
         row = json.loads(archive.with_suffix('.json').read_text())
         self.assertEqual(row['data_archive'], 'owned-data.tar')
         self.assertFalse(row['shared_data_restore'])
+        self.assertEqual(row['excluded_rebuildable_paths'], ['data/haneoka-asset-cache'])
         self.assertEqual((self.base / 'data/cache.json').read_text(), 'live data')
         self.assertNotIn('--extract', self.calls[0][0])
         self.assertEqual(self.calls[0][1]['budget_file'], self.backend.backups / 'owned-data.tar')
         self.state(transaction=dict(phase="rollback_stopping", backup=str(archive)))
         self.backend._snapshot_stopped_data()
         self.assertEqual(len(self.calls), 1)
+
+    @unittest.skipUnless(os.name == 'posix', 'requires native GNU tar')
+    def test_data_snapshot_excludes_only_root_query_art_and_preserves_business_data(self):
+        archive = self.backend.backups / 'owned.tar'
+        archive.write_bytes(b'code')
+        atomic_json(archive.with_suffix('.json'), dict(owner='taki-linux-updater-v1', archive=archive.name))
+        retained = ('cache.json', 'ai-quota.json', 'ai-metrics.json', 'ai-metrics.v2.json',
+                    'history.sqlite3', 'update-notices.sqlite3',
+                    'nested/haneoka-asset-cache/keep.png', 'haneoka-asset-cache-other/keep.png',
+                    'game-assets/notes.png')
+        original = {}
+        for name in (*retained, 'haneoka-asset-cache/art.png', '.env'):
+            path = self.base / 'data' / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            original[name] = name.encode()
+            path.write_bytes(original[name])
+        self.state(transaction=dict(phase='stopping', backup=str(archive)))
+        self.backend.run = run_bounded
+        self.backend._snapshot_stopped_data()
+        snapshot = archive.with_name('owned-data.tar')
+        with tarfile.open(snapshot) as saved:
+            names = saved.getnames()
+            self.assertFalse(any(n == 'data/haneoka-asset-cache' or n.startswith('data/haneoka-asset-cache/') for n in names))
+            self.assertNotIn('data/.env', names)
+            for name in retained:
+                self.assertEqual(saved.extractfile('data/' + name).read(), original[name])
+        for name, content in original.items():
+            self.assertEqual((self.base / 'data' / name).read_bytes(), content)
 
     def test_data_snapshot_failure_leaves_original_data_and_no_partial_archive(self):
         archive = self.backend.backups / "owned.tar"

@@ -626,9 +626,10 @@ class LinuxBackend:
         snapshot = archive.with_name(archive.stem + "-data.tar")
         try:
             self.run(["/usr/bin/tar", "--create", "--file=" + str(snapshot), "--directory=" + str(self.base),
-                      "--exclude=.env", "data"], timeout=120,
+                      "--exclude=.env", "--anchored", "--exclude=data/haneoka-asset-cache", "data"], timeout=120,
                      budget_root=self.backups, budget_file=snapshot)
             row["data_archive"] = snapshot.name
+            row["excluded_rebuildable_paths"] = ["data/haneoka-asset-cache"]
             row["shared_data_restore"] = False
             atomic_json(manifest, row)
         except Exception:
