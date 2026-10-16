@@ -410,7 +410,9 @@ def _historical_event(request, repository):
                 aliases[event.event_id] = (event.title, *record.names.values())
                 event = replace(event, title=record.title)
             event = replace(event, songs=tuple(replace(song, title=songs[song.music_id].title,
-                                names=(songs[song.music_id].title,)) if song.music_id in songs else song for song in event.songs))
+                                names=tuple(dict.fromkeys((song.title, *song.names,
+                                    songs[song.music_id].title, *songs[song.music_id].titles))))
+                                if song.music_id in songs else song for song in event.songs))
             enriched.append(event)
         events = tuple(enriched)
     if request.event_name:

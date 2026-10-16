@@ -159,6 +159,20 @@ class ArchiveTests(unittest.TestCase):
         self.assertNotIn('player_ids', str(saved))
         self.assertEqual(saved['songs'][0]['music_id'], '101')
 
+    def test_jp_catalog_enrichment_preserves_recorded_and_localized_song_names(self):
+        song = replace(self.event.songs[0], title='記録された曲名', names=('Recorded English',))
+        event = replace(self.event, songs=(song, self.event.songs[1]))
+        self.record(self.history, event, song, (123,), STAMP + 1000)
+        self.repo.capture_catalog = lambda: SimpleNamespace(activities=(), songs=(
+            SimpleNamespace(id=101, title='本地中文歌名',
+                            titles=('本地中文歌名', 'Catalog English', 'カタログ曲名')),))
+        for name in ('記録された曲名', 'Recorded English', '本地中文歌名', 'Catalog English', 'カタログ曲名'):
+            with self.subTest(name=name):
+                answer = self.ask('id12 歌名=' + json.dumps(name, ensure_ascii=False))
+                self.assertEqual(answer.status, 'success', answer.text)
+                self.assertEqual(answer.boards[0].score(1), 123)
+                self.assertEqual(answer.boards[0].song.title, '本地中文歌名')
+
     def test_latest_conflict_is_not_hidden_by_older_or_larger_scores(self):
         self.record(self.history, self.event, self.event.songs[0], (200,), STAMP + 1000)
         self.record(self.history, self.event, self.event.songs[0], (300,), STAMP + 1000)
