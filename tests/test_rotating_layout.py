@@ -84,7 +84,15 @@ class RotatingLayoutTests(unittest.TestCase):
 
     def test_three_role_labels_fit_the_member_card_without_splitting_a_word(self):
         row=InfoRow('成员卡',image_kind='portrait',tags=('加成','奖励','展示'))
-        self.assertEqual(rotating_layout._captions(row)[3],('加成/奖励/展示',))
+        self.assertEqual(rotating_layout._captions(row)[2],('加成/奖励/展示',))
+
+    def test_member_titles_use_wider_text_cells_and_avoid_a_lone_final_character(self):
+        row=InfoRow('成员卡',display_title='微笑，隐于幽暗',image_kind='portrait')
+        self.assertEqual(rotating_layout._captions(row)[0],('微笑，隐于幽暗',))
+        for title in ('迎着光芒走向新的明天','微笑，隐于幽暗之中'):
+            wrapped=rotating_layout._title_lines(title,176)
+            self.assertEqual(''.join(wrapped),title)
+            self.assertGreater(len(wrapped[-1]),1)
 
     def test_card_titles_and_all_character_names_are_drawn_without_truncation(self):
         title='在光芒之下迎接全新的一天'
@@ -107,14 +115,32 @@ class RotatingLayoutTests(unittest.TestCase):
                         with patch.object(Canvas,'text',text):
                             self.render(InfoView('查询',rows=rows,presentation=presentation))
                         for index,card in enumerate(cards):
-                            x=54+index*((228 if shape=='wide' else 144)+20)
+                            x=54+index*((228 if shape=='wide' else 176)+20)
                             values=[value for value,px,y in drawn if px==x]
                             # Rejoin actual drawn lines to check the complete source facts.
                             self.assertIn(card.display_title,''.join(values))
                             self.assertIn(card.body[0],''.join(values))
-                            self.assertIn(card.command,values)
-                        command_y=[y for value,x,y in drawn if value in ('/查卡 0','/查卡 1')]
-                        self.assertEqual(len(set(command_y)),1)
+                            self.assertNotIn(card.command,values)
+                        tag_y=[y for value,x,y in drawn if value=='加成/奖励/展示']
+                        self.assertEqual(len(set(tag_y)),1)
+
+    def test_activity_and_gacha_images_hide_commands_but_keep_text_query_entries(self):
+        card=InfoRow('成员卡',('琴平凪',),command='/查卡 65',display_title='划破黎明',
+                     kind='card',group='成员卡',image_kind='portrait')
+        entry=InfoRow('列表条目',command='/查活动 2',kind='banner',children=(card,),
+                      schedule=InfoSchedule('ID 2','已结束','未确认','未确认'))
+        song=InfoRow('Odd Dice',command='/查曲 100111',kind='song')
+        prose=InfoRow('说明',('完整段落。'*120,),command='/查卡池 12')
+        for presentation in ('activity','gacha'):
+            drawn=[];original=Canvas.text
+            def text(c,x,y,value,*args,**kw):
+                drawn.append(str(value));return original(c,x,y,value,*args,**kw)
+            with patch.object(readable_pages,'MAX_IMAGE_EDGE',1300),patch.object(Canvas,'text',text):
+                pages=self.render(InfoView('查询',rows=(entry,song,prose),presentation=presentation))
+            combined='\n'.join(p.text for p in pages)
+            for command in (card.command,entry.command,song.command,prose.command):
+                self.assertNotIn(command,drawn)
+                self.assertEqual(combined.splitlines().count(command),1)
 
     def test_vertical_entries_keep_banner_and_cards_together_and_text_once(self):
         rows=tuple(InfoRow(f'活动{i}',command=f'/查活动 {i}',kind='banner',

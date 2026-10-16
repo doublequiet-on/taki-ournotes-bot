@@ -68,9 +68,9 @@ def _row(row, *, width=None, body=None, title=True, image=True, command=True, co
                   row.rarity, show_image=image and bool(row.image_url or force_image),attribute_url=row.attribute_url)
 
 
-def _row_blocks(row, limit, *, force_image=False):
+def _row_blocks(row, limit, *, force_image=False, show_command=True):
     """Keep a list item whole when possible; split unusually long prose by lines."""
-    whole = _row(row, force_image=force_image)
+    whole = _row(row, force_image=force_image, command=show_command)
     if whole.height <= limit:
         return (whole,)
     # This is a single very long item, not a reason to crop it or shrink fonts.
@@ -101,7 +101,7 @@ def _row_blocks(row, limit, *, force_image=False):
         first = False
     if not result:
         raise ImageBudgetError("Information item exceeds the readable page budget")
-    if row.command:
+    if row.command and show_command:
         last = result[-1]
         command = lines(row.command, width, 24)
         addition = len(command) * 34 + 12
@@ -110,6 +110,8 @@ def _row_blocks(row, limit, *, force_image=False):
                 text=last.text + "\n" + row.command, command=command)
         else:
             result.append(_row(InfoRow(row.title, command=row.command), body=(), image=False, continued=True))
+    elif row.command:
+        result[-1]=replace(result[-1],text=result[-1].text+'\n'+row.command)
     return tuple(result)
 
 

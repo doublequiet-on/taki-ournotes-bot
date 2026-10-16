@@ -15,9 +15,9 @@ from .image_output import ImageBudgetError
 LEFT, RIGHT, GAP = 54, 1026, 20
 WIDTH = RIGHT - LEFT
 OVERVIEW_WIDTH = 474
-# Card title, character names, query command and activity roles.
+# Card title, character names and activity roles; query commands stay in text.
 CAPTION_STYLES = ((22, 32, INK, True), (20, 28, MUTED, False),
-                  (22, 30, ACCENT, False), (20, 28, MUTED, False))
+                  (20, 28, MUTED, False))
 
 
 @dataclass(frozen=True)
@@ -38,13 +38,25 @@ def _card_size(row):
     return (228, 128) if row.image_kind == 'wide' else (144, 192)
 
 
+def _caption_width(row):
+    return 228 if row.image_kind == 'wide' else 176
+
+
+def _title_lines(title, width):
+    wrapped = lines(title, width, 22, True) if title else ()
+    # Avoid leaving a lone final character while preserving every title glyph.
+    if len(wrapped)>1 and len(wrapped[-1].strip())==1 and len(wrapped[-2])>2 and '\n' not in title:
+        count=2 if wrapped[-2][-1] in '，。、；：！？）】」』〉》)]}%' else 1
+        wrapped=(*wrapped[:-2],wrapped[-2][:-count],wrapped[-2][-count:]+wrapped[-1])
+    return wrapped
+
+
 def _captions(row):
-    width, _ = _card_size(row)
-    title = lines(row.display_title, width, 22, True) if row.display_title else ()
+    width = _caption_width(row)
+    title = _title_lines(row.display_title, width)
     people = tuple(line for value in row.body for line in lines(value, width, 20))
-    command = lines(row.command, width, 22) if row.command else ()
     tags = lines('/'.join(row.tags), width, 20) if row.tags else ()
-    return title, people, command, tags
+    return title, people, tags
 
 
 def _caption_heights(rows):
@@ -57,7 +69,7 @@ def _card_panels(rows, presentation):
     result=[]
     for kind in dict.fromkeys(row.group for row in rows):
         group=tuple(row for row in rows if row.group==kind)
-        columns=4 if group[0].image_kind=='wide' else 6
+        columns=(WIDTH+GAP)//(_caption_width(group[0])+GAP)
         for start in range(0,len(group),columns):
             chunk=group[start:start+columns]
             title=('UP · ' if presentation=='gacha' else '关联')+kind+f' · {len(group)}'
@@ -76,7 +88,7 @@ def _card_panels(rows, presentation):
 def _entry_panels(row, limit, presentation):
     if row.schedule is None:raise ValueError('Banner row requires captured schedule facts')
     title_height=len(lines(row.title,648,30,True))*42
-    header=Panel(max(129,title_height+146)+24,'entry-head',row_text(replace(row,children=())),
+    header=Panel(max(129,title_height+108)+24,'entry-head',row_text(replace(row,children=())),
                  rows=(row,),requests=((row.image_url,(300,129)),) if row.image_url else ())
     parts=_card_panels(tuple(r for r in row.children if r.kind=='card'),presentation)
     for child in row.children:
@@ -117,10 +129,10 @@ def blocks(view, limit, prose_blocks):
     for row in rows:
         if row.kind=='banner':result.extend(_entry_panels(row,limit,view.presentation))
     for row in rows:
-        if row.kind not in {'schedule','banner','card','song'}:result.extend(prose_blocks(row,limit))
+        if row.kind not in {'schedule','banner','card','song'}:result.extend(prose_blocks(row,limit,show_command=False))
     result.extend(_card_panels(tuple(r for r in rows if r.kind=='card'),view.presentation))
     for row in rows:
-        if row.kind=='song':result.extend(prose_blocks(row,limit))
+        if row.kind=='song':result.extend(prose_blocks(row,limit,show_command=False))
     notes=view.footer if view.visual_footer is None else view.visual_footer
     wrapped=tuple(line for value in notes for line in lines(value,WIDTH,22))
     capacity=max(1,(limit-32)//32)
@@ -171,7 +183,6 @@ def draw(c,panel,y,load):
         _status(c,schedule.status,RIGHT-max(120,len(schedule.status)*22+32),cy-14,RIGHT,22)
         c.text(x,cy+42,'开始 '+schedule.start,24,MUTED)
         c.text(x,cy+76,'结束 '+schedule.end,24,MUTED)
-        c.text(x,cy+116,row.command,22,ACCENT)
     elif panel.kind=='overview':
         schedule=panel.rows[0].schedule;x=LEFT
         if panel.requests:
@@ -189,7 +200,7 @@ def draw(c,panel,y,load):
         art_h=max(_card_size(r)[1] for r in panel.rows)
         caption_heights=_caption_heights(panel.rows)
         for i,row in enumerate(panel.rows):
-            w,h=_card_size(row);x=LEFT+i*(w+GAP)
+            w,h=_card_size(row);x=LEFT+i*(_caption_width(row)+GAP)
             _card_art(c,row,x,y+62,load)
             cy=y+62+art_h+16
             for values,(size,step,color,bold),height in zip(_captions(row),CAPTION_STYLES,caption_heights):
