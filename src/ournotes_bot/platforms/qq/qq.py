@@ -955,6 +955,30 @@ async def reply_commands(message, target_id, group, commands, *, gate, repositor
         await sequencer.release(ticket)
 
 
+async def _refresh_catalog(repository: SongRepository) -> None:
+    """Report the published cache state, including non-raising source fallback."""
+    failure = False
+    try:
+        await asyncio.to_thread(repository.refresh)
+    except Exception:
+        failure = True
+        logger.exception("主资料刷新抛出异常，检查当前已发布缓存状态")
+    catalog = repository.capture_catalog()
+    state = catalog.cache_state
+    if state == "unsaved":
+        logger.warning("主资料已取得，但本地缓存保存失败，共 %d 首曲目", len(catalog.songs))
+    elif state == "stale":
+        logger.warning("主资料刷新失败，继续使用旧缓存，共 %d 首曲目", len(catalog.songs))
+    elif failure:
+        logger.error("主资料刷新失败，当前缓存状态=%s，共 %d 首曲目", state, len(catalog.songs))
+    elif state == "fresh":
+        logger.info("主资料刷新成功，已取得并保存，共 %d 首曲目", len(catalog.songs))
+    elif state == "cached":
+        logger.info("主资料使用已验证缓存，共 %d 首曲目", len(catalog.songs))
+    else:
+        logger.warning("主资料刷新结果未确认，当前缓存状态=%s，共 %d 首曲目", state, len(catalog.songs))
+
+
 def run_bot(app_id: str, app_secret: str, repository: SongRepository, settings: Settings) -> None:
     try:
         import botpy
@@ -1068,11 +1092,7 @@ def run_bot(app_id: str, app_secret: str, repository: SongRepository, settings: 
             # Unix half-hours also align with Hong Kong's UTC+8 wall clock.
             # Recalculate after each refresh; skip missed slots without catch-up.
             await asyncio.sleep(1800 - time.time() % 1800)
-            try:
-                await asyncio.to_thread(repository.refresh)
-                logger.info("Ournotes 数据刷新成功，共 %d 首曲目", len(repository.songs))
-            except Exception:
-                logger.exception("刷新失败，继续使用现有缓存")
+            await _refresh_catalog(repository)
 
     class ClientWithRefresh(OurNotesClient):
         async def on_ready(self) -> None:

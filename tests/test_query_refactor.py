@@ -83,7 +83,7 @@ class QueryRefactorTests(unittest.TestCase):
         ]):
             self.assertEqual(parser.answer(f"/问 {secret}", self.repo), UNKNOWN_ENTITY)
         parser.answer("/问 MyGO的歌有哪些", self.repo)
-        payload = self.metrics_path.read_text(encoding="utf-8")
+        payload = parser._metrics.path.read_text(encoding="utf-8")
         self.assertNotIn(secret, payload)
         record = json.loads(payload)
         bucket = next(iter(record["days"].values()))
@@ -156,8 +156,8 @@ class QueryRefactorTests(unittest.TestCase):
                 self.assertIsNone(result.spec.subject)
 
     def test_corrupt_metrics_do_not_break_or_repeat_model_calls(self) -> None:
-        self.metrics_path.write_text("{broken", encoding="utf-8")
         parser = AIQueryParser(self.settings)
+        parser._metrics.path.write_text("{broken", encoding="utf-8")
         with patch.object(parser, "_request", return_value={
             "intent": "chart", "query": "迷星叫", "difficulty": "EXPERT",
         }) as request:
@@ -469,7 +469,7 @@ class QueryRefactorTests(unittest.TestCase):
             ))
         self.assertTrue(all("迷星叫" in reply for reply in replies))
         self.assertLessEqual(len(parser._agent._cache), 128)
-        record = json.loads(self.metrics_path.read_text(encoding="utf-8"))
+        record = json.loads(parser._metrics.path.read_text(encoding="utf-8"))
         bucket = next(iter(record["days"].values()))
         self.assertEqual(bucket["ask_total"], 32)
         self.assertEqual(

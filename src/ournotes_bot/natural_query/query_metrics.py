@@ -1,6 +1,6 @@
 # L3
-# Input: 统计 JSON 路径、可选时钟、允许的计数名及非负增量；token usage 由调用方映射为计数。
-# Output: increment／increment_many 返回 bool；落盘结果为按北京时间日期聚合的匿名计数 JSON。
+# Input: 旧统计 JSON 基础路径、可选时钟、允许的计数名及非负增量；token usage 由调用方映射为计数。
+# Output: increment／increment_many 返回 bool；独立 .v2 文件保存 schema 2 的按北京时间日期聚合匿名计数，不迁移旧文件。
 # Pos: Query / Natural 的持久匿名查询指标；见 L2-2.md。
 # Effects/Dependencies: 在实例锁内读写独立 JSON；记录或保存故障后停记，不阻断查询、不保存问句正文。
 
@@ -16,11 +16,14 @@ from pathlib import Path
 from typing import Callable, Mapping
 
 from .ai_quota import BEIJING
+from .query_validation import OutcomeCode
 
 
 METRIC_NAMES = frozenset({
     "ask_total",
     "local_success",
+    "local_handled",
+    "local_parsed",
     "local_terminal_reject",
     "cache_hit_success",
     "cache_hit_terminal",
@@ -41,14 +44,18 @@ METRIC_NAMES = frozenset({
     "ai_total_tokens",
     "ai_cache_hit_tokens",
     "ai_cache_miss_tokens",
-})
+}) | frozenset("outcome_" + code.value for code in OutcomeCode) | frozenset(
+    "ai_" + code.value for code in OutcomeCode
+) | frozenset({"route_local", "route_cache", "route_model"})
 
 
 class QueryMetrics:
     """Best-effort counters; metrics failures never fail a user query."""
 
     def __init__(self, path: Path, clock: Callable[[], datetime] | None = None) -> None:
-        self.path = path
+        # Old releases reject unknown counter names. Keep their file untouched,
+        # including on rollback; v2 counts start here, never reinterpret history.
+        self.path = path.with_name(path.stem + ".v2" + path.suffix)
         self._clock = clock or (lambda: datetime.now(BEIJING))
         self._lock = threading.Lock()
         self._disabled = False
@@ -81,9 +88,9 @@ class QueryMetrics:
 
     def _load(self) -> dict:
         if not self.path.exists():
-            return {"schema": 1, "days": {}}
+            return {"schema": 2, "days": {}}
         record = json.loads(self.path.read_text(encoding="utf-8"))
-        if (not isinstance(record, dict) or record.get("schema") != 1
+        if (not isinstance(record, dict) or record.get("schema") != 2
                 or not isinstance(record.get("days"), dict)):
             raise ValueError("invalid metrics record")
         for day, bucket in record["days"].items():
