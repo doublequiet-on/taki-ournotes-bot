@@ -55,7 +55,7 @@ def chart(c,answer,board,box,display_time,heading=True):
 
 def render(answer,*,assets,load,display_time,server_label,timezone_label,catalogs=({},{}),bonus_marks=(),song_bands=None):
     if answer.event is None or answer.message or answer.request.numeric_only or not answer.boards:return ()
-    trend=answer.request.mode=='trend';boards=answer.boards
+    trend=answer.request.mode=='trend';boards=answer.boards;historical=answer.historical
     width=2600 if trend else (1080 if len(boards)==1 else 1800)
     member,support=catalogs;cache={};song_bands=song_bands or {}
     def song_title(board):return board.song.title if answer.event.challenge_order_verified else answer.song_label(board)
@@ -68,7 +68,8 @@ def render(answer,*,assets,load,display_time,server_label,timezone_label,catalog
     event=answer.event;title=lines(event.title,width-1010 if trend else (760 if width==1800 else width-580),64 if trend else 42,True)
     banner_width,banner_height=(840,360) if trend else (420,180)
     text_x=108+banner_width
-    period=display_time(event.start_ms,event.server)[5:16]+' — '+display_time(event.end_ms,event.server)[5:16]+'  ('+timezone_label+')'
+    period=(display_time(event.start_ms,event.server)[5:16]+' — '+display_time(event.end_ms,event.server)[5:16]
+            if event.start_ms is not None and event.end_ms is not None else '活动时间未记录')+('\n' if width==1080 else '  ')+'('+timezone_label+')'
     period_top=182+header_offset+len(title)*(78 if trend else 58)+(76 if trend else 58)
     period_height=len(lines(period,width-text_x-54,42 if trend else 30))*(54 if trend else 38)
     bonus_top=period_top+period_height+46
@@ -77,7 +78,7 @@ def render(answer,*,assets,load,display_time,server_label,timezone_label,catalog
     if not trend and width==1800:head=max(368+header_offset,period_top+period_height+28)
     if not trend and width==1080:head=max(480+header_offset,182+len(title)*58+260)
     event_head=head
-    footer=[' · '.join((b.song.title,b.status,'采集 '+display_time(b.fetched_ms,event.server))) for b in boards]
+    footer=[' · '.join((b.song.title,b.status,display_time(b.fetched_ms,event.server)+' '+timezone_label)) for b in boards]
     footer += [n for b in boards for n in b.notes]+list(event.notes)
     footer += [answer.history_for(b).warning for b in boards if answer.history_for(b).warning]
     footer=list(dict.fromkeys(footer))
@@ -106,7 +107,7 @@ def render(answer,*,assets,load,display_time,server_label,timezone_label,catalog
         tx=54+bw+54;ty=182+header_offset
         for line in title:c.text(tx,ty+24,line,64 if trend else 42,bold=True);ty+=78 if trend else 58
         c.text(tx,ty+24,f'{server_label} · 活动 {event.event_id}',44 if trend else 30,ACCENT);ty+=76 if trend else 58
-        c.paragraph(tx,ty,period if width!=1080 else display_time(event.start_ms,event.server)[5:10]+' — '+display_time(event.end_ms,event.server)[5:10]+' · '+timezone_label,width-tx-54,42 if trend else 30,54 if trend else 38,color=MUTED)
+        c.paragraph(tx,ty,period,width-tx-54,42 if trend else 30,54 if trend else 38,color=MUTED)
         bx=tx if trend else 54 if width<1800 else 1350;by=max(466+header_offset,182+header_offset+len(title)*78+76+period_height+46) if trend else 204+header_offset if width==1800 else event_head-78
         for label,url in bonus_marks:
             c.text(bx,by,label,44 if trend else 36,MUTED)
@@ -126,17 +127,17 @@ def render(answer,*,assets,load,display_time,server_label,timezone_label,catalog
             for rank in answer.ranks:
                 name=lines(answer.name_label(board,rank),450,42)
                 identity=lines('ID '+answer.id_label(board,rank),650,26)
-                blocks.append(('rank',max(156,24+len(name)*50+len(identity)*38), (board,rank)))
+                blocks.append(('rank',100 if historical else max(156,24+len(name)*50+len(identity)*38), (board,rank)))
             blocks.append(('chart',780 if answer.history_for(board).points else 180,board))
     else:
         cw=(width-200)/len(boards)
         title_heights={b.song.music_id:len(lines(song_title(b),int(cw)-110,30,True))*40 for b in boards}
-        columns=max(max(title_heights.values())+60,126)
+        columns=max(max(title_heights.values())+(122 if historical else 60),188 if historical else 126)
         def name_width(board,rank):
             score_width=font(32,True,True).getlength(score_text(board,rank))
             return max(90,int(cw)-144-int(score_width))
         for rank in answer.ranks:
-            rh=max(max(len(lines(answer.name_label(b,rank),name_width(b,rank),36 if width==1080 else 28))*36+
+            rh=72 if historical else max(max(len(lines(answer.name_label(b,rank),name_width(b,rank),36 if width==1080 else 28))*36+
                        len(lines('ID '+answer.id_label(b,rank),int(cw)-124,24))*32+44 for b in boards),112)
             blocks.append(('table',rh,rank))
         plot_height=404 if any(answer.history_for(b).points for b in boards) else 180
@@ -151,6 +152,10 @@ def render(answer,*,assets,load,display_time,server_label,timezone_label,catalog
                 c.paragraph(x+86,event_head+8,song_title(b),int(cw)-110,30,40,bold=True)
                 band=song_bands.get(str(b.song.music_id),'')
                 if band:c.text(x+86,event_head+title_heights[b.song.music_id]+32,band,26,MUTED)
+                if historical:
+                    c.text(x+8,event_head+title_heights[b.song.music_id]+66,'最近一次有效观测',24,ACCENT)
+                    c.text(x+8,event_head+title_heights[b.song.music_id]+98,
+                           display_time(b.fetched_ms,event.server),24,MUTED)
                 chart(c,answer,b,(x,event_head+columns,int(cw)-34,plot_height),display_time,heading=width!=1080)
             ranks=chart_ranks(answer)
             span=min(174,(width-200)/len(ranks));left=(width-span*len(ranks))/2
@@ -159,7 +164,8 @@ def render(answer,*,assets,load,display_time,server_label,timezone_label,catalog
                 c.text(x+38,ly,f'#{rank}',26,MUTED)
             c.text(100,head-18,'排名',26,MUTED,align='center')
             for i in range(len(boards)):
-                c.text(156+i*cw,head-18,'玩家',26,MUTED);c.text(156+(i+1)*cw-24,head-18,'分数',26,MUTED,align='right')
+                if not historical:c.text(156+i*cw,head-18,'玩家',26,MUTED)
+                c.text(156+(i+1)*cw-24,head-18,'分数',26,MUTED,align='right')
         elif start and blocks[start][0] not in ('song',):
             board=blocks[start][2][0] if blocks[start][0]=='rank' else blocks[start][2]
             c.text(54,head-20,answer.song_label(board)+'（续）',26,MUTED)
@@ -172,6 +178,12 @@ def render(answer,*,assets,load,display_time,server_label,timezone_label,catalog
             elif kind=='chart':chart(c,answer,data,(148,y,width-216,bh-24),display_time)
             elif kind=='rank':
                 board,rank=data;detail=board.player_detail(rank) or {};color=COLORS[answer.ranks.index(rank)%5]
+                if historical:
+                    c.text(94,y+48,f'#{rank}',32,color,align='center')
+                    c.text(1030,y+48,score_text(board,rank),50,bold=True,align='right')
+                    c.text(1120,y+48,'观测 '+display_time(board.fetched_ms,event.server),32,MUTED)
+                    y+=bh
+                    continue
                 c.draw.line((40,y+18,40,y+bh-18),fill=color,width=5);rank_marker(c,rank,94,y+78,72,color)
                 avatar(c,board,rank,148,y+28,96)
                 c.paragraph(274,y+23,answer.name_label(board,rank),450,42,50,bold=True)
@@ -187,8 +199,12 @@ def render(answer,*,assets,load,display_time,server_label,timezone_label,catalog
                 rank=data
                 if rank!=answer.request.target_rank and answer.ranks.index(rank)%2==0:c.box((48,y,width-48,y+bh),'#f7f4f9',0)
                 if rank==answer.request.target_rank:c.box((48,y,width-48,y+bh),SOFT,8)
-                rank_marker(c,rank,100,y+42,64)
+                if historical:c.text(100,y+34,f'#{rank}',26,ACCENT,align='center')
+                else:rank_marker(c,rank,100,y+42,64)
                 for i,b in enumerate(boards):
+                    if historical:
+                        c.text(156+(i+1)*cw-24,y+34,score_text(b,rank),42 if width==1080 else 32,bold=True,align='right')
+                        continue
                     x=156+i*cw;avatar(c,b,rank,round(x),y+14,84 if width==1080 else 76)
                     ty=c.paragraph(x+(118 if width==1080 else 92),y+(8 if width==1080 else 14),answer.name_label(b,rank),name_width(b,rank),36 if width==1080 else 28,40,bold=True)
                     ty=c.paragraph(x+(118 if width==1080 else 92),ty,'ID '+answer.id_label(b,rank),int(cw)-124,28 if width==1080 else 24,32,color=MUTED)
@@ -205,7 +221,7 @@ def render(answer,*,assets,load,display_time,server_label,timezone_label,catalog
         c.line(54,y+10,width-54)
         for i,line in enumerate(footlines):c.text(54,y+34+i*32,line,24,MUTED)
         return c.image
-    requests=set();badges={'ImageRanking1st.png','ImageRanking2ng.png','ImageRanking3rd.png'}
+    requests=set();badges=set() if historical else {'ImageRanking1st.png','ImageRanking2ng.png','ImageRanking3rd.png'}
     def request_card(card,w,h):
         requests.add((card.full_url if w<h else card.thumbnail_url,(w,h)))
         attr=card.catalog.get('attribute_icon')

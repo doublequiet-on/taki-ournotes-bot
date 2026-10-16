@@ -46,7 +46,7 @@ def load_artwork(source, event, urls: tuple[str, ...]) -> dict[str, Image.Image 
             original.load()
             return original.convert('RGB')
     def load(url):
-        haneoka = event.source == "haneoka" and is_catalog_asset(url)
+        haneoka = is_catalog_asset(url)
         if event.source == "haneoka" and (not haneoka or
                 parse_qs(urlsplit(url).query)['release'][0] != event.metadata_version):
             return None
@@ -82,7 +82,7 @@ def load_artwork(source, event, urls: tuple[str, ...]) -> dict[str, Image.Image 
                             if remaining <= 0:
                                 return None
                             raw, headers = public_get(url, 6_000_000, remaining)
-                            if (headers.get('x-haneoka-release-id') != event.metadata_version
+                            if (headers.get('x-haneoka-release-id') != parse_qs(urlsplit(url).query)['release'][0]
                                     or not headers.get('x-haneoka-source-id')):
                                 return None
                         else:

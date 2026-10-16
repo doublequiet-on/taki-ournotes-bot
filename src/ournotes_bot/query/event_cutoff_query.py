@@ -16,7 +16,7 @@ from .entity_lexicon import scoped_song_matches
 from ..sources.cutoff_history import HistoryView
 
 NODES = (1, 2, 3, 10, 100)
-HELP = '/查榜线 [jp/hk/kr/en] [id1或活动="名称"] [歌名或歌曲ID=完整ID] [50或20-40] [仅数值]；参数顺序不限。id1指定活动1（兼容 活动ID=1），裸数字表示排名；指定活动读取本地历史末次观测，无排名看五档趋势，单排名看前后十名，区间看每行分数。'
+HELP = '/查榜线 [jp/hk/kr/en] [id1或活动="名称"] [歌名或歌曲ID=完整ID] [50或20-40] [仅数值]；参数顺序不限。id1指定活动1（兼容 活动ID=1），裸数字表示排名；指定活动读取本地最近一次有效观测，无排名看五档趋势，单排名看前后十名，区间看每行分数。'
 SERVER_ALIASES = {"jp": "jp", "日服": "jp", "hk": "tw", "国服": "tw", "國服": "tw",
                   "tw": "tw", "台服": "tw", "臺服": "tw",
                   "kr": "kr", "韩服": "kr", "韓服": "kr", "en": "en", "英服": "en", "国际服": "en", "國際服": "en"}
@@ -296,11 +296,11 @@ class CutoffAnswer:
 
     @property
     def value_label(self):
-        return '历史末次观测' if self.historical else '当前值'
+        return '最近一次有效观测' if self.historical else '当前值'
 
     @property
     def capture_label(self):
-        return '历史源采集' if self.historical else '当前源采集'
+        return '有效观测时间' if self.historical else '当前源采集'
 
     @property
     def ranks(self) -> tuple[int, ...]:
@@ -346,19 +346,20 @@ class CutoffAnswer:
                 lines.append('')
             lines.extend([self.song_label(board), *song_period_lines(event, board.song)])
             if self.request.mode == 'trend':
-                lines.append(" / ".join(f"T{rank}：{self.score_label(board, rank)}（ID：{self.id_label(board, rank)}；用户名：{self.name_label(board, rank)}）" for rank in self.ranks))
+                lines.append(" / ".join(f"T{rank}：{self.score_label(board, rank)}" +
+                             ('' if self.historical else f"（ID：{self.id_label(board, rank)}；用户名：{self.name_label(board, rank)}）") for rank in self.ranks))
             lines.extend([f"{board.status} · 源采集 {display_time(board.fetched_ms, event.server)}", *board.notes])
             history = self.history_for(board)
             if history.warning:
                 lines.append(history.warning)
             if history.points:
-                lines.append("历史末次观测：" + display_time(history.points[-1].time_ms, event.server))
+                lines.append("历史记录截至：" + display_time(history.points[-1].time_ms, event.server))
                 if len(history.points) == 1:
                     lines.append("仅 1 个历史点，不足以形成曲线。")
         if self.request.mode != 'trend':
             lines.append('列：' + '｜'.join(self.song_label(board).partition(' · ')[0] for board in self.boards)
-                         + '（分数/数字ID/用户名；缺失为未获取）')
-            lines.extend(f'T{rank}：' + '｜'.join(f'{self.score_label(board, rank)}/{self.id_label(board, rank)}/{self.table_name(board, rank)}'
+                         + ('（分数）' if self.historical else '（分数/数字ID/用户名；缺失为未获取）'))
+            lines.extend(f'T{rank}：' + '｜'.join(self.score_label(board, rank) if self.historical else f'{self.score_label(board, rank)}/{self.id_label(board, rank)}/{self.table_name(board, rank)}'
                                                 for board in self.boards) for rank in self.ranks)
         lines.extend(["", *event.notes, f"{self.source_label}（非官方）· 挑战歌曲Top100 · 按响应位置，非预测或确认终榜。"])
         return "\n".join(lines)
@@ -408,8 +409,12 @@ def _historical_event(request, repository):
             record = records.get(event.event_id)
             if record:
                 aliases[event.event_id] = (event.title, *record.names.values())
-                event = replace(event, title=record.title)
+                event = replace(event, title=record.title,
+                                start_ms=event.start_ms if event.start_ms is not None else round(record.start_at * 1000) if record.start_at is not None else None,
+                                end_ms=event.end_ms if event.end_ms is not None else round(record.end_at * 1000) if record.end_at is not None else None,
+                                banner=event.banner or record.image_url)
             event = replace(event, songs=tuple(replace(song, title=songs[song.music_id].title,
+                                jacket=song.jacket or songs[song.music_id].jacket_url,
                                 names=tuple(dict.fromkeys((song.title, *song.names,
                                     songs[song.music_id].title, *songs[song.music_id].titles))))
                                 if song.music_id in songs else song for song in event.songs))
@@ -428,7 +433,7 @@ def _historical_event(request, repository):
     if len(events) > 1:
         return None, f'活动名称匹配 {len(events)} 个活动，请使用活动ID指定（最多列10个）：\n' + '\n'.join(f'id{e.event_id} · {e.title}' for e in events[:10]), 'ambiguous'
     event = events[0]
-    return replace(event, notes=('本地历史末次观测；非实时榜、非确认终榜，采集前及缺采期间的数据未补齐。',)), '', 'success'
+    return replace(event, notes=('各曲展示最近一次有效观测及其时间；非实时榜、非确认终榜。',)), '', 'success'
 
 
 def _execute_cutoff(request: CutoffRequest, repository) -> CutoffAnswer:
@@ -537,11 +542,14 @@ def _execute_cutoff(request: CutoffRequest, repository) -> CutoffAnswer:
         return CutoffAnswer(request, event, message='历史库暂不可用，未改查当前活动。', status='data_unavailable')
     histories = ()
     ranks=request.ranks or NODES
+    if historical and not any(b.score(rank) is not None for b in boards for rank in ranks):
+        details = tuple(dict.fromkeys(n for b in boards for n in (b.song.title + '：' + b.status, *b.notes)))
+        return CutoffAnswer(request, event, message='所选排名暂无有效历史分数。\n' + '\n'.join(details), status='data_unavailable')
     history_ranks=tuple(dict.fromkeys(ranks[round(i*(len(ranks)-1)/4)] for i in range(5)))
     if not request.numeric_only:
         histories = tuple((b.song.challenge_id, source.history.read(event, b.song, history_ranks) if source.history
                            else HistoryView(warning="历史记录未配置；当前值仍可查询。")) for b in boards)
         if historical:
-            histories = tuple((key, replace(view, warning=view.warning.replace('当前值', '历史末次观测')
-                                            .replace('当前榜线仍可查询', '历史末次观测单独显示'))) for key, view in histories)
+            histories = tuple((key, replace(view, warning=view.warning.replace('当前值', '最近一次有效观测')
+                                            .replace('当前榜线仍可查询', '最近一次有效观测单独显示'))) for key, view in histories)
     return CutoffAnswer(request, event, boards, status="success" if any(b.scores for b in boards) else "data_unavailable", histories=histories,history_ranks=history_ranks)

@@ -1,6 +1,6 @@
 # L3
 # Input: Captured challenge boards, explicit source/configuration and independent v1/v2/v3 paths.
-# Output: Score-only observations, recorded event metadata/identities, last snapshots and bounded history views.
+# Output: Score-only observations, recorded event metadata/identities, latest usable whole snapshots with exclusion reasons and bounded history views.
 # Pos: Data / Sources history and source composition; see L2-2.md and docs/META_OPEN.md.
 # Effects: Lazy SQLite, source/minute-state composition without requests; no credentials-file, worker or platform imports.
 """Append-only observed scores. Never reconstruct unobserved game history."""
@@ -218,7 +218,7 @@ class CutoffHistory:
                     points.append(HistoryPoint(stamp, scores, received, cut, quality))
                 warning = "" if points else "暂无可用历史时间点；当前值与历史分开显示。"
                 if any(p.quality != "valid" for p in points):
-                    warning = "历史含冲突或不可核实记录，已断线；未选择其中较大分数。"
+                    warning = "历史含不可用观测，已在相应时间断线；无效分数不入图。"
                 return HistoryView(tuple(points), warning, total)
         except (sqlite3.Error, OSError, ValueError, TypeError, IndexError):
             self.last_error = "storage_error"
@@ -273,30 +273,47 @@ class CutoffHistory:
             self.last_error = 'storage_error'
             raise SourceError('history_unavailable') from None
 
-    def latest(self, event, song):
-        """Last observed position vector, never per-rank maxima or a claimed final board."""
-        from .moenotes_events import BoardSnapshot, SourceError
+    def latest(self, event, song, *, before_ms=None):
+        """Newest usable whole observation; excluded attempts remain explicit."""
+        from .moenotes_events import BoardSnapshot, SourceError, display_time, zone_label
         empty = BoardSnapshot(song, source=self.source, time_kind=getattr(self, 'time_kind', 'tracker_observed'),
                               contract_version=getattr(self, 'contract_version', ''), status='暂无本曲历史观测')
         if not self.enabled or not self.path.exists():
             return empty
         try:
+            skipped = []
+            reasons = {'outside_period': '超出榜单有效期', 'conflict': '同一时间分数冲突',
+                       'identity_conflict': '曲目身份冲突', 'unknown_time': '采集时间未知',
+                       'clock_unknown': '来源时钟不可核实', 'clock_skew': '来源时钟偏差'}
             with closing(self._connect()) as db:
-                rows = db.execute("SELECT source_ms,received_ms,scores,quality,music FROM observations "
-                                  "WHERE server=? AND event=? AND challenge=? AND source_ms=(SELECT max(source_ms) FROM observations "
-                                  "WHERE server=? AND event=? AND challenge=?)",
-                                  (*self._key(event, song), *self._key(event, song))).fetchall()
-            if not rows:
-                return empty
-            stamp, received, encoded, quality, music = rows[0]
-            valid = len(rows) == 1 and stamp > 0 and quality == 'valid' and music == song.music_id
-            scores = json.loads(encoded) if valid else []
-            if not isinstance(scores, list) or len(scores) > 100 or any(n is not None and (type(n) is not int or n < 0) for n in scores):
-                raise ValueError('invalid stored scores')
-            return replace(empty, scores=tuple(scores), fetched_ms=stamp if stamp > 0 else None,
-                           received_ms=received, quality=quality if valid else 'unusable',
-                           status='本地历史末次观测' if valid else '末次历史观测质量不可用，未替换为较早分数',
-                           notes=('历史只保存分数，未保存玩家身份；不是确认终榜。',))
+                rows = db.execute("SELECT source_ms,received_ms,scores,quality,music,"
+                                  "count(*) OVER (PARTITION BY source_ms) FROM observations "
+                                  "WHERE server=? AND event=? AND challenge=? AND (? IS NULL OR source_ms<?) "
+                                  "ORDER BY source_ms DESC,id DESC",
+                                  (*self._key(event, song), before_ms, before_ms))
+                for stamp, received, encoded, quality, music, count in rows:
+                    reason = ('同一时间分数冲突' if count != 1 else '曲目身份冲突' if music != song.music_id
+                              else '采集时间未知' if stamp <= 0 else reasons.get(quality, quality) if quality != 'valid' else '')
+                    scores = []
+                    if not reason:
+                        try:
+                            scores = json.loads(encoded)
+                        except (ValueError, TypeError):
+                            reason = '分数记录损坏'
+                        if (not isinstance(scores, list) or len(scores) > 100
+                                or any(n is not None and (type(n) is not int or n < 0) for n in scores)):
+                            reason = '分数记录损坏'
+                        elif not reason and not any(n is not None for n in scores):
+                            reason = '没有可用分数'
+                    if reason:
+                        if not skipped:
+                            skipped.append(f'末次采集 {display_time(stamp if stamp > 0 else None, event.server)} '
+                                           f'{zone_label(event.server)} 不可用：{reason}；已跳过，原始记录保留。')
+                        continue
+                    return replace(empty, scores=tuple(scores), fetched_ms=stamp, received_ms=received,
+                                   status='最近一次有效观测',
+                                   notes=(*skipped, '历史只保存分数，未保存玩家身份；不是确认终榜。'))
+            return replace(empty, quality='unusable', status='暂无有效历史观测', notes=tuple(skipped))
         except (sqlite3.Error, OSError, ValueError, TypeError):
             self.last_error = 'storage_error'
             raise SourceError('history_unavailable') from None
@@ -438,12 +455,19 @@ class SourceHistory:
         return tuple(events.values())
 
     def latest(self, event, song):
-        boards = [store.latest(event, song) for store in self.stores.values()]
-        latest = max(boards, key=lambda b: (b.fetched_ms or -1, b.received_ms or -1))
-        tied = [b for b in boards if b.fetched_ms is not None and b.fetched_ms == latest.fetched_ms]
-        if any(b.scores != latest.scores for b in tied):
-            return replace(latest, scores=(), quality='conflict', status='同一时间的多来源历史冲突，未选择分数')
-        return latest
+        from .moenotes_events import display_time, zone_label
+        boards = {key: store.latest(event, song) for key, store in self.stores.items()}
+        notes = [n for b in boards.values() for n in b.notes]
+        while True:
+            latest = max(boards.values(), key=lambda b: (b.fetched_ms or -1, b.received_ms or -1))
+            tied = [key for key, b in boards.items() if b.fetched_ms is not None and b.fetched_ms == latest.fetched_ms]
+            if not any(boards[key].scores != latest.scores for key in tied):
+                return replace(latest, notes=tuple(dict.fromkeys((*notes, *latest.notes))))
+            notes.append(f'{display_time(latest.fetched_ms, event.server)} {zone_label(event.server)} '
+                         '同一时间的多来源历史冲突，已跳过该时间点。')
+            for key in tied:
+                boards[key] = self.stores[key].latest(event, song, before_ms=latest.fetched_ms)
+                notes.extend(boards[key].notes)
 
     def read(self, event, song, ranks, *, max_points=20000, **kwargs):
         views = [h.read(event, song, ranks, max_points=max_points, **kwargs) for h in self.stores.values()]
