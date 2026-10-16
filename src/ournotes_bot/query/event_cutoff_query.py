@@ -2,7 +2,7 @@
 # Input: direct/NL query text and the server-scoped EventCutoffRepository.
 # Output: CutoffRequest/CutoffAnswer with stable song numbers and same-row score/digital-ID/username projections.
 # Pos: Query / Deterministic challenge-song cutoffs; see L2-2.md.
-# Effects: alias-file reads and bounded Data calls/history writes; history reads only for trends; no model/QQ.
+# Effects: current queries use bounded Data calls/history writes; explicit activities read local history only; no model/QQ.
 from __future__ import annotations
 
 import re
@@ -16,7 +16,7 @@ from .entity_lexicon import scoped_song_matches
 from ..sources.cutoff_history import HistoryView
 
 NODES = (1, 2, 3, 10, 100)
-HELP = '/查榜线 [jp/hk/kr/en] [歌曲1或歌名] [50或20-40] [仅数值]；参数顺序不限。无排名看五档趋势，单排名看前后十名，区间看每行分数、数字ID与用户名；例如 /查榜线 100 hk 歌曲一。'
+HELP = '/查榜线 [jp/hk/kr/en] [id1或活动="名称"] [歌名或歌曲ID=完整ID] [50或20-40] [仅数值]；参数顺序不限。id1指定活动1（兼容 活动ID=1），裸数字表示排名；指定活动读取本地历史末次观测，无排名看五档趋势，单排名看前后十名，区间看每行分数。'
 SERVER_ALIASES = {"jp": "jp", "日服": "jp", "hk": "tw", "国服": "tw", "國服": "tw",
                   "tw": "tw", "台服": "tw", "臺服": "tw",
                   "kr": "kr", "韩服": "kr", "韓服": "kr", "en": "en", "英服": "en", "国际服": "en", "國際服": "en"}
@@ -25,7 +25,10 @@ MARKER = re.compile(r"榜线|榜線|档线|檔線|歌曲榜|(?:前\s*[+-]?\d+(?:
 _NUMBER = r'[tT]?[+-]?\d+(?:\.\d+)?'
 _RANK_PART = re.compile(rf'(?<!\S)({_NUMBER})(?:\s*[-—–~～到]\s*({_NUMBER}))?(?!\S)')
 _SONG_NUMBER = re.compile(r'(?:歌曲|歌)([\d零〇一二两三四五六七八九十百+-]+(?:\.\d+)?)$|第([\d零〇一二两三四五六七八九十百+-]+(?:\.\d+)?)首$')
-_TOKEN = re.compile(r'(?:(歌名|歌曲ID)\s*=\s*("(?:\\.|[^"\\])*"|[^\s]+))|[^\s]+', re.I)
+_EVENT_ID_PREFIX = r'id\s*(?:[=:]\s*)?'
+_EVENT_ID = re.compile(_EVENT_ID_PREFIX + r'([+-]?\d+(?:\.\d+)?)', re.I)
+_TOKEN = re.compile(r'(?:(歌名|歌曲ID|活动ID|活动名称|活动)\s*=\s*("(?:\\.|[^"\\])*"|[^\s]+))|'
+                    + _EVENT_ID_PREFIX + r'[+-]?\d+(?:\.\d+)?(?=\s|$)|[^\s]+', re.I)
 _UNKNOWN_CODES = {'cn', 'us', 'eu', 'gb', 'sg'}
 
 
@@ -45,10 +48,12 @@ class CutoffRequest:
     song_id: str = ""
     literal_query: bool = False
     extra_queries: tuple[str, ...] = ()
+    event_id: str = ""
+    event_name: str = ""
 
     def __init__(self, server="jp", query="", rank=None, error="", code="invalid_arguments",
                  server_hint="", *, ranks=(), numeric_only=False, mode=None, target_rank=None,
-                 range_bounds=(), song_number=None, song_id="", literal_query=False, extra_queries=()):
+                 range_bounds=(), song_number=None, song_id="", literal_query=False, extra_queries=(), event_id="", event_name=""):
         values = tuple(ranks) + ((rank,) if rank is not None else ())
         mode = mode or ("near" if rank is not None else "discrete" if values else "trend")
         if mode == "near":
@@ -77,7 +82,7 @@ class CutoffRequest:
                             ("error", error), ("code", code), ("server_hint", server_hint), ("numeric_only", numeric_only),
                             ("mode", mode), ("target_rank", target_rank), ("range_bounds", tuple(range_bounds)),
                             ("song_number", song_number), ("song_id", song_id), ("literal_query", literal_query),
-                            ("extra_queries", tuple(extra_queries))):
+                            ("extra_queries", tuple(extra_queries)), ("event_id", event_id), ("event_name", event_name)):
             object.__setattr__(self, name, value)
 
     @property
@@ -87,6 +92,10 @@ class CutoffRequest:
 
     def command_label(self):
         parts = ['查榜线', 'hk' if self.server == 'tw' else self.server]
+        if self.event_id:
+            parts.append(f'id{self.event_id}')
+        if self.event_name:
+            parts.append('活动=' + json.dumps(self.event_name, ensure_ascii=False))
         if self.song_number is not None:
             parts.append(f'歌曲{self.song_number}')
         if self.song_id:
@@ -161,6 +170,7 @@ def parse_cutoff(text: str) -> CutoffRequest:
     text = re.sub(r"\s+", " ", text)
     text = re.sub(r"^(?:查)?榜[线線](?:\s|$)", "", text).strip()
     servers, numbers, ids, names, words = [], [], [], [], []
+    event_ids, event_names = [], []
     numeric_only = False
     for match in _TOKEN.finditer(text):
         field, value = match.groups()
@@ -169,15 +179,28 @@ def parse_cutoff(text: str) -> CutoffRequest:
             try:
                 value = json.loads(value) if value.startswith('"') else value
             except ValueError:
-                return CutoffRequest(error='歌名引号不完整，请使用 歌名="完整名称"。')
+                return CutoffRequest(error='名称引号不完整，请使用 歌名="完整名称" 或 活动="完整名称"。')
             if not value:
-                return CutoffRequest(error='歌名或歌曲ID不能为空。')
-            if field.casefold() == '歌曲id':
+                return CutoffRequest(error='名称或ID不能为空。')
+            if field.casefold() == '活动id':
+                if not value.isdecimal() or int(value) <= 0:
+                    return CutoffRequest(error='活动ID必须是正整数。')
+                event_ids.append(str(int(value)))
+            elif field in {'活动', '活动名称'}:
+                if not re.sub(r'[\W_]+', '', value):
+                    return CutoffRequest(error='活动名称不能为空或只有标点。')
+                event_names.append(value)
+            elif field.casefold() == '歌曲id':
                 if not value.isdecimal():
                     return CutoffRequest(error='歌曲ID必须是完整的数字ID。')
                 ids.append(str(int(value)))
             else:
                 names.append(value)
+        elif event_id_match := _EVENT_ID.fullmatch(token):
+            value = event_id_match[1]
+            if not value.isdecimal() or int(value) <= 0:
+                return CutoffRequest(error='活动ID必须是正整数，例如 id1。')
+            event_ids.append(str(int(value)))
         elif token.casefold() in SERVER_ALIASES:
             servers.append(SERVER_ALIASES[token.casefold()])
         elif re.fullmatch(r'(?:server|服务器)[=:].*', token, re.I) or re.fullmatch(r'\S{1,4}服', token) or token.casefold() in _UNKNOWN_CODES:
@@ -197,10 +220,13 @@ def parse_cutoff(text: str) -> CutoffRequest:
             words.append(token)
     if len(set(servers)) > 1:
         return CutoffRequest(error='同时指定了不同服务器，请保留一个服务器。')
+    if len(set(event_ids)) > 1 or len(set(event_names)) > 1:
+        return CutoffRequest(error='同时指定了不同活动，请保留一个活动选择。')
     if len(set(numbers)) > 1 or len(set(ids)) > 1:
         return CutoffRequest(error='同时指定了不同歌曲，请保留一个歌曲选择。')
     request = CutoffRequest(servers[0] if servers else 'jp', song_number=numbers[0] if numbers else None,
-                            song_id=ids[0] if ids else '', numeric_only=numeric_only)
+                            song_id=ids[0] if ids else '', numeric_only=numeric_only,
+                            event_id=event_ids[0] if event_ids else '', event_name=event_names[0] if event_names else '')
     remaining = ' '.join(words)
     ranked, query = _rank_selection(request, remaining)
     if names:
@@ -242,7 +268,7 @@ def parse_natural_cutoff(question: str) -> CutoffRequest | None:
 
 def event_status(event: EventSnapshot) -> str:
     return {"feature": "未开始", "nowOn": "进行中", "aggregation": "结算中",
-            "result": "已结束（结果公示）", "end": "已结束"}.get(event.status, "状态未知")
+            "result": "已结束（结果公示）", "end": "已结束", "historical": "本地历史观测"}.get(event.status, "状态未知")
 
 
 def song_period_lines(event: EventSnapshot, song: EventSong) -> tuple[str, ...]:
@@ -263,6 +289,18 @@ class CutoffAnswer:
     histories: tuple[tuple[str, HistoryView], ...] = ()
     display_ranks: tuple[int, ...] = ()  # A page projection of the same captured boards.
     history_ranks: tuple[int, ...] = ()
+
+    @property
+    def historical(self):
+        return bool(self.request.event_id or self.request.event_name)
+
+    @property
+    def value_label(self):
+        return '历史末次观测' if self.historical else '当前值'
+
+    @property
+    def capture_label(self):
+        return '历史源采集' if self.historical else '当前源采集'
 
     @property
     def ranks(self) -> tuple[int, ...]:
@@ -327,6 +365,8 @@ class CutoffAnswer:
 
     @property
     def source_label(self):
+        if self.historical:
+            return '本地历史（' + '、'.join(sorted({b.source for b in self.boards})) + '）'
         return "Haneoka / MoeNotes" if self.event and self.event.source == "haneoka" else "MoeNotes"
 
     @staticmethod
@@ -351,6 +391,46 @@ def execute_cutoff(request: CutoffRequest, repository) -> CutoffAnswer:
         return _execute_cutoff(request, repository)
 
 
+def _historical_event(request, repository):
+    """Resolve only recorded challenge identities; static song associations never create boards."""
+    history = repository.event_cutoffs.history
+    if history is None:
+        return None, '历史记录未配置。', 'data_unavailable'
+    events = history.events(request.server)
+    # The existing JP catalog also supplies names for databases recorded before metadata storage.
+    aliases = {}
+    if request.server == 'jp' and hasattr(repository, 'capture_catalog'):
+        catalog = repository.capture_catalog()
+        records = {str(record.id): record for record in catalog.activities}
+        songs = {str(song.id): song for song in catalog.songs}
+        enriched = []
+        for event in events:
+            record = records.get(event.event_id)
+            if record:
+                aliases[event.event_id] = (event.title, *record.names.values())
+                event = replace(event, title=record.title)
+            event = replace(event, songs=tuple(replace(song, title=songs[song.music_id].title,
+                                names=tuple(dict.fromkeys((song.title, *song.names,
+                                    songs[song.music_id].title, *songs[song.music_id].titles))))
+                                if song.music_id in songs else song for song in event.songs))
+            enriched.append(event)
+        events = tuple(enriched)
+    if request.event_name:
+        def normalize(value):
+            return re.sub(r'[\W_]+', '', unicodedata.normalize('NFKC', value).casefold())
+        needle = normalize(request.event_name)
+        exact = tuple(e for e in events if any(needle == normalize(n) for n in (e.title, *aliases.get(e.event_id, ())) if n))
+        events = exact or tuple(e for e in events if any(needle in normalize(n) for n in (e.title, *aliases.get(e.event_id, ())) if n))
+    if request.event_id:
+        events = tuple(e for e in events if e.event_id == request.event_id)
+    if not events:
+        return None, '未找到该服务器指定活动的本地历史；只查询已保存的数据，不补造未采集记录。', 'empty'
+    if len(events) > 1:
+        return None, f'活动名称匹配 {len(events)} 个活动，请使用活动ID指定（最多列10个）：\n' + '\n'.join(f'id{e.event_id} · {e.title}' for e in events[:10]), 'ambiguous'
+    event = events[0]
+    return replace(event, notes=('本地历史末次观测；非实时榜、非确认终榜，采集前及缺采期间的数据未补齐。',)), '', 'success'
+
+
 def _execute_cutoff(request: CutoffRequest, repository) -> CutoffAnswer:
     if request.error:
         return CutoffAnswer(request, message=request.error, status=request.code)
@@ -358,9 +438,17 @@ def _execute_cutoff(request: CutoffRequest, repository) -> CutoffAnswer:
         return CutoffAnswer(request, message="未知服务器。" + HELP, status="invalid_arguments")
     source = repository.event_cutoffs
     deadline = source.deadline()
+    historical = bool(request.event_id or request.event_name)
     try:
-        event = source.event(request.server, deadline)
+        if historical:
+            event, message, status = _historical_event(request, repository)
+            if event is None:
+                return CutoffAnswer(request, message=message, status=status)
+        else:
+            event = source.event(request.server, deadline)
     except SourceError as exc:
+        if historical:
+            return CutoffAnswer(request, message='历史库暂不可用或活动身份冲突，未改查当前活动。', status='data_unavailable')
         message = "该服务器当前没有可用活动。" if exc.code == "not_found" else "该服务器的活动信息暂不可用，请稍后重试。"
         return CutoffAnswer(request, message=SERVERS[request.server][0] + "：" + message, status="data_unavailable")
     if not event.songs:
@@ -410,7 +498,7 @@ def _execute_cutoff(request: CutoffRequest, repository) -> CutoffAnswer:
         selected.append(event.songs[request.song_number - 1].music_id)
     if request.song_id:
         if request.song_id not in event_ids:
-            return CutoffAnswer(request, event, message='这首歌不是本期活动的挑战歌曲。', status='empty')
+            return CutoffAnswer(request, event, message='这首歌不是所选活动的挑战歌曲。' if historical else '这首歌不是本期活动的挑战歌曲。', status='empty')
         selected.append(request.song_id)
     for name in names:
         matches = scoped_song_matches(name, catalog)
@@ -422,7 +510,7 @@ def _execute_cutoff(request: CutoffRequest, repository) -> CutoffAnswer:
             return CutoffAnswer(request, event, message='歌曲名称有歧义，请补充完整名称或歌曲编号：\n' + '\n'.join(labels[key] for key in matches[:5]), status='ambiguous')
         if not matches:
             if outside:
-                return CutoffAnswer(request, event, message='这首歌不是本期活动的挑战歌曲。', status='empty')
+                return CutoffAnswer(request, event, message='这首歌不是所选活动的挑战歌曲。' if historical else '这首歌不是本期活动的挑战歌曲。', status='empty')
             if not event.catalog:
                 selector = '歌曲N／歌曲ID=…' if event.challenge_order_verified else '歌曲ID=…'
                 return CutoffAnswer(request, event, message=f'该服务器歌曲元数据暂不可用，无法核对名称；请稍后重试或使用 {selector} 。', status='data_unavailable')
@@ -443,11 +531,17 @@ def _execute_cutoff(request: CutoffRequest, repository) -> CutoffAnswer:
     if names:
         # Collapse equivalent names only after the exact challenge entry is confirmed.
         request = replace(request, query=songs[0].title, extra_queries=(), literal_query=True)
-    boards = source.boards(event, songs, deadline)
+    try:
+        boards = tuple(source.history.latest(event, song) for song in songs) if historical else source.boards(event, songs, deadline)
+    except SourceError:
+        return CutoffAnswer(request, event, message='历史库暂不可用，未改查当前活动。', status='data_unavailable')
     histories = ()
     ranks=request.ranks or NODES
     history_ranks=tuple(dict.fromkeys(ranks[round(i*(len(ranks)-1)/4)] for i in range(5)))
     if not request.numeric_only:
         histories = tuple((b.song.challenge_id, source.history.read(event, b.song, history_ranks) if source.history
                            else HistoryView(warning="历史记录未配置；当前值仍可查询。")) for b in boards)
+        if historical:
+            histories = tuple((key, replace(view, warning=view.warning.replace('当前值', '历史末次观测')
+                                            .replace('当前榜线仍可查询', '历史末次观测单独显示'))) for key, view in histories)
     return CutoffAnswer(request, event, boards, status="success" if any(b.scores for b in boards) else "data_unavailable", histories=histories,history_ranks=history_ranks)

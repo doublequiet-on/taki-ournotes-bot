@@ -39,7 +39,7 @@ Linux 受管更新器在安装／离线验证结束、停止旧服务之前自�
 
 查询升级 v1 的完整 55 项映射见 [实现与验收](QUERY_UPGRADE_V1.md)。共享歌曲条件在 `query/song_query.py`，字段短答在 `query/field_query.py`，有限续查在 `query/continuation.py`；QQ 的 `reply_commands` 管同用户顺序和发送确认。历史、采样、趋势分别位于 `sources/cutoff_history.py`、`sources/cutoff_sampler.py`、`rendering/cutoff_trends.py`，发布开关和长期保留见 [历史运维](CUTOFF_HISTORY.md)。
 
-活动歌曲榜线：`sources/moenotes_events.py::EventCutoffRepository` → `query/event_cutoff_query.py::execute_cutoff` → `rendering/event_cutoff_visuals.py::render_cutoff`；直接入口与自然语言本地分支共享捕获结果，QQ `_expand_replies` 预先分配整批回复预算。目标测试 `test_event_cutoffs.py`、`test_cutoff_query_v2.py`、`test_cutoff_trends.py`；脱敏素材脚本 `scripts/preview_event_cutoffs.py` 及固定合成脚本 `scripts/preview_cutoff_trends.py`，格式、边界和本轮 A01–A28 对应见 [功能说明](EVENT_CUTOFFS.md)。修改这些共享契约后需要完整离线回归与实际查看样图；QQ 真机验收另行授权。
+活动歌曲榜线：`sources/moenotes_events.py::EventCutoffRepository` → `query/event_cutoff_query.py::execute_cutoff` → `rendering/event_cutoff_visuals.py::render_cutoff`；直接入口与自然语言本地分支共享捕获结果，QQ `_expand_replies` 预先分配整批回复预算。往期查询通过 `id1`（兼容 `活动ID=1`）／`活动="名称"` 只读本地历史，目标测试增加 `test_cutoff_archive.py`；目标测试 `test_event_cutoffs.py`、`test_cutoff_query_v2.py`、`test_cutoff_trends.py`；脱敏素材脚本 `scripts/preview_event_cutoffs.py` 及固定合成脚本 `scripts/preview_cutoff_trends.py`，格式、边界和本轮 A01–A28 对应见 [功能说明](EVENT_CUTOFFS.md)。修改这些共享契约后需要完整离线回归与实际查看样图；QQ 真机验收另行授权。
 
 榜线数字ID／用户名来自同一行 `playerData.id`／`playerData.name`，仅进入当前缓存和捕获结果；字段缺失、Unicode名字、旧缓存、分页与历史无身份边界由 `test_cutoff_player_ids.py` 验证。合成预览覆盖11位／20位ID与中文用户名，不使用真实玩家身份作为测试素材。
 
@@ -76,7 +76,7 @@ Linux 受管更新器在安装／离线验证结束、停止旧服务之前自�
 | 卡牌/技能查询 | 已实现两类卡条件网格、精确ID详情、独立卡面及多维分类筛选；成员 BD 映射已核实，渐变框由项目绘制，属性／稀有度使用游戏原生图标；独立卡面保持来源原始尺寸。见 `structured_query.py::cards_for`、`support_cards_for` 与数据索引。 |
 | 谱面 | 已实现静态完整音符绘图和缺失回退；局部放大、播放模拟未实现。见 `render_chart`。 |
 | 直接查询与 AI 分工 | 已实现直接查询不调用模型、本地优先的受限 `/问`；不是自由问答。见 `_prepare_reply`、`QueryAgent.run`。 |
-| 活动歌曲榜线、活动/卡池 | `/查榜线` 已实现四服当前／最近活动挑战歌曲 Top 100 观测；`/查活动` 支持四服当前信息及日服列表／历史，`/查卡池` 提供日服资料；不提供积分档线、预测、概率或保底。入口见 `activity_query.py`、`gacha_query.py`；榜线约束见 [专题](EVENT_CUTOFFS.md)。 |
+| 活动歌曲榜线、活动/卡池 | `/查榜线` 已实现四服当前／最近活动挑战歌曲 Top 100 观测及按活动 ID／名称查询本地历史；`/查活动` 支持四服当前信息及日服列表／历史，`/查卡池` 提供日服资料；不提供积分档线、预测、概率或保底。入口见 `activity_query.py`、`gacha_query.py`；榜线约束见 [专题](EVENT_CUTOFFS.md)。 |
 | 攻略资料与知识库 | 审核后入库是产品约束；正式审核库、采集和审核流程未实现，见 README 长期方向。未来回答须用可靠数据及审核资料，不能把规划写成已落地。 |
 
 ## 开发与验证命令

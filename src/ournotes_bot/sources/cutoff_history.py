@@ -1,6 +1,6 @@
 # L3
 # Input: Captured challenge boards, explicit source/configuration and independent v1/v2/v3 paths.
-# Output: Score-only observations, source-separated history views and clock-gap/storage health.
+# Output: Score-only observations, recorded event metadata/identities, last snapshots and bounded history views.
 # Pos: Data / Sources history and source composition; see L2-2.md and docs/META_OPEN.md.
 # Effects: Lazy SQLite, source/minute-state composition without requests; no credentials-file, worker or platform imports.
 """Append-only observed scores. Never reconstruct unobserved game history."""
@@ -14,7 +14,7 @@ import sqlite3
 import threading
 import time
 from contextlib import closing
-from dataclasses import dataclass, replace
+from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 
 SCHEMA = """
@@ -33,6 +33,9 @@ CREATE TABLE IF NOT EXISTS gaps (
 CREATE INDEX IF NOT EXISTS gap_time ON gaps(server,event,challenge,received_ms);
 CREATE TABLE IF NOT EXISTS health (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 """
+
+# Additive table, deliberately retaining schema versions and old reader compatibility.
+EVENT_METADATA = "CREATE TABLE IF NOT EXISTS event_metadata (server TEXT, event TEXT, payload TEXT NOT NULL, PRIMARY KEY(server,event))"
 
 
 @dataclass(frozen=True)
@@ -138,6 +141,9 @@ class CutoffHistory:
                   or (board.song.effective_end_ms and source > board.song.effective_end_ms)):
                 quality = "outside_period"
             with closing(self._connect(write=True)) as db, db:
+                db.execute(EVENT_METADATA)
+                db.execute("INSERT OR REPLACE INTO event_metadata VALUES(?,?,?)",
+                           (event.server, str(event.event_id), json.dumps(asdict(event), ensure_ascii=False)))
                 identity = db.execute("SELECT music FROM boards WHERE server=? AND event=? AND challenge=?", key).fetchone()
                 if identity and identity[0] != str(board.song.music_id):
                     quality = "identity_conflict"
@@ -232,6 +238,68 @@ class CutoffHistory:
         except (sqlite3.Error, OSError):
             result["error"] = "storage_error"
         return result
+
+    def events(self, server):
+        """Read recorded identities, including pre-metadata databases, without creating files."""
+        from .moenotes_events import EventSnapshot, EventSong, SourceError
+        if not self.enabled or not self.path.exists():
+            return ()
+        try:
+            with closing(self._connect()) as db:
+                has_metadata = db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='event_metadata'").fetchone()
+                result = []
+                identities = db.execute("SELECT event,challenge,music FROM boards WHERE server=? ORDER BY event,challenge", (server,)).fetchall()
+                grouped = {}
+                for ident, challenge, music in identities:
+                    grouped.setdefault(ident, []).append(EventSong(challenge, music, f'歌曲 ID {music}'))
+                for ident, songs in grouped.items():
+                    row = db.execute("SELECT payload FROM event_metadata WHERE server=? AND event=?", (server, ident)).fetchone() if has_metadata else None
+                    event = EventSnapshot(server, ident, f'活动 {ident}', 'historical', None, None,
+                                          tuple(songs), source=self.source, challenge_order_verified=False)
+                    if row:
+                        data = json.loads(row[0])
+                        saved_songs = {s['challenge_id']: EventSong(**{**s, 'names': tuple(s['names'])}) for s in data['songs']}
+                        if (data['server'] != server or data['event_id'] != ident or not isinstance(data['title'], str)
+                                or any(not isinstance(s.title, str) or not isinstance(s.music_id, str)
+                                       or any(not isinstance(n, str) for n in s.names) for s in saved_songs.values())):
+                            raise ValueError('foreign event metadata')
+                        event = replace(event, title=data['title'], start_ms=data['start_ms'], end_ms=data['end_ms'],
+                                        songs=tuple(saved_songs[s.challenge_id] if s.challenge_id in saved_songs
+                                                    and saved_songs[s.challenge_id].music_id == s.music_id else s for s in songs),
+                                        banner=data['banner'], metadata_version=data['metadata_version'])
+                    result.append(event)
+                return tuple(result)
+        except (sqlite3.Error, OSError, ValueError, TypeError, KeyError):
+            self.last_error = 'storage_error'
+            raise SourceError('history_unavailable') from None
+
+    def latest(self, event, song):
+        """Last observed position vector, never per-rank maxima or a claimed final board."""
+        from .moenotes_events import BoardSnapshot, SourceError
+        empty = BoardSnapshot(song, source=self.source, time_kind=getattr(self, 'time_kind', 'tracker_observed'),
+                              contract_version=getattr(self, 'contract_version', ''), status='暂无本曲历史观测')
+        if not self.enabled or not self.path.exists():
+            return empty
+        try:
+            with closing(self._connect()) as db:
+                rows = db.execute("SELECT source_ms,received_ms,scores,quality,music FROM observations "
+                                  "WHERE server=? AND event=? AND challenge=? AND source_ms=(SELECT max(source_ms) FROM observations "
+                                  "WHERE server=? AND event=? AND challenge=?)",
+                                  (*self._key(event, song), *self._key(event, song))).fetchall()
+            if not rows:
+                return empty
+            stamp, received, encoded, quality, music = rows[0]
+            valid = len(rows) == 1 and stamp > 0 and quality == 'valid' and music == song.music_id
+            scores = json.loads(encoded) if valid else []
+            if not isinstance(scores, list) or len(scores) > 100 or any(n is not None and (type(n) is not int or n < 0) for n in scores):
+                raise ValueError('invalid stored scores')
+            return replace(empty, scores=tuple(scores), fetched_ms=stamp if stamp > 0 else None,
+                           received_ms=received, quality=quality if valid else 'unusable',
+                           status='本地历史末次观测' if valid else '末次历史观测质量不可用，未替换为较早分数',
+                           notes=('历史只保存分数，未保存玩家身份；不是确认终榜。',))
+        except (sqlite3.Error, OSError, ValueError, TypeError):
+            self.last_error = 'storage_error'
+            raise SourceError('history_unavailable') from None
 
     def status_text(self):
         from .moenotes_events import display_time
@@ -351,6 +419,31 @@ class SourceHistory:
 
     def failure(self, *args, **kwargs):
         return self.writer.failure(*args, **kwargs)
+
+    def events(self, server):
+        from .moenotes_events import SourceError
+        events = {}
+        for store in self.stores.values():
+            for event in store.events(server):
+                previous = events.get(event.event_id)
+                if previous:
+                    songs = {s.challenge_id: s for s in previous.songs}
+                    for song in event.songs:
+                        if song.challenge_id in songs and songs[song.challenge_id].music_id != song.music_id:
+                            raise SourceError('history_identity_conflict')
+                        if song.challenge_id not in songs or song.names:
+                            songs[song.challenge_id] = song
+                    event = replace(event if event.metadata_version != 'unknown' else previous, songs=tuple(songs.values()))
+                events[event.event_id] = event
+        return tuple(events.values())
+
+    def latest(self, event, song):
+        boards = [store.latest(event, song) for store in self.stores.values()]
+        latest = max(boards, key=lambda b: (b.fetched_ms or -1, b.received_ms or -1))
+        tied = [b for b in boards if b.fetched_ms is not None and b.fetched_ms == latest.fetched_ms]
+        if any(b.scores != latest.scores for b in tied):
+            return replace(latest, scores=(), quality='conflict', status='同一时间的多来源历史冲突，未选择分数')
+        return latest
 
     def read(self, event, song, ranks, *, max_points=20000, **kwargs):
         views = [h.read(event, song, ranks, max_points=max_points, **kwargs) for h in self.stores.values()]
