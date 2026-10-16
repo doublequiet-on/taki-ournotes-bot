@@ -78,6 +78,38 @@ class ArchiveTests(unittest.TestCase):
         self.assertEqual(result.cutoff.event.event_id, '12')
         self.assertEqual(result.cutoff.ranks, (3,))
 
+    def test_short_activity_id_forms_and_local_natural_route(self):
+        for selector in ('id12', 'ID12', 'Id 12', 'id=12', 'ID:12', 'id = 12', 'ｉｄ１２', 'id0012'):
+            with self.subTest(selector=selector):
+                request = parse_cutoff('/查榜线 ' + selector)
+                self.assertEqual(request.event_id, '12')
+                self.assertEqual(parse_natural_cutoff('/查榜线 ' + selector), request)
+                answer = execute_cutoff(request, self.repo)
+                self.assertEqual(answer.status, 'success', answer.text)
+                self.assertEqual(answer.event.event_id, '12')
+                self.assertIn('id12', answer.request.command_label())
+                self.assertEqual(parse_cutoff(answer.request.command_label()), answer.request)
+        self.assertEqual(parse_cutoff('/查榜线 12').event_id, '')
+        self.assertEqual(parse_cutoff('/查榜线 12').target_rank, 12)
+        self.assertEqual(self.ask('id999').status, 'empty')
+
+    def test_short_id_combinations_conflicts_and_literal_song_names(self):
+        for groups in itertools.permutations(('id12', 'jp', '歌曲ID=101', '3-3')):
+            answer = self.ask(' '.join(groups))
+            self.assertEqual(answer.status, 'success', answer.text)
+            self.assertEqual(answer.event.event_id, '12')
+            self.assertEqual(answer.ranks, (3,))
+            self.assertEqual(answer.boards[0].score(3), 0)
+        self.assertEqual(self.ask('id12 活动ID=12 id0012').status, 'success')
+        self.assertEqual(self.ask('hk id12').status, 'empty')
+        for text in ('id12 id13', 'id12 活动ID=13', 'id0', 'id-1', 'id1.5', 'id+1'):
+            self.assertEqual(self.ask(text).status, 'invalid_arguments', text)
+        literal = parse_cutoff('歌名="id12" 50')
+        self.assertEqual(literal.event_id, '')
+        self.assertEqual(literal.query, 'id12')
+        self.assertEqual(literal.target_rank, 50)
+        self.assertEqual(parse_cutoff('活动="id12"').event_name, 'id12')
+
     def test_missing_unknown_server_disabled_and_bad_store_do_not_fall_back(self):
         self.assertEqual(self.ask('活动ID=999').status, 'empty')
         self.assertEqual(self.ask('hk 活动ID=12').status, 'empty')
@@ -98,7 +130,7 @@ class ArchiveTests(unittest.TestCase):
         self.record(self.history, other, other.songs[0], (10,))
         ambiguous = self.ask('活动=星の')
         self.assertEqual(ambiguous.status, 'ambiguous')
-        self.assertIn('活动ID=13', ambiguous.text)
+        self.assertIn('id13', ambiguous.text)
         self.assertEqual(self.ask('活动="星の 約束"').event.event_id, '12')
         self.assertEqual(self.ask('活动ID=12 活动="星の 約束 再演"').status, 'empty')
         for text in ('活动ID=12 活动ID=13', '活动=甲 活动=乙', '活动ID=-1', '活动ID=1.5', '活动=""', '活动="___"', '活动="未闭合'):

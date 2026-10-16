@@ -16,7 +16,7 @@ from .entity_lexicon import scoped_song_matches
 from ..sources.cutoff_history import HistoryView
 
 NODES = (1, 2, 3, 10, 100)
-HELP = '/查榜线 [jp/hk/kr/en] [活动ID=2或活动="名称"] [歌名或歌曲ID=完整ID] [50或20-40] [仅数值]；参数顺序不限。指定活动读取本地历史末次观测，无排名看五档趋势，单排名看前后十名，区间看每行分数。'
+HELP = '/查榜线 [jp/hk/kr/en] [id1或活动="名称"] [歌名或歌曲ID=完整ID] [50或20-40] [仅数值]；参数顺序不限。id1指定活动1（兼容 活动ID=1），裸数字表示排名；指定活动读取本地历史末次观测，无排名看五档趋势，单排名看前后十名，区间看每行分数。'
 SERVER_ALIASES = {"jp": "jp", "日服": "jp", "hk": "tw", "国服": "tw", "國服": "tw",
                   "tw": "tw", "台服": "tw", "臺服": "tw",
                   "kr": "kr", "韩服": "kr", "韓服": "kr", "en": "en", "英服": "en", "国际服": "en", "國際服": "en"}
@@ -25,7 +25,10 @@ MARKER = re.compile(r"榜线|榜線|档线|檔線|歌曲榜|(?:前\s*[+-]?\d+(?:
 _NUMBER = r'[tT]?[+-]?\d+(?:\.\d+)?'
 _RANK_PART = re.compile(rf'(?<!\S)({_NUMBER})(?:\s*[-—–~～到]\s*({_NUMBER}))?(?!\S)')
 _SONG_NUMBER = re.compile(r'(?:歌曲|歌)([\d零〇一二两三四五六七八九十百+-]+(?:\.\d+)?)$|第([\d零〇一二两三四五六七八九十百+-]+(?:\.\d+)?)首$')
-_TOKEN = re.compile(r'(?:(歌名|歌曲ID|活动ID|活动名称|活动)\s*=\s*("(?:\\.|[^"\\])*"|[^\s]+))|[^\s]+', re.I)
+_EVENT_ID_PREFIX = r'id\s*(?:[=:]\s*)?'
+_EVENT_ID = re.compile(_EVENT_ID_PREFIX + r'([+-]?\d+(?:\.\d+)?)', re.I)
+_TOKEN = re.compile(r'(?:(歌名|歌曲ID|活动ID|活动名称|活动)\s*=\s*("(?:\\.|[^"\\])*"|[^\s]+))|'
+                    + _EVENT_ID_PREFIX + r'[+-]?\d+(?:\.\d+)?(?=\s|$)|[^\s]+', re.I)
 _UNKNOWN_CODES = {'cn', 'us', 'eu', 'gb', 'sg'}
 
 
@@ -90,7 +93,7 @@ class CutoffRequest:
     def command_label(self):
         parts = ['查榜线', 'hk' if self.server == 'tw' else self.server]
         if self.event_id:
-            parts.append(f'活动ID={self.event_id}')
+            parts.append(f'id{self.event_id}')
         if self.event_name:
             parts.append('活动=' + json.dumps(self.event_name, ensure_ascii=False))
         if self.song_number is not None:
@@ -193,6 +196,11 @@ def parse_cutoff(text: str) -> CutoffRequest:
                 ids.append(str(int(value)))
             else:
                 names.append(value)
+        elif event_id_match := _EVENT_ID.fullmatch(token):
+            value = event_id_match[1]
+            if not value.isdecimal() or int(value) <= 0:
+                return CutoffRequest(error='活动ID必须是正整数，例如 id1。')
+            event_ids.append(str(int(value)))
         elif token.casefold() in SERVER_ALIASES:
             servers.append(SERVER_ALIASES[token.casefold()])
         elif re.fullmatch(r'(?:server|服务器)[=:].*', token, re.I) or re.fullmatch(r'\S{1,4}服', token) or token.casefold() in _UNKNOWN_CODES:
@@ -416,7 +424,7 @@ def _historical_event(request, repository):
     if not events:
         return None, '未找到该服务器指定活动的本地历史；只查询已保存的数据，不补造未采集记录。', 'empty'
     if len(events) > 1:
-        return None, f'活动名称匹配 {len(events)} 个活动，请使用活动ID指定（最多列10个）：\n' + '\n'.join(f'活动ID={e.event_id} · {e.title}' for e in events[:10]), 'ambiguous'
+        return None, f'活动名称匹配 {len(events)} 个活动，请使用活动ID指定（最多列10个）：\n' + '\n'.join(f'id{e.event_id} · {e.title}' for e in events[:10]), 'ambiguous'
     event = events[0]
     return replace(event, notes=('本地历史末次观测；非实时榜、非确认终榜，采集前及缺采期间的数据未补齐。',)), '', 'success'
 
