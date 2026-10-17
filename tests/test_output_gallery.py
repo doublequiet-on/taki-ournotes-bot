@@ -18,6 +18,31 @@ SPEC.loader.exec_module(MODULE)
 
 
 class OutputGalleryTests(unittest.TestCase):
+    def test_observation_preserves_bytes_and_captures_native_encoder(self):
+        with tempfile.TemporaryDirectory() as directory:
+            manifests = []
+            for mode in (None, 'visual', 'timing'):
+                output = Path(directory) / str(mode)
+                command = [sys.executable, '-B', str(ROOT/'scripts/export_output_gallery.py'),
+                           '--only','song-list-17-page1','--output',str(output)]
+                if mode: command += ['--observe',mode]
+                run = subprocess.run(command,cwd=ROOT,capture_output=True,encoding='utf-8',timeout=120)
+                self.assertEqual(run.returncode,0,run.stdout+run.stderr)
+                manifests.append(json.loads((output/'manifest.json').read_bytes()))
+            samples = [m['samples'][0] for m in manifests]
+            self.assertEqual(len({r['files'][0]['sha256'] for r in samples}),1)
+            visual = samples[1]['observation']
+            self.assertEqual(visual['canvases'][0]['size'],samples[1]['files'][0]['encoded_size'])
+            self.assertEqual(samples[1]['files'][0]['canvas_indices'],[0])
+            self.assertEqual(len(visual['canvases'][0]['pixel_sha256']),64)
+            self.assertGreater(len(visual['drawn_text']),17)
+            self.assertEqual(len(visual['layouts'][0]['records']),17)
+            self.assertTrue(visual['fonts'])
+            self.assertTrue(visual['encoding_attempts'])
+            self.assertGreater(visual['process_peak_memory']['bytes'],0)
+            self.assertFalse((Path(directory)/'timing'/'canvases').exists())
+            self.assertNotIn('pixel_sha256',samples[2]['observation']['canvases'][0])
+
     def test_source_archive_has_explicitly_unavailable_git_metadata(self):
         with tempfile.TemporaryDirectory() as directory, patch.object(MODULE,'ROOT',Path(directory)):
             self.assertEqual(MODULE.version_info(),(None,False,None))

@@ -7,7 +7,7 @@
 from __future__ import annotations
 
 import argparse
-from contextlib import ExitStack
+from contextlib import ExitStack, nullcontext
 from dataclasses import replace
 import hashlib
 import html
@@ -17,6 +17,7 @@ import logging
 import os
 from pathlib import Path
 import platform
+import statistics
 import subprocess
 import sys
 import time
@@ -24,10 +25,14 @@ from unittest.mock import patch
 
 from PIL import Image, ImageOps
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from output_observation import Observation
+
 ROOT = Path(__file__).resolve().parents[1]
 BASELINE = "6563f0a01ea8a0f4f817e4c744401b6e932f61a7"
 FIXED_TIME = 1791763200  # 2026-10-12 00:00:00 UTC; only business wall clock is fixed.
 FAMILIES = {
+    "song-detail": "歌曲详情", "activity": "活动资料", "gacha": "卡池资料", "character": "人物资料",
     "song-list": "歌曲列表", "chart": "谱面资料与音符图",
     "member-list": "成员卡列表", "member-detail": "成员卡详情", "member-art": "成员原卡面",
     "snap-list": "SNAP列表", "snap-detail": "SNAP详情", "snap-art": "SNAP原卡面",
@@ -65,7 +70,7 @@ def guard_paths(output, inputs):
 
 
 class Gallery:
-    def __init__(self, output, only, cache, font):
+    def __init__(self, output, only, cache, font, observe=None):
         from ournotes_bot import visuals
         from ournotes_bot.platforms.qq import qq
         self.v, self.qq = visuals, qq
@@ -74,6 +79,8 @@ class Gallery:
         self.trace, self.canvases, self.missing, self.assets = [], [], set(), set()
         self.font = font
         self.datasets = {}
+        self.observation = Observation(output, observe) if observe else None
+        self.list_only = False
         self.expected_families = set(FAMILIES)
         version,self.baseline_available,self.baseline_changes = version_info()
         self.version = version or "源码归档（Git 版本不可用；以文件哈希追溯）"
@@ -116,7 +123,12 @@ class Gallery:
         key = family + "-" + name
         if self.only and key not in self.only and family not in self.only:
             return None
+        if self.list_only:
+            self.rows.append({'id':key})
+            return None
         self.trace, self.canvases, self.missing, self.assets, self.render_errors = [], [], set(), set(), []
+        if self.observation:
+            self.observation.reset(key)
         start, cpu = time.perf_counter(), time.process_time()
         row = {"id": key, "template_id": family, "command": command, "route": route,
                "data_source": source, "synthetic_fields": list(synthetic), "parameters": params or {},
@@ -138,38 +150,50 @@ class Gallery:
                        visible_ids=[c.entity_id for c in reply.context.visible] if reply.context else None,
                        continuation_choices=len(reply.context.visible) if reply.context else None,
                        context_pages=reply.context.pages if reply.context else None, files=[])
+            row['display_positions'] = [dict(position=i, entity_id=c.entity_id)
+                                       for i,c in enumerate(reply.context.visible,1)] if reply.context else []
             row["query_page"] = reply.context.page if reply.context else row["parameters"].get("page")
             row["query_pages"] = reply.context.pages if reply.context else row["parameters"].get("query_pages")
             if not row["record_ids"]:
                 row["record_ids"] = row["visible_ids"]
             row["record_ids_note"] = None if row["record_ids"] else "无实体记录或未捕获选择；详见route与parameters"
-            for number, page in enumerate(pages, 1):
-                stem = f"{key}-p{number}"
-                text_file = "texts/" + stem + ".txt"
-                (self.output / text_file).write_text(page.text, encoding="utf-8")
-                item = {"page": number, "text_file": text_file, "text": page.text, "image_file": None,
-                        "original_size": None, "encoded_size": None, "bytes": None, "thumbnail_file": None,
-                        "original_size_note": "纯文字无画布" if page.image is None else "预编码素材，无Pillow画布" if not self.canvases else None}
-                if page.image:
-                    with Image.open(io.BytesIO(page.image)) as picture:
-                        suffix = ".jpg" if picture.format == "JPEG" else ".png"
-                        filename = "images/" + stem + suffix
-                        (self.output / filename).write_bytes(page.image)
-                        thumb = picture.copy()
-                        thumb.thumbnail((430, 100000), Image.Resampling.LANCZOS)
-                        thumbnail = "thumbnails/" + stem + ".png"
-                        thumb.save(self.output / thumbnail)
-                        thumb.close()
-                        item.update(image_file=filename, encoded_size=list(picture.size), bytes=len(page.image),
-                                    original_size=self.canvases[number - 1] if number <= len(self.canvases) else None,
-                                    thumbnail_file=thumbnail, sha256=hashlib.sha256(page.image).hexdigest())
-                row["files"].append(item)
+            with self.observation.phase("io") if self.observation else nullcontext():
+                for number, page in enumerate(pages, 1):
+                    stem = f"{key}-p{number}"
+                    text_file = "texts/" + stem + ".txt"
+                    (self.output / text_file).write_text(page.text, encoding="utf-8")
+                    item = {"page": number, "text_file": text_file, "text": page.text, "image_file": None,
+                            "original_size": None, "encoded_size": None, "bytes": None, "thumbnail_file": None,
+                            "original_size_note": "纯文字无画布" if page.image is None else "预编码素材，无Pillow画布" if not self.canvases else None}
+                    if page.image:
+                        with Image.open(io.BytesIO(page.image)) as picture:
+                            suffix = ".jpg" if picture.format == "JPEG" else ".png"
+                            filename = "images/" + stem + suffix
+                            (self.output / filename).write_bytes(page.image)
+                            thumb = picture.copy()
+                            thumb.thumbnail((430, 100000), Image.Resampling.LANCZOS)
+                            thumbnail = "thumbnails/" + stem + ".png"
+                            thumb.save(self.output / thumbnail)
+                            thumb.close()
+                            item.update(image_file=filename, encoded_size=list(picture.size), bytes=len(page.image),
+                                        original_size=self.canvases[number - 1] if number <= len(self.canvases) else None,
+                                        thumbnail_file=thumbnail, sha256=hashlib.sha256(page.image).hexdigest())
+                        if self.observation:
+                            matches = [c for c in self.observation.canvases if c.get('encoded_sha256') == item['sha256']]
+                            item['canvas_indices'] = [c['index'] for c in matches]
+                            item['original_size'] = matches[0]['size'] if matches else None
+                    row["files"].append(item)
         except Exception as exc:
             row.update(status="failed", mode=None, page_count=None, files=[], error=f"{type(exc).__name__}: {exc}")
             self.errors.append(key)
         row.update(seconds=round(time.perf_counter() - start, 4), cpu_seconds=round(time.process_time() - cpu, 4),
                    functions=list(dict.fromkeys(self.trace)), missing_assets=sorted(self.missing), asset_urls=sorted(self.assets),
                    renderer_errors=self.render_errors, timing_scope="一次离线准备/绘图/编码/落盘总时长；未分段计时")
+        if self.observation:
+            row['observation'] = self.observation.result()
+            row['timing_scope'] = '独占阶段墙钟；observe为取证开销；进程峰值只有独立单例可归因'
+        row['evidence_class'] = ('缺素材验证' if self.missing else '合成边界' if synthetic else '固定输入视觉对照')
+        row['visual_acceptance'] = '未人工验收'
         self.rows.append(row)
         print(f"{key}: {row['status']} {row.get('page_count')} page(s)", flush=True)
         return reply if row["status"] == "success" else None
@@ -184,16 +208,21 @@ class Gallery:
         present = {r["template_id"] for r in self.rows}
         if not self.only and present != self.expected_families:
             raise AssertionError("missing output families: " + repr(self.expected_families - present))
-        manifest = {"schema": 1, "preview_only": True, "code_version": self.version,
+        manifest = {"schema": 2, "preview_only": True, "code_version": self.version,
                     "review_baseline": BASELINE, "baseline_available": self.baseline_available,
                     "changes_since_baseline": self.baseline_changes,
                     "production_code_sha256": self.code_hashes, "tool_sha256": digest(Path(__file__)),
+                    "observation_tool_sha256": digest(Path(__file__).with_name('output_observation.py')),
                     "fixed_clock_utc": "2026-10-12T00:00:00Z", "font": {"path": str(self.font), "sha256": digest(self.font)},
                     "environment": {"python": sys.version, "platform": platform.platform(), "pillow": Image.__version__},
                     "datasets": self.datasets,
                     "input_sha256": self.inputs, "inputs_unchanged": True, "network": "blocked", "qq_delivery": "未测",
                     "scope": "selected subset" if self.only else "all registered families and representative states",
                     "samples": self.rows}
+        manifest['observation'] = self.observation.mode if self.observation else 'disabled'
+        manifest['unexecuted_families'] = sorted(self.expected_families - present)
+        manifest['packaged_fonts'] = [{'path': str(p.relative_to(ROOT)), 'sha256': digest(p)}
+                                     for p in sorted((ROOT/'src/ournotes_bot/rendering/assets').glob('*.ttf'))]
         self.write_json("manifest.json", manifest)
         benchmark = {"scope": "基础离线记录；非线上性能，非稳定p95", "sample_count": len(self.rows),
                      "environment": manifest["environment"], "font": manifest["font"],
@@ -279,7 +308,7 @@ def export_cases(g):
                        {"type": "long", "node": [{"t": 10560, "pos": 6, "size": 6}, {"t": 11520, "pos": 12, "size": 6}]}]}
     with ExitStack() as stack:
         stack.enter_context(patch.object(q, "load_chart_data", return_value=ChartData(score, "haneoka", cache_state="fresh")))
-        for family, command in (("song-list", f"/查曲 {song.id}"), ("member-list", "/查卡 SSR"), ("member-detail", f"/查卡 {card.id}"),
+        for family, command in (("song-detail", f"/查曲 {song.id}"), ("member-list", "/查卡 SSR"), ("member-detail", f"/查卡 {card.id}"),
                                 ("snap-list", "/查SNAP EX"), ("snap-detail", f"/查支援卡 {support.id}")):
             g.sample(family, "normal", command, lambda command=command: prepare(command), route="_prepare_reply → resolve_command → _render_prepared → _image_from_result")
         for family, base, support_mode in (("member", card, False), ("snap", support, True)):
@@ -296,7 +325,7 @@ def export_cases(g):
             g.sample(family+"-detail", "long-stale", "捕获结果夹具：长名称/完整技能/旧缓存", lambda result=result: render(result), synthetic=("卡名", "技能附加条件", "旧缓存状态"), ids=[base.id])
             result = card_result([base, replace(base, id=900002)], support_mode, label="角色="+"长条件"*30)
             g.sample(family+"-list", "long-filter", "捕获结果夹具：长筛选条件", lambda result=result: render(result), synthetic=("查询条件", "复制卡ID"))
-            for count in (16, 17, 30, 31):
+            for count in (1, 16, 17, 30, 31, 32, 64):
                 rows = tuple(replace(base, id=900000+i, rarity=(2,3,4,10 if support_mode else 20)[i%4], card_type=i%5+1) for i in range(count))
                 for page in range(1, (count+15)//16+1):
                     result = card_result(rows, support_mode, page=page)
@@ -313,7 +342,7 @@ def export_cases(g):
         multiple = replace(card, skills=card.skills + (Skill("liveSkill", "合成第二效果", "合成效果：用于验证同类多个技能完整保留。"),))
         g.sample("member-detail", "multiple-effects", "捕获结果夹具：同类多技能", lambda: render(card_result([multiple], mode="detail")), synthetic=("第二演出技能",))
         g.sample("snap-list", "multi-character", "/查SNAP 灯 爱音", lambda: prepare("/查SNAP 灯 爱音"))
-        for count in (4, 16, 17, 30, 31):
+        for count in (1, 4, 16, 17, 30, 31, 32, 64):
             rows = tuple(replace(song, id=900000+i, title=f"合成歌曲 {i+1}", localized={}) for i in range(count))
             for page in range(1, (count+15)//16+1):
                 result = song_result(rows, page)
@@ -356,9 +385,27 @@ def export_cases(g):
         g.sample("easter-947","normal","/查卡 947",lambda: prepare("/查卡 947"),source="仓库内固定彩蛋JPEG；不经过重编码",route="_prepare_reply → _easter_egg_reply")
         with patch.object(q,"files",side_effect=FileNotFoundError("controlled missing egg")):
             g.sample("easter-947","missing","/查卡 947",lambda: prepare("/查卡 947"),expected="text",synthetic=("彩蛋文件缺失",),route="_easter_egg_reply读取失败 → 文字")
+    export_info(g, repo)
     export_cutoffs(g, repo)
     if g.cache:
         export_cached(g, parser)
+
+
+def export_info(g, repo):
+    from ournotes_bot.query.contracts.info import InfoAnswer, InfoRow, InfoView, info_text
+    from ournotes_bot.commands import CommandResult
+    for family, presentation in (('activity','activity'), ('gacha','gacha'), ('character','character')):
+        for count in (1,17,32,64):
+            rows = tuple(InfoRow(f'合成资料 {i+1}', (f'条目 {i+1}：中文と日本語 / English，未知状态保持。',),
+                                command=f'/查角色 {i+1}') for i in range(count))
+            view = InfoView('固定布局边界', rows=rows, presentation=presentation,
+                            footer=('合成夹具；不代表当前游戏资料。',))
+            answer = InfoAnswer(info_text((view,)), views=(view,))
+            result = CommandResult(('activity' if family=='activity' else 'info','',1),
+                                   **{('activity' if family=='activity' else 'info'): answer})
+            g.sample(family, str(count), '捕获信息视图边界',
+                     lambda result=result: g.qq._render_prepared(answer.text,result,repo,'zh'),
+                     synthetic=('资料内容','条目数'), ids=list(range(count)), route='捕获 InfoAnswer → 真实 QQ 绘图分发')
 
 
 def export_cached(g, parser):
@@ -381,6 +428,7 @@ def export_cached(g, parser):
         return g.read(path)["score"]
     with patch.object(g.qq,"load_chart_score",side_effect=chart):
         for family, command in (("song-list","/查曲 MyGO"),("chart","/查谱面 100001 EXPERT"),
+                                ("song-detail","/查曲 100001"),
                                 ("member-list","/查卡 立希"),("member-detail","/查卡 51"),
                                 ("member-art","/查卡面 51"),("snap-list","/查支援卡 立希"),
                                 ("snap-detail","/查支援卡 51"),("snap-art","/查支援卡面 51")):
@@ -447,11 +495,13 @@ def main():
     parser.add_argument("--game-assets-dir", type=Path, help="read-only hash-addressed original note/icon cache")
     parser.add_argument("--font", type=Path, help="explicit CJK font; its hash is recorded, never copied")
     parser.add_argument("--only", action="append", default=[], help="family or exact case ID; omit for complete gallery")
+    parser.add_argument('--observe', choices=('visual','timing'), help='opt-in canvas/phase evidence; timing never saves raw canvases')
+    parser.add_argument('--benchmark-runs', type=int, choices=(3,5), help='each selected case in a fresh child process; aggregate medians and ranges')
     args = parser.parse_args()
     output = args.output.resolve()
     cache = args.cache_dir.resolve() if args.cache_dir else None
     guard_paths(output, [ROOT / "tests/fixtures", ROOT / "docs", ROOT / "src", *([cache] if cache else [])])
-    os.environ.update(QQ_APP_ID="", QQ_APP_SECRET="", AI_API_KEY="")
+    os.environ.update(QQ_APP_ID="", QQ_APP_SECRET="", AI_API_KEY="", MOENOTES_OPEN_SECRET="", BDON_OPENPLATFORM="")
     def offline(event, arguments):
         if event in {"socket.connect", "socket.connect_ex", "socket.getaddrinfo", "socket.sendto"}:
             raise RuntimeError("output gallery network is blocked")
@@ -465,24 +515,41 @@ def main():
         parser.error("a usable CJK font is required")
     for folder in ("images","thumbnails","texts","isolated"):
         (output / folder).mkdir(parents=True,exist_ok=True)
-    g = Gallery(output,args.only,cache,font)
+    g = Gallery(output,args.only,cache,font,args.observe)
+    g.list_only = bool(args.benchmark_runs)
+    if g.observation:
+        g.asset = g.observation.wrap(g.asset, 'assets')
     logging.basicConfig(level=logging.ERROR)
     with ExitStack() as stack:
         stack.enter_context(patch.object(visuals,"FONT_PATHS",[str(font)]))
         stack.enter_context(patch.object(visuals,"_asset",side_effect=g.asset))
+        original_asset = qq._visual_asset
+        def tracked_asset(url, size):
+            image = original_asset(url, size)
+            if image is None and url: g.missing.add(url)
+            return image
+        stack.enter_context(patch.object(qq,'_visual_asset',side_effect=tracked_asset))
         stack.enter_context(patch("ournotes_bot.rendering.member_list_visuals.get_snapshot",return_value=None))
         stack.enter_context(patch.object(visuals,"runtime_data_dir",return_value=output/"isolated"))
         from ournotes_bot.sources.haneoka import game_assets
         def offline_game_asset(name, cache_dir):
-            if args.game_assets_dir is None:return None
+            if args.game_assets_dir is None:
+                g.missing.add('game:'+name)
+                return None
             spec=game_assets.MANIFEST.get(name)
             if spec is None:return None
             path=args.game_assets_dir / (spec['sha256']+Path(name).suffix)
-            if not path.is_file():return None
+            if not path.is_file():
+                g.missing.add('game:'+name)
+                return None
             raw=path.read_bytes()
+            g.inputs[str(path)] = hashlib.sha256(raw).hexdigest()
+            if hashlib.sha256(raw).hexdigest()!=spec['sha256']:g.missing.add('invalid-game:'+name)
             return raw if hashlib.sha256(raw).hexdigest()==spec['sha256'] else None
         stack.enter_context(patch.object(game_assets,'asset_bytes',side_effect=offline_game_asset))
         stack.enter_context(patch("time.time",return_value=FIXED_TIME))
+        if g.observation:
+            g.observation.install(stack)
         g.encoder = visuals._bytes
         stack.enter_context(patch.object(visuals,"_bytes",side_effect=g.encode))
         for module,names in ((qq,("render_song_list","render_chart","render_card_list","render_card","render_support_card_list","render_support_card")),
@@ -492,6 +559,35 @@ def main():
         export_cases(g)
     if args.only and not g.rows:
         parser.error("--only matched no cases")
+    if args.benchmark_runs:
+        samples = []
+        for case in g.rows:
+            runs = []
+            for number in range(args.benchmark_runs):
+                target = output / 'runs' / case['id'] / str(number+1)
+                command = [sys.executable,'-B',str(Path(__file__).resolve()),'--only',case['id'],
+                           '--observe','timing','--font',str(font),'--output',str(target)]
+                for option,value in (('--cache-dir',cache),('--game-assets-dir',args.game_assets_dir)):
+                    if value: command += [option,str(value)]
+                child = subprocess.run(command, capture_output=True, text=True, encoding='utf-8', timeout=300,
+                                       env={**os.environ,'PYTHONIOENCODING':'utf-8'})
+                if child.returncode:
+                    raise RuntimeError(f"benchmark {case['id']} failed: {child.stdout}\n{child.stderr}")
+                sample = json.loads((target/'manifest.json').read_bytes())['samples'][0]
+                runs.append(sample)
+            def summary(values):
+                return {'median': statistics.median(values),'min':min(values),'max':max(values)}
+            samples.append({'id':case['id'],'runs':len(runs),
+                            'seconds':summary([r['seconds'] for r in runs]),
+                            'peak_memory_bytes':summary([r['observation']['process_peak_memory']['bytes'] for r in runs]),
+                            'stages_seconds':{k:summary([r['observation']['stages_seconds'][k] for r in runs])
+                                              for k in runs[0]['observation']['stages_seconds']},
+                            'output_sha256':[[f.get('sha256') for f in r['files']] for r in runs]})
+            print('benchmark: '+case['id'],flush=True)
+        g.write_json('benchmark.json',{'code_version':g.version,'runs_per_case':args.benchmark_runs,
+                     'scope':'isolated processes; offline disk assets; no pixel capture; not production p95',
+                     'samples':samples})
+        return 0
     g.finish()
     print(json.dumps({"output":str(output),"cases":len(g.rows),"failed":g.errors},ensure_ascii=False))
     return bool(g.errors)
