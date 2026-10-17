@@ -10,7 +10,7 @@ from dataclasses import dataclass
 import re
 
 from ..data import SupportCard, localized_text, normalize, character_identity
-from .haneoka_theme import Canvas, BG, INK, MUTED, frame, lines, prepare_assets
+from .haneoka_theme import Canvas, BG, INK, MUTED, frame, font, lines, prepare_assets
 from .readable_pages import render_parts
 
 RARITIES = {4:0, 20:1, 10:1, 3:2, 2:3}
@@ -21,8 +21,7 @@ LABELS = {'leaderSkill':('队','#65509a'), 'liveSkill':('演','#237967'),
 
 def person_key(card):
     people = card.catalog.get('people', [])
-    # Multi-member memories have one canonical placement; query identity never
-    # changes the tile content or the related-character portraits.
+    # Use source character order, independent of the query label.
     return min(((p.get('band') or 999, p.get('order') if p.get('order') is not None else 999, p['id']) for p in people),
                default=(999,999,card.character))
 
@@ -134,23 +133,178 @@ def card_face(canvas,card,x,y,w,h,load,*,level=None,awake=None):
 @dataclass(frozen=True)
 class CardRow:
     cards: tuple
-    person: dict
+    headings: tuple
     group_start: bool
     offsets: tuple
     texts: tuple
     height: int
 
 
+def group_headings(people, locale, fallback):
+    """Measure the complete identity gutter, including on continuation pages."""
+    def name(person):
+        names = person.get('name', {})
+        return names.get(locale) or next((value for value in names.values() if value), fallback)
+    if len(people) == 1:
+        person = people[0]
+        wrapped = lines(name(person), 208, 34, True)
+        return ((person, 134, 0, 96, 34, wrapped),), 152 + len(wrapped)*44
+    headings = []
+    top = 0
+    for start in range(0, len(people), 2):
+        pair = people[start:start+2]
+        wrapped = tuple(lines(name(p), 104, 26, True) for p in pair)
+        for col, (person, text_lines) in enumerate(zip(pair, wrapped)):
+            headings.append((person, 78+col*112, top, 80, 26, text_lines))
+        top += 120 + max(map(len, wrapped))*38 + 16
+    return tuple(headings), top
+
+
+def _memory_headings(people, locale, fallback):
+    """Measure complete names beneath compact portraits, including long aliases."""
+    def name(person):
+        names = person.get('name', {})
+        return names.get(locale) or next((v for v in names.values() if v), fallback)
+    if len(people) == 1:
+        wrapped = tuple((line, 26) for line in lines(name(people[0]), 208, 26, True))
+        return ((people[0], 136, 0, 80, wrapped),), 132 + (len(wrapped)-1)*34
+    texts = []
+    for person in people:
+        wrapped = []
+        for part in name(person).split(' / '):
+            size = max(12, min(18, int(18*72/max(1, font(18, True, part.isascii()).getlength(part)))))
+            wrapped.extend((line, size) for line in lines(part, 72, size, True))
+        texts.append(tuple(wrapped))
+    headings, top = [], 0
+    for start in range(0, len(people), 3):
+        stop = min(start+3, len(people))
+        count = stop-start
+        pitch = 96 if count == 2 else 84
+        for col, i in enumerate(range(start, stop)):
+            headings.append((people[i], 136-(count-1)*pitch//2+col*pitch, top, 56, texts[i]))
+        top += 80 + 22*max(len(text) for text in texts[start:stop])
+    return tuple(headings), top
+
+
+def _render_memory_list(cards, query, locale, load):
+    """Merged character cells, colour rows and descending rarity within each row."""
+    groups = defaultdict(list)
+    group_people = {}
+    for card in cards:
+        related = card.catalog.get('people', [])
+        if related:
+            related = tuple(sorted(related, key=lambda p: (p.get('band') or 999, p['id'])))
+            key = (len(related) == 1, 0, tuple((p.get('band') or 999, p['id']) for p in related))
+        else:
+            names = sorted(set(card.characters or (card.character,)), key=lambda n: normalize(character_identity(n)))
+            related = tuple({'name': {locale: name}} for name in names)
+            key = (len(related) == 1, 1, tuple(normalize(character_identity(n)) for n in names))
+        groups[key].append(card)
+        group_people[key] = related
+    rows, records, headings = [], [], {}
+    for key, group in sorted(groups.items()):
+        headings[key] = _memory_headings(group_people[key], locale, group[0].character)
+        attributes = defaultdict(list)
+        for card in sorted(group, key=lambda c: (c.card_type, RARITIES.get(c.rarity, 9), c.id)):
+            attributes[card.card_type].append(card)
+        for same_colour in attributes.values():
+            for start in range(0, len(same_colour), 8):
+                batch = same_colour[start:start+8]
+                texts = tuple(tuple((label, color, lines(value.replace(' / 上限', '\n上限'), 268, 24))
+                                    for label, color, value in summaries(card, locale)) for card in batch)
+                text_height = max(sum(len(wrapped)*30 for _, _, wrapped in text)+8*(len(text)-1) for text in texts)
+                items = tuple((len(records)+i, card) for i, card in enumerate(batch))
+                records.extend(batch)
+                # Every complete row can start a page and must fit its full identity.
+                rows.append((key, items, texts, max(236+text_height, headings[key][1]+32)))
+    records = tuple(records)
+    width = 260 + max(len(row[1]) for row in rows)*348
+    title = lines(ui_label('留影卡列表', locale), width-72, 44, True)
+    subtitle = lines(f'{query or ui_label("全部", locale)} · {len(records)} '+ui_label('张', locale)
+                     +' · '+ui_label('技能', locale)+' Lv.5', width-76, 25)
+    head = 140+(len(title)-1)*56+(len(subtitle)-1)*34
+    notices = []
+    if any(c.catalog.get('detail_stale') for c in cards):
+        notices.append(ui_label('部分详情使用上次有效缓存。', locale))
+    if any(not c.catalog.get('detail_loaded') for c in cards):
+        notices.append(ui_label('部分技能资料未获取，未知分类不会当作无技能。', locale))
+    footer_lines = lines(' '.join(notices), width-76, 23) if notices else ()
+    detail_label = ui_label('按 ID 查详情', locale)
+    # Keep translated footer labels separate even on a single-column page.
+    position_width = font(23).getlength(ui_label('展示位置', locale)+f' {len(records)}–{len(records)} / {len(records)}')
+    separate_footer = position_width+font(23).getlength(detail_label)+24 > width-76
+    footer_h = 76+34*separate_footer+32*len(footer_lines)
+    assets = {}
+    def cached(url, size):
+        return assets[url, size]
+    requests = {(card.thumbnail_url, (288, 162)) for card in cards}
+    requests.update((card.catalog['attribute_icon'], (40, 40)) for card in cards if card.catalog.get('attribute_icon'))
+    requests.update((person['face'], (side, side)) for entries, _ in headings.values()
+                    for person, _, _, side, _ in entries if person.get('face'))
+    def paint(start, stop, height):
+        c = Canvas(width, height)
+        for i, line in enumerate(title):
+            c.text(36, 48+i*56, line, 44, bold=True)
+        for i, line in enumerate(subtitle):
+            c.text(38, 101+(len(title)-1)*56+i*34, line, 25, MUTED)
+        y, index = head, start
+        while index < stop:
+            key = rows[index][0]
+            end = index+1
+            while end < stop and rows[end][0] == key:
+                end += 1
+            group_height = sum(row[3] for row in rows[index:end])
+            if index != start:
+                c.line(32, y, width-32, '#e1dce7')
+            entries, heading_height = headings[key]
+            top = y+(group_height-heading_height)//2
+            for person, cx, offset, side, wrapped in entries:
+                if person.get('face'):
+                    c.paste(cached(person['face'], (side, side)), cx-side//2, top+offset, side, side, True, radius=side//2)
+                for n, (line, size) in enumerate(wrapped):
+                    c.text(cx, top+offset+(108 if side == 80 else 76)+n*(34 if side == 80 else 22),
+                           line, size, bold=True, align='center')
+            for _, items, texts, row_height in rows[index:end]:
+                for col, ((_, card), text) in enumerate(zip(items, texts)):
+                    x = 260+col*348
+                    card_face(c, card, x, y+14, 288, 162, cached)
+                    c.text(x, y+196, f'ID {card.id}', 24, MUTED)
+                    cy = y+230
+                    for label, color, wrapped in text:
+                        c.text(x, cy, ui_label(label, locale), 24, color, True)
+                        for n, line in enumerate(wrapped):
+                            c.text(x+30, cy+n*30, line, 24)
+                        cy += len(wrapped)*30+8
+                y += row_height
+            index = end
+        c.line(32, y, width-32, '#e1dce7')
+        c.text(38, y+38, ui_label('展示位置', locale)+f' {rows[start][1][0][0]+1}–{rows[stop-1][1][-1][0]+1} / {len(records)}', 23, MUTED)
+        c.text(width-38, y+38+34*separate_footer, detail_label, 23, MUTED, align='right')
+        for i, line in enumerate(footer_lines):
+            c.text(38, y+74+34*separate_footer+i*32, line, 23, MUTED)
+        return c.image
+    try:
+        rarities = {2: 'R', 3: 'SR', 4: 'SSR', 20: 'BD', 10: 'EX'}
+        badges = {f'RarityIconCenter_{rarities[c.rarity]}.png' for c in cards if c.rarity in rarities}
+        assets.update(prepare_assets(requests, load, badges))
+        parts = render_parts(tuple(row[3] for row in rows), width, head+footer_h, paint)
+        ranges = tuple((rows[p.start][1][0][0], rows[p.stop-1][1][-1][0]+1) for p in parts)
+        return parts, records, ranges
+    finally:
+        for asset in assets.values():
+            if asset is not None:
+                asset.close()
+
+
 def render_list(cards,query,locale='zh',*,load,characters=(),bands=()):
     cards=ordered(cards)
     if not cards:return (),cards,()
     support=isinstance(cards[0],SupportCard)
+    if support:
+        return _render_memory_list(cards, query, locale, load)
     # Approved member-list growth V3 and SNAP-list V4, rendered at 2x scale.
     # The left person gutter and each attribute's own row are intentional.
     pitch,artw,arth,textw=(432,288,162,280) if support else (256,192,192,196)
-    if support:
-        portrait_columns=(max(len(c.catalog.get('people',[])) for c in cards)+2)//3
-        pitch=max(pitch,artw+20+portrait_columns*48+28)
     left=260 if support else 264
     durations=set();targets=set()
     for card in cards:
@@ -169,9 +323,20 @@ def render_list(cards,query,locale='zh',*,load,characters=(),bands=()):
     requested_bands={normalize(name) for name in bands}
     selected_bands={ident for card in cards for ident,name in zip(card.catalog.get('band_ids',()),card.catalog.get('bands',())) if normalize(name) in requested_bands}
     groups=defaultdict(list)
+    group_people={}
     for card in cards:
         related=card.catalog.get('people',[])
-        if related:
+        if support:
+            if related:
+                related=tuple(sorted(related,key=lambda p:(p.get('band') or 999,p.get('order') if p.get('order') is not None else 999,p['id'])))
+                key=(0,tuple((p.get('band') or 999,p.get('order') if p.get('order') is not None else 999,p['id']) for p in related))
+            else:
+                names=sorted(set(card.characters or (card.character,)),key=lambda n:normalize(character_identity(n)))
+                related=tuple({'name':{locale:name}} for name in names)
+                key=(1,tuple(normalize(character_identity(name)) for name in names))
+            groups[key].append(card)
+            group_people[key]=related
+        elif related:
             for p in related:
                 if (not selected or p['id'] in selected) and (selected or not selected_bands or p.get('band') in selected_bands):
                     key=(p.get('band') or 999,p.get('order') if p.get('order') is not None else 999,p['id'])
@@ -180,7 +345,8 @@ def render_list(cards,query,locale='zh',*,load,characters=(),bands=()):
             groups[person_key(card)].append(card)
     rows=[];records=[]
     for key,group in sorted(groups.items()):
-        person=people.get(key[2],{'name':{locale:group[0].character}})
+        related=group_people[key] if support else (people.get(key[2],{'name':{locale:group[0].character}}),)
+        headings,heading_height=group_headings(related,locale,group[0].character)
         attributes=defaultdict(list)
         for card in sorted(group,key=lambda c:(c.card_type,RARITIES.get(c.rarity,9),c.id)):
             attributes[card.card_type].append(card)
@@ -193,7 +359,9 @@ def render_list(cards,query,locale='zh',*,load,characters=(),bands=()):
                 texts=tuple(tuple((label,color,lines(text,textw,32)) for label,color,text in summaries(c,locale,shared_duration=duration,shared_target=target)) for c in batch)
                 slots=max(map(len,texts)); heights=[max((len(t[i][2]) if i<len(t) else 0 for t in texts),default=1)*40 for i in range(slots)]
                 offsets=tuple(sum(heights[:i]) for i in range(slots))
-                rows.append(CardRow(items,person,first,offsets,texts,(224 if support else 254)+sum(heights)+36+(36 if first else 0)))
+                content_height=(224 if support else 254)+sum(heights)+36
+                if support:content_height=max(content_height,heading_height+16)
+                rows.append(CardRow(items,headings,first,offsets,texts,content_height+(36 if first else 0)))
                 first=False
     unique_count=len(cards)
     cards=tuple(records)
@@ -225,32 +393,25 @@ def render_list(cards,query,locale='zh',*,load,characters=(),bands=()):
         requests.add((card.thumbnail_url,(artw,arth)))
         if card.catalog.get('attribute_icon'):
             side=max(18,min(40,artw//4));requests.add((card.catalog['attribute_icon'],(side,side)))
-        for person in card.catalog.get('people',[]):
-            if person.get('face'):
-                requests.add((person['face'],(96,96)))
-                requests.add((person['face'],(44,44)))
+    for row in rows:
+        for person,_,_,side,_,_ in row.headings:
+            if person.get('face'):requests.add((person['face'],(side,side)))
     def paint(start,stop,height):
         c=Canvas(width,height)
         for n,line in enumerate(title_lines):c.text(56,72+n*96,line,80,bold=True)
         c.paragraph(56,176+title_extra,subtitle,width-112,42,52,color=MUTED)
         y=head
         for row_index,row in enumerate(rows[start:stop],start):
-            person=row.person
             if row.group_start:
                 if row_index!=start:c.line(48,y,width-48,'#e1dce7')
                 y+=36
             if row.group_start or row_index==start:
-                if person.get('face'):c.paste(cached(person['face'],(96,96)),86,y+8,96,96,True,radius=48)
-                name=person.get('name',{}).get(locale) or row.cards[0][1].character
-                for n,line in enumerate(lines(name,208,34,True)):
-                    c.text(134,y+152+n*44,line,34,bold=True,align='center')
+                for person,cx,top,side,size,wrapped in row.headings:
+                    if person.get('face'):c.paste(cached(person['face'],(side,side)),cx-side//2,y+top+8,side,side,True,radius=side//2)
+                    for n,line in enumerate(wrapped):
+                        c.text(cx,y+top+(152 if side==96 else 120)+n*(44 if side==96 else 38),line,size,bold=True,align='center')
             for col,((index,card),text) in enumerate(zip(row.cards,row.texts)):
                 x=left+col*pitch;card_face(c,card,x,y+8,artw,arth,cached)
-                if support and len(card.catalog.get('people',[]))>1:
-                    related=sorted(card.catalog['people'],key=lambda p:(p.get('band') or 999,p.get('order') if p.get('order') is not None else 999,p['id']))
-                    portrait_rows=min(3,len(related));py=y+8+(arth-(portrait_rows*48-4))//2
-                    for j,p in enumerate(related):
-                        if p.get('face'):c.paste(cached(p['face'],(44,44)),x+artw+20+(j//3)*48,py+(j%3)*48,44,44,True,radius=22)
                 c.text(x,y+(202 if support else 230),f'ID {card.id}',30 if support else 32,MUTED)
                 base=y+(224 if support else 254)
                 for i,(label,color,wrapped) in enumerate(text):
