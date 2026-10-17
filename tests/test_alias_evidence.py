@@ -1,5 +1,6 @@
 """Audit reviewed aliases against a versioned public identity snapshot, offline."""
 import json
+import hashlib
 import os
 import tempfile
 import unittest
@@ -24,6 +25,9 @@ class AliasEvidenceTests(unittest.TestCase):
         saved = json.loads((ROOT / 'tests/fixtures/haneoka_catalog.json').read_bytes())['snapshot']
         self.repo.songs, self.repo.cards, self.repo.support_cards = validate(saved, 1100)[0]
         # Synthetic cards bind all 25 real roster identities; no claims about owned/live cards.
+        # This fixture tests member identities only; do not mix in the original
+        # SNAP roster with differently formatted display names.
+        self.repo.support_cards = []
         template = self.repo.cards[0]
         self.repo.cards = [replace(template, id=10000+int(k), title='身份夹具'+k,
             character=r['characterName'][0].replace(' ', ''),
@@ -38,7 +42,7 @@ class AliasEvidenceTests(unittest.TestCase):
 
     def test_evidence_runtime_bijection_and_grounding(self):
         _validate_aliases(self.words)
-        tracked = {(e['kind'],e['alias']):e['target'] for e in self.entries if e['status'] in ('accepted','legacy_pending')}
+        tracked = {(e['kind'],e['alias']):e['target'] for e in self.entries if e['status'] in ('accepted','legacy_pending','maintainer_import')}
         runtime = {(k,a):t for k,v in self.words.items() if isinstance(v,dict) for a,t in v.items()}
         self.assertEqual(tracked,runtime)
         for e in self.entries:
@@ -54,7 +58,7 @@ class AliasEvidenceTests(unittest.TestCase):
     def test_each_added_alias_direct_local_and_discovery(self):
         with patch.object(self.parser,'_request',side_effect=AssertionError('model called')), patch.object(self.parser._quota,'reserve',side_effect=AssertionError('quota used')):
             for e in self.entries:
-                if e['status']!='accepted': continue
+                if e['status'] not in ('accepted','maintainer_import'): continue
                 a=e['alias']; song=e['kind'] in ('song','band')
                 with self.subTest(alias=a):
                     self.assertIn(a,known_alias_names(self.repo))
@@ -69,3 +73,38 @@ class AliasEvidenceTests(unittest.TestCase):
         self.assertNotEqual(resolve_entity('song','100007',self.repo),resolve_entity('song','100091',self.repo))
         self.repo.songs=[]
         self.assertIsNone(resolve_entity('song','まよいうた',self.repo))
+
+    def test_imported_glossary_snapshot_and_character_queries(self):
+        folder = ROOT / 'docs/research/feed-glossary'
+        audit = json.loads((folder / 'import-audit.json').read_bytes())
+        for name, info in audit['files'].items():
+            self.assertEqual(hashlib.sha256((folder / name).read_bytes()).hexdigest(), info['sha256'])
+        lines = (folder / 'glossary.txt').read_text(encoding='utf-8-sig').splitlines()
+        source_rows = [(i, *line.split('=', 1)) for i, line in enumerate(lines, 1)
+                       if line.strip() and not line.startswith('#')]
+        self.assertEqual(source_rows, [(r['line'], r['source'], r['translation']) for r in audit['entries']])
+        imports = {e['alias']: e for e in self.entries if e['status'] == 'maintainer_import'}
+        with patch.object(self.parser, '_request', side_effect=AssertionError('model called')), patch.object(self.parser._quota, 'reserve', side_effect=AssertionError('quota used')):
+            for row in audit['entries']:
+                if row['category'] != 'character':
+                    self.assertEqual(row['status'], 'reference_only')
+                    continue
+                expected = {c.id for c in self.repo.cards if c.character == row['target']}
+                self.assertEqual(len(expected), 1)
+                for term in row['terms']:
+                    name = term['name']
+                    with self.subTest(name=name, line=row['line']):
+                        if term['status'] == 'deferred_single_character':
+                            self.assertEqual(name, '枣')
+                            self.assertNotIn(name, self.words['character'])
+                            continue
+                        if term['status'] == 'imported':
+                            entry = imports[name]
+                            self.assertEqual(entry['source_line'], row['line'])
+                            self.assertEqual(entry['target'], row['target'])
+                            self.assertEqual(entry['sources'], ['docs/research/feed-glossary/glossary.txt'])
+                        direct = resolve_command('/查卡 ' + name, self.repo)
+                        self.assertEqual({c.id for c in direct.cards}, expected)
+                        answer = self.parser.answer_with_outcome('/问 ' + name + '的成员卡有哪些', self.repo)
+                        self.assertEqual(answer.code.value, 'success', answer.text)
+                        self.assertEqual({c.id for c in answer.result.cards}, expected)

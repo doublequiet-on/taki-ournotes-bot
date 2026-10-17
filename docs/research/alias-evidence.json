@@ -202,17 +202,6 @@
     },
     {
       "kind": "character",
-      "alias": "そよりん",
-      "target": "长崎爽世",
-      "status": "legacy_pending",
-      "language": "zh",
-      "evidence_kind": "legacy",
-      "sources": [],
-      "accessed": "2026-10-17",
-      "reason": "已有映射保留；本轮未补齐独立使用证据，不视为新审核通过。"
-    },
-    {
-      "kind": "character",
       "alias": "uiko",
       "target": "三角初华",
       "status": "legacy_pending",
@@ -302,17 +291,6 @@
     {
       "kind": "character",
       "alias": "喵姆亲",
-      "target": "祐天寺若麦",
-      "status": "legacy_pending",
-      "language": "zh",
-      "evidence_kind": "legacy",
-      "sources": [],
-      "accessed": "2026-10-17",
-      "reason": "已有映射保留；本轮未补齐独立使用证据，不视为新审核通过。"
-    },
-    {
-      "kind": "character",
-      "alias": "喵梦亲",
       "target": "祐天寺若麦",
       "status": "legacy_pending",
       "language": "zh",
@@ -1003,6 +981,118 @@
       ],
       "accessed": "2026-10-17",
       "reason": "类型条件，可能命中多张；不绑定某张 SNAP。"
+    },
+    {
+      "kind": "character",
+      "alias": "りっきー",
+      "target": "椎名立希",
+      "status": "maintainer_import",
+      "language": "ja/zh",
+      "evidence_kind": "maintainer_glossary",
+      "sources": [
+        "docs/research/feed-glossary/glossary.txt"
+      ],
+      "source_line": 33,
+      "accessed": "2026-10-17",
+      "reason": "用户指定复用翻译机器人维护的译名；绑定现有角色目录，不冒充本轮重新核实的官方译名。"
+    },
+    {
+      "kind": "character",
+      "alias": "あのちゃん",
+      "target": "千早愛音",
+      "status": "maintainer_import",
+      "language": "ja/zh",
+      "evidence_kind": "maintainer_glossary",
+      "sources": [
+        "docs/research/feed-glossary/glossary.txt"
+      ],
+      "source_line": 34,
+      "accessed": "2026-10-17",
+      "reason": "用户指定复用翻译机器人维护的译名；绑定现有角色目录，不冒充本轮重新核实的官方译名。"
+    },
+    {
+      "kind": "character",
+      "alias": "小爱",
+      "target": "千早愛音",
+      "status": "maintainer_import",
+      "language": "ja/zh",
+      "evidence_kind": "maintainer_glossary",
+      "sources": [
+        "docs/research/feed-glossary/glossary.txt"
+      ],
+      "source_line": 34,
+      "accessed": "2026-10-17",
+      "reason": "用户指定复用翻译机器人维护的译名；绑定现有角色目录，不冒充本轮重新核实的官方译名。"
+    },
+    {
+      "kind": "character",
+      "alias": "にゃむち",
+      "target": "アモーリス/祐天寺にゃむ",
+      "status": "maintainer_import",
+      "language": "ja/zh",
+      "evidence_kind": "maintainer_glossary",
+      "sources": [
+        "docs/research/feed-glossary/glossary.txt"
+      ],
+      "source_line": 50,
+      "accessed": "2026-10-17",
+      "reason": "用户指定复用翻译机器人维护的译名；绑定现有角色目录，不冒充本轮重新核实的官方译名。"
+    },
+    {
+      "kind": "character",
+      "alias": "喵梦亲",
+      "target": "アモーリス/祐天寺にゃむ",
+      "status": "maintainer_import",
+      "language": "ja/zh",
+      "evidence_kind": "maintainer_glossary",
+      "sources": [
+        "docs/research/feed-glossary/glossary.txt"
+      ],
+      "source_line": 50,
+      "accessed": "2026-10-17",
+      "reason": "用户指定复用翻译机器人维护的译名；绑定现有角色目录，不冒充本轮重新核实的官方译名。"
+    },
+    {
+      "kind": "character",
+      "alias": "若麦",
+      "target": "アモーリス/祐天寺にゃむ",
+      "status": "maintainer_import",
+      "language": "ja/zh",
+      "evidence_kind": "maintainer_glossary",
+      "sources": [
+        "docs/research/feed-glossary/glossary.txt"
+      ],
+      "source_line": 51,
+      "accessed": "2026-10-17",
+      "reason": "用户指定复用翻译机器人维护的译名；绑定现有角色目录，不冒充本轮重新核实的官方译名。"
+    },
+    {
+      "kind": "character",
+      "alias": "寧月",
+      "target": "四宮寧月",
+      "status": "maintainer_import",
+      "language": "ja/zh",
+      "evidence_kind": "maintainer_glossary",
+      "sources": [
+        "docs/research/feed-glossary/glossary.txt"
+      ],
+      "source_line": 100,
+      "accessed": "2026-10-17",
+      "reason": "用户指定复用翻译机器人维护的译名；绑定现有角色目录，不冒充本轮重新核实的官方译名。"
+    },
+    {
+      "kind": "character",
+      "alias": "そよりん",
+      "target": "長崎そよ",
+      "status": "maintainer_import",
+      "language": "ja/zh",
+      "evidence_kind": "maintainer_glossary",
+      "sources": [
+        "docs/research/feed-glossary/glossary.txt"
+      ],
+      "source_line": 35,
+      "accessed": "2026-10-17",
+      "reason": "用户指定复用翻译机器人维护的译名；绑定现有角色目录，不冒充本轮重新核实的官方译名。"
     }
   ]
 }

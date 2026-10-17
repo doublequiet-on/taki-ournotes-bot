@@ -1,0 +1,1492 @@
+{
+  "schema": 1,
+  "imported_at": "2026-10-17",
+  "source_project": "our-notes-feed-bot",
+  "basis": "User requested reuse of their maintained translation glossary. Historical source claims are preserved, not newly verified.",
+  "files": {
+    "glossary.txt": {
+      "original_name": "术语表.txt",
+      "sha256": "c77aa649cb627cff84fd1faf474b992bd0bc29b88b5e3d6bfdb36db4f0c09051"
+    },
+    "gameplay-sources.md": {
+      "original_name": "术语来源-玩法-2026-09-24.md",
+      "sha256": "39c6e05403df00c011dc0d48f739a4362a7eb53037e8dfbb97950d6977685190"
+    }
+  },
+  "entries": [
+    {
+      "line": 9,
+      "source": "BanG Dream! Our Notes",
+      "translation": "BanG Dream! 交织的乐章",
+      "category": "general",
+      "terms": [],
+      "status": "reference_only"
+    },
+    {
+      "line": 10,
+      "source": "BanG Dream!Our Notes",
+      "translation": "BanG Dream! 交织的乐章",
+      "category": "general",
+      "terms": [],
+      "status": "reference_only"
+    },
+    {
+      "line": 11,
+      "source": "Our Notes",
+      "translation": "Our Notes",
+      "category": "general",
+      "terms": [],
+      "status": "reference_only"
+    },
+    {
+      "line": 12,
+      "source": "アワーノーツ",
+      "translation": "Our Notes",
+      "category": "general",
+      "terms": [],
+      "status": "reference_only"
+    },
+    {
+      "line": 13,
+      "source": "MyGO!!!!!",
+      "translation": "MyGO!!!!!",
+      "category": "general",
+      "terms": [],
+      "status": "reference_only"
+    },
+    {
+      "line": 14,
+      "source": "Ave Mujica",
+      "translation": "Ave Mujica",
+      "category": "general",
+      "terms": [],
+      "status": "reference_only"
+    },
+    {
+      "line": 15,
+      "source": "夢限大みゅーたいぷ",
+      "translation": "梦限大MewType",
+      "category": "general",
+      "terms": [],
+      "status": "reference_only"
+    },
+    {
+      "line": 16,
+      "source": "millsage",
+      "translation": "millsage",
+      "category": "general",
+      "terms": [],
+      "status": "reference_only"
+    },
+    {
+      "line": 17,
+      "source": "一家Dumb Rock!",
+      "translation": "一家Dumb Rock!",
+      "category": "general",
+      "terms": [],
+      "status": "reference_only"
+    },
+    {
+      "line": 20,
+      "source": "高松 燈",
+      "translation": "高松灯",
+      "category": "character",
+      "terms": [
+        {
+          "name": "高松 燈",
+          "status": "existing"
+        },
+        {
+          "name": "高松灯",
+          "status": "existing"
+        }
+      ],
+      "identity": "灯",
+      "target": "高松燈"
+    },
+    {
+      "line": 21,
+      "source": "高松燈",
+      "translation": "高松灯",
+      "category": "character",
+      "terms": [
+        {
+          "name": "高松燈",
+          "status": "existing"
+        },
+        {
+          "name": "高松灯",
+          "status": "existing"
+        }
+      ],
+      "identity": "灯",
+      "target": "高松燈"
+    },
+    {
+      "line": 22,
+      "source": "千早 愛音",
+      "translation": "千早爱音",
+      "category": "character",
+      "terms": [
+        {
+          "name": "千早 愛音",
+          "status": "existing"
+        },
+        {
+          "name": "千早爱音",
+          "status": "existing"
+        }
+      ],
+      "identity": "爱音",
+      "target": "千早愛音"
+    },
+    {
+      "line": 23,
+      "source": "千早愛音",
+      "translation": "千早爱音",
+      "category": "character",
+      "terms": [
+        {
+          "name": "千早愛音",
+          "status": "existing"
+        },
+        {
+          "name": "千早爱音",
+          "status": "existing"
+        }
+      ],
+      "identity": "爱音",
+      "target": "千早愛音"
+    },
+    {
+      "line": 24,
+      "source": "要 楽奈",
+      "translation": "要乐奈",
+      "category": "character",
+      "terms": [
+        {
+          "name": "要 楽奈",
+          "status": "existing"
+        },
+        {
+          "name": "要乐奈",
+          "status": "existing"
+        }
+      ],
+      "identity": "乐奈",
+      "target": "要楽奈"
+    },
+    {
+      "line": 25,
+      "source": "要楽奈",
+      "translation": "要乐奈",
+      "category": "character",
+      "terms": [
+        {
+          "name": "要楽奈",
+          "status": "existing"
+        },
+        {
+          "name": "要乐奈",
+          "status": "existing"
+        }
+      ],
+      "identity": "乐奈",
+      "target": "要楽奈"
+    },
+    {
+      "line": 26,
+      "source": "長崎 そよ",
+      "translation": "长崎爽世",
+      "category": "character",
+      "terms": [
+        {
+          "name": "長崎 そよ",
+          "status": "existing"
+        },
+        {
+          "name": "长崎爽世",
+          "status": "existing"
+        }
+      ],
+      "identity": "素世",
+      "target": "長崎そよ"
+    },
+    {
+      "line": 27,
+      "source": "長崎そよ",
+      "translation": "长崎爽世",
+      "category": "character",
+      "terms": [
+        {
+          "name": "長崎そよ",
+          "status": "existing"
+        },
+        {
+          "name": "长崎爽世",
+          "status": "existing"
+        }
+      ],
+      "identity": "素世",
+      "target": "長崎そよ"
+    },
+    {
+      "line": 28,
+      "source": "椎名 立希",
+      "translation": "椎名立希",
+      "category": "character",
+      "terms": [
+        {
+          "name": "椎名 立希",
+          "status": "existing"
+        },
+        {
+          "name": "椎名立希",
+          "status": "existing"
+        }
+      ],
+      "identity": "立希",
+      "target": "椎名立希"
+    },
+    {
+      "line": 29,
+      "source": "椎名立希",
+      "translation": "椎名立希",
+      "category": "character",
+      "terms": [
+        {
+          "name": "椎名立希",
+          "status": "existing"
+        }
+      ],
+      "identity": "立希",
+      "target": "椎名立希"
+    },
+    {
+      "line": 30,
+      "source": "愛音",
+      "translation": "爱音",
+      "category": "character",
+      "terms": [
+        {
+          "name": "愛音",
+          "status": "existing"
+        },
+        {
+          "name": "爱音",
+          "status": "existing"
+        }
+      ],
+      "identity": "爱音",
+      "target": "千早愛音"
+    },
+    {
+      "line": 31,
+      "source": "楽奈",
+      "translation": "乐奈",
+      "category": "character",
+      "terms": [
+        {
+          "name": "楽奈",
+          "status": "existing"
+        },
+        {
+          "name": "乐奈",
+          "status": "existing"
+        }
+      ],
+      "identity": "乐奈",
+      "target": "要楽奈"
+    },
+    {
+      "line": 32,
+      "source": "立希",
+      "translation": "立希",
+      "category": "character",
+      "terms": [
+        {
+          "name": "立希",
+          "status": "existing"
+        }
+      ],
+      "identity": "立希",
+      "target": "椎名立希"
+    },
+    {
+      "line": 33,
+      "source": "りっきー",
+      "translation": "立希",
+      "category": "character",
+      "terms": [
+        {
+          "name": "りっきー",
+          "status": "imported"
+        },
+        {
+          "name": "立希",
+          "status": "existing"
+        }
+      ],
+      "identity": "立希",
+      "target": "椎名立希"
+    },
+    {
+      "line": 34,
+      "source": "あのちゃん",
+      "translation": "小爱",
+      "category": "character",
+      "terms": [
+        {
+          "name": "あのちゃん",
+          "status": "imported"
+        },
+        {
+          "name": "小爱",
+          "status": "imported"
+        }
+      ],
+      "identity": "爱音",
+      "target": "千早愛音"
+    },
+    {
+      "line": 35,
+      "source": "そよりん",
+      "translation": "爽世",
+      "category": "character",
+      "terms": [
+        {
+          "name": "そよりん",
+          "status": "imported"
+        },
+        {
+          "name": "爽世",
+          "status": "existing"
+        }
+      ],
+      "identity": "素世",
+      "target": "長崎そよ"
+    },
+    {
+      "line": 38,
+      "source": "三角 初華",
+      "translation": "三角初华",
+      "category": "character",
+      "terms": [
+        {
+          "name": "三角 初華",
+          "status": "existing"
+        },
+        {
+          "name": "三角初华",
+          "status": "existing"
+        }
+      ],
+      "identity": "初华",
+      "target": "ドロリス/三角初華"
+    },
+    {
+      "line": 39,
+      "source": "三角初華",
+      "translation": "三角初华",
+      "category": "character",
+      "terms": [
+        {
+          "name": "三角初華",
+          "status": "existing"
+        },
+        {
+          "name": "三角初华",
+          "status": "existing"
+        }
+      ],
+      "identity": "初华",
+      "target": "ドロリス/三角初華"
+    },
+    {
+      "line": 40,
+      "source": "若葉 睦",
+      "translation": "若叶睦",
+      "category": "character",
+      "terms": [
+        {
+          "name": "若葉 睦",
+          "status": "existing"
+        },
+        {
+          "name": "若叶睦",
+          "status": "existing"
+        }
+      ],
+      "identity": "睦",
+      "target": "モーティス/若葉睦"
+    },
+    {
+      "line": 41,
+      "source": "若葉睦",
+      "translation": "若叶睦",
+      "category": "character",
+      "terms": [
+        {
+          "name": "若葉睦",
+          "status": "existing"
+        },
+        {
+          "name": "若叶睦",
+          "status": "existing"
+        }
+      ],
+      "identity": "睦",
+      "target": "モーティス/若葉睦"
+    },
+    {
+      "line": 42,
+      "source": "八幡 海鈴",
+      "translation": "八幡海铃",
+      "category": "character",
+      "terms": [
+        {
+          "name": "八幡 海鈴",
+          "status": "existing"
+        },
+        {
+          "name": "八幡海铃",
+          "status": "existing"
+        }
+      ],
+      "identity": "海铃",
+      "target": "ティモリス/八幡海鈴"
+    },
+    {
+      "line": 43,
+      "source": "八幡海鈴",
+      "translation": "八幡海铃",
+      "category": "character",
+      "terms": [
+        {
+          "name": "八幡海鈴",
+          "status": "existing"
+        },
+        {
+          "name": "八幡海铃",
+          "status": "existing"
+        }
+      ],
+      "identity": "海铃",
+      "target": "ティモリス/八幡海鈴"
+    },
+    {
+      "line": 44,
+      "source": "祐天寺 にゃむ",
+      "translation": "祐天寺若麦",
+      "category": "character",
+      "terms": [
+        {
+          "name": "祐天寺 にゃむ",
+          "status": "existing"
+        },
+        {
+          "name": "祐天寺若麦",
+          "status": "existing"
+        }
+      ],
+      "identity": "喵梦",
+      "target": "アモーリス/祐天寺にゃむ"
+    },
+    {
+      "line": 45,
+      "source": "祐天寺にゃむ",
+      "translation": "祐天寺若麦",
+      "category": "character",
+      "terms": [
+        {
+          "name": "祐天寺にゃむ",
+          "status": "existing"
+        },
+        {
+          "name": "祐天寺若麦",
+          "status": "existing"
+        }
+      ],
+      "identity": "喵梦",
+      "target": "アモーリス/祐天寺にゃむ"
+    },
+    {
+      "line": 46,
+      "source": "豊川 祥子",
+      "translation": "丰川祥子",
+      "category": "character",
+      "terms": [
+        {
+          "name": "豊川 祥子",
+          "status": "existing"
+        },
+        {
+          "name": "丰川祥子",
+          "status": "existing"
+        }
+      ],
+      "identity": "祥子",
+      "target": "オブリビオニス/豊川祥子"
+    },
+    {
+      "line": 47,
+      "source": "豊川祥子",
+      "translation": "丰川祥子",
+      "category": "character",
+      "terms": [
+        {
+          "name": "豊川祥子",
+          "status": "existing"
+        },
+        {
+          "name": "丰川祥子",
+          "status": "existing"
+        }
+      ],
+      "identity": "祥子",
+      "target": "オブリビオニス/豊川祥子"
+    },
+    {
+      "line": 48,
+      "source": "初華",
+      "translation": "初华",
+      "category": "character",
+      "terms": [
+        {
+          "name": "初華",
+          "status": "existing"
+        },
+        {
+          "name": "初华",
+          "status": "existing"
+        }
+      ],
+      "identity": "初华",
+      "target": "ドロリス/三角初華"
+    },
+    {
+      "line": 49,
+      "source": "海鈴",
+      "translation": "海铃",
+      "category": "character",
+      "terms": [
+        {
+          "name": "海鈴",
+          "status": "existing"
+        },
+        {
+          "name": "海铃",
+          "status": "existing"
+        }
+      ],
+      "identity": "海铃",
+      "target": "ティモリス/八幡海鈴"
+    },
+    {
+      "line": 50,
+      "source": "にゃむち",
+      "translation": "喵梦亲",
+      "category": "character",
+      "terms": [
+        {
+          "name": "にゃむち",
+          "status": "imported"
+        },
+        {
+          "name": "喵梦亲",
+          "status": "imported"
+        }
+      ],
+      "identity": "喵梦",
+      "target": "アモーリス/祐天寺にゃむ"
+    },
+    {
+      "line": 51,
+      "source": "にゃむ",
+      "translation": "若麦",
+      "category": "character",
+      "terms": [
+        {
+          "name": "にゃむ",
+          "status": "existing"
+        },
+        {
+          "name": "若麦",
+          "status": "imported"
+        }
+      ],
+      "identity": "喵梦",
+      "target": "アモーリス/祐天寺にゃむ"
+    },
+    {
+      "line": 52,
+      "source": "祥子",
+      "translation": "祥子",
+      "category": "character",
+      "terms": [
+        {
+          "name": "祥子",
+          "status": "existing"
+        }
+      ],
+      "identity": "祥子",
+      "target": "オブリビオニス/豊川祥子"
+    },
+    {
+      "line": 55,
+      "source": "仲町 あられ",
+      "translation": "仲町阿拉蕾",
+      "category": "character",
+      "terms": [
+        {
+          "name": "仲町 あられ",
+          "status": "existing"
+        },
+        {
+          "name": "仲町阿拉蕾",
+          "status": "existing"
+        }
+      ],
+      "identity": "阿拉蕾",
+      "target": "仲町あられ"
+    },
+    {
+      "line": 56,
+      "source": "仲町あられ",
+      "translation": "仲町阿拉蕾",
+      "category": "character",
+      "terms": [
+        {
+          "name": "仲町あられ",
+          "status": "existing"
+        },
+        {
+          "name": "仲町阿拉蕾",
+          "status": "existing"
+        }
+      ],
+      "identity": "阿拉蕾",
+      "target": "仲町あられ"
+    },
+    {
+      "line": 57,
+      "source": "宮永 ののか",
+      "translation": "宫永野乃花",
+      "category": "character",
+      "terms": [
+        {
+          "name": "宮永 ののか",
+          "status": "existing"
+        },
+        {
+          "name": "宫永野乃花",
+          "status": "existing"
+        }
+      ],
+      "identity": "野乃花",
+      "target": "宮永ののか"
+    },
+    {
+      "line": 58,
+      "source": "宮永ののか",
+      "translation": "宫永野乃花",
+      "category": "character",
+      "terms": [
+        {
+          "name": "宮永ののか",
+          "status": "existing"
+        },
+        {
+          "name": "宫永野乃花",
+          "status": "existing"
+        }
+      ],
+      "identity": "野乃花",
+      "target": "宮永ののか"
+    },
+    {
+      "line": 59,
+      "source": "峰月 律",
+      "translation": "峰月律",
+      "category": "character",
+      "terms": [
+        {
+          "name": "峰月 律",
+          "status": "existing"
+        },
+        {
+          "name": "峰月律",
+          "status": "existing"
+        }
+      ],
+      "identity": "峰月律",
+      "target": "峰月律"
+    },
+    {
+      "line": 60,
+      "source": "峰月律",
+      "translation": "峰月律",
+      "category": "character",
+      "terms": [
+        {
+          "name": "峰月律",
+          "status": "existing"
+        }
+      ],
+      "identity": "峰月律",
+      "target": "峰月律"
+    },
+    {
+      "line": 61,
+      "source": "藤 都子",
+      "translation": "藤都子",
+      "category": "character",
+      "terms": [
+        {
+          "name": "藤 都子",
+          "status": "existing"
+        },
+        {
+          "name": "藤都子",
+          "status": "existing"
+        }
+      ],
+      "identity": "藤都子",
+      "target": "藤都子"
+    },
+    {
+      "line": 62,
+      "source": "藤都子",
+      "translation": "藤都子",
+      "category": "character",
+      "terms": [
+        {
+          "name": "藤都子",
+          "status": "existing"
+        }
+      ],
+      "identity": "藤都子",
+      "target": "藤都子"
+    },
+    {
+      "line": 63,
+      "source": "千石 ユノ",
+      "translation": "千石由乃",
+      "category": "character",
+      "terms": [
+        {
+          "name": "千石 ユノ",
+          "status": "existing"
+        },
+        {
+          "name": "千石由乃",
+          "status": "existing"
+        }
+      ],
+      "identity": "千石由乃",
+      "target": "千石ユノ"
+    },
+    {
+      "line": 64,
+      "source": "千石ユノ",
+      "translation": "千石由乃",
+      "category": "character",
+      "terms": [
+        {
+          "name": "千石ユノ",
+          "status": "existing"
+        },
+        {
+          "name": "千石由乃",
+          "status": "existing"
+        }
+      ],
+      "identity": "千石由乃",
+      "target": "千石ユノ"
+    },
+    {
+      "line": 65,
+      "source": "あられ",
+      "translation": "阿拉蕾",
+      "category": "character",
+      "terms": [
+        {
+          "name": "あられ",
+          "status": "existing"
+        },
+        {
+          "name": "阿拉蕾",
+          "status": "existing"
+        }
+      ],
+      "identity": "阿拉蕾",
+      "target": "仲町あられ"
+    },
+    {
+      "line": 66,
+      "source": "ののか",
+      "translation": "野乃花",
+      "category": "character",
+      "terms": [
+        {
+          "name": "ののか",
+          "status": "existing"
+        },
+        {
+          "name": "野乃花",
+          "status": "existing"
+        }
+      ],
+      "identity": "野乃花",
+      "target": "宮永ののか"
+    },
+    {
+      "line": 67,
+      "source": "都子",
+      "translation": "都子",
+      "category": "character",
+      "terms": [
+        {
+          "name": "都子",
+          "status": "existing"
+        }
+      ],
+      "identity": "藤都子",
+      "target": "藤都子"
+    },
+    {
+      "line": 68,
+      "source": "ユノ",
+      "translation": "由乃",
+      "category": "character",
+      "terms": [
+        {
+          "name": "ユノ",
+          "status": "existing"
+        },
+        {
+          "name": "由乃",
+          "status": "existing"
+        }
+      ],
+      "identity": "千石由乃",
+      "target": "千石ユノ"
+    },
+    {
+      "line": 71,
+      "source": "汐見 蛍",
+      "translation": "汐见萤",
+      "category": "character",
+      "terms": [
+        {
+          "name": "汐見 蛍",
+          "status": "existing"
+        },
+        {
+          "name": "汐见萤",
+          "status": "existing"
+        }
+      ],
+      "identity": "汐见萤",
+      "target": "汐見蛍"
+    },
+    {
+      "line": 72,
+      "source": "汐見蛍",
+      "translation": "汐见萤",
+      "category": "character",
+      "terms": [
+        {
+          "name": "汐見蛍",
+          "status": "existing"
+        },
+        {
+          "name": "汐见萤",
+          "status": "existing"
+        }
+      ],
+      "identity": "汐见萤",
+      "target": "汐見蛍"
+    },
+    {
+      "line": 73,
+      "source": "伊沢 なつめ",
+      "translation": "伊泽枣",
+      "category": "character",
+      "terms": [
+        {
+          "name": "伊沢 なつめ",
+          "status": "existing"
+        },
+        {
+          "name": "伊泽枣",
+          "status": "existing"
+        }
+      ],
+      "identity": "伊泽枣",
+      "target": "伊沢なつめ"
+    },
+    {
+      "line": 74,
+      "source": "伊沢なつめ",
+      "translation": "伊泽枣",
+      "category": "character",
+      "terms": [
+        {
+          "name": "伊沢なつめ",
+          "status": "existing"
+        },
+        {
+          "name": "伊泽枣",
+          "status": "existing"
+        }
+      ],
+      "identity": "伊泽枣",
+      "target": "伊沢なつめ"
+    },
+    {
+      "line": 75,
+      "source": "琴平 凪",
+      "translation": "琴平凪",
+      "category": "character",
+      "terms": [
+        {
+          "name": "琴平 凪",
+          "status": "existing"
+        },
+        {
+          "name": "琴平凪",
+          "status": "existing"
+        }
+      ],
+      "identity": "琴平凪",
+      "target": "琴平凪"
+    },
+    {
+      "line": 76,
+      "source": "琴平凪",
+      "translation": "琴平凪",
+      "category": "character",
+      "terms": [
+        {
+          "name": "琴平凪",
+          "status": "existing"
+        }
+      ],
+      "identity": "琴平凪",
+      "target": "琴平凪"
+    },
+    {
+      "line": 77,
+      "source": "浜崎 まほろ",
+      "translation": "滨崎茉幌",
+      "category": "character",
+      "terms": [
+        {
+          "name": "浜崎 まほろ",
+          "status": "existing"
+        },
+        {
+          "name": "滨崎茉幌",
+          "status": "existing"
+        }
+      ],
+      "identity": "滨崎茉幌",
+      "target": "浜崎まほろ"
+    },
+    {
+      "line": 78,
+      "source": "浜崎まほろ",
+      "translation": "滨崎茉幌",
+      "category": "character",
+      "terms": [
+        {
+          "name": "浜崎まほろ",
+          "status": "existing"
+        },
+        {
+          "name": "滨崎茉幌",
+          "status": "existing"
+        }
+      ],
+      "identity": "滨崎茉幌",
+      "target": "浜崎まほろ"
+    },
+    {
+      "line": 79,
+      "source": "和泉 朋花",
+      "translation": "和泉朋花",
+      "category": "character",
+      "terms": [
+        {
+          "name": "和泉 朋花",
+          "status": "existing"
+        },
+        {
+          "name": "和泉朋花",
+          "status": "existing"
+        }
+      ],
+      "identity": "和泉朋花",
+      "target": "和泉朋花"
+    },
+    {
+      "line": 80,
+      "source": "和泉朋花",
+      "translation": "和泉朋花",
+      "category": "character",
+      "terms": [
+        {
+          "name": "和泉朋花",
+          "status": "existing"
+        }
+      ],
+      "identity": "和泉朋花",
+      "target": "和泉朋花"
+    },
+    {
+      "line": 81,
+      "source": "なつめ",
+      "translation": "枣",
+      "category": "character",
+      "terms": [
+        {
+          "name": "なつめ",
+          "status": "existing"
+        },
+        {
+          "name": "枣",
+          "status": "deferred_single_character"
+        }
+      ],
+      "identity": "伊泽枣",
+      "target": "伊沢なつめ"
+    },
+    {
+      "line": 82,
+      "source": "まほろ",
+      "translation": "茉幌",
+      "category": "character",
+      "terms": [
+        {
+          "name": "まほろ",
+          "status": "existing"
+        },
+        {
+          "name": "茉幌",
+          "status": "existing"
+        }
+      ],
+      "identity": "滨崎茉幌",
+      "target": "浜崎まほろ"
+    },
+    {
+      "line": 83,
+      "source": "朋花",
+      "translation": "朋花",
+      "category": "character",
+      "terms": [
+        {
+          "name": "朋花",
+          "status": "existing"
+        }
+      ],
+      "identity": "和泉朋花",
+      "target": "和泉朋花"
+    },
+    {
+      "line": 86,
+      "source": "須賀 蕾叶",
+      "translation": "须贺蕾叶",
+      "category": "character",
+      "terms": [
+        {
+          "name": "須賀 蕾叶",
+          "status": "existing"
+        },
+        {
+          "name": "须贺蕾叶",
+          "status": "existing"
+        }
+      ],
+      "identity": "须贺蕾叶",
+      "target": "須賀蕾叶"
+    },
+    {
+      "line": 87,
+      "source": "須賀蕾叶",
+      "translation": "须贺蕾叶",
+      "category": "character",
+      "terms": [
+        {
+          "name": "須賀蕾叶",
+          "status": "existing"
+        },
+        {
+          "name": "须贺蕾叶",
+          "status": "existing"
+        }
+      ],
+      "identity": "须贺蕾叶",
+      "target": "須賀蕾叶"
+    },
+    {
+      "line": 88,
+      "source": "馬橋 心玖",
+      "translation": "马桥心玖",
+      "category": "character",
+      "terms": [
+        {
+          "name": "馬橋 心玖",
+          "status": "existing"
+        },
+        {
+          "name": "马桥心玖",
+          "status": "existing"
+        }
+      ],
+      "identity": "马桥心玖",
+      "target": "馬橋心玖"
+    },
+    {
+      "line": 89,
+      "source": "馬橋心玖",
+      "translation": "马桥心玖",
+      "category": "character",
+      "terms": [
+        {
+          "name": "馬橋心玖",
+          "status": "existing"
+        },
+        {
+          "name": "马桥心玖",
+          "status": "existing"
+        }
+      ],
+      "identity": "马桥心玖",
+      "target": "馬橋心玖"
+    },
+    {
+      "line": 90,
+      "source": "矢倉 蓬咲",
+      "translation": "矢仓蓬咲",
+      "category": "character",
+      "terms": [
+        {
+          "name": "矢倉 蓬咲",
+          "status": "existing"
+        },
+        {
+          "name": "矢仓蓬咲",
+          "status": "existing"
+        }
+      ],
+      "identity": "矢仓蓬咲",
+      "target": "矢倉蓬咲"
+    },
+    {
+      "line": 91,
+      "source": "矢倉蓬咲",
+      "translation": "矢仓蓬咲",
+      "category": "character",
+      "terms": [
+        {
+          "name": "矢倉蓬咲",
+          "status": "existing"
+        },
+        {
+          "name": "矢仓蓬咲",
+          "status": "existing"
+        }
+      ],
+      "identity": "矢仓蓬咲",
+      "target": "矢倉蓬咲"
+    },
+    {
+      "line": 92,
+      "source": "梅里 ちえり",
+      "translation": "梅里千樱梨",
+      "category": "character",
+      "terms": [
+        {
+          "name": "梅里 ちえり",
+          "status": "existing"
+        },
+        {
+          "name": "梅里千樱梨",
+          "status": "existing"
+        }
+      ],
+      "identity": "梅里千樱梨",
+      "target": "梅里ちえり"
+    },
+    {
+      "line": 93,
+      "source": "梅里ちえり",
+      "translation": "梅里千樱梨",
+      "category": "character",
+      "terms": [
+        {
+          "name": "梅里ちえり",
+          "status": "existing"
+        },
+        {
+          "name": "梅里千樱梨",
+          "status": "existing"
+        }
+      ],
+      "identity": "梅里千樱梨",
+      "target": "梅里ちえり"
+    },
+    {
+      "line": 94,
+      "source": "四宮 寧月",
+      "translation": "四宫宁月",
+      "category": "character",
+      "terms": [
+        {
+          "name": "四宮 寧月",
+          "status": "existing"
+        },
+        {
+          "name": "四宫宁月",
+          "status": "existing"
+        }
+      ],
+      "identity": "四宫宁月",
+      "target": "四宮寧月"
+    },
+    {
+      "line": 95,
+      "source": "四宮寧月",
+      "translation": "四宫宁月",
+      "category": "character",
+      "terms": [
+        {
+          "name": "四宮寧月",
+          "status": "existing"
+        },
+        {
+          "name": "四宫宁月",
+          "status": "existing"
+        }
+      ],
+      "identity": "四宫宁月",
+      "target": "四宮寧月"
+    },
+    {
+      "line": 96,
+      "source": "蕾叶",
+      "translation": "蕾叶",
+      "category": "character",
+      "terms": [
+        {
+          "name": "蕾叶",
+          "status": "existing"
+        }
+      ],
+      "identity": "须贺蕾叶",
+      "target": "須賀蕾叶"
+    },
+    {
+      "line": 97,
+      "source": "心玖",
+      "translation": "心玖",
+      "category": "character",
+      "terms": [
+        {
+          "name": "心玖",
+          "status": "existing"
+        }
+      ],
+      "identity": "马桥心玖",
+      "target": "馬橋心玖"
+    },
+    {
+      "line": 98,
+      "source": "蓬咲",
+      "translation": "蓬咲",
+      "category": "character",
+      "terms": [
+        {
+          "name": "蓬咲",
+          "status": "existing"
+        }
+      ],
+      "identity": "矢仓蓬咲",
+      "target": "矢倉蓬咲"
+    },
+    {
+      "line": 99,
+      "source": "ちえり",
+      "translation": "千樱梨",
+      "category": "character",
+      "terms": [
+        {
+          "name": "ちえり",
+          "status": "existing"
+        },
+        {
+          "name": "千樱梨",
+          "status": "existing"
+        }
+      ],
+      "identity": "梅里千樱梨",
+      "target": "梅里ちえり"
+    },
+    {
+      "line": 100,
+      "source": "寧月",
+      "translation": "宁月",
+      "category": "character",
+      "terms": [
+        {
+          "name": "寧月",
+          "status": "imported"
+        },
+        {
+          "name": "宁月",
+          "status": "existing"
+        }
+      ],
+      "identity": "四宫宁月",
+      "target": "四宮寧月"
+    },
+    {
+      "line": 107,
+      "source": "撃奏ライブ",
+      "translation": "激奏LIVE",
+      "category": "terminology",
+      "terms": [],
+      "status": "reference_only"
+    },
+    {
+      "line": 108,
+      "source": "COMBO撃奏",
+      "translation": "COMBO激奏",
+      "category": "terminology",
+      "terms": [],
+      "status": "reference_only"
+    },
+    {
+      "line": 109,
+      "source": "LUCK撃奏",
+      "translation": "LUCK激奏",
+      "category": "terminology",
+      "terms": [],
+      "status": "reference_only"
+    },
+    {
+      "line": 110,
+      "source": "JUST撃奏",
+      "translation": "JUST激奏",
+      "category": "terminology",
+      "terms": [],
+      "status": "reference_only"
+    },
+    {
+      "line": 111,
+      "source": "撃奏区間",
+      "translation": "激奏区间",
+      "category": "terminology",
+      "terms": [],
+      "status": "reference_only"
+    },
+    {
+      "line": 112,
+      "source": "アシストモード",
+      "translation": "辅助模式",
+      "category": "terminology",
+      "terms": [],
+      "status": "reference_only"
+    },
+    {
+      "line": 113,
+      "source": "Live2Dモード",
+      "translation": "Live2D 模式",
+      "category": "terminology",
+      "terms": [],
+      "status": "reference_only"
+    },
+    {
+      "line": 114,
+      "source": "MVモード",
+      "translation": "MV 模式",
+      "category": "terminology",
+      "terms": [],
+      "status": "reference_only"
+    },
+    {
+      "line": 115,
+      "source": "軽量モード",
+      "translation": "轻量模式",
+      "category": "terminology",
+      "terms": [],
+      "status": "reference_only"
+    },
+    {
+      "line": 116,
+      "source": "イマーシブホーム",
+      "translation": "沉浸式主画面",
+      "category": "terminology",
+      "terms": [],
+      "status": "reference_only"
+    },
+    {
+      "line": 117,
+      "source": "シネマティックストーリー",
+      "translation": "影院式剧情系统",
+      "category": "terminology",
+      "terms": [],
+      "status": "reference_only"
+    },
+    {
+      "line": 119,
+      "source": "シネマティック ストーリー",
+      "translation": "影院式剧情系统",
+      "category": "terminology",
+      "terms": [],
+      "status": "reference_only"
+    },
+    {
+      "line": 122,
+      "source": "アワーノーツガチャチケット×10",
+      "translation": "Our Notes 招募券×10",
+      "category": "terminology",
+      "terms": [],
+      "status": "reference_only"
+    },
+    {
+      "line": 123,
+      "source": "アワーノーツガチャチケット",
+      "translation": "Our Notes 招募券",
+      "category": "terminology",
+      "terms": [],
+      "status": "reference_only"
+    },
+    {
+      "line": 124,
+      "source": "ガチャチケット",
+      "translation": "招募券",
+      "category": "terminology",
+      "terms": [],
+      "status": "reference_only"
+    },
+    {
+      "line": 125,
+      "source": "ガチャ",
+      "translation": "招募",
+      "category": "terminology",
+      "terms": [],
+      "status": "reference_only"
+    },
+    {
+      "line": 127,
+      "source": "ワタシが主役のサイバーナイトガチャ",
+      "translation": "我是主角的赛博之夜招募",
+      "category": "terminology",
+      "terms": [],
+      "status": "reference_only"
+    }
+  ]
+}
