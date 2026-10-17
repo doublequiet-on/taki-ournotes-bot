@@ -1,0 +1,52 @@
+# ON 自然语言查询词法
+
+本批基于 main `941de1538d31ff4b13529637f21feef9d159076a`，扩充的是资料查询条件与本地信息入口。运行时使用已配置来源与缓存，不在线搜索资料，也不从模型记忆生成游戏事实。别名资料在独立 PR 维护，本 PR 不依赖新增词库。
+
+## 可以怎样问
+
+| 问法 | 条件及输出 |
+|---|---|
+| `/问 蓝色EX25级歌曲` | 蓝色、EXPERT、整级 25；列表可包含显示 25.5 的整级 25 谱面 |
+| `/问 蓝色EX25.0级歌曲` | 蓝色、EXPERT、显示等级精确 25.0 |
+| `/问 激奏同时包含JUST/COMBO的歌` | 两类均出现，顺序不限；与精确序列不同 |
+| `/问 激奏顺序是JUST/JUST/COMBO的歌曲` | 精确顺序与重复次数；不可改成 JUST/COMBO/JUST |
+| `/问 蓝色SSR或SR成员卡` | 颜色 AND 稀有度；SSR、SR 同维度任选 |
+| `/问 高松灯的生日卡` | 高松灯 AND BD；“生日卡”是稀有度条件，不是某张卡的昵称 |
+| `/问 EX SNAP有哪些` | SNAP 的 EX 稀有度，与歌曲 EXPERT 的 EX 分开 |
+| `/问 LIVE技能延长的SNAP` | 读取来源的 LIVE 分类；不把技能延长算成分数提升 |
+| `/问 得意MyGO的成员卡` | 来源已核实的得意乐曲标签；多标签要求全部包含 |
+| `/问 当前的卡池有哪些`、`/问 历史活动有哪些` | 转交现有资料执行器，保持时间窗和服别规则 |
+| `/问 高松灯的生日是什么`、`/问 MyGO的成员有哪些` | 返回人物档案／乐队目录；生日保持来源事实，未另建知识问答 |
+
+支持常用繁体语法词和来源／词库中已有的多语言实体名。先保护完整实体名，再解释颜色、稀有度和语法词，避免把歌名或卡名中的“蓝色”“生日”“的”当条件删除。未识别的实质条件保留并拒绝，不扩大查询范围。字段短答和技能原文关键词搜索沿用现有入口。
+
+## 游戏语义与来源边界
+
+官方 [ON 制作介绍](https://www.fromtyo.jp/news/20260629) 区分成员卡与 SNAP，[官方 EX SNAP 说明](https://bang-dream-on.bushimo.jp/news/post-8) 是 EX 类型的资料来源之一。正式人物名称与档案以[官网角色页](https://bang-dream-on.bushimo.jp/character/avemujica/misumi-uika/)和已验证 Catalog 为准。颜色码、LIVE／激奏分类、得意标签、稀有度的具体可得性仍由项目来源适配器与固定 release 决定；这里没有新增游戏数值、算分公式或效果推断。
+
+- BD 仅成员卡；EX 仅 SNAP。歌曲上下文的 EX 是 EXPERT。
+- 颜色使用图标颜色称呼，不创造官方属性名称。
+- 歌曲激奏序列与卡牌击奏技能分类分别查询；不能互相推导。
+- `contains` 包含一种；`all` 包含全部给定种类；`pure` 每段同一种；`mixed` 至少两类；`exact` 严格序列。
+- 来源缺失、合法空集、未知对象和歧义分别处理；不把未获取当零，也不承诺玩家拥有状态、卡池可抽资格或攻略效果。
+
+## 模型参数与执行
+
+`query_capabilities` 同时声明字段、默认值、枚举和提示；`catalog_arguments` 将提案与原文的确定性条件比较，最后仍交给 `SongFilter` / `CardRequest` 执行。模型不能提交 `song_query`、`card_query` 或命令字符串。
+
+| 能力 | 扩展字段 |
+|---|---|
+| `song.search` | `colors: int[]`（1～5）；`mission_mode`；`missions: enum[]`；`level_operator` 增加 `eq`；`integer_level: bool`；`difficulty` 增加 `ALL` |
+| `member_card.search` | `rarities: int[]`（2/3/4/20）；`colors`；`live_categories`；`gekisou_categories`；`characters/bands: str[]`；`tags: str[]`（来源标签 ID） |
+| `support_card.search` | 同上，稀有度为 2/3/4/10，无 `tags`；LIVE 另允许 `duration` |
+| `chart.get` | 保持歌曲＋难度 |
+
+数组默认空，未指定条件不得由模型补入；同样不能省略原文明示的条件。保留旧 `rarity` 单值 2/3/4/null 参数，不能和非空 `rarities` 并用。得意标签证据由程序提供，模型不猜 ID。多维条件要求原文词法可核实；不承诺任意改写、范围／排除或文本技能和分类的任意混合。活动／卡池／人物仅本地语法与明确命令转交，不注册模型工具。模型调用、修复、时间、执行次数和额度预算保持原值。
+
+## 固定验收
+
+`tests/fixtures/on_language.json` 固定 134 句，94 句开发集、40 句独立改写集，逐句记录条件指令、完整结果 ID 集、状态。测试比较规范化条件以及直接／本地的结果和顺序，明确断言零模型请求、零额度预占。合成 ID、属性、等级、生日与时间窗只用于测试，不是游戏事实。改写集用于回归验证，不宣称真实用户或真实模型准确率。
+
+`test_on_language.py` 另覆盖模型漏条件／新增条件／错误类型／乱序、一次修复和缓存重新执行、缺失／零／未知／歧义、名字保护。模型测试使用固定响应，并强制经过代理模型分支验证预算；未调用收费服务。`test_query_refactor.py` 等继续验证总预算、并发与持久额度。公共结果签名、额度和缓存格式未改，统计沿用 schema 2。
+
+实现导航：[本地词法](../src/ournotes_bot/natural_query/on_query.py)、[模型字段核验](../src/ournotes_bot/natural_query/catalog_arguments.py)、[规格总表](QUERY_SPEC.md)。
