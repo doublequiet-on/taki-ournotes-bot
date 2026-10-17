@@ -1,0 +1,1396 @@
+{
+  "schema": 1,
+  "fixture": "synthetic-on-query-v2",
+  "note": "IDs, colors, levels, birthdays and time windows are declared test inputs, not game facts. Commands and full IDs are manually specified expectations. Heldout questions are stored separately by split.",
+  "cases": [
+    {
+      "question": "蓝色的歌曲有哪些",
+      "command": "/查曲 蓝色",
+      "kind": "song",
+      "ids": [
+        100001,
+        100002
+      ],
+      "status": "success",
+      "split": "development"
+    },
+    {
+      "question": "绿色歌曲有哪些",
+      "command": "/查曲 绿色",
+      "kind": "song",
+      "ids": [
+        100003
+      ],
+      "status": "success",
+      "split": "development"
+    },
+    {
+      "question": "红色歌曲有哪些",
+      "command": "/查曲 红色",
+      "kind": "song",
+      "ids": [
+        100004
+      ],
+      "status": "success",
+      "split": "development"
+    },
+    {
+      "question": "黄色歌曲有哪些",
+      "command": "/查曲 黄色",
+      "kind": "song",
+      "ids": [],
+      "status": "empty",
+      "split": "development"
+    },
+    {
+      "question": "紫色歌曲有哪些",
+      "command": "/查曲 紫色",
+      "kind": "song",
+      "ids": [],
+      "status": "empty",
+      "split": "development"
+    },
+    {
+      "question": "蓝色或绿色歌曲",
+      "command": "/查曲 颜色=蓝/绿",
+      "kind": "song",
+      "ids": [
+        100001,
+        100002,
+        100003
+      ],
+      "status": "success",
+      "split": "development"
+    },
+    {
+      "question": "红色和蓝色歌曲",
+      "command": "/查曲 颜色=红/蓝",
+      "kind": "song",
+      "ids": [
+        100001,
+        100002,
+        100004
+      ],
+      "status": "success",
+      "split": "development"
+    },
+    {
+      "question": "MyGO的蓝色歌曲",
+      "command": "/查曲 MyGO 蓝色",
+      "kind": "song",
+      "ids": [
+        100001,
+        100002
+      ],
+      "status": "success",
+      "split": "development"
+    },
+    {
+      "question": "带JUST激奏的歌",
+      "command": "/查曲 激奏=JUST",
+      "kind": "song",
+      "ids": [
+        100001,
+        100002,
+        100003
+      ],
+      "status": "success",
+      "split": "development"
+    },
+    {
+      "question": "带COMBO激奏的歌",
+      "command": "/查曲 激奏=COMBO",
+      "kind": "song",
+      "ids": [
+        100001,
+        100003,
+        100004
+      ],
+      "status": "success",
+      "split": "development"
+    },
+    {
+      "question": "带LUCK激奏的歌",
+      "command": "/查曲 激奏=LUCK",
+      "kind": "song",
+      "ids": [
+        100003
+      ],
+      "status": "success",
+      "split": "development"
+    },
+    {
+      "question": "纯JUST的歌曲",
+      "command": "/查曲 激奏=纯JUST",
+      "kind": "song",
+      "ids": [
+        100002
+      ],
+      "status": "success",
+      "split": "development"
+    },
+    {
+      "question": "纯COMBO的歌曲",
+      "command": "/查曲 激奏=纯COMBO",
+      "kind": "song",
+      "ids": [
+        100004
+      ],
+      "status": "success",
+      "split": "development"
+    },
+    {
+      "question": "纯LUCK的歌曲",
+      "command": "/查曲 激奏=纯LUCK",
+      "kind": "song",
+      "ids": [],
+      "status": "empty",
+      "split": "development"
+    },
+    {
+      "question": "混合激奏的歌曲",
+      "command": "/查曲 激奏=混合",
+      "kind": "song",
+      "ids": [
+        100001,
+        100003
+      ],
+      "status": "success",
+      "split": "development"
+    },
+    {
+      "question": "激奏顺序是JUST/JUST/COMBO的歌曲",
+      "command": "/查曲 激奏=JUST/JUST/COMBO",
+      "kind": "song",
+      "ids": [
+        100001
+      ],
+      "status": "success",
+      "split": "development"
+    },
+    {
+      "question": "激奏顺序是JUST/COMBO/JUST的歌曲",
+      "command": "/查曲 激奏=JUST/COMBO/JUST",
+      "kind": "song",
+      "ids": [],
+      "status": "empty",
+      "split": "development"
+    },
+    {
+      "question": "激奏包含全部JUST/COMBO的歌曲",
+      "command": "/查曲 激奏=包含全部JUST/COMBO",
+      "kind": "song",
+      "ids": [
+        100001,
+        100003
+      ],
+      "status": "success",
+      "split": "development"
+    },
+    {
+      "question": "激奏包含全部JUST/COMBO/LUCK的歌曲",
+      "command": "/查曲 激奏=包含全部JUST/COMBO/LUCK",
+      "kind": "song",
+      "ids": [
+        100003
+      ],
+      "status": "success",
+      "split": "development"
+    },
+    {
+      "question": "激奏是COMBO/JUST/LUCK的歌曲",
+      "command": "/查曲 激奏=COMBO/JUST/LUCK",
+      "kind": "song",
+      "ids": [
+        100003
+      ],
+      "status": "success",
+      "split": "development"
+    },
+    {
+      "question": "蓝色纯JUST歌曲",
+      "command": "/查曲 蓝色 激奏=纯JUST",
+      "kind": "song",
+      "ids": [
+        100002
+      ],
+      "status": "success",
+      "split": "development"
+    },
+    {
+      "question": "蓝色带COMBO激奏歌曲",
+      "command": "/查曲 蓝色 激奏=COMBO",
+      "kind": "song",
+      "ids": [
+        100001
+      ],
+      "status": "success",
+      "split": "development"
+    },
+    {
+      "question": "绿色混合激奏歌曲",
+      "command": "/查曲 绿色 激奏=混合",
+      "kind": "song",
+      "ids": [
+        100003
+      ],
+      "status": "success",
+      "split": "development"
+    },
+    {
+      "question": "红色纯COMBO歌曲",
+      "command": "/查曲 红色 激奏=纯COMBO",
+      "kind": "song",
+      "ids": [
+        100004
+      ],
+      "status": "success",
+      "split": "development"
+    },
+    {
+      "question": "25级的歌曲有哪些",
+      "command": "/查曲 lv=25",
+      "kind": "song",
+      "ids": [
+        100001,
+        100002
+      ],
+      "status": "success",
+      "split": "development"
+    },
+    {
+      "question": "25.0级的歌曲有哪些",
+      "command": "/查曲 lv=25.0",
+      "kind": "song",
+      "ids": [
+        100002
+      ],
+      "status": "success",
+      "split": "development"
+    },
+    {
+      "question": "25.5级的歌曲有哪些",
+      "command": "/查曲 lv=25.5",
+      "kind": "song",
+      "ids": [
+        100001
+      ],
+      "status": "success",
+      "split": "development"
+    },
+    {
+      "question": "26级的歌曲有哪些",
+      "command": "/查曲 lv=26",
+      "kind": "song",
+      "ids": [
+        100003
+      ],
+      "status": "success",
+      "split": "development"
+    },
+    {
+      "question": "26.0级的歌曲有哪些",
+      "command": "/查曲 lv=26.0",
+      "kind": "song",
+      "ids": [],
+      "status": "empty",
+      "split": "development"
+    },
+    {
+      "question": "26.2级的歌曲有哪些",
+      "command": "/查曲 lv=26.2",
+      "kind": "song",
+      "ids": [
+        100003
+      ],
+      "status": "success",
+      "split": "development"
+    },
+    {
+      "question": "27级的歌曲有哪些",
+      "command": "/查曲 lv=27",
+      "kind": "song",
+      "ids": [
+        100004
+      ],
+      "status": "success",
+      "split": "development"
+    },
+    {
+      "question": "20级的歌曲有哪些",
+      "command": "/查曲 lv=20",
+      "kind": "song",
+      "ids": [
+        100001
+      ],
+      "status": "success",
+      "split": "development"
+    },
+    {
+      "question": "蓝色EX25级歌曲",
+      "command": "/查曲 蓝色 EX lv=25",
+      "kind": "song",
+      "ids": [
+        100001,
+        100002
+      ],
+      "status": "success",
+      "split": "development"
+    },
+    {
+      "question": "蓝色EX25.0级歌曲",
+      "command": "/查曲 蓝色 EX lv=25.0",
+      "kind": "song",
+      "ids": [
+        100002
+      ],
+      "status": "success",
+      "split": "development"
+    },
+    {
+      "question": "蓝色HARD20级歌曲",
+      "command": "/查曲 蓝色 HARD lv=20",
+      "kind": "song",
+      "ids": [
+        100001
+      ],
+      "status": "success",
+      "split": "development"
+    },
+    {
+      "question": "蓝色EX25级以下歌曲",
+      "command": "/查曲 蓝色 EX lv<=25",
+      "kind": "song",
+      "ids": [
+        100002
+      ],
+      "status": "success",
+      "split": "development"
+    },
+    {
+      "question": "蓝色EX25级以上歌曲",
+      "command": "/查曲 蓝色 EX lv>=25",
+      "kind": "song",
+      "ids": [
+        100001,
+        100002
+      ],
+      "status": "success",
+      "split": "development"
+    },
+    {
+      "question": "蓝色高于25级歌曲",
+      "command": "/查曲 蓝色 lv>25",
+      "kind": "song",
+      "ids": [
+        100001
+      ],
+      "status": "success",
+      "split": "development"
+    },
+    {
+      "question": "蓝色低于25级歌曲",
+      "command": "/查曲 蓝色 lv<25",
+      "kind": "song",
+      "ids": [],
+      "status": "empty",
+      "split": "development"
+    },
+    {
+      "question": "蓝色全难度20级歌曲",
+      "command": "/查曲 蓝色 ALL lv=20",
+      "kind": "song",
+      "ids": [
+        100001
+      ],
+      "status": "success",
+      "split": "development"
+    },
+    {
+      "question": "蓝色HARD高于19级歌曲",
+      "command": "/查曲 蓝色 HARD lv>19",
+      "kind": "song",
+      "ids": [
+        100001
+      ],
+      "status": "success",
+      "split": "development"
+    },
+    {
+      "question": "蓝色EX激奏JUST歌曲",
+      "command": "/查曲 蓝色 EX 激奏=JUST",
+      "kind": "song",
+      "ids": [
+        100001,
+        100002
+      ],
+      "status": "success",
+      "split": "development"
+    },
+    {
+      "question": "蓝色SSR成员卡",
+      "command": "/查卡 蓝色 SSR",
+      "kind": "card",
+      "ids": [
+        1
+      ],
+      "status": "success",
+      "split": "development"
+    },
+    {
+      "question": "蓝色SR成员卡",
+      "command": "/查卡 蓝色 SR",
+      "kind": "card",
+      "ids": [
+        2
+      ],
+      "status": "success",
+      "split": "development"
+    },
+    {
+      "question": "蓝色BD成员卡",
+      "command": "/查卡 蓝色 BD",
+      "kind": "card",
+      "ids": [
+        3
+      ],
+      "status": "success",
+      "split": "development"
+    },
+    {
+      "question": "生日卡有哪些",
+      "command": "/查卡 BD",
+      "kind": "card",
+      "ids": [
+        3
+      ],
+      "status": "success",
+      "split": "development"
+    },
+    {
+      "question": "绿色SSR成员卡",
+      "command": "/查卡 绿色 SSR",
+      "kind": "card",
+      "ids": [
+        4
+      ],
+      "status": "success",
+      "split": "development"
+    },
+    {
+      "question": "绿色R成员卡",
+      "command": "/查卡 绿色 R",
+      "kind": "card",
+      "ids": [
+        5
+      ],
+      "status": "success",
+      "split": "development"
+    },
+    {
+      "question": "红色SSR成员卡",
+      "command": "/查卡 红色 SSR",
+      "kind": "card",
+      "ids": [
+        6
+      ],
+      "status": "success",
+      "split": "development"
+    },
+    {
+      "question": "紫色SSR成员卡",
+      "command": "/查卡 紫色 SSR",
+      "kind": "card",
+      "ids": [],
+      "status": "empty",
+      "split": "development"
+    },
+    {
+      "question": "蓝色SSR或SR成员卡",
+      "command": "/查卡 蓝色 SSR/SR",
+      "kind": "card",
+      "ids": [
+        1,
+        2
+      ],
+      "status": "success",
+      "split": "development"
+    },
+    {
+      "question": "蓝色BD或SSR成员卡",
+      "command": "/查卡 蓝色 BD/SSR",
+      "kind": "card",
+      "ids": [
+        1,
+        3
+      ],
+      "status": "success",
+      "split": "development"
+    },
+    {
+      "question": "绿色SSR或R成员卡",
+      "command": "/查卡 绿色 SSR/R",
+      "kind": "card",
+      "ids": [
+        4,
+        5
+      ],
+      "status": "success",
+      "split": "development"
+    },
+    {
+      "question": "蓝色或绿色成员卡",
+      "command": "/查卡 蓝色/绿色",
+      "kind": "card",
+      "ids": [
+        1,
+        2,
+        3,
+        4,
+        5
+      ],
+      "status": "success",
+      "split": "development"
+    },
+    {
+      "question": "红色或蓝色SSR成员卡",
+      "command": "/查卡 红色/蓝色 SSR",
+      "kind": "card",
+      "ids": [
+        1,
+        6
+      ],
+      "status": "success",
+      "split": "development"
+    },
+    {
+      "question": "MyGO的蓝色成员卡",
+      "command": "/查卡 MyGO 蓝色",
+      "kind": "card",
+      "ids": [
+        1,
+        2,
+        3
+      ],
+      "status": "success",
+      "split": "development"
+    },
+    {
+      "question": "高松灯的生日卡",
+      "command": "/查卡 高松灯 BD",
+      "kind": "card",
+      "ids": [
+        3
+      ],
+      "status": "success",
+      "split": "development"
+    },
+    {
+      "question": "丰川祥子的绿色成员卡",
+      "command": "/查卡 丰川祥子 绿色",
+      "kind": "card",
+      "ids": [
+        4,
+        5
+      ],
+      "status": "success",
+      "split": "development"
+    },
+    {
+      "question": "Ave Mujica的SSR成员卡",
+      "command": "/查卡 Ave Mujica SSR",
+      "kind": "card",
+      "ids": [
+        4,
+        6
+      ],
+      "status": "success",
+      "split": "development"
+    },
+    {
+      "question": "LIVE分数提升的成员卡",
+      "command": "/查卡 LIVE=分数提升",
+      "kind": "card",
+      "ids": [
+        1,
+        2,
+        3,
+        6
+      ],
+      "status": "success",
+      "split": "development"
+    },
+    {
+      "question": "LIVE LIFE回复的成员卡",
+      "command": "/查卡 LIVE=LIFE回复",
+      "kind": "card",
+      "ids": [
+        4
+      ],
+      "status": "success",
+      "split": "development"
+    },
+    {
+      "question": "LIVE判定强化的成员卡",
+      "command": "/查卡 LIVE=判定强化",
+      "kind": "card",
+      "ids": [
+        5
+      ],
+      "status": "success",
+      "split": "development"
+    },
+    {
+      "question": "激奏JUST的成员卡",
+      "command": "/查卡 激奏=JUST",
+      "kind": "card",
+      "ids": [
+        1,
+        2,
+        3,
+        6
+      ],
+      "status": "success",
+      "split": "development"
+    },
+    {
+      "question": "激奏COMBO的成员卡",
+      "command": "/查卡 激奏=COMBO",
+      "kind": "card",
+      "ids": [
+        4
+      ],
+      "status": "success",
+      "split": "development"
+    },
+    {
+      "question": "激奏LUCK的成员卡",
+      "command": "/查卡 激奏=LUCK",
+      "kind": "card",
+      "ids": [
+        5
+      ],
+      "status": "success",
+      "split": "development"
+    },
+    {
+      "question": "得意MyGO的成员卡",
+      "command": "/查卡 得意=MyGO",
+      "kind": "card",
+      "ids": [
+        1,
+        2,
+        3
+      ],
+      "status": "success",
+      "split": "development"
+    },
+    {
+      "question": "得意Ave Mujica的成员卡",
+      "command": "/查卡 得意=Ave Mujica",
+      "kind": "card",
+      "ids": [
+        4,
+        5,
+        6
+      ],
+      "status": "success",
+      "split": "development"
+    },
+    {
+      "question": "蓝色SSR成员卡 LIVE=分数提升",
+      "command": "/查卡 蓝色 SSR LIVE=分数提升",
+      "kind": "card",
+      "ids": [
+        1
+      ],
+      "status": "success",
+      "split": "development"
+    },
+    {
+      "question": "角色=tmr或skk 颜色=蓝的成员卡",
+      "command": "/查卡 角色=tmr/skk 颜色=蓝",
+      "kind": "card",
+      "ids": [
+        1,
+        2,
+        3
+      ],
+      "status": "success",
+      "split": "development"
+    },
+    {
+      "question": "稀有度=BD/SSR 颜色=蓝的成员卡",
+      "command": "/查卡 稀有度=BD/SSR 颜色=蓝",
+      "kind": "card",
+      "ids": [
+        1,
+        3
+      ],
+      "status": "success",
+      "split": "development"
+    },
+    {
+      "question": "查卡 3",
+      "command": "/查卡 3",
+      "kind": "card",
+      "ids": [
+        3
+      ],
+      "status": "success",
+      "split": "development"
+    },
+    {
+      "question": "查卡 999",
+      "command": "/查卡 999",
+      "kind": "card",
+      "ids": [],
+      "status": "unknown_entity",
+      "split": "development"
+    },
+    {
+      "question": "EX SNAP有哪些",
+      "command": "/查留影卡 EX",
+      "kind": "support_card",
+      "ids": [
+        7
+      ],
+      "status": "success",
+      "split": "development"
+    },
+    {
+      "question": "SSR SNAP有哪些",
+      "command": "/查留影卡 SSR",
+      "kind": "support_card",
+      "ids": [
+        8
+      ],
+      "status": "success",
+      "split": "development"
+    },
+    {
+      "question": "SR SNAP有哪些",
+      "command": "/查留影卡 SR",
+      "kind": "support_card",
+      "ids": [
+        9
+      ],
+      "status": "success",
+      "split": "development"
+    },
+    {
+      "question": "EX或SSR SNAP",
+      "command": "/查留影卡 EX/SSR",
+      "kind": "support_card",
+      "ids": [
+        7,
+        8
+      ],
+      "status": "success",
+      "split": "development"
+    },
+    {
+      "question": "蓝色SNAP",
+      "command": "/查留影卡 蓝色",
+      "kind": "support_card",
+      "ids": [
+        7
+      ],
+      "status": "success",
+      "split": "development"
+    },
+    {
+      "question": "绿色SNAP",
+      "command": "/查留影卡 绿色",
+      "kind": "support_card",
+      "ids": [
+        8
+      ],
+      "status": "success",
+      "split": "development"
+    },
+    {
+      "question": "红色SNAP",
+      "command": "/查留影卡 红色",
+      "kind": "support_card",
+      "ids": [
+        9
+      ],
+      "status": "success",
+      "split": "development"
+    },
+    {
+      "question": "LIVE技能延长的SNAP",
+      "command": "/查留影卡 LIVE=技能延长",
+      "kind": "support_card",
+      "ids": [
+        9
+      ],
+      "status": "success",
+      "split": "development"
+    },
+    {
+      "question": "LIVE分数提升的SNAP",
+      "command": "/查留影卡 LIVE=分数提升",
+      "kind": "support_card",
+      "ids": [
+        7
+      ],
+      "status": "success",
+      "split": "development"
+    },
+    {
+      "question": "激奏COMBO的SNAP",
+      "command": "/查留影卡 激奏=COMBO",
+      "kind": "support_card",
+      "ids": [
+        8
+      ],
+      "status": "success",
+      "split": "development"
+    },
+    {
+      "question": "现在的活动是什么",
+      "command": "/查活动 当前",
+      "kind": "info",
+      "ids": [
+        11
+      ],
+      "status": "success",
+      "split": "development"
+    },
+    {
+      "question": "当前的卡池有哪些",
+      "command": "/查卡池 当前",
+      "kind": "info",
+      "ids": [
+        21
+      ],
+      "status": "success",
+      "split": "development"
+    },
+    {
+      "question": "历史活动有哪些",
+      "command": "/查活动 历史",
+      "kind": "info",
+      "ids": [
+        12
+      ],
+      "status": "success",
+      "split": "development"
+    },
+    {
+      "question": "历史卡池有哪些",
+      "command": "/查卡池 历史",
+      "kind": "info",
+      "ids": [
+        22
+      ],
+      "status": "success",
+      "split": "development"
+    },
+    {
+      "question": "活动列表",
+      "command": "/查活动 列表",
+      "kind": "info",
+      "ids": [
+        11,
+        12
+      ],
+      "status": "success",
+      "split": "development"
+    },
+    {
+      "question": "高松灯的生日是什么",
+      "command": "/查角色 高松灯",
+      "kind": "info",
+      "ids": [
+        1
+      ],
+      "status": "success",
+      "split": "development"
+    },
+    {
+      "question": "丰川祥子的人物资料",
+      "command": "/查角色 丰川祥子",
+      "kind": "info",
+      "ids": [
+        6
+      ],
+      "status": "success",
+      "split": "development"
+    },
+    {
+      "question": "MyGO的成员有哪些",
+      "command": "/查角色 乐队=MyGO",
+      "kind": "info",
+      "ids": [
+        1
+      ],
+      "status": "success",
+      "split": "development"
+    },
+    {
+      "question": "请帮我找一下藍色的歌曲有哪些？",
+      "command": "/查曲 蓝色",
+      "kind": "song",
+      "ids": [
+        100001,
+        100002
+      ],
+      "status": "success",
+      "split": "heldout"
+    },
+    {
+      "question": "麻烦查一下綠色歌曲",
+      "command": "/查曲 绿色",
+      "kind": "song",
+      "ids": [
+        100003
+      ],
+      "status": "success",
+      "split": "heldout"
+    },
+    {
+      "question": "看看紅色或藍色的樂曲",
+      "command": "/查曲 红色/蓝色",
+      "kind": "song",
+      "ids": [
+        100001,
+        100002,
+        100004
+      ],
+      "status": "success",
+      "split": "heldout"
+    },
+    {
+      "question": "想看MyGO的蓝色谱面",
+      "command": "/查曲 MyGO 蓝色",
+      "kind": "song",
+      "ids": [
+        100001,
+        100002
+      ],
+      "status": "success",
+      "split": "heldout"
+    },
+    {
+      "question": "给我看看純JUST的歌曲",
+      "command": "/查曲 激奏=纯JUST",
+      "kind": "song",
+      "ids": [
+        100002
+      ],
+      "status": "success",
+      "split": "heldout"
+    },
+    {
+      "question": "混合擊奏的樂曲有哪些？",
+      "command": "/查曲 激奏=混合",
+      "kind": "song",
+      "ids": [
+        100001,
+        100003
+      ],
+      "status": "success",
+      "split": "heldout"
+    },
+    {
+      "question": "查找激奏顺序为JUST/JUST/COMBO的歌",
+      "command": "/查曲 激奏=JUST/JUST/COMBO",
+      "kind": "song",
+      "ids": [
+        100001
+      ],
+      "status": "success",
+      "split": "heldout"
+    },
+    {
+      "question": "激奏同时包含JUST/COMBO的歌",
+      "command": "/查曲 激奏=包含全部JUST/COMBO",
+      "kind": "song",
+      "ids": [
+        100001,
+        100003
+      ],
+      "status": "success",
+      "split": "heldout"
+    },
+    {
+      "question": "請查詢蓝色25.5級歌曲",
+      "command": "/查曲 蓝色 lv=25.5",
+      "kind": "song",
+      "ids": [
+        100001
+      ],
+      "status": "success",
+      "split": "heldout"
+    },
+    {
+      "question": "帮我列出25级歌曲",
+      "command": "/查曲 lv=25",
+      "kind": "song",
+      "ids": [
+        100001,
+        100002
+      ],
+      "status": "success",
+      "split": "heldout"
+    },
+    {
+      "question": "蓝色EXPERT25.0级谱面",
+      "command": "/查曲 蓝色 EXPERT lv=25.0",
+      "kind": "song",
+      "ids": [
+        100002
+      ],
+      "status": "success",
+      "split": "heldout"
+    },
+    {
+      "question": "请找蓝色HARD20级歌",
+      "command": "/查曲 蓝色 HARD lv=20",
+      "kind": "song",
+      "ids": [
+        100001
+      ],
+      "status": "success",
+      "split": "heldout"
+    },
+    {
+      "question": "绿色EX26.2级谱面有哪些",
+      "command": "/查曲 绿色 EX lv=26.2",
+      "kind": "song",
+      "ids": [
+        100003
+      ],
+      "status": "success",
+      "split": "heldout"
+    },
+    {
+      "question": "蓝色歌曲激奏=纯JUST",
+      "command": "/查曲 蓝色 激奏=纯JUST",
+      "kind": "song",
+      "ids": [
+        100002
+      ],
+      "status": "success",
+      "split": "heldout"
+    },
+    {
+      "question": "全部紫色歌曲",
+      "command": "/查曲 紫色",
+      "kind": "song",
+      "ids": [],
+      "status": "empty",
+      "split": "heldout"
+    },
+    {
+      "question": "看看黄色混合激奏的歌曲",
+      "command": "/查曲 黄色 激奏=混合",
+      "kind": "song",
+      "ids": [],
+      "status": "empty",
+      "split": "heldout"
+    },
+    {
+      "question": "請查詢藍色SSR成員卡",
+      "command": "/查卡 蓝色 SSR",
+      "kind": "card",
+      "ids": [
+        1
+      ],
+      "status": "success",
+      "split": "heldout"
+    },
+    {
+      "question": "帮我找一下绿色R角色卡",
+      "command": "/查卡 绿色 R",
+      "kind": "card",
+      "ids": [
+        5
+      ],
+      "status": "success",
+      "split": "heldout"
+    },
+    {
+      "question": "想看高松灯的BD成员卡",
+      "command": "/查卡 高松灯 BD",
+      "kind": "card",
+      "ids": [
+        3
+      ],
+      "status": "success",
+      "split": "heldout"
+    },
+    {
+      "question": "给我看看SSR或SR的蓝色卡牌",
+      "command": "/查卡 SSR/SR 蓝色",
+      "kind": "card",
+      "ids": [
+        1,
+        2
+      ],
+      "status": "success",
+      "split": "heldout"
+    },
+    {
+      "question": "请列出BD/SSR蓝色成员卡",
+      "command": "/查卡 BD/SSR 蓝色",
+      "kind": "card",
+      "ids": [
+        1,
+        3
+      ],
+      "status": "success",
+      "split": "heldout"
+    },
+    {
+      "question": "看看红色成员卡",
+      "command": "/查卡 红色",
+      "kind": "card",
+      "ids": [
+        6
+      ],
+      "status": "success",
+      "split": "heldout"
+    },
+    {
+      "question": "丰川祥子的綠色成員卡有哪些？",
+      "command": "/查卡 丰川祥子 绿色",
+      "kind": "card",
+      "ids": [
+        4,
+        5
+      ],
+      "status": "success",
+      "split": "heldout"
+    },
+    {
+      "question": "只看绿色SSR成员卡",
+      "command": "/查卡 绿色 SSR",
+      "kind": "card",
+      "ids": [
+        4
+      ],
+      "status": "success",
+      "split": "heldout"
+    },
+    {
+      "question": "LIVE分類是判定强化的成员卡",
+      "command": "/查卡 LIVE=判定强化",
+      "kind": "card",
+      "ids": [
+        5
+      ],
+      "status": "success",
+      "split": "heldout"
+    },
+    {
+      "question": "击奏类型为LUCK的角色卡",
+      "command": "/查卡 激奏=LUCK",
+      "kind": "card",
+      "ids": [
+        5
+      ],
+      "status": "success",
+      "split": "heldout"
+    },
+    {
+      "question": "得意乐曲为MyGO的成员卡",
+      "command": "/查卡 得意=MyGO",
+      "kind": "card",
+      "ids": [
+        1,
+        2,
+        3
+      ],
+      "status": "success",
+      "split": "heldout"
+    },
+    {
+      "question": "请看看Ave Mujica的红色SSR卡",
+      "command": "/查卡 Ave Mujica 红色 SSR",
+      "kind": "card",
+      "ids": [
+        6
+      ],
+      "status": "success",
+      "split": "heldout"
+    },
+    {
+      "question": "请列出蓝色EX SNAP",
+      "command": "/查留影卡 蓝色 EX",
+      "kind": "support_card",
+      "ids": [
+        7
+      ],
+      "status": "success",
+      "split": "heldout"
+    },
+    {
+      "question": "给我看看绿色SSR留影卡",
+      "command": "/查留影卡 绿色 SSR",
+      "kind": "support_card",
+      "ids": [
+        8
+      ],
+      "status": "success",
+      "split": "heldout"
+    },
+    {
+      "question": "想看EX或SR的SNAP",
+      "command": "/查留影卡 EX/SR",
+      "kind": "support_card",
+      "ids": [
+        7,
+        9
+      ],
+      "status": "success",
+      "split": "heldout"
+    },
+    {
+      "question": "LIVE类型为技能延长的SNAP",
+      "command": "/查留影卡 LIVE=技能延长",
+      "kind": "support_card",
+      "ids": [
+        9
+      ],
+      "status": "success",
+      "split": "heldout"
+    },
+    {
+      "question": "击奏LUCK的支援卡有哪些",
+      "command": "/查留影卡 激奏=LUCK",
+      "kind": "support_card",
+      "ids": [
+        9
+      ],
+      "status": "success",
+      "split": "heldout"
+    },
+    {
+      "question": "查詢紅色SR SNAP",
+      "command": "/查留影卡 红色 SR",
+      "kind": "support_card",
+      "ids": [
+        9
+      ],
+      "status": "success",
+      "split": "heldout"
+    },
+    {
+      "question": "查一下现在的活动详情",
+      "command": "/查活动 当前",
+      "kind": "info",
+      "ids": [
+        11
+      ],
+      "status": "success",
+      "split": "heldout"
+    },
+    {
+      "question": "請查詢歷史活動有哪些？",
+      "command": "/查活动 历史",
+      "kind": "info",
+      "ids": [
+        12
+      ],
+      "status": "success",
+      "split": "heldout"
+    },
+    {
+      "question": "查看高松灯的人物资料",
+      "command": "/查角色 高松灯",
+      "kind": "info",
+      "ids": [
+        1
+      ],
+      "status": "success",
+      "split": "heldout"
+    },
+    {
+      "question": "想看丰川祥子的生日是哪天",
+      "command": "/查角色 丰川祥子",
+      "kind": "info",
+      "ids": [
+        6
+      ],
+      "status": "success",
+      "split": "heldout"
+    },
+    {
+      "question": "查角色 高松灯",
+      "command": "/查角色 高松灯",
+      "kind": "info",
+      "ids": [
+        1
+      ],
+      "status": "success",
+      "split": "heldout"
+    },
+    {
+      "question": "查卡池 历史",
+      "command": "/查卡池 历史",
+      "kind": "info",
+      "ids": [
+        22
+      ],
+      "status": "success",
+      "split": "heldout"
+    },
+    {
+      "question": "迷星叫的谱面",
+      "command": "/查谱面 100001 ",
+      "kind": "chart",
+      "ids": [
+        100001
+      ],
+      "status": "success",
+      "split": "development",
+      "difficulties": [
+        "HARD",
+        "EXPERT"
+      ]
+    },
+    {
+      "question": "迷星叫EX谱面",
+      "command": "/查谱面 100001 EX",
+      "kind": "chart",
+      "ids": [
+        100001
+      ],
+      "status": "success",
+      "split": "development",
+      "difficulties": [
+        "EXPERT"
+      ]
+    },
+    {
+      "question": "100001EX谱面",
+      "command": "/查谱面 100001 EX",
+      "kind": "chart",
+      "ids": [
+        100001
+      ],
+      "status": "success",
+      "split": "development",
+      "difficulties": [
+        "EXPERT"
+      ]
+    },
+    {
+      "question": "1EX谱面",
+      "command": "/查谱面 100001 EX",
+      "kind": "chart",
+      "ids": [
+        100001
+      ],
+      "status": "success",
+      "split": "development",
+      "difficulties": [
+        "EXPERT"
+      ]
+    }
+  ]
+}

@@ -42,7 +42,8 @@ Haneoka 未确认原始歌曲序号，请用歌名或歌曲ID；旧T50也查附�
 /查留影卡（兼容 /查支援卡、/查SNAP）：同上筛选，另支持 EX、LIVE=技能延长
 /查卡面 ID、/查留影卡面 ID：只输出卡面；条件多选用逗号，同维度任选、跨维度同时满足
 /查缩写 昵称：查看昵称对应的角色、乐队等，也可直接用于查曲或查卡
-/问 想查的内容：自然语言查询歌曲、谱面、成员卡技能或留影卡（复杂问法需配置 AI）
+/问 想查的内容：歌曲、谱面、成员卡和SNAP；活动、卡池和人物资料支持本地固定问法（其他复杂问法需配置 AI）
+例：/问 蓝色SSR或SR成员卡；/问 高松灯的生日卡；/问 当前的卡池有哪些
 /问 迷星叫 EX 物量：等级、Note、颜色、激奏、难度、数量及明确卡牌类型与ID的技能可本地短答
 /继续：续发未发送完的结果；/详情：查看单项或已选结果；列表详情请按ID查询
 自然续查支持 /问 第 N 个、看详情、换成 EX；10 分钟未成功续查失效，请单独发送
@@ -61,7 +62,7 @@ HELP_TEXTS = {
 /support <character, title or ID> [page N]: search support cards
 /查活动 [ID or title], /查卡池 [ID or title], /查角色 [name or ID]: JP information in Chinese
 /abbrev <nickname>: look up a character or band nickname
-/ask <query>: natural language song, chart, member-skill, or support-card lookup
+/ask <query>: song, chart, member-skill or SNAP lookup; bounded Chinese event/gacha/profile questions also run locally
 /status: process and data status  /language: language guide  /help: this guide
 Example: /song mygo 27, /chart 100001 EXPERT, /card tomori""",
     "ja": """Our Notes コマンド
@@ -71,7 +72,7 @@ Example: /song mygo 27, /chart 100001 EXPERT, /card tomori""",
 /サポート <キャラクター名・カード名・ID> [ページN]：サポートカードを検索
 /查活动 [ID・名称]、/查卡池 [ID・名称]、/查角色 [名前・ID]：日本版資料（中国語表示）
 /略称 <略称>：キャラクター・バンドなどの略称
-/問 <内容>：楽曲・譜面・メンバースキル・サポートカードの自然言語検索
+/問 <内容>：楽曲・譜面・メンバースキル・SNAPを検索。中国語の定型文でイベント・ガチャ・人物資料もローカル検索
 /状態：プロセスとデータの状態  /言語：言語案内  /ヘルプ：この案内
 例：/曲 mygo 27、/譜面 100001 EXPERT、/カード ともり""",
 }
@@ -152,12 +153,15 @@ def locale_for(content: str) -> str:
     return "zh"
 
 
-def _split_page(query: str) -> tuple[str, int]:
+def split_page(query: str) -> tuple[str, int]:
     match = re.search(r"(?:\s+|(?=第|页|ページ))(?:页\s*(\d+)|第\s*(\d+)\s*页|p(\d+)|page\s+(\d+)|ページ\s*(\d+))\s*$", query, re.I)
     if not match:
         return query, 1
     return query[:match.start()].strip(), int(next(value for value in match.groups() if value is not None))
 
+
+# Historical internal entry point remains available to existing callers.
+_split_page = split_page
 
 def _song_name_matches(repository: SongRepository, term: str) -> list[Song]:
     if not term:

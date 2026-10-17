@@ -43,6 +43,26 @@ class InfoCommandPipelineTests(unittest.TestCase):
                 self.assertIs(render.call_args.args[0], self.answer)
         self.assertFalse(self.parser.mock_calls)
 
+    def test_local_questions_reach_real_reply_pipeline_without_model(self):
+        from ournotes_bot.ai_query import AIQueryParser
+        from ournotes_bot.config import Settings
+        parser = AIQueryParser(Settings('', '', '', self.repo.cache_file, 6, 'fixture-key'))
+        for question, module, function in (
+            ('/问 高松灯的生日是什么', 'character_query', 'execute_character'),
+            ('/问 当前的卡池有哪些', 'gacha_query', 'execute_gacha'),
+            ('/问 历史活动有哪些', 'activity_query', 'execute_activity'),
+        ):
+            with self.subTest(question=question), \
+                 patch(f'ournotes_bot.query.{module}.{function}', return_value=self.answer) as execute, \
+                 patch('ournotes_bot.rendering.info_layout.render_info', return_value=(SimpleNamespace(text=self.answer.text, image=b'image'),)) as render, \
+                 patch.object(parser, '_request', side_effect=AssertionError('model called')), \
+                 patch.object(parser._quota, 'reserve', side_effect=AssertionError('quota used')):
+                reply = _prepare_reply(question, self.repo, parser)
+                self.assertEqual(reply.image, b'image')
+                self.assertEqual(reply.text, self.answer.text)
+                execute.assert_called_once()
+                self.assertIs(render.call_args.args[0], self.answer)
+
     def test_render_failure_retains_all_text_and_can_continue_without_requery(self):
         complete = '人物简介和来源\n' * 2200 + '完整结果最后一行'
         answer = InfoAnswer(complete, views=self.views)

@@ -1,6 +1,6 @@
 # 查询规格与入口差异
 
-本规格绑定基线 `86075410adf75c65ecece7b7a946dab51571d5a1`，面向维护者和后续查询开发。描述代码能力，不表示生产已部署、来源此刻完整或真实模型准确率。固定样例使用合成数据或仓库夹具，不把样例 ID、等级和颜色当成游戏事实。
+原始规格基线为 `86075410adf75c65ecece7b7a946dab51571d5a1`；自然语言扩展在 `941de15` 基础上更新，详见 [ON 词法与模型字段](ON_LANGUAGE.md)，面向维护者和后续查询开发。描述代码能力，不表示生产已部署、来源此刻完整或真实模型准确率。固定样例使用合成数据或仓库夹具，不把样例 ID、等级和颜色当成游戏事实。
 
 ## 入口、结果与证据
 
@@ -10,19 +10,19 @@
 
 | 业务 | 直接入口 | 本地 `/问` | 模型辅助 `/问` | 源码 / 现有测试 |
 |---|---|---|---|---|
-| 歌曲 | `/查曲`，兼容别名见 `commands.ALIASES` | 名称/乐队、等级比较；颜色/激奏专用语法 | `song.search`：单一对象、单等级边界、难度、页码 | `query/song_query.py`、`song_conditions.py`、`test_song_traits.py` |
+| 歌曲 | `/查曲`，兼容别名见 `commands.ALIASES` | 名称/乐队、等级比较；颜色/激奏专用语法 | `song.search`：单一对象、等级等值/单边界、难度、颜色、激奏组合、页码 | `query/song_query.py`、`song_conditions.py`、`test_song_traits.py` |
 | 谱面 | `/查谱面 歌曲 [难度]` | 歌曲谱面问法及字段短答 | `chart.get`：歌曲、难度 | `structured_query.chart_for`、`test_query_correctness.py`、`test_chart_data.py` |
-| 成员卡 | `/查卡`、`/查角色卡`、`/查卡面 ID` | 角色/乐队/卡、稀有度、技能；显式颜色、分类、多选及 BD | `member_card.search`：单一对象、技能词/类型、2/3/4 星、页码 | `query/card_catalog.py`、`test_card_catalog.py`、`test_natural_query_eval.py` |
-| SNAP | `/查留影卡`、`/查支援卡`、`/查snap`、`/查留影卡面 ID` | 角色、稀有度；显式颜色、分类、多选及 EX | `support_card.search`：对象、2/3/4 星、页码；不开放技能参数 | 同上，另见 `test_support_data.py` |
-| 活动 | `/查活动`、`event`、`イベント` | 没有独立口语执行器，也不在代理明确命令转交白名单 | 未注册 | `query/activity_query.py`、`test_info_queries.py` |
-| 卡池 | `/查卡池` | 同上；不要把英文 `gacha` 当作已实现别名 | 未注册 | `query/gacha_query.py`、`test_info_command_pipeline.py` |
-| 人物 | `/查角色` | 没有独立人物口语执行器 | 未注册 | `query/character_query.py`、`test_info_queries.py` |
+| 成员卡 | `/查卡`、`/查角色卡`、`/查卡面 ID` | 角色/乐队/卡、稀有度、技能；显式颜色、分类、多选及 BD | `member_card.search`：对象、多选稀有度/颜色、LIVE/击奏分类、得意标签、技能词/类型、页码 | `query/card_catalog.py`、`test_card_catalog.py`、`test_natural_query_eval.py` |
+| SNAP | `/查留影卡`、`/查支援卡`、`/查snap`、`/查留影卡面 ID` | 角色、稀有度；显式颜色、分类、多选及 EX | `support_card.search`：对象、多选稀有度/颜色、LIVE/击奏分类、页码；不开放任意技能关键词 | 同上，另见 `test_support_data.py` |
+| 活动 | `/查活动`、`event`、`イベント` | 当前/历史/列表/详情固定口语和明确命令转交 | 未注册 | `query/activity_query.py`、`test_info_queries.py` |
+| 卡池 | `/查卡池` | 当前/历史/详情固定口语和中文命令转交；英文 `gacha` 仍非入口 | 未注册 | `query/gacha_query.py`、`test_info_command_pipeline.py` |
+| 人物 | `/查角色` | 人物资料/生日/乐队成员固定口语和明确命令转交 | 未注册 | `query/character_query.py`、`test_info_queries.py` |
 | 歌曲榜线 | `/查榜线`、`/榜线` | `parse_natural_cutoff`，含服别/活动/歌曲/排名 | 保持本地，不调用模型 | `query/event_cutoff_query.py`、`test_cutoff_query_v2.py`、`test_cutoff_archive.py` |
 | 短答/数量 | 相应命令显示资料；短答入口是 `/问` | `parse_field_question` | 无 `field` 模型参数 | `query/field_query.py`、`test_field_queries.py` |
 | 别名 | `/查缩写` | 实体解析使用同一词库；不等于反查别名功能 | 只允许已核实对象 | `query/entity_lexicon.py`、`test_ai_lexicon.py` |
 | 续查 | `/继续`、选择和详情语法 | 平台持有已发送上下文；脱离上下文时代理拒绝 | 不开放自由修改条件 | `query/continuation.py`、`test_continuation.py` |
 
-状态不是跨层同名枚举：信息查询 `InfoAnswer` 可以返回 `no_results`，`CommandResult.status` 负责映射；代理使用 `OutcomeCode`。合法空集、未知实体、歧义、缺资料和无效参数须分别记录。卡牌解析错误当前统一进入 `invalid_arguments`，不能宣称每个入口都已细分未知实体。
+状态不是跨层同名枚举：信息查询 `InfoAnswer` 可以返回 `no_results`，`QueryAgent` 在信息转交边界映射为 `empty`；代理使用 `OutcomeCode`。合法空集、未知实体、歧义、缺资料和无效参数须分别记录。卡牌解析错误当前统一进入 `invalid_arguments`，不能宣称每个入口都已细分未知实体。
 
 ## 歌曲与谱面字段
 
@@ -38,7 +38,7 @@
 | 等级 → `comparison`、`level`、`integer_level` | 数值 1～40；一次一个 `= > >= < <=`；默认无条件。`lv25` 按整级 `Chart.level` 等值，`lv25.0` 按 `display_level` 精确等值 | 是 / 是 / 无 | `lv25` 可含显示 25.5 的整级 25 谱面；`lv25.0` 不含它 |
 | 页码 → `page` | 正整数，默认 1；完整结果保留，文字按页输出，超范围提示 | 页码 / 非业务筛选 / 无 | `/查曲 蓝色 页2`；不得因翻页改变筛选条件 |
 
-等级比较：未指定难度或 ALL 的**范围比较**按最难谱面判断；等值是任一适用谱面匹配。显式难度只比较该难度。`song.search` 模型只接受 `gte/gt/lte/lt` 单边界与四种难度；不开放颜色、激奏、等值、ALL、双边界或排除。本地歌曲语法见 `song_query.local_query` 与 `local_query.local_song_filter`，不能把模型目录的限制误写成直接命令限制。
+等级比较：未指定难度或 ALL 的**范围比较**按最难谱面判断；等值是任一适用谱面匹配。显式难度只比较该难度。`song.search` 模型支持 `eq/gte/gt/lte/lt`、四种难度及 ALL、颜色数组、激奏模式和序列、整级标记；不开放双边界或排除，所有条件须由原文词法核实。本地歌曲语法见 `song_query.local_query` 与 `local_query.local_song_filter`，不能把模型目录的限制误写成直接命令限制。
 
 缺颜色/激奏时：部分未知歌曲排除并附覆盖提示；候选全部缺所需字段返回 `data_unavailable`；未知名称返回 `unknown_entity`，完整条件交集为空是 `empty`。带缺失提示的数量是“已确认匹配”，不是完整总量。默认结果顺序沿来源/检索路径，不承诺跨版本稳定排序。
 
@@ -53,11 +53,11 @@
 | 角色 → `character` | 已核实角色/昵称；默认不限，同维度 OR | 两类卡均可；SNAP 多人参与关系，不按拼接展示名推断 |
 | 乐队 → `band` | 已核实乐队/简称；默认不限，同维度 OR | 两类卡；SNAP 按关联乐队；模型入口仍受能力与实体校验限制 |
 | 卡名 → `title_ids` | 精确原名/多语言名/人工别名解析为 ID 集；默认不限 | 各实体类别隔离；不默认拥有角色查询的全部模糊匹配规则 |
-| 稀有度 → `rarity` | R=2、SR=3、SSR=4；成员另有 BD=20，SNAP 另有 EX=10；默认不限，多选 OR | 两类不得互换 BD/EX；模型仅单值 2/3/4，不支持多选 |
-| 颜色 → `type` | 红1/蓝2/绿3/黄4/紫5；默认不限，多选 OR | 直接和部分本地口语支持；模型无此字段 |
+| 稀有度 → `rarity` | R=2、SR=3、SSR=4；成员另有 BD=20，SNAP 另有 EX=10；默认不限，多选 OR | 两类不得互换 BD/EX；模型使用 `rarities` 数组多选；旧 `rarity` 参数保留 2/3/4/null |
+| 颜色 → `type` | 红1/蓝2/绿3/黄4/紫5；默认不限，多选 OR | 直接、本地口语和模型 `colors` 数组支持 |
 | LIVE → `live` | 分数提升 `score`、LIFE回复 `life`、判定强化 `judgement`；SNAP 另有技能延长 `duration`；默认不限，多选 OR | 成员卡拒绝技能延长；SNAP EX 可有两项 LIVE 支援，不合并成一个臆造技能 |
 | 激奏/击奏 → `gekisou` | JUST/COMBO/LUCK；默认不限，多选 OR | 依来源分类；SNAP 的 `not_applicable` 是不适用，不是未知或可按 JUST 命中 |
-| 得意 → `tags` | 来源标签或核实的乐队标签；多个标签要求**全部包含** | 成员专属；SNAP 明确拒绝；模型不开放 |
+| 得意 → `tags` | 来源标签或核实的乐队标签；多个标签要求**全部包含** | 成员专属；SNAP 明确拒绝；模型使用来源标签 ID 数组并校验原文 |
 | 技能词/类型 → `skill_query/skill_kind` | `leader/live/gekisou`，词须来自原句；在技能名称、描述及多语言文案中匹配 | 结构化成员技能查询独立于 `CardRequest` 分类；本地及模型成员能力支持，不能泛化成 SNAP 任意技能反查 |
 
 显式字段接受 `=`、`:`、`：`；值按解析器支持的多选分隔符拆分（`/`、`,`、`，`、`、`、`|`、`或`）。跨字段 AND。未知颜色、角色、分类或不适用维度不得静默丢弃。候选记录缺少相关索引时返回 `data_unavailable`，不能只返回已知子集冒充完整卡牌筛选。卡牌 ID 不当作星级。
@@ -115,7 +115,7 @@
 | 等级与激奏 | 新样例区分 25/25.0、未指定难度范围、纯/混合/包含全部/精确序列；`test_song_traits.py` 验证缺资料覆盖 |
 | 卡牌集合 | 新样例验证蓝色＋SSR或SR、BD、SNAP EX、列表与 ID 详情；`test_card_catalog.py` 验证得意全包含、SNAP 多人、未知索引 |
 | 短答与结果状态 | 新样例验证 Note 未知/零、歧义/未知/空；`test_field_queries.py` 验证全集数量和技能 |
-| 模型范围 | 新样例比较开放的角色＋稀有度固定动作；拒绝 BD/EX/颜色等未开放参数；`test_natural_query_eval.py`、`test_query_refactor.py` 验证预算、原文核验及不得放宽 |
+| 模型范围 | 原样例保留旧单值参数约束；新 `test_on_language.py` 覆盖多选 BD/EX/颜色等扩展字段、漏条件及类型错误；`test_natural_query_eval.py`、`test_query_refactor.py` 验证预算、原文核验及不得放宽 |
 | 榜线数字 | 新样例比较直接/本地解析的 hk、id1、歌曲ID、20-40；历史读取见 `test_cutoff_archive.py` |
 | 信息与续查 | `test_info_queries.py` 固定时间窗/跨服范围/关联去重；`test_continuation.py` 固定会话隔离、TTL和发送确认 |
 
@@ -125,7 +125,7 @@
 
 1. 本地统计、缓存重执行状态和后台刷新日志已在独立 PR 修正；旧 `local_success` 不能直接评价解析准确率。
 2. SNAP 别名入口、坏词库保护、加载校验和内容版本已有回归；完整目标反查别名仍未实现。
-3. 按已核实来源补名称与高频别名，再逐业务对齐模型参数；新范围/排除语义另立任务。
+3. 本轮已扩展有界口语和模型类型字段，见 [ON 词法](ON_LANGUAGE.md)；别名补充独立交付，新范围/排除语义另立任务。
 4. 静态 release 判变和分段耗时另做；保持实时榜线采样、现有图像与发送契约。
 
 复现：按 [开发指南](DEV_GUIDE.md#开发与验证命令) 使用临时数据运行上述 unittest 文件，禁止真实模型和 QQ 连接。文档的支持结论必须有源码或固定样例依据；运行记录另绑定实际提交，不把本页当生产状态。

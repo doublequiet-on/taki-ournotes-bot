@@ -21,7 +21,7 @@ from ..query.song_conditions import extract_song_conditions
 from ..structured_query import QuerySpec
 
 
-UNSUPPORTED = "目前只能查询歌曲、谱面、活动歌曲榜线、成员卡和支援卡。试试 /查曲、/查谱面、/榜线、/查卡 或 /查留影卡；不支持泛攻略、配队或预测。"
+UNSUPPORTED = "目前只能查询歌曲、谱面、活动歌曲榜线、成员卡、SNAP，以及本地活动、卡池和人物资料查询。试试 /查曲、/查谱面、/榜线、/查卡、/查留影卡、/查活动、/查卡池 或 /查角色；不支持泛攻略、配队或预测。"
 UNKNOWN_ENTITY = "当前数据中无法确认这个查询对象。请用歌曲、乐队、角色、成员卡或支援卡的原名或 ID 重试。"
 AMBIGUOUS_ENTITY = "这句话提到了多个可查询对象，请只保留一个歌曲、乐队、角色、成员卡或支援卡名称。"
 
@@ -110,10 +110,22 @@ def validate_capability_action(data: dict[str, Any], capability: Capability, que
             return ValidationResult(None, OutcomeCode.UNSUPPORTED)
         if data.get("intent") != capability.intent:
             return ValidationResult(None, OutcomeCode.INVALID_OUTPUT)
-        return validate_legacy_plan(
+        legacy_arguments = {k: v for k, v in data.items() if k in capability.allowed_parameters}
+        if not data.get("level_operator") and data.get("level") is None and data.get("min_level") is not None:
+            legacy_arguments.update(level_operator="gte", level=data["min_level"])
+        if capability.invalid_fields(legacy_arguments):
+            return ValidationResult(None, OutcomeCode.INVALID_ARGUMENTS)
+        validated = validate_legacy_plan(
             data, question, repository,
             allow_empty_subject=allow_empty_subject and capability.allow_empty_subject,
         )
+        if validated.spec is None:
+            return validated
+        from .catalog_arguments import grounded_catalog
+        expanded, mismatches = grounded_catalog(data, capability.intent, question, repository)
+        if mismatches is not None:
+            return ValidationResult(expanded, OutcomeCode.INVALID_ARGUMENTS if mismatches else OutcomeCode.SUCCESS)
+        return validated
     if data == {"action": "reject", "reason": "unsupported"}:
         return ValidationResult(None, OutcomeCode.UNSUPPORTED)
     if (set(data) != {"action", "capability", "arguments"}
@@ -128,6 +140,11 @@ def validate_capability_action(data: dict[str, Any], capability: Capability, que
             capability.allowed_parameters, repairable=True,
         )
     assert isinstance(arguments, dict)
+    from .catalog_arguments import grounded_catalog
+    expanded, mismatches = grounded_catalog(arguments, capability.intent, question, repository)
+    if mismatches is not None:
+        return ValidationResult(expanded, OutcomeCode.INVALID_ARGUMENTS if mismatches else OutcomeCode.SUCCESS,
+                                mismatches, capability.allowed_parameters, repairable=bool(mismatches))
     # The model must preserve explicit page/rarity filters and cannot invent
     # either one. Both are parsed from the user's own question, independently
     # of the model's proposed arguments.
