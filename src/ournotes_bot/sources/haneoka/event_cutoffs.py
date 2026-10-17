@@ -309,7 +309,8 @@ class HaneokaEventCutoffRepository(EventCutoffRepository):
         elif fetched > server + 1000:
             scores, status, quality = (), "来源时钟异常，暂无可信当前值", "clock_unknown"
         elif ((song.effective_start_ms and period_time < song.effective_start_ms)
-              or (song.effective_end_ms and period_time > song.effective_end_ms)):
+              or (song.effective_end_ms and period_time > song.effective_end_ms
+                  and song.collect_status not in {"finalizing", "archived"})):
             scores, status, quality = (), "快照不在挑战期内，暂无可信当前值", "outside_period"
         elif board.age_seconds is not None and board.age_seconds > 600 and song.collect_status != "archived":
             scores, status, quality = (), "快照过期，暂无当前分数", "stale"
