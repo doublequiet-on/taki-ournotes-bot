@@ -1,0 +1,452 @@
+{
+  "source": "https://haneoka.org/api/v1/servers/jp/songs?release=r-454064752ee20564b7d3",
+  "identity": {
+    "schema": "haneoka-resource-release-identity-v1",
+    "server": "jp",
+    "releaseId": "r-454064752ee20564b7d3",
+    "sourceId": "v10059-d946d6c87a3c-589a82ae0ecf-md66bf083b172-n89161ad4"
+  },
+  "accessed": "2026-10-17",
+  "songs": [
+    {
+      "id": 100001,
+      "title": "迷星叫",
+      "band": "MyGO!!!!!"
+    },
+    {
+      "id": 100002,
+      "title": "壱雫空",
+      "band": "MyGO!!!!!"
+    },
+    {
+      "id": 100003,
+      "title": "碧天伴走",
+      "band": "MyGO!!!!!"
+    },
+    {
+      "id": 100004,
+      "title": "影色舞",
+      "band": "MyGO!!!!!"
+    },
+    {
+      "id": 100005,
+      "title": "潜在表明",
+      "band": "MyGO!!!!!"
+    },
+    {
+      "id": 100006,
+      "title": "音一会",
+      "band": "MyGO!!!!!"
+    },
+    {
+      "id": 100007,
+      "title": "春日影 (MyGO!!!!! ver.)",
+      "band": "MyGO!!!!!"
+    },
+    {
+      "id": 100008,
+      "title": "詩超絆",
+      "band": "MyGO!!!!!"
+    },
+    {
+      "id": 100009,
+      "title": "迷路日々",
+      "band": "MyGO!!!!!"
+    },
+    {
+      "id": 100010,
+      "title": "無路矢",
+      "band": "MyGO!!!!!"
+    },
+    {
+      "id": 100011,
+      "title": "名無声",
+      "band": "MyGO!!!!!"
+    },
+    {
+      "id": 100012,
+      "title": "歩拾道",
+      "band": "MyGO!!!!!"
+    },
+    {
+      "id": 100013,
+      "title": "端程山",
+      "band": "MyGO!!!!!"
+    },
+    {
+      "id": 100014,
+      "title": "砂寸奏",
+      "band": "MyGO!!!!!"
+    },
+    {
+      "id": 100015,
+      "title": "焚音打",
+      "band": "MyGO!!!!!"
+    },
+    {
+      "id": 100016,
+      "title": "聿日箋秋",
+      "band": "MyGO!!!!!"
+    },
+    {
+      "id": 100017,
+      "title": "証命讃歌",
+      "band": "MyGO!!!!!"
+    },
+    {
+      "id": 100018,
+      "title": "ないものねだり",
+      "band": "MyGO!!!!!"
+    },
+    {
+      "id": 100019,
+      "title": "シャルル",
+      "band": "MyGO!!!!!"
+    },
+    {
+      "id": 100020,
+      "title": "空に歌えば",
+      "band": "MyGO!!!!!"
+    },
+    {
+      "id": 100021,
+      "title": "青春コンプレックス",
+      "band": "MyGO!!!!!"
+    },
+    {
+      "id": 100026,
+      "title": "Ave Mujica",
+      "band": "Ave Mujica"
+    },
+    {
+      "id": 100027,
+      "title": "KiLLKiSS",
+      "band": "Ave Mujica"
+    },
+    {
+      "id": 100028,
+      "title": "Imprisoned XII",
+      "band": "Ave Mujica"
+    },
+    {
+      "id": 100029,
+      "title": "Crucifix X",
+      "band": "Ave Mujica"
+    },
+    {
+      "id": 100030,
+      "title": "八芒星ダンス",
+      "band": "Ave Mujica"
+    },
+    {
+      "id": 100031,
+      "title": "顔",
+      "band": "Ave Mujica"
+    },
+    {
+      "id": 100032,
+      "title": "天球(そら)のMúsica",
+      "band": "Ave Mujica"
+    },
+    {
+      "id": 100033,
+      "title": "Symbol I : △",
+      "band": "Ave Mujica"
+    },
+    {
+      "id": 100034,
+      "title": "Symbol II : 🜁",
+      "band": "Ave Mujica"
+    },
+    {
+      "id": 100035,
+      "title": "Symbol III : ▽",
+      "band": "Ave Mujica"
+    },
+    {
+      "id": 100036,
+      "title": "Symbol IV : 🜃",
+      "band": "Ave Mujica"
+    },
+    {
+      "id": 100037,
+      "title": "Ether",
+      "band": "Ave Mujica"
+    },
+    {
+      "id": 100038,
+      "title": "黒のバースデイ",
+      "band": "Ave Mujica"
+    },
+    {
+      "id": 100039,
+      "title": "Choir ‘S’ Choir",
+      "band": "Ave Mujica"
+    },
+    {
+      "id": 100040,
+      "title": "Mas?uerade Rhapsody Re?uest",
+      "band": "Ave Mujica"
+    },
+    {
+      "id": 100041,
+      "title": "残酷な天使のテーゼ",
+      "band": "Ave Mujica"
+    },
+    {
+      "id": 100042,
+      "title": "堕天",
+      "band": "Ave Mujica"
+    },
+    {
+      "id": 100043,
+      "title": "暗黒天国",
+      "band": "Ave Mujica"
+    },
+    {
+      "id": 100044,
+      "title": "KINGS",
+      "band": "Ave Mujica"
+    },
+    {
+      "id": 100047,
+      "title": "ファタール",
+      "band": "Ave Mujica"
+    },
+    {
+      "id": 100050,
+      "title": "†animaるパーティ†開催中†",
+      "band": "夢限大みゅーたいぷ"
+    },
+    {
+      "id": 100051,
+      "title": "エンプティパペット",
+      "band": "夢限大みゅーたいぷ"
+    },
+    {
+      "id": 100052,
+      "title": "限界現実サバイブ天使",
+      "band": "夢限大みゅーたいぷ"
+    },
+    {
+      "id": 100053,
+      "title": "ビッグマウス",
+      "band": "夢限大みゅーたいぷ"
+    },
+    {
+      "id": 100054,
+      "title": "夢現妄想世界",
+      "band": "夢限大みゅーたいぷ"
+    },
+    {
+      "id": 100055,
+      "title": "コハク",
+      "band": "夢限大みゅーたいぷ"
+    },
+    {
+      "id": 100056,
+      "title": "これはぼくたちの生存のあらすじ",
+      "band": "夢限大みゅーたいぷ"
+    },
+    {
+      "id": 100057,
+      "title": "うちゅうのふしぎ",
+      "band": "夢限大みゅーたいぷ"
+    },
+    {
+      "id": 100058,
+      "title": "真夜中遊園地",
+      "band": "夢限大みゅーたいぷ"
+    },
+    {
+      "id": 100059,
+      "title": "チューニング",
+      "band": "夢限大みゅーたいぷ"
+    },
+    {
+      "id": 100060,
+      "title": "超惑星Xへの旅",
+      "band": "夢限大みゅーたいぷ"
+    },
+    {
+      "id": 100061,
+      "title": "六兆年と一夜物語",
+      "band": "夢限大みゅーたいぷ"
+    },
+    {
+      "id": 100062,
+      "title": "唱",
+      "band": "夢限大みゅーたいぷ"
+    },
+    {
+      "id": 100063,
+      "title": "オリオンをなぞる",
+      "band": "夢限大みゅーたいぷ"
+    },
+    {
+      "id": 100064,
+      "title": "UNDEAD",
+      "band": "夢限大みゅーたいぷ"
+    },
+    {
+      "id": 100066,
+      "title": "ちゅ、多様性。",
+      "band": "夢限大みゅーたいぷ"
+    },
+    {
+      "id": 100069,
+      "title": "起死開戦",
+      "band": "millsage"
+    },
+    {
+      "id": 100070,
+      "title": "everscape",
+      "band": "millsage"
+    },
+    {
+      "id": 100071,
+      "title": "鳴らす",
+      "band": "millsage"
+    },
+    {
+      "id": 100072,
+      "title": "青のすみか",
+      "band": "millsage"
+    },
+    {
+      "id": 100074,
+      "title": "Pretender",
+      "band": "millsage"
+    },
+    {
+      "id": 100075,
+      "title": "unravel",
+      "band": "millsage"
+    },
+    {
+      "id": 100076,
+      "title": "ロウワー",
+      "band": "millsage"
+    },
+    {
+      "id": 100080,
+      "title": "ホーミー・タイッ！！",
+      "band": "一家Dumb Rock!"
+    },
+    {
+      "id": 100081,
+      "title": "ジャイアント・キラー・チューン",
+      "band": "一家Dumb Rock!"
+    },
+    {
+      "id": 100082,
+      "title": "ピースフル・ピーシーズ！",
+      "band": "一家Dumb Rock!"
+    },
+    {
+      "id": 100083,
+      "title": "Mela!",
+      "band": "一家Dumb Rock!"
+    },
+    {
+      "id": 100085,
+      "title": "サムライハート(Some Like It Hot!!)",
+      "band": "一家Dumb Rock!"
+    },
+    {
+      "id": 100087,
+      "title": "イケナイ太陽",
+      "band": "一家Dumb Rock!"
+    },
+    {
+      "id": 100088,
+      "title": "革命道中",
+      "band": "一家Dumb Rock!"
+    },
+    {
+      "id": 100091,
+      "title": "春日影",
+      "band": "CRYCHIC"
+    },
+    {
+      "id": 100092,
+      "title": "碧い瞳の中に",
+      "band": "Ave Mujica"
+    },
+    {
+      "id": 100093,
+      "title": "往欄印",
+      "band": "MyGO!!!!!"
+    },
+    {
+      "id": 100094,
+      "title": "TearJerker",
+      "band": "夢限大みゅーたいぷ"
+    },
+    {
+      "id": 100095,
+      "title": "Face The Next",
+      "band": "夢限大みゅーたいぷ"
+    },
+    {
+      "id": 100096,
+      "title": "The Whole Blue World",
+      "band": "Ave Mujica"
+    },
+    {
+      "id": 100097,
+      "title": "in my words",
+      "band": "夢限大みゅーたいぷ"
+    },
+    {
+      "id": 100098,
+      "title": "愛は衝動",
+      "band": "夢限大みゅーたいぷ"
+    },
+    {
+      "id": 100104,
+      "title": "微笑みの爆弾",
+      "band": "一家Dumb Rock!"
+    },
+    {
+      "id": 100105,
+      "title": "ホワイトノイズ",
+      "band": "MyGO!!!!!"
+    },
+    {
+      "id": 100106,
+      "title": "Keep on Riddim",
+      "band": "一家Dumb Rock!"
+    },
+    {
+      "id": 100108,
+      "title": "Stellar Stellar",
+      "band": "millsage"
+    },
+    {
+      "id": 100109,
+      "title": "夢我夢中",
+      "band": "夢限大みゅーたいぷ"
+    },
+    {
+      "id": 100110,
+      "title": "カーネーションの咲く日に",
+      "band": "millsage"
+    },
+    {
+      "id": 100111,
+      "title": "Odd Dice",
+      "band": "millsage"
+    },
+    {
+      "id": 100112,
+      "title": "過去を喰らう",
+      "band": "MyGO!!!!!"
+    },
+    {
+      "id": 100113,
+      "title": "神の名を",
+      "band": "Ave Mujica"
+    }
+  ]
+}

@@ -12,7 +12,7 @@ import unicodedata
 from dataclasses import dataclass, field
 
 from ..data import Card, SupportCard, localized_text, normalize, character_identity
-from .entity_lexicon import resolve_exact_alias
+from .entity_lexicon import resolve_exact_alias, resolve_character_fragment, CharacterAmbiguity
 
 RARITIES = {"R": 2, "SR": 3, "SSR": 4, "EX": 10, "BD": 20}
 # Public /images/CardType{attribute}.webp, inspected against the five actual icons.
@@ -115,10 +115,10 @@ def _entity(value, dimension, repository):
         for kind, field_name in (("character", "character"), ("band", "band")):
             names = [getattr(c, field_name), *c.localized.get(field_name, {}).values()]
             if (dimension is None or kind == dimension) and normalize(value) in {normalize(n) for n in names}:
-                found.add((kind, getattr(c, field_name)))
+                found.add((kind, character_identity(c.character) if kind == "character" else c.band))
     for c in repository.support_cards:
         if dimension in {None, "character"}:
-            found.update(("character", n) for n in c.characters if normalize(n) == normalize(value))
+            found.update(("character", character_identity(n)) for n in c.characters if normalize(n) == normalize(value))
         if dimension in {None, "band"}:
             found.update(("band", n) for n in c.catalog.get("bands", []) if normalize(n) == normalize(value))
     if len(found) == 1:
@@ -132,6 +132,10 @@ def _entity(value, dimension, repository):
         if dimension and match.entity.kind != dimension:
             raise ValueError(f"“{value}”不是{dimension}条件。")
         return match.entity.kind, str(match.entity.value)
+    if dimension != "band":
+        fragment = resolve_character_fragment(value, repository)
+        if fragment:
+            return "character", fragment
     # Built-in civil/stage-name equivalence is also used by old commands.
     from ..data import resolve_character_alias
     alias = resolve_character_alias(value)
@@ -340,7 +344,8 @@ def query_cards(query, repository, *, support=False, art=False):
         req = parse_card_request(query, repository, support=support, art=art)
         return execute_card_request(req, repository)
     except ValueError as exc:
-        return CardAnswer(CardRequest(support, query=query), error=str(exc))
+        return CardAnswer(CardRequest(support, query=query), error=str(exc),
+                          status="ambiguous" if isinstance(exc, CharacterAmbiguity) else "invalid_arguments")
 
 
 def detail_text(card, locale="zh"):

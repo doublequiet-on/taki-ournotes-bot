@@ -14,7 +14,7 @@ from dataclasses import replace
 
 from ..commands import CARD_RARITY_HELP, _split_page, split_card_rarity
 from ..data import SongRepository
-from ..query.entity_lexicon import find_anchor, resolve_entity
+from ..query.entity_lexicon import find_anchor, resolve_entity, resolve_character_fragment, CharacterAmbiguity
 from .query_terms import SKILL_CLARIFICATION, is_skill_placeholder
 from .query_validation import AMBIGUOUS_ENTITY, UNKNOWN_ENTITY
 from ..query.song_conditions import (
@@ -79,7 +79,7 @@ def local_song_filter(query: str, repository: SongRepository) -> QuerySpec | Non
     return QuerySpec("song", subject, difficulty, operator, level, page, term)
 
 
-def local_entity_question(query: str, repository: SongRepository) -> QuerySpec | None:
+def local_entity_question(query: str, repository: SongRepository) -> QuerySpec | str | None:
     text = unicodedata.normalize("NFKC", query).strip()
     page_match = re.search(r"(?:第\s*(\d+)\s*页|页\s*(\d+))\s*$", text)
     page = int(next(part for part in page_match.groups() if part)) if page_match else 1
@@ -93,6 +93,13 @@ def local_entity_question(query: str, repository: SongRepository) -> QuerySpec |
         match = pattern.fullmatch(text)
         if match:
             term = re.sub(r"号$", "", match.group("term").strip())
+            if intent in {"card", "support_card"}:
+                try:
+                    # Exact band aliases keep precedence over a fuzzy name.
+                    if resolve_entity(intent, term, repository) is None:
+                        resolve_character_fragment(term, repository)
+                except CharacterAmbiguity as exc:
+                    return str(exc)
             if resolve_entity(intent, term, repository) is None:
                 continue
             anchor = find_anchor(intent, term, repository)
@@ -171,6 +178,11 @@ def local_card_rarity_question(query: str, repository: SongRepository) -> QueryS
     if "技能" in text or "支援" in text:
         return UNKNOWN_ENTITY
     term = re.sub(r"\s*(?:的\s*)?(?:成员卡|角色卡|卡牌|卡面|卡)\s*(?:都?有(?:哪些|什么)|列表)?$", "", text).strip()
+    try:
+        if resolve_entity("card", term, repository) is None:
+            resolve_character_fragment(term, repository)
+    except CharacterAmbiguity as exc:
+        return str(exc)
     anchor = find_anchor("card", term, repository)
     if anchor.ambiguous:
         return AMBIGUOUS_ENTITY

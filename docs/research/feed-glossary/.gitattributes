@@ -1,0 +1,3 @@
+# Preserve source snapshot bytes for SHA-256 verification.
+glossary.txt -text
+gameplay-sources.md -text
