@@ -239,7 +239,7 @@ def _draw_block(c, block, y, load, *, left=LEFT, right=RIGHT):
 
 
 @reclaim_after_render
-def render_info(answer: InfoAnswer, *, load=None) -> tuple[InfoPage, ...]:
+def render_info(answer: InfoAnswer, *, load=None, try_full_activity=False) -> tuple[InfoPage, ...]:
     """Render captured views; loader returns owned images and no source is imported."""
     if answer.status != "success" or not answer.views:
         return ()
@@ -308,8 +308,22 @@ def render_info(answer: InfoAnswer, *, load=None) -> tuple[InfoPage, ...]:
                     c.image.close()
                     raise
 
-            parts = readable_pages.render_parts(tuple(block.height for block in blocks), WIDTH, fixed, paint,
-                                                max_height=2800 if view.presentation in {'activity','gacha'} else None)
+            heights = tuple(block.height for block in blocks)
+            parts = ()
+            full_height = fixed + sum(heights)
+            if (try_full_activity and view.presentation == 'activity' and heights
+                    and full_height > 2800
+                    and full_height <= min(readable_pages.MAX_IMAGE_EDGE, readable_pages.MAX_IMAGE_PIXELS // WIDTH)):
+                try:
+                    raw = readable_pages.encode_image(paint(0, len(blocks), full_height),
+                                                      close_input=True, preserve_size=True)
+                except ImageBudgetError:
+                    pass  # Keep the established whole-block pagination below.
+                else:
+                    parts = (readable_pages.ImagePart(raw, 0, len(blocks)),)
+            if not parts:
+                parts = readable_pages.render_parts(heights, WIDTH, fixed, paint,
+                                                    max_height=2800 if view.presentation in {'activity','gacha'} else None)
             for part in parts:
                 text = '\n'.join(v for v in (view.title, view.subtitle,
                     *(block.text for block in blocks[part.start:part.stop])) if v)

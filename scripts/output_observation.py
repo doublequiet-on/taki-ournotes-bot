@@ -168,6 +168,23 @@ class Observation:
             stack.enter_context(patch.object(module, entry, render))
             if hasattr(module, 'prepare_assets'):
                 stack.enter_context(patch.object(module, 'prepare_assets', self.wrap(module.prepare_assets, 'assets')))
+        from ournotes_bot.rendering import readable_pages
+        pack = readable_pages.render_parts
+        def pagination(heights, width, fixed, paint, **kwargs):
+            result = pack(heights, width, fixed, paint, **kwargs)
+            height = fixed + sum(heights)
+            reasons = []
+            if height > min(readable_pages.MAX_IMAGE_EDGE, readable_pages.MAX_IMAGE_PIXELS // width):
+                reasons.append('geometry_budget')
+            if kwargs.get('max_height') and height > kwargs['max_height']:
+                reasons.append('preferred_page_height')
+            if any(c.get('status') == 'failed' and c.get('error') == 'ImageBudgetError' for c in self.canvases):
+                reasons.append('encoding_budget_attempt_failed')
+            self.layouts.append({'renderer':'readable_pages', 'heights':heights, 'width':width,
+                'fixed_height':fixed, 'max_height':kwargs.get('max_height'), 'reasons':reasons,
+                'ranges':[(p.start,p.stop) for p in result]})
+            return result
+        stack.enter_context(patch.object(readable_pages, 'render_parts', pagination))
         # These call sites may prepare assets through the original module.
         stack.enter_context(patch.object(haneoka_theme, 'prepare_assets', self.wrap(haneoka_theme.prepare_assets, 'assets')))
 
