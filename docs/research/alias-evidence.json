@@ -1,0 +1,1008 @@
+{
+  "schema": 1,
+  "reviewed_at": "2026-10-17",
+  "entries": [
+    {
+      "kind": "band",
+      "alias": "卖狗",
+      "target": "MyGO!!!!!",
+      "status": "legacy_pending",
+      "language": "zh",
+      "evidence_kind": "legacy",
+      "sources": [],
+      "accessed": "2026-10-17",
+      "reason": "已有映射保留；本轮未补齐独立使用证据，不视为新审核通过。"
+    },
+    {
+      "kind": "band",
+      "alias": "狗团",
+      "target": "MyGO!!!!!",
+      "status": "legacy_pending",
+      "language": "zh",
+      "evidence_kind": "legacy",
+      "sources": [],
+      "accessed": "2026-10-17",
+      "reason": "已有映射保留；本轮未补齐独立使用证据，不视为新审核通过。"
+    },
+    {
+      "kind": "band",
+      "alias": "母鸡卡",
+      "target": "Ave Mujica",
+      "status": "legacy_pending",
+      "language": "zh",
+      "evidence_kind": "legacy",
+      "sources": [],
+      "accessed": "2026-10-17",
+      "reason": "已有映射保留；本轮未补齐独立使用证据，不视为新审核通过。"
+    },
+    {
+      "kind": "band",
+      "alias": "鸡团",
+      "target": "Ave Mujica",
+      "status": "legacy_pending",
+      "language": "zh",
+      "evidence_kind": "legacy",
+      "sources": [],
+      "accessed": "2026-10-17",
+      "reason": "已有映射保留；本轮未补齐独立使用证据，不视为新审核通过。"
+    },
+    {
+      "kind": "band",
+      "alias": "梦团",
+      "target": "梦限大MewType",
+      "status": "legacy_pending",
+      "language": "zh",
+      "evidence_kind": "legacy",
+      "sources": [],
+      "accessed": "2026-10-17",
+      "reason": "已有映射保留；本轮未补齐独立使用证据，不视为新审核通过。"
+    },
+    {
+      "kind": "band",
+      "alias": "ゆめみた",
+      "target": "梦限大MewType",
+      "status": "legacy_pending",
+      "language": "zh",
+      "evidence_kind": "legacy",
+      "sources": [],
+      "accessed": "2026-10-17",
+      "reason": "已有映射保留；本轮未补齐独立使用证据，不视为新审核通过。"
+    },
+    {
+      "kind": "band",
+      "alias": "茉团",
+      "target": "millsage",
+      "status": "legacy_pending",
+      "language": "zh",
+      "evidence_kind": "legacy",
+      "sources": [],
+      "accessed": "2026-10-17",
+      "reason": "已有映射保留；本轮未补齐独立使用证据，不视为新审核通过。"
+    },
+    {
+      "kind": "band",
+      "alias": "ミルサージュ",
+      "target": "millsage",
+      "status": "legacy_pending",
+      "language": "zh",
+      "evidence_kind": "legacy",
+      "sources": [],
+      "accessed": "2026-10-17",
+      "reason": "已有映射保留；本轮未补齐独立使用证据，不视为新审核通过。"
+    },
+    {
+      "kind": "band",
+      "alias": "家团",
+      "target": "一家Dumb Rock!",
+      "status": "legacy_pending",
+      "language": "zh",
+      "evidence_kind": "legacy",
+      "sources": [],
+      "accessed": "2026-10-17",
+      "reason": "已有映射保留；本轮未补齐独立使用证据，不视为新审核通过。"
+    },
+    {
+      "kind": "band",
+      "alias": "一家団欒",
+      "target": "一家Dumb Rock!",
+      "status": "legacy_pending",
+      "language": "zh",
+      "evidence_kind": "legacy",
+      "sources": [],
+      "accessed": "2026-10-17",
+      "reason": "已有映射保留；本轮未补齐独立使用证据，不视为新审核通过。"
+    },
+    {
+      "kind": "band",
+      "alias": "いっかだんらん",
+      "target": "一家Dumb Rock!",
+      "status": "legacy_pending",
+      "language": "zh",
+      "evidence_kind": "legacy",
+      "sources": [],
+      "accessed": "2026-10-17",
+      "reason": "已有映射保留；本轮未补齐独立使用证据，不视为新审核通过。"
+    },
+    {
+      "kind": "character",
+      "alias": "灯皇",
+      "target": "高松灯",
+      "status": "legacy_pending",
+      "language": "zh",
+      "evidence_kind": "legacy",
+      "sources": [],
+      "accessed": "2026-10-17",
+      "reason": "已有映射保留；本轮未补齐独立使用证据，不视为新审核通过。"
+    },
+    {
+      "kind": "character",
+      "alias": "tomorin",
+      "target": "高松灯",
+      "status": "legacy_pending",
+      "language": "zh",
+      "evidence_kind": "legacy",
+      "sources": [],
+      "accessed": "2026-10-17",
+      "reason": "已有映射保留；本轮未补齐独立使用证据，不视为新审核通过。"
+    },
+    {
+      "kind": "character",
+      "alias": "ともりん",
+      "target": "高松灯",
+      "status": "legacy_pending",
+      "language": "zh",
+      "evidence_kind": "legacy",
+      "sources": [],
+      "accessed": "2026-10-17",
+      "reason": "已有映射保留；本轮未补齐独立使用证据，不视为新审核通过。"
+    },
+    {
+      "kind": "character",
+      "alias": "阿农",
+      "target": "千早爱音",
+      "status": "legacy_pending",
+      "language": "zh",
+      "evidence_kind": "legacy",
+      "sources": [],
+      "accessed": "2026-10-17",
+      "reason": "已有映射保留；本轮未补齐独立使用证据，不视为新审核通过。"
+    },
+    {
+      "kind": "character",
+      "alias": "流浪猫",
+      "target": "要乐奈",
+      "status": "legacy_pending",
+      "language": "zh",
+      "evidence_kind": "legacy",
+      "sources": [],
+      "accessed": "2026-10-17",
+      "reason": "已有映射保留；本轮未补齐独立使用证据，不视为新审核通过。"
+    },
+    {
+      "kind": "character",
+      "alias": "野良猫",
+      "target": "要乐奈",
+      "status": "legacy_pending",
+      "language": "zh",
+      "evidence_kind": "legacy",
+      "sources": [],
+      "accessed": "2026-10-17",
+      "reason": "已有映射保留；本轮未补齐独立使用证据，不视为新审核通过。"
+    },
+    {
+      "kind": "character",
+      "alias": "soyorin",
+      "target": "长崎爽世",
+      "status": "legacy_pending",
+      "language": "zh",
+      "evidence_kind": "legacy",
+      "sources": [],
+      "accessed": "2026-10-17",
+      "reason": "已有映射保留；本轮未补齐独立使用证据，不视为新审核通过。"
+    },
+    {
+      "kind": "character",
+      "alias": "そよりん",
+      "target": "长崎爽世",
+      "status": "legacy_pending",
+      "language": "zh",
+      "evidence_kind": "legacy",
+      "sources": [],
+      "accessed": "2026-10-17",
+      "reason": "已有映射保留；本轮未补齐独立使用证据，不视为新审核通过。"
+    },
+    {
+      "kind": "character",
+      "alias": "uiko",
+      "target": "三角初华",
+      "status": "legacy_pending",
+      "language": "zh",
+      "evidence_kind": "legacy",
+      "sources": [],
+      "accessed": "2026-10-17",
+      "reason": "已有映射保留；本轮未补齐独立使用证据，不视为新审核通过。"
+    },
+    {
+      "kind": "character",
+      "alias": "ウイコ",
+      "target": "三角初华",
+      "status": "legacy_pending",
+      "language": "zh",
+      "evidence_kind": "legacy",
+      "sources": [],
+      "accessed": "2026-10-17",
+      "reason": "已有映射保留；本轮未补齐独立使用证据，不视为新审核通过。"
+    },
+    {
+      "kind": "character",
+      "alias": "墨缇丝",
+      "target": "若叶睦",
+      "status": "legacy_pending",
+      "language": "zh",
+      "evidence_kind": "legacy",
+      "sources": [],
+      "accessed": "2026-10-17",
+      "reason": "已有映射保留；本轮未补齐独立使用证据，不视为新审核通过。"
+    },
+    {
+      "kind": "character",
+      "alias": "睦头",
+      "target": "若叶睦",
+      "status": "legacy_pending",
+      "language": "zh",
+      "evidence_kind": "legacy",
+      "sources": [],
+      "accessed": "2026-10-17",
+      "reason": "已有映射保留；本轮未补齐独立使用证据，不视为新审核通过。"
+    },
+    {
+      "kind": "character",
+      "alias": "ムーコ",
+      "target": "若叶睦",
+      "status": "legacy_pending",
+      "language": "zh",
+      "evidence_kind": "legacy",
+      "sources": [],
+      "accessed": "2026-10-17",
+      "reason": "已有映射保留；本轮未补齐独立使用证据，不视为新审核通过。"
+    },
+    {
+      "kind": "character",
+      "alias": "umiko",
+      "target": "八幡海铃",
+      "status": "legacy_pending",
+      "language": "zh",
+      "evidence_kind": "legacy",
+      "sources": [],
+      "accessed": "2026-10-17",
+      "reason": "已有映射保留；本轮未补齐独立使用证据，不视为新审核通过。"
+    },
+    {
+      "kind": "character",
+      "alias": "ウミコ",
+      "target": "八幡海铃",
+      "status": "legacy_pending",
+      "language": "zh",
+      "evidence_kind": "legacy",
+      "sources": [],
+      "accessed": "2026-10-17",
+      "reason": "已有映射保留；本轮未补齐独立使用证据，不视为新审核通过。"
+    },
+    {
+      "kind": "character",
+      "alias": "海子姐",
+      "target": "八幡海铃",
+      "status": "legacy_pending",
+      "language": "zh",
+      "evidence_kind": "legacy",
+      "sources": [],
+      "accessed": "2026-10-17",
+      "reason": "已有映射保留；本轮未补齐独立使用证据，不视为新审核通过。"
+    },
+    {
+      "kind": "character",
+      "alias": "喵姆亲",
+      "target": "祐天寺若麦",
+      "status": "legacy_pending",
+      "language": "zh",
+      "evidence_kind": "legacy",
+      "sources": [],
+      "accessed": "2026-10-17",
+      "reason": "已有映射保留；本轮未补齐独立使用证据，不视为新审核通过。"
+    },
+    {
+      "kind": "character",
+      "alias": "喵梦亲",
+      "target": "祐天寺若麦",
+      "status": "legacy_pending",
+      "language": "zh",
+      "evidence_kind": "legacy",
+      "sources": [],
+      "accessed": "2026-10-17",
+      "reason": "已有映射保留；本轮未补齐独立使用证据，不视为新审核通过。"
+    },
+    {
+      "kind": "character",
+      "alias": "小祥",
+      "target": "丰川祥子",
+      "status": "legacy_pending",
+      "language": "zh",
+      "evidence_kind": "legacy",
+      "sources": [],
+      "accessed": "2026-10-17",
+      "reason": "已有映射保留；本轮未补齐独立使用证据，不视为新审核通过。"
+    },
+    {
+      "kind": "character",
+      "alias": "亲漾",
+      "target": "仲町阿拉蕾",
+      "status": "legacy_pending",
+      "language": "zh",
+      "evidence_kind": "legacy",
+      "sources": [],
+      "accessed": "2026-10-17",
+      "reason": "已有映射保留；本轮未补齐独立使用证据，不视为新审核通过。"
+    },
+    {
+      "kind": "character",
+      "alias": "仲町露玲",
+      "target": "仲町阿拉蕾",
+      "status": "legacy_pending",
+      "language": "zh",
+      "evidence_kind": "legacy",
+      "sources": [],
+      "accessed": "2026-10-17",
+      "reason": "已有映射保留；本轮未补齐独立使用证据，不视为新审核通过。"
+    },
+    {
+      "kind": "character",
+      "alias": "nono",
+      "target": "宫永野乃花",
+      "status": "legacy_pending",
+      "language": "zh",
+      "evidence_kind": "legacy",
+      "sources": [],
+      "accessed": "2026-10-17",
+      "reason": "已有映射保留；本轮未补齐独立使用证据，不视为新审核通过。"
+    },
+    {
+      "kind": "character",
+      "alias": "宫永和花",
+      "target": "宫永野乃花",
+      "status": "legacy_pending",
+      "language": "zh",
+      "evidence_kind": "legacy",
+      "sources": [],
+      "accessed": "2026-10-17",
+      "reason": "已有映射保留；本轮未补齐独立使用证据，不视为新审核通过。"
+    },
+    {
+      "kind": "character",
+      "alias": "りっちゃん",
+      "target": "峰月律",
+      "status": "legacy_pending",
+      "language": "zh",
+      "evidence_kind": "legacy",
+      "sources": [],
+      "accessed": "2026-10-17",
+      "reason": "已有映射保留；本轮未补齐独立使用证据，不视为新审核通过。"
+    },
+    {
+      "kind": "character",
+      "alias": "都子",
+      "target": "藤都子",
+      "status": "legacy_pending",
+      "language": "zh",
+      "evidence_kind": "legacy",
+      "sources": [],
+      "accessed": "2026-10-17",
+      "reason": "已有映射保留；本轮未补齐独立使用证据，不视为新审核通过。"
+    },
+    {
+      "kind": "character",
+      "alias": "由乃",
+      "target": "千石由乃",
+      "status": "legacy_pending",
+      "language": "zh",
+      "evidence_kind": "legacy",
+      "sources": [],
+      "accessed": "2026-10-17",
+      "reason": "已有映射保留；本轮未补齐独立使用证据，不视为新审核通过。"
+    },
+    {
+      "kind": "character",
+      "alias": "千石悠乃",
+      "target": "千石由乃",
+      "status": "legacy_pending",
+      "language": "zh",
+      "evidence_kind": "legacy",
+      "sources": [],
+      "accessed": "2026-10-17",
+      "reason": "已有映射保留；本轮未补齐独立使用证据，不视为新审核通过。"
+    },
+    {
+      "kind": "character",
+      "alias": "茉幌",
+      "target": "滨崎茉幌",
+      "status": "legacy_pending",
+      "language": "zh",
+      "evidence_kind": "legacy",
+      "sources": [],
+      "accessed": "2026-10-17",
+      "reason": "已有映射保留；本轮未补齐独立使用证据，不视为新审核通过。"
+    },
+    {
+      "kind": "character",
+      "alias": "朋花",
+      "target": "和泉朋花",
+      "status": "legacy_pending",
+      "language": "zh",
+      "evidence_kind": "legacy",
+      "sources": [],
+      "accessed": "2026-10-17",
+      "reason": "已有映射保留；本轮未补齐独立使用证据，不视为新审核通过。"
+    },
+    {
+      "kind": "character",
+      "alias": "蕾叶",
+      "target": "须贺蕾叶",
+      "status": "legacy_pending",
+      "language": "zh",
+      "evidence_kind": "legacy",
+      "sources": [],
+      "accessed": "2026-10-17",
+      "reason": "已有映射保留；本轮未补齐独立使用证据，不视为新审核通过。"
+    },
+    {
+      "kind": "character",
+      "alias": "心玖",
+      "target": "马桥心玖",
+      "status": "legacy_pending",
+      "language": "zh",
+      "evidence_kind": "legacy",
+      "sources": [],
+      "accessed": "2026-10-17",
+      "reason": "已有映射保留；本轮未补齐独立使用证据，不视为新审核通过。"
+    },
+    {
+      "kind": "character",
+      "alias": "蓬咲",
+      "target": "矢仓蓬咲",
+      "status": "legacy_pending",
+      "language": "zh",
+      "evidence_kind": "legacy",
+      "sources": [],
+      "accessed": "2026-10-17",
+      "reason": "已有映射保留；本轮未补齐独立使用证据，不视为新审核通过。"
+    },
+    {
+      "kind": "character",
+      "alias": "千樱梨",
+      "target": "梅里千樱梨",
+      "status": "legacy_pending",
+      "language": "zh",
+      "evidence_kind": "legacy",
+      "sources": [],
+      "accessed": "2026-10-17",
+      "reason": "已有映射保留；本轮未补齐独立使用证据，不视为新审核通过。"
+    },
+    {
+      "kind": "character",
+      "alias": "宁月",
+      "target": "四宫宁月",
+      "status": "legacy_pending",
+      "language": "zh",
+      "evidence_kind": "legacy",
+      "sources": [],
+      "accessed": "2026-10-17",
+      "reason": "已有映射保留；本轮未补齐独立使用证据，不视为新审核通过。"
+    },
+    {
+      "kind": "character",
+      "alias": "Uika Misumi",
+      "target": "三角初華",
+      "status": "accepted",
+      "language": "en",
+      "evidence_kind": "official",
+      "sources": [
+        "https://bang-dream-on.bushimo.jp/character/avemujica/misumi-uika/"
+      ],
+      "accessed": "2026-10-17",
+      "reason": "官方英文全名；来源名称含艺名/本名组合，补独立本名查询。"
+    },
+    {
+      "kind": "character",
+      "alias": "Sakiko Togawa",
+      "target": "豊川祥子",
+      "status": "accepted",
+      "language": "en",
+      "evidence_kind": "official",
+      "sources": [
+        "https://bang-dream-on.bushimo.jp/character/avemujica/togawa-sakiko/"
+      ],
+      "accessed": "2026-10-17",
+      "reason": "官方英文全名；来源名称含艺名/本名组合，补独立本名查询。"
+    },
+    {
+      "kind": "character",
+      "alias": "Mutsumi Wakaba",
+      "target": "若葉睦",
+      "status": "accepted",
+      "language": "en",
+      "evidence_kind": "official",
+      "sources": [
+        "https://bang-dream-on.bushimo.jp/character/avemujica/wakaba-mutsumi/"
+      ],
+      "accessed": "2026-10-17",
+      "reason": "官方英文全名；来源名称含艺名/本名组合，补独立本名查询。"
+    },
+    {
+      "kind": "character",
+      "alias": "Umiri Yahata",
+      "target": "八幡海鈴",
+      "status": "accepted",
+      "language": "en",
+      "evidence_kind": "official",
+      "sources": [
+        "https://bang-dream-on.bushimo.jp/character/avemujica/yahata-umiri/"
+      ],
+      "accessed": "2026-10-17",
+      "reason": "官方英文全名；来源名称含艺名/本名组合，补独立本名查询。"
+    },
+    {
+      "kind": "character",
+      "alias": "Nyamu Yūtenji",
+      "target": "祐天寺にゃむ",
+      "status": "accepted",
+      "language": "en",
+      "evidence_kind": "official",
+      "sources": [
+        "https://bang-dream-on.bushimo.jp/character/avemujica/yutenji-nyamu/"
+      ],
+      "accessed": "2026-10-17",
+      "reason": "官方英文全名；来源名称含艺名/本名组合，补独立本名查询。"
+    },
+    {
+      "kind": "character",
+      "alias": "Miku Mahashi",
+      "target": "馬橋 心玖",
+      "status": "automatic",
+      "language": "en",
+      "evidence_kind": "official",
+      "sources": [
+        "https://bang-dream-on.bushimo.jp/character/ikka-dumb-rock/mahashi-miku/"
+      ],
+      "accessed": "2026-10-17",
+      "reason": "官方姓名；现有 Catalog 多语言名称已覆盖，不重复导入。"
+    },
+    {
+      "kind": "character",
+      "alias": "Shizuku Shinomiya",
+      "target": "四宮 寧月",
+      "status": "automatic",
+      "language": "en",
+      "evidence_kind": "official",
+      "sources": [
+        "https://bang-dream-on.bushimo.jp/character/ikka-dumb-rock/shinomiya-shizuku/"
+      ],
+      "accessed": "2026-10-17",
+      "reason": "官方姓名；现有 Catalog 多语言名称已覆盖，不重复导入。"
+    },
+    {
+      "kind": "character",
+      "alias": "Raika Suga",
+      "target": "須賀 蕾叶",
+      "status": "automatic",
+      "language": "en",
+      "evidence_kind": "official",
+      "sources": [
+        "https://bang-dream-on.bushimo.jp/character/ikka-dumb-rock/suga-raika/"
+      ],
+      "accessed": "2026-10-17",
+      "reason": "官方姓名；现有 Catalog 多语言名称已覆盖，不重复导入。"
+    },
+    {
+      "kind": "character",
+      "alias": "Chieri Umezato",
+      "target": "梅里 ちえり",
+      "status": "automatic",
+      "language": "en",
+      "evidence_kind": "official",
+      "sources": [
+        "https://bang-dream-on.bushimo.jp/character/ikka-dumb-rock/umezato-chieri/"
+      ],
+      "accessed": "2026-10-17",
+      "reason": "官方姓名；现有 Catalog 多语言名称已覆盖，不重复导入。"
+    },
+    {
+      "kind": "character",
+      "alias": "Yomogi Yakura",
+      "target": "矢倉 蓬咲",
+      "status": "automatic",
+      "language": "en",
+      "evidence_kind": "official",
+      "sources": [
+        "https://bang-dream-on.bushimo.jp/character/ikka-dumb-rock/yakura-yomogi/"
+      ],
+      "accessed": "2026-10-17",
+      "reason": "官方姓名；现有 Catalog 多语言名称已覆盖，不重复导入。"
+    },
+    {
+      "kind": "character",
+      "alias": "Mahoro Hamasaki",
+      "target": "浜崎 まほろ",
+      "status": "automatic",
+      "language": "en",
+      "evidence_kind": "official",
+      "sources": [
+        "https://bang-dream-on.bushimo.jp/character/millsage/hamasaki-mahoro/"
+      ],
+      "accessed": "2026-10-17",
+      "reason": "官方姓名；现有 Catalog 多语言名称已覆盖，不重复导入。"
+    },
+    {
+      "kind": "character",
+      "alias": "Natsume Izawa",
+      "target": "伊沢 なつめ",
+      "status": "automatic",
+      "language": "en",
+      "evidence_kind": "official",
+      "sources": [
+        "https://bang-dream-on.bushimo.jp/character/millsage/izawa-natsume/"
+      ],
+      "accessed": "2026-10-17",
+      "reason": "官方姓名；现有 Catalog 多语言名称已覆盖，不重复导入。"
+    },
+    {
+      "kind": "character",
+      "alias": "Houka Izumi",
+      "target": "和泉 朋花",
+      "status": "automatic",
+      "language": "en",
+      "evidence_kind": "official",
+      "sources": [
+        "https://bang-dream-on.bushimo.jp/character/millsage/izumi-houka/"
+      ],
+      "accessed": "2026-10-17",
+      "reason": "官方姓名；现有 Catalog 多语言名称已覆盖，不重复导入。"
+    },
+    {
+      "kind": "character",
+      "alias": "Nagi Kotohira",
+      "target": "琴平 凪",
+      "status": "automatic",
+      "language": "en",
+      "evidence_kind": "official",
+      "sources": [
+        "https://bang-dream-on.bushimo.jp/character/millsage/kotohira-nagi/"
+      ],
+      "accessed": "2026-10-17",
+      "reason": "官方姓名；现有 Catalog 多语言名称已覆盖，不重复导入。"
+    },
+    {
+      "kind": "character",
+      "alias": "Hotaru Shiomi",
+      "target": "汐見 蛍",
+      "status": "automatic",
+      "language": "en",
+      "evidence_kind": "official",
+      "sources": [
+        "https://bang-dream-on.bushimo.jp/character/millsage/shiomi-hotaru/"
+      ],
+      "accessed": "2026-10-17",
+      "reason": "官方姓名；现有 Catalog 多语言名称已覆盖，不重复导入。"
+    },
+    {
+      "kind": "character",
+      "alias": "Anon Chihaya",
+      "target": "千早 愛音",
+      "status": "automatic",
+      "language": "en",
+      "evidence_kind": "official",
+      "sources": [
+        "https://bang-dream-on.bushimo.jp/character/mygo/chihaya-anon/"
+      ],
+      "accessed": "2026-10-17",
+      "reason": "官方姓名；现有 Catalog 多语言名称已覆盖，不重复导入。"
+    },
+    {
+      "kind": "character",
+      "alias": "Rāna Kaname",
+      "target": "要 楽奈",
+      "status": "automatic",
+      "language": "en",
+      "evidence_kind": "official",
+      "sources": [
+        "https://bang-dream-on.bushimo.jp/character/mygo/kaname-rana/"
+      ],
+      "accessed": "2026-10-17",
+      "reason": "官方姓名；现有 Catalog 多语言名称已覆盖，不重复导入。"
+    },
+    {
+      "kind": "character",
+      "alias": "Soyo Nagasaki",
+      "target": "長崎 そよ",
+      "status": "automatic",
+      "language": "en",
+      "evidence_kind": "official",
+      "sources": [
+        "https://bang-dream-on.bushimo.jp/character/mygo/nagasaki-soyo/"
+      ],
+      "accessed": "2026-10-17",
+      "reason": "官方姓名；现有 Catalog 多语言名称已覆盖，不重复导入。"
+    },
+    {
+      "kind": "character",
+      "alias": "Taki Shiina",
+      "target": "椎名 立希",
+      "status": "automatic",
+      "language": "en",
+      "evidence_kind": "official",
+      "sources": [
+        "https://bang-dream-on.bushimo.jp/character/mygo/shiina-taki/"
+      ],
+      "accessed": "2026-10-17",
+      "reason": "官方姓名；现有 Catalog 多语言名称已覆盖，不重复导入。"
+    },
+    {
+      "kind": "character",
+      "alias": "Tomori Takamatsu",
+      "target": "高松 燈",
+      "status": "automatic",
+      "language": "en",
+      "evidence_kind": "official",
+      "sources": [
+        "https://bang-dream-on.bushimo.jp/character/mygo/takamatsu-tomori/"
+      ],
+      "accessed": "2026-10-17",
+      "reason": "官方姓名；现有 Catalog 多语言名称已覆盖，不重复导入。"
+    },
+    {
+      "kind": "character",
+      "alias": "Miyako Fuji",
+      "target": "藤 都子",
+      "status": "automatic",
+      "language": "en",
+      "evidence_kind": "official",
+      "sources": [
+        "https://bang-dream-on.bushimo.jp/character/yumemita/fuji-miyako/"
+      ],
+      "accessed": "2026-10-17",
+      "reason": "官方姓名；现有 Catalog 多语言名称已覆盖，不重复导入。"
+    },
+    {
+      "kind": "character",
+      "alias": "Ritsu Minetsuki",
+      "target": "峰月 律",
+      "status": "automatic",
+      "language": "en",
+      "evidence_kind": "official",
+      "sources": [
+        "https://bang-dream-on.bushimo.jp/character/yumemita/minetsuki-ritsu/"
+      ],
+      "accessed": "2026-10-17",
+      "reason": "官方姓名；现有 Catalog 多语言名称已覆盖，不重复导入。"
+    },
+    {
+      "kind": "character",
+      "alias": "Nonoka Miyanaga",
+      "target": "宮永 ののか",
+      "status": "automatic",
+      "language": "en",
+      "evidence_kind": "official",
+      "sources": [
+        "https://bang-dream-on.bushimo.jp/character/yumemita/miyanaga-nonoka/"
+      ],
+      "accessed": "2026-10-17",
+      "reason": "官方姓名；现有 Catalog 多语言名称已覆盖，不重复导入。"
+    },
+    {
+      "kind": "character",
+      "alias": "Arale Nakamachi",
+      "target": "仲町 あられ",
+      "status": "automatic",
+      "language": "en",
+      "evidence_kind": "official",
+      "sources": [
+        "https://bang-dream-on.bushimo.jp/character/yumemita/nakamachi-arale/"
+      ],
+      "accessed": "2026-10-17",
+      "reason": "官方姓名；现有 Catalog 多语言名称已覆盖，不重复导入。"
+    },
+    {
+      "kind": "character",
+      "alias": "Yuno Sengoku",
+      "target": "千石 ユノ",
+      "status": "automatic",
+      "language": "en",
+      "evidence_kind": "official",
+      "sources": [
+        "https://bang-dream-on.bushimo.jp/character/yumemita/sengoku-yuno/"
+      ],
+      "accessed": "2026-10-17",
+      "reason": "官方姓名；现有 Catalog 多语言名称已覆盖，不重复导入。"
+    },
+    {
+      "kind": "song",
+      "alias": "まよいうた",
+      "target": "100001",
+      "status": "accepted",
+      "language": "ja",
+      "evidence_kind": "official",
+      "sources": [
+        "https://fujiwaramasaki-lyrics.themedia.jp/posts/38844201"
+      ],
+      "accessed": "2026-10-17",
+      "reason": "原文明确读音／异名；目标由固定目录核实。"
+    },
+    {
+      "kind": "song",
+      "alias": "なもなき",
+      "target": "100011",
+      "status": "accepted",
+      "language": "ja",
+      "evidence_kind": "official",
+      "sources": [
+        "https://fujiwaramasaki-lyrics.themedia.jp/posts/38844201"
+      ],
+      "accessed": "2026-10-17",
+      "reason": "原文明确读音／异名；目标由固定目录核实。"
+    },
+    {
+      "kind": "song",
+      "alias": "シルエットダンス",
+      "target": "100004",
+      "status": "accepted",
+      "language": "ja",
+      "evidence_kind": "official",
+      "sources": [
+        "https://fujiwaramasaki-lyrics.themedia.jp/posts/39399095/"
+      ],
+      "accessed": "2026-10-17",
+      "reason": "原文明确读音／异名；目标由固定目录核实。"
+    },
+    {
+      "kind": "song",
+      "alias": "おといちえ",
+      "target": "100006",
+      "status": "accepted",
+      "language": "ja",
+      "evidence_kind": "official",
+      "sources": [
+        "https://bushiroad.com/media/2cddc25db63144ec"
+      ],
+      "accessed": "2026-10-17",
+      "reason": "原文明确读音／异名；目标由固定目录核实。"
+    },
+    {
+      "kind": "song",
+      "alias": "ひとしずく",
+      "target": "100002",
+      "status": "accepted",
+      "language": "ja",
+      "evidence_kind": "official",
+      "sources": [
+        "https://prtimes.jp/main/html/rd/p/000006999.000014827.html"
+      ],
+      "accessed": "2026-10-17",
+      "reason": "原文明确读音／异名；目标由固定目录核实。"
+    },
+    {
+      "kind": "song",
+      "alias": "さすらい",
+      "target": "100014",
+      "status": "accepted",
+      "language": "ja",
+      "evidence_kind": "official",
+      "sources": [
+        "https://bushiroad.com/media/33517c7c559689c8"
+      ],
+      "accessed": "2026-10-17",
+      "reason": "原文明确读音／异名；目标由固定目录核实。"
+    },
+    {
+      "kind": "band",
+      "alias": "マイゴ",
+      "target": "MyGO!!!!!",
+      "status": "accepted",
+      "language": "ja",
+      "evidence_kind": "official",
+      "sources": [
+        "https://bushiroad.co.jp/media/0f88f5869b3cc59a"
+      ],
+      "accessed": "2026-10-17",
+      "reason": "原文明确读音／异名；目标由固定目录核实。"
+    },
+    {
+      "kind": "character",
+      "alias": "楽壇の天使",
+      "target": "汐見蛍",
+      "status": "accepted",
+      "language": "ja",
+      "evidence_kind": "official",
+      "sources": [
+        "https://bang-dream-on.bushimo.jp/character/millsage/shiomi-hotaru/"
+      ],
+      "accessed": "2026-10-17",
+      "reason": "原文明确读音／异名；目标由固定目录核实。"
+    },
+    {
+      "kind": "character",
+      "alias": "灯神",
+      "target": "高松灯",
+      "status": "accepted",
+      "language": "zh",
+      "evidence_kind": "community",
+      "sources": [
+        "https://m.hupu.com/score-item/common_second/78533",
+        "https://bangumi.tv/blog/339617"
+      ],
+      "accessed": "2026-10-17",
+      "reason": "两处独立社区原文以此称呼高松灯；仅作为实体别名。"
+    },
+    {
+      "kind": "character",
+      "alias": "偷摸零",
+      "target": "高松灯",
+      "status": "candidate",
+      "language": "zh",
+      "evidence_kind": "community",
+      "sources": [
+        "https://www.bilibili.com/video/BV1DNT9zPEAv/",
+        "https://www.douyin.com/video/7433781930111388982"
+      ],
+      "accessed": "2026-10-17",
+      "reason": "搜索命中但原文读取受限，未达到两条可读取证据。"
+    },
+    {
+      "kind": "song",
+      "alias": "搓澡歌",
+      "target": "影色舞",
+      "status": "candidate",
+      "language": "zh",
+      "evidence_kind": "community",
+      "sources": [],
+      "accessed": "2026-10-17",
+      "reason": "本次搜索未找到足够原文证据，不按印象导入。"
+    },
+    {
+      "kind": "song",
+      "alias": "春日影",
+      "target": "100007 / 100091",
+      "status": "excluded",
+      "language": "zh",
+      "evidence_kind": "official",
+      "sources": [
+        "https://haneoka.org/jp/ja/songs/"
+      ],
+      "accessed": "2026-10-17",
+      "reason": "存在 MyGO 与 CRYCHIC 版本，保留正式名称及 ID 消歧，不绑定单一 ID。"
+    },
+    {
+      "kind": "card",
+      "alias": "生日卡",
+      "target": "",
+      "status": "excluded",
+      "language": "zh",
+      "evidence_kind": "official",
+      "sources": [
+        "https://bang-dream-on.bushimo.jp/news/post-8"
+      ],
+      "accessed": "2026-10-17",
+      "reason": "类型条件，可能命中多张；不绑定某张卡。"
+    },
+    {
+      "kind": "support_card",
+      "alias": "EX SNAP",
+      "target": "",
+      "status": "excluded",
+      "language": "en",
+      "evidence_kind": "official",
+      "sources": [
+        "https://bang-dream-on.bushimo.jp/news/post-8"
+      ],
+      "accessed": "2026-10-17",
+      "reason": "类型条件，可能命中多张；不绑定某张 SNAP。"
+    }
+  ]
+}
