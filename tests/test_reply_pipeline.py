@@ -4,6 +4,7 @@ from ournotes_bot.query.card_catalog import query_cards
 import asyncio
 import tempfile
 import unittest
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
@@ -19,6 +20,35 @@ from ournotes_bot.rendering.readable_pages import ImagePart
 
 
 class ReplyPipelineTests(unittest.TestCase):
+    def test_chart_note_fallback_uses_captured_none_zero_and_positive(self):
+        from ournotes_bot.data import note_text
+        from ournotes_bot.structured_query import QuerySpec, resolve_query, answer_for
+        from ournotes_bot.query.entity_lexicon import EntityRef
+        for notes in (None,0,768):
+            song = self.repo.songs[0]
+            self.repo.songs = [replace(song,charts=(replace(song.charts[0],notes=notes),))]
+            # Natural-language model boundary is replaced with an already
+            # validated QueryResult. No model call, refresh or second selection.
+            result = resolve_query(QuerySpec('chart',subject=EntityRef('song',100001),difficulty='EXPERT'),self.repo)
+            for command in ('/查谱面 100001 EXPERT','/问 展示迷星叫 EXPERT 完整谱面资料'):
+                for failure in ('upload','draw'):
+                    with self.subTest(notes=notes,command=command,failure=failure), \
+                         patch.object(self.parser,'answer_with_plan',return_value=(answer_for(result.spec,self.repo,result=result),result)), \
+                         patch('ournotes_bot.platforms.qq.qq.load_chart_score',return_value={'notes':[]}) as score, \
+                         patch('ournotes_bot.rendering.chart_layout.render',return_value=(b'chart',),
+                               side_effect=ValueError('fixture render failure') if failure=='draw' else None):
+                        reply = _prepare_reply(command,self.repo,self.parser)
+                        self.assertEqual(score.call_count,1)
+                        message = self.message(upload_error=TimeoutError('fixture'))
+                        message._api.post_group_message.return_value={'id':'ack'}
+                        with patch('ournotes_bot.platforms.qq.qq.load_chart_score',side_effect=AssertionError('re-fetch')):
+                            asyncio.run(_deliver_reply(message,'fixture',True,reply))
+                        text = message._api.post_group_message.await_args.kwargs['content']
+                        self.assertNotIn('None Notes',text)
+                        if failure=='upload' or command.startswith('/问'):self.assertIn(note_text(notes),text)
+                        elif notes is None:self.assertIn('? Note',text)
+                        else:self.assertIn(f'{notes} Note',text)
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.repo = SongRepository(BASE, Path(self.temp.name) / "cache.json")

@@ -514,7 +514,7 @@ def _prepare_followup(context, operation, repository):
             return PreparedReply('上一张图片的发送回执不确定，暂不自动重发，请重新查询。')
         if operation.kind == 'continue':
             return (PreparedReply('',pages=context.remaining,context=context) if context.remaining
-                    else PreparedReply('本次查询的图片已经全部发送。',context=context))
+                    else PreparedReply('本次查询的图片已经全部发送。',context=context.query_context))
         context=context.query_context
         if context is None:
             return PreparedReply('此结果支持 /继续；选择卡牌或歌曲请先查询对应列表。')
@@ -643,7 +643,8 @@ def _complete_chart_reply(result,repository,locale,candidate):
             notice='谱面暂不可用'
     from ...rendering.chart_layout import render
     pages=render(song,charts,score,preview.difficulty if preview else None,locale,load=_visual_asset,notice=notice)
-    text=f'{song.title} · ID {song.id} · '+notice+'\n'+' / '.join(f'{c.difficulty} {c.display_level:g} · {c.notes} Notes' for c in charts)
+    from ...data import note_text
+    text=f'{song.title} · ID {song.id} · '+notice+'\n'+' / '.join(f'{c.difficulty} {c.display_level:g} · {note_text(c.notes)}' for c in charts)
     replies=tuple(PreparedReply(text,image,context=candidate) for image in pages)
     return replies[0] if len(replies)==1 else PreparedReply('',pages=replies,context=candidate)
 
