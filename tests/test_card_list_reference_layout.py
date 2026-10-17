@@ -43,28 +43,28 @@ class ReferenceLayoutTests(unittest.TestCase):
         self.assertTrue(all(row[0][1]==264 for row in rows.values()))
         with Image.open(io.BytesIO(parts[0].image)) as im:self.assertEqual(im.width,2360)
 
-    def test_multi_memory_groups_repeat_association_but_named_filter_limits_headings(self):
+    def test_multi_memory_has_one_complete_group_even_with_character_filter(self):
         card=self.memory();drawn=[];original=Canvas.text
         def capture(canvas,x,y,value,*args,**kwargs):
             drawn.append((str(value),x));return original(canvas,x,y,value,*args,**kwargs)
         with patch.object(Canvas,'text',capture):
             _,records,ranges=layout.render_list([card],'MyGO!!!!!',load=lambda *a:None)
-        self.assertEqual([c.id for c in records],[51,51])
-        self.assertEqual(ranges,((0,2),))
-        headings=[name for name,x in drawn if name.startswith('角色') and x==134]
+        self.assertEqual([c.id for c in records],[51])
+        self.assertEqual(ranges,((0,1),))
+        headings=[name for name,x in drawn if name.startswith('角色') and x<260]
         self.assertEqual(headings,['角色2','角色1'])
         self.assertTrue(any('1 张' in text for text,_ in drawn))
         # A canonical character filter also covers alias/spaced command labels.
         _,records,_=layout.render_list([card],'角色=alias SSR',characters=('角色1',),load=lambda *a:None)
         self.assertEqual([c.id for c in records],[51])
 
-    def test_related_portraits_are_beside_art_and_stable_across_character_queries(self):
+    def test_related_portraits_are_left_and_stable_across_character_queries(self):
         card=self.memory();captures=[]
         def load(url,size):
             im=Image.new('RGB',size);im.info['source']=url;return im
         original=Canvas.paste
         def capture(canvas,im,x,y,w,h,*args,**kwargs):
-            if im is not None and im.info.get('source','').startswith('face-') and w==44:
+            if im is not None and im.info.get('source','').startswith('face-') and w in (80,96):
                 captures.append((im.info['source'],x,y,w,h))
             return original(canvas,im,x,y,w,h,*args,**kwargs)
         for name in ('角色1','角色2'):
@@ -72,7 +72,7 @@ class ReferenceLayoutTests(unittest.TestCase):
             with patch.object(Canvas,'paste',capture):
                 layout.render_list([card],name,load=load)
             self.assertEqual(len(captures),2)
-            self.assertTrue(all(x==260+288+20 for _,x,_,_,_ in captures))
+            self.assertTrue(all(x+w<260 for _,x,_,w,_ in captures))
             if name=='角色1':first=tuple(captures)
             else:self.assertEqual(tuple(captures),first)
 
@@ -111,17 +111,17 @@ class ReferenceLayoutTests(unittest.TestCase):
             for locale in ('zh','en','ja'):
                 layout.render_list([self.member()],'MyGO!!!!!',locale,load=lambda *a:None)
 
-    def test_band_filter_restricts_headings_without_removing_related_portraits(self):
+    def test_band_filter_preserves_complete_character_combination(self):
         card=self.memory();people=card.catalog['people']+[dict(self.person(3,1),band=2)]
         card=replace(card,catalog={**card.catalog,'people':people,'band_ids':[1,2],'bands':['MyGO!!!!!','Ave Mujica']})
         headings=[];original=Canvas.text
         def capture(canvas,x,y,value,*args,**kwargs):
-            if x==134 and str(value).startswith('角色'):headings.append(str(value))
+            if x<260 and str(value).startswith('角色'):headings.append(str(value))
             return original(canvas,x,y,value,*args,**kwargs)
         with patch.object(Canvas,'text',capture):
             _,records,_=layout.render_list([card],'乐队=MyGO',bands=('MyGO!!!!!',),load=lambda *a:None)
-        self.assertEqual(headings,['角色2','角色1'])
-        self.assertEqual([c.id for c in records],[51,51])
+        self.assertEqual(headings,['角色2','角色1','角色3'])
+        self.assertEqual([c.id for c in records],[51])
         self.assertEqual([p['id'] for p in records[0].catalog['people']],[1,2,3])
         _,records,_=layout.render_list([card],'角色=角色1 乐队=Ave Mujica',characters=('角色1',),bands=('Ave Mujica',),load=lambda *a:None)
         self.assertEqual([c.id for c in records],[51])
@@ -133,9 +133,53 @@ class ReferenceLayoutTests(unittest.TestCase):
         request=parse_card_request('角色=tmr',repo,support=True)
         headings=[];original=Canvas.text
         def capture(canvas,x,y,value,*args,**kwargs):
-            if x==134 and str(value) in ('高松灯','千早爱音'):headings.append(str(value))
+            if x<260 and str(value) in ('高松灯','千早爱音'):headings.append(str(value))
             return original(canvas,x,y,value,*args,**kwargs)
         with patch.object(Canvas,'text',capture):
             _,records,_=layout.render_list([card],request.query,characters=request.filters['character'],load=lambda *a:None)
-        self.assertEqual(headings,['高松灯'])
+        self.assertEqual(headings,['千早爱音','高松灯'])
         self.assertEqual([c.id for c in records],[51])
+
+
+    def test_same_combination_groups_once_regardless_of_source_order(self):
+        a=self.memory()
+        b=replace(a,id=52,catalog={**a.catalog,'people':list(reversed(a.catalog['people']))})
+        solo=replace(a,id=53,catalog={**a.catalog,'people':[self.person(1,2)]})
+        positions=[]
+        original=layout.card_face
+        def capture(canvas,card,x,y,*args,**kwargs):
+            positions.append((card.id,x,y));return original(canvas,card,x,y,*args,**kwargs)
+        with patch.object(layout,'card_face',capture):
+            _,records,ranges=layout.render_list([solo,b,a],'角色1',load=lambda *a:None)
+        self.assertEqual([c.id for c in records],[51,52,53])
+        self.assertEqual(ranges,((0,3),))
+        self.assertEqual(positions[0][2],positions[1][2])
+        self.assertGreater(positions[2][2],positions[1][2])
+
+    def test_missing_catalog_preserves_all_captured_names(self):
+        card=replace(self.memory(),catalog={},characters=('乙','甲'))
+        drawn=[];original=Canvas.text
+        def capture(canvas,x,y,value,*args,**kwargs):
+            if x<260:drawn.append(str(value))
+            return original(canvas,x,y,value,*args,**kwargs)
+        with patch.object(Canvas,'text',capture):
+            _,records,_=layout.render_list([card],'乙',load=lambda *a:None)
+        self.assertEqual([c.id for c in records],[51])
+        self.assertIn('甲',drawn);self.assertIn('乙',drawn)
+
+    def test_complete_group_repeats_on_split_pages_without_overflow(self):
+        from ournotes_bot.rendering import readable_pages
+        people=[dict(self.person(i,i),name={'zh':f'长角色名字{i}'}) for i in range(1,6)]
+        base=replace(self.memory(),catalog={'people':people,'detail_loaded':True})
+        cards=[replace(base,id=i,card_type=i) for i in range(1,4)]
+        original=Canvas.text;names={}
+        def capture(canvas,x,y,value,size=28,*args,**kwargs):
+            self.assertLess(y,canvas.height-100 if x<260 and size==26 else canvas.height)
+            if x<260 and size==26:names.setdefault(canvas,[]).append(str(value))
+            return original(canvas,x,y,value,size,*args,**kwargs)
+        with patch.object(readable_pages,'MAX_IMAGE_PIXELS',1_500_000),patch.object(Canvas,'text',capture):
+            parts,records,ranges=layout.render_list(cards,'测试',load=lambda *a:None)
+        self.assertEqual(len(parts),3);self.assertEqual(ranges,((0,1),(1,2),(2,3)))
+        self.assertEqual(len(names),3)
+        for drawn in names.values():
+            for i in range(1,6):self.assertIn(f'长角色名字{i}',''.join(drawn))

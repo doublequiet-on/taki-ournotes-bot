@@ -115,7 +115,7 @@ class AlignmentTests(unittest.TestCase):
         self.assertIn('MyGO!!!!!',wrapped)
         self.assertFalse(any(v and set(v)<=set('!！') for v in wrapped))
 
-    def test_multi_member_appears_under_each_related_person_as_in_approved_sample(self):
+    def test_multi_memory_combines_related_people_in_one_group(self):
         from ournotes_bot.rendering import catalog_layout
         people=[dict(id=2,name={'zh':'第二人'},band=1,order=2),dict(id=1,name={'zh':'首人'},band=1,order=1)]
         card=SupportCard(51,'多人卡','第二人',('第二人',),4,1,3100,4000,3100,'','','',catalog={'people':people})
@@ -123,13 +123,13 @@ class AlignmentTests(unittest.TestCase):
         def capture(canvas,x,y,value,size,*args,**kwargs):
             drawn.append((str(value),size));return original(canvas,x,y,value,size,*args,**kwargs)
         with patch.object(Canvas,'text',capture):parts,_,_=catalog_layout.render_list([card],'全部',load=lambda *a:None)
-        self.assertIn(('首人',34),drawn)
-        self.assertIn(('第二人',34),drawn)
+        self.assertIn(('首人',26),drawn)
+        self.assertIn(('第二人',26),drawn)
         self.assertIn(('ID 51',30),drawn)
         self.assertIn(('未知',32),drawn)
         with Image.open(io.BytesIO(parts[0].image)) as im:self.assertEqual(im.width,1168)
 
-    def test_memory_ids_share_row_with_different_portrait_counts(self):
+    def test_different_character_combinations_have_distinct_rows(self):
         from ournotes_bot.rendering import catalog_layout
         people=[dict(id=i,name={'zh':'灯' if i==1 else str(i)},band=1,order=i) for i in range(1,10)]
         card=SupportCard(51,'多人卡','灯',('灯',),4,1,3100,4000,3100,'','','')
@@ -142,7 +142,7 @@ class AlignmentTests(unittest.TestCase):
         with patch.object(Canvas,'text',capture):
             catalog_layout.render_list([a,b],'灯',load=lambda *args:None)
         self.assertEqual(set(positions),{'ID 51','ID 52'})
-        self.assertEqual(positions['ID 51'],positions['ID 52'])
+        self.assertLess(positions['ID 51'],positions['ID 52'])
 
 
 class FullChartTests(unittest.TestCase):
