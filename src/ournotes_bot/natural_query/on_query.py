@@ -28,11 +28,18 @@ def protected_text(question, repository):
     # Longest full names first, including adjacent Chinese grammar. English
     # fragments must not match inside unrelated words. Restore exact text later.
     saved = {}
+    color_words = tuple(re.finditer(r"颜色|顏色|属性|屬性|[红紅蓝藍绿綠黄紫黑白橙青灰]色", text))
     candidates = sorted({unicodedata.normalize("NFKC", n) for n in names}, key=lambda n: (-len(n), n))
     if candidates:
         pattern = "|".join((r"(?<![A-Za-z])" if n[0].isascii() and n[0].isalpha() else "")
                            + re.escape(n) + (r"(?![A-Za-z])" if n[-1].isascii() and n[-1].isalpha() else "") for n in candidates)
         def keep(match):
+            # A short entity such as the song 颜 must not consume part of 颜色.
+            # Complete names (including titles containing color words) still win.
+            if any(word.start() <= match.start() and match.end() <= word.end()
+                   and match.end() - match.start() < word.end() - word.start()
+                   for word in color_words):
+                return match[0]
             index = len(saved)
             token = f"ZZENTITY{index}ZZ"
             while token.casefold() in text.casefold() or token in saved:

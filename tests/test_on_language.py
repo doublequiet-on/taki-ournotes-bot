@@ -21,6 +21,27 @@ CASES = json.loads((Path(__file__).parent / "fixtures/on_language.json").read_te
 
 
 class OnLanguageTests(unittest.TestCase):
+    def test_short_entity_names_do_not_split_color_filter_words(self):
+        self.repo.songs.append(replace(self.repo.songs[0], id=999999,
+                                      title="颜", titles=("颜",), localized={}))
+        self.repo.songs.append(replace(self.repo.songs[0], id=999998,
+                                      title="蓝", titles=("蓝",), localized={}))
+        cases = (
+            ("颜色为蓝色的歌曲有哪些", "/查曲 颜色=蓝"),
+            ("顏色為藍色的歌曲有哪些", "/查曲 颜色=蓝"),
+            ("蓝色角色有哪些", "/查卡 颜色=蓝"),
+            ("颜色是蓝色的留影卡有哪些", "/查留影卡 颜色=蓝"),
+            ("颜的蓝色歌曲", "/查曲 颜 颜色=蓝"),
+        )
+        with patch.object(self.parser, "_request", side_effect=AssertionError("model called")):
+            for question, command in cases:
+                with self.subTest(question=question):
+                    outcome = self.parser.answer_with_outcome("/问 " + question, self.repo)
+                    self.assertEqual(outcome.code, OutcomeCode.SUCCESS, outcome.text)
+                    direct = resolve_command(command, self.repo)
+                    self.assertEqual(outcome.result.songs or outcome.result.cards or outcome.result.support_cards,
+                                     direct.songs or direct.cards or direct.support_cards)
+
     def test_color_phrases_are_filters_not_entity_names(self):
         cases = [
             ("蓝色角色有哪些", "/查卡 蓝色", [1, 2, 3]),
