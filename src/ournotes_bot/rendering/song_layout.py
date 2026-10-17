@@ -3,6 +3,7 @@
 # Output: Readable Haneoka-style song-list image parts with continuous numbering.
 # Pos: Rendering / Song; approved paired-column list.
 # Effects: Pillow only; no query or platform operations.
+from collections import Counter
 from .labels import label as ui_label
 from ..data import localized_text
 from .haneoka_theme import Canvas, MUTED, DIFFICULTIES, lines, font, mission_label
@@ -25,6 +26,17 @@ def render_list(songs,query,locale='zh',*,load):
         return rows,heights
     subtitle=query+' · '+ui_label('共 {n} 首',locale).format(n=len(songs))
     head=136+len(lines(subtitle,width-108,24))*34
+    repeated = Counter((song.jacket_url, (128,128)) for song in songs)
+    repeated.update((song.traits.attribute_icon, (48,48)) for song in songs
+                    if song.traits and song.traits.attribute_icon)
+    assets = {}
+    def artwork(url, size):
+        key = (url, size)
+        if repeated[key] == 1:
+            return load(url,size)
+        if key not in assets:
+            assets[key] = load(url, size)
+        return assets[key]
     def paint(start,stop,height):
         rows,heights=page_rows(start,stop)
         c=Canvas(width,height);c.header(ui_label('歌曲列表',locale),subtitle);y=head
@@ -34,8 +46,8 @@ def render_list(songs,query,locale='zh',*,load):
             bandheight=max(48,max(len(lines(localized_text(s,'band',locale),550,34))*42 for _,s in row))
             for col,(index,song) in enumerate(row):
                 x=48+col*868
-                asset=load(song.jacket_url,(128,128));c.paste(asset,x,y+4,128,128,radius=12)
-                if asset is not None:asset.close()
+                asset=artwork(song.jacket_url,(128,128));c.paste(asset,x,y+4,128,128,radius=12)
+                if repeated[(song.jacket_url,(128,128))] == 1 and asset is not None:asset.close()
                 c.text(x+64,y+158,f'{index+1} · {song.id}',24,MUTED,align='center')
                 title=localized_text(song,'title',locale);c.paragraph(x+148,y+(titleh-len(lines(title,342,36,True))*44)/2,title,342,36,44,bold=True)
                 band=localized_text(song,'band',locale);c.paragraph(x+148,y+titleh+6,band,550,34,42,color=MUTED)
@@ -43,8 +55,8 @@ def render_list(songs,query,locale='zh',*,load):
                 if traits and traits.attribute_icon:
                     last_band=lines(band,550,34)[-1]
                     ax=x+148+min(580,font(34,False,last_band.isascii()).getlength(last_band))+16
-                    asset=load(traits.attribute_icon,(48,48));c.paste(asset,round(ax),y+titleh+3+(len(lines(band,550,34))-1)*42,48,48,True,trim=True)
-                    if asset is not None:asset.close()
+                    asset=artwork(traits.attribute_icon,(48,48));c.paste(asset,round(ax),y+titleh+3+(len(lines(band,550,34))-1)*42,48,48,True,trim=True)
+                    if repeated[(traits.attribute_icon,(48,48))] == 1 and asset is not None:asset.close()
                 for j,(name,(bg,fg)) in enumerate(DIFFICULTIES.items()):
                     chart=next((ch for ch in song.charts if ch.difficulty==name),None)
                     bx=x+516+j*72;by=y+(titleh-64)//2
@@ -65,19 +77,24 @@ def render_list(songs,query,locale='zh',*,load):
             y+=heights[ri]
         c.text(54,height-22,f'{start+1}–{stop} / {len(songs)} · '+ui_label('/查谱面 ID 难度',locale),22,MUTED)
         return c.image
-    parts=[];start=0
-    limit=min(MAX_IMAGE_EDGE,MAX_IMAGE_PIXELS//width)
-    while start<len(songs):
-        # A complete row is at least 196px. Test candidates from largest to smallest:
-        # moving the column break can change which long titles share a row.
-        stop=min(len(songs),start+max(1,(limit-head-44)//196)*cols)
-        while stop>start:
-            _,heights=page_rows(start,stop);height=head+44+sum(heights)
-            if height<=limit:
-                try:raw=encode_image(paint(start,stop,height),close_input=True,preserve_size=True)
-                except ImageBudgetError:pass
-                else:
-                    parts.append(ImagePart(raw,start,stop));start=stop;break
-            stop-=1
-        else:raise ImageBudgetError('One complete song exceeds the readable image budget')
-    return tuple(parts),tuple((p.start,p.stop) for p in parts)
+    try:
+        parts=[];start=0
+        limit=min(MAX_IMAGE_EDGE,MAX_IMAGE_PIXELS//width)
+        while start<len(songs):
+            # A complete row is at least 196px. Test candidates from largest to smallest:
+            # moving the column break can change which long titles share a row.
+            stop=min(len(songs),start+max(1,(limit-head-44)//196)*cols)
+            while stop>start:
+                _,heights=page_rows(start,stop);height=head+44+sum(heights)
+                if height<=limit:
+                    try:raw=encode_image(paint(start,stop,height),close_input=True,preserve_size=True)
+                    except ImageBudgetError:pass
+                    else:
+                        parts.append(ImagePart(raw,start,stop));start=stop;break
+                stop-=1
+            else:raise ImageBudgetError('One complete song exceeds the readable image budget')
+        return tuple(parts),tuple((p.start,p.stop) for p in parts)
+    finally:
+        for asset in assets.values():
+            if asset is not None:
+                asset.close()
