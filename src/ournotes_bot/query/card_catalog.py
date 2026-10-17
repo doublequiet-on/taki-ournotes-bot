@@ -160,7 +160,7 @@ def parse_card_request(query, repository, *, support=False, art=False):
     explicit_id = None
     def add(key, value):
         filters.setdefault(key, []).append(value)
-    keys = {"稀有度": "rarity", "星级": "rarity", "rarity": "rarity", "颜色": "type", "类型": "type", "type": "type",
+    keys = {"稀有度": "rarity", "星级": "rarity", "rarity": "rarity", "颜色": "type", "属性": "type", "类型": "type", "type": "type",
             "乐队": "band", "band": "band", "角色": "character", "character": "character",
             "live": "live", "击奏": "gekisou", "激奏": "gekisou", "gekisou": "gekisou",
             "得意": "tags", "得意乐曲": "tags", "tags": "tags"}

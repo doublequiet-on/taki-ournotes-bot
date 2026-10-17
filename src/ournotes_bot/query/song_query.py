@@ -15,7 +15,7 @@ from ..data import localized_text, normalize
 from .song_identity import protect_entity
 from ..sources.haneoka.song_traits import COLORS, describe
 
-MARKER = re.compile(r"颜色|属性|[红蓝绿黄紫黑白橙青灰]色|激奏|击奏|纯(?:JUST|COMBO|LUCK)", re.I)
+MARKER = re.compile(r"颜色|属性|[红蓝绿黄紫黑白橙青灰]色|(?:^|\s)[红蓝绿黄紫](?=\s|$)|激奏|击奏|纯(?:JUST|COMBO|LUCK)", re.I)
 HELP = "例：/查曲 蓝色 MyGO EX 激奏=JUST；/查曲 激奏=纯JUST；/查曲 激奏=JUST/JUST/COMBO。单类型表示包含，斜杠序列按顺序精确匹配。"
 DIFFS = {"EZ": "EASY", "EASY": "EASY", "NM": "NORMAL", "NORMAL": "NORMAL", "HD": "HARD", "HARD": "HARD", "EX": "EXPERT", "EXPERT": "EXPERT"}
 
@@ -39,7 +39,7 @@ def parse_filter(query, repository=None, *, force=False):
     if not force and not MARKER.search(text):
         return None
     text, protected = protect_entity(text, repository)
-    text = re.sub(r"\s*([=/,])\s*", r"\1", text)
+    text = re.sub(r"\s*([=:/,])\s*", r"\1", text)
     band = ""
     bands = list(re.finditer(r"乐队=", text))
     if len(bands) > 1:
@@ -67,7 +67,7 @@ def parse_filter(query, repository=None, *, force=False):
     colors, missions, mode, difficulty, comparison, level = (), (), "", "", "", None
     level_text = ""
     # Remove recognized fields; never erase arbitrary remaining words.
-    matches = list(re.finditer(r"(?:颜色|属性)(?:=|:)?([^\s]+)|([红蓝绿黄紫黑白橙青灰]色(?:[/,或][红蓝绿黄紫黑白橙青灰]色)*)", text, re.I))
+    matches = list(re.finditer(r"(?:颜色|属性)(?:=|:)?([^\s]+)|([红蓝绿黄紫黑白橙青灰]色(?:[/,或][红蓝绿黄紫黑白橙青灰]色)*|(?<!\S)[红蓝绿黄紫](?!\S))", text, re.I))
     if len(matches) > 1:
         raise ValueError("颜色请用单个条件列出，例如 颜色=蓝/绿。")
     if matches:

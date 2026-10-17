@@ -63,8 +63,18 @@ def trim(text):
     return text.strip()
 
 
+def color_conditions(text):
+    """Normalize color grammar after complete entity names have been protected."""
+    text = re.sub(r"([红蓝绿黄紫黑白橙青灰])(?:色)?属性", r"\1色", text)
+    text = re.sub(r"(?:颜色|属性)(?:是|为)?\s*(?:[=：:]\s*)?", "颜色=", text)
+    text = re.sub(r"([红蓝绿黄紫黑白橙青灰])(?=卡|歌曲|歌|成员|角色|SNAP|留影|支援)", r"\1色", text, flags=re.I)
+    return text
+
+
 def information_command(question, repository):
     text, saved = protected_text(question, repository)
+    if re.search(r"[红蓝绿黄紫黑白橙青灰]色|颜色|属性", color_conditions(text)):
+        return None  # Colored members refer to cards, not character profiles.
     text = re.sub(r"^(?:(?:请|帮我|查一下|查询|查看|看看|想看)\s*)+", "", text).strip(" ？?。！!")
     current = re.fullmatch(r"(?:(jp|hk|tw|kr|en|日服|国服|台服|韩服|英服|国际服)\s*)?(?:现在|当前|最近)(?:的)?(活动|卡池)(?:是什么|有哪些|有什么|详情)?", text, re.I)
     if current:
@@ -98,6 +108,9 @@ def information_command(question, repository):
 
 def parse_on_query(question, repository, *, include_legacy=False):
     text, saved = protected_text(question, repository)
+    text = color_conditions(text)
+    if re.search(r"[红蓝绿黄紫黑白橙青灰]色|颜色=", text):
+        text = re.sub(r"(?:角色|成员)(?=\s*(?:有哪些|都有谁|有什么|的|[?？]|$))", "成员卡", text)
     card = re.search(r"SNAP|留影卡|支援卡|成员卡|角色卡|卡牌|卡", text, re.I)
     if card:
         if "技能" in text and not re.search(r"LIVE(?:技能)?(?:分类|类型)?(?:是|为)?(?:=)?(?:分数提升|LIFE回复|判定强化|技能延长)|(?:击奏|激奏)(?:技能)?(?:分类|类型)?(?:是|为)?(?:=)?(?:JUST|COMBO|LUCK)", text, re.I):
@@ -108,7 +121,7 @@ def parse_on_query(question, repository, *, include_legacy=False):
         if not trigger and not (include_legacy and re.search(r"(?<![A-Za-z])(?:SSR|SR|R)(?![A-Za-z])", text, re.I)):
             return None
         support = card[0].casefold() in {"snap", "留影卡", "支援卡"}
-        text = text[:card.start()] + " " + text[card.end():]
+        text = text[:card.start()] + " " + re.sub(r"^\s*(?:是|为)", "", text[card.end():])
         text = trim(text)
         text = re.sub(r"生日", " BD ", text)
         text = re.sub(r"(?i)(LIVE)(?:技能(?!延长))?(?:分类|类型)?(?:是|为)?\s*(?:[=：:]\s*)?", " LIVE=", text)

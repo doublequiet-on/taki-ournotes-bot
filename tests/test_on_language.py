@@ -21,6 +21,64 @@ CASES = json.loads((Path(__file__).parent / "fixtures/on_language.json").read_te
 
 
 class OnLanguageTests(unittest.TestCase):
+    def test_color_phrases_are_filters_not_entity_names(self):
+        cases = [
+            ("蓝色角色有哪些", "/查卡 蓝色", [1, 2, 3]),
+            ("蓝色的成员有哪些", "/查卡 蓝色", [1, 2, 3]),
+            ("哪些角色卡是蓝色", "/查卡 蓝色", [1, 2, 3]),
+            ("有哪些红卡", "/查卡 红色", [6]),
+            ("蓝属性的成员卡有哪些", "/查卡 蓝色", [1, 2, 3]),
+            ("属性为蓝色的成员卡有哪些", "/查卡 属性=蓝色", [1, 2, 3]),
+            ("颜色是蓝色的留影卡有哪些", "/查留影卡 蓝色", [7]),
+            ("蓝属性的歌有哪些", "/查曲 蓝色", [100001, 100002]),
+            ("有哪些蓝歌", "/查曲 蓝", [100001, 100002]),
+            ("颜色为蓝色的歌曲有哪些", "/查曲 蓝色", [100001, 100002]),
+            ("颜色：蓝色的歌曲有哪些", "/查曲 颜色： 蓝色", [100001, 100002]),
+            ("颜色是蓝色或绿色的歌曲有哪些", "/查曲 颜色=蓝/绿", [100001, 100002, 100003]),
+            ("角色=tmr 属性=蓝色的成员卡有哪些", "/查卡 角色=tmr 颜色=蓝色", [1, 2, 3]),
+        ]
+        with patch.object(self.parser, "_request", side_effect=AssertionError("model called")), \
+             patch.object(self.parser._quota, "reserve", side_effect=AssertionError("quota used")):
+            for question, command, ids in cases:
+                with self.subTest(question=question):
+                    outcome = self.parser.answer_with_outcome("/问 " + question, self.repo)
+                    self.assertEqual(outcome.code, OutcomeCode.SUCCESS, outcome.text)
+                    actual = outcome.result
+                    direct = resolve_command(command, self.repo)
+                    for result in (actual, direct):
+                        records = result.songs or result.cards or result.support_cards
+                        self.assertEqual(sorted(c.id for c in records), ids)
+                    self.assertEqual(outcome.state.model_calls, 0)
+
+    def test_filter_dimensions_and_order_through_commands_and_questions(self):
+        cases = [
+            ("查卡", "成员卡", ["颜色=蓝", "稀有度=SSR/SR", "角色=tmr", "乐队=MyGO", "LIVE=分数提升", "击奏=JUST", "得意=MyGO"], [1, 2]),
+            ("查留影卡", "留影卡", ["颜色=蓝", "稀有度=EX", "角色=tmr", "LIVE=分数提升", "击奏=JUST"], [7]),
+            ("查曲", "歌曲", ["颜色=蓝", "乐队=MyGO", "EX", "lv<=25", "激奏=JUST"], [100002]),
+        ]
+        with patch.object(self.parser, "_request", side_effect=AssertionError("model called")):
+            for command, noun, fields, expected in cases:
+                for index in range(len(fields)):
+                    ordered = fields[index:] + fields[:index]
+                    for query in (" ".join(ordered), " ".join(reversed(ordered))):
+                        with self.subTest(command=command, query=query):
+                            direct = resolve_command("/" + command + " " + query, self.repo)
+                            outcome = self.parser.answer_with_outcome("/问 " + query + "的" + noun + "有哪些", self.repo)
+                            self.assertEqual(outcome.code, OutcomeCode.SUCCESS, outcome.text)
+                            for result in (direct, outcome.result):
+                                records = result.songs or result.cards or result.support_cards
+                                self.assertEqual(sorted(c.id for c in records), expected)
+
+    def test_color_names_remain_entities_and_unknown_filters_do_not_broaden(self):
+        song = replace(self.repo.songs[0], title="蓝", titles=("蓝",), localized={})
+        self.repo.songs[0] = song
+        self.assertEqual(resolve_command("/查曲 蓝", self.repo).songs, (song,))
+        with patch.object(self.parser, "_request", side_effect=AssertionError("model called")):
+            for question in ("颜色为黑色的歌曲有哪些", "黑属性的成员卡有哪些",
+                             "颜色为蓝色 不存在的歌曲有哪些", "蓝色角色有哪些但只要未拥有的"):
+                outcome = self.parser.answer_with_outcome("/问 " + question, self.repo)
+                self.assertNotIn(outcome.code, (OutcomeCode.SUCCESS, OutcomeCode.EMPTY), question)
+
     def setUp(self):
         test_query_spec.QuerySpecificationTests.setUp(self)
         base = self.repo.songs[0]
