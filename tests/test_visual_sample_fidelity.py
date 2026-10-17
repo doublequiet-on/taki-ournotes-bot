@@ -123,11 +123,11 @@ class AlignmentTests(unittest.TestCase):
         def capture(canvas,x,y,value,size,*args,**kwargs):
             drawn.append((str(value),size));return original(canvas,x,y,value,size,*args,**kwargs)
         with patch.object(Canvas,'text',capture):parts,_,_=catalog_layout.render_list([card],'全部',load=lambda *a:None)
-        self.assertIn(('首人',26),drawn)
-        self.assertIn(('第二人',26),drawn)
-        self.assertIn(('ID 51',30),drawn)
-        self.assertIn(('未知',32),drawn)
-        with Image.open(io.BytesIO(parts[0].image)) as im:self.assertEqual(im.width,1168)
+        self.assertIn(('首人',18),drawn)
+        self.assertIn(('第二人',18),drawn)
+        self.assertIn(('ID 51',24),drawn)
+        self.assertIn(('未知',24),drawn)
+        with Image.open(io.BytesIO(parts[0].image)) as im:self.assertEqual(im.width,608)
 
     def test_different_character_combinations_have_distinct_rows(self):
         from ournotes_bot.rendering import catalog_layout
@@ -142,7 +142,7 @@ class AlignmentTests(unittest.TestCase):
         with patch.object(Canvas,'text',capture):
             catalog_layout.render_list([a,b],'灯',load=lambda *args:None)
         self.assertEqual(set(positions),{'ID 51','ID 52'})
-        self.assertLess(positions['ID 51'],positions['ID 52'])
+        self.assertLess(positions['ID 52'],positions['ID 51'])
 
 
 class FullChartTests(unittest.TestCase):

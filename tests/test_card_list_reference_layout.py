@@ -52,7 +52,7 @@ class ReferenceLayoutTests(unittest.TestCase):
         self.assertEqual([c.id for c in records],[51])
         self.assertEqual(ranges,((0,1),))
         headings=[name for name,x in drawn if name.startswith('角色') and x<260]
-        self.assertEqual(headings,['角色2','角色1'])
+        self.assertEqual(headings,['角色1','角色2'])
         self.assertTrue(any('1 张' in text for text,_ in drawn))
         # A canonical character filter also covers alias/spaced command labels.
         _,records,_=layout.render_list([card],'角色=alias SSR',characters=('角色1',),load=lambda *a:None)
@@ -64,7 +64,7 @@ class ReferenceLayoutTests(unittest.TestCase):
             im=Image.new('RGB',size);im.info['source']=url;return im
         original=Canvas.paste
         def capture(canvas,im,x,y,w,h,*args,**kwargs):
-            if im is not None and im.info.get('source','').startswith('face-') and w in (80,96):
+            if im is not None and im.info.get('source','').startswith('face-') and w in (56,80,96):
                 captures.append((im.info['source'],x,y,w,h))
             return original(canvas,im,x,y,w,h,*args,**kwargs)
         for name in ('角色1','角色2'):
@@ -120,7 +120,7 @@ class ReferenceLayoutTests(unittest.TestCase):
             return original(canvas,x,y,value,*args,**kwargs)
         with patch.object(Canvas,'text',capture):
             _,records,_=layout.render_list([card],'乐队=MyGO',bands=('MyGO!!!!!',),load=lambda *a:None)
-        self.assertEqual(headings,['角色2','角色1','角色3'])
+        self.assertEqual(headings,['角色1','角色2','角色3'])
         self.assertEqual([c.id for c in records],[51])
         self.assertEqual([p['id'] for p in records[0].catalog['people']],[1,2,3])
         _,records,_=layout.render_list([card],'角色=角色1 乐队=Ave Mujica',characters=('角色1',),bands=('Ave Mujica',),load=lambda *a:None)
@@ -137,7 +137,7 @@ class ReferenceLayoutTests(unittest.TestCase):
             return original(canvas,x,y,value,*args,**kwargs)
         with patch.object(Canvas,'text',capture):
             _,records,_=layout.render_list([card],request.query,characters=request.filters['character'],load=lambda *a:None)
-        self.assertEqual(headings,['千早爱音','高松灯'])
+        self.assertEqual(headings,['高松灯','千早爱音'])
         self.assertEqual([c.id for c in records],[51])
 
 
@@ -174,12 +174,61 @@ class ReferenceLayoutTests(unittest.TestCase):
         cards=[replace(base,id=i,card_type=i) for i in range(1,4)]
         original=Canvas.text;names={}
         def capture(canvas,x,y,value,size=28,*args,**kwargs):
-            self.assertLess(y,canvas.height-100 if x<260 and size==26 else canvas.height)
-            if x<260 and size==26:names.setdefault(canvas,[]).append(str(value))
+            self.assertLess(y,canvas.height)
+            if x<260:names.setdefault(canvas,[]).append(str(value))
             return original(canvas,x,y,value,size,*args,**kwargs)
-        with patch.object(readable_pages,'MAX_IMAGE_PIXELS',1_500_000),patch.object(Canvas,'text',capture):
+        with patch.object(readable_pages,'MAX_IMAGE_PIXELS',400_000),patch.object(Canvas,'text',capture):
             parts,records,ranges=layout.render_list(cards,'测试',load=lambda *a:None)
         self.assertEqual(len(parts),3);self.assertEqual(ranges,((0,1),(1,2),(2,3)))
         self.assertEqual(len(names),3)
         for drawn in names.values():
             for i in range(1,6):self.assertIn(f'长角色名字{i}',''.join(drawn))
+
+    def test_memory_groups_merge_identity_cells_with_colour_rows_and_rarity_columns(self):
+        base=self.memory()
+        first=dict(self.person(1,9),name={'zh':'单人甲'})
+        second=dict(self.person(2,1),name={'zh':'单人乙'})
+        solo=replace(base,id=1,rarity=2,catalog={'people':[first],'detail_loaded':True})
+        cards=[solo,replace(solo,id=2,rarity=4),replace(solo,id=3,card_type=2),
+               replace(solo,id=4,catalog={'people':[second],'detail_loaded':True}),
+               replace(base,id=5,catalog={'people':[first,second],'detail_loaded':True}),
+               replace(base,id=6,card_type=5,catalog={'people':[second,first],'detail_loaded':True})]
+        placements=[];names=[];separators=[]
+        face=layout.card_face;text=Canvas.text;line=Canvas.line
+        def capture_face(canvas,card,x,y,*args,**kwargs):
+            placements.append((card.id,x,y));return face(canvas,card,x,y,*args,**kwargs)
+        def capture_text(canvas,x,y,value,*args,**kwargs):
+            if x<260 and str(value) in ('单人甲','单人乙'):names.append(str(value))
+            return text(canvas,x,y,value,*args,**kwargs)
+        def capture_line(canvas,x,y,right,*args,**kwargs):
+            separators.append((x,y,right));return line(canvas,x,y,right,*args,**kwargs)
+        with patch.object(layout,'card_face',capture_face),patch.object(Canvas,'text',capture_text),patch.object(Canvas,'line',capture_line):
+            parts,records,ranges=layout.render_list(cards,'测试',load=lambda *a:None)
+        self.assertEqual([c.id for c in records],[5,6,2,1,3,4])
+        self.assertEqual(ranges,((0,6),))
+        self.assertEqual(len(parts),1)
+        positions={ident:(x,y) for ident,x,y in placements}
+        self.assertEqual(positions[2][1],positions[1][1])
+        self.assertLess(positions[2][0],positions[1][0])
+        self.assertGreater(positions[3][1],positions[1][1])
+        self.assertEqual(names,['单人甲','单人乙','单人甲','单人乙'])
+        self.assertEqual(len(separators),3)  # Two group boundaries and the footer only.
+        self.assertTrue(all(x==32 for x,_,_ in separators))
+
+    def test_compact_memory_names_titles_and_skills_fit_three_locales(self):
+        from ournotes_bot.rendering.haneoka_theme import font
+        person=dict(self.person(1,1),name={locale:'Long character name / 很长的完整人物名字' for locale in ('zh','en','ja')})
+        card=replace(self.memory(),catalog={'people':[person,self.person(2,2)],'detail_loaded':False,'detail_stale':True},
+                     skills=(Skill('supportSkill','技能','完整技能描述 '+('long skill text '*12)),))
+        original=Canvas.text
+        def checked(canvas,x,y,value,size=28,color=None,bold=False,align='left',**kwargs):
+            width=font(size,bold,str(value).isascii()).getlength(str(value))
+            left=x-width if align=='right' else x-width/2 if align=='center' else x
+            self.assertGreaterEqual(left,-1,(value,canvas.width))
+            self.assertLessEqual(left+width,canvas.width+1,(value,canvas.width))
+            self.assertGreaterEqual(y-size/2,0)
+            self.assertLessEqual(y+size/2,canvas.height)
+            return original(canvas,x,y,value,size,color or '#1b1b1f',bold,align,**kwargs)
+        with patch.object(Canvas,'text',checked):
+            for locale in ('zh','en','ja'):
+                layout.render_list([card],'很长的查询条件 '*10,locale,load=lambda *a:None)
