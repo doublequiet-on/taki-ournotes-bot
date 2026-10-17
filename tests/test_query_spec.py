@@ -47,6 +47,72 @@ class QuerySpecificationTests(unittest.TestCase):
         self.parser = AIQueryParser(Settings('', '', BASE, self.repo.cache_file, 6, 'fixture-key',
             ai_quota_file=root / 'quota.json', ai_metrics_file=root / 'metrics.json'))
 
+    def test_spoken_rarity_multiselect_preserves_color_and_ids(self):
+        with patch.object(self.parser, '_request', side_effect=AssertionError('model called')) as model, \
+             patch.object(self.parser._quota, 'reserve', side_effect=AssertionError('quota used')) as quota:
+            for separator in ('或', ' 或 ', '/', '、', '|', ','):
+                answer = self.parser.answer_with_outcome('/问 蓝色 SSR' + separator + 'SR 成员卡', self.repo)
+                self.assertEqual(answer.code.value, 'success', answer.text)
+                self.assertEqual(tuple(c.id for c in answer.result.catalog.cards), (1, 2))
+                direct = resolve_command('/查卡 颜色=蓝 稀有度=SSR/SR', self.repo)
+                self.assertEqual(answer.result.catalog.request.filters, direct.catalog.request.filters)
+            invalid = self.parser.answer_with_outcome('/问 蓝色 SSR或未知 成员卡', self.repo)
+            self.assertNotIn(invalid.code.value, ('success', 'empty'))
+            model.assert_not_called()
+            quota.assert_not_called()
+
+    def test_snap_alias_discovery_and_collision(self):
+        from ournotes_bot.commands import handle_command
+        from ournotes_bot.query.entity_lexicon import known_alias_names, resolve_entity, unverified_alias_count
+        import os
+        path = Path(os.environ['OURNOTES_ALIAS_FILE'])
+        path.write_text(json.dumps({'support_card': {'照片': '7', '不存在照片': '999'}}), encoding='utf-8')
+        self.assertIn('照片', known_alias_names(self.repo))
+        self.assertNotIn('不存在照片', known_alias_names(self.repo))
+        self.assertEqual(unverified_alias_count(self.repo), 1)
+        self.assertIn('词库：有效', handle_command('/数据状态', self.repo))
+        self.assertEqual(resolve_entity('support_card', '照片', self.repo), '7')
+        self.assertIn('/查留影卡 照片', handle_command('/查缩写 照片', self.repo))
+        with patch.object(self.parser, '_request', side_effect=AssertionError('model called')), \
+             patch.object(self.parser._quota, 'reserve', side_effect=AssertionError('quota used')):
+            answer = self.parser.answer_with_outcome('/问 照片的留影卡', self.repo)
+            self.assertEqual(answer.code.value, 'success', answer.text)
+        path.write_text(json.dumps({'support_card': {'照片': '7'}, 'card': {'照片': '1'}}), encoding='utf-8')
+        self.assertIn('多个对象', handle_command('/查缩写 照片', self.repo))
+
+    def test_snap_only_character_alias_and_failed_file_status(self):
+        from ournotes_bot.commands import handle_command
+        from ournotes_bot.query.entity_lexicon import known_alias_names
+        import os
+        self.repo.cards = []
+        path = Path(os.environ['OURNOTES_ALIAS_FILE'])
+        path.write_text(json.dumps({'character': {'灯照片': '高松灯'}}), encoding='utf-8')
+        for nickname in ('tmr', '灯照片'):
+            self.assertIn(nickname, known_alias_names(self.repo))
+            self.assertIn('/查留影卡', handle_command('/查缩写 ' + nickname, self.repo))
+        path.write_text('{', encoding='utf-8')
+        self.assertIn('沿用本进程最后有效版本', handle_command('/数据状态', self.repo))
+        self.assertIn('灯照片', known_alias_names(self.repo))
+
+    def test_alias_change_invalidates_query_and_continuation_versions(self):
+        from ournotes_bot.query.continuation import catalog_version
+        from ournotes_bot.natural_query.query_agent import QueryAgent
+        import os
+        path = Path(os.environ['OURNOTES_ALIAS_FILE'])
+        self.parser._agent._sync_cache(self.repo)
+        self.parser._agent._cache["sentinel"] = object()
+        before = (QueryAgent._source(self.repo), catalog_version(self.repo))
+        stat = path.stat()
+        path.write_text(json.dumps({'support_card': {'照片': '7'}}), encoding='utf-8')
+        os.utime(path, ns=(stat.st_atime_ns, stat.st_mtime_ns))
+        after = (QueryAgent._source(self.repo), catalog_version(self.repo))
+        self.parser._agent._sync_cache(self.repo)
+        self.assertEqual(len(self.parser._agent._cache), 0)
+        self.assertNotEqual(before[0], after[0])
+        self.assertNotEqual(before[1], after[1])
+        path.write_text('{', encoding='utf-8')
+        self.assertEqual(after, (QueryAgent._source(self.repo), catalog_version(self.repo)))
+
     def test_song_normalization_and_complete_sets(self):
         cases = (
             ('蓝色 lv25', '蓝色 lv25的歌曲', True, '=', 25.0, (100001, 100002)),

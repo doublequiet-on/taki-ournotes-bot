@@ -11,6 +11,11 @@ from __future__ import annotations
 
 MESSAGES = {
     "zh": {
+        "aliases_unverified": "；当前资料未能确认的目标：{count}",
+        "aliases_current": "词库：有效",
+        "aliases_stale": "词库：加载失败，沿用本进程最后有效版本",
+        "aliases_unavailable": "词库：加载失败，本进程暂无有效版本",
+        "alias_found_support": "{query} → {name}\n发送 /查留影卡 {query} 查询。",
         "unavailable": "该功能暂未上线",
         "unknown": "没有识别该指令。",
         "not_found_song": "没有找到歌曲“{query}”。",
@@ -55,6 +60,11 @@ MESSAGES = {
         "language": "默认使用中文。英文指令：/song、/chart、/card、/support、/help；日文指令：/曲、/譜面、/カード、/サポート、/ヘルプ。任一指令均可输入中文、英文或日文名称。",
     },
     "en": {
+        "aliases_unverified": "; targets unverified against current catalog: {count}",
+        "aliases_current": "Aliases: current",
+        "aliases_stale": "Aliases: load failed; using last valid process snapshot",
+        "aliases_unavailable": "Aliases: unavailable; no valid process snapshot",
+        "alias_found_support": "{query} → {name}\nUse /support {query}.",
         "unavailable": "This feature is not available yet.",
         "unknown": "Unknown command.",
         "not_found_song": "No song found for “{query}”.",
@@ -99,6 +109,11 @@ MESSAGES = {
         "language": "Chinese is the default. Use /song, /chart, /card, /support, /help for English; /曲, /譜面, /カード, /サポート, /ヘルプ for Japanese. Queries work with Chinese, English, or Japanese titles in any language.",
     },
     "ja": {
+        "aliases_unverified": "；現在の資料で未確認の対象：{count}",
+        "aliases_current": "別名辞書：有効",
+        "aliases_stale": "別名辞書：読み込み失敗、最後の有効なデータを使用",
+        "aliases_unavailable": "別名辞書：読み込み失敗、有効なデータなし",
+        "alias_found_support": "{query} → {name}\n/サポート {query} で検索。",
         "unavailable": "この機能はまだ公開されていません。",
         "unknown": "コマンドを認識できませんでした。",
         "not_found_song": "「{query}」に一致する楽曲が見つかりません。",

@@ -2,19 +2,22 @@
 # Input: 查询意图、用户文本、SongRepository 实体集合及别名 JSON。
 # Output: AnchorResult（EntityRef／歧义）、实体名称或 None，以及别名文件状态版本。
 # Pos: Query / Deterministic 的共享实体定位与别名解析；见 L2-2.md。
-# Effects/Dependencies: 读取源码默认、安装默认或 OURNOTES_ALIAS_FILE 指定的 JSON；alias_version 取文件 mtime，无直接网络。
+# Effects/Dependencies: 读取别名 JSON；内容版本与最后有效快照按路径保存在进程内，失败保留旧值并记录日志，无网络。
 
 """Resolve model-proposed names against the current Project Yume cache."""
 
 from __future__ import annotations
 
+import hashlib
 import json
+import logging
 import os
 import re
 import sys
 import unicodedata
 from dataclasses import dataclass
 from pathlib import Path
+from threading import RLock
 
 from ..data import CHARACTER_ALIASES, SongRepository, character_identity, normalize, resolve_character_alias
 
@@ -52,19 +55,100 @@ class AnchorResult:
     ambiguous: bool = False
 
 
-def alias_version() -> int | None:
-    try:
-        return _alias_file().stat().st_mtime_ns
-    except OSError:
-        return None
+_lock = RLock()
+_snapshots: dict[Path, tuple[dict, int, str | None]] = {}
+_failures: dict[Path, str] = {}
+_logger = logging.getLogger(__name__)
+
+
+def _unique_object(pairs):
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("duplicate_key")
+        result[key] = value
+    return result
+
+
+def _validate_aliases(payload: object) -> dict:
+    groups = {"song", "band", "character", "card", "support_card", "outside_catalog"}
+    if not isinstance(payload, dict) or set(payload) - groups:
+        raise ValueError("invalid_categories")
+    for kind, entries in payload.items():
+        if kind == "outside_catalog":
+            if not isinstance(entries, list) or any(not isinstance(v, str) or not normalize(v) for v in entries):
+                raise ValueError("invalid_outside_catalog")
+            continue
+        if not isinstance(entries, dict):
+            raise ValueError("invalid_entries")
+        normalized = {}
+        for name, target in entries.items():
+            # Existing multi-server song aliases may have several scoped IDs.
+            if kind == "song" and (isinstance(target, list) or type(target) is int):
+                values = target if isinstance(target, list) else [target]
+                if not values or any(type(v) not in (str, int) or not str(v).strip()
+                                     or (str(v).lstrip("+-").isdecimal() and int(v) <= 0) for v in values):
+                    raise ValueError("invalid_target")
+            elif not isinstance(target, str) or not normalize(target):
+                raise ValueError("invalid_target")
+            if not normalize(name):
+                raise ValueError("invalid_target")
+            if isinstance(target, str) and target.lstrip("+-").isdecimal() and int(target) <= 0:
+                raise ValueError("invalid_id")
+            key = normalize(name)
+            if key in normalized and normalized[key] != target:
+                raise ValueError("conflicting_alias")
+            normalized[key] = target
+    return payload
+
+
+def _load_aliases(path: Path | None = None) -> tuple[dict, int, str | None]:
+    path = (path or _alias_file()).resolve()
+    with _lock:
+        previous = _snapshots.get(path)
+        try:
+            raw = path.read_bytes()
+            version = int.from_bytes(hashlib.sha256(str(path).encode() + b"\0" + raw).digest(), "big")
+            if previous and previous[1] == version:
+                snapshot = (previous[0], version, None)
+            else:
+                payload = _validate_aliases(json.loads(raw.decode("utf-8-sig"), object_pairs_hook=_unique_object))
+                snapshot = (payload, version, None)
+            _snapshots[path] = snapshot
+            _failures.pop(path, None)
+            return snapshot
+        except (OSError, ValueError) as exc:
+            reason = str(exc) if type(exc) is ValueError else type(exc).__name__
+            if _failures.get(path) != reason:
+                _logger.warning("Alias lexicon load failed (%s); retaining last valid snapshot if available", reason)
+            _failures[path] = reason
+            if previous:
+                return (previous[0], previous[1], "stale")
+            version = int.from_bytes(hashlib.sha256(str(path).encode()).digest(), "big")
+            return ({}, version, "unavailable")
+
+
+def alias_version() -> int:
+    return _load_aliases()[1]
+
+
+def alias_status() -> str:
+    """Effective process-local snapshot status; never expose lexicon contents."""
+    return _load_aliases()[2] or "current"
+
+
+def unverified_alias_count(repository: SongRepository) -> int:
+    """Count string targets absent/ambiguous in this catalog, not proven bad data.
+
+    Multi-server song ID lists are checked by scoped_song_matches instead.
+    """
+    return sum(_resolve_alias_target(kind, target, repository) is None
+               for kind, entries in _aliases().items() if isinstance(entries, dict)
+               for target in entries.values() if isinstance(target, str))
 
 
 def _aliases(path: Path | None = None) -> dict:
-    try:
-        payload = json.loads((path or _alias_file()).read_text(encoding="utf-8"))
-        return payload if isinstance(payload, dict) else {}
-    except (OSError, ValueError):
-        return {}
+    return _load_aliases(path)[0]
 
 
 def information_alias_targets(term: str) -> tuple[tuple[str, str], ...]:
@@ -279,14 +363,17 @@ def known_alias_names(repository: SongRepository) -> tuple[str, ...]:
     entries = _aliases()
     names = [key for key, alias in CHARACTER_ALIASES.items()
              if any(normalize(character_identity(card.character)) == normalize(alias.display)
-                    for card in repository.cards)]
-    for kind in ("song", "band", "character", "card"):
+                    for card in repository.cards) or any(
+                        normalize(character_identity(name)) == normalize(alias.display)
+                        for card in repository.support_cards for name in card.characters)]
+    for kind in ("song", "band", "character", "card", "support_card"):
         aliases = entries.get(kind, {})
         if not isinstance(aliases, dict):
             continue
-        intent = "song" if kind in {"song", "band"} else "card"
+        intent = "song" if kind in {"song", "band"} else "support_card" if kind == "support_card" else "card"
         for alias in aliases:
-            if isinstance(alias, str) and resolve_exact_alias(intent, alias, repository).entity:
+            if isinstance(alias, str) and (resolve_exact_alias(intent, alias, repository).entity
+                    or (kind == "character" and resolve_exact_alias("support_card", alias, repository).entity)):
                 names.append(alias)
     return tuple(dict.fromkeys(names))
 

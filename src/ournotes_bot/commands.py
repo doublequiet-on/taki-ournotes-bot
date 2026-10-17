@@ -14,7 +14,7 @@ from difflib import SequenceMatcher
 from typing import TypeVar
 
 from .data import Card, Skill, Song, SongRepository, SupportCard, character_identity, localized_text, normalize, resolve_character_alias
-from .query.entity_lexicon import known_alias_names, resolve_exact_alias
+from .query.entity_lexicon import alias_status, known_alias_names, resolve_exact_alias, unverified_alias_count
 from .i18n import tr
 from .natural_query.query_debug import QUERY_DEBUG_COUNTERS
 from .query.song_query import SongAnswer, parse_filter, execute as execute_song_filter
@@ -649,7 +649,7 @@ def handle_command(content: str, repository: SongRepository,
         history_text = "\n" + history.status_text() if history else "\n榜线历史：未配置"
         sampler = getattr(repository, "cutoff_sampler", None)
         history_text += "\n周期采样：" + (sampler.last_state if sampler else "未启动")
-        return (status + f"\n歌曲颜色／激奏：{count}/{len(catalog.songs)} · Haneoka 日服 · "
+        return (status + "\n" + tr(locale, "aliases_" + alias_status()) + tr(locale, "aliases_unverified", count=unverified_alias_count(repository)) + f"\n歌曲颜色／激奏：{count}/{len(catalog.songs)} · Haneoka 日服 · "
                 + ("旧缓存" if (catalog.cache_state == "stale" if main_catalog else traits.stale) else "有效缓存" if saved else "等待后台获取")
                 + (f"\n属性版本：{saved['release']}\n本机获取：{_safe_sync_time(saved['fetched_at'], locale)}" if saved else "") + history_text)
 
@@ -661,24 +661,29 @@ def handle_command(content: str, repository: SongRepository,
         if alias:
             cards = repository.search_cards(abbreviation, limit=1)
             name = localized_text(cards[0], "character", locale) if cards else alias.display
-            return tr(locale, "alias_found" if cards else "alias_missing_card", query=abbreviation, name=name)
+            key = "alias_found" if cards else "alias_found_support" if support_card_matches(repository, abbreviation) else "alias_missing_card"
+            return tr(locale, key, query=abbreviation, name=name)
         song_alias = resolve_exact_alias("song", abbreviation, repository)
         card_alias = resolve_exact_alias("card", abbreviation, repository)
-        if song_alias.ambiguous or card_alias.ambiguous:
+        support_alias = resolve_exact_alias("support_card", abbreviation, repository)
+        if song_alias.ambiguous or card_alias.ambiguous or support_alias.ambiguous:
             return tr(locale, "alias_ambiguous", query=abbreviation)
-        found = song_alias.entity or card_alias.entity
-        if song_alias.entity and card_alias.entity and song_alias.entity != card_alias.entity:
+        entities = {r.entity for r in (song_alias, card_alias, support_alias) if r.entity}
+        found = next(iter(entities), None)
+        if len(entities) > 1:
             return tr(locale, "alias_ambiguous", query=abbreviation)
         if found:
             if found.kind == "band":
                 return tr(locale, "alias_found_band", query=abbreviation, name=found.value)
             if found.kind == "song":
                 return tr(locale, "alias_found_song", query=abbreviation, name=found.value)
+            if found.kind == "support_card":
+                return tr(locale, "alias_found_support", query=abbreviation, name=found.value)
             if found.kind == "card":
                 return tr(locale, "alias_found", query=abbreviation, name=found.value)
             cards = card_matches(repository, abbreviation)
             name = localized_text(cards[0], "character", locale) if cards else found.value
-            return tr(locale, "alias_found", query=abbreviation, name=name)
+            return tr(locale, "alias_found" if cards else "alias_found_support", query=abbreviation, name=name)
         known = "、".join(known_alias_names(repository))
         return tr(locale, "alias_unknown", query=abbreviation, names=known)
 
