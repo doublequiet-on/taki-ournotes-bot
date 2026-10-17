@@ -140,6 +140,28 @@ class ContinuationCoreTests(Fixture, unittest.TestCase):
 
 
 class ContinuationDeliveryTests(Fixture, unittest.IsolatedAsyncioTestCase):
+    async def test_completed_continue_is_idempotent_and_retains_selection(self):
+        from ournotes_bot.rendering.readable_pages import ImagePart
+        from ournotes_bot.query.continuation import QueryContext
+        with patch('ournotes_bot.rendering.song_layout.render_list',
+                   return_value=((ImagePart(b'first',0,1),ImagePart(b'second',1,35)),((0,1),(1,35)))):
+            initial = await self.send(['/查曲 MyGO'])
+        self.assertEqual(initial._api.post_group_message.await_count,2)
+        cursor = self.store.get(self.key)
+        self.assertEqual((cursor.sent,cursor.total,cursor.remaining),(2,2,()))
+        visible = cursor.query_context.visible
+        for _ in range(2):
+            message = await self.send(['/继续'])
+            send = message._api.post_group_message
+            self.assertEqual(send.await_count,1)
+            self.assertEqual(send.await_args.kwargs['msg_type'],0)
+            self.assertNotIn('结果 ',send.await_args.kwargs['content'])
+            self.assertFalse(message._api._http.request.called)
+            self.assertEqual(self.current_query().visible,visible)
+        with patch('ournotes_bot.rendering.song_detail_layout.render',return_value=b'detail'):
+            await self.send(['/问 选二'])
+        self.assertEqual(self.current_query().selected.entity_id,self.repo.songs[1].id)
+
     def setUp(self):
         self.setup_repo()
         self.store = ContextStore()
