@@ -90,3 +90,9 @@ QQ 图片回复使用已确认的 Haneoka 风格：浅底、Noto Sans SC／Robot
 `encode_image()` 默认策略仍为原 JPEG 序列，返回 `bytes`；`encode_image_result()` 另提供格式、MIME、尺寸与逐次参数／字节数／失败原因。显式 `strategy="png-first"` 只接受 `preserve_size=True`：同一原画布先编码一次无量化 PNG，超过既有字节预算后按原 JPEG 质量序列尝试；不缩放、不从 JPEG 解码重编码。编码失败保留原异常与 `encoding_attempts`，接管的画布仍释放。普通图和谱面继续分别使用自己的几何／质量预算。
 
 画廊可用 `--encoding-strategy png-first` 显式启用并记录实际格式和扩展名；机器人配置没有启用入口。真实 QQ 格式兼容、目标运行环境资源依据尚未验证，不能标为可上线。
+
+## 单个活动完整视图试验（默认关闭）
+
+`render_info(..., try_full_activity=True)` 仅对 activity 的单个 `InfoView` 尝试完整画布。复用原区块测量与绘制，几何准入后才分配候选；编码预算失败时恢复 `max_height=2800` 的原分页。不合并视图、不重分区块、不拼成品图；只有实际页数改变时，页脚续图提示相应变化。原单图不重复尝试；卡池、人物与卡牌列表不启用。
+
+画廊参数 `--full-activity-view` 可独立或与 `--encoding-strategy png-first` 组合。合成区块像素对照只能证明此固定输入的完整性；缺原素材模板仍不算正式视觉验收，生产配置没有启用入口。

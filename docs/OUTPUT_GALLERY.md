@@ -23,3 +23,5 @@
 同时生成[盘点](output-gallery/inventory.md)、[字段表](output-gallery/field-map.md)、[草图表](output-gallery/sketch-worksheet.md)、[主题参考](output-gallery/theme-reference.md)副本。本阶段等待用户草图，不自动进入生产改版。
 
 编码实验仅通过 `--encoding-strategy png-first` 显式开启（默认 `legacy`）；可与 `--observe visual` 或独立 `--benchmark-runs 3` 配合。原画布摘要用于证明布局未变，输出实际格式决定扩展名与 manifest MIME。
+
+活动完整单图实验：`--full-activity-view`，默认关闭。分别运行默认、仅 PNG、仅完整活动、两者组合；`--observe visual` 的 pagination 记录区块高度、范围和几何／偏好高度／编码失败原因，保留所有候选画布并单独映射最终页。
