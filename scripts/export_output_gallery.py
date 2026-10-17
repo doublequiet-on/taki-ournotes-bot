@@ -170,11 +170,17 @@ class Gallery:
                             suffix = ".jpg" if picture.format == "JPEG" else ".png"
                             filename = "images/" + stem + suffix
                             (self.output / filename).write_bytes(page.image)
-                            thumb = picture.copy()
-                            thumb.thumbnail((430, 100000), Image.Resampling.LANCZOS)
-                            thumbnail = "thumbnails/" + stem + ".png"
-                            thumb.save(self.output / thumbnail)
-                            thumb.close()
+                            thumbnail = None
+                            # Image.open reads headers lazily. Timing must not decode
+                            # output pixels or allocate/encode a derived preview.
+                            if not self.observation or self.observation.mode != 'timing':
+                                thumb = picture.copy()
+                                try:
+                                    thumb.thumbnail((430, 100000), Image.Resampling.LANCZOS)
+                                    thumbnail = "thumbnails/" + stem + ".png"
+                                    thumb.save(self.output / thumbnail)
+                                finally:
+                                    thumb.close()
                             item.update(image_file=filename, format=picture.format, mime=Image.MIME.get(picture.format), encoded_size=list(picture.size), bytes=len(page.image),
                                         original_size=self.canvases[number - 1] if number <= len(self.canvases) else None,
                                         thumbnail_file=thumbnail, sha256=hashlib.sha256(page.image).hexdigest())
@@ -261,7 +267,7 @@ def gallery_html(rows, version):
                 continue
             pages = []
             for item in row["files"]:
-                image = (f'<a href="{item["image_file"]}" target="_blank"><img loading="lazy" src="{item["thumbnail_file"]}" alt="{escape(row["id"])} 第{item["page"]}页"></a>' if item["image_file"] else "")
+                image = (f'<a href="{item["image_file"]}" target="_blank"><img loading="lazy" src="{item["thumbnail_file"] or item["image_file"]}" alt="{escape(row["id"])} 第{item["page"]}页"></a>' if item["image_file"] else "")
                 dimensions = f'原画布 {item["original_size"] or "未经过画布绘制"} → 编码 {item["encoded_size"]} · {item["bytes"]} bytes' if item["image_file"] else "纯文字，无图片尺寸和字节数"
                 opened = "" if item["image_file"] else " open"
                 pages.append(f'<div class="page"><p>本次输出第 {item["page"]}/{row["page_count"]} 页 · {dimensions}</p>{image}<details{opened}><summary>文字回复 / 回退</summary><pre>{escape(item["text"])}</pre></details></div>')
@@ -592,7 +598,7 @@ def main():
                             'output_sha256':[[f.get('sha256') for f in r['files']] for r in runs]})
             print('benchmark: '+case['id'],flush=True)
         g.write_json('benchmark.json',{'code_version':g.version,'runs_per_case':args.benchmark_runs,
-                     'scope':'isolated processes; offline disk assets; no pixel capture; not production p95',
+                     'scope':'isolated processes; offline disk assets; no pixel capture or derived previews; delivery bytes and header metadata only; not production p95',
                      'samples':samples})
         return 0
     g.finish()
