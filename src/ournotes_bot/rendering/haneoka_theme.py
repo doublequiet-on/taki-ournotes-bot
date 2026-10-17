@@ -92,6 +92,26 @@ def prepare_assets(requests, load, game_names=()):
     return assets
 
 
+@contextmanager
+def prepared_render_assets(requests, load, game_names=()):
+    """Own artwork and capture game bytes before entering the drawing scope."""
+    source = _GAME_ASSETS.get()
+    captured = dict.fromkeys(game_names)
+    def capture(name):
+        captured[name] = source(name) if source else None
+        return captured[name]
+    with game_assets(capture):
+        artwork = prepare_assets(requests, load, game_names)
+    try:
+        # Unknown names are contract errors, never a late source fetch.
+        with game_assets(captured.__getitem__):
+            yield artwork
+    finally:
+        for image in artwork.values():
+            if image is not None:
+                image.close()
+
+
 @lru_cache(maxsize=96)
 def _icon(raw, width, height):
     with Image.open(BytesIO(raw)) as original:

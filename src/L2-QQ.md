@@ -67,3 +67,5 @@
 实现为 platforms/qq/qq.py 与 platforms/qq/menu.py，文件名和生命周期不变；platforms 只提供命名空间。main 仍延迟导入实际入口。QQ logger 显式保持 ournotes_bot.qq，更新器据此捕获“已上线”；不按目录变化改变运行日志协议。
 
 向上阅读：[仓库 L1](../L1.md)。源码文件头提供唯一 L3，具体行为与字段以实现为准。
+
+歌曲／谱面入口只判断适用条件并接线；资料捕获与文案由 [reply_preparation.py](ournotes_bot/application/reply_preparation.py) 提供，同次捕获用于绘图和上传失败回退。

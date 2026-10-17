@@ -25,6 +25,8 @@ CLI 模式与组合、配置根/数据路径、包身份；为多个系统域提
 - [i18n.py](ournotes_bot/i18n.py)：`tr`，支持已有语言表，缺 locale 退中文。
 - [__init__.py](ournotes_bot/__init__.py)：包版本身份。
 
+- [application/reply_preparation.py](ournotes_bot/application/reply_preparation.py)：捕获同次歌曲／谱面资料与原回退文字；结果仅含领域对象、绘图输入及文案，不含 QQ 身份或交付状态。测试见 [test_reply_preparation.py](../tests/test_reply_preparation.py)。
+
 ## Internal Subsystems
 
 组合根与四个运行支撑叶子直接 L2 → L3。没有足够复杂度和统一新生命周期来为每个叶子建立 L2-2；共享并不意味着相互调用。
@@ -48,7 +50,7 @@ bot 模式在 `qq.run_bot` 内重新组装实际使用的 AI/限流/通知组件
 
 ## Navigation to L2-2 / L3
 
-本页 Core Contracts 是完整源码范围，直接看文件头 L3 对应五项；CLI 与安装声明见 [pyproject.toml](../pyproject.toml)，源码包内容规则见 [MANIFEST.in](../MANIFEST.in)。
+本页 Core Contracts 是完整源码范围，直接看文件头 L3 对应运行支撑与回复准备；CLI 与安装声明见 [pyproject.toml](../pyproject.toml)，源码包内容规则见 [MANIFEST.in](../MANIFEST.in)。
 不把 `data.py/commands.py/structured_query.py/ai_query.py/visuals.py` 的根路径当作本域归属依据。
 
 ## Relevant Tests
@@ -59,6 +61,6 @@ bot 模式在 `qq.run_bot` 内重新组装实际使用的 AI/限流/通知组件
 
 ## 当前实现与边界
 
-五个文件均保留包根；业务门面按各自业务域导航。config 的 CONFIG_ROOT/SOURCE_ROOT 与 update_notice 的 RELEASE_SOURCE 原位保留。CLI 名称和 main 入口不变；不创建 application/shared/infrastructure 空目录。
+五个文件均保留包根；业务门面按各自业务域导航。config 的 CONFIG_ROOT/SOURCE_ROOT 与 update_notice 的 RELEASE_SOURCE 原位保留。CLI 名称和 main 入口不变；新增的非空 application 包仅负责歌曲／谱面回复准备，不扩展通用容器。
 
 向上阅读：[仓库 L1](../L1.md)。源码文件头提供唯一 L3，具体行为与字段以实现为准。
