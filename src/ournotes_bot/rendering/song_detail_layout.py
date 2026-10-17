@@ -5,7 +5,7 @@
 # Effects: Pillow and injected asset loading only.
 from .labels import label as ui_label
 from ..data import localized_text
-from .haneoka_theme import Canvas,MUTED,DIFFICULTIES,SURFACE,ACCENT,lines,mission_label,left_logo,prepare_assets,font
+from .haneoka_theme import Canvas,MUTED,DIFFICULTIES,SURFACE,ACCENT,lines,mission_label,left_logo,prepared_render_assets,font
 from .image_output import encode_image
 
 
@@ -128,7 +128,6 @@ def render(song,score,locale='zh',*,load,band_logos=()):
     timing_extra=max(0,math.ceil(len(windows)/3)-2)*86
     reward_rows=max(len(song.catalog.get('score_rewards',[])),len(song.catalog.get('combo_rewards',{}).get('expert',[])))
     height=2080+extra+credit_extra+timing_extra+max(0,reward_rows-5)*60
-    c=Canvas(1400,height);c.header(ui_label('歌曲详情',locale),f'/查曲 {song.id}')
     logos=band_logos or song.catalog.get('band_logos',[])
     requests={(song.jacket_url,(386,386))}
     if logos:requests.add((logos[0],(190,68)))
@@ -136,12 +135,12 @@ def render(song,score,locale='zh',*,load,band_logos=()):
     for row in song.catalog.get('score_rewards',[])+song.catalog.get('combo_rewards',{}).get('expert',[]):
         if row['image']:requests.add((row['image'],(42,42)))
     icons=tuple(f'gekisou-{v.lower()}.png' for v in (song.traits.missions or ()) if v in ('COMBO','JUST','LUCK')) if song.traits else ()
-    assets=prepare_assets(requests,load,icons)
-    def art(url,size):
-        return assets[(url,size)]
-    def section(y,title):
-        c.line(54,y-38,1346);c.text(54,y,title,38,bold=True)
-    try:
+    with prepared_render_assets(requests,load,icons) as assets:
+        def art(url,size):
+            return assets[(url,size)]
+        def section(y,title):
+            c.line(54,y-38,1346);c.text(54,y,title,38,bold=True)
+        c=Canvas(1400,height);c.header(ui_label('歌曲详情',locale),f'/查曲 {song.id}')
         c.paste(art(song.jacket_url,(386,386)),54,176,386,386,radius=16)
         c.text(247,596,f'ID {song.id}',32,MUTED,align='center')
         for i,t in enumerate(tl):c.text(484,204+i*74,t,58,bold=True)
@@ -209,6 +208,3 @@ def render(song,score,locale='zh',*,load,band_logos=()):
                 if row['image']:c.paste(art(row['image'],(42,42)),532 if col==0 else 1186,y-21,42,42,True,trim=True)
                 c.text(636 if col==0 else 1346,y,f'×{row["count"]:,}',30,align='right')
         return encode_image(c.image,close_input=True,preserve_size=True)
-    finally:
-        for image in assets.values():
-            if image is not None:image.close()

@@ -8,7 +8,7 @@ from functools import lru_cache
 from .labels import label as ui_label
 from PIL import Image,ImageDraw
 from ..data import localized_text
-from .haneoka_theme import Canvas,MUTED,DIFFICULTIES,ACCENT,lines,font,mission_label,left_logo,prepare_assets
+from .haneoka_theme import Canvas,MUTED,DIFFICULTIES,ACCENT,lines,font,mission_label,left_logo,prepared_render_assets
 from .image_output import encode_image,ImageBudgetError
 from .note_skin import draw_note
 
@@ -186,10 +186,8 @@ def render(song,charts,score,preview,locale='zh',*,load,notice=''):
     if song.traits and song.traits.attribute_icon:requests.add((song.traits.attribute_icon,(64,64)))
     icons=('skin001.json','skin001.png') if nodes else ()
     missions=tuple(f'gekisou-{v.lower()}.png' for v in (song.traits.missions or ()) if v in ('COMBO','JUST','LUCK')) if song.traits else ()
-    assets=prepare_assets(requests,load,icons+missions)
     def art(url,size):
         key=(url,size)
-        if key not in assets:assets[key]=load(url,size)
         return assets[key]
     bpms=(score or {}).get('events',{}).get('bpm',[])
     times=time_markers(bpms,end_tick) if nodes else ()
@@ -303,10 +301,7 @@ def render(song,charts,score,preview,locale='zh',*,load,notice=''):
                     draw_note(c,x+(node['pos']+node['size']/2)/24*w,trackbottom-(node['t']-lo)/1920*480,node['size']/24*w,kind,node['size'])
         c.text(TRACK_LEFT,trackbottom+66,f"{ui_label('列',locale)} 1–{columns} / {columns} · "+notice,24,MUTED)
         return c.image
-    try:
+    with prepared_render_assets(requests,load,icons+missions) as assets:
         return (encode_image(paint(),close_input=True,preserve_size=True,
-                             max_pixels=CHART_MAX_PIXELS,max_edge=CHART_MAX_EDGE,
-                             quality_steps=(95,90,88,84,80,76,72)),)
-    finally:
-        for image in assets.values():
-            if image is not None:image.close()
+                                 max_pixels=CHART_MAX_PIXELS,max_edge=CHART_MAX_EDGE,
+                                 quality_steps=(95,90,88,84,80,76,72)),)

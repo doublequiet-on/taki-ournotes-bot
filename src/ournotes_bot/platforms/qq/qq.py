@@ -632,19 +632,13 @@ def _complete_chart_reply(result,repository,locale,candidate):
         if result.parsed[0]!='chart' or not result.songs:return None
         song=result.songs[0];difficulty=result.parsed[2]
         charts=tuple(c for c in song.charts if difficulty is None or c.difficulty==difficulty)
-    preview=next((c for c in charts if c.difficulty=='EXPERT'),charts[-1] if charts else None)
-    score=None;notice=''
-    if preview:
-        try:
-            if repository.chart_source=='moenotes':score=load_chart_score(song,preview)
-            else:
-                captured=load_chart_data(song,preview,source=repository.chart_source);score=captured.score;notice=captured.notice(locale)
-        except ChartDataError:
-            notice='谱面暂不可用'
+    from ...application.reply_preparation import prepare_chart_reply
     from ...rendering.chart_layout import render
-    pages=render(song,charts,score,preview.difficulty if preview else None,locale,load=_visual_asset,notice=notice)
-    from ...data import note_text
-    text=f'{song.title} · ID {song.id} · '+notice+'\n'+' / '.join(f'{c.difficulty} {c.display_level:g} · {note_text(c.notes)}' for c in charts)
+    prepared=prepare_chart_reply(song,charts,repository.chart_source,locale,
+                                 load_score=load_chart_score,load_data=load_chart_data)
+    pages=render(prepared.song,prepared.charts,prepared.score,prepared.preview,prepared.locale,
+                 load=_visual_asset,notice=prepared.notice)
+    text=prepared.text
     replies=tuple(PreparedReply(text,image,context=candidate) for image in pages)
     return replies[0] if len(replies)==1 else PreparedReply('',pages=replies,context=candidate)
 
@@ -656,26 +650,13 @@ def _song_detail_reply(result,repository,locale,candidate):
     if isinstance(result,QueryResult):
         if result.spec.intent!='song' or result.spec.field or not result.spec.subject or result.spec.subject.kind!='song':return None
     elif result.parsed[0]!='songs' or (result.parsed[1]!=str(song.id) and normalize(result.parsed[1]) not in {normalize(t) for t in song.titles+(song.title,)}):return None
-    score=None;selected=next((c for c in song.charts if c.difficulty=='EXPERT'),None)
-    if selected:
-        try:
-            score=load_chart_score(song,selected) if repository.chart_source=='moenotes' else load_chart_data(song,selected,source=repository.chart_source).score
-        except ChartDataError:pass
-    logos=song.catalog.get('band_logos',[])
+    from ...application.reply_preparation import prepare_song_reply
     from ...rendering.song_detail_layout import render
-    from ...data import localized_text
-    text=f'{localized_text(song,"title",locale)} · ID {song.id} · '+localized_text(song,'band',locale)
-    text+='\n'+' / '.join(f'{ch.difficulty} {ch.display_level:g} · {ch.notes if ch.notes is not None else "?"} Note' for ch in song.charts)
-    if song.traits:text+='\n激奏：'+' → '.join(song.traits.missions or ())
-    text+='\n乐曲时长（毫秒）：'+str(song.catalog.get('duration_ms') or '未获取')
-    if score:
-        from ...rendering.song_detail_layout import seconds_at
-        events=score.get('events',{});bpms=events.get('bpm',[])
-        text+='\nBPM：'+', '.join(str(v['bpm']) for v in bpms)
-        text+='\n技能点位（秒）：'+', '.join(str(seconds_at(t,bpms)) for t in sorted(events.get('skill',[])))
-    for label,rows in [('得分奖励',song.catalog.get('score_rewards',[])),('EXPERT 连击奖励',song.catalog.get('combo_rewards',{}).get('expert',[]))]:
-        text+='\n'+label+'：'+' / '.join(str(row['tier'])+' '+(row['label'].get(locale) or row['label'].get('ja') or '道具')+' ×'+str(row['count']) for row in rows)
-    return PreparedReply(text,render(song,score,locale,load=_visual_asset,band_logos=logos),context=candidate)
+    prepared=prepare_song_reply(song,repository.chart_source,locale,
+                                load_score=load_chart_score,load_data=load_chart_data)
+    return PreparedReply(prepared.text,render(prepared.song,prepared.score,prepared.locale,
+                         load=_visual_asset,band_logos=prepared.band_logos),context=candidate)
+
 
 
 def _render_prepared(reply, result, repository, locale, candidate=None):
