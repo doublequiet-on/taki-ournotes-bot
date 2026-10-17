@@ -47,3 +47,5 @@ Game Records 过滤过非法挑战条目，仍无法证明原始序号完整，�
 `test_haneoka_event_metadata.py`：四服静态映射、时间／歌曲错配、损坏缓存、无排行的活动查询、素材 release；`test_source_egress.py`：实际下载调用链的主资料／谱面／卡牌和歌曲渲染／四服采样出口，离线网络桩不证明上游可用。
 
 实源预览与探测写入工作区忽略目录 `runtime/haneoka-unification/`，不覆盖生产。完整回归、包内容检查、发布 CI、服务启动与 QQ 实收分别验收。上游合同见 [固定版本说明](https://docs.haneoka.org/concepts/servers-and-releases/)、[歌曲分析页面](https://haneoka.org/jp/zh-CN/song-meta/)。
+
+结算／归档阶段（`finalizing`／`archived`）允许同活动挑战榜在结束后继续获取快照；结束时间不是榜单抓取截止时间。开始前的快照和其他采集状态的结束后快照仍拒绝，原有时钟、新鲜度、来源身份检查保留；不自动重标旧历史质量。

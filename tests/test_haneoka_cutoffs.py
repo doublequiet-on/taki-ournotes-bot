@@ -39,6 +39,8 @@ class Fixture:
                      None, {"rank": 3, "score": 0, "profileId": "3", "name": "zero"}]
         self.change = None
         self.wrong_region = False
+        self.event_status = "nowOn"
+        self.collect_status = "collecting"
 
     def __call__(self, url, timeout):
         self.calls.append(url)
@@ -47,10 +49,10 @@ class Fixture:
         region = url.split("/")[7]
         if url.endswith("/current"):
             body = {"region": region, "fetchedAtMs": None, "stale": False,
-                    "event": {"id": self.event_id, "status": "nowOn", "startAtMs": 1791300000000,
+                    "event": {"id": self.event_id, "status": self.event_status, "startAtMs": 1791300000000,
                               "endAtMs": 1791600000000,
                               "challenges": [{"id": "11", "musicId": self.music, "enabled": True,
-                                              "status": "collecting", "startAtMs": 1791300000000,
+                                              "status": self.collect_status, "startAtMs": 1791300000000,
                                               "endAtMs": 1791600000000}]}}
         else:
             body = {"region": "bad" if self.wrong_region else region, "eventId": self.event_id,
@@ -90,6 +92,45 @@ class HaneokaCutoffTests(unittest.TestCase):
             self.assertFalse(event.banner)
         self.assertTrue(all(url.startswith("https://haneoka.org/api/v1/game/records/") for url in self.fixture.calls))
         self.assertEqual(len(self.fixture.calls), 8)
+
+    def test_default_query_keeps_post_event_settlement_and_archived_snapshots(self):
+        from email.utils import formatdate
+        self.fixture.now = 1791600000 + 3600
+        self.fixture.clock_offset = 130000
+        self.fixture.fetched = int(self.fixture.now * 1000) + 100000
+        original = self.fixture.__call__
+        for event_status, collect_status, label in (("aggregation", "finalizing", "结算采集中"),
+                                                    ("result", "archived", "最后观测，非确认终榜")):
+            with self.subTest(phase=collect_status):
+                self.fixture.event_status, self.fixture.collect_status = event_status, collect_status
+                source = self.repository()
+                source.cache_dir = self.path / collect_status
+                source.transport = lambda url, timeout: (original(url, timeout)[0], {'Date': formatdate(self.fixture.now, usegmt=True)})
+                source.history = HaneokaCutoffHistory(self.path / (collect_status + '.db'), min_free_mb=0)
+                answer = execute_cutoff(parse_cutoff(''), SimpleNamespace(event_cutoffs=source, aliases={}))
+                self.assertEqual(answer.status, 'success')
+                self.assertEqual(answer.boards[0].score(1), 100)
+                self.assertEqual(answer.boards[0].status, label)
+                self.assertEqual(answer.boards[0].quality, 'valid')
+                points = answer.history_for(answer.boards[0]).points
+                self.assertEqual(points[-1].time_ms, int(self.fixture.now * 1000) - 30000)
+                self.assertEqual(source.history.latest(answer.event, answer.boards[0].song).score(1), 100)
+                self.assertTrue(render_cutoff(answer)[0].image)
+
+    def test_period_checks_still_reject_before_start_and_unsettled_after_end(self):
+        for phase, stamp in (('finalizing', 1791299999000), ('archived', 1791299999000),
+                             ('collecting', 1791600001000)):
+            with self.subTest(phase=phase, stamp=stamp):
+                self.fixture.collect_status = phase
+                self.fixture.fetched = stamp
+                self.fixture.now = stamp / 1000 + 1
+                source = self.repository()
+                source.cache_dir = self.path / (phase + str(stamp))
+                source.history = HaneokaCutoffHistory(self.path / (phase + '.db'), min_free_mb=0)
+                event, board = self.board(source)
+                self.assertEqual(board.quality, 'outside_period')
+                self.assertFalse(board.scores)
+                self.assertIsNone(source.history.latest(event, board.song).score(1))
 
     def test_precision_boundaries_keep_original_positions(self):
         values = [MAX_SCORE, MAX_SCORE + 1, 0, True, -1, "100", 1.5, None]

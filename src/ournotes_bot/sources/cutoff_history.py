@@ -214,7 +214,8 @@ class CutoffHistory:
             elif not server or source > server + 60000:
                 quality = "clock_unknown"
             elif ((board.song.effective_start_ms and source < board.song.effective_start_ms)
-                  or (board.song.effective_end_ms and source > board.song.effective_end_ms)):
+                  or (board.song.effective_end_ms and source > board.song.effective_end_ms
+                      and board.song.collect_status not in {"finalizing", "archived"})):
                 quality = "outside_period"
             with closing(self._connect(write=True)) as db, db:
                 db.execute(EVENT_METADATA)
