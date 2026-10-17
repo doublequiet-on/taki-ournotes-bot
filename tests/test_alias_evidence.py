@@ -42,7 +42,7 @@ class AliasEvidenceTests(unittest.TestCase):
 
     def test_evidence_runtime_bijection_and_grounding(self):
         _validate_aliases(self.words)
-        tracked = {(e['kind'],e['alias']):e['target'] for e in self.entries if e['status'] in ('accepted','legacy_pending','maintainer_import')}
+        tracked = {(e['kind'],e['alias']):e['target'] for e in self.entries if e['status'] in ('accepted','legacy_pending','maintainer_import','maintainer_requested')}
         runtime = {(k,a):t for k,v in self.words.items() if isinstance(v,dict) for a,t in v.items()}
         self.assertEqual(tracked,runtime)
         for e in self.entries:
@@ -58,7 +58,7 @@ class AliasEvidenceTests(unittest.TestCase):
     def test_each_added_alias_direct_local_and_discovery(self):
         with patch.object(self.parser,'_request',side_effect=AssertionError('model called')), patch.object(self.parser._quota,'reserve',side_effect=AssertionError('quota used')):
             for e in self.entries:
-                if e['status'] not in ('accepted','maintainer_import'): continue
+                if e['status'] not in ('accepted','maintainer_import','maintainer_requested'): continue
                 a=e['alias']; song=e['kind'] in ('song','band')
                 with self.subTest(alias=a):
                     self.assertIn(a,known_alias_names(self.repo))

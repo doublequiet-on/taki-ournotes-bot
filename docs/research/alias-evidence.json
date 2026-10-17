@@ -1093,6 +1093,110 @@
       "source_line": 35,
       "accessed": "2026-10-17",
       "reason": "用户指定复用翻译机器人维护的译名；绑定现有角色目录，不冒充本轮重新核实的官方译名。"
+    },
+    {
+      "kind": "band",
+      "alias": "梦",
+      "target": "梦限大MewType",
+      "status": "maintainer_requested",
+      "language": "zh",
+      "evidence_kind": "maintainer_request",
+      "sources": [
+        "docs/ALIAS_SOURCES.md"
+      ],
+      "accessed": "2026-10-17",
+      "reason": "维护者在本次会话明确指定此乐队简称。"
+    },
+    {
+      "kind": "band",
+      "alias": "孟宪达",
+      "target": "梦限大MewType",
+      "status": "maintainer_requested",
+      "language": "zh",
+      "evidence_kind": "maintainer_request",
+      "sources": [
+        "docs/ALIAS_SOURCES.md"
+      ],
+      "accessed": "2026-10-17",
+      "reason": "维护者在本次会话明确指定此乐队简称。"
+    },
+    {
+      "kind": "band",
+      "alias": "狗",
+      "target": "MyGO!!!!!",
+      "status": "maintainer_requested",
+      "language": "zh",
+      "evidence_kind": "maintainer_request",
+      "sources": [
+        "docs/ALIAS_SOURCES.md"
+      ],
+      "accessed": "2026-10-17",
+      "reason": "维护者在本次会话明确指定此乐队简称。"
+    },
+    {
+      "kind": "band",
+      "alias": "鸡",
+      "target": "Ave Mujica",
+      "status": "maintainer_requested",
+      "language": "zh",
+      "evidence_kind": "maintainer_request",
+      "sources": [
+        "docs/ALIAS_SOURCES.md"
+      ],
+      "accessed": "2026-10-17",
+      "reason": "维护者在本次会话明确指定此乐队简称。"
+    },
+    {
+      "kind": "band",
+      "alias": "m",
+      "target": "millsage",
+      "status": "maintainer_requested",
+      "language": "zh",
+      "evidence_kind": "maintainer_request",
+      "sources": [
+        "docs/ALIAS_SOURCES.md"
+      ],
+      "accessed": "2026-10-17",
+      "reason": "维护者在本次会话明确指定此乐队简称。"
+    },
+    {
+      "kind": "band",
+      "alias": "m团",
+      "target": "millsage",
+      "status": "maintainer_requested",
+      "language": "zh",
+      "evidence_kind": "maintainer_request",
+      "sources": [
+        "docs/ALIAS_SOURCES.md"
+      ],
+      "accessed": "2026-10-17",
+      "reason": "维护者在本次会话明确指定此乐队简称。"
+    },
+    {
+      "kind": "band",
+      "alias": "家",
+      "target": "一家Dumb Rock!",
+      "status": "maintainer_requested",
+      "language": "zh",
+      "evidence_kind": "maintainer_request",
+      "sources": [
+        "docs/ALIAS_SOURCES.md"
+      ],
+      "accessed": "2026-10-17",
+      "reason": "维护者在本次会话明确指定此乐队简称。"
+    },
+    {
+      "kind": "band",
+      "alias": "家石笨",
+      "target": "一家Dumb Rock!",
+      "status": "maintainer_requested",
+      "language": "zh",
+      "evidence_kind": "maintainer_request",
+      "sources": [
+        "docs/ALIAS_SOURCES.md"
+      ],
+      "accessed": "2026-10-17",
+      "reason": "维护者在本次会话明确指定此乐队简称。"
     }
   ]
 }

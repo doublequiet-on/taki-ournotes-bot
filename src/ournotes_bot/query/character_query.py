@@ -7,7 +7,7 @@ import re
 
 from ..data import character_identity, normalize, resolve_character_alias
 from .contracts.info import InfoAnswer, InfoRow, InfoView
-from .entity_lexicon import information_alias_targets
+from .entity_lexicon import information_alias_targets, character_name_variants, band_name_variants
 from .info_query import answer, available, footer, text_value, unavailable
 
 HELP = '/查角色：按乐队列出角色；/查角色 名称、昵称或ID；/查角色 乐队名或乐队=MyGO。'
@@ -34,7 +34,7 @@ def _identities(person):
 
 
 def _band_names(person):
-    return {normalize(n) for n in (person.band, *person.band_names.values()) if n}
+    return {variant for n in (person.band, *person.band_names.values()) if n for variant in band_name_variants(n)}
 
 
 def _band_members(people, query):
@@ -130,14 +130,15 @@ def execute_character(query, repository):
             character_aliases.update(p.id for p in people if normalize(target) in _names(p)
                                      or character_identity(target) in _identities(p))
         else:
-            band_aliases.update(p.id for p in people if normalize(target) in
-                                {normalize(p.band), *(normalize(n) for n in p.band_names.values() if n)})
+            band_aliases.update(p.id for p in people if normalize(target) in _band_names(p))
     if character_aliases or band_aliases:
         found = tuple(p for p in people if p.id in character_aliases | band_aliases)
         if len(found) == 1 and not band_aliases:
             return _detail(found[0], catalog)
         return _directory(found, catalog, candidate=bool(character_aliases))
-    found = tuple(p for p in people if any(needle in n for n in _names(p)))
+    found = tuple(p for p in people if any(needle in n for n in _names(p))
+                  or (re.fullmatch(r"[\u3400-\u9fff]", needle)
+                      and any(needle in n for name in (p.name, *p.names.values()) for n in character_name_variants(name))))
     if not found:
         found = tuple(p for p in people if any(needle in normalize(n) for n in (p.band, *p.band_names.values()) if n))
         if found:

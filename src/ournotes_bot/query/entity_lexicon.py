@@ -19,7 +19,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from threading import RLock
 
-from ..data import CHARACTER_ALIASES, SongRepository, character_identity, normalize, resolve_character_alias
+from ..data import CHARACTER_GROUPS, CHARACTER_ALIASES, SongRepository, character_identity, normalize, resolve_character_alias
 
 def _default_alias_file() -> Path:
     source_root = Path(__file__).resolve().parents[3]
@@ -278,6 +278,42 @@ def _resolve_source_entity(intent: str, term: str, repository: SongRepository) -
     return None
 
 
+def band_name_variants(name: str) -> set[str]:
+    names = {normalize(name)}
+    dream = {normalize(n) for n in ('夢限大みゅーたいぷ', '梦限大MewType', '夢限大MewType')}
+    return dream if names & dream else names
+
+
+def character_name_variants(name: str) -> set[str]:
+    """Full civilian names/established translations, excluding invented nicknames."""
+    identity = character_identity(name)
+    names = {normalize(name)}
+    for display, full_names, short_names in CHARACTER_GROUPS:
+        if identity == display:
+            names.update(normalize(n) for n in (display, *full_names, *short_names))
+    return names
+
+
+class CharacterAmbiguity(ValueError):
+    """A name fragment names several currently available characters."""
+
+
+def resolve_character_fragment(term: str, repository: SongRepository) -> str | None:
+    """Only a standalone Han character is a fuzzy character selector."""
+    needle = normalize(term)
+    if not re.fullmatch(r"[\u3400-\u9fff]", needle):
+        return None
+    names = [n for c in repository.cards for n in (c.character, *c.localized.get('character', {}).values())]
+    names.extend(n for c in repository.support_cards for n in c.characters)
+    matches = {}
+    for name in names:
+        if any(needle in variant for variant in character_name_variants(name)):
+            matches.setdefault(character_identity(name), name.rsplit('/', 1)[-1].strip())
+    if len(matches) > 1:
+        raise CharacterAmbiguity('角色名不唯一：' + '、'.join(sorted(matches.values())) + '。请用完整角色名消除歧义。')
+    return next(iter(matches), None)
+
+
 def _resolve_alias_target(kind: str, target: str, repository: SongRepository) -> str | None:
     """Keep each manually edited alias in its declared entity category."""
     needle = normalize(target)
@@ -290,18 +326,18 @@ def _resolve_alias_target(kind: str, target: str, repository: SongRepository) ->
     if kind == "character":
         matches = {
             character_identity(card.character) for card in repository.cards
-            if needle == normalize(character_identity(card.character))
+            if normalize(character_identity(target)) == normalize(character_identity(card.character))
             or needle in _names(card, "character")
             or any(needle == normalize(part.strip()) for part in card.character.split("/"))
         }
         matches.update(
             character_identity(name) for card in repository.support_cards for name in card.characters
-            if needle == normalize(character_identity(name)) or needle == normalize(name)
+            if normalize(character_identity(target)) == normalize(character_identity(name)) or needle == normalize(name)
         )
         return next(iter(matches)) if len(matches) == 1 else None
     if kind == "band":
         matches = {item.band for item in (*repository.songs, *repository.cards)
-                   if needle in _names(item, "band")}
+                   if band_name_variants(target).intersection(_names(item, "band"))}
         return next(iter(matches)) if len(matches) == 1 else None
     return None
 
@@ -384,7 +420,14 @@ def resolve_entity(intent: str, term: str, repository: SongRepository) -> str | 
     if direct:
         return direct
     match = resolve_exact_alias(intent, term, repository)
-    return str(match.entity.value) if match.entity else None
+    if match.entity:
+        return str(match.entity.value)
+    if intent in {'card', 'support_card'}:
+        try:
+            return resolve_character_fragment(term, repository)
+        except CharacterAmbiguity:
+            return None
+    return None
 
 
 def _mentioned(text: str, name: str) -> bool:
@@ -394,6 +437,8 @@ def _mentioned(text: str, name: str) -> bool:
     if needle.isdecimal():
         raw = unicodedata.normalize("NFKC", text)
         return bool(re.search(rf"(?<!\d){re.escape(needle)}(?!\d)", raw))
+    if len(needle) == 1 and needle.isascii() and needle.isalpha():
+        return bool(re.search(r'(?<![a-z])' + re.escape(needle) + r'(?![a-z])', unicodedata.normalize('NFKC', text).casefold()))
     return needle in normalize(text)
 
 
@@ -412,6 +457,16 @@ def find_anchor(intent: str, text: str, repository: SongRepository, *,
                "card": {"card", "character", "band"},
                "support_card": {"support_card", "character"}}.get(intent, set())
     found: set[EntityRef] = set()
+    exact = resolve_exact_alias(intent, text, repository)
+    if exact.entity or exact.ambiguous:
+        return exact
+    if intent in {'card', 'support_card'}:
+        try:
+            fragment = resolve_character_fragment(text, repository)
+        except CharacterAmbiguity:
+            return AnchorResult(None, True)
+        if fragment:
+            return AnchorResult(EntityRef('character', fragment))
 
     if "song" in allowed:
         for song in repository.songs:
@@ -475,6 +530,12 @@ def find_anchor(intent: str, text: str, repository: SongRepository, *,
         for alias_name, target in entries.items():
             if not isinstance(alias_name, str) or not isinstance(target, str) or not _mentioned(text, alias_name):
                 continue
+            if len(normalize(alias_name)) == 1 and not normalize(alias_name).isascii():
+                # Single-letter band names are selectors, not arbitrary substrings
+                # of a song title, a character name or another band's full name.
+                pattern = r'(?:^|[\s,，。！？?!=：:]|查询|查看|查一下|查|找)' + re.escape(alias_name) + r'(?=$|[\s,，。！？?!=：:]|的|歌曲|曲目|歌|成员卡|角色卡|卡牌|卡|留影卡|支援卡|乐队|团)'
+                if not re.search(pattern, text, re.I):
+                    continue
             canonical = _resolve_alias_target(kind, target, repository)
             if canonical is not None:
                 found.add(EntityRef(kind, int(canonical) if kind in {"song", "card", "support_card"} else canonical))

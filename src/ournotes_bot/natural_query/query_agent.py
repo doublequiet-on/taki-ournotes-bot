@@ -631,7 +631,7 @@ class QueryAgent:
             return OutcomeCode(message.status)
         if message == UNKNOWN_ENTITY:
             return OutcomeCode.UNKNOWN_ENTITY
-        if message == AMBIGUOUS_ENTITY:
+        if message == AMBIGUOUS_ENTITY or message.startswith("角色名不唯一："):
             return OutcomeCode.AMBIGUOUS
         return OutcomeCode.INVALID_ARGUMENTS
 
