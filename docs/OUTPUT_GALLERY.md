@@ -21,3 +21,5 @@
 输入前后哈希校验，网络由audit hook阻断，不刷新数据、不连接QQ、不调用模型。不加观测参数时仍只记录每例一次墙钟/CPU总时长（含准备/绘图/编码/落盘）及输出尺寸/字节数/页数；完整画布与阶段证据须显式启用观测。上传、发送、并发未测，不推算p95或线上提速。
 
 同时生成[盘点](output-gallery/inventory.md)、[字段表](output-gallery/field-map.md)、[草图表](output-gallery/sketch-worksheet.md)、[主题参考](output-gallery/theme-reference.md)副本。本阶段等待用户草图，不自动进入生产改版。
+
+编码实验仅通过 `--encoding-strategy png-first` 显式开启（默认 `legacy`）；可与 `--observe visual` 或独立 `--benchmark-runs 3` 配合。原画布摘要用于证明布局未变，输出实际格式决定扩展名与 manifest MIME。

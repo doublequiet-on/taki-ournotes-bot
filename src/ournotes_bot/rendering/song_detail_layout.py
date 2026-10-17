@@ -6,7 +6,7 @@
 from .labels import label as ui_label
 from ..data import localized_text
 from .haneoka_theme import Canvas,MUTED,DIFFICULTIES,SURFACE,ACCENT,lines,mission_label,left_logo,prepared_render_assets,font
-from .image_output import encode_image
+from .image_output import encode_image,check_geometry
 
 
 def seconds_at(tick,bpms):
@@ -140,6 +140,7 @@ def render(song,score,locale='zh',*,load,band_logos=()):
             return assets[(url,size)]
         def section(y,title):
             c.line(54,y-38,1346);c.text(54,y,title,38,bold=True)
+        check_geometry((1400,height))
         c=Canvas(1400,height);c.header(ui_label('歌曲详情',locale),f'/查曲 {song.id}')
         c.paste(art(song.jacket_url,(386,386)),54,176,386,386,radius=16)
         c.text(247,596,f'ID {song.id}',32,MUTED,align='center')
