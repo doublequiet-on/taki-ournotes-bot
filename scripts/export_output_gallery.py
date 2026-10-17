@@ -181,7 +181,7 @@ class Gallery:
                                     thumb.save(self.output / thumbnail)
                                 finally:
                                     thumb.close()
-                            item.update(image_file=filename, encoded_size=list(picture.size), bytes=len(page.image),
+                            item.update(image_file=filename, format=picture.format, mime=Image.MIME.get(picture.format), encoded_size=list(picture.size), bytes=len(page.image),
                                         original_size=self.canvases[number - 1] if number <= len(self.canvases) else None,
                                         thumbnail_file=thumbnail, sha256=hashlib.sha256(page.image).hexdigest())
                         if self.observation:
@@ -225,6 +225,7 @@ class Gallery:
                     "input_sha256": self.inputs, "inputs_unchanged": True, "network": "blocked", "qq_delivery": "未测",
                     "scope": "selected subset" if self.only else "all registered families and representative states",
                     "samples": self.rows}
+        manifest['encoding_strategy'] = getattr(self, 'encoding_strategy', 'legacy')
         manifest['observation'] = self.observation.mode if self.observation else 'disabled'
         manifest['unexecuted_families'] = sorted(self.expected_families - present)
         manifest['packaged_fonts'] = [{'path': str(p.relative_to(ROOT)), 'sha256': digest(p)}
@@ -503,6 +504,7 @@ def main():
     parser.add_argument("--only", action="append", default=[], help="family or exact case ID; omit for complete gallery")
     parser.add_argument('--observe', choices=('visual','timing'), help='opt-in canvas/phase evidence; timing never saves raw canvases')
     parser.add_argument('--benchmark-runs', type=int, choices=(3,5), help='each selected case in a fresh child process; aggregate medians and ranges')
+    parser.add_argument('--encoding-strategy', choices=('legacy','png-first'), default='legacy', help='gallery-only native canvas encoding experiment')
     args = parser.parse_args()
     output = args.output.resolve()
     cache = args.cache_dir.resolve() if args.cache_dir else None
@@ -522,6 +524,7 @@ def main():
     for folder in ("images","thumbnails","texts","isolated"):
         (output / folder).mkdir(parents=True,exist_ok=True)
     g = Gallery(output,args.only,cache,font,args.observe)
+    g.encoding_strategy = args.encoding_strategy
     g.list_only = bool(args.benchmark_runs)
     if g.observation:
         g.asset = g.observation.wrap(g.asset, 'assets')
@@ -554,6 +557,9 @@ def main():
             return raw if hashlib.sha256(raw).hexdigest()==spec['sha256'] else None
         stack.enter_context(patch.object(game_assets,'asset_bytes',side_effect=offline_game_asset))
         stack.enter_context(patch("time.time",return_value=FIXED_TIME))
+        if args.encoding_strategy != 'legacy':
+            from output_observation import experimental_encoding
+            stack.enter_context(experimental_encoding(args.encoding_strategy))
         if g.observation:
             g.observation.install(stack)
         g.encoder = visuals._bytes
@@ -575,6 +581,7 @@ def main():
                            '--observe','timing','--font',str(font),'--output',str(target)]
                 for option,value in (('--cache-dir',cache),('--game-assets-dir',args.game_assets_dir)):
                     if value: command += [option,str(value)]
+                command += ['--encoding-strategy', args.encoding_strategy]
                 child = subprocess.run(command, capture_output=True, text=True, encoding='utf-8', timeout=300,
                                        env={**os.environ,'PYTHONIOENCODING':'utf-8'})
                 if child.returncode:

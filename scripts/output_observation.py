@@ -181,3 +181,21 @@ class Observation:
                 'drawn_text': self.text, 'fonts': [
                     {'path': p, 'sha256': hashlib.sha256(Path(p).read_bytes()).hexdigest()}
                     for p in sorted(self.fonts)]}
+
+
+@contextmanager
+def experimental_encoding(strategy):
+    """Explicit gallery-only injection; production callers keep the default."""
+    from ournotes_bot.rendering import image_output
+    original = image_output.encode_image
+    def encode(image, **kwargs):
+        # Legacy resizable artwork is outside the native-canvas experiment.
+        if kwargs.get('preserve_size'):
+            kwargs['strategy'] = strategy
+        return original(image, **kwargs)
+    with ExitStack() as stack:
+        for name in ('image_output', 'readable_pages', 'song_layout', 'song_detail_layout', 'chart_layout'):
+            module = importlib.import_module('ournotes_bot.rendering.' + name)
+            if hasattr(module, 'encode_image'):
+                stack.enter_context(patch.object(module, 'encode_image', encode))
+        yield
