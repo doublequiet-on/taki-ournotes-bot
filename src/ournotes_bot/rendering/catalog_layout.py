@@ -110,7 +110,7 @@ def summaries(card,locale='zh',*,shared_duration=None,shared_target=None):
     return [(label,*grouped[label]) for label in ('队','演','支','激','技') if label in grouped] or [('技',MUTED,'未知')]
 
 
-def card_face(canvas,card,x,y,w,h,load,*,level=None,awake=None):
+def card_face(canvas,card,x,y,w,h,load,*,level=None,rank=None,growth=False):
     border=frame(w,h,card.rarity)
     canvas.image.paste(border,(x-4,y-4),border)
     canvas.paste(load(card.full_url if w<h else card.thumbnail_url,(w,h)),x,y,w,h,radius=6)
@@ -118,16 +118,20 @@ def card_face(canvas,card,x,y,w,h,load,*,level=None,awake=None):
     if attr:
         side=max(18,min(40,w//4))
         canvas.paste(load(attr,(side,side)),x+2,y+2,side,side,True)
-    if awake is None:
+    if rank is None and not growth:
         support=isinstance(card,SupportCard)
         bw=max(40,min(72,w//4)) if support else max(40,min(80,round(w*5/12)))
         bh=round(bw*2/3) if support else round(bw*.725)
         canvas.rarity_badge(card.rarity,x+w-6,y+h-6,bw,bh)
     if level is not None:
         canvas.text(x+3,y+h-10,f'Lv.{level}',max(14,w//7),'white',True,stroke=1)
-    if awake is not None and 0<=awake<=5:
-        badge=f"{'snaplimit_' if isinstance(card,SupportCard) else 'CardRank'}{awake}.png"
+    elif growth:
+        canvas.text(x+3,y+h-10,'Lv.—',max(14,w//7),'white',True,stroke=1)
+    if rank is not None and 0<=rank<=5:
+        badge=f"{'snaplimit_' if isinstance(card,SupportCard) else 'CardRank'}{rank}.png"
         canvas.badge(badge,x+w-26,y+h-12,24,22)
+    elif growth:
+        canvas.text(x+w-14,y+h-10,'—',max(14,w//7),'white',True,stroke=1)
 
 
 @dataclass(frozen=True)

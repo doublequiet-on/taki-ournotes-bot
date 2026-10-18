@@ -91,6 +91,12 @@ def player_detail(row):
     fields = ('rankExp', 'favoriteMemberCardId', 'totalPower')
     detail = {k: value(row.get(k)) for k in fields}
     if detail['favoriteMemberCardId']==0:detail['favoriteMemberCardId']=None
+    for key in ('favoriteMemberExp', 'favoriteMemberAwakeCount', 'favoriteMemberRank'):
+        if key in row:
+            number = value(row[key])
+            if key != 'favoriteMemberExp' and number is not None and number > 5:
+                number = None
+            detail[key] = number
     cards = row.get('cards')
     detail['cards'] = []
     if isinstance(cards, list) and len(cards) <= 5:
@@ -105,7 +111,7 @@ def player_detail(row):
                 ('slot', 'memberCardId', 'memberExp', 'memberAwakeCount', 'memberRank',
                  'supportCardId', 'supportExp', 'supportRank')})
         for card in detail['cards']:
-            for key in ('memberAwakeCount','supportRank'):
+            for key in ('memberAwakeCount','memberRank','supportRank'):
                 if card[key] is not None and card[key]>5:card[key]=None
             for key in ('memberCardId','supportCardId'):
                 if card[key]==0:card[key]=None
@@ -257,7 +263,8 @@ class HaneokaEventCutoffRepository(EventCutoffRepository):
         if not song.enabled or song.collect_status not in {"collecting", "finalizing", "archived"}:
             return replace(empty, status="本曲挑战榜未开放或尚未采集")
         digest = hashlib.sha256(json.dumps(expected).encode()).hexdigest()
-        key = f"board:{event.server}:{event.event_id}:{song.challenge_id}:{digest}"
+        # Old readers validate exact player-detail keys. Keep their cache intact.
+        key = f"board:{event.server}:{event.event_id}:{song.challenge_id}:{digest}:avatar-v2"
         def load():
             data, headers = self._json(f"{API}/{event.server}/events/{event.event_id}/challenges/{song.challenge_id}/ranking", deadline)
             payload = decode_board(data, event, song)
