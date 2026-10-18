@@ -33,7 +33,7 @@ QQ 图片回复使用已确认的 Haneoka 风格：浅底、Noto Sans SC／Robot
 - QQ `_render_prepared` 向新 `*_layout.py` 传入同次查询数据及素材回调。`readable_pages.render_parts` 负责完整分段，`encode_image(preserve_size=True)` 禁止降尺寸。
 - `info_layout.py` 接收纯 `InfoView`／`InfoRow` 与素材回调，不访问查询仓库。`scripts/preview_info_catalog.py` 可生成三类信息的合成离线样图；相关测试为 `test_info_layout.py` 与 `test_info_command_pipeline.py`。
 - `visual_skill_contracts.json` 保存人工确认摘要与机制／日文模板指纹，匹配失败退完整技能；条件增强与等级成长分别展示。
-- 等级按对应服务器成长曲线和特训上限（成员卡 `awakeCount`）计算。榜单头像直接使用同一行最爱卡的经验、特训和专精数据，不从最高分队伍补取；成员卡专精角标 `CardRankN` 使用 `cardRank`，留影使用 `supportRank`。头像缺成长数据时保持等级／专精位置并显示未知，不切换成稀有度。渐变框为本项目绘制，稀有度与专精图标为游戏原图。
+- 等级按对应服务器成长曲线和特训上限（成员卡 `awakeCount`）计算。榜单头像直接使用同一行最爱卡的经验、特训和专精数据，不从最高分队伍补取；成员卡专精角标 `CardRankN` 使用卡组槽位的 `memberRank` 或榜单头像的 `favoriteMemberRank`，留影使用 `supportRank`。头像缺成长数据时保持等级／专精位置并显示未知，不切换成稀有度。渐变框为本项目绘制，稀有度与专精图标为游戏原图。
 - 字体按 OFL 随包分发。游戏图标与 note atlas 不打包；`game_assets.json` 固定来源和 SHA-256。受管部署在停旧实例前自动准备 `game-assets` 与 `haneoka-asset-cache`，完整解码资料图片并记录摘要；损坏／缺失素材重取，准备失败阻止切换。榜线读取同一持久图片缓存，具体目录隔离见 [部署协议](../deploy/LINUX_OFFLINE.md#查询素材准备)。自行运行仍支持既有受限按需加载，原版 note 不可用时完整谱面退资料文字。
 - 字体、测量和 note 重建使用有界缓存；解码缩略图 LRU 上限 32 MB，调用者拿独立副本。新布局按 URL／尺寸去重并发预取，最多6个工作线程；调用者负责释放自己的图像副本。
 

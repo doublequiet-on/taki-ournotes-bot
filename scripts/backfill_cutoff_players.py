@@ -31,7 +31,7 @@ def candidates(cache_dir, history_file, source):
         key = data.get('key', '')
         if not key.startswith('board:'):
             continue
-        pattern = r'board:(jp|tw|kr|en):([1-9][0-9]{0,19}):([1-9][0-9]{0,19})' + (r':[a-f0-9]{64}' if source == 'haneoka' else '')
+        pattern = r'board:(jp|tw|kr|en):([1-9][0-9]{0,19}):([1-9][0-9]{0,19})' + (r':[a-f0-9]{64}(?::avatar-v2)?' if source == 'haneoka' else '')
         match = re.fullmatch(pattern, key)
         if (not match or data.get('schema') != 1 or path.stem != hashlib.sha256(key.encode()).hexdigest()):
             raise ValueError('invalid board cache identity: ' + path.name)
