@@ -69,6 +69,7 @@ def render(card,locale='zh',*,load):
             descriptions=[v.get(locale) or v.get('ja') or ui_label('未知',locale) for v in levels[index]]
             contracts=card.catalog.get('compact_skills',[])
             contract=contracts[index] if index<len(contracts) else None
+            if contract and contract.get('automatic'):contract=None
             brief=[contract['levels'].get(str(lv)) for lv in range(1,6)] if contract else []
             if brief and all(brief):
                 brief=[v['short'] if isinstance(v,dict) else v for v in brief]
@@ -97,6 +98,7 @@ def render(card,locale='zh',*,load):
         name=localized_text(skill,'name',locale)
         contracts=card.catalog.get('compact_skills',[])
         contract=contracts[index] if index<len(contracts) else None
+        if contract and contract.get('automatic'):contract=None
         last=contract['levels'].get('5') if contract else None
         if locale=='zh' and isinstance(last,dict):name=last['family']
         if locale=='zh' and isinstance(last,str) and skill.kind=='leaderSkill':

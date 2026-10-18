@@ -612,7 +612,8 @@ def _catalog_unknowns(catalog: CatalogView) -> dict[str, int]:
         "traits": sum(not song.traits or not song.traits.color or not song.traits.missions
                       for song in catalog.songs),
         "member_skills": sum(card.catalog.get("skill_index_complete") is False for card in catalog.cards),
-        "member_summaries": sum(card.catalog.get("member_summary_complete") is False
+        "member_summaries": sum(card.catalog.get("compact_summary_complete",
+                                                  card.catalog.get("member_summary_complete")) is False
                                 for card in catalog.cards),
         "member_tags": sum(card.catalog.get("tags_complete") is False for card in catalog.cards),
         "support_skills": sum(card.catalog.get("skill_index_complete") is False
