@@ -342,6 +342,10 @@ def convert(documents, identity_jp, fetched_at, *, stale=False):
                                                      summarize_skill(summary_skill(resolved["gekisou"]), member_refs)]
                     except (ValueError, KeyError, TypeError):
                         catalog["member_summary"] = [SUMMARY_UNKNOWN] * 3
+                    catalog["member_summary_complete"] = all(
+                        summary != SUMMARY_UNKNOWN for summary in catalog["member_summary"])
+                else:
+                    catalog["member_summary_complete"] = False
             loc = {"title": localized(title), "character": {locale: " / ".join(language(n, locale) or "未知角色" for n in character_names) for locale in LANGUAGES}}
             common = dict(id=card_id, title=language(title) or f"卡牌 {card_id}", character=loc["character"]["zh"],
                           rarity=integer(row["rarity"], 1, 100), card_type=integer(row["cardType"], 1, 5),

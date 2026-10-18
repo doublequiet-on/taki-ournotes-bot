@@ -63,7 +63,24 @@ def validate(saved, now, *, stale=False):
                      "member_skill_index_complete": bool(records[1]) and all(c.catalog["skill_index_complete"] for c in records[1]),
                      "card_catalog_version": 1,
                      "info_catalog_available": {key: key in info.available
-                                                for key in ("characters", "gachas", "activities")}}
+                                                for key in ("characters", "gachas", "activities")},
+                     "change_summary": saved.get("change_summary")}
+
+
+CHANGE_RESOURCES = ("songs", "cards", "support-cards", "characters", "gacha", "events")
+
+
+def added_since(previous, candidate):
+    """Keep the latest observed additions across refreshes with unchanged IDs."""
+    if previous is None:
+        return None
+    before, after = previous["documents"]["jp"], candidate["documents"]["jp"]
+    additions = {name: sorted(int(key) for key in after[name].keys() - before[name].keys())
+                 if name in before and name in after else []
+                 for name in CHANGE_RESOURCES}
+    if any(additions.values()):
+        return {"at": candidate["fetched_at"], "ids": additions}
+    return previous.get("change_summary") or {"at": candidate["fetched_at"], "ids": additions}
 
 
 class CatalogRepository:
@@ -188,6 +205,8 @@ class CatalogRepository:
             try:
                 candidate = self._collect()
                 result = validate(candidate, self.clock())
+                candidate["change_summary"] = added_since(self.saved, candidate)
+                result[1]["change_summary"] = candidate["change_summary"]
                 # Commit the entire JP/text snapshot only after conversion succeeds.
                 self.saved = candidate
             except ERRORS as exc:
