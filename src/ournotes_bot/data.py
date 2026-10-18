@@ -407,8 +407,7 @@ class SongRepository:
                 self.characters, self.gachas, self.activities = info.characters, info.gachas, info.activities
                 self.metadata = metadata
                 self.cache_state = state
-                if state != "unsaved":
-                    self.last_successful_sync_at = metadata["cached_at"]
+                self.last_successful_sync_at = metadata["last_successful_sync_at"]
                 self._detail_cards.clear()
                 self._detail_support_cards.clear()
 

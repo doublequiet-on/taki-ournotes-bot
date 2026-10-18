@@ -651,7 +651,7 @@ def _catalog_change_text(catalog: CatalogView, locale: str) -> str:
         rows.append(f"{label} {len(ids)}：{'、'.join(examples)}" + (f" 等" if len(ids) > 3 else ""))
     stamp = summary.get("at")
     when = _safe_sync_time(datetime.fromtimestamp(stamp, timezone.utc).isoformat(), locale) if type(stamp) in (int, float) and 0 < stamp < 253402300800 else tr(locale, "unknown_time")
-    heading = "changes_unsaved" if catalog.cache_state == "unsaved" else "changes_header"
+    heading = "changes_unsaved" if catalog.metadata.get("change_summary_saved") is False else "changes_header"
     return tr(locale, heading, time=when) + "\n" + ("\n".join(rows) if rows else tr(locale, "changes_none"))
 
 
