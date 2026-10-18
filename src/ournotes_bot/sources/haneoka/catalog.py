@@ -1,6 +1,6 @@
 # L3
 # Input: Independent cache path, TTL and anonymous release-pinned Catalog responses.
-# Output: Validated complete JP domain snapshot with separately verified intl text.
+# Output: Validated JP snapshot, verified intl text, and independent persistence facts.
 # Pos: Sources / Haneoka main Catalog orchestration; see ../L2-2.md.
 # Effects/Dependencies: Bounded GET, atomic independent cache; never retries another source.
 
@@ -63,7 +63,24 @@ def validate(saved, now, *, stale=False):
                      "member_skill_index_complete": bool(records[1]) and all(c.catalog["skill_index_complete"] for c in records[1]),
                      "card_catalog_version": 1,
                      "info_catalog_available": {key: key in info.available
-                                                for key in ("characters", "gachas", "activities")}}
+                                                for key in ("characters", "gachas", "activities")},
+                     "change_summary": saved.get("change_summary")}
+
+
+CHANGE_RESOURCES = ("songs", "cards", "support-cards", "characters", "gacha", "events")
+
+
+def added_since(previous, candidate):
+    """Keep the latest observed additions across refreshes with unchanged IDs."""
+    if previous is None:
+        return None
+    before, after = previous["documents"]["jp"], candidate["documents"]["jp"]
+    additions = {name: sorted(int(key) for key in after[name].keys() - before[name].keys())
+                 if name in before and name in after else []
+                 for name in CHANGE_RESOURCES}
+    if any(additions.values()):
+        return {"at": candidate["fetched_at"], "ids": additions}
+    return previous.get("change_summary") or {"at": candidate["fetched_at"], "ids": additions}
 
 
 class CatalogRepository:
@@ -73,6 +90,18 @@ class CatalogRepository:
         self.saved = None
         self.lock = threading.RLock()
         self.state = "unknown"
+        self._durable_initialized = False
+        self._durable_summary = None
+        self._durable_fetched_at = None
+
+    def _publication(self, result):
+        """Attach persistence facts independently of the latest refresh attempt."""
+        metadata = result[1]
+        metadata["change_summary_saved"] = metadata["change_summary"] == self._durable_summary
+        metadata["last_successful_sync_at"] = (
+            datetime.fromtimestamp(self._durable_fetched_at, timezone.utc).isoformat()
+            if self._durable_fetched_at is not None else None)
+        return result
 
     def _read(self):
         if self.path.stat().st_size > MAX_BYTES:
@@ -179,25 +208,35 @@ class CatalogRepository:
                     self.saved = self._read()
                 except ERRORS:
                     pass
+            if not self._durable_initialized:
+                if self.saved is not None:
+                    self._durable_summary = self.saved.get("change_summary")
+                    self._durable_fetched_at = self.saved["fetched_at"]
+                self._durable_initialized = True
             now = self.clock()
             if not refresh and self.saved and 0 <= now - self.saved["fetched_at"] < self.ttl:
                 result = validate(self.saved, now, stale=self.state == "stale")
                 if self.state not in {"unsaved", "stale"}:
                     self.state = "cached"
-                return result
+                return self._publication(result)
             try:
                 candidate = self._collect()
                 result = validate(candidate, self.clock())
+                candidate["change_summary"] = added_since(self.saved, candidate)
+                result[1]["change_summary"] = candidate["change_summary"]
                 # Commit the entire JP/text snapshot only after conversion succeeds.
                 self.saved = candidate
             except ERRORS as exc:
                 if self.saved is None:
                     raise DataError("Haneoka 主资料同步失败，且无已验证缓存") from exc
                 self.state = "stale"
-                return validate(self.saved, self.clock(), stale=True)
+                return self._publication(validate(self.saved, self.clock(), stale=True))
             self.state = "fresh"
             try:
                 self._write(candidate)
             except ERRORS:
                 self.state = "unsaved"
-            return result
+            else:
+                self._durable_summary = candidate["change_summary"]
+                self._durable_fetched_at = candidate["fetched_at"]
+            return self._publication(result)

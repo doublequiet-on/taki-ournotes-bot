@@ -12,6 +12,11 @@ from __future__ import annotations
 MESSAGES = {
     "zh": {
         "aliases_unverified": "；当前资料未能确认的目标：{count}",
+        "unknown_catalog": "可统计的未确认项：{count}（按类别计项，同一资料可重复；{detail}）",
+        "changes_unavailable": "最近新增：暂无可比的上次主资料快照",
+        "changes_header": "最近记录新增（{time}）：",
+        "changes_unsaved": "已取得但尚未保存的新增（{time}）：",
+        "changes_none": "无",
         "aliases_current": "词库：有效",
         "aliases_stale": "词库：加载失败，沿用本进程最后有效版本",
         "aliases_unavailable": "词库：加载失败，本进程暂无有效版本",
@@ -61,6 +66,11 @@ MESSAGES = {
     },
     "en": {
         "aliases_unverified": "; targets unverified against current catalog: {count}",
+        "unknown_catalog": "Explicitly unresolved items: {count} (counted per category; {detail})",
+        "changes_unavailable": "Recent additions: no comparable previous catalog snapshot",
+        "changes_header": "Latest recorded additions ({time}):",
+        "changes_unsaved": "Additions fetched but not saved ({time}):",
+        "changes_none": "none",
         "aliases_current": "Aliases: current",
         "aliases_stale": "Aliases: load failed; using last valid process snapshot",
         "aliases_unavailable": "Aliases: unavailable; no valid process snapshot",
@@ -110,6 +120,11 @@ MESSAGES = {
     },
     "ja": {
         "aliases_unverified": "；現在の資料で未確認の対象：{count}",
+        "unknown_catalog": "判定可能な未確認項目：{count}（分類別、同じ資料の重複あり；{detail}）",
+        "changes_unavailable": "最近の追加：比較できる前回の資料がありません",
+        "changes_header": "最後に記録した追加（{time}）：",
+        "changes_unsaved": "取得済み・未保存の追加（{time}）：",
+        "changes_none": "なし",
         "aliases_current": "別名辞書：有効",
         "aliases_stale": "別名辞書：読み込み失敗、最後の有効なデータを使用",
         "aliases_unavailable": "別名辞書：読み込み失敗、有効なデータなし",

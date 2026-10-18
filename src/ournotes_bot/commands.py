@@ -13,7 +13,7 @@ from datetime import datetime, timedelta, timezone
 from difflib import SequenceMatcher
 from typing import TypeVar
 
-from .data import Card, Skill, Song, SongRepository, SupportCard, character_identity, localized_text, normalize, resolve_character_alias
+from .data import Card, CatalogView, Skill, Song, SongRepository, SupportCard, character_identity, localized_text, normalize, resolve_character_alias
 from .query.entity_lexicon import alias_status, known_alias_names, resolve_exact_alias, unverified_alias_count
 from .i18n import tr
 from .natural_query.query_debug import QUERY_DEBUG_COUNTERS
@@ -47,7 +47,7 @@ Haneoka 未确认原始歌曲序号，请用歌名或歌曲ID；旧T50也查附�
 /问 迷星叫 EX 物量：等级、Note、颜色、激奏、难度、数量及明确卡牌类型与ID的技能可本地短答
 /继续：续发未发送完的结果；/详情：查看单项或已选结果；列表详情请按ID查询
 自然续查支持 /问 第 N 个、看详情、换成 EX；10 分钟未成功续查失效，请单独发送
-/数据状态：查看进程、最近同步与缓存状态
+/数据状态：查看最近同步、缓存、可统计的未确认项与最近新增
 /调试数据：查看本次进程的 AI API 成功调用与有效检索次数
 /帮助：查看本说明
 /介绍：了解 Taki 与数据来源
@@ -605,6 +605,56 @@ def _safe_sync_time(value: object, locale: str) -> str:
     return tr(locale, "unknown_time")
 
 
+def _catalog_unknowns(catalog: CatalogView) -> dict[str, int]:
+    """Count explicit unresolved fields, not inferred missing game content."""
+    return {
+        "notes": sum(chart.notes is None for song in catalog.songs for chart in song.charts),
+        "traits": sum(not song.traits or not song.traits.color or not song.traits.missions
+                      for song in catalog.songs),
+        "member_skills": sum(card.catalog.get("skill_index_complete") is False for card in catalog.cards),
+        "member_summaries": sum(card.catalog.get("member_summary_complete") is False
+                                for card in catalog.cards),
+        "member_tags": sum(card.catalog.get("tags_complete") is False for card in catalog.cards),
+        "support_skills": sum(card.catalog.get("skill_index_complete") is False
+                              for card in catalog.support_cards),
+        "activity_times": sum(item.start_at is None or item.end_at is None for item in catalog.activities),
+        "gacha_times": sum(item.start_at is None or item.end_at is None for item in catalog.gachas),
+    }
+
+
+def _catalog_change_text(catalog: CatalogView, locale: str) -> str:
+    summary = catalog.metadata.get("change_summary")
+    if not isinstance(summary, dict) or not isinstance(summary.get("ids"), dict):
+        return tr(locale, "changes_unavailable")
+    names = {
+        "songs": {item.id: localized_text(item, "title", locale) for item in catalog.songs},
+        "cards": {item.id: localized_text(item, "title", locale) for item in catalog.cards},
+        "support-cards": {item.id: localized_text(item, "title", locale) for item in catalog.support_cards},
+        "characters": {item.id: item.names.get(locale) or item.name for item in catalog.characters},
+        "gacha": {item.id: item.names.get(locale) or item.title for item in catalog.gachas},
+        "events": {item.id: item.names.get(locale) or item.title for item in catalog.activities},
+    }
+    labels = {
+        "zh": ("歌曲", "成员卡", "留影卡", "人物", "卡池", "活动"),
+        "en": ("songs", "member cards", "support cards", "characters", "gachas", "events"),
+        "ja": ("楽曲", "メンバーカード", "サポートカード", "キャラクター", "ガチャ", "イベント"),
+    }[locale]
+    rows = []
+    for key, label in zip(names, labels):
+        ids = summary["ids"].get(key, ())
+        if not isinstance(ids, list) or not ids:
+            continue
+        examples = []
+        for ident in ids[:3]:
+            title = " ".join(str(names[key].get(ident, "")).split())[:36]
+            examples.append(f"{ident} {title}".strip())
+        rows.append(f"{label} {len(ids)}：{'、'.join(examples)}" + (f" 等" if len(ids) > 3 else ""))
+    stamp = summary.get("at")
+    when = _safe_sync_time(datetime.fromtimestamp(stamp, timezone.utc).isoformat(), locale) if type(stamp) in (int, float) and 0 < stamp < 253402300800 else tr(locale, "unknown_time")
+    heading = "changes_unsaved" if catalog.metadata.get("change_summary_saved") is False else "changes_header"
+    return tr(locale, heading, time=when) + "\n" + ("\n".join(rows) if rows else tr(locale, "changes_none"))
+
+
 def handle_command(content: str, repository: SongRepository,
                    resolved: CommandResult | None = None) -> str | None:
     text = _clean_message(content)
@@ -653,9 +703,20 @@ def handle_command(content: str, repository: SongRepository,
         history_text = "\n" + history.status_text() if history else "\n榜线历史：未配置"
         sampler = getattr(repository, "cutoff_sampler", None)
         history_text += "\n周期采样：" + (sampler.last_state if sampler else "未启动")
+        catalog_text = ""
+        if main_catalog:
+            counts = _catalog_unknowns(catalog)
+            labels = {
+                "zh": ("谱面 Note", "歌曲属性／激奏", "成员卡技能", "成员卡摘要", "得意标签", "留影卡技能", "活动时间", "卡池时间"),
+                "en": ("chart notes", "song traits", "member skills", "member summaries", "best-song tags", "support skills", "event times", "gacha times"),
+                "ja": ("譜面ノーツ", "楽曲属性／激奏", "メンバースキル", "メンバー概要", "得意タグ", "サポートスキル", "イベント時刻", "ガチャ時刻"),
+            }[locale]
+            detail = "、".join(f"{label} {value}" for label, value in zip(labels, counts.values()) if value)
+            catalog_text = "\n" + tr(locale, "unknown_catalog", count=sum(counts.values()), detail=detail or "0")
+            catalog_text += "\n" + _catalog_change_text(catalog, locale)
         return (status + "\n" + tr(locale, "aliases_" + alias_status()) + tr(locale, "aliases_unverified", count=unverified_alias_count(repository)) + f"\n歌曲颜色／激奏：{count}/{len(catalog.songs)} · Haneoka 日服 · "
                 + ("旧缓存" if (catalog.cache_state == "stale" if main_catalog else traits.stale) else "有效缓存" if saved else "等待后台获取")
-                + (f"\n属性版本：{saved['release']}\n本机获取：{_safe_sync_time(saved['fetched_at'], locale)}" if saved else "") + history_text)
+                + (f"\n属性版本：{saved['release']}\n本机获取：{_safe_sync_time(saved['fetched_at'], locale)}" if saved else "") + catalog_text + history_text)
 
     if text.casefold() in {"查缩写", "abbrev", "略称"}:
         return COMMAND_HELPS[locale]["abbrev"]

@@ -7,12 +7,14 @@ from dataclasses import replace
 from pathlib import Path
 import tempfile
 import unittest
+import uuid
 from unittest.mock import Mock, patch
 from urllib.parse import parse_qs, urlsplit
 
 from PIL import Image
 
 from ournotes_bot.config import Settings
+from ournotes_bot.commands import _catalog_unknowns, handle_command
 from ournotes_bot.data import DataError, SongRepository
 from ournotes_bot.query.card_catalog import query_cards, detail_text
 from ournotes_bot.query.continuation import catalog_version
@@ -65,6 +67,178 @@ class CatalogTests(unittest.TestCase):
         repo = SongRepository("", self.path.with_name("old.json"), data_source="haneoka")
         repo._catalog_repository = self.repo
         return repo
+
+    def test_status_counts_explicit_unknowns_and_reports_latest_additions(self):
+        bot = self.main_repo()
+        self.repo.saved = copy.deepcopy(self.saved)
+        bot.load()
+        initial = handle_command('/数据状态', bot)
+        self.assertIn('最近新增：暂无可比的上次主资料快照', initial)
+        self.assertIn('可统计的未确认项：', initial)
+        previous = copy.deepcopy(self.saved)
+        candidate = copy.deepcopy(self.saved)
+        candidate['fetched_at'] = 1100
+        candidate['documents']['jp']['characters']['999'] = {'characterId': 999}
+        summary = source.added_since(previous, candidate)
+        self.assertEqual(summary['ids']['characters'], [999])
+        candidate['change_summary'] = summary
+        self.assertEqual(source.added_since(candidate, candidate), summary)
+        self.repo.saved['change_summary'] = summary
+        # Model a cache reload, rather than mutating an already published snapshot.
+        reloaded_source = source.CatalogRepository(self.path, clock=lambda: self.now)
+        reloaded_source.saved = copy.deepcopy(self.repo.saved)
+        bot._catalog_repository = reloaded_source
+        bot.load()
+        reply = handle_command('/数据状态', bot)
+        self.assertIn('最近记录新增（1970-01-01 08:18 UTC+08:00）', reply)
+        self.assertIn('人物 1：999', reply)
+
+    def test_first_comparison_without_new_ids_is_not_claimed_as_first_load(self):
+        previous = copy.deepcopy(self.saved)
+        current = copy.deepcopy(self.saved)
+        self.assertIsNone(source.added_since(None, current))
+        summary = source.added_since(previous, current)
+        self.assertTrue(all(not ids for ids in summary['ids'].values()))
+        self.assertEqual(source.added_since({**previous, 'change_summary': summary}, current), summary)
+
+    def test_status_unknown_counts_follow_explicit_fields(self):
+        bot = self.main_repo()
+        self.repo.saved = copy.deepcopy(self.saved)
+        bot.load()
+        view = bot.capture_catalog()
+        song = view.songs[0]
+        card = view.cards[0]
+        support = view.support_cards[0]
+        known = replace(view,
+                        songs=[replace(song, charts=(replace(song.charts[0], notes=0), *song.charts[1:])),
+                               *view.songs[1:]],
+                        cards=[replace(card, catalog={**card.catalog, 'skill_index_complete': True,
+                                                      'member_summary_complete': True, 'tags_complete': True}),
+                               *view.cards[1:]],
+                        support_cards=[replace(support, catalog={**support.catalog, 'skill_index_complete': True}),
+                                       *view.support_cards[1:]])
+        before = _catalog_unknowns(known)
+        changed = replace(known,
+                          songs=[replace(known.songs[0], charts=(replace(known.songs[0].charts[0], notes=None),
+                                                                *known.songs[0].charts[1:])), *known.songs[1:]],
+                          cards=[replace(known.cards[0], catalog={**known.cards[0].catalog,
+                                                                  'skill_index_complete': False,
+                                                                  'member_summary_complete': False,
+                                                                  'tags_complete': False}), *known.cards[1:]],
+                          support_cards=[replace(known.support_cards[0], catalog={**known.support_cards[0].catalog,
+                                                                                   'skill_index_complete': False}),
+                                         *known.support_cards[1:]])
+        after = _catalog_unknowns(changed)
+        for key in ('notes', 'member_skills', 'member_summaries', 'member_tags', 'support_skills'):
+            self.assertEqual(after[key], before[key] + 1, key)
+
+    def test_addition_survives_cache_reload_and_failed_refresh(self):
+        # Windows sandbox Temp can deny os.replace; use the writable checkout.
+        self.path = Path.cwd() / 'runtime' / f'status-{uuid.uuid4().hex}.json'
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self.addCleanup(lambda: self.path.unlink(missing_ok=True))
+        self.repo = source.CatalogRepository(self.path, clock=lambda: self.now)
+        bot = self.main_repo()
+        self.repo.saved = copy.deepcopy(self.saved)
+        bot.load()
+        candidate = copy.deepcopy(self.saved)
+        self.now = candidate['fetched_at'] + 100
+        candidate['fetched_at'] = self.now
+        people = candidate['documents']['jp']['characters']
+        added = copy.deepcopy(next(iter(people.values())))
+        added['characterId'] = 999
+        added['characterName'] = ['追加人物']
+        people['999'] = added
+        candidate['documents']['jp']['catalog']['resources']['characters']['count'] = len(people)
+        with patch.object(self.repo, '_collect', return_value=candidate):
+            bot.refresh()
+        self.assertEqual(bot.cache_state, 'fresh')
+        self.assertIn('人物 1：999 追加人物', handle_command('/数据状态', bot))
+        with patch.object(self.repo, '_collect', side_effect=OSError('offline')):
+            bot.refresh()
+        self.assertEqual(bot.cache_state, 'stale')
+        self.assertIn('人物 1：999 追加人物', handle_command('/数据状态', bot))
+        unsaved = copy.deepcopy(candidate)
+        self.now += 100
+        unsaved['fetched_at'] = self.now
+        another = copy.deepcopy(added)
+        another['characterId'] = 1000
+        another['characterName'] = ['未保存人物']
+        unsaved['documents']['jp']['characters']['1000'] = another
+        unsaved['documents']['jp']['catalog']['resources']['characters']['count'] += 1
+        with patch.object(self.repo, '_collect', return_value=unsaved), \
+             patch.object(self.repo, '_write', side_effect=OSError('disk full')):
+            bot.refresh()
+        self.assertEqual(bot.cache_state, 'unsaved')
+        self.assertIn('已取得但尚未保存的新增', handle_command('/数据状态', bot))
+        reloaded = self.main_repo()
+        reloaded._catalog_repository = source.CatalogRepository(self.path, clock=lambda: self.now)
+        reloaded.load()
+        self.assertIn('人物 1：999 追加人物', handle_command('/数据状态', reloaded))
+        self.assertNotIn('1000 未保存人物', handle_command('/数据状态', reloaded))
+
+    def status_sequence(self):
+        self.path = Path.cwd() / 'runtime' / f'status-{uuid.uuid4().hex}.json'
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self.addCleanup(lambda: self.path.unlink(missing_ok=True))
+        self.repo = source.CatalogRepository(self.path, clock=lambda: self.now)
+        self.repo._write(self.saved)
+        bot = self.main_repo()
+        bot.load()
+        candidate = copy.deepcopy(self.saved)
+        self.now += 100
+        candidate['fetched_at'] = self.now
+        people = candidate['documents']['jp']['characters']
+        person = copy.deepcopy(next(iter(people.values())))
+        person.update(characterId=999, characterName=['连续刷新测试人物'])
+        people['999'] = person
+        candidate['documents']['jp']['catalog']['resources']['characters']['count'] = len(people)
+        return bot, candidate
+
+    def test_saved_additions_stay_saved_after_identical_refresh_save_failure(self):
+        bot, candidate = self.status_sequence()
+        with patch.object(self.repo, '_collect', return_value=candidate):
+            bot.refresh()
+        successful = bot.last_successful_sync_at
+        summary = bot.metadata['change_summary']
+        repeated = copy.deepcopy(candidate)
+        self.now += 100
+        repeated['fetched_at'] = self.now
+        with patch.object(self.repo, '_collect', return_value=repeated), \
+             patch.object(self.repo, '_write', side_effect=OSError('disk full')):
+            bot.refresh()
+        self.assertEqual(bot.cache_state, 'unsaved')
+        self.assertEqual(bot.metadata['change_summary'], summary)
+        self.assertTrue(bot.metadata['change_summary_saved'])
+        self.assertNotIn('尚未保存的新增', handle_command('/数据状态', bot))
+        self.assertEqual(bot.last_successful_sync_at, successful)
+        with patch.object(self.repo, '_collect', side_effect=OSError('offline')):
+            bot.refresh()
+        self.assertTrue(bot.metadata['change_summary_saved'])
+        self.assertEqual(bot.last_successful_sync_at, successful)
+
+    def test_unsaved_additions_remain_pending_after_network_failure_and_recover(self):
+        bot, candidate = self.status_sequence()
+        successful = bot.last_successful_sync_at
+        with patch.object(self.repo, '_collect', return_value=candidate), \
+             patch.object(self.repo, '_write', side_effect=OSError('disk full')):
+            bot.refresh()
+        for operation in ('refresh', 'load'):
+            with patch.object(self.repo, '_collect', side_effect=OSError('offline')):
+                getattr(bot, operation)()
+            self.assertFalse(bot.metadata['change_summary_saved'])
+            self.assertIn('已取得但尚未保存的新增', handle_command('/数据状态', bot))
+            self.assertEqual(bot.last_successful_sync_at, successful)
+        restarted = self.main_repo()
+        restarted._catalog_repository = source.CatalogRepository(self.path, clock=lambda: self.now)
+        restarted.load()
+        self.assertIsNone(restarted.metadata['change_summary'])
+        self.assertEqual(restarted.last_successful_sync_at, successful)
+        with patch.object(self.repo, '_collect', return_value=candidate):
+            bot.refresh()
+        self.assertTrue(bot.metadata['change_summary_saved'])
+        self.assertNotIn('尚未保存的新增', handle_command('/数据状态', bot))
+        self.assertNotEqual(bot.last_successful_sync_at, successful)
 
     def test_independent_reference_text_values_units_and_floor(self):
         songs, cards, supports = self.records()
