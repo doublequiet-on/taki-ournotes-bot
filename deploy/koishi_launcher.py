@@ -7,6 +7,7 @@ import re
 
 
 def launch(base, role):
+    base=base.resolve(strict=True)
     code=(base/'current').resolve(strict=True)
     permit=json.loads(Path('/run/taki-updater/allowed.json').read_text())
     if permit['boot_id']!=Path('/proc/sys/kernel/random/boot_id').read_text().strip() or Path(permit['release']['code_dir'])!=code:
@@ -20,6 +21,9 @@ def launch(base, role):
     os.environ['OURNOTES_RELEASE_SOURCE']=str(code)
     os.environ['OURNOTES_DEPLOYMENT_STATE']='/run/taki-updater/notice.json'
     if role=='backend':
+        # The controller prepares artwork under this managed base. An inherited
+        # legacy EnvironmentFile must not send queries to a second, cold cache.
+        os.environ['OURNOTES_RUNTIME_DATA_DIR']=str(base/'data')
         os.environ.pop('QQ_APP_SECRET',None)
         python=Path(permit['release']['venv_dir'])/'bin/python'
         args=[str(python),'-B','-m','ournotes_bot.main','backend','--instance-id',os.environ['TAKI_INSTANCE_ID'],

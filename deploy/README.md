@@ -14,6 +14,8 @@
 
 新候选的素材准备入口为 `scripts/prepare_query_assets.py`，在停旧实例前校验固定游戏资源及同版资料图片，结果写入跨版本的 `data/game-assets`、`data/haneoka-asset-cache`；缺件／损坏重取，失败阻止切换。必须确认已安装控制器包含此准备步骤，不能仅凭新应用文件存在判断预下载已启用。
 
+Koishi 启动器将后端 `OURNOTES_RUNTIME_DATA_DIR` 固定为受管理的 `<base>/data`，使查询使用上述预热目录，即使旧环境文件仍指定另一运行目录。该启动器需单独审核安装；切换前核对旧目录归属并备份，具体路径与回退边界见 [离线发布说明](LINUX_OFFLINE.md)。
+
 停机业务备份只排除根级 data/haneoka-asset-cache 可重建图片目录，并在备份清单的 excluded_rebuildable_paths 中记录。磁盘上的缓存保留；历史库、额度、两版统计、通知账本及其他数据仍按原范围备份。单份归档的 2 GiB 上限与失败回退机制不变；离线恢复图片依赖保留缓存，缺失时需重新下载。
 
 ## 自行部署与配置
