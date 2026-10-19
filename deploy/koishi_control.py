@@ -121,5 +121,5 @@ class KoishiControl:
                 row={'active':{'sha':active['commit'],'source':active['code_dir']},
                      'previous':{'sha':previous['commit']},'rejected':None,'transaction':None,
                      'facts':json.dumps({'更新日志新增内容':'\n'.join(added)[:8000]},ensure_ascii=False)}
-        target=Path('/run/taki-updater/notice.json')
+        target=self.backend.runtime_directory()/'notice.json'
         atomic_json(target,row);target.chmod(0o644)

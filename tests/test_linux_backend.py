@@ -487,6 +487,50 @@ class LinuxBackendTests(unittest.TestCase):
                 expected = ['reset-failed'] if initial == 'failed' else []
                 self.assertEqual(commands, expected + ['start', 'gateway'])
 
+    @unittest.skipUnless(os.name == 'posix', 'root CLI and POSIX directory permissions')
+    def test_recover_cli_initializes_missing_runtime_before_notice_and_start(self):
+        from deploy.koishi_control import KoishiControl
+        self.state()
+        runtime=self.root/'run'
+        boot=self.root/'boot-id';boot.write_text('fixture-boot')
+        config=self.root/'config.json';config.write_text(json.dumps(self.config))
+        self.backend.current_release=lambda:self.baseline
+        self.backend._service=Mock(return_value={'MainPID':'0','ActiveState':'inactive'})
+        self.backend.healthy=Mock(return_value=True)
+        self.backend.koishi=KoishiControl(self.backend)
+        self.backend.koishi.start=Mock()
+        def selected_path(value):
+            return runtime if value=='/run/taki-updater' else boot if value=='/proc/sys/kernel/random/boot_id' else Path(value)
+        def runner(argv,**kwargs):
+            self.assertEqual(json.loads((runtime/'notice.json').read_text()),{'rejected':True})
+            self.assertEqual(json.loads((runtime/'allowed.json').read_text()),
+                             {'release':asdict(self.baseline),'boot_id':'fixture-boot'})
+            self.assertEqual(runtime.stat().st_mode&0o777,0o755)
+            self.assertEqual((runtime/'notice.json').stat().st_mode&0o777,0o644)
+            return ''
+        self.backend.run=runner
+        with patch('deploy.linux_backend.os.geteuid',return_value=0), \
+             patch('deploy.linux_backend.trusted'),patch('deploy.linux_backend.validate_config'), \
+             patch('deploy.linux_backend.LinuxBackend',return_value=self.backend), \
+             patch('deploy.linux_backend.Path',side_effect=selected_path),patch('builtins.print') as printer:
+            previous=os.umask(0o077)
+            try:code=main(['--config',str(config),'recover'])
+            finally:os.umask(previous)
+        self.assertEqual(code,0)
+        self.assertEqual(json.loads(printer.call_args.args[0])['reason'],'known_good_restarted')
+        self.backend.koishi.start.assert_called_once()
+
+    def test_runtime_directory_rejects_untrusted_existing_path_before_notice(self):
+        from deploy.koishi_control import KoishiControl
+        runtime=self.root/'run';runtime.mkdir()
+        marker=runtime/'notice.json';marker.write_text('unchanged')
+        with patch('deploy.linux_backend.Path',return_value=runtime), \
+             patch('deploy.linux_backend.trusted',side_effect=Rejected('controller_path_not_trusted')):
+            with self.assertRaisesRegex(Rejected,'controller_path_not_trusted'):
+                KoishiControl(self.backend).publish_notice(None)
+        self.assertEqual(marker.read_text(),'unchanged')
+        self.assertFalse((runtime/'allowed.json').exists())
+
     def test_stop_confirms_pid_zero_before_activation(self):
         with patch.object(self.backend, "_service", return_value={"MainPID": "42", "ActiveState": "active"}):
             with self.assertRaisesRegex(Rejected, "service_not_stopped"):

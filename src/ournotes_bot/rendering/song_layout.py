@@ -2,11 +2,11 @@
 # Input: Complete captured songs, query label and validated artwork loader.
 # Output: Readable Haneoka-style song-list image parts with continuous numbering.
 # Pos: Rendering / Song; approved paired-column list.
-# Effects: Pillow only; no query or platform operations.
+# Effects: Pillow and bounded concurrent injected artwork I/O; no query or platform operations.
 from collections import Counter
 from .labels import label as ui_label
 from ..data import localized_text
-from .haneoka_theme import Canvas, MUTED, DIFFICULTIES, lines, font, mission_label
+from .haneoka_theme import Canvas, MUTED, DIFFICULTIES, lines, font, mission_label, prepare_assets
 from .readable_pages import ImagePart
 from .image_output import MAX_IMAGE_EDGE, MAX_IMAGE_PIXELS, ImageBudgetError, encode_image
 
@@ -31,12 +31,7 @@ def render_list(songs,query,locale='zh',*,load):
                     if song.traits and song.traits.attribute_icon)
     assets = {}
     def artwork(url, size):
-        key = (url, size)
-        if repeated[key] == 1:
-            return load(url,size)
-        if key not in assets:
-            assets[key] = load(url, size)
-        return assets[key]
+        return assets[(url, size)]
     def paint(start,stop,height):
         rows,heights=page_rows(start,stop)
         c=Canvas(width,height);c.header(ui_label('歌曲列表',locale),subtitle);y=head
@@ -47,7 +42,6 @@ def render_list(songs,query,locale='zh',*,load):
             for col,(index,song) in enumerate(row):
                 x=48+col*868
                 asset=artwork(song.jacket_url,(128,128));c.paste(asset,x,y+4,128,128,radius=12)
-                if repeated[(song.jacket_url,(128,128))] == 1 and asset is not None:asset.close()
                 c.text(x+64,y+158,f'{index+1} · {song.id}',24,MUTED,align='center')
                 title=localized_text(song,'title',locale);c.paragraph(x+148,y+(titleh-len(lines(title,342,36,True))*44)/2,title,342,36,44,bold=True)
                 band=localized_text(song,'band',locale);c.paragraph(x+148,y+titleh+6,band,550,34,42,color=MUTED)
@@ -56,7 +50,6 @@ def render_list(songs,query,locale='zh',*,load):
                     last_band=lines(band,550,34)[-1]
                     ax=x+148+min(580,font(34,False,last_band.isascii()).getlength(last_band))+16
                     asset=artwork(traits.attribute_icon,(48,48));c.paste(asset,round(ax),y+titleh+3+(len(lines(band,550,34))-1)*42,48,48,True,trim=True)
-                    if repeated[(traits.attribute_icon,(48,48))] == 1 and asset is not None:asset.close()
                 for j,(name,(bg,fg)) in enumerate(DIFFICULTIES.items()):
                     chart=next((ch for ch in song.charts if ch.difficulty==name),None)
                     bx=x+516+j*72;by=y+(titleh-64)//2
@@ -87,10 +80,21 @@ def render_list(songs,query,locale='zh',*,load):
             while stop>start:
                 _,heights=page_rows(start,stop);height=head+44+sum(heights)
                 if height<=limit:
+                    # Fetch only this bounded page, before drawing. Shared artwork
+                    # survives retries/pages; unique art is released after this paint.
+                    requests={(song.jacket_url,(128,128)) for song in songs[start:stop]}
+                    requests.update((song.traits.attribute_icon,(48,48)) for song in songs[start:stop]
+                                    if song.traits and song.traits.attribute_icon)
+                    assets.update(prepare_assets(requests-assets.keys(),load))
                     try:raw=encode_image(paint(start,stop,height),close_input=True,preserve_size=True)
                     except ImageBudgetError:pass
                     else:
                         parts.append(ImagePart(raw,start,stop));start=stop;break
+                    finally:
+                        for key in requests:
+                            if repeated[key] == 1:
+                                asset=assets.pop(key)
+                                if asset is not None:asset.close()
                 stop-=1
             else:raise ImageBudgetError('One complete song exceeds the readable image budget')
         return tuple(parts),tuple((p.start,p.stop) for p in parts)
