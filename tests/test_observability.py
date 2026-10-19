@@ -42,8 +42,8 @@ class PrepareLoggingTests(unittest.TestCase):
         self.parser = AIQueryParser(Settings("", "", BASE, self.repo.cache_file, 6))
 
     def test_handled_and_ignored_messages_leave_clear_completion_logs(self):
-        with self.assertLogs("ournotes_bot.qq", level="INFO") as handled_log, \
-             patch("ournotes_bot.platforms.qq.qq._render_prepared",
+        with self.assertLogs("ournotes_bot.replies", level="INFO") as handled_log, \
+             patch("ournotes_bot.application.replies.render_prepared",
                    side_effect=lambda text, *args: PreparedReply(text)):
             reply = _prepare_reply("/查曲 迷星叫", self.repo, self.parser)
         self.assertIsNotNone(reply)
@@ -52,7 +52,7 @@ class PrepareLoggingTests(unittest.TestCase):
         self.assertIn("迷星叫", handled)
         self.assertIn("耗时", handled)
 
-        with self.assertLogs("ournotes_bot.qq", level="INFO") as ignored_log:
+        with self.assertLogs("ournotes_bot.replies", level="INFO") as ignored_log:
             self.assertIsNone(_prepare_reply("今天天气不错", self.repo, self.parser))
         self.assertIn("不回复", "\n".join(ignored_log.output))
 

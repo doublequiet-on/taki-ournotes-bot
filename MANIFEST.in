@@ -32,3 +32,4 @@ include docs/EVENT_CUTOFFS.md scripts/preview_event_cutoffs.py
 exclude architecture_exceptions.json scripts/check_architecture.py tests/test_architecture.py
 
 include docs/IMAGE_OUTPUT.md
+include docs/KOISHI_BACKEND_V1.md

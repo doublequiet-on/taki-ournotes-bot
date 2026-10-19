@@ -26,6 +26,8 @@ CLI 模式与组合、配置根/数据路径、包身份；为多个系统域提
 - [__init__.py](ournotes_bot/__init__.py)：包版本身份。
 
 - [application/reply_preparation.py](ournotes_bot/application/reply_preparation.py)：捕获同次歌曲／谱面资料与原回退文字；结果仅含领域对象、绘图输入及文案，不含 QQ 身份或交付状态。测试见 [test_reply_preparation.py](../tests/test_reply_preparation.py)。
+- [application/replies.py](ournotes_bot/application/replies.py)：共享完整回复准备、QueryGate、分页和 DeliveryCursor；旧 QQ 导出兼容名称，后端直接调用公开入口，不导入 botpy。图文与备用文字复用同次结果；日志在后端模式隐藏正文。
+- [application/backend.py](ournotes_bot/application/backend.py)、[backend_bootstrap.py](ournotes_bot/application/backend_bootstrap.py)：M2 常驻实例、loopback HTTP、接纳高水位、准备到 ACK 的续查租约；[backend_protocol.py](ournotes_bot/application/backend_protocol.py) 校验线协议，[delivery_ledger.py](ournotes_bot/application/delivery_ledger.py) 负责独占 SQLite 意图/回执事实。详见 [后端协议与阶段边界](../docs/KOISHI_BACKEND_V1.md)。
 
 ## Internal Subsystems
 
@@ -43,6 +45,7 @@ CLI 模式与组合、配置根/数据路径、包身份；为多个系统域提
 配置加载读取 dotenv 并通过 `setdefault` 补入进程环境，不能描述为完全无写状态。
 除 setup-menu 外，模式都会构造仓库/AI 门面并调用 `load`，可能网络与缓存写入；setup-menu 提前分流但有远端管理副作用。
 bot 模式在 `qq.run_bot` 内重新组装实际使用的 AI/限流/通知组件，Current 并非单一集中组合根。
+backend 在公共仓库初始化前独立分流，只组装一次业务实例；异步初始化后 ready。M2 尚未接管周期刷新/采样/通知，不能作为生产切换完成的依据。
 
 ## Failure / Degradation Boundaries
 

@@ -29,7 +29,7 @@ class ReplyPreparationTests(unittest.TestCase):
 
     def test_module_import_does_not_load_qq(self):
         run=subprocess.run([sys.executable,'-B','-c',
-            'import sys; import ournotes_bot.application.reply_preparation; assert "botpy" not in sys.modules; assert "ournotes_bot.platforms.qq.qq" not in sys.modules'],capture_output=True,text=True)
+            'import sys; import ournotes_bot.application.reply_preparation; import ournotes_bot.application.replies; import ournotes_bot.application.backend_bootstrap; assert "botpy" not in sys.modules; assert "ournotes_bot.platforms.qq.qq" not in sys.modules'],capture_output=True,text=True)
         self.assertEqual(run.returncode,0,run.stderr)
 
     def test_capture_game_bytes_once_and_close_owned_art_on_failure(self):

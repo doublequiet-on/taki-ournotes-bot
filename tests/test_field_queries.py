@@ -24,8 +24,8 @@ class FieldTests(unittest.TestCase):
         self.repo.support_cards = build_support_cards(CHARACTERS, SUPPORTS)
         self.repo.songs = [replace(self.repo.songs[0], traits=SongTraits(2, ("JUST", "COMBO")))]
         self.parser = AIQueryParser(Settings("", "", BASE, self.repo.cache_file, 6, ""))
-        for target in ("ournotes_bot.platforms.qq.qq._chart_image", "ournotes_bot.platforms.qq.qq.render_song_list",
-                       "ournotes_bot.platforms.qq.qq.render_card", "ournotes_bot.platforms.qq.qq.render_support_card"):
+        for target in ("ournotes_bot.application.replies.chart_image", "ournotes_bot.application.replies.render_song_list",
+                       "ournotes_bot.application.replies.render_card", "ournotes_bot.application.replies.render_support_card"):
             blocked = patch(target, side_effect=AssertionError("unrelated rendering"))
             blocked.start()
             self.addCleanup(blocked.stop)

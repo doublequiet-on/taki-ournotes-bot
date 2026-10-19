@@ -58,6 +58,7 @@ def check(path: Path) -> None:
     if not aliases or not code:
         raise ValueError(f"missing query aliases or bot code in {path.name}")
     required = {"continuation.py", "field_query.py", "cutoff_history.py", "cutoff_sampler.py", "cutoff_trends.py",
+                "backend.py", "backend_protocol.py", "backend_bootstrap.py", "delivery_ledger.py", "replies.py", "KOISHI_BACKEND_V1.md",
                 "CUTOFF_HISTORY.md", "QUERY_UPGRADE_V1.md", "query-upgrade-v1.env.example",
                 "moenotes_open.py", "META_OPEN.md", "THIRD_PARTY.md",
                 "transport.py", "identity.py", "chart_paths.py", "errors.py", "json_validation.py",

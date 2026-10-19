@@ -1,5 +1,7 @@
 # L2 Platform / QQ — 消息接入与交付
 
+M2 起，回复准备、QueryGate、分页与 DeliveryCursor 的实现移到 [共享 replies](ournotes_bot/application/replies.py)；qq.py 保留原名称导出和实际上传/发送、续查协调、后台任务。下文旧 `_prepare_reply` 等名称在 QQ 中为兼容导出；实现继续阅读 [Application](L2-Application.md)。[候选本机后端](../docs/KOISHI_BACKEND_V1.md) 尚未接管生产。
+
 ## Purpose
 
 把 QQ 事件接入已有查询能力，并按 QQ 的身份、时限、顺序、媒体和消息序号规则交付。SDK 与真实消息生命周期构成明确的系统边界。

@@ -173,9 +173,9 @@ class ContinuationDeliveryTests(Fixture, unittest.IsolatedAsyncioTestCase):
             # Force a real pixel-budget split instead of depending on an
             # implementation-specific preferred page height.
             ('ournotes_bot.rendering.song_layout.MAX_IMAGE_PIXELS', {'new':1760*3600}),
-            ('ournotes_bot.platforms.qq.qq._visual_asset', {'return_value':None}),
+            ('ournotes_bot.application.replies.visual_asset', {'return_value':None}),
             ('ournotes_bot.sources.haneoka.game_assets.asset_bytes', {'return_value':None}),
-            ('ournotes_bot.platforms.qq.qq.load_chart_data', {'side_effect':ChartDataError('fixture has no chart')})):
+            ('ournotes_bot.application.replies.load_chart_data', {'side_effect':ChartDataError('fixture has no chart')})):
             source=patch(target,**options)
             source.start()
             self.addCleanup(source.stop)
@@ -347,6 +347,87 @@ class ContinuationDeliveryTests(Fixture, unittest.IsolatedAsyncioTestCase):
         await self.send(["/查曲 MyGO 颜色=蓝 EX"])
         await self.send(["/查曲 100001"])
         self.assertEqual(self.store.get(self.key).query, "/查曲 100001")
+
+
+class BackendContinuationTests(Fixture, unittest.IsolatedAsyncioTestCase):
+    """The HTTP boundary must retain the same visible-context ownership rules."""
+
+    async def asyncSetUp(self):
+        import time
+        from ournotes_bot.application.backend import Backend
+        self.setup_repo()
+        self.now = time.time()
+        self.backend = Backend(self.repo, self.parser, Settings('', '', self.repo.data_base, self.repo.cache_file, 6),
+                               instance_id='fixture', app_id='app',
+                               ledger_path=self.repo.cache_file.with_name('delivery.sqlite3'), clock=lambda: self.now)
+        self.addAsyncCleanup(self.backend.close)
+        self.backend.ready = True
+        await self.backend.register('e1')
+        self.backend.gate.prepare = AsyncMock(return_value=PreparedReply('captured', context=self.context()))
+
+    def request(self, msg, seq):
+        from ournotes_bot.application.backend_protocol import PROTOCOL, CAPABILITY, digest
+        return dict(protocol=PROTOCOL, request_id=digest(['fixture', 'app', 'qq', 'group', 'g1', 'u1', msg]),
+                    instance_id='fixture', app_id='app', platform='qq', kind='group', conversation_id='g1',
+                    user_id='u1', message_id=msg, timestamp_ms=int(self.now*1000), body='/查曲 MyGO',
+                    capability=CAPABILITY, gateway_epoch='e1', ingress_seq=seq)
+
+    async def prepare(self, request):
+        await self.backend.submit(request)
+        for _ in range(100):
+            value = self.backend.lookup(request['request_id'], 'e1')
+            if value['status'] == 'prepared':
+                return value
+            await asyncio.sleep(.005)
+        self.fail('backend did not prepare the captured result')
+
+    def event(self, plan, kind):
+        from ournotes_bot.application.backend_protocol import PROTOCOL
+        event = dict(protocol=PROTOCOL, request_id=plan['request_id'], plan_version=1,
+                     gateway_epoch='e1', event=kind, part_id='0', attempt_id='a1')
+        if kind == 'ack':
+            event.update(result='success', message_id='accepted')
+        return self.backend.apply_event(plan['delivery_id'], event)
+
+    async def test_http_admission_reordering_rejects_old_new_request_before_begin(self):
+        from ournotes_bot.application.backend_protocol import ProtocolError
+        newer = self.request('B', 2)
+        plan = await self.prepare(newer)
+        lease = self.backend.works[plan['delivery_id']].lease
+        with self.assertRaisesRegex(ProtocolError, 'stale_admission'):
+            await self.backend.submit(self.request('A', 1))
+        self.assertEqual(self.backend.works[plan['delivery_id']].lease, lease)
+        duplicate = await self.backend.submit(newer)
+        self.assertEqual(duplicate['delivery_id'], plan['delivery_id'])
+        self.backend.gate.prepare.assert_awaited_once()
+
+    async def test_confirmed_ack_does_not_recommit_or_replace_newer_generation(self):
+        first = await self.prepare(self.request('A', 1))
+        self.assertEqual(self.event(first, 'intent')['permission'], 'granted')
+        self.assertEqual(self.event(first, 'intent')['permission'], 'existing')
+        newer = self.request('B', 2)
+        await self.backend.submit(newer)
+        self.event(first, 'ack')
+        self.assertIsNone(self.backend.contexts.get(self.key))
+        second = await self.prepare(newer)
+        self.event(second, 'intent')
+        self.event(second, 'ack')
+        current = self.backend.contexts.get(self.key)
+        self.assertIsNotNone(current)
+        self.assertTrue(self.event(first, 'ack')['duplicate'])
+        self.assertIs(self.backend.contexts.get(self.key), current)
+
+    async def test_new_gateway_cannot_replay_or_commit_old_delivery(self):
+        request = self.request('A', 1)
+        plan = await self.prepare(request)
+        self.event(plan, 'intent')
+        await self.backend.register('e2')
+        self.event(plan, 'ack')
+        self.assertIsNone(self.backend.contexts.get(self.key))
+        replay = await self.backend.submit({**request, 'gateway_epoch': 'e2'})
+        self.assertFalse(replay['send_allowed'])
+        self.assertEqual(replay['parts'][0]['status'], 'success')
+        self.backend.gate.prepare.assert_awaited_once()
 
 
 if __name__ == "__main__":

@@ -121,7 +121,7 @@ class AIEntityLexiconTests(unittest.TestCase):
                 with patch.object(self.parser, "_request", side_effect=AssertionError("model called")):
                     self.assertIn("睦卡2", self.parser.answer(f"/问 {term}的卡有哪些", self.repo))
         self.assertIn("墨缇丝 →", handle_command("/查缩写 墨缇丝", self.repo))
-        with patch("ournotes_bot.platforms.qq.qq.render_card_list", return_value=b"cards") as render:
+        with patch("ournotes_bot.application.replies.render_card_list", return_value=b"cards") as render:
             self.assertEqual(_image_reply("/查卡 墨缇丝", self.repo), b"cards")
             self.assertEqual([card.id for card in render.call_args.args[0]], expected)
 

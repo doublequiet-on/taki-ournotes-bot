@@ -34,14 +34,14 @@ class ReplyPipelineTests(unittest.TestCase):
                 for failure in ('upload','draw'):
                     with self.subTest(notes=notes,command=command,failure=failure), \
                          patch.object(self.parser,'answer_with_plan',return_value=(answer_for(result.spec,self.repo,result=result),result)), \
-                         patch('ournotes_bot.platforms.qq.qq.load_chart_score',return_value={'notes':[]}) as score, \
+                         patch('ournotes_bot.application.replies.load_chart_score',return_value={'notes':[]}) as score, \
                          patch('ournotes_bot.rendering.chart_layout.render',return_value=(b'chart',),
                                side_effect=ValueError('fixture render failure') if failure=='draw' else None):
                         reply = _prepare_reply(command,self.repo,self.parser)
                         self.assertEqual(score.call_count,1)
                         message = self.message(upload_error=TimeoutError('fixture'))
                         message._api.post_group_message.return_value={'id':'ack'}
-                        with patch('ournotes_bot.platforms.qq.qq.load_chart_score',side_effect=AssertionError('re-fetch')):
+                        with patch('ournotes_bot.application.replies.load_chart_score',side_effect=AssertionError('re-fetch')):
                             asyncio.run(_deliver_reply(message,'fixture',True,reply))
                         text = message._api.post_group_message.await_args.kwargs['content']
                         self.assertNotIn('None Notes',text)
@@ -97,7 +97,7 @@ class ReplyPipelineTests(unittest.TestCase):
     def test_chart_and_card_text_images_share_one_selection(self):
         from ournotes_bot.query.song_identity import unique_candidates
         with patch("ournotes_bot.query.song_identity.unique_candidates", wraps=unique_candidates) as select, \
-             patch("ournotes_bot.platforms.qq.qq.load_chart_score", return_value={"notes": []}), \
+             patch("ournotes_bot.application.replies.load_chart_score", return_value={"notes": []}), \
              patch("ournotes_bot.rendering.chart_layout.render", return_value=(b"chart",)) as render:
             result = _prepare_reply("/查谱面 100001 EXPERT", self.repo, self.parser)
         self.assertIn("768 Notes", result.text)
@@ -129,15 +129,15 @@ class ReplyPipelineTests(unittest.TestCase):
         self.assertNotIn("secret-value", result.text)
 
     def test_answer_and_render_failures_do_not_leak_raw_errors(self):
-        with patch("ournotes_bot.platforms.qq.qq.handle_command", side_effect=RuntimeError("Bearer secret-value")), \
-             self.assertLogs("ournotes_bot.qq", level="ERROR") as log:
+        with patch("ournotes_bot.application.replies.handle_command", side_effect=RuntimeError("Bearer secret-value")), \
+             self.assertLogs("ournotes_bot.replies", level="ERROR") as log:
             result = _prepare_reply("/查曲 迷星叫", self.repo, self.parser)
         self.assertEqual(result.text, "查询暂时失败，请稍后重试。")
         self.assertIsNone(result.image)
         self.assertNotIn("secret-value", " ".join(log.output))
 
         with patch("ournotes_bot.rendering.song_detail_layout.render", side_effect=RuntimeError("Bearer secret-value")), \
-             self.assertLogs("ournotes_bot.qq", level="WARNING") as log:
+             self.assertLogs("ournotes_bot.replies", level="WARNING") as log:
             result = _prepare_reply("/查曲 迷星叫", self.repo, self.parser)
         self.assertIn("迷星叫", result.text)
         self.assertIsNone(result.image)
@@ -397,8 +397,8 @@ class EasterEggTests(unittest.TestCase):
         from ournotes_bot.platforms.qq.qq import _image_reply
         for content in ("/查卡 947", "查卡 947", "／查卡 947", "<@!12345> /查卡  947", " /查卡\t947 "):
             with self.subTest(content=content), patch(
-                "ournotes_bot.platforms.qq.qq.resolve_command", side_effect=AssertionError("normal query called")
-            ), patch("ournotes_bot.platforms.qq.qq.catalog_version", side_effect=AssertionError("catalog called")):
+                "ournotes_bot.application.replies.resolve_command", side_effect=AssertionError("normal query called")
+            ), patch("ournotes_bot.application.replies.catalog_version", side_effect=AssertionError("catalog called")):
                 reply = _prepare_reply(content, None, None)
                 self.assertEqual(hashlib.sha256(reply.image).hexdigest(),
                                  "ed23f7f33a54c01b5b636cb312f606662d177cfb3d74cdb459d0b6c1315aa81c")
@@ -412,14 +412,14 @@ class EasterEggTests(unittest.TestCase):
                         "/问 查卡 947", "/查卡947", "/查卡 947\n/查曲 MyGO"):
             with self.subTest(content=content):
                 self.assertIsNone(_easter_egg_reply(content))
-        with patch("ournotes_bot.platforms.qq.qq.resolve_command", side_effect=RuntimeError("normal route")) as resolve:
+        with patch("ournotes_bot.application.replies.resolve_command", side_effect=RuntimeError("normal route")) as resolve:
             reply = _prepare_reply("/查卡 947 SSR", None, None)
         resolve.assert_called_once()
         self.assertIsNone(reply.image)
 
     def test_missing_asset_does_not_fall_through_to_card_query(self):
-        with patch("ournotes_bot.platforms.qq.qq.files") as resources, patch(
-            "ournotes_bot.platforms.qq.qq.resolve_command", side_effect=AssertionError("normal query called")
+        with patch("ournotes_bot.application.replies.files") as resources, patch(
+            "ournotes_bot.application.replies.resolve_command", side_effect=AssertionError("normal query called")
         ):
             resources.return_value.joinpath.return_value.read_bytes.side_effect = FileNotFoundError()
             reply = _prepare_reply("/查卡 947", None, None)

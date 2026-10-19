@@ -265,6 +265,10 @@ class ContextStore:
             self._locks[key] = lock
         return lock
 
+    def retained_contexts(self):
+        """Live contexts for application-wide retained-resource accounting."""
+        return tuple(context for key in tuple(self._entries) if (context := self.get(key)) is not None)
+
     def get(self, key):
         entry = self._entries.get(key)
         if entry is None:

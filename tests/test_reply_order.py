@@ -113,7 +113,7 @@ class ReplySequencerTests(unittest.IsolatedAsyncioTestCase):
         sequencer = ReplySequencer(timeout=0.1)
         first = await sequencer.issue()
         second = await sequencer.issue()
-        with self.assertLogs("ournotes_bot.qq", level="WARNING") as log:
+        with self.assertLogs("ournotes_bot.replies", level="WARNING") as log:
             await asyncio.wait_for(sequencer.wait_turn(second), timeout=5)
         self.assertIn("超时", " ".join(log.output))
         await sequencer.release(first)

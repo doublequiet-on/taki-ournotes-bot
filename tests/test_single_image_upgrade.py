@@ -57,7 +57,7 @@ class FullResultTests(unittest.TestCase):
 
     def test_continue_retains_exact_bytes_across_repository_refresh(self):
         pages=tuple(PreparedReply(str(i),bytes([i])) for i in range(8))
-        with patch('ournotes_bot.platforms.qq.qq.QQ_PASSIVE_REPLY_LIMIT',3):
+        with patch('ournotes_bot.application.replies.QQ_PASSIVE_REPLY_LIMIT',3):
             batch=_expand_replies([PreparedReply('',pages=pages)])
             self.assertEqual([p.image for p in batch],[bytes([i]) for i in range(3)])
             context=batch[-1].context
@@ -71,7 +71,7 @@ class FullResultTests(unittest.TestCase):
 
     def test_multi_command_overflow_preserves_all_commands_in_order(self):
         replies=[PreparedReply('',pages=tuple(PreparedReply(f'a{i}',bytes([i])) for i in range(4))),PreparedReply('second command')]
-        with patch('ournotes_bot.platforms.qq.qq.QQ_PASSIVE_REPLY_LIMIT',3):
+        with patch('ournotes_bot.application.replies.QQ_PASSIVE_REPLY_LIMIT',3):
             first=_expand_replies(replies)
             remaining=first[-1].context.remaining
             self.assertEqual([p.text for p in remaining],['a3','second command'])

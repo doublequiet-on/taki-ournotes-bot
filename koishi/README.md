@@ -1,6 +1,8 @@
 # Taki Koishi 迁移候选（M0 / M1）
 
-本目录交付锁定依赖、原始事件探针和逐片段 QQ 发送适配。`apply()` 只注册有作用域和卸载生命周期的 `takiTransport` 服务；尚未安装消息接收器、业务命令或 HTTP 后端，加载插件不会启动查询或发送消息。现有 Python bot 入口继续使用原实现。
+本目录交付锁定依赖、原始事件探针和逐片段 QQ 发送适配。`apply()` 只注册有作用域和卸载生命周期的 `takiTransport` 服务；尚未安装消息接收器或业务命令、尚未连接 HTTP 后端，加载插件不会启动查询或发送消息。现有 Python bot 入口继续使用原实现。
+
+M2 已增加独立 [Python HTTP 后端](../docs/KOISHI_BACKEND_V1.md)。本目录尚未连接它，camelCase 本地对象与 snake_case HTTP 契约转换、稳定的原消息 delivery 所有权和网关配置在 M3 接通；不能把 M1 的内存 events 替身直接当作线上账本。
 
 阶段记录见 [M0/M1 基线](../docs/KOISHI_MIGRATION_M0_M1.md)，完整要求见 [迁移方案 v1.1](../docs/KOISHI_MIGRATION_PLAN.txt)。本目录未进入 Python 离线发布包。
 
