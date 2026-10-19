@@ -1,0 +1,6 @@
+{
+  "name": "taki-console-assets",
+  "version": "0.1.0",
+  "private": true,
+  "files": ["index.js", "style.css"]
+}

@@ -15,10 +15,13 @@ function configuration(env) {
 }
 async function start(env=process.env) {
   const config=configuration(env)
+  const managementConfig=require('./console.cjs').configuration(env)
   const manifest=JSON.parse(fs.readFileSync(path.join(__dirname,'../combination.json'),'utf8'))
   if(!/^[a-f0-9]{40}$/.test(manifest.commit))throw Error('release identity')
   const ctx=new Context()
   ctx.plugin(require('@koishijs/plugin-http').default)
+  const management=managementConfig ? require('./console.cjs').install(ctx,managementConfig,manifest) : undefined
+  if(management)config.plugin.management=management.management
   const taki=ctx.plugin(require('./lib'),config.plugin)
   const adapter=ctx.plugin(require('@koishijs/plugin-adapter-qq').default,config.adapter)
   const server=http.createServer(async(req,res)=>{
@@ -38,15 +41,16 @@ async function start(env=process.env) {
   })
   try {
     await ctx.start()
+    await management?.ready()
     const receiver=ctx.takiTransport?.receiver
     if(!receiver)throw Error('gateway receiver unavailable')
     await receiver.ready
     await new Promise((resolve,reject)=>{server.once('error',reject);server.listen(config.port,'127.0.0.1',resolve)})
   } catch(error) {
-    await taki.dispose();await adapter.dispose();await ctx.stop();throw error
+    await taki.dispose();await adapter.dispose();await management?.close();await ctx.stop();throw error
   }
   let closing
-  const close=()=>closing ||= (async()=>{const stopped=new Promise(resolve=>server.close(resolve));await taki.dispose();await adapter.dispose();await stopped;await ctx.stop()})()
+  const close=()=>closing ||= (async()=>{const stopped=new Promise(resolve=>server.close(resolve));await taki.dispose();await adapter.dispose();await management?.close();await stopped;await ctx.stop()})()
   return {ctx,server,close}
 }
 module.exports={configuration,start}

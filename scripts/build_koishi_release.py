@@ -19,7 +19,7 @@ def sha(path):
 def build(python_artifact, node, output):
     if subprocess.check_output(['git','status','--porcelain','--untracked-files=no'],cwd=ROOT):
         raise ValueError('Combination requires committed tracked source')
-    if subprocess.check_output(['git','ls-files','--others','--exclude-standard','--','koishi/src','koishi/scripts'],cwd=ROOT):
+    if subprocess.check_output(['git','ls-files','--others','--exclude-standard','--','koishi/src','koishi/scripts','koishi/console'],cwd=ROOT):
         raise ValueError('Untracked gateway sources')
     commit = subprocess.check_output(['git','rev-parse','HEAD'],cwd=ROOT,text=True).strip()
     if python_artifact.suffix == '.zip':
@@ -34,9 +34,9 @@ def build(python_artifact, node, output):
     with tempfile.TemporaryDirectory(prefix='taki-combination-') as folder:
         stage=Path(folder)
         gateway=stage/'gateway';gateway.mkdir()
-        for name in ('scripts','node_modules'):
+        for name in ('scripts','node_modules','console'):
             shutil.copytree(ROOT/'koishi'/name,gateway/name,ignore=shutil.ignore_patterns('.bin','*.tsbuildinfo'))
-        for name in ('package.json','package-lock.json','run.cjs'):
+        for name in ('package.json','package-lock.json','run.cjs','console.cjs'):
             shutil.copy2(ROOT/'koishi'/name,gateway/name)
         subprocess.run([str(node),'node_modules/typescript/bin/tsc','-p','tsconfig.json','--outDir',str(gateway/'lib')],cwd=ROOT/'koishi',check=True)
         subprocess.run([str(node),'scripts/probe.cjs'],cwd=gateway,check=True,stdout=subprocess.DEVNULL)

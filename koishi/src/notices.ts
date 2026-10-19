@@ -20,7 +20,7 @@ export class Notices {
   private changed = new Map<string, number>()
   private task?: Promise<void>
   private nextRequest = 0
-  constructor(private ctx: Context, private client: BackendClient, private identity: Identity, private ready: Promise<void>) {
+  constructor(private ctx: Context, private client: BackendClient, private identity: Identity, private ready: Promise<void>, private enabled: (id?: string) => boolean = () => true) {
     ctx.effect(() => ctx.root.on('internal/session', session => this.capture(session as Session)))
     ctx.setInterval(() => this.tick(), 30000)
     void ready.then(() => this.tick()).catch(() => undefined)
@@ -55,7 +55,7 @@ export class Notices {
       .finally(() => { this.queued-- })
   }
   tick(): void {
-    if (!this.active || this.task) return
+    if (!this.active || this.task || !this.enabled()) return
     this.task=this.poll().catch(() => this.ctx.logger('taki').warn('notice poll failed; unresolved sends will not be replayed'))
       .finally(() => { this.task=undefined })
   }
@@ -74,7 +74,7 @@ export class Notices {
     const bot = this.ctx.bots.find(b=>b.platform==='qq' && b.config.id===this.identity.appId && b.selfId===this.identity.selfId) as QQBot | undefined
     if (!bot || bot.status !== Universal.Status.ONLINE || !this.active) return
     await this.groupTail
-    if (!this.active) return
+    if (!this.active || !this.enabled()) return
     const response = await this.client.retry('/v1/notices/claims',{...this.base(),claim_request_id:randomUUID(),limit:1})
     if (!Array.isArray(response.claims) || response.claims.length>1) throw Error('notice claims')
     for (const c of response.claims as Claim[]) {
@@ -82,7 +82,7 @@ export class Notices {
           || typeof c.text!=='string' || !c.text || [...c.text].length>120 || c.send_type!=='active'
           || !Number.isInteger(c.group_version) || !Number.isFinite(c.expires_at)) throw Error('notice shape')
       const version=this.changed.get(c.group_id)
-      const alive=()=>this.active && bot.status===Universal.Status.ONLINE && Date.now()<c.expires_at*1000 && this.changed.get(c.group_id)===version
+      const alive=()=>this.active && this.enabled(c.group_id) && bot.status===Universal.Status.ONLINE && Date.now()<c.expires_at*1000 && this.changed.get(c.group_id)===version
       const api=Object.create(bot.internal) as typeof bot.internal
       Object.assign(api,{http:()=>bot.http.extend({timeout:15000})})
       await this.pace()

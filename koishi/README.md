@@ -29,6 +29,8 @@ npm run probe -- probe-output.json
 | `src/gateway.ts` | 每 bot 的窄 discovery 主机修正，保留路径/参数并随卸载恢复。 |
 | `src/notices.ts` | 群许可事件、独立主动通知、逐次许可/intent/ACK，使用后端唯一账本。 |
 | `run.cjs` | 双进程网关入口，显式启用、受认证 loopback 健康、顺序卸载。 |
+| `console.cjs`、`console/` | 官方 Koishi 控制台接入、独立管理员会话与管理页面。 |
+| `src/management.ts` | 接收/通知范围设置校验、原子持久保存和管理记录。 |
 | `src/index.ts` | 默认关闭的配置、运输服务与受管 receiver 生命周期。 |
 | `scripts/probe.cjs` | 已安装包的离线行为验证与故障夹具。 |
 

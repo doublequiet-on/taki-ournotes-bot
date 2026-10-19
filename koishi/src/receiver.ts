@@ -6,8 +6,10 @@ import { BackendClient, BackendError, Plan } from './backend'
 import { decodeIncoming, Identity, Inbound } from './ingress'
 import { QQDelivery, QQInternal } from './delivery'
 import { Notices } from './notices'
+import type { Management } from './management'
 
 export interface ReceiverConfig extends Identity {
+  management?: Management
   notifications?: boolean; backendUrl: string; tokenEnv: string; permissions: string[]; maxPending: number
 }
 interface Raw { raw: unknown; seq: number; at: number; fingerprint: string; conflict?: boolean }
@@ -36,7 +38,7 @@ export class Receiver {
     ctx.effect(() => ctx.root.middleware(async (session, next) => {
       if (!await this.receive(session)) return next()
     }, true))
-    if (config.notifications) this.notices=new Notices(ctx,this.client,config,this.ready)
+    if (config.notifications) this.notices=new Notices(ctx,this.client,config,this.ready,id => config.management?.noticesAllowed(id) ?? true)
     ctx.on('dispose', () => this.dispose())
   }
   capture(session: Session): void {
@@ -100,6 +102,7 @@ export class Receiver {
       if (!this.active) return true
       if (!await this.client.recognizes(decoded.inbound.body)) return false
       if (!await this.permitted(canonical) || !this.active) return true
+      if (this.config.management && !this.config.management.accepts(decoded.inbound)) return true
       input = decoded.inbound
       const existing = this.jobs.get(input.requestId)
       if (existing) {

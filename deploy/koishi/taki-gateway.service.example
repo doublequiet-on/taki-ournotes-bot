@@ -19,6 +19,8 @@ TimeoutStopSec=90
 KillMode=control-group
 NoNewPrivileges=true
 ProtectSystem=strict
+# Create this dedicated directory owned by ubuntu before enabling the console.
+ReadWritePaths=-/home/ubuntu/taki/console-state
 LogNamespace=taki
 
 [Install]

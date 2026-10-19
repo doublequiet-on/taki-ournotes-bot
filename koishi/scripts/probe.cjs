@@ -425,6 +425,59 @@ async function main() {
     }
   })
   const root = path.resolve(__dirname, '..')
+  await run('console validates separate credentials and stays disabled by default',async()=>{
+    const {configuration}=require('../console.cjs')
+    assert.equal(configuration({}),undefined)
+    assert.throws(()=>configuration({TAKI_CONSOLE_ENABLED:'1'}))
+    const env={TAKI_CONSOLE_ENABLED:'1',TAKI_CONSOLE_PASSWORD:'fixture-console-password-000000',TAKI_CONSOLE_STATE_DIR:path.resolve('fixture-state')}
+    assert.equal(configuration(env).port,5140)
+    assert.throws(()=>configuration({...env,OURNOTES_BACKEND_TOKEN:env.TAKI_CONSOLE_PASSWORD}))
+    assert.throws(()=>configuration({...env,TAKI_CONSOLE_PORT:'0'}))
+  })
+  await run('console pause blocks real receiver before backend submission',async()=>{
+    const env=createBot();let submissions=0,receiver
+    const client={epoch:'fixture-e',deactivate(){},async initialize(){},async recognizes(body){return recognizes(body)},async retire(){},async submit(){submissions++;throw Error('pause bypass')}}
+    const fork=env.ctx.plugin(ctx=>{receiver=new Receiver(ctx,{...identity,backendUrl:'http://127.0.0.1:8765',tokenEnv:'unused',permissions:['authority:1'],maxPending:8,management:{accepts:()=>false}},client)})
+    try {
+      const raw=event()
+      await env.ctx.parallel('internal/session',env.bot.session({type:'internal',_type:'qq/group-at-message-create',_data:raw.d}))
+      assert.equal(await receiver.receive(env.ctx.reflect.trace(await adaptSession(env.bot,raw))),true)
+      assert.equal(submissions,0);assert.equal(env.calls.length,0);assert.equal(receiver.health().active,true)
+      const ordinary=event({id:'ordinary-message',content:'ordinary chat'})
+      await env.ctx.parallel('internal/session',env.bot.session({type:'internal',_type:'qq/group-at-message-create',_data:ordinary.d}))
+      assert.equal(await receiver.receive(env.ctx.reflect.trace(await adaptSession(env.bot,ordinary))),false)
+    }finally{await receiver.dispose();await fork.dispose()}
+  })
+  await run('console notice pause preserves group revocation synchronization',async()=>{
+    const {Notices}=require('../lib'),ctx=new Context();const calls=[]
+    const client={epoch:'e',readiness:{notices_enabled:true},async retry(url,body){calls.push({url,body});return{claims:[]}}}
+    const worker=new Notices(ctx,client,identity,Promise.resolve(),()=>false)
+    try {
+      worker.capture({platform:'qq',bot:{config:{id:identity.appId},selfId:identity.selfId},event:{_type:'qq/group-msg-reject',_data:{id:'event-disabled',group_openid:'fixture-group',timestamp:Math.floor(Date.now()/1000)}}})
+      // Discovery is also retained while paused; use the adapter's normal message envelope.
+      worker.capture({platform:'qq',bot:{config:{id:identity.appId},selfId:identity.selfId},event:{_type:'qq/group-at-message-create',_data:{...event().d}}})
+      await worker.groupTail;worker.tick();await Promise.resolve()
+      assert.ok(calls.some(c=>c.url==='/v1/groups/events' && c.body.kind==='reject'));assert.ok(calls.every(c=>c.url!=='/v1/notices/claims'));assert.equal(worker.healthy(),true)
+    } finally{await worker.close();await ctx.stop()}
+  })
+  await run('console settings persist, reject conflicts and constrain query/notice admission',async()=>{
+    const {Management,defaultSettings}=require('../lib/management')
+    const dir=fs.mkdtempSync(path.join(require('node:os').tmpdir(),'taki-console-probe-'))
+    try {
+      const m=new Management(dir),group={kind:'group',conversationId:'allowed'},privateInput={kind:'c2c'}
+      assert.equal(m.accepts(group),true)
+      m.update({...defaultSettings,groupAllowlist:['allowed'],privateEnabled:false},0)
+      assert.equal(m.accepts(group),true);assert.equal(m.accepts({...group,conversationId:'other'}),false)
+      assert.equal(m.accepts(privateInput),false);assert.equal(m.noticesAllowed('other'),false)
+      assert.throws(()=>m.update(defaultSettings,0));assert.throws(()=>m.update({...defaultSettings,extra:true},1))
+      assert.deepEqual(new Management(dir).snapshot().settings,m.snapshot().settings)
+      m.update({...defaultSettings,queriesEnabled:false,notificationsEnabled:false},1)
+      assert.equal(m.accepts(group),false);assert.equal(m.noticesAllowed(),false)
+      assert.throws(()=>m.update({...defaultSettings,groupAllowlist:['duplicate','duplicate']},2))
+      fs.writeFileSync(path.join(dir,'settings.json'),'{invalid')
+      assert.throws(()=>new Management(dir))
+    } finally {fs.rmSync(dir,{recursive:true,force:true})}
+  })
   const lock = JSON.parse(fs.readFileSync(path.join(root, 'package-lock.json')))
   const versions = Object.fromEntries(['koishi', '@koishijs/core', '@koishijs/plugin-adapter-qq', '@satorijs/adapter-qq', '@satorijs/core', 'typescript'].map(name => {
     const version = JSON.parse(fs.readFileSync(path.join(root, 'node_modules', name, 'package.json'))).version
