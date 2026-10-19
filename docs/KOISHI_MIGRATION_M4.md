@@ -49,6 +49,27 @@ Windows 旧部署状态规则继续保留。Linux 可选控制器仅在 Engine �
 
 启动器等待后端握手成功后才完成启动。握手拥有独立的 60 秒期限，暂时连接失败、服务端 5xx 或未就绪会每秒重试，注册始终使用同一个网关代次；协议不兼容、认证失败立即终止。期限到达会中止在途握手请求，启动器清理插件并以失败状态退出，由既有 `Restart=on-failure` 恢复。插件卸载也会中止握手等待。这不会改变业务发送的重试或防重规则。
 
+### 开机恢复入口
+
+Koishi 模式只把 [taki-updater-recover.service](../deploy/koishi/taki-updater-recover.service.example) 挂到 `multi-user.target`。后端和网关模板不提供 `[Install]`，由恢复控制器启动；已有服务仍须取消旧的 enable 链接。恢复入口运行 `recover`，复用事务恢复、版本指针检查和锁，随后签发当前开机许可，依次启动后端、网关并核验健康；不会解析 main 或下载新版本。已有 paused 状态保留并阻止启动，不自动 resume。
+
+不能只给后端增加 `After=taki-updater-recover.service`：恢复进程同步等待后端启动，后端再等待恢复单元结束会互相等待。网关保留对后端的 `Requires/After/BindsTo`。健康、备份等定时任务也不得另行拉起后端；安装前核对实际反向依赖及本机 drop-in。
+
+安装前核对受信控制器已包含未加载单元的启动修复，配置、当前/回退版本、组合清单和持久状态一致，更新器无事务且 timer 已暂停。备份服务文件、drop-in、启用链接及其原状态；保留已有环境与安全设置，不用模板覆盖本机密钥或数据路径。现有恢复服务若已等价，无需替换。
+
+经单独审阅安装后的启用关系如下；这些命令不带 `--now`，不启动或停止当前业务进程。先确认 timer 已经 `disabled/inactive`，恢复服务当前空闲，再在更新锁保护下调整，并回读结果：
+
+```sh
+systemctl disable taki.service taki-gateway.service
+systemctl enable taki-updater-recover.service
+systemctl is-enabled taki-updater-recover.service
+systemctl is-enabled taki.service taki-gateway.service taki-updater.timer
+```
+
+期望只有恢复服务 enabled，后端/网关为 disabled（新模板为 static），自动更新 timer 继续 disabled/inactive。取消服务 enable 不影响当前进程及 `Restart=on-failure`。回读依赖图时应确认 `multi-user.target` 不再直接拉起后端或网关，且不存在恢复单元与后端的等待环；同时核对 PID、InvocationID 和更新状态未变。回退本次开机配置时按备份恢复原 enable 链接，不自动回退代码、共享数据或恢复自动更新。
+
+隔离验收使用专属目标、服务名、许可和状态目录，验证冷启动、准备阶段中断恢复、paused/版本漂移阻止启动及网关失败暂停。隔离 systemd 通过只证明编排；生产安装不会执行 `recover`，整机重启、真实握手和 QQ 图文验收仍须获批维护窗口分别完成。
+
 ## 发布组合、控制器补丁与恢复包
 
 CI `koishi-combination` 依赖原 `offline-linux-bundle`，固定 Node 24.19.0、现有 npm lock 和适配器版本。构建时禁止依赖 lifecycle scripts；产物内含 Node 可执行文件、编译插件、安装后的锁定依赖、同 SHA 的 Python 离线包、逐文件 SHA-256 清单、协议/数据版本、控制器候选和 `0359a8d` 时的控制器恢复副本。安装时不运行 npm、不解析 latest。现有 Python 自动发布流程保持原行为；组合包当前作为 CI artifact 提供，尚未增加生产自动下载或发布权限。

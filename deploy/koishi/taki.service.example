@@ -1,4 +1,4 @@
-# Review/install separately; replaces the legacy Python service only after M5 approval.
+# Review/install separately; started by taki-updater-recover.service, not enabled at boot.
 [Unit]
 Description=Taki Python business backend
 After=network-online.target
@@ -20,6 +20,3 @@ NoNewPrivileges=true
 ProtectSystem=strict
 ReadWritePaths=/home/ubuntu/taki/data
 LogNamespace=taki
-
-[Install]
-WantedBy=multi-user.target

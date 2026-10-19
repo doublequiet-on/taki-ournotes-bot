@@ -1,4 +1,5 @@
-# Starts only with explicit TAKI_KOISHI_ENABLED=1 and a current-boot controller permit.
+# Started by the recovery controller after the backend; never enable independently at boot.
+# Requires explicit TAKI_KOISHI_ENABLED=1 and a current-boot controller permit.
 [Unit]
 Description=Taki Koishi QQ gateway
 Requires=taki.service
@@ -22,6 +23,3 @@ ProtectSystem=strict
 # Create this dedicated directory owned by ubuntu before enabling the console.
 ReadWritePaths=-/home/ubuntu/taki/console-state
 LogNamespace=taki
-
-[Install]
-WantedBy=multi-user.target
