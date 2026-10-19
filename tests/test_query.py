@@ -139,7 +139,7 @@ class QueryTests(unittest.TestCase):
                     answer = handle_command(command, self.repo, resolved=selected)
                 self.assertIn("第 2/2 页", answer)
                 self.assertIn("共17张", answer.replace(" ", ""))
-                with patch("ournotes_bot.platforms.qq.qq." + renderer, return_value=b"image") as render:
+                with patch("ournotes_bot.application.replies." + renderer, return_value=b"image") as render:
                     self.assertEqual(_image_from_result(selected, self.repo, "zh"), b"image")
                 self.assertEqual([card.id for card in render.call_args.args[0]], [17])
         first = parser.answer("/问 mygo的SSR卡", self.repo)
@@ -155,16 +155,16 @@ class QueryTests(unittest.TestCase):
 
     def test_chart_image_loads_notes_for_direct_and_natural_queries(self):
         score = {"notes": [{"t": 0, "pos": 6, "size": 6}]}
-        with patch("ournotes_bot.platforms.qq.qq.load_chart_score", return_value=score) as load, \
-             patch("ournotes_bot.platforms.qq.qq.render_chart", return_value=b"full chart") as render:
+        with patch("ournotes_bot.application.replies.load_chart_score", return_value=score) as load, \
+             patch("ournotes_bot.application.replies.render_chart", return_value=b"full chart") as render:
             self.assertEqual(_image_reply("/查谱面 1 EXPERT", self.repo), b"full chart")
             load.assert_called_with(self.repo.songs[0], self.repo.songs[0].charts[-1])
             self.assertIs(render.call_args.args[3], score)
         settings = Settings("", "", BASE, self.repo.cache_file, 6, "test-key", "test-model", "https://ai.example", 4)
         parser = AIQueryParser(settings)
         with patch.object(parser, "_request", return_value={"intent": "chart", "query": "迷星叫", "difficulty": "EXPERT"}), \
-             patch("ournotes_bot.platforms.qq.qq.load_chart_score", return_value=score) as load, \
-             patch("ournotes_bot.platforms.qq.qq.render_chart", return_value=b"full chart"):
+             patch("ournotes_bot.application.replies.load_chart_score", return_value=score) as load, \
+             patch("ournotes_bot.application.replies.render_chart", return_value=b"full chart"):
             parser.answer("/问 展示迷星叫 EXPERT 完整谱面资料", self.repo)
             self.assertEqual(_image_reply("/问 展示迷星叫 EXPERT 完整谱面资料", self.repo, parser), b"full chart")
             load.assert_called_with(self.repo.songs[0], self.repo.songs[0].charts[-1])
@@ -176,9 +176,9 @@ class QueryTests(unittest.TestCase):
         result = ChartData(score, "haneoka", cache_state="stale")
         settings = Settings("", "", BASE, self.repo.cache_file, 6, "test-key", "test-model", "https://ai.example")
         parser = AIQueryParser(settings)
-        with patch("ournotes_bot.platforms.qq.qq.load_chart_data", return_value=result) as load, \
-             patch("ournotes_bot.platforms.qq.qq.load_chart_score", side_effect=AssertionError("old source")), \
-             patch("ournotes_bot.platforms.qq.qq.render_chart", return_value=b"chart") as render:
+        with patch("ournotes_bot.application.replies.load_chart_data", return_value=result) as load, \
+             patch("ournotes_bot.application.replies.load_chart_score", side_effect=AssertionError("old source")), \
+             patch("ournotes_bot.application.replies.render_chart", return_value=b"chart") as render:
             self.assertEqual(_image_reply("/查谱面 1 EXPERT", self.repo), b"chart")
             load.assert_called_with(self.repo.songs[0], self.repo.songs[0].charts[-1], source="haneoka")
             self.assertIs(render.call_args.args[3], score)
@@ -237,7 +237,7 @@ class QueryTests(unittest.TestCase):
         self.assertEqual((card.performance, card.technic, card.visual), (600, 500, 400))
         self.assertEqual(card.skills[0].description, "提升25.0%")
         with patch.object(self.repo, "support_card_with_detail", return_value=card), \
-             patch("ournotes_bot.platforms.qq.qq.render_support_card", return_value=b"support image"):
+             patch("ournotes_bot.application.replies.render_support_card", return_value=b"support image"):
             self.assertEqual(_image_reply("/查支援卡 1", self.repo), b"support image")
 
     def test_ask_skill_and_support_queries_use_regular_list_renderers(self):
@@ -247,10 +247,10 @@ class QueryTests(unittest.TestCase):
         }])
         self.repo.cards = [replace(self.repo.cards[0], skills=skills)]
         parser = AIQueryParser(Settings("", "", BASE, self.repo.cache_file, 6))
-        with patch("ournotes_bot.platforms.qq.qq.render_card_list", return_value=b"skill cards") as render:
+        with patch("ournotes_bot.application.replies.render_card_list", return_value=b"skill cards") as render:
             self.assertEqual(_image_reply("/问 得分提升技能的成员卡有哪些", self.repo, parser), b"skill cards")
         self.assertEqual([card.id for card in render.call_args.args[0]], [1])
-        with patch("ournotes_bot.platforms.qq.qq.render_support_card_list", return_value=b"support cards") as render:
+        with patch("ournotes_bot.application.replies.render_support_card_list", return_value=b"support cards") as render:
             self.assertEqual(_image_reply("/问 tmr的支援卡有哪些", self.repo, parser), b"support cards")
         self.assertEqual([card.id for card in render.call_args.args[0]], [1])
 
@@ -297,7 +297,7 @@ class QueryTests(unittest.TestCase):
         self.assertEqual(len(song_matches(self.repo, "mygo lv<=25")), 1)
         self.assertEqual(song_matches(self.repo, "mygo lv<25"), [])
         self.assertEqual(song_matches(self.repo, "mygo lv>=25.5 diff=EXPERT"), [])
-        with patch("ournotes_bot.platforms.qq.qq.render_song_list", return_value=b"song image"):
+        with patch("ournotes_bot.application.replies.render_song_list", return_value=b"song image"):
             self.assertEqual(_image_reply("/问 mygo25级以上的歌曲", self.repo, parser), b"song image")
 
     def test_model_can_return_bounded_song_level_filter(self):
@@ -364,7 +364,7 @@ class QueryTests(unittest.TestCase):
              patch("ournotes_bot.sources.yatta.card_detail", return_value={}):
             self.assertIn("高松灯", parser.answer("/问 1号卡面", self.repo))
         with patch.object(self.repo, "card_with_detail", return_value=self.repo.cards[0]), \
-             patch("ournotes_bot.platforms.qq.qq.render_card", return_value=b"image"):
+             patch("ournotes_bot.application.replies.render_card", return_value=b"image"):
             self.assertEqual(_image_reply("/问 1号卡面", self.repo, parser), b"image")
 
 

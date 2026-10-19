@@ -72,7 +72,7 @@ def guard_paths(output, inputs):
 class Gallery:
     def __init__(self, output, only, cache, font, observe=None):
         from ournotes_bot import visuals
-        from ournotes_bot.platforms.qq import qq
+        from ournotes_bot.application import replies as qq
         self.v, self.qq = visuals, qq
         self.output, self.only, self.cache = output, set(only), cache
         self.rows, self.errors, self.inputs = [], [], {}
@@ -303,8 +303,8 @@ def export_cases(g):
     parser = AIQueryParser(Settings("", "", BASE, g.output / "isolated/cache.json", 6))
     song, card, support = repo.songs[0], repo.cards[-2], next(c for c in repo.support_cards if c.rarity == 10)
     q = g.qq
-    prepare = lambda command: q._prepare_reply(command, repo, parser)
-    render = lambda result: q._render_prepared(handle_command("/查曲", repo, resolved=result), result, repo, "zh", capture_context(result, repo))
+    prepare = lambda command: q.prepare_reply(command, repo, parser)
+    render = lambda result: q.render_prepared(handle_command("/查曲", repo, resolved=result), result, repo, "zh", capture_context(result, repo))
     def song_result(rows, page=1, label=""):
         return CommandResult(("songs", label, page), song_selection=SongAnswer(SongFilter(query=label), tuple(rows), page))
     def card_result(rows, support_mode=False, mode="list", page=1, label=""):
@@ -364,7 +364,7 @@ def export_cases(g):
         for locale, command in (("en", f"/song {song.id}"), ("ja", f"/曲 {song.id}")):
             # Capture a known selection and let production locale rendering consume it.
             result = song_result([song])
-            g.sample("song-list", locale, command, lambda locale=locale,result=result: q._render_prepared(result.song_selection.text(locale), result, repo, locale), params={"locale":locale})
+            g.sample("song-list", locale, command, lambda locale=locale,result=result: q.render_prepared(result.song_selection.text(locale), result, repo, locale), params={"locale":locale})
         for diff in ("EASY", "NORMAL", "HARD", "EXPERT"):
             command = f"/查谱面 {song.id} {diff}"
             g.sample("chart", diff.lower(), command, lambda command=command: prepare(command), synthetic=("音符和BPM：沿用test_chart_data的布局夹具",))
@@ -379,7 +379,7 @@ def export_cases(g):
             g.sample(family, "natural-local", command, lambda command=command: prepare(command), route="_prepare_reply → AIQueryParser本地解析 → _render_prepared")
         for family, command, operation in (("member-detail", "/查卡 SSR", Operation("select",1)), ("snap-detail", "/查SNAP EX", Operation("detail")), ("chart", f"/查曲 {song.id}", Operation("difficulty","HARD"))):
             context = capture_context(resolve_command(command,repo),repo)
-            g.sample(family, "followup", command + " → /"+operation.kind, lambda context=context,operation=operation: q._prepare_followup(context,operation,repo), route="_prepare_followup → execute_followup → _render_prepared", synthetic=("音符和BPM",) if family=="chart" else ())
+            g.sample(family, "followup", command + " → /"+operation.kind, lambda context=context,operation=operation: q.prepare_followup(context,operation,repo), route="_prepare_followup → execute_followup → _render_prepared", synthetic=("音符和BPM",) if family=="chart" else ())
         for count in (30,31):
             result = QueryResult(QuerySpec("song"), songs=tuple(replace(song,id=900000+i) for i in range(count)))
             # Current pagination shows only 16: total 31 does not itself exceed the visible-choice bound.
@@ -388,7 +388,7 @@ def export_cases(g):
                              ("debug","/调试数据"), ("abbrev","/查缩写 skk"), ("no-results","/查曲 不存在的完整歌曲名称xyz"),
                              ("invalid-page","/查卡 SSR 页999"), ("short-count","/问 MyGO歌曲有多少首"), ("unavailable","/查卡池")):
             g.sample("text", name, command, lambda command=command: prepare(command), expected="text", route="_prepare_reply → 纯文字分支")
-        with patch.object(q,"_song_detail_reply",side_effect=ValueError("controlled renderer failure")):
+        with patch.object(q,"song_detail_reply",side_effect=ValueError("controlled renderer failure")):
             g.sample("text","render-fallback",f"/查曲 {song.id}",lambda: prepare(f"/查曲 {song.id}"),expected="text",synthetic=("受控绘图失败",),route="_render_prepared异常 → 文字回退")
         g.sample("easter-947","normal","/查卡 947",lambda: prepare("/查卡 947"),source="仓库内固定彩蛋JPEG；不经过重编码",route="_prepare_reply → _easter_egg_reply")
         with patch.object(q,"files",side_effect=FileNotFoundError("controlled missing egg")):
@@ -412,7 +412,7 @@ def export_info(g, repo):
             result = CommandResult(('activity' if family=='activity' else 'info','',1),
                                    **{('activity' if family=='activity' else 'info'): answer})
             g.sample(family, str(count), '捕获信息视图边界',
-                     lambda result=result: g.qq._render_prepared(answer.text,result,repo,'zh'),
+                     lambda result=result: g.qq.render_prepared(answer.text,result,repo,'zh'),
                      synthetic=('资料内容','条目数'), ids=list(range(count)), route='捕获 InfoAnswer → 真实 QQ 绘图分发')
 
 
@@ -442,7 +442,7 @@ def export_cached(g, parser):
                                 ("snap-detail","/查支援卡 51"),("snap-art","/查支援卡面 51")):
             result = g.qq.resolve_command(command, repo)
             records = result.catalog.cards if result.catalog else result.songs or result.cards or result.support_cards
-            g.sample(family,"cached-art",command,lambda command=command:g.qq._prepare_reply(command,repo,parser), ids=[r.id for r in records],
+            g.sample(family,"cached-art",command,lambda command=command:g.qq.prepare_reply(command,repo,parser), ids=[r.id for r in records],
                      source="本地公开Project Yume旧快照/素材；当前代码绘制，不能代表当前Haneoka资料版本",route="_prepare_reply → 只读旧来源资料 → 当前绘图入口")
 
 
@@ -479,12 +479,12 @@ def export_cutoffs(g, repo):
         variants["server-"+server] = replace(base,event=replace(event,server=server),request=CutoffRequest(server=server))
     with patch.object(cv,"load_artwork",return_value={}):
         with patch.object(repo.event_cutoffs,"event",return_value=event):
-            g.sample("text","activity","/查活动",lambda:g.qq._prepare_reply("/查活动",repo,None),expected="image",
+            g.sample("text","activity","/查活动",lambda:g.qq.prepare_reply("/查活动",repo,None),expected="image",
                      synthetic=("活动", "歌曲", "时间"),source="合成活动，由真实活动查询生成图片",route="_prepare_reply → execute_activity → 活动图片")
         for name, answer in variants.items():
             family = "cutoff-trend" if answer.request.mode=="trend" else "cutoff-ranks"
             result = CommandResult(("cutoff","",None),cutoff=answer)
-            g.sample(family,name,"/"+answer.request.command_label(),lambda result=result:g.qq._render_prepared(result.cutoff.text,result,repo,"zh"),
+            g.sample(family,name,"/"+answer.request.command_label(),lambda result=result:g.qq.render_prepared(result.cutoff.text,result,repo,"zh"),
                      source="固定合成活动/榜单/历史；封面占位",synthetic=("活动", "歌曲", "分数", "玩家ID/名", "历史点", "时间"),
                      expected="text" if answer.request.numeric_only else "image",ids=[b.song.music_id for b in answer.boards],
                      params={"server":answer.request.server,"ranks":answer.request.ranks,"boards":len(answer.boards),
@@ -492,7 +492,7 @@ def export_cutoffs(g, repo):
                      route="捕获CutoffAnswer → _render_prepared → render_cutoff → render_trends/_tables")
         # Actual reply-budget path, all source pages remain available in the full-100 example.
         result=CommandResult(("cutoff","",None),cutoff=variants["full-100"])
-        g.sample("text","reply-budget","三曲100名 + 保留其他回复槽",lambda:g.qq.PreparedReply("\n\n".join(p.text for p in g.qq._expand_replies([g.qq._render_prepared(result.cutoff.text,result,repo,"zh")],reserve=4))),
+        g.sample("text","reply-budget","三曲100名 + 保留其他回复槽",lambda:g.qq.PreparedReply("\n\n".join(p.text for p in g.qq.expand_replies([g.qq.render_prepared(result.cutoff.text,result,repo,"zh")],reserve=4))),
                  expected="text",synthetic=("活动", "榜单", "回复预算"),route="_render_prepared → _expand_replies预算终态")
 
 
@@ -518,7 +518,7 @@ def main():
     sys.addaudithook(offline)
     sys.path.insert(0, str(ROOT / "src"))
     from ournotes_bot import visuals
-    from ournotes_bot.platforms.qq import qq
+    from ournotes_bot.application import replies as qq
     from ournotes_bot.rendering import card_visuals, event_cutoff_visuals
     font = args.font.resolve() if args.font else next((Path(p) for p in visuals.FONT_PATHS if Path(p).is_file()),None)
     if font is None or not font.is_file():
@@ -535,12 +535,12 @@ def main():
     with ExitStack() as stack:
         stack.enter_context(patch.object(visuals,"FONT_PATHS",[str(font)]))
         stack.enter_context(patch.object(visuals,"_asset",side_effect=g.asset))
-        original_asset = qq._visual_asset
+        original_asset = qq.visual_asset
         def tracked_asset(url, size):
             image = original_asset(url, size)
             if image is None and url: g.missing.add(url)
             return image
-        stack.enter_context(patch.object(qq,'_visual_asset',side_effect=tracked_asset))
+        stack.enter_context(patch.object(qq,'visual_asset',side_effect=tracked_asset))
         stack.enter_context(patch("ournotes_bot.rendering.member_list_visuals.get_snapshot",return_value=None))
         stack.enter_context(patch.object(visuals,"runtime_data_dir",return_value=output/"isolated"))
         from ournotes_bot.sources.haneoka import game_assets

@@ -120,7 +120,7 @@ class QueryGateTests(unittest.IsolatedAsyncioTestCase):
                 state["active"] -= 1
             return PreparedReply(content, content.encode())
 
-        with patch("ournotes_bot.platforms.qq.qq._prepare_reply", side_effect=prepare):
+        with patch("ournotes_bot.application.replies.prepare_reply", side_effect=prepare):
             tasks = [asyncio.create_task(gate.prepare(str(i), None, None)) for i in range(2)]
             try:
                 for _ in range(100):
@@ -154,7 +154,7 @@ class QueryGateTests(unittest.IsolatedAsyncioTestCase):
             release.wait(timeout=5)
             return PreparedReply(content)
 
-        with patch("ournotes_bot.platforms.qq.qq._prepare_reply", side_effect=prepare):
+        with patch("ournotes_bot.application.replies.prepare_reply", side_effect=prepare):
             task = asyncio.create_task(gate.prepare("first", None, None))
             try:
                 for _ in range(100):

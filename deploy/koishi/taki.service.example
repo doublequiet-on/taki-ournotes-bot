@@ -1,0 +1,25 @@
+# Review/install separately; replaces the legacy Python service only after M5 approval.
+[Unit]
+Description=Taki Python business backend
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/home/ubuntu/taki/current
+EnvironmentFile=/home/ubuntu/taki/config/koishi.env
+Environment=OURNOTES_RUNTIME_DATA_DIR=/home/ubuntu/taki/data
+ExecStart=/usr/bin/python3 /usr/local/lib/taki-updater/koishi_launcher.py --base /home/ubuntu/taki backend
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=90
+KillMode=control-group
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/home/ubuntu/taki/data
+LogNamespace=taki
+
+[Install]
+WantedBy=multi-user.target

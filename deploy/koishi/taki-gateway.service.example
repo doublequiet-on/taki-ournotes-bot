@@ -1,0 +1,27 @@
+# Starts only with explicit TAKI_KOISHI_ENABLED=1 and a current-boot controller permit.
+[Unit]
+Description=Taki Koishi QQ gateway
+Requires=taki.service
+After=taki.service network-online.target
+BindsTo=taki.service
+PartOf=taki.service
+
+[Service]
+Type=simple
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/home/ubuntu/taki/current
+EnvironmentFile=/home/ubuntu/taki/config/koishi.env
+ExecStart=/usr/bin/python3 /usr/local/lib/taki-updater/koishi_launcher.py --base /home/ubuntu/taki gateway
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=90
+KillMode=control-group
+NoNewPrivileges=true
+ProtectSystem=strict
+# Create this dedicated directory owned by ubuntu before enabling the console.
+ReadWritePaths=-/home/ubuntu/taki/console-state
+LogNamespace=taki
+
+[Install]
+WantedBy=multi-user.target

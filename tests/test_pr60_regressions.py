@@ -72,7 +72,7 @@ class ReviewRegressionTests(unittest.TestCase):
         def capture(c, x, y, value, *args, **kwargs):
             drawn.append(str(value))
             return original(c, x, y, value, *args, **kwargs)
-        with patch.object(Canvas, 'text', capture), patch('ournotes_bot.platforms.qq.qq._visual_asset', return_value=None):
+        with patch.object(Canvas, 'text', capture), patch('ournotes_bot.application.replies.visual_asset', return_value=None):
             reply = _render_prepared(answer.text(), result, self.repo, 'zh')
         for phrase in ('上次有效缓存', '资料未获取'):
             self.assertIn(phrase, ''.join(drawn))

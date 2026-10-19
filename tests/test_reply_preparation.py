@@ -27,9 +27,23 @@ class ReplyPreparationTests(unittest.TestCase):
         failed=prepare_chart_reply(song,song.charts,'moenotes','zh',load_score=Mock(side_effect=ChartDataError('offline')))
         self.assertIsNone(failed.score);self.assertEqual(failed.notice,'谱面暂不可用')
 
+    def test_shared_entry_recognition_is_read_only_and_leaves_other_plugins(self):
+        from ournotes_bot.application.replies import recognizes_message
+        for text in ('/帮助', '／查曲 MyGO', '/song a', '/查角色 1', '/查卡池', '/查活动',
+                     '/查榜线', '/问 下一页', '/继续', '/问 MyGO的歌曲', '/other\n/查SNAP EX'):
+            self.assertTrue(recognizes_message(text), text)
+        for text in ('普通聊天', '/other-plugin hello', '', '帮我看看最适合什么队伍'):
+            self.assertFalse(recognizes_message(text), text)
+
+    def test_long_page_text_keeps_continuation_suffix_inside_budget(self):
+        from ournotes_bot.application.replies import PreparedReply, expand_replies
+        pages = expand_replies([PreparedReply('', pages=(PreparedReply('字'*1790), PreparedReply('尾')))])
+        self.assertTrue(all(len(page.text) <= 1800 for page in pages))
+        self.assertEqual(sum(page.text.count('字') for page in pages), 1790)
+
     def test_module_import_does_not_load_qq(self):
         run=subprocess.run([sys.executable,'-B','-c',
-            'import sys; import ournotes_bot.application.reply_preparation; assert "botpy" not in sys.modules; assert "ournotes_bot.platforms.qq.qq" not in sys.modules'],capture_output=True,text=True)
+            'import sys; import ournotes_bot.application.reply_preparation; import ournotes_bot.application.replies; import ournotes_bot.application.backend_bootstrap; assert "botpy" not in sys.modules; assert "ournotes_bot.platforms.qq.qq" not in sys.modules'],capture_output=True,text=True)
         self.assertEqual(run.returncode,0,run.stderr)
 
     def test_capture_game_bytes_once_and_close_owned_art_on_failure(self):

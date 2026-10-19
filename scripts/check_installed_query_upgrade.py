@@ -20,7 +20,7 @@ def main():
             raise AssertionError("installed smoke check must stay offline")
     sys.addaudithook(offline)
     root = Path(__file__).resolve().parents[1]
-    modules = ("application.reply_preparation", "query.continuation", "query.field_query", "sources.cutoff_history",
+    modules = ("application.runtime_tasks", "application.notice_gateway", "application.notice_reports", "application.data_owner", "application.backend_bootstrap", "application.backend", "application.backend_protocol", "application.delivery_ledger", "application.replies", "application.reply_preparation", "query.continuation", "query.field_query", "sources.cutoff_history",
                "sources.cutoff_sampler", "rendering.cutoff_trends", "platforms.qq.qq",
                "sources.moenotes_open",
                "sources.haneoka.chart_data", "sources.haneoka.catalog", "sources.haneoka.catalog_records",
@@ -46,7 +46,7 @@ def main():
     # pip --target relocates data-files without rewriting their RECORD paths.
     # Verify actual installed resources through the runtime's resource locator.
     resources = ("query_aliases.json", "THIRD_PARTY.md", "docs/CUTOFF_HISTORY.md",
-                 "docs/IMAGE_OUTPUT.md", "docs/QUERY_UPGRADE_V1.md", "docs/META_OPEN.md", "docs/HANEOKA_CATALOG.md", "docs/HANEOKA_CUTOFFS.md",
+                 "docs/koishi/KOISHI_BACKEND_V1.md", "docs/IMAGE_OUTPUT.md", "docs/QUERY_UPGRADE_V1.md", "docs/META_OPEN.md", "docs/HANEOKA_CATALOG.md", "docs/HANEOKA_CUTOFFS.md",
                  "docs/HANEOKA_META_CONTRACT.md", "docs/HANEOKA_RETIREMENT.md", "docs/HANEOKA_RESEARCH.md", "docs/HANEOKA_UNIFIED.md",
                  "deploy/query-upgrade-v1.env.example")
     for relative in resources:

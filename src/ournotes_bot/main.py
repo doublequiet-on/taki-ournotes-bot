@@ -26,12 +26,21 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers.add_parser("repl", help="启动本地交互测试台")
     subparsers.add_parser("bot", help="连接 QQ 官方机器人并开始服务")
     subparsers.add_parser("setup-menu", help="安装单聊菜单与单聊/群聊快捷指令面板")
+    backend = subparsers.add_parser("backend", help="启动仅本机访问的 Koishi 业务后端（迁移候选）")
+    backend.add_argument('--instance-id', required=True)
+    backend.add_argument('--app-id', required=True, help='QQ 应用身份，不需要 QQ 密钥')
+    backend.add_argument('--state-dir', required=True, help='独立交付账本目录；业务缓存仍由现有配置指定')
+    backend.add_argument('--port', type=int, default=8765)
     return parser
 
 
 def main() -> None:
     args = build_parser().parse_args()
     settings = Settings.from_env()
+    if args.mode == 'backend':
+        from .application.backend_bootstrap import run_backend
+        run_backend(args, settings)
+        return
     if args.mode == "setup-menu":
         # Publishing command metadata must not refresh game caches or initialize AI.
         if not settings.app_id or not settings.app_secret:
@@ -41,6 +50,12 @@ def main() -> None:
         for result in asyncio.run(setup_menu(settings.app_id, settings.app_secret)):
             print(result)
         return
+    from .application.data_owner import DataOwner
+    with DataOwner(settings):
+        run_local(args, settings)
+
+
+def run_local(args, settings):
     repository = SongRepository(settings.data_base, settings.cache_file, settings.cache_ttl_hours,
                                 chart_source=settings.chart_source,
                                 data_source=settings.data_source)
