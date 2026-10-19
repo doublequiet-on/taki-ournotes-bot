@@ -1,0 +1,18 @@
+# The only Koishi boot entry. Does not check/download a new release or enable the update timer.
+[Unit]
+Description=Recover Taki transactions and start the known-good backend and gateway
+Wants=network-online.target
+After=network-online.target
+Before=taki-updater.service
+
+[Service]
+Type=oneshot
+User=root
+ExecStart=/usr/bin/python3.12 -B /usr/local/lib/taki-updater/linux_backend.py recover
+WorkingDirectory=/
+UMask=0077
+TimeoutStartSec=6min
+LogNamespace=taki
+
+[Install]
+WantedBy=multi-user.target
