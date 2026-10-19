@@ -289,6 +289,7 @@ class CutoffAnswer:
     histories: tuple[tuple[str, HistoryView], ...] = ()
     display_ranks: tuple[int, ...] = ()  # A page projection of the same captured boards.
     history_ranks: tuple[int, ...] = ()
+    score_display_limit: int = 30_000_000  # Display policy, never a source validity/game score limit.
 
     @property
     def historical(self):
@@ -328,7 +329,19 @@ class CutoffAnswer:
         return '指定排名 ' + ' / '.join(f'T{rank}' for rank in request.ranks)
 
     def history_for(self, board):
-        return next((view for key, view in self.histories if key == board.song.challenge_id), HistoryView())
+        view = next((view for key, view in self.histories if key == board.song.challenge_id), HistoryView())
+        hidden = sum(value is not None and value > self.score_display_limit
+                     for point in view.points for value in point.scores)
+        current = any(board.score(rank) is not None and board.score(rank) > self.score_display_limit
+                      for rank in self.ranks)
+        if not hidden and not current:
+            return view
+        points = tuple(replace(point, scores=tuple(
+            None if value is not None and value > self.score_display_limit else value
+            for value in point.scores)) for point in view.points)
+        warning = (f'异常分数：超过展示阈值 {self.score_display_limit:,} 的历史分数不绘制（{hidden} 项），缺口断线；'
+                   '当前值保留并标注，原始记录与来源排名不变。阈值不是游戏理论上限。')
+        return replace(view, points=points, warning=' '.join(filter(None, (view.warning, warning))))
 
     def has_players(self, board):
         return not self.historical or any(board.player_id(r) or board.player_name(r) for r in self.ranks)
@@ -373,9 +386,11 @@ class CutoffAnswer:
             return '本地历史（' + '、'.join(sorted({b.source for b in self.boards})) + '）'
         return "Haneoka / MoeNotes" if self.event and self.event.source == "haneoka" else "MoeNotes"
 
-    @staticmethod
-    def score_label(board, rank):
-        return str(board.score(rank)) if board.score(rank) is not None else '暂无数据'
+    def score_label(self, board, rank):
+        value = board.score(rank)
+        if value is None:
+            return '暂无数据'
+        return f'异常分数 {value}' if value > self.score_display_limit else str(value)
 
     @staticmethod
     def id_label(board, rank):
@@ -392,7 +407,8 @@ class CutoffAnswer:
 
 def execute_cutoff(request: CutoffRequest, repository) -> CutoffAnswer:
     with repository.event_cutoffs.foreground():
-        return _execute_cutoff(request, repository)
+        return replace(_execute_cutoff(request, repository), score_display_limit=
+                       getattr(repository.event_cutoffs, 'score_display_limit', 30_000_000))
 
 
 def _historical_event(request, repository):

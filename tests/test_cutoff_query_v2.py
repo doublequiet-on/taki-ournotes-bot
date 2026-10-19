@@ -274,7 +274,9 @@ class CutoffQueryV2Tests(unittest.TestCase):
         giant = 10**15
         points = tuple(HistoryPoint(answer.boards[0].fetched_ms + i * 300000, (giant,) * 5,
                                     answer.boards[0].received_ms + i * 300000) for i in range(2))
-        answer = replace(answer, histories=tuple((b.song.challenge_id, HistoryView(points)) for b in answer.boards))
+        # Explicitly include the synthetic large values to keep testing axis geometry.
+        answer = replace(answer, score_display_limit=giant,
+                         histories=tuple((b.song.challenge_id, HistoryView(points)) for b in answer.boards))
         with patch.object(cutoff_trends, '_text', wraps=cutoff_trends._text) as draw:
             pages = render_cutoff(answer)
         rendered = '\n'.join(line for call in draw.call_args_list for line in call.args[1])

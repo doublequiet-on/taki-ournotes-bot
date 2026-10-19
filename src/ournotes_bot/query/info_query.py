@@ -96,11 +96,11 @@ def card_rows(refs, catalog, label):
         kind = '成员卡' if ref.resource_type == 2 else '留影卡'
         command = f"/查卡 {ref.id}" if ref.resource_type == 2 else f"/查留影卡 {ref.id}"
         if card is None:
-            result.append(InfoRow(f'{kind} ID {ref.id}', ('当前快照缺少卡牌详情。',), command=command,
+            result.append(InfoRow(f'{kind} ID {ref.id}', (f'{kind} ID {ref.id}', '当前快照缺少卡牌详情。'), command=command,
                                   label=label, kind='card', group=kind,
                                   image_kind='wide' if ref.resource_type == 3 else 'portrait',tags=(label,) if label else ()))
         else:
-            result.append(InfoRow(f'{kind} {card.id} · {card.title}', (card.character,),
+            result.append(InfoRow(f'{kind} {card.id} · {card.title}', (f'{kind} ID {card.id}', card.character),
                                   card.thumbnail_url, command, label, card.rarity,
                                   image_kind='wide' if ref.resource_type==3 else 'portrait',
                                   attribute_url=card.catalog.get('attribute_icon',''),kind='card',group=kind,

@@ -30,8 +30,8 @@ def chart(c,answer,board,box,display_time,heading=True):
     c.text(x+w,y+(22 if heading else 53),'分数（百万）',32 if w>1500 else 24,MUTED,align='right')
     values=[v for p in view.points for v in p.scores if v is not None]
     if not values:
-        message=lines('暂无历史观测',w-24,26)
-        c.paragraph(x+12,y+max(72,(h-len(message)*36)/2),'暂无历史观测',w-24,26,36,color=MUTED)
+        message=lines('无可绘制有效观测',w-24,26)
+        c.paragraph(x+12,y+max(72,(h-len(message)*36)/2),'无可绘制有效观测',w-24,26,36,color=MUTED)
         return
     first,last=view.points[0].time_ms,view.points[-1].time_ms
     low,high=min(values),max(values);pad=max(1,(high-low)//8);low=max(0,low-pad);high+=pad
@@ -81,12 +81,16 @@ def render(answer,*,assets,load,display_time,server_label,timezone_label,catalog
     footer=[' · '.join((b.song.title,b.status,display_time(b.fetched_ms,event.server)+' '+timezone_label)) for b in boards]
     footer += [n for b in boards for n in b.notes]+list(event.notes)
     footer += [answer.history_for(b).warning for b in boards if answer.history_for(b).warning]
+    if any(b.score(r) is not None and b.score(r)>answer.score_display_limit for b in boards for r in answer.ranks):
+        footer.append('* 表示当前异常分数，完整原值和来源排名保留。')
     footer=list(dict.fromkeys(footer))
     footer += [answer.source_label+' · 非官方 · 挑战歌曲 Top 100 · 非预测、非确认终榜']
     footlines=tuple(l for v in footer for l in lines(v,width-108,24));footheight=len(footlines)*32+38
     def score_text(board,rank):
-        value=answer.score_label(board,rank)
-        return f'{int(value):,}' if value.isdigit() else value
+        value=board.score(rank)
+        return '暂无数据' if value is None else f'{value:,}'+('*' if value>answer.score_display_limit else '')
+    def trend_name_width(board,rank):
+        return min(450,max(90,1030-(148 if historical else 274)-24-font(50,True,True).getlength(score_text(board,rank))))
     def player_info(board,rank):
         detail=board.player_detail(rank) or {};exp=detail.get('rankExp')
         table=next(iter(member.values())).catalog.get('player_levels',[]) if member else ()
@@ -126,7 +130,7 @@ def render(answer,*,assets,load,display_time,server_label,timezone_label,catalog
             th=max(148,len(lines(song_title(board),width-270,54,True))*64+76)
             blocks.append(('song',th,board))
             for rank in answer.ranks:
-                name=lines(answer.name_label(board,rank),450,42)
+                name=lines(answer.name_label(board,rank),trend_name_width(board,rank),42)
                 identity=lines('ID '+answer.id_label(board,rank),650,26)
                 blocks.append(('rank',100 if historical and not answer.has_players(board) else max(156,24+len(name)*50+len(identity)*38), (board,rank)))
             blocks.append(('chart',780 if answer.history_for(board).points else 180,board))
@@ -181,7 +185,7 @@ def render(answer,*,assets,load,display_time,server_label,timezone_label,catalog
                 board,rank=data;detail=board.player_detail(rank) or {};color=COLORS[answer.ranks.index(rank)%5]
                 if historical:
                     if answer.has_players(board):
-                        c.paragraph(148,y+23,answer.name_label(board,rank),450,42,50,bold=True)
+                        c.paragraph(148,y+23,answer.name_label(board,rank),trend_name_width(board,rank),42,50,bold=True)
                         c.paragraph(148,y+bh-65,'ID '+answer.id_label(board,rank),650,32,38,color=MUTED)
                     c.text(94,y+48,f'#{rank}',32,color,align='center')
                     c.text(1030,y+48,score_text(board,rank),50,bold=True,align='right')
@@ -190,7 +194,7 @@ def render(answer,*,assets,load,display_time,server_label,timezone_label,catalog
                     continue
                 c.draw.line((40,y+18,40,y+bh-18),fill=color,width=5);rank_marker(c,rank,94,y+78,72,color)
                 avatar(c,board,rank,148,y+28,96)
-                c.paragraph(274,y+23,answer.name_label(board,rank),450,42,50,bold=True)
+                c.paragraph(274,y+23,answer.name_label(board,rank),trend_name_width(board,rank),42,50,bold=True)
                 c.paragraph(274,y+bh-70,'ID '+answer.id_label(board,rank),650,32,38,color=MUTED)
                 c.text(1030,y+48,score_text(board,rank),50,bold=True,align='right')
                 if player_info(board,rank):c.text(1030,y+103,player_info(board,rank),32,MUTED,align='right')

@@ -37,7 +37,6 @@ def load_artwork(source, event, urls: tuple[str, ...]) -> dict[str, Image.Image 
     from urllib.parse import parse_qs, urlsplit
     from ..sources.haneoka.catalog_assets import is_catalog_asset
     from ..sources.haneoka.transport import public_get
-    deadline = source.monotonic() + 6
     prefix = f"{ASSETS}/{event.server}/{SERVERS[event.server][3]}/"
     def decode(raw):
         with Image.open(io.BytesIO(raw)) as original:
@@ -46,6 +45,8 @@ def load_artwork(source, event, urls: tuple[str, ...]) -> dict[str, Image.Image 
             original.load()
             return original.convert('RGB')
     def load(url):
+        # Queue time for another image must not consume this image's fetch budget.
+        deadline = source.monotonic() + 6
         haneoka = is_catalog_asset(url)
         if event.source == "haneoka" and (not haneoka or
                 parse_qs(urlsplit(url).query)['release'][0] != event.metadata_version):
@@ -70,7 +71,10 @@ def load_artwork(source, event, urls: tuple[str, ...]) -> dict[str, Image.Image 
             try:
                 raw = None
                 if path.is_file() and path.stat().st_size <= 8_000_000 and 0 <= source.clock() - path.stat().st_mtime < 3600:
-                    raw = path.read_bytes()
+                    try:
+                        return decode(path.read_bytes())
+                    except (OSError, ValueError):
+                        pass  # Fetch once and atomically replace a corrupt cache entry.
                 downloaded = raw is None
                 if downloaded:
                     negative = source._negative.get(request_key)

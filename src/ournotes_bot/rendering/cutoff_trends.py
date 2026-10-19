@@ -65,7 +65,7 @@ def _card(answer, board, assets, preview_label):
     id_lines = [_lines(measure, 'ID：' + answer.id_label(board, rank), 530, 18) for rank in ranks]
     name_lines = [_lines(measure, '用户名：' + answer.name_label(board, rank), 530, 18) for rank in ranks]
     for rank in ranks:
-        value = str(board.score(rank)) if board.score(rank) is not None else "暂无数据"
+        value = answer.score_label(board, rank)
         if measure.textlength(value, font=v._font(24)) > 530:
             raise ValueError("full score exceeds readable card width")
     values = [value for p in view.points for value in p.scores if value is not None]
@@ -110,7 +110,7 @@ def _card(answer, board, assets, preview_label):
         color = COLORS[index]
         draw.rectangle((40, y + 9, 50, y + 23), fill=color)
         _text(draw, [f"T{rank}"], 60, y, 22, color)
-        value = str(board.score(rank)) if board.score(rank) is not None else "暂无数据"
+        value = answer.score_label(board, rank)
         _text(draw, [value], 146, y - 2, 24)
         _text(draw, name_lines[index], 146, y + 30, 18, v.INK, 24)
         _text(draw, id_lines[index], 146, y + 30 + len(name_lines[index]) * 24, 18, v.MUTED, 24)
@@ -120,7 +120,7 @@ def _card(answer, board, assets, preview_label):
     draw.rectangle((box[0], box[1], box[0] + box[2], box[1] + box[3]), outline=v.BORDER, width=1)
     valid_times = {p.time_ms for p in view.points if any(n is not None for n in p.scores)}
     if not values:
-        _text(draw, ["暂无历史曲线", f"上方为{answer.value_label}。"], 160, chart_top + 84, 20, v.MUTED)
+        _text(draw, ["无可绘制有效观测", f"上方为{answer.value_label}。"], 160, chart_top + 84, 20, v.MUTED)
     else:
         first, last = min(p.time_ms for p in view.points), max(p.time_ms for p in view.points)
         low, high = min(values), max(values)
@@ -170,7 +170,7 @@ def _column_layout(answer, board, measure, width):
     title = _lines(measure, answer.song_label(board).partition(' · ')[2], inner, 24)
     rows = []
     for rank in answer.ranks:
-        value = str(board.score(rank)) if board.score(rank) is not None else '暂无数据'
+        value = answer.score_label(board, rank)
         inline = measure.textlength(value, font=v._font(25)) <= inner - 66
         lines = [value] if inline else _lines(measure, value, inner, 22)
         ids = _lines(measure, 'ID：' + answer.id_label(board, rank), inner, 18)
@@ -183,7 +183,7 @@ def _column_layout(answer, board, measure, width):
         base = min(values) if len(str(max(values))) > 9 else 0
         axis = _lines(measure, f'纵轴 = {base} + 刻度差值' if base else '纵轴：观测分数（线性）', inner, 17)
     valid_times = {p.time_ms for p in view.points if any(n is not None for n in p.scores)}
-    caption = (f'暂无历史曲线，上方为{answer.value_label}。' if not values else
+    caption = (f'无可绘制有效观测，上方为{answer.value_label}。' if not values else
                '仅 1 个有效观测点，不足以形成曲线。' if len(valid_times) == 1 else
                '方点为真实观测，缺口处断线；不外推。')
     caption = _lines(measure, caption, inner, 18)
@@ -241,7 +241,7 @@ def _column_plot(canvas, draw, answer, board, x, top, width, axis, caption, boun
         _text(draw, ['始 ' + display_time(first, answer.event.server)[5:16],
                      '末 ' + display_time(last, answer.event.server)[5:16]], x + 100, top + 240, 17, v.MUTED, 24)
     else:
-        _text(draw, ['暂无历史'], x + 110, top + 105, 18, v.MUTED)
+        _text(draw, ['无有效观测'], x + 110, top + 105, 18, v.MUTED)
     return _text(draw, caption, x + 16, top + 288, 18, v.MUTED, 27)
 
 
