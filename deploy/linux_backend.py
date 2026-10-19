@@ -678,7 +678,8 @@ class LinuxBackend:
                     "boot_id": Path("/proc/sys/kernel/random/boot_id").read_text().strip()})
         (runtime / "allowed.json").chmod(0o644)
         self.started_at = time.time()
-        self.run(["/usr/bin/systemctl", "reset-failed", "taki.service"], timeout=30)
+        if self._service().get("ActiveState") == "failed":
+            self.run(["/usr/bin/systemctl", "reset-failed", "taki.service"], timeout=30)
         self.run(["/usr/bin/systemctl", "start", "taki.service"], timeout=90)
         if self.koishi: self.koishi.start()
 
