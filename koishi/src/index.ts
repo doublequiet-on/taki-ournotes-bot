@@ -12,6 +12,7 @@ export * from './ingress'
 export * from './backend'
 export * from './receiver'
 export * from './gateway'
+export * from './notices'
 export const name = 'taki'
 export const inject = { optional: ['database'] }
 
@@ -23,6 +24,7 @@ export const Config: Schema<Config> = Schema.object({
   backendUrl: Schema.string().default('http://127.0.0.1:8765'),
   tokenEnv: Schema.string().default('OURNOTES_BACKEND_TOKEN'),
   permissions: Schema.array(String).default(['authority:1']),
+  notifications: Schema.boolean().default(true),
   maxPending: Schema.number().min(1).max(8).step(1).default(8),
 })
 
@@ -30,6 +32,7 @@ declare module 'koishi' {
   interface Context { takiTransport: TakiTransport }
 }
 export class TakiTransport extends Service {
+  receiver?: Receiver
   private active = true
   private deliveries = new Set<QQDelivery>()
   constructor(ctx: Context) {
@@ -57,11 +60,12 @@ export class TakiTransport extends Service {
   }
 }
 export function apply(ctx: Context, config: Config): void {
-  new TakiTransport(ctx)
+  const transport=new TakiTransport(ctx)
+  ctx.set('takiTransport',transport)
   if (!config?.enabled) return
   if (![config.instanceId, config.appId, config.selfId].every(value => value && value.length <= 256)
       || !Number.isInteger(config.maxPending) || config.maxPending < 1 || config.maxPending > 8) throw new Error('invalid receiver configuration')
-  new Receiver(ctx, config)
+  transport.receiver=new Receiver(ctx, config)
   const install = (bot: any) => {
     if (bot.platform === 'qq' && bot.config.id === config.appId) installGatewayCompatibility(ctx, bot)
   }

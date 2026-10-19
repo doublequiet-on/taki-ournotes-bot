@@ -1,6 +1,6 @@
 # Taki 开发导航
 
-Koishi 迁移候选入口：[M0/M1 基线与门禁](KOISHI_MIGRATION_M0_M1.md) → [薄插件与离线探针](../koishi/README.md) → [M2 本机业务后端](KOISHI_BACKEND_V1.md) → [M3 查询接线与验证](KOISHI_MIGRATION_M3.md)。现有 Python bot 仍保留原运行入口；迁移候选使用独立 backend 模式。
+Koishi 迁移候选入口：[M0/M1 基线与门禁](KOISHI_MIGRATION_M0_M1.md) → [薄插件与离线探针](../koishi/README.md) → [M2 本机业务后端](KOISHI_BACKEND_V1.md) → [M3 查询接线与验证](KOISHI_MIGRATION_M3.md) → [M4 后台、组合发布与切换 runbook](KOISHI_MIGRATION_M4.md)。现有 Python bot 仍保留原运行入口；迁移候选使用独立 backend 模式。
 
 本指南导航到代码和已有专项说明，不替代实现核实，也不是 bot 运行时提示词。需要任务映射或验证命令时选相关一行，再按需补读调用方和测试；目标和上下文已明确时直接进入相关文件。源码位置已按 2026-09-30 目录整理校准，主体业务实现沿用 `5ea0f08`；不表示线上版本或上游数据已现场验证。
 

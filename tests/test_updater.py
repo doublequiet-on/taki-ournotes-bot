@@ -269,7 +269,9 @@ class UpdateNoticeTests(unittest.IsolatedAsyncioTestCase):
         self.state = {"active": {"sha": B, "source": str(self.source)},
                       "previous": {"sha": A, "source": str(self.previous_source)}, "rejected": None}
         u.atomic_json(self.state_path, self.state)
-        facts = patch("ournotes_bot.update_notice.release_facts",
+        from ournotes_bot.application.notice_reports import release_facts
+        self._original_facts = release_facts
+        facts = patch("ournotes_bot.application.notice_reports.release_facts",
                       side_effect=lambda _root, _previous, revision:
                       json.dumps({"提交标题": revision}))
         self.addCleanup(facts.stop)
@@ -347,7 +349,7 @@ class UpdateNoticeTests(unittest.IsolatedAsyncioTestCase):
         u.atomic_json(self.state_path, self.state)
         self.client.request.side_effect = None
         self.client.request.return_value = ModelResponse({"notice": "Taki 更新：bbbbbbbb"}, {})
-        with self.assertLogs("ournotes_bot.update_notice", level="ERROR"):
+        with self.assertLogs("ournotes_bot.application.notice_reports", level="ERROR"):
             await self.worker().deliver(self.api)
         self.assertEqual(len(self.posts()), 1)
         self.assertEqual(self.client.request.call_count, 2)
@@ -357,7 +359,7 @@ class UpdateNoticeTests(unittest.IsolatedAsyncioTestCase):
         self.client.request.side_effect = None
         self.client.request.return_value = ModelResponse(
             {"notice": "使用现有 DeepSeek API 配置，依据提交标题、变动文件和更新日志生成公告。"}, {})
-        with self.assertLogs("ournotes_bot.update_notice", level="ERROR"):
+        with self.assertLogs("ournotes_bot.application.notice_reports", level="ERROR"):
             await self.notifier.deliver(self.api)
         self.http.request.assert_not_called()
         self.assertEqual(self.notifier.store.report(B)[0], "failed")
@@ -456,7 +458,7 @@ class UpdateNoticeTests(unittest.IsolatedAsyncioTestCase):
         u.atomic_json(self.state_path, self.state)
         self.client.request.side_effect = None
         self.client.request.return_value = ModelResponse({"notice": "x" * 351}, {})
-        with self.assertLogs("ournotes_bot.update_notice", level="ERROR"):
+        with self.assertLogs("ournotes_bot.application.notice_reports", level="ERROR"):
             await self.notifier.deliver(self.api)
         await self.worker().deliver(self.api)
         self.assertEqual(self.client.request.call_count, 1)
@@ -468,3 +470,111 @@ class UpdateNoticeTests(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class NoticeGatewayTests(UpdateNoticeTests):
+    """Shared schema and actual claim/intent/ACK state transitions, no platform calls."""
+    def setUp(self):
+        super().setUp()
+        from ournotes_bot.application.notice_gateway import NoticeGateway
+        self.epoch = 'gateway-one'
+        self.backend = SimpleNamespace(instance_id='test', app_id='app', ready=True, closing=False,
+            ledger=SimpleNamespace(active=lambda epoch: epoch == self.epoch))
+        self.gateway = NoticeGateway(self.backend, self.notifier)
+        self.serial = 0
+
+    def base(self, **values):
+        return dict(protocol={'major':1,'minor':0},instance_id='test',app_id='app',gateway_epoch=self.epoch,**values)
+
+    def group(self, kind='discover', stamp=None):
+        self.serial += 1
+        import time
+        return self.gateway.group(self.base(event_id=str(self.serial),group_id='group',kind=kind,
+            timestamp_ms=stamp if stamp is not None else time.time()*1000,ingress_seq=self.serial))
+
+    async def claim(self):
+        self.serial += 1
+        return await self.gateway.claims(self.base(claim_request_id=str(self.serial),limit=1))
+
+    def event(self, claim, kind, **values):
+        self.serial += 1
+        return self.gateway.event(claim['notice_id'],self.base(claim_id=claim['claim_id'],event_id=str(self.serial),
+            event=kind,group_version=claim['group_version'],**values))
+
+    async def test_gateway_revoke_during_permission_and_after_claim(self):
+        import time
+        from ournotes_bot.application.backend_protocol import ProtocolError
+        self.group(); c=(await self.claim())['claims'][0]
+        self.group('reject')
+        with self.assertRaisesRegex(ProtocolError,'group_changed'):
+            self.event(c,'permission',allowed=True,observed_at_ms=time.time()*1000)
+        with self.assertRaisesRegex(ProtocolError,'group_changed'):
+            self.event(c,'intent',attempt_id='a')
+        self.assertEqual(self.notifier.store.pending(B)[0][1],0)
+
+    async def test_gateway_intent_once_ack_retry_and_old_reader_rollback(self):
+        self.group(); c=(await self.claim())['claims'][0]
+        body=self.base(claim_id=c['claim_id'],event_id='intent',event='intent',group_version=c['group_version'],attempt_id='a')
+        self.assertEqual(self.gateway.event(c['notice_id'],body)['permission'],'granted')
+        self.assertEqual(self.gateway.event(c['notice_id'],body)['permission'],'existing')
+        self.assertFalse(self.notifier.store.reserve('group',B))
+        ack={**body,'event_id':'ack','event':'ack','result':'success','message_id':'receipt'}
+        self.gateway.event(c['notice_id'],ack);self.gateway.event(c['notice_id'],ack)
+        self.assertEqual((await self.claim())['claims'],[])
+        await self.worker().deliver(self.api)
+        self.assertEqual(len(self.posts()),0)
+
+    async def test_gateway_restart_unknown_send_never_reclaimed_late_ack_recorded(self):
+        from ournotes_bot.application.notice_gateway import NoticeGateway
+        self.group(); c=(await self.claim())['claims'][0]
+        self.event(c,'intent',attempt_id='a')
+        self.gateway=NoticeGateway(self.backend,self.notifier)
+        self.assertEqual((await self.claim())['claims'],[])
+        self.event(c,'ack',attempt_id='a',result='success',message_id='late')
+        self.assertEqual(self.notifier.store.pending(B),[])
+
+    async def test_gateway_reload_claim_without_send_can_be_reclaimed(self):
+        from ournotes_bot.application.backend_protocol import ProtocolError
+        self.group(); c=(await self.claim())['claims'][0]
+        self.epoch='gateway-two'
+        new=(await self.claim())['claims'][0]
+        self.assertNotEqual(c['claim_id'],new['claim_id'])
+        with self.assertRaises(ProtocolError): self.event(c,'intent',attempt_id='old')
+        self.assertEqual(self.event(new,'intent',attempt_id='new')['permission'],'granted')
+
+    async def test_gateway_deployment_gate_and_same_claim_request(self):
+        self.group()
+        (self.root/'data/updater/transaction.json').write_text('{}')
+        self.assertEqual((await self.claim())['claims'],[])
+        (self.root/'data/updater/transaction.json').unlink()
+        request=self.base(claim_request_id='stable',limit=1)
+        first=await self.gateway.claims(request)
+        self.assertEqual(await self.gateway.claims(request),first)
+        self.assertEqual(self.client.request.call_count,1)
+
+    async def test_gateway_group_duplicate_conflict_and_old_timestamp(self):
+        import time
+        from ournotes_bot.application.backend_protocol import ProtocolError
+        stamp=time.time()*1000
+        body=self.base(event_id='same',group_id='group',kind='reject',timestamp_ms=stamp,ingress_seq=1)
+        first=self.gateway.group(body)
+        self.assertEqual(self.gateway.group(body),first)
+        with self.assertRaises(ProtocolError): self.gateway.group({**body,'kind':'allow'})
+        self.serial=2
+        self.assertFalse(self.group('allow',stamp-1000)['applied'])
+        self.assertEqual(self.notifier.store.pending(B)[0][1],0)
+
+    async def test_linux_published_committed_state_and_facts_gate(self):
+        import os
+        from ournotes_bot.application.notice_reports import committed_notice,release_facts
+        state=self.root/'notice.json'
+        state.write_text(json.dumps({**self.state,'transaction':None,'facts':'public changes'}))
+        with patch.dict(os.environ,OURNOTES_DEPLOYMENT_STATE=str(state)):
+            self.assertEqual(committed_notice(self.root,self.source),(B,A))
+            # Bypass the fixture patch only for this pure state-file read.
+            import importlib
+            module=importlib.import_module('ournotes_bot.application.notice_reports')
+            with patch.object(module,'release_facts',self._original_facts):
+                self.assertEqual(module.release_facts(self.root,A,B),'public changes')
+            state.write_text(json.dumps({**self.state,'transaction':{'phase':'starting'}}))
+            self.assertIsNone(committed_notice(self.root,self.source))

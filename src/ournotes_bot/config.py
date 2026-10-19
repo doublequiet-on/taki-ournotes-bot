@@ -54,6 +54,8 @@ def read_flag(name: str, default: bool) -> bool:
 
 def runtime_data_dir() -> Path:
     """Keep installed copies out of the package's potentially read-only directory."""
+    if os.getenv("OURNOTES_RUNTIME_DATA_DIR"):
+        return Path(os.environ["OURNOTES_RUNTIME_DATA_DIR"]).resolve()
     if SOURCE_ROOT:
         return SOURCE_ROOT / "data"
     if os.name == "nt":

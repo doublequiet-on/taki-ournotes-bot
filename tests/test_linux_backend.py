@@ -392,6 +392,27 @@ class LinuxBackendTests(unittest.TestCase):
             self.health_runner(**scenario)
             self.assertFalse(self.backend.healthy(self.baseline))
 
+    def test_koishi_stop_closes_gateway_before_backend(self):
+        order=[]
+        self.backend.koishi=Mock()
+        self.backend.koishi.stop.side_effect=lambda:order.append('gateway')
+        self.backend.run=lambda *args,**kw:order.append('backend')
+        self.backend._service=lambda:{'MainPID':'0','ActiveState':'inactive'}
+        self.backend._snapshot_stopped_data=Mock()
+        self.backend.stop()
+        self.assertEqual(order,['gateway','backend'])
+
+    def test_koishi_health_uses_both_pids_and_exact_combination(self):
+        from deploy.koishi_control import health_matches
+        row=dict(ready=True,release_sha=B,pid=12,backend_pid=11,backend_code_digest='digest',
+                 qq_online=True,handshake=True,backend_ready=True)
+        self.assertTrue(health_matches(row,B,'11','12','digest'))
+        for field,value in [('pid',13),('backend_pid',10),('release_sha',A),('handshake',False),('qq_online',False)]:
+            self.assertFalse(health_matches({**row,field:value},B,'11','12','digest'))
+        self.backend.koishi=Mock();self.backend.koishi.healthy.return_value=False
+        self.assertFalse(self.backend.healthy(self.baseline))
+        self.assertEqual(self.calls,[])
+
     def test_stop_confirms_pid_zero_before_activation(self):
         with patch.object(self.backend, "_service", return_value={"MainPID": "42", "ActiveState": "active"}):
             with self.assertRaisesRegex(Rejected, "service_not_stopped"):

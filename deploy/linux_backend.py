@@ -251,6 +251,13 @@ def run_bounded(argv: list[str], *, timeout: int = 120, log: Path | None = None,
 class LinuxBackend:
     def __init__(self, config: dict):
         self.config = config
+        self.koishi = None
+        if config.get('runtime_mode') == 'koishi':
+            try:
+                from .koishi_control import KoishiControl
+            except ImportError:
+                from koishi_control import KoishiControl
+            self.koishi = KoishiControl(self)
         self.base = Path(config["base"])
         self.state = Path(config["state_dir"])
         self.baseline = Release(**config["baseline"])
@@ -312,9 +319,10 @@ class LinuxBackend:
         if jobs.get("total_count", 101) > 100:
             raise Deferred("ci_job_limit")
         found = {job.get("name"): job for job in rows}
-        if not JOBS.issubset(found):
+        required_jobs = JOBS | ({'koishi-combination'} if self.koishi else set())
+        if not required_jobs.issubset(found):
             raise Rejected("ci_required_jobs_missing")
-        for name in JOBS:
+        for name in required_jobs:
             job = found[name]
             if (job.get("head_sha") != commit or job.get("run_id") != run_id
                     or job.get("status") != "completed" or job.get("conclusion") != "success"):
@@ -461,6 +469,9 @@ class LinuxBackend:
         atomic_json(self.manifests / (commit + ".json"), {"owner": "taki-linux-updater-v1", "release": asdict(release),
                     "digest": digest, "environment_digest": environment_digest(Path(release.venv_dir)),
                     "bundle_sha256": bundle_hash, "prepared": True})
+        if self.koishi:
+            combo, _ = self.koishi.combination(release)
+            self._sandbox(release,[str(combo/'bin/node'),str(combo/'gateway/scripts/probe.cjs')], 'koishi-probe', offline=True)
         return release
 
     def _prepare_note_assets(self, release: Release) -> None:
@@ -534,6 +545,9 @@ class LinuxBackend:
         self._manifest(previous)
         self._manifest(candidate)
         self._check_reviewed_fingerprints(previous, candidate)
+        if self.koishi:
+            self.koishi.combination(previous)
+            self.koishi.combination(candidate)
         # Baseline bytes are pinned in configuration and separately reviewed at
         # installation; never rerun its real environment during a rollback gate.
         if candidate != self.baseline:
@@ -597,6 +611,7 @@ class LinuxBackend:
         return dict(line.split("=", 1) for line in output.splitlines() if "=" in line)
 
     def stop(self) -> None:
+        if self.koishi: self.koishi.stop()
         self.run(["/usr/bin/systemctl", "stop", "taki.service"], timeout=90)
         state = self._service()
         if state.get("MainPID") != "0" or state.get("ActiveState") not in {"inactive", "failed"}:
@@ -637,6 +652,9 @@ class LinuxBackend:
             raise
 
     def activate(self, release: Release) -> None:
+        if self.koishi:
+            self.koishi.combination(release)
+            if self.koishi.state().get("MainPID") != "0": raise Rejected("gateway_not_stopped")
         self._manifest(release)
         if self._service().get("MainPID") != "0":
             raise Rejected("activation_requires_stopped_service")
@@ -662,8 +680,10 @@ class LinuxBackend:
         self.started_at = time.time()
         self.run(["/usr/bin/systemctl", "reset-failed", "taki.service"], timeout=30)
         self.run(["/usr/bin/systemctl", "start", "taki.service"], timeout=90)
+        if self.koishi: self.koishi.start()
 
     def healthy(self, release: Release) -> bool:
+        if self.koishi: return self.koishi.healthy(release)
         self._manifest(release)
         if self.current_release() != release:
             return False
@@ -772,6 +792,10 @@ def recover_engine(engine: Engine) -> RunResult:
 def validate_config(config: dict) -> None:
     """The installed controller is scoped to the already-reviewed Taki instance."""
     base, control = "/home/ubuntu/taki", "/usr/local/lib/taki-updater"
+    if config.get('runtime_mode','bot') not in ('bot','koishi'): raise Rejected('runtime_mode_invalid')
+    if config.get('runtime_mode')=='koishi' and (config.get('koishi_combinations')!='/opt/taki-combinations'
+            or config.get('koishi_health_token_file')!='/etc/taki-backend-token' or config.get('koishi_health_port')!=8766):
+        raise Rejected('koishi_configuration_out_of_scope')
     baseline = {"commit": "5ea0f085c9863b98c0384e086460cedd98a5f662",
                 "code_dir": base + "/releases/5ea0f085c9863b98c0384e086460cedd98a5f662-snapshot",
                 "venv_dir": base + "/venv"}
@@ -896,6 +920,7 @@ def main(argv=None) -> int:
                 return 0
         else:
             engine = Engine(config["state_dir"], LinuxBackend(config))
+            if engine.backend.koishi: engine.backend.koishi.publish_notice(None)
             if args.command == "resume":
                 result = asdict(engine.resume(retry_commit=args.retry_commit))
             elif args.command == "rollback":
@@ -904,6 +929,8 @@ def main(argv=None) -> int:
                 result = asdict(recover_engine(engine))
             else:
                 result = asdict(engine.run())
+        if args.command != "status" and engine.backend.koishi:
+            engine.backend.koishi.publish_notice(engine.load_state())
         print(json.dumps(result, ensure_ascii=True, sort_keys=True))
         if args.command == "rollback":
             return 0 if result.get("status") == "rolled_back" and result.get("reason") == "operator_requested" else 1

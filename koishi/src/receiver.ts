@@ -5,9 +5,10 @@ import type { QQBot } from '@satorijs/adapter-qq'
 import { BackendClient, BackendError, Plan } from './backend'
 import { decodeIncoming, Identity, Inbound } from './ingress'
 import { QQDelivery, QQInternal } from './delivery'
+import { Notices } from './notices'
 
 export interface ReceiverConfig extends Identity {
-  backendUrl: string; tokenEnv: string; permissions: string[]; maxPending: number
+  notifications?: boolean; backendUrl: string; tokenEnv: string; permissions: string[]; maxPending: number
 }
 interface Raw { raw: unknown; seq: number; at: number; fingerprint: string; conflict?: boolean }
 interface Job { input: Inbound; promise: Promise<void>; delivery?: QQDelivery; plan?: Plan }
@@ -16,6 +17,8 @@ export class Receiver {
   readonly epoch = randomUUID()
   readonly client: BackendClient
   private active = true
+  private notices?: Notices
+  health() { return { active:this.active && (this.notices?.healthy() ?? true), handshake:!!this.client.readiness, epoch:this.client.epoch, backend:this.client.readiness } }
   private sequence = 0
   private raw = new Map<string, Raw>()
   private jobs = new Map<string, Job>()
@@ -33,6 +36,7 @@ export class Receiver {
     ctx.effect(() => ctx.root.middleware(async (session, next) => {
       if (!await this.receive(session)) return next()
     }, true))
+    if (config.notifications) this.notices=new Notices(ctx,this.client,config,this.ready)
     ctx.on('dispose', () => this.dispose())
   }
   capture(session: Session): void {
@@ -176,11 +180,13 @@ export class Receiver {
   async dispose(): Promise<void> {
     this.active = false
     this.client.deactivate()
+    const noticesClosed=this.notices?.close()
     this.raw.clear()
     for (const job of this.jobs.values()) job.delivery?.dispose()
     // Retire before waiting for in-flight sends. Their late ACK may record facts, never context.
     try { await this.ready; await this.client.retire() }
     catch { this.log.warn('gateway retirement unconfirmed; no new local sends') }
     await Promise.allSettled([...this.jobs.values()].map(job => job.promise))
+    await noticesClosed
   }
 }

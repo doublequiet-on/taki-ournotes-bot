@@ -507,5 +507,14 @@ def run_bot(app_id: str, app_secret: str, repository: SongRepository, settings: 
                 sampler.stop()
         finally:
             if owns_loop:
-                loop.close()
+                async def drain_owned_loop():
+                    pending = [task for task in asyncio.all_tasks(loop) if task is not asyncio.current_task()]
+                    for task in pending:
+                        task.cancel()
+                    await asyncio.gather(*pending, return_exceptions=True)
+                    # Keep the CLI DataOwner lock until canceled to_thread writers really finish.
+                    await loop.shutdown_default_executor()
+                if not loop.is_closed():
+                    loop.run_until_complete(drain_owned_loop())
+                    loop.close()
                 asyncio.set_event_loop(None)

@@ -29,7 +29,7 @@ export const candidateLimits: Readonly<Limits> = Object.freeze({
 function object(value: unknown): Record<string, unknown> | undefined {
   return value !== null && typeof value === 'object' ? value as Record<string, unknown> : undefined
 }
-function receipt(value: unknown): Outcome {
+export function classifyReceipt(value: unknown): Outcome {
   const data = object(value)
   if (data?.audit_id || object(data?.data)?.message_audit) return { status: 'uncertain', reason: 'audit_pending' }
   if (typeof data?.code === 'number' && data.code !== 0) return { status: 'failure', reason: 'platform_rejected' }
@@ -165,12 +165,12 @@ export class QQDelivery {
       ...(media ? { media } : {}) }
     let result: Outcome
     try {
-      result = receipt(this.inbound.kind === 'group'
+      result = classifyReceipt(this.inbound.kind === 'group'
         ? await this.api.sendMessage(this.inbound.conversationId, payload)
         : await this.api.sendPrivateMessage(this.inbound.userId, payload))
     } catch (error) {
       const data = object(object(error)?.response)?.data
-      result = object(data) ? receipt(data) : { status: 'uncertain', reason: 'transport_error' }
+      result = object(data) ? classifyReceipt(data) : { status: 'uncertain', reason: 'transport_error' }
     }
     if (result.status !== 'success') this.halted = true
     return this.ack(attempt, result, result.status === 'success')

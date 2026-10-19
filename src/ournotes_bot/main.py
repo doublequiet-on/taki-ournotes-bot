@@ -50,6 +50,12 @@ def main() -> None:
         for result in asyncio.run(setup_menu(settings.app_id, settings.app_secret)):
             print(result)
         return
+    from .application.data_owner import DataOwner
+    with DataOwner(settings):
+        run_local(args, settings)
+
+
+def run_local(args, settings):
     repository = SongRepository(settings.data_base, settings.cache_file, settings.cache_ttl_hours,
                                 chart_source=settings.chart_source,
                                 data_source=settings.data_source)

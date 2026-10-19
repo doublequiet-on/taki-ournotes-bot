@@ -33,3 +33,5 @@ exclude architecture_exceptions.json scripts/check_architecture.py tests/test_ar
 
 include docs/IMAGE_OUTPUT.md
 include docs/KOISHI_BACKEND_V1.md
+
+include docs/KOISHI_MIGRATION_M4.md

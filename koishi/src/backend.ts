@@ -17,6 +17,7 @@ export class BackendError extends Error {
 }
 export class BackendClient implements DeliveryEvents {
   readonly base: string
+  readiness?: { notices_enabled?: boolean; backend_code_digest?: string; backend_epoch?: string }
   private contextAllowed = true
   deactivate(): void { this.contextAllowed = false }
   constructor(base: string, private token: string, readonly instance: string, readonly epoch: string,
@@ -73,8 +74,9 @@ export class BackendClient implements DeliveryEvents {
   async initialize(): Promise<void> {
     const ready = await this.retry('/v1/ready')
     if (!ready.ready || ready.protocol?.major !== 1 || ready.protocol?.minor !== 0
-        || ready.capability !== capability || !['classify', 'gateway_retire', 'ack_context_guard'].every(feature => ready.features?.includes(feature))) throw new BackendError('incompatible_backend')
+        || ready.capability !== capability || !['classify', 'gateway_retire', 'ack_context_guard', 'notice_gateway_v1'].every(feature => ready.features?.includes(feature))) throw new BackendError('incompatible_backend')
     await this.retry('/v1/gateways', { gateway_epoch: this.epoch })
+    this.readiness=ready
   }
   async recognizes(body: string): Promise<boolean> {
     const value = await this.retry('/v1/classify', { body })

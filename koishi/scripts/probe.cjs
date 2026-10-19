@@ -329,6 +329,27 @@ async function main() {
       assert.equal(submissions,0);assert.equal(env.calls.length,0);await receiver.dispose();await fork.dispose()
     })
   }
+  await run('M4 launcher defaults closed and requires explicit identity', async () => {
+    const {configuration}=require('../run.cjs')
+    assert.throws(()=>configuration({}))
+    assert.throws(()=>configuration({TAKI_KOISHI_ENABLED:'1'}))
+    const value=configuration({TAKI_KOISHI_ENABLED:'1',QQ_APP_ID:'a',QQ_APP_SECRET:'fixture',QQ_SELF_ID:'s',OURNOTES_BACKEND_TOKEN:'x'.repeat(32),TAKI_INSTANCE_ID:'i'})
+    assert.deepEqual(value.adapter.retryWhen,[])
+    assert.equal(value.plugin.notifications,true)
+  })
+  await run('M4 notices share strict receipt classification', async () => {
+    const {classifyReceipt}=require('../lib')
+    assert.equal(classifyReceipt({code:1,id:'not-success'}).status,'failure')
+    assert.equal(classifyReceipt({id:'audited',data:{message_audit:{}}}).status,'uncertain')
+    assert.equal(classifyReceipt({id:'receipt'}).status,'success')
+  })
+  await run('M4 real plugin publishes and releases its scoped transport service', async () => {
+    const ctx=new Context(),plugin=require('../lib')
+    const fork=ctx.plugin(plugin,{enabled:false})
+    assert.ok(ctx.takiTransport)
+    assert.equal(ctx.takiTransport.receiver,undefined)
+    await fork.dispose();assert.equal(ctx.takiTransport,undefined)
+  })
   const root = path.resolve(__dirname, '..')
   const lock = JSON.parse(fs.readFileSync(path.join(root, 'package-lock.json')))
   const versions = Object.fromEntries(['koishi', '@koishijs/core', '@koishijs/plugin-adapter-qq', '@satorijs/adapter-qq', '@satorijs/core', 'typescript'].map(name => {

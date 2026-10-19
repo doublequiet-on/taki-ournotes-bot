@@ -1,8 +1,8 @@
-# Taki Koishi 迁移候选（M0–M3）
+# Taki Koishi 迁移候选（M0–M4）
 
 M3 已接通查询、续查与逐片段交付；`enabled` 默认 false，仅注册运输服务。启用后连接同机 Python 后端，按原始事件身份、Koishi 作用域/权限和后端发送账本处理消息。
 
-配置、生命周期、行为差异和验收范围见 [M3 接线说明](../docs/KOISHI_MIGRATION_M3.md)，HTTP 见 [后端协议](../docs/KOISHI_BACKEND_V1.md)。生产切换另行确认；后台任务与主动通知属于 M4。现有 Python bot 入口保留，本目录不进入 Python 离线包。
+配置、生命周期、行为差异和验收范围见 [M3 接线说明](../docs/KOISHI_MIGRATION_M3.md)，HTTP 见 [后端协议](../docs/KOISHI_BACKEND_V1.md)。生产切换另行确认；后台任务、主动通知和组合发布见 [M4 运行准备](../docs/KOISHI_MIGRATION_M4.md)。现有 Python bot 入口保留，本目录不进入 Python 离线包。
 
 ## 重现离线探针
 
@@ -27,6 +27,8 @@ npm run probe -- probe-output.json
 | `src/backend.ts` | 认证 loopback 客户端、能力握手、受限图片、幂等重试与 ACK 提交门禁。 |
 | `src/receiver.ts` | 原始事件捕获、标准化作用域/权限、串行接纳、同消息 delivery 所有权。 |
 | `src/gateway.ts` | 每 bot 的窄 discovery 主机修正，保留路径/参数并随卸载恢复。 |
+| `src/notices.ts` | 群许可事件、独立主动通知、逐次许可/intent/ACK，使用后端唯一账本。 |
+| `run.cjs` | 双进程网关入口，显式启用、受认证 loopback 健康、顺序卸载。 |
 | `src/index.ts` | 默认关闭的配置、运输服务与受管 receiver 生命周期。 |
 | `scripts/probe.cjs` | 已安装包的离线行为验证与故障夹具。 |
 

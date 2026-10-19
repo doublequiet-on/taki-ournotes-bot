@@ -1,6 +1,6 @@
-# Koishi 本机业务后端协议 v1（M2 / M3）
+# Koishi 本机业务后端协议 v1（M2 / M3 / M4）
 
-本阶段以 `b60c12dc2acff3d170894e3fb60c15f12392c65b` 的 M0/M1 为起点，在同一迁移分支继续。实现 Python 常驻查询后端和共享回复准备；Koishi 消息接收器/HTTP 客户端与网关接线已在 [M3](KOISHI_MIGRATION_M3.md) 实现，真实平台送达待验；后台任务和通知发送属于 M4。生产切换仍需另行确认。
+本阶段以 `b60c12dc2acff3d170894e3fb60c15f12392c65b` 的 M0/M1 为起点，在同一迁移分支继续。实现 Python 常驻查询后端和共享回复准备；Koishi 消息接收器/HTTP 客户端与网关接线已在 [M3](KOISHI_MIGRATION_M3.md) 实现，真实平台送达待验；后台任务和通知发送已在 [M4](KOISHI_MIGRATION_M4.md) 接线。生产切换仍需另行确认。
 
 ## 启动与所有权
 
@@ -14,7 +14,7 @@ ournotes-bot backend --instance-id taki-test --app-id APP_ID --state-dir /absolu
 
 组装入口 `application/backend_bootstrap.py` 只创建一份 repository、AIQueryParser（含既有额度管理）、QueryGate 和 ContextStore。`repository.load()` 完成后才 ready；失败维持 503，记录错误类型，不伪装成可查询。初始化、资料读取和渲染仍可访问配置的数据源，离线测试用固定资料替换源初始化。`health` 不代表 ready 或 QQ 可用。
 
-本阶段不启动主资料/属性周期刷新、HistorySampler 或通知任务，ready 明确返回 `background_tasks: false`；旧 bot 仍按原入口管理它们。M4 接管时必须核对真实配置和单写者，不能同时启动两套任务。关闭时停止接纳、终结租约，等待正在运行的准备线程实际结束后关闭账本。线程无法强杀；取消 HTTP 等待不会取消共享工作或提前释放 QueryGate 容量。
+后端在资料初始化成功后启动主资料半小时刷新、300 秒属性刷新和按配置启用的 HistorySampler；`background_tasks` 表示必需任务均存活。关闭时先关闭接纳并等待查询/后台线程退出，再关闭账本和业务目录锁。`notices_enabled` 单独反映通知配置。新 `OURNOTES_RUNTIME_DATA_DIR` 控制素材/谱面缓存根目录；详细单写者、数据路径和旧版本限制见 M4 runbook。
 
 账本为 `state-dir/deliveries-v1.sqlite3`，旁边的文件锁由 OS 持有，进程退出自动释放；锁文件存在本身不表示正在运行。第二个使用同一账本的后端拒绝启动。schema=1，namespace 为 instance_id/AppID；不同命名空间不得复用同一个账本。它只保护交付账本，不能替代 M4 的所有共享业务文件单写者校验。
 
@@ -31,7 +31,7 @@ ournotes-bot backend --instance-id taki-test --app-id APP_ID --state-dir /absolu
 | 端点 | 结果 |
 |---|---|
 | GET /v1/health | `alive` 与 protocol；只证明进程处理请求。 |
-| GET /v1/ready | ready、protocol、backend_epoch、backend_code_digest、capability、features、background_tasks；未初始化为 503。代码摘要覆盖后端/协议/账本/准备/组装五个文件，不冒充整个仓库 SHA。 |
+| GET /v1/ready | ready、protocol、backend_epoch、backend_code_digest、capability、features、background_tasks、pid、notices_enabled；未初始化为 503。代码摘要覆盖后端/协议/账本/准备/组装与四个 M4 运行模块，不冒充整个仓库 SHA。 |
 | POST /v1/gateways | 输入仅 `gateway_epoch`；登记新代次并撤销旧代次。重复当前代次幂等，已退役代次不能重新激活。 |
 | POST /v1/classify | 输入仅 body，返回 recognized；只读识别，不查询/扣额/写上下文。 |
 | POST /v1/gateways/retire | 输入仅 gateway_epoch；撤销该代次并终结其活动请求，不影响新代次。 |
@@ -79,7 +79,7 @@ request_id 等于紧凑 JSON 数组 `[instance_id,app_id,"qq",kind,conversation_
 
 片段包含 `id, position, mode, status, attempt, message`；有发送权时额外返回 kind、纯文本 text，图片还返回 image 受控路径和 mime。初始片段 ID 为位置的十进制字符串，position 从 0 开始；当前最多五片段，复用共享 `expand_replies` 的分页与余图语义。send_allowed 只说明计划当前有效，**不能代替每片段 intent 的发送许可**。
 
-所有事件共同字段：`protocol,request_id,plan_version,gateway_epoch,event,part_id,attempt_id`，严格拒绝额外字段。M3 ready.features 包含 `classify`、`gateway_retire`、`ack_context_guard`，新网关要求三者齐备。ACK 允许可选布尔 `allow_context`，false 只补记发送事实并终结活动批，不提交上下文；省略保留 M2 兼容语义。ACK 还必须包含 `result,message_id`；success 要求非空消息 ID，其余 result 的 message_id 必须为 null。结果可为 success/failure/uncertain/aborted；审核中由网关映射为 uncertain。
+所有事件共同字段：`protocol,request_id,plan_version,gateway_epoch,event,part_id,attempt_id`，严格拒绝额外字段。M3 ready.features 包含 `classify`、`gateway_retire`、`ack_context_guard`、`notice_gateway_v1`，新网关要求四者齐备。ACK 允许可选布尔 `allow_context`，false 只补记发送事实并终结活动批，不提交上下文；省略保留 M2 兼容语义。ACK 还必须包含 `result,message_id`；success 要求非空消息 ID，其余 result 的 message_id 必须为 null。结果可为 success/failure/uncertain/aborted；审核中由网关映射为 uncertain。
 
 | event | 前置条件与行为 |
 |---|---|
@@ -101,9 +101,9 @@ QueryGate 沿用配置的并发/排队（默认 2+4），全后端最多持有 6
 
 账本不保存正文、图片或 QueryContext。重启将 preparing/prepared 标过期，未确认 sending 标 uncertain，旧代次全部退役；重复原事件不重查/重发。旧 success ACK 可补记，但内存游标不重建。业务缓存/额度/历史文件格式未改变，代码回退不能把删除交付账本当作恢复方法。
 
-## 冻结的主动通知协议（M4 接线）
+## 主动通知协议（M4 已接线）
 
-这些路由已经保留且认证，目前统一返回 501 `notification_transport_pending_m4`；未接入现有 NoticeStore、不发现群、不产生通知、不消费通知额度。v1 冻结以下字段与状态，M4 的实现和测试按此核对：
+下列路由已认证并接入唯一 NoticeStore；通知关闭时返回 503 `notifications_disabled`。仅已提交部署且已有/生成有效报告才能领取；后端 ready 不构成公告条件。群许可、通知意图和 ACK 追加事实见 M4 运行准备。领取响应为 `{"claims":[...]}`，空结果不落请求元数据；相同空轮询 ID 后来可以观察新任务，非空领取则持久幂等。
 
 | 路由 | 请求字段（均含 protocol、instance_id、app_id、gateway_epoch） | 返回及约束 |
 |---|---|---|
@@ -111,9 +111,9 @@ QueryGate 沿用配置的并发/排队（默认 2+4），全后端最多持有 6
 | POST /v1/notices/claims | claim_request_id、limit（1–16） | 幂等领取：notice_id、claim_id、expires_at、group_id、group_version、deployment_revision、text、send_type=active；只有既有部署已提交且符合现有账本/许可条件的任务可领取。无原用户 msg_id，不复用被动序号或预算。 |
 | POST /v1/notices/{notice_id}/events | claim_id、event_id、event（permission/intent/ack/aborted）、group_version；permission 带 allowed+observed_at_ms；intent 带 attempt_id；ACK 带 attempt_id+result+message_id | bot_state 核验绑定领取时的 group_version，不能覆盖随后发生的撤权；每通知只有一个有效领取者。发送前落盘 intent，ACK 幂等；未决发送在过期、重载、同部署再领取时不重授发送权。 |
 
-通知稳定键为 instance/AppID/group/deployment_revision；claim_request_id 和 event_id 同 ID 内容冲突拒绝。所有身份沿用 1–256 字符、无控制符限制；文本上限与既有通知分块/预算对照后冻结，不能套用被动五槽。ACK result 与被动相同；主动发送权限变化和通知真实客户端送达仍属 M4/实机验收。
+通知稳定键为 instance/AppID/group/deployment_revision；claim_request_id 和 event_id 同 ID 内容冲突拒绝。所有身份沿用 1–256 字符、无控制符限制；文本沿用既有报告 120 字上限，一条主动纯文本，不套用被动五槽。ACK result 与被动相同；主动发送权限变化和通知真实客户端送达仍属 M4/实机验收。
 
-Python 保留唯一现有通知账本和部署提交门禁；Koishi 只完成 bot_state 和实际发送，不复制完成账本。M4 必测：核验期间撤权、领取后重载、发送后 ACK 丢失、同部署重复领取、旧版回退。M2 的 501 不能当作这些行为已实现。
+Python 保留唯一现有通知账本和部署提交门禁；Koishi 只完成 bot_state 和实际发送，不复制完成账本。M4 已覆盖核验期间撤权、领取后重载、重复 ACK/领取、重启未决发送和旧版账本回读；实际平台送达仍待 M5。
 
 ## M2 本地验证（2026-10-19）
 

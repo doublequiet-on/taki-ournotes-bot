@@ -119,6 +119,41 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+  koishi-combination:
+    needs: offline-linux-bundle
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: koishi/.node-version
+          package-manager-cache: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - uses: actions/download-artifact@v4
+        with:
+          name: linux-offline-release
+          path: ${{ runner.temp }}/python-release
+      - name: Install pinned gateway dependencies without lifecycle scripts
+        working-directory: koishi
+        run: npx --yes --package=npm@12.2.0 npm ci --ignore-scripts --no-audit --no-fund
+      - name: Build paired release and controller recovery payload
+        run: |
+          python scripts/build_koishi_release.py --node "$(command -v node)" --python-artifact "$RUNNER_TEMP/python-release/taki-linux-x86_64-cp312.zip" --output "$RUNNER_TEMP/koishi-release/taki-koishi-linux-x64.zip"
+          python -m zipfile -e "$RUNNER_TEMP/koishi-release/taki-koishi-linux-x64.zip" "$RUNNER_TEMP/combination-check"
+          chmod +x "$RUNNER_TEMP/combination-check/bin/node"
+          sudo unshare --net -- "$(command -v python)" scripts/check_koishi_release.py "$RUNNER_TEMP/combination-check" "$(git rev-parse HEAD)"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: koishi-combination
+          path: ${{ runner.temp }}/koishi-release/
+          if-no-files-found: error
+          retention-days: 14
+
   publish-linux-bundle:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     needs: [architecture, test-and-package, offline-linux-bundle]

@@ -5,6 +5,7 @@ import asyncio
 import hmac
 import json as jsonlib
 import logging
+import os
 import time
 import uuid
 import hashlib
@@ -48,7 +49,7 @@ class Backend:
         self.instance_id, self.app_id, self.clock = instance_id, app_id, clock
         self.runtime = uuid.uuid4().hex
         self.code_digest = hashlib.sha256(b''.join(Path(__file__).with_name(name).read_bytes()
-            for name in ('backend.py', 'backend_protocol.py', 'delivery_ledger.py', 'replies.py', 'backend_bootstrap.py'))).hexdigest()
+            for name in ('backend.py', 'backend_protocol.py', 'delivery_ledger.py', 'replies.py', 'backend_bootstrap.py', 'runtime_tasks.py', 'notice_gateway.py', 'notice_reports.py', 'data_owner.py'))).hexdigest()
         self.ledger = Ledger(ledger_path, instance_id+'\0'+app_id, self.runtime, clock())
         self.contexts = ContextStore()
         self.gate = replies.QueryGate(settings.query_concurrency, settings.query_queue_limit, redact=True)
@@ -59,6 +60,9 @@ class Backend:
         self.ready = False
         self.closing = False
         self.admission = asyncio.Lock()
+        self.runtime_tasks = None
+        self.notices = None
+        self.data_owner = None
 
     def expire(self):
         for work in list(self.works.values()):
@@ -292,7 +296,9 @@ class Backend:
         tasks = list(self.tasks)
         for task in tasks: task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
+        if self.runtime_tasks: await self.runtime_tasks.close()
         self.ledger.close()
+        if self.data_owner: self.data_owner.close()
 
 
 def create_app(backend, token, initialize=None):
@@ -317,9 +323,11 @@ def create_app(backend, token, initialize=None):
             raise ProtocolError('invalid_json') from None
     async def health(request): return json({'alive': True, 'protocol': PROTOCOL})
     async def ready(request):
-        return json({'ready': backend.ready, 'protocol': PROTOCOL, 'backend_epoch': backend.runtime,
+        return json({'ready': backend.ready, 'protocol': PROTOCOL, 'backend_epoch': backend.runtime, 'pid': os.getpid(),
                      'capability': CAPABILITY, 'backend_code_digest': backend.code_digest,
-                     'background_tasks': False, 'features': ['classify', 'gateway_retire', 'ack_context_guard']}, 200 if backend.ready else 503)
+                     'background_tasks': bool(backend.runtime_tasks and backend.runtime_tasks.tasks and all(not task.done() for task in backend.runtime_tasks.tasks)),
+                     'notices_enabled': backend.notices is not None,
+                     'features': ['classify', 'gateway_retire', 'ack_context_guard', 'notice_gateway_v1']}, 200 if backend.ready else 503)
     async def classify(request):
         value = await read_json(request)
         require(isinstance(value, dict) and set(value) == {'body'} and isinstance(value['body'], str), 'classify_shape')
@@ -346,21 +354,27 @@ def create_app(backend, token, initialize=None):
         mime = 'image/png' if data.startswith(b'\x89PNG\r\n\x1a\n') else 'image/jpeg'
         return web.Response(body=data, content_type=mime, headers={'Cache-Control': 'no-store'})
     async def events(request): return json(backend.apply_event(request.match_info['did'], await read_json(request)))
-    async def notice_pending(request):
-        raise ProtocolError('notification_transport_pending_m4', 501)
+    def notices():
+        require(backend.notices is not None, 'notifications_disabled', 503)
+        return backend.notices
+    async def group_event(request): return json(notices().group(await read_json(request)))
+    async def notice_claims(request): return json(await notices().claims(await read_json(request)))
+    async def notice_event(request): return json(notices().event(request.match_info['nid'], await read_json(request)))
     app.add_routes([web.get('/v1/health', health), web.get('/v1/ready', ready),
                     web.post('/v1/gateways', register), web.post('/v1/gateways/retire', retire),
                     web.post('/v1/classify', classify), web.post('/v1/requests', submit),
                     web.get('/v1/requests/{rid}', lookup),
                     web.get('/v1/deliveries/{did}/parts/{pid}/image', image),
                     web.post('/v1/deliveries/{did}/events', events),
-                    web.post('/v1/groups/events', notice_pending), web.post('/v1/notices/claims', notice_pending),
-                    web.post('/v1/notices/{nid}/events', notice_pending)])
+                    web.post('/v1/groups/events', group_event), web.post('/v1/notices/claims', notice_claims),
+                    web.post('/v1/notices/{nid}/events', notice_event)])
     async def lifetime(app):
         async def load():
             try:
                 if initialize is not None: await asyncio.to_thread(initialize)
-                if not backend.closing: backend.ready = True
+                if not backend.closing:
+                    if backend.runtime_tasks: backend.runtime_tasks.start()
+                    backend.ready = True
             except Exception as exc:
                 logger.error('Initialization failed type=%s', type(exc).__name__)
         task = asyncio.create_task(load())

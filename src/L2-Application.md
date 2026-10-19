@@ -67,3 +67,5 @@ backend 在公共仓库初始化前独立分流，只组装一次业务实例；
 五个文件均保留包根；业务门面按各自业务域导航。config 的 CONFIG_ROOT/SOURCE_ROOT 与 update_notice 的 RELEASE_SOURCE 原位保留。CLI 名称和 main 入口不变；新增的非空 application 包仅负责歌曲／谱面回复准备，不扩展通用容器。
 
 向上阅读：[仓库 L1](../L1.md)。源码文件头提供唯一 L3，具体行为与字段以实现为准。
+
+- M4 运行叶子：`application/runtime_tasks.py` 管理后台任务，`data_owner.py` 在写入前锁定业务目录，`notice_reports.py` 复用原报告/账本，`notice_gateway.py` 实现群版本与主动领取/意图/ACK。旧 QQ 通知模块保留运输适配，后台不导入 botpy。

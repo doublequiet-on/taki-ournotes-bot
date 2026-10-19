@@ -20,7 +20,7 @@ def main():
             raise AssertionError("installed smoke check must stay offline")
     sys.addaudithook(offline)
     root = Path(__file__).resolve().parents[1]
-    modules = ("application.backend_bootstrap", "application.backend", "application.backend_protocol", "application.delivery_ledger", "application.replies", "application.reply_preparation", "query.continuation", "query.field_query", "sources.cutoff_history",
+    modules = ("application.runtime_tasks", "application.notice_gateway", "application.notice_reports", "application.data_owner", "application.backend_bootstrap", "application.backend", "application.backend_protocol", "application.delivery_ledger", "application.replies", "application.reply_preparation", "query.continuation", "query.field_query", "sources.cutoff_history",
                "sources.cutoff_sampler", "rendering.cutoff_trends", "platforms.qq.qq",
                "sources.moenotes_open",
                "sources.haneoka.chart_data", "sources.haneoka.catalog", "sources.haneoka.catalog_records",
