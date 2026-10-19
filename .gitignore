@@ -16,6 +16,11 @@ build/
 dist/
 *.log
 *.zip
+node_modules/
+/koishi/lib/
+/koishi/.local-tests/
+/koishi/probe-output/
+/koishi/probe-output.json
 
 # Runtime data, QQ sessions, downloaded game assets, and login QR codes
 data/*

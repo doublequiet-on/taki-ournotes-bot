@@ -1,0 +1,24 @@
+{
+  "name": "koishi-plugin-taki",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Taki QQ migration transport and offline probe (M0/M1)",
+  "main": "lib/index.js",
+  "types": "lib/index.d.ts",
+  "engines": { "node": ">=24.19.0 <25" },
+  "packageManager": "npm@12.2.0",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "probe": "node scripts/probe.cjs"
+  },
+  "dependencies": {
+    "koishi": "4.18.11",
+    "@koishijs/plugin-adapter-qq": "4.14.0",
+    "@satorijs/adapter-qq": "4.14.0",
+    "@satorijs/core": "4.6.0"
+  },
+  "devDependencies": {
+    "@types/node": "24.10.1",
+    "typescript": "5.9.3"
+  }
+}

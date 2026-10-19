@@ -8,6 +8,33 @@ permissions:
   contents: read
 
 jobs:
+  koishi-probe:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: koishi
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: koishi/.node-version
+          package-manager-cache: false
+      - name: Install locked candidate without lifecycle scripts
+        run: npx --yes --package=npm@12.2.0 npm ci --ignore-scripts --no-audit --no-fund
+      - name: Compile and probe installed adapter without QQ access
+        run: |
+          node node_modules/typescript/bin/tsc -p tsconfig.json
+          node scripts/probe.cjs probe-output.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: koishi-offline-probe
+          path: koishi/probe-output.json
+          if-no-files-found: warn
+          retention-days: 14
+
   architecture:
     runs-on: ubuntu-latest
     strategy:
