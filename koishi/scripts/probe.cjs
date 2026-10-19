@@ -13,7 +13,7 @@ require('node:https').request = deny
 globalThis.fetch = deny
 const { Context, h } = require('koishi')
 const { QQBot, adaptSession, WsClient, QQ } = require('@satorijs/adapter-qq')
-const { QQDelivery, candidateLimits, decodeIncoming, decodeGroupEvent, TakiTransport } = require('../lib')
+const { QQDelivery, candidateLimits, decodeIncoming, decodeGroupEvent, TakiTransport, BackendClient, Receiver, normalizeGateway } = require('../lib')
 const identity = { instanceId: 'fixture-instance', appId: 'fixture-app', selfId: 'fixture-self' }
 const now = Date.parse('2026-10-19T12:00:00+08:00')
 const picture = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=', 'base64')
@@ -274,6 +274,61 @@ async function main() {
     assert.equal((await f.delivery.deliver('huge', 0, { ...png, bytes: Buffer.alloc(3_000_001) })).reason, 'part_size')
     assert.equal(f.calls.length, 0)
   })
+  await run('M3 loopback client rejects public endpoints and redirect/resource escape', async () => {
+    assert.throws(() => new BackendClient('http://example.com','x'.repeat(32),'i','e'))
+    assert.throws(() => new BackendClient('http://127.0.0.1/path','x'.repeat(32),'i','e'))
+    const client = new BackendClient('http://127.0.0.1:8765','x'.repeat(32),'i','e',async () => { throw Error('must not fetch') })
+    await assert.rejects(client.request('/v1/../secret'))
+    await assert.rejects(client.image({delivery_id:'d'}, {id:'0',image:'http://example.com/image'}))
+  })
+  await run('M3 real client bounds streamed payload and refuses incompatible readiness', async () => {
+    const client = new BackendClient('http://127.0.0.1:8765','x'.repeat(32),'i','e',async () => new Response('x'.repeat(1024)))
+    await assert.rejects(client.request('/v1/health',undefined,100),/response_size/)
+    const incompatible = new BackendClient('http://127.0.0.1:8765','x'.repeat(32),'i','e',async () => Response.json({ready:true,protocol:{major:2,minor:0}}))
+    await assert.rejects(incompatible.initialize(),/incompatible_backend/)
+  })
+  await run('M3 ACK retry is bounded; intent loss has one HTTP attempt', async () => {
+    let calls=0
+    const client = new BackendClient('http://127.0.0.1:8765','x'.repeat(32),'i','e',async () => {calls++;throw Error('lost')})
+    const attempt={requestId:'r',deliveryId:'d',partId:'0',attemptId:'a',gatewayEpoch:'e'}
+    await assert.rejects(client.intent(attempt));assert.equal(calls,1)
+    calls=0;await assert.rejects(client.acknowledge(attempt,{status:'success',messageId:'m'}));assert.equal(calls,3)
+  })
+  await run('M3 ACK retry rechecks disposal context guard', async () => {
+    const guards=[]
+    const client=new BackendClient('http://127.0.0.1:8765','x'.repeat(32),'i','e',async (url,opts)=>{
+      guards.push(JSON.parse(opts.body).allow_context)
+      if(guards.length===1){client.deactivate();throw Error('lost before commit')}
+      return new Response('{}')
+    })
+    await client.acknowledge({requestId:'r',deliveryId:'d',partId:'0',attemptId:'a',gatewayEpoch:'e'},{status:'success',messageId:'m'})
+    assert.deepEqual(guards,[true,false])
+  })
+  await run('M3 gateway normalization retains actual path and query', async () => {
+    assert.equal(normalizeGateway('wss://api.sgroup.qq.com/socket/path?a=1&b=two'),'wss://api.bot.qq.com/socket/path?a=1&b=two')
+    assert.equal(normalizeGateway('wss://other.example/socket?a=1'),'wss://other.example/socket?a=1')
+    assert.throws(()=>normalizeGateway('ws://api.sgroup.qq.com/'))
+  })
+  for (const denied of ['channel-ignore','user-ignore','authority']) {
+    await run('M3 actual Koishi observation and permission gate: '+denied, async () => {
+      const env=createBot();let submissions=0,receiver
+      env.ctx.provide('database')
+      env.ctx.database={
+        async getChannel(){return {id:'fixture-group',platform:'qq',flag:denied==='channel-ignore'?1:0,
+          assignee:identity.selfId,guildId:'fixture-group',permissions:[],locales:[]}},
+        async getUser(){return {id:1,flag:denied==='user-ignore'?1:0,authority:denied==='authority'?0:1,permissions:[],locales:[]}},
+        async setChannel(){},async setUser(){},
+      }
+      const client={epoch:'fixture-e',deactivate(){},async initialize(){},async recognizes(){return true},async retire(){},
+        async submit(){submissions++;throw Error('permission bypass')}}
+      const plugin=ctx=>{receiver=new Receiver(ctx,{...identity,backendUrl:'http://127.0.0.1:8765',tokenEnv:'unused',permissions:['authority:1'],maxPending:8},client)}
+      plugin.inject={optional:['database']}
+      const fork=env.ctx.plugin(plugin),raw=event()
+      await env.ctx.parallel('internal/session',env.bot.session({type:'internal',_type:'qq/group-at-message-create',_data:raw.d}))
+      assert.equal(await receiver.receive(env.ctx.reflect.trace(await adaptSession(env.bot,raw))),true)
+      assert.equal(submissions,0);assert.equal(env.calls.length,0);await receiver.dispose();await fork.dispose()
+    })
+  }
   const root = path.resolve(__dirname, '..')
   const lock = JSON.parse(fs.readFileSync(path.join(root, 'package-lock.json')))
   const versions = Object.fromEntries(['koishi', '@koishijs/core', '@koishijs/plugin-adapter-qq', '@satorijs/adapter-qq', '@satorijs/core', 'typescript'].map(name => {

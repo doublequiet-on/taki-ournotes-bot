@@ -389,6 +389,27 @@ class BackendContinuationTests(Fixture, unittest.IsolatedAsyncioTestCase):
             event.update(result='success', message_id='accepted')
         return self.backend.apply_event(plan['delivery_id'], event)
 
+    async def test_disposed_ack_records_fact_without_committing_when_retire_was_lost(self):
+        from ournotes_bot.application.backend_protocol import PROTOCOL
+        plan = await self.prepare(self.request('disposed', 1))
+        self.event(plan, 'intent')
+        result = self.backend.apply_event(plan['delivery_id'], dict(protocol=PROTOCOL, request_id=plan['request_id'],
+            plan_version=1, gateway_epoch='e1', event='ack', part_id='0', attempt_id='a1', result='success',
+            message_id='delivered-before-close', allow_context=False))
+        self.assertEqual(result['parts'][0]['status'], 'success')
+        self.assertEqual(result['status'], 'aborted')
+        self.assertIsNone(self.backend.contexts.get(self.key))
+
+    async def test_retiring_gateway_does_not_reactivate_it_or_commit_late_ack(self):
+        from ournotes_bot.application.backend_protocol import ProtocolError
+        plan = await self.prepare(self.request('retired', 1))
+        self.event(plan, 'intent')
+        self.backend.ledger.retire('e1')
+        with self.assertRaisesRegex(ProtocolError, 'retired_epoch'):
+            await self.backend.register('e1')
+        self.event(plan, 'ack')
+        self.assertIsNone(self.backend.contexts.get(self.key))
+
     async def test_http_admission_reordering_rejects_old_new_request_before_begin(self):
         from ournotes_bot.application.backend_protocol import ProtocolError
         newer = self.request('B', 2)

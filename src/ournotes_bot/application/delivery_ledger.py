@@ -94,6 +94,10 @@ class Ledger:
             self.db.execute('DELETE FROM highwater')
         return True
 
+    def retire(self, epoch):
+        with self.db:
+            self.db.execute('UPDATE epochs SET active=0 WHERE epoch=?', (epoch,))
+
     def admit(self, request, runtime, delivery, now):
         require(self.active(request.gateway_epoch), 'inactive_epoch', 409)
         row = self.db.execute('SELECT seq FROM highwater WHERE context=?', (request.context_id,)).fetchone()

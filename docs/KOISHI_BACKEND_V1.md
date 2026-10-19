@@ -1,6 +1,6 @@
-# Koishi 本机业务后端协议 v1（M2）
+# Koishi 本机业务后端协议 v1（M2 / M3）
 
-本阶段以 `b60c12dc2acff3d170894e3fb60c15f12392c65b` 的 M0/M1 为起点，在同一迁移分支继续。实现 Python 常驻查询后端和共享回复准备；Koishi 消息接收器/HTTP 客户端、网关地址接线与最终送达属于 M3，后台任务和通知发送属于 M4。生产切换仍需另行确认。
+本阶段以 `b60c12dc2acff3d170894e3fb60c15f12392c65b` 的 M0/M1 为起点，在同一迁移分支继续。实现 Python 常驻查询后端和共享回复准备；Koishi 消息接收器/HTTP 客户端与网关接线已在 [M3](KOISHI_MIGRATION_M3.md) 实现，真实平台送达待验；后台任务和通知发送属于 M4。生产切换仍需另行确认。
 
 ## 启动与所有权
 
@@ -31,8 +31,10 @@ ournotes-bot backend --instance-id taki-test --app-id APP_ID --state-dir /absolu
 | 端点 | 结果 |
 |---|---|
 | GET /v1/health | `alive` 与 protocol；只证明进程处理请求。 |
-| GET /v1/ready | ready、protocol、backend_epoch、backend_code_digest、capability、background_tasks；未初始化为 503。代码摘要覆盖后端/协议/账本/准备/组装五个文件，不冒充整个仓库 SHA。 |
+| GET /v1/ready | ready、protocol、backend_epoch、backend_code_digest、capability、features、background_tasks；未初始化为 503。代码摘要覆盖后端/协议/账本/准备/组装五个文件，不冒充整个仓库 SHA。 |
 | POST /v1/gateways | 输入仅 `gateway_epoch`；登记新代次并撤销旧代次。重复当前代次幂等，已退役代次不能重新激活。 |
+| POST /v1/classify | 输入仅 body，返回 recognized；只读识别，不查询/扣额/写上下文。 |
+| POST /v1/gateways/retire | 输入仅 gateway_epoch；撤销该代次并终结其活动请求，不影响新代次。 |
 | POST /v1/requests | 首次接纳或返回已有请求，HTTP 202；业务/交付状态从 JSON 判断。 |
 | GET /v1/requests/{request_id} | 返回同一次准备/交付状态，不重新执行查询。 |
 | GET /v1/deliveries/{delivery_id}/parts/{part_id}/image | 只取当前有效计划归属的已编码图片，PNG/JPEG MIME 按实际魔数返回；失效为 409。 |
@@ -77,7 +79,7 @@ request_id 等于紧凑 JSON 数组 `[instance_id,app_id,"qq",kind,conversation_
 
 片段包含 `id, position, mode, status, attempt, message`；有发送权时额外返回 kind、纯文本 text，图片还返回 image 受控路径和 mime。初始片段 ID 为位置的十进制字符串，position 从 0 开始；当前最多五片段，复用共享 `expand_replies` 的分页与余图语义。send_allowed 只说明计划当前有效，**不能代替每片段 intent 的发送许可**。
 
-所有事件共同字段：`protocol,request_id,plan_version,gateway_epoch,event,part_id,attempt_id`，严格拒绝额外字段。ACK 还必须包含 `result,message_id`；success 要求非空消息 ID，其余 result 的 message_id 必须为 null。结果可为 success/failure/uncertain/aborted；审核中由网关映射为 uncertain。
+所有事件共同字段：`protocol,request_id,plan_version,gateway_epoch,event,part_id,attempt_id`，严格拒绝额外字段。M3 ready.features 包含 `classify`、`gateway_retire`、`ack_context_guard`，新网关要求三者齐备。ACK 允许可选布尔 `allow_context`，false 只补记发送事实并终结活动批，不提交上下文；省略保留 M2 兼容语义。ACK 还必须包含 `result,message_id`；success 要求非空消息 ID，其余 result 的 message_id 必须为 null。结果可为 success/failure/uncertain/aborted；审核中由网关映射为 uncertain。
 
 | event | 前置条件与行为 |
 |---|---|

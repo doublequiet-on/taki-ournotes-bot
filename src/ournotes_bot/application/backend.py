@@ -239,6 +239,9 @@ class Backend:
         live = self.live(row, payload['gateway_epoch'])
         if kind == 'ack':
             changed = self.ledger.ack(delivery, part_id, payload['attempt_id'], payload['result'], payload['message_id'])
+            if changed and live and payload.get('allow_context') is False:
+                self.finish(work, 'aborted')
+                live = False
             if changed and live:
                 part = next(p for p in parts if p['id'] == part_id)
                 reply = work.prepared[part['position']]
@@ -316,7 +319,22 @@ def create_app(backend, token, initialize=None):
     async def ready(request):
         return json({'ready': backend.ready, 'protocol': PROTOCOL, 'backend_epoch': backend.runtime,
                      'capability': CAPABILITY, 'backend_code_digest': backend.code_digest,
-                     'background_tasks': False}, 200 if backend.ready else 503)
+                     'background_tasks': False, 'features': ['classify', 'gateway_retire', 'ack_context_guard']}, 200 if backend.ready else 503)
+    async def classify(request):
+        value = await read_json(request)
+        require(isinstance(value, dict) and set(value) == {'body'} and isinstance(value['body'], str), 'classify_shape')
+        require(len(value['body'].encode()) <= 16384, 'body_size')
+        return json({'recognized': replies.recognizes_message(value['body'])})
+    async def retire(request):
+        value = await read_json(request)
+        require(isinstance(value, dict) and set(value) == {'gateway_epoch'}, 'epoch_shape')
+        epoch = value['gateway_epoch']
+        require(identity(epoch), 'gateway_epoch')
+        async with backend.admission:
+            backend.ledger.retire(epoch)
+            for work in list(backend.works.values()):
+                if work.request.gateway_epoch == epoch: backend.finish(work, 'aborted')
+        return json({'retired': True})
     async def register(request):
         value = await read_json(request)
         require(isinstance(value, dict) and set(value) == {'gateway_epoch'}, 'epoch_shape')
@@ -331,7 +349,8 @@ def create_app(backend, token, initialize=None):
     async def notice_pending(request):
         raise ProtocolError('notification_transport_pending_m4', 501)
     app.add_routes([web.get('/v1/health', health), web.get('/v1/ready', ready),
-                    web.post('/v1/gateways', register), web.post('/v1/requests', submit),
+                    web.post('/v1/gateways', register), web.post('/v1/gateways/retire', retire),
+                    web.post('/v1/classify', classify), web.post('/v1/requests', submit),
                     web.get('/v1/requests/{rid}', lookup),
                     web.get('/v1/deliveries/{did}/parts/{pid}/image', image),
                     web.post('/v1/deliveries/{did}/events', events),

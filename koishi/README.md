@@ -1,10 +1,8 @@
-# Taki Koishi 迁移候选（M0 / M1）
+# Taki Koishi 迁移候选（M0–M3）
 
-本目录交付锁定依赖、原始事件探针和逐片段 QQ 发送适配。`apply()` 只注册有作用域和卸载生命周期的 `takiTransport` 服务；尚未安装消息接收器或业务命令、尚未连接 HTTP 后端，加载插件不会启动查询或发送消息。现有 Python bot 入口继续使用原实现。
+M3 已接通查询、续查与逐片段交付；`enabled` 默认 false，仅注册运输服务。启用后连接同机 Python 后端，按原始事件身份、Koishi 作用域/权限和后端发送账本处理消息。
 
-M2 已增加独立 [Python HTTP 后端](../docs/KOISHI_BACKEND_V1.md)。本目录尚未连接它，camelCase 本地对象与 snake_case HTTP 契约转换、稳定的原消息 delivery 所有权和网关配置在 M3 接通；不能把 M1 的内存 events 替身直接当作线上账本。
-
-阶段记录见 [M0/M1 基线](../docs/KOISHI_MIGRATION_M0_M1.md)，完整要求见 [迁移方案 v1.1](../docs/KOISHI_MIGRATION_PLAN.txt)。本目录未进入 Python 离线发布包。
+配置、生命周期、行为差异和验收范围见 [M3 接线说明](../docs/KOISHI_MIGRATION_M3.md)，HTTP 见 [后端协议](../docs/KOISHI_BACKEND_V1.md)。生产切换另行确认；后台任务与主动通知属于 M4。现有 Python bot 入口保留，本目录不进入 Python 离线包。
 
 ## 重现离线探针
 
@@ -24,21 +22,16 @@ npm run probe -- probe-output.json
 
 | 文件 | 职责 |
 |---|---|
-| `src/ingress.ts` | 校验 AppID/selfId、会话/发送者/消息身份、时间；窄转换 legacy 字段后调用真实 `adaptSession`；生成稳定 requestId；群许可事件转换。 |
-| `src/delivery.ts` | 同一原消息逐片段上传/发送、msg_seq、发送前 intent、回执 ACK、预算及卸载检查；上传失败由调用方显式选用已捕获备用文本。 |
-| `src/index.ts` | Koishi 作用域过滤、受管 delivery 的销毁；调用方在批次结束时释放所有权，最多持有 64 个 delivery。 |
-| `scripts/probe.cjs` | M1 版本行为测试/运行探针；固定夹具、故障注入、JSON 证据。 |
+| `src/ingress.ts` | 原始身份与正文门禁、legacy 字段转换、真实 adaptSession、稳定 requestId。 |
+| `src/delivery.ts` | 每条原消息一个 QQDelivery；逐片段 intent、发送、ACK、预算与卸载。 |
+| `src/backend.ts` | 认证 loopback 客户端、能力握手、受限图片、幂等重试与 ACK 提交门禁。 |
+| `src/receiver.ts` | 原始事件捕获、标准化作用域/权限、串行接纳、同消息 delivery 所有权。 |
+| `src/gateway.ts` | 每 bot 的窄 discovery 主机修正，保留路径/参数并随卸载恢复。 |
+| `src/index.ts` | 默认关闭的配置、运输服务与受管 receiver 生命周期。 |
+| `scripts/probe.cjs` | 已安装包的离线行为验证与故障夹具。 |
 
-`decodeIncoming` 的业务识别函数由后续共享入口提供；探针只识别 `/查曲`、`/继续` 的固定样本，不是完整命令解析器。对 GROUP_MESSAGE_CREATE 要求自身 @；GROUP_AT_MESSAGE_CREATE/C2C 本身为定向入口。使用原始正文，避免把 Koishi 转义后的元素序列化当作业务文本。raw→Session 调用返回适配器对象；Koishi 实际事件监听器通过 Cordis trace 取得会话扩展，探针的高层发送也走这一步。
+业务识别调用 Python 共享入口；GROUP_MESSAGE_CREATE 要求自身 @，GROUP_AT_MESSAGE_CREATE/C2C 为定向入口。直接使用原始正文，不把 Koishi 转义元素当业务文本。
 
-`QQDelivery` 是**每条原入站消息**的序号所有者；同一消息的多命令/多片段必须复用同一实例。`deliver(partId, index, part)` 的 index 从 0 开始；成功 ACK 后才能前进。重复相同 partId 返回原结果，内容或 index 改变则拒绝。图像上传失败未消耗发送槽位，可用不同 partId、相同 index 发送预先准备的备用文本。
+同一原消息的多命令/多片段必须复用一个 QQDelivery，成功 ACK 后才能推进。上传失败由后端明确选择同次捕获的文字分支；intent 的 existing 不授权重发。未知回执停止后续片段。卸载后在途回执只记事实，后续发送被禁止。
 
-`DeliveryEvents` 是 M2 待实现的持久化事件端口；当前没有 HTTP、落盘账本、重启去重或跨进程事务。只有 intent 的明确 `granted` 才授权一次发送；`existing` 不等于可重发。ACK 丢失时 `acknowledgementPending` 为 true，仍保留平台真实结果；调用方须等待 `retryAcknowledgement()` 确认，不能据 success 直接提交业务上下文。超时、空回执、审核中都停止后续片段。插件卸载后已在途发送仍记录回执，不再启动后续发送。
-
-图片字节、文本与片段集合均有界；图片解码/像素限制由后端复用现有 `image_output`，尚未在本目录实现。当前 `candidateLimits` 是源码与夹具下的保守候选，不是实测平台额度。后续后端还必须校验 request digest、gateway epoch、准入顺序、权限和提交代次。
-
-## 接入前的门禁
-
-安装包已复现：旧身份字段不会自动映射；旧 `api.sgroup.qq.com` 网关下发地址不会被默认替换；高层发送会丢失部分成功返回。身份转换与窄发送适配已有实现；实际 receiver、基于真实 discovery 保留路径/参数的网关配置、完整命令及通知接线属于 M2/M3/M4。
-
-必须在另行授权的测试环境验证真实事件、权限、回复窗口、群/C2C 额度、图片及客户端送达。未经验证和生产切换确认，不启用新网关接管现有机器人。
+M1 候选额度不是实测平台额度。真实事件、群/C2C 权限、回复窗口及客户端送达仍需另行授权的测试；不得据离线通过接管生产机器人。历史基线见 [M0/M1](../docs/KOISHI_MIGRATION_M0_M1.md)，要求见 [方案 v1.1](../docs/KOISHI_MIGRATION_PLAN.txt)。

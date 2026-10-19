@@ -81,6 +81,9 @@ def event(value):
     require(value.get('protocol') == PROTOCOL, 'protocol_version', 409)
     kind = value.get('event')
     extra = {'result', 'message_id'} if kind == 'ack' else set()
+    if kind == 'ack' and 'allow_context' in value:
+        require(type(value['allow_context']) is bool, 'context_permission')
+        extra.add('allow_context')
     require(kind in ('intent', 'ack', 'upload_failed', 'aborted', 'batch_finished')
             and set(value) == common | extra, 'event_shape')
     require(value['plan_version'] == 1 and type(value['plan_version']) is int, 'plan_version', 409)

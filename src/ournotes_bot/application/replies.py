@@ -27,6 +27,20 @@ from ..visuals import (render_card, render_card_list, render_chart, render_song_
 logger = logging.getLogger("ournotes_bot.replies")
 
 
+def recognizes_message(content: str) -> bool:
+    """Read-only entry recognition; no repository, model, quota or context access."""
+    from ..commands import ALIASES, UNAVAILABLE_COMMANDS
+    specials = {"介绍", "about", "简介", "帮助", "help", "菜单", "指令", "ヘルプ",
+                "语言", "language", "言語", "调试数据", "数据状态", "状态", "版本", "status", "状態"}
+    for text in split_commands(content):
+        head = text.split(None, 1)[0].casefold()
+        if (head in ALIASES or head in UNAVAILABLE_COMMANDS
+                or head in {"查角色", "查卡池", "查活动", "event", "イベント"}
+                or text.casefold() in specials or parse_operation(text) is not None or is_ai_request(text)):
+            return True
+    return False
+
+
 def describe(content: str) -> str:
     """Text for the log. Direct commands are shown; /问 bodies stay out of it."""
     cleaned = (content or "").strip()
@@ -114,8 +128,16 @@ def expand_replies(replies: list[PreparedReply], reserve: int = 0) -> list[Prepa
                 pages.append(part)
     available=max(1,QQ_PASSIVE_REPLY_LIMIT-reserve)
     prior=base.sent if base else 0
-    total=base.total if base else len(pages)
     keep=bool(base or len(pages)>available or any(r.pages for r in replies))
+    if keep and not base:
+        # A continuation suffix consumes text capacity too; preserve every character.
+        bounded=[]
+        for page in pages:
+            chunks=text_chunks(page.text) if page.image is None and len(page.text)>1700 else (page.text,)
+            bounded.extend(replace(page,text=text,context=page.context if index==len(chunks)-1 else None)
+                           for index,text in enumerate(chunks))
+        pages=bounded
+    total=base.total if base else len(pages)
     expanded=[]
     for offset,page in enumerate(pages[:available]):
         if keep:
@@ -424,7 +446,7 @@ def prepare_followup(context, operation, repository):
             text = answer_for(result.spec, repository, result=result)
         else:
             text = handle_command("/查曲", repository, resolved=result)
-        return render_prepared(text, result, repository, "zh", candidate)
+        return replace(render_prepared(text, result, repository, "zh", candidate), business_status=result.status)
     except Exception as exc:
         logger.error("续查准备失败；错误类型=%s", type(exc).__name__)
         return PreparedReply("查询暂时失败，请稍后重试。")

@@ -1,0 +1,114 @@
+// L3: bounded authenticated loopback wire client; no business parsing or QQ credentials.
+import type { Inbound } from './ingress'
+import type { Attempt, DeliveryEvents, Outcome } from './delivery'
+
+export const protocol = { major: 1, minor: 0 }
+export const capability = 'qq-m1-candidate'
+export interface WirePart {
+  id: string; position: number; mode: string; status: string
+  kind?: 'text' | 'image'; text?: string; image?: string; mime?: string
+}
+export interface Plan {
+  request_id: string; delivery_id: string; plan_version: number; status: string
+  send_allowed: boolean; expires_at: number; parts: WirePart[]
+}
+export class BackendError extends Error {
+  constructor(public readonly code: string, public readonly status = 0) { super(code) }
+}
+export class BackendClient implements DeliveryEvents {
+  readonly base: string
+  private contextAllowed = true
+  deactivate(): void { this.contextAllowed = false }
+  constructor(base: string, private token: string, readonly instance: string, readonly epoch: string,
+              private fetcher: typeof fetch = fetch) {
+    const url = new URL(base)
+    if (url.protocol !== 'http:' || url.hostname !== '127.0.0.1' || url.username || url.password
+        || url.pathname !== '/' || url.search || url.hash || token.length < 32) throw new Error('invalid backend configuration')
+    this.base = url.origin
+  }
+  async request(path: string, body?: unknown, maximum = 131072, binary = false): Promise<any> {
+    if (!path.startsWith('/v1/') || path.includes('..') || path.includes('\\')) throw new BackendError('invalid_resource')
+    let response: Response
+    const controller = new AbortController(), timeout = setTimeout(() => controller.abort(), 10_000)
+    try {
+      response = await this.fetcher(this.base + path, { method: body === undefined ? 'GET' : 'POST',
+        redirect: 'error', signal: controller.signal,
+        headers: { Authorization: 'Bearer ' + this.token, 'X-Taki-Instance': this.instance,
+          'X-Taki-Epoch': this.epoch, 'Content-Type': 'application/json' },
+        body: body === undefined ? undefined : JSON.stringify(body) })
+      if (!response.body) throw new BackendError('empty_response')
+      const reader = response.body.getReader(), chunks: Uint8Array[] = []
+      let size = 0
+      try {
+        while (true) {
+          const item = await reader.read()
+          if (item.done) break
+          size += item.value.length
+          if (size > maximum) throw new BackendError('response_size')
+          chunks.push(item.value)
+        }
+      } finally { await reader.cancel() }
+      const bytes = Buffer.concat(chunks)
+      if (!response.ok) throw new BackendError('backend_http_' + response.status, response.status)
+      if (binary) {
+        const mime = response.headers.get('Content-Type')?.split(';')[0]
+        if (mime !== 'image/png' && mime !== 'image/jpeg') throw new BackendError('image_mime')
+        return bytes
+      }
+      try { return JSON.parse(bytes.toString('utf8')) } catch { throw new BackendError('invalid_json') }
+    } catch (error) {
+      if (error instanceof BackendError) throw error
+      throw new BackendError('backend_transport') // never expose bearer/URLs/raw response
+    } finally { clearTimeout(timeout) }
+  }
+  async retry(path: string, body?: unknown): Promise<any> {
+    for (let attempt = 0; ; attempt++) {
+      try { return await this.request(path, typeof body === 'function' ? body() : body) }
+      catch (error) {
+        if (!(error instanceof BackendError) || error.status && error.status < 500 || attempt >= 2) throw error
+        await new Promise(resolve => setTimeout(resolve, 100 * (attempt + 1)))
+      }
+    }
+  }
+  async initialize(): Promise<void> {
+    const ready = await this.retry('/v1/ready')
+    if (!ready.ready || ready.protocol?.major !== 1 || ready.protocol?.minor !== 0
+        || ready.capability !== capability || !['classify', 'gateway_retire', 'ack_context_guard'].every(feature => ready.features?.includes(feature))) throw new BackendError('incompatible_backend')
+    await this.retry('/v1/gateways', { gateway_epoch: this.epoch })
+  }
+  async recognizes(body: string): Promise<boolean> {
+    const value = await this.retry('/v1/classify', { body })
+    if (typeof value.recognized !== 'boolean') throw new BackendError('classify_shape')
+    return value.recognized
+  }
+  submit(input: Inbound, seq: number): Promise<Plan> {
+    return this.retry('/v1/requests', { protocol, request_id: input.requestId, instance_id: input.instanceId,
+      app_id: input.appId, platform: input.platform, kind: input.kind, conversation_id: input.conversationId,
+      user_id: input.userId, message_id: input.messageId, timestamp_ms: input.timestampMs, body: input.body,
+      capability, gateway_epoch: this.epoch, ingress_seq: seq })
+  }
+  lookup(id: string): Promise<Plan> { return this.retry('/v1/requests/' + encodeURIComponent(id)) }
+  async image(plan: Plan, part: WirePart): Promise<Uint8Array> {
+    const path = `/v1/deliveries/${plan.delivery_id}/parts/${part.id}/image`
+    if (part.image !== path) throw new BackendError('image_identity')
+    return this.request(path, undefined, 3_000_000, true)
+  }
+  event(plan: Pick<Plan, 'request_id' | 'delivery_id'>, kind: string, part = 'batch', attempt = 'none'): Promise<any> {
+    return this.retry(`/v1/deliveries/${plan.delivery_id}/events`, { protocol,
+      request_id: plan.request_id, plan_version: 1, gateway_epoch: this.epoch, event: kind, part_id: part, attempt_id: attempt })
+  }
+  async intent(a: Attempt): Promise<'granted' | 'existing' | 'denied'> {
+    // No retry: a lost permission reply must never become a second send.
+    const value = await this.request(`/v1/deliveries/${a.deliveryId}/events`, { protocol,
+      request_id: a.requestId, plan_version: 1, gateway_epoch: a.gatewayEpoch,
+      event: 'intent', part_id: a.partId, attempt_id: a.attemptId })
+    return value.permission === 'granted' || value.permission === 'existing' ? value.permission : 'denied'
+  }
+  async acknowledge(a: Attempt, result: Outcome): Promise<void> {
+    await this.retry(`/v1/deliveries/${a.deliveryId}/events`, () => ({ protocol,
+      request_id: a.requestId, plan_version: 1, gateway_epoch: a.gatewayEpoch,
+      event: 'ack', part_id: a.partId, attempt_id: a.attemptId,
+      result: result.status, message_id: result.messageId ?? null, allow_context: this.contextAllowed }))
+  }
+  retire(): Promise<any> { return this.retry('/v1/gateways/retire', { gateway_epoch: this.epoch }) }
+}
