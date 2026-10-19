@@ -350,6 +350,15 @@ async function main() {
     assert.equal(ctx.takiTransport.receiver,undefined)
     await fork.dispose();assert.equal(ctx.takiTransport,undefined)
   })
+  await run('M4 group capacity stops notification admission and health', async () => {
+    const ctx=new Context(),{Notices}=require('../lib')
+    const worker=new Notices(ctx,{},identity,new Promise(()=>{}))
+    for(let i=0;i<4096;i++)worker.changed.set('g'+i,1)
+    worker.capture({platform:'qq',bot:{config:{id:identity.appId},selfId:identity.selfId},
+      event:{_type:'GROUP_MSG_REJECT',_data:{group_openid:'overflow',timestamp:now/1000}}})
+    assert.equal(worker.healthy(),false)
+    await worker.close();await ctx.stop()
+  })
   const root = path.resolve(__dirname, '..')
   const lock = JSON.parse(fs.readFileSync(path.join(root, 'package-lock.json')))
   const versions = Object.fromEntries(['koishi', '@koishijs/core', '@koishijs/plugin-adapter-qq', '@satorijs/adapter-qq', '@satorijs/core', 'typescript'].map(name => {

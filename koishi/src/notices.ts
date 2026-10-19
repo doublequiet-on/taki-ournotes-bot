@@ -41,7 +41,7 @@ export class Notices {
     }
     if (!kind || !gid || !/^[A-Za-z0-9_-]{1,128}$/.test(gid) || !Number.isFinite(stamp)) return
     // Local revocation takes effect before its asynchronous HTTP write or an in-flight intent.
-    if (this.changed.size >= 4096 && !this.changed.has(gid)) return
+    if (this.changed.size >= 4096 && !this.changed.has(gid)) { this.active=false; this.ctx.logger('taki').warn('notice group capacity reached; reload required'); return }
     this.changed.set(gid,(this.changed.get(gid) ?? 0)+1)
     if (this.queued >= 128) { this.active=false; this.ctx.logger('taki').warn('notice event queue full; reload required'); return }
     this.seen.add(gid)
