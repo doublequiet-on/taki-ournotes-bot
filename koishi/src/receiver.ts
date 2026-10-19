@@ -38,7 +38,8 @@ export class Receiver {
     ctx.effect(() => ctx.root.middleware(async (session, next) => {
       if (!await this.receive(session)) return next()
     }, true))
-    if (config.notifications) this.notices=new Notices(ctx,this.client,config,this.ready,id => config.management?.noticesAllowed(id) ?? true)
+    if (config.notifications) this.notices=new Notices(ctx,this.client,config,this.ready,
+      id => config.management?.noticesAllowed(id) ?? true, () => config.management?.noticeGroups() ?? [])
     ctx.on('dispose', () => this.dispose())
   }
   capture(session: Session): void {

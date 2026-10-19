@@ -552,6 +552,26 @@ class NoticeGatewayTests(UpdateNoticeTests):
         self.assertEqual(await self.gateway.claims(request),first)
         self.assertEqual(self.client.request.call_count,1)
 
+    async def test_gateway_claim_allowlist_filters_before_limit_and_retains_idempotency(self):
+        import time
+        from ournotes_bot.application.backend_protocol import ProtocolError
+        for index, gid in enumerate(['a', 'b', 'c', 'd', 'e', 'z_allowed']):
+            self.gateway.group(self.base(event_id='group-'+gid, group_id=gid, kind='discover',
+                timestamp_ms=time.time()*1000, ingress_seq=index+1))
+        request=self.base(claim_request_id='scoped', limit=1, group_allowlist=['z_allowed'])
+        first=await self.gateway.claims(request)
+        self.assertEqual([c['group_id'] for c in first['claims']], ['z_allowed'])
+        self.assertEqual(await self.gateway.claims(request), first)
+        with self.assertRaisesRegex(ProtocolError, 'notice_conflict'):
+            await self.gateway.claims({**request, 'group_allowlist':['a']})
+        for invalid in [None, 'a', ['a', 'a'], ['bad space'], ['a']*129, [{}]]:
+            with self.assertRaisesRegex(ProtocolError, 'claim_groups'):
+                await self.gateway.claims({**request, 'claim_request_id':'invalid', 'group_allowlist':invalid})
+        unscoped=await self.gateway.claims(self.base(claim_request_id='legacy',limit=1))
+        self.assertEqual(unscoped['claims'][0]['group_id'], 'a')
+        empty=await self.gateway.claims(self.base(claim_request_id='empty',limit=1,group_allowlist=[]))
+        self.assertEqual(empty['claims'][0]['group_id'], 'b')
+
     async def test_gateway_group_duplicate_conflict_and_old_timestamp(self):
         import time
         from ournotes_bot.application.backend_protocol import ProtocolError

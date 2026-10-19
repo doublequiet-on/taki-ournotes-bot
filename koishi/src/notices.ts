@@ -20,7 +20,8 @@ export class Notices {
   private changed = new Map<string, number>()
   private task?: Promise<void>
   private nextRequest = 0
-  constructor(private ctx: Context, private client: BackendClient, private identity: Identity, private ready: Promise<void>, private enabled: (id?: string) => boolean = () => true) {
+  constructor(private ctx: Context, private client: BackendClient, private identity: Identity, private ready: Promise<void>,
+    private enabled: (id?: string) => boolean = () => true, private groups: () => string[] = () => []) {
     ctx.effect(() => ctx.root.on('internal/session', session => this.capture(session as Session)))
     ctx.setInterval(() => this.tick(), 30000)
     void ready.then(() => this.tick()).catch(() => undefined)
@@ -75,7 +76,9 @@ export class Notices {
     if (!bot || bot.status !== Universal.Status.ONLINE || !this.active) return
     await this.groupTail
     if (!this.active || !this.enabled()) return
-    const response = await this.client.retry('/v1/notices/claims',{...this.base(),claim_request_id:randomUUID(),limit:1})
+    const groups = this.groups()
+    const response = await this.client.retry('/v1/notices/claims',{...this.base(),claim_request_id:randomUUID(),limit:1,
+      ...(groups.length ? {group_allowlist:groups} : {})})
     if (!Array.isArray(response.claims) || response.claims.length>1) throw Error('notice claims')
     for (const c of response.claims as Claim[]) {
       if (!/^[a-f0-9]{64}$/.test(c.notice_id) || !/^[a-f0-9]{32}$/.test(c.claim_id) || !/^[A-Za-z0-9_-]{1,128}$/.test(c.group_id)

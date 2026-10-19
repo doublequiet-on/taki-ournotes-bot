@@ -68,4 +68,5 @@ export class Management {
   noticesAllowed(id?: string): boolean {
     return this.settings.notificationsEnabled && this.settings.groupsEnabled && (id === undefined || this.groupAllowed(id))
   }
+  noticeGroups(): string[] { return [...this.settings.groupAllowlist] }
 }

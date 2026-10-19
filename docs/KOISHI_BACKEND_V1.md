@@ -108,7 +108,7 @@ QueryGate 沿用配置的并发/排队（默认 2+4），全后端最多持有 6
 | 路由 | 请求字段（均含 protocol、instance_id、app_id、gateway_epoch） | 返回及约束 |
 |---|---|---|
 | POST /v1/groups/events | event_id、group_id、kind（discover/add/remove/allow/reject）、timestamp_ms、ingress_seq | 事件去重和同群版本比较；返回 group_version、applied。discover 不授予许可，remove/reject 撤销未开始的通知发送权。适配器原秒时间戳在网关明确转换为毫秒。 |
-| POST /v1/notices/claims | claim_request_id、limit（1–16） | 幂等领取：notice_id、claim_id、expires_at、group_id、group_version、deployment_revision、text、send_type=active；只有既有部署已提交且符合现有账本/许可条件的任务可领取。无原用户 msg_id，不复用被动序号或预算。 |
+| POST /v1/notices/claims | claim_request_id、limit（1–16）、可选 group_allowlist | 幂等领取：notice_id、claim_id、expires_at、group_id、group_version、deployment_revision、text、send_type=active；只有既有部署已提交且符合现有账本/许可条件的任务可领取。白名单最多 128 个唯一合法群 ID，在领取额度和租约之前过滤；省略或空数组沿用全部群。无原用户 msg_id，不复用被动序号或预算。 |
 | POST /v1/notices/{notice_id}/events | claim_id、event_id、event（permission/intent/ack/aborted）、group_version；permission 带 allowed+observed_at_ms；intent 带 attempt_id；ACK 带 attempt_id+result+message_id | bot_state 核验绑定领取时的 group_version，不能覆盖随后发生的撤权；每通知只有一个有效领取者。发送前落盘 intent，ACK 幂等；未决发送在过期、重载、同部署再领取时不重授发送权。 |
 
 通知稳定键为 instance/AppID/group/deployment_revision；claim_request_id 和 event_id 同 ID 内容冲突拒绝。所有身份沿用 1–256 字符、无控制符限制；文本沿用既有报告 120 字上限，一条主动纯文本，不套用被动五槽。ACK result 与被动相同；主动发送权限变化和通知真实客户端送达仍属 M4/实机验收。

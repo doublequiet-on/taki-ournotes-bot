@@ -21,14 +21,23 @@ function install(ctx, config, manifest) {
   const hash = value => createHash('sha256').update(value).digest()
   const passwordHash = hash(config.password)
   let nextLogin = 0
+  let closing = false, closePromise
   const valid = client => (sessions.get(client) || 0) > Date.now()
   // The console is reachable only through loopback (or an explicit SSH tunnel).
   // Reject foreign browser origins before the upstream WebSocket message dispatcher runs.
   class LocalConsole extends NodeConsole {
+    broadcasts = new Set()
+    broadcast(...args) {
+      const task = super.broadcast(...args)
+      this.broadcasts.add(task)
+      task.then(() => this.broadcasts.delete(task), () => this.broadcasts.delete(task))
+      return task
+    }
+    async drain() { while (this.broadcasts.size) await Promise.all([...this.broadcasts]) }
     accept(socket, request) {
       const host = request.headers.host
       const origin = request.headers.origin
-      if (![`127.0.0.1:${config.port}`, `localhost:${config.port}`].includes(host)
+      if (closing || ![`127.0.0.1:${config.port}`, `localhost:${config.port}`].includes(host)
           || origin && ![`http://127.0.0.1:${config.port}`, `http://localhost:${config.port}`].includes(origin)
           || Object.keys(this.clients).length >= 16) { socket.close(1008); return }
       super.accept(socket, request)
@@ -80,6 +89,22 @@ function install(ctx, config, manifest) {
   return { management, async ready() {
     if (!ctx.console?.listeners['taki/status']) throw Error('console registration failed')
     if (!ctx.server._http.listening) await require('node:events').once(ctx.server._http, 'listening', { signal: AbortSignal.timeout(5000) })
-  }, async close() { await registration.dispose(); await consoleScope.dispose(); await server.dispose() } }
+  }, close() { return closePromise ||= (async () => {
+    closing = true
+    const console = ctx.console
+    // Entry disposal broadcasts asynchronously. Finish connected clients and pending
+    // broadcasts before removing the console service that EntryProvider still needs.
+    await Promise.all(Object.values(console?.clients || {}).map(client => new Promise(resolve => {
+      if (client.socket.readyState === 3) return resolve()
+      const timer = setTimeout(() => client.socket.terminate(), 2000)
+      client.socket.once('close', () => { clearTimeout(timer); resolve() })
+      client.socket.close(1001)
+    })))
+    await console?.drain()
+    await registration.dispose()
+    await console?.drain()
+    await consoleScope.dispose()
+    await server.dispose()
+  })() } }
 }
 module.exports = { configuration, install }

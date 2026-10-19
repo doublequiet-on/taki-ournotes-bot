@@ -460,6 +460,19 @@ async function main() {
       assert.ok(calls.some(c=>c.url==='/v1/groups/events' && c.body.kind==='reject'));assert.ok(calls.every(c=>c.url!=='/v1/notices/claims'));assert.equal(worker.healthy(),true)
     } finally{await worker.close();await ctx.stop()}
   })
+  await run('console notice allowlist is sent before backend claims',async()=>{
+    const {Notices}=require('../lib'),env=createBot(),calls=[]
+    env.bot.status=1
+    const client={epoch:'e',readiness:{notices_enabled:true},async retry(url,body){calls.push({url,body});return{claims:[]}}}
+    const worker=new Notices(env.ctx,client,identity,Promise.resolve(),()=>true,()=>['allowed-group'])
+    try {
+      worker.tick();await worker.task
+      assert.equal(calls.length,1)
+      assert.equal(calls[0].url,'/v1/notices/claims')
+      assert.deepEqual(calls[0].body.group_allowlist,['allowed-group'])
+      assert.equal(env.calls.length,0)
+    } finally{await worker.close();await env.ctx.stop()}
+  })
   await run('console settings persist, reject conflicts and constrain query/notice admission',async()=>{
     const {Management,defaultSettings}=require('../lib/management')
     const dir=fs.mkdtempSync(path.join(require('node:os').tmpdir(),'taki-console-probe-'))

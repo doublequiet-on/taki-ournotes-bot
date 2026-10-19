@@ -94,15 +94,22 @@ class NoticeGateway:
             return result
 
     async def claims(self, value):
-        self.common(value, {'claim_request_id','limit'})
+        fields = {'claim_request_id','limit'}
+        if isinstance(value, dict) and 'group_allowlist' in value: fields.add('group_allowlist')
+        self.common(value, fields)
         require(identity(value['claim_request_id']) and type(value['limit']) is int and 1 <= value['limit'] <= 16, 'claim_input')
+        groups = value.get('group_allowlist', [])
+        require(isinstance(groups, list) and len(groups) <= 128 and all(
+            isinstance(gid, str) and re.fullmatch(r'[A-Za-z0-9_-]{1,128}', gid) for gid in groups), 'claim_groups')
+        require(len(set(groups)) == len(groups), 'claim_groups')
+        allowed = set(groups)
         async with self.lock:
             with closing(self.store.connect()) as db:
                 cached = self.cached(db, 'gateway_notice_requests', value['claim_request_id'], value)
                 if cached is not None: return cached
             notice = committed_notice(self.reports.project_root, self.reports.source)
             content = await self.reports._report(*notice) if notice else None
-            self.common(value, {'claim_request_id','limit'})
+            self.common(value, fields)
             result = {'claims':[]}
             with closing(self.store.connect()) as db, db:
                 db.execute('BEGIN IMMEDIATE')
@@ -112,6 +119,8 @@ class NoticeGateway:
                         '(SELECT 1 FROM notices n WHERE n.app=g.app AND n.gid=g.gid AND n.revision=?) ORDER BY gid',
                         (self.store.app_id,revision)).fetchall()
                     for (gid,) in rows:
+                        # Filter before the limit/lease: excluded groups must not starve permitted ones.
+                        if allowed and gid not in allowed: continue
                         if len(result['claims']) >= value['limit']: break
                         nid = digest([self.backend.instance_id,self.store.app_id,gid,revision])
                         prior = db.execute('SELECT status,expires,epoch FROM gateway_notice_claims WHERE app=? AND nid=?',(self.store.app_id,nid)).fetchone()
