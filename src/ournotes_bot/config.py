@@ -105,6 +105,7 @@ class Settings:
     cutoff_sampling_servers: tuple[str, ...] = ("jp", "tw", "kr", "en")
     cutoff_sampling_interval: int = 300
     cutoff_history_min_free_mb: int = 512
+    cutoff_score_display_limit: int = 30_000_000
     cutoff_source: str = "tracker"
     moenotes_open_secret: str = field(default="", repr=False)
     moenotes_open_history_file: Path | None = None
@@ -136,6 +137,9 @@ class Settings:
         if not servers or any(s not in {"jp", "tw", "kr", "en"} for s in servers):
             raise ValueError("OURNOTES_CUTOFF_SAMPLING_SERVERS must use jp,hk,kr,en")
         cutoff_source = os.getenv("OURNOTES_CUTOFF_SOURCE", "haneoka").strip()
+        cutoff_score_display_limit = int(os.getenv("OURNOTES_CUTOFF_SCORE_DISPLAY_LIMIT", "30000000"))
+        if cutoff_score_display_limit <= 0:
+            raise ValueError("OURNOTES_CUTOFF_SCORE_DISPLAY_LIMIT must be positive")
         chart_source = os.getenv("OURNOTES_CHART_SOURCE", "haneoka").strip()
         data_source = os.getenv("OURNOTES_DATA_SOURCE", "haneoka").strip()
         if data_source not in {"yume", "haneoka"}:
@@ -176,6 +180,7 @@ class Settings:
             cutoff_sampling_interval=max(60, int(os.getenv("OURNOTES_CUTOFF_SAMPLING_INTERVAL", "300"))),
             cutoff_history_min_free_mb=max(0, int(os.getenv("OURNOTES_CUTOFF_MIN_FREE_MB", "512"))),
             cutoff_source=cutoff_source,
+            cutoff_score_display_limit=cutoff_score_display_limit,
             moenotes_open_secret=(os.getenv("MOENOTES_OPEN_SECRET", "").strip()
                                   or os.getenv("BDON_OPENPLATFORM", "").strip()),
             moenotes_open_history_file=open_history,

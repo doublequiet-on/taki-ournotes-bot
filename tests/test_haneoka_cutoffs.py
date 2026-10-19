@@ -469,7 +469,8 @@ class HaneokaCutoffTests(unittest.TestCase):
     def test_source_composition_switches_without_network_or_file_creation(self):
         settings = SimpleNamespace(cutoff_source="haneoka", cache_file=self.path / "main.json",
                                    cutoff_history_file=None, moenotes_open_history_file=None,
-                                   cutoff_history_enabled=True, cutoff_history_min_free_mb=0)
+                                   cutoff_history_enabled=True, cutoff_history_min_free_mb=0,
+                                   cutoff_score_display_limit=30_000_000)
         repo = SimpleNamespace(event_cutoffs=self.source)
         configure_sources(repo, settings)
         self.assertIs(repo.event_cutoffs, self.source)

@@ -1,18 +1,18 @@
 {
   "RarityIconCenter_BD.png": {
-    "url": "https://haneoka.org/runtime/jp/unity/Assets/AddressableResources/UI/Atlas/FixUiSpriteAtlas.spriteatlasv2/RarityIconCenter_BD--Sprite--4866403557233305093.png?release=r-d9e6e6e773a4bd9e090b",
+    "url": "https://haneoka.org/runtime/jp/unity/Assets/AddressableResources/UI/Atlas/FixUiSpriteAtlas.spriteatlasv2/RarityIconCenter_BD--Sprite--4866403557233305093.png?release=r-8d8d2754722f09cde311",
     "sha256": "ae8564eaa8c928afede742202fadacf4eaf32c5dd3b7e1bc92f84f5aa2c6f248"
   },
   "RarityIconCenter_R.png": {
-    "url": "https://haneoka.org/runtime/jp/unity/Assets/AddressableResources/UI/Atlas/FixUiSpriteAtlas.spriteatlasv2/RarityIconCenter_R--Sprite--4984197320711555452.png?release=r-d9e6e6e773a4bd9e090b",
+    "url": "https://haneoka.org/runtime/jp/unity/Assets/AddressableResources/UI/Atlas/FixUiSpriteAtlas.spriteatlasv2/RarityIconCenter_R--Sprite--4984197320711555452.png?release=r-8d8d2754722f09cde311",
     "sha256": "fa849f48156eb373b6674dc332d45dc6104b4abab1d86cf8dc133ba6b690d9ab"
   },
   "RarityIconCenter_SR.png": {
-    "url": "https://haneoka.org/runtime/jp/unity/Assets/AddressableResources/UI/Atlas/FixUiSpriteAtlas.spriteatlasv2/RarityIconCenter_SR--Sprite-8699131816429684678.png?release=r-d9e6e6e773a4bd9e090b",
+    "url": "https://haneoka.org/runtime/jp/unity/Assets/AddressableResources/UI/Atlas/FixUiSpriteAtlas.spriteatlasv2/RarityIconCenter_SR--Sprite-8699131816429684678.png?release=r-8d8d2754722f09cde311",
     "sha256": "13e17bc4e3f5d7ebda0ff53af70b911a85a401563a682f8a21c39e6fa6665a5c"
   },
   "RarityIconCenter_SSR.png": {
-    "url": "https://haneoka.org/runtime/jp/unity/Assets/AddressableResources/UI/Atlas/FixUiSpriteAtlas.spriteatlasv2/RarityIconCenter_SSR--Sprite--4859392036282087881.png?release=r-d9e6e6e773a4bd9e090b",
+    "url": "https://haneoka.org/runtime/jp/unity/Assets/AddressableResources/UI/Atlas/FixUiSpriteAtlas.spriteatlasv2/RarityIconCenter_SSR--Sprite--4859392036282087881.png?release=r-8d8d2754722f09cde311",
     "sha256": "e46edac19e3c52c1116cdcf6eee127174e6a6e8337904d777de2d7b422b30fe2"
   },
   "CardRank0.png": {
@@ -73,7 +73,7 @@
     "sha256": "65a5905864c36b60de6508110b5b22e944f8b81f5d87e38ecf2787e9785fb4f6"
   },
   "RarityIconCenter_EX.png": {
-    "url": "https://haneoka.org/runtime/jp/unity/Assets/AddressableResources/UI/Atlas/FixUiSpriteAtlas.spriteatlasv2/RarityIconCenter_EX--Sprite-794418242220251623.png?release=r-d9e6e6e773a4bd9e090b",
+    "url": "https://haneoka.org/runtime/jp/unity/Assets/AddressableResources/UI/Atlas/FixUiSpriteAtlas.spriteatlasv2/RarityIconCenter_EX--Sprite-794418242220251623.png?release=r-8d8d2754722f09cde311",
     "sha256": "d5ae4fa97b0437d951812d7a5e2e914aab84a98fbf0a4c0a10a44bda54609e08"
   },
   "ImageRanking1st.png": {

@@ -37,7 +37,7 @@ def _related_rows(record, catalog, *, challenge_song_ids=(), include_songs=True)
             continue
         song = songs.get(ident)
         rows.append(InfoRow(song.title if song else f'歌曲 ID {ident}',
-                            (),
+                            (f'歌曲 ID {ident}',),
                             song.jacket_url if song else '', f'/查曲 {ident}', '关联歌曲',kind='song'))
     return tuple(rows)
 

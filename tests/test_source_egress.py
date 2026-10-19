@@ -223,7 +223,8 @@ class SourceEgressTests(unittest.TestCase):
         repo = self.repository()
         settings = SimpleNamespace(cutoff_source='haneoka', cache_file=repo.cache_file,
                                    cutoff_history_file=None, moenotes_open_history_file=None,
-                                   cutoff_history_enabled=True, cutoff_history_min_free_mb=0)
+                                   cutoff_history_enabled=True, cutoff_history_min_free_mb=0,
+                                   cutoff_score_display_limit=30_000_000)
         configure_sources(repo, settings)
         source = repo.event_cutoffs
         source.clock = source.monotonic = lambda: fixture.now

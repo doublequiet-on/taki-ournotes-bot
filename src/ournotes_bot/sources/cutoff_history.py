@@ -689,3 +689,4 @@ def configure_sources(repository, settings):
     haneoka = HaneokaCutoffHistory(settings.cache_file.with_name("haneoka-cutoff-history-v3.sqlite3"),
                                   enabled=settings.cutoff_history_enabled, min_free_mb=settings.cutoff_history_min_free_mb)
     source.history = SourceHistory(legacy, formal, active=settings.cutoff_source, haneoka=haneoka)
+    source.score_display_limit = settings.cutoff_score_display_limit
