@@ -133,3 +133,41 @@ class PlayerHistoryTests(unittest.TestCase):
             self.assertEqual(backup.execute('SELECT * FROM observations').fetchall(), current.execute('SELECT * FROM observations').fetchall())
             self.assertIsNone(backup.execute("SELECT 1 FROM sqlite_master WHERE name='observation_players'").fetchone())
         self.assertEqual(module.run(cache, self.store.path, 'tracker')['counts'], {'matched': 1})
+
+    def test_haneoka_recovery_accepts_old_and_avatar_v2_cache_keys(self):
+        spec = importlib.util.spec_from_file_location('backfill_haneoka_players', Path(__file__).parents[1]/'scripts/backfill_cutoff_players.py')
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        for suffix in ('', ':avatar-v2'):
+            with self.subTest(suffix=suffix):
+                root = self.root / ('old' if not suffix else 'avatar-v2')
+                root.mkdir()
+                store = HaneokaCutoffHistory(root/'history.sqlite3', min_free_mb=0)
+                b = replace(self.board, source='haneoka', time_kind='tracker_observed_via_haneoka',
+                            contract_version='haneoka:challenge-ranking/1')
+                self.assertEqual(store.record(self.event, replace(b, player_ids=(), player_names=())), 'valid')
+                key = 'board:jp:1:1:' + 'a'*64 + suffix
+                cache = root/'cache'; cache.mkdir()
+                data = {'schema': 1, 'key': key, 'received': NOW/1000,
+                        'payload': {'scores': list(b.scores), 'player_ids': list(b.player_ids),
+                                    'player_names': list(b.player_names), 'unsafe': False,
+                                    'fetched': NOW, 'server': NOW}}
+                (cache/(hashlib.sha256(key.encode()).hexdigest()+'.json')).write_text(json.dumps(data), encoding='utf-8')
+                self.assertEqual(module.run(cache, store.path, 'haneoka')['counts'], {'matched': 1})
+                self.assertFalse(store.latest(self.event, self.event.songs[0]).player_ids)
+                result = module.run(cache, store.path, 'haneoka', apply=True, backup_dir=root/'backups')
+                self.assertEqual(result['counts'], {'saved': 1})
+                self.assertEqual(store.latest(self.event, self.event.songs[0]).player_name(1), '合成🌸名字')
+                with closing(sqlite3.connect(result['backup'])) as backup, closing(sqlite3.connect(store.path)) as current:
+                    self.assertEqual(backup.execute('SELECT * FROM observations').fetchall(),
+                                     current.execute('SELECT * FROM observations').fetchall())
+                self.assertEqual(module.run(cache, store.path, 'haneoka')['counts'], {'matched': 1})
+                for invalid in (key+':unknown', key.replace('a'*64, 'a'*63)):
+                    with self.subTest(invalid=invalid):
+                        invalid_cache = root/'invalid'; invalid_cache.mkdir(exist_ok=True)
+                        data['key'] = invalid
+                        path = invalid_cache/(hashlib.sha256(invalid.encode()).hexdigest()+'.json')
+                        path.write_text(json.dumps(data), encoding='utf-8')
+                        with self.assertRaisesRegex(ValueError, 'invalid board cache identity'):
+                            module.run(invalid_cache, store.path, 'haneoka')
+                        path.unlink()

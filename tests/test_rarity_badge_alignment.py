@@ -47,7 +47,39 @@ class RarityBadgeAlignmentTests(unittest.TestCase):
             self.assertEqual(rarity.call_args.args,(2,206,206,80,58))
             badge.assert_not_called()
             rarity.reset_mock()
-            card_face(c,card,20,20,90,120,lambda *a:None,level=50,awake=3)
+            card_face(c,card,20,20,90,120,lambda *a:None,level=50,rank=3)
             rarity.assert_not_called()
             self.assertEqual(badge.call_args.args[0],'CardRank3.png')
         c.image.close()
+
+    def test_unknown_avatar_growth_does_not_turn_into_rarity_or_zero_rank(self):
+        card=SimpleNamespace(rarity=4,full_url='',thumbnail_url='',catalog={})
+        c=Canvas(180,180)
+        with patch.object(c,'rarity_badge') as rarity,patch.object(c,'badge') as badge,patch.object(c,'text') as text:
+            card_face(c,card,20,20,76,76,lambda *a:None,growth=True)
+            rarity.assert_not_called()
+            badge.assert_not_called()
+            self.assertIn('Lv.—',[call.args[2] for call in text.call_args_list])
+            card_face(c,card,20,20,76,76,lambda *a:None,level=1,rank=0,growth=True)
+            self.assertEqual(badge.call_args.args[0],'CardRank0.png')
+        c.image.close()
+
+    def test_ranking_avatar_uses_own_exp_and_rank_not_high_score_deck(self):
+        from ournotes_bot.rendering import ranking_layout
+        from ournotes_bot.query.event_cutoff_query import CutoffAnswer, CutoffRequest
+        from ournotes_bot.sources.moenotes_events import EventSnapshot, EventSong, BoardSnapshot, display_time
+        card=SimpleNamespace(id=1,rarity=4,full_url='',thumbnail_url='',catalog={
+            'level_curve':[{'level':1,'exp':0},{'level':50,'exp':100}],
+            'level_limits':[{'_awakeCount':5,'_limitLevel':100}]})
+        song=EventSong('7','101','fixture')
+        event=EventSnapshot('jp','3','fixture','collecting',1792274400000,1792964940000,(song,))
+        for favorite in ({'favoriteMemberExp':100,'favoriteMemberAwakeCount':5,'favoriteMemberRank':2},{}):
+            detail={'favoriteMemberCardId':1,'cards':[{'memberCardId':1,'memberExp':0,'memberAwakeCount':1,'memberRank':5}],**favorite}
+            board=BoardSnapshot(song,scores=(123,),player_details=(detail,))
+            answer=CutoffAnswer(CutoffRequest(ranks=(1,)),event,(board,))
+            with patch.object(ranking_layout,'card_face') as face:
+                pages=ranking_layout.render(answer,assets={},load=lambda *a:None,display_time=display_time,
+                                            server_label='日服',timezone_label='UTC+09:00',catalogs=({1:card},{}))
+                self.assertTrue(pages)
+                self.assertEqual(face.call_args.kwargs,{'level':50 if favorite else None,
+                                                       'rank':2 if favorite else None,'growth':True})

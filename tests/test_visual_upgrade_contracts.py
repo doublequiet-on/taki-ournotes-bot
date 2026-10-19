@@ -18,6 +18,20 @@ from ournotes_bot.platforms.qq.qq import PreparedReply, _deliver_reply, _fallbac
 
 
 class VisualSourceTests(unittest.TestCase):
+    def test_favorite_growth_is_optional_validated_and_independent_of_roster(self):
+        old=player_detail({'favoriteMemberCardId':48})
+        self.assertNotIn('favoriteMemberExp',old)
+        self.assertEqual(player_detail(old),old)
+        detail=player_detail({'favoriteMemberCardId':48,'favoriteMemberExp':721000,
+                              'favoriteMemberAwakeCount':5,'favoriteMemberRank':2,'cards':[]})
+        self.assertEqual(detail['favoriteMemberRank'],2)
+        self.assertEqual(detail['favoriteMemberAwakeCount'],5)
+        self.assertEqual(player_detail(detail),detail)
+        for invalid in (-1,6,True,'2'):
+            self.assertIsNone(player_detail({'favoriteMemberRank':invalid})['favoriteMemberRank'])
+        self.assertEqual(player_detail({'favoriteMemberRank':0})['favoriteMemberRank'],0)
+        self.assertIsNone(player_detail({'favoriteMemberExp':True})['favoriteMemberExp'])
+
     def test_unrelated_game_downloads_and_warm_reads_do_not_wait_for_cold_icon(self):
         import threading
         from concurrent.futures import ThreadPoolExecutor

@@ -97,8 +97,9 @@ def render(answer,*,assets,load,display_time,server_label,timezone_label,catalog
     def avatar(c,board,rank,x,y,size):
         detail=board.player_detail(rank) or {};card=member.get(detail.get('favoriteMemberCardId'))
         if card:
-            slot=next((v for v in detail.get('cards',[]) if v.get('memberCardId')==card.id),{})
-            card_face(c,card,x,y,size,size,art,level=level(card,slot.get('memberExp'),slot.get('memberAwakeCount')),awake=slot.get('memberAwakeCount'))
+            card_face(c,card,x,y,size,size,art,
+                      level=level(card,detail.get('favoriteMemberExp'),detail.get('favoriteMemberAwakeCount')),
+                      rank=detail.get('favoriteMemberRank'),growth=True)
         else:c.box((x,y,x+size,y+size));c.text(x+size/2,y+size/2,'?',28,MUTED,align='center')
     def header(c):
         c.header('歌曲榜线总览' if trend else '歌曲榜线','/'+answer.request.command_label())
@@ -195,8 +196,8 @@ def render(answer,*,assets,load,display_time,server_label,timezone_label,catalog
                 if player_info(board,rank):c.text(1030,y+103,player_info(board,rank),32,MUTED,align='right')
                 for i,slot in enumerate(detail.get('cards',[])):
                     mc=member.get(slot.get('memberCardId'));sc=support.get(slot.get('supportCardId'))
-                    if mc:card_face(c,mc,1070+i*100,y+20,90,120,art,level=level(mc,slot.get('memberExp'),slot.get('memberAwakeCount')),awake=slot.get('memberAwakeCount'))
-                    if sc:card_face(c,sc,1604+i*188,y+31,176,99,art,level=level(sc,slot.get('supportExp'),slot.get('supportRank')),awake=slot.get('supportRank'))
+                    if mc:card_face(c,mc,1070+i*100,y+20,90,120,art,level=level(mc,slot.get('memberExp'),slot.get('memberAwakeCount')),rank=slot.get('memberRank'),growth=True)
+                    if sc:card_face(c,sc,1604+i*188,y+31,176,99,art,level=level(sc,slot.get('supportExp'),slot.get('supportRank')),rank=slot.get('supportRank'))
                 if not detail.get('cards'):c.text(1070,y+74,'卡组未获取',28,MUTED)
             else:
                 rank=data
@@ -240,13 +241,16 @@ def render(answer,*,assets,load,display_time,server_label,timezone_label,catalog
             favorite=member.get(detail.get('favoriteMemberCardId'))
             side=96 if trend else 84 if width==1080 else 76
             if favorite:request_card(favorite,side,side)
+            favorite_rank=detail.get('favoriteMemberRank')
+            if type(favorite_rank) is int and 0<=favorite_rank<=5:
+                badges.add(f'CardRank{favorite_rank}.png')
             if trend:
                 for slot in detail.get('cards',[]):
                     mc=member.get(slot.get('memberCardId'));sc=support.get(slot.get('supportCardId'))
                     if mc:request_card(mc,90,120)
                     if sc:request_card(sc,176,99)
             for slot in detail.get('cards',[]):
-                for prefix,key in (('CardRank','memberAwakeCount'),('snaplimit_','supportRank')):
+                for prefix,key in (('CardRank','memberRank'),('snaplimit_','supportRank')):
                     value=slot.get(key)
                     if type(value) is int and 0<=value<=5:badges.add(f'{prefix}{value}.png')
     for label,url in bonus_marks:
