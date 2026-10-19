@@ -260,4 +260,3 @@ class NoticeReports:
             return None
         self.store.finish_report(revision, "ready" if content else "skipped", content)
         return content
-
