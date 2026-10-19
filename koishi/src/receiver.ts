@@ -24,14 +24,14 @@ export class Receiver {
   private jobs = new Map<string, Job>()
   private entering = 0
   private admission: Promise<void> = Promise.resolve()
-  private ready: Promise<void>
+  readonly ready: Promise<void>
   private log: ReturnType<Context['logger']>
   constructor(private ctx: Context, readonly config: ReceiverConfig, client?: BackendClient) {
     this.client = client ?? new BackendClient(config.backendUrl, process.env[config.tokenEnv] ?? '', config.instanceId, this.epoch)
     this.log = ctx.logger('taki')
     this.ready = this.client.initialize()
     // Mark rejection observed even when no message arrives; ingress still sees the same rejection.
-    void this.ready.catch(() => this.log.warn('backend initialization failed; reload after recovery'))
+    void this.ready.catch(() => this.log.warn('backend initialization failed; admission disabled'))
     ctx.effect(() => ctx.root.on('internal/session', session => this.capture(session as Session)))
     ctx.effect(() => ctx.root.middleware(async (session, next) => {
       if (!await this.receive(session)) return next()

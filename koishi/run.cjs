@@ -38,6 +38,9 @@ async function start(env=process.env) {
   })
   try {
     await ctx.start()
+    const receiver=ctx.takiTransport?.receiver
+    if(!receiver)throw Error('gateway receiver unavailable')
+    await receiver.ready
     await new Promise((resolve,reject)=>{server.once('error',reject);server.listen(config.port,'127.0.0.1',resolve)})
   } catch(error) {
     await taki.dispose();await adapter.dispose();await ctx.stop();throw error

@@ -1,6 +1,7 @@
 // L3: bounded authenticated loopback wire client; no business parsing or QQ credentials.
 import type { Inbound } from './ingress'
 import type { Attempt, DeliveryEvents, Outcome } from './delivery'
+import { setTimeout as delay } from 'node:timers/promises'
 
 export const protocol = { major: 1, minor: 0 }
 export const capability = 'qq-m1-candidate'
@@ -19,7 +20,8 @@ export class BackendClient implements DeliveryEvents {
   readonly base: string
   readiness?: { notices_enabled?: boolean; backend_code_digest?: string; backend_epoch?: string }
   private contextAllowed = true
-  deactivate(): void { this.contextAllowed = false }
+  private startup = new AbortController()
+  deactivate(): void { this.contextAllowed = false; this.startup.abort() }
   constructor(base: string, private token: string, readonly instance: string, readonly epoch: string,
               private fetcher: typeof fetch = fetch) {
     const url = new URL(base)
@@ -27,13 +29,13 @@ export class BackendClient implements DeliveryEvents {
         || url.pathname !== '/' || url.search || url.hash || token.length < 32) throw new Error('invalid backend configuration')
     this.base = url.origin
   }
-  async request(path: string, body?: unknown, maximum = 131072, binary = false): Promise<any> {
+  async request(path: string, body?: unknown, maximum = 131072, binary = false, signal?: AbortSignal): Promise<any> {
     if (!path.startsWith('/v1/') || path.includes('..') || path.includes('\\')) throw new BackendError('invalid_resource')
     let response: Response
     const controller = new AbortController(), timeout = setTimeout(() => controller.abort(), 10_000)
     try {
       response = await this.fetcher(this.base + path, { method: body === undefined ? 'GET' : 'POST',
-        redirect: 'error', signal: controller.signal,
+        redirect: 'error', signal: signal ? AbortSignal.any([controller.signal, signal]) : controller.signal,
         headers: { Authorization: 'Bearer ' + this.token, 'X-Taki-Instance': this.instance,
           'X-Taki-Epoch': this.epoch, 'Content-Type': 'application/json' },
         body: body === undefined ? undefined : JSON.stringify(body) })
@@ -71,12 +73,30 @@ export class BackendClient implements DeliveryEvents {
       }
     }
   }
-  async initialize(): Promise<void> {
-    const ready = await this.retry('/v1/ready')
-    if (!ready.ready || ready.protocol?.major !== 1 || ready.protocol?.minor !== 0
-        || ready.capability !== capability || !['classify', 'gateway_retire', 'ack_context_guard', 'notice_gateway_v1'].every(feature => ready.features?.includes(feature))) throw new BackendError('incompatible_backend')
-    await this.retry('/v1/gateways', { gateway_epoch: this.epoch })
-    this.readiness=ready
+  async initialize({ timeoutMs = 60_000, retryMs = 1000 } = {}): Promise<void> {
+    const deadline = new AbortController()
+    const timer = setTimeout(() => deadline.abort(), timeoutMs)
+    const signal = AbortSignal.any([deadline.signal, this.startup.signal])
+    try {
+      while (!signal.aborted) {
+        try {
+          const ready = await this.request('/v1/ready', undefined, 131072, false, signal)
+          if (ready.protocol?.major !== 1 || ready.protocol?.minor !== 0
+              || ready.capability !== capability || !['classify', 'gateway_retire', 'ack_context_guard', 'notice_gateway_v1'].every(feature => ready.features?.includes(feature))) throw new BackendError('incompatible_backend')
+          if (!ready.ready) throw new BackendError('backend_not_ready', 503)
+          await this.request('/v1/gateways', { gateway_epoch: this.epoch }, 131072, false, signal)
+          if (signal.aborted) break
+          this.readiness = ready
+          return
+        } catch (error) {
+          if (signal.aborted) break
+          if (!(error instanceof BackendError) || (error.code !== 'backend_transport' && error.status < 500)) throw error
+        }
+        try { await delay(retryMs, undefined, { signal }) }
+        catch { if (!signal.aborted) throw new BackendError('startup_wait_failed') }
+      }
+      throw new BackendError(this.startup.signal.aborted ? 'startup_cancelled' : 'startup_timeout')
+    } finally { clearTimeout(timer) }
   }
   async recognizes(body: string): Promise<boolean> {
     const value = await this.retry('/v1/classify', { body })

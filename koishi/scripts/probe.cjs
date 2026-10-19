@@ -359,6 +359,71 @@ async function main() {
     assert.equal(worker.healthy(),false)
     await worker.close();await ctx.stop()
   })
+  const startupReady={ready:true,protocol:{major:1,minor:0},capability:'qq-m1-candidate',
+    features:['classify','gateway_retire','ack_context_guard','notice_gateway_v1']}
+  await run('startup survives delayed readiness and registration transport failure', async () => {
+    let reads=0,registrations=0
+    const epochs=[]
+    const client=new BackendClient('http://127.0.0.1:8765','x'.repeat(32),'fixture','epoch',async(url,options)=>{
+      if(url.endsWith('/ready'))return new Response(JSON.stringify(startupReady),{status:++reads<=4?503:200})
+      epochs.push(JSON.parse(options.body).gateway_epoch)
+      if(++registrations===1)throw Error('connection reset')
+      return new Response('{}')
+    })
+    await client.initialize({timeoutMs:2000,retryMs:100})
+    assert.ok(reads>=6);assert.equal(registrations,2);assert.deepEqual(epochs,['epoch','epoch'])
+    assert.equal(client.readiness.ready,true)
+  })
+  await run('startup retries connection refused but rejects incompatible protocol and authentication immediately', async () => {
+    let calls=0
+    const client=new BackendClient('http://127.0.0.1:8765','x'.repeat(32),'fixture','epoch',async()=>{
+      if(++calls===1)throw Error('connection refused')
+      return new Response(JSON.stringify(startupReady))
+    })
+    await client.initialize({timeoutMs:1000,retryMs:5});assert.equal(calls,3)
+    for(const status of [200,401,403]) {
+      let attempts=0
+      const bad=new BackendClient('http://127.0.0.1:8765','x'.repeat(32),'fixture','epoch',async()=>{
+        attempts++;return new Response(JSON.stringify({...startupReady,protocol:{major:2,minor:0}}),{status})
+      })
+      await assert.rejects(bad.initialize({timeoutMs:500,retryMs:5}),e=>e.code===(status===200?'incompatible_backend':'backend_http_'+status))
+      assert.equal(attempts,1)
+    }
+  })
+  await run('startup deadline aborts a stalled request and leaves no handshake', async () => {
+    let aborted=false
+    const client=new BackendClient('http://127.0.0.1:8765','x'.repeat(32),'fixture','epoch',async(url,{signal})=>new Promise((resolve,reject)=>{
+      signal.addEventListener('abort',()=>{aborted=true;reject(Error('aborted'))},{once:true})
+    }))
+    await assert.rejects(client.initialize({timeoutMs:30,retryMs:5}),e=>e.code==='startup_timeout')
+    assert.equal(aborted,true);assert.equal(client.readiness,undefined)
+  })
+  await run('startup cancellation interrupts retry sleep without registering', async () => {
+    let calls=0
+    const client=new BackendClient('http://127.0.0.1:8765','x'.repeat(32),'fixture','epoch',async()=>{
+      calls++;return new Response('{}',{status:503})
+    })
+    const pending=client.initialize({timeoutMs:1000,retryMs:500})
+    setTimeout(()=>client.deactivate(),20)
+    await assert.rejects(pending,e=>e.code==='startup_cancelled');assert.equal(calls,1)
+  })
+  for(const mode of ['timeout','incompatible'])await run('actual gateway startup rejects '+mode+' and disposes plugins',async()=>{
+    const {Bot}=require('koishi'),originalStart=Bot.prototype.start,originalRead=fs.readFileSync
+    const originalInitialize=BackendClient.prototype.initialize,originalFetch=globalThis.fetch
+    const token=process.env.OURNOTES_BACKEND_TOKEN
+    Bot.prototype.start=async()=>{}
+    fs.readFileSync=function(file,...args){return String(file).endsWith('combination.json')?JSON.stringify({commit:'b'.repeat(40)}):originalRead.call(this,file,...args)}
+    BackendClient.prototype.initialize=function(){return originalInitialize.call(this,{timeoutMs:30,retryMs:5})}
+    globalThis.fetch=async()=>new Response(JSON.stringify({...startupReady,protocol:{major:2,minor:0}}),{status:mode==='timeout'?503:200})
+    process.env.OURNOTES_BACKEND_TOKEN='x'.repeat(32)
+    try {
+      await assert.rejects(require('../run.cjs').start({TAKI_KOISHI_ENABLED:'1',QQ_APP_ID:'fixture-app',QQ_APP_SECRET:'fixture',QQ_SELF_ID:'fixture-self',OURNOTES_BACKEND_TOKEN:'x'.repeat(32),TAKI_INSTANCE_ID:'fixture'}),
+        e=>e.code===(mode==='timeout'?'startup_timeout':'incompatible_backend'))
+    } finally {
+      Bot.prototype.start=originalStart;fs.readFileSync=originalRead;BackendClient.prototype.initialize=originalInitialize;globalThis.fetch=originalFetch
+      if(token===undefined)delete process.env.OURNOTES_BACKEND_TOKEN;else process.env.OURNOTES_BACKEND_TOKEN=token
+    }
+  })
   const root = path.resolve(__dirname, '..')
   const lock = JSON.parse(fs.readFileSync(path.join(root, 'package-lock.json')))
   const versions = Object.fromEntries(['koishi', '@koishijs/core', '@koishijs/plugin-adapter-qq', '@satorijs/adapter-qq', '@satorijs/core', 'typescript'].map(name => {
