@@ -460,6 +460,23 @@ async function main() {
       assert.ok(calls.some(c=>c.url==='/v1/groups/events' && c.body.kind==='reject'));assert.ok(calls.every(c=>c.url!=='/v1/notices/claims'));assert.equal(worker.healthy(),true)
     } finally{await worker.close();await ctx.stop()}
   })
+  await run('disabled backend notices preserve health and skip events before/after readiness',async()=>{
+    const {Notices}=require('../lib'),ctx=new Context();let releaseReady,calls=0
+    const client={epoch:'e',async retry(){calls++;throw Error('notifications_disabled')}}
+    const ready=new Promise(resolve=>{releaseReady=resolve})
+    const worker=new Notices(ctx,client,identity,ready)
+    const message={platform:'qq',bot:{config:{id:identity.appId},selfId:identity.selfId},event:{_type:'qq/group-at-message-create',_data:{...event().d}}}
+    try {
+      worker.capture(message)
+      client.readiness={notices_enabled:false};releaseReady()
+      await worker.groupTail
+      assert.equal(calls,0);assert.equal(worker.healthy(),true)
+      const count=worker.changed.size
+      worker.capture({...message,event:{_type:'qq/group-msg-reject',_data:{group_openid:'later-group',timestamp:Math.floor(Date.now()/1000)}}})
+      await worker.groupTail;worker.tick();await worker.task
+      assert.equal(calls,0);assert.equal(worker.changed.size,count);assert.equal(worker.healthy(),true)
+    }finally{await worker.close();await ctx.stop()}
+  })
   await run('console notice allowlist is sent before backend claims',async()=>{
     const {Notices}=require('../lib'),env=createBot(),calls=[]
     env.bot.status=1

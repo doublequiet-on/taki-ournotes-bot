@@ -28,7 +28,8 @@ export class Notices {
   }
   private base() { return { protocol, instance_id: this.identity.instanceId, app_id: this.identity.appId, gateway_epoch: this.client.epoch } }
   capture(session: Session): void {
-    if (!this.active || session.platform !== 'qq' || session.bot.config.id !== this.identity.appId || session.bot.selfId !== this.identity.selfId) return
+    if (!this.active || this.client.readiness?.notices_enabled === false || session.platform !== 'qq'
+        || session.bot.config.id !== this.identity.appId || session.bot.selfId !== this.identity.selfId) return
     const type = (session.event._type ?? '').replace(/^qq\//,'').replaceAll('-','_').toUpperCase()
     const data = session.event._data as any
     let event = decodeGroupEvent({ t:type, d:data },this.identity)
@@ -51,7 +52,7 @@ export class Notices {
     this.queued++
     this.groupTail = this.groupTail.then(async () => {
       await this.ready
-      if (this.active) await this.client.retry('/v1/groups/events',body)
+      if (this.active && this.client.readiness?.notices_enabled !== false) await this.client.retry('/v1/groups/events',body)
     }).catch(() => { this.active=false; this.ctx.logger('taki').warn('notice group synchronization failed; reload required') })
       .finally(() => { this.queued-- })
   }
