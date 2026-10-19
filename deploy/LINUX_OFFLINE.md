@@ -81,3 +81,5 @@ sudo /usr/bin/python3 -E -s -B /usr/local/lib/taki-updater/linux_backend.py stat
 同一候选准备阶段还执行 `scripts/prepare_query_assets.py`：取同版公开 Catalog，预下载角色立绘、卡面、缩略图、封面、活动/卡池及乐队图标，从同版活动／挑战索引补齐榜线小封面和章节横幅，同时校验全部固定游戏素材。只允许 release 固定的来源 URL；图片须完整解码且符合字节/像素预算。`prepared-artwork-v1.json` 保存来源身份及每张图片的 SHA-256，全部成功后原子发布；损坏或缺失文件重新获取，失败阻止候选完成准备，旧服务继续运行。
 
 素材仍存于 `<base>/data/game-assets` 和 `<base>/data/haneoka-asset-cache`。该步骤只额外挂载这两个目录，不开放整个共享数据目录；候选 Catalog 保存在候选 `test-data` 中，不覆盖正在运行的资料快照。更新、回退和重启沿现有 URL 哈希缓存读取已准备素材。诊断可运行 `python -B scripts/prepare_query_assets.py --cache-dir <隔离数据目录> --catalog <隔离Catalog文件>`；`--snapshot` 固定使用指定已有 Catalog 快照，仍会按其 release 身份请求活动／挑战索引并下载缺失素材；它不是断网开关。榜线绘图读取同一持久图片缓存，不受独立榜线小时缓存是否为空影响。准备耗时应与首次查询、热缓存查询耗时分别记录。
+
+受管理的 Koishi 后端由 `koishi_launcher.py --base <base> backend` 在启动时将 `OURNOTES_RUNTIME_DATA_DIR` 固定为 `<base>/data`，覆盖旧 EnvironmentFile 遗留值，保证预热和查询读取同一目录。直接运行 backend 的隔离目录配置不受影响。安装该启动器须单独核验并备份原文件；应用包更新不会自动安装控制器。上线检查应核对实际进程环境，而不只看 systemd 示例文件。旧运行目录不删除、不合并：其中可重建的成员／谱面缓存将按原刷新规则在新目录建立；主资料、额度、历史及统计仍按各自已有配置路径读取，数据格式不变。切换前检查两个目录的业务数据归属及 `<base>/data` 的写权限，按既有流程备份并先停旧实例。
