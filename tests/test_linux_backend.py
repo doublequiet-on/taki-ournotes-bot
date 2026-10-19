@@ -413,6 +413,80 @@ class LinuxBackendTests(unittest.TestCase):
         self.assertFalse(self.backend.healthy(self.baseline))
         self.assertEqual(self.calls,[])
 
+    def test_koishi_start_handles_unloaded_stopped_and_failed_units(self):
+        from deploy.koishi_control import KoishiControl
+        for initial in ('inactive', 'failed', 'active', 'activating'):
+            with self.subTest(state=initial):
+                control = KoishiControl(self.backend)
+                control.combination = Mock()
+                self.backend.current_release = lambda: self.baseline
+                state = {'ActiveState': initial}
+                commands = []
+                def runner(argv, **kwargs):
+                    action = argv[1]
+                    if action == 'show':
+                        return 'ActiveState=' + state['ActiveState'] + '\nMainPID=0\n'
+                    commands.append(action)
+                    if action == 'reset-failed':
+                        if state['ActiveState'] != 'failed':
+                            raise Rejected('unit_not_loaded')
+                        state['ActiveState'] = 'inactive'
+                    elif action == 'start':
+                        state['ActiveState'] = 'active'
+                    return ''
+                self.backend.run = runner
+                control.start()
+                self.assertEqual(state['ActiveState'], 'active')
+                self.assertEqual(commands, ['reset-failed', 'start'] if initial == 'failed' else ['start'])
+                control.combination.assert_called_once_with(self.baseline)
+
+    def test_koishi_start_preserves_validation_reset_and_start_failures(self):
+        from deploy.koishi_control import KoishiControl
+        for failure in ('combination', 'reset-failed', 'start'):
+            with self.subTest(failure=failure):
+                control = KoishiControl(self.backend)
+                control.combination = Mock(side_effect=ValueError('invalid_combination') if failure == 'combination' else None)
+                control.state = Mock(return_value={'ActiveState': 'failed' if failure == 'reset-failed' else 'inactive'})
+                self.backend.current_release = lambda: self.baseline
+                def runner(argv, **kwargs):
+                    if argv[1] == failure: raise Rejected('command_failed')
+                    return ''
+                self.backend.run = Mock(side_effect=runner)
+                with self.assertRaises((ValueError, Rejected)):
+                    control.start()
+                if failure == 'combination': self.backend.run.assert_not_called()
+                if failure == 'reset-failed':
+                    self.assertFalse(any(c.args[0][1] == 'start' for c in self.backend.run.call_args_list))
+
+    def test_backend_start_resets_only_failed_and_keeps_permit_before_processes(self):
+        original_path = Path
+        boot = self.root / 'boot-id'
+        boot.write_text('test-boot')
+        for initial in ('inactive', 'failed', 'active'):
+            with self.subTest(state=initial):
+                runtime = self.root / ('run-' + initial)
+                def selected_path(value):
+                    if value == '/run/taki-updater': return runtime
+                    if value == '/proc/sys/kernel/random/boot_id': return boot
+                    return original_path(value)
+                self.backend.current_release = lambda: self.baseline
+                self.backend._service = Mock(return_value={'ActiveState': initial})
+                commands = []
+                def runner(argv, **kwargs):
+                    if argv[1] == 'reset-failed' and initial != 'failed': raise Rejected('unit_not_loaded')
+                    permit = json.loads((runtime / 'allowed.json').read_text())
+                    self.assertEqual(permit, {'release': asdict(self.baseline), 'boot_id': 'test-boot'})
+                    self.assertEqual((runtime / 'allowed.json').stat().st_mode & 0o777, 0o644 if os.name != 'nt' else 0o666)
+                    commands.append(argv[1])
+                    return ''
+                self.backend.run = runner
+                self.backend.koishi = Mock()
+                self.backend.koishi.start.side_effect = lambda: commands.append('gateway')
+                with patch('deploy.linux_backend.Path', side_effect=selected_path), patch('deploy.linux_backend.trusted'):
+                    self.backend.start()
+                expected = ['reset-failed'] if initial == 'failed' else []
+                self.assertEqual(commands, expected + ['start', 'gateway'])
+
     def test_stop_confirms_pid_zero_before_activation(self):
         with patch.object(self.backend, "_service", return_value={"MainPID": "42", "ActiveState": "active"}):
             with self.assertRaisesRegex(Rejected, "service_not_stopped"):

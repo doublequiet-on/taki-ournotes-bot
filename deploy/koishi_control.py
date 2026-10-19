@@ -64,7 +64,10 @@ class KoishiControl:
 
     def start(self):
         self.combination(self.backend.current_release())
-        self.backend.run(['/usr/bin/systemctl','reset-failed','taki-gateway.service'],timeout=30)
+        # An inactive new unit may be unloaded between show and reset-failed.
+        # Failed units stay loaded; only they need their start limit reset.
+        if self.state().get('ActiveState') == 'failed':
+            self.backend.run(['/usr/bin/systemctl','reset-failed','taki-gateway.service'],timeout=30)
         self.backend.run(['/usr/bin/systemctl','start','taki-gateway.service'],timeout=90)
 
     def healthy(self, release):
