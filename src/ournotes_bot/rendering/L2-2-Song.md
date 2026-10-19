@@ -57,4 +57,5 @@ Current 直接引用 song_traits 的显示常量；这属于领域表现依赖�
 `visuals.py` 保留 `render_song_list/render_chart` 与歌曲身份／激奏辅助；完整谱面来源由 `sources/chart_data.py` 路由，条件由 `query/song_query.py` 解析。回归 `test_visuals.py`、`test_chart_data.py`。
 
 QQ 新入口为 [song_layout.py](song_layout.py)、[song_detail_layout.py](song_detail_layout.py)、[chart_layout.py](chart_layout.py)、[ranking_layout.py](ranking_layout.py)。[note_skin.py](note_skin.py) 只消费注入的原版 atlas；数据获取在来源层。
+歌曲列表按当前输出页通过 `haneoka_theme.prepare_assets` 最多六路并发预取封面和属性图，绘制阶段不再逐张请求来源；唯一素材随页释放，重复素材在本次渲染内复用并最终释放。来源校验、磁盘缓存和缺图回退仍由注入的加载器负责。回归见 `test_song_asset_reuse.py`。
 歌曲详情的技能事件按时间排序，判定统计按来源拍号与 binary32 小节时钟生成长条八分拍点，通过 [chart_judgments.py](chart_judgments.py) 支持变拍、隐藏/可见 guide、自动控制点、重合单点吸收和合并端点；恢复密度、五秒覆盖数、占比和排序。固定公开谱面参考向量见 `test_image_repairs.py`，不把判定统计等同于算分模型。谱面使用 trace 原生贴图；固定节拍列只显示栏号，所有栏横向连续排列为单张整首图；歌曲资料在最左侧独立竖列展示，封面、标题、难度与统计纵向排列，右侧谱面保持原轨道宽度和音符间距；9600 万像素／30000 像素边长为谱面专用预算，字节上限沿用编码器默认预算，超限退文字。`0:00`、15 秒间隔和末节点时间按来源 BPM 时钟定位；技能实心／空心编号牌、激奏三角／方块区分起止，跨栏断口不冒充端点，两类侧线同宽，端点图标与竖线分离并按局部 4 倍覆盖采样抗锯齿；纯文字时间标记与技能端点在同一留白区域避让。歌曲时长优先主资料音频长度，谱面时长按末节点计。回归见 `test_chart_annotations.py`、`test_visual_sample_fidelity.py`。

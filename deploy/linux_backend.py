@@ -669,11 +669,16 @@ class LinuxBackend:
         finally:
             os.close(descriptor)
 
-    def start(self) -> None:
+    def runtime_directory(self) -> Path:
+        """Create volatile controller output before notices or start permits."""
         runtime = Path("/run/taki-updater")
         runtime.mkdir(mode=0o755, exist_ok=True)
         trusted(runtime, directory=True)
         runtime.chmod(0o755)  # UMask=0077 must not hide the non-secret start permit.
+        return runtime
+
+    def start(self) -> None:
+        runtime = self.runtime_directory()
         atomic_json(runtime / "allowed.json", {"release": asdict(self.current_release()),
                     "boot_id": Path("/proc/sys/kernel/random/boot_id").read_text().strip()})
         (runtime / "allowed.json").chmod(0o644)
