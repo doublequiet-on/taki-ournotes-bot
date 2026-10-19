@@ -63,6 +63,62 @@ class CatalogTests(unittest.TestCase):
     def records(self):
         return source.validate(self.saved, self.now)[0]
 
+    def test_automatic_summary_refreshes_same_id_and_survives_restart(self):
+        from ournotes_bot.rendering.catalog_layout import summaries
+        bot, candidate = self.status_sequence()
+        for version, value in enumerate((12300, 17600), 1):
+            for server in ('jp', 'intl'):
+                skill = candidate['documents'][server]['cards']['51']['resolvedSkills']['live']
+                skill['description'] = [f'新版机制{version}：{{effects[0].value/100}}%', '', '',
+                    f'新机制{version}：得分提升{{effects[0].value/100}}%，仅LIFE≥700时，最多2次']
+                for effect in skill['effects']:
+                    effect['effectValue'] = value
+                    effect['raw']['_effectValue'] = value
+            with patch.object(self.repo, '_collect', return_value=copy.deepcopy(candidate)):
+                bot.refresh()
+            card = next(c for c in bot.cards if c.id == 51)
+            i = next(i for i,s in enumerate(card.skills) if s.kind == 'liveSkill')
+            brief = card.catalog['compact_skills'][i]
+            self.assertTrue(brief['automatic'])
+            self.assertEqual(brief['levels']['5'], f'新机制{version}：得分+{value/100:g}%，仅LIFE≥700时，最多2次')
+            self.assertIn(brief['levels']['5'], [s[2] for s in summaries(card)])
+        with patch.object(self.repo, '_collect', side_effect=OSError('offline')):
+            bot.refresh()
+        self.assertEqual(bot.cache_state, 'stale')
+        restarted = source.CatalogRepository(self.path, clock=lambda: self.now)
+        records, _ = restarted.load()
+        card = next(c for c in records[1] if c.id == 51)
+        self.assertEqual(card.catalog['compact_skills'][i], brief)
+
+    def test_automatic_summary_does_not_hide_unknown_parameters(self):
+        for server in ('jp', 'intl'):
+            skill = self.saved['documents'][server]['cards']['51']['resolvedSkills']['live']
+            skill['description'] = ['新机制{unknown.parameter}']
+        card = next(c for c in self.records()[1] if c.id == 51)
+        i = next(i for i,s in enumerate(card.skills) if s.kind == 'liveSkill')
+        self.assertIsNone(card.catalog['compact_skills'][i])
+        self.assertFalse(card.catalog['compact_summary_complete'])
+        self.assertIn('参数未确认', card.skills[i].description)
+
+    def test_new_card_and_skill_ids_generate_without_registered_fingerprint(self):
+        for server in ('jp', 'intl'):
+            docs = self.saved['documents'][server]
+            card = copy.deepcopy(docs['cards']['51'])
+            card['cardId'] = card['raw']['_id'] = 999
+            card['raw']['_liveSkillID'] = 999
+            skill = card['resolvedSkills']['live']
+            skill['id'] = 999
+            skill['description'] = ['新机制：{effects[0].value/100}%']
+            for effect in skill['effects']:
+                effect['raw']['_liveSkillID'] = 999
+            docs['cards']['999'] = card
+            docs['catalog']['resources']['cards']['count'] += 1
+        card = next(c for c in self.records()[1] if c.id == 999)
+        i = next(i for i,s in enumerate(card.skills) if s.kind == 'liveSkill')
+        self.assertTrue(card.catalog['compact_skills'][i]['automatic'])
+        self.assertEqual(card.catalog['compact_skills'][i]['levels']['5'], card.skills[i].description)
+        self.assertTrue(card.catalog['compact_summary_complete'])
+
     def main_repo(self):
         repo = SongRepository("", self.path.with_name("old.json"), data_source="haneoka")
         repo._catalog_repository = self.repo
@@ -113,6 +169,7 @@ class CatalogTests(unittest.TestCase):
                         songs=[replace(song, charts=(replace(song.charts[0], notes=0), *song.charts[1:])),
                                *view.songs[1:]],
                         cards=[replace(card, catalog={**card.catalog, 'skill_index_complete': True,
+                                                      'compact_summary_complete': True,
                                                       'member_summary_complete': True, 'tags_complete': True}),
                                *view.cards[1:]],
                         support_cards=[replace(support, catalog={**support.catalog, 'skill_index_complete': True}),
@@ -124,6 +181,7 @@ class CatalogTests(unittest.TestCase):
                           cards=[replace(known.cards[0], catalog={**known.cards[0].catalog,
                                                                   'skill_index_complete': False,
                                                                   'member_summary_complete': False,
+                                                                  'compact_summary_complete': False,
                                                                   'tags_complete': False}), *known.cards[1:]],
                           support_cards=[replace(known.support_cards[0], catalog={**known.support_cards[0].catalog,
                                                                                    'skill_index_complete': False}),
@@ -131,6 +189,9 @@ class CatalogTests(unittest.TestCase):
         after = _catalog_unknowns(changed)
         for key in ('notes', 'member_skills', 'member_summaries', 'member_tags', 'support_skills'):
             self.assertEqual(after[key], before[key] + 1, key)
+        legacy = {k: v for k, v in changed.cards[0].catalog.items() if k != 'compact_summary_complete'}
+        self.assertEqual(_catalog_unknowns(replace(changed, cards=[replace(changed.cards[0], catalog=legacy),
+                                                                 *changed.cards[1:]])), after)
 
     def test_addition_survives_cache_reload_and_failed_refresh(self):
         # Windows sandbox Temp can deny os.replace; use the writable checkout.

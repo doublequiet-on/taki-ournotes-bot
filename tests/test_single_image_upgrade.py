@@ -17,6 +17,16 @@ from ournotes_bot.platforms.qq.qq import PreparedReply,DeliveryCursor,_expand_re
 
 
 class FullResultTests(unittest.TestCase):
+    def test_automatic_summary_preserves_new_conditions_and_language(self):
+        from ournotes_bot.data import Skill
+        from ournotes_bot.sources.haneoka.visual_skill_contracts import automatic_summary
+        text = '装配此技能的成员仅在LIFE低于700时有25%的概率使得分提升12.5%，持续3秒（最多2次）；MyGO!!!!!成员额外获得1次'
+        skill = Skill('supportSkill', '新技能', text, {'description': {'zh': text}})
+        brief = automatic_summary([(skill, True, 'zh')] * 5)
+        self.assertEqual(brief['levels']['5'], '装配者仅在LIFE低于700时有25%的概率使得分+12.5%，持续3s（最多2次）；MyGO!!!!!成员额外获得1次')
+        self.assertEqual(automatic_summary([(skill, True, 'ja/en')]*5)['levels']['5'], text)
+        self.assertIsNone(automatic_summary([(skill, False, 'zh')]*5))
+
     def test_song_counts_never_drop_the_seventeenth_or_tail(self):
         for count in (1,16,17,31,35):
             songs=tuple(Song(i,'歌名','歌名','MyGO!!!!!','','','','','',()) for i in range(count))

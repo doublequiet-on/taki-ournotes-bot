@@ -72,6 +72,10 @@ def summaries(card,locale='zh',*,shared_duration=None,shared_target=None):
         label,color=LABELS.get(skill.kind,('技',MUTED))
         contract=contracts[i] if i<len(contracts) else None
         value=contract.get('levels',{}).get('5') if contract and locale=='zh' else None
+        if contract and contract.get('automatic'):
+            # Audited shorthand rewrites below may drop scope from a new template.
+            result.append((label,color,value or localized_text(skill,'description',locale)))
+            continue
         if isinstance(value,dict):
             text=memory_summary(value) if isinstance(card,SupportCard) else value['short']
             # Arrow means the stated target bonus, never skill level growth.
@@ -309,7 +313,7 @@ def render_list(cards,query,locale='zh',*,load,characters=(),bands=()):
     durations=set();targets=set()
     for card in cards:
         for contract in card.catalog.get('compact_skills',[]):
-            if not contract:continue
+            if not contract or contract.get('automatic'):continue
             value=contract['levels'].get('5')
             if contract['kind']=='live' and isinstance(value,str):
                 m=re.search(r' · ([0-9.]+)秒$',value)

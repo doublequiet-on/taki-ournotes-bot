@@ -270,9 +270,11 @@ def convert(documents, identity_jp, fetched_at, *, stale=False):
                     converted, valid, lang = skill_record(kind, skill, peer_by_id.get(skill_id), refs, other_refs)
                     complete &= valid
                     skills.append(converted)
-                    from .visual_skill_contracts import summary as reviewed_summary
-                    compact_skills.append(reviewed_summary(skill, refs))
-                    skill_levels.append([skill_record(kind,skill,peer_by_id.get(skill_id),refs,other_refs,lv)[0].localized['description'] for lv in range(1,6)])
+                    from .visual_skill_contracts import summary as reviewed_summary, automatic_summary
+                    levels = [skill_record(kind,skill,peer_by_id.get(skill_id),refs,other_refs,lv)
+                              for lv in range(1,5)] + [(converted, valid, lang)]
+                    compact_skills.append(reviewed_summary(skill, refs) or automatic_summary(levels))
+                    skill_levels.append([entry[0].localized['description'] for entry in levels])
                     skill_icons.append(asset_url(skill['icon'],release) if skill.get('icon') else '')
                     skill_languages[kind] = lang
                     cat = category(kind, skill)
@@ -306,6 +308,8 @@ def convert(documents, identity_jp, fetched_at, *, stale=False):
                                      for b in band_ids if jp['bands'].get(str(b), {}).get('logo')]
             catalog['resolved_skills'] = resolved
             catalog['compact_skills'] = compact_skills
+            catalog['compact_summary_complete'] = complete and bool(skills) and all(
+                value and value.get('levels', {}).get('5') for value in compact_skills)
             catalog['skill_levels'] = skill_levels
             catalog['skill_icons'] = skill_icons
             group = row.get('supportCardLevelGroup' if support else 'memberCardLevelGroup')
