@@ -150,6 +150,10 @@ class FreezeTests(unittest.TestCase):
         with patch('scripts.check_koishi_release.subprocess.check_output',return_value=json.dumps(node)),patch('scripts.check_koishi_release.subprocess.run'):
             self.assertEqual(verify(stage,commit),manifest)
         self.assertFalse(list(stage.rglob('*.pyc')))
+        from deploy.koishi_control import verify_combination
+        for protocol in ({'major':True,'minor':1},{'major':1.0,'minor':1},{'major':1,'minor':1,'extra':True}):
+            (stage/'combination.json').write_text(json.dumps({**manifest,'protocol':protocol}))
+            with self.assertRaisesRegex(ValueError,'combination_protocol'):verify_combination(stage,commit)
 
     def test_manual_settings_or_policy_edit_is_preserved_and_blocks_old_start(self):
         permit=transition(self.console,self.journal,False)

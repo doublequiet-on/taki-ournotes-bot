@@ -7,7 +7,7 @@ import re
 import time
 import uuid
 from contextlib import closing
-from .backend_protocol import PROTOCOL, require, identity
+from .backend_protocol import PROTOCOL, require, identity, require_protocol
 from .notice_reports import committed_notice
 
 
@@ -38,7 +38,7 @@ class NoticeGateway:
 
     def common(self, value, fields, active=True):
         require(isinstance(value, dict) and set(value) == set(fields) | {'protocol','instance_id','app_id','gateway_epoch'}, 'notice_shape')
-        require(value['protocol'] == PROTOCOL, 'protocol_version', 409)
+        require_protocol(value['protocol'])
         require(value['instance_id'] == self.backend.instance_id and value['app_id'] == self.backend.app_id, 'notice_identity', 403)
         require(identity(value['gateway_epoch']), 'gateway_epoch')
         if active:

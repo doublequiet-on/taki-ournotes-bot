@@ -399,6 +399,16 @@ async function main() {
     await assert.rejects(client.initialize({timeoutMs:30,retryMs:5}),e=>e.code==='startup_timeout')
     assert.equal(aborted,true);assert.equal(client.readiness,undefined)
   })
+  await run('Protocol pairing rejects boolean and extra-key profiles before registration',async()=>{
+    for(const profile of [{major:true,minor:1},{major:1,minor:1,extra:true}]){
+      let calls=0
+      const client=new BackendClient('http://127.0.0.1:8765','x'.repeat(32),'fixture','epoch',async()=>{
+        calls++;return new Response(JSON.stringify({...startupReady,protocol:profile}))
+      })
+      await assert.rejects(client.initialize({timeoutMs:500,retryMs:5}),e=>e.code==='incompatible_backend')
+      assert.equal(calls,1)
+    }
+  })
   await run('startup cancellation interrupts retry sleep without registering', async () => {
     let calls=0
     const client=new BackendClient('http://127.0.0.1:8765','x'.repeat(32),'fixture','epoch',async()=>{

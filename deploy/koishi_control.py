@@ -17,6 +17,8 @@ def verify_combination(root, commit, python_hash=None):
     if row.get('schema')!=1 or row.get('commit')!=commit:
         raise ValueError('combination_identity')
     profile = row.get('protocol')
+    if not isinstance(profile,dict) or set(profile) != {'major','minor'} or any(type(profile[k]) is not int for k in ('major','minor')):
+        raise ValueError('combination_protocol')
     if profile == {'major':1,'minor':0}:
         if row.get('capabilities',[]) != []: raise ValueError('combination_capabilities')
     elif profile == {'major':1,'minor':1}:

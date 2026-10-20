@@ -27,6 +27,12 @@ def identity(value):
             and not any(ord(c) < 32 or ord(c) == 127 for c in value))
 
 
+def require_protocol(value):
+    require(isinstance(value,dict) and set(value) == {'major','minor'}
+            and all(type(value[k]) is int for k in ('major','minor')) and value == PROTOCOL,
+            'protocol_version',409)
+
+
 def digest(value):
     return hashlib.sha256(json.dumps(value, ensure_ascii=False, separators=(',', ':'),
                                      sort_keys=isinstance(value, dict)).encode()).hexdigest()
@@ -53,7 +59,7 @@ class Request:
     def parse(cls, value, instance_id, app_id, now):
         fields = set(cls.__dataclass_fields__)
         require(isinstance(value, dict) and set(value) == fields | {'protocol'}, 'request_shape')
-        require(value['protocol'] == PROTOCOL, 'protocol_version', 409)
+        require_protocol(value['protocol'])
         require(value['instance_id'] == instance_id and value['app_id'] == app_id, 'instance_mismatch', 403)
         for key in fields - {'timestamp_ms', 'body', 'ingress_seq', 'policy'}:
             require(identity(value[key]), 'invalid_identity')
@@ -85,7 +91,7 @@ class Request:
 def event(value):
     require(isinstance(value, dict), 'event_shape')
     common = {'protocol', 'request_id', 'plan_version', 'gateway_epoch', 'event', 'part_id', 'attempt_id'}
-    require(value.get('protocol') == PROTOCOL, 'protocol_version', 409)
+    require_protocol(value.get('protocol'))
     kind = value.get('event')
     extra = {'result', 'message_id'} if kind == 'ack' else set()
     if kind == 'ack' and 'allow_context' in value:

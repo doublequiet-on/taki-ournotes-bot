@@ -89,7 +89,8 @@ export class BackendClient implements DeliveryEvents {
       while (!signal.aborted) {
         try {
           const ready = await this.request('/v1/ready', undefined, 131072, false, signal)
-          if (ready.protocol?.major !== 1 || ready.protocol?.minor !== 1
+          if (!ready.protocol || Object.keys(ready.protocol).sort().join()!=='major,minor'
+              || ready.protocol.major !== 1 || ready.protocol.minor !== 1
               || !ready.management_capabilities?.includes('group_policies_v1')
               || ready.capability !== capability || !['classify', 'gateway_retire', 'ack_context_guard', 'notice_gateway_v1'].every(feature => ready.features?.includes(feature))) throw new BackendError('incompatible_backend')
           if (!ready.ready) throw new BackendError('backend_not_ready', 503)

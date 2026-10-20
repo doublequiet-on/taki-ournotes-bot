@@ -130,6 +130,13 @@ class AdminTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_policy_snapshot_is_part_of_idempotency_and_strict_wire_shape(self):
         payload=self.payload()
+        from ournotes_bot.application.backend_protocol import event
+        from ournotes_bot.application.notice_gateway import NoticeGateway
+        for protocol in ({'major':True,'minor':1},{'major':1.0,'minor':1},{**PROTOCOL,'extra':True}):
+            with self.assertRaisesRegex(ProtocolError,'protocol_version'):await self.backend.submit({**payload,'protocol':protocol})
+            with self.assertRaisesRegex(ProtocolError,'protocol_version'):event({'protocol':protocol})
+            with self.assertRaisesRegex(ProtocolError,'protocol_version'):
+                NoticeGateway.__new__(NoticeGateway).common({'protocol':protocol,'instance_id':'fixture','app_id':'app','gateway_epoch':'epoch'},set())
         first=await self.backend.submit(payload)
         self.assertEqual((await self.backend.submit(payload))['delivery_id'],first['delivery_id'])
         changed={**payload,'policy':{**payload['policy'],'natural_query':'local','group_revision':1}}
