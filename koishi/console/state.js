@@ -58,10 +58,13 @@ export function sessionState() {
     try{await rpc('logout');message.value='';}catch{message.value='退出未确认；当前页面已清除。';}finally{clearProtected();}
   }
   async function save() {
+    const token=generation, submitted=JSON.stringify(draft.value);
     busy.value=true;
-    try { const result=await rpc('settings/update',draft.value,guard.value); dirty.value=false; conflict.value=false;
-      guard.value=result.guard; message.value='已保存生效；在途查询继续完成。'; await load(overview,'overview'); }
-    catch(error) {if(unauthorized(error))return;dirty.value=true;conflict.value=true;message.value=error==='invalid_settings'?'设置格式不正确，请检查群 OpenID；草稿已保留。':'保存未确认。草稿已保留，请核对服务器当前值。';await load(overview,'overview');}
+    try { const result=await rpc('settings/update',JSON.parse(submitted),guard.value);
+      if(token!==generation)return;
+      dirty.value=JSON.stringify(draft.value)!==submitted; conflict.value=false;
+      guard.value=result.guard; message.value=dirty.value?'已保存提交时的设置，后续编辑仍未保存。':'已保存生效；在途查询继续完成。'; await load(overview,'overview'); }
+    catch(error) {if(token!==generation||unauthorized(error))return;dirty.value=true;conflict.value=true;message.value=error==='invalid_settings'?'设置格式不正确，请检查群 OpenID；草稿已保留。':'保存未确认。草稿已保留，请核对服务器当前值。';await load(overview,'overview');}
     finally { busy.value=false; }
   }
   function selectGroup(id) {
@@ -70,12 +73,17 @@ export function sessionState() {
     groupRevision.value=groups.value?.policy?.revision;groupDirty.value=false;groupConflict.value=false;
   }
   async function saveGroup() {
+    const token=generation, id=groupId.value, submitted=JSON.stringify(groupDraft.value);
     busy.value=true;
     try {
-      const result=await rpc('groups/update',{group_id:groupId.value,policy:groupDraft.value,revision:groupRevision.value});
-      groupRevision.value=result.revision;groupDirty.value=false;groupConflict.value=false;message.value='群策略已保存。新查询使用新规则，在途查询继续完成。';
+      const result=await rpc('groups/update',{group_id:id,policy:JSON.parse(submitted),revision:groupRevision.value});
+      if(token!==generation)return;
+      if(groupId.value===id){
+        groupRevision.value=result.revision;groupDirty.value=JSON.stringify(groupDraft.value)!==submitted;groupConflict.value=false;
+      }
+      message.value=groupDirty.value?'已保存提交时的群策略，后续编辑仍未保存。':'群策略已保存。新查询使用新规则，在途查询继续完成。';
       await load(groups,'groups/list');
-    }catch(error){if(unauthorized(error))return;groupDirty.value=true;groupConflict.value=true;
+    }catch(error){if(token!==generation||unauthorized(error))return;if(groupId.value===id){groupDirty.value=true;groupConflict.value=true;}
       message.value=['invalid_group_id','invalid_group_policy'].includes(error)?'群 OpenID 或策略格式不正确，备注最多80字；草稿已保留。':'群策略保存未确认或版本冲突。草稿已保留，请先核对服务器值。';await load(groups,'groups/list');}
     finally{busy.value=false;}
   }

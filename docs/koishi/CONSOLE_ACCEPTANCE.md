@@ -2,6 +2,8 @@
 
 基线 main `b3d7c4267f8dd304ff0ce59dde2d9e3ff287c35a`。两期均为草稿：V1a分支 `codex/console-v1a` / [PR #100](https://github.com/doublequiet-on/taki-ournotes-bot/pull/100)，V1b叠加分支 `codex/console-v1b`，目标为V1a。源码交付不代表生产采用。
 
+独立审查修复：指标写线程持锁时，读取立即返回 `metrics_snapshot_busy`，事件循环心跳和后续写入回归通过；保存响应只确认提交时快照，期间的新编辑保留，失效响应不恢复管理数据。`node koishi/scripts/console-state-probe.cjs` 使用官方 Console 随包 Vue 验证迟到响应；管理与指标目标回归22项通过。修复已独立复查，完整回归以修复提交的 CI 为准。
+
 ## 执行入口与证据层
 
 - Python：`PYTHONPATH=src;tests python -B -m unittest test_console_admin test_console_policies test_continuation test_reply_pipeline test_updater test_linux_backend -q`；完整回归使用 `python -B -m unittest discover -s tests -q`。本地凭据清空、资料/模型/QQ均夹具化。

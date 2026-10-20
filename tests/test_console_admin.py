@@ -41,6 +41,36 @@ class ProjectionTests(unittest.TestCase):
 
 
 class AdminTests(unittest.IsolatedAsyncioTestCase):
+    async def test_metrics_busy_does_not_block_event_loop_or_disable_writer(self):
+        from concurrent.futures import ThreadPoolExecutor
+        from threading import Event
+        metrics=QueryMetrics(self.root/'metrics.json')
+        entered, release=Event(), Event()
+        def writer():
+            with metrics._lock:
+                entered.set()
+                release.wait(2)
+        self.backend.parser.metrics_snapshot=metrics.snapshot
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            job=executor.submit(writer)
+            await asyncio.to_thread(entered.wait)
+            try:
+                loop=asyncio.get_running_loop()
+                heartbeat=loop.create_future()
+                loop.call_later(.01,heartbeat.set_result,None)
+                started=loop.time()
+                result=self.backend.admin.metrics()
+                await heartbeat
+                self.assertLess(loop.time()-started,.5)
+                self.assertEqual(result['sections']['metrics']['reason_code'],'metrics_snapshot_busy')
+                self.assertTrue(metrics.available)
+                self.assertFalse(metrics.path.exists())
+            finally:
+                release.set()
+                await asyncio.wrap_future(job)
+        self.assertTrue(metrics.increment('ask_total'))
+        self.assertTrue(metrics.snapshot()['available'])
+
     async def asyncSetUp(self):
         self.folder=tempfile.TemporaryDirectory()
         self.addCleanup(self.folder.cleanup)
