@@ -135,6 +135,22 @@ class FreezeTests(unittest.TestCase):
         self.assertEqual(self.policy.read_bytes(),policy)
         self.assertEqual(business.read_bytes(),b'BUSINESS_SENTINEL')
 
+    def test_combination_verifier_does_not_create_bytecode_in_payload(self):
+        import hashlib,shutil,zipfile
+        from scripts.check_koishi_release import verify
+        stage=self.root/'combination';(stage/'controller').mkdir(parents=True)
+        shutil.copyfile(Path(__file__).resolve().parents[1]/'deploy/koishi_control.py',stage/'controller/koishi_control.py')
+        commit='a'*40
+        with zipfile.ZipFile(stage/'python.zip','w') as archive:archive.writestr('manifest.json',json.dumps({'commit':commit}))
+        files={p.relative_to(stage).as_posix():hashlib.sha256(p.read_bytes()).hexdigest() for p in stage.rglob('*') if p.is_file()}
+        node={'version':'v24.19.0','platform':'linux','arch':'x64'}
+        manifest={'schema':1,'commit':commit,'protocol':{'major':1,'minor':1},'capabilities':['group_policies_v1'],
+            'node':node,'files':files,'python_artifact':'python.zip','python_sha256':files['python.zip']}
+        (stage/'combination.json').write_text(json.dumps(manifest))
+        with patch('scripts.check_koishi_release.subprocess.check_output',return_value=json.dumps(node)),patch('scripts.check_koishi_release.subprocess.run'):
+            self.assertEqual(verify(stage,commit),manifest)
+        self.assertFalse(list(stage.rglob('*.pyc')))
+
     def test_manual_settings_or_policy_edit_is_preserved_and_blocks_old_start(self):
         permit=transition(self.console,self.journal,False)
         changed=json.loads(self.config.read_bytes());changed['privateEnabled']=False

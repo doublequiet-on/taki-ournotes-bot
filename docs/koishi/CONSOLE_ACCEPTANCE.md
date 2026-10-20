@@ -10,7 +10,7 @@
 - 浏览器：`npm pack ./console --ignore-scripts --offline` 的六项资源安装到node_modules，官方Console接真实隔离Python管理接口；全新无头Edge阻断外部页面请求。覆盖桌面1280、320px、深浅色、键盘/触摸、导航/筛选/详情、双会话保存冲突、15秒轮询草稿保护、后端超时及恢复。证据在本工作区 `runtime/console-v1b-installed/evidence`。
 - 正式产物：Linux CI生成同提交Python离线包与Koishi组合，禁网执行安装/实际嵌入运行时探针；发布前另下载该组合逐文件核验并使用其未修改JS、资源及Python应用wheel做隔离浏览器检查。Windows上的浏览器检查使用固定Windows Node，不能替代Linux ELF执行。最终提交、CI运行号及产物摘要写入交付回执。
 
-V1a `d11561747d2aee8aebb6b94bed54594be7105f4a` 的 Checks运行39397253372全部通过。最初离线测试因禁网namespace中loopback未启用失败，现仅启用隔离lo，仍无外部网络。V1b每次CI绑定其实际提交，不沿用V1a结论。
+V1a `d11561747d2aee8aebb6b94bed54594be7105f4a` 的 Checks运行39397253372全部通过。最初离线测试因禁网namespace中loopback未启用失败，现仅启用隔离lo，仍无外部网络。V1b每次CI绑定其实际提交，不沿用V1a结论。 V1b初轮组合检查曾因检查器import产生额外pyc而失败；改用run_path且新增清单不变回归，不跳过清单校验。
 
 本地V1b已执行完整回归及目标回归、60项网关探针、9种受保护RPC、资源包浏览器检查；最终计数与命令退出值以工作区交付回执及对应CI为准。Windows跳过POSIX/目标Linux测试；Linux CI必须执行相应覆盖。测试中的预期磁盘故障、模型禁止调用及发送失败日志不作为实机故障。
 
