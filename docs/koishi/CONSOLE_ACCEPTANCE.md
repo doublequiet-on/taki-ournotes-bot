@@ -1,5 +1,7 @@
 # Console 验收记录
 
+独立审查修复：指标写线程持锁时，读取立即返回 `metrics_snapshot_busy`，事件循环心跳和后续写入回归通过；保存响应只确认提交时快照，期间的新编辑保留，失效响应不恢复管理数据。`node koishi/scripts/console-state-probe.cjs` 使用官方 Console 随包 Vue 验证迟到响应；管理与指标目标回归22项通过。修复已独立复查，完整回归以修复提交的 CI 为准。
+
 任务基线：main `b3d7c4267f8dd304ff0ce59dde2d9e3ff287c35a`，开发分支 `codex/console-v1a`。本记录按 V1a、V1b 分期更新，草稿 PR 不代表已部署。
 
 ## V1a：批次 0–3

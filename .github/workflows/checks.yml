@@ -28,6 +28,7 @@ jobs:
           node node_modules/typescript/bin/tsc -p tsconfig.json
           node scripts/probe.cjs probe-output.json
           node scripts/console-rpc-probe.cjs
+          node scripts/console-state-probe.cjs
       - uses: actions/upload-artifact@v4
         if: always()
         with:

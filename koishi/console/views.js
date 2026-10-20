@@ -8,6 +8,7 @@ const names={available:'可用',partial:'部分采集',unavailable:'暂不可用
   reason_code:'缺失原因',dropped_events:'丢弃观测',retention_seconds:'保留秒数',request_capacity:'请求容量',spans_per_request:'每请求跨度上限',
   queued:'待提交观测',last_success_at:'最近提交成功',last_failure_at:'最近提交失败',availability:'可用性',
   metrics_not_collected:'尚未采集匿名指标',notifications_disabled:'后端通知已关闭',source_snapshot_not_instrumented:'该来源尚未采集快照',
+  metrics_snapshot_busy:'指标正在写入，本次读取暂不可用',
   observed_groups_not_platform_roster:'仅包含已观察群，不是平台群名单',historical_metadata_not_collected:'历史元数据尚未采集',
   request_id:'请求标识',delivery_id:'交付标识',created_at:'受理时间',lifecycle:'生命周期',delivery_state:'交付状态',
   uncertain_parts:'未确认片段数',confirmed_parts:'平台确认片段数',part_count:'片段数',scope:'范围',group_id:'群标识',

@@ -42,10 +42,13 @@ export function sessionState() {
     dirty.value=false;
   }
   async function save() {
+    const token=generation, submitted=JSON.stringify(draft.value);
     busy.value=true;
-    try { const result=await rpc('settings/update',draft.value,guard.value); dirty.value=false; conflict.value=false;
-      guard.value=result.guard; message.value='已保存生效；在途查询继续完成。'; await load(overview,'overview'); }
-    catch { conflict.value=true; message.value='保存未确认。草稿已保留，请核对服务器当前值。'; }
+    try { const result=await rpc('settings/update',JSON.parse(submitted),guard.value);
+      if(token!==generation)return;
+      dirty.value=JSON.stringify(draft.value)!==submitted; conflict.value=false;
+      guard.value=result.guard; message.value=dirty.value?'已保存提交时的设置，后续编辑仍未保存。':'已保存生效；在途查询继续完成。'; await load(overview,'overview'); }
+    catch { if(token!==generation)return; dirty.value=true; conflict.value=true; message.value='保存未确认。草稿已保留，请核对服务器当前值。'; }
     finally { busy.value=false; }
   }
   return {logged,busy,message,stale,dirty,conflict,overview,requests,detail,sources,metrics,groups,notices,draft,guard,rpc,load,login,logout,save,invalidate(){generation++;}};
