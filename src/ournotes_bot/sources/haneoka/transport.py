@@ -1,6 +1,6 @@
 # L3
 # Input: Anonymous Haneoka HTTPS URL, caller-owned response cap and total timeout.
-# Output: Bounded raw bytes and lowercase response headers, or ChartDataError.
+# Output: Bounded decoded bytes and lowercase response headers, or ChartDataError.
 # Pos: Data / Sources Haneoka public HTTP facility; see ../L2-2.md.
 # Effects/Dependencies: HTTPS only, no redirects/implicit proxy; optional explicit anonymous proxy.
 """Public transport; resource permissions and refresh budgets belong to callers."""
@@ -44,7 +44,7 @@ def public_get(url, limit, timeout):
             async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=timeout),
                                              trust_env=False) as session:
                 async with session.get(url, allow_redirects=False,
-                                       headers={"User-Agent": "Taki-chart/1", "Accept-Encoding": "identity"},
+                                       headers={"User-Agent": "Taki-chart/1", "Accept-Encoding": "gzip"},
                                        **public_proxy_options()) as response:
                     if response.status != 200:
                         raise ChartDataError(f"Haneoka HTTP {response.status}")

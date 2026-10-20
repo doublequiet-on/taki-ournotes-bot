@@ -3,11 +3,14 @@ from __future__ import annotations
 
 import asyncio
 import copy
+import gzip
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import os
 from pathlib import Path
 import subprocess
 import sys
 import textwrap
+import threading
 import unittest
 from unittest.mock import patch
 
@@ -98,10 +101,52 @@ class HaneokaFacilityTests(unittest.TestCase):
         self.assertEqual(create.call_args.kwargs["timeout"].total, 2.75)
         self.assertIs(create.call_args.kwargs["trust_env"], False)
         self.assertIs(response.options["allow_redirects"], False)
-        self.assertEqual(response.options["headers"], {"User-Agent": "Taki-chart/1", "Accept-Encoding": "identity"})
+        self.assertEqual(response.options["headers"], {"User-Agent": "Taki-chart/1", "Accept-Encoding": "gzip"})
         self.assertIs(ExistingChartDataError, ChartDataError)
         self.assertIs(chart_data.ChartDataError, ChartDataError)
         self.assertIs(chart_data.public_get, transport.public_get)
+
+    def test_gzip_transport_checks_decoded_size_and_rejects_broken_stream(self):
+        body = b'{"data":"' + b"x" * 131072 + b'"}'
+        compressed = gzip.compress(body)
+        served = [compressed]
+
+        class Handler(BaseHTTPRequestHandler):
+            def do_GET(self):
+                self.send_response(200)
+                self.send_header("Content-Encoding", "gzip")
+                self.send_header("Content-Length", str(len(served[0])))
+                self.end_headers()
+                self.wfile.write(served[0])
+
+            def log_message(self, *args):
+                pass
+
+        server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        real_session = aiohttp.ClientSession
+
+        def local_session(**kwargs):
+            session = real_session(**kwargs)
+            real_get = session.get
+            session.get = lambda url, **options: real_get(
+                f"http://127.0.0.1:{server.server_port}/", **options)
+            return session
+
+        try:
+            with patch.dict(os.environ, {"OURNOTES_PUBLIC_HTTP_PROXY": ""}), \
+                    patch("aiohttp.ClientSession", side_effect=local_session):
+                self.assertEqual(transport.public_get(transport.ORIGIN + "/test", len(body), 2)[0], body)
+                with self.assertRaisesRegex(ChartDataError, "too large"):
+                    transport.public_get(transport.ORIGIN + "/test", len(body) - 1, 2)
+                served[0] = b"invalid gzip stream"
+                with self.assertRaisesRegex(ChartDataError, "request failed"):
+                    transport.public_get(transport.ORIGIN + "/test", len(body), 2)
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join()
 
     def test_url_permissions_are_checked_before_any_http(self):
         for url in ("http://haneoka.org/api/test", "https://haneoka.org.evil/test",
