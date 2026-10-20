@@ -3,6 +3,7 @@ const fs=require('node:fs'), path=require('node:path'), http=require('node:http'
 const {Context,Universal}=require('koishi')
 function configuration(env) {
   if(env.TAKI_KOISHI_ENABLED!=='1')throw Error('gateway requires explicit enable')
+  if(!env.TAKI_CONSOLE_STATE_DIR||!path.isAbsolute(env.TAKI_CONSOLE_STATE_DIR))throw Error('management state directory required')
   for(const name of ['QQ_APP_ID','QQ_APP_SECRET','QQ_SELF_ID','OURNOTES_BACKEND_TOKEN','TAKI_INSTANCE_ID']) {
     if(!env[name])throw Error('missing '+name)
   }
@@ -24,7 +25,8 @@ async function start(env=process.env) {
   if(managementConfig)managementConfig.readHealth=readHealth
   ctx.plugin(require('@koishijs/plugin-http').default)
   const management=managementConfig ? require('./console.cjs').install(ctx,managementConfig,manifest) : undefined
-  if(management)config.plugin.management=management.management
+  // Policy enforcement belongs to the gateway lifecycle, including when its web UI is disabled.
+  config.plugin.management=management?.management||new(require('./lib/management').Management)(env.TAKI_CONSOLE_STATE_DIR,config.plugin)
   const taki=ctx.plugin(require('./lib'),config.plugin)
   const adapter=ctx.plugin(require('@koishijs/plugin-adapter-qq').default,config.adapter)
   const server=http.createServer(async(req,res)=>{

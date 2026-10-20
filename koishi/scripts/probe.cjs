@@ -333,7 +333,7 @@ async function main() {
     const {configuration}=require('../run.cjs')
     assert.throws(()=>configuration({}))
     assert.throws(()=>configuration({TAKI_KOISHI_ENABLED:'1'}))
-    const value=configuration({TAKI_KOISHI_ENABLED:'1',QQ_APP_ID:'a',QQ_APP_SECRET:'fixture',QQ_SELF_ID:'s',OURNOTES_BACKEND_TOKEN:'x'.repeat(32),TAKI_INSTANCE_ID:'i'})
+    const value=configuration({TAKI_KOISHI_ENABLED:'1',TAKI_CONSOLE_STATE_DIR:path.resolve('fixture-state'),QQ_APP_ID:'a',QQ_APP_SECRET:'fixture',QQ_SELF_ID:'s',OURNOTES_BACKEND_TOKEN:'x'.repeat(32),TAKI_INSTANCE_ID:'i'})
     assert.deepEqual(value.adapter.retryWhen,[])
     assert.equal(value.plugin.notifications,true)
   })
@@ -359,7 +359,8 @@ async function main() {
     assert.equal(worker.healthy(),false)
     await worker.close();await ctx.stop()
   })
-  const startupReady={ready:true,protocol:{major:1,minor:0},capability:'qq-m1-candidate',
+  const startupReady={ready:true,protocol:{major:1,minor:1},capability:'qq-m1-candidate',
+    management_capabilities:['group_policies_v1'],
     features:['classify','gateway_retire','ack_context_guard','notice_gateway_v1']}
   await run('startup survives delayed readiness and registration transport failure', async () => {
     let reads=0,registrations=0
@@ -417,7 +418,7 @@ async function main() {
     globalThis.fetch=async()=>new Response(JSON.stringify({...startupReady,protocol:{major:2,minor:0}}),{status:mode==='timeout'?503:200})
     process.env.OURNOTES_BACKEND_TOKEN='x'.repeat(32)
     try {
-      await assert.rejects(require('../run.cjs').start({TAKI_KOISHI_ENABLED:'1',QQ_APP_ID:'fixture-app',QQ_APP_SECRET:'fixture',QQ_SELF_ID:'fixture-self',OURNOTES_BACKEND_TOKEN:'x'.repeat(32),TAKI_INSTANCE_ID:'fixture'}),
+        await assert.rejects(require('../run.cjs').start({TAKI_KOISHI_ENABLED:'1',TAKI_CONSOLE_STATE_DIR:path.resolve('.local-tests/startup-'+mode),QQ_APP_ID:'fixture-app',QQ_APP_SECRET:'fixture',QQ_SELF_ID:'fixture-self',OURNOTES_BACKEND_TOKEN:'x'.repeat(32),TAKI_INSTANCE_ID:'fixture'}),
         e=>e.code===(mode==='timeout'?'startup_timeout':'incompatible_backend'))
     } finally {
       Bot.prototype.start=originalStart;fs.readFileSync=originalRead;BackendClient.prototype.initialize=originalInitialize;globalThis.fetch=originalFetch
@@ -481,12 +482,12 @@ async function main() {
     const {Notices}=require('../lib'),env=createBot(),calls=[]
     env.bot.status=1
     const client={epoch:'e',readiness:{notices_enabled:true},async retry(url,body){calls.push({url,body});return{claims:[]}}}
-    const worker=new Notices(env.ctx,client,identity,Promise.resolve(),()=>true,()=>['allowed-group'])
+    const worker=new Notices(env.ctx,client,identity,Promise.resolve(),()=>true,()=>({kind:'selected',group_ids:['allowed-group']}))
     try {
       worker.tick();await worker.task
       assert.equal(calls.length,1)
       assert.equal(calls[0].url,'/v1/notices/claims')
-      assert.deepEqual(calls[0].body.group_allowlist,['allowed-group'])
+      assert.deepEqual(calls[0].body.scope,{kind:'selected',group_ids:['allowed-group']})
       assert.equal(env.calls.length,0)
     } finally{await worker.close();await env.ctx.stop()}
   })
@@ -543,6 +544,134 @@ async function main() {
       assert.deepEqual(spans.map(s=>s.kind),['upload','send','receipt_submit'])
       assert.ok(spans.find(s=>s.kind==='send').duration_ms>=30)
       assert.equal(spans[0].attempt,null)
+    })
+    await run('Group policy revisions survive restart, cannot override globals and reject concurrent saves',async()=>{
+      const {Management,defaultSettings}=require('../lib/management')
+      const dir=fs.mkdtempSync(path.join(require('node:os').tmpdir(),'taki-group-policy-'))
+      const policy={label:'测试群',queries:'allow',notifications:'pause',natural_query:'local'}
+      try {
+        const m=new Management(dir,identity)
+        m.groups.update('fixture-group',policy,0)
+        assert.throws(()=>m.groups.update('fixture-group',policy,0),/group_policy_conflict/)
+        assert.equal(new Management(dir,identity).groups.snapshot().revision,1)
+        m.update({...defaultSettings,queriesEnabled:false,groupAllowlist:['fixture-group']},0)
+        assert.equal(m.accepts({kind:'group',conversationId:'fixture-group'}),false)
+        assert.equal(m.noticeScope().kind,'none')
+        assert.equal(m.policySnapshot({kind:'group',conversationId:'fixture-group'}).natural_query,'local')
+        m.update({...defaultSettings,groupAllowlist:['other']},1)
+        assert.equal(m.effective('fixture-group').queries,false)
+        assert.ok(m.effective('fixture-group').reasons.includes('global_group_excluded'))
+        m.update(defaultSettings,2)
+        fs.writeFileSync(path.join(dir,'group-policies.v1.json'),'{broken')
+        const broken=new Management(dir,identity)
+        assert.equal(broken.accepts({kind:'group',conversationId:'fixture-group'}),false)
+        assert.equal(broken.noticeScope().kind,'none')
+        assert.equal(broken.groups.snapshot().availability,'unavailable')
+        assert.equal(broken.accepts({kind:'c2c'}),true)
+      } finally {fs.rmSync(dir,{recursive:true,force:true})}
+    })
+    await run('Group policy lost rename response is resolved from disk; failed writes keep effective values',async()=>{
+      const {GroupPolicies}=require('../lib/group-policies')
+      const dir=fs.mkdtempSync(path.join(require('node:os').tmpdir(),'taki-policy-save-'))
+      const owner={platform:'qq',app_id:'fixture-app',instance_id:'fixture-instance'},policy={label:'',queries:'pause',notifications:'pause',natural_query:'off'}
+      const rename=fs.renameSync,write=fs.writeFileSync
+      try {
+        const p=new GroupPolicies(dir,owner)
+        fs.renameSync=(...args)=>{rename(...args);throw Error('lost completion')}
+        assert.equal(p.update('g',policy,0).revision,1)
+        fs.renameSync=rename
+        fs.writeFileSync=()=>{throw Error('disk full')}
+        assert.throws(()=>p.update('g',{...policy,queries:'allow'},1),/save_unconfirmed/)
+        assert.equal(p.get('g').queries,'pause')
+        assert.equal(p.snapshot().revision,1)
+        fs.writeFileSync=write
+        assert.equal(new GroupPolicies(dir,{...owner,app_id:'other'}).error,'group_policy_unavailable')
+      } finally {fs.renameSync=rename;fs.writeFileSync=write;fs.rmSync(dir,{recursive:true,force:true})}
+    })
+    await run('Notice scope none does not become all or claim a report',async()=>{
+      const {Notices}=require('../lib'),env=createBot();let calls=0
+      env.bot.status=1
+      const client={epoch:'e',readiness:{notices_enabled:true},async retry(){calls++;throw Error('none claimed')}}
+      const worker=new Notices(env.ctx,client,identity,Promise.resolve(),()=>true,()=>({kind:'none'}))
+      try {worker.tick();await worker.task;assert.equal(calls,0);assert.equal(env.calls.length,0)}
+      finally {await worker.close();await env.ctx.stop()}
+    })
+    await run('Shared live health never reports last good readiness after current failure',async()=>{
+      const {healthReader}=require('../health.cjs');let calls=0,fail=false
+      const ready={ready:true,background_tasks:true,backend_epoch:'e',backend_code_digest:'digest'}
+      const ctx={bots:[{platform:'qq',config:{id:'a'},selfId:'s',status:1}],takiTransport:{receiver:{health:()=>({active:true,handshake:true,backend:ready}),
+        client:{async request(){calls++;if(fail)throw Error('offline');return ready}}}}}
+      const read=healthReader(ctx,{commit:'b'.repeat(40),backend_code_digest:'digest'},{appId:'a',selfId:'s'})
+      const results=await Promise.all([read(),read()]);assert.equal(calls,1);assert.equal(results[0].ready,true)
+      fail=true;const current=await read({fresh:true});assert.equal(current.ready,false);assert.equal(current.backend_ready,false);assert.equal(current.stale,true)
+    })
+    await run('Request retry preserves admitted policy snapshot after external settings change',async()=>{
+      const policy={natural_query:'local',epoch:'fixture',global_revision:1,group_revision:2},seen=[]
+      const client=new BackendClient('http://127.0.0.1:8765','x'.repeat(32),'fixture','e',async(url,options)=>{
+        seen.push(JSON.parse(options.body));policy.natural_query='model';policy.group_revision=3
+        return seen.length===1?Response.json({error:'temporary'},{status:503}):Response.json({request_id:'fixture'})
+      })
+      try {
+        await client.submit({requestId:'fixture',instanceId:'fixture',appId:'app',platform:'qq',kind:'group',conversationId:'g',userId:'u',messageId:'m',timestampMs:Date.now(),body:'/问 fixture'},1,policy)
+        assert.equal(seen.length,2);assert.deepEqual(seen[0].policy,seen[1].policy);assert.equal(seen[1].policy.natural_query,'local')
+      }finally{await client.telemetry.close()}
+    })
+    await run('Policy revocation after notice intent prevents send but still records aborted ACK',async()=>{
+      const {Notices}=require('../lib'),env=createBot(),records=[];let enabled=true
+      env.bot.status=1
+      const claim={notice_id:'a'.repeat(64),claim_id:'b'.repeat(32),group_id:'fixture-group',group_version:0,expires_at:Date.now()/1000+120,text:'fixture',send_type:'active'}
+      const client={epoch:'e',readiness:{notices_enabled:true},
+        async retry(url,body){records.push({url,body});return url.endsWith('/claims')?{claims:[claim]}:{recorded:true}},
+        async request(url,body){records.push({url,body});enabled=false;return{permission:'granted'}}}
+      const worker=new Notices(env.ctx,client,identity,Promise.resolve(),()=>enabled)
+      worker.pace=async()=>{}
+      try {
+        worker.tick();await worker.task
+        assert.ok(records.some(r=>r.body.event==='intent'))
+        assert.ok(records.some(r=>r.body.event==='ack'&&r.body.result==='aborted'))
+        assert.equal(env.calls.filter(c=>c.data?.msg_type===0).length,0)
+      }finally{await worker.close();await env.ctx.stop()}
+    })
+    await run('Pausing new queries leaves an admitted receiver job and its ACK running',async()=>{
+      const env=createBot();let paused=false,submissions=0,acked=false,receiver,plan
+      const management={accepts:()=>!paused,policySnapshot:()=>({natural_query:'local',epoch:'policy',global_revision:0,group_revision:0})}
+      const client={epoch:'e',deactivate(){},async initialize(){},async recognizes(){return true},async retire(){},
+        async submit(input){submissions++;paused=true;return plan={request_id:input.requestId,delivery_id:'d'.repeat(32),plan_version:1,status:'prepared',send_allowed:true,expires_at:Date.now()/1000+290,
+          parts:[{id:'0',position:0,mode:'primary',status:'pending',kind:'text',text:'fixture'}]}},
+        async intent(){return'granted'},async acknowledge(){acked=true},async lookup(){return{...plan,status:'finished',send_allowed:false,parts:[{...plan.parts[0],status:'success'}]}},async event(){return{}}}
+      const fork=env.ctx.plugin(ctx=>{receiver=new Receiver(ctx,{...identity,backendUrl:'http://127.0.0.1:8765',tokenEnv:'unused',permissions:['authority:1'],maxPending:8,management},client)})
+      receiver.permitted=async()=>true // Explicit positive platform-permission fixture; denial paths are separately probed.
+      try {
+        const raw=event({timestamp:new Date().toISOString()})
+        await env.ctx.parallel('internal/session',env.bot.session({type:'internal',_type:'qq/group-at-message-create',_data:raw.d}))
+        await receiver.receive(env.ctx.reflect.trace(await adaptSession(env.bot,raw)))
+        assert.equal(submissions,1);assert.equal(acked,true);assert.equal(env.calls.filter(c=>c.data?.msg_type===0).length,1)
+      }finally{await receiver.dispose();await fork.dispose();await env.ctx.stop()}
+    })
+    await run('Actual gateway keeps policy enforcement when the Console web UI is disabled',async()=>{
+      const {Management}=require('../lib/management'),Bot=require('koishi').Bot
+      const dir=fs.mkdtempSync(path.join(require('node:os').tmpdir(),'taki-console-off-'))
+      new Management(dir,identity).groups.update('fixture-group',{label:'',queries:'pause',notifications:'pause',natural_query:'off'},0)
+      const originalStart=Bot.prototype.start,originalInitialize=BackendClient.prototype.initialize,originalRetire=BackendClient.prototype.retire,read=fs.readFileSync
+      const originalToken=process.env.OURNOTES_BACKEND_TOKEN;let runtime
+      try {
+        Bot.prototype.start=async function(){this.user={id:identity.selfId};this.status=1}
+        BackendClient.prototype.initialize=async function(){this.readiness={notices_enabled:false,diagnostics_enabled:false}}
+        BackendClient.prototype.retire=async()=>{}
+        fs.readFileSync=function(file,...args){return String(file).endsWith('combination.json')?JSON.stringify({commit:'b'.repeat(40)}):read.call(this,file,...args)}
+        process.env.OURNOTES_BACKEND_TOKEN='x'.repeat(32)
+        runtime=await require('../run.cjs').start({TAKI_KOISHI_ENABLED:'1',TAKI_CONSOLE_ENABLED:'0',TAKI_CONSOLE_STATE_DIR:dir,
+          TAKI_GATEWAY_HEALTH_PORT:'15144',QQ_APP_ID:identity.appId,QQ_APP_SECRET:'fixture',QQ_SELF_ID:identity.selfId,
+          OURNOTES_BACKEND_TOKEN:'x'.repeat(32),TAKI_INSTANCE_ID:identity.instanceId})
+        const management=runtime.ctx.takiTransport.receiver.config.management
+        assert.equal(management.accepts({kind:'group',conversationId:'fixture-group'}),false)
+        assert.equal(management.accepts({kind:'c2c'}),true)
+        assert.equal(runtime.ctx.console,undefined)
+      }finally{
+        await runtime?.close();Bot.prototype.start=originalStart;BackendClient.prototype.initialize=originalInitialize;BackendClient.prototype.retire=originalRetire;fs.readFileSync=read
+        if(originalToken===undefined)delete process.env.OURNOTES_BACKEND_TOKEN;else process.env.OURNOTES_BACKEND_TOKEN=originalToken
+        fs.rmSync(dir,{recursive:true,force:true})
+      }
     })
     const lock = JSON.parse(fs.readFileSync(path.join(root, 'package-lock.json')))
   const versions = Object.fromEntries(['koishi', '@koishijs/core', '@koishijs/plugin-adapter-qq', '@satorijs/adapter-qq', '@satorijs/core', 'typescript'].map(name => {

@@ -3,8 +3,9 @@ import type { Inbound } from './ingress'
 import type { Attempt, DeliveryEvents, Outcome } from './delivery'
 import { setTimeout as delay } from 'node:timers/promises'
 import { Telemetry, Span } from './telemetry'
+import type { PolicySnapshot } from './group-policies'
 
-export const protocol = { major: 1, minor: 0 }
+export const protocol = { major: 1, minor: 1 }
 export const capability = 'qq-m1-candidate'
 export interface WirePart {
   id: string; position: number; mode: string; status: string
@@ -23,9 +24,9 @@ export class BackendClient implements DeliveryEvents {
     return this.request('/v1/admin/telemetry', { backend_epoch: this.readiness.backend_epoch, events },
       131072, false, AbortSignal.timeout(1500))
   })
-  observe(span: Span): void { this.telemetry.enqueue(span) }
+  observe(span: Span): void { if(this.readiness?.diagnostics_enabled!==false)this.telemetry.enqueue(span) }
   readonly base: string
-  readiness?: { notices_enabled?: boolean; backend_code_digest?: string; backend_epoch?: string }
+  readiness?: { notices_enabled?: boolean; backend_code_digest?: string; backend_epoch?: string; diagnostics_enabled?:boolean }
   private contextAllowed = true
   private startup = new AbortController()
   deactivate(): void { this.contextAllowed = false; this.startup.abort() }
@@ -88,7 +89,8 @@ export class BackendClient implements DeliveryEvents {
       while (!signal.aborted) {
         try {
           const ready = await this.request('/v1/ready', undefined, 131072, false, signal)
-          if (ready.protocol?.major !== 1 || ready.protocol?.minor !== 0
+          if (ready.protocol?.major !== 1 || ready.protocol?.minor !== 1
+              || !ready.management_capabilities?.includes('group_policies_v1')
               || ready.capability !== capability || !['classify', 'gateway_retire', 'ack_context_guard', 'notice_gateway_v1'].every(feature => ready.features?.includes(feature))) throw new BackendError('incompatible_backend')
           if (!ready.ready) throw new BackendError('backend_not_ready', 503)
           await this.request('/v1/gateways', { gateway_epoch: this.epoch }, 131072, false, signal)
@@ -110,11 +112,11 @@ export class BackendClient implements DeliveryEvents {
     if (typeof value.recognized !== 'boolean') throw new BackendError('classify_shape')
     return value.recognized
   }
-  submit(input: Inbound, seq: number): Promise<Plan> {
+  submit(input: Inbound, seq: number, policy: PolicySnapshot = {natural_query:'model',epoch:this.epoch,global_revision:0,group_revision:0}): Promise<Plan> {
     return this.retry('/v1/requests', { protocol, request_id: input.requestId, instance_id: input.instanceId,
       app_id: input.appId, platform: input.platform, kind: input.kind, conversation_id: input.conversationId,
       user_id: input.userId, message_id: input.messageId, timestamp_ms: input.timestampMs, body: input.body,
-      capability, gateway_epoch: this.epoch, ingress_seq: seq })
+      capability, gateway_epoch: this.epoch, ingress_seq: seq, policy:structuredClone(policy) })
   }
   lookup(id: string): Promise<Plan> { return this.retry('/v1/requests/' + encodeURIComponent(id)) }
   async image(plan: Plan, part: WirePart): Promise<Uint8Array> {

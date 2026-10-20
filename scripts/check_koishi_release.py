@@ -11,6 +11,10 @@ def verify(root, expected_commit):
     root=root.resolve()
     manifest=json.loads((root/'combination.json').read_text(encoding='utf-8'))
     if manifest['schema']!=1 or manifest['commit']!=expected_commit: raise ValueError('Combination identity')
+    # The same strict pairing checked by the trusted controller, before runtime probes.
+    sys.path.insert(0,str(root/'controller'))
+    from koishi_control import verify_combination
+    verify_combination(root,expected_commit)
     listed=set(manifest['files'])
     actual={p.relative_to(root).as_posix() for p in root.rglob('*') if p.is_file() and p.relative_to(root).as_posix()!='combination.json'}
     if actual!=listed or any(p.is_symlink() for p in root.rglob('*')): raise ValueError('Unlisted or missing payload')

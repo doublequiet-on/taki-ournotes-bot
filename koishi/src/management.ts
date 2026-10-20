@@ -3,6 +3,7 @@ import { mkdirSync, readFileSync, writeFileSync, renameSync, openSync, fsyncSync
 import { randomUUID } from 'node:crypto'
 import { join, isAbsolute } from 'node:path'
 import type { Inbound } from './ingress'
+import { GroupPolicies, PolicySnapshot } from './group-policies'
 
 export interface ManagementSettings {
   queriesEnabled: boolean
@@ -26,21 +27,24 @@ export function validateSettings(value: unknown): ManagementSettings {
   return structuredClone(v)
 }
 export class Management {
+  readonly groups: GroupPolicies
   private readonly epoch = randomUUID()
   private settings: ManagementSettings
   private revision = 0
   private events: { time: string; event: string }[] = []
   private file: string
-  constructor(directory: string) {
+  constructor(directory: string, identity?: { appId:string; instanceId:string }) {
     if (!isAbsolute(directory)) throw Error('console state directory must be absolute')
     mkdirSync(directory, { recursive: true, mode: 0o700 })
     this.file = join(directory, 'settings.json')
+    this.groups = new GroupPolicies(directory,{platform:'qq',app_id:identity?.appId||'unconfigured',instance_id:identity?.instanceId||'unconfigured'})
     try { this.settings = validateSettings(JSON.parse(readFileSync(this.file, 'utf8'))) }
     catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
       this.settings = structuredClone(defaultSettings)
     }
     this.record('管理设置已加载')
+    if(this.groups.error)this.record('群策略不可用，新群查询和通知已限制')
   }
   snapshot() { return { settings: structuredClone(this.settings), revision: this.revision,
     guard: { gateway_epoch: this.epoch, revision: this.revision }, events: [...this.events] } }
@@ -53,9 +57,15 @@ export class Management {
     const next = validateSettings(value)
     // A failed write must not change live admission. Atomic replacement also works on Windows.
     const temporary = this.file + '.tmp'
-    writeFileSync(temporary, JSON.stringify(next, null, 2) + '\n', { mode: 0o600 })
-    const fd = openSync(temporary, 'r+'); try { fsyncSync(fd) } finally { closeSync(fd) }
-    renameSync(temporary, this.file)
+    const content = JSON.stringify(next, null, 2) + '\n'
+    try {
+      writeFileSync(temporary, content, { mode: 0o600 })
+      const fd = openSync(temporary, 'r+'); try { fsyncSync(fd) } finally { closeSync(fd) }
+      renameSync(temporary, this.file)
+    } catch {
+      try { if(readFileSync(this.file,'utf8')!==content)throw Error('different') }
+      catch { throw Error('settings_save_unconfirmed') }
+    }
     this.settings = next
     this.revision++
     this.record('管理员保存了接收范围与通知设置')
@@ -64,20 +74,26 @@ export class Management {
   updateGuarded(value: unknown, guard: unknown) {
     const g = guard as { gateway_epoch?: string; revision?: number }
     if (!g || Object.keys(g).sort().join() !== 'gateway_epoch,revision'
-        || g.gateway_epoch !== this.epoch || !Number.isInteger(g.revision)
+        || g.gateway_epoch !== this.epoch || !Number.isSafeInteger(g.revision)
         || g.revision !== this.revision) throw Error('settings_conflict')
     return this.update(value, g.revision)
   }
   accepts(input: Inbound): boolean {
     const s = this.settings
-    return s.queriesEnabled && (input.kind === 'c2c' ? s.privateEnabled : this.groupAllowed(input.conversationId))
+    return input.kind==='c2c'?s.queriesEnabled&&s.privateEnabled:this.groups.effective(input.conversationId,s).queries
   }
   groupAllowed(id: string): boolean {
     const s = this.settings
     return s.groupsEnabled && (!s.groupAllowlist.length || s.groupAllowlist.includes(id))
   }
   noticesAllowed(id?: string): boolean {
-    return this.settings.notificationsEnabled && this.settings.groupsEnabled && (id === undefined || this.groupAllowed(id))
+    return id===undefined?this.groups.noticeScope(this.settings).kind!=='none':this.groups.effective(id,this.settings).notifications
   }
   noticeGroups(): string[] { return [...this.settings.groupAllowlist] }
+  noticeScope() { return this.groups.noticeScope(this.settings) }
+  effective(id:string) { return this.groups.effective(id,this.settings) }
+  policySnapshot(input:Inbound):PolicySnapshot {
+    return Object.freeze({natural_query:input.kind==='group'?this.effective(input.conversationId).natural_query:'model',
+      epoch:this.epoch,global_revision:this.revision,group_revision:this.groups.snapshot().revision})
+  }
 }

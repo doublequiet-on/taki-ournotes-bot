@@ -81,7 +81,7 @@ class Ledger:
     def admin_rows(self):
         """Bounded read of retained facts, without expiry or lifecycle transitions."""
         return [dict(row) for row in self.db.execute(
-            'SELECT id,delivery,created,status FROM requests ORDER BY created DESC,id DESC LIMIT ?', (self.capacity,))]
+            'SELECT id,delivery,created,status,runtime FROM requests ORDER BY created DESC,id DESC LIMIT ?', (self.capacity,))]
 
     def admin_parts(self):
         grouped = {}

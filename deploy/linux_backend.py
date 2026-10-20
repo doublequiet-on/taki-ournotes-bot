@@ -678,9 +678,13 @@ class LinuxBackend:
         return runtime
 
     def start(self) -> None:
+        policy_guard = self.koishi.prepare_start() if self.koishi else None
         runtime = self.runtime_directory()
-        atomic_json(runtime / "allowed.json", {"release": asdict(self.current_release()),
-                    "boot_id": Path("/proc/sys/kernel/random/boot_id").read_text().strip()})
+        permit = {"release": asdict(self.current_release()),
+                  "boot_id": Path("/proc/sys/kernel/random/boot_id").read_text().strip()}
+        if policy_guard is not None:
+            permit['policy_guard'] = policy_guard
+        atomic_json(runtime / "allowed.json", permit)
         (runtime / "allowed.json").chmod(0o644)
         self.started_at = time.time()
         if self._service().get("ActiveState") == "failed":

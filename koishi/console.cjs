@@ -1,5 +1,5 @@
 // Official Koishi web UI with a bounded administrator surface; no general config/marketplace loader.
-const { createHash, timingSafeEqual } = require('node:crypto')
+const { createHash, timingSafeEqual, randomUUID } = require('node:crypto')
 const path = require('node:path')
 const NodeConsole = require('@koishijs/plugin-console').default
 const Server = require('@koishijs/plugin-server').default
@@ -12,14 +12,18 @@ function configuration(env) {
   if (!Number.isInteger(port) || port < 1 || port > 65535) throw Error('console port')
   if (password.length < 20 || password.length > 256 || password === env.OURNOTES_BACKEND_TOKEN || password === env.QQ_APP_SECRET) throw Error('console requires a separate password of 20-256 characters')
   if (!env.TAKI_CONSOLE_STATE_DIR || !path.isAbsolute(env.TAKI_CONSOLE_STATE_DIR)) throw Error('console state directory required')
-  return { port, password, directory: env.TAKI_CONSOLE_STATE_DIR }
+  const state=env.TAKI_POLICY_RECOVERY_STATE||'unknown',reason=env.TAKI_POLICY_RECOVERY_REASON||null
+  if(!['unknown','current','restored','frozen','conflict'].includes(state)||reason&&!['settings_changed','policy_changed'].includes(reason))throw Error('policy recovery state')
+  return { port, password, directory: env.TAKI_CONSOLE_STATE_DIR, recoveryPolicy:{state,reason} }
 }
 
 function install(ctx, config, manifest, assetsDirectory = path.join(__dirname, 'node_modules/taki-console-assets')) {
-  const management = new Management(config.directory)
+  const management = new Management(config.directory, config.identity)
   const readHealth = config.readHealth || require('./health.cjs').healthReader(ctx, manifest, config.identity || {})
-  const methods = ['overview', 'requests/list', 'requests/detail', 'sources', 'notices/list', 'query-metrics', 'groups/list', 'settings/update']
+  const methods = ['overview', 'requests/list', 'requests/detail', 'sources', 'notices/list', 'query-metrics', 'groups/list', 'groups/update', 'settings/update']
   const reads = new Map()
+  const groupPages = new Map()
+  let lastObservedGroups, lastNoticeGroups
   async function readBackend(resource, params = {}) {
     const receiver = ctx.takiTransport?.receiver
     if (!receiver) throw Error('backend_unavailable')
@@ -50,6 +54,8 @@ function install(ctx, config, manifest, assetsDirectory = path.join(__dirname, '
     }
     async drain() { while (this.broadcasts.size) await Promise.all([...this.broadcasts]) }
     accept(socket, request) {
+      // Observe ws protocol errors (including maxPayload) without logging frame contents.
+      socket.on('error', () => { if(socket.readyState===1)socket.close(1008) })
       const host = request.headers.host
       const origin = request.headers.origin
       if (closing || ![`127.0.0.1:${config.port}`, `localhost:${config.port}`].includes(host)
@@ -108,19 +114,19 @@ function install(ctx, config, manifest, assetsDirectory = path.join(__dirname, '
       try { return management.updateGuarded(value, guard) }
       catch (error) {
         if (error.message === 'settings_conflict') throw error
-        throw Error('保存失败：请检查设置格式和状态目录权限')
+        throw Error(error.message==='invalid management settings'?'invalid_settings':'settings_save_unconfirmed')
       }
     }, { authority: 5 })
     listen('taki/overview', async function() {
-      const health = await readHealth()
-      let backend
-      try { backend = await readBackend('overview') }
-      catch { backend = { sections: { backend: { availability: 'unavailable', data: null, reason_code: 'backend_unavailable', stale: true } } } }
+      const [health,backend] = await Promise.all([readHealth(),readBackend('overview').catch(() =>
+        ({ sections: { backend: { availability: 'unavailable', data: null, reason_code: 'backend_unavailable', stale: true } } }))])
       return { ...management.snapshot(), health, backend,
+        recovery_policy:config.recoveryPolicy||null,
+        policy_health:{availability:management.groups.error?'unavailable':'available',reason_code:management.groups.error},
         gateway_observation: ctx.takiTransport?.receiver?.client.telemetry?.snapshot() || null }
     }, { authority: 5 })
     for (const [method, resource] of [['requests/list','requests'], ['sources','sources'], ['notices/list','notices'],
-      ['query-metrics','query-metrics'], ['groups/list','groups']]) {
+      ['query-metrics','query-metrics']]) {
       listen('taki/'+method, function(params = {}) {
         if (!params || typeof params !== 'object' || Array.isArray(params) || Object.keys(params).length > 8
             || Object.values(params).some(v => typeof v !== 'string' || v.length > 2048)) throw Error('admin_parameters')
@@ -131,6 +137,46 @@ function install(ctx, config, manifest, assetsDirectory = path.join(__dirname, '
       if (typeof id !== 'string' || !/^[a-f0-9]{64}$/.test(id)) throw Error('admin_request_id')
       return readBackend('requests/'+id)
     }, { authority: 5 })
+    listen('taki/groups/list', async function(params = {}) {
+      if(!params||typeof params!=='object'||Array.isArray(params)||Object.keys(params).some(k=>!['limit','cursor'].includes(k))
+        || Object.values(params).some(v=>typeof v!=='string'||v.length>256))throw Error('admin_parameters')
+      const limit=Number(params.limit||25)
+      if(!Number.isInteger(limit)||limit<1||limit>100)throw Error('admin_limit')
+      const candidates = new Map()
+      let observation = null, notice = null, stale = false
+      await Promise.all([
+        readBackend('groups').then(value=>{observation=value;lastObservedGroups=value}).catch(()=>{observation=lastObservedGroups;stale=true}),
+        readBackend('notices').then(value=>{notice=value;lastNoticeGroups=value}).catch(()=>{notice=lastNoticeGroups;stale=true})])
+      const policy=management.groups.snapshot(),guard=management.snapshot().guard
+      for (const row of observation?.sections?.groups?.data || []) candidates.set(row.group_id, {...row, origins:['observed']})
+      for (const row of notice?.sections?.notices?.data?.groups || []) candidates.set(row.group_id,
+        {...candidates.get(row.group_id),...row,origins:[...(candidates.get(row.group_id)?.origins||[]),'notice']})
+      for (const id of [...management.snapshot().settings.groupAllowlist,...Object.keys(policy.groups)])
+        candidates.set(id,{...candidates.get(id),group_id:id,origins:[...(candidates.get(id)?.origins||[]),'configured']})
+      const sorted=[...candidates.keys()].sort((a,b)=>Number(Object.hasOwn(policy.groups,b))-Number(Object.hasOwn(policy.groups,a))||a.localeCompare(b))
+      for(const [key,entry] of groupPages)if(entry.until<Date.now())groupPages.delete(key)
+      let ids=sorted,offset=0
+      if(params.cursor){
+        const saved=groupPages.get(params.cursor)
+        if(!saved||saved.owner!==this.id||saved.revision!==policy.revision||saved.guard!==JSON.stringify(guard))throw Error('group_cursor_invalid')
+        ids=saved.ids;offset=saved.offset
+      }
+      let next_cursor=null
+      if(offset+limit<ids.length){
+        next_cursor=randomUUID();groupPages.set(next_cursor,{ids,offset:offset+limit,owner:this.id,revision:policy.revision,guard:JSON.stringify(guard),until:Date.now()+300000})
+        while(groupPages.size>16)groupPages.delete(groupPages.keys().next().value)
+      }
+      return {policy,generated_at:Date.now()/1000,sections:{groups:{availability:policy.reason_code?'unavailable':'partial',reason_code:policy.reason_code||'observed_groups_not_platform_roster',
+        observed_at:observation?.generated_at||null,stale:stale||!observation,next_cursor,total:ids.length,
+        data:ids.slice(offset,offset+limit).map(id=>({...candidates.get(id),group_id:id,
+          policy:management.groups.get(id),effective:management.effective(id)}))}}}
+    }, { authority:5 })
+    listen('taki/groups/update', function(value) {
+      if(!value||typeof value!=='object'||Array.isArray(value)||Object.keys(value).sort().join()!=='group_id,policy,revision')throw Error('group_update_shape')
+      const result=management.groups.update(value.group_id,value.policy,value.revision)
+      management.record('管理员保存了分群策略')
+      return result
+    }, { authority:5 })
   })
   return { management, async ready() {
     if (!ctx.console?.listeners['taki/status']) throw Error('console registration failed')

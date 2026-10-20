@@ -370,7 +370,8 @@ class BackendContinuationTests(Fixture, unittest.IsolatedAsyncioTestCase):
         return dict(protocol=PROTOCOL, request_id=digest(['fixture', 'app', 'qq', 'group', 'g1', 'u1', msg]),
                     instance_id='fixture', app_id='app', platform='qq', kind='group', conversation_id='g1',
                     user_id='u1', message_id=msg, timestamp_ms=int(self.now*1000), body='/查曲 MyGO',
-                    capability=CAPABILITY, gateway_epoch='e1', ingress_seq=seq)
+                    capability=CAPABILITY, gateway_epoch='e1', ingress_seq=seq,
+                    policy=dict(natural_query='model',epoch='fixture',global_revision=0,group_revision=0))
 
     async def prepare(self, request):
         await self.backend.submit(request)

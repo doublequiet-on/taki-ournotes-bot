@@ -484,7 +484,10 @@ class NoticeGatewayTests(UpdateNoticeTests):
         self.serial = 0
 
     def base(self, **values):
-        return dict(protocol={'major':1,'minor':0},instance_id='test',app_id='app',gateway_epoch=self.epoch,**values)
+        from ournotes_bot.application.backend_protocol import PROTOCOL
+        if 'claim_request_id' in values and 'scope' not in values:
+            values['scope']={'kind':'all','exclude_group_ids':[]}
+        return dict(protocol=PROTOCOL,instance_id='test',app_id='app',gateway_epoch=self.epoch,**values)
 
     def group(self, kind='discover', stamp=None):
         self.serial += 1
@@ -558,19 +561,21 @@ class NoticeGatewayTests(UpdateNoticeTests):
         for index, gid in enumerate(['a', 'b', 'c', 'd', 'e', 'z_allowed']):
             self.gateway.group(self.base(event_id='group-'+gid, group_id=gid, kind='discover',
                 timestamp_ms=time.time()*1000, ingress_seq=index+1))
-        request=self.base(claim_request_id='scoped', limit=1, group_allowlist=['z_allowed'])
+        request=self.base(claim_request_id='scoped', limit=1, scope={'kind':'selected','group_ids':['z_allowed']})
         first=await self.gateway.claims(request)
         self.assertEqual([c['group_id'] for c in first['claims']], ['z_allowed'])
         self.assertEqual(await self.gateway.claims(request), first)
         with self.assertRaisesRegex(ProtocolError, 'notice_conflict'):
-            await self.gateway.claims({**request, 'group_allowlist':['a']})
+            await self.gateway.claims({**request, 'scope':{'kind':'selected','group_ids':['a']}})
         for invalid in [None, 'a', ['a', 'a'], ['bad space'], ['a']*129, [{}]]:
             with self.assertRaisesRegex(ProtocolError, 'claim_groups'):
-                await self.gateway.claims({**request, 'claim_request_id':'invalid', 'group_allowlist':invalid})
+                await self.gateway.claims({**request, 'claim_request_id':'invalid', 'scope':{'kind':'selected','group_ids':invalid}})
         unscoped=await self.gateway.claims(self.base(claim_request_id='legacy',limit=1))
         self.assertEqual(unscoped['claims'][0]['group_id'], 'a')
-        empty=await self.gateway.claims(self.base(claim_request_id='empty',limit=1,group_allowlist=[]))
-        self.assertEqual(empty['claims'][0]['group_id'], 'b')
+        empty=await self.gateway.claims(self.base(claim_request_id='empty',limit=1,scope={'kind':'none'}))
+        self.assertEqual(empty['claims'], [])
+        with self.assertRaisesRegex(ProtocolError,'claim_scope_empty_selected'):
+            await self.gateway.claims(self.base(claim_request_id='invalid-empty',limit=1,scope={'kind':'selected','group_ids':[]}))
 
     async def test_gateway_group_duplicate_conflict_and_old_timestamp(self):
         import time

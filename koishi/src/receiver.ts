@@ -39,7 +39,7 @@ export class Receiver {
       if (!await this.receive(session)) return next()
     }, true))
     if (config.notifications) this.notices=new Notices(ctx,this.client,config,this.ready,
-      id => config.management?.noticesAllowed(id) ?? true, () => config.management?.noticeGroups() ?? [])
+      id => config.management?.noticesAllowed(id) ?? true, () => config.management?.noticeScope() ?? {kind:'all',exclude_group_ids:[]})
     ctx.on('dispose', () => this.dispose())
   }
   capture(session: Session): void {
@@ -112,7 +112,7 @@ export class Receiver {
         await existing.promise
         return true
       }
-      const plan = await this.client.submit(input, source.seq)
+      const plan = await this.client.submit(input, source.seq, this.config.management?.policySnapshot(input))
       const job: Job = { input, plan, promise: Promise.resolve() }
       this.jobs.set(input.requestId, job)
       job.promise = this.deliver(job, session.bot as unknown as QQBot)

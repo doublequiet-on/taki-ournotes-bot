@@ -14,8 +14,15 @@ import time
 def verify_combination(root, commit, python_hash=None):
     root=Path(root)
     row=json.loads((root/'combination.json').read_text(encoding='utf-8'))
-    if row.get('schema')!=1 or row.get('commit')!=commit or row.get('protocol')!={'major':1,'minor':0}:
+    if row.get('schema')!=1 or row.get('commit')!=commit:
         raise ValueError('combination_identity')
+    profile = row.get('protocol')
+    if profile == {'major':1,'minor':0}:
+        if row.get('capabilities',[]) != []: raise ValueError('combination_capabilities')
+    elif profile == {'major':1,'minor':1}:
+        if row.get('capabilities') != ['group_policies_v1']: raise ValueError('combination_capabilities')
+    else:
+        raise ValueError('combination_protocol')
     if row.get('node')!={'version':'v24.19.0','platform':'linux','arch':'x64'}:
         raise ValueError('combination_target')
     if python_hash and row.get('python_sha256')!=python_hash: raise ValueError('combination_python_mismatch')
@@ -61,6 +68,21 @@ class KoishiControl:
         state=self.state()
         if state.get('MainPID')!='0' or state.get('ActiveState') not in ('inactive','failed'):
             raise ValueError('gateway_not_stopped')
+
+    def prepare_start(self):
+        try:
+            from .group_policy_guard import transition, LEGACY_FREEZE_COMMITS
+        except ImportError:
+            from group_policy_guard import transition, LEGACY_FREEZE_COMMITS
+        _,manifest = self.combination(self.backend.current_release())
+        directory = Path(self.backend.config['base'])/'console-state'
+        supported = manifest.get('capabilities') == ['group_policies_v1']
+        permit = transition(directory, self.backend.state/'group-policy-freeze.v1.json', supported)
+        if permit['state'] == 'frozen':
+            if manifest['commit'] not in LEGACY_FREEZE_COMMITS:
+                raise ValueError('policy_guard_legacy_unverified')
+            permit['legacy_commit'] = manifest['commit']
+        return permit
 
     def start(self):
         self.combination(self.backend.current_release())

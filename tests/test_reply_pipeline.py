@@ -33,7 +33,7 @@ class ReplyPipelineTests(unittest.TestCase):
             for command in ('/查谱面 100001 EXPERT','/问 展示迷星叫 EXPERT 完整谱面资料'):
                 for failure in ('upload','draw'):
                     with self.subTest(notes=notes,command=command,failure=failure), \
-                         patch.object(self.parser,'answer_with_plan',return_value=(answer_for(result.spec,self.repo,result=result),result)), \
+                         patch.object(self.parser,'answer_with_outcome',return_value=SimpleNamespace(text=answer_for(result.spec,self.repo,result=result),result=result,state=SimpleNamespace(parse_origin='model',processing_route='model'))), \
                          patch('ournotes_bot.application.replies.load_chart_score',return_value={'notes':[]}) as score, \
                          patch('ournotes_bot.rendering.chart_layout.render',return_value=(b'chart',),
                                side_effect=ValueError('fixture render failure') if failure=='draw' else None):

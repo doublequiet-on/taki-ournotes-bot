@@ -29,7 +29,8 @@ async def seed(app):
     now=time.time()-1
     await backend.submit(dict(protocol=PROTOCOL,request_id=digest(['fixture','app','qq','group','fixture-group','fixture-user','message']),
         instance_id='fixture',app_id='app',platform='qq',kind='group',conversation_id='fixture-group',user_id='fixture-user',
-        message_id='message',timestamp_ms=int(now*1000),body='/帮助',capability=CAPABILITY,gateway_epoch='fixture-gateway',ingress_seq=1))
+        message_id='message',timestamp_ms=int(now*1000),body='/帮助',capability=CAPABILITY,gateway_epoch='fixture-gateway',ingress_seq=1,
+        policy=dict(natural_query='model',epoch='fixture',global_revision=0,group_revision=0)))
 app=create_app(backend,'fixture-backend-token-000000000000')
 app.on_startup.append(seed)
 web.run_app(app,host='127.0.0.1',port=18765,print=None)

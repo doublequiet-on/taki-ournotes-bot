@@ -21,7 +21,8 @@ def business_state(value):
     return {'success': 'ok', 'no_result': 'no_result', 'empty': 'no_result',
             'unknown_entity': 'no_result', 'invalid_arguments': 'invalid',
             'ambiguous': 'invalid', 'unsupported': 'invalid',
-            'data_unavailable': 'unavailable', 'unavailable': 'unavailable'}.get(value, 'unknown')
+            'data_unavailable': 'unavailable', 'unavailable': 'unavailable',
+            'not_configured': 'unavailable', 'temporary_failure': 'unavailable', 'no_results':'no_result', 'mixed':'mixed'}.get(value, 'unknown')
 
 
 def delivery_state(row, parts):
@@ -64,16 +65,20 @@ class Admin:
         if metadata is False:
             metadata = self.backend.diagnostics.read(row['id'])
         view = {'request_id': row['id'], 'delivery_id': row['delivery'], 'created_at': row['created'],
+                'backend_epoch': row['runtime'],
                 'lifecycle': row['status'], 'delivery_state': delivery_state(row, parts),
                 'uncertain_parts': sum(p['status'] in ('sending', 'uncertain') for p in parts),
                 'confirmed_parts': sum(p['status'] == 'success' for p in parts), 'part_count': len(parts),
                 'scope': metadata['scope'] if metadata else None,
                 'group_id': metadata['group_id'] if metadata else None,
                 'command_kinds': [c['kind'] for c in metadata['commands']] if metadata else None,
+                'command_count': metadata['commands'][0].get('total_commands') if metadata and metadata['commands'] else None,
                 'business_outcome': 'unknown',
                 'observation': 'partial',
                 'observation_reason': 'transport_coverage_not_guaranteed' if metadata else 'historical_metadata_not_collected',
                 'missing_reason': None if metadata else 'historical_metadata_not_collected'}
+        view['delivery_reason'] = ('completed_without_output' if row['status'] == 'finished' and not parts else
+            'platform_result_unconfirmed' if view['uncertain_parts'] else None)
         if metadata and metadata['commands']:
             outcomes = {business_state(c['outcome']) for c in metadata['commands']}
             view['business_outcome'] = next(iter(outcomes)) if len(outcomes) == 1 else 'mixed'
@@ -103,7 +108,8 @@ class Admin:
         views = [v for v in self.views() if now-86400 <= v['created_at'] < now]
         counts = Counter(v['delivery_state'] for v in views)
         return self.envelope(
-            service=section({'ready': self.backend.ready, 'closing': self.backend.closing}, now=now),
+            service=section({'ready': self.backend.ready, 'closing': self.backend.closing,
+                'natural_query': self.backend.parser.policy_capabilities() if hasattr(self.backend.parser,'policy_capabilities') else None}, now=now),
             requests=section({'from': now-86400, 'to': now, 'total': len(views),
                               'states': {s: counts[s] for s in STATES},
                               'metadata_missing': sum(v['scope'] is None for v in views),
@@ -176,24 +182,53 @@ class Admin:
 
     def sources(self):
         catalog = self.backend.repository.capture_catalog()
+        owner = self.backend.runtime_tasks
+        observation = owner.observation_snapshot() if owner else None
         return self.envelope(catalog=section({'cache_state': catalog.cache_state,
             'song_count': len(catalog.songs), 'last_successful_sync_at': catalog.last_successful_sync_at},
-            now=self.backend.clock()), other_sources=section(availability='unsupported',
-            reason='source_snapshot_not_instrumented', now=self.backend.clock()))
+            availability='available' if catalog.cache_state == 'fresh' else 'partial',
+            now=self.backend.clock()), background=section(observation, availability='partial',
+            reason=None if observation else 'background_observation_not_collected', now=self.backend.clock()))
 
-    def notices(self):
+    def notices(self, params=None):
+        params = params or {}
+        require(set(params) <= {'limit','cursor'}, 'admin_parameters')
+        try:
+            limit = int(params.get('limit',25))
+            require(1 <= limit <= 100, 'admin_limit')
+            window = point = None
+            if params.get('cursor'):
+                require(len(params['cursor']) <= 2048, 'admin_cursor')
+                raw, signature = params['cursor'].split('.')
+                require(hmac.compare_digest(hmac.new(self.cursor_key,raw.encode(),hashlib.sha256).hexdigest(),signature), 'admin_cursor')
+                cursor = json.loads(base64.urlsafe_b64decode(raw+'='*(-len(raw)%4)))
+                require(isinstance(cursor,dict) and set(cursor) == {'resource','window','point'}
+                        and cursor['resource'] == 'notices', 'admin_cursor')
+                window,point = cursor['window'],cursor['point']
+                require(type(window) is int and type(point) is int and 0 < point <= window, 'admin_cursor')
+        except (ValueError,TypeError,KeyError,UnicodeError):
+            require(False,'admin_parameters')
         owner = self.backend.notices
         if owner is None:
             return self.envelope(notices=section(availability='unsupported', reason='notifications_disabled'))
         # Use the existing owner connection, never pending()/claims() or report generation.
         with closing(owner.store.connect()) as db:
-            items = [dict(zip(('group_id','revision','status'), row)) for row in db.execute(
-                'SELECT gid,revision,status FROM notices WHERE app=? ORDER BY revision DESC,gid LIMIT 100',
-                (owner.store.app_id,))]
+            if window is None:
+                window = db.execute('SELECT COALESCE(MAX(rowid),0) FROM notices WHERE app=?',(owner.store.app_id,)).fetchone()[0]
+            rows = db.execute('SELECT rowid,gid,revision,status FROM notices WHERE app=? AND rowid<=? AND rowid<? ORDER BY rowid DESC LIMIT ?',
+                (owner.store.app_id,window,point if point is not None else window+1,limit+1)).fetchall()
+            token = None
+            if len(rows) > limit:
+                rows = rows[:limit]
+                raw = base64.urlsafe_b64encode(json.dumps({'resource':'notices','window':window,'point':rows[-1][0]},separators=(',',':')).encode()).decode().rstrip('=')
+                token = raw+'.'+hmac.new(self.cursor_key,raw.encode(),hashlib.sha256).hexdigest()
+            items = [dict(zip(('group_id','revision','status'),row[1:])) for row in rows]
             groups = [dict(zip(('group_id','present','allowed','observed_at'), row)) for row in db.execute(
                 'SELECT gid,present,allowed,event_at FROM groups WHERE app=? ORDER BY gid LIMIT 128',
                 (owner.store.app_id,))]
-        return self.envelope(notices=section({'items': items, 'groups': groups}, now=self.backend.clock()))
+        return self.envelope(notices=section({'items':items,'groups':groups,'next_cursor':token,
+            'order':'record_insertion_desc','time_window':None},availability='partial',
+            reason='notice_timestamps_not_collected',now=self.backend.clock()))
 
     def metrics(self):
         snapshot = self.backend.parser.metrics_snapshot()
@@ -215,13 +250,15 @@ class Admin:
         require(isinstance(value['events'], list) and len(value['events']) <= 32 and
                 len(json.dumps(value).encode()) <= 24576, 'telemetry_size')
         validated = []
+        seen = {}
         for item in value['events']:
-            require(isinstance(item, dict) and set(item) == {'event_id','request_id','delivery_id','kind','position','attempt','duration_ms'}, 'telemetry_event')
+            require(isinstance(item, dict) and set(item) == {'event_id','request_id','delivery_id','kind','position','attempt','duration_ms','outcome'}, 'telemetry_event')
             require(identity(item['event_id']) and identity(item['request_id']), 'telemetry_identity')
             row = self.backend.ledger.request(item['request_id'])
             require(row is not None and row['delivery'] == item['delivery_id'] and row['epoch'] == epoch
                     and row['runtime'] == self.backend.runtime, 'telemetry_association', 409)
             require(item['kind'] in ('upload','send','receipt_submit'), 'telemetry_kind')
+            require(item['outcome'] in ('ok','error','unknown'), 'telemetry_outcome')
             require(type(item['duration_ms']) in (int,float) and math.isfinite(item['duration_ms'])
                     and 0 <= item['duration_ms'] <= 600000, 'telemetry_duration')
             parts = self.backend.ledger.parts(row['delivery'])
@@ -229,8 +266,12 @@ class Admin:
             require(type(item['position']) is int and part is not None, 'telemetry_part')
             require((item['kind'] == 'upload' and item['attempt'] is None) or
                     (item['attempt'] is not None and item['attempt'] == part['attempt']), 'telemetry_attempt')
+            signature = tuple(item[k] for k in ('request_id','kind','position','attempt','duration_ms','outcome'))
+            existing = seen.get(item['event_id']) or self.backend.diagnostics.event_signature(item['event_id'])
+            require(existing is None or existing == signature, 'telemetry_conflict', 409)
+            seen[item['event_id']] = signature
             validated.append(item)
         for item in validated:
             self.backend.diagnostics.span(item['event_id'], item['request_id'], item['kind'],
-                item['duration_ms'], self.backend.clock(), item['position'], item['attempt'])
+                item['duration_ms'], self.backend.clock(), item['position'], item['attempt'], item['outcome'])
         return {'accepted': len(validated)}

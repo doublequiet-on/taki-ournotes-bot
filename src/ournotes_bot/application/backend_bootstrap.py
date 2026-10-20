@@ -21,6 +21,8 @@ def build_backend(args, settings):
     token = os.environ.get('OURNOTES_BACKEND_TOKEN', '')
     require(len(token) >= 32, 'backend_token_required')
     require(1 <= args.port <= 65535, 'backend_port')
+    diagnostics = os.environ.get('TAKI_DIAGNOSTICS_ENABLED','1')
+    require(diagnostics in ('0','1'), 'diagnostics_configuration')
     owner = DataOwner(settings)
     backend = None
     try:
@@ -29,7 +31,8 @@ def build_backend(args, settings):
                                     chart_source=settings.chart_source, data_source=settings.data_source)
         configure_sources(repository, settings)
         backend = Backend(repository, AIQueryParser(settings), settings, instance_id=args.instance_id,
-                          app_id=args.app_id, ledger_path=Path(args.state_dir)/'deliveries-v1.sqlite3')
+                          app_id=args.app_id, ledger_path=Path(args.state_dir)/'deliveries-v1.sqlite3',
+                          diagnostics_enabled=diagnostics=='1')
         backend.runtime_tasks = RuntimeTasks(repository, settings)
         if settings.update_notices:
             notice_ai = AIClient(settings.ai_base_url, settings.ai_api_key, settings.ai_model) if settings.ai_api_key else None
@@ -41,6 +44,7 @@ def build_backend(args, settings):
     except BaseException:
         if backend is not None:
             backend.ledger.close()
+            backend.diagnostics.close()
         owner.close()
         raise
 

@@ -32,10 +32,13 @@ _query_text = query_text
 
 
 class AIQueryParser:
+    """Thin facade retained for main.py, qq.py and existing integrations."""
+
     def metrics_snapshot(self):
         return self._metrics.snapshot()
 
-    """Thin facade retained for main.py, qq.py and existing integrations."""
+    def policy_capabilities(self):
+        return {'model_configured': self._agent.ai_enabled, 'daily_limit': self._agent.daily_limit}
 
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
