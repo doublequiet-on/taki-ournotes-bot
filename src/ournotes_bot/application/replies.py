@@ -27,6 +27,17 @@ from ..visuals import (render_card, render_card_list, render_chart, render_song_
 logger = logging.getLogger("ournotes_bot.replies")
 
 
+def command_kind(content: str) -> str:
+    """Finite observation categories; never store query arguments or question text."""
+    if is_ai_request(content):
+        return 'ask'
+    if parse_operation(content) is not None:
+        return 'continuation'
+    head = content.split(None, 1)[0].lstrip('/').casefold()
+    return {'帮助': 'help', 'help': 'help', '查卡': 'card', '查曲': 'song',
+            '查谱面': 'chart', '查榜线': 'cutoff', '查活动': 'event'}.get(head, 'other')
+
+
 def recognizes_message(content: str) -> bool:
     """Read-only entry recognition; no repository, model, quota or context access."""
     from ..commands import ALIASES, UNAVAILABLE_COMMANDS
@@ -78,6 +89,7 @@ class PreparedReply:
     budget_label: str = "查榜线"
     fallback_texts: tuple[str, ...] = ()
     business_status: str | None = None
+    command_index: int | None = None
 
     @property
     def passive_slots(self):
@@ -116,6 +128,8 @@ def expand_replies(replies: list[PreparedReply], reserve: int = 0) -> list[Prepa
     base=replies[0].context if len(replies)==1 and isinstance(replies[0].context,DeliveryCursor) else None
     for reply in replies:
         for part in reply.pages or (reply,):
+            if part.command_index is None and reply.command_index is not None:
+                part = replace(part, command_index=reply.command_index)
             if part.business_status is None and reply.business_status is not None:
                 part = replace(part, business_status=reply.business_status)
             if part.fallback_texts:
@@ -123,7 +137,7 @@ def expand_replies(replies: list[PreparedReply], reserve: int = 0) -> list[Prepa
             if part.image is None and len(part.text)>1800:
                 chunks=text_chunks(part.text)
                 pages.extend(PreparedReply(t,context=part.context if i==len(chunks)-1 else None,
-                                           business_status=part.business_status) for i,t in enumerate(chunks))
+                                           business_status=part.business_status, command_index=part.command_index) for i,t in enumerate(chunks))
             else:
                 pages.append(part)
     available=max(1,QQ_PASSIVE_REPLY_LIMIT-reserve)
@@ -249,7 +263,7 @@ class ReplySequencer:
 
 
 async def prepare_commands(commands: list[str], gate: "QueryGate", repository: SongRepository,
-                           ai_parser: AIQueryParser, limit: int) -> tuple[list["PreparedReply"], int]:
+                           ai_parser: AIQueryParser, limit: int, *, observe=None) -> tuple[list["PreparedReply"], int]:
     """Prepare several commands concurrently and return replies in asked order.
 
     Preparation is bounded by `gate`, so a burst queues instead of swamping the
@@ -269,12 +283,15 @@ async def prepare_commands(commands: list[str], gate: "QueryGate", repository: S
         return_exceptions=True,
     )
     replies: list[PreparedReply] = []
-    for result in results:
+    if observe is not None:
+        observe([('unavailable' if isinstance(result, BaseException) else result.business_status or 'unknown')
+                 if result else 'unknown' for result in results])
+    for index, result in enumerate(results):
         if isinstance(result, BaseException):
             logger.error("查询结果准备失败；错误类型=%s", type(result).__name__)
             continue
         if result:
-            replies.append(result)
+            replies.append(replace(result, command_index=index))
     overflow = max(0, len(commands) - limit)
     return expand_replies(replies, reserve=int(bool(overflow))), overflow
 

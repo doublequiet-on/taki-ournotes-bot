@@ -118,3 +118,16 @@ class QueryMetrics:
     @property
     def available(self) -> bool:
         return not self._disabled
+
+    def snapshot(self) -> dict:
+        """Read-only validated snapshot; never creates files or changes writer availability."""
+        with self._lock:
+            try:
+                exists = self.path.is_file()
+                record = self._load()
+                return {'available': exists, 'write_available': not self._disabled,
+                        'reason_code': None if exists else 'metrics_not_collected',
+                        'timezone': 'Asia/Shanghai', 'days': record['days']}
+            except (OSError, ValueError, TypeError, KeyError, json.JSONDecodeError):
+                return {'available': False, 'write_available': not self._disabled,
+                        'reason_code': 'metrics_snapshot_invalid', 'timezone': 'Asia/Shanghai', 'days': None}

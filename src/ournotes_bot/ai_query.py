@@ -32,6 +32,9 @@ _query_text = query_text
 
 
 class AIQueryParser:
+    def metrics_snapshot(self):
+        return self._metrics.snapshot()
+
     """Thin facade retained for main.py, qq.py and existing integrations."""
 
     def __init__(self, settings: Settings) -> None:

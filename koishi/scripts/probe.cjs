@@ -508,7 +508,43 @@ async function main() {
       assert.throws(()=>new Management(dir))
     } finally {fs.rmSync(dir,{recursive:true,force:true})}
   })
-  const lock = JSON.parse(fs.readFileSync(path.join(root, 'package-lock.json')))
+    await run('Console guards reject a previous process and preserve stale drafts',async()=>{
+      const {Management,defaultSettings}=require('../lib/management')
+      const dir=fs.mkdtempSync(path.join(require('node:os').tmpdir(),'taki-console-guard-'))
+      try {
+        const a=new Management(dir),guard=a.snapshot().guard
+        a.updateGuarded({...defaultSettings,privateEnabled:false},guard)
+        assert.throws(()=>a.updateGuarded(defaultSettings,guard),/settings_conflict/)
+        const b=new Management(dir)
+        assert.throws(()=>b.updateGuarded(defaultSettings,guard),/settings_conflict/)
+        assert.equal(b.snapshot().settings.privateEnabled,false)
+      } finally {fs.rmSync(dir,{recursive:true,force:true})}
+    })
+    await run('Console telemetry queue is bounded and retries at most once',async()=>{
+      const {Telemetry}=require('../lib/telemetry')
+      let calls=0
+      const telemetry=new Telemetry(async()=>{calls++;throw Error('fixture disconnect')})
+      const span={request_id:'r',delivery_id:'d',kind:'send',position:0,attempt:'a',duration_ms:20}
+      for(let i=0;i<300;i++)telemetry.enqueue(span)
+      assert.equal(telemetry.snapshot().queued,256)
+      assert.equal(telemetry.dropped,44)
+      await telemetry.flush()
+      assert.equal(calls,2)
+      assert.equal(telemetry.dropped,76)
+      await telemetry.close()
+    })
+    await run('Console monotonic spans separate upload send and receipt submission',async()=>{
+      const spans=[],wait=ms=>new Promise(r=>setTimeout(r,ms))
+      const api={async sendFileGuild(){await wait(20);return{file_info:'fixture'}},async sendMessage(){await wait(40);return{id:'fixture-message'}}}
+      const inbound={requestId:'request',kind:'group',conversationId:'fixture-group',messageId:'fixture',timestampMs:Date.now()}
+      const events={async intent(){return'granted'},async acknowledge(){await wait(10)},observe(span){spans.push(span)}}
+      const delivery=new QQDelivery(api,inbound,'delivery','epoch',events,()=>true)
+      assert.equal((await delivery.deliver('0',0,png)).status,'success')
+      assert.deepEqual(spans.map(s=>s.kind),['upload','send','receipt_submit'])
+      assert.ok(spans.find(s=>s.kind==='send').duration_ms>=30)
+      assert.equal(spans[0].attempt,null)
+    })
+    const lock = JSON.parse(fs.readFileSync(path.join(root, 'package-lock.json')))
   const versions = Object.fromEntries(['koishi', '@koishijs/core', '@koishijs/plugin-adapter-qq', '@satorijs/adapter-qq', '@satorijs/core', 'typescript'].map(name => {
     const version = JSON.parse(fs.readFileSync(path.join(root, 'node_modules', name, 'package.json'))).version
     assert.equal(version, lock.packages['node_modules/' + name].version, 'installed version differs: ' + name)

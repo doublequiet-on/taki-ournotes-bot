@@ -1,0 +1,20 @@
+.taki-console { max-width:1120px; margin:24px auto; padding:0 16px 32px; line-height:1.7; overflow-wrap:anywhere; color:var(--fg1); }
+.taki-console nav { display:flex; gap:8px; flex-wrap:wrap; }
+.taki-console button { padding:8px 14px; margin:6px 6px 6px 0; min-height:44px; cursor:pointer; color:inherit; background:var(--bg2,#eee); border:1px solid var(--border,#aaa); border-radius:6px; }
+.taki-console button:disabled { cursor:default; opacity:.65; }
+.taki-console :focus-visible { outline:3px solid #5588cc; outline-offset:2px; }
+.taki-console section { margin:20px 0; padding:16px; border:1px solid var(--border,#aaa); border-radius:8px; }
+.taki-console .stats { display:grid; grid-template-columns:repeat(auto-fit,minmax(130px,1fr)); gap:12px; }
+.taki-console .stats strong { display:block; font-size:1.8em; }
+.taki-console .toggle { display:block; margin:12px 0; }
+.taki-console input,.taki-console select,.taki-console textarea { color:inherit; background:var(--bg1,#fff); border:1px solid var(--border,#aaa); padding:8px; box-sizing:border-box; max-width:100%; }
+.taki-console textarea { display:block; width:100%; }
+.taki-console pre { white-space:pre-wrap; overflow-wrap:anywhere; font-size:.9em; }
+.taki-console ul { padding-left:20px; }
+.taki-console li { margin:10px 0; }
+.taki-console small { display:block; opacity:.8; }
+.taki-console .fact { display:grid; grid-template-columns:minmax(90px,180px) minmax(0,1fr); gap:8px; padding:4px 0; }
+.taki-console dt { opacity:.8; }
+.taki-console dd { margin:0; }
+@media(max-width:480px) { .taki-console .fact { grid-template-columns:1fr; gap:0; } }
+@media(max-width:480px) { .taki-console { padding:0 8px 24px; } .taki-console section { padding:10px; } }

@@ -19,6 +19,9 @@ from ..query.continuation import ContextKey, ContextStore, MISSING, parse_operat
 from . import replies
 from .backend_protocol import PROTOCOL, CAPABILITY, WINDOW, Request, ProtocolError, require, identity, event
 from .delivery_ledger import Ledger
+from .diagnostics import Diagnostics
+from .admin import Admin
+from .backend_sources import CODE_FILES
 
 logger = logging.getLogger('ournotes_bot.backend')
 
@@ -48,9 +51,11 @@ class Backend:
         self.repository, self.parser, self.settings = repository, parser, settings
         self.instance_id, self.app_id, self.clock = instance_id, app_id, clock
         self.runtime = uuid.uuid4().hex
-        self.code_digest = hashlib.sha256(b''.join(Path(__file__).with_name(name).read_bytes()
-            for name in ('backend.py', 'backend_protocol.py', 'delivery_ledger.py', 'replies.py', 'backend_bootstrap.py', 'runtime_tasks.py', 'notice_gateway.py', 'notice_reports.py', 'data_owner.py'))).hexdigest()
+        self.code_digest = hashlib.sha256(b''.join((Path(__file__).parent/name).read_bytes()
+            for name in CODE_FILES)).hexdigest()
         self.ledger = Ledger(ledger_path, instance_id+'\0'+app_id, self.runtime, clock())
+        self.diagnostics = Diagnostics(Path(ledger_path).with_name('diagnostics-v1.sqlite3'))
+        self.admin = Admin(self)
         self.contexts = ContextStore()
         self.gate = replies.QueryGate(settings.query_concurrency, settings.query_queue_limit, redact=True)
         self.sequencer = replies.ReplySequencer(enabled=settings.reply_order)
@@ -105,6 +110,8 @@ class Backend:
             require(bool(commands), 'empty_commands')
             delivery = uuid.uuid4().hex
             self.ledger.admit(request, self.runtime, delivery, self.clock())
+            self.diagnostics.admitted(request, delivery, self.runtime, self.clock(),
+                [{'kind': replies.command_kind(c), 'outcome': None} for c in commands])
             key = ContextKey(request.platform, request.kind, request.conversation_id, request.user_id)
             operation = parse_operation(commands[0]) if len(commands) == 1 else None
             lineage = self.contexts.lineage(key) if operation else None
@@ -131,16 +138,25 @@ class Backend:
                 current = (self.contexts.get(work.key) if work.lineage is not None
                            and self.contexts.lineage(work.key) == work.lineage else None)
                 work.lease = self.contexts.begin(work.key, clear=False) if current is not None else None
+                started = time.monotonic()
                 result = (await self.gate.prepare_followup(current, work.operation, self.repository)
                           if current is not None else replies.PreparedReply(MISSING))
                 parts = replies.expand_replies([result])
             else:
+                started = time.monotonic()
                 parts, overflow = await replies.prepare_commands(commands, self.gate, self.repository,
-                                                                  self.parser, self.settings.multi_command_limit)
+                    self.parser, self.settings.multi_command_limit,
+                    observe=lambda outcomes: self.diagnostics.outcomes(work.request.request_id, outcomes))
                 if overflow:
                     parts.append(replies.PreparedReply(tr(locale_for(commands[0]), 'too_many_commands',
                                                           limit=self.settings.multi_command_limit, total=len(commands))))
+            self.diagnostics.span(uuid.uuid4().hex, work.request.request_id, 'prepare',
+                                  (time.monotonic()-started)*1000, self.clock())
+            self.diagnostics.prepared(work.request.request_id, parts)
+            started = time.monotonic()
             await self.sequencer.wait_turn(work.order)
+            self.diagnostics.span(uuid.uuid4().hex, work.request.request_id, 'reply_order_wait',
+                                  (time.monotonic()-started)*1000, self.clock())
             self.expire()
             if not work.active:
                 return
@@ -298,6 +314,7 @@ class Backend:
         await asyncio.gather(*tasks, return_exceptions=True)
         if self.runtime_tasks: await self.runtime_tasks.close()
         self.ledger.close()
+        self.diagnostics.close()
         if self.data_owner: self.data_owner.close()
 
 
@@ -310,6 +327,10 @@ def create_app(backend, token, initialize=None):
             supplied = request.headers.get('Authorization', '')
             require(hmac.compare_digest(supplied.encode(), ('Bearer '+token).encode()), 'unauthorized', 401)
             require(request.headers.get('X-Taki-Instance') == backend.instance_id, 'instance_mismatch', 403)
+            if request.path.startswith('/v1/admin/') and request.method == 'GET':
+                require(len(request.query) == len(set(request.query)), 'admin_parameters')
+                if request.path != '/v1/admin/requests':
+                    require(not request.query, 'admin_parameters')
             return await handler(request)
         except ProtocolError as exc:
             return web.json_response({'error': exc.code, 'protocol': PROTOCOL}, status=exc.status)
@@ -327,6 +348,7 @@ def create_app(backend, token, initialize=None):
                      'capability': CAPABILITY, 'backend_code_digest': backend.code_digest,
                      'background_tasks': bool(backend.runtime_tasks and backend.runtime_tasks.tasks and all(not task.done() for task in backend.runtime_tasks.tasks)),
                      'notices_enabled': backend.notices is not None,
+                     'management_capabilities': ['admin_read_v1', 'telemetry_v1'],
                      'features': ['classify', 'gateway_retire', 'ack_context_guard', 'notice_gateway_v1']}, 200 if backend.ready else 503)
     async def classify(request):
         value = await read_json(request)
@@ -360,6 +382,17 @@ def create_app(backend, token, initialize=None):
     async def group_event(request): return json(notices().group(await read_json(request)))
     async def notice_claims(request): return json(await notices().claims(await read_json(request)))
     async def notice_event(request): return json(notices().event(request.match_info['nid'], await read_json(request)))
+    async def admin_overview(request):
+        require(not request.query, 'admin_parameters')
+        return json(backend.admin.overview())
+    async def admin_requests(request): return json(backend.admin.listing(dict(request.query)))
+    async def admin_detail(request): return json(backend.admin.detail(request.match_info['rid']))
+    async def admin_groups(request): return json(backend.admin.groups())
+    async def admin_sources(request): return json(backend.admin.sources())
+    async def admin_notices(request): return json(backend.admin.notices())
+    async def admin_metrics(request): return json(backend.admin.metrics())
+    async def admin_telemetry(request):
+        return json(backend.admin.telemetry(await read_json(request), request.headers.get('X-Taki-Epoch')))
     app.add_routes([web.get('/v1/health', health), web.get('/v1/ready', ready),
                     web.post('/v1/gateways', register), web.post('/v1/gateways/retire', retire),
                     web.post('/v1/classify', classify), web.post('/v1/requests', submit),
@@ -367,7 +400,11 @@ def create_app(backend, token, initialize=None):
                     web.get('/v1/deliveries/{did}/parts/{pid}/image', image),
                     web.post('/v1/deliveries/{did}/events', events),
                     web.post('/v1/groups/events', group_event), web.post('/v1/notices/claims', notice_claims),
-                    web.post('/v1/notices/{nid}/events', notice_event)])
+                    web.post('/v1/notices/{nid}/events', notice_event),
+                    web.get('/v1/admin/overview', admin_overview), web.get('/v1/admin/requests', admin_requests),
+                    web.get('/v1/admin/requests/{rid}', admin_detail), web.get('/v1/admin/groups', admin_groups),
+                    web.get('/v1/admin/sources', admin_sources), web.get('/v1/admin/notices', admin_notices),
+                    web.get('/v1/admin/query-metrics', admin_metrics), web.post('/v1/admin/telemetry', admin_telemetry)])
     async def lifetime(app):
         async def load():
             try:
