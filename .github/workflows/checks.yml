@@ -111,7 +111,8 @@ jobs:
         run: python scripts/build_offline_release.py --output "$RUNNER_TEMP/offline-release"
       - name: Prove installation and regression with networking disabled
         run: |
-          sudo unshare --net -- "$(command -v python)" scripts/check_offline_release.py \
+          # Local authenticated HTTP fixtures need lo; the namespace still has no external interface.
+          sudo unshare --net -- /bin/bash -c 'set -e; ip link set lo up; exec "$@"' -- "$(command -v python)" scripts/check_offline_release.py \
             "$RUNNER_TEMP/offline-release/taki-linux-x86_64-cp312.zip" "$(git rev-parse HEAD)"
       - uses: actions/upload-artifact@v4
         with:
