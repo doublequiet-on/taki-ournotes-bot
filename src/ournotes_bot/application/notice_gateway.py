@@ -7,7 +7,7 @@ import re
 import time
 import uuid
 from contextlib import closing
-from .backend_protocol import PROTOCOL, require, identity
+from .backend_protocol import PROTOCOL, require, identity, require_protocol
 from .notice_reports import committed_notice
 
 
@@ -38,7 +38,7 @@ class NoticeGateway:
 
     def common(self, value, fields, active=True):
         require(isinstance(value, dict) and set(value) == set(fields) | {'protocol','instance_id','app_id','gateway_epoch'}, 'notice_shape')
-        require(value['protocol'] == PROTOCOL, 'protocol_version', 409)
+        require_protocol(value['protocol'])
         require(value['instance_id'] == self.backend.instance_id and value['app_id'] == self.backend.app_id, 'notice_identity', 403)
         require(identity(value['gateway_epoch']), 'gateway_epoch')
         if active:
@@ -94,14 +94,21 @@ class NoticeGateway:
             return result
 
     async def claims(self, value):
-        fields = {'claim_request_id','limit'}
-        if isinstance(value, dict) and 'group_allowlist' in value: fields.add('group_allowlist')
+        fields = {'claim_request_id','limit','scope'}
         self.common(value, fields)
         require(identity(value['claim_request_id']) and type(value['limit']) is int and 1 <= value['limit'] <= 16, 'claim_input')
-        groups = value.get('group_allowlist', [])
+        scope = value['scope']
+        require(isinstance(scope, dict) and scope.get('kind') in ('all','selected','none'), 'claim_scope')
+        kind = scope['kind']
+        key = 'group_ids' if kind == 'selected' else 'exclude_group_ids'
+        require(set(scope) == ({'kind'} if kind == 'none' else {'kind',key}), 'claim_scope')
+        groups = scope.get(key, [])
         require(isinstance(groups, list) and len(groups) <= 128 and all(
             isinstance(gid, str) and re.fullmatch(r'[A-Za-z0-9_-]{1,128}', gid) for gid in groups), 'claim_groups')
         require(len(set(groups)) == len(groups), 'claim_groups')
+        require(kind != 'selected' or bool(groups), 'claim_scope_empty_selected')
+        if kind == 'none':
+            return {'claims': []}
         allowed = set(groups)
         async with self.lock:
             with closing(self.store.connect()) as db:
@@ -120,7 +127,7 @@ class NoticeGateway:
                         (self.store.app_id,revision)).fetchall()
                     for (gid,) in rows:
                         # Filter before the limit/lease: excluded groups must not starve permitted ones.
-                        if allowed and gid not in allowed: continue
+                        if (kind == 'selected' and gid not in allowed) or (kind == 'all' and gid in allowed): continue
                         if len(result['claims']) >= value['limit']: break
                         nid = digest([self.backend.instance_id,self.store.app_id,gid,revision])
                         prior = db.execute('SELECT status,expires,epoch FROM gateway_notice_claims WHERE app=? AND nid=?',(self.store.app_id,nid)).fetchone()

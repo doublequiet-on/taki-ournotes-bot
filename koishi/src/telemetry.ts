@@ -2,7 +2,7 @@
 import { randomUUID } from 'node:crypto'
 export interface Span {
   request_id: string; delivery_id: string; kind: 'upload' | 'send' | 'receipt_submit'
-  position: number; attempt: string | null; duration_ms: number
+  position: number; attempt: string | null; duration_ms: number; outcome:'ok'|'error'|'unknown'
 }
 export class Telemetry {
   private queue: (Span & { event_id: string })[] = []

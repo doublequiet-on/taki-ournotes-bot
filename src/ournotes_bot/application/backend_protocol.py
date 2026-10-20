@@ -2,9 +2,11 @@
 from __future__ import annotations
 import hashlib
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, asdict
+from ..domain.query_policy import ExecutionPolicy
+from .backend_sources import TRANSPORT_PROTOCOL
 
-PROTOCOL = {'major': 1, 'minor': 0}
+PROTOCOL = TRANSPORT_PROTOCOL
 CAPABILITY = 'qq-m1-candidate'
 WINDOW = 298.0
 
@@ -23,6 +25,12 @@ def require(condition, code, status=400):
 def identity(value):
     return (isinstance(value, str) and 0 < len(value) <= 256 and value.strip() == value
             and not any(ord(c) < 32 or ord(c) == 127 for c in value))
+
+
+def require_protocol(value):
+    require(isinstance(value,dict) and set(value) == {'major','minor'}
+            and all(type(value[k]) is int for k in ('major','minor')) and value == PROTOCOL,
+            'protocol_version',409)
 
 
 def digest(value):
@@ -45,14 +53,15 @@ class Request:
     capability: str
     gateway_epoch: str
     ingress_seq: int
+    policy: ExecutionPolicy = ExecutionPolicy()
 
     @classmethod
     def parse(cls, value, instance_id, app_id, now):
         fields = set(cls.__dataclass_fields__)
         require(isinstance(value, dict) and set(value) == fields | {'protocol'}, 'request_shape')
-        require(value['protocol'] == PROTOCOL, 'protocol_version', 409)
+        require_protocol(value['protocol'])
         require(value['instance_id'] == instance_id and value['app_id'] == app_id, 'instance_mismatch', 403)
-        for key in fields - {'timestamp_ms', 'body', 'ingress_seq'}:
+        for key in fields - {'timestamp_ms', 'body', 'ingress_seq', 'policy'}:
             require(identity(value[key]), 'invalid_identity')
         require(value['platform'] == 'qq' and value['kind'] in ('group', 'c2c'), 'conversation_kind')
         require(value['kind'] != 'c2c' or value['conversation_id'] == value['user_id'], 'c2c_identity')
@@ -60,14 +69,18 @@ class Request:
         require(type(value['timestamp_ms']) is int and 0 <= value['timestamp_ms'] < 10**14, 'message_time')
         require(type(value['ingress_seq']) is int and 0 < value['ingress_seq'] < 2**53, 'ingress_seq')
         require(isinstance(value['body'], str) and 0 < len(value['body'].encode()) <= 16384, 'body_size')
+        policy = value['policy']
+        require(isinstance(policy, dict) and set(policy) == set(ExecutionPolicy.__dataclass_fields__), 'policy_shape')
+        require(policy['natural_query'] in ('off','local','model') and identity(policy['epoch']), 'policy_value')
+        require(all(type(policy[k]) is int and 0 <= policy[k] < 2**53 for k in ('global_revision','group_revision')), 'policy_revision')
         expected = digest([instance_id, app_id, 'qq', value['kind'], value['conversation_id'], value['user_id'], value['message_id']])
         require(value['request_id'] == expected, 'request_identity')
         # Age is checked after dedupe by the coordinator, so retries can read expired facts.
-        return cls(**{key: value[key] for key in fields})
+        return cls(**{key: value[key] for key in fields - {'policy'}}, policy=ExecutionPolicy(**policy))
 
     @property
     def content_digest(self):
-        return digest({key: value for key, value in self.__dict__.items()
+        return digest({key: value for key, value in asdict(self).items()
                        if key not in ('gateway_epoch', 'ingress_seq')})
 
     @property
@@ -78,7 +91,7 @@ class Request:
 def event(value):
     require(isinstance(value, dict), 'event_shape')
     common = {'protocol', 'request_id', 'plan_version', 'gateway_epoch', 'event', 'part_id', 'attempt_id'}
-    require(value.get('protocol') == PROTOCOL, 'protocol_version', 409)
+    require_protocol(value.get('protocol'))
     kind = value.get('event')
     extra = {'result', 'message_id'} if kind == 'ack' else set()
     if kind == 'ack' and 'allow_context' in value:

@@ -27,6 +27,26 @@ async function main(){
   const stale=state.save();state.invalidate();state.draft.value=null;state.guard.value=null
   receipt();await stale
   assert.equal(state.draft.value,null);assert.equal(state.guard.value,null,'an invalidated response cannot restore protected state')
-  console.log(JSON.stringify({passed:true,saveDraftRace:true,invalidatedSave:true}))
+  let policies={},groupRevision=0
+  globalThis.consoleStateFixture.send=async(method,value)=>{
+    if(method==='taki/groups/update')return new Promise(resolve=>{receipt=()=>{policies[value.group_id]=structuredClone(value.policy);resolve({revision:++groupRevision})}})
+    if(method==='taki/groups/list')return {policy:{groups:structuredClone(policies),revision:groupRevision}}
+    throw Error('unexpected RPC '+method)
+  }
+  const groups=sessionState();groups.logged.value=true;await groups.load(groups.groups,'groups/list');groups.selectGroup('alpha')
+  groups.groupDraft.value.label='submitted';groups.groupDirty.value=true
+  const groupSaving=groups.saveGroup();groups.groupDraft.value.label='later edit';receipt();await groupSaving
+  assert.equal(policies.alpha.label,'submitted')
+  assert.equal(groups.groupDraft.value.label,'later edit');assert.equal(groups.groupDirty.value,true)
+  assert.equal(groups.groupRevision.value,1)
+  const groupResaving=groups.saveGroup();receipt();await groupResaving
+  assert.equal(policies.alpha.label,'later edit');assert.equal(groups.groupDirty.value,false)
+  const switchSaving=groups.saveGroup();groups.selectGroup('beta');groups.groupDraft.value.label='beta draft';groups.groupDirty.value=true
+  receipt();await switchSaving
+  assert.equal(groups.groupId.value,'beta');assert.equal(groups.groupDraft.value.label,'beta draft');assert.equal(groups.groupDirty.value,true)
+  const expired=groups.saveGroup();groups.invalidate();groups.groupDraft.value=null;groups.groupRevision.value=null
+  receipt();await expired
+  assert.equal(groups.groupDraft.value,null);assert.equal(groups.groupRevision.value,null)
+  console.log(JSON.stringify({passed:true,saveDraftRace:true,groupSaveDraftRace:true,groupSwitchDuringSave:true,invalidatedSave:true}))
 }
 main().catch(error=>{console.error(error);process.exitCode=1}).finally(()=>{delete globalThis.consoleStateFixture})

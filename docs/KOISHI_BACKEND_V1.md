@@ -26,7 +26,9 @@ ournotes-bot backend --instance-id taki-test --app-id APP_ID --state-dir /absolu
 - `X-Taki-Instance: <instance_id>`
 - 查询状态/图片额外用 `X-Taki-Epoch: <gateway_epoch>` 表明读取者；不匹配时可读最小交付事实，但不得获取发送内容/图片。
 
-请求 JSON 最大 32 KiB；正文 UTF-8 最大 16 KiB；不接受任意本地文件路径或远端图片 URL。协议严格采用 `{"major":1,"minor":0}`，不兼容版本返回 409。错误是 `{"error":"分类","protocol":...}`，不回显 token、正文、原始 QQ 身份或异常细节。访问日志关闭；业务准备日志在后端模式隐藏查询正文，使用 request_id 关联后端错误。
+请求 JSON 最大 32 KiB；正文 UTF-8 最大 16 KiB；不接受任意本地文件路径或远端图片 URL。当前运输协议严格采用 `{"major":1,"minor":1}`，不兼容版本返回 409。错误是 `{"error":"分类","protocol":...}`，不回显 token、正文、原始 QQ 身份或异常细节。访问日志关闭；业务准备日志在后端模式隐藏查询正文，使用 request_id 关联后端错误。
+
+Console V1a 使用1.0并独立扩展管理能力；V1b配对1.1与 `group_policies_v1`，不允许混装。新请求必须携带 `policy={natural_query,epoch,global_revision,group_revision}`，模式 off/local/model，revision 为非负安全整数。该不可变快照参与请求摘要；重试复用原快照，身份相同但快照不同返回409，不重新执行。通知领取使用严格的 scope：all+exclude_group_ids、selected+非空group_ids、none；none不生成报告或领取。ACK和撤权继续记事实。共同源码摘要清单为 `application/backend_sources.py`，管理、遥测、分页与隐私契约见 [Console V1](koishi/CONSOLE_V1.md)。
 
 | 端点 | 结果 |
 |---|---|

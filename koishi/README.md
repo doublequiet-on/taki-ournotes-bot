@@ -31,6 +31,8 @@ npm run probe -- probe-output.json
 | `run.cjs` | 双进程网关入口，显式启用、受认证 loopback 健康、顺序卸载。 |
 | `console.cjs`、`console/` | 官方 Koishi 控制台接入、独立管理员会话与管理页面。 |
 | `src/management.ts` | 接收/通知范围设置校验、原子持久保存和管理记录。 |
+| `src/group-policies.ts` | 实例绑定群策略、持久 revision、有效规则、通知 all/selected/none。 |
+| `src/telemetry.ts`、`health.cjs` | 有界旁路耗时采集、共享实时健康读取。 |
 | `src/index.ts` | 默认关闭的配置、运输服务与受管 receiver 生命周期。 |
 | `scripts/probe.cjs` | 已安装包的离线行为验证与故障夹具。 |
 
@@ -39,3 +41,11 @@ npm run probe -- probe-output.json
 同一原消息的多命令/多片段必须复用一个 QQDelivery，成功 ACK 后才能推进。上传失败由后端明确选择同次捕获的文字分支；intent 的 existing 不授权重发。未知回执停止后续片段。卸载后在途回执只记事实，后续发送被禁止。
 
 M1 候选额度不是实测平台额度。真实事件、群/C2C 权限、回复窗口及客户端送达仍需另行授权的测试；不得据离线通过接管生产机器人。历史基线见 [M0/M1](../docs/KOISHI_MIGRATION_M0_M1.md)，要求见 [方案 v1.1](../docs/KOISHI_MIGRATION_PLAN.txt)。
+
+## 可视化管理 V1
+
+入口为官方 Console 的「Taki 管理」页 `/taki`，提供总览、查询诊断、分群管理；契约与缺失数据口径见 [Console V1](../docs/koishi/CONSOLE_V1.md)，验收见 [执行矩阵](../docs/koishi/CONSOLE_ACCEPTANCE.md)。
+
+运输协议1.1要求绝对路径 `TAKI_CONSOLE_STATE_DIR`，即使 `TAKI_CONSOLE_ENABLED=0` 也加载设置及群策略；网页开关只控制管理入口。受管启动固定使用 `<base>/console-state`，不能换目录绕过已存策略。此目录须为服务用户可写，不能放进只读组合包。网页启用另需独立管理密码；不暴露后端token。
+
+`node scripts/console-rpc-probe.cjs` 使用本机隔离 WebSocket。`scripts/console-server.cjs`、`console-browser.cjs` 及 Python `tests/fixtures/console_backend.py` 只作隔离浏览器验收，不进入生产启动链。浏览器证据必须使用打包后的模块，不能以源码预览替代。

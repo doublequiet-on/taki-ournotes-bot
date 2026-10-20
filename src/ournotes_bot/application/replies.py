@@ -19,6 +19,7 @@ from ..data import SongRepository
 from ..structured_query import QueryResult, query_page_notice
 from ..query.continuation import (QueryContext, catalog_version,
                                   capture_context, execute_followup, parse_operation)
+from ..domain.query_policy import CURRENT_POLICY, continuation_allowed
 from ..visuals import (render_card, render_card_list, render_chart, render_song_list,
                       render_support_card, render_support_card_list)
 
@@ -90,6 +91,8 @@ class PreparedReply:
     fallback_texts: tuple[str, ...] = ()
     business_status: str | None = None
     command_index: int | None = None
+    parse_origin: str = 'unknown'
+    processing_route: str | None = None
 
     @property
     def passive_slots(self):
@@ -103,6 +106,7 @@ class DeliveryCursor:
     sent: int
     total: int
     uncertain: bool = False
+    origin: str = 'unknown'
 
     @property
     def retained_bytes(self):
@@ -113,9 +117,10 @@ def fallback_cursor(reply):
     previous=reply.context if isinstance(reply.context,DeliveryCursor) else None
     query=previous.query_context if previous else reply.context
     chunks=text_chunks(reply.text)
-    pages=tuple(PreparedReply(t,context=query if i==len(chunks)-1 else None) for i,t in enumerate(chunks))
+    pages=tuple(PreparedReply(t,context=query if i==len(chunks)-1 else None,parse_origin=reply.parse_origin,
+                              processing_route=reply.processing_route) for i,t in enumerate(chunks))
     pages+=previous.remaining if previous else ()
-    return DeliveryCursor(None,pages,0,len(pages))
+    return DeliveryCursor(None,pages,0,len(pages),origin=previous.origin if previous else reply.parse_origin)
 
 
 def text_chunks(text,limit=1700):
@@ -128,6 +133,10 @@ def expand_replies(replies: list[PreparedReply], reserve: int = 0) -> list[Prepa
     base=replies[0].context if len(replies)==1 and isinstance(replies[0].context,DeliveryCursor) else None
     for reply in replies:
         for part in reply.pages or (reply,):
+            if part.parse_origin == 'unknown' and reply.parse_origin != 'unknown':
+                part = replace(part, parse_origin=reply.parse_origin)
+            if part.processing_route is None and reply.processing_route is not None:
+                part = replace(part, processing_route=reply.processing_route)
             if part.command_index is None and reply.command_index is not None:
                 part = replace(part, command_index=reply.command_index)
             if part.business_status is None and reply.business_status is not None:
@@ -137,7 +146,8 @@ def expand_replies(replies: list[PreparedReply], reserve: int = 0) -> list[Prepa
             if part.image is None and len(part.text)>1800:
                 chunks=text_chunks(part.text)
                 pages.extend(PreparedReply(t,context=part.context if i==len(chunks)-1 else None,
-                                           business_status=part.business_status, command_index=part.command_index) for i,t in enumerate(chunks))
+                                           business_status=part.business_status, command_index=part.command_index,
+                                           parse_origin=part.parse_origin, processing_route=part.processing_route) for i,t in enumerate(chunks))
             else:
                 pages.append(part)
     available=max(1,QQ_PASSIVE_REPLY_LIMIT-reserve)
@@ -152,11 +162,14 @@ def expand_replies(replies: list[PreparedReply], reserve: int = 0) -> list[Prepa
                            for index,text in enumerate(chunks))
         pages=bounded
     total=base.total if base else len(pages)
+    origins = {r.parse_origin for r in replies}
+    origin = (base.origin if base else 'mixed' if len(replies)>1 else 'unknown' if 'unknown' in origins else
+              'model' if 'model' in origins else 'local' if 'local' in origins else 'direct')
     expanded=[]
     for offset,page in enumerate(pages[:available]):
         if keep:
             query=(page.context if isinstance(page.context,QueryContext) else base.query_context if base else None) if len(replies)==1 else None
-            cursor=DeliveryCursor(query,tuple(pages[offset+1:]),prior+offset+1,total)
+            cursor=DeliveryCursor(query,tuple(pages[offset+1:]),prior+offset+1,total,origin=origin)
             suffix=f'\n结果 {cursor.sent}/{total}'+('；/继续 发送剩余结果。' if cursor.remaining else '')
             page=replace(page,text=page.text+suffix,context=cursor)
         expanded.append(page)
@@ -413,7 +426,10 @@ def prepare_reply(content: str, repository: SongRepository,
                    ai_parser: AIQueryParser, *, log_content: bool = True) -> PreparedReply | None:
     easter_egg = easter_egg_reply(content)
     if easter_egg is not None:
-        return easter_egg
+        return replace(easter_egg,parse_origin='direct',processing_route='direct')
+    if is_ai_request(content) and CURRENT_POLICY.get().natural_query == 'off':
+        outcome = ai_parser.answer_with_outcome(content, repository)
+        return PreparedReply(outcome.text, business_status=outcome.code.value, parse_origin='policy',processing_route='local')
     started = time.monotonic()
 
     def elapsed() -> float:
@@ -422,8 +438,13 @@ def prepare_reply(content: str, repository: SongRepository,
     try:
         before = catalog_version(repository)
         if is_ai_request(content):
-            reply, result = ai_parser.answer_with_plan(content, repository)
+            outcome = ai_parser.answer_with_outcome(content, repository)
+            reply, result = outcome.text, outcome.result
+            origin = outcome.state.parse_origin
+            route = outcome.state.processing_route
         else:
+            origin = 'direct'
+            route = 'direct'
             result = resolve_command(content, repository)
             reply = handle_command(content, repository, resolved=result)
     except Exception as exc:
@@ -433,8 +454,10 @@ def prepare_reply(content: str, repository: SongRepository,
         logger.info("未识别为查询，不回复；内容=%s", describe(content) if log_content else '[redacted]')
         return None
     candidate = capture_context(result, repository, catalog_before=before, complete=True)
+    if candidate is not None:
+        candidate = replace(candidate, origin=origin)
     prepared = render_prepared(reply, result, repository, locale_for(content), candidate)
-    prepared = replace(prepared, business_status=getattr(result, 'status', None))
+    prepared = replace(prepared, business_status=getattr(result, 'status', None), parse_origin=origin,processing_route=route)
     logger.info("查询完成；内容=%s 文本=%d字 图片=%s 耗时=%.0fms",
                 describe(content) if log_content else '[redacted]', len(reply),
                 f"{len(prepared.image):,}B" if prepared.image else "无", elapsed())
@@ -443,6 +466,16 @@ def prepare_reply(content: str, repository: SongRepository,
 
 def prepare_followup(context, operation, repository):
     from ..structured_query import answer_for
+    if isinstance(context,DeliveryCursor) and context.origin == 'mixed' and operation.kind == 'continue':
+        if context.uncertain:
+            return PreparedReply('上一张图片的发送回执不确定，暂不自动重发，请重新查询。')
+        remaining = tuple(part if continuation_allowed(part.parse_origin) else
+            PreparedReply('当前策略不允许继续此前 /问 结果，请重新发送直接查询。',parse_origin='policy')
+            for part in context.remaining)
+        return PreparedReply('',pages=remaining,context=replace(context,remaining=remaining),parse_origin='mixed')
+    if not continuation_allowed(getattr(context, 'origin', 'unknown')):
+        return PreparedReply('当前 /问 策略不允许继续此来源的旧结果，请重新发送直接查询。')
+    origin = getattr(context, 'origin', 'unknown')
     if isinstance(context,DeliveryCursor):
         if context.uncertain:
             return PreparedReply('上一张图片的发送回执不确定，暂不自动重发，请重新查询。')
@@ -459,11 +492,14 @@ def prepare_followup(context, operation, repository):
         if isinstance(outcome, str):
             return PreparedReply(outcome)
         result, candidate = outcome
+        if candidate is not None:
+            candidate = replace(candidate, origin=origin)
         if isinstance(result, QueryResult):
             text = answer_for(result.spec, repository, result=result)
         else:
             text = handle_command("/查曲", repository, resolved=result)
-        return replace(render_prepared(text, result, repository, "zh", candidate), business_status=result.status)
+        return replace(render_prepared(text, result, repository, "zh", candidate), business_status=result.status,
+                       parse_origin=origin,processing_route='continuation')
     except Exception as exc:
         logger.error("续查准备失败；错误类型=%s", type(exc).__name__)
         return PreparedReply("查询暂时失败，请稍后重试。")

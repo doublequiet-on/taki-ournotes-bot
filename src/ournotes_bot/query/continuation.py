@@ -99,6 +99,7 @@ class QueryContext:
     version: tuple[str, str]
     selected: Choice | None = None
     complete: bool = False
+    origin: str = 'unknown'
 
 
 def catalog_version(repository) -> str:

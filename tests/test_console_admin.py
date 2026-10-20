@@ -7,7 +7,7 @@ import time
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 from ournotes_bot.application.admin import Admin, delivery_state
 from ournotes_bot.application.backend import Backend, create_app
@@ -90,7 +90,8 @@ class AdminTests(unittest.IsolatedAsyncioTestCase):
         return dict(protocol=PROTOCOL,request_id=digest(['fixture','app','qq','group','group1','secret-user',msg]),
             instance_id='fixture',app_id='app',platform='qq',kind='group',conversation_id='group1',
             user_id='secret-user',message_id=msg,timestamp_ms=int(self.now*1000),body='/帮助',
-            capability=CAPABILITY,gateway_epoch='epoch',ingress_seq=index)
+            capability=CAPABILITY,gateway_epoch='epoch',ingress_seq=index,
+            policy=dict(natural_query='model',epoch='fixture',global_revision=0,group_revision=0))
 
     async def admitted(self,index=1):
         for work in list(self.backend.works.values()):
@@ -98,11 +99,14 @@ class AdminTests(unittest.IsolatedAsyncioTestCase):
         await asyncio.sleep(.001)
         payload=self.payload(index)
         await self.backend.submit(payload)
-        for _ in range(30):
-            row=self.backend.ledger.request(payload['request_id'])
-            if row['status']=='prepared':return row
-            await asyncio.sleep(.001)
-        self.fail('fixture preparation did not finish')
+        return await self.wait_status(payload['request_id'],'prepared')
+
+    async def wait_status(self,request_id,status):
+        for _ in range(200):
+            row=self.backend.ledger.request(request_id)
+            if row['status']==status:return row
+            await asyncio.sleep(.005)
+        self.fail(f'fixture expected {status}, observed {row["status"]}')
 
     async def test_read_does_not_expire_or_change_ledger_and_privacy(self):
         row=await self.admitted()
@@ -154,18 +158,159 @@ class AdminTests(unittest.IsolatedAsyncioTestCase):
         pending=self.backend.admin.listing({'attention':'true'})['sections']['requests']['data']['items']
         self.assertEqual(pending[0]['delivery_state'],'uncertain')
 
+    async def test_policy_snapshot_is_part_of_idempotency_and_strict_wire_shape(self):
+        payload=self.payload()
+        from ournotes_bot.application.backend_protocol import event
+        from ournotes_bot.application.notice_gateway import NoticeGateway
+        for protocol in ({'major':True,'minor':1},{'major':1.0,'minor':1},{**PROTOCOL,'extra':True}):
+            with self.assertRaisesRegex(ProtocolError,'protocol_version'):await self.backend.submit({**payload,'protocol':protocol})
+            with self.assertRaisesRegex(ProtocolError,'protocol_version'):event({'protocol':protocol})
+            with self.assertRaisesRegex(ProtocolError,'protocol_version'):
+                NoticeGateway.__new__(NoticeGateway).common({'protocol':protocol,'instance_id':'fixture','app_id':'app','gateway_epoch':'epoch'},set())
+        first=await self.backend.submit(payload)
+        self.assertEqual((await self.backend.submit(payload))['delivery_id'],first['delivery_id'])
+        changed={**payload,'policy':{**payload['policy'],'natural_query':'local','group_revision':1}}
+        with self.assertRaisesRegex(ProtocolError,'request_conflict'):
+            await self.backend.submit(changed)
+        for policy in ({'natural_query':'local'}, {**payload['policy'],'global_revision':True},
+                       {**payload['policy'],'natural_query':'unknown'}):
+            with self.assertRaises(ProtocolError):
+                await self.backend.submit({**payload,'policy':policy})
+
     async def test_spans_deduplicate_validate_and_do_not_change_permission(self):
         row=await self.admitted()
-        event=dict(event_id='event',request_id=row['id'],delivery_id=row['delivery'],kind='upload',position=0,attempt=None,duration_ms=123)
+        event=dict(event_id='event',request_id=row['id'],delivery_id=row['delivery'],kind='upload',position=0,attempt=None,duration_ms=123,outcome='ok')
         batch={'backend_epoch':self.backend.runtime,'events':[event,event]}
         before=self.backend.ledger.parts(row['delivery'])
         self.backend.admin.telemetry(batch,'epoch')
         spans=self.backend.diagnostics.read(row['id'])['spans']
         self.assertEqual(sum(s['kind']=='upload' for s in spans),1)
         self.assertEqual(before,self.backend.ledger.parts(row['delivery']))
-        for change in ({'position':5},{'duration_ms':float('nan')},{'attempt':'false'}):
+        for change in ({'position':5},{'duration_ms':float('nan')},{'duration_ms':-1},{'attempt':'false'}):
             with self.assertRaises(ProtocolError):
                 self.backend.admin.telemetry({'backend_epoch':self.backend.runtime,'events':[event|change]},'epoch')
+        with self.assertRaisesRegex(ProtocolError,'telemetry_conflict'):
+            self.backend.admin.telemetry({'backend_epoch':self.backend.runtime,'events':[event|{'duration_ms':124}]},'epoch')
+
+    async def test_mixed_outcomes_and_partial_uncertain_share_all_read_models(self):
+        self.backend.gate.prepare=AsyncMock(side_effect=[PreparedReply('first',business_status='success'),
+            PreparedReply('second',business_status='invalid_arguments'),PreparedReply('third')])
+        payload=self.payload();payload['body']='/帮助\n/查曲 x\n/查卡 x'
+        await self.backend.submit(payload)
+        row=await self.wait_status(payload['request_id'],'prepared')
+        self.backend.ledger.intent(row['delivery'],'0','a')
+        self.backend.ledger.ack(row['delivery'],'0','a','success','receipt')
+        self.backend.ledger.intent(row['delivery'],'1','b')
+        self.backend.finish(self.backend.works[row['delivery']],'expired')
+        self.now+=.01
+        detail=self.backend.admin.detail(row['id'])['sections']['request']['data']
+        listed=self.backend.admin.listing({})['sections']['requests']['data']['items'][0]
+        summary=self.backend.admin.overview()['sections']['requests']['data']
+        self.assertEqual(detail['business_outcome'],'mixed')
+        self.assertEqual(detail['delivery_state'],listed['delivery_state'])
+        self.assertEqual(detail['delivery_state'],'partial')
+        self.assertEqual(detail['uncertain_parts'],1)
+        self.assertEqual(summary['states']['partial'],1)
+        self.assertEqual(sum(summary['states'].values()),summary['total'])
+
+    async def test_fallback_keeps_upload_failure_span_at_same_position(self):
+        self.backend.gate.prepare=AsyncMock(return_value=PreparedReply('fallback',image=b'fixture'))
+        row=await self.admitted()
+        self.backend.apply_event(row['delivery'],dict(protocol=PROTOCOL,request_id=row['id'],plan_version=1,
+            gateway_epoch='epoch',event='upload_failed',part_id='0',attempt_id='none'))
+        event=dict(event_id='upload-failure',request_id=row['id'],delivery_id=row['delivery'],kind='upload',position=0,
+                   attempt=None,duration_ms=10,outcome='error')
+        self.backend.admin.telemetry({'backend_epoch':self.backend.runtime,'events':[event]},'epoch')
+        result=self.backend.admin.detail(row['id'])['sections']['request']['data']
+        self.assertEqual(result['parts'][0]['id'],'0:f')
+        self.assertEqual(result['parts'][0]['primary_kind'],'image')
+        self.assertEqual(result['spans'][-1]['outcome'],'error')
+        self.assertEqual(result['spans'][-1]['position'],0)
+
+    async def test_disabled_and_full_observation_do_not_change_admission(self):
+        self.backend.diagnostics.close()
+        self.backend.diagnostics=Diagnostics(self.root/'disabled.sqlite3',enabled=False)
+        self.assertFalse((self.root/'disabled.sqlite3').exists())
+        row=await self.admitted()
+        self.assertEqual(row['status'],'prepared')
+        self.assertEqual(self.backend.diagnostics.reason,'diagnostics_disabled')
+        self.backend.diagnostics=Diagnostics(self.root/'bounded.sqlite3')
+        row=await self.admitted(2)
+        for i in range(100):
+            self.backend.diagnostics.span(str(i),row['id'],'prepare',1,self.now)
+        self.assertEqual(len(self.backend.diagnostics.read(row['id'])['spans']),32)
+        self.assertGreater(self.backend.diagnostics.dropped,0)
+        self.assertEqual(self.backend.ledger.request(row['id'])['status'],'prepared')
+
+    async def test_readonly_and_sqlite_full_diagnostics_do_not_fail_queries(self):
+        diagnostics=self.backend.diagnostics
+        diagnostics.db.execute('PRAGMA query_only=ON')
+        self.assertEqual((await self.admitted())['status'],'prepared')
+        self.assertEqual(diagnostics.reason,'diagnostics_write_failed')
+        diagnostics.db.execute('PRAGMA query_only=OFF')
+        pages=diagnostics.db.execute('PRAGMA page_count').fetchone()[0]
+        diagnostics.db.execute(f'PRAGMA max_page_count={pages}')
+        self.assertFalse(diagnostics.write(lambda db:db.execute('INSERT INTO requests VALUES(?,?,?,?,?,?,?,?)',
+            ('full','full','epoch',self.now,'group','fixture','x'*100000,None))))
+        self.assertEqual((await self.admitted(2))['status'],'prepared')
+
+    async def test_read_notice_owner_is_side_effect_free(self):
+        from contextlib import closing
+        from ournotes_bot.application.notice_reports import NoticeStore
+        owner=NoticeStore(self.root/'notices.sqlite3','app')
+        owner.observe('group1')
+        self.backend.notices=SimpleNamespace(store=owner,claims=Mock(side_effect=AssertionError('claim invoked')))
+        with closing(owner.connect()) as db:before=list(db.iterdump())
+        for _ in range(3):self.backend.admin.notices()
+        with closing(owner.connect()) as db:self.assertEqual(list(db.iterdump()),before)
+        self.backend.notices.claims.assert_not_called()
+
+    async def test_notice_cursor_keeps_first_insertion_window_and_rejects_other_resource(self):
+        from contextlib import closing
+        from ournotes_bot.application.notice_reports import NoticeStore
+        owner=NoticeStore(self.root/'notices.sqlite3','app')
+        self.backend.notices=SimpleNamespace(store=owner)
+        with closing(owner.connect()) as db,db:
+            db.executemany("INSERT INTO notices(app,gid,revision,status) VALUES('app',?,?,'sending')",
+                [(f'group{i}','a'*40) for i in range(30)])
+        first=self.backend.admin.notices()['sections']['notices']
+        self.assertEqual(first['reason_code'],'notice_timestamps_not_collected')
+        self.assertEqual(len(first['data']['items']),25)
+        cursor=first['data']['next_cursor']
+        with closing(owner.connect()) as db,db:
+            db.execute("INSERT INTO notices(app,gid,revision,status) VALUES('app','late',?,'success')",('b'*40,))
+        second=self.backend.admin.notices({'cursor':cursor})['sections']['notices']['data']
+        self.assertEqual(len(second['items']),5)
+        self.assertEqual(len({v['group_id'] for v in first['data']['items']+second['items']}),30)
+        self.assertNotIn('late',str(second))
+        self.assertIsNone(second['next_cursor'])
+        with self.assertRaises(ProtocolError):self.backend.admin.listing({'cursor':cursor})
+        for params in ({'limit':'101'},{'from':'0'},{'cursor':cursor+'bad'}):
+            with self.assertRaises(ProtocolError):self.backend.admin.notices(params)
+
+    async def test_metrics_days_keep_missing_distinct_from_zero(self):
+        from datetime import datetime,timezone,timedelta
+        today=datetime(2026,10,20,0,1,tzinfo=timezone(timedelta(hours=8)))
+        day=[today-timedelta(minutes=2)]
+        metrics=QueryMetrics(self.root/'metrics.json',clock=lambda:day[0])
+        metrics.increment_many({'ask_total':2,'route_local':2})
+        day[0]=today;metrics.increment_many({'ask_total':1,'route_model':1})
+        self.backend.parser=SimpleNamespace(metrics_snapshot=metrics.snapshot)
+        self.backend.clock=lambda:today.timestamp()
+        data=self.backend.admin.metrics()['sections']['metrics']['data']
+        self.assertEqual(data['today']['ask_total'],1)
+        self.assertEqual(data['last_seven_days']['ask_total'],3)
+        self.assertEqual((data['observed_days'],data['missing_days']),(2,5))
+        metrics.path.write_text('broken')
+        self.assertEqual(self.backend.admin.metrics()['sections']['metrics']['availability'],'unavailable')
+        self.assertTrue(metrics.available)
+
+    async def test_command_metadata_is_bounded_and_counts_overflow(self):
+        payload=self.payload();payload['body']='\n'.join(['/帮助']*1000)
+        await self.backend.submit(payload);await self.wait_status(payload['request_id'],'prepared')
+        observed=self.backend.diagnostics.read(payload['request_id'])
+        self.assertLessEqual(len(observed['commands']),self.backend.settings.multi_command_limit+1)
+        self.assertEqual(observed['commands'][0]['total_commands'],1000)
 
     async def test_broken_diagnostics_does_not_reject_business(self):
         self.backend.diagnostics.close()
@@ -195,11 +340,38 @@ class AdminTests(unittest.IsolatedAsyncioTestCase):
         row=await self.admitted()
         self.backend.ledger.intent(row['delivery'],'0','attempt')
         self.backend.finish(self.backend.works[row['delivery']],'expired')
-        self.backend.ledger.ack(row['delivery'],'0','attempt','success','platform-receipt')
+        self.backend.apply_event(row['delivery'],dict(protocol=PROTOCOL,request_id=row['id'],plan_version=1,
+            gateway_epoch='epoch',event='ack',part_id='0',attempt_id='attempt',result='success',
+            message_id='platform-receipt',allow_context=False))
         view=self.backend.admin.detail(row['id'])['sections']['request']['data']
         self.assertEqual(view['lifecycle'],'expired')
         self.assertEqual(view['delivery_state'],'complete')
         self.assertNotIn('platform-receipt',json.dumps(view))
+
+    async def test_zero_parts_is_closed_without_platform_success(self):
+        self.backend.gate.prepare=AsyncMock(return_value=None)
+        payload=self.payload();await self.backend.submit(payload);await self.wait_status(payload['request_id'],'finished')
+        result=self.backend.admin.detail(payload['request_id'])['sections']['request']['data']
+        self.assertEqual(result['lifecycle'],'finished')
+        self.assertEqual(result['part_count'],0)
+        self.assertEqual(result['delivery_state'],'closed_unsent')
+
+    async def test_failed_refresh_preserves_cached_availability(self):
+        from ournotes_bot.application.runtime_tasks import RuntimeTasks
+        tasks=RuntimeTasks(self.repo,SimpleNamespace(cutoff_sampling_enabled=False))
+        self.backend.runtime_tasks=tasks
+        def refresh_catalog():raise OSError('fixture source offline')
+        worker=asyncio.create_task(tasks.loop(refresh_catalog,100))
+        for _ in range(200):
+            if tasks.observation_snapshot()['refreshes'].get('refresh_catalog',{}).get('last_error_code'):
+                break
+            await asyncio.sleep(.005)
+        worker.cancel();await asyncio.gather(worker,return_exceptions=True)
+        self.repo.capture_catalog=lambda:SimpleNamespace(cache_state='stale',songs=[1],last_successful_sync_at='2026-10-19T00:00:00Z')
+        snapshot=self.backend.admin.sources()['sections']
+        self.assertEqual(snapshot['catalog']['data']['song_count'],1)
+        self.assertEqual(snapshot['catalog']['data']['cache_state'],'stale')
+        self.assertEqual(snapshot['background']['data']['refreshes']['refresh_catalog']['last_error_code'],'OSError')
 
     async def test_http_auth_and_read_routes(self):
         from aiohttp.test_utils import TestClient, TestServer

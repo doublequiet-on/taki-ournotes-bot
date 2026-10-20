@@ -15,7 +15,22 @@ def launch(base, role):
     commit=permit['release']['commit']
     if not re.fullmatch('[a-f0-9]{40}',commit): raise RuntimeError('release identity')
     combo=Path('/opt/taki-combinations')/commit
-    if json.loads((combo/'combination.json').read_text())['commit']!=commit: raise RuntimeError('combination identity')
+    manifest=json.loads((combo/'combination.json').read_text())
+    if manifest['commit']!=commit: raise RuntimeError('combination identity')
+    try:
+        from .group_policy_guard import verify_start
+    except ImportError:
+        from group_policy_guard import verify_start
+    directory=base/'console-state'
+    if os.environ.get('TAKI_CONSOLE_STATE_DIR',str(directory)) != str(directory):
+        raise RuntimeError('policy console state mismatch')
+    os.environ['TAKI_CONSOLE_STATE_DIR']=str(directory)
+    supported=manifest.get('capabilities')==['group_policies_v1']
+    if not supported and (directory/'group-policies.v1.json').exists() and os.environ.get('TAKI_CONSOLE_ENABLED') != '1':
+        raise RuntimeError('legacy policy freeze requires enabled management')
+    verify_start(directory,permit.get('policy_guard'),supported,commit)
+    os.environ['TAKI_POLICY_RECOVERY_STATE']=permit['policy_guard']['state']
+    os.environ['TAKI_POLICY_RECOVERY_REASON']=permit['policy_guard'].get('reason','')
     os.chdir(code)
     os.environ['PYTHONPATH']=str(code/'src')
     os.environ['OURNOTES_RELEASE_SOURCE']=str(code)

@@ -22,6 +22,7 @@ from .delivery_ledger import Ledger
 from .diagnostics import Diagnostics
 from .admin import Admin
 from .backend_sources import CODE_FILES
+from ..domain.query_policy import CURRENT_POLICY
 
 logger = logging.getLogger('ournotes_bot.backend')
 
@@ -46,7 +47,7 @@ class Work:
 
 class Backend:
     def __init__(self, repository, parser, settings, *, instance_id, app_id, ledger_path,
-                 clock=time.time, plan_capacity=64, byte_capacity=128_000_000):
+                 clock=time.time, plan_capacity=64, byte_capacity=128_000_000, diagnostics_enabled=True):
         require(identity(instance_id) and identity(app_id), 'configured_identity')
         self.repository, self.parser, self.settings = repository, parser, settings
         self.instance_id, self.app_id, self.clock = instance_id, app_id, clock
@@ -54,7 +55,7 @@ class Backend:
         self.code_digest = hashlib.sha256(b''.join((Path(__file__).parent/name).read_bytes()
             for name in CODE_FILES)).hexdigest()
         self.ledger = Ledger(ledger_path, instance_id+'\0'+app_id, self.runtime, clock())
-        self.diagnostics = Diagnostics(Path(ledger_path).with_name('diagnostics-v1.sqlite3'))
+        self.diagnostics = Diagnostics(Path(ledger_path).with_name('diagnostics-v1.sqlite3'), enabled=diagnostics_enabled)
         self.admin = Admin(self)
         self.contexts = ContextStore()
         self.gate = replies.QueryGate(settings.query_concurrency, settings.query_queue_limit, redact=True)
@@ -94,6 +95,7 @@ class Backend:
         return {'gateway_epoch': epoch, 'backend_epoch': self.runtime}
 
     async def submit(self, payload):
+        started = time.perf_counter()
         request = Request.parse(payload, self.instance_id, self.app_id, self.clock())
         async with self.admission:
             self.expire()
@@ -110,8 +112,14 @@ class Backend:
             require(bool(commands), 'empty_commands')
             delivery = uuid.uuid4().hex
             self.ledger.admit(request, self.runtime, delivery, self.clock())
-            self.diagnostics.admitted(request, delivery, self.runtime, self.clock(),
-                [{'kind': replies.command_kind(c), 'outcome': None} for c in commands])
+            admission_ms = (time.perf_counter()-started)*1000
+            observed_commands = [{'kind': replies.command_kind(c), 'outcome': None}
+                                 for c in commands[:self.settings.multi_command_limit]]
+            observed_commands[0]['total_commands'] = len(commands)
+            if len(commands) > self.settings.multi_command_limit:
+                observed_commands.append({'kind':'overflow','outcome':'invalid_arguments'})
+            self.diagnostics.admitted(request, delivery, self.runtime, self.clock(), observed_commands)
+            self.diagnostics.span(uuid.uuid4().hex,request.request_id,'admission',admission_ms,self.clock(),outcome='ok')
             key = ContextKey(request.platform, request.kind, request.conversation_id, request.user_id)
             operation = parse_operation(commands[0]) if len(commands) == 1 else None
             lineage = self.contexts.lineage(key) if operation else None
@@ -124,7 +132,18 @@ class Backend:
             work.task.add_done_callback(self.tasks.discard)
             return self.snapshot(self.ledger.request(request.request_id), request.gateway_epoch)
 
+    async def prepare_call(self, work, operation):
+        started, outcome = time.perf_counter(), 'error'
+        try:
+            result = await operation
+            outcome = 'ok'
+            return result
+        finally:
+            self.diagnostics.span(uuid.uuid4().hex,work.request.request_id,'prepare',
+                (time.perf_counter()-started)*1000,self.clock(),outcome=outcome)
+
     async def prepare(self, work, commands):
+        policy_token = CURRENT_POLICY.set(work.request.policy)
         try:
             self.expire()
             if not work.active: return
@@ -138,25 +157,28 @@ class Backend:
                 current = (self.contexts.get(work.key) if work.lineage is not None
                            and self.contexts.lineage(work.key) == work.lineage else None)
                 work.lease = self.contexts.begin(work.key, clear=False) if current is not None else None
-                started = time.monotonic()
-                result = (await self.gate.prepare_followup(current, work.operation, self.repository)
-                          if current is not None else replies.PreparedReply(MISSING))
+                if work.request.policy.natural_query == 'off' and replies.is_ai_request(commands[0]):
+                    result = replies.PreparedReply('本群已关闭 /问；请使用直接查询指令。')
+                else:
+                    result = (await self.prepare_call(work,self.gate.prepare_followup(current, work.operation, self.repository))
+                              if current is not None else replies.PreparedReply(MISSING))
                 parts = replies.expand_replies([result])
+                parts = [replace(part,command_index=0,processing_route='continuation') for part in parts]
+                statuses = {part.business_status or 'unknown' for part in parts}
+                self.diagnostics.outcomes(work.request.request_id,
+                    [next(iter(statuses)) if len(statuses) == 1 else 'mixed' if statuses else 'unknown'])
             else:
-                started = time.monotonic()
-                parts, overflow = await replies.prepare_commands(commands, self.gate, self.repository,
+                parts, overflow = await self.prepare_call(work,replies.prepare_commands(commands, self.gate, self.repository,
                     self.parser, self.settings.multi_command_limit,
-                    observe=lambda outcomes: self.diagnostics.outcomes(work.request.request_id, outcomes))
+                    observe=lambda outcomes: self.diagnostics.outcomes(work.request.request_id, outcomes)))
                 if overflow:
                     parts.append(replies.PreparedReply(tr(locale_for(commands[0]), 'too_many_commands',
                                                           limit=self.settings.multi_command_limit, total=len(commands))))
-            self.diagnostics.span(uuid.uuid4().hex, work.request.request_id, 'prepare',
-                                  (time.monotonic()-started)*1000, self.clock())
             self.diagnostics.prepared(work.request.request_id, parts)
-            started = time.monotonic()
+            started = time.perf_counter()
             await self.sequencer.wait_turn(work.order)
             self.diagnostics.span(uuid.uuid4().hex, work.request.request_id, 'reply_order_wait',
-                                  (time.monotonic()-started)*1000, self.clock())
+                                  (time.perf_counter()-started)*1000, self.clock(), outcome='ok')
             self.expire()
             if not work.active:
                 return
@@ -176,6 +198,7 @@ class Backend:
             logger.error('Preparation failed request=%s type=%s', work.request.request_id, type(exc).__name__)
             self.finish(work, 'failed')
         finally:
+            CURRENT_POLICY.reset(policy_token)
             # Only release a lock this task actually acquired (see acquired flag below).
             if work.lock is not None and work.lock_acquired:
                 work.lock.release()
@@ -329,7 +352,7 @@ def create_app(backend, token, initialize=None):
             require(request.headers.get('X-Taki-Instance') == backend.instance_id, 'instance_mismatch', 403)
             if request.path.startswith('/v1/admin/') and request.method == 'GET':
                 require(len(request.query) == len(set(request.query)), 'admin_parameters')
-                if request.path != '/v1/admin/requests':
+                if request.path not in ('/v1/admin/requests','/v1/admin/notices'):
                     require(not request.query, 'admin_parameters')
             return await handler(request)
         except ProtocolError as exc:
@@ -348,7 +371,8 @@ def create_app(backend, token, initialize=None):
                      'capability': CAPABILITY, 'backend_code_digest': backend.code_digest,
                      'background_tasks': bool(backend.runtime_tasks and backend.runtime_tasks.tasks and all(not task.done() for task in backend.runtime_tasks.tasks)),
                      'notices_enabled': backend.notices is not None,
-                     'management_capabilities': ['admin_read_v1', 'telemetry_v1'],
+                     'diagnostics_enabled': backend.diagnostics.db is not None,
+                     'management_capabilities': ['admin_read_v1', 'telemetry_v1', 'group_policies_v1'],
                      'features': ['classify', 'gateway_retire', 'ack_context_guard', 'notice_gateway_v1']}, 200 if backend.ready else 503)
     async def classify(request):
         value = await read_json(request)
@@ -389,7 +413,7 @@ def create_app(backend, token, initialize=None):
     async def admin_detail(request): return json(backend.admin.detail(request.match_info['rid']))
     async def admin_groups(request): return json(backend.admin.groups())
     async def admin_sources(request): return json(backend.admin.sources())
-    async def admin_notices(request): return json(backend.admin.notices())
+    async def admin_notices(request): return json(backend.admin.notices(dict(request.query)))
     async def admin_metrics(request): return json(backend.admin.metrics())
     async def admin_telemetry(request):
         return json(backend.admin.telemetry(await read_json(request), request.headers.get('X-Taki-Epoch')))

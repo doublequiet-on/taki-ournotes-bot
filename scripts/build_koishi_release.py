@@ -44,7 +44,7 @@ def build(python_artifact, node, output):
         binary.parent.mkdir();shutil.copy2(node,binary)
         python=stage/'python'/python_artifact.name;python.parent.mkdir();shutil.copy2(python_artifact,python)
         recovery=stage/'controller';recovery.mkdir()
-        for name in ('koishi_control.py','koishi_launcher.py','linux_backend.py','linux_updater.py','offline_bundle.py'):
+        for name in ('koishi_control.py','koishi_launcher.py','group_policy_guard.py','linux_backend.py','linux_updater.py','offline_bundle.py'):
             shutil.copy2(ROOT/'deploy'/name,recovery/name)
         shutil.copytree(ROOT/'deploy/koishi',recovery/'service-templates')
         shutil.copy2(ROOT/'docs/KOISHI_MIGRATION_M4.md',stage/'RUNBOOK.md')
@@ -55,11 +55,13 @@ def build(python_artifact, node, output):
         files={p.relative_to(stage).as_posix():sha(p) for p in sorted(stage.rglob('*')) if p.is_file()}
         application=ROOT/'src/ournotes_bot/application'
         import runpy
-        code_files=runpy.run_path(str(application/'backend_sources.py'))['CODE_FILES']
+        inventory=runpy.run_path(str(application/'backend_sources.py'))
+        code_files=inventory['CODE_FILES']
         manifest={'schema':1,'commit':commit,'controller_rollback_commit':rollback_ref,'node':identity,'lock_sha256':sha(gateway/'package-lock.json'),
                   'python_artifact':python.relative_to(stage).as_posix(),'python_sha256':sha(python),
                   'backend_code_digest':hashlib.sha256(b''.join((application/n).read_bytes() for n in code_files)).hexdigest(),
-                  'protocol':{'major':1,'minor':0},'data_schema':1,'rollback':'code-only; retain notice/delivery facts',
+                  'protocol':inventory['TRANSPORT_PROTOCOL'],'capabilities':['group_policies_v1'],
+                  'data_schema':1,'rollback':'code-only; freeze settings before unsupported policy runtimes',
                   'files':files}
         (stage/'combination.json').write_text(json.dumps(manifest,indent=2)+'\n',encoding='utf-8')
         output.parent.mkdir(parents=True,exist_ok=True)

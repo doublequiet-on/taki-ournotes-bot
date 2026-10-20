@@ -37,6 +37,7 @@ from .query_validation import (
     validate_route,
 )
 from ..structured_query import QueryResult, QuerySpec, answer_for
+from ..domain.query_policy import CURRENT_POLICY
 
 
 MAX_MODEL_CALLS = 3
@@ -122,6 +123,8 @@ class AgentState:
     final_code: OutcomeCode | None = None
     processing_route: str = "local"
     local_parsed: bool = False
+    natural_mode: str = 'model'
+    parse_origin: str = 'local'
 
 
 @dataclass(frozen=True)
@@ -153,6 +156,7 @@ class CachedOutcome:
     command: str | None = None
     message: str | None = None
     expires_at: float | None = None
+    origin: str = 'unknown'
 
 
 ModelRequester = Callable[[str, str, float], ModelResponse | dict]
@@ -198,6 +202,8 @@ class QueryAgent:
                 del self._cache[question]
                 return None
             if cached is not None:
+                if CURRENT_POLICY.get().natural_query != 'model' and cached.origin != 'local':
+                    return None
                 self._cache.move_to_end(question)
             return cached
 
@@ -266,13 +272,17 @@ class QueryAgent:
         return outcome
 
     def _run(self, content: str, repository: SongRepository) -> AgentOutcome:
-        self._sync_cache(repository)
         question = query_text(content)
         tracked = is_ai_request(content)
         started = self.clock()
-        state = AgentState(question, started, started + TOTAL_BUDGET_SECONDS)
+        state = AgentState(question, started, started + TOTAL_BUDGET_SECONDS,
+                           natural_mode=CURRENT_POLICY.get().natural_query)
         if tracked:
             self.metrics.increment("ask_total")
+        if state.natural_mode == 'off':
+            return self._finish_terminal(state, OutcomeCode.NOT_CONFIGURED,
+                '本群已关闭 /问；仍可使用 /查曲、/查卡 等直接指令。', cache=False)
+        self._sync_cache(repository)
 
         if not question or len(question) > 100:
             return self._finish_terminal(
@@ -331,7 +341,7 @@ class QueryAgent:
             state.final_code = self._command_code(selected)
             state.local_parsed = selected is not None and state.final_code != OutcomeCode.INVALID_ARGUMENTS
             self._cache_put(question, CachedOutcome(
-                "command", state.final_code, command=command,
+                "command", state.final_code, command=command, origin='local',
             ))
             self._remember_state(question, state)
             return AgentOutcome(text, selected, state)
@@ -349,14 +359,16 @@ class QueryAgent:
             self._remember_state(question, state)
             return outcome
 
-        if not self.ai_enabled:
+        if not self.ai_enabled or state.natural_mode != 'model':
             return self._finish_terminal(
                 state, OutcomeCode.NOT_CONFIGURED,
-                "自然语言查询尚未配置 AI；请用 /查曲、/查谱面、/查卡 或 /查留影卡。",
+                ('本群 /问 仅允许本地解析，请使用明确条件或直接指令。' if state.natural_mode == 'local'
+                 else "自然语言查询尚未配置 AI；请用 /查曲、/查谱面、/查卡 或 /查留影卡。"),
                 cache=False,
             )
 
         state.processing_route = "model"
+        state.parse_origin = 'model'
         capability_id = local_route(question)
         prefetched = None
         if capability_id is None:
@@ -455,7 +467,7 @@ class QueryAgent:
                     cache=False,
                 )
 
-            self._cache_spec(question, validated.spec, outcome.code)
+            self._cache_spec(question, validated.spec, outcome.code, origin='model')
             self._remember_state(question, state)
             if (outcome.code == OutcomeCode.SUCCESS
                     and self._has_useful_result(outcome.payload)):
@@ -472,6 +484,7 @@ class QueryAgent:
     def _from_cache(self, state: AgentState, cached: CachedOutcome,
                     repository: SongRepository) -> AgentOutcome:
         state.processing_route = "cache"
+        state.parse_origin = cached.origin
         if cached.kind == "terminal":
             return self._finish_terminal(
                 state, cached.code, cached.message or UNSUPPORTED,
@@ -492,6 +505,8 @@ class QueryAgent:
 
     def _model_data(self, state: AgentState, question: str, prompt: str, metric: str,
                     tracked: bool) -> tuple[dict | None, TerminalOutcome | None]:
+        if state.natural_mode != 'model':
+            return None, TerminalOutcome(OutcomeCode.NOT_CONFIGURED, '当前策略不允许模型解析。')
         remaining = state.deadline - self.clock()
         if (remaining <= 0 or state.model_calls >= MAX_MODEL_CALLS
                 or state.steps >= MAX_STEPS):
@@ -606,15 +621,16 @@ class QueryAgent:
             self._cache_put(state.question, CachedOutcome(
                 "terminal", code, message=message,
                 expires_at=self.clock() + TERMINAL_CACHE_TTL_SECONDS,
+                origin=state.parse_origin,
             ))
         self._remember_state(state.question, state)
         terminal = TerminalOutcome(code, message)
         return AgentOutcome(message, terminal, state)
 
-    def _cache_spec(self, question: str, spec: QuerySpec, code: OutcomeCode) -> None:
+    def _cache_spec(self, question: str, spec: QuerySpec, code: OutcomeCode, *, origin='local') -> None:
         expires = None if code == OutcomeCode.SUCCESS else self.clock() + TERMINAL_CACHE_TTL_SECONDS
         self._cache_put(question, CachedOutcome(
-            "spec", code, spec=spec, expires_at=expires,
+            "spec", code, spec=spec, expires_at=expires, origin=origin,
         ))
 
     @staticmethod

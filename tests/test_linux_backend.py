@@ -475,12 +475,14 @@ class LinuxBackendTests(unittest.TestCase):
                 def runner(argv, **kwargs):
                     if argv[1] == 'reset-failed' and initial != 'failed': raise Rejected('unit_not_loaded')
                     permit = json.loads((runtime / 'allowed.json').read_text())
-                    self.assertEqual(permit, {'release': asdict(self.baseline), 'boot_id': 'test-boot'})
+                    self.assertEqual(permit, {'release': asdict(self.baseline), 'boot_id': 'test-boot',
+                                             'policy_guard': {'state':'fixture'}})
                     self.assertEqual((runtime / 'allowed.json').stat().st_mode & 0o777, 0o644 if os.name != 'nt' else 0o666)
                     commands.append(argv[1])
                     return ''
                 self.backend.run = runner
                 self.backend.koishi = Mock()
+                self.backend.koishi.prepare_start.return_value={'state':'fixture'}
                 self.backend.koishi.start.side_effect = lambda: commands.append('gateway')
                 with patch('deploy.linux_backend.Path', side_effect=selected_path), patch('deploy.linux_backend.trusted'):
                     self.backend.start()
@@ -499,12 +501,13 @@ class LinuxBackendTests(unittest.TestCase):
         self.backend.healthy=Mock(return_value=True)
         self.backend.koishi=KoishiControl(self.backend)
         self.backend.koishi.start=Mock()
+        self.backend.koishi.prepare_start=Mock(return_value={'state':'fixture'})
         def selected_path(value):
             return runtime if value=='/run/taki-updater' else boot if value=='/proc/sys/kernel/random/boot_id' else Path(value)
         def runner(argv,**kwargs):
             self.assertEqual(json.loads((runtime/'notice.json').read_text()),{'rejected':True})
             self.assertEqual(json.loads((runtime/'allowed.json').read_text()),
-                             {'release':asdict(self.baseline),'boot_id':'fixture-boot'})
+                             {'release':asdict(self.baseline),'boot_id':'fixture-boot','policy_guard':{'state':'fixture'}})
             self.assertEqual(runtime.stat().st_mode&0o777,0o755)
             self.assertEqual((runtime/'notice.json').stat().st_mode&0o777,0o644)
             return ''
