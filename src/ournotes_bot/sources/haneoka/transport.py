@@ -41,20 +41,35 @@ def public_get(url, limit, timeout):
     async def read():
         import aiohttp
         try:
-            async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=timeout),
-                                             trust_env=False) as session:
-                async with session.get(url, allow_redirects=False,
-                                       headers={"User-Agent": "Taki-chart/1", "Accept-Encoding": "gzip"},
-                                       **public_proxy_options()) as response:
-                    if response.status != 200:
-                        raise ChartDataError(f"Haneoka HTTP {response.status}")
-                    chunks, size = [], 0
-                    async for chunk in response.content.iter_chunked(65536):
-                        size += len(chunk)
-                        if size > limit:
-                            raise ChartDataError("Haneoka response is too large")
-                        chunks.append(chunk)
-                    return b"".join(chunks), {key.lower(): value for key, value in response.headers.items()}
+            # Reserve half the caller's budget for one fresh connection if headers stall.
+            # The outer deadline includes both attempts and body decoding.
+            async with asyncio.timeout(timeout):
+                async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=timeout),
+                                                 trust_env=False) as session:
+                    for attempt in range(2):
+                        received_headers = False
+                        try:
+                            async with asyncio.timeout(timeout / 2 if attempt == 0 else None) as header_wait:
+                                async with session.get(
+                                    url, allow_redirects=False,
+                                    headers={"User-Agent": "Taki-chart/1", "Accept-Encoding": "gzip"},
+                                    **public_proxy_options(),
+                                ) as response:
+                                    received_headers = True
+                                    header_wait.reschedule(None)
+                                    if response.status != 200:
+                                        raise ChartDataError(f"Haneoka HTTP {response.status}")
+                                    chunks, size = [], 0
+                                    async for chunk in response.content.iter_chunked(65536):
+                                        size += len(chunk)
+                                        if size > limit:
+                                            raise ChartDataError("Haneoka response is too large")
+                                        chunks.append(chunk)
+                                    return b"".join(chunks), {
+                                        key.lower(): value for key, value in response.headers.items()}
+                        except (aiohttp.ClientConnectionError, asyncio.TimeoutError, ConnectionResetError) as exc:
+                            if attempt or received_headers or isinstance(exc, aiohttp.ClientSSLError):
+                                raise
         except (aiohttp.ClientError, asyncio.TimeoutError, OSError) as exc:
             raise ChartDataError("Haneoka request failed") from exc
 

@@ -11,6 +11,7 @@ import subprocess
 import sys
 import textwrap
 import threading
+import time
 import unittest
 from unittest.mock import patch
 
@@ -155,6 +156,77 @@ class HaneokaFacilityTests(unittest.TestCase):
             with self.subTest(url=url), patch("aiohttp.ClientSession", side_effect=AssertionError("HTTP attempted")):
                 with self.assertRaises(ChartDataError):
                     transport.public_get(url, 10, 1)
+
+    def test_header_retry_and_body_share_one_real_http_deadline(self):
+        scenario, calls = ["headers_once"], []
+
+        class Handler(BaseHTTPRequestHandler):
+            def do_GET(self):
+                calls.append(self.path)
+                mode, number = scenario[0], len(calls)
+                if mode == "headers_always" or (mode == "headers_once" and number == 1):
+                    time.sleep(.8)
+                if mode == "disconnect_once" and number == 1:
+                    self.close_connection = True
+                    return
+                self.send_response(503 if mode == "http_error" else 200)
+                self.send_header("Content-Length", "2")
+                self.end_headers()
+                if mode in ("slow_body", "stalled_body"):
+                    time.sleep(.4 if mode == "slow_body" else .8)
+                try:
+                    self.wfile.write(b"ok")
+                except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
+                    pass
+
+            def log_message(self, *args):
+                pass
+
+        server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        real_session = aiohttp.ClientSession
+
+        def local_session(**kwargs):
+            session = real_session(**kwargs)
+            real_get = session.get
+            session.get = lambda url, **options: real_get(
+                f"http://127.0.0.1:{server.server_port}/", **options)
+            return session
+
+        try:
+            with patch.dict(os.environ, {"OURNOTES_PUBLIC_HTTP_PROXY": ""}), \
+                    patch("aiohttp.ClientSession", side_effect=local_session):
+                for mode, expected_calls, success in (
+                    ("headers_once", 2, True), ("disconnect_once", 2, True),
+                    ("headers_always", 2, False), ("slow_body", 1, True),
+                    ("stalled_body", 1, False), ("http_error", 1, False),
+                ):
+                    with self.subTest(mode=mode):
+                        scenario[0], calls[:] = mode, []
+                        started = time.monotonic()
+                        if success:
+                            self.assertEqual(transport.public_get(transport.ORIGIN + "/test", 2, .6)[0], b"ok")
+                        else:
+                            with self.assertRaises(ChartDataError):
+                                transport.public_get(transport.ORIGIN + "/test", 2, .6)
+                        self.assertLess(time.monotonic() - started, .85)
+                        self.assertEqual(len(calls), expected_calls)
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join()
+
+    def test_tls_failure_is_not_retried(self):
+        class TLSFailure(Response):
+            async def __aenter__(self):
+                raise aiohttp.ClientSSLError(None, OSError("TLS failed"))
+        session = Session()
+        with patch("aiohttp.ClientSession", return_value=session), \
+                patch.object(session, "get", return_value=TLSFailure()) as get:
+            with self.assertRaises(ChartDataError):
+                transport.public_get(transport.ORIGIN + "/test", 4, 1)
+        self.assertEqual(get.call_count, 1)
 
     def test_redirect_status_and_stream_overflow_never_return_partial_bytes(self):
         response = Session()
