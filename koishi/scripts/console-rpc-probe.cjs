@@ -19,7 +19,14 @@ async function main(){
     await ctx.start();await manager.ready();const a=await connect();clients.push(a.ws)
     for(const m of methods)assert.equal((await a.call('taki/'+m)).error,'unauthorized')
     assert.equal(reads,0)
-    assert.equal((await a.call('taki/login','fixture-console-password-000000')).value,true)
+    const attacker=await connect();clients.push(attacker.ws)
+    const loginTime=Date.now();Date.now=()=>loginTime
+    try {
+      assert.equal((await attacker.call('taki/login','wrong')).error,'登录失败')
+      assert.equal((await attacker.call('taki/login','wrong')).error,'请稍后再登录')
+      assert.equal((await a.call('taki/login','fixture-console-password-000000')).value,true,'another connection must not consume the administrator login budget')
+      assert.equal((await a.call('taki/login','fixture-console-password-000000')).error,'请稍后再登录')
+    } finally {Date.now=()=>clock()+offset}
     const state=(await a.call('taki/status')).value
     const existed=fs.existsSync(path.join(dir,'settings.json'))
     assert.equal((await a.call('taki/settings',state.settings,state.revision)).error,'upgrade_required')

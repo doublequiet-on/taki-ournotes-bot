@@ -19,6 +19,8 @@ map $http_upgrade $taki_console_upgrade_ok {
     websocket 1;
 }
 limit_conn_zone $binary_remote_addr zone=taki_console_connections:1m;
+# Bound reconnect attempts too; per-connection RPC throttling resets on reconnect.
+limit_req_zone $binary_remote_addr zone=taki_console_handshakes:1m rate=5r/s;
 
 server {
     listen 443 ssl;
@@ -45,6 +47,8 @@ server {
         if ($taki_console_upgrade_ok = 0) { return 400; }
         limit_except GET { deny all; }
         limit_conn taki_console_connections 4;
+        limit_req zone=taki_console_handshakes burst=10 nodelay;
+        limit_req_status 429;
         proxy_pass http://127.0.0.1:5140;
         proxy_http_version 1.1;
         proxy_set_header Host "127.0.0.1:5140";
