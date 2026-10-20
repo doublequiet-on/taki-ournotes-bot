@@ -39,7 +39,8 @@ function install(ctx, config, manifest, assetsDirectory = path.join(__dirname, '
   const sessions = new WeakMap()
   const hash = value => createHash('sha256').update(value).digest()
   const passwordHash = hash(config.password)
-  let nextLogin = 0
+  // Failed guesses must not reserve the login budget of other connections.
+  const nextLogin = new WeakMap()
   let closing = false, closePromise
   const valid = client => (sessions.get(client) || 0) > Date.now()
   // The console is reachable only through loopback (or an explicit SSH tunnel).
@@ -91,8 +92,8 @@ function install(ctx, config, manifest, assetsDirectory = path.join(__dirname, '
     scoped.server._ws.options.maxPayload = 32768
     scoped.console.addEntry(assetsDirectory)
     listen('taki/login', function(password) {
-      if (Date.now() < nextLogin) throw Error('请稍后再登录')
-      nextLogin = Date.now() + 1000
+      if (Date.now() < (nextLogin.get(this) || 0)) throw Error('请稍后再登录')
+      nextLogin.set(this, Date.now() + 1000)
       if (typeof password !== 'string' || password.length > 256 || !timingSafeEqual(hash(password), passwordHash)) throw Error('登录失败')
       sessions.set(this, Date.now() + 30 * 60 * 1000)
       management.record('管理员已登录')

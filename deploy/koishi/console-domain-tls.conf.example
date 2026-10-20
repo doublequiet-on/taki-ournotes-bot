@@ -1,0 +1,79 @@
+# Preparation template only; include inside nginx's http {} AFTER issuing a certificate.
+# Replace ALL console.example.invalid occurrences with the agreed FQDN.
+# One instance per file; namespace these maps/zones before creating a second instance.
+# Define once per http block; merge with an existing setting instead of duplicating it.
+map_hash_bucket_size 128;
+map $http_host $taki_console_host_ok {
+    default 0;
+    console.example.invalid 1;
+    console.example.invalid:443 1;
+}
+map $http_origin $taki_console_origin {
+    default blocked;
+    "" "";
+    "https://console.example.invalid" "http://127.0.0.1:5140";
+    "https://console.example.invalid:443" "http://127.0.0.1:5140";
+}
+map $http_upgrade $taki_console_upgrade_ok {
+    default 0;
+    websocket 1;
+}
+limit_conn_zone $binary_remote_addr zone=taki_console_connections:1m;
+# Bound reconnect attempts too; per-connection RPC throttling resets on reconnect.
+limit_req_zone $binary_remote_addr zone=taki_console_handshakes:1m rate=5r/s;
+
+server {
+    listen 443 ssl;
+    server_name console.example.invalid;
+    ssl_certificate /etc/letsencrypt/live/console.example.invalid/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/console.example.invalid/privkey.pem;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_session_tickets off;
+
+    # Check the REAL browser Host/Origin before translating to the local-only gateway.
+    # Never unconditionally rewrite Origin: that would defeat cross-site protection.
+    if ($taki_console_host_ok = 0) { return 421; }
+    if ($taki_console_origin = blocked) { return 403; }
+    access_log off;
+    error_log /var/log/nginx/taki-console-error.log warn;
+    client_max_body_size 32k;
+    add_header X-Content-Type-Options nosniff always;
+    add_header Content-Security-Policy "frame-ancestors 'none'" always;
+    add_header Referrer-Policy no-referrer always;
+    add_header Cache-Control "no-store" always;
+
+    location = /status {
+        if ($taki_console_origin = "") { return 403; }
+        if ($taki_console_upgrade_ok = 0) { return 400; }
+        limit_except GET { deny all; }
+        limit_conn taki_console_connections 4;
+        limit_req zone=taki_console_handshakes burst=10 nodelay;
+        limit_req_status 429;
+        proxy_pass http://127.0.0.1:5140;
+        proxy_http_version 1.1;
+        proxy_set_header Host "127.0.0.1:5140";
+        proxy_set_header Origin $taki_console_origin;
+        proxy_set_header Upgrade "websocket";
+        proxy_set_header Connection "upgrade";
+        proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_connect_timeout 5s;
+        proxy_read_timeout 90s;
+        proxy_send_timeout 90s;
+        proxy_buffering off;
+    }
+    location / {
+        limit_except GET { deny all; }
+        proxy_pass http://127.0.0.1:5140;
+        proxy_http_version 1.1;
+        proxy_set_header Host "127.0.0.1:5140";
+        proxy_set_header Origin $taki_console_origin;
+        proxy_set_header Upgrade "";
+        proxy_set_header Connection "";
+        proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_connect_timeout 5s;
+        proxy_read_timeout 30s;
+        proxy_send_timeout 30s;
+    }
+}
