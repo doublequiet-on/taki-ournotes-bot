@@ -419,6 +419,7 @@ async function main() {
     await assert.rejects(pending,e=>e.code==='startup_cancelled');assert.equal(calls,1)
   })
   for(const mode of ['timeout','incompatible'])await run('actual gateway startup rejects '+mode+' and disposes plugins',async()=>{
+    const dir=fs.mkdtempSync(path.join(require('node:os').tmpdir(),'taki-startup-probe-'))
     const {Bot}=require('koishi'),originalStart=Bot.prototype.start,originalRead=fs.readFileSync
     const originalInitialize=BackendClient.prototype.initialize,originalFetch=globalThis.fetch
     const token=process.env.OURNOTES_BACKEND_TOKEN
@@ -428,11 +429,12 @@ async function main() {
     globalThis.fetch=async()=>new Response(JSON.stringify({...startupReady,protocol:{major:2,minor:0}}),{status:mode==='timeout'?503:200})
     process.env.OURNOTES_BACKEND_TOKEN='x'.repeat(32)
     try {
-        await assert.rejects(require('../run.cjs').start({TAKI_KOISHI_ENABLED:'1',TAKI_CONSOLE_STATE_DIR:path.resolve('.local-tests/startup-'+mode),QQ_APP_ID:'fixture-app',QQ_APP_SECRET:'fixture',QQ_SELF_ID:'fixture-self',OURNOTES_BACKEND_TOKEN:'x'.repeat(32),TAKI_INSTANCE_ID:'fixture'}),
+        await assert.rejects(require('../run.cjs').start({TAKI_KOISHI_ENABLED:'1',TAKI_CONSOLE_STATE_DIR:dir,QQ_APP_ID:'fixture-app',QQ_APP_SECRET:'fixture',QQ_SELF_ID:'fixture-self',OURNOTES_BACKEND_TOKEN:'x'.repeat(32),TAKI_INSTANCE_ID:'fixture'}),
         e=>e.code===(mode==='timeout'?'startup_timeout':'incompatible_backend'))
     } finally {
       Bot.prototype.start=originalStart;fs.readFileSync=originalRead;BackendClient.prototype.initialize=originalInitialize;globalThis.fetch=originalFetch
       if(token===undefined)delete process.env.OURNOTES_BACKEND_TOKEN;else process.env.OURNOTES_BACKEND_TOKEN=token
+      fs.rmSync(dir,{recursive:true,force:true})
     }
   })
   const root = path.resolve(__dirname, '..')

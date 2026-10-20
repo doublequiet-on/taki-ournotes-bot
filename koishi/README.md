@@ -14,7 +14,7 @@ npm run build
 npm run probe -- probe-output.json
 ```
 
-报告输出路径可以省略。探针在进程内禁止真实 socket、HTTP 和 fetch；固定原始事件经过实际安装的 QQ adapter，上传和发送调用其实际 internal API，仅 HTTP 返回值由夹具提供。探针不启动 Koishi 应用、不加载 `.env`、不登录 QQ。高层发送的部分成功测试会打印预期的 `fixture explicit rejection` 警告，最终报告必须 `failed: 0`。
+报告输出路径可以省略。探针在进程内禁止真实 socket、HTTP 和 fetch；固定原始事件经过实际安装的 QQ adapter，上传和发送调用其实际 internal API，仅 HTTP 返回值由夹具提供。启动故障场景使用隔离的系统临时目录并在结束时清理，不要求源码目录可写；探针不加载 `.env`、不登录 QQ。高层发送的部分成功测试会打印预期的 `fixture explicit rejection` 警告，最终报告必须 `failed: 0`。
 
 安装允许访问 npm 官方 registry，但禁止依赖安装脚本；编译和探针不需要联网。升级任意锁定包后必须重跑，不能沿用旧版本结论。完整依赖树和 integrity 在 `package-lock.json`，生成的 `lib/` 与 `node_modules/` 不提交。
 
