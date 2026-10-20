@@ -28,6 +28,9 @@ SOURCE = ORIGIN + "/api/v1/servers/jp/"
 ENTITIES = {"songs": "musicId", "cards": "cardId", "support-cards": "supportCardId",
             "characters": "characterId", "bands": "bandId"}
 MAX_BYTES = 24_000_000
+# Download accounting also includes discovery indexes and batch envelopes which
+# are not retained in the snapshot. Keep the existing cache/rollback limit.
+MAX_DOWNLOAD_BYTES = 32_000_000
 ERRORS = (OSError, ValueError, TypeError, KeyError, IndexError, RuntimeError, OverflowError, AttributeError)
 
 
@@ -141,7 +144,7 @@ class CatalogRepository:
             raw, headers = self.fetch(url, 8_000_000, 20)
             with budget_lock:
                 total += len(raw)
-                if len(raw) > 8_000_000 or total > MAX_BYTES:
+                if len(raw) > 8_000_000 or total > MAX_DOWNLOAD_BYTES:
                     raise ValueError("Catalog download budget")
             value = decode_json(raw)
             check_headers(headers, ident or identity(value, server))

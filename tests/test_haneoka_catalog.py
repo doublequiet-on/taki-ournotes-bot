@@ -63,6 +63,34 @@ class CatalogTests(unittest.TestCase):
     def records(self):
         return source.validate(self.saved, self.now)[0]
 
+    def test_download_budget_counts_all_decoded_responses_at_exact_boundary(self):
+        sizes = []
+
+        def measured(url, limit, timeout):
+            raw, headers = self.respond(url, limit, timeout)
+            sizes.append(len(raw))
+            return raw, headers
+
+        self.repo.fetch = measured
+        candidate = self.repo._collect()
+        total = sum(sizes)
+        with patch.object(source, "MAX_DOWNLOAD_BYTES", total):
+            self.assertEqual(self.repo._collect(), candidate)
+        with patch.object(source, "MAX_DOWNLOAD_BYTES", total - 1):
+            with self.assertRaisesRegex(ValueError, "Catalog download budget"):
+                self.repo._collect()
+
+    def test_download_budget_does_not_expand_persisted_cache_limit(self):
+        candidate = self.repo._collect()
+        self.repo._write(candidate)
+        original = self.path.read_bytes()
+        with patch.object(source, "MAX_BYTES", len(original) - 1):
+            with self.assertRaisesRegex(ValueError, "Catalog cache size limit"):
+                self.repo._write(candidate)
+            with self.assertRaisesRegex(ValueError, "Catalog cache size limit"):
+                self.repo._read()
+        self.assertEqual(self.path.read_bytes(), original)
+
     def test_automatic_summary_refreshes_same_id_and_survives_restart(self):
         from ournotes_bot.rendering.catalog_layout import summaries
         bot, candidate = self.status_sequence()
