@@ -19,6 +19,7 @@ LEGACY_FREEZE_COMMITS = frozenset({
     'b3d7c4267f8dd304ff0ce59dde2d9e3ff287c35a',
     '5e96af27680e5d7cbdbfab01de8cd21171c45d66',
     'd11561747d2aee8aebb6b94bed54594be7105f4a',
+    '38ce5a8a8fcae32e29df3e9c925282722d60528e',  # PR #100, same reviewed V1a enforcement
 })
 
 

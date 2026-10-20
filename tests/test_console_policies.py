@@ -224,3 +224,21 @@ class FreezeTests(unittest.TestCase):
         control=KoishiControl(backend);control.combination=Mock(return_value=(None,{'protocol':{'major':1,'minor':0},'commit':'f'*40}))
         with self.assertRaisesRegex(ValueError,'legacy_unverified'):control.prepare_start()
         self.assertFalse(json.loads((console/'settings.json').read_bytes())['queriesEnabled'])
+
+    def test_controller_accepts_formal_v1a_only_with_verified_freeze(self):
+        from types import SimpleNamespace
+        from deploy.koishi_control import KoishiControl
+        base=self.root/'base';base.mkdir();console=base/'console-state';console.mkdir()
+        (console/'group-policies.v1.json').write_text('{}')
+        (console/'settings.json').write_text(json.dumps(DEFAULT))
+        backend=SimpleNamespace(config={'base':str(base)},state=self.root/'trusted-state',current_release=lambda:None)
+        commit='38ce5a8a8fcae32e29df3e9c925282722d60528e'
+        control=KoishiControl(backend)
+        control.combination=Mock(return_value=(None,{'protocol':{'major':1,'minor':0},'commit':commit}))
+        permit=control.prepare_start()
+        self.assertEqual(permit['legacy_commit'],commit)
+        self.assertEqual(permit['state'],'frozen')
+        verify_start(console,permit,False)
+        frozen=json.loads((console/'settings.json').read_bytes())
+        self.assertFalse(frozen['queriesEnabled'])
+        self.assertFalse(frozen['notificationsEnabled'])

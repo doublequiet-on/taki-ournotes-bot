@@ -1,8 +1,10 @@
 # Console V1 验收与交付
 
-基线 main `b3d7c4267f8dd304ff0ce59dde2d9e3ff287c35a`。两期均为草稿：V1a分支 `codex/console-v1a` / [PR #100](https://github.com/doublequiet-on/taki-ournotes-bot/pull/100)，V1b叠加分支 `codex/console-v1b`，目标为V1a。源码交付不代表生产采用。
+基线 main `b3d7c4267f8dd304ff0ce59dde2d9e3ff287c35a`。V1a [PR #100](https://github.com/doublequiet-on/taki-ournotes-bot/pull/100) 已经独立审查、修复并合并，正式提交 `38ce5a8a8fcae32e29df3e9c925282722d60528e`。V1b 分支 `codex/console-v1b` 已正常合入该 main，PR #101 改以 main 为目标。源码合并不代表生产采用。
 
 独立审查修复：指标写线程持锁时，读取立即返回 `metrics_snapshot_busy`，事件循环心跳和后续写入回归通过；保存响应只确认提交时快照，期间的新编辑保留，失效响应不恢复管理数据。`node koishi/scripts/console-state-probe.cjs` 使用官方 Console 随包 Vue 验证迟到响应；管理与指标目标回归22项通过。修复已独立复查，完整回归以修复提交的 CI 为准。
+
+V1b 同步覆盖群保存期间的新编辑、切换群及过期响应；独立复查和状态探针通过。管理／策略／指标目标回归48项通过（Windows跳过1项），61项运输探针、9种认证RPC和更新后的npm安装资源浏览器回归通过。V1a正式合并树已与审查头 `478e275` 核对一致，其管理执行模块与此前审查的 `d115617` 相同；正式SHA加入旧版冻结白名单，未知旧版继续保持停止。
 
 ## 执行入口与证据层
 
