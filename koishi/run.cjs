@@ -19,6 +19,9 @@ async function start(env=process.env) {
   const manifest=JSON.parse(fs.readFileSync(path.join(__dirname,'../combination.json'),'utf8'))
   if(!/^[a-f0-9]{40}$/.test(manifest.commit))throw Error('release identity')
   const ctx=new Context()
+  if(managementConfig)managementConfig.identity=config.plugin
+  const readHealth=require('./health.cjs').healthReader(ctx,manifest,config.plugin)
+  if(managementConfig)managementConfig.readHealth=readHealth
   ctx.plugin(require('@koishijs/plugin-http').default)
   const management=managementConfig ? require('./console.cjs').install(ctx,managementConfig,manifest) : undefined
   if(management)config.plugin.management=management.management
@@ -28,15 +31,9 @@ async function start(env=process.env) {
     const supplied=Buffer.from(req.headers.authorization||''),expected=Buffer.from('Bearer '+env.OURNOTES_BACKEND_TOKEN)
     if(req.url!=='/health' || supplied.length!==expected.length || !crypto.timingSafeEqual(supplied,expected)){res.writeHead(403);res.end();return}
     try {
-      const receiver=ctx.takiTransport?.receiver, local=receiver?.health()
-      const backend=receiver ? await receiver.client.request('/v1/ready') : null
-      const bot=ctx.bots.find(b=>b.platform==='qq' && b.config.id===config.plugin.appId)
-      const ready=!!(local?.active && local.handshake && backend?.ready && backend.background_tasks
-        && backend.backend_epoch===local.backend.backend_epoch && backend.backend_code_digest===manifest.backend_code_digest
-        && bot?.selfId===config.plugin.selfId && bot.status===Universal.Status.ONLINE)
-      res.writeHead(ready?200:503,{'Content-Type':'application/json','Cache-Control':'no-store'})
-      res.end(JSON.stringify({ready,pid:process.pid,release_sha:manifest.commit,backend_ready:!!backend?.ready,backend_pid:backend?.pid,
-        qq_online:bot?.status===Universal.Status.ONLINE,handshake:!!local?.handshake,backend_code_digest:backend?.backend_code_digest}))
+      const health=await readHealth({fresh:true})
+      res.writeHead(health.ready?200:503,{'Content-Type':'application/json','Cache-Control':'no-store'})
+      res.end(JSON.stringify(health))
     }catch{res.writeHead(503);res.end('{"ready":false}')}
   })
   try {

@@ -1,5 +1,6 @@
 // Local-only management state. No QQ messages, credentials or business database are stored here.
-import { mkdirSync, readFileSync, writeFileSync, renameSync } from 'node:fs'
+import { mkdirSync, readFileSync, writeFileSync, renameSync, openSync, fsyncSync, closeSync } from 'node:fs'
+import { randomUUID } from 'node:crypto'
 import { join, isAbsolute } from 'node:path'
 import type { Inbound } from './ingress'
 
@@ -25,6 +26,7 @@ export function validateSettings(value: unknown): ManagementSettings {
   return structuredClone(v)
 }
 export class Management {
+  private readonly epoch = randomUUID()
   private settings: ManagementSettings
   private revision = 0
   private events: { time: string; event: string }[] = []
@@ -40,7 +42,8 @@ export class Management {
     }
     this.record('管理设置已加载')
   }
-  snapshot() { return { settings: structuredClone(this.settings), revision: this.revision, events: [...this.events] } }
+  snapshot() { return { settings: structuredClone(this.settings), revision: this.revision,
+    guard: { gateway_epoch: this.epoch, revision: this.revision }, events: [...this.events] } }
   record(event: string) {
     this.events.push({ time: new Date().toISOString(), event })
     if (this.events.length > 100) this.events.shift()
@@ -51,11 +54,19 @@ export class Management {
     // A failed write must not change live admission. Atomic replacement also works on Windows.
     const temporary = this.file + '.tmp'
     writeFileSync(temporary, JSON.stringify(next, null, 2) + '\n', { mode: 0o600 })
+    const fd = openSync(temporary, 'r+'); try { fsyncSync(fd) } finally { closeSync(fd) }
     renameSync(temporary, this.file)
     this.settings = next
     this.revision++
     this.record('管理员保存了接收范围与通知设置')
     return this.snapshot()
+  }
+  updateGuarded(value: unknown, guard: unknown) {
+    const g = guard as { gateway_epoch?: string; revision?: number }
+    if (!g || Object.keys(g).sort().join() !== 'gateway_epoch,revision'
+        || g.gateway_epoch !== this.epoch || !Number.isInteger(g.revision)
+        || g.revision !== this.revision) throw Error('settings_conflict')
+    return this.update(value, g.revision)
   }
   accepts(input: Inbound): boolean {
     const s = this.settings

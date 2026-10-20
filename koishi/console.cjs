@@ -15,8 +15,23 @@ function configuration(env) {
   return { port, password, directory: env.TAKI_CONSOLE_STATE_DIR }
 }
 
-function install(ctx, config, manifest) {
+function install(ctx, config, manifest, assetsDirectory = path.join(__dirname, 'node_modules/taki-console-assets')) {
   const management = new Management(config.directory)
+  const readHealth = config.readHealth || require('./health.cjs').healthReader(ctx, manifest, config.identity || {})
+  const methods = ['overview', 'requests/list', 'requests/detail', 'sources', 'notices/list', 'query-metrics', 'groups/list', 'settings/update']
+  const reads = new Map()
+  async function readBackend(resource, params = {}) {
+    const receiver = ctx.takiTransport?.receiver
+    if (!receiver) throw Error('backend_unavailable')
+    const query = new URLSearchParams(params).toString()
+    const url = '/v1/admin/' + resource + (query ? '?' + query : '')
+    const existing = reads.get(url)
+    if (existing && Date.now() < existing.until) return existing.value
+    const value = receiver.client.request(url, undefined, 131072, false, AbortSignal.timeout(2000))
+    reads.set(url, { until: Date.now()+5000, value })
+    if (reads.size > 64) reads.delete(reads.keys().next().value)
+    try { return await value } catch (error) { reads.delete(url); throw Error(error.code || 'backend_unavailable') }
+  }
   const sessions = new WeakMap()
   const hash = value => createHash('sha256').update(value).digest()
   const passwordHash = hash(config.password)
@@ -48,7 +63,7 @@ function install(ctx, config, manifest) {
       socket.addEventListener('message', event => {
         let value
         try { value = JSON.parse(event.data.toString()) } catch { socket.close(1008); return }
-        if (!value || !['ping', 'taki/login', 'taki/logout', 'taki/status', 'taki/settings'].includes(value.type)
+        if (!value || !['ping', 'taki/login', 'taki/logout', 'taki/status', 'taki/settings', ...methods.map(m => 'taki/'+m)].includes(value.type)
             || !Array.isArray(value.args) || value.args.length > 2
             || typeof value.id !== 'string' || value.id.length > 128) { socket.close(1008); return }
         void client.receive(event).catch(() => socket.close(1011))
@@ -59,9 +74,17 @@ function install(ctx, config, manifest) {
   const server = ctx.plugin(Server, { host: '127.0.0.1', port: config.port, maxPort: config.port })
   const consoleScope = ctx.plugin(LocalConsole, { uiPath: '', apiPath: '/status', open: false, devMode: false })
   const registration = ctx.inject(['console', 'server'], scoped => {
+    const listen = (name, callback, options) => scoped.console.addListener(name, async function(...args) {
+      try { return await callback.apply(this, args) }
+      catch (error) {
+        const safe = Error(typeof error === 'string' ? error : error.message || 'management_failed')
+        safe.stack = safe.message
+        throw safe
+      }
+    }, options)
     scoped.server._ws.options.maxPayload = 32768
-    scoped.console.addEntry(path.join(__dirname, 'node_modules/taki-console-assets/index.js'))
-    scoped.console.addListener('taki/login', function(password) {
+    scoped.console.addEntry(assetsDirectory)
+    listen('taki/login', function(password) {
       if (Date.now() < nextLogin) throw Error('请稍后再登录')
       nextLogin = Date.now() + 1000
       if (typeof password !== 'string' || password.length > 256 || !timingSafeEqual(hash(password), passwordHash)) throw Error('登录失败')
@@ -69,8 +92,8 @@ function install(ctx, config, manifest) {
       management.record('管理员已登录')
       return true
     })
-    scoped.console.addListener('taki/logout', function() { sessions.delete(this); return true })
-    scoped.console.addListener('taki/status', function() {
+    listen('taki/logout', function() { sessions.delete(this); return true })
+    listen('taki/status', function() {
       const receiver = ctx.takiTransport?.receiver
       const health = receiver?.health()
       const bot = ctx.bots.find(b => b.platform === 'qq' && b.config.id === receiver?.config.appId)
@@ -78,12 +101,35 @@ function install(ctx, config, manifest) {
         handshake: !!health?.handshake, receiverActive: !!health?.active,
         backendNotices: !!health?.backend?.notices_enabled, botStatus: bot?.status ?? null }
     }, { authority: 5 })
-    scoped.console.addListener('taki/settings', function(value, revision) {
-      try { return management.update(value, revision) }
+    listen('taki/settings', function(value, revision) {
+      throw Error('upgrade_required')
+    }, { authority: 5 })
+    listen('taki/settings/update', function(value, guard) {
+      try { return management.updateGuarded(value, guard) }
       catch (error) {
-        if (error.message === '设置已更新，请刷新后重试') throw error
+        if (error.message === 'settings_conflict') throw error
         throw Error('保存失败：请检查设置格式和状态目录权限')
       }
+    }, { authority: 5 })
+    listen('taki/overview', async function() {
+      const health = await readHealth()
+      let backend
+      try { backend = await readBackend('overview') }
+      catch { backend = { sections: { backend: { availability: 'unavailable', data: null, reason_code: 'backend_unavailable', stale: true } } } }
+      return { ...management.snapshot(), health, backend,
+        gateway_observation: ctx.takiTransport?.receiver?.client.telemetry?.snapshot() || null }
+    }, { authority: 5 })
+    for (const [method, resource] of [['requests/list','requests'], ['sources','sources'], ['notices/list','notices'],
+      ['query-metrics','query-metrics'], ['groups/list','groups']]) {
+      listen('taki/'+method, function(params = {}) {
+        if (!params || typeof params !== 'object' || Array.isArray(params) || Object.keys(params).length > 8
+            || Object.values(params).some(v => typeof v !== 'string' || v.length > 2048)) throw Error('admin_parameters')
+        return readBackend(resource, params)
+      }, { authority: 5 })
+    }
+    listen('taki/requests/detail', function(id) {
+      if (typeof id !== 'string' || !/^[a-f0-9]{64}$/.test(id)) throw Error('admin_request_id')
+      return readBackend('requests/'+id)
     }, { authority: 5 })
   })
   return { management, async ready() {

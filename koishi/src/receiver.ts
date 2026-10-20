@@ -192,5 +192,6 @@ export class Receiver {
     catch { this.log.warn('gateway retirement unconfirmed; no new local sends') }
     await Promise.allSettled([...this.jobs.values()].map(job => job.promise))
     await noticesClosed
+    await this.client.telemetry?.close()
   }
 }

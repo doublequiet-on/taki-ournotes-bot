@@ -36,7 +36,7 @@ def build(python_artifact, node, output):
         gateway=stage/'gateway';gateway.mkdir()
         for name in ('scripts','node_modules','console'):
             shutil.copytree(ROOT/'koishi'/name,gateway/name,ignore=shutil.ignore_patterns('.bin','*.tsbuildinfo'))
-        for name in ('package.json','package-lock.json','run.cjs','console.cjs'):
+        for name in ('package.json','package-lock.json','run.cjs','console.cjs','health.cjs'):
             shutil.copy2(ROOT/'koishi'/name,gateway/name)
         subprocess.run([str(node),'node_modules/typescript/bin/tsc','-p','tsconfig.json','--outDir',str(gateway/'lib')],cwd=ROOT/'koishi',check=True)
         subprocess.run([str(node),'scripts/probe.cjs'],cwd=gateway,check=True,stdout=subprocess.DEVNULL)
@@ -54,8 +54,8 @@ def build(python_artifact, node, output):
             (rollback/name).write_bytes(subprocess.check_output(['git','show',rollback_ref+':deploy/'+name],cwd=ROOT))
         files={p.relative_to(stage).as_posix():sha(p) for p in sorted(stage.rglob('*')) if p.is_file()}
         application=ROOT/'src/ournotes_bot/application'
-        code_files=('backend.py','backend_protocol.py','delivery_ledger.py','replies.py','backend_bootstrap.py',
-                    'runtime_tasks.py','notice_gateway.py','notice_reports.py','data_owner.py')
+        import runpy
+        code_files=runpy.run_path(str(application/'backend_sources.py'))['CODE_FILES']
         manifest={'schema':1,'commit':commit,'controller_rollback_commit':rollback_ref,'node':identity,'lock_sha256':sha(gateway/'package-lock.json'),
                   'python_artifact':python.relative_to(stage).as_posix(),'python_sha256':sha(python),
                   'backend_code_digest':hashlib.sha256(b''.join((application/n).read_bytes() for n in code_files)).hexdigest(),

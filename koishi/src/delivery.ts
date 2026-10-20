@@ -15,6 +15,8 @@ export interface Attempt {
 export interface DeliveryEvents {
   intent(attempt: Attempt): Promise<'granted' | 'existing' | 'denied'>
   acknowledge(attempt: Attempt, result: Outcome): Promise<void>
+  observe?(span: { request_id: string; delivery_id: string; kind: 'upload' | 'send' | 'receipt_submit';
+    position: number; attempt: string | null; duration_ms: number }): void
 }
 export interface Limits {
   maxSends: number
@@ -99,17 +101,22 @@ export class QQDelivery {
     return promise
   }
   private async ack(attempt: Attempt, result: Outcome, advance: boolean): Promise<Outcome> {
+    const started = performance.now()
     try { await this.events.acknowledge(attempt, result) }
     catch {
       this.pendingAck = { attempt, result, advance }
       this.halted = true
       // Preserve the real platform fact; callers must inspect acknowledgement state.
       return result
-    }
+    } finally { this.observe('receipt_submit', Number(attempt.partId.split(':')[0]), attempt.attemptId, started) }
     if (advance) this.nextIndex++
     return result
   }
   get acknowledgementPending(): boolean { return Boolean(this.pendingAck) }
+  private observe(kind: 'upload' | 'send' | 'receipt_submit', position: number, attempt: string | null, started: number) {
+    this.events.observe?.({ request_id: this.inbound.requestId, delivery_id: this.deliveryId,
+      kind, position, attempt, duration_ms: performance.now()-started })
+  }
   async retryAcknowledgement(): Promise<boolean> {
     // Serialize with deliver(), including repeated ACK recovery callbacks.
     const work = this.tail.then(async () => {
@@ -131,6 +138,7 @@ export class QQDelivery {
     if (this.sequence >= this.limits.maxSends) return { status: 'aborted', reason: 'send_budget' }
     let media: { file_info: string } | undefined
     if (part.kind === 'image') {
+      const started = performance.now()
       try {
         const payload = { file_type: 1, srv_send_msg: false, file_data: Buffer.from(part.bytes).toString('base64') }
         const uploaded = this.inbound.kind === 'group'
@@ -141,6 +149,7 @@ export class QQDelivery {
         }
         media = { file_info: uploaded.file_info }
       } catch { return { status: 'upload_failed', reason: 'upload_error' } }
+      finally { this.observe('upload', index, null, started) }
     }
     if (!this.valid()) return { status: 'aborted', reason: 'inactive_or_expired' }
     const attempt: Attempt = { requestId: this.inbound.requestId, deliveryId: this.deliveryId, partId,
@@ -164,6 +173,7 @@ export class QQDelivery {
       content: part.kind === 'image' ? part.caption || ' ' : part.text,
       ...(media ? { media } : {}) }
     let result: Outcome
+    const started = performance.now()
     try {
       result = classifyReceipt(this.inbound.kind === 'group'
         ? await this.api.sendMessage(this.inbound.conversationId, payload)
@@ -171,7 +181,7 @@ export class QQDelivery {
     } catch (error) {
       const data = object(object(error)?.response)?.data
       result = object(data) ? classifyReceipt(data) : { status: 'uncertain', reason: 'transport_error' }
-    }
+    } finally { this.observe('send', index, attempt.attemptId, started) }
     if (result.status !== 'success') this.halted = true
     return this.ack(attempt, result, result.status === 'success')
   }

@@ -118,3 +118,23 @@ class QueryMetrics:
     @property
     def available(self) -> bool:
         return not self._disabled
+
+    def snapshot(self) -> dict:
+        """Read-only validated snapshot; never creates files or changes writer availability."""
+        # A query worker may hold this lock through fsync. Console reads run on
+        # the backend event loop and must not wait for that worker.
+        if not self._lock.acquire(blocking=False):
+            return {'available': False, 'write_available': not self._disabled,
+                    'reason_code': 'metrics_snapshot_busy', 'timezone': 'Asia/Shanghai', 'days': None}
+        try:
+            try:
+                exists = self.path.is_file()
+                record = self._load()
+                return {'available': exists, 'write_available': not self._disabled,
+                        'reason_code': None if exists else 'metrics_not_collected',
+                        'timezone': 'Asia/Shanghai', 'days': record['days']}
+            except (OSError, ValueError, TypeError, KeyError, json.JSONDecodeError):
+                return {'available': False, 'write_available': not self._disabled,
+                        'reason_code': 'metrics_snapshot_invalid', 'timezone': 'Asia/Shanghai', 'days': None}
+        finally:
+            self._lock.release()

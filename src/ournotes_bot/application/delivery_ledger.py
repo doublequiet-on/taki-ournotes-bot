@@ -78,6 +78,17 @@ class Ledger:
     def parts(self, delivery):
         return [dict(row) for row in self.db.execute('SELECT * FROM parts WHERE delivery=? ORDER BY position', (delivery,))]
 
+    def admin_rows(self):
+        """Bounded read of retained facts, without expiry or lifecycle transitions."""
+        return [dict(row) for row in self.db.execute(
+            'SELECT id,delivery,created,status FROM requests ORDER BY created DESC,id DESC LIMIT ?', (self.capacity,))]
+
+    def admin_parts(self):
+        grouped = {}
+        for row in self.db.execute('SELECT delivery,id,position,mode,status FROM parts ORDER BY delivery,position'):
+            grouped.setdefault(row['delivery'], []).append(dict(row))
+        return grouped
+
     def active(self, epoch):
         row = self.db.execute('SELECT active FROM epochs WHERE epoch=?', (epoch,)).fetchone()
         return bool(row and row[0])

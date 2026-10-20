@@ -2,6 +2,7 @@
 import type { Inbound } from './ingress'
 import type { Attempt, DeliveryEvents, Outcome } from './delivery'
 import { setTimeout as delay } from 'node:timers/promises'
+import { Telemetry, Span } from './telemetry'
 
 export const protocol = { major: 1, minor: 0 }
 export const capability = 'qq-m1-candidate'
@@ -17,6 +18,12 @@ export class BackendError extends Error {
   constructor(public readonly code: string, public readonly status = 0) { super(code) }
 }
 export class BackendClient implements DeliveryEvents {
+  readonly telemetry = new Telemetry(events => {
+    if (!this.readiness?.backend_epoch) return Promise.reject(new BackendError('not_ready'))
+    return this.request('/v1/admin/telemetry', { backend_epoch: this.readiness.backend_epoch, events },
+      131072, false, AbortSignal.timeout(1500))
+  })
+  observe(span: Span): void { this.telemetry.enqueue(span) }
   readonly base: string
   readiness?: { notices_enabled?: boolean; backend_code_digest?: string; backend_epoch?: string }
   private contextAllowed = true
