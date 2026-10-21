@@ -34,6 +34,22 @@ Haneoka 实例提供 catalog_sync/catalog_reload/assets_verify/assets_repair/ass
 
 输出 /run/taki-ops/host-v1.json，root:ubuntu、0640，目录 0750 不允许应用写入。30 秒采集，超过 90 秒标记陈旧，未来时间标记时钟变化。目录大小最多每 10 分钟统计，扫描限 2 秒；complete=false 的字节数只是已扫描部分。business_data 包含 assets，不可相加。磁盘门槛按 releases 和 backups 所在文件系统分别报告。
 
+安装准备：从已通过组合哈希／兼容门禁的产物取 `controller/ops_snapshot.py` 与 `controller/service-templates/taki-ops-snapshot.*.example`，先核对受信控制器已提供配套的 `status_document` 和 `Engine(..., backend=None)`；不同版本不能盲目覆盖。模板使用现有 ubuntu 应用组，其他实例须先核对组与固定目录。本轮只交付文件，以下操作需另行批准后由运维执行：
+
+```sh
+# 在核验后的组合包 controller 目录内执行；不更新任何机器人代码或服务。
+sudo install -o root -g root -m 0644 ops_snapshot.py /usr/local/lib/taki-updater/ops_snapshot.py
+sudo install -o root -g root -m 0644 service-templates/taki-ops-snapshot.service.example /etc/systemd/system/taki-ops-snapshot.service
+sudo install -o root -g root -m 0644 service-templates/taki-ops-snapshot.timer.example /etc/systemd/system/taki-ops-snapshot.timer
+sudo systemd-analyze verify /etc/systemd/system/taki-ops-snapshot.service /etc/systemd/system/taki-ops-snapshot.timer
+sudo systemctl daemon-reload
+sudo systemctl enable --now taki-ops-snapshot.timer
+systemctl show taki-ops-snapshot.timer -p ActiveState -p UnitFileState
+stat -c '%U:%G %a %n' /run/taki-ops /run/taki-ops/host-v1.json
+```
+
+验收需检查采集时间持续更新、应用不可写、未含凭据，且 `taki-updater.timer` 仍暂停；网页只读该文件。撤除时仅停用 `taki-ops-snapshot.timer`，不启动更新器、不删除应用设置或业务库。真实主机采集、systemd 启用及恢复演练均不由离线测试替代。
+
 控制器记录、进程 cwd 线索和网关/后端启动身份分开显示。cwd 不等于模块摘要；控制器目标只代表最近观察，非实时 main。仅在采集代次和 PID 对得上时比较运行版本。
 
 现有备份清单只能证明相应归档存在，不能证明摘要或恢复成功。可读取独立批准流程产生、root 所有的 /var/lib/taki-updater/ops-recovery-proof.v1.json：schema=1，objects 以 code_environment/business_data/console_settings/trusted_configuration/isolated_restore/offsite_copy 为键，每项包含 artifact_sha256、verified_at，可选 restore_verified。页面标注为外部受信记录，不声称本采集器执行了核验，也不据此推断归档当前存在。
