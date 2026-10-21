@@ -97,6 +97,7 @@ class SourceOperations:
         if repair:
             from ..visuals import invalidate_visual_assets
             invalidate_visual_assets(repaired)
+            invalidate_visual_assets([url for url,_,state in rows if state == 'reused'], failures_only=True)
             valid = {url:item for url,item,_ in rows if item is not None}
             if retry:
                 valid = {**prior, **valid}
@@ -105,7 +106,7 @@ class SourceOperations:
                 manifest_saved = True
             except OSError:
                 manifest_saved = False
-        fixed_failed, fixed_repaired = [], []
+        fixed_failed, fixed_repaired, fixed_reused = [], [], []
         for name,spec in MANIFEST.items():
             if fixed_retry is not None and name not in fixed_retry:
                 continue
@@ -119,10 +120,13 @@ class SourceOperations:
                     prepare_note_assets(base/'game-assets',names=(name,));fixed_repaired.append(name)
                 elif not valid:
                     fixed_failed.append(name)
+                else:
+                    fixed_reused.append(name)
             except (OSError,ValueError,ChartDataError):
                 fixed_failed.append(name)
         if repair:
             invalidate_game_assets(fixed_repaired)
+            invalidate_game_assets(fixed_reused, failures_only=True)
             try:
                 artwork.atomic_write(failed_path,json.dumps({'identities':saved['identities'],'urls':failures,'fixed_assets':fixed_failed}).encode())
             except OSError:
