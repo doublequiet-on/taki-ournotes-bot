@@ -60,6 +60,7 @@
 .taki-console .brand-image{width:54px;height:54px;object-fit:cover;object-position:40% 25%;border-radius:18px}
 .taki-console .status-bar{position:sticky;bottom:0;display:flex;align-items:center;justify-content:space-between;background:var(--surface);z-index:2;padding:6px 16px;border-radius:18px}
 .taki-console :is(p,dd,li,strong,span){overflow-wrap:anywhere}
-.taki-console .guide{display:none}
-@media(min-width:1000px){.taki-console>div{padding-left:180px}.taki-console nav{position:fixed;top:128px;bottom:80px;width:160px;flex-direction:column;align-items:stretch;margin-left:-180px;border-radius:20px}.taki-console nav button{text-align:left}}
+.taki-console .guide{padding:8px 16px;border:0;background:var(--soft)}
+.taki-console .guide summary{min-height:32px;padding:4px 0}
+@media(min-width:1000px){.taki-console>div{padding-left:180px}.taki-console nav{position:fixed;top:128px;width:160px;flex-direction:column;align-items:stretch;margin-left:-180px;border-radius:20px}.taki-console nav button{text-align:left}}
 @media(max-width:600px){.taki-console nav{flex-wrap:wrap}.taki-console .status-bar{font-size:12px}.taki-console .status-bar button{margin:0}}
