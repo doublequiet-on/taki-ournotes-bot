@@ -44,7 +44,7 @@ class OperationJournal {
     const content=JSON.stringify(this.value)+'\n',temporary=this.file+'.tmp'
     if(Buffer.byteLength(content)>4*1024*1024)throw Error('ops_journal_capacity')
     try{fs.writeFileSync(temporary,content,{mode:0o600});const fd=fs.openSync(temporary,'r+');try{fs.fsyncSync(fd)}finally{fs.closeSync(fd)}fs.renameSync(temporary,this.file)}
-    catch(e){try{if(fs.readFileSync(this.file,'utf8')===content)return}catch{}throw Error('ops_journal_write_unconfirmed')}
+    catch(e){try{if(fs.readFileSync(this.file,'utf8')===content)return}catch{}this.error='ops_journal_write_unconfirmed';throw Error(this.error)}
   }
   begin(action,before,after,extra={}){
     if(this.error)throw Error(this.error)
@@ -61,7 +61,17 @@ class OperationJournal {
     entry.summary={fields:Object.keys(entry.after).filter(k=>!equal(entry.before[k],entry.after[k])),before_digest:digest(entry.before),after_digest:digest(entry.after)}
     delete entry.before;delete entry.after
   }
-  finish(entry,state,code=null){entry.state=state;entry.code=code;entry.finished_at=Date.now();this.compact(entry);this.save();return entry}
+  finish(entry,state,code=null){
+    const previous={...entry}
+    entry.state=state;entry.code=code;entry.finished_at=Date.now()
+    this.compact(entry)
+    try{this.save()}catch(error){
+      for(const key of Object.keys(entry))delete entry[key]
+      Object.assign(entry,previous,{state:'intent',code:'save_unconfirmed'})
+      this.error='ops_journal_write_unconfirmed';throw error
+    }
+    return entry
+  }
   apply(action,before,after,run,extra={}){
     const entry=this.begin(action,before,after,extra)
     let result

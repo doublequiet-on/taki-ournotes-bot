@@ -6,6 +6,7 @@ const guide=(title,text)=>h('details',{class:'guide'},[h('summary',title),h('p',
 const technical=(title,children)=>h('details',{class:'technical'},[h('summary',title),...children]);
 const deliveryLabel=item=>item.delivery_reason==='completed_without_output'?'已完成，无输出':(labels[item.delivery_state]||item.delivery_state)+(item.uncertain_parts?'（仍有片段结果未确认）':'');
 const names={available:'可用',partial:'部分采集',unavailable:'暂不可用',unsupported:'尚不支持',
+  policy_blocked:'策略已暂停',backend_stage:'后端观测阶段',effective_notifications:'当前策略允许通知',policy_observed_at:'策略检查时间',
   code:'结果',stage:'阶段',before_version:'更新前版本',after_version:'当前版本',added_counts:'本次新增',persisted:'已保存',published:'本次已发布到内存',data_available:'资料可用',snapshot:'目标快照',checked_at:'检查时间',checked:'已核验',reused:'复用',repaired:'已修复',failed:'失败',manifest_saved:'清单已保存',scope:'范围',failure_codes:'失败原因',fixed_asset_failures:'固定素材失败项',
   upstream_unchanged:'已是当前上游版本',synchronized:'同步完成',updated_unsaved:'已更新，缓存保存失败',refresh_failed_cached:'同步失败，继续使用旧数据',no_available_data:'暂无可用数据',assets_partial:'素材部分完成',assets_verified:'素材核验完成',catalog_snapshot_and_builtin_assets:'资料快照与固定游戏素材',
   runtime:'运行身份',controller:'更新控制器',services:'系统单元',processes:'进程观察',disk:'空间门槛',sizes:'目录占用',backup_coverage:'备份覆盖',gateway_sha:'网关版本',current_sha:'控制器记录版本',previous_sha:'前一版本',observed_target:'最近观察目标',paused:'已暂停',paused_reason:'暂停原因',preparation_step:'准备阶段',retry_after:'最早重试时间',blocked_reason:'阻止原因',download:'下载进度',idle:'无活动事务',

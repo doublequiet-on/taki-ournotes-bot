@@ -22,6 +22,7 @@ class Controls {
     if(local){this.management.groups.assertPersistent();if(this.management.groups.snapshot().revision!==value.group_revision)throw Error('group_policy_conflict')}
   }
   existing(value){
+    if(this.journal.error)throw Error(this.journal.error)
     const old=this.journal.find(value.operation_id)
     if(old&&old.signature!==signature(value))throw Error('control_id_conflict')
     return old

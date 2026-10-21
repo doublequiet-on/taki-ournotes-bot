@@ -37,7 +37,33 @@ function controlProbe(directory){
   const broken=new OperationJournal(brokenDir,'fixture'),blocked=new Controls(normal,broken)
   assert.equal(blocked.snapshot().available,false)
   assert.equal(normal.snapshot().settings.queriesEnabled,true)
-  console.log(JSON.stringify({controls:true,batchRevision:true,offPreserved:true,idempotency:true,restartRestore:true,abaConflict:true,externalEditPreserved:true,corruptionIsolated:true}))
+  const faultDir=path.join(directory,'control-write-failure'),faultManagement=new Management(faultDir,identity)
+  const faultJournal=new OperationJournal(faultDir,'fixture'),faultControls=new Controls(faultManagement,faultJournal)
+  const save=faultJournal.save.bind(faultJournal);let writes=0
+  faultJournal.save=()=>{if(++writes===2)throw Error('fixture result write failure');return save()}
+  const fault={operation_id:'f'.repeat(32),action:'maintenance',group_ids:[],guard:faultManagement.snapshot().guard,group_revision:0}
+  assert.throws(()=>faultControls.start(fault),/fixture result write failure/)
+  assert.equal(faultManagement.snapshot().settings.queriesEnabled,false)
+  assert.equal(faultJournal.find(fault.operation_id).state,'intent');assert.equal(faultControls.snapshot().available,false)
+  assert.throws(()=>faultControls.start(fault),/ops_journal_write_unconfirmed/)
+  assert.equal(faultManagement.snapshot().revision,1,'retry must not reapply the control')
+  const restarted=new OperationJournal(faultDir,'fixture');restarted.reconcile(faultManagement)
+  const recovered=new Controls(faultManagement,restarted)
+  assert.equal(restarted.find(fault.operation_id).state,'applied')
+  assert.equal(recovered.snapshot().items[0].restorable,false,'missing durable post-tag cannot authorize restoration')
+  console.log(JSON.stringify({controls:true,batchRevision:true,offPreserved:true,idempotency:true,restartRestore:true,abaConflict:true,externalEditPreserved:true,corruptionIsolated:true,resultWriteFailureIsolated:true}))
+}
+function journalProbe(directory){
+  const {OperationJournal}=require('../operation-journal.cjs'),folder=path.join(directory,'journal-faults')
+  fs.mkdirSync(folder)
+  const j=new OperationJournal(folder,'fixture'),save=j.save.bind(j);let writes=0,executions=0
+  j.save=()=>{if(++writes===2)throw Error('fixture result write failure');return save()}
+  assert.throws(()=>j.apply('settings/update',{enabled:true},{enabled:false},()=>{executions++}),/fixture result write failure/)
+  assert.equal(executions,1);assert.equal(j.snapshot().available,false);assert.equal(j.snapshot().items[0].state,'intent')
+  assert.equal(JSON.parse(fs.readFileSync(j.file,'utf8')).entries[0].state,'intent')
+  assert.throws(()=>j.apply('settings/update',{}, {},()=>{executions++}),/ops_journal_write_unconfirmed/);assert.equal(executions,1)
+  fs.writeFileSync(j.file,JSON.stringify({schema:1,identity:'fixture',entries:[null]}))
+  assert.equal(new OperationJournal(folder,'fixture').snapshot().available,false)
 }
 async function connect(origin='http://127.0.0.1:15143'){
   const ws=new WebSocket('ws://127.0.0.1:15143/status',{origin}),pending=new Map();let seq=0
@@ -47,8 +73,12 @@ async function connect(origin='http://127.0.0.1:15143'){
 }
 async function main(){
   const dir=fs.mkdtempSync(path.join(os.tmpdir(),'taki-console-rpc-')),ctx=new Context(),transport=new TakiTransport(ctx)
+  journalProbe(dir)
   let reads=0,offset=0;const clock=Date.now;Date.now=()=>clock()+offset
-  transport.receiver={client:{request:async()=>{reads++;return{sections:{}}}},health:()=>({})};ctx.set('takiTransport',transport)
+  const targets=['pending','sending','uncertain','sent','claimed','permission_unknown'].map((stage,i)=>({group_id:'g'+String(i).padStart(2,'0'),stage,ledger_status:stage,claim:{status:stage}}))
+  const noticeFixture={sections:{notices:{data:{targets}},notice_target:{data:{targets}}}}
+  const noticeBefore=JSON.stringify(noticeFixture)
+  transport.receiver={client:{request:async url=>{reads++;return url.includes('/notices')||url.includes('/ops/notice-targets/')?noticeFixture:{sections:{}}}},health:()=>({})};ctx.set('takiTransport',transport)
   const manager=install(ctx,{port:15143,password:'fixture-console-password-000000',directory:dir},{commit:'b'.repeat(40)})
   const clients=[]
   const methods=['overview','requests/list','requests/detail','sources','notices/list','query-metrics','groups/list','groups/update','settings/update',
@@ -96,6 +126,27 @@ async function main(){
     assert.equal((await a.call('taki/requests/detail','../secret')).error,'admin_request_id')
     const policy={label:'',queries:'inherit',notifications:'inherit',natural_query:'inherit'}
     for(let i=0;i<30;i++)manager.management.groups.update('g'+String(i).padStart(2,'0'),policy,i)
+    const noticeRows=async method=>(await a.call(method,...(method==='taki/ops/notice-target'?['g00']:[]))).value.sections[method==='taki/ops/notice-target'?'notice_target':'notices'].data.targets
+    const saveSettings=async changes=>{const current=(await a.call('taki/status')).value;const result=await a.call('taki/settings/update',{...current.settings,...changes},current.guard);assert.ok(result.value,result.error)}
+    await saveSettings({notificationsEnabled:false})
+    for(const method of ['taki/notices/list','taki/ops/notice-target']){
+      const rows=await noticeRows(method)
+      assert.equal(rows[0].stage,'policy_blocked');assert.equal(rows[0].backend_stage,'pending')
+      assert.deepEqual(rows[0].notification_reasons,['global_notifications_disabled'])
+      assert.deepEqual(rows.slice(1,4).map(r=>r.stage),['sending','uncertain','sent'])
+      assert.equal(rows[4].stage,'policy_blocked');assert.equal(rows[4].claim.status,'claimed')
+      assert.equal(rows[5].stage,'permission_unknown')
+    }
+    await saveSettings({notificationsEnabled:true})
+    assert.equal((await noticeRows('taki/notices/list'))[0].stage,'pending')
+    manager.management.groups.update('g00',{...policy,notifications:'pause'},30)
+    assert.deepEqual((await noticeRows('taki/ops/notice-target'))[0].notification_reasons,['group_notifications_paused'])
+    manager.management.groups.update('g00',policy,31)
+    await saveSettings({groupAllowlist:['g01']})
+    assert.deepEqual((await noticeRows('taki/notices/list'))[0].notification_reasons,['global_group_excluded'])
+    await saveSettings({groupAllowlist:[]})
+    assert.equal((await noticeRows('taki/notices/list'))[0].effective_notifications,true)
+    assert.equal(JSON.stringify(noticeFixture),noticeBefore,'policy projection must not mutate cached ledger facts')
     const first=(await a.call('taki/groups/list',{limit:'10'})).value.sections.groups
     const second=(await a.call('taki/groups/list',{limit:'10',cursor:first.next_cursor})).value.sections.groups
     assert.equal(first.data.length,10);assert.equal(second.data.length,10)
