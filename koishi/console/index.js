@@ -20,7 +20,7 @@ const Page={setup() {
       }
       if(ticks%3===1)await s.load(s.jobs,'ops/jobs/list');
       if(tab.value==='sources'&&s.jobDetail.value&&['queued','running'].includes(s.jobDetail.value.state))await s.load(s.jobDetail,'ops/jobs/detail',s.jobDetail.value.id);
-      if(ticks%12===1)await Promise.all([s.load(s.sources,'sources'),s.load(s.metrics,'query-metrics'),s.load(s.groups,'groups/list'),s.load(s.notices,'notices/list'),s.load(s.audit,'ops/audit')]);
+      if(ticks%12===1)await Promise.all([s.load(s.sources,'sources'),s.load(s.metrics,'query-metrics'),s.load(s.groups,'groups/list'),s.load(s.notices,'notices/list'),s.load(s.audit,'ops/audit'),s.load(s.host,'ops/host')]);
     } finally {polling=false;}
   }
   const visible=() => {if(document.hidden)s.invalidate();else{ticks=0;void poll();}};

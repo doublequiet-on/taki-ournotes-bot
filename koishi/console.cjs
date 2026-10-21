@@ -6,6 +6,7 @@ const Server = require('@koishijs/plugin-server').default
 const { Management, validateSettings } = require('./lib/management')
 const { validateGroupPolicy } = require('./lib/group-policies')
 const { OperationJournal } = require('./operation-journal.cjs')
+const { readHostSnapshot } = require('./ops-host.cjs')
 
 function configuration(env) {
   if (env.TAKI_CONSOLE_ENABLED !== '1') return
@@ -23,7 +24,7 @@ function install(ctx, config, manifest, assetsDirectory = path.join(__dirname, '
   const management = new Management(config.directory, config.identity)
   const readHealth = config.readHealth || require('./health.cjs').healthReader(ctx, manifest, config.identity || {})
   const methods = ['overview', 'requests/list', 'requests/detail', 'sources', 'notices/list', 'query-metrics', 'groups/list', 'groups/update', 'settings/update',
-    'ops/jobs/list','ops/jobs/detail','ops/jobs/start','ops/export','ops/audit']
+    'ops/jobs/list','ops/jobs/detail','ops/jobs/start','ops/export','ops/audit','ops/host','ops/notice-target']
   const journal = new OperationJournal(config.directory, management.groups.snapshot().instance ? JSON.stringify(management.groups.snapshot().instance) : manifest.commit)
   journal.reconcile(management)
   const reads = new Map()
@@ -144,9 +145,29 @@ function install(ctx, config, manifest, assetsDirectory = path.join(__dirname, '
       reads.delete('/v1/admin/ops/jobs');return result
     }, {authority:5})
     listen('taki/ops/audit', function() { return journal.snapshot() }, {authority:5})
+    listen('taki/ops/notice-target', function(id) {
+      if(typeof id!=='string'||!/^[A-Za-z0-9_-]{1,128}$/.test(id))throw Error('admin_group')
+      return readBackend('ops/notice-targets/'+id)
+    }, {authority:5})
+    listen('taki/ops/host', async function() {
+      const snapshot=readHostSnapshot(config.hostSnapshotPath)
+      const health=await readHealth()
+      const observed=snapshot.data?.processes,controller=snapshot.data?.controller
+      return {...snapshot,data:{...snapshot.data,runtime:{gateway_sha:manifest.commit,gateway_pid:process.pid,
+        backend_pid:health.backend_pid??null,backend_code_digest:health.backend_code_digest??null,observed_at:health.observed_at,stale:health.stale,
+        backend_digest_matches:!health.stale&&health.backend_code_digest&&manifest.backend_code_digest?health.backend_code_digest===manifest.backend_code_digest:null,
+        controller_matches_gateway:!snapshot.stale&&observed?.gateway?.pid===process.pid&&controller?.current_sha?controller.current_sha===manifest.commit:null,
+        expected_backend_digest:manifest.backend_code_digest??null}}}
+    }, {authority:5})
     listen('taki/ops/export', async function(id) {
       if(id!==undefined&&(typeof id!=='string'||!/^[a-f0-9]{64}$/.test(id)))throw Error('admin_request_id')
-      return readBackend('ops/export'+(id?'/'+id:''))
+      const result=await readBackend('ops/export'+(id?'/'+id:''))
+      const settings=management.snapshot(),policy=management.groups.snapshot(),audit=journal.snapshot()
+      return {...result,gateway:{release_sha:manifest.commit,protocol:{major:1,minor:1},health:await readHealth(),
+        controls:{queries_enabled:settings.settings.queriesEnabled,notifications_enabled:settings.settings.notificationsEnabled,
+          configured_group_count:settings.settings.groupAllowlist.length,policy_revision:policy.revision,policy_health:policy.reason_code,
+          recovery_policy:config.recoveryPolicy||null}},host:readHostSnapshot(config.hostSnapshotPath),
+        management_audit:{available:audit.available,items:audit.items.slice(0,20).map(({id,at,action,state,code})=>({id,at,action,state,code}))}}
     }, {authority:5})
     for (const [method, resource] of [['requests/list','requests'], ['sources','sources'], ['notices/list','notices'],
       ['query-metrics','query-metrics']]) {

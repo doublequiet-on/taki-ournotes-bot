@@ -29,7 +29,18 @@ export function attentionView(s,search) {
   return h('section',[h('h2','需要处理'),!problems.length?h('p',v?'暂无已知异常':'尚未取得状态'):h('ul',problems.map(([label,text,fn])=>h('li',[label,button(text,fn)]))),button('导出诊断',()=>s.exportDiagnostic())]);
 }
 export function operationsSettings(s) {
-  return h('div',[h('section',[h('h2','运行与恢复准备'),s.host.value?section(s.host.value,'主机状态'):h('p','采集器尚未安装或状态未取得'),button('刷新主机状态',()=>s.load(s.host,'ops/host'))]),
+  const host=s.host.value,data=host?.data,runtime=data?.runtime,controller=data?.controller;
+  const timer=data?.services?.['taki-updater.timer'];
+  const short=v=>v?v.slice(0,8):'尚未采集',proof=v=>v===true?'有记录':v===false?'未通过':'尚未采集';
+  const objects={code_environment:'代码与环境',business_data:'业务数据',console_settings:'设置与群策略',trusted_configuration:'控制器与系统配置',isolated_restore:'隔离恢复',offsite_copy:'异地副本'};
+  return h('div',[h('section',[h('h2','运行与恢复准备'),button('刷新主机状态',()=>s.load(s.host,'ops/host')),
+    h('div',{class:'stats'},[[short(runtime?.gateway_sha),'网关运行版本'],[short(controller?.current_sha),'控制器记录'],[short(controller?.previous_sha),'前一版本']].map(([value,label])=>h('div',[h('strong',value),h('span',label)]))),
+    controller?.paused&&h('p','更新控制器已暂停'),host?.reason_code&&h('p',({host_collector_not_installed:'主机采集器尚未安装',host_snapshot_stale:'主机快照已过期',host_clock_changed:'主机观测时间需要核对'})[host.reason_code]||'主机观测暂不可用'),
+    timer&&h('p',`自动更新定时器：${timer.UnitFileState==='disabled'||timer.UnitFileState==='masked'?'已停用':timer.UnitFileState||'未知'} · ${timer.ActiveState==='active'?'已激活':timer.ActiveState==='inactive'?'未激活':'状态未知'}`),
+    data?.backup_coverage&&h('details',[h('summary','备份覆盖与核验记录'),h('ul',data.backup_coverage.map(row=>h('li',[
+      h('strong',objects[row.object]||row.object),h('span',`归档存在：${row.archive_exists===true?'是':row.archive_exists===false?'否':'未知'} · 摘要核验：${proof(row.checksum_verified)} · 恢复核验：${proof(row.restore_verified)}`),
+      row.evidence_at&&h('small',`外部受信记录 ${stamp(row.evidence_at)}`)])))]),
+    host&&h('details',[h('summary','运行、空间与恢复详情'),section(host,'主机状态')])]),
     h('section',[h('h2','管理记录'),button('刷新管理记录',()=>s.load(s.audit,'ops/audit')),
       s.audit.value&&!s.audit.value.available&&h('p',{role:'alert'},'管理记录不可用'),
       h('ul',(s.audit.value?.items||[]).slice(0,25).map(e=>h('li',`${new Date(e.at).toLocaleString()} · ${e.action} · ${states[e.state]||e.state}`)))])]);

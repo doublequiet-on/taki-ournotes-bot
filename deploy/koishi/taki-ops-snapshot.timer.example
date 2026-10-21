@@ -1,0 +1,11 @@
+[Unit]
+Description=Collect Taki read-only operations facts
+
+[Timer]
+OnBootSec=30
+OnUnitActiveSec=30
+AccuracySec=5
+Unit=taki-ops-snapshot.service
+
+[Install]
+WantedBy=timers.target

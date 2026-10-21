@@ -15,7 +15,7 @@ async function main(){
   const manager=install(ctx,{port:15143,password:'fixture-console-password-000000',directory:dir},{commit:'b'.repeat(40)})
   const clients=[]
   const methods=['overview','requests/list','requests/detail','sources','notices/list','query-metrics','groups/list','groups/update','settings/update',
-    'ops/jobs/list','ops/jobs/detail','ops/jobs/start','ops/export','ops/audit']
+    'ops/jobs/list','ops/jobs/detail','ops/jobs/start','ops/export','ops/audit','ops/host','ops/notice-target']
   try{
     await ctx.start();await manager.ready();const a=await connect();clients.push(a.ws)
     for(const m of methods)assert.equal((await a.call('taki/'+m)).error,'unauthorized')
@@ -29,6 +29,12 @@ async function main(){
       assert.equal((await a.call('taki/login','fixture-console-password-000000')).error,'请稍后再登录')
     } finally {Date.now=()=>clock()+offset}
     const state=(await a.call('taki/status')).value
+    const {readHostSnapshot}=require('../ops-host.cjs'),hostFile=path.join(dir,'host-fixture.json')
+    fs.writeFileSync(hostFile,JSON.stringify({schema:'taki-host-ops-v1',observed_at:Date.now()/1000-120,controller:{current_sha:'a'.repeat(40)}}),{mode:0o600})
+    assert.equal(readHostSnapshot(hostFile).stale,true)
+    fs.writeFileSync(hostFile,'broken')
+    assert.equal(readHostSnapshot(hostFile).availability,'unavailable')
+    assert.equal((await a.call('taki/ops/host')).value.reason_code,'host_collector_not_installed')
     assert.equal((await a.call('taki/ops/jobs/detail','../secret')).error,'ops_identity')
     assert.equal((await a.call('taki/ops/export','../secret')).error,'admin_request_id')
     assert.equal((await a.call('taki/ops/jobs/start',{command:'reboot'})).error,'ops_shape')

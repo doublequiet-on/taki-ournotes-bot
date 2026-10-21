@@ -8,6 +8,7 @@ import json
 import math
 import secrets
 import re
+import sqlite3
 from collections import Counter
 from contextlib import closing
 from datetime import datetime, timedelta, timezone
@@ -65,7 +66,10 @@ class Admin:
             data = {'request': self.detail(request_id)}
         else:
             data = {'overview': self.overview(), 'sources': self.sources(),
-                    'attention': self.listing({'attention': 'true', 'limit': '25'})}
+                    'attention': self.listing({'attention': 'true', 'limit': '25'}),'metrics':self.metrics(),'notices':self.notices()}
+            notice=data['notices']['sections']['notices']
+            if isinstance(notice.get('data'),dict):
+                notice['data']={k:v for k,v in notice['data'].items() if k in ('items','targets','deployment_revision','report_status','candidate_count','time_semantics')}
         aliases = {}
         def anonymous(value):
             if isinstance(value, dict):
@@ -216,7 +220,60 @@ class Admin:
             now=self.backend.clock()), background=section(observation, availability='partial',
             reason=None if observation else 'background_observation_not_collected', now=self.backend.clock()))
 
+    def notice_targets(self, db, owner, groups):
+        tables={row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        has_claims='gateway_notice_claims' in tables
+        claims={}
+        if has_claims:
+            claims={(gid,revision):dict(notice_id=nid,status=status,expires_at=expires) for nid,gid,revision,status,expires in db.execute(
+                'SELECT nid,gid,revision,status,expires FROM gateway_notice_claims WHERE app=?',(owner.store.app_id,))}
+        getter=getattr(owner,'deployment_identity',None)
+        try:identity=getter() if callable(getter) else None
+        except (OSError,ValueError,TypeError):identity=None
+        revision=identity[0] if identity else None
+        targets=[]
+        notices={(gid,rev):status for gid,rev,status in db.execute('SELECT gid,revision,status FROM notices WHERE app=?',(owner.store.app_id,))}
+        for group in groups:
+            gid=group['group_id'];claim=claims.get((gid,revision));status=notices.get((gid,revision))
+            if status in ('sent','failure','uncertain','sending','disabled'):stage=status
+            elif claim:stage='lease_expired' if claim['status']=='claimed' and claim['expires_at']<=self.backend.clock() else claim['status']
+            elif not revision:stage='deployment_target_unknown'
+            elif not group['present']:stage='group_removed'
+            elif group['allowed']==0:stage='permission_denied'
+            elif group['allowed'] is None:stage='permission_unknown'
+            else:stage='pending'
+            targets.append({'group_id':gid,'deployment_revision':revision,'stage':stage,'ledger_status':status,'claim':claim,
+                'observation_times':self.backend.operations.notice_times(claim['notice_id']) if claim else None})
+        report_status=None
+        if revision:
+            row=db.execute('SELECT status FROM release_reports WHERE app=? AND revision=?',(owner.store.app_id,revision)).fetchone()
+            report_status=row[0] if row else None
+        return {'deployment_revision':revision,'report_status':report_status,'targets':targets,'claims_collected':has_claims,
+                'candidate_count':db.execute('SELECT count(*) FROM groups WHERE app=?',(owner.store.app_id,)).fetchone()[0],
+                'time_semantics':'server_observations_only; historical_times_unknown'}
+
+    def notice_target(self, gid):
+        try:return self._notice_target(gid)
+        except sqlite3.Error:
+            return self.envelope(notice_target=section(availability='unavailable',reason='notice_read_unavailable',now=self.backend.clock()))
+
+    def _notice_target(self, gid):
+        require(isinstance(gid,str) and re.fullmatch('[A-Za-z0-9_-]{1,128}',gid), 'admin_group')
+        owner=self.backend.notices
+        if owner is None:return self.envelope(notice_target=section(availability='unsupported',reason='notifications_disabled'))
+        with closing(owner.store.connect()) as db:
+            db.execute('PRAGMA query_only=ON');db.execute('PRAGMA busy_timeout=0');db.execute('BEGIN')
+            groups=[dict(zip(('group_id','present','allowed','observed_at'),row)) for row in db.execute(
+                'SELECT gid,present,allowed,event_at FROM groups WHERE app=? AND gid=?',(owner.store.app_id,gid))]
+            data=self.notice_targets(db,owner,groups)
+        return self.envelope(notice_target=section(data,availability='partial',reason='historical_notice_timestamps_missing',now=self.backend.clock()))
+
     def notices(self, params=None):
+        try:return self._notices(params)
+        except sqlite3.Error:
+            return self.envelope(notices=section(availability='unavailable',reason='notice_read_unavailable',now=self.backend.clock()))
+
+    def _notices(self, params=None):
         params = params or {}
         require(set(params) <= {'limit','cursor'}, 'admin_parameters')
         try:
@@ -239,6 +296,9 @@ class Admin:
             return self.envelope(notices=section(availability='unsupported', reason='notifications_disabled'))
         # Use the existing owner connection, never pending()/claims() or report generation.
         with closing(owner.store.connect()) as db:
+            db.execute('PRAGMA query_only=ON')
+            db.execute('PRAGMA busy_timeout=0')
+            db.execute('BEGIN')
             if window is None:
                 window = db.execute('SELECT COALESCE(MAX(rowid),0) FROM notices WHERE app=?',(owner.store.app_id,)).fetchone()[0]
             rows = db.execute('SELECT rowid,gid,revision,status FROM notices WHERE app=? AND rowid<=? AND rowid<? ORDER BY rowid DESC LIMIT ?',
@@ -252,7 +312,8 @@ class Admin:
             groups = [dict(zip(('group_id','present','allowed','observed_at'), row)) for row in db.execute(
                 'SELECT gid,present,allowed,event_at FROM groups WHERE app=? ORDER BY gid LIMIT 128',
                 (owner.store.app_id,))]
-        return self.envelope(notices=section({'items':items,'groups':groups,'next_cursor':token,
+            projection=self.notice_targets(db,owner,groups[:limit])
+        return self.envelope(notices=section({'items':items,'groups':groups,'next_cursor':token,**projection,
             'order':'record_insertion_desc','time_window':None},availability='partial',
             reason='notice_timestamps_not_collected',now=self.backend.clock()))
 

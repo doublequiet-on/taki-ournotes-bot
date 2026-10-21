@@ -9,6 +9,7 @@ import re
 import sqlite3
 import threading
 import time
+from collections import deque
 from pathlib import Path
 
 from .backend_protocol import require, ProtocolError
@@ -20,6 +21,7 @@ class Operations:
         self.lock = threading.RLock()
         self.db, self.error, self.worker = None, None, None
         self.handlers, self.closing = {}, False
+        self.notice_queue, self.notice_dropped, self.notice_error = deque(), 0, None
         try:
             self.db = sqlite3.connect(Path(path), timeout=0, check_same_thread=False)
             self.db.execute('PRAGMA busy_timeout=0')
@@ -28,6 +30,7 @@ class Operations:
                     signature TEXT, state TEXT, created REAL, started REAL, finished REAL, result TEXT);
                 CREATE TABLE IF NOT EXISTS submissions(id TEXT PRIMARY KEY, signature TEXT, job TEXT, created REAL);
                 CREATE TABLE IF NOT EXISTS owner(identity TEXT PRIMARY KEY);
+                CREATE TABLE IF NOT EXISTS notice_observations(nid TEXT,kind TEXT,first REAL,last REAL,PRIMARY KEY(nid,kind));
             ''')
             owners = self.db.execute('SELECT identity FROM owner').fetchall()
             require(not owners or owners == [(identity,)], 'ops_instance_mismatch')
@@ -46,7 +49,39 @@ class Operations:
 
     def health(self):
         return {'available': self.db is not None and self.error is None, 'reason_code': self.error,
-                'actions': sorted(self.handlers), 'retention_days': 7, 'capacity': 200}
+                'actions': sorted(self.handlers), 'retention_days': 7, 'capacity': 200,
+                'notice_observation':{'queued':len(self.notice_queue),'dropped':self.notice_dropped,'reason_code':self.notice_error}}
+
+    def observe_notice(self, nid, kind):
+        if self.db is None or len(self.notice_queue)>=256:
+            self.notice_dropped+=1
+            return
+        self.notice_queue.append((nid,kind,self.clock()))
+
+    def flush_notices(self):
+        rows=[]
+        for _ in range(min(32,len(self.notice_queue))):
+            rows.append(self.notice_queue.popleft())
+        if not rows or self.db is None:return
+        try:
+            with self.lock,self.db:
+                self.db.executemany('INSERT INTO notice_observations VALUES(?,?,?,?) ON CONFLICT(nid,kind) DO UPDATE SET last=excluded.last',
+                                    [(nid,kind,at,at) for nid,kind,at in rows])
+                self.db.execute('DELETE FROM notice_observations WHERE last<? OR rowid IN (SELECT rowid FROM notice_observations ORDER BY last DESC LIMIT -1 OFFSET 16384)',(self.clock()-86400,))
+            self.notice_error=None
+        except sqlite3.Error:
+            self.notice_dropped+=len(rows);self.notice_error='notice_observation_write_failed'
+
+    def notice_times(self, nid):
+        if self.db is None:return None
+        if not self.lock.acquire(blocking=False):return None
+        try:
+            rows=self.db.execute('SELECT kind,first,last FROM notice_observations WHERE nid=?',(nid,)).fetchall()
+            return {kind:{'first_observed_at':first,'last_observed_at':last} for kind,first,last in rows} or None
+        except sqlite3.Error:
+            return None
+        finally:
+            self.lock.release()
 
     def available(self):
         require(self.db is not None and self.error is None, 'ops_store_unavailable', 503)
@@ -149,5 +184,7 @@ class Operations:
         self.closing = True
         if self.worker is not None:
             await asyncio.shield(self.worker)
+        while self.notice_queue:
+            await asyncio.to_thread(self.flush_notices)
         if self.db is not None:
             self.db.close()

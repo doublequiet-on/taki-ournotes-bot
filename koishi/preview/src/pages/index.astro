@@ -380,7 +380,8 @@ const nav = [
               class="pill warm"
               hidden>未保存</span>
           </div>
-          <div class="settings-workspace">
+          <article class="card" style="margin-bottom:20px"><div class="card-heading"><h2>运行与恢复准备</h2><span class="pill purple">演示数据</span></div><dl class="key-values"><div><dt>网关与后端</dt><dd>版本配套</dd></div><div><dt>自动更新</dt><dd>已暂停</dd></div><div><dt>备份</dt><dd>归档存在 · 恢复核验尚未采集</dd></div></dl><details><summary>恢复准备清单</summary><p>代码与环境、业务数据、设置与群策略、受信配置、隔离恢复、异地副本</p></details></article>
+<div class="settings-workspace">
             <nav class="settings-tree card" aria-label="设置分组"><span class="tree-heading">全局配置</span><button type="button" data-setting="general" aria-current="page"><Icon name="shield" size={19}/><span>查询与通知</span><i class="dirty-dot" hidden></i></button><button type="button" data-setting="scope"><Icon name="groups" size={19}/><span>群范围</span><i class="dirty-dot" hidden></i></button><span class="tree-heading">用户设置</span><button type="button" data-setting="appearance"><Icon name="sun" size={19}/><span>外观</span></button></nav>
             <form id="global-form" class="settings-layout">
               <article class="card settings-card" data-setting-pane="general"><div class="card-heading"><h2>查询与通知</h2><Icon name="shield"/></div><label class="setting-row"><span><strong>接收新查询</strong></span><input class="switch" type="checkbox" name="queries" checked/></label><label class="setting-row"><span><strong>群查询</strong></span><input class="switch" type="checkbox" name="groups" checked/></label><label class="setting-row"><span><strong>私聊查询</strong></span><input class="switch" type="checkbox" name="private"/></label><label class="setting-row"><span><strong>主动通知</strong></span><input class="switch" type="checkbox" name="notices"/></label></article>

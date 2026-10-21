@@ -153,3 +153,7 @@ Moenotes 可选 open 榜线：`sources/moenotes_open.py::OpenClient`、`OpenEven
 统一美工与单图优先实现、验证和性能：[IMAGE_OUTPUT](IMAGE_OUTPUT.md)。
 
 查询素材准备入口为 `python -B scripts/prepare_query_assets.py --cache-dir <数据目录> --catalog <Catalog路径>`，受管部署在停旧实例前自动调用；完整校验、目录隔离和失败行为见 [Linux 离线部署](../deploy/LINUX_OFFLINE.md)。绘图修复验收须同时保存服务器原尺寸图片、命令、源码摘要和耗时；覆盖列表/详情、独立卡面、各难度谱面，单独复现 `/查曲 odd dice`、`/查谱面 odd dice`，不能以单元测试替代实际图片检查。
+
+## 控制台运维
+
+操作契约与分批验收见 [运维控制台](koishi/OPERATIONS.md)。后端任务在 application/operations.py、operations_sources.py，受信主机采集在 deploy/ops_snapshot.py；管理与通知读取测试使用 test_console_admin.py，主机投影使用 test_linux_backend.py，网关运行 console-rpc-probe.cjs 与 console-state-probe.cjs。

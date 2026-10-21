@@ -28,6 +28,22 @@ Haneoka 实例提供 catalog_sync/catalog_reload/assets_verify/assets_repair/ass
 
 素材任务范围为捕获的 Catalog 快照引用和内置游戏素材；不声称覆盖未收集的其他来源、谱面或历史版本。逐文件解码／摘要检查，最多两个下载线程，20 分钟后停止发起新文件；有效文件保留，文件原子替换。修复清除对应运行时图片和固定素材的负缓存。失败项按同快照重试，清单保存失败单独报告，不掩盖已经修复的文件。
 
+### 主机采集与恢复证据
+
+单独审阅安装 deploy/ops_snapshot.py 到受信控制器目录，并安装 taki-ops-snapshot.service/timer 模板；不能从应用自动安装。该 timer 与自动更新 timer 独立，不恢复自动更新。oneshot 不依赖、不启动或重启机器人，只执行固定 systemctl show、控制器 status 投影和有界文件统计；不读环境凭据，不联网，不调用 check/recover/resume/rollback。
+
+输出 /run/taki-ops/host-v1.json，root:ubuntu、0640，目录 0750 不允许应用写入。30 秒采集，超过 90 秒标记陈旧，未来时间标记时钟变化。目录大小最多每 10 分钟统计，扫描限 2 秒；complete=false 的字节数只是已扫描部分。business_data 包含 assets，不可相加。磁盘门槛按 releases 和 backups 所在文件系统分别报告。
+
+控制器记录、进程 cwd 线索和网关/后端启动身份分开显示。cwd 不等于模块摘要；控制器目标只代表最近观察，非实时 main。仅在采集代次和 PID 对得上时比较运行版本。
+
+现有备份清单只能证明相应归档存在，不能证明摘要或恢复成功。可读取独立批准流程产生、root 所有的 /var/lib/taki-updater/ops-recovery-proof.v1.json：schema=1，objects 以 code_environment/business_data/console_settings/trusted_configuration/isolated_restore/offsite_copy 为键，每项包含 artifact_sha256、verified_at，可选 restore_verified。页面标注为外部受信记录，不声称本采集器执行了核验，也不据此推断归档当前存在。
+
+### 通知只读投影
+
+既有 notices 列表保留插入窗口分页，额外返回最多当前 limit 个已观察目标和候选总数。单群通过 ops/notice-target（Python /v1/admin/ops/notice-targets/{group_id}）读取，合并当前已发布通知目标、许可、领取及账本状态。读取不执行 claims、pending 或报告生成；策略限制仍由网关有效规则解释。
+
+新增时间放在独立 operations 库的 notice_observations 表，仅记录 claimed/sending/ack 等实际处理时的服务器观测。通知路径只入有界队列（256），独立任务每批最多 32 条落盘；写入失败与丢弃只影响观测，不改变许可或 ACK。保留 24 小时、最多 16384 条，历史、丢失和未覆盖时间保持未知，不作为客户端送达时间。
+
 导出包含实例摘要或单条请求，不含密码、令牌、原问句、用户或平台消息标识、完整配置及日志。每份导出使用临时群代号；实例导出最多含前 25 条需要关注记录，不代表完整消息流量。
 
 ## 批次验收矩阵
