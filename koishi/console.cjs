@@ -42,6 +42,18 @@ function install(ctx, config, manifest, assetsDirectory = path.join(__dirname, '
     if (reads.size > 64) reads.delete(reads.keys().next().value)
     try { return await value } catch (error) { reads.delete(url); throw Error(error.code || 'backend_unavailable') }
   }
+  function noticePolicies(value, section) {
+    const data=value?.sections?.[section]?.data
+    if(!Array.isArray(data?.targets))return value
+    const targets=data.targets.map(target=>{
+      const policy=management.effective(target.group_id)
+      return {...target,backend_stage:target.stage,effective_notifications:policy.notifications,
+        notification_reasons:policy.notification_reasons,
+        stage:!policy.notifications&&['pending','claimed','lease_expired'].includes(target.stage)?'policy_blocked':target.stage}
+    })
+    return {...value,sections:{...value.sections,[section]:{...value.sections[section],
+      data:{...data,targets,policy_observed_at:Date.now()/1000}}}}
+  }
   const sessions = new WeakMap()
   const hash = value => createHash('sha256').update(value).digest()
   const passwordHash = hash(config.password)
@@ -145,9 +157,9 @@ function install(ctx, config, manifest, assetsDirectory = path.join(__dirname, '
       reads.delete('/v1/admin/ops/jobs');return result
     }, {authority:5})
     listen('taki/ops/audit', function() { return journal.snapshot() }, {authority:5})
-    listen('taki/ops/notice-target', function(id) {
+    listen('taki/ops/notice-target', async function(id) {
       if(typeof id!=='string'||!/^[A-Za-z0-9_-]{1,128}$/.test(id))throw Error('admin_group')
-      return readBackend('ops/notice-targets/'+id)
+      return noticePolicies(await readBackend('ops/notice-targets/'+id),'notice_target')
     }, {authority:5})
     listen('taki/ops/host', async function() {
       const snapshot=readHostSnapshot(config.hostSnapshotPath)
@@ -171,10 +183,11 @@ function install(ctx, config, manifest, assetsDirectory = path.join(__dirname, '
     }, {authority:5})
     for (const [method, resource] of [['requests/list','requests'], ['sources','sources'], ['notices/list','notices'],
       ['query-metrics','query-metrics']]) {
-      listen('taki/'+method, function(params = {}) {
+      listen('taki/'+method, async function(params = {}) {
         if (!params || typeof params !== 'object' || Array.isArray(params) || Object.keys(params).length > 8
             || Object.values(params).some(v => typeof v !== 'string' || v.length > 2048)) throw Error('admin_parameters')
-        return readBackend(resource, params)
+        const value=await readBackend(resource, params)
+        return resource==='notices'?noticePolicies(value,'notices'):value
       }, { authority: 5 })
     }
     listen('taki/requests/detail', function(id) {

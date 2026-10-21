@@ -23,6 +23,8 @@
 
 ### 资料与素材动作
 
+通知目标读取在网关叠加当前全局和分群策略；待处理或已领取但尚未发送的目标受限时显示“策略已暂停”。原后端阶段、账本、领取及发送不确定事实保留，发送中和已确认结果不被策略覆盖。策略每次读取重新计算，不修改共享读取缓存或业务账本。
+
 Haneoka 实例提供 catalog_sync/catalog_reload/assets_verify/assets_repair/assets_retry。请求参数为空，由服务端在受理时捕获 JP/intl 版本；原操作 ID 重试复用原快照，快照变化不会重绑或覆盖较新资料。普通同步以小型身份读取比较两个版本，完整重新获取复用既有下载与验证预算。
 
 结果区分 upstream_unchanged/synchronized/updated_unsaved/refresh_failed_cached/no_available_data，并分别返回本次发布、持久保存、资料可用性及本次新增数量。未保存的同版本快照可以重试保存，不伪报同步成功。
