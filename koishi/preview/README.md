@@ -1,6 +1,6 @@
 # Taki Console 设计预览
 
-独立的 Astro 静态预览。参照 Haneoka 的 Material 侧栏、圆角内容面板、卡片与设置行；页面和 SVG 均为本项目新实现，没有拷入 Haneoka 的业务源码、账号系统或素材。当前版本只使用 `src/data.ts` 演示夹具，不接 Console RPC、Python、QQ 或模型，不读取真实配置。生产 Console 仍在 `../console/`。
+独立的 Astro 静态预览。参照 Haneoka 的 Material 侧栏、圆角内容面板、卡片与设置行；页面与界面 SVG 为本项目实现。品牌图片来源见 [资源清单](public/brand/README.md)，不引入其他网站的业务或账号系统。当前版本只使用 `src/data.ts` 演示夹具，不接 Console RPC、Python、QQ 或模型，不读取真实配置。生产 Console 仍在 `../console/`。
 
 ## 本地查看
 

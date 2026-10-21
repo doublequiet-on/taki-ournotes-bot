@@ -1,5 +1,6 @@
 ---
 import Icon from "../components/Icon.astro";
+import TakiAvatar from "../components/TakiAvatar.astro";
 import "../style.css";
 const nav = [
   ["overview", "home", "总览"],
@@ -28,18 +29,14 @@ const nav = [
     <title>Taki · 控制台预览</title>
     <link
       rel="icon"
-      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'%3E%3Crect width='40' height='40' rx='14' fill='%235d589b'/%3E%3Ctext x='20' y='29' fill='white' text-anchor='middle' font-family='sans-serif' font-size='29'%3ET%3C/text%3E%3C/svg%3E"
+      href="/brand/taki.png"
     />
   </head>
   <body>
     <a class="skip" href="#content">跳到内容</a>
     <div class="scrim" id="nav-scrim" hidden></div>
     <aside class="sidebar" id="sidebar" aria-label="主导航">
-      <a href="#overview" class="brand"
-        ><span class="brand-mark">t<span>✦</span></span><span
-          >taki<span class="brand-sub">console</span></span
-        ></a
-      >
+      <a href="#overview" class="brand"><TakiAvatar /><span>Taki</span></a>
       <nav>
         {
           nav.map(([page, icon, title]) => (
@@ -52,8 +49,7 @@ const nav = [
       </nav>
       <div class="sidebar-bottom">
         <div class="instance">
-          <span class="avatar small purple"><Icon name="bot" size={20} /></span
-          ><div>
+          <TakiAvatar class="small" /><div>
             <strong>Taki</strong><span class="muted">演示实例</span>
           </div><span class="dot"></span>
         </div><button class="nav-login" id="logout"
@@ -177,11 +173,11 @@ const nav = [
                     aria-label="查看数据来源"
                     ><Icon name="arrow" size={18} /></a>
                 </div><div class="source-mini">
-                  <span class="source-symbol purple">H</span><div>
+                  <img class="source-symbol site-icon" src="/brand/haneoka.svg" width="36" height="36" alt="" /><div>
                     <strong>Haneoka</strong><small>主目录</small>
                   </div><span class="pill success">可用</span>
                 </div><div class="source-mini">
-                  <span class="source-symbol teal">M</span><div>
+                  <img class="source-symbol site-icon" src="/brand/moenotes.png" width="36" height="36" alt="" /><div>
                     <strong>Moenotes</strong><small>活动榜线</small>
                   </div><span class="pill warm">缓存</span>
                 </div>
@@ -280,7 +276,7 @@ const nav = [
           <div class="source-grid">
             <article class="card source-detail">
               <div class="source-identity">
-                <span class="source-symbol large purple">H</span><div>
+                <img class="source-symbol large site-icon" src="/brand/haneoka.svg" width="52" height="52" alt="" /><div>
                   <h2>Haneoka</h2><span class="muted">主目录</span>
                 </div><span class="pill success">可用</span>
               </div><dl class="key-values">
@@ -298,7 +294,7 @@ const nav = [
               </details>
             </article><article class="card source-detail">
               <div class="source-identity">
-                <span class="source-symbol large teal">M</span><div>
+                <img class="source-symbol large site-icon" src="/brand/moenotes.png" width="52" height="52" alt="" /><div>
                   <h2>Moenotes</h2><span class="muted">活动榜线</span>
                 </div><span class="pill warm">使用缓存</span>
               </div><dl class="key-values">
@@ -479,7 +475,7 @@ const nav = [
       class="login-dialog"
       aria-labelledby="login-title"
     >
-      <span class="brand-mark">t<span>✦</span></span><h2 id="login-title">
+      <TakiAvatar /><h2 id="login-title">
         Taki 控制台
       </h2><span class="pill purple">设计预览</span><form id="login-form">
         <label class="field"

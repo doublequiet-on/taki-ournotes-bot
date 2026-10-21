@@ -181,14 +181,6 @@ strong {
   font-weight: 650;
   letter-spacing: -1px;
 }
-.brand-sub {
-  font-size: 11px;
-  display: block;
-  color: var(--muted);
-  letter-spacing: 2px;
-  font-weight: 500;
-  margin-top: -2px;
-}
 .brand-mark {
   position: relative;
   display: grid;
@@ -196,19 +188,23 @@ strong {
   width: 44px;
   height: 44px;
   flex: none;
-  border-radius: 16px;
-  background: var(--primary);
-  color: var(--on-primary);
-  font-size: 37px;
-  font-weight: 650;
-  font-family: Georgia, serif;
-  line-height: 1;
+  border-radius: 15px;
+  overflow: hidden;
+  background: var(--selected);
 }
-.brand-mark span {
+.brand-mark img {
   position: absolute;
-  right: 6px;
-  top: 7px;
-  font: 13px sans-serif;
+  width: 300%;
+  height: 300%;
+  max-width: none;
+  left: -55%;
+  top: -40%;
+  object-fit: cover;
+}
+.brand-mark.small {
+  width: 36px;
+  height: 36px;
+  border-radius: 12px;
 }
 .sidebar nav {
   display: flex;
@@ -796,6 +792,12 @@ main {
   border-radius: 18px;
   font-size: 24px;
 }
+.site-icon {
+  object-fit: contain;
+  padding: 2px;
+  background: transparent;
+  flex: none;
+}
 .ask-total {
   font-size: 32px;
   line-height: 1.5;
@@ -1353,6 +1355,9 @@ dialog::backdrop {
 }
 .login-dialog .brand-mark {
   margin: 0 auto 24px;
+  width: 72px;
+  height: 72px;
+  border-radius: 24px;
 }
 .login-dialog h2 {
   font-size: 24px;
