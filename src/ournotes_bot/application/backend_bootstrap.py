@@ -11,6 +11,7 @@ from .backend import Backend, create_app
 from .data_owner import DataOwner
 from .runtime_tasks import RuntimeTasks
 from .operations_sources import SourceOperations
+from .operations_runtime import RuntimeOperations
 from .notice_reports import NoticeReports, RELEASE_SOURCE
 from .notice_gateway import NoticeGateway
 from ..ai_client import AIClient
@@ -36,6 +37,7 @@ def build_backend(args, settings):
                           diagnostics_enabled=diagnostics=='1')
         backend.runtime_tasks = RuntimeTasks(repository, settings)
         SourceOperations(backend).register()
+        RuntimeOperations(backend).register()
         if settings.update_notices:
             notice_ai = AIClient(settings.ai_base_url, settings.ai_api_key, settings.ai_model) if settings.ai_api_key else None
             reports = NoticeReports(CONFIG_ROOT, settings.cache_file.with_name('update-notices.sqlite3'), args.app_id,

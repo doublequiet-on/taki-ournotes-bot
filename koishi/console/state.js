@@ -3,14 +3,14 @@ export function sessionState() {
   const logged=ref(false), busy=ref(false), message=ref(''), stale=ref(false), dirty=ref(false), conflict=ref(false);
   const overview=ref(null), requests=ref(null), detail=ref(null), sources=ref(null), metrics=ref(null), groups=ref(null), notices=ref(null), draft=ref(null), guard=ref(null);
   const groupId=ref(''),groupDraft=ref(null),groupRevision=ref(null),groupDirty=ref(false),groupConflict=ref(false);
-  const jobs=ref(null),jobDetail=ref(null),audit=ref(null),host=ref(null),noticeTarget=ref(null),pendingJobs=new Map();
+  const jobs=ref(null),jobDetail=ref(null),audit=ref(null),host=ref(null),noticeTarget=ref(null),controls=ref(null),pendingJobs=new Map(),pendingControls=new Map();
   let generation=0;
   const sequences=new Map();
   const failed=new Set();
   function clearProtected() {
     generation++;logged.value=false;failed.clear();sequences.clear();stale.value=false;
-    for(const value of [overview,requests,detail,sources,metrics,groups,notices,draft,guard,jobs,jobDetail,audit,host,noticeTarget])value.value=null;
-    pendingJobs.clear();
+    for(const value of [overview,requests,detail,sources,metrics,groups,notices,draft,guard,jobs,jobDetail,audit,host,noticeTarget,controls])value.value=null;
+    pendingJobs.clear();pendingControls.clear();
     dirty.value=false;conflict.value=false;groupId.value='';groupDraft.value=null;groupRevision.value=null;groupDirty.value=false;groupConflict.value=false;
   }
   function unauthorized(error) {
@@ -108,6 +108,28 @@ export function sessionState() {
       const a=document.createElement('a');a.href=url;a.download='taki-diagnostic.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
     }catch(error){if(token!==generation||unauthorized(error))return;message.value='诊断导出失败，请稍后重试。';}
   }
-  return {jobs,jobDetail,audit,host,noticeTarget,startJob,exportDiagnostic,logged,busy,message,stale,dirty,conflict,overview,requests,detail,sources,metrics,groups,notices,draft,guard,rpc,load,login,logout,save,
+  async function controlRequest(action,groupIds=[],targetId=null) {
+    if(dirty.value||groupDirty.value){message.value='请先保存或还原当前草稿。';return;}
+    const token=generation,key=JSON.stringify([action,groupIds,targetId]);busy.value=true;
+    try{
+      if(!pendingControls.has(key)){
+        const snapshot=await rpc('ops/controls');if(token!==generation)return;controls.value=snapshot;
+        const local=action==='local'||targetId&&snapshot.items.find(e=>e.id===targetId)?.control==='local';
+        if(!snapshot.available||!snapshot.settings_persistent_matches_live||local&&!snapshot.groups_persistent_matches_live)throw Error('persistent_conflict');
+        pendingControls.set(key,{operation_id:crypto.randomUUID().replaceAll('-',''),guard:snapshot.guard,group_revision:snapshot.group_revision,
+          ...(targetId?{target_id:targetId}:{action,group_ids:groupIds})});
+      }
+      const result=await rpc(targetId?'ops/controls/restore':'ops/controls/start',pendingControls.get(key));if(token!==generation)return;
+      if(result.state!=='intent')pendingControls.delete(key);
+      message.value=result.state==='applied'?(result.no_change?'当前设置无需变更。':'管理操作已生效，在途查询继续完成。'):'操作结果需要核对：'+result.state;
+      await Promise.all([load(controls,'ops/controls'),load(overview,'overview'),load(groups,'groups/list'),load(audit,'ops/audit')]);
+    }catch(error){if(token!==generation||unauthorized(error))return;
+      const reason=String(error?.message||error);
+      if(/conflict|shape|parameters|not_restorable|capacity/.test(reason))pendingControls.delete(key);
+      message.value=/conflict/.test(reason)?'设置已变化，操作未覆盖新值。请核对当前设置后重试。':'管理操作结果未确认；重试将复用操作标识。';
+      await load(controls,'ops/controls');
+    }finally{busy.value=false;}
+  }
+  return {jobs,jobDetail,audit,host,noticeTarget,controls,startControl:(action,ids)=>controlRequest(action,ids),restoreControl:id=>controlRequest('restore',[],id),startJob,exportDiagnostic,logged,busy,message,stale,dirty,conflict,overview,requests,detail,sources,metrics,groups,notices,draft,guard,rpc,load,login,logout,save,
     groupId,groupDraft,groupRevision,groupDirty,groupConflict,selectGroup,saveGroup,invalidate(){generation++;}};
 }

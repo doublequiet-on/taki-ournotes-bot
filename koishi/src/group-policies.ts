@@ -1,6 +1,8 @@
 // Instance-bound policy state. No business ledger or platform permission ownership.
 import { readFileSync, writeFileSync, renameSync, openSync, fsyncSync, closeSync, lstatSync } from 'node:fs'
 import { join } from 'node:path'
+import { isDeepStrictEqual } from 'node:util'
+import { createHash } from 'node:crypto'
 import type { ManagementSettings } from './management'
 export type Mode = 'off' | 'local' | 'model'
 export interface GroupPolicy { label: string; queries: 'inherit' | 'allow' | 'pause'; notifications: 'inherit' | 'allow' | 'pause'; natural_query: 'inherit' | Mode }
@@ -41,16 +43,33 @@ export class GroupPolicies {
   }
   snapshot(){return {...structuredClone(this.value),availability:this.error?'unavailable':'available',reason_code:this.error}}
   get(id:string):GroupPolicy { return Object.hasOwn(this.value.groups,id)?structuredClone(this.value.groups[id]):{...inherited} }
-  update(id:unknown,policy:unknown,revision:unknown) {
-    if(this.error)throw Error('group_policy_unavailable')
-    if(!gid(id))throw Error('invalid_group_id')
-    const nextPolicy=validateGroupPolicy(policy)
+  assertPersistent() {
     let disk=this.value
-    try{disk=this.read()}catch(error){if((error as NodeJS.ErrnoException).code!=='ENOENT'){this.error='group_policy_unavailable';throw Error('group_policy_unavailable')}}
-    if(revision!==disk.revision || revision!==this.value.revision)throw Error('group_policy_conflict')
+    try{disk=this.read()}catch(error){if((error as NodeJS.ErrnoException).code!=='ENOENT'||this.value.revision!==0)throw Error('group_policy_conflict')}
+    if(!isDeepStrictEqual(disk,this.value))throw Error('group_policy_conflict')
+  }
+  persistenceTag() {
+    const info=lstatSync(this.file,{bigint:true})
+    if(!info.isFile()||info.isSymbolicLink())throw Error('group_policy_conflict')
+    return {sha256:createHash('sha256').update(readFileSync(this.file)).digest('hex'),inode:String(info.ino),mtime:String(info.mtimeNs),size:String(info.size)}
+  }
+  update(id:unknown,policy:unknown,revision:unknown) {
+    if(!gid(id))throw Error('invalid_group_id')
+    return this.updateMany({[id]:validateGroupPolicy(policy)},revision)
+  }
+  updateMany(policies:Record<string,GroupPolicy>,revision:unknown) {
+    if(this.error)throw Error('group_policy_unavailable')
+    const entries=Object.entries(policies)
+    if(!entries.length||entries.length>128)throw Error('invalid_group_batch')
+    for(const [id,policy] of entries){if(!gid(id))throw Error('invalid_group_id');validateGroupPolicy(policy)}
+    let disk=this.value
+    try{disk=this.read()}catch(error){if((error as NodeJS.ErrnoException).code!=='ENOENT'){this.error='group_policy_unavailable';throw Error('group_policy_unavailable')}
+      if(this.value.revision!==0)throw Error('group_policy_conflict')}
+    if(revision!==disk.revision || revision!==this.value.revision || !isDeepStrictEqual(disk,this.value))throw Error('group_policy_conflict')
     if(disk.revision>=Number.MAX_SAFE_INTEGER)throw Error('group_policy_revision_capacity')
-    if(!Object.hasOwn(disk.groups,id)&&Object.keys(disk.groups).length>=128)throw Error('group_policy_capacity')
-    const next:Document={...disk,revision:disk.revision+1,groups:{...disk.groups,[id]:nextPolicy}}
+    const groups={...disk.groups,...structuredClone(policies)}
+    if(Object.keys(groups).length>128)throw Error('group_policy_capacity')
+    const next:Document={...disk,revision:disk.revision+1,groups}
     const text=JSON.stringify(next,null,2)+'\n',temporary=this.file+'.tmp'
     try {
       writeFileSync(temporary,text,{mode:0o600});const fd=openSync(temporary,'r+')

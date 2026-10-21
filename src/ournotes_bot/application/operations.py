@@ -136,16 +136,29 @@ class Operations:
         require(isinstance(ident, str) and re.fullmatch('[a-f0-9]{32}', ident), 'ops_identity')
         with self.lock:
             self.available()
-            row = self.db.execute('SELECT id,action,state,created,started,finished,result FROM jobs WHERE id=?', (ident,)).fetchone()
+            try:
+                row = self.db.execute('SELECT id,action,state,created,started,finished,result FROM jobs WHERE id=?', (ident,)).fetchone()
+            except sqlite3.Error:
+                self.error='ops_store_failed'
+                require(False,'ops_store_unavailable',503)
         require(row is not None, 'ops_unknown_job', 404)
         result = dict(zip(('id','action','state','created_at','started_at','finished_at','result'), row))
-        result['result'] = json.loads(result['result']) if result['result'] else None
+        try:
+            result['result'] = json.loads(result['result']) if result['result'] else None
+            if result['result'] is not None and not isinstance(result['result'],dict):raise ValueError('ops_result')
+        except (ValueError,TypeError):
+            self.error='ops_result_corrupt'
+            require(False,'ops_store_unavailable',503)
         return result
 
     def listing(self):
         with self.lock:
             self.available()
-            ids = [row[0] for row in self.db.execute('SELECT id FROM jobs ORDER BY created DESC,id DESC LIMIT 25')]
+            try:
+                ids = [row[0] for row in self.db.execute('SELECT id FROM jobs ORDER BY created DESC,id DESC LIMIT 25')]
+            except sqlite3.Error:
+                self.error='ops_store_failed'
+                require(False,'ops_store_unavailable',503)
             items = [self.detail(ident) for ident in ids]
             for item in items:
                 result = item['result']
@@ -188,3 +201,4 @@ class Operations:
             await asyncio.to_thread(self.flush_notices)
         if self.db is not None:
             self.db.close()
+            self.db=None

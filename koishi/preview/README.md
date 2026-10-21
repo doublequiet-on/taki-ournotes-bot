@@ -37,4 +37,4 @@ PowerShell 使用 `$env:ASTRO_TELEMETRY_DISABLED='1'`，再分别运行 `npm run
 | `src/style.css` | 响应式布局、明暗主题与组件视觉 |
 | `src/workbench.css` | 活动栏、桌面检查面板、配置分组与固定状态/保存区域 |
 
-此目录不在现有组合包的复制清单中，不替换 Koishi 插件入口。设计确认后，真实接入需另行实现和验证认证、缺失口径、保存 revision、草稿并发保护及安装包资源路径。
+此目录不在现有组合包的复制清单中，不替换 Koishi 插件入口。正式五页与运维动作由独立 Vue／Console RPC 实现，见 [运维契约](../../docs/koishi/OPERATIONS.md)。本预览的同步、后台检查、维护和临时本地解析只操作本次页面内存，不连接真实服务。

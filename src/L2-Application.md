@@ -74,3 +74,4 @@ backend 在公共仓库初始化前独立分流，只组装一次业务实例；
 ## 管理任务
 
 Backend 的 operations.py 拥有独立有界运维任务库与单执行器；与发送/通知账本隔离。Admin 提供脱敏导出。Console RPC 与网关管理审计契约见 [运维控制台](../docs/koishi/OPERATIONS.md)。
+`operations_sources.py` 管理快照绑定的资料／素材任务；`operations_runtime.py` 提供固定的任务恢复、活动、采样和连接检查。`runtime_tasks.py` 统一手动／定时资源锁与进程内观测，不提供系统进程控制。

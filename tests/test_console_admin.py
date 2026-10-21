@@ -454,3 +454,13 @@ class OperationTests(unittest.IsolatedAsyncioTestCase):
             self.assertFalse(jobs.health()['available'])
             self.assertEqual(path.read_bytes(),b'broken')
             await jobs.close()
+
+    async def test_later_store_failure_disables_only_management_reads(self):
+        from ournotes_bot.application.operations import Operations
+        with tempfile.TemporaryDirectory() as folder:
+            jobs=Operations(Path(folder)/'ops.sqlite3','fixture')
+            jobs.db.execute('DROP TABLE jobs')
+            with self.assertRaisesRegex(ProtocolError,'ops_store_unavailable'):jobs.listing()
+            self.assertFalse(jobs.health()['available'])
+            await jobs.close()
+            self.assertIsNone(jobs.db)

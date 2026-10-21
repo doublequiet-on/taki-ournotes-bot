@@ -270,6 +270,7 @@ class OpenEventCutoffRepository(EventCutoffRepository):
             # Unknown source times/positions never become valid history points.
             if board.quality in {"valid", "outside_period", "clock_unknown"} and board.fetched_ms:
                 stored = self.history.record(event, board)
+                self._note_retrieval('history_result',stored)
                 if stored == "conflict":
                     board = replace(board, scores=(), quality="conflict", status="同一源时刻分数冲突，暂无可信当前值")
                 elif stored in {"storage_error", "busy", "low_disk", "disk_unavailable"}:

@@ -21,6 +21,7 @@ export class Receiver {
   private active = true
   private notices?: Notices
   health() { return { active:this.active && (this.notices?.healthy() ?? true), handshake:!!this.client.readiness, epoch:this.client.epoch, backend:this.client.readiness } }
+  activity() { return { accepted_inflight:this.jobs.size, admission_inflight:this.entering } }
   private sequence = 0
   private raw = new Map<string, Raw>()
   private jobs = new Map<string, Job>()

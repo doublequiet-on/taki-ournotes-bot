@@ -237,6 +237,7 @@ class EventCutoffRepository:
         self._negative: dict[str, tuple[float, SourceError]] = {}
         self.history = None
         self._foreground = 0
+        self._diagnostic_local = threading.local()
 
     @contextmanager
     def foreground(self):
@@ -259,6 +260,27 @@ class EventCutoffRepository:
     def _lock(self, key: str):
         with self._guard:
             return self._locks.setdefault(key, threading.Lock())
+
+    def _note_retrieval(self, key, value):
+        capture=getattr(self._diagnostic_local,'capture',None)
+        if capture is not None:capture[key]=value
+
+    def read_event_observed(self, server, deadline):
+        previous=getattr(self._diagnostic_local,'capture',None)
+        capture={};self._diagnostic_local.capture=capture
+        try:
+            event=self.event(server,deadline)
+            return event,{'retrieval':capture.get('current:'+server,'unknown')}
+        finally:self._diagnostic_local.capture=previous
+
+    def read_board_observed(self, event, song, deadline):
+        previous=getattr(self._diagnostic_local,'capture',None)
+        capture={};self._diagnostic_local.capture=capture
+        try:
+            board=self.board(event,song,deadline)
+            choices=[value for key,value in capture.items() if key.startswith('board:')]
+            return board,{'retrieval':choices[0] if len(choices)==1 else 'unknown','history_result':capture.get('history_result')}
+        finally:self._diagnostic_local.capture=previous
 
     def _path(self, key: str) -> Path:
         return self.cache_dir / (hashlib.sha256(key.encode()).hexdigest() + ".json")
@@ -334,6 +356,7 @@ class EventCutoffRepository:
             old = self._load(key)
             age = self.monotonic() - old.tick if old else float("inf")
             if old and age < ttl:
+                self._note_retrieval(key,'cache')
                 return old
             negative = self._negative.get(key)
             try:
@@ -347,17 +370,21 @@ class EventCutoffRepository:
                     before, after = _ms(old.headers.get("x-fetched-at")), _ms(headers.get("x-fetched-at"))
                     if before and after and after < before:
                         self._negative[key] = (self.monotonic() + 30, SourceError("late_snapshot"))
+                        self._note_retrieval(key,'late_cache')
                         return replace(old, late=entry)
                 self._entries[key] = entry
                 self._negative.pop(key, None)
                 self._save(key, entry)
+                self._note_retrieval(key,'upstream')
                 return entry
             except SourceError as exc:
                 if not negative or negative[0] <= self.monotonic():
                     self._negative[key] = (self.monotonic() + (60 if exc.code == "not_found" else exc.retry_after), exc)
                 # A confirmed absence must not resurrect an old event/board.
                 if old and age <= max_age and exc.code != "not_found":
+                    self._note_retrieval(key,'fallback')
                     return replace(old, fallback=True)
+                self._note_retrieval(key,'failed')
                 raise
         finally:
             lock.release()
@@ -547,6 +574,7 @@ class EventCutoffRepository:
             if entry.fallback:
                 self.history.failure(event.server, event.event_id, song.challenge_id, "source_fallback")
             stored = self.history.record(event, board)
+            self._note_retrieval('history_result',stored)
             if stored == "conflict":
                 board = replace(board, scores=(), status="同一源时刻分数冲突，暂无可信当前值", quality="conflict")
             elif stored in {"storage_error", "busy", "low_disk", "disk_unavailable"}:
