@@ -422,6 +422,21 @@ class AdminTests(unittest.IsolatedAsyncioTestCase):
 
 
 class OperationTests(unittest.IsolatedAsyncioTestCase):
+    async def test_sqlite_full_rejects_before_task_execution(self):
+        from ournotes_bot.application.operations import Operations
+        with tempfile.TemporaryDirectory() as folder:
+            jobs=Operations(Path(folder)/'ops.sqlite3','fixture')
+            calls=[]
+            jobs.register('fixture',lambda p:None,lambda p:calls.append(p) or {'code':'fixture_complete'})
+            pages=jobs.db.execute('PRAGMA page_count').fetchone()[0]
+            jobs.db.execute('PRAGMA max_page_count='+str(pages))
+            with self.assertRaisesRegex(ProtocolError,'ops_store_unavailable'):
+                await jobs.submit({'operation_id':'d'*32,'action':'fixture','params':{'value':'x'*4000}})
+            self.assertEqual(calls,[])
+            self.assertFalse(jobs.health()['available'])
+            self.assertEqual(jobs.db.execute('SELECT count(*) FROM jobs').fetchone()[0],0)
+            await jobs.close()
+
     async def test_idle_housekeeping_expires_completed_jobs(self):
         from ournotes_bot.application.operations import Operations
         with tempfile.TemporaryDirectory() as folder:
