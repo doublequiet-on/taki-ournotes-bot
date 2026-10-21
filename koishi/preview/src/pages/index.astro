@@ -2,6 +2,7 @@
 import Icon from "../components/Icon.astro";
 import TakiAvatar from "../components/TakiAvatar.astro";
 import "../style.css";
+import "../workbench.css";
 const nav = [
   ["overview", "home", "总览"],
   ["requests", "list", "查询记录"],
@@ -41,7 +42,7 @@ const nav = [
         {
           nav.map(([page, icon, title]) => (
             <a href={`#${page}`} data-nav={page}>
-              <span>{title}</span>
+              <Icon name={icon} /><span>{title}</span>
               {page === "requests" && <span class="nav-count">3</span>}
             </a>
           ))
@@ -78,37 +79,15 @@ const nav = [
         <section class="page" data-page="overview">
           <div class="page-heading">
             <div>
-              <span class="overline">OVERVIEW</span><h1>总览</h1>
+              <h1>总览</h1>
             </div><button class="button subtle" id="refresh"
               ><Icon name="refresh" size={18} /><span>刷新</span></button>
           </div>
           <div class="overview-top">
-            <article class="hero card">
-              <div class="hero-top">
-                <span class="pill success"
-                  ><span class="dot"></span>运行正常</span
-                ><span class="muted">演示状态</span>
-              </div>
-              <div class="hero-main">
-                <div>
-                  <h2>Taki<span class="hero-spark">✦</span></h2><div
-                    class="connection"
-                  >
-                    <span><i class="dot"></i>QQ 在线</span><span
-                      ><i class="dot"></i>后端就绪</span
-                    ><span><i class="dot"></i>已连接</span>
-                  </div>
-                </div><div class="bot-art" aria-hidden="true">
-                  <div class="antenna"></div><div class="bot-face">
-                    <span></span><span></span>
-                  </div><div class="bot-mouth"></div><i class="spark one">✦</i
-                  ><i class="spark two">✧</i><i class="orbit"></i>
-                </div>
-              </div>
-              <div class="hero-bottom">
-                <span><Icon name="clock" size={16} />已运行 2 天 6 小时</span><a
-                  href="#settings">管理设置 <Icon name="arrow" size={18} /></a>
-              </div>
+            <article class="card hero instance-panel">
+              <div class="instance-heading"><TakiAvatar class="instance-portrait" /><div><h2>Taki</h2><span class="muted">演示实例</span></div><span class="pill success"><span class="dot"></span>运行正常</span></div>
+              <div class="service-grid"><div><span>QQ 连接</span><strong><i class="dot"></i>在线</strong></div><div><span>业务后端</span><strong><i class="dot"></i>就绪</strong></div><div><span>网关握手</span><strong><i class="dot"></i>已建立</strong></div></div>
+              <div class="hero-bottom"><span><Icon name="clock" size={16} />运行 2 天 6 小时</span><a href="#settings">管理设置 <Icon name="arrow" size={18}/></a></div>
             </article>
             <article class="card quick-card">
               <div class="card-heading">
@@ -199,7 +178,7 @@ const nav = [
         <section class="page" data-page="requests" hidden>
           <div class="page-heading">
             <div>
-              <span class="overline">REQUESTS</span><h1>查询记录</h1>
+              <h1>查询记录</h1>
             </div><span class="muted">最近 24 小时</span>
           </div>
           <div class="toolbar">
@@ -226,6 +205,7 @@ const nav = [
                 ></select
               ></label>
           </div>
+          <div class="record-workspace">
           <article class="card table-card">
             <div class="table-scroll">
               <table>
@@ -242,10 +222,26 @@ const nav = [
                 >2026 年 10 月 21 日</span>
             </div>
           </article>
+<div class="inspector-slot request-slot"><dialog
+      id="request-dialog"
+      class="detail-dialog"
+      aria-labelledby="request-detail-title"
+    >
+      <div class="dialog-heading">
+        <div>
+          <h2
+            id="request-detail-title"
+          >
+            查询详情
+          </h2>
+        </div><button class="icon-button close-dialog" aria-label="关闭查询详情"
+          ><Icon name="close" /></button>
+      </div><div id="request-detail"></div>
+    </dialog><div class="inspector-empty card"><Icon name="list" size={30}/><span>选择一条记录</span></div></div></div>
         </section>
         <section class="page" data-page="groups" hidden>
           <div class="page-heading">
-            <div><span class="overline">GROUPS</span><h1>群管理</h1></div><span
+            <div><h1>群管理</h1></div><span
               class="pill neutral">3 个演示群</span>
           </div>
           <div class="toolbar">
@@ -259,18 +255,64 @@ const nav = [
             ><button class="button subtle" id="group-reset"
               ><Icon name="refresh" size={18} />重置演示修改</button>
           </div>
-          <div id="group-grid" class="group-grid"></div><div
-            id="group-empty"
-            class="empty"
+          <div class="group-workspace"><article class="card group-directory"><div class="directory-heading"><h2>已观察群</h2><span class="muted">3</span></div><div id="group-grid" class="group-grid"></div><div id="group-empty" class="empty" hidden>没有匹配的群</div></article><div class="inspector-slot group-slot"><dialog
+      id="group-dialog"
+      class="group-dialog"
+      aria-labelledby="group-detail-title"
+    >
+      <form id="group-form">
+        <div class="dialog-heading">
+          <h2 id="group-detail-title">群设置</h2><button
+            class="icon-button close-dialog"
+            type="button"
+            aria-label="关闭群设置"><Icon name="close" /></button>
+        </div><div class="dialog-body">
+          <label class="field"
+            >群备注<input name="label" maxlength="80" required /></label
+          ><div class="policy-fields">
+            <label class="field"
+              >新查询<select name="queries"
+                ><option value="inherit">继承全局</option><option value="allow"
+                  >允许</option
+                ><option value="pause">暂停</option></select
+              ></label
+            ><label class="field"
+              >主动通知<select name="notifications"
+                ><option value="inherit">继承全局</option><option value="allow"
+                  >允许</option
+                ><option value="pause">暂停</option></select
+              ></label
+            ><label class="field"
+              >/问<select name="ask"
+                ><option value="inherit">继承</option><option value="off"
+                  >关闭</option
+                ><option value="local">仅本地</option><option value="model"
+                  >允许模型</option
+                ></select
+              ></label>
+          </div><div class="effective-block">
+            <h3>当前生效</h3><div id="effective-policy"></div>
+          </div><details>
+            <summary>群标识</summary><code id="group-identifier"></code>
+          </details><p
+            id="group-error"
+            class="warning-text"
+            role="alert"
             hidden
           >
-            没有匹配的群
-          </div>
+          </p>
+        </div><div class="dialog-footer">
+          <span id="group-dirty" class="muted">未修改</span><button
+            class="button primary"
+            type="submit">保存群设置</button>
+        </div>
+      </form>
+    </dialog><div class="inspector-empty card"><Icon name="groups" size={30}/><span>选择一个群</span></div></div></div>
         </section>
         <section class="page" data-page="sources" hidden>
           <div class="page-heading">
             <div>
-              <span class="overline">SOURCES</span><h1>数据来源</h1>
+              <h1>数据来源</h1>
             </div><span class="muted">演示快照 · 14:32</span>
           </div>
           <div class="source-grid">
@@ -332,144 +374,26 @@ const nav = [
         </section>
         <section class="page" data-page="settings" hidden>
           <div class="page-heading">
-            <div><span class="overline">SETTINGS</span><h1>设置</h1></div><span
+            <div><h1>设置</h1></div><span
               id="global-dirty"
               class="pill warm"
               hidden>未保存</span>
           </div>
-          <form id="global-form" class="settings-layout">
-            <article class="card settings-card">
-              <div class="card-heading">
-                <h2>查询与通知</h2><Icon name="shield" />
-              </div><label class="setting-row"
-                ><span><strong>接收新查询</strong></span><input
-                  class="switch"
-                  type="checkbox"
-                  name="queries"
-                  checked
-                /></label
-              ><label class="setting-row"
-                ><span><strong>群查询</strong></span><input
-                  class="switch"
-                  type="checkbox"
-                  name="groups"
-                  checked
-                /></label
-              ><label class="setting-row"
-                ><span><strong>私聊查询</strong></span><input
-                  class="switch"
-                  type="checkbox"
-                  name="private"
-                /></label
-              ><label class="setting-row"
-                ><span><strong>主动通知</strong></span><input
-                  class="switch"
-                  type="checkbox"
-                  name="notices"
-                /></label>
-            </article><article class="card settings-card">
-              <div class="card-heading">
-                <h2>群范围</h2><Icon name="groups" />
-              </div><fieldset class="scope-options">
-                <legend class="sr-only">允许的群范围</legend><label
-                  ><input
-                    type="radio"
-                    name="scope"
-                    value="selected"
-                    checked
-                  /><span>指定群</span><span class="muted">3</span></label
-                ><label
-                  ><input type="radio" name="scope" value="all" /><span
-                    >全部群</span
-                  ></label>
-              </fieldset><div class="selected-groups" id="scope-groups"></div>
-            </article><div class="save-bar">
-              <span id="global-save-status" class="muted">已保存至本次预览</span
-              ><div>
-                <button class="button subtle" type="reset">还原</button><button
-                  class="button primary"
-                  type="submit">保存设置</button>
-              </div>
-            </div>
-          </form>
-          <article class="card appearance-card">
-            <div>
-              <h2>外观</h2><span class="muted" id="theme-label">浅色</span>
-            </div><button class="button subtle" id="theme-setting"
-              ><Icon name="sun" size={18} />切换主题</button>
-          </article>
+          <div class="settings-workspace">
+            <nav class="settings-tree card" aria-label="设置分组"><span class="tree-heading">全局配置</span><button type="button" data-setting="general" aria-current="page"><Icon name="shield" size={19}/><span>查询与通知</span><i class="dirty-dot" hidden></i></button><button type="button" data-setting="scope"><Icon name="groups" size={19}/><span>群范围</span><i class="dirty-dot" hidden></i></button><span class="tree-heading">用户设置</span><button type="button" data-setting="appearance"><Icon name="sun" size={19}/><span>外观</span></button></nav>
+            <form id="global-form" class="settings-layout">
+              <article class="card settings-card" data-setting-pane="general"><div class="card-heading"><h2>查询与通知</h2><Icon name="shield"/></div><label class="setting-row"><span><strong>接收新查询</strong></span><input class="switch" type="checkbox" name="queries" checked/></label><label class="setting-row"><span><strong>群查询</strong></span><input class="switch" type="checkbox" name="groups" checked/></label><label class="setting-row"><span><strong>私聊查询</strong></span><input class="switch" type="checkbox" name="private"/></label><label class="setting-row"><span><strong>主动通知</strong></span><input class="switch" type="checkbox" name="notices"/></label></article>
+              <article class="card settings-card" data-setting-pane="scope" hidden><div class="card-heading"><h2>群范围</h2><Icon name="groups"/></div><fieldset class="scope-options"><legend class="sr-only">允许的群范围</legend><label><input type="radio" name="scope" value="selected" aria-label="指定群" checked/><span>指定群</span><span class="muted">3</span></label><label><input type="radio" name="scope" value="all"/><span>全部群</span></label></fieldset><div class="selected-groups" id="scope-groups"></div></article>
+              <article class="card settings-card" data-setting-pane="appearance" hidden><div class="card-heading"><h2>外观</h2><Icon name="sun"/></div><div class="setting-row"><span><strong>主题</strong><small class="muted" id="theme-label">浅色</small></span><button type="button" class="button subtle" id="theme-setting"><Icon name="sun" size={18}/>切换主题</button></div></article>
+              <div class="save-bar"><span id="global-save-status" class="muted">已保存至本次预览</span><div><button id="global-reset" class="button subtle" type="reset" disabled>还原</button><button id="global-save" class="button primary" type="submit" disabled>保存设置</button></div></div>
+            </form>
+          </div>
         </section>
       </main>
     </div>
-    <dialog
-      id="request-dialog"
-      class="detail-dialog"
-      aria-labelledby="request-detail-title"
-    >
-      <div class="dialog-heading">
-        <div>
-          <span class="overline">REQUEST DETAIL</span><h2
-            id="request-detail-title"
-          >
-            查询详情
-          </h2>
-        </div><button class="icon-button close-dialog" aria-label="关闭查询详情"
-          ><Icon name="close" /></button>
-      </div><div id="request-detail"></div>
-    </dialog>
-    <dialog
-      id="group-dialog"
-      class="group-dialog"
-      aria-labelledby="group-detail-title"
-    >
-      <form id="group-form">
-        <div class="dialog-heading">
-          <h2 id="group-detail-title">群设置</h2><button
-            class="icon-button close-dialog"
-            type="button"
-            aria-label="关闭群设置"><Icon name="close" /></button>
-        </div><div class="dialog-body">
-          <label class="field"
-            >群备注<input name="label" maxlength="80" required /></label
-          ><div class="policy-fields">
-            <label class="field"
-              >新查询<select name="queries"
-                ><option value="inherit">继承全局</option><option value="allow"
-                  >允许</option
-                ><option value="pause">暂停</option></select
-              ></label
-            ><label class="field"
-              >主动通知<select name="notifications"
-                ><option value="inherit">继承全局</option><option value="allow"
-                  >允许</option
-                ><option value="pause">暂停</option></select
-              ></label
-            ><label class="field"
-              >/问<select name="ask"
-                ><option value="inherit">继承</option><option value="off"
-                  >关闭</option
-                ><option value="local">仅本地</option><option value="model"
-                  >允许模型</option
-                ></select
-              ></label>
-          </div><div class="effective-block">
-            <h3>当前生效</h3><div id="effective-policy"></div>
-          </div><details>
-            <summary>群标识</summary><code id="group-identifier"></code>
-          </details><p
-            id="group-error"
-            class="warning-text"
-            role="alert"
-            hidden
-          >
-          </p>
-        </div><div class="dialog-footer">
-          <span id="group-dirty" class="muted">未修改</span><button
-            class="button primary"
-            type="submit">保存群设置</button>
-        </div>
-      </form>
-    </dialog>
+
+
+    <footer class="app-statusbar"><span><i class="dot"></i>QQ 在线</span><span><i class="dot"></i>后端就绪</span><span class="statusbar-instance">演示实例</span><button id="status-dirty" hidden>有未保存设置</button><span class="statusbar-preview">本地预览</span></footer>
     <dialog
       id="login-dialog"
       class="login-dialog"
