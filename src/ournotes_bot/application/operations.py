@@ -92,6 +92,14 @@ class Operations:
                         "(SELECT id FROM jobs ORDER BY created DESC,id DESC LIMIT -1 OFFSET 199))", (cutoff,))
         self.db.execute('DELETE FROM submissions WHERE created<? OR job NOT IN (SELECT id FROM jobs)', (cutoff,))
 
+    def housekeeping(self):
+        if self.db is None or self.error is not None:return
+        try:
+            with self.lock,self.db:
+                self.prune()
+                self.db.execute('DELETE FROM notice_observations WHERE last<?',(self.clock()-86400,))
+        except sqlite3.Error:self.error='ops_store_failed'
+
     async def submit(self, value):
         require(not self.closing, 'ops_closing', 503)
         require(isinstance(value, dict) and set(value) == {'operation_id', 'action', 'params'}, 'ops_shape')

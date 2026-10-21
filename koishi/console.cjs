@@ -30,6 +30,7 @@ function install(ctx, config, manifest, assetsDirectory = path.join(__dirname, '
   const journal = new OperationJournal(config.directory, management.groups.snapshot().instance ? JSON.stringify(management.groups.snapshot().instance) : manifest.commit)
   journal.reconcile(management)
   const controls=new Controls(management,journal)
+  ctx.setInterval(()=>journal.prune(),60000)
   const reads = new Map()
   const groupPages = new Map()
   let lastObservedGroups, lastNoticeGroups

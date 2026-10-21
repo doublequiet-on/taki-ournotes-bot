@@ -71,6 +71,13 @@ class OperationJournal {
     this.finish(entry,'applied');return result
   }
   find(id){return this.value.entries.find(e=>e.id===id)}
+  prune(){
+    if(this.error)return
+    const cutoff=Date.now()-30*86400000,entries=this.value.entries.filter(e=>e.at>=cutoff||e.state==='intent'||active(e))
+    if(entries.length===this.value.entries.length)return
+    this.value={...this.value,entries}
+    try{this.save()}catch{this.error='ops_journal_retention_unconfirmed'}
+  }
   snapshot(){return{available:!this.error,reason_code:this.error,items:structuredClone(this.value.entries).reverse()}}
   publicSnapshot(){return{available:!this.error,reason_code:this.error,total:this.value.entries.length,items:this.value.entries.slice(-100).reverse().map(e=>({id:e.id,at:e.at,action:e.action,state:e.state,code:e.code,session:e.session,group_id:e.group_id,accepted_guard:e.accepted_guard,result_guard:e.result_guard,summary:e.summary||{fields:e.control==='local'?['natural_query']:Object.keys(e.after||{})}}))}}
   controls(){return this.value.entries.filter(active)}

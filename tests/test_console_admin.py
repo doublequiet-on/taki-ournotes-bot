@@ -422,6 +422,19 @@ class AdminTests(unittest.IsolatedAsyncioTestCase):
 
 
 class OperationTests(unittest.IsolatedAsyncioTestCase):
+    async def test_idle_housekeeping_expires_completed_jobs(self):
+        from ournotes_bot.application.operations import Operations
+        with tempfile.TemporaryDirectory() as folder:
+            now=[1000000]
+            jobs=Operations(Path(folder)/'ops.sqlite3','fixture',clock=lambda:now[0])
+            jobs.register('fixture',lambda p:None,lambda p:{'code':'fixture_complete'})
+            await jobs.submit({'operation_id':'c'*32,'action':'fixture','params':{}})
+            await jobs.worker
+            now[0]+=7*86400+1
+            jobs.housekeeping()
+            self.assertEqual(jobs.listing()['items'],[])
+            await jobs.close()
+
     async def test_durable_coalescing_conflict_and_interrupted_restart(self):
         from ournotes_bot.application.operations import Operations
         with tempfile.TemporaryDirectory() as folder:

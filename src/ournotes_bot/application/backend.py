@@ -460,9 +460,12 @@ def create_app(backend, token, initialize=None):
                 await asyncio.sleep(1)
                 backend.expire()
         async def flush_observation():
+            ticks=0
             while True:
                 await asyncio.sleep(1)
                 await finish_thread(backend.operations.flush_notices)
+                ticks+=1
+                if ticks%60==0:await finish_thread(backend.operations.housekeeping)
         expiry = asyncio.create_task(reaper())
         observation = asyncio.create_task(flush_observation())
         yield
