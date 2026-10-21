@@ -126,13 +126,15 @@ class Admin:
 
     def overview(self):
         now = self.backend.clock()
-        views = [v for v in self.views() if now-86400 <= v['created_at'] < now]
+        retained = list(self.views())
+        views = [v for v in retained if now-86400 <= v['created_at'] < now]
         counts = Counter(v['delivery_state'] for v in views)
         return self.envelope(
             service=section({'ready': self.backend.ready, 'closing': self.backend.closing,
                 'natural_query': self.backend.parser.policy_capabilities() if hasattr(self.backend.parser,'policy_capabilities') else None}, now=now),
             requests=section({'from': now-86400, 'to': now, 'total': len(views),
                               'states': {s: counts[s] for s in STATES},
+                              'retained_unresolved':sum(v['delivery_state'] in ('uncertain','partial') for v in retained),
                               'metadata_missing': sum(v['scope'] is None for v in views),
                               'recent': views[:5]}, now=now),
             observation=section(self.backend.diagnostics.health(), now=now))
@@ -205,8 +207,11 @@ class Admin:
         catalog = self.backend.repository.capture_catalog()
         owner = self.backend.runtime_tasks
         observation = owner.observation_snapshot() if owner else None
+        metadata = getattr(catalog, 'metadata', {})
         return self.envelope(catalog=section({'cache_state': catalog.cache_state,
-            'song_count': len(catalog.songs), 'last_successful_sync_at': catalog.last_successful_sync_at},
+            'song_count': len(catalog.songs), 'data_version':metadata.get('data_version'),'text_version':metadata.get('text_version'),
+            'card_count':metadata.get('card_count'),'support_card_count':metadata.get('support_card_count'),
+            'last_successful_sync_at': catalog.last_successful_sync_at},
             availability='available' if catalog.cache_state == 'fresh' else 'partial',
             now=self.backend.clock()), background=section(observation, availability='partial',
             reason=None if observation else 'background_observation_not_collected', now=self.backend.clock()))

@@ -83,6 +83,17 @@ def prepare_note_assets(cache_dir, source_dir=None, *, names=NOTE_ASSETS):
     return tuple(prepared)
 
 
+def invalidate_assets(names):
+    for name in names:
+        if name not in MANIFEST:
+            raise ValueError('Unknown built-in game asset')
+        with _LOCK:
+            lock = _ASSET_LOCKS.setdefault(name, threading.Lock())
+        with lock:
+            _MEMORY.pop(name, None)
+            _FAILED.pop(name, None)
+
+
 def asset_bytes(name, cache_dir):
     spec = MANIFEST.get(name)
     if spec is None:

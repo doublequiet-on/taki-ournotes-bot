@@ -64,7 +64,6 @@ class Operations:
         require(isinstance(ident, str) and re.fullmatch('[a-f0-9]{32}', ident), 'ops_identity')
         require(isinstance(action, str) and action in self.handlers, 'ops_action')
         require(isinstance(params, dict), 'ops_parameters')
-        self.handlers[action][0](params)
         encoded = json.dumps(params, sort_keys=True, separators=(',', ':'), allow_nan=False)
         require(len(encoded.encode()) <= 4096, 'ops_parameters')
         signature = hashlib.sha256((action+'\0'+encoded).encode()).hexdigest()
@@ -75,16 +74,20 @@ class Operations:
                 if previous:
                     require(previous[0] == signature, 'ops_conflict', 409)
                     return self.detail(previous[1])
+                prepared = self.handlers[action][0](params)
+                execution = params if prepared is None else prepared
+                execution_encoded = json.dumps(execution, sort_keys=True, separators=(',', ':'), allow_nan=False)
+                execution_signature = hashlib.sha256((action+'\0'+execution_encoded).encode()).hexdigest()
                 with self.db:
                     self.prune()
                     require(self.db.execute('SELECT count(*) FROM submissions').fetchone()[0] < 2000, 'ops_submission_capacity', 409)
-                    existing = self.db.execute("SELECT id FROM jobs WHERE signature=? AND state IN ('queued','running')", (signature,)).fetchone()
+                    existing = self.db.execute("SELECT id FROM jobs WHERE signature=? AND state IN ('queued','running')", (execution_signature,)).fetchone()
                     require(existing or self.db.execute("SELECT count(*) FROM jobs WHERE state IN ('queued','running')").fetchone()[0] < 8,
                             'ops_queue_full', 409)
                     job = existing[0] if existing else ident
                     if not existing:
                         self.db.execute('INSERT INTO jobs VALUES(?,?,?,?,?,?,NULL,NULL,NULL)',
-                                        (job, action, encoded, signature, 'queued', self.clock()))
+                                        (job, action, execution_encoded, execution_signature, 'queued', self.clock()))
                     self.db.execute('INSERT INTO submissions VALUES(?,?,?,?)', (ident, signature, job, self.clock()))
                 if self.worker is None or self.worker.done():
                     require(not self.closing, 'ops_closing', 503)
@@ -134,7 +137,7 @@ class Operations:
                 self.error = 'ops_store_failed'
                 return
             except Exception as exc:
-                state, encoded = 'failed', json.dumps({'code': 'operation_failed', 'error_type': type(exc).__name__})
+                state, encoded = 'failed', json.dumps({'code': exc.code if isinstance(exc, ProtocolError) else 'operation_failed', 'error_type': type(exc).__name__})
             try:
                 with self.lock, self.db:
                     self.db.execute('UPDATE jobs SET state=?,finished=?,result=? WHERE id=?', (state, self.clock(), encoded, row[0]))

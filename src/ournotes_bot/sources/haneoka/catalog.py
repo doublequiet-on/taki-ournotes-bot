@@ -204,6 +204,62 @@ class CatalogRepository:
             info = convert_info(self.saved["documents"], self.saved["identities"]["jp"], metadata["cached_at"])
             return records, metadata, info
 
+    def synchronize_with_info(self, force=False):
+        """Explicit administration refresh; separates publication from durable success."""
+        with self.lock:
+            if self.saved is None:
+                try:
+                    self.saved = self._read()
+                except ERRORS:
+                    pass
+            before = self.saved
+            prior_ids = {name: set(before['documents']['jp'].get(name, {})) for name in CHANGE_RESOURCES} if before else None
+            previous_version = {s: v['releaseId'] for s,v in before['identities'].items()} if before else None
+            result_code = None
+            stage = 'identity' if not force else 'catalog'
+            try:
+                if not force:
+                    current = {}
+                    for server in ('jp', 'intl'):
+                        raw, headers = self.fetch(f'{ORIGIN}/api/v1/servers/{server}/release?projection=identity', 512000, 20)
+                        current[server] = identity(decode_json(raw), server)
+                        check_headers(headers, current[server])
+                    same = before is not None and all(
+                        all(before['identities'][s][k] == current[s][k] for k in ('releaseId','sourceId')) for s in ('jp','intl'))
+                    if same:
+                        validate(before, self.clock())
+                        try:
+                            disk_valid = self._read() == before
+                        except ERRORS:
+                            disk_valid = False
+                        if not disk_valid:
+                            stage = 'persistence'
+                            self._write(before)
+                        self._durable_fetched_at = before['fetched_at']
+                        self._durable_summary = before.get('change_summary')
+                        self.state, result_code = 'cached', 'upstream_unchanged'
+                if result_code is None:
+                    stage = 'catalog'
+                    self.load(refresh=True)
+                    result_code = {'fresh':'synchronized','unsaved':'updated_unsaved','stale':'refresh_failed_cached'}.get(self.state, 'no_available_data')
+            except ERRORS:
+                if stage == 'persistence' and self.saved is not None:
+                    self.state, result_code = 'unsaved', 'updated_unsaved'
+                else:
+                    self.state, result_code = ('stale','refresh_failed_cached') if self.saved else ('unknown','no_available_data')
+            summary = {'code':result_code,'stage':stage,'before_version':previous_version,
+                       'after_version':{s:v['releaseId'] for s,v in self.saved['identities'].items()} if self.saved else None,
+                       'persisted':self.saved is not None and self._durable_fetched_at == self.saved['fetched_at'],
+                       'published':result_code in ('synchronized','updated_unsaved'),'data_available':self.saved is not None,
+                       'added_counts':None,'checked_at':self.clock()}
+            if self.saved is None:
+                return None, None, None, summary
+            records, metadata = self._publication(validate(self.saved, self.clock(), stale=self.state=='stale'))
+            info = convert_info(self.saved['documents'], self.saved['identities']['jp'], metadata['cached_at'])
+            if prior_ids is not None:
+                summary['added_counts'] = {name:len(set(self.saved['documents']['jp'].get(name, {}))-prior_ids[name]) for name in CHANGE_RESOURCES}
+            return records, metadata, info, summary
+
     def load(self, refresh=False):
         with self.lock:
             if self.saved is None:

@@ -859,6 +859,23 @@ _NATIVE_ASSET_FAILED = {}
 _NATIVE_ASSET_FLIGHTS = weakref.WeakValueDictionary()
 
 
+def invalidate_visual_assets(urls):
+    """Forget only repaired pinned URLs, after any existing renderer flight ends."""
+    global _NATIVE_ASSET_BYTES
+    for url in urls:
+        with _NATIVE_ASSET_LOCK:
+            lock = _NATIVE_ASSET_FLIGHTS.get(url)
+            if lock is None:
+                lock = threading.Lock()
+                _NATIVE_ASSET_FLIGHTS[url] = lock
+        with lock, _NATIVE_ASSET_LOCK:
+            _NATIVE_ASSET_FAILED.pop(url, None)
+            for key in [key for key in _NATIVE_ASSETS if key[0] == url]:
+                image = _NATIVE_ASSETS.pop(key)
+                _NATIVE_ASSET_BYTES -= image.width*image.height*4
+                image.close()
+
+
 def load_visual_asset(url, size):
     """Validated transparent artwork; caller owns the returned image."""
     with _NATIVE_ASSET_LOCK:

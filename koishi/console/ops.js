@@ -6,7 +6,8 @@ export function jobsView(s) {
   return h('section',[h('h2','操作记录'),button('刷新记录',()=>s.load(s.jobs,'ops/jobs/list')),
     !s.jobs.value?h('p','尚未取得操作记录'):h('ul',{class:'record-list'},(s.jobs.value.items||[]).map(job=>h('li',[
       h('strong',actions[job.action]||job.action),h('span',`${states[job.state]||job.state} · ${stamp(job.created_at)}`),
-      job.result&&section({availability:'available',observed_at:job.finished_at,data:job.result},'结果')]))),
+      button('查看结果',()=>s.load(s.jobDetail,'ops/jobs/detail',job.id)),job.result&&section({availability:'available',observed_at:job.finished_at,data:job.result},'结果')]))),
+    s.jobDetail.value&&section({availability:'available',observed_at:s.jobDetail.value.finished_at,data:s.jobDetail.value},'操作详情'),
     s.jobs.value?.items?.length===0&&h('p','暂无操作记录')]);
 }
 export function sourcesView(s) {
@@ -20,7 +21,7 @@ export function sourcesView(s) {
 export function attentionView(s,search) {
   const v=s.overview.value,stats=v?.backend?.sections?.requests?.data,problems=[];
   if(v&&!v.health?.ready)problems.push(['连接需要关注','刷新状态',()=>s.load(s.overview,'overview')]);
-  if(stats&&stats.states.partial+stats.states.uncertain+stats.states.failed>0)problems.push(['存在部分发送、失败或未确认记录','查看请求',search]);
+  if(stats&&(stats.retained_unresolved??stats.states.partial+stats.states.uncertain)>0)problems.push(['存在部分发送或未确认记录','查看请求',search]);
   const catalog=s.sources.value?.sections?.catalog?.data;
   if(catalog&&['stale','unsaved','unknown'].includes(catalog.cache_state))problems.push(['资料同步需要关注','查看来源',()=>s.navigate('sources')]);
   if(v?.policy_health?.availability==='unavailable'||['frozen','conflict'].includes(v?.recovery_policy?.state))problems.push(['策略限制或恢复冲突','查看设置',()=>s.navigate('settings')]);

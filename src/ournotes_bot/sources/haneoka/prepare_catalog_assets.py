@@ -72,7 +72,7 @@ def ranking_urls(saved, *, fetch=public_get):
     return tuple(sorted(urls))
 
 
-def _check(raw):
+def check_asset(raw):
     if not raw or len(raw)>6_000_000:raise ValueError('Artwork byte budget')
     with Image.open(io.BytesIO(raw)) as image:
         if image.width*image.height>20_000_000:raise ValueError('Artwork pixel budget')
@@ -80,7 +80,7 @@ def _check(raw):
     return hashlib.sha256(raw).hexdigest()
 
 
-def _atomic(path,raw):
+def atomic_write(path,raw):
     fd,name=tempfile.mkstemp(prefix=path.name+'.',suffix='.tmp',dir=path.parent)
     try:
         with os.fdopen(fd,'wb') as stream:stream.write(raw)
@@ -101,7 +101,7 @@ def prepare(saved,cache_dir,now,*,download=download_asset,workers=6,extra_urls=(
         path=cache/(hashlib.sha256(url.encode()).hexdigest()+'.png')
         if path.is_file() and path.stat().st_size<=6_000_000:
             try:
-                raw=path.read_bytes();digest=_check(raw)
+                raw=path.read_bytes();digest=check_asset(raw)
                 # Adopt existing validated application cache; subsequent preparations
                 # check the saved content hash as well as decoding the source image.
                 if url not in prior or prior[url]['sha256']==digest:
@@ -109,14 +109,14 @@ def prepare(saved,cache_dir,now,*,download=download_asset,workers=6,extra_urls=(
             except (OSError,ValueError,KeyError):pass
         for attempt in range(2):
             try:
-                raw=download(url,timeout=45);digest=_check(raw)
+                raw=download(url,timeout=45);digest=check_asset(raw)
                 break
             except (OSError,ChartDataError):
                 if attempt:raise
-        _atomic(path,raw)
+        atomic_write(path,raw)
         return url,{'sha256':digest,'bytes':len(raw),'file':path.name}
     with ThreadPoolExecutor(max_workers=workers) as pool:
         assets=dict(pool.map(one,urls))
     report={'schema':1,'identities':saved['identities'],'assets':assets}
-    _atomic(manifest,json.dumps(report,ensure_ascii=False,sort_keys=True).encode('utf-8'))
+    atomic_write(manifest,json.dumps(report,ensure_ascii=False,sort_keys=True).encode('utf-8'))
     return report
