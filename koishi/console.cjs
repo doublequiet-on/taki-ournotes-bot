@@ -3,7 +3,9 @@ const { createHash, timingSafeEqual, randomUUID } = require('node:crypto')
 const path = require('node:path')
 const NodeConsole = require('@koishijs/plugin-console').default
 const Server = require('@koishijs/plugin-server').default
-const { Management } = require('./lib/management')
+const { Management, validateSettings } = require('./lib/management')
+const { validateGroupPolicy } = require('./lib/group-policies')
+const { OperationJournal } = require('./operation-journal.cjs')
 
 function configuration(env) {
   if (env.TAKI_CONSOLE_ENABLED !== '1') return
@@ -20,7 +22,10 @@ function configuration(env) {
 function install(ctx, config, manifest, assetsDirectory = path.join(__dirname, 'node_modules/taki-console-assets')) {
   const management = new Management(config.directory, config.identity)
   const readHealth = config.readHealth || require('./health.cjs').healthReader(ctx, manifest, config.identity || {})
-  const methods = ['overview', 'requests/list', 'requests/detail', 'sources', 'notices/list', 'query-metrics', 'groups/list', 'groups/update', 'settings/update']
+  const methods = ['overview', 'requests/list', 'requests/detail', 'sources', 'notices/list', 'query-metrics', 'groups/list', 'groups/update', 'settings/update',
+    'ops/jobs/list','ops/jobs/detail','ops/jobs/start','ops/export','ops/audit']
+  const journal = new OperationJournal(config.directory, management.groups.snapshot().instance ? JSON.stringify(management.groups.snapshot().instance) : manifest.commit)
+  journal.reconcile(management)
   const reads = new Map()
   const groupPages = new Map()
   let lastObservedGroups, lastNoticeGroups
@@ -112,7 +117,7 @@ function install(ctx, config, manifest, assetsDirectory = path.join(__dirname, '
       throw Error('upgrade_required')
     }, { authority: 5 })
     listen('taki/settings/update', function(value, guard) {
-      try { return management.updateGuarded(value, guard) }
+      try { value=validateSettings(value);return journal.apply('settings/update',management.snapshot().settings,value,()=>management.updateGuarded(value, guard)) }
       catch (error) {
         if (error.message === 'settings_conflict') throw error
         throw Error(error.message==='invalid management settings'?'invalid_settings':'settings_save_unconfirmed')
@@ -126,6 +131,23 @@ function install(ctx, config, manifest, assetsDirectory = path.join(__dirname, '
         policy_health:{availability:management.groups.error?'unavailable':'available',reason_code:management.groups.error},
         gateway_observation: ctx.takiTransport?.receiver?.client.telemetry?.snapshot() || null }
     }, { authority: 5 })
+    listen('taki/ops/jobs/list', function() { return readBackend('ops/jobs') }, {authority:5})
+    listen('taki/ops/jobs/detail', function(id) {
+      if(typeof id!=='string'||!/^[a-f0-9]{32}$/.test(id))throw Error('ops_identity')
+      return readBackend('ops/jobs/'+id)
+    }, {authority:5})
+    listen('taki/ops/jobs/start', async function(value) {
+      if(!value||typeof value!=='object'||Array.isArray(value)||Object.keys(value).sort().join()!=='action,operation_id,params')throw Error('ops_shape')
+      const client=ctx.takiTransport?.receiver?.client
+      if(!client)throw Error('backend_unavailable')
+      const result=await client.request('/v1/admin/ops/jobs',value,131072,false,AbortSignal.timeout(2000))
+      reads.delete('/v1/admin/ops/jobs');return result
+    }, {authority:5})
+    listen('taki/ops/audit', function() { return journal.snapshot() }, {authority:5})
+    listen('taki/ops/export', async function(id) {
+      if(id!==undefined&&(typeof id!=='string'||!/^[a-f0-9]{64}$/.test(id)))throw Error('admin_request_id')
+      return readBackend('ops/export'+(id?'/'+id:''))
+    }, {authority:5})
     for (const [method, resource] of [['requests/list','requests'], ['sources','sources'], ['notices/list','notices'],
       ['query-metrics','query-metrics']]) {
       listen('taki/'+method, function(params = {}) {
@@ -174,7 +196,10 @@ function install(ctx, config, manifest, assetsDirectory = path.join(__dirname, '
     }, { authority:5 })
     listen('taki/groups/update', function(value) {
       if(!value||typeof value!=='object'||Array.isArray(value)||Object.keys(value).sort().join()!=='group_id,policy,revision')throw Error('group_update_shape')
-      const result=management.groups.update(value.group_id,value.policy,value.revision)
+      if(typeof value.group_id!=='string'||!/^[A-Za-z0-9_-]{1,128}$/.test(value.group_id))throw Error('invalid_group_id')
+      validateGroupPolicy(value.policy)
+      const result=journal.apply('groups/update',management.groups.get(value.group_id),value.policy,
+        ()=>management.groups.update(value.group_id,value.policy,value.revision),{group_id:value.group_id})
       management.record('管理员保存了分群策略')
       return result
     }, { authority:5 })

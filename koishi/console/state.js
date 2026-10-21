@@ -3,12 +3,14 @@ export function sessionState() {
   const logged=ref(false), busy=ref(false), message=ref(''), stale=ref(false), dirty=ref(false), conflict=ref(false);
   const overview=ref(null), requests=ref(null), detail=ref(null), sources=ref(null), metrics=ref(null), groups=ref(null), notices=ref(null), draft=ref(null), guard=ref(null);
   const groupId=ref(''),groupDraft=ref(null),groupRevision=ref(null),groupDirty=ref(false),groupConflict=ref(false);
+  const jobs=ref(null),audit=ref(null),host=ref(null),pendingJobs=new Map();
   let generation=0;
   const sequences=new Map();
   const failed=new Set();
   function clearProtected() {
     generation++;logged.value=false;failed.clear();sequences.clear();stale.value=false;
-    for(const value of [overview,requests,detail,sources,metrics,groups,notices,draft,guard])value.value=null;
+    for(const value of [overview,requests,detail,sources,metrics,groups,notices,draft,guard,jobs,audit,host])value.value=null;
+    pendingJobs.clear();
     dirty.value=false;conflict.value=false;groupId.value='';groupDraft.value=null;groupRevision.value=null;groupDirty.value=false;groupConflict.value=false;
   }
   function unauthorized(error) {
@@ -87,6 +89,23 @@ export function sessionState() {
       message.value=['invalid_group_id','invalid_group_policy'].includes(error)?'群 OpenID 或策略格式不正确，备注最多80字；草稿已保留。':'群策略保存未确认或版本冲突。草稿已保留，请先核对服务器值。';await load(groups,'groups/list');}
     finally{busy.value=false;}
   }
-  return {logged,busy,message,stale,dirty,conflict,overview,requests,detail,sources,metrics,groups,notices,draft,guard,rpc,load,login,logout,save,
+  async function startJob(action,params={}) {
+    const token=generation,key=JSON.stringify([action,params]);
+    if(!pendingJobs.has(key))pendingJobs.set(key,crypto.randomUUID().replaceAll('-',''));
+    busy.value=true;
+    try{const job=await rpc('ops/jobs/start',{operation_id:pendingJobs.get(key),action,params});
+      if(token!==generation)return;
+      pendingJobs.delete(key);message.value='操作已受理：'+job.id.slice(0,8);await load(jobs,'ops/jobs/list');
+    }catch(error){if(token!==generation||unauthorized(error))return;message.value='操作受理未确认，请查看任务记录；重试将复用同一操作标识。';}
+    finally{busy.value=false;}
+  }
+  async function exportDiagnostic(id) {
+    const token=generation;
+    try{const value=await rpc('ops/export',...(id?[id]:[]));if(token!==generation)return;
+      const url=URL.createObjectURL(new Blob([JSON.stringify(value,null,2)],{type:'application/json'}));
+      const a=document.createElement('a');a.href=url;a.download='taki-diagnostic.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
+    }catch(error){if(token!==generation||unauthorized(error))return;message.value='诊断导出失败，请稍后重试。';}
+  }
+  return {jobs,audit,host,startJob,exportDiagnostic,logged,busy,message,stale,dirty,conflict,overview,requests,detail,sources,metrics,groups,notices,draft,guard,rpc,load,login,logout,save,
     groupId,groupDraft,groupRevision,groupDirty,groupConflict,selectGroup,saveGroup,invalidate(){generation++;}};
 }

@@ -21,6 +21,7 @@ from .backend_protocol import PROTOCOL, CAPABILITY, WINDOW, Request, ProtocolErr
 from .delivery_ledger import Ledger
 from .diagnostics import Diagnostics
 from .admin import Admin
+from .operations import Operations
 from .backend_sources import CODE_FILES
 from ..domain.query_policy import CURRENT_POLICY
 
@@ -57,6 +58,7 @@ class Backend:
         self.ledger = Ledger(ledger_path, instance_id+'\0'+app_id, self.runtime, clock())
         self.diagnostics = Diagnostics(Path(ledger_path).with_name('diagnostics-v1.sqlite3'), enabled=diagnostics_enabled)
         self.admin = Admin(self)
+        self.operations = Operations(Path(ledger_path).with_name('operations-v1.sqlite3'), instance_id+'\0'+app_id, clock=clock)
         self.contexts = ContextStore()
         self.gate = replies.QueryGate(settings.query_concurrency, settings.query_queue_limit, redact=True)
         self.sequencer = replies.ReplySequencer(enabled=settings.reply_order)
@@ -336,6 +338,7 @@ class Backend:
         for task in tasks: task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
         if self.runtime_tasks: await self.runtime_tasks.close()
+        await self.operations.close()
         self.ledger.close()
         self.diagnostics.close()
         if self.data_owner: self.data_owner.close()
@@ -372,7 +375,7 @@ def create_app(backend, token, initialize=None):
                      'background_tasks': bool(backend.runtime_tasks and backend.runtime_tasks.tasks and all(not task.done() for task in backend.runtime_tasks.tasks)),
                      'notices_enabled': backend.notices is not None,
                      'diagnostics_enabled': backend.diagnostics.db is not None,
-                     'management_capabilities': ['admin_read_v1', 'telemetry_v1', 'group_policies_v1'],
+                     'management_capabilities': ['admin_read_v1', 'telemetry_v1', 'group_policies_v1', 'ops_v1'],
                      'features': ['classify', 'gateway_retire', 'ack_context_guard', 'notice_gateway_v1']}, 200 if backend.ready else 503)
     async def classify(request):
         value = await read_json(request)
@@ -415,6 +418,13 @@ def create_app(backend, token, initialize=None):
     async def admin_sources(request): return json(backend.admin.sources())
     async def admin_notices(request): return json(backend.admin.notices(dict(request.query)))
     async def admin_metrics(request): return json(backend.admin.metrics())
+    async def ops_jobs(request): return json(backend.operations.listing())
+    async def ops_detail(request): return json(backend.operations.detail(request.match_info['jid']))
+    async def ops_submit(request):
+        require(backend.ready and not backend.closing, 'backend_not_ready', 503)
+        require(backend.ledger.active(request.headers.get('X-Taki-Epoch')), 'ops_gateway_epoch', 409)
+        return json(await backend.operations.submit(await read_json(request)), 202)
+    async def ops_export(request): return json(backend.admin.export(request.match_info.get('rid')))
     async def admin_telemetry(request):
         return json(backend.admin.telemetry(await read_json(request), request.headers.get('X-Taki-Epoch')))
     app.add_routes([web.get('/v1/health', health), web.get('/v1/ready', ready),
@@ -428,7 +438,10 @@ def create_app(backend, token, initialize=None):
                     web.get('/v1/admin/overview', admin_overview), web.get('/v1/admin/requests', admin_requests),
                     web.get('/v1/admin/requests/{rid}', admin_detail), web.get('/v1/admin/groups', admin_groups),
                     web.get('/v1/admin/sources', admin_sources), web.get('/v1/admin/notices', admin_notices),
-                    web.get('/v1/admin/query-metrics', admin_metrics), web.post('/v1/admin/telemetry', admin_telemetry)])
+                    web.get('/v1/admin/query-metrics', admin_metrics), web.post('/v1/admin/telemetry', admin_telemetry),
+                    web.get('/v1/admin/ops/jobs', ops_jobs), web.post('/v1/admin/ops/jobs', ops_submit),
+                    web.get('/v1/admin/ops/jobs/{jid}', ops_detail),
+                    web.get('/v1/admin/ops/export', ops_export), web.get('/v1/admin/ops/export/{rid}', ops_export)])
     async def lifetime(app):
         async def load():
             try:

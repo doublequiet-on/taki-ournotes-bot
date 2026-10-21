@@ -14,7 +14,8 @@ async function main(){
   transport.receiver={client:{request:async()=>{reads++;return{sections:{}}}},health:()=>({})};ctx.set('takiTransport',transport)
   const manager=install(ctx,{port:15143,password:'fixture-console-password-000000',directory:dir},{commit:'b'.repeat(40)})
   const clients=[]
-  const methods=['overview','requests/list','requests/detail','sources','notices/list','query-metrics','groups/list','groups/update','settings/update']
+  const methods=['overview','requests/list','requests/detail','sources','notices/list','query-metrics','groups/list','groups/update','settings/update',
+    'ops/jobs/list','ops/jobs/detail','ops/jobs/start','ops/export','ops/audit']
   try{
     await ctx.start();await manager.ready();const a=await connect();clients.push(a.ws)
     for(const m of methods)assert.equal((await a.call('taki/'+m)).error,'unauthorized')
@@ -28,11 +29,17 @@ async function main(){
       assert.equal((await a.call('taki/login','fixture-console-password-000000')).error,'请稍后再登录')
     } finally {Date.now=()=>clock()+offset}
     const state=(await a.call('taki/status')).value
+    assert.equal((await a.call('taki/ops/jobs/detail','../secret')).error,'ops_identity')
+    assert.equal((await a.call('taki/ops/export','../secret')).error,'admin_request_id')
+    assert.equal((await a.call('taki/ops/jobs/start',{command:'reboot'})).error,'ops_shape')
     const existed=fs.existsSync(path.join(dir,'settings.json'))
     assert.equal((await a.call('taki/settings',state.settings,state.revision)).error,'upgrade_required')
     assert.equal(fs.existsSync(path.join(dir,'settings.json')),existed)
     const changed=await a.call('taki/settings/update',{...state.settings,privateEnabled:false},state.guard)
     assert.equal(changed.value.settings.privateEnabled,false)
+    const audit=(await a.call('taki/ops/audit')).value
+    assert.equal(audit.items[0].state,'applied')
+    assert.ok(!JSON.stringify(audit).includes('fixture-console-password'))
     assert.equal((await a.call('taki/settings/update',state.settings,state.guard)).error,'settings_conflict')
     assert.ok((await a.call('taki/requests/list',{limit:200})).error)
     assert.equal((await a.call('taki/requests/list',{cursor:'x'.repeat(2049)})).error,'admin_parameters')

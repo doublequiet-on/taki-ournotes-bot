@@ -1,5 +1,7 @@
 # Taki 可视化控制台
 
+新增运维入口、任务与审计契约见 [运维控制台](OPERATIONS.md)。正式页面分为总览、查询记录、群管理、数据来源、设置；Astro 仍是隔离演示。
+
 开发基线：`b3d7c4267f8dd304ff0ce59dde2d9e3ff287c35a`。V1a 运输协议为1.0；V1b配对运输协议1.1及组合能力 `group_policies_v1`。管理读取独立声明 `admin_read_v1`、`diagnostics_v1`，握手另声明遥测能力。沿用 Python 业务后端、Koishi 网关两个进程，浏览器只调用受认证 Console RPC。
 
 ## 使用入口与事实口径
