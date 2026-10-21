@@ -2,6 +2,18 @@
 const assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path'),os=require('node:os')
 const {Context}=require('koishi'),WebSocket=require('ws'),{install}=require('../console.cjs')
 const {TakiTransport}=require('../lib')
+function journalProbe(directory){
+  const {OperationJournal}=require('../operation-journal.cjs'),folder=path.join(directory,'journal-faults')
+  fs.mkdirSync(folder)
+  const j=new OperationJournal(folder,'fixture'),save=j.save.bind(j);let writes=0,executions=0
+  j.save=()=>{if(++writes===2)throw Error('fixture result write failure');return save()}
+  assert.throws(()=>j.apply('settings/update',{enabled:true},{enabled:false},()=>{executions++}),/fixture result write failure/)
+  assert.equal(executions,1);assert.equal(j.snapshot().available,false);assert.equal(j.snapshot().items[0].state,'intent')
+  assert.equal(JSON.parse(fs.readFileSync(j.file,'utf8')).entries[0].state,'intent')
+  assert.throws(()=>j.apply('settings/update',{}, {},()=>{executions++}),/ops_journal_write_unconfirmed/);assert.equal(executions,1)
+  fs.writeFileSync(j.file,JSON.stringify({schema:1,identity:'fixture',entries:[null]}))
+  assert.equal(new OperationJournal(folder,'fixture').snapshot().available,false)
+}
 async function connect(origin='http://127.0.0.1:15143'){
   const ws=new WebSocket('ws://127.0.0.1:15143/status',{origin}),pending=new Map();let seq=0
   ws.on('message',bytes=>{const m=JSON.parse(bytes);if(m.type==='response')pending.get(m.body.id)?.(m.body)})
@@ -10,6 +22,7 @@ async function connect(origin='http://127.0.0.1:15143'){
 }
 async function main(){
   const dir=fs.mkdtempSync(path.join(os.tmpdir(),'taki-console-rpc-')),ctx=new Context(),transport=new TakiTransport(ctx)
+  journalProbe(dir)
   let reads=0,offset=0;const clock=Date.now;Date.now=()=>clock()+offset
   transport.receiver={client:{request:async()=>{reads++;return{sections:{}}}},health:()=>({})};ctx.set('takiTransport',transport)
   const manager=install(ctx,{port:15143,password:'fixture-console-password-000000',directory:dir},{commit:'b'.repeat(40)})
