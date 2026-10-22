@@ -8,6 +8,10 @@ import tempfile
 import time
 import tracemalloc
 import uuid
+import io
+import threading
+from concurrent.futures import ThreadPoolExecutor
+from unittest.mock import patch
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -55,6 +59,32 @@ def main():
         tracemalloc.start();b.admin.overview();current,peak=tracemalloc.get_traced_memory();tracemalloc.stop()
         result['read_python_allocations']={'current_bytes':current,'peak_bytes':peak,'scope':'one overview, excludes interpreter/native allocations'}
         result['environment']['spans_per_request']=31
+        # Explicit controlled source: no network, but the actual decode/write/cache
+        # invalidation path and two-download worker limit remain in use.
+        b.repository=SimpleNamespace(capture_catalog=lambda:SimpleNamespace(cache_state='fresh',songs=(),metadata={},last_successful_sync_at=None))
+        b.parser=SimpleNamespace(metrics_snapshot=lambda:{'available':False,'reason_code':'benchmark_not_collected'})
+        result['ops_list']=measure(b.operations.listing)
+        result['export']=measure(b.admin.export)
+        result['poll_five_panels']=measure(lambda:(b.admin.overview(),b.admin.listing({}),b.admin.sources(),b.admin.notices(),b.operations.listing()))
+        from ournotes_bot.application.operations_sources import SourceOperations
+        from PIL import Image
+        raw=io.BytesIO();Image.new('RGB',(512,512),(140,110,170)).save(raw,format='PNG');image=raw.getvalue()
+        entered=threading.Event()
+        def download(url,timeout):
+            entered.set();time.sleep(.04);return image
+        source=SourceOperations(b)
+        urls=tuple('https://bestdori.com/assets/fixture-'+str(i)+'.png' for i in range(256))
+        saved={'identities':{'jp':{'releaseId':'fixture'},'intl':{'releaseId':'fixture'}}}
+        with patch.object(source,'snapshot',return_value=saved),patch('ournotes_bot.application.operations_sources.runtime_data_dir',return_value=root/'repair'),patch('ournotes_bot.application.operations_sources.artwork.catalog_urls',return_value=urls),patch('ournotes_bot.application.operations_sources.artwork.download_asset',side_effect=download),patch('ournotes_bot.application.operations_sources.MANIFEST',{}),ThreadPoolExecutor(max_workers=1) as pool:
+            started=time.perf_counter();repair=pool.submit(source.assets,{'snapshot':{'data_version':'fixture','text_version':'fixture'}},repair=True)
+            if not entered.wait(3):raise RuntimeError('repair did not start')
+            overlaps=[]
+            def overlap(function):
+                overlaps.append(not repair.done());return function()
+            result['during_controlled_repair']={'overview':measure(lambda:overlap(b.admin.overview)),'export':measure(lambda:overlap(b.admin.export))}
+            result['during_controlled_repair']['all_samples_overlap']=all(overlaps)
+            repair_result=repair.result()
+            result['controlled_repair']={'elapsed_ms':round((time.perf_counter()-started)*1000,3),'result':repair_result,'images':len(urls),'fixture_delay_ms':40,'image_size':'512x512','network':False}
         asyncio.run(b.close())
         args.output.parent.mkdir(parents=True,exist_ok=True);args.output.write_text(json.dumps(result,indent=2));print(json.dumps(result))
 

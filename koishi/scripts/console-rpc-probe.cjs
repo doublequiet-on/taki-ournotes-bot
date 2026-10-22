@@ -2,6 +2,57 @@
 const assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path'),os=require('node:os')
 const {Context}=require('koishi'),WebSocket=require('ws'),{install}=require('../console.cjs')
 const {TakiTransport}=require('../lib')
+function controlProbe(directory){
+  const {Management}=require('../lib/management'),{OperationJournal}=require('../operation-journal.cjs'),{Controls}=require('../ops-controls.cjs')
+  const identity={appId:'fixture-app',instanceId:'fixture-instance'},dir=path.join(directory,'control-unit')
+  let m=new Management(dir,identity),journal=new OperationJournal(dir,'fixture'),controls=new Controls(m,journal)
+  const inherited={label:'',queries:'inherit',notifications:'inherit',natural_query:'inherit'}
+  m.groups.update('a',inherited,0);m.groups.update('b',{...inherited,natural_query:'model'},1);m.groups.update('off',{...inherited,natural_query:'off'},2)
+  const payload=(action,id,groups=[])=>({operation_id:id.repeat(32),action,group_ids:groups,guard:m.snapshot().guard,group_revision:m.groups.snapshot().revision})
+  const restore=(id,target)=>({operation_id:id.repeat(32),target_id:target,guard:m.snapshot().guard,group_revision:m.groups.snapshot().revision})
+  const first=payload('local','1',['a','b','off']),accepted=controls.start(first,'fixture-session')
+  assert.equal(m.groups.snapshot().revision,4);assert.equal(m.groups.get('a').natural_query,'local');assert.equal(m.groups.get('off').natural_query,'off')
+  assert.equal(controls.start(first).id,accepted.id);assert.equal(m.groups.snapshot().revision,4)
+  assert.throws(()=>controls.start({...first,group_ids:['a']}),/control_id_conflict/)
+  controls.restore(restore('2',accepted.id));assert.equal(m.groups.get('a').natural_query,'inherit');assert.equal(m.groups.get('b').natural_query,'model')
+  const local=controls.start(payload('local','3',['a']))
+  m=new Management(dir,identity);journal=new OperationJournal(dir,'fixture');journal.reconcile(m);controls=new Controls(m,journal)
+  assert.equal(controls.snapshot().items.find(e=>e.id===local.id).restorable,true)
+  controls.restore(restore('4',local.id));assert.equal(m.groups.get('a').natural_query,'inherit')
+  const maintenance=controls.start(payload('maintenance','5'))
+  assert.equal(m.snapshot().settings.queriesEnabled,false);assert.equal(m.snapshot().settings.notificationsEnabled,false)
+  m.updateGuarded({...m.snapshot().settings,queriesEnabled:true},m.snapshot().guard)
+  m.updateGuarded({...m.snapshot().settings,queriesEnabled:false},m.snapshot().guard)
+  assert.throws(()=>controls.restore(restore('6',maintenance.id)),/control_restore_conflict/,'ABA saves must not restore stale permissions')
+  assert.equal(m.snapshot().settings.queriesEnabled,false)
+  const historical=journal.begin('settings/update',{},{});journal.finish(historical,'applied')
+  historical.at=0;journal.find(maintenance.id).at=0;journal.prune()
+  assert.equal(journal.find(historical.id),undefined)
+  assert.ok(journal.find(maintenance.id),'active recovery material survives audit retention')
+  const file=path.join(dir,'group-policies.v1.json'),disk=JSON.parse(fs.readFileSync(file,'utf8'));disk.groups.a.natural_query='off';fs.writeFileSync(file,JSON.stringify(disk))
+  assert.throws(()=>controls.start(payload('local','7',['a'])),/group_policy_conflict/)
+  assert.equal(JSON.parse(fs.readFileSync(file,'utf8')).groups.a.natural_query,'off')
+  const brokenDir=path.join(directory,'control-broken'),normal=new Management(brokenDir,identity)
+  fs.writeFileSync(path.join(brokenDir,'operations.v1.json'),'broken')
+  const broken=new OperationJournal(brokenDir,'fixture'),blocked=new Controls(normal,broken)
+  assert.equal(blocked.snapshot().available,false)
+  assert.equal(normal.snapshot().settings.queriesEnabled,true)
+  const faultDir=path.join(directory,'control-write-failure'),faultManagement=new Management(faultDir,identity)
+  const faultJournal=new OperationJournal(faultDir,'fixture'),faultControls=new Controls(faultManagement,faultJournal)
+  const save=faultJournal.save.bind(faultJournal);let writes=0
+  faultJournal.save=()=>{if(++writes===2)throw Error('fixture result write failure');return save()}
+  const fault={operation_id:'f'.repeat(32),action:'maintenance',group_ids:[],guard:faultManagement.snapshot().guard,group_revision:0}
+  assert.throws(()=>faultControls.start(fault),/fixture result write failure/)
+  assert.equal(faultManagement.snapshot().settings.queriesEnabled,false)
+  assert.equal(faultJournal.find(fault.operation_id).state,'intent');assert.equal(faultControls.snapshot().available,false)
+  assert.throws(()=>faultControls.start(fault),/ops_journal_write_unconfirmed/)
+  assert.equal(faultManagement.snapshot().revision,1,'retry must not reapply the control')
+  const restarted=new OperationJournal(faultDir,'fixture');restarted.reconcile(faultManagement)
+  const recovered=new Controls(faultManagement,restarted)
+  assert.equal(restarted.find(fault.operation_id).state,'applied')
+  assert.equal(recovered.snapshot().items[0].restorable,false,'missing durable post-tag cannot authorize restoration')
+  console.log(JSON.stringify({controls:true,batchRevision:true,offPreserved:true,idempotency:true,restartRestore:true,abaConflict:true,externalEditPreserved:true,corruptionIsolated:true,resultWriteFailureIsolated:true}))
+}
 function journalProbe(directory){
   const {OperationJournal}=require('../operation-journal.cjs'),folder=path.join(directory,'journal-faults')
   fs.mkdirSync(folder)
@@ -31,7 +82,8 @@ async function main(){
   const manager=install(ctx,{port:15143,password:'fixture-console-password-000000',directory:dir},{commit:'b'.repeat(40)})
   const clients=[]
   const methods=['overview','requests/list','requests/detail','sources','notices/list','query-metrics','groups/list','groups/update','settings/update',
-    'ops/jobs/list','ops/jobs/detail','ops/jobs/start','ops/export','ops/audit','ops/host','ops/notice-target']
+    'ops/jobs/list','ops/jobs/detail','ops/jobs/start','ops/export','ops/audit','ops/host','ops/notice-target',
+    'ops/controls','ops/controls/start','ops/controls/restore']
   try{
     await ctx.start();await manager.ready();const a=await connect();clients.push(a.ws)
     for(const m of methods)assert.equal((await a.call('taki/'+m)).error,'unauthorized')
@@ -62,6 +114,12 @@ async function main(){
     const audit=(await a.call('taki/ops/audit')).value
     assert.equal(audit.items[0].state,'applied')
     assert.ok(!JSON.stringify(audit).includes('fixture-console-password'))
+    const maintenance={operation_id:'e'.repeat(32),action:'maintenance',group_ids:[],guard:changed.value.guard,group_revision:0}
+    assert.equal((await a.call('taki/ops/controls/start',maintenance)).value.state,'applied')
+    const controlState=(await a.call('taki/ops/controls')).value
+    assert.equal((await a.call('taki/ops/controls/restore',{operation_id:'f'.repeat(32),target_id:maintenance.operation_id,guard:controlState.guard,group_revision:0})).value.state,'applied')
+    assert.equal(manager.management.snapshot().settings.privateEnabled,false)
+    controlProbe(dir)
     assert.equal((await a.call('taki/settings/update',state.settings,state.guard)).error,'settings_conflict')
     assert.ok((await a.call('taki/requests/list',{limit:200})).error)
     assert.equal((await a.call('taki/requests/list',{cursor:'x'.repeat(2049)})).error,'admin_parameters')

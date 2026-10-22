@@ -38,7 +38,8 @@ class SourceOperations:
 
     def synchronize(self, params, force=False):
         require(self.target() == params['snapshot'], 'ops_snapshot_changed', 409)
-        result = self.repository.synchronize_catalog(force, params['snapshot'])
+        owner=self.backend.runtime_tasks
+        result = owner.synchronize_catalog(force,params['snapshot']) if owner else self.repository.synchronize_catalog(force, params['snapshot'])
         if result['code'] in ('updated_unsaved','refresh_failed_cached','snapshot_changed'):
             result['_state'] = 'partial'
         elif result['code'] == 'no_available_data':

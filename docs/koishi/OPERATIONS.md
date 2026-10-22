@@ -37,6 +37,22 @@ Haneoka 实例提供 catalog_sync/catalog_reload/assets_verify/assets_repair/ass
 
 输出 /run/taki-ops/host-v1.json，root:ubuntu、0640，目录 0750 不允许应用写入。30 秒采集，超过 90 秒标记陈旧，未来时间标记时钟变化。目录大小最多每 10 分钟统计，扫描限 2 秒；complete=false 的字节数只是已扫描部分。business_data 包含 assets，不可相加。磁盘门槛按 releases 和 backups 所在文件系统分别报告。
 
+安装准备：从已通过组合哈希／兼容门禁的产物取 `controller/ops_snapshot.py` 与 `controller/service-templates/taki-ops-snapshot.*.example`，先核对受信控制器已提供配套的 `status_document` 和 `Engine(..., backend=None)`；不同版本不能盲目覆盖。模板使用现有 ubuntu 应用组，其他实例须先核对组与固定目录。本轮只交付文件，以下操作需另行批准后由运维执行：
+
+```sh
+# 在核验后的组合包 controller 目录内执行；不更新任何机器人代码或服务。
+sudo install -o root -g root -m 0644 ops_snapshot.py /usr/local/lib/taki-updater/ops_snapshot.py
+sudo install -o root -g root -m 0644 service-templates/taki-ops-snapshot.service.example /etc/systemd/system/taki-ops-snapshot.service
+sudo install -o root -g root -m 0644 service-templates/taki-ops-snapshot.timer.example /etc/systemd/system/taki-ops-snapshot.timer
+sudo systemd-analyze verify /etc/systemd/system/taki-ops-snapshot.service /etc/systemd/system/taki-ops-snapshot.timer
+sudo systemctl daemon-reload
+sudo systemctl enable --now taki-ops-snapshot.timer
+systemctl show taki-ops-snapshot.timer -p ActiveState -p UnitFileState
+stat -c '%U:%G %a %n' /run/taki-ops /run/taki-ops/host-v1.json
+```
+
+验收需检查采集时间持续更新、应用不可写、未含凭据，且 `taki-updater.timer` 仍暂停；网页只读该文件。撤除时仅停用 `taki-ops-snapshot.timer`，不启动更新器、不删除应用设置或业务库。真实主机采集、systemd 启用及恢复演练均不由离线测试替代。
+
 控制器记录、进程 cwd 线索和网关/后端启动身份分开显示。cwd 不等于模块摘要；控制器目标只代表最近观察，非实时 main。仅在采集代次和 PID 对得上时比较运行版本。
 
 现有备份清单只能证明相应归档存在，不能证明摘要或恢复成功。可读取独立批准流程产生、root 所有的 /var/lib/taki-updater/ops-recovery-proof.v1.json：schema=1，objects 以 code_environment/business_data/console_settings/trusted_configuration/isolated_restore/offsite_copy 为键，每项包含 artifact_sha256、verified_at，可选 restore_verified。页面标注为外部受信记录，不声称本采集器执行了核验，也不据此推断归档当前存在。
@@ -48,6 +64,22 @@ Haneoka 实例提供 catalog_sync/catalog_reload/assets_verify/assets_repair/ass
 新增时间放在独立 operations 库的 notice_observations 表，仅记录 claimed/sending/ack 等实际处理时的服务器观测。通知路径只入有界队列（256），独立任务每批最多 32 条落盘；写入失败与丢弃只影响观测，不改变许可或 ACK。保留 24 小时、最多 16384 条，历史、丢失和未覆盖时间保持未知，不作为客户端送达时间。
 
 导出包含实例摘要或单条请求，不含密码、令牌、原问句、用户或平台消息标识、完整配置及日志。每份导出使用临时群代号；实例导出最多含前 25 条需要关注记录，不代表完整消息流量。
+
+### 后台恢复、采样与可逆设置
+
+tasks_recover 只重建配置允许且已退出／缺失的 catalog、traits 和可选 sampling 任务；存活任务保持原实例。手动资料同步与定时刷新共用 catalog 锁。进程内观测提供最近尝试、成功、连续失败及下次计划；进程重启前的时间保持缺失。
+
+events_check 使用配置的服务器与现有来源缓存；upstream_check 只读主资料的 JP/intl 身份，不发布资料。sample_once 仅在采样已配置时开放，与周期采样共用非阻塞锁、前台让位、发现退避和时钟隔离。结果分别统计实际获取路径、历史写入返回值和新增有效观测，不把缓存命中或重复记录算成新历史。
+
+网关 ops/controls、ops/controls/start、ops/controls/restore 采用全局 epoch/revision；群操作另需群 revision。maintenance 只暂停 queriesEnabled/notificationsEnabled，不取消已接纳任务或 ACK。local 只把选中群当前有效的 model 收紧为 local，原 off/local 保持不变；原继承值也保存供恢复，不设置自动恢复倒计时。
+
+独立审计先原子保存意图，再修改设置，最后回读确认并保存结果。操作 ID 重试复用原结果。活动恢复记录保留原字段，普通已完成审计只保留字段名、摘要和保存版本；会话使用随机标识，不保存管理员密码。记录不可写时禁止对应管理操作，业务与 ACK 不受影响。
+
+恢复同时比较当前字段和写入后的文件身份（摘要、文件标识、时间和长度），以检测改回相同值的中间修改；后续任何保存都可能使恢复保守地报告冲突。正常进程重启后可恢复；写入配置后、结果记录前崩溃时，能核对已生效状态但缺少写后文件证据，自动恢复被阻止，原设置保留供人工核对。恢复不会覆盖冲突或自动恢复模型权限。
+
+空闲时也每分钟执行独立保留期限清理；读接口不触发清理。活动恢复记录不因 30 日审计清理而丢失；有界存储达到上限且无法清理时拒绝新管理动作。升级／代码回退不删除独立 operations 库、审计、设置或群策略；旧版忽略运维记录，保留已经收紧的设置。恢复新版后仍须核对保存证据。既有不支持群策略的旧版冻结门禁继续适用。
+
+Astro 中的后台检查、维护和 local 均只修改本次页面内存，演示标识始终保留，不连接后端。
 
 ## 批次验收矩阵
 

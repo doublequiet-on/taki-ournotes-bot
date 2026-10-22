@@ -7,6 +7,7 @@ const { Management, validateSettings } = require('./lib/management')
 const { validateGroupPolicy } = require('./lib/group-policies')
 const { OperationJournal } = require('./operation-journal.cjs')
 const { readHostSnapshot } = require('./ops-host.cjs')
+const { Controls } = require('./ops-controls.cjs')
 
 function configuration(env) {
   if (env.TAKI_CONSOLE_ENABLED !== '1') return
@@ -24,9 +25,12 @@ function install(ctx, config, manifest, assetsDirectory = path.join(__dirname, '
   const management = new Management(config.directory, config.identity)
   const readHealth = config.readHealth || require('./health.cjs').healthReader(ctx, manifest, config.identity || {})
   const methods = ['overview', 'requests/list', 'requests/detail', 'sources', 'notices/list', 'query-metrics', 'groups/list', 'groups/update', 'settings/update',
-    'ops/jobs/list','ops/jobs/detail','ops/jobs/start','ops/export','ops/audit','ops/host','ops/notice-target']
+    'ops/jobs/list','ops/jobs/detail','ops/jobs/start','ops/export','ops/audit','ops/host','ops/notice-target',
+    'ops/controls','ops/controls/start','ops/controls/restore']
   const journal = new OperationJournal(config.directory, management.groups.snapshot().instance ? JSON.stringify(management.groups.snapshot().instance) : manifest.commit)
   journal.reconcile(management)
+  const controls=new Controls(management,journal)
+  ctx.setInterval(()=>journal.prune(),60000)
   const reads = new Map()
   const groupPages = new Map()
   let lastObservedGroups, lastNoticeGroups
@@ -55,6 +59,7 @@ function install(ctx, config, manifest, assetsDirectory = path.join(__dirname, '
       data:{...data,targets,policy_observed_at:Date.now()/1000}}}}
   }
   const sessions = new WeakMap()
+  const sessionIds = new WeakMap()
   const hash = value => createHash('sha256').update(value).digest()
   const passwordHash = hash(config.password)
   // Failed guesses must not reserve the login budget of other connections.
@@ -114,6 +119,7 @@ function install(ctx, config, manifest, assetsDirectory = path.join(__dirname, '
       nextLogin.set(this, Date.now() + 1000)
       if (typeof password !== 'string' || password.length > 256 || !timingSafeEqual(hash(password), passwordHash)) throw Error('登录失败')
       sessions.set(this, Date.now() + 30 * 60 * 1000)
+      sessionIds.set(this,randomUUID())
       management.record('管理员已登录')
       return true
     })
@@ -130,7 +136,7 @@ function install(ctx, config, manifest, assetsDirectory = path.join(__dirname, '
       throw Error('upgrade_required')
     }, { authority: 5 })
     listen('taki/settings/update', function(value, guard) {
-      try { value=validateSettings(value);return journal.apply('settings/update',management.snapshot().settings,value,()=>management.updateGuarded(value, guard)) }
+      try { value=validateSettings(value);return journal.apply('settings/update',management.snapshot().settings,value,()=>management.updateGuarded(value, guard),{session:sessionIds.get(this),accepted_guard:management.snapshot().guard}) }
       catch (error) {
         if (error.message === 'settings_conflict') throw error
         throw Error(error.message==='invalid management settings'?'invalid_settings':'settings_save_unconfirmed')
@@ -142,7 +148,8 @@ function install(ctx, config, manifest, assetsDirectory = path.join(__dirname, '
       return { ...management.snapshot(), health, backend,
         recovery_policy:config.recoveryPolicy||null,
         policy_health:{availability:management.groups.error?'unavailable':'available',reason_code:management.groups.error},
-        gateway_observation: ctx.takiTransport?.receiver?.client.telemetry?.snapshot() || null }
+        gateway_observation: ctx.takiTransport?.receiver?.client.telemetry?.snapshot() || null,
+        activity:ctx.takiTransport?.receiver?.activity?.()||null }
     }, { authority: 5 })
     listen('taki/ops/jobs/list', function() { return readBackend('ops/jobs') }, {authority:5})
     listen('taki/ops/jobs/detail', function(id) {
@@ -156,7 +163,10 @@ function install(ctx, config, manifest, assetsDirectory = path.join(__dirname, '
       const result=await client.request('/v1/admin/ops/jobs',value,131072,false,AbortSignal.timeout(2000))
       reads.delete('/v1/admin/ops/jobs');return result
     }, {authority:5})
-    listen('taki/ops/audit', function() { return journal.snapshot() }, {authority:5})
+    listen('taki/ops/audit', function() { return journal.publicSnapshot() }, {authority:5})
+    listen('taki/ops/controls', function() { return controls.snapshot() }, {authority:5})
+    listen('taki/ops/controls/start', function(value) { return controls.start(value,sessionIds.get(this)) }, {authority:5})
+    listen('taki/ops/controls/restore', function(value) { return controls.restore(value,sessionIds.get(this)) }, {authority:5})
     listen('taki/ops/notice-target', async function(id) {
       if(typeof id!=='string'||!/^[A-Za-z0-9_-]{1,128}$/.test(id))throw Error('admin_group')
       return noticePolicies(await readBackend('ops/notice-targets/'+id),'notice_target')
@@ -233,7 +243,7 @@ function install(ctx, config, manifest, assetsDirectory = path.join(__dirname, '
       if(typeof value.group_id!=='string'||!/^[A-Za-z0-9_-]{1,128}$/.test(value.group_id))throw Error('invalid_group_id')
       validateGroupPolicy(value.policy)
       const result=journal.apply('groups/update',management.groups.get(value.group_id),value.policy,
-        ()=>management.groups.update(value.group_id,value.policy,value.revision),{group_id:value.group_id})
+        ()=>management.groups.update(value.group_id,value.policy,value.revision),{group_id:value.group_id,session:sessionIds.get(this),accepted_guard:{group_revision:management.groups.snapshot().revision}})
       management.record('管理员保存了分群策略')
       return result
     }, { authority:5 })

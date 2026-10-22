@@ -423,6 +423,13 @@ class SongRepository:
                                self.cache_state, self.last_successful_sync_at,
                                self.characters, self.gachas, self.activities)
 
+    def check_catalog_upstream(self):
+        with self._catalog_refresh_lock:
+            if self._catalog_repository is None:
+                raise DataError('Catalog is not initialized')
+            identities=self._catalog_repository.probe_identities()
+            return {server:value['releaseId'] for server,value in identities.items()}
+
     def capture_source_snapshot(self):
         """Capture a published Haneoka source reference; callers must not mutate it."""
         with self._catalog_refresh_lock:

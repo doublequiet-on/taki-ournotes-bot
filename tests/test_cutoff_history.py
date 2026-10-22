@@ -214,6 +214,21 @@ class SamplerTests(unittest.TestCase):
             sampler.sample_once()
             self.assertEqual(source.event.call_count, 8)
 
+    def test_manual_sampling_shares_lock_and_does_not_bypass_backoff(self):
+        with tempfile.TemporaryDirectory() as folder:
+            fx=PublicFixture()
+            source=EventCutoffRepository(Path(folder)/'cache',transport=fx,clock=lambda:fx.now,monotonic=lambda:fx.now)
+            source.history=CutoffHistory(Path(folder)/'history.sqlite3',min_free_mb=0)
+            sampler=HistorySampler(source,clock=lambda:fx.now)
+            with sampler.sample_lock:
+                self.assertEqual(sampler.sample_once()['code'],'sampling_busy')
+            self.assertFalse(fx.calls)
+            sampler.discovery_after={server:fx.now+999 for server in sampler.servers}
+            result=sampler.sample_once()
+            self.assertTrue(all(row['code']=='discovery_backoff' for row in result['regions']))
+            self.assertEqual(result['new_valid_observations'],0)
+            self.assertFalse(fx.calls)
+
     def test_worker_start_is_idempotent_and_stop_cancels(self):
         async def run():
             source = SimpleNamespace(history=None)

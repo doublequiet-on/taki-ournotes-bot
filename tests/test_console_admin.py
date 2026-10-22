@@ -422,6 +422,34 @@ class AdminTests(unittest.IsolatedAsyncioTestCase):
 
 
 class OperationTests(unittest.IsolatedAsyncioTestCase):
+    async def test_sqlite_full_rejects_before_task_execution(self):
+        from ournotes_bot.application.operations import Operations
+        with tempfile.TemporaryDirectory() as folder:
+            jobs=Operations(Path(folder)/'ops.sqlite3','fixture')
+            calls=[]
+            jobs.register('fixture',lambda p:None,lambda p:calls.append(p) or {'code':'fixture_complete'})
+            pages=jobs.db.execute('PRAGMA page_count').fetchone()[0]
+            jobs.db.execute('PRAGMA max_page_count='+str(pages))
+            with self.assertRaisesRegex(ProtocolError,'ops_store_unavailable'):
+                await jobs.submit({'operation_id':'d'*32,'action':'fixture','params':{'value':'x'*4000}})
+            self.assertEqual(calls,[])
+            self.assertFalse(jobs.health()['available'])
+            self.assertEqual(jobs.db.execute('SELECT count(*) FROM jobs').fetchone()[0],0)
+            await jobs.close()
+
+    async def test_idle_housekeeping_expires_completed_jobs(self):
+        from ournotes_bot.application.operations import Operations
+        with tempfile.TemporaryDirectory() as folder:
+            now=[1000000]
+            jobs=Operations(Path(folder)/'ops.sqlite3','fixture',clock=lambda:now[0])
+            jobs.register('fixture',lambda p:None,lambda p:{'code':'fixture_complete'})
+            await jobs.submit({'operation_id':'c'*32,'action':'fixture','params':{}})
+            await jobs.worker
+            now[0]+=7*86400+1
+            jobs.housekeeping()
+            self.assertEqual(jobs.listing()['items'],[])
+            await jobs.close()
+
     async def test_durable_coalescing_conflict_and_interrupted_restart(self):
         from ournotes_bot.application.operations import Operations
         with tempfile.TemporaryDirectory() as folder:
@@ -454,3 +482,13 @@ class OperationTests(unittest.IsolatedAsyncioTestCase):
             self.assertFalse(jobs.health()['available'])
             self.assertEqual(path.read_bytes(),b'broken')
             await jobs.close()
+
+    async def test_later_store_failure_disables_only_management_reads(self):
+        from ournotes_bot.application.operations import Operations
+        with tempfile.TemporaryDirectory() as folder:
+            jobs=Operations(Path(folder)/'ops.sqlite3','fixture')
+            jobs.db.execute('DROP TABLE jobs')
+            with self.assertRaisesRegex(ProtocolError,'ops_store_unavailable'):jobs.listing()
+            self.assertFalse(jobs.health()['available'])
+            await jobs.close()
+            self.assertIsNone(jobs.db)

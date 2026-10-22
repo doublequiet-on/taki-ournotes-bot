@@ -33,7 +33,7 @@ export function operationsSettings(s) {
   const timer=data?.services?.['taki-updater.timer'];
   const short=v=>v?v.slice(0,8):'尚未采集',proof=v=>v===true?'有记录':v===false?'未通过':'尚未采集';
   const objects={code_environment:'代码与环境',business_data:'业务数据',console_settings:'设置与群策略',trusted_configuration:'控制器与系统配置',isolated_restore:'隔离恢复',offsite_copy:'异地副本'};
-  return h('div',[h('section',[h('h2','运行与恢复准备'),button('刷新主机状态',()=>s.load(s.host,'ops/host')),
+  return h('div',[controlView(s),h('section',[h('h2','运行与恢复准备'),button('刷新主机状态',()=>s.load(s.host,'ops/host')),
     h('div',{class:'stats'},[[short(runtime?.gateway_sha),'网关运行版本'],[short(controller?.current_sha),'控制器记录'],[short(controller?.previous_sha),'前一版本']].map(([value,label])=>h('div',[h('strong',value),h('span',label)]))),
     controller?.paused&&h('p','更新控制器已暂停'),host?.reason_code&&h('p',({host_collector_not_installed:'主机采集器尚未安装',host_snapshot_stale:'主机快照已过期',host_clock_changed:'主机观测时间需要核对'})[host.reason_code]||'主机观测暂不可用'),
     timer&&h('p',`自动更新定时器：${timer.UnitFileState==='disabled'||timer.UnitFileState==='masked'?'已停用':timer.UnitFileState||'未知'} · ${timer.ActiveState==='active'?'已激活':timer.ActiveState==='inactive'?'未激活':'状态未知'}`),
@@ -43,5 +43,23 @@ export function operationsSettings(s) {
     host&&h('details',[h('summary','运行、空间与恢复详情'),section(host,'主机状态')])]),
     h('section',[h('h2','管理记录'),button('刷新管理记录',()=>s.load(s.audit,'ops/audit')),
       s.audit.value&&!s.audit.value.available&&h('p',{role:'alert'},'管理记录不可用'),
-      h('ul',(s.audit.value?.items||[]).slice(0,25).map(e=>h('li',`${new Date(e.at).toLocaleString()} · ${e.action} · ${states[e.state]||e.state}`)))])]);
+      h('ul',(s.audit.value?.items||[]).slice(0,25).map(e=>h('li',[h('details',[h('summary',`${new Date(e.at).toLocaleString()} · ${e.action} · ${states[e.state]||e.state}`),
+        h('p',`会话 ${e.session?.slice(-8)||'尚未采集'} · 字段 ${e.summary?.fields?.join('、')||'无变更'}`),
+        section({availability:'available',observed_at:e.at/1000,data:{accepted_guard:e.accepted_guard??null,result_guard:e.result_guard??null,code:e.code??null}},'保存版本')])])) )])]);
+}
+export function controlView(s){
+  const controls=s.controls.value,disabled=s.busy.value||s.dirty.value||s.groupDirty.value||!controls?.available||!controls.settings_persistent_matches_live;
+  const activity=s.overview.value?.activity;
+  return h('section',[h('h2','维护与恢复'),button('进入维护',()=>{
+    if(window.confirm('暂停新查询和主动通知？在途查询与确认会继续完成。'))void s.startControl('maintenance',[]);
+  },disabled),
+  h('p',activity?`已受理在途 ${activity.accepted_inflight} · 接纳中 ${activity.admission_inflight}`:'在途数量尚未采集'),
+  controls&&!controls.persistent_matches_live&&h('p',{role:'alert'},'持久设置与当前运行值不一致，已阻止管理操作。'),
+  h('ul',{class:'record-list'},(controls?.items||[]).map(entry=>h('li',[
+    h('strong',entry.control==='maintenance'?'维护模式':`临时本地解析 · ${entry.group_count} 个群`),
+    h('span',entry.control==='local'?(entry.group_ids||[]).map(id=>s.groups.value?.policy?.groups?.[id]?.label||'…'+id.slice(-6)).join('、'):`原设置：查询${entry.before?.queriesEnabled?'开启':'关闭'} · 通知${entry.before?.notificationsEnabled?'开启':'关闭'}`),
+    (entry.current_matches===false||entry.persistence_matches===false)&&h('p','已检测到后续保存或恢复证据缺失。原设置保留，本次不会覆盖。'),
+    entry.before_modes&&h('small','原模式：'+Object.entries(entry.before_modes).map(([mode,count])=>`${({inherit:'继承',model:'允许模型',local:'本地',off:'关闭'})[mode]||mode} ${count}`).join(' · ')),
+    button('恢复这次变更',()=>{if(window.confirm('恢复这次操作前的设置？期间修改过的字段会报告冲突。'))void s.restoreControl(entry.id);},disabled||!entry.restorable)
+  ]))),!controls?.items?.length&&h('p','没有待恢复的管理操作')]);
 }

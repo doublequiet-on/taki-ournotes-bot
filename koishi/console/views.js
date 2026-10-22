@@ -2,7 +2,7 @@ import { h } from './runtime.js';
 export const labels={processing:'处理中',complete:'平台确认全部发送',partial:'部分发送',failed:'已确认失败',uncertain:'发送结果不确定',closed_unsent:'已关闭，未确认发送',unknown:'未知'};
 export const stamp=v => v ? new Date(v*1000).toLocaleString('zh-CN',{timeZone:'Asia/Hong_Kong'}) : '尚未采集';
 export const button=(text,action,disabled=false) => h('button',{onClick:action,disabled},text);
-const guide=(title,text)=>h('aside',{class:'guide'},[h('strong',title),h('p',text)]);
+const guide=(title,text)=>h('details',{class:'guide'},[h('summary',title),h('p',text)]);
 const technical=(title,children)=>h('details',{class:'technical'},[h('summary',title),...children]);
 const deliveryLabel=item=>item.delivery_reason==='completed_without_output'?'已完成，无输出':(labels[item.delivery_state]||item.delivery_state)+(item.uncertain_parts?'（仍有片段结果未确认）':'');
 const names={available:'可用',partial:'部分采集',unavailable:'暂不可用',unsupported:'尚不支持',
@@ -63,10 +63,8 @@ export function overviewView(s,open) {
     value?.policy_health?.availability==='unavailable'&&h('p',{role:'alert'},'群策略损坏或实例不匹配：新群查询和通知已限制，私聊仍按全局规则处理。'),
     !value&&guide('正在读取机器人状态','如果长时间没有结果，请检查页面上方的连接提示。尚未读取不代表机器人离线。'),
     value && h('section',{class:'health-card'},[h('span',{class:'eyebrow'},'运行状态'),h('h2',value.health.ready ? '服务已就绪' : '服务需要关注'),
-      h('p',value.health.ready?'服务连接正常。能否回复某个群，还需看下方全局设置与该群规则。':'先检查 QQ 连接与后端状态。不要重复发送同一条指令；可到查询诊断查看是否仍在处理中。'),
       h('p',`QQ ${value.health.qq_online ? '在线' : '未在线'} · 后端 ${value.health.backend_ready ? '就绪' : '未就绪'} · 握手 ${value.health.handshake ? '已建立' : '未建立'}`),
-      h('p',`新查询：${value.settings.queriesEnabled?'接收（按范围和群规则检查）':'全局暂停'} · 主动通知：${value.settings.notificationsEnabled?'按群规则和平台许可检查':'全局暂停'}`),
-      h('p',value.backend?.sections?.service?.data?.natural_query?.model_configured===false?'模型未配置，/问 仍可使用本地解析。':'/问 模型路径受后端配置、额度与群策略共同限制。'),
+      h('p',`新查询：${value.settings.queriesEnabled?'接收中':'全局暂停'} · 主动通知：${value.settings.notificationsEnabled?'按群规则检查':'全局暂停'}`),
       h('p',{class:'muted'},`${stamp(value.health.observed_at)}${value.health.stale ? ' · 当前读取失败' : ''}`),technical('运行版本（排障时使用）',[h('small',value.health.release_sha||'尚未采集')])]),
     stats && h('section',[h('h2',`已受理 ${stats.total} 条`),h('div',{class:'stats'},Object.entries(stats.states).map(([key,count]) => h('div',[h('strong',String(count)),h('span',labels[key])]))),
       h('p',{class:'muted'},`元数据缺失 ${stats.metadata_missing} 条`),h('h3','最近的查询'),stats.recent.length?h('ul',{class:'record-list'},stats.recent.map(item => row(item,open,s.groups.value))):h('p','此时间范围内没有已受理的查询记录。')]),
@@ -116,6 +114,8 @@ export function groupsView(s,requests) {
       h('p',{class:'guide'},'新查询决定是否接收新指令；主动通知决定是否允许机器人主动推送。/问 的“仅本地解析”不调用模型；/查卡、/查曲等直接指令始终不调用模型。'),
       current&&section({availability:'available',observed_at:s.groups.value.generated_at,data:current.effective},'当前已生效规则'),
       s.noticeTarget.value?.sections?.notice_target&&section(s.noticeTarget.value.sections.notice_target,'通知状态'),
+      button('临时仅本地解析',()=>{if(window.confirm('将此群的模型解析收紧为本地解析？关闭模式保持关闭；之后需手动恢复。'))void s.startControl('local',[s.groupId.value]);},
+        s.busy.value||s.dirty.value||s.groupDirty.value||!s.controls.value?.available||!s.controls.value?.persistent_matches_live||!/^[A-Za-z0-9_-]{1,128}$/.test(s.groupId.value)),
       s.groupConflict.value&&h('p',{role:'alert'},'群策略版本冲突或保存未确认；草稿仍保留。'),
       s.groupConflict.value&&section({availability:'available',observed_at:s.groups.value.generated_at,data:value?.groups?.[s.groupId.value]},'服务器当前值'),
       h('p',{role:'status',class:'draft-status'},s.groupDirty.value?'有未保存的群设置，点击保存后才会生效。':'当前显示已载入的群设置。'),button('保存群策略',s.saveGroup,s.busy.value||!!value?.reason_code),

@@ -204,6 +204,15 @@ class CatalogRepository:
             info = convert_info(self.saved["documents"], self.saved["identities"]["jp"], metadata["cached_at"])
             return records, metadata, info
 
+    def probe_identities(self):
+        with self.lock:
+            current={}
+            for server in ('jp','intl'):
+                raw,headers=self.fetch(f'{ORIGIN}/api/v1/servers/{server}/release?projection=identity',512000,20)
+                current[server]=identity(decode_json(raw),server)
+                check_headers(headers,current[server])
+            return current
+
     def synchronize_with_info(self, force=False):
         """Explicit administration refresh; separates publication from durable success."""
         with self.lock:
@@ -219,11 +228,7 @@ class CatalogRepository:
             stage = 'identity' if not force else 'catalog'
             try:
                 if not force:
-                    current = {}
-                    for server in ('jp', 'intl'):
-                        raw, headers = self.fetch(f'{ORIGIN}/api/v1/servers/{server}/release?projection=identity', 512000, 20)
-                        current[server] = identity(decode_json(raw), server)
-                        check_headers(headers, current[server])
+                    current = self.probe_identities()
                     same = before is not None and all(
                         all(before['identities'][s][k] == current[s][k] for k in ('releaseId','sourceId')) for s in ('jp','intl'))
                     if same:

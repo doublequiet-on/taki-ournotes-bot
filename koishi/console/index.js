@@ -18,7 +18,7 @@ const Page={setup() {
         if(!s.requests.value)search(false);
         if(currentRequest&&!['complete','failed','closed_unsent'].includes(s.detail.value?.sections?.request?.data?.delivery_state))await s.load(s.detail,'requests/detail',currentRequest);
       }
-      if(ticks%3===1)await s.load(s.jobs,'ops/jobs/list');
+      if(ticks%3===1)await Promise.all([s.load(s.jobs,'ops/jobs/list'),s.load(s.controls,'ops/controls')]);
       if(tab.value==='sources'&&s.jobDetail.value&&['queued','running'].includes(s.jobDetail.value.state))await s.load(s.jobDetail,'ops/jobs/detail',s.jobDetail.value.id);
       if(ticks%12===1)await Promise.all([s.load(s.sources,'sources'),s.load(s.metrics,'query-metrics'),s.load(s.groups,'groups/list'),s.load(s.notices,'notices/list'),s.load(s.audit,'ops/audit'),s.load(s.host,'ops/host')]);
     } finally {polling=false;}

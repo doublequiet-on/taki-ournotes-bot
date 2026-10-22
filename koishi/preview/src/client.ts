@@ -491,6 +491,32 @@ renderGroups();
 refreshGlobalDirty();
 
 let previewOperationCount=0;
+let previewMaintenance=false,previewLocal=false;
+$('#preview-maintenance').addEventListener('click',()=>{
+  previewMaintenance=true;
+  $<HTMLButtonElement>('#preview-restore').disabled=false;
+  $('#preview-maintenance-status').textContent='维护中 · 暂停新查询和通知 · 在途请求继续完成';
+  toast('演示维护已开启');
+});
+$('#preview-restore').addEventListener('click',()=>{
+  if(!previewMaintenance)return;
+  previewMaintenance=false;
+  $<HTMLButtonElement>('#preview-restore').disabled=true;
+  $('#preview-maintenance-status').textContent='已恢复 · 正常接收新查询 · 主动通知已暂停';
+  toast('演示设置已恢复');
+});
+$('#preview-local').addEventListener('click',()=>{
+  previewLocal=true;
+  $<HTMLButtonElement>('#preview-local-restore').disabled=false;
+  $('#preview-local-status').textContent='星之屋 · 临时本地解析 · 原关闭群保持关闭';
+  toast('演示本地解析已开启');
+});
+$('#preview-local-restore').addEventListener('click',()=>{
+  if(!previewLocal)return;
+  previewLocal=false;
+  $<HTMLButtonElement>('#preview-local-restore').disabled=true;
+  $('#preview-local-status').textContent='星之屋 · 允许模型 · 已恢复';
+});
 $$('[data-preview-op]').forEach(el=>el.addEventListener('click',()=>{
   const list=$('#preview-ops-results');
   if(!previewOperationCount)list.replaceChildren();

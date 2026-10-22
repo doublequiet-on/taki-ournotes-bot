@@ -113,6 +113,37 @@ class NaturalPolicyTests(Fixture, unittest.IsolatedAsyncioTestCase):
         finally:CURRENT_POLICY.reset(token)
 
 
+class RuntimeRecoveryTests(unittest.IsolatedAsyncioTestCase):
+    async def test_recovery_replaces_only_exited_task_and_blocks_shutdown(self):
+        from types import SimpleNamespace
+        from ournotes_bot.application.runtime_tasks import RuntimeTasks
+        import asyncio
+        repository=SimpleNamespace(refresh_song_traits=lambda:None)
+        owner=RuntimeTasks(repository,SimpleNamespace(cutoff_sampling_enabled=False))
+        self.assertEqual(owner.start()['restored'],['catalog','traits'])
+        first=dict(owner.named_tasks)
+        self.assertEqual(owner.recover()['restored'],[])
+        first['catalog'].cancel()
+        await asyncio.gather(first['catalog'],return_exceptions=True)
+        result=owner.recover()
+        self.assertEqual(result['restored'],['catalog'])
+        self.assertIs(owner.named_tasks['traits'],first['traits'])
+        await owner.close()
+        with self.assertRaisesRegex(RuntimeError,'runtime_closing'):owner.recover()
+
+    async def test_manual_catalog_reports_unsaved_without_false_success(self):
+        from types import SimpleNamespace
+        from ournotes_bot.application.runtime_tasks import RuntimeTasks
+        repository=SimpleNamespace(synchronize_catalog=lambda force,expected:{'code':'updated_unsaved'})
+        owner=RuntimeTasks(repository,SimpleNamespace(cutoff_sampling_enabled=False))
+        self.assertEqual(owner.synchronize_catalog(False,None)['code'],'updated_unsaved')
+        observed=owner.observation_snapshot()['refreshes']['refresh_catalog']
+        self.assertEqual(observed['consecutive_failures'],1)
+        self.assertNotIn('last_successful_at',observed)
+        self.assertFalse(observed['running'])
+        await owner.close()
+
+
 class FreezeTests(unittest.TestCase):
     def setUp(self):
         self.temp=tempfile.TemporaryDirectory();self.addCleanup(self.temp.cleanup)

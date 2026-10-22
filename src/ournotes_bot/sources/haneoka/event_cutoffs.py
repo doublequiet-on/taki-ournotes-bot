@@ -292,6 +292,7 @@ class HaneokaEventCutoffRepository(EventCutoffRepository):
             if entry.fallback:
                 self.history.failure(event.server, event.event_id, song.challenge_id, "source_fallback")
             stored = self.history.record(event, board)
+            self._note_retrieval('history_result',stored)
             if stored == "conflict":
                 board = replace(board, scores=(), quality="conflict", status="同一源时刻分数冲突，暂无可信当前值")
             elif stored == "clock_skew":
