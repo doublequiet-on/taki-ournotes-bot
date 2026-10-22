@@ -22,6 +22,13 @@ root=Path(sys.argv[1])/f'run-{os.getpid()}'; root.mkdir(parents=True,exist_ok=Tr
 repository=SimpleNamespace(capture_catalog=lambda:SimpleNamespace(cache_state='stale',songs=[],last_successful_sync_at=None))
 parser=SimpleNamespace(metrics_snapshot=lambda:{'available':False,'reason_code':'metrics_not_collected'})
 backend=Backend(repository,parser,Settings('','','fixture',root/'cache.json',6),instance_id='fixture',app_id='app',ledger_path=root/'ledger.sqlite3')
+if os.getenv('TAKI_FIXTURE_SOURCE_OPS') == '1':
+    from ournotes_bot.application.operations_sources import SourceOperations
+    repository.data_source='haneoka'
+    repository.capture_catalog=lambda:SimpleNamespace(cache_state='cached',songs=[],last_successful_sync_at=None,
+        metadata={'data_version':'r-'+'a'*20,'text_version':'r-'+'b'*20})
+    repository.synchronize_catalog=lambda force,expected:{'code':'upstream_unchanged','persisted':True,'published':False,'before_version':expected,'after_version':expected}
+    SourceOperations(backend).register()
 backend.gate.prepare=AsyncMock(return_value=PreparedReply('测试夹具，非生产数据',business_status='success'))
 async def seed(app):
     backend.ready=True

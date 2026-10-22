@@ -10,6 +10,81 @@ from ournotes_bot.sources.haneoka import game_assets
 
 
 class NoteAssetPreparationTests(unittest.TestCase):
+    def test_partial_download_retains_failure_and_retry_only_repairs_that_snapshot(self):
+        import io,json
+        from types import SimpleNamespace
+        from PIL import Image
+        from ournotes_bot.application.operations_sources import SourceOperations
+        from ournotes_bot.sources.haneoka import prepare_catalog_assets as artwork
+        saved=json.loads((Path(__file__).parent/'fixtures/haneoka_catalog.json').read_text('utf-8'))['snapshot']
+        versions={k:saved['identities'][s]['releaseId'] for k,s in (('data_version','jp'),('text_version','intl'))}
+        repository=SimpleNamespace(capture_catalog=lambda:SimpleNamespace(metadata=versions),capture_source_snapshot=lambda:saved)
+        ops=SourceOperations(SimpleNamespace(repository=repository))
+        url='https://haneoka.org/assets/jp/Assets/AddressableResources/Image/Jacket/retry.png?release='+versions['data_version']
+        stream=io.BytesIO();Image.new('RGB',(8,8),'blue').save(stream,format='PNG')
+        with patch('ournotes_bot.application.operations_sources.runtime_data_dir',return_value=self.root),patch.object(artwork,'catalog_urls',return_value=(url,)),patch.dict(game_assets.MANIFEST,{},clear=True):
+            with patch.object(artwork,'download_asset',side_effect=ChartDataError('offline')):
+                report=ops.assets({'snapshot':versions},repair=True)
+            self.assertEqual(report['_state'],'partial');self.assertEqual(report['failed'],1)
+            with patch.object(artwork,'download_asset',return_value=stream.getvalue()) as download:
+                report=ops.assets({'snapshot':versions},repair=True,retry=True)
+            self.assertEqual(report['repaired'],1);self.assertEqual(download.call_count,1)
+
+    def test_verified_local_assets_clear_negative_cache_without_network_or_warm_eviction(self):
+        import time
+        from types import SimpleNamespace
+        from ournotes_bot.application.operations_sources import SourceOperations
+        from ournotes_bot.sources.haneoka import prepare_catalog_assets as artwork
+        cache = self.root/'game-assets'
+        cache.mkdir()
+        for name, raw in self.payloads.items():
+            (cache/self.filename(name)).write_bytes(raw)
+        ops = SourceOperations(SimpleNamespace(repository=None))
+        warm = self.payloads['skin001.json']
+        with patch.object(ops, 'snapshot', return_value={'identities':{}}), \
+             patch('ournotes_bot.application.operations_sources.runtime_data_dir', return_value=self.root), \
+             patch.object(artwork, 'catalog_urls', return_value=()), \
+             patch.object(game_assets, '_fetch', side_effect=AssertionError('network')), \
+             patch.dict(game_assets._MEMORY, {'skin001.json':warm}, clear=True), \
+             patch.dict(game_assets._FAILED, {'skin001.png':time.monotonic()+100}, clear=True):
+            report = ops.assets({'snapshot':{}}, repair=True)
+            self.assertEqual(report['failed'], 0)
+            self.assertEqual(report['repaired'], 0)
+            self.assertNotIn('skin001.png', game_assets._FAILED)
+            self.assertIs(game_assets._MEMORY['skin001.json'], warm)
+            self.assertEqual(game_assets.asset_bytes('skin001.png', cache), self.payloads['skin001.png'])
+
+    def test_runtime_artwork_repair_clears_negative_cache_and_renders(self):
+        self.check_runtime_artwork_repair(reuse=False)
+
+    def test_runtime_artwork_reuse_clears_negative_cache_and_renders(self):
+        self.check_runtime_artwork_repair(reuse=True)
+
+    def check_runtime_artwork_repair(self, *, reuse):
+        import io,json,time
+        from types import SimpleNamespace
+        from PIL import Image
+        from ournotes_bot.application.operations_sources import SourceOperations
+        from ournotes_bot.sources.haneoka import prepare_catalog_assets as artwork
+        from ournotes_bot import visuals
+        saved=json.loads((Path(__file__).parent/'fixtures/haneoka_catalog.json').read_text('utf-8'))['snapshot']
+        versions={'data_version':saved['identities']['jp']['releaseId'],'text_version':saved['identities']['intl']['releaseId']}
+        repository=SimpleNamespace(capture_catalog=lambda:SimpleNamespace(metadata=versions),capture_source_snapshot=lambda:saved)
+        ops=SourceOperations(SimpleNamespace(repository=repository))
+        url='https://haneoka.org/assets/jp/Assets/AddressableResources/Image/Jacket/example.png?release='+versions['data_version']
+        image=Image.new('RGB',(16,16),'purple');stream=io.BytesIO();image.save(stream,format='PNG');raw=stream.getvalue()
+        cache=self.root/'haneoka-asset-cache';cache.mkdir()
+        (cache/(hashlib.sha256(url.encode()).hexdigest()+'.png')).write_bytes(raw if reuse else b'broken')
+        visuals._NATIVE_ASSET_FAILED[url]=time.monotonic()+100
+        with patch('ournotes_bot.application.operations_sources.runtime_data_dir',return_value=self.root),patch.object(artwork,'catalog_urls',return_value=(url,)),patch.object(artwork,'download_asset',side_effect=AssertionError('network') if reuse else None,return_value=raw),patch.dict(game_assets.MANIFEST,{},clear=True):
+            report=ops.assets({'snapshot':versions},repair=True)
+        self.assertEqual(report['repaired'],0 if reuse else 1);self.assertEqual(report['failed'],0)
+        self.assertEqual(report['reused'],1 if reuse else 0)
+        self.assertNotIn(url,visuals._NATIVE_ASSET_FAILED)
+        with patch.object(visuals,'runtime_data_dir',return_value=self.root),patch.object(artwork,'download_asset',side_effect=AssertionError('network')):
+            rendered=visuals.load_visual_asset(url,(8,8))
+        self.assertEqual(rendered.size,(8,8));rendered.close();visuals.invalidate_visual_assets((url,))
+
     def setUp(self):
         self.payloads = {'skin001.json': b'{"notes":{}}', 'skin001.png': b'fixed-test-atlas'}
         self.manifest = {name: {'url': 'https://example.invalid/' + name,

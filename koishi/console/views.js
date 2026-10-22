@@ -6,6 +6,8 @@ const guide=(title,text)=>h('aside',{class:'guide'},[h('strong',title),h('p',tex
 const technical=(title,children)=>h('details',{class:'technical'},[h('summary',title),...children]);
 const deliveryLabel=item=>item.delivery_reason==='completed_without_output'?'已完成，无输出':(labels[item.delivery_state]||item.delivery_state)+(item.uncertain_parts?'（仍有片段结果未确认）':'');
 const names={available:'可用',partial:'部分采集',unavailable:'暂不可用',unsupported:'尚不支持',
+  code:'结果',stage:'阶段',before_version:'更新前版本',after_version:'当前版本',added_counts:'本次新增',persisted:'已保存',published:'本次已发布到内存',data_available:'资料可用',snapshot:'目标快照',checked_at:'检查时间',checked:'已核验',reused:'复用',repaired:'已修复',failed:'失败',manifest_saved:'清单已保存',scope:'范围',failure_codes:'失败原因',fixed_asset_failures:'固定素材失败项',
+  upstream_unchanged:'已是当前上游版本',synchronized:'同步完成',updated_unsaved:'已更新，缓存保存失败',refresh_failed_cached:'同步失败，继续使用旧数据',no_available_data:'暂无可用数据',assets_partial:'素材部分完成',assets_verified:'素材核验完成',catalog_snapshot_and_builtin_assets:'资料快照与固定游戏素材',
   fresh:'刚同步',cached:'已验证缓存',stale:'旧缓存',unsaved:'已取得但未保存',c2c:'私聊',group:'群聊',
   queries:'新查询',notifications:'主动通知',natural_query:'/问 模式',reasons:'查询限制原因',notification_reasons:'通知限制原因',
   model_ceiling:'模型上限',backend_configuration_and_quota:'后端配置及额度',policy:'已保存策略',label:'群备注',

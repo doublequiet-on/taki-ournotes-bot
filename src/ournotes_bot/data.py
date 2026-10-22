@@ -423,6 +423,32 @@ class SongRepository:
                                self.cache_state, self.last_successful_sync_at,
                                self.characters, self.gachas, self.activities)
 
+    def capture_source_snapshot(self):
+        """Capture a published Haneoka source reference; callers must not mutate it."""
+        with self._catalog_refresh_lock:
+            return self._catalog_repository.saved if self._catalog_repository is not None else None
+
+    def synchronize_catalog(self, force=False, expected=None):
+        """Administrative refresh through the existing serialized publication owner."""
+        if self.data_source != 'haneoka':
+            raise DataError('Catalog synchronization requires Haneoka')
+        from .sources.haneoka.catalog import CatalogRepository
+        with self._catalog_refresh_lock:
+            if expected is not None and any(self.metadata.get(k) != v for k,v in expected.items()):
+                return {'code':'snapshot_changed','published':False,'persisted':None}
+            if self._catalog_repository is None:
+                self._catalog_repository = CatalogRepository(self.cache_file.with_name('haneoka-catalog-jp-v1.json'), self.cache_ttl_hours)
+            records, metadata, info, report = self._catalog_repository.synchronize_with_info(force)
+            if records is not None:
+                with self._song_lock:
+                    self.songs, self.cards, self.support_cards = records
+                    self.characters, self.gachas, self.activities = info.characters, info.gachas, info.activities
+                    self.metadata, self.cache_state = metadata, self._catalog_repository.state
+                    self.last_successful_sync_at = metadata['last_successful_sync_at']
+                    self._detail_cards.clear()
+                    self._detail_support_cards.clear()
+            return report
+
     def card_with_detail(self, card: Card) -> Card:
         if self.data_source == "haneoka":
             return card

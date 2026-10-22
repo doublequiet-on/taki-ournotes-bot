@@ -27,6 +27,68 @@ FIXTURE = Path(__file__).parent / "fixtures/haneoka_catalog.json"
 
 
 class CatalogTests(unittest.TestCase):
+    def probe_responses(self, versions=None):
+        identities = versions or self.saved['identities']
+        def respond(url,limit,timeout):
+            self.assertEqual(limit,512000)
+            server=urlsplit(url).path.split('/')[-2]
+            ident=identities[server]
+            return source.encoded(ident),{'x-haneoka-release-id':ident['releaseId'],'x-haneoka-source-id':ident['sourceId']}
+        return respond
+
+    def test_admin_sync_unchanged_checks_both_versions_without_full_download(self):
+        self.repo.load(refresh=True)
+        self.repo.fetch=Mock(side_effect=self.probe_responses())
+        with patch.object(self.repo,'_collect',side_effect=AssertionError('full refresh')):
+            *_,report=self.repo.synchronize_with_info()
+        self.assertEqual(report['code'],'upstream_unchanged')
+        self.assertEqual(self.repo.fetch.call_count,2)
+        self.assertTrue(report['persisted'])
+        self.assertEqual(set(report['added_counts'].values()),{0})
+
+    def test_admin_sync_text_version_and_unsaved_result(self):
+        self.repo.load(refresh=True)
+        candidate=copy.deepcopy(self.repo.saved)
+        candidate['identities']['intl']['releaseId']='r-'+'b'*20
+        candidate['fetched_at']=self.now+1
+        self.now+=2
+        self.repo.fetch=Mock(side_effect=self.probe_responses(candidate['identities']))
+        with patch.object(self.repo,'_collect',return_value=candidate),patch.object(self.repo,'_write',side_effect=OSError('disk full')):
+            *_,report=self.repo.synchronize_with_info()
+        self.assertEqual(report['code'],'updated_unsaved')
+        self.assertTrue(report['published']);self.assertFalse(report['persisted'])
+        self.assertNotEqual(report['before_version']['intl'],report['after_version']['intl'])
+
+    def test_admin_sync_failure_retains_cache_and_does_not_claim_publication(self):
+        self.repo.load(refresh=True)
+        with patch.object(self.repo,'_collect',side_effect=OSError('offline')):
+            *_,report=self.repo.synchronize_with_info(True)
+        self.assertEqual(report['code'],'refresh_failed_cached')
+        self.assertFalse(report['published']);self.assertTrue(report['data_available'])
+
+    def test_admin_sync_without_valid_cache_reports_unavailable(self):
+        with patch.object(self.repo,'_collect',side_effect=OSError('offline')):
+            records,_,_,report=self.repo.synchronize_with_info(True)
+        self.assertIsNone(records)
+        self.assertEqual(report['code'],'no_available_data')
+
+    def test_admin_sync_retries_unsaved_snapshot_without_fetching_catalog(self):
+        self.repo.load(refresh=True)
+        self.repo._durable_fetched_at=None
+        self.repo.state='unsaved'
+        self.repo.fetch=Mock(side_effect=self.probe_responses())
+        with patch.object(self.repo,'_collect',side_effect=AssertionError('catalog refetch')):
+            *_,report=self.repo.synchronize_with_info()
+        self.assertTrue(report['persisted']);self.assertEqual(report['code'],'upstream_unchanged')
+
+    def test_admin_sync_repairs_corrupt_disk_from_valid_same_version_memory(self):
+        self.repo.load(refresh=True)
+        self.path.write_text('broken',encoding='utf-8')
+        self.repo.fetch=Mock(side_effect=self.probe_responses())
+        with patch.object(self.repo,'_collect',side_effect=AssertionError('catalog refetch')):
+            *_,report=self.repo.synchronize_with_info()
+        self.assertTrue(report['persisted']);self.assertEqual(self.repo._read(),self.repo.saved)
+
     def setUp(self):
         fixture = json.loads(FIXTURE.read_bytes())
         self.saved, self.expected = fixture["snapshot"], fixture["expected_yume"]
