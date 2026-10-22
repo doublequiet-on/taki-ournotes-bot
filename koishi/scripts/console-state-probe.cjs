@@ -9,6 +9,7 @@ async function main(){
   const settings={queriesEnabled:true,privateEnabled:true,groupsEnabled:true,groupAllowlist:[],notificationsEnabled:true}
   let server=structuredClone(settings),revision=0,receipt
   globalThis.consoleStateFixture.send=async(method,value)=>{
+    if(method==='taki/ops/notice-target')return{sections:{notice_target:{availability:'unsupported'}}}
     if(method==='taki/settings/update')return new Promise(resolve=>{receipt=()=>{server=structuredClone(value);resolve({guard:{gateway_epoch:'fixture',revision:++revision}})}})
     if(method==='taki/overview')return {settings:structuredClone(server),guard:{gateway_epoch:'fixture',revision}}
     throw Error('unexpected RPC '+method)
@@ -29,6 +30,7 @@ async function main(){
   assert.equal(state.draft.value,null);assert.equal(state.guard.value,null,'an invalidated response cannot restore protected state')
   let policies={},groupRevision=0
   globalThis.consoleStateFixture.send=async(method,value)=>{
+    if(method==='taki/ops/notice-target')return{sections:{notice_target:{availability:'unsupported'}}}
     if(method==='taki/groups/update')return new Promise(resolve=>{receipt=()=>{policies[value.group_id]=structuredClone(value.policy);resolve({revision:++groupRevision})}})
     if(method==='taki/groups/list')return {policy:{groups:structuredClone(policies),revision:groupRevision}}
     throw Error('unexpected RPC '+method)

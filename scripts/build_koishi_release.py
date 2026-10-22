@@ -36,7 +36,7 @@ def build(python_artifact, node, output):
         gateway=stage/'gateway';gateway.mkdir()
         for name in ('scripts','node_modules','console'):
             shutil.copytree(ROOT/'koishi'/name,gateway/name,ignore=shutil.ignore_patterns('.bin','*.tsbuildinfo'))
-        for name in ('package.json','package-lock.json','run.cjs','console.cjs','health.cjs','operation-journal.cjs'):
+        for name in ('package.json','package-lock.json','run.cjs','console.cjs','health.cjs','operation-journal.cjs','ops-host.cjs'):
             shutil.copy2(ROOT/'koishi'/name,gateway/name)
         subprocess.run([str(node),'node_modules/typescript/bin/tsc','-p','tsconfig.json','--outDir',str(gateway/'lib')],cwd=ROOT/'koishi',check=True)
         subprocess.run([str(node),'scripts/probe.cjs'],cwd=gateway,check=True,stdout=subprocess.DEVNULL)
@@ -44,7 +44,7 @@ def build(python_artifact, node, output):
         binary.parent.mkdir();shutil.copy2(node,binary)
         python=stage/'python'/python_artifact.name;python.parent.mkdir();shutil.copy2(python_artifact,python)
         recovery=stage/'controller';recovery.mkdir()
-        for name in ('koishi_control.py','koishi_launcher.py','group_policy_guard.py','linux_backend.py','linux_updater.py','offline_bundle.py'):
+        for name in ('koishi_control.py','koishi_launcher.py','group_policy_guard.py','linux_backend.py','linux_updater.py','offline_bundle.py','ops_snapshot.py'):
             shutil.copy2(ROOT/'deploy'/name,recovery/name)
         shutil.copytree(ROOT/'deploy/koishi',recovery/'service-templates')
         shutil.copy2(ROOT/'docs/KOISHI_MIGRATION_M4.md',stage/'RUNBOOK.md')

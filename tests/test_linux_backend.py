@@ -885,3 +885,36 @@ class BoundedProcessTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class OpsSnapshotTests(unittest.TestCase):
+    def test_controller_projection_excludes_paths_credentials_and_events(self):
+        from deploy.ops_snapshot import project_controller,process_release
+        row=project_controller({'current':{'commit':A,'code_dir':'SECRET_PATH'},'previous':{'commit':B},
+            'observed_target':B,'events':[{'message':'SECRET'}],'token':'SECRET'})
+        self.assertNotIn('SECRET',json.dumps(row));self.assertEqual(row['current_sha'],A)
+        self.assertEqual(process_release('/opt/taki-combinations/'+B+'/gateway'),B)
+        self.assertIsNone(process_release('/home/ubuntu/taki/current'))
+
+    def test_existing_archive_is_not_checksum_or_restore_verification(self):
+        from deploy.ops_snapshot import coverage,directory_size
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder);(root/'old.tar').write_bytes(b'fixture')
+            report=coverage([{'owner':'taki-linux-updater-v1','archive':'old.tar'}],root)
+            code=next(r for r in report if r['object']=='code_environment')
+            self.assertTrue(code['archive_exists']);self.assertIsNone(code['checksum_verified']);self.assertIsNone(code['restore_verified'])
+            report=directory_size(root,0)
+            self.assertFalse(report['complete'])
+
+    def test_collector_only_runs_fixed_systemctl_show(self):
+        from deploy import ops_snapshot as ops
+        from types import SimpleNamespace
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder);(root/'releases').mkdir();(root/'backups').mkdir()
+            with patch.object(ops.subprocess,'run',return_value=SimpleNamespace(stdout='Id=taki.service\nActiveState=active\nMainPID=0\n')) as command, \
+                 patch.object(ops.os,'statvfs',return_value=SimpleNamespace(f_bavail=8,f_frsize=1024**3),create=True), \
+                 patch.object(ops,'atomic_output'):
+                result=ops.collect({'current':{'commit':A}},root,root,root)
+            self.assertEqual(command.call_args.args[0][1],'show')
+            self.assertTrue(result['disk']['releases']['meets_minimum'])
+            self.assertNotIn('check',command.call_args.args[0])

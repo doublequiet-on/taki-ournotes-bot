@@ -1,0 +1,19 @@
+[Unit]
+Description=Taki read-only operations snapshot
+
+[Service]
+Type=oneshot
+User=root
+Group=ubuntu
+UMask=0027
+RuntimeDirectory=taki-ops
+RuntimeDirectoryMode=0750
+RuntimeDirectoryPreserve=yes
+ExecStart=/usr/bin/python3 -I -B /usr/local/lib/taki-updater/ops_snapshot.py
+TimeoutStartSec=15
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=true
+ReadWritePaths=/run/taki-ops
+RestrictAddressFamilies=AF_UNIX

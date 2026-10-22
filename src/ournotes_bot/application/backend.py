@@ -22,6 +22,7 @@ from .delivery_ledger import Ledger
 from .diagnostics import Diagnostics
 from .admin import Admin
 from .operations import Operations
+from .runtime_tasks import finish_thread
 from .backend_sources import CODE_FILES
 from ..domain.query_policy import CURRENT_POLICY
 
@@ -425,6 +426,7 @@ def create_app(backend, token, initialize=None):
         require(backend.ledger.active(request.headers.get('X-Taki-Epoch')), 'ops_gateway_epoch', 409)
         return json(await backend.operations.submit(await read_json(request)), 202)
     async def ops_export(request): return json(backend.admin.export(request.match_info.get('rid')))
+    async def ops_notice_target(request): return json(backend.admin.notice_target(request.match_info['gid']))
     async def admin_telemetry(request):
         return json(backend.admin.telemetry(await read_json(request), request.headers.get('X-Taki-Epoch')))
     app.add_routes([web.get('/v1/health', health), web.get('/v1/ready', ready),
@@ -441,6 +443,7 @@ def create_app(backend, token, initialize=None):
                     web.get('/v1/admin/query-metrics', admin_metrics), web.post('/v1/admin/telemetry', admin_telemetry),
                     web.get('/v1/admin/ops/jobs', ops_jobs), web.post('/v1/admin/ops/jobs', ops_submit),
                     web.get('/v1/admin/ops/jobs/{jid}', ops_detail),
+                    web.get('/v1/admin/ops/notice-targets/{gid}', ops_notice_target),
                     web.get('/v1/admin/ops/export', ops_export), web.get('/v1/admin/ops/export/{rid}', ops_export)])
     async def lifetime(app):
         async def load():
@@ -456,11 +459,17 @@ def create_app(backend, token, initialize=None):
             while True:
                 await asyncio.sleep(1)
                 backend.expire()
+        async def flush_observation():
+            while True:
+                await asyncio.sleep(1)
+                await finish_thread(backend.operations.flush_notices)
         expiry = asyncio.create_task(reaper())
+        observation = asyncio.create_task(flush_observation())
         yield
         backend.closing = True
         expiry.cancel()
-        await asyncio.gather(expiry, return_exceptions=True)
+        observation.cancel()
+        await asyncio.gather(expiry, observation, return_exceptions=True)
         await task  # initialization threads cannot be killed by canceling HTTP.
         await backend.close()
     app.cleanup_ctx.append(lifetime)

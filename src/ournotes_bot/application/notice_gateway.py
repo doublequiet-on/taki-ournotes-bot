@@ -36,6 +36,9 @@ class NoticeGateway:
             # Existing notices.sending already suppresses retry in old and new runtimes.
             db.execute("UPDATE gateway_notice_claims SET status='uncertain' WHERE app=? AND status='sending'", (self.store.app_id,))
 
+    def deployment_identity(self):
+        return committed_notice(self.reports.project_root,self.reports.source)
+
     def common(self, value, fields, active=True):
         require(isinstance(value, dict) and set(value) == set(fields) | {'protocol','instance_id','app_id','gateway_epoch'}, 'notice_shape')
         require_protocol(value['protocol'])
@@ -143,6 +146,9 @@ class NoticeGateway:
                             group_version=version,deployment_revision=revision,text=content,send_type='active'))
                 # Empty polls do not create unbounded metadata. Reusing their ID may observe new work.
                 if result['claims']: self.save(db,'gateway_notice_requests',value['claim_request_id'],value,result)
+            observer=getattr(self.backend,'operations',None)
+            if observer is not None:
+                for claim in result['claims']:observer.observe_notice(claim['notice_id'],'claimed')
             return result
 
     def event(self, nid, value):
@@ -201,4 +207,8 @@ class NoticeGateway:
                                ('sending' if granted else 'failure',value['attempt_id'],self.store.app_id,nid))
                     result = {'permission':'granted' if granted else 'denied'}
             self.save(db,'gateway_notice_events',key,{'nid':nid,**value},result)
-            return result
+        observer=getattr(self.backend,'operations',None)
+        if observer is not None:
+            observed = ('sending' if result['permission']=='granted' else 'permission_denied') if kind=='intent' else kind
+            observer.observe_notice(nid,observed)
+        return result

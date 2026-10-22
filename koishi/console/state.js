@@ -3,13 +3,13 @@ export function sessionState() {
   const logged=ref(false), busy=ref(false), message=ref(''), stale=ref(false), dirty=ref(false), conflict=ref(false);
   const overview=ref(null), requests=ref(null), detail=ref(null), sources=ref(null), metrics=ref(null), groups=ref(null), notices=ref(null), draft=ref(null), guard=ref(null);
   const groupId=ref(''),groupDraft=ref(null),groupRevision=ref(null),groupDirty=ref(false),groupConflict=ref(false);
-  const jobs=ref(null),jobDetail=ref(null),audit=ref(null),host=ref(null),pendingJobs=new Map();
+  const jobs=ref(null),jobDetail=ref(null),audit=ref(null),host=ref(null),noticeTarget=ref(null),pendingJobs=new Map();
   let generation=0;
   const sequences=new Map();
   const failed=new Set();
   function clearProtected() {
     generation++;logged.value=false;failed.clear();sequences.clear();stale.value=false;
-    for(const value of [overview,requests,detail,sources,metrics,groups,notices,draft,guard,jobs,jobDetail,audit,host])value.value=null;
+    for(const value of [overview,requests,detail,sources,metrics,groups,notices,draft,guard,jobs,jobDetail,audit,host,noticeTarget])value.value=null;
     pendingJobs.clear();
     dirty.value=false;conflict.value=false;groupId.value='';groupDraft.value=null;groupRevision.value=null;groupDirty.value=false;groupConflict.value=false;
   }
@@ -73,6 +73,8 @@ export function sessionState() {
     if(groupDirty.value){if(id!==groupId.value)message.value='请先保存或放弃当前群草稿。';return;}
     groupId.value=id;groupDraft.value=structuredClone(toRaw(groups.value?.policy?.groups?.[id])||{label:'',queries:'inherit',notifications:'inherit',natural_query:'inherit'});
     groupRevision.value=groups.value?.policy?.revision;groupDirty.value=false;groupConflict.value=false;
+    noticeTarget.value=null;
+    if(/^[A-Za-z0-9_-]{1,128}$/.test(id))void load(noticeTarget,'ops/notice-target',id);
   }
   async function saveGroup() {
     const token=generation, id=groupId.value, submitted=JSON.stringify(groupDraft.value);
@@ -106,6 +108,6 @@ export function sessionState() {
       const a=document.createElement('a');a.href=url;a.download='taki-diagnostic.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
     }catch(error){if(token!==generation||unauthorized(error))return;message.value='诊断导出失败，请稍后重试。';}
   }
-  return {jobs,jobDetail,audit,host,startJob,exportDiagnostic,logged,busy,message,stale,dirty,conflict,overview,requests,detail,sources,metrics,groups,notices,draft,guard,rpc,load,login,logout,save,
+  return {jobs,jobDetail,audit,host,noticeTarget,startJob,exportDiagnostic,logged,busy,message,stale,dirty,conflict,overview,requests,detail,sources,metrics,groups,notices,draft,guard,rpc,load,login,logout,save,
     groupId,groupDraft,groupRevision,groupDirty,groupConflict,selectGroup,saveGroup,invalidate(){generation++;}};
 }

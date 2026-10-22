@@ -262,6 +262,30 @@ class AdminTests(unittest.IsolatedAsyncioTestCase):
             ('full','full','epoch',self.now,'group','fixture','x'*100000,None))))
         self.assertEqual((await self.admitted(2))['status'],'prepared')
 
+    async def test_notice_projection_reads_claims_without_leasing_or_generating(self):
+        from contextlib import closing
+        from ournotes_bot.application.notice_reports import NoticeStore
+        from ournotes_bot.application.notice_gateway import NoticeGateway
+        owner=NoticeStore(self.root/'notice-projection.sqlite3','app')
+        owner.observe('unknown');owner.observe('leased');owner.permission('leased',True,0)
+        reports=SimpleNamespace(store=owner,project_root=self.root,source=self.root,_report=Mock(side_effect=AssertionError('report')))
+        gateway=NoticeGateway(self.backend,reports);gateway.deployment_identity=lambda:('a'*40,'b'*40)
+        gateway.claims=Mock(side_effect=AssertionError('claims'))
+        self.backend.notices=gateway
+        with closing(owner.connect()) as db,db:
+            db.execute("INSERT INTO gateway_notice_claims VALUES(?,?,?,?,?,?,?,?,?,NULL)",('app','a'*64,'claim','leased','a'*40,'epoch',1,self.now+60,'claimed'))
+        with closing(owner.connect()) as db:before=list(db.iterdump())
+        data=self.backend.admin.notices()['sections']['notices']['data']
+        targets={r['group_id']:r for r in data['targets']}
+        self.assertEqual(targets['unknown']['stage'],'permission_unknown')
+        self.assertEqual(targets['leased']['stage'],'claimed')
+        self.assertIsNone(targets['leased']['observation_times'])
+        self.backend.operations.observe_notice('a'*64,'claimed');self.backend.operations.flush_notices()
+        target=self.backend.admin.notice_target('leased')['sections']['notice_target']['data']['targets'][0]
+        self.assertEqual(target['observation_times']['claimed']['first_observed_at'],self.now)
+        with closing(owner.connect()) as db:self.assertEqual(list(db.iterdump()),before)
+        reports._report.assert_not_called();gateway.claims.assert_not_called()
+
     async def test_read_notice_owner_is_side_effect_free(self):
         from contextlib import closing
         from ournotes_bot.application.notice_reports import NoticeStore
