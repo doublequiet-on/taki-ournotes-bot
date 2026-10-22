@@ -489,3 +489,14 @@ renderRecent();
 renderRequests();
 renderGroups();
 refreshGlobalDirty();
+
+let previewOperationCount=0;
+$$('[data-preview-op]').forEach(el=>el.addEventListener('click',()=>{
+  const list=$('#preview-ops-results');
+  if(!previewOperationCount)list.replaceChildren();
+  const item=document.createElement('li');
+  item.textContent=`${el.getAttribute('data-preview-op')} · 演示完成 · 仅更新本次预览`;
+  list.prepend(item);previewOperationCount++;
+  while(list.children.length>25)list.lastElementChild?.remove();
+  toast('演示操作已完成');
+}));

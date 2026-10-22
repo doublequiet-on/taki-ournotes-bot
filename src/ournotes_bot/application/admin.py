@@ -57,7 +57,28 @@ class Admin:
     def envelope(self, **sections):
         return {'schema_version': 1, 'generated_at': self.backend.clock(),
                 'backend_epoch': self.backend.runtime,
-                'capabilities': ['admin_read_v1', 'diagnostics_v1'], 'sections': sections}
+                'capabilities': ['admin_read_v1', 'diagnostics_v1', 'ops_v1'], 'sections': sections}
+
+    def export(self, request_id=None):
+        """Bounded facts, not raw messages/configuration/logs. Aliases last one export."""
+        if request_id is not None:
+            data = {'request': self.detail(request_id)}
+        else:
+            data = {'overview': self.overview(), 'sources': self.sources(),
+                    'attention': self.listing({'attention': 'true', 'limit': '25'})}
+        aliases = {}
+        def anonymous(value):
+            if isinstance(value, dict):
+                return {k: (aliases.setdefault(v, 'group-'+str(len(aliases)+1)) if k == 'group_id' and v else anonymous(v))
+                        for k,v in value.items() if k not in ('label', 'error', 'message', 'body')}
+            if isinstance(value, list):
+                return [anonymous(v) for v in value]
+            return value
+        result = {'schema': 'taki-diagnostic-v1', 'generated_at': self.backend.clock(),
+                  'protocol': {'major': 1, 'minor': 1}, 'data': anonymous(data),
+                  'scope': 'one_request' if request_id else 'instance_and_first_25_attention_requests'}
+        require(len(json.dumps(result).encode()) <= 120000, 'diagnostic_export_too_large', 409)
+        return result
 
     def view(self, row, *, detail=False, parts=None, metadata=False):
         if parts is None:

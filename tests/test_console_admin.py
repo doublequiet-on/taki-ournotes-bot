@@ -20,6 +20,14 @@ from ournotes_bot.natural_query.query_metrics import QueryMetrics
 
 
 class ProjectionTests(unittest.TestCase):
+    def test_diagnostic_export_anonymizes_groups_without_mutation(self):
+        backend=SimpleNamespace(clock=lambda:123)
+        admin=Admin(backend)
+        admin.detail=lambda ident: {'group_id':'private-group','parts':[{'group_id':'private-group'}]}
+        exported=admin.export('a'*64)
+        self.assertNotIn('private-group',json.dumps(exported))
+        self.assertEqual(exported['data']['request']['group_id'],exported['data']['request']['parts'][0]['group_id'])
+
     def test_exclusive_projection_including_zero_parts_and_uncertain(self):
         def state(status, *parts):
             return delivery_state({'status': status}, [{'status': p} for p in parts])
@@ -387,3 +395,38 @@ class AdminTests(unittest.IsolatedAsyncioTestCase):
             await client.close()
         # TestClient owns lifecycle and closed this backend already.
         self.backend.close=AsyncMock()
+
+
+class OperationTests(unittest.IsolatedAsyncioTestCase):
+    async def test_durable_coalescing_conflict_and_interrupted_restart(self):
+        from ournotes_bot.application.operations import Operations
+        with tempfile.TemporaryDirectory() as folder:
+            path=Path(folder)/'operations.sqlite3'
+            jobs=Operations(path,'fixture')
+            entered,release=asyncio.Event(),asyncio.Event()
+            async def run(params):
+                entered.set();await release.wait();return {'code':'fixture_complete'}
+            jobs.register('fixture',lambda p:None,run)
+            first=await jobs.submit({'operation_id':'a'*32,'action':'fixture','params':{}})
+            await entered.wait()
+            second=await jobs.submit({'operation_id':'b'*32,'action':'fixture','params':{}})
+            self.assertEqual(first['id'],second['id'])
+            with self.assertRaisesRegex(ProtocolError,'ops_conflict'):
+                await jobs.submit({'operation_id':'a'*32,'action':'fixture','params':{'different':True}})
+            release.set();await jobs.worker
+            self.assertEqual(jobs.detail(first['id'])['state'],'succeeded')
+            with jobs.db:
+                jobs.db.execute("UPDATE jobs SET state='running'")
+            await jobs.close()
+            restarted=Operations(path,'fixture')
+            self.assertEqual(restarted.detail(first['id'])['state'],'interrupted')
+            await restarted.close()
+
+    async def test_corrupt_store_disables_operations_without_replacing_it(self):
+        from ournotes_bot.application.operations import Operations
+        with tempfile.TemporaryDirectory() as folder:
+            path=Path(folder)/'operations.sqlite3';path.write_bytes(b'broken')
+            jobs=Operations(path,'fixture')
+            self.assertFalse(jobs.health()['available'])
+            self.assertEqual(path.read_bytes(),b'broken')
+            await jobs.close()

@@ -53,3 +53,13 @@
 .taki-console form button[type=submit] { background:var(--accent); color:#fff; width:100%; margin:16px 0; }
 @media(max-width:600px) { .taki-console { margin:12px auto; padding:0 12px 24px; } .taki-console section { padding:16px; border-radius:20px; } .taki-console .console-header { align-items:flex-start; } .taki-console .console-header p { font-size:13px; } .taki-console nav { width:100%; gap:2px; } .taki-console nav button { flex:1; padding:10px 8px; font-size:13px; } .taki-console .fact { grid-template-columns:1fr; gap:0; } .taki-console .technical { padding:4px 12px; } .taki-console .guide { padding:14px; } .taki-console form { margin:24px auto; padding:24px 18px; } }
 @media(prefers-reduced-motion:reduce) { .taki-console button { transition:none; } }
+
+/* Operations workbench: Koishi navigation with Haneoka surfaces. */
+.taki-console{font-family:system-ui,"Microsoft YaHei",sans-serif}
+.taki-console .brand{display:flex;align-items:center;gap:12px}
+.taki-console .brand-image{width:54px;height:54px;object-fit:cover;object-position:40% 25%;border-radius:18px}
+.taki-console .status-bar{position:sticky;bottom:0;display:flex;align-items:center;justify-content:space-between;background:var(--surface);z-index:2;padding:6px 16px;border-radius:18px}
+.taki-console :is(p,dd,li,strong,span){overflow-wrap:anywhere}
+.taki-console .guide{display:none}
+@media(min-width:1000px){.taki-console>div{padding-left:180px}.taki-console nav{position:fixed;top:128px;bottom:80px;width:160px;flex-direction:column;align-items:stretch;margin-left:-180px;border-radius:20px}.taki-console nav button{text-align:left}}
+@media(max-width:600px){.taki-console nav{flex-wrap:wrap}.taki-console .status-bar{font-size:12px}.taki-console .status-bar button{margin:0}}
