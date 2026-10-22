@@ -1,0 +1,14 @@
+{
+  "name": "taki-console-design-preview",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "astro dev --host 127.0.0.1 --port 15160",
+    "build": "astro build",
+    "preview": "astro preview --host 127.0.0.1 --port 15160"
+  },
+  "dependencies": {
+    "astro": "5.18.2"
+  }
+}

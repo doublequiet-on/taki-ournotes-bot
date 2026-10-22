@@ -44,6 +44,8 @@ M1 候选额度不是实测平台额度。真实事件、群/C2C 权限、回复
 
 ## 可视化管理 V1
 
+独立的 Astro 可点击设计稿见 [Console 设计预览](preview/README.md)。预览仅使用演示数据，不进入现有运行或组合发布链。
+
 域名入口准备见 [借用子域名接入](../docs/koishi/CONSOLE_DOMAIN.md)：同机 HTTPS 代理先校验外部 Host/Origin，再转发本机控制台；默认监听与 SSH 入口保持不变。
 
 入口为官方 Console 的「Taki 管理」页 `/taki`，提供总览、查询诊断、分群管理；契约与缺失数据口径见 [Console V1](../docs/koishi/CONSOLE_V1.md)，验收见 [执行矩阵](../docs/koishi/CONSOLE_ACCEPTANCE.md)。

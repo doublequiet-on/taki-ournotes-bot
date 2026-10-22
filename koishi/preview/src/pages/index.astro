@@ -1,0 +1,419 @@
+---
+import Icon from "../components/Icon.astro";
+import TakiAvatar from "../components/TakiAvatar.astro";
+import "../style.css";
+import "../workbench.css";
+const nav = [
+  ["overview", "home", "总览"],
+  ["requests", "list", "查询记录"],
+  ["groups", "groups", "群管理"],
+  ["sources", "database", "数据来源"],
+  ["settings", "settings", "设置"],
+];
+---
+
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" /><meta
+      name="viewport"
+      content="width=device-width, initial-scale=1"
+    />
+    <meta name="color-scheme" content="light dark" /><meta
+      name="robots"
+      content="noindex,nofollow"
+    />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'none'; object-src 'none'; base-uri 'self'; form-action 'none'"
+    />
+    <title>Taki · 控制台预览</title>
+    <link
+      rel="icon"
+      href="/brand/taki.png"
+    />
+  </head>
+  <body>
+    <a class="skip" href="#content">跳到内容</a>
+    <div class="scrim" id="nav-scrim" hidden></div>
+    <aside class="sidebar" id="sidebar" aria-label="主导航">
+      <a href="#overview" class="brand"><TakiAvatar /><span>Taki</span></a>
+      <nav>
+        {
+          nav.map(([page, icon, title]) => (
+            <a href={`#${page}`} data-nav={page}>
+              <Icon name={icon} /><span>{title}</span>
+              {page === "requests" && <span class="nav-count">3</span>}
+            </a>
+          ))
+        }
+      </nav>
+      <div class="sidebar-bottom">
+        <div class="instance">
+          <TakiAvatar class="small" /><div>
+            <strong>Taki</strong><span class="muted">演示实例</span>
+          </div><span class="dot"></span>
+        </div><button class="nav-login" id="logout"
+          ><Icon name="logout" size={18} />退出预览</button>
+      </div>
+    </aside>
+    <div class="app">
+      <header class="topbar">
+        <button
+          class="icon-button menu-button"
+          id="menu"
+          aria-label="打开导航"
+          aria-expanded="false"><Icon name="menu" /></button
+        >
+        <span id="page-title">总览</span>
+        <div class="topbar-actions">
+          <span class="preview-badge"
+            ><span class="dot"></span>设计预览 · 演示数据</span
+          ><button class="icon-button" id="theme" aria-label="切换深浅主题"
+            ><Icon name="sun" /></button
+          ><button class="avatar profile" id="profile" aria-label="账户"
+            >管</button>
+        </div>
+      </header>
+      <main id="content" tabindex="-1">
+        <section class="page" data-page="overview">
+          <div class="page-heading">
+            <div>
+              <h1>总览</h1>
+            </div><button class="button subtle" id="refresh"
+              ><Icon name="refresh" size={18} /><span>刷新</span></button>
+          </div>
+          <div class="overview-top">
+            <article class="card hero instance-panel">
+              <div class="instance-heading"><TakiAvatar class="instance-portrait" /><div><h2>Taki</h2><span class="muted">演示实例</span></div><span class="pill success"><span class="dot"></span>运行正常</span></div>
+              <div class="service-grid"><div><span>QQ 连接</span><strong><i class="dot"></i>在线</strong></div><div><span>业务后端</span><strong><i class="dot"></i>就绪</strong></div><div><span>网关握手</span><strong><i class="dot"></i>已建立</strong></div></div>
+              <div class="hero-bottom"><span><Icon name="clock" size={16} />运行 2 天 6 小时</span><a href="#settings">管理设置 <Icon name="arrow" size={18}/></a></div>
+            </article>
+            <article class="card quick-card">
+              <div class="card-heading">
+                <h2>接收与推送</h2><Icon name="shield" />
+              </div><div class="quick-row">
+                <span>新查询</span><span
+                  class="pill success"
+                  id="overview-query">接收中</span>
+              </div><div class="quick-row">
+                <span>群查询</span><span class="muted" id="overview-range"
+                  >3 个群</span>
+              </div><div class="quick-row">
+                <span>主动通知</span><span
+                  class="pill neutral"
+                  id="overview-notice">已暂停</span>
+              </div><a href="#groups" class="text-link"
+                >群管理 <Icon name="arrow" size={17} /></a>
+            </article>
+          </div>
+          <div class="stat-grid">
+            <article class="stat card">
+              <div class="stat-title">
+                <Icon name="list" size={20} />已受理请求<span class="muted"
+                  >24h</span>
+              </div><div class="stat-number">8<span>条</span></div><span
+                class="stat-caption">当前演示记录</span>
+            </article>
+            <article class="stat card">
+              <div class="stat-title">
+                <Icon name="check" size={20} />平台已确认
+              </div><div class="stat-number">4<span>条</span></div><span
+                class="stat-caption">占已受理请求 50%</span>
+            </article>
+            <article class="stat card attention">
+              <div class="stat-title">
+                <Icon name="clock" size={20} />需要关注
+              </div><div class="stat-number">3<span>条</span></div><button
+                class="text-link"
+                id="attention-link"
+                >查看记录 <Icon name="arrow" size={16} /></button>
+            </article>
+            <article class="stat card">
+              <div class="stat-title">
+                <Icon name="chart" size={20} />准备耗时中位数
+              </div><div class="stat-number">—</div><span class="stat-caption"
+                >尚未采集</span>
+            </article>
+          </div>
+          <div class="overview-bottom">
+            <article class="card recent">
+              <div class="card-heading">
+                <h2>最近查询</h2><a class="text-link" href="#requests"
+                  >全部记录 <Icon name="arrow" size={18} /></a>
+              </div><div id="recent-list"></div>
+            </article>
+            <div class="side-stack">
+              <article class="card source-summary">
+                <div class="card-heading">
+                  <h2>数据来源</h2><a
+                    href="#sources"
+                    class="icon-button"
+                    aria-label="查看数据来源"
+                    ><Icon name="arrow" size={18} /></a>
+                </div><div class="source-mini">
+                  <img class="source-symbol site-icon" src="/brand/haneoka.svg" width="36" height="36" alt="" /><div>
+                    <strong>Haneoka</strong><small>主目录</small>
+                  </div><span class="pill success">可用</span>
+                </div><div class="source-mini">
+                  <img class="source-symbol site-icon" src="/brand/moenotes.png" width="36" height="36" alt="" /><div>
+                    <strong>Moenotes</strong><small>活动榜线</small>
+                  </div><span class="pill warm">缓存</span>
+                </div>
+              </article><article class="card ask-card">
+                <div class="card-heading">
+                  <h2>/问</h2><span class="pill purple">今日</span>
+                </div><div class="ask-total">1<span>次请求</span></div><div
+                  class="ask-bar"
+                >
+                  <span></span>
+                </div><div class="ask-legend">
+                  <span><i class="dot"></i>本地 1</span><span>缓存 0</span><span
+                    >模型 0</span>
+                </div>
+              </article>
+            </div>
+          </div>
+        </section>
+        <section class="page" data-page="requests" hidden>
+          <div class="page-heading">
+            <div>
+              <h1>查询记录</h1>
+            </div><span class="muted">最近 24 小时</span>
+          </div>
+          <div class="toolbar">
+            <div class="segmented" aria-label="记录范围">
+              <button class="active" data-filter="all" aria-pressed="true"
+                >全部 <span>8</span></button
+              ><button data-filter="attention" aria-pressed="false"
+                >需要关注 <span>3</span></button>
+            </div><label class="search-field"
+              ><Icon name="search" size={19} /><input
+                id="request-search"
+                type="search"
+                placeholder="搜索指令或群"
+                aria-label="搜索查询记录"
+              /></label
+            ><label class="select-wrap"
+              ><select id="status-filter" aria-label="发送状态"
+                ><option value="">全部状态</option><option value="complete"
+                  >平台已确认</option
+                ><option value="processing">处理中</option><option
+                  value="partial">部分发送</option
+                ><option value="uncertain">结果待确认</option><option
+                  value="failed">发送失败</option
+                ></select
+              ></label>
+          </div>
+          <div class="record-workspace">
+          <article class="card table-card">
+            <div class="table-scroll">
+              <table>
+                <thead
+                  ><tr
+                    ><th>指令</th><th>群</th><th>状态</th><th>耗时</th><th
+                      >时间</th
+                    ><th><span class="sr-only">详情</span></th></tr
+                  ></thead
+                ><tbody id="request-table"></tbody>
+              </table>
+            </div><div class="table-footer">
+              <span id="request-count">8 条记录</span><span
+                >2026 年 10 月 21 日</span>
+            </div>
+          </article>
+<div class="inspector-slot request-slot"><dialog
+      id="request-dialog"
+      class="detail-dialog"
+      aria-labelledby="request-detail-title"
+    >
+      <div class="dialog-heading">
+        <div>
+          <h2
+            id="request-detail-title"
+          >
+            查询详情
+          </h2>
+        </div><button class="icon-button close-dialog" aria-label="关闭查询详情"
+          ><Icon name="close" /></button>
+      </div><div id="request-detail"></div>
+    </dialog><div class="inspector-empty card"><Icon name="list" size={30}/><span>选择一条记录</span></div></div></div>
+        </section>
+        <section class="page" data-page="groups" hidden>
+          <div class="page-heading">
+            <div><h1>群管理</h1></div><span
+              class="pill neutral">3 个演示群</span>
+          </div>
+          <div class="toolbar">
+            <label class="search-field"
+              ><Icon name="search" size={19} /><input
+                type="search"
+                id="group-search"
+                placeholder="搜索群备注"
+                aria-label="搜索群"
+              /></label
+            ><button class="button subtle" id="group-reset"
+              ><Icon name="refresh" size={18} />重置演示修改</button>
+          </div>
+          <div class="group-workspace"><article class="card group-directory"><div class="directory-heading"><h2>已观察群</h2><span class="muted">3</span></div><div id="group-grid" class="group-grid"></div><div id="group-empty" class="empty" hidden>没有匹配的群</div></article><div class="inspector-slot group-slot"><dialog
+      id="group-dialog"
+      class="group-dialog"
+      aria-labelledby="group-detail-title"
+    >
+      <form id="group-form">
+        <div class="dialog-heading">
+          <h2 id="group-detail-title">群设置</h2><button
+            class="icon-button close-dialog"
+            type="button"
+            aria-label="关闭群设置"><Icon name="close" /></button>
+        </div><div class="dialog-body">
+          <label class="field"
+            >群备注<input name="label" maxlength="80" required /></label
+          ><div class="policy-fields">
+            <label class="field"
+              >新查询<select name="queries"
+                ><option value="inherit">继承全局</option><option value="allow"
+                  >允许</option
+                ><option value="pause">暂停</option></select
+              ></label
+            ><label class="field"
+              >主动通知<select name="notifications"
+                ><option value="inherit">继承全局</option><option value="allow"
+                  >允许</option
+                ><option value="pause">暂停</option></select
+              ></label
+            ><label class="field"
+              >/问<select name="ask"
+                ><option value="inherit">继承</option><option value="off"
+                  >关闭</option
+                ><option value="local">仅本地</option><option value="model"
+                  >允许模型</option
+                ></select
+              ></label>
+          </div><div class="effective-block">
+            <h3>当前生效</h3><div id="effective-policy"></div>
+          </div><details>
+            <summary>群标识</summary><code id="group-identifier"></code>
+          </details><p
+            id="group-error"
+            class="warning-text"
+            role="alert"
+            hidden
+          >
+          </p>
+        </div><div class="dialog-footer">
+          <span id="group-dirty" class="muted">未修改</span><button
+            class="button primary"
+            type="submit">保存群设置</button>
+        </div>
+      </form>
+    </dialog><div class="inspector-empty card"><Icon name="groups" size={30}/><span>选择一个群</span></div></div></div>
+        </section>
+        <section class="page" data-page="sources" hidden>
+          <div class="page-heading">
+            <div>
+              <h1>数据来源</h1>
+            </div><span class="muted">演示快照 · 14:32</span>
+          </div>
+          <div class="source-grid">
+            <article class="card source-detail">
+              <div class="source-identity">
+                <img class="source-symbol large site-icon" src="/brand/haneoka.svg" width="52" height="52" alt="" /><div>
+                  <h2>Haneoka</h2><span class="muted">主目录</span>
+                </div><span class="pill success">可用</span>
+              </div><dl class="key-values">
+                <div><dt>缓存</dt><dd>已验证</dd></div><div>
+                  <dt>最近成功同步</dt><dd>今天 14:30</dd>
+                </div><div><dt>歌曲数</dt><dd>尚未采集</dd></div><div>
+                  <dt>最近错误</dt><dd>无</dd>
+                </div>
+              </dl><details>
+                <summary>采集详情</summary><dl class="key-values">
+                  <div><dt>刷新间隔</dt><dd>30 分钟</dd></div><div>
+                    <dt>正在刷新</dt><dd>否</dd>
+                  </div>
+                </dl>
+              </details>
+            </article><article class="card source-detail">
+              <div class="source-identity">
+                <img class="source-symbol large site-icon" src="/brand/moenotes.png" width="52" height="52" alt="" /><div>
+                  <h2>Moenotes</h2><span class="muted">活动榜线</span>
+                </div><span class="pill warm">使用缓存</span>
+              </div><dl class="key-values">
+                <div><dt>缓存</dt><dd>已验证</dd></div><div>
+                  <dt>最近成功同步</dt><dd>今天 14:20</dd>
+                </div><div><dt>最近尝试</dt><dd>今天 14:30</dd></div><div>
+                  <dt>最近错误</dt><dd>
+                    <span class="warning-text">读取超时</span>
+                  </dd>
+                </div>
+              </dl><details>
+                <summary>采集详情</summary><dl class="key-values">
+                  <div><dt>历史覆盖</dt><dd>尚未采集</dd></div><div>
+                    <dt>观测时间</dt><dd>今天 14:32</dd>
+                  </div>
+                </dl>
+              </details>
+            </article>
+          </div>
+          <article class="card telemetry-card">
+            <div class="card-heading">
+              <h2>诊断采集</h2><span class="pill neutral">部分采集</span>
+            </div><div class="telemetry-grid">
+              <div>
+                <span class="muted">请求元数据</span><strong>8 / 8</strong>
+              </div><div>
+                <span class="muted">阶段耗时</span><strong>6 / 8</strong>
+              </div><div>
+                <span class="muted">丢弃事件</span><strong>0</strong>
+              </div><div>
+                <span class="muted">保留时间</span><strong>24 小时</strong>
+              </div>
+            </div>
+          </article>
+        </section>
+        <section class="page" data-page="settings" hidden>
+          <div class="page-heading">
+            <div><h1>设置</h1></div><span
+              id="global-dirty"
+              class="pill warm"
+              hidden>未保存</span>
+          </div>
+          <div class="settings-workspace">
+            <nav class="settings-tree card" aria-label="设置分组"><span class="tree-heading">全局配置</span><button type="button" data-setting="general" aria-current="page"><Icon name="shield" size={19}/><span>查询与通知</span><i class="dirty-dot" hidden></i></button><button type="button" data-setting="scope"><Icon name="groups" size={19}/><span>群范围</span><i class="dirty-dot" hidden></i></button><span class="tree-heading">用户设置</span><button type="button" data-setting="appearance"><Icon name="sun" size={19}/><span>外观</span></button></nav>
+            <form id="global-form" class="settings-layout">
+              <article class="card settings-card" data-setting-pane="general"><div class="card-heading"><h2>查询与通知</h2><Icon name="shield"/></div><label class="setting-row"><span><strong>接收新查询</strong></span><input class="switch" type="checkbox" name="queries" checked/></label><label class="setting-row"><span><strong>群查询</strong></span><input class="switch" type="checkbox" name="groups" checked/></label><label class="setting-row"><span><strong>私聊查询</strong></span><input class="switch" type="checkbox" name="private"/></label><label class="setting-row"><span><strong>主动通知</strong></span><input class="switch" type="checkbox" name="notices"/></label></article>
+              <article class="card settings-card" data-setting-pane="scope" hidden><div class="card-heading"><h2>群范围</h2><Icon name="groups"/></div><fieldset class="scope-options"><legend class="sr-only">允许的群范围</legend><label><input type="radio" name="scope" value="selected" aria-label="指定群" checked/><span>指定群</span><span class="muted">3</span></label><label><input type="radio" name="scope" value="all"/><span>全部群</span></label></fieldset><div class="selected-groups" id="scope-groups"></div></article>
+              <article class="card settings-card" data-setting-pane="appearance" hidden><div class="card-heading"><h2>外观</h2><Icon name="sun"/></div><div class="setting-row"><span><strong>主题</strong><small class="muted" id="theme-label">浅色</small></span><button type="button" class="button subtle" id="theme-setting"><Icon name="sun" size={18}/>切换主题</button></div></article>
+              <div class="save-bar"><span id="global-save-status" class="muted">已保存至本次预览</span><div><button id="global-reset" class="button subtle" type="reset" disabled>还原</button><button id="global-save" class="button primary" type="submit" disabled>保存设置</button></div></div>
+            </form>
+          </div>
+        </section>
+      </main>
+    </div>
+
+
+    <footer class="app-statusbar"><span><i class="dot"></i>QQ 在线</span><span><i class="dot"></i>后端就绪</span><span class="statusbar-instance">演示实例</span><button id="status-dirty" hidden>有未保存设置</button><span class="statusbar-preview">本地预览</span></footer>
+    <dialog
+      id="login-dialog"
+      class="login-dialog"
+      aria-labelledby="login-title"
+    >
+      <TakiAvatar /><h2 id="login-title">
+        Taki 控制台
+      </h2><span class="pill purple">设计预览</span><form id="login-form">
+        <label class="field"
+          >管理员密码<input
+            type="password"
+            autocomplete="off"
+            placeholder="演示模式无需密码"
+          /></label
+        ><button class="button primary" type="submit">进入预览</button>
+      </form>
+    </dialog>
+    <div id="toast" class="toast" role="status" hidden></div>
+    <script>
+      import "../client";
+    </script>
+  </body>
+</html>

@@ -1,20 +1,55 @@
-.taki-console { max-width:1120px; margin:24px auto; padding:0 16px 32px; line-height:1.7; overflow-wrap:anywhere; color:var(--fg1); }
-.taki-console nav { display:flex; gap:8px; flex-wrap:wrap; }
-.taki-console button { padding:8px 14px; margin:6px 6px 6px 0; min-height:44px; cursor:pointer; color:inherit; background:var(--bg2,#eee); border:1px solid var(--border,#aaa); border-radius:6px; }
-.taki-console button:disabled { cursor:default; opacity:.65; }
-.taki-console :focus-visible { outline:3px solid #5588cc; outline-offset:2px; }
-.taki-console section { margin:20px 0; padding:16px; border:1px solid var(--border,#aaa); border-radius:8px; }
-.taki-console .stats { display:grid; grid-template-columns:repeat(auto-fit,minmax(130px,1fr)); gap:12px; }
-.taki-console .stats strong { display:block; font-size:1.8em; }
-.taki-console .toggle { display:block; margin:12px 0; }
-.taki-console input,.taki-console select,.taki-console textarea { color:inherit; background:var(--bg1,#fff); border:1px solid var(--border,#aaa); padding:8px; box-sizing:border-box; max-width:100%; }
-.taki-console textarea { display:block; width:100%; }
-.taki-console pre { white-space:pre-wrap; overflow-wrap:anywhere; font-size:.9em; }
+/* Haneoka-inspired Material surfaces; host colours follow the Koishi theme. */
+.taki-console { --accent:#6569bd; --ink:var(--fg1,#272733); --surface:var(--bg1,#fff); --soft:var(--bg2,#f2f1f8); --line:color-mix(in srgb,var(--ink) 16%,transparent); max-width:1120px; margin:24px auto; padding:0 24px 40px; line-height:1.7; overflow-wrap:anywhere; color:var(--ink); font-family:"Segoe UI","Microsoft YaHei",sans-serif; }
+.taki-console * { box-sizing:border-box; }
+.taki-console h1 { font-size:clamp(26px,4vw,36px); font-weight:650; letter-spacing:-.04em; margin:28px 0 8px; line-height:1.25; }
+.taki-console h2 { font-size:21px; line-height:1.4; margin:0 0 12px; }
+.taki-console h3 { font-size:16px; margin:24px 0 8px; }
+.taki-console p { margin:8px 0 14px; }
+.taki-console .console-header { display:flex; align-items:center; justify-content:space-between; gap:16px; padding:8px 0 16px; }
+.taki-console .console-header>button { flex:none; white-space:nowrap; }
+.taki-console .console-header p { margin:4px 0; }
+.taki-console .eyebrow { font-size:12px; font-weight:750; letter-spacing:.14em; }
+.taki-console nav { display:flex; gap:8px; padding:6px; background:var(--soft); border-radius:28px; width:fit-content; max-width:100%; }
+.taki-console button { padding:10px 18px; margin:6px 8px 6px 0; min-height:44px; cursor:pointer; color:inherit; font:inherit; font-size:14px; font-weight:600; background:var(--soft); border:1px solid var(--line); border-radius:24px; transition:background .15s; }
+.taki-console button:hover:not(:disabled) { background:color-mix(in srgb,var(--accent) 18%,var(--surface)); }
+.taki-console nav button { border:0; background:transparent; margin:0; }
+.taki-console nav button[aria-current=page] { background:var(--accent); color:#fff; }
+.taki-console button:disabled { cursor:default; opacity:.55; }
+.taki-console :focus-visible { outline:3px solid var(--accent); outline-offset:3px; }
+.taki-console section { margin:20px 0; padding:24px; background:var(--surface); border:1px solid var(--line); border-radius:24px; }
+.taki-console .health-card { background:color-mix(in srgb,var(--accent) 12%,var(--surface)); border-color:transparent; }
+.taki-console .health-card h2 { font-size:28px; margin-top:8px; }
+.taki-console .guide { display:block; background:var(--soft); border-radius:18px; padding:16px 20px; margin:18px 0; border-inline-start:3px solid var(--accent); font-size:14px; }
+.taki-console .guide p { margin:4px 0 0; }
+.taki-console .stats { display:grid; grid-template-columns:repeat(auto-fit,minmax(120px,1fr)); gap:10px; }
+.taki-console .stats>div { background:var(--soft); border-radius:16px; padding:16px; }
+.taki-console .stats strong { display:block; font-size:30px; font-weight:600; line-height:1.4; }
+.taki-console .stats span { font-size:13px; }
+.taki-console .toggle { display:flex; align-items:center; justify-content:space-between; gap:16px; padding:14px 0; border-bottom:1px solid var(--line); }
+.taki-console .toggle:has(input) { justify-content:flex-start; }
+.taki-console input[type=checkbox] { accent-color:var(--accent); width:22px; height:22px; flex:none; }
+.taki-console input:not([type=checkbox]),.taki-console select,.taki-console textarea { color:inherit; background:var(--surface); border:1px solid var(--line); border-radius:12px; padding:12px; font:inherit; min-height:44px; max-width:100%; }
+.taki-console input:not([type=checkbox]) { display:block; width:100%; margin:8px 0; }
+.taki-console textarea { display:block; width:100%; margin-top:8px; resize:vertical; }
+.taki-console .toggle select { min-width:0; max-width:65%; }
+.taki-console .muted,.taki-console small { opacity:.78; font-size:13px; }
+.taki-console small { display:block; }
+.taki-console .draft-status { font-size:14px; font-weight:600; padding-top:12px; }
+.taki-console [role=alert] { background:color-mix(in srgb,#d89a38 18%,var(--surface)); border-inline-start:3px solid #b87816; padding:14px 18px; border-radius:12px; }
+.taki-console>p[role=status] { padding:14px 18px; background:var(--soft); border-radius:12px; }
 .taki-console ul { padding-left:20px; }
 .taki-console li { margin:10px 0; }
-.taki-console small { display:block; opacity:.8; }
-.taki-console .fact { display:grid; grid-template-columns:minmax(90px,180px) minmax(0,1fr); gap:8px; padding:4px 0; }
-.taki-console dt { opacity:.8; }
-.taki-console dd { margin:0; }
-@media(max-width:480px) { .taki-console .fact { grid-template-columns:1fr; gap:0; } }
-@media(max-width:480px) { .taki-console { padding:0 8px 24px; } .taki-console section { padding:10px; } }
+.taki-console .record-list { list-style:none; padding:0; }
+.taki-console .record-list>li { padding:14px 16px; border:1px solid var(--line); border-radius:18px; margin:10px 0; }
+.taki-console .record-list span { display:block; font-size:14px; }
+.taki-console .technical { border:1px solid var(--line); border-radius:18px; margin:16px 0; padding:4px 18px; background:var(--surface); }
+.taki-console summary { cursor:pointer; min-height:48px; padding:12px 0; font-size:14px; font-weight:600; }
+.taki-console .technical section { margin:10px 0; border-radius:16px; }
+.taki-console .fact { display:grid; grid-template-columns:minmax(90px,180px) minmax(0,1fr); gap:12px; padding:6px 0; border-bottom:1px solid var(--line); font-size:14px; }
+.taki-console dt { opacity:.78; }
+.taki-console dd { margin:0; min-width:0; }
+.taki-console footer { border-top:1px solid var(--line); margin-top:32px; padding-top:20px; }
+.taki-console form { max-width:480px; margin:8vh auto; padding:32px; border-radius:28px; background:var(--surface); border:1px solid var(--line); }
+.taki-console form button[type=submit] { background:var(--accent); color:#fff; width:100%; margin:16px 0; }
+@media(max-width:600px) { .taki-console { margin:12px auto; padding:0 12px 24px; } .taki-console section { padding:16px; border-radius:20px; } .taki-console .console-header { align-items:flex-start; } .taki-console .console-header p { font-size:13px; } .taki-console nav { width:100%; gap:2px; } .taki-console nav button { flex:1; padding:10px 8px; font-size:13px; } .taki-console .fact { grid-template-columns:1fr; gap:0; } .taki-console .technical { padding:4px 12px; } .taki-console .guide { padding:14px; } .taki-console form { margin:24px auto; padding:24px 18px; } }
+@media(prefers-reduced-motion:reduce) { .taki-console button { transition:none; } }
