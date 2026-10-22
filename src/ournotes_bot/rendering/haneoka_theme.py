@@ -124,7 +124,11 @@ def _icon(raw, width, height):
 
 def icon(name, width, height):
     raw = game_asset(name)
-    return _icon(raw, width, height) if raw else None
+    try:
+        return _icon(raw, width, height) if raw else None
+    except OSError:
+        # Unreadable image bytes use the same fallback as unavailable artwork.
+        return None
 
 
 def mission_label(canvas, x, cy, value, size=29, symbol=36, bold=False):
@@ -217,7 +221,14 @@ class Canvas:
     def badge(self,name,x,cy,width,height=None):
         image=icon(name,width,height or width)
         if image is None:
-            label = name.removeprefix('RarityIconCenter_').removesuffix('.png') if name.startswith('Rarity') else '觉'+name.removesuffix('.png')[-1]
+            if name.startswith('RarityIconCenter_'):
+                label=name.removeprefix('RarityIconCenter_').removesuffix('.png')
+            elif name.startswith('CardRank'):
+                label='专'+name.removeprefix('CardRank').removesuffix('.png')
+            elif name.startswith('snaplimit_'):
+                label='觉'+name.removeprefix('snaplimit_').removesuffix('.png')
+            else:
+                label=name.removesuffix('.png')
             self.text(x+width/2,cy,label,min(18,height or width),ACCENT,True,'center',stroke=0)
             return
         self.image.paste(image,(round(x),round(cy-image.height/2)),image)
