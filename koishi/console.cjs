@@ -8,6 +8,7 @@ const { validateGroupPolicy } = require('./lib/group-policies')
 const { OperationJournal } = require('./operation-journal.cjs')
 const { readHostSnapshot } = require('./ops-host.cjs')
 const { Controls } = require('./ops-controls.cjs')
+const { TrustedActions } = require('./trusted-actions.cjs')
 
 function configuration(env) {
   if (env.TAKI_CONSOLE_ENABLED !== '1') return
@@ -18,7 +19,8 @@ function configuration(env) {
   if (!env.TAKI_CONSOLE_STATE_DIR || !path.isAbsolute(env.TAKI_CONSOLE_STATE_DIR)) throw Error('console state directory required')
   const state=env.TAKI_POLICY_RECOVERY_STATE||'unknown',reason=env.TAKI_POLICY_RECOVERY_REASON||null
   if(!['unknown','current','restored','frozen','conflict'].includes(state)||reason&&!['settings_changed','policy_changed'].includes(reason))throw Error('policy recovery state')
-  return { port, password, directory: env.TAKI_CONSOLE_STATE_DIR, recoveryPolicy:{state,reason} }
+  if(env.TAKI_ACTION_SOCKET&&env.TAKI_ACTION_SOCKET!=='/run/taki-actions/control.sock')throw Error('controller socket')
+  return { port, password, directory: env.TAKI_CONSOLE_STATE_DIR, recoveryPolicy:{state,reason},actionSocket:env.TAKI_ACTION_SOCKET }
 }
 
 function install(ctx, config, manifest, assetsDirectory = path.join(__dirname, 'node_modules/taki-console-assets')) {
@@ -26,10 +28,12 @@ function install(ctx, config, manifest, assetsDirectory = path.join(__dirname, '
   const readHealth = config.readHealth || require('./health.cjs').healthReader(ctx, manifest, config.identity || {})
   const methods = ['overview', 'requests/list', 'requests/detail', 'sources', 'notices/list', 'query-metrics', 'groups/list', 'groups/update', 'settings/update',
     'ops/jobs/list','ops/jobs/detail','ops/jobs/start','ops/export','ops/audit','ops/host','ops/notice-target',
-    'ops/controls','ops/controls/start','ops/controls/restore']
+    'ops/controls','ops/controls/start','ops/controls/restore',
+    'model/settings','model/save','model/probe','model/group','ops/trusted','ops/trusted/prepare','ops/trusted/start']
   const journal = new OperationJournal(config.directory, management.groups.snapshot().instance ? JSON.stringify(management.groups.snapshot().instance) : manifest.commit)
   journal.reconcile(management)
   const controls=new Controls(management,journal)
+  const trusted=new TrustedActions(management,journal,{socket:config.actionSocket,instance:config.identity?.instanceId})
   ctx.setInterval(()=>journal.prune(),60000)
   const reads = new Map()
   const groupPages = new Map()
@@ -146,6 +150,7 @@ function install(ctx, config, manifest, assetsDirectory = path.join(__dirname, '
       const [health,backend] = await Promise.all([readHealth(),readBackend('overview').catch(() =>
         ({ sections: { backend: { availability: 'unavailable', data: null, reason_code: 'backend_unavailable', stale: true } } }))])
       return { ...management.snapshot(), health, backend,
+        current_policy_version:{...management.snapshot().guard,group_revision:management.groups.snapshot().revision},
         recovery_policy:config.recoveryPolicy||null,
         policy_health:{availability:management.groups.error?'unavailable':'available',reason_code:management.groups.error},
         gateway_observation: ctx.takiTransport?.receiver?.client.telemetry?.snapshot() || null,
@@ -164,6 +169,23 @@ function install(ctx, config, manifest, assetsDirectory = path.join(__dirname, '
       reads.delete('/v1/admin/ops/jobs');return result
     }, {authority:5})
     listen('taki/ops/audit', function() { return journal.publicSnapshot() }, {authority:5})
+    listen('taki/model/settings', function(){return readBackend('model')},{authority:5})
+    listen('taki/model/group', function(id){
+      if(typeof id!=='string'||!/^[A-Za-z0-9_-]{1,128}$/.test(id))throw Error('admin_group')
+      return readBackend('model/groups/'+id)
+    },{authority:5})
+    for(const [method,url] of [['save','/v1/admin/model'],['probe','/v1/admin/model/probe']]){
+      listen('taki/model/'+method,async function(value){
+        if(!value||typeof value!=='object'||Array.isArray(value))throw Error('model_admin_shape')
+        const client=ctx.takiTransport?.receiver?.client
+        if(!client)throw Error('backend_unavailable')
+        const result=await client.request(url,value,131072,false,AbortSignal.timeout(2000))
+        reads.clear();return result
+      },{authority:5})
+    }
+    listen('taki/ops/trusted',function(){return trusted.status()},{authority:5})
+    listen('taki/ops/trusted/prepare',function(action){return trusted.prepare(action)},{authority:5})
+    listen('taki/ops/trusted/start',function(value){return trusted.start(value,sessionIds.get(this))},{authority:5})
     listen('taki/ops/controls', function() { return controls.snapshot() }, {authority:5})
     listen('taki/ops/controls/start', function(value) { return controls.start(value,sessionIds.get(this)) }, {authority:5})
     listen('taki/ops/controls/restore', function(value) { return controls.restore(value,sessionIds.get(this)) }, {authority:5})

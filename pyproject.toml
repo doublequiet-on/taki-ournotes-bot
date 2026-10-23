@@ -23,7 +23,7 @@ where = ["src"]
 [tool.setuptools.data-files]
 "share/ournotes-qq-bot" = ["query_aliases.json", "THIRD_PARTY.md"]
 "share/ournotes-qq-bot/docs/knowledge" = ["docs/knowledge/knowledge-draft.md"]
-"share/ournotes-qq-bot/docs" = ["docs/IMAGE_OUTPUT.md", "docs/CUTOFF_HISTORY.md", "docs/QUERY_UPGRADE_V1.md", "docs/META_OPEN.md", "docs/HANEOKA_CATALOG.md", "docs/HANEOKA_CUTOFFS.md", "docs/HANEOKA_META_CONTRACT.md", "docs/HANEOKA_RETIREMENT.md", "docs/HANEOKA_RESEARCH.md", "docs/HANEOKA_UNIFIED.md", "docs/QUERY_CHAT_PACKAGE2B.md", "docs/QUERY_CHAT_PACKAGE3.md"]
+"share/ournotes-qq-bot/docs" = ["docs/IMAGE_OUTPUT.md", "docs/CUTOFF_HISTORY.md", "docs/QUERY_UPGRADE_V1.md", "docs/META_OPEN.md", "docs/HANEOKA_CATALOG.md", "docs/HANEOKA_CUTOFFS.md", "docs/HANEOKA_META_CONTRACT.md", "docs/HANEOKA_RETIREMENT.md", "docs/HANEOKA_RESEARCH.md", "docs/HANEOKA_UNIFIED.md", "docs/QUERY_CHAT_PACKAGE2B.md", "docs/QUERY_CHAT_PACKAGE3.md", "docs/QUERY_CHAT_PACKAGE4.md"]
 "share/ournotes-qq-bot/deploy" = ["deploy/query-upgrade-v1.env.example"]
 "share/ournotes-qq-bot/docs/koishi" = ["docs/KOISHI_BACKEND_V1.md", "docs/KOISHI_MIGRATION_M4.md", "docs/koishi/CONSOLE_V1.md", "docs/koishi/OPERATIONS.md"]
 

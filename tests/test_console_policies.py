@@ -26,6 +26,27 @@ def native_profile(**changes):
 
 
 class WeightedUsageTests(unittest.TestCase):
+    def test_observation_failure_keeps_settled_usage_and_business_result_available(self):
+        from ournotes_bot.domain.model_calls import Usage
+        self.ledger.reserve('r','a','u',None,self.profile,100)
+        self.ledger.start('a',self.profile);self.ledger.settle('a',Usage(80,0,10,None,90,'known'))
+        self.ledger.db.execute("CREATE TRIGGER reject_observation BEFORE INSERT ON attempt_observations BEGIN SELECT RAISE(ABORT,'fixture full'); END")
+        self.assertFalse(self.ledger.observe('a','light_chat',100))
+        self.assertEqual(self.ledger.get('a')['state'],'settled')
+        self.assertEqual(self.ledger.summary()['observation_error'],'usage_observation_unavailable')
+
+    def test_configured_frequency_is_enforced_per_group_and_user(self):
+        from ournotes_bot.domain.model_calls import ModelError
+        profile=replace(self.profile,user_rate_requests=10,group_rate_requests=1,rate_window_seconds=20)
+        self.ledger.reserve('r1','a1','u1','g',profile,100)
+        with self.assertRaisesRegex(ModelError,'model_rate_limited'):
+            self.ledger.reserve('r2','a2','u2','g',profile,100)
+        self.now[0]+=21
+        self.ledger.reserve('r2','a2','u2','g',profile,100)
+        profile=replace(profile,user_rate_requests=1,group_rate_requests=10)
+        with self.assertRaisesRegex(ModelError,'model_rate_limited'):
+            self.ledger.reserve('r3','a3','u2',None,profile,100)
+
     def setUp(self):
         from ournotes_bot.application.usage_ledger import UsageLedger
         self.temp=tempfile.TemporaryDirectory();self.addCleanup(self.temp.cleanup)
@@ -165,6 +186,124 @@ class WeightedUsageTests(unittest.TestCase):
         with self.assertRaises(ModelError): openrouter_price(data,replace(profile,price=replace(profile.price,currency='CNY')))
         data['data'][0]['pricing']['request']='0.01'
         with self.assertRaisesRegex(ModelError,'price_dimensions_unsupported'): openrouter_price(data,profile)
+
+
+class ModelAdminTests(unittest.IsolatedAsyncioTestCase):
+    async def asyncSetUp(self):
+        from dataclasses import asdict
+        from types import SimpleNamespace
+        from unittest.mock import AsyncMock
+        from ournotes_bot.application.model_runtime import ModelRuntime
+        from ournotes_bot.application.model_execution import ModelScheduler
+        self.temp=tempfile.TemporaryDirectory();self.addCleanup(self.temp.cleanup)
+        self.root=Path(self.temp.name);self.path=self.root/'profile.json'
+        profile=asdict(native_profile());profile.pop('api_key')
+        self.old={'schema':'taki-model-config/1','instance_id':'i','app_id':'a','profile':profile,
+            'bindings':[dict(kind='group',conversation_id='g',user_id='u',subject='subject',evidence_ref='fixture/binding')]}
+        self.path.write_text(json.dumps(self.old),encoding='utf-8')
+        self.client=SimpleNamespace(request=AsyncMock(),price=AsyncMock())
+        backend=SimpleNamespace(instance_id='i',app_id='a',runtime='epoch',models=ModelScheduler(),
+                                settings=SimpleNamespace(ai_profile_file=self.path,query_ai_api_key='OLD_KEY'))
+        self.runtime=ModelRuntime(backend,self.root/'usage.sqlite3',client=self.client)
+        self.addAsyncCleanup(self.runtime.close);self.addAsyncCleanup(backend.models.close)
+        self.admin=self.runtime.admin
+
+    def payload(self,letter='a'):
+        settings=self.admin.settings()
+        return dict(operation_id=letter*32,guard=settings['guard'],profile=settings['profile'],groups=settings['groups'],
+                    api_key='NEW_PRIVATE_KEY',api_url=settings['api_url'])
+
+    async def test_save_is_versioned_private_and_idempotent_with_binding_preserved(self):
+        old=self.runtime.config.snapshot();body=self.payload();result=self.admin.save(body)
+        self.assertNotIn('NEW_PRIVATE_KEY',json.dumps(result));self.assertTrue(result['key_configured'])
+        self.assertNotIn('NEW_PRIVATE_KEY',''.join(self.admin.db.iterdump()))
+        self.assertNotIn('OLD_KEY',''.join(self.admin.db.iterdump()))
+        self.assertEqual(json.loads(self.path.read_text('utf-8'))['bindings'],self.old['bindings'])
+        self.assertEqual(self.runtime.config.snapshot().profile.api_key,'NEW_PRIVATE_KEY')
+        self.assertEqual(old.profile.api_key,'OLD_KEY')
+        self.assertEqual(result['guard'],self.admin.save(body)['guard'])
+        self.client.request.assert_not_called()
+        if os.name!='nt':self.assertEqual(self.path.stat().st_mode&0o777,0o600)
+
+    async def test_stale_guard_and_unregistered_url_cannot_overwrite(self):
+        from ournotes_bot.domain.model_calls import ModelError
+        a=self.payload();b=self.payload('b');self.admin.save(a);saved=self.path.read_bytes()
+        with self.assertRaisesRegex(ModelError,'conflict'):self.admin.save(b)
+        self.assertEqual(saved,self.path.read_bytes())
+        bad=self.payload('c');bad['api_url']='http://169.254.169.254/latest/meta-data'
+        with self.assertRaisesRegex(ModelError,'endpoint'):self.admin.save(bad)
+        self.assertEqual(saved,self.path.read_bytes())
+        self.client.request.assert_not_called()
+
+    async def test_missing_legacy_key_keeps_profile_editable_and_capacity_rejects_before_write(self):
+        from ournotes_bot.domain.model_calls import ModelError
+        self.runtime.config.api_key=''
+        current=self.admin.settings()
+        self.assertTrue(current['editable']);self.assertFalse(current['key_configured'])
+        self.assertEqual(current['profile']['model'],'fixture-native')
+        self.runtime.config.versions={str(i):'digest' for i in range(128)}
+        before=self.path.read_bytes()
+        with self.assertRaisesRegex(ModelError,'capacity'):self.admin.save(self.payload())
+        self.assertEqual(before,self.path.read_bytes())
+
+    async def test_duplicate_probe_argument_is_not_capability_evidence_but_usage_settles(self):
+        from ournotes_bot.domain.model_calls import AttemptResult,Usage,ToolCall
+        self.client.request.return_value=AttemptResult('ok',Usage(80,0,10,None,90,'known'),
+            (ToolCall('probe','capability_echo','{"marker":"bad","marker":"taki-probe"}'),))
+        self.admin.probe({'operation_id':'f'*32,'guard':self.admin.settings()['guard'],'confirm':'billable_capability_probe'})
+        await self.admin.task
+        self.assertEqual(self.admin.settings()['capability']['state'],'failed')
+        self.assertEqual(self.runtime.usage.get('f'*32)['charged'],'100')
+
+    async def test_group_override_reaches_actual_reservation_and_reference_unit_is_fixed(self):
+        from ournotes_bot.domain.model_calls import ModelError
+        body=self.payload();body['groups']={'g':{'group_daily_limit':1,'group_rate_requests':1}}
+        self.admin.save(body)
+        profile=self.runtime.config.snapshot().for_group('g').profile
+        with self.assertRaisesRegex(ModelError,'quota_exceeded'):
+            self.runtime.usage.reserve('r','at','u','g',profile,100)
+        self.runtime.usage.reserve('r','at','u',None,profile,100)
+        body=self.payload('b');body['profile']['price']['currency']='CNY'
+        before=self.path.read_bytes()
+        with self.assertRaisesRegex(ModelError,'reference_unit'):self.admin.save(body)
+        self.assertEqual(before,self.path.read_bytes())
+
+    async def test_probe_confirmation_single_call_usage_and_no_response_content_persisted(self):
+        from ournotes_bot.domain.model_calls import AttemptResult,Usage,ToolCall,ModelError
+        self.client.request.return_value=AttemptResult('ok',Usage(80,0,10,None,90,'known'),
+            (ToolCall('probe','capability_echo','{"marker":"taki-probe"}'),),'PRIVATE_PROVIDER_PROSE')
+        settings=self.admin.settings();self.admin.settings();self.client.request.assert_not_called()
+        body={'operation_id':'d'*32,'guard':settings['guard'],'confirm':'billable_capability_probe'}
+        with self.assertRaisesRegex(ModelError,'confirmation'):self.admin.probe({**body,'confirm':False})
+        self.admin.probe(body);self.admin.probe(body)
+        await self.admin.task
+        self.admin.probe(body)
+        self.assertEqual(self.client.request.await_count,1)
+        self.assertEqual(self.admin.settings()['capability']['state'],'succeeded')
+        self.assertEqual(self.runtime.usage.summary()['attempts'],1)
+        self.assertNotIn('PRIVATE_PROVIDER_PROSE',''.join(self.admin.db.iterdump())+''.join(self.runtime.usage.db.iterdump()))
+        self.assertEqual(self.runtime.usage.get('d'*32)['state'],'settled')
+
+    async def test_probe_unknown_does_not_replay_after_restart(self):
+        from ournotes_bot.application.model_admin import ModelAdmin
+        self.client.request.side_effect=asyncio.TimeoutError
+        body={'operation_id':'e'*32,'guard':self.admin.settings()['guard'],'confirm':'billable_capability_probe'}
+        self.admin.probe(body);await self.admin.task
+        await self.admin.close()
+        self.runtime.admin=ModelAdmin(self.runtime,self.root/'model-admin-v1.sqlite3')
+        self.runtime.admin.probe(body)
+        self.assertEqual(self.client.request.await_count,1)
+        self.assertEqual(self.runtime.admin.settings()['capability']['state'],'unknown')
+
+    async def test_broken_admin_audit_does_not_disable_query_accounting(self):
+        from ournotes_bot.application.model_admin import ModelAdmin
+        from ournotes_bot.domain.model_calls import ModelError
+        await self.admin.close();path=self.root/'model-admin-v1.sqlite3';path.write_bytes(b'broken')
+        self.runtime.admin=ModelAdmin(self.runtime,path)
+        with self.assertRaisesRegex(ModelError,'unavailable'):self.runtime.admin.settings()
+        self.runtime.usage.reserve('r','at','u',None,native_profile(),100)
+        self.assertEqual(self.runtime.usage.get('at')['state'],'reserved')
+        self.assertEqual(path.read_bytes(),b'broken')
 
 
 class NativeTransportTests(unittest.IsolatedAsyncioTestCase):
@@ -848,6 +987,15 @@ class FreezeTests(unittest.TestCase):
             (console/'settings.json').write_text(json.dumps(DEFAULT))
             with self.assertRaisesRegex(ValueError,'not_frozen'):launcher.launch(base,'gateway')
             self.assertEqual(execute.call_count,2)
+            # The controller and the actual launcher must agree on the v2 capability pair.
+            (combo/'combination.json').write_text(json.dumps({'commit':commit,'protocol':{'major':2,'minor':0},
+                'capabilities':['group_policies_v1','query_chat_contract_v1']}))
+            guard=transition(console,self.root/'new-guard.json',True)
+            permit.write_text(json.dumps({'release':{'code_dir':str(code),'commit':commit,'venv_dir':str(base/'venv')},'boot_id':'fixture','policy_guard':guard}))
+            os.environ['OURNOTES_QUERY_AI_API_KEY']='fixture-private'
+            launcher.launch(base,'gateway')
+            self.assertEqual(execute.call_count,3)
+            self.assertNotIn('OURNOTES_QUERY_AI_API_KEY',os.environ)
 
     def test_controller_keeps_unreviewed_legacy_runtime_stopped_after_freeze(self):
         from types import SimpleNamespace

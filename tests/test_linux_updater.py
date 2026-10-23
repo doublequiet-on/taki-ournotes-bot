@@ -581,5 +581,71 @@ class LinuxUpdaterTests(unittest.TestCase):
         self.assertEqual(new_directory.stat().st_mode & 0o777, 0o755)
 
 
+class TrustedActionProtocolTests(unittest.TestCase):
+    def setUp(self):
+        from deploy.trusted_actions import TrustedActions
+        from types import SimpleNamespace
+        from unittest.mock import Mock
+        self.temp=tempfile.TemporaryDirectory();self.addCleanup(self.temp.cleanup)
+        self.path=Path(self.temp.name)/'actions.json'
+        self.now=[123.0]
+        self.adapter=SimpleNamespace(propose=Mock(return_value={'from_sha':A,'target_sha':B,'config_digest':'c'*64,
+            'backend_digest':'d'*64,'gates':{'ci':True,'compatibility':True,'combination':True},'before_pids':{'backend':1,'gateway':2}}),
+            validate=Mock(return_value={'gates':True,'maintenance':True,'inflight':0,'frozen':False}),execute=Mock(),
+            health=Mock(return_value={'ready':True,'release_sha':B,'backend_digest':'d'*64,'backend_pid':123,'gateway_pid':456}))
+        self.owner=TrustedActions(self.path,'fixture',self.adapter,clock=lambda:self.now[0])
+        self.addCleanup(self.owner.close)
+
+    def payload(self):
+        plan=self.owner.prepare({'instance_id':'fixture','action':'update'})['plans'][0]
+        return {'operation_id':'1'*32,'plan':plan,'confirmation':'update:fixture:'+B}
+
+    def test_fixed_plan_intent_health_readback_and_duplicate(self):
+        from deploy.trusted_actions import TrustedActions
+        self.owner.status();self.adapter.propose.assert_not_called();self.adapter.execute.assert_not_called()
+        body=self.payload()
+        self.owner.execute(body);self.owner.worker.join(2)
+        self.assertEqual(self.owner.status()['items'][0]['state'],'succeeded')
+        self.assertEqual(self.adapter.execute.call_args.args,('update',B,'1'*32))
+        self.owner.close()
+        restarted=TrustedActions(self.path,'fixture',self.adapter,clock=lambda:self.now[0]);self.addCleanup(restarted.close)
+        restarted.execute(body)
+        self.assertEqual(self.adapter.execute.call_count,1)
+        with self.assertRaisesRegex(ValueError,'id_conflict'):restarted.execute({**body,'confirmation':'different'})
+
+    def test_unknown_health_and_restart_never_replay(self):
+        from deploy.trusted_actions import TrustedActions
+        body=self.payload();self.adapter.health.return_value['release_sha']=A
+        self.owner.execute(body);self.owner.worker.join(2)
+        self.assertEqual(self.owner.status()['items'][0]['state'],'unknown')
+        self.owner.execute(body);self.assertEqual(self.adapter.execute.call_count,1)
+        self.owner.close()
+        restarted=TrustedActions(self.path,'fixture',self.adapter);self.addCleanup(restarted.close)
+        with self.assertRaisesRegex(ValueError,'unresolved'):restarted.prepare({'action':'update','instance_id':'fixture'})
+        self.assertEqual(self.adapter.execute.call_count,1)
+
+    def test_expired_unconfirmed_custom_command_and_frozen_are_rejected(self):
+        body=self.payload()
+        for bad in ({**body,'command':'reboot'},{**body,'confirmation':''}):
+            with self.assertRaises(ValueError):self.owner.execute(bad)
+        self.adapter.validate.return_value['frozen']=True
+        with self.assertRaisesRegex(ValueError,'live_guard'):self.owner.execute(body)
+        self.adapter.validate.return_value['frozen']=False
+        self.adapter.validate.return_value['inflight']=1
+        with self.assertRaisesRegex(ValueError,'live_guard'):self.owner.execute(body)
+        self.now[0]+=121
+        with self.assertRaisesRegex(ValueError,'plan_expired'):self.owner.execute(body)
+        self.adapter.execute.assert_not_called()
+
+    def test_failed_gates_and_intent_disk_failure_do_not_operate(self):
+        self.adapter.propose.return_value['gates']['ci']=False
+        with self.assertRaisesRegex(ValueError,'gates'):self.payload()
+        self.adapter.propose.return_value['gates']['ci']=True
+        body=self.payload()
+        with patch.object(self.owner,'save',side_effect=OSError('disk full')):
+            with self.assertRaises(OSError):self.owner.execute(body)
+        self.adapter.execute.assert_not_called()
+
+
 if __name__ == "__main__":
     unittest.main()
