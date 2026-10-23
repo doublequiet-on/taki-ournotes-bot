@@ -85,7 +85,7 @@ class Settings:
     data_base: str
     cache_file: Path
     cache_ttl_hours: float
-    ai_api_key: str = ""
+    ai_api_key: str = field(default="", repr=False)
     ai_model: str = "deepseek-chat"
     ai_base_url: str = "https://api.deepseek.com"
     ai_daily_limit: int = 100
@@ -113,6 +113,8 @@ class Settings:
     data_source: str = "yume"
     knowledge_dir: Path | None = None
     knowledge_model_dir: Path | None = None
+    ai_profile_file: Path | None = None
+    query_ai_api_key: str = field(default='', repr=False)
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -156,10 +158,13 @@ class Settings:
             open_history = CONFIG_ROOT / open_history
         configured_knowledge = os.getenv('OURNOTES_KNOWLEDGE_DIR', '').strip() or 'knowledge/on'
         configured_embedding = os.getenv('OURNOTES_KNOWLEDGE_MODEL_DIR', '').strip()
+        configured_profile = os.getenv('OURNOTES_AI_PROFILE_FILE', '').strip()
         return cls(
             app_id=os.getenv("QQ_APP_ID", "").strip(),
             knowledge_dir=(CONFIG_ROOT / configured_knowledge).resolve(),
             knowledge_model_dir=(CONFIG_ROOT / configured_embedding).resolve() if configured_embedding else None,
+            ai_profile_file=(CONFIG_ROOT / configured_profile).resolve() if configured_profile else None,
+            query_ai_api_key=os.getenv('OURNOTES_QUERY_AI_API_KEY','').strip(),
             app_secret=os.getenv("QQ_APP_SECRET", "").strip(),
             data_base="https://bdon.yatta.moe",
             cache_file=raw_cache,

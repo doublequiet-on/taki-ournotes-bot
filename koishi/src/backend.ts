@@ -20,6 +20,7 @@ export interface Plan {
   request_id: string; delivery_id: string; plan_version: number; status: string
   send_allowed: boolean; expires_at: number; parts: WirePart[]
   pending_model_permission?: ModelPermission
+  processing_hint?: boolean
 }
 export class BackendError extends Error {
   constructor(public readonly code: string, public readonly status = 0) { super(code) }

@@ -126,10 +126,14 @@ class Ledger:
                              now, request.timestamp_ms/1000+298, delivery, request.context_id, request.ingress_seq))
             self.db.execute('INSERT OR REPLACE INTO highwater VALUES(?,?)', (request.context_id, request.ingress_seq))
 
-    def prepared(self, delivery, count):
+    def processing_hint(self, delivery):
+        with self.db:
+            self.db.execute("INSERT INTO parts VALUES(?, '0', 0, 'primary', 'pending', NULL, NULL, NULL)",(delivery,))
+
+    def prepared(self, delivery, count, *, start=0):
         with self.db:
             self.db.executemany("INSERT INTO parts VALUES(?,?,?,'primary','pending',NULL,NULL,NULL)",
-                                ((delivery, str(i), i) for i in range(count)))
+                                ((delivery, str(i), i) for i in range(start,count)))
             self.db.execute("UPDATE requests SET status='prepared' WHERE delivery=?", (delivery,))
 
     def finish(self, delivery, status):

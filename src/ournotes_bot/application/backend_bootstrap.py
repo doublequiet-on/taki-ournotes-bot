@@ -19,6 +19,7 @@ from ..config import CONFIG_ROOT
 from .backend_protocol import ProtocolError, require
 from .knowledge_service import KnowledgeService
 from ..sources.knowledge_embeddings import LocalBgeEncoder
+from .model_runtime import ModelRuntime
 
 
 def build_backend(args, settings):
@@ -40,6 +41,7 @@ def build_backend(args, settings):
         backend.knowledge = KnowledgeService(settings.knowledge_dir or CONFIG_ROOT/'knowledge'/'on',
             Path(args.state_dir)/'knowledge-v1.sqlite3', LocalBgeEncoder(settings.knowledge_model_dir))
         backend.knowledge.observe()
+        backend.model_runtime = ModelRuntime(backend, Path(args.state_dir)/'usage-v1.sqlite3')
         backend.runtime_tasks = RuntimeTasks(repository, settings, backend.knowledge)
         SourceOperations(backend).register()
         RuntimeOperations(backend).register()
@@ -53,6 +55,7 @@ def build_backend(args, settings):
     except BaseException:
         if backend is not None:
             if backend.knowledge is not None: backend.knowledge.close()
+            if backend.model_runtime is not None: backend.model_runtime.usage.close()
             backend.ledger.close()
             backend.diagnostics.close()
             if backend.operations.db is not None: backend.operations.db.close()

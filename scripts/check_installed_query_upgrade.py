@@ -14,7 +14,12 @@ import tempfile
 
 
 def main():
-    os.environ.update(QQ_APP_ID="", QQ_APP_SECRET="", AI_API_KEY="", MOENOTES_OPEN_SECRET="", BDON_OPENPLATFORM="")
+    import asyncio
+    # Windows creates a local self-pipe for the event loop. Establish it before
+    # forbidding network; all installed application work still runs under the hook.
+    loop = asyncio.new_event_loop()
+    os.environ.update(QQ_APP_ID="", QQ_APP_SECRET="", AI_API_KEY="", MOENOTES_OPEN_SECRET="", BDON_OPENPLATFORM="",
+                      OURNOTES_QUERY_AI_API_KEY="", OURNOTES_AI_PROFILE_FILE="")
     def offline(event, args):
         if event in {"socket.connect", "socket.getaddrinfo", "socket.sendto"}:
             raise AssertionError("installed smoke check must stay offline")
@@ -24,6 +29,8 @@ def main():
                "sources.cutoff_sampler", "rendering.cutoff_trends", "platforms.qq.qq",
                "domain.meta_query", "sources.haneoka.song_metrics", "query.song_metrics", "rendering.song_metrics_layout",
                "domain.knowledge", "sources.knowledge_files", "sources.knowledge_embeddings",
+               "domain.model_calls", "sources.model_provider", "natural_query.native_tools",
+               "application.model_runtime", "application.model_config", "application.usage_ledger",
                "query.knowledge_retrieval", "application.knowledge_service", "application.knowledge_cli",
                "sources.moenotes_open",
                "sources.haneoka.chart_data", "sources.haneoka.catalog", "sources.haneoka.catalog_records",
@@ -50,6 +57,7 @@ def main():
     # Verify actual installed resources through the runtime's resource locator.
     resources = ("query_aliases.json", "THIRD_PARTY.md", "docs/CUTOFF_HISTORY.md",
                  "docs/QUERY_CHAT_PACKAGE2B.md", "docs/knowledge/knowledge-draft.md",
+                 "docs/QUERY_CHAT_PACKAGE3.md",
                  "docs/koishi/KOISHI_BACKEND_V1.md", "docs/IMAGE_OUTPUT.md", "docs/QUERY_UPGRADE_V1.md", "docs/META_OPEN.md", "docs/HANEOKA_CATALOG.md", "docs/HANEOKA_CUTOFFS.md",
                  "docs/HANEOKA_META_CONTRACT.md", "docs/HANEOKA_RETIREMENT.md", "docs/HANEOKA_RESEARCH.md", "docs/HANEOKA_UNIFIED.md",
                  "deploy/query-upgrade-v1.env.example")
@@ -68,6 +76,25 @@ def main():
     assert parse_operation("/问 第三个").value == 3
     assert ContextStore().capacity == 1024
     with tempfile.TemporaryDirectory() as folder:
+        from types import SimpleNamespace
+        from unittest.mock import patch
+        from ournotes_bot.config import Settings
+        from ournotes_bot.application.backend_bootstrap import build_backend
+        from ournotes_bot.application.usage_ledger import UsageLedger
+        settings = Settings('', '', 'https://fixture.invalid', Path(folder)/'data/cache.json', 6,
+                            update_notices=False, knowledge_dir=Path(folder)/'knowledge')
+        args = SimpleNamespace(port=8765, instance_id='installed', app_id='fixture', state_dir=str(Path(folder)/'state'))
+        with patch.dict(os.environ, {'OURNOTES_BACKEND_TOKEN':'fixture-'*8,'OURNOTES_RUNTIME_DATA_DIR':str(Path(folder)/'data')}), \
+             patch('ournotes_bot.application.backend_bootstrap.create_app',side_effect=lambda backend,*_:backend):
+            backend = build_backend(args, settings)
+        try:
+            assert backend.model_runtime.config.status()['code'] == 'model_not_configured'
+            assert backend.model_runtime.usage.summary()['attempts'] == 0
+        finally:
+            loop.run_until_complete(backend.close())
+            loop.close()
+        reopened = UsageLedger(Path(folder)/'state/usage-v1.sqlite3','installed\0fixture')
+        reopened.close()
         from ournotes_bot.application.knowledge_service import KnowledgeService
         from ournotes_bot.sources.knowledge_embeddings import LocalBgeEncoder
         from ournotes_bot.domain.knowledge import KnowledgeScope
@@ -110,7 +137,8 @@ def main():
     pages = render_info(InfoAnswer(info_text(views), views=views), load=lambda *a: None)
     assert len(pages) == 1 and pages[0].image and '/查角色 1' in pages[0].text
     print(json.dumps({"installed_version": distribution.version, "modules": len(modules),
-                      "isolated": True, "network": False, "resources": True, "history": True}))
+                      "isolated": True, "network": False, "resources": True, "history": True,
+                      "native_backend_ownership": True}))
 
 
 if __name__ == "__main__":

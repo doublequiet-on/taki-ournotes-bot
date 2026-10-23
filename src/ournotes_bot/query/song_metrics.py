@@ -183,4 +183,13 @@ def execute_meta(spec, repository):
 def execute_many(specs, repository):
     if not isinstance(specs, (tuple, list)) or not 1 <= len(specs) <= 4 or any(not isinstance(s, MetaQuerySpec) for s in specs):
         raise MetaError('invalid_argument', '一次逻辑查询支持 1–4 个规范查询。')
-    return tuple(execute_meta(spec, repository) for spec in specs)
+    snapshots={}
+    for server in dict.fromkeys(spec.resource_server for spec in specs):
+        try: snapshots[server]=repository.song_metrics.current(server)
+        except MetaError as exc: snapshots[server]=exc
+    results=[]
+    for spec in specs:
+        snapshot=snapshots[spec.resource_server]
+        results.append(MetaResult(spec,snapshot.status,warnings=(str(snapshot),)) if isinstance(snapshot,MetaError)
+                       else select_meta(spec,snapshot))
+    return tuple(results)

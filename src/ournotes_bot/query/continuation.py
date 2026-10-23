@@ -318,6 +318,10 @@ class ContextStore:
         entry = self._entries.get(key)
         return entry.at + self.ttl if entry else 0
 
+    def active(self, ticket):
+        entry = self._entries.get(ticket.key) if ticket is not None else None
+        return bool(entry is not None and entry.generation == ticket.generation and self.clock() < entry.at+self.ttl)
+
     def lineage(self, key):
         if self.get(key) is None:
             return None

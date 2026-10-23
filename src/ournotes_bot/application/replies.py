@@ -95,6 +95,7 @@ class PreparedReply:
     processing_route: str | None = None
     visible_indices: tuple[int, ...] = ()
     layout_version: str = 'prepared-reply/1'
+    evidence: tuple = ()
 
     @property
     def passive_slots(self):
@@ -120,7 +121,7 @@ def fallback_cursor(reply):
     query=previous.query_context if previous else reply.context
     chunks=text_chunks(reply.text)
     pages=tuple(PreparedReply(t,context=query if i==len(chunks)-1 else None,parse_origin=reply.parse_origin,
-                              processing_route=reply.processing_route) for i,t in enumerate(chunks))
+                              processing_route=reply.processing_route,evidence=reply.evidence) for i,t in enumerate(chunks))
     pages+=previous.remaining if previous else ()
     return DeliveryCursor(None,pages,0,len(pages),origin=previous.origin if previous else reply.parse_origin)
 
@@ -143,13 +144,16 @@ def expand_replies(replies: list[PreparedReply], reserve: int = 0) -> list[Prepa
                 part = replace(part, command_index=reply.command_index)
             if part.business_status is None and reply.business_status is not None:
                 part = replace(part, business_status=reply.business_status)
+            if not part.evidence and reply.evidence:
+                part = replace(part, evidence=reply.evidence)
             if part.fallback_texts:
                 part=replace(part,text='\n'.join(part.fallback_texts),fallback_texts=())
             if part.image is None and len(part.text)>1800:
                 chunks=text_chunks(part.text)
                 pages.extend(PreparedReply(t,context=part.context if i==len(chunks)-1 else None,
                                            business_status=part.business_status, command_index=part.command_index,
-                                           parse_origin=part.parse_origin, processing_route=part.processing_route) for i,t in enumerate(chunks))
+                                           parse_origin=part.parse_origin, processing_route=part.processing_route,
+                                           evidence=part.evidence) for i,t in enumerate(chunks))
             else:
                 pages.append(part)
     available=max(1,QQ_PASSIVE_REPLY_LIMIT-reserve)
@@ -176,6 +180,26 @@ def expand_replies(replies: list[PreparedReply], reserve: int = 0) -> list[Prepa
             page=replace(page,text=page.text+suffix,context=cursor)
         expanded.append(page)
     return expanded
+
+
+def reserve_progress_slot(parts, *, overflow=False):
+    """Rebudget captured pages after a hint, keeping each page's entity context."""
+    if not parts: return []
+    first=parts[0]
+    cursor=first.context if isinstance(first.context,DeliveryCursor) else None
+    if cursor is not None:
+        suffix=f'\n结果 {cursor.sent}/{cursor.total}'+('；/继续 发送剩余结果。' if cursor.remaining else '')
+        # The cursor holds the original pages, before display suffixes/cursors.
+        pages=[replace(first,text=first.text.removesuffix(suffix),context=cursor.query_context),*cursor.remaining]
+        if overflow: pages.append(parts[-1])
+        origin=cursor.origin
+    else:
+        pages=list(parts)
+        if len(pages)<=QQ_PASSIVE_REPLY_LIMIT-1: return pages
+        origin='mixed' if len(pages)>1 else first.parse_origin
+    batch=PreparedReply('',pages=tuple(pages),parse_origin=origin,
+                        context=DeliveryCursor(None,(),0,len(pages),origin=origin))
+    return expand_replies([batch],reserve=1)
 
 
 class QueryGate:
