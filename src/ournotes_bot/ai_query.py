@@ -79,6 +79,15 @@ class AIQueryParser:
     def answer_with_outcome(self, content: str, repository: SongRepository) -> AgentOutcome:
         return self._agent.run(content, repository)
 
+    def prepare_local(self, content, repository):
+        return self._agent.run(content, repository, defer_model=True)
+
+    def resume_model(self, deferred, repository):
+        return self._agent.resume(deferred, repository)
+
+    def sweep(self):
+        self._agent.sweep()
+
     def _request(self, query: str, system_prompt: str = SYSTEM_PROMPT,
                  timeout: float = 12.0) -> ModelResponse:
         return self._client.request(system_prompt, query, timeout=timeout)

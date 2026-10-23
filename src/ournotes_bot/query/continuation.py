@@ -100,6 +100,7 @@ class QueryContext:
     selected: Choice | None = None
     complete: bool = False
     origin: str = 'unknown'
+    visible_indices: tuple[int, ...] = ()
 
 
 def catalog_version(repository) -> str:
@@ -208,9 +209,10 @@ def execute_followup(context: QueryContext, operation: Operation, repository):
     elif operation.kind in {"select", "detail", "difficulty"}:
         selected = context.selected
         if operation.kind == "select":
-            if not 1 <= operation.value <= len(context.visible):
-                return QueryProblem(f"请选择已展示的 1～{len(context.visible)} 号。", "invalid_arguments")
-            selected = context.visible[operation.value - 1]
+            indices = context.visible_indices or tuple(range(1, len(context.visible)+1))
+            if operation.value not in indices:
+                return QueryProblem("请选择本条消息中已展示的序号：" + "、".join(map(str, indices)) + "。", "invalid_arguments")
+            selected = context.visible[indices.index(operation.value)]
         elif selected is None:
             if len(context.visible) != 1:
                 return QueryProblem("已展示的结果有多个，请按列表中的 ID 重新查询详情。", "ambiguous")
@@ -279,14 +281,25 @@ class ContextStore:
             return None
         return entry.context
 
+    def sweep(self):
+        for key in tuple(self._entries):
+            self.get(key)
+
+    def clear(self):
+        self._entries.clear()
+
+    def deadline(self, key):
+        entry = self._entries.get(key)
+        return entry.at + self.ttl if entry else 0
+
     def lineage(self, key):
         if self.get(key) is None:
             return None
         return self._entries[key].lineage
 
     def begin(self, key, *, clear=True):
-        previous = self._entries.get(key)
         context = None if clear else self.get(key)
+        previous = self._entries.get(key)
         self._generation += 1
         at = self.clock() if clear or previous is None else previous.at
         lineage = self._generation if clear or previous is None else previous.lineage
@@ -300,9 +313,11 @@ class ContextStore:
         if not confirmed or ticket is None or context is None:
             return False
         entry = self._entries.get(ticket.key)
-        if entry is None or entry.generation != ticket.generation:
+        if entry is None or entry.generation != ticket.generation or self.clock() >= entry.at + self.ttl:
+            if entry is not None and self.clock() >= entry.at + self.ttl:
+                self._entries.pop(ticket.key, None)
             return False
-        self._entries[ticket.key] = _Entry(ticket.generation, entry.lineage, context, self.clock())
+        self._entries[ticket.key] = _Entry(ticket.generation, entry.lineage, context, entry.at)
         self._entries.move_to_end(ticket.key)
         # Encoded continuation images are bounded separately from the entry count.
         while len(self._entries) > 1 and sum(getattr(e.context, 'retained_bytes', 0) for e in self._entries.values()) > 128_000_000:

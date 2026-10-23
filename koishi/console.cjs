@@ -185,7 +185,7 @@ function install(ctx, config, manifest, assetsDirectory = path.join(__dirname, '
       if(id!==undefined&&(typeof id!=='string'||!/^[a-f0-9]{64}$/.test(id)))throw Error('admin_request_id')
       const result=await readBackend('ops/export'+(id?'/'+id:''))
       const settings=management.snapshot(),policy=management.groups.snapshot(),audit=journal.snapshot()
-      return {...result,gateway:{release_sha:manifest.commit,protocol:{major:1,minor:1},health:await readHealth(),
+      return {...result,gateway:{release_sha:manifest.commit,protocol:manifest.protocol,health:await readHealth(),
         controls:{queries_enabled:settings.settings.queriesEnabled,notifications_enabled:settings.settings.notificationsEnabled,
           configured_group_count:settings.settings.groupAllowlist.length,policy_revision:policy.revision,policy_health:policy.reason_code,
           recovery_policy:config.recoveryPolicy||null}},host:readHostSnapshot(config.hostSnapshotPath),

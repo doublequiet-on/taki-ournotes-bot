@@ -1,5 +1,7 @@
 # L2 Platform / QQ — 消息接入与交付
 
+旧 Python 入口保留原交付序列，在 on_ready 启动独立的每秒上下文／解析缓存清理任务；读取与 ACK 不延长旧正文期限。Koishi 后端 2.0 的独立话题交付及执行许可见 [包 1](../docs/QUERY_CHAT_PACKAGE1.md)。
+
 M2 起，回复准备、QueryGate、分页与 DeliveryCursor 的实现移到 [共享 replies](ournotes_bot/application/replies.py)；qq.py 保留原名称导出和实际上传/发送、续查协调、后台任务。下文旧 `_prepare_reply` 等名称在 QQ 中为兼容导出；实现继续阅读 [Application](L2-Application.md)。[候选本机后端](../docs/KOISHI_BACKEND_V1.md) 尚未接管生产。
 
 ## Purpose

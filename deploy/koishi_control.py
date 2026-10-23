@@ -23,6 +23,8 @@ def verify_combination(root, commit, python_hash=None):
         if row.get('capabilities',[]) != []: raise ValueError('combination_capabilities')
     elif profile == {'major':1,'minor':1}:
         if row.get('capabilities') != ['group_policies_v1']: raise ValueError('combination_capabilities')
+    elif profile == {'major':2,'minor':0}:
+        if row.get('capabilities') != ['group_policies_v1','query_chat_contract_v1']: raise ValueError('combination_capabilities')
     else:
         raise ValueError('combination_protocol')
     if row.get('node')!={'version':'v24.19.0','platform':'linux','arch':'x64'}:
@@ -78,7 +80,7 @@ class KoishiControl:
             from group_policy_guard import transition, LEGACY_FREEZE_COMMITS
         _,manifest = self.combination(self.backend.current_release())
         directory = Path(self.backend.config['base'])/'console-state'
-        supported = manifest.get('capabilities') == ['group_policies_v1']
+        supported = manifest.get('capabilities') in (['group_policies_v1'], ['group_policies_v1','query_chat_contract_v1'])
         permit = transition(directory, self.backend.state/'group-policy-freeze.v1.json', supported)
         if permit['state'] == 'frozen':
             if manifest['commit'] not in LEGACY_FREEZE_COMMITS:

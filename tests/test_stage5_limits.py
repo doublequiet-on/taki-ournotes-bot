@@ -103,6 +103,74 @@ class DailyQuotaTests(unittest.TestCase):
         self.assertEqual(settings.ai_quota_file, self.path)
 
 
+class ModelSchedulerTests(unittest.IsolatedAsyncioTestCase):
+    async def test_five_running_twenty_waiting_and_one_per_user(self):
+        from ournotes_bot.application.model_execution import ModelScheduler
+        from ournotes_bot.application.backend_protocol import ProtocolError
+        scheduler = ModelScheduler()
+        release = asyncio.Event()
+        started = []
+        async def operation(deadline):
+            started.append(deadline)
+            await release.wait()
+            return 'done'
+        tasks = [asyncio.create_task(scheduler.run(str(i), operation)) for i in range(25)]
+        try:
+            for _ in range(50):
+                if len(started) == 5 and len(scheduler.queue) == 20: break
+                await asyncio.sleep(.001)
+            self.assertEqual((len(started), len(scheduler.queue), sum(scheduler.running.values())), (5,20,5))
+            with self.assertRaisesRegex(ProtocolError, 'queue_full'):
+                await scheduler.run('overflow', operation)
+            self.assertTrue(all(count == 1 for count in scheduler.running.values()))
+        finally:
+            release.set()
+            self.assertEqual(await asyncio.gather(*tasks), ['done']*25)
+            await scheduler.close()
+        self.assertFalse(scheduler.running)
+
+    async def test_user_queue_limit_does_not_block_other_user(self):
+        from ournotes_bot.application.model_execution import ModelScheduler
+        from ournotes_bot.application.backend_protocol import ProtocolError
+        scheduler = ModelScheduler()
+        release = asyncio.Event()
+        async def operation(deadline): await release.wait()
+        tasks = [asyncio.create_task(scheduler.run('same-user', operation)) for _ in range(4)]
+        try:
+            for _ in range(50):
+                if len(scheduler.queue) == 3: break
+                await asyncio.sleep(.001)
+            with self.assertRaisesRegex(ProtocolError, 'queue_full'):
+                await scheduler.run('same-user', operation)
+            async def fast(deadline): return 'independent'
+            self.assertEqual(await scheduler.run('another-user', fast), 'independent')
+            self.assertEqual(scheduler.running['same-user'], 1)
+        finally:
+            release.set()
+            await asyncio.gather(*tasks)
+            await scheduler.close()
+
+    async def test_timeouts_do_not_release_running_worker_or_start_queued_work(self):
+        from ournotes_bot.application.model_execution import ModelScheduler
+        from ournotes_bot.application.backend_protocol import ProtocolError
+        scheduler = ModelScheduler(running=1, wait_seconds=.015, execution_seconds=.025)
+        release = asyncio.Event()
+        async def blocked(deadline): await release.wait()
+        worker = asyncio.create_task(scheduler.run('a', blocked))
+        while not scheduler.tasks: await asyncio.sleep(.001)
+        calls = []
+        async def queued(deadline): calls.append('unexpected')
+        with self.assertRaisesRegex(ProtocolError, 'queue_timeout'):
+            await scheduler.run('b', queued)
+        with self.assertRaises(asyncio.TimeoutError): await worker
+        self.assertEqual(sum(scheduler.running.values()), 1)
+        self.assertFalse(scheduler.queue)
+        self.assertFalse(calls)
+        release.set()
+        await scheduler.close()
+        self.assertFalse(scheduler.running)
+
+
 class QueryGateTests(unittest.IsolatedAsyncioTestCase):
     async def test_bounded_workers_queue_and_request_owned_images(self):
         gate = QueryGate(2, 1)

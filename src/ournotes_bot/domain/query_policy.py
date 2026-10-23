@@ -12,6 +12,11 @@ class ExecutionPolicy:
 
 
 CURRENT_POLICY = ContextVar('taki_execution_policy', default=ExecutionPolicy())
+# Request-scoped state and execution hook; application supplies the trusted permit.
+CURRENT_QUERY_SCOPE = ContextVar('taki_query_scope', default=None)
+CURRENT_MODEL_START = ContextVar('taki_model_start', default=None)
+CURRENT_EXECUTION_CHECK = ContextVar('taki_execution_check', default=None)
+CURRENT_CONTENT_DEADLINE = ContextVar('taki_content_deadline', default=None)
 
 
 def continuation_allowed(origin):

@@ -337,6 +337,51 @@ async function main() {
     assert.deepEqual(value.adapter.retryWhen,[])
     assert.equal(value.plugin.notifications,true)
   })
+  await run('Query chat drops ordinary non-addressed group text before raw retention', async()=>{
+    const env=createBot();let receiver
+    const client={deactivate(){},async initialize(){},async retire(){}}
+    const fork=env.ctx.plugin(ctx=>{receiver=new Receiver(ctx,{...identity,backendUrl:'http://127.0.0.1:8765',tokenEnv:'unused',permissions:[],maxPending:8},client)})
+    try {
+      receiver.capture(env.bot.session({type:'internal',_type:'qq/group-message-create',_data:event({content:'ordinary private conversation'}).d}))
+      assert.equal(receiver.raw.size,0)
+      receiver.capture(env.bot.session({type:'internal',_type:'qq/group-at-message-create',_data:event().d}))
+      assert.equal(receiver.raw.size,1)
+      for(const record of receiver.raw.values())record.at=Date.now()-298001
+      receiver.sweep();assert.equal(receiver.raw.size,0)
+    }finally{await receiver.dispose();await fork.dispose();await env.ctx.stop()}
+  })
+  for(const revoked of ['authority','user-ignore','channel-ignore','pause','local']) {
+    await run('Query chat current execution permission rechecks '+revoked, async()=>{
+      const env=createBot();let receiver,changed=false,reads=0;const decisions=[]
+      env.ctx.provide('database')
+      env.ctx.database={
+        async getChannel(){return{id:'fixture-group',platform:'qq',flag:changed&&revoked==='channel-ignore'?1:0,assignee:identity.selfId,guildId:'fixture-group',permissions:[],locales:[]}},
+        async getUser(){reads++;return{id:1,flag:changed&&revoked==='user-ignore'?1:0,authority:changed&&revoked==='authority'?0:1,permissions:[],locales:[]}},
+        async setChannel(){},async setUser(){},
+      }
+      const management={accepts:()=>!(changed&&revoked==='pause'),policySnapshot:()=>({natural_query:changed&&revoked==='local'?'local':'model',epoch:'policy',global_revision:changed?1:0,group_revision:0})}
+      const client={readiness:{backend_epoch:'backend'},deactivate(){},async initialize(){},async retire(){},async modelPermission(challenge,policy,allowed){decisions.push({challenge,policy,allowed})}}
+      const plugin=ctx=>{receiver=new Receiver(ctx,{...identity,backendUrl:'http://127.0.0.1:8765',tokenEnv:'unused',permissions:['authority:1'],maxPending:8,management},client)}
+      plugin.inject={optional:['database']};const fork=env.ctx.plugin(plugin)
+      try {
+        const session=env.ctx.reflect.trace(await adaptSession(env.bot,event()))
+        assert.equal(await receiver.permitted(session),true)
+        const input={...identity,requestId:'request',platform:'qq',kind:'group',conversationId:'fixture-group',userId:'fixture-user'}
+        const job={input,session,permissionAttempts:new Set()}
+        const challenge={request_id:'request',attempt_id:'a'.repeat(32),nonce:'b'.repeat(32),user_id:input.userId,gateway_epoch:receiver.epoch,backend_epoch:'backend',remaining_ms:3000,
+          scope:{instance_id:identity.instanceId,app_id:identity.appId,platform:'qq',kind:'group',conversation_id:input.conversationId}}
+        await receiver.authorizeModel(job,challenge)
+        assert.equal(decisions[0].allowed,true)
+        const oldReads=reads;changed=true
+        await receiver.authorizeModel(job,{...challenge,attempt_id:'c'.repeat(32),nonce:'d'.repeat(32)})
+        assert.equal(decisions[1].allowed,false)
+        if(revoked!=='channel-ignore')assert.ok(reads>oldReads,'fresh user database read')
+        await receiver.authorizeModel(job,challenge);assert.equal(decisions.length,2)
+        await assert.rejects(()=>receiver.authorizeModel(job,{...challenge,request_id:'another'}),/model_permission_binding/)
+        assert.equal(env.calls.length,0)
+      }finally{await receiver.dispose();await fork.dispose();await env.ctx.stop()}
+    })
+  }
   await run('M4 notices share strict receipt classification', async () => {
     const {classifyReceipt}=require('../lib')
     assert.equal(classifyReceipt({code:1,id:'not-success'}).status,'failure')
@@ -359,9 +404,10 @@ async function main() {
     assert.equal(worker.healthy(),false)
     await worker.close();await ctx.stop()
   })
-  const startupReady={ready:true,protocol:{major:1,minor:1},capability:'qq-m1-candidate',
+  const startupReady={ready:true,protocol:{major:2,minor:0},capability:'qq-query-chat-v3',
     management_capabilities:['group_policies_v1'],
-    features:['classify','gateway_retire','ack_context_guard','notice_gateway_v1']}
+    features:['classify','gateway_retire','ack_context_guard','notice_gateway_v1',
+      'quoted_context_v1','fixed_snapshot_v1','current_model_permit_v1','independent_delivery_v1']}
   await run('startup survives delayed readiness and registration transport failure', async () => {
     let reads=0,registrations=0
     const epochs=[]
@@ -385,7 +431,7 @@ async function main() {
     for(const status of [200,401,403]) {
       let attempts=0
       const bad=new BackendClient('http://127.0.0.1:8765','x'.repeat(32),'fixture','epoch',async()=>{
-        attempts++;return new Response(JSON.stringify({...startupReady,protocol:{major:2,minor:0}}),{status})
+        attempts++;return new Response(JSON.stringify({...startupReady,protocol:{major:3,minor:0}}),{status})
       })
       await assert.rejects(bad.initialize({timeoutMs:500,retryMs:5}),e=>e.code===(status===200?'incompatible_backend':'backend_http_'+status))
       assert.equal(attempts,1)
@@ -426,7 +472,7 @@ async function main() {
     Bot.prototype.start=async()=>{}
     fs.readFileSync=function(file,...args){return String(file).endsWith('combination.json')?JSON.stringify({commit:'b'.repeat(40)}):originalRead.call(this,file,...args)}
     BackendClient.prototype.initialize=function(){return originalInitialize.call(this,{timeoutMs:30,retryMs:5})}
-    globalThis.fetch=async()=>new Response(JSON.stringify({...startupReady,protocol:{major:2,minor:0}}),{status:mode==='timeout'?503:200})
+    globalThis.fetch=async()=>new Response(JSON.stringify({...startupReady,protocol:{major:3,minor:0}}),{status:mode==='timeout'?503:200})
     process.env.OURNOTES_BACKEND_TOKEN='x'.repeat(32)
     try {
         await assert.rejects(require('../run.cjs').start({TAKI_KOISHI_ENABLED:'1',TAKI_CONSOLE_STATE_DIR:dir,QQ_APP_ID:'fixture-app',QQ_APP_SECRET:'fixture',QQ_SELF_ID:'fixture-self',OURNOTES_BACKEND_TOKEN:'x'.repeat(32),TAKI_INSTANCE_ID:'fixture'}),

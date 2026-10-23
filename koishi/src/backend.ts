@@ -5,8 +5,13 @@ import { setTimeout as delay } from 'node:timers/promises'
 import { Telemetry, Span } from './telemetry'
 import type { PolicySnapshot } from './group-policies'
 
-export const protocol = { major: 1, minor: 1 }
-export const capability = 'qq-m1-candidate'
+export const protocol = { major: 2, minor: 0 }
+export const capability = 'qq-query-chat-v3'
+export interface ModelPermission {
+  request_id: string; attempt_id: string; nonce: string; user_id: string
+  backend_epoch: string; gateway_epoch: string; scope: Record<string,string>
+  admission_policy_version: Omit<PolicySnapshot,'natural_query'>; remaining_ms: number
+}
 export interface WirePart {
   id: string; position: number; mode: string; status: string
   kind?: 'text' | 'image'; text?: string; image?: string; mime?: string
@@ -14,6 +19,7 @@ export interface WirePart {
 export interface Plan {
   request_id: string; delivery_id: string; plan_version: number; status: string
   send_allowed: boolean; expires_at: number; parts: WirePart[]
+  pending_model_permission?: ModelPermission
 }
 export class BackendError extends Error {
   constructor(public readonly code: string, public readonly status = 0) { super(code) }
@@ -90,9 +96,10 @@ export class BackendClient implements DeliveryEvents {
         try {
           const ready = await this.request('/v1/ready', undefined, 131072, false, signal)
           if (!ready.protocol || Object.keys(ready.protocol).sort().join()!=='major,minor'
-              || ready.protocol.major !== 1 || ready.protocol.minor !== 1
+              || ready.protocol.major !== protocol.major || ready.protocol.minor !== protocol.minor
               || !ready.management_capabilities?.includes('group_policies_v1')
-              || ready.capability !== capability || !['classify', 'gateway_retire', 'ack_context_guard', 'notice_gateway_v1'].every(feature => ready.features?.includes(feature))) throw new BackendError('incompatible_backend')
+              || ready.capability !== capability || !['classify', 'gateway_retire', 'ack_context_guard', 'notice_gateway_v1',
+                'quoted_context_v1', 'fixed_snapshot_v1', 'current_model_permit_v1', 'independent_delivery_v1'].every(feature => ready.features?.includes(feature))) throw new BackendError('incompatible_backend')
           if (!ready.ready) throw new BackendError('backend_not_ready', 503)
           await this.request('/v1/gateways', { gateway_epoch: this.epoch }, 131072, false, signal)
           if (signal.aborted) break
@@ -117,7 +124,16 @@ export class BackendClient implements DeliveryEvents {
     return this.retry('/v1/requests', { protocol, request_id: input.requestId, instance_id: input.instanceId,
       app_id: input.appId, platform: input.platform, kind: input.kind, conversation_id: input.conversationId,
       user_id: input.userId, message_id: input.messageId, timestamp_ms: input.timestampMs, body: input.body,
-      capability, gateway_epoch: this.epoch, ingress_seq: seq, policy:structuredClone(policy) })
+      capability, gateway_epoch: this.epoch, ingress_seq: seq, policy:structuredClone(policy),
+      trigger:input.trigger ?? (/^[/／]?(?:问|ask)(?:\s|$)/i.test(input.body)?'ask':'command'),
+      reference:input.reference ?? null, interaction:null })
+  }
+  modelPermission(challenge:ModelPermission, policy:PolicySnapshot, allowed:boolean):Promise<unknown> {
+    const { admission_policy_version, remaining_ms, ...binding } = challenge
+    const { natural_query, ...current_policy_version } = policy
+    return this.request(`/v1/requests/${encodeURIComponent(challenge.request_id)}/model-permissions/${encodeURIComponent(challenge.attempt_id)}`,
+      {...binding,decision:allowed?'allow':'deny',current_policy_version,reason:allowed?'model_allowed':'current_policy_denied',ttl_ms:1000},
+      131072,false,AbortSignal.timeout(2500))
   }
   lookup(id: string): Promise<Plan> { return this.retry('/v1/requests/' + encodeURIComponent(id)) }
   async image(plan: Plan, part: WirePart): Promise<Uint8Array> {
