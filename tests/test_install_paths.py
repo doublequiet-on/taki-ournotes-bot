@@ -58,6 +58,16 @@ class InstallPathTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "Noto Sans CJK"):
                 _font(24)
 
+    def test_knowledge_paths_are_explicit_and_relative_to_config(self):
+        with tempfile.TemporaryDirectory() as directory, \
+             patch('ournotes_bot.config.CONFIG_ROOT', Path(directory)), \
+             patch('ournotes_bot.config.load_dotenv'), \
+             patch.dict(os.environ, {'OURNOTES_KNOWLEDGE_DIR': 'knowledge/on',
+                                    'OURNOTES_KNOWLEDGE_MODEL_DIR': 'models/bge'}, clear=True):
+            settings = Settings.from_env()
+            self.assertEqual(settings.knowledge_dir, (Path(directory)/'knowledge/on').resolve())
+            self.assertEqual(settings.knowledge_model_dir, (Path(directory)/'models/bge').resolve())
+
 
 if __name__ == "__main__":
     unittest.main()

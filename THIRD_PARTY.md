@@ -65,3 +65,6 @@ Noto Sans SC 与 Roboto 字体以 SIL Open Font License 1.1 分发，许可证�
 游戏稀有度、觉醒图标固定于 Haneoka JP release `r-d9e6e6e773a4bd9e090b`；原 note atlas/config 来自公开 `haneoka-gakuen/cassiopeia-plugin-our-notes` 提交 `cb2b6e470b6e99f30bfa81a88520cbd1c26055dd` 的 `src/assets/note-skins/skin001.*`。该上游代码为 MPL-2.0，不能据此推定游戏素材授权。项目仅保存 URL／校验和，运行时下载，不将游戏图片、atlas 或上游配置加入发行包。本地 note 绘制器为独立实现。
 
 `visual_skill_contracts.json` 为本项目确认的中文短摘要及机制指纹，不包含上游 Master 或上游程序实现。机制变化不沿用旧摘要。字体缓存、原创渐变边框及布局由本项目实现。
+## 可选本地知识嵌入
+
+包 2B 可选使用 [BAAI/bge-small-zh-v1.5](https://huggingface.co/BAAI/bge-small-zh-v1.5)（MIT）及 [Xenova 的 ONNX 导出](https://huggingface.co/Xenova/bge-small-zh-v1.5/tree/fcecc3c5fef6becfa2b2bdda15c1c938857be534)。权重不随 Taki 分发，运行时不下载；部署者需保存模型原许可证。固定版本、文件哈希、CPU 资源与可选运行依赖见 [知识库说明](docs/QUERY_CHAT_PACKAGE2B.md#本地语义模型)。

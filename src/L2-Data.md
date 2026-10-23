@@ -18,6 +18,8 @@
 
 ## Core Contracts
 
+- 已审核知识的纯文档／适用范围／证据类型在 [domain/knowledge.py](ournotes_bot/domain/knowledge.py)；本地文件校验和可选语义编码分别位于 [knowledge_files.py](ournotes_bot/sources/knowledge_files.py)、[knowledge_embeddings.py](ournotes_bot/sources/knowledge_embeddings.py)。批准状态和持久停用记录由 Application 持有；读取来源链接不会触发联网。
+
 - 领域身份：`Song/Chart/Card/SupportCard/Skill` 由 [data.py](ournotes_bot/data.py) 定义；`Song.traits` 当前引用来源文件中的 `SongTraits`。
 - 人物、卡池与活动基础资料由纯类型 [domain/info_catalog.py](ournotes_bot/domain/info_catalog.py) 定义，与 Haneoka 卡牌在同次 Catalog 发布和捕获；不从卡牌集合反推人物目录。
 - 来源契约由 [Sources](ournotes_bot/sources/L2-2.md) 维护；不得把列表技能摘要当作完整详情，有限统计求值也不证明游戏实际得分。正式榜线保留公开发现／素材和本地历史例外。

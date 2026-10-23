@@ -23,6 +23,8 @@ def main():
     modules = ("application.runtime_tasks", "application.notice_gateway", "application.notice_reports", "application.data_owner", "application.backend_bootstrap", "application.backend", "application.backend_protocol", "application.delivery_ledger", "application.replies", "application.reply_preparation", "query.continuation", "query.field_query", "sources.cutoff_history",
                "sources.cutoff_sampler", "rendering.cutoff_trends", "platforms.qq.qq",
                "domain.meta_query", "sources.haneoka.song_metrics", "query.song_metrics", "rendering.song_metrics_layout",
+               "domain.knowledge", "sources.knowledge_files", "sources.knowledge_embeddings",
+               "query.knowledge_retrieval", "application.knowledge_service", "application.knowledge_cli",
                "sources.moenotes_open",
                "sources.haneoka.chart_data", "sources.haneoka.catalog", "sources.haneoka.catalog_records",
                "sources.haneoka.catalog_text", "sources.haneoka.catalog_assets", "sources.haneoka.event_cutoffs",
@@ -47,6 +49,7 @@ def main():
     # pip --target relocates data-files without rewriting their RECORD paths.
     # Verify actual installed resources through the runtime's resource locator.
     resources = ("query_aliases.json", "THIRD_PARTY.md", "docs/CUTOFF_HISTORY.md",
+                 "docs/QUERY_CHAT_PACKAGE2B.md", "docs/knowledge/knowledge-draft.md",
                  "docs/koishi/KOISHI_BACKEND_V1.md", "docs/IMAGE_OUTPUT.md", "docs/QUERY_UPGRADE_V1.md", "docs/META_OPEN.md", "docs/HANEOKA_CATALOG.md", "docs/HANEOKA_CUTOFFS.md",
                  "docs/HANEOKA_META_CONTRACT.md", "docs/HANEOKA_RETIREMENT.md", "docs/HANEOKA_RESEARCH.md", "docs/HANEOKA_UNIFIED.md",
                  "deploy/query-upgrade-v1.env.example")
@@ -65,6 +68,15 @@ def main():
     assert parse_operation("/问 第三个").value == 3
     assert ContextStore().capacity == 1024
     with tempfile.TemporaryDirectory() as folder:
+        from ournotes_bot.application.knowledge_service import KnowledgeService
+        from ournotes_bot.sources.knowledge_embeddings import LocalBgeEncoder
+        from ournotes_bot.domain.knowledge import KnowledgeScope
+        knowledge = KnowledgeService(Path(folder)/'knowledge', Path(folder)/'knowledge.sqlite3', LocalBgeEncoder(None))
+        try:
+            assert knowledge.refresh()['code'] == 'empty'
+            assert knowledge.retrieve('已审核资料', KnowledgeScope(), knowledge.approved_set_revision).code == 'empty'
+        finally:
+            knowledge.close()
         store = CutoffHistory(Path(folder) / "history.sqlite3", min_free_mb=0)
         song = EventSong("1", "100001", "合成安装测试", collect_status="collecting")
         event = EventSnapshot("jp", "1", "合成安装测试", "nowOn", None, None, (song,))
