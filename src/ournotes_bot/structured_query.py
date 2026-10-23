@@ -13,6 +13,7 @@ from dataclasses import dataclass, replace
 from .commands import (PAGE_SIZE, _format_card_detail, _format_support_card_detail,
                        filter_card_rarity, page_notice, page_slice, rarity_text)
 from .data import Card, Chart, Skill, Song, SongRepository, SupportCard, character_identity, localized_text, normalize, note_text
+from .domain.meta_query import MetaQuerySpec, MetaResult
 from .query.entity_lexicon import EntityRef
 from .i18n import tr
 from .query.card_catalog import CardAnswer, query_cards
@@ -38,6 +39,7 @@ class QuerySpec:
     cutoff_request: CutoffRequest | None = None
     song_filter: SongFilter | None = None
     field: str = ""
+    meta_request: MetaQuerySpec | None = None
 
     def __post_init__(self):
         if self.card_query is not None:
@@ -67,6 +69,8 @@ class QuerySpec:
         return " ".join(parts)
 
     def command_label(self) -> str:
+        if self.meta_request is not None:
+            return "问 " + (self.display_name or "歌曲指标")
         if self.field:
             if self.field == "count":
                 query = self.song_filter.query if self.song_filter else self.card_query or ""
@@ -113,8 +117,14 @@ class QueryResult:
     cutoff: CutoffAnswer | None = None
     status: str = "success"
     short_text: str | None = None
+    meta: MetaResult | None = None
 
     def __post_init__(self):
+        if self.meta is not None:
+            status = {"ok":"success", "partial":"success", "empty":"empty", "unsupported_field":"unsupported",
+                      "invalid_argument":"invalid_arguments"}.get(self.meta.status, "data_unavailable")
+            object.__setattr__(self, "status", status)
+            return
         if self.short_text is not None:
             return
         for answer in (self.cutoff, self.catalog, self.song_selection):
@@ -152,6 +162,9 @@ def query_page_notice(spec: QuerySpec, total: int, locale: str) -> str:
 
 def resolve_query(spec: QuerySpec, repository: SongRepository) -> QueryResult:
     """Capture records for both answer text and image within one request."""
+    if spec.meta_request is not None:
+        from .query.song_metrics import execute_meta
+        return QueryResult(spec, meta=execute_meta(spec.meta_request, repository))
     if spec.field:
         from .query.field_query import answer_field
         return answer_field(spec, repository)
@@ -281,6 +294,8 @@ def support_cards_for(spec: QuerySpec, repository: SongRepository) -> list[Suppo
 def answer_for(spec: QuerySpec, repository: SongRepository, locale: str = "zh",
                result: QueryResult | None = None) -> str:
     selected = result if result is not None else resolve_query(spec, repository)
+    if selected.meta is not None:
+        return selected.meta.text()
     if selected.short_text is not None:
         return selected.short_text
     if selected.cutoff is not None:

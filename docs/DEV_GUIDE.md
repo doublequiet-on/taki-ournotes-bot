@@ -1,5 +1,7 @@
 # Taki 开发导航
 
+确定性歌曲指标（v3 包 2A）的字段、来源、图片和固定分页见 [包 2A](QUERY_CHAT_PACKAGE2A.md)。
+
 查询聊天 v3 的共同协议、执行许可、独立模型调度和短期上下文见 [包 1](QUERY_CHAT_PACKAGE1.md)。后端载荷现为 2.0；M2–M4 文档保留阶段历史，变更部分以该文档及源码为准。目标回归为 `test_continuation.py`、`test_stage5_limits.py`、`test_reply_pipeline.py`、`test_console_admin.py`、`test_console_policies.py`、`test_query_refactor.py`；网关运行现有三项离线探针。
 
 Koishi 迁移候选入口：[M0/M1 基线与门禁](KOISHI_MIGRATION_M0_M1.md) → [薄插件与离线探针](../koishi/README.md) → [M2 本机业务后端](KOISHI_BACKEND_V1.md) → [M3 查询接线与验证](KOISHI_MIGRATION_M3.md) → [M4 后台、组合发布与切换 runbook](KOISHI_MIGRATION_M4.md)。现有 Python bot 仍保留原运行入口；迁移候选使用独立 backend 模式。

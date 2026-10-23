@@ -270,6 +270,8 @@ class SongRepository:
         self._detail_support_cards: dict[int, SupportCard] = {}
         self.cache_state = "unknown"
         self.last_successful_sync_at: str | None = None
+        from .sources.haneoka.song_metrics import SongMetricsRepository
+        self.song_metrics = SongMetricsRepository()
         self.song_traits = SongTraitsRepository(cache_file.with_name("haneoka-song-traits-jp.json"))
         from .sources.moenotes_events import EventCutoffRepository
         self.event_cutoffs = EventCutoffRepository(cache_file.parent / "moenotes-cutoff-v1")

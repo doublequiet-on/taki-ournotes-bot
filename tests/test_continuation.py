@@ -505,6 +505,31 @@ class BackendContinuationTests(Fixture, unittest.IsolatedAsyncioTestCase):
         self.assertIn('frozen-page-two',second['parts'][0]['text'])
         self.backend.gate.prepare_followup.assert_not_awaited()
 
+    async def test_meta_entry_ack_pages_and_selection_keep_resource_snapshot(self):
+        from ournotes_bot.domain.meta_query import MetaSnapshot, MetaSong, MetaSource
+        from ournotes_bot.rendering.readable_pages import ImagePart
+        songs = tuple(MetaSong(str(i), f'intl-{i}', (5,), 'fixture', '', float(i), ((),)*4) for i in range(10,20))
+        snapshot = MetaSnapshot(MetaSource('intl','fixture-release','fixture-source',1),songs)
+        request = self.request('meta',1);request['body']='/问 国际服最短的前10首'
+        with patch.object(self.repo.song_metrics,'current',return_value=snapshot) as source, \
+             patch('ournotes_bot.rendering.song_metrics_layout.render', return_value=(ImagePart(b'first',0,5),ImagePart(b'second',5,10))):
+            first = await self.prepare(request)
+        source.assert_called_once_with('intl')
+        self.event(first,'intent');self.event(first,'ack');self.event(first,'aborted')
+        saved = self.backend.conversations.snapshots[first['delivery_id']]
+        self.assertEqual(saved.layout_version,'song-meta/1')
+        with patch.object(self.repo.song_metrics,'current',side_effect=AssertionError('must not refetch')):
+            second = await self.prepare(self.quote('meta-page',2,first))
+            self.event(second,'intent');self.event(second,'ack')
+            anchor = next(a for a in self.backend.conversations.anchors.values() if a.page==1)
+            context = getattr(anchor.context,'query_context',anchor.context)
+            self.assertEqual(context.visible_indices,tuple(range(6,11)))
+            self.assertNotIsInstance(execute_followup(context,Operation('select',1),self.repo),tuple)
+            result, detail = execute_followup(context,Operation('select',6),self.repo)
+            self.assertEqual(result.meta.rows[0].song.song_id,'15')
+            self.assertEqual(result.meta.source,snapshot.source)
+            self.assertEqual(detail.meta.source.server,'intl')
+
     async def test_confirmed_page_exposes_only_its_global_indices_and_detail_keeps_selected_entity(self):
         context=capture_context(resolve_command('/查曲 MyGO',self.repo),self.repo,complete=True)
         self.backend.gate.prepare.return_value=PreparedReply('rows 17 to 32',context=context,visible_indices=tuple(range(17,33)))

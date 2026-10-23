@@ -345,6 +345,19 @@ class QueryAgent:
             self._remember_state(question, state)
             return outcome
 
+        from ..domain.meta_query import MetaError
+        from ..query.song_metrics import parse_meta_question
+        try:
+            meta = parse_meta_question(question, repository)
+        except MetaError as exc:
+            code = OutcomeCode.UNSUPPORTED if exc.status == 'unsupported_field' else OutcomeCode.INVALID_ARGUMENTS
+            return self._finish_terminal(state, code, str(exc), cache=False)
+        if meta is not None:
+            state.local_parsed = True
+            outcome = self._execute_spec(state, QuerySpec('song_meta', meta_request=meta, display_name=question), repository)
+            self._remember_state(question, state)
+            return outcome
+
         from ..query.field_query import parse_field_question
         field = parse_field_question(question, repository)
         if isinstance(field, str):
@@ -662,7 +675,7 @@ class QueryAgent:
             raise OSError("agent budget exhausted")
         state.tool_executions += 1
         state.steps += 1
-        if spec.field:
+        if spec.field or spec.meta_request is not None:
             from ..structured_query import resolve_query
             result = resolve_query(spec, repository)
         else:
@@ -733,7 +746,7 @@ class QueryAgent:
     @staticmethod
     def _result_code(result: QueryResult, repository: SongRepository) -> OutcomeCode:
         spec = result.spec
-        if result.short_text is not None:
+        if result.short_text is not None or result.meta is not None:
             return OutcomeCode(result.status)
         if result.cutoff is not None:
             return OutcomeCode(result.cutoff.status)
