@@ -64,7 +64,13 @@
 }
 ```
 
-同一个受信 subject 才能共享群／私聊额度。不同群的绑定也须明确登记。不从昵称、头像或裸 ID 推断同人；没有绑定时返回 `identity_unverified`，不会悄悄改成分场景用户额度。配置中的证据引用由管理员提供，结构校验不等于平台实测已经通过。
+同一个受信 subject 才能共享群／私聊额度。不同群的绑定也须明确登记。不从昵称、头像或裸 ID 推断同人。v1／v2 没有绑定时返回 `identity_unverified`；配置中的证据引用由管理员提供，结构校验不等于平台实测已经通过。
+
+v3（`taki-model-config/3`）在 v2 的 `secret`、`groups`、`bindings` 之外要求 `group_admissions`：最多 128 个 `{"conversation_id":"verified-platform-group-id","evidence_ref":"admin-acceptance/group-proof"}`。管理员核验真实网关身份后，可明确放行该群全员；不支持通配符，也不使用 QQ 群号码替代平台群标识。其他群和未绑定私聊继续拒绝。网关验签／认证、每次模型调用的动态许可、群策略及用量预留不变。
+
+群成员的稳定 subject 由 `group_subject(instance_id, app_id, conversation_id, user_id)` 生成，跨重启保持一致；个人额度分别计算，全群共享群额度。显式绑定优先。经核验的同一账号私聊绑定必须使用已有群成员的 subject，才能共用个人额度且保留历史用量。不同群的成员身份不自动合并。控制台保存配置时原样保留受保护的群准入列表，不能通过额度编辑扩大准入。
+
+撤销准入须原子写入新配置版本；此前已受理请求仍按其配置快照处理，如需立即停止模型调用须同时撤销网关许可。回退到只支持 v1／v2 的代码前恢复对应受保护配置；保留用量账和身份核验／批准／撤销记录，不清空额度。旧代码拒绝 v3 配置，不会自动放开权限。
 
 目前 wire profile 为 `deepseek-chat-v1`、`openai-chat-v1`、`openrouter-chat-v1`，端点分别固定在官方 HTTPS 域名；不接受玩家或配置中的自定义 URL，也不跟随重定向。仅接文本 Chat Completions；DeepSeek 请求显式设置 `thinking: {"type":"disabled"}`，响应若仍含非空 reasoning_content，继续按不支持的协议拒绝并保留用量。不支持的 Responses-only／DeepSeek thinking 工具链须另实现适配，不能靠改模型名声称支持。没有 profile／密钥／能力证明／价格时不启动 AI。
 

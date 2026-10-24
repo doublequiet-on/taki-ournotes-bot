@@ -154,6 +154,48 @@ class WeightedUsageTests(unittest.TestCase):
         with self.assertRaisesRegex(ModelError,'reference_unit_mismatch'):
             self.ledger.reserve('r2','b','u',None,other,10)
 
+    def test_group_admission_is_explicit_stable_and_separate_from_private(self):
+        from dataclasses import asdict
+        from types import SimpleNamespace
+        from ournotes_bot.application.model_config import ModelConfiguration,group_subject
+        from ournotes_bot.domain.model_calls import ModelError
+        profile=asdict(self.profile);profile.pop('api_key')
+        data=dict(schema='taki-model-config/3',instance_id='i',app_id='a',profile=profile,
+                  secret='FIXTURE',bindings=[],groups={},
+                  group_admissions=[dict(conversation_id='g1',evidence_ref='verified/group')])
+        config=ModelConfiguration(None,'','i','a');snapshot=config.parse(data,'digest')
+        request=SimpleNamespace(kind='group',conversation_id='g1',user_id='member')
+        subject=snapshot.subject(request)
+        self.assertEqual(subject,group_subject('i','a','g1','member'))
+        self.assertEqual(subject,ModelConfiguration(None,'','i','a').parse(data,'digest').subject(request))
+        self.assertNotEqual(subject,snapshot.subject(SimpleNamespace(kind='group',conversation_id='g1',user_id='other')))
+        for kind,conversation in [('group','g2'),('c2c','member')]:
+            with self.assertRaisesRegex(ModelError,'identity_unverified'):
+                snapshot.subject(SimpleNamespace(kind=kind,conversation_id=conversation,user_id='member'))
+        data['bindings']=[dict(kind='c2c',conversation_id='private',user_id='private',subject=subject,evidence_ref='verified/same-account')]
+        linked=config.parse(data,'next')
+        self.assertEqual(linked.subject(SimpleNamespace(kind='c2c',conversation_id='private',user_id='private')),subject)
+        # The existing ledger must apply the same individual cap in both scenes.
+        restricted=replace(self.profile,user_daily_limit=1000,max_output_tokens=64)
+        self.ledger.reserve('group','group-attempt',self.ledger.key('user',subject),'g1',restricted,600)
+        with self.assertRaisesRegex(ModelError,'quota_exceeded'):
+            self.ledger.reserve('private','private-attempt',self.ledger.key('user',subject),None,restricted,600)
+        self.ledger.reserve('other','other-attempt',self.ledger.key('user','other'),'g1',restricted,600)
+        from ournotes_bot.domain.model_calls import Usage
+        from ournotes_bot.application.usage_ledger import UsageLedger
+        self.ledger.start('group-attempt',restricted)
+        self.ledger.settle('group-attempt',Usage(600,0,0,None,600,'known'))
+        self.ledger.close()
+        self.ledger=UsageLedger(self.path,'fixture',clock=lambda:self.now[0])
+        # Rebuilding the same identity after restart must retain settled personal usage.
+        restored=config.parse(data,'next').subject(request)
+        with self.assertRaisesRegex(ModelError,'quota_exceeded'):
+            self.ledger.reserve('restart','restart-attempt',self.ledger.key('user',restored),None,restricted,600)
+        for admissions in ([data['group_admissions'][0]]*2,[dict(conversation_id='*',evidence_ref='verified/group')],
+                           [dict(conversation_id='g1',evidence_ref='')]):
+            with self.assertRaisesRegex(ModelError,'group_admission_configuration'):
+                config.parse({**data,'group_admissions':admissions},'bad')
+
     def test_config_snapshot_rejects_unknown_fields_and_preserves_old_price(self):
         from dataclasses import asdict
         from ournotes_bot.application.model_config import ModelConfiguration
@@ -212,6 +254,16 @@ class ModelAdminTests(unittest.IsolatedAsyncioTestCase):
         settings=self.admin.settings()
         return dict(operation_id=letter*32,guard=settings['guard'],profile=settings['profile'],groups=settings['groups'],
                     api_key='NEW_PRIVATE_KEY',api_url=settings['api_url'])
+
+    async def test_console_save_preserves_protected_group_admissions(self):
+        value={**self.old,'schema':'taki-model-config/3','secret':'OLD_KEY','groups':{},
+               'group_admissions':[dict(conversation_id='g',evidence_ref='verified/group')]}
+        self.path.write_text(json.dumps(value),encoding='utf-8')
+        self.admin.save(self.payload())
+        saved=json.loads(self.path.read_text('utf-8'))
+        self.assertEqual(saved['schema'],'taki-model-config/3')
+        self.assertEqual(saved['group_admissions'],value['group_admissions'])
+        self.assertEqual(saved['bindings'],value['bindings'])
 
     async def test_save_is_versioned_private_and_idempotent_with_binding_preserved(self):
         old=self.runtime.config.snapshot();body=self.payload();result=self.admin.save(body)
@@ -445,6 +497,20 @@ class NativeRuntimeTests(Fixture,unittest.IsolatedAsyncioTestCase):
         plan,attempts=await self.prepare_native('/问 你好')
         self.assertFalse(attempts);self.assertEqual(plan['parts'][0]['business_status'],'identity_unverified')
         self.client.request.assert_not_awaited()
+
+    async def test_admitted_group_member_still_requires_gateway_permission(self):
+        self.snapshot=replace(self.snapshot,bindings=(),group_admissions=('g1',),identity_namespace=('fixture','app'))
+        plan,attempts=await self.prepare_native('/问 你好',allow=lambda n:False)
+        self.assertEqual(len(attempts),1)
+        self.assertEqual(plan['parts'][0]['business_status'],'policy_denied')
+        self.client.request.assert_not_awaited()
+
+    async def test_admitted_group_member_reaches_accounted_native_path(self):
+        self.snapshot=replace(self.snapshot,bindings=(),group_admissions=('g1',),identity_namespace=('fixture','app'))
+        plan,attempts=await self.prepare_native('/问 你好')
+        self.assertEqual(len(attempts),1)
+        self.assertEqual(self.client.request.await_count,1)
+        self.assertEqual(self.backend.model_runtime.usage.get(attempts[0])['state'],'settled')
 
     async def test_queued_request_keeps_admitted_configuration_and_price(self):
         original=self.snapshot.profile
