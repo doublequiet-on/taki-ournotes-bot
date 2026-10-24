@@ -1,7 +1,8 @@
 # L3: Fresh identity, bounded immutable-release resources, validated Meta records.
-# Effects: Public Haneoka reads only; per-server memory cache, no stale fallback.
+# Effects: Scoped public HTTP; same-release Catalog reuse, per-server cache, no stale fallback.
 from __future__ import annotations
 
+import json
 import math
 import re
 import time
@@ -13,7 +14,7 @@ from ...domain.meta_query import MetaError, MetaSnapshot, MetaSong, MetaSource, 
 from ..json_validation import decode_json
 from ..errors import ChartDataError
 from .identity import release_identity, check_headers
-from .transport import ORIGIN, public_get
+from .transport import ORIGIN, public_get, public_http_scope
 from .catalog_assets import asset_url
 
 
@@ -94,8 +95,9 @@ def normalize_song(key, row, meta, bands, server, release):
 
 
 class SongMetricsRepository:
-    def __init__(self, *, fetch=public_get, clock=time.time, monotonic=time.monotonic):
+    def __init__(self, *, fetch=public_get, clock=time.time, monotonic=time.monotonic, documents=None):
         self.fetch, self.clock, self.monotonic = fetch, clock, monotonic
+        self.documents = documents
         self._locks = {s: Lock() for s in ('jp', 'intl')}
         self._cache = {}
         self._observations = {}
@@ -105,6 +107,7 @@ class SongMetricsRepository:
         return {'origin':ORIGIN,'servers':{server:dict(self._observations.get(server,
             {'code':'not_observed','release_id':None,'observed_at':None})) for server in ('jp','intl')}}
 
+    @public_http_scope()
     def current(self, server):
         if server not in self._locks:
             raise MetaError('invalid_argument', '歌曲指标区服只支持 jp / intl。')
@@ -128,6 +131,7 @@ class SongMetricsRepository:
 
     def _collect(self, server, deadline):
         total = 0
+        documents = {}
         def get(resource, identity=None, ids=()):
             nonlocal total
             remaining = deadline - self.monotonic()
@@ -136,10 +140,26 @@ class SongMetricsRepository:
             query = [('release', identity['releaseId'])] if identity else [('projection', 'identity')]
             query += [('id', key) for key in ids]
             limit = 512_000 if identity is None else 8_000_000
+            reused = identity is not None and resource in documents
             try:
-                raw, headers = self.fetch(f'{ORIGIN}/api/v1/servers/{server}/{resource}?{urlencode(query)}', limit, remaining)
+                if reused:
+                    value = documents[resource]
+                    if resource == 'songs':
+                        if ids:
+                            value = {'items': {k: value[k] for k in ids if k in value},
+                                     'missing': [k for k in ids if k not in value]}
+                        else:
+                            value = {k: {'musicId': row['musicId']} for k, row in value.items()}
+                    # Retain decoded size/aggregate budgets and isolate the consumer
+                    # from the published Catalog objects. No fabricated HTTP headers.
+                    raw = json.dumps(value, ensure_ascii=False, allow_nan=False).encode('utf-8')
+                    headers = None
+                else:
+                    raw, headers = self.fetch(f'{ORIGIN}/api/v1/servers/{server}/{resource}?{urlencode(query)}', limit, remaining)
             except (OSError, TimeoutError, ChartDataError) as exc:
                 raise MetaError('source_unavailable', '歌曲指标来源暂不可用，请稍后重试。') from exc
+            except (ValueError, TypeError, KeyError, AttributeError) as exc:
+                raise MetaError('source_incomplete', '复用的歌曲资料结构不完整。') from exc
             total += len(raw)
             if len(raw) > limit or total > 32_000_000:
                 raise MetaError('source_incomplete', '歌曲指标响应超出读取预算。')
@@ -147,7 +167,8 @@ class SongMetricsRepository:
                 value = decode_json(raw)
                 if not isinstance(value, dict):
                     raise ValueError('object required')
-                check_headers(headers, identity or release_identity(value, server))
+                if not reused:
+                    check_headers(headers, identity or release_identity(value, server))
             except (ValueError, TypeError, KeyError, ChartDataError) as exc:
                 raise MetaError('source_incomplete', '歌曲指标来源版本或响应结构不一致。') from exc
             return value
@@ -158,6 +179,8 @@ class SongMetricsRepository:
         cached = self._cache.get(server)
         if cached and (cached.source.release_id, cached.source.source_id) == (source.release_id, source.source_id):
             return replace(cached, source=source)
+        if self.documents is not None:
+            documents = self.documents(server, identity) or {}
         catalog = get('catalog', identity)
         if catalog.get('server') != server or catalog.get('sourceId') != source.source_id:
             raise MetaError('source_incomplete', '目录来源版本不一致。')
@@ -188,5 +211,7 @@ class SongMetricsRepository:
                 raise MetaError('source_incomplete', '歌曲详情批次不完整。')
             records.extend(normalize_song(k, items[k], meta[k], bands, server, source.release_id) for k in requested)
         snapshot = MetaSnapshot(source, tuple(records))
+        if self.monotonic() > deadline:
+            raise MetaError('source_unavailable', '歌曲指标来源读取超时。')
         self._cache[server] = snapshot
         return snapshot

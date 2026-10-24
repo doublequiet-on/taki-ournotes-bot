@@ -52,6 +52,72 @@ class Session(Response):
 
 
 class HaneokaFacilityTests(unittest.TestCase):
+    def test_scoped_connections_reuse_tcp_and_close_after_success_or_failure(self):
+        clients, cookies, sessions = [], [], []
+
+        class Handler(BaseHTTPRequestHandler):
+            protocol_version = 'HTTP/1.1'
+            def do_GET(self):
+                clients.append(self.client_address)
+                cookies.append(self.headers.get('Cookie'))
+                self.send_response(200)
+                self.send_header('Content-Length', '2')
+                self.send_header('Set-Cookie', 'unexpected=value')
+                self.end_headers()
+                self.wfile.write(b'ok')
+            def log_message(self, *args): pass
+
+        server = ThreadingHTTPServer(('127.0.0.1', 0), Handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        real_session = aiohttp.ClientSession
+        def local_session(**kwargs):
+            session = real_session(**kwargs)
+            sessions.append(session)
+            real_get = session.get
+            session.get = lambda url, **options: real_get(
+                f'http://127.0.0.1:{server.server_port}/', **options)
+            return session
+        try:
+            with patch.dict(os.environ, {'OURNOTES_PUBLIC_HTTP_PROXY': ''}), \
+                    patch('aiohttp.ClientSession', side_effect=local_session):
+                with transport.public_http_scope():
+                    transport.public_get(transport.ORIGIN + '/test', 2, 1)
+                    with transport.public_http_scope():
+                        transport.public_get(transport.ORIGIN + '/test', 2, .5)
+                    self.assertFalse(sessions[0].closed)
+                self.assertTrue(sessions[0].closed)
+                self.assertTrue(sessions[0]._loop.is_closed())
+                self.assertEqual(clients[0], clients[1])
+                with self.assertRaises(ChartDataError), transport.public_http_scope():
+                    transport.public_get(transport.ORIGIN + '/test', 1, 1)
+                self.assertTrue(sessions[1].closed)
+                self.assertTrue(sessions[1]._loop.is_closed())
+                self.assertNotEqual(clients[1], clients[2])
+                self.assertEqual(cookies, [None, None, None])
+        finally:
+            server.shutdown(); server.server_close(); thread.join()
+
+    def test_scopes_are_thread_local_and_keep_each_request_timeout(self):
+        from concurrent.futures import ThreadPoolExecutor
+        barrier = threading.Barrier(2)
+        def worker():
+            with transport.public_http_scope():
+                barrier.wait(timeout=3)
+                scope = transport._connections.scope
+                with transport.public_http_scope():
+                    self.assertIs(transport._connections.scope, scope)
+                return scope
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            a, b = list(pool.map(lambda _: worker(), range(2)))
+        self.assertIsNot(a, b)
+        response = Session()
+        with patch('aiohttp.ClientSession', return_value=response) as create, transport.public_http_scope():
+            transport.public_get(transport.ORIGIN + '/test', 4, 20)
+            transport.public_get(transport.ORIGIN + '/test', 4, .1)
+            self.assertEqual(response.options['timeout'].total, .1)
+        self.assertEqual(create.call_count, 1)
+
     def test_public_proxy_is_explicit_and_preserves_request_security(self):
         response=Session()
         with patch.dict(os.environ,{'OURNOTES_PUBLIC_HTTP_PROXY':'http://127.0.0.1:7890'}),patch('aiohttp.ClientSession',return_value=response) as create:

@@ -19,7 +19,11 @@
 
 纯类型和白名单位于 `domain/meta_query.py`。`MetaQuerySpec` v1 只允许 song、jp/intl、规范难度、注册字段及匹配的运算符：最多 8 个 AND 条件、3 项排序（含最后的数字歌曲 ID 升序）、1–50 条结果。`from_dict` 拒绝未知键及错误类型；`execute_many` 最多 4 个规范查询，供后续工具接口复用。
 
-`sources/haneoka/song_metrics.py` 复用公共 transport。每次新查询先在线读取 `/release?projection=identity`，再读取固定 release 的 catalog、song-meta、songs 索引、songs 批次和 bands。批次至多 100 ID，校验 missing、数量、ID 集合及每个响应的 release/source。单响应不超过 8 MB、总读取不超过 32 MB，共用 18 秒读取预算。同版资源可以复用每服一份内存快照；身份读取失败也不能使用旧结果冒充当前数据，不写持久缓存。
+`sources/haneoka/song_metrics.py` 复用公共 transport。每次新查询先在线读取 `/release?projection=identity`，再读取固定 release 的 catalog、song-meta、songs 索引、songs 批次和 bands。批次至多 100 ID，校验 missing、数量、ID 集合及每个网络响应的 release/source。单响应不超过 8 MB、总读取不超过 32 MB，共用 18 秒读取预算。同版资源可以复用每服一份内存快照；身份读取失败也不能使用旧结果冒充当前数据，不写持久缓存。
+
+Meta 内存快照为空时，也可复用主目录已经整体校验并发布的同区服、同 release/source 原始文档。复用后仍核对 Meta 的数量、ID、难度、字段完整性及序列化后的大小预算；错误不静默改为联网补全。主目录旧缓存未保存的资源按原流程下载，当前 intl 的 song-meta 属于此类。主目录已加载且版本匹配时，Meta 首查通常为 JP 一次 release、intl 一次 release 加一次 song-meta；主目录无可复用文档时仍走原完整资源链。完整 `/问` 的 `current_query_view` 仍先独立核验两服主目录身份。
+
+一次 Meta 读取、主目录读取及其各并发资源批次在本线程的显式作用域内复用 HTTP 会话；成功或异常退出均关闭会话和事件循环。嵌套作用域共享连接，各线程互不共享。不持久保留会话、不使用 Cookie，保留逐请求剩余超时、原有重试、HTTPS、gzip 解压后大小及版本头门禁。
 
 `MetaResult` 保留规范请求、区服、release/source、检查时间、不可变行值、覆盖和缺失字段。状态为 ok / empty / partial / source_unavailable / source_incomplete / unsupported_field / invalid_argument。共享 `QueryResult` 仍使用现有终态枚举，partial 有自己的文本与覆盖标记，不冒充完整排名。
 
