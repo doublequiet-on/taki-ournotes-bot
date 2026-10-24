@@ -284,6 +284,11 @@ def band_name_variants(name: str) -> set[str]:
     return dream if names & dream else names
 
 
+def band_aliases() -> tuple[tuple[str, str], ...]:
+    """Names only; callers verify targets against their own resource identity."""
+    return tuple(_aliases().get('band', {}).items())
+
+
 def character_name_variants(name: str) -> set[str]:
     """Full civilian names/established translations, excluding invented nicknames."""
     identity = character_identity(name)

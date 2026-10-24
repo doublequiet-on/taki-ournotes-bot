@@ -86,6 +86,9 @@ class Conversations:
         snapshot = DisplaySnapshot(work.delivery, self.scope(work.request), work.key,
                                    work.lease.generation if work.lineage is None else work.lineage,
                                    tuple(pages), self.clock(), deadline)
+        versions = {p.layout_version for p in pages}
+        if len(versions) == 1:
+            snapshot = replace(snapshot, layout_version=next(iter(versions)))
         if snapshot.retained_bytes > self.byte_capacity:
             return None
         self.snapshots[work.delivery] = snapshot

@@ -476,6 +476,51 @@ class QueryRefactorTests(unittest.TestCase):
             bucket.get("local_success", 0) + bucket.get("cache_hit_success", 0), 32,
         )
 
+    def test_meta_local_route_rechecks_source_and_never_calls_model(self):
+        from ournotes_bot.domain.meta_query import MetaSource, MetaSnapshot, MetaSong, MetaError
+        song = MetaSong('100080', 'fixture', (5,), '一家Dumb Rock!', '', 101.132, ((),)*4)
+        snapshot = MetaSnapshot(MetaSource('intl', 'fixture-release', 'fixture-source', 1), (song,))
+        parser = AIQueryParser(self.settings)
+        with patch.object(self.repo.song_metrics, 'current', return_value=snapshot) as source, \
+             patch.object(parser, '_request', side_effect=AssertionError('must stay local')):
+            for _ in range(2):
+                result = parser.answer_with_outcome('/问 国际服家团最短的歌是哪首', self.repo)
+                self.assertEqual(result.result.meta.rows[0].song.song_id, '100080')
+                self.assertEqual(result.state.processing_route, 'local')
+            self.assertEqual(source.call_count, 2)
+            source.assert_called_with('intl')
+            source.side_effect = MetaError('source_unavailable', 'fixture outage')
+            result = parser.answer_with_outcome('/问 国际服家团最短的歌是哪首', self.repo)
+            self.assertEqual(result.code, OutcomeCode.DATA_UNAVAILABLE)
+            self.assertFalse(result.result.meta.rows)
+
+    def test_meta_ties_unknowns_and_filter_conjunction(self):
+        from ournotes_bot.domain.meta_query import MetaSource, MetaSnapshot, MetaSong, MetaQuerySpec, MetaFilter, MetaOrder
+        from ournotes_bot.query.song_metrics import select_meta
+        rows = tuple(MetaSong(key, key, band, '', '', seconds, ((),)*4) for key, band, seconds in (
+            ('10', (5,), 90), ('2', (5,), 90), ('3', None, 70), ('4', (1,), None), ('5', (5,), None)))
+        snap = MetaSnapshot(MetaSource('jp','r','s',1),rows)
+        spec = MetaQuerySpec(band_ids=(5,), order_by=(MetaOrder('duration_seconds'),))
+        result = select_meta(spec,snap)
+        self.assertEqual([r.song.song_id for r in result.rows], ['2','10','5'])
+        self.assertEqual((result.status,result.coverage.unknown), ('partial',2))
+        result = select_meta(replace(spec, filters=(MetaFilter('duration_seconds','lte',80),)), snap)
+        self.assertFalse(result.rows)
+        self.assertEqual(result.status,'partial')
+
+    def test_meta_unknown_conditions_and_contract_limits_are_terminal(self):
+        from ournotes_bot.domain.meta_query import MetaError, MetaQuerySpec, MetaOrder
+        from ournotes_bot.query.song_metrics import parse_meta_question
+        self.assertEqual(parse_meta_question('请问母鸡卡最短的歌是哪首',self.repo).band_ids,(2,))
+        self.assertIsNone(parse_meta_question('四星5秒技能的成员卡',self.repo))
+        for question in ('家团最短的0首', '最短的前51首', '韩服最短的歌', '家团最短但红色的歌', 'NPS最高的歌'):
+            with self.subTest(question=question), self.assertRaises(MetaError):
+                parse_meta_question(question,self.repo)
+        with self.assertRaises(MetaError):
+            MetaQuerySpec(difficulty='expert', order_by=tuple(MetaOrder(f) for f in ('notes','nps','level')))
+        with self.assertRaises(MetaError):
+            MetaQuerySpec.from_dict({'filters':[{'field':'score','op':'eq','value':1}]})
+
     def test_metrics_path_can_be_configured_independently(self) -> None:
         metrics = Path(self.temp.name) / "custom" / "metrics.json"
         with patch("ournotes_bot.config.load_dotenv"), patch.dict(os.environ, {

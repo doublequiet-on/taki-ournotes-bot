@@ -15,6 +15,7 @@ import weakref
 from collections import OrderedDict
 from dataclasses import dataclass, replace
 
+from ..domain.meta_query import MetaResult
 from ..commands import CommandResult, PAGE_SIZE, page_slice, resolve_command
 from ..structured_query import QueryResult, QuerySpec, resolve_query
 from .entity_lexicon import EntityRef, alias_version
@@ -101,6 +102,7 @@ class QueryContext:
     complete: bool = False
     origin: str = 'unknown'
     visible_indices: tuple[int, ...] = ()
+    meta: MetaResult | None = None
 
 
 def catalog_version(repository) -> str:
@@ -126,6 +128,13 @@ def capture_context(result, repository, *, catalog_before=None, complete=False,
     """Copy IDs in exactly the text/image page order; never rerun the selection."""
     if result is None or result.status != "success" or result.cutoff is not None:
         return None
+    if isinstance(result, QueryResult) and result.meta is not None:
+        answer = result.meta
+        if not answer.rows:
+            return None
+        visible = tuple(Choice('meta_song', int(row.song.song_id), answer.spec.difficulty or '') for row in answer.rows)
+        return QueryContext(result.spec, visible, 1, 1, (answer.source.release_id, answer.source.source_id),
+                            complete=True, meta=answer)
     spec = result.spec if isinstance(result, QueryResult) else result.query_spec
     if spec and spec.field:
         return None
@@ -194,6 +203,23 @@ def capture_context(result, repository, *, catalog_before=None, complete=False,
 
 def execute_followup(context: QueryContext, operation: Operation, repository):
     """Return (captured result, next context) or a local terminal problem."""
+    if context.meta is not None:
+        if operation.kind not in {'select', 'detail'}:
+            return QueryProblem('此结果支持固定分页和序号详情；更换条件或难度请发送完整查询。', 'invalid_arguments')
+        indices = context.visible_indices or tuple(range(1, len(context.visible)+1))
+        selected = context.selected
+        if operation.kind == 'select':
+            if operation.value not in indices:
+                return QueryProblem('请选择本条消息中已展示的序号：' + '、'.join(map(str,indices)) + '。', 'invalid_arguments')
+            selected = context.visible[indices.index(operation.value)]
+        if selected is None:
+            if len(context.visible) != 1:
+                return QueryProblem('请先选择本条消息中的序号。', 'ambiguous')
+            selected = context.visible[0]
+        rows = tuple(r for r in context.meta.rows if r.song.song_id == str(selected.entity_id))
+        answer = replace(context.meta, rows=rows)
+        return QueryResult(context.query, meta=answer), replace(context, visible=(selected,), selected=selected,
+                                                                visible_indices=(), meta=answer)
     if context.version != dependency_version(repository, context.query):
         return QueryProblem(CHANGED, "invalid_arguments")
     if operation.kind == "page":

@@ -94,6 +94,7 @@ class PreparedReply:
     parse_origin: str = 'unknown'
     processing_route: str | None = None
     visible_indices: tuple[int, ...] = ()
+    layout_version: str = 'prepared-reply/1'
 
     @property
     def passive_slots(self):
@@ -647,6 +648,18 @@ def render_prepared(reply, result, repository, locale, candidate=None):
 
 def render_prepared_inner(reply, result, repository, locale, candidate=None):
     try:
+        if isinstance(result, QueryResult) and result.meta is not None:
+            from ..rendering.song_metrics_layout import render, LAYOUT_VERSION
+            answer = result.meta
+            parts = render(answer, load=visual_asset)
+            if not parts:
+                return PreparedReply(answer.text(), complete_text=True)
+            pages = tuple(PreparedReply(answer.text(p.start,p.stop), p.image,
+                context=replace(candidate, visible=candidate.visible[:p.stop]) if candidate and not candidate.selected else candidate,
+                layout_version=LAYOUT_VERSION,
+                visible_indices=() if candidate and candidate.selected else tuple(range(p.start+1,p.stop+1))) for p in parts)
+            return pages[0] if len(pages)==1 else PreparedReply(reply,pages=pages,context=candidate)
+
         if isinstance(result, CommandResult) and (result.info is not None or result.activity is not None):
             from ..rendering.info_layout import render_info
             answer = result.info if result.info is not None else result.activity

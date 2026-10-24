@@ -22,6 +22,7 @@ def main():
     root = Path(__file__).resolve().parents[1]
     modules = ("application.runtime_tasks", "application.notice_gateway", "application.notice_reports", "application.data_owner", "application.backend_bootstrap", "application.backend", "application.backend_protocol", "application.delivery_ledger", "application.replies", "application.reply_preparation", "query.continuation", "query.field_query", "sources.cutoff_history",
                "sources.cutoff_sampler", "rendering.cutoff_trends", "platforms.qq.qq",
+               "domain.meta_query", "sources.haneoka.song_metrics", "query.song_metrics", "rendering.song_metrics_layout",
                "sources.moenotes_open",
                "sources.haneoka.chart_data", "sources.haneoka.catalog", "sources.haneoka.catalog_records",
                "sources.haneoka.catalog_text", "sources.haneoka.catalog_assets", "sources.haneoka.event_cutoffs",

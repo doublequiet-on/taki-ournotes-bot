@@ -1,5 +1,7 @@
 # L2-2 Song Rendering
 
+`song_metrics_layout.py` 消费纯 `domain/meta_query.py::MetaResult`，使用既有主题与图片预算计算完整行分页，返回固定全局范围。业务查询和来源版本检查在绘图前完成；`song-meta/1` 页面交给包 1 快照复用。见 [包 2A](../../../docs/QUERY_CHAT_PACKAGE2A.md)。
+
 ## Purpose
 
 把歌曲及谱面结果投影为图片，复用歌曲身份、颜色和激奏展示；同时维护活动歌曲榜线视图。
