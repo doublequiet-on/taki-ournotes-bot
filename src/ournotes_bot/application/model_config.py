@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 import hashlib
+import json
 import os
 from pathlib import Path
 import re
@@ -12,12 +13,20 @@ from ..domain.model_calls import ModelError, ModelProfile, Price, require
 from ..sources.json_validation import decode_json
 
 
+def group_subject(instance_id, app_id, conversation_id, user_id):
+    """Stable identity for an explicitly admitted group's verified platform actor."""
+    raw=json.dumps([instance_id,app_id,conversation_id,user_id],ensure_ascii=True,separators=(',',':'))
+    return 'group/'+hashlib.sha256(raw.encode()).hexdigest()
+
+
 @dataclass(frozen=True)
 class ConfigSnapshot:
     profile: ModelProfile
     bindings: tuple
     fingerprint: str = ''
     groups: tuple = ()
+    group_admissions: tuple = ()
+    identity_namespace: tuple = ()
 
     def for_group(self, group_id):
         overrides=dict(self.groups).get(group_id)
@@ -26,8 +35,10 @@ class ConfigSnapshot:
     def subject(self, request):
         key=(request.kind,request.conversation_id,request.user_id)
         matches=[subject for kind,conversation,user,subject in self.bindings if (kind,conversation,user)==key]
-        require(len(matches)==1,'identity_unverified')
-        return matches[0]
+        if len(matches)==1:return matches[0]
+        require(not matches and request.kind=='group' and request.conversation_id in self.group_admissions
+                and len(self.identity_namespace)==2,'identity_unverified')
+        return group_subject(*self.identity_namespace,request.conversation_id,request.user_id)
 
 
 class ModelConfiguration:
@@ -51,10 +62,11 @@ class ModelConfiguration:
         return decode_json(raw), hashlib.sha256(raw).hexdigest()
 
     def parse(self, data, digest, *, api_key=None):
-        require(isinstance(data,dict) and data.get('schema') in ('taki-model-config/1','taki-model-config/2'),'model_configuration')
+        require(isinstance(data,dict) and data.get('schema') in ('taki-model-config/1','taki-model-config/2','taki-model-config/3'),'model_configuration')
         require((data.get('instance_id'),data.get('app_id'))==self.namespace,'model_configuration')
         fields={'schema','instance_id','app_id','profile','bindings'}
-        if data['schema']=='taki-model-config/2': fields|={'secret','groups'}
+        if data['schema'] in ('taki-model-config/2','taki-model-config/3'): fields|={'secret','groups'}
+        if data['schema']=='taki-model-config/3':fields.add('group_admissions')
         require(set(data)==fields and isinstance(data['profile'],dict),'model_configuration')
         value=dict(data['profile'])
         require('api_key' not in value and isinstance(value.get('price'),dict),'model_configuration')
@@ -78,7 +90,18 @@ class ModelConfiguration:
             require(isinstance(key,str) and re.fullmatch(r'[A-Za-z0-9_-]{1,128}',key) and isinstance(limits,dict)
                     and set(limits)=={'group_daily_limit','group_rate_requests'},'model_group_configuration')
             replace(profile,**limits)  # Reuse the runtime's quota and rate contract.
-        return ConfigSnapshot(profile,tuple(bindings),digest,tuple((k,dict(v)) for k,v in groups.items()))
+        admissions=data.get('group_admissions',[])
+        require(isinstance(admissions,list) and len(admissions)<=128,'group_admission_configuration')
+        admitted=[]
+        for row in admissions:
+            require(isinstance(row,dict) and set(row)=={'conversation_id','evidence_ref'},'group_admission_configuration')
+            group=row['conversation_id'];evidence=row['evidence_ref']
+            require(isinstance(group,str) and re.fullmatch(r'[A-Za-z0-9_-]{1,128}',group)
+                    and group not in admitted and isinstance(evidence,str)
+                    and re.fullmatch(r'[A-Za-z0-9_.:/-]{1,160}',evidence),'group_admission_configuration')
+            admitted.append(group)
+        return ConfigSnapshot(profile,tuple(bindings),digest,tuple((k,dict(v)) for k,v in groups.items()),
+                              tuple(admitted),self.namespace)
 
     def snapshot(self):
         if self.path is None: raise ModelError('model_not_configured')
@@ -145,6 +168,7 @@ class ModelConfiguration:
         return {'code':self.code,'configured':bool(profile),'config_version':profile.config_version if profile else None,
                 'provider':profile.provider if profile else None,'model':profile.model if profile else None,
                 'identity_bindings':len(self.current.bindings) if self.current else 0,
+                'admitted_groups':len(self.current.group_admissions) if self.current else 0,
                 'price_estimated':profile.price.estimated if profile else None,
                 'pricing_version':profile.price.pricing_version if profile else None,
                 'price_source':profile.price.source if profile else None,

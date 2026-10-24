@@ -125,6 +125,8 @@ class ModelAdmin:
                               'fetched_at':time.time(),'estimated':True,'source':'registered-default'}
             data={'schema':'taki-model-config/2','instance_id':self.config.namespace[0],'app_id':self.config.namespace[1],
                   'profile':profile,'secret':secret,'bindings':old['bindings'] if old else [],'groups':value['groups']}
+            if old and old.get('schema')=='taki-model-config/3':
+                data.update(schema='taki-model-config/3',group_admissions=old['group_admissions'])
             snapshot=self.config.parse(data,'')
             unit=self.runtime.usage.db.execute("SELECT value FROM meta WHERE key='reference_unit'").fetchone()
             require(unit is None or unit[0]==snapshot.profile.price.reference_unit,'reference_unit_mismatch')

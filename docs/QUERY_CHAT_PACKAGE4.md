@@ -18,7 +18,7 @@
 
 浏览器仅调用 authority 5 的 Console RPC。`model/settings`、`model/save`、`model/probe`、`model/group` 转到认证的 `/v1/admin/model`、`/probe`、`/groups/{group_id}`；写操作还要求活跃网关 epoch。后端令牌不会下发浏览器。
 
-`OURNOTES_AI_PROFILE_FILE` 指定管理员预先选定的配置路径。未指定或文件损坏时如实不可编辑，不创建任意配置目录。新文件使用 `taki-model-config/2`，在包 3 字段外增加后端专有 `secret` 和最多 128 项 `groups`；旧 v1＋`OURNOTES_QUERY_AI_API_KEY` 仍可读。群覆盖只有 `group_daily_limit`、`group_rate_requests`。身份绑定及其证据由后端文件维护，网页保存时原样保留，不能用昵称推导统一身份。
+`OURNOTES_AI_PROFILE_FILE` 指定管理员预先选定的配置路径。未指定或文件损坏时如实不可编辑，不创建任意配置目录。新文件使用 `taki-model-config/2`，在包 3 字段外增加后端专有 `secret` 和最多 128 项 `groups`；旧 v1＋`OURNOTES_QUERY_AI_API_KEY` 仍可读。已有 v3 文件保留其版本及受保护的 `group_admissions`，网页不能新增或修改群准入。群覆盖只有 `group_daily_limit`、`group_rate_requests`。身份绑定及其证据由后端文件维护，网页保存时原样保留，不能用昵称推导统一身份。
 
 保存使用后端 epoch＋当前文件 SHA-256 比较、完整类型校验、唯一新版本、0600 临时文件、fsync 和原子替换；POSIX 目录不能允许组／其他用户写。Windows 使用部署目录 ACL，不能将 POSIX mode 当作 Windows 权限证明。已有请求继续用原配置快照，旧用量按原价保存。保存回执丢失时保留草稿并回读，不能伪报生效；重复 operation ID 不再次写入。
 
