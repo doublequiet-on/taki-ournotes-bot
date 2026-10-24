@@ -101,9 +101,12 @@ def request_body(profile, messages, tools):
         body['tool_choice']='auto'
         if profile.parallel_control: body['parallel_tool_calls']=False
     if profile.provider=='openai': body['store']=False
+    if profile.provider=='deepseek':
+        # This wire profile accepts final text/tools, not reasoning history.
+        body['thinking']={'type':'disabled'}
     if profile.provider=='openrouter':
         body['provider']={'allow_fallbacks':False,'require_parameters':True}
-    # No strict/beta, thinking, reasoning or sampling knobs without an adapter.
+    # No strict/beta, reasoning effort or sampling knobs without an adapter.
     return body
 
 
