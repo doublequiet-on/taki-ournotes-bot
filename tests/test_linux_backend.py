@@ -16,6 +16,7 @@ from deploy.linux_backend import (GIB, JOBS, LinuxBackend, Rejected, Deferred,
                                  extract_archive, fingerprints, tree_digest)
 from deploy.linux_backend import environment_digest, recover_engine, validate_config
 from deploy.linux_backend import run_bounded, freeze_release, status_document, human_status, main
+from deploy.linux_backend import knowledge_bundle_spec
 from deploy.linux_updater import Engine, Release, RunResult, atomic_json
 
 
@@ -23,6 +24,96 @@ A, B = "a" * 40, "b" * 40
 
 
 class LinuxBackendTests(unittest.TestCase):
+    @unittest.skipUnless(sys.version_info>=(3,11),'controller runs on CPython 3.12')
+    def test_knowledge_cannot_override_a_base_lock_pin(self):
+        self.config['knowledge_bundle']={'commit':B,'sha256':'c'*64}
+        release=self.candidate();root=Path(release.code_dir).parent
+        (Path(release.code_dir)/'pyproject.toml').write_text('[project.optional-dependencies]\nknowledge=["onnxruntime==1.23.2","tokenizers==0.22.2","numpy==2.2.6"]\n')
+        payload=root/'payload';payload.mkdir();(payload/'requirements.lock').write_text('packaging==1 --hash=sha256:'+'f'*64+'\n')
+        archive=self.backend.state/'knowledge-bundles'/(B+'.zip');archive.parent.mkdir();archive.write_bytes(b'fixture')
+        roots={'onnxruntime':'1.23.2','tokenizers':'0.22.2','numpy':'2.2.6'}
+        def unpack(path,destination,commit,expected):
+            destination.mkdir();text='\n'.join(k+'=='+v+' --hash=sha256:'+'f'*64 for k,v in dict(roots,packaging='2').items())
+            (destination/'requirements.lock').write_text(text+'\n');return {'roots':roots}
+        with patch('deploy.linux_backend.trusted'),patch('deploy.linux_backend.unpack_dependency_bundle',side_effect=unpack):
+            with self.assertRaisesRegex(Rejected,'knowledge_base_lock_conflict'):self.backend._prepare_knowledge_payload(release)
+
+    def test_knowledge_sandbox_exposes_only_cpuinfo_with_host_proc_replaced(self):
+        self.config['knowledge_bundle']={'commit':B,'sha256':'c'*64}
+        release=self.candidate()
+        with patch.object(self.backend,'_sandbox_cpuinfo',return_value=self.root/'cpuinfo'):
+            self.backend._sandbox(release,['python','-c','pass'],'knowledge-imports')
+        argv=self.calls[-1][0]
+        for value in ('PrivateNetwork=yes','User=ubuntu','NoNewPrivileges=yes','MemoryMax=768M',
+                      'TemporaryFileSystem=/proc:ro,size=1M',
+                      'BindReadOnlyPaths='+str(self.root/'cpuinfo')+':/proc/cpuinfo'):
+            self.assertIn(value,argv)
+        hidden=next(a for a in argv if a.startswith('InaccessiblePaths='))
+        self.assertIn('-'+str(self.base/'config'),hidden)
+        self.assertIn('ProtectHome=tmpfs',argv)
+
+    def test_successful_knowledge_prepare_is_sealed_after_import_and_catches_drift(self):
+        self.state(transaction=dict(phase='preparing',commit=B,previous=asdict(self.baseline),candidate=None))
+        self.backend.current_release=lambda:self.baseline
+        self.config['knowledge_bundle']={'commit':B,'sha256':'c'*64}
+        roots={'onnxruntime':'1.23.2','numpy':'2.2.6','tokenizers':'0.22.2'}
+        timeline=[]
+        def unpack(archive,payload,commit,expected):payload.mkdir()
+        def extract(archive,code,commit):code.mkdir();(code/'critical.py').write_text('original')
+        def sandbox(release,args,step,**kwargs):
+            timeline.append(step)
+            if step=='knowledge-install':(Path(release.venv_dir)/'dependency').write_text('installed')
+        with patch('deploy.linux_backend.require_target'),patch('deploy.linux_backend.get_bundle',return_value=(self.root/'x','f'*64)), \
+             patch('deploy.linux_backend.unpack_bundle',side_effect=unpack),patch('deploy.linux_backend.extract_archive',side_effect=extract), \
+             patch.object(self.backend,'_check_reviewed_fingerprints'), \
+             patch.object(self.backend,'_prepare_knowledge_payload',return_value={'roots':roots}), \
+             patch.object(self.backend,'_sandbox',side_effect=sandbox), \
+             patch('deploy.linux_backend.freeze_release',side_effect=lambda _:timeline.append('freeze')):
+            release=self.backend.prepare(B)
+        self.assertLess(timeline.index('knowledge-install'),timeline.index('knowledge-imports'))
+        self.assertLess(timeline.index('knowledge-imports'),timeline.index('dependencies'))
+        self.assertLess(timeline.index('tests'),timeline.index('freeze'))
+        record=self.backend._manifest(release)
+        self.assertEqual(record['knowledge_bundle'],dict(self.config['knowledge_bundle'],roots=roots))
+        (Path(release.venv_dir)/'dependency').unlink()
+        with self.assertRaisesRegex(Rejected,'release_environment_drift'):self.backend._manifest(release)
+
+    def test_knowledge_configuration_is_optional_and_commit_pinned(self):
+        self.assertIsNone(knowledge_bundle_spec({}))
+        spec={'commit':B,'sha256':'c'*64}
+        self.assertEqual(knowledge_bundle_spec({'knowledge_bundle':spec}),spec)
+        for value in (None,{},dict(spec,path='/tmp/untrusted'),dict(spec,commit='main')):
+            with self.assertRaisesRegex(Rejected,'configuration_invalid'):
+                knowledge_bundle_spec({'knowledge_bundle':value})
+
+    def test_configured_sidecar_cannot_silently_skip_for_another_commit(self):
+        self.backend.config['knowledge_bundle']={'commit':A,'sha256':'c'*64}
+        with self.assertRaisesRegex(Rejected,'knowledge_bundle_commit_mismatch'):
+            self.backend._prepare_knowledge_payload(Release(B,'/candidate/code','/candidate/venv'))
+
+    def test_knowledge_install_is_offline_before_digest_and_failure_never_seals(self):
+        self.state(transaction=dict(phase='preparing',commit=B,previous=asdict(self.baseline),candidate=None))
+        self.backend.current_release=lambda:self.baseline
+        self.backend.config['knowledge_bundle']={'commit':B,'sha256':'c'*64}
+        def unpack(archive,payload,commit,expected):payload.mkdir()
+        def extract(archive,code,commit):code.mkdir();(code/'critical.py').write_text('original')
+        calls=[]
+        def sandbox(release,args,step,**kwargs):
+            calls.append((step,args,kwargs))
+            if step=='knowledge-install':raise Rejected('command_failed')
+        with patch('deploy.linux_backend.require_target'),patch('deploy.linux_backend.get_bundle',return_value=(self.root/'x','f'*64)), \
+             patch('deploy.linux_backend.unpack_bundle',side_effect=unpack),patch('deploy.linux_backend.extract_archive',side_effect=extract), \
+             patch.object(self.backend,'_check_reviewed_fingerprints'), \
+             patch.object(self.backend,'_prepare_knowledge_payload',return_value={'roots':{'numpy':'2.2.6'}}), \
+             patch.object(self.backend,'_sandbox',side_effect=sandbox),patch('deploy.linux_backend.freeze_release') as freeze:
+            with self.assertRaisesRegex(Rejected,'command_failed'):self.backend.prepare(B)
+        freeze.assert_not_called()
+        self.assertFalse(json.loads((self.backend.manifests/(B+'.json')).read_text())['prepared'])
+        step,args,opts=calls[-1]
+        self.assertEqual(step,'knowledge-install');self.assertTrue(opts['offline'])
+        for flag in ('--no-index','--no-deps','--require-hashes'):self.assertIn(flag,args)
+        self.assertFalse(any(s=='installed' for s,_,_ in calls))
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)

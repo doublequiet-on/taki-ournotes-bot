@@ -98,6 +98,87 @@ def unpack_bundle(path: Path, destination: Path, commit: str, expected: str):
     return manifest
 
 
+def dependency_lock(raw: str, *, required=('onnxruntime','tokenizers','numpy')) -> dict[str, tuple[str, str]]:
+    """Accept only one exact version and wheel hash per distribution, never URLs."""
+    result = {}
+    for line in raw.splitlines():
+        line = line.strip()
+        if not line or line.startswith('#'):
+            continue
+        match = re.fullmatch(r'([A-Za-z0-9][A-Za-z0-9_.-]*)==([A-Za-z0-9_.+!]+) --hash=sha256:([a-f0-9]{64})', line)
+        if not match:
+            raise Rejected('knowledge_lock_invalid')
+        name = re.sub(r'[-_.]+', '-', match[1]).lower()
+        if name in result or len(result) >= 128:
+            raise Rejected('knowledge_lock_invalid')
+        result[name] = (match[2], match[3])
+    if not set(required) <= result.keys():
+        raise Rejected('knowledge_lock_incomplete')
+    return result
+
+
+def inspect_dependency_bundle(path: Path, commit: str, expected: str) -> dict:
+    """A separately reviewed knowledge sidecar, bound to an application commit."""
+    if (not isinstance(commit, str) or not re.fullmatch(r'[a-f0-9]{40}', commit)
+            or not isinstance(expected, str) or not SHA256.fullmatch(expected)
+            or path.is_symlink() or not path.is_file() or path.stat().st_size > LIMIT
+            or digest(path) != expected):
+        raise Rejected('knowledge_bundle_digest_mismatch')
+    try:
+        with zipfile.ZipFile(path) as archive:
+            entries = archive.infolist(); names = [r.filename for r in entries]
+            if (len(names) > 130 or len(names) != len(set(names))
+                    or sum(r.file_size for r in entries) > EXPANDED_LIMIT
+                    or not {'manifest.json', 'requirements.lock'} <= set(names)):
+                raise Rejected('knowledge_bundle_structure_invalid')
+            for row in entries:
+                if (not (row.filename in ('manifest.json', 'requirements.lock') or
+                         re.fullmatch(r'wheelhouse/[A-Za-z0-9_.+-]+\.whl', row.filename))
+                        or stat.S_IFMT(row.external_attr >> 16) not in (0, stat.S_IFREG)
+                        or row.flag_bits & 1):
+                    raise Rejected('knowledge_bundle_structure_invalid')
+            if archive.getinfo('manifest.json').file_size > 65536 or archive.getinfo('requirements.lock').file_size > 32768:
+                raise Rejected('knowledge_bundle_structure_invalid')
+            manifest = json.loads(archive.read('manifest.json'))
+            if (set(manifest) != {'version','profile','commit','target','roots','files'}
+                    or type(manifest['version']) is not int or manifest['version'] != 1
+                    or manifest['profile'] != 'knowledge' or manifest['commit'] != commit
+                    or manifest['target'] != TARGET or not isinstance(manifest['files'], dict)
+                    or set(manifest['files']) != set(names)-{'manifest.json'}):
+                raise Rejected('knowledge_bundle_manifest_mismatch')
+            for name, value in manifest['files'].items():
+                if not isinstance(value, str) or not SHA256.fullmatch(value) or hashlib.sha256(archive.read(name)).hexdigest() != value:
+                    raise Rejected('knowledge_bundle_member_digest_mismatch')
+            lock = dependency_lock(archive.read('requirements.lock').decode('utf-8'))
+            if manifest['roots'] != {k: lock[k][0] for k in ('onnxruntime','tokenizers','numpy')}:
+                raise Rejected('knowledge_dependency_contract_mismatch')
+            wheels = {}
+            for name in set(names)-{'manifest.json','requirements.lock'}:
+                parts = name.removeprefix('wheelhouse/').split('-')
+                key = re.sub(r'[-_.]+', '-', parts[0]).lower()
+                if (len(parts) < 5 or key in wheels or key not in lock
+                        or parts[1] != lock[key][0] or manifest['files'][name] != lock[key][1]):
+                    raise Rejected('knowledge_wheel_not_locked')
+                wheels[key] = name
+            if set(wheels) != set(lock):
+                raise Rejected('knowledge_wheel_missing')
+            return manifest
+    except (ValueError, KeyError, TypeError, UnicodeError, zipfile.BadZipFile, RuntimeError) as exc:
+        raise Rejected('knowledge_bundle_structure_invalid') from exc
+
+
+def unpack_dependency_bundle(path: Path, destination: Path, commit: str, expected: str):
+    manifest = inspect_dependency_bundle(path, commit, expected)
+    destination.mkdir(mode=0o700)
+    with zipfile.ZipFile(path) as archive:
+        for name in manifest['files']:
+            target = destination/name
+            target.parent.mkdir(exist_ok=True)
+            with target.open('xb') as stream:
+                stream.write(archive.read(name))
+    return manifest
+
+
 def download(url: str, target: Path, expected: str, *, fallback_url: str | None = None,
              size: int | None = None, progress=None, sleep=time.sleep,
              opener=urllib.request.urlopen, clock=time.monotonic):

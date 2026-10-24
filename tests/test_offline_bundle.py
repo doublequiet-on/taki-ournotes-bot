@@ -15,6 +15,61 @@ from deploy import offline_bundle as b
 COMMIT = "a" * 40
 
 
+class KnowledgeBundleTests(unittest.TestCase):
+    def setUp(self):
+        self.temp=tempfile.TemporaryDirectory();self.addCleanup(self.temp.cleanup)
+        self.root=Path(self.temp.name)
+
+    def bundle(self, change=None):
+        roots={'onnxruntime':'1.23.2','tokenizers':'0.22.2','numpy':'2.2.6'}
+        files={f'wheelhouse/{name}-{version}-py3-none-any.whl':name.encode() for name,version in roots.items()}
+        lines=[name+'=='+version+' --hash=sha256:'+hashlib.sha256(name.encode()).hexdigest() for name,version in roots.items()]
+        files['requirements.lock']=('\n'.join(lines)+'\n').encode()
+        m={'version':1,'profile':'knowledge','commit':COMMIT,'target':b.TARGET,'roots':roots,
+           'files':{n:hashlib.sha256(v).hexdigest() for n,v in files.items()}}
+        if change:change(m,files)
+        p=self.root/'knowledge.zip'
+        with zipfile.ZipFile(p,'w') as z:
+            for n,v in files.items():z.writestr(n,v)
+            z.writestr('manifest.json',json.dumps(m))
+        return p,b.digest(p)
+
+    def test_commit_bound_payload_is_complete_and_extracts_without_overwrite(self):
+        p,h=self.bundle();out=self.root/'payload'
+        m=b.unpack_dependency_bundle(p,out,COMMIT,h)
+        self.assertEqual(set(m['roots']),{'onnxruntime','tokenizers','numpy'})
+        self.assertEqual(len(list((out/'wheelhouse').glob('*.whl'))),3)
+        with self.assertRaises(FileExistsError):b.unpack_dependency_bundle(p,out,COMMIT,h)
+
+    def test_wrong_commit_digest_and_missing_wheel_reject_before_extract(self):
+        p,h=self.bundle()
+        for commit,digest in [('b'*40,h),(COMMIT,'f'*64)]:
+            with self.assertRaises(b.Rejected):b.unpack_dependency_bundle(p,self.root/'out',commit,digest)
+        self.assertFalse((self.root/'out').exists())
+        def missing(m,files):
+            key=next(n for n in files if n.startswith('wheelhouse/'));files.pop(key);m['files'].pop(key)
+        p,h=self.bundle(missing)
+        with self.assertRaisesRegex(b.Rejected,'knowledge_wheel_missing'):b.inspect_dependency_bundle(p,COMMIT,h)
+
+    def test_extra_file_traversal_or_unlocked_wheel_rejected(self):
+        for name in ('../outside','.env','wheelhouse/extra-1-py3-none-any.whl'):
+            def extra(m,files):files[name]=b'bad';m['files'][name]=hashlib.sha256(b'bad').hexdigest()
+            p,h=self.bundle(extra)
+            with self.assertRaises(b.Rejected):b.inspect_dependency_bundle(p,COMMIT,h)
+
+    def test_member_hash_and_root_version_must_match_lock(self):
+        def corrupt(m,files):files['requirements.lock']+=b'# changed\n'
+        p,h=self.bundle(corrupt)
+        with self.assertRaisesRegex(b.Rejected,'member_digest'):b.inspect_dependency_bundle(p,COMMIT,h)
+        p,h=self.bundle(lambda m,f:m['roots'].update(numpy='99'))
+        with self.assertRaisesRegex(b.Rejected,'contract_mismatch'):b.inspect_dependency_bundle(p,COMMIT,h)
+
+    def test_lock_cannot_download_unpinned_or_alternate_sources(self):
+        for text in ('numpy>=2','--index-url https://example.invalid',
+                     'numpy==2 --hash=sha256:'+'f'*64+'\nnumpy==2 --hash=sha256:'+'f'*64):
+            with self.assertRaises(b.Rejected):b.dependency_lock(text)
+
+
 class Response(io.BytesIO):
     def __init__(self, data, *, status=200, headers=None, fail_after=None, fault=TimeoutError):
         super().__init__(data)
