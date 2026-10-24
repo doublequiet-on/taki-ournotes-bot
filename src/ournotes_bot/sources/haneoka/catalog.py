@@ -1,8 +1,8 @@
 # L3
 # Input: Independent cache path, TTL and anonymous release-pinned Catalog responses.
-# Output: Validated JP snapshot, verified intl text, and independent persistence facts.
+# Output: Validated JP snapshot, verified intl text, persistence facts and same-release Meta inputs.
 # Pos: Sources / Haneoka main Catalog orchestration; see ../L2-2.md.
-# Effects/Dependencies: Bounded GET, atomic independent cache; never retries another source.
+# Effects/Dependencies: Scoped bounded GET, atomic independent cache; never retries another source.
 
 from __future__ import annotations
 
@@ -21,7 +21,7 @@ from ...data import DataError
 from .catalog_records import convert, integer
 from .info_catalog import convert_info
 from ..json_validation import decode_json
-from .transport import ORIGIN, public_get
+from .transport import ORIGIN, public_get, public_http_scope
 from .identity import resource_identity as identity, check_headers
 
 SOURCE = ORIGIN + "/api/v1/servers/jp/"
@@ -130,6 +130,7 @@ class CatalogRepository:
         finally:
             temporary.unlink(missing_ok=True)
 
+    @public_http_scope()
     def _collect(self):
         started, total = time.monotonic(), 0
         budget_lock = threading.Lock()
@@ -157,6 +158,7 @@ class CatalogRepository:
             if catalog.get("server") != server or catalog.get("sourceId") != ident["sourceId"]:
                 raise ValueError("Catalog identity mismatch")
 
+            @public_http_scope()
             def collection(resource):
                 count = integer(catalog["resources"][resource]["count"], 1, 5000)
                 rows = get(server, resource, ident)
@@ -205,6 +207,7 @@ class CatalogRepository:
             info = convert_info(self.saved["documents"], self.saved["identities"]["jp"], metadata["cached_at"])
             return records, metadata, info
 
+    @public_http_scope()
     def probe_identities(self):
         with self.lock:
             current={}
@@ -214,6 +217,18 @@ class CatalogRepository:
                 check_headers(headers,current[server])
             return current
 
+    def metrics_documents(self, server, current):
+        """Capture already-published source documents for an independently checked identity.
+
+        Published snapshots are replaced, never mutated. Capture references without
+        waiting for a background refresh; the Meta consumer revalidates its contract.
+        """
+        for snapshot in (self._query_snapshot, self.saved):
+            if snapshot is not None and snapshot['identities'][server] == current:
+                return snapshot['documents'][server]
+        return None
+
+    @public_http_scope()
     def current_with_info(self):
         """Request-local current data: successful identity check, never stale fallback."""
         with self.lock:

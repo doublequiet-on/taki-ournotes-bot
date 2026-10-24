@@ -271,10 +271,14 @@ class SongRepository:
         self.cache_state = "unknown"
         self.last_successful_sync_at: str | None = None
         from .sources.haneoka.song_metrics import SongMetricsRepository
-        self.song_metrics = SongMetricsRepository()
+        self.song_metrics = SongMetricsRepository(documents=self._metrics_documents)
         self.song_traits = SongTraitsRepository(cache_file.with_name("haneoka-song-traits-jp.json"))
         from .sources.moenotes_events import EventCutoffRepository
         self.event_cutoffs = EventCutoffRepository(cache_file.parent / "moenotes-cutoff-v1")
+
+    def _metrics_documents(self, server, identity):
+        source = self._catalog_repository
+        return source.metrics_documents(server, identity) if source is not None else None
 
     def refresh_song_traits(self) -> None:
         """Run off the QQ event loop; source failure cannot invalidate the main catalog."""
