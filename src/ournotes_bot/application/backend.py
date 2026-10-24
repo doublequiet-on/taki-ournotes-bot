@@ -84,6 +84,7 @@ class Backend:
         self.closing = False
         self.admission = asyncio.Lock()
         self.runtime_tasks = None
+        self.knowledge = None
         self.notices = None
         self.data_owner = None
 
@@ -450,6 +451,7 @@ class Backend:
         self.conversations.clear()
         self.contexts.clear()
         if self.runtime_tasks: await self.runtime_tasks.close()
+        if self.knowledge is not None: self.knowledge.close()
         await self.operations.close()
         self.ledger.close()
         self.diagnostics.close()

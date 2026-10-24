@@ -31,6 +31,8 @@ CLI 模式与组合、配置根/数据路径、包身份；为多个系统域提
 
 ## Internal Subsystems
 
+- [application/knowledge_service.py](ournotes_bot/application/knowledge_service.py)：独占知识目录与状态库，先提交停用记录，再发布候选索引；排队／生成／交付消费者通过完整证据租约重验。后端组合与 RuntimeTasks 接入独立观察和重建任务；[knowledge_cli.py](ournotes_bot/application/knowledge_cli.py) 提供脱离游戏初始化的校验、导入和检索入口。格式和内容交付见 [包 2B](../docs/QUERY_CHAT_PACKAGE2B.md)。
+
 - [application/model_execution.py](ournotes_bot/application/model_execution.py)：独立模型队列、每次尝试的当前许可与绝对执行期限；不拥有模型事实或加权账务。
 - [application/conversation_state.py](ournotes_bot/application/conversation_state.py)：会话／话题、成功消息锚点及固定页面；与 ContextStore 共用绝对期限。见 [查询聊天包 1](../docs/QUERY_CHAT_PACKAGE1.md)。
 

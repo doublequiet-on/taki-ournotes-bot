@@ -12,13 +12,18 @@ dependencies = ["qq-botpy==1.2.1", "Pillow>=11,<13", "aiohttp>=3.9,<4"]
 
 [project.scripts]
 ournotes-bot = "ournotes_bot.main:main"
+taki-knowledge = "ournotes_bot.application.knowledge_cli:main"
+
+[project.optional-dependencies]
+knowledge = ["onnxruntime==1.23.2", "tokenizers==0.22.2", "numpy==2.2.6"]
 
 [tool.setuptools.packages.find]
 where = ["src"]
 
 [tool.setuptools.data-files]
 "share/ournotes-qq-bot" = ["query_aliases.json", "THIRD_PARTY.md"]
-"share/ournotes-qq-bot/docs" = ["docs/IMAGE_OUTPUT.md", "docs/CUTOFF_HISTORY.md", "docs/QUERY_UPGRADE_V1.md", "docs/META_OPEN.md", "docs/HANEOKA_CATALOG.md", "docs/HANEOKA_CUTOFFS.md", "docs/HANEOKA_META_CONTRACT.md", "docs/HANEOKA_RETIREMENT.md", "docs/HANEOKA_RESEARCH.md", "docs/HANEOKA_UNIFIED.md"]
+"share/ournotes-qq-bot/docs/knowledge" = ["docs/knowledge/knowledge-draft.md"]
+"share/ournotes-qq-bot/docs" = ["docs/IMAGE_OUTPUT.md", "docs/CUTOFF_HISTORY.md", "docs/QUERY_UPGRADE_V1.md", "docs/META_OPEN.md", "docs/HANEOKA_CATALOG.md", "docs/HANEOKA_CUTOFFS.md", "docs/HANEOKA_META_CONTRACT.md", "docs/HANEOKA_RETIREMENT.md", "docs/HANEOKA_RESEARCH.md", "docs/HANEOKA_UNIFIED.md", "docs/QUERY_CHAT_PACKAGE2B.md"]
 "share/ournotes-qq-bot/deploy" = ["deploy/query-upgrade-v1.env.example"]
 "share/ournotes-qq-bot/docs/koishi" = ["docs/KOISHI_BACKEND_V1.md", "docs/KOISHI_MIGRATION_M4.md", "docs/koishi/CONSOLE_V1.md", "docs/koishi/OPERATIONS.md"]
 

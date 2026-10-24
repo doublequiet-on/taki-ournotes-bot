@@ -111,6 +111,8 @@ class Settings:
     moenotes_open_history_file: Path | None = None
     chart_source: str = "moenotes"
     data_source: str = "yume"
+    knowledge_dir: Path | None = None
+    knowledge_model_dir: Path | None = None
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -152,8 +154,12 @@ class Settings:
         open_history = Path(configured_open_history) if configured_open_history else raw_cache.with_name("moenotes-open-history-v2.sqlite3")
         if configured_open_history and not open_history.is_absolute():
             open_history = CONFIG_ROOT / open_history
+        configured_knowledge = os.getenv('OURNOTES_KNOWLEDGE_DIR', '').strip() or 'knowledge/on'
+        configured_embedding = os.getenv('OURNOTES_KNOWLEDGE_MODEL_DIR', '').strip()
         return cls(
             app_id=os.getenv("QQ_APP_ID", "").strip(),
+            knowledge_dir=(CONFIG_ROOT / configured_knowledge).resolve(),
+            knowledge_model_dir=(CONFIG_ROOT / configured_embedding).resolve() if configured_embedding else None,
             app_secret=os.getenv("QQ_APP_SECRET", "").strip(),
             data_base="https://bdon.yatta.moe",
             cache_file=raw_cache,

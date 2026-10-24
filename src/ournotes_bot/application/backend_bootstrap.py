@@ -17,6 +17,8 @@ from .notice_gateway import NoticeGateway
 from ..ai_client import AIClient
 from ..config import CONFIG_ROOT
 from .backend_protocol import ProtocolError, require
+from .knowledge_service import KnowledgeService
+from ..sources.knowledge_embeddings import LocalBgeEncoder
 
 
 def build_backend(args, settings):
@@ -35,7 +37,10 @@ def build_backend(args, settings):
         backend = Backend(repository, AIQueryParser(settings), settings, instance_id=args.instance_id,
                           app_id=args.app_id, ledger_path=Path(args.state_dir)/'deliveries-v1.sqlite3',
                           diagnostics_enabled=diagnostics=='1')
-        backend.runtime_tasks = RuntimeTasks(repository, settings)
+        backend.knowledge = KnowledgeService(settings.knowledge_dir or CONFIG_ROOT/'knowledge'/'on',
+            Path(args.state_dir)/'knowledge-v1.sqlite3', LocalBgeEncoder(settings.knowledge_model_dir))
+        backend.knowledge.observe()
+        backend.runtime_tasks = RuntimeTasks(repository, settings, backend.knowledge)
         SourceOperations(backend).register()
         RuntimeOperations(backend).register()
         if settings.update_notices:
@@ -47,6 +52,7 @@ def build_backend(args, settings):
         return create_app(backend, token, repository.load)
     except BaseException:
         if backend is not None:
+            if backend.knowledge is not None: backend.knowledge.close()
             backend.ledger.close()
             backend.diagnostics.close()
             if backend.operations.db is not None: backend.operations.db.close()

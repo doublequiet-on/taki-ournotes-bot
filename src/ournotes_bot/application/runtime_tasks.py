@@ -20,8 +20,9 @@ async def finish_thread(function):
 
 
 class RuntimeTasks:
-    def __init__(self, repository, settings):
+    def __init__(self, repository, settings, knowledge=None):
         self.repository = repository
+        self.knowledge = knowledge
         self.tasks = []
         self.named_tasks = {}
         self.closing = False
@@ -42,7 +43,7 @@ class RuntimeTasks:
             try:
                 result=function()
                 code=result.get('code') if isinstance(result,dict) else None
-                success=code in (None,'fresh','cached','synchronized','upstream_unchanged')
+                success=code in (None,'fresh','cached','synchronized','upstream_unchanged','ready','empty')
                 with self.observation_lock:
                     current=self.observations[name]
                     current.update(running=False,last_finished_at=time.time(),last_error_code=None if success else code,
@@ -95,6 +96,12 @@ class RuntimeTasks:
         log('Catalog refresh state=%s songs=%d', snapshot.cache_state, len(snapshot.songs))
         return {'code':snapshot.cache_state}
 
+    def watch_knowledge(self):
+        return self.knowledge.watch()
+
+    def refresh_knowledge(self):
+        return self.knowledge.refresh()
+
     def start(self):
         return self.recover()
 
@@ -102,6 +109,9 @@ class RuntimeTasks:
         if self.closing:raise RuntimeError('runtime_closing')
         restored,unchanged=[],[]
         definitions={'catalog':(self.refresh_catalog,1800,True),'traits':(self.repository.refresh_song_traits,300,False)}
+        if self.knowledge is not None:
+            definitions.update(knowledge_watch=(self.watch_knowledge, 1, False),
+                               knowledge_refresh=(self.refresh_knowledge, 30, False))
         for name,(function,interval,aligned) in definitions.items():
             old=self.named_tasks.get(name)
             if old is not None and not old.done():

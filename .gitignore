@@ -28,6 +28,7 @@ data/*
 /QQ/
 /napcat-data/
 /runtime/
+/knowledge/on/.knowledge.lock
 /artifacts/output-gallery*/
 *qrcode*.png
 *login-qr*.png

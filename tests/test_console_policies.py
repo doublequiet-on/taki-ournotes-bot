@@ -114,6 +114,57 @@ class NaturalPolicyTests(Fixture, unittest.IsolatedAsyncioTestCase):
 
 
 class RuntimeRecoveryTests(unittest.IsolatedAsyncioTestCase):
+    async def test_knowledge_watch_runs_while_candidate_build_is_blocked(self):
+        import threading
+        from types import SimpleNamespace
+        from ournotes_bot.application.runtime_tasks import RuntimeTasks
+        started, release, observed_twice = threading.Event(), threading.Event(), threading.Event()
+        watches = []
+        def build():
+            started.set(); release.wait(10)
+            return {'code': 'empty'}
+        def watch():
+            watches.append(True)
+            if len(watches) >= 2: observed_twice.set()
+            return {'code': 'empty'}
+        repository = SimpleNamespace(refresh_song_traits=lambda: None)
+        owner = RuntimeTasks(repository, SimpleNamespace(cutoff_sampling_enabled=False),
+                             SimpleNamespace(refresh=build, watch=watch))
+        try:
+            owner.start()
+            self.assertTrue(await asyncio.to_thread(started.wait, 2))
+            self.assertTrue(await asyncio.to_thread(observed_twice.wait, 3))
+            observation = owner.observation_snapshot()['refreshes']['watch_knowledge']
+            self.assertEqual(observation['consecutive_failures'], 0)
+        finally:
+            release.set()
+            await owner.close()
+
+    async def test_backend_bootstrap_owns_knowledge_and_releases_it(self):
+        from types import SimpleNamespace
+        from ournotes_bot.application.backend_bootstrap import build_backend
+        from ournotes_bot.application.knowledge_service import KnowledgeService
+        from ournotes_bot.sources.knowledge_embeddings import LocalBgeEncoder
+        from ournotes_bot.config import Settings
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            settings = Settings('', '', 'https://fixture.invalid', root/'data/cache.json', 6,
+                                update_notices=False, knowledge_dir=root/'knowledge')
+            args = SimpleNamespace(port=8765, instance_id='fixture', app_id='fixture', state_dir=str(root/'state'))
+            with patch.dict(os.environ, {'OURNOTES_BACKEND_TOKEN': 'x'*32, 'OURNOTES_RUNTIME_DATA_DIR': str(root/'data')}), \
+                 patch('ournotes_bot.application.backend_bootstrap.create_app', side_effect=lambda backend, *args: backend):
+                backend = build_backend(args, settings)
+            try:
+                self.assertEqual(backend.knowledge.status()['code'], 'empty')
+                self.assertIs(backend.runtime_tasks.knowledge, backend.knowledge)
+            finally:
+                await backend.close()
+            replacement = KnowledgeService(root/'knowledge', root/'state/knowledge-v1.sqlite3', LocalBgeEncoder(None))
+            try:
+                self.assertEqual(replacement.refresh()['code'], 'empty')
+            finally:
+                replacement.close()
+
     async def test_recovery_replaces_only_exited_task_and_blocks_shutdown(self):
         from types import SimpleNamespace
         from ournotes_bot.application.runtime_tasks import RuntimeTasks

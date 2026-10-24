@@ -1,5 +1,7 @@
 # Taki 开发导航
 
+知识库格式、批准／撤审、混合检索、本地模型和受控导入见 [包 2B](QUERY_CHAT_PACKAGE2B.md)；内容与模型生成接线分阶段验收。
+
 确定性歌曲指标（v3 包 2A）的字段、来源、图片和固定分页见 [包 2A](QUERY_CHAT_PACKAGE2A.md)。
 
 查询聊天 v3 的共同协议、执行许可、独立模型调度和短期上下文见 [包 1](QUERY_CHAT_PACKAGE1.md)。后端载荷现为 2.0；M2–M4 文档保留阶段历史，变更部分以该文档及源码为准。目标回归为 `test_continuation.py`、`test_stage5_limits.py`、`test_reply_pipeline.py`、`test_console_admin.py`、`test_console_policies.py`、`test_query_refactor.py`；网关运行现有三项离线探针。
