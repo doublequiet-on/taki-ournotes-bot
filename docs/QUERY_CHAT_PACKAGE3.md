@@ -1,0 +1,98 @@
+# 查询聊天 v3：包 3 模型路由与用量账
+
+包 3 从包 2B `524c588749254fe1f3dba5ccc5c6ebb1206b720f` 继续。实现位于 Python 业务后端；Koishi 只增加慢提示交付，继续拥有当前平台与群策略的许可。此文说明工程行为，不代表正式百科、真实 QQ 身份、模型账号或上线验收已经通过。
+
+## 入口与结果
+
+`Backend.prepare_command` → `ModelRuntime.prepare`：明确查询先按请求核实 Haneoka 当前 release，再运行既有本地解析和模板。翻页继续读固定展示快照；传统指令、旧 Python SDK 入口、后台刷新和公告的旧 `AIClient.request()` 合同保留。新版后端不会落回旧 JSON 路由／修复链，也不写旧 `ai-quota.json` 次数账。
+
+剩余 `/问` 在入场时固定模型配置、价格、受信用户身份与引用，进入包 1 的 5 执行／20 等待队列，每用户 1 执行／3 等待。等待最多 60 秒；执行总预算 30 秒，包括工具读取与第二次生成。AI 等待和 HTTP 不占 QueryGate；资料读取和绘图仍受它约束。一个入站消息最多开启一个 AI 编排；同批直接查询／本地查询仍保留顺序。
+
+手动注册的原生工具覆盖歌曲、谱面、成员卡、SNAP、字段短答、活动歌曲榜线、人物／活动／卡池／缩写／帮助／状态、歌曲指标、审核知识和已显示结果解释。模型只能给注册参数；本地 schema 与原句实体／条件双重校验。拒绝未知字段、任意 URL／路径／SQL／管理员动作、多工具调用、参数错误以及无依据的条件放宽。普通查询直接模板输出，不让模型重写。
+
+歌曲指标的同类“最短和最长”由一个工具返回两组，每个资源服只捕获一次快照。仍沿用包 0 核定合同及包 2A：歌曲级时长无需难度，谱面字段过滤／排序需明确难度；不在包 3 改动已经核定的难度缺省行为。难度不明的原 v3 产品描述与核定合同差异需在最终产品验收中确认。
+
+只有知识问答或明确要求解释时，才允许第二次生成。第二次不提供工具，不接受返回的工具调用。纯寒暄允许直接文本，其他零工具事实回答拒绝。生成最多 800 字，寒暄最多 300 字；程序维护统一中文人格。玩家纠错重新检索，不修改知识库。
+
+每次模型调用：验证上下文／审核依据 → 预留用户与群额度 → 获取新的执行许可 → 再查上下文／依据／许可期限 → 持久标记 started → HTTP。第二次完整重走，不复用第一次许可；无自动修复、重试、模型切换或数据源切换。当前许可绑定同一个账务 attempt ID。
+
+实际执行超过 8 秒才发一次“还在核实，请稍等。”，排队静默。提示使用原发送账本的 intent／ACK、同一个 QQDelivery 和消息序号，占一个普通回复名额；最终结果最多使用剩余四个名额，其余进入原继续发送游标。提示不发布对话锚点；提示发送期间网关继续轮询模型许可。上传、发送、ACK 保留各自预算，不计入模型 30 秒。
+
+## 知识、上下文与当前资料
+
+知识检索使用包 2B 的 `EvidenceLease`。生成前、第二次许可后、生成后、发送 intent 前和成功 ACK 发布上下文前均核对。撤审／删除的已捕获答案整份失效，旧索引失败不会恢复内容；已发生用量仍结算。已经发出的 QQ 请求无法撤回，晚 ACK 只记发送事实，不恢复失效上下文。
+
+上下文保存已确认显示文本、最多 20 条短期角色消息、最多 8,000 字历史及其证据依赖；明确解释普通查询时保留至多 6,000 字的已核验工具证据，后续解释复用证据，不把模型自己的上次回答当事实。与原每会话 20 个快照、16,000 字和全局 8 MiB 文字预算共同生效，证据和历史也计入内存体积。派生内容继承最早到期时间，绝不因新回复续期；重启不恢复。正文不进入用量账、配置、诊断或导出。
+
+`CatalogRepository.current_with_info` 成功核实 JP／intl release 后，可复用同版本的已验证内容；版本变化才读取完整新资料。核实失败返回不可用，不把缓存当当前答案；当前请求只更新独立内存视图，不改旧持久缓存、刷新状态或公告增量。新版结果的实体详情核对当前版本，变化时请重新查询；固定分页和 Meta 已捕获详情不重查。
+
+## 配置与启用条件
+
+后端读取 `OURNOTES_AI_PROFILE_FILE` 指向的管理员保护文件；新版查询密钥单独来自 `OURNOTES_QUERY_AI_API_KEY`。旧 `AI_API_KEY`／`AI_MODEL`／`AI_BASE_URL` 继续服务旧公告等调用。密钥不会进入 profile 文件、`repr`、状态或导出。文件须原子替换且修改 `config_version`；已受理请求继续用自己的快照。版本与文件摘要在新账本登记，跨重启不能用同一版本替换内容。
+
+配置结构如下。占位符必须由实际能力证据、登记价格及可信身份绑定替换；此示例不提供可上线的报价或平台证明。
+
+```json
+{
+  "schema": "taki-model-config/1",
+  "instance_id": "your-instance",
+  "app_id": "your-app",
+  "profile": {
+    "provider": "deepseek",
+    "model": "verified-model-name",
+    "wire_profile": "deepseek-chat-v1",
+    "config_version": "config-1",
+    "capability_evidence": "admin-acceptance/model-probe-id",
+    "price": {
+      "currency": "USD",
+      "input_rate": "REPLACE_WITH_INTEGER_MICRO_CURRENCY_PER_MILLION",
+      "cached_rate": "REPLACE_WITH_REGISTERED_RATE",
+      "output_rate": "REPLACE_WITH_REGISTERED_RATE",
+      "reference_rate": "REPLACE_WITH_FIXED_REFERENCE_RATE",
+      "pricing_version": "registered-price-1",
+      "fetched_at": "REPLACE_WITH_UNIX_TIMESTAMP",
+      "estimated": true,
+      "source": "registered-default"
+    }
+  },
+  "bindings": [
+    {"kind": "group", "conversation_id": "trusted-group-id", "user_id": "trusted-member-id",
+     "subject": "verified-player-1", "evidence_ref": "admin-acceptance/unified-identity-proof"},
+    {"kind": "c2c", "conversation_id": "trusted-private-id", "user_id": "trusted-private-id",
+     "subject": "verified-player-1", "evidence_ref": "admin-acceptance/unified-identity-proof"}
+  ]
+}
+```
+
+同一个受信 subject 才能共享群／私聊额度。不同群的绑定也须明确登记。不从昵称、头像或裸 ID 推断同人；没有绑定时返回 `identity_unverified`，不会悄悄改成分场景用户额度。配置中的证据引用由管理员提供，结构校验不等于平台实测已经通过。
+
+目前 wire profile 为 `deepseek-chat-v1`、`openai-chat-v1`、`openrouter-chat-v1`，端点分别固定在官方 HTTPS 域名；不接受玩家或配置中的自定义 URL，也不跟随重定向。仅接文本 Chat Completions；不支持的 Responses-only／DeepSeek thinking 工具链须另实现适配，不能靠改模型名声称支持。没有 profile／密钥／能力证明／价格时不启动 AI。
+
+可选工程默认：`max_input_tokens=32768`、`max_output_tokens=768`（允许 64–1536）、`user_daily_limit=100000`、`group_daily_limit=1000000`。这些是实现默认，不是用户选定的额度。输入按文本 wire 序列化 UTF-8 大小加 framing 余量上界检查，并预留该上界及最大输出；实际能力验收须覆盖所选模型的分词与输出上限。每可信用户 10 秒最多进入 3 个 AI 请求；第二次生成不算新请求。`parallel_control` 默认 false，仅已证实支持的 OpenAI／OpenRouter 组合可设 true；`cache_usage=true`、`reasoning_usage=false` 按真实响应能力登记，不能把缺失计数填为零。
+
+OpenRouter 配置启用后，后台从官方 models API 刷新本模型价格；失败或收费维度不适用时保留登记的估算默认价。其他 provider 使用登记默认价，不从 OpenRouter 或第三方网站借价。币种及参考单位固定于账本，换成不兼容单位会拒绝新预留，不能混算或自动猜汇率。配置页面和主动能力测试属于包 4；本包不在页面打开时发付费探测。
+
+原生协议和用量字段依据：[OpenAI Chat Completions](https://developers.openai.com/api/reference/resources/chat/subresources/completions/methods/create)、[DeepSeek Tool Calls](https://api-docs.deepseek.com/guides/tool_calls/)、[DeepSeek completion](https://api-docs.deepseek.com/api/create-chat-completion/)、[OpenRouter models](https://openrouter.ai/docs/api/api-reference/models/list-all-models-and-their-properties)。官方文档说明协议，不能证明当前账号或所选模型实际支持。
+
+## 新账本
+
+`usage-v1.sqlite3` 独立于旧次数账、发送事实账和公告账；Python 单进程独占写。保存 request／attempt、HMAC 用户／群键、provider／model／配置版本、价格快照、预留、started、用量、精确费用、错误分类及时间；不保存原始 OpenID、问题、回答、工具参数或密钥。稳定盐仅存该账本私有元数据。
+
+价格单位为整数“微货币／百万 Token”，额度为固定参考输入价格的等价 Token。设非缓存输入、缓存输入、输出数量为 `i,c,o`，对应单价为 `pi,pc,po`，参考单价为 `pr`：
+
+- 加权额度：`(i*pi + c*pc + o*po) / pr`。
+- 参考成本（微货币）：`(i*pi + c*pc + o*po) / 1000000`。
+
+两者都用有理数保存，不用浮点累积。缓存包含在总输入中，reasoning 包含在总输出中，不重复相加。`total_tokens` 单独存在时不猜分项价格；缺失部分记 partial／unknown，只结算能确认的分项。失败、参数错误、撤权、超时、QQ 失败都不会抹掉已确认用量。
+
+原子检查用户与群的当日已用量＋在途预留，再创建 attempt。未 started 的失败释放预留；收到明确响应后按真实可确认用量结算、释放余额。北京时间日界线以实际 started 时刻归属，跨午夜重新检查新日预算。价格刷新不重算历史 attempt。
+
+重启仅释放未 started 的预留；started 未结算项保留至开始后 5 分钟，再标为未知、释放预留。不会重放 HTTP。晚到可信用量按同 attempt 幂等补结，可导致余额为负，之后停止新 AI。已结算事实冲突可诊断，不能覆盖成另一组计数。
+
+管理员现有 overview 的 `service` 提供 `native_model` 和 `weighted_usage` 只读状态，包括 unknown／partial、估算价、账务不完整与参考成本；玩家不显示 Token、额度数字或费用。未知用量可能低估消耗，参考成本不是供应商账单或硬费用上限。
+
+## 验证与后续门槛
+
+既有测试文件扩展覆盖原生 HTTP（隔离 loopback 服务）、权限与额度、日界线、失败用量、撤审及晚 ACK、超时与晚到用量、固定配置、同工具分组和正文隐私。Koishi 禁网探针验证实际安装适配器的发送序号及慢提示并行许可轮询。完整回归、架构与 wheel／sdist 安装记录绑定交付提交，不用隔离夹具声称真实资源／模型／QQ 通过。
+
+上线仍需：真实模型工具与 usage 能力、真实跨场景身份映射、正式审核百科、真实回复引用／按钮／QQ 客户端送达，以及包 4–5 的控制台和整体验收。此包不编写百科正文，不合并或部署。

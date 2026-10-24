@@ -425,6 +425,25 @@ class SongRepository:
                                self.cache_state, self.last_successful_sync_at,
                                self.characters, self.gachas, self.activities)
 
+    def current_query_view(self):
+        """A verified per-request view; does not switch legacy refresh/fallback policy."""
+        from copy import copy
+        from .sources.haneoka.catalog import CatalogRepository
+        if self.data_source != 'haneoka':
+            raise DataError('Current natural queries require the verified Haneoka catalog adapter')
+        with self._catalog_refresh_lock:
+            if self._catalog_repository is None:
+                self._catalog_repository = CatalogRepository(self.cache_file.with_name('haneoka-catalog-jp-v1.json'), self.cache_ttl_hours)
+            records, metadata, info = self._catalog_repository.current_with_info()
+            view = copy(self)
+            view.songs, view.cards, view.support_cards = records
+            view.metadata, view.cache_state = metadata, 'fresh'
+            view.characters, view.gachas, view.activities = info.characters, info.gachas, info.activities
+            view._catalog_repository = copy(self._catalog_repository)
+            view._catalog_repository.saved = self._catalog_repository._query_snapshot
+            view._detail_cards, view._detail_support_cards = {}, {}
+            return view
+
     def check_catalog_upstream(self):
         with self._catalog_refresh_lock:
             if self._catalog_repository is None:

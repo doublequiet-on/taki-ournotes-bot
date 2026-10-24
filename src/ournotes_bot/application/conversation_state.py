@@ -2,8 +2,9 @@
 # Effects: Bounded volatile memory; no repository reads, rendering or platform IO.
 from __future__ import annotations
 import time
+import json
 from collections import OrderedDict
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, replace, asdict
 
 from ..query.continuation import ContextKey, QueryContext
 
@@ -22,6 +23,9 @@ class Anchor:
 class ReadOnlyContext:
     text: str
     origin: str = 'direct'
+    evidence: tuple = ()
+    history: tuple = ()
+    facts: str = ''
 
 
 @dataclass(frozen=True)
@@ -37,16 +41,23 @@ class DisplaySnapshot:
 
     @property
     def retained_bytes(self):
-        return sum(len(p.image or b'') + len(p.text.encode()) for p in self.pages)
+        return sum(len(p.image or b'') for p in self.pages) + self.text_bytes
+
+    @property
+    def text_bytes(self):
+        return sum(len(p.text.encode()) + (len(json.dumps(asdict(p.context),ensure_ascii=False).encode())
+                   if isinstance(p.context,ReadOnlyContext) else 0)
+                   + len(json.dumps([asdict(lease) for lease in p.evidence],ensure_ascii=False).encode()) for p in self.pages)
 
 
 class Conversations:
-    def __init__(self, contexts, *, clock=time.monotonic, capacity=1024, byte_capacity=128_000_000):
+    def __init__(self, contexts, *, clock=time.monotonic, capacity=1024, byte_capacity=128_000_000, valid_evidence=lambda leases: not leases):
         self.contexts, self.clock = contexts, clock
         self.capacity, self.byte_capacity = capacity, byte_capacity
         self.snapshots = OrderedDict()
         self.anchors = OrderedDict()
         self.recent = OrderedDict()
+        self.valid_evidence = valid_evidence
 
     @staticmethod
     def scope(request):
@@ -96,14 +107,14 @@ class Conversations:
         # Dialogue text has a per-conversation budget. Captured business display
         # pages use the global snapshot byte budget, preserving complete lists.
         def dialogue_chars(items):
-            return sum(len(p.context.text) for _,s in items for p in s.pages
+            return sum(len(p.context.text)+len(p.context.facts)+sum(len(t) for _,t in p.context.history) for _,s in items for p in s.pages
                        if isinstance(p.context, ReadOnlyContext))
         while scoped and (len(scoped) > 20 or dialogue_chars(scoped) > 16000):
             key,_ = scoped.pop(0)
             self.snapshots.pop(key,None)
         while (len(self.snapshots) > self.capacity or
                sum(s.retained_bytes for s in self.snapshots.values()) > self.byte_capacity or
-               sum(len(p.text.encode()) for s in self.snapshots.values() for p in s.pages) > 8*1024*1024):
+               sum(s.text_bytes for s in self.snapshots.values()) > 8*1024*1024):
             self.snapshots.popitem(last=False)
         self.sweep()
         return self.snapshots.get(work.delivery)
@@ -115,6 +126,8 @@ class Conversations:
         if is_page:
             page = work.anchor.page + work.operation.value
         if snapshot is None or not 0 <= page < len(snapshot.pages):
+            return
+        if not self.valid_evidence(snapshot.pages[page].evidence):
             return
         if self.contexts.lineage(work.key) != snapshot.lineage:
             return
@@ -155,6 +168,8 @@ class Conversations:
         snapshot = self.snapshots.get(anchor.snapshot_id)
         index = anchor.page + offset
         if snapshot is None or not 0 <= index < len(snapshot.pages):
+            return None
+        if snapshot.pages[index].business_status=='processing_hint':
             return None
         return snapshot.pages[index]
 

@@ -27,6 +27,18 @@ FIXTURE = Path(__file__).parent / "fixtures/haneoka_catalog.json"
 
 
 class CatalogTests(unittest.TestCase):
+    def test_natural_current_view_checks_release_and_never_falls_back(self):
+        self.repo.load(refresh=True)
+        before=copy.deepcopy(self.repo.saved)
+        self.repo.fetch=Mock(side_effect=self.probe_responses())
+        with patch.object(self.repo,'_collect',side_effect=AssertionError('unchanged release redownload')):
+            records,metadata,info=self.repo.current_with_info()
+        self.assertTrue(records[0]);self.assertEqual(self.repo.fetch.call_count,2)
+        self.assertEqual(self.repo.saved,before)
+        self.repo.fetch=Mock(side_effect=OSError('fixture network failure'))
+        with self.assertRaises(OSError): self.repo.current_with_info()
+        self.assertEqual(self.repo.saved,before)
+
     def probe_responses(self, versions=None):
         identities = versions or self.saved['identities']
         def respond(url,limit,timeout):
@@ -35,6 +47,20 @@ class CatalogTests(unittest.TestCase):
             ident=identities[server]
             return source.encoded(ident),{'x-haneoka-release-id':ident['releaseId'],'x-haneoka-source-id':ident['sourceId']}
         return respond
+
+    def test_current_new_release_does_not_consume_legacy_refresh_or_persistence(self):
+        self.repo.load(refresh=True)
+        before=copy.deepcopy(self.repo.saved);disk=self.path.read_bytes();state=self.repo.state
+        candidate=copy.deepcopy(before);candidate['identities']['jp']['releaseId']='r-'+'b'*20
+        candidate['identities']['jp']['sourceId']='new-query-source'
+        candidate['documents']['jp']['catalog']['sourceId']='new-query-source'
+        self.repo.fetch=Mock(side_effect=self.probe_responses(candidate['identities']))
+        with patch.object(self.repo,'_collect',return_value=candidate) as collect:
+            self.repo.current_with_info();self.repo.current_with_info()
+        collect.assert_called_once()
+        self.assertEqual(self.repo.saved,before)
+        self.assertEqual(self.path.read_bytes(),disk)
+        self.assertEqual(self.repo.state,state)
 
     def test_admin_sync_unchanged_checks_both_versions_without_full_download(self):
         self.repo.load(refresh=True)

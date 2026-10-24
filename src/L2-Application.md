@@ -10,7 +10,7 @@ CLI 模式与组合、配置根/数据路径、包身份；为多个系统域提
 
 ## Non-Responsibilities
 
-不拥有领域模型、查询结果、查询额度、渲染原语或发布通知。业务兼容入口仍归原域；`bot_info.py` 只被直接命令使用，归 Query。没有独立“Shared Boundary” L2 或通用服务容器。
+不拥有游戏领域事实、查询语义、渲染原语或发布通知。版本化模型用量账属于请求编排，旧查询次数账仍在 Natural。业务兼容入口仍归原域；`bot_info.py` 只被直接命令使用，归 Query。没有独立“Shared Boundary” L2 或通用服务容器。
 
 ## Inputs / Outputs
 
@@ -19,6 +19,7 @@ CLI 模式与组合、配置根/数据路径、包身份；为多个系统域提
 
 ## Core Contracts
 
+- [model_calls.py](ournotes_bot/domain/model_calls.py) 定义原生模型、可信用量与精确价格纯类型；新版调用由 `application/model_runtime.py` 编排，传输由 `sources/model_provider.py` 提供，详见[包 3](../docs/QUERY_CHAT_PACKAGE3.md)。
 - [main.py](ournotes_bot/main.py)：`build_parser/main`；命令入口由 [pyproject.toml](../pyproject.toml) 声明。
 - [config.py](ournotes_bot/config.py)：`Settings.from_env`、`CONFIG_ROOT/SOURCE_ROOT/runtime_data_dir`；配置项只以代码和 [.env.example](../.env.example) 为准。
 - [ai_client.py](ournotes_bot/ai_client.py)：`AIClient.request → ModelResponse` 与客户端异常；调用策略分别归 Query 和 [运行时通知专题](../docs/更新通知机制.md)。
@@ -30,6 +31,8 @@ CLI 模式与组合、配置根/数据路径、包身份；为多个系统域提
 - [application/backend.py](ournotes_bot/application/backend.py)、[backend_bootstrap.py](ournotes_bot/application/backend_bootstrap.py)：M2/M3 常驻实例、loopback HTTP、代次撤销与卸载 ACK 门禁、接纳高水位、准备到 ACK 的续查租约；[backend_protocol.py](ournotes_bot/application/backend_protocol.py) 校验线协议，[delivery_ledger.py](ournotes_bot/application/delivery_ledger.py) 负责独占 SQLite 意图/回执事实。详见 [后端协议与阶段边界](../docs/KOISHI_BACKEND_V1.md)。
 
 ## Internal Subsystems
+
+- [application/model_runtime.py](ournotes_bot/application/model_runtime.py)：后端原生工具编排、当前许可、证据生成和上下文核验；[model_config.py](ournotes_bot/application/model_config.py) 固定受信配置／身份快照，[usage_ledger.py](ournotes_bot/application/usage_ledger.py) 独占写精确预留与结算。纯合同在 [domain/model_calls.py](ournotes_bot/domain/model_calls.py)，公开说明见 [包 3](../docs/QUERY_CHAT_PACKAGE3.md)。
 
 - [application/knowledge_service.py](ournotes_bot/application/knowledge_service.py)：独占知识目录与状态库，先提交停用记录，再发布候选索引；排队／生成／交付消费者通过完整证据租约重验。后端组合与 RuntimeTasks 接入独立观察和重建任务；[knowledge_cli.py](ournotes_bot/application/knowledge_cli.py) 提供脱离游戏初始化的校验、导入和检索入口。格式和内容交付见 [包 2B](../docs/QUERY_CHAT_PACKAGE2B.md)。
 

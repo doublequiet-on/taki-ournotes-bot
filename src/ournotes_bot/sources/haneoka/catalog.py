@@ -91,6 +91,7 @@ class CatalogRepository:
         self.path, self.ttl = path, ttl_hours * 3600
         self.fetch, self.clock = fetch, clock
         self.saved = None
+        self._query_snapshot = None
         self.lock = threading.RLock()
         self.state = "unknown"
         self._durable_initialized = False
@@ -212,6 +213,22 @@ class CatalogRepository:
                 current[server]=identity(decode_json(raw),server)
                 check_headers(headers,current[server])
             return current
+
+    def current_with_info(self):
+        """Request-local current data: successful identity check, never stale fallback."""
+        with self.lock:
+            current = self.probe_identities()
+            candidate = next((s for s in (self.saved, self._query_snapshot)
+                              if s is not None and s['identities'] == current), None)
+            if candidate is None:
+                candidate = self._collect()
+            result = validate(candidate, self.clock())
+            # A query must not consume the background refresh's additions or
+            # change its persistence/fallback state. Reuse only after a fresh probe.
+            self._query_snapshot = candidate
+            records, metadata = self._publication(result)
+            info = convert_info(candidate['documents'], candidate['identities']['jp'], metadata['cached_at'])
+            return records, metadata, info
 
     def synchronize_with_info(self, force=False):
         """Explicit administration refresh; separates publication from durable success."""

@@ -388,6 +388,34 @@ async function main() {
     assert.equal(classifyReceipt({id:'audited',data:{message_audit:{}}}).status,'uncertain')
     assert.equal(classifyReceipt({id:'receipt'}).status,'success')
   })
+  await run('Query chat slow hint shares sequence owner while model permits continue polling',async()=>{
+    const env=createBot();let receiver,stage=0,decisions=0
+    const decoded=await decodeIncoming(env.bot,event(),identity,recognizes)
+    const input={...decoded.inbound,timestampMs:Date.now()}
+    let releaseHint
+    const slow=new Promise(resolve=>{releaseHint=resolve})
+    env.setHandler(async()=>{if(env.calls.length===1)await slow;return{id:'receipt-'+env.calls.length}})
+    const part=(position,text,status='pending')=>({id:String(position),position,mode:'primary',status,kind:'text',text})
+    const base={request_id:input.requestId,delivery_id:'a'.repeat(32),plan_version:1,send_allowed:true,
+                expires_at:Date.now()/1000+298,processing_hint:true}
+    const hint=()=>({...base,status:'preparing',parts:[part(0,'还在核实，请稍等。')]})
+    const client={epoch:'epoch',deactivate(){},async initialize(){},async retire(){},
+      async lookup(){
+        if(stage===0)return{...hint(),pending_model_permission:{fixture:true}}
+        if(stage===1)return{...base,status:'prepared',parts:[part(0,'还在核实，请稍等。','success'),part(1,'最终回答')]}
+        return{...base,status:'finished',send_allowed:false,parts:[part(0,'提示','success'),part(1,'最终回答','success')]}
+      },async intent(){return'granted'},async acknowledge(attempt){if(attempt.partId==='0')stage=1;else stage=2},async event(){}
+    }
+    const fork=env.ctx.plugin(ctx=>{receiver=new Receiver(ctx,{...identity,backendUrl:'http://127.0.0.1:8765',tokenEnv:'unused',permissions:[],maxPending:8},client)})
+    receiver.authorizeModel=async()=>{decisions++;releaseHint()}
+    try{
+      const job={input,plan:hint(),permissionAttempts:new Set()}
+      await receiver.deliver(job,env.bot)
+      assert.equal(decisions,1);assert.equal(env.calls.length,2)
+      assert.deepEqual(env.calls.map(c=>c.data.msg_seq),[1,2])
+      assert.deepEqual(env.calls.map(c=>c.data.content),['还在核实，请稍等。','最终回答'])
+    }finally{releaseHint();await receiver.dispose();await fork.dispose();await env.ctx.stop()}
+  })
   await run('M4 real plugin publishes and releases its scoped transport service', async () => {
     const ctx=new Context(),plugin=require('../lib')
     const fork=ctx.plugin(plugin,{enabled:false})

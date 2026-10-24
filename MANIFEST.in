@@ -37,3 +37,4 @@ include docs/koishi/CONSOLE_V1.md
 
 include docs/KOISHI_MIGRATION_M4.md
 include docs/QUERY_CHAT_PACKAGE2B.md docs/knowledge/knowledge-draft.md
+include docs/QUERY_CHAT_PACKAGE3.md

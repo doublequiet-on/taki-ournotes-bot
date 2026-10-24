@@ -55,6 +55,12 @@ class Work:
     missing_anchor: bool = False
     model_attempts: int = 0
     content_deadline: float = field(default_factory=lambda: time.monotonic()+600)
+    model_snapshot: object = None
+    model_subject: str | None = None
+    model_error: str | None = None
+    model_started_at: float | None = None
+    native_claimed: bool = False
+    hint: bool = False
 
 
 class Backend:
@@ -72,7 +78,7 @@ class Backend:
         self.admin = Admin(self)
         self.operations = Operations(Path(ledger_path).with_name('operations-v1.sqlite3'), instance_id+'\0'+app_id, clock=clock)
         self.contexts = ContextStore()
-        self.conversations = Conversations(self.contexts)
+        self.conversations = Conversations(self.contexts, valid_evidence=self.valid_evidence)
         self.models = ModelScheduler()
         self.permissions = ModelPermissions(self)
         self.reference_profiles = frozenset(reference_profiles)
@@ -85,6 +91,7 @@ class Backend:
         self.admission = asyncio.Lock()
         self.runtime_tasks = None
         self.knowledge = None
+        self.model_runtime = None
         self.notices = None
         self.data_owner = None
 
@@ -92,12 +99,16 @@ class Backend:
         self.conversations.sweep()
         sweep = getattr(self.parser, 'sweep', None)
         if sweep is not None: sweep()
+        if self.model_runtime is not None: self.model_runtime.usage.reconcile()
         for work in list(self.works.values()):
             context_deadline = self.contexts.deadline(work.key)
             if work.active and (self.clock() >= work.request.timestamp_ms/1000+WINDOW or
                                 work.lease is not None and time.monotonic() >= context_deadline or
                                 work.anchor is not None and work.anchor.snapshot_id not in self.conversations.snapshots):
                 self.finish(work, 'expired')
+
+    def valid_evidence(self, leases):
+        return all(self.knowledge is not None and self.knowledge.valid(lease) for lease in leases)
 
     def finish(self, work, status):
         if not work.active:
@@ -151,12 +162,16 @@ class Backend:
             self.diagnostics.admitted(request, delivery, self.runtime, self.clock(), observed_commands)
             self.diagnostics.span(uuid.uuid4().hex,request.request_id,'admission',admission_ms,self.clock(),outcome='ok')
             operation = parse_operation(commands[0]) if len(commands) == 1 else None
-            anchor = self.conversations.resolve(request) if operation or request.reference else None
+            anchor = self.conversations.resolve(request) if operation or request.reference or (
+                self.model_runtime is not None and len(commands)==1 and replies.is_ai_request(commands[0])) else None
             key = anchor.key if anchor else ContextKey(request.platform, request.kind, request.conversation_id, request.request_id)
             lineage = anchor.lineage if anchor else None
             lease = self.contexts.begin(key) if not operation and anchor is None else None
             work = Work(request, delivery, key, operation, lineage, lease, anchor=anchor,
                         missing_anchor=request.reference is not None and anchor is None)
+            if anchor is not None: work.content_deadline=min(work.content_deadline,anchor.expires)
+            if self.model_runtime is not None and any(replies.is_ai_request(c) for c in commands):
+                self.model_runtime.capture(work)
             self.works[delivery] = work
             work.task = asyncio.create_task(self.prepare(work, commands))
             self.tasks.add(work.task)
@@ -164,6 +179,8 @@ class Backend:
             return self.snapshot(self.ledger.request(request.request_id), request.gateway_epoch)
 
     async def prepare_command(self, work, content):
+        if self.model_runtime is not None and replies.is_ai_request(content) and work.request.policy.natural_query!='off':
+            return await self.model_runtime.prepare(work, content)
         if not replies.is_ai_request(content) or work.request.policy.natural_query == 'off' or not hasattr(self.parser, 'prepare_local'):
             return await self.gate.prepare(content, self.repository, self.parser)
         before = replies.catalog_version(self.repository)
@@ -219,6 +236,7 @@ class Backend:
                 (time.perf_counter()-started)*1000,self.clock(),outcome=outcome)
 
     async def prepare(self, work, commands):
+        overflow = 0
         policy_token = CURRENT_POLICY.set(work.request.policy)
         scope_token = CURRENT_QUERY_SCOPE.set((self.instance_id, self.app_id, work.request.request_id))
         deadline_token = CURRENT_CONTENT_DEADLINE.set(min(work.content_deadline,
@@ -250,7 +268,12 @@ class Backend:
                 elif work.operation is None:
                     result = await self.prepare_command(work, commands[0]) if current is not None else replies.PreparedReply(MISSING)
                 else:
-                    result = (await self.prepare_call(work,self.gate.prepare_followup(current, work.operation, self.repository))
+                    query_context = current.query_context if isinstance(current,replies.DeliveryCursor) else current
+                    native_detail = (self.model_runtime is not None and work.operation.kind != 'continue'
+                                     and getattr(current,'origin','unknown') in ('local','model')
+                                     and getattr(query_context,'meta',None) is None)
+                    result = (await self.prepare_call(work,self.model_runtime.followup(work,current,work.operation)
+                              if native_detail else self.gate.prepare_followup(current, work.operation, self.repository))
                               if current is not None else replies.PreparedReply(MISSING))
                 parts = replies.expand_replies([result])
                 parts = [replace(part,command_index=0,processing_route='continuation') for part in parts]
@@ -271,14 +294,17 @@ class Backend:
             self.expire()
             if not work.active:
                 return
-            parts = [replace(p, context=ReadOnlyContext(p.text, p.parse_origin)) if p.context is None else p for p in parts]
+            if work.hint:
+                parts = [work.prepared[0], *replies.reserve_progress_slot(parts,overflow=bool(overflow))]
+            parts = [replace(p, context=ReadOnlyContext(p.text, p.parse_origin, p.evidence))
+                     if p.context is None and p.business_status!='processing_hint' else p for p in parts]
             work.prepared = tuple(parts)
             complete = list(parts)
             if parts and isinstance(parts[-1].context, replies.DeliveryCursor):
                 complete.extend(parts[-1].context.remaining)
             self.conversations.capture(work, complete)
             require(self.retained_bytes() <= self.byte_capacity, 'byte_capacity', 503)
-            self.ledger.prepared(work.delivery, len(parts))
+            self.ledger.prepared(work.delivery, len(parts), start=int(work.hint))
             if not parts:
                 self.finish(work, 'finished')
             else:
@@ -330,9 +356,10 @@ class Backend:
 
     def live(self, row, epoch):
         work = self.works.get(row['delivery'])
-        return bool(work and work.active and row['status'] == 'prepared' and row['epoch'] == epoch
+        return bool(work and work.active and (row['status'] == 'prepared' or work.hint and row['status']=='preparing') and row['epoch'] == epoch
                     and row['runtime'] == self.runtime and self.ledger.active(epoch)
-                    and self.clock() < row['expires'])
+                    and self.clock() < row['expires']
+                    and all(self.valid_evidence(reply.evidence) for reply in work.prepared))
 
     def snapshot(self, row, epoch):
         require(row is not None, 'unknown_request', 404)
@@ -342,6 +369,7 @@ class Backend:
         result = {'protocol': PROTOCOL, 'request_id': row['id'], 'delivery_id': row['delivery'],
                   'plan_version': 1, 'status': row['status'], 'send_allowed': live,
                   'expires_at': row['expires'], 'parts': []}
+        if work and work.hint: result['processing_hint'] = True
         if work and work.active and row['epoch'] == epoch and self.ledger.active(epoch):
             challenge = self.permissions.challenge_view(work)
             if challenge is not None: result['pending_model_permission'] = challenge
@@ -365,6 +393,14 @@ class Backend:
 
     def lookup(self, request_id, epoch):
         self.expire()
+        row=self.ledger.request(request_id)
+        work=self.works.get(row['delivery']) if row else None
+        if (work and work.active and not work.hint and row['status']=='preparing'
+                and work.model_started_at is not None and time.monotonic()-work.model_started_at>=8
+                and row['epoch']==epoch and self.ledger.active(epoch)):
+            self.ledger.processing_hint(work.delivery)
+            work.hint=True
+            work.prepared=(replies.PreparedReply('还在核实，请稍等。',business_status='processing_hint'),)
         return self.snapshot(self.ledger.request(request_id), epoch)
 
     def image(self, delivery, part_id, epoch):
@@ -390,6 +426,12 @@ class Backend:
         live = self.live(row, payload['gateway_epoch'])
         if kind == 'ack':
             changed = self.ledger.ack(delivery, part_id, payload['attempt_id'], payload['result'], payload['message_id'])
+            if work and work.hint and part_id=='0':
+                # Progress occupies one ordinary send slot, but creates no topic
+                # and never completes a request whose answer is still preparing.
+                if changed and (payload['result']!='success' or payload.get('allow_context') is False):
+                    self.finish(work,'aborted')
+                return {'recorded':True,'duplicate':not changed,**self.snapshot(self.ledger.by_delivery(delivery),payload['gateway_epoch'])}
             if changed and live and payload.get('allow_context') is False:
                 self.finish(work, 'aborted')
                 live = False
@@ -451,6 +493,7 @@ class Backend:
         self.conversations.clear()
         self.contexts.clear()
         if self.runtime_tasks: await self.runtime_tasks.close()
+        if self.model_runtime is not None: await self.model_runtime.close()
         if self.knowledge is not None: self.knowledge.close()
         await self.operations.close()
         self.ledger.close()
@@ -570,6 +613,7 @@ def create_app(backend, token, initialize=None):
                 if initialize is not None: await asyncio.to_thread(initialize)
                 if not backend.closing:
                     if backend.runtime_tasks: backend.runtime_tasks.start()
+                    if backend.model_runtime: backend.model_runtime.start()
                     backend.ready = True
             except Exception as exc:
                 logger.error('Initialization failed type=%s', type(exc).__name__)

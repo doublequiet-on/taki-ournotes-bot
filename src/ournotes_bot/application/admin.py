@@ -135,7 +135,9 @@ class Admin:
         counts = Counter(v['delivery_state'] for v in views)
         return self.envelope(
             service=section({'ready': self.backend.ready, 'closing': self.backend.closing,
-                'natural_query': self.backend.parser.policy_capabilities() if hasattr(self.backend.parser,'policy_capabilities') else None}, now=now),
+                'natural_query': self.backend.parser.policy_capabilities() if hasattr(self.backend.parser,'policy_capabilities') else None,
+                'native_model': self.backend.model_runtime.config.status() if self.backend.model_runtime else None,
+                'weighted_usage': self.backend.model_runtime.usage.summary() if self.backend.model_runtime else None}, now=now),
             requests=section({'from': now-86400, 'to': now, 'total': len(views),
                               'states': {s: counts[s] for s in STATES},
                               'retained_unresolved':sum(v['delivery_state'] in ('uncertain','partial') for v in retained),

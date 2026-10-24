@@ -148,24 +148,45 @@ export class Receiver {
   }
   private async deliver(job: Job, bot: QQBot): Promise<void> {
     let completed = false
+    let hint: Promise<boolean> | undefined
     const alive = () => this.active && Date.now() < job.input.timestampMs + 298000
     try {
       if (!job.plan) throw new BackendError('missing_admitted_plan')
       this.validate(job.plan, job.input)
+      // The same delivery owner counts the slow hint and final answer together.
+      const api = Object.create(bot.internal) as QQInternal & { http: () => typeof bot.http }
+      api.http = () => bot.http.extend({ timeout: 15000 })
+      job.delivery = new QQDelivery(api, job.input, job.plan.delivery_id, this.client.epoch, this.client, alive)
       while (alive() && job.plan.status === 'preparing') {
         if(job.plan.pending_model_permission) await this.authorizeModel(job,job.plan.pending_model_permission)
+        if(job.plan.processing_hint && job.plan.send_allowed && !hint) {
+          const part=job.plan.parts[0]
+          if(job.plan.parts.length!==1 || part.id!=='0' || part.status!=='pending' || part.kind!=='text' || typeof part.text!=='string') return
+          const delivery=job.delivery, text=part.text
+          // Keep polling permits while QQ is uploading/sending/acknowledging.
+          hint=(async()=>{
+            try {
+              const result=await delivery.deliver('0',0,{kind:'text',text})
+              if(delivery.acknowledgementPending && !await delivery.retryAcknowledgement()) return false
+              return result.status==='success'
+            } catch { return false }
+          })()
+        }
         await new Promise(resolve => setTimeout(resolve, 100))
         job.plan = await this.client.lookup(job.input.requestId)
         this.validate(job.plan, job.input)
       }
+      if(hint) {
+        if(!await hint) return
+        job.plan=await this.client.lookup(job.input.requestId)
+        this.validate(job.plan,job.input)
+      }
       if (!alive() || !job.plan.send_allowed) return
       // Keep installed official methods and live token headers, but bound each transport call.
       // A per-delivery facade avoids changing other plugins' HTTP configuration.
-      const api = Object.create(bot.internal) as QQInternal & { http: () => typeof bot.http }
-      api.http = () => bot.http.extend({ timeout: 15000 })
-      job.delivery = new QQDelivery(api, job.input, job.plan.delivery_id, this.client.epoch, this.client, alive)
       for (let index = 0; index < job.plan.parts.length; index++) {
         let part = job.plan.parts[index]
+        if(index===0 && hint && job.plan.processing_hint && part.status==='success') continue
         // A resumed plan with any prior attempt belongs to the original sender; never rebuild sequence state.
         if (!alive() || part.status !== 'pending') return
         if (part.kind !== 'text' && part.kind !== 'image' || typeof part.text !== 'string') throw new BackendError('part_shape')

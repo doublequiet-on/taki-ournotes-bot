@@ -82,6 +82,9 @@ class AIQueryParser:
     def prepare_local(self, content, repository):
         return self._agent.run(content, repository, defer_model=True)
 
+    def prepare_native_local(self, content, repository):
+        return self._agent.run(content, repository, defer_model=True, native=True)
+
     def resume_model(self, deferred, repository):
         return self._agent.resume(deferred, repository)
 

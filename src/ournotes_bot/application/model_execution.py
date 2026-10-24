@@ -92,7 +92,7 @@ class ModelPermissions:
         return {**entry['binding'], 'remaining_ms': max(0, int((entry['deadline']-self.clock())*1000)),
                 'admission_policy_version': {k: v for k, v in asdict(work.request.policy).items() if k != 'natural_query'}}
 
-    async def acquire(self, work, execution_deadline):
+    async def acquire(self, work, execution_deadline, *, attempt_id=None):
         request = work.request
         require(work.active and request.policy.natural_query == 'model' and
                 self.backend.ledger.active(request.gateway_epoch), 'policy_denied', 409)
@@ -100,7 +100,7 @@ class ModelPermissions:
         require(work.delivery not in self.pending, 'permission_pending', 409)
         require(work.model_attempts < 2, 'model_attempt_limit', 409)
         work.model_attempts += 1
-        binding = dict(request_id=request.request_id, attempt_id=uuid.uuid4().hex, nonce=uuid.uuid4().hex,
+        binding = dict(request_id=request.request_id, attempt_id=attempt_id or uuid.uuid4().hex, nonce=uuid.uuid4().hex,
                        scope=request.scope, user_id=request.user_id, backend_epoch=self.backend.runtime,
                        gateway_epoch=request.gateway_epoch)
         future = asyncio.get_running_loop().create_future()

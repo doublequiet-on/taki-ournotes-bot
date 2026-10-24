@@ -276,9 +276,9 @@ class QueryAgent:
         state = self.state_for(content)
         return state.final_code if state is not None else None
 
-    def run(self, content: str, repository: SongRepository, *, defer_model=False):
+    def run(self, content: str, repository: SongRepository, *, defer_model=False, native=False):
         self.sweep()
-        outcome = self._run(content, repository, defer_model=defer_model)
+        outcome = self._run(content, repository, defer_model=defer_model, native=native)
         if isinstance(outcome, DeferredModel):
             return outcome
         return self.record_outcome(outcome, is_ai_request(content))
@@ -306,7 +306,7 @@ class QueryAgent:
             self.metrics.increment_many(changes)
         return outcome
 
-    def _run(self, content: str, repository: SongRepository, *, defer_model=False):
+    def _run(self, content: str, repository: SongRepository, *, defer_model=False, native=False):
         question = query_text(content)
         tracked = is_ai_request(content)
         started = self.clock()
@@ -320,10 +320,10 @@ class QueryAgent:
                 '本群已关闭 /问；仍可使用 /查曲、/查卡 等直接指令。', cache=False)
         self._sync_cache(repository)
 
-        if not question or len(question) > 100:
+        if not question or len(question) > (500 if native else 100):
             return self._finish_terminal(
                 state, OutcomeCode.INVALID_ARGUMENTS,
-                "用法：/问 <想查的歌曲、谱面、成员卡、技能或留影卡>，最多 100 字。",
+                '用法：/问 <问题>，最多 ' + ('500' if native else '100') + ' 字。',
                 cache=False,
             )
 
@@ -350,6 +350,8 @@ class QueryAgent:
         try:
             meta = parse_meta_question(question, repository)
         except MetaError as exc:
+            if native and state.natural_mode == 'model' and exc.status == 'invalid_argument':
+                return DeferredModel(state, tracked)
             code = OutcomeCode.UNSUPPORTED if exc.status == 'unsupported_field' else OutcomeCode.INVALID_ARGUMENTS
             return self._finish_terminal(state, code, str(exc), cache=False)
         if meta is not None:
@@ -377,7 +379,7 @@ class QueryAgent:
                 state, OutcomeCode.UNKNOWN_ENTITY, UNKNOWN_ENTITY,
                 cache=True,
             )
-        if _UNSUPPORTED_TERMS.search(question):
+        if _UNSUPPORTED_TERMS.search(question) and not native:
             return self._finish_terminal(
                 state, OutcomeCode.UNSUPPORTED, UNSUPPORTED,
                 cache=True,
@@ -408,7 +410,7 @@ class QueryAgent:
             self._remember_state(question, state)
             return outcome
 
-        if not self.ai_enabled or state.natural_mode != 'model':
+        if (not self.ai_enabled and not native) or state.natural_mode != 'model':
             return self._finish_terminal(
                 state, OutcomeCode.NOT_CONFIGURED,
                 ('本群 /问 仅允许本地解析，请使用明确条件或直接指令。' if state.natural_mode == 'local'
@@ -416,7 +418,7 @@ class QueryAgent:
                 cache=False,
             )
 
-        if defer_model:
+        if defer_model or native:
             return DeferredModel(state, tracked)
         return self.run_model(state, repository, tracked)
 
