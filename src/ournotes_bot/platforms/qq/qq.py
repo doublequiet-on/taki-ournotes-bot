@@ -476,9 +476,17 @@ def run_bot(app_id: str, app_secret: str, repository: SongRepository, settings: 
             await asyncio.sleep(1800 - time.time() % 1800)
             await _refresh_catalog(repository)
 
+    async def expire_conversations():
+        while True:
+            await asyncio.sleep(1)
+            contexts.sweep()
+            ai_parser.sweep()
+
     class ClientWithRefresh(OurNotesClient):
         async def on_ready(self) -> None:
             await super().on_ready()
+            if not hasattr(self, '_context_expiry_task') or self._context_expiry_task.done():
+                self._context_expiry_task = asyncio.create_task(expire_conversations())
             if not hasattr(self, "_refresh_task"):
                 self._refresh_task = asyncio.create_task(refresh_loop())
             if not hasattr(self, "_song_traits_task") or self._song_traits_task.done():

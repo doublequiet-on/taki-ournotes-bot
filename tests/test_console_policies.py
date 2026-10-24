@@ -182,6 +182,12 @@ class FreezeTests(unittest.TestCase):
             self.assertEqual(verify(stage,commit),manifest)
         self.assertFalse(list(stage.rglob('*.pyc')))
         from deploy.koishi_control import verify_combination
+        upgraded={**manifest,'protocol':{'major':2,'minor':0},
+                  'capabilities':['group_policies_v1','query_chat_contract_v1']}
+        (stage/'combination.json').write_text(json.dumps(upgraded))
+        self.assertEqual(verify_combination(stage,commit),upgraded)
+        (stage/'combination.json').write_text(json.dumps({**upgraded,'capabilities':['group_policies_v1']}))
+        with self.assertRaisesRegex(ValueError,'combination_capabilities'):verify_combination(stage,commit)
         for protocol in ({'major':True,'minor':1},{'major':1.0,'minor':1},{'major':1,'minor':1,'extra':True}):
             (stage/'combination.json').write_text(json.dumps({**manifest,'protocol':protocol}))
             with self.assertRaisesRegex(ValueError,'combination_protocol'):verify_combination(stage,commit)

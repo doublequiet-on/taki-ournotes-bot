@@ -98,7 +98,7 @@ class AdminTests(unittest.IsolatedAsyncioTestCase):
         return dict(protocol=PROTOCOL,request_id=digest(['fixture','app','qq','group','group1','secret-user',msg]),
             instance_id='fixture',app_id='app',platform='qq',kind='group',conversation_id='group1',
             user_id='secret-user',message_id=msg,timestamp_ms=int(self.now*1000),body='/帮助',
-            capability=CAPABILITY,gateway_epoch='epoch',ingress_seq=index,
+            capability=CAPABILITY,gateway_epoch='epoch',ingress_seq=index,trigger='command',reference=None,interaction=None,
             policy=dict(natural_query='model',epoch='fixture',global_revision=0,group_revision=0))
 
     async def admitted(self,index=1):
@@ -170,6 +170,10 @@ class AdminTests(unittest.IsolatedAsyncioTestCase):
         payload=self.payload()
         from ournotes_bot.application.backend_protocol import event
         from ournotes_bot.application.notice_gateway import NoticeGateway
+        for profile in ([], {}, 'unverified'):
+            with self.assertRaisesRegex(ProtocolError,'reference_profile'):
+                await self.backend.submit({**payload,'trigger':'quoted_reply',
+                    'reference':{'message_id':'fixture-message','adapter_profile_version':profile}})
         for protocol in ({'major':True,'minor':1},{'major':1.0,'minor':1},{**PROTOCOL,'extra':True}):
             with self.assertRaisesRegex(ProtocolError,'protocol_version'):await self.backend.submit({**payload,'protocol':protocol})
             with self.assertRaisesRegex(ProtocolError,'protocol_version'):event({'protocol':protocol})
@@ -357,16 +361,16 @@ class AdminTests(unittest.IsolatedAsyncioTestCase):
         second=self.payload(2)
         await self.backend.submit(second)
         await asyncio.sleep(.06)
-        # Preparation already ended, although first request still owns reply order.
+        # Independent requests no longer wait on a global arrival ticket.
         early=self.backend.diagnostics.read(second['request_id'])['spans']
         self.assertIn('prepare',[s['kind'] for s in early])
-        self.assertNotIn('reply_order_wait',[s['kind'] for s in early])
+        self.assertEqual(self.backend.lookup(second['request_id'],'epoch')['status'],'prepared')
         self.backend.finish(self.backend.works[first['delivery']],'finished')
         await asyncio.sleep(.02)
         spans=self.backend.diagnostics.read(second['request_id'])['spans']
         durations={s['kind']:s['duration_ms'] for s in spans}
-        self.assertGreater(durations['reply_order_wait'],40)
-        self.assertLess(durations['prepare'],durations['reply_order_wait'])
+        self.assertEqual(durations['reply_order_wait'],0)
+        self.assertGreaterEqual(durations['prepare'],0)
 
     async def test_late_ack_updates_facts_without_reopening_lifecycle(self):
         row=await self.admitted()

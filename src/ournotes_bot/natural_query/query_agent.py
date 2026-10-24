@@ -11,7 +11,7 @@ from __future__ import annotations
 import json
 import re
 from collections import OrderedDict
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import Enum
 from threading import RLock
 from time import monotonic
@@ -37,7 +37,8 @@ from .query_validation import (
     validate_route,
 )
 from ..structured_query import QueryResult, QuerySpec, answer_for
-from ..domain.query_policy import CURRENT_POLICY
+from ..domain.query_policy import (CURRENT_POLICY, CURRENT_QUERY_SCOPE, CURRENT_MODEL_START,
+                                  CURRENT_EXECUTION_CHECK, CURRENT_CONTENT_DEADLINE)
 
 
 MAX_MODEL_CALLS = 3
@@ -125,6 +126,7 @@ class AgentState:
     local_parsed: bool = False
     natural_mode: str = 'model'
     parse_origin: str = 'local'
+    expires_at: float = 0
 
 
 @dataclass(frozen=True)
@@ -162,6 +164,13 @@ class CachedOutcome:
 ModelRequester = Callable[[str, str, float], ModelResponse | dict]
 
 
+@dataclass(frozen=True)
+class DeferredModel:
+    """Local resolution completed; application schedules model work outside QueryGate."""
+    state: AgentState
+    tracked: bool
+
+
 class QueryAgent:
     def __init__(self, *, ai_enabled: bool, daily_limit: int, quota: DailyQuota,
                  metrics: QueryMetrics, requester: ModelRequester,
@@ -174,7 +183,7 @@ class QueryAgent:
         self.clock = clock
         self._lock = RLock()
         self._cache: OrderedDict[str, CachedOutcome] = OrderedDict()
-        self._states: OrderedDict[str, AgentState] = OrderedDict()
+        self._states: OrderedDict[tuple, AgentState] = OrderedDict()
         self._cache_source: tuple[object, ...] | None = None
 
     @staticmethod
@@ -195,6 +204,8 @@ class QueryAgent:
                 self._cache_source = source
 
     def _cache_get(self, question: str) -> CachedOutcome | None:
+        if CURRENT_QUERY_SCOPE.get() is not None:
+            return None  # No context-dependent plan cache in the first chat contract.
         now = self.clock()
         with self._lock:
             cached = self._cache.get(question)
@@ -208,6 +219,9 @@ class QueryAgent:
             return cached
 
     def _cache_put(self, question: str, cached: CachedOutcome) -> None:
+        if CURRENT_QUERY_SCOPE.get() is not None:
+            return
+        cached = replace(cached, expires_at=min(cached.expires_at or self.clock()+600, self.clock()+600))
         with self._lock:
             self._cache[question] = cached
             self._cache.move_to_end(question)
@@ -215,7 +229,10 @@ class QueryAgent:
                 self._cache.popitem(last=False)
 
     def _remember_state(self, question: str, state: AgentState) -> None:
+        question = (CURRENT_QUERY_SCOPE.get(), question)
         with self._lock:
+            if self.clock() >= (state.expires_at or state.started_at + 600):
+                return
             self._states[question] = state
             self._states.move_to_end(question)
             if len(self._states) > CACHE_CAPACITY:
@@ -241,15 +258,33 @@ class QueryAgent:
         if not is_ai_request(content):
             return None
         with self._lock:
-            return self._states.get(query_text(content))
+            self.sweep()
+            return self._states.get((CURRENT_QUERY_SCOPE.get(), query_text(content)))
+
+    def sweep(self):
+        """Owner calls periodically, also used on reads; no access extends deadlines."""
+        now = self.clock()
+        with self._lock:
+            for key, cached in list(self._cache.items()):
+                if cached.expires_at is None or cached.expires_at <= now:
+                    self._cache.pop(key, None)
+            for key, state in list(self._states.items()):
+                if (state.expires_at or state.started_at + 600) <= now:
+                    self._states.pop(key, None)
 
     def outcome_code_for(self, content: str) -> OutcomeCode | None:
         state = self.state_for(content)
         return state.final_code if state is not None else None
 
-    def run(self, content: str, repository: SongRepository) -> AgentOutcome:
-        outcome = self._run(content, repository)
-        if is_ai_request(content):
+    def run(self, content: str, repository: SongRepository, *, defer_model=False):
+        self.sweep()
+        outcome = self._run(content, repository, defer_model=defer_model)
+        if isinstance(outcome, DeferredModel):
+            return outcome
+        return self.record_outcome(outcome, is_ai_request(content))
+
+    def record_outcome(self, outcome, tracked):
+        if tracked:
             # One returned outcome per request, including cache re-execution.
             # Request/token counters below describe work, not final outcomes.
             state, code = outcome.state, outcome.code
@@ -271,12 +306,13 @@ class QueryAgent:
             self.metrics.increment_many(changes)
         return outcome
 
-    def _run(self, content: str, repository: SongRepository) -> AgentOutcome:
+    def _run(self, content: str, repository: SongRepository, *, defer_model=False):
         question = query_text(content)
         tracked = is_ai_request(content)
         started = self.clock()
         state = AgentState(question, started, started + TOTAL_BUDGET_SECONDS,
                            natural_mode=CURRENT_POLICY.get().natural_query)
+        state.expires_at = min(started+600, CURRENT_CONTENT_DEADLINE.get() or started+600)
         if tracked:
             self.metrics.increment("ask_total")
         if state.natural_mode == 'off':
@@ -367,6 +403,19 @@ class QueryAgent:
                 cache=False,
             )
 
+        if defer_model:
+            return DeferredModel(state, tracked)
+        return self.run_model(state, repository, tracked)
+
+    def resume(self, deferred, repository):
+        state = deferred.state
+        if self.clock() >= (state.expires_at or state.started_at + 600):
+            return self._finish_terminal(state, OutcomeCode.TEMPORARY_FAILURE, '上次请求已过期，请重新查询。', cache=False)
+        state.deadline = self.clock() + 30
+        return self.record_outcome(self.run_model(state, repository, deferred.tracked), deferred.tracked)
+
+    def run_model(self, state, repository, tracked):
+        question = state.question
         state.processing_route = "model"
         state.parse_origin = 'model'
         capability_id = local_route(question)
@@ -508,12 +557,18 @@ class QueryAgent:
         if state.natural_mode != 'model':
             return None, TerminalOutcome(OutcomeCode.NOT_CONFIGURED, '当前策略不允许模型解析。')
         remaining = state.deadline - self.clock()
-        if (remaining <= 0 or state.model_calls >= MAX_MODEL_CALLS
+        maximum = 2 if CURRENT_QUERY_SCOPE.get() is not None else MAX_MODEL_CALLS
+        if (remaining <= 0 or state.model_calls >= maximum
                 or state.steps >= MAX_STEPS):
             return None, TerminalOutcome(
                 OutcomeCode.TEMPORARY_FAILURE,
                 "自然语言解析暂不可用；请直接使用 /查曲、/查谱面、/查卡 或 /查留影卡。",
             )
+        start = CURRENT_MODEL_START.get()
+        try:
+            grant = start() if start is not None else None
+        except AIClientError:
+            return None, TerminalOutcome(OutcomeCode.NOT_CONFIGURED, '当前执行许可不可用；请稍后重新查询。')
         try:
             available = self.quota.reserve(self.daily_limit)
         except QuotaUnavailable:
@@ -533,6 +588,9 @@ class QueryAgent:
         if tracked:
             self.metrics.increment(metric)
         try:
+            if grant is not None: grant()
+            remaining = state.deadline - self.clock()
+            if remaining <= 0: raise AIClientError('execution_timeout')
             response = self.requester(question, prompt, min(12.0, remaining))
         except AIInvalidResponse:
             return None, TerminalOutcome(OutcomeCode.INVALID_OUTPUT, UNSUPPORTED)
@@ -551,6 +609,9 @@ class QueryAgent:
             data = response.data
         else:
             data = response
+        active = CURRENT_EXECUTION_CHECK.get()
+        if active is not None and not active():
+            return None, TerminalOutcome(OutcomeCode.TEMPORARY_FAILURE, '请求已结束，请重新查询。')
         if not isinstance(data, dict):
             return None, TerminalOutcome(OutcomeCode.INVALID_OUTPUT, UNSUPPORTED)
         QUERY_DEBUG_COUNTERS.record_api_success()
@@ -593,6 +654,9 @@ class QueryAgent:
 
     def _execute_spec(self, state: AgentState, spec: QuerySpec,
                       repository: SongRepository) -> AgentOutcome:
+        active = CURRENT_EXECUTION_CHECK.get()
+        if active is not None and not active():
+            raise OSError('request no longer active')
         if (state.tool_executions >= MAX_TOOL_EXECUTIONS or state.steps >= MAX_STEPS
                 or self.clock() >= state.deadline):
             raise OSError("agent budget exhausted")
@@ -644,7 +708,7 @@ class QueryAgent:
         }
 
     def _can_repair(self, state: AgentState) -> bool:
-        return (state.repairs < MAX_REPAIRS and state.model_calls < MAX_MODEL_CALLS
+        return (CURRENT_QUERY_SCOPE.get() is None and state.repairs < MAX_REPAIRS and state.model_calls < MAX_MODEL_CALLS
                 and state.tool_executions < MAX_TOOL_EXECUTIONS
                 and state.steps < MAX_STEPS and self.clock() < state.deadline)
 

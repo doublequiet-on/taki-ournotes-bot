@@ -13,7 +13,7 @@ from collections import Counter
 from contextlib import closing
 from datetime import datetime, timedelta, timezone
 
-from .backend_protocol import require, identity
+from .backend_protocol import require, identity, PROTOCOL
 
 STATES = ('processing', 'complete', 'partial', 'failed', 'uncertain', 'closed_unsent', 'unknown')
 
@@ -79,7 +79,7 @@ class Admin:
                 return [anonymous(v) for v in value]
             return value
         result = {'schema': 'taki-diagnostic-v1', 'generated_at': self.backend.clock(),
-                  'protocol': {'major': 1, 'minor': 1}, 'data': anonymous(data),
+                  'protocol': PROTOCOL, 'data': anonymous(data),
                   'scope': 'one_request' if request_id else 'instance_and_first_25_attention_requests'}
         require(len(json.dumps(result).encode()) <= 120000, 'diagnostic_export_too_large', 409)
         return result

@@ -2,7 +2,7 @@
 import { randomUUID } from 'node:crypto'
 import { Context, Session, Channel, User } from 'koishi'
 import type { QQBot } from '@satorijs/adapter-qq'
-import { BackendClient, BackendError, Plan } from './backend'
+import { BackendClient, BackendError, Plan, ModelPermission } from './backend'
 import { decodeIncoming, Identity, Inbound } from './ingress'
 import { QQDelivery, QQInternal } from './delivery'
 import { Notices } from './notices'
@@ -13,7 +13,7 @@ export interface ReceiverConfig extends Identity {
   notifications?: boolean; backendUrl: string; tokenEnv: string; permissions: string[]; maxPending: number
 }
 interface Raw { raw: unknown; seq: number; at: number; fingerprint: string; conflict?: boolean }
-interface Job { input: Inbound; promise: Promise<void>; delivery?: QQDelivery; plan?: Plan }
+interface Job { input: Inbound; promise: Promise<void>; delivery?: QQDelivery; plan?: Plan; session:Session; permissionAttempts:Set<string> }
 
 export class Receiver {
   readonly epoch = randomUUID()
@@ -42,6 +42,13 @@ export class Receiver {
     if (config.notifications) this.notices=new Notices(ctx,this.client,config,this.ready,
       id => config.management?.noticesAllowed(id) ?? true, () => config.management?.noticeScope() ?? {kind:'all',exclude_group_ids:[]})
     ctx.on('dispose', () => this.dispose())
+    const sweep=setInterval(()=>this.sweep(),1000)
+    sweep.unref()
+    ctx.on('dispose',()=>clearInterval(sweep))
+  }
+  private sweep():void {
+    const now=Date.now()
+    for(const [key,value] of this.raw) if(now-value.at>=298000)this.raw.delete(key)
   }
   capture(session: Session): void {
     if (!this.active || session.platform !== 'qq' || session.bot.config.id !== this.config.appId || session.type !== 'internal') return
@@ -50,6 +57,12 @@ export class Receiver {
     const type = types[session.event._type ?? ''], data = session.event._data as Record<string, unknown> | undefined
     if (!type || !data || typeof data.id !== 'string' || typeof data.content !== 'string'
         || Buffer.byteLength(data.content) > 16384 || Buffer.byteLength(JSON.stringify(data)) > 32768) return
+    if(type==='GROUP_MESSAGE_CREATE') {
+      const mentions=Array.isArray(data.mentions)?data.mentions:[]
+      const tags=[...data.content.matchAll(/<@!?(\w+)>/gu)].map(m=>m[1])
+      if(!mentions.some(m=>m && typeof m==='object' && (m as {is_you?:boolean}).is_you===true)
+        && !tags.includes(this.config.appId) && !tags.includes(this.config.selfId)) return
+    }
     const now = Date.now()
     for (const [key, value] of this.raw) if (now - value.at > 298000) this.raw.delete(key)
     if (this.raw.size >= 512 && !this.raw.has(data.id)) return
@@ -114,7 +127,7 @@ export class Receiver {
         return true
       }
       const plan = await this.client.submit(input, source.seq, this.config.management?.policySnapshot(input))
-      const job: Job = { input, plan, promise: Promise.resolve() }
+      const job: Job = { input, plan, promise: Promise.resolve(), session:canonical, permissionAttempts:new Set() }
       this.jobs.set(input.requestId, job)
       job.promise = this.deliver(job, session.bot as unknown as QQBot)
       release()
@@ -123,7 +136,7 @@ export class Receiver {
     } catch (error) {
       this.log.warn('request stopped: %s', error instanceof BackendError ? error.code : 'integration_error')
       return true
-    } finally { release(); this.entering-- }
+    } finally { this.raw.delete(session.messageId ?? ''); release(); this.entering-- }
   }
   private validate(plan: Plan, input: Inbound): void {
     if (plan.request_id !== input.requestId || !/^[a-f0-9]{32}$/.test(plan.delivery_id) || plan.plan_version !== 1
@@ -140,6 +153,7 @@ export class Receiver {
       if (!job.plan) throw new BackendError('missing_admitted_plan')
       this.validate(job.plan, job.input)
       while (alive() && job.plan.status === 'preparing') {
+        if(job.plan.pending_model_permission) await this.authorizeModel(job,job.plan.pending_model_permission)
         await new Promise(resolve => setTimeout(resolve, 100))
         job.plan = await this.client.lookup(job.input.requestId)
         this.validate(job.plan, job.input)
@@ -181,6 +195,29 @@ export class Receiver {
       }
       this.jobs.delete(job.input.requestId)
     }
+  }
+  private async authorizeModel(job:Job, challenge:ModelPermission):Promise<void> {
+    const input=job.input
+    const scope={instance_id:input.instanceId,app_id:input.appId,platform:input.platform,
+      kind:input.kind,conversation_id:input.conversationId}
+    if(challenge.request_id!==input.requestId || challenge.gateway_epoch!==this.epoch
+      || challenge.backend_epoch!==this.client.readiness?.backend_epoch || challenge.user_id!==input.userId
+      || !/^[a-f0-9]{32}$/.test(challenge.attempt_id) || !/^[a-f0-9]{32}$/.test(challenge.nonce)
+      || !Number.isInteger(challenge.remaining_ms) || challenge.remaining_ms<=0 || challenge.remaining_ms>3000
+      || !challenge.scope || Object.keys(challenge.scope).length!==Object.keys(scope).length
+      || Object.entries(scope).some(([k,v])=>challenge.scope[k]!==v)) throw new BackendError('model_permission_binding')
+    if(job.permissionAttempts.has(challenge.attempt_id)) return
+    job.permissionAttempts.add(challenge.attempt_id)
+    if(job.permissionAttempts.size>2) throw new BackendError('model_attempt_limit')
+    // Re-evaluate current plugin scope/platform permission and current management state.
+    // observeUser reuses the old Session's loaded fields. A new Session forces a
+    // fresh database read; reusing the admitted Session would miss a revoked user.
+    const current=this.ctx.reflect.trace(job.session.bot.session({...job.session.event}))
+    const permitted=this.active && await this.permitted(current)
+    const management=this.config.management
+    const policy=management?.policySnapshot(input) ?? {natural_query:'model' as const,epoch:this.epoch,global_revision:0,group_revision:0}
+    const allowed=permitted && this.active && (management?.accepts(input) ?? true) && policy.natural_query==='model'
+    await this.client.modelPermission(challenge,policy,allowed)
   }
   async dispose(): Promise<void> {
     this.active = false

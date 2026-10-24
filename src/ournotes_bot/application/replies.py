@@ -93,6 +93,7 @@ class PreparedReply:
     command_index: int | None = None
     parse_origin: str = 'unknown'
     processing_route: str | None = None
+    visible_indices: tuple[int, ...] = ()
 
     @property
     def passive_slots(self):
@@ -196,6 +197,10 @@ class QueryGate:
     async def prepare_followup(self, context, operation, repository):
         return await self._run(prepare_followup, context, operation, repository)
 
+    async def run(self, function, *args):
+        """Bound only local resolution or rendering, never model queue/HTTP waits."""
+        return await self._run(function, *args)
+
     async def _run(self, function, *args):
         async with self._lock:
             if self._pending >= self._capacity:
@@ -276,7 +281,7 @@ class ReplySequencer:
 
 
 async def prepare_commands(commands: list[str], gate: "QueryGate", repository: SongRepository,
-                           ai_parser: AIQueryParser, limit: int, *, observe=None) -> tuple[list["PreparedReply"], int]:
+                           ai_parser: AIQueryParser, limit: int, *, observe=None, prepare=None) -> tuple[list["PreparedReply"], int]:
     """Prepare several commands concurrently and return replies in asked order.
 
     Preparation is bounded by `gate`, so a burst queues instead of swamping the
@@ -290,7 +295,7 @@ async def prepare_commands(commands: list[str], gate: "QueryGate", repository: S
     async def prepare_one(command):
         if len(commands) > 1 and parse_operation(command) is not None:
             return PreparedReply("连续查询请单独发送；同一条消息中的新查询和续查不会按依赖链执行。")
-        return await gate.prepare(command, repository, ai_parser)
+        return await prepare(command) if prepare is not None else await gate.prepare(command, repository, ai_parser)
     results = await asyncio.gather(
         *(prepare_one(command) for command in selected),
         return_exceptions=True,
@@ -423,7 +428,8 @@ def image_reply(content: str, repository: SongRepository, ai_parser: AIQueryPars
 
 
 def prepare_reply(content: str, repository: SongRepository,
-                   ai_parser: AIQueryParser, *, log_content: bool = True) -> PreparedReply | None:
+                   ai_parser: AIQueryParser, *, log_content: bool = True, outcome=None,
+                   catalog_before=None) -> PreparedReply | None:
     easter_egg = easter_egg_reply(content)
     if easter_egg is not None:
         return replace(easter_egg,parse_origin='direct',processing_route='direct')
@@ -436,9 +442,9 @@ def prepare_reply(content: str, repository: SongRepository,
         return (time.monotonic() - started) * 1000
 
     try:
-        before = catalog_version(repository)
+        before = catalog_version(repository) if catalog_before is None else catalog_before
         if is_ai_request(content):
-            outcome = ai_parser.answer_with_outcome(content, repository)
+            outcome = outcome if outcome is not None else ai_parser.answer_with_outcome(content, repository)
             reply, result = outcome.text, outcome.result
             origin = outcome.state.parse_origin
             route = outcome.state.processing_route
@@ -487,6 +493,8 @@ def prepare_followup(context, operation, repository):
             return PreparedReply('此结果支持 /继续；选择卡牌或歌曲请先查询对应列表。')
     if operation.kind == 'continue':
         return PreparedReply('本次查询的图片已经全部发送。',context=context)
+    if not isinstance(context, QueryContext):
+        return PreparedReply('这条结果没有可选实体，请发送完整查询。')
     try:
         outcome = execute_followup(context, operation, repository)
         if isinstance(outcome, str):
@@ -563,7 +571,7 @@ def complete_list_reply(result,repository,locale,candidate):
             from ..query.card_catalog import catalog_notice
             text += catalog_notice(records)
         ctx=replace(candidate,visible=candidate.visible[:stop]) if candidate else None
-        pages.append(PreparedReply(text,part.image,context=ctx))
+        pages.append(PreparedReply(text,part.image,context=ctx,visible_indices=tuple(range(start+1,stop+1))))
     return pages[0] if len(pages)==1 else PreparedReply('',pages=tuple(pages),context=candidate)
 
 

@@ -1,5 +1,7 @@
 # Taki Koishi 迁移候选（M0–M4）
 
+查询聊天包 1 将网关／后端载荷升级为 2.0，接入每次模型尝试的当前权限核验。实现与生产能力边界见 [包 1](../docs/QUERY_CHAT_PACKAGE1.md)；真实 QQ 引用／按钮 profile 尚未启用。
+
 M3 已接通查询、续查与逐片段交付；`enabled` 默认 false，仅注册运输服务。启用后连接同机 Python 后端，按原始事件身份、Koishi 作用域/权限和后端发送账本处理消息。
 
 配置、生命周期、行为差异和验收范围见 [M3 接线说明](../docs/KOISHI_MIGRATION_M3.md)，HTTP 见 [后端协议](../docs/KOISHI_BACKEND_V1.md)。生产切换另行确认；后台任务、主动通知和组合发布见 [M4 运行准备](../docs/KOISHI_MIGRATION_M4.md)。现有 Python bot 入口保留，本目录不进入 Python 离线包。

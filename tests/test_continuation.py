@@ -362,6 +362,7 @@ class BackendContinuationTests(Fixture, unittest.IsolatedAsyncioTestCase):
                                ledger_path=self.repo.cache_file.with_name('delivery.sqlite3'), clock=lambda: self.now)
         self.addAsyncCleanup(self.backend.close)
         self.backend.ready = True
+        self.backend.reference_profiles = frozenset({'fixture'})
         await self.backend.register('e1')
         self.backend.gate.prepare = AsyncMock(return_value=PreparedReply('captured', context=self.context()))
 
@@ -370,7 +371,7 @@ class BackendContinuationTests(Fixture, unittest.IsolatedAsyncioTestCase):
         return dict(protocol=PROTOCOL, request_id=digest(['fixture', 'app', 'qq', 'group', 'g1', 'u1', msg]),
                     instance_id='fixture', app_id='app', platform='qq', kind='group', conversation_id='g1',
                     user_id='u1', message_id=msg, timestamp_ms=int(self.now*1000), body='/查曲 MyGO',
-                    capability=CAPABILITY, gateway_epoch='e1', ingress_seq=seq,
+                    capability=CAPABILITY, gateway_epoch='e1', ingress_seq=seq,trigger='command',reference=None,interaction=None,
                     policy=dict(natural_query='model',epoch='fixture',global_revision=0,group_revision=0))
 
     async def prepare(self, request):
@@ -385,10 +386,23 @@ class BackendContinuationTests(Fixture, unittest.IsolatedAsyncioTestCase):
     def event(self, plan, kind):
         from ournotes_bot.application.backend_protocol import PROTOCOL
         event = dict(protocol=PROTOCOL, request_id=plan['request_id'], plan_version=1,
-                     gateway_epoch='e1', event=kind, part_id='0', attempt_id='a1')
+                     gateway_epoch='e1', event=kind, part_id=plan['parts'][0]['id'], attempt_id='a1')
         if kind == 'ack':
-            event.update(result='success', message_id='accepted')
+            event.update(result='success', message_id='accepted-'+plan['request_id'][:8])
         return self.backend.apply_event(plan['delivery_id'], event)
+
+    async def test_long_fallback_notice_keeps_continue_anchor_without_selectable_rows(self):
+        self.backend.gate.prepare.return_value=PreparedReply('captured text '*200,image=b'fixture',context=self.context())
+        first=await self.prepare(self.request('fallback',1))
+        first=self.event(first,'upload_failed')
+        self.event(first,'intent');self.event(first,'ack')
+        followup=self.request('continue',2);followup['body']='/继续'
+        second=await self.prepare(followup)
+        self.assertIn('captured text',second['parts'][0]['text'])
+        anchor=self.backend.conversations.resolve(self.backend.works[second['delivery_id']].request)
+        self.assertEqual(anchor.page,-1)
+        self.assertIsNone(anchor.context.query_context)
+        self.assertIsNone(self.backend.conversations.page(anchor,1))
 
     async def test_disposed_ack_records_fact_without_committing_when_retire_was_lost(self):
         from ournotes_bot.application.backend_protocol import PROTOCOL
@@ -423,8 +437,9 @@ class BackendContinuationTests(Fixture, unittest.IsolatedAsyncioTestCase):
         self.assertEqual(duplicate['delivery_id'], plan['delivery_id'])
         self.backend.gate.prepare.assert_awaited_once()
 
-    async def test_confirmed_ack_does_not_recommit_or_replace_newer_generation(self):
+    async def test_independent_topics_do_not_replace_each_other_and_duplicate_ack_is_inert(self):
         first = await self.prepare(self.request('A', 1))
+        first_key = self.backend.works[first['delivery_id']].key
         self.assertEqual(self.event(first, 'intent')['permission'], 'granted')
         self.assertEqual(self.event(first, 'intent')['permission'], 'existing')
         newer = self.request('B', 2)
@@ -432,12 +447,15 @@ class BackendContinuationTests(Fixture, unittest.IsolatedAsyncioTestCase):
         self.event(first, 'ack')
         self.assertIsNone(self.backend.contexts.get(self.key))
         second = await self.prepare(newer)
+        second_key = self.backend.works[second['delivery_id']].key
         self.event(second, 'intent')
         self.event(second, 'ack')
-        current = self.backend.contexts.get(self.key)
+        current = self.backend.contexts.get(second_key)
         self.assertIsNotNone(current)
+        self.assertIsNotNone(self.backend.contexts.get(first_key))
+        self.assertNotEqual(first_key, second_key)
         self.assertTrue(self.event(first, 'ack')['duplicate'])
-        self.assertIs(self.backend.contexts.get(self.key), current)
+        self.assertIs(self.backend.contexts.get(second_key), current)
 
     async def test_new_gateway_cannot_replay_or_commit_old_delivery(self):
         request = self.request('A', 1)
@@ -450,6 +468,182 @@ class BackendContinuationTests(Fixture, unittest.IsolatedAsyncioTestCase):
         self.assertFalse(replay['send_allowed'])
         self.assertEqual(replay['parts'][0]['status'], 'success')
         self.backend.gate.prepare.assert_awaited_once()
+
+    def quote(self, msg, seq, plan, body='/问 下一页', user='u1', group='g1'):
+        from ournotes_bot.application.backend_protocol import digest
+        value = self.request(msg, seq)
+        value.update(body=body, user_id=user, conversation_id=group, trigger='quoted_reply',
+                     reference={'message_id':'accepted-'+plan['request_id'][:8], 'adapter_profile_version':'fixture'})
+        value['request_id'] = digest(['fixture','app','qq','group',group,user,msg])
+        return value
+
+    async def test_quote_shares_only_confirmed_same_group_context(self):
+        first = await self.prepare(self.request('A',1))
+        self.event(first,'intent');self.event(first,'ack')
+        same = self.quote('B',2,first,body='/问 选 1',user='u2')
+        self.backend.gate.prepare_followup=AsyncMock(return_value=PreparedReply('same-topic',context=self.context()))
+        second=await self.prepare(same)
+        self.assertEqual(second['parts'][0]['text'],'same-topic')
+        self.assertEqual(self.backend.works[second['delivery_id']].key.user, first['request_id'])
+        cross=await self.prepare(self.quote('C',3,first,user='u2',group='other'))
+        self.assertEqual(cross['parts'][0]['text'],MISSING)
+
+    async def test_snapshot_paging_does_not_read_repository_after_update(self):
+        ctx=self.context()
+        self.backend.gate.prepare=AsyncMock(return_value=PreparedReply('',pages=(
+            PreparedReply('frozen-page-one',context=ctx),PreparedReply('frozen-page-two',context=ctx)),context=ctx))
+        first=await self.prepare(self.request('A',1))
+        self.event(first,'intent');self.event(first,'ack')  # Only page one is confirmed.
+        followup=self.quote('B',2,first)
+        await self.backend.submit(followup)
+        await asyncio.sleep(.02)
+        self.assertEqual(self.backend.lookup(followup['request_id'],'e1')['status'],'preparing')
+        self.event(first,'aborted')  # End the predecessor; the unsent second page stays captured.
+        self.repo.songs.reverse()
+        self.backend.gate.prepare_followup=AsyncMock(side_effect=AssertionError('must not refetch'))
+        second=await self.prepare(followup)
+        self.assertIn('frozen-page-two',second['parts'][0]['text'])
+        self.backend.gate.prepare_followup.assert_not_awaited()
+
+    async def test_confirmed_page_exposes_only_its_global_indices_and_detail_keeps_selected_entity(self):
+        context=capture_context(resolve_command('/查曲 MyGO',self.repo),self.repo,complete=True)
+        self.backend.gate.prepare.return_value=PreparedReply('rows 17 to 32',context=context,visible_indices=tuple(range(17,33)))
+        plan=await self.prepare(self.request('page',1));self.event(plan,'intent');self.event(plan,'ack')
+        from ournotes_bot.application.backend_protocol import Request
+        request=Request.parse(self.quote('select',2,plan), 'fixture','app',self.now,reference_profiles={'fixture'})
+        anchor=self.backend.conversations.resolve(request)
+        self.assertEqual(anchor.context.visible_indices,tuple(range(17,33)))
+        result,_=execute_followup(anchor.context,Operation('select',18),self.repo)
+        self.assertEqual(result.chart[0].id,self.repo.songs[17].id)
+        self.assertNotIsInstance(execute_followup(anchor.context,Operation('select',1),self.repo),tuple)
+        selected=replace(context,selected=context.visible[17])
+        self.backend.gate.prepare.return_value=PreparedReply('selected detail',context=selected)
+        detail=await self.prepare(self.request('detail',3));self.event(detail,'intent');self.event(detail,'ack')
+        request=Request.parse(self.quote('difficulty',4,detail),'fixture','app',self.now,reference_profiles={'fixture'})
+        anchor=self.backend.conversations.resolve(request)
+        self.assertEqual(anchor.context.visible,(selected.selected,))
+        self.assertEqual(anchor.context.selected,selected.selected)
+
+    async def test_unconfirmed_quote_cannot_see_pending_snapshot(self):
+        first=await self.prepare(self.request('A',1))
+        second=await self.prepare(self.quote('B',2,first))
+        self.assertEqual(second['parts'][0]['text'],MISSING)
+
+    async def test_each_attempt_requires_bound_current_permission(self):
+        from ournotes_bot.application.backend_protocol import ProtocolError
+        import time
+        first=await self.prepare(self.request('A',1));work=self.backend.works[first['delivery_id']]
+        task=asyncio.create_task(self.backend.permissions.acquire(work,time.monotonic()+30))
+        await asyncio.sleep(0)
+        challenge=self.backend.permissions.challenge_view(work)
+        body={k:v for k,v in challenge.items() if k not in ('remaining_ms','admission_policy_version')}
+        body.update(decision='allow',current_policy_version=challenge['admission_policy_version'],reason='fixture',ttl_ms=1000)
+        with self.assertRaisesRegex(ProtocolError,'permission_identity'):
+            self.backend.permissions.decide(work.request.request_id,body['attempt_id'],{**body,'nonce':'wrong'},'e1')
+        self.backend.permissions.decide(work.request.request_id,body['attempt_id'],body,'e1')
+        self.assertTrue(self.backend.permissions.decide(work.request.request_id,body['attempt_id'],body,'e1')['duplicate'])
+        self.assertGreater(await task,time.monotonic())
+        next_task=asyncio.create_task(self.backend.permissions.acquire(work,time.monotonic()+30));await asyncio.sleep(0)
+        next_challenge=self.backend.permissions.challenge_view(work)
+        self.assertNotEqual(challenge['attempt_id'],next_challenge['attempt_id'])
+        self.assertTrue(self.backend.permissions.decide(work.request.request_id,body['attempt_id'],body,'e1')['duplicate'])
+        self.assertFalse(next_task.done())  # Recording the old fact cannot grant the new attempt.
+        denial={k:v for k,v in next_challenge.items() if k not in ('remaining_ms','admission_policy_version')}
+        denial.update(decision='deny',current_policy_version=next_challenge['admission_policy_version'],reason='revoked',ttl_ms=1000)
+        self.backend.permissions.decide(work.request.request_id,denial['attempt_id'],denial,'e1')
+        with self.assertRaisesRegex(ProtocolError,'policy_denied'):await next_task
+        with self.assertRaisesRegex(ProtocolError,'model_attempt_limit'):
+            await self.backend.permissions.acquire(work,time.monotonic()+30)
+
+    async def test_hung_model_permission_does_not_block_direct_query(self):
+        import time
+        from ournotes_bot.natural_query.query_agent import DeferredModel,AgentState,AgentOutcome,TerminalOutcome
+        from ournotes_bot.natural_query.query_validation import OutcomeCode
+        from ournotes_bot.domain.query_policy import CURRENT_MODEL_START
+        def local(content,repo):return DeferredModel(AgentState(content,time.monotonic(),time.monotonic()+30),True)
+        def resume(deferred,repo):
+            CURRENT_MODEL_START.get()()()
+            deferred.state.final_code=OutcomeCode.SUCCESS
+            return AgentOutcome('model-fixture',TerminalOutcome(OutcomeCode.SUCCESS,'model-fixture'),deferred.state)
+        self.backend.parser=SimpleNamespace(prepare_local=local,resume_model=resume)
+        request=self.request('AI',1);request.update(body='/问 fixture question',trigger='ask')
+        await self.backend.submit(request)
+        for _ in range(100):
+            pending=self.backend.lookup(request['request_id'],'e1')
+            if pending.get('pending_model_permission'):break
+            await asyncio.sleep(.005)
+        else:self.fail('model permission challenge was never published')
+        self.assertEqual(self.backend.gate._pending,0)
+        direct=await self.prepare(self.request('direct',2))
+        self.assertTrue(direct['send_allowed'])
+        self.event(direct,'intent');self.event(direct,'ack')
+        self.assertEqual(self.backend.lookup(direct['request_id'],'e1')['status'],'finished')
+        self.assertEqual(self.backend.lookup(request['request_id'],'e1')['status'],'preparing')
+        challenge=pending['pending_model_permission']
+        body={k:v for k,v in challenge.items() if k not in ('remaining_ms','admission_policy_version')}
+        body.update(decision='allow',current_policy_version=challenge['admission_policy_version'],reason='fixture',ttl_ms=1000)
+        with patch('ournotes_bot.application.replies.render_prepared',return_value=PreparedReply('model-fixture')):
+            self.backend.permissions.decide(request['request_id'],body['attempt_id'],body,'e1')
+            model=await self.prepare(request)
+        self.assertEqual(model['parts'][0]['text'],'model-fixture')
+
+    async def test_permission_expiry_and_retirement_are_closed(self):
+        from ournotes_bot.application.backend_protocol import ProtocolError
+        now=[1.0];self.backend.permissions.clock=lambda:now[0]
+        plan=await self.prepare(self.request('A',1));work=self.backend.works[plan['delivery_id']]
+        task=asyncio.create_task(self.backend.permissions.acquire(work,30));await asyncio.sleep(0)
+        challenge=self.backend.permissions.challenge_view(work)
+        body={k:v for k,v in challenge.items() if k not in ('remaining_ms','admission_policy_version')}
+        body.update(decision='allow',current_policy_version=challenge['admission_policy_version'],reason='fixture',ttl_ms=1000)
+        now[0]=5
+        with self.assertRaisesRegex(ProtocolError,'permission_expired'):
+            self.backend.permissions.decide(work.request.request_id,body['attempt_id'],body,'e1')
+        await self.backend.register('e2')
+        with self.assertRaisesRegex(ProtocolError,'inactive_request'):await task
+
+    async def test_legacy_ack_records_fact_but_cannot_restore_context(self):
+        plan=await self.prepare(self.request('A',1));self.event(plan,'intent')
+        key=self.backend.works[plan['delivery_id']].key
+        result=self.backend.apply_event(plan['delivery_id'],dict(protocol={'major':1,'minor':1},request_id=plan['request_id'],
+            plan_version=1,gateway_epoch='e1',event='ack',part_id='0',attempt_id='a1',result='success',message_id='old-receipt'))
+        self.assertEqual(result['parts'][0]['status'],'success')
+        self.assertIsNone(self.backend.contexts.get(key))
+
+
+class AbsoluteLifetimeTests(Fixture,unittest.TestCase):
+    def setUp(self):self.setup_repo()
+
+    def test_followup_commit_and_reads_cannot_extend_original_deadline(self):
+        now=[0.0];store=ContextStore(clock=lambda:now[0]);ticket=store.begin(self.key)
+        now[0]=10;self.assertTrue(store.commit(ticket,self.context(),confirmed=True))
+        now[0]=599;ticket=store.begin(self.key,clear=False)
+        self.assertTrue(store.commit(ticket,self.context(),confirmed=True))
+        self.assertEqual(store.deadline(self.key),600)
+        now[0]=600;store.sweep()
+        self.assertEqual(store._entries,{})
+        self.assertFalse(store.commit(ticket,self.context(),confirmed=True))
+
+    def test_successful_plan_and_state_expire_without_another_query(self):
+        agent=self.parser._agent;now=[0.0];agent.clock=lambda:now[0]
+        self.parser.answer_with_outcome('/问 查曲 MyGO',self.repo)
+        self.assertIsNotNone(self.parser.command_for('/问 查曲 MyGO'))
+        now[0]=599;self.assertIsNotNone(self.parser.state_for('/问 查曲 MyGO'))
+        now[0]=600;agent.sweep()
+        self.assertEqual(agent._cache,{})
+        self.assertEqual(agent._states,{})
+        self.assertIsNone(self.parser.command_for('/问 查曲 MyGO'))
+
+    def test_runtime_scopes_never_share_question_plans_or_states(self):
+        from ournotes_bot.domain.query_policy import CURRENT_QUERY_SCOPE
+        a=CURRENT_QUERY_SCOPE.set(('instance','topic-a'))
+        try:
+            self.parser.answer_with_outcome('/问 查曲 MyGO',self.repo)
+            self.assertIsNotNone(self.parser.state_for('/问 查曲 MyGO'))
+            self.assertIsNone(self.parser.command_for('/问 查曲 MyGO'))
+        finally:CURRENT_QUERY_SCOPE.reset(a)
+        b=CURRENT_QUERY_SCOPE.set(('instance','topic-b'))
+        try:self.assertIsNone(self.parser.state_for('/问 查曲 MyGO'))
+        finally:CURRENT_QUERY_SCOPE.reset(b)
 
 
 if __name__ == "__main__":

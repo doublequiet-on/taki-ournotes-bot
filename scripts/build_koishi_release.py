@@ -60,7 +60,7 @@ def build(python_artifact, node, output):
         manifest={'schema':1,'commit':commit,'controller_rollback_commit':rollback_ref,'node':identity,'lock_sha256':sha(gateway/'package-lock.json'),
                   'python_artifact':python.relative_to(stage).as_posix(),'python_sha256':sha(python),
                   'backend_code_digest':hashlib.sha256(b''.join((application/n).read_bytes() for n in code_files)).hexdigest(),
-                  'protocol':inventory['TRANSPORT_PROTOCOL'],'capabilities':['group_policies_v1'],
+                  'protocol':inventory['TRANSPORT_PROTOCOL'],'capabilities':['group_policies_v1','query_chat_contract_v1'],
                   'data_schema':1,'rollback':'code-only; freeze settings before unsupported policy runtimes',
                   'files':files}
         (stage/'combination.json').write_text(json.dumps(manifest,indent=2)+'\n',encoding='utf-8')

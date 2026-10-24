@@ -7,7 +7,7 @@ from ..domain.query_policy import ExecutionPolicy
 from .backend_sources import TRANSPORT_PROTOCOL
 
 PROTOCOL = TRANSPORT_PROTOCOL
-CAPABILITY = 'qq-m1-candidate'
+CAPABILITY = 'qq-query-chat-v3'
 WINDOW = 298.0
 
 
@@ -54,14 +54,17 @@ class Request:
     gateway_epoch: str
     ingress_seq: int
     policy: ExecutionPolicy = ExecutionPolicy()
+    trigger: str = 'command'
+    reference: dict | None = None
+    interaction: dict | None = None
 
     @classmethod
-    def parse(cls, value, instance_id, app_id, now):
+    def parse(cls, value, instance_id, app_id, now, *, reference_profiles=()):
         fields = set(cls.__dataclass_fields__)
         require(isinstance(value, dict) and set(value) == fields | {'protocol'}, 'request_shape')
         require_protocol(value['protocol'])
         require(value['instance_id'] == instance_id and value['app_id'] == app_id, 'instance_mismatch', 403)
-        for key in fields - {'timestamp_ms', 'body', 'ingress_seq', 'policy'}:
+        for key in fields - {'timestamp_ms', 'body', 'ingress_seq', 'policy', 'reference', 'interaction'}:
             require(identity(value[key]), 'invalid_identity')
         require(value['platform'] == 'qq' and value['kind'] in ('group', 'c2c'), 'conversation_kind')
         require(value['kind'] != 'c2c' or value['conversation_id'] == value['user_id'], 'c2c_identity')
@@ -69,6 +72,17 @@ class Request:
         require(type(value['timestamp_ms']) is int and 0 <= value['timestamp_ms'] < 10**14, 'message_time')
         require(type(value['ingress_seq']) is int and 0 < value['ingress_seq'] < 2**53, 'ingress_seq')
         require(isinstance(value['body'], str) and 0 < len(value['body'].encode()) <= 16384, 'body_size')
+        require(value['trigger'] in ('command','ask','quoted_reply','button'), 'trigger')
+        ref, interaction = value['reference'], value['interaction']
+        if value['trigger'] == 'quoted_reply':
+            require(isinstance(ref, dict) and set(ref) == {'message_id','adapter_profile_version'}
+                    and identity(ref['message_id']) and identity(ref['adapter_profile_version'])
+                    and ref['adapter_profile_version'] in reference_profiles,
+                    'reference_profile')
+        else:
+            require(ref is None, 'reference_shape')
+        # No live button profile has been verified; do not accept arbitrary interaction data.
+        require(value['trigger'] != 'button' and interaction is None, 'interaction_profile')
         policy = value['policy']
         require(isinstance(policy, dict) and set(policy) == set(ExecutionPolicy.__dataclass_fields__), 'policy_shape')
         require(policy['natural_query'] in ('off','local','model') and identity(policy['epoch']), 'policy_value')
@@ -87,11 +101,20 @@ class Request:
     def context_id(self):
         return digest([self.instance_id, self.app_id, self.platform, self.kind, self.conversation_id, self.user_id])
 
+    @property
+    def scope(self):
+        return {key: getattr(self, key) for key in ('instance_id','app_id','platform','kind','conversation_id')}
+
 
 def event(value):
     require(isinstance(value, dict), 'event_shape')
     common = {'protocol', 'request_id', 'plan_version', 'gateway_epoch', 'event', 'part_id', 'attempt_id'}
-    require_protocol(value.get('protocol'))
+    legacy_ack = value.get('protocol') == {'major':1,'minor':1} and value.get('event') == 'ack'
+    if legacy_ack:
+        require(all(type(value['protocol'][k]) is int for k in ('major','minor')), 'protocol_version', 409)
+        value = {**value, 'allow_context': False}
+    else:
+        require_protocol(value.get('protocol'))
     kind = value.get('event')
     extra = {'result', 'message_id'} if kind == 'ack' else set()
     if kind == 'ack' and 'allow_context' in value:

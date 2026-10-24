@@ -9,8 +9,10 @@ import os
 import time
 import uuid
 import hashlib
+from functools import partial
+from concurrent.futures import TimeoutError as FutureTimeout, CancelledError as FutureCancelled
 from pathlib import Path
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field, replace, fields, is_dataclass
 
 from aiohttp import web
 from ..commands import split_commands, locale_for
@@ -24,7 +26,12 @@ from .admin import Admin
 from .operations import Operations
 from .runtime_tasks import finish_thread
 from .backend_sources import CODE_FILES
-from ..domain.query_policy import CURRENT_POLICY
+from ..domain.query_policy import (CURRENT_POLICY, CURRENT_QUERY_SCOPE, CURRENT_MODEL_START,
+                                  CURRENT_EXECUTION_CHECK, CURRENT_CONTENT_DEADLINE, continuation_allowed)
+from ..ai_client import AIClientError
+from ..natural_query.query_agent import DeferredModel
+from .model_execution import ModelScheduler, ModelPermissions
+from .conversation_state import Conversations, ReadOnlyContext
 
 logger = logging.getLogger('ournotes_bot.backend')
 
@@ -37,7 +44,6 @@ class Work:
     operation: object
     lineage: object
     lease: object
-    order: object
     ended: asyncio.Event = field(default_factory=asyncio.Event)
     prepared: tuple = ()
     candidate: object = None
@@ -45,11 +51,16 @@ class Work:
     lock: object = None
     lock_acquired: bool = False
     task: object = None
+    anchor: object = None
+    missing_anchor: bool = False
+    model_attempts: int = 0
+    content_deadline: float = field(default_factory=lambda: time.monotonic()+600)
 
 
 class Backend:
     def __init__(self, repository, parser, settings, *, instance_id, app_id, ledger_path,
-                 clock=time.time, plan_capacity=64, byte_capacity=128_000_000, diagnostics_enabled=True):
+                 clock=time.time, plan_capacity=64, byte_capacity=128_000_000, diagnostics_enabled=True,
+                 reference_profiles=()):
         require(identity(instance_id) and identity(app_id), 'configured_identity')
         self.repository, self.parser, self.settings = repository, parser, settings
         self.instance_id, self.app_id, self.clock = instance_id, app_id, clock
@@ -61,8 +72,11 @@ class Backend:
         self.admin = Admin(self)
         self.operations = Operations(Path(ledger_path).with_name('operations-v1.sqlite3'), instance_id+'\0'+app_id, clock=clock)
         self.contexts = ContextStore()
+        self.conversations = Conversations(self.contexts)
+        self.models = ModelScheduler()
+        self.permissions = ModelPermissions(self)
+        self.reference_profiles = frozenset(reference_profiles)
         self.gate = replies.QueryGate(settings.query_concurrency, settings.query_queue_limit, redact=True)
-        self.sequencer = replies.ReplySequencer(enabled=settings.reply_order)
         self.works = {}
         self.tasks = set()
         self.plan_capacity, self.byte_capacity = plan_capacity, byte_capacity
@@ -74,8 +88,14 @@ class Backend:
         self.data_owner = None
 
     def expire(self):
+        self.conversations.sweep()
+        sweep = getattr(self.parser, 'sweep', None)
+        if sweep is not None: sweep()
         for work in list(self.works.values()):
-            if work.active and self.clock() >= work.request.timestamp_ms/1000+WINDOW:
+            context_deadline = self.contexts.deadline(work.key)
+            if work.active and (self.clock() >= work.request.timestamp_ms/1000+WINDOW or
+                                work.lease is not None and time.monotonic() >= context_deadline or
+                                work.anchor is not None and work.anchor.snapshot_id not in self.conversations.snapshots):
                 self.finish(work, 'expired')
 
     def finish(self, work, status):
@@ -84,9 +104,14 @@ class Backend:
         # Persist termination before releasing its ownership; failures remain diagnosable.
         self.ledger.finish(work.delivery, status)
         work.active = False
+        self.permissions.abort(work)
         work.ended.set()
         work.prepared = ()
         work.candidate = None
+        work.anchor = None
+        self.conversations.discard_unconfirmed(work.delivery)
+        if status in ('expired', 'aborted') and work.task is not None and work.task is not asyncio.current_task():
+            work.task.cancel()
 
     async def register(self, epoch):
         require(identity(epoch), 'gateway_epoch')
@@ -95,11 +120,12 @@ class Backend:
             if changed:
                 for work in list(self.works.values()):
                     self.finish(work, 'aborted')
+                self.permissions.versions.clear()
         return {'gateway_epoch': epoch, 'backend_epoch': self.runtime}
 
     async def submit(self, payload):
         started = time.perf_counter()
-        request = Request.parse(payload, self.instance_id, self.app_id, self.clock())
+        request = Request.parse(payload, self.instance_id, self.app_id, self.clock(), reference_profiles=self.reference_profiles)
         async with self.admission:
             self.expire()
             existing = self.ledger.request(request.request_id)
@@ -123,17 +149,63 @@ class Backend:
                 observed_commands.append({'kind':'overflow','outcome':'invalid_arguments'})
             self.diagnostics.admitted(request, delivery, self.runtime, self.clock(), observed_commands)
             self.diagnostics.span(uuid.uuid4().hex,request.request_id,'admission',admission_ms,self.clock(),outcome='ok')
-            key = ContextKey(request.platform, request.kind, request.conversation_id, request.user_id)
             operation = parse_operation(commands[0]) if len(commands) == 1 else None
-            lineage = self.contexts.lineage(key) if operation else None
-            lease = self.contexts.begin(key) if operation is None else None
-            order = await self.sequencer.issue()
-            work = Work(request, delivery, key, operation, lineage, lease, order)
+            anchor = self.conversations.resolve(request) if operation or request.reference else None
+            key = anchor.key if anchor else ContextKey(request.platform, request.kind, request.conversation_id, request.request_id)
+            lineage = anchor.lineage if anchor else None
+            lease = self.contexts.begin(key) if not operation and anchor is None else None
+            work = Work(request, delivery, key, operation, lineage, lease, anchor=anchor,
+                        missing_anchor=request.reference is not None and anchor is None)
             self.works[delivery] = work
             work.task = asyncio.create_task(self.prepare(work, commands))
             self.tasks.add(work.task)
             work.task.add_done_callback(self.tasks.discard)
             return self.snapshot(self.ledger.request(request.request_id), request.gateway_epoch)
+
+    async def prepare_command(self, work, content):
+        if not replies.is_ai_request(content) or work.request.policy.natural_query == 'off' or not hasattr(self.parser, 'prepare_local'):
+            return await self.gate.prepare(content, self.repository, self.parser)
+        before = replies.catalog_version(self.repository)
+        outcome = await self.gate.run(self.parser.prepare_local, content, self.repository)
+        if isinstance(outcome, replies.PreparedReply):
+            return outcome
+        if isinstance(outcome, DeferredModel):
+            loop = asyncio.get_running_loop()
+            async def model(deadline):
+                def start():
+                    pending = asyncio.run_coroutine_threadsafe(self.permissions.acquire(work, deadline), loop)
+                    try:
+                        allowed_until = pending.result(timeout=3.1)
+                    except (ProtocolError, FutureTimeout, FutureCancelled, asyncio.CancelledError):
+                        pending.cancel()
+                        raise AIClientError('current_permission_unavailable') from None
+                    if not work.active or time.monotonic() >= allowed_until:
+                        raise AIClientError('current_permission_expired')
+                    consumed = False
+                    def consume():
+                        nonlocal consumed
+                        if consumed or not work.active or time.monotonic() >= allowed_until:
+                            raise AIClientError('current_permission_expired')
+                        consumed = True
+                    return consume
+                token = CURRENT_MODEL_START.set(start)
+                active_token = CURRENT_EXECUTION_CHECK.set(lambda: work.active and time.monotonic() < deadline)
+                try:
+                    return await finish_thread(partial(self.parser.resume_model, outcome, self.repository))
+                finally:
+                    CURRENT_MODEL_START.reset(token)
+                    CURRENT_EXECUTION_CHECK.reset(active_token)
+            try:
+                # Cross-scene identity mapping is not assumed; retain trusted ingress scope.
+                user = (work.request.kind, work.request.conversation_id, work.request.user_id)
+                outcome = await self.models.run(user, model)
+            except (ProtocolError, asyncio.TimeoutError) as exc:
+                code = exc.code if isinstance(exc, ProtocolError) else 'execution_timeout'
+                return replies.PreparedReply('当前 AI 请求较多或等待超时，请稍后重试。', business_status=code)
+        if not work.active:
+            return None
+        return await self.gate.run(partial(replies.prepare_reply, log_content=False, outcome=outcome, catalog_before=before),
+                                   content, self.repository, self.parser)
 
     async def prepare_call(self, work, operation):
         started, outcome = time.perf_counter(), 'error'
@@ -147,21 +219,35 @@ class Backend:
 
     async def prepare(self, work, commands):
         policy_token = CURRENT_POLICY.set(work.request.policy)
+        scope_token = CURRENT_QUERY_SCOPE.set((self.instance_id, self.app_id, work.request.request_id))
+        deadline_token = CURRENT_CONTENT_DEADLINE.set(min(work.content_deadline,
+            self.contexts.deadline(work.key) or work.content_deadline))
         try:
             self.expire()
             if not work.active: return
-            if work.operation:
-                work.lock = self.contexts.lock(work.key)
-                # A bounded lease covers lock wait + preparation + remote delivery.
-                await asyncio.wait_for(work.lock.acquire(), max(.001, work.request.timestamp_ms/1000+WINDOW-self.clock()))
-                work.lock_acquired = True
-                self.expire()
-                if not work.active: return
+            work.lock = self.contexts.lock(work.key)
+            # Only this topic's predecessor owns the lock through its final ACK.
+            await asyncio.wait_for(work.lock.acquire(), max(.001, work.request.timestamp_ms/1000+WINDOW-self.clock()))
+            work.lock_acquired = True
+            self.expire()
+            if not work.active: return
+            if work.missing_anchor:
+                parts = [replies.PreparedReply(MISSING)]
+            elif work.operation or work.anchor is not None:
                 current = (self.contexts.get(work.key) if work.lineage is not None
                            and self.contexts.lineage(work.key) == work.lineage else None)
+                if work.request.reference is not None and current is not None:
+                    current = work.anchor.context
                 work.lease = self.contexts.begin(work.key, clear=False) if current is not None else None
                 if work.request.policy.natural_query == 'off' and replies.is_ai_request(commands[0]):
                     result = replies.PreparedReply('本群已关闭 /问；请使用直接查询指令。')
+                elif current is not None and not continuation_allowed(getattr(current,'origin','unknown')):
+                    result = replies.PreparedReply('当前策略不允许继续此前 /问 结果，请重新发送直接查询。')
+                elif current is not None and work.operation and work.operation.kind == 'page':
+                    result = self.conversations.page(work.anchor, work.operation.value)
+                    result = result or replies.PreparedReply('页码超出范围，或这份结果已过期。')
+                elif work.operation is None:
+                    result = await self.prepare_command(work, commands[0]) if current is not None else replies.PreparedReply(MISSING)
                 else:
                     result = (await self.prepare_call(work,self.gate.prepare_followup(current, work.operation, self.repository))
                               if current is not None else replies.PreparedReply(MISSING))
@@ -173,19 +259,23 @@ class Backend:
             else:
                 parts, overflow = await self.prepare_call(work,replies.prepare_commands(commands, self.gate, self.repository,
                     self.parser, self.settings.multi_command_limit,
-                    observe=lambda outcomes: self.diagnostics.outcomes(work.request.request_id, outcomes)))
+                    observe=lambda outcomes: self.diagnostics.outcomes(work.request.request_id, outcomes),
+                    prepare=lambda command: self.prepare_command(work, command)))
                 if overflow:
                     parts.append(replies.PreparedReply(tr(locale_for(commands[0]), 'too_many_commands',
                                                           limit=self.settings.multi_command_limit, total=len(commands))))
             self.diagnostics.prepared(work.request.request_id, parts)
-            started = time.perf_counter()
-            await self.sequencer.wait_turn(work.order)
             self.diagnostics.span(uuid.uuid4().hex, work.request.request_id, 'reply_order_wait',
-                                  (time.perf_counter()-started)*1000, self.clock(), outcome='ok')
+                                  0, self.clock(), outcome='ok')
             self.expire()
             if not work.active:
                 return
+            parts = [replace(p, context=ReadOnlyContext(p.text, p.parse_origin)) if p.context is None else p for p in parts]
             work.prepared = tuple(parts)
+            complete = list(parts)
+            if parts and isinstance(parts[-1].context, replies.DeliveryCursor):
+                complete.extend(parts[-1].context.remaining)
+            self.conversations.capture(work, complete)
             require(self.retained_bytes() <= self.byte_capacity, 'byte_capacity', 503)
             self.ledger.prepared(work.delivery, len(parts))
             if not parts:
@@ -202,10 +292,11 @@ class Backend:
             self.finish(work, 'failed')
         finally:
             CURRENT_POLICY.reset(policy_token)
+            CURRENT_QUERY_SCOPE.reset(scope_token)
+            CURRENT_CONTENT_DEADLINE.reset(deadline_token)
             # Only release a lock this task actually acquired (see acquired flag below).
             if work.lock is not None and work.lock_acquired:
                 work.lock.release()
-            await self.sequencer.release(work.order)
             self.works.pop(work.delivery, None)
 
     def retained_bytes(self):
@@ -221,9 +312,19 @@ class Backend:
                 for item in value: visit(item)
             elif isinstance(value, replies.PreparedReply):
                 for item in (value.image, value.text, value.pages, value.context, value.fallback_texts): visit(item)
-            elif isinstance(value, replies.DeliveryCursor): visit(value.remaining)
-        for work in self.works.values(): visit(work.prepared)
+            elif isinstance(value, replies.DeliveryCursor):
+                visit(value.remaining)
+                visit(value.query_context)
+            elif isinstance(value, dict):
+                for key, item in value.items(): visit(key); visit(item)
+            elif is_dataclass(value):
+                for item in fields(value): visit(getattr(value,item.name))
+        for work in self.works.values():
+            visit(work.prepared)
+            visit(work.request.body)
         for context in self.contexts.retained_contexts(): visit(context)
+        for snapshot in self.conversations.snapshots.values():
+            for page in snapshot.pages: visit(page)
         return total
 
     def live(self, row, epoch):
@@ -240,6 +341,9 @@ class Backend:
         result = {'protocol': PROTOCOL, 'request_id': row['id'], 'delivery_id': row['delivery'],
                   'plan_version': 1, 'status': row['status'], 'send_allowed': live,
                   'expires_at': row['expires'], 'parts': []}
+        if work and work.active and row['epoch'] == epoch and self.ledger.active(epoch):
+            challenge = self.permissions.challenge_view(work)
+            if challenge is not None: result['pending_model_permission'] = challenge
         for part in parts:
             view = {key: part[key] for key in ('id', 'position', 'mode', 'status', 'attempt', 'message')}
             if live and work:
@@ -300,6 +404,10 @@ class Backend:
                         work.candidate = candidate
                     if work.operation:
                         self.contexts.commit(work.lease, candidate, confirmed=True)
+                    elif candidate is not None:
+                        self.contexts.commit(work.lease, candidate, confirmed=True)
+                    self.conversations.confirm(work, payload['message_id'], part['position'], candidate,
+                                               fallback_notice=long_fallback)
                 elif payload['result'] == 'uncertain' and isinstance(candidate, replies.DeliveryCursor):
                     work.candidate = replace(candidate, uncertain=True)
                     if work.operation: self.contexts.commit(work.lease, work.candidate, confirmed=True)
@@ -338,6 +446,9 @@ class Backend:
         tasks = list(self.tasks)
         for task in tasks: task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
+        await self.models.close()
+        self.conversations.clear()
+        self.contexts.clear()
         if self.runtime_tasks: await self.runtime_tasks.close()
         await self.operations.close()
         self.ledger.close()
@@ -377,7 +488,9 @@ def create_app(backend, token, initialize=None):
                      'notices_enabled': backend.notices is not None,
                      'diagnostics_enabled': backend.diagnostics.db is not None,
                      'management_capabilities': ['admin_read_v1', 'telemetry_v1', 'group_policies_v1', 'ops_v1'],
-                     'features': ['classify', 'gateway_retire', 'ack_context_guard', 'notice_gateway_v1']}, 200 if backend.ready else 503)
+                     'features': ['classify', 'gateway_retire', 'ack_context_guard', 'notice_gateway_v1',
+                                  'quoted_context_v1', 'fixed_snapshot_v1', 'current_model_permit_v1', 'independent_delivery_v1'],
+                     'reference_profiles': sorted(backend.reference_profiles)}, 200 if backend.ready else 503)
     async def classify(request):
         value = await read_json(request)
         require(isinstance(value, dict) and set(value) == {'body'} and isinstance(value['body'], str), 'classify_shape')
@@ -399,6 +512,9 @@ def create_app(backend, token, initialize=None):
         return json(await backend.register(value['gateway_epoch']))
     async def submit(request): return json(await backend.submit(await read_json(request)), 202)
     async def lookup(request): return json(backend.lookup(request.match_info['rid'], request.headers.get('X-Taki-Epoch')))
+    async def model_permission(request):
+        return json(backend.permissions.decide(request.match_info['rid'], request.match_info['aid'],
+                                              await read_json(request), request.headers.get('X-Taki-Epoch')))
     async def image(request):
         data = backend.image(request.match_info['did'], request.match_info['pid'], request.headers.get('X-Taki-Epoch'))
         mime = 'image/png' if data.startswith(b'\x89PNG\r\n\x1a\n') else 'image/jpeg'
@@ -433,6 +549,7 @@ def create_app(backend, token, initialize=None):
                     web.post('/v1/gateways', register), web.post('/v1/gateways/retire', retire),
                     web.post('/v1/classify', classify), web.post('/v1/requests', submit),
                     web.get('/v1/requests/{rid}', lookup),
+                    web.post('/v1/requests/{rid}/model-permissions/{aid}', model_permission),
                     web.get('/v1/deliveries/{did}/parts/{pid}/image', image),
                     web.post('/v1/deliveries/{did}/events', events),
                     web.post('/v1/groups/events', group_event), web.post('/v1/notices/claims', notice_claims),

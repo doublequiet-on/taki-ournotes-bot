@@ -17,6 +17,8 @@ export interface Inbound {
   messageId: string
   timestampMs: number
   body: string
+  trigger?: 'command' | 'ask' | 'quoted_reply'
+  reference?: { message_id:string; adapter_profile_version:string } | null
 }
 export type IngressResult =
   | { status: 'accepted'; inbound: Inbound; session: Session }

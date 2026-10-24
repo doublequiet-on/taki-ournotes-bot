@@ -205,6 +205,30 @@ class ReplyPipelineTests(unittest.TestCase):
 
 
 class CatalogRefreshScheduleTests(unittest.IsolatedAsyncioTestCase):
+    async def test_conversation_reaper_runs_without_queries_and_ready_is_idempotent(self):
+        instances=[]
+        class FakeClient:
+            def __init__(self,**kwargs):
+                self.robot=SimpleNamespace(name='Taki')
+                self._refresh_task=Mock()
+                self._song_traits_task=Mock(done=Mock(return_value=False))
+                instances.append(self)
+            def run(self,**kwargs): pass
+        repository=SimpleNamespace(songs=[],event_cutoffs=SimpleNamespace(history=True))
+        with tempfile.TemporaryDirectory() as folder:
+            settings=Settings('fixture','',BASE,Path(folder)/'cache.json',6,qq_gateway_host='',update_notices=False)
+            with patch('botpy.Client',FakeClient), patch('ournotes_bot.platforms.qq.qq.ContextStore') as contexts, \
+                 patch('ournotes_bot.platforms.qq.qq.AIQueryParser') as parser, \
+                 patch('ournotes_bot.platforms.qq.qq.asyncio.sleep',side_effect=[None,asyncio.CancelledError]) as sleep:
+                run_bot('fixture','',repository,settings)
+                client=instances[-1]
+                await client.on_ready();task=client._context_expiry_task
+                await client.on_ready();self.assertIs(client._context_expiry_task,task)
+                with self.assertRaises(asyncio.CancelledError):await task
+                contexts.return_value.sweep.assert_called_once()
+                parser.return_value.sweep.assert_called_once()
+                self.assertEqual([c.args for c in sleep.await_args_list],[(1,),(1,)])
+
     async def check_schedule(self, start, durations, expected, *, fail_first=False):
         from datetime import datetime
 
@@ -216,6 +240,9 @@ class CatalogRefreshScheduleTests(unittest.IsolatedAsyncioTestCase):
             def __init__(self, **kwargs):
                 self.robot = SimpleNamespace(name="Taki")
                 self._song_traits_task = Mock(done=Mock(return_value=False))
+                # This fixture advances the refresh clock only; the independent
+                # one-second conversation reaper has its own lifecycle tests.
+                self._context_expiry_task = Mock(done=Mock(return_value=False))
                 instances.append(self)
 
             def run(self, **kwargs):

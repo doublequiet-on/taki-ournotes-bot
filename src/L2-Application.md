@@ -31,6 +31,9 @@ CLI 模式与组合、配置根/数据路径、包身份；为多个系统域提
 
 ## Internal Subsystems
 
+- [application/model_execution.py](ournotes_bot/application/model_execution.py)：独立模型队列、每次尝试的当前许可与绝对执行期限；不拥有模型事实或加权账务。
+- [application/conversation_state.py](ournotes_bot/application/conversation_state.py)：会话／话题、成功消息锚点及固定页面；与 ContextStore 共用绝对期限。见 [查询聊天包 1](../docs/QUERY_CHAT_PACKAGE1.md)。
+
 组合根与四个运行支撑叶子直接 L2 → L3。没有足够复杂度和统一新生命周期来为每个叶子建立 L2-2；共享并不意味着相互调用。
 
 ## Dependencies
