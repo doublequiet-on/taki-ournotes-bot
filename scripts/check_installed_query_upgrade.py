@@ -30,7 +30,7 @@ def main():
                "domain.meta_query", "sources.haneoka.song_metrics", "query.song_metrics", "rendering.song_metrics_layout",
                "domain.knowledge", "sources.knowledge_files", "sources.knowledge_embeddings",
                "domain.model_calls", "sources.model_provider", "natural_query.native_tools",
-               "application.model_runtime", "application.model_config", "application.usage_ledger",
+               "application.model_runtime", "application.model_config", "application.model_admin", "application.usage_ledger",
                "query.knowledge_retrieval", "application.knowledge_service", "application.knowledge_cli",
                "sources.moenotes_open",
                "sources.haneoka.chart_data", "sources.haneoka.catalog", "sources.haneoka.catalog_records",
@@ -57,7 +57,7 @@ def main():
     # Verify actual installed resources through the runtime's resource locator.
     resources = ("query_aliases.json", "THIRD_PARTY.md", "docs/CUTOFF_HISTORY.md",
                  "docs/QUERY_CHAT_PACKAGE2B.md", "docs/knowledge/knowledge-draft.md",
-                 "docs/QUERY_CHAT_PACKAGE3.md",
+                 "docs/QUERY_CHAT_PACKAGE3.md", "docs/QUERY_CHAT_PACKAGE4.md",
                  "docs/koishi/KOISHI_BACKEND_V1.md", "docs/IMAGE_OUTPUT.md", "docs/QUERY_UPGRADE_V1.md", "docs/META_OPEN.md", "docs/HANEOKA_CATALOG.md", "docs/HANEOKA_CUTOFFS.md",
                  "docs/HANEOKA_META_CONTRACT.md", "docs/HANEOKA_RETIREMENT.md", "docs/HANEOKA_RESEARCH.md", "docs/HANEOKA_UNIFIED.md",
                  "deploy/query-upgrade-v1.env.example")

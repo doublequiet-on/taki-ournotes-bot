@@ -19,6 +19,11 @@ class ModelScheduler:
         self.tasks = set()
         self.closed = False
 
+    def status(self):
+        return dict(running=sum(self.running.values()),waiting=len(self.queue),running_limit=self.limit,
+                    waiting_limit=self.capacity,user_waiting_limit=self.user_capacity,
+                    wait_seconds=self.wait_seconds,execution_seconds=self.execution_seconds,closed=self.closed)
+
     def dispatch(self):
         for user, future in list(self.queue):
             if sum(self.running.values()) >= self.limit:
@@ -84,6 +89,12 @@ class ModelPermissions:
         self.pending = {}
         self.decisions = {}
         self.versions = {}
+        self.failures = Counter()
+        self.last_failure = None
+
+    def status(self):
+        return {'pending':len(self.pending),'failures':dict(self.failures),'last_failure':self.last_failure,
+                'scope':'current_process'}
 
     def challenge_view(self, work):
         entry = self.pending.get(work.delivery)
@@ -112,6 +123,10 @@ class ModelPermissions:
             deadline = min(entry['deadline'], decision['received'] + decision['ttl_ms']/1000, execution_deadline)
             require(work.active and self.clock() < deadline, 'permission_expired', 409)
             return deadline
+        except (ProtocolError,asyncio.TimeoutError) as exc:
+            code=exc.code if isinstance(exc,ProtocolError) else 'permission_timeout'
+            self.failures[code]+=1;self.last_failure=code
+            raise
         finally:
             self.pending.pop(work.delivery, None)
 

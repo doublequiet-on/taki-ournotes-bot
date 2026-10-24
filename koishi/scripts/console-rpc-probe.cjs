@@ -74,6 +74,7 @@ async function connect(origin='http://127.0.0.1:15143'){
 async function main(){
   const dir=fs.mkdtempSync(path.join(os.tmpdir(),'taki-console-rpc-')),ctx=new Context(),transport=new TakiTransport(ctx)
   journalProbe(dir)
+  await trustedProbe(dir)
   let reads=0,offset=0;const clock=Date.now;Date.now=()=>clock()+offset
   const targets=['pending','sending','uncertain','sent','claimed','permission_unknown'].map((stage,i)=>({group_id:'g'+String(i).padStart(2,'0'),stage,ledger_status:stage,claim:{status:stage}}))
   const noticeFixture={sections:{notices:{data:{targets}},notice_target:{data:{targets}}}}
@@ -83,7 +84,8 @@ async function main(){
   const clients=[]
   const methods=['overview','requests/list','requests/detail','sources','notices/list','query-metrics','groups/list','groups/update','settings/update',
     'ops/jobs/list','ops/jobs/detail','ops/jobs/start','ops/export','ops/audit','ops/host','ops/notice-target',
-    'ops/controls','ops/controls/start','ops/controls/restore']
+    'ops/controls','ops/controls/start','ops/controls/restore',
+    'model/settings','model/save','model/probe','model/group','ops/trusted','ops/trusted/prepare','ops/trusted/start']
   try{
     await ctx.start();await manager.ready();const a=await connect();clients.push(a.ws)
     for(const m of methods)assert.equal((await a.call('taki/'+m)).error,'unauthorized')
@@ -103,6 +105,9 @@ async function main(){
     fs.writeFileSync(hostFile,'broken')
     assert.equal(readHostSnapshot(hostFile).availability,'unavailable')
     assert.equal((await a.call('taki/ops/host')).value.reason_code,'host_collector_not_installed')
+    assert.equal((await a.call('taki/ops/trusted')).value.reason_code,'controller_not_installed')
+    assert.equal((await a.call('taki/ops/trusted/prepare','command')).error,'controller_action')
+    assert.equal((await a.call('taki/model/group','../secret')).error,'admin_group')
     assert.equal((await a.call('taki/ops/jobs/detail','../secret')).error,'ops_identity')
     assert.equal((await a.call('taki/ops/export','../secret')).error,'admin_request_id')
     assert.equal((await a.call('taki/ops/jobs/start',{command:'reboot'})).error,'ops_shape')
@@ -168,5 +173,28 @@ async function main(){
     }
     console.log(JSON.stringify({passed:true,authenticated_methods:methods.length,old_write:'upgrade_required',expired:'rejected',origin:'rejected'}))
   } finally {for(const ws of clients)ws.terminate();await manager.close();await ctx.stop();Date.now=clock;fs.rmSync(dir,{recursive:true,force:true})}
+}
+async function trustedProbe(directory){
+  const {TrustedActions}=require('../trusted-actions.cjs'),{Management}=require('../lib/management'),{OperationJournal}=require('../operation-journal.cjs')
+  const m=new Management(path.join(directory,'trusted'),{instanceId:'fixture',appId:'a'}),j=new OperationJournal(path.join(directory,'trusted'),'fixture')
+  m.update({...m.snapshot().settings,queriesEnabled:false,notificationsEnabled:false},0)
+  const plan={instance_id:'fixture',plan_id:'a'.repeat(32),action:'update',from_sha:'a'.repeat(40),target_sha:'b'.repeat(40),
+    config_digest:'c'.repeat(64),backend_digest:'d'.repeat(64),before_pids:{backend:1,gateway:2},inflight_policy:'drain',expires_at:Date.now()/1000+120,gates:{ci:true,compatibility:true,combination:true}}
+  let submissions=0,items=[]
+  const bridge=new TrustedActions(m,j,{instance:'fixture',transport:async(method,url,value)=>{
+    if(url.endsWith('/execute')){submissions++;assert.equal(j.value.entries.at(-1).state,'intent');throw Error('lost receipt')}
+    return{schema:'taki-trusted-actions/1',instance_id:'fixture',plans:[plan],items}
+  }})
+  const value={operation_id:'e'.repeat(32),plan,confirmation:'update:fixture:'+plan.target_sha}
+  assert.equal((await bridge.start(value,'session')).reason_code,'controller_outcome_unknown')
+  await bridge.start(value,'session');assert.equal(submissions,1,'unknown outcome must only read back')
+  items=[{operation_id:value.operation_id,state:'succeeded',health:{ready:true,release_sha:plan.from_sha,backend_digest:plan.backend_digest,backend_pid:12,gateway_pid:34}}]
+  assert.equal((await bridge.status()).items[0].state,'unknown','wrong runtime cannot prove success')
+  items[0].health.release_sha=plan.target_sha
+  assert.equal((await bridge.status()).items[0].verified,true)
+  assert.equal(j.value.entries.at(-1).state,'applied')
+  const restart=new OperationJournal(path.join(directory,'trusted'),'fixture');restart.reconcile(m)
+  assert.equal(restart.value.entries.at(-1).state,'applied')
+  assert.ok(!JSON.stringify(j.publicSnapshot()).includes('confirmation'))
 }
 main().catch(e=>{console.error(e);process.exitCode=1})

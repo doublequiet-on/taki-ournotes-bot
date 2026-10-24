@@ -6,6 +6,8 @@ import hmac
 import json as jsonlib
 import logging
 import os
+import re
+import sqlite3
 import time
 import uuid
 import hashlib
@@ -580,6 +582,29 @@ def create_app(backend, token, initialize=None):
     async def admin_sources(request): return json(backend.admin.sources())
     async def admin_notices(request): return json(backend.admin.notices(dict(request.query)))
     async def admin_metrics(request): return json(backend.admin.metrics())
+    async def model_settings(request):
+        from ..domain.model_calls import ModelError
+        require(backend.model_runtime is not None,'model_admin_unavailable',503)
+        owner=backend.model_runtime.admin
+        try:
+            if request.method=='GET': return json(owner.settings())
+            require(backend.ready and not backend.closing,'backend_not_ready',503)
+            require(backend.ledger.active(request.headers.get('X-Taki-Epoch')),'ops_gateway_epoch',409)
+            value=await read_json(request)
+            return json(owner.probe(value) if request.path.endswith('/probe') else owner.save(value))
+        except ModelError as exc:
+            raise ProtocolError(str(exc),409) from None
+        except (OSError,sqlite3.Error):
+            raise ProtocolError('model_admin_unavailable',503) from None
+    async def model_group(request):
+        from ..domain.model_calls import ModelError
+        require(backend.model_runtime is not None,'model_admin_unavailable',503)
+        gid=request.match_info['gid']
+        require(isinstance(gid,str) and re.fullmatch('[A-Za-z0-9_-]{1,128}',gid),'admin_group')
+        try:
+            runtime=backend.model_runtime;profile=runtime.config.snapshot().for_group(gid).profile
+            return json(runtime.usage.group_view(gid,profile))
+        except ModelError as exc: raise ProtocolError(str(exc),409) from None
     async def ops_jobs(request): return json(backend.operations.listing())
     async def ops_detail(request): return json(backend.operations.detail(request.match_info['jid']))
     async def ops_submit(request):
@@ -603,6 +628,8 @@ def create_app(backend, token, initialize=None):
                     web.get('/v1/admin/requests/{rid}', admin_detail), web.get('/v1/admin/groups', admin_groups),
                     web.get('/v1/admin/sources', admin_sources), web.get('/v1/admin/notices', admin_notices),
                     web.get('/v1/admin/query-metrics', admin_metrics), web.post('/v1/admin/telemetry', admin_telemetry),
+                    web.get('/v1/admin/model', model_settings),web.post('/v1/admin/model', model_settings),
+                    web.post('/v1/admin/model/probe',model_settings),web.get('/v1/admin/model/groups/{gid}',model_group),
                     web.get('/v1/admin/ops/jobs', ops_jobs), web.post('/v1/admin/ops/jobs', ops_submit),
                     web.get('/v1/admin/ops/jobs/{jid}', ops_detail),
                     web.get('/v1/admin/ops/notice-targets/{gid}', ops_notice_target),

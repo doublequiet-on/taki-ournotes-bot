@@ -20,6 +20,24 @@ from ournotes_bot.natural_query.query_metrics import QueryMetrics
 
 
 class ProjectionTests(unittest.TestCase):
+    def test_meta_observation_is_readonly_and_keeps_failure_visible(self):
+        from ournotes_bot.sources.haneoka.song_metrics import SongMetricsRepository
+        from ournotes_bot.domain.meta_query import MetaSnapshot,MetaSource,MetaSong,MetaError
+        source=SongMetricsRepository(fetch=Mock(side_effect=AssertionError('no network')))
+        self.assertEqual(source.status()['servers']['jp']['code'],'not_observed')
+        song=MetaSong('1','fixture',(),'', '',90,((('notes',100),),(),(),()))
+        source._collect=Mock(return_value=MetaSnapshot(MetaSource('jp','r-fixture','fixture',123),(song,)))
+        source.current('jp')
+        observed=source.status()['servers']['jp']
+        self.assertEqual(observed['observed_at'],123)
+        self.assertEqual(observed['field_coverage']['notes'],1)
+        self.assertEqual(observed['field_coverage']['duration_seconds'],1)
+        source._collect.side_effect=MetaError('source_unavailable','untrusted prose')
+        with self.assertRaises(MetaError):source.current('jp')
+        self.assertEqual(source.status()['servers']['jp']['code'],'source_unavailable')
+        self.assertNotIn('untrusted prose',str(source.status()))
+        source.fetch.assert_not_called()
+
     def test_diagnostic_export_anonymizes_groups_without_mutation(self):
         backend=SimpleNamespace(clock=lambda:123)
         admin=Admin(backend)
@@ -49,6 +67,28 @@ class ProjectionTests(unittest.TestCase):
 
 
 class AdminTests(unittest.IsolatedAsyncioTestCase):
+    async def test_model_admin_http_requires_epoch_and_keeps_secret_out_of_reads(self):
+        from dataclasses import replace
+        from aiohttp.test_utils import TestClient,TestServer
+        from ournotes_bot.application.model_runtime import ModelRuntime
+        self.backend.settings=replace(self.backend.settings,ai_profile_file=self.root/'profile.json')
+        self.backend.model_runtime=ModelRuntime(self.backend,self.root/'usage.sqlite3')
+        client=TestClient(TestServer(create_app(self.backend,'x'*32)))
+        await client.start_server();self.addAsyncCleanup(client.close)
+        headers={'Authorization':'Bearer '+'x'*32,'X-Taki-Instance':'fixture'}
+        self.assertEqual((await client.get('/v1/admin/model')).status,401)
+        settings=await (await client.get('/v1/admin/model',headers=headers)).json()
+        payload=dict(operation_id='a'*32,guard=settings['guard'],profile=settings['profile'],groups={},api_key='PRIVATE_TEST_KEY',api_url=settings['api_url'])
+        payload['profile']['capability_evidence']='fixture/native'
+        self.assertEqual((await client.post('/v1/admin/model',json=payload,headers=headers)).status,409)
+        headers['X-Taki-Epoch']='epoch'
+        response=await client.post('/v1/admin/model',json=payload,headers=headers)
+        self.assertEqual(response.status,200)
+        self.assertNotIn('PRIVATE_TEST_KEY',await response.text())
+        group=await client.get('/v1/admin/model/groups/group1',headers=headers)
+        self.assertEqual(group.status,200)
+        self.assertEqual((await group.json())['daily_limit'],1000000)
+
     async def test_metrics_busy_does_not_block_event_loop_or_disable_writer(self):
         from concurrent.futures import ThreadPoolExecutor
         from threading import Event

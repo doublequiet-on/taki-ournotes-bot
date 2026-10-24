@@ -108,6 +108,7 @@ class Admin:
             outcomes = {business_state(c['outcome']) for c in metadata['commands']}
             view['business_outcome'] = next(iter(outcomes)) if len(outcomes) == 1 else 'mixed'
         if detail:
+            view['model_attempts'] = self.backend.model_runtime.usage.request_view(row['id']) if self.backend.model_runtime else None
             view['parts'] = [{k: p[k] for k in ('id', 'position', 'mode', 'status')} |
                              {'platform_confirmed': p['status'] == 'success',
                               'primary_kind': next((m['kind'] for m in (metadata['parts'] or [])
@@ -137,6 +138,8 @@ class Admin:
             service=section({'ready': self.backend.ready, 'closing': self.backend.closing,
                 'natural_query': self.backend.parser.policy_capabilities() if hasattr(self.backend.parser,'policy_capabilities') else None,
                 'native_model': self.backend.model_runtime.config.status() if self.backend.model_runtime else None,
+                'model_scheduler':self.backend.models.status(),
+                'model_permissions':self.backend.permissions.status(),
                 'weighted_usage': self.backend.model_runtime.usage.summary() if self.backend.model_runtime else None}, now=now),
             requests=section({'from': now-86400, 'to': now, 'total': len(views),
                               'states': {s: counts[s] for s in STATES},
@@ -214,7 +217,16 @@ class Admin:
         owner = self.backend.runtime_tasks
         observation = owner.observation_snapshot() if owner else None
         metadata = getattr(catalog, 'metadata', {})
-        return self.envelope(catalog=section({'cache_state': catalog.cache_state,
+        knowledge=self.backend.knowledge.status() if self.backend.knowledge else None
+        if knowledge:
+            knowledge={**{k:v for k,v in knowledge.items() if k not in ('issues','error')},
+                       'reason_code':knowledge['error'],'issue_count':len(knowledge['issues'])}
+        metrics=getattr(self.backend.repository,'song_metrics',None)
+        return self.envelope(meta=section(metrics.status() if metrics else None,
+            availability='available' if metrics else 'unsupported',now=self.backend.clock()),
+            knowledge=section(knowledge,availability='available' if knowledge else 'unavailable',
+                              reason=None if knowledge else 'knowledge_not_configured',now=self.backend.clock()),
+            catalog=section({'cache_state': catalog.cache_state,
             'song_count': len(catalog.songs), 'data_version':metadata.get('data_version'),'text_version':metadata.get('text_version'),
             'card_count':metadata.get('card_count'),'support_card_count':metadata.get('support_card_count'),
             'last_successful_sync_at': catalog.last_successful_sync_at},

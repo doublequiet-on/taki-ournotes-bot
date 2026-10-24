@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict
+from collections import Counter
 from datetime import datetime, timedelta, timezone
 from fractions import Fraction
 import hashlib
@@ -27,7 +28,7 @@ def encode(value):
 
 class UsageLedger:
     def __init__(self,path,namespace,*,clock=time.time):
-        self.path=Path(path);self.clock=clock;self.db=None
+        self.path=Path(path);self.clock=clock;self.db=None;self.observation_error=None
         self.path.parent.mkdir(parents=True,exist_ok=True)
         self.lock=self.path.with_suffix('.lock').open('a+b')
         try:
@@ -51,6 +52,8 @@ class UsageLedger:
                     state TEXT NOT NULL, reserved TEXT NOT NULL, charged TEXT NOT NULL, cost TEXT NOT NULL,
                     usage TEXT NOT NULL, error_code TEXT, billing_incomplete INTEGER NOT NULL);
                 CREATE INDEX IF NOT EXISTS attempts_day ON attempts(day,user_key,group_key);
+                CREATE TABLE IF NOT EXISTS attempt_observations(
+                    id TEXT PRIMARY KEY, kind TEXT NOT NULL, duration_ms INTEGER NOT NULL);
             ''')
             with self.db:
                 for key,value in (('schema','1'),('namespace',namespace)):
@@ -100,8 +103,12 @@ class UsageLedger:
             self.db.execute('INSERT OR IGNORE INTO meta VALUES(?,?)',('reference_unit',profile.price.reference_unit))
             # Count business requests, so the allowed second generation is not a retry.
             recent=self.db.execute('SELECT COUNT(DISTINCT request_id) FROM attempts WHERE user_key=? AND created>? AND request_id!=?',
-                                   (user,now-10,request)).fetchone()[0]
-            require(recent<3,'model_rate_limited')
+                                   (user,now-profile.rate_window_seconds,request)).fetchone()[0]
+            require(recent<profile.user_rate_requests,'model_rate_limited')
+            if group is not None:
+                recent_group=self.db.execute('SELECT COUNT(DISTINCT request_id) FROM attempts WHERE group_key=? AND created>? AND request_id!=?',
+                    (group,now-profile.rate_window_seconds,request)).fetchone()[0]
+                require(recent_group<profile.group_rate_requests,'model_rate_limited')
             self.check(date,user,group,amount,profile)
             self.db.execute('INSERT INTO attempts VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
                 (attempt,request,user,group,profile.provider,profile.model,profile.config_version,encode(asdict(profile.price)),
@@ -145,12 +152,14 @@ class UsageLedger:
                             (self.clock(),self.clock()-300))
 
     def summary(self):
-        rows=self.db.execute('SELECT usage,price,charged,cost,state,billing_incomplete FROM attempts WHERE day=?',(day(self.clock()),)).fetchall()
+        rows=self.db.execute('SELECT usage,price,charged,cost,state,billing_incomplete,error_code FROM attempts WHERE day=?',(day(self.clock()),)).fetchall()
         currencies={}
         for row in rows:
             currency=json.loads(row['price'])['currency']
             currencies[currency]=currencies.get(currency,Fraction())+Fraction(row['cost'])
         return {'schema':'taki-usage/1','day':day(self.clock()),'attempts':len(rows),
+                'observation_error':self.observation_error,
+                'timezone':'Asia/Shanghai','error_counts':dict(Counter(r['error_code'] for r in rows if r['error_code'])),
                 'started_pending':sum(r['state']=='started' for r in rows),
                 'usage_unknown':sum(r['state']=='settled' and json.loads(r['usage'])['status']=='unknown' for r in rows),
                 'usage_partial':sum(json.loads(r['usage'])['status']=='partial' for r in rows),
@@ -158,6 +167,33 @@ class UsageLedger:
                 'price_estimated':sum(json.loads(r['price'])['estimated'] for r in rows),
                 'weighted_tokens':str(sum((Fraction(r['charged']) for r in rows),Fraction())),
                 'reference_cost_micro':{k:str(v) for k,v in currencies.items()}}
+
+    def observe(self, attempt, kind, duration_ms):
+        require(isinstance(kind,str) and len(kind)<=64 and kind.replace('_','').isalnum(),'usage_observation')
+        require(type(duration_ms) is int and 0<=duration_ms<=3600000,'usage_observation')
+        try:
+            with self.db:
+                self.db.execute('INSERT OR REPLACE INTO attempt_observations VALUES(?,?,?)',(attempt,kind,duration_ms))
+            return True
+        except sqlite3.Error:
+            self.observation_error='usage_observation_unavailable'
+            return False  # Optional diagnostics cannot suppress a settled business reply.
+
+    def request_view(self, request):
+        rows=self.db.execute('''SELECT a.*,o.kind,o.duration_ms FROM attempts a
+            LEFT JOIN attempt_observations o ON a.id=o.id WHERE request_id=? ORDER BY created LIMIT 8''',(request,))
+        return [dict(attempt_id=r['id'],provider=r['provider'],model=r['model'],config_version=r['config_version'],
+            day=r['day'],state=r['state'],started_at=r['started'],settled_at=r['settled'],
+            tool_kind=r['kind'],duration_ms=r['duration_ms'],usage=json.loads(r['usage']),
+            price=json.loads(r['price']),weighted_tokens=r['charged'],reserved_tokens=r['reserved'],
+            reference_cost_micro=r['cost'],error_code=r['error_code'],billing_incomplete=bool(r['billing_incomplete'])) for r in rows]
+
+    def group_view(self, group, profile):
+        key=self.key('group',group)
+        return {'day':day(self.clock()),'timezone':'Asia/Shanghai',
+                'spent_and_reserved':str(self.spent(day(self.clock()),key,group=True)),
+                'daily_limit':profile.group_daily_limit,'rate_requests':profile.group_rate_requests,
+                'rate_window_seconds':profile.rate_window_seconds}
 
     def close(self):
         if self.db is not None: self.db.close();self.db=None

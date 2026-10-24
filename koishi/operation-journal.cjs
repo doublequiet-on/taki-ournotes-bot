@@ -96,6 +96,7 @@ class OperationJournal {
     let changed=false
     for(const entry of this.value.entries){
       if(entry.state!=='intent')continue
+      if(entry.action.startsWith('trusted/'))continue // Only controller result + real runtime identity can resolve it.
       let current
       try{management.assertPersistent();if(entry.control==='local'||entry.group_id)management.groups.assertPersistent();current=currentFor(entry,management)}
       catch{entry.state='conflict';entry.code='persistent_values_changed';changed=true;continue}

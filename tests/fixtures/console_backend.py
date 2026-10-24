@@ -21,7 +21,20 @@ sys.addaudithook(offline)
 root=Path(sys.argv[1])/f'run-{os.getpid()}'; root.mkdir(parents=True,exist_ok=True)
 repository=SimpleNamespace(capture_catalog=lambda:SimpleNamespace(cache_state='stale',songs=[],last_successful_sync_at=None))
 parser=SimpleNamespace(metrics_snapshot=lambda:{'available':False,'reason_code':'metrics_not_collected'})
-backend=Backend(repository,parser,Settings('','','fixture',root/'cache.json',6),instance_id='fixture',app_id='app',ledger_path=root/'ledger.sqlite3')
+backend=Backend(repository,parser,Settings('','','fixture',root/'cache.json',6,ai_profile_file=root/'model.json'),instance_id='fixture',app_id='app',ledger_path=root/'ledger.sqlite3')
+if os.getenv('TAKI_FIXTURE_MODEL_ADMIN') == '1':
+    from dataclasses import asdict
+    import json
+    from ournotes_bot.application.model_runtime import ModelRuntime
+    from ournotes_bot.domain.model_calls import ModelProfile,Price,Usage,AttemptResult,ToolCall
+    profile=asdict(ModelProfile('deepseek','fixture-native','fixture-console','deepseek-chat-v1','fixture/synthetic-only',
+        Price('CNY',1000000,100000,2000000,1000000,'fixture-price',1,True,'registered-default'),'fixture-key'))
+    profile.pop('api_key')
+    (root/'model.json').write_text(json.dumps({'schema':'taki-model-config/2','instance_id':'fixture','app_id':'app',
+        'profile':profile,'bindings':[],'groups':{},'secret':'fixture-key'}),encoding='utf-8')
+    client=SimpleNamespace(request=AsyncMock(return_value=AttemptResult('ok',Usage(100,0,10,None,110,'known'),
+        (ToolCall('probe','capability_echo','{"marker":"taki-probe"}'),))),price=AsyncMock(return_value=Price('CNY',1000000,100000,2000000,1000000,'fixture-price',1,True,'registered-default')))
+    backend.model_runtime=ModelRuntime(backend,root/'usage.sqlite3',client=client)
 if os.getenv('TAKI_FIXTURE_SOURCE_OPS') == '1':
     from ournotes_bot.application.operations_sources import SourceOperations
     repository.data_source='haneoka'
@@ -37,6 +50,7 @@ async def seed(app):
     await backend.submit(dict(protocol=PROTOCOL,request_id=digest(['fixture','app','qq','group','fixture-group','fixture-user','message']),
         instance_id='fixture',app_id='app',platform='qq',kind='group',conversation_id='fixture-group',user_id='fixture-user',
         message_id='message',timestamp_ms=int(now*1000),body='/帮助',capability=CAPABILITY,gateway_epoch='fixture-gateway',ingress_seq=1,
+        trigger='command',reference=None,interaction=None,
         policy=dict(natural_query='model',epoch='fixture',global_revision=0,group_revision=0)))
 app=create_app(backend,'fixture-backend-token-000000000000')
 app.on_startup.append(seed)

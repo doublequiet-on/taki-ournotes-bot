@@ -98,6 +98,12 @@ class SongMetricsRepository:
         self.fetch, self.clock, self.monotonic = fetch, clock, monotonic
         self._locks = {s: Lock() for s in ('jp', 'intl')}
         self._cache = {}
+        self._observations = {}
+
+    def status(self):
+        """Published observations only; opening Console never retrieves Meta."""
+        return {'origin':ORIGIN,'servers':{server:dict(self._observations.get(server,
+            {'code':'not_observed','release_id':None,'observed_at':None})) for server in ('jp','intl')}}
 
     def current(self, server):
         if server not in self._locks:
@@ -106,7 +112,17 @@ class SongMetricsRepository:
         if not self._locks[server].acquire(timeout=18):
             raise MetaError('source_unavailable', '歌曲指标查询繁忙，请稍后重试。')
         try:
-            return self._collect(server, deadline)
+            snapshot=self._collect(server, deadline)
+            coverage={'duration_seconds':sum(s.duration_seconds is not None for s in snapshot.songs)}
+            for field in ('level','notes','nps','bpm_first','bpm_min','bpm_max'):
+                coverage[field]=sum(dict(chart).get(field) is not None for song in snapshot.songs for chart in song.charts)
+            self._observations[server]={'code':'ready','release_id':snapshot.source.release_id,
+                'source_id':snapshot.source.source_id,'observed_at':snapshot.source.checked_at,
+                'songs':len(snapshot.songs),'charts':4*len(snapshot.songs),'field_coverage':coverage}
+            return snapshot
+        except MetaError as exc:
+            self._observations[server]={**self._observations.get(server,{}),'code':exc.status,'failed_at':self.clock()}
+            raise
         finally:
             self._locks[server].release()
 

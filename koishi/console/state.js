@@ -4,12 +4,15 @@ export function sessionState() {
   const overview=ref(null), requests=ref(null), detail=ref(null), sources=ref(null), metrics=ref(null), groups=ref(null), notices=ref(null), draft=ref(null), guard=ref(null);
   const groupId=ref(''),groupDraft=ref(null),groupRevision=ref(null),groupDirty=ref(false),groupConflict=ref(false);
   const jobs=ref(null),jobDetail=ref(null),audit=ref(null),host=ref(null),noticeTarget=ref(null),controls=ref(null),pendingJobs=new Map(),pendingControls=new Map();
+  const model=ref(null),modelDraft=ref(null),modelGuard=ref(null),modelKey=ref(''),modelDirty=ref(false),modelConflict=ref(false),groupUsage=ref(null),trusted=ref(null);
+  const pendingProbes=new Map(),pendingTrusted=new Map();
   let generation=0;
   const sequences=new Map();
   const failed=new Set();
   function clearProtected() {
     generation++;logged.value=false;failed.clear();sequences.clear();stale.value=false;
-    for(const value of [overview,requests,detail,sources,metrics,groups,notices,draft,guard,jobs,jobDetail,audit,host,noticeTarget,controls])value.value=null;
+    for(const value of [overview,requests,detail,sources,metrics,groups,notices,draft,guard,jobs,jobDetail,audit,host,noticeTarget,controls,model,modelDraft,modelGuard,groupUsage,trusted])value.value=null;
+    modelKey.value='';modelDirty.value=false;modelConflict.value=false;pendingProbes.clear();pendingTrusted.clear();
     pendingJobs.clear();pendingControls.clear();
     dirty.value=false;conflict.value=false;groupId.value='';groupDraft.value=null;groupRevision.value=null;groupDirty.value=false;groupConflict.value=false;
   }
@@ -43,6 +46,7 @@ export function sessionState() {
         if(!groupDirty.value)selectGroup(groupId.value);
         else if(groupRevision.value!==value.policy?.revision)groupConflict.value=true;
       }
+      if(method==='model/settings')acceptModel(value);
     } catch (error) {
       if(token!==generation||seq!==sequences.get(target))return;
       if(unauthorized(error))return;
@@ -74,7 +78,9 @@ export function sessionState() {
     groupId.value=id;groupDraft.value=structuredClone(toRaw(groups.value?.policy?.groups?.[id])||{label:'',queries:'inherit',notifications:'inherit',natural_query:'inherit'});
     groupRevision.value=groups.value?.policy?.revision;groupDirty.value=false;groupConflict.value=false;
     noticeTarget.value=null;
+    groupUsage.value=null;
     if(/^[A-Za-z0-9_-]{1,128}$/.test(id))void load(noticeTarget,'ops/notice-target',id);
+    if(/^[A-Za-z0-9_-]{1,128}$/.test(id))void load(groupUsage,'model/group',id);
   }
   async function saveGroup() {
     const token=generation, id=groupId.value, submitted=JSON.stringify(groupDraft.value);
@@ -130,6 +136,53 @@ export function sessionState() {
       await load(controls,'ops/controls');
     }finally{busy.value=false;}
   }
-  return {jobs,jobDetail,audit,host,noticeTarget,controls,startControl:(action,ids)=>controlRequest(action,ids),restoreControl:id=>controlRequest('restore',[],id),startJob,exportDiagnostic,logged,busy,message,stale,dirty,conflict,overview,requests,detail,sources,metrics,groups,notices,draft,guard,rpc,load,login,logout,save,
+  function acceptModel(value){
+    if(['succeeded','failed'].includes(value.capability?.state))pendingProbes.delete(value.profile?.config_version);
+    if(!modelDirty.value){modelDraft.value=structuredClone(toRaw(value.profile));modelGuard.value=value.guard;}
+    else if(JSON.stringify(modelGuard.value)!==JSON.stringify(value.guard))modelConflict.value=true;
+  }
+  async function saveModel(group=null,limits=null){
+    const token=generation,profile=JSON.stringify(group?model.value?.profile:modelDraft.value),key=modelKey.value;
+    if(group&&modelDirty.value){message.value='请先保存或放弃模型设置草稿。';return;}
+    busy.value=true;
+    try{
+      let groups=structuredClone(toRaw(model.value?.groups)||{});
+      if(group){if(limits===null)delete groups[group];else groups={...groups,[group]:limits};}
+      const result=await rpc('model/save',{operation_id:crypto.randomUUID().replaceAll('-',''),guard:group?model.value.guard:modelGuard.value,
+        profile:JSON.parse(profile),groups,api_key:group?'':key,api_url:model.value.endpoints[JSON.parse(profile).provider]});
+      if(token!==generation)return;
+      if(!group)modelDirty.value=JSON.stringify(modelDraft.value)!==profile;
+      modelConflict.value=false;model.value=result;modelGuard.value=result.guard;acceptModel(result);message.value='AI 设置已按新版本保存。';
+      if(group)await load(groupUsage,'model/group',group);
+    }catch(error){if(token!==generation||unauthorized(error))return;modelConflict.value=true;
+      message.value='AI 设置未确认，请核对服务器值：'+String(error?.message||error);await load(model,'model/settings');
+    }finally{modelKey.value='';busy.value=false;}
+  }
+  async function probeModel(){
+    const token=generation,version=model.value?.profile?.config_version;
+    if(modelDirty.value||!version)return;
+    if(!pendingProbes.has(version))pendingProbes.set(version,{operation_id:crypto.randomUUID().replaceAll('-',''),guard:model.value.guard,confirm:'billable_capability_probe'});
+    busy.value=true;
+    try{const value=await rpc('model/probe',pendingProbes.get(version));if(token!==generation)return;
+      model.value=value;acceptModel(value);message.value='能力测试已受理；用量与结果将单独记录。';
+    }catch(error){if(token!==generation||unauthorized(error))return;message.value='能力测试结果未确认，请刷新记录；不会自动重复调用。';}
+    finally{busy.value=false;}
+  }
+  async function trustedRequest(action,plan=null){
+    const token=generation;busy.value=true;
+    try{
+      let result;
+      if(!plan)result=await rpc('ops/trusted/prepare',action);
+      else{
+        if(!pendingTrusted.has(plan.plan_id))pendingTrusted.set(plan.plan_id,{operation_id:crypto.randomUUID().replaceAll('-',''),plan,
+          confirmation:`${plan.action}:${plan.instance_id}:${plan.target_sha}`});
+        result=await rpc('ops/trusted/start',pendingTrusted.get(plan.plan_id));
+      }
+      if(token!==generation)return;trusted.value=result;message.value=plan?'已提交；以控制器回读的运行版本和健康结果为准。':'待执行版本已核定，请核对后确认。';
+    }catch(error){if(token!==generation||unauthorized(error))return;message.value='控制器状态需要核对：'+String(error?.message||error);await load(trusted,'ops/trusted');}
+    finally{busy.value=false;}
+  }
+  return {model,modelDraft,modelGuard,modelKey,modelDirty,modelConflict,groupUsage,trusted,saveModel,probeModel,trustedRequest,
+    jobs,jobDetail,audit,host,noticeTarget,controls,startControl:(action,ids)=>controlRequest(action,ids),restoreControl:id=>controlRequest('restore',[],id),startJob,exportDiagnostic,logged,busy,message,stale,dirty,conflict,overview,requests,detail,sources,metrics,groups,notices,draft,guard,rpc,load,login,logout,save,
     groupId,groupDraft,groupRevision,groupDirty,groupConflict,selectGroup,saveGroup,invalidate(){generation++;}};
 }

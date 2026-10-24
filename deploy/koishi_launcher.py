@@ -25,7 +25,7 @@ def launch(base, role):
     if os.environ.get('TAKI_CONSOLE_STATE_DIR',str(directory)) != str(directory):
         raise RuntimeError('policy console state mismatch')
     os.environ['TAKI_CONSOLE_STATE_DIR']=str(directory)
-    supported=manifest.get('capabilities')==['group_policies_v1']
+    supported=manifest.get('capabilities') in (['group_policies_v1'],['group_policies_v1','query_chat_contract_v1'])
     if not supported and (directory/'group-policies.v1.json').exists() and os.environ.get('TAKI_CONSOLE_ENABLED') != '1':
         raise RuntimeError('legacy policy freeze requires enabled management')
     verify_start(directory,permit.get('policy_guard'),supported,commit)
@@ -44,7 +44,7 @@ def launch(base, role):
         args=[str(python),'-B','-m','ournotes_bot.main','backend','--instance-id',os.environ['TAKI_INSTANCE_ID'],
               '--app-id',os.environ['QQ_APP_ID'],'--state-dir',str(base/'data/delivery'), '--port',os.environ.get('TAKI_BACKEND_PORT','8765')]
     else:
-        for name in ('AI_API_KEY','MOENOTES_OPEN_SECRET','BDON_OPENPLATFORM'): os.environ.pop(name,None)
+        for name in ('AI_API_KEY','OURNOTES_QUERY_AI_API_KEY','OURNOTES_AI_PROFILE_FILE','MOENOTES_OPEN_SECRET','BDON_OPENPLATFORM'): os.environ.pop(name,None)
         args=[str(combo/'bin/node'),str(combo/'gateway/run.cjs')]
     os.execv(args[0],args)
 

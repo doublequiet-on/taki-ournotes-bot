@@ -92,6 +92,9 @@ class ModelProfile:
     parallel_control: bool = False
     cache_usage: bool = True
     reasoning_usage: bool = False
+    user_rate_requests: int = 3
+    group_rate_requests: int = 30
+    rate_window_seconds: int = 10
 
     def __post_init__(self):
         require(self.provider in ('deepseek', 'openai', 'openrouter'), 'provider_unsupported')
@@ -105,6 +108,9 @@ class ModelProfile:
         require(all(type(v) is int and 0 <= v <= 10**12 for v in (self.user_daily_limit,self.group_daily_limit)), 'model_configuration')
         require(all(type(v) is bool for v in (self.parallel_control,self.cache_usage,self.reasoning_usage)), 'model_configuration')
         require(not self.parallel_control or self.provider in ('openai','openrouter'), 'unsupported_parameter')
+        require(all(type(v) is int and 1 <= v <= 1000 for v in
+                    (self.user_rate_requests,self.group_rate_requests)), 'model_configuration')
+        require(type(self.rate_window_seconds) is int and 1 <= self.rate_window_seconds <= 3600, 'model_configuration')
 
 
 @dataclass(frozen=True)

@@ -9,6 +9,7 @@ async function main(){
   const settings={queriesEnabled:true,privateEnabled:true,groupsEnabled:true,groupAllowlist:[],notificationsEnabled:true}
   let server=structuredClone(settings),revision=0,receipt
   globalThis.consoleStateFixture.send=async(method,value)=>{
+    if(method==='taki/model/group')return{daily_limit:1000}
     if(method==='taki/ops/notice-target')return{sections:{notice_target:{availability:'unsupported'}}}
     if(method==='taki/settings/update')return new Promise(resolve=>{receipt=()=>{server=structuredClone(value);resolve({guard:{gateway_epoch:'fixture',revision:++revision}})}})
     if(method==='taki/overview')return {settings:structuredClone(server),guard:{gateway_epoch:'fixture',revision}}
@@ -30,6 +31,7 @@ async function main(){
   assert.equal(state.draft.value,null);assert.equal(state.guard.value,null,'an invalidated response cannot restore protected state')
   let policies={},groupRevision=0
   globalThis.consoleStateFixture.send=async(method,value)=>{
+    if(method==='taki/model/group')return{daily_limit:1000}
     if(method==='taki/ops/notice-target')return{sections:{notice_target:{availability:'unsupported'}}}
     if(method==='taki/groups/update')return new Promise(resolve=>{receipt=()=>{policies[value.group_id]=structuredClone(value.policy);resolve({revision:++groupRevision})}})
     if(method==='taki/groups/list')return {policy:{groups:structuredClone(policies),revision:groupRevision}}
@@ -49,6 +51,19 @@ async function main(){
   const expired=groups.saveGroup();groups.invalidate();groups.groupDraft.value=null;groups.groupRevision.value=null
   receipt();await expired
   assert.equal(groups.groupDraft.value,null);assert.equal(groups.groupRevision.value,null)
+  const model=sessionState();model.logged.value=true
+  const modelValue={profile:{provider:'deepseek',model:'fixture',config_version:'1'},guard:{backend_epoch:'e',fingerprint:'old'},groups:{},endpoints:{deepseek:'https://api.deepseek.com/chat/completions'}}
+  globalThis.consoleStateFixture.send=async(method,value)=>{
+    if(method==='taki/model/settings')return structuredClone(modelValue)
+    if(method==='taki/model/save')return new Promise(resolve=>{receipt=()=>resolve({...structuredClone(modelValue),profile:value.profile,guard:{backend_epoch:'e',fingerprint:'new'}})})
+    if(method==='taki/logout')return true
+    throw Error('unexpected model RPC')
+  }
+  await model.load(model.model,'model/settings');model.modelKey.value='private-new-key';model.modelDirty.value=true
+  const savingModel=model.saveModel();model.modelDraft.value.model='later edit';receipt();await savingModel
+  assert.equal(model.modelKey.value,'');assert.equal(model.modelDraft.value.model,'later edit');assert.equal(model.modelDirty.value,true)
+  assert.equal(model.modelConflict.value,false)
+  await model.logout();assert.equal(model.model.value,null);assert.equal(model.modelDraft.value,null);assert.equal(model.modelKey.value,'')
   console.log(JSON.stringify({passed:true,saveDraftRace:true,groupSaveDraftRace:true,groupSwitchDuringSave:true,invalidatedSave:true}))
 }
 main().catch(error=>{console.error(error);process.exitCode=1}).finally(()=>{delete globalThis.consoleStateFixture})

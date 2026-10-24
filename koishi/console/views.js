@@ -1,11 +1,19 @@
 import { h } from './runtime.js';
+import { groupQuota } from './model.js';
 export const labels={processing:'处理中',complete:'平台确认全部发送',partial:'部分发送',failed:'已确认失败',uncertain:'发送结果不确定',closed_unsent:'已关闭，未确认发送',unknown:'未知'};
 export const stamp=v => v ? new Date(v*1000).toLocaleString('zh-CN',{timeZone:'Asia/Hong_Kong'}) : '尚未采集';
 export const button=(text,action,disabled=false) => h('button',{onClick:action,disabled},text);
 const guide=(title,text)=>h('details',{class:'guide'},[h('summary',title),h('p',text)]);
 const technical=(title,children)=>h('details',{class:'technical'},[h('summary',title),...children]);
 const deliveryLabel=item=>item.delivery_reason==='completed_without_output'?'已完成，无输出':(labels[item.delivery_state]||item.delivery_state)+(item.uncertain_parts?'（仍有片段结果未确认）':'');
-const names={available:'可用',partial:'部分采集',unavailable:'暂不可用',unsupported:'尚不支持',
+const names={meta:'歌曲 Meta',knowledge:'百科批准与索引',error_counts:'今日调用错误',issue_count:'格式问题数',field_coverage:'已知字段数量',duration_seconds:'末判定时长',notes:'Note 数',nps:'NPS',level:'等级',bpm_first:'首 BPM',bpm_min:'最低 BPM',bpm_max:'最高 BPM',
+  origin:'来源地址',release_id:'release',source_id:'来源版本',songs:'歌曲总数',charts:'谱面总数',not_observed:'尚无查询观测',
+  approved_set_revision:'批准集合版本',index_revision:'索引版本',approved_documents:'可供答文档数',indexed_chunks:'索引片段数',index_error:'索引错误',last_build:'最近索引构建',encoder:'编码器',ready:'就绪',empty:'空库',index_pending:'索引待更新',
+  model_attempts:'模型尝试',attempt_id:'尝试标识',tool_kind:'工具类别',usage:'用量',input_total:'输入 Token',input_cached:'其中缓存输入',output_total:'输出 Token',output_reasoning:'其中推理 Token',total:'总 Token',
+  weighted_tokens:'加权 Token',reserved_tokens:'预留 Token',reference_cost_micro:'参考费用（微货币）',billing_incomplete:'用量不完整',config_version:'配置版本',price:'计价快照',pricing_version:'计价版本',estimated:'估算价',currency:'币种',provider:'服务商',
+  started_at:'调用时间',settled_at:'结算时间',error_code:'原因',state:'状态',known:'已知',input_rate:'输入单价',cached_rate:'缓存单价',output_rate:'输出单价',reference_rate:'固定参考单价',source:'来源',fetched_at:'取价时间',
+  global_revision:'全局策略版本',group_revision:'群策略版本',gateway_epoch:'网关代次',pending:'等待许可',last_failure:'最近许可失败',failures:'本进程失败计数',
+  available:'可用',partial:'部分采集',unavailable:'暂不可用',unsupported:'尚不支持',
   policy_blocked:'策略已暂停',backend_stage:'后端观测阶段',effective_notifications:'当前策略允许通知',policy_observed_at:'策略检查时间',
   code:'结果',stage:'阶段',before_version:'更新前版本',after_version:'当前版本',added_counts:'本次新增',persisted:'已保存',published:'本次已发布到内存',data_available:'资料可用',snapshot:'目标快照',checked_at:'检查时间',checked:'已核验',reused:'复用',repaired:'已修复',failed:'失败',manifest_saved:'清单已保存',scope:'范围',failure_codes:'失败原因',fixed_asset_failures:'固定素材失败项',
   upstream_unchanged:'已是当前上游版本',synchronized:'同步完成',updated_unsaved:'已更新，缓存保存失败',refresh_failed_cached:'同步失败，继续使用旧数据',no_available_data:'暂无可用数据',assets_partial:'素材部分完成',assets_verified:'素材核验完成',catalog_snapshot_and_builtin_assets:'资料快照与固定游戏素材',
@@ -114,6 +122,7 @@ export function groupsView(s,requests) {
       h('p',{class:'guide'},'新查询决定是否接收新指令；主动通知决定是否允许机器人主动推送。/问 的“仅本地解析”不调用模型；/查卡、/查曲等直接指令始终不调用模型。'),
       current&&section({availability:'available',observed_at:s.groups.value.generated_at,data:current.effective},'当前已生效规则'),
       s.noticeTarget.value?.sections?.notice_target&&section(s.noticeTarget.value.sections.notice_target,'通知状态'),
+      groupQuota(s),
       button('临时仅本地解析',()=>{if(window.confirm('将此群的模型解析收紧为本地解析？关闭模式保持关闭；之后需手动恢复。'))void s.startControl('local',[s.groupId.value]);},
         s.busy.value||s.dirty.value||s.groupDirty.value||!s.controls.value?.available||!s.controls.value?.persistent_matches_live||!/^[A-Za-z0-9_-]{1,128}$/.test(s.groupId.value)),
       s.groupConflict.value&&h('p',{role:'alert'},'群策略版本冲突或保存未确认；草稿仍保留。'),

@@ -2,6 +2,7 @@ import { h, ref, onMounted, onUnmounted, resolveComponent } from './runtime.js';
 import { sessionState } from './state.js';
 import { button, overviewView, requestsView, groupsView, settingsView } from './views.js';
 import { attentionView, sourcesView, operationsSettings } from './ops.js';
+import { modelOverview, modelSettings, trustedView } from './model.js';
 const Page={setup() {
   const s=sessionState(),password=ref(''),tab=ref('overview'),params={};
   let timer,ticks=0,currentRequest=null,polling=false;
@@ -19,12 +20,13 @@ const Page={setup() {
         if(currentRequest&&!['complete','failed','closed_unsent'].includes(s.detail.value?.sections?.request?.data?.delivery_state))await s.load(s.detail,'requests/detail',currentRequest);
       }
       if(ticks%3===1)await Promise.all([s.load(s.jobs,'ops/jobs/list'),s.load(s.controls,'ops/controls')]);
+      if(ticks%3===1&&['settings','groups'].includes(tab.value))await Promise.all([s.load(s.model,'model/settings'),s.load(s.trusted,'ops/trusted')]);
       if(tab.value==='sources'&&s.jobDetail.value&&['queued','running'].includes(s.jobDetail.value.state))await s.load(s.jobDetail,'ops/jobs/detail',s.jobDetail.value.id);
       if(ticks%12===1)await Promise.all([s.load(s.sources,'sources'),s.load(s.metrics,'query-metrics'),s.load(s.groups,'groups/list'),s.load(s.notices,'notices/list'),s.load(s.audit,'ops/audit'),s.load(s.host,'ops/host')]);
     } finally {polling=false;}
   }
   const visible=() => {if(document.hidden)s.invalidate();else{ticks=0;void poll();}};
-  const leaving=event => {if(s.dirty.value||s.groupDirty.value){event.preventDefault();event.returnValue='';}};
+  const leaving=event => {if(s.dirty.value||s.groupDirty.value||s.modelDirty.value){event.preventDefault();event.returnValue='';}};
   onMounted(() => {timer=setInterval(() => void poll(),5000);document.addEventListener('visibilitychange',visible);window.addEventListener('beforeunload',leaving);});
   onUnmounted(() => {clearInterval(timer);s.invalidate();document.removeEventListener('visibilitychange',visible);window.removeEventListener('beforeunload',leaving);});
   return () => h(resolveComponent('k-layout'),{},{default:() => h('main',{class:'taki-console'},[
@@ -32,8 +34,8 @@ const Page={setup() {
     !s.logged.value?h('form',{onSubmit:async e => {e.preventDefault();await s.login(password.value);password.value='';const id=new URL(window.location.href).searchParams.get('request_id');if(s.logged.value&&/^[a-f0-9]{64}$/.test(id||''))open(id);ticks=0;void poll();}},[
       h('strong','Taki'),h('img',{class:'brand-image',src:new URL('./brand/taki.png',import.meta.url).href,alt:''}),h('h1','Taki'),h('label',['管理员密码',h('input',{type:'password',autocomplete:'current-password',value:password.value,onInput:e => password.value=e.target.value})]),h('button',{type:'submit',disabled:s.busy.value},s.busy.value?'正在登录…':'登录'),h('small','请输入为此机器人设置的控制台密码，不是 QQ 密码。')]):h('div',[
       h('header',{class:'console-header'},[h('div',{class:'brand'},[h('img',{class:'brand-image',src:new URL('./brand/taki.png',import.meta.url).href,alt:''}),h('strong','Taki')]),button('退出登录',s.logout,s.busy.value)]),
-      h('nav',{'aria-label':'Taki 工作页面'},['overview','requests','groups','sources','settings'].map((key,i) => h('button',{'aria-current':tab.value===key?'page':undefined,onClick:() => {tab.value=key;if(key==='requests'&&!s.requests.value)search(false);}},['总览','查询记录','群管理','数据来源','设置'][i]))),
-      tab.value==='overview'?h('div',[attentionView(s,()=>{tab.value='requests';search(true);}),overviewView(s,open)]):tab.value==='requests'?requestsView(s,open,params,search,cursor => s.load(s.requests,'requests/list',{...params,cursor}),id=>{tab.value='groups';s.selectGroup(id);}):tab.value==='groups'?groupsView(s,id=>{params.group_id=id;tab.value='requests';search(false);}):tab.value==='sources'?sourcesView(s):h('div',[h('h1','设置'),settingsView(s),operationsSettings(s)]),
+      h('nav',{'aria-label':'Taki 工作页面'},['overview','requests','groups','sources','settings'].map((key,i) => h('button',{'aria-current':tab.value===key?'page':undefined,onClick:() => {tab.value=key;if(key==='requests'&&!s.requests.value)search(false);if(['groups','settings'].includes(key)){void s.load(s.model,'model/settings');void s.load(s.trusted,'ops/trusted');}}},['总览','查询记录','群管理','数据来源','设置'][i]))),
+      tab.value==='overview'?h('div',[attentionView(s,()=>{tab.value='requests';search(true);}),modelOverview(s),overviewView(s,open)]):tab.value==='requests'?requestsView(s,open,params,search,cursor => s.load(s.requests,'requests/list',{...params,cursor}),id=>{tab.value='groups';s.selectGroup(id);}):tab.value==='groups'?groupsView(s,id=>{params.group_id=id;tab.value='requests';search(false);}):tab.value==='sources'?sourcesView(s):h('div',[h('h1','设置'),settingsView(s),modelSettings(s),trustedView(s),operationsSettings(s)]),
       tab.value==='requests'&&currentRequest&&button('导出此请求诊断',()=>s.exportDiagnostic(currentRequest)),h('footer',{class:'status-bar'},[h('span',s.overview.value?.health?.ready?'● 已连接':'○ 状态待核对'),button(s.dirty.value||s.groupDirty.value?'有未保存修改':'设置',()=>{tab.value=s.groupDirty.value?'groups':'settings';})])])
   ])});
 }};

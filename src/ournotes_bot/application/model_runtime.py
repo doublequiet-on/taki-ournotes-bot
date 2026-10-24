@@ -18,6 +18,7 @@ from ..natural_query.native_tools import TOOLS, validate_call, execute, scope_fo
 from ..sources.model_provider import NativeClient, request_body
 from ..data import DataError
 from .model_config import ModelConfiguration
+from .model_admin import ModelAdmin
 from .usage_ledger import UsageLedger
 from .conversation_state import ReadOnlyContext
 from .runtime_tasks import finish_thread
@@ -63,10 +64,13 @@ class ModelRuntime:
         self.config=ModelConfiguration(getattr(backend.settings,'ai_profile_file',None),getattr(backend.settings,'query_ai_api_key',''),
                                        backend.instance_id,backend.app_id)
         self.usage=UsageLedger(path,backend.instance_id+'\0'+backend.app_id)
+        self.admin=ModelAdmin(self,self.usage.path.with_name('model-admin-v1.sqlite3'))
 
     def capture(self,work):
         try:
             work.model_snapshot=self.config.snapshot()
+            if work.request.kind=='group':
+                work.model_snapshot=work.model_snapshot.for_group(work.request.conversation_id)
             if work.model_snapshot.fingerprint:
                 self.usage.configuration(work.model_snapshot.profile.config_version,work.model_snapshot.fingerprint)
             work.model_subject=work.model_snapshot.subject(work.request)
@@ -82,6 +86,7 @@ class ModelRuntime:
     async def close(self):
         if self.task:
             self.task.cancel();await asyncio.gather(self.task,return_exceptions=True)
+        await self.admin.close()
         self.usage.close()
 
     def check(self,work,deadline,leases=()):
@@ -165,7 +170,7 @@ class ModelRuntime:
         require(bound<=profile.max_input_tokens,'model_input_too_large')
         attempt=uuid.uuid4().hex
         self.usage.reserve(work.request.request_id,attempt,user,group,profile,bound)
-        started=False
+        started=False;began=time.monotonic();kind='generation' if not tools else 'routing'
         try:
             permitted_until=await self.backend.permissions.acquire(work,deadline,attempt_id=attempt)
             self.check(work,deadline,leases)
@@ -175,6 +180,9 @@ class ModelRuntime:
             result=await asyncio.wait_for(self.client.request(profile,body,timeout=max(.001,deadline-time.monotonic())),
                                           max(.001,deadline-time.monotonic()))
             self.usage.settle(attempt,result.usage,result.error_code)
+            if result.tool_calls:
+                kind=result.tool_calls[0].name if result.tool_calls[0].name in TOOLS else 'unrecognized_tool'
+            elif tools: kind='light_chat' if result.status=='ok' else 'routing'
             self.check(work,deadline,leases)
             require(result.status=='ok',result.error_code or 'model_protocol_error')
             return result
@@ -184,6 +192,7 @@ class ModelRuntime:
             elif self.usage.get(attempt)['state']=='started': self.usage.settle(attempt,Usage(),code)
             raise
         finally:
+            self.usage.observe(attempt,kind,min(3600000,int((time.monotonic()-began)*1000)))
             body.clear()  # No prompt/response state retained by the runtime owner.
 
     async def run(self,work,question,history,leases,user,group,deadline):
