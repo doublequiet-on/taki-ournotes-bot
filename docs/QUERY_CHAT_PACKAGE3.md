@@ -66,7 +66,9 @@
 
 同一个受信 subject 才能共享群／私聊额度。不同群的绑定也须明确登记。不从昵称、头像或裸 ID 推断同人；没有绑定时返回 `identity_unverified`，不会悄悄改成分场景用户额度。配置中的证据引用由管理员提供，结构校验不等于平台实测已经通过。
 
-目前 wire profile 为 `deepseek-chat-v1`、`openai-chat-v1`、`openrouter-chat-v1`，端点分别固定在官方 HTTPS 域名；不接受玩家或配置中的自定义 URL，也不跟随重定向。仅接文本 Chat Completions；不支持的 Responses-only／DeepSeek thinking 工具链须另实现适配，不能靠改模型名声称支持。没有 profile／密钥／能力证明／价格时不启动 AI。
+目前 wire profile 为 `deepseek-chat-v1`、`openai-chat-v1`、`openrouter-chat-v1`，端点分别固定在官方 HTTPS 域名；不接受玩家或配置中的自定义 URL，也不跟随重定向。仅接文本 Chat Completions；DeepSeek 请求显式设置 `thinking: {"type":"disabled"}`，响应若仍含非空 reasoning_content，继续按不支持的协议拒绝并保留用量。不支持的 Responses-only／DeepSeek thinking 工具链须另实现适配，不能靠改模型名声称支持。没有 profile／密钥／能力证明／价格时不启动 AI。
+
+知识生成提示词区分事实资料日期与整理／访问／批准日期，按证据声明的共通机制范围回答，同时保留实体、材料数和日期条件。省略号及示例凭据不视为真实泄露；代办账号操作请求使用固定拒绝答复，不追加凭据状态判断或操作建议。这些生成约束仍需真实模型逐题验收，不能代替既有证据、权限和响应校验。
 
 可选工程默认：`max_input_tokens=32768`、`max_output_tokens=768`（允许 64–1536）、`user_daily_limit=100000`、`group_daily_limit=1000000`。这些是实现默认，不是用户选定的额度。输入按文本 wire 序列化 UTF-8 大小加 framing 余量上界检查，并预留该上界及最大输出；实际能力验收须覆盖所选模型的分词与输出上限。每可信用户 10 秒最多进入 3 个 AI 请求；第二次生成不算新请求。`parallel_control` 默认 false，仅已证实支持的 OpenAI／OpenRouter 组合可设 true；`cache_usage=true`、`reasoning_usage=false` 按真实响应能力登记，不能把缺失计数填为零。
 

@@ -133,6 +133,7 @@ class EvidenceChunkV1:
     applicability: Applicability
     evidence_type: str
     limitations: tuple[str, ...]
+    servers: tuple[str, ...] = ()
 
     @property
     def key(self) -> tuple[str, str, int]:

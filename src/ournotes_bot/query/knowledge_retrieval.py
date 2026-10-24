@@ -42,25 +42,29 @@ class IndexRow:
 
 
 def split_document(doc, approval):
-    # Exact slices keep source text (including spaces and injection strings)
-    # as data. Sources, scope and limitations accompany every slice.
-    start, ordinal = 0, 0
-    while start < len(doc.body):
-        end = min(start+CHUNK_CHARS, len(doc.body))
-        if end < len(doc.body):
-            boundary = max(doc.body.rfind('\n', start+CHUNK_CHARS//2, end),
-                           doc.body.rfind('。', start+CHUNK_CHARS//2, end))
-            if boundary >= 0:
-                end = boundary+1
-        text = doc.body[start:end]
-        start = end
-        if not text.strip():
-            continue
-        ordinal += 1
-        chunk_hash = hashlib.sha256(text.encode('utf-8')).hexdigest()
-        yield EvidenceChunkV1(doc.id, doc.content_sha256, approval.approval_revision,
-            f'{doc.id}:{ordinal}:{chunk_hash[:16]}', chunk_hash, text, doc.sources,
-            doc.applicability, doc.evidence_type, doc.limitations)
+    # Keep the editorial footer separate so repeated source/scope text cannot
+    # displace substantive rules. All text, sources and limitations remain evidence.
+    footer = re.search(r'^## 依据与边界[ \t]*$', doc.body, re.M)
+    sections = (doc.body[:footer.start()], doc.body[footer.start():]) if footer else (doc.body,)
+    ordinal = 0
+    for body in sections:
+        start = 0
+        while start < len(body):
+            end = min(start+CHUNK_CHARS, len(body))
+            if end < len(body):
+                boundary = max(body.rfind('\n', start+CHUNK_CHARS//2, end),
+                               body.rfind('。', start+CHUNK_CHARS//2, end))
+                if boundary >= 0:
+                    end = boundary+1
+            text = body[start:end]
+            start = end
+            if not text.strip():
+                continue
+            ordinal += 1
+            chunk_hash = hashlib.sha256(text.encode('utf-8')).hexdigest()
+            yield EvidenceChunkV1(doc.id, doc.content_sha256, approval.approval_revision,
+                f'{doc.id}:{ordinal}:{chunk_hash[:16]}', chunk_hash, text, doc.sources,
+                doc.applicability, doc.evidence_type, doc.limitations, doc.servers)
 
 
 def checked_vector(value, dimensions):
@@ -125,7 +129,8 @@ def rank(query, rows, query_vector):
         ordered = sorted(scores, key=lambda i: (-scores[i], rows[i].chunk.chunk_id))
         for position, i in enumerate(ordered, 1):
             fused[i] = fused.get(i, 0)+1/(60+position)
-    return tuple(rows[i].chunk for i in sorted(fused, key=lambda i: (-fused[i], rows[i].chunk.chunk_id)))
+    return tuple(rows[i].chunk for i in sorted(fused, key=lambda i: (
+        rows[i].chunk.text.startswith('## 依据与边界'), -fused[i], rows[i].chunk.chunk_id)))
 
 
 def evidence_json(chunks) -> str:

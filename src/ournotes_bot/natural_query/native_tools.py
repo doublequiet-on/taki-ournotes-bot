@@ -79,7 +79,7 @@ TOOLS.update({
     'event_cutoff':Tool('event_cutoff','查询原句中的活动挑战歌曲榜线观测及历史；不预测、不宣称终榜。',obj({}),'cutoff',('jp','tw','kr','en')),
     'catalog_info':Tool('catalog_info','只读人物、活动、卡池、缩写或帮助。query必须取自原句，活动/卡池可用当前、历史、列表。',
         obj({'kind':enum(('character','event','gacha','abbreviation','help','status')),'query':string(80)},('kind','query')),'info'),
-    'knowledge_search':Tool('knowledge_search','检索已审核的ON规则；用户纠错仅重新核实。默认日服当前；历史版本/日期必须来自原句。',
+    'knowledge_search':Tool('knowledge_search','检索已审核的ON规则；用户纠错仅重新核实。默认日服当前；历史版本/日期必须来自原句。未指定的version/date必须填JSON null，不能填字符串"null"或猜测值。',
         obj({'server':enum(('jp','intl')),'version':{'type':['string','null'],'maxLength':40},
              'date':{'type':['string','null'],'maxLength':10}},('server','version','date')),'knowledge',('jp','intl')),
 })
