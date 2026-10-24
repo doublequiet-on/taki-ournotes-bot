@@ -19,6 +19,24 @@ Checks 的 `offline-linux-bundle` 在 Ubuntu 24.04 / Python 3.12 从完整提交
 
 服务器校验 main 的精确 Checks、标签指向、GitHub 资产摘要、包内提交号／平台／逐文件摘要。下载首次成功后缓存；首次取得的摘要也会保留，用于拒绝同一提交的资产被替换。缓存损坏会拒绝更新，不以删除锁定摘要绕过检查。最多保留三个已验证归档；回退版本和环境由原有独立保留策略保护。
 
+## 已审核知识依赖附加包
+
+百科语义检索使用绑定应用完整提交号的独立离线附加包，基础发布包和默认安装行为保持原协议。`deploy/linux-knowledge-cp312.lock` 固定 Linux CPython 3.12 的24项直接及传递依赖和wheel哈希。准备匹配wheel后运行：
+
+```text
+python -B scripts/build_knowledge_bundle.py --commit <应用完整SHA> --wheelhouse <已有Linux wheels目录> --output <附加包.zip>
+```
+
+工具不联网、不安装；拒绝缺失/重复wheel、浮动版本和替代下载源。包内只有精确安装锁、wheel和清单，不含百科正文、批准状态或API配置。不能在安装时重新解析传递依赖替换已审核锁。
+
+受信配置可显式增加 `knowledge_bundle` 对象，唯一字段为 `commit`（40位应用提交号）及 `sha256`（附加包摘要）。审核后的ZIP预先存入root管理的 `<state_dir>/knowledge-bundles/<commit>.zip`。没有该配置时沿用基础安装；配置存在而提交不匹配、包缺失或改动时拒绝候选，不能静默跳过。
+
+控制器检查根所有权、路径、外层摘要、平台、提交、成员清单、锁与每个wheel的对应关系；三个直接依赖还必须与候选pyproject的knowledge声明一致；与基础锁重叠的分发名必须具有相同版本和wheel摘要，不能覆盖基础环境的既定版本。随后在原断网、非root、限资源沙箱执行 `pip install --no-index --find-links ... --require-hashes --no-deps`，导入并核定版本，继续原安装检查、pip check、测试、兼容与素材门禁，最后才冻结环境，记录附加包身份和完整环境摘要。
+
+ONNX Runtime初始化需要CPU信息。启用附加包的沙箱把宿主 `/proc` 替换为空的只读tmpfs，仅挂载控制器保存在root私有目录中的只读 `/proc/cpuinfo` 快照，不暴露宿主PID、environ、fd、maps或mountinfo。凭证隐藏、PrivateNetwork、User和资源限制保持原设置。未配置附加包时继续完整隐藏/proc。真实导入和进程信息不可见性需一起验收。
+
+安装失败不生成prepared=true记录，旧版尚未停止；封存后依赖缺失或篡改仍由原environment_digest拒绝。回退读取原环境记录，不依赖当前附加包配置；不在正式venv上补装或重写摘要。本入口属于受信控制器变更，须单独审核安装；合并代码不代表线上已接入。后续提交需要对应附加包和明确配置，不自动降级到基础环境。
+
 ## 失败与重试
 
 main／CI 元数据的 HTTP 响应读取中断（含 IncompleteRead）由适配器归类为 `github_unavailable`，下次定时检查可重新读取 CI，不把网络中断记成该提交永久失败。真正 CI 失败、提交不匹配及兼容拒绝仍阻止更新；旧失败记录不因此自动解封。该适配器属于独立控制器，合并源码仍需单独安装受审文件。

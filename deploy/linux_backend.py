@@ -22,16 +22,17 @@ import signal
 import stat
 import subprocess
 import tarfile
+import tempfile
 import time
 import urllib.error
 import urllib.request
 from datetime import datetime, timezone
 
 try:
-    from .offline_bundle import get_bundle, require_target, unpack_bundle
+    from .offline_bundle import get_bundle, require_target, unpack_bundle, unpack_dependency_bundle, dependency_lock
     from .linux_updater import Deferred, Engine, LockBusy, Rejected, Release, RunResult, SHA_RE, atomic_json
 except ImportError:  # Direct execution from the installed, root-owned directory.
-    from offline_bundle import get_bundle, require_target, unpack_bundle
+    from offline_bundle import get_bundle, require_target, unpack_bundle, unpack_dependency_bundle, dependency_lock
     from linux_updater import Deferred, Engine, LockBusy, Rejected, Release, RunResult, SHA_RE, atomic_json
 
 
@@ -44,6 +45,17 @@ MAX_OUTPUT = 2 * 1024 ** 2
 JOBS = {"test-and-package (3.10)", "test-and-package (3.12)", "offline-linux-bundle"}
 READY = re.compile(r"ournotes_bot\.qq\b.*机器人 .+ 已上线")
 ERROR = re.compile(r"\b(?:ERROR|CRITICAL|Traceback|ModuleNotFoundError|ImportError)\b")
+
+
+def knowledge_bundle_spec(config: dict):
+    if 'knowledge_bundle' not in config:
+        return None
+    value = config['knowledge_bundle']
+    if (not isinstance(value, dict) or set(value) != {'commit', 'sha256'}
+            or not isinstance(value['commit'], str) or not re.fullmatch(r'[a-f0-9]{40}', value['commit'])
+            or not isinstance(value['sha256'], str) or not re.fullmatch(r'[a-f0-9]{64}', value['sha256'])):
+        raise Rejected('knowledge_bundle_configuration_invalid')
+    return value
 
 
 def fingerprints(root: Path, paths: list[str]) -> dict[str, str]:
@@ -387,9 +399,17 @@ class LinuxBackend:
             "-p", "WorkingDirectory=" + release.code_dir]
         if offline:
             options += ["-p", "PrivateNetwork=yes"]
+        knowledge = knowledge_bundle_spec(self.config) is not None
+        if knowledge:
+            # ORT's cpuinfo library aborts when /proc/cpuinfo is inaccessible.
+            # An empty read-only tmpfs exposes only this non-secret hardware file,
+            # never host process IDs, environ, fd, maps or mount information.
+            cpuinfo = self._sandbox_cpuinfo()
+            options += ['-p', 'TemporaryFileSystem=/proc:ro,size=1M',
+                        '-p', 'BindReadOnlyPaths='+str(cpuinfo)+':/proc/cpuinfo']
         # One list assignment avoids resetting an earlier InaccessiblePaths list.
         # ProtectHome still hides all other shared data; expose only the artwork cache.
-        hidden = ["/proc", "-/run/user", "-/run/dbus"] + [
+        hidden = ([] if knowledge else ["/proc"]) + ["-/run/user", "-/run/dbus"] + [
             "-" + p for p in self.config.get("credential_paths", [])
             if not ((note_cache or query_cache) and Path(p) == self.base / "data")]
         options += ["-p", "InaccessiblePaths=" + " ".join(hidden)]
@@ -410,6 +430,21 @@ class LinuxBackend:
             except Rejected:
                 pass  # Already collected units also return nonzero.
             raise
+
+    def _sandbox_cpuinfo(self):
+        directory = self.state/'sandbox-hardware'
+        directory.mkdir(mode=0o700,exist_ok=True)
+        trusted(directory,directory=True)
+        path = directory/'cpuinfo'
+        if path.exists() or path.is_symlink():
+            trusted(path)
+        raw = Path('/proc/cpuinfo').read_bytes()
+        if not raw or len(raw)>1024*1024:
+            raise Rejected('sandbox_cpuinfo_invalid')
+        with tempfile.NamedTemporaryFile(dir=directory,delete=False) as f:
+            f.write(raw);f.flush();os.fsync(f.fileno());temporary=Path(f.name)
+        temporary.chmod(0o444);temporary.replace(path)
+        return path
 
     def _preparation_step(self, commit: str, step: str) -> None:
         """Persist the download/execution boundary under the engine's lock."""
@@ -446,6 +481,7 @@ class LinuxBackend:
         # Reject known-incompatible source before downloading dependencies or
         # running candidate build code. Verify again after complete preparation.
         self._check_reviewed_fingerprints(self.current_release(), release)
+        knowledge = self._prepare_knowledge_payload(release)
         for directory in ("venv", "home", "tmp", "test-data"):
             (root / directory).mkdir(mode=0o700)
         self.run(["/usr/bin/chown", "-R", "ubuntu:ubuntu", str(root)], timeout=60)
@@ -454,6 +490,16 @@ class LinuxBackend:
         self._sandbox(release, [python, "-m", "pip", "install", "--no-index",
             "--find-links", str(payload / "wheelhouse"), "--require-hashes", "--no-deps",
             "-r", str(payload / "requirements.lock")], "install", offline=True)
+        if knowledge is not None:
+            extra = root / 'knowledge-payload'
+            self._sandbox(release, [python, '-m', 'pip', 'install', '--no-index',
+                '--find-links', str(extra/'wheelhouse'), '--require-hashes', '--no-deps',
+                '-r', str(extra/'requirements.lock')], 'knowledge-install', offline=True)
+            roots = knowledge['roots']
+            self._sandbox(release, [python, '-I', '-c',
+                'import importlib.metadata as m,json; import onnxruntime,tokenizers,numpy; '
+                'assert {k:m.version(k) for k in '+repr(list(roots))+'} == '+repr(roots)],
+                'knowledge-imports', offline=True)
         self._sandbox(release, [python, "-I", "scripts/check_installed_query_upgrade.py"], "installed", offline=True)
         self._sandbox(release, [python, "-m", "pip", "check"], "dependencies", offline=True)
         self._sandbox(release, [python, "-B", "-m", "unittest", "discover", "-s", "tests", "-q"], "tests", offline=True)
@@ -466,13 +512,44 @@ class LinuxBackend:
         if tree_digest(Path(release.code_dir)) != digest:
             raise Rejected("candidate_source_changed")
         freeze_release(root)
-        atomic_json(self.manifests / (commit + ".json"), {"owner": "taki-linux-updater-v1", "release": asdict(release),
+        record = {"owner": "taki-linux-updater-v1", "release": asdict(release),
                     "digest": digest, "environment_digest": environment_digest(Path(release.venv_dir)),
-                    "bundle_sha256": bundle_hash, "prepared": True})
+                    "bundle_sha256": bundle_hash, "prepared": True}
+        if knowledge is not None:
+            record['knowledge_bundle'] = dict(knowledge_bundle_spec(self.config), roots=knowledge['roots'])
+        atomic_json(self.manifests / (commit + ".json"), record)
         if self.koishi:
             combo, _ = self.koishi.combination(release)
             self._sandbox(release,[str(combo/'bin/node'),str(combo/'gateway/scripts/probe.cjs')], 'koishi-probe', offline=True)
         return release
+
+    def _prepare_knowledge_payload(self, release: Release):
+        spec = knowledge_bundle_spec(self.config)
+        if spec is None:
+            return None
+        if spec['commit'] != release.commit:
+            raise Rejected('knowledge_bundle_commit_mismatch')
+        path = self.state/'knowledge-bundles'/(release.commit+'.zip')
+        if not path.exists():
+            raise Rejected('knowledge_bundle_missing')
+        trusted(path)
+        manifest = unpack_dependency_bundle(path, Path(release.code_dir).parent/'knowledge-payload',
+                                            release.commit, spec['sha256'])
+        # The controller runs on CPython 3.12; parse the candidate declaration as data.
+        import tomllib
+        try:
+            declared = tomllib.loads((Path(release.code_dir)/'pyproject.toml').read_text(encoding='utf-8'))
+            roots = declared['project']['optional-dependencies']['knowledge']
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            raise Rejected('knowledge_dependency_contract_mismatch') from exc
+        if set(roots) != {k+'=='+v for k,v in manifest['roots'].items()}:
+            raise Rejected('knowledge_dependency_contract_mismatch')
+        root=Path(release.code_dir).parent
+        base=dependency_lock((root/'payload/requirements.lock').read_text(encoding='utf-8'),required=())
+        extra=dependency_lock((root/'knowledge-payload/requirements.lock').read_text(encoding='utf-8'))
+        if any(base[k]!=extra[k] for k in base.keys() & extra.keys()):
+            raise Rejected('knowledge_base_lock_conflict')
+        return manifest
 
     def _prepare_note_assets(self, release: Release) -> None:
         """Before stop/switch, verify fixed note art in the launcher's persistent cache."""
@@ -802,6 +879,7 @@ def recover_engine(engine: Engine) -> RunResult:
 def validate_config(config: dict) -> None:
     """The installed controller is scoped to the already-reviewed Taki instance."""
     base, control = "/home/ubuntu/taki", "/usr/local/lib/taki-updater"
+    knowledge_bundle_spec(config)
     if config.get('runtime_mode','bot') not in ('bot','koishi'): raise Rejected('runtime_mode_invalid')
     if config.get('runtime_mode')=='koishi' and (config.get('koishi_combinations')!='/opt/taki-combinations'
             or config.get('koishi_health_token_file')!='/etc/taki-backend-token' or config.get('koishi_health_port')!=8766):
