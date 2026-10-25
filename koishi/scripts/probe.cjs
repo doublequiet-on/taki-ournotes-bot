@@ -203,7 +203,10 @@ async function main() {
     const sends = e.calls.filter(c => c.url.endsWith('/messages'))
     assert.deepEqual(sends.map(c => c.data.msg_seq), [1, 2])
     assert.ok(sends.every(c => c.data.msg_id === 'fixture-message'))
-    assert.equal(sends[1].data.content, kind === 'group' ? '<qqbot-at-user id="fixture-user" />\n' + text.text : text.text)
+    assert.equal(kind === 'group' ? sends[1].data.markdown.content : sends[1].data.content, kind === 'group' ? '<qqbot-at-user id="fixture-user" />\n' + text.text : text.text)
+    assert.equal(sends[0].data.msg_type, 7); assert.equal(sends[0].data.content, png.caption)
+    assert.equal(sends[1].data.msg_type, kind === 'group' ? 2 : 0)
+    if (kind === 'group') assert.equal(sends[1].data.content, undefined)
     assert.ok(sends.every(c => c.url.includes(kind === 'group' ? '/groups/fixture-group/' : '/users/fixture-user/')))
   })
   await run('upload failure permits explicit captured text fallback without consuming a slot', async () => {
@@ -212,15 +215,15 @@ async function main() {
     assert.equal((await e.delivery.deliver('image', 0, png)).status, 'upload_failed')
     assert.equal(e.delivery.usedSlots, 0); assert.equal(e.records.length, 0)
     assert.equal((await e.delivery.deliver('fallback', 0, text)).status, 'success')
-    assert.equal(e.calls.at(-1).data.content, '<qqbot-at-user id="fixture-user" />\n' + text.text); assert.equal(e.calls.at(-1).data.msg_seq, 1)
+    assert.equal(e.calls.at(-1).data.markdown.content, '<qqbot-at-user id="fixture-user" />\n' + text.text); assert.equal(e.calls.at(-1).data.msg_seq, 1)
   })
   await run('native group mention stays with each captured sender across interleaved text and image', async () => {
     const a = await setup('group', {}, { id: 'message-a', author: { id: 'user-a' } })
     const b = await setup('group', {}, { id: 'message-b', author: { id: 'user-b' } })
     a.decoded.inbound.userId = 'later-user'; a.decoded.inbound.messageId = 'later-message'
     await Promise.all([a.delivery.deliver('text', 0, text), b.delivery.deliver('image', 0, png)])
-    assert.equal(a.calls.at(-1).data.content, '<qqbot-at-user id="user-a" />\n' + text.text)
-    assert.equal(b.calls.at(-1).data.content, '<qqbot-at-user id="user-b" />\n' + png.caption)
+    assert.equal(a.calls.at(-1).data.markdown.content, '<qqbot-at-user id="user-a" />\n' + text.text)
+    assert.equal(b.calls.at(-1).data.content, png.caption)
     assert.equal(a.calls.at(-1).data.msg_id, 'message-a'); assert.equal(b.calls.at(-1).data.msg_id, 'message-b')
     assert.equal(a.calls.at(-1).data.msg_seq, 1); assert.equal(b.calls.at(-1).data.msg_seq, 1)
   })
@@ -228,10 +231,10 @@ async function main() {
     const e = await setup('group', {}, { author: { id: 'x'.repeat(256) } })
     const bad = '<qqbot-at-user id="other" /><@other><qqbot-cmd-enter text="/问" />'
     assert.equal((await e.delivery.deliver('body', 0, { kind: 'text', text: bad })).status, 'success')
-    assert.equal(e.calls.at(-1).data.content.match(/<qqbot-at-user /g).length, 1)
-    assert.ok(e.calls.at(-1).data.content.endsWith('＜qqbot-at-user id="other" />＜@other>＜qqbot-cmd-enter text="/问" />'))
+    assert.equal(e.calls.at(-1).data.markdown.content.match(/<qqbot-at-user /g).length, 1)
+    assert.ok(e.calls.at(-1).data.markdown.content.endsWith('＜qqbot-at-user id="other" />＜@other>＜qqbot-cmd-enter text="/问" />'))
     assert.equal((await e.delivery.deliver('bounded', 1, { kind: 'text', text: '文'.repeat(1500) })).status, 'success')
-    assert.ok([...e.calls.at(-1).data.content].length <= 1800)
+    assert.ok([...e.calls.at(-1).data.markdown.content].length <= 1800)
     const before = e.calls.length
     assert.equal((await e.delivery.deliver('oversize', 2, { kind: 'text', text: '文'.repeat(1800) })).reason, 'part_size')
     assert.equal(e.calls.length, before)
@@ -454,8 +457,32 @@ async function main() {
       await receiver.deliver(job,env.bot)
       assert.equal(decisions,1);assert.equal(env.calls.length,2)
       assert.deepEqual(env.calls.map(c=>c.data.msg_seq),[1,2])
-        assert.deepEqual(env.calls.map(c=>c.data.content),['还在核实，请稍等。','最终回答'].map(t=>'<qqbot-at-user id="fixture-user" />\n'+t))
+        assert.deepEqual(env.calls.map(c=>c.data.markdown.content),['还在核实，请稍等。','最终回答'].map(t=>'<qqbot-at-user id="fixture-user" />\n'+t))
     }finally{releaseHint();await receiver.dispose();await fork.dispose();await env.ctx.stop()}
+  })
+  await run('Prepared image group plan sends one Markdown mention then four images within five slots',async()=>{
+    const env=createBot();let receiver,completed=0
+    const decoded=await decodeIncoming(env.bot,event(),identity,recognizes)
+    const input={...decoded.inbound,timestampMs:Date.now()}
+    const parts=Array.from({length:5},(_,i)=>({id:String(i),position:i,mode:'primary',status:'pending',
+      kind:i?'image':'text',text:i?'图片 '+i:'查询结果：'}))
+    const plan=()=>({request_id:input.requestId,delivery_id:'a'.repeat(32),plan_version:1,
+      status:completed===5?'finished':'prepared',send_allowed:completed<5,processing_hint:true,
+      expires_at:Date.now()/1000+290,parts:parts.map((p,i)=>({...p,status:i<completed?'success':'pending'}))})
+    const client={epoch:'epoch',deactivate(){},async initialize(){},async retire(){},async image(){return picture},
+      async lookup(){return plan()},async intent(){return'granted'},async acknowledge(attempt){
+        assert.equal(attempt.partId,String(completed));completed++
+      },async event(){throw Error('unexpected abort')}}
+    const fork=env.ctx.plugin(ctx=>{receiver=new Receiver(ctx,{...identity,backendUrl:'http://127.0.0.1:8765',tokenEnv:'unused',permissions:[],maxPending:8},client)})
+    try{
+      await receiver.deliver({input,plan:plan(),permissionAttempts:new Set()},env.bot)
+      const sends=env.calls.filter(c=>c.url.endsWith('/messages'))
+      assert.equal(completed,5);assert.deepEqual(sends.map(c=>c.data.msg_seq),[1,2,3,4,5])
+      assert.deepEqual(sends.map(c=>c.data.msg_type),[2,7,7,7,7])
+      assert.equal(sends[0].data.markdown.content,'<qqbot-at-user id="fixture-user" />\n查询结果：')
+      assert.ok(sends.slice(1).every(c=>!c.data.content.includes('qqbot-at-user')))
+      assert.equal(env.calls.filter(c=>c.url.endsWith('/files')).length,4)
+    }finally{await receiver.dispose();await fork.dispose();await env.ctx.stop()}
   })
   await run('M4 real plugin publishes and releases its scoped transport service', async () => {
     const ctx=new Context(),plugin=require('../lib')
@@ -772,7 +799,7 @@ async function main() {
         const raw=event({timestamp:new Date().toISOString()})
         await env.ctx.parallel('internal/session',env.bot.session({type:'internal',_type:'qq/group-at-message-create',_data:raw.d}))
         await receiver.receive(env.ctx.reflect.trace(await adaptSession(env.bot,raw)))
-        assert.equal(submissions,1);assert.equal(acked,true);assert.equal(env.calls.filter(c=>c.data?.msg_type===0).length,1)
+        assert.equal(submissions,1);assert.equal(acked,true);assert.equal(env.calls.filter(c=>c.data?.msg_type===2).length,1)
       }finally{await receiver.dispose();await fork.dispose();await env.ctx.stop()}
     })
     await run('Actual gateway keeps policy enforcement when the Console web UI is disabled',async()=>{

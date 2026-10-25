@@ -1,6 +1,7 @@
 # L3: Request-local read-only site navigation over a pinned catalog and notices.
 # Effects: Bounded public source reads; opaque handles never persist or grant URL access.
 import json
+import re
 import time
 from datetime import datetime
 
@@ -18,6 +19,13 @@ class SiteLookup:
         self.notices,self.verify=notices or Notices(),verify or verify_catalog
         self.catalog=None;self.notice_snapshots={};self.handles={};self.records={}
         self.operations=0;self.evidence=[];self.expires_at=None;self.source_notes=[]
+        self.reader_links={}
+
+    def attribution(self):
+        text='\n\n来源：'+'；'.join(self.source_notes)
+        if self.reader_links:
+            text+='\n'+'\n'.join(f'[{label}]({url})' for label,url in self.reader_links.values())
+        return text
 
     def handle(self,resource,row):
         rid=row['id'] if isinstance(row,dict) else row.id
@@ -60,6 +68,22 @@ class SiteLookup:
         stamp=('版本 '+result['release'] if 'release' in result else '公告采集 '+result['observed_at'])
         note='Haneoka / '+('日服' if result['server']=='jp' else '国际服英文')+' / '+stamp
         if note not in self.source_notes:self.source_notes.append(note)
+        # Reader URLs are program-owned and derived only after a successful read.
+        # Normal catalog queries keep their existing answer/image route.
+        resource=(args['resource'] if name=='site_search' else self.handles[args['handle']][0].split(':')[0])
+        if resource=='notices' or (resource in ('songs','events') and re.search(r'链接|連結|網址|网址|原文|网页|網頁',self.question)):
+            server=result['server'];locale='ja' if server=='jp' else 'en'
+            route={'notices':'announcements','songs':'songs','events':'events'}[resource]
+            label={'notices':'公告','songs':'歌曲','events':'活动'}[resource]
+            url=f'https://haneoka.org/{server}/{locale}/{route}/'
+            if result['kind']=='detail':
+                rid=result['fields']['id']
+                require(type(rid) is int and rid>0,'query_entity_mismatch')
+                url+=str(rid)+'/'
+            key=(server,resource)
+            # A read detail replaces the broad list; later searches must not undo it.
+            if result['kind']=='detail' or key not in self.reader_links:
+                self.reader_links[key]=(f'Haneoka {"日服" if server=="jp" else "国际服"}{label}'+('原文' if resource=='notices' and result['kind']=='detail' else '页面'),url)
         return text
 
     def search(self,args,deadline):

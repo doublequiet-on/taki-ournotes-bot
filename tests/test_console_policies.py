@@ -521,6 +521,7 @@ class NativeRuntimeTests(Fixture,unittest.IsolatedAsyncioTestCase):
         text=plan['parts'][0]['text']
         self.assertEqual(text.count('来源：'),1);self.assertNotIn('虚构站点',text)
         self.assertIn('r-fixture',text);self.assertIn('登记名称为合成曲100001',text)
+        self.assertNotIn('https://',text)
 
     async def test_explicit_song_name_uses_read_field_without_extra_generation(self):
         from ournotes_bot.domain.info_catalog import ActivityInfo
@@ -686,6 +687,28 @@ class NativeRuntimeTests(Fixture,unittest.IsolatedAsyncioTestCase):
         session.evidence=['x'*(6000-len(text))]
         with self.assertRaisesRegex(ModelError,'model_input_too_large'):
             session.execute('site_search',args,time.monotonic()+5)
+
+    def test_reader_links_use_verified_pages_and_detail_replaces_listing(self):
+        import time
+        from ournotes_bot.application.site_lookup import SiteLookup
+        notices=Mock()
+        notices.read.return_value=dict(source='Haneoka',server='jp',language='ja',observed_at='2026-10-25T08:00:00Z',
+            rows=[dict(id=71,title='恶意标题](https://evil.invalid/)',startAt=100,endAt=200,updatedAt=None)])
+        session=SiteLookup(self.repo,'公告',notices=notices)
+        session.execute('site_search',dict(resource='notices',server='jp',query=''),time.monotonic()+5)
+        self.assertIn('https://haneoka.org/jp/ja/announcements/)',session.attribution())
+        session.execute('site_read',dict(handle='item1'),time.monotonic()+5)
+        session.execute('site_search',dict(resource='notices',server='jp',query=''),time.monotonic()+5)
+        self.assertEqual(session.attribution().count('https://'),1)
+        self.assertIn('https://haneoka.org/jp/ja/announcements/71/)',session.attribution())
+        self.assertNotIn('evil',session.attribution())
+        self.repo.metadata.update(data_source='haneoka',data_version='fixture',text_version='fixture')
+        for question,linked in [('合成曲100001名称',False),('合成曲100001网页链接',True)]:
+            session=SiteLookup(self.repo,question,verify=Mock())
+            session.execute('site_search',dict(resource='songs',server='jp',query='100001'),time.monotonic()+5)
+            session.execute('site_read',dict(handle='item1'),time.monotonic()+5)
+            self.assertEqual('https://' in session.attribution(),linked)
+            if linked:self.assertIn('https://haneoka.org/jp/ja/songs/100001/)',session.attribution())
 
     async def test_semantic_chat_comparisons_get_two_separate_permits(self):
         for seq,question in enumerate(('原神牛逼还是鸣潮牛逼','随便聊聊，你站哪边','今天只想摸鱼'),1):
@@ -1034,6 +1057,7 @@ class NativeRuntimeTests(Fixture,unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(attempts),2)
         self.assertEqual(notices.read.call_args.args[0],'intl')
         self.assertIn('国际服英文',plan['parts'][0]['text'])
+        self.assertIn('[Haneoka 国际服公告页面](https://haneoka.org/intl/en/announcements/)',plan['parts'][0]['text'])
 
     def test_followup_scope_inherits_and_explicit_conditions_win(self):
         from ournotes_bot.natural_query.native_tools import scope_for
@@ -1124,12 +1148,15 @@ class NativeRuntimeTests(Fixture,unittest.IsolatedAsyncioTestCase):
         from ournotes_bot.natural_query.native_tools import TOOLS,execute
         good=(
             ('event','当前','这期活动啥时候结束','/查活动 当前'),
+            ('event','当前','这期活动啥时候结束啊','/查活动 当前'),
+            ('event','当前','国际服这期活动什么时候结束呀？','/查活动 国际服 当前'),
             ('event','本期','本期活动什么时候结束？','/查活动 当前'),
             ('event','当前','国际服这次活动结束时间是什么','/查活动 国际服 当前'),
             ('event','en 当前','国际服当前活动什么时候开始','/查活动 国际服 当前'),
             ('event','','台服这期活动详情','/查活动 台服 当前'),
             ('event','历史','历史活动有哪些','/查活动 历史'),
             ('gacha','当前','本期卡池啥时候结束','/查卡池 当前'),
+            ('gacha','当前','本期卡池什么时候结束呢','/查卡池 当前'),
         )
         for kind,query,question,command in good:
             with self.subTest(question=question), \
@@ -1142,6 +1169,8 @@ class NativeRuntimeTests(Fixture,unittest.IsolatedAsyncioTestCase):
             ('event','当前','上期活动什么时候结束'),
             ('event','当前','下期活动什么时候开始'),
             ('event','当前','2020年这期活动什么时候结束'),
+            ('event','当前','2020年这期活动什么时候结束啊'),
+            ('event','当前','这期活动啥时候结束啊并预测榜线'),
             ('event','当前','最近结束的历史活动有哪些'),
             ('event','历史','当前活动有哪些'),
             ('event','jp 当前','国际服这期活动啥时候结束'),
@@ -1157,6 +1186,18 @@ class NativeRuntimeTests(Fixture,unittest.IsolatedAsyncioTestCase):
                 with self.assertRaisesRegex(ModelError,'^query_(entity_mismatch|server_unsupported)$'):
                     execute(TOOLS['catalog_info'],dict(kind=kind,query=query),question,self.repo)
                 resolve.assert_not_called()
+
+    async def test_screenshot_event_question_reaches_native_local_query_without_model(self):
+        from types import SimpleNamespace
+        from ournotes_bot.query.contracts.info import InfoAnswer
+        answer=InfoAnswer('夹具活动结束：2026-10-30 20:00')
+        with patch('ournotes_bot.query.activity_query.execute_activity',return_value=answer) as execute, \
+             patch('ournotes_bot.rendering.info_layout.render_info',return_value=(SimpleNamespace(text=answer.text,image=b'image'),)):
+            plan,attempts=await self.prepare_native('/问 这期活动啥时候结束啊')
+        self.assertFalse(attempts);self.client.request.assert_not_awaited()
+        execute.assert_called_once()
+        self.assertEqual([p['kind'] for p in plan['parts']],['text','image'])
+        self.assertEqual(self.backend.works[plan['delivery_id']].prepared[1].text,answer.text)
 
     def test_native_chart_preserves_explicit_difficulty_and_captured_result(self):
         from ournotes_bot.domain.model_calls import ToolCall,ModelError
@@ -1308,10 +1349,11 @@ class NativeRuntimeTests(Fixture,unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(attempts),1,plan)
         self.client.request.assert_awaited_once()
         self.repo.song_metrics.current.assert_called_once_with('jp')
-        self.assertEqual(len(plan['parts']),2,plan)
+        self.assertEqual(len(plan['parts']),3,plan)
+        self.assertEqual(plan['parts'][0]['business_status'],'processing_hint')
         prepared=self.backend.works[plan['delivery_id']].prepared
-        self.assertIn('工程合成曲100',prepared[0].text)
-        self.assertIn('工程合成曲400',prepared[1].text)
+        self.assertIn('工程合成曲100',prepared[1].text)
+        self.assertIn('工程合成曲400',prepared[2].text)
 
     async def test_native_detail_uses_current_view_when_legacy_repository_is_older(self):
         from copy import copy
@@ -1321,11 +1363,13 @@ class NativeRuntimeTests(Fixture,unittest.IsolatedAsyncioTestCase):
              patch('ournotes_bot.application.replies.load_chart_data',side_effect=ValueError('isolated chart unavailable')), \
              patch('ournotes_bot.application.replies.load_chart_score',side_effect=ValueError('isolated chart unavailable')):
             first,_=await self.prepare_native('/问 查曲 MyGO')
+            first=self.Helpers.accept_image_intro(self,first)
             self.event(first,'intent');self.event(first,'ack')
             second,attempts=await self.prepare_native('/问 第一个',seq=2)
         self.assertFalse(attempts)
-        self.assertNotIn('资料版本',second['parts'][0]['text'])
-        self.assertIn('合成曲100001',second['parts'][0]['text'])
+        detail=self.backend.works[second['delivery_id']].prepared[-1].text
+        self.assertNotIn('资料版本',detail)
+        self.assertIn('合成曲100001',detail)
         self.assertGreaterEqual(self.repo.current_query_view.call_count,2)
 
     def reviewed_fixture(self,body='红色夹具标记用于工程测试，不是游戏事实。'):

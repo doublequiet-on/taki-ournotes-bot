@@ -87,7 +87,7 @@ def information_command(question, repository):
         r"(?:(jp|hk|tw|kr|en|日服|国服|台服|韩服|英服|国际服)\s*)?"
         r"(?:现在|当前|最近|这期|本期|这次)(?:的)?\s*(活动|卡池)\s*"
         r"(?:是什么|有哪些|有什么|详情|(?:啥时候|什么时候|何时|几号)(?:开始|结束)|"
-        r"(?:开始|结束)(?:时间|日期)(?:是什么|是啥|是几号)?)?", text, re.I)
+        r"(?:开始|结束)(?:时间|日期)(?:是什么|是啥|是几号)?)?(?:啊|呀|呢|吗|嘛|吧)?", text, re.I)
     if current:
         region, kind = current[1] or "", current[2]
         if kind == "卡池" and region not in {"", "jp", "日服"}:

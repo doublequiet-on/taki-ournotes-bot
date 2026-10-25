@@ -300,6 +300,13 @@ class Backend:
             self.expire()
             if not work.active:
                 return
+            if work.request.kind=='group' and not work.hint and parts and parts[0].image:
+                # Keep native image captions plain. Reuse the verified Markdown
+                # path through an accounted text introduction, retaining image
+                # uploads, ACK ordering, five-send budget and continuation.
+                self.ledger.processing_hint(work.delivery)
+                work.hint=True
+                work.prepared=(replies.PreparedReply('查询结果：',business_status='processing_hint'),)
             if work.hint:
                 parts = [work.prepared[0], *replies.reserve_progress_slot(parts,overflow=bool(overflow),text_limit=text_limit)]
             parts = [replace(p, context=ReadOnlyContext(p.text, p.parse_origin, p.evidence))
