@@ -268,16 +268,20 @@ class AdminTests(unittest.IsolatedAsyncioTestCase):
     async def test_fallback_keeps_upload_failure_span_at_same_position(self):
         self.backend.gate.prepare=AsyncMock(return_value=PreparedReply('fallback',image=b'fixture'))
         row=await self.admitted()
+        base=dict(protocol=PROTOCOL,request_id=row['id'],plan_version=1,gateway_epoch='epoch',part_id='0',attempt_id='intro')
+        self.backend.apply_event(row['delivery'],dict(base,event='intent'))
+        self.backend.apply_event(row['delivery'],dict(base,event='ack',result='success',message_id='intro-receipt'))
         self.backend.apply_event(row['delivery'],dict(protocol=PROTOCOL,request_id=row['id'],plan_version=1,
-            gateway_epoch='epoch',event='upload_failed',part_id='0',attempt_id='none'))
-        event=dict(event_id='upload-failure',request_id=row['id'],delivery_id=row['delivery'],kind='upload',position=0,
+            gateway_epoch='epoch',event='upload_failed',part_id='1',attempt_id='none'))
+        event=dict(event_id='upload-failure',request_id=row['id'],delivery_id=row['delivery'],kind='upload',position=1,
                    attempt=None,duration_ms=10,outcome='error')
         self.backend.admin.telemetry({'backend_epoch':self.backend.runtime,'events':[event]},'epoch')
         result=self.backend.admin.detail(row['id'])['sections']['request']['data']
-        self.assertEqual(result['parts'][0]['id'],'0:f')
-        self.assertEqual(result['parts'][0]['primary_kind'],'image')
+        self.assertEqual(result['parts'][0]['primary_kind'],'text')
+        self.assertEqual(result['parts'][1]['id'],'1:f')
+        self.assertEqual(result['parts'][1]['primary_kind'],'image')
         self.assertEqual(result['spans'][-1]['outcome'],'error')
-        self.assertEqual(result['spans'][-1]['position'],0)
+        self.assertEqual(result['spans'][-1]['position'],1)
 
     async def test_disabled_and_full_observation_do_not_change_admission(self):
         self.backend.diagnostics.close()

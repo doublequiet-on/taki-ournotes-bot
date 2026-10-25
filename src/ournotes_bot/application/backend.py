@@ -294,7 +294,6 @@ class Backend:
                 if overflow:
                     parts.append(replies.PreparedReply(tr(locale_for(commands[0]), 'too_many_commands',
                                                           limit=self.settings.multi_command_limit, total=len(commands))))
-            self.diagnostics.prepared(work.request.request_id, parts)
             self.diagnostics.span(uuid.uuid4().hex, work.request.request_id, 'reply_order_wait',
                                   0, self.clock(), outcome='ok')
             self.expire()
@@ -309,6 +308,7 @@ class Backend:
                 work.prepared=(replies.PreparedReply('查询结果：',business_status='processing_hint'),)
             if work.hint:
                 parts = [work.prepared[0], *replies.reserve_progress_slot(parts,overflow=bool(overflow),text_limit=text_limit)]
+            self.diagnostics.prepared(work.request.request_id, parts)
             parts = [replace(p, context=ReadOnlyContext(p.text, p.parse_origin, p.evidence))
                      if p.context is None and p.business_status!='processing_hint' else p for p in parts]
             work.prepared = tuple(parts)
