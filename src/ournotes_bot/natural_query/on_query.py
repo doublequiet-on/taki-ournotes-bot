@@ -117,6 +117,17 @@ def information_command(question, repository):
     return None
 
 
+def activity_time_field(question, repository):
+    """A short reply only for an entirely grounded current-activity time question."""
+    command = information_command(question, repository)
+    if not command or not command.startswith('/查活动 ') or not command.endswith(' 当前'):
+        return None
+    for word, field in (('结束', 'end'), ('开始', 'start')):
+        if word in question:
+            return field
+    return None
+
+
 def parse_on_query(question, repository, *, include_legacy=False):
     text, saved = protected_text(question, repository)
     text = color_conditions(text)
