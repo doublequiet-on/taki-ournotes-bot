@@ -32,6 +32,8 @@ API 地址按已登记服务商选择固定 HTTPS Chat Completions 地址。当�
 
 新增 `model-admin-v1.sqlite3` 保存配置／探测的有限元数据和输入摘要，不保存密钥或模型响应。它损坏时只关闭模型管理，查询账务仍独立工作。原 usage-v1 表结构不改含义，附加的 `attempt_observations` 表只记类别和耗时。
 
+首轮合法零工具文本的观测类别为 `routing_text`，不把它自动视作已通过寒暄校验；历史 `light_chat` 记录保留原样。attempt 的结算／错误码描述模型调用，查询记录的业务结果描述后续路由与校验；提供方正常返回且用量已结算，仍可能得到 `model_no_evidence` 或条件不匹配，不能据此计算回答成功率。
+
 ## 受信动作协议（独立审查面）
 
 实现分为网关 `trusted-actions.cjs`、受信进程中的 `deploy/trusted_actions.py` 协议核心和显式 Unix 服务接线 `create_server()`。默认不启用。只有独立安装、权限审阅后的控制器提供 `/run/taki-actions/control.sock` 时才可连接；Windows 和未安装实例显示不可用，不展示可执行重启／更新按钮。

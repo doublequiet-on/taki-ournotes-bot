@@ -1,4 +1,4 @@
-# L3: Manual read-only native tool registry, schema validation and grounded execution.
+# L3: Manual read-only tools; closed schema and grounding failures use finite reason codes.
 # Effects: Existing deterministic query/command paths only; no model or platform IO.
 from __future__ import annotations
 
@@ -109,22 +109,24 @@ def check_schema(value,schema):
 def validate_call(call):
     tool=TOOLS.get(call.name)
     require(tool is not None,'tool_unregistered')
-    try: args=decode_json(call.arguments)
-    except (ValueError,UnicodeError,RecursionError): raise ModelError('invalid_argument') from None
-    check_schema(args,tool.schema)
+    try:
+        args=decode_json(call.arguments)
+        check_schema(args,tool.schema)
+    except (ValueError,UnicodeError,RecursionError):
+        raise ModelError('tool_arguments_invalid') from None
     return tool,args
 
 
 def scope_for(question,args):
-    require(not re.search(r'台服|港服|韩服|美服|欧服|\b(?:tw|hk|kr|en)\b',question,re.I),'invalid_argument')
-    require(not (re.search(r'日服|\bjp\b',question,re.I) and re.search(r'国际服|國際服|\bintl\b',question,re.I)),'invalid_argument')
+    require(not re.search(r'台服|港服|韩服|美服|欧服|\b(?:tw|hk|kr|en)\b',question,re.I),'knowledge_server_unsupported')
+    require(not (re.search(r'日服|\bjp\b',question,re.I) and re.search(r'国际服|國際服|\bintl\b',question,re.I)),'knowledge_server_ambiguous')
     server='intl' if re.search(r'国际服|國際服|\bintl\b',question,re.I) else 'jp'
-    require(args['server']==server,'invalid_argument')
+    require(args['server']==server,'query_server_mismatch')
     for key in ('version','date'):
-        if args[key] is not None: require(args[key] in question,'invalid_argument')
+        if args[key] is not None: require(args[key] in question,'query_'+key+'_mismatch')
     # An explicitly historical question must not quietly become a current one.
-    require(not re.search(r'\d{4}-\d{2}-\d{2}',question) or args['date'] is not None,'invalid_argument')
-    require(not re.search(r'\d+\.\d+(?:\.\d+)?\s*(?:版|版本)',question) or args['version'] is not None,'invalid_argument')
+    require(not re.search(r'\d{4}-\d{2}-\d{2}',question) or args['date'] is not None,'query_date_mismatch')
+    require(not re.search(r'\d+\.\d+(?:\.\d+)?\s*(?:版|版本)',question) or args['version'] is not None,'query_version_mismatch')
     require(not re.search(r'历史|以前|旧版',question) or args['version'] is not None or args['date'] is not None,'knowledge_scope_ambiguous')
     return KnowledgeScope(server=server,version=args['version'],date=args['date'])
 
@@ -156,7 +158,7 @@ class ToolOutput:
 
 def execute(tool,args,question,repository):
     if tool.servers==('jp',):
-        require(not re.search(r'国际服|國際服|台服|港服|韩服|美服|欧服|\b(?:intl|tw|hk|kr|en)\b',question,re.I),'invalid_argument')
+        require(not re.search(r'国际服|國際服|台服|港服|韩服|美服|欧服|\b(?:intl|tw|hk|kr|en)\b',question,re.I),'query_server_unsupported')
     question=re.sub(r'^(?:请|帮我)?(?:解释|分析)(?:一下)?[\s，,：:]*','',question).strip()
     question=re.sub(r'[，,\s]*(?:并|再|然后)(?:解释|分析)(?:一下)?[。！!]*$','',question).strip()
     if tool.kind in CAPABILITIES:
@@ -166,7 +168,8 @@ def execute(tool,args,question,repository):
             # difficulty. Native calls must not omit, invent or replace it.
             conditions=question.replace(args.get('query',''),' ') if args.get('query') else question
             evidence=extract_song_conditions(conditions)
-            require(not evidence.difficulty_conflict and args.get('difficulty','')==evidence.difficulty,'invalid_argument')
+            require(not evidence.difficulty_conflict,'query_difficulty_ambiguous')
+            require(args.get('difficulty','')==evidence.difficulty,'query_difficulty_mismatch')
         validated=validate_capability_action({'action':'call_tool','capability':tool.kind,'arguments':args},
                                             capability,question,repository,allow_empty_subject=True)
         if validated.spec is None or validated.code!=OutcomeCode.SUCCESS:
@@ -187,10 +190,10 @@ def execute(tool,args,question,repository):
         return ToolOutput((answer_for(spec,repository,result=result),),(result,))
     require(tool.kind=='info','tool_unregistered')
     kind,query=args['kind'],args['query'].strip()
-    require(not re.search(r'[\r\n\\/;`]|https?:|<@',query,re.I),'invalid_argument')
-    require(not query or query in question or query in ('当前','历史','列表') and any(w in question for w in ('现在','当前','最近','历史','有哪些','列表')),'invalid_argument')
+    require(not re.search(r'[\r\n\\/;`]|https?:|<@',query,re.I),'tool_arguments_invalid')
+    require(not query or query in question or query in ('当前','历史','列表') and any(w in question for w in ('现在','当前','最近','历史','有哪些','列表')),'query_entity_mismatch')
     heads={'character':'/查角色','event':'/查活动','gacha':'/查卡池','abbreviation':'/查缩写','help':'/帮助','status':'/状态'}
-    require(kind not in ('help','status') or not query,'invalid_argument')
+    require(kind not in ('help','status') or not query,'tool_arguments_invalid')
     command=heads[kind]+' '+query
     result=resolve_command(command,repository)
     text=handle_command(command,repository,resolved=result)

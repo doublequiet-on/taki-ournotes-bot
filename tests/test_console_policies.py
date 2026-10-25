@@ -454,6 +454,84 @@ class NativeRuntimeTests(Fixture,unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.backend.model_runtime.usage.summary()['attempts'],0)
         self.repo.current_query_view.assert_called_once()
 
+    async def test_unverified_text_is_not_a_protocol_failure_or_published_answer(self):
+        from ournotes_bot.domain.model_calls import AttemptResult,Usage
+        self.client.request.return_value=AttemptResult('ok',Usage(10,0,2,None,12,'known'),text='UNVERIFIED_FACT_SENTINEL')
+        for seq,question in enumerate(('教我打梵音打','这个规则是什么意思'),1):
+            with self.subTest(question=question):
+                plan,attempts=await self.prepare_native('/问 '+question,seq=seq)
+                self.assertEqual(len(attempts),1)
+                self.assertEqual(plan['parts'][0]['business_status'],'model_no_evidence')
+                self.assertNotIn('UNVERIFIED_FACT_SENTINEL',str(plan))
+                row=self.backend.model_runtime.usage.get(attempts[0])
+                self.assertEqual(row['state'],'settled');self.assertEqual(row['charged'],'14')
+                observed=self.backend.model_runtime.usage.request_view(row['request_id'])
+                self.assertEqual(observed[0]['tool_kind'],'routing_text')
+                self.event(plan,'intent');self.event(plan,'ack')
+                for anchor in self.backend.conversations.anchors.values():
+                    self.assertEqual(anchor.context.origin,'policy')
+                    self.assertFalse(anchor.context.history);self.assertFalse(anchor.context.facts)
+                self.assertNotIn('UNVERIFIED_FACT_SENTINEL',str(self.backend.conversations.snapshots))
+        self.assertEqual(self.client.request.await_count,2)
+
+    async def test_bad_wire_response_keeps_protocol_error_and_known_usage(self):
+        from ournotes_bot.domain.model_calls import AttemptResult,Usage
+        self.client.request.return_value=AttemptResult('error',Usage(10,0,2,None,12,'known'),error_code='model_protocol_error')
+        plan,attempts=await self.prepare_native('/问 你好')
+        self.assertEqual(plan['parts'][0]['business_status'],'model_protocol_error')
+        self.assertEqual(self.backend.model_runtime.usage.get(attempts[0])['charged'],'14')
+        self.client.request.assert_awaited_once()
+
+    async def test_long_chat_has_its_own_failure_and_is_not_displayed(self):
+        from ournotes_bot.domain.model_calls import AttemptResult,Usage
+        self.client.request.return_value=AttemptResult('ok',Usage(10,0,2,None,12,'known'),text='长'*301)
+        plan,attempts=await self.prepare_native('/问 你好')
+        self.assertEqual(plan['parts'][0]['business_status'],'model_response_too_long')
+        self.assertNotIn('长'*301,str(plan));self.assertEqual(len(attempts),1)
+
+    async def test_missing_model_date_stops_before_retrieval_with_specific_reason(self):
+        from ournotes_bot.domain.model_calls import AttemptResult,ToolCall,Usage
+        self.reviewed_fixture()
+        self.backend.knowledge.retrieve=Mock(side_effect=AssertionError('must not search current knowledge'))
+        self.client.request.return_value=AttemptResult('ok',Usage(10,0,2,None,12,'known'),
+            (ToolCall('c','knowledge_search','{"server":"jp","version":null,"date":null}'),))
+        plan,attempts=await self.prepare_native('/问 2020-01-01的规则是什么')
+        self.assertEqual(plan['parts'][0]['business_status'],'query_date_mismatch')
+        self.assertIn('日期',plan['parts'][0]['text']);self.assertNotIn('说得更明确',plan['parts'][0]['text'])
+        self.backend.knowledge.retrieve.assert_not_called();self.client.request.assert_awaited_once()
+        self.assertEqual(self.backend.model_runtime.usage.get(attempts[0])['charged'],'14')
+
+    def test_knowledge_scope_reasons_keep_all_original_rejections(self):
+        from ournotes_bot.natural_query.native_tools import scope_for
+        from ournotes_bot.domain.model_calls import ModelError
+        defaults=dict(server='jp',version=None,date=None)
+        cases=[('台服规则',{},'knowledge_server_unsupported'),
+               ('日服和国际服规则',{},'knowledge_server_ambiguous'),
+               ('国际服规则',{},'query_server_mismatch'),
+               ('规则',dict(date='2020-01-01'),'query_date_mismatch'),
+               ('规则',dict(version='1.2.3'),'query_version_mismatch'),
+               ('2020-01-01规则',{},'query_date_mismatch'),
+               ('1.2.3版本规则',{},'query_version_mismatch'),
+               ('以前的规则',{},'knowledge_scope_ambiguous')]
+        for question,changes,code in cases:
+            with self.subTest(question=question):
+                with self.assertRaisesRegex(ModelError,'^'+code+'$'):
+                    scope_for(question,{**defaults,**changes})
+        scope=scope_for('国际服2020-01-01规则',{**defaults,'server':'intl','date':'2020-01-01'})
+        self.assertEqual(scope.server,'intl');self.assertEqual(scope.date,'2020-01-01')
+
+    def test_catalog_and_schema_reasons_do_not_accept_invented_arguments(self):
+        from ournotes_bot.natural_query.native_tools import validate_call,execute
+        from ournotes_bot.domain.model_calls import ToolCall,ModelError
+        for arguments in ('{','{"server":"jp","version":"null","date":null,"extra":1}'):
+            with self.subTest(arguments=arguments),self.assertRaisesRegex(ModelError,'^tool_arguments_invalid$'):
+                validate_call(ToolCall('k','knowledge_search',arguments))
+        tool,args=validate_call(ToolCall('c','catalog_info','{"kind":"character","query":"凭空补的名字"}'))
+        with patch('ournotes_bot.natural_query.native_tools.resolve_command') as resolve:
+            with self.assertRaisesRegex(ModelError,'^query_entity_mismatch$'):
+                execute(tool,args,'查询角色资料',self.repo)
+            resolve.assert_not_called()
+
     def test_native_chart_preserves_explicit_difficulty_and_captured_result(self):
         from ournotes_bot.domain.model_calls import ToolCall,ModelError
         from ournotes_bot.natural_query.native_tools import validate_call,execute
@@ -677,6 +755,24 @@ class NativeRuntimeTests(Fixture,unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(attempts),2);self.assertEqual(self.client.request.await_count,1)
         self.assertEqual(plan['parts'][0]['business_status'],'knowledge_revoked')
         self.assertEqual(self.backend.model_runtime.usage.get(attempts[1])['state'],'released')
+
+    async def test_long_or_empty_generation_still_settles_without_publishing(self):
+        from ournotes_bot.domain.model_calls import AttemptResult
+        self.reviewed_fixture()
+        for seq,(text,code) in enumerate((('长'*801,'model_response_too_long'),('','model_protocol_error')),1):
+            with self.subTest(code=code):
+                results=self.knowledge_responses()
+                results[1]=AttemptResult('ok',results[1].usage,text=text)
+                self.client.request.side_effect=results
+                plan,attempts=await self.prepare_native('/问 红色规则是什么意思',seq=seq)
+                self.assertEqual(plan['parts'][0]['business_status'],code)
+                self.assertEqual(len(attempts),2)
+                self.assertEqual([self.backend.model_runtime.usage.get(a)['charged'] for a in attempts],['14','14'])
+                self.event(plan,'intent');self.event(plan,'ack')
+                for anchor in self.backend.conversations.anchors.values():
+                    self.assertEqual(anchor.context.origin,'policy')
+                    self.assertFalse(anchor.context.history);self.assertFalse(anchor.context.facts)
+                self.assertNotIn('长'*801,str(self.backend.conversations.snapshots))
 
     async def test_revoked_during_generation_discards_answer_but_settles_both(self):
         file=self.reviewed_fixture();results=self.knowledge_responses();calls=[]
