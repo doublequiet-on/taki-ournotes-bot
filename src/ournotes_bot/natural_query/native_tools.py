@@ -72,16 +72,19 @@ for capability in CAPABILITIES.values():
     TOOLS[name]=Tool(name,capability.description+'；条件须保留原句，缺省 page=1。',
                      obj({k:PARAMETERS[k] for k in capability.allowed_parameters}),capability.id)
 TOOLS.update({
-    'visible_result':Tool('visible_result','仅解释用户已引用、确实发送成功的结果；不补充未显示的新事实。需要有效引用且用户明确要求解释。',obj({}),'visible'),
+    'visible_result':Tool('visible_result','解释或简化已成功发送的上一回答（说简单点、没懂）；只使用其仍有效的原始证据。新问题、纠错或切换区服应重新检索。',obj({}),'visible'),
+    'conversation_reply':Tool('conversation_reply','简短致谢/告别，或对象不明确时澄清；不回答游戏事实。仅选择固定回复类型。',
+        obj({'intent':enum(('thanks','goodbye','clarify'))},('intent',)),'conversation'),
     'song_metrics':Tool('song_metrics','歌曲末判定时长、等级、Note、NPS、BPM；默认日服，谱面指标必须明确难度。同类最短和最长最多4组；不可配队、算分。',
                        obj({'queries':{**array(META_SCHEMA,4),'minItems':1}},('queries',)),'meta',('jp','intl')),
     'field_query':Tool('field_query','查询原句明确要求的单个歌曲、卡或角色字段；字段由程序解析。',obj({}),'field'),
     'event_cutoff':Tool('event_cutoff','查询原句中的活动挑战歌曲榜线观测及历史；不预测、不宣称终榜。',obj({}),'cutoff',('jp','tw','kr','en')),
     'catalog_info':Tool('catalog_info','只读人物、活动、卡池、缩写或帮助。query必须取自原句，活动/卡池可用当前、历史、列表。',
         obj({'kind':enum(('character','event','gacha','abbreviation','help','status')),'query':string(80)},('kind','query')),'info'),
-    'knowledge_search':Tool('knowledge_search','检索已审核的ON规则；用户纠错仅重新核实。默认日服当前；历史版本/日期必须来自原句。未指定的version/date必须填JSON null，不能填字符串"null"或猜测值。',
-        obj({'server':enum(('jp','intl')),'version':{'type':['string','null'],'maxLength':40},
-             'date':{'type':['string','null'],'maxLength':10}},('server','version','date')),'knowledge',('jp','intl')),
+    'knowledge_search':Tool('knowledge_search','检索已审核的ON玩法教学、操作解释与规则；精确计算也先查资料，不能零工具猜测或拒绝。怎么玩/新人/入门用mode=intro。追问上一知识主题（如那LUCK呢、那国际服呢）填followup=true；新主题false。server默认jp，只有用户明确写出国际服才用intl，明确同时询问日服和国际服才用common，不能因为机制共通自行填common。追问继承有效主题范围，当前明确条件优先。未指定且无继承的version/date填JSON null，不能猜测。',
+        obj({'server':enum(('jp','intl','common')),'version':{'type':['string','null'],'maxLength':40},
+             'date':{'type':['string','null'],'maxLength':10},'followup':{'type':'boolean'},
+             'mode':enum(('intro','explain','compare','calculation'))},('server','version','date')),'knowledge',('jp','intl')),
 })
 
 
@@ -117,16 +120,26 @@ def validate_call(call):
     return tool,args
 
 
-def scope_for(question,args):
+def scope_for(question,args,previous=None):
     require(not re.search(r'台服|港服|韩服|美服|欧服|\b(?:tw|hk|kr|en)\b',question,re.I),'knowledge_server_unsupported')
-    require(not (re.search(r'日服|\bjp\b',question,re.I) and re.search(r'国际服|國際服|\bintl\b',question,re.I)),'knowledge_server_ambiguous')
-    server='intl' if re.search(r'国际服|國際服|\bintl\b',question,re.I) else 'jp'
+    jp=bool(re.search(r'日服|\bjp\b',question,re.I))
+    intl=bool(re.search(r'国际服|國際服|\bintl\b',question,re.I))
+    server='common' if jp and intl else 'intl' if intl else 'jp' if jp else previous.server if previous else 'jp'
     require(args['server']==server,'query_server_mismatch')
-    for key in ('version','date'):
-        if args[key] is not None: require(args[key] in question,'query_'+key+'_mismatch')
+    normalized=re.sub(r'(\d{4})年(\d{1,2})月(\d{1,2})日',
+                      lambda m:f'{int(m[1]):04d}-{int(m[2]):02d}-{int(m[3]):02d}',question)
+    dates=re.findall(r'\d{4}-\d{2}-\d{2}',normalized)
+    versions=re.findall(r'\d+\.\d+(?:\.\d+)?(?=\s*(?:版|版本))',question)
+    reset=bool(dates or versions or re.search(r'当前|现在|現時|目前',question))
+    for key,explicit in (('version',versions),('date',dates)):
+        inherited=getattr(previous,key) if previous and not reset else None
+        if args[key] is not None:
+            require(args[key] in explicit or args[key]==inherited or
+                    key=='version' and args[key] in question,'query_'+key+'_mismatch')
+        if inherited is not None: require(args[key]==inherited,'query_'+key+'_mismatch')
     # An explicitly historical question must not quietly become a current one.
-    require(not re.search(r'\d{4}-\d{2}-\d{2}',question) or args['date'] is not None,'query_date_mismatch')
-    require(not re.search(r'\d+\.\d+(?:\.\d+)?\s*(?:版|版本)',question) or args['version'] is not None,'query_version_mismatch')
+    require(not dates or len(set(dates))==1 and args['date']==dates[0],'query_date_mismatch')
+    require(not versions or len(set(versions))==1 and args['version']==versions[0],'query_version_mismatch')
     require(not re.search(r'历史|以前|旧版',question) or args['version'] is not None or args['date'] is not None,'knowledge_scope_ambiguous')
     return KnowledgeScope(server=server,version=args['version'],date=args['date'])
 

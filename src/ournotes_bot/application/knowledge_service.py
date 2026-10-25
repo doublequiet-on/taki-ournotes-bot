@@ -14,7 +14,7 @@ import time
 import uuid
 
 from ..domain.knowledge import EvidenceLease, KnowledgeError, KnowledgeScope, Retrieval, SemanticEncoder
-from ..query.knowledge_retrieval import (bounded, build_index, checked_vector, evidence_json, rank, split_document)
+from ..query.knowledge_retrieval import (bounded, build_index, checked_vector, complete_sections, evidence_json, rank, split_document)
 from ..sources.knowledge_files import (canonical, decode_json, digest, eligible, parse_approvals,
     require, safe_path, scan_directory)
 
@@ -221,8 +221,9 @@ class KnowledgeService:
                     'indexed_chunks': len(self.index), 'error': self.error, 'index_error': self.index_error,
                     'issues': self.issues, 'last_build': self.last_build, 'encoder': self.encoder.identity}
 
-    def retrieve(self, query: str, scope: KnowledgeScope, approved_set_revision: str, limit=6, *, max_chars=6000) -> Retrieval:
+    def retrieve(self, query: str, scope: KnowledgeScope, approved_set_revision: str, limit=6, *, max_chars=6000, focus_query=None) -> Retrieval:
         require(isinstance(query, str) and 0 < len(query.strip()) <= 500, 'knowledge_query_size')
+        require(focus_query is None or isinstance(focus_query,str) and 0 < len(focus_query.strip()) <= 500, 'knowledge_query_size')
         bounded((), limit, max_chars)
         self.observe()
         with self.lock:
@@ -236,17 +237,23 @@ class KnowledgeService:
             if not self.allowed:
                 return response('empty')
             today = datetime.fromtimestamp(self.clock(), timezone.utc).date().isoformat()
-            allowed = {a.key for doc, a in self.allowed.values() if doc.game == scope.game and scope.server in doc.servers
+            allowed = {a.key for doc, a in self.allowed.values() if doc.game == scope.game and set(scope.servers) <= set(doc.servers)
                        and doc.applicability.matches(scope, today)}
             rows = tuple(row for row in self.index if row.chunk.key in allowed)
             if not rows:
                 return response('unavailable' if self.index_revision != version and allowed else 'missing')
         try:
-            values = self.encoder.encode((query,), query=True)
-            require(len(values) == 1, 'semantic_query_shape')
+            queries = (query,focus_query) if focus_query is not None else (query,)
+            values = self.encoder.encode(queries, query=True)
+            require(len(values) == len(queries), 'semantic_query_shape')
             vector = checked_vector(values[0], self.encoder.dimensions)
             ranked = rank(query, rows, vector)
-            chunks = bounded(ranked, limit, max_chars)
+            if focus_query is not None:
+                focused = rank(focus_query,rows,checked_vector(values[1],self.encoder.dimensions))
+                # One participation passage precedes the main rules ranking;
+                # both use the same filtered index, lease and final budget.
+                ranked = tuple(dict.fromkeys((*focused[:1],*ranked)))
+            chunks = bounded(complete_sections(ranked, rows), limit, max_chars)
             if ranked and not chunks:
                 return response('unavailable')
         except Exception:
@@ -275,7 +282,7 @@ class KnowledgeService:
                 if pair is None:
                     return False
                 doc, approval = pair
-                if (chunk.key != approval.key or doc.game != lease.scope.game or lease.scope.server not in doc.servers
+                if (chunk.key != approval.key or doc.game != lease.scope.game or not set(lease.scope.servers) <= set(doc.servers)
                         or not doc.applicability.matches(lease.scope, today)
                         or chunk not in tuple(split_document(doc, approval))):
                     return False

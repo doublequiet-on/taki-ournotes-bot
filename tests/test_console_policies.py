@@ -452,6 +452,15 @@ class NativeRuntimeTests(Fixture,unittest.IsolatedAsyncioTestCase):
         self.assertFalse(attempts);self.client.request.assert_not_awaited()
         self.assertIn('200',plan['parts'][0]['text'])
         self.assertEqual(self.backend.model_runtime.usage.summary()['attempts'],0)
+
+    async def test_local_query_after_knowledge_still_uses_no_model(self):
+        self.reviewed_fixture();self.client.request.side_effect=self.knowledge_responses()
+        plan,_=await self.prepare_native('/问 红色规则是什么意思')
+        self.event(plan,'intent');self.event(plan,'ack')
+        self.client.request.reset_mock(side_effect=True)
+        plan,attempts=await self.prepare_native('/问 合成曲100001 EX Note',seq=2)
+        self.assertFalse(attempts);self.client.request.assert_not_awaited()
+        self.assertIn('200',plan['parts'][0]['text'])
         self.repo.current_query_view.assert_called_once()
 
     async def test_unverified_text_is_not_a_protocol_failure_or_published_answer(self):
@@ -501,12 +510,12 @@ class NativeRuntimeTests(Fixture,unittest.IsolatedAsyncioTestCase):
         self.backend.knowledge.retrieve.assert_not_called();self.client.request.assert_awaited_once()
         self.assertEqual(self.backend.model_runtime.usage.get(attempts[0])['charged'],'14')
 
-    def test_knowledge_scope_reasons_keep_all_original_rejections(self):
+    def test_knowledge_scope_reasons_preserve_grounding_with_common_scope(self):
         from ournotes_bot.natural_query.native_tools import scope_for
         from ournotes_bot.domain.model_calls import ModelError
         defaults=dict(server='jp',version=None,date=None)
         cases=[('台服规则',{},'knowledge_server_unsupported'),
-               ('日服和国际服规则',{},'knowledge_server_ambiguous'),
+               ('日服和国际服规则',{},'query_server_mismatch'),
                ('国际服规则',{},'query_server_mismatch'),
                ('规则',dict(date='2020-01-01'),'query_date_mismatch'),
                ('规则',dict(version='1.2.3'),'query_version_mismatch'),
@@ -519,6 +528,79 @@ class NativeRuntimeTests(Fixture,unittest.IsolatedAsyncioTestCase):
                     scope_for(question,{**defaults,**changes})
         scope=scope_for('国际服2020-01-01规则',{**defaults,'server':'intl','date':'2020-01-01'})
         self.assertEqual(scope.server,'intl');self.assertEqual(scope.date,'2020-01-01')
+
+    def test_followup_scope_inherits_and_explicit_conditions_win(self):
+        from ournotes_bot.natural_query.native_tools import scope_for
+        from ournotes_bot.domain.knowledge import KnowledgeScope
+        from ournotes_bot.domain.model_calls import ModelError
+        args=dict(server='intl',version=None,date='2020-01-01')
+        old=KnowledgeScope(server='intl',date='2020-01-01')
+        self.assertEqual(scope_for('那LUCK呢',args,old),old)
+        self.assertEqual(scope_for('国际服2020年1月1日的激奏',args).date,'2020-01-01')
+        current=scope_for('那现在日服呢',dict(server='jp',version=None,date=None),old)
+        self.assertEqual(current,KnowledgeScope())
+        common=scope_for('日服和国际服规则一样吗',dict(server='common',version=None,date=None))
+        self.assertEqual(common.servers,('jp','intl'))
+        for question,values in [('那LUCK呢',{**args,'date':None}),
+                                ('现在呢',args),('2021年1月1日呢',args),
+                                ('规则',{**args,'date':'2020-01-02'})]:
+            with self.subTest(question=question),self.assertRaises(ModelError):
+                scope_for(question,values,old)
+
+    async def test_knowledge_followup_and_simplification_use_ack_topic_and_original_evidence(self):
+        from ournotes_bot.domain.model_calls import AttemptResult,ToolCall
+        self.reviewed_fixture();responses=self.knowledge_responses();bodies=[]
+        responses += [AttemptResult('ok',responses[0].usage,(ToolCall('c2','knowledge_search',
+                      '{"server":"jp","version":null,"date":null,"followup":true,"mode":"explain"}'),)),
+                      AttemptResult('ok',responses[0].usage,text='第二轮解释。'),
+                      AttemptResult('ok',responses[0].usage,(ToolCall('c3','visible_result','{}'),)),
+                      AttemptResult('ok',responses[0].usage,text='简单说：这是测试。')]
+        async def provider(profile,body,**_):
+            bodies.append(json.loads(json.dumps(body)));return responses[len(bodies)-1]
+        self.client.request.side_effect=provider
+        queries=[];retrieve=self.backend.knowledge.retrieve
+        def search(query,*a,**kw):
+            queries.append(query);return retrieve(query,*a,**kw)
+        self.backend.knowledge.retrieve=search
+        expires=[]
+        for seq,question in enumerate(('红色规则是什么意思','那LUCK呢','说简单点'),1):
+            plan,attempts=await self.prepare_native('/问 '+question,seq=seq)
+            self.assertEqual(plan['parts'][0]['business_status'],'success')
+            self.assertEqual(len(attempts),2)
+            self.event(plan,'intent');self.event(plan,'ack')
+            anchor=self.backend.conversations.resolve(self.backend.works[plan['delivery_id']].request)
+            expires.append(anchor.expires)
+        self.assertIn('红色规则是什么意思',queries[1]);self.assertIn('那LUCK呢',queries[1])
+        self.assertEqual(len(queries),2)
+        evidence=next(m['content'] for m in reversed(bodies[-1]['messages']) if m['role']=='tool')
+        self.assertIn('红色夹具标记',evidence)
+        self.assertNotIn('第二轮解释',evidence)
+        self.assertEqual(json.loads(bodies[-1]['messages'][1]['content'])['待改写的上一问题'],'那LUCK呢')
+        self.assertEqual(len(bodies[-1]['messages']),4)  # no unrelated earlier topics
+        self.assertLessEqual(max(expires),expires[0]+.01)
+
+    async def test_followup_without_ack_does_not_inherit_topic(self):
+        from ournotes_bot.domain.model_calls import AttemptResult,ToolCall
+        self.reviewed_fixture();responses=self.knowledge_responses()
+        self.client.request.side_effect=responses
+        await self.prepare_native('/问 红色规则是什么意思')
+        self.client.request.side_effect=None
+        self.client.request.return_value=AttemptResult('ok',responses[0].usage,(ToolCall('next','knowledge_search',
+            '{"server":"jp","version":null,"date":null,"followup":true}'),))
+        plan,attempts=await self.prepare_native('/问 那LUCK怎么理解',seq=2)
+        self.assertEqual(plan['parts'][0]['business_status'],'context_expired');self.assertEqual(len(attempts),1)
+
+    async def test_social_tool_returns_only_fixed_text(self):
+        from ournotes_bot.domain.model_calls import AttemptResult,ToolCall,Usage
+        self.client.request.return_value=AttemptResult('ok',Usage(10,0,2,None,12,'known'),
+            (ToolCall('c','conversation_reply','{"intent":"thanks"}'),),text='UNTRUSTED_GAME_FACT')
+        plan,attempts=await self.prepare_native('/问 谢啦')
+        self.assertEqual(plan['parts'][0]['text'],'不客气。')
+        self.assertEqual(len(attempts),1);self.assertNotIn('UNTRUSTED_GAME_FACT',str(plan))
+        self.client.request.return_value=AttemptResult('ok',Usage(10,0,2,None,12,'known'),text='UNTRUSTED_GAME_FACT')
+        plan,attempts=await self.prepare_native('/问 懂了，谢谢',seq=2)
+        self.assertEqual(plan['parts'][0]['text'],'不客气。')
+        self.assertEqual(len(attempts),1);self.assertNotIn('UNTRUSTED_GAME_FACT',str(plan))
 
     def test_catalog_and_schema_reasons_do_not_accept_invented_arguments(self):
         from ournotes_bot.natural_query.native_tools import validate_call,execute
@@ -702,7 +784,7 @@ class NativeRuntimeTests(Fixture,unittest.IsolatedAsyncioTestCase):
         self.assertIn('合成曲100001',second['parts'][0]['text'])
         self.assertGreaterEqual(self.repo.current_query_view.call_count,2)
 
-    def reviewed_fixture(self):
+    def reviewed_fixture(self,body='红色夹具标记用于工程测试，不是游戏事实。'):
         from ournotes_bot.application.knowledge_service import KnowledgeService
         from ournotes_bot.sources.knowledge_files import parse_document
         root=self.repo.cache_file.parent/'knowledge';root.mkdir()
@@ -711,7 +793,7 @@ class NativeRuntimeTests(Fixture,unittest.IsolatedAsyncioTestCase):
             valid_from=None,valid_to=None,scope_note='仅工程夹具'),sources=[dict(source_id='fixture',kind='fixture',
             uri='fixture://isolated',locator='isolated',accessed_at='2026-10-23')],evidence_type='reviewed_analysis',
             review_status='approved',reviewed_by='ISOLATED-FIXTURE',reviewed_at='2026-10-23',limitations=['不是游戏事实'])
-        text='---\n'+json.dumps(meta,ensure_ascii=False)+'\n---\n红色夹具标记用于工程测试，不是游戏事实。\n'
+        text='---\n'+json.dumps(meta,ensure_ascii=False)+'\n---\n'+body+'\n'
         (root/'fixture.md').write_text(text,encoding='utf-8')
         parsed=parse_document(text)
         approval=dict(schema='taki-knowledge-approvals/1',revision=1,approved=[dict(id='fixture',
@@ -731,6 +813,22 @@ class NativeRuntimeTests(Fixture,unittest.IsolatedAsyncioTestCase):
         return [AttemptResult('ok',usage,(ToolCall('c','knowledge_search','{"server":"jp","version":null,"date":null}'),)),
                 AttemptResult('ok',usage,text='红色标记是工程夹具，不能当作游戏事实。')]
 
+    async def test_comparison_uses_approved_table_then_revocation_stops_rephrase(self):
+        self.reviewed_fixture(body='## 三种区间\n\n|区间|首要比较|相同后继续比较|\n|---|---|---|\n'
+            '|COMBO|工程连击|工程得分，再比较工程判定|\n\n'
+            '所有比较项都相同才并列。COMBO不把进区间前的连击直接算进去。')
+        self.client.request.side_effect=self.knowledge_responses()[:1]
+        plan,attempts=await self.prepare_native('/问 满连了为什么COMBO区间没第一')
+        self.assertEqual(len(attempts),1);self.client.request.assert_awaited_once()
+        self.assertIn('工程连击',plan['parts'][0]['text']);self.assertIn('工程得分，再比较工程判定',plan['parts'][0]['text'])
+        self.assertNotIn('PERFECT',plan['parts'][0]['text'])  # no hardcoded game table
+        self.event(plan,'intent');self.event(plan,'ack')
+        (self.backend.knowledge.root/'fixture.md').unlink()
+        self.client.request.reset_mock()
+        plan,attempts=await self.prepare_native('/问 说简单点',seq=2)
+        self.assertEqual(plan['parts'][0]['business_status'],'knowledge_revoked')
+        self.assertFalse(attempts);self.client.request.assert_not_awaited()
+
     async def test_knowledge_second_attempt_gets_fresh_permit_without_tools(self):
         self.reviewed_fixture();results=self.knowledge_responses();bodies=[]
         async def provider(profile,body,**_):
@@ -739,6 +837,9 @@ class NativeRuntimeTests(Fixture,unittest.IsolatedAsyncioTestCase):
         plan,attempts=await self.prepare_native('/问 红色规则是什么意思')
         self.assertEqual(len(set(attempts)),2)
         self.assertIn('tools',bodies[0]);self.assertNotIn('tools',bodies[1])
+        self.assertEqual(bodies[0]['tool_choice'],'required')
+        self.assertEqual(bodies[0]['thinking'],{'type':'disabled'})
+        self.assertNotIn('tool_choice',bodies[1])
         self.assertEqual(bodies[1]['messages'][-1]['role'],'tool')
         self.assertIn('content_sha256',bodies[1]['messages'][-1]['content'])
         self.assertIn('工程夹具',plan['parts'][0]['text'])
