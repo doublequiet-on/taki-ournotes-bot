@@ -486,12 +486,16 @@ class NativeRuntimeTests(Fixture,unittest.IsolatedAsyncioTestCase):
 
     async def test_semantic_chat_rejects_explicit_fact_misrouting(self):
         self.snapshot=replace(self.snapshot,profile=native_profile(user_rate_requests=10))
-        for seq,question in enumerate(('你喜欢哪个，顺便说下抽卡概率','最新剧情讲的什么','COMBO怎么打','这期活动何时结束'),1):
+        for seq,question in enumerate(('你喜欢哪个，顺便说下抽卡概率','最新剧情讲的什么','COMBO怎么打'),1):
             self.client.request.side_effect=self.social_responses()
             plan,attempts=await self.prepare_native('/问 '+question,seq=seq)
-            self.assertNotEqual(plan['parts'][0]['business_status'],'success')
-            self.assertLessEqual(len(attempts),1)
+            self.assertEqual(plan['parts'][0]['business_status'],'model_no_evidence')
+            self.assertEqual(len(attempts),1)
             self.assertNotIn('这次我站原神',str(plan))
+        # Current-event questions may succeed locally without calling a model;
+        # their factual nature is still rejected if selected for free chat.
+        from ournotes_bot.application.persona import chat_needs_evidence
+        self.assertTrue(chat_needs_evidence('这期活动何时结束'))
 
     async def test_semantic_chat_new_topic_drops_knowledge_text_but_keeps_revocation(self):
         file=self.reviewed_fixture();self.client.request.side_effect=self.knowledge_responses()
