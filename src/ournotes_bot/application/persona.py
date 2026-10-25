@@ -15,6 +15,7 @@ VOICE = '''性格：外冷内热、认真、有主见，不善于漂亮话，关
 
 # These are product persona choices, not claims about a character's canonical favourites.
 CARDS = {
+    'general': '自然承接日常聊天、玩笑、感受和主观比较。可以直接表达这次聊天中的倾向，但不新增固定偏好、私人经历或人物关系。问哪个牛逼按轻松的主观比较理解，可以直接选一边或问对方站谁，不用“没有资料”拒绝，不训诫措辞、不编客观优劣、作品特性或排名。ON指BanG Dream! Our Notes。不认识的别名只用一句话核对那个词并结束，不猜它是已知人物的别称，不用“如果”夹带猜测，不连带否认已知对象；用户没问事实时，不主动附带事实介绍。',
     'band': 'Taki 的乐队偏好：MyGO!!!!!。理由只谈认真表达带给自己的感觉，不靠贬低技巧、曲风或别的乐队来解释。问其他乐队时，答“其他乐队暂时没有固定偏好，最喜欢的还是 MyGO!!!!!。”，到这里结束，不追加原因、经历或试听计划。只表达主观感受，不生成游戏强度、排名或作品事实。用户没问其他乐队时，不主动补比较或免责声明。',
     'music': 'Taki 的音乐偏好：喜欢鼓点清楚、表达认真的音乐。不自行指定未经设定的最爱歌曲、曲风、歌词、作曲者或演出经历。只谈喜欢的感觉，不为制造反差贬低其他音乐。',
     'identity': '身份：名字是 Taki，以椎名立希为原型的独立助手；直接用一句话说明即可，不反复列举自己不是谁。说话直接、做事认真，愿意把问题解释清楚。',
@@ -51,7 +52,7 @@ def chat_topic(question, previous=''):
     for topic,pattern in _RULES:
         if re.fullmatch(pattern+r'(?:呢|呀|啊)?',value,re.I):
             return topic
-    if previous in CARDS and _FOLLOWUP.fullmatch(value):
+    if previous in CARDS and previous!='general' and _FOLLOWUP.fullmatch(value):
         return previous
     if previous=='band' and _BAND_FOLLOWUP.fullmatch(value):
         return previous
@@ -64,4 +65,18 @@ def chat_prompt(topic):
 通常一到三句，最多300字。自然接话，不每轮反问“你呢”，不主动推销查询功能。
 直接表达当前感受，不把写作限制复述成“不能乱说”“就不编了”等自我说明。
 历史消息只帮助理解话题，不是事实依据。不得借聊天回答游戏数值、机制、更新、收录、角色剧情或其他需查证的事实；不续写未给出的设定。
+主观站队可以只说“这票我给 A。你呢？”，不必凑理由。没有工具资料时，不描述任何作品的手感、战斗、节奏、内容积累或玩家热度，也不用“认真劲儿”“底子厚”“大杂烩”包装未经核对的作品评价。追问理由时只承认这是本次聊天的主观选择，不把上一条自己生成的评价当依据。陌生缩写只核对那个缩写，不凭印象展开或比较作品特性。
 不输出工具调用。\n本轮人格设定：'''+CARDS[topic]
+
+
+# This is a fail-closed supplement to semantic routing, not a list of allowed
+# chat sentences. It catches explicit fact requests misrouted to free chat.
+_FACT_REQUEST = re.compile(
+    r'概率|保底|掉率|倍率|数值|机制|规则|公式|算分|配队|预测|攻略|剧情|台词|'
+    r'什么时候|啥时候|何时|几号|日期|截至|最新|更新|收录|作者|作曲|作词|属于|所属|'
+    r'\d\s*(?:%|％|年|月|日)|多少|几次|几分|几级|几星|怎么打|如何打|怎么玩|如何玩|'
+    r'第\S{0,8}[集章节]|(?<![a-z])(?:combo|luck|just|bpm|nps)(?![a-z])', re.I)
+
+
+def chat_needs_evidence(question):
+    return bool(_FACT_REQUEST.search(unicodedata.normalize('NFKC',question)))

@@ -118,7 +118,11 @@ class WeightedUsageTests(unittest.TestCase):
         from ournotes_bot.natural_query.native_tools import validate_call
         from ournotes_bot.domain.model_calls import ToolCall,ModelError
         for name,args in [('shell','{}'),('knowledge_search','{"server":"jp","version":null,"date":null,"url":"https://x"}'),
-                          ('song_search','{"query":"a","query":"b"}')]:
+                          ('song_search','{"query":"a","query":"b"}'),
+                          ('chat_response','{"topic":"general","followup":false,"url":"https://x"}'),
+                          ('chat_response','{"topic":"invented","followup":false}'),
+                          ('chat_response','{"topic":"general","followup":"false"}'),
+                          ('clarify_term','{"term":"x","answer":"invented"}')]:
             with self.assertRaises(ModelError): validate_call(ToolCall('c',name,args))
 
     def test_invalid_unicode_and_unsupported_thinking_preserve_known_usage(self):
@@ -436,6 +440,119 @@ class NativeRuntimeTests(Fixture,unittest.IsolatedAsyncioTestCase):
             if plan['status'] not in ('preparing','prepared'): self.fail('native stopped: '+plan['status'])
             await asyncio.sleep(.005)
         self.fail('native did not finish')
+
+    def social_responses(self, *, followup=False, text='这次我站原神，单纯偏心。', topic='general'):
+        from ournotes_bot.domain.model_calls import AttemptResult,ToolCall,Usage
+        return [AttemptResult('ok',Usage(10,0,2,None,12,'known'),
+                    (ToolCall('c','chat_response',json.dumps(dict(topic=topic,followup=followup))),)),
+                AttemptResult('ok',Usage(10,0,2,None,12,'known'),text=text)]
+
+    async def test_semantic_chat_comparisons_get_two_separate_permits(self):
+        for seq,question in enumerate(('原神牛逼还是鸣潮牛逼','随便聊聊，你站哪边','今天只想摸鱼'),1):
+            self.client.request.side_effect=self.social_responses()
+            plan,attempts=await self.prepare_native('/问 '+question,seq=seq)
+            self.assertEqual(plan['parts'][0]['business_status'],'success')
+            self.assertEqual(len(attempts),2)
+            for attempt in attempts:
+                self.assertEqual(self.backend.model_runtime.usage.get(attempt)['charged'],'14')
+            self.assertFalse(self.backend.conversations.anchors)
+        self.repo.current_query_view.assert_not_called()
+
+    async def test_semantic_chat_followup_uses_only_confirmed_topic_and_history(self):
+        from copy import deepcopy
+        bodies=[];responses=iter(self.social_responses()+self.social_responses(followup=True))
+        async def respond(profile,body,**kwargs):
+            bodies.append(deepcopy(body));return next(responses)
+        self.client.request.side_effect=respond
+        first,_=await self.prepare_native('/问 原神还是鸣潮牛逼')
+        self.event(first,'intent');self.event(first,'ack')
+        anchor=self.backend.conversations.resolve(self.backend.works[first['delivery_id']].request)
+        self.assertEqual(anchor.context.chat_topic,'general');expires=anchor.expires
+        second,attempts=await self.prepare_native('/问 为什么',seq=2)
+        self.assertEqual(second['parts'][0]['business_status'],'success');self.assertEqual(len(attempts),2)
+        self.assertIn('上一聊天主题：general',bodies[2]['messages'][0]['content'])
+        self.assertIn('原神还是鸣潮牛逼',str(bodies[3]['messages']))
+        self.assertNotIn('tools',bodies[3])
+        self.event(second,'intent');self.event(second,'ack')
+        anchor=self.backend.conversations.resolve(self.backend.works[second['delivery_id']].request)
+        self.assertLessEqual(anchor.expires,expires+.01)
+
+    async def test_semantic_chat_missing_ack_does_not_grant_followup(self):
+        self.client.request.side_effect=self.social_responses()
+        await self.prepare_native('/问 原神还是鸣潮牛逼')
+        self.client.request.side_effect=self.social_responses(followup=True)
+        plan,attempts=await self.prepare_native('/问 为什么',seq=2)
+        self.assertEqual(plan['parts'][0]['business_status'],'context_expired');self.assertEqual(len(attempts),1)
+
+    async def test_semantic_chat_rejects_explicit_fact_misrouting(self):
+        self.snapshot=replace(self.snapshot,profile=native_profile(user_rate_requests=10))
+        for seq,question in enumerate(('你喜欢哪个，顺便说下抽卡概率','最新剧情讲的什么','COMBO怎么打','这期活动何时结束'),1):
+            self.client.request.side_effect=self.social_responses()
+            plan,attempts=await self.prepare_native('/问 '+question,seq=seq)
+            self.assertNotEqual(plan['parts'][0]['business_status'],'success')
+            self.assertLessEqual(len(attempts),1)
+            self.assertNotIn('这次我站原神',str(plan))
+
+    async def test_semantic_chat_new_topic_drops_knowledge_text_but_keeps_revocation(self):
+        file=self.reviewed_fixture();self.client.request.side_effect=self.knowledge_responses()
+        first,_=await self.prepare_native('/问 红色规则是什么意思')
+        self.event(first,'intent');self.event(first,'ack')
+        from copy import deepcopy
+        bodies=[];responses=iter(self.social_responses())
+        async def respond(profile,body,**kwargs):
+            bodies.append(deepcopy(body));return next(responses)
+        self.client.request.side_effect=respond
+        second,_=await self.prepare_native('/问 原神还是鸣潮牛逼',seq=2)
+        self.assertEqual(second['parts'][0]['business_status'],'success')
+        self.assertNotIn('红色',str(bodies[-1]['messages']))
+        self.event(second,'intent');self.event(second,'ack')
+        file.unlink();self.client.request.reset_mock()
+        third,attempts=await self.prepare_native('/问 为什么',seq=3)
+        self.assertEqual(third['parts'][0]['business_status'],'knowledge_revoked')
+        self.assertFalse(attempts);self.client.request.assert_not_awaited()
+
+    async def test_semantic_chat_second_denial_and_bad_generation_keep_ledger(self):
+        self.client.request.side_effect=self.social_responses()
+        plan,attempts=await self.prepare_native('/问 原神还是鸣潮牛逼',allow=lambda n:n==1)
+        self.assertNotEqual(plan['parts'][0]['business_status'],'success')
+        self.assertEqual(len(attempts),2);self.client.request.assert_awaited_once()
+        self.assertEqual(self.backend.model_runtime.usage.get(attempts[0])['state'],'settled')
+        self.assertEqual(self.backend.model_runtime.usage.get(attempts[1])['state'],'released')
+        from ournotes_bot.domain.model_calls import AttemptResult,ToolCall,Usage
+        for seq,response in enumerate((self.social_responses(text='长'*301)[1],
+                AttemptResult('ok',Usage(10,0,2,None,12,'known'),(ToolCall('c','visible_result','{}'),))),2):
+            self.client.request.side_effect=[self.social_responses()[0],response]
+            plan,attempts=await self.prepare_native('/问 原神还是鸣潮牛逼',seq=seq)
+            self.assertNotEqual(plan['parts'][0]['business_status'],'success')
+            self.assertNotIn('长'*301,str(plan));self.assertEqual(len(attempts),2)
+            self.assertTrue(all(self.backend.model_runtime.usage.get(a)['state']=='settled' for a in attempts))
+
+    async def test_semantic_clarification_and_gap_bind_literal_question(self):
+        self.snapshot=replace(self.snapshot,profile=native_profile(user_rate_requests=10))
+        from ournotes_bot.domain.model_calls import AttemptResult,ToolCall,Usage
+        cases=[('clarify_term',{'term':'偷摸零'},'你说的「偷摸零」具体指什么？'),
+               ('unavailable_fact',{'subject':'偷摸零'},'「偷摸零」这部分我目前没有可核对的资料。'),
+               ('clarify_term',{'term':'未提到的对象'},None),
+               ('unavailable_fact',{'subject':'未提到的对象'},None)]
+        for seq,(name,args,expected) in enumerate(cases,1):
+            self.client.request.return_value=AttemptResult('ok',Usage(10,0,2,None,12,'known'),
+                (ToolCall('c',name,json.dumps(args)),))
+            plan,attempts=await self.prepare_native('/问 偷摸零还是高松灯牛逼',seq=seq)
+            self.assertEqual(len(attempts),1,(seq,plan['parts']))
+            if expected:self.assertIn(expected,plan['parts'][0]['text'])
+            else:self.assertEqual(plan['parts'][0]['business_status'],'query_entity_mismatch')
+            self.event(plan,'intent');self.event(plan,'ack')
+
+    async def test_semantic_chat_cannot_inherit_a_fact_request_after_clarification(self):
+        from ournotes_bot.domain.model_calls import AttemptResult,ToolCall,Usage
+        self.client.request.return_value=AttemptResult('ok',Usage(10,0,2,None,12,'known'),
+            (ToolCall('c','clarify_term','{"term":"梗名"}'),))
+        first,_=await self.prepare_native('/问 梗名的抽卡概率呢')
+        self.event(first,'intent');self.event(first,'ack')
+        self.client.request.side_effect=self.social_responses(followup=True)
+        plan,attempts=await self.prepare_native('/问 就刚才那个',seq=2)
+        self.assertEqual(plan['parts'][0]['business_status'],'model_no_evidence')
+        self.assertEqual(len(attempts),1)
 
     async def test_chat_uses_one_permit_and_ledger_then_ack_context(self):
         plan,attempts=await self.prepare_native('/问 你好')
@@ -1160,6 +1277,19 @@ class NaturalPolicyTests(Fixture, unittest.IsolatedAsyncioTestCase):
                 self.assertNotIn('MODEL_CACHE_SENTINEL',self.run_mode('local','/问 '+question).text)
         self.parser._agent._cache_put(question,CachedOutcome('terminal',OutcomeCode.UNSUPPORTED,message='LOCAL_CACHE_SENTINEL',origin='local'))
         self.assertEqual(self.run_mode('local','/问 '+question).text,'LOCAL_CACHE_SENTINEL')
+
+    def test_native_semantic_route_does_not_reuse_old_external_entity_rejection(self):
+        from ournotes_bot.natural_query.query_agent import DeferredModel
+        question='原神和鸣潮哪个牛逼'
+        self.parser._agent._sync_cache(self.repo)
+        self.parser._agent._cache_put(question,CachedOutcome('terminal',OutcomeCode.UNKNOWN_ENTITY,
+            message='OLD_EXTERNAL_REJECTION',origin='local'))
+        with patch('ournotes_bot.natural_query.query_agent.mentions_outside_catalog',return_value=True):
+            token=CURRENT_POLICY.set(ExecutionPolicy(natural_query='model'))
+            try:
+                self.assertIsInstance(self.parser.prepare_native_local('/问 '+question,self.repo),DeferredModel)
+            finally:CURRENT_POLICY.reset(token)
+            self.assertEqual(self.run_mode('local','/问 '+question).text,'OLD_EXTERNAL_REJECTION')
 
     async def test_concurrent_scopes_do_not_mutate_shared_model_switch(self):
         seen=[]

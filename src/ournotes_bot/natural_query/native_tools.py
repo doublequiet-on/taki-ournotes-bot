@@ -73,6 +73,12 @@ for capability in CAPABILITIES.values():
     TOOLS[name]=Tool(name,capability.description+'；条件须保留原句，缺省 page=1。',
                      obj({k:PARAMETERS[k] for k in capability.allowed_parameters}),capability.id)
 TOOLS.update({
+    'chat_response':Tool('chat_response','日常聊天、玩笑、情绪或主观偏好比较，不限固定句式；没有日期数值、机制、剧情或其他待核实事实。topic选最贴近的一类，普通比较用general。followup=true只用于已确认聊天的连续追问，新话题false。混合事实问题必须选择取证工具，生成时同时承接主观部分。',
+        obj({'topic':enum(('general','band','music','identity','tone','praise','comfort')),'followup':{'type':'boolean'}},('topic','followup')),'social'),
+    'clarify_term':Tool('clarify_term','仅当一个别名或对象确实不清楚时，核对该词；term必须逐字取自当前原句。不能因用户聊天或比较就要求名称ID。',
+        obj({'term':string(40)},('term',)),'clarification'),
+    'unavailable_fact':Tool('unavailable_fact','仅用于明确要求核实的具体事实且现有工具无法覆盖，如其他游戏概率或未接入的剧情。subject逐字取自原句。普通“哪个牛逼／哪个好”没有事实指标，必须用chat_response，不能用此工具；也不得用于偏好、玩笑或有已支持工具的ON查询。不能假装已经联网查过。',
+        obj({'subject':string(60)},('subject',)),'gap'),
     'visible_result':Tool('visible_result','解释或简化已成功发送的上一回答（说简单点、没懂）；只使用其仍有效的原始证据。新问题、纠错或切换区服应重新检索。',obj({}),'visible'),
     'conversation_reply':Tool('conversation_reply','简短致谢/告别，或确实缺少对象的指代请求才澄清。问偏好不是缺少查询对象。不能作为不会回答时的通用出口；不回答游戏事实。仅选择固定回复类型。',
         obj({'intent':enum(('thanks','goodbye','clarify'))},('intent',)),'conversation'),

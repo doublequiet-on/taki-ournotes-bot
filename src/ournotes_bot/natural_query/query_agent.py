@@ -371,10 +371,14 @@ class QueryAgent:
             return outcome
 
         cached = self._cache_get(question)
-        if cached is not None:
+        if cached is not None and not (native and state.natural_mode == 'model'
+                                      and cached.code == OutcomeCode.UNKNOWN_ENTITY
+                                      and mentions_outside_catalog(question)):
             return self._from_cache(state, cached, repository)
 
         if mentions_outside_catalog(question):
+            if native and state.natural_mode == 'model':
+                return DeferredModel(state, tracked)  # May be a subjective comparison, not an ON entity lookup.
             return self._finish_terminal(
                 state, OutcomeCode.UNKNOWN_ENTITY, UNKNOWN_ENTITY,
                 cache=True,
