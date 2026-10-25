@@ -80,6 +80,7 @@ backend 在公共仓库初始化前独立分流，只组装一次业务实例；
 
 - M4 运行叶子：`application/runtime_tasks.py` 管理后台任务，`data_owner.py` 在写入前锁定业务目录，`notice_reports.py` 复用原报告/账本，`notice_gateway.py` 实现群版本与主动领取/意图/ACK。旧 QQ 通知模块保留运输适配，后台不导入 botpy。
 - Console 管理读取：`application/admin.py` 投影既有账本事实；`diagnostics.py` 独立、有界、可降级地观察元数据和单调耗时，不授予发送许可。运行与组合构建共用 `backend_sources.py` 摘要清单。接口、隐私及缺失口径见 [Console 契约](../docs/koishi/CONSOLE_V1.md)。
+- `application/persona.py` 保存共用语气、主观偏好及整句聊天意图；`model_runtime.py` 仍拥有权限、额度与证据编排。偏好追问只继承 ACK 后的内存话题，绝对期限不续期；来源与边界见 [Taki 性格说明](../docs/TAKI_PERSONALITY.md)。
 
 ## 管理任务
 

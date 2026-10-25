@@ -73,7 +73,7 @@ for capability in CAPABILITIES.values():
                      obj({k:PARAMETERS[k] for k in capability.allowed_parameters}),capability.id)
 TOOLS.update({
     'visible_result':Tool('visible_result','解释或简化已成功发送的上一回答（说简单点、没懂）；只使用其仍有效的原始证据。新问题、纠错或切换区服应重新检索。',obj({}),'visible'),
-    'conversation_reply':Tool('conversation_reply','简短致谢/告别，或对象不明确时澄清；不回答游戏事实。仅选择固定回复类型。',
+    'conversation_reply':Tool('conversation_reply','简短致谢/告别，或确实缺少对象的指代请求才澄清。问偏好不是缺少查询对象。不能作为不会回答时的通用出口；不回答游戏事实。仅选择固定回复类型。',
         obj({'intent':enum(('thanks','goodbye','clarify'))},('intent',)),'conversation'),
     'song_metrics':Tool('song_metrics','歌曲末判定时长、等级、Note、NPS、BPM；默认日服，谱面指标必须明确难度。同类最短和最长最多4组；不可配队、算分。',
                        obj({'queries':{**array(META_SCHEMA,4),'minItems':1}},('queries',)),'meta',('jp','intl')),
