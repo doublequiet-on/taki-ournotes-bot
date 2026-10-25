@@ -73,7 +73,7 @@ for capability in CAPABILITIES.values():
     TOOLS[name]=Tool(name,capability.description+'；条件须保留原句，缺省 page=1。',
                      obj({k:PARAMETERS[k] for k in capability.allowed_parameters}),capability.id)
 TOOLS.update({
-    'site_search':Tool('site_search','在已准入站点查目录候选：Haneoka 固定主资料仅日服；公告支持日服或国际服英文镜像。query只能取原句关键词，无关键词填空；page每次也占一步。最多三步查证，搜索后按返回handle读取详情及其中关联。不能读任意URL、跨服、历史版本、剧情或玩家帖子；明确已有直接查询优先原工具。',
+    'site_search':Tool('site_search','在已准入站点查目录候选：Haneoka 固定主资料仅日服；公告支持日服或国际服英文镜像；台服/臺服是intl别称，不代表公告语言是繁中。query只能取原句关键词，无关键词填空；page每次也占一步。最多三步查证，搜索后按返回handle读取详情及其中关联。不能读任意URL、跨服、历史版本、剧情或玩家帖子；明确已有直接查询优先原工具。',
         obj({'resource':enum(('songs','cards','support_cards','characters','events','gachas','notices')),
              'server':enum(('jp','intl')),'query':string(80),'page':{'type':'integer','minimum':1,'maximum':10}},
             ('resource','server','query')),'site'),
@@ -94,7 +94,7 @@ TOOLS.update({
     'event_cutoff':Tool('event_cutoff','查询原句中的活动挑战歌曲榜线观测及历史；不预测、不宣称终榜。',obj({}),'cutoff',('jp','tw','kr','en')),
     'catalog_info':Tool('catalog_info','只读人物、活动、卡池、缩写或帮助。query必须取自原句，活动/卡池可用当前、历史、列表。',
         obj({'kind':enum(('character','event','gacha','abbreviation','help','status')),'query':string(80)},('kind','query')),'info'),
-    'knowledge_search':Tool('knowledge_search','检索已审核的ON玩法教学、操作解释与规则；精确计算也先查资料，不能零工具猜测或拒绝。怎么玩/新人/入门用mode=intro。追问上一知识主题（如那LUCK呢、那国际服呢）填followup=true；新主题false。server默认jp，只有用户明确写出国际服才用intl，明确同时询问日服和国际服才用common，不能因为机制共通自行填common。追问继承有效主题范围，当前明确条件优先。未指定且无继承的version/date填JSON null，不能猜测。',
+    'knowledge_search':Tool('knowledge_search','检索已审核的ON玩法教学、操作解释与规则；精确计算也先查资料，不能零工具猜测或拒绝。怎么玩/新人/入门用mode=intro。追问上一知识主题（如那LUCK呢、那国际服呢）填followup=true；新主题false。server默认jp，只有用户明确写出国际服/台服/臺服才用intl，明确同时询问日服和国际服才用common，不能因为机制共通自行填common。追问继承有效主题范围，当前明确条件优先。未指定且无继承的version/date填JSON null，不能猜测。',
         obj({'server':enum(('jp','intl','common')),'version':{'type':['string','null'],'maxLength':40},
              'date':{'type':['string','null'],'maxLength':10},'followup':{'type':'boolean'},
              'mode':enum(('intro','explain','compare','calculation'))},('server','version','date')),'knowledge',('jp','intl')),
@@ -134,9 +134,11 @@ def validate_call(call):
 
 
 def scope_for(question,args,previous=None):
-    require(not re.search(r'台服|港服|韩服|美服|欧服|\b(?:tw|hk|kr|en)\b',question,re.I),'knowledge_server_unsupported')
-    jp=bool(re.search(r'日服|\bjp\b',question,re.I))
-    intl=bool(re.search(r'国际服|國際服|\bintl\b',question,re.I))
+    require(not re.search(r'港服|韩服|美服|欧服|\b(?:tw|hk|kr|en)\b',question,re.I),'knowledge_server_unsupported')
+    # An explicitly forbidden substitute is not a requested second region.
+    region_question=re.sub(r'(?:不能|不要|不可|别)用(?:日服|国际服|國際服|台服|臺服)(?:资料|公告)?(?:代替|替代)', '', question)
+    jp=bool(re.search(r'日服|\bjp\b',region_question,re.I))
+    intl=bool(re.search(r'国际服|國際服|台服|臺服|\bintl\b',region_question,re.I))
     server='common' if jp and intl else 'intl' if intl else 'jp' if jp else previous.server if previous else 'jp'
     require(args['server']==server,'query_server_mismatch')
     normalized=re.sub(r'(\d{4})年(\d{1,2})月(\d{1,2})日',
@@ -188,7 +190,7 @@ def execute(tool,args,question,repository):
     calendar=information_command(question,repository) if tool.kind=='info' and args['kind'] in ('event','gacha') else None
     current_event=bool(calendar and calendar.startswith('/查活动 ') and calendar.endswith(' 当前'))
     if tool.servers==('jp',) and not current_event:
-        require(not re.search(r'国际服|國際服|台服|港服|韩服|美服|欧服|\b(?:intl|tw|hk|kr|en)\b',question,re.I),'query_server_unsupported')
+        require(not re.search(r'国际服|國際服|台服|臺服|港服|韩服|美服|欧服|\b(?:intl|tw|hk|kr|en)\b',question,re.I),'query_server_unsupported')
     if tool.kind in CAPABILITIES:
         capability=CAPABILITIES[tool.kind]
         if tool.kind=='chart.get':

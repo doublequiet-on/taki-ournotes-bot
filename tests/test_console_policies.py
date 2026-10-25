@@ -845,7 +845,8 @@ class NativeRuntimeTests(Fixture,unittest.IsolatedAsyncioTestCase):
         from ournotes_bot.natural_query.native_tools import scope_for
         from ournotes_bot.domain.model_calls import ModelError
         defaults=dict(server='jp',version=None,date=None)
-        cases=[('台服规则',{},'knowledge_server_unsupported'),
+        cases=[('韩服规则',{},'knowledge_server_unsupported'),
+               ('台服规则',{},'query_server_mismatch'),
                ('日服和国际服规则',{},'query_server_mismatch'),
                ('国际服规则',{},'query_server_mismatch'),
                ('规则',dict(date='2020-01-01'),'query_date_mismatch'),
@@ -859,6 +860,33 @@ class NativeRuntimeTests(Fixture,unittest.IsolatedAsyncioTestCase):
                     scope_for(question,{**defaults,**changes})
         scope=scope_for('国际服2020-01-01规则',{**defaults,'server':'intl','date':'2020-01-01'})
         self.assertEqual(scope.server,'intl');self.assertEqual(scope.date,'2020-01-01')
+
+    def test_taiwan_alias_uses_intl_without_changing_language_or_other_scopes(self):
+        from ournotes_bot.natural_query.native_tools import scope_for
+        from ournotes_bot.domain.model_calls import ModelError
+        args=dict(server='intl',version=None,date=None)
+        for question in ('台服公告', '臺服规则', '去站内查台服公告，不能用日服代替。'):
+            self.assertEqual(scope_for(question,args).server,'intl')
+            with self.assertRaisesRegex(ModelError,'query_server_mismatch'):
+                scope_for(question,{**args,'server':'jp'})
+        self.assertEqual(scope_for('日服和台服规则一样吗',{**args,'server':'common'}).server,'common')
+        self.assertEqual(scope_for('台服2020-01-01规则',{**args,'date':'2020-01-01'}).date,'2020-01-01')
+        with self.assertRaisesRegex(ModelError,'query_date_mismatch'):
+            scope_for('台服2020-01-01规则',args)
+
+    async def test_site_taiwan_notice_reaches_intl_source_and_preserves_english_label(self):
+        from datetime import datetime,timezone
+        notices=Mock()
+        notices.read.return_value=dict(source='Haneoka',server='intl',language='en',
+            observed_at=datetime.now(timezone.utc).isoformat(),rows=[])
+        self.client.request.side_effect=self.site_responses([
+            ('site_search',dict(resource='notices',server='intl',query=''))],text='公告列表暂无条目。')
+        with patch('ournotes_bot.application.site_lookup.Notices',return_value=notices):
+            plan,attempts=await self.prepare_native('/问 去站内查台服公告，不能用日服代替。')
+        self.assertEqual(plan['parts'][0]['business_status'],'success')
+        self.assertEqual(len(attempts),2)
+        self.assertEqual(notices.read.call_args.args[0],'intl')
+        self.assertIn('国际服英文',plan['parts'][0]['text'])
 
     def test_followup_scope_inherits_and_explicit_conditions_win(self):
         from ournotes_bot.natural_query.native_tools import scope_for
