@@ -532,10 +532,123 @@ class NativeRuntimeTests(Fixture,unittest.IsolatedAsyncioTestCase):
             ('site_read',dict(handle='item1')),('site_read',dict(handle='item2'))])
         with patch('ournotes_bot.application.site_lookup.verify_catalog'):
             plan,attempts=await self.prepare_native('/问 去站内找合成活动，再读它的关联歌曲，告诉我歌名。')
-        self.assertEqual(plan['parts'][0]['business_status'],'success')
+        self.assertEqual(plan['parts'][0]['business_status'],'partial')
         self.assertEqual(len(attempts),3)
         self.assertTrue(plan['parts'][0]['text'].startswith('歌曲名称：合成曲100001。'))
         self.assertNotIn('正式',plan['parts'][0]['text'])
+
+    async def notice_reply_near_expiry(self):
+        from datetime import datetime,timezone
+        notices=Mock()
+        notices.read.return_value=dict(source='Haneoka',server='jp',language='ja',
+            observed_at=datetime.fromtimestamp(__import__('time').time()-86400+30,timezone.utc).isoformat(),rows=[])
+        self.client.request.side_effect=self.site_responses([
+            ('site_search',dict(resource='notices',server='jp',query=''))],text='没有公告。')
+        with patch('ournotes_bot.application.site_lookup.Notices',return_value=notices):
+            return await self.prepare_native('/问 去站内查日服公告')
+
+    async def test_notice_expiry_blocks_late_send_and_ack_does_not_restore_context(self):
+        plan,_=await self.notice_reply_near_expiry()
+        work=self.backend.works[plan['delivery_id']]
+        cutoff=work.prepared[0].evidence_deadline
+        self.assertIsNotNone(cutoff)
+        self.assertLessEqual(self.backend.conversations.snapshots[work.delivery].expires,cutoff)
+        # A legitimate send starts before expiry; its delayed receipt is still recorded.
+        self.event(plan,'intent')
+        with patch('ournotes_bot.application.backend.time.monotonic',return_value=cutoff+1):
+            expired=self.backend.lookup(plan['request_id'],'e1')
+            self.assertFalse(expired['send_allowed'])
+            with self.assertRaisesRegex(ProtocolError,'inactive_delivery'):
+                self.event(plan,'intent')
+            ack=self.event(plan,'ack')
+            self.assertTrue(ack['recorded'])
+            self.assertIsNone(self.backend.conversations.resolve(work.request))
+            self.assertTrue(self.event(plan,'ack')['duplicate'])
+
+    async def test_notice_ack_and_visible_followup_keep_absolute_evidence_deadline(self):
+        plan,_=await self.notice_reply_near_expiry()
+        work=self.backend.works[plan['delivery_id']];cutoff=work.prepared[0].evidence_deadline
+        self.event(plan,'intent');self.event(plan,'ack')
+        anchor=self.backend.conversations.resolve(work.request)
+        self.assertLessEqual(anchor.expires,cutoff)
+        from ournotes_bot.domain.model_calls import AttemptResult,ToolCall,Usage
+        self.client.request.side_effect=[AttemptResult('ok',Usage(10,0,2,None,12,'known'),
+            (ToolCall('v','visible_result','{}'),)),AttemptResult('ok',Usage(10,0,2,None,12,'known'),text='无公告。')]
+        second,_=await self.prepare_native('/问 说简单点',seq=2)
+        new=self.backend.works[second['delivery_id']]
+        self.assertLessEqual(new.prepared[0].evidence_deadline,cutoff)
+        self.event(second,'intent');self.event(second,'ack')
+        self.assertLessEqual(self.backend.conversations.resolve(new.request).expires,cutoff)
+        self.backend.conversations.clock=lambda:cutoff+1
+        request=self.request('expired-ref',3)
+        request.update(body='/问 说简单点',trigger='quoted_reply',reference={'message_id':'accepted-'+second['request_id'][:8],
+                                                     'adapter_profile_version':'fixture'})
+        self.client.request.reset_mock()
+        expired=await self.Helpers.prepare(self,request)
+        self.assertNotIn('无公告。',expired['parts'][0]['text'])
+        self.client.request.assert_not_awaited()
+
+    def test_evidence_deadline_survives_chunking_and_image_fallback(self):
+        from ournotes_bot.application.replies import expand_replies,fallback_cursor
+        reply=PreparedReply('x'*4000,evidence_deadline=123)
+        self.assertTrue(all(p.evidence_deadline==123 for p in expand_replies([reply],text_limit=1500)))
+        image=replace(reply,image=b'fixture')
+        self.assertTrue(all(p.evidence_deadline==123 for p in fallback_cursor(image,text_limit=1500).remaining))
+        nested=replace(reply,text='',pages=(PreparedReply('nested',evidence_deadline=200),))
+        self.assertEqual(expand_replies([nested])[0].evidence_deadline,123)
+
+    def test_site_relations_preserve_unknown_empty_partial_and_truncated(self):
+        import time
+        from ournotes_bot.application.site_lookup import SiteLookup
+        from ournotes_bot.domain.info_catalog import ActivityInfo,CardRef
+        self.repo.metadata.update(data_source='haneoka',data_version='r-fixture',text_version='r-text',
+                                  info_catalog_available={'activities':True})
+        row=ActivityInfo(1,'活动',{})
+        self.repo.activities=(row,)
+        session=SiteLookup(self.repo,'活动',verify=Mock())
+        session.execute('site_search',dict(resource='events',server='jp',query='活动'),time.monotonic()+5)
+        unknown=session.detail('item1',time.monotonic()+5)['fields']
+        self.assertFalse(unknown['relation_status']['reward_cards']['source_complete'])
+        session.handles['item1']=('events',replace(row,available_relations=frozenset({'reward_cards'})))
+        empty=session.detail('item1',time.monotonic()+5)['fields']
+        self.assertTrue(empty['relation_status']['reward_cards']['source_complete'])
+        self.assertEqual(empty['relation_status']['reward_cards']['known_count'],0)
+        refs=tuple(CardRef(2,i) for i in range(13))
+        session.handles['item1']=('events',replace(row,reward_cards=refs,available_relations=frozenset({'reward_cards'})))
+        truncated=session.detail('item1',time.monotonic()+5)['fields']
+        self.assertTrue(truncated['relation_status']['reward_cards']['truncated'])
+        self.assertEqual(truncated['relation_status']['reward_cards']['returned_count'],12)
+        session.handles['item1']=('events',replace(row,reward_cards=refs[:1]))
+        partial=session.detail('item1',time.monotonic()+5)['fields']
+        self.assertFalse(partial['relation_status']['reward_cards']['source_complete'])
+        self.assertEqual(partial['relation_status']['reward_cards']['known_count'],1)
+
+    async def test_unique_song_name_remains_complete(self):
+        self.repo.metadata.update(data_source='haneoka',data_version='r-fixture',text_version='r-text')
+        self.client.request.side_effect=self.site_responses([
+            ('site_search',dict(resource='songs',server='jp',query='100001')),
+            ('site_read',dict(handle='item1'))])
+        with patch('ournotes_bot.application.site_lookup.verify_catalog'):
+            plan,attempts=await self.prepare_native('/问 去站内找100001，告诉我歌名。')
+        self.assertEqual(plan['parts'][0]['business_status'],'success')
+        self.assertNotIn('尚未确认',plan['parts'][0]['text'])
+        self.assertEqual(len(attempts),2)
+
+    async def test_multiple_related_song_names_are_explicitly_partial(self):
+        from ournotes_bot.domain.info_catalog import ActivityInfo
+        first=self.repo.songs[0]
+        self.repo.songs=(*self.repo.songs,replace(first,id=999999,title='第二首歌'))
+        self.repo.metadata.update(data_source='haneoka',data_version='r-fixture',text_version='r-text',
+                                  info_catalog_available={'activities':True})
+        self.repo.activities=(ActivityInfo(1,'合成活动',{},song_ids=(first.id,999999)),)
+        self.client.request.side_effect=self.site_responses([
+            ('site_search',dict(resource='events',server='jp',query='合成活动')),
+            ('site_read',dict(handle='item1')),('site_read',dict(handle='item2'))])
+        with patch('ournotes_bot.application.site_lookup.verify_catalog'):
+            plan,attempts=await self.prepare_native('/问 去站内找合成活动的全部关联歌曲，告诉我歌名。')
+        self.assertEqual(plan['parts'][0]['business_status'],'partial')
+        self.assertIn('尚未确认完整歌名列表',plan['parts'][0]['text'])
+        self.assertEqual(len(attempts),3)
 
     async def test_site_failure_is_not_replaced_by_another_source(self):
         from ournotes_bot.sources.errors import ChartDataError

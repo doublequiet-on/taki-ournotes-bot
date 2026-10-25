@@ -96,6 +96,7 @@ class PreparedReply:
     visible_indices: tuple[int, ...] = ()
     layout_version: str = 'prepared-reply/1'
     evidence: tuple = ()
+    evidence_deadline: float | None = None  # Monotonic; never extended by delivery/ACK.
 
     @property
     def passive_slots(self):
@@ -121,7 +122,8 @@ def fallback_cursor(reply, *, text_limit=1800):
     query=previous.query_context if previous else reply.context
     chunks=text_chunks(reply.text,limit=text_limit-100)
     pages=tuple(PreparedReply(t,context=query if i==len(chunks)-1 else None,parse_origin=reply.parse_origin,
-                              processing_route=reply.processing_route,evidence=reply.evidence) for i,t in enumerate(chunks))
+                              processing_route=reply.processing_route,evidence=reply.evidence,
+                              evidence_deadline=reply.evidence_deadline) for i,t in enumerate(chunks))
     pages+=previous.remaining if previous else ()
     return DeliveryCursor(None,pages,0,len(pages),origin=previous.origin if previous else reply.parse_origin)
 
@@ -146,6 +148,9 @@ def expand_replies(replies: list[PreparedReply], reserve: int = 0, *, text_limit
                 part = replace(part, business_status=reply.business_status)
             if not part.evidence and reply.evidence:
                 part = replace(part, evidence=reply.evidence)
+            if reply.evidence_deadline is not None:
+                part=replace(part,evidence_deadline=min(part.evidence_deadline,reply.evidence_deadline)
+                             if part.evidence_deadline is not None else reply.evidence_deadline)
             if part.fallback_texts:
                 part=replace(part,text='\n'.join(part.fallback_texts),fallback_texts=())
             if part.image is None and len(part.text)>text_limit:
@@ -153,7 +158,7 @@ def expand_replies(replies: list[PreparedReply], reserve: int = 0, *, text_limit
                 pages.extend(PreparedReply(t,context=part.context if i==len(chunks)-1 else None,
                                            business_status=part.business_status, command_index=part.command_index,
                                            parse_origin=part.parse_origin, processing_route=part.processing_route,
-                                           evidence=part.evidence) for i,t in enumerate(chunks))
+                                           evidence=part.evidence,evidence_deadline=part.evidence_deadline) for i,t in enumerate(chunks))
             else:
                 pages.append(part)
     available=max(1,QQ_PASSIVE_REPLY_LIMIT-reserve)

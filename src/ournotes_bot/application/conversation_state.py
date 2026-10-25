@@ -97,7 +97,8 @@ class Conversations:
             return self.snapshots.get(work.anchor.snapshot_id)
         if work.lease is None:
             return None
-        deadline = self.contexts.deadline(work.key)
+        deadline = min([self.contexts.deadline(work.key),
+                        *(p.evidence_deadline for p in pages if p.evidence_deadline is not None)])
         if deadline <= self.clock():
             return None
         snapshot = DisplaySnapshot(work.delivery, self.scope(work.request), work.key,

@@ -215,7 +215,11 @@ class ModelRuntime:
             async def operation(deadline):
                 work.model_started_at=time.monotonic()
                 return await self.run(work,question,history,leases,user,group,deadline)
-            return await self.backend.models.run(user,operation)
+            reply=await self.backend.models.run(user,operation)
+            # Facts carried into an ACK-bound followup retain their absolute limit.
+            if isinstance(reply.context,ReadOnlyContext) and reply.context.facts:
+                reply=replace(reply,evidence_deadline=work.content_deadline)
+            return reply
         except (ModelError,ProtocolError,KnowledgeError) as exc:
             return failure(exc.code if isinstance(exc,ProtocolError) else str(exc))
         except asyncio.TimeoutError:
@@ -451,6 +455,8 @@ class ModelRuntime:
                 raise
             except (ChartDataError,ValueError,OSError):
                 raise ModelError('source_unavailable') from None
+            if session.expires_at is not None:
+                work.content_deadline=min(work.content_deadline,time.monotonic()+session.expires_at-time.time())
             # A narrowly requested song name is an exact catalog field, not a
             # generation task. Avoid inventing a distinction between registered
             # and 'formal' names after following an activity association.
@@ -458,10 +464,10 @@ class ModelRuntime:
                 resource,row=session.handles[args['handle']]
                 if resource=='songs':
                     self.check(work,deadline,leases)
-                    return self.text_reply('歌曲名称：'+session.label(row)+'。\n\n来源：'+'；'.join(session.source_notes),
-                                           question,history,leases,facts='\n'.join(session.evidence),focus=question)
-            if session.expires_at is not None:
-                work.content_deadline=min(work.content_deadline,time.monotonic()+session.expires_at-time.time())
+                    text,complete=session.song_name_answer(args['handle'])
+                    reply=self.text_reply(text+'\n\n来源：'+'；'.join(session.source_notes),
+                                          question,history,leases,facts='\n'.join(session.evidence),focus=question)
+                    return replace(reply,business_status='success' if complete else 'partial')
             self.check(work,deadline,leases)
             messages.append({'role':'assistant','content':None,'tool_calls':[{'id':call.id,'type':'function',
                             'function':{'name':call.name,'arguments':call.arguments}}]})

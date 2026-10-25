@@ -365,7 +365,9 @@ class Backend:
         return bool(work and work.active and (row['status'] == 'prepared' or work.hint and row['status']=='preparing') and row['epoch'] == epoch
                     and row['runtime'] == self.runtime and self.ledger.active(epoch)
                     and self.clock() < row['expires']
-                    and all(self.valid_evidence(reply.evidence) for reply in work.prepared))
+                    and all(self.valid_evidence(reply.evidence) and
+                            (reply.evidence_deadline is None or time.monotonic()<reply.evidence_deadline)
+                            for reply in work.prepared))
 
     def snapshot(self, row, epoch):
         require(row is not None, 'unknown_request', 404)

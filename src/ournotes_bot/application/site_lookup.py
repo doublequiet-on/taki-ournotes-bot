@@ -142,5 +142,37 @@ class SiteLookup:
                                     handle=self.handle(kind,target) if target else None))
         fields['related']=related
         fields['related_list_may_be_partial']=len(related)>=12
+        if resource in ('events','gachas'):
+            names=('reward_cards','bonus_cards','pickup_cards','song_ids') if resource=='events' else ('pickup_cards','featured_cards')
+            fields['available_relations']=sorted(row.available_relations)
+            fields['relation_status']={name:dict(
+                source_complete=name in row.available_relations if name!='song_ids' else None,
+                known_count=len(getattr(row,name)),
+                returned_count=sum(r['relation']==name for r in related),
+                truncated=len(getattr(row,name))>sum(r['relation']==name for r in related)) for name in names}
+            fields['related_list_may_be_partial']=any(
+                item['source_complete'] is not True or item['truncated'] for item in fields['relation_status'].values())
         return dict(**source,kind='detail',handle=handle,fields=fields,
-                    note='title/name为登记名称，不判断正式性；空字段只表示该字段未登记；活动关联歌曲不是挑战歌曲声明。只按同版本已知关联继续读取。')
+                    note='title/name为登记名称，不判断正式性；空字段只表示该字段未登记；relation_status中source_complete=false或null表示无法确认完整性，只有true且未截断的空列表才表示确认没有该关联；活动关联歌曲不是挑战歌曲声明。只按同版本已知关联继续读取。')
+
+    def song_name_answer(self,handle):
+        """Only claim a complete name answer for one unambiguous known target."""
+        resource,row=self.handles[handle]
+        require(resource=='songs','query_entity_mismatch')
+        complete=False
+        for text in reversed(self.evidence[:-1]):
+            value=json.loads(text)
+            if value['kind']=='detail':
+                related=value['fields'].get('related',[])
+                if any(r.get('handle')==handle for r in related):
+                    state=value['fields'].get('relation_status',{}).get('song_ids',{})
+                    songs=[r for r in related if r['resource']=='songs']
+                    complete=len(songs)==1 and state.get('source_complete') is True and not state.get('truncated',False)
+                    break
+            elif any(item['handle']==handle for item in value.get('items',[])):
+                complete=value['total_in_snapshot']==1
+                break
+        text='歌曲名称：'+self.label(row)+'。'
+        if not complete:
+            text+='\n这里只列本次已读取的歌曲，尚未确认完整歌名列表。'
+        return text,complete
