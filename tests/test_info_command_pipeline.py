@@ -52,6 +52,9 @@ class InfoCommandPipelineTests(unittest.TestCase):
             ('/问 当前的卡池有哪些', 'gacha_query', 'execute_gacha'),
             ('/问 历史活动有哪些', 'activity_query', 'execute_activity'),
             ('/问 这期活动啥时候结束', 'activity_query', 'execute_activity'),
+            ('/问 这期活动啥时候结束啊', 'activity_query', 'execute_activity'),
+            ('/问 国际服这期活动什么时候结束呀？', 'activity_query', 'execute_activity'),
+            ('/问 本期卡池什么时候结束呢', 'gacha_query', 'execute_gacha'),
             ('/问 本期活动什么时候结束？', 'activity_query', 'execute_activity'),
             ('/问 国际服这次活动结束时间是什么', 'activity_query', 'execute_activity'),
             ('/问 本期卡池啥时候结束', 'gacha_query', 'execute_gacha'),
@@ -71,7 +74,9 @@ class InfoCommandPipelineTests(unittest.TestCase):
         from ournotes_bot.natural_query.on_query import information_command
         for question in ('上期活动什么时候结束','下期活动什么时候开始','2020年这期活动什么时候结束',
                          '国际服本期卡池什么时候结束','日服和国际服这期活动什么时候结束',
-                         '这期活动和下期活动有什么不同','这期活动什么时候结束并预测榜线'):
+                         '这期活动和下期活动有什么不同','这期活动什么时候结束并预测榜线',
+                         '这期活动啥时候结束啊并预测榜线','2020年这期活动什么时候结束啊',
+                         '日服和国际服这期活动什么时候结束呢'):
             with self.subTest(question=question):
                 self.assertIsNone(information_command(question,self.repo))
         self.assertEqual(information_command('国际服这期活动啥时候结束',self.repo),'/查活动 国际服 当前')

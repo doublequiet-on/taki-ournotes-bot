@@ -465,7 +465,7 @@ class ModelRuntime:
                 if resource=='songs':
                     self.check(work,deadline,leases)
                     text,complete=session.song_name_answer(args['handle'])
-                    reply=self.text_reply(text+'\n\n来源：'+'；'.join(session.source_notes),
+                    reply=self.text_reply(text+session.attribution(),
                                           question,history,leases,facts='\n'.join(session.evidence),focus=question)
                     return replace(reply,business_status='success' if complete else 'partial')
             self.check(work,deadline,leases)
@@ -487,7 +487,7 @@ class ModelRuntime:
             body='\n\n'.join(p for p in re.split(r'\n\s*\n',result.text.strip())
                              if not re.match(r'^(?:[-*]\s+)?(?:\*\*)?(?:来源|資料來源|资料来源|Source)\s*[:：]',p,re.I))
             require(bool(body.strip()),'model_no_evidence')
-            text=body+'\n\n来源：'+'；'.join(session.source_notes)
+            text=body+session.attribution()
             return self.text_reply(text,question,history,leases,
                                    facts='\n'.join(session.evidence),focus=question)
 

@@ -391,10 +391,49 @@ class BackendContinuationTests(Fixture, unittest.IsolatedAsyncioTestCase):
             event.update(result='success', message_id='accepted-'+plan['request_id'][:8])
         return self.backend.apply_event(plan['delivery_id'], event)
 
+    def accept_image_intro(self,plan):
+        self.assertEqual(plan['parts'][0]['business_status'],'processing_hint')
+        self.assertEqual(plan['parts'][0]['kind'],'text')
+        self.assertEqual(plan['parts'][1]['kind'],'image')
+        self.event(plan,'intent');plan=self.event(plan,'ack')
+        return {**plan,'parts':plan['parts'][1:]}
+
+    async def test_group_image_intro_counts_against_budget_without_own_context_or_page_loss(self):
+        pages=tuple(PreparedReply('page-'+str(i),image=b'fixture',context=self.context()) for i in range(6))
+        self.backend.gate.prepare.return_value=PreparedReply('',pages=pages,context=self.context())
+        first=await self.prepare(self.request('images',1))
+        self.assertEqual(len(first['parts']),5)
+        first=self.accept_image_intro(first)
+        self.assertFalse(self.backend.conversations.anchors)
+        sent=[]
+        for part in first['parts']:
+            current={**first,'parts':[part]}
+            sent.append(self.backend.works[first['delivery_id']].prepared[part['position']].text.split('\n结果 ',1)[0])
+            self.event(current,'intent');self.event(current,'ack')
+        followup=self.request('rest-images',2);followup['body']='/继续'
+        second=await self.prepare(followup)
+        self.assertEqual(len(second['parts']),3)
+        second=self.accept_image_intro(second)
+        sent.extend(self.backend.works[second['delivery_id']].prepared[p['position']].text.split('\n结果 ',1)[0] for p in second['parts'])
+        self.assertEqual(sent,['page-'+str(i) for i in range(6)])
+        self.backend.gate.prepare.assert_awaited_once()
+
+    async def test_private_image_does_not_add_group_introduction(self):
+        from ournotes_bot.application.backend_protocol import digest
+        self.backend.gate.prepare.return_value=PreparedReply('private',image=b'fixture')
+        request=self.request('private-image',1)
+        request.update(kind='c2c',conversation_id='u1',request_id=digest(['fixture','app','qq','c2c','u1','u1','private-image']))
+        plan=await self.prepare(request)
+        self.assertEqual(len(plan['parts']),1)
+        self.assertEqual(plan['parts'][0]['kind'],'image')
+        self.assertFalse(plan.get('processing_hint',False))
+
     async def test_long_fallback_notice_keeps_continue_anchor_without_selectable_rows(self):
         self.backend.gate.prepare.return_value=PreparedReply('captured text '*200,image=b'fixture',context=self.context())
         first=await self.prepare(self.request('fallback',1))
+        first=self.accept_image_intro(first)
         first=self.event(first,'upload_failed')
+        first={**first,'parts':first['parts'][1:]}
         self.event(first,'intent');self.event(first,'ack')
         followup=self.request('continue',2);followup['body']='/继续'
         second=await self.prepare(followup)
@@ -408,7 +447,9 @@ class BackendContinuationTests(Fixture, unittest.IsolatedAsyncioTestCase):
         text='文'*1600
         self.backend.gate.prepare.return_value=PreparedReply(text,image=b'fixture',context=self.context())
         first=await self.prepare(self.request('mention-fallback',1))
+        first=self.accept_image_intro(first)
         first=self.event(first,'upload_failed')
+        first={**first,'parts':first['parts'][1:]}
         self.assertIn('/继续',first['parts'][0]['text'])
         self.event(first,'intent');self.event(first,'ack')
         followup=self.request('mention-continue',2);followup['body']='/继续'
@@ -529,13 +570,15 @@ class BackendContinuationTests(Fixture, unittest.IsolatedAsyncioTestCase):
              patch('ournotes_bot.rendering.song_metrics_layout.render', return_value=(ImagePart(b'first',0,5),ImagePart(b'second',5,10))):
             first = await self.prepare(request)
         source.assert_called_once_with('intl')
+        first=self.accept_image_intro(first)
         self.event(first,'intent');self.event(first,'ack');self.event(first,'aborted')
         saved = self.backend.conversations.snapshots[first['delivery_id']]
         self.assertEqual(saved.layout_version,'song-meta/1')
         with patch.object(self.repo.song_metrics,'current',side_effect=AssertionError('must not refetch')):
             second = await self.prepare(self.quote('meta-page',2,first))
+            second=self.accept_image_intro(second)
             self.event(second,'intent');self.event(second,'ack')
-            anchor = next(a for a in self.backend.conversations.anchors.values() if a.page==1)
+            anchor = next(a for a in self.backend.conversations.anchors.values() if a.page==2)
             context = getattr(anchor.context,'query_context',anchor.context)
             self.assertEqual(context.visible_indices,tuple(range(6,11)))
             self.assertNotIsInstance(execute_followup(context,Operation('select',1),self.repo),tuple)

@@ -77,9 +77,10 @@ export class QQDelivery {
   private content(part: Part): string {
     const text = part.kind === 'image' ? part.caption || ' ' : part.text
     if (this.inbound.kind !== 'group') return text
-    // QQ text-chain protocol (not the guild-only legacy <@id> encoder).
-    // Body text cannot introduce a second platform mention/interaction tag.
-    return `<qqbot-at-user id="${this.inbound.userId}" />\n` + text.replace(/<(?=@|\/?qqbot-)/giu, '＜')
+    // Group text mentions render in Markdown; native image captions stay plain.
+    // An image-first plan includes a separately accounted text introduction.
+    const body = text.replace(/<(?=@|\/?qqbot-)/giu, '＜')
+    return part.kind === 'text' ? `<qqbot-at-user id="${this.inbound.userId}" />\n` + body : body
   }
   dispose(): void { this.disposed = true }
   get usedSlots(): number { return this.sequence }
@@ -182,9 +183,10 @@ export class QQDelivery {
       this.halted = true
       return this.ack(attempt, { status: 'aborted', reason: 'inactive_or_expired' }, false)
     }
+    const markdown = this.inbound.kind === 'group' && part.kind === 'text'
     const payload = { msg_id: this.inbound.messageId, msg_seq: ++this.sequence,
-      msg_type: part.kind === 'image' ? 7 : 0,
-      content: this.content(part),
+      msg_type: part.kind === 'image' ? 7 : markdown ? 2 : 0,
+      ...(markdown ? { markdown: { content: this.content(part) } } : { content: this.content(part) }),
       ...(media ? { media } : {}) }
     let result: Outcome
     const started = performance.now()
