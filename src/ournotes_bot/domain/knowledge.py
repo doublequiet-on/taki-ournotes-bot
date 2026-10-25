@@ -21,7 +21,7 @@ class KnowledgeScope:
     date: str | None = None
 
     def __post_init__(self):
-        if self.game != GAME or self.server not in ('jp', 'intl'):
+        if self.game != GAME or self.server not in ('jp', 'intl', 'common'):
             raise KnowledgeError('scope_game_or_server')
         if self.version is not None and (not isinstance(self.version, str) or not self.version.strip()):
             raise KnowledgeError('scope_version')
@@ -31,6 +31,10 @@ class KnowledgeScope:
                     raise ValueError
             except (TypeError, ValueError):
                 raise KnowledgeError('scope_date') from None
+
+    @property
+    def servers(self):
+        return ('jp', 'intl') if self.server == 'common' else (self.server,)
 
 
 @dataclass(frozen=True)

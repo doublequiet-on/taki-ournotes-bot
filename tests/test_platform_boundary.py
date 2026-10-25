@@ -129,7 +129,7 @@ class KnowledgeAuthorityTests(unittest.TestCase):
         from ournotes_bot.sources.knowledge_files import parse_document
         from ournotes_bot.application.knowledge_service import atomic_text
         meta = dict(schema='taki-knowledge/1', id='ci-fixture', title='工程测试', keywords=['工程测试'], aliases=[],
-            game='bang-dream-our-notes', servers=[server], applicability=dict(mode='current', game_version=version,
+            game='bang-dream-our-notes', servers=list(server) if isinstance(server,tuple) else [server], applicability=dict(mode='current', game_version=version,
             valid_from=None, valid_to=None, scope_note='仅隔离工程测试'), sources=[dict(source_id='fixture',
             kind='fixture', uri='fixture://local-only', locator='isolated-ci', accessed_at='2026-10-23')],
             evidence_type='reviewed_analysis', review_status='approved', reviewed_by='ISOLATED-FIXTURE',
@@ -178,6 +178,61 @@ class KnowledgeAuthorityTests(unittest.TestCase):
         self.assertEqual(result.code, 'ok')
         self.assertLessEqual(len(result.lease.chunks), 6)
         self.assertLessEqual(len(evidence_json(result.lease.chunks)), 6000)
+
+    def test_common_scope_requires_both_servers_and_rechecks_lease(self):
+        from dataclasses import replace
+        from ournotes_bot.domain.knowledge import KnowledgeScope
+        self.write_fixture();self.service.refresh()
+        jp=self.retrieve().lease
+        self.assertEqual(self.retrieve(server='common').code,'missing')
+        self.assertFalse(self.service.valid(replace(jp,scope=KnowledgeScope(server='common'))))
+        self.write_fixture(2,server=('jp','intl'));self.service.refresh()
+        common=self.retrieve(server='common')
+        self.assertEqual(common.code,'ok');self.assertTrue(self.service.valid(common.lease))
+        self.write_fixture(3);self.service.refresh()
+        self.assertFalse(self.service.valid(common.lease))
+
+    def test_sections_preserve_heading_budget_and_deduplicate_only_metadata(self):
+        import json
+        from dataclasses import asdict
+        from ournotes_bot.query.knowledge_retrieval import evidence_json,complete_sections,bounded
+        self.write_fixture(text='## 入门\n\n'+'参与流程。'*75+'\n\n## 公式边界\n\n未知项。')
+        self.service.refresh();rows=self.service.index
+        chunks=[r.chunk for r in rows]
+        self.assertTrue(all(len(c.text)<=360 for c in chunks))
+        first=[c for c in chunks if '参与流程' in c.text]
+        self.assertGreater(len(first),1)
+        self.assertTrue(all(c.text.startswith('## 入门') for c in first))
+        result=bounded(complete_sections((first[0],),rows))
+        self.assertFalse(any('未知项' in c.text for c in result))
+        data=json.loads(evidence_json(result))
+        self.assertEqual(len(data['documents']),1)
+        self.assertEqual(len(data['passages']),len(result))
+        for passage,chunk in zip(data['passages'],result):
+            restored={**data['documents'][passage['document']],**{k:v for k,v in passage.items() if k!='document'}}
+            self.assertEqual(restored,json.loads(json.dumps(asdict(chunk))))
+        self.assertLess(len(evidence_json(result)),len(json.dumps([asdict(c) for c in result],ensure_ascii=False)))
+
+    def test_table_rows_carry_their_own_source_column_labels(self):
+        from ournotes_bot.query.knowledge_retrieval import labelled_tables
+        text='|区间|首要比较|\n|---|---|\n|JUST|JUST数量|\n|COMBO|最大连击|\n'
+        result=labelled_tables(text)
+        self.assertIn('区间：COMBO；首要比较：最大连击',result)
+        self.assertIn('区间：JUST；首要比较：JUST数量',result)
+        ambiguous=text.replace('最大连击','有\\|转义')
+        self.assertEqual(labelled_tables(ambiguous),ambiguous)
+
+    def test_focus_search_keeps_scope_and_shared_evidence_budget(self):
+        from ournotes_bot.domain.knowledge import KnowledgeScope,KnowledgeError
+        self.write_fixture(server='intl',text='## 入门\n工程测试参与方法。\n## 区间\n工程测试区间。')
+        self.service.refresh()
+        r=self.service.retrieve('区间',KnowledgeScope(server='intl'),self.service.approved_set_revision,focus_query='参与方法')
+        self.assertEqual(r.code,'ok');self.assertTrue(self.service.valid(r.lease))
+        self.assertLessEqual(len(r.lease.chunks),6);self.assertLessEqual(len(self.service.prepare_evidence(r.lease)),6000)
+        r=self.service.retrieve('区间',KnowledgeScope(),self.service.approved_set_revision,focus_query='参与方法')
+        self.assertEqual(r.code,'missing')
+        with self.assertRaises(KnowledgeError):
+            self.service.retrieve('区间',KnowledgeScope(),self.service.approved_set_revision,focus_query='长'*501)
 
     def test_rollback_or_missing_manifest_closes_existing_evidence(self):
         self.write_fixture(2); self.service.refresh()
