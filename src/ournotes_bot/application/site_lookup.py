@@ -101,7 +101,8 @@ class SiteLookup:
         return dict(**self.provenance(resource),kind='candidates',total_in_snapshot=len(found),
                     limited_listing=resource.startswith('notices:'),page=args.get('page',1),
                     more=offset+6<len(found),items=items,
-                    note='候选标题不是正文。多个候选须按用户条件选择或澄清；公告保留源顺序，含置顶，第一条未必发布时间最新。')
+                    match_mode='id_exact' if query.isdecimal() else 'substring' if query else 'listing',
+                    note='匹配只覆盖本次关键词，不代表相似搜索。候选标题不是正文。多个候选须按用户条件选择或澄清；公告保留源顺序，含置顶，第一条未必发布时间最新。')
 
     def detail(self,handle,deadline):
         resource,row=self.handles[handle]
@@ -142,4 +143,4 @@ class SiteLookup:
         fields['related']=related
         fields['related_list_may_be_partial']=len(related)>=12
         return dict(**source,kind='detail',handle=handle,fields=fields,
-                    note='空字段表示未确认；活动关联歌曲不是挑战歌曲声明。只按同版本已知关联继续读取。')
+                    note='title/name为登记名称，不判断正式性；空字段只表示该字段未登记；活动关联歌曲不是挑战歌曲声明。只按同版本已知关联继续读取。')
