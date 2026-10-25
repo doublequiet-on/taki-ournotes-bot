@@ -56,6 +56,7 @@ class Work:
     anchor: object = None
     missing_anchor: bool = False
     model_attempts: int = 0
+    model_attempt_limit: int = 2
     content_deadline: float = field(default_factory=lambda: time.monotonic()+600)
     model_snapshot: object = None
     model_subject: str | None = None
@@ -239,6 +240,9 @@ class Backend:
 
     async def prepare(self, work, commands):
         overflow = 0
+        # Reserve space for the gateway's native mention (identity <=256 chars).
+        # Private replies retain their original body budget.
+        text_limit = 1500 if work.request.kind == 'group' else 1800
         policy_token = CURRENT_POLICY.set(work.request.policy)
         scope_token = CURRENT_QUERY_SCOPE.set((self.instance_id, self.app_id, work.request.request_id))
         deadline_token = CURRENT_CONTENT_DEADLINE.set(min(work.content_deadline,
@@ -277,7 +281,7 @@ class Backend:
                     result = (await self.prepare_call(work,self.model_runtime.followup(work,current,work.operation)
                               if native_detail else self.gate.prepare_followup(current, work.operation, self.repository))
                               if current is not None else replies.PreparedReply(MISSING))
-                parts = replies.expand_replies([result])
+                parts = replies.expand_replies([result],text_limit=text_limit)
                 parts = [replace(part,command_index=0,processing_route='continuation') for part in parts]
                 statuses = {part.business_status or 'unknown' for part in parts}
                 self.diagnostics.outcomes(work.request.request_id,
@@ -286,7 +290,7 @@ class Backend:
                 parts, overflow = await self.prepare_call(work,replies.prepare_commands(commands, self.gate, self.repository,
                     self.parser, self.settings.multi_command_limit,
                     observe=lambda outcomes: self.diagnostics.outcomes(work.request.request_id, outcomes),
-                    prepare=lambda command: self.prepare_command(work, command)))
+                    prepare=lambda command: self.prepare_command(work, command),text_limit=text_limit))
                 if overflow:
                     parts.append(replies.PreparedReply(tr(locale_for(commands[0]), 'too_many_commands',
                                                           limit=self.settings.multi_command_limit, total=len(commands))))
@@ -297,7 +301,7 @@ class Backend:
             if not work.active:
                 return
             if work.hint:
-                parts = [work.prepared[0], *replies.reserve_progress_slot(parts,overflow=bool(overflow))]
+                parts = [work.prepared[0], *replies.reserve_progress_slot(parts,overflow=bool(overflow),text_limit=text_limit)]
             parts = [replace(p, context=ReadOnlyContext(p.text, p.parse_origin, p.evidence))
                      if p.context is None and p.business_status!='processing_hint' else p for p in parts]
             work.prepared = tuple(parts)
@@ -361,7 +365,9 @@ class Backend:
         return bool(work and work.active and (row['status'] == 'prepared' or work.hint and row['status']=='preparing') and row['epoch'] == epoch
                     and row['runtime'] == self.runtime and self.ledger.active(epoch)
                     and self.clock() < row['expires']
-                    and all(self.valid_evidence(reply.evidence) for reply in work.prepared))
+                    and all(self.valid_evidence(reply.evidence) and
+                            (reply.evidence_deadline is None or time.monotonic()<reply.evidence_deadline)
+                            for reply in work.prepared))
 
     def snapshot(self, row, epoch):
         require(row is not None, 'unknown_request', 404)
@@ -388,7 +394,7 @@ class Backend:
                     view.update(kind='image', text=caption, image=f"/v1/deliveries/{row['delivery']}/parts/{part['id']}/image", mime=mime)
                 else:
                     text = ('图片上传失败，完整文字已保留；发送 /继续 查看。'
-                            if part['mode'] == 'fallback' and len(reply.text) > 1800 else reply.text)
+                            if part['mode'] == 'fallback' and len(reply.text) > (1500 if work.request.kind == 'group' else 1800) else reply.text)
                     view.update(kind='text', text=text)
             result['parts'].append(view)
         return result
@@ -441,9 +447,10 @@ class Backend:
                 part = next(p for p in parts if p['id'] == part_id)
                 reply = work.prepared[part['position']]
                 candidate = reply.context
-                long_fallback = part['mode'] == 'fallback' and len(reply.text) > 1800
+                text_limit = 1500 if work.request.kind == 'group' else 1800
+                long_fallback = part['mode'] == 'fallback' and len(reply.text) > text_limit
                 if payload['result'] == 'success':
-                    if long_fallback: candidate = replies.fallback_cursor(reply)
+                    if long_fallback: candidate = replies.fallback_cursor(reply,text_limit=text_limit)
                     if candidate is not None and (work.operation or len(split_commands(work.request.body)) == 1
                                                   or isinstance(candidate, replies.DeliveryCursor)):
                         work.candidate = candidate

@@ -109,7 +109,7 @@ class ModelPermissions:
                 self.backend.ledger.active(request.gateway_epoch), 'policy_denied', 409)
         require(self.clock() < execution_deadline, 'execution_timeout', 409)
         require(work.delivery not in self.pending, 'permission_pending', 409)
-        require(work.model_attempts < 2, 'model_attempt_limit', 409)
+        require(work.model_attempts < min(4,getattr(work,'model_attempt_limit',2)), 'model_attempt_limit', 409)
         work.model_attempts += 1
         binding = dict(request_id=request.request_id, attempt_id=attempt_id or uuid.uuid4().hex, nonce=uuid.uuid4().hex,
                        scope=request.scope, user_id=request.user_id, backend_epoch=self.backend.runtime,

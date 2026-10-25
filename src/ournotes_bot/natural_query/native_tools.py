@@ -14,7 +14,8 @@ from ..commands import resolve_command, handle_command
 from ..query.song_metrics import parse_meta_question, execute_many
 from ..query.field_query import parse_field_question
 from ..query.song_conditions import extract_song_conditions
-from ..query.event_cutoff_query import parse_natural_cutoff
+from ..query.event_cutoff_query import parse_natural_cutoff, SERVER_ALIASES
+from .on_query import information_command
 from .query_capabilities import CAPABILITIES
 from .query_validation import validate_capability_action, OutcomeCode, message_for
 
@@ -72,8 +73,20 @@ for capability in CAPABILITIES.values():
     TOOLS[name]=Tool(name,capability.description+'；条件须保留原句，缺省 page=1。',
                      obj({k:PARAMETERS[k] for k in capability.allowed_parameters}),capability.id)
 TOOLS.update({
+    'site_search':Tool('site_search','在已准入站点查目录候选：Haneoka 固定主资料仅日服；公告支持日服或国际服英文镜像；台服/臺服是intl别称，不代表公告语言是繁中。query只能取原句关键词，无关键词填空；page每次也占一步。最多三步查证，搜索后按返回handle读取详情及其中关联。不能读任意URL、跨服、历史版本、剧情或玩家帖子；明确已有直接查询优先原工具。',
+        obj({'resource':enum(('songs','cards','support_cards','characters','events','gachas','notices')),
+             'server':enum(('jp','intl')),'query':string(80),'page':{'type':'integer','minimum':1,'maximum':10}},
+            ('resource','server','query')),'site'),
+    'site_read':Tool('site_read','读取本轮站内搜索或关联返回的handle；不能猜ID或跨请求复用handle。',
+        obj({'handle':string(20)},('handle',)),'site'),
+    'chat_response':Tool('chat_response','日常聊天、玩笑、情绪或主观偏好比较，不限固定句式；没有日期数值、机制、剧情或其他待核实事实。topic选最贴近的一类，普通比较用general。followup=true只用于已确认聊天的连续追问，新话题false。混合事实问题必须选择取证工具，生成时同时承接主观部分。',
+        obj({'topic':enum(('general','band','music','identity','tone','praise','comfort')),'followup':{'type':'boolean'}},('topic','followup')),'social'),
+    'clarify_term':Tool('clarify_term','仅当一个别名或对象确实不清楚时，核对该词；term必须逐字取自当前原句。不能因用户聊天或比较就要求名称ID。',
+        obj({'term':string(40)},('term',)),'clarification'),
+    'unavailable_fact':Tool('unavailable_fact','仅用于明确要求核实的具体事实且现有工具无法覆盖，如其他游戏概率或未接入的剧情。subject逐字取自原句。普通“哪个牛逼／哪个好”没有事实指标，必须用chat_response，不能用此工具；也不得用于偏好、玩笑或有已支持工具的ON查询。不能假装已经联网查过。',
+        obj({'subject':string(60)},('subject',)),'gap'),
     'visible_result':Tool('visible_result','解释或简化已成功发送的上一回答（说简单点、没懂）；只使用其仍有效的原始证据。新问题、纠错或切换区服应重新检索。',obj({}),'visible'),
-    'conversation_reply':Tool('conversation_reply','简短致谢/告别，或对象不明确时澄清；不回答游戏事实。仅选择固定回复类型。',
+    'conversation_reply':Tool('conversation_reply','简短致谢/告别，或确实缺少对象的指代请求才澄清。问偏好不是缺少查询对象。不能作为不会回答时的通用出口；不回答游戏事实。仅选择固定回复类型。',
         obj({'intent':enum(('thanks','goodbye','clarify'))},('intent',)),'conversation'),
     'song_metrics':Tool('song_metrics','歌曲末判定时长、等级、Note、NPS、BPM；默认日服，谱面指标必须明确难度。同类最短和最长最多4组；不可配队、算分。',
                        obj({'queries':{**array(META_SCHEMA,4),'minItems':1}},('queries',)),'meta',('jp','intl')),
@@ -81,7 +94,7 @@ TOOLS.update({
     'event_cutoff':Tool('event_cutoff','查询原句中的活动挑战歌曲榜线观测及历史；不预测、不宣称终榜。',obj({}),'cutoff',('jp','tw','kr','en')),
     'catalog_info':Tool('catalog_info','只读人物、活动、卡池、缩写或帮助。query必须取自原句，活动/卡池可用当前、历史、列表。',
         obj({'kind':enum(('character','event','gacha','abbreviation','help','status')),'query':string(80)},('kind','query')),'info'),
-    'knowledge_search':Tool('knowledge_search','检索已审核的ON玩法教学、操作解释与规则；精确计算也先查资料，不能零工具猜测或拒绝。怎么玩/新人/入门用mode=intro。追问上一知识主题（如那LUCK呢、那国际服呢）填followup=true；新主题false。server默认jp，只有用户明确写出国际服才用intl，明确同时询问日服和国际服才用common，不能因为机制共通自行填common。追问继承有效主题范围，当前明确条件优先。未指定且无继承的version/date填JSON null，不能猜测。',
+    'knowledge_search':Tool('knowledge_search','检索已审核的ON玩法教学、操作解释与规则；精确计算也先查资料，不能零工具猜测或拒绝。怎么玩/新人/入门用mode=intro。追问上一知识主题（如那LUCK呢、那国际服呢）填followup=true；新主题false。server默认jp，只有用户明确写出国际服/台服/臺服才用intl，明确同时询问日服和国际服才用common，不能因为机制共通自行填common。追问继承有效主题范围，当前明确条件优先。未指定且无继承的version/date填JSON null，不能猜测。',
         obj({'server':enum(('jp','intl','common')),'version':{'type':['string','null'],'maxLength':40},
              'date':{'type':['string','null'],'maxLength':10},'followup':{'type':'boolean'},
              'mode':enum(('intro','explain','compare','calculation'))},('server','version','date')),'knowledge',('jp','intl')),
@@ -121,9 +134,11 @@ def validate_call(call):
 
 
 def scope_for(question,args,previous=None):
-    require(not re.search(r'台服|港服|韩服|美服|欧服|\b(?:tw|hk|kr|en)\b',question,re.I),'knowledge_server_unsupported')
-    jp=bool(re.search(r'日服|\bjp\b',question,re.I))
-    intl=bool(re.search(r'国际服|國際服|\bintl\b',question,re.I))
+    require(not re.search(r'港服|韩服|美服|欧服|\b(?:tw|hk|kr|en)\b',question,re.I),'knowledge_server_unsupported')
+    # An explicitly forbidden substitute is not a requested second region.
+    region_question=re.sub(r'(?:不能|不要|不可|别)用(?:日服|国际服|國際服|台服|臺服)(?:资料|公告)?(?:代替|替代)', '', question)
+    jp=bool(re.search(r'日服|\bjp\b',region_question,re.I))
+    intl=bool(re.search(r'国际服|國際服|台服|臺服|\bintl\b',region_question,re.I))
     server='common' if jp and intl else 'intl' if intl else 'jp' if jp else previous.server if previous else 'jp'
     require(args['server']==server,'query_server_mismatch')
     normalized=re.sub(r'(\d{4})年(\d{1,2})月(\d{1,2})日',
@@ -170,10 +185,12 @@ class ToolOutput:
 
 
 def execute(tool,args,question,repository):
-    if tool.servers==('jp',):
-        require(not re.search(r'国际服|國際服|台服|港服|韩服|美服|欧服|\b(?:intl|tw|hk|kr|en)\b',question,re.I),'query_server_unsupported')
     question=re.sub(r'^(?:请|帮我)?(?:解释|分析)(?:一下)?[\s，,：:]*','',question).strip()
     question=re.sub(r'[，,\s]*(?:并|再|然后)(?:解释|分析)(?:一下)?[。！!]*$','',question).strip()
+    calendar=information_command(question,repository) if tool.kind=='info' and args['kind'] in ('event','gacha') else None
+    current_event=bool(calendar and calendar.startswith('/查活动 ') and calendar.endswith(' 当前'))
+    if tool.servers==('jp',) and not current_event:
+        require(not re.search(r'国际服|國際服|台服|臺服|港服|韩服|美服|欧服|\b(?:intl|tw|hk|kr|en)\b',question,re.I),'query_server_unsupported')
     if tool.kind in CAPABILITIES:
         capability=CAPABILITIES[tool.kind]
         if tool.kind=='chart.get':
@@ -204,8 +221,27 @@ def execute(tool,args,question,repository):
     require(tool.kind=='info','tool_unregistered')
     kind,query=args['kind'],args['query'].strip()
     require(not re.search(r'[\r\n\\/;`]|https?:|<@',query,re.I),'tool_arguments_invalid')
-    require(not query or query in question or query in ('当前','历史','列表') and any(w in question for w in ('现在','当前','最近','历史','有哪些','列表')),'query_entity_mismatch')
     heads={'character':'/查角色','event':'/查活动','gacha':'/查卡池','abbreviation':'/查缩写','help':'/帮助','status':'/状态'}
+    # Calendar modes are grounded by the same complete-utterance parser used by
+    # local queries. A word anywhere in the question must not authorize dropping
+    # a historical date, named event, explicit region or another requested object.
+    modes={'当前','最近','这期','本期','这次','现在','历史','列表'}
+    tokens=query.split()
+    if kind in ('event','gacha') and (current_event or not tokens or tokens[-1] in modes):
+        grounded=calendar
+        require(bool(grounded) and grounded.split()[0]==heads[kind],'query_entity_mismatch')
+        expected=grounded.split()[1:]
+        expected_mode=expected[-1] if expected else ''
+        mode=tokens[-1] if tokens else ''
+        require(mode==expected_mode or expected_mode=='当前' and mode in ('','最近','这期','本期','这次','现在'),
+                'query_entity_mismatch')
+        if len(tokens)>1:
+            require(len(tokens)==2 and tokens[0].casefold() in SERVER_ALIASES,'query_entity_mismatch')
+            expected_server=SERVER_ALIASES.get(expected[0].casefold(),'jp') if len(expected)>1 else 'jp'
+            require(SERVER_ALIASES[tokens[0].casefold()]==expected_server,'query_entity_mismatch')
+        query=' '.join(expected)  # Preserve the user's region even if the model omitted it.
+    else:
+        require(not query or query in question,'query_entity_mismatch')
     require(kind not in ('help','status') or not query,'tool_arguments_invalid')
     command=heads[kind]+' '+query
     result=resolve_command(command,repository)

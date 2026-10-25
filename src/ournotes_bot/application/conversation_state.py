@@ -31,6 +31,7 @@ class ReadOnlyContext:
     topic: str = ''
     knowledge_scope: KnowledgeScope | None = None
     focus: str = ''
+    chat_topic: str = ''
 
 
 @dataclass(frozen=True)
@@ -96,7 +97,8 @@ class Conversations:
             return self.snapshots.get(work.anchor.snapshot_id)
         if work.lease is None:
             return None
-        deadline = self.contexts.deadline(work.key)
+        deadline = min([self.contexts.deadline(work.key),
+                        *(p.evidence_deadline for p in pages if p.evidence_deadline is not None)])
         if deadline <= self.clock():
             return None
         snapshot = DisplaySnapshot(work.delivery, self.scope(work.request), work.key,
@@ -112,7 +114,7 @@ class Conversations:
         # Dialogue text has a per-conversation budget. Captured business display
         # pages use the global snapshot byte budget, preserving complete lists.
         def dialogue_chars(items):
-            return sum(len(p.context.text)+len(p.context.facts)+len(p.context.topic)+len(p.context.focus)+sum(len(t) for _,t in p.context.history) for _,s in items for p in s.pages
+            return sum(len(p.context.text)+len(p.context.facts)+len(p.context.topic)+len(p.context.focus)+len(p.context.chat_topic)+sum(len(t) for _,t in p.context.history) for _,s in items for p in s.pages
                        if isinstance(p.context, ReadOnlyContext))
         while scoped and (len(scoped) > 20 or dialogue_chars(scoped) > 16000):
             key,_ = scoped.pop(0)

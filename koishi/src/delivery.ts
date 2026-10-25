@@ -69,6 +69,17 @@ export class QQDelivery {
         || !Number.isInteger(limits.maxTextChars) || limits.maxTextChars < 1 || limits.maxTextChars > candidateLimits.maxTextChars) {
       throw new Error('invalid delivery limits')
     }
+    // Identity is captured from verified ingress, never from generated prose.
+    if (inbound.kind === 'group' && (!inbound.userId || inbound.userId.length > 256
+        || /[\s<>"'&\u0000-\u001f\u007f]/u.test(inbound.userId))) throw new Error('invalid mention identity')
+    this.inbound = Object.freeze({ ...inbound })
+  }
+  private content(part: Part): string {
+    const text = part.kind === 'image' ? part.caption || ' ' : part.text
+    if (this.inbound.kind !== 'group') return text
+    // QQ text-chain protocol (not the guild-only legacy <@id> encoder).
+    // Body text cannot introduce a second platform mention/interaction tag.
+    return `<qqbot-at-user id="${this.inbound.userId}" />\n` + text.replace(/<(?=@|\/?qqbot-)/giu, '＜')
   }
   dispose(): void { this.disposed = true }
   get usedSlots(): number { return this.sequence }
@@ -78,9 +89,9 @@ export class QQDelivery {
   }
   deliver(partId: string, index: number, part: Part): Promise<Outcome> {
     if (!partId || !Number.isInteger(index) || index < 0) return Promise.reject(new Error('invalid part identity'))
-    if (part.kind === 'image'
-      ? !part.bytes.length || part.bytes.length > this.limits.maxImageBytes || [...part.caption].length > this.limits.maxTextChars
-      : !part.text || [...part.text].length > this.limits.maxTextChars) {
+    if ([...this.content(part)].length > this.limits.maxTextChars || (part.kind === 'image'
+      ? !part.bytes.length || part.bytes.length > this.limits.maxImageBytes
+      : !part.text)) {
       return Promise.resolve({ status: 'aborted', reason: 'part_size' })
     }
     const key = fingerprint(part), existing = this.parts.get(partId)
@@ -173,7 +184,7 @@ export class QQDelivery {
     }
     const payload = { msg_id: this.inbound.messageId, msg_seq: ++this.sequence,
       msg_type: part.kind === 'image' ? 7 : 0,
-      content: part.kind === 'image' ? part.caption || ' ' : part.text,
+      content: this.content(part),
       ...(media ? { media } : {}) }
     let result: Outcome
     const started = performance.now()

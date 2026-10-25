@@ -35,6 +35,7 @@ CLI 模式与组合、配置根/数据路径、包身份；为多个系统域提
 - [application/model_admin.py](ournotes_bot/application/model_admin.py)：后端受保护配置写入、管理意图审计和明确确认的能力探测；只返回元数据，复用模型调度与账务。控制台和独立受信进程协议见 [包 4](../docs/QUERY_CHAT_PACKAGE4.md)。
 
 - [application/model_runtime.py](ournotes_bot/application/model_runtime.py)：后端原生工具编排、当前许可、证据生成和上下文核验；[model_config.py](ournotes_bot/application/model_config.py) 固定受信配置／身份快照，v3 允许有核验证据的指定群全员准入，跨场景身份仍须显式绑定；[usage_ledger.py](ournotes_bot/application/usage_ledger.py) 独占写精确预留与结算。纯合同在 [domain/model_calls.py](ournotes_bot/domain/model_calls.py)，公开说明见 [包 3](../docs/QUERY_CHAT_PACKAGE3.md)。
+- [application/site_lookup.py](ournotes_bot/application/site_lookup.py)：U3 请求内目录候选、详情及已知关联导航，最多三次只读取证；固定版本／公告快照、有界证据和短期 handle，不接受模型 URL、不写百科。`model_runtime.py` 仅在此流程开放四次逐次许可，网关同步硬上限，仍受原 30 秒执行预算约束。
 
 - [application/knowledge_service.py](ournotes_bot/application/knowledge_service.py)：独占知识目录与状态库，先提交停用记录，再发布候选索引；排队／生成／交付消费者通过完整证据租约重验。后端组合与 RuntimeTasks 接入独立观察和重建任务；[knowledge_cli.py](ournotes_bot/application/knowledge_cli.py) 提供脱离游戏初始化的校验、导入和检索入口。格式和内容交付见 [包 2B](../docs/QUERY_CHAT_PACKAGE2B.md)。
 
@@ -80,8 +81,13 @@ backend 在公共仓库初始化前独立分流，只组装一次业务实例；
 
 - M4 运行叶子：`application/runtime_tasks.py` 管理后台任务，`data_owner.py` 在写入前锁定业务目录，`notice_reports.py` 复用原报告/账本，`notice_gateway.py` 实现群版本与主动领取/意图/ACK。旧 QQ 通知模块保留运输适配，后台不导入 botpy。
 - Console 管理读取：`application/admin.py` 投影既有账本事实；`diagnostics.py` 独立、有界、可降级地观察元数据和单调耗时，不授予发送许可。运行与组合构建共用 `backend_sources.py` 摘要清单。接口、隐私及缺失口径见 [Console 契约](../docs/koishi/CONSOLE_V1.md)。
+- `application/persona.py` 保存共用语气、主观偏好、整句快路径和一般聊天提示；`model_runtime.py` 编排 U2 语义聊天、局部澄清与具体资料缺口，仍拥有权限、额度与证据检查。聊天追问只继承 ACK 后的同话题最近 6 条历史，绝对期限不续期；来源与边界见 [Taki 性格说明](../docs/TAKI_PERSONALITY.md)。
 
 ## 管理任务
 
 Backend 的 operations.py 拥有独立有界运维任务库与单执行器；与发送/通知账本隔离。Admin 提供脱敏导出。Console RPC 与网关管理审计契约见 [运维控制台](../docs/koishi/OPERATIONS.md)。
 `operations_sources.py` 管理快照绑定的资料／素材任务；`operations_runtime.py` 提供固定的任务恢复、活动、采样和连接检查。`runtime_tasks.py` 统一手动／定时资源锁与进程内观测，不提供系统进程控制。
+
+U3 站内回答只陈述当前字段和匹配方式；来源由程序统一追加，移除模型独立来源段。明确以“告诉我／给我歌名”等请求结尾且已读到歌曲详情时直接输出名称字段，不再追加生成；多个候选或关联完整性未知时标为部分完成，不宣称完整列表。明确读取任意网址的请求直接说明可查目录／公告范围，不发起模型或外部读取。
+
+公告证据的单调时钟截止时间随 PreparedReply 传递，分块／图片回退不得延长；发送许可与 ACK 主题快照共同校验，过期 ACK 仍记账但不恢复上下文。关联详情单独暴露来源完整性和返回截断，未知／部分关联不能等同确认空列表。

@@ -4,6 +4,8 @@
 
 ## 成对协议与当前许可
 
+U3 补充：网关模型许可硬上限为每请求四次，后端普通流程仍两次，只有站内三步查证流程升至四次。每次继续独立重查权限，不能复用旧许可；第五次拒绝。此变化纳入后端运行摘要，需配套发布／回退网关与后端，详见 [U3](QUERY_CHAT_NEXT_PLAN.md#u3haneokamoenotes-站内自主查证)。
+
 - HTTP 路径保留 `/v1`，载荷协议升级为 **2.0**，能力为 `qq-query-chat-v3`。组合清单须同时声明 `group_policies_v1`、`query_chat_contract_v1`；后端、网关和源码摘要成对更新。
 - 入站增加必填 `trigger`（command/ask/quoted_reply/button）、`reference`、`interaction`。后两者通常为 null；引用只接受后端明确配置的 adapter profile，按钮尚不接受。生产默认 profile 列表为空，测试中的 `fixture` 不代表生产能力。
 - 准备状态返回 `pending_model_permission`；网关通过 `POST /v1/requests/{request_id}/model-permissions/{attempt_id}` 回答。沿用 Bearer、实例头和网关代次认证，绑定 scope、用户、请求、attempt、nonce、双方代次；不修改入场策略摘要。
