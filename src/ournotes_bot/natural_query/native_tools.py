@@ -14,7 +14,8 @@ from ..commands import resolve_command, handle_command
 from ..query.song_metrics import parse_meta_question, execute_many
 from ..query.field_query import parse_field_question
 from ..query.song_conditions import extract_song_conditions
-from ..query.event_cutoff_query import parse_natural_cutoff
+from ..query.event_cutoff_query import parse_natural_cutoff, SERVER_ALIASES
+from .on_query import information_command
 from .query_capabilities import CAPABILITIES
 from .query_validation import validate_capability_action, OutcomeCode, message_for
 
@@ -170,10 +171,12 @@ class ToolOutput:
 
 
 def execute(tool,args,question,repository):
-    if tool.servers==('jp',):
-        require(not re.search(r'国际服|國際服|台服|港服|韩服|美服|欧服|\b(?:intl|tw|hk|kr|en)\b',question,re.I),'query_server_unsupported')
     question=re.sub(r'^(?:请|帮我)?(?:解释|分析)(?:一下)?[\s，,：:]*','',question).strip()
     question=re.sub(r'[，,\s]*(?:并|再|然后)(?:解释|分析)(?:一下)?[。！!]*$','',question).strip()
+    calendar=information_command(question,repository) if tool.kind=='info' and args['kind'] in ('event','gacha') else None
+    current_event=bool(calendar and calendar.startswith('/查活动 ') and calendar.endswith(' 当前'))
+    if tool.servers==('jp',) and not current_event:
+        require(not re.search(r'国际服|國際服|台服|港服|韩服|美服|欧服|\b(?:intl|tw|hk|kr|en)\b',question,re.I),'query_server_unsupported')
     if tool.kind in CAPABILITIES:
         capability=CAPABILITIES[tool.kind]
         if tool.kind=='chart.get':
@@ -204,8 +207,27 @@ def execute(tool,args,question,repository):
     require(tool.kind=='info','tool_unregistered')
     kind,query=args['kind'],args['query'].strip()
     require(not re.search(r'[\r\n\\/;`]|https?:|<@',query,re.I),'tool_arguments_invalid')
-    require(not query or query in question or query in ('当前','历史','列表') and any(w in question for w in ('现在','当前','最近','历史','有哪些','列表')),'query_entity_mismatch')
     heads={'character':'/查角色','event':'/查活动','gacha':'/查卡池','abbreviation':'/查缩写','help':'/帮助','status':'/状态'}
+    # Calendar modes are grounded by the same complete-utterance parser used by
+    # local queries. A word anywhere in the question must not authorize dropping
+    # a historical date, named event, explicit region or another requested object.
+    modes={'当前','最近','这期','本期','这次','现在','历史','列表'}
+    tokens=query.split()
+    if kind in ('event','gacha') and (current_event or not tokens or tokens[-1] in modes):
+        grounded=calendar
+        require(bool(grounded) and grounded.split()[0]==heads[kind],'query_entity_mismatch')
+        expected=grounded.split()[1:]
+        expected_mode=expected[-1] if expected else ''
+        mode=tokens[-1] if tokens else ''
+        require(mode==expected_mode or expected_mode=='当前' and mode in ('','最近','这期','本期','这次','现在'),
+                'query_entity_mismatch')
+        if len(tokens)>1:
+            require(len(tokens)==2 and tokens[0].casefold() in SERVER_ALIASES,'query_entity_mismatch')
+            expected_server=SERVER_ALIASES.get(expected[0].casefold(),'jp') if len(expected)>1 else 'jp'
+            require(SERVER_ALIASES[tokens[0].casefold()]==expected_server,'query_entity_mismatch')
+        query=' '.join(expected)  # Preserve the user's region even if the model omitted it.
+    else:
+        require(not query or query in question,'query_entity_mismatch')
     require(kind not in ('help','status') or not query,'tool_arguments_invalid')
     command=heads[kind]+' '+query
     result=resolve_command(command,repository)

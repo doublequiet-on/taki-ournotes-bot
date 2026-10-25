@@ -83,7 +83,11 @@ def information_command(question, repository):
     if re.search(r"[红蓝绿黄紫黑白橙青灰]色|颜色|属性", color_conditions(text)):
         return None  # Colored members refer to cards, not character profiles.
     text = re.sub(r"^(?:(?:请|帮我|查一下|查询|查看|看看|想看)\s*)+", "", text).strip(" ？?。！!")
-    current = re.fullmatch(r"(?:(jp|hk|tw|kr|en|日服|国服|台服|韩服|英服|国际服)\s*)?(?:现在|当前|最近)(?:的)?(活动|卡池)(?:是什么|有哪些|有什么|详情)?", text, re.I)
+    current = re.fullmatch(
+        r"(?:(jp|hk|tw|kr|en|日服|国服|台服|韩服|英服|国际服)\s*)?"
+        r"(?:现在|当前|最近|这期|本期|这次)(?:的)?\s*(活动|卡池)\s*"
+        r"(?:是什么|有哪些|有什么|详情|(?:啥时候|什么时候|何时|几号)(?:开始|结束)|"
+        r"(?:开始|结束)(?:时间|日期)(?:是什么|是啥|是几号)?)?", text, re.I)
     if current:
         region, kind = current[1] or "", current[2]
         if kind == "卡池" and region not in {"", "jp", "日服"}:

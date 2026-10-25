@@ -404,6 +404,20 @@ class BackendContinuationTests(Fixture, unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(anchor.context.query_context)
         self.assertIsNone(self.backend.conversations.page(anchor,1))
 
+    async def test_group_fallback_between_1500_and_1800_keeps_all_text_for_continue(self):
+        text='文'*1600
+        self.backend.gate.prepare.return_value=PreparedReply(text,image=b'fixture',context=self.context())
+        first=await self.prepare(self.request('mention-fallback',1))
+        first=self.event(first,'upload_failed')
+        self.assertIn('/继续',first['parts'][0]['text'])
+        self.event(first,'intent');self.event(first,'ack')
+        followup=self.request('mention-continue',2);followup['body']='/继续'
+        second=await self.prepare(followup)
+        self.assertEqual(len(second['parts']),2)
+        self.assertTrue(all(len(p['text'])<=1500 for p in second['parts']))
+        self.assertEqual(''.join(p['text'].split('\n结果 ',1)[0] for p in second['parts']),text)
+        self.backend.gate.prepare.assert_awaited_once()
+
     async def test_disposed_ack_records_fact_without_committing_when_retire_was_lost(self):
         from ournotes_bot.application.backend_protocol import PROTOCOL
         plan = await self.prepare(self.request('disposed', 1))

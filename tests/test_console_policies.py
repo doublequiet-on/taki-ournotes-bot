@@ -731,6 +731,44 @@ class NativeRuntimeTests(Fixture,unittest.IsolatedAsyncioTestCase):
                 execute(tool,args,'查询角色资料',self.repo)
             resolve.assert_not_called()
 
+    def test_calendar_modes_ground_whole_question_and_preserve_server(self):
+        from ournotes_bot.natural_query.native_tools import TOOLS,execute
+        good=(
+            ('event','当前','这期活动啥时候结束','/查活动 当前'),
+            ('event','本期','本期活动什么时候结束？','/查活动 当前'),
+            ('event','当前','国际服这次活动结束时间是什么','/查活动 国际服 当前'),
+            ('event','en 当前','国际服当前活动什么时候开始','/查活动 国际服 当前'),
+            ('event','','台服这期活动详情','/查活动 台服 当前'),
+            ('event','历史','历史活动有哪些','/查活动 历史'),
+            ('gacha','当前','本期卡池啥时候结束','/查卡池 当前'),
+        )
+        for kind,query,question,command in good:
+            with self.subTest(question=question), \
+                 patch('ournotes_bot.natural_query.native_tools.resolve_command',return_value=object()) as resolve, \
+                 patch('ournotes_bot.natural_query.native_tools.handle_command',return_value='captured'):
+                execute(TOOLS['catalog_info'],dict(kind=kind,query=query),question,self.repo)
+                resolve.assert_called_once_with(command,self.repo)
+        from ournotes_bot.domain.model_calls import ModelError
+        bad=(
+            ('event','当前','上期活动什么时候结束'),
+            ('event','当前','下期活动什么时候开始'),
+            ('event','当前','2020年这期活动什么时候结束'),
+            ('event','当前','最近结束的历史活动有哪些'),
+            ('event','历史','当前活动有哪些'),
+            ('event','jp 当前','国际服这期活动啥时候结束'),
+            ('event','en 当前','这期活动啥时候结束'),
+            ('event','当前','这期活动和下期活动有什么不同'),
+            ('gacha','当前','国际服本期卡池什么时候结束'),
+            ('gacha','当前','这期活动啥时候结束'),
+            ('character','当前','这期活动啥时候结束'),
+        )
+        for kind,query,question in bad:
+            with self.subTest(question=question,kind=kind), \
+                 patch('ournotes_bot.natural_query.native_tools.resolve_command') as resolve:
+                with self.assertRaisesRegex(ModelError,'^query_(entity_mismatch|server_unsupported)$'):
+                    execute(TOOLS['catalog_info'],dict(kind=kind,query=query),question,self.repo)
+                resolve.assert_not_called()
+
     def test_native_chart_preserves_explicit_difficulty_and_captured_result(self):
         from ournotes_bot.domain.model_calls import ToolCall,ModelError
         from ournotes_bot.natural_query.native_tools import validate_call,execute

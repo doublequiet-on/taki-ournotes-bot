@@ -46,9 +46,9 @@ async function run(name, task) {
   try { await task(); results.push({ name, status: 'passed' }) }
   catch (error) { results.push({ name, status: 'failed', error: String(error.stack || error) }) }
 }
-async function setup(kind = 'group', options = {}) {
+async function setup(kind = 'group', options = {}, extra = {}) {
   const env = createBot()
-  const decoded = await decodeIncoming(env.bot, event({ kind }), identity, recognizes)
+  const decoded = await decodeIncoming(env.bot, event({ kind, ...extra }), identity, recognizes)
   assert.equal(decoded.status, 'accepted')
   const records = [], trace = []
   let failAck = false, active = true
@@ -164,6 +164,18 @@ async function main() {
         [['fixture-group', 'fixture-user', now], ['fixture-user', 'fixture-user', now]])
     } finally { clearInterval(ws._ping) }
   })
+  await run('group h.at is discarded by pinned adapter; not proof of a native mention', async () => {
+    const env = createBot()
+    await new Promise(resolve => setImmediate(resolve))
+    const decoded = await decodeIncoming(env.bot, event(), identity, recognizes)
+    const session = env.ctx.reflect.trace(decoded.session)
+    session.timestamp = Date.now() // Keep the adapter's passive-reply window live in this fixture.
+    await session.send([h.at('fixture-user'), h.text('mention protocol probe')])
+    const sent = env.calls.filter(call => call.url.endsWith('/messages'))
+    assert.equal(sent.length, 1)
+    assert.equal(sent[0].data.content, 'mention protocol probe')
+    assert.equal(sent[0].data.msg_id, 'fixture-message')
+  })
   await run('high-level Session.send loses partial-success return on later error', async () => {
     const env = createBot()
     // Cordis initializes the Koishi service asynchronously; no ctx.start/login.
@@ -191,7 +203,7 @@ async function main() {
     const sends = e.calls.filter(c => c.url.endsWith('/messages'))
     assert.deepEqual(sends.map(c => c.data.msg_seq), [1, 2])
     assert.ok(sends.every(c => c.data.msg_id === 'fixture-message'))
-    assert.equal(sends[1].data.content, text.text) // literal, no message markup evaluation
+    assert.equal(sends[1].data.content, kind === 'group' ? '<qqbot-at-user id="fixture-user" />\n' + text.text : text.text)
     assert.ok(sends.every(c => c.url.includes(kind === 'group' ? '/groups/fixture-group/' : '/users/fixture-user/')))
   })
   await run('upload failure permits explicit captured text fallback without consuming a slot', async () => {
@@ -200,7 +212,32 @@ async function main() {
     assert.equal((await e.delivery.deliver('image', 0, png)).status, 'upload_failed')
     assert.equal(e.delivery.usedSlots, 0); assert.equal(e.records.length, 0)
     assert.equal((await e.delivery.deliver('fallback', 0, text)).status, 'success')
-    assert.equal(e.calls.at(-1).data.content, text.text); assert.equal(e.calls.at(-1).data.msg_seq, 1)
+    assert.equal(e.calls.at(-1).data.content, '<qqbot-at-user id="fixture-user" />\n' + text.text); assert.equal(e.calls.at(-1).data.msg_seq, 1)
+  })
+  await run('native group mention stays with each captured sender across interleaved text and image', async () => {
+    const a = await setup('group', {}, { id: 'message-a', author: { id: 'user-a' } })
+    const b = await setup('group', {}, { id: 'message-b', author: { id: 'user-b' } })
+    a.decoded.inbound.userId = 'later-user'; a.decoded.inbound.messageId = 'later-message'
+    await Promise.all([a.delivery.deliver('text', 0, text), b.delivery.deliver('image', 0, png)])
+    assert.equal(a.calls.at(-1).data.content, '<qqbot-at-user id="user-a" />\n' + text.text)
+    assert.equal(b.calls.at(-1).data.content, '<qqbot-at-user id="user-b" />\n' + png.caption)
+    assert.equal(a.calls.at(-1).data.msg_id, 'message-a'); assert.equal(b.calls.at(-1).data.msg_id, 'message-b')
+    assert.equal(a.calls.at(-1).data.msg_seq, 1); assert.equal(b.calls.at(-1).data.msg_seq, 1)
+  })
+  await run('only transport may introduce mentions; final payload still obeys 1800 characters', async () => {
+    const e = await setup('group', {}, { author: { id: 'x'.repeat(256) } })
+    const bad = '<qqbot-at-user id="other" /><@other><qqbot-cmd-enter text="/问" />'
+    assert.equal((await e.delivery.deliver('body', 0, { kind: 'text', text: bad })).status, 'success')
+    assert.equal(e.calls.at(-1).data.content.match(/<qqbot-at-user /g).length, 1)
+    assert.ok(e.calls.at(-1).data.content.endsWith('＜qqbot-at-user id="other" />＜@other>＜qqbot-cmd-enter text="/问" />'))
+    assert.equal((await e.delivery.deliver('bounded', 1, { kind: 'text', text: '文'.repeat(1500) })).status, 'success')
+    assert.ok([...e.calls.at(-1).data.content].length <= 1800)
+    const before = e.calls.length
+    assert.equal((await e.delivery.deliver('oversize', 2, { kind: 'text', text: '文'.repeat(1800) })).reason, 'part_size')
+    assert.equal(e.calls.length, before)
+    const privateReply = await setup('c2c')
+    assert.equal((await privateReply.delivery.deliver('private', 0, { kind: 'text', text: '文'.repeat(1800) })).status, 'success')
+    assert.equal(privateReply.calls.at(-1).data.content, '文'.repeat(1800))
   })
   await run('missing file_info is upload failure; no media send', async () => {
     const e = await setup(); e.setHandler(() => ({}))
@@ -413,7 +450,7 @@ async function main() {
       await receiver.deliver(job,env.bot)
       assert.equal(decisions,1);assert.equal(env.calls.length,2)
       assert.deepEqual(env.calls.map(c=>c.data.msg_seq),[1,2])
-      assert.deepEqual(env.calls.map(c=>c.data.content),['还在核实，请稍等。','最终回答'])
+        assert.deepEqual(env.calls.map(c=>c.data.content),['还在核实，请稍等。','最终回答'].map(t=>'<qqbot-at-user id="fixture-user" />\n'+t))
     }finally{releaseHint();await receiver.dispose();await fork.dispose();await env.ctx.stop()}
   })
   await run('M4 real plugin publishes and releases its scoped transport service', async () => {
@@ -623,7 +660,7 @@ async function main() {
     await run('Console monotonic spans separate upload send and receipt submission',async()=>{
       const spans=[],wait=ms=>new Promise(r=>setTimeout(r,ms))
       const api={async sendFileGuild(){await wait(20);return{file_info:'fixture'}},async sendMessage(){await wait(40);return{id:'fixture-message'}}}
-      const inbound={requestId:'request',kind:'group',conversationId:'fixture-group',messageId:'fixture',timestampMs:Date.now()}
+      const inbound={requestId:'request',kind:'group',conversationId:'fixture-group',userId:'fixture-user',messageId:'fixture',timestampMs:Date.now()}
       const events={async intent(){return'granted'},async acknowledge(){await wait(10)},observe(span){spans.push(span)}}
       const delivery=new QQDelivery(api,inbound,'delivery','epoch',events,()=>true)
       assert.equal((await delivery.deliver('0',0,png)).status,'success')

@@ -51,6 +51,10 @@ class InfoCommandPipelineTests(unittest.TestCase):
             ('/问 高松灯的生日是什么', 'character_query', 'execute_character'),
             ('/问 当前的卡池有哪些', 'gacha_query', 'execute_gacha'),
             ('/问 历史活动有哪些', 'activity_query', 'execute_activity'),
+            ('/问 这期活动啥时候结束', 'activity_query', 'execute_activity'),
+            ('/问 本期活动什么时候结束？', 'activity_query', 'execute_activity'),
+            ('/问 国际服这次活动结束时间是什么', 'activity_query', 'execute_activity'),
+            ('/问 本期卡池啥时候结束', 'gacha_query', 'execute_gacha'),
         ):
             with self.subTest(question=question), \
                  patch(f'ournotes_bot.query.{module}.{function}', return_value=self.answer) as execute, \
@@ -62,6 +66,36 @@ class InfoCommandPipelineTests(unittest.TestCase):
                 self.assertEqual(reply.text, self.answer.text)
                 execute.assert_called_once()
                 self.assertIs(render.call_args.args[0], self.answer)
+
+    def test_calendar_deixis_does_not_discard_history_or_other_conditions(self):
+        from ournotes_bot.natural_query.on_query import information_command
+        for question in ('上期活动什么时候结束','下期活动什么时候开始','2020年这期活动什么时候结束',
+                         '国际服本期卡池什么时候结束','日服和国际服这期活动什么时候结束',
+                         '这期活动和下期活动有什么不同','这期活动什么时候结束并预测榜线'):
+            with self.subTest(question=question):
+                self.assertIsNone(information_command(question,self.repo))
+        self.assertEqual(information_command('国际服这期活动啥时候结束',self.repo),'/查活动 国际服 当前')
+
+    def test_group_mention_reserve_preserves_complete_text_and_private_budget(self):
+        from ournotes_bot.application.replies import expand_replies,fallback_cursor,reserve_progress_slot,PreparedReply
+        text='首段正文。'*1700+'最终字符'
+        reply=PreparedReply(text,parse_origin='direct')
+        pages=expand_replies([reply],text_limit=1500)
+        self.assertEqual(len(pages),5)
+        cursor=pages[0].context
+        first=pages[0].text.split('\n结果 ',1)[0]
+        self.assertEqual(first+''.join(p.text for p in cursor.remaining),text)
+        self.assertTrue(all(len(p.text)<=1500 for p in pages))
+        with_hint=reserve_progress_slot(pages,text_limit=1500)
+        self.assertEqual(len(with_hint),4)
+        first=with_hint[0].text.split('\n结果 ',1)[0]
+        self.assertEqual(first+''.join(p.text for p in with_hint[0].context.remaining),text)
+        fallback=fallback_cursor(reply,text_limit=1500)
+        self.assertEqual(''.join(p.text for p in fallback.remaining),text)
+        continued=expand_replies([PreparedReply('',pages=fallback.remaining,context=fallback)],text_limit=1500)
+        self.assertTrue(all(len(p.text)<=1500 for p in continued))
+        private=expand_replies([PreparedReply('文'*1800)])
+        self.assertEqual(len(private),1);self.assertEqual(private[0].text,'文'*1800)
 
     def test_render_failure_retains_all_text_and_can_continue_without_requery(self):
         complete = '人物简介和来源\n' * 2200 + '完整结果最后一行'

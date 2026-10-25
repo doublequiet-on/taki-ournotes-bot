@@ -116,10 +116,10 @@ class DeliveryCursor:
         return sum(len(p.image or b'') + len(p.text.encode('utf-8')) for p in self.remaining)
 
 
-def fallback_cursor(reply):
+def fallback_cursor(reply, *, text_limit=1800):
     previous=reply.context if isinstance(reply.context,DeliveryCursor) else None
     query=previous.query_context if previous else reply.context
-    chunks=text_chunks(reply.text)
+    chunks=text_chunks(reply.text,limit=text_limit-100)
     pages=tuple(PreparedReply(t,context=query if i==len(chunks)-1 else None,parse_origin=reply.parse_origin,
                               processing_route=reply.processing_route,evidence=reply.evidence) for i,t in enumerate(chunks))
     pages+=previous.remaining if previous else ()
@@ -130,7 +130,7 @@ def text_chunks(text,limit=1700):
     return tuple(text[i:i+limit] for i in range(0,len(text),limit)) or ('',)
 
 
-def expand_replies(replies: list[PreparedReply], reserve: int = 0) -> list[PreparedReply]:
+def expand_replies(replies: list[PreparedReply], reserve: int = 0, *, text_limit=1800) -> list[PreparedReply]:
     """Budget a single ordered captured batch, including multi-command overflow."""
     pages=[]
     base=replies[0].context if len(replies)==1 and isinstance(replies[0].context,DeliveryCursor) else None
@@ -148,8 +148,8 @@ def expand_replies(replies: list[PreparedReply], reserve: int = 0) -> list[Prepa
                 part = replace(part, evidence=reply.evidence)
             if part.fallback_texts:
                 part=replace(part,text='\n'.join(part.fallback_texts),fallback_texts=())
-            if part.image is None and len(part.text)>1800:
-                chunks=text_chunks(part.text)
+            if part.image is None and len(part.text)>text_limit:
+                chunks=text_chunks(part.text,limit=text_limit-100)
                 pages.extend(PreparedReply(t,context=part.context if i==len(chunks)-1 else None,
                                            business_status=part.business_status, command_index=part.command_index,
                                            parse_origin=part.parse_origin, processing_route=part.processing_route,
@@ -163,7 +163,7 @@ def expand_replies(replies: list[PreparedReply], reserve: int = 0) -> list[Prepa
         # A continuation suffix consumes text capacity too; preserve every character.
         bounded=[]
         for page in pages:
-            chunks=text_chunks(page.text) if page.image is None and len(page.text)>1700 else (page.text,)
+            chunks=text_chunks(page.text,limit=text_limit-100) if page.image is None and len(page.text)>text_limit-100 else (page.text,)
             bounded.extend(replace(page,text=text,context=page.context if index==len(chunks)-1 else None)
                            for index,text in enumerate(chunks))
         pages=bounded
@@ -182,7 +182,7 @@ def expand_replies(replies: list[PreparedReply], reserve: int = 0) -> list[Prepa
     return expanded
 
 
-def reserve_progress_slot(parts, *, overflow=False):
+def reserve_progress_slot(parts, *, overflow=False, text_limit=1800):
     """Rebudget captured pages after a hint, keeping each page's entity context."""
     if not parts: return []
     first=parts[0]
@@ -199,7 +199,7 @@ def reserve_progress_slot(parts, *, overflow=False):
         origin='mixed' if len(pages)>1 else first.parse_origin
     batch=PreparedReply('',pages=tuple(pages),parse_origin=origin,
                         context=DeliveryCursor(None,(),0,len(pages),origin=origin))
-    return expand_replies([batch],reserve=1)
+    return expand_replies([batch],reserve=1,text_limit=text_limit)
 
 
 class QueryGate:
@@ -306,7 +306,7 @@ class ReplySequencer:
 
 
 async def prepare_commands(commands: list[str], gate: "QueryGate", repository: SongRepository,
-                           ai_parser: AIQueryParser, limit: int, *, observe=None, prepare=None) -> tuple[list["PreparedReply"], int]:
+                           ai_parser: AIQueryParser, limit: int, *, observe=None, prepare=None, text_limit=1800) -> tuple[list["PreparedReply"], int]:
     """Prepare several commands concurrently and return replies in asked order.
 
     Preparation is bounded by `gate`, so a burst queues instead of swamping the
@@ -336,7 +336,7 @@ async def prepare_commands(commands: list[str], gate: "QueryGate", repository: S
         if result:
             replies.append(replace(result, command_index=index))
     overflow = max(0, len(commands) - limit)
-    return expand_replies(replies, reserve=int(bool(overflow))), overflow
+    return expand_replies(replies, reserve=int(bool(overflow)),text_limit=text_limit), overflow
 
 
 def image_from_result(result: QueryResult | CommandResult | None,
