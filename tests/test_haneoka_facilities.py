@@ -31,6 +31,72 @@ def release(server="jp"):
                 releaseId="r-0123456789abcdef0123", sourceId="synthetic-source.1")
 
 
+class NoticeContractTests(unittest.TestCase):
+    def notice(self):
+        return dict(server='jp',available=True,fetchedAt='2026-10-25T08:00:00Z',actualSourceLocale='ja',
+                    id=71,title='合成公告',startAt=100,endAt=200,updatedAt=0,
+                    html='<head>hidden</head><p>正文 &amp; 说明</p><script>secret()</script><img src="https://evil.invalid/track">')
+
+    def reader(self, value):
+        import json
+        from datetime import datetime
+        from ournotes_bot.sources.haneoka.notices import Notices
+        self.calls=[]
+        def fetch(url,limit,timeout):
+            self.calls.append((url,limit,timeout))
+            return json.dumps(value).encode(),{'x-haneoka-announcement-fetched-at':value.get('fetchedAt')}
+        return Notices(fetch=fetch,clock=lambda:datetime.fromisoformat('2026-10-25T09:00:00+00:00').timestamp())
+
+    def test_notice_html_is_text_and_images_never_fetched(self):
+        result=self.reader(self.notice()).read('jp',time.monotonic()+5,71)
+        self.assertEqual(result['rows'][0]['text'],'正文 & 说明')
+        self.assertTrue(result['rows'][0]['images_not_read']);self.assertEqual(len(self.calls),1)
+        self.assertTrue(self.calls[0][0].startswith('https://haneoka.org/api/v1/announcements/71?'))
+        self.assertLessEqual(self.calls[0][2],5)
+
+    def test_notice_identity_unavailable_stale_and_language_fail_closed(self):
+        for change in (dict(server='intl'),dict(available=False),dict(id=72),dict(actualSourceLocale='en'),
+                       dict(fetchedAt='2026-10-23T08:00:00Z'),dict(fetchedAt='2026-10-25T12:00:00Z'),
+                       dict(startAt=200,endAt=100),dict(id=True),dict(html=None)):
+            with self.subTest(change=change),self.assertRaises((ChartDataError,ValueError)):
+                self.reader({**self.notice(),**change}).read('jp',time.monotonic()+5,71)
+
+    def test_notice_budget_expiry_and_truncation_are_explicit(self):
+        reader=self.reader(self.notice())
+        with self.assertRaises(ChartDataError):reader.read('jp',time.monotonic()-1,71)
+        self.assertEqual(self.calls,[])
+        value=self.notice();value['html']='<p>'+'长'*2600+'</p>'
+        row=self.reader(value).read('jp',time.monotonic()+5,71)['rows'][0]
+        self.assertEqual(len(row['text']),2400);self.assertTrue(row['text_truncated'])
+
+    def test_notice_duplicate_and_foreign_header_rejected(self):
+        value=self.notice();value['announcements']=[dict(value),dict(value)]
+        with self.assertRaises(ChartDataError):self.reader(value).read('jp',time.monotonic()+5)
+        from ournotes_bot.sources.haneoka.notices import Notices
+        import json
+        reader=Notices(fetch=lambda *args:(json.dumps(self.notice()).encode(),{}))
+        with self.assertRaises(ChartDataError):reader.read('jp',time.monotonic()+5,71)
+
+    def test_catalog_probe_checks_both_releases_and_deadline(self):
+        import json
+        from ournotes_bot.sources.haneoka.notices import verify_catalog
+        calls=[]
+        def fetch(url,limit,timeout):
+            server='jp' if '/jp/' in url else 'intl';ident=release(server)
+            calls.append((server,timeout))
+            return json.dumps(ident).encode(),{'x-haneoka-release-id':ident['releaseId'],
+                                              'x-haneoka-source-id':ident['sourceId']}
+        metadata=dict(data_version=release()['releaseId'],text_version=release()['releaseId'])
+        verify_catalog(metadata,time.monotonic()+5,fetch)
+        self.assertEqual([row[0] for row in calls],['jp','intl'])
+        self.assertTrue(all(0<row[1]<=5 for row in calls))
+        with self.assertRaises(ChartDataError):
+            verify_catalog({**metadata,'text_version':'different'},time.monotonic()+5,fetch)
+        size=len(calls)
+        with self.assertRaises(ChartDataError):verify_catalog(metadata,time.monotonic()-1,fetch)
+        self.assertEqual(len(calls),size)
+
+
 class Response:
     status = 200
     headers = {"X-Haneoka-Release-Id": release()["releaseId"]}

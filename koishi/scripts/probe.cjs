@@ -414,6 +414,10 @@ async function main() {
         assert.equal(decisions[1].allowed,false)
         if(revoked!=='channel-ignore')assert.ok(reads>oldReads,'fresh user database read')
         await receiver.authorizeModel(job,challenge);assert.equal(decisions.length,2)
+        for(const id of ['e','f']) await receiver.authorizeModel(job,{...challenge,attempt_id:id.repeat(32)})
+        assert.equal(decisions.length,4);assert.ok(decisions.slice(1).every(d=>!d.allowed))
+        await assert.rejects(()=>receiver.authorizeModel(job,{...challenge,attempt_id:'1'.repeat(32)}),/model_attempt_limit/)
+        assert.equal(decisions.length,4)
         await assert.rejects(()=>receiver.authorizeModel(job,{...challenge,request_id:'another'}),/model_permission_binding/)
         assert.equal(env.calls.length,0)
       }finally{await receiver.dispose();await fork.dispose();await env.ctx.stop()}

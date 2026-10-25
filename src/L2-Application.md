@@ -35,6 +35,7 @@ CLI 模式与组合、配置根/数据路径、包身份；为多个系统域提
 - [application/model_admin.py](ournotes_bot/application/model_admin.py)：后端受保护配置写入、管理意图审计和明确确认的能力探测；只返回元数据，复用模型调度与账务。控制台和独立受信进程协议见 [包 4](../docs/QUERY_CHAT_PACKAGE4.md)。
 
 - [application/model_runtime.py](ournotes_bot/application/model_runtime.py)：后端原生工具编排、当前许可、证据生成和上下文核验；[model_config.py](ournotes_bot/application/model_config.py) 固定受信配置／身份快照，v3 允许有核验证据的指定群全员准入，跨场景身份仍须显式绑定；[usage_ledger.py](ournotes_bot/application/usage_ledger.py) 独占写精确预留与结算。纯合同在 [domain/model_calls.py](ournotes_bot/domain/model_calls.py)，公开说明见 [包 3](../docs/QUERY_CHAT_PACKAGE3.md)。
+- [application/site_lookup.py](ournotes_bot/application/site_lookup.py)：U3 请求内目录候选、详情及已知关联导航，最多三次只读取证；固定版本／公告快照、有界证据和短期 handle，不接受模型 URL、不写百科。`model_runtime.py` 仅在此流程开放四次逐次许可，网关同步硬上限，仍受原 30 秒执行预算约束。
 
 - [application/knowledge_service.py](ournotes_bot/application/knowledge_service.py)：独占知识目录与状态库，先提交停用记录，再发布候选索引；排队／生成／交付消费者通过完整证据租约重验。后端组合与 RuntimeTasks 接入独立观察和重建任务；[knowledge_cli.py](ournotes_bot/application/knowledge_cli.py) 提供脱离游戏初始化的校验、导入和检索入口。格式和内容交付见 [包 2B](../docs/QUERY_CHAT_PACKAGE2B.md)。
 

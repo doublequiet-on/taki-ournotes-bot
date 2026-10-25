@@ -56,6 +56,7 @@ class Work:
     anchor: object = None
     missing_anchor: bool = False
     model_attempts: int = 0
+    model_attempt_limit: int = 2
     content_deadline: float = field(default_factory=lambda: time.monotonic()+600)
     model_snapshot: object = None
     model_subject: str | None = None

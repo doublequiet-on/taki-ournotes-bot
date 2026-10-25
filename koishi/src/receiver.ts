@@ -229,7 +229,7 @@ export class Receiver {
       || Object.entries(scope).some(([k,v])=>challenge.scope[k]!==v)) throw new BackendError('model_permission_binding')
     if(job.permissionAttempts.has(challenge.attempt_id)) return
     job.permissionAttempts.add(challenge.attempt_id)
-    if(job.permissionAttempts.size>2) throw new BackendError('model_attempt_limit')
+    if(job.permissionAttempts.size>4) throw new BackendError('model_attempt_limit')
     // Re-evaluate current plugin scope/platform permission and current management state.
     // observeUser reuses the old Session's loaded fields. A new Session forces a
     // fresh database read; reusing the admitted Session would miss a revoked user.

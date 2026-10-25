@@ -73,6 +73,12 @@ for capability in CAPABILITIES.values():
     TOOLS[name]=Tool(name,capability.description+'；条件须保留原句，缺省 page=1。',
                      obj({k:PARAMETERS[k] for k in capability.allowed_parameters}),capability.id)
 TOOLS.update({
+    'site_search':Tool('site_search','在已准入站点查目录候选：Haneoka 固定主资料仅日服；公告支持日服或国际服英文镜像。query只能取原句关键词，无关键词填空；page每次也占一步。最多三步查证，搜索后按返回handle读取详情及其中关联。不能读任意URL、跨服、历史版本、剧情或玩家帖子；明确已有直接查询优先原工具。',
+        obj({'resource':enum(('songs','cards','support_cards','characters','events','gachas','notices')),
+             'server':enum(('jp','intl')),'query':string(80),'page':{'type':'integer','minimum':1,'maximum':10}},
+            ('resource','server','query')),'site'),
+    'site_read':Tool('site_read','读取本轮站内搜索或关联返回的handle；不能猜ID或跨请求复用handle。',
+        obj({'handle':string(20)},('handle',)),'site'),
     'chat_response':Tool('chat_response','日常聊天、玩笑、情绪或主观偏好比较，不限固定句式；没有日期数值、机制、剧情或其他待核实事实。topic选最贴近的一类，普通比较用general。followup=true只用于已确认聊天的连续追问，新话题false。混合事实问题必须选择取证工具，生成时同时承接主观部分。',
         obj({'topic':enum(('general','band','music','identity','tone','praise','comfort')),'followup':{'type':'boolean'}},('topic','followup')),'social'),
     'clarify_term':Tool('clarify_term','仅当一个别名或对象确实不清楚时，核对该词；term必须逐字取自当前原句。不能因用户聊天或比较就要求名称ID。',

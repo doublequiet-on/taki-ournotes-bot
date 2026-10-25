@@ -122,6 +122,8 @@ class WeightedUsageTests(unittest.TestCase):
                           ('chat_response','{"topic":"general","followup":false,"url":"https://x"}'),
                           ('chat_response','{"topic":"invented","followup":false}'),
                           ('chat_response','{"topic":"general","followup":"false"}'),
+                          ('site_read','{"handle":"item1","url":"https://evil.invalid"}'),
+                          ('site_search','{"resource":"files","server":"jp","query":"secret"}'),
                           ('clarify_term','{"term":"x","answer":"invented"}')]:
             with self.assertRaises(ModelError): validate_call(ToolCall('c',name,args))
 
@@ -446,6 +448,97 @@ class NativeRuntimeTests(Fixture,unittest.IsolatedAsyncioTestCase):
         return [AttemptResult('ok',Usage(10,0,2,None,12,'known'),
                     (ToolCall('c','chat_response',json.dumps(dict(topic=topic,followup=followup))),)),
                 AttemptResult('ok',Usage(10,0,2,None,12,'known'),text=text)]
+
+    def site_responses(self, calls, text='根据 Haneoka 固定版本资料，找到了对应歌曲。'):
+        from ournotes_bot.domain.model_calls import AttemptResult,ToolCall,Usage
+        return [AttemptResult('ok',Usage(10,0,2,None,12,'known'),(ToolCall('c'+str(i),name,json.dumps(args)),))
+                for i,(name,args) in enumerate(calls)]+[AttemptResult('ok',Usage(10,0,2,None,12,'known'),text=text)]
+
+    async def test_site_search_read_and_related_are_bounded_and_individually_permitted(self):
+        from ournotes_bot.domain.info_catalog import ActivityInfo
+        self.repo.metadata.update(data_source='haneoka',data_version='r-fixture',text_version='r-text',
+                                  info_catalog_available={'activities':True})
+        self.repo.activities=(ActivityInfo(1,'合成活动',{},song_ids=(100001,)),)
+        self.client.request.side_effect=self.site_responses([
+            ('site_search',dict(resource='events',server='jp',query='合成活动')),
+            ('site_read',dict(handle='item1')),('site_read',dict(handle='item2'))])
+        with patch('ournotes_bot.application.site_lookup.verify_catalog') as verify:
+            plan,attempts=await self.prepare_native('/问 去站内找合成活动的关联歌曲')
+        self.assertEqual(plan['parts'][0]['business_status'],'success');self.assertEqual(len(attempts),4)
+        verify.assert_called_once();self.assertEqual(self.client.request.await_count,4)
+        self.assertTrue(all(self.backend.model_runtime.usage.get(a)['state']=='settled' for a in attempts))
+        self.event(plan,'intent');self.event(plan,'ack')
+        anchor=self.backend.conversations.resolve(self.backend.works[plan['delivery_id']].request)
+        self.assertIn('合成曲100001',anchor.context.facts);self.assertIn('r-fixture',anchor.context.facts)
+        self.repo.current_query_view.assert_not_called()
+
+    async def test_site_third_permission_denial_does_not_make_third_http(self):
+        self.repo.metadata.update(data_source='haneoka',data_version='r-fixture',text_version='r-text')
+        self.client.request.side_effect=self.site_responses([
+            ('site_search',dict(resource='songs',server='jp',query='合成曲100001')),
+            ('site_read',dict(handle='item1'))])
+        with patch('ournotes_bot.application.site_lookup.verify_catalog'):
+            plan,attempts=await self.prepare_native('/问 去站内找合成曲100001',allow=lambda n:n<3)
+        self.assertEqual(plan['parts'][0]['business_status'],'policy_denied')
+        self.assertEqual(len(attempts),3);self.assertEqual(self.client.request.await_count,2)
+        self.assertEqual(self.backend.model_runtime.usage.get(attempts[-1])['state'],'released')
+
+    async def test_site_unknown_handle_and_cross_server_cannot_fetch(self):
+        for seq,call in enumerate((('site_read',dict(handle='item9')),
+                ('site_search',dict(resource='songs',server='intl',query='合成曲'))),1):
+            self.client.request.side_effect=self.site_responses([call])
+            with patch('ournotes_bot.application.site_lookup.verify_catalog') as verify:
+                plan,attempts=await self.prepare_native('/问 去站内找合成曲',seq=seq)
+            self.assertIn(plan['parts'][0]['business_status'],('query_entity_mismatch','query_server_mismatch'))
+            self.assertEqual(len(attempts),1);verify.assert_not_called()
+
+    async def test_site_fourth_operation_cannot_get_another_model_call(self):
+        self.repo.metadata.update(data_source='haneoka',data_version='r-fixture',text_version='r-text')
+        self.client.request.side_effect=self.site_responses([
+            ('site_search',dict(resource='songs',server='jp',query='合成曲')),
+            ('site_read',dict(handle='item1')),('site_read',dict(handle='item2')),
+            ('site_read',dict(handle='item3'))])
+        with patch('ournotes_bot.application.site_lookup.verify_catalog'):
+            plan,attempts=await self.prepare_native('/问 去站内找合成曲')
+        self.assertEqual(plan['parts'][0]['business_status'],'model_attempt_limit')
+        self.assertEqual(len(attempts),4);self.assertEqual(self.client.request.await_count,4)
+
+    async def test_site_failure_is_not_replaced_by_another_source(self):
+        from ournotes_bot.sources.errors import ChartDataError
+        self.repo.metadata.update(data_source='haneoka',data_version='r-fixture',text_version='r-text')
+        self.client.request.side_effect=self.site_responses([('site_search',dict(resource='songs',server='jp',query='合成曲'))])
+        with patch('ournotes_bot.application.site_lookup.verify_catalog',side_effect=ChartDataError('changed')):
+            plan,attempts=await self.prepare_native('/问 去站内找合成曲')
+        self.assertEqual(plan['parts'][0]['business_status'],'source_unavailable');self.assertEqual(len(attempts),1)
+
+    def test_site_notice_changed_snapshot_and_expired_budget_fail_closed(self):
+        import time
+        from ournotes_bot.application.site_lookup import SiteLookup
+        from ournotes_bot.domain.model_calls import ModelError
+        notices=Mock()
+        base=dict(source='Haneoka',server='jp',language='ja',observed_at='2026-10-25T08:00:00Z',
+                  rows=[dict(id=71,title='合成公告',startAt=100,endAt=200,updatedAt=None)])
+        notices.read.side_effect=[base,{**base,'observed_at':'2026-10-25T08:01:00Z'}]
+        session=SiteLookup(self.repo,'合成公告',notices=notices)
+        session.execute('site_search',dict(resource='notices',server='jp',query='合成公告'),time.monotonic()+5)
+        with self.assertRaisesRegex(ModelError,'source_unavailable'):
+            session.execute('site_read',dict(handle='item1'),time.monotonic()+5)
+        self.assertEqual(len(session.evidence),1)
+        with self.assertRaisesRegex(ModelError,'execution_timeout'):
+            session.execute('site_read',dict(handle='item1'),time.monotonic()-1)
+        self.assertEqual(notices.read.call_count,2)
+
+    def test_site_evidence_budget_includes_join_separators(self):
+        import time
+        from ournotes_bot.application.site_lookup import SiteLookup
+        from ournotes_bot.domain.model_calls import ModelError
+        self.repo.metadata.update(data_source='haneoka',data_version='r-fixture',text_version='r-text')
+        session=SiteLookup(self.repo,'100001',verify=Mock())
+        args=dict(resource='songs',server='jp',query='100001')
+        text=session.execute('site_search',args,time.monotonic()+5)
+        session.evidence=['x'*(6000-len(text))]
+        with self.assertRaisesRegex(ModelError,'model_input_too_large'):
+            session.execute('site_search',args,time.monotonic()+5)
 
     async def test_semantic_chat_comparisons_get_two_separate_permits(self):
         for seq,question in enumerate(('原神牛逼还是鸣潮牛逼','随便聊聊，你站哪边','今天只想摸鱼'),1):
