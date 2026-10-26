@@ -195,11 +195,9 @@ def _calendar(server, mode, repository, now):
             if notice_note:
                 lines.append(notice_note)
     label = '日服' if server == 'jp' else '国际服（台服）'
-    notes = list(footer(catalog, diagnostics=False))
-    notes[0] = '资料来源：Haneoka ' + label
-    if calendar:
-        notes.append('资料版本：' + calendar.release)
-    text = '\n'.join((label + ' · 活动日程', *lines, *notes))
+    if catalog.cache_state == 'stale':
+        lines.append('当前使用旧缓存，时间可能已有调整。')
+    text = '\n'.join((label + ' · 活动日程', *lines))
     return InfoAnswer(text, evidence_expires_at=evidence_expires_at)
 
 

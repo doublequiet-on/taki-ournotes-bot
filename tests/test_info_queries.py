@@ -82,6 +82,8 @@ class InformationQueryTests(unittest.TestCase):
         repo = Repository(catalog(activities=(ended,)))
         result = execute_activity('日程', repo, now=NOW)
         self.assertIn('最近一期《上一期》已于', result.text)
+        for metadata in ('资料来源', '资料版本', '本机获取', 'r-test-release'):
+            self.assertNotIn(metadata, result.text)
         self.assertIn('还不能确定下一期', result.text)
         self.assertNotIn('清 CP', result.text)
         future = activity(2, '下一期', NOW+50, NOW+100)
@@ -105,7 +107,8 @@ class InformationQueryTests(unittest.TestCase):
         for alias in ('台服', '国际服', 'intl', 'tw', 'en'):
             result = execute_activity(alias+' 日程', repo, now=NOW)
             self.assertIn('国际一期', result.text); self.assertNotIn('日服一期', result.text)
-            self.assertIn('r-intl', result.text)
+            self.assertIn('国际服（台服）', result.text)
+            self.assertNotIn('r-intl', result.text)
         repo.snapshot = catalog(activities=(jp,))
         self.assertEqual(execute_activity('国际服 日程', repo, now=NOW).status, 'data_unavailable')
         repo.snapshot = catalog(activities=(jp, activity(3, '重叠')))
