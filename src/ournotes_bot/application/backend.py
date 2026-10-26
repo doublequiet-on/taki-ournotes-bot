@@ -733,14 +733,14 @@ def create_app(backend, token, initialize=None):
     async def lifetime(app):
         async def load():
             try:
-                if initialize is not None: await asyncio.to_thread(initialize)
+                if initialize is not None: await finish_thread(initialize)
                 if not backend.closing:
                     if backend.runtime_tasks: backend.runtime_tasks.start()
                     if backend.model_runtime: backend.model_runtime.start()
                     backend.ready = True
             except Exception as exc:
                 logger.error('Initialization failed type=%s', type(exc).__name__)
-        task = asyncio.create_task(load())
+        task = asyncio.create_task(load(), name='backend-initialize')
         async def reaper():
             try:
                 while True:
@@ -760,12 +760,24 @@ def create_app(backend, token, initialize=None):
         expiry = asyncio.create_task(reaper())
         backend.reaper_task = expiry
         observation = asyncio.create_task(flush_observation())
-        yield
-        backend.closing = True
-        expiry.cancel()
-        observation.cancel()
-        await asyncio.gather(expiry, observation, return_exceptions=True)
-        await task  # initialization threads cannot be killed by canceling HTTP.
-        await backend.close()
+        async def shutdown():
+            backend.closing = True
+            expiry.cancel()
+            observation.cancel()
+            try:
+                await asyncio.gather(expiry, observation, return_exceptions=True)
+            finally:
+                # Even a separately cancelled initializer owns its real thread
+                # until finish_thread settles. Close stores only afterwards.
+                try:
+                    await task
+                finally:
+                    await backend.close()
+        try:
+            yield
+        finally:
+            # HTTP cleanup is a waiter, not the owner of the shutdown sequence.
+            # Cancellation must not skip initializer draining or store closure.
+            await drain_task(asyncio.create_task(shutdown()))
     app.cleanup_ctx.append(lifetime)
     return app

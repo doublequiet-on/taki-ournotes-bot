@@ -268,6 +268,64 @@ class AdminTests(unittest.IsolatedAsyncioTestCase):
     async def test_retire_then_close_drains_repeated_cancellation_before_storage_close(self):
         await self.assert_thread_drain_on_close('retire')
 
+    async def test_http_cleanup_cancellation_still_closes_after_observation_thread(self):
+        await self.assert_http_cleanup_drain('observation')
+
+    async def test_http_cleanup_cancellation_still_closes_after_initializer(self):
+        await self.assert_http_cleanup_drain('initialize')
+
+    async def test_cancelled_initializer_retains_thread_until_http_cleanup_closes(self):
+        await self.assert_http_cleanup_drain('cancelled-initialize')
+
+    async def assert_http_cleanup_drain(self, phase):
+        import threading
+        entered, release, ended = threading.Event(), threading.Event(), threading.Event()
+        closed = Mock()
+        self.backend.data_owner = SimpleNamespace(close=closed)
+
+        def worker():
+            entered.set()
+            release.wait(5)
+            closed.assert_not_called()
+            ended.set()
+
+        initialize = worker if phase != 'observation' else None
+        app = create_app(self.backend, 'x'*32, initialize=initialize)
+        lifetime = app.cleanup_ctx[0](app)
+        shutdown = None
+        with patch.object(self.backend.operations, 'flush_notices',
+                          side_effect=worker if phase == 'observation' else lambda: None):
+            try:
+                await lifetime.__anext__()
+                self.assertTrue(await asyncio.to_thread(entered.wait, 2))
+                if phase == 'cancelled-initialize':
+                    initializer = next(task for task in asyncio.all_tasks() if task.get_name() == 'backend-initialize')
+                    initializer.cancel()
+                    await asyncio.sleep(0)
+                    initializer.cancel()
+                    await asyncio.sleep(0)
+                    self.assertFalse(initializer.done())
+                shutdown = asyncio.create_task(lifetime.__anext__())
+                # The real cleanup owner has reached its maintenance drain.
+                await asyncio.gather(self.backend.reaper_task, return_exceptions=True)
+                shutdown.cancel()
+                await asyncio.sleep(0)
+                shutdown.cancel()
+                await asyncio.sleep(0)
+                self.assertFalse(shutdown.done())
+                self.assertFalse(ended.is_set())
+                closed.assert_not_called()
+            finally:
+                release.set()
+                if shutdown is not None:
+                    with self.assertRaises(asyncio.CancelledError):
+                        await shutdown
+                else:
+                    await lifetime.aclose()
+        self.assertTrue(ended.is_set())
+        self.assertTrue(self.backend._close_task.done())
+        closed.assert_called_once()
+
     async def assert_thread_drain_on_close(self, trigger):
         import threading
         client = None
