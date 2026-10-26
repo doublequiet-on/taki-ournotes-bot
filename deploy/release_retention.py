@@ -134,7 +134,6 @@ def plan(config, protected=(), *, references=None):
             item['identities'][str(path)] = identity
     manifests = sorted((state / 'releases').glob('*.json'), key=lambda p: (p.stat().st_mtime_ns, p.name), reverse=True)
     # Validate ownership before interpreting any manifest-provided paths.
-    retained = 0
     for path in manifests:
         record = read_record(path)
         release = record.get('release', {})
@@ -147,9 +146,9 @@ def plan(config, protected=(), *, references=None):
         add(item, root)
         item['records'].append(str(path))
         item['python_hash'] = record.get('bundle_sha256')
-        if record.get('prepared') is True and retained < 3:
-            protect(sha, 'recent')
-            retained += 1
+        item['python_ready'] = (record.get('prepared') is True and
+                                all((root / name).is_dir() and not (root / name).is_symlink()
+                                    for name in ('code', 'venv')))
     # New staging records remain after rename, proving ownership independently
     # from the Python manifest; older pairs are accepted only after full checking.
     for path in (state / 'combinations').glob('*.json'):
@@ -189,7 +188,11 @@ def plan(config, protected=(), *, references=None):
                 raise Rejected('cleanup_directory_replaced')
         item['records'] = sorted(set(item['records']) | set(intent['records']))
         item['intent'] = str(path)
+        item['intent_paths'] = set(intent['paths'])
+        item['intent_records'] = set(intent['records'])
+    retained = 0
     for sha, item in rows.items():
+        pair_ready = combos is None
         if combos is not None:
             root = combos / sha
             if root.exists() or root.is_symlink():
@@ -203,9 +206,21 @@ def plan(config, protected=(), *, references=None):
                             manifest = verify_combination(root, sha, expected)
                             if owner and manifest_digest(manifest) != owner.get('manifest_sha256'):
                                 raise ValueError('manifest changed')
+                            pair_ready = True
                         except (OSError, ValueError, KeyError, TypeError):
                             item['reasons'].append('combination_invalid')
                 add(item, root)
+        if 'intent' in item:
+            # An interrupted deletion owns only its original generation. A new
+            # stage, pairing, or owner record must not inherit that permission.
+            if (set(item['paths']) - item['intent_paths'] or
+                    set(item['records']) - item['intent_records']):
+                item['reasons'].append('cleanup_ownership_changed')
+        elif item.get('python_ready') and pair_ready and retained < 3:
+            # Python seals its manifest before Koishi extraction starts. Only a
+            # complete pair consumes a recent slot; abandoned stages can recover.
+            protect(sha, 'recent')
+            retained += 1
         reasons = guards.get(sha, set())
         if current_target is not None and _inside(current_target, base / 'releases' / sha):
             reasons.add('current_path')
@@ -217,7 +232,7 @@ def plan(config, protected=(), *, references=None):
             reasons.add('state_unavailable')
         item['reasons'] = sorted(set(item['reasons']) | reasons)
         item['action'] = 'keep' if item['reasons'] else 'delete'
-        for key in ('python_hash', 'combination_owner'):
+        for key in ('python_hash', 'python_ready', 'combination_owner', 'intent_paths', 'intent_records'):
             item.pop(key, None)
     known = {p for item in rows.values() for p in item['paths']}
     for parent in (base / 'releases', combos):

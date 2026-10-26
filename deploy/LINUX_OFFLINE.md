@@ -51,7 +51,7 @@ ONNX Runtime初始化需要CPU信息。启用附加包的沙箱把宿主 `/proc`
 
 `release_retention.py` 为 Python release、Koishi 展开目录及其清单生成统一回收计划。`python3 linux_backend.py cleanup-plan` 只读取状态、清单和 `/proc` 的 cwd/exe 引用，不停服务、不创建后端目录、不执行清理。输出每个版本的保护原因、拟删除路径和预计字节；这是一份观察，不能拿旧清单直接删除。
 
-自动清理由既有更新事务在 `update.lock` 内调用：默认保留最近三个已准备版本，另保护 current、previous、baseline、未完成事务的所有版本、`retention_pins` 配置中的完整 SHA 及活进程引用。进程引用不可确认时不回收版本。删除前重新计算计划，并在 `state_dir/cleanup-intents` 保存归属及目录身份；中途中断后只继续同一目录，不接管被替换的目录。清理失败沿用 `cleanup_failed` 记录，不回退健康版本。
+自动清理由既有更新事务在 `update.lock` 内调用：默认保留最近三个完整配对版本；Python 已准备但 Koishi 尚未发布的 stage 不占这个名额，另保护 current、previous、baseline、未完成事务的所有版本、`retention_pins` 配置中的完整 SHA 及活进程引用。进程引用不可确认时不回收版本。删除前重新计算计划，并在 `state_dir/cleanup-intents` 保存归属及目录身份；中途中断后只继续同一目录，不接管被替换的目录或意图生成后新增的路径/归属记录。清理失败沿用 `cleanup_failed` 记录，不回退健康版本。
 
 新暂存的组合在 `state_dir/combinations` 留有 root 管理的所有权记录，覆盖展开前、rename 后及中断恢复。旧组合只有与受管 Python 清单配对、完整内容校验通过时才参与回收；没有证明的孤立组合或旧临时 stage 只报告。下载 ZIP 仍沿用其独立缓存策略，清理不改素材账本、业务数据或备份恢复语义。
 

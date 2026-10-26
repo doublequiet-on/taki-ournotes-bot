@@ -738,6 +738,63 @@ class LinuxBackendTests(unittest.TestCase):
         self.assertTrue(all(r['action']=='keep' for r in report['entries']))
         self.assertTrue(all('process_references_unknown' in r['reasons'] for r in report['entries']))
 
+    def test_interrupted_combination_stage_does_not_consume_recent_pair_slot(self):
+        from deploy import release_retention as retention
+        combos, releases = self.retention_fixture()
+        sha = '7'*40
+        candidate = self.candidate(sha)  # Python is sealed before Koishi staging.
+        stage = combos / ('.'+sha+'-interrupted'); stage.mkdir()
+        (stage/'partial').write_text('interrupted extraction')
+        owners = self.backend.state/'combinations'; owners.mkdir()
+        owner = owners/(sha+'.json')
+        atomic_json(owner, dict(owner=retention.OWNER, commit=sha, destination=str(combos/sha),
+            phase='staging', stage=str(stage), python_sha256='e'*64, manifest_sha256='f'*64))
+        self.state(current=asdict(releases[5]), previous=releases[4],
+            transaction=dict(commit=sha,previous=asdict(releases[5]),candidate=asdict(candidate)))
+        report = retention.plan(self.config, references=(set(),True))
+        pending = next(row for row in report['entries'] if row['commit']==sha)
+        self.assertEqual(pending['action'],'keep')
+        self.assertIn('transaction',pending['reasons'])
+        self.assertNotIn('recent',pending['reasons'])
+        # Recovery clears the abandoned transaction before invoking cleanup.
+        self.state(current=asdict(releases[5]), previous=releases[4])
+        report = retention.plan(self.config, references=(set(),True))
+        self.assertEqual([row['commit'] for row in report['entries'] if 'recent' in row['reasons']],
+                         [str(number)*40 for number in (4,5,6)])
+        self.assertEqual(next(row for row in report['entries'] if row['commit']==sha)['action'],'delete')
+        live = retention.plan(self.config, references=({str(stage/'partial')},True))
+        self.assertIn('active_process',next(row for row in live['entries'] if row['commit']==sha)['reasons'])
+        self.config['retention_pins']=[sha]
+        pinned = retention.plan(self.config, references=(set(),True))
+        self.assertIn('pinned',next(row for row in pinned['entries'] if row['commit']==sha)['reasons'])
+        self.config['retention_pins']=[]
+        with patch.object(retention,'process_paths',return_value=(set(),True)):
+            retention.execute(self.config)
+        self.assertFalse(owner.exists())
+        self.assertFalse(stage.exists())
+        self.assertFalse(Path(candidate.code_dir).parent.exists())
+
+    def test_interrupted_delete_cannot_adopt_a_later_unowned_combination(self):
+        from deploy import release_retention as retention
+        combos, _ = self.retention_fixture()
+        root = combos/('1'*40)
+        (root/'node').unlink();(root/'combination.json').unlink();root.rmdir()
+        report = retention.plan(self.config,references=(set(),True))
+        entry = next(row for row in report['entries'] if row['commit']=='1'*40)
+        intents = self.backend.state/'cleanup-intents';intents.mkdir()
+        journal = intents/('1'*40+'.json')
+        atomic_json(journal,{key:entry[key] for key in ('commit','paths','records','identities')} |
+                    {'owner':retention.OWNER})
+        root.mkdir();(root/'unknown').write_text('arrived after deletion intent')
+        with patch.object(retention,'process_paths',return_value=(set(),True)):
+            resumed = next(row for row in retention.plan(self.config)['entries'] if row['commit']=='1'*40)
+            self.assertEqual(resumed['action'],'keep')
+            self.assertIn('cleanup_ownership_changed',resumed['reasons'])
+            retention.execute(self.config)
+        self.assertTrue((root/'unknown').exists())
+        self.assertTrue(journal.exists())
+        self.assertTrue(Path(entry['paths'][0]).exists())
+
     def test_retention_skips_invalid_pair_and_resumes_partial_delete(self):
         from deploy import release_retention as retention
         combos, releases = self.retention_fixture()
