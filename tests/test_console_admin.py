@@ -66,6 +66,96 @@ class ProjectionTests(unittest.TestCase):
             self.assertTrue(metrics.available)
 
 
+class LedgerCapacityTests(unittest.TestCase):
+    def setUp(self):
+        self.folder = tempfile.TemporaryDirectory()
+        self.addCleanup(self.folder.cleanup)
+        self.path = Path(self.folder.name)/'ledger.sqlite3'
+        self.now = 1_000_000
+        self.ledger = None
+        self.addCleanup(lambda: self.ledger.close() if self.ledger is not None else None)
+
+    def open(self, **limits):
+        self.ledger = Ledger(self.path, 'fixture', 'runtime', self.now, **limits)
+        return self.ledger
+
+    def admit(self, index, *, context='context', epoch='epoch', now=None):
+        now = self.now if now is None else now
+        request = SimpleNamespace(request_id=str(index), content_digest='digest', gateway_epoch=epoch,
+                                  context_id=context, ingress_seq=index, timestamp_ms=now*1000)
+        self.ledger.admit(request, 'runtime', 'delivery-'+str(index), now)
+
+    def test_defaults_and_legacy_capacity_remain_compatible(self):
+        ledger = self.open()
+        self.assertEqual(ledger.capacity_status()['limits'], {'requests':4096,'highwater':4096,'epochs':4096})
+        self.assertEqual(ledger.retention,86400)
+        ledger.close()
+        ledger = self.open(capacity=2,request_capacity=4)
+        self.assertEqual(ledger.capacity_status()['limits'], {'requests':4,'highwater':2,'epochs':2})
+
+    def test_invalid_limits_fail_before_creating_state(self):
+        for name in ('request','context','epoch'):
+            for value in (0,-1,True,1.5,'2',2**63):
+                with self.subTest(name=name,value=value), self.assertRaisesRegex(ProtocolError,'ledger_'+name+'_capacity_configuration'):
+                    self.open(**{name+'_capacity':value})
+                self.assertFalse(self.path.exists())
+                self.assertFalse(self.path.with_suffix('.lock').exists())
+
+    def test_request_context_and_epoch_gates_are_independent(self):
+        ledger = self.open(request_capacity=3,context_capacity=1,epoch_capacity=2)
+        self.assertTrue(ledger.register('epoch'))
+        self.admit(1)
+        self.admit(2)
+        with self.assertRaisesRegex(ProtocolError,'context_capacity'):
+            self.admit(3,context='another')
+        self.admit(3)
+        with self.assertRaisesRegex(ProtocolError,'ledger_capacity'):
+            self.admit(4)
+        self.assertTrue(ledger.register('next-epoch'))
+        self.assertFalse(ledger.register('next-epoch'))
+        self.assertEqual(ledger.capacity_status()['counts']['highwater'],0)
+        with self.assertRaisesRegex(ProtocolError,'retired_epoch'):
+            ledger.register('epoch')
+        with self.assertRaisesRegex(ProtocolError,'epoch_capacity'):
+            ledger.register('third-epoch')
+        with self.assertRaisesRegex(ProtocolError,'inactive_epoch'):
+            self.admit(4)
+        self.assertTrue(ledger.active('next-epoch'))
+        self.assertEqual(ledger.capacity_status()['reason_codes'], {'requests':'ledger_capacity','epochs':'epoch_capacity'})
+
+    def test_lower_limit_retains_facts_and_counts_beyond_history_projection(self):
+        ledger = self.open(request_capacity=3)
+        ledger.register('epoch')
+        for index in (1,2,3):
+            self.admit(index)
+            ledger.prepared('delivery-'+str(index),1)
+        ledger.intent('delivery-1','0','attempt')
+        ledger.finish('delivery-2','finished')
+        ledger.finish('delivery-3','finished')
+        ledger.close()
+        ledger = self.open(request_capacity=2)
+        self.assertEqual(len(ledger.admin_rows()),2)
+        before = list(ledger.db.iterdump())
+        status = ledger.capacity_status()
+        self.assertEqual(status['counts'], {'requests':3,'highwater':0,'epochs':1,'unresolved_requests':1,'unresolved_parts':1})
+        self.assertEqual(status['limits']['requests'],2)
+        self.assertTrue(status['at_capacity']['requests'])
+        self.assertEqual(before,list(ledger.db.iterdump()))
+        ledger.register('next-epoch')
+        with self.assertRaisesRegex(ProtocolError,'ledger_capacity'):
+            self.admit(4,epoch='next-epoch')
+        self.assertEqual(ledger.capacity_status()['counts']['requests'],3)
+        self.admit(4,epoch='next-epoch',now=self.now+86401)
+        self.assertIsNotNone(ledger.request('1'))
+        self.assertIsNone(ledger.request('2'))
+        self.assertIsNone(ledger.request('3'))
+        self.assertEqual(ledger.capacity_status()['counts']['requests'],2)
+        self.assertEqual(ledger.parts('delivery-1')[0]['status'],'uncertain')
+        self.assertTrue(ledger.ack('delivery-1','0','attempt','success','late-receipt'))
+        self.assertFalse(ledger.ack('delivery-1','0','attempt','success','late-receipt'))
+        self.assertEqual(ledger.capacity_status()['counts']['unresolved_requests'],0)
+
+
 class AdminTests(unittest.IsolatedAsyncioTestCase):
     async def test_model_admin_http_requires_epoch_and_keeps_secret_out_of_reads(self):
         from dataclasses import replace
@@ -155,6 +245,28 @@ class AdminTests(unittest.IsolatedAsyncioTestCase):
             if row['status']==status:return row
             await asyncio.sleep(.005)
         self.fail(f'fixture expected {status}, observed {row["status"]}')
+
+    async def test_capacity_diagnostics_and_request_replay_at_limit(self):
+        backend = Backend(self.repo,self.backend.parser,self.backend.settings,instance_id='fixture',app_id='app',
+                          ledger_path=self.root/'limited.sqlite3',clock=lambda:self.now,
+                          ledger_request_capacity=1,ledger_context_capacity=2,ledger_epoch_capacity=3)
+        self.addAsyncCleanup(backend.close)
+        backend.ready = True
+        backend.gate.prepare = AsyncMock(return_value=PreparedReply('fixture',business_status='success'))
+        await backend.register('epoch')
+        payload = self.payload()
+        first = await backend.submit(payload)
+        self.assertEqual((await backend.submit(payload))['delivery_id'],first['delivery_id'])
+        with self.assertRaisesRegex(ProtocolError,'request_conflict'):
+            await backend.submit({**payload,'body':'/查曲 fixture'})
+        with self.assertRaisesRegex(ProtocolError,'ledger_capacity'):
+            await backend.submit(self.payload(2))
+        before = list(backend.ledger.db.iterdump())
+        status = backend.admin.overview()['sections']['ledger']['data']
+        self.assertEqual(status['limits'], {'requests':1,'highwater':2,'epochs':3})
+        self.assertEqual(status['counts']['requests'],1)
+        self.assertEqual(status['reason_codes'], {'requests':'ledger_capacity'})
+        self.assertEqual(before,list(backend.ledger.db.iterdump()))
 
     async def test_read_does_not_expire_or_change_ledger_and_privacy(self):
         row=await self.admitted()

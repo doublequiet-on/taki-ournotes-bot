@@ -69,14 +69,17 @@ class Work:
 class Backend:
     def __init__(self, repository, parser, settings, *, instance_id, app_id, ledger_path,
                  clock=time.time, plan_capacity=64, byte_capacity=128_000_000, diagnostics_enabled=True,
-                 reference_profiles=()):
+                 reference_profiles=(), ledger_request_capacity=4096,
+                 ledger_context_capacity=4096, ledger_epoch_capacity=4096):
         require(identity(instance_id) and identity(app_id), 'configured_identity')
         self.repository, self.parser, self.settings = repository, parser, settings
         self.instance_id, self.app_id, self.clock = instance_id, app_id, clock
         self.runtime = uuid.uuid4().hex
         self.code_digest = hashlib.sha256(b''.join((Path(__file__).parent/name).read_bytes()
             for name in CODE_FILES)).hexdigest()
-        self.ledger = Ledger(ledger_path, instance_id+'\0'+app_id, self.runtime, clock())
+        self.ledger = Ledger(ledger_path, instance_id+'\0'+app_id, self.runtime, clock(),
+                             request_capacity=ledger_request_capacity, context_capacity=ledger_context_capacity,
+                             epoch_capacity=ledger_epoch_capacity)
         self.diagnostics = Diagnostics(Path(ledger_path).with_name('diagnostics-v1.sqlite3'), enabled=diagnostics_enabled)
         self.admin = Admin(self)
         self.operations = Operations(Path(ledger_path).with_name('operations-v1.sqlite3'), instance_id+'\0'+app_id, clock=clock)
