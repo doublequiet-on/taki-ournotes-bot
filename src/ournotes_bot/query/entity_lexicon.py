@@ -15,6 +15,8 @@ import os
 import re
 import sys
 import unicodedata
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass
 from pathlib import Path
 from threading import RLock
@@ -61,6 +63,30 @@ _failures: dict[Path, str] = {}
 _logger = logging.getLogger(__name__)
 
 
+@dataclass(frozen=True)
+class AliasSnapshot:
+    entries: dict
+    version: int
+    status: str | None
+
+
+_active_aliases: ContextVar[AliasSnapshot | None] = ContextVar('query_alias_snapshot', default=None)
+
+
+@contextmanager
+def alias_scope(*, enabled=True):
+    """Use one effective alias file snapshot throughout a logical query."""
+    if not enabled or _active_aliases.get() is not None:
+        yield
+        return
+    snapshot = AliasSnapshot(*_load_aliases())
+    token = _active_aliases.set(snapshot)
+    try:
+        yield
+    finally:
+        _active_aliases.reset(token)
+
+
 def _unique_object(pairs):
     result = {}
     for key, value in pairs:
@@ -103,6 +129,9 @@ def _validate_aliases(payload: object) -> dict:
 
 
 def _load_aliases(path: Path | None = None) -> tuple[dict, int, str | None]:
+    snapshot = _active_aliases.get() if path is None else None
+    if snapshot is not None:
+        return snapshot.entries, snapshot.version, snapshot.status
     path = (path or _alias_file()).resolve()
     with _lock:
         previous = _snapshots.get(path)

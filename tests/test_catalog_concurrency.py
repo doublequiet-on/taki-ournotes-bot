@@ -3,18 +3,23 @@
 import copy
 import hashlib
 import json
+import os
 from pathlib import Path
 import tempfile
 import threading
 import unittest
+from types import SimpleNamespace
 from unittest.mock import patch
 from urllib.parse import parse_qs, urlsplit
 
 from ournotes_bot.commands import handle_command, resolve_command
 from ournotes_bot.data import DataError, SongRepository
 from ournotes_bot.query.continuation import catalog_version
+from ournotes_bot.query.continuation import capture_context, Operation, CHANGED
 from ournotes_bot.query.entity_lexicon import alias_version
 from ournotes_bot.sources.haneoka import catalog
+from ournotes_bot.application import replies
+from ournotes_bot.query import card_catalog
 
 
 class ObservedLock:
@@ -304,6 +309,153 @@ class CatalogConcurrencyTests(unittest.TestCase):
         self.assertIsNot(current.cards[0].catalog, view.cards[0].catalog)
         self.assertIsNot(current.cards[0].localized, view.cards[0].localized)
         self.assertNotEqual(catalog_version(self.repo), original_version)
+
+    def test_direct_query_uses_one_publication_through_parse_text_and_render(self):
+        for stage in ('execute', 'text', 'render'):
+            with self.subTest(stage=stage):
+                for docs in self.saved['documents'].values():
+                    docs['cards']['1']['prefix'] = ['NeedleTitle', '', '', '', '']
+                    docs['cards']['26']['prefix'] = ['OtherTitle', '', '', '', '']
+                self.repo.synchronize_catalog(force=True)
+                before = self.repo.capture_catalog()
+                old_source = before.source_snapshot
+                rendered = []
+
+                def publish():
+                    self.saved = copy.deepcopy(self.saved)
+                    for docs in self.saved['documents'].values():
+                        docs['cards']['1']['prefix'] = ['DifferentTitle', '', '', '', '']
+                        docs['cards']['26']['prefix'] = ['NeedleTitle', '', '', '', '']
+                    # Keep release labels unchanged: publication content still changes.
+                    writer = self.start(lambda: self.repo.synchronize_catalog(force=True))
+                    self.assertTrue(writer[1].wait(2), 'query held publication lock')
+                    self.finish(writer)
+
+                execute = card_catalog.execute_card_request
+                text = replies.handle_command
+
+                def execute_after_refresh(request, view):
+                    if stage == 'execute':
+                        publish()
+                    return execute(request, view)
+
+                def text_after_refresh(content, view, **kwargs):
+                    if stage == 'text':
+                        publish()
+                    return text(content, view, **kwargs)
+
+                def render_after_refresh(reply, result, view, locale, candidate):
+                    if stage == 'render':
+                        publish()
+                    rendered.append(tuple((c.id, c.title) for c in result.catalog.cards))
+                    self.assertIs(view.capture_source_snapshot(), old_source)
+                    self.assertIs(view._catalog_repository.saved, old_source)
+                    self.assertEqual(view.capture_catalog().metadata, before.metadata)
+                    self.assertEqual(view.search_cards('NeedleTitle')[0].id, 1)
+                    self.assertIsNotNone(candidate)
+                    return replies.PreparedReply(reply, context=candidate)
+
+                with patch.object(card_catalog, 'execute_card_request', side_effect=execute_after_refresh), \
+                     patch.object(replies, 'handle_command', side_effect=text_after_refresh), \
+                     patch.object(replies, 'render_prepared', side_effect=render_after_refresh):
+                    prepared = replies.prepare_reply('/查卡 NeedleTitle', self.repo, None)
+                self.assertEqual(rendered, [((1, 'NeedleTitle'),)])
+                self.assertIn('NeedleTitle', prepared.text)
+                self.assertNotIn('DifferentTitle', prepared.text)
+                self.assertEqual([c.id for c in card_catalog.query_cards('NeedleTitle', self.repo).cards], [26])
+                self.assertIsNot(self.repo.capture_catalog().source_snapshot, old_source)
+
+    def test_query_view_has_no_source_io_and_keeps_methods_bound_to_capture(self):
+        self.repo.load()
+        calls = len(self.catalog_calls)
+        view = self.repo.capture_query_view()
+        self.assertIs(view.capture_query_view(), view)
+        self.assertIs(view.cards, self.repo.cards)
+        self.assertIsNot(view.metadata, self.repo.metadata)
+        before = copy.deepcopy(view.capture_catalog())
+        self.assertEqual(len(self.catalog_calls), calls)
+        self.advance()
+        self.repo.refresh()
+        self.assertEqual(view.capture_catalog(), before)
+        self.assertIs(view.search.__self__, view)
+        self.assertIs(view.card_with_detail.__self__, view)
+        self.assertEqual(len(view.search('', 20)), 0)
+        self.assertEqual(len(view.songs), 2)
+        self.assertEqual(len(self.repo.songs), 1)
+        legacy = SongRepository('', Path(self.temp.name) / 'legacy.json')
+        self.assertIs(legacy.capture_query_view(), legacy)
+
+    def test_direct_query_keeps_alias_snapshot_until_text_and_context_finish(self):
+        self.repo.load()
+        aliases = Path(self.temp.name) / 'aliases.json'
+        aliases.write_text(json.dumps({'card': {'probe-alias': '1'}}), encoding='utf-8')
+        text = replies.handle_command
+
+        def change_alias(content, view, **kwargs):
+            aliases.write_text(json.dumps({'card': {'probe-alias': '26'}}), encoding='utf-8')
+            return text(content, view, **kwargs)
+
+        def render(reply, result, view, locale, candidate):
+            self.assertIsNotNone(candidate)
+            self.assertEqual(candidate.version[0], catalog_version(view))
+            return replies.PreparedReply(str(result.catalog.cards[0].id), context=candidate)
+
+        with patch.dict(os.environ, {'OURNOTES_ALIAS_FILE': str(aliases)}), \
+             patch.object(replies, 'render_prepared', side_effect=render):
+            with patch.object(replies, 'handle_command', side_effect=change_alias):
+                first = replies.prepare_reply('/查卡 probe-alias', self.repo, None)
+            second = replies.prepare_reply('/查卡 probe-alias', self.repo, None)
+        self.assertEqual((first.text, second.text), ('1', '26'))
+        self.assertNotEqual(first.context.version, second.context.version)
+
+    def test_preview_and_followup_read_captured_catalog_while_owner_refreshes(self):
+        self.repo.load()
+        old_cards = self.repo.cards
+        context = capture_context(resolve_command('/查卡 1', self.repo), self.repo)
+        followup = replies.execute_followup
+
+        def refresh_then_execute(context, operation, view):
+            self.advance()
+            self.repo.refresh()
+            self.assertIs(view.cards, old_cards)
+            return followup(context, operation, view)
+
+        with patch.object(replies, 'execute_followup', side_effect=refresh_then_execute), \
+             patch.object(replies, 'render_prepared', side_effect=lambda text, *args: replies.PreparedReply(text)):
+            reply = replies.prepare_followup(context, Operation('detail', ''), self.repo)
+        self.assertIn(old_cards[0].title, reply.text)
+        self.assertNotEqual(reply.text, CHANGED)
+        self.assertEqual(replies.prepare_followup(context, Operation('detail', ''), self.repo).text, CHANGED)
+        current_cards = self.repo.cards
+
+        def preview(result, view, locale):
+            self.assertIs(view.cards, current_cards)
+            self.assertIsNot(view, self.repo)
+            return b'preview'
+
+        with patch.object(replies, 'image_from_result', side_effect=preview):
+            self.assertEqual(replies.image_reply('/查卡 1', self.repo), b'preview')
+
+    def test_cli_direct_query_uses_the_same_local_capture_contract(self):
+        from ournotes_bot import main
+        self.repo.load()
+        settings = SimpleNamespace(data_base='', cache_file=self.repo.cache_file,
+                                   cache_ttl_hours=6, chart_source='moenotes', data_source='haneoka')
+        args = SimpleNamespace(mode='query', message=['/查曲'])
+
+        def answer(content, view):
+            self.advance()
+            self.repo.refresh()
+            self.assertIsNot(view, self.repo)
+            self.assertEqual((len(view.songs), len(self.repo.songs)), (2, 1))
+            return handle_command(content, view)
+
+        with patch.object(main, 'SongRepository', return_value=self.repo), \
+             patch.object(main, 'AIQueryParser'), patch.object(self.repo, 'load'), \
+             patch('ournotes_bot.sources.cutoff_history.configure_sources'), \
+             patch.object(main, 'handle_command', side_effect=answer), patch('builtins.print') as output:
+            main.run_local(args, settings)
+        self.assertTrue(output.called)
 
     def test_version_hash_uses_captured_references_without_holding_publication_lock(self):
         self.repo.load()

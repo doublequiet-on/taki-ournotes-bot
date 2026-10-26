@@ -242,6 +242,7 @@ class CatalogView:
     activities: tuple[ActivityInfo, ...] = ()
     activity_calendars: dict = field(default_factory=dict)
     records_version: str | None = None
+    source_snapshot: dict | None = None
 
 
 class SongRepository:
@@ -254,6 +255,8 @@ class SongRepository:
         self.data_source = data_source
         self._catalog_repository = None
         self._records_publication = None
+        self._published_source_snapshot = None
+        self._captured_catalog = None
         if chart_source not in {"moenotes", "haneoka"}:
             raise ValueError("unsupported chart source")
         self.chart_source = chart_source
@@ -417,6 +420,7 @@ class SongRepository:
             with self._song_lock:
                 self.songs, self.cards, self.support_cards = records
                 self._records_publication = records
+                self._published_source_snapshot = self._catalog_repository.saved
                 self.characters, self.gachas, self.activities = info.characters, info.gachas, info.activities
                 self.activity_calendars = info.activity_calendars
                 self.metadata = metadata
@@ -432,6 +436,8 @@ class SongRepository:
         Haneoka writers replace these references; this is not a deep freeze or
         a new atomic-publication guarantee for the legacy Yume refresh path.
         """
+        if self._captured_catalog is not None:
+            return self._captured_catalog
         with self._song_lock:
             publication = self._records_publication
             # The digest belongs to the final converted records. Replacing a
@@ -442,7 +448,34 @@ class SongRepository:
                                zip((self.songs, self.cards, self.support_cards), publication)) else None)
             return CatalogView(self.songs, self.cards, self.support_cards, self.metadata,
                                self.cache_state, self.last_successful_sync_at,
-                               self.characters, self.gachas, self.activities, self.activity_calendars, version)
+                               self.characters, self.gachas, self.activities, self.activity_calendars, version,
+                               self._published_source_snapshot)
+
+    def capture_query_view(self):
+        """Borrow one published Haneoka catalog for a complete local query.
+
+        Methods remain bound to this view, so search/detail helpers cannot read
+        later publications from the live owner. Independent Meta/ranking sources
+        keep their own currentness contracts. Legacy Yume remains unchanged.
+        """
+        if self.data_source != 'haneoka' or self._captured_catalog is not None:
+            return self
+        from copy import copy, deepcopy
+        with self._song_lock:
+            captured = self.capture_catalog()
+            captured = replace(captured, metadata=deepcopy(captured.metadata))
+            view = copy(self)
+            view._captured_catalog = captured
+            view.songs, view.cards, view.support_cards = captured.songs, captured.cards, captured.support_cards
+            view.metadata, view.cache_state = captured.metadata, captured.cache_state
+            view.last_successful_sync_at = captured.last_successful_sync_at
+            view.characters, view.gachas, view.activities = captured.characters, captured.gachas, captured.activities
+            view.activity_calendars = captured.activity_calendars
+            if self._catalog_repository is not None:
+                view._catalog_repository = copy(self._catalog_repository)
+                view._catalog_repository.saved = captured.source_snapshot
+            view._detail_cards, view._detail_support_cards = {}, {}
+            return view
 
     def current_query_view(self):
         """A verified per-request view; does not switch legacy refresh/fallback policy."""
@@ -455,6 +488,7 @@ class SongRepository:
                 self._catalog_repository = CatalogRepository(self.cache_file.with_name('haneoka-catalog-jp-v1.json'), self.cache_ttl_hours)
             records, metadata, info = self._catalog_repository.current_with_info()
             view = copy(self)
+            view._captured_catalog = None
             view.songs, view.cards, view.support_cards = records
             view._records_publication = records
             view.metadata, view.cache_state = metadata, 'fresh'
@@ -462,6 +496,7 @@ class SongRepository:
             view.activity_calendars = info.activity_calendars
             view._catalog_repository = copy(self._catalog_repository)
             view._catalog_repository.saved = self._catalog_repository._query_snapshot
+            view._published_source_snapshot = self._catalog_repository._query_snapshot
             view._catalog_repository._saved_publication = self._catalog_repository._query_publication
             view._detail_cards, view._detail_support_cards = {}, {}
             return view
@@ -475,6 +510,8 @@ class SongRepository:
 
     def capture_source_snapshot(self):
         """Capture a published Haneoka source reference; callers must not mutate it."""
+        if self._captured_catalog is not None:
+            return self._captured_catalog.source_snapshot
         with self._catalog_refresh_lock:
             return self._catalog_repository.saved if self._catalog_repository is not None else None
 
@@ -493,6 +530,7 @@ class SongRepository:
                 with self._song_lock:
                     self.songs, self.cards, self.support_cards = records
                     self._records_publication = records
+                    self._published_source_snapshot = self._catalog_repository.saved
                     self.characters, self.gachas, self.activities = info.characters, info.gachas, info.activities
                     self.activity_calendars = info.activity_calendars
                     self.metadata, self.cache_state = metadata, self._catalog_repository.state

@@ -73,3 +73,32 @@ class AliasLoadingTests(unittest.TestCase):
             versions = list(pool.map(lambda _: lexicon.alias_version(), range(40)))
         self.assertEqual(len(set(versions)), 1)
         self.assertEqual(lexicon.alias_status(), "current")
+
+    def test_query_scope_retains_content_version_and_status_then_reads_new_file(self):
+        old = {'card': {'needle': '1'}}
+        new = {'card': {'needle': '26'}}
+        self.write(old)
+        version = lexicon.alias_version()
+        with self.assertRaisesRegex(RuntimeError, 'leave scope'):
+            with lexicon.alias_scope():
+                self.write(new)
+                with lexicon.alias_scope():
+                    self.assertEqual(lexicon._aliases(), old)
+                    self.assertEqual(lexicon.alias_version(), version)
+                # An independent worker captures the latest content.
+                with ThreadPoolExecutor(max_workers=1) as pool:
+                    current = pool.submit(lexicon.alias_version).result()
+                self.assertNotEqual(current, version)
+                self.path.unlink()
+                self.assertEqual(lexicon.alias_status(), 'current')
+                raise RuntimeError('leave scope')
+        self.assertEqual(lexicon._aliases(), new)
+        self.assertEqual(lexicon.alias_version(), current)
+        self.assertEqual(lexicon.alias_status(), 'stale')
+
+    def test_disabled_query_scope_preserves_legacy_file_observation(self):
+        self.write({'card': {'needle': '1'}})
+        with lexicon.alias_scope(enabled=False):
+            before = lexicon.alias_version()
+            self.write({'card': {'needle': '26'}})
+            self.assertNotEqual(lexicon.alias_version(), before)
