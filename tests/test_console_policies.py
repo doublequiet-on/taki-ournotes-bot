@@ -55,6 +55,149 @@ class WeightedUsageTests(unittest.TestCase):
         self.ledger=UsageLedger(self.path,'fixture',clock=lambda:self.now[0]);self.addCleanup(lambda:self.ledger.close())
         self.profile=native_profile()
 
+    def legacy_indexes(self):
+        # A schema-1 database from before the access-path update.
+        for row in self.ledger.db.execute("SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='attempts'").fetchall():
+            if row[0] != 'attempts_day' and not row[0].startswith('sqlite_autoindex_'):
+                self.ledger.db.execute('DROP INDEX "'+row[0]+'"')
+        self.ledger.db.commit()
+
+    def test_index_upgrade_is_idempotent_and_checks_identity_first(self):
+        from contextlib import closing
+        import sqlite3
+        from ournotes_bot.application.usage_ledger import UsageLedger
+        from ournotes_bot.domain.model_calls import ModelError, Usage
+        self.ledger.reserve('r','a','u','g',self.profile,100)
+        self.ledger.start('a',self.profile);self.ledger.settle('a',Usage(100,0,20,None,120,'known'))
+        fact=self.ledger.get('a');self.legacy_indexes();self.ledger.close()
+        with self.assertRaisesRegex(ModelError,'usage_ledger_identity'):
+            UsageLedger(self.path,'wrong-instance',clock=lambda:self.now[0])
+        with closing(sqlite3.connect(self.path)) as db, db:
+            self.assertEqual([r[0] for r in db.execute("SELECT name FROM sqlite_master WHERE type='index' AND name LIKE 'attempts_%'")],['attempts_day'])
+            db.execute("UPDATE meta SET value='2' WHERE key='schema'")
+        with self.assertRaisesRegex(ModelError,'usage_ledger_identity'):
+            UsageLedger(self.path,'fixture',clock=lambda:self.now[0])
+        with closing(sqlite3.connect(self.path)) as db, db:
+            self.assertEqual(db.execute("SELECT count(*) FROM sqlite_master WHERE type='index' AND name LIKE 'attempts_%'").fetchone()[0],1)
+            db.execute("UPDATE meta SET value='1' WHERE key='schema'")
+        for _ in range(2):
+            self.ledger=UsageLedger(self.path,'fixture',clock=lambda:self.now[0])
+            self.assertEqual(self.ledger.get('a'),fact)
+            self.assertEqual(self.ledger.db.execute("SELECT value FROM meta WHERE key='schema'").fetchone()[0],'1')
+            self.assertEqual(self.ledger.db.execute("SELECT count(*) FROM sqlite_master WHERE type='index' AND name LIKE 'attempts_%'").fetchone()[0],6)
+            self.assertEqual(self.ledger.db.execute('PRAGMA integrity_check').fetchone()[0],'ok')
+            self.assertEqual(self.ledger.db.execute('PRAGMA synchronous').fetchone()[0],2)
+            self.assertEqual(self.ledger.db.execute('PRAGMA journal_mode').fetchone()[0],'delete')
+            self.ledger.close()
+
+    def test_interrupted_index_upgrade_resumes_before_reconcile(self):
+        from contextlib import closing
+        import sqlite3, subprocess, sys, textwrap
+        from ournotes_bot.application.usage_ledger import UsageLedger
+        self.ledger.reserve('r','a','u','g',self.profile,100);self.ledger.start('a',self.profile)
+        self.legacy_indexes();self.ledger.close();self.now[0]+=301
+        code=textwrap.dedent("""
+            import os, sqlite3, sys
+            from ournotes_bot.application.usage_ledger import UsageLedger
+            connect=sqlite3.connect
+            def intercepted(*args,**kwargs):
+                db=connect(*args,**kwargs)
+                def authorize(action,name,*rest):
+                    if action==sqlite3.SQLITE_CREATE_INDEX and name=='attempts_group_recent':
+                        os._exit(73)
+                    return sqlite3.SQLITE_OK
+                db.set_authorizer(authorize)
+                return db
+            sqlite3.connect=intercepted
+            UsageLedger(sys.argv[1],'fixture',clock=lambda:float(sys.argv[2]))
+        """)
+        root=Path(__file__).resolve().parents[1]
+        env=dict(os.environ,PYTHONPATH=str(root/'src'),QQ_APP_ID='',QQ_APP_SECRET='',AI_API_KEY='')
+        process=subprocess.run([sys.executable,'-B','-c',code,str(self.path),str(self.now[0])],
+                               env=env,cwd=root,capture_output=True,text=True,timeout=15)
+        self.assertEqual(process.returncode,73,process.stdout+process.stderr)
+        with closing(sqlite3.connect(self.path)) as db, db:
+            self.assertEqual(db.execute("SELECT state FROM attempts WHERE id='a'").fetchone()[0],'started')
+            self.assertEqual(db.execute("SELECT count(*) FROM sqlite_master WHERE type='index' AND name LIKE 'attempts_%'").fetchone()[0],3)
+        self.ledger=UsageLedger(self.path,'fixture',clock=lambda:self.now[0])
+        self.assertEqual(self.ledger.get('a')['state'],'settled')
+        self.assertEqual(self.ledger.get('a')['billing_incomplete'],1)
+        self.assertEqual(self.ledger.db.execute('PRAGMA integrity_check').fetchone()[0],'ok')
+        self.assertEqual(self.ledger.db.execute("SELECT count(*) FROM sqlite_master WHERE type='index' AND name LIKE 'attempts_%'").fetchone()[0],6)
+
+    def test_index_full_disk_and_readonly_fail_closed_without_losing_usage(self):
+        import sqlite3
+        from ournotes_bot.application.usage_ledger import UsageLedger
+        from ournotes_bot.domain.model_calls import Usage
+        self.ledger.reserve('r','a','u','g',self.profile,100)
+        self.ledger.start('a',self.profile);self.ledger.settle('a',Usage(100,0,20,None,120,'known'))
+        fact=self.ledger.get('a');self.legacy_indexes();self.ledger.db.execute('VACUUM');self.ledger.close()
+        connect=sqlite3.connect
+        def full(*args,**kwargs):
+            db=connect(*args,**kwargs)
+            pages=db.execute('PRAGMA page_count').fetchone()[0]
+            db.execute('PRAGMA max_page_count='+str(pages))
+            return db
+        with patch('ournotes_bot.application.usage_ledger.sqlite3.connect',side_effect=full):
+            with self.assertRaisesRegex(sqlite3.OperationalError,'full'):
+                UsageLedger(self.path,'fixture',clock=lambda:self.now[0])
+        with patch('ournotes_bot.application.usage_ledger.sqlite3.connect',side_effect=lambda *a,**kw:connect(self.path.as_uri()+'?mode=ro',uri=True)):
+            with self.assertRaises(sqlite3.OperationalError):
+                UsageLedger(self.path,'fixture',clock=lambda:self.now[0])
+        self.ledger=UsageLedger(self.path,'fixture',clock=lambda:self.now[0])
+        self.assertEqual(self.ledger.get('a'),fact)
+        self.assertEqual(self.ledger.db.execute('PRAGMA integrity_check').fetchone()[0],'ok')
+        self.ledger.db.execute('PRAGMA query_only=ON')
+        with self.assertRaises(sqlite3.OperationalError):
+            self.ledger.reserve('new','b','u','g',self.profile,100)
+        self.assertIsNone(self.ledger.db.execute("SELECT id FROM attempts WHERE id='b'").fetchone())
+
+    def test_same_business_request_does_not_consume_another_frequency_slot(self):
+        from ournotes_bot.domain.model_calls import ModelError, Usage
+        profile=replace(self.profile,user_rate_requests=1,group_rate_requests=1)
+        for attempt in ('a','b'):
+            self.ledger.reserve('same-request',attempt,'u','g',profile,10)
+            self.ledger.start(attempt,profile);self.ledger.settle(attempt,Usage(10,0,2,None,12,'known'))
+        self.assertEqual(self.ledger.summary()['weighted_tokens'],'28')
+        with self.assertRaisesRegex(ModelError,'model_rate_limited'):
+            self.ledger.reserve('other-request','c','u','g',profile,10)
+        self.assertEqual(len(self.ledger.request_view('same-request')),2)
+
+    def test_midnight_start_rechecks_group_quota_before_changing_billing_day(self):
+        from datetime import datetime, timedelta, timezone
+        from ournotes_bot.application.usage_ledger import day
+        from ournotes_bot.domain.model_calls import ModelError, Usage
+        profile=replace(self.profile,group_daily_limit=2000)
+        self.now[0]=datetime(2026,10,27,23,59,59,tzinfo=timezone(timedelta(hours=8))).timestamp()
+        self.ledger.reserve('r','a','u','g',profile,100);original=self.ledger.get('a')['day']
+        self.now[0]+=2
+        self.ledger.reserve('s','b','v','g',profile,100);self.ledger.start('b',profile)
+        self.ledger.settle('b',Usage(1000,0,0,None,1000,'known'))
+        with self.assertRaisesRegex(ModelError,'quota_exceeded'):self.ledger.start('a',profile)
+        self.assertEqual(self.ledger.get('a')['state'],'reserved');self.assertEqual(self.ledger.get('a')['day'],original)
+        self.ledger.start('a',replace(profile,group_daily_limit=3000))
+        self.assertEqual(self.ledger.get('a')['day'],day(self.now[0]))
+
+    def test_usage_access_paths_cover_history_without_optimizer_statistics(self):
+        import hashlib
+        sha=lambda x:hashlib.sha256(x.encode()).hexdigest()
+        row=(sha('a'),sha('r'),sha('u'),sha('g'),self.profile.provider,self.profile.model,self.profile.config_version,
+             '{}','2000-01-01',self.now[0]-86400,None,None,'settled','0','0','0','{}',None,0)
+        rows=[(sha(str(i)),sha(str(i//2)),sha('u'+str(i//2%500)),sha('g'+str(i//2%4)),*row[4:]) for i in range(2000)]
+        with self.ledger.db:self.ledger.db.executemany('INSERT INTO attempts VALUES('+','.join('?'*19)+')',rows)
+        queries=[("UPDATE attempts SET state='settled' WHERE state='started' AND started<=?",(self.now[0]-300,),'attempts_started_pending'),
+                 ('SELECT COUNT(DISTINCT request_id) FROM attempts WHERE user_key=? AND created>? AND request_id!=?',(sha('u1'),self.now[0]-60,sha('other')),'attempts_user_recent'),
+                 ('SELECT COUNT(DISTINCT request_id) FROM attempts WHERE group_key=? AND created>? AND request_id!=?',(sha('g1'),self.now[0]-60,sha('other')),'attempts_group_recent'),
+                 ('SELECT a.*,o.kind,o.duration_ms FROM attempts a LEFT JOIN attempt_observations o ON a.id=o.id WHERE request_id=? ORDER BY created LIMIT 8',(sha('1'),),'attempts_request_created'),
+                 ('SELECT id,charged,reserved FROM attempts WHERE day=? AND user_key=?',('2000-01-01',sha('u1')),'attempts_day'),
+                 ('SELECT id,charged,reserved FROM attempts WHERE day=? AND group_key=?',('2000-01-01',sha('g1')),'attempts_day_group')]
+        for analyzed in (False,True):
+            if analyzed:self.ledger.db.execute('ANALYZE')
+            for sql,params,index in queries:
+                with self.subTest(analyzed=analyzed,index=index):
+                    plan=' '.join(str(r[3]) for r in self.ledger.db.execute('EXPLAIN QUERY PLAN '+sql,params))
+                    self.assertIn(index,plan.split())
+
     def test_atomic_group_reservation_and_known_failure_idempotent(self):
         from fractions import Fraction
         from ournotes_bot.domain.model_calls import Usage,ModelError

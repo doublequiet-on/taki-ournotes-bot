@@ -110,6 +110,8 @@ OpenRouter 配置启用后，后台从官方 models API 刷新本模型价格；
 
 `usage-v1.sqlite3` 独立于旧次数账、发送事实账和公告账；Python 单进程独占写。保存 request／attempt、HMAC 用户／群键、provider／model／配置版本、价格快照、预留、started、用量、精确费用、错误分类及时间；不保存原始 OpenID、问题、回答、工具参数或密钥。稳定盐仅存该账本私有元数据。
 
+用量账本在独占所有权并校验 schema／namespace 后、首次到期结算前，幂等建立 started 稀疏索引、用户／群时间窗覆盖索引、request_id 诊断索引与群日额度索引。群时间窗索引必须与 `(day,group_key)` 配套，避免无统计信息时群日额度改扫整群历史；保留原 `(day,user_key,group_key)`。此更新只增加索引，schema 仍为 1，旧代码可读写；创建中断后重开补齐，失败则初始化失败。保持原事务、FULL 同步、journal mode 与维护频率，不自动执行 ANALYZE／VACUUM。首次启动须预留建索引时间与空间。
+
 价格单位为整数“微货币／百万 Token”，额度为固定参考输入价格的等价 Token。设非缓存输入、缓存输入、输出数量为 `i,c,o`，对应单价为 `pi,pc,po`，参考单价为 `pr`：
 
 - 加权额度：`(i*pi + c*pc + o*po) / pr`。

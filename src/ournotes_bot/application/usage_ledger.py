@@ -64,6 +64,16 @@ class UsageLedger:
                 self.salt=bytes.fromhex(self.db.execute("SELECT value FROM meta WHERE key='salt'").fetchone()[0])
                 # A reservation before the durable started transition cannot have called HTTP.
                 self.db.execute("UPDATE attempts SET state='released', reserved='0', error_code='restart_not_started' WHERE state='reserved'")
+            # Add access paths only after the persisted identity has been checked.
+            # Pair the group time-window index with day/group: without statistics,
+            # otherwise SQLite may scan a group's entire history for daily quota.
+            self.db.executescript('''
+                CREATE INDEX IF NOT EXISTS attempts_started_pending ON attempts(started) WHERE state='started';
+                CREATE INDEX IF NOT EXISTS attempts_user_recent ON attempts(user_key,created,request_id);
+                CREATE INDEX IF NOT EXISTS attempts_group_recent ON attempts(group_key,created,request_id);
+                CREATE INDEX IF NOT EXISTS attempts_request_created ON attempts(request_id,created);
+                CREATE INDEX IF NOT EXISTS attempts_day_group ON attempts(day,group_key);
+            ''')
             self.reconcile()
         except BaseException:
             self.close();raise
