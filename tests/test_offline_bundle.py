@@ -71,6 +71,31 @@ class CombinationArchiveTests(unittest.TestCase):
         self.assertFalse(out.exists())
         self.assertEqual(list(self.root.glob('.'+COMMIT+'-*')),[])
 
+    def test_stage_records_ownership_before_extract_and_preserves_it_after_rename_failure(self):
+        from deploy.release_retention import read_record, manifest_digest
+        from deploy.linux_updater import atomic_json
+        path,sha,row=self.bundle(); out=self.root/COMMIT; owners=self.root/'owners'
+        calls=[]
+        def save(destination, value):
+            calls.append(value['phase'])
+            if value['phase']=='published': raise OSError('fixture stopped after rename')
+            atomic_json(destination,value)
+        with patch('deploy.linux_updater.atomic_json',side_effect=save):
+            with self.assertRaises(OSError):
+                stage_combination(path,out,COMMIT,sha,row['python_sha256'],ownership_dir=owners)
+        saved=read_record(owners/(COMMIT+'.json'))
+        self.assertEqual(calls,['staging','published'])
+        self.assertEqual(saved['manifest_sha256'],manifest_digest(row))
+        self.assertEqual(saved['destination'],str(out))
+        self.assertTrue(out.exists()); self.assertFalse(Path(saved['stage']).exists())
+
+    def test_failed_stage_removes_only_its_own_record(self):
+        path,sha,row=self.bundle(); out=self.root/COMMIT; owners=self.root/'owners'
+        with patch('deploy.koishi_control.shutil.copyfileobj',side_effect=OSError('fixture full disk')):
+            with self.assertRaises(OSError):
+                stage_combination(path,out,COMMIT,sha,row['python_sha256'],ownership_dir=owners)
+        self.assertFalse(out.exists());self.assertEqual(list(owners.iterdir()),[])
+
     def test_release_asset_uses_own_inspector_cache_and_first_use_pin(self):
         path,sha,row=self.bundle(); tag='linux-'+COMMIT
         release={'tag_name':tag,'draft':False,'assets':[{'name':COMBINATION_ASSET,'state':'uploaded','id':12,

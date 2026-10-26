@@ -47,6 +47,20 @@ ONNX Runtime初始化需要CPU信息。启用附加包的沙箱把宿主 `/proc`
 
 部署验收应核对：三个 Release 资产绑定同一 SHA、自动下载/暂存成功、候选断网安装与 probe、停止后的备份、双进程健康及稳定窗口，最后启用 `taki-updater.timer` 并确认下一次检查。只开启 timer 不等于完成这条链路。停用自动更新只需停止/禁用 timer；控制器回退需同时恢复旧配置，业务数据不随代码回退。
 
+## 配对版本回收
+
+`release_retention.py` 为 Python release、Koishi 展开目录及其清单生成统一回收计划。`python3 linux_backend.py cleanup-plan` 只读取状态、清单和 `/proc` 的 cwd/exe 引用，不停服务、不创建后端目录、不执行清理。输出每个版本的保护原因、拟删除路径和预计字节；这是一份观察，不能拿旧清单直接删除。
+
+自动清理由既有更新事务在 `update.lock` 内调用：默认保留最近三个已准备版本，另保护 current、previous、baseline、未完成事务的所有版本、`retention_pins` 配置中的完整 SHA 及活进程引用。进程引用不可确认时不回收版本。删除前重新计算计划，并在 `state_dir/cleanup-intents` 保存归属及目录身份；中途中断后只继续同一目录，不接管被替换的目录。清理失败沿用 `cleanup_failed` 记录，不回退健康版本。
+
+新暂存的组合在 `state_dir/combinations` 留有 root 管理的所有权记录，覆盖展开前、rename 后及中断恢复。旧组合只有与受管 Python 清单配对、完整内容校验通过时才参与回收；没有证明的孤立组合或旧临时 stage 只报告。下载 ZIP 仍沿用其独立缓存策略，清理不改素材账本、业务数据或备份恢复语义。
+
+本变更必须独立审阅并安装 `linux_backend.py`、`koishi_control.py`、`release_retention.py`；应用发布不会替换这些控制器文件。安装前备份控制器与配置，先审阅 dry-run，再在更新锁内启用。`retention_pins` 默认空列表，仅接受完整小写 SHA。解除固定保留是单独的运维决定。
+
+### 素材账本两阶段门禁
+
+素材 schema 2 启用前，将 `koishi/src/materials.ts` 及其实际拆分出的状态模块加入受信 `compatibility_paths` 和策略的同名路径集合。阶段 A 只批准旧版和双读兼容版的旧 `schema_contract`；A 读到 schema 2 后也必须保留所有未知事实并继续写 2。确认 A 的实际 current、双进程版本和空事务后，以实际编译 A/B 的读写回退证据更新受信策略，将 A/B 批准为新契约，旧版仍为旧契约。现有前后版本契约比较会在停服前拒绝旧版跳过 A 直达 B，不能仅靠两次发布间隔保证顺序。不得删除未知素材或放宽指纹审核来解除门禁。
+
 ## 失败与重试
 
 main／CI 元数据的 HTTP 响应读取中断（含 IncompleteRead）由适配器归类为 `github_unavailable`，下次定时检查可重新读取 CI，不把网络中断记成该提交永久失败。真正 CI 失败、提交不匹配及兼容拒绝仍阻止更新；旧失败记录不因此自动解封。该适配器属于独立控制器，合并源码仍需单独安装受审文件。
@@ -89,7 +103,7 @@ sudo /usr/bin/python3 -E -s -B /usr/local/lib/taki-updater/linux_backend.py stat
 
 新增的 `linux_backend.py`、`linux_updater.py` 是此前独立 Linux 控制器源码的受审版本；保留线上安装步骤 1800 秒、其他步骤 900 秒的运行上限。原先只针对本地私有审批快照的测试改为构造审批样例检查，私有策略没有随源码提交。
 
-这三个文件需要一起审核、备份和替换：`linux_backend.py`、`linux_updater.py`、`offline_bundle.py`。不要从应用候选代码中自动自更新控制器，不替换 launcher、systemd 单元、生产配置、兼容策略或已审核夹具。
+基础控制器文件为 `linux_backend.py`、`linux_updater.py`、`offline_bundle.py`；本版配对回收还必须一并审核、备份和安装 `koishi_control.py`、`release_retention.py`。不要从应用候选代码中自动自更新控制器，不替换 launcher、systemd 单元或已审核夹具；素材两阶段涉及的受信兼容策略按上文单独审阅。
 
 迁移前先核对线上文件摘要与已检查基线，确认更新器没有活动事务、旧机器人健康、备份可读。暂停更新定时器并取得现有控制器锁，在受信目录同文件系统中暂存和校验新文件，保留旧文件及回退清单，完成整组替换和导入检查后再恢复定时器。意外中断应保持定时器停止，恢复整组旧控制器后再恢复调度。不要中止正在切换版本的事务，也不要因安装控制器直接重启机器人。
 
