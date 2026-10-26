@@ -12,7 +12,7 @@ type Entry = { key: string; created: number; used: number; state: 'owned' | 'com
 type Cold = { bytes: Uint8Array; shape: ReturnType<typeof imageShape>; key: string; valid(): boolean;
   resolve(value: MaterialLease): void; reject(error: unknown): void }
 // Compatibility release A preserves v1 writers; release B changes only this floor.
-const minimumSchema: 1 | 2 = 1
+const minimumSchema: 1 | 2 = 2
 export class MaterialAborted extends Error { constructor() { super('material waiter inactive') } }
 export class MaterialAPIError extends Error {
   constructor(readonly absent = false) { super('material API rejected') }
