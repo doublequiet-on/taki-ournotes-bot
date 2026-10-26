@@ -20,6 +20,8 @@ npm run probe -- probe-output.json
 
 报告输出路径可以省略。探针在进程内禁止真实 socket、HTTP 和 fetch；固定原始事件经过实际安装的 QQ adapter，上传和发送调用其实际 internal API，仅 HTTP 返回值由夹具提供。启动故障场景使用隔离的系统临时目录并在结束时清理，不要求源码目录可写；探针不加载 `.env`、不登录 QQ。高层发送的部分成功测试会打印预期的 `fixture explicit rejection` 警告，最终报告必须 `failed: 0`。
 
+HTTP 双端样例位于 `scripts/fixtures/http-v2.json`，随组合包的 scripts 一起交付。Python 的 `test_console_admin.HTTPV2ContractTests` 对照实际 snapshot／事件／模型许可输出并验证 TS 入站样例；probe 验证实际 TS 编码、响应解码与 Receiver 绑定。管理 CJS 的原始 JSON 透传仍保留，不属于本次静态类型迁移。
+
 安装允许访问 npm 官方 registry，但禁止依赖安装脚本；编译和探针不需要联网。升级任意锁定包后必须重跑，不能沿用旧版本结论。完整依赖树和 integrity 在 `package-lock.json`，生成的 `lib/` 与 `node_modules/` 不提交。
 
 ## 模块与调用约束
@@ -31,6 +33,7 @@ npm run probe -- probe-output.json
 | `src/ingress.ts` | 原始身份与正文门禁、legacy 字段转换、真实 adaptSession、稳定 requestId。 |
 | `src/materials.ts` | 官方图片素材上传、私有所有权记录、内容复用与有界回收。 |
 | `src/delivery.ts` | 每条原消息一个 QQDelivery；逐片段 intent、发送、ACK、预算与卸载。 |
+| `src/wire.ts` | HTTP 2.0 JSON 的 unknown 解码、事实／可发计划与回执类型；不授予权限。 |
 | `src/backend.ts` | 认证 loopback 客户端、能力握手、受限图片、幂等重试与 ACK 提交门禁。 |
 | `src/receiver.ts` | 原始事件捕获、标准化作用域/权限、串行接纳、同消息 delivery 所有权。 |
 | `src/gateway.ts` | 每 bot 的窄 discovery 主机修正，保留路径/参数并随卸载恢复。 |
