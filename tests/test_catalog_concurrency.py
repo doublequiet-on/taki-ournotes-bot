@@ -205,7 +205,7 @@ class CatalogConcurrencyTests(unittest.TestCase):
                 self.cleanup_workers(release, writer, *readers)
         expected = tuple(action() for action in actions)
         self.assertEqual(tuple(self.finish(worker) for worker in readers), expected)
-        self.assertEqual(expected[1], self.previous_version())
+        self.assertIsNotNone(expected[0].records_version)
 
     def test_refresh_is_serialized_through_publication(self):
         self.repo.load()
@@ -294,7 +294,7 @@ class CatalogConcurrencyTests(unittest.TestCase):
         self.repo.load()
         view = self.repo.capture_catalog()
         expected = copy.deepcopy(view)
-        self.assertEqual(catalog_version(self.repo), self.previous_version())
+        original_version = catalog_version(self.repo)
         self.advance()
         self.repo.refresh()
         self.assertEqual(view, expected)
@@ -303,7 +303,7 @@ class CatalogConcurrencyTests(unittest.TestCase):
         self.assertIsNot(current.metadata, view.metadata)
         self.assertIsNot(current.cards[0].catalog, view.cards[0].catalog)
         self.assertIsNot(current.cards[0].localized, view.cards[0].localized)
-        self.assertEqual(catalog_version(self.repo), self.previous_version())
+        self.assertNotEqual(catalog_version(self.repo), original_version)
 
     def test_version_hash_uses_captured_references_without_holding_publication_lock(self):
         self.repo.load()
@@ -318,7 +318,7 @@ class CatalogConcurrencyTests(unittest.TestCase):
                 return dict.__repr__(metadata)
 
         self.repo.metadata = PausedMetadata(self.repo.metadata)
-        expected = self.previous_version()
+        expected = catalog_version(self.repo)
         reader = self.start(lambda: catalog_version(self.repo), name="hash-reader")
         writer = None
         try:
@@ -332,6 +332,23 @@ class CatalogConcurrencyTests(unittest.TestCase):
             self.cleanup_workers(release, reader, writer)
         self.assertEqual(self.finish(reader), expected)
         self.assertNotEqual(catalog_version(self.repo), expected)
+
+    def test_unowned_records_use_legacy_content_fingerprint(self):
+        self.repo.load()
+        self.repo.songs = list(reversed(self.repo.songs))
+        self.assertIsNone(self.repo.capture_catalog().records_version)
+        self.assertEqual(catalog_version(self.repo), self.previous_version())
+
+    def test_metadata_and_alias_changes_invalidate_cached_records_version(self):
+        self.repo.load()
+        before = catalog_version(self.repo)
+        records_version = self.repo.capture_catalog().records_version
+        self.repo.metadata = {**self.repo.metadata, 'last_successful_sync_at': 'fixture-new-sync'}
+        self.assertEqual(self.repo.capture_catalog().records_version, records_version)
+        self.assertNotEqual(catalog_version(self.repo), before)
+        current = catalog_version(self.repo)
+        with patch('ournotes_bot.query.continuation.alias_version', return_value=-123):
+            self.assertNotEqual(catalog_version(self.repo), current)
 
     def test_concurrent_cold_loads_initialize_one_source(self):
         entered, release, second_attempt = threading.Event(), threading.Event(), threading.Event()
