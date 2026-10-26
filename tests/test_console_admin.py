@@ -938,3 +938,123 @@ class OperationTests(unittest.IsolatedAsyncioTestCase):
             self.assertFalse(jobs.health()['available'])
             await jobs.close()
             self.assertIsNone(jobs.db)
+
+
+class HTTPV2ContractTests(unittest.IsolatedAsyncioTestCase):
+    """Shared examples are produced by Python and consumed by the installed TS gateway."""
+    @staticmethod
+    async def produce():
+        stamp = 1792382400.0
+        request = dict(protocol=PROTOCOL,
+            request_id=digest(['fixture','app','qq','group','group1','fixture-user','message']),
+            instance_id='fixture',app_id='app',platform='qq',kind='group',conversation_id='group1',
+            user_id='fixture-user',message_id='message',timestamp_ms=int(stamp*1000),body='/帮助',
+            capability=CAPABILITY,gateway_epoch='epoch',ingress_seq=1,trigger='command',reference=None,interaction=None,
+            policy=dict(natural_query='model',epoch='fixture',global_revision=0,group_revision=0))
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder)
+            repo=SimpleNamespace(capture_catalog=lambda: SimpleNamespace(cache_state='stale',songs=[],last_successful_sync_at=None))
+            backend=Backend(repo,SimpleNamespace(),Settings('','','fixture',root/'cache.json',6),
+                instance_id='fixture',app_id='app',ledger_path=root/'ledger.sqlite3',clock=lambda:stamp)
+            backend.runtime='b'*32
+            backend.ready=True
+            permit_clock=[10.0]
+            backend.permissions.clock=lambda:permit_clock[0]
+            release=asyncio.Event()
+            async def prepare(*args):
+                await release.wait()
+                return PreparedReply('fixture answer',image=b'\x89PNG\r\n\x1a\nfixture',business_status='success')
+            backend.gate.prepare=prepare
+            result={'python_to_ts':{},'ts_to_python':{'request':request,'events':{}},
+                'identity_cases':{'accepted':['😀'*256,'\ufeffreceipt\ufeff'],
+                                  'rejected':['😀'*257,'\x85receipt','receipt\x85']}}
+            output=result['python_to_ts']
+            try:
+                app=create_app(backend,'x'*32)
+                handlers={route.resource.canonical:route.handler for route in app.router.routes()}
+                ready=json.loads((await handlers['/v1/ready'](None)).text)
+                # These diagnostics are not protocol identities; freeze only volatile diagnostics.
+                ready['pid']=0;ready['backend_code_digest']='0'*64
+                output['ready']=ready
+                output['classify']=json.loads((await handlers['/v1/classify'](SimpleNamespace(json=AsyncMock(return_value={'body':'/帮助'})))).text)
+                output['registration']=await backend.register('epoch')
+                with patch('ournotes_bot.application.backend.uuid.uuid4',return_value=SimpleNamespace(hex='d'*32)):
+                    output['preparing']=await backend.submit(request)
+                work=backend.works['d'*32]
+                with patch('ournotes_bot.application.model_execution.uuid.uuid4',return_value=SimpleNamespace(hex='c'*32)):
+                    permission_task=asyncio.create_task(backend.permissions.acquire(work,20.0,attempt_id='a'*32))
+                    await asyncio.sleep(0)
+                output['challenge']=backend.permissions.challenge_view(work)
+                output['preparing_challenge']=backend.snapshot(backend.ledger.request(request['request_id']),'epoch')
+                permit_clock[0]=12.9995
+                output['challenge_zero']=backend.permissions.challenge_view(work)
+                permit_clock[0]=10.0
+                decision={k:v for k,v in output['challenge'].items() if k not in ('remaining_ms','admission_policy_version')}
+                decision.update(decision='allow',current_policy_version={'epoch':'fixture','global_revision':0,'group_revision':0},reason='model_allowed',ttl_ms=1000)
+                result['ts_to_python']['model_permission']=decision
+                output['model_permission']=backend.permissions.decide(request['request_id'],'a'*32,decision,'epoch')
+                await permission_task
+                work.model_started_at=time.monotonic()-9
+                output['hint_pending']=backend.lookup(request['request_id'],'epoch')
+                common=dict(protocol=PROTOCOL,request_id=request['request_id'],plan_version=1,gateway_epoch='epoch',
+                    part_id='0',attempt_id='fixture-attempt')
+                def apply(name, payload):
+                    result['ts_to_python']['events'][name]=payload
+                    return backend.apply_event(work.delivery,payload)
+                output['hint_intent']=apply('hint_intent',{**common,'event':'intent'})
+                output['hint_sending']=backend.lookup(request['request_id'],'epoch')
+                output['hint_ack']=apply('hint_ack',{**common,'event':'ack','result':'success','message_id':'hint-receipt','allow_context':True})
+                output['hint_success']=backend.lookup(request['request_id'],'epoch')
+                release.set()
+                for _ in range(200):
+                    if backend.ledger.request(request['request_id'])['status']=='prepared':break
+                    await asyncio.sleep(.005)
+                output['prepared_image']=backend.lookup(request['request_id'],'epoch')
+                if output['prepared_image']['status']!='prepared':raise AssertionError('reply did not prepare')
+                # R3 may revoke the in-memory work before a terminal write succeeds.
+                work.active=False
+                output['prepared_revoked']=backend.snapshot(backend.ledger.request(request['request_id']),'epoch')
+                work.active=True
+                output['fallback']=apply('upload_failed',{**common,'event':'upload_failed','part_id':'1','attempt_id':'none'})
+                output['intent']=apply('intent',{**common,'event':'intent','part_id':'1:f'})
+                output['existing_intent']=apply('intent_duplicate',{**common,'event':'intent','part_id':'1:f'})
+                output['ack']=apply('ack',{**common,'event':'ack','part_id':'1:f','result':'success','message_id':'answer-receipt','allow_context':True})
+                output['duplicate_ack']=apply('ack_duplicate',result['ts_to_python']['events']['ack'])
+                output['terminal']=backend.lookup(request['request_id'],'epoch')
+                output['batch_finished']=apply('batch_finished',{**common,'event':'batch_finished','part_id':'batch','attempt_id':'none'})
+                output['aborted']=apply('aborted',{**common,'event':'aborted','part_id':'batch','attempt_id':'none'})
+                legacy={**result['ts_to_python']['events']['ack'],'protocol':{'major':1,'minor':1}}
+                legacy.pop('allow_context')
+                result['ts_to_python']['events']['legacy_ack']=legacy
+                output['legacy_ack']=backend.apply_event(work.delivery,legacy)
+                output['retirement']=json.loads((await handlers['/v1/gateways/retire'](SimpleNamespace(json=AsyncMock(return_value={'gateway_epoch':'epoch'})))).text)
+                return result
+            finally:
+                release.set()
+                await backend.close()
+
+    async def test_shared_http_v2_producer_outputs_and_request_event_consumers(self):
+        from ournotes_bot.application.backend_protocol import Request, event
+        fixture=Path(__file__).parents[1]/'koishi/scripts/fixtures/http-v2.json'
+        expected=json.loads(fixture.read_text(encoding='utf-8'))
+        self.assertEqual(await self.produce(),expected)
+        request=expected['ts_to_python']['request']
+        parsed=Request.parse(request,'fixture','app',request['timestamp_ms']/1000)
+        self.assertEqual(parsed.request_id,request['request_id'])
+        for name,payload in expected['ts_to_python']['events'].items():
+            decoded=event(payload)
+            if name=='legacy_ack':self.assertFalse(decoded['allow_context'])
+        mutations=[{'protocol':{'major':1,'minor':1}},{'protocol':{'major':True,'minor':0}},
+            {'request_id':'0'*64},{'timestamp_ms':True},{'ingress_seq':2**53},{'extra':True},
+            {'policy':{**request['policy'],'global_revision':True}}]
+        for change in mutations:
+            with self.subTest(change=change),self.assertRaises(ProtocolError):Request.parse({**request,**change},'fixture','app',0)
+        original=expected['ts_to_python']['events']['ack']
+        for message in expected['identity_cases']['accepted']:
+            self.assertEqual(event({**original,'message_id':message})['message_id'],message)
+        for message in expected['identity_cases']['rejected']:
+            with self.subTest(identity=repr(message)),self.assertRaises(ProtocolError):
+                event({**original,'message_id':message})
+        for change in ({'event':'unknown'},{'protocol':{'major':2,'minor':0,'extra':True}},
+                       {'result':'unknown'},{'message_id':None},{'allow_context':1},{'extra':True}):
+            with self.subTest(change=change),self.assertRaises(ProtocolError):event({**original,**change})

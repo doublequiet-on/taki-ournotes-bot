@@ -3,14 +3,12 @@ import { randomUUID } from 'node:crypto'
 import { Context, Session, Universal } from 'koishi'
 import type { QQBot } from '@satorijs/adapter-qq'
 import { BackendClient, protocol } from './backend'
+import { decodeNoticeClaims, decodeNoticePermission } from './wire'
+import type { NoticeClaim as Claim } from './wire'
 import { classifyReceipt } from './delivery'
 import { decodeGroupEvent, Identity } from './ingress'
 import type { NoticeScope } from './group-policies'
 
-interface Claim {
-  notice_id: string; claim_id: string; group_id: string; group_version: number
-  expires_at: number; text: string; send_type: string
-}
 export class Notices {
   private active = true
   healthy(): boolean { return this.active }
@@ -82,11 +80,7 @@ export class Notices {
     if(groups.kind==='none')return
     const response = await this.client.retry('/v1/notices/claims',{...this.base(),claim_request_id:randomUUID(),limit:1,
       scope:groups})
-    if (!Array.isArray(response.claims) || response.claims.length>1) throw Error('notice claims')
-    for (const c of response.claims as Claim[]) {
-      if (!/^[a-f0-9]{64}$/.test(c.notice_id) || !/^[a-f0-9]{32}$/.test(c.claim_id) || !/^[A-Za-z0-9_-]{1,128}$/.test(c.group_id)
-          || typeof c.text!=='string' || !c.text || [...c.text].length>120 || c.send_type!=='active'
-          || !Number.isInteger(c.group_version) || !Number.isFinite(c.expires_at)) throw Error('notice shape')
+    for (const c of decodeNoticeClaims(response)) {
       const version=this.changed.get(c.group_id)
       const alive=()=>this.active && this.enabled(c.group_id) && bot.status===Universal.Status.ONLINE && Date.now()<c.expires_at*1000 && this.changed.get(c.group_id)===version
       const api=Object.create(bot.internal) as typeof bot.internal
@@ -103,7 +97,7 @@ export class Notices {
       if (!alive()) return
       const attempt_id=randomUUID()
       const intent=await this.event(c,'intent',{attempt_id},false)
-      if (intent.permission!=='granted') return
+      if (decodeNoticePermission(intent)!=='granted') return
       if (!alive()) { await this.event(c,'ack',{attempt_id,result:'aborted',message_id:null}); return }
       let result='uncertain', message_id: string | null=null
       try {

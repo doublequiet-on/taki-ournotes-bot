@@ -261,8 +261,9 @@ export class Receiver {
           const fallback: Plan = await this.client.event(job.plan, 'upload_failed', part.id)
           this.validate(fallback, job.input)
           job.plan = fallback
+          if (!fallback.send_allowed) return
           part = fallback.parts[index]
-          if (!fallback.send_allowed || part.mode !== 'fallback' || part.kind !== 'text' || typeof part.text !== 'string') return
+          if (part.mode !== 'fallback' || part.kind !== 'text' || typeof part.text !== 'string') return
           result = await job.delivery.deliver(part.id, index, { kind: 'text', text: part.text })
         }
         if (job.delivery.acknowledgementPending && !await job.delivery.retryAcknowledgement()) return
