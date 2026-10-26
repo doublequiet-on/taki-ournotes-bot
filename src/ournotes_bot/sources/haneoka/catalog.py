@@ -59,7 +59,7 @@ def validate(saved, now, *, stale=False):
                     raise ValueError("Catalog row identity mismatch")
     stamp = datetime.fromtimestamp(fetched, timezone.utc).isoformat()
     records = convert(saved["documents"], saved["identities"]["jp"], stamp, stale=stale)
-    info = convert_info(saved["documents"], saved["identities"]["jp"], stamp)
+    info = convert_info(saved["documents"], saved["identities"]["jp"], stamp, saved["identities"]["intl"])
     return records, {"source": SOURCE, "data_source": "haneoka", "data_version": saved["identities"]["jp"]["releaseId"],
                      "text_version": saved["identities"]["intl"]["releaseId"], "cached_at": stamp,
                      "song_count": len(records[0]), "card_count": len(records[1]), "support_card_count": len(records[2]),
@@ -204,7 +204,7 @@ class CatalogRepository:
         """Capture converted facts from the same committed source snapshot as cards."""
         with self.lock:
             records, metadata = self.load(refresh)
-            info = convert_info(self.saved["documents"], self.saved["identities"]["jp"], metadata["cached_at"])
+            info = convert_info(self.saved["documents"], self.saved["identities"]["jp"], metadata["cached_at"], self.saved["identities"]["intl"])
             return records, metadata, info
 
     @public_http_scope()
@@ -242,7 +242,7 @@ class CatalogRepository:
             # change its persistence/fallback state. Reuse only after a fresh probe.
             self._query_snapshot = candidate
             records, metadata = self._publication(result)
-            info = convert_info(candidate['documents'], candidate['identities']['jp'], metadata['cached_at'])
+            info = convert_info(candidate['documents'], candidate['identities']['jp'], metadata['cached_at'], candidate['identities']['intl'])
             return records, metadata, info
 
     def synchronize_with_info(self, force=False):
@@ -292,7 +292,7 @@ class CatalogRepository:
             if self.saved is None:
                 return None, None, None, summary
             records, metadata = self._publication(validate(self.saved, self.clock(), stale=self.state=='stale'))
-            info = convert_info(self.saved['documents'], self.saved['identities']['jp'], metadata['cached_at'])
+            info = convert_info(self.saved['documents'], self.saved['identities']['jp'], metadata['cached_at'], self.saved['identities']['intl'])
             if prior_ids is not None:
                 summary['added_counts'] = {name:len(set(self.saved['documents']['jp'].get(name, {}))-prior_ids[name]) for name in CHANGE_RESOURCES}
             return records, metadata, info, summary

@@ -240,6 +240,7 @@ class CatalogView:
     characters: tuple[CharacterInfo, ...] = ()
     gachas: tuple[GachaInfo, ...] = ()
     activities: tuple[ActivityInfo, ...] = ()
+    activity_calendars: dict = field(default_factory=dict)
 
 
 class SongRepository:
@@ -265,6 +266,9 @@ class SongRepository:
         self.characters: tuple[CharacterInfo, ...] = ()
         self.gachas: tuple[GachaInfo, ...] = ()
         self.activities: tuple[ActivityInfo, ...] = ()
+        self.activity_calendars = {}
+        from .sources.haneoka.activity_announcements import ActivityAnnouncements
+        self.activity_announcements = ActivityAnnouncements()
         self.metadata: dict[str, Any] = {}
         self._detail_cards: dict[int, Card] = {}
         self._detail_support_cards: dict[int, SupportCard] = {}
@@ -411,6 +415,7 @@ class SongRepository:
             with self._song_lock:
                 self.songs, self.cards, self.support_cards = records
                 self.characters, self.gachas, self.activities = info.characters, info.gachas, info.activities
+                self.activity_calendars = info.activity_calendars
                 self.metadata = metadata
                 self.cache_state = state
                 self.last_successful_sync_at = metadata["last_successful_sync_at"]
@@ -427,7 +432,7 @@ class SongRepository:
         with self._song_lock:
             return CatalogView(self.songs, self.cards, self.support_cards, self.metadata,
                                self.cache_state, self.last_successful_sync_at,
-                               self.characters, self.gachas, self.activities)
+                               self.characters, self.gachas, self.activities, self.activity_calendars)
 
     def current_query_view(self):
         """A verified per-request view; does not switch legacy refresh/fallback policy."""
@@ -443,6 +448,7 @@ class SongRepository:
             view.songs, view.cards, view.support_cards = records
             view.metadata, view.cache_state = metadata, 'fresh'
             view.characters, view.gachas, view.activities = info.characters, info.gachas, info.activities
+            view.activity_calendars = info.activity_calendars
             view._catalog_repository = copy(self._catalog_repository)
             view._catalog_repository.saved = self._catalog_repository._query_snapshot
             view._detail_cards, view._detail_support_cards = {}, {}
@@ -475,6 +481,7 @@ class SongRepository:
                 with self._song_lock:
                     self.songs, self.cards, self.support_cards = records
                     self.characters, self.gachas, self.activities = info.characters, info.gachas, info.activities
+                    self.activity_calendars = info.activity_calendars
                     self.metadata, self.cache_state = metadata, self._catalog_repository.state
                     self.last_successful_sync_at = metadata['last_successful_sync_at']
                     self._detail_cards.clear()

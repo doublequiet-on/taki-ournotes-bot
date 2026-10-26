@@ -51,6 +51,19 @@ class InfoConversionTests(unittest.TestCase):
     def convert(self):
         return convert_info(self.docs, IDENTITY, "2026-10-15T00:00:00+00:00")
 
+    def test_international_calendar_uses_own_dates_and_identity(self):
+        import copy
+        self.docs['intl']['events'] = copy.deepcopy(self.docs['jp']['events'])
+        self.docs['intl']['events']['2']['startAt'] = [4000000]
+        self.docs['intl']['events']['2']['endAt'] = [5000000]
+        intl_identity = dict(IDENTITY, releaseId='r-'+'a'*20, sourceId='intl-source')
+        info = convert_info(self.docs, IDENTITY, 'fixture', intl_identity)
+        self.assertEqual(info.activities[0].start_at, 1000)
+        calendar = info.activity_calendars['intl']
+        self.assertEqual(calendar.records[0].start_at, 4000)
+        self.assertEqual(calendar.source_id, 'intl-source')
+        self.assertEqual(calendar.release, intl_identity['releaseId'])
+
     def test_event_detail_art_is_release_pinned_and_prepared_before_deployment(self):
         from dataclasses import asdict
         row=self.docs['jp']['events']['2']

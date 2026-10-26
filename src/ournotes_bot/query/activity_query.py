@@ -4,6 +4,8 @@
 # Pos: Query / Deterministic activity information; see L2-2.md.
 # Effects: Current requests read event metadata only; no ranking, model or QQ calls.
 import time
+import math
+from datetime import datetime, timezone, timedelta
 from dataclasses import replace
 
 from ..data import normalize
@@ -123,10 +125,93 @@ def _current(server, repository):
                             visual_footer=tuple(visual_notes),hero_kind=hero_kind,hero_logo_url=logo),))
 
 
+# Calendar resource identity is deliberately separate from the four ranking regions.
+CALENDAR_SERVERS = {'jp': 'jp', '日服': 'jp', 'intl': 'intl', 'tw': 'intl',
+                    '台服': 'intl', '国际服': 'intl', 'en': 'intl', '英服': 'intl'}
+
+
+def _calendar(server, mode, repository, now):
+    catalog = repository.capture_catalog()
+    calendar = getattr(catalog, 'activity_calendars', {}).get(server)
+    if calendar is None:
+        # Older JP publications remain usable; never borrow JP dates for intl.
+        if server != 'jp' or not available(catalog, 'activities'):
+            return unavailable('活动日程')
+        records = catalog.activities
+    else:
+        records = calendar.records
+    zone = timezone(timedelta(hours=8))
+    def stamp(value):
+        return datetime.fromtimestamp(value, zone).strftime('%Y-%m-%d %H:%M:%S') + '（北京时间 UTC+8）'
+    valid = [r for r in records if all(type(v) in (int, float) and math.isfinite(v)
+             for v in (r.start_at, r.end_at)) and r.start_at < r.end_at]
+    active = [r for r in valid if r.start_at <= now < r.end_at]
+    ended = sorted((r for r in valid if r.end_at <= now), key=lambda r: r.end_at, reverse=True)
+    future = sorted((r for r in valid if r.start_at > now), key=lambda r: r.start_at)
+    unknown = len(valid) != len(records)
+    recent = ended[0] if ended else None
+    upcoming = future[0] if future else None
+    lines = []
+    evidence_expires_at = None
+    ambiguous = len(active) > 1 or (len(ended) > 1 and ended[0].end_at == ended[1].end_at) or (
+        len(future) > 1 and future[0].start_at == future[1].start_at)
+    if ambiguous:
+        lines.append('资料中存在时间重叠或同一时间的多期活动，暂不能唯一确定本期／下期。')
+    elif mode == '下期':
+        if upcoming and not unknown:
+            lines.append(f'下一期《{upcoming.title}》将于 {stamp(upcoming.start_at)} 开始。')
+        else:
+            lines.append('当前已读取的资料还不能确定下一期开启时间。')
+    elif active:
+        current = active[0]
+        if mode == '日程开始':
+            lines.append(f'《{current.title}》已于 {stamp(current.start_at)} 开始，目前进行中。')
+        else:
+            lines.append(f'《{current.title}》正在进行，将于 {stamp(current.end_at)} 结束。')
+            if catalog.cache_state == 'fresh' and not unknown:
+                lines.append('记得及时清 CP，别留到活动结束啦。')
+    else:
+        if recent:
+            lines.append(f'最近一期《{recent.title}》已于 {stamp(recent.end_at)} 结束。')
+        else:
+            lines.append('当前资料中没有能确认正在进行或最近结束的活动。')
+        if upcoming and not unknown:
+            lines.append(f'下一期《{upcoming.title}》将于 {stamp(upcoming.start_at)} 开始，目前还没开始。')
+        else:
+            lines.append('当前已读取的资料还不能确定下一期开启时间。')
+    if unknown:
+        lines.append('部分活动时间缺失，无法确认完整日程。')
+    # A missing future catalog entry may already have a published notice. Only
+    # the source adapter can supply a verified explicit body time, never a model.
+    if not ambiguous and not upcoming and (not active or mode == '下期'):
+        notices = getattr(repository, 'activity_announcements', None)
+        if notices is not None:
+            announced, notice_note = notices.next(server, now)
+            if announced:
+                evidence_expires_at = announced.expires_at
+                lines = [line for line in lines if '还不能确定下一期开启时间' not in line]
+                lines.append(f'公告预告《{announced.title}》将于 {stamp(announced.start_at)} 开始。')
+                lines.append(f'[查看活动公告]({announced.url})')
+            if notice_note:
+                lines.append(notice_note)
+    label = '日服' if server == 'jp' else '国际服（台服）'
+    notes = list(footer(catalog, diagnostics=False))
+    notes[0] = '资料来源：Haneoka ' + label
+    if calendar:
+        notes.append('资料版本：' + calendar.release)
+    text = '\n'.join((label + ' · 活动日程', *lines, *notes))
+    return InfoAnswer(text, evidence_expires_at=evidence_expires_at)
+
+
 def execute_activity(query, repository, *, now=None):
     query = query.strip()
     tokens = query.lower().split()
     server = 'jp'
+    if tokens and tokens[-1] in {'日程', '日程开始', '下期'}:
+        if len(tokens) == 1 or len(tokens) == 2 and tokens[0] in CALENDAR_SERVERS:
+            resource = CALENDAR_SERVERS[tokens[0]] if len(tokens) == 2 else 'jp'
+            return _calendar(resource, tokens[-1], repository, time.time() if now is None else now)
+        return InfoAnswer(HELP, 'invalid_arguments')
     if tokens and tokens[0] in SERVER_ALIASES:
         server = SERVER_ALIASES[tokens[0]]
         query = query.split(None, 1)[1].strip() if len(tokens) > 1 else ''

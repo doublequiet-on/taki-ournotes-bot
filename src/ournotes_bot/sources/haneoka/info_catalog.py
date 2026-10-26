@@ -9,7 +9,7 @@ from __future__ import annotations
 from datetime import date
 import re
 
-from ...domain.info_catalog import ActivityInfo, CardRef, CharacterInfo, GachaInfo, InfoCatalog
+from ...domain.info_catalog import ActivityCalendar, ActivityInfo, CardRef, CharacterInfo, GachaInfo, InfoCatalog
 from .catalog_assets import asset_url
 from .catalog_text import LANGUAGES, localized, original, translated
 
@@ -92,7 +92,7 @@ def _card_refs(rows):
     return tuple(sorted(refs))
 
 
-def convert_info(documents, identity_jp, fetched_at):
+def convert_info(documents, identity_jp, fetched_at, identity_intl=None):
     jp, other = documents["jp"], documents["intl"]
     release = identity_jp["releaseId"]
     common = dict(release=release, source_id=identity_jp["sourceId"], fetched_at=fetched_at)
@@ -202,6 +202,27 @@ def convert_info(documents, identity_jp, fetched_at):
                     bonus_cards=_card_refs(targets), reward_cards=_card_refs(rewards),
                     pickup_cards=_card_refs(pickups), song_ids=(music_id,) if music_id else (),
                     available_relations=frozenset(relations)))
+    calendars = {}
+    if 'activities' in available:
+        calendars['jp'] = ActivityCalendar(tuple(activities), release, identity_jp['sourceId'], fetched_at)
+    if identity_intl is not None and 'events' in other:
+        # Convert the intl calendar from its own timestamps and pinned identity.
+        # JP data is never used to fill a missing international event date.
+        rows, _ = _rows(other, 'events')
+        intl_records = []
+        for key, row in rows.items():
+            ident = _identity(key, row, 'id')
+            if row.get('kind') != 'game-event':
+                continue
+            start, end = _time(row.get('startAt')), _time(row.get('endAt'))
+            if start is not None and end is not None and start >= end:
+                raise ValueError('invalid international activity interval')
+            names = _text(row, {}, 'title', False)
+            intl_records.append(ActivityInfo(ident, names['zh'] or str(ident), names,
+                start_at=start, end_at=end, release=identity_intl['releaseId'],
+                source_id=identity_intl['sourceId'], fetched_at=fetched_at))
+        calendars['intl'] = ActivityCalendar(tuple(intl_records), identity_intl['releaseId'],
+                                               identity_intl['sourceId'], fetched_at)
     return InfoCatalog(tuple(sorted(characters, key=lambda c: (c.band_id or 0, c.order, c.id))),
                        tuple(sorted(gachas, key=lambda g: g.id)), tuple(sorted(activities, key=lambda e: e.id)),
-                       frozenset(available))
+                       frozenset(available), calendars)

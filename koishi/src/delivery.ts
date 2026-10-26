@@ -3,6 +3,7 @@
 import { createHash, randomUUID } from 'node:crypto'
 import type { QQBot } from '@satorijs/adapter-qq'
 import type { Inbound } from './ingress'
+import type { ImageMaterials, MaterialLease } from './materials'
 
 export type QQInternal = Pick<QQBot['internal'], 'sendFileGuild' | 'sendFilePrivate' | 'sendMessage' | 'sendPrivateMessage'>
 export type Part =
@@ -61,6 +62,7 @@ export class QQDelivery {
     private readonly alive: () => boolean,
     private readonly limits: Readonly<Limits> = candidateLimits,
     private readonly now: () => number = Date.now,
+    private readonly materials?: ImageMaterials,
   ) {
     if (!deliveryId || !gatewayEpoch || !Number.isInteger(limits.maxSends) || limits.maxSends < 1
         || limits.maxSends > 5 || !Number.isFinite(limits.replyWindowMs) || limits.replyWindowMs <= 0
@@ -78,7 +80,7 @@ export class QQDelivery {
     const text = part.kind === 'image' ? part.caption || ' ' : part.text
     if (this.inbound.kind !== 'group') return text
     // Group text mentions render in Markdown; native image captions stay plain.
-    // An image-first plan includes a separately accounted text introduction.
+    // Image mentions are composed only after official material upload succeeds.
     const body = text.replace(/<(?=@|\/?qqbot-)/giu, '＜')
     return part.kind === 'text' ? `<qqbot-at-user id="${this.inbound.userId}" />\n` + body : body
   }
@@ -150,23 +152,32 @@ export class QQDelivery {
     if (!this.valid()) return { status: 'aborted', reason: 'inactive_or_expired' }
     if (this.sequence >= this.limits.maxSends) return { status: 'aborted', reason: 'send_budget' }
     let media: { file_info: string } | undefined
+    let material: MaterialLease | undefined
+    try {
     if (part.kind === 'image') {
       const started = performance.now()
       let observed:'ok'|'error'='error'
       try {
+        if (this.inbound.kind === 'group') {
+          if (!this.materials) throw Error('material store unavailable')
+          material = await this.materials.acquire(part.bytes)
+        } else {
         const payload = { file_type: 1, srv_send_msg: false, file_data: Buffer.from(part.bytes).toString('base64') }
-        const uploaded = this.inbound.kind === 'group'
-          ? await this.api.sendFileGuild(this.inbound.conversationId, payload)
-          : await this.api.sendFilePrivate(this.inbound.userId, payload)
+        const uploaded = await this.api.sendFilePrivate(this.inbound.userId, payload)
         if (!uploaded || typeof uploaded.file_info !== 'string' || !uploaded.file_info.trim()) {
           return { status: 'upload_failed', reason: 'missing_file_info' }
         }
         media = { file_info: uploaded.file_info }
+        }
         observed='ok'
       } catch { return { status: 'upload_failed', reason: 'upload_error' } }
       finally { this.observe('upload', index, null, started, observed) }
     }
     if (!this.valid()) return { status: 'aborted', reason: 'inactive_or_expired' }
+    const markdown = this.inbound.kind === 'group'
+    const body = material ? `![查询结果 #${material.width}px #${material.height}px](${material.url})\n<qqbot-at-user id="${this.inbound.userId}" />`
+      + (part.kind === 'image' && part.caption ? '\n' + this.content(part) : '') : this.content(part)
+    if ([...body].length > this.limits.maxTextChars) return { status: 'upload_failed', reason: 'material_caption_size' }
     const attempt: Attempt = { requestId: this.inbound.requestId, deliveryId: this.deliveryId, partId,
       attemptId: randomUUID(), gatewayEpoch: this.gatewayEpoch }
     let permission: 'granted' | 'existing' | 'denied'
@@ -183,10 +194,9 @@ export class QQDelivery {
       this.halted = true
       return this.ack(attempt, { status: 'aborted', reason: 'inactive_or_expired' }, false)
     }
-    const markdown = this.inbound.kind === 'group' && part.kind === 'text'
     const payload = { msg_id: this.inbound.messageId, msg_seq: ++this.sequence,
-      msg_type: part.kind === 'image' ? 7 : markdown ? 2 : 0,
-      ...(markdown ? { markdown: { content: this.content(part) } } : { content: this.content(part) }),
+      msg_type: markdown ? 2 : part.kind === 'image' ? 7 : 0,
+      ...(markdown ? { markdown: { content: body, ...(material ? { force_verify_image_resource: true } : {}) } } : { content: body }),
       ...(media ? { media } : {}) }
     let result: Outcome
     const started = performance.now()
@@ -201,6 +211,7 @@ export class QQDelivery {
       result = object(data) ? classifyReceipt(data) : { status: 'uncertain', reason: 'transport_error' }
     } finally { this.observe('send', index, attempt.attemptId, started, observed) }
     if (result.status !== 'success') this.halted = true
-    return this.ack(attempt, result, result.status === 'success')
+    return await this.ack(attempt, result, result.status === 'success')
+    } finally { material?.release() }
   }
 }

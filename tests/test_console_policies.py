@@ -1147,16 +1147,18 @@ class NativeRuntimeTests(Fixture,unittest.IsolatedAsyncioTestCase):
     def test_calendar_modes_ground_whole_question_and_preserve_server(self):
         from ournotes_bot.natural_query.native_tools import TOOLS,execute
         good=(
-            ('event','当前','这期活动啥时候结束','/查活动 当前'),
-            ('event','当前','这期活动啥时候结束啊','/查活动 当前'),
-            ('event','当前','国际服这期活动什么时候结束呀？','/查活动 国际服 当前'),
-            ('event','本期','本期活动什么时候结束？','/查活动 当前'),
-            ('event','当前','国际服这次活动结束时间是什么','/查活动 国际服 当前'),
-            ('event','en 当前','国际服当前活动什么时候开始','/查活动 国际服 当前'),
+            ('event','当前','这期活动啥时候结束','/查活动 日程'),
+            ('event','当前','这期活动啥时候结束啊','/查活动 日程'),
+            ('event','当前','国际服这期活动什么时候结束呀？','/查活动 国际服 日程'),
+            ('event','本期','本期活动什么时候结束？','/查活动 日程'),
+            ('event','当前','国际服这次活动结束时间是什么','/查活动 国际服 日程'),
+            ('event','en 当前','国际服当前活动什么时候开始','/查活动 国际服 日程开始'),
             ('event','','台服这期活动详情','/查活动 台服 当前'),
             ('event','历史','历史活动有哪些','/查活动 历史'),
             ('gacha','当前','本期卡池啥时候结束','/查卡池 当前'),
             ('gacha','当前','本期卡池什么时候结束呢','/查卡池 当前'),
+            ('event','下期','下期活动什么时候开始','/查活动 下期'),
+            ('event','当前','这期活动结束了吗','/查活动 日程'),
         )
         for kind,query,question,command in good:
             with self.subTest(question=question), \
@@ -1188,20 +1190,34 @@ class NativeRuntimeTests(Fixture,unittest.IsolatedAsyncioTestCase):
                 resolve.assert_not_called()
 
     async def test_screenshot_event_question_reaches_native_local_query_without_model(self):
-        from types import SimpleNamespace
-        from ournotes_bot.query.contracts.info import InfoAnswer,InfoView,InfoRow,InfoSchedule
-        view=InfoView('夹具活动',rows=(InfoRow('时间',schedule=InfoSchedule(
-            '活动 ID 1','进行中','2026-10-21 20:00:00','2026-10-30 20:00:00','UTC+09:00')),))
-        answer=InfoAnswer('夹具活动结束：2026-10-30 20:00',views=(view,))
-        with patch('ournotes_bot.query.activity_query.execute_activity',return_value=answer) as execute, \
-             patch('ournotes_bot.rendering.info_layout.render_info',side_effect=AssertionError('image rendered')):
-            plan,attempts=await self.prepare_native('/问 这期活动啥时候结束啊')
-        self.assertFalse(attempts);self.client.request.assert_not_awaited()
-        execute.assert_called_once()
-        self.assertEqual([p['kind'] for p in plan['parts']],['text'])
-        self.assertIn('2026-10-30 20:00:00（UTC+09:00）',plan['parts'][0]['text'])
-        self.assertIn('记得及时清 CP',plan['parts'][0]['text'])
-        self.assertNotIn('查询结果：',plan['parts'][0]['text'])
+        from datetime import datetime,timezone
+        from ournotes_bot.domain.info_catalog import ActivityInfo
+        from ournotes_bot.query.activity_query import execute_activity
+        end=datetime(2026,10,30,12,tzinfo=timezone.utc).timestamp()
+        self.repo.activities=(ActivityInfo(1,'夹具活动',{},start_at=end-86400,end_at=end),)
+        self.repo.metadata['info_catalog_available']={'activities':True}
+        self.repo.cache_state='fresh'
+        self.repo.activity_announcements=Mock()
+        self.repo.activity_announcements.next.return_value=(None,'')
+        for seq,(question,now,reminder) in enumerate((
+            ('这期活动啥时候结束啊',end-10,True),
+            ('这期活动结束了吗',end,False),
+            ('现在活动还在吗',end+10,False),
+            ('下期活动什么时候开始',end+10,False)),1):
+            with patch('ournotes_bot.query.activity_query.execute_activity',
+                       side_effect=lambda query,repo:execute_activity(query,repo,now=now)) as execute, \
+                 patch('ournotes_bot.rendering.info_layout.render_info',side_effect=AssertionError('image rendered')):
+                plan,attempts=await self.prepare_native('/问 '+question,seq=seq)
+            self.assertFalse(attempts);self.client.request.assert_not_awaited()
+            execute.assert_called_once()
+            self.assertEqual([p['kind'] for p in plan['parts']],['text'])
+            body=plan['parts'][0]['text']
+            if seq<4:self.assertIn('2026-10-30 20:00:00（北京时间 UTC+8）',body)
+            self.assertEqual('记得及时清 CP' in body,reminder)
+            if seq in (2,3): self.assertIn('已于',body)
+            if seq>1:self.assertIn('还不能确定下一期开启时间',body)
+            self.assertNotIn('查询结果：',body)
+            self.event(plan,'intent');self.event(plan,'ack')
 
     def test_native_chart_preserves_explicit_difficulty_and_captured_result(self):
         from ournotes_bot.domain.model_calls import ToolCall,ModelError

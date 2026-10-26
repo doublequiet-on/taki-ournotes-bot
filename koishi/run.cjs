@@ -10,7 +10,7 @@ function configuration(env) {
   const port=Number(env.TAKI_GATEWAY_HEALTH_PORT||8766)
   if(!Number.isInteger(port)||port<1||port>65535)throw Error('health port')
   return {port,plugin:{enabled:true,notifications:true,instanceId:env.TAKI_INSTANCE_ID,appId:env.QQ_APP_ID,
-    selfId:env.QQ_SELF_ID,backendUrl:env.TAKI_BACKEND_URL||'http://127.0.0.1:8765',tokenEnv:'OURNOTES_BACKEND_TOKEN',permissions:['authority:1'],maxPending:8},
+    selfId:env.QQ_SELF_ID,materialStateDir:path.join(env.TAKI_CONSOLE_STATE_DIR,'qq-materials'),backendUrl:env.TAKI_BACKEND_URL||'http://127.0.0.1:8765',tokenEnv:'OURNOTES_BACKEND_TOKEN',permissions:['authority:1'],maxPending:8},
     adapter:{id:env.QQ_APP_ID,secret:env.QQ_APP_SECRET,type:'public',protocol:'websocket',sandbox:false,
       intents:1<<25,endpoint:'https://api.bot.qq.com',retryWhen:[]}}
 }

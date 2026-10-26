@@ -83,6 +83,17 @@ def information_command(question, repository):
     if re.search(r"[红蓝绿黄紫黑白橙青灰]色|颜色|属性", color_conditions(text)):
         return None  # Colored members refer to cards, not character profiles.
     text = re.sub(r"^(?:(?:请|帮我|查一下|查询|查看|看看|想看)\s*)+", "", text).strip(" ？?。！!")
+    calendar = re.fullmatch(
+        r"(?:(jp|intl|tw|en|日服|台服|国际服|英服)\s*)?"
+        r"(现在|当前|最近|这期|本期|这次|下期|下一期|下次|下一次|下一个)(?:的)?\s*活动\s*"
+        r"((?:啥时候|什么时候|何时|几号)(?:开始|结束)|(?:开始|结束)(?:时间|日期)(?:是什么|是啥|是几号)?|"
+        r"结束了|结束|还在|还在进行|还没结束)(?:啊|呀|呢|吗|嘛|吧)?", text, re.I)
+    if calendar:
+        region, which, request = calendar.groups()
+        if which in {'下期', '下一期', '下次', '下一次', '下一个'} and '开始' not in request:
+            return None
+        mode = '下期' if which in {'下期', '下一期', '下次', '下一次', '下一个'} else '日程开始' if '开始' in request else '日程'
+        return '/查活动 ' + (region or '') + ' ' + mode
     current = re.fullmatch(
         r"(?:(jp|hk|tw|kr|en|日服|国服|台服|韩服|英服|国际服)\s*)?"
         r"(?:现在|当前|最近|这期|本期|这次)(?:的)?\s*(活动|卡池)\s*"
@@ -120,11 +131,12 @@ def information_command(question, repository):
 def activity_time_field(question, repository):
     """A short reply only for an entirely grounded current-activity time question."""
     command = information_command(question, repository)
-    if not command or not command.startswith('/查活动 ') or not command.endswith(' 当前'):
-        return None
-    for word, field in (('结束', 'end'), ('开始', 'start')):
-        if word in question:
-            return field
+    if command and command.startswith('/查活动 ') and command.split()[-1] in {'日程', '日程开始', '下期'}:
+        return 'calendar'
+    if command and command.startswith('/查活动 ') and command.endswith(' 当前'):
+        for word, field in (('结束', 'end'), ('开始', 'start')):
+            if word in question:
+                return field
     return None
 
 
