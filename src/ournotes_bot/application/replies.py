@@ -500,6 +500,7 @@ def prepare_reply(content: str, repository: SongRepository,
             short = activity_time_reply(result.activity, field)
     prepared = (PreparedReply(short, complete_text=True) if short is not None else
                 render_prepared(reply, result, repository, locale_for(content), candidate))
+    prepared = bind_info_expiry(prepared, result)
     prepared = replace(prepared, business_status=getattr(result, 'status', None), parse_origin=origin,processing_route=route)
     logger.info("查询完成；内容=%s 文本=%d字 图片=%s 耗时=%.0fms",
                 describe(content) if log_content else '[redacted]', len(reply),
@@ -509,7 +510,7 @@ def prepare_reply(content: str, repository: SongRepository,
 
 def activity_time_reply(answer, field):
     """Use the captured schedule, including its timezone and source warnings."""
-    if answer.status != 'success':
+    if answer.status != 'success' or field == 'calendar':
         return answer.text
     schedules = [(view, row.schedule) for view in answer.views for row in view.rows if row.schedule]
     label = '结束' if field == 'end' else '开始'
@@ -698,12 +699,23 @@ def song_detail_reply(result,repository,locale,candidate):
 
 
 
+def bind_info_expiry(prepared, result):
+    if isinstance(result, CommandResult):
+        info = result.activity if result.activity is not None else result.info
+        expiry = getattr(info, 'evidence_expires_at', None)
+        if expiry is not None:
+            deadline = time.monotonic() + max(0, expiry-time.time())
+            return replace(prepared, evidence_deadline=min(deadline, prepared.evidence_deadline)
+                           if prepared.evidence_deadline is not None else deadline)
+    return prepared
+
+
 def render_prepared(reply, result, repository, locale, candidate=None):
     from ..rendering.haneoka_theme import game_assets
     from ..sources.haneoka.game_assets import asset_bytes
     from ..config import runtime_data_dir
     with game_assets(lambda name: asset_bytes(name, runtime_data_dir() / 'game-assets')):
-        return render_prepared_inner(reply, result, repository, locale, candidate)
+        return bind_info_expiry(render_prepared_inner(reply, result, repository, locale, candidate), result)
 
 
 def render_prepared_inner(reply, result, repository, locale, candidate=None):

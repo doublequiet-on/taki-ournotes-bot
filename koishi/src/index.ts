@@ -25,6 +25,7 @@ export const Config: Schema<Config> = Schema.object({
   tokenEnv: Schema.string().default('OURNOTES_BACKEND_TOKEN'),
   permissions: Schema.array(String).default(['authority:1']),
   notifications: Schema.boolean().default(true),
+  materialStateDir: Schema.string().description('本实例 QQ 素材私有持久目录'),
   maxPending: Schema.number().min(1).max(8).step(1).default(8),
 })
 

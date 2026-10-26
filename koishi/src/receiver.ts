@@ -6,10 +6,12 @@ import { BackendClient, BackendError, Plan, ModelPermission } from './backend'
 import { decodeIncoming, Identity, Inbound } from './ingress'
 import { QQDelivery, QQInternal } from './delivery'
 import { Notices } from './notices'
+import { MaterialStore } from './materials'
 import type { Management } from './management'
 
 export interface ReceiverConfig extends Identity {
   management?: Management
+  materialStateDir?: string
   notifications?: boolean; backendUrl: string; tokenEnv: string; permissions: string[]; maxPending: number
 }
 interface Raw { raw: unknown; seq: number; at: number; fingerprint: string; conflict?: boolean }
@@ -20,6 +22,7 @@ export class Receiver {
   readonly client: BackendClient
   private active = true
   private notices?: Notices
+  private materials?: MaterialStore
   health() { return { active:this.active && (this.notices?.healthy() ?? true), handshake:!!this.client.readiness, epoch:this.client.epoch, backend:this.client.readiness } }
   activity() { return { accepted_inflight:this.jobs.size, admission_inflight:this.entering } }
   private sequence = 0
@@ -156,7 +159,15 @@ export class Receiver {
       // The same delivery owner counts the slow hint and final answer together.
       const api = Object.create(bot.internal) as QQInternal & { http: () => typeof bot.http }
       api.http = () => bot.http.extend({ timeout: 15000 })
-      job.delivery = new QQDelivery(api, job.input, job.plan.delivery_id, this.client.epoch, this.client, alive)
+      if (!this.materials && this.config.materialStateDir) {
+        this.materials = new MaterialStore(this.config.materialStateDir, this.config.appId, async (method, path, data) => {
+          const response = await bot.http(path, { method, data, timeout: 15000 })
+          if (response.data?.code && response.data.code !== 0) throw new Error('material API rejected')
+          return response.data
+        })
+      }
+      job.delivery = new QQDelivery(api, job.input, job.plan.delivery_id, this.client.epoch, this.client, alive,
+        undefined, undefined, this.materials)
       while (alive() && job.plan.status === 'preparing') {
         if(job.plan.pending_model_permission) await this.authorizeModel(job,job.plan.pending_model_permission)
         if(job.plan.processing_hint && job.plan.send_allowed && !hint) {

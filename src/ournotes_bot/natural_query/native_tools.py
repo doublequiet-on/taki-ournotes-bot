@@ -188,7 +188,7 @@ def execute(tool,args,question,repository):
     question=re.sub(r'^(?:请|帮我)?(?:解释|分析)(?:一下)?[\s，,：:]*','',question).strip()
     question=re.sub(r'[，,\s]*(?:并|再|然后)(?:解释|分析)(?:一下)?[。！!]*$','',question).strip()
     calendar=information_command(question,repository) if tool.kind=='info' and args['kind'] in ('event','gacha') else None
-    current_event=bool(calendar and calendar.startswith('/查活动 ') and calendar.endswith(' 当前'))
+    current_event=bool(calendar and calendar.startswith('/查活动 ') and calendar.split()[-1] in {'当前','日程','日程开始','下期'})
     if tool.servers==('jp',) and not current_event:
         require(not re.search(r'国际服|國際服|台服|臺服|港服|韩服|美服|欧服|\b(?:intl|tw|hk|kr|en)\b',question,re.I),'query_server_unsupported')
     if tool.kind in CAPABILITIES:
@@ -225,7 +225,7 @@ def execute(tool,args,question,repository):
     # Calendar modes are grounded by the same complete-utterance parser used by
     # local queries. A word anywhere in the question must not authorize dropping
     # a historical date, named event, explicit region or another requested object.
-    modes={'当前','最近','这期','本期','这次','现在','历史','列表'}
+    modes={'当前','最近','这期','本期','这次','现在','历史','列表','日程','日程开始','下期','下一期'}
     tokens=query.split()
     if kind in ('event','gacha') and (current_event or not tokens or tokens[-1] in modes):
         grounded=calendar
@@ -233,12 +233,15 @@ def execute(tool,args,question,repository):
         expected=grounded.split()[1:]
         expected_mode=expected[-1] if expected else ''
         mode=tokens[-1] if tokens else ''
-        require(mode==expected_mode or expected_mode=='当前' and mode in ('','最近','这期','本期','这次','现在'),
+        require(mode==expected_mode or expected_mode in ('当前','日程','日程开始') and mode in ('','当前','最近','这期','本期','这次','现在')
+                or expected_mode=='下期' and mode=='下一期',
                 'query_entity_mismatch')
         if len(tokens)>1:
-            require(len(tokens)==2 and tokens[0].casefold() in SERVER_ALIASES,'query_entity_mismatch')
-            expected_server=SERVER_ALIASES.get(expected[0].casefold(),'jp') if len(expected)>1 else 'jp'
-            require(SERVER_ALIASES[tokens[0].casefold()]==expected_server,'query_entity_mismatch')
+            from ..query.activity_query import CALENDAR_SERVERS
+            aliases = CALENDAR_SERVERS if expected_mode in {'日程','日程开始','下期'} else SERVER_ALIASES
+            require(len(tokens)==2 and tokens[0].casefold() in aliases,'query_entity_mismatch')
+            expected_server=aliases.get(expected[0].casefold(),'jp') if len(expected)>1 else 'jp'
+            require(aliases[tokens[0].casefold()]==expected_server,'query_entity_mismatch')
         query=' '.join(expected)  # Preserve the user's region even if the model omitted it.
     else:
         require(not query or query in question,'query_entity_mismatch')

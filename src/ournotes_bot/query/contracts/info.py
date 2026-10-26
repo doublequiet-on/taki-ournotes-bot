@@ -54,6 +54,7 @@ class InfoAnswer:
     text: str
     status: str = "success"
     views: tuple[InfoView, ...] = ()
+    evidence_expires_at: float | None = None
 
 
 def row_text(row: InfoRow) -> str:

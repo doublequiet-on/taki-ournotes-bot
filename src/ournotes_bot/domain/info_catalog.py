@@ -82,3 +82,21 @@ class InfoCatalog:
     gachas: tuple[GachaInfo, ...] = ()
     activities: tuple[ActivityInfo, ...] = ()
     available: frozenset[str] = frozenset()
+    activity_calendars: dict[str, ActivityCalendar] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class ActivityCalendar:
+    records: tuple[ActivityInfo, ...]
+    release: str
+    source_id: str
+    fetched_at: str
+
+
+@dataclass(frozen=True)
+class AnnouncedActivity:
+    title: str
+    start_at: float
+    url: str
+    observed_at: str
+    expires_at: float | None = None

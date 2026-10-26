@@ -73,9 +73,10 @@ class InfoCommandPipelineTests(unittest.TestCase):
         view = InfoView('夹具活动', '日服 · 当前／最近活动', rows=(InfoRow('时间', schedule=InfoSchedule(
             '活动 ID 1', '进行中', '2026-10-21 15:00:00', '2026-10-30 14:59:59', 'UTC+09:00')),),
             footer=('资料来源：夹具', '来源覆盖提示保留'))
-        answer = InfoAnswer(info_text((view,)), views=(view,))
+        answer = InfoAnswer('2026-10-30 14:59:59（UTC+09:00）\n记得及时清 CP\n来源覆盖提示保留', views=(view,))
         for question in ('/问 这期活动啥时候结束啊', '/问 本期活动什么时候结束？',
-                         '/问 国际服这次活动结束时间是什么', '/问 国际服这期活动什么时候结束呀？'):
+                         '/问 国际服这次活动结束时间是什么', '/问 国际服这期活动什么时候结束呀？', '/问 这期活动结束了吗',
+                         '/问 现在活动还在吗', '/问 下期活动什么时候开始', '/问 下一次活动什么时候开始'):
             with self.subTest(question=question), \
                  patch('ournotes_bot.query.activity_query.execute_activity', return_value=answer) as execute, \
                  patch('ournotes_bot.application.replies.render_prepared', side_effect=AssertionError('image rendered')), \
@@ -104,14 +105,27 @@ class InfoCommandPipelineTests(unittest.TestCase):
 
     def test_calendar_deixis_does_not_discard_history_or_other_conditions(self):
         from ournotes_bot.natural_query.on_query import information_command
-        for question in ('上期活动什么时候结束','下期活动什么时候开始','2020年这期活动什么时候结束',
+        for question in ('上期活动什么时候结束','2020年这期活动什么时候结束',
                          '国际服本期卡池什么时候结束','日服和国际服这期活动什么时候结束',
                          '这期活动和下期活动有什么不同','这期活动什么时候结束并预测榜线',
                          '这期活动啥时候结束啊并预测榜线','2020年这期活动什么时候结束啊',
                          '日服和国际服这期活动什么时候结束呢'):
             with self.subTest(question=question):
                 self.assertIsNone(information_command(question,self.repo))
-        self.assertEqual(information_command('国际服这期活动啥时候结束',self.repo),'/查活动 国际服 当前')
+        self.assertEqual(information_command('国际服这期活动啥时候结束',self.repo),'/查活动 国际服 日程')
+
+    def test_announced_time_expiry_reaches_delivery_gate_without_extension(self):
+        from ournotes_bot.application.replies import bind_info_expiry, PreparedReply
+        from ournotes_bot.commands import CommandResult
+        result=CommandResult(('activity','日程',None),activity=InfoAnswer('已确认预告',evidence_expires_at=1010))
+        with patch('ournotes_bot.application.replies.time.time',return_value=1000), \
+             patch('ournotes_bot.application.replies.time.monotonic',return_value=50):
+            reply=bind_info_expiry(PreparedReply('预告'),result)
+            self.assertEqual(reply.evidence_deadline,60)
+            self.assertEqual(bind_info_expiry(PreparedReply('预告',evidence_deadline=55),result).evidence_deadline,55)
+        with patch('ournotes_bot.application.replies.time.time',return_value=1020), \
+             patch('ournotes_bot.application.replies.time.monotonic',return_value=70):
+            self.assertEqual(bind_info_expiry(PreparedReply('预告'),result).evidence_deadline,70)
 
     def test_group_mention_reserve_preserves_complete_text_and_private_budget(self):
         from ournotes_bot.application.replies import expand_replies,fallback_cursor,reserve_progress_slot,PreparedReply

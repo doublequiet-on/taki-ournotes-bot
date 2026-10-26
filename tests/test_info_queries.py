@@ -77,6 +77,40 @@ class CurrentSource:
 
 
 class InformationQueryTests(unittest.TestCase):
+    def test_calendar_gap_boundary_next_and_missing_times(self):
+        ended = activity(1, '上一期', NOW-100, NOW, display_end_at=NOW+500)
+        repo = Repository(catalog(activities=(ended,)))
+        result = execute_activity('日程', repo, now=NOW)
+        self.assertIn('最近一期《上一期》已于', result.text)
+        self.assertIn('还不能确定下一期', result.text)
+        self.assertNotIn('清 CP', result.text)
+        future = activity(2, '下一期', NOW+50, NOW+100)
+        repo.snapshot = catalog(activities=(ended, future))
+        self.assertIn('下一期《下一期》将于', execute_activity('日程', repo, now=NOW).text)
+        self.assertIn('目前还没开始', execute_activity('日程', repo, now=NOW).text)
+        self.assertIn('清 CP', execute_activity('日程', repo, now=NOW+50).text)
+        repo.snapshot = catalog(activities=(ended, future), cache_state='stale')
+        self.assertNotIn('清 CP', execute_activity('日程', repo, now=NOW+50).text)
+        self.assertIn('旧缓存', execute_activity('日程', repo, now=NOW+50).text)
+        repo.snapshot = catalog(activities=(ended, future, activity(3, '时间未知', None, None)))
+        self.assertIn('部分活动时间缺失', execute_activity('日程', repo, now=NOW).text)
+        self.assertNotIn('下一期《', execute_activity('下期', repo, now=NOW).text)
+
+    def test_calendar_keeps_intl_identity_and_rejects_ambiguous_schedules(self):
+        from ournotes_bot.domain.info_catalog import ActivityCalendar
+        jp = activity(1, '日服一期')
+        intl = activity(2, '国际一期', NOW-200, NOW-100)
+        repo = Repository(catalog(activities=(jp,), activity_calendars={
+            'intl': ActivityCalendar((intl,), 'r-intl', 'intl-source', 'fixture')}))
+        for alias in ('台服', '国际服', 'intl', 'tw', 'en'):
+            result = execute_activity(alias+' 日程', repo, now=NOW)
+            self.assertIn('国际一期', result.text); self.assertNotIn('日服一期', result.text)
+            self.assertIn('r-intl', result.text)
+        repo.snapshot = catalog(activities=(jp,))
+        self.assertEqual(execute_activity('国际服 日程', repo, now=NOW).status, 'data_unavailable')
+        repo.snapshot = catalog(activities=(jp, activity(3, '重叠')))
+        self.assertIn('暂不能唯一确定', execute_activity('日程', repo, now=NOW).text)
+
     def test_activity_merges_roles_by_card_type_and_id_and_keeps_known_partial_rewards(self):
         ref=CardRef(2,7)
         record=activity(1,'活动',bonus_cards=(ref,),reward_cards=(ref,CardRef(3,7)),pickup_cards=(ref,),
@@ -373,6 +407,65 @@ class InformationQueryTests(unittest.TestCase):
         record = activity(2, '另一活动', bonus_cards=(CardRef(2, 7),), available_relations=frozenset({'bonus_cards'}))
         repo, _ = self._current_repository(record)
         self.assertNotIn('/查卡 7', execute_activity('', repo).text)
+
+
+class ActivityAnnouncementTests(unittest.TestCase):
+    def test_only_explicit_body_event_period_is_used(self):
+        from ournotes_bot.sources.haneoka.activity_announcements import announced_time
+        row = dict(title='イベント「次のステージ」開催予告！',
+                   text='【イベント開催期間】\n2026/10/30(金) 15:00 ～ 2026/11/07(土) 14:59', text_truncated=False)
+        name, stamp = announced_time(row, 'jp')
+        from datetime import datetime, timezone
+        self.assertEqual(name, '次のステージ')
+        self.assertEqual(stamp, datetime(2026,10,30,6,tzinfo=timezone.utc).timestamp())
+        for change in ({'text_truncated':True}, {'text':'【ランキング結果集計期間】\n2026/10/30(金) 15:00'},
+                       {'text':'2026/10/30(金) 15:00'}, {'title':'イベント「次のステージ」延期のお知らせ'},
+                       {'text':row['text']+'\n延期となります'}, {'text':'【イベント開催期間】\n2026/02/30 15:00'}):
+            self.assertIsNone(announced_time({**row,**change},'jp'))
+        self.assertIsNotNone(announced_time({**row,'text':row['text']+'\n内容は予告なく変更する場合がございます'},'jp'))
+        en=dict(title='Challenge Live Event "Next" Coming Soon!',text='Event Period: 2026/10/30 06:00 - 2026/11/07 05:59 (UTC)',text_truncated=False)
+        self.assertEqual(announced_time(en,'intl')[1],stamp)
+        self.assertIsNone(announced_time({**en,'text':en['text'].replace(' (UTC)','')},'intl'))
+
+    def test_notice_identity_change_missing_body_and_explicit_future(self):
+        from unittest.mock import Mock
+        from ournotes_bot.sources.haneoka.activity_announcements import ActivityAnnouncements
+        from ournotes_bot.sources.errors import ChartDataError
+        from datetime import datetime, timezone
+        now = datetime(2026,10,26,tzinfo=timezone.utc).timestamp()
+        row=dict(id=10,title='イベント「次のステージ」開催予告！',startAt=int(now-100),endAt=None,updatedAt=int(now-10))
+        index=dict(observed_at='2026-10-26T00:00:00Z',rows=[row])
+        full={**row,'text':'【イベント開催期間】\n2026/10/30(金) 15:00 ～ 2026/11/07(土) 14:59','text_truncated':False}
+        notices=Mock();notices.read.side_effect=[index,{**index,'rows':[full]}]
+        result,note=ActivityAnnouncements(notices).next('jp',now)
+        self.assertEqual(result.title,'次のステージ');self.assertTrue(result.url.endswith('/jp/ja/announcements/10/'))
+        self.assertEqual(notices.read.call_count,2)
+        revision={**row,'id':11,'updatedAt':int(now),'title':'イベント「次のステージ」について'}
+        revised={**revision,'text':'開催を中止します','text_truncated':False}
+        revised_index={**index,'rows':[revision,row]}
+        notices.read.side_effect=[revised_index,{**index,'rows':[revised]},{**index,'rows':[full]}]
+        result,note=ActivityAnnouncements(notices).next('jp',now)
+        self.assertIsNone(result);self.assertIn('延期或调整',note)
+        notices.read.side_effect=[index,{**index,'observed_at':'different','rows':[full]}]
+        self.assertIsNone(ActivityAnnouncements(notices).next('jp',now)[0])
+        notices.read.side_effect=[index,ChartDataError('missing body')]
+        result,note=ActivityAnnouncements(notices).next('jp',now)
+        self.assertIsNone(result);self.assertIn('暂不能确认',note)
+        notices.read.side_effect=ChartDataError('unavailable')
+        self.assertIn('读取失败',ActivityAnnouncements(notices).next('jp',now)[1])
+
+    def test_gap_uses_verified_notice_when_next_calendar_entry_is_absent(self):
+        from unittest.mock import Mock
+        from ournotes_bot.domain.info_catalog import AnnouncedActivity
+        repo=Repository(catalog(activities=(activity(1,'最近一期',NOW-100,NOW),)))
+        repo.activity_announcements=Mock()
+        repo.activity_announcements.next.return_value=(AnnouncedActivity('下一期公告',NOW+100,
+             'https://haneoka.org/jp/ja/announcements/10/','fixture'),'')
+        result=execute_activity('日程',repo,now=NOW)
+        self.assertIn('最近一期',result.text);self.assertIn('公告预告《下一期公告》将于',result.text)
+        self.assertIn('/announcements/10/',result.text);self.assertNotIn('清 CP',result.text)
+        self.assertNotIn('还不能确定',result.text)
+        repo.activity_announcements.next.assert_called_once_with('jp',NOW)
 
 
 if __name__ == '__main__':

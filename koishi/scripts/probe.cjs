@@ -46,6 +46,15 @@ async function run(name, task) {
   try { await task(); results.push({ name, status: 'passed' }) }
   catch (error) { results.push({ name, status: 'failed', error: String(error.stack || error) }) }
 }
+// Delivery fault tests inject a material port; the real three-step material API is
+// exercised separately below. Reuse the upload fixture's fault switch, never its payload in production.
+function fixtureMaterials(api) {
+  return {async acquire(bytes) {
+    const result=await api.sendFileGuild('fixture-group',{file_type:1,srv_send_msg:false,file_data:Buffer.from(bytes).toString('base64')})
+    if(!result?.file_info) throw Error('missing material fixture')
+    return {url:'qqbot-media://image/v1/fixture',width:1,height:1,release(){}}
+  }}
+}
 async function setup(kind = 'group', options = {}, extra = {}) {
   const env = createBot()
   const decoded = await decodeIncoming(env.bot, event({ kind, ...extra }), identity, recognizes)
@@ -62,10 +71,111 @@ async function setup(kind = 'group', options = {}, extra = {}) {
   const originalHandler = (url) => url.endsWith('/files') ? { file_info: 'fixture-file' } : { id: 'receipt-' + env.calls.length }
   env.setHandler((url, ...args) => { trace.push(url.endsWith('/files') ? 'upload' : 'send'); return originalHandler(url, ...args) })
   const delivery = new QQDelivery(env.bot.internal, decoded.inbound, 'fixture-delivery', 'fixture-epoch', events,
-    () => active, { ...candidateLimits, ...options }, () => now + 1)
+    () => active, { ...candidateLimits, ...options }, () => now + 1, fixtureMaterials(env.bot.internal))
   return { ...env, decoded, delivery, events, records, trace, failAck(value) { failAck = value }, deactivate() { active = false } }
 }
 async function main() {
+  await run('Official materials: prepare PUT complete, content reuse, restart and ownership',async()=>{
+    const {MaterialStore,imageShape}=require('../lib/materials')
+    const directory=fs.mkdtempSync(path.join(require('node:os').tmpdir(),'taki-material-'))
+    const calls=[];let id=0,clock=Date.now()
+    const api=async(method,url,data)=>{
+      calls.push({method,url,data})
+      if(url.endsWith('/prepare'))return{upload_id:'upload_'+(++id),presigned_url:'https://fixture.cos.ap-guangzhou.myqcloud.com/image'}
+      if(url.endsWith('/complete'))return{image_id:'owned_'+id,url:'qqbot-media://image/v1/owned_'+id}
+      if(method==='DELETE')return{}
+      throw Error('unexpected API')
+    }
+    const put=async(url,bytes,type)=>{calls.push({method:'PUT',url,type});return crypto.createHash('md5').update(bytes).digest('hex')}
+    try {
+      const store=new MaterialStore(directory,'fixture-app',api,put,()=>clock)
+      const [a,b]=await Promise.all([store.acquire(picture),store.acquire(picture)])
+      assert.deepEqual(calls.map(c=>c.method),['POST','PUT','POST'])
+      assert.equal(a.width,1);assert.equal(a.height,1);assert.equal(a.url,b.url)
+      assert.equal(calls[0].data.content_type,'image/png')
+      a.release();a.release();b.release()
+      const restored=new MaterialStore(directory,'fixture-app',api,put,()=>clock)
+      const c=await restored.acquire(picture);c.release();assert.equal(calls.length,3)
+      clock+=90*86400000
+      const d=await restored.acquire(picture);d.release()
+      assert.equal(calls[3].url,'/v2/media-images/owned_1/delete')
+      assert.equal(calls[3].method,'DELETE')
+      assert.throws(()=>imageShape(Buffer.from('not an image')))
+      const ledger=fs.readFileSync(path.join(directory,fs.readdirSync(directory)[0]),'utf8')
+      assert.ok(!ledger.includes('presigned_url'));assert.ok(!ledger.includes('https://'))
+    }finally{assert.ok(path.resolve(directory).startsWith(path.resolve(require('node:os').tmpdir())+path.sep));fs.rmSync(directory,{recursive:true})}
+  })
+  await run('Material reclamation only deletes recorded idle IDs and protects active leases',async()=>{
+    const {MaterialStore}=require('../lib/materials')
+    const directory=fs.mkdtempSync(path.join(require('node:os').tmpdir(),'taki-material-'))
+    const app='fixture-capacity',clock=Date.now(),removed=[]
+    const key=crypto.createHash('sha256').update(picture).digest('hex')
+    const entries=Array.from({length:64},(_,i)=>({key:i===0?key:i.toString(16).padStart(64,'0'),created:clock-700000,
+      used:clock-600000+i,imageId:'owned_'+i,url:'qqbot-media://image/v1/owned_'+i}))
+    const file=path.join(directory,crypto.createHash('sha256').update(app).digest('hex')+'.json')
+    fs.writeFileSync(file,JSON.stringify({schema:1,appId:app,entries}))
+    const api=async(method,url)=>{
+      if(method==='DELETE'){removed.push(url);return{}}
+      return url.endsWith('prepare')?{upload_id:'new_upload',presigned_url:'fixture'}:{image_id:'new_image',url:'qqbot-media://image/v1/new_image'}
+    }
+    try {
+      const store=new MaterialStore(directory,app,api,async(url,bytes)=>crypto.createHash('md5').update(bytes).digest('hex'),()=>clock)
+      const active=await store.acquire(picture)
+      const another=await store.acquire(Buffer.concat([picture,Buffer.from('second')]))
+      assert.deepEqual(removed,['/v2/media-images/owned_1/delete'])
+      assert.equal(JSON.parse(fs.readFileSync(file)).entries.length,64)
+      active.release();another.release()
+    }finally{assert.ok(path.resolve(directory).startsWith(path.resolve(require('node:os').tmpdir())+path.sep));fs.rmSync(directory,{recursive:true})}
+  })
+  await run('Lost material completion persists reservation; restart never retries or sends',async()=>{
+    const {MaterialStore}=require('../lib/materials')
+    const directory=fs.mkdtempSync(path.join(require('node:os').tmpdir(),'taki-material-'))
+    let completes=0,prepares=0
+    const api=async(method,url)=>{
+      if(url.endsWith('/prepare')){prepares++;return{upload_id:'upload_lost',presigned_url:'fixture'}}
+      completes++;throw Error('response lost')
+    }
+    const put=async()=>crypto.createHash('md5').update(picture).digest('hex')
+    try {
+      await assert.rejects(new MaterialStore(directory,'app',api,put).acquire(picture))
+      await assert.rejects(new MaterialStore(directory,'app',api,put).acquire(picture),/unresolved/)
+      assert.equal(completes,1);assert.equal(prepares,1)
+      const wrong=path.join(directory,crypto.createHash('sha256').update('app').digest('hex')+'.json')
+      fs.writeFileSync(wrong,'{broken')
+      await assert.rejects(new MaterialStore(directory,'app',api,put).acquire(picture))
+      assert.equal(prepares,1)
+    }finally{assert.ok(path.resolve(directory).startsWith(path.resolve(require('node:os').tmpdir())+path.sep));fs.rmSync(directory,{recursive:true})}
+  })
+  await run('Material PUT validates host, ETag transport is unsigned and redirects fail closed',async()=>{
+    const {putMaterial}=require('../lib/materials')
+    const prior=globalThis.fetch;let calls=0
+    globalThis.fetch=async(url,options)=>{
+      calls++;assert.deepEqual(options.headers,{'Content-Type':'image/png'});assert.equal(options.redirect,'error')
+      assert.equal(options.method,'PUT');assert.equal(options.body.length,picture.length)
+      return{ok:true,headers:new Headers({etag:'"abc"'}),body:{async cancel(){}}}
+    }
+    try {
+      for(const url of ['http://fixture.cos.ap-guangzhou.myqcloud.com/x','https://127.0.0.1/x','https://a:b@fixture.cos.ap-guangzhou.myqcloud.com/x',
+        'https://fixture.cos.ap-guangzhou.myqcloud.com.evil/x'])await assert.rejects(putMaterial(url,picture,'image/png'))
+      assert.equal(calls,0)
+      assert.equal(await putMaterial('https://fixture.cos.ap-guangzhou.myqcloud.com/x',picture,'image/png'),'abc')
+      assert.equal(calls,1)
+    }finally{globalThis.fetch=prior}
+  })
+  await run('Material ETag mismatch never completes; image send uncertainty never resends',async()=>{
+    const {MaterialStore}=require('../lib/materials')
+    const directory=fs.mkdtempSync(path.join(require('node:os').tmpdir(),'taki-material-'))
+    let calls=0
+    try {
+      const store=new MaterialStore(directory,'app',async()=>{calls++;return{upload_id:'upload',presigned_url:'fixture'}},async()=>'bad')
+      await assert.rejects(store.acquire(picture),/ETag/);assert.equal(calls,1)
+      const e=await setup();e.setHandler(url=>url.endsWith('/files')?{file_info:'ok'}:{audit_id:'pending'})
+      assert.equal((await e.delivery.deliver('one',0,png)).status,'uncertain')
+      await e.delivery.deliver('one',0,png)
+      assert.equal((await e.delivery.deliver('two',1,text)).status,'aborted')
+      assert.equal(e.calls.filter(c=>c.url.endsWith('/messages')).length,1)
+    }finally{assert.ok(path.resolve(directory).startsWith(path.resolve(require('node:os').tmpdir())+path.sep));fs.rmSync(directory,{recursive:true})}
+  })
   for (const kind of ['group', 'c2c']) for (const legacy of [false, true]) {
     await run(`${kind}/${legacy ? 'legacy' : 'modern'} raw event -> installed adapter Session`, async () => {
       const env = createBot(), raw = event({ kind, legacy }), before = structuredClone(raw)
@@ -204,7 +314,12 @@ async function main() {
     assert.deepEqual(sends.map(c => c.data.msg_seq), [1, 2])
     assert.ok(sends.every(c => c.data.msg_id === 'fixture-message'))
     assert.equal(kind === 'group' ? sends[1].data.markdown.content : sends[1].data.content, kind === 'group' ? '<qqbot-at-user id="fixture-user" />\n' + text.text : text.text)
-    assert.equal(sends[0].data.msg_type, 7); assert.equal(sends[0].data.content, png.caption)
+    assert.equal(sends[0].data.msg_type, kind === 'group' ? 2 : 7)
+    if(kind==='group') {
+      assert.equal(sends[0].data.media,undefined)
+      assert.equal(sends[0].data.markdown.content,'![查询结果 #1px #1px](qqbot-media://image/v1/fixture)\n<qqbot-at-user id="fixture-user" />\n'+png.caption)
+      assert.equal(sends[0].data.markdown.force_verify_image_resource,true)
+    } else assert.equal(sends[0].data.content,png.caption)
     assert.equal(sends[1].data.msg_type, kind === 'group' ? 2 : 0)
     if (kind === 'group') assert.equal(sends[1].data.content, undefined)
     assert.ok(sends.every(c => c.url.includes(kind === 'group' ? '/groups/fixture-group/' : '/users/fixture-user/')))
@@ -223,7 +338,7 @@ async function main() {
     a.decoded.inbound.userId = 'later-user'; a.decoded.inbound.messageId = 'later-message'
     await Promise.all([a.delivery.deliver('text', 0, text), b.delivery.deliver('image', 0, png)])
     assert.equal(a.calls.at(-1).data.markdown.content, '<qqbot-at-user id="user-a" />\n' + text.text)
-    assert.equal(b.calls.at(-1).data.content, png.caption)
+    assert.equal(b.calls.at(-1).data.markdown.content,'![查询结果 #1px #1px](qqbot-media://image/v1/fixture)\n<qqbot-at-user id="user-b" />\n'+png.caption)
     assert.equal(a.calls.at(-1).data.msg_id, 'message-a'); assert.equal(b.calls.at(-1).data.msg_id, 'message-b')
     assert.equal(a.calls.at(-1).data.msg_seq, 1); assert.equal(b.calls.at(-1).data.msg_seq, 1)
   })
@@ -243,7 +358,7 @@ async function main() {
     assert.equal(privateReply.calls.at(-1).data.content, '文'.repeat(1800))
   })
   await run('missing file_info is upload failure; no media send', async () => {
-    const e = await setup(); e.setHandler(() => ({}))
+    const e = await setup('c2c'); e.setHandler(() => ({}))
     assert.equal((await e.delivery.deliver('image', 0, png)).reason, 'missing_file_info')
     assert.equal(e.calls.length, 1); assert.equal(e.records.length, 0)
   })
@@ -460,7 +575,7 @@ async function main() {
         assert.deepEqual(env.calls.map(c=>c.data.markdown.content),['还在核实，请稍等。','最终回答'].map(t=>'<qqbot-at-user id="fixture-user" />\n'+t))
     }finally{releaseHint();await receiver.dispose();await fork.dispose();await env.ctx.stop()}
   })
-  await run('Prepared image group plan sends one Markdown mention then four images within five slots',async()=>{
+  await run('Actual slow hint and four combined image mentions share five slots',async()=>{
     const env=createBot();let receiver,completed=0
     const decoded=await decodeIncoming(env.bot,event(),identity,recognizes)
     const input={...decoded.inbound,timestampMs:Date.now()}
@@ -475,14 +590,48 @@ async function main() {
       },async event(){throw Error('unexpected abort')}}
     const fork=env.ctx.plugin(ctx=>{receiver=new Receiver(ctx,{...identity,backendUrl:'http://127.0.0.1:8765',tokenEnv:'unused',permissions:[],maxPending:8},client)})
     try{
+      receiver.materials=fixtureMaterials(env.bot.internal)
       await receiver.deliver({input,plan:plan(),permissionAttempts:new Set()},env.bot)
       const sends=env.calls.filter(c=>c.url.endsWith('/messages'))
       assert.equal(completed,5);assert.deepEqual(sends.map(c=>c.data.msg_seq),[1,2,3,4,5])
-      assert.deepEqual(sends.map(c=>c.data.msg_type),[2,7,7,7,7])
+      assert.deepEqual(sends.map(c=>c.data.msg_type),[2,2,2,2,2])
       assert.equal(sends[0].data.markdown.content,'<qqbot-at-user id="fixture-user" />\n查询结果：')
-      assert.ok(sends.slice(1).every(c=>!c.data.content.includes('qqbot-at-user')))
+      assert.ok(sends.slice(1).every(c=>c.data.markdown.content.includes('qqbot-at-user')))
       assert.equal(env.calls.filter(c=>c.url.endsWith('/files')).length,4)
     }finally{await receiver.dispose();await fork.dispose();await env.ctx.stop()}
+  })
+  await run('Receiver wires official material APIs to one passive Markdown image and real mention',async()=>{
+    const env=createBot();let receiver,completed=false,puts=0
+    const directory=fs.mkdtempSync(path.join(require('node:os').tmpdir(),'taki-material-receiver-'))
+    const prior=globalThis.fetch
+    globalThis.fetch=async(url,options)=>{
+      puts++;assert.equal(new URL(url).hostname,'fixture.cos.ap-guangzhou.myqcloud.com')
+      assert.deepEqual(options.headers,{'Content-Type':'image/png'})
+      return{ok:true,body:{async cancel(){}},headers:new Headers({etag:crypto.createHash('md5').update(picture).digest('hex')})}
+    }
+    env.setHandler(url=>url.endsWith('/prepare')?{upload_id:'receiver_upload',presigned_url:'https://fixture.cos.ap-guangzhou.myqcloud.com/image'}:
+      url.endsWith('/complete')?{image_id:'receiver_owned',url:'qqbot-media://image/v1/receiver_owned'}:{id:'receiver_message'})
+    const decoded=await decodeIncoming(env.bot,event(),identity,recognizes)
+    const input={...decoded.inbound,timestampMs:Date.now()}
+    const plan=()=>({request_id:input.requestId,delivery_id:'a'.repeat(32),plan_version:1,status:completed?'finished':'prepared',
+      send_allowed:!completed,expires_at:Date.now()/1000+290,
+      parts:[{id:'0',position:0,mode:'primary',status:completed?'success':'pending',kind:'image',text:''}]})
+    const client={epoch:'epoch',deactivate(){},async initialize(){},async retire(){},async image(){return picture},
+      async lookup(){return plan()},async intent(){return'granted'},async acknowledge(){completed=true},async event(){throw Error('unexpected fallback')}}
+    const fork=env.ctx.plugin(ctx=>{receiver=new Receiver(ctx,{...identity,materialStateDir:directory,
+      backendUrl:'http://127.0.0.1:8765',tokenEnv:'unused',permissions:[],maxPending:8},client)})
+    try{
+      await receiver.deliver({input,plan:plan(),permissionAttempts:new Set()},env.bot)
+      assert.equal(puts,1);assert.equal(completed,true)
+      assert.deepEqual(env.calls.map(c=>c.url),['/v2/media-images/prepare','/v2/media-images/complete','/v2/groups/fixture-group/messages'])
+      const body=env.calls.at(-1).data
+      assert.equal(body.msg_type,2);assert.equal(body.msg_seq,1);assert.equal(body.msg_id,'fixture-message')
+      assert.equal(body.markdown.content,'![查询结果 #1px #1px](qqbot-media://image/v1/receiver_owned)\n<qqbot-at-user id="fixture-user" />')
+      assert.equal(body.markdown.force_verify_image_resource,true)
+    }finally{
+      globalThis.fetch=prior;await receiver.dispose();await fork.dispose();await env.ctx.stop()
+      assert.ok(path.resolve(directory).startsWith(path.resolve(require('node:os').tmpdir())+path.sep));fs.rmSync(directory,{recursive:true})
+    }
   })
   await run('M4 real plugin publishes and releases its scoped transport service', async () => {
     const ctx=new Context(),plugin=require('../lib')
@@ -693,7 +842,7 @@ async function main() {
       const api={async sendFileGuild(){await wait(20);return{file_info:'fixture'}},async sendMessage(){await wait(40);return{id:'fixture-message'}}}
       const inbound={requestId:'request',kind:'group',conversationId:'fixture-group',userId:'fixture-user',messageId:'fixture',timestampMs:Date.now()}
       const events={async intent(){return'granted'},async acknowledge(){await wait(10)},observe(span){spans.push(span)}}
-      const delivery=new QQDelivery(api,inbound,'delivery','epoch',events,()=>true)
+      const delivery=new QQDelivery(api,inbound,'delivery','epoch',events,()=>true,undefined,undefined,fixtureMaterials(api))
       assert.equal((await delivery.deliver('0',0,png)).status,'success')
       assert.deepEqual(spans.map(s=>s.kind),['upload','send','receipt_submit'])
       assert.ok(spans.find(s=>s.kind==='send').duration_ms>=30)
