@@ -2,7 +2,7 @@
 # Input: server, public MoeNotes endpoints, an isolated cache directory and injectable transport/clocks.
 # Output: captured snapshots with source/time-kind; current scores, public player IDs and usernames preserve response positions.
 # Pos: Data / MoeNotes challenge rankings; see L2-2.md.
-# Effects: bounded anonymous HTTPS GETs, isolated current-cache writes and optional history records; no startup I/O or QQ.
+# Effects: bounded anonymous HTTPS GETs and isolated cache writes; configured tracker writes history only from sampling; no startup I/O or QQ.
 """On-demand challenge rankings. Event points and permanent song records are never read."""
 from __future__ import annotations
 
@@ -234,8 +234,11 @@ class EventCutoffRepository:
         self._guard = threading.Lock()
         self._locks: dict[str, threading.Lock] = {}
         self._entries: dict[str, _Entry] = {}
+        self._refresh_revisions: dict[str, int] = {}
         self._negative: dict[str, tuple[float, SourceError]] = {}
         self.history = None
+        # Enabled by tracker composition; other adapters retain their own history policy.
+        self.scheduled_history_only = False
         self._foreground = 0
         self._diagnostic_local = threading.local()
 
@@ -278,6 +281,15 @@ class EventCutoffRepository:
         capture={};self._diagnostic_local.capture=capture
         try:
             board=self.board(event,song,deadline)
+            if self.scheduled_history_only and self.history:
+                if board.received_ms and (
+                        (board.server_ms and abs(board.server_ms-board.received_ms) > 60000)
+                        or (board.fetched_ms and board.fetched_ms > board.received_ms+1000)):
+                    board = replace(board, quality='clock_unknown', scores=())
+                stored = self.history.record(event, board)
+                capture['history_result'] = stored
+                if stored not in {'valid', 'duplicate'}:
+                    board = replace(board, scores=(), quality=stored)
             choices=[value for key,value in capture.items() if key.startswith('board:')]
             return board,{'retrieval':choices[0] if len(choices)==1 else 'unknown','history_result':capture.get('history_result')}
         finally:self._diagnostic_local.capture=previous
@@ -349,10 +361,17 @@ class EventCutoffRepository:
 
     def _cached(self, key: str, ttl: float, max_age: float, loader: Callable,
                 deadline: float) -> _Entry:
+        fresh_board = self.scheduled_history_only and key.startswith('board:')
+        before_wait = self._refresh_revisions.get(key, 0)
+        if fresh_board:
+            ttl, max_age = 0, -1
         lock = self._lock(key)
         if not lock.acquire(timeout=max(0, deadline - self.monotonic())):
             raise SourceError("budget")
         try:
+            if fresh_board and self._refresh_revisions.get(key, 0) != before_wait:
+                self._note_retrieval(key, 'coalesced')
+                return self._entries[key]
             old = self._load(key)
             age = self.monotonic() - old.tick if old else float("inf")
             if old and age < ttl:
@@ -369,10 +388,13 @@ class EventCutoffRepository:
                 if key.startswith("board:") and old:
                     before, after = _ms(old.headers.get("x-fetched-at")), _ms(headers.get("x-fetched-at"))
                     if before and after and after < before:
+                        if fresh_board:
+                            raise SourceError('late_snapshot')
                         self._negative[key] = (self.monotonic() + 30, SourceError("late_snapshot"))
                         self._note_retrieval(key,'late_cache')
                         return replace(old, late=entry)
                 self._entries[key] = entry
+                self._refresh_revisions[key] = self._refresh_revisions.get(key, 0) + 1
                 self._negative.pop(key, None)
                 self._save(key, entry)
                 self._note_retrieval(key,'upstream')
@@ -543,6 +565,7 @@ class EventCutoffRepository:
                        catalog=tuple((key, names(row.get("titleTextID"))) for key, row in music.items()), notes=tuple(notes))
 
     def board(self, event: EventSnapshot, song: EventSong, deadline: float) -> BoardSnapshot:
+        history = None if self.scheduled_history_only else self.history
         if not song.enabled or song.collect_status == "disabled":
             return BoardSnapshot(song, status="本曲挑战榜未开放")
         if song.collect_status not in {"collecting", "finalizing", "archived"}:
@@ -564,16 +587,16 @@ class EventCutoffRepository:
             entry = self._cached(f"board:{event.server}:{event.event_id}:{song.challenge_id}", 60, 600, load, deadline)
         except SourceError as exc:
             messages = {"pending": "来源采集中", "rate_limited": "来源限流，稍后重试", "not_found": "本曲暂无榜单", "budget": "本次查询预算已用尽"}
-            if self.history:
-                self.history.failure(event.server, event.event_id, song.challenge_id, exc.code)
+            if history:
+                history.failure(event.server, event.event_id, song.challenge_id, exc.code)
             return BoardSnapshot(song, status=messages.get(exc.code, "本曲来源暂不可用"))
-        if self.history and entry.late:
-            self.history.record(event, self._snapshot(event, song, entry.late))
+        if history and entry.late:
+            history.record(event, self._snapshot(event, song, entry.late))
         board = self._snapshot(event, song, entry)
-        if self.history:
+        if history:
             if entry.fallback:
-                self.history.failure(event.server, event.event_id, song.challenge_id, "source_fallback")
-            stored = self.history.record(event, board)
+                history.failure(event.server, event.event_id, song.challenge_id, "source_fallback")
+            stored = history.record(event, board)
             self._note_retrieval('history_result',stored)
             if stored == "conflict":
                 board = replace(board, scores=(), status="同一源时刻分数冲突，暂无可信当前值", quality="conflict")
