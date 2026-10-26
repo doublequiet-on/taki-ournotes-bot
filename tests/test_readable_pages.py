@@ -1,5 +1,6 @@
 """Single-image-first output keeps measured rows and never downsizes text."""
 import io
+from contextlib import contextmanager
 import unittest
 from unittest.mock import patch
 
@@ -47,3 +48,68 @@ class ReadablePagesTests(unittest.TestCase):
                 encode_image(im, close_input=True, preserve_size=True)
         with self.assertRaises(ValueError):
             im.getpixel((0, 0))
+
+    def test_page_scope_is_once_per_maximal_candidate_and_closes_before_next(self):
+        events = []
+        active = False
+        @contextmanager
+        def scope(start, stop):
+            nonlocal active
+            self.assertFalse(active)
+            active = True
+            events.append(('enter', start, stop))
+            try:
+                yield
+            finally:
+                active = False
+                events.append(('exit', start, stop))
+        def paint(start, stop, height):
+            self.assertTrue(active)
+            events.append(('paint', start, stop))
+            return Image.new('RGB', (200, height))
+        def encode(image, **kwargs):
+            height = image.height
+            image.close()
+            if height > 200:
+                raise ImageBudgetError('fixture byte budget')
+            return b'page'
+        with patch.object(pages, 'encode_image', encode):
+            result = pages.render_parts((100,)*5, 200, 0, paint, page_scope=scope)
+        self.assertEqual([(p.start,p.stop) for p in result], [(0,2),(2,4),(4,5)])
+        self.assertEqual([e for e in events if e[0]=='enter'], [('enter',0,5),('enter',2,5),('enter',4,5)])
+        self.assertEqual([e for e in events if e[0]=='exit'], [('exit',0,5),('exit',2,5),('exit',4,5)])
+        self.assertFalse(active)
+
+    def test_prepare_and_paint_budget_errors_are_not_encoding_retries(self):
+        for phase in ('prepare','paint'):
+            events=[]
+            @contextmanager
+            def scope(start, stop):
+                events.append('enter')
+                try:
+                    if phase=='prepare':raise ImageBudgetError('prepare failed')
+                    yield
+                finally:
+                    events.append('exit')
+            def paint(*args):
+                events.append('paint')
+                raise ImageBudgetError('paint failed')
+            with self.subTest(phase=phase), patch.object(pages,'encode_image') as encode:
+                with self.assertRaisesRegex(ImageBudgetError,phase+' failed'):
+                    pages.render_parts((100,)*3,200,0,paint,page_scope=scope)
+                encode.assert_not_called()
+                self.assertEqual(events,['enter','exit'] if phase=='prepare' else ['enter','paint','exit'])
+
+    def test_scope_exits_after_nonbudget_encoder_failure(self):
+        events=[]
+        @contextmanager
+        def scope(*args):
+            try:yield
+            finally:events.append('closed')
+        def encode(image,**kwargs):
+            image.close()
+            raise OSError('encoder failed')
+        with patch.object(pages,'encode_image',encode):
+            with self.assertRaisesRegex(OSError,'encoder failed'):
+                pages.render_parts((100,),200,0,lambda *a:Image.new('RGB',(200,100)),page_scope=scope)
+        self.assertEqual(events,['closed'])
