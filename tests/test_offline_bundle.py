@@ -9,10 +9,111 @@ import unittest
 from unittest.mock import patch
 import urllib.error
 import zipfile
+import os
+from deploy.koishi_control import inspect_combination_archive, stage_combination, COMBINATION_ASSET
 
 from deploy import offline_bundle as b
 
 COMMIT = "a" * 40
+
+
+class CombinationArchiveTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory(); self.root = Path(self.temp.name)
+        self.addCleanup(self.clean)
+
+    def clean(self):
+        for p in self.root.rglob('*'): p.chmod(0o700 if p.is_dir() else 0o600)
+        self.temp.cleanup()
+
+    def bundle(self, change=None):
+        files = {'bin/node':b'fixture-node', 'gateway/scripts/probe.cjs':b'fixture-probe',
+                 'gateway/package-lock.json':b'fixture-lock', 'python/taki-linux-x86_64-cp312.zip':b'fixture-python'}
+        row = {'schema':1, 'commit':COMMIT, 'node':{'version':'v24.19.0','platform':'linux','arch':'x64'},
+               'protocol':{'major':2,'minor':0}, 'capabilities':['group_policies_v1','query_chat_contract_v1'],
+               'python_artifact':'python/taki-linux-x86_64-cp312.zip',
+               'files':{n:hashlib.sha256(v).hexdigest() for n,v in files.items()}}
+        row['python_sha256']=row['files'][row['python_artifact']]
+        row['lock_sha256']=row['files']['gateway/package-lock.json']
+        if change: change(row,files)
+        path = self.root/'combination.zip'
+        with zipfile.ZipFile(path,'w') as z:
+            for n,v in files.items(): z.writestr(n,v)
+            z.writestr('combination.json',json.dumps(row))
+        return path,b.digest(path),row
+
+    def test_stage_pins_python_and_publishes_complete_directory(self):
+        path,sha,row=self.bundle(); out=self.root/COMMIT
+        self.assertEqual(stage_combination(path,out,COMMIT,sha,row['python_sha256']),row)
+        self.assertEqual((out/'bin/node').read_bytes(),b'fixture-node')
+        if os.name=='posix':
+            self.assertEqual((out/'bin/node').stat().st_mode & 0o777,0o555)
+            self.assertFalse((out/'combination.json').stat().st_mode & 0o222)
+        with self.assertRaises(FileExistsError): stage_combination(path,out,COMMIT,sha,row['python_sha256'])
+        with self.assertRaisesRegex(ValueError,'python_mismatch'):
+            stage_combination(path,self.root/'wrong',COMMIT,sha,'f'*64)
+        self.assertFalse((self.root/'wrong').exists())
+
+    def test_archive_wrong_commit_protocol_inventory_hash_and_paths_rejected(self):
+        cases = [lambda m,f:m.update(commit='b'*40),lambda m,f:m.update(protocol={'major':99,'minor':0}),
+                 lambda m,f:f.update({'extra':b'bad'}),lambda m,f:f.update({'bin/node':b'changed'})]
+        for name in ('../outside','/absolute','gateway/../outside','x\\outside','C:outside'):
+            cases.append(lambda m,f,n=name:(f.update({n:b'bad'}),m['files'].update({n:hashlib.sha256(b'bad').hexdigest()})))
+        for change in cases:
+            path,sha,_=self.bundle(change)
+            with self.assertRaises(b.Rejected): inspect_combination_archive(path,COMMIT,sha)
+
+    def test_failed_extraction_never_publishes_partial_directory(self):
+        path,sha,row=self.bundle(); out=self.root/COMMIT
+        with patch('deploy.koishi_control.shutil.copyfileobj',side_effect=OSError('disk full')):
+            with self.assertRaises(OSError): stage_combination(path,out,COMMIT,sha,row['python_sha256'])
+        self.assertFalse(out.exists())
+        self.assertEqual(list(self.root.glob('.'+COMMIT+'-*')),[])
+
+    def test_release_asset_uses_own_inspector_cache_and_first_use_pin(self):
+        path,sha,row=self.bundle(); tag='linux-'+COMMIT
+        release={'tag_name':tag,'draft':False,'assets':[{'name':COMBINATION_ASSET,'state':'uploaded','id':12,
+            'size':path.stat().st_size,'digest':'sha256:'+sha,
+            'browser_download_url':'https://github.com/doublequiet-on/taki-ournotes-bot/releases/download/'+tag+'/'+COMBINATION_ASSET}]}
+        def api(suffix): return release if suffix.startswith('/releases/') else {'object':{'type':'commit','sha':COMMIT}}
+        def download(url,target,expected,**kwargs): target.write_bytes(path.read_bytes())
+        with patch.object(b.os,'name','nt'):
+            cache=self.root/'cache'
+            result=b.get_bundle(cache,COMMIT,api,downloader=download,asset_name=COMBINATION_ASSET,inspector=inspect_combination_archive)
+            self.assertEqual(result[1],sha)
+            self.assertEqual(b.get_bundle(cache,COMMIT,lambda _:self.fail('network on cache hit'),asset_name=COMBINATION_ASSET,inspector=inspect_combination_archive),result)
+            result[0].unlink()
+            release['assets'][0]['digest']='sha256:'+'f'*64
+            with self.assertRaisesRegex(b.Rejected,'asset_changed'):
+                b.get_bundle(cache,COMMIT,api,downloader=download,asset_name=COMBINATION_ASSET,inspector=inspect_combination_archive)
+
+
+class PublicationTests(unittest.TestCase):
+    def test_retry_preserves_existing_python_and_uploads_missing_sidecars(self):
+        from scripts import publish_offline_release as p
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory); bundle=root/'python.zip'; combo=root/'combo.zip'; knowledge=root/'knowledge.zip'
+            for f in (bundle,combo,knowledge): f.write_bytes(f.name.encode())
+            digest=b.digest(bundle); uploaded=[]
+            assets=[{'name':b.ASSET,'state':'uploaded','digest':'sha256:'+digest}]
+            def api(request,**kwargs):
+                if '/git/ref/' in request.full_url:
+                    row={'object':{'type':'commit','sha':COMMIT,'url':p.API+'/git/commits/'+COMMIT}}
+                elif '/releases/tags/' in request.full_url:
+                    row={'id':123,'draft':False,'tag_name':'linux-'+COMMIT,'assets':assets}
+                else:
+                    name=request.full_url.split('?name=')[1];uploaded.append(name)
+                    row={'digest':'sha256:'+hashlib.sha256(request.data).hexdigest()}
+                return io.BytesIO(json.dumps(row).encode())
+            env={'GITHUB_EVENT_NAME':'push','GITHUB_REF':'refs/heads/main','GITHUB_REPOSITORY':p.REPO,'GITHUB_SHA':COMMIT,'GH_TOKEN':'fixture'}
+            with patch.dict(os.environ,env),patch.object(p,'inspect_bundle'), \
+                 patch.object(p,'inspect_combination_archive',return_value={'python_sha256':digest}), \
+                 patch.object(p,'inspect_dependency_bundle'),patch.object(p.urllib.request,'urlopen',side_effect=api):
+                p.publish(bundle,COMMIT,combination=combo,knowledge=knowledge)
+                self.assertEqual(uploaded,[COMBINATION_ASSET,b.KNOWLEDGE_ASSET])
+                assets[0]['digest']='sha256:'+'f'*64
+                with self.assertRaisesRegex(SystemExit,'overwrite'):
+                    p.publish(bundle,COMMIT,combination=combo,knowledge=knowledge)
 
 
 class KnowledgeBundleTests(unittest.TestCase):

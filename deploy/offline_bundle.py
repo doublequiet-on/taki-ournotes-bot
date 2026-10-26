@@ -31,6 +31,7 @@ except ImportError:
 
 TARGET = "linux-x86_64-cp312"
 ASSET = "taki-" + TARGET + ".zip"
+KNOWLEDGE_ASSET = "taki-knowledge-" + TARGET + ".zip"
 LIMIT = 128 * 1024 * 1024
 EXPANDED_LIMIT = 256 * 1024 * 1024
 SHA256 = re.compile(r"[0-9a-f]{64}\Z")
@@ -330,7 +331,8 @@ def download(url: str, target: Path, expected: str, *, fallback_url: str | None 
         raise
 
 
-def get_bundle(cache: Path, commit: str, api, *, downloader=download) -> tuple[Path, str]:
+def get_bundle(cache: Path, commit: str, api, *, downloader=download,
+               asset_name=ASSET, inspector=inspect_bundle) -> tuple[Path, str]:
     """Pin exact asset digest locally; validated cached data needs no download."""
     if not re.fullmatch(r"[0-9a-f]{40}", commit):
         raise Rejected("invalid_commit")
@@ -348,7 +350,7 @@ def get_bundle(cache: Path, commit: str, api, *, downloader=download) -> tuple[P
     if pin.exists():
         expected = pin.read_text(encoding="ascii").strip()
         if target.exists():
-            inspect_bundle(target, commit, expected)
+            inspector(target, commit, expected)
             report(dict(stage="verified", route="cache", received_bytes=target.stat().st_size,
                         expected_bytes=target.stat().st_size))
             return target, expected
@@ -360,13 +362,13 @@ def get_bundle(cache: Path, commit: str, api, *, downloader=download) -> tuple[P
     if (release.get("tag_name") != tag or release.get("draft") is not False
             or ref.get("object", {}).get("type") != "commit" or ref["object"].get("sha") != commit):
         raise Rejected("bundle_release_mismatch")
-    assets = [row for row in release.get("assets", []) if row.get("name") == ASSET and row.get("state") == "uploaded"]
+    assets = [row for row in release.get("assets", []) if row.get("name") == asset_name and row.get("state") == "uploaded"]
     if len(assets) != 1:
         raise Deferred("bundle_not_published")
     asset = assets[0]
     asset_id = asset.get("id")
     value = asset.get("digest", "")
-    url = "https://github.com/doublequiet-on/taki-ournotes-bot/releases/download/" + tag + "/" + ASSET
+    url = "https://github.com/doublequiet-on/taki-ournotes-bot/releases/download/" + tag + "/" + asset_name
     if (not isinstance(value, str) or not value.startswith("sha256:") or not SHA256.fullmatch(value[7:])
             or type(asset_id) is not int or asset_id <= 0
             or asset.get("browser_download_url") != url or type(asset.get("size")) is not int or not 0 < asset["size"] <= LIMIT):
@@ -382,7 +384,7 @@ def get_bundle(cache: Path, commit: str, api, *, downloader=download) -> tuple[P
             os.fsync(stream.fileno())
     fallback = "https://api.github.com/repos/doublequiet-on/taki-ournotes-bot/releases/assets/" + str(asset_id) + "?download=1"
     downloader(url, target, expected, fallback_url=fallback, size=asset["size"], progress=report)
-    inspect_bundle(target, commit, expected)
+    inspector(target, commit, expected)
     report(dict(stage="verified", route="cache", received_bytes=target.stat().st_size,
                 expected_bytes=asset["size"]))
     # Retain the newest three verified downloads. Application rollback environments

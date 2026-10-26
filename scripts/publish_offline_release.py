@@ -11,18 +11,29 @@ import urllib.error
 import urllib.request
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from deploy.offline_bundle import ASSET, digest, inspect_bundle
+from deploy.offline_bundle import ASSET, KNOWLEDGE_ASSET, digest, inspect_bundle, inspect_dependency_bundle
+from deploy.koishi_control import COMBINATION_ASSET, inspect_combination_archive
 
 REPO = "doublequiet-on/taki-ournotes-bot"
 API = "https://api.github.com/repos/" + REPO
 
 
-def publish(bundle, commit):
+def publish(bundle, commit, *, combination=None, knowledge=None):
     if (os.environ.get("GITHUB_EVENT_NAME") != "push" or os.environ.get("GITHUB_REF") != "refs/heads/main"
             or os.environ.get("GITHUB_REPOSITORY") != REPO or os.environ.get("GITHUB_SHA") != commit):
         raise SystemExit("Publisher requires this repository's exact main push")
     expected = digest(bundle)
     inspect_bundle(bundle, commit, expected)
+    payloads = [(ASSET, bundle, expected)]
+    if combination is not None:
+        sha = digest(combination)
+        row = inspect_combination_archive(combination, commit, sha)
+        if row['python_sha256'] != expected: raise SystemExit('Combination Python bundle mismatch')
+        payloads.append((COMBINATION_ASSET, combination, sha))
+    if knowledge is not None:
+        sha = digest(knowledge)
+        inspect_dependency_bundle(knowledge, commit, sha)
+        payloads.append((KNOWLEDGE_ASSET, knowledge, sha))
     token = os.environ["GH_TOKEN"]
     def api(path, body=None, *, binary=False):
         url = path if path.startswith("https://uploads.github.com/repos/" + REPO + "/") else API + path
@@ -53,18 +64,26 @@ def publish(bundle, commit):
                     "This asset does not install or replace the server controller."})
     if release.get("draft") or release.get("tag_name") != tag:
         raise SystemExit("Unexpected release state")
-    assets = [row for row in release.get("assets", []) if row["name"] == ASSET]
-    if assets:
-        if len(assets) != 1 or assets[0].get("digest") != "sha256:" + expected or assets[0].get("state") != "uploaded":
-            raise SystemExit("Refusing to overwrite an existing asset")
-        print("Identical published bundle already exists:", tag)
-        return
-    url = "https://uploads.github.com/repos/" + REPO + "/releases/" + str(release["id"]) + "/assets?name=" + ASSET
-    asset = api(url, bundle.read_bytes(), binary=True)
-    if asset.get("digest") != "sha256:" + expected:
-        raise SystemExit("Uploaded asset digest was not confirmed")
-    print("Published verified bundle:", tag, expected)
+    for name, path, sha in payloads:
+        assets = [row for row in release.get("assets", []) if row["name"] == name]
+        if assets:
+            if len(assets) != 1 or assets[0].get("digest") != "sha256:" + sha or assets[0].get("state") != "uploaded":
+                raise SystemExit("Refusing to overwrite an existing asset")
+            print("Identical published bundle already exists:", tag, name)
+            continue
+        url = "https://uploads.github.com/repos/" + REPO + "/releases/" + str(release["id"]) + "/assets?name=" + name
+        asset = api(url, path.read_bytes(), binary=True)
+        if asset.get("digest") != "sha256:" + sha:
+            raise SystemExit("Uploaded asset digest was not confirmed")
+        print("Published verified bundle:", tag, name, sha)
 
 
 if __name__ == "__main__":
-    publish(Path(sys.argv[1]), sys.argv[2])
+    import argparse
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('bundle', type=Path)
+    parser.add_argument('commit')
+    parser.add_argument('--combination', type=Path)
+    parser.add_argument('--knowledge', type=Path)
+    args = parser.parse_args()
+    publish(args.bundle, args.commit, combination=args.combination, knowledge=args.knowledge)

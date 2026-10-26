@@ -10,16 +10,18 @@ Checks 的 `offline-linux-bundle` 在 Ubuntu 24.04 / Python 3.12 从完整提交
 
 `check_offline_release.py` 在 `unshare --net` 环境中创建全新 venv，执行 `pip install --no-index --find-links ... --require-hashes --no-deps`、`pip check`、安装后资源检查及源码全量回归。Windows 本地通过不能替代这个 Linux 检查。
 
-只有 main 的 push 且两种 Python 回归和离线包验证全部成功，才发布预发行资产：
+只有 main 的 push，且两种 Python 回归、架构、离线包、Koishi probe 与组合验证全部成功，才发布预发行资产：
 
 - 标签：`linux-<40位提交号>`，直接指向该提交。
-- 文件：`taki-linux-x86_64-cp312.zip`。
+- 文件：`taki-linux-x86_64-cp312.zip`、`taki-koishi-linux-x64.zip`、`taki-knowledge-linux-x86_64-cp312.zip`。三者绑定同一提交；组合还绑定 Python 归档摘要。
 - 重跑只接受相同标签及相同资产摘要，不覆盖已发布内容；这不是对 GitHub 仓库管理员的不可变性保证。
 - PR 和其他分支只生成有保留期限的 CI artifact，不发布 Release。
 
 服务器校验 main 的精确 Checks、标签指向、GitHub 资产摘要、包内提交号／平台／逐文件摘要。下载首次成功后缓存；首次取得的摘要也会保留，用于拒绝同一提交的资产被替换。缓存损坏会拒绝更新，不以删除锁定摘要绕过检查。最多保留三个已验证归档；回退版本和环境由原有独立保留策略保护。
 
 ## 已审核知识依赖附加包
+
+受信配置可显式选择 `"knowledge_bundle": {"mode":"release"}`，按候选提交获取正式 Release 的附加包。CI 按现有 `linux-knowledge-cp312.lock` 下载和打包，在断网环境安装、导入并运行回归；控制器再次核对可选依赖声明、基础锁兼容及逐 wheel 摘要。每次安装记录解析后的提交和摘要，不改写配置。旧的 `{commit,sha256}` 人工固定模式继续支持。
 
 百科语义检索使用绑定应用完整提交号的独立离线附加包，基础发布包和默认安装行为保持原协议。`deploy/linux-knowledge-cp312.lock` 固定 Linux CPython 3.12 的24项直接及传递依赖和wheel哈希。准备匹配wheel后运行：
 
@@ -29,13 +31,21 @@ python -B scripts/build_knowledge_bundle.py --commit <应用完整SHA> --wheelho
 
 工具不联网、不安装；拒绝缺失/重复wheel、浮动版本和替代下载源。包内只有精确安装锁、wheel和清单，不含百科正文、批准状态或API配置。不能在安装时重新解析传递依赖替换已审核锁。
 
-受信配置可显式增加 `knowledge_bundle` 对象，唯一字段为 `commit`（40位应用提交号）及 `sha256`（附加包摘要）。审核后的ZIP预先存入root管理的 `<state_dir>/knowledge-bundles/<commit>.zip`。没有该配置时沿用基础安装；配置存在而提交不匹配、包缺失或改动时拒绝候选，不能静默跳过。
+人工固定模式的 `knowledge_bundle` 对象字段为 `commit`（40位应用提交号）及 `sha256`（附加包摘要）。审核后的ZIP预先存入root管理的 `<state_dir>/knowledge-bundles/<commit>.zip`。没有该配置时沿用基础安装；配置存在而提交不匹配、包缺失或改动时拒绝候选，不能静默跳过。
 
 控制器检查根所有权、路径、外层摘要、平台、提交、成员清单、锁与每个wheel的对应关系；三个直接依赖还必须与候选pyproject的knowledge声明一致；与基础锁重叠的分发名必须具有相同版本和wheel摘要，不能覆盖基础环境的既定版本。随后在原断网、非root、限资源沙箱执行 `pip install --no-index --find-links ... --require-hashes --no-deps`，导入并核定版本，继续原安装检查、pip check、测试、兼容与素材门禁，最后才冻结环境，记录附加包身份和完整环境摘要。
 
 ONNX Runtime初始化需要CPU信息。启用附加包的沙箱把宿主 `/proc` 替换为空的只读tmpfs，仅挂载控制器保存在root私有目录中的只读 `/proc/cpuinfo` 快照，不暴露宿主PID、environ、fd、maps或mountinfo。凭证隐藏、PrivateNetwork、User和资源限制保持原设置。未配置附加包时继续完整隐藏/proc。真实导入和进程信息不可见性需一起验收。
 
-安装失败不生成prepared=true记录，旧版尚未停止；封存后依赖缺失或篡改仍由原environment_digest拒绝。回退读取原环境记录，不依赖当前附加包配置；不在正式venv上补装或重写摘要。本入口属于受信控制器变更，须单独审核安装；合并代码不代表线上已接入。后续提交需要对应附加包和明确配置，不自动降级到基础环境。
+安装失败不生成prepared=true记录，旧版尚未停止；封存后依赖缺失或篡改仍由原environment_digest拒绝。回退读取原环境记录，不依赖当前附加包配置；不在正式venv上补装或重写摘要。本入口属于受信控制器变更，须单独审核安装；合并代码不代表线上已接入。后续提交仍需对应附加包；Release 模式自动解析该提交的已发布包，人工模式需更新固定配置，两者都不自动降级到基础环境。
+
+## Koishi 自动暂存
+
+受信配置 `"koishi_auto_stage": true` 启用配对包自动暂存，默认关闭。控制器只读取正式 Release 数据，不执行或安装归档中的控制器源码。固定标签、CI、首次摘要锁定、完整清单、文件类型、路径和展开大小检查通过后，暂存为 root 所有且应用不可写的完整目录，再原子发布到 `/opt/taki-combinations/<SHA>`。已有组合只校验，不覆盖。所有归档下载都在可恢复的 downloading 阶段完成，尚未停止旧实例；不完整暂存不会成为可启动组合。
+
+启用前须单独审阅并安装 `linux_backend.py`、`offline_bundle.py` 与 `koishi_control.py`，备份控制器和配置、持有更新锁，并保留原 `linux_updater.py`、launcher 和兼容策略。合并源码不会更新受信控制器。缺少发布包时等待后续检查；摘要变化、组合错配和未审核的共享数据变化仍拒绝更新。自动暂存不自动批准兼容性指纹。
+
+部署验收应核对：三个 Release 资产绑定同一 SHA、自动下载/暂存成功、候选断网安装与 probe、停止后的备份、双进程健康及稳定窗口，最后启用 `taki-updater.timer` 并确认下一次检查。只开启 timer 不等于完成这条链路。停用自动更新只需停止/禁用 timer；控制器回退需同时恢复旧配置，业务数据不随代码回退。
 
 ## 失败与重试
 
