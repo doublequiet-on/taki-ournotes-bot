@@ -13,7 +13,7 @@ require('node:https').request = deny
 globalThis.fetch = deny
 const { Context, h } = require('koishi')
 const { QQBot, adaptSession, WsClient, QQ } = require('@satorijs/adapter-qq')
-const { QQDelivery, candidateLimits, decodeIncoming, decodeGroupEvent, TakiTransport, BackendClient, Receiver, normalizeGateway } = require('../lib')
+const { QQDelivery, candidateLimits, decodeIncoming, decodeGroupEvent, TakiTransport, BackendClient, BackendError, Receiver, normalizeGateway } = require('../lib')
 const identity = { instanceId: 'fixture-instance', appId: 'fixture-app', selfId: 'fixture-self' }
 const now = Date.parse('2026-10-19T12:00:00+08:00')
 const picture = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=', 'base64')
@@ -45,6 +45,47 @@ function createBot() {
 async function run(name, task) {
   try { await task(); results.push({ name, status: 'passed' }) }
   catch (error) { results.push({ name, status: 'failed', error: String(error.stack || error) }) }
+}
+function deferred() {
+  let resolve
+  const promise = new Promise(done => { resolve = done })
+  return {promise,resolve}
+}
+async function until(predicate) {
+  const deadline=Date.now()+2000
+  while(!predicate()) {
+    assert.ok(Date.now()<deadline,'probe condition did not settle')
+    await new Promise(resolve=>setImmediate(resolve))
+  }
+}
+function receiverFixture(overrides={},maxPending=8) {
+  const env=createBot(), held=new Map(), submitted=[], sent=[], plans=new Map(), finished=new Set()
+  const client={epoch:'fixture-epoch',deactivate(){},async initialize(){},async retire(){},async recognizes(){return true},
+    async submit(input,seq){
+      submitted.push({input,seq})
+      const plan={request_id:input.requestId,delivery_id:crypto.createHash('sha256').update(input.requestId).digest('hex').slice(0,32),
+        plan_version:1,status:'prepared',send_allowed:true,expires_at:Date.now()/1000+298,
+        parts:[{id:'0',position:0,mode:'primary',status:'pending',kind:'text',text:'fixture'}]}
+      plans.set(input.requestId,plan);return plan
+    },async intent(){return'granted'},async acknowledge(attempt){finished.add(attempt.requestId)},
+    async lookup(id){return{...plans.get(id),status:'finished',send_allowed:false}},async event(){},...overrides}
+  let receiver
+  const fork=env.ctx.plugin(ctx=>{receiver=new Receiver(ctx,{...identity,backendUrl:'http://127.0.0.1:8765',tokenEnv:'unused',permissions:[],maxPending},client)})
+  env.setHandler(async(url,options)=>{
+    assert.ok(url.endsWith('/messages'))
+    sent.push(options.data.msg_id)
+    await held.get(options.data.msg_id)?.promise
+    return{id:'receipt-'+options.data.msg_id}
+  })
+  return {...env,receiver,client,submitted,sent,finished,
+    async session(id,mutate){
+      const raw=event({id,timestamp:new Date().toISOString()})
+      const captured=structuredClone(raw);mutate?.(captured)
+      held.set(id,deferred())
+      receiver.capture(env.bot.session({type:'internal',_type:'qq/group-at-message-create',_data:captured.d}))
+      return env.ctx.reflect.trace(await adaptSession(env.bot,raw))
+    },release(id){held.get(id)?.resolve()},
+    async close(){for(const wait of held.values())wait.resolve();await receiver.dispose();await fork.dispose();await env.ctx.stop()}}
 }
 // Delivery fault tests inject a material port; the real three-step material API is
 // exercised separately below. Reuse the upload fixture's fault switch, never its payload in production.
@@ -449,6 +490,28 @@ async function main() {
     await assert.rejects(client.intent(attempt));assert.equal(calls,1)
     calls=0;await assert.rejects(client.acknowledge(attempt,{status:'success',messageId:'m'}));assert.equal(calls,3)
   })
+  await run('Backend diagnostics preserve allowlisted errors and existing retry limits',async()=>{
+    for(const code of ['ledger_capacity','context_capacity','epoch_capacity','plan_capacity','byte_capacity']) {
+      let calls=0
+      const client=new BackendClient('http://127.0.0.1:8765','x'.repeat(32),'i','e',async()=>{
+        calls++;return Response.json({error:code,protocol:{major:2,minor:0}},{status:503})
+      })
+      await assert.rejects(client.retry('/v1/requests'),error=>error.code===code&&error.status===503)
+      assert.equal(calls,3)
+    }
+    for(const body of ['not json',{error:'private untrusted content',protocol:{major:2,minor:0}},
+      {error:'ledger_capacity',protocol:{major:1,minor:1}},{error:'ledger_capacity',protocol:{major:2,minor:0},extra:'private'}]) {
+      const client=new BackendClient('http://127.0.0.1:8765','x'.repeat(32),'i','e',async()=>
+        new Response(typeof body==='string'?body:JSON.stringify(body),{status:503}))
+      await assert.rejects(client.request('/v1/requests'),error=>error.code==='backend_http_503'&&error.status===503)
+    }
+    let calls=0
+    const client=new BackendClient('http://127.0.0.1:8765','x'.repeat(32),'i','e',async()=>{
+      calls++;return Response.json({error:'request_conflict',protocol:{major:2,minor:0}},{status:409})
+    })
+    await assert.rejects(client.retry('/v1/requests'),error=>error.code==='request_conflict'&&error.status===409)
+    assert.equal(calls,1)
+  })
   await run('M3 ACK retry rechecks disposal context guard', async () => {
     const guards=[]
     const client=new BackendClient('http://127.0.0.1:8765','x'.repeat(32),'i','e',async (url,opts)=>{
@@ -484,6 +547,110 @@ async function main() {
       assert.equal(submissions,0);assert.equal(env.calls.length,0);await receiver.dispose();await fork.dispose()
     })
   }
+  await run('Receiver owns eight unique flights across admission, duplicates and real delivery',async()=>{
+    const ready=deferred(),fixture=receiverFixture({async initialize(){await ready.promise}})
+    const {receiver}=fixture, pending=[]
+    try {
+      const sessions=[]
+      for(let index=0;index<9;index++)sessions.push(await fixture.session('capacity-'+index))
+      pending.push(receiver.receive(sessions[0]))
+      pending.push(receiver.receive(sessions[0])) // Duplicate while initialize/admission is waiting.
+      for(let index=1;index<8;index++)pending.push(receiver.receive(sessions[index]))
+      assert.equal(receiver.activity().pending_total,8)
+      assert.equal(receiver.activity().admission_inflight,8)
+      assert.equal(await receiver.receive(sessions[8]),true)
+      assert.equal(fixture.submitted.length,0)
+      ready.resolve()
+      await until(()=>fixture.sent.length===8)
+      assert.equal(receiver.activity().pending_total,8)
+      assert.equal(receiver.activity().accepted_inflight,8)
+      assert.equal(receiver.activity().admission_inflight,0)
+      pending.push(receiver.receive(sessions[0])) // Duplicate at full capacity joins its original sender.
+      assert.equal(receiver.activity().admission_attempts.duplicate,2)
+      assert.equal(receiver.activity().admission_attempts.capacity_rejected_unclassified,1)
+      assert.deepEqual(fixture.submitted.map(item=>item.seq),[1,2,3,4,5,6,7,8])
+      // All messages belong to the same user. The last one can finish while the first stays held.
+      fixture.release('capacity-7')
+      await until(()=>receiver.activity().pending_total===7)
+      assert.equal(fixture.finished.size,1)
+      assert.equal(fixture.sent.length,8)
+      for(let index=0;index<7;index++)fixture.release('capacity-'+index)
+      await Promise.all(pending)
+      assert.equal(receiver.activity().pending_total,0)
+      assert.equal(receiver.activity().admission_inflight,0)
+      assert.equal(receiver.activity().accepted_inflight,0)
+      assert.equal(fixture.submitted.length,8)
+      assert.equal(new Set(fixture.sent).size,8)
+      const snapshot=receiver.activity();snapshot.admission_attempts.accepted=-1
+      assert.equal(receiver.activity().admission_attempts.accepted,8)
+    }finally{ready.resolve();await fixture.close();await Promise.allSettled(pending)}
+  })
+  for(const stage of ['decode','unrecognized','permission','submit','deliver']) {
+    await run('Receiver releases its unique reservation after '+stage,async()=>{
+      const fixture=receiverFixture(stage==='unrecognized'?{async recognizes(){return false}}:
+        stage==='submit'?{async submit(){throw new BackendError('ledger_capacity',503)}}:
+        stage==='deliver'?{async submit(input){return{request_id:input.requestId,delivery_id:'invalid',parts:[]}}}:{},1)
+      try {
+        if(stage==='permission')fixture.receiver.permitted=async()=>false
+        const session=await fixture.session('failure',stage==='decode'?raw=>{raw.d.author={}}:undefined)
+        assert.equal(await fixture.receiver.receive(session),stage!=='decode'&&stage!=='unrecognized')
+        assert.equal(fixture.receiver.activity().pending_total,0)
+        assert.equal(fixture.receiver.activity().admission_inflight,0)
+        assert.equal(fixture.receiver.activity().accepted_inflight,0)
+        assert.equal(fixture.receiver.jobs.size,0)
+        assert.equal(fixture.calls.length,0)
+        if(stage==='submit')assert.equal(fixture.receiver.activity().admission_attempts.ledger_capacity,1)
+      }finally{await fixture.close()}
+    })
+  }
+  await run('Receiver conflicting raw retry stops pending admission without another owner',async()=>{
+    const classify=deferred(),fixture=receiverFixture({async recognizes(){await classify.promise;return true}})
+    let pending
+    try {
+      const session=await fixture.session('conflict')
+      pending=fixture.receiver.receive(session)
+      await until(()=>fixture.receiver.activity().pending_total===1)
+      fixture.receiver.capture(fixture.bot.session({type:'internal',_type:'qq/group-at-message-create',
+        _data:event({id:'conflict',content:'/查曲 changed'}).d}))
+      assert.equal(await fixture.receiver.receive(session),true)
+      assert.equal(fixture.receiver.activity().pending_total,1)
+      classify.resolve();await pending
+      assert.equal(fixture.submitted.length,0)
+      assert.equal(fixture.calls.length,0)
+      assert.equal(fixture.receiver.activity().pending_total,0)
+    }finally{classify.resolve();await fixture.close();await pending}
+  })
+  await run('Receiver disposal drains pending admission and new lifecycle resets local counters',async()=>{
+    const classify=deferred(),entered=deferred(),fixture=receiverFixture({async recognizes(){entered.resolve();await classify.promise;return true}})
+    const pending=[]
+    try {
+      pending.push(fixture.receiver.receive(await fixture.session('dispose-first')))
+      await entered.promise
+      pending.push(fixture.receiver.receive(await fixture.session('dispose-second')))
+      assert.equal(fixture.receiver.activity().pending_total,2)
+      let closed=false
+      const closing=fixture.receiver.dispose().then(()=>{closed=true})
+      await new Promise(resolve=>setImmediate(resolve))
+      assert.equal(closed,false)
+      classify.resolve();await Promise.all([...pending,closing])
+      assert.equal(fixture.receiver.activity().pending_total,0)
+      assert.equal(fixture.submitted.length,0)
+      assert.equal(fixture.calls.length,0)
+      const next=receiverFixture()
+      try {
+        assert.notEqual(next.receiver.activity().epoch,fixture.receiver.activity().epoch)
+        assert.ok(Object.values(next.receiver.activity().admission_attempts).every(count=>count===0))
+      }finally{await next.close()}
+    }finally{classify.resolve();await fixture.close();await Promise.allSettled(pending)}
+  })
+  await run('Receiver exposes capacity failure during startup without waiting for a message',async()=>{
+    const fixture=receiverFixture({async initialize(){throw new BackendError('epoch_capacity',503)}})
+    try {
+      await assert.rejects(fixture.receiver.ready,/epoch_capacity/)
+      assert.equal(fixture.receiver.activity().startup_error,'epoch_capacity')
+      assert.equal(fixture.receiver.activity().pending_total,0)
+    }finally{await fixture.close()}
+  })
   await run('M4 launcher defaults closed and requires explicit identity', async () => {
     const {configuration}=require('../run.cjs')
     assert.throws(()=>configuration({}))

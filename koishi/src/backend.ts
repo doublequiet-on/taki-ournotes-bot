@@ -7,6 +7,23 @@ import type { PolicySnapshot } from './group-policies'
 
 export const protocol = { major: 2, minor: 0 }
 export const capability = 'qq-query-chat-v3'
+const safeBackendErrors = new Set([
+  'ledger_capacity', 'context_capacity', 'epoch_capacity', 'plan_capacity', 'byte_capacity',
+  'not_ready', 'inactive_epoch', 'retired_epoch', 'stale_admission', 'request_conflict',
+  'message_expired', 'instance_mismatch', 'protocol_version', 'capability_profile',
+])
+
+function responseError(bytes: Buffer, status: number): BackendError {
+  let code = 'backend_http_' + status
+  try {
+    const value = JSON.parse(bytes.toString('utf8'))
+    if (value && Object.keys(value).sort().join() === 'error,protocol'
+        && typeof value.error === 'string' && safeBackendErrors.has(value.error)
+        && value.protocol && Object.keys(value.protocol).sort().join() === 'major,minor'
+        && value.protocol.major === protocol.major && value.protocol.minor === protocol.minor) code = value.error
+  } catch { /* Unknown response bodies remain an HTTP status, never diagnostic text. */ }
+  return new BackendError(code, status)
+}
 export interface ModelPermission {
   request_id: string; attempt_id: string; nonce: string; user_id: string
   backend_epoch: string; gateway_epoch: string; scope: Record<string,string>
@@ -67,7 +84,7 @@ export class BackendClient implements DeliveryEvents {
         }
       } finally { await reader.cancel() }
       const bytes = Buffer.concat(chunks)
-      if (!response.ok) throw new BackendError('backend_http_' + response.status, response.status)
+      if (!response.ok) throw responseError(bytes, response.status)
       if (binary) {
         const mime = response.headers.get('Content-Type')?.split(';')[0]
         if (mime !== 'image/png' && mime !== 'image/jpeg') throw new BackendError('image_mime')

@@ -16,6 +16,23 @@ export interface ReceiverConfig extends Identity {
 }
 interface Raw { raw: unknown; seq: number; at: number; fingerprint: string; conflict?: boolean }
 interface Job { input: Inbound; promise: Promise<void>; delivery?: QQDelivery; plan?: Plan; session:Session; permissionAttempts:Set<string> }
+interface Flight { source: Raw; promise: Promise<boolean>; accepted: boolean }
+const admissionOutcomes = ['duplicate', 'conflict', 'capacity_rejected_unclassified', 'decode_ignored', 'decode_rejected',
+  'scope_denied', 'unrecognized', 'permission_denied', 'management_denied', 'disposed', 'accepted',
+  'ledger_capacity', 'context_capacity', 'epoch_capacity', 'plan_capacity', 'byte_capacity',
+  'backend_unavailable', 'backend_rejected', 'integration_error'] as const
+type AdmissionOutcome = typeof admissionOutcomes[number]
+function admissionFailure(error: unknown): AdmissionOutcome {
+  if (!(error instanceof BackendError)) return 'integration_error'
+  switch (error.code) {
+    case 'ledger_capacity': case 'context_capacity': case 'epoch_capacity': case 'plan_capacity': case 'byte_capacity':
+      return error.code
+    default:
+      if (error.code === 'startup_cancelled') return 'disposed'
+      if (error.status >= 500 || ['backend_transport', 'startup_timeout', 'backend_not_ready', 'not_ready'].includes(error.code)) return 'backend_unavailable'
+      return error.status >= 400 || error.code === 'incompatible_backend' ? 'backend_rejected' : 'integration_error'
+  }
+}
 
 export class Receiver {
   readonly epoch = randomUUID()
@@ -24,11 +41,22 @@ export class Receiver {
   private notices?: Notices
   private materials?: MaterialStore
   health() { return { active:this.active && (this.notices?.healthy() ?? true), handshake:!!this.client.readiness, epoch:this.client.epoch, backend:this.client.readiness } }
-  activity() { return { accepted_inflight:this.jobs.size, admission_inflight:this.entering } }
+  activity() {
+    const accepted = [...this.flights.values()].filter(flight => flight.accepted).length
+    return { accepted_inflight:accepted, admission_inflight:this.flights.size-accepted,
+      pending_total:this.flights.size, capacity:this.config.maxPending, epoch:this.epoch,
+      started_at:this.startedAt, startup_error:this.startupError ?? null, admission_attempts:{...this.admissionCounts} }
+  }
+  private readonly startedAt = Date.now()/1000
+  private startupError?: AdmissionOutcome
+  private admissionCounts = Object.fromEntries(admissionOutcomes.map(outcome => [outcome, 0])) as Record<AdmissionOutcome,number>
+  private observed(outcome: AdmissionOutcome): void {
+    this.admissionCounts[outcome] = Math.min(Number.MAX_SAFE_INTEGER, this.admissionCounts[outcome]+1)
+  }
   private sequence = 0
   private raw = new Map<string, Raw>()
   private jobs = new Map<string, Job>()
-  private entering = 0
+  private flights = new Map<string, Flight>()
   private admission: Promise<void> = Promise.resolve()
   readonly ready: Promise<void>
   private log: ReturnType<Context['logger']>
@@ -37,7 +65,10 @@ export class Receiver {
     this.log = ctx.logger('taki')
     this.ready = this.client.initialize()
     // Mark rejection observed even when no message arrives; ingress still sees the same rejection.
-    void this.ready.catch(() => this.log.warn('backend initialization failed; admission disabled'))
+    void this.ready.catch(error => {
+      this.startupError = admissionFailure(error)
+      this.log.warn('backend initialization failed; admission disabled')
+    })
     ctx.effect(() => ctx.root.on('internal/session', session => this.capture(session as Session)))
     ctx.effect(() => ctx.root.middleware(async (session, next) => {
       if (!await this.receive(session)) return next()
@@ -102,9 +133,22 @@ export class Receiver {
     if (!this.active || session.platform !== 'qq' || session.bot.config.id !== this.config.appId) return false
     const source = this.raw.get(session.messageId ?? '')
     if (!source) return false // never reconstruct identity from an ordinary Koishi message
-    if (source.conflict) return true
-    if (this.entering + this.jobs.size >= this.config.maxPending) return true
-    this.entering++
+    if (source.conflict) { this.observed('conflict'); return true }
+    const key = session.messageId!, existing = this.flights.get(key)
+    if (existing) {
+      if (existing.source.fingerprint !== source.fingerprint) { this.observed('conflict'); return true }
+      this.observed('duplicate')
+      return existing.promise
+    }
+    if (this.flights.size >= this.config.maxPending) { this.observed('capacity_rejected_unclassified'); return true }
+    // Reserve once before the first await. Retries join this owner even while admission is waiting.
+    const flight: Flight = { source, promise:Promise.resolve(true), accepted:false }
+    this.flights.set(key, flight)
+    flight.promise = this.receiveOwned(session, key, flight)
+    return flight.promise
+  }
+  private async receiveOwned(session: Session, key: string, flight: Flight): Promise<boolean> {
+    const source = flight.source
     const previous = this.admission
     let release!: () => void
     this.admission = new Promise<void>(resolve => { release = resolve })
@@ -112,15 +156,19 @@ export class Receiver {
     try {
       // Serialize recognition/permissions/admission only; preparation and delivery run independently.
       await previous
+      if (!this.active) { this.observed('disposed'); return true }
+      if (source.conflict) { this.observed('conflict'); return true }
       const decoded = await decodeIncoming(session.bot as unknown as QQBot, source.raw, this.config, () => true)
-      if (decoded.status !== 'accepted') return false
+      if (decoded.status !== 'accepted') { this.observed(decoded.status === 'ignored' ? 'decode_ignored' : 'decode_rejected'); return false }
       const canonical = this.ctx.reflect.trace(decoded.session)
-      if (!this.ctx.filter(canonical)) return false
+      if (!this.ctx.filter(canonical)) { this.observed('scope_denied'); return false }
       await this.ready
-      if (!this.active) return true
-      if (!await this.client.recognizes(decoded.inbound.body)) return false
-      if (!await this.permitted(canonical) || !this.active) return true
-      if (this.config.management && !this.config.management.accepts(decoded.inbound)) return true
+      if (!this.active) { this.observed('disposed'); return true }
+      if (!await this.client.recognizes(decoded.inbound.body)) { this.observed('unrecognized'); return false }
+      if (!await this.permitted(canonical)) { this.observed('permission_denied'); return true }
+      if (!this.active) { this.observed('disposed'); return true }
+      if (this.config.management && !this.config.management.accepts(decoded.inbound)) { this.observed('management_denied'); return true }
+      if (source.conflict) { this.observed('conflict'); return true }
       input = decoded.inbound
       const existing = this.jobs.get(input.requestId)
       if (existing) {
@@ -132,14 +180,21 @@ export class Receiver {
       const plan = await this.client.submit(input, source.seq, this.config.management?.policySnapshot(input))
       const job: Job = { input, plan, promise: Promise.resolve(), session:canonical, permissionAttempts:new Set() }
       this.jobs.set(input.requestId, job)
+      flight.accepted = true
+      this.observed('accepted')
       job.promise = this.deliver(job, session.bot as unknown as QQBot)
       release()
       await job.promise
       return true
     } catch (error) {
+      this.observed(admissionFailure(error))
       this.log.warn('request stopped: %s', error instanceof BackendError ? error.code : 'integration_error')
       return true
-    } finally { this.raw.delete(session.messageId ?? ''); release(); this.entering-- }
+    } finally {
+      if (this.raw.get(key) === source) this.raw.delete(key)
+      release()
+      if (this.flights.get(key) === flight) this.flights.delete(key)
+    }
   }
   private validate(plan: Plan, input: Inbound): void {
     if (plan.request_id !== input.requestId || !/^[a-f0-9]{32}$/.test(plan.delivery_id) || plan.plan_version !== 1
@@ -260,7 +315,7 @@ export class Receiver {
     // Retire before waiting for in-flight sends. Their late ACK may record facts, never context.
     try { await this.ready; await this.client.retire() }
     catch { this.log.warn('gateway retirement unconfirmed; no new local sends') }
-    await Promise.allSettled([...this.jobs.values()].map(job => job.promise))
+    await Promise.allSettled([...this.flights.values()].map(flight => flight.promise))
     await noticesClosed
     await this.client.telemetry?.close()
   }
