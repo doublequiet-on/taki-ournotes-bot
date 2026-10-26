@@ -225,6 +225,98 @@ async function main() {
       assert.equal(e.calls.filter(c=>c.url.endsWith('/messages')).length,1)
     }finally{assert.ok(path.resolve(directory).startsWith(path.resolve(require('node:os').tmpdir())+path.sep));fs.rmSync(directory,{recursive:true})}
   })
+  await run('Material prepare rejects non-string IDs before PUT or ownership persistence',async()=>{
+    const {MaterialStore}=require('../lib/materials')
+    for(const upload_id of [123,true,['upload'],{},null,undefined]) await materialFixture(async f=>{
+      let puts=0,completes=0
+      const store=new MaterialStore(f.directory,f.app,async(method,url)=>{
+        if(url.endsWith('/prepare'))return{upload_id,presigned_url:'fixture'}
+        completes++;return{image_id:'image',url:'qqbot-media://image/v1/image'}
+      },async(...args)=>{puts++;return f.put(...args)})
+      try {
+        await assert.rejects(store.acquire(picture),/invalid material prepare/)
+        assert.equal(puts,0);assert.equal(completes,0);assert.equal(store.diagnostics().occupied,0)
+        assert.equal(store.diagnostics().blocked,false);assert.equal(fs.existsSync(f.file),false)
+      } finally {await store.close()}
+      const restored=new MaterialStore(f.directory,f.app,async(method,url)=>url.endsWith('/prepare')?
+        {upload_id:'valid',presigned_url:'fixture'}:{image_id:'valid',url:'qqbot-media://image/v1/valid'},f.put)
+      try {(await restored.acquire(picture)).release();assert.equal(restored.diagnostics().owned,1)} finally {await restored.close()}
+    })
+  })
+  await run('Material malformed complete preserves a readable pending owner and unrelated uploads',async()=>{
+    const {MaterialStore}=require('../lib/materials')
+    const malformed=[123,true,['image'],{},null,undefined].map(image_id=>({image_id,url:'qqbot-media://image/v1/image'}))
+    malformed.push({image_id:'image',url:['qqbot-media://image/v1/image']})
+    for(const completion of malformed) await materialFixture(async f=>{
+      const store=new MaterialStore(f.directory,f.app,async(method,url)=>url.endsWith('/prepare')?
+        {upload_id:'pending',presigned_url:'fixture'}:completion,f.put)
+      try {
+        await assert.rejects(store.acquire(picture),/invalid material completion/)
+        assert.equal(store.diagnostics().completion_unknown,1);assert.equal(store.diagnostics().blocked,false)
+        const pending=JSON.parse(fs.readFileSync(f.file)).entries[0]
+        assert.equal(pending.uploadId,'pending');assert.equal(pending.imageId,undefined);assert.equal(pending.url,undefined)
+      } finally {await store.close()}
+      let calls=0
+      const restored=new MaterialStore(f.directory,f.app,async(method,url)=>{calls++;return url.endsWith('/prepare')?
+        {upload_id:'other',presigned_url:'fixture'}:{image_id:'other',url:'qqbot-media://image/v1/other'}},f.put)
+      try {
+        await assert.rejects(restored.acquire(picture),/unresolved/);assert.equal(calls,0)
+        ;(await restored.acquire(Buffer.concat([picture,Buffer.from('other')]))).release()
+        assert.equal(restored.diagnostics().completion_unknown,1);assert.equal(restored.diagnostics().owned,1)
+        assert.equal(restored.diagnostics().blocked,false)
+      } finally {await restored.close()}
+    })
+  })
+  await run('Material schema1 safe integer IDs normalize without losing owned or pending facts',async()=>{
+    const {MaterialStore}=require('../lib/materials'),clock=Date.now()
+    for(const id of [123,-123,Number.MAX_SAFE_INTEGER]) await materialFixture(async f=>{
+      const pendingBytes=Buffer.concat([picture,Buffer.from('pending')]),pendingKey=f.key(pendingBytes)
+      const entries=[{key:f.key(picture),created:clock,used:clock,uploadId:id,imageId:id,url:'qqbot-media://image/v1/legacy'},
+        {key:pendingKey,created:clock,used:clock,uploadId:id}]
+      fs.writeFileSync(f.file,JSON.stringify({schema:1,appId:f.app,entries}))
+      const noAPI=async()=>{throw Error('legacy IDs must not cause external actions')}
+      const store=new MaterialStore(f.directory,f.app,noAPI,f.put,()=>clock),floor=store.diagnostics().schema
+      try {(await store.acquire(picture)).release();assert.equal(store.diagnostics().completion_unknown,1)} finally {await store.close()}
+      const saved=JSON.parse(fs.readFileSync(f.file));assert.equal(saved.schema,floor)
+      assert.equal(saved.entries.length,2);assert.equal(saved.entries[0].imageId,String(id))
+      assert.equal(saved.entries[0].uploadId,String(id));assert.equal(saved.entries[1].uploadId,String(id))
+      assert.equal(saved.entries[1].key,pendingKey);assert.equal(saved.entries[1].imageId,undefined)
+      const restored=new MaterialStore(f.directory,f.app,noAPI,f.put,()=>clock)
+      try {
+        (await restored.acquire(picture)).release()
+        await assert.rejects(restored.acquire(pendingBytes),/unresolved/)
+        assert.equal(restored.diagnostics().completion_unknown,1);assert.equal(restored.diagnostics().occupied,2)
+        assert.equal(restored.diagnostics().blocked,false)
+      } finally {await restored.close()}
+    })
+  })
+  await run('Material ambiguous schema1 IDs preserve ledger bytes and never guess ownership',async()=>{
+    const {MaterialStore}=require('../lib/materials'),clock=Date.now()
+    for(const field of ['uploadId','imageId']) for(const id of [Number.MAX_SAFE_INTEGER+1,1.5,0,true,['id']]) await materialFixture(async f=>{
+      const entry={key:f.key(picture),created:clock,used:clock,uploadId:'upload',imageId:'image',url:'qqbot-media://image/v1/image',[field]:id}
+      const original=JSON.stringify({schema:1,appId:f.app,entries:[entry]});fs.writeFileSync(f.file,original)
+      let calls=0;const store=new MaterialStore(f.directory,f.app,async()=>{calls++;throw Error('must not call')},f.put,()=>clock)
+      try {
+        await assert.rejects(store.acquire(picture),/invalid material ledger/)
+        assert.equal(store.diagnostics().blocked,true);assert.equal(calls,0)
+        assert.equal(fs.readFileSync(f.file,'utf8'),original)
+      } finally {await store.close()}
+    })
+  })
+  await run('Material schema2 never coerces numeric IDs or drops their records',async()=>{
+    const {MaterialStore}=require('../lib/materials'),clock=Date.now()
+    for(const entry of [
+      {state:'owned',imageId:123,url:'qqbot-media://image/v1/image'},
+      {state:'completion_unknown',uploadId:123},
+      {state:'deletion_unknown',imageId:123,url:'qqbot-media://image/v1/image'}
+    ]) await materialFixture(async f=>{
+      const original=JSON.stringify({schema:2,appId:f.app,entries:[{key:f.key(picture),created:clock,used:clock,...entry}]})
+      fs.writeFileSync(f.file,original)
+      const store=new MaterialStore(f.directory,f.app,async()=>{throw Error('must not call')},f.put,()=>clock)
+      try {await assert.rejects(store.acquire(picture),/invalid material ledger/);assert.equal(fs.readFileSync(f.file,'utf8'),original)}
+      finally {await store.close()}
+    })
+  })
   await run('Material v2 deletion uncertainty survives restart and never grants a stale lease',()=>materialFixture(async f=>{
     const {MaterialStore}=require('../lib/materials'),clock=Date.now()
     const entries=Array.from({length:64},(_,i)=>({state:'owned',key:i?f.key('owned'+i):f.key(picture),created:clock-700000,
