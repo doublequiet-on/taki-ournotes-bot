@@ -20,6 +20,7 @@ from ..structured_query import QueryResult, query_page_notice
 from ..query.continuation import (QueryContext, catalog_version,
                                   capture_context, execute_followup, parse_operation)
 from ..domain.query_policy import CURRENT_POLICY, continuation_allowed
+from .runtime_tasks import finish_thread
 from ..visuals import (render_card, render_card_list, render_chart, render_song_list,
                       render_support_card, render_support_card_list)
 
@@ -238,15 +239,7 @@ class QueryGate:
             self._pending += 1
         try:
             async with self._workers:
-                work = asyncio.create_task(asyncio.to_thread(function, *args))
-                try:
-                    return await asyncio.shield(work)
-                except asyncio.CancelledError:
-                    # to_thread cannot stop a running worker; keep its slot occupied.
-                    try:
-                        await work
-                    finally:
-                        raise
+                return await finish_thread(function, *args)
         finally:
             async with self._lock:
                 self._pending -= 1

@@ -232,9 +232,46 @@ class QueryGateTests(unittest.IsolatedAsyncioTestCase):
                 self.assertTrue(started.is_set())
                 task.cancel()
                 await asyncio.sleep(0)
+                task.cancel()
+                await asyncio.sleep(0)
+                self.assertFalse(task.done())
+                self.assertEqual(gate._pending, 1)
+                self.assertEqual(gate._workers._value, 0)
                 busy = await gate.prepare("second", None, None)
                 self.assertIn("查询较多", busy.text)
             finally:
                 release.set()
             with self.assertRaises(asyncio.CancelledError):
                 await task
+        self.assertEqual(gate._pending, 0)
+
+    async def test_cancelled_queued_work_never_starts_and_late_failure_keeps_cancellation(self):
+        gate = QueryGate(1, 1)
+        started, release = threading.Event(), threading.Event()
+        called = []
+        def worker():
+            started.set()
+            release.wait(5)
+            raise OSError('failed while draining')
+        first = asyncio.create_task(gate.run(worker))
+        try:
+            self.assertTrue(await asyncio.to_thread(started.wait, 1))
+            queued = asyncio.create_task(gate.run(lambda: called.append(True)))
+            await asyncio.sleep(0)
+            self.assertEqual(gate._pending, 2)
+            queued.cancel()
+            with self.assertRaises(asyncio.CancelledError):
+                await queued
+            first.cancel()
+            await asyncio.sleep(0)
+            first.cancel()
+            await asyncio.sleep(0)
+            self.assertFalse(first.done())
+            self.assertEqual(gate._pending, 1)
+            self.assertFalse(called)
+        finally:
+            release.set()
+            with self.assertRaises(asyncio.CancelledError):
+                await first
+        self.assertEqual(gate._pending, 0)
+        self.assertEqual(gate._workers._value, 1)

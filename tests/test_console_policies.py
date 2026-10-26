@@ -1588,7 +1588,12 @@ class NaturalPolicyTests(Fixture, unittest.IsolatedAsyncioTestCase):
             started.set();release.wait(2);raise OSError('fixture failed during cancellation')
         task=asyncio.create_task(finish_thread(worker))
         await asyncio.to_thread(started.wait,1)
-        task.cancel();release.set()
+        task.cancel()
+        await asyncio.sleep(0)
+        task.cancel()
+        await asyncio.sleep(0)
+        self.assertFalse(task.done())
+        release.set()
         with self.assertRaises(asyncio.CancelledError):await asyncio.wait_for(task,1)
 
     def run_mode(self,mode,content):
