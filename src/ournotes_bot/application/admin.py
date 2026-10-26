@@ -120,7 +120,7 @@ class Admin:
         return view
 
     def rows(self):
-        # The business owner already bounds this table to 4096. No lookup()/expiry side effects.
+        # Bounded history projection; capacity diagnostics query the complete tables separately.
         return self.backend.ledger.admin_rows()
 
     def views(self):
@@ -146,7 +146,8 @@ class Admin:
                               'retained_unresolved':sum(v['delivery_state'] in ('uncertain','partial') for v in retained),
                               'metadata_missing': sum(v['scope'] is None for v in views),
                               'recent': views[:5]}, now=now),
-            observation=section(self.backend.diagnostics.health(), now=now))
+            observation=section(self.backend.diagnostics.health(), now=now),
+            ledger=section(self.backend.ledger.capacity_status(), now=now))
 
     def listing(self, params):
         require(set(params) <= {'limit', 'from', 'to', 'cursor', 'state', 'group_id', 'attention'}, 'admin_parameters')

@@ -27,6 +27,139 @@ FIXTURE = Path(__file__).parent / "fixtures/haneoka_catalog.json"
 
 
 class CatalogTests(unittest.TestCase):
+    def test_current_cache_reuses_verified_conversion_and_bounds_shared_slot(self):
+        self.repo.load(refresh=True)
+        original_size = self.repo.cache_metrics()['retained_bytes']
+        self.repo.fetch = Mock(side_effect=self.probe_responses())
+        with patch.object(source, 'convert', wraps=source.convert) as convert, \
+             patch.object(source, 'convert_info', wraps=source.convert_info) as info, \
+             patch.object(source, 'retained_size', wraps=source.retained_size) as size:
+            first = self.repo.current_with_info()
+            measured = size.call_count
+            second = self.repo.current_with_info()
+        self.assertIs(first[0], second[0])
+        self.assertIs(first[2], second[2])
+        self.assertIsNot(first[1], second[1])
+        self.assertEqual((convert.call_count, info.call_count, self.repo.fetch.call_count), (0, 0, 4))
+        self.assertEqual(size.call_count, measured, 'hot hits must not walk the retained graph')
+        self.assertEqual(self.repo.cache_metrics()['retained_bytes'], original_size)
+        self.assertEqual(self.repo.cache_metrics()['publications'], 1)
+        first[1]['info_catalog_available']['gachas'] = not second[1]['info_catalog_available']['gachas']
+        self.assertNotEqual(first[1]['info_catalog_available'], second[1]['info_catalog_available'])
+        self.assertEqual(self.repo.current_with_info()[1], second[1])
+
+    def test_derived_budget_bypass_preserves_queries(self):
+        self.repo.derived_cache_bytes = 0
+        self.repo.load(refresh=True)
+        self.repo.fetch = Mock(side_effect=self.probe_responses())
+        with patch.object(source, 'convert', wraps=source.convert) as convert, \
+             patch.object(source, 'convert_info', wraps=source.convert_info) as info:
+            first = self.repo.current_with_info()
+            second = self.repo.current_with_info()
+        self.assertEqual(first, second)
+        self.assertIsNot(first[0], second[0])
+        self.assertEqual((convert.call_count, info.call_count), (2, 2))
+        metrics = self.repo.cache_metrics()
+        self.assertEqual((metrics['retained_bytes'], metrics['variants']), (0, 0))
+        self.assertGreater(metrics['bypasses'], 0)
+
+    def test_two_distinct_slots_share_one_derived_byte_budget(self):
+        self.repo.load(refresh=True)
+        saved = self.repo.saved
+        before = self.repo.cache_metrics()['retained_bytes']
+        self.repo.derived_cache_bytes = before + before // 4
+        candidate = copy.deepcopy(saved)
+        candidate['identities']['jp']['releaseId'] = 'r-' + 'b' * 20
+        candidate['identities']['jp']['sourceId'] = 'new-query-source'
+        candidate['documents']['jp']['catalog']['sourceId'] = 'new-query-source'
+        self.repo.fetch = Mock(side_effect=self.probe_responses(candidate['identities']))
+        with patch.object(self.repo, '_collect', return_value=candidate):
+            current = self.repo.current_with_info()
+        metrics = self.repo.cache_metrics()
+        self.assertIs(self.repo.saved, saved)
+        self.assertEqual(metrics['publications'], 2)
+        self.assertEqual(metrics['variants'], 1)
+        self.assertLessEqual(metrics['retained_bytes'], metrics['byte_limit'])
+        self.assertEqual(current[1]['data_version'], candidate['identities']['jp']['releaseId'])
+        self.repo.fetch = Mock(side_effect=self.probe_responses(saved['identities']))
+        original = self.repo.current_with_info()
+        self.assertEqual(original[1]['data_version'], saved['identities']['jp']['releaseId'])
+        self.assertLessEqual(self.repo.cache_metrics()['retained_bytes'], self.repo.derived_cache_bytes)
+
+    def test_derived_publication_keeps_old_metadata_after_persistence_recovery(self):
+        with patch.object(self.repo, '_write', side_effect=OSError('fixture disk full')):
+            self.repo.load(refresh=True)
+        self.repo.fetch = Mock(side_effect=self.probe_responses())
+        _, old, _ = self.repo.current_with_info()
+        before = copy.deepcopy(old)
+        _, new, _, report = self.repo.synchronize_with_info()
+        self.assertTrue(report['persisted'])
+        self.assertEqual(old, before)
+        self.assertIsNone(old['last_successful_sync_at'])
+        self.assertEqual(new['last_successful_sync_at'], new['cached_at'])
+        self.assertIsNot(old, new)
+
+    def test_cached_snapshot_still_checks_time_and_failed_probe(self):
+        self.repo.load(refresh=True)
+        self.repo.fetch = Mock(side_effect=self.probe_responses())
+        self.repo.current_with_info()
+        self.now -= 400
+        with self.assertRaisesRegex(ValueError, 'timestamp'):
+            self.repo.current_with_info()
+        self.repo.fetch = Mock(side_effect=OSError('fixture offline'))
+        with self.assertRaises(OSError):
+            self.repo.current_with_info()
+
+    def test_same_label_new_content_replaces_records_fingerprint(self):
+        bot = self.main_repo()
+        bot.load(refresh=True)
+        old = bot.capture_catalog()
+        old_version = catalog_version(bot)
+        candidate = copy.deepcopy(self.repo.saved)
+        song = next(iter(candidate['documents']['jp']['songs'].values()))
+        song['composer'][0] += ' fixture replacement'
+        with patch.object(self.repo, '_collect', return_value=candidate):
+            bot.refresh()
+        current = bot.capture_catalog()
+        self.assertEqual(current.metadata['data_version'], old.metadata['data_version'])
+        self.assertNotEqual(current.records_version, old.records_version)
+        self.assertNotEqual(catalog_version(bot), old_version)
+        self.assertNotIn('fixture replacement', old.songs[0].composer)
+
+    def test_stale_variant_does_not_modify_fresh_records(self):
+        bot = self.main_repo()
+        bot.load(refresh=True)
+        old = bot.capture_catalog()
+        captured = copy.deepcopy(old)
+        with patch.object(self.repo, 'fetch', side_effect=OSError('fixture offline')):
+            bot.refresh()
+        stale = bot.capture_catalog()
+        self.assertEqual(stale.cache_state, 'stale')
+        self.assertTrue(stale.cards[0].catalog['detail_stale'])
+        self.assertNotEqual(stale.records_version, old.records_version)
+        self.repo.fetch = Mock(side_effect=self.probe_responses())
+        recovered = bot.current_query_view().capture_catalog()
+        self.assertFalse(recovered.cards[0].catalog['detail_stale'])
+        self.assertEqual(recovered.records_version, old.records_version)
+        self.assertEqual(old, captured)
+        self.assertLessEqual(self.repo.cache_metrics()['variants'], 2)
+
+    def test_many_publications_do_not_retain_history(self):
+        self.repo.load(refresh=True)
+        for index in range(8):
+            candidate = copy.deepcopy(self.repo.saved)
+            self.now += 1
+            candidate['fetched_at'] = self.now
+            with patch.object(self.repo, '_collect', return_value=candidate):
+                self.repo.load(refresh=True)
+            self.repo.fetch = Mock(side_effect=self.probe_responses(candidate['identities']))
+            self.repo.current_with_info()
+            metrics = self.repo.cache_metrics()
+            self.assertLessEqual(metrics['publications'], 2)
+            self.assertLessEqual(metrics['variants'], 4)
+            self.assertLessEqual(metrics['retained_bytes'], metrics['byte_limit'])
+        self.assertEqual(metrics['publications'], 1)
+
     def test_natural_current_view_checks_release_and_never_falls_back(self):
         self.repo.load(refresh=True)
         before=copy.deepcopy(self.repo.saved)

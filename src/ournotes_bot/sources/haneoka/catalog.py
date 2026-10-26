@@ -1,20 +1,23 @@
 # L3
 # Input: Independent cache path, TTL and anonymous release-pinned Catalog responses.
-# Output: Validated JP snapshot, verified intl text, persistence facts and same-release Meta inputs.
+# Output: Bounded validated JP/intl derivatives, captured persistence facts and same-release Meta inputs.
 # Pos: Sources / Haneoka main Catalog orchestration; see ../L2-2.md.
-# Effects/Dependencies: Scoped bounded GET, atomic independent cache; never retries another source.
+# Effects/Dependencies: Scoped GET, atomic source cache and two-slot derived cache (64 MiB); no foreign source retry.
 
 from __future__ import annotations
 
 import hashlib
+from copy import deepcopy
 import json
 import math
 import os
+import sys
 import threading
 import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
+from dataclasses import dataclass, fields, is_dataclass
 from urllib.parse import urlencode
 
 from ...data import DataError
@@ -28,6 +31,7 @@ SOURCE = ORIGIN + "/api/v1/servers/jp/"
 ENTITIES = {"songs": "musicId", "cards": "cardId", "support-cards": "supportCardId",
             "characters": "characterId", "bands": "bandId"}
 MAX_BYTES = 24_000_000
+DERIVED_CACHE_BYTES = 64 * 1024 * 1024
 # Download accounting also includes discovery indexes and batch envelopes which
 # are not retained in the snapshot. Keep the existing cache/rollback limit.
 MAX_DOWNLOAD_BYTES = 32_000_000
@@ -38,12 +42,66 @@ def encoded(value):
     return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False).encode("utf-8")
 
 
-def validate(saved, now, *, stale=False):
-    if not isinstance(saved, dict) or saved.get("schema") != 1 or saved.get("source") != SOURCE:
-        raise ValueError("foreign Catalog cache")
+class CatalogRecords(tuple):
+    """Records owned by one validated publication, with a content-derived digest."""
+    def __new__(cls, records):
+        result = super().__new__(cls, records)
+        digest = hashlib.sha256()
+        for collection in records:
+            digest.update(repr(collection).encode("utf-8"))
+        result.fingerprint = digest.hexdigest()
+        return result
+
+
+class CatalogResult(tuple):
+    """Keep the existing records/metadata unpacking contract and its matching info."""
+    def __new__(cls, records, metadata, info):
+        result = super().__new__(cls, (records, metadata))
+        result.info = info
+        return result
+
+
+@dataclass
+class CatalogPublication:
+    snapshot: dict
+    fingerprint: str
+    variants: dict
+
+
+def retained_size(*roots):
+    """Estimate the retained Python object graph once per cache change, sharing once."""
+    seen, pending, total = set(), list(roots), 0
+    while pending:
+        value = pending.pop()
+        if id(value) in seen:
+            continue
+        seen.add(id(value))
+        total += sys.getsizeof(value)
+        if isinstance(value, dict):
+            pending.extend(value.keys())
+            pending.extend(value.values())
+        elif isinstance(value, (list, tuple, set, frozenset)):
+            pending.extend(value)
+            if hasattr(value, "__dict__"):
+                pending.append(vars(value))
+        elif is_dataclass(value) and not isinstance(value, type):
+            pending.extend(getattr(value, item.name) for item in fields(value))
+            if hasattr(value, "__dict__"):
+                pending.append(vars(value))
+    return total
+
+
+def validate_timestamp(saved, now):
     fetched = saved["fetched_at"]
     if type(fetched) not in (int, float) or not math.isfinite(fetched) or not 0 < fetched <= now + 300:
         raise ValueError("invalid Catalog timestamp")
+    return fetched
+
+
+def validate(saved, now, *, stale=False):
+    if not isinstance(saved, dict) or saved.get("schema") != 1 or saved.get("source") != SOURCE:
+        raise ValueError("foreign Catalog cache")
+    fetched = validate_timestamp(saved, now)
     for server in ("jp", "intl"):
         ident = identity(saved["identities"][server], server)
         catalog = saved["documents"][server]["catalog"]
@@ -58,16 +116,16 @@ def validate(saved, now, *, stale=False):
                 if k != str(integer(row[key], 1)):
                     raise ValueError("Catalog row identity mismatch")
     stamp = datetime.fromtimestamp(fetched, timezone.utc).isoformat()
-    records = convert(saved["documents"], saved["identities"]["jp"], stamp, stale=stale)
+    records = CatalogRecords(convert(saved["documents"], saved["identities"]["jp"], stamp, stale=stale))
     info = convert_info(saved["documents"], saved["identities"]["jp"], stamp, saved["identities"]["intl"])
-    return records, {"source": SOURCE, "data_source": "haneoka", "data_version": saved["identities"]["jp"]["releaseId"],
+    return CatalogResult(records, {"source": SOURCE, "data_source": "haneoka", "data_version": saved["identities"]["jp"]["releaseId"],
                      "text_version": saved["identities"]["intl"]["releaseId"], "cached_at": stamp,
                      "song_count": len(records[0]), "card_count": len(records[1]), "support_card_count": len(records[2]),
                      "member_skill_index_complete": bool(records[1]) and all(c.catalog["skill_index_complete"] for c in records[1]),
                      "card_catalog_version": 1,
                      "info_catalog_available": {key: key in info.available
                                                 for key in ("characters", "gachas", "activities")},
-                     "change_summary": saved.get("change_summary")}
+                     "change_summary": saved.get("change_summary")}, info)
 
 
 CHANGE_RESOURCES = ("songs", "cards", "support-cards", "characters", "gacha", "events")
@@ -87,11 +145,19 @@ def added_since(previous, candidate):
 
 
 class CatalogRepository:
-    def __init__(self, path, ttl_hours=6, *, fetch=public_get, clock=time.time):
+    def __init__(self, path, ttl_hours=6, *, fetch=public_get, clock=time.time,
+                 derived_cache_bytes=DERIVED_CACHE_BYTES):
         self.path, self.ttl = path, ttl_hours * 3600
         self.fetch, self.clock = fetch, clock
         self.saved = None
         self._query_snapshot = None
+        self._saved_publication = None
+        self._query_publication = None
+        if type(derived_cache_bytes) is not int or derived_cache_bytes < 0:
+            raise ValueError("invalid Catalog derived cache budget")
+        self.derived_cache_bytes = derived_cache_bytes
+        self._derived_hits = self._derived_builds = self._derived_bypasses = 0
+        self._derived_bytes = 0
         self.lock = threading.RLock()
         self.state = "unknown"
         self._durable_initialized = False
@@ -100,12 +166,67 @@ class CatalogRepository:
 
     def _publication(self, result):
         """Attach persistence facts independently of the latest refresh attempt."""
-        metadata = result[1]
+        metadata = deepcopy(result[1])
         metadata["change_summary_saved"] = metadata["change_summary"] == self._durable_summary
         metadata["last_successful_sync_at"] = (
             datetime.fromtimestamp(self._durable_fetched_at, timezone.utc).isoformat()
             if self._durable_fetched_at is not None else None)
+        return CatalogResult(result[0], metadata, result.info)
+
+    def _publications(self):
+        publications = []
+        for publication in (self._saved_publication, self._query_publication):
+            if publication is not None and all(publication is not old for old in publications):
+                publications.append(publication)
+        return publications
+
+    def _limit_derived(self, preferred):
+        publications = self._publications()
+        self._derived_bytes = retained_size(*(p.variants for p in publications if p.variants))
+        # Keep the just-requested publication if it fits; old query snapshots may
+        # still exist, but their reconstructible derivatives need not be retained.
+        for publication in sorted(publications, key=lambda p: p is preferred):
+            if self._derived_bytes <= self.derived_cache_bytes:
+                break
+            publication.variants.clear()
+            self._derived_bypasses += 1
+            self._derived_bytes = retained_size(*(p.variants for p in publications if p.variants))
+
+    def _new_publication(self, snapshot, *, stale=False):
+        result = validate(snapshot, self.clock(), stale=stale)
+        self._derived_builds += 1
+        return CatalogPublication(snapshot, hashlib.sha256(encoded(snapshot)).hexdigest(), {stale: result}), result
+
+    def _derived(self, publication, *, stale=False):
+        # Currentness still requires the caller's identity probe; the timestamp
+        # check also remains live when a previously validated snapshot is reused.
+        validate_timestamp(publication.snapshot, self.clock())
+        if stale in publication.variants:
+            self._derived_hits += 1
+            return publication.variants[stale]
+        result = validate(publication.snapshot, self.clock(), stale=stale)
+        self._derived_builds += 1
+        publication.variants[stale] = result
+        self._limit_derived(publication)
         return result
+
+    def _saved_result(self, *, stale=False):
+        publication = self._saved_publication
+        if publication is None or publication.snapshot is not self.saved:
+            publication, result = self._new_publication(self.saved, stale=stale)
+            self._saved_publication = publication
+            self._limit_derived(publication)
+            return result
+        return self._derived(publication, stale=stale)
+
+    def cache_metrics(self):
+        with self.lock:
+            publications = self._publications()
+            return {"publications": len(publications),
+                    "variants": sum(len(p.variants) for p in publications),
+                    "retained_bytes": self._derived_bytes, "byte_limit": self.derived_cache_bytes,
+                    "hits": self._derived_hits, "builds": self._derived_builds,
+                    "bypasses": self._derived_bypasses}
 
     def _read(self):
         if self.path.stat().st_size > MAX_BYTES:
@@ -203,9 +324,8 @@ class CatalogRepository:
     def load_with_info(self, refresh=False):
         """Capture converted facts from the same committed source snapshot as cards."""
         with self.lock:
-            records, metadata = self.load(refresh)
-            info = convert_info(self.saved["documents"], self.saved["identities"]["jp"], metadata["cached_at"], self.saved["identities"]["intl"])
-            return records, metadata, info
+            result = self.load(refresh)
+            return result[0], result[1], result.info
 
     @public_http_scope()
     def probe_identities(self):
@@ -233,17 +353,25 @@ class CatalogRepository:
         """Request-local current data: successful identity check, never stale fallback."""
         with self.lock:
             current = self.probe_identities()
-            candidate = next((s for s in (self.saved, self._query_snapshot)
-                              if s is not None and s['identities'] == current), None)
-            if candidate is None:
-                candidate = self._collect()
-            result = validate(candidate, self.clock())
-            # A query must not consume the background refresh's additions or
-            # change its persistence/fallback state. Reuse only after a fresh probe.
-            self._query_snapshot = candidate
-            records, metadata = self._publication(result)
-            info = convert_info(candidate['documents'], candidate['identities']['jp'], metadata['cached_at'], candidate['identities']['intl'])
-            return records, metadata, info
+            if self.saved is not None and self.saved['identities'] == current:
+                result = self._saved_result()
+                publication = self._saved_publication
+            elif self._query_snapshot is not None and self._query_snapshot['identities'] == current:
+                publication = self._query_publication
+                if publication is None or publication.snapshot is not self._query_snapshot:
+                    publication, result = self._new_publication(self._query_snapshot)
+                else:
+                    result = self._derived(publication)
+            else:
+                publication, result = self._new_publication(self._collect())
+            # The request and background slots share a publication only when they
+            # actually capture the same validated snapshot, not merely a label.
+            self._query_snapshot = publication.snapshot
+            if self._query_publication is not publication:
+                self._query_publication = publication
+                self._limit_derived(publication)
+            published = self._publication(result)
+            return published[0], published[1], published.info
 
     def synchronize_with_info(self, force=False):
         """Explicit administration refresh; separates publication from durable success."""
@@ -264,7 +392,7 @@ class CatalogRepository:
                     same = before is not None and all(
                         all(before['identities'][s][k] == current[s][k] for k in ('releaseId','sourceId')) for s in ('jp','intl'))
                     if same:
-                        validate(before, self.clock())
+                        self._saved_result()
                         try:
                             disk_valid = self._read() == before
                         except ERRORS:
@@ -291,8 +419,9 @@ class CatalogRepository:
                        'added_counts':None,'checked_at':self.clock()}
             if self.saved is None:
                 return None, None, None, summary
-            records, metadata = self._publication(validate(self.saved, self.clock(), stale=self.state=='stale'))
-            info = convert_info(self.saved['documents'], self.saved['identities']['jp'], metadata['cached_at'], self.saved['identities']['intl'])
+            published = self._publication(self._saved_result(stale=self.state=='stale'))
+            records, metadata = published
+            info = published.info
             if prior_ids is not None:
                 summary['added_counts'] = {name:len(set(self.saved['documents']['jp'].get(name, {}))-prior_ids[name]) for name in CHANGE_RESOURCES}
             return records, metadata, info, summary
@@ -311,22 +440,22 @@ class CatalogRepository:
                 self._durable_initialized = True
             now = self.clock()
             if not refresh and self.saved and 0 <= now - self.saved["fetched_at"] < self.ttl:
-                result = validate(self.saved, now, stale=self.state == "stale")
+                result = self._saved_result(stale=self.state == "stale")
                 if self.state not in {"unsaved", "stale"}:
                     self.state = "cached"
                 return self._publication(result)
             try:
                 candidate = self._collect()
-                result = validate(candidate, self.clock())
                 candidate["change_summary"] = added_since(self.saved, candidate)
-                result[1]["change_summary"] = candidate["change_summary"]
-                # Commit the entire JP/text snapshot only after conversion succeeds.
-                self.saved = candidate
+                publication, result = self._new_publication(candidate)
+                # Commit source and derivatives together only after validation.
+                self.saved, self._saved_publication = candidate, publication
+                self._limit_derived(publication)
             except ERRORS as exc:
                 if self.saved is None:
                     raise DataError("Haneoka 主资料同步失败，且无已验证缓存") from exc
                 self.state = "stale"
-                return self._publication(validate(self.saved, self.clock(), stale=True))
+                return self._publication(self._saved_result(stale=True))
             self.state = "fresh"
             try:
                 self._write(candidate)

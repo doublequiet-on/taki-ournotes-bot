@@ -24,6 +24,8 @@ npm run probe -- probe-output.json
 
 ## 模块与调用约束
 
+接纳容量按唯一原消息计量，默认 `maxPending=8`，从等待接纳到交付结束只占一份名额；重复原事件复用原任务，冲突继续拒绝。满载发生在识别前，保持静默并计入 `capacity_rejected_unclassified`。`activity()` 提供互斥的接纳／已受理占用、总占用、上限与当前进程累计原因计数，经现有 overview 读取。三个后端账本预算、缓存与隔离基准见 [查询性能与容量](../docs/PERFORMANCE_FOUNDATION.md)。
+
 | 文件 | 职责 |
 |---|---|
 | `src/ingress.ts` | 原始身份与正文门禁、legacy 字段转换、真实 adaptSession、稳定 requestId。 |

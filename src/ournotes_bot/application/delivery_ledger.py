@@ -8,7 +8,19 @@ from .backend_protocol import ProtocolError, require
 
 
 class Ledger:
-    def __init__(self, path, namespace, runtime, now, capacity=4096, retention=86400):
+    def __init__(self, path, namespace, runtime, now, capacity=4096, retention=86400, *,
+                 request_capacity=None, context_capacity=None, epoch_capacity=None):
+        # Keep the positional capacity API for older local callers; production passes
+        # each limit explicitly so increasing requests never widens the other gates.
+        limits = {'request': capacity if request_capacity is None else request_capacity,
+                  'context': capacity if context_capacity is None else context_capacity,
+                  'epoch': capacity if epoch_capacity is None else epoch_capacity}
+        for name, value in limits.items():
+            require(type(value) is int and 0 < value <= 2**63-1,
+                    'ledger_'+name+'_capacity_configuration')
+        self.request_capacity = limits['request']
+        self.context_capacity = limits['context']
+        self.epoch_capacity = limits['epoch']
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.lock = self.path.with_suffix('.lock').open('a+b')
@@ -26,7 +38,7 @@ class Ledger:
         except OSError:
             self.lock.close()
             raise ProtocolError('backend_already_running', 409) from None
-        self.capacity, self.retention = capacity, retention
+        self.capacity, self.retention = self.request_capacity, retention
         self.db = None
         try:
             self.db = sqlite3.connect(self.path)
@@ -81,7 +93,25 @@ class Ledger:
     def admin_rows(self):
         """Bounded read of retained facts, without expiry or lifecycle transitions."""
         return [dict(row) for row in self.db.execute(
-            'SELECT id,delivery,created,status,runtime FROM requests ORDER BY created DESC,id DESC LIMIT ?', (self.capacity,))]
+            'SELECT id,delivery,created,status,runtime FROM requests ORDER BY created DESC,id DESC LIMIT ?', (self.request_capacity,))]
+
+    def capacity_status(self):
+        """Read actual retained counts, including records above a lowered limit."""
+        row = self.db.execute("""SELECT
+            (SELECT count(*) FROM requests) AS requests,
+            (SELECT count(*) FROM highwater) AS highwater,
+            (SELECT count(*) FROM epochs) AS epochs,
+            (SELECT count(*) FROM requests WHERE EXISTS
+                (SELECT 1 FROM parts WHERE parts.delivery=requests.delivery
+                 AND parts.status IN ('sending','uncertain'))) AS unresolved_requests,
+            (SELECT count(*) FROM parts WHERE status IN ('sending','uncertain')) AS unresolved_parts
+        """).fetchone()
+        limits = {'requests': self.request_capacity, 'highwater': self.context_capacity,
+                  'epochs': self.epoch_capacity}
+        reasons = {'requests': 'ledger_capacity', 'highwater': 'context_capacity', 'epochs': 'epoch_capacity'}
+        return {'counts': dict(row), 'limits': limits, 'retention_seconds': self.retention,
+                'at_capacity': {name: row[name] >= limit for name, limit in limits.items()},
+                'reason_codes': {name: reasons[name] for name, limit in limits.items() if row[name] >= limit}}
 
     def admin_parts(self):
         grouped = {}
@@ -98,7 +128,7 @@ class Ledger:
         if row:
             require(row[0], 'retired_epoch', 409)
             return False
-        require(self.db.execute('SELECT count(*) FROM epochs').fetchone()[0] < self.capacity, 'epoch_capacity', 503)
+        require(self.db.execute('SELECT count(*) FROM epochs').fetchone()[0] < self.epoch_capacity, 'epoch_capacity', 503)
         with self.db:
             self.db.execute('UPDATE epochs SET active=0')
             self.db.execute('INSERT INTO epochs VALUES(?,1)', (epoch,))
@@ -118,8 +148,8 @@ class Ledger:
             self.db.execute("DELETE FROM requests WHERE created<? AND status NOT IN ('preparing','prepared') "
                             "AND NOT EXISTS (SELECT 1 FROM parts WHERE parts.delivery=requests.delivery "
                             "AND parts.status IN ('sending','uncertain'))", (now-self.retention,))
-            require(self.db.execute('SELECT count(*) FROM requests').fetchone()[0] < self.capacity, 'ledger_capacity', 503)
-            require(row is not None or self.db.execute('SELECT count(*) FROM highwater').fetchone()[0] < self.capacity,
+            require(self.db.execute('SELECT count(*) FROM requests').fetchone()[0] < self.request_capacity, 'ledger_capacity', 503)
+            require(row is not None or self.db.execute('SELECT count(*) FROM highwater').fetchone()[0] < self.context_capacity,
                     'context_capacity', 503)
             self.db.execute('INSERT INTO requests VALUES(?,?,?,?,?,?,?,?,?,?)',
                             (request.request_id, request.content_digest, request.gateway_epoch, runtime, 'preparing',

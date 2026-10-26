@@ -1710,6 +1710,23 @@ class RuntimeRecoveryTests(unittest.IsolatedAsyncioTestCase):
             release.set()
             await owner.close()
 
+    async def test_backend_bootstrap_rejects_invalid_capacities_before_locking(self):
+        from types import SimpleNamespace
+        from ournotes_bot.application.backend_bootstrap import build_backend
+        from ournotes_bot.application.backend_protocol import ProtocolError
+        args = SimpleNamespace(port=8765)
+        env = {'OURNOTES_BACKEND_TOKEN':'x'*32,'TAKI_DIAGNOSTICS_ENABLED':'1',
+               'TAKI_LEDGER_REQUEST_CAPACITY':'4096','TAKI_LEDGER_CONTEXT_CAPACITY':'4096',
+               'TAKI_LEDGER_EPOCH_CAPACITY':'4096'}
+        for name in ('REQUEST','CONTEXT','EPOCH'):
+            for value in ('','0','-1','1.5','true',' 2','２',str(2**63),'9'*5000):
+                with self.subTest(name=name,value=value[:20]), \
+                     patch.dict(os.environ,{**env,'TAKI_LEDGER_'+name+'_CAPACITY':value}), \
+                     patch('ournotes_bot.application.backend_bootstrap.DataOwner') as owner:
+                    with self.assertRaisesRegex(ProtocolError,'ledger_'+name.lower()+'_capacity_configuration'):
+                        build_backend(args,SimpleNamespace())
+                    owner.assert_not_called()
+
     async def test_backend_bootstrap_owns_knowledge_and_releases_it(self):
         from types import SimpleNamespace
         from ournotes_bot.application.backend_bootstrap import build_backend
@@ -1721,10 +1738,14 @@ class RuntimeRecoveryTests(unittest.IsolatedAsyncioTestCase):
             settings = Settings('', '', 'https://fixture.invalid', root/'data/cache.json', 6,
                                 update_notices=False, knowledge_dir=root/'knowledge')
             args = SimpleNamespace(port=8765, instance_id='fixture', app_id='fixture', state_dir=str(root/'state'))
-            with patch.dict(os.environ, {'OURNOTES_BACKEND_TOKEN': 'x'*32, 'OURNOTES_RUNTIME_DATA_DIR': str(root/'data')}), \
+            with patch.dict(os.environ, {'OURNOTES_BACKEND_TOKEN': 'x'*32, 'OURNOTES_RUNTIME_DATA_DIR': str(root/'data'),
+                                         'TAKI_LEDGER_REQUEST_CAPACITY':'5','TAKI_LEDGER_CONTEXT_CAPACITY':'6',
+                                         'TAKI_LEDGER_EPOCH_CAPACITY':'7'}), \
                  patch('ournotes_bot.application.backend_bootstrap.create_app', side_effect=lambda backend, *args: backend):
                 backend = build_backend(args, settings)
             try:
+                self.assertEqual(backend.ledger.capacity_status()['limits'], {'requests':5,'highwater':6,'epochs':7})
+                self.assertEqual(backend.ledger.retention,86400)
                 self.assertEqual(backend.knowledge.status()['code'], 'empty')
                 self.assertIs(backend.runtime_tasks.knowledge, backend.knowledge)
             finally:

@@ -28,6 +28,14 @@ def build_backend(args, settings):
     require(1 <= args.port <= 65535, 'backend_port')
     diagnostics = os.environ.get('TAKI_DIAGNOSTICS_ENABLED','1')
     require(diagnostics in ('0','1'), 'diagnostics_configuration')
+    capacities = {}
+    for name in ('request', 'context', 'epoch'):
+        raw = os.environ.get('TAKI_LEDGER_'+name.upper()+'_CAPACITY', '4096')
+        require(raw.isascii() and raw.isdecimal() and len(raw) <= 19,
+                'ledger_'+name+'_capacity_configuration')
+        value = int(raw)
+        require(0 < value <= 2**63-1, 'ledger_'+name+'_capacity_configuration')
+        capacities['ledger_'+name+'_capacity'] = value
     owner = DataOwner(settings)
     backend = None
     try:
@@ -37,7 +45,7 @@ def build_backend(args, settings):
         configure_sources(repository, settings)
         backend = Backend(repository, AIQueryParser(settings), settings, instance_id=args.instance_id,
                           app_id=args.app_id, ledger_path=Path(args.state_dir)/'deliveries-v1.sqlite3',
-                          diagnostics_enabled=diagnostics=='1')
+                          diagnostics_enabled=diagnostics=='1', **capacities)
         backend.knowledge = KnowledgeService(settings.knowledge_dir or CONFIG_ROOT/'knowledge'/'on',
             Path(args.state_dir)/'knowledge-v1.sqlite3', LocalBgeEncoder(settings.knowledge_model_dir))
         backend.knowledge.observe()

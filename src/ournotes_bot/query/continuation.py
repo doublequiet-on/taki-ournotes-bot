@@ -111,9 +111,14 @@ def catalog_version(repository) -> str:
     capture = getattr(repository, "capture_catalog", None)
     catalog = capture() if capture is not None else repository
     digest = hashlib.sha256()
-    for value in (getattr(catalog, "metadata", {}), getattr(catalog, "songs", ()),
-                  getattr(catalog, "cards", ()), getattr(catalog, "support_cards", ()),
-                  getattr(repository, "chart_source", "moenotes"), getattr(repository, "data_source", "yume")):
+    records_version = getattr(catalog, "records_version", None)
+    if records_version is None:
+        values = (getattr(catalog, "metadata", {}), getattr(catalog, "songs", ()),
+                  getattr(catalog, "cards", ()), getattr(catalog, "support_cards", ()))
+    else:
+        values = ("haneoka-records/1", records_version, getattr(catalog, "metadata", {}))
+    for value in (*values, getattr(repository, "chart_source", "moenotes"),
+                  getattr(repository, "data_source", "yume")):
         digest.update(repr(value).encode("utf-8"))
     digest.update(str(alias_version()).encode("ascii"))
     return digest.hexdigest()

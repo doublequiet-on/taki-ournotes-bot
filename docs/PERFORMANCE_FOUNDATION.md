@@ -1,0 +1,69 @@
+# 查询性能与容量
+
+本轮保持 TS 网关／Python 业务核心、载荷协议 2.0 和单状态持有者。多平台后续边界见 [契约草案](MULTIPLATFORM_CONTRACT.md)。性能证据必须区分本地固定夹具、真实来源、平台接受回执与客户端显示。
+
+## 接纳与账本预算
+
+网关按唯一原消息计量从接纳等待到交付结束的在途工作，默认上限仍为 8。重复原事件复用同一个处理任务，不多占槽；原始事件冲突仍拒绝。接纳阶段保持顺序，准备与交付独立运行，同用户无依赖查询不增加全用户等待队列。网关门前满载保持静默，后端 QueryGate 已有的忙碌提示不变。
+
+`Receiver.activity()` 保留 `accepted_inflight`、`admission_inflight`，增加 `pending_total`、`capacity`、`epoch`、`started_at`、`startup_error`、`admission_attempts`。计数按固定原因累计，进程重启归零；`capacity_rejected_unclassified` 表示识别前容量丢弃，不能计为已经确认的业务超载。它通过现有受认证 overview 暴露，不写进要求已入账请求／片段的发送遥测。已知后端容量错误保留安全错误码及 HTTP 状态，未知响应仅报告通用 HTTP 错误；重试语义不变。
+
+后端环境变量分别控制下列门槛，默认均为 4096，要求十进制正整数：
+
+| 配置 | 计量对象 | 生命周期 |
+|---|---|---|
+| `TAKI_LEDGER_REQUEST_CAPACITY` | 已接纳请求记录 | 新请求接纳时清理按 created 已超过 86400 秒的终态；sending／uncertain 等未决事实保留 |
+| `TAKI_LEDGER_CONTEXT_CAPACITY` | 用户 × 会话身份的接纳高水位 | 当前网关代次累计；换代次或后端启动清空，不随请求到期减少 |
+| `TAKI_LEDGER_EPOCH_CAPACITY` | 数据库中累计注册的网关代次 | retire 只置 inactive，后端重启不会删除历史代次 |
+
+管理 overview 的 `sections.ledger.data` 用直接 SQL 计数提供 `counts`、`limits`、`at_capacity`、`reason_codes` 和 `retention_seconds`，不从受限列表推算容量。降低配置不删除已有事实；已有请求的读取、去重与 ACK 保留，新请求按对应门禁处理。达到门槛不表示 CPU 饱和，也不代表每种接纳操作都会失败，例如已有高水位身份不会再占新的 highwater 条目。
+
+本次只参数化容量，生产配置不随代码自动扩大。增加容量前应按三类生命周期分别估算，并指定兼容回退版本：旧代码仍硬编码 4096，数据库可读不等于回退后仍能接纳。留存仍为 86400 秒，不通过缩短留存、清理未决事实或频繁重启释放容量。
+
+## 目录派生缓存
+
+Haneoka 后台发布与自然查询发布各持有一个已验证对象，每个对象最多缓存 fresh／stale 两种 records 派生。一次校验同时得到 records、info 和 metadata 基础信息，避免重复转换。最终 records 的内容指纹随其一起发布，查询只组合小型状态 metadata、来源和当前别名版本。
+
+两槽保留的派生结果对象图默认预算 64 MiB，构建或缓存变化后按共享引用去重估算，不在热命中时重复遍历。超限时先释放另一发布的派生成果；当前发布仍超限则不缓存，查询照常完成。两个槽引用同一发布时共享对象。该预算不是进程 RSS 上限，也不限制刷新时新旧发布、构建临时对象的瞬时占用。
+
+`cache_metrics()` 返回淘汰后的 `retained_bytes`、`byte_limit`、`publications`、`variants`、`hits`、`builds`、`bypasses`。进程资源另由外部采样记录：Windows RSS 峰值取系统进程峰值，Linux 取采样最大值；原始快照、旧请求、绘图及编码均计入进程。预算仍需用实际目录规模及目标机器资源验收，本次固定小夹具不能证明生产内存上限。
+
+metadata 每次捕获深复制小型状态，fresh→stale→恢复、未保存→已保存均重新表达。自然查询仍探测 JP／intl 当前身份；相同标签换内容仅在现有流程实际取得并发布后才可识别。别名仍按文件内容检测，不改成长 TTL。固定分页与 Meta 捕获详情保持原绝对期限；Yume、未附发布指纹或歌曲／卡牌／支援卡集合引用被替换时走原指纹路径。已发布 records 及嵌套对象仍须只读，此机制不检测原地修改。
+
+## 素材热命中与冷上传
+
+素材状态提交与冷上传分别排队，冷上传并发仍为 1。有效热命中可以在无关冷请求的 prepare／PUT／complete 期间取得独立 lease；同内容排队请求执行时重查缓存，复用已经完成的上传。快照保存与最终重命名仍由唯一状态队列串行执行。
+
+冷工作在 prepare 前预占账本容量，complete 前保存 uploadId 未决事实；每次推进外部动作前检查保存故障。最多保留 8 个冷工作、24,000,000 字节输入；这些是素材队列上界，不能扩大网关接纳预算。complete 已在途而另一保存失败时，仍记下晚到所有权，不向调用方发放未经持久确认的 lease。
+
+容量回收与过期删除保持在状态队列中；持有 lease 的过期素材拒绝再次取得，不边用边删。schema 仍为 1。既有删除结果不明时的行为保持：保留本地记录，没有新增跨重启的 deleting 状态；因此本批不声称解决远端删除成功但回执丢失后的失效 URL 问题。
+
+## 可复现基准
+
+在锁定 Node/npm、Python 及项目依赖的源码工作区中先编译 Koishi。谱面素材准备与基准分开，后者禁止外部来源连接：
+
+```powershell
+python -B scripts/prepare_note_assets.py --cache-dir runtime/performance/assets/game-assets
+# koishi 目录：npm ci --ignore-scripts，然后 npm run build
+python -B scripts/benchmark_queries.py --output runtime/performance/baseline --assets runtime/performance/assets/game-assets --runs 3 --requests 8
+```
+
+每次使用新的 output 目录，不覆盖旧证据。`--scenarios` 可选择 `light,hot,cold,chart,mixed,ask-mixed`，`--concurrency` 可用 `1`、`2`、`4` 或 `1,2,4`。每组启用独立后端、账本和素材目录，使用实际 Receiver、HTTP Backend、QueryGate、业务查询、绘图编码、QQDelivery 和 intent／ACK。QQBot 的 HTTP 与 COS PUT 为本地桩，不登录、上传或发送真实消息。进程内清空账号凭据，运行时状态仅写指定目录。
+
+输入是仓库固定 Haneoka 夹具、确定性合成封面与 128 节点谱面、固定哈希原生音符素材。身份 I/O 设 3 ms、首次封面准备设 15 ms、COS PUT 设 120 ms、消息回执设 5 ms；`/问` 使用正式本地解析，不调用付费模型。这些延迟与合成谱面只用于可比较场景，不代表上游、真实曲目或 QQ 时延。cold 从空素材缓存开始轮流查七张不同留影卡，超过七条会复用，报告实际上传数。
+
+输出 `results.json` 记录起始 HEAD、源码与编译产物、输入／锁文件／字体哈希、运行时版本、场景及每次结果；子目录保存成功延迟、拒绝／降级、吞吐、事件循环延迟、阶段计数、账本事实及外部采样的 Node/Python RSS 与 CPU。运行结束再次核对文件哈希，变化则拒绝生成有效比较。Windows 使用后端实际 PID，避免虚拟环境启动器造成错误采样。
+
+成功延迟与吞吐只统计 `samples`；上传数与完成图片数扣除预热。`timings`、Python counters 和账本包含初始化／预热，不能直接除以计时请求数。阶段计时为 inclusive，不能相加当总耗时；资源采样覆盖进程启动及测量阶段，不能用它归因单个请求。计时结束后排空有界遥测队列再读取后端快照，仍须检查 dropped／availability，不能把缺项当零。每组只有少量样本，p95 是描述性统计，不报告可靠 p99。
+
+此工具的成功分类针对上述固定正常输入：请求 finished、有预期输出，图像查询同时要求业务 success；`rejected` 表示零输出，`degraded` 表示预期图片只有文字。报告前须检查各样本 business_status 与账本状态；故障注入使用独立正确性测试，不能把这三个字段当作通用故障原因分类器。
+
+普通完整谱面绘制上限为 96M 像素／30000 边长，群聊素材入口仍为 40M／16384；最终文件 3 MB 也不是工作内存上限。基准按所请求图像是否实际走完发送链分类，文字回退不计为完整图像成功。本机测量没有施加 4 核／4 GB 限制，正式容量仍需在目标机器预算中验证。
+
+`export_output_gallery.py --benchmark-runs` 可补单例绘图分析。`output_observation.py` 的主线程插桩与 visual 模式适合样图检查，不能替代 QueryGate 工作线程下的并发基准。不要用固定为零的历史 `reply_order_wait` 字段证明等待不存在。
+
+## 验证与回退
+
+接纳使用现有 Koishi 离线 probe；账本使用 console_admin／console_policies 及续查测试；目录使用 Haneoka、并发、info、续查和别名回归。共享调用链变化需完整离线测试、架构门禁及隔离安装检查。新增测试默认本地保留的约定不影响现有测试的维护。
+
+网关与后端按组合版本发布／回退，不改变协议 2.0 的接纳及发送许可。派生缓存仅在进程内，回退无需迁移；交付账本、额度与素材所有权记录继续保存。测试、CI、生产采用版本、平台回执与客户端显示分别报告。

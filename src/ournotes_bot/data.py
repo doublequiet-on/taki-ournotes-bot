@@ -241,6 +241,7 @@ class CatalogView:
     gachas: tuple[GachaInfo, ...] = ()
     activities: tuple[ActivityInfo, ...] = ()
     activity_calendars: dict = field(default_factory=dict)
+    records_version: str | None = None
 
 
 class SongRepository:
@@ -252,6 +253,7 @@ class SongRepository:
             raise ValueError("unsupported main data source")
         self.data_source = data_source
         self._catalog_repository = None
+        self._records_publication = None
         if chart_source not in {"moenotes", "haneoka"}:
             raise ValueError("unsupported chart source")
         self.chart_source = chart_source
@@ -414,6 +416,7 @@ class SongRepository:
             # view in place. HTTP, validation and persistence have already ended.
             with self._song_lock:
                 self.songs, self.cards, self.support_cards = records
+                self._records_publication = records
                 self.characters, self.gachas, self.activities = info.characters, info.gachas, info.activities
                 self.activity_calendars = info.activity_calendars
                 self.metadata = metadata
@@ -430,9 +433,16 @@ class SongRepository:
         a new atomic-publication guarantee for the legacy Yume refresh path.
         """
         with self._song_lock:
+            publication = self._records_publication
+            # The digest belongs to the final converted records. Replacing a
+            # collection outside the Haneoka owner falls back to the full hash.
+            version = (getattr(publication, 'fingerprint', None)
+                       if self.data_source == 'haneoka' and publication is not None
+                       and all(current is captured for current, captured in
+                               zip((self.songs, self.cards, self.support_cards), publication)) else None)
             return CatalogView(self.songs, self.cards, self.support_cards, self.metadata,
                                self.cache_state, self.last_successful_sync_at,
-                               self.characters, self.gachas, self.activities, self.activity_calendars)
+                               self.characters, self.gachas, self.activities, self.activity_calendars, version)
 
     def current_query_view(self):
         """A verified per-request view; does not switch legacy refresh/fallback policy."""
@@ -446,11 +456,13 @@ class SongRepository:
             records, metadata, info = self._catalog_repository.current_with_info()
             view = copy(self)
             view.songs, view.cards, view.support_cards = records
+            view._records_publication = records
             view.metadata, view.cache_state = metadata, 'fresh'
             view.characters, view.gachas, view.activities = info.characters, info.gachas, info.activities
             view.activity_calendars = info.activity_calendars
             view._catalog_repository = copy(self._catalog_repository)
             view._catalog_repository.saved = self._catalog_repository._query_snapshot
+            view._catalog_repository._saved_publication = self._catalog_repository._query_publication
             view._detail_cards, view._detail_support_cards = {}, {}
             return view
 
@@ -480,6 +492,7 @@ class SongRepository:
             if records is not None:
                 with self._song_lock:
                     self.songs, self.cards, self.support_cards = records
+                    self._records_publication = records
                     self.characters, self.gachas, self.activities = info.characters, info.gachas, info.activities
                     self.activity_calendars = info.activity_calendars
                     self.metadata, self.cache_state = metadata, self._catalog_repository.state
