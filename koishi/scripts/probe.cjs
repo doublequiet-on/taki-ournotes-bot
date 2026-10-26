@@ -58,6 +58,14 @@ async function until(predicate) {
     await new Promise(resolve=>setImmediate(resolve))
   }
 }
+async function materialFixture(task) {
+  const directory=fs.mkdtempSync(path.join(require('node:os').tmpdir(),'taki-material-round2-'))
+  const app='fixture-material',file=path.join(directory,crypto.createHash('sha256').update(app).digest('hex')+'.json')
+  const key=bytes=>crypto.createHash('sha256').update(bytes).digest('hex')
+  const put=async(url,bytes)=>crypto.createHash('md5').update(bytes).digest('hex')
+  try {await task({directory,app,file,key,put})}
+  finally {assert.ok(path.resolve(directory).startsWith(path.resolve(require('node:os').tmpdir())+path.sep));fs.rmSync(directory,{recursive:true})}
+}
 function receiverFixture(overrides={},maxPending=8) {
   const env=createBot(), held=new Map(), submitted=[], sent=[], plans=new Map(), finished=new Set()
   const client={epoch:'fixture-epoch',deactivate(){},async initialize(){},async retire(){},async recognizes(){return true},
@@ -90,7 +98,7 @@ function receiverFixture(overrides={},maxPending=8) {
 // Delivery fault tests inject a material port; the real three-step material API is
 // exercised separately below. Reuse the upload fixture's fault switch, never its payload in production.
 function fixtureMaterials(api) {
-  return {async acquire(bytes) {
+  return {async close(){},async acquire(bytes) {
     const result=await api.sendFileGuild('fixture-group',{file_type:1,srv_send_msg:false,file_data:Buffer.from(bytes).toString('base64')})
     if(!result?.file_info) throw Error('missing material fixture')
     return {url:'qqbot-media://image/v1/fixture',width:1,height:1,release(){}}
@@ -217,6 +225,182 @@ async function main() {
       assert.equal(e.calls.filter(c=>c.url.endsWith('/messages')).length,1)
     }finally{assert.ok(path.resolve(directory).startsWith(path.resolve(require('node:os').tmpdir())+path.sep));fs.rmSync(directory,{recursive:true})}
   })
+  await run('Material v2 deletion uncertainty survives restart and never grants a stale lease',()=>materialFixture(async f=>{
+    const {MaterialStore}=require('../lib/materials'),clock=Date.now()
+    const entries=Array.from({length:64},(_,i)=>({state:'owned',key:i?f.key('owned'+i):f.key(picture),created:clock-700000,
+      used:clock-600000+i,imageId:'owned_'+i,url:'qqbot-media://image/v1/owned_'+i}))
+    fs.writeFileSync(f.file,JSON.stringify({schema:2,appId:f.app,entries}))
+    let deletes=0
+    const api=async(method)=>{assert.equal(method,'DELETE');deletes++;throw Error('deleted remotely, response lost')}
+    const store=new MaterialStore(f.directory,f.app,api,f.put,()=>clock)
+    await assert.rejects(store.acquire(Buffer.concat([picture,Buffer.from('new')])))
+    assert.equal(JSON.parse(fs.readFileSync(f.file)).entries[0].state,'deletion_unknown')
+    await assert.rejects(store.acquire(picture),/unresolved/)
+    const restored=new MaterialStore(f.directory,f.app,api,f.put,()=>clock)
+    await assert.rejects(restored.acquire(picture),/unresolved/)
+    assert.equal(deletes,1);assert.equal(restored.diagnostics().deletion_unknown,1)
+    assert.equal(restored.diagnostics().occupied,64)
+    await store.close();await restored.close()
+  }))
+  await run('Material absent-ID proof accepts only the documented code in either HTTP shape',()=>materialFixture(async f=>{
+    const {MaterialStore,MaterialAPIError,materialRequest}=require('../lib/materials'),clock=Date.now()
+    for(const httpError of [false,true]) {
+      fs.writeFileSync(f.file,JSON.stringify({schema:2,appId:f.app,entries:[{state:'owned',key:f.key(picture),
+        created:0,used:0,imageId:'gone',url:'qqbot-media://image/v1/gone'}]}))
+      let deleted=0
+      const store=new MaterialStore(f.directory,f.app,async(method,url)=>{
+        if(method==='DELETE') {deleted++;return materialRequest(async()=>{
+          if(httpError)throw{response:{data:{code:40035008}}};return{data:{code:40035008}}
+        })}
+        return url.endsWith('/prepare')?{upload_id:'new',presigned_url:'fixture'}:{image_id:'new',url:'qqbot-media://image/v1/new'}
+      },f.put,()=>clock)
+      const lease=await store.acquire(picture);lease.release();assert.equal(deleted,1)
+      assert.equal(JSON.parse(fs.readFileSync(f.file)).entries[0].state,'owned');await store.close()
+    }
+    for(const code of [40035009,'40035008'])await assert.rejects(materialRequest(async()=>({data:{code}})),e=>e instanceof MaterialAPIError&&!e.absent)
+    await assert.rejects(materialRequest(async()=>{throw Error('transport')}),e=>e instanceof MaterialAPIError&&!e.absent)
+  }))
+  await run('Material ownership sync failure stops DELETE and full snapshots remain serialized',()=>materialFixture(async f=>{
+    const {MaterialStore}=require('../lib/materials'),fsp=require('node:fs/promises'),clock=Date.now()
+    fs.writeFileSync(f.file,JSON.stringify({schema:2,appId:f.app,entries:[{state:'owned',key:f.key(picture),created:0,used:0,
+      imageId:'old',url:'qqbot-media://image/v1/old'}]}))
+    let calls=0,syncs=0;const original=fsp.open
+    fsp.open=async(...args)=>{const handle=await original(...args);handle.sync=async()=>{syncs++;throw Error('injected fsync failure')};return handle}
+    const store=new MaterialStore(f.directory,f.app,async()=>{calls++;throw Error('must not call')},f.put,()=>clock)
+    try {await assert.rejects(store.acquire(picture),/fsync/);assert.equal(calls,0);assert.equal(syncs,1);assert.equal(store.diagnostics().blocked,true)}
+    finally {fsp.open=original;await store.close()}
+    assert.equal(JSON.parse(fs.readFileSync(f.file)).entries[0].state,'owned')
+  }))
+  await run('Cancellation before DELETE restores its saved marker without an external action',()=>materialFixture(async f=>{
+    const {MaterialStore,MaterialAborted}=require('../lib/materials'),fsp=require('node:fs/promises'),entered=deferred(),release=deferred()
+    fs.writeFileSync(f.file,JSON.stringify({schema:2,appId:f.app,entries:[{state:'owned',key:f.key(picture),created:0,used:0,
+      imageId:'old',url:'qqbot-media://image/v1/old'}]}))
+    const original=fsp.rename;let renamed=0,calls=0
+    fsp.rename=async(...args)=>{await original(...args);if(++renamed===1){entered.resolve();await release.promise}}
+    const stop=new AbortController(),store=new MaterialStore(f.directory,f.app,async()=>{calls++;throw Error('no external action')},f.put)
+    const work=store.acquire(picture,{signal:stop.signal}),aborted=assert.rejects(work,MaterialAborted)
+    try {await entered.promise;assert.equal(JSON.parse(fs.readFileSync(f.file)).entries[0].state,'deletion_unknown');stop.abort();release.resolve();await aborted}
+    finally {fsp.rename=original;release.resolve();await store.close()}
+    assert.equal(calls,0);assert.equal(JSON.parse(fs.readFileSync(f.file)).entries[0].state,'owned')
+  }))
+  await run('Material queued cancellation releases capacity, preserves another same-content waiter and drains real work',()=>materialFixture(async f=>{
+    const {MaterialStore,MaterialAborted}=require('../lib/materials'),entered=deferred(),release=deferred()
+    let prepares=0,completes=0,puts=0
+    const store=new MaterialStore(f.directory,f.app,async(method,url)=>{
+      if(url.endsWith('/prepare')){prepares++;entered.resolve();await release.promise;return{upload_id:'one',presigned_url:'fixture'}}
+      completes++;return{image_id:'one',url:'qqbot-media://image/v1/one'}
+    },async(...args)=>{puts++;return f.put(...args)})
+    const first=new AbortController(),cancelled=new AbortController()
+    const a=store.acquire(picture,{signal:first.signal});const aResult=assert.rejects(a,MaterialAborted)
+    await entered.promise
+    const b=store.acquire(picture)
+    const c=store.acquire(Buffer.concat([picture,Buffer.from('cancel')]),{signal:cancelled.signal});const cResult=assert.rejects(c,MaterialAborted)
+    await until(()=>store.diagnostics().queued===2)
+    cancelled.abort();await cResult
+    assert.equal(store.diagnostics().pending,2);assert.equal(store.diagnostics().queued,1)
+    first.abort();release.resolve();await aResult
+    const lease=await b;assert.equal(lease.url,'qqbot-media://image/v1/one');lease.release();lease.release()
+    assert.deepEqual([prepares,puts,completes],[1,1,1]);await store.close()
+    await assert.rejects(store.acquire(picture),MaterialAborted)
+    assert.equal(store.diagnostics().pending,0)
+  }))
+  await run('Material close cancels queued uploads but waits for started completion and keeps ownership',()=>materialFixture(async f=>{
+    const {MaterialStore,MaterialAborted}=require('../lib/materials'),entered=deferred(),release=deferred()
+    let prepares=0,completes=0
+    const store=new MaterialStore(f.directory,f.app,async(method,url)=>{
+      if(url.endsWith('/prepare')){prepares++;return{upload_id:'one',presigned_url:'fixture'}}
+      completes++;entered.resolve();await release.promise;return{image_id:'one',url:'qqbot-media://image/v1/one'}
+    },f.put)
+    const a=store.acquire(picture),aResult=assert.rejects(a,MaterialAborted);await entered.promise
+    const b=store.acquire(Buffer.concat([picture,Buffer.from('queued')])),bResult=assert.rejects(b,MaterialAborted)
+    await until(()=>store.diagnostics().queued===1)
+    let closed=false;const closing=store.close().then(()=>closed=true)
+    await bResult;assert.equal(closed,false);assert.equal(store.diagnostics().pending,1)
+    release.resolve();await aResult;await closing
+    assert.deepEqual([prepares,completes],[1,1]);assert.equal(JSON.parse(fs.readFileSync(f.file)).entries[0].imageId,'one')
+  }))
+  await run('Material deadline skips queued external work and valid hot hits bypass cold upload',()=>materialFixture(async f=>{
+    const {MaterialStore,MaterialAborted}=require('../lib/materials'),entered=deferred(),release=deferred(),clock=Date.now()
+    fs.writeFileSync(f.file,JSON.stringify({schema:2,appId:f.app,entries:[{state:'owned',key:f.key(picture),created:clock,
+      used:clock,imageId:'hot',url:'qqbot-media://image/v1/hot'}]}))
+    let now=clock,prepares=0
+    const store=new MaterialStore(f.directory,f.app,async(method,url)=>{
+      if(url.endsWith('/prepare')){prepares++;entered.resolve();await release.promise;return{upload_id:'one',presigned_url:'fixture'}}
+      return{image_id:'one',url:'qqbot-media://image/v1/one'}
+    },f.put,()=>now)
+    const cold=store.acquire(Buffer.concat([picture,Buffer.from('cold')]));await entered.promise
+    const queued=store.acquire(Buffer.concat([picture,Buffer.from('expired')]),{deadline:clock+1000}),expired=assert.rejects(queued,MaterialAborted)
+    await until(()=>store.diagnostics().queued===1)
+    const hot=await store.acquire(picture);hot.release();assert.equal(prepares,1)
+    now=clock+1001;release.resolve();(await cold).release();await expired;assert.equal(prepares,1);await store.close()
+  }))
+  await run('Material compatibility reader preserves the loaded schema and all unknown ownership',()=>materialFixture(async f=>{
+    const {MaterialStore}=require('../lib/materials'),clock=Date.now(),api=async()=>{throw Error('must not access platform')}
+    const pendingBytes=Buffer.concat([picture,Buffer.from('pending')]),deletedBytes=Buffer.concat([picture,Buffer.from('deleted')])
+    for(const schema of [1,2]) {
+      const entries=[{key:f.key(picture),created:clock,used:clock,imageId:'hot',url:'qqbot-media://image/v1/hot',...(schema===2?{state:'owned'}:{})},
+        {key:f.key(pendingBytes),created:clock,used:clock,uploadId:'pending',...(schema===2?{state:'completion_unknown'}:{})}]
+      if(schema===2)entries.push({key:f.key(deletedBytes),created:clock,used:clock,imageId:'deleted',url:'qqbot-media://image/v1/deleted',state:'deletion_unknown'})
+      fs.writeFileSync(f.file,JSON.stringify({schema,appId:f.app,entries}))
+      const store=new MaterialStore(f.directory,f.app,api,f.put,()=>clock),floor=store.diagnostics().schema
+      const [a,b]=await Promise.all([store.acquire(picture),store.acquire(picture)])
+      a.release();a.release();b.release()
+      await assert.rejects(store.acquire(pendingBytes),/unresolved/)
+      if(schema===2)await assert.rejects(store.acquire(deletedBytes),/unresolved/)
+      const saved=JSON.parse(fs.readFileSync(f.file));assert.equal(saved.schema,Math.max(floor,schema));assert.equal(saved.entries.length,entries.length)
+      if(saved.schema===2)assert.equal(saved.entries[1].state,'completion_unknown')
+      assert.equal(store.active.size,0);await store.close()
+    }
+  }))
+  await run('Material every complete snapshot synchronizes file then rename then directory before leasing',()=>materialFixture(async f=>{
+    const {MaterialStore}=require('../lib/materials'),fsp=require('node:fs/promises'),clock=Date.now(),trace=[]
+    fs.writeFileSync(f.file,JSON.stringify({schema:2,appId:f.app,entries:[{state:'owned',key:f.key(picture),created:clock,used:clock,
+      imageId:'hot',url:'qqbot-media://image/v1/hot'}]}))
+    const originalOpen=fsp.open,originalRename=fsp.rename
+    fsp.open=async(...args)=>{const handle=await originalOpen(...args),sync=handle.sync.bind(handle)
+      handle.sync=async()=>{trace.push(args[0]===f.directory?'directory-sync':'file-sync');return sync()};return handle}
+    fsp.rename=async(...args)=>{trace.push('rename');return originalRename(...args)}
+    const store=new MaterialStore(f.directory,f.app,async()=>{throw Error('no network')},f.put,()=>clock)
+    try {for(let i=0;i<2;i++){const lease=await store.acquire(picture);trace.push('lease');lease.release()}}
+    finally {fsp.open=originalOpen;fsp.rename=originalRename;await store.close()}
+    const one=['file-sync','rename',...(process.platform==='win32'?[]:['directory-sync']),'lease']
+    assert.deepEqual(trace,[...one,...one])
+  }))
+  await run('Material late complete retains ownership after another snapshot save failure without granting leases',()=>materialFixture(async f=>{
+    const {MaterialStore}=require('../lib/materials'),fsp=require('node:fs/promises'),clock=Date.now(),entered=deferred(),release=deferred()
+    fs.writeFileSync(f.file,JSON.stringify({schema:2,appId:f.app,entries:[{state:'owned',key:f.key(picture),created:clock,used:clock,
+      imageId:'hot',url:'qqbot-media://image/v1/hot'}]}))
+    const store=new MaterialStore(f.directory,f.app,async(method,url)=>{
+      if(url.endsWith('/prepare'))return{upload_id:'late',presigned_url:'fixture'}
+      entered.resolve();await release.promise;return{image_id:'late',url:'qqbot-media://image/v1/late'}
+    },f.put,()=>clock)
+    const work=store.acquire(Buffer.concat([picture,Buffer.from('late')])),failed=assert.rejects(work,/recovery/)
+    await entered.promise
+    const original=fsp.rename;fsp.rename=async()=>{throw Error('injected rename failure')}
+    try {await assert.rejects(store.acquire(picture),/rename/)}finally{fsp.rename=original}
+    release.resolve();await failed;await store.close()
+    const saved=JSON.parse(fs.readFileSync(f.file));assert.equal(saved.entries.find(e=>e.imageId==='late').state,'owned')
+    assert.equal(store.active.size,0);assert.equal(store.diagnostics().blocked,true)
+  }))
+  await run('Real QQDelivery disposal cancels queued cold work without intent, send or lost late ownership',()=>materialFixture(async f=>{
+    const {MaterialStore}=require('../lib/materials'),entered=deferred(),release=deferred(),clock=Date.now()
+    let prepares=0,puts=0,completes=0,intents=0,sends=0
+    const store=new MaterialStore(f.directory,f.app,async(method,url)=>{
+      if(url.endsWith('/prepare')){prepares++;entered.resolve();await release.promise;return{upload_id:'one',presigned_url:'fixture'}}
+      completes++;return{image_id:'one',url:'qqbot-media://image/v1/one'}
+    },async(...args)=>{puts++;return f.put(...args)})
+    const input={kind:'group',userId:'user',requestId:'request',messageId:'message',conversationId:'group',timestampMs:clock}
+    const events={async intent(){intents++;return'granted'},async acknowledge(){throw Error('must not ACK without intent')}}
+    const api={async sendMessage(){sends++;return{id:'sent'}}}
+    const a=new QQDelivery(api,input,'a','epoch',events,()=>true,undefined,undefined,store)
+    const b=new QQDelivery(api,{...input,requestId:'second'},'b','epoch',events,()=>true,undefined,undefined,store)
+    const first=a.deliver('0',0,{kind:'image',bytes:picture,caption:''});await entered.promise
+    const second=b.deliver('0',0,{kind:'image',bytes:Buffer.concat([picture,Buffer.from('second')]),caption:''})
+    await until(()=>store.diagnostics().queued===1);a.dispose();b.dispose()
+    assert.equal((await second).status,'aborted');release.resolve();assert.equal((await first).status,'aborted');await store.close()
+    assert.deepEqual([prepares,puts,completes,intents,sends],[1,1,1,0,0]);assert.equal(store.active.size,0)
+    assert.equal(JSON.parse(fs.readFileSync(f.file)).entries[0].imageId,'one')
+  }))
   for (const kind of ['group', 'c2c']) for (const legacy of [false, true]) {
     await run(`${kind}/${legacy ? 'legacy' : 'modern'} raw event -> installed adapter Session`, async () => {
       const env = createBot(), raw = event({ kind, legacy }), before = structuredClone(raw)
