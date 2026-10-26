@@ -69,9 +69,7 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
       - name: Install CJK font for image rendering test
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y fonts-noto-cjk
+        run: bash scripts/install_ci_fonts.sh
       - name: Install project
         run: |
           python -m pip install 'setuptools>=68'
@@ -107,7 +105,7 @@ jobs:
         with:
           python-version: '3.12'
       - name: Install system font
-        run: sudo apt-get update && sudo apt-get install -y fonts-noto-cjk
+        run: bash scripts/install_ci_fonts.sh
       - name: Build locked Linux bundle
         run: python scripts/build_offline_release.py --output "$RUNNER_TEMP/offline-release"
       - name: Prove installation and regression with networking disabled
