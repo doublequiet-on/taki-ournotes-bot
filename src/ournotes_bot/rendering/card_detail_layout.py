@@ -202,7 +202,7 @@ def render(card,locale='zh',*,load):
             y+=bh
         if card.catalog.get('detail_stale'):c.text(54,height-24,ui_label('使用上次有效资料',locale),22,MUTED)
         return c.image
-    try:return render_parts(tuple(b[1] for b in blocks),1080,head+48,paint,max_height=2800)
+    try:return render_parts(tuple(b[1] for b in blocks),1080,head+48,paint)
     finally:
         for asset in assets.values():
             if asset is not None:asset.close()
