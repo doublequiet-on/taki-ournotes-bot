@@ -492,12 +492,43 @@ def prepare_reply(content: str, repository: SongRepository,
     candidate = capture_context(result, repository, catalog_before=before, complete=True)
     if candidate is not None:
         candidate = replace(candidate, origin=origin)
-    prepared = render_prepared(reply, result, repository, locale_for(content), candidate)
+    short = None
+    if is_ai_request(content) and isinstance(result, CommandResult) and result.activity is not None:
+        from ..natural_query.on_query import activity_time_field
+        field = activity_time_field(outcome.state.question, repository)
+        if field:
+            short = activity_time_reply(result.activity, field)
+    prepared = (PreparedReply(short, complete_text=True) if short is not None else
+                render_prepared(reply, result, repository, locale_for(content), candidate))
     prepared = replace(prepared, business_status=getattr(result, 'status', None), parse_origin=origin,processing_route=route)
     logger.info("查询完成；内容=%s 文本=%d字 图片=%s 耗时=%.0fms",
                 describe(content) if log_content else '[redacted]', len(reply),
                 f"{len(prepared.image):,}B" if prepared.image else "无", elapsed())
     return prepared
+
+
+def activity_time_reply(answer, field):
+    """Use the captured schedule, including its timezone and source warnings."""
+    if answer.status != 'success':
+        return answer.text
+    schedules = [(view, row.schedule) for view in answer.views for row in view.rows if row.schedule]
+    label = '结束' if field == 'end' else '开始'
+    if len(schedules) != 1:
+        return f'当前资料还不能确定活动的{label}时间，请稍后再查。'
+    view, schedule = schedules[0]
+    value = schedule.end if field == 'end' else schedule.start
+    if not value or value == '未知':
+        text = f'《{view.title}》的{label}时间暂未提供。'
+    else:
+        text = f'《{view.title}》的{label}时间是 {value}（{schedule.zone}）。'
+        if field == 'end' and schedule.status == '进行中':
+            text += '\n记得及时清 CP，别留到活动结束啦。'
+        elif schedule.status == '已结束':
+            text += '\n这期活动已经结束了。'
+        elif schedule.status == '尚未开始':
+            text += '\n这期活动还没开始。'
+    # Keep the region, source and any incomplete/stale-data notice from this same result.
+    return '\n'.join((text, view.subtitle, *view.footer))
 
 
 def prepare_followup(context, operation, repository):

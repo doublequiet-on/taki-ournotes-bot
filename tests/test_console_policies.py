@@ -1189,15 +1189,19 @@ class NativeRuntimeTests(Fixture,unittest.IsolatedAsyncioTestCase):
 
     async def test_screenshot_event_question_reaches_native_local_query_without_model(self):
         from types import SimpleNamespace
-        from ournotes_bot.query.contracts.info import InfoAnswer
-        answer=InfoAnswer('夹具活动结束：2026-10-30 20:00')
+        from ournotes_bot.query.contracts.info import InfoAnswer,InfoView,InfoRow,InfoSchedule
+        view=InfoView('夹具活动',rows=(InfoRow('时间',schedule=InfoSchedule(
+            '活动 ID 1','进行中','2026-10-21 20:00:00','2026-10-30 20:00:00','UTC+09:00')),))
+        answer=InfoAnswer('夹具活动结束：2026-10-30 20:00',views=(view,))
         with patch('ournotes_bot.query.activity_query.execute_activity',return_value=answer) as execute, \
-             patch('ournotes_bot.rendering.info_layout.render_info',return_value=(SimpleNamespace(text=answer.text,image=b'image'),)):
+             patch('ournotes_bot.rendering.info_layout.render_info',side_effect=AssertionError('image rendered')):
             plan,attempts=await self.prepare_native('/问 这期活动啥时候结束啊')
         self.assertFalse(attempts);self.client.request.assert_not_awaited()
         execute.assert_called_once()
-        self.assertEqual([p['kind'] for p in plan['parts']],['text','image'])
-        self.assertEqual(self.backend.works[plan['delivery_id']].prepared[1].text,answer.text)
+        self.assertEqual([p['kind'] for p in plan['parts']],['text'])
+        self.assertIn('2026-10-30 20:00:00（UTC+09:00）',plan['parts'][0]['text'])
+        self.assertIn('记得及时清 CP',plan['parts'][0]['text'])
+        self.assertNotIn('查询结果：',plan['parts'][0]['text'])
 
     def test_native_chart_preserves_explicit_difficulty_and_captured_result(self):
         from ournotes_bot.domain.model_calls import ToolCall,ModelError
@@ -1349,11 +1353,12 @@ class NativeRuntimeTests(Fixture,unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(attempts),1,plan)
         self.client.request.assert_awaited_once()
         self.repo.song_metrics.current.assert_called_once_with('jp')
-        self.assertEqual(len(plan['parts']),3,plan)
-        self.assertEqual(plan['parts'][0]['business_status'],'processing_hint')
+        self.assertEqual(len(plan['parts']),2,plan)
+        self.assertEqual(plan['parts'][0]['kind'],'image')
+        self.assertFalse(plan.get('processing_hint',False))
         prepared=self.backend.works[plan['delivery_id']].prepared
-        self.assertIn('工程合成曲100',prepared[1].text)
-        self.assertIn('工程合成曲400',prepared[2].text)
+        self.assertIn('工程合成曲100',prepared[0].text)
+        self.assertIn('工程合成曲400',prepared[1].text)
 
     async def test_native_detail_uses_current_view_when_legacy_repository_is_older(self):
         from copy import copy
@@ -1363,7 +1368,7 @@ class NativeRuntimeTests(Fixture,unittest.IsolatedAsyncioTestCase):
              patch('ournotes_bot.application.replies.load_chart_data',side_effect=ValueError('isolated chart unavailable')), \
              patch('ournotes_bot.application.replies.load_chart_score',side_effect=ValueError('isolated chart unavailable')):
             first,_=await self.prepare_native('/问 查曲 MyGO')
-            first=self.Helpers.accept_image_intro(self,first)
+            first=self.Helpers.assert_native_image(self,first)
             self.event(first,'intent');self.event(first,'ack')
             second,attempts=await self.prepare_native('/问 第一个',seq=2)
         self.assertFalse(attempts)

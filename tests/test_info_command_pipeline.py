@@ -10,7 +10,7 @@ from ournotes_bot.data import SongRepository
 from ournotes_bot.platforms.qq.qq import (
     DeliveryCursor, _expand_replies, _prepare_followup, _prepare_reply,
 )
-from ournotes_bot.query.contracts.info import InfoAnswer, InfoRow, InfoView, info_text
+from ournotes_bot.query.contracts.info import InfoAnswer, InfoRow, InfoSchedule, InfoView, info_text
 from ournotes_bot.query.continuation import parse_operation
 
 
@@ -51,12 +51,8 @@ class InfoCommandPipelineTests(unittest.TestCase):
             ('/问 高松灯的生日是什么', 'character_query', 'execute_character'),
             ('/问 当前的卡池有哪些', 'gacha_query', 'execute_gacha'),
             ('/问 历史活动有哪些', 'activity_query', 'execute_activity'),
-            ('/问 这期活动啥时候结束', 'activity_query', 'execute_activity'),
-            ('/问 这期活动啥时候结束啊', 'activity_query', 'execute_activity'),
-            ('/问 国际服这期活动什么时候结束呀？', 'activity_query', 'execute_activity'),
             ('/问 本期卡池什么时候结束呢', 'gacha_query', 'execute_gacha'),
-            ('/问 本期活动什么时候结束？', 'activity_query', 'execute_activity'),
-            ('/问 国际服这次活动结束时间是什么', 'activity_query', 'execute_activity'),
+            ('/问 这期活动详情', 'activity_query', 'execute_activity'),
             ('/问 本期卡池啥时候结束', 'gacha_query', 'execute_gacha'),
         ):
             with self.subTest(question=question), \
@@ -69,6 +65,42 @@ class InfoCommandPipelineTests(unittest.TestCase):
                 self.assertEqual(reply.text, self.answer.text)
                 execute.assert_called_once()
                 self.assertIs(render.call_args.args[0], self.answer)
+
+    def test_current_activity_time_is_one_text_reply_on_local_and_cached_paths(self):
+        from ournotes_bot.ai_query import AIQueryParser
+        from ournotes_bot.config import Settings
+        parser = AIQueryParser(Settings('', '', '', self.repo.cache_file, 6, 'fixture-key'))
+        view = InfoView('夹具活动', '日服 · 当前／最近活动', rows=(InfoRow('时间', schedule=InfoSchedule(
+            '活动 ID 1', '进行中', '2026-10-21 15:00:00', '2026-10-30 14:59:59', 'UTC+09:00')),),
+            footer=('资料来源：夹具', '来源覆盖提示保留'))
+        answer = InfoAnswer(info_text((view,)), views=(view,))
+        for question in ('/问 这期活动啥时候结束啊', '/问 本期活动什么时候结束？',
+                         '/问 国际服这次活动结束时间是什么', '/问 国际服这期活动什么时候结束呀？'):
+            with self.subTest(question=question), \
+                 patch('ournotes_bot.query.activity_query.execute_activity', return_value=answer) as execute, \
+                 patch('ournotes_bot.application.replies.render_prepared', side_effect=AssertionError('image rendered')), \
+                 patch.object(parser, '_request', side_effect=AssertionError('model called')), \
+                 patch.object(parser._quota, 'reserve', side_effect=AssertionError('quota used')):
+                for _ in range(2):
+                    reply = _prepare_reply(question, self.repo, parser)
+                    self.assertIsNone(reply.image)
+                    self.assertFalse(reply.pages)
+                    self.assertIn('2026-10-30 14:59:59（UTC+09:00）', reply.text)
+                    self.assertIn('记得及时清 CP', reply.text)
+                    self.assertIn('来源覆盖提示保留', reply.text)
+                self.assertEqual(execute.call_count, 2)  # Cached intent still refreshes facts.
+
+    def test_activity_short_reply_preserves_errors_missing_time_and_inactive_states(self):
+        from ournotes_bot.application.replies import activity_time_reply
+        for status, end in (('已结束', '2026-10-20 20:00:00'), ('尚未开始', '2026-10-30 20:00:00'),
+                            ('进行中', '未知')):
+            view = InfoView('夹具', rows=(InfoRow('时间', schedule=InfoSchedule('ID 1', status, '开始时间', end)),))
+            answer = InfoAnswer(info_text((view,)), views=(view,))
+            self.assertNotIn('清 CP', activity_time_reply(answer, 'end'))
+            self.assertNotIn('清 CP', activity_time_reply(answer, 'start'))
+        self.assertIn('暂未提供', activity_time_reply(answer, 'end'))
+        self.assertEqual(activity_time_reply(InfoAnswer('来源暂不可用', 'data_unavailable'), 'end'), '来源暂不可用')
+        self.assertIn('不能确定', activity_time_reply(InfoAnswer('缺少结构化时间'), 'end'))
 
     def test_calendar_deixis_does_not_discard_history_or_other_conditions(self):
         from ournotes_bot.natural_query.on_query import information_command
