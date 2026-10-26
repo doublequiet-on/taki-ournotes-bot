@@ -31,6 +31,9 @@ export async function materialRequest(request: () => Promise<{data: any}>): Prom
 }
 const token = /^[A-Za-z0-9_-]{1,512}$/
 const uri = /^qqbot-media:\/\/image\/v1\/[A-Za-z0-9_-]{1,1024}$/
+function validId(value: unknown): value is string {
+  return typeof value==='string' && token.test(value)
+}
 const lifetime = 89 * 86400000
 
 export function imageShape(bytes: Uint8Array): { width: number; height: number; type: string; ext: string } {
@@ -146,12 +149,21 @@ export class MaterialStore implements ImageMaterials {
       const raw=await readFile(this.file,'utf8')
       if (raw.length>200000) throw Error('material ledger size')
       const state=JSON.parse(raw)
-      if(![1,2].includes(state.schema) || state.appId!==this.appId || !Array.isArray(state.entries) || state.entries.length>64
-        || state.entries.some((e:Entry)=>!e || typeof e.key!=='string' || !/^[a-f0-9]{64}$/.test(e.key) || !Number.isFinite(e.created)
+      if(![1,2].includes(state.schema) || state.appId!==this.appId || !Array.isArray(state.entries) || state.entries.length>64) throw Error('invalid material ledger')
+      // Legacy writers let RegExp coerce numeric IDs. Normalize only exact,
+      // nonzero safe integers in v1; never guess an imprecise ID or drop its owner.
+      if(state.schema===1) for(const entry of state.entries) {
+        if(!entry || typeof entry!=='object') continue
+        for(const field of ['uploadId','imageId']) {
+          const value=entry[field]
+          if(typeof value==='number' && Number.isSafeInteger(value) && value!==0) entry[field]=String(value)
+        }
+      }
+      if(state.entries.some((e:Entry)=>!e || typeof e.key!=='string' || !/^[a-f0-9]{64}$/.test(e.key) || !Number.isFinite(e.created)
           || !Number.isFinite(e.used) || e.used<e.created || e.used>this.now()+300000
           || Object.keys(e).some(k=>!['key','created','used','imageId','url','uploadId',...(state.schema===2?['state']:[])].includes(k))
-          || (e.imageId!==undefined && (typeof e.imageId!=='string' || !token.test(e.imageId) || typeof e.url!=='string' || !uri.test(e.url)))
-          || (e.uploadId!==undefined && (typeof e.uploadId!=='string' || !token.test(e.uploadId)))
+          || (e.imageId!==undefined && (!validId(e.imageId) || typeof e.url!=='string' || !uri.test(e.url)))
+          || (e.uploadId!==undefined && (!validId(e.uploadId)))
           || (e.imageId===undefined && (!e.uploadId || e.url!==undefined))
           || (state.schema===2 && (!['owned','completion_unknown','deletion_unknown'].includes(e.state)
             || (e.state==='completion_unknown' ? !e.uploadId || e.imageId!==undefined || e.url!==undefined : !e.imageId))))) throw Error('invalid material ledger')
@@ -302,7 +314,7 @@ export class MaterialStore implements ImageMaterials {
       this.coldPhase='prepare'
       const prepared=await this.api('POST','/v2/media-images/prepare',{file_name:key+'.'+shape.ext,
         file_size:bytes.length,content_type:shape.type,md5,sha1:createHash('sha1').update(bytes).digest('hex')})
-      if(!token.test(prepared?.upload_id || '') || typeof prepared.presigned_url!=='string') throw Error('invalid material prepare')
+      if(!validId(prepared?.upload_id) || typeof prepared.presigned_url!=='string') throw Error('invalid material prepare')
       this.available()
       this.coldPhase='put'
       const etag=await this.put(prepared.presigned_url,bytes,shape.type)
@@ -319,7 +331,7 @@ export class MaterialStore implements ImageMaterials {
       this.available()
       this.coldPhase='complete'
       const completed=await this.api('POST','/v2/media-images/complete',{upload_id:prepared.upload_id,md5:etag})
-      if(!token.test(completed?.image_id || '') || !uri.test(completed?.url || '')) throw Error('invalid material completion')
+      if(!validId(completed?.image_id) || typeof completed.url!=='string' || !uri.test(completed.url)) throw Error('invalid material completion')
       return await this.state(async()=>{
         entry.imageId=completed.image_id;entry.url=completed.url;entry.used=this.now();entry.state='owned'
         // A different hit may have failed to save while complete was in flight.
