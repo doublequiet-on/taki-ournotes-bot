@@ -307,7 +307,11 @@ export class Receiver {
     const allowed=permitted && this.active && (management?.accepts(input) ?? true) && policy.natural_query==='model'
     await this.client.modelPermission(challenge,policy,allowed)
   }
-  async dispose(): Promise<void> {
+  private closing?: Promise<void>
+  dispose(): Promise<void> {
+    return this.closing ??= this.drain()
+  }
+  private async drain(): Promise<void> {
     this.active = false
     this.client.deactivate()
     const noticesClosed=this.notices?.close()

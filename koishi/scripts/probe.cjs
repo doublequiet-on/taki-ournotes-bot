@@ -1144,21 +1144,72 @@ async function main() {
     const dir=fs.mkdtempSync(path.join(require('node:os').tmpdir(),'taki-startup-probe-'))
     const {Bot}=require('koishi'),originalStart=Bot.prototype.start,originalRead=fs.readFileSync
     const originalInitialize=BackendClient.prototype.initialize,originalFetch=globalThis.fetch
-    const token=process.env.OURNOTES_BACKEND_TOKEN
+    const token=process.env.OURNOTES_BACKEND_TOKEN,cleanup=deferred(),cleanupEntered=deferred()
+    let returned=false
     Bot.prototype.start=async()=>{}
     fs.readFileSync=function(file,...args){return String(file).endsWith('combination.json')?JSON.stringify({commit:'b'.repeat(40)}):originalRead.call(this,file,...args)}
-    BackendClient.prototype.initialize=function(){return originalInitialize.call(this,{timeoutMs:30,retryMs:5})}
+    BackendClient.prototype.initialize=function(){return originalInitialize.call(this,{timeoutMs:30,retryMs:5}).finally(()=>{
+      this.telemetry.pending=cleanup.promise;cleanupEntered.resolve()
+    })}
     globalThis.fetch=async()=>new Response(JSON.stringify({...startupReady,protocol:{major:3,minor:0}}),{status:mode==='timeout'?503:200})
     process.env.OURNOTES_BACKEND_TOKEN='x'.repeat(32)
     try {
-        await assert.rejects(require('../run.cjs').start({TAKI_KOISHI_ENABLED:'1',TAKI_CONSOLE_STATE_DIR:dir,QQ_APP_ID:'fixture-app',QQ_APP_SECRET:'fixture',QQ_SELF_ID:'fixture-self',OURNOTES_BACKEND_TOKEN:'x'.repeat(32),TAKI_INSTANCE_ID:'fixture'}),
-        e=>e.code===(mode==='timeout'?'startup_timeout':'incompatible_backend'))
+        const pending=assert.rejects(require('../run.cjs').start({TAKI_KOISHI_ENABLED:'1',TAKI_CONSOLE_STATE_DIR:dir,QQ_APP_ID:'fixture-app',QQ_APP_SECRET:'fixture',QQ_SELF_ID:'fixture-self',OURNOTES_BACKEND_TOKEN:'x'.repeat(32),TAKI_INSTANCE_ID:'fixture'}),
+        e=>e.code===(mode==='timeout'?'startup_timeout':'incompatible_backend')).then(()=>{returned=true})
+        await cleanupEntered.promise;await new Promise(resolve=>setImmediate(resolve))
+        assert.equal(returned,false,'startup failure must await real receiver cleanup')
+        cleanup.resolve();await pending
     } finally {
+      cleanup.resolve()
       Bot.prototype.start=originalStart;fs.readFileSync=originalRead;BackendClient.prototype.initialize=originalInitialize;globalThis.fetch=originalFetch
       if(token===undefined)delete process.env.OURNOTES_BACKEND_TOKEN;else process.env.OURNOTES_BACKEND_TOKEN=token
       fs.rmSync(dir,{recursive:true,force:true})
     }
   })
+  await run('Actual gateway close drains material completion, notices and telemetry before unloading once',()=>materialFixture(async f=>{
+    const {MaterialStore,MaterialAborted}=require('../lib/materials'),{Bot}=require('koishi')
+    const originalStart=Bot.prototype.start,originalInitialize=BackendClient.prototype.initialize,originalRetire=BackendClient.prototype.retire,read=fs.readFileSync
+    const originalToken=process.env.OURNOTES_BACKEND_TOKEN,complete=deferred(),entered=deferred(),notice=deferred(),telemetry=deferred()
+    let runtime,pending,closing,closed=false,retirements=0
+    try {
+      Bot.prototype.start=async function(){this.user={id:identity.selfId};this.status=1}
+      BackendClient.prototype.initialize=async function(){this.readiness={notices_enabled:false,diagnostics_enabled:false}}
+      BackendClient.prototype.retire=async()=>{retirements++}
+      fs.readFileSync=function(file,...args){return String(file).endsWith('combination.json')?JSON.stringify({commit:'b'.repeat(40)}):read.call(this,file,...args)}
+      process.env.OURNOTES_BACKEND_TOKEN='x'.repeat(32)
+      runtime=await require('../run.cjs').start({TAKI_KOISHI_ENABLED:'1',TAKI_CONSOLE_ENABLED:'0',TAKI_CONSOLE_STATE_DIR:f.directory,
+        TAKI_GATEWAY_HEALTH_PORT:'15145',QQ_APP_ID:identity.appId,QQ_APP_SECRET:'fixture',QQ_SELF_ID:identity.selfId,
+        OURNOTES_BACKEND_TOKEN:'x'.repeat(32),TAKI_INSTANCE_ID:identity.instanceId})
+      const receiver=runtime.ctx.takiTransport.receiver
+      fs.writeFileSync(f.file,JSON.stringify({schema:2,appId:f.app,entries:[]}))
+      receiver.materials=new MaterialStore(f.directory,f.app,async(method,url)=>{
+        if(url.endsWith('/prepare'))return{upload_id:'late_shutdown',presigned_url:'fixture'}
+        entered.resolve();await complete.promise;return{image_id:'owned_shutdown',url:'qqbot-media://image/v1/owned_shutdown'}
+      },f.put)
+      pending=assert.rejects(receiver.materials.acquire(picture),e=>e instanceof MaterialAborted)
+      await entered.promise
+      receiver.notices.groupTail=notice.promise
+      receiver.client.telemetry.pending=telemetry.promise
+      closing=runtime.close();assert.equal(runtime.close(),closing)
+      void closing.then(()=>{closed=true})
+      assert.equal(receiver.dispose(),receiver.dispose())
+      await new Promise(resolve=>setImmediate(resolve))
+      assert.equal(closed,false);assert.equal(retirements,1)
+      assert.equal(runtime.ctx.takiTransport.receiver,receiver)
+      assert.equal(JSON.parse(fs.readFileSync(f.file)).entries[0].state,'completion_unknown')
+      complete.resolve();await pending
+      assert.equal(JSON.parse(fs.readFileSync(f.file)).entries[0].state,'owned')
+      assert.equal(closed,false)
+      notice.resolve();await new Promise(resolve=>setImmediate(resolve));assert.equal(closed,false)
+      telemetry.resolve();await closing
+      assert.equal(retirements,1);assert.equal(runtime.ctx.takiTransport,undefined)
+    } finally {
+      complete.resolve();notice.resolve();telemetry.resolve()
+      await Promise.allSettled([pending,closing]);await runtime?.close()
+      Bot.prototype.start=originalStart;BackendClient.prototype.initialize=originalInitialize;BackendClient.prototype.retire=originalRetire;fs.readFileSync=read
+      if(originalToken===undefined)delete process.env.OURNOTES_BACKEND_TOKEN;else process.env.OURNOTES_BACKEND_TOKEN=originalToken
+    }
+  }))
   const root = path.resolve(__dirname, '..')
   await run('console validates separate credentials and stays disabled by default',async()=>{
     const {configuration}=require('../console.cjs')

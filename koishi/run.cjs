@@ -38,6 +38,11 @@ async function start(env=process.env) {
       res.end(JSON.stringify(health))
     }catch{res.writeHead(503);res.end('{"ready":false}')}
   })
+  const dispose=async()=>{
+    // Cordis fork.dispose() only starts async hooks; await the owner before removing its adapter.
+    await ctx.takiTransport?.receiver?.dispose()
+    taki.dispose();adapter.dispose();await management?.close()
+  }
   try {
     await ctx.start()
     await management?.ready()
@@ -46,10 +51,10 @@ async function start(env=process.env) {
     await receiver.ready
     await new Promise((resolve,reject)=>{server.once('error',reject);server.listen(config.port,'127.0.0.1',resolve)})
   } catch(error) {
-    await taki.dispose();await adapter.dispose();await management?.close();await ctx.stop();throw error
+    await dispose();await ctx.stop();throw error
   }
   let closing
-  const close=()=>closing ||= (async()=>{const stopped=new Promise(resolve=>server.close(resolve));await taki.dispose();await adapter.dispose();await management?.close();await stopped;await ctx.stop()})()
+  const close=()=>closing ||= (async()=>{const stopped=new Promise(resolve=>server.close(resolve));await dispose();await stopped;await ctx.stop()})()
   return {ctx,server,close}
 }
 module.exports={configuration,start}
