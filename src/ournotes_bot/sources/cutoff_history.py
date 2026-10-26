@@ -18,6 +18,8 @@ from contextlib import closing
 from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 
+from . import history_compression as compressed
+
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS boards (
  server TEXT, event TEXT, challenge TEXT, music TEXT NOT NULL,
@@ -107,6 +109,9 @@ class CutoffHistory:
             connection = sqlite3.connect(self.path.as_uri() + "?mode=ro", uri=True, timeout=0.15)
         try:
             version = connection.execute("PRAGMA user_version").fetchone()[0]
+            if version == compressed.VERSION:
+                connection.close()
+                return compressed.open_store(self.path, write=write, legacy_version=1)
             if version not in {0, 1}:
                 raise sqlite3.DatabaseError("unsupported history version")
             if write:
@@ -150,16 +155,18 @@ class CutoffHistory:
         players = self._players(board, scores)
         if not any(any(p) for p in players):
             return 'no_players'
-        db.execute(PLAYER_SCHEMA)
+        if not isinstance(db, compressed.Connection):
+            db.execute(PLAYER_SCHEMA)
+        player_table = compressed.physical_table(db, 'observation_players')
         old = db.execute('SELECT players,quality FROM observation_players WHERE observation_id=?', (ident,)).fetchone()
         if old:
             previous = self._read_players(old[0], scores)
             if old[1] != 'valid' or any(a and b and a != b for p, q in zip(previous, players) for a, b in zip(p, q)):
-                db.execute("UPDATE observation_players SET quality='conflict' WHERE observation_id=?", (ident,))
+                db.execute(f"UPDATE {player_table} SET quality='conflict' WHERE observation_id=?", (ident,))
                 return 'player_conflict'
             players = [[a or b for a, b in zip(p, q)] for p, q in zip(previous, players)]
-        db.execute('INSERT OR REPLACE INTO observation_players VALUES(?,?,?)',
-                   (ident, json.dumps(players, ensure_ascii=False, separators=(',', ':')), 'valid'))
+        db.execute(f'INSERT OR REPLACE INTO {player_table} VALUES(?,?,?)',
+                   (ident, compressed.encode(db, 'observation_players', json.dumps(players, ensure_ascii=False, separators=(',', ':'))), 'valid'))
         return 'saved'
 
     def backfill_players(self, event, board, *, apply=False):
@@ -229,11 +236,14 @@ class CutoffHistory:
                                       (*key, source or -1)).fetchall()
                 if any(row[0] != digest for row in previous) and source:
                     quality = "conflict"
-                    db.execute("UPDATE observations SET quality='conflict' WHERE server=? AND event=? AND challenge=? AND source_ms=?",
+                    table = compressed.physical_table(db, "observations")
+                    db.execute(f"UPDATE {table} SET quality='conflict' WHERE server=? AND event=? AND challenge=? AND source_ms=?",
                                (*key, source))
                 duplicate = any(row[0] == digest for row in previous)
-                db.execute("INSERT OR IGNORE INTO observations(server,event,challenge,music,source_ms,server_ms,received_ms,scores,digest,quality,collect_status) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
-                           (*key, str(board.song.music_id), source or -1, server, received, encoded, digest, quality, board.song.collect_status))
+                table = compressed.physical_table(db, "observations")
+                payload = compressed.encode(db, "observations", encoded)
+                db.execute(f"INSERT OR IGNORE INTO {table}(server,event,challenge,music,source_ms,server_ms,received_ms,scores,digest,quality,collect_status) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+                           (*key, str(board.song.music_id), source or -1, server, received, payload, digest, quality, board.song.collect_status))
                 ident = db.execute('SELECT id FROM observations WHERE server=? AND event=? AND challenge=? AND source_ms=? AND digest=?',
                                    (*key, source or -1, digest)).fetchone()[0]
                 self._save_players(db, ident, board, scores)
@@ -380,18 +390,19 @@ class CutoffHistory:
                        'identity_conflict': '曲目身份冲突', 'unknown_time': '采集时间未知',
                        'clock_unknown': '来源时钟不可核实', 'clock_skew': '来源时钟偏差'}
             with closing(self._connect()) as db:
-                has_players = db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='observation_players'").fetchone()
-                rows = db.execute("SELECT source_ms,received_ms,scores,quality,music,id,"
+                has_players = db.execute("SELECT 1 FROM sqlite_master WHERE type IN ('table','view') AND name='observation_players'").fetchone()
+                rows = db.execute("SELECT source_ms,received_ms,quality,music,id,"
                                   "count(*) OVER (PARTITION BY source_ms) FROM observations "
                                   "WHERE server=? AND event=? AND challenge=? AND (? IS NULL OR source_ms<?) "
                                   "ORDER BY source_ms DESC,id DESC",
                                   (*self._key(event, song), before_ms, before_ms))
-                for stamp, received, encoded, quality, music, ident, count in rows:
+                for stamp, received, quality, music, ident, count in rows:
                     reason = ('同一时间分数冲突' if count != 1 else '曲目身份冲突' if music != song.music_id
                               else '采集时间未知' if stamp <= 0 else reasons.get(quality, quality) if quality != 'valid' else '')
                     scores = []
                     if not reason:
                         try:
+                            encoded = db.execute('SELECT scores FROM observations WHERE id=?', (ident,)).fetchone()[0]
                             scores = json.loads(encoded)
                         except (ValueError, TypeError):
                             reason = '分数记录损坏'
@@ -455,6 +466,9 @@ class OpenCutoffHistory(CutoffHistory):
             db = sqlite3.connect(self.path.as_uri() + "?mode=ro", uri=True, timeout=.15)
         try:
             version = db.execute("PRAGMA user_version").fetchone()[0]
+            if version == compressed.VERSION:
+                db.close()
+                return compressed.open_store(self.path, write=write, legacy_version=self.schema_version)
             if version not in ({0, self.schema_version} if write else {self.schema_version}):
                 raise sqlite3.DatabaseError("unsupported formal history version")
             if write:
