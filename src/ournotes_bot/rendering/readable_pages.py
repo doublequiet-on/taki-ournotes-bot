@@ -1,11 +1,12 @@
 # L3
-# Input: Ordered, measured rows and a painter for a complete subset.
+# Input: Ordered measured rows, a subset painter and optional candidate preparation scope.
 # Output: Complete encoded image parts at the requested font/image scale.
 # Pos: Rendering / Core; measured single-image-first layout.
-# Effects: CPU/Pillow encoding only; does not filter records or send messages.
+# Effects: Runs caller-owned preparation scopes and Pillow encoding; no filtering or sending.
 """Pack complete rows before drawing; never shrink text to fit the encoder."""
+from contextlib import nullcontext
 from dataclasses import dataclass
-from typing import Callable
+from typing import Callable, ContextManager
 
 from PIL import Image
 
@@ -20,13 +21,16 @@ class ImagePart:
 
 
 def render_parts(heights: tuple[int, ...], width: int, fixed_height: int,
-                 paint: Callable[[int, int, int], Image.Image], *, max_height: int | None = None) -> tuple[ImagePart, ...]:
+                 paint: Callable[[int, int, int], Image.Image], *, max_height: int | None = None,
+                 page_scope: Callable[[int, int], ContextManager[None]] | None = None) -> tuple[ImagePart, ...]:
     """Largest fitting ordered prefix, with byte-budget checks before publication.
 
     Row positions refer to the captured input, not record IDs. The painter owns
     no shared output file. Encoding takes ownership of each temporary canvas.
     Byte size is not assumed monotonic: reductions are tested in descending row
     count so no larger candidate inside the pixel budget is silently skipped.
+    An optional scope owns one maximal candidate's assets across encoding retries;
+    it exits before the next page starts. Painters close canvases they fail to return.
     """
     if not heights:
         return ()
@@ -44,16 +48,20 @@ def render_parts(heights: tuple[int, ...], width: int, fixed_height: int,
             stop += 1
         if stop == start:
             raise ImageBudgetError("One complete row exceeds the readable image budget")
-        while stop > start:
-            try:
-                raw = encode_image(paint(start, stop, height), close_input=True, preserve_size=True)
-            except ImageBudgetError:
-                stop -= 1
-                height -= heights[stop]
+        with page_scope(start, stop) if page_scope else nullcontext():
+            while stop > start:
+                # Preparation/drawing errors are not byte-budget retries. Once
+                # paint succeeds, the encoder owns its independent canvas.
+                image = paint(start, stop, height)
+                try:
+                    raw = encode_image(image, close_input=True, preserve_size=True)
+                except ImageBudgetError:
+                    stop -= 1
+                    height -= heights[stop]
+                else:
+                    parts.append(ImagePart(raw, start, stop))
+                    start = stop
+                    break
             else:
-                parts.append(ImagePart(raw, start, stop))
-                start = stop
-                break
-        else:
-            raise ImageBudgetError("One complete row exceeds the readable byte budget")
+                raise ImageBudgetError("One complete row exceeds the readable byte budget")
     return tuple(parts)

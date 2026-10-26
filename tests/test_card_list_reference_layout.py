@@ -2,6 +2,8 @@
 import io
 import unittest
 from dataclasses import replace
+from contextlib import contextmanager, ExitStack
+from collections import Counter
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -232,3 +234,151 @@ class ReferenceLayoutTests(unittest.TestCase):
         with patch.object(Canvas,'text',checked):
             for locale in ('zh','en','ja'):
                 layout.render_list([card],'很长的查询条件 '*10,locale,load=lambda *a:None)
+
+
+class PageAssetScopeTests(unittest.TestCase):
+    """Real grouping, pagination and parallel preparation with counted owned art."""
+    person = ReferenceLayoutTests.person
+    member = ReferenceLayoutTests.member
+    memory = ReferenceLayoutTests.memory
+
+    @contextmanager
+    def assets(self, *, missing=False, failure=None, reject=0, pixel_limit=None):
+        from ournotes_bot.rendering import readable_pages, haneoka_theme
+        state={'live':0,'peak':0,'bytes':0,'peak_bytes':0,'canvases':0,'loads':[],
+               'page_loads':[],'game':[],'attempts':0,'owned':[],'paint_keys':[]}
+        owner=self
+        class Owned:
+            def __init__(self,key,size,canvas=False):
+                self.key,self.size,self.closed,self.canvas=key,size,False,canvas
+                self.cost=size[0]*size[1]*4
+                state['owned'].append(self)
+                if canvas:state['canvases']+=1
+                else:
+                    state['live']+=1;state['bytes']+=self.cost
+                    state['peak']=max(state['peak'],state['live'])
+                    state['peak_bytes']=max(state['peak_bytes'],state['bytes'])
+            def paste(self,*args,**kwargs):pass
+            def close(self):
+                owner.assertFalse(self.closed,'owned resource closed twice')
+                self.closed=True
+                if self.canvas:state['canvases']-=1
+                else:state['live']-=1;state['bytes']-=self.cost
+        def load(url,size):
+            owner.assertEqual(state['canvases'],0,'source access while drawing')
+            state['loads'].append((url,size))
+            if failure=='prepare' and url=='art-1':raise RuntimeError('prepare failed')
+            return None if missing else Owned(url,size)
+        class Canvas:
+            def __init__(self,width,height):
+                state['page_loads'].append(len(state['loads']))
+                self.image=Owned('canvas',(width,height),True)
+            def paste(self,asset,*args,**kwargs):
+                if asset is not None:
+                    owner.assertFalse(asset.closed)
+                    state['paint_keys'].append(asset.key)
+            def text(self,*args,**kwargs):
+                if failure=='paint':raise RuntimeError('paint failed')
+            def __getattr__(self,name):return lambda *args,**kwargs:None
+        def encode(image,**kwargs):
+            owner.assertEqual(state['canvases'],1)
+            state['attempts']+=1
+            image.close()
+            if failure=='encode':raise OSError('encode failed')
+            if state['attempts']<=reject:raise readable_pages.ImageBudgetError('fixture bytes')
+            return b'encoded'
+        def game(name):
+            owner.assertEqual(state['canvases'],0)
+            state['game'].append(name)
+            return None
+        with ExitStack() as stack:
+            stack.enter_context(patch.object(layout,'Canvas',Canvas))
+            stack.enter_context(patch.object(layout,'lines',lambda text,*a,**k:(str(text),)))
+            stack.enter_context(patch.object(layout,'font',lambda *a,**k:SimpleNamespace(getlength=lambda text:len(str(text))*15)))
+            stack.enter_context(patch.object(layout,'frame',lambda *a:None))
+            stack.enter_context(patch.object(readable_pages,'encode_image',encode))
+            # Keep the actual rarity lookup even though the fixture Canvas is inert.
+            original_face=layout.card_face
+            def face(*args,**kwargs):
+                original_face(*args,**kwargs)
+                name={2:'R',3:'SR',4:'SSR',20:'BD',10:'EX'}[args[1].rarity]
+                haneoka_theme.game_asset('RarityIconCenter_'+name+'.png')
+            stack.enter_context(patch.object(layout,'card_face',face))
+            stack.enter_context(haneoka_theme.game_assets(game))
+            if pixel_limit is not None:stack.enter_context(patch.object(readable_pages,'MAX_IMAGE_PIXELS',pixel_limit))
+            try:yield state,load
+            finally:
+                self.assertEqual(state['live'],0)
+                self.assertEqual(state['bytes'],0)
+                self.assertEqual(state['canvases'],0)
+                self.assertTrue(all(v.closed for v in state['owned']))
+
+    def cards(self,count,support=False):
+        base=self.memory() if support else self.member()
+        # One identity, one attribute and one unique image per source card.
+        catalog={**base.catalog,'people':[self.person(1,1)],'attribute_icon':'attribute'}
+        return tuple(replace(base,id=i,thumbnail_url=f'art-{i}',catalog=catalog) for i in range(count))
+
+    def test_maximal_candidate_bounds_assets_for_16_160_800_cards(self):
+        for support in (False,True):
+            peaks=[]
+            for count in (16,160,800):
+                with self.subTest(support=support,count=count),self.assets() as (state,load):
+                    parts,records,ranges=layout.render_list(self.cards(count,support),'all',load=load)
+                    self.assertEqual([c.id for c in records],list(range(count)))
+                    self.assertEqual(ranges[0][0],0);self.assertEqual(ranges[-1][1],count)
+                    self.assertTrue(all(a[1]==b[0] for a,b in zip(ranges,ranges[1:])))
+                    self.assertEqual(state['peak'],max(stop-start for start,stop in ranges)+2)
+                    self.assertEqual(state['page_loads'][0],ranges[0][1]+2)
+                    self.assertEqual(len(state['game']),5)
+                    self.assertEqual(len(set(state['game'])),5)
+                    peaks.append(state['peak_bytes'])
+            self.assertEqual(peaks[1],peaks[2],'owned bytes must stop growing beyond one full candidate')
+
+    def test_continued_headers_and_three_locales_use_prepared_keys(self):
+        for support in (False,True):
+            for locale in ('zh','en','ja'):
+                with self.subTest(support=support,locale=locale),self.assets(pixel_limit=4_000_000) as (state,load):
+                    parts,records,ranges=layout.render_list(self.cards(40,support),'all',locale,load=load)
+                    self.assertGreater(len(parts),1)
+                    self.assertEqual(sum(key=='face-1' for key in state['paint_keys']),len(parts))
+                    self.assertEqual(len(state['game']),5)
+
+    def test_byte_retries_reuse_maximal_candidate_including_missing_results(self):
+        for missing in (False,True):
+            with self.subTest(missing=missing),self.assets(missing=missing,reject=2) as (state,load):
+                parts,records,ranges=layout.render_list(self.cards(24),'all',load=load)
+                self.assertEqual(state['page_loads'][:3],[26,26,26])
+                self.assertEqual(ranges,((0,8),(8,24)))
+                self.assertEqual(Counter(key for key,size in state['loads'])['art-0'],1)
+                self.assertEqual(len(state['game']),5)
+
+    def test_prepare_paint_encoder_failures_release_all_owned_resources(self):
+        for support in (False,True):
+            for failure,error in (('prepare',RuntimeError),('paint',RuntimeError),('encode',OSError)):
+                with self.subTest(support=support,failure=failure),self.assets(failure=failure) as (state,load):
+                    with self.assertRaisesRegex(error,failure+' failed'):
+                        layout.render_list(self.cards(16,support),'all',load=load)
+                    if failure=='prepare':self.assertEqual(state['canvases'],0)
+
+    def test_missing_prepared_key_fails_without_source_fallback(self):
+        original=layout.prepared_render_assets
+        @contextmanager
+        def incomplete(*args,**kwargs):
+            with original(*args,**kwargs) as assets:
+                for key in list(assets):
+                    if key[0]=='art-1':
+                        image=assets.pop(key)
+                        if image is not None:image.close()
+                yield assets
+        for support in (False,True):
+            with self.subTest(support=support),self.assets() as (state,load),patch.object(layout,'prepared_render_assets',incomplete):
+                with self.assertRaises(KeyError):layout.render_list(self.cards(16,support),'all',load=load)
+                self.assertEqual(Counter(key for key,size in state['loads'])['art-1'],1)
+
+    def test_single_row_geometry_and_byte_failure_release_the_scope(self):
+        from ournotes_bot.rendering.image_output import ImageBudgetError
+        for support in (False,True):
+            for options in ({'pixel_limit':100},{'reject':100}):
+                with self.subTest(support=support,options=options),self.assets(**options) as (state,load):
+                    with self.assertRaises(ImageBudgetError):layout.render_list(self.cards(8,support),'all',load=load)
