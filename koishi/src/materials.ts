@@ -11,6 +11,7 @@ export type MaterialAPI = (method: 'POST' | 'DELETE', path: string, data?: unkno
 type Entry = { key: string; created: number; used: number; state: 'owned' | 'completion_unknown' | 'deletion_unknown'; imageId?: string; url?: string; uploadId?: string }
 type Cold = { bytes: Uint8Array; shape: ReturnType<typeof imageShape>; key: string; valid(): boolean;
   resolve(value: MaterialLease): void; reject(error: unknown): void }
+type StateWork = { run(): Promise<void> }
 // Compatibility release A preserves v1 writers; release B changes only this floor.
 const minimumSchema: 1 | 2 = 2
 export class MaterialAborted extends Error { constructor() { super('material waiter inactive') } }
@@ -70,10 +71,12 @@ export async function putMaterial(url: string, bytes: Uint8Array, type: string):
 }
 
 export class MaterialStore implements ImageMaterials {
-  private tail: Promise<unknown> = Promise.resolve()
+  private stateQueue: StateWork[] = []
+  private stateRunning?: Promise<void>
   private queue: Cold[] = []
   private running?: Promise<void>
   private calls = new Set<Promise<MaterialLease>>()
+  private cancelWaiters = new Set<()=>void>()
   private closing = false
   private closed?: Promise<void>
   private schema: 1 | 2 = minimumSchema
@@ -95,10 +98,28 @@ export class MaterialStore implements ImageMaterials {
     this.limits=Object.freeze({...limits})
     this.file=join(directory,createHash('sha256').update(appId).digest('hex')+'.json')
   }
-  private state<T>(operation:()=>Promise<T>): Promise<T> {
-    const task=this.tail.then(operation)
-    this.tail=task.catch(()=>undefined)
-    return task
+  private state<T>(operation:()=>Promise<T>, cancellable?:(cancel:()=>void)=>void): Promise<T> {
+    return new Promise<T>((resolve,reject)=>{
+      const item:StateWork={run:async()=>{
+        try {resolve(await operation())}catch(error){reject(error)}
+      }}
+      this.stateQueue.push(item)
+      // Only an initial lookup opts in. Never detach a running mutation or a
+      // late ownership commit from the serialized state owner.
+      cancellable?.(()=>{
+        const index=this.stateQueue.indexOf(item)
+        if(index>=0) {this.stateQueue.splice(index,1);reject(new MaterialAborted())}
+      })
+      this.pumpState()
+    })
+  }
+  private pumpState() {
+    if(this.stateRunning) return
+    const item=this.stateQueue.shift()
+    if(!item) return
+    this.stateRunning=Promise.resolve().then(()=>item.run()).finally(()=>{
+      this.stateRunning=undefined;this.pumpState()
+    })
   }
   private available() {
     if(this.blocked) throw Error('material ledger requires recovery')
@@ -149,6 +170,7 @@ export class MaterialStore implements ImageMaterials {
       owned:count('owned'), completion_unknown:count('completion_unknown'), deletion_unknown:count('deletion_unknown'),
       capacity:64, occupied:entries.length+this.reserved, pending:this.pending, pending_bytes:this.pendingBytes,
       queued:this.queue.length, running:!!this.running, cold_phase:this.coldPhase,
+      state_queued:this.stateQueue.length, state_active:!!this.stateRunning,
       oldest_unresolved_entry_age_ms:unresolved.length?Math.max(0,this.now()-Math.min(...unresolved.map(e=>e.created))):null }
   }
   private lease(entry:Entry, shape:{width:number;height:number}): MaterialLease {
@@ -178,10 +200,13 @@ export class MaterialStore implements ImageMaterials {
     const key=createHash('sha256').update(captured).digest('hex')
     this.pending++;this.pendingBytes+=captured.length
     let queued:Cold|undefined
+    let cancelLookup:(()=>void)|undefined
     const cancel=()=>{
+      cancelLookup?.()
       const index=queued?this.queue.indexOf(queued):-1
       if(index>=0) { this.queue.splice(index,1);queued!.reject(new MaterialAborted()) }
     }
+    this.cancelWaiters.add(cancel)
     signal?.addEventListener('abort',cancel,{once:true})
     const remaining=deadline===undefined?undefined:deadline-this.now()
     const timeout=remaining===undefined || remaining>2147483647?undefined:setTimeout(cancel,Math.max(0,remaining))
@@ -197,7 +222,8 @@ export class MaterialStore implements ImageMaterials {
           throw Error('material ownership unresolved')
         }
         return entry && this.now()-entry.used<lifetime ? this.reuse(entry,shape) : undefined
-      })
+      },cancel=>{cancelLookup=cancel})
+      cancelLookup=undefined
       if(cached) {
         if(!valid()) {cached.release();throw new MaterialAborted()}
         return cached
@@ -213,6 +239,7 @@ export class MaterialStore implements ImageMaterials {
     const tracked=task.finally(()=>{
       this.pending--;this.pendingBytes-=captured.length
       signal?.removeEventListener('abort',cancel)
+      this.cancelWaiters.delete(cancel)
       if(timeout) clearTimeout(timeout)
       this.calls.delete(tracked)
     })
@@ -231,11 +258,12 @@ export class MaterialStore implements ImageMaterials {
   close():Promise<void> {
     if(!this.closed) {
       this.closing=true
-      for(const item of this.queue.splice(0)) item.reject(new MaterialAborted())
+      for(const cancel of this.cancelWaiters) cancel()
       this.closed=(async()=>{
         await Promise.allSettled([...this.calls])
         await this.running
-        await this.tail
+        await this.state(async()=>undefined)
+        await this.stateRunning
       })()
     }
     return this.closed
