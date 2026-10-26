@@ -682,6 +682,7 @@ def configure_sources(repository, settings):
     elif isinstance(source, (OpenEventCutoffRepository, HaneokaEventCutoffRepository)):
         from .moenotes_events import EventCutoffRepository
         source = repository.event_cutoffs = EventCutoffRepository(settings.cache_file.parent / "moenotes-cutoff-v1")
+    source.scheduled_history_only = settings.cutoff_source == "tracker"
     legacy = CutoffHistory(settings.cutoff_history_file or settings.cache_file.with_name("moenotes-history-v1.sqlite3"),
                           enabled=settings.cutoff_history_enabled, min_free_mb=settings.cutoff_history_min_free_mb)
     formal = OpenCutoffHistory(settings.moenotes_open_history_file or settings.cache_file.with_name("moenotes-open-history-v2.sqlite3"),
