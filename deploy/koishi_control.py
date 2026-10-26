@@ -1,19 +1,112 @@
 """Opt-in trusted-controller patch for a preverified two-process combination.
 
-No installation on import. The existing updater still owns transactions, compatibility
-review, backups and rollback. Combination staging is a separate administrator action.
+No installation on import. The existing updater owns transactions, compatibility
+review, backups and rollback. Opt-in staging accepts exact-commit public release assets.
 """
 import hashlib
 import http.client
 import json
 from pathlib import Path
 import re
+import os
+import shutil
+import stat
 import time
+import tempfile
+import zipfile
+
+COMBINATION_ASSET = 'taki-koishi-linux-x64.zip'
+
+
+def inspect_combination_archive(path, commit, expected):
+    """Inspect archive bytes as data; never import or execute its controller."""
+    try:
+        from .offline_bundle import digest, LIMIT, Rejected
+    except ImportError:
+        from offline_bundle import digest, LIMIT, Rejected
+    path = Path(path)
+    if (not re.fullmatch('[a-f0-9]{40}', commit) or not re.fullmatch('[a-f0-9]{64}', expected)
+            or path.is_symlink() or path.stat().st_size > LIMIT or digest(path) != expected):
+        raise Rejected('combination_archive_digest')
+    try:
+        with zipfile.ZipFile(path) as archive:
+            rows = archive.infolist(); names = [r.filename for r in rows]
+            if (len(rows) > 50000 or len(set(names)) != len(names)
+                    or sum(r.file_size for r in rows) > 1024**3
+                    or 'combination.json' not in names):
+                raise ValueError('inventory')
+            for row in rows:
+                parts = row.filename.split('/')
+                if (any(p in ('', '.', '..') for p in parts) or '\\' in row.filename or ':' in row.filename
+                        or stat.S_IFMT(row.external_attr >> 16) not in (0, stat.S_IFREG)
+                        or row.flag_bits & 1 or row.file_size > 256*1024**2):
+                    raise ValueError('member')
+            if archive.getinfo('combination.json').file_size > 8*1024**2:
+                raise ValueError('manifest size')
+            manifest = json.loads(archive.read('combination.json'))
+            _profile(manifest, commit)
+            if (not isinstance(manifest.get('files'), dict)
+                    or set(manifest['files']) != set(names)-{'combination.json'}
+                    or not {'bin/node', 'gateway/scripts/probe.cjs', 'gateway/package-lock.json',
+                            'python/taki-linux-x86_64-cp312.zip'} <= set(manifest['files'])
+                    or manifest.get('python_artifact') != 'python/taki-linux-x86_64-cp312.zip'
+                    or manifest.get('python_sha256') != manifest['files'][manifest['python_artifact']]
+                    or manifest.get('lock_sha256') != manifest['files']['gateway/package-lock.json']):
+                raise ValueError('manifest inventory')
+            for name, expected_member in manifest['files'].items():
+                if not isinstance(expected_member, str) or not re.fullmatch('[a-f0-9]{64}', expected_member):
+                    raise ValueError('member hash')
+                h = hashlib.sha256()
+                with archive.open(name) as source:
+                    for block in iter(lambda: source.read(1024**2), b''): h.update(block)
+                if h.hexdigest() != expected_member: raise ValueError('member hash')
+            return manifest
+    except (ValueError, KeyError, TypeError, zipfile.BadZipFile, RuntimeError) as exc:
+        raise Rejected('combination_archive_invalid') from exc
+
+
+def stage_combination(archive, destination, commit, expected, python_hash):
+    """Publish a complete verified directory with no application-writable files."""
+    manifest = inspect_combination_archive(archive, commit, expected)
+    _profile(manifest, commit, python_hash)
+    destination = Path(destination)
+    if destination.exists() or destination.is_symlink(): raise FileExistsError(destination)
+    stage = Path(tempfile.mkdtemp(prefix='.'+commit+'-', dir=destination.parent))
+    try:
+        with zipfile.ZipFile(archive) as z:
+            for name in ['combination.json', *manifest['files']]:
+                target = stage/name
+                target.parent.mkdir(parents=True, exist_ok=True)
+                with z.open(name) as src, target.open('xb') as dst:
+                    shutil.copyfileobj(src, dst, 1024**2)
+                target.chmod(0o555 if name=='bin/node' else 0o444)
+        verify_combination(stage, commit, python_hash)
+        for directory in sorted((p for p in stage.rglob('*') if p.is_dir()), reverse=True): directory.chmod(0o555)
+        stage.chmod(0o555)
+        os.rename(stage, destination)
+    finally:
+        if stage.exists():
+            # Only the freshly created, link-free staging directory belongs to us.
+            stage.chmod(0o700)
+            for p in stage.rglob('*'): p.chmod(0o700 if p.is_dir() else 0o600)
+            shutil.rmtree(stage)
+    return manifest
 
 
 def verify_combination(root, commit, python_hash=None):
     root=Path(root)
     row=json.loads((root/'combination.json').read_text(encoding='utf-8'))
+    _profile(row, commit, python_hash)
+    actual={p.relative_to(root).as_posix() for p in root.rglob('*') if p.is_file() and p.relative_to(root).as_posix()!='combination.json'}
+    if actual!=set(row['files']) or any(p.is_symlink() for p in root.rglob('*')): raise ValueError('combination_inventory')
+    for name,digest in row['files'].items():
+        path=root/name
+        if path.is_symlink() or not path.resolve().is_relative_to(root.resolve()) or hashlib.sha256(path.read_bytes()).hexdigest()!=digest:
+            raise ValueError('combination_payload')
+    return row
+
+
+def _profile(row, commit, python_hash=None):
     if row.get('schema')!=1 or row.get('commit')!=commit:
         raise ValueError('combination_identity')
     profile = row.get('protocol')
@@ -30,13 +123,6 @@ def verify_combination(root, commit, python_hash=None):
     if row.get('node')!={'version':'v24.19.0','platform':'linux','arch':'x64'}:
         raise ValueError('combination_target')
     if python_hash and row.get('python_sha256')!=python_hash: raise ValueError('combination_python_mismatch')
-    actual={p.relative_to(root).as_posix() for p in root.rglob('*') if p.is_file() and p.relative_to(root).as_posix()!='combination.json'}
-    if actual!=set(row['files']) or any(p.is_symlink() for p in root.rglob('*')): raise ValueError('combination_inventory')
-    for name,digest in row['files'].items():
-        path=root/name
-        if path.is_symlink() or not path.resolve().is_relative_to(root.resolve()) or hashlib.sha256(path.read_bytes()).hexdigest()!=digest:
-            raise ValueError('combination_payload')
-    return row
 
 
 def health_matches(row, release, backend_pid, gateway_pid, digest):
@@ -49,6 +135,33 @@ def health_matches(row, release, backend_pid, gateway_pid, digest):
 class KoishiControl:
     def __init__(self, backend):
         self.backend=backend
+
+    def prefetch(self, commit):
+        if not self.backend.config.get('koishi_auto_stage', False): return None
+        try:
+            from .linux_backend import API
+            from .offline_bundle import get_bundle
+        except ImportError:
+            from linux_backend import API
+            from offline_bundle import get_bundle
+        return get_bundle(self.backend.state/'combination-cache', commit,
+            lambda suffix: self.backend._json(API+suffix), asset_name=COMBINATION_ASSET,
+            inspector=inspect_combination_archive)
+
+    def prepare(self, release):
+        if self.backend.config.get('koishi_auto_stage', False):
+            try:
+                from .linux_backend import trusted
+            except ImportError:
+                from linux_backend import trusted
+            parent = Path(self.backend.config['koishi_combinations'])
+            trusted(parent, directory=True)
+            root = parent/release.commit
+            if not root.exists() and not root.is_symlink():
+                archive, digest = self.prefetch(release.commit)
+                stage_combination(archive, root, release.commit, digest,
+                                  self.backend._manifest(release)['bundle_sha256'])
+        return self.combination(release)
 
     def combination(self, release):
         try:

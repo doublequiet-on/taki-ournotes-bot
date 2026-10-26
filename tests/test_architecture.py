@@ -143,7 +143,7 @@ class ArchitectureTests(unittest.TestCase):
         workflow = (ROOT / ".github/workflows/checks.yml").read_text(encoding="utf-8")
         publish = workflow.split("  publish-linux-bundle:", 1)[1]
         needs = next(line.strip() for line in publish.splitlines() if line.strip().startswith("needs:"))
-        self.assertEqual(needs, "needs: [architecture, test-and-package, offline-linux-bundle]")
+        self.assertEqual(needs, "needs: [architecture, test-and-package, offline-linux-bundle, koishi-probe, koishi-combination]")
         self.assertIn("scripts/check_architecture.py", workflow.split("  test-and-package:", 1)[0])
         self.assertIn("python-version: ['3.10', '3.12']", workflow.split("  test-and-package:", 1)[0])
 

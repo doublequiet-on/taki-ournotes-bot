@@ -80,11 +80,46 @@ class LinuxBackendTests(unittest.TestCase):
 
     def test_knowledge_configuration_is_optional_and_commit_pinned(self):
         self.assertIsNone(knowledge_bundle_spec({}))
+        self.assertEqual(knowledge_bundle_spec({'knowledge_bundle':{'mode':'release'}}),{'mode':'release'})
         spec={'commit':B,'sha256':'c'*64}
         self.assertEqual(knowledge_bundle_spec({'knowledge_bundle':spec}),spec)
         for value in (None,{},dict(spec,path='/tmp/untrusted'),dict(spec,commit='main')):
             with self.assertRaisesRegex(Rejected,'configuration_invalid'):
                 knowledge_bundle_spec({'knowledge_bundle':value})
+
+    @unittest.skipUnless(sys.version_info>=(3,11),'controller runs on CPython 3.12')
+    def test_release_knowledge_resolves_exact_commit_without_rewriting_config(self):
+        self.config['knowledge_bundle']={'mode':'release'}
+        release=self.candidate(); root=Path(release.code_dir).parent
+        roots={'onnxruntime':'1.23.2','tokenizers':'0.22.2','numpy':'2.2.6'}
+        (Path(release.code_dir)/'pyproject.toml').write_text('[project.optional-dependencies]\nknowledge='+json.dumps([k+'=='+v for k,v in roots.items()])+'\n')
+        payload=root/'payload';payload.mkdir();(payload/'requirements.lock').write_text('')
+        def unpack(path,destination,commit,sha):
+            self.assertEqual((commit,sha),(B,'f'*64));destination.mkdir()
+            (destination/'requirements.lock').write_text('\n'.join(k+'=='+v+' --hash=sha256:'+'f'*64 for k,v in roots.items()))
+            return {'roots':roots}
+        with patch.object(self.backend,'_knowledge_archive',return_value=(self.root/'archive','f'*64)) as fetch, \
+             patch('deploy.linux_backend.trusted'),patch('deploy.linux_backend.unpack_dependency_bundle',side_effect=unpack), \
+             patch.object(Path,'exists',return_value=True):
+            row=self.backend._prepare_knowledge_payload(release)
+        fetch.assert_called_once_with(B)
+        self.assertEqual(row['resolved_spec'],{'commit':B,'sha256':'f'*64})
+        self.assertEqual(self.config['knowledge_bundle'],{'mode':'release'})
+
+    def test_combination_auto_stage_is_opt_in_and_always_verifies_existing_pair(self):
+        from deploy.koishi_control import KoishiControl
+        control=KoishiControl(self.backend); release=self.candidate()
+        control.combination=Mock(return_value=('verified',{}))
+        with patch('deploy.offline_bundle.get_bundle') as download:
+            self.assertIsNone(control.prefetch(B))
+            self.assertEqual(control.prepare(release),('verified',{}))
+            download.assert_not_called()
+        self.config.update(koishi_auto_stage=True,koishi_combinations=str(self.root/'combinations'))
+        (self.root/'combinations'/B).mkdir(parents=True)
+        with patch('deploy.linux_backend.trusted'),patch.object(control,'prefetch') as download:
+            self.assertEqual(control.prepare(release),('verified',{}))
+            download.assert_not_called()
+        self.assertEqual(control.combination.call_count,2)
 
     def test_configured_sidecar_cannot_silently_skip_for_another_commit(self):
         self.backend.config['knowledge_bundle']={'commit':A,'sha256':'c'*64}

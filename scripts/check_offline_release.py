@@ -12,11 +12,11 @@ import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
-from deploy.offline_bundle import digest, require_target, unpack_bundle
+from deploy.offline_bundle import digest, require_target, unpack_bundle, unpack_dependency_bundle, dependency_lock
 from deploy.linux_backend import extract_archive
 
 
-def verify(bundle: Path, commit: str):
+def verify(bundle: Path, commit: str, knowledge: Path | None = None):
     require_target()
     # Require an actual isolated namespace, not just pip's --no-index option.
     if {name for _, name in socket.if_nameindex()} - {"lo"}:
@@ -38,6 +38,18 @@ def verify(bundle: Path, commit: str):
         python = venv / "bin/python"
         run(python, "-m", "pip", "install", "--no-index", "--find-links", payload / "wheelhouse",
             "--require-hashes", "--no-deps", "-r", payload / "requirements.lock")
+        if knowledge is not None:
+            extra = root/'knowledge'
+            manifest = unpack_dependency_bundle(knowledge, extra, commit, digest(knowledge))
+            import tomllib
+            declared = tomllib.loads((code/'pyproject.toml').read_text(encoding='utf-8'))
+            assert set(declared['project']['optional-dependencies']['knowledge']) == {k+'=='+v for k,v in manifest['roots'].items()}
+            base_lock = dependency_lock((payload/'requirements.lock').read_text(), required=())
+            extra_lock = dependency_lock((extra/'requirements.lock').read_text())
+            assert all(base_lock[k] == extra_lock[k] for k in base_lock.keys() & extra_lock.keys())
+            run(python, '-m', 'pip', 'install', '--no-index', '--find-links', extra/'wheelhouse',
+                '--require-hashes', '--no-deps', '-r', extra/'requirements.lock')
+            run(python, '-I', '-c', 'import onnxruntime,tokenizers,numpy')
         run(python, "-m", "pip", "check")
         run(python, "-I", code / "scripts/check_installed_query_upgrade.py")
         run(python, "-I", "-m", "ournotes_bot.main", "--help")
@@ -50,5 +62,6 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("bundle", type=Path)
     parser.add_argument("commit")
+    parser.add_argument('--knowledge', type=Path)
     args = parser.parse_args()
-    verify(args.bundle.resolve(), args.commit)
+    verify(args.bundle.resolve(), args.commit, args.knowledge)

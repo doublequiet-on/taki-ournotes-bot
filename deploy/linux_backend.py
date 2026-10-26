@@ -29,10 +29,10 @@ import urllib.request
 from datetime import datetime, timezone
 
 try:
-    from .offline_bundle import get_bundle, require_target, unpack_bundle, unpack_dependency_bundle, dependency_lock
+    from .offline_bundle import get_bundle, require_target, unpack_bundle, unpack_dependency_bundle, dependency_lock, KNOWLEDGE_ASSET, inspect_dependency_bundle
     from .linux_updater import Deferred, Engine, LockBusy, Rejected, Release, RunResult, SHA_RE, atomic_json
 except ImportError:  # Direct execution from the installed, root-owned directory.
-    from offline_bundle import get_bundle, require_target, unpack_bundle, unpack_dependency_bundle, dependency_lock
+    from offline_bundle import get_bundle, require_target, unpack_bundle, unpack_dependency_bundle, dependency_lock, KNOWLEDGE_ASSET, inspect_dependency_bundle
     from linux_updater import Deferred, Engine, LockBusy, Rejected, Release, RunResult, SHA_RE, atomic_json
 
 
@@ -51,6 +51,8 @@ def knowledge_bundle_spec(config: dict):
     if 'knowledge_bundle' not in config:
         return None
     value = config['knowledge_bundle']
+    if value == {'mode': 'release'}:
+        return value
     if (not isinstance(value, dict) or set(value) != {'commit', 'sha256'}
             or not isinstance(value['commit'], str) or not re.fullmatch(r'[a-f0-9]{40}', value['commit'])
             or not isinstance(value['sha256'], str) or not re.fullmatch(r'[a-f0-9]{64}', value['sha256'])):
@@ -473,6 +475,12 @@ class LinuxBackend:
         self._preparation_step(commit, "downloading")
         bundle, bundle_hash = get_bundle(self.state / "bundle-cache", commit,
                                         lambda suffix: self._json(API + suffix))
+        # Keep all public artifact transfers inside the resumable download phase.
+        # Candidate code has not run; interruption may safely retry these caches.
+        if self.koishi:
+            self.koishi.prefetch(commit)
+        if knowledge_bundle_spec(self.config) == {'mode': 'release'}:
+            self._knowledge_archive(commit)
         self._preparation_step(commit, "offline_preparation")
         payload = root / "payload"
         unpack_bundle(bundle, payload, commit, bundle_hash)
@@ -516,20 +524,29 @@ class LinuxBackend:
                     "digest": digest, "environment_digest": environment_digest(Path(release.venv_dir)),
                     "bundle_sha256": bundle_hash, "prepared": True}
         if knowledge is not None:
-            record['knowledge_bundle'] = dict(knowledge_bundle_spec(self.config), roots=knowledge['roots'])
+            record['knowledge_bundle'] = dict(knowledge.get('resolved_spec', knowledge_bundle_spec(self.config)), roots=knowledge['roots'])
         atomic_json(self.manifests / (commit + ".json"), record)
         if self.koishi:
-            combo, _ = self.koishi.combination(release)
+            combo, _ = self.koishi.prepare(release)
             self._sandbox(release,[str(combo/'bin/node'),str(combo/'gateway/scripts/probe.cjs')], 'koishi-probe', offline=True)
         return release
+
+    def _knowledge_archive(self, commit):
+        return get_bundle(self.state/'knowledge-release-cache', commit,
+            lambda suffix: self._json(API+suffix), asset_name=KNOWLEDGE_ASSET,
+            inspector=inspect_dependency_bundle)
 
     def _prepare_knowledge_payload(self, release: Release):
         spec = knowledge_bundle_spec(self.config)
         if spec is None:
             return None
+        if spec == {'mode': 'release'}:
+            path, sha = self._knowledge_archive(release.commit)
+            spec = {'commit': release.commit, 'sha256': sha}
+        else:
+            path = self.state/'knowledge-bundles'/(release.commit+'.zip')
         if spec['commit'] != release.commit:
             raise Rejected('knowledge_bundle_commit_mismatch')
-        path = self.state/'knowledge-bundles'/(release.commit+'.zip')
         if not path.exists():
             raise Rejected('knowledge_bundle_missing')
         trusted(path)
@@ -549,6 +566,7 @@ class LinuxBackend:
         extra=dependency_lock((root/'knowledge-payload/requirements.lock').read_text(encoding='utf-8'))
         if any(base[k]!=extra[k] for k in base.keys() & extra.keys()):
             raise Rejected('knowledge_base_lock_conflict')
+        manifest['resolved_spec'] = spec
         return manifest
 
     def _prepare_note_assets(self, release: Release) -> None:
@@ -880,6 +898,8 @@ def validate_config(config: dict) -> None:
     """The installed controller is scoped to the already-reviewed Taki instance."""
     base, control = "/home/ubuntu/taki", "/usr/local/lib/taki-updater"
     knowledge_bundle_spec(config)
+    if type(config.get('koishi_auto_stage', False)) is not bool:
+        raise Rejected('koishi_auto_stage_configuration_invalid')
     if config.get('runtime_mode','bot') not in ('bot','koishi'): raise Rejected('runtime_mode_invalid')
     if config.get('runtime_mode')=='koishi' and (config.get('koishi_combinations')!='/opt/taki-combinations'
             or config.get('koishi_health_token_file')!='/etc/taki-backend-token' or config.get('koishi_health_port')!=8766):
