@@ -280,6 +280,9 @@ export class Receiver {
         try { await this.client.event(job.plan, 'aborted') }
         catch { this.log.warn('delivery close unconfirmed; backend expiry retains unresolved intent') }
       }
+      // Polling may fail while the hint still owns a send/ACK. Stop new sends
+      // and close the plan first, then retain its reservation until facts settle.
+      if (hint) await hint
       this.jobs.delete(job.input.requestId)
     }
   }

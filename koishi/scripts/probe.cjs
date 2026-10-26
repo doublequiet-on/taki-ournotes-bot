@@ -651,6 +651,44 @@ async function main() {
       assert.equal(fixture.receiver.activity().pending_total,0)
     }finally{await fixture.close()}
   })
+  for(const failure of ['lookup','plan'])await run('Receiver retains slow hint ownership after '+failure+' failure',async()=>{
+    const ack=deferred(),ackEntered=deferred(),outcomes=[]
+    let aborted=false,returned=false,closed=false,pending,closing
+    const fixture=receiverFixture({
+      async lookup(){
+        if(failure==='lookup')throw new BackendError('backend_transport')
+        return{request_id:'invalid',delivery_id:'invalid',parts:[]}
+      },
+      async event(plan,type){assert.equal(type,'aborted');aborted=true},
+      async acknowledge(attempt,outcome){outcomes.push(outcome);ackEntered.resolve();await ack.promise},
+    },1)
+    const submit=fixture.client.submit
+    fixture.client.submit=async(...args)=>({...await submit(...args),status:'preparing',processing_hint:true})
+    try {
+      pending=fixture.receiver.receive(await fixture.session('slow-hint')).then(()=>{returned=true})
+      await until(()=>fixture.sent.length===1)
+      await until(()=>aborted)
+      assert.equal(fixture.receiver.activity().pending_total,1)
+      assert.equal(fixture.receiver.activity().accepted_inflight,1)
+      assert.equal(fixture.receiver.jobs.size,1)
+      assert.equal(returned,false)
+      await fixture.receiver.receive(await fixture.session('over-capacity'))
+      assert.equal(fixture.receiver.activity().admission_attempts.capacity_rejected_unclassified,1)
+      assert.equal(fixture.submitted.length,1)
+      closing=fixture.receiver.dispose().then(()=>{closed=true})
+      await new Promise(resolve=>setImmediate(resolve))
+      assert.equal(closed,false)
+      fixture.release('slow-hint')
+      await ackEntered.promise
+      assert.equal(fixture.receiver.activity().pending_total,1)
+      assert.equal(returned,false);assert.equal(closed,false)
+      ack.resolve();await Promise.all([pending,closing])
+      assert.equal(fixture.receiver.activity().pending_total,0)
+      assert.equal(fixture.receiver.jobs.size,0)
+      assert.deepEqual(outcomes,[{status:'success',messageId:'receipt-slow-hint'}])
+      assert.deepEqual(fixture.sent,['slow-hint'])
+    }finally{ack.resolve();await fixture.close();await Promise.allSettled([pending,closing])}
+  })
   await run('M4 launcher defaults closed and requires explicit identity', async () => {
     const {configuration}=require('../run.cjs')
     assert.throws(()=>configuration({}))
