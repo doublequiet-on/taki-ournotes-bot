@@ -319,6 +319,48 @@ async function main() {
     release.resolve();await aResult;await closing
     assert.deepEqual([prepares,completes],[1,1]);assert.equal(JSON.parse(fs.readFileSync(f.file)).entries[0].imageId,'one')
   }))
+  for(const cancellation of ['abort','deadline','close'])await run(`Material ${cancellation} removes an initial lookup blocked by another DELETE`,()=>materialFixture(async f=>{
+    const {MaterialStore,MaterialAborted}=require('../lib/materials'),entered=deferred(),release=deferred(),clock=Date.now()
+    fs.writeFileSync(f.file,JSON.stringify({schema:2,appId:f.app,entries:Array.from({length:64},(_,i)=>({state:'owned',
+      key:i?f.key('old'+i):f.key(picture),created:clock-700000,used:clock-600000+i,imageId:'old_'+i,url:'qqbot-media://image/v1/old_'+i}))}))
+    const bytes=Buffer.concat([picture,Buffer.from('active')]),stop=new AbortController(),observed=[]
+    let deletes=0,prepares=0,closed=false
+    const store=new MaterialStore(f.directory,f.app,async(method,url)=>{
+      if(method==='DELETE'){deletes++;entered.resolve();await release.promise;return{}}
+      if(url.endsWith('/prepare')){prepares++;return{upload_id:'new',presigned_url:'fixture'}}
+      return{image_id:'new',url:'qqbot-media://image/v1/new'}
+    },f.put,Date.now,{maxPending:2,maxBytes:bytes.length+picture.length})
+    const active=store.acquire(bytes);observed.push(active.catch(error=>error))
+    let closing
+    try {
+      await entered.promise
+      const queued=store.acquire(picture,cancellation==='deadline'?{deadline:Date.now()+30}:{signal:stop.signal})
+      let settled=false;const queuedResult=queued.then(()=>{settled=true;throw Error('cancelled lookup returned a lease')},error=>{settled=true;assert.ok(error instanceof MaterialAborted)})
+      observed.push(queuedResult)
+      await until(()=>store.diagnostics().state_queued===1)
+      assert.equal(store.diagnostics().queued,0);assert.equal(store.diagnostics().pending,2)
+      if(cancellation==='close')closing=store.close().then(()=>{closed=true})
+      else if(cancellation==='abort')stop.abort()
+      await until(()=>settled)
+      await queuedResult
+      assert.equal(store.diagnostics().pending,1);assert.equal(store.diagnostics().pending_bytes,bytes.length)
+      assert.equal(store.diagnostics().state_queued,0);assert.equal(closed,false)
+      // Repeated cancelled callers must not accumulate hidden work on the old
+      // promise tail, nor keep a freed input reservation out of reach.
+      if(cancellation!=='close')for(let i=0;i<4;i++) {
+        const nextStop=new AbortController(),next=store.acquire(picture,{signal:nextStop.signal})
+        const rejected=assert.rejects(next,MaterialAborted);observed.push(rejected)
+        await until(()=>store.diagnostics().state_queued===1);nextStop.abort();await rejected
+        assert.equal(store.diagnostics().pending,1);assert.equal(store.diagnostics().state_queued,0)
+      }
+      assert.equal(deletes,1);assert.equal(prepares,0)
+      release.resolve()
+      if(cancellation==='close'){await closing;await assert.rejects(active,MaterialAborted);assert.equal(prepares,0)}
+      else {(await active).release();assert.equal(prepares,1)}
+    } finally {release.resolve();await Promise.allSettled(observed);await store.close()}
+    assert.equal(store.diagnostics().pending,0);assert.equal(store.diagnostics().pending_bytes,0)
+    assert.equal(store.diagnostics().state_queued,0);assert.equal(store.diagnostics().state_active,false)
+  }))
   await run('Material deadline skips queued external work and valid hot hits bypass cold upload',()=>materialFixture(async f=>{
     const {MaterialStore,MaterialAborted}=require('../lib/materials'),entered=deferred(),release=deferred(),clock=Date.now()
     fs.writeFileSync(f.file,JSON.stringify({schema:2,appId:f.app,entries:[{state:'owned',key:f.key(picture),created:clock,
