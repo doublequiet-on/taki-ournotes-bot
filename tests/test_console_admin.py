@@ -7,7 +7,7 @@ import time
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, Mock
+from unittest.mock import AsyncMock, Mock, patch
 
 from ournotes_bot.application.admin import Admin, delivery_state
 from ournotes_bot.application.backend import Backend, create_app
@@ -157,6 +157,238 @@ class LedgerCapacityTests(unittest.TestCase):
 
 
 class AdminTests(unittest.IsolatedAsyncioTestCase):
+    async def test_admitted_initialization_failure_has_stable_terminal_fact(self):
+        for index, (owner, method) in enumerate(((self.backend.diagnostics, 'admitted'),
+                                               (self.backend.contexts, 'begin')), 1):
+            with self.subTest(step=method), patch.object(owner, method, side_effect=RuntimeError('injected')):
+                payload = self.payload(index)
+                result = await self.backend.submit(payload)
+            self.assertEqual(result['status'], 'failed')
+            self.assertFalse(result['send_allowed'])
+            self.assertFalse(self.backend.works)
+            self.assertEqual((await self.backend.submit(payload))['status'], 'failed')
+        self.backend.gate.prepare.assert_not_called()
+
+    async def test_model_capture_storage_failure_is_owned_without_retrying_business(self):
+        from types import MethodType
+        from ournotes_bot.application.model_runtime import ModelRuntime
+        snapshot = SimpleNamespace(fingerprint='fixture', profile=SimpleNamespace(config_version=1),
+                                   subject=lambda request:'subject')
+        snapshot.for_group = lambda group:snapshot
+        runtime = SimpleNamespace(config=SimpleNamespace(snapshot=lambda:snapshot),
+            usage=SimpleNamespace(configuration=Mock(side_effect=sqlite3.OperationalError('injected')),
+                                  reconcile=lambda:None), close=AsyncMock())
+        runtime.capture = MethodType(ModelRuntime.capture, runtime)
+        self.backend.model_runtime = runtime
+        payload = self.payload(); payload['body']='/问 fixture'
+        result = await self.backend.submit(payload)
+        self.assertEqual(result['status'], 'failed')
+        self.now += 600
+        self.assertEqual((await self.backend.submit(payload))['status'], 'failed')
+        self.assertFalse(self.backend.works)
+        runtime.usage.configuration.assert_called_once()
+
+    async def test_termination_save_failure_retains_owner_and_recovers_before_other_maintenance(self):
+        payload = self.payload()
+        with patch.object(self.backend.contexts, 'begin', side_effect=RuntimeError('injected')):
+            with patch.object(self.backend.ledger, 'finish', side_effect=sqlite3.OperationalError('disk full')):
+                result = await self.backend.submit(payload)
+        work = next(iter(self.backend.works.values()))
+        self.assertEqual(result['status'], 'preparing')
+        self.assertFalse(result['send_allowed'])
+        self.assertFalse(work.active)
+        self.assertEqual(work.terminal_status, 'failed')
+        self.assertFalse(self.backend.accepting())
+        with self.assertRaises(ProtocolError) as caught:
+            await self.backend.submit(self.payload(2))
+        self.assertEqual(caught.exception.code, 'not_ready')
+        self.backend.finish(work, 'expired')
+        self.assertEqual(work.terminal_status, 'failed')
+        self.assertEqual((await self.backend.submit(payload))['status'], 'preparing')
+        work.terminal_retry_at = time.monotonic()-1
+        with patch.object(self.backend, 'expire', side_effect=sqlite3.OperationalError('other maintenance')):
+            self.backend.maintain()
+        self.assertFalse(self.backend.works)
+        self.assertEqual(self.backend.ledger.request(payload['request_id'])['status'], 'failed')
+        self.assertEqual(self.backend.maintenance_status()['reason'], 'maintenance_failed')
+        self.backend.maintain()
+        self.assertTrue(self.backend.accepting())
+
+    async def test_termination_retries_are_bounded_and_restart_preserves_dedupe(self):
+        payload = self.payload()
+        with patch.object(self.backend.contexts, 'begin', side_effect=RuntimeError('injected')):
+            with patch.object(self.backend.ledger, 'finish', side_effect=sqlite3.OperationalError('disk full')) as save:
+                await self.backend.submit(payload)
+                work = next(iter(self.backend.works.values()))
+                for attempt, delay in enumerate((1, 2, 4), 1):
+                    due = work.terminal_retry_at
+                    with patch('ournotes_bot.application.backend.time.monotonic', return_value=due-.01):
+                        self.backend.retry_terminations()
+                    self.assertEqual(save.call_count, attempt)
+                    with patch('ournotes_bot.application.backend.time.monotonic', return_value=due):
+                        self.backend.retry_terminations()
+                    self.assertEqual(save.call_count, attempt+1)
+                    if attempt < 3:
+                        self.assertEqual(work.terminal_retry_at-due, (2,4)[attempt-1])
+                self.assertIsNone(work.terminal_retry_at)
+                self.backend.retry_terminations()
+                self.assertEqual(save.call_count, 4)
+        self.assertEqual(self.backend.maintenance_status()['exhausted_terminations'], 1)
+        self.assertFalse(self.backend.accepting())
+        await self.backend.close()
+        restarted = Backend(self.repo, self.backend.parser, self.backend.settings, instance_id='fixture', app_id='app',
+            ledger_path=self.root/'delivery.sqlite3', clock=lambda:self.now)
+        self.addAsyncCleanup(restarted.close)
+        restarted.ready=True
+        await restarted.register('epoch2')
+        payload['gateway_epoch']='epoch2'
+        result = await restarted.submit(payload)
+        self.assertEqual(result['status'], 'expired')
+        self.assertFalse(result['send_allowed'])
+        self.assertFalse(restarted.tasks)
+
+    async def test_failed_preparation_terminal_save_keeps_owner_after_task_exits(self):
+        with patch.object(self.backend.ledger, 'prepared', side_effect=RuntimeError('preparation failure')), \
+             patch.object(self.backend.ledger, 'finish', side_effect=sqlite3.OperationalError('disk full')):
+            await self.backend.submit(self.payload())
+            work = next(iter(self.backend.works.values()))
+            await work.task
+            await asyncio.sleep(0)
+        self.assertTrue(work.terminal_pending)
+        self.assertEqual(work.terminal_status, 'failed')
+        self.assertIs(self.backend.works[work.delivery], work)
+        self.assertFalse(self.backend.accepting())
+        work.terminal_retry_at = time.monotonic()-1
+        self.backend.retry_terminations()
+        self.assertFalse(self.backend.works)
+
+    async def test_expire_then_close_drains_repeated_cancellation_before_storage_close(self):
+        await self.assert_thread_drain_on_close('expire')
+
+    async def test_retire_then_close_drains_repeated_cancellation_before_storage_close(self):
+        await self.assert_thread_drain_on_close('retire')
+
+    async def assert_thread_drain_on_close(self, trigger):
+        import threading
+        client = None
+        if trigger == 'retire':
+            from aiohttp.test_utils import TestClient, TestServer
+            client=TestClient(TestServer(create_app(self.backend,'x'*32)))
+            await client.start_server();self.addAsyncCleanup(client.close)
+        started, release = threading.Event(), threading.Event()
+        def worker():
+            started.set(); release.wait(5)
+            return PreparedReply('late')
+        async def prepare(work, command):
+            return await self.backend.gate.run(worker)
+        self.backend.prepare_command = prepare
+        closed = Mock()
+        self.backend.data_owner = SimpleNamespace(close=closed)
+        await self.backend.submit(self.payload())
+        work = next(iter(self.backend.works.values()))
+        close = None
+        try:
+            self.assertTrue(await asyncio.to_thread(started.wait, 1))
+            if trigger == 'expire':
+                self.now += 600
+                self.backend.expire()
+            else:
+                response=await client.post('/v1/gateways/retire',json={'gateway_epoch':'epoch'},
+                    headers={'Authorization':'Bearer '+'x'*32,'X-Taki-Instance':'fixture'})
+                self.assertEqual(response.status,200)
+            await asyncio.sleep(0)
+            close = asyncio.create_task(self.backend.close())
+            await asyncio.sleep(0); await asyncio.sleep(0)
+            close.cancel()
+            await asyncio.sleep(0)
+            close.cancel()
+            await asyncio.sleep(0)
+            self.assertFalse(work.task.done())
+            self.assertFalse(close.done())
+            self.assertEqual(self.backend.gate._pending, 1)
+            closed.assert_not_called()
+        finally:
+            release.set()
+            if close is not None:
+                with self.assertRaises(asyncio.CancelledError): await close
+        closed.assert_called_once()
+        self.assertFalse(self.backend.tasks)
+
+    async def test_cancel_before_preparation_starts_releases_owner_after_persisting(self):
+        payload = self.payload()
+        await self.backend.submit(payload)
+        work = next(iter(self.backend.works.values()))
+        work.task.cancel()
+        await asyncio.gather(work.task, return_exceptions=True)
+        await asyncio.sleep(0)
+        self.assertEqual(self.backend.ledger.request(payload['request_id'])['status'], 'aborted')
+        self.assertFalse(self.backend.works)
+        self.backend.gate.prepare.assert_not_called()
+
+    async def test_unexpected_preparation_owner_failure_is_consumed_and_terminated(self):
+        self.backend.prepare = AsyncMock(side_effect=RuntimeError('owner failed before its try block'))
+        payload = self.payload()
+        await self.backend.submit(payload)
+        work = next(iter(self.backend.works.values()))
+        with self.assertLogs('ournotes_bot.backend', level='ERROR') as logs:
+            await asyncio.gather(work.task, return_exceptions=True)
+            await asyncio.sleep(0)
+        self.assertTrue(any('Preparation owner failed' in line for line in logs.output))
+        self.assertEqual(self.backend.ledger.request(payload['request_id'])['status'], 'failed')
+        self.assertFalse(self.backend.works)
+
+    async def test_ready_exposes_pending_terminal_without_fabricating_durable_status(self):
+        from aiohttp.test_utils import TestClient, TestServer
+        client=TestClient(TestServer(create_app(self.backend,'x'*32)))
+        await client.start_server();self.addAsyncCleanup(client.close)
+        headers={'Authorization':'Bearer '+'x'*32,'X-Taki-Instance':'fixture'}
+        payload = self.payload()
+        with patch.object(self.backend.contexts,'begin',side_effect=RuntimeError('injected')), \
+             patch.object(self.backend.ledger,'finish',side_effect=sqlite3.OperationalError('injected')):
+            await self.backend.submit(payload)
+            response=await client.get('/v1/ready',headers=headers)
+            result=await response.json()
+        self.assertEqual(response.status,503)
+        self.assertEqual(result['maintenance']['reason'],'delivery_storage_unavailable')
+        self.assertEqual(result['maintenance']['pending_terminations'],1)
+        self.assertGreaterEqual(result['maintenance']['oldest_pending_seconds'],0)
+        self.assertEqual(self.backend.ledger.request(payload['request_id'])['status'],'preparing')
+
+    async def test_reaper_storage_failure_is_reported_by_ready_and_can_recover(self):
+        from aiohttp.test_utils import TestClient, TestServer
+        client=TestClient(TestServer(create_app(self.backend,'x'*32)))
+        await client.start_server();self.addAsyncCleanup(client.close)
+        headers={'Authorization':'Bearer '+'x'*32,'X-Taki-Instance':'fixture'}
+        called = asyncio.Event()
+        def fail():
+            called.set()
+            raise sqlite3.OperationalError('injected')
+        with patch.object(self.backend, 'expire', side_effect=fail):
+            await asyncio.wait_for(called.wait(), 3)
+            response=await client.get('/v1/ready',headers=headers)
+            self.assertEqual(response.status,503)
+            result=await response.json()
+            self.assertFalse(result['ready'])
+            self.assertEqual(result['maintenance']['reason'],'maintenance_failed')
+            self.assertTrue(result['maintenance']['reaper_alive'])
+        self.backend.maintain()
+        response=await client.get('/v1/ready',headers=headers)
+        self.assertEqual(response.status,200)
+
+    async def test_reaper_unknown_failure_stays_failed_and_ready_reports_it(self):
+        from aiohttp.test_utils import TestClient, TestServer
+        client=TestClient(TestServer(create_app(self.backend,'x'*32)))
+        await client.start_server();self.addAsyncCleanup(client.close)
+        headers={'Authorization':'Bearer '+'x'*32,'X-Taki-Instance':'fixture'}
+        with patch.object(self.backend, 'expire', side_effect=RuntimeError('unexpected')):
+            with self.assertRaises(RuntimeError):
+                await asyncio.wait_for(asyncio.shield(self.backend.reaper_task), 3)
+        response=await client.get('/v1/ready',headers=headers)
+        self.assertEqual(response.status,503)
+        result=await response.json()
+        self.assertFalse(result['maintenance']['reaper_alive'])
+        self.assertEqual(result['maintenance']['reaper_error'],'RuntimeError')
+
     async def test_model_admin_http_requires_epoch_and_keeps_secret_out_of_reads(self):
         from dataclasses import replace
         from aiohttp.test_utils import TestClient,TestServer

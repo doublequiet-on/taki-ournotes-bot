@@ -26,7 +26,7 @@ from .delivery_ledger import Ledger
 from .diagnostics import Diagnostics
 from .admin import Admin
 from .operations import Operations
-from .runtime_tasks import finish_thread
+from .runtime_tasks import finish_thread, drain_task
 from .backend_sources import CODE_FILES
 from ..domain.query_policy import (CURRENT_POLICY, CURRENT_QUERY_SCOPE, CURRENT_MODEL_START,
                                   CURRENT_EXECUTION_CHECK, CURRENT_CONTENT_DEADLINE, continuation_allowed)
@@ -64,6 +64,11 @@ class Work:
     model_started_at: float | None = None
     native_claimed: bool = False
     hint: bool = False
+    terminal_status: str | None = None
+    terminal_pending: bool = False
+    terminal_since: float | None = None
+    terminal_retries: int = 0
+    terminal_retry_at: float | None = None
 
 
 class Backend:
@@ -100,6 +105,9 @@ class Backend:
         self.model_runtime = None
         self.notices = None
         self.data_owner = None
+        self._close_task = None
+        self.reaper_task = None
+        self.reaper_error = None
 
     def expire(self):
         self.conversations.sweep()
@@ -117,10 +125,11 @@ class Backend:
         return all(self.knowledge is not None and self.knowledge.valid(lease) for lease in leases)
 
     def finish(self, work, status):
-        if not work.active:
+        if work.terminal_status is not None or not work.active:
             return
-        # Persist termination before releasing its ownership; failures remain diagnosable.
-        self.ledger.finish(work.delivery, status)
+        # Revoke permission immediately, but retain ownership until the fact is durable.
+        work.terminal_status = status
+        work.terminal_pending = True
         work.active = False
         self.permissions.abort(work)
         work.ended.set()
@@ -130,6 +139,67 @@ class Backend:
         self.conversations.discard_unconfirmed(work.delivery)
         if status in ('expired', 'aborted') and work.task is not None and work.task is not asyncio.current_task():
             work.task.cancel()
+        self.persist_termination(work)
+
+    def persist_termination(self, work):
+        try:
+            self.ledger.finish(work.delivery, work.terminal_status)
+        except sqlite3.Error as exc:
+            if work.terminal_since is None:
+                work.terminal_since = self.clock()
+            delays = (1, 2, 4)
+            work.terminal_retry_at = (time.monotonic()+delays[work.terminal_retries]
+                                      if work.terminal_retries < len(delays) else None)
+            logger.error('Delivery termination storage failed delivery=%s type=%s retries=%s',
+                         work.delivery, type(exc).__name__, work.terminal_retries)
+            return
+        work.terminal_pending = False
+        work.terminal_retry_at = None
+        if work.task is None or work.task.done():
+            self.works.pop(work.delivery, None)
+
+    def retry_terminations(self):
+        now = time.monotonic()
+        for work in list(self.works.values()):
+            if work.terminal_pending and work.terminal_retry_at is not None and now >= work.terminal_retry_at:
+                work.terminal_retries += 1
+                self.persist_termination(work)
+
+    def maintenance_status(self):
+        pending = [work for work in self.works.values() if work.terminal_pending]
+        reaper_alive = self.reaper_task is None or not self.reaper_task.done()
+        reason = ('delivery_storage_unavailable' if pending else
+                  'maintenance_failed' if self.reaper_error or not reaper_alive else None)
+        return {'reason': reason, 'pending_terminations': len(pending),
+                'oldest_pending_seconds': max((max(0, self.clock()-work.terminal_since) for work in pending), default=0),
+                'exhausted_terminations': sum(work.terminal_retry_at is None for work in pending),
+                'reaper_alive': reaper_alive, 'reaper_error': self.reaper_error}
+
+    def accepting(self):
+        return self.ready and not self.closing and self.maintenance_status()['reason'] is None
+
+    def maintain(self):
+        # Termination recovery must run even when unrelated expiry maintenance fails.
+        self.retry_terminations()
+        try:
+            self.expire()
+        except sqlite3.Error as exc:
+            self.reaper_error = type(exc).__name__
+            logger.error('Expiry maintenance storage failed type=%s', self.reaper_error)
+        else:
+            self.reaper_error = None
+
+    def preparation_done(self, work, task):
+        self.tasks.discard(task)
+        if task.cancelled():
+            self.finish(work, 'aborted')
+        else:
+            error = task.exception()
+            if error is not None:
+                logger.error('Preparation owner failed request=%s type=%s', work.request.request_id, type(error).__name__)
+                self.finish(work, 'failed')
+        if not work.terminal_pending:
+            self.works.pop(work.delivery, None)
 
     async def register(self, epoch):
         require(identity(epoch), 'gateway_epoch')
@@ -150,7 +220,7 @@ class Backend:
             if existing:
                 require(existing['digest'] == request.content_digest, 'request_conflict', 409)
                 return self.snapshot(existing, request.gateway_epoch)
-            require(self.ready and not self.closing, 'not_ready', 503)
+            require(self.accepting(), 'not_ready', 503)
             age = self.clock()-request.timestamp_ms/1000
             require(0 <= age < WINDOW, 'message_expired', 409)
             require(len(self.works) < self.plan_capacity, 'plan_capacity', 503)
@@ -158,30 +228,36 @@ class Backend:
             commands = split_commands(request.body)
             require(bool(commands), 'empty_commands')
             delivery = uuid.uuid4().hex
+            key = ContextKey(request.platform, request.kind, request.conversation_id, request.request_id)
+            work = Work(request, delivery, key, None, None, None)
             self.ledger.admit(request, self.runtime, delivery, self.clock())
-            admission_ms = (time.perf_counter()-started)*1000
-            observed_commands = [{'kind': replies.command_kind(c), 'outcome': None}
-                                 for c in commands[:self.settings.multi_command_limit]]
-            observed_commands[0]['total_commands'] = len(commands)
-            if len(commands) > self.settings.multi_command_limit:
-                observed_commands.append({'kind':'overflow','outcome':'invalid_arguments'})
-            self.diagnostics.admitted(request, delivery, self.runtime, self.clock(), observed_commands)
-            self.diagnostics.span(uuid.uuid4().hex,request.request_id,'admission',admission_ms,self.clock(),outcome='ok')
-            operation = parse_operation(commands[0]) if len(commands) == 1 else None
-            anchor = self.conversations.resolve(request) if operation or request.reference or (
-                self.model_runtime is not None and len(commands)==1 and replies.is_ai_request(commands[0])) else None
-            key = anchor.key if anchor else ContextKey(request.platform, request.kind, request.conversation_id, request.request_id)
-            lineage = anchor.lineage if anchor else None
-            lease = self.contexts.begin(key) if not operation and anchor is None else None
-            work = Work(request, delivery, key, operation, lineage, lease, anchor=anchor,
-                        missing_anchor=request.reference is not None and anchor is None)
-            if anchor is not None: work.content_deadline=min(work.content_deadline,anchor.expires)
-            if self.model_runtime is not None and any(replies.is_ai_request(c) for c in commands):
-                self.model_runtime.capture(work)
             self.works[delivery] = work
-            work.task = asyncio.create_task(self.prepare(work, commands))
-            self.tasks.add(work.task)
-            work.task.add_done_callback(self.tasks.discard)
+            try:
+                admission_ms = (time.perf_counter()-started)*1000
+                observed_commands = [{'kind': replies.command_kind(c), 'outcome': None}
+                                     for c in commands[:self.settings.multi_command_limit]]
+                observed_commands[0]['total_commands'] = len(commands)
+                if len(commands) > self.settings.multi_command_limit:
+                    observed_commands.append({'kind':'overflow','outcome':'invalid_arguments'})
+                self.diagnostics.admitted(request, delivery, self.runtime, self.clock(), observed_commands)
+                self.diagnostics.span(uuid.uuid4().hex,request.request_id,'admission',admission_ms,self.clock(),outcome='ok')
+                work.operation = parse_operation(commands[0]) if len(commands) == 1 else None
+                work.anchor = self.conversations.resolve(request) if work.operation or request.reference or (
+                    self.model_runtime is not None and len(commands)==1 and replies.is_ai_request(commands[0])) else None
+                work.missing_anchor = request.reference is not None and work.anchor is None
+                if work.anchor is not None:
+                    work.key, work.lineage = work.anchor.key, work.anchor.lineage
+                    work.content_deadline = min(work.content_deadline, work.anchor.expires)
+                if not work.operation and work.anchor is None:
+                    work.lease = self.contexts.begin(work.key)
+                if self.model_runtime is not None and any(replies.is_ai_request(c) for c in commands):
+                    self.model_runtime.capture(work)
+                work.task = asyncio.create_task(self.prepare(work, commands))
+                self.tasks.add(work.task)
+                work.task.add_done_callback(lambda task: self.preparation_done(work, task))
+            except Exception as exc:
+                logger.error('Admitted request initialization failed request=%s type=%s', request.request_id, type(exc).__name__)
+                self.finish(work, 'failed')
             return self.snapshot(self.ledger.request(request.request_id), request.gateway_epoch)
 
     async def prepare_command(self, work, content):
@@ -335,7 +411,8 @@ class Backend:
             # Only release a lock this task actually acquired (see acquired flag below).
             if work.lock is not None and work.lock_acquired:
                 work.lock.release()
-            self.works.pop(work.delivery, None)
+            if not work.terminal_pending:
+                self.works.pop(work.delivery, None)
 
     def retained_bytes(self):
         seen, total = set(), 0
@@ -497,6 +574,11 @@ class Backend:
         return {'permission': granted, 'msg_seq': part['position']+1}
 
     async def close(self):
+        if self._close_task is None:
+            self._close_task = asyncio.create_task(self._close())
+        await drain_task(self._close_task)
+
+    async def _close(self):
         self.closing, self.ready = True, False
         for work in list(self.works.values()): self.finish(work, 'aborted')
         # Cancellation retains QueryGate's thread slot until its actual work ends.
@@ -541,7 +623,9 @@ def create_app(backend, token, initialize=None):
             raise ProtocolError('invalid_json') from None
     async def health(request): return json({'alive': True, 'protocol': PROTOCOL})
     async def ready(request):
-        return json({'ready': backend.ready, 'protocol': PROTOCOL, 'backend_epoch': backend.runtime, 'pid': os.getpid(),
+        accepting = backend.accepting()
+        return json({'ready': accepting, 'protocol': PROTOCOL, 'backend_epoch': backend.runtime, 'pid': os.getpid(),
+                     'maintenance': backend.maintenance_status(),
                      'capability': CAPABILITY, 'backend_code_digest': backend.code_digest,
                      'background_tasks': bool(backend.runtime_tasks and backend.runtime_tasks.tasks and all(not task.done() for task in backend.runtime_tasks.tasks)),
                      'notices_enabled': backend.notices is not None,
@@ -549,7 +633,7 @@ def create_app(backend, token, initialize=None):
                      'management_capabilities': ['admin_read_v1', 'telemetry_v1', 'group_policies_v1', 'ops_v1'],
                      'features': ['classify', 'gateway_retire', 'ack_context_guard', 'notice_gateway_v1',
                                   'quoted_context_v1', 'fixed_snapshot_v1', 'current_model_permit_v1', 'independent_delivery_v1'],
-                     'reference_profiles': sorted(backend.reference_profiles)}, 200 if backend.ready else 503)
+                     'reference_profiles': sorted(backend.reference_profiles)}, 200 if accepting else 503)
     async def classify(request):
         value = await read_json(request)
         require(isinstance(value, dict) and set(value) == {'body'} and isinstance(value['body'], str), 'classify_shape')
@@ -658,9 +742,14 @@ def create_app(backend, token, initialize=None):
                 logger.error('Initialization failed type=%s', type(exc).__name__)
         task = asyncio.create_task(load())
         async def reaper():
-            while True:
-                await asyncio.sleep(1)
-                backend.expire()
+            try:
+                while True:
+                    await asyncio.sleep(1)
+                    backend.maintain()
+            except Exception as exc:
+                backend.reaper_error = type(exc).__name__
+                logger.error('Expiry maintenance stopped type=%s', backend.reaper_error)
+                raise
         async def flush_observation():
             ticks=0
             while True:
@@ -669,6 +758,7 @@ def create_app(backend, token, initialize=None):
                 ticks+=1
                 if ticks%60==0:await finish_thread(backend.operations.housekeeping)
         expiry = asyncio.create_task(reaper())
+        backend.reaper_task = expiry
         observation = asyncio.create_task(flush_observation())
         yield
         backend.closing = True

@@ -16,7 +16,7 @@ ournotes-bot backend --instance-id taki-test --app-id APP_ID --state-dir /absolu
 
 组装入口 `application/backend_bootstrap.py` 只创建一份 repository、AIQueryParser（含既有额度管理）、QueryGate 和 ContextStore。`repository.load()` 完成后才 ready；失败维持 503，记录错误类型，不伪装成可查询。初始化、资料读取和渲染仍可访问配置的数据源，离线测试用固定资料替换源初始化。`health` 不代表 ready 或 QQ 可用。
 
-后端在资料初始化成功后启动主资料半小时刷新、300 秒属性刷新和按配置启用的 HistorySampler；`background_tasks` 表示必需任务均存活。关闭时先关闭接纳并等待查询/后台线程退出，再关闭账本和业务目录锁。`notices_enabled` 单独反映通知配置。新 `OURNOTES_RUNTIME_DATA_DIR` 控制素材/谱面缓存根目录；详细单写者、数据路径和旧版本限制见 M4 runbook。
+后端在资料初始化成功后启动主资料半小时刷新、300 秒属性刷新和按配置启用的 HistorySampler；`background_tasks` 表示这些 RuntimeTasks 任务均存活，过期维护任务另见 `maintenance`。关闭时先关闭接纳并等待查询/后台线程退出，再关闭账本和业务目录锁；调用者反复取消也必须排空真实线程，随后才传播取消。`notices_enabled` 单独反映通知配置。新 `OURNOTES_RUNTIME_DATA_DIR` 控制素材/谱面缓存根目录；详细单写者、数据路径和旧版本限制见 M4 runbook。
 
 账本为 `state-dir/deliveries-v1.sqlite3`，旁边的文件锁由 OS 持有，进程退出自动释放；锁文件存在本身不表示正在运行。第二个使用同一账本的后端拒绝启动。schema=1，namespace 为 instance_id/AppID；不同命名空间不得复用同一个账本。它只保护交付账本，不能替代 M4 的所有共享业务文件单写者校验。
 
@@ -35,7 +35,7 @@ Console V1a 使用1.0并独立扩展管理能力；V1b配对1.1与 `group_polici
 | 端点 | 结果 |
 |---|---|
 | GET /v1/health | `alive` 与 protocol；只证明进程处理请求。 |
-| GET /v1/ready | ready、protocol、backend_epoch、backend_code_digest、capability、features、background_tasks、pid、notices_enabled；未初始化为 503。代码摘要覆盖后端/协议/账本/准备/组装与四个 M4 运行模块，不冒充整个仓库 SHA。 |
+| GET /v1/ready | ready、protocol、backend_epoch、backend_code_digest、capability、features、background_tasks、maintenance、pid、notices_enabled；未初始化、关闭中或维护故障为 503。`maintenance` 给出原因、待保存终态数量/最早年龄/耗尽重试数量及 reaper 存活/错误类型。代码摘要覆盖后端/协议/账本/准备/组装与四个 M4 运行模块，不冒充整个仓库 SHA。 |
 | POST /v1/gateways | 输入仅 `gateway_epoch`；登记新代次并撤销旧代次。重复当前代次幂等，已退役代次不能重新激活。 |
 | POST /v1/classify | 输入仅 body，返回 recognized；只读识别，不查询/扣额/写上下文。 |
 | POST /v1/gateways/retire | 输入仅 gateway_epoch；撤销该代次并终结其活动请求，不影响新代次。 |
@@ -104,6 +104,8 @@ QueryGate 沿用配置的并发/排队（默认 2+4），全后端最多持有 6
 交付元数据最多 4096 个请求、4096 个代次和 4096 个当前代次上下文高水位。终态至少保留 24 小时再按接纳触发清理；sending/uncertain 不被普通淘汰遗忘，达到上限停止新接纳。代次记录不自动删除，达到上限需后续明确维护策略。该保守容量门禁优先于重复发送风险。
 
 账本不保存正文、图片或 QueryContext。重启将 preparing/prepared 标过期，未确认 sending 标 uncertain，旧代次全部退役；重复原事件不重查/重发。旧 success ACK 可补记，但内存游标不重建。业务缓存/额度/历史文件格式未改变，代码回退不能把删除交付账本当作恢复方法。
+
+持久接纳成功后立即登记 Work，后续初始化失败记为 failed。终态落库失败时先停止该请求的发送许可，保留 Work 和固定目标终态；新接纳及 ready 为 503，原因 `delivery_storage_unavailable`，查询仍展示实际账本状态且不允许发送。reaper 在其他过期维护前按 1、2、4 秒最多重试三次幂等终态写，不重执行业务或再次扣额。全部写成且维护恢复后才恢复接纳；耗尽后保留故障，修复存储并重启，由上述既有恢复规则收口。reaper 的 SQLite 错误会记录并在下一轮维护复查；未知异常停止任务并保持不可接纳。账本 schema 与协议版本不变。
 
 ## 主动通知协议（M4 已接线）
 
