@@ -10,6 +10,7 @@ from unittest.mock import patch
 import urllib.error
 import zipfile
 import os
+from types import SimpleNamespace
 from deploy.koishi_control import inspect_combination_archive, stage_combination, COMBINATION_ASSET
 
 from deploy import offline_bundle as b
@@ -77,7 +78,9 @@ class CombinationArchiveTests(unittest.TestCase):
             'browser_download_url':'https://github.com/doublequiet-on/taki-ournotes-bot/releases/download/'+tag+'/'+COMBINATION_ASSET}]}
         def api(suffix): return release if suffix.startswith('/releases/') else {'object':{'type':'commit','sha':COMMIT}}
         def download(url,target,expected,**kwargs): target.write_bytes(path.read_bytes())
-        with patch.object(b.os,'name','nt'):
+        # Only bypass the root-owner requirement of this download fixture. Changing
+        # global os.name would make pathlib construct Windows paths on Linux.
+        with patch.object(b,'os',SimpleNamespace(name='nt',fsync=os.fsync)):
             cache=self.root/'cache'
             result=b.get_bundle(cache,COMMIT,api,downloader=download,asset_name=COMBINATION_ASSET,inspector=inspect_combination_archive)
             self.assertEqual(result[1],sha)
