@@ -47,6 +47,8 @@ Python 对应 `/v1/admin/{overview,requests,requests/{id},sources,notices,groups
 
 ## 观测与资源
 
+网关 `activity()` 增加唯一占用 `pending_total`、`capacity`、`epoch`、`started_at`、`startup_error` 和固定枚举 `admission_attempts`，累计数重启归零；其中 `capacity_rejected_unclassified` 不能等同已识别业务的超载。后端 overview 的 `sections.ledger.data` 直接查询 requests／highwater／epochs 及未决事实数量，提供各自 limits、at_capacity、reason_codes 与 retention_seconds。现有受认证读取通路承载这些字段，不扩大发送遥测的身份校验；配置及生命周期见 [查询性能与容量](../PERFORMANCE_FOUNDATION.md)。
+
 独立诊断库由 Backend 单写，保留24小时，最多4096请求、每请求32跨度。SQLite使用失败即返回的锁预算；异常只降低观测可用性，不影响发送许可。设置 `TAKI_DIAGNOSTICS_ENABLED=0` 可关闭旁路采集而继续业务，不创建诊断库。新增span_results采用附表，不改原span列数；V1a旧模块升级前后仍能读写。Koishi 队列256条，每批32条且不超过24KiB，失败最多重试一次；关键运输流程仅同步入队，不等待遥测 HTTP。库故障与丢弃计数在采集健康中显示。队列进程退出未送达部分会缺失，不能当作完整覆盖。
 
 管理读取不触发目录刷新、通知 claim、发送 intent/ACK、过期处理或指标写入。QueryMetrics 的 ask_total 是问请求口径，route 与 AI 工作计数不能相加作为请求总数；不计算账单、客户端送达率。
