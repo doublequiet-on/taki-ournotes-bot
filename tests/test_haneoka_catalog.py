@@ -835,6 +835,20 @@ class CatalogTests(unittest.TestCase):
         self.assertEqual(before, after)
         self.assertLessEqual(len(after), 3_000_000)
 
+    def test_event_banner_asset_is_pinned_and_narrowly_allowlisted(self):
+        release = "r-c7a157f812ca79b3a593"
+        path = "/assets/jp/Assets/AddressableResources/Image/Event/04/Banner/event_banner_00004.png"
+        url = asset_url(path, release)
+        self.assertTrue(is_catalog_asset(url))
+        for bad in (path.replace("/04/", "/../"), path.replace("/04/", "/event/"),
+                    path.replace("/Banner/", "/Other/"), path.replace("/04/Banner/", "/Banner/"),
+                    path.replace(".png", ".svg"), path + "?x=1"):
+            with self.subTest(path=bad), self.assertRaises(ValueError):
+                asset_url(bad, release)
+        for bad in (url.replace("haneoka.org", "evil.invalid"), url + "&release=" + release,
+                    url + "#fragment", url.replace(release, "r-invalid")):
+            self.assertFalse(is_catalog_asset(bad))
+
     def test_images_are_pinned_bounded_isolated_and_do_not_fall_back(self):
         from ournotes_bot.visuals import _asset
         url = self.records()[1][0].full_url
