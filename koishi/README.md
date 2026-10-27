@@ -65,7 +65,7 @@ M1 候选额度不是实测平台额度。真实事件、群/C2C 权限、回复
 
 域名入口准备见 [借用子域名接入](../docs/koishi/CONSOLE_DOMAIN.md)：同机 HTTPS 代理先校验外部 Host/Origin，再转发本机控制台；默认监听与 SSH 入口保持不变。
 
-入口为官方 Console 的「Taki 管理」页 `/taki`，提供总览、查询诊断、分群管理；契约与缺失数据口径见 [Console V1](../docs/koishi/CONSOLE_V1.md)，验收见 [执行矩阵](../docs/koishi/CONSOLE_ACCEPTANCE.md)。
+入口为官方 Console 的「Taki 管理」页 `/taki`，提供总览、查询记录、群管理、数据来源和设置；契约与缺失数据口径见 [Console V1](../docs/koishi/CONSOLE_V1.md)，验收见 [执行矩阵](../docs/koishi/CONSOLE_ACCEPTANCE.md)。
 
 运输协议1.1要求绝对路径 `TAKI_CONSOLE_STATE_DIR`，即使 `TAKI_CONSOLE_ENABLED=0` 也加载设置及群策略；网页开关只控制管理入口。受管启动固定使用 `<base>/console-state`，不能换目录绕过已存策略。此目录须为服务用户可写，不能放进只读组合包。网页启用另需独立管理密码；不暴露后端token。
 
