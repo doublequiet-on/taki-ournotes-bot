@@ -1639,6 +1639,28 @@ class NativeRuntimeTests(Fixture,unittest.IsolatedAsyncioTestCase):
         self.assertEqual([self.backend.model_runtime.usage.get(a)['charged'] for a in attempts],['14','14'])
         self.assertNotIn('红色标记',plan['parts'][0]['text'])
 
+    async def test_batch_runtime_check_and_ack_confirmation_reobserve_independently(self):
+        import time
+        file=self.reviewed_fixture();self.client.request.side_effect=self.knowledge_responses()
+        plan,_=await self.prepare_native('/问 红色规则是什么意思')
+        work=self.backend.works[plan['delivery_id']]
+        leases=work.prepared[0].evidence
+        self.assertTrue(leases)
+        service=self.backend.knowledge
+        with patch.object(service,'observe',wraps=service.observe) as observe:
+            self.backend.model_runtime.check(work,time.monotonic()+10,leases+leases)
+            self.assertEqual(observe.call_count,1)
+        self.event(plan,'intent')
+        original=self.backend.ledger.ack
+        def record_then_revoke(*args,**kwargs):
+            changed=original(*args,**kwargs)
+            file.unlink()
+            return changed
+        with patch.object(self.backend.ledger,'ack',side_effect=record_then_revoke):
+            receipt=self.event(plan,'ack')
+        self.assertEqual(receipt['parts'][0]['status'],'success')
+        self.assertFalse(self.backend.conversations.anchors)
+
     async def test_revoked_after_intent_keeps_ack_fact_without_context(self):
         file=self.reviewed_fixture();self.client.request.side_effect=self.knowledge_responses()
         plan,_=await self.prepare_native('/问 红色规则是什么意思')

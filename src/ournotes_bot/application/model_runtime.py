@@ -154,7 +154,7 @@ class ModelRuntime:
             require(time.monotonic()<work.anchor.expires and work.anchor.snapshot_id in self.backend.conversations.snapshots,'context_expired')
         if work.lease:
             require(self.backend.contexts.active(work.lease),'context_expired')
-        require(all(self.backend.knowledge is not None and self.backend.knowledge.valid(lease) for lease in leases),'knowledge_revoked')
+        require(self.backend.valid_evidence(leases),'knowledge_revoked')
 
     def previous(self,work):
         if not work.anchor: return (),()

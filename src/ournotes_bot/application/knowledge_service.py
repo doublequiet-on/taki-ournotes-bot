@@ -265,26 +265,51 @@ class KnowledgeService:
         return Retrieval('ok' if chunks else 'missing', lease)
 
     def valid(self, lease: EvidenceLease) -> bool:
-        """Required before generation, before send, and before context publication.
+        """Reobserve at each generation, send and context publication boundary."""
+        return self.validate_current((lease,))
 
-        A revoked member invalidates the WHOLE answer. No pruning or model retry.
-        The caller owns usage settlement even if this returns False.
+    def validate_current(self, leases) -> bool:
+        """Validate one boundary against one current authority observation.
+
+        Member reuse is local to this call. A revoked member invalidates the
+        whole answer; callers still settle any model usage already incurred.
         """
-        if not isinstance(lease, EvidenceLease):
+        leases = tuple(leases)
+        if not leases:
+            return True
+        if any(not isinstance(lease, EvidenceLease) for lease in leases):
             return False
-        self.observe()
         with self.lock:
+            self.observe()
             if not self.available:
                 return False
             today = datetime.fromtimestamp(self.clock(), timezone.utc).date().isoformat()
-            for chunk in lease.chunks:
-                pair = self.allowed.get(chunk.doc_id)
-                if pair is None:
-                    return False
-                doc, approval = pair
-                if (chunk.key != approval.key or doc.game != lease.scope.game or not set(lease.scope.servers) <= set(doc.servers)
-                        or not doc.applicability.matches(lease.scope, today)
-                        or chunk not in tuple(split_document(doc, approval))):
+            referenced = {}
+            for lease in leases:
+                for chunk in lease.chunks:
+                    pair = self.allowed.get(chunk.doc_id)
+                    if pair is None:
+                        return False
+                    doc, approval = pair
+                    if (chunk.key != approval.key or doc.game != lease.scope.game
+                            or not set(lease.scope.servers) <= set(doc.servers)
+                            or not doc.applicability.matches(lease.scope, today)):
+                        return False
+                    members = referenced.setdefault(chunk.doc_id, {})
+                    if members.setdefault(chunk.chunk_id, chunk) != chunk:
+                        return False
+            for doc_id, members in referenced.items():
+                # Keep only the requested members, never a second full document
+                # or a cache of past approvals. Compare every evidence field.
+                for canonical in split_document(*self.allowed[doc_id]):
+                    expected = members.get(canonical.chunk_id)
+                    if expected is not None:
+                        if expected != canonical:
+                            return False
+                        del members[canonical.chunk_id]
+                        if not members:
+                            break
+                if members:
                     return False
             return True
 

@@ -124,13 +124,13 @@ class KnowledgeAuthorityTests(unittest.TestCase):
         self.service.close()
         self.temp.cleanup()
 
-    def write_fixture(self, number=1, *, server='jp', version=None, text='隔离测试内容，不代表任何游戏事实。'):
+    def write_fixture(self, number=1, *, server='jp', version=None, text='隔离测试内容，不代表任何游戏事实。', doc_id='ci-fixture', valid_to=None):
         import json
         from ournotes_bot.sources.knowledge_files import parse_document
         from ournotes_bot.application.knowledge_service import atomic_text
-        meta = dict(schema='taki-knowledge/1', id='ci-fixture', title='工程测试', keywords=['工程测试'], aliases=[],
+        meta = dict(schema='taki-knowledge/1', id=doc_id, title='工程测试', keywords=['工程测试'], aliases=[],
             game='bang-dream-our-notes', servers=list(server) if isinstance(server,tuple) else [server], applicability=dict(mode='current', game_version=version,
-            valid_from=None, valid_to=None, scope_note='仅隔离工程测试'), sources=[dict(source_id='fixture',
+            valid_from='2026-01-01' if valid_to else None, valid_to=valid_to, scope_note='仅隔离工程测试'), sources=[dict(source_id='fixture',
             kind='fixture', uri='fixture://local-only', locator='isolated-ci', accessed_at='2026-10-23')],
             evidence_type='reviewed_analysis', review_status='approved', reviewed_by='ISOLATED-FIXTURE',
             reviewed_at='2026-10-23', limitations=['合成测试，非正式百科'])
@@ -139,13 +139,129 @@ class KnowledgeAuthorityTests(unittest.TestCase):
         approvals = dict(schema='taki-knowledge-approvals/1', revision=number, revoked=[], approved=[dict(
             id=doc.id, content_sha256=doc.content_sha256, approval_revision=number, approved_by=doc.reviewed_by,
             approved_at=doc.reviewed_at, confirmation_ref=f'fixture://isolated/{number}')])
-        atomic_text(self.service.root/'ci-fixture.md', content)
+        atomic_text(self.service.root/(doc_id+'.md'), content)
         atomic_text(self.service.root/'approvals.json', json.dumps(approvals))
         return content, approvals
 
     def retrieve(self, **scope):
         from ournotes_bot.domain.knowledge import KnowledgeScope
         return self.service.retrieve('工程测试', KnowledgeScope(**scope), self.service.approved_set_revision)
+
+    def test_one_boundary_observes_once_and_splits_each_referenced_document_once(self):
+        import time
+        from types import SimpleNamespace
+        from unittest.mock import patch
+        from ournotes_bot.application import knowledge_service as ks
+        from ournotes_bot.application.backend import Backend
+        from ournotes_bot.domain.knowledge import EvidenceLease, KnowledgeScope
+        self.write_fixture(text='## 工程测试\n'+'隔离测试内容。'*300)
+        self.service.refresh()
+        chunks=tuple(row.chunk for row in self.service.index[:6])
+        self.assertEqual(len(chunks),6)
+        lease=EvidenceLease(self.service.approved_set_revision,KnowledgeScope(),chunks)
+        backend=object.__new__(Backend)
+        backend.knowledge=self.service;backend.runtime='runtime';backend.clock=lambda:10
+        backend.ledger=SimpleNamespace(active=lambda epoch:True)
+        row=dict(delivery='delivery',status='prepared',epoch='epoch',runtime='runtime',expires=20)
+        for count in (1,5):
+            work=SimpleNamespace(active=True,hint=False,prepared=[
+                SimpleNamespace(evidence=(lease,lease),evidence_deadline=None) for _ in range(count)])
+            backend.works={'delivery':work}
+            with patch.object(self.service,'observe',wraps=self.service.observe) as observe, \
+                    patch.object(ks,'split_document',wraps=ks.split_document) as split:
+                self.assertTrue(backend.live(row,'epoch'))
+                self.assertEqual(observe.call_count,1)
+                self.assertEqual(split.call_count,1)
+            work.prepared[-1].evidence_deadline=time.monotonic()-1
+            self.assertFalse(backend.live(row,'epoch'))
+        work.prepared=[SimpleNamespace(evidence=(lease,),evidence_deadline=20)]
+        now=[10]
+        original=self.service.observe
+        def observed_after_deadline():
+            result=original();now[0]=21;return result
+        with patch.object(self.service,'observe',side_effect=observed_after_deadline), \
+                patch('ournotes_bot.application.backend.time.monotonic',side_effect=lambda:now[0]):
+            self.assertFalse(backend.live(row,'epoch'))
+        work.prepared=[SimpleNamespace(evidence=(),evidence_deadline=None)]
+        with patch.object(self.service,'observe',wraps=self.service.observe) as observe:
+            self.assertTrue(backend.live(row,'epoch'));observe.assert_not_called()
+        # A later checkpoint must reobserve even in the same HTTP event.
+        (self.service.root/'ci-fixture.md').unlink()
+        self.assertFalse(backend.valid_evidence((lease,)))
+
+    def test_batch_compares_complete_members_and_all_scopes(self):
+        from dataclasses import replace
+        from ournotes_bot.domain.knowledge import KnowledgeScope
+        self.write_fixture();self.service.refresh();lease=self.retrieve().lease
+        chunk=lease.chunks[0]
+        changes=dict(text=chunk.text+'changed',chunk_sha256='0'*64,chunk_id='not-a-member',
+                     source_refs=(),applicability=replace(chunk.applicability,scope_note='changed'),
+                     evidence_type='changed',limitations=(),servers=('intl',),
+                     content_sha256='0'*64,approval_revision=999)
+        for key,value in changes.items():
+            with self.subTest(field=key):
+                forged=replace(lease,chunks=(replace(chunk,**{key:value}),))
+                self.assertFalse(self.service.validate_current((lease,forged)))
+                self.assertFalse(self.service.validate_current((forged,)))
+        self.assertFalse(self.service.validate_current((lease,replace(lease,scope=KnowledgeScope(server='common')))))
+        self.assertTrue(self.service.validate_current((lease,replace(lease,approved_set_revision='older-unrelated-set'))))
+
+    def test_empty_collection_and_empty_lease_have_different_authority_requirements(self):
+        from unittest.mock import patch
+        from ournotes_bot.domain.knowledge import EvidenceLease,KnowledgeScope
+        self.service.close()
+        with patch.object(self.service,'observe',wraps=self.service.observe) as observe:
+            self.assertTrue(self.service.validate_current(()));observe.assert_not_called()
+            self.assertFalse(self.service.validate_current((EvidenceLease('',KnowledgeScope(),()),)))
+            self.assertEqual(observe.call_count,1)
+        self.assertFalse(self.service.valid(None))
+
+    def test_batch_rechecks_utc_date_but_keeps_explicit_historical_scope(self):
+        from dataclasses import replace
+        from datetime import datetime,timezone
+        from ournotes_bot.domain.knowledge import KnowledgeScope
+        self.service.clock=lambda:datetime(2026,10,27,23,59,tzinfo=timezone.utc).timestamp()
+        self.write_fixture(valid_to='2026-10-27');self.service.refresh();lease=self.retrieve().lease
+        self.assertTrue(self.service.validate_current((lease,)))
+        self.service.clock=lambda:datetime(2026,10,28,tzinfo=timezone.utc).timestamp()
+        self.assertFalse(self.service.validate_current((lease,)))
+        self.assertTrue(self.service.validate_current((replace(lease,scope=KnowledgeScope(date='2026-10-27')),)))
+
+    def test_unrelated_publication_and_failed_index_do_not_revoke_members(self):
+        import json
+        from unittest.mock import patch
+        from ournotes_bot.application.knowledge_service import atomic_text
+        from ournotes_bot.query import knowledge_retrieval
+        _,first=self.write_fixture(text='隔离内容。'*200);self.service.refresh();lease=self.retrieve().lease
+        _,second=self.write_fixture(2,doc_id='other-fixture')
+        second['approved']+=first['approved']
+        atomic_text(self.service.root/'approvals.json',json.dumps(second))
+        self.encoder.fail=True;self.service.refresh()
+        self.assertTrue(self.service.index_error)
+        self.assertTrue(self.service.validate_current((lease,)))
+        self.encoder.fail=False
+        with patch.object(knowledge_retrieval,'MAX_CHUNKS',1):
+            self.service.rebuild()
+            self.assertEqual(self.service.index_error,'knowledge_chunk_limit')
+            self.assertTrue(self.service.validate_current((lease,)))
+
+    def test_failed_authority_save_remains_closed_through_pending_recovery(self):
+        from ournotes_bot.application.knowledge_service import KnowledgeService
+        self.write_fixture();self.service.refresh();lease=self.retrieve().lease
+        self.service.db.execute('PRAGMA query_only=ON')
+        (self.service.root/'ci-fixture.md').unlink()
+        self.assertFalse(self.service.validate_current((lease,)))
+        self.assertIsNotNone(self.service.pending_authority)
+        self.write_fixture()  # Replacing an old file cannot bypass the pending floor.
+        self.assertFalse(self.service.validate_current((lease,)))
+        self.service.db.execute('PRAGMA query_only=OFF')
+        self.assertFalse(self.service.validate_current((lease,)))
+        self.assertIsNone(self.service.pending_authority)
+        self.service.close()
+        self.service=KnowledgeService(self.root/'content',self.root/'state.sqlite3',self.encoder)
+        self.assertFalse(self.service.validate_current((lease,)))
+        self.write_fixture(2);self.service.refresh()
+        self.assertTrue(self.service.valid(self.retrieve().lease))
 
     def test_deleted_capture_stays_invalid_after_failed_index_and_restart(self):
         from ournotes_bot.application.knowledge_service import KnowledgeService
