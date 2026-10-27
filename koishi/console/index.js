@@ -1,15 +1,34 @@
-import { h, ref, onMounted, onUnmounted, resolveComponent } from './runtime.js';
+import { h, ref, watch, onMounted, onUnmounted, resolveComponent } from './runtime.js';
 import { sessionState } from './state.js';
 import { button, overviewView, requestsView, groupsView, settingsView } from './views.js';
 import { attentionView, sourcesView, operationsSettings } from './ops.js';
 import { modelOverview, modelSettings, trustedView } from './model.js';
 const recoveryKey=Symbol.for('taki.console.recovery.v1');
 const recovery=globalThis[recoveryKey]||=( {current:null,snapshot:null} );
-function releaseState(state){state.suspend();recovery.snapshot=state.captureEdits();if(recovery.current===state)recovery.current=null;}
+const storageKey='taki.console.recovery.v1';
+let recoveryReadError=false;
+function storeRecovery(snapshot){
+  try {const hasEdits=snapshot.global||snapshot.group||snapshot.model||snapshot.jobs.length||snapshot.controls.length||snapshot.probes.length||snapshot.trusted.length;
+    if(!hasEdits){sessionStorage.removeItem(storageKey);return true;}
+    const value=JSON.stringify(snapshot);if(value.length>65536)return false;sessionStorage.setItem(storageKey,value);return true;}catch{return false;}
+}
+function takeRecovery(){
+  try {const value=sessionStorage.getItem(storageKey);if(!value)return null;if(value.length>65536)throw Error('recovery too large');
+    const snapshot=JSON.parse(value),record=v=>!!v&&typeof v==='object'&&!Array.isArray(v),edit=v=>v===null||(record(v)&&record(v.draft));
+    if(!record(snapshot)||snapshot.schema!==1||typeof snapshot.notice!=='string'||!edit(snapshot.global)||!edit(snapshot.group)||!edit(snapshot.model)
+      ||snapshot.global&&!Array.isArray(snapshot.global.draft.groupAllowlist)
+      ||snapshot.group&&typeof snapshot.group.id!=='string'||snapshot.model&&!record(snapshot.model.draft.price)
+      ||!['jobs','controls','probes','trusted'].every(key=>Array.isArray(snapshot[key])&&snapshot[key].every(item=>Array.isArray(item)&&item.length===2)))throw Error('invalid recovery');
+    return snapshot;
+  }catch{recoveryReadError=true;return null;}
+}
+function clearStoredRecovery(){try{sessionStorage.removeItem(storageKey);}catch{}}
+function clearRecovery(){clearStoredRecovery();recovery.snapshot=null;}
+function releaseState(state){state.suspend();recovery.snapshot=state.captureEdits();storeRecovery(recovery.snapshot);if(recovery.current===state)recovery.current=null;}
 const Page={setup() {
   if(recovery.current)releaseState(recovery.current);
-  const s=sessionState();s.restoreEdits(recovery.snapshot);recovery.snapshot=null;recovery.current=s;
-  const password=ref(''),tab=ref('overview'),params={};
+  const s=sessionState();s.restoreEdits(recovery.snapshot||takeRecovery());recovery.snapshot=null;recovery.current=s;
+  const password=ref(''),tab=ref('overview'),storageAvailable=ref(true),recoveryWarning=ref(recoveryReadError),params={};recoveryReadError=false;
   let timer,ticks=0,currentRequest=null,polling=false;
   s.navigate=key=>{tab.value=key;};
   const open=id => {if(currentRequest!==id)s.detail.value=null;currentRequest=id;tab.value='requests';const url=new URL(window.location.href);url.searchParams.set('request_id',id);window.history.replaceState(null,'',url);void s.load(s.detail,'requests/detail',id);};
@@ -31,14 +50,17 @@ const Page={setup() {
     } finally {polling=false;}
   }
   const visible=() => {if(document.hidden)s.invalidate();else{ticks=0;void poll();}};
-  const leaving=event => {if(s.dirty.value||s.groupDirty.value||s.modelDirty.value){event.preventDefault();event.returnValue='';}};
-  onMounted(() => {timer=setInterval(() => void poll(),5000);document.addEventListener('visibilitychange',visible);window.addEventListener('beforeunload',leaving);});
-  onUnmounted(() => {clearInterval(timer);if(recovery.current===s)releaseState(s);document.removeEventListener('visibilitychange',visible);window.removeEventListener('beforeunload',leaving);});
+  const syncRecovery=()=>{if(!storeRecovery(s.captureEdits()))storageAvailable.value=false;};
+  const stopRecoveryWatch=watch([s.dirty,s.groupDirty,s.modelDirty,s.draft,s.groupDraft,s.modelDraft,s.modelKey,s.busy,s.message],syncRecovery,{deep:true,flush:'sync'});
+  const leaving=event => {const stored=storeRecovery(s.captureEdits());if((!stored&&(s.dirty.value||s.groupDirty.value||s.modelDirty.value))||s.modelKey.value){event.preventDefault();event.returnValue='';}};
+  onMounted(() => {try{sessionStorage.setItem(storageKey+'-probe','1');sessionStorage.removeItem(storageKey+'-probe');}catch{storageAvailable.value=false;}
+    timer=setInterval(() => void poll(),5000);document.addEventListener('visibilitychange',visible);window.addEventListener('beforeunload',leaving);syncRecovery();});
+  onUnmounted(() => {clearInterval(timer);stopRecoveryWatch();if(recovery.current===s)releaseState(s);document.removeEventListener('visibilitychange',visible);window.removeEventListener('beforeunload',leaving);});
   return () => h(resolveComponent('k-layout'),{},{default:() => h('main',{class:'taki-console'},[
-    s.message.value&&h('p',{role:'status'},s.message.value),s.stale.value&&h('p',{role:'alert'},'连接异常：以下保留数据可能已陈旧。'),
+    s.message.value&&h('p',{role:'status'},s.message.value),s.readMessage.value&&h('p',{role:'status'},s.readMessage.value),s.stale.value&&h('p',{role:'alert'},'连接异常：以下保留数据可能已陈旧。'),!storageAvailable.value&&h('p',{role:'alert'},'浏览器无法暂存草稿，刷新页面可能丢失未保存的修改。'),recoveryWarning.value&&h('p',{role:'alert'},'暂存草稿无法读取，请核对服务器设置。'),
     !s.logged.value?h('form',{onSubmit:async e => {e.preventDefault();await s.login(password.value);password.value='';const id=new URL(window.location.href).searchParams.get('request_id');if(s.logged.value&&/^[a-f0-9]{64}$/.test(id||''))open(id);ticks=0;void poll();}},[
       h('strong','Taki'),h('img',{class:'brand-image',src:new URL('./brand/taki.png',import.meta.url).href,alt:''}),h('h1','Taki'),h('label',['管理员密码',h('input',{type:'password',autocomplete:'current-password',value:password.value,onInput:e => password.value=e.target.value})]),h('button',{type:'submit',disabled:s.busy.value},s.busy.value?'正在登录…':'登录'),h('small','请输入为此机器人设置的控制台密码，不是 QQ 密码。')]):h('div',[
-      h('header',{class:'console-header'},[h('div',{class:'brand'},[h('img',{class:'brand-image',src:new URL('./brand/taki.png',import.meta.url).href,alt:''}),h('strong','Taki')]),button('退出登录',s.logout,s.busy.value)]),
+      h('header',{class:'console-header'},[h('div',{class:'brand'},[h('img',{class:'brand-image',src:new URL('./brand/taki.png',import.meta.url).href,alt:''}),h('strong','Taki')]),button('退出登录',async()=>{await s.logout();clearRecovery();},s.busy.value)]),
       h('nav',{'aria-label':'Taki 工作页面'},['overview','requests','groups','sources','settings'].map((key,i) => h('button',{'aria-current':tab.value===key?'page':undefined,onClick:() => {tab.value=key;if(key==='requests'&&!s.requests.value)search(false);if(['groups','settings'].includes(key)){void s.load(s.model,'model/settings');void s.load(s.trusted,'ops/trusted');}}},['总览','查询记录','群管理','数据来源','设置'][i]))),
       tab.value==='overview'?h('div',[attentionView(s,()=>{tab.value='requests';search(true);}),modelOverview(s),overviewView(s,open)]):tab.value==='requests'?requestsView(s,open,params,search,cursor => s.load(s.requests,'requests/list',{...params,cursor}),id=>{tab.value='groups';s.selectGroup(id);}):tab.value==='groups'?groupsView(s,id=>{params.group_id=id;tab.value='requests';search(false);}):tab.value==='sources'?sourcesView(s):h('div',[h('h1','设置'),settingsView(s),modelSettings(s),trustedView(s),operationsSettings(s)]),
       tab.value==='requests'&&currentRequest&&button('导出此请求诊断',()=>s.exportDiagnostic(currentRequest)),h('footer',{class:'status-bar'},[h('span',s.overview.value?.health?.ready?'● 已连接':'○ 状态待核对'),button(s.dirty.value||s.groupDirty.value?'有未保存修改':'设置',()=>{tab.value=s.groupDirty.value?'groups':'settings';})])])

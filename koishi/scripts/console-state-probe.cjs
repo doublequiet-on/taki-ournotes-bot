@@ -91,6 +91,15 @@ async function main(){
   await after.logout();const cleared=after.captureEdits();assert.equal(cleared.global,null);assert.equal(cleared.group,null);assert.equal(cleared.model,null)
   const missing=sessionState();await missing.load(missing.groups,'groups/list');missing.selectGroup('alpha');missing.groupDirty.value=true;missing.suspend()
   const restored=sessionState();restored.restoreEdits(missing.captureEdits());await restored.load(restored.overview,'overview');assert.equal(restored.groupRecoveryBlocked.value,true)
-  console.log(JSON.stringify({passed:true,saveDraftRace:true,groupSaveDraftRace:true,groupSwitchDuringSave:true,invalidatedSave:true,recoveredDrafts:true,secretCleared:true,groupEpochBlocked:true,operationIdReused:true,logoutCleared:true}))
+  globalThis.consoleStateFixture.send=async(method,value)=>{
+    if(method==='taki/groups/list')return {policy:{groups:{},revision:0}}
+    if(method==='taki/groups/update')return {revision:1}
+    if(method==='taki/model/group'||method==='taki/ops/notice-target')throw Error('fixture_backend_unavailable')
+    throw Error('unexpected status RPC '+method)
+  }
+  const status=sessionState();await status.load(status.groups,'groups/list');status.selectGroup('alpha');status.groupDraft.value.label='fixture';status.groupDirty.value=true
+  await status.saveGroup();assert.equal(status.message.value,'群策略已保存。新查询使用新规则，在途查询继续完成。')
+  assert.match(status.readMessage.value,/读取失败/);assert.equal(status.stale.value,true)
+  console.log(JSON.stringify({passed:true,saveDraftRace:true,groupSaveDraftRace:true,groupSwitchDuringSave:true,invalidatedSave:true,recoveredDrafts:true,secretCleared:true,groupEpochBlocked:true,operationIdReused:true,logoutCleared:true,actionAndReadStatusSeparated:true}))
 }
 main().catch(error=>{console.error(error);process.exitCode=1}).finally(()=>{delete globalThis.consoleStateFixture})
