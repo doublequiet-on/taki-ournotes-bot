@@ -71,10 +71,24 @@ def game_asset(name):
     return loader(name) if loader else None
 
 
-def prepare_assets(requests, load, game_names=()):
-    """Load a render's unique artwork concurrently, using its captured UI loader."""
+def prepare_assets(requests, load, game_names=(), *, synchronous=False):
+    """Load unique artwork with the captured UI loader; detail callers may stay serial."""
     loader = _GAME_ASSETS.get()
     requests = sorted(set(requests))
+    if synchronous:
+        assets = {}
+        try:
+            for key in requests:
+                assets[key] = load(*key)
+            if loader:
+                for name in sorted(set(game_names)):
+                    loader(name)
+            return assets
+        except BaseException:
+            for image in assets.values():
+                if image is not None:
+                    image.close()
+            raise
     with ThreadPoolExecutor(max_workers=6) as pool:
         icons = [pool.submit(loader, name) for name in sorted(set(game_names))] if loader else []
         jobs = [pool.submit(load,*key) for key in requests]
@@ -93,7 +107,7 @@ def prepare_assets(requests, load, game_names=()):
 
 
 @contextmanager
-def prepared_render_assets(requests, load, game_names=()):
+def prepared_render_assets(requests, load, game_names=(), *, synchronous=False):
     """Own artwork and capture game bytes before entering the drawing scope."""
     source = _GAME_ASSETS.get()
     captured = dict.fromkeys(game_names)
@@ -101,7 +115,7 @@ def prepared_render_assets(requests, load, game_names=()):
         captured[name] = source(name) if source else None
         return captured[name]
     with game_assets(capture):
-        artwork = prepare_assets(requests, load, game_names)
+        artwork = prepare_assets(requests, load, game_names, synchronous=synchronous)
     try:
         # Unknown names are contract errors, never a late source fetch.
         with game_assets(captured.__getitem__):
