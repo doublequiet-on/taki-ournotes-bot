@@ -42,6 +42,8 @@ const Page={setup() {
   const returnFocus=()=>{if(narrow.value)requestAnimationFrame(()=>{if(inspectorTrigger?.isConnected)inspectorTrigger.focus();else document.querySelector('.taki-console .page-panel')?.focus();});};
   const closeDetail=()=>{currentRequest=null;s.detail.value=null;const url=new URL(window.location.href);url.searchParams.delete('request_id');window.history.replaceState(null,'',url);returnFocus();};
   const closeGroup=()=>{groupOpen.value=false;returnFocus();};
+  const closeDrawer=()=>{drawer.value=false;requestAnimationFrame(()=>document.querySelector('.taki-console .menu-button')?.focus());};
+  const openDrawer=()=>{drawer.value=true;requestAnimationFrame(()=>document.querySelector('.console-sidebar nav [aria-current="page"]')?.focus());};
   const openGroup=id=>{inspectorTrigger=document.activeElement;s.selectGroup(id);if(s.groupId.value===id){groupOpen.value=true;if(narrow.value)requestAnimationFrame(()=>document.querySelector('.group-inspector [aria-label="关闭群详情"]')?.focus());}};
   const selectTab=key=>{const wasOpen=drawer.value;if(tab.value!==key){tab.value=key;const layout=document.querySelector('.taki-console')?.parentElement;if(layout)layout.scrollTop=0;}drawer.value=false;if(key==='groups'&&s.groupDirty.value)groupOpen.value=true;if(wasOpen)requestAnimationFrame(()=>{const target=narrow.value&&key==='groups'&&groupOpen.value?'.group-inspector [aria-label="关闭群详情"]':narrow.value&&key==='requests'&&currentRequest&&s.detail.value?'.request-inspector [aria-label="关闭查询详情"]':'.taki-console .page-panel';document.querySelector(target)?.focus();});if(key==='requests'&&!s.requests.value)search(false);if(['groups','settings'].includes(key)){void s.load(s.model,'model/settings');void s.load(s.trusted,'ops/trusted');}};
   s.navigate=selectTab;
@@ -64,8 +66,8 @@ const Page={setup() {
   }
   const visible=() => {if(document.hidden)s.invalidate();else{ticks=0;void poll();}};
   const keydown=event=>{
-    if(event.key==='Escape'&&drawer.value){drawer.value=false;requestAnimationFrame(()=>document.querySelector('.taki-console .menu-button')?.focus());return;}
-    const panel=narrow.value&&document.querySelector('.taki-console [data-inspector]');
+    if(event.key==='Escape'&&drawer.value){closeDrawer();return;}
+    const panel=narrow.value&&document.querySelector(drawer.value?'.taki-console .console-sidebar':'.taki-console [data-inspector]');
     if(event.key==='Escape'&&panel){if(tab.value==='requests')closeDetail();else if(tab.value==='groups')closeGroup();return;}
     if(event.key==='Tab'&&panel){const items=[...panel.querySelectorAll('button:not([disabled]),input:not([disabled]),select:not([disabled]),textarea:not([disabled]),summary,[tabindex]:not([tabindex="-1"])')].filter(el=>el.getClientRects().length);
       if(items.length&&(!panel.contains(document.activeElement)||(event.shiftKey&&document.activeElement===items[0])||(!event.shiftKey&&document.activeElement===items[items.length-1]))){event.preventDefault();(event.shiftKey?items[items.length-1]:items[0]).focus();}}
@@ -82,18 +84,18 @@ const Page={setup() {
     !s.logged.value?h('div',{class:'login-screen'},[
       h('form',{onSubmit:async e => {e.preventDefault();await s.login(password.value);password.value='';const id=new URL(window.location.href).searchParams.get('request_id');if(s.logged.value&&/^[a-f0-9]{64}$/.test(id||''))open(id);ticks=0;void poll();}},[
         portrait('login-portrait'),h('h1','Taki'),h('label',['管理员密码',h('input',{type:'password',autocomplete:'current-password',value:password.value,onInput:e => password.value=e.target.value})]),h('button',{type:'submit',disabled:s.busy.value},s.busy.value?'正在登录…':'登录'),h('small','请输入为此机器人设置的控制台密码。'),s.message.value&&h('p',{role:'status'},s.message.value)])]):h('div',{class:'console-layout'},[
-      drawer.value&&h('button',{class:'drawer-scrim','aria-label':'关闭导航',onClick:()=>drawer.value=false}),
-      h('aside',{class:['console-sidebar',drawer.value&&'is-open']},[
+      drawer.value&&h('button',{class:'drawer-scrim','aria-label':'关闭导航',onClick:closeDrawer}),
+      h('aside',{class:['console-sidebar',drawer.value&&'is-open'],role:narrow.value&&drawer.value?'dialog':undefined,'aria-modal':narrow.value&&drawer.value?'true':undefined,'aria-label':narrow.value&&drawer.value?'导航':undefined},[
         h('div',{class:'sidebar-brand'},[portrait('brand-image'),h('strong','Taki')]),
         h('nav',{'aria-label':'Taki 工作页面'},navigation.map(([key,label,glyph])=>h('button',{'aria-current':tab.value===key?'page':undefined,onClick:()=>selectTab(key)},[icon(glyph),h('span',label),((key==='settings'&&(s.dirty.value||s.modelDirty.value))||(key==='groups'&&s.groupDirty.value))&&h('i',{class:'draft-dot','aria-label':'有未保存修改'})]))),
         h('div',{class:'sidebar-bottom'},[h('div',{class:'sidebar-instance'},[portrait('small-portrait'),h('div',[h('strong','Taki'),h('small',connection())]),h('i',{class:['status-dot',connection()==='已连接'?'good':'unknown']})]),
           h('button',{class:'sidebar-logout',disabled:s.busy.value,onClick:async()=>{await s.logout();clearRecovery();}},[icon('logout'),h('span','退出登录')])])]),
       h('div',{class:'console-app'},[
-        h('header',{class:'topbar'},[h('button',{class:'icon-button menu-button','aria-label':'打开导航','aria-expanded':drawer.value,onClick:()=>drawer.value=!drawer.value},[icon('menu')]),h('strong',navigation.find(([key])=>key===tab.value)?.[1]||'总览'),h('div',{class:'topbar-actions'},[h('span',{class:'connection-indicator'},connection()),h('button',{class:'icon-button','aria-label':'切换深浅主题',onClick:toggleTheme},[icon('sun')])])]),
+        h('header',{class:'topbar'},[h('button',{class:'icon-button menu-button','aria-label':'打开导航','aria-expanded':drawer.value,onClick:()=>drawer.value?closeDrawer():openDrawer()},[icon('menu')]),h('strong',navigation.find(([key])=>key===tab.value)?.[1]||'总览'),h('div',{class:'topbar-actions'},[h('span',{class:'connection-indicator'},connection()),h('button',{class:'icon-button','aria-label':'切换深浅主题',onClick:toggleTheme},[icon('sun')])])]),
         h('div',{class:'page-panel',tabindex:'-1'},[
           s.message.value&&h('p',{role:'status',class:'page-message'},s.message.value),s.readMessage.value&&h('p',{role:'status',class:'page-message'},s.readMessage.value),s.stale.value&&h('p',{role:'alert'},'连接异常：以下保留数据可能已陈旧。'),!storageAvailable.value&&h('p',{role:'alert'},'浏览器无法暂存草稿，刷新页面可能丢失未保存的修改。'),recoveryWarning.value&&h('p',{role:'alert'},'暂存草稿无法读取，请核对服务器设置。'),
           tab.value==='overview'?h('div',[overviewView(s,open,()=>{selectTab('requests');search(true);}),attentionView(s,()=>{selectTab('requests');search(true);}),modelOverview(s)]):tab.value==='requests'?requestsView(s,open,params,search,cursor => s.load(s.requests,'requests/list',{...params,cursor}),id=>{selectTab('groups');openGroup(id);},closeDetail,currentRequest,narrow.value):tab.value==='groups'?groupsView(s,id=>{params.group_id=id;selectTab('requests');search(false);},openGroup,closeGroup,groupOpen.value,narrow.value):tab.value==='sources'?sourcesView(s):h('div',[h('h1','设置'),settingsView(s),modelSettings(s),trustedView(s),operationsSettings(s)]),
-          tab.value==='requests'&&currentRequest&&button('导出此请求诊断',()=>s.exportDiagnostic(currentRequest))]),
+          ]),
         h('footer',{class:'status-bar'},[h('span',connection()),button(s.dirty.value||s.groupDirty.value||s.modelDirty.value?'有未保存修改':'设置',()=>selectTab(s.groupDirty.value?'groups':'settings'))])])])
   ])});
 }};
