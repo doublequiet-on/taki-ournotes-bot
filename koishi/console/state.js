@@ -72,7 +72,7 @@ export function sessionState() {
       if(!stale.value&&/^(读取失败|后端暂不可用)/.test(readMessage.value))readMessage.value='连接已恢复，草稿未被覆盖。';
       if(method==='overview') {
         if(groupDirty.value&&groupEpochBeforeDisconnect!==undefined){groupRecoveryBlocked.value=!groupEpochBeforeDisconnect||groupEpochBeforeDisconnect!==value.guard?.gateway_epoch;if(groupRecoveryBlocked.value)groupConflict.value=true;}
-        groupEpochBeforeDisconnect=undefined;
+        if(!groupRecoveryBlocked.value)groupEpochBeforeDisconnect=undefined;
         if(!dirty.value) { draft.value=structuredClone(value.settings); guard.value=value.guard; }
         else if(JSON.stringify(guard.value)!==JSON.stringify(value.guard))conflict.value=true;
       }

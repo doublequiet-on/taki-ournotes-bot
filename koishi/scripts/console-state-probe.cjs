@@ -91,6 +91,15 @@ async function main(){
   await after.logout();const cleared=after.captureEdits();assert.equal(cleared.global,null);assert.equal(cleared.group,null);assert.equal(cleared.model,null)
   const missing=sessionState();await missing.load(missing.groups,'groups/list');missing.selectGroup('alpha');missing.groupDirty.value=true;missing.suspend()
   const restored=sessionState();restored.restoreEdits(missing.captureEdits());await restored.load(restored.overview,'overview');assert.equal(restored.groupRecoveryBlocked.value,true)
+  for(const original of [null,'gateway-before']){
+    let current=restored;const snapshot=current.captureEdits();snapshot.group.epoch=original;current=sessionState();current.restoreEdits(snapshot)
+    for(let reconnect=0;reconnect<2;reconnect++){
+      await current.load(current.overview,'overview');current.suspend();const next=sessionState();next.restoreEdits(current.captureEdits());await next.load(next.overview,'overview')
+      assert.equal(next.groupRecoveryBlocked.value,true,'repeated reconnects must not replace the draft original gateway identity')
+      assert.equal(next.captureEdits().group.epoch,original,'the original gateway must stay unchanged until the draft is discarded')
+      await next.saveGroup();assert.match(next.message.value,/网关状态尚未确认或已变化/);current=next
+    }
+  }
   globalThis.consoleStateFixture.send=async(method,value)=>{
     if(method==='taki/groups/list')return {policy:{groups:{},revision:0}}
     if(method==='taki/groups/update')return {revision:1}
