@@ -122,7 +122,8 @@ class Backend:
                 self.finish(work, 'expired')
 
     def valid_evidence(self, leases):
-        return all(self.knowledge is not None and self.knowledge.valid(lease) for lease in leases)
+        leases = tuple(leases)
+        return not leases or self.knowledge is not None and self.knowledge.validate_current(leases)
 
     def finish(self, work, status):
         if work.terminal_status is not None or not work.active:
@@ -444,12 +445,13 @@ class Backend:
 
     def live(self, row, epoch):
         work = self.works.get(row['delivery'])
-        return bool(work and work.active and (row['status'] == 'prepared' or work.hint and row['status']=='preparing') and row['epoch'] == epoch
-                    and row['runtime'] == self.runtime and self.ledger.active(epoch)
-                    and self.clock() < row['expires']
-                    and all(self.valid_evidence(reply.evidence) and
-                            (reply.evidence_deadline is None or time.monotonic()<reply.evidence_deadline)
-                            for reply in work.prepared))
+        if not (work and work.active and (row['status'] == 'prepared' or work.hint and row['status']=='preparing')
+                and row['epoch'] == epoch and row['runtime'] == self.runtime and self.ledger.active(epoch)
+                and self.clock() < row['expires']):
+            return False
+        return (self.valid_evidence(lease for reply in work.prepared for lease in reply.evidence)
+                and all(reply.evidence_deadline is None or time.monotonic() < reply.evidence_deadline
+                        for reply in work.prepared))
 
     def snapshot(self, row, epoch):
         require(row is not None, 'unknown_request', 404)
