@@ -290,7 +290,7 @@ class OnLanguageTests(unittest.TestCase):
             self.assertEqual(local.code,OutcomeCode.SUCCESS)
             self.assertEqual(local.result.spec.page,2)
             self.assertEqual(sorted(c.id for c in local.result.cards),[1,2])
-            self.assertNotIn("页",local.result.spec.card_query)
+            self.assertNotIn("页",local.result.spec.card_request.query)
         action={"action":"call_tool","capability":"member_card.search","arguments":{"query":"","colors":[2],"rarities":[4,3],"page":2}}
         grounded=validate_capability_action(action,CAPABILITIES["member_card.search"],q,self.repo,allow_empty_subject=True)
         self.assertIsNotNone(grounded.spec)

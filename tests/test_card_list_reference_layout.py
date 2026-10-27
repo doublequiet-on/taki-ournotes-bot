@@ -138,7 +138,7 @@ class ReferenceLayoutTests(unittest.TestCase):
             if x<260 and str(value) in ('高松灯','千早爱音'):headings.append(str(value))
             return original(canvas,x,y,value,*args,**kwargs)
         with patch.object(Canvas,'text',capture):
-            _,records,_=layout.render_list([card],request.query,characters=request.filters['character'],load=lambda *a:None)
+            _,records,_=layout.render_list([card],request.query,characters=request.filters.character,load=lambda *a:None)
         self.assertEqual(headings,['高松灯','千早爱音'])
         self.assertEqual([c.id for c in records],[51])
 

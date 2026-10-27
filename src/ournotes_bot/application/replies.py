@@ -624,8 +624,8 @@ def complete_list_reply(result,repository,locale,candidate):
     if page<1 or page>max(1,(len(cards or songs)+15)//16):return None
     if cards:
         from ..rendering.catalog_layout import render_list
-        characters=result.catalog.request.filters.get('character',()) if result.catalog else ()
-        bands=result.catalog.request.filters.get('band',()) if result.catalog else ()
+        characters=result.catalog.request.filters.character if result.catalog else ()
+        bands=result.catalog.request.filters.band if result.catalog else ()
         parts,records,ranges=render_list(cards,label,locale,load=visual_asset,characters=characters,bands=bands)
     elif songs:
         from ..rendering.song_layout import render_list
