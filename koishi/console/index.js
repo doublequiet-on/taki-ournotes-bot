@@ -3,8 +3,13 @@ import { sessionState } from './state.js';
 import { button, overviewView, requestsView, groupsView, settingsView } from './views.js';
 import { attentionView, sourcesView, operationsSettings } from './ops.js';
 import { modelOverview, modelSettings, trustedView } from './model.js';
+const recoveryKey=Symbol.for('taki.console.recovery.v1');
+const recovery=globalThis[recoveryKey]||=( {current:null,snapshot:null} );
+function releaseState(state){state.suspend();recovery.snapshot=state.captureEdits();if(recovery.current===state)recovery.current=null;}
 const Page={setup() {
-  const s=sessionState(),password=ref(''),tab=ref('overview'),params={};
+  if(recovery.current)releaseState(recovery.current);
+  const s=sessionState();s.restoreEdits(recovery.snapshot);recovery.snapshot=null;recovery.current=s;
+  const password=ref(''),tab=ref('overview'),params={};
   let timer,ticks=0,currentRequest=null,polling=false;
   s.navigate=key=>{tab.value=key;};
   const open=id => {if(currentRequest!==id)s.detail.value=null;currentRequest=id;tab.value='requests';const url=new URL(window.location.href);url.searchParams.set('request_id',id);window.history.replaceState(null,'',url);void s.load(s.detail,'requests/detail',id);};
@@ -28,7 +33,7 @@ const Page={setup() {
   const visible=() => {if(document.hidden)s.invalidate();else{ticks=0;void poll();}};
   const leaving=event => {if(s.dirty.value||s.groupDirty.value||s.modelDirty.value){event.preventDefault();event.returnValue='';}};
   onMounted(() => {timer=setInterval(() => void poll(),5000);document.addEventListener('visibilitychange',visible);window.addEventListener('beforeunload',leaving);});
-  onUnmounted(() => {clearInterval(timer);s.invalidate();document.removeEventListener('visibilitychange',visible);window.removeEventListener('beforeunload',leaving);});
+  onUnmounted(() => {clearInterval(timer);if(recovery.current===s)releaseState(s);document.removeEventListener('visibilitychange',visible);window.removeEventListener('beforeunload',leaving);});
   return () => h(resolveComponent('k-layout'),{},{default:() => h('main',{class:'taki-console'},[
     s.message.value&&h('p',{role:'status'},s.message.value),s.stale.value&&h('p',{role:'alert'},'连接异常：以下保留数据可能已陈旧。'),
     !s.logged.value?h('form',{onSubmit:async e => {e.preventDefault();await s.login(password.value);password.value='';const id=new URL(window.location.href).searchParams.get('request_id');if(s.logged.value&&/^[a-f0-9]{64}$/.test(id||''))open(id);ticks=0;void poll();}},[
