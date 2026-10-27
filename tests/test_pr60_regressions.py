@@ -211,6 +211,22 @@ class DetailAssetScopeTests(unittest.TestCase):
                 self.assertEqual(len(set(state['at_canvas'][:3])),1)
                 self.assertEqual(state['game'],['RarityIconCenter_SSR.png'])
 
+    def test_encoder_handoff_keeps_assets_and_reclaims_only_completed_paint(self):
+        for fail in (None,'paint','encode'):
+            with self.subTest(fail=fail),self.assets(fail=fail,reject=2 if fail is None else 0) as (state,load):
+                calls=[]
+                def reclaim(pixels):
+                    self.assertEqual(state['canvases'],1)
+                    self.assertGreater(state['live'],0)
+                    self.assertGreater(pixels,0)
+                    calls.append(state['attempts'])
+                with patch.object(card_detail_layout,'_release_image_memory',reclaim):
+                    if fail:
+                        with self.assertRaisesRegex((RuntimeError,OSError),fail+' failed'):
+                            card_detail_layout.render(self.card(16),load=load)
+                    else:card_detail_layout.render(self.card(16),load=load)
+                self.assertEqual(calls,list(range(state['attempts'])))
+
     def test_all_failure_stages_release_ownership(self):
         for fail,error in (('measure',RuntimeError),('prepare',RuntimeError),('paint',RuntimeError),('encode',OSError)):
             with self.subTest(stage=fail),self.assets(fail=fail) as (state,load):

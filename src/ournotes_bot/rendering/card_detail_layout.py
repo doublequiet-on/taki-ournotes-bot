@@ -11,6 +11,7 @@ from PIL import ImageOps
 from ..data import SupportCard, localized_text
 from .haneoka_theme import Canvas, MUTED, ACCENT, SOFT, SURFACE, frame, lines, prepared_render_assets
 from .readable_pages import render_parts
+from .image_output import _release_image_memory
 
 NAMES={'leaderSkill':'队长技能','liveSkill':'演出技能','gekisouSkill':'激奏技能',
        'supportSkill':'支援技能','gekisouSupportSkill':'激奏支援技能'}
@@ -218,6 +219,9 @@ def _render(card,locale,load,shared,game_names,fitted_logo):
                 else:c.text(54,y+40,ui_label('技能详情未获取',locale),32,MUTED)
                 y+=bh
             if card.catalog.get('detail_stale'):c.text(54,height-24,ui_label('使用上次有效资料',locale),22,MUTED)
+            # Prepared assets stay owned across encoding retries. Return freed
+            # drawing buffers before the encoder allocates its JPEG workspace.
+            _release_image_memory(c.image.width*c.image.height)
             return c.image
         except BaseException:
             c.image.close()
