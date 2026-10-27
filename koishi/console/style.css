@@ -1,3 +1,5 @@
+/* Koishi's layout clips its default slot; only the Taki page needs scrolling. */
+.layout-container .main-container .layout-main:has(> .taki-console) { overflow-y:auto; }
 /* Haneoka-inspired Material surfaces; host colours follow the Koishi theme. */
 .taki-console { --accent:#6569bd; --ink:var(--fg1,#272733); --surface:var(--bg1,#fff); --soft:var(--bg2,#f2f1f8); --line:color-mix(in srgb,var(--ink) 16%,transparent); max-width:1120px; margin:24px auto; padding:0 24px 40px; line-height:1.7; overflow-wrap:anywhere; color:var(--ink); font-family:"Segoe UI","Microsoft YaHei",sans-serif; }
 .taki-console * { box-sizing:border-box; }

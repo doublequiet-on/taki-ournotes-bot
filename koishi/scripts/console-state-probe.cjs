@@ -64,6 +64,51 @@ async function main(){
   assert.equal(model.modelKey.value,'');assert.equal(model.modelDraft.value.model,'later edit');assert.equal(model.modelDirty.value,true)
   assert.equal(model.modelConflict.value,false)
   await model.logout();assert.equal(model.model.value,null);assert.equal(model.modelDraft.value,null);assert.equal(model.modelKey.value,'')
-  console.log(JSON.stringify({passed:true,saveDraftRace:true,groupSaveDraftRace:true,groupSwitchDuringSave:true,invalidatedSave:true}))
+  let epoch='gateway-before',attempted=[],trustedAttempts=[],finishJob,finishTrusted
+  globalThis.consoleStateFixture.send=async(method,value)=>{
+    if(method==='taki/overview')return {settings:structuredClone(settings),guard:{gateway_epoch:epoch,revision:0}}
+    if(method==='taki/groups/list')return {policy:{groups:{},revision:0}}
+    if(method==='taki/model/group'||method==='taki/ops/notice-target')return {sections:{}}
+    if(method==='taki/ops/jobs/start'){attempted.push(value.operation_id);return new Promise(resolve=>{finishJob=resolve})}
+    if(method==='taki/ops/trusted/start'){trustedAttempts.push(value.operation_id);return new Promise(resolve=>{finishTrusted=resolve})}
+    if(method==='taki/ops/jobs/list')return {items:[]}
+    if(method==='taki/logout')return true
+    throw Error('unexpected recovery RPC '+method)
+  }
+  const before=sessionState();before.logged.value=true;await before.load(before.overview,'overview');await before.load(before.groups,'groups/list')
+  before.draft.value.privateEnabled=false;before.dirty.value=true;before.selectGroup('alpha');before.groupDraft.value.label='unsaved';before.groupDirty.value=true
+  before.modelDraft.value={provider:'fixture',model:'unsaved'};before.modelGuard.value={backend_epoch:'old'};before.modelDirty.value=true;before.modelKey.value='secret-must-not-be-retained'
+  before.trusted.value={plan:{plan_id:'fixture-plan',action:'restart',instance_id:'fixture',target_sha:'fixture'}}
+  const uncertain=before.startJob('fixture',{}),uncertainTrusted=before.trustedRequest('restart',before.trusted.value.plan)
+  before.suspend();finishJob({id:'fixture-id'});finishTrusted({state:'fixture'});await Promise.all([uncertain,uncertainTrusted])
+  const recovery=before.captureEdits();assert.equal(JSON.stringify(recovery).includes('secret-must-not-be-retained'),false)
+  const after=sessionState();after.restoreEdits(recovery);assert.equal(after.modelKey.value,'');assert.equal(after.draft.value.privateEnabled,false)
+  assert.equal(after.groupDraft.value.label,'unsaved');assert.equal(after.groupRecoveryBlocked.value,true)
+  epoch='gateway-after';await after.load(after.overview,'overview');assert.equal(after.groupRecoveryBlocked.value,true);assert.equal(after.conflict.value,true)
+  const retry=after.startJob('fixture',{});assert.equal(attempted[0],attempted[1]);finishJob({id:'fixture-id'});await retry
+  const retryTrusted=after.trustedRequest('restart',{plan_id:'fixture-plan',action:'restart',instance_id:'fixture',target_sha:'fixture'})
+  assert.equal(trustedAttempts[0],trustedAttempts[1]);finishTrusted({state:'fixture'});await retryTrusted
+  await after.logout();const cleared=after.captureEdits();assert.equal(cleared.global,null);assert.equal(cleared.group,null);assert.equal(cleared.model,null)
+  const missing=sessionState();await missing.load(missing.groups,'groups/list');missing.selectGroup('alpha');missing.groupDirty.value=true;missing.suspend()
+  const restored=sessionState();restored.restoreEdits(missing.captureEdits());await restored.load(restored.overview,'overview');assert.equal(restored.groupRecoveryBlocked.value,true)
+  for(const original of [null,'gateway-before']){
+    let current=restored;const snapshot=current.captureEdits();snapshot.group.epoch=original;current=sessionState();current.restoreEdits(snapshot)
+    for(let reconnect=0;reconnect<2;reconnect++){
+      await current.load(current.overview,'overview');current.suspend();const next=sessionState();next.restoreEdits(current.captureEdits());await next.load(next.overview,'overview')
+      assert.equal(next.groupRecoveryBlocked.value,true,'repeated reconnects must not replace the draft original gateway identity')
+      assert.equal(next.captureEdits().group.epoch,original,'the original gateway must stay unchanged until the draft is discarded')
+      await next.saveGroup();assert.match(next.message.value,/网关状态尚未确认或已变化/);current=next
+    }
+  }
+  globalThis.consoleStateFixture.send=async(method,value)=>{
+    if(method==='taki/groups/list')return {policy:{groups:{},revision:0}}
+    if(method==='taki/groups/update')return {revision:1}
+    if(method==='taki/model/group'||method==='taki/ops/notice-target')throw Error('fixture_backend_unavailable')
+    throw Error('unexpected status RPC '+method)
+  }
+  const status=sessionState();await status.load(status.groups,'groups/list');status.selectGroup('alpha');status.groupDraft.value.label='fixture';status.groupDirty.value=true
+  await status.saveGroup();assert.equal(status.message.value,'群策略已保存。新查询使用新规则，在途查询继续完成。')
+  assert.match(status.readMessage.value,/读取失败/);assert.equal(status.stale.value,true)
+  console.log(JSON.stringify({passed:true,saveDraftRace:true,groupSaveDraftRace:true,groupSwitchDuringSave:true,invalidatedSave:true,recoveredDrafts:true,secretCleared:true,groupEpochBlocked:true,operationIdReused:true,logoutCleared:true,actionAndReadStatusSeparated:true}))
 }
 main().catch(error=>{console.error(error);process.exitCode=1}).finally(()=>{delete globalThis.consoleStateFixture})

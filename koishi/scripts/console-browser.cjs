@@ -1,6 +1,54 @@
 // Development acceptance only. Pass installed npm asset directory, Playwright package and screenshot directory.
 const assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path')
 const {chromium}=require(process.argv[2]),output=path.resolve(process.argv[3])
+async function verifySettingsScroll(page){
+  const layout=page.locator('.layout-main'),save=page.getByRole('button',{name:'保存设置',exact:true})
+  const toggle=page.getByLabel('允许私聊',{exact:true})
+  const position=async()=>{
+    const bounds=await layout.boundingBox(),box=await save.boundingBox()
+    const hit=await page.evaluate(({x,y})=>document.elementFromPoint(x,y)?.closest('button')?.textContent.trim(),{x:box.x+box.width/2,y:box.y+box.height/2})
+    return {bounds,box,ready:box.y>=bounds.y&&box.y+box.height<=bounds.y+bounds.height&&hit==='保存设置'}
+  }
+  await page.setViewportSize({width:1280,height:720})
+  await page.getByRole('navigation',{name:'Taki 工作页面'}).getByRole('button',{name:'设置',exact:true}).click()
+  const initial=await toggle.isChecked();await toggle.setChecked(!initial)
+  await layout.evaluate(e=>e.scrollTop=0)
+  let {bounds,box}=await position()
+  assert.ok(box.y>bounds.y+bounds.height,'fixture must place save below the visible viewport')
+  await page.mouse.move(900,500);await page.mouse.wheel(0,300);await page.waitForTimeout(300)
+  assert.ok(await layout.evaluate(e=>e.scrollTop)>100,'mouse wheel must scroll the Taki page')
+  let current=await position()
+  for(let attempt=0;attempt<10&&!current.ready;attempt++){
+    await page.mouse.wheel(0,current.box.y<current.bounds.y+50?-120:120);await page.waitForTimeout(150);current=await position()
+  }
+  assert.ok(current.ready,'save button must be visible and clickable after scrolling')
+  box=current.box
+  await page.screenshot({path:path.join(output,'settings-scroll-desktop.png')})
+  await page.mouse.click(box.x+box.width/2,box.y+box.height/2)
+  await page.getByText('已保存生效；在途查询继续完成。',{exact:true}).waitFor()
+  await page.getByText('当前显示已载入的全局设置。',{exact:true}).waitFor()
+
+  await page.setViewportSize({width:320,height:640})
+  await toggle.setChecked(initial);await layout.evaluate(e=>e.scrollTop=0)
+  const touch=await page.context().newCDPSession(page)
+  current=await position()
+  for(let attempt=0;attempt<10&&!current.ready;attempt++){
+    const upwards=current.box.y>=current.bounds.y+50,start=upwards?480:250,step=upwards?-40:40
+    await touch.send('Input.dispatchTouchEvent',{type:'touchStart',touchPoints:[{x:220,y:start}]})
+    for(let n=1;n<=4;n++){await touch.send('Input.dispatchTouchEvent',{type:'touchMove',touchPoints:[{x:220,y:start+step*n}]});await page.waitForTimeout(35)}
+    await touch.send('Input.dispatchTouchEvent',{type:'touchEnd',touchPoints:[]});await page.waitForTimeout(300)
+    current=await position()
+  }
+  assert.ok(await layout.evaluate(e=>e.scrollTop)>100,'touch must scroll the Taki page')
+  assert.ok(current.ready,'save button must be visible and clickable after touch scrolling')
+  box=current.box
+  await page.screenshot({path:path.join(output,'settings-scroll-mobile.png')})
+  await page.touchscreen.tap(box.x+box.width/2,box.y+box.height/2)
+  await page.getByText('已保存生效；在途查询继续完成。',{exact:true}).waitFor()
+  await page.getByText('当前显示已载入的全局设置。',{exact:true}).waitFor()
+  assert.equal(await toggle.isChecked(),initial)
+  await touch.detach()
+}
 async function main(){
   fs.mkdirSync(output,{recursive:true})
   const browser=await chromium.launch({executablePath:process.argv[4],headless:true})
@@ -15,6 +63,12 @@ async function main(){
     await page.getByLabel('管理员密码').fill('fixture-console-password-000000')
     await page.getByRole('button',{name:'登录',exact:true}).click()
     await page.getByRole('heading',{name:'Taki 总览',exact:true}).waitFor()
+    if(process.env.TAKI_SCROLL_ONLY==='1'){
+      await verifySettingsScroll(page)
+      assert.deepEqual(errors,[]);assert.deepEqual(failed,[])
+      fs.writeFileSync(path.join(output,'scroll.json'),JSON.stringify({passed:true,mouse:true,touch:true,installedAssets:true},null,2))
+      return
+    }
     await page.getByText('已受理 1 条',{exact:true}).waitFor()
     assert.equal(await page.getByRole('button',{name:'总览',exact:true}).getAttribute('aria-current'),'page')
     await page.getByText('数据来源与采集状态 · 排查缺图、旧数据时查看',{exact:true}).click()
