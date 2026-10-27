@@ -15,6 +15,7 @@ from ..sources.haneoka.song_traits import COLORS
 from .song_identity import exact_songs, unique_candidates, candidate_text, literal_song_match, QueryProblem
 from .song_query import parse_filter, execute as filter_songs
 from .entity_lexicon import EntityRef
+from .card_catalog import parse_card_request, execute_card_request
 
 FIELD_LABELS = {"notes": "Note", "level": "等级", "color": "颜色", "missions": "激奏", "difficulties": "已收录难度"}
 
@@ -37,7 +38,11 @@ def parse_field_question(question, repository):
         support = bool(re.search(r"SNAP|留影卡|支援卡", term, re.I))
         term = re.sub(r"(?:的)?(?:成员卡|角色卡|卡牌|卡|SNAP|留影卡|支援卡)$", "", term, flags=re.I).strip()
         term = "" if term in {"全部", "所有", "全库"} else term
-        return QuerySpec("support_card" if support else "card", field="count", card_query=term)
+        try:
+            request = parse_card_request(term, repository, support=support)
+        except ValueError as exc:
+            return QueryProblem(str(exc))
+        return QuerySpec("support_card" if support else "card", field="count", page=request.page, card_request=request)
     skill = re.fullmatch(r"(成员卡|角色卡|SNAP|留影卡|支援卡|卡牌|卡)\s*(?:ID\s*[:=]?)?(\d+)\s*(?:的)?\s*(队长|LIVE|激奏|击奏|支援)?技能(?:效果)?(?:是什么|有哪些)?", text, re.I)
     if not skill:
         reversed_id = re.fullmatch(r"(\d+)号?(?:的)?\s*(成员卡|角色卡|SNAP|留影卡|支援卡|卡牌|卡)\s*(?:的)?(队长|LIVE|激奏|击奏|支援)?技能(?:效果)?(?:是什么|有哪些)?", text, re.I)
@@ -98,13 +103,13 @@ def answer_field(spec, repository):
             label = "已确认匹配" if selected.warning else "符合条件"
             return result(f"{label}的歌曲共 {count} 首。" + ("\n" + selected.warning if selected.warning else ""),
                           "success" if count else "empty", songs=selected.songs)
-        from .card_catalog import parse_card_request, execute_card_request
+        from ..structured_query import card_request_for
         try:
-            req = parse_card_request(spec.card_query or "", repository, support=spec.intent == "support_card")
+            req = card_request_for(spec, repository)
         except ValueError as exc:
             return result(str(exc), "invalid_arguments")
-        if req.card_id is not None:
-            req = replace(req, card_id=None, mode="list", filters={**req.filters, "title_ids": (req.card_id,)})
+        filters = replace(req.filters, title_ids=(req.card_id,)) if req.card_id is not None else req.filters
+        req = replace(req, card_id=None, mode="list", filters=filters)
         selected = execute_card_request(req, repository)
         if selected.error:
             return result(selected.error, selected.status)

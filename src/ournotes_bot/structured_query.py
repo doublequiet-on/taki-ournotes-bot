@@ -13,10 +13,11 @@ from dataclasses import dataclass, replace
 from .commands import (PAGE_SIZE, _format_card_detail, _format_support_card_detail,
                        filter_card_rarity, page_notice, page_slice, rarity_text)
 from .data import Card, Chart, Skill, Song, SongRepository, SupportCard, character_identity, localized_text, normalize, note_text
+from .domain.card_query import CardFilters, CardRequest
 from .domain.meta_query import MetaQuerySpec, MetaResult
 from .query.entity_lexicon import EntityRef
 from .i18n import tr
-from .query.card_catalog import CardAnswer, query_cards
+from .query.card_catalog import CardAnswer, parse_card_request, execute_card_request
 from .query.song_query import SongAnswer, SongFilter, parse_filter, execute as execute_song_filter
 from .query.event_cutoff_query import CutoffRequest, CutoffAnswer, execute_cutoff
 from .sources.haneoka.song_traits import describe as describe_song
@@ -40,8 +41,18 @@ class QuerySpec:
     song_filter: SongFilter | None = None
     field: str = ""
     meta_request: MetaQuerySpec | None = None
+    card_request: CardRequest | None = None
 
     def __post_init__(self):
+        if self.card_request is not None:
+            req = self.card_request
+            if self.intent != ("support_card" if req.support else "card"):
+                raise ValueError("card request intent does not match support mode")
+            if (self.card_query is not None or self.subject is not None or self.rarity is not None
+                    or self.skill_query or self.skill_kind):
+                raise ValueError("typed and legacy card selection cannot coexist")
+            # Structured callers and replace(spec, page=...) own the page number.
+            object.__setattr__(self, "card_request", replace(req, page=self.page))
         if self.card_query is not None:
             from .commands import _split_page
             query, page = _split_page(self.card_query)
@@ -50,6 +61,8 @@ class QuerySpec:
                 object.__setattr__(self, "page", page)
 
     def query_label(self) -> str:
+        if self.card_request is not None:
+            return self.card_request.query
         if self.song_query is not None:
             return self.song_query
         parts = [self.display_name] if self.display_name else []
@@ -73,7 +86,7 @@ class QuerySpec:
             return "问 " + (self.display_name or "歌曲指标")
         if self.field:
             if self.field == "count":
-                query = self.song_filter.query if self.song_filter else self.card_query or ""
+                query = self.song_filter.query if self.song_filter else self.card_request.query if self.card_request else self.card_query or ""
                 label = {"song": "歌曲", "card": "成员卡", "support_card": "SNAP"}[self.intent]
                 return f"问 {query or '全部'} {label}有多少{'首' if self.intent == 'song' else '张'}"
             if self.field == "skills":
@@ -82,6 +95,9 @@ class QuerySpec:
             return f"问 {self.display_name} {self.difficulty} {FIELD_LABELS[self.field]}".replace("  ", " ")
         if self.cutoff_request is not None:
             return self.cutoff_request.command_label()
+        if self.card_request is not None:
+            req = self.card_request
+            return req.command.lstrip("/") + " " + req.query + (f" 页{self.page}" if self.page > 1 else "")
         if self.card_query is not None:
             return (("查留影卡 " if self.intent == "support_card" else "查卡 ")
                     + self.card_query + (f" 页{self.page}" if self.page > 1 else ""))
@@ -173,19 +189,15 @@ def resolve_query(spec: QuerySpec, repository: SongRepository) -> QueryResult:
     if spec.song_query is not None:
         answer = execute_song_filter(parse_filter(spec.song_query, repository, force=True), repository, spec.page)
         return QueryResult(spec, songs=answer.songs, song_selection=answer)
-    if spec.card_query is not None:
-        answer = query_cards(f"{spec.card_query} 页{spec.page}", repository, support=spec.intent == "support_card")
-        return QueryResult(spec, catalog=answer, cards=answer.cards if spec.intent == "card" else (),
-                           support_cards=answer.cards if spec.intent == "support_card" else ())
-    if spec.intent in {"card", "support_card"} and not (spec.skill_query or spec.skill_kind):
-        query = ""
-        if spec.rarity is not None:
-            query = f"{spec.rarity}星 "
-        if spec.subject:
-            prefix = {"character": "角色=", "band": "乐队="}.get(spec.subject.kind, "")
-            query += prefix + str(spec.subject.value)
-        query += f" 页{spec.page}"
-        answer = query_cards(query, repository, support=spec.intent == "support_card")
+    if spec.card_request is not None or spec.card_query is not None or (
+            spec.intent in {"card", "support_card"} and not (spec.skill_query or spec.skill_kind)):
+        try:
+            request = card_request_for(spec, repository)
+            answer = execute_card_request(request, repository)
+        except ValueError as exc:
+            from .query.entity_lexicon import CharacterAmbiguity
+            answer = CardAnswer(CardRequest(spec.intent == "support_card", query=spec.card_query or spec.query_label()),
+                                error=str(exc), status="ambiguous" if isinstance(exc, CharacterAmbiguity) else "invalid_arguments")
         return QueryResult(spec, catalog=answer, cards=answer.cards if spec.intent == "card" else (),
                            support_cards=answer.cards if spec.intent == "support_card" else ())
     if spec.intent == "song":
@@ -197,6 +209,33 @@ def resolve_query(spec: QuerySpec, repository: SongRepository) -> QueryResult:
     if spec.intent == "chart":
         return QueryResult(spec, chart=chart_for(spec, repository))
     raise ValueError("unsupported query intent")
+
+
+def card_request_for(spec: QuerySpec, repository: SongRepository) -> CardRequest:
+    """Adapt old callers once; canonical requests never parse their display label."""
+    if spec.card_request is not None:
+        return spec.card_request
+    if spec.card_query is not None:
+        return replace(parse_card_request(spec.card_query, repository, support=spec.intent == "support_card"), page=spec.page)
+    support = spec.intent == "support_card"
+    filters = CardFilters(rarity=(spec.rarity,) if spec.rarity is not None else ())
+    mode, ident = "list", None
+    if spec.subject is not None:
+        kind, value = spec.subject.kind, spec.subject.value
+        if kind in {"card", "support_card"}:
+            mode = "detail"
+            if spec.rarity is None:
+                ident = int(value)
+            else:
+                filters = replace(filters, title_ids=(int(value),))
+        elif kind in {"character", "band"}:
+            filters = replace(filters, **{kind: (str(value),)})
+        else:
+            raise ValueError("unsupported card subject")
+    label = (f"{spec.rarity}星 " if spec.rarity is not None else "")
+    if spec.subject is not None:
+        label += {"character": "角色=", "band": "乐队="}.get(spec.subject.kind, "") + str(spec.subject.value)
+    return CardRequest(support, mode, ident, spec.page, label.strip(), filters)
 
 
 def songs_for(spec: QuerySpec, repository: SongRepository) -> list[Song]:

@@ -218,3 +218,84 @@ class QuerySpecificationTests(unittest.TestCase):
         near = parse_cutoff('/查榜线 1')
         self.assertEqual(near.event_id, '')
         self.assertEqual(near.ranks, tuple(range(1, 12)))
+
+    def test_card_contract_is_immutable_and_keeps_import_identity(self):
+        from dataclasses import FrozenInstanceError
+        from ournotes_bot.domain.card_query import CardFilters, CardRequest
+        from ournotes_bot.query.card_catalog import CardRequest as CompatibleRequest
+        from ournotes_bot.structured_query import QuerySpec
+        from ournotes_bot.query.entity_lexicon import EntityRef
+        self.assertIs(CardRequest, CompatibleRequest)
+        filters=CardFilters(rarity=(4,),character=('高松灯',))
+        with self.assertRaises(FrozenInstanceError):filters.rarity=(3,)
+        with self.assertRaises(TypeError):CardFilters(rarity=[4])
+        request=CardRequest(page=7,filters=filters)
+        spec=QuerySpec('card',card_request=request,page=2)
+        self.assertEqual((request.page,spec.card_request.page,replace(spec,page=3).card_request.page),(7,2,3))
+        for fields in ({'card_query':''},{'subject':EntityRef('card',1)},{'rarity':4},
+                       {'skill_query':'得分'},{'skill_kind':'live'}):
+            with self.subTest(fields=fields),self.assertRaises(ValueError):
+                QuerySpec('card',card_request=request,**fields)
+        with self.assertRaises(ValueError):QuerySpec('support_card',card_request=request)
+        with self.assertRaises(ValueError):CardRequest(card_id=1,filters=filters)
+
+    def test_canonical_local_model_direct_parity_and_no_execution_reparse(self):
+        from ournotes_bot.natural_query import on_query
+        from ournotes_bot.query.card_catalog import parse_card_request
+        question='成员卡 颜色=蓝 稀有度=SSR/SR 角色=高松灯'
+        command='/查卡 颜色=蓝 稀有度=SSR/SR 角色=高松灯'
+        direct=resolve_command(command,self.repo)
+        local=self.parser.answer_with_outcome('/问 '+question,self.repo)
+        with patch.object(on_query,'parse_card_request',wraps=parse_card_request) as parsed:
+            grounded=validate_capability_action({'action':'call_tool','capability':'member_card.search',
+                'arguments':{'query':'','colors':[2],'rarities':[3,4],'characters':['tmr'],'page':1}},
+                CAPABILITIES['member_card.search'],question,self.repo)
+            self.assertIsNotNone(grounded.spec,grounded)
+            self.assertEqual(parsed.call_count,1)
+        with patch('ournotes_bot.structured_query.parse_card_request',side_effect=AssertionError('display reparsed')):
+            model=resolve_query(grounded.spec,self.repo)
+            label_only=resolve_query(replace(grounded.spec,card_request=replace(
+                grounded.spec.card_request,query='展示标签不能作为过滤条件')),self.repo)
+        self.assertEqual(local.result.cards,direct.cards)
+        self.assertEqual(model.cards,direct.cards)
+        self.assertEqual(label_only.cards,direct.cards)
+        for changes in ({'colors':[]},{'rarities':[4]},{'characters':['skk']},{'bands':['MyGO']},
+                        {'page':2},{'query':'角色=高松灯'},{'tags':['invented']},{'live_categories':['life']}):
+            arguments={'query':'','colors':[2],'rarities':[3,4],'characters':['tmr'],'page':1,**changes}
+            rejected=validate_capability_action({'action':'call_tool','capability':'member_card.search',
+                'arguments':arguments},CAPABILITIES['member_card.search'],question,self.repo)
+            self.assertIsNone(rejected.spec,changes)
+
+    def test_typed_count_and_followup_never_parse_display_text(self):
+        from ournotes_bot.query.card_catalog import parse_card_request
+        from ournotes_bot.query.continuation import capture_context,execute_followup,Operation
+        from ournotes_bot.structured_query import QuerySpec
+        self.repo.cards=[replace(self.repo.cards[0],id=i) for i in range(1,36)]
+        request=parse_card_request('SSR 页2',self.repo)
+        result=resolve_query(QuerySpec('card',card_request=request,page=2),self.repo)
+        context=capture_context(result,self.repo)
+        self.assertEqual(context.query.card_request,request)
+        with patch('ournotes_bot.structured_query.parse_card_request',side_effect=AssertionError('reparsed')):
+            count=resolve_query(QuerySpec('card',card_request=request,page=2,field='count'),self.repo)
+            next_result,_=execute_followup(context,Operation('page',1),self.repo)
+            with patch.object(self.repo,'card_with_detail',side_effect=lambda card:card):
+                selected,_=execute_followup(context,Operation('select',2),self.repo)
+        self.assertIn('35 张',count.short_text)
+        self.assertEqual(next_result.catalog.visible[0].id,33)
+        self.assertEqual(selected.catalog.cards[0].id,18)
+
+    def test_filtered_id_is_not_the_unfiltered_shortcut_and_legacy_adapts_once(self):
+        from ournotes_bot.query.card_catalog import parse_card_request,execute_card_request
+        from ournotes_bot.structured_query import QuerySpec
+        from ournotes_bot.query.entity_lexicon import EntityRef
+        with patch.object(self.repo,'card_with_detail',side_effect=lambda card:card) as detail:
+            exact=parse_card_request('1 颜色=红色',self.repo)
+            self.assertEqual((exact.mode,exact.card_id,exact.filters.title_ids),('detail',None,(1,)))
+            self.assertEqual(execute_card_request(exact,self.repo).status,'empty')
+            detail.assert_not_called()
+            with patch('ournotes_bot.structured_query.parse_card_request',side_effect=AssertionError('generated command parsed')):
+                legacy=resolve_query(QuerySpec('card',EntityRef('character','高松灯'),rarity=4),self.repo)
+            self.assertEqual(tuple(c.id for c in legacy.cards),(1,))
+            with patch('ournotes_bot.structured_query.parse_card_request',wraps=parse_card_request) as parse:
+                resolve_query(QuerySpec('card',card_query='SSR',page=2),self.repo)
+                self.assertEqual(parse.call_count,1)
