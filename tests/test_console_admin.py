@@ -229,7 +229,7 @@ class AdminTests(unittest.IsolatedAsyncioTestCase):
                         self.backend.retry_terminations()
                     self.assertEqual(save.call_count, attempt+1)
                     if attempt < 3:
-                        self.assertEqual(work.terminal_retry_at-due, (2,4)[attempt-1])
+                        self.assertEqual(work.terminal_retry_at, due + (2,4)[attempt-1])
                 self.assertIsNone(work.terminal_retry_at)
                 self.backend.retry_terminations()
                 self.assertEqual(save.call_count, 4)
