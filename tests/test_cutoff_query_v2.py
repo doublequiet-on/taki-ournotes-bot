@@ -10,7 +10,7 @@ import unittest
 from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import patch, Mock
 
 from PIL import Image
 
@@ -348,6 +348,242 @@ class CutoffQueryV2Tests(unittest.TestCase):
         self.assertIn('+0', rendered)
         self.assertNotIn('+-', rendered)
         self.assertIn('T1 / T2 / T3 / T10 / T100', rendered)
+
+
+class TotalRankingOfflineTests(unittest.TestCase):
+    """Normalized adapter fixtures only; no claim about an upstream HTTP schema."""
+    def setUp(self):
+        from ournotes_bot.sources.total_rankings import TotalRankingHistory, TotalRankingRepository
+        self.case=CutoffQueryV2Tests()
+        self.case.setUp()
+        self.addCleanup(self.case.doCleanups)
+        self.event=self.case.halloween_event()
+        self.now=self.event.start_ms/1000+300
+        self.history=TotalRankingHistory(Path(self.case.tmp.name)/'totals.sqlite3','tracker',
+                                        min_free_mb=0,clock=lambda:self.now)
+        self.calls=0
+        def fetch(event,deadline):
+            self.calls+=1
+            return self.snapshot()
+        self.totals=TotalRankingRepository(self.history,fetch=fetch,clock=lambda:self.now)
+        self.case.source.total_rankings=self.totals
+
+    def snapshot(self):
+        from ournotes_bot.sources.total_rankings import TotalRankingSnapshot, event_key
+        return TotalRankingSnapshot(event_key(self.event),'tracker',tuple(60_000_000-i*12345 for i in range(100)),
+                                    int(self.now*1000)-1000,int(self.now*1000),
+                                    player_ids=tuple(str(11000000001+i) for i in range(100)),
+                                    player_names=tuple('合成玩家'+str(i+1) for i in range(100)))
+
+    def ask(self,query='总榜'):
+        with patch.object(self.case.source,'event',return_value=self.event):
+            return self.case.ask(query)
+
+    def test_disconnected_source_never_creates_files_or_calls_adapter(self):
+        self.totals.fetch=None
+        self.assertIn('暂未接入',self.ask().text)
+        self.assertEqual(self.totals.sample(self.event,0),'not_connected')
+        self.assertFalse(self.history.path.exists())
+        self.assertEqual(self.calls,0)
+
+    def test_current_queries_do_not_write_history_and_accept_large_totals(self):
+        import sqlite3
+        answer=self.ask()
+        self.assertIn('60000000',answer.text)
+        self.assertNotIn('异常分数',answer.text)
+        self.assertFalse(answer.boards)
+        self.assertEqual(answer.total.player_id(1),'11000000001')
+        with sqlite3.connect(self.history.path) as db:
+            self.assertEqual(db.execute('SELECT count(*) FROM samples').fetchone()[0],0)
+            self.assertEqual(db.execute('SELECT count(*) FROM current_totals').fetchone()[0],1)
+        with patch.object(self.history,'read',side_effect=AssertionError('numeric history read')):
+            self.assertFalse(render_cutoff(self.ask('总榜 100 仅数值')))
+        self.assertEqual(self.calls,1)
+
+    def test_full_overview_splits_total_and_four_songs_without_duplicate_text(self):
+        from ournotes_bot.sources.moenotes_events import BoardSnapshot
+        boards=tuple(BoardSnapshot(s,(10_000_000,)*100) for s in self.event.songs)
+        with patch.object(self.case.source,'boards',return_value=boards):
+            answer=self.ask('')
+            pages=render_cutoff(answer,preview_label='合成离线验收')
+            self.assertEqual(len(pages),3)
+            self.assertIn('60000000',pages[0].text)
+            self.assertNotIn('60000000',pages[1].text)
+            self.assertTrue(all(len(p.text)<1800 for p in pages))
+            self.assertFalse(self.ask('单曲').total)
+
+    def test_total_only_event_can_sample_without_song_history(self):
+        from ournotes_bot.sources.cutoff_sampler import HistorySampler
+        self.event=replace(self.event,event_id='99',songs=(),total_ranking_enabled=True)
+        self.case.source.history=None
+        with patch.object(self.case.source,'event',return_value=self.event):
+            sampler=HistorySampler(self.case.source,servers=('jp',),clock=lambda:self.now)
+            self.assertEqual(sampler.sample_once()['new_valid_observations'],1)
+            self.assertEqual(sampler.sample_once()['new_valid_observations'],0)
+            self.now+=300
+            self.assertEqual(sampler.sample_once()['new_valid_observations'],1)
+        self.assertEqual(len(self.history.read(self.event,(1,)).points),2)
+        self.assertEqual(self.history.events('jp')[0].event_id,'99')
+        self.assertTrue(self.ask('').total)
+
+    def test_validation_rejects_wrong_identity_source_precision_and_position(self):
+        from ournotes_bot.sources.total_rankings import validate
+        from ournotes_bot.sources.moenotes_events import SourceError
+        base=self.snapshot()
+        for changed in (replace(base,event_key='wrong'),replace(base,source='haneoka'),
+                        replace(base,scores=(True,)),replace(base,scores=(2**53,)),
+                        replace(base,scores=(0,),player_ids=base.player_ids),
+                        replace(base,scores=(None,),player_ids=('11000000001',),player_names=('name',))):
+            with self.assertRaises(SourceError):validate(self.event,changed,'tracker')
+        self.assertNotEqual(base.event_key,__import__('ournotes_bot.sources.total_rankings',fromlist=['event_key']).event_key(
+            replace(self.event,songs=self.event.songs[:3])))
+
+    def test_restart_cache_fallback_expiry_conflict_and_recovery(self):
+        from ournotes_bot.sources.total_rankings import TotalRankingRepository
+        from ournotes_bot.sources.moenotes_events import SourceError
+        board=self.totals.capture(self.event,0)
+        self.now+=61
+        restored=TotalRankingRepository(self.history,fetch=Mock(side_effect=SourceError('upstream')),clock=lambda:self.now)
+        self.assertEqual(restored.capture(self.event,0).score(1),60_000_000)
+        self.now+=600
+        self.assertIsNone(restored.capture(self.event,0).score(1))
+        self.now+=61
+        self.totals.capture(self.event,0)
+        cached=self.totals.current[board.event_key]
+        self.now+=61
+        self.totals.fetch=lambda e,d:replace(cached,scores=(99,)*100)
+        self.assertEqual(self.totals.capture(self.event,0).quality,'conflict')
+        self.assertEqual(self.totals.sample(self.event,0),'conflict')
+        self.assertFalse(self.history.read(self.event,(1,)).points)
+        self.now+=61
+        self.totals.fetch=lambda e,d:self.snapshot()
+        self.assertEqual(self.totals.sample(self.event,0),'valid')
+        self.assertTrue(self.history.read(self.event,(1,)).points)
+
+    def test_sampling_gaps_old_history_and_independent_database(self):
+        import sqlite3
+        self.assertEqual(self.totals.sample(self.event,0),'valid')
+        self.now+=300
+        self.history.failure(self.event,'offline')
+        self.now+=300
+        self.assertEqual(self.totals.sample(self.event,0),'valid')
+        view=self.history.read(self.event,(1,100))
+        self.assertTrue(view.points[1].break_before)
+        answer=self.ask('id4 总榜')
+        self.assertEqual(answer.total.score(1),60_000_000)
+        self.assertIn('最后有效观测',answer.text)
+        with patch.object(self.case.source,'event',side_effect=AssertionError('historical network')):
+            self.assertTrue(self.case.ask('id4 总榜').total)
+        with sqlite3.connect(self.history.path) as db:
+            self.assertFalse(db.execute("SELECT name FROM sqlite_master WHERE name='observations'").fetchone())
+
+    def test_sampler_foreground_yield_marks_total_gap_without_fetching(self):
+        from ournotes_bot.sources.cutoff_sampler import HistorySampler
+        self.case.source.history=None
+        with patch.object(self.case.source,'event',return_value=self.event):
+            sampler=HistorySampler(self.case.source,servers=('jp',),clock=lambda:self.now)
+            sampler.sample_once()
+            self.now+=300
+            with self.case.source.foreground():sampler.sample_once()
+            self.assertEqual(self.calls,1)
+            self.now+=300
+            sampler.sample_once()
+        self.assertTrue(self.history.read(self.event,(1,)).points[1].break_before)
+
+    def test_full_range_pagination_keeps_all_ranks(self):
+        pages=render_cutoff(self.ask('总榜 1-100'))
+        text='\n'.join(p.text for p in pages)
+        for rank in range(1,101):self.assertIn(f'T{rank}：',text)
+        self.assertTrue(all(len(p.text)<1800 for p in pages))
+
+    @patch('ournotes_bot.sources.haneoka.game_assets.asset_bytes',return_value=None)
+    def test_total_uses_real_command_and_reply_renderer_with_captured_fallback(self, _game_art):
+        from ournotes_bot.commands import resolve_command
+        from ournotes_bot.application.replies import render_prepared
+        from ournotes_bot.natural_query.query_agent import QueryAgent
+        from ournotes_bot.structured_query import QueryResult
+        with patch.object(self.case.source,'event',return_value=self.event):
+            result=resolve_command('/查榜线 总榜 100',self.case.repo)
+        with patch('ournotes_bot.rendering.event_cutoff_visuals.load_artwork',return_value={}):
+            prepared=render_prepared(result.cutoff.text,result,self.case.repo,'zh')
+        self.assertTrue(prepared.image)
+        self.assertIn('58777845',prepared.text)
+        self.assertIn('综合分数榜',prepared.text)
+        self.assertEqual(self.calls,1)
+        query_result=QueryResult(QuerySpec(intent='event_cutoff'),cutoff=result.cutoff)
+        self.assertTrue(QueryAgent._has_useful_result(query_result))
+        with patch('ournotes_bot.rendering.ranking_layout.render',side_effect=ValueError('synthetic render failure')):
+            failed=render_prepared(result.cutoff.text,result,self.case.repo,'zh')
+        self.assertFalse(failed.image)
+        self.assertEqual(failed.text,result.cutoff.text)
+        self.assertEqual(self.calls,1)
+        from ournotes_bot.sources.moenotes_events import BoardSnapshot
+        boards=tuple(BoardSnapshot(s,(10_000_000,)*100) for s in self.event.songs)
+        with patch.object(self.case.source,'event',return_value=self.event),patch.object(self.case.source,'boards',return_value=boards):
+            overview=resolve_command('/查榜线',self.case.repo)
+        with patch('ournotes_bot.rendering.event_cutoff_visuals.load_artwork',return_value={}):
+            prepared=render_prepared(overview.cutoff.text,overview,self.case.repo,'zh')
+        self.assertTrue(prepared.pages)
+        self.assertIn('60000000',prepared.pages[0].text)
+        self.assertNotIn('60000000',prepared.pages[1].text)
+
+    def test_concurrent_capture_coalesces_and_corrupt_cache_is_replaced(self):
+        import sqlite3
+        from concurrent.futures import ThreadPoolExecutor
+        from ournotes_bot.sources.total_rankings import TotalRankingRepository
+        with ThreadPoolExecutor(max_workers=4) as pool:
+            boards=list(pool.map(lambda _:self.totals.capture(self.event,0),range(4)))
+        self.assertEqual(self.calls,1)
+        self.assertTrue(all(b.scores==boards[0].scores for b in boards))
+        with sqlite3.connect(self.history.path) as db:
+            db.execute("UPDATE current_totals SET payload='{}'")
+        restored=TotalRankingRepository(self.history,fetch=self.totals.fetch,clock=lambda:self.now)
+        self.assertEqual(restored.capture(self.event,0).score(1),60_000_000)
+        self.assertEqual(self.calls,2)
+
+    def test_foreign_legacy_database_and_low_disk_are_not_modified(self):
+        import sqlite3
+        from ournotes_bot.sources.total_rankings import TotalRankingHistory
+        other=Path(self.case.tmp.name)/'legacy.sqlite3'
+        with sqlite3.connect(other) as db:
+            db.execute('CREATE TABLE observations (score INTEGER)')
+            db.execute('INSERT INTO observations VALUES (123)')
+            db.execute('PRAGMA user_version=7')
+        before=other.read_bytes()
+        foreign=TotalRankingHistory(other,'tracker',min_free_mb=0,clock=lambda:self.now)
+        raw=replace(self.snapshot(),received_ms=int(self.now*1000))
+        self.assertEqual(foreign.record(self.event,raw),'storage_error')
+        self.assertEqual(other.read_bytes(),before)
+        self.history.min_free_bytes=1
+        self.history.disk_usage=lambda _:SimpleNamespace(free=0)
+        self.assertEqual(self.history.record(self.event,raw),'low_disk')
+        self.assertFalse(self.history.path.exists())
+
+    def test_other_source_cannot_write_existing_total_database(self):
+        from ournotes_bot.sources.total_rankings import TotalRankingHistory
+        self.totals.sample(self.event,0)
+        before=self.history.path.read_bytes()
+        foreign=TotalRankingHistory(self.history.path,'haneoka',min_free_mb=0,clock=lambda:self.now)
+        raw=replace(self.snapshot(),source='haneoka',received_ms=int(self.now*1000))
+        self.assertEqual(foreign.record(replace(self.event,source='haneoka'),raw),'storage_error')
+        self.assertEqual(self.history.path.read_bytes(),before)
+
+    def test_clock_quarantine_and_recovery_preserve_raw_without_plotting(self):
+        import sqlite3,json
+        base=self.snapshot()
+        self.totals.fetch=lambda e,d:replace(base,fetched_ms=base.fetched_ms+120000,server_ms=base.server_ms+120000)
+        self.assertEqual(self.totals.sample(self.event,0),'clock_unknown')
+        self.assertFalse(self.history.read(self.event,(1,)).points)
+        with sqlite3.connect(self.history.path) as db:
+            payload,state=db.execute('SELECT payload,quality FROM samples').fetchone()
+            self.assertEqual(json.loads(payload)['scores'][0],60_000_000)
+            self.assertEqual(state,'clock_unknown')
+        self.now+=300
+        self.totals.fetch=lambda e,d:self.snapshot()
+        self.assertEqual(self.totals.sample(self.event,0),'valid')
+        view=self.history.read(self.event,(1,))
+        self.assertEqual(len(view.points),1)
+        self.assertTrue(view.points[0].break_before)
 
 
 if __name__ == '__main__':

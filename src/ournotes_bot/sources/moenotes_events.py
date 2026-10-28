@@ -166,6 +166,7 @@ class EventSnapshot:
     notes: tuple[str, ...] = ()
     source: str = "tracker"
     challenge_order_verified: bool = True
+    total_ranking_enabled: bool | None = None  # Explicit normalized capability; never inferred from raw flags.
 
 
 @dataclass(frozen=True)
@@ -191,6 +192,8 @@ def event_ranking_format(event: EventSnapshot) -> EventRankingFormat:
     Match the entire identity so reused IDs/changed song sets remain unknown.
     These declarations do not manufacture a total-ranking endpoint or scores.
     """
+    if type(event.total_ranking_enabled) is bool:
+        return EventRankingFormat(event.total_ranking_enabled)
     profiles = {
         '1': (1790758800000, 1791460799000, (('1','100109'),('2','100056'),('3','100063')), False),
         '2': (1791525600000, 1792216799000, (('4','100111'),('5','100110'),('6','100076')), False),

@@ -780,7 +780,7 @@ class QueryAgent:
             return False
         spec = result.spec
         if result.cutoff is not None:
-            return any(board.scores for board in result.cutoff.boards)
+            return bool(result.cutoff.total and result.cutoff.total.scores) or any(board.scores for board in result.cutoff.boards)
         if spec.intent == "chart":
             return result.chart is not None and bool(result.chart[1])
         if spec.intent == "card":
