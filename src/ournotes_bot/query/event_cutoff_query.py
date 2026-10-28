@@ -1,6 +1,6 @@
 # L3
 # Input: direct/NL query text and the server-scoped EventCutoffRepository.
-# Output: CutoffRequest/CutoffAnswer with stable song numbers and same-row score/digital-ID/username projections.
+# Output: Captured single-song boards and explicit per-event total-ranking availability.
 # Pos: Query / Deterministic challenge-song cutoffs; see L2-2.md.
 # Effects: current queries use bounded Data calls/history writes; explicit activities read local history only; no model/QQ.
 from __future__ import annotations
@@ -11,12 +11,13 @@ import unicodedata
 from dataclasses import dataclass, replace
 
 from ..sources.moenotes_events import (BoardSnapshot, EventSnapshot, EventSong, SERVERS, SourceError,
-                                      display_time, zone_label)
+                                      display_time, zone_label, event_ranking_format)
 from .entity_lexicon import scoped_song_matches
 from ..sources.cutoff_history import HistoryView
+from ..domain.total_rankings import TotalRankingSnapshot
 
 NODES = (1, 2, 3, 10, 100)
-HELP = '/查榜线 [jp/hk/kr/en] [id1或活动="名称"] [歌名或歌曲ID=完整ID] [50或20-40] [仅数值]；参数顺序不限。id1指定活动1（兼容 活动ID=1），裸数字表示排名；指定活动读取本地最近一次有效观测，无排名看五档趋势，单排名看前后十名，区间看每行分数。'
+HELP = '/查榜线 [jp/hk/kr/en] [id1或活动="名称"] [单曲或总榜] [歌名或歌曲ID=完整ID] [50或20-40] [仅数值]；参数顺序不限。总榜目前仅查接入状态。id1指定活动1（兼容 活动ID=1），裸数字表示排名；指定活动读取本地最近一次有效观测，无排名看五档趋势，单排名看前后十名，区间看每行分数。'
 SERVER_ALIASES = {"jp": "jp", "日服": "jp", "hk": "tw", "国服": "tw", "國服": "tw",
                   "tw": "tw", "台服": "tw", "臺服": "tw",
                   "kr": "kr", "韩服": "kr", "韓服": "kr", "en": "en", "英服": "en", "国际服": "en", "國際服": "en"}
@@ -50,10 +51,11 @@ class CutoffRequest:
     extra_queries: tuple[str, ...] = ()
     event_id: str = ""
     event_name: str = ""
+    board_scope: str = "all"
 
     def __init__(self, server="jp", query="", rank=None, error="", code="invalid_arguments",
                  server_hint="", *, ranks=(), numeric_only=False, mode=None, target_rank=None,
-                 range_bounds=(), song_number=None, song_id="", literal_query=False, extra_queries=(), event_id="", event_name=""):
+                 range_bounds=(), song_number=None, song_id="", literal_query=False, extra_queries=(), event_id="", event_name="", board_scope="all"):
         values = tuple(ranks) + ((rank,) if rank is not None else ())
         mode = mode or ("near" if rank is not None else "discrete" if values else "trend")
         if mode == "near":
@@ -78,11 +80,16 @@ class CutoffRequest:
             error, values = error or "无法识别排名模式。", ()
         if song_number is not None and (type(song_number) is not int or song_number < 1):
             error = error or "歌曲编号必须为正整数，例如 歌曲1。"
+        if board_scope not in {'all', 'song', 'total'}:
+            error = error or '无法识别榜单类型。'
+        if board_scope == 'total' and (query or song_number is not None or song_id or extra_queries):
+            error = error or '综合榜不能同时指定歌曲，请保留总榜或单曲选择。'
         for name, value in (("server", server), ("query", query), ("ranks", tuple(sorted(set(values)))),
                             ("error", error), ("code", code), ("server_hint", server_hint), ("numeric_only", numeric_only),
                             ("mode", mode), ("target_rank", target_rank), ("range_bounds", tuple(range_bounds)),
                             ("song_number", song_number), ("song_id", song_id), ("literal_query", literal_query),
-                            ("extra_queries", tuple(extra_queries)), ("event_id", event_id), ("event_name", event_name)):
+                            ("extra_queries", tuple(extra_queries)), ("event_id", event_id), ("event_name", event_name),
+                            ("board_scope", board_scope)):
             object.__setattr__(self, name, value)
 
     @property
@@ -92,6 +99,8 @@ class CutoffRequest:
 
     def command_label(self):
         parts = ['查榜线', 'hk' if self.server == 'tw' else self.server]
+        if self.board_scope != 'all':
+            parts.append('总榜' if self.board_scope == 'total' else '单曲')
         if self.event_id:
             parts.append(f'id{self.event_id}')
         if self.event_name:
@@ -172,6 +181,7 @@ def parse_cutoff(text: str) -> CutoffRequest:
     servers, numbers, ids, names, words = [], [], [], [], []
     event_ids, event_names = [], []
     numeric_only = False
+    scopes = []
     for match in _TOKEN.finditer(text):
         field, value = match.groups()
         token = match[0]
@@ -208,6 +218,8 @@ def parse_cutoff(text: str) -> CutoffRequest:
             if alias not in SERVER_ALIASES:
                 return CutoffRequest(error='未知服务器。仅支持日服（jp）、国服（hk）、韩服（kr）、英服（en）。')
             servers.append(SERVER_ALIASES[alias])
+        elif token in {'总榜', '總榜', '综合榜', '綜合榜', '单曲', '單曲'}:
+            scopes.append('song' if token in {'单曲', '單曲'} else 'total')
         elif token == '仅数值':
             numeric_only = True
         elif _SONG_NUMBER.fullmatch(token):
@@ -220,13 +232,16 @@ def parse_cutoff(text: str) -> CutoffRequest:
             words.append(token)
     if len(set(servers)) > 1:
         return CutoffRequest(error='同时指定了不同服务器，请保留一个服务器。')
+    if len(set(scopes)) > 1:
+        return CutoffRequest(error='不能同时指定总榜和单曲，请保留一种榜单选择。')
     if len(set(event_ids)) > 1 or len(set(event_names)) > 1:
         return CutoffRequest(error='同时指定了不同活动，请保留一个活动选择。')
     if len(set(numbers)) > 1 or len(set(ids)) > 1:
         return CutoffRequest(error='同时指定了不同歌曲，请保留一个歌曲选择。')
     request = CutoffRequest(servers[0] if servers else 'jp', song_number=numbers[0] if numbers else None,
                             song_id=ids[0] if ids else '', numeric_only=numeric_only,
-                            event_id=event_ids[0] if event_ids else '', event_name=event_names[0] if event_names else '')
+                            event_id=event_ids[0] if event_ids else '', event_name=event_names[0] if event_names else '',
+                            board_scope=scopes[0] if scopes else 'all')
     remaining = ' '.join(words)
     ranked, query = _rank_selection(request, remaining)
     if names:
@@ -290,6 +305,43 @@ class CutoffAnswer:
     display_ranks: tuple[int, ...] = ()  # A page projection of the same captured boards.
     history_ranks: tuple[int, ...] = ()
     score_display_limit: int = 30_000_000  # Display policy, never a source validity/game score limit.
+    total: TotalRankingSnapshot | None = None
+    total_history: HistoryView = HistoryView()
+    total_status: str = ''
+
+    def total_time_label(self, stamp):
+        return display_time(stamp,self.event.server)+' '+zone_label(self.event.server)
+
+    @property
+    def total_region_label(self):
+        return SERVERS[self.event.server][0]
+
+    @property
+    def total_text(self):
+        board = self.total
+        if board is None:
+            return ''
+        lines = [f'{SERVERS[self.event.server][0]} · {self.event.title} · 综合分数榜', self.rank_label,
+                 f'{board.status} · 源采集 {display_time(board.fetched_ms,self.event.server)}']
+        for rank in self.ranks:
+            value = board.score(rank)
+            lines.append(f'T{rank}：' + (str(value) if value is not None else '暂无数据')
+                         + f' · ID：{board.player_id(rank) or "未获取"} · {board.player_name(rank) or "未获取"}')
+        lines.extend((*board.notes,self.total_history.warning))
+        if self.total_history.points:
+            lines.append('综合榜历史截至：' + display_time(self.total_history.points[-1].time_ms,self.event.server))
+        lines.append(f'来源 {board.source} · 综合榜独立观测；非预测、非确认终榜。')
+        return '\n'.join(line for line in lines if line)
+
+    @property
+    def ranking_notes(self):
+        if self.total is not None:
+            return ()
+        if (self.event and self.request.board_scope == 'all' and not self.request.query
+                and self.request.song_number is None and not self.request.song_id):
+            rules = event_ranking_format(self.event)
+            return (self.total_status or rules.total_status,) if rules.total_enabled is True else ()
+        return ()
 
     @property
     def historical(self):
@@ -353,10 +405,14 @@ class CutoffAnswer:
         event = self.event
         if event is None:
             return "活动暂不可用。"
+        if not self.boards and self.total is not None:
+            return self.total_text
         lines = [f"{SERVERS[event.server][0]} · {event.title} · {event_status(event)}", f"活动 {event.event_id} · {zone_label(event.server)}",
                  f"开始：{display_time(event.start_ms, event.server)}", f"结束：{display_time(event.end_ms, event.server)}", self.rank_label]
         if self.display_ranks and self.display_ranks != self.request.ranks:
             lines.append(f'本页 T{self.ranks[0]}～T{self.ranks[-1]}')
+        if self.total is not None:
+            lines.extend(('',self.total_text,''))
         for board in self.boards:
             if self.request.mode == 'trend':
                 lines.append('')
@@ -377,7 +433,7 @@ class CutoffAnswer:
                          + ('（分数/数字ID/用户名；缺失为未获取）' if any(self.has_players(b) for b in self.boards) else '（分数）'))
             lines.extend(f'T{rank}：' + '｜'.join(f'{self.score_label(board, rank)}/{self.id_label(board, rank)}/{self.table_name(board, rank)}' if self.has_players(board) else self.score_label(board, rank)
                                                 for board in self.boards) for rank in self.ranks)
-        lines.extend(["", *event.notes, f"{self.source_label}（非官方）· 挑战歌曲Top100 · 按响应位置，非预测或确认终榜。"])
+        lines.extend(["", *self.ranking_notes, *event.notes, f"{self.source_label}（非官方）· 挑战歌曲Top100 · 按响应位置，非预测或确认终榜。"])
         return "\n".join(lines)
 
     @property
@@ -414,9 +470,17 @@ def execute_cutoff(request: CutoffRequest, repository) -> CutoffAnswer:
 def _historical_event(request, repository):
     """Resolve only recorded challenge identities; static song associations never create boards."""
     history = repository.event_cutoffs.history
-    if history is None:
+    totals = getattr(repository.event_cutoffs,'total_rankings',None)
+    if request.board_scope == 'total' and totals is not None:
+        events = totals.history.events(request.server)
+        # Single-song metadata may identify an older event with no total board;
+        # scores and players still come exclusively from the total store.
+        if history is not None and (not events or request.event_id and not any(e.event_id==request.event_id for e in events)):
+            events = (*events,*(e for e in history.events(request.server) if e.event_id not in {t.event_id for t in events}))
+    elif history is None:
         return None, '历史记录未配置。', 'data_unavailable'
-    events = history.events(request.server)
+    else:
+        events = history.events(request.server)
     # The existing JP catalog also supplies names for databases recorded before metadata storage.
     aliases = {}
     if request.server == 'jp' and hasattr(repository, 'capture_catalog'):
@@ -475,7 +539,35 @@ def _execute_cutoff(request: CutoffRequest, repository) -> CutoffAnswer:
             return CutoffAnswer(request, message='历史库暂不可用或活动身份冲突，未改查当前活动。', status='data_unavailable')
         message = "该服务器当前没有可用活动。" if exc.code == "not_found" else "该服务器的活动信息暂不可用，请稍后重试。"
         return CutoffAnswer(request, message=SERVERS[request.server][0] + "：" + message, status="data_unavailable")
+    rules = event_ranking_format(event)
+    totals = getattr(source,'total_rankings',None)
+    total = None
+    total_history = HistoryView()
+    total_status = rules.total_status
+    include_total = request.board_scope == 'total' or (request.board_scope == 'all' and not (
+        request.query or request.song_number is not None or request.song_id or request.extra_queries))
+    if include_total and totals is not None and (rules.total_enabled is True or historical and rules.total_enabled is not False):
+        if historical or totals.connected:
+            total_status = '综合榜来源或历史暂不可用，单曲榜单独查询。'
+            try:
+                total = totals.history.latest(event) if historical else totals.capture(event,deadline)
+                if not request.numeric_only:
+                    total_history = totals.history.read(event,request.ranks or NODES)
+                if total is not None and not any(s is not None for s in total.scores) and not total_history.points:
+                    total_status=total.status
+                    total=None
+            except SourceError:
+                total_status = '综合榜历史暂不可用，未改查单曲历史。'
+    if request.board_scope == 'total':
+        if total is not None:
+            return CutoffAnswer(request,event,total=total,total_history=total_history,
+                                status='success' if total.scores or total_history.points else 'data_unavailable')
+        return CutoffAnswer(request, event, message=f'{SERVERS[event.server][0]} · {event.title}\n' + total_status,
+                            status='empty' if rules.total_enabled is False else 'data_unavailable')
     if not event.songs:
+        if total is not None:
+            return CutoffAnswer(request,event,total=total,total_history=total_history,
+                                status='success' if total.scores or total_history.points else 'data_unavailable')
         return CutoffAnswer(request, event, message="本活动没有挑战歌曲榜。", status="empty")
     query = request.query.strip()
     full_catalog = event.catalog or tuple((s.music_id, s.names + (s.title,)) for s in event.songs)
@@ -571,4 +663,13 @@ def _execute_cutoff(request: CutoffRequest, repository) -> CutoffAnswer:
         if historical:
             histories = tuple((key, replace(view, warning=view.warning.replace('当前值', '最近一次有效观测')
                                             .replace('当前榜线仍可查询', '最近一次有效观测单独显示'))) for key, view in histories)
-    return CutoffAnswer(request, event, boards, status="success" if any(b.scores for b in boards) else "data_unavailable", histories=histories,history_ranks=history_ranks)
+    answer = CutoffAnswer(request, event, boards, status="success" if any(b.scores for b in boards) or total and total.scores else "data_unavailable",
+                          histories=histories,history_ranks=history_ranks,total=total,total_history=total_history,total_status=total_status)
+    # A real saved history remains useful during an outage. With no current
+    # values or history, avoid sending several empty trend/table images.
+    if not historical and total is None and not any(b.scores for b in boards) and not any(view.points for _, view in histories):
+        details = tuple(dict.fromkeys(b.status for b in boards))
+        return replace(answer, message=f'{SERVERS[event.server][0]} · {event.title}\n'
+                       + '本期所选单曲榜暂无可用分数，请稍后重试。\n'
+                       + '\n'.join((*answer.ranking_notes, *details)))
+    return answer

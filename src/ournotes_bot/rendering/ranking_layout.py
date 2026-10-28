@@ -54,7 +54,13 @@ def chart(c,answer,board,box,display_time,heading=True):
 
 
 def render(answer,*,assets,load,display_time,server_label,timezone_label,catalogs=({},{}),bonus_marks=(),song_bands=None):
-    if answer.event is None or answer.message or answer.request.numeric_only or not answer.boards:return ()
+    if answer.event is None or answer.message or answer.request.numeric_only or not (answer.boards or answer.total):return ()
+    total_pages=()
+    if answer.total is not None:
+        from .total_rankings import render_total
+        total_pages=render_total(replace(answer,boards=()),assets)
+        if not answer.boards:return total_pages
+        answer=replace(answer,total=None,total_status='综合榜单独展示。')
     trend=answer.request.mode=='trend';boards=answer.boards;historical=answer.historical
     width=2600 if trend else (1080 if len(boards)==1 else 1800)
     member,support=catalogs;cache={};song_bands=song_bands or {}
@@ -80,6 +86,7 @@ def render(answer,*,assets,load,display_time,server_label,timezone_label,catalog
     event_head=head
     footer=[' · '.join((b.song.title,b.status,display_time(b.fetched_ms,event.server)+' '+timezone_label)) for b in boards]
     footer += [n for b in boards for n in b.notes]+list(event.notes)
+    footer += [*answer.ranking_notes]
     footer += [answer.history_for(b).warning for b in boards if answer.history_for(b).warning]
     if any(b.score(r) is not None and b.score(r)>answer.score_display_limit for b in boards for r in answer.ranks):
         footer.append('* 表示当前异常分数，完整原值和来源排名保留。')
@@ -277,7 +284,7 @@ def render(answer,*,assets,load,display_time,server_label,timezone_label,catalog
             parts=render_parts(sizes,width,head+footheight,lambda a,z,h:paint(groups[a],groups[z],h))
         else:
             parts=render_parts(tuple(b[1] for b in blocks),width,head+footheight,paint)
-        return tuple(CutoffPage(p.image,answer.text if trend else replace(answer,display_ranks=tuple(b[2] for b in blocks[p.start:p.stop])).text) for p in parts)
+        return total_pages+tuple(CutoffPage(p.image,answer.text if trend else replace(answer,display_ranks=tuple(b[2] for b in blocks[p.start:p.stop])).text) for p in parts)
     finally:
         for image in cache.values():
             if image is not None:image.close()
