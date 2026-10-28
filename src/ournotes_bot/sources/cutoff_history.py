@@ -199,10 +199,12 @@ class CutoffHistory:
             return
         size = len(board.observed_scores if board.observed_scores is not None else board.scores)
         if len(values) != size:
-            raise ValueError('invalid player details length')
+            _LOGGER.warning('Misaligned history player details excluded; scores and public identity retained')
+            return
         details = [values[i] if i < size and score is not None else None for i, score in enumerate(scores)]
         if any(detail is not None and not valid_ranking_detail(detail, server) for detail in details):
-            raise ValueError('invalid player details')
+            _LOGGER.warning('Invalid history player details excluded; scores and public identity retained')
+            return
         if not any(detail is not None for detail in details):
             return
         db.execute(DETAIL_SCHEMA)
@@ -825,4 +827,5 @@ def configure_sources(repository, settings):
         settings.cache_file.with_name(total_file),
         settings.cutoff_source, enabled=settings.cutoff_history_enabled,
         min_free_mb=settings.cutoff_history_min_free_mb,
-        compressed=settings.cutoff_source == 'tracker'), fetch=total_fetch, clock=source.clock)
+        compressed=settings.cutoff_source == 'tracker'), fetch=total_fetch,
+        clock=source.clock if total_fetch is not None else time.time)
