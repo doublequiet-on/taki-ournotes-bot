@@ -10,10 +10,21 @@ import tempfile
 import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
+KOISHI_CLIENT_SHA256 = '55a68e89eda7e3fe59305b09e6c4de19481a8d7aa5df97579822c819ebf3ccaf'
+KOISHI_RELOAD_OLD = b'p2(e,t).then(location.reload,'
+KOISHI_RELOAD_NEW = b'p2(e,t).then(()=>location.reload(),'
 
 
 def sha(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def patch_koishi_client(path):
+    """Bind Koishi 5.30.11's reconnect reload; reject unknown upstream assets."""
+    data = path.read_bytes()
+    if hashlib.sha256(data).hexdigest() != KOISHI_CLIENT_SHA256 or data.count(KOISHI_RELOAD_OLD) != 1:
+        raise ValueError('Koishi Console client differs from reviewed 5.30.11 asset')
+    path.write_bytes(data.replace(KOISHI_RELOAD_OLD, KOISHI_RELOAD_NEW, 1))
 
 
 def build(python_artifact, node, output):
@@ -36,6 +47,7 @@ def build(python_artifact, node, output):
         gateway=stage/'gateway';gateway.mkdir()
         for name in ('scripts','node_modules','console'):
             shutil.copytree(ROOT/'koishi'/name,gateway/name,ignore=shutil.ignore_patterns('.bin','*.tsbuildinfo'))
+        patch_koishi_client(gateway/'node_modules/@koishijs/plugin-console/dist/client.js')
         for name in ('package.json','package-lock.json','run.cjs','console.cjs','health.cjs','operation-journal.cjs','ops-host.cjs','ops-controls.cjs','trusted-actions.cjs'):
             shutil.copy2(ROOT/'koishi'/name,gateway/name)
         subprocess.run([str(node),'node_modules/typescript/bin/tsc','-p','tsconfig.json','--outDir',str(gateway/'lib')],cwd=ROOT/'koishi',check=True)

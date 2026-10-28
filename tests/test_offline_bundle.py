@@ -14,8 +14,33 @@ from types import SimpleNamespace
 from deploy.koishi_control import inspect_combination_archive, stage_combination, COMBINATION_ASSET
 
 from deploy import offline_bundle as b
+from scripts import build_koishi_release as koishi_release
 
 COMMIT = "a" * 40
+
+
+class KoishiClientPatchTests(unittest.TestCase):
+    def test_pinned_reload_fix_and_unexpected_asset_rejection(self):
+        original = b'fixture:' + koishi_release.KOISHI_RELOAD_OLD + b'end'
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'client.js'
+            path.write_bytes(original)
+            with patch.object(koishi_release, 'KOISHI_CLIENT_SHA256', hashlib.sha256(original).hexdigest()):
+                koishi_release.patch_koishi_client(path)
+                self.assertEqual(path.read_bytes(), original.replace(koishi_release.KOISHI_RELOAD_OLD, koishi_release.KOISHI_RELOAD_NEW))
+                with self.assertRaisesRegex(ValueError, 'differs from reviewed'):
+                    koishi_release.patch_koishi_client(path)
+            changed = b'unexpected asset'
+            path.write_bytes(changed)
+            with self.assertRaisesRegex(ValueError, 'differs from reviewed'):
+                koishi_release.patch_koishi_client(path)
+            self.assertEqual(path.read_bytes(), changed)
+            duplicate = original + koishi_release.KOISHI_RELOAD_OLD
+            path.write_bytes(duplicate)
+            with patch.object(koishi_release, 'KOISHI_CLIENT_SHA256', hashlib.sha256(duplicate).hexdigest()):
+                with self.assertRaisesRegex(ValueError, 'differs from reviewed'):
+                    koishi_release.patch_koishi_client(path)
+            self.assertEqual(path.read_bytes(), duplicate)
 
 
 class CombinationArchiveTests(unittest.TestCase):
