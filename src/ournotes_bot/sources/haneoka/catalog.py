@@ -11,6 +11,7 @@ from copy import deepcopy
 import json
 import math
 import os
+import re
 import sys
 import threading
 import time
@@ -40,6 +41,19 @@ ERRORS = (OSError, ValueError, TypeError, KeyError, IndexError, RuntimeError, Ov
 
 def encoded(value):
     return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False).encode("utf-8")
+
+
+_EVENT_BANNER = re.compile(r"/assets/jp/Assets/AddressableResources/Image/Event/[0-9]+/Banner/[A-Za-z0-9_-]+\.(?:png|webp)")
+
+
+def persistent_snapshot(saved):
+    """Keep the shared cache readable by versions predating event banner support."""
+    snapshot = deepcopy(saved)
+    for event in snapshot["documents"]["jp"].get("events", {}).values():
+        image = event.get("image")
+        if isinstance(image, str) and _EVENT_BANNER.fullmatch(image):
+            event["image"] = ""
+    return snapshot
 
 
 class CatalogRecords(tuple):
@@ -239,6 +253,7 @@ class CatalogRepository:
         return saved
 
     def _write(self, saved):
+        saved = persistent_snapshot(saved)
         body = encoded({"snapshot": saved, "sha256": hashlib.sha256(encoded(saved)).hexdigest()})
         if len(body) > MAX_BYTES:
             raise ValueError("Catalog cache size limit")
@@ -394,7 +409,7 @@ class CatalogRepository:
                     if same:
                         self._saved_result()
                         try:
-                            disk_valid = self._read() == before
+                            disk_valid = self._read() == persistent_snapshot(before)
                         except ERRORS:
                             disk_valid = False
                         if not disk_valid:

@@ -175,7 +175,7 @@ def parse_on_query(question, repository, *, include_legacy=False):
             return QueryProblem(str(exc), "ambiguous" if "歧义" in str(exc) else "invalid_arguments")
         if not 1 <= req.page <= 100:
             return QueryProblem("页码应在 1～100 之间。")
-        return QuerySpec("support_card" if support else "card", page=req.page, card_query=req.query)
+        return QuerySpec("support_card" if support else "card", page=req.page, card_request=req)
     # Existing range-only grammar retains its contract. New exact levels and
     # colors/missions use SongFilter, including integer vs decimal equality.
     if not re.search(r"歌曲|乐曲|曲目|歌|谱面", text):

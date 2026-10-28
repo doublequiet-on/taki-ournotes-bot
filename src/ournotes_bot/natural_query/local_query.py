@@ -250,7 +250,7 @@ def local_card_catalog(query: str, repository: SongRepository) -> QuerySpec | st
         req = parse_card_request(text, repository, support=support)
     except ValueError as exc:
         return str(exc)
-    return QuerySpec("support_card" if support else "card", page=req.page, card_query=text)
+    return QuerySpec("support_card" if support else "card", page=req.page, card_request=req)
 
 
 def is_explicit_empty_subject_query(query: str, intent: str,

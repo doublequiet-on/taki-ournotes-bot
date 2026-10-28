@@ -9,8 +9,9 @@ from __future__ import annotations
 
 import re
 import unicodedata
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
+from ..domain.card_query import CardFilters, CardRequest
 from ..data import Card, SupportCard, localized_text, normalize, character_identity
 from .entity_lexicon import resolve_exact_alias, resolve_character_fragment, CharacterAmbiguity
 
@@ -38,22 +39,6 @@ def labels(card):
         return "/".join("不适用" if v == "not_applicable" else
                         (LIVE.get(v, "分类未确认") if key == "live" else v or "分类未确认") for v in values)
     return label("live"), label("gekisou")
-
-
-@dataclass(frozen=True)
-class CardRequest:
-    support: bool = False
-    mode: str = "list"
-    card_id: int | None = None
-    page: int = 1
-    query: str = ""
-    filters: dict[str, tuple] = field(default_factory=dict)
-
-    @property
-    def command(self):
-        if self.mode == "art":
-            return "/查留影卡面" if self.support else "/查卡面"
-        return "/查留影卡" if self.support else "/查卡"
 
 
 @dataclass(frozen=True)
@@ -142,6 +127,28 @@ def _entity(value, dimension, repository):
     if alias and dimension != "band":
         return "character", alias.display
     raise ValueError(f"无法识别筛选值“{value}”；请使用已收录的角色/乐队简称或完整名称。")
+
+
+def card_entity_filters(value, repository, *, support=False, dimension=None):
+    """Resolve one model-proposed entity, not a filter expression."""
+    value = unicodedata.normalize("NFKC", value).strip()
+    if dimension is None and value.isdecimal():
+        return CardFilters(title_ids=(int(value),))
+    try:
+        kind, name = _entity(value, dimension, repository)
+        return CardFilters(**{kind: (name,)})
+    except ValueError:
+        if dimension is not None:
+            raise
+        source = repository.support_cards if support else repository.cards
+        exact = tuple(c.id for c in source if normalize(value) in
+                      {normalize(c.title), *(normalize(n) for n in c.localized.get("title", {}).values())})
+        alias = resolve_exact_alias("support_card" if support else "card", value, repository)
+        if not alias.ambiguous and alias.entity and alias.entity.kind == ("support_card" if support else "card"):
+            exact = tuple(c.id for c in source if c.id == alias.entity.value)
+        if not exact:
+            raise
+        return CardFilters(title_ids=tuple(dict.fromkeys(exact)))
 
 
 def parse_card_request(query, repository, *, support=False, art=False):
@@ -271,7 +278,7 @@ def parse_card_request(query, repository, *, support=False, art=False):
                     for card_id in exact:
                         add("title_ids", card_id)
     return CardRequest(support, mode="detail" if explicit_id is not None else "list", page=page,
-                       query=query, filters={k: tuple(dict.fromkeys(v)) for k, v in filters.items()})
+                       query=query, filters=CardFilters(**{k: tuple(dict.fromkeys(v)) for k, v in filters.items()}))
 
 
 def execute_card_request(req, repository):
@@ -291,7 +298,7 @@ def execute_card_request(req, repository):
     for card in {c.id: c for c in cards}.values():
         keep = True
         card_missing = set()
-        for key, values in req.filters.items():
+        for key, values in req.filters.conditions():
             unknown = False
             if key == "rarity":
                 match = card.rarity in values

@@ -166,6 +166,45 @@ class EventSnapshot:
     notes: tuple[str, ...] = ()
     source: str = "tracker"
     challenge_order_verified: bool = True
+    total_ranking_enabled: bool | None = None  # Explicit normalized capability; never inferred from raw flags.
+
+
+@dataclass(frozen=True)
+class EventRankingFormat:
+    """Verified per-event capability, independent of ranking transport availability."""
+    total_enabled: bool | None = None
+
+    @property
+    def total_status(self):
+        if self.total_enabled is True:
+            return '本期设有综合分数榜；综合榜数据暂未接入。'
+        if self.total_enabled is False:
+            return '该期未开放综合分数榜。'
+        return '该期是否开放综合分数榜尚未确认；当前仅支持已接入的单曲榜。'
+
+
+def event_ranking_format(event: EventSnapshot) -> EventRankingFormat:
+    """Reviewed JP rules; never infer total ranking from eventType/disabled flags.
+
+    Evidence: JP 1.1.0 notice 75, Halloween notice 77, MasterEvent,
+    MasterChallengeMusic and MasterChallengeMusicTotalRankingReward at
+    1.1.0.100/374f6731b9e37377975ad5fad0e6f56a (2026-10-28).
+    Match the entire identity so reused IDs/changed song sets remain unknown.
+    These declarations do not manufacture a total-ranking endpoint or scores.
+    """
+    if type(event.total_ranking_enabled) is bool:
+        return EventRankingFormat(event.total_ranking_enabled)
+    profiles = {
+        '1': (1790758800000, 1791460799000, (('1','100109'),('2','100056'),('3','100063')), False),
+        '2': (1791525600000, 1792216799000, (('4','100111'),('5','100110'),('6','100076')), False),
+        '3': (1792303200000, 1792994399000, (('7','100114'),('8','100081'),('9','100104')), False),
+        '4': (1793156400000, 1794031199000, (('10','100118'),('11','100115'),('12','100005'),('13','100029')), True),
+    }
+    profile = profiles.get(event.event_id) if event.server == 'jp' else None
+    if profile and (event.start_ms, event.end_ms, frozenset((s.challenge_id, s.music_id) for s in event.songs)) == (
+            profile[0], profile[1], frozenset(profile[2])) and len(event.songs) == len(profile[2]):
+        return EventRankingFormat(profile[3])
+    return EventRankingFormat()
 
 
 @dataclass(frozen=True)

@@ -1,24 +1,56 @@
 import { ref, send, toRaw } from './runtime.js';
 export function sessionState() {
-  const logged=ref(false), busy=ref(false), message=ref(''), stale=ref(false), dirty=ref(false), conflict=ref(false);
+  const logged=ref(false), busy=ref(false), message=ref(''), readMessage=ref(''), stale=ref(false), dirty=ref(false), conflict=ref(false);
   const overview=ref(null), requests=ref(null), detail=ref(null), sources=ref(null), metrics=ref(null), groups=ref(null), notices=ref(null), draft=ref(null), guard=ref(null);
   const groupId=ref(''),groupDraft=ref(null),groupRevision=ref(null),groupDirty=ref(false),groupConflict=ref(false);
   const jobs=ref(null),jobDetail=ref(null),audit=ref(null),host=ref(null),noticeTarget=ref(null),controls=ref(null),pendingJobs=new Map(),pendingControls=new Map();
   const model=ref(null),modelDraft=ref(null),modelGuard=ref(null),modelKey=ref(''),modelDirty=ref(false),modelConflict=ref(false),groupUsage=ref(null),trusted=ref(null);
+  const groupRecoveryBlocked=ref(false);
   const pendingProbes=new Map(),pendingTrusted=new Map();
-  let generation=0;
+  let generation=0,reauthNotice='',groupEpochBeforeDisconnect;
   const sequences=new Map();
   const failed=new Set();
-  function clearProtected() {
-    generation++;logged.value=false;failed.clear();sequences.clear();stale.value=false;
-    for(const value of [overview,requests,detail,sources,metrics,groups,notices,draft,guard,jobs,jobDetail,audit,host,noticeTarget,controls,model,modelDraft,modelGuard,groupUsage,trusted])value.value=null;
-    modelKey.value='';modelDirty.value=false;modelConflict.value=false;pendingProbes.clear();pendingTrusted.clear();
-    pendingJobs.clear();pendingControls.clear();
-    dirty.value=false;conflict.value=false;groupId.value='';groupDraft.value=null;groupRevision.value=null;groupDirty.value=false;groupConflict.value=false;
+  function clearProtected(keepEdits=false) {
+    const hadDraft=dirty.value||groupDirty.value||modelDirty.value,hadModelKey=!!modelKey.value;
+    if(keepEdits&&groupDirty.value&&groupEpochBeforeDisconnect===undefined)groupEpochBeforeDisconnect=guard.value?.gateway_epoch||null;
+    generation++;logged.value=false;failed.clear();sequences.clear();stale.value=false;readMessage.value='';
+    for(const value of [overview,requests,detail,sources,metrics,groups,notices,jobs,jobDetail,audit,host,noticeTarget,controls,model,groupUsage,trusted])value.value=null;
+    if(!keepEdits||!dirty.value){draft.value=null;guard.value=null;dirty.value=false;conflict.value=false;}
+    if(!keepEdits||!groupDirty.value){groupId.value='';groupDraft.value=null;groupRevision.value=null;groupDirty.value=false;groupConflict.value=false;groupRecoveryBlocked.value=false;groupEpochBeforeDisconnect=undefined;}
+    if(!keepEdits||!modelDirty.value){modelDraft.value=null;modelGuard.value=null;modelDirty.value=false;modelConflict.value=false;}
+    modelKey.value='';
+    if(!keepEdits){pendingProbes.clear();pendingTrusted.clear();pendingJobs.clear();pendingControls.clear();reauthNotice='';}
+    return {hadDraft,hadModelKey};
   }
   function unauthorized(error) {
     if(error!=='unauthorized'&&error?.message!=='unauthorized')return false;
-    clearProtected();message.value='管理会话已过期，请重新登录。';return true;
+    suspend();return true;
+  }
+  function suspend() {
+    const {hadDraft,hadModelKey}=clearProtected(true);
+    if(hadModelKey)reauthNotice='设置草稿已保留；未提交的密钥已清除，请重新输入。';
+    else if(hadDraft&&!reauthNotice)reauthNotice='未保存的设置草稿已保留，请核对后继续。';
+    message.value='管理会话已过期，请重新登录。'+reauthNotice;
+  }
+  function captureEdits() {
+    // RPC payloads are JSON values; serialization also unwraps nested Vue proxies.
+    const copy=value=>value===undefined?null:JSON.parse(JSON.stringify(value));
+    return {schema:1,notice:modelKey.value?'设置草稿已保留；未提交的密钥已清除，请重新输入。':reauthNotice,
+      global:dirty.value?{draft:copy(draft.value),guard:copy(guard.value),conflict:conflict.value}:null,
+      group:groupDirty.value?{id:groupId.value,draft:copy(groupDraft.value),revision:groupRevision.value,epoch:groupEpochBeforeDisconnect===undefined?(guard.value?.gateway_epoch||null):groupEpochBeforeDisconnect}:null,
+      model:modelDirty.value?{draft:copy(modelDraft.value),guard:copy(modelGuard.value),conflict:modelConflict.value}:null,
+      jobs:copy([...pendingJobs]),controls:copy([...pendingControls]),probes:copy([...pendingProbes]),trusted:copy([...pendingTrusted])};
+  }
+  function restoreEdits(snapshot) {
+    if(!snapshot||snapshot.schema!==1)return;
+    reauthNotice=snapshot.notice||'';
+    if(snapshot.global){draft.value=snapshot.global.draft;guard.value=snapshot.global.guard;dirty.value=true;conflict.value=!!snapshot.global.conflict;}
+    if(snapshot.group){groupId.value=snapshot.group.id;groupDraft.value=snapshot.group.draft;groupRevision.value=snapshot.group.revision;groupDirty.value=true;
+      groupEpochBeforeDisconnect=snapshot.group.epoch;groupRecoveryBlocked.value=true;}
+    if(snapshot.model){modelDraft.value=snapshot.model.draft;modelGuard.value=snapshot.model.guard;modelDirty.value=true;modelConflict.value=!!snapshot.model.conflict;}
+    for(const [map,entries] of [[pendingJobs,snapshot.jobs],[pendingControls,snapshot.controls],[pendingProbes,snapshot.probes],[pendingTrusted,snapshot.trusted]])
+      if(Array.isArray(entries))for(const [key,value] of entries)map.set(key,value);
+    if(reauthNotice)message.value='管理会话已过期，请重新登录。'+reauthNotice;
   }
   async function rpc(method,...args) {
     let timer;
@@ -35,10 +67,12 @@ export function sessionState() {
         value.backend={...target.value.backend,sections:Object.fromEntries(Object.entries(target.value.backend.sections).map(([key,item])=>[key,{...item,stale:true,reason_code:'backend_unavailable'}]))};
       }
       target.value=value;
-      if(backendMissing){failed.add(target);message.value='后端暂不可用，保留最近请求数据和草稿；当前健康未就绪。';}else failed.delete(target);
+      if(backendMissing){failed.add(target);readMessage.value='后端暂不可用，保留最近请求数据和草稿；当前健康未就绪。';}else failed.delete(target);
       stale.value=failed.size>0;
-      if(!stale.value&&/^(读取失败|后端暂不可用)/.test(message.value))message.value='连接已恢复，草稿未被覆盖。';
+      if(!stale.value&&/^(读取失败|后端暂不可用)/.test(readMessage.value))readMessage.value='连接已恢复，草稿未被覆盖。';
       if(method==='overview') {
+        if(groupDirty.value&&groupEpochBeforeDisconnect!==undefined){groupRecoveryBlocked.value=!groupEpochBeforeDisconnect||groupEpochBeforeDisconnect!==value.guard?.gateway_epoch;if(groupRecoveryBlocked.value)groupConflict.value=true;}
+        if(!groupRecoveryBlocked.value)groupEpochBeforeDisconnect=undefined;
         if(!dirty.value) { draft.value=structuredClone(value.settings); guard.value=value.guard; }
         else if(JSON.stringify(guard.value)!==JSON.stringify(value.guard))conflict.value=true;
       }
@@ -50,13 +84,13 @@ export function sessionState() {
     } catch (error) {
       if(token!==generation||seq!==sequences.get(target))return;
       if(unauthorized(error))return;
-      failed.add(target); stale.value=true; message.value='读取失败，保留上次数据和草稿。会话过期时请重新登录。';
+      failed.add(target); stale.value=true; readMessage.value='读取失败，保留上次数据和草稿。会话过期时请重新登录。';
       if(target.value?.sections)for(const item of Object.values(target.value.sections))item.stale=true;
     }
   }
   async function login(password) {
     busy.value=true;
-    try { await rpc('login',password); logged.value=true; message.value=''; await load(overview,'overview'); }
+    try { await rpc('login',password); logged.value=true; message.value=reauthNotice;reauthNotice=''; await load(overview,'overview'); }
     catch { message.value='登录失败，请检查密码并稍后重试。'; }
     finally { busy.value=false; }
   }
@@ -76,13 +110,14 @@ export function sessionState() {
   function selectGroup(id) {
     if(groupDirty.value){if(id!==groupId.value)message.value='请先保存或放弃当前群草稿。';return;}
     groupId.value=id;groupDraft.value=structuredClone(toRaw(groups.value?.policy?.groups?.[id])||{label:'',queries:'inherit',notifications:'inherit',natural_query:'inherit'});
-    groupRevision.value=groups.value?.policy?.revision;groupDirty.value=false;groupConflict.value=false;
+    groupRevision.value=groups.value?.policy?.revision;groupDirty.value=false;groupConflict.value=false;groupRecoveryBlocked.value=false;
     noticeTarget.value=null;
     groupUsage.value=null;
     if(/^[A-Za-z0-9_-]{1,128}$/.test(id))void load(noticeTarget,'ops/notice-target',id);
     if(/^[A-Za-z0-9_-]{1,128}$/.test(id))void load(groupUsage,'model/group',id);
   }
   async function saveGroup() {
+    if(groupRecoveryBlocked.value){message.value='网关状态尚未确认或已变化，请核对群草稿后继续。';return;}
     const token=generation, id=groupId.value, submitted=JSON.stringify(groupDraft.value);
     busy.value=true;
     try {
@@ -183,6 +218,6 @@ export function sessionState() {
     finally{busy.value=false;}
   }
   return {model,modelDraft,modelGuard,modelKey,modelDirty,modelConflict,groupUsage,trusted,saveModel,probeModel,trustedRequest,
-    jobs,jobDetail,audit,host,noticeTarget,controls,startControl:(action,ids)=>controlRequest(action,ids),restoreControl:id=>controlRequest('restore',[],id),startJob,exportDiagnostic,logged,busy,message,stale,dirty,conflict,overview,requests,detail,sources,metrics,groups,notices,draft,guard,rpc,load,login,logout,save,
-    groupId,groupDraft,groupRevision,groupDirty,groupConflict,selectGroup,saveGroup,invalidate(){generation++;}};
+    jobs,jobDetail,audit,host,noticeTarget,controls,startControl:(action,ids)=>controlRequest(action,ids),restoreControl:id=>controlRequest('restore',[],id),startJob,exportDiagnostic,logged,busy,message,readMessage,stale,dirty,conflict,overview,requests,detail,sources,metrics,groups,notices,draft,guard,rpc,load,login,logout,save,
+    groupId,groupDraft,groupRevision,groupDirty,groupConflict,groupRecoveryBlocked,selectGroup,saveGroup,suspend,captureEdits,restoreEdits,invalidate(){generation++;}};
 }

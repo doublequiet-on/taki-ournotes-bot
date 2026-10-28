@@ -6,7 +6,7 @@ import unittest
 from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
+from unittest.mock import Mock, AsyncMock, patch
 
 from ournotes_bot.commands import CommandResult, HELP_TEXT
 from ournotes_bot.data import SongRepository
@@ -114,3 +114,164 @@ class MentionTests(unittest.IsolatedAsyncioTestCase):
         message = SimpleNamespace(id='event', author=SimpleNamespace(member_openid='issuer', user_openid='user'), _api=api)
         await _deliver_reply(message, 'user', False, PreparedReply('正文'))
         self.assertEqual(api.post_c2c_message.await_args.kwargs['content'], '正文')
+
+
+class DetailAssetScopeTests(unittest.TestCase):
+    """Exercise real detail planning with independently counted owned images."""
+
+    def card(self, relations=0, support=False):
+        from ournotes_bot.data import Card, SupportCard, Skill
+        common=dict(skills=(Skill('liveSkill','技能','完整工程条件。'),),full_url='full',
+                    catalog=dict(band_logos=['logo'],attribute_icon='attribute',skill_icons=['skill'],
+                        people=[dict(id=i,band=1,order=i,name={'zh':'工程人物'},face='face-'+str(i)) for i in (1,2)],
+                        relations=[dict(kind='相关活动',id=i,name={'zh':'关联工程测试'},image='relation-'+str(i),start='',end='')
+                                   for i in range(relations)]))
+        if support:
+            return SupportCard(id=1,title='工程留影',character='工程人物',characters=('工程人物','工程人物二'),rarity=4,card_type=1,performance=1,technic=2,visual=3,start_at='',thumbnail_url='',**common)
+        return Card(id=1,asset_id=1,title='工程角色',character='工程人物',band='工程乐队',rarity=4,card_type=1,performance=1,technic=2,visual=3,start_at='',skill_name='',thumbnail_url='',**common)
+
+    def assets(self, *, fail=None, missing=False, reject=0):
+        from contextlib import contextmanager,ExitStack
+        import threading
+        from ournotes_bot.rendering import haneoka_theme,readable_pages
+        owner=self
+        @contextmanager
+        def scope():
+            state=dict(live=0,peak=0,canvases=0,loads=[],at_canvas=[],objects=[],game=[],attempts=0)
+            thread=threading.get_ident()
+            class Owned:
+                def __init__(self,key,size,canvas=False):
+                    self.key,self.size,self.canvas,self.closed=key,size,canvas,False
+                    self.width,self.height=size;self.mode='RGB'
+                    state['objects'].append(self)
+                    if canvas:state['canvases']+=1
+                    else:
+                        state['live']+=1;state['peak']=max(state['peak'],state['live'])
+                def copy(self):return Owned(self.key+':copy',self.size)
+                def paste(self,*args):pass
+                def close(self):
+                    owner.assertFalse(self.closed,'double close '+self.key);self.closed=True
+                    state['canvases' if self.canvas else 'live']-=1
+            def load(url,size):
+                owner.assertEqual(threading.get_ident(),thread,'detail must load on its caller thread')
+                owner.assertEqual(state['canvases'],0,'late source access')
+                state['loads'].append((url,size))
+                if fail=='prepare' and url=='skill':raise RuntimeError('prepare failed')
+                return None if missing else Owned(url,(972,500) if url=='full' else size)
+            def game(name):
+                owner.assertEqual(state['canvases'],0);state['game'].append(name);return None
+            class Canvas:
+                def __init__(self,width,height):
+                    state['at_canvas'].append(len(state['loads']));self.image=Owned('canvas',(width,height),True)
+                def paste(self,asset,*args,**kwargs):
+                    if asset is not None:owner.assertFalse(asset.closed)
+                def text(self,*args,**kwargs):
+                    if fail=='paint':raise RuntimeError('paint failed')
+                def rarity_badge(self,*args):haneoka_theme.game_asset('RarityIconCenter_SSR.png')
+                def __getattr__(self,name):return lambda *a,**k:None
+            def encode(image,**kwargs):
+                owner.assertTrue(kwargs['close_input']);image.close();state['attempts']+=1
+                if fail=='encode':raise OSError('encode failed')
+                if state['attempts']<=reject:raise readable_pages.ImageBudgetError('fixture bytes')
+                return b'encoded'
+            def lines(text,*args,**kwargs):
+                if fail=='measure':raise RuntimeError('measure failed')
+                return [str(text)]
+            with ExitStack() as stack:
+                stack.enter_context(patch.object(card_detail_layout,'Canvas',Canvas))
+                stack.enter_context(patch.object(card_detail_layout,'lines',lines))
+                stack.enter_context(patch.object(card_detail_layout,'frame',return_value=None))
+                stack.enter_context(patch.object(card_detail_layout.ImageOps,'contain',side_effect=lambda image,size:Owned('fitted',size)))
+                stack.enter_context(patch.object(readable_pages,'MAX_IMAGE_PIXELS',4_000_000))
+                stack.enter_context(patch.object(readable_pages,'encode_image',encode))
+                stack.enter_context(haneoka_theme.game_assets(game))
+                try:yield state,load
+                finally:
+                    owner.assertEqual(state['live'],0);owner.assertEqual(state['canvases'],0)
+                    owner.assertTrue(all(image.closed for image in state['objects']))
+        return scope()
+
+    def test_shared_and_candidate_page_ownership_stays_bounded(self):
+        for support,locale in ((False,"zh"),(False,"ja"),(False,"en"),(True,"zh"),(True,"ja"),(True,"en")):
+            peaks=[]
+            for count in (0,16,64):
+                with self.subTest(support=support,count=count),self.assets() as (state,load):
+                    result=card_detail_layout.render(self.card(count,support),locale,load=load)
+                    self.assertTrue(result);self.assertEqual(result[0].start,0)
+                    self.assertTrue(all(a.stop==b.start for a,b in zip(result,result[1:])))
+                    self.assertEqual(state['game'],['RarityIconCenter_SSR.png'])
+                    self.assertEqual(sum(url=='full' for url,_ in state['loads']),1)
+                    peaks.append(state['peak'])
+            self.assertEqual(peaks[1],peaks[2])
+
+    def test_retries_reuse_candidate_including_missing_images(self):
+        for missing in (False,True):
+            with self.subTest(missing=missing),self.assets(missing=missing,reject=2) as (state,load):
+                card_detail_layout.render(self.card(16),load=load)
+                self.assertEqual(len(set(state['at_canvas'][:3])),1)
+                self.assertEqual(state['game'],['RarityIconCenter_SSR.png'])
+
+    def test_encoder_handoff_keeps_assets_and_reclaims_only_completed_paint(self):
+        for fail in (None,'paint','encode'):
+            with self.subTest(fail=fail),self.assets(fail=fail,reject=2 if fail is None else 0) as (state,load):
+                calls=[]
+                def reclaim(pixels):
+                    self.assertEqual(state['canvases'],1)
+                    self.assertGreater(state['live'],0)
+                    self.assertGreater(pixels,0)
+                    calls.append(state['attempts'])
+                with patch.object(card_detail_layout,'_release_image_memory',reclaim):
+                    if fail:
+                        with self.assertRaisesRegex((RuntimeError,OSError),fail+' failed'):
+                            card_detail_layout.render(self.card(16),load=load)
+                    else:card_detail_layout.render(self.card(16),load=load)
+                self.assertEqual(calls,list(range(state['attempts'])))
+
+    def test_all_failure_stages_release_ownership(self):
+        for fail,error in (('measure',RuntimeError),('prepare',RuntimeError),('paint',RuntimeError),('encode',OSError)):
+            with self.subTest(stage=fail),self.assets(fail=fail) as (state,load):
+                with self.assertRaisesRegex(error,fail+' failed'):
+                    card_detail_layout.render(self.card(16),load=load)
+                if fail=='measure':self.assertIn('full',[key for key,_ in state['loads']])
+
+    def test_unplanned_key_does_not_fetch_while_drawing(self):
+        from contextlib import contextmanager
+        original=card_detail_layout.prepared_render_assets
+        @contextmanager
+        def incomplete(*args,**kwargs):
+            with original(*args,**kwargs) as assets:
+                for key in tuple(assets):
+                    if key[0]=='skill':
+                        image=assets.pop(key)
+                        if image is not None:image.close()
+                yield assets
+        with self.assets() as (state,load),patch.object(card_detail_layout,'prepared_render_assets',incomplete):
+            with self.assertRaises(KeyError):card_detail_layout.render(self.card(16),load=load)
+            self.assertEqual(sum(url=='skill' for url,_ in state['loads']),1)
+
+    def test_serial_preparation_failure_restores_context_and_closes_images(self):
+        from ournotes_bot.rendering import haneoka_theme as theme
+        images=[]
+        def load(*args):
+            image=Mock();images.append(image);return image
+        def source(name):raise RuntimeError('icon failed')
+        with theme.game_assets(source):
+            with self.assertRaisesRegex(RuntimeError,'icon failed'):
+                with theme.prepared_render_assets([('a',(1,1)),('b',(1,1))],load,['rarity'],synchronous=True):
+                    self.fail('must fail before drawing')
+            self.assertIs(theme._GAME_ASSETS.get(),source)
+        for image in images:image.close.assert_called_once()
+
+    def test_borrowed_frame_and_icon_remain_usable(self):
+        from io import BytesIO
+        from PIL import Image
+        from ournotes_bot.rendering import haneoka_theme as theme
+        raw=BytesIO()
+        with Image.new('RGBA',(20,20),'red') as image:image.save(raw,format='PNG')
+        border=theme.frame(32,40,4);icon=theme._icon(raw.getvalue(),12,12)
+        with self.assets() as (state,load),patch.object(card_detail_layout,'frame',return_value=border):
+            card_detail_layout.render(self.card(16),load=load)
+        # These belong to theme caches, not the render's asset scope.
+        self.assertIs(theme.frame(32,40,4),border)
+        self.assertIs(theme._icon(raw.getvalue(),12,12),icon)
+        self.assertTrue(border.getbbox());self.assertTrue(icon.getbbox())

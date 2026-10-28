@@ -28,9 +28,9 @@ ournotes-bot backend --instance-id taki-test --app-id APP_ID --state-dir /absolu
 - `X-Taki-Instance: <instance_id>`
 - 查询状态/图片额外用 `X-Taki-Epoch: <gateway_epoch>` 表明读取者；不匹配时可读最小交付事实，但不得获取发送内容/图片。
 
-请求 JSON 最大 32 KiB；正文 UTF-8 最大 16 KiB；不接受任意本地文件路径或远端图片 URL。当前运输协议严格采用 `{"major":1,"minor":1}`，不兼容版本返回 409。错误是 `{"error":"分类","protocol":...}`，不回显 token、正文、原始 QQ 身份或异常细节。访问日志关闭；业务准备日志在后端模式隐藏查询正文，使用 request_id 关联后端错误。
+请求 JSON 最大 32 KiB；正文 UTF-8 最大 16 KiB；不接受任意本地文件路径或远端图片 URL。当前运输协议严格采用 `{"major":2,"minor":0}`，不兼容版本返回 409。错误是 `{"error":"分类","protocol":...}`，不回显 token、正文、原始 QQ 身份或异常细节。访问日志关闭；业务准备日志在后端模式隐藏查询正文，使用 request_id 关联后端错误。
 
-Console V1a 使用1.0并独立扩展管理能力；V1b配对1.1与 `group_policies_v1`，不允许混装。新请求必须携带 `policy={natural_query,epoch,global_revision,group_revision}`，模式 off/local/model，revision 为非负安全整数。该不可变快照参与请求摘要；重试复用原快照，身份相同但快照不同返回409，不重新执行。通知领取使用严格的 scope：all+exclude_group_ids、selected+非空group_ids、none；none不生成报告或领取。ACK和撤权继续记事实。共同源码摘要清单为 `application/backend_sources.py`，管理、遥测、分页与隐私契约见 [Console V1](koishi/CONSOLE_V1.md)。
+历史 Console V1a 使用1.0，V1b配对1.1；当前配对协议为2.0与 `qq-query-chat-v3`，仍要求 `group_policies_v1`，不允许混装。新请求必须携带 `policy={natural_query,epoch,global_revision,group_revision}`，模式 off/local/model，revision 为非负安全整数。该不可变快照参与请求摘要；重试复用原快照，身份相同但快照不同返回409，不重新执行。通知领取使用严格的 scope：all+exclude_group_ids、selected+非空group_ids、none；none不生成报告或领取。ACK和撤权继续记事实。共同源码摘要清单为 `application/backend_sources.py`，管理、遥测、分页与隐私契约见 [Console V1](koishi/CONSOLE_V1.md)。
 
 | 端点 | 结果 |
 |---|---|
@@ -46,13 +46,25 @@ Console V1a 使用1.0并独立扩展管理能力；V1b配对1.1与 `group_polici
 
 JSON 和图片响应使用 no-store。未 ready、新任务/账本容量不足为 503；身份/认证不匹配为 403/401；冲突、过期和非法状态转换为 409。
 
+## 当前 HTTP 2.0 解码边界
+
+网关 `src/wire.ts` 将未经验证的 JSON `unknown` 解码为内部类型；图片读取单独返回 `Uint8Array`。普通响应的额外元数据字段允许并忽略；协议对象、许可 scope／策略版本保持精确键校验。未知请求／片段状态、mode、kind 和许可判别值停止本次消费。Classify、登记／退役、intent 与模型决策回执不带 protocol，不套用 Plan 的信封。
+
+Plan 按 `send_allowed` 区分可发正文与持久事实：preparing 可没有正文，也可带进度提示；提示片段在发送中／成功后仍可留在 preparing 计划。prepared 也可能已撤销发送且没有正文（例如终态尚未保存）。`processing_hint=true` 可留在 prepared／终态；终态片段只有身份、顺序、模式、状态、attempt 和 message。`business_status` 保持业务字符串，与交付状态分开。图片 fallback 的原位置不变，ID 为 `i:f`。
+
+结构解码不替代 Receiver 的原请求、双方代次、用户、scope、图片资源和当前平台权限核验。许可 `remaining_ms=0` 是不足一毫秒时可能产生的合法结构值，但既有授权仍拒绝它并停止该交付。expires_at 为秒，入站 timestamp_ms 为毫秒。
+
+解码在幂等 HTTP retry 返回之后执行，结构错误不触发额外 HTTP 重试；原网络／HTTP／JSON 解析错误重试分类保持。intent 仍不重试。ACK 的 recorded／duplicate 与返回计划分别校验，未知发送结果继续按原事实账本处理。
+
+共享脱敏夹具为 `koishi/scripts/fixtures/http-v2.json`：TS 编码由 Python 的实际 Request.parse／event 消费；Python 的 snapshot／事件处理／challenge_view 实际输出由 TS 解码并继续核验绑定。Python 不额外实现生产未用的 Plan decoder。样例、已有 unittest 与已安装网关 probe 一同回归；文件随离线组合包交付，不依赖包外 tests 目录。
+
 ## 请求与入站顺序
 
 请求字段必须完整且没有额外字段：
 
 ```json
 {
-  "protocol": {"major": 1, "minor": 0},
+  "protocol": {"major": 2, "minor": 0},
   "request_id": "SHA256_HEX",
   "instance_id": "taki-test",
   "app_id": "APP_ID",
@@ -63,9 +75,13 @@ JSON 和图片响应使用 no-store。未 ready、新任务/账本容量不足�
   "message_id": "ORIGINAL_MESSAGE_ID",
   "timestamp_ms": 1792382400000,
   "body": "/查曲 MyGO",
-  "capability": "qq-m1-candidate",
+  "capability": "qq-query-chat-v3",
   "gateway_epoch": "RANDOM_PER_PLUGIN_LIFETIME",
-  "ingress_seq": 1
+  "ingress_seq": 1,
+  "policy": {"natural_query": "model", "epoch": "POLICY_EPOCH", "global_revision": 0, "group_revision": 0},
+  "trigger": "command",
+  "reference": null,
+  "interaction": null
 }
 ```
 

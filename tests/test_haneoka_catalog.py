@@ -1,4 +1,5 @@
 import copy
+import hashlib
 import io
 import json
 import os
@@ -834,6 +835,50 @@ class CatalogTests(unittest.TestCase):
             get.assert_not_called()
         self.assertEqual(before, after)
         self.assertLessEqual(len(after), 3_000_000)
+
+    def test_event_banner_asset_is_pinned_and_narrowly_allowlisted(self):
+        release = "r-c7a157f812ca79b3a593"
+        path = "/assets/jp/Assets/AddressableResources/Image/Event/04/Banner/event_banner_00004.png"
+        url = asset_url(path, release)
+        self.assertTrue(is_catalog_asset(url))
+        for bad in (path.replace("/04/", "/../"), path.replace("/04/", "/event/"),
+                    path.replace("/Banner/", "/Other/"), path.replace("/04/Banner/", "/Banner/"),
+                    path.replace(".png", ".svg"), path + "?x=1"):
+            with self.subTest(path=bad), self.assertRaises(ValueError):
+                asset_url(bad, release)
+        for bad in (url.replace("haneoka.org", "evil.invalid"), url + "&release=" + release,
+                    url + "#fragment", url.replace(release, "r-invalid")):
+            self.assertFalse(is_catalog_asset(bad))
+
+    def test_event_banner_cache_preserves_facts_and_offline_restart(self):
+        candidate = copy.deepcopy(self.saved)
+        path = "/assets/jp/Assets/AddressableResources/Image/Event/04/Banner/event_banner_00004.png"
+        candidate["documents"]["jp"]["events"] = {"4": {
+            "id": "4", "kind": "game-event", "title": ["Event 4"], "image": path,
+            "effects": [{"raw": {"_memberCardId": 1}}]}}
+        with patch.object(self.repo, "_collect", return_value=candidate):
+            records, meta = self.repo.load(refresh=True)
+        relation = next(r for c in records[1] if c.id == 1 for r in c.catalog["relations"] if r["id"] == "4")
+        self.assertIn(path, relation["image"])
+        self.assertEqual(candidate["documents"]["jp"]["events"]["4"]["image"], path)
+        envelope = json.loads(self.path.read_bytes())
+        self.assertEqual(envelope["sha256"], hashlib.sha256(source.encoded(envelope["snapshot"])).hexdigest())
+        event = envelope["snapshot"]["documents"]["jp"]["events"]["4"]
+        self.assertEqual(event, {**candidate["documents"]["jp"]["events"]["4"], "image": ""})
+        with patch.object(self.repo, "probe_identities", return_value=candidate["identities"]), \
+                patch.object(self.repo, "_write", side_effect=AssertionError("unchanged cache rewritten")):
+            self.repo.synchronize_with_info()
+        invalid = copy.deepcopy(candidate)
+        invalid["documents"]["jp"]["events"]["4"]["image"] = path.replace("/04/", "/../")
+        self.assertEqual(source.persistent_snapshot(invalid), invalid)
+        with self.assertRaises(ValueError):
+            source.validate(invalid, self.now)
+        restarted = source.CatalogRepository(self.path, fetch=Mock(side_effect=OSError("offline")), clock=lambda: self.now)
+        records, restarted_meta = restarted.load(refresh=True)
+        self.assertEqual(restarted.state, "stale")
+        relation = next(r for c in records[1] if c.id == 1 for r in c.catalog["relations"] if r["id"] == "4")
+        self.assertEqual(relation["image"], "")
+        self.assertEqual(restarted_meta["data_version"], meta["data_version"])
 
     def test_images_are_pinned_bounded_isolated_and_do_not_fall_back(self):
         from ournotes_bot.visuals import _asset

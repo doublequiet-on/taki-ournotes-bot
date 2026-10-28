@@ -21,6 +21,8 @@ const png = { kind: 'image', bytes: picture, caption: '图片 1/2；/继续 发�
 const text = { kind: 'text', text: '固定备用文字 <image src="literal"> & 正文' }
 const recognizes = body => /^(?:[／/]?查曲|[／/]?继续)(?:\s|$)/u.test(body)
 const results = []
+const wire = require('../lib/wire')
+const httpV2 = JSON.parse(fs.readFileSync(path.join(__dirname,'fixtures/http-v2.json'),'utf8'))
 function event({ kind = 'group', legacy = false, type, content = '/查曲 固定夹具', ...extra } = {}) {
   return { op: 0, s: 1, id: 'fixture-event', t: type || (kind === 'c2c' ? 'C2C_MESSAGE_CREATE' : 'GROUP_AT_MESSAGE_CREATE'), d: {
     id: 'fixture-message', timestamp: new Date(now).toISOString(), content,
@@ -788,6 +790,119 @@ async function main() {
     assert.equal((await f.delivery.deliver('huge', 0, { ...png, bytes: Buffer.alloc(3_000_001) })).reason, 'part_size')
     assert.equal(f.calls.length, 0)
   })
+  await run('HTTP v2 actual Python outputs decode with additive fields and distinct facts/payloads',async()=>{
+    const responses=httpV2.python_to_ts
+    for(const [name,value] of Object.entries(responses)) {
+      if(name==='ready') {assert.equal(wire.decodeReady({...value,extra:true}).ready,true);continue}
+      if(name==='classify') {assert.equal(wire.decodeClassify(value),true);continue}
+      if(name==='registration') {assert.deepEqual(wire.decodeRegistration(value),value);continue}
+      if(name==='retirement') {assert.deepEqual(wire.decodeRetirement(value),value);continue}
+      if(name==='model_permission') {assert.deepEqual(wire.decodeRecorded(value),value);continue}
+      if(name==='challenge'||name==='challenge_zero') {assert.deepEqual(wire.decodeModelPermission(value),value);continue}
+      if(name.includes('intent')) {assert.deepEqual(wire.decodeIntent(value),value);continue}
+      const decoder=Object.hasOwn(value,'recorded')?wire.decodeAcknowledgement:wire.decodePlan
+      assert.deepEqual(decoder({...value,extra:'future metadata',parts:value.parts.map(p=>({...p,extra:true}))}),value)
+    }
+    assert.equal(wire.decodeModelPermission(responses.challenge_zero).remaining_ms,0)
+    for(const [outcome,messages] of Object.entries(httpV2.identity_cases))for(const message of messages) {
+      const ack=structuredClone(responses.ack);ack.parts[1].message=message
+      if(outcome==='accepted')assert.equal(wire.decodeAcknowledgement(ack).parts[1].message,message)
+      else assert.throws(()=>wire.decodeAcknowledgement(ack),/part_shape/)
+    }
+    for(const status of ['failure','uncertain','aborted','expired','failed'])
+      assert.equal(wire.decodePlan({...responses.terminal,status}).status,status)
+    const claims={claims:[{notice_id:'a'.repeat(64),claim_id:'b'.repeat(32),group_id:'group',group_version:1,expires_at:1,text:'notice',send_type:'active'}]}
+    assert.deepEqual(wire.decodeNoticeClaims(claims),claims.claims)
+    assert.throws(()=>wire.decodeNoticeClaims({claims:[{...claims.claims[0],group_version:'1'}]}))
+    assert.throws(()=>wire.decodeNoticePermission({permission:'unexpected'}))
+  })
+  await run('HTTP v2 TS request/event encoders match Python-consumed examples',async()=>{
+    const expected=httpV2.ts_to_python,responses=httpV2.python_to_ts,request=expected.request,seen=[]
+    let response=responses.preparing
+    const client=new BackendClient('http://127.0.0.1:8765','x'.repeat(32),'fixture','epoch',async(url,options)=>{
+      seen.push({url,body:options.body&&JSON.parse(options.body)});return Response.json(response)
+    })
+    const input={requestId:request.request_id,instanceId:request.instance_id,appId:request.app_id,platform:request.platform,
+      kind:request.kind,conversationId:request.conversation_id,userId:request.user_id,messageId:request.message_id,
+      timestampMs:request.timestamp_ms,body:request.body,trigger:request.trigger,reference:request.reference}
+    await client.submit(input,request.ingress_seq,request.policy);assert.deepEqual(seen.at(-1).body,request)
+    response=responses.model_permission
+    await client.modelPermission(wire.decodeModelPermission({...responses.challenge,ignored:'future'}),request.policy,true)
+    assert.deepEqual(seen.at(-1).body,expected.model_permission)
+    for(const name of ['hint_intent','intent','intent_duplicate','hint_ack','ack','ack_duplicate','upload_failed','batch_finished','aborted']) {
+      const e=expected.events[name],attempt={requestId:e.request_id,deliveryId:responses.preparing.delivery_id,partId:e.part_id,attemptId:e.attempt_id,gatewayEpoch:e.gateway_epoch}
+      response=e.event==='intent'?responses.intent:e.event==='ack'?responses.ack:responses.terminal
+      if(e.event==='intent')await client.intent(attempt)
+      else if(e.event==='ack')await client.acknowledge(attempt,{status:e.result,messageId:e.message_id})
+      else await client.event(responses.preparing,e.event,e.part_id,e.attempt_id)
+      assert.deepEqual(seen.at(-1).body,e)
+    }
+  })
+  await run('HTTP v2 rejects malformed control values and required payload before consumption',async()=>{
+    const good=httpV2.python_to_ts.prepared_image
+    const mutations=[v=>v.protocol.major=true,v=>v.protocol.extra=true,v=>v.status='future_state',v=>v.send_allowed=1,
+      v=>v.plan_version=2,v=>v.expires_at='seconds',v=>v.parts={},v=>v.parts[1].kind='audio',v=>v.parts[1].mode='future_mode',
+      v=>v.parts[1].status='future_status',v=>v.parts[1].position=0,v=>v.parts[1].id='0',v=>v.parts[1].text=null,
+      v=>v.parts[1].mime='image/webp',v=>delete v.parts[1].attempt,v=>v.parts[1].message=3]
+    for(const mutate of mutations){const v=structuredClone(good);mutate(v);assert.throws(()=>wire.decodePlan(v))}
+    assert.throws(()=>wire.decodePlan({...good,send_allowed:false}))
+    for(const [decode,value] of [
+      [wire.decodeReady,{...httpV2.python_to_ts.ready,notices_enabled:1}],
+      [wire.decodeReady,{...httpV2.python_to_ts.ready,features:'classify'}],
+      [wire.decodeReady,{...httpV2.python_to_ts.ready,backend_epoch:'wrong'}],
+      [wire.decodeClassify,{recognized:1}], [wire.decodeRegistration,{gateway_epoch:'epoch',backend_epoch:'wrong'}],
+      [wire.decodeRetirement,{retired:false}], [wire.decodeRecorded,{recorded:true,duplicate:0}],
+      [wire.decodeIntent,{permission:'future',msg_seq:1}], [wire.decodeIntent,{permission:'granted',msg_seq:6}],
+    ])assert.throws(()=>decode(value))
+    for(const mutate of [v=>v.scope.extra='x',v=>v.remaining_ms=-1,v=>v.remaining_ms=3001,
+      v=>v.admission_policy_version.global_revision=Number.MAX_SAFE_INTEGER+1,v=>v.scope.platform='other']) {
+      const v=structuredClone(httpV2.python_to_ts.challenge);mutate(v);assert.throws(()=>wire.decodeModelPermission(v))
+    }
+  })
+  await run('HTTP v2 semantic decode failures never enter request retries',async()=>{
+    const r=httpV2.ts_to_python.request,p=httpV2.python_to_ts.preparing,a={requestId:r.request_id,deliveryId:p.delivery_id,partId:'0',attemptId:'a',gatewayEpoch:'epoch'}
+    const calls=[c=>c.recognizes('fixture'),c=>c.lookup(r.request_id),c=>c.submit({},1),c=>c.event(p,'aborted'),
+      c=>c.intent(a),c=>c.acknowledge(a,{status:'success',messageId:'receipt'}),
+      c=>c.modelPermission(httpV2.python_to_ts.challenge,r.policy,true),c=>c.retire()]
+    for(const invoke of calls){let count=0;const c=new BackendClient('http://127.0.0.1:8765','x'.repeat(32),'fixture','epoch',async()=>{count++;return Response.json({})})
+      await assert.rejects(invoke(c));assert.equal(count,1)}
+    for(const changed of [{gateway_epoch:'wrong'},{backend_epoch:'c'.repeat(32)}]) {
+      let count=0
+      const c=new BackendClient('http://127.0.0.1:8765','x'.repeat(32),'fixture','epoch',async(url)=>{
+        count++;return Response.json(url.endsWith('/ready')?httpV2.python_to_ts.ready:{...httpV2.python_to_ts.registration,...changed})
+      })
+      await assert.rejects(c.initialize(),/gateway_binding/);assert.equal(count,2);assert.equal(c.readiness,undefined)
+    }
+    // The raw transport's existing JSON/error retry classification remains unchanged.
+    let count=0;const c=new BackendClient('http://127.0.0.1:8765','x'.repeat(32),'fixture','epoch',async()=>{count++;return new Response('not json')})
+    await assert.rejects(c.lookup(r.request_id),/invalid_json/);assert.equal(count,3)
+  })
+  await run('HTTP v2 decoded plans retain Receiver identity, image and current-permit guards',async()=>{
+    for(const mode of ['state','identity','image','scope','zero','backend','gateway','user','valid-permit']) {
+      const fetched=[];let permits=0
+      const f=receiverFixture({readiness:{backend_epoch:'b'.repeat(32)},async modelPermission(){permits++},
+        async lookup(id){return wire.decodePlan({...httpV2.python_to_ts.terminal,request_id:id})}})
+      const client=new BackendClient('http://127.0.0.1:8765','x'.repeat(32),identity.instanceId,f.receiver.epoch,async(url,options)=>{
+        fetched.push(url);const request=JSON.parse(options.body)
+        assert.ok(url.endsWith('/requests'))
+        const template=httpV2.python_to_ts.prepared_image
+        const part={...template.parts[1],id:'0',position:0,image:`/v1/deliveries/${template.delivery_id}/parts/0/image`}
+        let plan={...template,request_id:request.request_id,expires_at:Date.now()/1000+298,processing_hint:false,parts:[part]}
+        if(mode==='state')plan.status='unexpected'
+        if(mode==='identity')plan.request_id='0'.repeat(64)
+        if(mode==='image')plan.parts[0].image='/v1/deliveries/'+'e'.repeat(32)+'/parts/0/image'
+        if(['scope','zero','backend','gateway','user','valid-permit'].includes(mode))plan={...plan,status:'preparing',send_allowed:false,parts:[],pending_model_permission:{
+          ...httpV2.python_to_ts.challenge,request_id:request.request_id,gateway_epoch:mode==='gateway'?'wrong':client.epoch,
+          backend_epoch:mode==='backend'?'c'.repeat(32):'b'.repeat(32),user_id:mode==='user'?'wrong':request.user_id,
+          scope:{instance_id:request.instance_id,app_id:request.app_id,platform:request.platform,kind:request.kind,
+            conversation_id:mode==='scope'?'wrong-conversation':request.conversation_id},remaining_ms:mode==='zero'?0:3000}}
+        return Response.json(plan)
+      })
+      f.client.submit=client.submit.bind(client);f.client.image=client.image.bind(client)
+      try {await f.receiver.receive(await f.session('wire-'+mode));assert.equal(f.calls.length,0);assert.equal(fetched.length,1);assert.equal(permits,mode==='valid-permit'?1:0)}
+      finally {await f.close();await client.telemetry.close()}
+    }
+  })
   await run('M3 loopback client rejects public endpoints and redirect/resource escape', async () => {
     assert.throws(() => new BackendClient('http://example.com','x'.repeat(32),'i','e'))
     assert.throws(() => new BackendClient('http://127.0.0.1/path','x'.repeat(32),'i','e'))
@@ -835,7 +950,7 @@ async function main() {
     const client=new BackendClient('http://127.0.0.1:8765','x'.repeat(32),'i','e',async (url,opts)=>{
       guards.push(JSON.parse(opts.body).allow_context)
       if(guards.length===1){client.deactivate();throw Error('lost before commit')}
-      return new Response('{}')
+      return Response.json(httpV2.python_to_ts.ack)
     })
     await client.acknowledge({requestId:'r',deliveryId:'d',partId:'0',attemptId:'a',gatewayEpoch:'e'},{status:'success',messageId:'m'})
     assert.deepEqual(guards,[true,false])
@@ -1172,10 +1287,7 @@ async function main() {
     assert.equal(worker.healthy(),false)
     await worker.close();await ctx.stop()
   })
-  const startupReady={ready:true,protocol:{major:2,minor:0},capability:'qq-query-chat-v3',
-    management_capabilities:['group_policies_v1'],
-    features:['classify','gateway_retire','ack_context_guard','notice_gateway_v1',
-      'quoted_context_v1','fixed_snapshot_v1','current_model_permit_v1','independent_delivery_v1']}
+  const startupReady=httpV2.python_to_ts.ready
   await run('startup survives delayed readiness and registration transport failure', async () => {
     let reads=0,registrations=0
     const epochs=[]
@@ -1183,7 +1295,7 @@ async function main() {
       if(url.endsWith('/ready'))return new Response(JSON.stringify(startupReady),{status:++reads<=4?503:200})
       epochs.push(JSON.parse(options.body).gateway_epoch)
       if(++registrations===1)throw Error('connection reset')
-      return new Response('{}')
+      return Response.json(httpV2.python_to_ts.registration)
     })
     await client.initialize({timeoutMs:2000,retryMs:100})
     assert.ok(reads>=6);assert.equal(registrations,2);assert.deepEqual(epochs,['epoch','epoch'])
@@ -1191,9 +1303,9 @@ async function main() {
   })
   await run('startup retries connection refused but rejects incompatible protocol and authentication immediately', async () => {
     let calls=0
-    const client=new BackendClient('http://127.0.0.1:8765','x'.repeat(32),'fixture','epoch',async()=>{
+    const client=new BackendClient('http://127.0.0.1:8765','x'.repeat(32),'fixture','epoch',async(url)=>{
       if(++calls===1)throw Error('connection refused')
-      return new Response(JSON.stringify(startupReady))
+      return Response.json(url.endsWith('/ready')?startupReady:httpV2.python_to_ts.registration)
     })
     await client.initialize({timeoutMs:1000,retryMs:5});assert.equal(calls,3)
     for(const status of [200,401,403]) {
@@ -1486,7 +1598,7 @@ async function main() {
       const policy={natural_query:'local',epoch:'fixture',global_revision:1,group_revision:2},seen=[]
       const client=new BackendClient('http://127.0.0.1:8765','x'.repeat(32),'fixture','e',async(url,options)=>{
         seen.push(JSON.parse(options.body));policy.natural_query='model';policy.group_revision=3
-        return seen.length===1?Response.json({error:'temporary'},{status:503}):Response.json({request_id:'fixture'})
+        return seen.length===1?Response.json({error:'temporary'},{status:503}):Response.json(httpV2.python_to_ts.preparing)
       })
       try {
         await client.submit({requestId:'fixture',instanceId:'fixture',appId:'app',platform:'qq',kind:'group',conversationId:'g',userId:'u',messageId:'m',timestampMs:Date.now(),body:'/问 fixture'},1,policy)

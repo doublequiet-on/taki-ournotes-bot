@@ -11,7 +11,7 @@ import threading
 import time
 from collections import Counter
 
-from .moenotes_events import SERVERS, SourceError
+from .moenotes_events import SERVERS, SourceError, event_ranking_format
 
 
 class HistorySampler:
@@ -53,7 +53,10 @@ class HistorySampler:
 
     def _sample_once(self):
         history=self.source.history
-        if not history or not history.writable():
+        totals=getattr(self.source,'total_rankings',None)
+        song_writable=bool(history and history.writable())
+        total_writable=bool(totals and totals.connected and totals.history.writable())
+        if not song_writable and not total_writable:
             self.last_state='历史写入关闭或暂停'
             return {'code':'history_unavailable','_state':'partial'}
         lookups,stored=Counter(),Counter()
@@ -62,7 +65,10 @@ class HistorySampler:
             if self.stopping.is_set():
                 regions.append({'server':server,'code':'sampling_stopped'});partial=True;break
             if self.source.foreground_active:
-                for skipped in self.servers[index:]:history.failure(skipped,code='foreground_yield')
+                if history:
+                    for skipped in self.servers[index:]:history.failure(skipped,code='foreground_yield')
+                if total_writable:
+                    for skipped in self.servers[index:]:totals.history.failure_for_server(skipped,'foreground_yield')
                 self.last_state='让位于前台查询';regions.append({'server':server,'code':'foreground_yield'});partial=True;break
             if self.discovery_after.get(server,0)>self.clock():
                 regions.append({'server':server,'code':'discovery_backoff'});continue
@@ -70,8 +76,9 @@ class HistorySampler:
                 deadline=self.source.deadline()
                 observed=getattr(self.source,'read_event_observed',None)
                 event=observed(server,deadline)[0] if callable(observed) else self.source.event(server,deadline)
-                songs=[song for song in event.songs if song.enabled and song.collect_status in {'collecting','finalizing'}]
-                if not songs:
+                songs=[song for song in event.songs if song.enabled and song.collect_status in {'collecting','finalizing'}] if song_writable else []
+                sample_total=total_writable and event_ranking_format(event).total_enabled is True and event.status in {'nowOn','aggregation'}
+                if not songs and not sample_total:
                     self.discovery_after[server]=self.clock()+max(900,self.interval)
                     regions.append({'server':server,'code':'no_collecting_songs'});continue
                 count=0;paused=False
@@ -88,19 +95,33 @@ class HistorySampler:
                     else:stored[observation['history_result']]+=1
                     if not board.scores:partial=True
                     count+=1
-                if paused:break
+                if paused:
+                    if sample_total:totals.history.failure(event,'sampling_paused')
+                    break
+                total_code=None
+                if sample_total:
+                    if self.stopping.is_set() or self.source.foreground_active or not totals.history.writable():
+                        total_code='sampling_paused'; partial=True
+                        totals.history.failure(event,total_code)
+                    else:
+                        total_code=totals.sample(event,deadline)
+                        stored[total_code]+=1
+                        partial |= total_code not in {'valid','duplicate'}
+                        count+=1
                 regions.append({'server':server,'code':'sampled','board_count':count})
+                if total_code is not None:regions[-1]['total_code']=total_code
                 self.last_state='周期采样已运行'
             except SourceError as exc:
-                history.failure(server,code=exc.code)
+                if history:history.failure(server,code=exc.code)
+                if total_writable:totals.history.failure_for_server(server,exc.code)
                 self.discovery_after[server]=self.clock()+max(self.interval,exc.retry_after)
                 self.last_state='来源暂不可用，等待退避'
                 regions.append({'server':server,'code':exc.code});partial=True
             except Exception as exc:
-                history.failure(server,code='sampling_error')
+                if history:history.failure(server,code='sampling_error')
                 self.last_state='采样失败，等待下一周期'
                 regions.append({'server':server,'code':'sampling_error','error_type':type(exc).__name__});partial=True
-        pending=bool(history.status().get('clock_pending'))
+        pending=bool(history and history.status().get('clock_pending'))
         if pending:
             self.last_state='采样告警：存在时钟异常待核验观测，详见榜线历史状态';partial=True
         return {'code':'sampling_checked','regions':regions,'board_lookups':dict(lookups),'history_results':dict(stored),

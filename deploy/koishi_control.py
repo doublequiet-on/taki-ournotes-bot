@@ -65,14 +65,30 @@ def inspect_combination_archive(path, commit, expected):
         raise Rejected('combination_archive_invalid') from exc
 
 
-def stage_combination(archive, destination, commit, expected, python_hash):
+def stage_combination(archive, destination, commit, expected, python_hash, *, ownership_dir=None):
     """Publish a complete verified directory with no application-writable files."""
     manifest = inspect_combination_archive(archive, commit, expected)
     _profile(manifest, commit, python_hash)
     destination = Path(destination)
     if destination.exists() or destination.is_symlink(): raise FileExistsError(destination)
+    ownership = None
+    if ownership_dir is not None:
+        try:
+            from .linux_updater import atomic_json
+            from .release_retention import OWNER, manifest_digest
+        except ImportError:
+            from linux_updater import atomic_json
+            from release_retention import OWNER, manifest_digest
+        ownership_dir = Path(ownership_dir)
+        ownership_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+        ownership = ownership_dir / (commit + '.json')
+        if ownership.exists() or ownership.is_symlink(): raise FileExistsError(ownership)
     stage = Path(tempfile.mkdtemp(prefix='.'+commit+'-', dir=destination.parent))
     try:
+        if ownership is not None:
+            record = dict(owner=OWNER, commit=commit, destination=str(destination), stage=str(stage),
+                          phase='staging', python_sha256=python_hash, manifest_sha256=manifest_digest(manifest))
+            atomic_json(ownership, record)
         with zipfile.ZipFile(archive) as z:
             for name in ['combination.json', *manifest['files']]:
                 target = stage/name
@@ -84,12 +100,16 @@ def stage_combination(archive, destination, commit, expected, python_hash):
         for directory in sorted((p for p in stage.rglob('*') if p.is_dir()), reverse=True): directory.chmod(0o555)
         stage.chmod(0o555)
         os.rename(stage, destination)
+        if ownership is not None:
+            atomic_json(ownership, dict(record, stage=None, phase='published'))
     finally:
         if stage.exists():
             # Only the freshly created, link-free staging directory belongs to us.
             stage.chmod(0o700)
             for p in stage.rglob('*'): p.chmod(0o700 if p.is_dir() else 0o600)
             shutil.rmtree(stage)
+            if ownership is not None:
+                ownership.unlink(missing_ok=True)
     return manifest
 
 
@@ -160,7 +180,8 @@ class KoishiControl:
             if not root.exists() and not root.is_symlink():
                 archive, digest = self.prefetch(release.commit)
                 stage_combination(archive, root, release.commit, digest,
-                                  self.backend._manifest(release)['bundle_sha256'])
+                                  self.backend._manifest(release)['bundle_sha256'],
+                                  ownership_dir=self.backend.state/'combinations')
         return self.combination(release)
 
     def combination(self, release):

@@ -664,11 +664,9 @@ class QueryAgent:
         evidence = [f"{anchor.entity.kind}:{anchor.entity.value}"] if anchor.entity else []
         if capability.id == "member_card.search" and "得意" in question:
             from .on_query import parse_on_query
-            from ..query.card_catalog import parse_card_request
             parsed = parse_on_query(question, repository)
-            if isinstance(parsed, QuerySpec) and parsed.card_query is not None:
-                request = parse_card_request(parsed.card_query, repository)
-                evidence.extend("tag:" + str(key) for key in request.filters.get("tags", ()))
+            if isinstance(parsed, QuerySpec) and parsed.card_request is not None:
+                evidence.extend("tag:" + str(key) for key in parsed.card_request.filters.tags)
         return tuple(evidence)
 
     def _execute_spec(self, state: AgentState, spec: QuerySpec,
@@ -780,7 +778,7 @@ class QueryAgent:
             return False
         spec = result.spec
         if result.cutoff is not None:
-            return any(board.scores for board in result.cutoff.boards)
+            return bool(result.cutoff.total and result.cutoff.total.scores) or any(board.scores for board in result.cutoff.boards)
         if spec.intent == "chart":
             return result.chart is not None and bool(result.chart[1])
         if spec.intent == "card":

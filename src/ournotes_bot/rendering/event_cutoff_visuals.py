@@ -168,7 +168,7 @@ def _draw_header(canvas, draw, answer, assets, width, layout, preview_label, hea
 
 
 def _footer_lines(answer, measure, width):
-    notes = [*answer.event.notes, f'来源 {answer.source_label} · 非官方 · 活动挑战歌曲 Top 100',
+    notes = [*answer.ranking_notes, *answer.event.notes, f'来源 {answer.source_label} · 非官方 · 活动挑战歌曲 Top 100',
              '按来源响应位置；非预测、非确认终榜']
     return [line for note in notes if note for line in _lines(measure, note, width - 76, 18)]
 
@@ -266,11 +266,18 @@ def _tables(answer, assets, preview_label):
 
 @reclaim_after_render
 def render_cutoff(answer: CutoffAnswer, *, asset_loader=None, preview_label: str = '') -> tuple[CutoffPage, ...]:
-    if answer.event is None or answer.message or not answer.boards or answer.request.numeric_only:
+    if answer.event is None or answer.message or not (answer.boards or answer.total) or answer.request.numeric_only:
         return ()
     event = answer.event
     assets = asset_loader(event, (event.banner, *(b.song.jacket for b in answer.boards))) if asset_loader else {}
+    pages=()
+    if answer.total is not None:
+        from .total_rankings import render_total
+        pages=render_total(replace(answer,boards=()),assets,preview_label)
+        if not answer.boards:
+            return pages
+        answer=replace(answer,total=None,total_status='综合榜单独展示。')
     if answer.request.mode == 'trend':
         from .cutoff_trends import render_trends
-        return render_trends(answer, assets, preview_label)
-    return _tables(answer, assets, preview_label)
+        return pages+render_trends(answer, assets, preview_label)
+    return pages+_tables(answer, assets, preview_label)

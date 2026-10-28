@@ -99,6 +99,8 @@ Linux 受管更新器在安装／离线验证结束、停止旧服务之前自�
 
 ## 开发与验证命令
 
+综合榜内部离线链路：`domain/total_rankings.py` → `sources/total_rankings.py` → `query/event_cutoff_query.py` → 正式 `application/replies.py`／`rendering/ranking_layout.py` → `rendering/total_rankings.py`；`cutoff_sampler.py` 仅在显式适配器已接入时采样。目标验证为既有 `test_cutoff_query_v2.py::TotalRankingOfflineTests`，扩大到原榜线／历史／采样／回复测试。当前正式来源没有综合榜适配器；测试桩和合成图不能视为真实接口验收。合同见 [榜线说明](EVENT_CUTOFFS.md#综合榜内部合同与独立存储)。
+
 源码依赖修改先运行 `python -B scripts/check_architecture.py`；门禁负例执行 `python -B -m unittest discover -s tests -p test_architecture.py -v`。约束、存量债务和发布接线见 [架构门禁](ARCHITECTURE.md)，不向运行依赖增加开发工具。
 
 在**目标仓库根目录的 Windows PowerShell** 执行。Python >=3.10，项目依赖见 `pyproject.toml`；已有环境优先复用。缺环境时按 README 创建 `.venv` 并 `pip install -e .`（会安装依赖，本轮未执行）。绘图测试需要可用 CJK 字体；CI 使用 Noto CJK。
