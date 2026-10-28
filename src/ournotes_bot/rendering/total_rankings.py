@@ -10,13 +10,32 @@ from dataclasses import replace
 from PIL import ImageDraw
 
 from .. import visuals as v
-from .haneoka_theme import Canvas
+from .haneoka_theme import Canvas, prepared_render_assets
+from .catalog_layout import card_face, card_level
 from .image_output import encode_image
 from .event_cutoff_visuals import CutoffPage, _header_layout, _lines, _text
 from .cutoff_trends import COLORS, segments, coordinates
 
 
-def render_total(answer, assets, preview_label=''):
+def render_total(answer, assets, preview_label='', *, catalogs=({}, {}), load=None):
+    member, _ = catalogs
+    requests, badges = set(), set()
+    for rank in answer.ranks:
+        detail = answer.total.player_detail(rank) or {}
+        card = member.get(detail.get('favoriteMemberCardId'))
+        if card:
+            requests.add((card.thumbnail_url, (88, 88)))
+            attribute = card.catalog.get('attribute_icon')
+            if attribute:
+                requests.add((attribute, (22, 22)))
+            growth = detail.get('favoriteMemberRank')
+            if type(growth) is int and 0 <= growth <= 5:
+                badges.add(f'CardRank{growth}.png')
+    with prepared_render_assets(requests, load or (lambda *_: None), badges) as artwork:
+        return _render_total(answer, assets, preview_label, member, lambda url, size: artwork.get((url, size)))
+
+
+def _render_total(answer, assets, preview_label, member, art):
     board=answer.total
     width=720
     measure=Canvas(width,20).draw
@@ -31,10 +50,16 @@ def render_total(answer, assets, preview_label=''):
     rows=[]
     for rank in answer.ranks:
         value=board.score(rank)
-        score=_lines(measure,str(value) if value is not None else '暂无数据',500,26)
-        names=_lines(measure,'用户名：'+(board.player_name(rank) or '未获取'),640,18)
-        ids=_lines(measure,'ID：'+(board.player_id(rank) or '未获取'),640,18)
-        rows.append((rank,score,names,ids,22+len(score)*32+(len(names)+len(ids))*25))
+        score=_lines(measure,str(value) if value is not None else '暂无数据',460,26)
+        names=_lines(measure,'用户名：'+(board.player_name(rank) or '未获取'),460,18)
+        ids=_lines(measure,'ID：'+(board.player_id(rank) or '未获取'),460,18)
+        detail=board.player_detail(rank) or {}
+        table=next(iter(member.values())).catalog.get('player_levels',[]) if member else ()
+        levels=[row['rank'] for row in table if type(detail.get('rankExp')) is int and row['exp']<=detail['rankExp']]
+        info=([f'等级 {max(levels)}'] if levels else [])
+        if detail.get('totalPower') is not None:info.append(f'综合力 {detail["totalPower"]:,}')
+        summary=_lines(measure,' · '.join(info),460,18) if info else []
+        rows.append((rank,score,names,ids,summary,max(122,22+len(score)*32+(len(names)+len(ids)+len(summary))*25)))
     groups=[];group=[];height=fixed
     for row in rows:
         projected=replace(answer,display_ranks=tuple(r[0] for r in (*group,row)))
@@ -58,13 +83,23 @@ def render_total(answer, assets, preview_label=''):
         y=_text(draw,layout[1],38,y+8,22,v.ACCENT,32)
         if preview_label:_text(draw,[preview_label],38,y+12,18,v.MUTED)
         y=layout[2]
-        for rank,score,names,ids,h in group:
+        for rank,score,names,ids,summary,h in group:
             selected=answer.request.mode=='near' and rank==answer.request.target_rank
             draw.rounded_rectangle((20,y,700,y+h-5),radius=12,fill=v.SURFACE if selected else v.PAPER)
             _text(draw,[f'T{rank}'],38,y+10,24,v.ACCENT)
-            _text(draw,score,180,y+8,26,v.INK,32)
-            yy=_text(draw,names,38,y+12+len(score)*32,18,v.MUTED,25)
-            _text(draw,ids,38,yy,18,v.MUTED,25)
+            detail=board.player_detail(rank) or {}
+            card=member.get(detail.get('favoriteMemberCardId'))
+            if card:
+                card_face(surface,card,106,y+14,88,88,art,
+                          level=card_level(card,detail.get('favoriteMemberExp'),detail.get('favoriteMemberAwakeCount')),
+                          rank=detail.get('favoriteMemberRank'),growth=True)
+            else:
+                surface.box((106,y+14,194,y+102))
+                surface.text(150,y+58,'?',26,v.MUTED,align='center')
+            _text(draw,score,218,y+8,26,v.INK,32)
+            yy=_text(draw,names,218,y+12+len(score)*32,18,v.MUTED,25)
+            yy=_text(draw,ids,218,yy,18,v.MUTED,25)
+            _text(draw,summary,218,yy,18,v.MUTED,25)
             y+=h
         if trend:
             _plot(canvas,draw,answer,y)

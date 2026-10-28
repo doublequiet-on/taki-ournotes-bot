@@ -18,7 +18,7 @@
 
 歌曲列表、谱面和活动榜线的编码图片字节；不输出查询计划，不获取完整谱面，不发消息。
 
-[total_rankings.py](total_rankings.py) 消费已捕获的独立综合榜与历史视图，生成关键排名趋势、附近／区间分数表及逐页文字。正式回复经 `application/replies.py` → `ranking_layout.py::render` 分流，旧离线入口 `event_cutoff_visuals.py::render_cutoff` 同样支持；总览先综合榜后单曲页，共用原输出预算和 QQ 回退链路。不查询来源、不拼接单曲、不套用单曲三千万阈值；当前正式数据适配器仍未接入。内部合同与时间规则见 [榜线说明](../../../docs/EVENT_CUTOFFS.md#综合榜内部合同与独立存储)。
+[total_rankings.py](total_rankings.py) 消费已捕获的独立综合榜与历史视图，生成关键排名趋势、附近／区间分数表及逐页文字。正式回复经 `application/replies.py` → `ranking_layout.py::render` 分流，旧离线入口 `event_cutoff_visuals.py::render_cutoff` 同样支持；总览先综合榜后单曲页，共用原输出预算和 QQ 回退链路。不查询来源、不拼接单曲、不套用单曲三千万阈值；`tracker` 来源可接收 Moenotes 公开快照，默认 Haneoka 来源暂未接入。内部合同与时间规则见 [榜线说明](../../../docs/EVENT_CUTOFFS.md#综合榜内部合同与独立存储)。
 
 ## Core Flow
 

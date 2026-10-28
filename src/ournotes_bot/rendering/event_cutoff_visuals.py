@@ -51,9 +51,11 @@ def load_artwork(source, event, urls: tuple[str, ...]) -> dict[str, Image.Image 
         if event.source == "haneoka" and (not haneoka or
                 parse_qs(urlsplit(url).query)['release'][0] != event.metadata_version):
             return None
-        if not haneoka and (not url.startswith(prefix) or not re.fullmatch(
-                r"(?:Story/Banner/Chapter|Image/Jacket)/([A-Za-z0-9_-]{1,120})/\1\.webp", url[len(prefix):])):
-            return None
+        if not haneoka:
+            path = url[len(prefix):] if url.startswith(prefix) else ""
+            if not (re.fullmatch(r"(?:Story/Banner/Chapter|Image/Jacket)/([A-Za-z0-9_-]{1,120})/\1\.webp", path)
+                    or re.fullmatch(r"Image/Event/[0-9]{1,3}/Banner/([A-Za-z0-9_-]{1,120})/\1\.webp", path)):
+                return None
         if haneoka:
             prepared=v.runtime_data_dir()/'haneoka-asset-cache'/(hashlib.sha256(url.encode()).hexdigest()+'.png')
             try:

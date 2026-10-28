@@ -1,6 +1,6 @@
 # L3
 # Input: server, public MoeNotes endpoints, an isolated cache directory and injectable transport/clocks.
-# Output: captured snapshots with source/time-kind; current scores, public player IDs and usernames preserve response positions.
+# Output: captured scores and public player/profile/deck fields preserve response positions.
 # Pos: Data / MoeNotes challenge rankings; see L2-2.md.
 # Effects: bounded anonymous HTTPS GETs and isolated cache writes; configured tracker writes history only from sampling; no startup I/O or QQ.
 """On-demand challenge rankings. Event points and permanent song records are never read."""
@@ -101,6 +101,10 @@ def _ms(value) -> int | None:
     return value if type(value) is int and 0 < value < 253402300799000 else None
 
 
+def source_timestamp(value) -> int | None:
+    return _ms(value)
+
+
 def _player_id(value) -> str | None:
     """Keep the public decimal ID losslessly, never coerce floats or booleans."""
     if type(value) is int:
@@ -122,6 +126,143 @@ def _player_name(value) -> str | None:
 def player_identity(ident, name) -> tuple[str | None, str | None]:
     """Normalize the public ID/name pair for live snapshots and persisted observations."""
     return _player_id(ident), _player_name(name)
+
+
+def _ranking_number(value, *, identifier=False):
+    if identifier and isinstance(value, str) and re.fullmatch(r"[0-9]{1,16}", value):
+        value = int(value)
+    if type(value) is not int or not 0 <= value <= 2**53 - 1:
+        return None
+    return value if not identifier or value > 0 else None
+
+
+_PROFILE_HOSTS = {
+    "jp": "static.bang-dream-on.jp",
+    "tw": "l14-prod-hk-patch-sirius.gamerfusiontech.com",
+    "en": "l14-prod-sg-patch-sirius.bilibiligame.net",
+    "kr": "l14-prod-sg-patch-sirius.bilibiligame.net",
+}
+
+
+def _profile_image_url(value, server=None):
+    if not isinstance(value, str) or len(value) > 2048:
+        return None
+    try:
+        parts = urlsplit(value)
+        hosts = {_PROFILE_HOSTS[server]} if server in _PROFILE_HOSTS else set(_PROFILE_HOSTS.values())
+        if (parts.scheme != "https" or parts.hostname not in hosts or parts.username or parts.password
+                or parts.port is not None or parts.query or parts.fragment or not parts.path.startswith("/")
+                or "\\" in parts.path or ".." in parts.path.split("/")):
+            return None
+        return value
+    except ValueError:
+        return None
+
+
+def ranking_player_detail(row, server=None):
+    """Project public same-row profile and high-score deck fields."""
+    if not isinstance(row, dict):
+        return None
+    player = row.get("playerData") if isinstance(row.get("playerData"), dict) else {}
+    favorite = player.get("favoriteMemberCard") if isinstance(player.get("favoriteMemberCard"), dict) else {}
+    deck = row.get("highScoreDeck") if isinstance(row.get("highScoreDeck"), dict) else {}
+    def growth(value):
+        number = _ranking_number(value)
+        return number if number is not None and number <= 5 else None
+    detail = {
+        "rankExp": _ranking_number(player.get("rankExp")),
+        "favoriteMemberCardId": _ranking_number(favorite.get("cardId"), identifier=True),
+        "favoriteMemberExp": _ranking_number(favorite.get("exp")),
+        "favoriteMemberAwakeCount": growth(favorite.get("awakeCount")),
+        "favoriteMemberRank": growth(favorite.get("cardRank")),
+        "totalPower": _ranking_number(deck.get("totalPower")),
+        "cards": [],
+        "profileId": _player_id(player.get("profileId")),
+        "profileCard": None,
+    }
+    profile = player.get("profileCard")
+    if isinstance(profile, dict):
+        urls = profile.get("thumbnailUrl", [])
+        if not isinstance(urls, list) or len(urls) > 10:
+            urls = []
+        detail["profileCard"] = {
+            "name": _player_name(profile.get("name")),
+            "slot": _ranking_number(profile.get("slot")),
+            "thumbnailUrls": [_profile_image_url(url, server) for url in urls],
+        }
+    cards = deck.get("cards")
+    if not isinstance(cards, list) or len(cards) > 5:
+        return detail
+    slots = set()
+    for card in cards:
+        if not isinstance(card, dict):
+            detail["cards"] = []
+            return detail
+        slot = card.get("slotIndex", 0)
+        if type(slot) is not int or slot not in range(5) or slot in slots:
+            detail["cards"] = []
+            return detail
+        slots.add(slot)
+        member = card.get("memberCard") if isinstance(card.get("memberCard"), dict) else {}
+        support = card.get("supportCard") if isinstance(card.get("supportCard"), dict) else {}
+        detail["cards"].append({
+            "slot": slot,
+            "memberCardId": _ranking_number(member.get("cardId"), identifier=True),
+            "memberExp": _ranking_number(member.get("exp")),
+            "memberAwakeCount": growth(member.get("awakeCount")),
+            "memberRank": growth(member.get("cardRank")),
+            "supportCardId": _ranking_number(support.get("cardId"), identifier=True),
+            "supportExp": _ranking_number(support.get("exp")),
+            "supportRank": growth(support.get("rank")),
+        })
+    detail["cards"].sort(key=lambda card: card["slot"])
+    return detail
+
+
+def valid_ranking_detail(detail, server=None):
+    if not isinstance(detail, dict):
+        return False
+    scalar = {"rankExp", "favoriteMemberCardId", "favoriteMemberExp", "favoriteMemberAwakeCount",
+              "favoriteMemberRank", "totalPower"}
+    card_keys = {"slot", "memberCardId", "memberExp", "memberAwakeCount", "memberRank",
+                 "supportCardId", "supportExp", "supportRank"}
+    if set(detail) - (scalar | {"cards", "profileId", "profileCard"}):
+        return False
+    def valid_number(key, value):
+        if value is None:
+            return True
+        if type(value) is not int or not 0 <= value <= 2**53 - 1:
+            return False
+        if key.endswith("Id") and value == 0:
+            return False
+        return not (key.endswith("Rank") or key.endswith("AwakeCount")) or value <= 5
+    if any(not valid_number(key, value) for key, value in detail.items() if key in scalar):
+        return False
+    profile_id = detail.get("profileId")
+    if profile_id is not None and _player_id(profile_id) != profile_id:
+        return False
+    profile = detail.get("profileCard")
+    if profile is not None:
+        if not isinstance(profile, dict) or set(profile) != {"name", "slot", "thumbnailUrls"}:
+            return False
+        if profile["name"] is not None and _player_name(profile["name"]) != profile["name"]:
+            return False
+        if not valid_number("slot", profile["slot"]):
+            return False
+        urls = profile["thumbnailUrls"]
+        if not isinstance(urls, list) or len(urls) > 10 or any(url is not None and _profile_image_url(url, server) != url for url in urls):
+            return False
+    cards = detail.get("cards", [])
+    if not isinstance(cards, list) or len(cards) > 5:
+        return False
+    slots = []
+    for card in cards:
+        if not isinstance(card, dict) or set(card) - card_keys or type(card.get("slot")) is not int or card["slot"] not in range(5):
+            return False
+        if any(not valid_number(key, value) for key, value in card.items() if key != "slot"):
+            return False
+        slots.append(card["slot"])
+    return slots == sorted(set(slots))
 
 
 def display_time(value: int | None, server: str, *, date: bool = True) -> str:
@@ -167,6 +308,8 @@ class EventSnapshot:
     source: str = "tracker"
     challenge_order_verified: bool = True
     total_ranking_enabled: bool | None = None  # Explicit normalized capability; never inferred from raw flags.
+    api_start_ms: int | None = None
+    api_end_ms: int | None = None
 
 
 @dataclass(frozen=True)
@@ -264,6 +407,16 @@ def asset_url(server: str, kind: str, name: str) -> str:
     return f"{ASSETS}/{server}/{SERVERS[server][3]}/{path}/{name}/{name}.webp"
 
 
+def event_banner_url(server: str, value) -> str:
+    if not isinstance(value, str):
+        return ""
+    match = re.fullmatch(r"([0-9]{1,3})/Banner/([A-Za-z0-9_-]{1,120})(?:\.png)?", value)
+    if not match:
+        return ""
+    group, name = match.groups()
+    return f"{ASSETS}/{server}/{SERVERS[server][3]}/Image/Event/{group}/Banner/{name}/{name}.webp"
+
+
 class EventCutoffRepository:
     """Lazy, isolated, per-key coalesced cache. Never changes the main data schema."""
     def __init__(self, cache_dir: Path, *, transport: Callable = public_get,
@@ -321,7 +474,7 @@ class EventCutoffRepository:
         try:
             board=self.board(event,song,deadline)
             if self.scheduled_history_only and self.history:
-                if board.received_ms and (
+                if not getattr(self.history, 'supports_clock_calibration', False) and board.received_ms and (
                         (board.server_ms and abs(board.server_ms-board.received_ms) > 60000)
                         or (board.fetched_ms and board.fetched_ms > board.received_ms+1000)):
                     board = replace(board, quality='clock_unknown', scores=())
@@ -371,11 +524,14 @@ class EventCutoffRepository:
         if key.startswith("board:"):
             scores, ids = payload.get("scores"), payload.get("player_ids")
             names = payload.get('player_names')
+            details = payload.get('player_details')
             return (isinstance(scores, list) and len(scores) <= 100
                     and (ids is None or isinstance(ids, list) and len(ids) == len(scores)
                          and all(value is None or isinstance(value, str) and _player_id(value) == value for value in ids))
                     and (names is None or isinstance(names, list) and len(names) == len(scores)
-                         and all(value is None or _player_name(value) == value for value in names)))
+                         and all(value is None or _player_name(value) == value for value in names))
+                    and (details is None or isinstance(details, list) and len(details) == len(scores)
+                         and all(value is None or valid_ranking_detail(value, key.split(":")[1]) for value in details)))
         if key.startswith("table:"):
             return isinstance(payload.get("rows"), list) and all(isinstance(row, dict) for row in payload["rows"])
         if key.startswith("metadata:"):
@@ -546,7 +702,8 @@ class EventCutoffRepository:
         if data.get("stale") is True:
             notes.append("来源将活动快照标记为陈旧")
         event = EventSnapshot(server, event_id, f"活动 {event_id}", str(data.get("eventStatus", "unknown")),
-                              _ms(data.get("startAt")), _ms(data.get("endAt")), tuple(songs), notes=tuple(notes))
+                              _ms(data.get("startAt")), _ms(data.get("endAt")), tuple(songs), notes=tuple(notes),
+                              api_start_ms=_ms(data.get("startAt")), api_end_ms=_ms(data.get("endAt")))
         try:
             metadata = self._metadata(server, deadline)
             event = self._enrich(event, metadata.payload)
@@ -598,8 +755,10 @@ class EventCutoffRepository:
                          effective_start_ms=times[0] if song.effective_start_ms == event.start_ms else song.effective_start_ms,
                          effective_end_ms=times[1] if song.effective_end_ms == event.end_ms else song.effective_end_ms)
                  for song in songs]
+        banner = (event_banner_url(event.server, master.get("bannerAsset"))
+                  or asset_url(event.server, "banner", str(chapter.get("chapterBanner", chapter.get("banner", "")))))
         return replace(event, title=title[0] if title else event.title, songs=tuple(songs), start_ms=times[0], end_ms=times[1],
-                       banner=asset_url(event.server, "banner", str(chapter.get("banner", ""))),
+                       banner=banner,
                        metadata_version=data["version"], asset_version=data.get("asset_version", "unknown"),
                        catalog=tuple((key, names(row.get("titleTextID"))) for key, row in music.items()), notes=tuple(notes))
 
@@ -614,14 +773,15 @@ class EventCutoffRepository:
             players = body.get("players")
             if not isinstance(players, list):
                 raise SourceError("invalid_board")
-            # Retain current scores and public IDs/usernames, including null holes; no decks/profile data.
             scores = [p.get("score") if isinstance(p, dict) else None for p in players[:100]]
             ids = [_player_id(p["playerData"].get("id"))
                    if isinstance(p, dict) and isinstance(p.get("playerData"), dict) else None for p in players[:100]]
             names = [_player_name(p["playerData"].get("name"))
                      if isinstance(p, dict) and isinstance(p.get("playerData"), dict) else None for p in players[:100]]
+            details = [ranking_player_detail(p, event.server) if type(score) is int and score >= 0 else None
+                       for p, score in zip(players[:100], scores)]
             return {"scores": [n if type(n) is int and n >= 0 else None for n in scores],
-                    "player_ids": ids, "player_names": names}, headers
+                    "player_ids": ids, "player_names": names, "player_details": details}, headers
         try:
             entry = self._cached(f"board:{event.server}:{event.event_id}:{song.challenge_id}", 60, 600, load, deadline)
         except SourceError as exc:
@@ -687,8 +847,17 @@ class EventCutoffRepository:
         player_ids = tuple(_player_id(n) for n in ids) if isinstance(ids, list) and len(ids) == len(observed) else ()
         names = entry.payload.get('player_names')
         player_names = tuple(_player_name(n) for n in names) if isinstance(names, list) and len(names) == len(observed) else ()
+        details = entry.payload.get('player_details')
+        player_details = tuple(details) if isinstance(details, list) and len(details) == len(observed) else ()
+        http_date = None
+        try:
+            date = parsedate_to_datetime(headers.get("date", ""))
+            if date.tzinfo is not None:
+                http_date = _ms(int(date.timestamp() * 1000))
+        except (ValueError, TypeError, OverflowError):
+            pass
         return BoardSnapshot(song, scores, fetched, server, int(entry.received * 1000), age, status, tuple(notes), observed, quality,
-                             player_ids, player_names)
+                             player_ids, player_names, player_details=player_details, http_date_ms=http_date)
 
     def boards(self, event: EventSnapshot, songs: tuple[EventSong, ...], deadline: float) -> tuple[BoardSnapshot, ...]:
         with ThreadPoolExecutor(max_workers=3) as pool:

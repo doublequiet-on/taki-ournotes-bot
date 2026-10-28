@@ -22,6 +22,8 @@ class TotalRankingSnapshot:
     status: str = '综合榜当前观测'
     notes: tuple[str, ...] = ()
     observed_scores: tuple[int | None, ...] | None = None
+    http_date_ms: int | None = None
+    player_details: tuple[dict | None, ...] = ()
 
     def score(self, rank):
         return self.scores[rank-1] if 1 <= rank <= len(self.scores) else None
@@ -31,3 +33,6 @@ class TotalRankingSnapshot:
 
     def player_name(self, rank):
         return self.player_names[rank-1] if self.score(rank) is not None and rank <= len(self.player_names) else None
+
+    def player_detail(self, rank):
+        return self.player_details[rank-1] if self.score(rank) is not None and rank <= len(self.player_details) else None

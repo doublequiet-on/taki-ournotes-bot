@@ -15,7 +15,7 @@ from pathlib import Path
 from . import history_compression as c
 
 BUSINESS = {'boards', 'observations', 'gaps', 'health', 'event_metadata',
-            'observation_players', 'clock_calibrations', 'clock_quarantine', 'clock_pending'}
+            'observation_players', 'observation_player_details', 'clock_calibrations', 'clock_quarantine', 'clock_pending'}
 FIELDS = {'observations': 'scores', 'observation_players': 'players'}
 PLAYER_SCHEMA = 'CREATE TABLE observation_players (observation_id INTEGER PRIMARY KEY, players TEXT NOT NULL, quality TEXT NOT NULL)'
 

@@ -62,11 +62,12 @@ class PlayerIdTests(unittest.TestCase):
     def test_current_cache_reload_and_history_keep_same_snapshot_players(self):
         answer = self.ask('歌曲1 50-50')
         body = json.loads(self.source._path('board:jp:1:1').read_text(encoding='utf-8'))['payload']
-        self.assertEqual(set(body),{'scores','player_ids','player_names'})
+        self.assertEqual(set(body),{'scores','player_ids','player_names','player_details'})
         self.assertEqual(body['player_ids'][49],'11000000050')
         serialized = json.dumps(body)
         self.assertEqual(body['player_names'][49],'玩家50')
-        for unwanted in ('playerData','profileId','highScoreDeck','private'):
+        self.assertEqual(body['player_details'][49]['profileId'],'99999999999')
+        for unwanted in ('playerData','highScoreDeck','private'):
             self.assertNotIn(unwanted,serialized)
         reloaded = EventCutoffRepository(self.source.cache_dir,transport=Mock(side_effect=AssertionError('network')),
                                         clock=lambda:self.fx.now,monotonic=lambda:self.fx.now)
