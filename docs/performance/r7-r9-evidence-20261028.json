@@ -1,0 +1,18 @@
+{
+  "schema": "taki-performance-evidence-index/1",
+  "archive": "taki-r7-r9-evidence-20261028.zip",
+  "bytes": 52824141,
+  "sha256": "9f8fe87c90e083f1f182f02dac73a649bb0e0e2b83a94216a515854cfec42112",
+  "files": 259,
+  "uncompressed_bytes": 151059971,
+  "redacted_files": 109,
+  "publication": "prepared locally; attach to the approved final A GitHub Release; not yet published",
+  "source_revisions": {
+    "first_baseline": "080c8bcdf1734193e475796b2917da6753fa9eda",
+    "first_integration": "59d0e67d354ee5c0db61fb76cac77d2d2d22734b",
+    "second_integration": "6c57d6b54cb9138189558469f58301fd03e0e7a9"
+  },
+  "excluded": [
+    "r7-r9/baseline.tar"
+  ]
+}

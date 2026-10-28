@@ -27,7 +27,7 @@ def main():
     root = Path(__file__).resolve().parents[1]
     modules = ("application.runtime_tasks", "application.notice_gateway", "application.notice_reports", "application.data_owner", "application.backend_bootstrap", "application.backend", "application.backend_protocol", "application.delivery_ledger", "application.replies", "application.reply_preparation", "query.continuation", "query.field_query", "sources.cutoff_history",
                "sources.cutoff_sampler", "rendering.cutoff_trends", "platforms.qq.qq",
-               "domain.meta_query", "sources.haneoka.song_metrics", "query.song_metrics", "rendering.song_metrics_layout",
+               "domain.meta_query", "domain.card_query", "sources.haneoka.song_metrics", "query.song_metrics", "rendering.song_metrics_layout",
                "domain.knowledge", "sources.knowledge_files", "sources.knowledge_embeddings",
                "domain.model_calls", "sources.model_provider", "natural_query.native_tools",
                "application.model_runtime", "application.model_config", "application.model_admin", "application.usage_ledger",
@@ -43,6 +43,9 @@ def main():
     for name in modules:
         module = importlib.import_module("ournotes_bot." + name)
         assert not Path(module.__file__).resolve().is_relative_to(root), "imported source checkout"
+    from ournotes_bot.domain.card_query import CardRequest, CardFilters
+    from ournotes_bot.query.card_catalog import CardRequest as LegacyRequest, CardFilters as LegacyFilters
+    assert CardRequest is LegacyRequest and CardFilters is LegacyFilters, "card query types diverged"
     from ournotes_bot.platforms.qq.qq import _prepare_reply
     import hashlib
     reply = _prepare_reply("/查卡 947", None, None)

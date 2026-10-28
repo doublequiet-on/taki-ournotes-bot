@@ -57,7 +57,7 @@ def check(path: Path) -> None:
         raise ValueError(f"missing bundled card-947 image in {path.name}")
     if not aliases or not code:
         raise ValueError(f"missing query aliases or bot code in {path.name}")
-    required = {"continuation.py", "field_query.py", "cutoff_history.py", "cutoff_sampler.py", "cutoff_trends.py",
+    required = {"continuation.py", "field_query.py", "card_query.py", "cutoff_history.py", "cutoff_sampler.py", "cutoff_trends.py",
                 "knowledge.py", "knowledge_files.py", "knowledge_embeddings.py", "knowledge_retrieval.py",
                 "knowledge_service.py", "knowledge_cli.py", "QUERY_CHAT_PACKAGE2B.md", "knowledge-draft.md",
                 "model_calls.py", "model_provider.py", "native_tools.py", "model_runtime.py", "model_config.py", "usage_ledger.py", "QUERY_CHAT_PACKAGE3.md",
@@ -76,6 +76,8 @@ def check(path: Path) -> None:
         raise ValueError(f"development architecture gate in {path.name}")
     if not required.issubset(documents):
         raise ValueError(f"missing query upgrade modules or instructions in {path.name}")
+    if not any(PurePosixPath(name).parts[-3:] == ("ournotes_bot", "domain", "card_query.py") for name in names):
+        raise ValueError(f"missing canonical card query domain in {path.name}")
     if not {"event_cutoffs.py", "HANEOKA_CUTOFFS.md"} <= documents:
         raise ValueError(f"missing Haneoka cutoff preview resources in {path.name}")
     if path.name.endswith(".tar.gz"):
