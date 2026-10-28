@@ -31,4 +31,3 @@ class TotalRankingSnapshot:
 
     def player_name(self, rank):
         return self.player_names[rank-1] if self.score(rank) is not None and rank <= len(self.player_names) else None
-
