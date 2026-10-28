@@ -836,20 +836,13 @@ class LinuxBackend:
 
     def cleanup(self, protected: tuple[Release, ...]) -> None:
         self._quiesce_preparations()
-        protected_paths = {release.code_dir for release in protected} | {self.baseline.code_dir}
-        owned = sorted(self.manifests.glob("*.json"), key=lambda path: path.stat().st_mtime, reverse=True)
-        for index, manifest in enumerate(owned):
-            record = json.loads(manifest.read_text())
-            release = Release(**record["release"])
-            root = self.releases / release.commit
-            if (record.get("owner") != "taki-linux-updater-v1" or release.code_dir != str(root / "code")
-                    or release.venv_dir != str(root / "venv") or root.is_symlink() or root.resolve() != root):
-                raise Rejected("cleanup_path_not_owned")
-            if index >= 3 and release.code_dir not in protected_paths:
-                shutil.rmtree(root)
-                manifest.unlink()
-                for log in self.logs.glob(release.commit + "-*.log"):
-                    log.unlink()
+        try:
+            from .release_retention import execute
+        except ImportError:
+            from release_retention import execute
+        # Engine calls cleanup while holding update.lock. The planner is also
+        # exposed separately without service calls or filesystem writes.
+        execute(self.config, protected)
         snapshots = sorted(self.backups.glob("*.json"), key=lambda path: path.stat().st_mtime, reverse=True)
         for manifest in snapshots[2:]:
             row = json.loads(manifest.read_text())
@@ -898,6 +891,9 @@ def validate_config(config: dict) -> None:
     """The installed controller is scoped to the already-reviewed Taki instance."""
     base, control = "/home/ubuntu/taki", "/usr/local/lib/taki-updater"
     knowledge_bundle_spec(config)
+    pins = config.get('retention_pins', [])
+    if not isinstance(pins, list) or any(not isinstance(p, str) or not SHA_RE.fullmatch(p) for p in pins):
+        raise Rejected('retention_pins_invalid')
     if type(config.get('koishi_auto_stage', False)) is not bool:
         raise Rejected('koishi_auto_stage_configuration_invalid')
     if config.get('runtime_mode','bot') not in ('bot','koishi'): raise Rejected('runtime_mode_invalid')
@@ -999,7 +995,7 @@ def human_status(state: dict) -> str:
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description="Taki reviewed public-main Linux updater")
     parser.add_argument("--config", default="/etc/taki-updater.json")
-    parser.add_argument("command", choices=("check", "recover", "status", "resume", "rollback"))
+    parser.add_argument("command", choices=("check", "recover", "status", "cleanup-plan", "resume", "rollback"))
     parser.add_argument("--retry-commit")
     parser.add_argument("--human", action="store_true", help="Chinese read-only status (status only)")
     args = parser.parse_args(argv)
@@ -1019,7 +1015,13 @@ def main(argv=None) -> int:
             if json.loads(marker.read_text()).get("phase") != "installed":
                 print(json.dumps({"status": "deferred", "reason": "installation_incomplete"}))
                 return 0
-        if args.command == "status":
+        if args.command == 'cleanup-plan':
+            try:
+                from .release_retention import plan
+            except ImportError:
+                from release_retention import plan
+            result = plan(config)
+        elif args.command == "status":
             # Loading state does not need a backend; its constructor creates
             # preparation folders, which a read-only status must not do.
             result = status_document(Engine(config["state_dir"], backend=None))
@@ -1037,7 +1039,7 @@ def main(argv=None) -> int:
                 result = asdict(recover_engine(engine))
             else:
                 result = asdict(engine.run())
-        if args.command != "status" and engine.backend.koishi:
+        if args.command not in ("status", "cleanup-plan") and engine.backend.koishi:
             engine.backend.koishi.publish_notice(engine.load_state())
         print(json.dumps(result, ensure_ascii=True, sort_keys=True))
         if args.command == "rollback":

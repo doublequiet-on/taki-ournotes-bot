@@ -686,6 +686,214 @@ class LinuxBackendTests(unittest.TestCase):
             self.backend.cleanup(())
         self.assertTrue(self.root.exists())
 
+    def retention_fixture(self):
+        self.config.update(runtime_mode='koishi', koishi_combinations=str(self.root / 'combinations'))
+        combos = self.root / 'combinations'
+        combos.mkdir()
+        releases = []
+        for number in range(1, 7):
+            sha = str(number) * 40
+            release = self.candidate(sha); releases.append(release)
+            root = combos / sha; root.mkdir()
+            (root / 'node').write_bytes(b'node fixture')
+            manifest = dict(schema=1, commit=sha, python_sha256='e'*64,
+                node=dict(version='v24.19.0',platform='linux',arch='x64'),
+                protocol=dict(major=2,minor=0), capabilities=['group_policies_v1','query_chat_contract_v1'],
+                files={'node':hashlib.sha256(b'node fixture').hexdigest()})
+            (root / 'combination.json').write_text(json.dumps(manifest))
+            path = self.backend.manifests / (sha + '.json')
+            row = json.loads(path.read_text()); row['bundle_sha256'] = 'e'*64
+            atomic_json(path, row); os.utime(path, (number, number))
+        self.state(previous=releases[4], current=asdict(releases[5]))
+        return combos, releases
+
+    def test_paired_retention_plans_without_writes_and_protects_pins_processes(self):
+        from deploy.release_retention import plan, execute
+        combos, releases = self.retention_fixture()
+        self.config['retention_pins'] = ['1'*40]
+        unknown = combos / ('8'*40); unknown.mkdir()
+        stage = combos / '.unknown-stage'; stage.mkdir()
+        before = {str(p): p.read_bytes() for p in self.root.rglob('*') if p.is_file()}
+        with patch('deploy.release_retention.process_paths', return_value=({str(combos / ('2'*40) / 'node')}, True)):
+            report = plan(self.config)
+            self.assertEqual([r['commit'] for r in report['entries'] if r['action']=='delete'], ['3'*40])
+            self.assertGreater(report['reclaim_bytes'], 0)
+            self.assertEqual(before, {str(p): p.read_bytes() for p in self.root.rglob('*') if p.is_file()})
+            execute(self.config)
+        self.assertFalse((combos / ('3'*40)).exists())
+        self.assertFalse(Path(releases[2].code_dir).exists())
+        self.assertTrue(unknown.exists()); self.assertTrue(stage.exists())
+        self.assertTrue(self.baseline_code.exists())
+        self.assertTrue((self.backend.state/'cleanup-plan.json').exists())
+
+    def test_retention_protects_transaction_and_unknown_process_inventory(self):
+        from deploy.release_retention import plan
+        combos, releases = self.retention_fixture()
+        self.state(current=asdict(releases[5]), previous=releases[4],
+                   transaction=dict(commit='1'*40, previous=asdict(releases[1]), candidate=asdict(releases[2])))
+        report = plan(self.config, references=(set(), True))
+        self.assertTrue(all(r['action']=='keep' for r in report['entries']))
+        self.state(current=asdict(releases[5]), previous=releases[4])
+        report = plan(self.config, references=(set(), False))
+        self.assertTrue(all(r['action']=='keep' for r in report['entries']))
+        self.assertTrue(all('process_references_unknown' in r['reasons'] for r in report['entries']))
+
+    def test_interrupted_combination_stage_does_not_consume_recent_pair_slot(self):
+        from deploy import release_retention as retention
+        combos, releases = self.retention_fixture()
+        sha = '7'*40
+        candidate = self.candidate(sha)  # Python is sealed before Koishi staging.
+        stage = combos / ('.'+sha+'-interrupted'); stage.mkdir()
+        (stage/'partial').write_text('interrupted extraction')
+        owners = self.backend.state/'combinations'; owners.mkdir()
+        owner = owners/(sha+'.json')
+        atomic_json(owner, dict(owner=retention.OWNER, commit=sha, destination=str(combos/sha),
+            phase='staging', stage=str(stage), python_sha256='e'*64, manifest_sha256='f'*64))
+        self.state(current=asdict(releases[5]), previous=releases[4],
+            transaction=dict(commit=sha,previous=asdict(releases[5]),candidate=asdict(candidate)))
+        report = retention.plan(self.config, references=(set(),True))
+        pending = next(row for row in report['entries'] if row['commit']==sha)
+        self.assertEqual(pending['action'],'keep')
+        self.assertIn('transaction',pending['reasons'])
+        self.assertNotIn('recent',pending['reasons'])
+        # Recovery clears the abandoned transaction before invoking cleanup.
+        self.state(current=asdict(releases[5]), previous=releases[4])
+        report = retention.plan(self.config, references=(set(),True))
+        self.assertEqual([row['commit'] for row in report['entries'] if 'recent' in row['reasons']],
+                         [str(number)*40 for number in (4,5,6)])
+        self.assertEqual(next(row for row in report['entries'] if row['commit']==sha)['action'],'delete')
+        live = retention.plan(self.config, references=({str(stage/'partial')},True))
+        self.assertIn('active_process',next(row for row in live['entries'] if row['commit']==sha)['reasons'])
+        self.config['retention_pins']=[sha]
+        pinned = retention.plan(self.config, references=(set(),True))
+        self.assertIn('pinned',next(row for row in pinned['entries'] if row['commit']==sha)['reasons'])
+        self.config['retention_pins']=[]
+        with patch.object(retention,'process_paths',return_value=(set(),True)):
+            retention.execute(self.config)
+        self.assertFalse(owner.exists())
+        self.assertFalse(stage.exists())
+        self.assertFalse(Path(candidate.code_dir).parent.exists())
+
+    def test_interrupted_delete_cannot_adopt_a_later_unowned_combination(self):
+        from deploy import release_retention as retention
+        combos, _ = self.retention_fixture()
+        root = combos/('1'*40)
+        (root/'node').unlink();(root/'combination.json').unlink();root.rmdir()
+        report = retention.plan(self.config,references=(set(),True))
+        entry = next(row for row in report['entries'] if row['commit']=='1'*40)
+        intents = self.backend.state/'cleanup-intents';intents.mkdir()
+        journal = intents/('1'*40+'.json')
+        atomic_json(journal,{key:entry[key] for key in ('commit','paths','records','identities')} |
+                    {'owner':retention.OWNER})
+        root.mkdir();(root/'unknown').write_text('arrived after deletion intent')
+        with patch.object(retention,'process_paths',return_value=(set(),True)):
+            resumed = next(row for row in retention.plan(self.config)['entries'] if row['commit']=='1'*40)
+            self.assertEqual(resumed['action'],'keep')
+            self.assertIn('cleanup_ownership_changed',resumed['reasons'])
+            retention.execute(self.config)
+        self.assertTrue((root/'unknown').exists())
+        self.assertTrue(journal.exists())
+        self.assertTrue(Path(entry['paths'][0]).exists())
+
+    def test_retention_skips_invalid_pair_and_resumes_partial_delete(self):
+        from deploy import release_retention as retention
+        combos, releases = self.retention_fixture()
+        (combos / ('1'*40) / 'node').write_bytes(b'tampered')
+        with patch.object(retention, 'process_paths', return_value=(set(), True)):
+            report = retention.plan(self.config)
+            self.assertIn('combination_invalid', next(r for r in report['entries'] if r['commit']=='1'*40)['reasons'])
+            def partial(path):
+                (Path(path) / 'node').unlink()
+                raise OSError('fixture interruption')
+            with patch.object(retention.shutil, 'rmtree', side_effect=partial):
+                with self.assertRaises(OSError): retention.execute(self.config)
+            journal = self.backend.state/'cleanup-intents'/('2'*40+'.json')
+            self.assertTrue(journal.exists())
+            retention.execute(self.config)
+        self.assertFalse(journal.exists())
+        self.assertFalse((combos / ('2'*40)).exists())
+        self.assertFalse(Path(releases[1].code_dir).exists())
+        self.assertTrue((combos / ('1'*40)).exists())
+
+    def test_owned_stage_cleanup_preserves_unowned_stage_and_rejects_escape(self):
+        from deploy import release_retention as retention
+        combos, _ = self.retention_fixture()
+        sha = '7'*40; stage = combos / ('.'+sha+'-fixture'); stage.mkdir()
+        (stage/'part').write_text('partial')
+        unknown = combos / ('.'+'8'*40+'-fixture'); unknown.mkdir()
+        owners = self.backend.state/'combinations'; owners.mkdir()
+        path = owners/(sha+'.json')
+        record = dict(owner=retention.OWNER, commit=sha, destination=str(combos/sha),
+                      phase='staging', stage=str(stage), python_sha256='e'*64, manifest_sha256='f'*64)
+        atomic_json(path, record)
+        with patch.object(retention, 'process_paths', return_value=(set(), True)):
+            retention.execute(self.config)
+        self.assertFalse(stage.exists()); self.assertFalse(path.exists()); self.assertTrue(unknown.exists())
+        atomic_json(path, dict(record, stage=str(self.root)))
+        with self.assertRaisesRegex(Rejected, 'combination_stage_invalid'):
+            retention.plan(self.config, references=(set(), True))
+
+    def test_retention_rechecks_active_references_before_delete(self):
+        from deploy import release_retention as retention
+        combos, releases = self.retention_fixture()
+        calls = 0
+        def references():
+            nonlocal calls
+            calls += 1
+            return (set() if calls == 1 else {str(combos/('1'*40)/'node')}, True)
+        with patch.object(retention, 'process_paths', side_effect=references):
+            retention.execute(self.config)
+        self.assertTrue((combos/('1'*40)).exists()); self.assertTrue(Path(releases[0].code_dir).exists())
+
+    def test_cleanup_plan_cli_does_not_construct_backend_or_write_notice(self):
+        from types import SimpleNamespace
+        self.retention_fixture()
+        config = self.root/'config.json'; config.write_text(json.dumps(self.config))
+        before = {str(p): p.read_bytes() for p in self.root.rglob('*') if p.is_file()}
+        with patch('deploy.linux_backend.os', SimpleNamespace(name='posix', geteuid=lambda:0)), \
+             patch('deploy.linux_backend.trusted'), patch('deploy.linux_backend.validate_config'), \
+             patch('deploy.linux_backend.LinuxBackend') as backend, patch('builtins.print') as printer, \
+             patch('deploy.release_retention.process_paths', return_value=(set(), True)):
+            self.assertEqual(main(['--config',str(config),'cleanup-plan']),0)
+        backend.assert_not_called()
+        self.assertTrue(json.loads(printer.call_args.args[0])['read_only'])
+        self.assertEqual(before, {str(p): p.read_bytes() for p in self.root.rglob('*') if p.is_file()})
+
+    def test_retention_does_not_delete_replacement_after_interruption(self):
+        from deploy import release_retention as retention
+        combos, _ = self.retention_fixture()
+        with patch.object(retention, 'process_paths', return_value=(set(), True)):
+            report = retention.plan(self.config)
+            entry = next(r for r in report['entries'] if r['commit']=='1'*40)
+            intents=self.backend.state/'cleanup-intents';intents.mkdir()
+            intent={k:entry[k] for k in ('commit','paths','records','identities')}
+            intent['owner']=retention.OWNER
+            # A replacement object is distinguishable even when it has the same
+            # approved payload; do not inherit the interrupted delete's ownership.
+            intent['identities'][str(combos/('1'*40))]=[-1,-1]
+            atomic_json(intents/('1'*40+'.json'),intent)
+            with self.assertRaisesRegex(Rejected,'cleanup_directory_replaced'):
+                retention.execute(self.config)
+        self.assertTrue((combos/('1'*40)/'node').exists())
+
+    def test_material_contract_rejects_skipped_bridge_before_switch(self):
+        # The controller's existing pairwise contract comparison also covers
+        # material readers: no new protocol or candidate-executed gate is needed.
+        previous = self.baseline
+        candidate = self.candidate()
+        self.policy()
+        policy_path = Path(self.config['compatibility_policy'])
+        policy = json.loads(policy_path.read_text())
+        policy['reviews'][0]['schema_contract'] = 'materials-v1'
+        (Path(candidate.code_dir)/'critical.py').write_text('schema2 writer')
+        policy['reviews'].append(dict(fingerprints=fingerprints(Path(candidate.code_dir), self.config['compatibility_paths']),
+            forward_and_rollback_data_compatible=True, evidence='compiled bridge/read-write fixture',
+            schema_contract='materials-v2'))
+        atomic_json(policy_path, policy)
+        with patch('deploy.linux_backend.trusted'):
+            with self.assertRaisesRegex(Rejected, 'persistence_contract_changed'):
+                self.backend._check_reviewed_fingerprints(previous, candidate)
+
     def test_environment_changes_are_rejected_before_activation(self):
         release = self.candidate()
         (Path(release.venv_dir) / "injected.py").write_text("changed")
