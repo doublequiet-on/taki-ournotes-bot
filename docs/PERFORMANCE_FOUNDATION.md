@@ -8,6 +8,8 @@
 
 该锚点不是已发布版本。最终 PR head 自己的 CI、main 发布、实际安装控制器、A/B 运行验收分别记录，不能借用旧候选 CI。旧整合 [6c57d6b CI](https://github.com/doublequiet-on/taki-ournotes-bot/actions/runs/40477423352) 的架构、Python 3.10/3.12、禁网安装、网关和组合检查成功；发布为 skipped。主线 [3e19710 CI](https://github.com/doublequiet-on/taki-ournotes-bot/actions/runs/40553950267) 成功，不等于本次 A 已验收。
 
+[最终 A 草稿 #147](https://github.com/doublequiet-on/taki-ournotes-bot/pull/147) 保存最新候选、绑定版本的 CI 与验收结果。正式包浏览器检查发现既有 Koishi 重连会先卸载 Taki 页面，再刷新欢迎页；收尾补丁在首次断线时捕获完整地址，并贯穿失败重试恢复原页，继续保留草稿和重新认证边界。该修复随实际组合打包验证，未改查询热路径；新增验收覆盖两次失败后重连、无草稿重连及全局/群/模型草稿恢复，未提交密钥不暂存。
+
 ### 可长期取得的证据
 
 [归档索引](performance/r7-r9-evidence-20261028.json) 固定 ZIP 名称、大小、SHA-256 和原始版本。[复现入口](../scripts/performance/README.md) 提供归档校验、逐请求重算及原实验脚本。归档含两批原始数据、负面结果、修正后结果、代表图、素材实际编译回退及相关回归日志。大文件作为最终 A 的 Release 独立附件准备，不进入机器人安装包；未正式上传时索引明确标为 prepared，不能把计划 URL 当下载完成。

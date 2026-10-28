@@ -1,6 +1,52 @@
 // Development acceptance only. Pass installed npm asset directory, Playwright package and screenshot directory.
 const assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path')
 const {chromium}=require(process.argv[2]),output=path.resolve(process.argv[3])
+async function verifyReconnect(page){
+  const nav=()=>page.getByRole('navigation',{name:'Taki 工作页面'})
+  const reconnect=async failures=>{
+    const before=await page.evaluate(()=>window.fixtureDocument),url=page.url()
+    await page.evaluate(n=>{
+      window.fixtureFailures=n
+      window.fixtureSockets.filter(s=>s.readyState===1).forEach(s=>s.close(4000,'isolated reconnect check'))
+    },failures)
+    await page.waitForFunction(before=>typeof window.fixtureDocument==='string'&&window.fixtureDocument!==before,before,{timeout:30000})
+    await page.waitForURL(url)
+    await page.getByLabel('管理员密码').fill('fixture-console-password-000000')
+    await page.getByRole('button',{name:'登录',exact:true}).click()
+    await page.getByRole('heading',{name:'总览',exact:true}).waitFor()
+  }
+  await nav().getByText('设置',{exact:true}).click()
+  const toggle=page.getByLabel('允许私聊',{exact:true}),initial=await toggle.isChecked()
+  await toggle.setChecked(!initial)
+  await page.getByLabel('模型 ID',{exact:true}).fill('fixture-unsaved-reconnect-model')
+  await page.getByLabel('新密钥',{exact:true}).fill('fixture-never-persist-this-key')
+  await nav().getByText('群管理',{exact:true}).click();await page.locator('.group-entry').first().click()
+  await page.getByLabel('群备注',{exact:true}).fill('重连保留草稿')
+  const stored=await page.evaluate(()=>sessionStorage.getItem('taki.console.recovery.v1'))
+  assert.ok(stored.includes('重连保留草稿')&&stored.includes('fixture-unsaved-reconnect-model'))
+  assert.ok(!stored.includes('fixture-never-persist-this-key'))
+  await reconnect(2)
+  await nav().getByText('设置',{exact:true}).click()
+  assert.equal(await toggle.isChecked(),!initial)
+  assert.equal(await page.getByLabel('模型 ID',{exact:true}).inputValue(),'fixture-unsaved-reconnect-model')
+  assert.equal(await page.getByLabel('新密钥',{exact:true}).inputValue(),'')
+  await nav().getByText('群管理',{exact:true}).click()
+  assert.equal(await page.getByLabel('群备注',{exact:true}).inputValue(),'重连保留草稿')
+  await page.getByRole('button',{name:'保存群策略',exact:true}).click()
+  await page.getByText('群策略已保存。新查询使用新规则，在途查询继续完成。',{exact:true}).waitFor()
+  await nav().getByText('设置',{exact:true}).click()
+  await page.getByRole('button',{name:'放弃 AI 草稿并刷新',exact:true}).click()
+  await page.getByRole('button',{name:'保存设置',exact:true}).click()
+  await page.getByText('已保存生效；在途查询继续完成。',{exact:true}).waitFor()
+  assert.equal(await page.locator('.draft-dot').count(),0)
+  await reconnect(0)
+  await nav().getByText('设置',{exact:true}).click()
+  assert.equal(await toggle.isChecked(),!initial)
+  await page.screenshot({path:path.join(output,'reconnected-drafts-saved.png'),fullPage:true})
+  return {passed:true,actualWebSocketReconnect:true,failedConnectionsBeforeSuccess:2,noDraftReconnect:true,
+    fullUrlPreserved:true,reauthentication:true,globalGroupModelDraftsPreserved:true,
+    unsubmittedSecretNotStored:true,groupAndGlobalSaveAfterReconnect:true}
+}
 async function verifySettingsScroll(page){
   const layout=page.locator('.layout-main'),save=page.getByRole('button',{name:'保存设置',exact:true})
   const toggle=page.getByLabel('允许私聊',{exact:true})
@@ -57,12 +103,28 @@ async function main(){
   page.on('pageerror',e=>errors.push(e.message))
   page.on('response',r=>{if(r.status()>=400)failed.push([r.status(),r.url()])})
   await page.route('**/*',route=>new URL(route.request().url()).hostname==='127.0.0.1'?route.continue():route.abort())
+  const reconnect=process.env.TAKI_RECONNECT_ONLY==='1'
+  if(reconnect){
+    page.on('dialog',dialog=>dialog.accept())
+    await page.addInitScript(()=>{
+      window.fixtureDocument=crypto.randomUUID();window.fixtureSockets=[];window.fixtureFailures=0
+      const Native=window.WebSocket
+      window.WebSocket=class extends Native {constructor(url,...args){
+        if(window.fixtureFailures>0){window.fixtureFailures--;url='ws://127.0.0.1:15143/status'}
+        super(url,...args);window.fixtureSockets.push(this)
+      }}
+    })
+  }
   try{
-    await page.goto('http://127.0.0.1:15142/taki',{waitUntil:'networkidle'})
+    await page.goto('http://127.0.0.1:15142/taki'+(reconnect?'?reconnect_fixture=1#detail':''),{waitUntil:'networkidle'})
     await page.screenshot({path:path.join(output,'login-desktop.png'),fullPage:true})
     await page.getByLabel('管理员密码').fill('fixture-console-password-000000')
     await page.getByRole('button',{name:'登录',exact:true}).click()
     await page.getByRole('heading',{name:'总览',exact:true}).waitFor()
+    if(reconnect){
+      const result=await verifyReconnect(page);assert.deepEqual(errors,[]);assert.deepEqual(failed,[])
+      fs.writeFileSync(path.join(output,'reconnect.json'),JSON.stringify({...result,errors,failed},null,2));return
+    }
     if(process.env.TAKI_SCROLL_ONLY==='1'){
       await verifySettingsScroll(page)
       assert.deepEqual(errors,[]);assert.deepEqual(failed,[])

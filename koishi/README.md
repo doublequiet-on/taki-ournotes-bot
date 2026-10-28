@@ -80,6 +80,6 @@ M1 候选额度不是实测平台额度。真实事件、群/C2C 权限、回复
 
 运输协议1.1要求绝对路径 `TAKI_CONSOLE_STATE_DIR`，即使 `TAKI_CONSOLE_ENABLED=0` 也加载设置及群策略；网页开关只控制管理入口。受管启动固定使用 `<base>/console-state`，不能换目录绕过已存策略。此目录须为服务用户可写，不能放进只读组合包。网页启用另需独立管理密码；不暴露后端token。
 
-组合包构建时只在暂存目录修正 Koishi 5.30.11 客户端重连刷新回调；先校验原始文件 SHA-256 和唯一匹配，未知版本拒绝打包，不修改已安装的 npm 依赖。
+组合包构建时只在暂存目录修正 Koishi 5.30.11 客户端重连回调：首次断线、卸载页面前捕获完整地址，连续失败重试沿用该地址，成功后返回原页重新登录。先校验原始文件 SHA-256 和每个替换片段唯一匹配，未知版本拒绝打包，不修改已安装的 npm 依赖。`TAKI_RECONNECT_ONLY=1` 的现有 Console 浏览器夹具覆盖连续失败、无草稿及三类草稿恢复；只连接本机模拟服务。
 
 `node scripts/console-rpc-probe.cjs` 使用本机隔离 WebSocket。`scripts/console-server.cjs`、`console-browser.cjs` 及 Python `tests/fixtures/console_backend.py` 只作隔离浏览器验收，不进入生产启动链。浏览器证据必须使用打包后的模块，不能以源码预览替代。设置 TAKI_SCROLL_ONLY=1 可单独检查桌面滚轮、手机触摸滚动及模拟设置保存。
