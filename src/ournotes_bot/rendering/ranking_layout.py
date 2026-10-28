@@ -58,7 +58,7 @@ def render(answer,*,assets,load,display_time,server_label,timezone_label,catalog
     total_pages=()
     if answer.total is not None:
         from .total_rankings import render_total
-        total_pages=render_total(replace(answer,boards=()),assets)
+        total_pages=render_total(replace(answer,boards=()),assets,catalogs=catalogs,load=load)
         if not answer.boards:return total_pages
         answer=replace(answer,total=None,total_status='综合榜单独展示。')
     trend=answer.request.mode=='trend';boards=answer.boards;historical=answer.historical
@@ -105,6 +105,13 @@ def render(answer,*,assets,load,display_time,server_label,timezone_label,catalog
         values=([f'等级 {max(ranks)}'] if ranks else [])
         if detail.get('totalPower') is not None:values.append(f'综合力 {detail["totalPower"]:,}')
         return ' · '.join(values)
+    def player_info_lines(board,rank,max_width):
+        info=player_info(board,rank)
+        if not info:return ()
+        values=info.split(' · ')
+        if len(values)>1 and font(22).getlength(info)>max_width:
+            return tuple(line for value in values for line in lines(value,max_width,22))
+        return tuple(lines(info,max_width,22))
     def avatar(c,board,rank,x,y,size):
         detail=board.player_detail(rank) or {};card=member.get(detail.get('favoriteMemberCardId'))
         if card:
@@ -148,9 +155,18 @@ def render(answer,*,assets,load,display_time,server_label,timezone_label,catalog
         def name_width(board,rank):
             score_width=font(32,True,True).getlength(score_text(board,rank))
             return max(90,int(cw)-(40 if historical else 144)-int(score_width))
+        def row_height(board,rank):
+            name_size = 36 if width==1080 else 28
+            id_size = 28 if width==1080 else 24
+            height = (8 if width==1080 and not historical else 14)
+            height += len(lines(answer.name_label(board,rank),name_width(board,rank),name_size,True))*40
+            height += len(lines('ID '+answer.id_label(board,rank),int(cw)-124,id_size))*32
+            info = player_info(board,rank) if not historical else ''
+            if info:
+                height += 40 if width==1080 else len(player_info_lines(board,rank,int(cw)-124))*30
+            return height+12
         for rank in answer.ranks:
-            rh=72 if historical and not any(answer.has_players(b) for b in boards) else max(max(len(lines(answer.name_label(b,rank),name_width(b,rank),36 if width==1080 else 28))*36+
-                       len(lines('ID '+answer.id_label(b,rank),int(cw)-124,24))*32+44 for b in boards),112)
+            rh=72 if historical and not any(answer.has_players(b) for b in boards) else max(max(row_height(b,rank) for b in boards),112)
             blocks.append(('table',rh,rank))
         plot_height=404 if any(answer.history_for(b).points for b in boards) else 180
         head+=columns+plot_height+88
@@ -231,9 +247,11 @@ def render(answer,*,assets,load,display_time,server_label,timezone_label,catalog
                     if info:
                         if width==1080:
                             left_info,*right_info=info.split(' · ',1)
-                            c.text(x+118,y+93,left_info,26,MUTED)
-                            if right_info:c.text(x+cw-24,y+84,right_info[0],28,MUTED,align='right')
-                        else:c.paragraph(x+92,ty,info,int(cw)-124,22,30,color=MUTED)
+                            c.text(x+118,ty+16,left_info,26,MUTED)
+                            if right_info:c.text(x+cw-24,ty+16,right_info[0],28,MUTED,align='right')
+                        else:
+                            for line in player_info_lines(b,rank,int(cw)-124):
+                                ty=c.paragraph(x+92,ty,line,int(cw)-124,22,30,color=MUTED)
                     c.text(x+cw-24,y+(28 if width==1080 else 34),score_text(b,rank),42 if width==1080 else 32,bold=True,align='right')
                 c.line(54,y+bh,width-54,'#e5e0e9')
             y+=bh

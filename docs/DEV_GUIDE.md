@@ -99,7 +99,7 @@ Linux 受管更新器在安装／离线验证结束、停止旧服务之前自�
 
 ## 开发与验证命令
 
-综合榜内部离线链路：`domain/total_rankings.py` → `sources/total_rankings.py` → `query/event_cutoff_query.py` → 正式 `application/replies.py`／`rendering/ranking_layout.py` → `rendering/total_rankings.py`；`cutoff_sampler.py` 仅在显式适配器已接入时采样。目标验证为既有 `test_cutoff_query_v2.py::TotalRankingOfflineTests`，扩大到原榜线／历史／采样／回复测试。当前正式来源没有综合榜适配器；测试桩和合成图不能视为真实接口验收。合同见 [榜线说明](EVENT_CUTOFFS.md#综合榜内部合同与独立存储)。
+综合榜链路：`domain/total_rankings.py` → `sources/total_rankings.py` → `query/event_cutoff_query.py` → 正式 `application/replies.py`／`rendering/ranking_layout.py` → `rendering/total_rankings.py`；`tracker` 安装公开快照适配器，后台采样写入独立压缩历史。正式图片与单曲榜共用对应区服的收藏卡资料，显示头像、等级及综合力。目标验证为既有 `test_cutoff_query_v2.py::TotalRankingOfflineTests`，扩大到原榜线／历史／采样／回复测试；测试桩和合成图不能视为真实接口验收。合同见 [榜线说明](EVENT_CUTOFFS.md#综合榜内部合同与独立存储)。
 
 源码依赖修改先运行 `python -B scripts/check_architecture.py`；门禁负例执行 `python -B -m unittest discover -s tests -p test_architecture.py -v`。约束、存量债务和发布接线见 [架构门禁](ARCHITECTURE.md)，不向运行依赖增加开发工具。
 

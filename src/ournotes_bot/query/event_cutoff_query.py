@@ -17,7 +17,7 @@ from ..sources.cutoff_history import HistoryView
 from ..domain.total_rankings import TotalRankingSnapshot
 
 NODES = (1, 2, 3, 10, 100)
-HELP = '/查榜线 [jp/hk/kr/en] [id1或活动="名称"] [单曲或总榜] [歌名或歌曲ID=完整ID] [50或20-40] [仅数值]；参数顺序不限。总榜目前仅查接入状态。id1指定活动1（兼容 活动ID=1），裸数字表示排名；指定活动读取本地最近一次有效观测，无排名看五档趋势，单排名看前后十名，区间看每行分数。'
+HELP = '/查榜线 [jp/hk/kr/en] [id1或活动="名称"] [单曲或总榜] [歌名或歌曲ID=完整ID] [50或20-40] [仅数值]；参数顺序不限。总榜可用性取决于来源。id1指定活动1（兼容 活动ID=1），裸数字表示排名；指定活动读取本地最近一次有效观测，无排名看五档趋势，单排名看前后十名，区间看每行分数。'
 SERVER_ALIASES = {"jp": "jp", "日服": "jp", "hk": "tw", "国服": "tw", "國服": "tw",
                   "tw": "tw", "台服": "tw", "臺服": "tw",
                   "kr": "kr", "韩服": "kr", "韓服": "kr", "en": "en", "英服": "en", "国际服": "en", "國際服": "en"}
@@ -546,11 +546,13 @@ def _execute_cutoff(request: CutoffRequest, repository) -> CutoffAnswer:
     total_status = rules.total_status
     include_total = request.board_scope == 'total' or (request.board_scope == 'all' and not (
         request.query or request.song_number is not None or request.song_id or request.extra_queries))
-    if include_total and totals is not None and (rules.total_enabled is True or historical and rules.total_enabled is not False):
+    if include_total and totals is not None and (rules.total_enabled is True or rules.total_enabled is None and (historical or totals.connected)):
         if historical or totals.connected:
             total_status = '综合榜来源或历史暂不可用，单曲榜单独查询。'
             try:
                 total = totals.history.latest(event) if historical else totals.capture(event,deadline)
+                if total is None and not historical:
+                    total_status = totals.unavailable_status(event)
                 if not request.numeric_only:
                     total_history = totals.history.read(event,request.ranks or NODES)
                 if total is not None and not any(s is not None for s in total.scores) and not total_history.points:

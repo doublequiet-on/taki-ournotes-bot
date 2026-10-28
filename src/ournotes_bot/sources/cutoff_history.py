@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import bisect
+import base64
 import hashlib
 import json
 import logging
@@ -14,6 +15,7 @@ import shutil
 import sqlite3
 import threading
 import time
+import zlib
 from contextlib import closing
 from dataclasses import asdict, dataclass, replace
 from pathlib import Path
@@ -40,6 +42,7 @@ CREATE TABLE IF NOT EXISTS health (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 # Additive table, deliberately retaining schema versions and old reader compatibility.
 EVENT_METADATA = "CREATE TABLE IF NOT EXISTS event_metadata (server TEXT, event TEXT, payload TEXT NOT NULL, PRIMARY KEY(server,event))"
 PLAYER_SCHEMA = "CREATE TABLE IF NOT EXISTS observation_players (observation_id INTEGER PRIMARY KEY, players TEXT NOT NULL, quality TEXT NOT NULL)"
+DETAIL_SCHEMA = "CREATE TABLE IF NOT EXISTS observation_player_details (observation_id INTEGER PRIMARY KEY, details TEXT NOT NULL, digest TEXT NOT NULL, quality TEXT NOT NULL)"
 QUARANTINE_SCHEMA = """
 CREATE TABLE IF NOT EXISTS clock_quarantine (
  server TEXT, event TEXT, challenge TEXT, music TEXT, received_ms INTEGER,
@@ -169,6 +172,55 @@ class CutoffHistory:
                    (ident, compressed.encode(db, 'observation_players', json.dumps(players, ensure_ascii=False, separators=(',', ':'))), 'valid'))
         return 'saved'
 
+    @staticmethod
+    def _read_details(encoded, digest, scores, server):
+        from .moenotes_events import valid_ranking_detail
+        try:
+            body = base64.b64decode(encoded, validate=True)
+            decoder = zlib.decompressobj()
+            raw = decoder.decompress(body, 1048577)
+            if len(raw) > 1048576 or not decoder.eof or decoder.unused_data or decoder.unconsumed_tail:
+                raise ValueError('invalid player details compression')
+            if hashlib.sha256(raw).hexdigest() != digest:
+                raise ValueError('player details checksum mismatch')
+            details = json.loads(raw)
+        except (zlib.error, UnicodeError) as exc:
+            raise ValueError('invalid player details') from exc
+        if (not isinstance(details, list) or len(details) != len(scores)
+                or any(detail is not None and (score is None or not valid_ranking_detail(detail, server))
+                       for detail, score in zip(details, scores))):
+            raise ValueError('invalid player details positions')
+        return details
+
+    def _save_details(self, db, ident, board, scores, server):
+        from .moenotes_events import valid_ranking_detail
+        values = board.player_details
+        if self.source != 'tracker' or not values:
+            return
+        size = len(board.observed_scores if board.observed_scores is not None else board.scores)
+        if len(values) != size:
+            _LOGGER.warning('Misaligned history player details excluded; scores and public identity retained')
+            return
+        details = [values[i] if i < size and score is not None else None for i, score in enumerate(scores)]
+        if any(detail is not None and not valid_ranking_detail(detail, server) for detail in details):
+            _LOGGER.warning('Invalid history player details excluded; scores and public identity retained')
+            return
+        if not any(detail is not None for detail in details):
+            return
+        db.execute(DETAIL_SCHEMA)
+        old = db.execute('SELECT details,digest,quality FROM observation_player_details WHERE observation_id=?', (ident,)).fetchone()
+        if old:
+            previous = self._read_details(old[0], old[1], scores, server)
+            if old[2] != 'valid' or any(a is not None and b is not None and a != b for a, b in zip(previous, details)):
+                db.execute("UPDATE observation_player_details SET quality='conflict' WHERE observation_id=?", (ident,))
+                return
+            details = [a if a is not None else b for a, b in zip(previous, details)]
+        raw = json.dumps(details, ensure_ascii=False, separators=(',', ':')).encode('utf-8')
+        if len(raw) > 1048576:
+            raise ValueError('player details exceed storage budget')
+        db.execute('INSERT OR REPLACE INTO observation_player_details VALUES(?,?,?,?)',
+                   (ident, base64.b64encode(zlib.compress(raw)).decode('ascii'), hashlib.sha256(raw).hexdigest(), 'valid'))
+
     def backfill_players(self, event, board, *, apply=False):
         """Attach only to an existing identical source/time/music/score vector; never insert observations."""
         if board.source != self.source or not self.path.exists() or not self.enabled:
@@ -181,7 +233,7 @@ class CutoffHistory:
         digest = hashlib.sha256(json.dumps(scores, separators=(',', ':')).encode()).hexdigest()
         with self._lock, closing(self._connect(write=apply)) as db, db:
             stamp = board.fetched_ms
-            if self.source == 'haneoka' and db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='clock_calibrations'").fetchone():
+            if db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='clock_calibrations'").fetchone():
                 calibrated = db.execute('SELECT DISTINCT source_ms FROM clock_calibrations WHERE server=? AND event=? AND challenge=? AND raw_source_ms=? AND raw_server_ms=? AND received_ms=?',
                                         (*self._key(event, board.song), stamp, board.server_ms, board.received_ms)).fetchall()
                 if len(calibrated) == 1:
@@ -226,8 +278,12 @@ class CutoffHistory:
                 quality = "outside_period"
             with closing(self._connect(write=True)) as db, db:
                 db.execute(EVENT_METADATA)
+                event_metadata = asdict(event)
+                # The legacy schema remains readable by the previous Taki version.
+                event_metadata.pop("api_start_ms", None)
+                event_metadata.pop("api_end_ms", None)
                 db.execute("INSERT OR REPLACE INTO event_metadata VALUES(?,?,?)",
-                           (event.server, str(event.event_id), json.dumps(asdict(event), ensure_ascii=False)))
+                           (event.server, str(event.event_id), json.dumps(event_metadata, ensure_ascii=False)))
                 identity = db.execute("SELECT music FROM boards WHERE server=? AND event=? AND challenge=?", key).fetchone()
                 if identity and identity[0] != str(board.song.music_id):
                     quality = "identity_conflict"
@@ -247,6 +303,7 @@ class CutoffHistory:
                 ident = db.execute('SELECT id FROM observations WHERE server=? AND event=? AND challenge=? AND source_ms=? AND digest=?',
                                    (*key, source or -1, digest)).fetchone()[0]
                 self._save_players(db, ident, board, scores)
+                self._save_details(db, ident, board, scores, event.server)
                 if _clock_provenance is not None:
                     db.execute("CREATE TABLE IF NOT EXISTS clock_calibrations (server TEXT, event TEXT, challenge TEXT, source_ms INTEGER, received_ms INTEGER, raw_source_ms INTEGER, raw_server_ms INTEGER, http_date_ms INTEGER, PRIMARY KEY(server,event,challenge,source_ms,received_ms))")
                     db.execute("INSERT OR IGNORE INTO clock_calibrations VALUES(?,?,?,?,?,?,?,?)",
@@ -391,6 +448,7 @@ class CutoffHistory:
                        'clock_unknown': '来源时钟不可核实', 'clock_skew': '来源时钟偏差'}
             with closing(self._connect()) as db:
                 has_players = db.execute("SELECT 1 FROM sqlite_master WHERE type IN ('table','view') AND name='observation_players'").fetchone()
+                has_details = db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='observation_player_details'").fetchone()
                 rows = db.execute("SELECT source_ms,received_ms,quality,music,id,"
                                   "count(*) OVER (PARTITION BY source_ms) FROM observations "
                                   "WHERE server=? AND event=? AND challenge=? AND (? IS NULL OR source_ms<?) "
@@ -424,10 +482,21 @@ class CutoffHistory:
                     player_note = ('该次观测的玩家身份记录损坏，未显示身份。' if saved and saved[1] == 'corrupt'
                                    else '该次观测的玩家身份冲突，未选择其中一份。' if saved and saved[1] != 'valid'
                                    else '该次观测未保存玩家身份。' if not players else '')
+                    details, detail_note = (), ''
+                    stored = db.execute('SELECT details,digest,quality FROM observation_player_details WHERE observation_id=?', (ident,)).fetchone() if has_details else None
+                    if stored and (not saved or saved[1] == 'valid'):
+                        if stored[2] != 'valid':
+                            detail_note = '该次观测的玩家资料冲突，未选择其中一份。'
+                        else:
+                            try:
+                                details = tuple(self._read_details(stored[0], stored[1], scores, event.server))
+                            except (ValueError, TypeError):
+                                detail_note = '该次观测的玩家资料记录损坏，未显示资料。'
                     return replace(empty, scores=tuple(scores), fetched_ms=stamp, received_ms=received,
                                    player_ids=tuple(p[0] for p in players), player_names=tuple(p[1] for p in players),
+                                   player_details=details,
                                    status='最近一次有效观测',
-                                   notes=(*skipped, *((player_note,) if player_note else ()), '不是确认终榜。'))
+                                   notes=(*skipped, *(note for note in (player_note, detail_note) if note), '不是确认终榜。'))
             return replace(empty, quality='unusable', status='暂无有效历史观测', notes=tuple(skipped))
         except (sqlite3.Error, OSError, ValueError, TypeError):
             self.last_error = 'storage_error'
@@ -572,7 +641,7 @@ class HaneokaCutoffHistory(OpenCutoffHistory):
         try:
             with closing(self._connect()) as db:
                 exists = db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='clock_calibrations'").fetchone()
-                calibrated = exists and db.execute("SELECT 1 FROM clock_calibrations WHERE server=? AND event=? AND challenge=? LIMIT 1",
+                calibrated = exists and db.execute("SELECT 1 FROM clock_calibrations WHERE server=? AND event=? AND challenge=? AND source_ms<>raw_source_ms LIMIT 1",
                                                   self._key(event, song)).fetchone()
             if calibrated:
                 return replace(view, warning="；".join(filter(None, (view.warning,
@@ -580,6 +649,47 @@ class HaneokaCutoffHistory(OpenCutoffHistory):
         except (sqlite3.Error, OSError):
             return replace(view, warning="；".join(filter(None, (view.warning, "时钟校准记录暂不可读。"))))
         return view
+
+
+class TrackerCutoffHistory(HaneokaCutoffHistory):
+    """Preserve tracker history format while recording same-response clock provenance."""
+    source = "tracker"
+    time_kind = "tracker_observed"
+    contract_version = "tracker/1"
+    schema_version = 1
+    supports_clock_calibration = True
+    _connect = CutoffHistory._connect
+
+    def record(self, event, board):
+        if (getattr(board, "source", "") != self.source or getattr(board, "time_kind", "") != self.time_kind
+                or getattr(board, "contract_version", "") != self.contract_version):
+            return "wrong_source"
+        server, received = self._ms(board.server_ms), self._ms(board.received_ms)
+        date, fetched = self._ms(board.http_date_ms), self._ms(board.fetched_ms)
+        if not server or not received or not fetched:
+            return CutoffHistory.record(self, event, board)
+        skewed = abs(server - received) > 60000
+        if skewed:
+            if not date or abs(date - received) > 5000 or not fetched or fetched > server + 1000:
+                return self._quarantine_clock(event, board)
+        estimated = fetched + date - server if skewed else fetched
+        try:
+            with self._lock:
+                if self.path.exists():
+                    with closing(self._connect()) as db:
+                        exists = db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='clock_calibrations'").fetchone()
+                        previous = db.execute(
+                            "SELECT DISTINCT source_ms FROM clock_calibrations WHERE server=? AND event=? AND challenge=? AND raw_source_ms=?",
+                            (*self._key(event, board.song), fetched)).fetchall() if exists else []
+                    if len(previous) > 1:
+                        return self._quarantine_clock(event, board)
+                    if previous:
+                        estimated = previous[0][0]
+                adjusted = replace(board, fetched_ms=estimated, server_ms=date if skewed else server)
+                return CutoffHistory.record(self, event, adjusted, _clock_provenance=(fetched, server, date))
+        except (sqlite3.Error, OSError, ValueError):
+            self.last_error = "storage_error"
+            return "storage_error"
 
 
 class SourceHistory:
@@ -606,6 +716,10 @@ class SourceHistory:
 
     def writable(self):
         return self.writer.writable()
+
+    @property
+    def supports_clock_calibration(self):
+        return bool(getattr(self.writer, "supports_clock_calibration", False))
 
     def record(self, event, board):
         source = getattr(board, "source", "tracker")
@@ -643,7 +757,7 @@ class SourceHistory:
             if not any(boards[key].scores != latest.scores for key in tied):
                 if any(a and b and a != b for key in tied for field in ('player_ids', 'player_names')
                        for a, b in zip(getattr(latest, field), getattr(boards[key], field))):
-                    return replace(latest, player_ids=(), player_names=(),
+                    return replace(latest, player_ids=(), player_names=(), player_details=(),
                                    notes=tuple(dict.fromkeys((*notes, '同一时间的多来源玩家身份冲突，分数保留，身份未选择。'))))
                 return replace(latest, notes=tuple(dict.fromkeys((*notes, *latest.notes))))
             notes.append(f'{display_time(latest.fetched_ms, event.server)} {zone_label(event.server)} '
@@ -697,7 +811,7 @@ def configure_sources(repository, settings):
         from .moenotes_events import EventCutoffRepository
         source = repository.event_cutoffs = EventCutoffRepository(settings.cache_file.parent / "moenotes-cutoff-v1")
     source.scheduled_history_only = settings.cutoff_source == "tracker"
-    legacy = CutoffHistory(settings.cutoff_history_file or settings.cache_file.with_name("moenotes-history-v1.sqlite3"),
+    legacy = TrackerCutoffHistory(settings.cutoff_history_file or settings.cache_file.with_name("moenotes-history-v1.sqlite3"),
                           enabled=settings.cutoff_history_enabled, min_free_mb=settings.cutoff_history_min_free_mb)
     formal = OpenCutoffHistory(settings.moenotes_open_history_file or settings.cache_file.with_name("moenotes-open-history-v2.sqlite3"),
                               enabled=settings.cutoff_history_enabled, min_free_mb=settings.cutoff_history_min_free_mb)
@@ -705,9 +819,13 @@ def configure_sources(repository, settings):
                                   enabled=settings.cutoff_history_enabled, min_free_mb=settings.cutoff_history_min_free_mb)
     source.history = SourceHistory(legacy, formal, active=settings.cutoff_source, haneoka=haneoka)
     source.score_display_limit = settings.cutoff_score_display_limit
-    # The independent store stays lazy. No adapter/HTTP route is assumed here.
-    from .total_rankings import TotalRankingHistory, TotalRankingRepository
+    from .total_rankings import TotalRankingHistory, TotalRankingRepository, fetch_moenotes_total
+    total_file = ('tracker-total-rankings-v2.sqlite3' if settings.cutoff_source == 'tracker'
+                  else f'{settings.cutoff_source}-total-rankings-v1.sqlite3')
+    total_fetch = (lambda event, deadline: fetch_moenotes_total(source, event, deadline)) if settings.cutoff_source == 'tracker' else None
     source.total_rankings = TotalRankingRepository(TotalRankingHistory(
-        settings.cache_file.with_name(f'{settings.cutoff_source}-total-rankings-v1.sqlite3'),
+        settings.cache_file.with_name(total_file),
         settings.cutoff_source, enabled=settings.cutoff_history_enabled,
-        min_free_mb=settings.cutoff_history_min_free_mb))
+        min_free_mb=settings.cutoff_history_min_free_mb,
+        compressed=settings.cutoff_source == 'tracker'), fetch=total_fetch,
+        clock=source.clock if total_fetch is not None else time.time)

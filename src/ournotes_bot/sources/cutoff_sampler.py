@@ -77,7 +77,8 @@ class HistorySampler:
                 observed=getattr(self.source,'read_event_observed',None)
                 event=observed(server,deadline)[0] if callable(observed) else self.source.event(server,deadline)
                 songs=[song for song in event.songs if song.enabled and song.collect_status in {'collecting','finalizing'}] if song_writable else []
-                sample_total=total_writable and event_ranking_format(event).total_enabled is True and event.status in {'nowOn','aggregation'}
+                sample_total=(total_writable and event_ranking_format(event).total_enabled is not False
+                              and event.status in {'nowOn','aggregation','result'})
                 if not songs and not sample_total:
                     self.discovery_after[server]=self.clock()+max(900,self.interval)
                     regions.append({'server':server,'code':'no_collecting_songs'});continue
@@ -88,8 +89,9 @@ class HistorySampler:
                             for skipped in self.servers[index:]:history.failure(skipped,code='foreground_yield')
                         self.last_state='采样暂停';regions.append({'server':server,'code':'sampling_paused'});partial=True;paused=True;break
                     observed=getattr(self.source,'read_board_observed',None)
-                    if callable(observed):board,observation=observed(event,song,deadline)
-                    else:board,observation=self.source.board(event,song,deadline),{'retrieval':'unknown','history_result':None}
+                    board_deadline = self.source.deadline()
+                    if callable(observed):board,observation=observed(event,song,board_deadline)
+                    else:board,observation=self.source.board(event,song,board_deadline),{'retrieval':'unknown','history_result':None}
                     lookups[observation['retrieval']]+=1
                     if observation.get('history_result') is None:unknown_history=True
                     else:stored[observation['history_result']]+=1
@@ -104,7 +106,7 @@ class HistorySampler:
                         total_code='sampling_paused'; partial=True
                         totals.history.failure(event,total_code)
                     else:
-                        total_code=totals.sample(event,deadline)
+                        total_code=totals.sample(event,self.source.deadline())
                         stored[total_code]+=1
                         partial |= total_code not in {'valid','duplicate'}
                         count+=1
