@@ -7,7 +7,7 @@ import time
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, Mock
+from unittest.mock import AsyncMock, Mock, patch
 
 from ournotes_bot.application.admin import Admin, delivery_state
 from ournotes_bot.application.backend import Backend, create_app
@@ -157,6 +157,296 @@ class LedgerCapacityTests(unittest.TestCase):
 
 
 class AdminTests(unittest.IsolatedAsyncioTestCase):
+    async def test_admitted_initialization_failure_has_stable_terminal_fact(self):
+        for index, (owner, method) in enumerate(((self.backend.diagnostics, 'admitted'),
+                                               (self.backend.contexts, 'begin')), 1):
+            with self.subTest(step=method), patch.object(owner, method, side_effect=RuntimeError('injected')):
+                payload = self.payload(index)
+                result = await self.backend.submit(payload)
+            self.assertEqual(result['status'], 'failed')
+            self.assertFalse(result['send_allowed'])
+            self.assertFalse(self.backend.works)
+            self.assertEqual((await self.backend.submit(payload))['status'], 'failed')
+        self.backend.gate.prepare.assert_not_called()
+
+    async def test_model_capture_storage_failure_is_owned_without_retrying_business(self):
+        from types import MethodType
+        from ournotes_bot.application.model_runtime import ModelRuntime
+        snapshot = SimpleNamespace(fingerprint='fixture', profile=SimpleNamespace(config_version=1),
+                                   subject=lambda request:'subject')
+        snapshot.for_group = lambda group:snapshot
+        runtime = SimpleNamespace(config=SimpleNamespace(snapshot=lambda:snapshot),
+            usage=SimpleNamespace(configuration=Mock(side_effect=sqlite3.OperationalError('injected')),
+                                  reconcile=lambda:None), close=AsyncMock())
+        runtime.capture = MethodType(ModelRuntime.capture, runtime)
+        self.backend.model_runtime = runtime
+        payload = self.payload(); payload['body']='/问 fixture'
+        result = await self.backend.submit(payload)
+        self.assertEqual(result['status'], 'failed')
+        self.now += 600
+        self.assertEqual((await self.backend.submit(payload))['status'], 'failed')
+        self.assertFalse(self.backend.works)
+        runtime.usage.configuration.assert_called_once()
+
+    async def test_termination_save_failure_retains_owner_and_recovers_before_other_maintenance(self):
+        payload = self.payload()
+        with patch.object(self.backend.contexts, 'begin', side_effect=RuntimeError('injected')):
+            with patch.object(self.backend.ledger, 'finish', side_effect=sqlite3.OperationalError('disk full')):
+                result = await self.backend.submit(payload)
+        work = next(iter(self.backend.works.values()))
+        self.assertEqual(result['status'], 'preparing')
+        self.assertFalse(result['send_allowed'])
+        self.assertFalse(work.active)
+        self.assertEqual(work.terminal_status, 'failed')
+        self.assertFalse(self.backend.accepting())
+        with self.assertRaises(ProtocolError) as caught:
+            await self.backend.submit(self.payload(2))
+        self.assertEqual(caught.exception.code, 'not_ready')
+        self.backend.finish(work, 'expired')
+        self.assertEqual(work.terminal_status, 'failed')
+        self.assertEqual((await self.backend.submit(payload))['status'], 'preparing')
+        work.terminal_retry_at = time.monotonic()-1
+        with patch.object(self.backend, 'expire', side_effect=sqlite3.OperationalError('other maintenance')):
+            self.backend.maintain()
+        self.assertFalse(self.backend.works)
+        self.assertEqual(self.backend.ledger.request(payload['request_id'])['status'], 'failed')
+        self.assertEqual(self.backend.maintenance_status()['reason'], 'maintenance_failed')
+        self.backend.maintain()
+        self.assertTrue(self.backend.accepting())
+
+    async def test_termination_retries_are_bounded_and_restart_preserves_dedupe(self):
+        payload = self.payload()
+        with patch.object(self.backend.contexts, 'begin', side_effect=RuntimeError('injected')):
+            with patch.object(self.backend.ledger, 'finish', side_effect=sqlite3.OperationalError('disk full')) as save:
+                await self.backend.submit(payload)
+                work = next(iter(self.backend.works.values()))
+                for attempt, delay in enumerate((1, 2, 4), 1):
+                    due = work.terminal_retry_at
+                    with patch('ournotes_bot.application.backend.time.monotonic', return_value=due-.01):
+                        self.backend.retry_terminations()
+                    self.assertEqual(save.call_count, attempt)
+                    with patch('ournotes_bot.application.backend.time.monotonic', return_value=due):
+                        self.backend.retry_terminations()
+                    self.assertEqual(save.call_count, attempt+1)
+                    if attempt < 3:
+                        self.assertEqual(work.terminal_retry_at, due + (2,4)[attempt-1])
+                self.assertIsNone(work.terminal_retry_at)
+                self.backend.retry_terminations()
+                self.assertEqual(save.call_count, 4)
+        self.assertEqual(self.backend.maintenance_status()['exhausted_terminations'], 1)
+        self.assertFalse(self.backend.accepting())
+        await self.backend.close()
+        restarted = Backend(self.repo, self.backend.parser, self.backend.settings, instance_id='fixture', app_id='app',
+            ledger_path=self.root/'delivery.sqlite3', clock=lambda:self.now)
+        self.addAsyncCleanup(restarted.close)
+        restarted.ready=True
+        await restarted.register('epoch2')
+        payload['gateway_epoch']='epoch2'
+        result = await restarted.submit(payload)
+        self.assertEqual(result['status'], 'expired')
+        self.assertFalse(result['send_allowed'])
+        self.assertFalse(restarted.tasks)
+
+    async def test_failed_preparation_terminal_save_keeps_owner_after_task_exits(self):
+        with patch.object(self.backend.ledger, 'prepared', side_effect=RuntimeError('preparation failure')), \
+             patch.object(self.backend.ledger, 'finish', side_effect=sqlite3.OperationalError('disk full')):
+            await self.backend.submit(self.payload())
+            work = next(iter(self.backend.works.values()))
+            await work.task
+            await asyncio.sleep(0)
+        self.assertTrue(work.terminal_pending)
+        self.assertEqual(work.terminal_status, 'failed')
+        self.assertIs(self.backend.works[work.delivery], work)
+        self.assertFalse(self.backend.accepting())
+        work.terminal_retry_at = time.monotonic()-1
+        self.backend.retry_terminations()
+        self.assertFalse(self.backend.works)
+
+    async def test_expire_then_close_drains_repeated_cancellation_before_storage_close(self):
+        await self.assert_thread_drain_on_close('expire')
+
+    async def test_retire_then_close_drains_repeated_cancellation_before_storage_close(self):
+        await self.assert_thread_drain_on_close('retire')
+
+    async def test_http_cleanup_cancellation_still_closes_after_observation_thread(self):
+        await self.assert_http_cleanup_drain('observation')
+
+    async def test_http_cleanup_cancellation_still_closes_after_initializer(self):
+        await self.assert_http_cleanup_drain('initialize')
+
+    async def test_cancelled_initializer_retains_thread_until_http_cleanup_closes(self):
+        await self.assert_http_cleanup_drain('cancelled-initialize')
+
+    async def assert_http_cleanup_drain(self, phase):
+        import threading
+        entered, release, ended = threading.Event(), threading.Event(), threading.Event()
+        closed = Mock()
+        self.backend.data_owner = SimpleNamespace(close=closed)
+
+        def worker():
+            entered.set()
+            release.wait(5)
+            closed.assert_not_called()
+            ended.set()
+
+        initialize = worker if phase != 'observation' else None
+        app = create_app(self.backend, 'x'*32, initialize=initialize)
+        lifetime = app.cleanup_ctx[0](app)
+        shutdown = None
+        with patch.object(self.backend.operations, 'flush_notices',
+                          side_effect=worker if phase == 'observation' else lambda: None):
+            try:
+                await lifetime.__anext__()
+                self.assertTrue(await asyncio.to_thread(entered.wait, 2))
+                if phase == 'cancelled-initialize':
+                    initializer = next(task for task in asyncio.all_tasks() if task.get_name() == 'backend-initialize')
+                    initializer.cancel()
+                    await asyncio.sleep(0)
+                    initializer.cancel()
+                    await asyncio.sleep(0)
+                    self.assertFalse(initializer.done())
+                shutdown = asyncio.create_task(lifetime.__anext__())
+                # The real cleanup owner has reached its maintenance drain.
+                await asyncio.gather(self.backend.reaper_task, return_exceptions=True)
+                shutdown.cancel()
+                await asyncio.sleep(0)
+                shutdown.cancel()
+                await asyncio.sleep(0)
+                self.assertFalse(shutdown.done())
+                self.assertFalse(ended.is_set())
+                closed.assert_not_called()
+            finally:
+                release.set()
+                if shutdown is not None:
+                    with self.assertRaises(asyncio.CancelledError):
+                        await shutdown
+                else:
+                    await lifetime.aclose()
+        self.assertTrue(ended.is_set())
+        self.assertTrue(self.backend._close_task.done())
+        closed.assert_called_once()
+
+    async def assert_thread_drain_on_close(self, trigger):
+        import threading
+        client = None
+        if trigger == 'retire':
+            from aiohttp.test_utils import TestClient, TestServer
+            client=TestClient(TestServer(create_app(self.backend,'x'*32)))
+            await client.start_server();self.addAsyncCleanup(client.close)
+        started, release = threading.Event(), threading.Event()
+        def worker():
+            started.set(); release.wait(5)
+            return PreparedReply('late')
+        async def prepare(work, command):
+            return await self.backend.gate.run(worker)
+        self.backend.prepare_command = prepare
+        closed = Mock()
+        self.backend.data_owner = SimpleNamespace(close=closed)
+        await self.backend.submit(self.payload())
+        work = next(iter(self.backend.works.values()))
+        close = None
+        try:
+            self.assertTrue(await asyncio.to_thread(started.wait, 1))
+            if trigger == 'expire':
+                self.now += 600
+                self.backend.expire()
+            else:
+                response=await client.post('/v1/gateways/retire',json={'gateway_epoch':'epoch'},
+                    headers={'Authorization':'Bearer '+'x'*32,'X-Taki-Instance':'fixture'})
+                self.assertEqual(response.status,200)
+            await asyncio.sleep(0)
+            close = asyncio.create_task(self.backend.close())
+            await asyncio.sleep(0); await asyncio.sleep(0)
+            close.cancel()
+            await asyncio.sleep(0)
+            close.cancel()
+            await asyncio.sleep(0)
+            self.assertFalse(work.task.done())
+            self.assertFalse(close.done())
+            self.assertEqual(self.backend.gate._pending, 1)
+            closed.assert_not_called()
+        finally:
+            release.set()
+            if close is not None:
+                with self.assertRaises(asyncio.CancelledError): await close
+        closed.assert_called_once()
+        self.assertFalse(self.backend.tasks)
+
+    async def test_cancel_before_preparation_starts_releases_owner_after_persisting(self):
+        payload = self.payload()
+        await self.backend.submit(payload)
+        work = next(iter(self.backend.works.values()))
+        work.task.cancel()
+        await asyncio.gather(work.task, return_exceptions=True)
+        await asyncio.sleep(0)
+        self.assertEqual(self.backend.ledger.request(payload['request_id'])['status'], 'aborted')
+        self.assertFalse(self.backend.works)
+        self.backend.gate.prepare.assert_not_called()
+
+    async def test_unexpected_preparation_owner_failure_is_consumed_and_terminated(self):
+        self.backend.prepare = AsyncMock(side_effect=RuntimeError('owner failed before its try block'))
+        payload = self.payload()
+        await self.backend.submit(payload)
+        work = next(iter(self.backend.works.values()))
+        with self.assertLogs('ournotes_bot.backend', level='ERROR') as logs:
+            await asyncio.gather(work.task, return_exceptions=True)
+            await asyncio.sleep(0)
+        self.assertTrue(any('Preparation owner failed' in line for line in logs.output))
+        self.assertEqual(self.backend.ledger.request(payload['request_id'])['status'], 'failed')
+        self.assertFalse(self.backend.works)
+
+    async def test_ready_exposes_pending_terminal_without_fabricating_durable_status(self):
+        from aiohttp.test_utils import TestClient, TestServer
+        client=TestClient(TestServer(create_app(self.backend,'x'*32)))
+        await client.start_server();self.addAsyncCleanup(client.close)
+        headers={'Authorization':'Bearer '+'x'*32,'X-Taki-Instance':'fixture'}
+        payload = self.payload()
+        with patch.object(self.backend.contexts,'begin',side_effect=RuntimeError('injected')), \
+             patch.object(self.backend.ledger,'finish',side_effect=sqlite3.OperationalError('injected')):
+            await self.backend.submit(payload)
+            response=await client.get('/v1/ready',headers=headers)
+            result=await response.json()
+        self.assertEqual(response.status,503)
+        self.assertEqual(result['maintenance']['reason'],'delivery_storage_unavailable')
+        self.assertEqual(result['maintenance']['pending_terminations'],1)
+        self.assertGreaterEqual(result['maintenance']['oldest_pending_seconds'],0)
+        self.assertEqual(self.backend.ledger.request(payload['request_id'])['status'],'preparing')
+
+    async def test_reaper_storage_failure_is_reported_by_ready_and_can_recover(self):
+        from aiohttp.test_utils import TestClient, TestServer
+        client=TestClient(TestServer(create_app(self.backend,'x'*32)))
+        await client.start_server();self.addAsyncCleanup(client.close)
+        headers={'Authorization':'Bearer '+'x'*32,'X-Taki-Instance':'fixture'}
+        called = asyncio.Event()
+        def fail():
+            called.set()
+            raise sqlite3.OperationalError('injected')
+        with patch.object(self.backend, 'expire', side_effect=fail):
+            await asyncio.wait_for(called.wait(), 3)
+            response=await client.get('/v1/ready',headers=headers)
+            self.assertEqual(response.status,503)
+            result=await response.json()
+            self.assertFalse(result['ready'])
+            self.assertEqual(result['maintenance']['reason'],'maintenance_failed')
+            self.assertTrue(result['maintenance']['reaper_alive'])
+        self.backend.maintain()
+        response=await client.get('/v1/ready',headers=headers)
+        self.assertEqual(response.status,200)
+
+    async def test_reaper_unknown_failure_stays_failed_and_ready_reports_it(self):
+        from aiohttp.test_utils import TestClient, TestServer
+        client=TestClient(TestServer(create_app(self.backend,'x'*32)))
+        await client.start_server();self.addAsyncCleanup(client.close)
+        headers={'Authorization':'Bearer '+'x'*32,'X-Taki-Instance':'fixture'}
+        with patch.object(self.backend, 'expire', side_effect=RuntimeError('unexpected')):
+            with self.assertRaises(RuntimeError):
+                await asyncio.wait_for(asyncio.shield(self.backend.reaper_task), 3)
+        response=await client.get('/v1/ready',headers=headers)
+        self.assertEqual(response.status,503)
+        result=await response.json()
+        self.assertFalse(result['maintenance']['reaper_alive'])
+        self.assertEqual(result['maintenance']['reaper_error'],'RuntimeError')
+
     async def test_model_admin_http_requires_epoch_and_keeps_secret_out_of_reads(self):
         from dataclasses import replace
         from aiohttp.test_utils import TestClient,TestServer
@@ -648,3 +938,123 @@ class OperationTests(unittest.IsolatedAsyncioTestCase):
             self.assertFalse(jobs.health()['available'])
             await jobs.close()
             self.assertIsNone(jobs.db)
+
+
+class HTTPV2ContractTests(unittest.IsolatedAsyncioTestCase):
+    """Shared examples are produced by Python and consumed by the installed TS gateway."""
+    @staticmethod
+    async def produce():
+        stamp = 1792382400.0
+        request = dict(protocol=PROTOCOL,
+            request_id=digest(['fixture','app','qq','group','group1','fixture-user','message']),
+            instance_id='fixture',app_id='app',platform='qq',kind='group',conversation_id='group1',
+            user_id='fixture-user',message_id='message',timestamp_ms=int(stamp*1000),body='/帮助',
+            capability=CAPABILITY,gateway_epoch='epoch',ingress_seq=1,trigger='command',reference=None,interaction=None,
+            policy=dict(natural_query='model',epoch='fixture',global_revision=0,group_revision=0))
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder)
+            repo=SimpleNamespace(capture_catalog=lambda: SimpleNamespace(cache_state='stale',songs=[],last_successful_sync_at=None))
+            backend=Backend(repo,SimpleNamespace(),Settings('','','fixture',root/'cache.json',6),
+                instance_id='fixture',app_id='app',ledger_path=root/'ledger.sqlite3',clock=lambda:stamp)
+            backend.runtime='b'*32
+            backend.ready=True
+            permit_clock=[10.0]
+            backend.permissions.clock=lambda:permit_clock[0]
+            release=asyncio.Event()
+            async def prepare(*args):
+                await release.wait()
+                return PreparedReply('fixture answer',image=b'\x89PNG\r\n\x1a\nfixture',business_status='success')
+            backend.gate.prepare=prepare
+            result={'python_to_ts':{},'ts_to_python':{'request':request,'events':{}},
+                'identity_cases':{'accepted':['😀'*256,'\ufeffreceipt\ufeff'],
+                                  'rejected':['😀'*257,'\x85receipt','receipt\x85']}}
+            output=result['python_to_ts']
+            try:
+                app=create_app(backend,'x'*32)
+                handlers={route.resource.canonical:route.handler for route in app.router.routes()}
+                ready=json.loads((await handlers['/v1/ready'](None)).text)
+                # These diagnostics are not protocol identities; freeze only volatile diagnostics.
+                ready['pid']=0;ready['backend_code_digest']='0'*64
+                output['ready']=ready
+                output['classify']=json.loads((await handlers['/v1/classify'](SimpleNamespace(json=AsyncMock(return_value={'body':'/帮助'})))).text)
+                output['registration']=await backend.register('epoch')
+                with patch('ournotes_bot.application.backend.uuid.uuid4',return_value=SimpleNamespace(hex='d'*32)):
+                    output['preparing']=await backend.submit(request)
+                work=backend.works['d'*32]
+                with patch('ournotes_bot.application.model_execution.uuid.uuid4',return_value=SimpleNamespace(hex='c'*32)):
+                    permission_task=asyncio.create_task(backend.permissions.acquire(work,20.0,attempt_id='a'*32))
+                    await asyncio.sleep(0)
+                output['challenge']=backend.permissions.challenge_view(work)
+                output['preparing_challenge']=backend.snapshot(backend.ledger.request(request['request_id']),'epoch')
+                permit_clock[0]=12.9995
+                output['challenge_zero']=backend.permissions.challenge_view(work)
+                permit_clock[0]=10.0
+                decision={k:v for k,v in output['challenge'].items() if k not in ('remaining_ms','admission_policy_version')}
+                decision.update(decision='allow',current_policy_version={'epoch':'fixture','global_revision':0,'group_revision':0},reason='model_allowed',ttl_ms=1000)
+                result['ts_to_python']['model_permission']=decision
+                output['model_permission']=backend.permissions.decide(request['request_id'],'a'*32,decision,'epoch')
+                await permission_task
+                work.model_started_at=time.monotonic()-9
+                output['hint_pending']=backend.lookup(request['request_id'],'epoch')
+                common=dict(protocol=PROTOCOL,request_id=request['request_id'],plan_version=1,gateway_epoch='epoch',
+                    part_id='0',attempt_id='fixture-attempt')
+                def apply(name, payload):
+                    result['ts_to_python']['events'][name]=payload
+                    return backend.apply_event(work.delivery,payload)
+                output['hint_intent']=apply('hint_intent',{**common,'event':'intent'})
+                output['hint_sending']=backend.lookup(request['request_id'],'epoch')
+                output['hint_ack']=apply('hint_ack',{**common,'event':'ack','result':'success','message_id':'hint-receipt','allow_context':True})
+                output['hint_success']=backend.lookup(request['request_id'],'epoch')
+                release.set()
+                for _ in range(200):
+                    if backend.ledger.request(request['request_id'])['status']=='prepared':break
+                    await asyncio.sleep(.005)
+                output['prepared_image']=backend.lookup(request['request_id'],'epoch')
+                if output['prepared_image']['status']!='prepared':raise AssertionError('reply did not prepare')
+                # R3 may revoke the in-memory work before a terminal write succeeds.
+                work.active=False
+                output['prepared_revoked']=backend.snapshot(backend.ledger.request(request['request_id']),'epoch')
+                work.active=True
+                output['fallback']=apply('upload_failed',{**common,'event':'upload_failed','part_id':'1','attempt_id':'none'})
+                output['intent']=apply('intent',{**common,'event':'intent','part_id':'1:f'})
+                output['existing_intent']=apply('intent_duplicate',{**common,'event':'intent','part_id':'1:f'})
+                output['ack']=apply('ack',{**common,'event':'ack','part_id':'1:f','result':'success','message_id':'answer-receipt','allow_context':True})
+                output['duplicate_ack']=apply('ack_duplicate',result['ts_to_python']['events']['ack'])
+                output['terminal']=backend.lookup(request['request_id'],'epoch')
+                output['batch_finished']=apply('batch_finished',{**common,'event':'batch_finished','part_id':'batch','attempt_id':'none'})
+                output['aborted']=apply('aborted',{**common,'event':'aborted','part_id':'batch','attempt_id':'none'})
+                legacy={**result['ts_to_python']['events']['ack'],'protocol':{'major':1,'minor':1}}
+                legacy.pop('allow_context')
+                result['ts_to_python']['events']['legacy_ack']=legacy
+                output['legacy_ack']=backend.apply_event(work.delivery,legacy)
+                output['retirement']=json.loads((await handlers['/v1/gateways/retire'](SimpleNamespace(json=AsyncMock(return_value={'gateway_epoch':'epoch'})))).text)
+                return result
+            finally:
+                release.set()
+                await backend.close()
+
+    async def test_shared_http_v2_producer_outputs_and_request_event_consumers(self):
+        from ournotes_bot.application.backend_protocol import Request, event
+        fixture=Path(__file__).parents[1]/'koishi/scripts/fixtures/http-v2.json'
+        expected=json.loads(fixture.read_text(encoding='utf-8'))
+        self.assertEqual(await self.produce(),expected)
+        request=expected['ts_to_python']['request']
+        parsed=Request.parse(request,'fixture','app',request['timestamp_ms']/1000)
+        self.assertEqual(parsed.request_id,request['request_id'])
+        for name,payload in expected['ts_to_python']['events'].items():
+            decoded=event(payload)
+            if name=='legacy_ack':self.assertFalse(decoded['allow_context'])
+        mutations=[{'protocol':{'major':1,'minor':1}},{'protocol':{'major':True,'minor':0}},
+            {'request_id':'0'*64},{'timestamp_ms':True},{'ingress_seq':2**53},{'extra':True},
+            {'policy':{**request['policy'],'global_revision':True}}]
+        for change in mutations:
+            with self.subTest(change=change),self.assertRaises(ProtocolError):Request.parse({**request,**change},'fixture','app',0)
+        original=expected['ts_to_python']['events']['ack']
+        for message in expected['identity_cases']['accepted']:
+            self.assertEqual(event({**original,'message_id':message})['message_id'],message)
+        for message in expected['identity_cases']['rejected']:
+            with self.subTest(identity=repr(message)),self.assertRaises(ProtocolError):
+                event({**original,'message_id':message})
+        for change in ({'event':'unknown'},{'protocol':{'major':2,'minor':0,'extra':True}},
+                       {'result':'unknown'},{'message_id':None},{'allow_context':1},{'extra':True}):
+            with self.subTest(change=change),self.assertRaises(ProtocolError):event({**original,**change})

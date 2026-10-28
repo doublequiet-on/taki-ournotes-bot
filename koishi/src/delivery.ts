@@ -3,7 +3,7 @@
 import { createHash, randomUUID } from 'node:crypto'
 import type { QQBot } from '@satorijs/adapter-qq'
 import type { Inbound } from './ingress'
-import type { ImageMaterials, MaterialLease } from './materials'
+import { MaterialAborted, type ImageMaterials, type MaterialLease } from './materials'
 
 export type QQInternal = Pick<QQBot['internal'], 'sendFileGuild' | 'sendFilePrivate' | 'sendMessage' | 'sendPrivateMessage'>
 export type Part =
@@ -48,6 +48,7 @@ function fingerprint(part: Part): string {
 export class QQDelivery {
   private sequence = 0
   private disposed = false
+  private readonly materialWait = new AbortController()
   private halted = false
   private nextIndex = 0
   private tail: Promise<unknown> = Promise.resolve()
@@ -84,7 +85,7 @@ export class QQDelivery {
     const body = text.replace(/<(?=@|\/?qqbot-)/giu, '＜')
     return part.kind === 'text' ? `<qqbot-at-user id="${this.inbound.userId}" />\n` + body : body
   }
-  dispose(): void { this.disposed = true }
+  dispose(): void { this.disposed = true;this.materialWait.abort() }
   get usedSlots(): number { return this.sequence }
   private valid(): boolean {
     const age = this.now() - this.inbound.timestampMs
@@ -160,7 +161,8 @@ export class QQDelivery {
       try {
         if (this.inbound.kind === 'group') {
           if (!this.materials) throw Error('material store unavailable')
-          material = await this.materials.acquire(part.bytes)
+          material = await this.materials.acquire(part.bytes,{signal:this.materialWait.signal,
+            deadline:this.inbound.timestampMs+this.limits.replyWindowMs})
         } else {
         const payload = { file_type: 1, srv_send_msg: false, file_data: Buffer.from(part.bytes).toString('base64') }
         const uploaded = await this.api.sendFilePrivate(this.inbound.userId, payload)
@@ -170,7 +172,10 @@ export class QQDelivery {
         media = { file_info: uploaded.file_info }
         }
         observed='ok'
-      } catch { return { status: 'upload_failed', reason: 'upload_error' } }
+      } catch(error) {
+        if(error instanceof MaterialAborted) return {status:'aborted',reason:'inactive_or_expired'}
+        return { status: 'upload_failed', reason: 'upload_error' }
+      }
       finally { this.observe('upload', index, null, started, observed) }
     }
     if (!this.valid()) return { status: 'aborted', reason: 'inactive_or_expired' }

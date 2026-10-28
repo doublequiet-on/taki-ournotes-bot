@@ -6,14 +6,16 @@
 """Colour rows flow left; rarity never reserves an empty column."""
 from .labels import label as ui_label
 from collections import defaultdict
+from contextlib import contextmanager
 from dataclasses import dataclass
 import re
 
 from ..data import SupportCard, localized_text, normalize, character_identity
-from .haneoka_theme import Canvas, BG, INK, MUTED, frame, font, lines, prepare_assets
+from .haneoka_theme import Canvas, BG, INK, MUTED, frame, font, lines, prepared_render_assets
 from .readable_pages import render_parts
 
 RARITIES = {4:0, 20:1, 10:1, 3:2, 2:3}
+_RARITY_BADGES = tuple(f'RarityIconCenter_{name}.png' for name in ('R', 'SR', 'SSR', 'BD', 'EX'))
 LABELS = {'leaderSkill':('队','#65509a'), 'liveSkill':('演','#237967'),
           'gekisouSkill':('激','#b2476e'), 'supportSkill':('支','#237967'),
           'gekisouSupportSkill':('激','#b2476e')}
@@ -245,63 +247,74 @@ def _render_memory_list(cards, query, locale, load):
     assets = {}
     def cached(url, size):
         return assets[url, size]
-    requests = {(card.thumbnail_url, (288, 162)) for card in cards}
-    requests.update((card.catalog['attribute_icon'], (40, 40)) for card in cards if card.catalog.get('attribute_icon'))
-    requests.update((person['face'], (side, side)) for entries, _ in headings.values()
-                    for person, _, _, side, _ in entries if person.get('face'))
+    @contextmanager
+    def page_scope(start, stop):
+        nonlocal assets
+        selected = rows[start:stop]
+        page_cards = [card for _, items, _, _ in selected for _, card in items]
+        requests = {(card.thumbnail_url, (288, 162)) for card in page_cards}
+        requests.update((card.catalog['attribute_icon'], (40, 40)) for card in page_cards if card.catalog.get('attribute_icon'))
+        # A continued group repeats its complete identity on this page.
+        requests.update((person['face'], (side, side)) for key in {row[0] for row in selected}
+                        for person, _, _, side, _ in headings[key][0] if person.get('face'))
+        with prepared_render_assets(requests, load, _RARITY_BADGES) as prepared:
+            assets = prepared
+            try:
+                yield
+            finally:
+                assets = {}
     def paint(start, stop, height):
         c = Canvas(width, height)
-        for i, line in enumerate(title):
-            c.text(36, 48+i*56, line, 44, bold=True)
-        for i, line in enumerate(subtitle):
-            c.text(38, 101+(len(title)-1)*56+i*34, line, 25, MUTED)
-        y, index = head, start
-        while index < stop:
-            key = rows[index][0]
-            end = index+1
-            while end < stop and rows[end][0] == key:
-                end += 1
-            group_height = sum(row[3] for row in rows[index:end])
-            if index != start:
-                c.line(32, y, width-32, '#e1dce7')
-            entries, heading_height = headings[key]
-            top = y+(group_height-heading_height)//2
-            for person, cx, offset, side, wrapped in entries:
-                if person.get('face'):
-                    c.paste(cached(person['face'], (side, side)), cx-side//2, top+offset, side, side, True, radius=side//2)
-                for n, (line, size) in enumerate(wrapped):
-                    c.text(cx, top+offset+(108 if side == 80 else 76)+n*(34 if side == 80 else 22),
-                           line, size, bold=True, align='center')
-            for _, items, texts, row_height in rows[index:end]:
-                for col, ((_, card), text) in enumerate(zip(items, texts)):
-                    x = 260+col*348
-                    card_face(c, card, x, y+14, 288, 162, cached)
-                    c.text(x, y+196, f'ID {card.id}', 24, MUTED)
-                    cy = y+230
-                    for label, color, wrapped in text:
-                        c.text(x, cy, ui_label(label, locale), 24, color, True)
-                        for n, line in enumerate(wrapped):
-                            c.text(x+30, cy+n*30, line, 24)
-                        cy += len(wrapped)*30+8
-                y += row_height
-            index = end
-        c.line(32, y, width-32, '#e1dce7')
-        c.text(38, y+38, ui_label('展示位置', locale)+f' {rows[start][1][0][0]+1}–{rows[stop-1][1][-1][0]+1} / {len(records)}', 23, MUTED)
-        c.text(width-38, y+38+34*separate_footer, detail_label, 23, MUTED, align='right')
-        for i, line in enumerate(footer_lines):
-            c.text(38, y+74+34*separate_footer+i*32, line, 23, MUTED)
-        return c.image
-    try:
-        rarities = {2: 'R', 3: 'SR', 4: 'SSR', 20: 'BD', 10: 'EX'}
-        badges = {f'RarityIconCenter_{rarities[c.rarity]}.png' for c in cards if c.rarity in rarities}
-        assets.update(prepare_assets(requests, load, badges))
-        parts = render_parts(tuple(row[3] for row in rows), width, head+footer_h, paint)
-        ranges = tuple((rows[p.start][1][0][0], rows[p.stop-1][1][-1][0]+1) for p in parts)
-        return parts, records, ranges
-    finally:
-        for asset in assets.values():
-            if asset is not None:
-                asset.close()
+        try:
+            for i, line in enumerate(title):
+                c.text(36, 48+i*56, line, 44, bold=True)
+            for i, line in enumerate(subtitle):
+                c.text(38, 101+(len(title)-1)*56+i*34, line, 25, MUTED)
+            y, index = head, start
+            while index < stop:
+                key = rows[index][0]
+                end = index+1
+                while end < stop and rows[end][0] == key:
+                    end += 1
+                group_height = sum(row[3] for row in rows[index:end])
+                if index != start:
+                    c.line(32, y, width-32, '#e1dce7')
+                entries, heading_height = headings[key]
+                top = y+(group_height-heading_height)//2
+                for person, cx, offset, side, wrapped in entries:
+                    if person.get('face'):
+                        c.paste(cached(person['face'], (side, side)), cx-side//2, top+offset, side, side, True, radius=side//2)
+                    for n, (line, size) in enumerate(wrapped):
+                        c.text(cx, top+offset+(108 if side == 80 else 76)+n*(34 if side == 80 else 22),
+                               line, size, bold=True, align='center')
+                for _, items, texts, row_height in rows[index:end]:
+                    for col, ((_, card), text) in enumerate(zip(items, texts)):
+                        x = 260+col*348
+                        card_face(c, card, x, y+14, 288, 162, cached)
+                        c.text(x, y+196, f'ID {card.id}', 24, MUTED)
+                        cy = y+230
+                        for label, color, wrapped in text:
+                            c.text(x, cy, ui_label(label, locale), 24, color, True)
+                            for n, line in enumerate(wrapped):
+                                c.text(x+30, cy+n*30, line, 24)
+                            cy += len(wrapped)*30+8
+                    y += row_height
+                index = end
+            c.line(32, y, width-32, '#e1dce7')
+            c.text(38, y+38, ui_label('展示位置', locale)+f' {rows[start][1][0][0]+1}–{rows[stop-1][1][-1][0]+1} / {len(records)}', 23, MUTED)
+            c.text(width-38, y+38+34*separate_footer, detail_label, 23, MUTED, align='right')
+            for i, line in enumerate(footer_lines):
+                c.text(38, y+74+34*separate_footer+i*32, line, 23, MUTED)
+            return c.image
+        except BaseException:
+            c.image.close()
+            raise
+    # Capture the five fixed game icons once. Nested page scopes read these
+    # bytes, and never revisit the external game loader while drawing.
+    with prepared_render_assets((), load, _RARITY_BADGES):
+        parts = render_parts(tuple(row[3] for row in rows), width, head+footer_h, paint, page_scope=page_scope)
+    ranges = tuple((rows[p.start][1][0][0], rows[p.stop-1][1][-1][0]+1) for p in parts)
+    return parts, records, ranges
 
 
 def render_list(cards,query,locale='zh',*,load,characters=(),bands=()):
@@ -393,54 +406,60 @@ def render_list(cards,query,locale='zh',*,load,characters=(),bands=()):
     head=252+title_extra+len(lines(subtitle,width-112,42))*52
     assets={}
     def cached(url,size):
-        key=(url,size)
-        if key not in assets:assets[key]=load(url,size)
-        return assets[key]
-    requests=set()
-    for card in cards:
-        requests.add((card.thumbnail_url,(artw,arth)))
-        if card.catalog.get('attribute_icon'):
-            side=max(18,min(40,artw//4));requests.add((card.catalog['attribute_icon'],(side,side)))
-    for row in rows:
-        for person,_,_,side,_,_ in row.headings:
-            if person.get('face'):requests.add((person['face'],(side,side)))
+        return assets[url,size]
+    @contextmanager
+    def page_scope(start,stop):
+        nonlocal assets
+        selected=rows[start:stop]
+        requests=set()
+        for row in selected:
+            for _,card in row.cards:
+                requests.add((card.thumbnail_url,(artw,arth)))
+                if card.catalog.get('attribute_icon'):
+                    side=max(18,min(40,artw//4));requests.add((card.catalog['attribute_icon'],(side,side)))
+            for person,_,_,side,_,_ in row.headings:
+                if person.get('face'):requests.add((person['face'],(side,side)))
+        with prepared_render_assets(requests,load,_RARITY_BADGES) as prepared:
+            assets=prepared
+            try:
+                yield
+            finally:
+                assets={}
     def paint(start,stop,height):
         c=Canvas(width,height)
-        for n,line in enumerate(title_lines):c.text(56,72+n*96,line,80,bold=True)
-        c.paragraph(56,176+title_extra,subtitle,width-112,42,52,color=MUTED)
-        y=head
-        for row_index,row in enumerate(rows[start:stop],start):
-            if row.group_start:
-                if row_index!=start:c.line(48,y,width-48,'#e1dce7')
-                y+=36
-            if row.group_start or row_index==start:
-                for person,cx,top,side,size,wrapped in row.headings:
-                    if person.get('face'):c.paste(cached(person['face'],(side,side)),cx-side//2,y+top+8,side,side,True,radius=side//2)
-                    for n,line in enumerate(wrapped):
-                        c.text(cx,y+top+(152 if side==96 else 120)+n*(44 if side==96 else 38),line,size,bold=True,align='center')
-            for col,((index,card),text) in enumerate(zip(row.cards,row.texts)):
-                x=left+col*pitch;card_face(c,card,x,y+8,artw,arth,cached)
-                c.text(x,y+(202 if support else 230),f'ID {card.id}',30 if support else 32,MUTED)
-                base=y+(224 if support else 254)
-                for i,(label,color,wrapped) in enumerate(text):
-                    cy=base+row.offsets[i]+18;c.text(x,cy,ui_label(label,locale),32,color,True)
-                    for n,line in enumerate(wrapped):c.text(x+44,cy+n*40,line,32)
-            y+=row.height-(36 if row.group_start else 0)
-        c.text(48,height-footer_h+28,ui_label('展示位置',locale)+f' {rows[start].cards[0][0]+1}–{rows[stop-1].cards[-1][0]+1} / {len(cards)}',28,MUTED)
-        c.text(48,height-30,ui_label('按 ID 查详情',locale),28,MUTED)
-        for n, text in enumerate(footer_lines):
-            c.text(48,height-footer_h+68+n*40,text,28,MUTED)
-        return c.image
-    try:
-        rarities={2:'R',3:'SR',4:'SSR',20:'BD',10:'EX'}
-        badges={f'RarityIconCenter_{rarities[c.rarity]}.png' for c in cards if c.rarity in rarities}
-        assets.update(prepare_assets(requests,load,badges))
-        parts=render_parts(tuple(r.height for r in rows),width,head+footer_h,paint)
-        ranges=tuple((rows[p.start].cards[0][0],rows[p.stop-1].cards[-1][0]+1) for p in parts)
-        return parts,cards,ranges
-    finally:
-        for asset in assets.values():
-            if asset is not None:asset.close()
+        try:
+            for n,line in enumerate(title_lines):c.text(56,72+n*96,line,80,bold=True)
+            c.paragraph(56,176+title_extra,subtitle,width-112,42,52,color=MUTED)
+            y=head
+            for row_index,row in enumerate(rows[start:stop],start):
+                if row.group_start:
+                    if row_index!=start:c.line(48,y,width-48,'#e1dce7')
+                    y+=36
+                if row.group_start or row_index==start:
+                    for person,cx,top,side,size,wrapped in row.headings:
+                        if person.get('face'):c.paste(cached(person['face'],(side,side)),cx-side//2,y+top+8,side,side,True,radius=side//2)
+                        for n,line in enumerate(wrapped):
+                            c.text(cx,y+top+(152 if side==96 else 120)+n*(44 if side==96 else 38),line,size,bold=True,align='center')
+                for col,((index,card),text) in enumerate(zip(row.cards,row.texts)):
+                    x=left+col*pitch;card_face(c,card,x,y+8,artw,arth,cached)
+                    c.text(x,y+(202 if support else 230),f'ID {card.id}',30 if support else 32,MUTED)
+                    base=y+(224 if support else 254)
+                    for i,(label,color,wrapped) in enumerate(text):
+                        cy=base+row.offsets[i]+18;c.text(x,cy,ui_label(label,locale),32,color,True)
+                        for n,line in enumerate(wrapped):c.text(x+44,cy+n*40,line,32)
+                y+=row.height-(36 if row.group_start else 0)
+            c.text(48,height-footer_h+28,ui_label('展示位置',locale)+f' {rows[start].cards[0][0]+1}–{rows[stop-1].cards[-1][0]+1} / {len(cards)}',28,MUTED)
+            c.text(48,height-30,ui_label('按 ID 查详情',locale),28,MUTED)
+            for n, text in enumerate(footer_lines):
+                c.text(48,height-footer_h+68+n*40,text,28,MUTED)
+            return c.image
+        except BaseException:
+            c.image.close()
+            raise
+    with prepared_render_assets((),load,_RARITY_BADGES):
+        parts=render_parts(tuple(r.height for r in rows),width,head+footer_h,paint,page_scope=page_scope)
+    ranges=tuple((rows[p.start].cards[0][0],rows[p.stop-1].cards[-1][0]+1) for p in parts)
+    return parts,cards,ranges
 
 
 def card_level(card, exp, progress):

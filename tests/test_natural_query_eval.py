@@ -146,7 +146,7 @@ class NaturalQueryEvaluationTests(unittest.TestCase):
         catalog = parse_local_query("MyGO的红色SSR角色卡有哪些", self.repo)
         self.assertIsInstance(catalog, QuerySpec)
         self.assertEqual(catalog.intent, "card")
-        self.assertIsNotNone(catalog.card_query)
+        self.assertIsNotNone(catalog.card_request)
 
     def test_pr2_rarity_enumerations_are_local_and_return_fixed_records(self) -> None:
         cases = (

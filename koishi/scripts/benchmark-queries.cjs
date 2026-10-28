@@ -61,11 +61,11 @@ Object.defineProperty(receiver, 'admission', { get() {
   return admission.then(value => { timings.admission_wait.push(performance.now()-started); return value })
 }, set(value) { admission = value } })
 const acquire = MaterialStore.prototype.acquire
-MaterialStore.prototype.acquire = async function(bytes) {
+MaterialStore.prototype.acquire = async function(bytes, wait) {
   const key = crypto.createHash('sha256').update(bytes).digest('hex')
   const hit = this.entries?.some(entry => entry.key === key && entry.imageId)
   const started = performance.now()
-  try { return await acquire.call(this, bytes) }
+  try { return await acquire.call(this, bytes, wait) }
   finally { timings[hit ? 'material_hit' : 'material_miss'].push(performance.now()-started) }
 }
 const cards = [1, 26, 31, 51, 61, 62, 64]

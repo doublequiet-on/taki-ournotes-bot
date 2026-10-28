@@ -5,6 +5,8 @@ import json
 from pathlib import Path
 import tempfile
 import re
+import shutil
+import subprocess
 import unittest
 from unittest.mock import patch
 import urllib.error
@@ -21,13 +23,16 @@ COMMIT = "a" * 40
 
 class KoishiClientPatchTests(unittest.TestCase):
     def test_pinned_reload_fix_and_unexpected_asset_rejection(self):
-        original = b'fixture:' + koishi_release.KOISHI_RELOAD_OLD + b'end'
+        original = b'fixture:' + b'|'.join(old for old, _ in koishi_release.KOISHI_RECONNECT_PATCHES) + b'end'
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / 'client.js'
             path.write_bytes(original)
             with patch.object(koishi_release, 'KOISHI_CLIENT_SHA256', hashlib.sha256(original).hexdigest()):
                 koishi_release.patch_koishi_client(path)
-                self.assertEqual(path.read_bytes(), original.replace(koishi_release.KOISHI_RELOAD_OLD, koishi_release.KOISHI_RELOAD_NEW))
+                expected = original
+                for old, new in koishi_release.KOISHI_RECONNECT_PATCHES:
+                    expected = expected.replace(old, new, 1)
+                self.assertEqual(path.read_bytes(), expected)
                 with self.assertRaisesRegex(ValueError, 'differs from reviewed'):
                     koishi_release.patch_koishi_client(path)
             changed = b'unexpected asset'
@@ -35,12 +40,33 @@ class KoishiClientPatchTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'differs from reviewed'):
                 koishi_release.patch_koishi_client(path)
             self.assertEqual(path.read_bytes(), changed)
-            duplicate = original + koishi_release.KOISHI_RELOAD_OLD
-            path.write_bytes(duplicate)
-            with patch.object(koishi_release, 'KOISHI_CLIENT_SHA256', hashlib.sha256(duplicate).hexdigest()):
-                with self.assertRaisesRegex(ValueError, 'differs from reviewed'):
-                    koishi_release.patch_koishi_client(path)
-            self.assertEqual(path.read_bytes(), duplicate)
+            for old, _ in koishi_release.KOISHI_RECONNECT_PATCHES:
+                for malformed in (original + old, original.replace(old, b'')):
+                    path.write_bytes(malformed)
+                    with patch.object(koishi_release, 'KOISHI_CLIENT_SHA256', hashlib.sha256(malformed).hexdigest()):
+                        with self.assertRaisesRegex(ValueError, 'differs from reviewed'):
+                            koishi_release.patch_koishi_client(path)
+                    self.assertEqual(path.read_bytes(), malformed)
+
+    @unittest.skipUnless(shutil.which('node'), 'Node is required for reconnect behavior')
+    def test_disconnect_captures_current_url_and_keeps_it_across_failed_retries(self):
+        original = b'''function p2(e,t){const n=t(),o=()=>{cr.value=null;for(const a in ot)ot[a]=void 0;
+setTimeout(()=>{p2(e,t).then(location.reload,()=>{})},1e3)};n.close=o;return n.promise}'''
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'client.js'; path.write_bytes(original)
+            with patch.object(koishi_release, 'KOISHI_CLIENT_SHA256', hashlib.sha256(original).hexdigest()):
+                koishi_release.patch_koishi_client(path)
+            script = '''const assert=require('node:assert/strict');
+(async()=>{for(const failures of [0,2]){
+let location={href:'http://localhost/initial',replace(url){this.href=url;this.restored=url},reload(){throw Error('unbound reload')}};
+const cr={value:1},ot={set entry(value){location.href='http://localhost/'}},queue=[],connections=[];
+const setTimeout=fn=>queue.push(fn),t=()=>{const n={promise:connections.length>0&&connections.length<=failures?Promise.reject(Error('offline')):Promise.resolve()};connections.push(n);return n};
+''' + path.read_text() + '''
+await p2({},t);const expected='http://localhost/taki?request_id=abc#detail';location.href=expected;
+for(let index=0;index<=failures;index++){connections[index].close();queue.shift()();await new Promise(setImmediate)}
+assert.equal(location.restored,expected);assert.equal(connections.length,failures+2);
+}})().catch(error=>{console.error(error);process.exitCode=1});'''
+            subprocess.run([shutil.which('node'), '-e', script], check=True, capture_output=True, text=True)
 
 
 class CombinationArchiveTests(unittest.TestCase):
@@ -95,6 +121,31 @@ class CombinationArchiveTests(unittest.TestCase):
             with self.assertRaises(OSError): stage_combination(path,out,COMMIT,sha,row['python_sha256'])
         self.assertFalse(out.exists())
         self.assertEqual(list(self.root.glob('.'+COMMIT+'-*')),[])
+
+    def test_stage_records_ownership_before_extract_and_preserves_it_after_rename_failure(self):
+        from deploy.release_retention import read_record, manifest_digest
+        from deploy.linux_updater import atomic_json
+        path,sha,row=self.bundle(); out=self.root/COMMIT; owners=self.root/'owners'
+        calls=[]
+        def save(destination, value):
+            calls.append(value['phase'])
+            if value['phase']=='published': raise OSError('fixture stopped after rename')
+            atomic_json(destination,value)
+        with patch('deploy.linux_updater.atomic_json',side_effect=save):
+            with self.assertRaises(OSError):
+                stage_combination(path,out,COMMIT,sha,row['python_sha256'],ownership_dir=owners)
+        saved=read_record(owners/(COMMIT+'.json'))
+        self.assertEqual(calls,['staging','published'])
+        self.assertEqual(saved['manifest_sha256'],manifest_digest(row))
+        self.assertEqual(saved['destination'],str(out))
+        self.assertTrue(out.exists()); self.assertFalse(Path(saved['stage']).exists())
+
+    def test_failed_stage_removes_only_its_own_record(self):
+        path,sha,row=self.bundle(); out=self.root/COMMIT; owners=self.root/'owners'
+        with patch('deploy.koishi_control.shutil.copyfileobj',side_effect=OSError('fixture full disk')):
+            with self.assertRaises(OSError):
+                stage_combination(path,out,COMMIT,sha,row['python_sha256'],ownership_dir=owners)
+        self.assertFalse(out.exists());self.assertEqual(list(owners.iterdir()),[])
 
     def test_release_asset_uses_own_inspector_cache_and_first_use_pin(self):
         path,sha,row=self.bundle(); tag='linux-'+COMMIT

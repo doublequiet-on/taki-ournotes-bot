@@ -5,8 +5,11 @@ import { setTimeout as delay } from 'node:timers/promises'
 import { Telemetry, Span } from './telemetry'
 import type { PolicySnapshot } from './group-policies'
 
-export const protocol = { major: 2, minor: 0 }
-export const capability = 'qq-query-chat-v3'
+import { protocol, capability, BackendError, decodeReady, decodeClassify, decodePlan, decodeRecorded,
+  decodeAcknowledgement, decodeIntent, decodeRegistration, decodeRetirement, object } from './wire'
+import type { Ready, Plan, WirePart, ModelPermission, Recorded } from './wire'
+export { protocol, capability, BackendError } from './wire'
+export type { Plan, WirePart, ModelPermission } from './wire'
 const safeBackendErrors = new Set([
   'ledger_capacity', 'context_capacity', 'epoch_capacity', 'plan_capacity', 'byte_capacity',
   'not_ready', 'inactive_epoch', 'retired_epoch', 'stale_admission', 'request_conflict',
@@ -16,31 +19,14 @@ const safeBackendErrors = new Set([
 function responseError(bytes: Buffer, status: number): BackendError {
   let code = 'backend_http_' + status
   try {
-    const value = JSON.parse(bytes.toString('utf8'))
+    const value = object(JSON.parse(bytes.toString('utf8')), 'backend_error_shape')
+    const version = object(value.protocol, 'backend_error_shape')
     if (value && Object.keys(value).sort().join() === 'error,protocol'
         && typeof value.error === 'string' && safeBackendErrors.has(value.error)
-        && value.protocol && Object.keys(value.protocol).sort().join() === 'major,minor'
-        && value.protocol.major === protocol.major && value.protocol.minor === protocol.minor) code = value.error
+        && Object.keys(version).sort().join() === 'major,minor'
+        && version.major === protocol.major && version.minor === protocol.minor) code = value.error
   } catch { /* Unknown response bodies remain an HTTP status, never diagnostic text. */ }
   return new BackendError(code, status)
-}
-export interface ModelPermission {
-  request_id: string; attempt_id: string; nonce: string; user_id: string
-  backend_epoch: string; gateway_epoch: string; scope: Record<string,string>
-  admission_policy_version: Omit<PolicySnapshot,'natural_query'>; remaining_ms: number
-}
-export interface WirePart {
-  id: string; position: number; mode: string; status: string
-  kind?: 'text' | 'image'; text?: string; image?: string; mime?: string
-}
-export interface Plan {
-  request_id: string; delivery_id: string; plan_version: number; status: string
-  send_allowed: boolean; expires_at: number; parts: WirePart[]
-  pending_model_permission?: ModelPermission
-  processing_hint?: boolean
-}
-export class BackendError extends Error {
-  constructor(public readonly code: string, public readonly status = 0) { super(code) }
 }
 export class BackendClient implements DeliveryEvents {
   readonly telemetry = new Telemetry(events => {
@@ -50,7 +36,7 @@ export class BackendClient implements DeliveryEvents {
   })
   observe(span: Span): void { if(this.readiness?.diagnostics_enabled!==false)this.telemetry.enqueue(span) }
   readonly base: string
-  readiness?: { notices_enabled?: boolean; backend_code_digest?: string; backend_epoch?: string; diagnostics_enabled?:boolean }
+  readiness?: Ready
   private contextAllowed = true
   private startup = new AbortController()
   deactivate(): void { this.contextAllowed = false; this.startup.abort() }
@@ -61,7 +47,9 @@ export class BackendClient implements DeliveryEvents {
         || url.pathname !== '/' || url.search || url.hash || token.length < 32) throw new Error('invalid backend configuration')
     this.base = url.origin
   }
-  async request(path: string, body?: unknown, maximum = 131072, binary = false, signal?: AbortSignal): Promise<any> {
+  request(path: string, body?: unknown, maximum?: number, binary?: false, signal?: AbortSignal): Promise<unknown>
+  request(path: string, body: unknown, maximum: number, binary: true, signal?: AbortSignal): Promise<Uint8Array>
+  async request(path: string, body?: unknown, maximum = 131072, binary = false, signal?: AbortSignal): Promise<unknown> {
     if (!path.startsWith('/v1/') || path.includes('..') || path.includes('\\')) throw new BackendError('invalid_resource')
     let response: Response
     const controller = new AbortController(), timeout = setTimeout(() => controller.abort(), 10_000)
@@ -96,7 +84,7 @@ export class BackendClient implements DeliveryEvents {
       throw new BackendError('backend_transport') // never expose bearer/URLs/raw response
     } finally { clearTimeout(timeout) }
   }
-  async retry(path: string, body?: unknown): Promise<any> {
+  async retry(path: string, body?: unknown): Promise<unknown> {
     for (let attempt = 0; ; attempt++) {
       try { return await this.request(path, typeof body === 'function' ? body() : body) }
       catch (error) {
@@ -112,14 +100,10 @@ export class BackendClient implements DeliveryEvents {
     try {
       while (!signal.aborted) {
         try {
-          const ready = await this.request('/v1/ready', undefined, 131072, false, signal)
-          if (!ready.protocol || Object.keys(ready.protocol).sort().join()!=='major,minor'
-              || ready.protocol.major !== protocol.major || ready.protocol.minor !== protocol.minor
-              || !ready.management_capabilities?.includes('group_policies_v1')
-              || ready.capability !== capability || !['classify', 'gateway_retire', 'ack_context_guard', 'notice_gateway_v1',
-                'quoted_context_v1', 'fixed_snapshot_v1', 'current_model_permit_v1', 'independent_delivery_v1'].every(feature => ready.features?.includes(feature))) throw new BackendError('incompatible_backend')
+          const ready = decodeReady(await this.request('/v1/ready', undefined, 131072, false, signal))
           if (!ready.ready) throw new BackendError('backend_not_ready', 503)
-          await this.request('/v1/gateways', { gateway_epoch: this.epoch }, 131072, false, signal)
+          const registered=decodeRegistration(await this.request('/v1/gateways', { gateway_epoch: this.epoch }, 131072, false, signal))
+          if(registered.gateway_epoch!==this.epoch || registered.backend_epoch!==ready.backend_epoch) throw new BackendError('gateway_binding')
           if (signal.aborted) break
           this.readiness = ready
           return
@@ -134,47 +118,45 @@ export class BackendClient implements DeliveryEvents {
     } finally { clearTimeout(timer) }
   }
   async recognizes(body: string): Promise<boolean> {
-    const value = await this.retry('/v1/classify', { body })
-    if (typeof value.recognized !== 'boolean') throw new BackendError('classify_shape')
-    return value.recognized
+    return decodeClassify(await this.retry('/v1/classify', { body }))
   }
-  submit(input: Inbound, seq: number, policy: PolicySnapshot = {natural_query:'model',epoch:this.epoch,global_revision:0,group_revision:0}): Promise<Plan> {
-    return this.retry('/v1/requests', { protocol, request_id: input.requestId, instance_id: input.instanceId,
+  async submit(input: Inbound, seq: number, policy: PolicySnapshot = {natural_query:'model',epoch:this.epoch,global_revision:0,group_revision:0}): Promise<Plan> {
+    return decodePlan(await this.retry('/v1/requests', { protocol, request_id: input.requestId, instance_id: input.instanceId,
       app_id: input.appId, platform: input.platform, kind: input.kind, conversation_id: input.conversationId,
       user_id: input.userId, message_id: input.messageId, timestamp_ms: input.timestampMs, body: input.body,
       capability, gateway_epoch: this.epoch, ingress_seq: seq, policy:structuredClone(policy),
       trigger:input.trigger ?? (/^[/／]?(?:问|ask)(?:\s|$)/i.test(input.body)?'ask':'command'),
-      reference:input.reference ?? null, interaction:null })
+      reference:input.reference ?? null, interaction:null }))
   }
-  modelPermission(challenge:ModelPermission, policy:PolicySnapshot, allowed:boolean):Promise<unknown> {
+  async modelPermission(challenge:ModelPermission, policy:PolicySnapshot, allowed:boolean):Promise<Recorded> {
     const { admission_policy_version, remaining_ms, ...binding } = challenge
     const { natural_query, ...current_policy_version } = policy
-    return this.request(`/v1/requests/${encodeURIComponent(challenge.request_id)}/model-permissions/${encodeURIComponent(challenge.attempt_id)}`,
+    return decodeRecorded(await this.request(`/v1/requests/${encodeURIComponent(challenge.request_id)}/model-permissions/${encodeURIComponent(challenge.attempt_id)}`,
       {...binding,decision:allowed?'allow':'deny',current_policy_version,reason:allowed?'model_allowed':'current_policy_denied',ttl_ms:1000},
-      131072,false,AbortSignal.timeout(2500))
+      131072,false,AbortSignal.timeout(2500)))
   }
-  lookup(id: string): Promise<Plan> { return this.retry('/v1/requests/' + encodeURIComponent(id)) }
+  async lookup(id: string): Promise<Plan> { return decodePlan(await this.retry('/v1/requests/' + encodeURIComponent(id))) }
   async image(plan: Plan, part: WirePart): Promise<Uint8Array> {
     const path = `/v1/deliveries/${plan.delivery_id}/parts/${part.id}/image`
     if (part.image !== path) throw new BackendError('image_identity')
     return this.request(path, undefined, 3_000_000, true)
   }
-  event(plan: Pick<Plan, 'request_id' | 'delivery_id'>, kind: string, part = 'batch', attempt = 'none'): Promise<any> {
-    return this.retry(`/v1/deliveries/${plan.delivery_id}/events`, { protocol,
-      request_id: plan.request_id, plan_version: 1, gateway_epoch: this.epoch, event: kind, part_id: part, attempt_id: attempt })
+  async event(plan: Pick<Plan, 'request_id' | 'delivery_id'>, kind: 'upload_failed' | 'aborted' | 'batch_finished', part = 'batch', attempt = 'none'): Promise<Plan> {
+    return decodePlan(await this.retry(`/v1/deliveries/${plan.delivery_id}/events`, { protocol,
+      request_id: plan.request_id, plan_version: 1, gateway_epoch: this.epoch, event: kind, part_id: part, attempt_id: attempt }))
   }
   async intent(a: Attempt): Promise<'granted' | 'existing' | 'denied'> {
     // No retry: a lost permission reply must never become a second send.
-    const value = await this.request(`/v1/deliveries/${a.deliveryId}/events`, { protocol,
+    const value = decodeIntent(await this.request(`/v1/deliveries/${a.deliveryId}/events`, { protocol,
       request_id: a.requestId, plan_version: 1, gateway_epoch: a.gatewayEpoch,
-      event: 'intent', part_id: a.partId, attempt_id: a.attemptId })
-    return value.permission === 'granted' || value.permission === 'existing' ? value.permission : 'denied'
+      event: 'intent', part_id: a.partId, attempt_id: a.attemptId }))
+    return value.permission
   }
   async acknowledge(a: Attempt, result: Outcome): Promise<void> {
-    await this.retry(`/v1/deliveries/${a.deliveryId}/events`, () => ({ protocol,
+    decodeAcknowledgement(await this.retry(`/v1/deliveries/${a.deliveryId}/events`, () => ({ protocol,
       request_id: a.requestId, plan_version: 1, gateway_epoch: a.gatewayEpoch,
       event: 'ack', part_id: a.partId, attempt_id: a.attemptId,
-      result: result.status, message_id: result.messageId ?? null, allow_context: this.contextAllowed }))
+      result: result.status, message_id: result.messageId ?? null, allow_context: this.contextAllowed })))
   }
-  retire(): Promise<any> { return this.retry('/v1/gateways/retire', { gateway_epoch: this.epoch }) }
+  async retire(): Promise<{retired:true}> { return decodeRetirement(await this.retry('/v1/gateways/retire', { gateway_epoch: this.epoch })) }
 }

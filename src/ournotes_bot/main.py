@@ -15,6 +15,7 @@ from .commands import handle_command
 from .ai_query import AIQueryParser, is_ai_request
 from .config import Settings
 from .data import DataError, SongRepository
+from .query.entity_lexicon import alias_scope
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -65,7 +66,8 @@ def run_local(args, settings):
     def answer(message: str) -> str | None:
         if is_ai_request(message):
             return ai_parser.answer(message, repository)
-        return handle_command(message, repository)
+        with alias_scope(enabled=repository.data_source == 'haneoka'):
+            return handle_command(message, repository.capture_query_view())
     try:
         repository.load(refresh=args.mode == "sync")
     except DataError as exc:

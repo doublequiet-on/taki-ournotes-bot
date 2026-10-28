@@ -16,7 +16,7 @@ ournotes-bot backend --instance-id taki-test --app-id APP_ID --state-dir /absolu
 
 组装入口 `application/backend_bootstrap.py` 只创建一份 repository、AIQueryParser（含既有额度管理）、QueryGate 和 ContextStore。`repository.load()` 完成后才 ready；失败维持 503，记录错误类型，不伪装成可查询。初始化、资料读取和渲染仍可访问配置的数据源，离线测试用固定资料替换源初始化。`health` 不代表 ready 或 QQ 可用。
 
-后端在资料初始化成功后启动主资料半小时刷新、300 秒属性刷新和按配置启用的 HistorySampler；`background_tasks` 表示必需任务均存活。关闭时先关闭接纳并等待查询/后台线程退出，再关闭账本和业务目录锁。`notices_enabled` 单独反映通知配置。新 `OURNOTES_RUNTIME_DATA_DIR` 控制素材/谱面缓存根目录；详细单写者、数据路径和旧版本限制见 M4 runbook。
+后端在资料初始化成功后启动主资料半小时刷新、300 秒属性刷新和按配置启用的 HistorySampler；`background_tasks` 表示这些 RuntimeTasks 任务均存活，过期维护任务另见 `maintenance`。关闭时先关闭接纳并等待查询/后台线程退出，再关闭账本和业务目录锁；调用者反复取消也必须排空真实线程，随后才传播取消。`notices_enabled` 单独反映通知配置。新 `OURNOTES_RUNTIME_DATA_DIR` 控制素材/谱面缓存根目录；详细单写者、数据路径和旧版本限制见 M4 runbook。
 
 账本为 `state-dir/deliveries-v1.sqlite3`，旁边的文件锁由 OS 持有，进程退出自动释放；锁文件存在本身不表示正在运行。第二个使用同一账本的后端拒绝启动。schema=1，namespace 为 instance_id/AppID；不同命名空间不得复用同一个账本。它只保护交付账本，不能替代 M4 的所有共享业务文件单写者校验。
 
@@ -28,14 +28,14 @@ ournotes-bot backend --instance-id taki-test --app-id APP_ID --state-dir /absolu
 - `X-Taki-Instance: <instance_id>`
 - 查询状态/图片额外用 `X-Taki-Epoch: <gateway_epoch>` 表明读取者；不匹配时可读最小交付事实，但不得获取发送内容/图片。
 
-请求 JSON 最大 32 KiB；正文 UTF-8 最大 16 KiB；不接受任意本地文件路径或远端图片 URL。当前运输协议严格采用 `{"major":1,"minor":1}`，不兼容版本返回 409。错误是 `{"error":"分类","protocol":...}`，不回显 token、正文、原始 QQ 身份或异常细节。访问日志关闭；业务准备日志在后端模式隐藏查询正文，使用 request_id 关联后端错误。
+请求 JSON 最大 32 KiB；正文 UTF-8 最大 16 KiB；不接受任意本地文件路径或远端图片 URL。当前运输协议严格采用 `{"major":2,"minor":0}`，不兼容版本返回 409。错误是 `{"error":"分类","protocol":...}`，不回显 token、正文、原始 QQ 身份或异常细节。访问日志关闭；业务准备日志在后端模式隐藏查询正文，使用 request_id 关联后端错误。
 
-Console V1a 使用1.0并独立扩展管理能力；V1b配对1.1与 `group_policies_v1`，不允许混装。新请求必须携带 `policy={natural_query,epoch,global_revision,group_revision}`，模式 off/local/model，revision 为非负安全整数。该不可变快照参与请求摘要；重试复用原快照，身份相同但快照不同返回409，不重新执行。通知领取使用严格的 scope：all+exclude_group_ids、selected+非空group_ids、none；none不生成报告或领取。ACK和撤权继续记事实。共同源码摘要清单为 `application/backend_sources.py`，管理、遥测、分页与隐私契约见 [Console V1](koishi/CONSOLE_V1.md)。
+历史 Console V1a 使用1.0，V1b配对1.1；当前配对协议为2.0与 `qq-query-chat-v3`，仍要求 `group_policies_v1`，不允许混装。新请求必须携带 `policy={natural_query,epoch,global_revision,group_revision}`，模式 off/local/model，revision 为非负安全整数。该不可变快照参与请求摘要；重试复用原快照，身份相同但快照不同返回409，不重新执行。通知领取使用严格的 scope：all+exclude_group_ids、selected+非空group_ids、none；none不生成报告或领取。ACK和撤权继续记事实。共同源码摘要清单为 `application/backend_sources.py`，管理、遥测、分页与隐私契约见 [Console V1](koishi/CONSOLE_V1.md)。
 
 | 端点 | 结果 |
 |---|---|
 | GET /v1/health | `alive` 与 protocol；只证明进程处理请求。 |
-| GET /v1/ready | ready、protocol、backend_epoch、backend_code_digest、capability、features、background_tasks、pid、notices_enabled；未初始化为 503。代码摘要覆盖后端/协议/账本/准备/组装与四个 M4 运行模块，不冒充整个仓库 SHA。 |
+| GET /v1/ready | ready、protocol、backend_epoch、backend_code_digest、capability、features、background_tasks、maintenance、pid、notices_enabled；未初始化、关闭中或维护故障为 503。`maintenance` 给出原因、待保存终态数量/最早年龄/耗尽重试数量及 reaper 存活/错误类型。代码摘要覆盖后端/协议/账本/准备/组装与四个 M4 运行模块，不冒充整个仓库 SHA。 |
 | POST /v1/gateways | 输入仅 `gateway_epoch`；登记新代次并撤销旧代次。重复当前代次幂等，已退役代次不能重新激活。 |
 | POST /v1/classify | 输入仅 body，返回 recognized；只读识别，不查询/扣额/写上下文。 |
 | POST /v1/gateways/retire | 输入仅 gateway_epoch；撤销该代次并终结其活动请求，不影响新代次。 |
@@ -46,13 +46,25 @@ Console V1a 使用1.0并独立扩展管理能力；V1b配对1.1与 `group_polici
 
 JSON 和图片响应使用 no-store。未 ready、新任务/账本容量不足为 503；身份/认证不匹配为 403/401；冲突、过期和非法状态转换为 409。
 
+## 当前 HTTP 2.0 解码边界
+
+网关 `src/wire.ts` 将未经验证的 JSON `unknown` 解码为内部类型；图片读取单独返回 `Uint8Array`。普通响应的额外元数据字段允许并忽略；协议对象、许可 scope／策略版本保持精确键校验。未知请求／片段状态、mode、kind 和许可判别值停止本次消费。Classify、登记／退役、intent 与模型决策回执不带 protocol，不套用 Plan 的信封。
+
+Plan 按 `send_allowed` 区分可发正文与持久事实：preparing 可没有正文，也可带进度提示；提示片段在发送中／成功后仍可留在 preparing 计划。prepared 也可能已撤销发送且没有正文（例如终态尚未保存）。`processing_hint=true` 可留在 prepared／终态；终态片段只有身份、顺序、模式、状态、attempt 和 message。`business_status` 保持业务字符串，与交付状态分开。图片 fallback 的原位置不变，ID 为 `i:f`。
+
+结构解码不替代 Receiver 的原请求、双方代次、用户、scope、图片资源和当前平台权限核验。许可 `remaining_ms=0` 是不足一毫秒时可能产生的合法结构值，但既有授权仍拒绝它并停止该交付。expires_at 为秒，入站 timestamp_ms 为毫秒。
+
+解码在幂等 HTTP retry 返回之后执行，结构错误不触发额外 HTTP 重试；原网络／HTTP／JSON 解析错误重试分类保持。intent 仍不重试。ACK 的 recorded／duplicate 与返回计划分别校验，未知发送结果继续按原事实账本处理。
+
+共享脱敏夹具为 `koishi/scripts/fixtures/http-v2.json`：TS 编码由 Python 的实际 Request.parse／event 消费；Python 的 snapshot／事件处理／challenge_view 实际输出由 TS 解码并继续核验绑定。Python 不额外实现生产未用的 Plan decoder。样例、已有 unittest 与已安装网关 probe 一同回归；文件随离线组合包交付，不依赖包外 tests 目录。
+
 ## 请求与入站顺序
 
 请求字段必须完整且没有额外字段：
 
 ```json
 {
-  "protocol": {"major": 1, "minor": 0},
+  "protocol": {"major": 2, "minor": 0},
   "request_id": "SHA256_HEX",
   "instance_id": "taki-test",
   "app_id": "APP_ID",
@@ -63,9 +75,13 @@ JSON 和图片响应使用 no-store。未 ready、新任务/账本容量不足�
   "message_id": "ORIGINAL_MESSAGE_ID",
   "timestamp_ms": 1792382400000,
   "body": "/查曲 MyGO",
-  "capability": "qq-m1-candidate",
+  "capability": "qq-query-chat-v3",
   "gateway_epoch": "RANDOM_PER_PLUGIN_LIFETIME",
-  "ingress_seq": 1
+  "ingress_seq": 1,
+  "policy": {"natural_query": "model", "epoch": "POLICY_EPOCH", "global_revision": 0, "group_revision": 0},
+  "trigger": "command",
+  "reference": null,
+  "interaction": null
 }
 ```
 
@@ -104,6 +120,8 @@ QueryGate 沿用配置的并发/排队（默认 2+4），全后端最多持有 6
 交付元数据最多 4096 个请求、4096 个代次和 4096 个当前代次上下文高水位。终态至少保留 24 小时再按接纳触发清理；sending/uncertain 不被普通淘汰遗忘，达到上限停止新接纳。代次记录不自动删除，达到上限需后续明确维护策略。该保守容量门禁优先于重复发送风险。
 
 账本不保存正文、图片或 QueryContext。重启将 preparing/prepared 标过期，未确认 sending 标 uncertain，旧代次全部退役；重复原事件不重查/重发。旧 success ACK 可补记，但内存游标不重建。业务缓存/额度/历史文件格式未改变，代码回退不能把删除交付账本当作恢复方法。
+
+持久接纳成功后立即登记 Work，后续初始化失败记为 failed。终态落库失败时先停止该请求的发送许可，保留 Work 和固定目标终态；新接纳及 ready 为 503，原因 `delivery_storage_unavailable`，查询仍展示实际账本状态且不允许发送。reaper 在其他过期维护前按 1、2、4 秒最多重试三次幂等终态写，不重执行业务或再次扣额。全部写成且维护恢复后才恢复接纳；耗尽后保留故障，修复存储并重启，由上述既有恢复规则收口。reaper 的 SQLite 错误会记录并在下一轮维护复查；未知异常停止任务并保持不可接纳。账本 schema 与协议版本不变。
 
 ## 主动通知协议（M4 已接线）
 

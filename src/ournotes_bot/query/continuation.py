@@ -150,7 +150,7 @@ def capture_context(result, repository, *, catalog_before=None, complete=False,
         if req.mode == "art" or answer.error:
             return None
         kind = "support_card" if req.support else "card"
-        spec = QuerySpec(kind, card_query=req.query, page=req.page)
+        spec = QuerySpec(kind, card_request=req, page=req.page)
         page, pages = req.page, max(1, (len(answer.cards) + PAGE_SIZE - 1) // PAGE_SIZE)
         visible = tuple(Choice(kind, c.id) for c in (answer.cards if complete else answer.visible))
         if req.mode == "detail" and len(visible) == 1:
@@ -259,7 +259,10 @@ def execute_followup(context: QueryContext, operation: Operation, repository):
                              selected.difficulty if selected.difficulty not in {"", "ALL"} else "EXPERT",
                              display_name=str(selected.entity_id))
         else:
-            spec = QuerySpec(selected.kind, card_query=str(selected.entity_id))
+            from ..domain.card_query import CardRequest
+            spec = QuerySpec(selected.kind, card_request=CardRequest(
+                support=selected.kind == "support_card", mode="detail",
+                card_id=selected.entity_id, query=str(selected.entity_id)))
         result = resolve_query(spec, repository)
         candidate = replace(context, selected=selected) if result.status == "success" else None
     else:

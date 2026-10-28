@@ -8,15 +8,29 @@ from ..sources.cutoff_sampler import HistorySampler
 logger = logging.getLogger(__name__)
 
 
-async def finish_thread(function):
-    task = asyncio.create_task(asyncio.to_thread(function))
-    try:
-        return await asyncio.shield(task)
-    except asyncio.CancelledError:
-        # Preserve cancellation even if the thread fails while being drained.
-        # Letting its exception escape here turns shutdown back into a retry loop.
-        await asyncio.gather(task, return_exceptions=True)
-        raise
+async def drain_task(task):
+    """Keep ownership until task settles, then propagate the caller's cancellation."""
+    cancelled = False
+    while True:
+        try:
+            result = await asyncio.shield(task)
+            break
+        except asyncio.CancelledError:
+            if task.done() and task.cancelled():
+                raise
+            cancelled = True
+        except BaseException:
+            if cancelled:
+                raise asyncio.CancelledError() from None
+            raise
+    if cancelled:
+        raise asyncio.CancelledError()
+    return result
+
+
+async def finish_thread(function, *args):
+    # The awaiting owner stays registered even after repeated cancellation.
+    return await drain_task(asyncio.create_task(asyncio.to_thread(function, *args)))
 
 
 class RuntimeTasks:
@@ -132,6 +146,8 @@ class RuntimeTasks:
             self.sampler.stop()
         for task in self.tasks:
             task.cancel()
-        await asyncio.gather(*self.tasks, return_exceptions=True)
-        self.tasks.clear()
-        self.named_tasks.clear()
+        try:
+            await drain_task(asyncio.gather(*self.tasks, return_exceptions=True))
+        finally:
+            self.tasks.clear()
+            self.named_tasks.clear()

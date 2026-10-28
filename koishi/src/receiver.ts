@@ -6,7 +6,7 @@ import { BackendClient, BackendError, Plan, ModelPermission } from './backend'
 import { decodeIncoming, Identity, Inbound } from './ingress'
 import { QQDelivery, QQInternal } from './delivery'
 import { Notices } from './notices'
-import { MaterialStore } from './materials'
+import { MaterialStore, materialRequest } from './materials'
 import type { Management } from './management'
 
 export interface ReceiverConfig extends Identity {
@@ -45,7 +45,8 @@ export class Receiver {
     const accepted = [...this.flights.values()].filter(flight => flight.accepted).length
     return { accepted_inflight:accepted, admission_inflight:this.flights.size-accepted,
       pending_total:this.flights.size, capacity:this.config.maxPending, epoch:this.epoch,
-      started_at:this.startedAt, startup_error:this.startupError ?? null, admission_attempts:{...this.admissionCounts} }
+      started_at:this.startedAt, startup_error:this.startupError ?? null, admission_attempts:{...this.admissionCounts},
+      materials:this.materials?.diagnostics() ?? null }
   }
   private readonly startedAt = Date.now()/1000
   private startupError?: AdmissionOutcome
@@ -215,11 +216,8 @@ export class Receiver {
       const api = Object.create(bot.internal) as QQInternal & { http: () => typeof bot.http }
       api.http = () => bot.http.extend({ timeout: 15000 })
       if (!this.materials && this.config.materialStateDir) {
-        this.materials = new MaterialStore(this.config.materialStateDir, this.config.appId, async (method, path, data) => {
-          const response = await bot.http(path, { method, data, timeout: 15000 })
-          if (response.data?.code && response.data.code !== 0) throw new Error('material API rejected')
-          return response.data
-        })
+        this.materials = new MaterialStore(this.config.materialStateDir, this.config.appId,
+          (method, path, data) => materialRequest(()=>bot.http(path, { method, data, timeout: 15000 })))
       }
       job.delivery = new QQDelivery(api, job.input, job.plan.delivery_id, this.client.epoch, this.client, alive,
         undefined, undefined, this.materials)
@@ -263,8 +261,9 @@ export class Receiver {
           const fallback: Plan = await this.client.event(job.plan, 'upload_failed', part.id)
           this.validate(fallback, job.input)
           job.plan = fallback
+          if (!fallback.send_allowed) return
           part = fallback.parts[index]
-          if (!fallback.send_allowed || part.mode !== 'fallback' || part.kind !== 'text' || typeof part.text !== 'string') return
+          if (part.mode !== 'fallback' || part.kind !== 'text' || typeof part.text !== 'string') return
           result = await job.delivery.deliver(part.id, index, { kind: 'text', text: part.text })
         }
         if (job.delivery.acknowledgementPending && !await job.delivery.retryAcknowledgement()) return
@@ -309,16 +308,22 @@ export class Receiver {
     const allowed=permitted && this.active && (management?.accepts(input) ?? true) && policy.natural_query==='model'
     await this.client.modelPermission(challenge,policy,allowed)
   }
-  async dispose(): Promise<void> {
+  private closing?: Promise<void>
+  dispose(): Promise<void> {
+    return this.closing ??= this.drain()
+  }
+  private async drain(): Promise<void> {
     this.active = false
     this.client.deactivate()
     const noticesClosed=this.notices?.close()
     this.raw.clear()
     for (const job of this.jobs.values()) job.delivery?.dispose()
+    const materialsClosed=this.materials?.close()
     // Retire before waiting for in-flight sends. Their late ACK may record facts, never context.
     try { await this.ready; await this.client.retire() }
     catch { this.log.warn('gateway retirement unconfirmed; no new local sends') }
     await Promise.allSettled([...this.flights.values()].map(flight => flight.promise))
+    await (materialsClosed ?? this.materials?.close())
     await noticesClosed
     await this.client.telemetry?.close()
   }

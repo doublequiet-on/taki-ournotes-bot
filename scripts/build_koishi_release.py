@@ -11,8 +11,13 @@ import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
 KOISHI_CLIENT_SHA256 = '55a68e89eda7e3fe59305b09e6c4de19481a8d7aa5df97579822c819ebf3ccaf'
-KOISHI_RELOAD_OLD = b'p2(e,t).then(location.reload,'
-KOISHI_RELOAD_NEW = b'p2(e,t).then(()=>location.reload(),'
+KOISHI_RECONNECT_PATCHES = (
+    (b'function p2(e,t){', b'function p2(e,t,takiReconnectUrl){'),
+    (b'o=()=>{cr.value=null;for(const a in ot)ot[a]=void 0;',
+     b'o=()=>{takiReconnectUrl??=location.href;cr.value=null;for(const a in ot)ot[a]=void 0;'),
+    (b'p2(e,t).then(location.reload,',
+     b'p2(e,t,takiReconnectUrl).then(()=>location.replace(takiReconnectUrl),'),
+)
 
 
 def sha(path):
@@ -20,11 +25,14 @@ def sha(path):
 
 
 def patch_koishi_client(path):
-    """Bind Koishi 5.30.11's reconnect reload; reject unknown upstream assets."""
+    """Keep the first disconnect URL through Koishi's page disposal and retries."""
     data = path.read_bytes()
-    if hashlib.sha256(data).hexdigest() != KOISHI_CLIENT_SHA256 or data.count(KOISHI_RELOAD_OLD) != 1:
+    if (hashlib.sha256(data).hexdigest() != KOISHI_CLIENT_SHA256
+            or any(data.count(old) != 1 for old, _ in KOISHI_RECONNECT_PATCHES)):
         raise ValueError('Koishi Console client differs from reviewed 5.30.11 asset')
-    path.write_bytes(data.replace(KOISHI_RELOAD_OLD, KOISHI_RELOAD_NEW, 1))
+    for old, new in KOISHI_RECONNECT_PATCHES:
+        data = data.replace(old, new, 1)
+    path.write_bytes(data)
 
 
 def build(python_artifact, node, output):
@@ -56,7 +64,7 @@ def build(python_artifact, node, output):
         binary.parent.mkdir();shutil.copy2(node,binary)
         python=stage/'python'/python_artifact.name;python.parent.mkdir();shutil.copy2(python_artifact,python)
         recovery=stage/'controller';recovery.mkdir()
-        for name in ('koishi_control.py','koishi_launcher.py','group_policy_guard.py','linux_backend.py','linux_updater.py','offline_bundle.py','ops_snapshot.py','trusted_actions.py'):
+        for name in ('koishi_control.py','koishi_launcher.py','group_policy_guard.py','linux_backend.py','linux_updater.py','offline_bundle.py','release_retention.py','ops_snapshot.py','trusted_actions.py'):
             shutil.copy2(ROOT/'deploy'/name,recovery/name)
         shutil.copytree(ROOT/'deploy/koishi',recovery/'service-templates')
         shutil.copy2(ROOT/'docs/KOISHI_MIGRATION_M4.md',stage/'RUNBOOK.md')

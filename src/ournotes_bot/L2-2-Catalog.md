@@ -16,6 +16,8 @@
 
 `capture_catalog()` 同时捕获 `characters/gachas/activities` 与歌曲、两类卡牌及来源 metadata。新资料使用 `domain/info_catalog.py` 的纯记录，`metadata.info_catalog_available` 分别标记集合是否取得；旧缓存缺集合不等于空集合。转换在主快照发布前校验，沿用现有原子发布与同源缓存回退，不新增缓存文件或定时任务。
 
+Haneoka 的 `capture_query_view()` 从现有发布捕获目录、状态及对应原始来源快照，不探测上游。查询方法绑定到该视图，解析、文字和绘图准备不会读到随后发布的另一版目录；每请求仅复制小型 metadata，已发布 records 和嵌套字段仍按只读约定借用。Yume 的刷新、按需详情与非原子旧发布保持原策略。独立 Meta 和榜单来源继续使用各自当前性规则，不属于主目录原子视图。
+
 `Song/Chart/Card/SupportCard/Skill`、名称规范化与角色身份、`SongRepository` 的资料集合、技能/分类完整度、同步与缓存状态。dataclass 虽为 frozen，部分字段仍含 dict，不能推导为深度不可变的全局快照。
 
 ## Core Flow
@@ -50,7 +52,7 @@ Project Yume 的并发详情调度位于 Catalog，不应按“网络相关”�
 ## Relevant Tests
 
 - [test_haneoka_catalog.py](../../tests/test_haneoka_catalog.py)：完整快照、中文关联、技能、属性单位、图片／缓存隔离与来源边界。
-- [test_catalog_concurrency.py](../../tests/test_catalog_concurrency.py)：慢刷新／落盘时热读、完整发布的一致读取、刷新顺序、单次初始化及失败恢复；版本哈希不持发布锁，已捕获的嵌套记录不被后续刷新改写。
+- [test_catalog_concurrency.py](../../tests/test_catalog_concurrency.py)：慢刷新／落盘时热读、完整发布的一致读取、刷新顺序、单次初始化及失败恢复；直接查询解析／文字／绘图准备之间刷新仍使用同版目录，普通续查和图片预览复用捕获；版本哈希不持发布锁，已捕获的嵌套记录不被后续刷新改写。
 
 - [test_status.py](../../tests/test_status.py)：`test_untrusted_timestamp_and_failed_save_do_not_claim_success` 区分 unsaved 与同步成功。
 - [test_support_data.py](../../tests/test_support_data.py)、[test_card_catalog.py](../../tests/test_card_catalog.py)：旧卡牌行、扩展字段往返、缺索引升级失败。

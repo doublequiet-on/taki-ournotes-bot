@@ -8,6 +8,7 @@ import logging
 import re
 import time
 from functools import partial
+from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from importlib.resources import files
 from ..ai_query import AIQueryParser, is_ai_request
@@ -19,7 +20,9 @@ from ..data import SongRepository
 from ..structured_query import QueryResult, query_page_notice
 from ..query.continuation import (QueryContext, catalog_version,
                                   capture_context, execute_followup, parse_operation)
+from ..query.entity_lexicon import alias_scope
 from ..domain.query_policy import CURRENT_POLICY, continuation_allowed
+from .runtime_tasks import finish_thread
 from ..visuals import (render_card, render_card_list, render_chart, render_song_list,
                       render_support_card, render_support_card_list)
 
@@ -238,15 +241,7 @@ class QueryGate:
             self._pending += 1
         try:
             async with self._workers:
-                work = asyncio.create_task(asyncio.to_thread(function, *args))
-                try:
-                    return await asyncio.shield(work)
-                except asyncio.CancelledError:
-                    # to_thread cannot stop a running worker; keep its slot occupied.
-                    try:
-                        await work
-                    finally:
-                        raise
+                return await finish_thread(function, *args)
         finally:
             async with self._lock:
                 self._pending -= 1
@@ -445,8 +440,21 @@ def easter_egg_reply(content: str) -> PreparedReply | None:
     return PreparedReply("彩蛋图片发送失败，请稍后重试。", image)
 
 
+@contextmanager
+def _captured_query(repository, *, enabled=True):
+    capture = getattr(repository, 'capture_query_view', None)
+    enabled = enabled and getattr(repository, 'data_source', None) == 'haneoka' and callable(capture)
+    with alias_scope(enabled=enabled):
+        yield capture() if enabled else repository
+
+
 def image_reply(content: str, repository: SongRepository, ai_parser: AIQueryParser | None = None) -> bytes | None:
     """Compatibility helper for local previews; live replies use prepare_reply."""
+    with _captured_query(repository, enabled=not is_ai_request(content)) as view:
+        return _image_reply(content, view, ai_parser)
+
+
+def _image_reply(content, repository, ai_parser):
     easter_egg = easter_egg_reply(content)
     if easter_egg is not None:
         return easter_egg.image
@@ -460,6 +468,12 @@ def image_reply(content: str, repository: SongRepository, ai_parser: AIQueryPars
 def prepare_reply(content: str, repository: SongRepository,
                    ai_parser: AIQueryParser, *, log_content: bool = True, outcome=None,
                    catalog_before=None) -> PreparedReply | None:
+    with _captured_query(repository, enabled=not is_ai_request(content)) as view:
+        return _prepare_reply(content, view, ai_parser, log_content=log_content,
+                              outcome=outcome, catalog_before=catalog_before)
+
+
+def _prepare_reply(content, repository, ai_parser, *, log_content, outcome, catalog_before):
     easter_egg = easter_egg_reply(content)
     if easter_egg is not None:
         return replace(easter_egg,parse_origin='direct',processing_route='direct')
@@ -533,7 +547,6 @@ def activity_time_reply(answer, field):
 
 
 def prepare_followup(context, operation, repository):
-    from ..structured_query import answer_for
     if isinstance(context,DeliveryCursor) and context.origin == 'mixed' and operation.kind == 'continue':
         if context.uncertain:
             return PreparedReply('上一张图片的发送回执不确定，暂不自动重发，请重新查询。')
@@ -557,6 +570,12 @@ def prepare_followup(context, operation, repository):
         return PreparedReply('本次查询的图片已经全部发送。',context=context)
     if not isinstance(context, QueryContext):
         return PreparedReply('这条结果没有可选实体，请发送完整查询。')
+    with _captured_query(repository, enabled=context.meta is None) as view:
+        return _prepare_selected_followup(context, operation, view, origin)
+
+
+def _prepare_selected_followup(context, operation, repository, origin):
+    from ..structured_query import answer_for
     try:
         outcome = execute_followup(context, operation, repository)
         if isinstance(outcome, str):
@@ -605,8 +624,8 @@ def complete_list_reply(result,repository,locale,candidate):
     if page<1 or page>max(1,(len(cards or songs)+15)//16):return None
     if cards:
         from ..rendering.catalog_layout import render_list
-        characters=result.catalog.request.filters.get('character',()) if result.catalog else ()
-        bands=result.catalog.request.filters.get('band',()) if result.catalog else ()
+        characters=result.catalog.request.filters.character if result.catalog else ()
+        bands=result.catalog.request.filters.band if result.catalog else ()
         parts,records,ranges=render_list(cards,label,locale,load=visual_asset,characters=characters,bands=bands)
     elif songs:
         from ..rendering.song_layout import render_list

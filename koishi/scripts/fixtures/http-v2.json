@@ -1,0 +1,760 @@
+{
+  "python_to_ts": {
+    "ready": {
+      "ready": true,
+      "protocol": {
+        "major": 2,
+        "minor": 0
+      },
+      "backend_epoch": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "pid": 0,
+      "maintenance": {
+        "reason": null,
+        "pending_terminations": 0,
+        "oldest_pending_seconds": 0,
+        "exhausted_terminations": 0,
+        "reaper_alive": true,
+        "reaper_error": null
+      },
+      "capability": "qq-query-chat-v3",
+      "backend_code_digest": "0000000000000000000000000000000000000000000000000000000000000000",
+      "background_tasks": false,
+      "notices_enabled": false,
+      "diagnostics_enabled": true,
+      "management_capabilities": [
+        "admin_read_v1",
+        "telemetry_v1",
+        "group_policies_v1",
+        "ops_v1"
+      ],
+      "features": [
+        "classify",
+        "gateway_retire",
+        "ack_context_guard",
+        "notice_gateway_v1",
+        "quoted_context_v1",
+        "fixed_snapshot_v1",
+        "current_model_permit_v1",
+        "independent_delivery_v1"
+      ],
+      "reference_profiles": []
+    },
+    "classify": {
+      "recognized": true
+    },
+    "registration": {
+      "gateway_epoch": "epoch",
+      "backend_epoch": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    },
+    "preparing": {
+      "protocol": {
+        "major": 2,
+        "minor": 0
+      },
+      "request_id": "b461cd01680f7f8ca752bb40cad70f00b672b8dbc02cd4c280662aca55994785",
+      "delivery_id": "dddddddddddddddddddddddddddddddd",
+      "plan_version": 1,
+      "status": "preparing",
+      "send_allowed": false,
+      "expires_at": 1792382698.0,
+      "parts": []
+    },
+    "challenge": {
+      "request_id": "b461cd01680f7f8ca752bb40cad70f00b672b8dbc02cd4c280662aca55994785",
+      "attempt_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "nonce": "cccccccccccccccccccccccccccccccc",
+      "scope": {
+        "instance_id": "fixture",
+        "app_id": "app",
+        "platform": "qq",
+        "kind": "group",
+        "conversation_id": "group1"
+      },
+      "user_id": "fixture-user",
+      "backend_epoch": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "gateway_epoch": "epoch",
+      "remaining_ms": 3000,
+      "admission_policy_version": {
+        "epoch": "fixture",
+        "global_revision": 0,
+        "group_revision": 0
+      }
+    },
+    "preparing_challenge": {
+      "protocol": {
+        "major": 2,
+        "minor": 0
+      },
+      "request_id": "b461cd01680f7f8ca752bb40cad70f00b672b8dbc02cd4c280662aca55994785",
+      "delivery_id": "dddddddddddddddddddddddddddddddd",
+      "plan_version": 1,
+      "status": "preparing",
+      "send_allowed": false,
+      "expires_at": 1792382698.0,
+      "parts": [],
+      "pending_model_permission": {
+        "request_id": "b461cd01680f7f8ca752bb40cad70f00b672b8dbc02cd4c280662aca55994785",
+        "attempt_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "nonce": "cccccccccccccccccccccccccccccccc",
+        "scope": {
+          "instance_id": "fixture",
+          "app_id": "app",
+          "platform": "qq",
+          "kind": "group",
+          "conversation_id": "group1"
+        },
+        "user_id": "fixture-user",
+        "backend_epoch": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "gateway_epoch": "epoch",
+        "remaining_ms": 3000,
+        "admission_policy_version": {
+          "epoch": "fixture",
+          "global_revision": 0,
+          "group_revision": 0
+        }
+      }
+    },
+    "challenge_zero": {
+      "request_id": "b461cd01680f7f8ca752bb40cad70f00b672b8dbc02cd4c280662aca55994785",
+      "attempt_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "nonce": "cccccccccccccccccccccccccccccccc",
+      "scope": {
+        "instance_id": "fixture",
+        "app_id": "app",
+        "platform": "qq",
+        "kind": "group",
+        "conversation_id": "group1"
+      },
+      "user_id": "fixture-user",
+      "backend_epoch": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "gateway_epoch": "epoch",
+      "remaining_ms": 0,
+      "admission_policy_version": {
+        "epoch": "fixture",
+        "global_revision": 0,
+        "group_revision": 0
+      }
+    },
+    "model_permission": {
+      "recorded": true,
+      "duplicate": false
+    },
+    "hint_pending": {
+      "protocol": {
+        "major": 2,
+        "minor": 0
+      },
+      "request_id": "b461cd01680f7f8ca752bb40cad70f00b672b8dbc02cd4c280662aca55994785",
+      "delivery_id": "dddddddddddddddddddddddddddddddd",
+      "plan_version": 1,
+      "status": "preparing",
+      "send_allowed": true,
+      "expires_at": 1792382698.0,
+      "parts": [
+        {
+          "id": "0",
+          "position": 0,
+          "mode": "primary",
+          "status": "pending",
+          "attempt": null,
+          "message": null,
+          "business_status": "processing_hint",
+          "kind": "text",
+          "text": "还在核实，请稍等。"
+        }
+      ],
+      "processing_hint": true
+    },
+    "hint_intent": {
+      "permission": "granted",
+      "msg_seq": 1
+    },
+    "hint_sending": {
+      "protocol": {
+        "major": 2,
+        "minor": 0
+      },
+      "request_id": "b461cd01680f7f8ca752bb40cad70f00b672b8dbc02cd4c280662aca55994785",
+      "delivery_id": "dddddddddddddddddddddddddddddddd",
+      "plan_version": 1,
+      "status": "preparing",
+      "send_allowed": true,
+      "expires_at": 1792382698.0,
+      "parts": [
+        {
+          "id": "0",
+          "position": 0,
+          "mode": "primary",
+          "status": "sending",
+          "attempt": "fixture-attempt",
+          "message": null,
+          "business_status": "processing_hint",
+          "kind": "text",
+          "text": "还在核实，请稍等。"
+        }
+      ],
+      "processing_hint": true
+    },
+    "hint_ack": {
+      "recorded": true,
+      "duplicate": false,
+      "protocol": {
+        "major": 2,
+        "minor": 0
+      },
+      "request_id": "b461cd01680f7f8ca752bb40cad70f00b672b8dbc02cd4c280662aca55994785",
+      "delivery_id": "dddddddddddddddddddddddddddddddd",
+      "plan_version": 1,
+      "status": "preparing",
+      "send_allowed": true,
+      "expires_at": 1792382698.0,
+      "parts": [
+        {
+          "id": "0",
+          "position": 0,
+          "mode": "primary",
+          "status": "success",
+          "attempt": "fixture-attempt",
+          "message": "hint-receipt",
+          "business_status": "processing_hint",
+          "kind": "text",
+          "text": "还在核实，请稍等。"
+        }
+      ],
+      "processing_hint": true
+    },
+    "hint_success": {
+      "protocol": {
+        "major": 2,
+        "minor": 0
+      },
+      "request_id": "b461cd01680f7f8ca752bb40cad70f00b672b8dbc02cd4c280662aca55994785",
+      "delivery_id": "dddddddddddddddddddddddddddddddd",
+      "plan_version": 1,
+      "status": "preparing",
+      "send_allowed": true,
+      "expires_at": 1792382698.0,
+      "parts": [
+        {
+          "id": "0",
+          "position": 0,
+          "mode": "primary",
+          "status": "success",
+          "attempt": "fixture-attempt",
+          "message": "hint-receipt",
+          "business_status": "processing_hint",
+          "kind": "text",
+          "text": "还在核实，请稍等。"
+        }
+      ],
+      "processing_hint": true
+    },
+    "prepared_image": {
+      "protocol": {
+        "major": 2,
+        "minor": 0
+      },
+      "request_id": "b461cd01680f7f8ca752bb40cad70f00b672b8dbc02cd4c280662aca55994785",
+      "delivery_id": "dddddddddddddddddddddddddddddddd",
+      "plan_version": 1,
+      "status": "prepared",
+      "send_allowed": true,
+      "expires_at": 1792382698.0,
+      "parts": [
+        {
+          "id": "0",
+          "position": 0,
+          "mode": "primary",
+          "status": "success",
+          "attempt": "fixture-attempt",
+          "message": "hint-receipt",
+          "business_status": "processing_hint",
+          "kind": "text",
+          "text": "还在核实，请稍等。"
+        },
+        {
+          "id": "1",
+          "position": 1,
+          "mode": "primary",
+          "status": "pending",
+          "attempt": null,
+          "message": null,
+          "business_status": "success",
+          "kind": "image",
+          "text": " ",
+          "image": "/v1/deliveries/dddddddddddddddddddddddddddddddd/parts/1/image",
+          "mime": "image/png"
+        }
+      ],
+      "processing_hint": true
+    },
+    "prepared_revoked": {
+      "protocol": {
+        "major": 2,
+        "minor": 0
+      },
+      "request_id": "b461cd01680f7f8ca752bb40cad70f00b672b8dbc02cd4c280662aca55994785",
+      "delivery_id": "dddddddddddddddddddddddddddddddd",
+      "plan_version": 1,
+      "status": "prepared",
+      "send_allowed": false,
+      "expires_at": 1792382698.0,
+      "parts": [
+        {
+          "id": "0",
+          "position": 0,
+          "mode": "primary",
+          "status": "success",
+          "attempt": "fixture-attempt",
+          "message": "hint-receipt"
+        },
+        {
+          "id": "1",
+          "position": 1,
+          "mode": "primary",
+          "status": "pending",
+          "attempt": null,
+          "message": null
+        }
+      ],
+      "processing_hint": true
+    },
+    "fallback": {
+      "protocol": {
+        "major": 2,
+        "minor": 0
+      },
+      "request_id": "b461cd01680f7f8ca752bb40cad70f00b672b8dbc02cd4c280662aca55994785",
+      "delivery_id": "dddddddddddddddddddddddddddddddd",
+      "plan_version": 1,
+      "status": "prepared",
+      "send_allowed": true,
+      "expires_at": 1792382698.0,
+      "parts": [
+        {
+          "id": "0",
+          "position": 0,
+          "mode": "primary",
+          "status": "success",
+          "attempt": "fixture-attempt",
+          "message": "hint-receipt",
+          "business_status": "processing_hint",
+          "kind": "text",
+          "text": "还在核实，请稍等。"
+        },
+        {
+          "id": "1:f",
+          "position": 1,
+          "mode": "fallback",
+          "status": "pending",
+          "attempt": null,
+          "message": null,
+          "business_status": "success",
+          "kind": "text",
+          "text": "fixture answer"
+        }
+      ],
+      "processing_hint": true
+    },
+    "intent": {
+      "permission": "granted",
+      "msg_seq": 2
+    },
+    "existing_intent": {
+      "permission": "existing",
+      "msg_seq": 2
+    },
+    "ack": {
+      "recorded": true,
+      "duplicate": false,
+      "protocol": {
+        "major": 2,
+        "minor": 0
+      },
+      "request_id": "b461cd01680f7f8ca752bb40cad70f00b672b8dbc02cd4c280662aca55994785",
+      "delivery_id": "dddddddddddddddddddddddddddddddd",
+      "plan_version": 1,
+      "status": "finished",
+      "send_allowed": false,
+      "expires_at": 1792382698.0,
+      "parts": [
+        {
+          "id": "0",
+          "position": 0,
+          "mode": "primary",
+          "status": "success",
+          "attempt": "fixture-attempt",
+          "message": "hint-receipt"
+        },
+        {
+          "id": "1:f",
+          "position": 1,
+          "mode": "fallback",
+          "status": "success",
+          "attempt": "fixture-attempt",
+          "message": "answer-receipt"
+        }
+      ],
+      "processing_hint": true
+    },
+    "duplicate_ack": {
+      "recorded": true,
+      "duplicate": true,
+      "protocol": {
+        "major": 2,
+        "minor": 0
+      },
+      "request_id": "b461cd01680f7f8ca752bb40cad70f00b672b8dbc02cd4c280662aca55994785",
+      "delivery_id": "dddddddddddddddddddddddddddddddd",
+      "plan_version": 1,
+      "status": "finished",
+      "send_allowed": false,
+      "expires_at": 1792382698.0,
+      "parts": [
+        {
+          "id": "0",
+          "position": 0,
+          "mode": "primary",
+          "status": "success",
+          "attempt": "fixture-attempt",
+          "message": "hint-receipt"
+        },
+        {
+          "id": "1:f",
+          "position": 1,
+          "mode": "fallback",
+          "status": "success",
+          "attempt": "fixture-attempt",
+          "message": "answer-receipt"
+        }
+      ],
+      "processing_hint": true
+    },
+    "terminal": {
+      "protocol": {
+        "major": 2,
+        "minor": 0
+      },
+      "request_id": "b461cd01680f7f8ca752bb40cad70f00b672b8dbc02cd4c280662aca55994785",
+      "delivery_id": "dddddddddddddddddddddddddddddddd",
+      "plan_version": 1,
+      "status": "finished",
+      "send_allowed": false,
+      "expires_at": 1792382698.0,
+      "parts": [
+        {
+          "id": "0",
+          "position": 0,
+          "mode": "primary",
+          "status": "success",
+          "attempt": "fixture-attempt",
+          "message": "hint-receipt"
+        },
+        {
+          "id": "1:f",
+          "position": 1,
+          "mode": "fallback",
+          "status": "success",
+          "attempt": "fixture-attempt",
+          "message": "answer-receipt"
+        }
+      ],
+      "processing_hint": true
+    },
+    "batch_finished": {
+      "protocol": {
+        "major": 2,
+        "minor": 0
+      },
+      "request_id": "b461cd01680f7f8ca752bb40cad70f00b672b8dbc02cd4c280662aca55994785",
+      "delivery_id": "dddddddddddddddddddddddddddddddd",
+      "plan_version": 1,
+      "status": "finished",
+      "send_allowed": false,
+      "expires_at": 1792382698.0,
+      "parts": [
+        {
+          "id": "0",
+          "position": 0,
+          "mode": "primary",
+          "status": "success",
+          "attempt": "fixture-attempt",
+          "message": "hint-receipt"
+        },
+        {
+          "id": "1:f",
+          "position": 1,
+          "mode": "fallback",
+          "status": "success",
+          "attempt": "fixture-attempt",
+          "message": "answer-receipt"
+        }
+      ],
+      "processing_hint": true
+    },
+    "aborted": {
+      "protocol": {
+        "major": 2,
+        "minor": 0
+      },
+      "request_id": "b461cd01680f7f8ca752bb40cad70f00b672b8dbc02cd4c280662aca55994785",
+      "delivery_id": "dddddddddddddddddddddddddddddddd",
+      "plan_version": 1,
+      "status": "finished",
+      "send_allowed": false,
+      "expires_at": 1792382698.0,
+      "parts": [
+        {
+          "id": "0",
+          "position": 0,
+          "mode": "primary",
+          "status": "success",
+          "attempt": "fixture-attempt",
+          "message": "hint-receipt"
+        },
+        {
+          "id": "1:f",
+          "position": 1,
+          "mode": "fallback",
+          "status": "success",
+          "attempt": "fixture-attempt",
+          "message": "answer-receipt"
+        }
+      ],
+      "processing_hint": true
+    },
+    "legacy_ack": {
+      "recorded": true,
+      "duplicate": true,
+      "protocol": {
+        "major": 2,
+        "minor": 0
+      },
+      "request_id": "b461cd01680f7f8ca752bb40cad70f00b672b8dbc02cd4c280662aca55994785",
+      "delivery_id": "dddddddddddddddddddddddddddddddd",
+      "plan_version": 1,
+      "status": "finished",
+      "send_allowed": false,
+      "expires_at": 1792382698.0,
+      "parts": [
+        {
+          "id": "0",
+          "position": 0,
+          "mode": "primary",
+          "status": "success",
+          "attempt": "fixture-attempt",
+          "message": "hint-receipt"
+        },
+        {
+          "id": "1:f",
+          "position": 1,
+          "mode": "fallback",
+          "status": "success",
+          "attempt": "fixture-attempt",
+          "message": "answer-receipt"
+        }
+      ],
+      "processing_hint": true
+    },
+    "retirement": {
+      "retired": true
+    }
+  },
+  "ts_to_python": {
+    "request": {
+      "protocol": {
+        "major": 2,
+        "minor": 0
+      },
+      "request_id": "b461cd01680f7f8ca752bb40cad70f00b672b8dbc02cd4c280662aca55994785",
+      "instance_id": "fixture",
+      "app_id": "app",
+      "platform": "qq",
+      "kind": "group",
+      "conversation_id": "group1",
+      "user_id": "fixture-user",
+      "message_id": "message",
+      "timestamp_ms": 1792382400000,
+      "body": "/帮助",
+      "capability": "qq-query-chat-v3",
+      "gateway_epoch": "epoch",
+      "ingress_seq": 1,
+      "trigger": "command",
+      "reference": null,
+      "interaction": null,
+      "policy": {
+        "natural_query": "model",
+        "epoch": "fixture",
+        "global_revision": 0,
+        "group_revision": 0
+      }
+    },
+    "events": {
+      "hint_intent": {
+        "protocol": {
+          "major": 2,
+          "minor": 0
+        },
+        "request_id": "b461cd01680f7f8ca752bb40cad70f00b672b8dbc02cd4c280662aca55994785",
+        "plan_version": 1,
+        "gateway_epoch": "epoch",
+        "part_id": "0",
+        "attempt_id": "fixture-attempt",
+        "event": "intent"
+      },
+      "hint_ack": {
+        "protocol": {
+          "major": 2,
+          "minor": 0
+        },
+        "request_id": "b461cd01680f7f8ca752bb40cad70f00b672b8dbc02cd4c280662aca55994785",
+        "plan_version": 1,
+        "gateway_epoch": "epoch",
+        "part_id": "0",
+        "attempt_id": "fixture-attempt",
+        "event": "ack",
+        "result": "success",
+        "message_id": "hint-receipt",
+        "allow_context": true
+      },
+      "upload_failed": {
+        "protocol": {
+          "major": 2,
+          "minor": 0
+        },
+        "request_id": "b461cd01680f7f8ca752bb40cad70f00b672b8dbc02cd4c280662aca55994785",
+        "plan_version": 1,
+        "gateway_epoch": "epoch",
+        "part_id": "1",
+        "attempt_id": "none",
+        "event": "upload_failed"
+      },
+      "intent": {
+        "protocol": {
+          "major": 2,
+          "minor": 0
+        },
+        "request_id": "b461cd01680f7f8ca752bb40cad70f00b672b8dbc02cd4c280662aca55994785",
+        "plan_version": 1,
+        "gateway_epoch": "epoch",
+        "part_id": "1:f",
+        "attempt_id": "fixture-attempt",
+        "event": "intent"
+      },
+      "intent_duplicate": {
+        "protocol": {
+          "major": 2,
+          "minor": 0
+        },
+        "request_id": "b461cd01680f7f8ca752bb40cad70f00b672b8dbc02cd4c280662aca55994785",
+        "plan_version": 1,
+        "gateway_epoch": "epoch",
+        "part_id": "1:f",
+        "attempt_id": "fixture-attempt",
+        "event": "intent"
+      },
+      "ack": {
+        "protocol": {
+          "major": 2,
+          "minor": 0
+        },
+        "request_id": "b461cd01680f7f8ca752bb40cad70f00b672b8dbc02cd4c280662aca55994785",
+        "plan_version": 1,
+        "gateway_epoch": "epoch",
+        "part_id": "1:f",
+        "attempt_id": "fixture-attempt",
+        "event": "ack",
+        "result": "success",
+        "message_id": "answer-receipt",
+        "allow_context": true
+      },
+      "ack_duplicate": {
+        "protocol": {
+          "major": 2,
+          "minor": 0
+        },
+        "request_id": "b461cd01680f7f8ca752bb40cad70f00b672b8dbc02cd4c280662aca55994785",
+        "plan_version": 1,
+        "gateway_epoch": "epoch",
+        "part_id": "1:f",
+        "attempt_id": "fixture-attempt",
+        "event": "ack",
+        "result": "success",
+        "message_id": "answer-receipt",
+        "allow_context": true
+      },
+      "batch_finished": {
+        "protocol": {
+          "major": 2,
+          "minor": 0
+        },
+        "request_id": "b461cd01680f7f8ca752bb40cad70f00b672b8dbc02cd4c280662aca55994785",
+        "plan_version": 1,
+        "gateway_epoch": "epoch",
+        "part_id": "batch",
+        "attempt_id": "none",
+        "event": "batch_finished"
+      },
+      "aborted": {
+        "protocol": {
+          "major": 2,
+          "minor": 0
+        },
+        "request_id": "b461cd01680f7f8ca752bb40cad70f00b672b8dbc02cd4c280662aca55994785",
+        "plan_version": 1,
+        "gateway_epoch": "epoch",
+        "part_id": "batch",
+        "attempt_id": "none",
+        "event": "aborted"
+      },
+      "legacy_ack": {
+        "protocol": {
+          "major": 1,
+          "minor": 1
+        },
+        "request_id": "b461cd01680f7f8ca752bb40cad70f00b672b8dbc02cd4c280662aca55994785",
+        "plan_version": 1,
+        "gateway_epoch": "epoch",
+        "part_id": "1:f",
+        "attempt_id": "fixture-attempt",
+        "event": "ack",
+        "result": "success",
+        "message_id": "answer-receipt"
+      }
+    },
+    "model_permission": {
+      "request_id": "b461cd01680f7f8ca752bb40cad70f00b672b8dbc02cd4c280662aca55994785",
+      "attempt_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "nonce": "cccccccccccccccccccccccccccccccc",
+      "scope": {
+        "instance_id": "fixture",
+        "app_id": "app",
+        "platform": "qq",
+        "kind": "group",
+        "conversation_id": "group1"
+      },
+      "user_id": "fixture-user",
+      "backend_epoch": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "gateway_epoch": "epoch",
+      "decision": "allow",
+      "current_policy_version": {
+        "epoch": "fixture",
+        "global_revision": 0,
+        "group_revision": 0
+      },
+      "reason": "model_allowed",
+      "ttl_ms": 1000
+    }
+  },
+  "identity_cases": {
+    "accepted": [
+      "😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀",
+      "﻿receipt﻿"
+    ],
+    "rejected": [
+      "😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀",
+      "receipt",
+      "receipt"
+    ]
+  }
+}

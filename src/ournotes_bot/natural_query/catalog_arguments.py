@@ -5,7 +5,9 @@
 # Effects: Reads local aliases; never executes model-supplied command/filter strings.
 """Compare typed model dimensions with independently parsed ON evidence."""
 from ..data import normalize, character_identity
-from ..query.card_catalog import parse_card_request
+from dataclasses import replace
+from ..domain.card_query import CardFilters
+from ..query.card_catalog import card_entity_filters
 from ..query.entity_lexicon import find_anchor, resolve_entity
 from ..query.song_query import parse_filter
 from ..structured_query import QuerySpec
@@ -20,7 +22,7 @@ def grounded_catalog(arguments, intent, question, repository):
     active = any(arguments.get(key) for key in EXTENDED) or arguments.get("level_operator") == "eq" or arguments.get("difficulty") == "ALL"
     if isinstance(parsed, str):
         return None, ("conditions",)
-    if not isinstance(parsed, QuerySpec) or (parsed.song_query is None and parsed.card_query is None):
+    if not isinstance(parsed, QuerySpec) or (parsed.song_query is None and parsed.card_request is None):
         return (None, ("conditions",)) if active else (None, None)
     if parsed.intent != intent:
         return None, ("capability",)
@@ -55,22 +57,19 @@ def grounded_catalog(arguments, intent, question, repository):
                     or proposed_subject.ambiguous or proposed_subject.entity != expected_subject.entity):
                 invalid.append("query")
     else:
-        req = parse_card_request(parsed.card_query, repository, support=intent == "support_card")
+        req = parsed.card_request
         filters = req.filters
         if (not active and arguments.get("rarity") is not None
-                and set(filters) <= {"rarity", "character", "band", "title_ids"}):
+                and {key for key, _ in filters.conditions()} <= {"rarity", "character", "band", "title_ids"}):
             return None, None  # Keep the established single-rarity QuerySpec contract.
-        proposed = {}
-        # query is an entity only, never a raw command or catalog field string.
+        proposed = CardFilters()
+        # Every proposed name is one entity, never interpreted as command grammar.
         if query:
             if resolve_entity(intent, query, repository) is None:
                 invalid.append("query")
             else:
                 try:
-                    entity = parse_card_request(query, repository, support=req.support)
-                    proposed.update(entity.filters)
-                    if entity.card_id is not None:
-                        proposed["title_ids"] = (entity.card_id,)
+                    proposed = card_entity_filters(query, repository, support=req.support)
                 except ValueError:
                     invalid.append("query")
         for field, key in (("characters", "character"), ("bands", "band")):
@@ -78,15 +77,13 @@ def grounded_catalog(arguments, intent, question, repository):
                 try:
                     values = []
                     for name in arguments[field]:
-                        selector = parse_card_request(("角色=" if key == "character" else "乐队=") + name, repository, support=req.support)
-                        if set(selector.filters) != {key} or len(selector.filters[key]) != 1:
-                            raise ValueError("not a single entity")
-                        values.extend(selector.filters[key])
-                    proposed[key] = (*proposed.get(key, ()), *values)
+                        entity = card_entity_filters(name, repository, support=req.support, dimension=key)
+                        values.extend(getattr(entity, key))
+                    proposed = replace(proposed, **{key: (*getattr(proposed, key), *values)})
                 except ValueError:
                     invalid.append(field)
         if req.card_id is not None:
-            filters = {"title_ids": (req.card_id,)}
+            filters = CardFilters(title_ids=(req.card_id,))
         for field, key in (("colors", "type"), ("rarities", "rarity"), ("live_categories", "live"),
                            ("gekisou_categories", "gekisou"), ("tags", "tags")):
             values = arguments.get(field, [])
@@ -95,13 +92,12 @@ def grounded_catalog(arguments, intent, question, repository):
                     invalid.extend(("rarity", "rarities"))
                 values = [arguments["rarity"]]
             if values:
-                proposed[key] = values
+                proposed = replace(proposed, **{key: tuple(values)})
         if arguments.get("skill_query") or arguments.get("skill_kind"):
             invalid.extend(("skill_query", "skill_kind"))
-        keys = set(proposed) | set(filters)
-        for key in keys:
-            expected_values = set(filters.get(key, ()))
-            actual_values = set(proposed.get(key, ()))
+        for key, expected in filters.conditions(include_empty=True):
+            expected_values = set(expected)
+            actual_values = set(getattr(proposed, key))
             if key in {"character", "band"}:
                 identity = character_identity if key == "character" else lambda v: v
                 expected_values = {normalize(identity(v)) for v in expected_values}
