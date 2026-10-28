@@ -24,6 +24,69 @@ from test_event_cutoffs import PublicFixture, encoded
 
 
 class CutoffQueryV2Tests(unittest.TestCase):
+    def halloween_event(self):
+        from ournotes_bot.sources.moenotes_events import EventSnapshot, EventSong
+        songs = tuple(EventSong(str(10+i), mid, '合成课题曲'+str(i+1), collect_status='collecting')
+                      for i, mid in enumerate(('100118','100115','100005','100029')))
+        return EventSnapshot('jp','4','万圣节 · 合成验收','nowOn',1793156400000,1794031199000,songs)
+
+    def test_ranking_scope_roundtrip_and_conflicts(self):
+        for tokens in itertools.permutations(('总榜','100','jp','仅数值')):
+            request = parse_cutoff(' '.join(tokens))
+            self.assertFalse(request.error)
+            self.assertEqual(request.board_scope, 'total')
+            self.assertEqual(parse_cutoff(request.command_label()), request)
+        for query in ('总榜 单曲', '总榜 歌曲1', '总榜 歌曲ID=100118', '总榜 歌名="总榜"', '总榜 abc'):
+            self.assertTrue(parse_cutoff(query).error, query)
+        self.assertEqual(parse_cutoff('歌名="总榜"').query, '总榜')
+        self.assertEqual(parse_cutoff('单曲 20-40').board_scope, 'song')
+
+    def test_verified_format_is_scoped_to_complete_event_identity(self):
+        from ournotes_bot.sources.moenotes_events import event_ranking_format
+        event = self.halloween_event()
+        self.assertTrue(event_ranking_format(event).total_enabled)
+        self.assertTrue(event_ranking_format(replace(event, songs=event.songs[::-1])).total_enabled)
+        for changed in (replace(event, server='tw'), replace(event, event_id='5'),
+                        replace(event, start_ms=event.start_ms+1), replace(event, songs=event.songs[:3])):
+            self.assertIsNone(event_ranking_format(changed).total_enabled)
+        old = replace(event, event_id='1', start_ms=1790758800000, end_ms=1791460799000,
+                      songs=tuple(replace(s, challenge_id=str(i+1),music_id=mid)
+                                  for i,(s,mid) in enumerate(zip(event.songs,('100109','100056','100063')))))
+        self.assertFalse(event_ranking_format(old).total_enabled)
+
+    def test_total_query_never_reads_song_boards_or_writes_history(self):
+        event = self.halloween_event()
+        with patch.object(self.source, 'event', return_value=event), \
+                patch.object(self.source, 'boards', side_effect=AssertionError('song read')), \
+                patch.object(self.source.history, 'read', side_effect=AssertionError('history read')):
+            answer = self.ask('总榜 100')
+            self.assertIn('综合榜数据暂未接入', answer.text)
+            self.assertEqual(answer.status, 'data_unavailable')
+            self.assertFalse(answer.boards)
+            self.assertFalse(render_cutoff(answer))
+
+    def test_four_song_overview_and_outage_keep_total_capability(self):
+        from ournotes_bot.sources.moenotes_events import BoardSnapshot
+        event = self.halloween_event()
+        boards = tuple(BoardSnapshot(song, tuple(20_000_000-r for r in range(100))) for song in event.songs)
+        with patch.object(self.source, 'event', return_value=event), patch.object(self.source, 'boards', return_value=boards):
+            answer = self.ask('100')
+            self.assertEqual(len(answer.boards), 4)
+            self.assertIn('综合榜数据暂未接入', answer.text)
+            self.assertFalse(self.ask('单曲 100').ranking_notes)
+            self.assertEqual(len(render_cutoff(answer)), 1)
+            self.assertEqual(len(render_cutoff(self.ask())), 2)
+        missing = tuple(BoardSnapshot(song, status='来源暂不可用') for song in event.songs)
+        with patch.object(self.source, 'event', return_value=event), patch.object(self.source, 'boards', return_value=missing):
+            answer = self.ask()
+            self.assertIn('综合榜数据暂未接入', answer.text)
+            self.assertFalse(render_cutoff(answer))
+            self.assertIn('所选单曲榜暂无可用分数', answer.text)
+        partial = (boards[0], *missing[1:])
+        with patch.object(self.source, 'event', return_value=event), patch.object(self.source, 'boards', return_value=partial):
+            self.assertEqual(self.ask().status, 'success')
+            self.assertFalse(self.ask().message)
+
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
