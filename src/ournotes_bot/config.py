@@ -88,8 +88,6 @@ class Settings:
     ai_api_key: str = field(default="", repr=False)
     ai_model: str = "deepseek-chat"
     ai_base_url: str = "https://api.deepseek.com"
-    ai_reasoning_effort: str | None = None
-    ai_openai_proxy: str | None = None
     ai_daily_limit: int = 100
     query_concurrency: int = 2
     query_queue_limit: int = 4
@@ -117,6 +115,8 @@ class Settings:
     knowledge_model_dir: Path | None = None
     ai_profile_file: Path | None = None
     query_ai_api_key: str = field(default='', repr=False)
+    ai_reasoning_effort: str | None = None
+    ai_openai_proxy: str | None = None
 
     @classmethod
     def from_env(cls) -> "Settings":
