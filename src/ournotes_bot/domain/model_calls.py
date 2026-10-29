@@ -133,3 +133,5 @@ class AttemptResult:
     tool_calls: tuple[ToolCall, ...] = ()
     text: str | None = None
     error_code: str | None = None
+    # One complete provider response, never duplicated per executable call.
+    output_items: tuple = ()

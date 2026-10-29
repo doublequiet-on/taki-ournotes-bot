@@ -25,7 +25,8 @@ def main():
             raise AssertionError("installed smoke check must stay offline")
     sys.addaudithook(offline)
     root = Path(__file__).resolve().parents[1]
-    modules = ("application.runtime_tasks", "application.notice_gateway", "application.notice_reports", "application.data_owner", "application.backend_bootstrap", "application.backend", "application.backend_protocol", "application.delivery_ledger", "application.replies", "application.reply_preparation", "query.continuation", "query.field_query", "sources.cutoff_history",
+    modules = ("domain.chat", "application.chat_agent", "application.chat_context", "application.chat_store",
+               "application.runtime_tasks", "application.notice_gateway", "application.notice_reports", "application.data_owner", "application.backend_bootstrap", "application.backend", "application.backend_protocol", "application.delivery_ledger", "application.replies", "application.reply_preparation", "query.continuation", "query.field_query", "sources.cutoff_history",
                "sources.cutoff_sampler", "rendering.cutoff_trends", "platforms.qq.qq",
                "domain.meta_query", "domain.card_query", "sources.haneoka.song_metrics", "query.song_metrics", "rendering.song_metrics_layout",
                "domain.knowledge", "sources.knowledge_files", "sources.knowledge_embeddings",
@@ -59,6 +60,7 @@ def main():
     # pip --target relocates data-files without rewriting their RECORD paths.
     # Verify actual installed resources through the runtime's resource locator.
     resources = ("query_aliases.json", "THIRD_PARTY.md", "docs/CUTOFF_HISTORY.md",
+                 "docs/CHAT_AGENT_BASELINE.md", "docs/CHAT_AGENT_ARCHITECTURE.md", "docs/CHAT_AGENT_ACCEPTANCE.md", "docs/CHAT_AGENT_RUNBOOK.md",
                  "docs/QUERY_CHAT_PACKAGE2B.md", "docs/knowledge/knowledge-draft.md",
                  "docs/QUERY_CHAT_PACKAGE3.md", "docs/QUERY_CHAT_PACKAGE4.md",
                  "docs/koishi/KOISHI_BACKEND_V1.md", "docs/IMAGE_OUTPUT.md", "docs/QUERY_UPGRADE_V1.md", "docs/META_OPEN.md", "docs/HANEOKA_CATALOG.md", "docs/HANEOKA_CUTOFFS.md",

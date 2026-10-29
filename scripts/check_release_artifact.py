@@ -57,7 +57,8 @@ def check(path: Path) -> None:
         raise ValueError(f"missing bundled card-947 image in {path.name}")
     if not aliases or not code:
         raise ValueError(f"missing query aliases or bot code in {path.name}")
-    required = {"continuation.py", "field_query.py", "card_query.py", "cutoff_history.py", "cutoff_sampler.py", "cutoff_trends.py",
+    required = {"chat.py", "chat_agent.py", "chat_context.py", "chat_store.py",
+                "continuation.py", "field_query.py", "card_query.py", "cutoff_history.py", "cutoff_sampler.py", "cutoff_trends.py",
                 "knowledge.py", "knowledge_files.py", "knowledge_embeddings.py", "knowledge_retrieval.py",
                 "knowledge_service.py", "knowledge_cli.py", "QUERY_CHAT_PACKAGE2B.md", "knowledge-draft.md",
                 "model_calls.py", "model_provider.py", "native_tools.py", "model_runtime.py", "model_config.py", "usage_ledger.py", "QUERY_CHAT_PACKAGE3.md",

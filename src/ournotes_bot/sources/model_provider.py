@@ -120,7 +120,7 @@ def decode_attempt(raw, profile, *, http_status=200):
     if calls is None: calls=[]
     if not isinstance(calls,list):
         return error()
-    if len(calls)>1: return error('multiple_tools')
+    if len(calls)>8: return error('multiple_tools')
     if bool(calls)!=(choice['finish_reason']=='tool_calls'): return error()
     parsed=[]
     for call in calls:
@@ -131,11 +131,13 @@ def decode_attempt(raw, profile, *, http_status=200):
                 or not isinstance(function.get('name'),str) or not re.fullmatch(r'[A-Za-z0-9_]{1,64}',function['name'])
                 or not bounded_utf8(function.get('arguments'),12000)):
             return error()
-        parsed.append(ToolCall(call['id'],function['name'],function['arguments'],response_items))
+        if any(previous.id==call['id'] for previous in parsed): return error()
+        # Keep the legacy single-call adapter; new consumers use output_items.
+        parsed.append(ToolCall(call['id'],function['name'],function['arguments'],response_items if len(calls)==1 else ()))
     text=message.get('content')
     if text is not None and (not bounded_utf8(text,16000) or len(text)>4000): return error()
     if not parsed and not (text and text.strip()): return error()
-    return AttemptResult('ok',usage,tuple(parsed),text.strip() if text else None)
+    return AttemptResult('ok',usage,tuple(parsed),text.strip() if text else None,output_items=response_items)
 
 
 def request_body(profile, messages, tools):

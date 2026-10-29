@@ -69,6 +69,7 @@ class Work:
     terminal_since: float | None = None
     terminal_retries: int = 0
     terminal_retry_at: float | None = None
+    chat: bool = False
 
 
 class Backend:
@@ -132,6 +133,8 @@ class Backend:
         work.terminal_status = status
         work.terminal_pending = True
         work.active = False
+        if work.chat and self.model_runtime and self.model_runtime.agent:
+            self.model_runtime.agent.audit(self.model_runtime.agent.store.finish,work.delivery,status)
         self.permissions.abort(work)
         work.ended.set()
         work.prepared = ()
@@ -227,10 +230,14 @@ class Backend:
             require(len(self.works) < self.plan_capacity, 'plan_capacity', 503)
             require(self.retained_bytes() < self.byte_capacity, 'byte_capacity', 503)
             commands = split_commands(request.body)
+            chat=bool(getattr(self.settings,'chat_engine','legacy')=='agent' and self.model_runtime and self.model_runtime.is_chat(request.body)
+                      and parse_operation(request.body) is None)
+            if chat: commands=[request.body]
             require(bool(commands), 'empty_commands')
             delivery = uuid.uuid4().hex
             key = ContextKey(request.platform, request.kind, request.conversation_id, request.request_id)
             work = Work(request, delivery, key, None, None, None)
+            work.chat=chat
             self.ledger.admit(request, self.runtime, delivery, self.clock())
             self.works[delivery] = work
             try:
@@ -243,15 +250,17 @@ class Backend:
                 self.diagnostics.admitted(request, delivery, self.runtime, self.clock(), observed_commands)
                 self.diagnostics.span(uuid.uuid4().hex,request.request_id,'admission',admission_ms,self.clock(),outcome='ok')
                 work.operation = parse_operation(commands[0]) if len(commands) == 1 else None
-                work.anchor = self.conversations.resolve(request) if work.operation or request.reference or (
+                work.anchor = self.conversations.resolve(request) if work.operation or request.reference or (not chat and
                     self.model_runtime is not None and len(commands)==1 and replies.is_ai_request(commands[0])) else None
                 work.missing_anchor = request.reference is not None and work.anchor is None
+                if chat and work.missing_anchor and self.model_runtime.agent.context.contains(request,request.reference['message_id']):
+                    work.missing_anchor=False
                 if work.anchor is not None:
                     work.key, work.lineage = work.anchor.key, work.anchor.lineage
                     work.content_deadline = min(work.content_deadline, work.anchor.expires)
                 if not work.operation and work.anchor is None:
                     work.lease = self.contexts.begin(work.key)
-                if self.model_runtime is not None and any(replies.is_ai_request(c) for c in commands):
+                if self.model_runtime is not None and (chat or any(replies.is_ai_request(c) for c in commands)):
                     self.model_runtime.capture(work)
                 work.task = asyncio.create_task(self.prepare(work, commands))
                 self.tasks.add(work.task)
@@ -262,6 +271,8 @@ class Backend:
             return self.snapshot(self.ledger.request(request.request_id), request.gateway_epoch)
 
     async def prepare_command(self, work, content):
+        if work.chat:
+            return await self.model_runtime.prepare(work,content)
         if self.model_runtime is not None and replies.is_ai_request(content) and work.request.policy.natural_query!='off':
             return await self.model_runtime.prepare(work, content)
         if not replies.is_ai_request(content) or work.request.policy.natural_query == 'off' or not hasattr(self.parser, 'prepare_local'):
@@ -330,7 +341,8 @@ class Backend:
         try:
             self.expire()
             if not work.active: return
-            work.lock = self.contexts.lock(work.key)
+            work.lock = self.contexts.lock(ContextKey(work.request.platform,work.request.kind,
+                work.request.conversation_id,'chat-agent') if work.chat else work.key)
             # Only this topic's predecessor owns the lock through its final ACK.
             await asyncio.wait_for(work.lock.acquire(), max(.001, work.request.timestamp_ms/1000+WINDOW-self.clock()))
             work.lock_acquired = True
@@ -338,6 +350,12 @@ class Backend:
             if not work.active: return
             if work.missing_anchor:
                 parts = [replies.PreparedReply(MISSING)]
+            elif work.chat:
+                # Triggered chat keeps a whole multiline message and serializes
+                # its group through ACK, independently of query topic snapshots.
+                result=await self.prepare_call(work,self.prepare_command(work,commands[0]))
+                parts=replies.expand_replies([result],text_limit=text_limit)
+                self.diagnostics.outcomes(work.request.request_id,[result.business_status or 'unknown'])
             elif work.operation or work.anchor is not None:
                 current = (self.contexts.get(work.key) if work.lineage is not None
                            and self.contexts.lineage(work.key) == work.lineage else None)
@@ -445,6 +463,8 @@ class Backend:
 
     def live(self, row, epoch):
         work = self.works.get(row['delivery'])
+        if work and work.chat and getattr(self.settings,'chat_engine','legacy')!='agent':
+            return False
         if not (work and work.active and (row['status'] == 'prepared' or work.hint and row['status']=='preparing')
                 and row['epoch'] == epoch and row['runtime'] == self.runtime and self.ledger.active(epoch)
                 and self.clock() < row['expires']):
@@ -533,6 +553,9 @@ class Backend:
                 candidate = reply.context
                 text_limit = 1500 if work.request.kind == 'group' else 1800
                 long_fallback = part['mode'] == 'fallback' and len(reply.text) > text_limit
+                if work.chat and self.model_runtime.agent:
+                    self.model_runtime.agent.acknowledge(work,part_id,payload['message_id'],reply.text,
+                        payload['result'],allow_context=payload.get('allow_context') is not False)
                 if payload['result'] == 'success':
                     if long_fallback: candidate = replies.fallback_cursor(reply,text_limit=text_limit)
                     if candidate is not None and (work.operation or len(split_commands(work.request.body)) == 1
@@ -640,7 +663,8 @@ def create_app(backend, token, initialize=None):
         value = await read_json(request)
         require(isinstance(value, dict) and set(value) == {'body'} and isinstance(value['body'], str), 'classify_shape')
         require(len(value['body'].encode()) <= 16384, 'body_size')
-        return json({'recognized': replies.recognizes_message(value['body'])})
+        return json({'recognized': replies.recognizes_message(value['body']) or bool(
+            getattr(backend.settings,'chat_engine','legacy')=='agent' and backend.model_runtime and backend.model_runtime.is_chat(value['body']))})
     async def retire(request):
         value = await read_json(request)
         require(isinstance(value, dict) and set(value) == {'gateway_epoch'}, 'epoch_shape')

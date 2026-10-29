@@ -27,6 +27,7 @@ from .runtime_tasks import finish_thread
 from .backend_protocol import ProtocolError
 from . import replies
 from .persona import VOICE, chat_topic, chat_prompt, chat_needs_evidence
+from .chat_agent import ChatAgent
 
 PERSONA = '''你是 Taki，一个以椎名立希为原型的独立查询助手。简体中文，直率认真，简洁、友善，可轻微吐槽，不羞辱玩家。
 围绕用户当前问题表达：先直接给结论或能提供的帮助，再补必要依据、条件和下一步；不复述检索过程，不主动扩展到无关问题。
@@ -125,6 +126,14 @@ class ModelRuntime:
                                        backend.instance_id,backend.app_id)
         self.usage=UsageLedger(path,backend.instance_id+'\0'+backend.app_id)
         self.admin=ModelAdmin(self,self.usage.path.with_name('model-admin-v1.sqlite3'))
+        self.agent=(ChatAgent(self,self.usage.path.with_name('chat-v1.sqlite3'))
+                    if getattr(backend.settings,'chat_engine','legacy')=='agent' else None)
+
+    def is_chat(self,content):
+        if self.agent is None or getattr(self.backend.settings,'chat_engine','legacy')!='agent': return False
+        if replies.is_ai_request(content): return True
+        return bool(content.strip() and not content.lstrip().startswith(('/', '／'))
+                    and not replies.recognizes_message(content))
 
     def capture(self,work):
         try:
@@ -147,9 +156,12 @@ class ModelRuntime:
         if self.task:
             self.task.cancel();await asyncio.gather(self.task,return_exceptions=True)
         await self.admin.close()
+        if self.agent: self.agent.close()
         self.usage.close()
 
     def check(self,work,deadline,leases=()):
+        if getattr(work,'chat',False):
+            require(getattr(self.backend.settings,'chat_engine','legacy')=='agent','policy_denied')
         require(work.active and time.monotonic()<deadline,'execution_timeout')
         require(time.monotonic()<work.content_deadline,'context_expired')
         if work.anchor:
@@ -188,6 +200,8 @@ class ModelRuntime:
 
     async def prepare(self,work,content):
         question=query_text(content)
+        if getattr(work,'chat',False):
+            return await self.prepare_chat(work,question if replies.is_ai_request(content) else content.strip())
         if not question or len(question)>500:
             return replies.PreparedReply('用法：/问 <问题>，最多 500 字。',business_status='invalid_argument')
         try:
@@ -227,7 +241,32 @@ class ModelRuntime:
         except asyncio.TimeoutError:
             return failure('execution_timeout')
 
-    async def attempt(self,work,messages,tools,user,group,deadline,leases=(),*,require_tool=False):
+    async def prepare_chat(self,work,question):
+        try:
+            require(bool(question),'invalid_argument')
+            require(work.request.policy.natural_query=='model','policy_denied')
+            if work.model_error: raise ModelError(work.model_error)
+            require(work.model_snapshot is not None and work.model_subject is not None,'model_not_configured')
+            require(not work.native_claimed,'multiple_ai_requests')
+            work.native_claimed=True
+            user=self.usage.key('user',work.model_subject)
+            group=self.usage.key('group',work.request.conversation_id) if work.request.kind=='group' else None
+            async def operation(deadline):
+                work.model_started_at=time.monotonic()
+                return await self.agent.run(work,question,user,group,deadline)
+            seconds=min(self.agent.budget.execution_seconds,work.content_deadline-time.monotonic(),
+                        work.request.timestamp_ms/1000+298-self.backend.clock()-5)
+            require(seconds>0,'execution_timeout')
+            return await self.backend.models.run(user,operation,execution_seconds=seconds)
+        except (ModelError,ProtocolError,KnowledgeError) as exc:
+            code=exc.code if isinstance(exc,ProtocolError) else str(exc)
+            self.agent.audit(self.agent.store.finish,work.delivery,code)
+            return failure(code)
+        except asyncio.TimeoutError:
+            self.agent.audit(self.agent.store.finish,work.delivery,'execution_timeout')
+            return failure('execution_timeout')
+
+    async def attempt(self,work,messages,tools,user,group,deadline,leases=(),*,require_tool=False,reservation=None):
         profile=work.model_snapshot.profile
         self.check(work,deadline,leases)
         body=request_body(profile,messages,tools)
@@ -238,8 +277,12 @@ class ModelRuntime:
         # 4096 tokens for bounded wire framing is a conservative input ceiling.
         bound=len(json.dumps(body,ensure_ascii=False,separators=(',',':')).encode())+4096
         require(bound<=profile.max_input_tokens,'model_input_too_large')
-        attempt=uuid.uuid4().hex
-        self.usage.reserve(work.request.request_id,attempt,user,group,profile,bound)
+        attempt=reservation or uuid.uuid4().hex
+        if reservation is None:
+            self.usage.reserve(work.request.request_id,attempt,user,group,profile,bound)
+        else:
+            held=self.usage.get(attempt)
+            require(held['request_id']==work.request.request_id and held['state']=='reserved','invalid_reservation')
         started=False;began=time.monotonic();kind='generation' if not tools else 'routing'
         try:
             permitted_until=await self.backend.permissions.acquire(work,deadline,attempt_id=attempt)
@@ -250,6 +293,12 @@ class ModelRuntime:
             result=await asyncio.wait_for(self.client.request(profile,body,timeout=max(.001,deadline-time.monotonic())),
                                           max(.001,deadline-time.monotonic()))
             self.usage.settle(attempt,result.usage,result.error_code)
+            if getattr(work,'chat',False):
+                self.agent.audit(self.agent.store.event,work.delivery,'model/'+attempt,'model',
+                    {'attempt_id':attempt,'status':result.status,'error_code':result.error_code,
+                     'usage_status':result.usage.status,'visible':result.text or '',
+                     'input_total':result.usage.input_total,'output_total':result.usage.output_total,
+                     'elapsed_ms':int((time.monotonic()-began)*1000)})
             if result.tool_calls:
                 kind=result.tool_calls[0].name if result.tool_calls[0].name in TOOLS else 'unrecognized_tool'
             elif tools: kind='routing_text' if result.status=='ok' else 'routing'
@@ -262,6 +311,12 @@ class ModelRuntime:
             elif self.usage.get(attempt)['state']=='started': self.usage.settle(attempt,Usage(),code)
             raise
         finally:
+            if getattr(work,'chat',False):
+                recorded=self.usage.get(attempt)
+                self.agent.audit(self.agent.store.event,work.delivery,'model/'+attempt,'model',
+                    {'attempt_id':attempt,'state':recorded['state'],'error_code':recorded['error_code'],
+                     'billing_incomplete':bool(recorded['billing_incomplete']),
+                     'elapsed_ms':int((time.monotonic()-began)*1000)})
             self.usage.observe(attempt,kind,min(3600000,int((time.monotonic()-began)*1000)))
             body.clear()  # No prompt/response state retained by the runtime owner.
 

@@ -57,14 +57,17 @@ class Request:
     trigger: str = 'command'
     reference: dict | None = None
     interaction: dict | None = None
+    sender_name: str = ''
 
     @classmethod
     def parse(cls, value, instance_id, app_id, now, *, reference_profiles=()):
         fields = set(cls.__dataclass_fields__)
-        require(isinstance(value, dict) and set(value) == fields | {'protocol'}, 'request_shape')
+        require(isinstance(value, dict) and set(value) in (fields | {'protocol'},(fields-{'sender_name'}) | {'protocol'}), 'request_shape')
+        value={**value,'sender_name':value.get('sender_name','')}
+        require(value['sender_name']=='' or identity(value['sender_name']),'sender_name')
         require_protocol(value['protocol'])
         require(value['instance_id'] == instance_id and value['app_id'] == app_id, 'instance_mismatch', 403)
-        for key in fields - {'timestamp_ms', 'body', 'ingress_seq', 'policy', 'reference', 'interaction'}:
+        for key in fields - {'timestamp_ms', 'body', 'ingress_seq', 'policy', 'reference', 'interaction','sender_name'}:
             require(identity(value[key]), 'invalid_identity')
         require(value['platform'] == 'qq' and value['kind'] in ('group', 'c2c'), 'conversation_kind')
         require(value['kind'] != 'c2c' or value['conversation_id'] == value['user_id'], 'c2c_identity')

@@ -40,3 +40,4 @@ include docs/KOISHI_MIGRATION_M4.md
 include docs/QUERY_CHAT_PACKAGE2B.md docs/knowledge/knowledge-draft.md
 include docs/QUERY_CHAT_PACKAGE3.md
 include docs/PERFORMANCE_FOUNDATION.md docs/MULTIPLATFORM_CONTRACT.md
+include docs/CHAT_AGENT_BASELINE.md docs/CHAT_AGENT_ARCHITECTURE.md docs/CHAT_AGENT_ACCEPTANCE.md docs/CHAT_AGENT_RUNBOOK.md

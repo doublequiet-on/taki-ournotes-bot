@@ -122,8 +122,8 @@ def check_schema(value,schema):
         require(schema.get('minimum',-10**15)<=value<=schema.get('maximum',10**15),'invalid_argument')
 
 
-def validate_call(call):
-    tool=TOOLS.get(call.name)
+def validate_call(call,registry=None):
+    tool=(TOOLS if registry is None else registry).get(call.name)
     require(tool is not None,'tool_unregistered')
     try:
         args=decode_json(call.arguments)

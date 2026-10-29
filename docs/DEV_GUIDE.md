@@ -1,5 +1,7 @@
 # Taki 开发导航
 
+可选对话 Agent（C0＋C1）：[基线与约定替换](CHAT_AGENT_BASELINE.md)、[实际架构](CHAT_AGENT_ARCHITECTURE.md)、[验收](CHAT_AGENT_ACCEPTANCE.md)、[运行与回退](CHAT_AGENT_RUNBOOK.md)。目标用例为 `test_console_policies.ChatAgentTests`；旧 NativeRuntimeTests 保留验证 legacy。默认 `OURNOTES_CHAT_ENGINE=legacy`。
+
 性能与容量改动进入 [查询性能与容量](PERFORMANCE_FOUNDATION.md)：唯一接纳、三个账本预算、目录派生缓存及隔离全链路基准；多平台后续设计见 [契约草案](MULTIPLATFORM_CONTRACT.md)，不表示已接入其他平台。
 
 查询聊天 v3 的包 5 工程验收、37 项场景映射、真实接入待项及迁移／回退顺序见 [工程验收](QUERY_CHAT_PACKAGE5.md)。隔离联调通过与正式上线分别核定。

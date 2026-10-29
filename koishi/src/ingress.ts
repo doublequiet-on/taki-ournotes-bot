@@ -17,6 +17,7 @@ export interface Inbound {
   messageId: string
   timestampMs: number
   body: string
+  senderName?: string
   trigger?: 'command' | 'ask' | 'quoted_reply'
   reference?: { message_id:string; adapter_profile_version:string } | null
 }
@@ -100,7 +101,8 @@ export async function decodeIncoming(
   return {
     status: 'accepted', session,
     inbound: { requestId, instanceId: identity.instanceId, appId: identity.appId, platform: 'qq',
-      kind, conversationId, userId, messageId: data.id, timestampMs, body },
+      kind, conversationId, userId, messageId: data.id, timestampMs, body,
+      ...(id(author.username) ? {senderName:author.username} : {}) },
   }
 }
 

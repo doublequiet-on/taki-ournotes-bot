@@ -1,5 +1,7 @@
 # L2 Application Runtime — 启动与运行支撑
 
+可选聊天由 [application/chat_agent.py](ournotes_bot/application/chat_agent.py) 编排，复用 ModelRuntime 许可与结算；[chat_context.py](ournotes_bot/application/chat_context.py) 保存有界群内参与片段和成功 ACK 回复；[chat_store.py](ournotes_bot/application/chat_store.py) 独占聊天审计库与 30 日到期。预算、规范化消息和人格 v0 在 [domain/chat.py](ournotes_bot/domain/chat.py)。旧 persona 话题卡仅用于 legacy，以下 U2/U3 描述保留其适用范围；新入口与协议 2.1 见 [聊天架构](../docs/CHAT_AGENT_ARCHITECTURE.md)。
+
 ## Purpose
 
 定义一个 Taki 进程如何选择模式、获得配置并进入业务/平台运行，以及共享运行工具的使用边界。它是应用外壳的地图，不是业务剩余文件的收纳域。
