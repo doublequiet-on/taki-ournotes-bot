@@ -8,6 +8,8 @@
 
 新增结构化 `memory_messages`，保存消息 ID、角色、发言者 ID、显示名、源时间、文字和引用；`memory_run_sources` 记录审计片段重复了哪些来源；`memory_dependencies` 记录已送达回复实际参与的上下文来源；`memory_summaries` 与 `memory_summary_sources` 保存带来源的派生摘要；FTS5 trigram 索引支持日中子串检索，小于三字的词使用同群 `instr` 筛选。索引、源消息和派生关系由同一库拥有，没有另一个可漏删的向量库或导出缓存。
 
+引用尚未参与保存的观察图片时，`memory_media_sources` 只保存原消息 ID、原作者 ID 和源时间；独立 image_reference 材料不冒充原消息正文。它同样绑定 run／派生回复，删除和最早源到期会级联清理，独立删除清单在恢复前生效。图片原始字节、签名 URL 和合成的“原话”均不写入该表。
+
 `begin(work, messages, participating=True)` 兼容原入口。显式不参与时立即返回；真实主动候选应由宿主在确认参与后才调用。用户消息来自规范化上下文；正文中的 role 标签不会赋权。上下文里声称是 assistant 的消息，只有在本库已有成功 ACK 时才被承认为 assistant 记忆。`generated` 仍保存可见生成状态用于审计，不将其当作已发历史。
 
 `event(..., kind='delivery', data)` 仅在 `status=success` 且 `allow_context=True` 时建立 assistant 记录。失败、不确定、未发及撤销上下文许可均不能建立已说历史，多段回复逐段处理。C1 历史回填也遵守相同 ACK 约束；C1 没有交付时间戳的旧记录按更早的 run 源时间到期，避免迁移续期。回填分两遍关联来源，不把最早源时间误当作 run 创建次序；回退 C1 期间新增的旧格式片段在再次升级时仍会发现并回填。

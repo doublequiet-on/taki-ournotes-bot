@@ -82,6 +82,7 @@ class Work:
     addressed_registered: bool = False
     proactive_delivered: bool = False
     private_search_texts: tuple = ()
+    private_search_ids: tuple = ()
     public_question: str = ''
     entity_evidence: tuple = ()
     entity_source_version: str = ''
@@ -277,7 +278,8 @@ class Backend:
                 work.anchor = self.conversations.resolve(request) if work.operation or request.reference or (not chat and
                     self.model_runtime is not None and len(commands)==1 and replies.is_ai_request(commands[0])) else None
                 work.missing_anchor = request.reference is not None and work.anchor is None
-                if chat and work.missing_anchor and self.model_runtime.agent.context.contains(request,request.reference['message_id']):
+                if chat and work.missing_anchor and (self.model_runtime.agent.context.contains(request,request.reference['message_id'])
+                        or self.model_runtime.agent.image_contains(request,request.reference['message_id'])):
                     work.missing_anchor=False
                 if work.anchor is not None:
                     work.key, work.lineage = work.anchor.key, work.anchor.lineage

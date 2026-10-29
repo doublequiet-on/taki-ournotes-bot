@@ -2181,6 +2181,42 @@ class ChatImageIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
         if self.reference:value.update(trigger='quoted_reply',reference=self.reference)
         return value
 
+    async def referenced_observation(self):
+        from ournotes_bot.domain.chat_images import parse_attachments
+        agent=self.backend.model_runtime.agent
+        self.backend.reference_profiles=frozenset({'fixture'})
+        scope=Request_scope();stamp=int(self.now*1000)-1000
+        agent.images.remember(json.dumps(scope,sort_keys=True,separators=(',',':')),'observed-image','u2',stamp,
+                              parse_attachments(self.attachments),(self.image,))
+        self.attachments=[];self.reference=dict(message_id='observed-image',adapter_profile_version='fixture')
+        self.client.request.return_value=self.result('引用的是乙原先发的图。')
+        plan,attempts=await self.prepare_native('/问 乙先前发的这张图是什么？')
+        self.assertEqual(plan['parts'][0]['business_status'],'success');self.assertEqual(len(attempts),1)
+        request=self.backend.works[plan['delivery_id']].request
+        self.event(plan,'intent');self.event(plan,'ack')
+        return agent,scope,stamp,request
+
+    async def test_quote_unparticipated_observation_has_metadata_without_invented_message(self):
+        bodies=self.capture_native_bodies()
+        agent,scope,stamp,request=await self.referenced_observation()
+        visual=next(item for item in bodies[0]['input'] if isinstance(item.get('content'),list))
+        metadata=json.loads(visual['content'][0]['text'])['image_reference']
+        self.assertEqual(metadata,dict(message_id='observed-image',speaker_id='u2',timestamp_ms=stamp))
+        self.assertEqual(agent.store.read(scope,['observed-image'])['messages'],[])
+        self.assertEqual(agent.store.db.execute('SELECT speaker_id FROM memory_media_sources').fetchone()[0],'u2')
+        agent.forget(scope,['observed-image'])
+        self.assertEqual(agent.store.status(scope)['media_sources'],0)
+        self.assertFalse(any(row['role']=='assistant' for row in agent.store.recent(scope)))
+        self.assertFalse(agent.image_contains(request,'observed-image'))
+
+    async def test_image_metadata_expiry_cascades_before_newer_reply_expiry(self):
+        agent,scope,stamp,_=await self.referenced_observation()
+        agent.store.clock=lambda:stamp/1000+30*86400+.5
+        rows=agent.store.recent(scope)
+        self.assertTrue(any(row['role']=='user' for row in rows))
+        self.assertFalse(any(row['role']=='assistant' for row in rows))
+        self.assertEqual(agent.store.status(scope)['media_sources'],0)
+
     async def test_image_only_then_other_speaker_quote_and_no_media_persistence(self):
         bodies=self.capture_native_bodies()
         self.client.request.return_value=self.result('图中是合成蓝色矩形。')
@@ -2452,6 +2488,10 @@ class ChatWebTests(Fixture,unittest.IsolatedAsyncioTestCase):
         self.assertEqual(public_search_query('https://example.org/music 音乐新闻'),'https://example.org/music 音乐新闻')
         with self.assertRaisesRegex(ModelError,'private_search_query'):
             public_search_query('493810',private_texts=('私人PIN是493810，不要发送到公网。',),public_question='帮我查公开公告')
+        for text,secret in (('我的PIN是493810请不要外传。','493810'),('密码是abc123请不要告诉别人。','abc123'),
+                            ('PIN is 493810, keep it private.','493810'),('密码是小狗请不要告诉别人。','小狗')):
+            with self.subTest(secret=secret),self.assertRaisesRegex(ModelError,'private_search_query'):
+                public_search_query(secret,private_texts=(text,),public_question='帮我查公开公告')
 
     async def test_incomplete_web_is_local_failure_and_unknown_extra_fee(self):
         from ournotes_bot.application.chat_capabilities import WebCapability

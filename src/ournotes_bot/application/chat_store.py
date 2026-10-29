@@ -53,6 +53,10 @@ class ChatStore:
                         speaker_id TEXT NOT NULL, display_name TEXT NOT NULL, timestamp_ms INTEGER NOT NULL,
                         text TEXT NOT NULL, reply_to TEXT, PRIMARY KEY(scope,message_id));
                     CREATE INDEX IF NOT EXISTS memory_recent ON memory_messages(scope,timestamp_ms);
+                    CREATE TABLE IF NOT EXISTS memory_media_sources (
+                        scope TEXT NOT NULL,message_id TEXT NOT NULL,speaker_id TEXT NOT NULL,timestamp_ms INTEGER NOT NULL,
+                        PRIMARY KEY(scope,message_id));
+                    CREATE INDEX IF NOT EXISTS memory_media_expiry ON memory_media_sources(timestamp_ms,scope);
                     CREATE TABLE IF NOT EXISTS memory_run_sources (
                         run_id TEXT NOT NULL, scope TEXT NOT NULL, message_id TEXT NOT NULL,
                         PRIMARY KEY(run_id,scope,message_id));
@@ -121,6 +125,8 @@ class ChatStore:
                 or not isinstance(name,str) or len(name)>256): raise ValueError('chat_memory_message')
         if reply_to is not None: message_id(reply_to)
         if self._blocked(scope,mid,stamp): return False
+        media=self.db.execute('SELECT speaker_id,timestamp_ms FROM memory_media_sources WHERE scope=? AND message_id=?',(scope,mid)).fetchone()
+        if media and (media['speaker_id'],media['timestamp_ms'])!=(speaker,stamp):raise ValueError('chat_memory_media_conflict')
         prior=self.db.execute('SELECT * FROM memory_messages WHERE scope=? AND message_id=?',(scope,mid)).fetchone()
         if prior:
             if any(prior[key]!=value for key,value in (('role',role),('speaker_id',speaker),('text',text),('reply_to',reply_to))):
@@ -134,6 +140,22 @@ class ChatStore:
     def _context(self,run,scope,messages):
         for message in messages:
             source=json.loads(message['content'])
+            if 'image_reference' in source:
+                reference=source['image_reference']
+                if (message.get('role')!='user' or not isinstance(reference,dict)
+                        or set(reference)!={'message_id','speaker_id','timestamp_ms'}
+                        or type(reference['timestamp_ms']) is not int or not 0<=reference['timestamp_ms']<=int(self.clock()*1000)+1000):
+                    raise ValueError('chat_memory_media')
+                mid=message_id(reference['message_id']);speaker=message_id(reference['speaker_id']);stamp=reference['timestamp_ms']
+                if self._blocked(scope,mid,stamp):continue
+                original=self.db.execute('SELECT role,speaker_id,timestamp_ms FROM memory_messages WHERE scope=? AND message_id=?',(scope,mid)).fetchone()
+                if original and (original['role'],original['speaker_id'],original['timestamp_ms'])!=('user',speaker,stamp):raise ValueError('chat_memory_media_conflict')
+                old=self.db.execute('SELECT speaker_id,timestamp_ms FROM memory_media_sources WHERE scope=? AND message_id=?',(scope,mid)).fetchone()
+                if old and (old['speaker_id'],old['timestamp_ms'])!=(speaker,stamp):raise ValueError('chat_memory_media_conflict')
+                if not old:
+                    self.db.execute('INSERT INTO memory_media_sources VALUES (?,?,?,?)',(scope,mid,speaker,stamp));self._changed()
+                self.db.execute('INSERT OR IGNORE INTO memory_run_sources VALUES (?,?,?)',(run,scope,mid))
+                continue
             # A frozen business display is evidence material, not a chat event.
             if 'message_id' not in source: continue
             if message.get('role') not in ('user','assistant') or source.get('role')!=message['role']:
@@ -193,6 +215,9 @@ class ChatStore:
         source_times=[work.request.timestamp_ms/1000]
         for message in messages:
             source=json.loads(message['content'])
+            if 'image_reference' in source:
+                ref=source['image_reference']
+                if self._blocked(scope,message_id(ref['message_id']),ref['timestamp_ms']):continue
             if 'message_id' in source:
                 if self._blocked(scope,message_id(source['message_id']),source['timestamp_ms']): continue
                 if message.get('role')=='assistant' and self.db.execute(
@@ -245,6 +270,7 @@ class ChatStore:
         for mid in removed:
             self.db.execute('DELETE FROM memory_fts WHERE scope=? AND item_id=? AND kind=\'message\'',(scope,mid))
             self.db.execute('DELETE FROM memory_messages WHERE scope=? AND message_id=?',(scope,mid))
+            self.db.execute('DELETE FROM memory_media_sources WHERE scope=? AND message_id=?',(scope,mid))
             self.db.execute('DELETE FROM memory_dependencies WHERE scope=? AND (message_id=? OR source_message_id=?)',(scope,mid,mid))
             self.db.execute('DELETE FROM memory_run_sources WHERE scope=? AND message_id=?',(scope,mid))
         # A C1 audit blob may repeat deleted text in context or visible output;
@@ -259,9 +285,9 @@ class ChatStore:
     def sweep(self):
         cutoff=int((self.clock()-RETENTION_SECONDS)*1000)
         with self.db:
-            scopes=[r[0] for r in self.db.execute('SELECT DISTINCT scope FROM memory_messages WHERE timestamp_ms<=?',(cutoff,))]
+            scopes=[r[0] for r in self.db.execute('SELECT scope FROM memory_messages WHERE timestamp_ms<=? UNION SELECT scope FROM memory_media_sources WHERE timestamp_ms<=?',(cutoff,cutoff))]
             for scope in scopes:
-                self._purge(scope,[r[0] for r in self.db.execute('SELECT message_id FROM memory_messages WHERE scope=? AND timestamp_ms<=?',(scope,cutoff))])
+                self._purge(scope,[r[0] for r in self.db.execute('SELECT message_id FROM memory_messages WHERE scope=? AND timestamp_ms<=? UNION SELECT message_id FROM memory_media_sources WHERE scope=? AND timestamp_ms<=?',(scope,cutoff,scope,cutoff))])
             self.db.execute('DELETE FROM events WHERE run_id IN (SELECT id FROM runs WHERE source_time<=?)',(cutoff/1000,))
             self.db.execute('DELETE FROM memory_run_sources WHERE run_id IN (SELECT id FROM runs WHERE source_time<=?)',(cutoff/1000,))
             self.db.execute('DELETE FROM runs WHERE source_time<=?',(cutoff/1000,))
@@ -399,6 +425,7 @@ class ChatStore:
             for key in set(scopes)|{key for key,_ in messages}:
                 ids={mid for scope,mid in messages if scope==key}
                 if key in scopes: ids.update(r[0] for r in self.db.execute('SELECT message_id FROM memory_messages WHERE scope=? AND timestamp_ms<=?',(key,scopes[key])))
+                if key in scopes: ids.update(r[0] for r in self.db.execute('SELECT message_id FROM memory_media_sources WHERE scope=? AND timestamp_ms<=?',(key,scopes[key])))
                 self._purge(key,ids)
             self._changed()
         self.sweep()
@@ -421,9 +448,13 @@ class ChatStore:
         self.sweep();key=self._scope(scope)
         return {'schema':'chat/1','memory_version':2,'retention_days':30,'revision':self.revision,
                 'messages':self.db.execute('SELECT count(*) FROM memory_messages WHERE scope=?',(key,)).fetchone()[0],
+                'media_sources':self.db.execute('SELECT count(*) FROM memory_media_sources WHERE scope=?',(key,)).fetchone()[0],
                 'summaries':self.db.execute('SELECT count(*) FROM memory_summaries WHERE scope=?',(key,)).fetchone()[0],
                 'message_tombstones':self.db.execute('SELECT count(*) FROM memory_tombstones WHERE scope=?',(key,)).fetchone()[0],
                 'clear_before_ms':next(iter(self.db.execute('SELECT deleted_before_ms FROM memory_scope_deletions WHERE scope=?',(key,))),[None])[0]}
+
+    def source_valid(self,scope,mid,timestamp_ms):
+        return not self._blocked(self._scope(scope),message_id(mid),timestamp_ms)
 
     def proactive_replies(self,scope):
         key=self._scope(scope)
