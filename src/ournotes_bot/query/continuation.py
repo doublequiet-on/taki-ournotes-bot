@@ -322,6 +322,9 @@ class ContextStore:
     def clear(self):
         self._entries.clear()
 
+    def discard(self,key):
+        self._entries.pop(key,None)
+
     def deadline(self, key):
         entry = self._entries.get(key)
         return entry.at + self.ttl if entry else 0

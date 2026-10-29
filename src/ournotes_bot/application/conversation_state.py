@@ -91,6 +91,15 @@ class Conversations:
         choices = [a for (s, _), a in self.recent.items() if s == scope]
         return choices[0] if len(choices) == 1 else None
 
+    def clear_scope(self,scope):
+        keys={snapshot.key for snapshot in self.snapshots.values() if snapshot.scope==scope}
+        for key,snapshot in list(self.snapshots.items()):
+            if snapshot.scope==scope:self.snapshots.pop(key,None)
+        for mapping in (self.anchors,self.recent):
+            for key in list(mapping):
+                if key[0]==scope:mapping.pop(key,None)
+        for key in keys:self.contexts.discard(key)
+
     def capture(self, work, pages):
         self.sweep()
         if work.anchor is not None and work.operation is not None and work.operation.kind == 'page':

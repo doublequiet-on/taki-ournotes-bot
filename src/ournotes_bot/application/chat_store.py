@@ -199,7 +199,7 @@ class ChatStore:
         if not kept: return
         with self.db:
             inserted=self.db.execute('INSERT OR IGNORE INTO runs VALUES (?,?,?,?,?,?,?,?,?)',(
-                work.delivery,scope,min(source_times),work.request.trigger,PERSONA_VERSION,
+                work.delivery,scope,min(source_times),work.request.trigger,getattr(work,'persona_version',PERSONA_VERSION),
                 work.model_snapshot.profile.config_version,encoded(kept),'','running')).rowcount
             if inserted: self._context(work.delivery,scope,kept)
 
@@ -208,6 +208,15 @@ class ChatStore:
             inserted=self.db.execute('INSERT OR IGNORE INTO events SELECT ?,?,?,? WHERE EXISTS (SELECT 1 FROM runs WHERE id=?)',
                                     (run_id,event_id,kind,encoded(data),run_id)).rowcount
             if inserted and kind=='delivery': self._delivery(run_id,data)
+
+    def bind_sources(self,run_id,scope,message_ids):
+        key=self._scope(scope)
+        with self.db:
+            if self.db.execute('SELECT 1 FROM runs WHERE id=? AND scope=?',(run_id,key)).fetchone() is None:return
+            for mid in message_ids:
+                if self.db.execute('SELECT 1 FROM memory_messages WHERE scope=? AND message_id=?',(key,mid)).fetchone() is None:
+                    raise ValueError('chat_memory_source_missing')
+                self.db.execute('INSERT OR IGNORE INTO memory_run_sources VALUES (?,?,?)',(run_id,key,mid))
 
     def generated(self,run_id,text):
         with self.db: self.db.execute("UPDATE runs SET visible=?,status='generated' WHERE id=?",(text,run_id))

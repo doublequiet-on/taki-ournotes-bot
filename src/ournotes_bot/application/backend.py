@@ -72,6 +72,7 @@ class Work:
     chat: bool = False
     story_versions: tuple = ()
     persona_version: str = 'taki-v0/legacy-derived'
+    memory_sources: tuple = ()
 
 
 class Backend:
@@ -469,6 +470,8 @@ class Backend:
             return False
         if work and work.story_versions and not self.model_runtime.agent.story_valid(work.story_versions):
             return False
+        if work and work.chat and not self.model_runtime.agent.memory_valid(work):
+            return False
         if not (work and work.active and (row['status'] == 'prepared' or work.hint and row['status']=='preparing')
                 and row['epoch'] == epoch and row['runtime'] == self.runtime and self.ledger.active(epoch)
                 and self.clock() < row['expires']):
@@ -731,6 +734,22 @@ def create_app(backend, token, initialize=None):
             runtime=backend.model_runtime;profile=runtime.config.snapshot().for_group(gid).profile
             return json(runtime.usage.group_view(gid,profile))
         except ModelError as exc: raise ProtocolError(str(exc),409) from None
+    async def chat_memory(request):
+        require(backend.model_runtime is not None and backend.model_runtime.agent is not None,'chat_unavailable',503)
+        gid=request.match_info['gid']
+        require(re.fullmatch('[A-Za-z0-9_-]{1,128}',gid),'admin_group')
+        scope=dict(instance_id=backend.instance_id,app_id=backend.app_id,platform='qq',kind='group',conversation_id=gid)
+        agent=backend.model_runtime.agent
+        try:
+            if request.method=='GET':return json(agent.store.status(scope))
+            require(backend.ready and not backend.closing,'backend_not_ready',503)
+            require(backend.ledger.active(request.headers.get('X-Taki-Epoch')),'ops_gateway_epoch',409)
+            value=await read_json(request)
+            require(isinstance(value,dict) and (set(value)=={'action'} and value['action']=='clear' or
+                    set(value)=={'action','message_ids'} and value['action']=='delete'),'chat_memory_action')
+            return json(agent.forget(scope,value['message_ids'] if value['action']=='delete' else None))
+        except ValueError as exc:raise ProtocolError(str(exc)) from None
+        except (OSError,sqlite3.Error):raise ProtocolError('chat_memory_unavailable',503) from None
     async def ops_jobs(request): return json(backend.operations.listing())
     async def ops_detail(request): return json(backend.operations.detail(request.match_info['jid']))
     async def ops_submit(request):
@@ -756,6 +775,7 @@ def create_app(backend, token, initialize=None):
                     web.get('/v1/admin/query-metrics', admin_metrics), web.post('/v1/admin/telemetry', admin_telemetry),
                     web.get('/v1/admin/model', model_settings),web.post('/v1/admin/model', model_settings),
                     web.post('/v1/admin/model/probe',model_settings),web.get('/v1/admin/model/groups/{gid}',model_group),
+                    web.get('/v1/admin/chat/groups/{gid}/memory',chat_memory),web.post('/v1/admin/chat/groups/{gid}/memory',chat_memory),
                     web.get('/v1/admin/ops/jobs', ops_jobs), web.post('/v1/admin/ops/jobs', ops_submit),
                     web.get('/v1/admin/ops/jobs/{jid}', ops_detail),
                     web.get('/v1/admin/ops/notice-targets/{gid}', ops_notice_target),

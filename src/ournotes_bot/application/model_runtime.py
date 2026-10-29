@@ -165,6 +165,7 @@ class ModelRuntime:
         if getattr(work,'chat',False):
             require(getattr(self.backend.settings,'chat_engine','legacy')=='agent','policy_denied')
             require(self.agent.story_valid(work.story_versions),'story_revoked')
+            require(self.agent.memory_valid(work),'chat_memory_deleted')
         require(work.active and time.monotonic()<deadline,'execution_timeout')
         require(time.monotonic()<work.content_deadline,'context_expired')
         if work.anchor:

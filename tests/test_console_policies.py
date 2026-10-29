@@ -2063,6 +2063,58 @@ class ChatAgentTests(Fixture, unittest.IsolatedAsyncioTestCase):
         self.event(plan,'intent');self.event(plan,'ack')
 
 
+class ChatSourceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
+    Helpers=ChatAgentTests.Helpers
+    request=ChatAgentTests.request
+    result=ChatAgentTests.result
+    capture_native_bodies=ChatAgentTests.capture_native_bodies
+    asyncSetUp=ChatAgentTests.asyncSetUp
+    prepare_native=NativeRuntimeTests.prepare_native
+    event=NativeRuntimeTests.event
+
+    async def test_story_search_read_and_withdrawal_recheck_before_intent(self):
+        from test_platform_boundary import StoryPublicationTests
+        from ournotes_bot.domain.model_calls import ToolCall
+        fixture=StoryPublicationTests();fixture.setUp();self.addCleanup(fixture.doCleanups)
+        fixture.publish()
+        agent=self.backend.model_runtime.agent;agent.story=fixture.service
+        handle=fixture.service.search('立希')['items'][0]['handle']
+        bodies=self.capture_native_bodies()
+        self.client.request.side_effect=[self.result(calls=(ToolCall('s','story_search','{"query":"立希"}'),)),
+            self.result(calls=(ToolCall('r','story_read',json.dumps(dict(handle=handle))),)),self.result('资料注明这是合成场景。')]
+        plan,attempts=await self.prepare_native('/问 读立希的场景并解释上下文')
+        self.assertEqual(len(attempts),3)
+        data=json.loads(next(m['content'] for m in bodies[-1]['messages'] if m.get('tool_call_id')=='r'))
+        self.assertEqual(data['scenes'][0]['source_kind'],'synthetic_fixture')
+        self.assertTrue(plan['send_allowed'])
+        fixture.service.withdraw('test-story','test withdrawal')
+        self.assertFalse(self.backend.lookup(plan['request_id'],'e1')['send_allowed'])
+        self.backend.finish(self.backend.works[plan['delivery_id']],'aborted')
+
+    async def test_memory_tools_restart_and_delete_cancel_pending_reply(self):
+        from ournotes_bot.application.chat_context import ChatContext
+        from ournotes_bot.domain.model_calls import ToolCall
+        agent=self.backend.model_runtime.agent
+        self.client.request.return_value=self.result('我选择准备充分。')
+        first,_=await self.prepare_native('/问 我们聊即兴还是准备',seq=1)
+        self.event(first,'intent');self.event(first,'ack')
+        scope=dict(instance_id='fixture',app_id='app',platform='qq',kind='group',conversation_id='g1')
+        remembered=agent.store.search(scope,'准备')['messages']
+        self.assertTrue(any(r['role']=='assistant' for r in remembered))
+        agent.context=ChatContext(store=agent.store)
+        bodies=self.capture_native_bodies();self.current_user='u2'
+        mid=next(row['message_id'] for row in remembered if row['role']=='user')
+        self.client.request.side_effect=[self.result(calls=(ToolCall('m','group_memory_search','{"query":"准备"}'),)),
+            self.result(calls=(ToolCall('r','group_memory_read',json.dumps(dict(message_ids=[mid]))),)),self.result('承接之前的偏好。')]
+        plan,_=await self.prepare_native('/问 还记得你刚才的选择吗',seq=2)
+        rows=[json.loads(item['content']) for item in bodies[-1]['messages'][1:] if item['role'] in ('user','assistant') and item['content']]
+        self.assertIn('我选择准备充分。',[row['text'] for row in rows])
+        agent.forget(scope,[mid])
+        self.assertFalse(self.backend.lookup(plan['request_id'],'e1')['send_allowed'])
+        self.assertFalse(agent.store.search(scope,'准备')['messages'])
+        self.assertFalse(any(s.scope==tuple(scope.values()) for s in self.backend.conversations.snapshots.values()))
+
+
 class ChatWebTests(Fixture,unittest.IsolatedAsyncioTestCase):
     Helpers=ChatAgentTests.Helpers
     event=ChatAgentTests.event

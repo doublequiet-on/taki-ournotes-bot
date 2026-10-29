@@ -42,8 +42,8 @@ def chat_tools():
 class ChatAgent:
     def __init__(self,runtime,path):
         self.runtime=runtime
-        self.context=ChatContext()
         self.store=ChatStore(path,runtime.backend.instance_id+'\0'+runtime.backend.app_id)
+        self.context=ChatContext(store=self.store)
         self.budget=TurnBudget()
         self.tools=chat_tools()
         self.audit_failures=0
@@ -54,6 +54,30 @@ class ChatAgent:
         if not versions:return True
         try:return self.story is not None and all(self.story.valid(*version) for version in versions)
         except (StoryError,OSError):return False
+
+    def memory_valid(self,work):
+        if not work.memory_sources:return True
+        return all(len(self.store.read(work.request.scope,list(work.memory_sources[i:i+48]))['messages'])==len(work.memory_sources[i:i+48])
+                   for i in range(0,len(work.memory_sources),48))
+
+    def bind_memory(self,work,rows):
+        work.memory_sources=tuple(dict.fromkeys((*work.memory_sources,*(row['message_id'] for row in rows))))
+        require(len(work.memory_sources)<=120,'chat_memory_limit')
+        self.audit(self.store.bind_sources,work.delivery,work.request.scope,[row['message_id'] for row in rows])
+        if rows:
+            expires=min(row['timestamp_ms'] for row in rows)/1000+30*86400
+            work.content_deadline=min(work.content_deadline,time.monotonic()+expires-time.time())
+
+    def forget(self,scope,ids=None):
+        result=self.store.clear_scope(scope) if ids is None else self.store.delete_messages(scope,ids)
+        key=tuple(scope.values())
+        self.context.scopes.pop(key,None)
+        self.context.revisions.pop(key,None)
+        backend=self.runtime.backend
+        backend.conversations.clear_scope(key)
+        for work in list(backend.works.values()):
+            if work.request.scope==scope:backend.finish(work,'aborted')
+        return result
 
     def audit(self,operation,*args):
         """Visible audit is secondary to usage and durable delivery facts."""
@@ -87,6 +111,7 @@ class ChatAgent:
             prompt=prompt.replace('人格初稿是 legacy-derived，尚非剧情研究审核定稿。','人格采用以下人工批准档案。')
             prompt+='\n人工批准人格档案：\n'+persona['prompt']
         self.audit(self.store.begin,work,history)
+        self.bind_memory(work,[json.loads(item['content']) for item in history if 'message_id' in json.loads(item['content'])])
         messages=[{'role':'system','content':prompt},*history]
         leases=()
         seen={}
@@ -97,6 +122,10 @@ class ChatAgent:
         web_citations={}
         site=SiteLookup(runtime.backend.repository,question,allow_rewrite=True,max_operations=self.budget.tool_calls)
         registry=dict(self.tools)
+        registry['group_memory_search']=Tool('group_memory_search','检索本群最近30天Taki参与过的对话；区分发言者、实际送达回复和外部事实。可改写query。',
+            obj({'query':string(120)},('query',)),'memory')
+        registry['group_memory_read']=Tool('group_memory_read','读取本群指定消息ID及其发言者；仅支持已保存的参与片段。',
+            obj({'message_ids':{'type':'array','items':string(256),'minItems':1,'maxItems':8}},('message_ids',)),'memory')
         if self.story:
             registry['story_search']=Tool('story_search','检索已发布剧情场景；query可改写或翻译。返回来源层级和版本，候选并非完整原文；按handle继续读前后文。',
                 obj({'query':string(300),'filters':obj({k:string(100) for k in ('work','source_kind','character','source_id','chapter')})},('query',)),'story')
@@ -195,7 +224,24 @@ class ChatAgent:
         runtime=self.runtime
         tool,args=validate_call(call,self.tools if registry is None else registry)
         try:
-            if tool.kind=='story':
+            if tool.kind=='memory':
+                # SQLite remains on its owning event-loop thread.
+                output=(self.store.search(work.request.scope,args['query'],limit=8) if call.name=='group_memory_search'
+                        else self.store.read(work.request.scope,args['message_ids']))
+                while output['messages'] and len(json.dumps(output,ensure_ascii=False).encode())>24576:
+                    output['messages'].pop()
+                output['status']='ok' if output['messages'] else 'no_results'
+                self.bind_memory(work,output['messages'])
+                if call.name=='group_memory_search':
+                    output['summaries']=[]
+                    for summary in self.store.summaries(work.request.scope,args['query'],limit=4):
+                        rows=self.store.read(work.request.scope,summary['source_message_ids'])['messages']
+                        if len(set(work.memory_sources)|{row['message_id'] for row in rows})>120:continue
+                        candidate={**output,'summaries':[*output['summaries'],summary]}
+                        if len(json.dumps(candidate,ensure_ascii=False).encode())>24576:break
+                        self.bind_memory(work,rows);output=candidate
+                return output,leases
+            elif tool.kind=='story':
                 if call.name=='story_search':
                     output=await finish_thread(partial(self.story.search,args['query'],args.get('filters')))
                     story_handles.update(item['handle'] for item in output.get('items',[]))
