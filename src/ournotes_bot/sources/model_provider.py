@@ -141,8 +141,12 @@ def decode_attempt(raw, profile, *, http_status=200):
         return error()
     if choice.get('finish_reason') not in ('stop','tool_calls') or message.get('refusal'):
         return error('model_refused' if message.get('refusal') else 'model_incomplete')
-    if profile.provider=='deepseek' and message.get('reasoning_content'):
-        return error('wire_profile_unsupported')
+    reasoning=None
+    if profile.provider=='deepseek' and message.get('reasoning_content') is not None:
+        if profile.reasoning_effort in (None,'none') and message.get('reasoning_content'):
+            return error('wire_profile_unsupported')
+        reasoning=message['reasoning_content']
+        if not bounded_utf8(reasoning,131072):return error()
     calls = message.get('tool_calls')
     if calls is None: calls=[]
     if not isinstance(calls,list):
@@ -161,11 +165,13 @@ def decode_attempt(raw, profile, *, http_status=200):
         if any(previous.id==call['id'] for previous in parsed): return error()
         # Keep the legacy single-call adapter; new consumers use output_items.
         parsed.append(ToolCall(call['id'],function['name'],function['arguments'],response_items if len(calls)==1 else ()))
+    if profile.provider=='deepseek' and profile.reasoning_effort not in (None,'none') and parsed and reasoning is None:
+        return error()
     text=message.get('content')
     if text is not None and (not bounded_utf8(text,16000) or len(text)>4000): return error()
     if not parsed and not (text and text.strip()): return error()
     return AttemptResult('ok',usage,tuple(parsed),text.strip() if text else None,output_items=response_items,
-                         citations=citations,provider_actions=provider_actions,native_calls=native_calls)
+                         citations=citations,provider_actions=provider_actions,native_calls=native_calls,reasoning_content=reasoning)
 
 
 def response_citations(items):
@@ -232,7 +238,7 @@ def request_body(profile, messages, tools):
             body.update(tools=[{'type':'function',**tool['function'],'strict':False} for tool in tools],
                         tool_choice='auto',parallel_tool_calls=False)
         return body
-    body={'model':profile.model,'messages':[{k:v for k,v in message.items() if k!='response_items'}
+    body={'model':profile.model,'messages':[{k:v for k,v in message.items() if k!='response_items' and (k!='reasoning_content' or profile.provider=='deepseek' and profile.reasoning_effort not in (None,'none'))}
                                           for message in messages],'stream':False,
           'max_completion_tokens' if profile.provider=='openai' else 'max_tokens':profile.max_output_tokens}
     if tools:
@@ -241,8 +247,15 @@ def request_body(profile, messages, tools):
         if profile.parallel_control: body['parallel_tool_calls']=False
     if profile.provider=='openai': body['store']=False
     if profile.provider=='deepseek':
-        # This wire profile accepts final text/tools, not reasoning history.
-        body['thinking']={'type':'disabled'}
+        enabled=profile.reasoning_effort not in (None,'none')
+        body['thinking']={'type':'enabled' if enabled else 'disabled'}
+        if enabled:
+            body['reasoning_effort']=profile.reasoning_effort
+            # Historical turns retain visible text only. Same-turn tool results
+            # carry their exact returned protocol field; never reconstruct thoughts.
+            for message in body['messages']:
+                if message.get('role')=='assistant' and message.get('reasoning_content') is None:
+                    message['reasoning_content']=''
     if profile.provider=='openrouter':
         body['provider']={'allow_fallbacks':False,'require_parameters':True}
     # No strict/beta, reasoning effort or sampling knobs without an adapter.

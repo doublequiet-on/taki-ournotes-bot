@@ -42,23 +42,24 @@ class ModelAdmin:
     def guard(self, fingerprint):
         return {'backend_epoch':self.backend.runtime,'fingerprint':fingerprint}
 
-    def check_guard(self, guard):
-        _,fingerprint=self.config.read()
+    def check_guard(self, guard, config=None):
+        _,fingerprint=(config or self.config).read()
         require(guard==self.guard(fingerprint),'model_config_conflict')
 
-    def settings(self):
+    def settings(self, fallback=False):
+        config=self.runtime.fallback if fallback else self.config
         require(not self.error,'model_admin_unavailable')
         profile=None;groups={};code='model_not_configured';fingerprint=None;key=False
         try:
-            data,fingerprint=self.config.read()
+            data,fingerprint=config.read()
             if data is not None:
-                snapshot=self.config.parse(data,fingerprint,api_key='configuration-preview')
+                snapshot=config.parse(data,fingerprint,api_key='configuration-preview')
                 profile=asdict(snapshot.profile);profile.pop('api_key')
-                secret=data.get('secret',self.config.api_key)
+                secret=data.get('secret',config.api_key)
                 key=isinstance(secret,str) and 1<=len(secret)<=512 and not any(c.isspace() for c in secret)
                 groups=dict(snapshot.groups);code='ready' if key else 'model_not_configured'
         except (OSError,ValueError,TypeError,KeyError,RecursionError):
-            code='model_configuration' if self.config.path else 'model_not_configured'
+            code='model_configuration' if config.path else 'model_not_configured'
             fingerprint=None
         if profile is None:
             # Unsaved form defaults, not a configured/verified model or a claimed market price.
@@ -69,12 +70,12 @@ class ModelAdmin:
                 'user_rate_requests':3,'group_rate_requests':30,'rate_window_seconds':10,
                 'price':{'currency':'CNY','input_rate':1000000,'cached_rate':1000000,'output_rate':1000000,
                     'reference_rate':1000000,'pricing_version':'','fetched_at':0,'estimated':True,'source':'registered-default'}}
-        return {'code':code,'editable':self.config.path is not None and fingerprint is not None,
+        return {'role':'fallback' if fallback else 'primary','code':code,'editable':config.path is not None and fingerprint is not None,
                 'guard':self.guard(fingerprint),'profile':profile,'groups':groups,'key_configured':key,
                 'endpoints':dict(ENDPOINTS),'api_url':('https://api.openai.com/v1/responses'
                     if profile.get('wire_profile')=='openai-responses-v1' else ENDPOINTS[profile['provider']]),
                 'capability':self.latest_probe(profile['config_version']),
-                'audit':self.audit(),'timezone':'Asia/Shanghai','price_status':self.config.status()}
+                'audit':self.audit(),'timezone':'Asia/Shanghai','price_status':config.status()}
 
     def latest_probe(self, version):
         row=self.db.execute("SELECT id,state,result FROM actions WHERE action='probe' AND config_version=? ORDER BY created DESC LIMIT 1",(version,)).fetchone()
@@ -109,38 +110,41 @@ class ModelAdmin:
         except sqlite3.Error:
             self.error='model_admin_unavailable';raise ModelError(self.error) from None
 
-    def save(self, value):
+    def save(self, value, fallback=False):
+        config=self.runtime.fallback if fallback else self.config
         require(isinstance(value,dict) and set(value)=={'operation_id','guard','profile','groups','api_key','api_url'},'model_admin_shape')
         operation=value['operation_id']
-        if not self.begin(value,'save','console-'+str(operation)): return self.settings()
+        if not self.begin(value,'save_fallback' if fallback else 'save','console-'+str(operation)): return self.settings(fallback)
         try:
-            self.check_guard(value['guard'])
-            old,fingerprint=self.config.read()
+            self.check_guard(value['guard'],config)
+            old,fingerprint=config.read()
             require(isinstance(value['profile'],dict),'model_configuration')
             profile=dict(value['profile'])
+            require(not fallback or profile.get('provider')=='deepseek','fallback_configuration')
             expected_url=('https://api.openai.com/v1/responses' if profile.get('provider')=='openai'
                           and profile.get('wire_profile')=='openai-responses-v1' else ENDPOINTS.get(profile.get('provider')))
             require(value['api_url']==expected_url,'model_endpoint_unsupported')
             require(isinstance(value['api_key'],str),'model_configuration')
-            secret=value['api_key'] or (old.get('secret',self.config.api_key) if old else self.config.api_key)
+            require(not old or old['profile']['provider']==profile['provider'] or bool(value['api_key']),'provider_key_required')
+            secret=value['api_key'] or (old.get('secret',config.api_key) if old else config.api_key)
             profile['config_version']='console-'+operation
             profile['price']={**profile['price'],'pricing_version':'default/'+operation,
                               'fetched_at':time.time(),'estimated':True,'source':'registered-default'}
-            data={'schema':'taki-model-config/2','instance_id':self.config.namespace[0],'app_id':self.config.namespace[1],
+            data={'schema':'taki-model-config/2','instance_id':config.namespace[0],'app_id':config.namespace[1],
                   'profile':profile,'secret':secret,'bindings':old['bindings'] if old else [],'groups':value['groups']}
             if old and old.get('schema')=='taki-model-config/3':
                 data.update(schema='taki-model-config/3',group_admissions=old['group_admissions'])
-            snapshot=self.config.parse(data,'')
+            snapshot=config.parse(data,'')
             unit=self.runtime.usage.db.execute("SELECT value FROM meta WHERE key='reference_unit'").fetchone()
             require(unit is None or unit[0]==snapshot.profile.price.reference_unit,'reference_unit_mismatch')
-            snapshot=self.config.write(data,fingerprint)
+            snapshot=config.write(data,fingerprint)
             self.runtime.usage.configuration(snapshot.profile.config_version,snapshot.fingerprint)
             self.finish(operation,'succeeded',{'code':'saved','config_version':snapshot.profile.config_version})
         except (OSError,ValueError,TypeError,KeyError,RecursionError,sqlite3.Error) as exc:
             code=str(exc) if isinstance(exc,ModelError) else 'model_save_unconfirmed'
             self.finish(operation,'failed' if isinstance(exc,ModelError) else 'unknown',{'code':code})
             raise ModelError(code) from None
-        return self.settings()
+        return self.settings(fallback)
 
     def probe(self, value):
         require(not self.error,'model_admin_unavailable')

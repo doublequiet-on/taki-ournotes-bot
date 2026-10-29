@@ -83,3 +83,14 @@ queries/notifications支持inherit、allow、pause；allow仍受全局范围与�
 `next_route` 复用运行时的首轮与最终回复预留门槛，仅表示采集时下一轮的预算选择，不保证权限、额度或网络连通。在途请求继续使用原模型。实际路由新增 `model_route` 诊断阶段；旧记录未采集原因时保持未知。请求详情显示实际模型尝试、Token、费用及处理阶段，释放预留不等于付费调用，平台回执不等于客户端收到。
 
 前端费用投影由 `koishi/console/costs.js` 提供，随 `taki-console-assets` 分发；只读总览接口和已有 Console RPC 传递新增字段，不新增凭据或持久库结构。
+
+
+## 群能力、记忆及模型管理
+
+`GET /v1/admin/chat/status` 与 `/v1/admin/chat/groups/{gid}/status` 投影主备各自的模型版本、联网／图片／主动发言批准元数据及群服务每小时上限；不触发探测或修改批准。模型配置、能力批准与当前群策略分别显示，登记证据不等于实际功能验收。群详情通过现有记忆接口读取数量与 30 天保留规则，不返回正文。Console 的删除请求绑定群、当前网关 epoch 和 `expected_revision`；冲突或超时只刷新核对，不自动重放。删除沿用宿主的摘要、图片来源、上下文及在途回答失效流程，保留费用账本。
+
+“模型与费用”及设置页复用同一模型编辑状态，分别管理主模型和 DeepSeek 备用配置。`GET/POST /v1/admin/model/fallback` 复用受保护配置写入、版本保护和元数据审计；备用配置仅允许 DeepSeek，已有计费参考币种／单位不能改变。切换服务商须提供对应新密钥。浏览器恢复草稿保留主备归属，不保留密钥；有草稿时先保存或放弃再切换配置。
+
+OpenAI Responses 发送 `reasoning.effort`，表单提供默认及 API 支持的枚举，具体档位支持仍取决于模型；Chat Completions 接口不发送本应用尚未接入的推理参数。DeepSeek 分开提供关闭及 low/high/max，发送 `thinking` 和 `reasoning_effort`；旧配置省略该字段仍关闭思考。DeepSeek 思考模式只用 auto 工具选择，不发送该模式不支持的 required。工具循环精确回传当轮 `reasoning_content`，仅在内存中保留；历史只恢复可见文本，不保存或展示推理内容。输入序列化预算和输出计费上限仍生效。参考：[OpenAI reasoning](https://developers.openai.com/api/docs/guides/reasoning)、[DeepSeek thinking](https://api-docs.deepseek.com/guides/thinking_mode/)、[DeepSeek Chat API](https://api-docs.deepseek.com/api/create-chat-completion/)。
+
+保存会生成新模型版本，绑定旧指纹的能力及服务批准需重新核对；不会自动批准或付费测试。启用 DeepSeek 推理档位后，旧版本不支持该配置值：回退应用前须在当前版本关闭该选项，或按既有受保护配置恢复流程处理，不能只回退代码。

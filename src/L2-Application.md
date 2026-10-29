@@ -2,7 +2,7 @@
 
 可选聊天由 [application/chat_agent.py](ournotes_bot/application/chat_agent.py) 编排，复用 ModelRuntime 许可与结算；[chat_context.py](ournotes_bot/application/chat_context.py) 恢复有界参与片段和成功 ACK 回复；[chat_store.py](ournotes_bot/application/chat_store.py) 独占 30 日记忆、派生关系与删除墓碑。预算、规范化消息和人格 v0 在 [domain/chat.py](ournotes_bot/domain/chat.py)。旧 persona 话题卡仅用于 legacy，以下 U2/U3 保留该范围；协议 2.2 与现状见 [聊天架构](../docs/CHAT_AGENT_ARCHITECTURE.md)。
 
-[story_service.py](ournotes_bot/application/story_service.py)／[story_cli.py](ournotes_bot/application/story_cli.py) 拥有本地版本化剧情发布、撤回与独立人格批准；[chat_capabilities.py](ournotes_bot/application/chat_capabilities.py) 绑定模型能力证据；[chat_jobs.py](ournotes_bot/application/chat_jobs.py) 拥有群服务批准、预算与摘要材料；[proactive_chat.py](ournotes_bot/application/proactive_chat.py) 是无 IO 观察控制器，[chat_proactive_runtime.py](ournotes_bot/application/chat_proactive_runtime.py) 接宿主许可、候选和 ACK。配置与验证边界见 [F1](../docs/CHAT_AGENT_F1.md)。
+[story_service.py](ournotes_bot/application/story_service.py)／[story_cli.py](ournotes_bot/application/story_cli.py) 拥有本地版本化剧情发布、撤回与独立人格批准；[chat_capabilities.py](ournotes_bot/application/chat_capabilities.py) 绑定模型能力证据；[chat_admin.py](ournotes_bot/application/chat_admin.py) 只读投影主备能力批准与群服务上限，不返回对话正文或写入批准；[chat_jobs.py](ournotes_bot/application/chat_jobs.py) 拥有群服务批准、预算与摘要材料；[proactive_chat.py](ournotes_bot/application/proactive_chat.py) 是无 IO 观察控制器，[chat_proactive_runtime.py](ournotes_bot/application/chat_proactive_runtime.py) 接宿主许可、候选和 ACK。配置与验证边界见 [F1](../docs/CHAT_AGENT_F1.md)。
 
 ## Purpose
 

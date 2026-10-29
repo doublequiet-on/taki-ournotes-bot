@@ -1,3 +1,4 @@
+import { groupChatView } from './chat.js';
 import { executionView } from './costs.js';
 import { h } from './runtime.js';
 import { groupQuota } from './model.js';
@@ -137,7 +138,7 @@ export function groupsView(s,requests,openGroup,closeGroup,groupOpen,narrow) {
       h('p',{class:'guide'},'新查询决定是否接收新指令；主动通知决定是否允许机器人主动推送。/问 的“仅本地解析”不调用模型；/查卡、/查曲等直接指令始终不调用模型。'),
       current&&section({availability:'available',observed_at:s.groups.value.generated_at,data:current.effective},'当前已生效规则'),
       s.noticeTarget.value?.sections?.notice_target&&section(s.noticeTarget.value.sections.notice_target,'通知状态'),
-      groupQuota(s),
+      groupQuota(s),groupChatView(s,current?.effective),
       button('临时仅本地解析',()=>{if(window.confirm('将此群的模型解析收紧为本地解析？关闭模式保持关闭；之后需手动恢复。'))void s.startControl('local',[s.groupId.value]);},
         s.busy.value||s.dirty.value||s.groupDirty.value||!s.controls.value?.available||!s.controls.value?.persistent_matches_live||!/^[A-Za-z0-9_-]{1,128}$/.test(s.groupId.value)),
       (s.groupConflict.value||s.groupRecoveryBlocked.value)&&h('p',{role:'alert'},s.groupRecoveryBlocked.value?'网关状态尚未确认或已变化，群草稿仍保留；请核对后再继续。':'群策略版本冲突或保存未确认；草稿仍保留。'),

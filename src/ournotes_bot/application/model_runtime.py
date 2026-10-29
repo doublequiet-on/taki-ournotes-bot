@@ -412,7 +412,7 @@ class ModelRuntime:
             body.update(tools=[{'type':'web_search','search_context_size':'low'}],max_tool_calls=web.max_calls)
             action_budget=(('web_search',web.max_calls,web.unit_cost_micro),)
         # Verified native wires support required tool choice; no fallback/retry.
-        if require_tool and tools and (profile.provider=='deepseek' or profile.wire_profile=='openai-responses-v1'):
+        if require_tool and tools and (profile.provider=='deepseek' and profile.reasoning_effort in (None,'none') or profile.wire_profile=='openai-responses-v1'):
             body['tool_choice']='required'
         # Registered text-only byte-BPE profiles: serialized UTF-8 bytes plus
         # 4096 tokens for bounded wire framing is a conservative input ceiling.
@@ -634,7 +634,7 @@ class ModelRuntime:
             messages=[messages[0],{'role':'user','content':json.dumps(
                 {'待改写的上一问题':focus,'上次展示文本（非事实依据）':getattr(context,'text',''),
                  '本轮改写要求':question},ensure_ascii=False)}]
-        messages.append({'role':'assistant','content':None,'response_items':call.response_items,'tool_calls':[{'id':call.id,'type':'function',
+        messages.append({'role':'assistant','content':None,'response_items':call.response_items,'reasoning_content':result.reasoning_content,'tool_calls':[{'id':call.id,'type':'function',
                           'function':{'name':call.name,'arguments':call.arguments}}]})
         messages.append({'role':'tool','tool_call_id':call.id,'content':evidence})
         generated=await self.attempt(work,messages,[],user,group,deadline,leases)
@@ -684,7 +684,7 @@ class ModelRuntime:
                                           question,history,leases,facts='\n'.join(session.evidence),focus=question)
                     return replace(reply,business_status='success' if complete else 'partial')
             self.check(work,deadline,leases)
-            messages.append({'role':'assistant','content':None,'response_items':call.response_items,'tool_calls':[{'id':call.id,'type':'function',
+            messages.append({'role':'assistant','content':None,'response_items':call.response_items,'reasoning_content':result.reasoning_content,'tool_calls':[{'id':call.id,'type':'function',
                             'function':{'name':call.name,'arguments':call.arguments}}]})
             messages.append({'role':'tool','tool_call_id':call.id,'content':evidence})
             tools=([t.wire() for t in TOOLS.values() if t.kind=='site']

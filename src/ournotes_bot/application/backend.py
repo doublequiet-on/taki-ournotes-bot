@@ -759,11 +759,12 @@ def create_app(backend, token, initialize=None):
         require(backend.model_runtime is not None,'model_admin_unavailable',503)
         owner=backend.model_runtime.admin
         try:
-            if request.method=='GET': return json(owner.settings())
+            fallback=request.path.endswith('/fallback')
+            if request.method=='GET': return json(owner.settings(fallback))
             require(backend.ready and not backend.closing,'backend_not_ready',503)
             require(backend.ledger.active(request.headers.get('X-Taki-Epoch')),'ops_gateway_epoch',409)
             value=await read_json(request)
-            return json(owner.probe(value) if request.path.endswith('/probe') else owner.save(value))
+            return json(owner.probe(value) if request.path.endswith('/probe') else owner.save(value,fallback))
         except ModelError as exc:
             raise ProtocolError(str(exc),409) from None
         except (OSError,sqlite3.Error):
@@ -806,7 +807,15 @@ def create_app(backend, token, initialize=None):
             return json({'protocol':PROTOCOL,'candidate':True,'plan':await backend.submit(value,proactive=candidate)})
         except ModelError:return json({'protocol':PROTOCOL,'candidate':False})
         except (sqlite3.Error,OSError,ValueError):raise ProtocolError('chat_service_unavailable',503) from None
+    async def chat_status(request):
+        from .chat_admin import status
+        require(backend.model_runtime is not None,'chat_unavailable',503)
+        gid=request.match_info.get('gid')
+        require(gid is None or re.fullmatch('[A-Za-z0-9_-]{1,128}',gid),'admin_group')
+        return json(status(backend.model_runtime,gid))
     async def chat_memory(request):
+        if request.method=='GET' and (backend.model_runtime is None or backend.model_runtime.agent is None):
+            return json({'availability':'unavailable','reason_code':'chat_unavailable'})
         require(backend.model_runtime is not None and backend.model_runtime.agent is not None,'chat_unavailable',503)
         gid=request.match_info['gid']
         require(re.fullmatch('[A-Za-z0-9_-]{1,128}',gid),'admin_group')
@@ -817,6 +826,9 @@ def create_app(backend, token, initialize=None):
             require(backend.ready and not backend.closing,'backend_not_ready',503)
             require(backend.ledger.active(request.headers.get('X-Taki-Epoch')),'ops_gateway_epoch',409)
             value=await read_json(request)
+            if isinstance(value,dict) and 'expected_revision' in value:
+                revision=value.pop('expected_revision')
+                require(type(revision) is int and agent.store.status(scope)['revision']==revision,'chat_memory_conflict',409)
             require(isinstance(value,dict) and (set(value)=={'action'} and value['action']=='clear' or
                     set(value)=={'action','message_ids'} and value['action']=='delete'),'chat_memory_action')
             return json(agent.forget(scope,value['message_ids'] if value['action']=='delete' else None))
@@ -847,7 +859,9 @@ def create_app(backend, token, initialize=None):
                     web.get('/v1/admin/sources', admin_sources), web.get('/v1/admin/notices', admin_notices),
                     web.get('/v1/admin/query-metrics', admin_metrics), web.post('/v1/admin/telemetry', admin_telemetry),
                     web.get('/v1/admin/model', model_settings),web.post('/v1/admin/model', model_settings),
+                    web.get('/v1/admin/model/fallback',model_settings),web.post('/v1/admin/model/fallback',model_settings),
                     web.post('/v1/admin/model/probe',model_settings),web.get('/v1/admin/model/groups/{gid}',model_group),
+                    web.get('/v1/admin/chat/status',chat_status),web.get('/v1/admin/chat/groups/{gid}/status',chat_status),
                     web.get('/v1/admin/chat/groups/{gid}/memory',chat_memory),web.post('/v1/admin/chat/groups/{gid}/memory',chat_memory),
                     web.get('/v1/admin/ops/jobs', ops_jobs), web.post('/v1/admin/ops/jobs', ops_submit),
                     web.get('/v1/admin/ops/jobs/{jid}', ops_detail),

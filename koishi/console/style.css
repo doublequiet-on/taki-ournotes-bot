@@ -135,3 +135,5 @@
 
 .taki-console .cost-table{min-width:620px}.taki-console .costs-page .stats strong{font-size:1.4rem;white-space:nowrap}.taki-console .costs-page .stats{grid-template-columns:repeat(auto-fit,minmax(155px,1fr))}
 .taki-console .cost-table,.taki-console .cost-table caption,.taki-console .cost-table th,.taki-console .cost-table td{color:var(--tc-text);border-color:var(--tc-line)}
+
+.taki-console .chat-management button,.taki-console .model-settings button{background:var(--tc-raised);color:var(--tc-primary);border-color:var(--tc-line)}

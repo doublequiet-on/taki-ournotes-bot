@@ -33,8 +33,8 @@ export function operationsSettings(s) {
   const timer=data?.services?.['taki-updater.timer'];
   const short=v=>v?v.slice(0,8):'尚未采集',proof=v=>v===true?'有记录':v===false?'未通过':'尚未采集';
   const objects={code_environment:'代码与环境',business_data:'业务数据',console_settings:'设置与群策略',trusted_configuration:'控制器与系统配置',isolated_restore:'隔离恢复',offsite_copy:'异地副本'};
-  return h('div',[controlView(s),h('section',[h('h2','运行与恢复准备'),button('刷新主机状态',()=>s.load(s.host,'ops/host')),
-    h('div',{class:'stats'},[[short(runtime?.gateway_sha),'网关运行版本'],[short(controller?.current_sha),'控制器记录'],[short(controller?.previous_sha),'前一版本']].map(([value,label])=>h('div',[h('strong',value),h('span',label)]))),
+  return h('div',[recoveryView(s),controlView(s),h('section',[h('h2','运行与恢复准备'),button('刷新主机状态',()=>s.load(s.host,'ops/host')),
+    h('div',{class:'stats'},[[short(data?.processes?.backend?.cwd_release_sha),'后端进程目录版本'],[short(controller?.observed_target),'最近观察目标'],[short(runtime?.gateway_sha),'网关运行版本'],[short(controller?.current_sha),'控制器记录'],[short(controller?.previous_sha),'前一版本']].map(([value,label])=>h('div',[h('strong',value),h('span',label)]))),
     controller?.paused&&h('p','更新控制器已暂停'),host?.reason_code&&h('p',({host_collector_not_installed:'主机采集器尚未安装',host_snapshot_stale:'主机快照已过期',host_clock_changed:'主机观测时间需要核对'})[host.reason_code]||'主机观测暂不可用'),
     timer&&h('p',`自动更新定时器：${timer.UnitFileState==='disabled'||timer.UnitFileState==='masked'?'已停用':timer.UnitFileState||'未知'} · ${timer.ActiveState==='active'?'已激活':timer.ActiveState==='inactive'?'未激活':'状态未知'}`),
     data?.backup_coverage&&h('details',[h('summary','备份覆盖与核验记录'),h('ul',data.backup_coverage.map(row=>h('li',[
@@ -62,4 +62,16 @@ export function controlView(s){
     entry.before_modes&&h('small','原模式：'+Object.entries(entry.before_modes).map(([mode,count])=>`${({inherit:'继承',model:'允许模型',local:'本地',off:'关闭'})[mode]||mode} ${count}`).join(' · ')),
     button('恢复这次变更',()=>{if(window.confirm('恢复这次操作前的设置？期间修改过的字段会报告冲突。'))void s.restoreControl(entry.id);},disabled||!entry.restorable)
   ]))),!controls?.items?.length&&h('p','没有待恢复的管理操作')]);
+}
+
+export function recoveryView(s){
+ const host=s.host.value,r=host?.data?.business_recovery,b=r?.backup,v=r?.restore;
+ const runtime=host?.data?.runtime;
+ const checks=[['主机快照新鲜',host?host.stale===false:null],['后端代码摘要匹配',runtime?.backend_digest_matches??null],['控制器与网关版本匹配',runtime?.controller_matches_gateway??null],['业务备份未超过 36 小时',b?!b.stale:null],['同一备份已通过隔离恢复',v?v.verified&&!v.stale:null]];
+ return h('section',[h('h2','上线与恢复证据'),h('p','各项证据分别核对；未采集或过期的状态需要刷新。'),
+ h('ul',checks.map(([label,value])=>h('li',`${label}：${value===true?'有通过记录':value===false?'需要处理':'尚未采集'}`))),
+ b?h('div',[h('p',`最近业务备份 ${b.id} · ${b.databases} 个数据库 · ${stamp(b.created_epoch)}`),h('p',`备份运行版本 ${b.runtime_sha}`),b.inventory&&h('ul',b.inventory.map(row=>h('li',`${row.name}：${row.included?'已列入备份清单':'未列入本次清单'}`)))]):h('p','尚未取得完整业务备份 v2 回执。'),
+ v&&h('p',`隔离恢复验证 ${v.backup_id} · ${stamp(v.checked_epoch)}`),
+ r?.reason_code&&h('small','恢复证据：'+({trusted_procedure_receipts:'来自受信备份与恢复程序',restore_receipt_missing_or_invalid:'缺少与本次备份匹配的有效恢复回执',full_backup_receipt_missing:'完整业务备份回执未采集'})[r.reason_code]),
+ h('small','数据库数量来自备份回执，清单仅表示归档包含项；没有清单时不推断具体数据库覆盖；旧采集器需独立升级后才能提供这些字段。')]);
 }
