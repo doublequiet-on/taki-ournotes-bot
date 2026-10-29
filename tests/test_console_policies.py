@@ -90,6 +90,28 @@ class WeightedUsageTests(unittest.TestCase):
         with self.assertRaisesRegex(ModelError,'quota_exceeded'):
             self.ledger.reserve('r3','a3','u','g',profile,100,action_budget=(('web_search',1,60000),))
 
+    def test_reopen_repairs_legacy_unknown_web_holds_without_changing_known_cost(self):
+        from ournotes_bot.application.usage_ledger import UsageLedger
+        from ournotes_bot.domain.model_calls import ModelError,ProviderAction,Usage
+        profile=replace(self.profile,user_daily_limit=100000,group_daily_limit=100000,user_rate_requests=100,group_rate_requests=100)
+        for i,status in enumerate(('unknown','reserved')):
+            group='g'+str(i);attempt='a'+str(i)
+            self.ledger.reserve('r'+str(i),attempt,'u'+str(i),group,profile,100,action_budget=(('web_search',1,60000),))
+            self.ledger.start(attempt,profile)
+            self.ledger.settle(attempt,Usage(100,0,20,None,120,'known'),actions=(ProviderAction('web_search',None),))
+            with self.ledger.db:
+                self.ledger.db.execute("UPDATE attempts SET reserved='0' WHERE id=?",(attempt,))
+                self.ledger.db.execute('UPDATE attempt_actions SET status=? WHERE attempt=?',(status,attempt))
+        self.ledger.close();self.ledger=UsageLedger(self.path,'fixture',clock=lambda:self.now[0])
+        for i in range(2):
+            row=self.ledger.get('a'+str(i))
+            self.assertEqual((row['charged'],row['reserved'],row['billing_incomplete']),('140','60000',1))
+            with self.assertRaisesRegex(ModelError,'quota_exceeded'):
+                self.ledger.reserve('next'+str(i),'next'+str(i),'u'+str(i),'g'+str(i),profile,100,action_budget=(('web_search',1,60000),))
+        self.ledger.settle('a0',Usage(100,0,20,None,120,'known'),actions=(ProviderAction('web_search',0),))
+        self.assertEqual(self.ledger.get('a0')['reserved'],'0')
+        self.assertEqual(self.ledger.get('a1')['reserved'],'60000')
+
     def legacy_indexes(self):
         # A schema-1 database from before the access-path update.
         for row in self.ledger.db.execute("SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='attempts'").fetchall():

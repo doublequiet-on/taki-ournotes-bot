@@ -79,6 +79,7 @@ class UsageLedger:
                 CREATE INDEX IF NOT EXISTS attempts_day_group ON attempts(day,group_key);
             ''')
             self.reconcile()
+            self.restore_unknown_actions()
         except BaseException:
             self.close();raise
 
@@ -197,6 +198,21 @@ class UsageLedger:
                 self.db.execute("UPDATE attempts SET state='settled',reserved=?,settled=?,error_code='usage_unknown_after_restart',billing_incomplete=1 WHERE id=? AND state='started'",
                                 (str(hold),now,row['id']))
                 self.db.execute("UPDATE attempt_actions SET status='unknown' WHERE attempt=? AND status='reserved'",(row['id'],))
+    def restore_unknown_actions(self):
+        # Earlier versions could settle an unknown web action with zero
+        # reserved quota. Reconstruct its upper bound on opening the ledger,
+        # without changing known charges or action counts.
+        with self.db:
+            rows=self.db.execute("""SELECT DISTINCT attempts.id,attempts.price,attempts.reserved
+                FROM attempts JOIN attempt_actions ON attempts.id=attempt_actions.attempt
+                WHERE attempts.state='settled' AND attempts.billing_incomplete=1
+                AND attempt_actions.count IS NULL AND attempt_actions.status IN ('reserved','unknown')""").fetchall()
+            for row in rows:
+                price=Price(**json.loads(row['price']))
+                hold=sum((Fraction(a['max_count']*a['unit_cost_micro']*1_000_000,price.reference_rate)
+                          for a in self.db.execute("SELECT max_count,unit_cost_micro FROM attempt_actions WHERE attempt=? AND count IS NULL AND status IN ('reserved','unknown')",(row['id'],))),Fraction())
+                if hold>Fraction(row['reserved']):
+                    self.db.execute('UPDATE attempts SET reserved=? WHERE id=?',(str(hold),row['id']))
 
     def summary(self):
         rows=self.db.execute('SELECT usage,price,charged,cost,state,billing_incomplete,error_code FROM attempts WHERE day=?',(day(self.clock()),)).fetchall()
