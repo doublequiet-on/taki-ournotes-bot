@@ -222,7 +222,8 @@ class UsageLedger:
             day=r['day'],state=r['state'],started_at=r['started'],settled_at=r['settled'],
             tool_kind=r['kind'],duration_ms=r['duration_ms'],usage=json.loads(r['usage']),
             price=json.loads(r['price']),weighted_tokens=r['charged'],reserved_tokens=r['reserved'],
-            reference_cost_micro=r['cost'],error_code=r['error_code'],billing_incomplete=bool(r['billing_incomplete'])) for r in rows]
+            reference_cost_micro=r['cost'],error_code=r['error_code'],billing_incomplete=bool(r['billing_incomplete']),
+            provider_actions=[dict(action) for action in self.db.execute('SELECT kind,max_count,count,status,unit_cost_micro FROM attempt_actions WHERE attempt=?',(r['id'],))]) for r in rows]
 
     def group_view(self, group, profile):
         key=self.key('group',group)

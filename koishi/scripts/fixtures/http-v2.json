@@ -35,7 +35,9 @@
         "quoted_context_v1",
         "fixed_snapshot_v1",
         "current_model_permit_v1",
-        "independent_delivery_v1"
+        "independent_delivery_v1",
+        "chat_observation_v1",
+        "chat_images_v1"
       ],
       "reference_profiles": []
     },

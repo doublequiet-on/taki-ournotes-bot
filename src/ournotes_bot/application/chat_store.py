@@ -74,6 +74,10 @@ class ChatStore:
                     CREATE TABLE IF NOT EXISTS memory_scope_deletions (
                         scope TEXT PRIMARY KEY, deleted_before_ms INTEGER NOT NULL);
                     CREATE TABLE IF NOT EXISTS memory_state (key TEXT PRIMARY KEY,value INTEGER NOT NULL);
+                    CREATE TABLE IF NOT EXISTS chat_service_runs (
+                        delivery TEXT PRIMARY KEY,scope TEXT NOT NULL,request_id TEXT NOT NULL,created REAL NOT NULL);
+                    CREATE TABLE IF NOT EXISTS chat_service_receipts (
+                        request_id TEXT PRIMARY KEY,scope TEXT NOT NULL,delivered_at REAL NOT NULL);
                     INSERT OR IGNORE INTO memory_state VALUES ('revision',0);
                     INSERT OR IGNORE INTO memory_state VALUES ('c1_imported',0);
                     CREATE VIRTUAL TABLE IF NOT EXISTS memory_fts USING fts5(
@@ -261,6 +265,8 @@ class ChatStore:
             self.db.execute('DELETE FROM events WHERE run_id IN (SELECT id FROM runs WHERE source_time<=?)',(cutoff/1000,))
             self.db.execute('DELETE FROM memory_run_sources WHERE run_id IN (SELECT id FROM runs WHERE source_time<=?)',(cutoff/1000,))
             self.db.execute('DELETE FROM runs WHERE source_time<=?',(cutoff/1000,))
+            self.db.execute('DELETE FROM chat_service_runs WHERE created<=?',(cutoff/1000,))
+            self.db.execute('DELETE FROM chat_service_receipts WHERE delivered_at<=?',(cutoff/1000,))
 
     @staticmethod
     def _message(row):
@@ -418,6 +424,30 @@ class ChatStore:
                 'summaries':self.db.execute('SELECT count(*) FROM memory_summaries WHERE scope=?',(key,)).fetchone()[0],
                 'message_tombstones':self.db.execute('SELECT count(*) FROM memory_tombstones WHERE scope=?',(key,)).fetchone()[0],
                 'clear_before_ms':next(iter(self.db.execute('SELECT deleted_before_ms FROM memory_scope_deletions WHERE scope=?',(key,))),[None])[0]}
+
+    def proactive_replies(self,scope):
+        key=self._scope(scope)
+        return tuple(row[0] for row in self.db.execute('SELECT delivered_at FROM chat_service_receipts WHERE scope=? AND delivered_at>?',
+            (key,self.clock()-86400)))
+
+    def service_run(self,delivery,scope,request_id):
+        with self.db:self.db.execute('INSERT INTO chat_service_runs VALUES (?,?,?,?)',(delivery,self._scope(scope),request_id,self.clock()))
+
+    def service_ack(self,delivery):
+        with self.db:
+            self.db.execute('INSERT OR IGNORE INTO chat_service_receipts SELECT request_id,scope,? FROM chat_service_runs WHERE delivery=?',(self.clock(),delivery))
+
+    def recover_service_receipts(self,ledger):
+        # Delivery facts remain authoritative if an auxiliary receipt write failed.
+        # The passive reply window gives a conservative upper time bound where
+        # old delivery rows do not retain an exact ACK timestamp.
+        rows=self.db.execute('''SELECT r.* FROM chat_service_runs r WHERE r.created>?
+            AND NOT EXISTS (SELECT 1 FROM chat_service_receipts a WHERE a.request_id=r.request_id)''',(self.clock()-86700,)).fetchall()
+        with self.db:
+            for row in rows:
+                if any(part['status']=='success' for part in ledger.parts(row['delivery'])):
+                    self.db.execute('INSERT OR IGNORE INTO chat_service_receipts VALUES (?,?,?)',
+                        (row['request_id'],row['scope'],min(self.clock(),row['created']+298)))
 
     def close(self):
         self.db.close()

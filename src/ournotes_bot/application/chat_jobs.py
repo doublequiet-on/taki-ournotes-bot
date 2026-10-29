@@ -182,7 +182,7 @@ class ServiceBudget:
         try:
             # Group + request namespace keeps costs visible across administrator subject changes.
             # Old uncertain attempts remain held even after the rolling hour ends.
-            rows = self.usage.db.execute('''SELECT request_id,config_version,price,created,state,
+            rows = self.usage.db.execute('''SELECT id,request_id,config_version,price,created,state,
                 reserved,cost,billing_incomplete FROM attempts WHERE group_key=? AND request_id LIKE ?
                 AND (created>? OR state='started' OR billing_incomplete=1) ORDER BY created LIMIT 4097''',
                 (group, prefix + '%', now - 3600)).fetchall()
@@ -204,6 +204,8 @@ class ServiceBudget:
                     inputs, outputs = ((profile.max_input_tokens, profile.max_output_tokens)
                                        if row['config_version'] == profile.config_version else (65536, 8192))
                     bound = price.reserve(inputs, outputs) * price.reference_rate / 1_000_000
+                    bound += sum(action['max_count']*action['unit_cost_micro'] for action in self.usage.db.execute(
+                        'SELECT max_count,unit_cost_micro FROM attempt_actions WHERE attempt=?',(row['id'],)))
                     amount = max(amount, held, bound)
                 else:
                     amount += held

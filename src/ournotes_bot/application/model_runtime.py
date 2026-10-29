@@ -175,6 +175,7 @@ class ModelRuntime:
             require(self.agent.story_valid(work.story_versions),'story_revoked')
             require(self.agent.memory_valid(work),'chat_memory_deleted')
             require(self.agent.images_valid(work),'image_not_available')
+            require(self.agent.proactive.valid(work),'proactive_stale')
         require(work.active and time.monotonic()<deadline,'execution_timeout')
         require(time.monotonic()<work.content_deadline,'context_expired')
         if work.anchor:
@@ -236,7 +237,7 @@ class ModelRuntime:
                     return await self.backend.gate.run(partial(replies.prepare_reply,log_content=False,outcome=outcome),content,repository,self.backend.parser)
             if work.request.policy.natural_query!='model': return failure('policy_denied')
             if work.model_error: return failure(work.model_error)
-            require(work.model_snapshot is not None and work.model_subject is not None,'model_not_configured')
+            require(work.model_snapshot is not None and (work.model_subject is not None or work.proactive is not None),'model_not_configured')
             require(not work.native_claimed,'multiple_ai_requests')
             work.native_claimed=True
             user=self.usage.key('user',work.model_subject)
@@ -259,10 +260,13 @@ class ModelRuntime:
             require(bool(question),'invalid_argument')
             require(work.request.policy.natural_query=='model','policy_denied')
             if work.model_error: raise ModelError(work.model_error)
-            require(work.model_snapshot is not None and work.model_subject is not None,'model_not_configured')
+            require(work.model_snapshot is not None and (work.model_subject is not None or work.proactive is not None),'model_not_configured')
             require(not work.native_claimed,'multiple_ai_requests')
             work.native_claimed=True
-            user=self.usage.key('user',work.model_subject)
+            if work.proactive is not None:
+                user=self.usage.key('service',work.request.instance_id,work.request.app_id,work.request.conversation_id,
+                    work.service_policy.service_subject_id,'proactive')
+            else:user=self.usage.key('user',work.model_subject)
             group=self.usage.key('group',work.request.conversation_id) if work.request.kind=='group' else None
             async def operation(deadline):
                 work.model_started_at=time.monotonic()
@@ -274,14 +278,15 @@ class ModelRuntime:
         except (ModelError,ProtocolError,KnowledgeError) as exc:
             code=exc.code if isinstance(exc,ProtocolError) else str(exc)
             self.agent.audit(self.agent.store.finish,work.delivery,code)
-            return failure(code)
+            return replies.PreparedReply('',business_status='proactive_error') if work.proactive is not None else failure(code)
         except asyncio.TimeoutError:
             self.agent.audit(self.agent.store.finish,work.delivery,'execution_timeout')
-            return failure('execution_timeout')
+            return replies.PreparedReply('',business_status='proactive_error') if work.proactive is not None else failure('execution_timeout')
 
-    async def attempt(self,work,messages,tools,user,group,deadline,leases=(),*,require_tool=False,reservation=None,web=None):
+    async def attempt(self,work,messages,tools,user,group,deadline,leases=(),*,require_tool=False,reservation=None,web=None,billing_request_id=None,service_policy=None):
         profile=work.model_snapshot.profile
         self.check(work,deadline,leases)
+        if service_policy is not None:require(self.agent.services.policy(work.model_snapshot,work.request.conversation_id)==service_policy,'chat_service_revoked')
         body=request_body(profile,messages,tools)
         action_budget=()
         if web is not None:
@@ -307,27 +312,38 @@ class ModelRuntime:
         bound=len(json.dumps(token_body,ensure_ascii=False,separators=(',',':')).encode())+4096+image_tokens
         require(bound<=profile.max_input_tokens,'model_input_too_large')
         attempt=reservation or uuid.uuid4().hex
+        billing_request_id=billing_request_id or work.service_request_id or work.request.request_id
+        if work.proactive is not None and billing_request_id==work.service_request_id and reservation is None:
+            from .chat_jobs import ServiceError,maximum_cost_micro
+            try:self.agent.service_budget.check(work.service_policy,'proactive',profile,billing_request_id,
+                maximum_cost_micro(profile)+sum(count*rate for _,count,rate in action_budget),
+                reply_times=self.agent.store.proactive_replies(work.request.scope))
+            except ServiceError as exc:raise ModelError(str(exc)) from None
         if reservation is None:
-            self.usage.reserve(work.request.request_id,attempt,user,group,profile,bound,action_budget=action_budget)
+            self.usage.reserve(billing_request_id,attempt,user,group,profile,bound,action_budget=action_budget)
         else:
             held=self.usage.get(attempt)
-            require(held['request_id']==work.request.request_id and held['state']=='reserved','invalid_reservation')
+            require(held['request_id']==billing_request_id and held['state']=='reserved','invalid_reservation')
         started=False;began=time.monotonic();kind='generation' if not tools else 'routing'
         try:
             permitted_until=await self.backend.permissions.acquire(work,deadline,attempt_id=attempt)
             self.check(work,deadline,leases)
+            if service_policy is not None:require(self.agent.services.policy(work.model_snapshot,work.request.conversation_id)==service_policy,'chat_service_revoked')
             require(time.monotonic()<permitted_until,'permission_expired')
             self.usage.start(attempt,profile);started=True
             # No await/queue/tool work between the consumed permit and this HTTP.
             result=await asyncio.wait_for(self.client.request(profile,body,timeout=max(.001,deadline-time.monotonic())),
                                           max(.001,deadline-time.monotonic()))
             self.usage.settle(attempt,result.usage,result.error_code,actions=result.provider_actions)
-            require(all(action.count==0 or web is not None and action.count is not None and action.count<=web.max_calls
-                        for action in result.provider_actions),'provider_action_budget_exceeded')
-            if getattr(work,'chat',False):
+            if result.status=='ok':
+                require(type(result.native_calls) is int and 0<=result.native_calls<=(web.max_calls if web else 0)
+                        and all(action.count==0 or web is not None and action.count is not None and action.count<=web.max_calls
+                                for action in result.provider_actions),'provider_action_budget_exceeded')
+            if getattr(work,'chat',False) and service_policy is None:
                 self.agent.audit(self.agent.store.event,work.delivery,'model/'+attempt,'model',
                     {'attempt_id':attempt,'status':result.status,'error_code':result.error_code,
                      'usage_status':result.usage.status,'visible':result.text or '',
+                     'native_calls':result.native_calls,'provider_actions':[dict(kind=action.kind,count=action.count) for action in result.provider_actions],
                      'input_total':result.usage.input_total,'output_total':result.usage.output_total,
                      'elapsed_ms':int((time.monotonic()-began)*1000)})
             if result.tool_calls:
@@ -335,6 +351,7 @@ class ModelRuntime:
                 kind=name if name in TOOLS or getattr(work,'chat',False) and name in ('web_search','story_search','story_read','group_memory_search','group_memory_read') else 'unrecognized_tool'
             elif tools: kind='routing_text' if result.status=='ok' else 'routing'
             self.check(work,deadline,leases)
+            if service_policy is not None:require(self.agent.services.policy(work.model_snapshot,work.request.conversation_id)==service_policy,'chat_service_revoked')
             require(result.status=='ok',result.error_code or 'model_protocol_error')
             return result
         except BaseException as exc:
@@ -343,7 +360,7 @@ class ModelRuntime:
             elif self.usage.get(attempt)['state']=='started': self.usage.settle(attempt,Usage(),code)
             raise
         finally:
-            if getattr(work,'chat',False):
+            if getattr(work,'chat',False) and service_policy is None:
                 recorded=self.usage.get(attempt)
                 self.agent.audit(self.agent.store.event,work.delivery,'model/'+attempt,'model',
                     {'attempt_id':attempt,'state':recorded['state'],'error_code':recorded['error_code'],

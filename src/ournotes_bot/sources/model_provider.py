@@ -102,9 +102,13 @@ def decode_attempt(raw, profile, *, http_status=200):
         return AttemptResult('error',error_code='model_protocol_error')
     if not isinstance(payload,dict):
         return AttemptResult('error',error_code='model_protocol_error')
-    response_items=();citations=();provider_actions=()
+    response_items=();citations=();provider_actions=();native_calls=0
     if profile.wire_profile=='openai-responses-v1':
         response_items=tuple(payload.get('output',[])) if isinstance(payload.get('output'),list) else ()
+        native_calls=sum(isinstance(item,dict) and item.get('type')=='web_search_call' for item in response_items)
+        if payload.get('status')=='incomplete' and http_status==200 and not payload.get('error'):
+            return AttemptResult('error',usage_from(responses_payload(payload).get('usage'),profile),
+                error_code='model_incomplete',provider_actions=(ProviderAction('web_search',None),) if native_calls else (),native_calls=native_calls)
         if payload.get('status')=='completed' and http_status==200 and not payload.get('error'):
             try:
                 searches=0;web_ids=set()
@@ -121,11 +125,11 @@ def decode_attempt(raw, profile, *, http_status=200):
                 citations=tuple(response_citations(response_items))
             except (ValueError,TypeError,KeyError):
                 return AttemptResult('error',usage_from(responses_payload(payload).get('usage'),profile),
-                                     error_code='model_protocol_error',provider_actions=provider_actions)
+                                     error_code='model_protocol_error',provider_actions=(ProviderAction('web_search',None),),native_calls=native_calls)
         payload=responses_payload(payload)
     usage = usage_from(payload.get('usage'),profile)  # Always before content/tool validation.
     def error(code='model_protocol_error'):
-        return AttemptResult('error',usage,error_code=code,provider_actions=provider_actions)
+        return AttemptResult('error',usage,error_code=code,provider_actions=provider_actions,native_calls=native_calls)
     if http_status != 200 or payload.get('error'):
         return error('provider_error')
     choices = payload.get('choices')
@@ -161,7 +165,7 @@ def decode_attempt(raw, profile, *, http_status=200):
     if text is not None and (not bounded_utf8(text,16000) or len(text)>4000): return error()
     if not parsed and not (text and text.strip()): return error()
     return AttemptResult('ok',usage,tuple(parsed),text.strip() if text else None,output_items=response_items,
-                         citations=citations,provider_actions=provider_actions)
+                         citations=citations,provider_actions=provider_actions,native_calls=native_calls)
 
 
 def response_citations(items):
@@ -179,10 +183,13 @@ def response_citations(items):
                 if not isinstance(url,str) or len(url)>2048 or any(c.isspace() or c in '<>\\' for c in url):raise ValueError('citation_url')
                 parsed=urlsplit(url)
                 if parsed.scheme not in ('https','http') or not parsed.hostname or parsed.username or parsed.password:raise ValueError('citation_url')
-                if parsed.hostname=='localhost' or parsed.hostname.endswith(('.localhost','.local','.internal')):raise ValueError('citation_url')
+                host=parsed.hostname.rstrip('.')
+                if '.' not in host and ':' not in host or host=='localhost' or host.endswith(('.localhost','.local','.internal','.lan','.home','.test','.invalid')):raise ValueError('citation_url')
                 try:
-                    address=ipaddress.ip_address(parsed.hostname)
-                except ValueError:address=None
+                    address=ipaddress.ip_address(host)
+                except ValueError:
+                    if re.fullmatch(r'(?:0x[0-9a-f]+|\d+)(?:\.(?:0x[0-9a-f]+|\d+))*',host,re.I):raise ValueError('citation_url')
+                    address=None
                 if address is not None and not address.is_global:raise ValueError('citation_url')
                 if not isinstance(title,str) or len(title)>300:raise ValueError('citation_title')
                 start,end=annotation.get('start_index'),annotation.get('end_index')

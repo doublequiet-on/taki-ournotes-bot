@@ -30,9 +30,10 @@ class ChatCapabilities:
         require(self.path.is_file() and not self.path.is_symlink() and self.path.stat().st_size<=16384,'chat_capability_configuration')
         try: value=json.loads(self.path.read_text(encoding='utf-8'))
         except (ValueError,UnicodeError):raise ModelError('chat_capability_configuration') from None
-        require(isinstance(value,dict) and value.get('schema') in ('chat-capabilities/1','chat-capabilities/2'),'chat_capability_configuration')
+        require(isinstance(value,dict) and value.get('schema') in ('chat-capabilities/1','chat-capabilities/2','chat-capabilities/3'),'chat_capability_configuration')
         fields={'schema','config_version','fingerprint','web_search'}
-        if value['schema']=='chat-capabilities/2':fields.add('vision')
+        if value['schema'] in ('chat-capabilities/2','chat-capabilities/3'):fields.add('vision')
+        if value['schema']=='chat-capabilities/3':fields.add('proactive')
         require(set(value)==fields,'chat_capability_configuration')
         if value['config_version']!=snapshot.profile.config_version or value['fingerprint']!=snapshot.fingerprint:return None
         return value
@@ -60,3 +61,12 @@ class ChatCapabilities:
                 and vision['detail'] in ('low','high') and isinstance(vision['evidence_ref'],str)
                 and 1<=len(vision['evidence_ref'])<=160,'chat_capability_configuration')
         return VisionCapability(**vision)
+
+    def proactive(self,snapshot,group_id):
+        value=self.read(snapshot)
+        if value is None or value.get('proactive') is None:return False
+        proof=value['proactive']
+        require(isinstance(proof,dict) and set(proof)=={'groups','receive_evidence_ref','send_evidence_ref'},'chat_capability_configuration')
+        require(isinstance(proof['groups'],list) and len(proof['groups'])<=128 and all(isinstance(gid,str) and 1<=len(gid)<=128 for gid in proof['groups'])
+                and all(isinstance(proof[key],str) and 1<=len(proof[key])<=160 for key in ('receive_evidence_ref','send_evidence_ref')),'chat_capability_configuration')
+        return group_id in proof['groups']

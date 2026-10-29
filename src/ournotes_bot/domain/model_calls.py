@@ -137,6 +137,7 @@ class AttemptResult:
     output_items: tuple = ()
     citations: tuple = ()
     provider_actions: tuple = ()
+    native_calls: int | None = 0
 
 
 @dataclass(frozen=True)

@@ -1,6 +1,6 @@
 # Taki 开发导航
 
-可选对话 Agent（C0＋C1）：[基线与约定替换](CHAT_AGENT_BASELINE.md)、[实际架构](CHAT_AGENT_ARCHITECTURE.md)、[验收](CHAT_AGENT_ACCEPTANCE.md)、[运行与回退](CHAT_AGENT_RUNBOOK.md)。目标用例为 `test_console_policies.ChatAgentTests`；旧 NativeRuntimeTests 保留验证 legacy。默认 `OURNOTES_CHAT_ENGINE=legacy`。
+可选对话 Agent：[基线与约定替换](CHAT_AGENT_BASELINE.md)、[实际架构](CHAT_AGENT_ARCHITECTURE.md)、[组合 F1](CHAT_AGENT_F1.md)、[运行与回退](CHAT_AGENT_RUNBOOK.md)。`test_console_policies` 的 ChatAgent／ChatSourceIntegration／ChatImageIntegration／ChatServiceIntegration／ChatWeb／ChatServiceJobs 测试覆盖接线；C3 与 G1 控制器在 `test_continuation`，图片边界在 `test_media`，剧情发布在 `test_platform_boundary`。旧 NativeRuntimeTests 保留验证 legacy。默认 `OURNOTES_CHAT_ENGINE=legacy`；完整测试类名以源码为准。
 
 性能与容量改动进入 [查询性能与容量](PERFORMANCE_FOUNDATION.md)：唯一接纳、三个账本预算、目录派生缓存及隔离全链路基准；多平台后续设计见 [契约草案](MULTIPLATFORM_CONTRACT.md)，不表示已接入其他平台。
 

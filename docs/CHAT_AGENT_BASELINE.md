@@ -19,4 +19,4 @@
 
 配置复用 `ModelConfiguration` 捕获的同一 `ModelProfile`：provider、model、wire_profile、config_version、capability_evidence、价格、输出额度与 reasoning_effort 均不重写。本批没有读取生产密钥或猜测 Terra 的实际 API model ID。离线使用合成 DeepSeek wire 和 OpenAI Responses wire，后者覆盖 reasoning／多工具续接；不能据此宣称 Terra 实测兼容。
 
-人格为 `taki-v0/legacy-derived`，是明确标注的运行初稿。K1 剧情来源与人工审核还未执行，初稿不构成原作研究定稿，也不批准新的百科正文。后续接口见[实际架构](CHAT_AGENT_ARCHITECTURE.md)。
+默认人格为 `taki-v0/legacy-derived`，是明确标注的运行初稿。K1 已补来源目录、场景引擎和人格研究草稿，真实人格审核未完成；只有独立人工批准的版本才替换初稿。本文保留 C0 约定，组合现状见 [F1](CHAT_AGENT_F1.md)，不批准新的百科正文。

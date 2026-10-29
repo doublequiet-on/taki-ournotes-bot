@@ -2072,6 +2072,18 @@ class ChatSourceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
     prepare_native=NativeRuntimeTests.prepare_native
     event=NativeRuntimeTests.event
 
+    async def test_approved_fixture_persona_is_versioned_in_audit(self):
+        from test_platform_boundary import StoryPublicationTests
+        fixture=StoryPublicationTests();fixture.setUp();self.addCleanup(fixture.doCleanups)
+        status=fixture.publish(fixture.bundle(kind='official_original',personas=True))
+        fixture.service.approve_persona('test-persona','fixture-human','fixture-only-confirmation',revision=status['source_revision'])
+        self.backend.model_runtime.agent.story=fixture.service
+        self.client.request.return_value=self.result('认真听到了。')
+        plan,_=await self.prepare_native('/问 随便聊两句')
+        persona=self.backend.model_runtime.agent.store.db.execute('SELECT persona FROM runs').fetchone()[0]
+        self.assertTrue(persona.startswith('test-persona/'))
+        self.event(plan,'intent');self.event(plan,'ack')
+
     async def test_story_search_read_and_withdrawal_recheck_before_intent(self):
         from test_platform_boundary import StoryPublicationTests
         from ournotes_bot.domain.model_calls import ToolCall
@@ -2178,6 +2190,152 @@ class ChatImageIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
         self.event(direct,'intent');self.event(direct,'ack')
 
 
+class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
+    Helpers=ChatAgentTests.Helpers
+    request=ChatAgentTests.request
+    result=ChatAgentTests.result
+    prepare_native=NativeRuntimeTests.prepare_native
+    event=NativeRuntimeTests.event
+
+    async def asyncSetUp(self):
+        from ournotes_bot.application.chat_jobs import ServicePolicy,SummaryLimits,ProactiveLimits
+        await ChatAgentTests.asyncSetUp(self)
+        self.agent=self.backend.model_runtime.agent
+        self.tick=100.0;self.agent.proactive.controller.clock=lambda:self.tick
+        self.policy=ServicePolicy('fixture','app','g1','approved-group-service','fixture-approval',self.snapshot.profile.config_version,
+            self.snapshot.fingerprint,self.snapshot.profile.price.currency,SummaryLimits(True,20,10**9),ProactiveLimits(True,120,3,10**9,60))
+        self.agent.services.policy=Mock(return_value=self.policy)
+        self.backend.model_runtime.capabilities.proactive=Mock(return_value=True)
+
+    def observation(self,body='大家继续聊这个问题',seq=1):
+        from ournotes_bot.application.backend_protocol import Request
+        value=self.request('observed'+str(seq),seq);value.update(body=body,trigger='observation')
+        request=Request.parse(value,'fixture','app',self.now)
+        self.assertTrue(self.agent.proactive.observe(request))
+        return value
+
+    async def candidate(self,value,serial=1):
+        from ournotes_bot.application.backend_protocol import Request,digest
+        raw={**value,'trigger':'proactive','proactive_id':format(serial,'032x')}
+        raw['request_id']=digest(['fixture','app','qq','group','g1',raw['user_id'],raw['message_id'],raw['proactive_id']])
+        request=Request.parse(raw,'fixture','app',self.now)
+        candidate=self.agent.proactive.candidate(request)
+        self.assertIsNotNone(candidate)
+        plan=await self.backend.submit(raw,proactive=candidate);attempts=[]
+        for _ in range(1500):
+            plan=self.backend.lookup(raw['request_id'],'e1')
+            challenge=plan.get('pending_model_permission')
+            if challenge and challenge['attempt_id'] not in attempts:
+                attempts.append(challenge['attempt_id'])
+                decision={key:item for key,item in challenge.items() if key not in ('remaining_ms','admission_policy_version')}
+                decision.update(decision='allow',reason='fixture',ttl_ms=1000,
+                    current_policy_version=dict(epoch='fixture',global_revision=0,group_revision=0))
+                self.backend.permissions.decide(raw['request_id'],challenge['attempt_id'],decision,'e1')
+            if plan['status'] in ('prepared','finished'):return plan,attempts,candidate
+            if plan['status'] not in ('preparing','prepared'):self.fail('candidate stopped: '+plan['status'])
+            await asyncio.sleep(.005)
+        self.fail('candidate did not finish')
+
+    async def test_skip_is_billed_to_service_without_dialogue_persistence(self):
+        value=self.observation();self.tick+=1.6
+        self.client.request.return_value=self.result('{"participation":"skip"}')
+        plan,attempts,candidate=await self.candidate(value)
+        self.assertEqual(plan['status'],'finished');self.assertEqual(plan['parts'],[])
+        self.assertEqual(self.agent.store.db.execute('SELECT count(*) FROM runs').fetchone()[0],0)
+        self.assertEqual(self.agent.store.db.execute('SELECT count(*) FROM memory_messages').fetchone()[0],0)
+        usage=self.backend.model_runtime.usage.get(attempts[0])
+        self.assertEqual(usage['user_key'],self.backend.model_runtime.usage.key('service','fixture','app','g1','approved-group-service','proactive'))
+        self.assertTrue(usage['request_id'].startswith('chat-service/proactive/'))
+        self.assertEqual(self.agent.store.proactive_replies(Request_scope()),())
+
+    def test_unknown_web_fee_bound_survives_budget_reconstruction(self):
+        from ournotes_bot.application.chat_jobs import service_request_id,ServiceError,ServiceBudget
+        from ournotes_bot.domain.model_calls import Usage,ProviderAction
+        usage=self.backend.model_runtime.usage;profile=self.snapshot.profile
+        job=service_request_id('proactive','fixture','app','g1','unknown-web')
+        user=usage.key('service','fixture','app','g1','approved-group-service','proactive');group=usage.key('group','g1')
+        usage.reserve(job,'unknown-web',user,group,replace(profile,user_daily_limit=10**12,group_daily_limit=10**12),10,
+            action_budget=(('web_search',2,10**8),))
+        usage.start('unknown-web',replace(profile,user_daily_limit=10**12,group_daily_limit=10**12))
+        usage.settle('unknown-web',Usage(),'provider_unavailable',actions=(ProviderAction('web_search',None),))
+        policy=replace(self.policy,proactive=replace(self.policy.proactive,max_cost_micro_per_hour=10**8))
+        with self.assertRaisesRegex(ServiceError,'chat_service_cost_limit'):
+            ServiceBudget(usage,'fixture','app').check(policy,'proactive',profile,
+                service_request_id('proactive','fixture','app','g1','next'),1)
+
+    async def test_defer_then_reply_persists_only_after_ack_and_receipt_survives_clear(self):
+        value=self.observation();self.tick+=1.6
+        self.client.request.side_effect=[self.result('{"participation":"defer","delay_seconds":2}'),
+                                        self.result('{"participation":"reply","text":"接着你们的话题说一句。"}')]
+        first,_,_=await self.candidate(value)
+        self.assertFalse(first['parts']);self.tick+=2.1
+        plan,attempts,candidate=await self.candidate(value,2)
+        self.assertEqual(self.agent.store.db.execute('SELECT count(*) FROM runs').fetchone()[0],0)
+        self.assertTrue(plan['send_allowed'])
+        self.event(plan,'intent');self.event(plan,'ack')
+        rows=self.agent.store.recent(Request_scope())
+        self.assertTrue(any(row['role']=='assistant' and row['text']=='接着你们的话题说一句。' for row in rows))
+        self.assertEqual(len(self.agent.store.proactive_replies(Request_scope())),1)
+        self.agent.forget(Request_scope())
+        self.assertEqual(self.agent.store.recent(Request_scope()),[])
+        self.assertEqual(len(self.agent.store.proactive_replies(Request_scope())),1)
+
+    async def test_new_message_cancels_generated_reply_and_never_archives_observation(self):
+        value=self.observation();self.tick+=1.6
+        self.client.request.return_value=self.result('{"participation":"reply","text":"稍早生成的回答。"}')
+        plan,_,_=await self.candidate(value)
+        self.assertTrue(plan['send_allowed'])
+        self.current_user='u2';self.observation('问题已经由别人回答了',seq=2)
+        self.assertFalse(self.backend.lookup(plan['request_id'],'e1')['send_allowed'])
+        self.backend.finish(self.backend.works[plan['delivery_id']],'aborted')
+        self.assertFalse(self.agent.store.recent(Request_scope()))
+        self.assertEqual(self.agent.store.db.execute('SELECT count(*) FROM events').fetchone()[0],0)
+
+    async def test_service_receipt_failure_keeps_ack_and_recovers_budget_from_delivery_facts(self):
+        value=self.observation();self.tick+=1.6
+        self.client.request.return_value=self.result('{"participation":"reply","text":"实际送达的一句。"}')
+        plan,_,_=await self.candidate(value)
+        work=self.backend.works[plan['delivery_id']]
+        self.agent.store.db.executescript("CREATE TRIGGER fail_service_ack BEFORE INSERT ON chat_service_receipts BEGIN SELECT RAISE(ABORT,'fixture disk'); END;")
+        self.event(plan,'intent');self.event(plan,'ack')
+        self.assertTrue(work.ended.is_set());self.assertFalse(work.active)
+        self.assertEqual(self.backend.lookup(plan['request_id'],'e1')['status'],'finished')
+        self.assertGreater(self.agent.audit_failures,0)
+        self.agent.store.db.execute('DROP TRIGGER fail_service_ack')
+        self.agent.store.recover_service_receipts(self.backend.ledger)
+        self.assertEqual(len(self.agent.store.proactive_replies(Request_scope())),1)
+
+    async def test_summary_uses_same_profile_independent_service_job_and_source_deletion(self):
+        from ournotes_bot.application.backend_protocol import Request
+        from types import SimpleNamespace
+        for index in range(12):
+            value=self.request('seed'+str(index),index+1);value['timestamp_ms']-=25000-index*1000
+            request=Request.parse(value,'fixture','app',self.now)
+            work=SimpleNamespace(request=request,delivery='seed-'+str(index),model_snapshot=self.snapshot)
+            message=dict(message_id=request.message_id,speaker_id='u1',text='合成讨论'+str(index),timestamp_ms=request.timestamp_ms,
+                role='user',display_name='',reply_to=None)
+            self.agent.store.begin(work,[dict(role='user',content=json.dumps(message))])
+            self.agent.store.event(work.delivery,'ack','delivery',dict(status='success',allow_context=True,message_id='reply'+str(index),text='合成已发回复'))
+        profiles=[]
+        async def model(profile,body,**kwargs):
+            profiles.append(profile)
+            if len(profiles)==1:return self.result('继续聊。')
+            material=json.loads(body['messages'][-1]['content'])
+            return self.result(json.dumps(dict(source_key=material['source_key'],message_ids=material['message_ids'],summary='u1提出观点，Taki已回应，仍有一个分歧。')))
+        self.client.request.side_effect=model
+        plan,attempts=await self.prepare_native('/问 继续前面的讨论',seq=30)
+        self.assertEqual(len(attempts),2);self.assertEqual(profiles[0],profiles[1])
+        self.assertTrue(self.backend.model_runtime.usage.get(attempts[1])['request_id'].startswith('chat-service/summary/'))
+        summaries=self.agent.store.summaries(Request_scope());self.assertEqual(len(summaries),1)
+        self.event(plan,'intent');self.event(plan,'ack')
+        self.agent.forget(Request_scope(),[summaries[0]['source_message_ids'][0]])
+        self.assertEqual(self.agent.store.summaries(Request_scope()),[])
+
+
+def Request_scope():
+    return dict(instance_id='fixture',app_id='app',platform='qq',kind='group',conversation_id='g1')
+
+
 class ChatWebTests(Fixture,unittest.IsolatedAsyncioTestCase):
     Helpers=ChatAgentTests.Helpers
     event=ChatAgentTests.event
@@ -2236,6 +2394,36 @@ class ChatWebTests(Fixture,unittest.IsolatedAsyncioTestCase):
         charge=self.backend.model_runtime.usage.get(attempts[1])
         self.assertEqual(charge['charged'],'10014')
         self.assertEqual(charge['billing_incomplete'],0)
+        self.event(plan,'intent');self.event(plan,'ack')
+
+    def test_native_budget_counts_all_actions_and_private_queries_are_rejected(self):
+        from ournotes_bot.sources.model_provider import decode_attempt
+        from ournotes_bot.application.chat_agent import public_search_query
+        from ournotes_bot.domain.model_calls import ModelError
+        self.web_result()
+        payload=dict(status='completed',output=[dict(type='web_search_call',id=str(index),status='completed',action=dict(type=kind))
+            for index,kind in enumerate(('search','open_page','find_in_page'))],usage=dict(input_tokens=10,output_tokens=2,total_tokens=12,input_tokens_details=dict(cached_tokens=0)))
+        payload['output'].append(dict(type='message',role='assistant',status='completed',content=[dict(type='output_text',text='public')]))
+        result=decode_attempt(json.dumps(payload),self.snapshot.profile)
+        self.assertEqual(result.native_calls,3);self.assertEqual(result.provider_actions[0].count,1)
+        for query in ('http://192.168.1.1/admin','https://metadata.google.internal/','169.254.169.254','http://localhost/a','http://localhost./','http://127.1/a','ｈｔｔｐ://１９２.１６８.１.１/admin','http://[::1]/','私密昵称 的事情'):
+            with self.subTest(query=query),self.assertRaisesRegex(ModelError,'private_search_query'):public_search_query(query,['私密昵称'])
+        self.assertEqual(public_search_query('https://example.org/music 音乐新闻'),'https://example.org/music 音乐新闻')
+
+    async def test_incomplete_web_is_local_failure_and_unknown_extra_fee(self):
+        from ournotes_bot.application.chat_capabilities import WebCapability
+        from ournotes_bot.domain.model_calls import ToolCall
+        from ournotes_bot.sources.model_provider import decode_attempt
+        self.web_result()
+        incomplete=decode_attempt(json.dumps(dict(status='incomplete',incomplete_details=dict(reason='max_output_tokens'),
+            output=[dict(type='web_search_call',id='w',status='completed',action=dict(type='search'))],
+            usage=dict(input_tokens=10,output_tokens=2,total_tokens=12,input_tokens_details=dict(cached_tokens=0)))),self.snapshot.profile)
+        self.assertEqual(incomplete.error_code,'model_incomplete');self.assertIsNone(incomplete.provider_actions[0].count)
+        self.backend.model_runtime.capabilities.web=Mock(return_value=WebCapability(2,10000,'fixture-probe'))
+        self.client.request.side_effect=[self.result(calls=(ToolCall('w','web_search','{"query":"公开音乐"}'),)),incomplete,self.result('搜索这次未完成，我先说明已有资料。')]
+        plan,attempts=await self.prepare_native('/问 查公开音乐并说明已有资料')
+        self.assertEqual(plan['parts'][0]['business_status'],'success');self.assertEqual(len(attempts),3)
+        self.assertTrue(self.backend.model_runtime.usage.get(attempts[1])['billing_incomplete'])
         self.event(plan,'intent');self.event(plan,'ack')
 
     def test_action_unknown_is_not_zero_and_late_known_count_fills_gap(self):
