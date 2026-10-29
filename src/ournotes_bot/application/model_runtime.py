@@ -148,10 +148,37 @@ class ModelRuntime:
         self.fallback=ModelConfiguration(getattr(backend.settings,'ai_fallback_profile_file',None)
             or self.usage.path.with_name('model-fallback-v1.json'),getattr(backend.settings,'fallback_ai_api_key',''),
             backend.instance_id,backend.app_id)
+        self.proactive_config=ModelConfiguration(getattr(backend.settings,'ai_proactive_profile_file',None)
+            or self.usage.path.with_name('model-proactive-v1.json'),getattr(backend.settings,'proactive_ai_api_key',''),
+            backend.instance_id,backend.app_id)
+        self.proactive_capabilities=ChatCapabilities(self.usage.path.with_name('chat-proactive-capabilities-v1.json'))
+        self._dedicated_proactive=bool(getattr(backend.settings,'ai_proactive_profile_file',None))
         self.admin=ModelAdmin(self,self.usage.path.with_name('model-admin-v1.sqlite3'))
         self.capabilities=ChatCapabilities(self.usage.path.with_name('chat-capabilities-v1.json'))
         self.agent=(ChatAgent(self,self.usage.path.with_name('chat-v1.sqlite3'))
                     if getattr(backend.settings,'chat_engine','legacy')=='agent' else None)
+
+    def dedicated_proactive(self):
+        # Latch the selected route: removing/revoking its files must never select a dearer model.
+        paths=(self.proactive_config.path,self.proactive_capabilities.path,
+               self.usage.path.with_name('chat-proactive-services-v1.json'))
+        if any(path.exists() or path.is_symlink() for path in paths):self._dedicated_proactive=True
+        return self._dedicated_proactive
+
+    def proactive_snapshot(self,group_id):
+        primary=self.config.snapshot().for_group(group_id)
+        if not self.dedicated_proactive():return primary
+        selected=self.proactive_config.snapshot().for_group(group_id)
+        require(selected.profile.price.reference_unit==primary.profile.price.reference_unit,'reference_unit_mismatch')
+        # Independent limits may tighten, but never bypass the shared group's existing ceiling.
+        profile=replace(selected.profile,group_daily_limit=min(primary.profile.group_daily_limit,selected.profile.group_daily_limit),
+            group_rate_requests=min(primary.profile.group_rate_requests,selected.profile.group_rate_requests),
+            rate_window_seconds=max(primary.profile.rate_window_seconds,selected.profile.rate_window_seconds))
+        # Keep platform admission and actor identity from the primary administrator configuration.
+        return replace(primary,profile=profile,fingerprint=selected.fingerprint)
+
+    def capabilities_for(self,work):
+        return self.proactive_capabilities if work.proactive is not None and self.dedicated_proactive() else self.capabilities
 
     def cost_status(self):
         result=self.usage.costs()
@@ -224,7 +251,7 @@ class ModelRuntime:
         work.budget_fallback=True
 
     def route(self,work):
-        if work.budget_fallback:return
+        if work.budget_fallback or work.proactive is not None:return
         profile=work.model_snapshot.profile
         # Admit a bounded first request and its maximum final response together.
         amount=2*profile.price.reserve(profile.max_input_tokens,profile.max_output_tokens)
@@ -251,7 +278,7 @@ class ModelRuntime:
         except ModelError as exc:
             # A competing request may reserve the budget during image/tool IO.
             # Only a pre-permit rejection may choose another model; never retry HTTP.
-            if str(exc)!='primary_budget_exceeded' or work.model_attempts or work.budget_fallback:raise
+            if str(exc)!='primary_budget_exceeded' or work.model_attempts or work.budget_fallback or work.proactive is not None:raise
             self.use_fallback(work)
             work.image_bytes=0
             return await operation(deadline)
@@ -260,6 +287,7 @@ class ModelRuntime:
         async def prices():
             while True:
                 await self.config.refresh_price(self.client)
+                if self.dedicated_proactive():await self.proactive_config.refresh_price(self.client)
                 await asyncio.sleep(3600)
         self.task=asyncio.create_task(prices())
 
@@ -393,7 +421,7 @@ class ModelRuntime:
         image_count=sum(len(message.get('images',())) for message in messages)
         image_tokens=0
         if image_count:
-            vision=self.capabilities.vision(work.model_snapshot)
+            vision=self.capabilities_for(work).vision(work.model_snapshot)
             require(vision is not None,'image_capability_unverified')
             require(image_count<=3 and all(message.get('image_detail')==vision.detail for message in messages if message.get('images')),
                     'image_count_exceeded')

@@ -66,6 +66,22 @@ async function main(){
   assert.equal(model.modelKey.value,'');assert.equal(model.modelDraft.value.model,'later edit');assert.equal(model.modelDirty.value,true)
   assert.equal(model.modelConflict.value,false)
   await model.logout();assert.equal(model.model.value,null);assert.equal(model.modelDraft.value,null);assert.equal(model.modelKey.value,'')
+  const dedicated=sessionState(),dedicatedCalls=[]
+  globalThis.consoleStateFixture.send=async(method,value)=>{
+    dedicatedCalls.push(method)
+    if(method==='taki/model/proactive/settings')return {...structuredClone(modelValue),role:'proactive'}
+    if(method==='taki/model/proactive/save')return {...structuredClone(modelValue),role:'proactive',profile:{...value.profile,config_version:'proactive-new'}}
+    if(method==='taki/model/proactive/probe')return {...structuredClone(modelValue),role:'proactive',profile:{...modelValue.profile,config_version:'proactive-new'},capability:{state:'intent'}}
+    throw Error('unexpected proactive RPC '+method)
+  }
+  dedicated.selectModelRole('proactive');await dedicated.refreshModel()
+  dedicated.modelDraft.value.model='cheap-fixture';dedicated.modelDirty.value=true
+  const dedicatedRecovery=dedicated.captureEdits(),restoredDedicated=sessionState();restoredDedicated.restoreEdits(dedicatedRecovery)
+  assert.equal(restoredDedicated.modelRole.value,'proactive');assert.equal(restoredDedicated.modelDraft.value.model,'cheap-fixture')
+  await dedicated.saveModel();await dedicated.probeModel()
+  assert.equal(dedicatedCalls.includes('taki/model/proactive/save'),true)
+  assert.equal(dedicatedCalls.includes('taki/model/proactive/probe'),true)
+  assert.equal(dedicatedCalls.some(m=>m==='taki/model/save'||m==='taki/model/probe'),false)
   let epoch='gateway-before',attempted=[],trustedAttempts=[],finishJob,finishTrusted
   globalThis.consoleStateFixture.send=async(method,value)=>{
     if(method==='taki/overview')return {settings:structuredClone(settings),guard:{gateway_epoch:epoch,revision:0}}
@@ -111,6 +127,6 @@ async function main(){
   const status=sessionState();await status.load(status.groups,'groups/list');status.selectGroup('alpha');status.groupDraft.value.label='fixture';status.groupDirty.value=true
   await status.saveGroup();assert.equal(status.message.value,'群策略已保存。新查询使用新规则，在途查询继续完成。')
   assert.match(status.readMessage.value,/读取失败/);assert.equal(status.stale.value,true)
-  console.log(JSON.stringify({passed:true,saveDraftRace:true,groupSaveDraftRace:true,groupSwitchDuringSave:true,invalidatedSave:true,recoveredDrafts:true,secretCleared:true,groupEpochBlocked:true,operationIdReused:true,logoutCleared:true,actionAndReadStatusSeparated:true}))
+  console.log(JSON.stringify({passed:true,proactiveRoleRouting:true,proactiveDraftRecovery:true,saveDraftRace:true,groupSaveDraftRace:true,groupSwitchDuringSave:true,invalidatedSave:true,recoveredDrafts:true,secretCleared:true,groupEpochBlocked:true,operationIdReused:true,logoutCleared:true,actionAndReadStatusSeparated:true}))
 }
 main().catch(error=>{console.error(error);process.exitCode=1}).finally(()=>{delete globalThis.consoleStateFixture})

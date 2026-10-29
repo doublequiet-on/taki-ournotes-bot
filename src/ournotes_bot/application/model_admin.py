@@ -76,8 +76,12 @@ class ModelAdmin:
         _,fingerprint=(config or self.config).read()
         require(guard==self.guard(fingerprint),'model_config_conflict')
 
-    def settings(self, fallback=False):
-        config=self.runtime.fallback if fallback else self.config
+    def selected_config(self,fallback=False,proactive=False):
+        require(not (fallback and proactive),'model_admin_shape')
+        return self.runtime.proactive_config if proactive else self.runtime.fallback if fallback else self.config
+
+    def settings(self, fallback=False, *, proactive=False):
+        config=self.selected_config(fallback,proactive)
         require(not self.error,'model_admin_unavailable')
         profile=None;groups={};code='model_not_configured';fingerprint=None;key=False
         try:
@@ -101,16 +105,16 @@ class ModelAdmin:
                 'price':{'currency':'CNY','input_rate':1000000,'cached_rate':1000000,'output_rate':1000000,
                     'reference_rate':1000000,'pricing_version':'','fetched_at':0,'estimated':True,'source':'registered-default'}}
         writable=config.writable()
-        return {'role':'fallback' if fallback else 'primary','code':code,'editable':writable and fingerprint is not None,
+        return {'role':'proactive' if proactive else 'fallback' if fallback else 'primary','code':code,'editable':writable and fingerprint is not None,
                 'write_reason':None if writable else 'model_config_permissions','primary_budget':self.budget_settings(),
                 'guard':self.guard(fingerprint),'profile':profile,'groups':groups,'key_configured':key,
                 'endpoints':dict(ENDPOINTS),'api_url':('https://api.openai.com/v1/responses'
                     if profile.get('wire_profile')=='openai-responses-v1' else ENDPOINTS[profile['provider']]),
-                'capability':self.latest_probe(profile['config_version']),
+                'capability':self.latest_probe(profile['config_version'],proactive=proactive),
                 'audit':self.audit(),'timezone':'Asia/Shanghai','price_status':config.status()}
 
-    def latest_probe(self, version):
-        row=self.db.execute("SELECT id,state,result FROM actions WHERE action='probe' AND config_version=? ORDER BY created DESC LIMIT 1",(version,)).fetchone()
+    def latest_probe(self, version, *, proactive=False):
+        row=self.db.execute("SELECT id,state,result FROM actions WHERE action=? AND config_version=? ORDER BY created DESC LIMIT 1",('probe_proactive' if proactive else 'probe',version)).fetchone()
         return dict(operation_id=row['id'],state=row['state'],result=json.loads(row['result']) if row['result'] else None) if row else None
 
     def audit(self):
@@ -142,11 +146,11 @@ class ModelAdmin:
         except sqlite3.Error:
             self.error='model_admin_unavailable';raise ModelError(self.error) from None
 
-    def save(self, value, fallback=False):
-        config=self.runtime.fallback if fallback else self.config
+    def save(self, value, fallback=False, *, proactive=False):
+        config=self.selected_config(fallback,proactive)
         require(isinstance(value,dict) and set(value)=={'operation_id','guard','profile','groups','api_key','api_url'},'model_admin_shape')
         operation=value['operation_id']
-        if not self.begin(value,'save_fallback' if fallback else 'save','console-'+str(operation)): return self.settings(fallback)
+        if not self.begin(value,'save_proactive' if proactive else 'save_fallback' if fallback else 'save','console-'+str(operation)): return self.settings(fallback,proactive=proactive)
         try:
             self.check_guard(value['guard'],config)
             old,fingerprint=config.read()
@@ -176,21 +180,22 @@ class ModelAdmin:
             code=str(exc) if isinstance(exc,ModelError) else 'model_save_unconfirmed'
             self.finish(operation,'failed' if isinstance(exc,ModelError) else 'unknown',{'code':code})
             raise ModelError(code) from None
-        return self.settings(fallback)
+        return self.settings(fallback,proactive=proactive)
 
-    def probe(self, value):
+    def probe(self, value, *, proactive=False):
         require(not self.error,'model_admin_unavailable')
         require(isinstance(value,dict) and set(value)=={'operation_id','guard','confirm'}
                 and value['confirm']=='billable_capability_probe','model_probe_confirmation')
         # Idempotence is checked before current config/guard. An unknown result is never retried.
         existing=self.db.execute('SELECT config_version FROM actions WHERE id=?',(value['operation_id'],)).fetchone()
         if existing:
-            self.begin(value,'probe',existing[0]);return self.settings()
-        self.check_guard(value['guard'])
-        snapshot=self.config.snapshot()
-        self.begin(value,'probe',snapshot.profile.config_version)
+            self.begin(value,'probe_proactive' if proactive else 'probe',existing[0]);return self.settings(proactive=proactive)
+        config=self.selected_config(proactive=proactive)
+        self.check_guard(value['guard'],config)
+        snapshot=config.snapshot()
+        self.begin(value,'probe_proactive' if proactive else 'probe',snapshot.profile.config_version)
         self.task=asyncio.create_task(self.queued_probe(value['operation_id'],snapshot))
-        return self.settings()
+        return self.settings(proactive=proactive)
 
     async def queued_probe(self, operation, snapshot):
         from .backend_protocol import ProtocolError

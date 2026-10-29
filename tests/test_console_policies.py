@@ -538,6 +538,36 @@ class ModelAdminTests(unittest.IsolatedAsyncioTestCase):
         return dict(operation_id=letter*32,guard=settings['guard'],profile=settings['profile'],groups=settings['groups'],
                     api_key='NEW_PRIVATE_KEY',api_url=settings['api_url'])
 
+    async def test_proactive_settings_save_is_isolated_and_never_inherits_primary_key(self):
+        before=self.path.read_bytes();settings=self.admin.settings(proactive=True)
+        self.assertEqual(settings['role'],'proactive');self.assertFalse(settings['key_configured'])
+        body=self.payload();body.update(guard=settings['guard'],api_key='PROACTIVE_PRIVATE_KEY')
+        body['profile']={**body['profile'],'model':'cheap-fixture','max_output_tokens':128}
+        saved=self.admin.save(body,proactive=True)
+        self.assertEqual(self.path.read_bytes(),before);self.assertEqual(saved['role'],'proactive')
+        self.assertEqual(self.runtime.proactive_config.snapshot().profile.api_key,'PROACTIVE_PRIVATE_KEY')
+        self.assertFalse(self.runtime.capabilities.path.exists())
+        self.assertNotIn('PROACTIVE_PRIVATE_KEY',json.dumps(saved))
+        self.assertEqual(self.admin.save(body,proactive=True)['guard'],saved['guard'])
+        self.client.request.assert_not_called()
+
+    async def test_proactive_probe_uses_selected_model_once_and_bills_shared_ledger(self):
+        from ournotes_bot.domain.model_calls import AttemptResult,Usage,ToolCall
+        settings=self.admin.settings(proactive=True);body=self.payload()
+        body.update(guard=settings['guard'],api_key='PROACTIVE_PRIVATE_KEY')
+        body['profile']={**body['profile'],'model':'cheap-fixture','max_output_tokens':128}
+        saved=self.admin.save(body,proactive=True)
+        self.client.request.return_value=AttemptResult('ok',Usage(10,0,2,None,12,'known'),
+            (ToolCall('echo','capability_echo','{"marker":"taki-probe"}'),))
+        probe=dict(operation_id='b'*32,guard=saved['guard'],confirm='billable_capability_probe')
+        self.admin.probe(probe,proactive=True);await self.admin.task
+        result=self.admin.probe(probe,proactive=True)
+        self.assertEqual(result['capability']['state'],'succeeded')
+        self.assertEqual(self.client.request.await_count,1)
+        self.assertEqual(self.client.request.call_args.args[0].model,'cheap-fixture')
+        self.assertEqual(self.runtime.usage.get('b'*32)['model'],'cheap-fixture')
+        self.assertEqual(self.admin.settings()['profile']['model'],self.old['profile']['model'])
+
     async def test_console_save_preserves_protected_group_admissions(self):
         value={**self.old,'schema':'taki-model-config/3','secret':'OLD_KEY','groups':{},
                'group_admissions':[dict(conversation_id='g',evidence_ref='verified/group')]}
@@ -2450,6 +2480,88 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
             if plan['status'] not in ('preparing','prepared'):self.fail('candidate stopped: '+plan['status'])
             await asyncio.sleep(.005)
         self.fail('candidate did not finish')
+
+    def dedicated_model(self,**limits):
+        from dataclasses import asdict
+        runtime=self.backend.model_runtime
+        value={'schema':'taki-model-config/2','instance_id':'fixture','app_id':'app',
+            'profile':asdict(replace(self.snapshot.profile,model='cheap-fixture',config_version='proactive-fixture',max_output_tokens=128,
+                price=replace(self.snapshot.profile.price,input_rate=100000,cached_rate=50000,output_rate=200000),**limits)),
+            'secret':'PROACTIVE_PRIVATE_KEY','bindings':[],'groups':{}}
+        value['profile'].pop('api_key')
+        runtime.proactive_config.path.write_text(json.dumps(value),encoding='utf-8')
+        snapshot=runtime.proactive_snapshot('g1')
+        runtime.proactive_capabilities.path.write_text(json.dumps({'schema':'chat-capabilities/3',
+            'config_version':snapshot.profile.config_version,'fingerprint':snapshot.fingerprint,
+            'web_search':None,'vision':None,'proactive':{'groups':['g1'],
+                'receive_evidence_ref':'fixture/receive','send_evidence_ref':'fixture/send'}}),encoding='utf-8')
+        services={'schema':'taki-chat-services/1','instance_id':'fixture','app_id':'app',
+            'profile':{'config_version':snapshot.profile.config_version,'fingerprint':snapshot.fingerprint,
+                       'currency':snapshot.profile.price.currency},'groups':{'g1':{
+                'approved':True,'service_subject_id':'cheap-service','approval_ref':'fixture/proactive',
+                'proactive':asdict(self.policy.proactive)}}}
+        self.agent.proactive.services.path.write_text(json.dumps(services),encoding='utf-8')
+        self.agent.proactive.services.path.chmod(0o600)
+        return snapshot
+
+    async def test_dedicated_proactive_runs_real_backend_with_own_model_and_shared_service_bill(self):
+        snapshot=self.dedicated_model();runtime=self.backend.model_runtime
+        value=self.observation();self.tick+=1.6
+        self.client.request.return_value=self.result('{"participation":"reply","text":"合成主动回复"}')
+        plan,attempts,_=await self.candidate(value)
+        self.assertTrue(plan['send_allowed'])
+        self.assertEqual(self.client.request.call_args.args[0],snapshot.profile)
+        row=runtime.usage.get(attempts[0]);self.assertEqual(row['model'],'cheap-fixture')
+        self.assertEqual(row['cost'],str(snapshot.profile.price.amount(self.result().usage)[1]))
+        self.assertEqual(row['user_key'],runtime.usage.key('service','fixture','app','g1','cheap-service','proactive'))
+        self.assertEqual(row['group_key'],runtime.usage.key('group','g1'))
+        self.event(plan,'intent');self.event(plan,'ack')
+        self.client.request.reset_mock();self.client.request.return_value=self.result('点名回复仍用原模型。')
+        await self.prepare_native('/问 普通聊天',seq=2)
+        self.assertEqual(self.client.request.call_args.args[0].model,self.snapshot.profile.model)
+
+    def test_dedicated_limits_cannot_relax_existing_group_quota_or_rate(self):
+        self.snapshot=replace(self.snapshot,profile=replace(self.snapshot.profile,
+            group_daily_limit=17,group_rate_requests=2,rate_window_seconds=60))
+        snapshot=self.dedicated_model(group_daily_limit=1000000,group_rate_requests=100,rate_window_seconds=1)
+        self.assertEqual(snapshot.profile.group_daily_limit,17)
+        self.assertEqual(snapshot.profile.group_rate_requests,2)
+        self.assertEqual(snapshot.profile.rate_window_seconds,60)
+
+    async def test_dedicated_config_change_revokes_prepared_send(self):
+        self.dedicated_model();value=self.observation();self.tick+=1.6
+        self.client.request.return_value=self.result('{"participation":"reply","text":"不应再发送"}')
+        plan,_,_=await self.candidate(value)
+        self.backend.model_runtime.proactive_config.path.unlink()
+        self.assertFalse(self.backend.lookup(plan['request_id'],'e1')['send_allowed'])
+        self.assertTrue(self.backend.model_runtime.dedicated_proactive())
+
+    def test_dedicated_missing_or_mismatched_approval_blocks_observation_without_primary_fallback(self):
+        from ournotes_bot.application.backend_protocol import Request
+        self.dedicated_model();self.agent.proactive.services.path.unlink()
+        raw=self.request('independent',1);raw['trigger']='observation'
+        self.assertFalse(self.agent.proactive.observe(Request.parse(raw,'fixture','app',self.now)))
+        self.client.request.assert_not_called()
+
+    def test_dedicated_currency_cannot_bypass_shared_reference_unit(self):
+        from ournotes_bot.domain.model_calls import ModelError
+        self.dedicated_model();path=self.backend.model_runtime.proactive_config.path
+        value=json.loads(path.read_text(encoding='utf-8'));value['profile']['price']['reference_rate']+=1
+        value['profile']['config_version']='changed-reference';path.write_text(json.dumps(value),encoding='utf-8')
+        with self.assertRaisesRegex(ModelError,'reference_unit_mismatch'):
+            self.backend.model_runtime.proactive_snapshot('g1')
+        self.client.request.assert_not_called()
+
+    async def test_proactive_budget_failure_never_uses_fallback(self):
+        from ournotes_bot.domain.model_calls import ModelError
+        from types import SimpleNamespace
+        from unittest.mock import AsyncMock
+        runtime=self.backend.model_runtime;work=SimpleNamespace(proactive=object(),budget_fallback=False,
+            model_attempts=0,model_snapshot=self.snapshot)
+        operation=AsyncMock(side_effect=ModelError('primary_budget_exceeded'))
+        with self.assertRaisesRegex(ModelError,'primary_budget_exceeded'):
+            await runtime.routed(work,operation,1000)
+        self.assertFalse(work.budget_fallback);operation.assert_awaited_once()
 
     async def test_skip_is_billed_to_service_without_dialogue_persistence(self):
         value=self.observation();self.tick+=1.6

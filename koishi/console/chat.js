@@ -2,13 +2,13 @@
 import { h } from './runtime.js';
 import { button, stamp } from './views.js';
 const names={primary:'主模型',fallback:'备用模型',web:'联网搜索',vision:'图片理解',proactive:'主动发言',summary:'摘要'};
-const reasons={approved:'已有批准记录',agent_disabled:'Agent 尚未启用',group_required:'请在群详情核对批准范围',approval_absent_or_profile_changed:'未批准或批准绑定的模型版本已变化',model_not_configured:'模型尚未配置',chat_services_absent:'群服务未配置',chat_service_unapproved:'本群服务未批准',chat_service_profile_mismatch:'群服务绑定的模型版本已变化',service_disabled:'群服务配置为关闭',proactive_limits_unsupported:'主动发言限额超出当前支持范围',ready:'已有本群服务批准',chat_capability_configuration:'能力配置格式需要核对',chat_capability_unverified:'接口或币种不符合批准要求',capability_read_failed:'能力文件读取失败'};
+const reasons={dedicated_proactive_model:'主动发言使用独立模型',approved:'已有批准记录',agent_disabled:'Agent 尚未启用',group_required:'请在群详情核对批准范围',approval_absent_or_profile_changed:'未批准或批准绑定的模型版本已变化',model_not_configured:'模型尚未配置',chat_services_absent:'群服务未配置',chat_service_unapproved:'本群服务未批准',chat_service_profile_mismatch:'群服务绑定的模型版本已变化',service_disabled:'群服务配置为关闭',proactive_limits_unsupported:'主动发言限额超出当前支持范围',ready:'已有本群服务批准',chat_capability_configuration:'能力配置格式需要核对',chat_capability_unverified:'接口或币种不符合批准要求',capability_read_failed:'能力文件读取失败'};
 const reason=v=>reasons[v]||v||'尚未采集';
 export function capabilityView(value,effective=null){
  return h('section',[h('h2','能力与批准状态'),!value?h('p','尚未取得能力状态'):h('div',[h('p',`运行引擎：${value.engine} · 读取不会发起模型探测`),
  h('p','下列批准来自管理员登记的证据；当前面板未进行联网、图片或平台收发测试。模型版本变化后需重新核对批准。'),
  effective&&h('p',`本群查询：${effective.queries===true?'允许':effective.queries===false?'暂停':'未知'} · 模型模式：${({model:'允许模型',local:'仅本地',off:'关闭',inherit:'继承'})[effective.natural_query]||'未知'}；本群策略与额度仍会限制实际执行。`),
- ...(value.profiles||[]).map(p=>h('details',{open:true},[h('summary',`${names[p.role]} · ${p.model||'未配置'} · ${p.config_version||'无版本'}`),!p.configured&&h('p',reason(p.reason)),
+ ...(value.profiles||[]).map(p=>h('details',{open:true},[h('summary',`${p.role==='proactive'?'主动参与模型':names[p.role]} · ${p.model||'未配置'} · ${p.config_version||'无版本'}`),!p.configured&&h('p',reason(p.reason)),
  h('ul',(p.capabilities||[]).map(c=>h('li',[h('strong',names[c.kind]),h('p',`实现：${c.implemented?'已有':'未知'} · 批准：${c.approved?'已有记录':'无有效记录'} · 批准前置条件：${c.eligible?'条件满足，仍需权限与额度':'条件未满足'} · ${reason(c.reason)}`),c.evidence_ref&&h('small','证据编号：'+c.evidence_ref)]))),
  p.services&&h('div',[h('h3','群服务预算'),h('p',reason(p.services.reason)),...['summary','proactive'].filter(k=>p.services[k]).map(k=>{const v=p.services[k];return h('p',`${names[k]}：${v.enabled?'已配置开启':'关闭'} · 每小时费用上限 ${p.services.currency} ${v.max_cost_micro_per_hour/1e6} · ${k==='summary'?'最多任务 '+v.max_jobs_per_hour:'最多调用 '+v.max_calls_per_hour+' / 回复 '+v.max_replies_per_hour+' · 冷却 '+v.cooldown_seconds+' 秒'}`);})])]))])]);
 }

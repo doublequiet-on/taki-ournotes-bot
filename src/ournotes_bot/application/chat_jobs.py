@@ -83,8 +83,8 @@ def _limits(value, kind):
 class ChatServices:
     """Missing, unapproved, mismatched or invalid files disable services, never ordinary chat."""
 
-    def __init__(self, state_dir, instance_id, app_id):
-        self.path = Path(state_dir) / 'chat-services-v1.json'
+    def __init__(self, state_dir, instance_id, app_id, *, filename="chat-services-v1.json"):
+        self.path = Path(state_dir) / filename
         self.namespace = (instance_id, app_id)
         self.code = 'chat_services_absent'
 

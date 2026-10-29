@@ -42,6 +42,21 @@
 
 `ChatServices(state_dir, instance_id, app_id).policy(snapshot, group_id)` 返回不可变 `ServicePolicy` 或 `None`，`.code` 提供有限诊断。策略有 `.summary`、`.proactive` 和各自上限、批准引用、服务主体及 profile 绑定。
 
+## 独立主动参与模型
+
+控制台「模型与额度 → 管理配置 → 主动参与模型」可独立保存 provider、模型 ID、密钥、推理强度、输入／输出预算、频率及价格。配置文件默认位于 state-dir 的 `model-proactive-v1.json`，使用现有 `taki-model-config/2` 或 `/3` 合同；可由 `OURNOTES_AI_PROACTIVE_PROFILE_FILE` 指定路径、`OURNOTES_PROACTIVE_AI_API_KEY` 提供后端密钥。未填写独立密钥时不继承主模型或备用模型的密钥。付费能力测试也是独立入口，只有显式确认才执行，记录到同一账本，不会自动批准群服务。
+
+旧安装完全没有独立主动配置及批准文件时保留共用主模型的行为。管理员配置独立角色后，主动判断及本轮只读工具循环、最终回复均使用该 profile；被点名聊天、`/问`、预算备用路由及摘要保持原配置。独立文件出现即选择独立角色，当前进程随后即使文件丢失也不会自动回到主模型；重启时独立能力／服务文件的存在也会维持独立路由。需要显式固定该选择的安装应设置 `OURNOTES_AI_PROACTIVE_PROFILE_FILE`。主动任务额度不足或提供方失败时停止，不自动调用主模型或备用模型。
+
+独立角色另用 state-dir 下的两个批准文件，均绑定独立 profile 的 config_version 和 fingerprint：
+
+- `chat-proactive-capabilities-v1.json`：与原 `chat-capabilities-v1.json` 相同的 schema。proactive 必须有目标群、真实平台接收及发送证据；初次试运行的 web_search、vision 均设 null，主模型的联网／图片批准不会继承。
+- `chat-proactive-services-v1.json`：与本文 `chat-services-v1.json` 相同的 schema、群服务主体和小时预算。仅 proactive 生效，独立角色的 summary 设置不接入摘要任务。原文件继续服务主模型摘要与旧路由。
+
+保存模型本身不创建这两个批准文件、不收集群消息、不启用主动发送。修改独立模型后需要重新核对并批准对应版本；缺失、无效、币种或指纹不符均关闭主动参与。在途请求及发送前会重新核验模型与批准，旧结果不能换绑到新配置。已发生的模型费用和成功回复事实保持不变。
+
+独立模型的群日额度与频率只能收紧主模型现有群上限，不能放宽；频率窗口采用两者较长值。独立模型与主模型必须使用同一账本参考单位（币种和 reference_rate），不自动换汇；各模型的输入、缓存和输出单价可以不同。服务费用仍使用原群服务请求命名空间及实际 price 快照，继续受本群小时费用／请求／回复上限、成功 ACK 冷却和账本每日预算约束。非 DeepSeek 的美元费用仍计入全机器人主模型日预算；DeepSeek 沿用既有提供方预算语义，不将人民币伪装成美元。不同币种不能通过单独角色绕开账本限制。
+
 ## 预算与账务接线
 
 `service_request_id(task, instance_id, app_id, group_id, source_key)` 为 `summary` 或 `proactive` 生成独立请求身份。摘要可使用源集合哈希作为 `source_key`，主动参与可使用触发批次身份；同一业务的模型连续调用共享该 job request_id，不能混进普通用户请求。

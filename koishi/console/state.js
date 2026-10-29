@@ -54,7 +54,7 @@ export function sessionState() {
     if(snapshot.global){draft.value=snapshot.global.draft;guard.value=snapshot.global.guard;dirty.value=true;conflict.value=!!snapshot.global.conflict;}
     if(snapshot.group){groupId.value=snapshot.group.id;groupDraft.value=snapshot.group.draft;groupRevision.value=snapshot.group.revision;groupDirty.value=true;
       groupEpochBeforeDisconnect=snapshot.group.epoch;groupRecoveryBlocked.value=true;}
-    if(snapshot.model){modelRole.value=snapshot.model.role==='fallback'?'fallback':'primary';modelDraft.value=snapshot.model.draft;modelGuard.value=snapshot.model.guard;modelDirty.value=true;modelConflict.value=!!snapshot.model.conflict;}
+    if(snapshot.model){modelRole.value=['fallback','proactive'].includes(snapshot.model.role)?snapshot.model.role:'primary';modelDraft.value=snapshot.model.draft;modelGuard.value=snapshot.model.guard;modelDirty.value=true;modelConflict.value=!!snapshot.model.conflict;}
     for(const [map,entries] of [[pendingJobs,snapshot.jobs],[pendingControls,snapshot.controls],[pendingProbes,snapshot.probes],[pendingTrusted,snapshot.trusted]])
       if(Array.isArray(entries))for(const [key,value] of entries)map.set(key,value);
     if(reauthNotice)message.value='管理会话已过期，请重新登录。'+reauthNotice;
@@ -87,7 +87,7 @@ export function sessionState() {
         if(!groupDirty.value)selectGroup(groupId.value);
         else if(groupRevision.value!==value.policy?.revision)groupConflict.value=true;
       }
-      if(['model/settings','model/fallback/settings'].includes(method))acceptModel(value);
+      if(['model/settings','model/fallback/settings','model/proactive/settings'].includes(method))acceptModel(value);
     } catch (error) {
       if(token!==generation||seq!==sequences.get(target))return;
       if(unauthorized(error))return;
@@ -181,13 +181,13 @@ export function sessionState() {
   }
   function acceptModel(value){
     if(value.primary_budget&&!budgetEdit.value?.dirty)budgetEdit.value={daily:value.primary_budget.daily_usd,guard:value.primary_budget.guard,dirty:false};
-    if(['succeeded','failed'].includes(value.capability?.state))pendingProbes.delete(value.profile?.config_version);
+    if(['succeeded','failed'].includes(value.capability?.state))pendingProbes.delete((value.role||modelRole.value)+'/'+value.profile?.config_version);
     if(!modelDirty.value){modelDraft.value=structuredClone(toRaw(value.profile));modelGuard.value=value.guard;}
     else if(JSON.stringify(modelGuard.value)!==JSON.stringify(value.guard))modelConflict.value=true;
   }
-  function refreshModel(){return load(model,modelRole.value==='fallback'?'model/fallback/settings':'model/settings');}
+  function refreshModel(){return load(model,modelRole.value==='primary'?'model/settings':`model/${modelRole.value}/settings`);}
   function selectModelRole(role){
-    if(modelDirty.value){message.value='请先保存或放弃当前模型草稿，再切换主备配置。';return;}
+    if(modelDirty.value){message.value='请先保存或放弃当前模型草稿，再切换模型配置。';return;}
     modelRole.value=role;model.value=null;modelDraft.value=null;modelGuard.value=null;modelKey.value='';void refreshModel();
   }
   async function saveBudget(){
@@ -205,7 +205,7 @@ export function sessionState() {
     try{
       let groups=structuredClone(toRaw(model.value?.groups)||{});
       if(group){if(limits===null)delete groups[group];else groups={...groups,[group]:limits};}
-      const result=await rpc(modelRole.value==='fallback'?'model/fallback/save':'model/save',{operation_id:crypto.randomUUID().replaceAll('-',''),guard:group?model.value.guard:modelGuard.value,
+      const result=await rpc(modelRole.value==='primary'?'model/save':`model/${modelRole.value}/save`,{operation_id:crypto.randomUUID().replaceAll('-',''),guard:group?model.value.guard:modelGuard.value,
         profile:JSON.parse(profile),groups,api_key:group?'':key,api_url:JSON.parse(profile).wire_profile==='openai-responses-v1'?'https://api.openai.com/v1/responses':model.value.endpoints[JSON.parse(profile).provider]});
       if(token!==generation)return;
       if(!group)modelDirty.value=JSON.stringify(modelDraft.value)!==profile;
@@ -216,11 +216,11 @@ export function sessionState() {
     }finally{modelKey.value='';busy.value=false;}
   }
   async function probeModel(){
-    const token=generation,version=model.value?.profile?.config_version;
-    if(modelDirty.value||!version||modelRole.value!=='primary')return;
-    if(!pendingProbes.has(version))pendingProbes.set(version,{operation_id:crypto.randomUUID().replaceAll('-',''),guard:model.value.guard,confirm:'billable_capability_probe'});
+    const token=generation,version=model.value?.profile?.config_version,probeKey=modelRole.value+'/'+version;
+    if(modelDirty.value||!version||modelRole.value==='fallback')return;
+    if(!pendingProbes.has(probeKey))pendingProbes.set(probeKey,{operation_id:crypto.randomUUID().replaceAll('-',''),guard:model.value.guard,confirm:'billable_capability_probe'});
     busy.value=true;
-    try{const value=await rpc('model/probe',pendingProbes.get(version));if(token!==generation)return;
+    try{const value=await rpc(modelRole.value==='proactive'?'model/proactive/probe':'model/probe',pendingProbes.get(probeKey));if(token!==generation)return;
       model.value=value;acceptModel(value);message.value='能力测试已受理；用量与结果将单独记录。';
     }catch(error){if(token!==generation||unauthorized(error))return;message.value='能力测试结果未确认，请刷新记录；不会自动重复调用。';}
     finally{busy.value=false;}
