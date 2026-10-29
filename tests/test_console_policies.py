@@ -64,6 +64,8 @@ class WeightedUsageTests(unittest.TestCase):
         self.ledger.settle('a1',usage,actions=(ProviderAction('web_search',None),))
         row=self.ledger.get('a1')
         self.assertEqual((row['charged'],row['reserved'],row['billing_incomplete']),('140','60000',1))
+        self.assertFalse(self.ledger.settle('a1',usage,actions=(ProviderAction('web_search',None),)))
+        self.assertEqual(self.ledger.get('a1')['reserved'],'60000')
         with self.assertRaisesRegex(ModelError,'quota_exceeded'):
             self.ledger.reserve('r2','a2','u','g',profile,100,action_budget=(('web_search',1,60000),))
         self.ledger.settle('a1',usage,actions=(ProviderAction('web_search',0),))
@@ -84,6 +86,9 @@ class WeightedUsageTests(unittest.TestCase):
         self.ledger.settle('a1',Usage(100,0,20,None,120,'known'),actions=(ProviderAction('web_search',1),))
         row=self.ledger.get('a1')
         self.assertEqual((row['charged'],row['reserved'],row['billing_incomplete']),('60140','0',0))
+        self.assertFalse(self.ledger.settle('a1',Usage(100,0,20,None,120,'known'),actions=(ProviderAction('web_search',1),)))
+        with self.assertRaisesRegex(ModelError,'quota_exceeded'):
+            self.ledger.reserve('r3','a3','u','g',profile,100,action_budget=(('web_search',1,60000),))
 
     def legacy_indexes(self):
         # A schema-1 database from before the access-path update.
