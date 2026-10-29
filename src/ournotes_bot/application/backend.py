@@ -764,7 +764,7 @@ def create_app(backend, token, initialize=None):
             require(backend.ready and not backend.closing,'backend_not_ready',503)
             require(backend.ledger.active(request.headers.get('X-Taki-Epoch')),'ops_gateway_epoch',409)
             value=await read_json(request)
-            return json(owner.probe(value) if request.path.endswith('/probe') else owner.save(value,fallback))
+            return json(owner.save_budget(value) if request.path.endswith('/budget') else owner.probe(value) if request.path.endswith('/probe') else owner.save(value,fallback))
         except ModelError as exc:
             raise ProtocolError(str(exc),409) from None
         except (OSError,sqlite3.Error):
@@ -881,7 +881,7 @@ def create_app(backend, token, initialize=None):
                     web.get('/v1/admin/query-metrics', admin_metrics), web.post('/v1/admin/telemetry', admin_telemetry),
                     web.get('/v1/admin/model', model_settings),web.post('/v1/admin/model', model_settings),
                     web.get('/v1/admin/model/fallback',model_settings),web.post('/v1/admin/model/fallback',model_settings),
-                    web.post('/v1/admin/model/probe',model_settings),web.get('/v1/admin/model/groups/{gid}',model_group),
+                    web.post('/v1/admin/model/probe',model_settings),web.post('/v1/admin/model/budget',model_settings),web.get('/v1/admin/model/groups/{gid}',model_group),
                     web.get('/v1/admin/library/{kind}/{offset:[0-9]+}',library_status),web.post('/v1/admin/library/{action}',library_command),
                     web.get('/v1/admin/chat/status',chat_status),web.get('/v1/admin/chat/groups/{gid}/status',chat_status),
                     web.get('/v1/admin/chat/groups/{gid}/memory',chat_memory),web.post('/v1/admin/chat/groups/{gid}/memory',chat_memory),
