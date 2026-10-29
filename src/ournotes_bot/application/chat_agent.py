@@ -379,6 +379,10 @@ class ChatAgent:
             self.audit(self.store.bind_sources,work.delivery,work.request.scope,list(work.memory_sources))
         else:work.participating_history=tuple(context)
         try:
+            if work.model_snapshot.profile.provider!='deepseek':
+                final_attempt=uuid.uuid4().hex
+                runtime.usage.reserve(work.service_request_id or work.request.request_id,final_attempt,user,group,
+                    work.model_snapshot.profile,work.model_snapshot.profile.max_input_tokens)
             for index in range(self.budget.model_calls):
                 runtime.check(work,deadline,leases)
                 final=force_final or work.model_attempts>=self.budget.model_calls-1 or index==self.budget.model_calls-1 or operations>=self.budget.tool_calls or deadline-time.monotonic()<=self.budget.final_seconds
@@ -389,7 +393,8 @@ class ChatAgent:
                     result=await runtime.attempt(work,messages,[] if final else [tool.wire() for tool in registry.values()],
                                                  user,group,deadline,leases,reservation=reservation)
                 except ModelError as exc:
-                    if str(exc)!='quota_exceeded' or final or final_attempt is None: raise
+                    if str(exc) not in ('quota_exceeded','primary_budget_exceeded') or final or final_attempt is None: raise
+                    if str(exc)=='primary_budget_exceeded' and work.model_attempts==0:raise
                     # No HTTP/permit has started on a failed reserve. Consume the
                     # already held final request instead of another retrieval.
                     final=True

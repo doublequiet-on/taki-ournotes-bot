@@ -114,6 +114,9 @@ class Settings:
     knowledge_dir: Path | None = None
     knowledge_model_dir: Path | None = None
     ai_profile_file: Path | None = None
+    ai_fallback_profile_file: Path | None = None
+    ai_primary_daily_usd: str = '2.5'
+    fallback_ai_api_key: str = field(default='', repr=False)
     query_ai_api_key: str = field(default='', repr=False)
     ai_reasoning_effort: str | None = None
     ai_openai_proxy: str | None = None
@@ -163,6 +166,7 @@ class Settings:
         configured_knowledge = os.getenv('OURNOTES_KNOWLEDGE_DIR', '').strip() or 'knowledge/on'
         configured_embedding = os.getenv('OURNOTES_KNOWLEDGE_MODEL_DIR', '').strip()
         configured_profile = os.getenv('OURNOTES_AI_PROFILE_FILE', '').strip()
+        fallback_profile = os.getenv('OURNOTES_AI_FALLBACK_PROFILE_FILE','').strip()
         chat_engine = os.getenv('OURNOTES_CHAT_ENGINE', 'legacy').strip()
         story_dir = os.getenv('OURNOTES_STORY_DIR','').strip()
         if chat_engine not in ('legacy', 'agent'):
@@ -172,6 +176,9 @@ class Settings:
             knowledge_dir=(CONFIG_ROOT / configured_knowledge).resolve(),
             knowledge_model_dir=(CONFIG_ROOT / configured_embedding).resolve() if configured_embedding else None,
             ai_profile_file=(CONFIG_ROOT / configured_profile).resolve() if configured_profile else None,
+            ai_fallback_profile_file=(CONFIG_ROOT / fallback_profile).resolve() if fallback_profile else None,
+            ai_primary_daily_usd=os.getenv('OURNOTES_AI_PRIMARY_DAILY_USD','2.5').strip(),
+            fallback_ai_api_key=os.getenv('OURNOTES_FALLBACK_AI_API_KEY','').strip(),
             chat_engine=chat_engine,
             story_dir=(CONFIG_ROOT/story_dir).resolve() if story_dir else None,
             query_ai_api_key=os.getenv('OURNOTES_QUERY_AI_API_KEY','').strip(),

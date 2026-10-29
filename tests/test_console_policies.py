@@ -63,6 +63,46 @@ class WeightedUsageTests(unittest.TestCase):
         with self.assertRaisesRegex(ModelError,'usage_conflict'):
             self.ledger.settle('a',Usage(10,0,2,None,12,'known'),actions=(ProviderAction('web_search',1),))
 
+    def test_primary_daily_usd_budget_is_global_exact_and_survives_restart(self):
+        from fractions import Fraction
+        from ournotes_bot.application.usage_ledger import UsageLedger,day
+        from ournotes_bot.domain.model_calls import Usage,ModelError
+        profile=replace(self.profile,provider='openai',wire_profile='openai-responses-v1',
+            price=replace(self.profile.price,input_rate=100000000,cached_rate=100000000,output_rate=100000000),
+            user_daily_limit=10**10,group_daily_limit=10**10)
+        for key in ('a','b'):
+            self.ledger.reserve(key,key,key,key,profile,10000)
+        with self.assertRaisesRegex(ModelError,'primary_budget_exceeded'):
+            self.ledger.reserve('c','c','other','other',profile,10000)
+        self.ledger.start('a',profile)
+        self.ledger.settle('a',Usage(10000,0,5000,None,15000,'known'))
+        self.ledger.release('b','cancelled')
+        self.assertEqual(self.ledger.primary_spent(day(self.now[0])),1500000)
+        self.ledger.close();self.ledger=UsageLedger(self.path,'fixture',clock=lambda:self.now[0])
+        self.assertEqual(self.ledger.primary_spent(day(self.now[0])),1500000)
+        with self.assertRaisesRegex(ModelError,'primary_budget_exceeded'):
+            self.ledger.reserve('c','c','other','other',profile,10000)
+        # DeepSeek is outside the primary USD budget but keeps ordinary quotas.
+        self.ledger.reserve('d','d','u','g',self.profile,100)
+        self.now[0]+=86400
+        self.assertEqual(self.ledger.primary_spent(day(self.now[0])),0)
+        self.ledger.reserve('next','next','other','other',profile,10000)
+
+    def test_primary_budget_counts_web_cost_and_unknown_token_hold(self):
+        from ournotes_bot.application.usage_ledger import day
+        from ournotes_bot.domain.model_calls import Usage,ProviderAction,ModelError
+        profile=replace(self.profile,provider='openai',wire_profile='openai-responses-v1',
+            user_daily_limit=10**10,group_daily_limit=10**10)
+        self.ledger.reserve('a','a','u1','g1',profile,100,action_budget=(('web_search',2,1000000),))
+        self.ledger.start('a',profile)
+        self.ledger.settle('a',Usage(10,0,2,None,12,'known'),actions=(ProviderAction('web_search',2),))
+        self.assertEqual(self.ledger.primary_spent(day(self.now[0])),2000014)
+        with self.assertRaisesRegex(ModelError,'primary_budget_exceeded'):
+            self.ledger.reserve('b','b','u2','g2',profile,100,action_budget=(('web_search',1,600000),))
+        self.ledger.reserve('c','c','u2','g2',profile,100)
+        self.ledger.start('c',profile);self.ledger.settle('c',Usage())
+        self.assertGreater(self.ledger.primary_spent(day(self.now[0])),2000014)
+
     def test_observation_failure_keeps_settled_usage_and_business_result_available(self):
         from ournotes_bot.domain.model_calls import Usage
         self.ledger.reserve('r','a','u',None,self.profile,100)
@@ -2666,6 +2706,136 @@ class ChatReviewRegressionTests(Fixture,unittest.IsolatedAsyncioTestCase):
                 public_search_query(query,private_texts=('PIN is 493810',))
         with self.assertRaises(ValueError):
             list(response_citations([dict(type='message',content=[dict(text='source',annotations=[dict(type='url_citation',url='http://%31%32%37.0.0.1/admin',title='s',start_index=0,end_index=6)])])]))
+
+
+class ChatBudgetRoutingTests(Fixture,unittest.IsolatedAsyncioTestCase):
+    Helpers=ChatAgentTests.Helpers
+    request=ChatAgentTests.request
+    result=ChatAgentTests.result
+    asyncSetUp=ChatAgentTests.asyncSetUp
+    prepare_native=ChatAgentTests.prepare_native
+    event=ChatAgentTests.event
+
+    def configure(self,exhausted=True):
+        from fractions import Fraction
+        from ournotes_bot.application.model_config import ConfigSnapshot
+        runtime=self.backend.model_runtime
+        self.snapshot=replace(self.snapshot,profile=replace(self.snapshot.profile,
+            provider='openai',wire_profile='openai-responses-v1',config_version='primary-v1'))
+        self.backup=ConfigSnapshot(replace(native_profile(),config_version='fallback-v1',
+            user_rate_requests=100,group_rate_requests=100),(),fingerprint='fallback-fixture')
+        runtime.fallback.snapshot=Mock(side_effect=lambda:self.backup)
+        if exhausted:runtime.usage.primary_daily_micro=Fraction(0)
+        self.client.request.return_value=self.result('fixture reply')
+        return runtime
+
+    async def test_exhausted_primary_uses_deepseek_once_with_original_identity(self):
+        runtime=self.configure()
+        plan,attempts=await self.prepare_native('/问 聊两句')
+        self.assertEqual(len(attempts),1)
+        self.assertEqual(self.client.request.call_args.args[0].provider,'deepseek')
+        row=runtime.usage.get(attempts[0])
+        self.assertEqual((row['provider'],row['config_version']),('deepseek','fallback-v1'))
+        self.assertEqual(plan['parts'][0]['business_status'],'success')
+        self.event(plan,'intent');self.event(plan,'ack')
+
+    async def test_available_primary_keeps_primary_and_releases_unused_final(self):
+        runtime=self.configure(False)
+        plan,attempts=await self.prepare_native('/问 聊两句')
+        self.assertEqual(len(attempts),1)
+        self.assertEqual(self.client.request.call_args.args[0].provider,'openai')
+        self.assertEqual(plan['parts'][0]['business_status'],'success')
+        self.assertEqual(runtime.usage.db.execute("SELECT count(*) FROM attempts WHERE error_code='final_not_needed' AND state='released'").fetchone()[0],1)
+        runtime.fallback.snapshot.assert_not_called()
+
+    async def test_missing_fallback_never_spends_primary_after_budget(self):
+        from ournotes_bot.domain.model_calls import ModelError
+        runtime=self.configure();runtime.fallback.snapshot.side_effect=ModelError('model_not_configured')
+        plan,attempts=await self.prepare_native('/问 聊两句')
+        self.assertEqual(attempts,[])
+        self.assertEqual(plan['parts'][0]['business_status'],'fallback_not_configured')
+        self.client.request.assert_not_called()
+
+    async def test_fallback_changes_revoke_prepared_delivery(self):
+        runtime=self.configure()
+        plan,_=await self.prepare_native('/问 聊两句')
+        self.assertTrue(plan['send_allowed'])
+        self.backup=replace(self.backup,fingerprint='changed')
+        self.assertFalse(self.backend.lookup(plan['request_id'],'e1')['send_allowed'])
+        with self.assertRaises(ProtocolError):self.event(plan,'intent')
+
+    async def test_competing_reservation_before_first_permit_uses_fallback(self):
+        from fractions import Fraction
+        runtime=self.configure(False)
+        original=runtime.agent.image_messages
+        async def competing(*args,**kwargs):
+            messages=await original(*args,**kwargs)
+            runtime.usage.primary_daily_micro=Fraction(0)
+            return messages
+        with patch.object(runtime.agent,'image_messages',side_effect=competing):
+            plan,attempts=await self.prepare_native('/问 聊两句')
+        self.assertEqual(len(attempts),1)
+        self.assertEqual(self.client.request.call_args.args[0].provider,'deepseek')
+        self.assertEqual(plan['parts'][0]['business_status'],'success')
+        self.assertEqual(runtime.agent.audit_failures,0)
+
+    async def test_started_primary_tool_turn_uses_held_final_without_switching(self):
+        from ournotes_bot.domain.model_calls import ToolCall
+        runtime=self.configure(False)
+        profile=self.snapshot.profile
+        calls=[]
+        async def model(current,body,**kwargs):
+            calls.append((current.provider,body))
+            if len(calls)==1:
+                runtime.usage.primary_daily_micro=profile.price.reserve(profile.max_input_tokens,profile.max_output_tokens)*profile.price.reference_rate/1000000+14
+                return self.result(calls=(ToolCall('help','catalog_info','{"kind":"help","query":""}'),))
+            return self.result('fixture final')
+        self.client.request.side_effect=model
+        plan,attempts=await self.prepare_native('/问 查帮助再回答')
+        self.assertEqual([provider for provider,_ in calls],['openai','openai'])
+        self.assertEqual(len(attempts),2)
+        self.assertNotIn('tools',calls[-1][1])
+        self.assertEqual(plan['parts'][0]['business_status'],'success')
+        runtime.fallback.snapshot.assert_not_called()
+
+    async def test_legacy_backend_also_uses_daily_budget_fallback(self):
+        runtime=self.configure()
+        self.backend.settings=replace(self.backend.settings,chat_engine='legacy')
+        runtime.agent.close();runtime.agent=None
+        plan,attempts=await self.prepare_native('/问 你好')
+        self.assertEqual(len(attempts),1)
+        self.assertEqual(self.client.request.call_args.args[0].provider,'deepseek')
+        self.assertEqual(plan['parts'][0]['business_status'],'success')
+
+    async def test_http_failure_does_not_retry_on_deepseek(self):
+        from ournotes_bot.domain.model_calls import AttemptResult,Usage
+        runtime=self.configure(False)
+        self.client.request.return_value=AttemptResult('error',Usage(),error_code='model_timeout')
+        plan,attempts=await self.prepare_native('/问 聊两句')
+        self.assertEqual(len(attempts),1)
+        self.assertEqual(self.client.request.call_count,1)
+        self.assertEqual(self.client.request.call_args.args[0].provider,'openai')
+        runtime.fallback.snapshot.assert_not_called()
+        self.assertNotEqual(plan['parts'][0]['business_status'],'success')
+
+    async def test_protected_deepseek_file_is_loaded_at_actual_backend_entry(self):
+        from dataclasses import asdict
+        from ournotes_bot.application.model_config import ModelConfiguration
+        runtime=self.configure()
+        profile=asdict(self.backup.profile);profile.pop('api_key')
+        path=self.repo.cache_file.with_name('fallback-config.json')
+        path.write_text(json.dumps(dict(schema='taki-model-config/2',instance_id='fixture',app_id='app',
+            profile=profile,secret='synthetic-deepseek-key',bindings=[],groups={})),encoding='utf8')
+        runtime.fallback=ModelConfiguration(path,'','fixture','app')
+        plan,attempts=await self.prepare_native('/问 聊两句')
+        self.assertEqual(len(attempts),1)
+        self.assertEqual(self.client.request.call_args.args[0].api_key,'synthetic-deepseek-key')
+        self.assertEqual(plan['parts'][0]['business_status'],'success')
+
+    async def test_primary_revocation_also_revokes_fallback_delivery(self):
+        self.configure();plan,_=await self.prepare_native('/问 聊两句')
+        self.snapshot=replace(self.snapshot,fingerprint='changed-primary')
+        self.assertFalse(self.backend.lookup(plan['request_id'],'e1')['send_allowed'])
 
 
 class ChatWebTests(Fixture,unittest.IsolatedAsyncioTestCase):

@@ -61,6 +61,8 @@ class Work:
     model_snapshot: object = None
     model_subject: str | None = None
     model_error: str | None = None
+    primary_model_snapshot: object = None
+    budget_fallback: bool = False
     model_started_at: float | None = None
     native_claimed: bool = False
     hint: bool = False
@@ -502,6 +504,8 @@ class Backend:
         if work and work.chat and not self.model_runtime.agent.images_valid(work):
             return False
         if work and work.chat and not self.model_runtime.agent.entity_valid(work):
+            return False
+        if work and self.model_runtime and not self.model_runtime.fallback_valid(work):
             return False
         if work and work.chat and not self.model_runtime.agent.web_valid(work):
             return False

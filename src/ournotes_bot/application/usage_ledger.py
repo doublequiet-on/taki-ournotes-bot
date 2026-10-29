@@ -1,4 +1,4 @@
-# L3: Single-writer, versioned exact weighted usage facts; independent of legacy call counts.
+# L3: Exact weighted usage and whole-bot primary USD budget; independent of legacy call counts.
 # Effects: SQLite reservations/settlements, missing-action markers and deletion trigger; no messages or credentials.
 from __future__ import annotations
 
@@ -10,6 +10,7 @@ import hashlib
 import hmac
 import json
 import os
+import re
 from pathlib import Path
 import secrets
 import sqlite3
@@ -27,7 +28,9 @@ def encode(value):
 
 
 class UsageLedger:
-    def __init__(self,path,namespace,*,clock=time.time):
+    def __init__(self,path,namespace,*,clock=time.time,primary_daily_usd='2.5'):
+        require(isinstance(primary_daily_usd,str) and re.fullmatch(r'\d{1,6}(?:\.\d{1,6})?',primary_daily_usd),'primary_budget_configuration')
+        self.primary_daily_micro=Fraction(primary_daily_usd)*1_000_000
         self.path=Path(path);self.clock=clock;self.db=None;self.observation_error=None
         self.path.parent.mkdir(parents=True,exist_ok=True)
         self.lock=self.path.with_suffix('.lock').open('a+b')
@@ -117,9 +120,27 @@ class UsageLedger:
         rows=self.db.execute(f'SELECT id,charged,reserved FROM attempts WHERE day=? AND {column}=?',(date,key))
         return sum((Fraction(r['charged'])+Fraction(r['reserved']) for r in rows if r['id']!=exclude),Fraction())
 
+    def primary_spent(self,date,exclude=None):
+        total=Fraction()
+        for row in self.db.execute("SELECT id,price,cost,reserved FROM attempts WHERE day=? AND provider<>'deepseek' AND state<>'released'",(date,)):
+            if row['id']==exclude:continue
+            price=Price(**json.loads(row['price']))
+            require(price.currency=='USD','primary_budget_currency')
+            total+=Fraction(row['cost'])+Fraction(row['reserved'])*price.reference_rate/1_000_000
+        return total
+
+    def check_primary(self,date,profile,amount,exclude=None):
+        if profile.provider=='deepseek':return
+        require(profile.price.currency=='USD','primary_budget_currency')
+        require(not self.db.execute('''SELECT 1 FROM attempts a JOIN unbounded_actions u ON u.attempt=a.id
+            WHERE a.provider<>'deepseek' AND (u.count IS NULL OR u.count<>0) LIMIT 1''').fetchone(),'usage_unavailable')
+        micro=amount*profile.price.reference_rate/1_000_000
+        require(self.primary_spent(date,exclude)+micro<=self.primary_daily_micro,'primary_budget_exceeded')
+
     def check(self,date,user,group,amount,profile,exclude=None):
         require(not self.db.execute('''SELECT 1 FROM attempts a JOIN unbounded_actions u ON u.attempt=a.id
             WHERE (u.count IS NULL OR u.count<>0) AND (a.user_key=? OR (? IS NOT NULL AND a.group_key=?)) LIMIT 1''',(user,group,group)).fetchone(),'usage_unavailable')
+        self.check_primary(date,profile,amount,exclude)
         require(self.spent(date,user,exclude=exclude)+amount<=profile.user_daily_limit,'quota_exceeded')
         if group is not None:
             require(self.spent(date,group,group=True,exclude=exclude)+amount<=profile.group_daily_limit,'quota_exceeded')

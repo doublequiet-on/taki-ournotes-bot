@@ -21,7 +21,7 @@ from ..sources.errors import ChartDataError
 from .site_lookup import SiteLookup
 from .model_config import ModelConfiguration
 from .model_admin import ModelAdmin
-from .usage_ledger import UsageLedger
+from .usage_ledger import UsageLedger, day
 from .conversation_state import ReadOnlyContext
 from .runtime_tasks import finish_thread
 from .backend_protocol import ProtocolError
@@ -103,6 +103,11 @@ ERRORS={
     'image_invalid_metadata':'这次图片附件信息不完整，请重新发送原图。',
     'chat_capability_revoked':'联网能力或模型配置已变化，这次请求已停止。',
     'usage_unavailable':'本次额度费用尚未核实，暂时不能继续调用模型。',
+    'primary_budget_exceeded':'今天的主模型预算已用完，请稍后再试。',
+    'primary_budget_currency':'主模型预算要求使用美元计价的配置。',
+    'fallback_not_configured':'今天的主模型预算不足，DeepSeek 备用配置尚不可用。',
+    'fallback_configuration':'DeepSeek 备用配置无效，请联系管理员。',
+    'fallback_configuration_changed':'模型配置已变化，请重新提问。',
     'story_revoked':'引用的剧情资料已变化，这次回答已停止，请重新提问。',
     'chat_memory_deleted':'所引用的聊天记忆已删除或到期，这次回答已停止。',
     'query_source_changed':'本轮查询资料的版本已变化，这次回答已停止，请重新提问。',
@@ -137,7 +142,11 @@ class ModelRuntime:
         self.task=None
         self.config=ModelConfiguration(getattr(backend.settings,'ai_profile_file',None),getattr(backend.settings,'query_ai_api_key',''),
                                        backend.instance_id,backend.app_id)
-        self.usage=UsageLedger(path,backend.instance_id+'\0'+backend.app_id)
+        self.usage=UsageLedger(path,backend.instance_id+'\0'+backend.app_id,
+            primary_daily_usd=getattr(backend.settings,'ai_primary_daily_usd','2.5'))
+        self.fallback=ModelConfiguration(getattr(backend.settings,'ai_fallback_profile_file',None)
+            or self.usage.path.with_name('model-fallback-v1.json'),getattr(backend.settings,'fallback_ai_api_key',''),
+            backend.instance_id,backend.app_id)
         self.admin=ModelAdmin(self,self.usage.path.with_name('model-admin-v1.sqlite3'))
         self.capabilities=ChatCapabilities(self.usage.path.with_name('chat-capabilities-v1.json'))
         self.agent=(ChatAgent(self,self.usage.path.with_name('chat-v1.sqlite3'))
@@ -159,6 +168,50 @@ class ModelRuntime:
             work.model_subject=work.model_snapshot.subject(work.request)
         except ModelError as exc: work.model_error=str(exc)
 
+    def use_fallback(self,work):
+        require(not work.budget_fallback and work.model_attempts==0,'primary_budget_exceeded')
+        try: fallback=self.fallback.snapshot()
+        except ModelError: raise ModelError('fallback_not_configured') from None
+        if work.request.kind=='group':fallback=fallback.for_group(work.request.conversation_id)
+        require(fallback.profile.provider=='deepseek','fallback_configuration')
+        require(fallback.profile.price.reference_unit==work.model_snapshot.profile.price.reference_unit,'reference_unit_mismatch')
+        self.usage.configuration(fallback.profile.config_version,fallback.fingerprint)
+        work.primary_model_snapshot=work.model_snapshot
+        # Preserve the primary configuration's verified platform identity.
+        work.model_snapshot=replace(work.model_snapshot,profile=fallback.profile,fingerprint=fallback.fingerprint)
+        work.budget_fallback=True
+
+    def route(self,work):
+        if work.budget_fallback:return
+        profile=work.model_snapshot.profile
+        # Admit a bounded first request and its maximum final response together.
+        amount=2*profile.price.reserve(profile.max_input_tokens,profile.max_output_tokens)
+        try:self.usage.check_primary(day(self.usage.clock()),profile,amount)
+        except ModelError as exc:
+            if str(exc)!='primary_budget_exceeded':raise
+            self.use_fallback(work)
+
+    def fallback_valid(self,work):
+        if not work.budget_fallback:return True
+        try:
+            current=self.config.snapshot();fallback=self.fallback.snapshot()
+            return (current.fingerprint==work.primary_model_snapshot.fingerprint
+                and current.profile.config_version==work.primary_model_snapshot.profile.config_version
+                and fallback.fingerprint==work.model_snapshot.fingerprint
+                and fallback.profile.config_version==work.model_snapshot.profile.config_version)
+        except (ModelError,OSError):return False
+
+    async def routed(self,work,operation,deadline):
+        self.route(work)
+        try:return await operation(deadline)
+        except ModelError as exc:
+            # A competing request may reserve the budget during image/tool IO.
+            # Only a pre-permit rejection may choose another model; never retry HTTP.
+            if str(exc)!='primary_budget_exceeded' or work.model_attempts or work.budget_fallback:raise
+            self.use_fallback(work)
+            work.image_bytes=0
+            return await operation(deadline)
+
     def start(self):
         async def prices():
             while True:
@@ -174,6 +227,7 @@ class ModelRuntime:
         self.usage.close()
 
     def check(self,work,deadline,leases=()):
+        require(self.fallback_valid(work),'fallback_configuration_changed')
         if getattr(work,'chat',False):
             require(getattr(self.backend.settings,'chat_engine','legacy')=='agent','policy_denied')
             require(self.agent.story_valid(work.story_versions),'story_revoked')
@@ -250,7 +304,7 @@ class ModelRuntime:
             group=self.usage.key('group',work.request.conversation_id) if work.request.kind=='group' else None
             async def operation(deadline):
                 work.model_started_at=time.monotonic()
-                return await self.run(work,question,history,leases,user,group,deadline)
+                return await self.routed(work,lambda end:self.run(work,question,history,leases,user,group,end),deadline)
             reply=await self.backend.models.run(user,operation)
             # Facts carried into an ACK-bound followup retain their absolute limit.
             if isinstance(reply.context,ReadOnlyContext) and reply.context.facts:
@@ -276,7 +330,7 @@ class ModelRuntime:
             group=self.usage.key('group',work.request.conversation_id) if work.request.kind=='group' else None
             async def operation(deadline):
                 work.model_started_at=time.monotonic()
-                return await self.agent.run(work,question,user,group,deadline)
+                return await self.routed(work,lambda end:self.agent.run(work,question,user,group,end),deadline)
             seconds=min(self.agent.budget.execution_seconds,work.content_deadline-time.monotonic(),
                         work.request.timestamp_ms/1000+298-self.backend.clock()-5)
             require(seconds>0,'execution_timeout')
