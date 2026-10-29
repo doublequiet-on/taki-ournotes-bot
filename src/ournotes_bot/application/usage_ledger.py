@@ -164,28 +164,39 @@ class UsageLedger:
         if usage.status=='unknown' and old.status!='unknown': return False
         price=Price(**json.loads(row['price']));charged,cost=price.amount(usage)
         incomplete=usage.status!='known' or any(count and kind not in {b['kind'] for b in budgets} for kind,count in counts.items())
-        actual=[]
+        actual=[];unknown_hold=Fraction()
         for budget in budgets:
             count=counts.get(budget['kind'],budget['count'])
             if count is None:count=budget['count']
             require(budget['count'] is None or count==budget['count'],'usage_conflict')
-            if count is None:incomplete=True
+            if count is None:
+                incomplete=True
+                # An unknown billable action is not zero: keep its bounded
+                # reservation in the ordinary user/group quota until resolved.
+                unknown_hold+=Fraction(budget['max_count']*budget['unit_cost_micro']*1_000_000,price.reference_rate)
             else:
                 require(type(count) is int and 0<=count<=100,'provider_action_shape')
                 amount=count*budget['unit_cost_micro']
                 cost+=amount;charged+=Fraction(amount*1_000_000,price.reference_rate)
             actual.append((count,'unknown' if count is None else 'known',attempt,budget['kind']))
         with self.db:
-            self.db.execute("UPDATE attempts SET state='settled',reserved='0',charged=?,cost=?,usage=?,settled=?,error_code=?,billing_incomplete=? WHERE id=?",
-                (str(charged),str(cost),new,self.clock(),code,int(incomplete),attempt))
+            self.db.execute("UPDATE attempts SET state='settled',reserved=?,charged=?,cost=?,usage=?,settled=?,error_code=?,billing_incomplete=? WHERE id=?",
+                (str(unknown_hold),str(charged),str(cost),new,self.clock(),code,int(incomplete),attempt))
             self.db.executemany('UPDATE attempt_actions SET count=?,status=? WHERE attempt=? AND kind=?',actual)
         return True
 
     def reconcile(self):
         # Never replay model HTTP. Keep crash uncertainty for a finite five minutes.
         with self.db:
-            self.db.execute("UPDATE attempts SET state='settled',reserved='0',settled=?,error_code='usage_unknown_after_restart',billing_incomplete=1 WHERE state='started' AND started<=?",
-                            (self.clock(),self.clock()-300))
+            now=self.clock()
+            rows=self.db.execute("SELECT id,price FROM attempts WHERE state='started' AND started<=?",(now-300,)).fetchall()
+            for row in rows:
+                price=Price(**json.loads(row['price']))
+                hold=sum((Fraction(a['max_count']*a['unit_cost_micro']*1_000_000,price.reference_rate)
+                          for a in self.db.execute('SELECT max_count,unit_cost_micro FROM attempt_actions WHERE attempt=?',(row['id'],))),Fraction())
+                self.db.execute("UPDATE attempts SET state='settled',reserved=?,settled=?,error_code='usage_unknown_after_restart',billing_incomplete=1 WHERE id=? AND state='started'",
+                                (str(hold),now,row['id']))
+                self.db.execute("UPDATE attempt_actions SET status='unknown' WHERE attempt=? AND status='reserved'",(row['id'],))
 
     def summary(self):
         rows=self.db.execute('SELECT usage,price,charged,cost,state,billing_incomplete,error_code FROM attempts WHERE day=?',(day(self.clock()),)).fetchall()

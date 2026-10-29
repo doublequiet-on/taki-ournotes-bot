@@ -8,6 +8,8 @@
 
 诊断先查现有交付账与加权用量账，按 request/attempt ID 区分 reserve、started、settled、released 及 billing_incomplete。聊天库只保存必要可见信息，可据此区分生成、工具失败和逐段交付；不要导出真实正文至公开 CI。实例 state-dir 的 `chat-v1.sqlite3` 独立于 `usage-v1.sqlite3`，不要拿聊天库清理来重置额度。
 
+联网操作次数未知时，已结算记录仍会在 `reserved` 中保留该操作的费用上界，继续计入用户及群额度；服务预算也按未知上界处理。若之后收到可核对的实际次数，账本结算实际费用并释放该部分预留。不要将 `billing_incomplete` 当作零费用，也不要为恢复额度删除账本。
+
 工具执行前会预留最终收束的加权额度，未用时记录为 `released/final_not_needed`；summary 的记录数包含这种占位，真实调用数按 started_at 非空核对。聊天审计写入故障会记录 `Chat audit unavailable` 与进程内 audit_failures，继续完成已结算结果和 ACK；不能因此忽略必需用量账或交付账故障。
 
 30 日源到期由 ChatStore 在启动及读取时清扫；摘要不延长来源期限。十五分钟／48 条／24 KiB 的参与上下文可在重启后恢复，更早片段通过本群检索。图片字节和签名 URL 仅在短时内存，记忆只保存附件存在及原消息关联。真实 QQ 引用索引关联与撤回仍待 profile 验证，见 [QQ 证据](CHAT_QQ_QUOTE_EVIDENCE.md)。

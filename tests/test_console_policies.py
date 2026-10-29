@@ -55,6 +55,36 @@ class WeightedUsageTests(unittest.TestCase):
         self.ledger=UsageLedger(self.path,'fixture',clock=lambda:self.now[0]);self.addCleanup(lambda:self.ledger.close())
         self.profile=native_profile()
 
+    def test_unknown_web_fee_stays_in_group_quota_until_late_count(self):
+        from ournotes_bot.domain.model_calls import ModelError,ProviderAction,Usage
+        profile=replace(self.profile,user_daily_limit=100000,group_daily_limit=100000,user_rate_requests=100,group_rate_requests=100)
+        self.ledger.reserve('r1','a1','u','g',profile,100,action_budget=(('web_search',1,60000),))
+        self.ledger.start('a1',profile)
+        usage=Usage(100,0,20,None,120,'known')
+        self.ledger.settle('a1',usage,actions=(ProviderAction('web_search',None),))
+        row=self.ledger.get('a1')
+        self.assertEqual((row['charged'],row['reserved'],row['billing_incomplete']),('140','60000',1))
+        with self.assertRaisesRegex(ModelError,'quota_exceeded'):
+            self.ledger.reserve('r2','a2','u','g',profile,100,action_budget=(('web_search',1,60000),))
+        self.ledger.settle('a1',usage,actions=(ProviderAction('web_search',0),))
+        self.assertEqual((self.ledger.get('a1')['reserved'],self.ledger.get('a1')['billing_incomplete']),('0',0))
+        self.ledger.reserve('r2','a2','u','g',profile,100,action_budget=(('web_search',1,60000),))
+
+    def test_crashed_web_attempt_retains_action_bound_and_accepts_late_result(self):
+        from ournotes_bot.domain.model_calls import ModelError,ProviderAction,Usage
+        from ournotes_bot.application.usage_ledger import UsageLedger
+        profile=replace(self.profile,user_daily_limit=100000,group_daily_limit=100000,user_rate_requests=100,group_rate_requests=100)
+        self.ledger.reserve('r1','a1','u','g',profile,100,action_budget=(('web_search',1,60000),))
+        self.ledger.start('a1',profile);self.ledger.close();self.now[0]+=301
+        self.ledger=UsageLedger(self.path,'fixture',clock=lambda:self.now[0])
+        row=self.ledger.get('a1')
+        self.assertEqual((row['state'],row['reserved'],row['billing_incomplete']),('settled','60000',1))
+        with self.assertRaisesRegex(ModelError,'quota_exceeded'):
+            self.ledger.reserve('r2','a2','u','g',profile,100,action_budget=(('web_search',1,60000),))
+        self.ledger.settle('a1',Usage(100,0,20,None,120,'known'),actions=(ProviderAction('web_search',1),))
+        row=self.ledger.get('a1')
+        self.assertEqual((row['charged'],row['reserved'],row['billing_incomplete']),('60140','0',0))
+
     def legacy_indexes(self):
         # A schema-1 database from before the access-path update.
         for row in self.ledger.db.execute("SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='attempts'").fetchall():
