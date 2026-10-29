@@ -143,7 +143,8 @@ class ModelRuntime:
         self.config=ModelConfiguration(getattr(backend.settings,'ai_profile_file',None),getattr(backend.settings,'query_ai_api_key',''),
                                        backend.instance_id,backend.app_id)
         self.usage=UsageLedger(path,backend.instance_id+'\0'+backend.app_id,
-            primary_daily_usd=getattr(backend.settings,'ai_primary_daily_usd','2.5'))
+            primary_daily_usd=getattr(backend.settings,'ai_primary_daily_usd','2.5'),
+            exempt_subjects=getattr(backend.settings,'ai_quota_exempt_subjects',()))
         self.fallback=ModelConfiguration(getattr(backend.settings,'ai_fallback_profile_file',None)
             or self.usage.path.with_name('model-fallback-v1.json'),getattr(backend.settings,'fallback_ai_api_key',''),
             backend.instance_id,backend.app_id)
@@ -228,7 +229,7 @@ class ModelRuntime:
         # Admit a bounded first request and its maximum final response together.
         amount=2*profile.price.reserve(profile.max_input_tokens,profile.max_output_tokens)
         try:
-            self.usage.check_primary(day(self.usage.clock()),profile,amount)
+            self.usage.check_primary(day(self.usage.clock()),profile,amount,user=self.usage.key('user',work.model_subject))
             self.record_route(work,'primary_budget_available')
         except ModelError as exc:
             if str(exc)!='primary_budget_exceeded':raise

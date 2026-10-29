@@ -116,6 +116,7 @@ class Settings:
     ai_profile_file: Path | None = None
     ai_fallback_profile_file: Path | None = None
     ai_primary_daily_usd: str = '2.5'
+    ai_quota_exempt_subjects: tuple = ()
     fallback_ai_api_key: str = field(default='', repr=False)
     query_ai_api_key: str = field(default='', repr=False)
     ai_reasoning_effort: str | None = None
@@ -178,6 +179,7 @@ class Settings:
             ai_profile_file=(CONFIG_ROOT / configured_profile).resolve() if configured_profile else None,
             ai_fallback_profile_file=(CONFIG_ROOT / fallback_profile).resolve() if fallback_profile else None,
             ai_primary_daily_usd=os.getenv('OURNOTES_AI_PRIMARY_DAILY_USD','2.5').strip(),
+            ai_quota_exempt_subjects=tuple(x.strip() for x in os.getenv('OURNOTES_AI_QUOTA_EXEMPT_SUBJECTS','').split(',') if x.strip()),
             fallback_ai_api_key=os.getenv('OURNOTES_FALLBACK_AI_API_KEY','').strip(),
             chat_engine=chat_engine,
             story_dir=(CONFIG_ROOT/story_dir).resolve() if story_dir else None,
