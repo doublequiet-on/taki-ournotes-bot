@@ -19,6 +19,8 @@ from ..domain.story import StoryError
 from ..domain.chat_images import ImageError
 from ..sources.chat_images import ImageLoader,ImageCache
 from ..natural_query.native_tools import TOOLS, Tool, obj, string, validate_call, execute, scope_for
+from ..natural_query.query_validation import EntityEvidence
+from ..query.continuation import catalog_version
 from ..sources.errors import ChartDataError
 from ..data import DataError
 from .runtime_tasks import finish_thread
@@ -174,6 +176,11 @@ class ChatAgent:
         try:return self.story is not None and all(self.story.valid(*version) for version in versions)
         except (StoryError,OSError):return False
 
+    def entity_valid(self,work):
+        if not work.entity_source_version:return True
+        try:return catalog_version(self.runtime.backend.repository.capture_catalog())==work.entity_source_version
+        except (OSError,ValueError,DataError):return False
+
     def memory_valid(self,work):
         if not work.memory_sources:return True
         try:return all(len(self.store.read(work.request.scope,list(work.memory_sources[i:i+48]))['messages'])==len(work.memory_sources[i:i+48])
@@ -193,6 +200,29 @@ class ChatAgent:
         values=tuple(dict.fromkeys((*work.private_search_texts,*(row['text'] for row in rows))))
         require(sum(len(value.encode()) for value in values)<=262144,'chat_memory_limit')
         work.private_search_texts=values
+
+    def initial_context(self,work,messages,tools):
+        """Trim complete old exchanges before the function transcript starts."""
+        protected={work.request.message_id}
+        if work.request.reference:protected.add(work.request.reference['message_id'])
+        def required(message):
+            if message['role']=='system':return True
+            data=json.loads(message['content'])
+            return data.get('message_id') in protected or 'delivered_display' in data
+        mandatory=[message for message in messages if required(message)]
+        minimum=self.runtime.input_bound(work,mandatory,tools)
+        maximum=work.model_snapshot.profile.max_input_tokens
+        require(minimum<=maximum,'model_input_too_large')
+        target=max(minimum,maximum-8192)
+        while self.runtime.input_bound(work,messages,tools)>target:
+            index=next((i for i,message in enumerate(messages) if not required(message)),None)
+            if index is None:break
+            removed=json.loads(messages[index]['content']).get('message_id')
+            messages.pop(index)
+            if removed:
+                messages[:]=[message for message in messages if required(message) or
+                    json.loads(message['content']).get('reply_to')!=removed]
+        return messages
 
     def forget(self,scope,ids=None):
         result=self.store.clear_scope(scope) if ids is None else self.store.delete_messages(scope,ids)
@@ -251,11 +281,7 @@ class ChatAgent:
             work.story_versions=((persona['source_revision'],persona['revocation_revision']),)
             prompt=prompt.replace('人格初稿是 legacy-derived，尚非剧情研究审核定稿。','人格采用以下人工批准档案。')
             prompt+='\n人工批准人格档案：\n'+persona['prompt']
-        if work.proactive is None:
-            self.audit(self.store.begin,work,history)
-            self.bind_memory(work,[json.loads(item['content']) for item in history if 'message_id' in json.loads(item['content'])])
-        else:
-            work.participating_history=tuple(history)
+        if work.proactive is not None:
             prompt+='\n这是未点名的群聊观察。由你判断此刻回复是否能接住谈话、补充信息或回应情绪；别人已回答、话题变化或正在等人时可略过/暂缓。可以先用已接入只读工具，工具完成后仍须决定。最终只输出JSON：回复用{"participation":"reply","text":"自然回复正文"}；略过用{"participation":"skip"}；暂缓用{"participation":"defer","delay_seconds":2}（2至5秒）。不需要为普通交流找事实证据。'
         self.bind_memory(work,summary_rows)
         messages=[{'role':'system','content':prompt},*await self.image_messages(work,history,deadline-self.budget.final_seconds)]
@@ -287,6 +313,13 @@ class ChatAgent:
         if web is not None:
             registry['web_search']=Tool('web_search','检索公开互联网信息；query只含完成问题所需公开关键词，不包含群聊、身份、私密内容或内部网址。',
                 obj({'query':string(160)},('query',)),'web')
+        messages=self.initial_context(work,messages,[tool.wire() for tool in registry.values()])
+        context=[{'role':message['role'],'content':message['content']} for message in messages if message['role']!='system']
+        if work.proactive is None:
+            self.audit(self.store.begin,work,context)
+            self.bind_memory(work,[json.loads(item['content']) for item in context if 'message_id' in json.loads(item['content'])])
+            self.audit(self.store.bind_sources,work.delivery,work.request.scope,list(work.memory_sources))
+        else:work.participating_history=tuple(context)
         try:
             for index in range(self.budget.model_calls):
                 runtime.check(work,deadline,leases)
@@ -366,6 +399,14 @@ class ChatAgent:
                         output,leases=await self.execute(work,call,question,site,leases,deadline-self.budget.final_seconds,deadline,
                                                          registry=registry,web=web,user=user,group=group,story_handles=story_handles,image_handles=image_handles,vision=vision)
                     image_input=output.pop('_image_input',None)
+                    tool_message={'role':'tool','tool_call_id':call.id,'content':json.dumps(output,ensure_ascii=False)}
+                    projected=[*messages,tool_message,*([image_input] if image_input else [])]
+                    if runtime.input_bound(work,projected,[])>work.model_snapshot.profile.max_input_tokens-1024:
+                        output={'status':'budget_exhausted','reason':'tool_result_input_budget','retryable':False}
+                        tool_message['content']=json.dumps(output)
+                        image_input=None;force_final=True
+                    elif runtime.input_bound(work,projected,[tool.wire() for tool in registry.values()])>work.model_snapshot.profile.max_input_tokens-2048:
+                        force_final=True
                     seen[call.id]=((call.name,call.arguments),output)
                     if output['status'] in ('budget_exhausted','quota_exceeded'):force_final=True
                     for ref in output.get('evidence_refs',[]):web_citations[ref['url']]=ref
@@ -373,7 +414,7 @@ class ChatAgent:
                     self.audit(self.store.event,work.delivery,'tool/'+call.id,'tool',{'name':call.name,'status':output['status'],
                         'source':{key:provenance[key] for key in ('source','server','release','text_release','observed_at','source_revision')
                                   if key in provenance}})
-                    messages.append({'role':'tool','tool_call_id':call.id,'content':json.dumps(output,ensure_ascii=False)})
+                    messages.append(tool_message)
                     if image_input:messages.append(image_input)
             raise ModelError('model_attempt_limit')
         finally:
@@ -445,6 +486,16 @@ class ChatAgent:
                 if site.expires_at is not None:
                     work.content_deadline=min(work.content_deadline,time.monotonic()+site.expires_at-time.time())
                 output={'status':'ok','data':json.loads(evidence)}
+                if call.name=='site_read' and output['data'].get('kind')=='detail':
+                    resource,row=site.handles[args['handle']]
+                    kind={'songs':'song','cards':'card','support_cards':'support_card'}.get(resource)
+                    if kind:
+                        version=catalog_version(site.catalog)
+                        require(not work.entity_source_version or work.entity_source_version==version,'query_source_changed')
+                        work.entity_source_version=version
+                        name=getattr(row,'title','') or getattr(row,'name','')
+                        item=EntityEvidence(kind,row.id,args['handle'],name if len(name)<=256 else '')
+                        work.entity_evidence=tuple(dict.fromkeys((*work.entity_evidence,item)))
             elif tool.kind=='knowledge':
                 knowledge=runtime.backend.knowledge
                 if knowledge is None: return {'status':'not_available','retryable':False},leases
@@ -458,7 +509,9 @@ class ChatAgent:
                 output={'status':'ok','data':evidence}
             else:
                 repository=await runtime.current_repository()
-                output=await runtime.backend.gate.run(execute,tool,args,question,repository)
+                if work.entity_evidence:
+                    require(catalog_version(repository.capture_catalog())==work.entity_source_version,'query_source_changed')
+                output=await runtime.backend.gate.run(partial(execute,entity_evidence=work.entity_evidence),tool,args,question,repository)
                 if isinstance(output,PreparedReply):
                     output={'status':output.business_status or 'not_available','retryable':True}
                 else: output={'status':output.status or 'ok','data':list(output.texts)}

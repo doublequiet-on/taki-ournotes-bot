@@ -1793,6 +1793,29 @@ class ChatAgentTests(Fixture, unittest.IsolatedAsyncioTestCase):
         self.event(direct,'intent');self.event(direct,'ack')
         self.assertFalse(self.backend.model_runtime.is_chat('/other-plugin command'))
 
+    async def test_full_context_window_trims_old_exchanges_to_profile_input_budget(self):
+        from ournotes_bot.application.backend_protocol import Request
+        from types import SimpleNamespace
+        agent=self.backend.model_runtime.agent
+        for index in range(12):
+            value=self.request('long'+str(index),index+1);value['timestamp_ms']-=50000-index*1000
+            request=Request.parse(value,'fixture','app',self.now)
+            work=SimpleNamespace(request=request,delivery='long-'+str(index),model_snapshot=self.snapshot)
+            message=dict(message_id=request.message_id,speaker_id='u1',text='旧讨论材料'*110,timestamp_ms=request.timestamp_ms,
+                         role='user',reply_to=None,display_name='')
+            agent.store.begin(work,[dict(role='user',content=json.dumps(message))])
+            agent.store.event(work.delivery,'ack','delivery',dict(status='success',allow_context=True,message_id='sent'+str(index),text='已送达回复'))
+        bodies=self.capture_native_bodies();self.client.request.return_value=self.result('接着当前问题聊。')
+        question='/问 这是当前完整问题，必须保留全部条件。'
+        plan,attempts=await self.prepare_native(question,seq=30)
+        self.assertEqual(plan['parts'][0]['business_status'],'success');self.assertEqual(len(attempts),1)
+        rows=[json.loads(item['content']) for item in bodies[0]['messages'] if item['role']!='system']
+        self.assertIn('这是当前完整问题，必须保留全部条件。',[row['text'] for row in rows])
+        self.assertLess(len(rows),25)
+        ids={row['message_id'] for row in rows}
+        self.assertTrue(all(row['reply_to'] in ids for row in rows if row['role']=='assistant'))
+        self.event(plan,'intent');self.event(plan,'ack')
+
     async def test_multiplayer_history_survives_topic_change_and_fake_system(self):
         bodies=self.capture_native_bodies()
         self.client.request.return_value=self.result('我选A，喜欢临场反应。')
@@ -1828,20 +1851,23 @@ class ChatAgentTests(Fixture, unittest.IsolatedAsyncioTestCase):
         first=response(('a','site_search',dict(resource='events',server='jp',query='合成活动')))
         multi=response(('b','site_read',dict(handle='item1')),('c','site_read',dict(handle='item2')))
         duplicate=response(('b','site_read',dict(handle='item1')))
-        self.client.request.side_effect=[first,multi,duplicate,self.result('关联歌曲为合成曲100001。')]
+        chart=response(('d','chart_get',dict(query='合成曲100001',difficulty='EXPERT')))
+        self.client.request.side_effect=[first,multi,duplicate,chart,self.result('关联歌曲为合成曲100001，EXPERT等级25。')]
         with patch('ournotes_bot.application.site_lookup.verify_catalog'),patch('ournotes_bot.application.site_lookup.SiteLookup.execute',autospec=True,
                 side_effect=__import__('ournotes_bot.application.site_lookup',fromlist=['SiteLookup']).SiteLookup.execute) as execute_site:
-            plan,attempts=await self.prepare_native('/问 查询合成活动关联歌曲，并继续读取歌曲资料')
-        self.assertEqual(len(attempts),4)
+            plan,attempts=await self.prepare_native('/问 查询合成活动关联歌曲的EXPERT等级，并继续读取歌曲资料')
+        self.assertEqual(len(attempts),5)
         self.assertEqual(execute_site.call_count,3)
         self.assertEqual(plan['parts'][0]['business_status'],'success')
         transcript=bodies[-1]['input']
-        self.assertEqual(sum(i.get('type')=='function_call' for i in transcript),3)
-        self.assertEqual([i['call_id'] for i in transcript if i.get('type')=='function_call_output'],['a','b','c'])
+        self.assertEqual(sum(i.get('type')=='function_call' for i in transcript),4)
+        self.assertEqual([i['call_id'] for i in transcript if i.get('type')=='function_call_output'],['a','b','c','d'])
+        chart_output=json.loads(next(i['output'] for i in transcript if i.get('type')=='function_call_output' and i['call_id']=='d'))
+        self.assertEqual(chart_output['status'],'ok');self.assertIn('25',str(chart_output['data']))
         self.assertEqual(sum(i.get('id')=='reason-b' for i in bodies[2]['input']),1)
         stored=' '.join(row[0] for row in self.backend.model_runtime.agent.store.db.execute('SELECT data FROM events'))
         self.assertNotIn('SECRET_REASONING',stored)
-        self.assertEqual(len([r for r in self.backend.model_runtime.usage.request_view(plan['request_id']) if r['started_at'] is not None]),4)
+        self.assertEqual(len([r for r in self.backend.model_runtime.usage.request_view(plan['request_id']) if r['started_at'] is not None]),5)
         self.assertFalse(any(r['state']=='reserved' for r in self.backend.model_runtime.usage.request_view(plan['request_id'])))
         self.event(plan,'intent');self.event(plan,'ack')
 

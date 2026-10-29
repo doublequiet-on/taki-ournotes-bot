@@ -103,6 +103,8 @@ ERRORS={
     'image_invalid_metadata':'这次图片附件信息不完整，请重新发送原图。',
     'story_revoked':'引用的剧情资料已变化，这次回答已停止，请重新提问。',
     'chat_memory_deleted':'所引用的聊天记忆已删除或到期，这次回答已停止。',
+    'query_source_changed':'本轮查询资料的版本已变化，这次回答已停止，请重新提问。',
+    'model_input_too_large':'本轮必要文字或图片超过当前模型输入上限，请缩短问题或分开发图。',
 }
 
 
@@ -175,6 +177,7 @@ class ModelRuntime:
             require(self.agent.story_valid(work.story_versions),'story_revoked')
             require(self.agent.memory_valid(work),'chat_memory_deleted')
             require(self.agent.images_valid(work),'image_not_available')
+            require(self.agent.entity_valid(work),'query_source_changed')
             require(self.agent.proactive.valid(work),'proactive_stale')
         require(work.active and time.monotonic()<deadline,'execution_timeout')
         require(time.monotonic()<work.content_deadline,'context_expired')
@@ -283,6 +286,21 @@ class ModelRuntime:
             self.agent.audit(self.agent.store.finish,work.delivery,'execution_timeout')
             return replies.PreparedReply('',business_status='proactive_error') if work.proactive is not None else failure('execution_timeout')
 
+    def input_bound(self,work,messages,tools,*,body=None):
+        from ..sources.model_provider import request_body as bound_body
+        profile=work.model_snapshot.profile
+        image_count=sum(len(message.get('images',())) for message in messages)
+        image_tokens=0
+        if image_count:
+            vision=self.capabilities.vision(work.model_snapshot)
+            require(vision is not None,'image_capability_unverified')
+            require(image_count<=3 and all(message.get('image_detail')==vision.detail for message in messages if message.get('images')),
+                    'image_count_exceeded')
+            image_tokens=image_count*vision.max_image_tokens
+        if body is None or image_count:
+            body=bound_body(profile,[{key:value for key,value in message.items() if key not in ('images','image_detail')} for message in messages],tools)
+        return len(json.dumps(body,ensure_ascii=False,separators=(',',':')).encode())+4096+image_tokens
+
     async def attempt(self,work,messages,tools,user,group,deadline,leases=(),*,require_tool=False,reservation=None,web=None,billing_request_id=None,service_policy=None):
         profile=work.model_snapshot.profile
         self.check(work,deadline,leases)
@@ -298,18 +316,7 @@ class ModelRuntime:
             body['tool_choice']='required'
         # Registered text-only byte-BPE profiles: serialized UTF-8 bytes plus
         # 4096 tokens for bounded wire framing is a conservative input ceiling.
-        token_body=body
-        image_count=sum(len(message.get('images',())) for message in messages)
-        image_tokens=0
-        if image_count:
-            vision=self.capabilities.vision(work.model_snapshot)
-            require(vision is not None,'image_capability_unverified')
-            require(image_count<=3 and all(message.get('image_detail')==vision.detail for message in messages if message.get('images')),
-                    'image_count_exceeded')
-            # Count text/framing separately; base64 bytes are not image tokens.
-            token_body=request_body(profile,[{key:value for key,value in message.items() if key not in ('images','image_detail')} for message in messages],tools)
-            image_tokens=image_count*vision.max_image_tokens
-        bound=len(json.dumps(token_body,ensure_ascii=False,separators=(',',':')).encode())+4096+image_tokens
+        bound=self.input_bound(work,messages,tools,body=body)
         require(bound<=profile.max_input_tokens,'model_input_too_large')
         attempt=reservation or uuid.uuid4().hex
         billing_request_id=billing_request_id or work.service_request_id or work.request.request_id
