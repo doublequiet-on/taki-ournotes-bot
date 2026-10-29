@@ -45,6 +45,7 @@ class ProactiveChat:
     def observe(self,request):
         if request.kind!='group' or request.policy.natural_query!='model':return False
         try:
+            if not self.agent.store.source_valid(request.scope,request.message_id,request.timestamp_ms):return False
             snapshot=self.agent.runtime.config.snapshot().for_group(request.conversation_id)
             if self.configured(request,snapshot) is None:return False
             if replies.recognizes_message(request.body) and not replies.is_ai_request(request.body):
@@ -54,7 +55,7 @@ class ProactiveChat:
             self.controller.observe(self.scope(request),ChatMessage(request.message_id,request.user_id,
                 request.body,request.timestamp_ms,display_name=request.sender_name))
             return True
-        except (ModelError,ServiceError,ValueError,OSError):return False
+        except (ModelError,ServiceError,ValueError,OSError,sqlite3.Error):return False
 
     def candidate(self,request):
         if self.agent.audit_failures:return None
@@ -100,8 +101,10 @@ class ProactiveChat:
         if work.proactive is None:return True
         try:
             policy=self.policy(work.model_snapshot,work.request)
-            return (policy==work.service_policy and (self.controller.can_send(work.proactive) if sending else self.controller.valid(work.proactive)))
-        except (ModelError,ServiceError,ValueError,OSError):return False
+            return (policy==work.service_policy and all(self.agent.store.source_valid(work.request.scope,row.message_id,row.timestamp_ms)
+                    for row in work.proactive.messages)
+                    and (self.controller.can_send(work.proactive) if sending else self.controller.valid(work.proactive)))
+        except (ModelError,ServiceError,ValueError,OSError,sqlite3.Error):return False
 
     def history(self,work):
         # Only frozen, bounded observation material; never enters persistent context before ACK.

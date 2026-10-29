@@ -282,7 +282,7 @@ export class Receiver {
       if (!this.ctx.filter(canonical)) { this.observed('scope_denied'); return false }
       await this.ready
       if (!this.active) { this.observed('disposed'); return true }
-      if (decoded.inbound.trigger!=='observation' && !decoded.inbound.attachments?.length
+      if (decoded.inbound.trigger!=='observation' && (!decoded.inbound.attachments?.length || /^[/／]/u.test(decoded.inbound.body))
           && !await this.client.recognizes(decoded.inbound.body)) { this.observed('unrecognized'); return false }
       if (!await this.permitted(canonical)) { this.observed('permission_denied'); return input.trigger!=='observation' }
       if (!this.active) { this.observed('disposed'); return true }

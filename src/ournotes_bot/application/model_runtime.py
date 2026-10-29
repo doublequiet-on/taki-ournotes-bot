@@ -10,7 +10,7 @@ import re
 import time
 import uuid
 
-from ..domain.model_calls import ModelError, Usage, require
+from ..domain.model_calls import ModelError, Usage, ProviderAction, require
 from ..domain.knowledge import KnowledgeError
 from ..natural_query.query_agent import DeferredModel, AgentOutcome, AgentState, query_text
 from ..natural_query.query_validation import OutcomeCode
@@ -101,6 +101,8 @@ ERRORS={
     'image_untrusted_source':'这次附件来源不在已接入的QQ图片来源中，请重新发送原图。',
     'image_unsupported_type':'这次图片格式暂不支持，请发送静态PNG、JPEG、WebP或GIF。',
     'image_invalid_metadata':'这次图片附件信息不完整，请重新发送原图。',
+    'chat_capability_revoked':'联网能力或模型配置已变化，这次请求已停止。',
+    'usage_unavailable':'本次额度费用尚未核实，暂时不能继续调用模型。',
     'story_revoked':'引用的剧情资料已变化，这次回答已停止，请重新提问。',
     'chat_memory_deleted':'所引用的聊天记忆已删除或到期，这次回答已停止。',
     'query_source_changed':'本轮查询资料的版本已变化，这次回答已停止，请重新提问。',
@@ -178,6 +180,7 @@ class ModelRuntime:
             require(self.agent.memory_valid(work),'chat_memory_deleted')
             require(self.agent.images_valid(work),'image_not_available')
             require(self.agent.entity_valid(work),'query_source_changed')
+            require(self.agent.web_valid(work),'chat_capability_revoked')
             require(self.agent.proactive.valid(work),'proactive_stale')
         require(work.active and time.monotonic()<deadline,'execution_timeout')
         require(time.monotonic()<work.content_deadline,'context_expired')
@@ -342,7 +345,8 @@ class ModelRuntime:
             # No await/queue/tool work between the consumed permit and this HTTP.
             result=await asyncio.wait_for(self.client.request(profile,body,timeout=max(.001,deadline-time.monotonic())),
                                           max(.001,deadline-time.monotonic()))
-            self.usage.settle(attempt,result.usage,result.error_code,actions=result.provider_actions)
+            actions=result.provider_actions or ((ProviderAction('web_search',None),) if web is not None else ())
+            self.usage.settle(attempt,result.usage,result.error_code,actions=actions)
             if result.status=='ok':
                 require(type(result.native_calls) is int and 0<=result.native_calls<=(web.max_calls if web else 0)
                         and all(action.count==0 or web is not None and action.count is not None and action.count<=web.max_calls
@@ -365,7 +369,8 @@ class ModelRuntime:
         except BaseException as exc:
             code=exc.code if isinstance(exc,ProtocolError) else str(exc) if isinstance(exc,(ModelError,KnowledgeError)) else 'attempt_interrupted'
             if not started: self.usage.release(attempt,code)
-            elif self.usage.get(attempt)['state']=='started': self.usage.settle(attempt,Usage(),code)
+            elif self.usage.get(attempt)['state']=='started':
+                self.usage.settle(attempt,Usage(),code,actions=(ProviderAction('web_search',None),) if web is not None else ())
             raise
         finally:
             if getattr(work,'chat',False) and service_policy is None:

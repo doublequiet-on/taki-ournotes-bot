@@ -86,6 +86,10 @@ class Work:
     public_question: str = ''
     entity_evidence: tuple = ()
     entity_source_version: str = ''
+    web_capability: object = None
+    knowledge_scope: object = None
+    image_deadline: float = float('inf')
+    image_bytes: int = 0
 
 
 class Backend:
@@ -498,6 +502,8 @@ class Backend:
         if work and work.chat and not self.model_runtime.agent.images_valid(work):
             return False
         if work and work.chat and not self.model_runtime.agent.entity_valid(work):
+            return False
+        if work and work.chat and not self.model_runtime.agent.web_valid(work):
             return False
         if work and work.proactive is not None and not self.model_runtime.agent.proactive.valid(work,sending=True):
             return False

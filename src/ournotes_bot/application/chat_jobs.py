@@ -187,6 +187,9 @@ class ServiceBudget:
                 AND (created>? OR state='started' OR billing_incomplete=1) ORDER BY created LIMIT 4097''',
                 (group, prefix + '%', now - 3600)).fetchall()
             _check(len(rows) <= 4096, 'chat_service_budget_capacity')
+            _check(not self.usage.db.execute('''SELECT 1 FROM attempts a JOIN unbounded_actions u ON u.attempt=a.id
+                WHERE a.group_key=? AND a.request_id LIKE ? AND (u.count IS NULL OR u.count<>0) LIMIT 1''',(group,prefix+'%')).fetchone(),
+                'chat_service_usage_unavailable')
             recent, cost = [], Fraction()
             for row in rows:
                 if row['state'] == 'released':

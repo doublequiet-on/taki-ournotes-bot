@@ -140,6 +140,17 @@ async function setup(kind = 'group', options = {}, extra = {}) {
   return { ...env, decoded, delivery, events, records, trace, failAck(value) { failAck = value }, deactivate() { active = false } }
 }
 async function main() {
+  await run('Review: image attachment cannot claim another plugin slash command',async()=>{
+    const f=receiverFixture({async recognizes(){return false}})
+    try {
+      const session=await f.session('foreign-image',raw=>{
+        raw.d.content='/other-plugin action'
+        raw.d.attachments=[{content_type:'image/png',url:'https://multimedia.nt.qq.com.cn/download?fileid=fixture'}]
+      })
+      assert.equal(await f.receiver.receive(session),false)
+      assert.equal(f.submitted.length,0)
+    }finally{await f.close()}
+  })
   await run('G1 observed ingress is opt-in, identity verified and keeps original speakers/images',async()=>{
     const env=createBot(),raw=event({type:'GROUP_MESSAGE_CREATE',content:'任何普通话题',author:{id:'same-name-a',username:'同名'}})
     assert.equal((await decodeIncoming(env.bot,raw,identity,()=>false)).status,'ignored')

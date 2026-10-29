@@ -11,12 +11,12 @@ import uuid
 import unicodedata
 from dataclasses import replace
 from functools import partial
-from urllib.parse import urlsplit
+from urllib.parse import urlsplit, unquote
 
 from ..domain.chat import PERSONA, TurnBudget
 from ..domain.model_calls import ModelError, require
 from ..domain.story import StoryError
-from ..domain.chat_images import ImageError
+from ..domain.chat_images import ImageError, MAX_TOTAL_BYTES
 from ..sources.chat_images import ImageLoader,ImageCache
 from ..natural_query.native_tools import TOOLS, Tool, obj, string, validate_call, execute, scope_for
 from ..natural_query.query_validation import EntityEvidence
@@ -38,7 +38,13 @@ logger=logging.getLogger(__name__)
 
 
 def public_search_query(query,identities=(),*,private_texts=(),public_question=''):
-    normalize=lambda text:unicodedata.normalize('NFKC',text).casefold()
+    def normalize(text):
+        for _ in range(4):
+            decoded=unquote(text)
+            if decoded==text:break
+            text=decoded
+        require(not re.search(r'%[0-9a-f]{2}',text,re.I),'private_search_query')
+        return unicodedata.normalize('NFKC',text).casefold()
     folded=normalize(query);question=normalize(public_question)
     require(query and not any(c in query for c in '\r\n') and not any(value and normalize(value) in folded for value in identities),'private_search_query')
     material=tuple(normalize(text) for text in private_texts)
@@ -63,6 +69,8 @@ def public_search_query(query,identities=(),*,private_texts=(),public_question='
             if opaque or fragment not in question:
                 require(not any(fragment in text for text in material),'private_search_query')
     hosts=[]
+    require(not re.search(r'(?<![\w.-])localhost\b',folded),'private_search_query')
+    hosts.extend(re.findall(r'(?<![\w.-])(?:[\w-]+\.)+(?:localhost|local|internal|lan|home|test|invalid)\b',folded))
     for raw in re.findall(r'(?:https?://|www\.)[^\s<>]+',folded,re.I):
         try:parsed=urlsplit(raw if '://' in raw else 'https://'+raw)
         except ValueError:raise ModelError('private_search_query') from None
@@ -105,6 +113,7 @@ class ChatAgent:
         self.budget=TurnBudget()
         self.tools=chat_tools()
         self.audit_failures=0
+        self.knowledge_scopes={}
         root=getattr(runtime.backend.settings,'story_dir',None)
         self.story=StoryService(root) if root else None
         self.image_loader=ImageLoader()
@@ -150,6 +159,24 @@ class ChatAgent:
             return True
         except (ImageError,sqlite3.Error):return False
 
+    def web_valid(self,work):
+        if work.web_capability is None:return True
+        try:
+            current=self.runtime.config.snapshot()
+            if work.request.kind=='group':current=current.for_group(work.request.conversation_id)
+            return (current.fingerprint==work.model_snapshot.fingerprint
+                    and current.profile.config_version==work.model_snapshot.profile.config_version
+                    and self.runtime.capabilities.web(current)==work.web_capability)
+        except (ModelError,OSError):return False
+
+    async def load_images(self,work,ref,deadline):
+        work.image_deadline=min(work.image_deadline,time.monotonic()+10,deadline)
+        loaded=ref.images or await self.image_loader.load_many(ref.attachments,timestamp_ms=ref.timestamp_ms,deadline=work.image_deadline)
+        require(time.monotonic()<work.image_deadline,'image_not_available')
+        work.image_bytes+=sum(len(image.data) for image in loaded)
+        require(work.image_bytes<=MAX_TOTAL_BYTES,'image_too_large')
+        return loaded
+
     def image_contains(self,request,mid):
         try:
             ref=self.images.get(self.image_scope(request),mid)
@@ -175,7 +202,7 @@ class ChatAgent:
             for ref in references:
                 work.private_search_ids=tuple(dict.fromkeys((*work.private_search_ids,ref.message_id,ref.speaker_id)))
                 require(self.store.source_valid(request.scope,ref.message_id,ref.timestamp_ms),'chat_memory_deleted')
-                loaded=ref.images or await self.image_loader.load_many(ref.attachments,timestamp_ms=ref.timestamp_ms,deadline=deadline)
+                loaded=await self.load_images(work,ref,deadline)
                 self.runtime.check(work,deadline)
                 require(self.store.source_valid(request.scope,ref.message_id,ref.timestamp_ms),'chat_memory_deleted')
                 self.images.remember(scope,ref.message_id,ref.speaker_id,ref.timestamp_ms,ref.attachments,loaded)
@@ -257,6 +284,7 @@ class ChatAgent:
         key=tuple(scope.values())
         self.context.scopes.pop(key,None)
         self.context.revisions.pop(key,None)
+        self.knowledge_scopes.pop(key,None)
         self.images.forget_scope(json.dumps(scope,sort_keys=True,separators=(',',':')))
         self.proactive.clear(scope)
         backend=self.runtime.backend
@@ -313,7 +341,8 @@ class ChatAgent:
             prompt+='\n这是未点名的群聊观察。由你判断此刻回复是否能接住谈话、补充信息或回应情绪；别人已回答、话题变化或正在等人时可略过/暂缓。可以先用已接入只读工具，工具完成后仍须决定。最终只输出JSON：回复用{"participation":"reply","text":"自然回复正文"}；略过用{"participation":"skip"}；暂缓用{"participation":"defer","delay_seconds":2}（2至5秒）。不需要为普通交流找事实证据。'
         self.bind_memory(work,summary_rows)
         messages=[{'role':'system','content':prompt},*await self.image_messages(work,history,deadline-self.budget.final_seconds)]
-        leases=()
+        leases=tuple(snapshot.pages[work.anchor.page].evidence) if work.anchor else ()
+        runtime.check(work,deadline,leases)
         seen={}
         output_ids={}
         operations=0
@@ -461,7 +490,7 @@ class ChatAgent:
                 if (scope,mid) in work.image_sources:return {'status':'already_visible','message_id':mid},leases
                 count=sum(len(self.images.get(key,message).attachments) for key,message in work.image_sources)
                 if count+len(ref.attachments)>3:raise ImageError('image_count_exceeded')
-                loaded=ref.images or await self.image_loader.load_many(ref.attachments,timestamp_ms=ref.timestamp_ms,deadline=deadline)
+                loaded=await self.load_images(work,ref,deadline)
                 runtime.check(work,turn_deadline,leases)
                 require(self.store.source_valid(work.request.scope,mid,ref.timestamp_ms),'chat_memory_deleted')
                 self.images.remember(scope,mid,ref.speaker_id,ref.timestamp_ms,ref.attachments,loaded)
@@ -501,6 +530,8 @@ class ChatAgent:
                     work.story_versions=tuple(dict.fromkeys((*work.story_versions,version)))
                 return output,leases
             elif tool.kind=='web':
+                require(web is not None and runtime.capabilities.web(work.model_snapshot)==web,'chat_capability_revoked')
+                work.web_capability=web
                 if work.model_attempts>=self.budget.model_calls-1:return {'status':'budget_exhausted','retryable':False},leases
                 names=[row.display_name for row in self.context.scopes.get(self.context.scope(work.request),()) if row.role=='user' and len(row.display_name)>=2]
                 query=public_search_query(args['query'].strip(),(work.request.user_id,work.request.conversation_id,
@@ -530,7 +561,13 @@ class ChatAgent:
             elif tool.kind=='knowledge':
                 knowledge=runtime.backend.knowledge
                 if knowledge is None: return {'status':'not_available','retryable':False},leases
-                scope=scope_for(question,args)
+                previous=None
+                if args.get('followup') or re.match(r'^(?:那|刚才|之前|接着|继续)',question):
+                    saved=self.knowledge_scopes.get(self.context.scope(work.request))
+                    require(saved is not None and bool(self.store.read(work.request.scope,[saved[0]])['messages']),'context_expired')
+                    previous=saved[1]
+                scope=scope_for(question,args,previous)
+                work.knowledge_scope=scope
                 await finish_thread(knowledge.observe)
                 retrieval=await finish_thread(partial(knowledge.retrieve,args.get('query') or question,scope,knowledge.approved_set_revision))
                 if retrieval.code!='ok':
@@ -580,6 +617,10 @@ class ChatAgent:
                           'allow_context':allow_context,'delivered_at':self.runtime.backend.clock()})
         if status=='success' and allow_context:
             self.context.delivered(work.request,message_id,text)
+            if work.knowledge_scope is not None:
+                key=self.context.scope(work.request)
+                self.knowledge_scopes[key]=(message_id,work.knowledge_scope)
+                while len(self.knowledge_scopes)>1024:self.knowledge_scopes.pop(next(iter(self.knowledge_scopes)))
 
     def close(self):
         self.store.close()

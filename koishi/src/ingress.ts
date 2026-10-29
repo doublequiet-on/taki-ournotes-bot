@@ -137,7 +137,7 @@ export async function decodeIncoming(
   const body = (addressed?data.content.replace(/<@!?\w+>/gu,''):data.content).trim()
   const attachments = imageAttachments(data.attachments, data.id)
   if (!attachments) return { status: 'rejected', reason: 'invalid_attachments' }
-  if (!attachments.length && (!body || addressed && !recognizes(body))) return { status: 'ignored', reason: 'not_taki' }
+  if ((!attachments.length || /^[/／]/u.test(body)) && (!body || addressed && !recognizes(body))) return { status: 'ignored', reason: 'not_taki' }
   const canonical = {
     ...envelope,
     d: { ...data, author: { ...author, id: userId }, ...(kind === 'group' ? { group_id: conversationId } : {}) },

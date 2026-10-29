@@ -26,6 +26,43 @@ def native_profile(**changes):
 
 
 class WeightedUsageTests(unittest.TestCase):
+    def test_unknown_token_and_missing_action_are_not_free(self):
+        from ournotes_bot.domain.model_calls import Usage,ProviderAction,ModelError
+        profile=replace(self.profile,user_daily_limit=1000000,group_daily_limit=1000000,user_rate_requests=100,group_rate_requests=100)
+        self.ledger.reserve('r','a','u','g',profile,100,action_budget=(('web_search',1,100),))
+        self.ledger.start('a',profile)
+        self.ledger.settle('a',Usage(),actions=(ProviderAction('web_search',None),))
+        self.assertGreater(int(self.ledger.get('a')['reserved']),100)
+        self.ledger.settle('a',Usage(10,0,2,None,12,'known'),actions=(ProviderAction('web_search',1),))
+        self.assertEqual(self.ledger.get('a')['reserved'],'0')
+        self.ledger.reserve('r2','a2','u','g',profile,100)
+        self.ledger.start('a2',profile)
+        self.ledger.settle('a2',Usage(10,0,2,None,12,'known'),actions=(ProviderAction('web_search',None),))
+        self.assertTrue(self.ledger.get('a2')['billing_incomplete'])
+        with self.assertRaisesRegex(ModelError,'usage_unavailable'):
+            self.ledger.reserve('r3','a3','u','g',profile,100)
+        self.ledger.settle('a2',Usage(10,0,2,None,12,'known'),actions=(ProviderAction('web_search',1),))
+        with self.assertRaisesRegex(ModelError,'usage_conflict'):
+            self.ledger.settle('a2',Usage(10,0,2,None,12,'known'),actions=(ProviderAction('web_search',0),))
+
+    def test_crash_missing_action_record_is_blocked_until_confirmed_zero(self):
+        from ournotes_bot.domain.model_calls import Usage,ProviderAction,ModelError
+        from ournotes_bot.application.usage_ledger import UsageLedger
+        profile=replace(self.profile,user_daily_limit=1000000,group_daily_limit=1000000,user_rate_requests=100,group_rate_requests=100)
+        self.ledger.reserve('r','a','u','g',profile,100,action_budget=(('web_search',1,100),))
+        self.ledger.start('a',profile)
+        with self.ledger.db:self.ledger.db.execute('DELETE FROM attempt_actions WHERE attempt=?',('a',))
+        self.ledger.close();self.now[0]+=301
+        self.ledger=UsageLedger(self.path,'fixture',clock=lambda:self.now[0])
+        self.assertTrue(self.ledger.get('a')['billing_incomplete'])
+        with self.assertRaisesRegex(ModelError,'usage_unavailable'):
+            self.ledger.reserve('next','next','u','g',profile,100)
+        self.ledger.settle('a',Usage(10,0,2,None,12,'known'),actions=(ProviderAction('web_search',0),))
+        self.ledger.close();self.ledger=UsageLedger(self.path,'fixture',clock=lambda:self.now[0])
+        self.ledger.reserve('next','next','u','g',profile,100)
+        with self.assertRaisesRegex(ModelError,'usage_conflict'):
+            self.ledger.settle('a',Usage(10,0,2,None,12,'known'),actions=(ProviderAction('web_search',1),))
+
     def test_observation_failure_keeps_settled_usage_and_business_result_available(self):
         from ournotes_bot.domain.model_calls import Usage
         self.ledger.reserve('r','a','u',None,self.profile,100)
@@ -80,7 +117,7 @@ class WeightedUsageTests(unittest.TestCase):
         self.ledger.start('a1',profile);self.ledger.close();self.now[0]+=301
         self.ledger=UsageLedger(self.path,'fixture',clock=lambda:self.now[0])
         row=self.ledger.get('a1')
-        self.assertEqual((row['state'],row['reserved'],row['billing_incomplete']),('settled','60000',1))
+        self.assertEqual((row['state'],row['reserved'],row['billing_incomplete']),('settled',str(60000+self.ledger.token_hold(profile.price,Usage())),1))
         with self.assertRaisesRegex(ModelError,'quota_exceeded'):
             self.ledger.reserve('r2','a2','u','g',profile,100,action_budget=(('web_search',1,60000),))
         self.ledger.settle('a1',Usage(100,0,20,None,120,'known'),actions=(ProviderAction('web_search',1),))
@@ -279,7 +316,7 @@ class WeightedUsageTests(unittest.TestCase):
         self.ledger=UsageLedger(self.path,'fixture',clock=lambda:self.now[0])
         self.assertNotEqual(self.ledger.get('a')['reserved'],'0')
         self.now[0]+=301;self.ledger.reconcile()
-        self.assertEqual(self.ledger.get('a')['reserved'],'0')
+        self.assertNotEqual(self.ledger.get('a')['reserved'],'0')
         self.assertEqual(self.ledger.summary()['usage_unknown'],1)
         self.now[0]+=86400
         self.ledger.settle('a',Usage(100,0,20,None,120,'known'))
@@ -2298,6 +2335,25 @@ class ChatImageIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
         self.assertIn('[图片附件 a',persisted)
         self.event(second,'intent');self.event(second,'ack')
 
+    async def test_reference_and_current_images_share_byte_limit(self):
+        from io import BytesIO
+        from PIL import Image
+        from ournotes_bot.domain.chat_images import LoadedImage
+        output=BytesIO();Image.new('RGB',(1800,1000)).save(output,format='PNG',compress_level=0)
+        data=output.getvalue()
+        async def load(attachments,**kwargs):
+            return tuple(LoadedImage(a.id,'image/png',1800,1000,data) for a in attachments)
+        self.backend.model_runtime.agent.image_loader.load_many.side_effect=load
+        self.client.request.return_value=self.result('fixture')
+        first,_=await self.prepare_native('first')
+        self.event(first,'intent');self.event(first,'ack')
+        self.backend.reference_profiles=frozenset({'fixture'})
+        self.reference=dict(message_id='native1',adapter_profile_version='fixture')
+        self.attachments=[{**self.attachments[0],'id':key} for key in ('b','c')]
+        plan,attempts=await self.prepare_native('compare',seq=2)
+        self.assertEqual(attempts,[])
+        self.assertEqual(plan['parts'][0]['business_status'],'image_too_large')
+
     async def test_unverified_vision_has_explicit_failure_and_direct_command_zero_model(self):
         self.backend.model_runtime.capabilities.vision.return_value=None
         plan,attempts=await self.prepare_native('')
@@ -2367,6 +2423,12 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
         self.assertTrue(usage['request_id'].startswith('chat-service/proactive/'))
         self.assertEqual(self.agent.store.proactive_replies(Request_scope()),())
 
+    def test_deleted_observation_cannot_be_readmitted(self):
+        from ournotes_bot.application.backend_protocol import Request
+        value=self.observation('private fixture')
+        self.agent.forget(Request_scope(),[value['message_id']])
+        self.assertFalse(self.agent.proactive.observe(Request.parse(value,'fixture','app',self.now)))
+
     def test_unknown_web_fee_bound_survives_budget_reconstruction(self):
         from ournotes_bot.application.chat_jobs import service_request_id,ServiceError,ServiceBudget
         from ournotes_bot.domain.model_calls import Usage,ProviderAction
@@ -2381,6 +2443,18 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
         with self.assertRaisesRegex(ServiceError,'chat_service_cost_limit'):
             ServiceBudget(usage,'fixture','app').check(policy,'proactive',profile,
                 service_request_id('proactive','fixture','app','g1','next'),1)
+
+    def test_missing_service_action_reservation_blocks_budget(self):
+        from ournotes_bot.application.chat_jobs import service_request_id,ServiceError
+        from ournotes_bot.domain.model_calls import Usage,ProviderAction
+        usage=self.backend.model_runtime.usage;profile=self.snapshot.profile
+        job=service_request_id('proactive','fixture','app','g1','missing-action')
+        user=usage.key('service','fixture','app','g1','approved-group-service','proactive');group=usage.key('group','g1')
+        usage.reserve(job,'missing-action',user,group,profile,10)
+        usage.start('missing-action',profile)
+        usage.settle('missing-action',Usage(10,0,2,None,12,'known'),actions=(ProviderAction('web_search',None),))
+        with self.assertRaisesRegex(ServiceError,'chat_service_usage_unavailable'):
+            self.agent.service_budget.check(self.policy,'proactive',profile,service_request_id('proactive','fixture','app','g1','next'),1)
 
     def test_service_budget_adds_known_cost_to_unknown_action_hold(self):
         from ournotes_bot.application.chat_jobs import service_request_id,ServiceError,ServiceBudget
@@ -2485,6 +2559,113 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
 
 def Request_scope():
     return dict(instance_id='fixture',app_id='app',platform='qq',kind='group',conversation_id='g1')
+
+
+class ChatReviewRegressionTests(Fixture,unittest.IsolatedAsyncioTestCase):
+    Helpers=ChatAgentTests.Helpers
+    request=ChatAgentTests.request
+    result=ChatAgentTests.result
+    asyncSetUp=ChatAgentTests.asyncSetUp
+    prepare_native=ChatAgentTests.prepare_native
+    event=ChatAgentTests.event
+    reviewed_fixture=NativeRuntimeTests.reviewed_fixture
+
+    async def test_revoked_quote_stops_before_model(self):
+        from ournotes_bot.domain.model_calls import ToolCall
+        file=self.reviewed_fixture()
+        self.client.request.side_effect=[self.result(calls=(ToolCall('k','knowledge_search','{"server":"jp","date":null,"version":null}'),)),self.result('fixture')]
+        first,_=await self.prepare_native('/问 红色规则是什么意思')
+        self.event(first,'intent');self.event(first,'ack')
+        file.write_text(file.read_text(encoding='utf-8')+'\nchanged',encoding='utf-8')
+        value=self.request('quote',2)
+        value.update(body='/问 解释上一条',trigger='quoted_reply',reference=dict(message_id='accepted-'+first['request_id'][:8],adapter_profile_version='fixture'))
+        self.request=lambda *_:value
+        plan,attempts=await self.prepare_native(value['body'],seq=2)
+        self.assertEqual(attempts,[])
+        self.assertEqual(plan['parts'][0]['business_status'],'knowledge_revoked')
+
+    async def test_capability_revoked_during_first_response_blocks_native_search(self):
+        from ournotes_bot.application.chat_capabilities import WebCapability
+        from ournotes_bot.domain.model_calls import ToolCall
+        self.snapshot=replace(self.snapshot,profile=replace(self.snapshot.profile,provider='openai',wire_profile='openai-responses-v1'))
+        caps=self.backend.model_runtime.capabilities
+        caps.web=Mock(return_value=WebCapability(2,10000,'fixture'))
+        async def model(*args,**kwargs):
+            caps.web.return_value=None
+            return self.result(calls=(ToolCall('w','web_search','{"query":"public news"}'),))
+        self.client.request.side_effect=model
+        plan,attempts=await self.prepare_native('/问 public news')
+        self.assertEqual(len(attempts),1)
+        self.assertEqual(plan['parts'][0]['business_status'],'chat_capability_revoked')
+
+    async def test_web_capability_revoked_after_generation_blocks_intent(self):
+        from ournotes_bot.application.chat_capabilities import WebCapability
+        from ournotes_bot.domain.model_calls import ToolCall,AttemptResult,Usage,ProviderAction
+        self.snapshot=replace(self.snapshot,profile=replace(self.snapshot.profile,provider='openai',wire_profile='openai-responses-v1'))
+        caps=self.backend.model_runtime.capabilities
+        caps.web=Mock(return_value=WebCapability(2,10000,'fixture'))
+        self.client.request.side_effect=[self.result(calls=(ToolCall('w','web_search','{"query":"public news"}'),)),
+            AttemptResult('ok',Usage(10,0,2,None,12,'known'),text='public',citations=({'url':'https://example.org','title':'fixture'},),provider_actions=(ProviderAction('web_search',1),),native_calls=1),
+            self.result('fixture response')]
+        plan,_=await self.prepare_native('/问 public news')
+        self.assertTrue(plan['send_allowed'])
+        caps.web.return_value=None
+        self.assertFalse(self.backend.lookup(plan['request_id'],'e1')['send_allowed'])
+        with self.assertRaises(ProtocolError):self.event(plan,'intent')
+
+    async def test_web_model_configuration_change_blocks_intent(self):
+        from ournotes_bot.application.chat_capabilities import WebCapability
+        from ournotes_bot.domain.model_calls import ToolCall,AttemptResult,Usage,ProviderAction
+        self.snapshot=replace(self.snapshot,profile=replace(self.snapshot.profile,provider='openai',wire_profile='openai-responses-v1'))
+        caps=self.backend.model_runtime.capabilities
+        caps.web=Mock(return_value=WebCapability(2,10000,'fixture'))
+        self.client.request.side_effect=[self.result(calls=(ToolCall('w','web_search','{"query":"public news"}'),)),
+            AttemptResult('ok',Usage(10,0,2,None,12,'known'),text='public',citations=({'url':'https://example.org','title':'fixture'},),provider_actions=(ProviderAction('web_search',1),),native_calls=1),
+            self.result('fixture response')]
+        plan,_=await self.prepare_native('/问 public news')
+        self.snapshot=replace(self.snapshot,fingerprint='new-configuration')
+        self.assertFalse(self.backend.lookup(plan['request_id'],'e1')['send_allowed'])
+
+    async def test_missing_action_reservation_and_no_provider_response_blocks_next_call(self):
+        from ournotes_bot.application.chat_capabilities import WebCapability
+        from ournotes_bot.domain.model_calls import ToolCall,AttemptResult
+        self.snapshot=replace(self.snapshot,profile=replace(self.snapshot.profile,provider='openai',wire_profile='openai-responses-v1'))
+        runtime=self.backend.model_runtime
+        runtime.capabilities.web=Mock(return_value=WebCapability(2,10000,'fixture'))
+        calls=[]
+        async def model(profile,body,**kwargs):
+            calls.append(1)
+            if len(calls)==1:return self.result(calls=(ToolCall('w','web_search','{"query":"public news"}'),))
+            with runtime.usage.db:
+                runtime.usage.db.execute("DELETE FROM attempt_actions WHERE attempt=(SELECT id FROM attempts WHERE state='started')")
+            return AttemptResult('error',error_code='provider_unavailable')
+        self.client.request.side_effect=model
+        plan,attempts=await self.prepare_native('/问 public news')
+        self.assertEqual(len(calls),2)
+        self.assertEqual(plan['parts'][0]['business_status'],'usage_unavailable')
+        self.assertEqual(runtime.usage.get(attempts[1])['billing_incomplete'],1)
+
+    async def test_followup_cannot_drop_acked_region_date(self):
+        from types import SimpleNamespace
+        from ournotes_bot.domain.model_calls import ToolCall
+        knowledge=Mock();knowledge.retrieve.return_value=SimpleNamespace(code='empty',message='empty')
+        self.backend.knowledge=knowledge
+        self.client.request.side_effect=[self.result(calls=(ToolCall('a','knowledge_search','{"server":"intl","date":"2020-01-01","version":null}'),)),self.result('fixture'),
+            self.result(calls=(ToolCall('b','knowledge_search','{"server":"jp","date":null,"version":null,"followup":true}'),))]
+        first,_=await self.prepare_native('/问 国际服2020-01-01规则')
+        self.event(first,'intent');self.event(first,'ack')
+        second,_=await self.prepare_native('/问 那LUCK呢',seq=2)
+        self.assertEqual(second['parts'][0]['business_status'],'query_server_mismatch')
+        self.assertEqual(knowledge.retrieve.call_count,1)
+
+    def test_private_query_and_citation_canonicalization(self):
+        from ournotes_bot.application.chat_agent import public_search_query
+        from ournotes_bot.sources.model_provider import response_citations
+        for query in ('intranet.internal login','http://%31%32%37.0.0.1/admin','PIN %34%39%33%38%31%30'):
+            with self.assertRaisesRegex(ValueError,'private_search_query'):
+                public_search_query(query,private_texts=('PIN is 493810',))
+        with self.assertRaises(ValueError):
+            list(response_citations([dict(type='message',content=[dict(text='source',annotations=[dict(type='url_citation',url='http://%31%32%37.0.0.1/admin',title='s',start_index=0,end_index=6)])])]))
 
 
 class ChatWebTests(Fixture,unittest.IsolatedAsyncioTestCase):
@@ -3063,7 +3244,7 @@ class ChatServiceJobsTests(unittest.TestCase):
         self.attempt()
         self.now[0]+=400
         self.ledger.close();self.ledger=UsageLedger(self.root/'usage.sqlite3','jobs-fixture',clock=lambda:self.now[0])
-        self.assertEqual(self.ledger.get('attempt-source')['reserved'],'0')
+        self.assertNotEqual(self.ledger.get('attempt-source')['reserved'],'0')
         self.budget=ServiceBudget(self.ledger,'instance','app',clock=lambda:self.now[0])
         permit=self.budget.check(self.save(),'summary',self.profile,self.request(source='next'),1)
         self.assertGreaterEqual(permit.spent_cost_micro,maximum_cost_micro(self.profile))

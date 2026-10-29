@@ -182,6 +182,8 @@ def response_citations(items):
                 url=annotation.get('url');title=annotation.get('title')
                 if not isinstance(url,str) or len(url)>2048 or any(c.isspace() or c in '<>\\' for c in url):raise ValueError('citation_url')
                 parsed=urlsplit(url)
+                if '%' in parsed.netloc:raise ValueError('citation_url')
+                if parsed.port not in (None,80,443):raise ValueError('citation_url')
                 if parsed.scheme not in ('https','http') or not parsed.hostname or parsed.username or parsed.password:raise ValueError('citation_url')
                 host=parsed.hostname.rstrip('.')
                 if '.' not in host and ':' not in host or host=='localhost' or host.endswith(('.localhost','.local','.internal','.lan','.home','.test','.invalid')):raise ValueError('citation_url')
