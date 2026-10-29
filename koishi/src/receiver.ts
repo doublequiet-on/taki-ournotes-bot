@@ -1,4 +1,5 @@
 // L3: raw-event sequence ownership -> Koishi scope/permissions -> Python -> QQDelivery.
+// Effects: bounded, ephemeral observation metadata in authenticated activity(); no message content.
 import { createHash, randomUUID } from 'node:crypto'
 import { Context, Session, Channel, User } from 'koishi'
 import type { QQBot } from '@satorijs/adapter-qq'
@@ -19,6 +20,9 @@ interface Observation {
   key:string; input:Inbound; session:Session; seq:number; fingerprint:string; bytes:number; attempt:number
   policyVersion:string
   cancelled:boolean; accepted:boolean; timer?:ReturnType<typeof setTimeout>; promise?:Promise<void>
+}
+interface ObservationDiagnostic {
+  at: number; correlation: string; event_type: 'GROUP_MESSAGE_CREATE'; trigger: 'observation'; stage: 'decoded' | 'backend_response' | 'backend_error'; observed: boolean | null
 }
 interface Job { input: Inbound; promise: Promise<void>; delivery?: QQDelivery; plan?: Plan; session:Session; permissionAttempts:Set<string>; proactive?:Observation }
 interface Flight { source: Raw; promise: Promise<boolean>; accepted: boolean }
@@ -54,7 +58,22 @@ export class Receiver {
       pending_total:total, capacity:this.config.maxPending, epoch:this.epoch,
       started_at:this.startedAt, startup_error:this.startupError ?? null, admission_attempts:{...this.admissionCounts},
       materials:this.materials?.diagnostics() ?? null, observation_pending:this.observations.size,
-      observation_bytes:this.observationBytes() }
+      observation_bytes:this.observationBytes(),
+      observation_diagnostics:this.observationDiagnostics() }
+  }
+  private readonly diagnosticSalt = randomUUID()
+  private diagnosticRows: ObservationDiagnostic[] = []
+  private observationDiagnostics(): ObservationDiagnostic[] {
+    const cutoff=Date.now()/1000-900
+    this.diagnosticRows=this.diagnosticRows.filter(row=>row.at>cutoff)
+    return this.diagnosticRows.map(row=>({...row}))
+  }
+  private diagnoseObservation(input:Inbound,stage:ObservationDiagnostic['stage'],observed:boolean|null=null):void {
+    this.observationDiagnostics()
+    this.diagnosticRows.push({at:Date.now()/1000,event_type:'GROUP_MESSAGE_CREATE',trigger:'observation',
+      correlation:createHash('sha256').update(this.diagnosticSalt+'\0'+input.requestId).digest('hex').slice(0,24),
+      stage,observed})
+    if(this.diagnosticRows.length>64)this.diagnosticRows.shift()
   }
   private readonly startedAt = Date.now()/1000
   private startupError?: AdmissionOutcome
@@ -93,6 +112,7 @@ export class Receiver {
     ctx.on('dispose',()=>clearInterval(sweep))
   }
   private sweep():void {
+    this.observationDiagnostics()
     const now=Date.now()
     for(const [key,value] of this.raw) if(now-value.at>=298000)this.raw.delete(key)
     for(const [key,value] of this.groupArrivals)if(now-value.at>=298000)this.groupArrivals.delete(key)
@@ -278,6 +298,7 @@ export class Receiver {
       const decoded = await decodeIncoming(session.bot as unknown as QQBot, source.raw, this.config, () => true,true)
       if (decoded.status !== 'accepted') { this.observed(decoded.status === 'ignored' ? 'decode_ignored' : 'decode_rejected'); return false }
       input=decoded.inbound
+      if(input.trigger==='observation')this.diagnoseObservation(input,'decoded')
       const canonical = this.ctx.reflect.trace(decoded.session)
       if (!this.ctx.filter(canonical)) { this.observed('scope_denied'); return false }
       await this.ready
@@ -293,7 +314,14 @@ export class Receiver {
         const policy=this.policy(input)
         if(policy.natural_query!=='model')return false
         const version=this.policyVersion(input)
-        const observed=await this.client.chatObservation(input,source.seq,policy)
+        let observed
+        try {
+          observed=await this.client.chatObservation(input,source.seq,policy)
+        } catch(error) {
+          this.diagnoseObservation(input,'backend_error')
+          throw error
+        }
+        this.diagnoseObservation(input,'backend_response',observed.observed)
         if(observed.observed && this.active && !source.conflict
             && (this.config.management?.accepts(input)??true) && this.policyVersion(input)===version) {
           this.queueObservation(input,canonical,source,observed.delay_ms)

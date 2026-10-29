@@ -79,7 +79,7 @@ async function main(){
   const targets=['pending','sending','uncertain','sent','claimed','permission_unknown'].map((stage,i)=>({group_id:'g'+String(i).padStart(2,'0'),stage,ledger_status:stage,claim:{status:stage}}))
   const noticeFixture={sections:{notices:{data:{targets}},notice_target:{data:{targets}}}}
   const noticeBefore=JSON.stringify(noticeFixture)
-  transport.receiver={client:{epoch:'fixture-epoch',request:async url=>{reads++;return url.includes('/notices')||url.includes('/ops/notice-targets/')?noticeFixture:{sections:{}}}},health:()=>({})};ctx.set('takiTransport',transport)
+  transport.receiver={client:{epoch:'fixture-epoch',request:async url=>{reads++;return url.includes('/notices')||url.includes('/ops/notice-targets/')?noticeFixture:{sections:{}}}},health:()=>({}),activity:()=>({observation_diagnostics:[{at:1,correlation:'fixture-correlation',event_type:'GROUP_MESSAGE_CREATE',trigger:'observation',stage:'backend_response',observed:false}]})};ctx.set('takiTransport',transport)
   const manager=install(ctx,{port:15143,password:'fixture-console-password-000000',directory:dir},{commit:'b'.repeat(40)})
   const clients=[]
   const methods=['overview','requests/list','requests/detail','sources','notices/list','query-metrics','groups/list','groups/update','settings/update',
@@ -98,6 +98,9 @@ async function main(){
       assert.equal((await a.call('taki/login','fixture-console-password-000000')).value,true,'another connection must not consume the administrator login budget')
       assert.equal((await a.call('taki/login','fixture-console-password-000000')).error,'请稍后再登录')
     } finally {Date.now=()=>clock()+offset}
+    const diagnosticView=(await a.call('taki/overview')).value.activity.observation_diagnostics
+    assert.equal(diagnosticView[0].stage,'backend_response')
+    assert.equal(diagnosticView[0].observed,false)
     const state=(await a.call('taki/status')).value
     for(const method of ['chat/status','chat/group/status','chat/group/memory'])assert.ok((await a.call('taki/'+method,...(method==='chat/status'?[]:['g1']))).value)
     assert.equal((await a.call('taki/chat/group/memory','../g1')).error,'admin_group')

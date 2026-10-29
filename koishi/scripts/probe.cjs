@@ -140,6 +140,54 @@ async function setup(kind = 'group', options = {}, extra = {}) {
   return { ...env, decoded, delivery, events, records, trace, failAck(value) { failAck = value }, deactivate() { active = false } }
 }
 async function main() {
+  await run('Observation metadata: unapproved ingress is bounded, private and never schedules candidates',async()=>{
+    let observations=0,candidates=0
+    const f=receiverFixture({
+      async chatObservation(){observations++;return{protocol:wire.protocol,observed:false,delay_ms:0}},
+      async chatCandidate(){candidates++;throw Error('must remain closed')}
+    })
+    const original=Date.now
+    try {
+      await f.receiver.receive(await f.ordinary('metadata-secret-id',{content:'PRIVATE_BODY',author:{id:'PRIVATE_USER'}}))
+      let rows=f.receiver.activity().observation_diagnostics
+      assert.deepEqual(rows.map(r=>r.stage),['decoded','backend_response'])
+      assert.equal(rows[0].correlation,rows[1].correlation)
+      assert.equal(rows[1].observed,false)
+      assert.equal(rows[0].event_type,'GROUP_MESSAGE_CREATE');assert.equal(rows[0].trigger,'observation')
+      assert.match(rows[0].correlation,/^[a-f0-9]{24}$/)
+      assert.deepEqual(Object.keys(rows[0]).sort(),['at','correlation','event_type','observed','stage','trigger'])
+      for(const secret of ['PRIVATE_BODY','PRIVATE_USER','metadata-secret-id','fixture-group'])assert.ok(!JSON.stringify(rows).includes(secret))
+      rows[0].stage='corrupted';assert.equal(f.receiver.activity().observation_diagnostics[0].stage,'decoded')
+      const firstCorrelation=f.receiver.activity().observation_diagnostics[0].correlation
+      const g=receiverFixture()
+      try{
+        await g.receiver.receive(await g.ordinary('metadata-secret-id',{content:'PRIVATE_BODY',author:{id:'PRIVATE_USER'}}))
+        assert.notEqual(g.receiver.activity().observation_diagnostics[0].correlation,firstCorrelation)
+      }finally{await g.close()}
+      for(let i=0;i<34;i++)await f.receiver.receive(await f.ordinary('bounded-metadata-'+i))
+      assert.equal(f.receiver.activity().observation_diagnostics.length,64)
+      assert.ok(!f.receiver.activity().observation_diagnostics.some(r=>r.correlation===firstCorrelation))
+      assert.equal(observations,35);assert.equal(candidates,0)
+      assert.equal(f.receiver.activity().observation_pending,0)
+      assert.equal(f.submitted.length,0);assert.equal(f.sent.length,0)
+      Date.now=()=>original()+901000
+      assert.deepEqual(f.receiver.activity().observation_diagnostics,[])
+    }finally{Date.now=original;await f.close()}
+    const denied=receiverFixture()
+    denied.receiver.permitted=async()=>false
+    try{
+      await denied.receiver.receive(await denied.ordinary('denied-metadata'))
+      assert.deepEqual(denied.receiver.activity().observation_diagnostics.map(r=>r.stage),['decoded'])
+      assert.equal(denied.submitted.length,0);assert.equal(denied.sent.length,0)
+    }finally{await denied.close()}
+    const failed=receiverFixture({async chatObservation(){throw new BackendError('backend_transport')}})
+    try{
+      await failed.receiver.receive(await failed.ordinary('failed-metadata'))
+      assert.deepEqual(failed.receiver.activity().observation_diagnostics.map(r=>r.stage),['decoded','backend_error'])
+      assert.equal(failed.submitted.length,0);assert.equal(failed.sent.length,0)
+    }finally{await failed.close()}
+  })
+
   await run('Review: image attachment cannot claim another plugin slash command',async()=>{
     const f=receiverFixture({async recognizes(){return false}})
     try {
