@@ -164,7 +164,7 @@ class KnowledgeAuthorityTests(unittest.TestCase):
         backend.ledger=SimpleNamespace(active=lambda epoch:True)
         row=dict(delivery='delivery',status='prepared',epoch='epoch',runtime='runtime',expires=20)
         for count in (1,5):
-            work=SimpleNamespace(active=True,hint=False,chat=False,prepared=[
+            work=SimpleNamespace(active=True,hint=False,chat=False,story_versions=(),prepared=[
                 SimpleNamespace(evidence=(lease,lease),evidence_deadline=None) for _ in range(count)])
             backend.works={'delivery':work}
             with patch.object(self.service,'observe',wraps=self.service.observe) as observe, \

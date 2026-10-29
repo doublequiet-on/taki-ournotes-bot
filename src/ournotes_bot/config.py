@@ -118,6 +118,7 @@ class Settings:
     ai_reasoning_effort: str | None = None
     ai_openai_proxy: str | None = None
     chat_engine: str = 'legacy'
+    story_dir: Path | None = None
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -163,6 +164,7 @@ class Settings:
         configured_embedding = os.getenv('OURNOTES_KNOWLEDGE_MODEL_DIR', '').strip()
         configured_profile = os.getenv('OURNOTES_AI_PROFILE_FILE', '').strip()
         chat_engine = os.getenv('OURNOTES_CHAT_ENGINE', 'legacy').strip()
+        story_dir = os.getenv('OURNOTES_STORY_DIR','').strip()
         if chat_engine not in ('legacy', 'agent'):
             raise ValueError('OURNOTES_CHAT_ENGINE must be legacy or agent')
         return cls(
@@ -171,6 +173,7 @@ class Settings:
             knowledge_model_dir=(CONFIG_ROOT / configured_embedding).resolve() if configured_embedding else None,
             ai_profile_file=(CONFIG_ROOT / configured_profile).resolve() if configured_profile else None,
             chat_engine=chat_engine,
+            story_dir=(CONFIG_ROOT/story_dir).resolve() if story_dir else None,
             query_ai_api_key=os.getenv('OURNOTES_QUERY_AI_API_KEY','').strip(),
             app_secret=os.getenv("QQ_APP_SECRET", "").strip(),
             data_base="https://bdon.yatta.moe",

@@ -205,6 +205,7 @@ class StoryService:
         withdrawals=self.revocations()
         if source_ids & withdrawals['sources'].keys() or persona.persona_id in withdrawals['personas']:return None
         return {'persona_id':persona.persona_id,'prompt':persona.prompt,'source_revision':bundle.revision,
+                'revocation_revision':withdrawals['revision'],
                 'source_claim_ids':list(persona.source_claim_ids),'covers_until':persona.covers_until,
                 'review_status':'approved','reviewed_by':row['reviewed_by'],'confirmation_ref':row['confirmation_ref'],
                 'approved_at':row['approved_at'],'persona_sha256':row['persona_sha256']}

@@ -11,3 +11,4 @@ CODE_FILES += ('model_runtime.py', 'persona.py', 'model_config.py', 'model_admin
                '../sources/model_provider.py', '../natural_query/native_tools.py', 'site_lookup.py', '../sources/haneoka/notices.py')
 CODE_FILES += ('chat_agent.py','chat_context.py','chat_store.py','../domain/chat.py')
 CODE_FILES += ('chat_capabilities.py',)
+CODE_FILES += ('story_service.py','story_cli.py','../domain/story.py','../sources/story_files.py','../query/story_retrieval.py')

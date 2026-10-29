@@ -11,6 +11,7 @@ from functools import partial
 
 from ..domain.chat import PERSONA, TurnBudget
 from ..domain.model_calls import ModelError, require
+from ..domain.story import StoryError
 from ..natural_query.native_tools import TOOLS, Tool, obj, string, validate_call, execute, scope_for
 from ..sources.errors import ChartDataError
 from ..data import DataError
@@ -18,6 +19,7 @@ from .runtime_tasks import finish_thread
 from .site_lookup import SiteLookup
 from .chat_context import ChatContext
 from .chat_store import ChatStore
+from .story_service import StoryService
 from .replies import PreparedReply
 
 logger=logging.getLogger(__name__)
@@ -45,6 +47,13 @@ class ChatAgent:
         self.budget=TurnBudget()
         self.tools=chat_tools()
         self.audit_failures=0
+        root=getattr(runtime.backend.settings,'story_dir',None)
+        self.story=StoryService(root) if root else None
+
+    def story_valid(self,versions):
+        if not versions:return True
+        try:return self.story is not None and all(self.story.valid(*version) for version in versions)
+        except (StoryError,OSError):return False
 
     def audit(self,operation,*args):
         """Visible audit is secondary to usage and durable delivery facts."""
@@ -69,8 +78,16 @@ class ChatAgent:
                 'referenced_message_id':work.request.reference['message_id'] if work.request.reference else None,
                 'delivered_display':snapshot.pages[work.anchor.page].text,
                 'note':'已送达引用；历史陈述本身不证明外部事实'},ensure_ascii=False)})
+        try: persona=self.story.persona() if self.story else None
+        except (StoryError,OSError) as exc: raise ModelError('story_persona_unavailable') from exc
+        prompt=PERSONA
+        if persona:
+            work.persona_version=persona['persona_id']+'/'+persona['persona_sha256']
+            work.story_versions=((persona['source_revision'],persona['revocation_revision']),)
+            prompt=prompt.replace('人格初稿是 legacy-derived，尚非剧情研究审核定稿。','人格采用以下人工批准档案。')
+            prompt+='\n人工批准人格档案：\n'+persona['prompt']
         self.audit(self.store.begin,work,history)
-        messages=[{'role':'system','content':PERSONA},*history]
+        messages=[{'role':'system','content':prompt},*history]
         leases=()
         seen={}
         output_ids={}
@@ -80,6 +97,12 @@ class ChatAgent:
         web_citations={}
         site=SiteLookup(runtime.backend.repository,question,allow_rewrite=True,max_operations=self.budget.tool_calls)
         registry=dict(self.tools)
+        if self.story:
+            registry['story_search']=Tool('story_search','检索已发布剧情场景；query可改写或翻译。返回来源层级和版本，候选并非完整原文；按handle继续读前后文。',
+                obj({'query':string(300),'filters':obj({k:string(100) for k in ('work','source_kind','character','source_id','chapter')})},('query',)),'story')
+            registry['story_read']=Tool('story_read','读取本轮已返回的剧情handle及前后场景；未知或撤回不可猜测。',
+                obj({'handle':string(200),'before':{'type':'integer','minimum':0,'maximum':2},'after':{'type':'integer','minimum':0,'maximum':2}},('handle',)),'story')
+        story_handles=set()
         web=runtime.capabilities.web(work.model_snapshot)
         if web is not None:
             registry['web_search']=Tool('web_search','检索公开互联网信息；query只含完成问题所需公开关键词，不包含群聊、身份、私密内容或内部网址。',
@@ -153,7 +176,7 @@ class ChatAgent:
                     else:
                         operations+=1
                         output,leases=await self.execute(work,call,question,site,leases,deadline-self.budget.final_seconds,deadline,
-                                                         registry=registry,web=web,user=user,group=group)
+                                                         registry=registry,web=web,user=user,group=group,story_handles=story_handles)
                     seen[call.id]=((call.name,call.arguments),output)
                     if output['status'] in ('budget_exhausted','quota_exceeded'):force_final=True
                     for ref in output.get('evidence_refs',[]):web_citations[ref['url']]=ref
@@ -168,11 +191,23 @@ class ChatAgent:
                 runtime.usage.release(final_attempt,'final_not_needed')
             messages.clear()
 
-    async def execute(self,work,call,question,site,leases,deadline,turn_deadline,*,registry=None,web=None,user=None,group=None):
+    async def execute(self,work,call,question,site,leases,deadline,turn_deadline,*,registry=None,web=None,user=None,group=None,story_handles=None):
         runtime=self.runtime
         tool,args=validate_call(call,self.tools if registry is None else registry)
         try:
-            if tool.kind=='web':
+            if tool.kind=='story':
+                if call.name=='story_search':
+                    output=await finish_thread(partial(self.story.search,args['query'],args.get('filters')))
+                    story_handles.update(item['handle'] for item in output.get('items',[]))
+                else:
+                    require(args['handle'] in story_handles,'story_handle_unissued')
+                    output=await finish_thread(partial(self.story.read,args['handle'],before=args.get('before',1),after=args.get('after',1)))
+                    story_handles.update(output[key] for key in ('previous_handle','next_handle') if output.get(key))
+                if output.get('status')=='ok':
+                    version=(output['source_revision'],output['revocation_revision'])
+                    work.story_versions=tuple(dict.fromkeys((*work.story_versions,version)))
+                return output,leases
+            elif tool.kind=='web':
                 if work.model_attempts>=self.budget.model_calls-1:return {'status':'budget_exhausted','retryable':False},leases
                 query=args['query'].strip()
                 require(query and not any(c in query for c in '\r\n') and not any(value in query for value in (
@@ -221,6 +256,8 @@ class ChatAgent:
             return {'status':str(exc),'retryable':True},leases
         except (DataError,ChartDataError,OSError):
             return {'status':'source_unavailable','retryable':True},leases
+        except StoryError as exc:
+            return {'status':str(exc),'retryable':False},leases
 
     def acknowledge(self,work,part_id,message_id,text,status,*,allow_context):
         self.audit(self.store.event,work.delivery,'delivery/'+part_id,'delivery',

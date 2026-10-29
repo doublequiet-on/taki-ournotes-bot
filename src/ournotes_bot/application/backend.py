@@ -70,6 +70,8 @@ class Work:
     terminal_retries: int = 0
     terminal_retry_at: float | None = None
     chat: bool = False
+    story_versions: tuple = ()
+    persona_version: str = 'taki-v0/legacy-derived'
 
 
 class Backend:
@@ -464,6 +466,8 @@ class Backend:
     def live(self, row, epoch):
         work = self.works.get(row['delivery'])
         if work and work.chat and getattr(self.settings,'chat_engine','legacy')!='agent':
+            return False
+        if work and work.story_versions and not self.model_runtime.agent.story_valid(work.story_versions):
             return False
         if not (work and work.active and (row['status'] == 'prepared' or work.hint and row['status']=='preparing')
                 and row['epoch'] == epoch and row['runtime'] == self.runtime and self.ledger.active(epoch)
