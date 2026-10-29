@@ -1,4 +1,5 @@
-# L3: Manual read-only tools; closed schema and grounding failures use finite reason codes.
+# L3: Manual read-only tools; host-only read identities extend grounding, never conditions.
+# Closed model schemas and grounding failures use finite reason codes.
 # Effects: Existing deterministic query/command paths only; no model or platform IO.
 from __future__ import annotations
 
@@ -17,7 +18,7 @@ from ..query.song_conditions import extract_song_conditions
 from ..query.event_cutoff_query import parse_natural_cutoff, SERVER_ALIASES
 from .on_query import information_command
 from .query_capabilities import CAPABILITIES
-from .query_validation import validate_capability_action, OutcomeCode, message_for
+from .query_validation import EntityEvidence, validate_capability_action, OutcomeCode, message_for
 
 
 def obj(properties,required=()):
@@ -184,7 +185,7 @@ class ToolOutput:
     status: str | None = None
 
 
-def execute(tool,args,question,repository):
+def execute(tool,args,question,repository,*,entity_evidence:tuple[EntityEvidence,...]=()):
     question=re.sub(r'^(?:请|帮我)?(?:解释|分析)(?:一下)?[\s，,：:]*','',question).strip()
     question=re.sub(r'[，,\s]*(?:并|再|然后)(?:解释|分析)(?:一下)?[。！!]*$','',question).strip()
     calendar=information_command(question,repository) if tool.kind=='info' and args['kind'] in ('event','gacha') else None
@@ -201,7 +202,8 @@ def execute(tool,args,question,repository):
             require(not evidence.difficulty_conflict,'query_difficulty_ambiguous')
             require(args.get('difficulty','')==evidence.difficulty,'query_difficulty_mismatch')
         validated=validate_capability_action({'action':'call_tool','capability':tool.kind,'arguments':args},
-                                            capability,question,repository,allow_empty_subject=True)
+                                            capability,question,repository,allow_empty_subject=True,
+                                            entity_evidence=entity_evidence)
         if validated.spec is None or validated.code!=OutcomeCode.SUCCESS:
             if validated.code not in (OutcomeCode.UNKNOWN_ENTITY,OutcomeCode.AMBIGUOUS):
                 raise ModelError('invalid_argument')

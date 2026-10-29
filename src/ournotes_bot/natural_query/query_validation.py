@@ -1,5 +1,5 @@
 # L3
-# Input: 原始问题、模型 JSON 动作、Capability 定义及 SongRepository 实体。
+# Input: 原始问题、模型动作、Capability、仓库实体及可选宿主本轮已读实体证据。
 # Output: 路由校验返回 RouteResult；动作校验返回 ValidationResult，其中 spec 为 QuerySpec | None，并保留原因码及可修复信息。
 # Pos: Query / Natural 的动作校验、实体核实 与原文条件锚定；见 L2-2.md。
 # Effects/Dependencies: 不调用模型；经实体解析可读本地别名 JSON，可信条件的业务执行交给查询层。
@@ -10,11 +10,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 from enum import Enum
+import re
 from typing import Any
 
 from ..commands import _split_page, split_card_rarity
 from ..data import SongRepository, normalize
-from ..query.entity_lexicon import find_anchor, resolve_entity
+from ..query.entity_lexicon import AnchorResult, EntityRef, find_anchor, resolve_entity
 from .query_capabilities import CAPABILITIES, Capability
 from .query_terms import is_skill_placeholder
 from ..query.song_conditions import extract_song_conditions
@@ -55,6 +56,46 @@ class RouteResult:
     capability_id: str | None
     code: OutcomeCode
     prefetched: dict[str, Any] | None = None
+
+
+@dataclass(frozen=True)
+class EntityEvidence:
+    """Host-owned identity from a successful detail read in this exact turn.
+
+    The host owns provenance/turn/freshness checks; this is never model input.
+    A source name can identify an ID, but cannot add query conditions/instructions.
+    """
+    kind: str
+    entity_id: int
+    source_ref: str
+    name: str = ''
+
+    def __post_init__(self):
+        if (type(self.kind) is not str or self.kind not in {'song', 'card', 'support_card'}
+                or type(self.entity_id) is not int or self.entity_id <= 0
+                or type(self.source_ref) is not str or not self.source_ref.strip()
+                or len(self.source_ref) > 128 or self.source_ref != self.source_ref.strip()
+                or type(self.name) is not str or len(self.name) > 256):
+            raise ValueError('entity_evidence_invalid')
+
+
+def _evidence_anchor(intent, term, repository, entity_evidence):
+    """Select only one locally existing, actually read ID; do not parse names."""
+    kind = 'song' if intent in {'song', 'chart'} else intent
+    rows = {'song': repository.songs, 'card': repository.cards,
+            'support_card': repository.support_cards}.get(kind, ())
+    ids = {row.id for row in rows}
+    if not normalize(term):
+        return AnchorResult(None)
+    resolved = resolve_entity(intent, term, repository)
+    # A known local name/alias must keep its existing identity, even if another
+    # source record advertises that same spelling for a different ID.
+    local_id = int(resolved) if resolved is not None and resolved.isdecimal() else None
+    found = {EntityRef(kind, item.entity_id) for item in entity_evidence
+             if item.kind == kind and item.entity_id in ids
+             and (item.entity_id == local_id if resolved is not None else
+                  bool(item.name) and normalize(term) == normalize(item.name))}
+    return AnchorResult(next(iter(found)) if len(found) == 1 else None, len(found) > 1)
 
 
 _LEGACY_FIELDS = frozenset({
@@ -101,8 +142,12 @@ def validate_route(data: dict[str, Any]) -> RouteResult:
 
 def validate_capability_action(data: dict[str, Any], capability: Capability, question: str,
                                repository: SongRepository, *,
-                               allow_empty_subject: bool = False) -> ValidationResult:
+                               allow_empty_subject: bool = False,
+                               entity_evidence: tuple[EntityEvidence, ...] = ()) -> ValidationResult:
     """Validate a capability-scoped action and apply catalog grounding."""
+    if (type(entity_evidence) is not tuple or len(entity_evidence) > 60
+            or any(type(item) is not EntityEvidence for item in entity_evidence)):
+        return ValidationResult(None, OutcomeCode.INVALID_ARGUMENTS, ('entity_evidence',))
     if "intent" in data:
         if any(key not in _LEGACY_FIELDS for key in data):
             return ValidationResult(None, OutcomeCode.INVALID_OUTPUT)
@@ -178,6 +223,7 @@ def validate_capability_action(data: dict[str, Any], capability: Capability, que
     validated = validate_legacy_plan(
         legacy, question, repository,
         allow_empty_subject=allow_empty_subject and capability.allow_empty_subject,
+        _entity_evidence=entity_evidence,
     )
     if validated.code == OutcomeCode.INVALID_ARGUMENTS:
         validated = replace(
@@ -197,8 +243,9 @@ def validate_capability_action(data: dict[str, Any], capability: Capability, que
 
 def validate_legacy_plan(data: dict[str, Any], question: str,
                          repository: SongRepository, *,
-                         allow_empty_subject: bool = False) -> ValidationResult:
-    """Validate the legacy all-capabilities JSON contract without changing it."""
+                         allow_empty_subject: bool = False,
+                         _entity_evidence: tuple[EntityEvidence, ...] = ()) -> ValidationResult:
+    """Keep legacy defaults; only native scoped actions supply host identities."""
     intent = data.get("intent")
     term = data.get("query")
     difficulty = data.get("difficulty") or ""
@@ -238,12 +285,37 @@ def validate_legacy_plan(data: dict[str, Any], question: str,
             return ValidationResult(None, OutcomeCode.INVALID_ARGUMENTS)
     elif level is not None or (intent == "song" and difficulty):
         return ValidationResult(None, OutcomeCode.INVALID_ARGUMENTS)
+    read_anchor = (_evidence_anchor(intent, term, repository, _entity_evidence)
+                   if term.strip() and _entity_evidence else AnchorResult(None))
+    if read_anchor.entity is not None:
+        # A read identity never proves historical chart/card values. Check
+        # before lexical anchors: version digits can resemble short song IDs.
+        temporal = (('date', r'\d{4}(?:-|/|年)\d{1,2}(?:-|/|月)\d{1,2}日?'),
+                    ('version', r'(?:\d+\.\d+(?:\.\d+)?\s*(?:版|版本)|(?:版本?|version|ver\.?|\bv)\s*\d+\.\d+(?:\.\d+)?)'),
+                    ('date', r'历史|歷史|以前|旧版|舊版|当时|當時|截至|截止'))
+        invalid = tuple(dict.fromkeys(field for field, pattern in temporal if re.search(pattern, question, re.I)))
+        if invalid:
+            return ValidationResult(None, OutcomeCode.INVALID_ARGUMENTS, invalid)
     anchor = find_anchor(
         intent, question, repository,
         explicit_card_ids=intent == "card" and bool(skill_query or skill_kind),
     )
     if anchor.ambiguous:
         return ValidationResult(None, OutcomeCode.AMBIGUOUS)
+    source_grounded = False
+    if anchor.entity is None and term.strip() and _entity_evidence:
+        if read_anchor.ambiguous:
+            return ValidationResult(None, OutcomeCode.AMBIGUOUS)
+        if read_anchor.entity is not None:
+            if intent == 'chart':
+                song_anchor = find_anchor('song', question, repository)
+                if song_anchor.ambiguous:
+                    return ValidationResult(None, OutcomeCode.AMBIGUOUS)
+                if song_anchor.entity is not None and song_anchor.entity.kind == 'band':
+                    song = next(row for row in repository.songs if row.id == read_anchor.entity.value)
+                    if song.band != song_anchor.entity.value:
+                        return ValidationResult(None, OutcomeCode.UNKNOWN_ENTITY)
+            anchor, source_grounded = read_anchor, True
     if anchor.entity is None and not allow_empty_subject:
         return ValidationResult(None, OutcomeCode.UNKNOWN_ENTITY)
     if (intent == "card" and anchor.entity is None and "技能" in question
@@ -251,7 +323,7 @@ def validate_legacy_plan(data: dict[str, Any], question: str,
         # A structurally valid "which cards' skill ..." question cannot be
         # turned into an unfiltered catalog listing by omitting its predicate.
         return ValidationResult(None, OutcomeCode.INVALID_ARGUMENTS)
-    if term.strip():
+    if term.strip() and not source_grounded:
         if resolve_entity(intent, term, repository) is None:
             return ValidationResult(None, OutcomeCode.UNKNOWN_ENTITY)
         proposed = find_anchor(intent, term, repository)
