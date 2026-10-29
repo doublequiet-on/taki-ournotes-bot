@@ -1,3 +1,4 @@
+import { executionView } from './costs.js';
 import { h } from './runtime.js';
 import { groupQuota } from './model.js';
 export const labels={processing:'处理中',complete:'平台确认全部发送',partial:'部分发送',failed:'已确认失败',uncertain:'发送结果不确定',closed_unsent:'已关闭，未确认发送',unknown:'未知'};
@@ -96,7 +97,7 @@ export function overviewView(s,open,attentionSearch) {
 }
 export function requestsView(s,open,params,search,more,group,close,selected,narrow) {
   const list=s.requests.value?.sections?.requests?.data,detail=selected&&s.detail.value?.sections?.request?.data;
-  return h('div',{class:'requests-page'},[h('div',{class:'page-heading'},[h('h1','查询记录'),h('small','最近 24 小时')]),
+  return h('div',{class:'requests-page'},[h('div',{class:'page-heading'},[h('h1','请求记录'),h('small','最近 24 小时')]),
     guide('机器人没有回复，先从这里找','点击“需要关注”查看仍在处理、部分发送或结果不确定的请求，再打开记录看详情。结果不确定时先核对 QQ 群，不要立即重发；平台确认发送也不等于用户已读。'),
     h('div',{class:'request-toolbar'},[h('div',{class:'filter-tabs'},[h('button',{'aria-pressed':params.attention!=='true',onClick:()=>search(false)},'最近 24 小时'),h('button',{'aria-pressed':params.attention==='true',onClick:()=>search(true)},'需要关注（含历史未决）')]),
       h('label',['状态 ',h('select',{'aria-label':'发送状态',value:params.state||'',onChange:e => {params.state=e.target.value;search(params.attention==='true');}},[h('option',{value:''},'全部状态'),...Object.entries(labels).map(([value,text]) => h('option',{value},text))])])]),
@@ -106,7 +107,7 @@ export function requestsView(s,open,params,search,more,group,close,selected,narr
       list&&h('small',`${stamp(list.from)} 至 ${stamp(list.to)} · 平台确认不代表客户端已读`),list?.next_cursor && button('下一页',() => more(list.next_cursor))]),
       narrow&&detail&&h('div',{class:'inspector-scrim','aria-hidden':'true',onClick:close}),
       detail?h('section',{class:'request-inspector',role:narrow?'dialog':undefined,'aria-modal':narrow?'true':undefined,'aria-label':narrow?'查询详情':undefined,'data-inspector':narrow?'request':undefined},[h('div',{class:'card-heading'},[h('h2','查询详情'),h('button',{'aria-label':'关闭查询详情',onClick:close},'关闭')]),detail.group_id&&button('查看关联群',()=>group(detail.group_id)),h('p',{class:['state-pill',detail.delivery_state]},deliveryLabel(detail)),h('p',`业务结果：${names[detail.business_outcome]||detail.business_outcome} · 观测：${names[detail.observation]||detail.observation}`),
-        h('p',names[detail.missing_reason]||'准备是生成回复的时间；上传与发送是交给平台的时间。缺失阶段不代表耗时为零。'),button('导出此请求诊断',()=>s.exportDiagnostic(selected)),technical('查看完整记录与阶段耗时',[h('p','各阶段采用各进程单调时钟，不跨进程相减。'),facts(detail)])]):h('section',{class:'inspector-empty'},selected?'正在读取查询详情':'选择一条记录查看详情')])]);
+        h('p',names[detail.missing_reason]||'准备是生成回复的时间；上传与发送是交给平台的时间。缺失阶段不代表耗时为零。'),button('导出此请求诊断',()=>s.exportDiagnostic(selected)),executionView(detail),technical('查看完整记录与阶段耗时',[h('p','各阶段采用各进程单调时钟，不跨进程相减。'),facts(detail)])]):h('section',{class:'inspector-empty'},selected?'正在读取查询详情':'选择一条记录查看详情')])]);
 }
 export function groupsView(s,requests,openGroup,closeGroup,groupOpen,narrow) {
   const items=s.groups.value?.sections?.groups?.data||[];

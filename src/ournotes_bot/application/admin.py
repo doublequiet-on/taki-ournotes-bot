@@ -140,6 +140,7 @@ class Admin:
                 'native_model': self.backend.model_runtime.config.status() if self.backend.model_runtime else None,
                 'model_scheduler':self.backend.models.status(),
                 'model_permissions':self.backend.permissions.status(),
+                'model_costs': self.backend.model_runtime.cost_status() if self.backend.model_runtime else None,
                 'weighted_usage': self.backend.model_runtime.usage.summary() if self.backend.model_runtime else None}, now=now),
             requests=section({'from': now-86400, 'to': now, 'total': len(views),
                               'states': {s: counts[s] for s in STATES},

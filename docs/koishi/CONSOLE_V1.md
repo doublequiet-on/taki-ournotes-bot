@@ -74,3 +74,12 @@ queries/notifications支持inherit、allow、pause；allow仍受全局范围与�
 回归入口：`python -B -m unittest discover -s tests -p test_console_admin.py`、既有续查回归、架构门禁及 `node scripts/probe.cjs`。正式包资源检查与浏览器证据、性能数据和附件矩阵执行结果记录于本任务验收记录；未执行项目不能按通过报告。
 
 本功能开发不包含合并、部署、重启或 QQ 发送。自动更新继续暂停。生产采集需批准部署后另验。
+
+
+## Agent 费用与执行观察
+
+新增“模型与费用”页面；“查询记录”显示为“请求记录”。总览 service 的 `model_costs` 来自完整当日账本：金额为精确分数字符串，单位微货币；按模型、提供方和币种分别列出已发生费用、进行中预留及未知用量预留。DeepSeek 支出单列，不计入主模型美元预算。页面读取不发起模型探测。
+
+`next_route` 复用运行时的首轮与最终回复预留门槛，仅表示采集时下一轮的预算选择，不保证权限、额度或网络连通。在途请求继续使用原模型。实际路由新增 `model_route` 诊断阶段；旧记录未采集原因时保持未知。请求详情显示实际模型尝试、Token、费用及处理阶段，释放预留不等于付费调用，平台回执不等于客户端收到。
+
+前端费用投影由 `koishi/console/costs.js` 提供，随 `taki-console-assets` 分发；只读总览接口和已有 Console RPC 传递新增字段，不新增凭据或持久库结构。

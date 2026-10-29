@@ -130,3 +130,8 @@
 @media(max-width:760px){.taki-console .settings-actions{bottom:42px;align-items:flex-start;flex-direction:column}.taki-console .settings-actions>div{display:flex;width:100%;justify-content:flex-end}.taki-console .settings-actions button{margin:0 0 0 6px;padding:8px 12px}}
 @media(max-width:760px){.layout-container .main-container .layout-main:has(> .taki-console [data-inspector]){overflow:hidden}.taki-console .inspector-scrim{display:block;position:fixed;inset:0;z-index:110;background:#0008}.taki-console .request-inspector[data-inspector],.taki-console .group-inspector[data-inspector]{position:fixed;z-index:111;left:0;right:0;bottom:0;max-height:calc(100dvh - 24px);overflow-y:auto;overscroll-behavior:contain;margin:0;padding:22px 18px 72px;border-radius:24px 24px 0 0;box-shadow:0 -10px 45px #0003}}
 @media(prefers-reduced-motion:reduce){.taki-console .console-sidebar{transition:none}}
+
+.taki-console .cost-table-scroll{overflow-x:auto}.taki-console .cost-table{width:100%;border-collapse:collapse;text-align:left}.taki-console .cost-table th,.taki-console .cost-table td{padding:12px;border-bottom:1px solid currentColor;vertical-align:top}.taki-console .cost-table td{font-variant-numeric:tabular-nums;white-space:nowrap}
+
+.taki-console .cost-table{min-width:620px}.taki-console .costs-page .stats strong{font-size:1.4rem;white-space:nowrap}.taki-console .costs-page .stats{grid-template-columns:repeat(auto-fit,minmax(155px,1fr))}
+.taki-console .cost-table,.taki-console .cost-table caption,.taki-console .cost-table th,.taki-console .cost-table td{color:var(--tc-text);border-color:var(--tc-line)}

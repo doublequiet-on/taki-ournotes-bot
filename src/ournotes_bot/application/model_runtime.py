@@ -152,6 +152,46 @@ class ModelRuntime:
         self.agent=(ChatAgent(self,self.usage.path.with_name('chat-v1.sqlite3'))
                     if getattr(backend.settings,'chat_engine','legacy')=='agent' else None)
 
+    def cost_status(self):
+        result=self.usage.costs()
+        result['engine']='agent' if self.agent else 'legacy'
+        result['route_reason']='model_not_configured'
+        result['next_route']='blocked'
+        try:
+            profile=self.config.snapshot().profile
+            amount=2*profile.price.reserve(profile.max_input_tokens,profile.max_output_tokens)
+            result['admission_micro']=str(amount*profile.price.reference_rate/1_000_000)
+            try:
+                self.usage.check_primary(day(self.usage.clock()),profile,amount)
+                result.update(next_route='primary',route_reason='primary_budget_available')
+            except ModelError as exc:
+                result['route_reason']=str(exc)
+                if str(exc)=='primary_budget_exceeded':
+                    fallback=self.fallback.snapshot().profile
+                    require(fallback.provider=='deepseek','fallback_configuration')
+                    require(fallback.price.reference_unit==profile.price.reference_unit,'reference_unit_mismatch')
+                    result['next_route']='fallback'
+        except ModelError as exc:
+            result['route_reason']=str(exc)
+        result['primary']=self.config.status()
+        try:
+            fallback=self.fallback.snapshot().profile
+            require(fallback.provider=='deepseek','fallback_configuration')
+            if self.config.current:
+                require(fallback.price.reference_unit==self.config.current.profile.price.reference_unit,'reference_unit_mismatch')
+            result['fallback_ready']=True
+        except ModelError as exc:
+            result['fallback_ready']=False
+            result['fallback_reason']=str(exc)
+        result['fallback']=self.fallback.status()
+        return result
+
+    def record_route(self,work,reason):
+        diagnostics=getattr(self.backend,'diagnostics',None)
+        if diagnostics:
+            diagnostics.span(uuid.uuid4().hex,work.request.request_id,'model_route',0,
+                             self.backend.clock(),outcome=reason)
+
     def is_chat(self,content):
         if self.agent is None or getattr(self.backend.settings,'chat_engine','legacy')!='agent': return False
         if replies.is_ai_request(content): return True
@@ -170,6 +210,7 @@ class ModelRuntime:
 
     def use_fallback(self,work):
         require(not work.budget_fallback and work.model_attempts==0,'primary_budget_exceeded')
+        self.record_route(work,'primary_budget_exceeded')
         try: fallback=self.fallback.snapshot()
         except ModelError: raise ModelError('fallback_not_configured') from None
         if work.request.kind=='group':fallback=fallback.for_group(work.request.conversation_id)
@@ -186,7 +227,9 @@ class ModelRuntime:
         profile=work.model_snapshot.profile
         # Admit a bounded first request and its maximum final response together.
         amount=2*profile.price.reserve(profile.max_input_tokens,profile.max_output_tokens)
-        try:self.usage.check_primary(day(self.usage.clock()),profile,amount)
+        try:
+            self.usage.check_primary(day(self.usage.clock()),profile,amount)
+            self.record_route(work,'primary_budget_available')
         except ModelError as exc:
             if str(exc)!='primary_budget_exceeded':raise
             self.use_fallback(work)
