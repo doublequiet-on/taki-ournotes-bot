@@ -1,5 +1,5 @@
 # L3: Shared release/runtime digest inventory. Order is part of the compatibility contract.
-TRANSPORT_PROTOCOL = {'major': 2, 'minor': 1}
+TRANSPORT_PROTOCOL = {'major': 2, 'minor': 2}
 CODE_FILES = ('backend.py', 'backend_protocol.py', 'delivery_ledger.py', 'replies.py',
               'backend_bootstrap.py', 'runtime_tasks.py', 'notice_gateway.py', 'notice_reports.py',
               'data_owner.py', 'backend_sources.py', 'admin.py', 'diagnostics.py', 'operations.py', 'operations_sources.py', 'operations_runtime.py',
@@ -13,3 +13,4 @@ CODE_FILES += ('chat_agent.py','chat_context.py','chat_store.py','../domain/chat
 CODE_FILES += ('chat_capabilities.py',)
 CODE_FILES += ('story_service.py','story_cli.py','../domain/story.py','../sources/story_files.py','../query/story_retrieval.py')
 CODE_FILES += ('../domain/chat_memory.py',)
+CODE_FILES += ('../domain/chat_images.py','../sources/chat_images.py')

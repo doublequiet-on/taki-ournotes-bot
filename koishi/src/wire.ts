@@ -1,7 +1,7 @@
-// L3: untrusted HTTP JSON -> validated protocol 2.1 values; no IO or authorization.
+// L3: untrusted HTTP JSON -> validated protocol 2.2 values; no IO or authorization.
 import type { PolicySnapshot } from './group-policies'
 
-export const protocol = { major: 2, minor: 1 } as const
+export const protocol = { major: 2, minor: 2 } as const
 export const capability = 'qq-query-chat-v3'
 export class BackendError extends Error {
   constructor(public readonly code: string, public readonly status = 0) { super(code) }

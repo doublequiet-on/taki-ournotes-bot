@@ -2,7 +2,8 @@
 from __future__ import annotations
 import hashlib
 import json
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass, asdict, field
+from ..domain.chat_images import ImageError,parse_attachments
 from ..domain.query_policy import ExecutionPolicy
 from .backend_sources import TRANSPORT_PROTOCOL
 
@@ -58,23 +59,27 @@ class Request:
     reference: dict | None = None
     interaction: dict | None = None
     sender_name: str = ''
+    attachments: tuple = field(default=(),repr=False)
 
     @classmethod
     def parse(cls, value, instance_id, app_id, now, *, reference_profiles=()):
         fields = set(cls.__dataclass_fields__)
-        require(isinstance(value, dict) and set(value) in (fields | {'protocol'},(fields-{'sender_name'}) | {'protocol'}), 'request_shape')
+        optional={'sender_name','attachments'}
+        require(isinstance(value,dict) and fields-optional | {'protocol'}<=set(value)<=fields | {'protocol'},'request_shape')
         value={**value,'sender_name':value.get('sender_name','')}
+        try:value['attachments']=parse_attachments(value.get('attachments'))
+        except ImageError as exc:raise ProtocolError(exc.code) from None
         require(value['sender_name']=='' or identity(value['sender_name']),'sender_name')
         require_protocol(value['protocol'])
         require(value['instance_id'] == instance_id and value['app_id'] == app_id, 'instance_mismatch', 403)
-        for key in fields - {'timestamp_ms', 'body', 'ingress_seq', 'policy', 'reference', 'interaction','sender_name'}:
+        for key in fields - {'timestamp_ms', 'body', 'ingress_seq', 'policy', 'reference', 'interaction','sender_name','attachments'}:
             require(identity(value[key]), 'invalid_identity')
         require(value['platform'] == 'qq' and value['kind'] in ('group', 'c2c'), 'conversation_kind')
         require(value['kind'] != 'c2c' or value['conversation_id'] == value['user_id'], 'c2c_identity')
         require(value['capability'] == CAPABILITY, 'capability_profile', 409)
         require(type(value['timestamp_ms']) is int and 0 <= value['timestamp_ms'] < 10**14, 'message_time')
         require(type(value['ingress_seq']) is int and 0 < value['ingress_seq'] < 2**53, 'ingress_seq')
-        require(isinstance(value['body'], str) and 0 < len(value['body'].encode()) <= 16384, 'body_size')
+        require(isinstance(value['body'],str) and len(value['body'].encode())<=16384 and (value['body'] or value['attachments']),'body_size')
         require(value['trigger'] in ('command','ask','quoted_reply','button'), 'trigger')
         ref, interaction = value['reference'], value['interaction']
         if value['trigger'] == 'quoted_reply':

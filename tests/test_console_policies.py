@@ -2115,6 +2115,69 @@ class ChatSourceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
         self.assertFalse(any(s.scope==tuple(scope.values()) for s in self.backend.conversations.snapshots.values()))
 
 
+class ChatImageIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
+    Helpers=ChatAgentTests.Helpers
+    result=ChatAgentTests.result
+    capture_native_bodies=ChatAgentTests.capture_native_bodies
+    prepare_native=NativeRuntimeTests.prepare_native
+    event=NativeRuntimeTests.event
+
+    async def asyncSetUp(self):
+        from unittest.mock import AsyncMock
+        from ournotes_bot.application.chat_capabilities import VisionCapability
+        from ournotes_bot.domain.chat_images import LoadedImage
+        from io import BytesIO
+        from PIL import Image
+        await ChatAgentTests.asyncSetUp(self)
+        self.snapshot=replace(self.snapshot,profile=replace(self.snapshot.profile,provider='openai',wire_profile='openai-responses-v1'))
+        self.backend.model_runtime.capabilities.vision=Mock(return_value=VisionCapability(128,'low','fixture-probe'))
+        buffer=BytesIO();Image.new('RGB',(1000,440),(50,120,210)).save(buffer,format='PNG')
+        self.image=LoadedImage('a','image/png',1000,440,buffer.getvalue())
+        self.attachments=[dict(id='a',url='https://multimedia.nt.qq.com.cn/download?signed=PRIVATE_FIXTURE',content_type='image/png')]
+        self.reference=None
+        self.backend.model_runtime.agent.image_loader.load_many=AsyncMock(return_value=(self.image,))
+
+    def request(self,msg,seq):
+        value=ChatAgentTests.request(self,msg,seq)
+        if self.attachments:value['attachments']=self.attachments
+        if self.reference:value.update(trigger='quoted_reply',reference=self.reference)
+        return value
+
+    async def test_image_only_then_other_speaker_quote_and_no_media_persistence(self):
+        bodies=self.capture_native_bodies()
+        self.client.request.return_value=self.result('图中是合成蓝色矩形。')
+        first,attempts=await self.prepare_native('')
+        self.assertEqual(len(attempts),1)
+        visual=next(body for body in bodies if any(isinstance(item.get('content'),list) for item in body.get('input',())))
+        content=visual['input'][-1]['content']
+        self.assertEqual(content[-1]['type'],'input_image')
+        self.assertTrue(content[-1]['image_url'].startswith('data:image/png;base64,'))
+        self.event(first,'intent');self.event(first,'ack')
+        self.attachments=[];self.current_user='u2';self.backend.reference_profiles=frozenset({'fixture'})
+        self.reference=dict(message_id='native1',adapter_profile_version='fixture')
+        second,_=await self.prepare_native('/问 甲的图片是什么颜色？',seq=2)
+        visual=[body for body in bodies if any(isinstance(item.get('content'),list) for item in body.get('input',()))][-1]
+        original=next(item for item in visual['input'] if isinstance(item.get('content'),list))
+        self.assertEqual(json.loads(original['content'][0]['text'])['speaker_id'],'u1')
+        self.backend.model_runtime.agent.image_loader.load_many.assert_awaited_once()
+        db=self.backend.model_runtime.agent.store.db
+        persisted=' '.join(row[0] for table,column in (('events','data'),('runs','context'),('memory_messages','text'))
+                           for row in db.execute('SELECT '+column+' FROM '+table))
+        self.assertNotIn('PRIVATE_FIXTURE',persisted);self.assertNotIn('base64,',persisted)
+        self.assertIn('[图片附件 a',persisted)
+        self.event(second,'intent');self.event(second,'ack')
+
+    async def test_unverified_vision_has_explicit_failure_and_direct_command_zero_model(self):
+        self.backend.model_runtime.capabilities.vision.return_value=None
+        plan,attempts=await self.prepare_native('')
+        self.assertEqual(attempts,[])
+        self.assertEqual(plan['parts'][0]['business_status'],'image_capability_unverified')
+        self.event(plan,'intent');self.event(plan,'ack')
+        direct,attempts=await self.prepare_native('/查曲 MyGO',seq=2)
+        self.assertEqual(attempts,[]);self.client.request.assert_not_awaited()
+        self.event(direct,'intent');self.event(direct,'ack')
+
+
 class ChatWebTests(Fixture,unittest.IsolatedAsyncioTestCase):
     Helpers=ChatAgentTests.Helpers
     event=ChatAgentTests.event

@@ -73,6 +73,7 @@ class Work:
     story_versions: tuple = ()
     persona_version: str = 'taki-v0/legacy-derived'
     memory_sources: tuple = ()
+    image_sources: tuple = ()
 
 
 class Backend:
@@ -233,9 +234,10 @@ class Backend:
             require(len(self.works) < self.plan_capacity, 'plan_capacity', 503)
             require(self.retained_bytes() < self.byte_capacity, 'byte_capacity', 503)
             commands = split_commands(request.body)
-            chat=bool(getattr(self.settings,'chat_engine','legacy')=='agent' and self.model_runtime and self.model_runtime.is_chat(request.body)
+            chat=bool(getattr(self.settings,'chat_engine','legacy')=='agent' and self.model_runtime and (self.model_runtime.is_chat(request.body)
+                      or not request.body.strip() and request.attachments)
                       and parse_operation(request.body) is None)
-            if chat: commands=[request.body]
+            if chat: commands=[request.body or '[图片]']
             require(bool(commands), 'empty_commands')
             delivery = uuid.uuid4().hex
             key = ContextKey(request.platform, request.kind, request.conversation_id, request.request_id)
@@ -471,6 +473,8 @@ class Backend:
         if work and work.story_versions and not self.model_runtime.agent.story_valid(work.story_versions):
             return False
         if work and work.chat and not self.model_runtime.agent.memory_valid(work):
+            return False
+        if work and work.chat and not self.model_runtime.agent.images_valid(work):
             return False
         if not (work and work.active and (row['status'] == 'prepared' or work.hint and row['status']=='preparing')
                 and row['epoch'] == epoch and row['runtime'] == self.runtime and self.ledger.active(epoch)

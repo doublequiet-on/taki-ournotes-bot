@@ -95,6 +95,14 @@ ERRORS={
     'knowledge_scope_ambiguous':'请明确想问的游戏版本或日期。',
     'multiple_ai_requests':'需要 AI 处理的问题请分开发送。',
     'multiple_tools':'不同功能的问题请分开发送，我会逐个查询。',
+    'image_capability_unverified':'当前模型的看图能力尚未验收。可以先用文字说明，或稍后重新发图。',
+    'image_not_available':'这张图片当前无法读取，请重新发送原图。',
+    'image_too_large':'这次图片超出读取上限，请压缩或分开发送。',
+    'image_untrusted_source':'这次附件来源不在已接入的QQ图片来源中，请重新发送原图。',
+    'image_unsupported_type':'这次图片格式暂不支持，请发送静态PNG、JPEG、WebP或GIF。',
+    'image_invalid_metadata':'这次图片附件信息不完整，请重新发送原图。',
+    'story_revoked':'引用的剧情资料已变化，这次回答已停止，请重新提问。',
+    'chat_memory_deleted':'所引用的聊天记忆已删除或到期，这次回答已停止。',
 }
 
 
@@ -166,6 +174,7 @@ class ModelRuntime:
             require(getattr(self.backend.settings,'chat_engine','legacy')=='agent','policy_denied')
             require(self.agent.story_valid(work.story_versions),'story_revoked')
             require(self.agent.memory_valid(work),'chat_memory_deleted')
+            require(self.agent.images_valid(work),'image_not_available')
         require(work.active and time.monotonic()<deadline,'execution_timeout')
         require(time.monotonic()<work.content_deadline,'context_expired')
         if work.anchor:
@@ -284,7 +293,18 @@ class ModelRuntime:
             body['tool_choice']='required'
         # Registered text-only byte-BPE profiles: serialized UTF-8 bytes plus
         # 4096 tokens for bounded wire framing is a conservative input ceiling.
-        bound=len(json.dumps(body,ensure_ascii=False,separators=(',',':')).encode())+4096
+        token_body=body
+        image_count=sum(len(message.get('images',())) for message in messages)
+        image_tokens=0
+        if image_count:
+            vision=self.capabilities.vision(work.model_snapshot)
+            require(vision is not None,'image_capability_unverified')
+            require(image_count<=3 and all(message.get('image_detail')==vision.detail for message in messages if message.get('images')),
+                    'image_count_exceeded')
+            # Count text/framing separately; base64 bytes are not image tokens.
+            token_body=request_body(profile,[{key:value for key,value in message.items() if key not in ('images','image_detail')} for message in messages],tools)
+            image_tokens=image_count*vision.max_image_tokens
+        bound=len(json.dumps(token_body,ensure_ascii=False,separators=(',',':')).encode())+4096+image_tokens
         require(bound<=profile.max_input_tokens,'model_input_too_large')
         attempt=reservation or uuid.uuid4().hex
         if reservation is None:

@@ -12,6 +12,8 @@ from functools import partial
 from ..domain.chat import PERSONA, TurnBudget
 from ..domain.model_calls import ModelError, require
 from ..domain.story import StoryError
+from ..domain.chat_images import ImageError
+from ..sources.chat_images import ImageLoader,ImageCache
 from ..natural_query.native_tools import TOOLS, Tool, obj, string, validate_call, execute, scope_for
 from ..sources.errors import ChartDataError
 from ..data import DataError
@@ -49,6 +51,49 @@ class ChatAgent:
         self.audit_failures=0
         root=getattr(runtime.backend.settings,'story_dir',None)
         self.story=StoryService(root) if root else None
+        self.image_loader=ImageLoader()
+        self.images=ImageCache()
+
+    @staticmethod
+    def image_scope(request):
+        return json.dumps(request.scope,sort_keys=True,separators=(',',':'))
+
+    def images_valid(self,work):
+        try:
+            for scope,mid in work.image_sources:self.images.get(scope,mid)
+            return True
+        except ImageError:return False
+
+    async def image_messages(self,work,history,deadline):
+        request=work.request;scope=self.image_scope(request);references=[]
+        if request.attachments:
+            self.images.remember(scope,request.message_id,request.user_id,request.timestamp_ms,request.attachments)
+            references.append(self.images.get(scope,request.message_id))
+        if request.reference:
+            try:references.insert(0,self.images.get(scope,request.reference['message_id']))
+            except ImageError:
+                if any('[图片附件 ' in item['content'] and request.reference['message_id'] in item['content'] for item in history):
+                    raise ModelError('image_not_available') from None
+        if not references:return history
+        vision=self.runtime.capabilities.vision(work.model_snapshot)
+        require(vision is not None,'image_capability_unverified')
+        require(sum(len(ref.attachments) for ref in references)<=3,'image_count_exceeded')
+        messages=[dict(item) for item in history]
+        try:
+            for ref in references:
+                loaded=ref.images or await self.image_loader.load_many(ref.attachments,timestamp_ms=ref.timestamp_ms,deadline=deadline)
+                self.images.remember(scope,ref.message_id,ref.speaker_id,ref.timestamp_ms,ref.attachments,loaded)
+                matching=[item for item in messages if item['role']=='user' and json.loads(item['content']).get('message_id')==ref.message_id]
+                if matching:message=matching[-1]
+                else:
+                    message={'role':'user','content':json.dumps(dict(message_id=ref.message_id,speaker_id=ref.speaker_id,
+                        timestamp_ms=ref.timestamp_ms,text='引用的原图，原作者按speaker_id识别；仅本轮图片可见。'),ensure_ascii=False)}
+                    messages.insert(0,message)
+                message.update(images=loaded,image_detail=vision.detail)
+                work.image_sources=(*work.image_sources,(scope,ref.message_id))
+                work.content_deadline=min(work.content_deadline,time.monotonic()+ref.timestamp_ms/1000+300-time.time())
+        except ImageError as exc:raise ModelError(exc.code) from None
+        return messages
 
     def story_valid(self,versions):
         if not versions:return True
@@ -73,6 +118,7 @@ class ChatAgent:
         key=tuple(scope.values())
         self.context.scopes.pop(key,None)
         self.context.revisions.pop(key,None)
+        self.images.forget_scope(json.dumps(scope,sort_keys=True,separators=(',',':')))
         backend=self.runtime.backend
         backend.conversations.clear_scope(key)
         for work in list(backend.works.values()):
@@ -91,6 +137,8 @@ class ChatAgent:
         runtime=self.runtime
         deadline=min(deadline,work.content_deadline)
         work.model_attempt_limit=self.budget.model_calls
+        if work.request.attachments:
+            question+='\n'+''.join('[图片附件 '+item.id+' '+item.content_type+'；图像仅在本轮或有效引用中可见]' for item in work.request.attachments)
         self.context.trigger(work.request,question)
         history=self.context.messages(work.request)
         # A validated explicit reference to a business display is conversation
@@ -112,7 +160,7 @@ class ChatAgent:
             prompt+='\n人工批准人格档案：\n'+persona['prompt']
         self.audit(self.store.begin,work,history)
         self.bind_memory(work,[json.loads(item['content']) for item in history if 'message_id' in json.loads(item['content'])])
-        messages=[{'role':'system','content':prompt},*history]
+        messages=[{'role':'system','content':prompt},*await self.image_messages(work,history,deadline-self.budget.final_seconds)]
         leases=()
         seen={}
         output_ids={}

@@ -228,3 +228,7 @@ class ImageCache:
     def forget(self, scope: str, message_id: str):
         self._entries.pop((scope, message_id), None)
         self._expires.pop((scope, message_id), None)
+
+    def forget_scope(self,scope: str):
+        for key in list(self._entries):
+            if key[0]==scope:self.forget(*key)

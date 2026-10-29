@@ -101,7 +101,7 @@ export class Receiver {
     const now = Date.now()
     for (const [key, value] of this.raw) if (now - value.at > 298000) this.raw.delete(key)
     if (this.raw.size >= 512 && !this.raw.has(data.id)) return
-    const fingerprint = JSON.stringify([type, data.content, data.timestamp, data.author, data.group_id, data.group_openid, data.mentions])
+    const fingerprint = JSON.stringify([type, data.content, data.timestamp, data.author, data.group_id, data.group_openid, data.mentions, data.attachments, data.message_reference])
     const existing = this.raw.get(data.id)
     if (existing) {
       // Do not let a conflicting raw event replace the first identity/body while decode is waiting.
@@ -165,7 +165,7 @@ export class Receiver {
       if (!this.ctx.filter(canonical)) { this.observed('scope_denied'); return false }
       await this.ready
       if (!this.active) { this.observed('disposed'); return true }
-      if (!await this.client.recognizes(decoded.inbound.body)) { this.observed('unrecognized'); return false }
+      if (!decoded.inbound.attachments?.length && !await this.client.recognizes(decoded.inbound.body)) { this.observed('unrecognized'); return false }
       if (!await this.permitted(canonical)) { this.observed('permission_denied'); return true }
       if (!this.active) { this.observed('disposed'); return true }
       if (this.config.management && !this.config.management.accepts(decoded.inbound)) { this.observed('management_denied'); return true }

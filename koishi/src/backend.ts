@@ -125,6 +125,7 @@ export class BackendClient implements DeliveryEvents {
       app_id: input.appId, platform: input.platform, kind: input.kind, conversation_id: input.conversationId,
       user_id: input.userId, message_id: input.messageId, timestamp_ms: input.timestampMs, body: input.body,
       ...(input.senderName===undefined ? {} : {sender_name:input.senderName}),
+      ...(input.attachments===undefined ? {} : {attachments:input.attachments}),
       capability, gateway_epoch: this.epoch, ingress_seq: seq, policy:structuredClone(policy),
       trigger:input.trigger ?? (/^[/／]?(?:问|ask)(?:\s|$)/i.test(input.body)?'ask':'command'),
       reference:input.reference ?? null, interaction:null }))

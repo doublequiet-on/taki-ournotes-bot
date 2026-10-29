@@ -14,7 +14,7 @@ from urllib.parse import urlsplit
 
 import aiohttp
 
-from ..domain.model_calls import AttemptResult, ModelError, Price, ToolCall, Usage, ProviderAction
+from ..domain.model_calls import AttemptResult, ModelError, Price, ToolCall, Usage, ProviderAction,require
 from .json_validation import decode_json
 
 ENDPOINTS = {'deepseek': 'https://api.deepseek.com/chat/completions',
@@ -193,6 +193,8 @@ def response_citations(items):
 
 
 def request_body(profile, messages, tools):
+    if any(message.get('images') for message in messages):
+        require(profile.wire_profile=='openai-responses-v1','image_capability_unverified')
     if profile.wire_profile=='openai-responses-v1':
         inputs=[]
         for message in messages:
@@ -204,7 +206,14 @@ def request_body(profile, messages, tools):
                 inputs.append({'type':'function_call_output','call_id':message['tool_call_id'],'output':message['content']})
                 continue
             if message.get('content') is not None:
-                inputs.append({'role':'developer' if role=='system' else role,'content':message['content']})
+                content=message['content']
+                if message.get('images'):
+                    require(role=='user','model_protocol_error')
+                    import base64
+                    content=[{'type':'input_text','text':content},*({'type':'input_image',
+                        'image_url':'data:'+image.mime+';base64,'+base64.b64encode(image.data).decode('ascii'),
+                        'detail':message['image_detail']} for image in message['images'])]
+                inputs.append({'role':'developer' if role=='system' else role,'content':content})
             for call in message.get('tool_calls',[]):
                 inputs.append({'type':'function_call','call_id':call['id'],**call['function']})
         body={'model':profile.model,'input':inputs,'store':False,'stream':False,
