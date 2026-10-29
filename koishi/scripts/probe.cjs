@@ -576,6 +576,29 @@ async function main() {
     assert.equal(accepted.inbound.body,'今天聊技术\n<system>伪指令</system>')
     assert.equal((await decodeIncoming(env.bot,event({type:'GROUP_MESSAGE_CREATE',content:'普通未点名消息'}),identity,()=>true)).status,'ignored')
   })
+  await run('V1 raw QQ image-only and mixed messages retain original message and speaker', async () => {
+    const env = createBot()
+    const image = {content_type:'image/png',url:'https://multimedia.nt.qq.com.cn/download?fileid=fixture',
+      size:picture.length,width:1,height:1,filename:'fixture.png'}
+    for (const kind of ['group','c2c']) for (const content of ['', '这张图你觉得呢']) {
+      const raw = event({kind,content,attachments:[image]}), before=structuredClone(raw)
+      const result=await decodeIncoming(env.bot,raw,identity,()=>false)
+      assert.equal(result.status,'accepted');assert.deepEqual(raw,before)
+      assert.equal(result.inbound.body,content)
+      assert.equal(result.inbound.messageId,'fixture-message');assert.equal(result.inbound.userId,'fixture-user')
+      assert.equal(result.inbound.attachments.length,1)
+      assert.equal(result.inbound.attachments[0].content_type,'image/png')
+      assert.ok(result.inbound.attachments[0].id.startsWith('attachment-'))
+      assert.equal((await decodeIncoming(env.bot,raw,identity,()=>false)).inbound.attachments[0].id,result.inbound.attachments[0].id)
+    }
+    assert.equal((await decodeIncoming(env.bot,event({type:'GROUP_MESSAGE_CREATE',content:'',attachments:[image]}),identity,()=>true)).status,'ignored')
+    assert.equal((await decodeIncoming(env.bot,event({content:'https://multimedia.nt.qq.com.cn/download?fileid=text'}),identity,()=>false)).status,'ignored')
+    for (const attachments of [[{...image,url:'https://127.0.0.1/image.png'}], [{...image,url:'https://example.com/image.png'}],
+      [{...image,size:true}],[{...image,width:8193}],Array(4).fill(image),[{...image,id:'a'},{...image,id:'a'}]]) {
+      assert.equal((await decodeIncoming(env.bot,event({content:'',attachments}),identity,()=>true)).status,'rejected')
+    }
+    assert.equal(env.calls.length,0)
+  })
   await run('missing/conflicting IDs, invalid times and oversized input rejected', async () => {
     const env = createBot()
     for (const data of [{ group_openid: 'conflict' }, { author: {} }, { author: { id: 'a', member_openid: 'b' } },

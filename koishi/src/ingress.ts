@@ -6,6 +6,14 @@ import type { Session } from 'koishi'
 
 export type ConversationKind = 'group' | 'c2c'
 export interface Identity { instanceId: string; appId: string; selfId: string }
+export interface ImageAttachment {
+  id: string
+  url: string
+  content_type: 'image/png' | 'image/jpeg' | 'image/webp' | 'image/gif'
+  size?: number
+  width?: number
+  height?: number
+}
 export interface Inbound {
   requestId: string
   instanceId: string
@@ -18,6 +26,7 @@ export interface Inbound {
   timestampMs: number
   body: string
   senderName?: string
+  attachments?: ImageAttachment[]
   trigger?: 'command' | 'ask' | 'quoted_reply'
   reference?: { message_id:string; adapter_profile_version:string } | null
 }
@@ -41,6 +50,44 @@ function pair(current: unknown, legacy: unknown): string | undefined {
 }
 function digest(value: unknown): string {
   return createHash('sha256').update(JSON.stringify(value)).digest('hex')
+}
+
+const imageTypes = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif'])
+/** Normalize only raw QQ attachments. A text URL is never promoted to an image. */
+function imageAttachments(value: unknown, messageId: string): ImageAttachment[] | undefined {
+  if (value === undefined) return []
+  if (!Array.isArray(value) || value.length > 3) return
+  const result: ImageAttachment[] = []
+  for (let index = 0; index < value.length; index++) {
+    const attachment = record(value[index])
+    if (!attachment || typeof attachment.content_type !== 'string') return
+    // Non-image files are not model image input.
+    if (!attachment.content_type.startsWith('image/')) continue
+    if (!imageTypes.has(attachment.content_type) || typeof attachment.url !== 'string'
+        || attachment.url.length > 8192 || /[\s\u0000-\u001f\u007f]/u.test(attachment.url)) return
+    let url: URL
+    try { url = new URL(attachment.url) } catch { return }
+    if (url.protocol !== 'https:' || url.hostname !== 'multimedia.nt.qq.com.cn' || url.port
+        || url.username || url.password || url.hash || url.pathname !== '/download' || !url.search) return
+    if (attachment.id !== undefined && !id(attachment.id)) return
+    // Actual QQ payloads can omit id. This is a message-local transport id, not a new source fact.
+    const normalized: ImageAttachment = {
+      id: attachment.id as string | undefined ?? 'attachment-' + digest([messageId, index]).slice(0, 32),
+      url: attachment.url, content_type: attachment.content_type as ImageAttachment['content_type'],
+    }
+    for (const key of ['size', 'width', 'height'] as const) {
+      const number = attachment[key]
+      if (number === undefined) continue
+      if (typeof number !== 'number' || !Number.isSafeInteger(number) || number <= 0
+          || number > (key === 'size' ? 6 * 1024 * 1024 : 8192)) return
+      normalized[key] = number
+    }
+    if (normalized.width && normalized.height && normalized.width * normalized.height > 16_000_000) return
+    result.push(normalized)
+  }
+  if (new Set(result.map(item => item.id)).size !== result.length
+      || result.reduce((total, item) => total + (item.size || 0), 0) > 12 * 1024 * 1024) return
+  return result
 }
 
 /** Recognizer comes from the business entry manifest; do not duplicate query parsing. */
@@ -85,7 +132,9 @@ export async function decodeIncoming(
   if (!addressed) return { status: 'ignored', reason: 'not_addressed' }
   // Read raw plain text, not Koishi's escaped element serialization.
   const body = data.content.replace(/<@!?\w+>/gu, '').trim()
-  if (!body || !recognizes(body)) return { status: 'ignored', reason: 'not_taki' }
+  const attachments = imageAttachments(data.attachments, data.id)
+  if (!attachments) return { status: 'rejected', reason: 'invalid_attachments' }
+  if (!attachments.length && (!body || !recognizes(body))) return { status: 'ignored', reason: 'not_taki' }
   const canonical = {
     ...envelope,
     d: { ...data, author: { ...author, id: userId }, ...(kind === 'group' ? { group_id: conversationId } : {}) },
@@ -102,7 +151,8 @@ export async function decodeIncoming(
     status: 'accepted', session,
     inbound: { requestId, instanceId: identity.instanceId, appId: identity.appId, platform: 'qq',
       kind, conversationId, userId, messageId: data.id, timestampMs, body,
-      ...(id(author.username) ? {senderName:author.username} : {}) },
+      ...(id(author.username) ? {senderName:author.username} : {}),
+      ...(attachments.length ? {attachments} : {}) },
   }
 }
 
