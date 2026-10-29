@@ -206,7 +206,9 @@ class ServiceBudget:
                     bound = price.reserve(inputs, outputs) * price.reference_rate / 1_000_000
                     bound += sum(action['max_count']*action['unit_cost_micro'] for action in self.usage.db.execute(
                         'SELECT max_count,unit_cost_micro FROM attempt_actions WHERE attempt=?',(row['id'],)))
-                    amount = max(amount, held, bound)
+                    # Known settled cost and an unresolved action reservation
+                    # are additive; the full-call bound is a separate floor.
+                    amount = max(amount + held, bound)
                 else:
                     amount += held
                 cost += amount

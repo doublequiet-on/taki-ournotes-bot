@@ -2382,6 +2382,23 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
             ServiceBudget(usage,'fixture','app').check(policy,'proactive',profile,
                 service_request_id('proactive','fixture','app','g1','next'),1)
 
+    def test_service_budget_adds_known_cost_to_unknown_action_hold(self):
+        from ournotes_bot.application.chat_jobs import service_request_id,ServiceError,ServiceBudget
+        from ournotes_bot.domain.model_calls import Usage,ProviderAction
+        usage=self.backend.model_runtime.usage;profile=self.snapshot.profile
+        job=service_request_id('proactive','fixture','app','g1','oversized-provider-usage')
+        user=usage.key('service','fixture','app','g1','approved-group-service','proactive');group=usage.key('group','g1')
+        generous=replace(profile,user_daily_limit=10**12,group_daily_limit=10**12)
+        usage.reserve(job,'known-plus-unknown',user,group,generous,10,action_budget=(('web_search',1,60000),))
+        usage.start('known-plus-unknown',generous)
+        usage.settle('known-plus-unknown',Usage(100000,0,0,None,100000,'known'),actions=(ProviderAction('web_search',None),))
+        row=usage.get('known-plus-unknown')
+        self.assertEqual((row['cost'],row['reserved']),('100000','60000'))
+        policy=replace(self.policy,proactive=replace(self.policy.proactive,max_cost_micro_per_hour=150000))
+        with self.assertRaisesRegex(ServiceError,'chat_service_cost_limit'):
+            ServiceBudget(usage,'fixture','app').check(policy,'proactive',profile,
+                service_request_id('proactive','fixture','app','g1','next'),1)
+
     async def test_defer_then_reply_persists_only_after_ack_and_receipt_survives_clear(self):
         value=self.observation();self.tick+=1.6
         self.client.request.side_effect=[self.result('{"participation":"defer","delay_seconds":2}'),
