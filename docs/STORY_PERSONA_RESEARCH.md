@@ -1,6 +1,6 @@
 # 立希人格研究与统一审核候选（DRAFT）
 
-取证日期：2026-10-29。本文是待人工审核的研究资料，不是批准的人格正文，不改变现有 `legacy-derived` 运行初稿。已知来源覆盖见 [STORY_SOURCE_COVERAGE](STORY_SOURCE_COVERAGE.md)，工程批准合同见 [STORY_ENGINE](STORY_ENGINE.md)。
+取证日期：2026-10-29；Our Notes 官网人物页补核日期：2026-10-30。本文是待人工审核的研究资料，不是批准的人格正文，不改变现有 `legacy-derived` 运行初稿。已知来源覆盖见 [STORY_SOURCE_COVERAGE](STORY_SOURCE_COVERAGE.md)，工程批准合同见 [STORY_ENGINE](STORY_ENGINE.md)。
 
 本次只有一个真实官方简介短引句进入隔离样例，尚没有原作完整交流场景或覆盖 Our Notes 后续剧情的原文库。下列候选从官网人物介绍、分集梗概及研究推断形成；它们不能直接标为引擎 `original_fact`，也不能据此批准运行人格。
 
@@ -10,6 +10,8 @@
 |---|---|---|
 | P-MYGO | [MyGO 官方立希介绍](https://anime.bang-dream.com/mygo/character/taki/)／人物正文 | 介绍她喜欢独处、在 RiNG 工作、接待客人不擅长、对燈较宽容，有年长四岁的姐姐。这是官方概括，不是完整对白或关系研究。 |
 | P-AVE | [Ave Mujica 官方立希介绍](https://anime.bang-dream.com/avemujica/character/taki/)／人物正文 | 介绍她言行生硬但照顾人，负责 MyGO 的鼓和作曲，与初華、海鈴同班，接待客人不擅长。本轮搜索索引可核对正文，直连发生 TLS EOF；没有将其写成原作台词。 |
+| P-ON | [Our Notes 官方立希介绍](https://bang-dream-on.bushimo.jp/character/mygo/shiina-taki/)／人物正文及资料栏 | 游戏官网介绍她喜欢独处、容易与人发生摩擦，对认可的人有忠诚的一面，在 RiNG 工作但不擅长接待；资料栏列出喜欢的食物和兴趣。这里是产品人物简介，不提供完整游戏内交流场景，不能据此自动写入正式剧情库或批准运行人格。 |
+| P-ON-UMIRI | [Our Notes 官方海鈴介绍](https://bang-dream-on.bushimo.jp/character/avemujica/yahata-umiri/)／人物正文 | 介绍海鈴与初華、立希同班；只支持该游戏产品简介中的同班关系，不推定三人的具体互动或近期剧情。 |
 | S-05 | [MyGO Story](https://anime.bang-dream.com/mygo/story/)／第 5 集《逃げてない！》 | 简介说明首次演出前的乐队承诺、爱音练习态度及立希的发言。隔离样例 `mygo.ep05.official-summary.quote01` 保存官网所引的一句日文，非整集场景。 |
 | S-06 | [MyGO Story](https://anime.bang-dream.com/mygo/story/)／第 6 集《なんで今更》 | 简介把立希的烦躁放在乐奈突然出现及演出练习不顺的语境中；未提供完整对话及人物全部动机。 |
 | S-11 | [MyGO Story](https://anime.bang-dream.com/mygo/story/)／第 11 集《それでも》 | 简介说明爱音、乐奈、爽世、立希被燈的诗打动；不能直接扩写为每人具体认错方式或心理独白。 |

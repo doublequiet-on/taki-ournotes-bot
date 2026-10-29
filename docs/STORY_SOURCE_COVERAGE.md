@@ -1,6 +1,6 @@
 # K1 全系列剧情来源覆盖记录（DRAFT）
 
-取证日期：2026-10-29。范围是 BanG Dream! 官方作品目录、GBP 与 Our Notes 已公开的剧情类别、公开人物介绍及可追溯的出版入口。此表记录来源覆盖和正文缺口，不代表已取得全系列台词、字幕、漫画或游戏脚本。
+取证日期：2026-10-29；Our Notes 人物和活动入口补核日期：2026-10-30。范围是 BanG Dream! 官方作品目录、GBP 与 Our Notes 已公开的剧情类别、公开人物介绍及可追溯的出版入口。此表记录来源覆盖和正文缺口，不代表已取得全系列台词、字幕、漫画或游戏脚本。
 
 本次匿名读取官方 HTML，不登录游戏、不获取账号、不下载视频、字幕或漫画图片，不调用模型。链接核验记录保存在忽略的 `runtime/story-source-link-check.json`；真实短样例和导入读回结果分别为 `runtime/story-real-sample.json`、`runtime/story-real-sample-result.json`。这些运行资料不进入提交或公开发行包。
 
@@ -23,6 +23,8 @@
 | GBP：[攻略指南](https://bang-dream.bushimo.jp/guide/)、[官方 FAQ](https://bang-dream.bushimo.jp/faq/) | 主线、乐队、活动剧情；区域对话；成员 Episode／Memorial Episode 类别和解锁说明。FAQ 还说明部分成员采用 Memorial Animation。 | 页面是功能说明，不提供逐章完整日文脚本；未完成各季、各服、各活动与各卡牌的逐项清单，未核对卡牌全部解锁或原文获取许可。 | `pending_validation` |
 | GBP 往期活动：[官方 FAQ](https://bang-dream.bushimo.jp/faq/) | 结束后的活动剧情在游戏内对应入口读取，未解锁内容可能要求乐队等级。 | 不能据此推断任意活动均已公开、全部可匿名导出，或其他服与日服内容一致。须按活动 ID、章节和版本登记。 | `pending_validation` |
 | Our Notes：[发行介绍](https://bang-dream-on.bushimo.jp/news/post-8) | 发行时五支乐队各 20 话、合计 100 话，约 24 小时；介绍额外故事、Another Story 与絆故事。 | 这是发行时口径，不是 2026-10-29 的完整存量。公告没有公开全部文本；活动、成员／卡牌、关系支线和后续增量未逐条盘点。 | `pending_validation` |
+| Our Notes：[立希人物介绍](https://bang-dream-on.bushimo.jp/character/mygo/shiina-taki/)及[海鈴人物介绍](https://bang-dream-on.bushimo.jp/character/avemujica/yahata-umiri/) | 可核对人物简介和同班关系；立希资料栏另列出食物与兴趣。 | 官网概述不等于游戏内剧情场景；未导入数据库，不以之自动批准人格或推断剧情时点。 | `pending_validation` |
+| Our Notes：[A day〜#HalloweenSnap〜 活动页](https://bang-dream-on.bushimo.jp/campaign/halloweensnap/) | 官网明确说明该活动没有活动剧情，并介绍以角色日常为主题的沉浸式主页。 | 不能将活动宣传、卡面或主页直接当成活动剧情正文；也不能据此推断其他活动没有剧情。 | `pending_validation` |
 | Our Notes 后续活动与卡牌故事 | 需要逐活动、逐卡牌核对游戏内入口及官方公告。 | 目前没有完整 ID 清单、正文、更新时间和获取许可；不能照搬 GBP 的分类或剧情到 ON。 | `missing_source` |
 
 游戏查询数据接口或第三方数据库即使公开可见，也不能据此自动认定拥有原作脚本再使用许可。本次没有从第三方页面导入游戏剧情正文。
