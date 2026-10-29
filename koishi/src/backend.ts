@@ -6,7 +6,7 @@ import { Telemetry, Span } from './telemetry'
 import type { PolicySnapshot } from './group-policies'
 
 import { protocol, capability, BackendError, decodeReady, decodeClassify, decodePlan, decodeRecorded,
-  decodeAcknowledgement, decodeIntent, decodeRegistration, decodeRetirement, object } from './wire'
+  decodeAcknowledgement, decodeIntent, decodeRegistration, decodeRetirement, decodeChatObservation, decodeChatCandidate, object } from './wire'
 import type { Ready, Plan, WirePart, ModelPermission, Recorded } from './wire'
 export { protocol, capability, BackendError } from './wire'
 export type { Plan, WirePart, ModelPermission } from './wire'
@@ -120,15 +120,30 @@ export class BackendClient implements DeliveryEvents {
   async recognizes(body: string): Promise<boolean> {
     return decodeClassify(await this.retry('/v1/classify', { body }))
   }
-  async submit(input: Inbound, seq: number, policy: PolicySnapshot = {natural_query:'model',epoch:this.epoch,global_revision:0,group_revision:0}): Promise<Plan> {
-    return decodePlan(await this.retry('/v1/requests', { protocol, request_id: input.requestId, instance_id: input.instanceId,
+  private encode(input: Inbound, seq: number, policy: PolicySnapshot) {
+    if (input.proactiveId!==undefined && (input.trigger!=='proactive' || !/^[a-f0-9]{32}$/.test(input.proactiveId))
+        || input.trigger==='proactive' && input.proactiveId===undefined) throw new BackendError('proactive_identity')
+    return { protocol, request_id: input.requestId, instance_id: input.instanceId,
       app_id: input.appId, platform: input.platform, kind: input.kind, conversation_id: input.conversationId,
       user_id: input.userId, message_id: input.messageId, timestamp_ms: input.timestampMs, body: input.body,
       ...(input.senderName===undefined ? {} : {sender_name:input.senderName}),
       ...(input.attachments===undefined ? {} : {attachments:input.attachments}),
+      ...(input.proactiveId===undefined ? {} : {proactive_id:input.proactiveId}),
       capability, gateway_epoch: this.epoch, ingress_seq: seq, policy:structuredClone(policy),
       trigger:input.trigger ?? (/^[/／]?(?:问|ask)(?:\s|$)/i.test(input.body)?'ask':'command'),
-      reference:input.reference ?? null, interaction:null }))
+      reference:input.reference ?? null, interaction:null }
+  }
+  async submit(input: Inbound, seq: number, policy: PolicySnapshot = {natural_query:'model',epoch:this.epoch,global_revision:0,group_revision:0}): Promise<Plan> {
+    if (input.trigger==='observation' || input.trigger==='proactive') throw new BackendError('request_trigger')
+    return decodePlan(await this.retry('/v1/requests', this.encode(input,seq,policy)))
+  }
+  async chatObservation(input: Inbound, seq: number, policy: PolicySnapshot) {
+    if(input.kind!=='group' || input.trigger!=='observation' || input.proactiveId!==undefined) throw new BackendError('observation_identity')
+    return decodeChatObservation(await this.retry('/v1/chat/observations',this.encode(input,seq,policy)))
+  }
+  async chatCandidate(input: Inbound, seq: number, policy: PolicySnapshot) {
+    if(input.kind!=='group' || input.trigger!=='proactive') throw new BackendError('candidate_identity')
+    return decodeChatCandidate(await this.retry('/v1/chat/candidates',this.encode(input,seq,policy)))
   }
   async modelPermission(challenge:ModelPermission, policy:PolicySnapshot, allowed:boolean):Promise<Recorded> {
     const { admission_policy_version, remaining_ms, ...binding } = challenge

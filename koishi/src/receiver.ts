@@ -1,5 +1,5 @@
 // L3: raw-event sequence ownership -> Koishi scope/permissions -> Python -> QQDelivery.
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { Context, Session, Channel, User } from 'koishi'
 import type { QQBot } from '@satorijs/adapter-qq'
 import { BackendClient, BackendError, Plan, ModelPermission } from './backend'
@@ -14,8 +14,13 @@ export interface ReceiverConfig extends Identity {
   materialStateDir?: string
   notifications?: boolean; backendUrl: string; tokenEnv: string; permissions: string[]; maxPending: number
 }
-interface Raw { raw: unknown; seq: number; at: number; fingerprint: string; conflict?: boolean }
-interface Job { input: Inbound; promise: Promise<void>; delivery?: QQDelivery; plan?: Plan; session:Session; permissionAttempts:Set<string> }
+interface Raw { raw: unknown; seq: number; at: number; fingerprint: string; bytes:number; conflict?: boolean }
+interface Observation {
+  key:string; input:Inbound; session:Session; seq:number; fingerprint:string; bytes:number; attempt:number
+  policyVersion:string
+  cancelled:boolean; accepted:boolean; timer?:ReturnType<typeof setTimeout>; promise?:Promise<void>
+}
+interface Job { input: Inbound; promise: Promise<void>; delivery?: QQDelivery; plan?: Plan; session:Session; permissionAttempts:Set<string>; proactive?:Observation }
 interface Flight { source: Raw; promise: Promise<boolean>; accepted: boolean }
 const admissionOutcomes = ['duplicate', 'conflict', 'capacity_rejected_unclassified', 'decode_ignored', 'decode_rejected',
   'scope_denied', 'unrecognized', 'permission_denied', 'management_denied', 'disposed', 'accepted',
@@ -43,10 +48,13 @@ export class Receiver {
   health() { return { active:this.active && (this.notices?.healthy() ?? true), handshake:!!this.client.readiness, epoch:this.client.epoch, backend:this.client.readiness } }
   activity() {
     const accepted = [...this.flights.values()].filter(flight => flight.accepted).length
-    return { accepted_inflight:accepted, admission_inflight:this.flights.size-accepted,
-      pending_total:this.flights.size, capacity:this.config.maxPending, epoch:this.epoch,
+      + [...this.observationTasks].filter(task=>task.accepted).length
+    const total=this.flights.size+this.observationTasks.size
+    return { accepted_inflight:accepted, admission_inflight:total-accepted,
+      pending_total:total, capacity:this.config.maxPending, epoch:this.epoch,
       started_at:this.startedAt, startup_error:this.startupError ?? null, admission_attempts:{...this.admissionCounts},
-      materials:this.materials?.diagnostics() ?? null }
+      materials:this.materials?.diagnostics() ?? null, observation_pending:this.observations.size,
+      observation_bytes:this.observationBytes() }
   }
   private readonly startedAt = Date.now()/1000
   private startupError?: AdmissionOutcome
@@ -58,6 +66,9 @@ export class Receiver {
   private raw = new Map<string, Raw>()
   private jobs = new Map<string, Job>()
   private flights = new Map<string, Flight>()
+  private observations = new Map<string, Observation>()
+  private observationTasks = new Set<Observation>()
+  private groupArrivals = new Map<string,{seq:number;at:number}>()
   private admission: Promise<void> = Promise.resolve()
   readonly ready: Promise<void>
   private log: ReturnType<Context['logger']>
@@ -84,32 +95,137 @@ export class Receiver {
   private sweep():void {
     const now=Date.now()
     for(const [key,value] of this.raw) if(now-value.at>=298000)this.raw.delete(key)
+    for(const [key,value] of this.groupArrivals)if(now-value.at>=298000)this.groupArrivals.delete(key)
+    for(const task of this.observations.values()) if(!this.observationAlive(task))this.cancelObservation(task.key)
+  }
+  private groupKey(group:string):string {
+    return JSON.stringify([this.config.instanceId,this.config.appId,'qq','group',group])
+  }
+  private observationBytes():number {
+    const sources=new Set([...this.raw.values(),...[...this.flights.values()].map(flight=>flight.source)])
+    return [...sources].reduce((total,item)=>total+item.bytes,0)
+      + [...this.observationTasks].reduce((total,item)=>total+item.bytes,0)
+  }
+  private cancelObservation(key:string):void {
+    const task=this.observations.get(key)
+    if(!task)return
+    task.cancelled=true
+    if(task.timer)clearTimeout(task.timer)
+    task.timer=undefined
+    this.observations.delete(key)
+    for(const job of this.jobs.values())if(job.proactive===task)job.delivery?.dispose()
+    if(!task.promise)this.observationTasks.delete(task)
+  }
+  private observationAlive(task:Observation):boolean {
+    const management=this.config.management
+    return this.active && !task.cancelled && this.observations.get(task.key)===task
+      && this.groupArrivals.get(task.key)?.seq===task.seq
+      && Date.now()<task.input.timestampMs+298000 && (management?.accepts(task.input)??true)
+      && (management?.policySnapshot(task.input).natural_query??'model')==='model'
+      && this.policyVersion(task.input)===task.policyVersion
+  }
+  private policy(input:Inbound) {
+    return this.config.management?.policySnapshot(input)
+      ?? {natural_query:'model' as const,epoch:this.epoch,global_revision:0,group_revision:0}
+  }
+  private policyVersion(input:Inbound):string {
+    const policy=this.policy(input)
+    return JSON.stringify([policy.epoch,policy.global_revision,policy.group_revision,policy.natural_query])
+  }
+  private scheduleObservation(task:Observation,delayMs:number):void {
+    task.timer=setTimeout(()=>{
+      task.timer=undefined
+      task.promise=this.runObservation(task).finally(()=>{
+        task.promise=undefined
+        if(task.cancelled)this.observationTasks.delete(task)
+      })
+    },delayMs)
+    task.timer.unref()
+  }
+  private queueObservation(input:Inbound,session:Session,source:Raw,delayMs:number):void {
+    const key=this.groupKey(input.conversationId)
+    if(this.groupArrivals.get(key)?.seq!==source.seq)return
+    this.cancelObservation(key)
+    const bytes=Buffer.byteLength(JSON.stringify(input))+Buffer.byteLength(JSON.stringify(session.event))
+    // The current ingress flight releases its slot on return; the timer takes it.
+    if(this.flights.size+this.observationTasks.size-1>=this.config.maxPending
+        || this.observationBytes()+bytes>8*1024*1024)return
+    const task:Observation={key,input,session,seq:source.seq,fingerprint:source.fingerprint,bytes,
+      attempt:0,cancelled:false,accepted:false,policyVersion:this.policyVersion(input)}
+    this.observations.set(key,task)
+    this.observationTasks.add(task)
+    this.scheduleObservation(task,delayMs)
+  }
+  private async runObservation(task:Observation):Promise<void> {
+    let again=false
+    try {
+      if(!this.observationAlive(task) || task.attempt>=3)return
+      const current=this.ctx.reflect.trace(task.session.bot.session({...task.session.event}))
+      if(!await this.permitted(current) || !this.observationAlive(task))return
+      const proactiveId=randomUUID().replaceAll('-','')
+      const input:Inbound={...task.input,trigger:'proactive',proactiveId,
+        requestId:createHash('sha256').update(JSON.stringify([task.input.instanceId,task.input.appId,'qq','group',
+          task.input.conversationId,task.input.userId,task.input.messageId,proactiveId])).digest('hex')}
+      task.attempt++
+      const candidate=await this.client.chatCandidate(input,task.seq,this.policy(input))
+      if(!candidate.candidate)return
+      const job:Job={input,plan:candidate.plan,session:task.session,permissionAttempts:new Set(),
+        promise:Promise.resolve(),proactive:task}
+      this.jobs.set(input.requestId,job)
+      task.accepted=true
+      job.promise=this.deliver(job,task.session.bot as unknown as QQBot)
+      await job.promise
+      task.accepted=false
+      again=this.observationAlive(task) && task.attempt<3 && job.plan?.status==='finished'
+    } catch(error) {
+      this.log.warn('proactive candidate stopped: %s',error instanceof BackendError?error.code:'integration_error')
+    } finally {
+      task.accepted=false
+      if(again)this.scheduleObservation(task,5000)
+      else if(this.observations.get(task.key)===task)this.cancelObservation(task.key)
+    }
   }
   capture(session: Session): void {
     if (!this.active || session.platform !== 'qq' || session.bot.config.id !== this.config.appId || session.type !== 'internal') return
     const types: Record<string, string> = { 'qq/group-at-message-create': 'GROUP_AT_MESSAGE_CREATE',
       'qq/group-message-create': 'GROUP_MESSAGE_CREATE', 'qq/c2c-message-create': 'C2C_MESSAGE_CREATE' }
     const type = types[session.event._type ?? ''], data = session.event._data as Record<string, unknown> | undefined
-    if (!type || !data || typeof data.id !== 'string' || typeof data.content !== 'string'
+    if (!type || !data || typeof data.id !== 'string' || !data.id || data.id.length>256 || typeof data.content !== 'string'
         || Buffer.byteLength(data.content) > 16384 || Buffer.byteLength(JSON.stringify(data)) > 32768) return
-    if(type==='GROUP_MESSAGE_CREATE') {
-      const mentions=Array.isArray(data.mentions)?data.mentions:[]
-      const tags=[...data.content.matchAll(/<@!?(\w+)>/gu)].map(m=>m[1])
-      if(!mentions.some(m=>m && typeof m==='object' && (m as {is_you?:boolean}).is_you===true)
-        && !tags.includes(this.config.appId) && !tags.includes(this.config.selfId)) return
+    if(data.author && typeof data.author==='object' && (data.author as {bot?:unknown}).bot===true)return
+    if(data.author && typeof data.author==='object') {
+      const author=data.author as Record<string,unknown>
+      if([author.id,author.member_openid,author.user_openid].some(value=>value===this.config.selfId || value===this.config.appId))return
     }
     const now = Date.now()
     for (const [key, value] of this.raw) if (now - value.at > 298000) this.raw.delete(key)
-    if (this.raw.size >= 512 && !this.raw.has(data.id)) return
-    const fingerprint = JSON.stringify([type, data.content, data.timestamp, data.author, data.group_id, data.group_openid, data.mentions, data.attachments, data.message_reference])
+    const fingerprint = JSON.stringify([type, data.content, data.timestamp, data.author, data.group_id, data.group_openid, data.mentions, data.attachments])
     const existing = this.raw.get(data.id)
     if (existing) {
       // Do not let a conflicting raw event replace the first identity/body while decode is waiting.
       if (existing.fingerprint !== fingerprint) existing.conflict = true
       return
     }
+    const group=data.group_id??data.group_openid
+    const seq=this.sequence+1
+    if(type!=='C2C_MESSAGE_CREATE' && typeof group==='string' && group.length>0 && group.length<=256) {
+      const current=this.observations.get(this.groupKey(group))
+      if(current?.input.messageId===data.id && current.fingerprint===fingerprint)return
+      // Invalidate locally at raw arrival, before permissions/HTTP can reorder.
+      this.cancelObservation(this.groupKey(group))
+      this.groupArrivals.delete(this.groupKey(group))
+      this.groupArrivals.set(this.groupKey(group),{seq,at:now})
+      while(this.groupArrivals.size>512) {
+        const oldest=this.groupArrivals.keys().next().value!
+        this.cancelObservation(oldest)
+        this.groupArrivals.delete(oldest)
+      }
+    }
+    this.sequence=seq
+    const bytes=Buffer.byteLength(JSON.stringify(data))+Buffer.byteLength(fingerprint)
+    if(this.raw.size>=512 || this.observationBytes()+bytes>8*1024*1024)return
     // Assigned at raw arrival, before adapter async work, permissions or HTTP can reorder.
-    this.raw.set(data.id, { raw: { t: type, d: structuredClone(data) }, seq: ++this.sequence, at: now, fingerprint })
+    this.raw.set(data.id, { raw: { t: type, d: structuredClone(data) }, seq, at: now, fingerprint,bytes })
   }
   private async permitted(session: Session): Promise<boolean> {
     if (!this.ctx.filter(session)) return false
@@ -141,7 +257,7 @@ export class Receiver {
       this.observed('duplicate')
       return existing.promise
     }
-    if (this.flights.size >= this.config.maxPending) { this.observed('capacity_rejected_unclassified'); return true }
+    if (this.flights.size+this.observationTasks.size >= this.config.maxPending) { this.observed('capacity_rejected_unclassified'); return true }
     // Reserve once before the first await. Retries join this owner even while admission is waiting.
     const flight: Flight = { source, promise:Promise.resolve(true), accepted:false }
     this.flights.set(key, flight)
@@ -159,18 +275,31 @@ export class Receiver {
       await previous
       if (!this.active) { this.observed('disposed'); return true }
       if (source.conflict) { this.observed('conflict'); return true }
-      const decoded = await decodeIncoming(session.bot as unknown as QQBot, source.raw, this.config, () => true)
+      const decoded = await decodeIncoming(session.bot as unknown as QQBot, source.raw, this.config, () => true,true)
       if (decoded.status !== 'accepted') { this.observed(decoded.status === 'ignored' ? 'decode_ignored' : 'decode_rejected'); return false }
+      input=decoded.inbound
       const canonical = this.ctx.reflect.trace(decoded.session)
       if (!this.ctx.filter(canonical)) { this.observed('scope_denied'); return false }
       await this.ready
       if (!this.active) { this.observed('disposed'); return true }
-      if (!decoded.inbound.attachments?.length && !await this.client.recognizes(decoded.inbound.body)) { this.observed('unrecognized'); return false }
-      if (!await this.permitted(canonical)) { this.observed('permission_denied'); return true }
+      if (decoded.inbound.trigger!=='observation' && !decoded.inbound.attachments?.length
+          && !await this.client.recognizes(decoded.inbound.body)) { this.observed('unrecognized'); return false }
+      if (!await this.permitted(canonical)) { this.observed('permission_denied'); return input.trigger!=='observation' }
       if (!this.active) { this.observed('disposed'); return true }
-      if (this.config.management && !this.config.management.accepts(decoded.inbound)) { this.observed('management_denied'); return true }
+      if (this.config.management && !this.config.management.accepts(decoded.inbound)) { this.observed('management_denied'); return input.trigger!=='observation' }
       if (source.conflict) { this.observed('conflict'); return true }
       input = decoded.inbound
+      if(input.trigger==='observation') {
+        const policy=this.policy(input)
+        if(policy.natural_query!=='model')return false
+        const version=this.policyVersion(input)
+        const observed=await this.client.chatObservation(input,source.seq,policy)
+        if(observed.observed && this.active && !source.conflict
+            && (this.config.management?.accepts(input)??true) && this.policyVersion(input)===version) {
+          this.queueObservation(input,canonical,source,observed.delay_ms)
+        }
+        return false // Observation never consumes another plugin's ordinary message.
+      }
       const existing = this.jobs.get(input.requestId)
       if (existing) {
         if (JSON.stringify(existing.input) !== JSON.stringify(input)) throw new BackendError('local_request_conflict')
@@ -190,7 +319,7 @@ export class Receiver {
     } catch (error) {
       this.observed(admissionFailure(error))
       this.log.warn('request stopped: %s', error instanceof BackendError ? error.code : 'integration_error')
-      return true
+      return input?.trigger!=='observation'
     } finally {
       if (this.raw.get(key) === source) this.raw.delete(key)
       release()
@@ -209,9 +338,12 @@ export class Receiver {
     let completed = false
     let hint: Promise<boolean> | undefined
     const alive = () => this.active && Date.now() < job.input.timestampMs + 298000
+      && (!job.proactive || this.observationAlive(job.proactive))
     try {
       if (!job.plan) throw new BackendError('missing_admitted_plan')
       this.validate(job.plan, job.input)
+      if(job.proactive && job.plan.status==='finished' && !job.plan.parts.length) {completed=true;return}
+      if(job.proactive && job.plan.processing_hint)throw new BackendError('proactive_hint')
       // The same delivery owner counts the slow hint and final answer together.
       const api = Object.create(bot.internal) as QQInternal & { http: () => typeof bot.http }
       api.http = () => bot.http.extend({ timeout: 15000 })
@@ -219,7 +351,12 @@ export class Receiver {
         this.materials = new MaterialStore(this.config.materialStateDir, this.config.appId,
           (method, path, data) => materialRequest(()=>bot.http(path, { method, data, timeout: 15000 })))
       }
-      job.delivery = new QQDelivery(api, job.input, job.plan.delivery_id, this.client.epoch, this.client, alive,
+      const events=job.proactive ? {
+        intent:async(attempt:Parameters<BackendClient['intent']>[0])=>
+          alive() && await this.currentProactivePermission(job) && alive()?this.client.intent(attempt):'denied' as const,
+        acknowledge:this.client.acknowledge.bind(this.client),observe:this.client.observe.bind(this.client),
+      }:this.client
+      job.delivery = new QQDelivery(api, job.input, job.plan.delivery_id, this.client.epoch, events, alive,
         undefined, undefined, this.materials)
       while (alive() && job.plan.status === 'preparing') {
         if(job.plan.pending_model_permission) await this.authorizeModel(job,job.plan.pending_model_permission)
@@ -285,6 +422,11 @@ export class Receiver {
       this.jobs.delete(job.input.requestId)
     }
   }
+  private async currentProactivePermission(job:Job):Promise<boolean> {
+    if(!job.proactive || !this.observationAlive(job.proactive))return false
+    const current=this.ctx.reflect.trace(job.session.bot.session({...job.session.event}))
+    return await this.permitted(current) && this.observationAlive(job.proactive)
+  }
   private async authorizeModel(job:Job, challenge:ModelPermission):Promise<void> {
     const input=job.input
     const scope={instance_id:input.instanceId,app_id:input.appId,platform:input.platform,
@@ -305,7 +447,8 @@ export class Receiver {
     const permitted=this.active && await this.permitted(current)
     const management=this.config.management
     const policy=management?.policySnapshot(input) ?? {natural_query:'model' as const,epoch:this.epoch,global_revision:0,group_revision:0}
-    const allowed=permitted && this.active && (management?.accepts(input) ?? true) && policy.natural_query==='model'
+    const allowed=permitted && this.active && (!job.proactive || this.observationAlive(job.proactive))
+      && (management?.accepts(input) ?? true) && policy.natural_query==='model'
     await this.client.modelPermission(challenge,policy,allowed)
   }
   private closing?: Promise<void>
@@ -317,12 +460,15 @@ export class Receiver {
     this.client.deactivate()
     const noticesClosed=this.notices?.close()
     this.raw.clear()
+    for(const key of this.observations.keys())this.cancelObservation(key)
+    this.groupArrivals.clear()
     for (const job of this.jobs.values()) job.delivery?.dispose()
     const materialsClosed=this.materials?.close()
     // Retire before waiting for in-flight sends. Their late ACK may record facts, never context.
     try { await this.ready; await this.client.retire() }
     catch { this.log.warn('gateway retirement unconfirmed; no new local sends') }
     await Promise.allSettled([...this.flights.values()].map(flight => flight.promise))
+    await Promise.allSettled([...this.observationTasks].map(task=>task.promise))
     await (materialsClosed ?? this.materials?.close())
     await noticesClosed
     await this.client.telemetry?.close()

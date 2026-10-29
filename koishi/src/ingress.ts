@@ -27,7 +27,8 @@ export interface Inbound {
   body: string
   senderName?: string
   attachments?: ImageAttachment[]
-  trigger?: 'command' | 'ask' | 'quoted_reply'
+  trigger?: 'command' | 'ask' | 'quoted_reply' | 'observation' | 'proactive'
+  proactiveId?: string
   reference?: { message_id:string; adapter_profile_version:string } | null
 }
 export type IngressResult =
@@ -93,6 +94,7 @@ function imageAttachments(value: unknown, messageId: string): ImageAttachment[] 
 /** Recognizer comes from the business entry manifest; do not duplicate query parsing. */
 export async function decodeIncoming(
   bot: QQBot, raw: unknown, identity: Identity, recognizes: (body: string) => boolean,
+  observe = false,
 ): Promise<IngressResult> {
   if (![identity.instanceId, identity.appId, identity.selfId].every(id)) {
     throw new Error('invalid configured identity')
@@ -115,6 +117,7 @@ export async function decodeIncoming(
   if (!userId || !conversationId || !id(data.id)) {
     return { status: 'rejected', reason: 'missing_or_conflicting_identity' }
   }
+  if(userId===identity.selfId || userId===identity.appId)return {status:'ignored',reason:'bot_message'}
   if (typeof data.content !== 'string' || Buffer.byteLength(data.content) > 16_384) {
     return { status: 'rejected', reason: 'invalid_content' }
   }
@@ -129,12 +132,12 @@ export async function decodeIncoming(
   const addressed = type === 'GROUP_AT_MESSAGE_CREATE' || kind === 'c2c'
     || mentions.some(mention => mention?.is_you === true)
     || tags.includes(identity.appId) || tags.includes(identity.selfId)
-  if (!addressed) return { status: 'ignored', reason: 'not_addressed' }
+  if (!addressed && !observe) return { status: 'ignored', reason: 'not_addressed' }
   // Read raw plain text, not Koishi's escaped element serialization.
-  const body = data.content.replace(/<@!?\w+>/gu, '').trim()
+  const body = (addressed?data.content.replace(/<@!?\w+>/gu,''):data.content).trim()
   const attachments = imageAttachments(data.attachments, data.id)
   if (!attachments) return { status: 'rejected', reason: 'invalid_attachments' }
-  if (!attachments.length && (!body || !recognizes(body))) return { status: 'ignored', reason: 'not_taki' }
+  if (!attachments.length && (!body || addressed && !recognizes(body))) return { status: 'ignored', reason: 'not_taki' }
   const canonical = {
     ...envelope,
     d: { ...data, author: { ...author, id: userId }, ...(kind === 'group' ? { group_id: conversationId } : {}) },
@@ -151,6 +154,7 @@ export async function decodeIncoming(
     status: 'accepted', session,
     inbound: { requestId, instanceId: identity.instanceId, appId: identity.appId, platform: 'qq',
       kind, conversationId, userId, messageId: data.id, timestampMs, body,
+      ...(!addressed ? {trigger:'observation' as const} : {}),
       ...(id(author.username) ? {senderName:author.username} : {}),
       ...(attachments.length ? {attachments} : {}) },
   }

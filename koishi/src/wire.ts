@@ -154,6 +154,21 @@ export function decodePlan(value: unknown): Plan {
   requireWire(status==='preparing' && base.processing_hint===true && parts.length===1 && parts[0].kind==='text','plan_shape')
   return {...base,status,send_allowed:true,processing_hint:true,parts:[parts[0]]}
 }
+export interface ChatObservation { protocol: typeof protocol; observed: boolean; delay_ms: number }
+export function decodeChatObservation(value: unknown): ChatObservation {
+  const v=object(value,'observation_shape')
+  exact(v,['protocol','observed','delay_ms'],'observation_shape')
+  return {protocol:wireProtocol(v.protocol),observed:boolean(v.observed,'observation_shape'),
+    delay_ms:integer(v.delay_ms,0,2000,'observation_shape')}
+}
+export type ChatCandidate = { protocol: typeof protocol; candidate: false }
+  | { protocol: typeof protocol; candidate: true; plan: Plan }
+export function decodeChatCandidate(value: unknown): ChatCandidate {
+  const v=object(value,'candidate_shape'), active=boolean(v.candidate,'candidate_shape')
+  exact(v,active?['protocol','candidate','plan']:['protocol','candidate'],'candidate_shape')
+  const version=wireProtocol(v.protocol)
+  return active?{protocol:version,candidate:true,plan:decodePlan(v.plan)}:{protocol:version,candidate:false}
+}
 export interface Recorded { recorded: true; duplicate: boolean }
 export function decodeRecorded(value: unknown): Recorded {
   const v=object(value,'recorded_shape');requireWire(v.recorded===true,'recorded_shape')
