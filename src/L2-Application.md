@@ -95,3 +95,6 @@ Backend 的 operations.py 拥有独立有界运维任务库与单执行器；与
 U3 站内回答只陈述当前字段和匹配方式；来源由程序统一追加，移除模型独立来源段。明确以“告诉我／给我歌名”等请求结尾且已读到歌曲详情时直接输出名称字段，不再追加生成；多个候选或关联完整性未知时标为部分完成，不宣称完整列表。明确读取任意网址的请求直接说明可查目录／公告范围，不发起模型或外部读取。
 
 公告证据的单调时钟截止时间随 PreparedReply 传递，分块／图片回退不得延长；发送许可与 ACK 主题快照共同校验，过期 ACK 仍记账但不恢复上下文。关联详情单独暴露来源完整性和返回截断，未知／部分关联不能等同确认空列表。
+
+
+知识管理由 [application/library_admin.py](ournotes_bot/application/library_admin.py) 提供分页来源元数据、整库差异预览及一次性版本保护的发布计划，调用既有宿主 owner。`knowledge_service.import_confirmed(expected=...)` 核对预览时的内容／批准版本；`withdraw_document` 先持久化禁止使用下限再写原撤回清单。`story_service.import_value/withdraw(expected=...)` 在原发布锁内比较来源与撤回版本。管理接口不生成审核材料，不批准人格；协议与限制见 [Console 契约](../docs/koishi/CONSOLE_V1.md#知识资料管理)。

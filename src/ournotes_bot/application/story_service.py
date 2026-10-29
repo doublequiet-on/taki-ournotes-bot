@@ -53,9 +53,13 @@ class StoryService:
         return row
 
     def import_bundle(self,path,*,allow_fixture=False):
-        value=read_json(path);bundle=parse_bundle(value,allow_fixture=allow_fixture)
+        return self.import_value(read_json(path),allow_fixture=allow_fixture)
+
+    def import_value(self,value,*,allow_fixture=False,expected=None):
+        bundle=parse_bundle(value,allow_fixture=allow_fixture)
         require(all(persona.review_status!='approved' for persona in bundle.personas),'story_import_requires_draft')
         with publish_lock(self.root):
+            self.check_expected(expected)
             self.revocations()  # A corrupt withdrawal ledger must never revive content.
             target=self.release_path(bundle.revision)
             if target.exists():
@@ -139,9 +143,15 @@ class StoryService:
                 'truncated_before':selected[0].previous_scene is not None,
                 'truncated_after':selected[-1].next_scene is not None}
 
-    def withdraw(self,source_id,reason):
+    def check_expected(self,expected):
+        if expected is not None:
+            current=self.current()
+            require(expected==[current.revision if current else None,self.revocations()['revision']],'story_publication_conflict')
+
+    def withdraw(self,source_id,reason,*,expected=None):
         identifier(source_id);text(reason)
         with publish_lock(self.root):
+            self.check_expected(expected)
             bundle=self.current();require(bundle is not None and any(s.source_id==source_id for s in bundle.sources),'story_source')
             ledger=self.revocations()
             if source_id not in ledger['sources']:

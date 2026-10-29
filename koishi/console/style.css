@@ -137,3 +137,5 @@
 .taki-console .cost-table,.taki-console .cost-table caption,.taki-console .cost-table th,.taki-console .cost-table td{color:var(--tc-text);border-color:var(--tc-line)}
 
 .taki-console .chat-management button,.taki-console .model-settings button{background:var(--tc-raised);color:var(--tc-primary);border-color:var(--tc-line)}
+
+.taki-console .library-management button{background:var(--tc-raised);color:var(--tc-primary);border-color:var(--tc-line)}.taki-console .library-diff{max-height:480px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;background:var(--tc-bg);padding:16px;border-radius:12px;color:var(--tc-text)}

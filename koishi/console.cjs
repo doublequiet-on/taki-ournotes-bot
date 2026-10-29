@@ -29,7 +29,7 @@ function install(ctx, config, manifest, assetsDirectory = path.join(__dirname, '
   const methods = ['overview', 'requests/list', 'requests/detail', 'sources', 'notices/list', 'query-metrics', 'groups/list', 'groups/update', 'settings/update',
     'ops/jobs/list','ops/jobs/detail','ops/jobs/start','ops/export','ops/audit','ops/host','ops/notice-target',
     'ops/controls','ops/controls/start','ops/controls/restore',
-    'chat/status','chat/group/status','chat/group/memory','chat/memory/update','model/fallback/settings','model/fallback/save','model/settings','model/save','model/probe','model/group','ops/trusted','ops/trusted/prepare','ops/trusted/start']
+    'library/status','library/preview','library/compare','library/publish','library/withdraw','chat/status','chat/group/status','chat/group/memory','chat/memory/update','model/fallback/settings','model/fallback/save','model/settings','model/save','model/probe','model/group','ops/trusted','ops/trusted/prepare','ops/trusted/start']
   const journal = new OperationJournal(config.directory, management.groups.snapshot().instance ? JSON.stringify(management.groups.snapshot().instance) : manifest.commit)
   journal.reconcile(management)
   const controls=new Controls(management,journal)
@@ -169,6 +169,24 @@ function install(ctx, config, manifest, assetsDirectory = path.join(__dirname, '
       reads.delete('/v1/admin/ops/jobs');return result
     }, {authority:5})
     listen('taki/ops/audit', function() { return journal.publicSnapshot() }, {authority:5})
+    listen('taki/library/status',function(value){
+      if(!value||typeof value!=='object'||Array.isArray(value)||Object.keys(value).sort().join()!=='kind,offset'
+        ||!['knowledge','story'].includes(value.kind)||!Number.isSafeInteger(value.offset)||value.offset<0||value.offset>10000)throw Error('library_shape')
+      return readBackend('library/'+value.kind+'/'+value.offset)
+    },{authority:5})
+    for(const action of ['preview','compare','publish','withdraw'])listen('taki/library/'+action,async function(value){
+      const client=ctx.takiTransport?.receiver?.client
+      if(!client)throw Error('backend_unavailable')
+      if(!value||typeof value!=='object'||Array.isArray(value)||Object.keys(value).sort().join()!=='epoch,payload'
+        ||typeof value.epoch!=='string'||value.epoch!==client.epoch)throw Error('ops_gateway_epoch')
+      if(!value.payload||typeof value.payload!=='object'||Array.isArray(value.payload)
+        ||Buffer.byteLength(JSON.stringify(value),'utf8')>28000)throw Error('library_shape')
+      try{
+        const result=await client.request('/v1/admin/library/'+action,value.payload,131072,false,AbortSignal.timeout(2000))
+        if(['publish','withdraw'].includes(action))management.record('管理员操作了知识资料：'+action)
+        return result
+      }finally{reads.clear()}
+    },{authority:5})
     listen('taki/chat/status',function(){return readBackend('chat/status')},{authority:5})
     for(const resource of ['status','memory'])listen('taki/chat/group/'+resource,function(id){
       if(typeof id!=='string'||!/^[A-Za-z0-9_-]{1,128}$/.test(id))throw Error('admin_group')

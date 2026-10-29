@@ -85,7 +85,7 @@ async function main(){
   const methods=['overview','requests/list','requests/detail','sources','notices/list','query-metrics','groups/list','groups/update','settings/update',
     'ops/jobs/list','ops/jobs/detail','ops/jobs/start','ops/export','ops/audit','ops/host','ops/notice-target',
     'ops/controls','ops/controls/start','ops/controls/restore',
-    'chat/status','chat/group/status','chat/group/memory','chat/memory/update','model/fallback/settings','model/fallback/save','model/settings','model/save','model/probe','model/group','ops/trusted','ops/trusted/prepare','ops/trusted/start']
+    'library/status','library/preview','library/compare','library/publish','library/withdraw','chat/status','chat/group/status','chat/group/memory','chat/memory/update','model/fallback/settings','model/fallback/save','model/settings','model/save','model/probe','model/group','ops/trusted','ops/trusted/prepare','ops/trusted/start']
   try{
     await ctx.start();await manager.ready();const a=await connect();clients.push(a.ws)
     for(const m of methods)assert.equal((await a.call('taki/'+m)).error,'unauthorized')
@@ -106,6 +106,11 @@ async function main(){
     assert.equal((await a.call('taki/chat/memory/update',{group_id:'g1',mutation:{...mutation,expected_revision:'0'},epoch:'fixture-epoch'})).error,'chat_memory_shape')
     assert.equal(reads,beforeMemory,'rejected memory changes must never reach backend')
     assert.ok((await a.call('taki/chat/memory/update',{group_id:'g1',mutation,epoch:'fixture-epoch'})).value)
+    const libraryReads=reads
+    assert.equal((await a.call('taki/library/status',{kind:'../story',offset:0})).error,'library_shape')
+    assert.equal((await a.call('taki/library/publish',{epoch:'old',payload:{preview_id:'fixture',confirm_reviewed:true}})).error,'ops_gateway_epoch')
+    assert.equal(reads,libraryReads)
+    assert.ok((await a.call('taki/library/status',{kind:'knowledge',offset:0})).value)
     const {readHostSnapshot}=require('../ops-host.cjs'),hostFile=path.join(dir,'host-fixture.json')
     fs.writeFileSync(hostFile,JSON.stringify({schema:'taki-host-ops-v1',observed_at:Date.now()/1000-120,controller:{current_sha:'a'.repeat(40)}}),{mode:0o600})
     assert.equal(readHostSnapshot(hostFile).stale,true)

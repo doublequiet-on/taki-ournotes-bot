@@ -5,6 +5,7 @@ export function sessionState() {
   const groupId=ref(''),groupDraft=ref(null),groupRevision=ref(null),groupDirty=ref(false),groupConflict=ref(false);
   const jobs=ref(null),jobDetail=ref(null),audit=ref(null),host=ref(null),noticeTarget=ref(null),controls=ref(null),pendingJobs=new Map(),pendingControls=new Map();
   const model=ref(null),modelDraft=ref(null),modelGuard=ref(null),modelKey=ref(''),modelDirty=ref(false),modelConflict=ref(false),groupUsage=ref(null),trusted=ref(null);
+  const library=ref(null),libraryKind=ref('knowledge'),libraryText=ref(''),libraryPreview=ref(null),libraryConfirmed=ref(false);
   const modelRole=ref('primary');
   const chat=ref(null),chatGroup=ref(null),memory=ref(null),memoryIds=ref('');
   const groupRecoveryBlocked=ref(false);
@@ -16,11 +17,11 @@ export function sessionState() {
     const hadDraft=dirty.value||groupDirty.value||modelDirty.value,hadModelKey=!!modelKey.value;
     if(keepEdits&&groupDirty.value&&groupEpochBeforeDisconnect===undefined)groupEpochBeforeDisconnect=guard.value?.gateway_epoch||null;
     generation++;logged.value=false;failed.clear();sequences.clear();stale.value=false;readMessage.value='';
-    for(const value of [overview,requests,detail,sources,metrics,groups,notices,jobs,jobDetail,audit,host,noticeTarget,controls,model,groupUsage,trusted,chat,chatGroup,memory])value.value=null;
+    for(const value of [overview,requests,detail,sources,metrics,groups,notices,jobs,jobDetail,audit,host,noticeTarget,controls,model,groupUsage,trusted,chat,chatGroup,memory,library,libraryPreview])value.value=null;
     if(!keepEdits||!dirty.value){draft.value=null;guard.value=null;dirty.value=false;conflict.value=false;}
     if(!keepEdits||!groupDirty.value){groupId.value='';groupDraft.value=null;groupRevision.value=null;groupDirty.value=false;groupConflict.value=false;groupRecoveryBlocked.value=false;groupEpochBeforeDisconnect=undefined;}
     if(!keepEdits||!modelDirty.value){modelDraft.value=null;modelGuard.value=null;modelDirty.value=false;modelConflict.value=false;}
-    modelKey.value='';memoryIds.value='';
+    modelKey.value='';memoryIds.value='';libraryText.value='';libraryConfirmed.value=false;
     if(!keepEdits){pendingProbes.clear();pendingTrusted.clear();pendingJobs.clear();pendingControls.clear();reauthNotice='';}
     return {hadDraft,hadModelKey};
   }
@@ -240,7 +241,29 @@ export function sessionState() {
     }catch(error){if(token!==generation||unauthorized(error))return;message.value='删除未确认或记忆版本已变化，请刷新核对后再操作；不会自动重试。';}
     finally{busy.value=false;if(token===generation&&groupId.value===id)await load(memory,'chat/group/memory',id);}
   }
-  return {modelRole,refreshModel,selectModelRole,chat,chatGroup,memory,memoryIds,updateMemory,model,modelDraft,modelGuard,modelKey,modelDirty,modelConflict,groupUsage,trusted,saveModel,probeModel,trustedRequest,
+  async function refreshLibrary(offset=0){
+    const previous=JSON.stringify(library.value?.guard),kind=libraryKind.value;
+    await load(library,'library/status',{kind,offset});
+    if(kind===libraryKind.value&&offset>0&&previous&&previous!==JSON.stringify(library.value?.guard)){message.value='资料版本已变化，已回到第一页。';await load(library,'library/status',{kind,offset:0});}
+  }
+  function selectLibrary(kind){if(busy.value)return;libraryKind.value=kind;library.value=null;libraryPreview.value=null;libraryText.value='';libraryConfirmed.value=false;void refreshLibrary();}
+  async function libraryAction(action,extra={}){
+    if(busy.value||!guard.value?.gateway_epoch)return;
+    const token=generation,kind=libraryKind.value,text=libraryText.value;busy.value=true;
+    try{
+      let payload=extra;
+      if(action==='preview')payload={kind,content:libraryText.value};
+      if(action==='publish')payload={preview_id:libraryPreview.value?.preview_id,confirm_reviewed:libraryConfirmed.value};
+      if(action==='withdraw')payload={kind,id:extra.id,reason:extra.reason,guard:library.value?.guard,confirm_withdraw:true};
+      const result=await rpc('library/'+action,{epoch:guard.value.gateway_epoch,payload});
+      if(token!==generation||kind!==libraryKind.value)return;
+      if(['preview','compare'].includes(action)&&text!==libraryText.value){message.value='内容已变化，请重新生成预览。';return;}
+      if(['preview','compare'].includes(action)){libraryPreview.value=result;libraryConfirmed.value=false;message.value='差异预览已生成，请核对内容、来源及人工确认记录。';}
+      else{libraryPreview.value=null;libraryConfirmed.value=false;message.value='资料操作已确认，当前状态已刷新。';await refreshLibrary();}
+    }catch(error){if(token!==generation||unauthorized(error))return;libraryPreview.value=null;libraryConfirmed.value=false;message.value='资料操作未确认：'+String(error?.message||error)+'。请刷新核对后重新预览，不会自动重试。';}
+    finally{busy.value=false;}
+  }
+  return {library,libraryKind,libraryText,libraryPreview,libraryConfirmed,refreshLibrary,selectLibrary,libraryAction,modelRole,refreshModel,selectModelRole,chat,chatGroup,memory,memoryIds,updateMemory,model,modelDraft,modelGuard,modelKey,modelDirty,modelConflict,groupUsage,trusted,saveModel,probeModel,trustedRequest,
     jobs,jobDetail,audit,host,noticeTarget,controls,startControl:(action,ids)=>controlRequest(action,ids),restoreControl:id=>controlRequest('restore',[],id),startJob,exportDiagnostic,logged,busy,message,readMessage,stale,dirty,conflict,overview,requests,detail,sources,metrics,groups,notices,draft,guard,rpc,load,login,logout,save,
     groupId,groupDraft,groupRevision,groupDirty,groupConflict,groupRecoveryBlocked,selectGroup,saveGroup,suspend,captureEdits,restoreEdits,invalidate(){generation++;}};
 }

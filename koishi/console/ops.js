@@ -1,3 +1,4 @@
+import { libraryView } from './library.js';
 import { h } from './runtime.js';
 import { button, section, stamp } from './views.js';
 export const actions={catalog_sync:'检查并同步',catalog_reload:'重新获取资料',assets_verify:'核验图片',assets_repair:'修复图片',assets_retry:'重试失败图片',tasks_recover:'检查并恢复后台任务',events_check:'检查当前活动',sample_once:'立即采样',upstream_check:'检查上游连接'};
@@ -12,7 +13,7 @@ export function jobsView(s) {
 }
 export function sourcesView(s) {
   const supported=s.jobs.value?.health?.actions||[];
-  return h('div',[h('h1','数据来源'),...Object.entries(s.sources.value?.sections||{}).map(([key,item])=>section(item,key)),
+  return h('div',[h('h1','数据来源'),libraryView(s),...Object.entries(s.sources.value?.sections||{}).map(([key,item])=>section(item,key)),
     h('section',[h('h2','同步与修复'),...Object.entries(actions).map(([action,label])=>button(label,()=>{
       if(['catalog_reload','assets_repair','assets_retry'].includes(action)&&!window.confirm(label+'？将获取上游资料或图片，不重启机器人。'))return;
       void s.startJob(action);

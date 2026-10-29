@@ -94,3 +94,18 @@ queries/notifications支持inherit、allow、pause；allow仍受全局范围与�
 OpenAI Responses 发送 `reasoning.effort`，表单提供默认及 API 支持的枚举，具体档位支持仍取决于模型；Chat Completions 接口不发送本应用尚未接入的推理参数。DeepSeek 分开提供关闭及 low/high/max，发送 `thinking` 和 `reasoning_effort`；旧配置省略该字段仍关闭思考。DeepSeek 思考模式只用 auto 工具选择，不发送该模式不支持的 required。工具循环精确回传当轮 `reasoning_content`，仅在内存中保留；历史只恢复可见文本，不保存或展示推理内容。输入序列化预算和输出计费上限仍生效。参考：[OpenAI reasoning](https://developers.openai.com/api/docs/guides/reasoning)、[DeepSeek thinking](https://api-docs.deepseek.com/guides/thinking_mode/)、[DeepSeek Chat API](https://api-docs.deepseek.com/api/create-chat-completion/)。
 
 保存会生成新模型版本，绑定旧指纹的能力及服务批准需重新核对；不会自动批准或付费测试。启用 DeepSeek 推理档位后，旧版本不支持该配置值：回退应用前须在当前版本关闭该选项，或按既有受保护配置恢复流程处理，不能只回退代码。
+
+
+## 知识资料管理
+
+“数据来源”包含独立的已审核 ON 百科、剧情与派生人格资料视图。主机缓存和群记忆不进入正式知识库。状态页按 20 项分页，展示来源、版本、审核人／时间、确认编号、适用范围、索引和发布状态；来源超过 3 个或已存剧情版本超过 50 个时明确显示截断。人格批准仍独立于资料包导入。
+
+管理读接口为 `GET /v1/admin/library/{knowledge|story}/{offset}`，写接口为 `POST /v1/admin/library/{preview|compare|publish|withdraw}`；Console RPC 为 `library/status` 及相应动作，继续使用 authority 5、当前管理会话和活动网关 epoch。`application/library_admin.py` 调用当前宿主拥有的 KnowledgeService／StoryService，不创建第二个数据库 owner、不调用模型或抓取 URL。
+
+浏览器导入入口保持既有 32 KB 管理消息边界，单个 JSON 内容限制 18000 UTF-8 字节。百科包结构为 `{schema:"taki-console-knowledge/1", files:{"相对路径.md":"完整 Markdown"}, approvals:原批准清单, delivery:原交付清单}`；所有批准、哈希、审核人与确认记录仍由内容方提供，并通过原有 `validate_delivery`。剧情使用原 `taki-story-bundle/1`，不接受合成来源或包内已批准人格。更大资料包使用原本地导入工具，不拆成多次整库替换。
+
+预览比较当前整库与候选，列出新增、移除、修改和正文／审核清单差异，绝不把缺失文件当增量保留。完整差异超过 100 项、20000 字符输入或 30000 字节输出时不提供发布令牌。可发布令牌保存在内存中，10 分钟有效、最多 8 个，绑定后端 epoch、源版本及撤回状态，执行前再次检查；令牌先消费再写入，失败或结果不明不自动重放。编辑正文、切换资料类型或退出会话会清除前端预览；不保存导入草稿到浏览器恢复存储。正式版本变化后页面禁用旧预览。
+
+发布必须勾选人工审阅确认并确认完整快照替换。此操作不会生成批准材料或自动批准人格。剧情可比较已存版本，当前撤回记录继续生效；百科仅比较当前与上传候选，不声称持有旧正文。百科撤回先持久化禁止使用的版本下限，再写既有格式的撤回清单，因此写失败或旧材料恢复不能重新放行。重新批准须保留撤回记录，并提供更高版本及新的人工确认。
+
+发布和撤回按宿主既有证据边界使旧回答失效；不重发消息或清除计费。耗时索引操作可能超过管理响应预算，此时先刷新状态核对，不能盲目再次发布。CLI、数据库结构与既有批准格式保持兼容。

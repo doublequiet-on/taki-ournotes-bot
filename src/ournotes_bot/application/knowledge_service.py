@@ -320,7 +320,7 @@ class KnowledgeService:
         require(len(lease.chunks) <= 6 and len(text) <= 6000, 'retrieval_budget')
         return text
 
-    def import_confirmed(self, staging: Path, delivery: dict):
+    def import_confirmed(self, staging: Path, delivery: dict, *, expected=None):
         """Full snapshot import; only call with user-supplied confirmed material.
 
         Owning the content directory excludes another live process. Live control
@@ -336,6 +336,8 @@ class KnowledgeService:
             self.observe()
             with self.lock:
                 require(self.available, 'knowledge_state_unavailable')
+                if expected is not None:
+                    require(expected==[scan_directory(self.root).fingerprint,self.approved_set_revision],'knowledge_live_content_changed')
                 self.transition(scan)
                 baseline = scan_directory(self.root).fingerprint
                 candidate = eligible(scan)
@@ -388,6 +390,29 @@ class KnowledgeService:
                     self.observe()
                     raise
                 return self.status()
+
+    def withdraw_document(self,doc_id,reason,*,expected):
+        """Durable deny floor precedes the existing-format revocation manifest."""
+        from ..sources.knowledge_files import identifier, string
+        identifier(doc_id);string(reason,'revocation_reason')
+        with self.build_lock, self.lock:
+            self.observe()
+            scan=scan_directory(self.root)
+            require(expected==[scan.fingerprint,self.approved_set_revision],'knowledge_live_content_changed')
+            require(self.available and doc_id in self.allowed,'knowledge_document_not_approved')
+            manifest=decode_json(scan.manifest_text)
+            revision=manifest['revision']+1
+            manifest['revision']=revision
+            manifest['approved']=[row for row in manifest['approved'] if row['id']!=doc_id]
+            manifest['revoked'].append(dict(id=doc_id,content_sha256=None,revocation_revision=revision,
+                revoked_at=datetime.fromtimestamp(self.clock(),timezone.utc).isoformat(),reason=reason))
+            blocked=dict(self.authority['blocked'])
+            blocked[doc_id]=max(blocked.get(doc_id,0),revision)
+            self.persist({**self.authority,'blocked':blocked})
+            self.publish_allowed({key:pair for key,pair in self.allowed.items() if key!=doc_id})
+            atomic_text(self.root/'approvals.json',canonical(manifest))
+            self.observe()
+            return self.status()
 
 
 def atomic_text(path, text):

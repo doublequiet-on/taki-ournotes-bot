@@ -2,5 +2,5 @@
   "name": "taki-console-assets",
   "version": "0.1.0",
   "private": true,
-  "files": ["index.js", "runtime.js", "state.js", "views.js", "model.js", "costs.js", "chat.js", "ops.js", "brand", "style.css"]
+  "files": ["index.js", "runtime.js", "state.js", "views.js", "model.js", "costs.js", "chat.js", "library.js", "ops.js", "brand", "style.css"]
 }

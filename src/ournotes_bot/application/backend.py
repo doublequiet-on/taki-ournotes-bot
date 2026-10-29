@@ -807,6 +807,27 @@ def create_app(backend, token, initialize=None):
             return json({'protocol':PROTOCOL,'candidate':True,'plan':await backend.submit(value,proactive=candidate)})
         except ModelError:return json({'protocol':PROTOCOL,'candidate':False})
         except (sqlite3.Error,OSError,ValueError):raise ProtocolError('chat_service_unavailable',503) from None
+    from .library_admin import LibraryAdmin
+    library=LibraryAdmin(backend)
+    async def library_status(request):
+        from ..domain.story import StoryError
+        from ..domain.knowledge import KnowledgeError
+        try:
+            return json(await finish_thread(lambda:library.metadata(request.match_info['kind'],int(request.match_info['offset']))))
+        except (KnowledgeError,StoryError) as exc:
+            if str(exc)=='library_not_configured':return json({'kind':request.match_info['kind'],'availability':'unavailable','reason_code':'library_not_configured','items':[]})
+            raise ProtocolError(str(exc),409) from None
+        except (OSError,sqlite3.Error):raise ProtocolError('library_unavailable',503) from None
+    async def library_command(request):
+        from ..domain.story import StoryError
+        from ..domain.knowledge import KnowledgeError
+        require(backend.ready and not backend.closing,'backend_not_ready',503)
+        require(backend.ledger.active(request.headers.get('X-Taki-Epoch')),'ops_gateway_epoch',409)
+        action=request.match_info['action'];value=await read_json(request)
+        require(action in ('preview','compare','publish','withdraw'),'library_action')
+        try:return json(await finish_thread(lambda:getattr(library,action)(value)))
+        except (KnowledgeError,StoryError) as exc:raise ProtocolError(str(exc),409) from None
+        except (OSError,sqlite3.Error,ValueError,TypeError):raise ProtocolError('library_operation_unconfirmed',503) from None
     async def chat_status(request):
         from .chat_admin import status
         require(backend.model_runtime is not None,'chat_unavailable',503)
@@ -861,6 +882,7 @@ def create_app(backend, token, initialize=None):
                     web.get('/v1/admin/model', model_settings),web.post('/v1/admin/model', model_settings),
                     web.get('/v1/admin/model/fallback',model_settings),web.post('/v1/admin/model/fallback',model_settings),
                     web.post('/v1/admin/model/probe',model_settings),web.get('/v1/admin/model/groups/{gid}',model_group),
+                    web.get('/v1/admin/library/{kind}/{offset:[0-9]+}',library_status),web.post('/v1/admin/library/{action}',library_command),
                     web.get('/v1/admin/chat/status',chat_status),web.get('/v1/admin/chat/groups/{gid}/status',chat_status),
                     web.get('/v1/admin/chat/groups/{gid}/memory',chat_memory),web.post('/v1/admin/chat/groups/{gid}/memory',chat_memory),
                     web.get('/v1/admin/ops/jobs', ops_jobs), web.post('/v1/admin/ops/jobs', ops_submit),
