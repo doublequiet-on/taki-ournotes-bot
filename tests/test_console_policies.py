@@ -568,6 +568,47 @@ class ModelAdminTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.runtime.usage.get('b'*32)['model'],'cheap-fixture')
         self.assertEqual(self.admin.settings()['profile']['model'],self.old['profile']['model'])
 
+    def configured_proactive_limits(self):
+        body=self.payload();body.update(guard=self.admin.settings(proactive=True)['guard'],api_key='PROACTIVE_PRIVATE_KEY')
+        self.admin.save(body,proactive=True)
+        return self.admin.proactive_limits('g')
+
+    def limits_payload(self,value,letter='c'):
+        return dict(operation_id=letter*32,guard=value['guard'],limits={**value['limits'],
+            'enabled':True,'max_calls_per_hour':30,'max_replies_per_hour':3,'max_cost_micro_per_hour':600000,'cooldown_seconds':600})
+
+    async def test_proactive_limits_save_is_idempotent_and_does_not_mint_approval(self):
+        value=self.configured_proactive_limits();primary=self.path.read_bytes()
+        path=self.root/'chat-proactive-services-v1.json';self.assertFalse(path.exists())
+        body=self.limits_payload(value);saved=self.admin.save_proactive_limits('g',body)
+        self.assertEqual(saved['limits']['max_calls_per_hour'],30);self.assertFalse(saved['approved']);self.assertFalse(saved['eligible'])
+        raw=path.read_bytes();self.admin.save_proactive_limits('g',body);self.assertEqual(path.read_bytes(),raw)
+        self.assertEqual(self.path.read_bytes(),primary);self.client.request.assert_not_called()
+        self.assertFalse(self.runtime.proactive_capabilities.path.exists())
+
+    async def test_proactive_limits_edit_preserves_existing_approvals_and_other_groups(self):
+        value=self.configured_proactive_limits();self.admin.save_proactive_limits('g',self.limits_payload(value))
+        path=self.root/'chat-proactive-services-v1.json';data=json.loads(path.read_text(encoding='utf-8'))
+        data['groups']['g'].update(approved=True,service_subject_id='existing-service',approval_ref='fixture/reviewed')
+        data['groups']['other']={'approved':False};path.write_text(json.dumps(data),encoding='utf-8');path.chmod(0o600)
+        value=self.admin.proactive_limits('g');self.assertTrue(value['approved'])
+        body=self.limits_payload(value,'d');body['limits'].update(enabled=False,max_replies_per_hour=0)
+        self.admin.save_proactive_limits('g',body);saved=json.loads(path.read_text(encoding='utf-8'))
+        self.assertEqual(saved['groups']['g']['approval_ref'],'fixture/reviewed')
+        self.assertEqual(saved['groups']['g']['service_subject_id'],'existing-service')
+        self.assertTrue(saved['groups']['g']['approved']);self.assertEqual(saved['groups']['other'],data['groups']['other'])
+        self.assertFalse(self.admin.proactive_limits('g')['eligible'])
+
+    async def test_proactive_limits_stale_guard_and_unsupported_counts_do_not_overwrite(self):
+        from ournotes_bot.domain.model_calls import ModelError
+        value=self.configured_proactive_limits();self.admin.save_proactive_limits('g',self.limits_payload(value))
+        path=self.root/'chat-proactive-services-v1.json';raw=path.read_bytes()
+        with self.assertRaisesRegex(ModelError,'model_config_conflict'):
+            self.admin.save_proactive_limits('g',self.limits_payload(value,'d'))
+        current=self.admin.proactive_limits('g');bad=self.limits_payload(current,'e');bad['limits']['max_calls_per_hour']=121
+        with self.assertRaisesRegex(ModelError,'proactive_limits_unsupported'):self.admin.save_proactive_limits('g',bad)
+        self.assertEqual(path.read_bytes(),raw);self.client.request.assert_not_called()
+
     async def test_console_save_preserves_protected_group_admissions(self):
         value={**self.old,'schema':'taki-model-config/3','secret':'OLD_KEY','groups':{},
                'group_admissions':[dict(conversation_id='g',evidence_ref='verified/group')]}
@@ -2527,6 +2568,19 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
         self.assertEqual(snapshot.profile.group_daily_limit,17)
         self.assertEqual(snapshot.profile.group_rate_requests,2)
         self.assertEqual(snapshot.profile.rate_window_seconds,60)
+
+    async def test_console_pause_revokes_prepared_proactive_without_resetting_charges(self):
+        self.dedicated_model();value=self.observation();self.tick+=1.6
+        self.client.request.return_value=self.result('{"participation":"reply","text":"暂停后不应发送"}')
+        plan,attempts,_=await self.candidate(value)
+        runtime=self.backend.model_runtime;cost=runtime.usage.get(attempts[0])['cost']
+        current=runtime.admin.proactive_limits('g1')
+        saved=runtime.admin.save_proactive_limits('g1',dict(operation_id='d'*32,guard=current['guard'],
+            limits={**current['limits'],'enabled':False}))
+        self.assertTrue(saved['approved']);self.assertFalse(saved['limits']['enabled'])
+        self.assertFalse(self.backend.lookup(plan['request_id'],'e1')['send_allowed'])
+        self.assertEqual(runtime.usage.get(attempts[0])['cost'],cost)
+        self.assertEqual(self.client.request.await_count,1)
 
     async def test_dedicated_config_change_revokes_prepared_send(self):
         self.dedicated_model();value=self.observation();self.tick+=1.6

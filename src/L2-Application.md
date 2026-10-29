@@ -36,7 +36,7 @@ CLI 模式与组合、配置根/数据路径、包身份；为多个系统域提
 
 ## Internal Subsystems
 
-- [application/model_admin.py](ournotes_bot/application/model_admin.py)：后端受保护配置写入、管理意图审计和明确确认的能力探测；只返回元数据，复用模型调度与账务。控制台和独立受信进程协议见 [包 4](../docs/QUERY_CHAT_PACKAGE4.md)。
+- [application/model_admin.py](ournotes_bot/application/model_admin.py)：后端受保护模型配置与主动参与限额写入、管理意图审计和明确确认的能力探测；只返回元数据，复用模型调度与账务。控制台和独立受信进程协议见 [包 4](../docs/QUERY_CHAT_PACKAGE4.md)。
 
 - [application/model_runtime.py](ournotes_bot/application/model_runtime.py)：后端原生工具编排、当前许可、证据生成和上下文核验；[model_config.py](ournotes_bot/application/model_config.py) 固定受信配置／身份快照，v3 允许有核验证据的指定群全员准入，跨场景身份仍须显式绑定；[usage_ledger.py](ournotes_bot/application/usage_ledger.py) 独占写精确预留与结算；未知 token／操作保留费用上界，操作意图、缺失记录标记及删除检测 trigger 随共享用量库保存，缺少价格事实时阻止相关主体继续调用。非 DeepSeek 的 USD 费用与预留共用每日 $2.5 上限；新轮不足时，model_runtime 从独立受保护配置选择 DeepSeek，沿用原平台身份及用户／群额度，已开始轮次不换模型；配置及回退约束见 [运行手册](../docs/CHAT_AGENT_RUNBOOK.md#每日主模型预算与-deepseek-备用)。纯合同在 [domain/model_calls.py](ournotes_bot/domain/model_calls.py)，公开说明见 [包 3](../docs/QUERY_CHAT_PACKAGE3.md)。
 - [application/site_lookup.py](ournotes_bot/application/site_lookup.py)：U3 请求内目录候选、详情及已知关联导航，最多三次只读取证；固定版本／公告快照、有界证据和短期 handle，不接受模型 URL、不写百科。程序按已查证资源生成公告及明确索要的歌曲／活动网页链接，保留实际来源区服与采集时点。`model_runtime.py` 仅在此流程开放四次逐次许可，网关同步硬上限，仍受原 30 秒执行预算约束。

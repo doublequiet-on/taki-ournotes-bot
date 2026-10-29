@@ -91,6 +91,8 @@ queries/notifications支持inherit、allow、pause；allow仍受全局范围与�
 
 “模型与费用”及设置页复用同一模型编辑状态，分别管理主模型、DeepSeek 备用与主动参与模型配置。`GET/POST /v1/admin/model/fallback` 复用受保护配置写入、版本保护和元数据审计；备用配置仅允许 DeepSeek，已有计费参考币种／单位不能改变。切换服务商须提供对应新密钥。浏览器恢复草稿保留模型角色归属，不保留密钥；有草稿时先保存或放弃再切换配置。
 
+「主动参与限额」在模型设置区域按群编辑启用状态、每小时模型请求数、回复数、费用和冷却。后端为 `GET/POST /v1/admin/model/proactive/groups/{gid}/limits`，Console RPC 为 `model/proactive/limits/settings` 与 `model/proactive/limits/save`。保存沿用管理鉴权和网关 epoch，增加服务文件与模型双指纹保护；不重置历史预算、不授予新群批准。未批准群可先保存限额，仍不会自动发言。
+
 独立主动参与使用 `GET/POST /v1/admin/model/proactive` 和 `POST /v1/admin/model/proactive/probe`，对应 Console RPC 为 `model/proactive/settings`、`model/proactive/save`、`model/proactive/probe`。权限、网关 epoch、版本冲突及探测幂等要求与原主模型入口一致。密钥独立保存；读取或保存不触发付费测试，也不批准群内发送。具体配置文件、群服务批准和账本约束见 [独立主动参与模型](../CHAT_SERVICE_JOBS.md#独立主动参与模型)。
 
 OpenAI Responses 发送 `reasoning.effort`，表单提供默认及 API 支持的枚举，具体档位支持仍取决于模型；Chat Completions 接口不发送本应用尚未接入的推理参数。DeepSeek 分开提供关闭及 low/high/max，发送 `thinking` 和 `reasoning_effort`；旧配置省略该字段仍关闭思考。DeepSeek 思考模式只用 auto 工具选择，不发送该模式不支持的 required。工具循环精确回传当轮 `reasoning_content`，仅在内存中保留；历史只恢复可见文本，不保存或展示推理内容。输入序列化预算和输出计费上限仍生效。参考：[OpenAI reasoning](https://developers.openai.com/api/docs/guides/reasoning)、[DeepSeek thinking](https://api-docs.deepseek.com/guides/thinking_mode/)、[DeepSeek Chat API](https://api-docs.deepseek.com/api/create-chat-completion/)。

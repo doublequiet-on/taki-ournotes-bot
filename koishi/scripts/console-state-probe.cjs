@@ -54,7 +54,7 @@ async function main(){
   receipt();await expired
   assert.equal(groups.groupDraft.value,null);assert.equal(groups.groupRevision.value,null)
   const model=sessionState();model.logged.value=true
-  const modelValue={profile:{provider:'deepseek',model:'fixture',config_version:'1'},guard:{backend_epoch:'e',fingerprint:'old'},groups:{},endpoints:{deepseek:'https://api.deepseek.com/chat/completions'}}
+  const modelValue={profile:{provider:'deepseek',model:'fixture',config_version:'1',price:{}},guard:{backend_epoch:'e',fingerprint:'old'},groups:{},endpoints:{deepseek:'https://api.deepseek.com/chat/completions'}}
   globalThis.consoleStateFixture.send=async(method,value)=>{
     if(method==='taki/model/settings')return structuredClone(modelValue)
     if(method==='taki/model/save')return new Promise(resolve=>{receipt=()=>resolve({...structuredClone(modelValue),profile:value.profile,guard:{backend_epoch:'e',fingerprint:'new'}})})
@@ -69,6 +69,9 @@ async function main(){
   const dedicated=sessionState(),dedicatedCalls=[]
   globalThis.consoleStateFixture.send=async(method,value)=>{
     dedicatedCalls.push(method)
+    if(method==='taki/groups/list')return {policy:{groups:{alpha:{label:'合成测试群'}}},sections:{groups:{data:[{group_id:'alpha',policy:{label:'合成测试群'}}]}}}
+    if(method==='taki/model/proactive/limits/settings')return {group_id:'alpha',currency:'USD',approved:false,capability_approved:false,guard:{backend_epoch:'e',fingerprint:'limits-old',model_fingerprint:'fixture'},limits:{enabled:false,max_calls_per_hour:24,max_replies_per_hour:2,max_cost_micro_per_hour:500000,cooldown_seconds:600}}
+    if(method==='taki/model/proactive/limits/save')return new Promise(resolve=>{receipt=()=>resolve({group_id:value.group_id,currency:'USD',approved:false,capability_approved:false,guard:{backend_epoch:'e',fingerprint:'limits-new',model_fingerprint:'fixture'},limits:value.limits})})
     if(method==='taki/model/proactive/settings')return {...structuredClone(modelValue),role:'proactive'}
     if(method==='taki/model/proactive/save')return {...structuredClone(modelValue),role:'proactive',profile:{...value.profile,config_version:'proactive-new'}}
     if(method==='taki/model/proactive/probe')return {...structuredClone(modelValue),role:'proactive',profile:{...modelValue.profile,config_version:'proactive-new'},capability:{state:'intent'}}
@@ -82,6 +85,23 @@ async function main(){
   assert.equal(dedicatedCalls.includes('taki/model/proactive/save'),true)
   assert.equal(dedicatedCalls.includes('taki/model/proactive/probe'),true)
   assert.equal(dedicatedCalls.some(m=>m==='taki/model/save'||m==='taki/model/probe'),false)
+  await dedicated.refreshProactiveLimits('alpha');dedicated.proactiveEdit.value.limits.max_calls_per_hour=30;dedicated.proactiveEdit.value.dirty=true
+  const savingLimits=dedicated.saveProactiveLimits();dedicated.proactiveEdit.value.limits.max_replies_per_hour=6;receipt();await savingLimits
+  assert.equal(dedicated.proactiveLimits.value.limits.max_calls_per_hour,30)
+  assert.equal(dedicated.proactiveEdit.value.limits.max_replies_per_hour,6);assert.equal(dedicated.proactiveEdit.value.dirty,true)
+  const quotaRecovery=sessionState();quotaRecovery.restoreEdits(dedicated.captureEdits())
+  assert.equal(quotaRecovery.modelRole.value,'proactive');
+  assert.equal(quotaRecovery.proactiveEdit.value.group_id,'alpha');assert.equal(quotaRecovery.proactiveEdit.value.limits.max_replies_per_hour,6)
+  await dedicated.refreshProactiveLimits('alpha');assert.equal(dedicated.proactiveEdit.value.conflict,true)
+  assert.equal(dedicated.proactiveEdit.value.limits.max_replies_per_hour,6)
+  const entry=fs.readFileSync(require.resolve('../console/index.js'),'utf8')
+  const parser=entry.slice(entry.indexOf('function takeRecovery(){'),entry.indexOf('function clearStoredRecovery'))
+  const readRecovery=value=>new Function('sessionStorage','storageKey','let recoveryReadError=false;'+parser+';return takeRecovery();')({getItem:()=>JSON.stringify(value)},'fixture')
+  const actualRecovery=readRecovery(dedicated.captureEdits())
+  assert.equal(actualRecovery.modelRole,'proactive');assert.equal(actualRecovery.proactive.group_id,'alpha')
+  assert.equal(readRecovery({...actualRecovery,modelRole:'untrusted-role'}),null)
+  await quotaRecovery.logout();assert.equal(quotaRecovery.proactiveEdit.value,null)
+
   let epoch='gateway-before',attempted=[],trustedAttempts=[],finishJob,finishTrusted
   globalThis.consoleStateFixture.send=async(method,value)=>{
     if(method==='taki/overview')return {settings:structuredClone(settings),guard:{gateway_epoch:epoch,revision:0}}
@@ -127,6 +147,6 @@ async function main(){
   const status=sessionState();await status.load(status.groups,'groups/list');status.selectGroup('alpha');status.groupDraft.value.label='fixture';status.groupDirty.value=true
   await status.saveGroup();assert.equal(status.message.value,'群策略已保存。新查询使用新规则，在途查询继续完成。')
   assert.match(status.readMessage.value,/读取失败/);assert.equal(status.stale.value,true)
-  console.log(JSON.stringify({passed:true,proactiveRoleRouting:true,proactiveDraftRecovery:true,saveDraftRace:true,groupSaveDraftRace:true,groupSwitchDuringSave:true,invalidatedSave:true,recoveredDrafts:true,secretCleared:true,groupEpochBlocked:true,operationIdReused:true,logoutCleared:true,actionAndReadStatusSeparated:true}))
+  console.log(JSON.stringify({passed:true,proactiveQuotaSaveRace:true,proactiveQuotaRecovery:true,proactiveQuotaConflict:true,proactiveRoleRouting:true,proactiveDraftRecovery:true,saveDraftRace:true,groupSaveDraftRace:true,groupSwitchDuringSave:true,invalidatedSave:true,recoveredDrafts:true,secretCleared:true,groupEpochBlocked:true,operationIdReused:true,logoutCleared:true,actionAndReadStatusSeparated:true}))
 }
 main().catch(error=>{console.error(error);process.exitCode=1}).finally(()=>{delete globalThis.consoleStateFixture})

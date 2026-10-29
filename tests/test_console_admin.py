@@ -482,6 +482,17 @@ class AdminTests(unittest.IsolatedAsyncioTestCase):
         probe=await client.post('/v1/admin/model/proactive/probe',json={},headers=headers)
         self.assertEqual(probe.status,409)
         self.assertFalse((self.root/'chat-proactive-capabilities-v1.json').exists())
+        url='/v1/admin/model/proactive/groups/group1/limits'
+        self.assertEqual((await client.get(url)).status,401)
+        limits=await (await client.get(url,headers=headers)).json()
+        quota=dict(operation_id='c'*32,guard=limits['guard'],limits={**limits['limits'],'enabled':True})
+        no_epoch={k:v for k,v in headers.items() if k!='X-Taki-Epoch'}
+        self.assertEqual((await client.post(url,json=quota,headers=no_epoch)).status,409)
+        response=await client.post(url,json=quota,headers=headers)
+        self.assertEqual(response.status,200);saved=await response.json()
+        self.assertFalse(saved['approved']);self.assertFalse(saved['eligible'])
+        self.assertEqual(saved['limits']['max_calls_per_hour'],24)
+
 
 
     async def test_metrics_busy_does_not_block_event_loop_or_disable_writer(self):

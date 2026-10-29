@@ -6,6 +6,7 @@ import asyncio
 from dataclasses import asdict, replace
 import hashlib
 import json
+import os
 from fractions import Fraction
 import re
 import sqlite3
@@ -112,6 +113,68 @@ class ModelAdmin:
                     if profile.get('wire_profile')=='openai-responses-v1' else ENDPOINTS[profile['provider']]),
                 'capability':self.latest_probe(profile['config_version'],proactive=proactive),
                 'audit':self.audit(),'timezone':'Asia/Shanghai','price_status':config.status()}
+
+    def proactive_limits(self, group_id):
+        from .chat_jobs import ChatServices,ProactiveLimits,_limits
+        require(isinstance(group_id,str) and re.fullmatch(r'[A-Za-z0-9_-]{1,128}',group_id),'admin_group')
+        snapshot=self.runtime.proactive_config.snapshot().for_group(group_id)
+        owner=ChatServices(self.runtime.usage.path.parent,*self.config.namespace,filename='chat-proactive-services-v1.json')
+        data,policies,digest=owner.read(snapshot)
+        row=(data or {}).get('groups',{}).get(group_id,{})
+        limits=asdict(_limits(row.get('proactive',asdict(ProactiveLimits(False,24,2,500000,600))),'proactive'))
+        approved=group_id in policies
+        proof=self.runtime.proactive_capabilities.proactive(snapshot,group_id)
+        return {'group_id':group_id,'currency':snapshot.profile.price.currency,'limits':limits,
+                'approved':approved,'capability_approved':proof,'eligible':self.runtime.agent is not None and approved and proof and limits['enabled'] and max(limits['max_calls_per_hour'],limits['max_replies_per_hour'])<=120,
+                'guard':{'backend_epoch':self.backend.runtime,'fingerprint':digest,'model_fingerprint':snapshot.fingerprint}}
+
+    def save_proactive_limits(self, group_id, value):
+        from .chat_jobs import ChatServices,ServiceError,_limits
+        require(isinstance(value,dict) and set(value)=={'operation_id','guard','limits'},'model_admin_shape')
+        current=self.proactive_limits(group_id)
+        if not self.begin({**value,'group_id':group_id},'save_proactive_limits',self.runtime.proactive_config.snapshot().profile.config_version):
+            return self.proactive_limits(group_id)
+        temporary=None
+        try:
+            require(value['guard']==current['guard'],'model_config_conflict')
+            limits=_limits(value['limits'],'proactive')
+            require(max(limits.max_calls_per_hour,limits.max_replies_per_hour)<=120,'proactive_limits_unsupported')
+            snapshot=self.runtime.proactive_config.snapshot().for_group(group_id)
+            owner=ChatServices(self.runtime.usage.path.parent,*self.config.namespace,filename='chat-proactive-services-v1.json')
+            data,_,digest=owner.read(snapshot)
+            require(digest==current['guard']['fingerprint'],'model_config_conflict')
+            if data is None:
+                data={'schema':'taki-chat-services/1','instance_id':self.config.namespace[0],'app_id':self.config.namespace[1],
+                      'profile':{'config_version':snapshot.profile.config_version,'fingerprint':snapshot.fingerprint,
+                                 'currency':snapshot.profile.price.currency},'groups':{}}
+            require(group_id in data['groups'] or len(data['groups'])<128,'chat_service_configuration')
+            row=data['groups'].setdefault(group_id,{'approved':False})
+            # Limits never mint platform evidence, a service subject or an approval.
+            row['proactive']=asdict(limits)
+            raw=(encode(data)+'\n').encode()
+            require(len(raw)<=131072,'chat_service_configuration')
+            parent=owner.path.parent
+            require(parent.is_dir() and not parent.is_symlink() and os.access(parent,os.W_OK)
+                    and (os.name=='nt' or parent.stat().st_mode & 0o022==0),'model_config_permissions')
+            temporary=owner.path.with_name(owner.path.name+'.'+value['operation_id']+'.tmp')
+            fd=os.open(temporary,os.O_WRONLY|os.O_CREAT|os.O_EXCL,0o600)
+            with os.fdopen(fd,'wb') as stream:stream.write(raw);stream.flush();os.fsync(stream.fileno())
+            # Check both model and service bytes immediately before replacement.
+            require(self.proactive_limits(group_id)['guard']==value['guard'],'model_config_conflict')
+            os.replace(temporary,owner.path)
+            if os.name!='nt':
+                directory=os.open(parent,os.O_RDONLY)
+                try:os.fsync(directory)
+                finally:os.close(directory)
+            require(owner.read(snapshot)[2]==hashlib.sha256(raw).hexdigest(),'model_config_save_unconfirmed')
+            self.finish(value['operation_id'],'succeeded',{'code':'saved'})
+        except (OSError,ValueError,TypeError,KeyError,RecursionError,sqlite3.Error) as exc:
+            code=str(exc) if isinstance(exc,(ModelError,ServiceError)) else 'model_save_unconfirmed'
+            self.finish(value['operation_id'],'failed' if isinstance(exc,(ModelError,ServiceError)) else 'unknown',{'code':code})
+            raise ModelError(code) from None
+        finally:
+            if temporary:temporary.unlink(missing_ok=True)
+        return self.proactive_limits(group_id)
 
     def latest_probe(self, version, *, proactive=False):
         row=self.db.execute("SELECT id,state,result FROM actions WHERE action=? AND config_version=? ORDER BY created DESC LIMIT 1",('probe_proactive' if proactive else 'probe',version)).fetchone()
