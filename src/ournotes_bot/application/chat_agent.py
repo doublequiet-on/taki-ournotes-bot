@@ -554,6 +554,11 @@ class ChatAgent:
             if str(exc)=='execution_timeout':
                 runtime.check(work,turn_deadline,leases)
                 return {'status':'tool_timeout','retryable':False},leases
+            if tool.kind=='chart.get' and str(exc)=='query_difficulty_mismatch':
+                # Do not execute an ungrounded difficulty, but allow the agent to
+                # answer a follow-up from other evidence or request clarification.
+                return {'status':'query_difficulty_mismatch','retryable':False,
+                        'data':'本轮消息中的谱面难度与调用参数不一致；该查询未执行。可依据其他已核实资料回答，或请用户明确难度。'},leases
             if tool.kind=='web' and str(exc) in ('quota_exceeded','provider_unavailable','provider_error','model_incomplete','model_refused','private_search_query'):
                 return {'status':str(exc),'retryable':False},leases
             if str(exc) not in ('source_unavailable','model_input_too_large'):
