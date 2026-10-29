@@ -160,6 +160,7 @@ class KnowledgeAuthorityTests(unittest.TestCase):
         self.assertEqual(len(chunks),6)
         lease=EvidenceLease(self.service.approved_set_revision,KnowledgeScope(),chunks)
         backend=object.__new__(Backend)
+        backend.model_runtime=None
         backend.knowledge=self.service;backend.runtime='runtime';backend.clock=lambda:10
         backend.ledger=SimpleNamespace(active=lambda epoch:True)
         row=dict(delivery='delivery',status='prepared',epoch='epoch',runtime='runtime',expires=20)
