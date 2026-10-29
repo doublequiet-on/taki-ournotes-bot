@@ -28,7 +28,9 @@ def encode(value):
 
 
 class UsageLedger:
-    def __init__(self,path,namespace,*,clock=time.time,primary_daily_usd='2.5'):
+    def __init__(self,path,namespace,*,clock=time.time,primary_daily_usd='2.5',exempt_subjects=()):
+        require(isinstance(exempt_subjects,tuple) and len(exempt_subjects)<=100
+                and all(isinstance(s,str) and 1<=len(s)<=160 and not any(ord(c)<33 for c in s) for s in exempt_subjects),'quota_exemption_configuration')
         require(isinstance(primary_daily_usd,str) and re.fullmatch(r'\d{1,6}(?:\.\d{1,6})?',primary_daily_usd),'primary_budget_configuration')
         self.primary_daily_micro=Fraction(primary_daily_usd)*1_000_000
         self.path=Path(path);self.clock=clock;self.db=None;self.observation_error=None
@@ -69,6 +71,7 @@ class UsageLedger:
                     self.db.execute('INSERT OR IGNORE INTO meta VALUES(?,?)',(key,value))
                 self.db.execute('INSERT OR IGNORE INTO meta VALUES(?,?)',('salt',secrets.token_hex(32)))
                 self.salt=bytes.fromhex(self.db.execute("SELECT value FROM meta WHERE key='salt'").fetchone()[0])
+                self.exempt_users=frozenset(self.key('user',s) for s in exempt_subjects)
                 self.db.execute('CREATE TABLE IF NOT EXISTS unbounded_actions(attempt TEXT PRIMARY KEY,kind TEXT NOT NULL,count INTEGER)')
                 self.db.execute('CREATE TABLE IF NOT EXISTS expected_actions(attempt TEXT PRIMARY KEY,kind TEXT NOT NULL)')
                 self.db.execute('''CREATE TRIGGER IF NOT EXISTS detect_missing_action AFTER DELETE ON attempt_actions
@@ -117,30 +120,33 @@ class UsageLedger:
 
     def spent(self,date,key,*,group=False,exclude=None):
         column='group_key' if group else 'user_key'
-        rows=self.db.execute(f'SELECT id,charged,reserved FROM attempts WHERE day=? AND {column}=?',(date,key))
-        return sum((Fraction(r['charged'])+Fraction(r['reserved']) for r in rows if r['id']!=exclude),Fraction())
+        rows=self.db.execute(f'SELECT id,user_key,charged,reserved FROM attempts WHERE day=? AND {column}=?',(date,key))
+        return sum((Fraction(r['charged'])+Fraction(r['reserved']) for r in rows
+                    if r['id']!=exclude and not (group and r['user_key'] in self.exempt_users)),Fraction())
 
-    def primary_spent(self,date,exclude=None):
+    def primary_spent(self,date,exclude=None,*,include_exempt=False):
         total=Fraction()
-        for row in self.db.execute("SELECT id,price,cost,reserved FROM attempts WHERE day=? AND provider<>'deepseek' AND state<>'released'",(date,)):
-            if row['id']==exclude:continue
+        for row in self.db.execute("SELECT id,user_key,price,cost,reserved FROM attempts WHERE day=? AND provider<>'deepseek' AND state<>'released'",(date,)):
+            if row['id']==exclude or (not include_exempt and row['user_key'] in self.exempt_users):continue
             price=Price(**json.loads(row['price']))
             require(price.currency=='USD','primary_budget_currency')
             total+=Fraction(row['cost'])+Fraction(row['reserved'])*price.reference_rate/1_000_000
         return total
 
-    def check_primary(self,date,profile,amount,exclude=None):
+    def check_primary(self,date,profile,amount,exclude=None,*,user=None):
+        if user in self.exempt_users:return
         if profile.provider=='deepseek':return
         require(profile.price.currency=='USD','primary_budget_currency')
-        require(not self.db.execute('''SELECT 1 FROM attempts a JOIN unbounded_actions u ON u.attempt=a.id
-            WHERE a.provider<>'deepseek' AND (u.count IS NULL OR u.count<>0) LIMIT 1''').fetchone(),'usage_unavailable')
+        require(not any(r[0] not in self.exempt_users for r in self.db.execute('''SELECT a.user_key FROM attempts a JOIN unbounded_actions u ON u.attempt=a.id
+            WHERE a.provider<>'deepseek' AND (u.count IS NULL OR u.count<>0)''')),'usage_unavailable')
         micro=amount*profile.price.reference_rate/1_000_000
         require(self.primary_spent(date,exclude)+micro<=self.primary_daily_micro,'primary_budget_exceeded')
 
     def check(self,date,user,group,amount,profile,exclude=None):
-        require(not self.db.execute('''SELECT 1 FROM attempts a JOIN unbounded_actions u ON u.attempt=a.id
-            WHERE (u.count IS NULL OR u.count<>0) AND (a.user_key=? OR (? IS NOT NULL AND a.group_key=?)) LIMIT 1''',(user,group,group)).fetchone(),'usage_unavailable')
-        self.check_primary(date,profile,amount,exclude)
+        require(not any(r[0]==user or (user not in self.exempt_users and r[0] not in self.exempt_users) for r in self.db.execute('''SELECT a.user_key FROM attempts a JOIN unbounded_actions u ON u.attempt=a.id
+            WHERE (u.count IS NULL OR u.count<>0) AND (a.user_key=? OR (? IS NOT NULL AND a.group_key=?))''',(user,group,group))),'usage_unavailable')
+        self.check_primary(date,profile,amount,exclude,user=user)
+        if user in self.exempt_users:return
         require(self.spent(date,user,exclude=exclude)+amount<=profile.user_daily_limit,'quota_exceeded')
         if group is not None:
             require(self.spent(date,group,group=True,exclude=exclude)+amount<=profile.group_daily_limit,'quota_exceeded')
@@ -308,12 +314,14 @@ class UsageLedger:
         items=[{k:str(v) if isinstance(v,Fraction) else v for k,v in item.items()} for item in groups.values()]
         try:
             spent=self.primary_spent(date)
+            exempt_spent=self.primary_spent(date,include_exempt=True)-spent
             remaining=str(max(Fraction(),self.primary_daily_micro-spent))
             error=None
         except ModelError as exc:
-            spent=None;remaining=None;error=str(exc)
+            spent=None;exempt_spent=None;remaining=None;error=str(exc)
         return dict(day=date,timezone='Asia/Shanghai',limit_micro=str(self.primary_daily_micro),
                     primary_spent_and_reserved_micro=str(spent) if spent is not None else None,
+                    exempt_primary_spent_and_reserved_micro=str(exempt_spent) if exempt_spent is not None else None,
                     remaining_micro=remaining,error=error,items=items)
 
     def observe(self, attempt, kind, duration_ms):
