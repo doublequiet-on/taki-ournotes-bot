@@ -118,7 +118,9 @@ def combo_comparison(question,lease):
 
 class ModelRuntime:
     def __init__(self,backend,path,*,client=None):
-        self.backend=backend;self.client=client or NativeClient();self.task=None
+        self.backend=backend
+        self.client=client or NativeClient(openai_proxy=getattr(backend.settings,'ai_openai_proxy',None))
+        self.task=None
         self.config=ModelConfiguration(getattr(backend.settings,'ai_profile_file',None),getattr(backend.settings,'query_ai_api_key',''),
                                        backend.instance_id,backend.app_id)
         self.usage=UsageLedger(path,backend.instance_id+'\0'+backend.app_id)
@@ -229,9 +231,8 @@ class ModelRuntime:
         profile=work.model_snapshot.profile
         self.check(work,deadline,leases)
         body=request_body(profile,messages,tools)
-        # Verified DeepSeek non-thinking wire supports required tool choice.
-        # Other providers retain their registered behavior; no fallback/retry.
-        if require_tool and tools and profile.provider=='deepseek':
+        # Verified native wires support required tool choice; no fallback/retry.
+        if require_tool and tools and (profile.provider=='deepseek' or profile.wire_profile=='openai-responses-v1'):
             body['tool_choice']='required'
         # Registered text-only byte-BPE profiles: serialized UTF-8 bytes plus
         # 4096 tokens for bounded wire framing is a conservative input ceiling.
@@ -419,7 +420,7 @@ class ModelRuntime:
             messages=[messages[0],{'role':'user','content':json.dumps(
                 {'待改写的上一问题':focus,'上次展示文本（非事实依据）':getattr(context,'text',''),
                  '本轮改写要求':question},ensure_ascii=False)}]
-        messages.append({'role':'assistant','content':None,'tool_calls':[{'id':call.id,'type':'function',
+        messages.append({'role':'assistant','content':None,'response_items':call.response_items,'tool_calls':[{'id':call.id,'type':'function',
                           'function':{'name':call.name,'arguments':call.arguments}}]})
         messages.append({'role':'tool','tool_call_id':call.id,'content':evidence})
         generated=await self.attempt(work,messages,[],user,group,deadline,leases)
@@ -469,7 +470,7 @@ class ModelRuntime:
                                           question,history,leases,facts='\n'.join(session.evidence),focus=question)
                     return replace(reply,business_status='success' if complete else 'partial')
             self.check(work,deadline,leases)
-            messages.append({'role':'assistant','content':None,'tool_calls':[{'id':call.id,'type':'function',
+            messages.append({'role':'assistant','content':None,'response_items':call.response_items,'tool_calls':[{'id':call.id,'type':'function',
                             'function':{'name':call.name,'arguments':call.arguments}}]})
             messages.append({'role':'tool','tool_call_id':call.id,'content':evidence})
             tools=([t.wire() for t in TOOLS.values() if t.kind=='site']

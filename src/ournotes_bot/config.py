@@ -115,6 +115,8 @@ class Settings:
     knowledge_model_dir: Path | None = None
     ai_profile_file: Path | None = None
     query_ai_api_key: str = field(default='', repr=False)
+    ai_reasoning_effort: str | None = None
+    ai_openai_proxy: str | None = None
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -172,6 +174,8 @@ class Settings:
             ai_api_key=os.getenv("AI_API_KEY", "").strip(),
             ai_model=os.getenv("AI_MODEL", "deepseek-chat").strip(),
             ai_base_url=os.getenv("AI_BASE_URL", "https://api.deepseek.com").rstrip("/"),
+            ai_reasoning_effort=os.getenv('AI_REASONING_EFFORT','').strip() or None,
+            ai_openai_proxy=os.getenv('OURNOTES_OPENAI_PROXY','').strip() or None,
             ai_daily_limit=max(0, int(os.getenv("AI_DAILY_LIMIT", "100"))),
             query_concurrency=max(1, int(os.getenv("OURNOTES_QUERY_CONCURRENCY", "2"))),
             query_queue_limit=max(0, int(os.getenv("OURNOTES_QUERY_QUEUE_LIMIT", "4"))),

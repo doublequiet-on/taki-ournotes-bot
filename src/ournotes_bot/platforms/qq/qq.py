@@ -380,7 +380,7 @@ def run_bot(app_id: str, app_secret: str, repository: SongRepository, settings: 
     repository.cutoff_sampler = sampler
     reply_sequencer = ReplySequencer(enabled=settings.reply_order)
     contexts = ContextStore()
-    notice_ai = (AIClient(settings.ai_base_url, settings.ai_api_key, settings.ai_model)
+    notice_ai = (AIClient(settings.ai_base_url, settings.ai_api_key, settings.ai_model, settings.ai_reasoning_effort, settings.ai_openai_proxy)
                  if settings.ai_api_key else None)
     if settings.update_notices and notice_ai is None:
         logger.warning("更新通知缺少 AI_API_KEY；不会生成或发送群公告")

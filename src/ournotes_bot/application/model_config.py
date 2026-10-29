@@ -167,6 +167,7 @@ class ModelConfiguration:
         profile=self.current.profile if self.current else None
         return {'code':self.code,'configured':bool(profile),'config_version':profile.config_version if profile else None,
                 'provider':profile.provider if profile else None,'model':profile.model if profile else None,
+                'reasoning_effort':profile.reasoning_effort if profile else None,
                 'identity_bindings':len(self.current.bindings) if self.current else 0,
                 'admitted_groups':len(self.current.group_admissions) if self.current else 0,
                 'price_estimated':profile.price.estimated if profile else None,
