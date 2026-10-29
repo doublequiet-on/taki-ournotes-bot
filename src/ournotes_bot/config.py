@@ -115,6 +115,8 @@ class Settings:
     knowledge_model_dir: Path | None = None
     ai_profile_file: Path | None = None
     ai_fallback_profile_file: Path | None = None
+    ai_proactive_profile_file: Path | None = None
+    proactive_ai_api_key: str = field(default="", repr=False)
     ai_primary_daily_usd: str = '2.5'
     ai_quota_exempt_subjects: tuple = ()
     fallback_ai_api_key: str = field(default='', repr=False)
@@ -168,6 +170,7 @@ class Settings:
         configured_embedding = os.getenv('OURNOTES_KNOWLEDGE_MODEL_DIR', '').strip()
         configured_profile = os.getenv('OURNOTES_AI_PROFILE_FILE', '').strip()
         fallback_profile = os.getenv('OURNOTES_AI_FALLBACK_PROFILE_FILE','').strip()
+        proactive_profile = os.getenv('OURNOTES_AI_PROACTIVE_PROFILE_FILE','').strip()
         chat_engine = os.getenv('OURNOTES_CHAT_ENGINE', 'legacy').strip()
         story_dir = os.getenv('OURNOTES_STORY_DIR','').strip()
         if chat_engine not in ('legacy', 'agent'):
@@ -181,6 +184,8 @@ class Settings:
             ai_primary_daily_usd=os.getenv('OURNOTES_AI_PRIMARY_DAILY_USD','2.5').strip(),
             ai_quota_exempt_subjects=tuple(x.strip() for x in os.getenv('OURNOTES_AI_QUOTA_EXEMPT_SUBJECTS','').split(',') if x.strip()),
             fallback_ai_api_key=os.getenv('OURNOTES_FALLBACK_AI_API_KEY','').strip(),
+            ai_proactive_profile_file=(CONFIG_ROOT / proactive_profile).resolve() if proactive_profile else None,
+            proactive_ai_api_key=os.getenv('OURNOTES_PROACTIVE_AI_API_KEY','').strip(),
             chat_engine=chat_engine,
             story_dir=(CONFIG_ROOT/story_dir).resolve() if story_dir else None,
             query_ai_api_key=os.getenv('OURNOTES_QUERY_AI_API_KEY','').strip(),

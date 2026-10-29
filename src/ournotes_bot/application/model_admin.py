@@ -6,6 +6,7 @@ import asyncio
 from dataclasses import asdict, replace
 import hashlib
 import json
+import os
 from fractions import Fraction
 import re
 import sqlite3
@@ -76,8 +77,12 @@ class ModelAdmin:
         _,fingerprint=(config or self.config).read()
         require(guard==self.guard(fingerprint),'model_config_conflict')
 
-    def settings(self, fallback=False):
-        config=self.runtime.fallback if fallback else self.config
+    def selected_config(self,fallback=False,proactive=False):
+        require(not (fallback and proactive),'model_admin_shape')
+        return self.runtime.proactive_config if proactive else self.runtime.fallback if fallback else self.config
+
+    def settings(self, fallback=False, *, proactive=False):
+        config=self.selected_config(fallback,proactive)
         require(not self.error,'model_admin_unavailable')
         profile=None;groups={};code='model_not_configured';fingerprint=None;key=False
         try:
@@ -101,16 +106,78 @@ class ModelAdmin:
                 'price':{'currency':'CNY','input_rate':1000000,'cached_rate':1000000,'output_rate':1000000,
                     'reference_rate':1000000,'pricing_version':'','fetched_at':0,'estimated':True,'source':'registered-default'}}
         writable=config.writable()
-        return {'role':'fallback' if fallback else 'primary','code':code,'editable':writable and fingerprint is not None,
+        return {'role':'proactive' if proactive else 'fallback' if fallback else 'primary','code':code,'editable':writable and fingerprint is not None,
                 'write_reason':None if writable else 'model_config_permissions','primary_budget':self.budget_settings(),
                 'guard':self.guard(fingerprint),'profile':profile,'groups':groups,'key_configured':key,
                 'endpoints':dict(ENDPOINTS),'api_url':('https://api.openai.com/v1/responses'
                     if profile.get('wire_profile')=='openai-responses-v1' else ENDPOINTS[profile['provider']]),
-                'capability':self.latest_probe(profile['config_version']),
+                'capability':self.latest_probe(profile['config_version'],proactive=proactive),
                 'audit':self.audit(),'timezone':'Asia/Shanghai','price_status':config.status()}
 
-    def latest_probe(self, version):
-        row=self.db.execute("SELECT id,state,result FROM actions WHERE action='probe' AND config_version=? ORDER BY created DESC LIMIT 1",(version,)).fetchone()
+    def proactive_limits(self, group_id):
+        from .chat_jobs import ChatServices,ProactiveLimits,_limits
+        require(isinstance(group_id,str) and re.fullmatch(r'[A-Za-z0-9_-]{1,128}',group_id),'admin_group')
+        snapshot=self.runtime.proactive_config.snapshot().for_group(group_id)
+        owner=ChatServices(self.runtime.usage.path.parent,*self.config.namespace,filename='chat-proactive-services-v1.json')
+        data,policies,digest=owner.read(snapshot)
+        row=(data or {}).get('groups',{}).get(group_id,{})
+        limits=asdict(_limits(row.get('proactive',asdict(ProactiveLimits(False,24,2,500000,600))),'proactive'))
+        approved=group_id in policies
+        proof=self.runtime.proactive_capabilities.proactive(snapshot,group_id)
+        return {'group_id':group_id,'currency':snapshot.profile.price.currency,'limits':limits,
+                'approved':approved,'capability_approved':proof,'eligible':self.runtime.agent is not None and approved and proof and limits['enabled'] and max(limits['max_calls_per_hour'],limits['max_replies_per_hour'])<=120,
+                'guard':{'backend_epoch':self.backend.runtime,'fingerprint':digest,'model_fingerprint':snapshot.fingerprint}}
+
+    def save_proactive_limits(self, group_id, value):
+        from .chat_jobs import ChatServices,ServiceError,_limits
+        require(isinstance(value,dict) and set(value)=={'operation_id','guard','limits'},'model_admin_shape')
+        current=self.proactive_limits(group_id)
+        if not self.begin({**value,'group_id':group_id},'save_proactive_limits',self.runtime.proactive_config.snapshot().profile.config_version):
+            return self.proactive_limits(group_id)
+        temporary=None
+        try:
+            require(value['guard']==current['guard'],'model_config_conflict')
+            limits=_limits(value['limits'],'proactive')
+            require(max(limits.max_calls_per_hour,limits.max_replies_per_hour)<=120,'proactive_limits_unsupported')
+            snapshot=self.runtime.proactive_config.snapshot().for_group(group_id)
+            owner=ChatServices(self.runtime.usage.path.parent,*self.config.namespace,filename='chat-proactive-services-v1.json')
+            data,_,digest=owner.read(snapshot)
+            require(digest==current['guard']['fingerprint'],'model_config_conflict')
+            if data is None:
+                data={'schema':'taki-chat-services/1','instance_id':self.config.namespace[0],'app_id':self.config.namespace[1],
+                      'profile':{'config_version':snapshot.profile.config_version,'fingerprint':snapshot.fingerprint,
+                                 'currency':snapshot.profile.price.currency},'groups':{}}
+            require(group_id in data['groups'] or len(data['groups'])<128,'chat_service_configuration')
+            row=data['groups'].setdefault(group_id,{'approved':False})
+            # Limits never mint platform evidence, a service subject or an approval.
+            row['proactive']=asdict(limits)
+            raw=(encode(data)+'\n').encode()
+            require(len(raw)<=131072,'chat_service_configuration')
+            parent=owner.path.parent
+            require(parent.is_dir() and not parent.is_symlink() and os.access(parent,os.W_OK)
+                    and (os.name=='nt' or parent.stat().st_mode & 0o022==0),'model_config_permissions')
+            temporary=owner.path.with_name(owner.path.name+'.'+value['operation_id']+'.tmp')
+            fd=os.open(temporary,os.O_WRONLY|os.O_CREAT|os.O_EXCL,0o600)
+            with os.fdopen(fd,'wb') as stream:stream.write(raw);stream.flush();os.fsync(stream.fileno())
+            # Check both model and service bytes immediately before replacement.
+            require(self.proactive_limits(group_id)['guard']==value['guard'],'model_config_conflict')
+            os.replace(temporary,owner.path)
+            if os.name!='nt':
+                directory=os.open(parent,os.O_RDONLY)
+                try:os.fsync(directory)
+                finally:os.close(directory)
+            require(owner.read(snapshot)[2]==hashlib.sha256(raw).hexdigest(),'model_config_save_unconfirmed')
+            self.finish(value['operation_id'],'succeeded',{'code':'saved'})
+        except (OSError,ValueError,TypeError,KeyError,RecursionError,sqlite3.Error) as exc:
+            code=str(exc) if isinstance(exc,(ModelError,ServiceError)) else 'model_save_unconfirmed'
+            self.finish(value['operation_id'],'failed' if isinstance(exc,(ModelError,ServiceError)) else 'unknown',{'code':code})
+            raise ModelError(code) from None
+        finally:
+            if temporary:temporary.unlink(missing_ok=True)
+        return self.proactive_limits(group_id)
+
+    def latest_probe(self, version, *, proactive=False):
+        row=self.db.execute("SELECT id,state,result FROM actions WHERE action=? AND config_version=? ORDER BY created DESC LIMIT 1",('probe_proactive' if proactive else 'probe',version)).fetchone()
         return dict(operation_id=row['id'],state=row['state'],result=json.loads(row['result']) if row['result'] else None) if row else None
 
     def audit(self):
@@ -142,11 +209,11 @@ class ModelAdmin:
         except sqlite3.Error:
             self.error='model_admin_unavailable';raise ModelError(self.error) from None
 
-    def save(self, value, fallback=False):
-        config=self.runtime.fallback if fallback else self.config
+    def save(self, value, fallback=False, *, proactive=False):
+        config=self.selected_config(fallback,proactive)
         require(isinstance(value,dict) and set(value)=={'operation_id','guard','profile','groups','api_key','api_url'},'model_admin_shape')
         operation=value['operation_id']
-        if not self.begin(value,'save_fallback' if fallback else 'save','console-'+str(operation)): return self.settings(fallback)
+        if not self.begin(value,'save_proactive' if proactive else 'save_fallback' if fallback else 'save','console-'+str(operation)): return self.settings(fallback,proactive=proactive)
         try:
             self.check_guard(value['guard'],config)
             old,fingerprint=config.read()
@@ -176,21 +243,22 @@ class ModelAdmin:
             code=str(exc) if isinstance(exc,ModelError) else 'model_save_unconfirmed'
             self.finish(operation,'failed' if isinstance(exc,ModelError) else 'unknown',{'code':code})
             raise ModelError(code) from None
-        return self.settings(fallback)
+        return self.settings(fallback,proactive=proactive)
 
-    def probe(self, value):
+    def probe(self, value, *, proactive=False):
         require(not self.error,'model_admin_unavailable')
         require(isinstance(value,dict) and set(value)=={'operation_id','guard','confirm'}
                 and value['confirm']=='billable_capability_probe','model_probe_confirmation')
         # Idempotence is checked before current config/guard. An unknown result is never retried.
         existing=self.db.execute('SELECT config_version FROM actions WHERE id=?',(value['operation_id'],)).fetchone()
         if existing:
-            self.begin(value,'probe',existing[0]);return self.settings()
-        self.check_guard(value['guard'])
-        snapshot=self.config.snapshot()
-        self.begin(value,'probe',snapshot.profile.config_version)
+            self.begin(value,'probe_proactive' if proactive else 'probe',existing[0]);return self.settings(proactive=proactive)
+        config=self.selected_config(proactive=proactive)
+        self.check_guard(value['guard'],config)
+        snapshot=config.snapshot()
+        self.begin(value,'probe_proactive' if proactive else 'probe',snapshot.profile.config_version)
         self.task=asyncio.create_task(self.queued_probe(value['operation_id'],snapshot))
-        return self.settings()
+        return self.settings(proactive=proactive)
 
     async def queued_probe(self, operation, snapshot):
         from .backend_protocol import ProtocolError

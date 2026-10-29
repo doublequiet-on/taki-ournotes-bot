@@ -162,11 +162,12 @@ class ChatAgent:
     def web_valid(self,work):
         if work.web_capability is None:return True
         try:
-            current=self.runtime.config.snapshot()
-            if work.request.kind=='group':current=current.for_group(work.request.conversation_id)
+            current=(self.runtime.proactive_snapshot(work.request.conversation_id) if work.proactive is not None
+                     else self.runtime.config.snapshot())
+            if work.proactive is None and work.request.kind=='group':current=current.for_group(work.request.conversation_id)
             return (current.fingerprint==work.model_snapshot.fingerprint
                     and current.profile.config_version==work.model_snapshot.profile.config_version
-                    and self.runtime.capabilities.web(current)==work.web_capability)
+                    and self.runtime.capabilities_for(work).web(current)==work.web_capability)
         except (ModelError,OSError):return False
 
     async def load_images(self,work,ref,deadline):
@@ -194,7 +195,7 @@ class ChatAgent:
                 if any('[图片附件 ' in item['content'] and request.reference['message_id'] in item['content'] for item in history):
                     raise ModelError('image_not_available') from None
         if not references:return history
-        vision=self.runtime.capabilities.vision(work.model_snapshot)
+        vision=self.runtime.capabilities_for(work).vision(work.model_snapshot)
         require(vision is not None,'image_capability_unverified')
         require(sum(len(ref.attachments) for ref in references)<=3,'image_count_exceeded')
         messages=[dict(item) for item in history]
@@ -353,7 +354,7 @@ class ChatAgent:
         registry=dict(self.tools)
         image_handles={json.loads(item['content']).get('message_id') for item in history if item['role']=='user'}
         image_handles.update(mid for _,mid in work.image_sources)
-        vision=runtime.capabilities.vision(work.model_snapshot)
+        vision=runtime.capabilities_for(work).vision(work.model_snapshot)
         if vision is not None:
             registry['image_read']=Tool('image_read','按本轮上下文中原消息ID重读仍有效的本群图片，用于比较或追问；保持原作者。缓存过期时返回不可用，不能读取任意URL。',
                 obj({'message_id':string(256)},('message_id',)),'image')
@@ -367,7 +368,7 @@ class ChatAgent:
             registry['story_read']=Tool('story_read','读取本轮已返回的剧情handle及前后场景；未知或撤回不可猜测。',
                 obj({'handle':string(200),'before':{'type':'integer','minimum':0,'maximum':2},'after':{'type':'integer','minimum':0,'maximum':2}},('handle',)),'story')
         story_handles=set()
-        web=runtime.capabilities.web(work.model_snapshot)
+        web=runtime.capabilities_for(work).web(work.model_snapshot)
         if web is not None:
             registry['web_search']=Tool('web_search','检索公开互联网信息；query只含完成问题所需公开关键词，不包含群聊、身份、私密内容或内部网址。',
                 obj({'query':string(160)},('query',)),'web')
@@ -535,7 +536,7 @@ class ChatAgent:
                     work.story_versions=tuple(dict.fromkeys((*work.story_versions,version)))
                 return output,leases
             elif tool.kind=='web':
-                require(web is not None and runtime.capabilities.web(work.model_snapshot)==web,'chat_capability_revoked')
+                require(web is not None and runtime.capabilities_for(work).web(work.model_snapshot)==web,'chat_capability_revoked')
                 work.web_capability=web
                 if work.model_attempts>=self.budget.model_calls-1:return {'status':'budget_exhausted','retryable':False},leases
                 names=[row.display_name for row in self.context.scopes.get(self.context.scope(work.request),()) if row.role=='user' and len(row.display_name)>=2]

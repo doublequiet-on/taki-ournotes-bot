@@ -10,7 +10,7 @@ from fractions import Fraction
 from ..domain.chat import ChatMessage
 from ..domain.chat_images import ImageError
 from ..domain.model_calls import ModelError,require
-from .chat_jobs import ServiceError,maximum_cost_micro,service_request_id
+from .chat_jobs import ChatServices,ServiceError,maximum_cost_micro,service_request_id
 from .proactive_chat import ProactiveController,ProactivePolicy
 from . import replies
 
@@ -20,14 +20,22 @@ class ProactiveChat:
         self.agent=agent
         self.controller=ProactiveController()
         self.addressed=Counter()
+        self.services=ChatServices(agent.runtime.usage.path.parent,agent.runtime.backend.instance_id,
+            agent.runtime.backend.app_id,filename='chat-proactive-services-v1.json')
+
+    def owners(self):
+        runtime=self.agent.runtime
+        return ((self.services,runtime.proactive_capabilities) if runtime.dedicated_proactive()
+                else (self.agent.services,runtime.capabilities))
 
     @staticmethod
     def scope(request):return tuple(request.scope.values())
 
     def policy(self,snapshot,request):
-        policy=self.agent.services.policy(snapshot,request.conversation_id)
+        services,capabilities=self.owners()
+        policy=services.policy(snapshot,request.conversation_id)
         if policy is None or not policy.proactive.enabled:return None
-        if not self.agent.runtime.capabilities.proactive(snapshot,request.conversation_id):return None
+        if not capabilities.proactive(snapshot,request.conversation_id):return None
         if max(policy.proactive.max_calls_per_hour,policy.proactive.max_replies_per_hour)>120:return None
         return policy
 
@@ -46,7 +54,7 @@ class ProactiveChat:
         if request.kind!='group' or request.policy.natural_query!='model':return False
         try:
             if not self.agent.store.source_valid(request.scope,request.message_id,request.timestamp_ms):return False
-            snapshot=self.agent.runtime.config.snapshot().for_group(request.conversation_id)
+            snapshot=self.agent.runtime.proactive_snapshot(request.conversation_id)
             if self.configured(request,snapshot) is None:return False
             if replies.recognizes_message(request.body) and not replies.is_ai_request(request.body):
                 self.controller.cancel(self.scope(request));return False
@@ -59,11 +67,11 @@ class ProactiveChat:
 
     def candidate(self,request):
         if self.agent.audit_failures:return None
-        snapshot=self.agent.runtime.config.snapshot().for_group(request.conversation_id)
+        snapshot=self.agent.runtime.proactive_snapshot(request.conversation_id)
         policy=self.configured(request,snapshot)
         if policy is None:return None
         cost=maximum_cost_micro(snapshot.profile)*self.agent.budget.model_calls
-        web=self.agent.runtime.capabilities.web(snapshot)
+        web=self.owners()[1].web(snapshot)
         if web:cost+=self.agent.budget.model_calls*web.max_calls*web.unit_cost_micro
         candidate=self.controller.candidate(self.scope(request),reserve_cost_micro=math.ceil(cost))
         if candidate is None:return None
@@ -75,6 +83,7 @@ class ProactiveChat:
             reply_times=self.agent.store.proactive_replies(request.scope))
         except ServiceError:
             self.controller.decide(candidate,'skip',actual_cost_micro=0);return None
+        if snapshot.fingerprint:self.agent.runtime.usage.configuration(snapshot.profile.config_version,snapshot.fingerprint)
         return candidate,policy,snapshot,job
 
     def start_addressed(self,work):
@@ -100,7 +109,9 @@ class ProactiveChat:
     def valid(self,work,*,sending=False):
         if work.proactive is None:return True
         try:
-            policy=self.policy(work.model_snapshot,work.request)
+            current=self.agent.runtime.proactive_snapshot(work.request.conversation_id)
+            if current!=work.model_snapshot:return False
+            policy=self.policy(current,work.request)
             return (policy==work.service_policy and all(self.agent.store.source_valid(work.request.scope,row.message_id,row.timestamp_ms)
                     for row in work.proactive.messages)
                     and (self.controller.can_send(work.proactive) if sending else self.controller.valid(work.proactive)))

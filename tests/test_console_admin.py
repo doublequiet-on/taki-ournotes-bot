@@ -468,6 +468,32 @@ class AdminTests(unittest.IsolatedAsyncioTestCase):
         group=await client.get('/v1/admin/model/groups/group1',headers=headers)
         self.assertEqual(group.status,200)
         self.assertEqual((await group.json())['daily_limit'],1000000)
+        primary_before=(self.root/'profile.json').read_bytes()
+        self.assertEqual((await client.get('/v1/admin/model/proactive')).status,401)
+        selected=await (await client.get('/v1/admin/model/proactive',headers=headers)).json()
+        self.assertEqual(selected['role'],'proactive');self.assertFalse(selected['key_configured'])
+        independent={**payload,'operation_id':'b'*32,'guard':selected['guard'],
+                     'profile':{**payload['profile'],'model':'cheap-fixture','max_output_tokens':128},
+                     'api_key':'PRIVATE_PROACTIVE_TEST_KEY'}
+        saved=await client.post('/v1/admin/model/proactive',json=independent,headers=headers)
+        self.assertEqual(saved.status,200);result=await saved.json()
+        self.assertEqual(result['role'],'proactive');self.assertNotIn('PRIVATE_PROACTIVE_TEST_KEY',json.dumps(result))
+        self.assertEqual((self.root/'profile.json').read_bytes(),primary_before)
+        probe=await client.post('/v1/admin/model/proactive/probe',json={},headers=headers)
+        self.assertEqual(probe.status,409)
+        self.assertFalse((self.root/'chat-proactive-capabilities-v1.json').exists())
+        url='/v1/admin/model/proactive/groups/group1/limits'
+        self.assertEqual((await client.get(url)).status,401)
+        limits=await (await client.get(url,headers=headers)).json()
+        quota=dict(operation_id='c'*32,guard=limits['guard'],limits={**limits['limits'],'enabled':True})
+        no_epoch={k:v for k,v in headers.items() if k!='X-Taki-Epoch'}
+        self.assertEqual((await client.post(url,json=quota,headers=no_epoch)).status,409)
+        response=await client.post(url,json=quota,headers=headers)
+        self.assertEqual(response.status,200);saved=await response.json()
+        self.assertFalse(saved['approved']);self.assertFalse(saved['eligible'])
+        self.assertEqual(saved['limits']['max_calls_per_hour'],24)
+
+
 
     async def test_metrics_busy_does_not_block_event_loop_or_disable_writer(self):
         from concurrent.futures import ThreadPoolExecutor

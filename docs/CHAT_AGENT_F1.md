@@ -12,7 +12,7 @@
 | 看图 | 能力文件 schema 2／3 中 vision 的 `max_image_tokens`、`detail`、`evidence_ref`。证据须覆盖当前模型及输入上界；无证据时不下载／不声称看过。纯图、图文、有效本群引用进入 input_image；Base64 长度不作为 token。见 [V1](CHAT_IMAGES_V1.md)、[真实引用限制](CHAT_QQ_QUOTE_EVIDENCE.md)。 |
 | 月度记忆 | 独立 `chat-v1.sqlite3`，30 日源时间到期，逐段成功 ACK 才成为 assistant 历史；本群检索／读取、派生摘要、删除与墓碑约束恢复。摘要与原文分层，来源删除会传播。见 [C3](CHAT_MEMORY_C3.md)。 |
 | 服务任务 | `chat-services-v1.json` 以 `taki-chat-services/1` 明确群级主体、批准引用、币种和 summary／proactive 小时预算，绑定同一模型版本。摘要只在压缩需要且无排队请求时使用剩余时间／许可，独立作业 ID 与服务账；失败保留有界原文。见 [服务任务](CHAT_SERVICE_JOBS.md)。 |
-| 主动参与 | 另须能力文件 schema 3 的 proactive，精确包含 groups、receive_evidence_ref、send_evidence_ref。非点名消息只进有界内存，合并后同一 Agent 决定 reply／skip／defer；最多两次暂缓重评。新消息、点名、策略或来源变化取消旧发送。候选版本绑定与当前许可、Intent、ACK 仍逐层执行。见 [G1](CHAT_PROACTIVE_G1.md)。 |
+| 主动参与 | 可在控制台单独配置模型与密钥，独立角色使用 chat-proactive-capabilities-v1.json / chat-proactive-services-v1.json 批准及限额，见 [服务任务](CHAT_SERVICE_JOBS.md#独立主动参与模型)。另须能力文件 schema 3 的 proactive，精确包含 groups、receive_evidence_ref、send_evidence_ref。非点名消息只进有界内存，合并后同一 Agent 决定 reply／skip／defer；最多两次暂缓重评。新消息、点名、策略或来源变化取消旧发送。候选版本绑定与当前许可、Intent、ACK 仍逐层执行。见 [G1](CHAT_PROACTIVE_G1.md)。 |
 
 能力文件 schema 1 保留原 web_search；schema 2 再含 vision；schema 3 同时含 web_search、vision、proactive，未启用项写 null。proactive 的接收／发送证据是平台实测记录，不能只填写功能名冒充验收。真实语料、人格批准、能力批准、群主体批准、图片和私有数据库均不进入 wheel／sdist。
 

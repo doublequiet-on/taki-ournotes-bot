@@ -83,46 +83,49 @@ def _limits(value, kind):
 class ChatServices:
     """Missing, unapproved, mismatched or invalid files disable services, never ordinary chat."""
 
-    def __init__(self, state_dir, instance_id, app_id):
-        self.path = Path(state_dir) / 'chat-services-v1.json'
+    def __init__(self, state_dir, instance_id, app_id, *, filename="chat-services-v1.json"):
+        self.path = Path(state_dir) / filename
         self.namespace = (instance_id, app_id)
         self.code = 'chat_services_absent'
 
+    def read(self, snapshot):
+        """Validated administrator document and a digest of exactly the parsed bytes."""
+        if not self.path.exists():return None, {}, 'absent'
+        info = self.path.lstat()
+        _check(self.path.is_file() and not self.path.is_symlink() and info.st_size <= 131072)
+        _check(os.name == 'nt' or info.st_mode & 0o022 == 0, 'chat_service_permissions')
+        with self.path.open('rb') as stream:
+            raw = stream.read(131073)
+        _check(len(raw) <= 131072)
+        data = decode_json(raw)
+        _check(isinstance(data, dict) and set(data) == {'schema', 'instance_id', 'app_id', 'profile', 'groups'})
+        _check(data['schema'] == 'taki-chat-services/1'
+               and (data['instance_id'], data['app_id']) == self.namespace)
+        binding = data['profile']
+        _check(isinstance(binding, dict) and set(binding) == {'config_version', 'fingerprint', 'currency'})
+        _check(isinstance(binding['fingerprint'], str) and re.fullmatch(r'[0-9a-f]{64}', binding['fingerprint'])
+               and binding['config_version'] == snapshot.profile.config_version
+               and binding['fingerprint'] == snapshot.fingerprint, 'chat_service_profile_mismatch')
+        _check(binding['currency'] == snapshot.profile.price.currency, 'chat_service_currency_mismatch')
+        groups = data['groups']
+        _check(isinstance(groups, dict) and len(groups) <= 128)
+        parsed = {}
+        for gid, value in groups.items():
+            _check(_id(gid, 128) and isinstance(value, dict)
+                   and not set(value) - {'approved', 'service_subject_id', 'approval_ref', 'summary', 'proactive'})
+            _check('approved' not in value or type(value['approved']) is bool)
+            if value.get('approved') is not True:
+                continue
+            _check(_id(value.get('service_subject_id')) and _id(value.get('approval_ref')))
+            parsed[gid] = ServicePolicy(*self.namespace, gid, value['service_subject_id'], value['approval_ref'],
+                binding['config_version'], binding['fingerprint'], binding['currency'],
+                _limits(value.get('summary'), 'summary'), _limits(value.get('proactive'), 'proactive'))
+        return data, parsed, hashlib.sha256(raw).hexdigest()
+
     def policy(self, snapshot, group_id) -> ServicePolicy | None:
         try:
-            if not self.path.exists():
-                self.code = 'chat_services_absent'
-                return None
-            info = self.path.lstat()
-            _check(self.path.is_file() and not self.path.is_symlink() and info.st_size <= 131072)
-            _check(os.name == 'nt' or info.st_mode & 0o022 == 0, 'chat_service_permissions')
-            with self.path.open('rb') as stream:
-                raw = stream.read(131073)
-            _check(len(raw) <= 131072)
-            data = decode_json(raw)
-            _check(isinstance(data, dict) and set(data) == {'schema', 'instance_id', 'app_id', 'profile', 'groups'})
-            _check(data['schema'] == 'taki-chat-services/1'
-                   and (data['instance_id'], data['app_id']) == self.namespace)
-            binding = data['profile']
-            _check(isinstance(binding, dict) and set(binding) == {'config_version', 'fingerprint', 'currency'})
-            _check(isinstance(binding['fingerprint'], str) and re.fullmatch(r'[0-9a-f]{64}', binding['fingerprint'])
-                   and binding['config_version'] == snapshot.profile.config_version
-                   and binding['fingerprint'] == snapshot.fingerprint, 'chat_service_profile_mismatch')
-            _check(binding['currency'] == snapshot.profile.price.currency, 'chat_service_currency_mismatch')
-            groups = data['groups']
-            _check(isinstance(groups, dict) and len(groups) <= 128)
-            parsed = {}
-            for gid, value in groups.items():
-                _check(_id(gid, 128) and isinstance(value, dict)
-                       and not set(value) - {'approved', 'service_subject_id', 'approval_ref', 'summary', 'proactive'})
-                _check('approved' not in value or type(value['approved']) is bool)
-                if value.get('approved') is not True:
-                    continue
-                _check(_id(value.get('service_subject_id')) and _id(value.get('approval_ref')))
-                parsed[gid] = ServicePolicy(*self.namespace, gid, value['service_subject_id'], value['approval_ref'],
-                    binding['config_version'], binding['fingerprint'], binding['currency'],
-                    _limits(value.get('summary'), 'summary'), _limits(value.get('proactive'), 'proactive'))
-            self.code = 'ready' if group_id in parsed else 'chat_service_unapproved'
+            data,parsed,_ = self.read(snapshot)
+            self.code = ('ready' if group_id in parsed else 'chat_service_unapproved') if data else 'chat_services_absent'
             return parsed.get(group_id)
         except ServiceError as exc:
             self.code = str(exc)

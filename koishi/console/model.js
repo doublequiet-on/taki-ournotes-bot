@@ -22,27 +22,27 @@ export function modelOverview(s){
 function quantityFractionCurrency(v){const [a,b=1]=String(v).split('/').map(Number);return Number.isFinite(a/b)?(a/b/1e6).toLocaleString('zh-CN',{maximumFractionDigits:6}):'未知';}
 export function modelSettings(s){
   const value=s.model.value,p=s.modelDraft.value;
-  const fallback=s.modelRole.value==='fallback';
-  const rolePicker=h('label',['管理配置',h('select',{'aria-label':'管理配置',value:s.modelRole.value,disabled:s.busy.value||s.modelDirty.value,onChange:e=>s.selectModelRole(e.target.value)},[h('option',{value:'primary'},'主模型'),h('option',{value:'fallback'},'DeepSeek 备用模型')])]);
+  const fallback=s.modelRole.value==='fallback',proactive=s.modelRole.value==='proactive';
+  const rolePicker=h('label',['管理配置',h('select',{'aria-label':'管理配置',value:s.modelRole.value,disabled:s.busy.value||s.modelDirty.value,onChange:e=>s.selectModelRole(e.target.value)},[h('option',{value:'primary'},'主模型'),h('option',{value:'fallback'},'DeepSeek 备用模型'),h('option',{value:'proactive'},'主动参与模型')])]);
   if(!value||!p)return h('section',{class:'model-settings'},[h('h2','模型与额度'),rolePicker,h('p','模型设置尚未取得'),button('读取模型设置',()=>s.refreshModel())]);
   const text=(obj,key,title,type='text',min=null,max=null)=>h('label',[title,h('input',{'aria-label':title,type,value:obj[key],min,max,
     onInput:e=>{obj[key]=type==='number'?Number(e.target.value):e.target.value;s.modelDirty.value=true;}})]);
   const flag=(key,title)=>h('label',{class:'toggle'},[h('input',{type:'checkbox',checked:p[key],onChange:e=>{p[key]=e.target.checked;s.modelDirty.value=true;}}),title]);
   const probe=value.capability;
   return h('section',{class:'model-settings'},[h('h2','模型与额度'),rolePicker,h('p',`${code(value.code)} · 密钥${value.key_configured?'已配置':'未配置'}`),
-    !value.editable&&h('p',{role:'alert'},'模型配置目录不可安全写入，请修复后端配置目录的权限与服务可写路径。主备模型均受此限制。'),
-    !fallback&&s.budgetEdit?.value&&h('section',{class:'budget-editor'},[h('h3','全机器人每日主模型预算'),h('p',`当前生效：USD ${value.primary_budget.daily_usd}`),h('label',['每日上限（美元）',h('input',{type:'number',min:0,max:999999.999999,step:'0.01','aria-label':'每日主模型预算（美元）',value:s.budgetEdit.value.daily,onInput:e=>{s.budgetEdit.value.daily=e.target.value;s.budgetEdit.value.dirty=true;}})]),button('保存每日预算',()=>s.saveBudget(),s.busy.value||!s.budgetEdit.value.dirty),s.budgetEdit.value.dirty&&JSON.stringify(s.budgetEdit.value.guard)!==JSON.stringify(value.primary_budget.guard)&&button('核对最新预算后保留草稿',()=>{if(window.confirm(`服务器当前预算为 USD ${value.primary_budget.daily_usd}。保留你的金额并以此版本重试？`))s.budgetEdit.value.guard=value.primary_budget.guard;},s.busy.value),button('放弃预算草稿',()=>{s.budgetEdit.value=null;void s.refreshModel();},s.busy.value),h('small','即时生效并持久保存；0 表示普通账号直接使用备用模型。本人额度豁免继续按服务器名单生效。')]),
+    !value.editable&&h('p',{role:'alert'},'模型配置目录不可安全写入，请修复后端配置目录的权限与服务可写路径。各模型配置均受此限制。'),
+    !fallback&&!proactive&&s.budgetEdit?.value&&h('section',{class:'budget-editor'},[h('h3','全机器人每日主模型预算'),h('p',`当前生效：USD ${value.primary_budget.daily_usd}`),h('label',['每日上限（美元）',h('input',{type:'number',min:0,max:999999.999999,step:'0.01','aria-label':'每日主模型预算（美元）',value:s.budgetEdit.value.daily,onInput:e=>{s.budgetEdit.value.daily=e.target.value;s.budgetEdit.value.dirty=true;}})]),button('保存每日预算',()=>s.saveBudget(),s.busy.value||!s.budgetEdit.value.dirty),s.budgetEdit.value.dirty&&JSON.stringify(s.budgetEdit.value.guard)!==JSON.stringify(value.primary_budget.guard)&&button('核对最新预算后保留草稿',()=>{if(window.confirm(`服务器当前预算为 USD ${value.primary_budget.daily_usd}。保留你的金额并以此版本重试？`))s.budgetEdit.value.guard=value.primary_budget.guard;},s.busy.value),button('放弃预算草稿',()=>{s.budgetEdit.value=null;void s.refreshModel();},s.busy.value),h('small','即时生效并持久保存；0 表示普通账号直接使用备用模型。本人额度豁免继续按服务器名单生效。')]),
     h('div',{class:'form-grid'},[h('label',['服务商',h('select',{'aria-label':'服务商',value:p.provider,onChange:e=>{p.provider=e.target.value;p.wire_profile=p.provider==='openai'?'openai-responses-v1':p.provider+'-chat-v1';p.parallel_control=false;p.reasoning_effort=null;p.max_output_tokens=Math.min(p.max_output_tokens,p.wire_profile==='openai-responses-v1'?8192:1536);s.modelDirty.value=true;}},
       (fallback?['deepseek']:['deepseek','openai','openrouter']).map(v=>h('option',{value:v},v)))]),text(p,'model','模型 ID'),
       h('label',['API 地址',h('input',{value:p.wire_profile==='openai-responses-v1'?'https://api.openai.com/v1/responses':value.endpoints[p.provider],readonly:true,'aria-label':'API 地址'})]),
       h('label',['新密钥（留空保留）',h('input',{type:'password',autocomplete:'new-password','aria-label':'新密钥',value:s.modelKey.value,
         onInput:e=>{s.modelKey.value=e.target.value;s.modelDirty.value=true;}})]),
-      text(p,'user_daily_limit','用户每日额度（加权 Token）','number',0,1e12),text(p,'group_daily_limit','群默认每日额度（加权 Token）','number',0,1e12),
-      text(p,'user_rate_requests','每用户窗口内请求数','number',1,1000),text(p,'group_rate_requests','每群窗口内请求数','number',1,1000),
+      text(p,'user_daily_limit',proactive?'主动参与每日额度（加权 Token）':'用户每日额度（加权 Token）','number',0,1e12),text(p,'group_daily_limit','群默认每日额度（加权 Token）','number',0,1e12),
+      text(p,'user_rate_requests',proactive?'主动参与窗口内请求数':'每用户窗口内请求数','number',1,1000),text(p,'group_rate_requests','每群窗口内请求数','number',1,1000),
       text(p,'rate_window_seconds','频率窗口（秒）','number',1,3600)]),
     (p.provider==='openai'||p.provider==='deepseek')&&h('label',[p.provider==='deepseek'?'DeepSeek 推理强度':'OpenAI 推理强度',h('select',{'aria-label':p.provider==='deepseek'?'DeepSeek 推理强度':'OpenAI 推理强度',value:p.reasoning_effort||(p.provider==='deepseek'?'none':''),disabled:p.provider==='openai'&&p.wire_profile!=='openai-responses-v1',onChange:e=>{p.reasoning_effort=e.target.value||null;s.modelDirty.value=true;}},[(p.provider==='deepseek'?['none','low','high','max']:['','none','minimal','low','medium','high','xhigh','max']).map(v=>h('option',{value:v},p.provider==='deepseek'?({none:'关闭思考',low:'低',high:'高',max:'最高'}[v]):(v||'模型默认')))])]),
     p.provider==='openai'&&h('label',['OpenAI 接口',h('select',{'aria-label':'OpenAI 接口',value:p.wire_profile,onChange:e=>{p.wire_profile=e.target.value;p.reasoning_effort=null;s.modelDirty.value=true;}},['openai-responses-v1','openai-chat-v1'].map(v=>h('option',{value:v},v))) ]),
-    h('p','主备模型分别保存。推理档位以所选模型支持为准；输出上限包含推理 Token。保存后生成新配置版本，已绑定的能力批准和群服务批准需要重新核对。更换服务商必须填写该服务商的新密钥。'),
+    h('p','各角色的模型分别保存。推理档位以所选模型支持为准；输出上限包含推理 Token。保存后生成新配置版本，已绑定的能力批准和群服务批准需要重新核对。更换服务商必须填写该服务商的新密钥。'),
     h('small','地址仅支持已登记的 HTTPS 接口。额度按北京时间每日结算，参考费用不是提供方账单。'),
     h('details',[h('summary','模型能力与默认估算价'),h('p','能力依据是管理员登记的信息；下方测试记录才表示该配置版本的实际探测结果。价格以每百万 Token 的微货币单位填写。'),
       text(p,'capability_evidence','能力依据编号'),text(p,'max_input_tokens','输入预算','number',8192,65536),text(p,'max_output_tokens','最大输出 Token','number',64,p.wire_profile==='openai-responses-v1'?8192:1536),
@@ -54,14 +54,38 @@ export function modelSettings(s){
     s.modelConflict.value&&h('div',[h('p',{role:'alert'},'模型设置版本冲突或保存未确认，草稿仍保留。'),button('以最新版本重试此草稿',()=>{if(window.confirm('将保留你的草稿，并以当前服务器版本作为保存基础，确认继续？')){s.modelGuard.value=value.guard;s.modelConflict.value=false;}})]),
     h('p',{role:'status'},s.modelDirty.value?'有未保存的 AI 设置':'当前显示已载入的 AI 设置'),
     button('保存 AI 设置',()=>s.saveModel(),s.busy.value||!value.editable),button('放弃 AI 草稿并刷新',()=>{s.modelDirty.value=false;s.modelConflict.value=false;s.modelKey.value='';void s.refreshModel();},s.busy.value),
-    fallback&&h('p','备用模型可单独配置；此处付费探测入口只支持主模型。'),h('h3','连接与能力测试'),h('p',probe?`${code(probe.state)} · ${code(probe.result?.code)}`:'此配置版本尚未进行实际测试'),
+    proactive&&proactiveQuota(s),
+    proactive&&h('p','用于主动观察后的判断与回复；不会自动切换主模型。保存不会启用群发言，仍需单独批准群服务与能力。'),
+    fallback&&h('p','备用模型可单独配置；此处付费探测入口支持主模型和主动参与模型。'),h('h3','连接与能力测试'),h('p',probe?`${code(probe.state)} · ${code(probe.result?.code)}`:'此配置版本尚未进行实际测试'),
     button('发起一次能力测试',()=>{if(window.confirm('将向当前服务商发送一次合成工具测试，可能产生费用。确认执行？'))void s.probeModel();},
       fallback||s.busy.value||s.modelDirty.value||!value.key_configured||['intent','unknown','interrupted'].includes(probe?.state)),
     h('small','只在明确确认后调用；打开或刷新页面不会发起模型测试。'),
     h('details',[h('summary','AI 配置与测试记录'),...(value.audit||[]).map(a=>h('p',`${stamp(a.created_at)} · ${a.action} · ${code(a.state)} · ${a.config_version}`))])]);
 }
+function proactiveQuota(s){
+  const value=s.proactiveLimits.value,edit=s.proactiveEdit.value,items=s.groups.value?.sections?.groups?.data||[];
+  const ids=[...new Set([...items.map(g=>g.group_id),...Object.keys(s.groups.value?.policy?.groups||{}),s.groupId.value,edit?.group_id].filter(Boolean))];
+  const fields=[['max_calls_per_hour','每小时最多模型请求',120],['max_replies_per_hour','每小时最多主动回复',120],['cooldown_seconds','回复冷却（秒）',86400]];
+  const mark=()=>{edit.dirty=true;};
+  return h('section',{class:'proactive-quota'},[h('h3','主动参与限额'),
+    h('label',['目标群',h('select',{'aria-label':'主动参与目标群',value:edit?.group_id||'',disabled:s.busy.value,onChange:e=>s.refreshProactiveLimits(e.target.value)},[
+      h('option',{value:''},'请选择群'),...ids.map(id=>h('option',{value:id},items.find(g=>g.group_id===id)?.policy?.label||s.groups.value?.policy?.groups?.[id]?.label||`群 …${id.slice(-6)}`))])]),
+    button('刷新可选群',()=>s.load(s.groups,'groups/list'),s.busy.value),
+    !ids.length&&h('p','暂无群记录，请先在群管理中关联目标群。'),
+    edit&&h('div',[
+      h('p',value?.approved?(value.capability_approved?'本群已有服务和能力批准':'群服务已批准，能力尚待核对'):'本群尚未批准自动发言；可先保存限额'),
+      h('label',{class:'toggle'},[h('input',{type:'checkbox',checked:edit.limits.enabled,onChange:e=>{edit.limits.enabled=e.target.checked;mark();}}),'启用主动参与（仍须本群批准）']),
+      h('div',{class:'form-grid'},fields.map(([key,title,max])=>h('label',[title,h('input',{type:'number',min:0,max,step:1,'aria-label':title,value:edit.limits[key],onInput:e=>{edit.limits[key]=Number(e.target.value);mark();}})]))),
+      h('label',[`每小时费用上限（${value?.currency||'当前币种'}）`,h('input',{type:'number',min:0,max:1000000,step:'0.01','aria-label':'主动参与每小时费用上限',value:edit.limits.max_cost_micro_per_hour/1e6,onInput:e=>{edit.limits.max_cost_micro_per_hour=Math.round(Number(e.target.value)*1e6);mark();}})]),
+      h('p','模型请求数包含判断、略过、暂缓和工具续接；成功回复另计次数。费用上限也要容纳整轮预留，达到限额后停止主动参与。'),
+      edit.conflict&&h('p',{role:'alert'},'服务器配置已变化或保存未确认；草稿保留，请先读取最新值核对。'),
+      button('保存主动参与限额',()=>s.saveProactiveLimits(),s.busy.value||!edit.dirty||edit.conflict||s.modelDirty.value),
+      edit.conflict&&value?.group_id===edit.group_id&&button('核对最新限额后保留草稿',()=>{if(window.confirm(`服务器当前限额：每小时 ${value.limits.max_calls_per_hour} 次请求、${value.limits.max_replies_per_hour} 次回复、${value.currency} ${value.limits.max_cost_micro_per_hour/1e6}。保留你的草稿并以此版本重试？`)){edit.guard=value.guard;edit.conflict=false;}},s.busy.value),
+      button('放弃限额草稿并刷新',()=>s.refreshProactiveLimits(edit.group_id,true),s.busy.value),
+      h('small',edit.dirty?'有未保存的主动参与限额':'当前显示已保存的主动参与限额')])]);
+}
 export function groupQuota(s){
-  if(s.modelRole.value==='fallback')return h('section',[h('h3','群 AI 额度'),h('p','当前编辑备用模型；群额度管理使用主模型配置。'),button('切换到主模型配置',()=>s.selectModelRole('primary'),s.modelDirty.value||s.busy.value)]);
+  if(s.modelRole.value!=='primary')return h('section',[h('h3','群 AI 额度'),h('p','群额度管理使用主模型配置；各模型的默认额度在上方单独保存。'),button('切换到主模型配置',()=>s.selectModelRole('primary'),s.modelDirty.value||s.busy.value)]);
   const v=s.groupUsage.value,id=s.groupId.value,model=s.model.value;
   const override=model?.groups?.[id];
   return h('section',[h('h3','群 AI 额度'),v?h('p',`今日已用与预留 ${quantity(v.spent_and_reserved)} / ${v.daily_limit} · ${v.rate_window_seconds} 秒内 ${v.rate_requests} 次`):h('p','群额度尚未取得'),

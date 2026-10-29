@@ -754,17 +754,30 @@ def create_app(backend, token, initialize=None):
     async def admin_sources(request): return json(backend.admin.sources())
     async def admin_notices(request): return json(backend.admin.notices(dict(request.query)))
     async def admin_metrics(request): return json(backend.admin.metrics())
+    async def proactive_limits(request):
+        from ..domain.model_calls import ModelError
+        from .chat_jobs import ServiceError
+        require(backend.model_runtime is not None,'model_admin_unavailable',503)
+        try:
+            owner=backend.model_runtime.admin;gid=request.match_info['gid']
+            if request.method=='GET':return json(owner.proactive_limits(gid))
+            require(backend.ready and not backend.closing,'backend_not_ready',503)
+            require(backend.ledger.active(request.headers.get('X-Taki-Epoch')),'ops_gateway_epoch',409)
+            return json(owner.save_proactive_limits(gid,await read_json(request)))
+        except (ModelError,ServiceError) as exc:raise ProtocolError(str(exc),409) from None
+        except (OSError,sqlite3.Error):raise ProtocolError('model_admin_unavailable',503) from None
     async def model_settings(request):
         from ..domain.model_calls import ModelError
         require(backend.model_runtime is not None,'model_admin_unavailable',503)
         owner=backend.model_runtime.admin
         try:
             fallback=request.path.endswith('/fallback')
-            if request.method=='GET': return json(owner.settings(fallback))
+            proactive='/model/proactive' in request.path
+            if request.method=='GET': return json(owner.settings(fallback,proactive=proactive))
             require(backend.ready and not backend.closing,'backend_not_ready',503)
             require(backend.ledger.active(request.headers.get('X-Taki-Epoch')),'ops_gateway_epoch',409)
             value=await read_json(request)
-            return json(owner.save_budget(value) if request.path.endswith('/budget') else owner.probe(value) if request.path.endswith('/probe') else owner.save(value,fallback))
+            return json(owner.save_budget(value) if request.path.endswith('/budget') else owner.probe(value,proactive=proactive) if request.path.endswith('/probe') else owner.save(value,fallback,proactive=proactive))
         except ModelError as exc:
             raise ProtocolError(str(exc),409) from None
         except (OSError,sqlite3.Error):
@@ -881,7 +894,10 @@ def create_app(backend, token, initialize=None):
                     web.get('/v1/admin/query-metrics', admin_metrics), web.post('/v1/admin/telemetry', admin_telemetry),
                     web.get('/v1/admin/model', model_settings),web.post('/v1/admin/model', model_settings),
                     web.get('/v1/admin/model/fallback',model_settings),web.post('/v1/admin/model/fallback',model_settings),
-                    web.post('/v1/admin/model/probe',model_settings),web.post('/v1/admin/model/budget',model_settings),web.get('/v1/admin/model/groups/{gid}',model_group),
+                    web.get('/v1/admin/model/proactive/groups/{gid}/limits',proactive_limits),
+                    web.post('/v1/admin/model/proactive/groups/{gid}/limits',proactive_limits),
+                    web.get('/v1/admin/model/proactive',model_settings),web.post('/v1/admin/model/proactive',model_settings),
+                    web.post('/v1/admin/model/proactive/probe',model_settings),web.post('/v1/admin/model/probe',model_settings),web.post('/v1/admin/model/budget',model_settings),web.get('/v1/admin/model/groups/{gid}',model_group),
                     web.get('/v1/admin/library/{kind}/{offset:[0-9]+}',library_status),web.post('/v1/admin/library/{action}',library_command),
                     web.get('/v1/admin/chat/status',chat_status),web.get('/v1/admin/chat/groups/{gid}/status',chat_status),
                     web.get('/v1/admin/chat/groups/{gid}/memory',chat_memory),web.post('/v1/admin/chat/groups/{gid}/memory',chat_memory),

@@ -2,7 +2,7 @@
 
 可选聊天由 [application/chat_agent.py](ournotes_bot/application/chat_agent.py) 编排，复用 ModelRuntime 许可与结算；[chat_context.py](ournotes_bot/application/chat_context.py) 恢复有界参与片段和成功 ACK 回复；[chat_store.py](ournotes_bot/application/chat_store.py) 独占 30 日记忆、派生关系与删除墓碑。预算、规范化消息和人格 v0 在 [domain/chat.py](ournotes_bot/domain/chat.py)。旧 persona 话题卡仅用于 legacy，以下 U2/U3 保留该范围；协议 2.2 与现状见 [聊天架构](../docs/CHAT_AGENT_ARCHITECTURE.md)。
 
-[story_service.py](ournotes_bot/application/story_service.py)／[story_cli.py](ournotes_bot/application/story_cli.py) 拥有本地版本化剧情发布、撤回与独立人格批准；[chat_capabilities.py](ournotes_bot/application/chat_capabilities.py) 绑定模型能力证据；[chat_admin.py](ournotes_bot/application/chat_admin.py) 只读投影主备能力批准与群服务上限，不返回对话正文或写入批准；[chat_jobs.py](ournotes_bot/application/chat_jobs.py) 拥有群服务批准、预算与摘要材料；[proactive_chat.py](ournotes_bot/application/proactive_chat.py) 是无 IO 观察控制器，[chat_proactive_runtime.py](ournotes_bot/application/chat_proactive_runtime.py) 接宿主许可、候选和 ACK。配置与验证边界见 [F1](../docs/CHAT_AGENT_F1.md)。
+[story_service.py](ournotes_bot/application/story_service.py)／[story_cli.py](ournotes_bot/application/story_cli.py) 拥有本地版本化剧情发布、撤回与独立人格批准；[chat_capabilities.py](ournotes_bot/application/chat_capabilities.py) 绑定模型能力证据；[chat_admin.py](ournotes_bot/application/chat_admin.py) 只读投影主模型、备用及独立主动参与模型的能力批准与群服务上限，不返回对话正文或写入批准；[chat_jobs.py](ournotes_bot/application/chat_jobs.py) 拥有群服务批准、预算与摘要材料；[proactive_chat.py](ournotes_bot/application/proactive_chat.py) 是无 IO 观察控制器，[chat_proactive_runtime.py](ournotes_bot/application/chat_proactive_runtime.py) 接宿主许可、候选和 ACK。配置与验证边界见 [F1](../docs/CHAT_AGENT_F1.md)。
 
 ## Purpose
 
@@ -36,7 +36,7 @@ CLI 模式与组合、配置根/数据路径、包身份；为多个系统域提
 
 ## Internal Subsystems
 
-- [application/model_admin.py](ournotes_bot/application/model_admin.py)：后端受保护配置写入、管理意图审计和明确确认的能力探测；只返回元数据，复用模型调度与账务。控制台和独立受信进程协议见 [包 4](../docs/QUERY_CHAT_PACKAGE4.md)。
+- [application/model_admin.py](ournotes_bot/application/model_admin.py)：后端受保护模型配置与主动参与限额写入、管理意图审计和明确确认的能力探测；只返回元数据，复用模型调度与账务。控制台和独立受信进程协议见 [包 4](../docs/QUERY_CHAT_PACKAGE4.md)。
 
 - [application/model_runtime.py](ournotes_bot/application/model_runtime.py)：后端原生工具编排、当前许可、证据生成和上下文核验；[model_config.py](ournotes_bot/application/model_config.py) 固定受信配置／身份快照，v3 允许有核验证据的指定群全员准入，跨场景身份仍须显式绑定；[usage_ledger.py](ournotes_bot/application/usage_ledger.py) 独占写精确预留与结算；未知 token／操作保留费用上界，操作意图、缺失记录标记及删除检测 trigger 随共享用量库保存，缺少价格事实时阻止相关主体继续调用。非 DeepSeek 的 USD 费用与预留共用每日 $2.5 上限；新轮不足时，model_runtime 从独立受保护配置选择 DeepSeek，沿用原平台身份及用户／群额度，已开始轮次不换模型；配置及回退约束见 [运行手册](../docs/CHAT_AGENT_RUNBOOK.md#每日主模型预算与-deepseek-备用)。纯合同在 [domain/model_calls.py](ournotes_bot/domain/model_calls.py)，公开说明见 [包 3](../docs/QUERY_CHAT_PACKAGE3.md)。
 - [application/site_lookup.py](ournotes_bot/application/site_lookup.py)：U3 请求内目录候选、详情及已知关联导航，最多三次只读取证；固定版本／公告快照、有界证据和短期 handle，不接受模型 URL、不写百科。程序按已查证资源生成公告及明确索要的歌曲／活动网页链接，保留实际来源区服与采集时点。`model_runtime.py` 仅在此流程开放四次逐次许可，网关同步硬上限，仍受原 30 秒执行预算约束。
