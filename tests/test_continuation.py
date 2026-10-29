@@ -751,5 +751,455 @@ class AbsoluteLifetimeTests(Fixture,unittest.TestCase):
         finally:CURRENT_QUERY_SCOPE.reset(b)
 
 
+class ChatMemoryStoreTests(unittest.TestCase):
+    """C3: real scoped SQLite, receipt provenance and deletion/restore boundaries."""
+    def setUp(self):
+        from ournotes_bot.application.chat_store import ChatStore
+        self.temp=tempfile.TemporaryDirectory();self.addCleanup(self.temp.cleanup)
+        self.path=Path(self.temp.name)/'chat.sqlite3';self.now=[1793270000.0]
+        self.scope=dict(instance_id='fixture',app_id='app',platform='qq',kind='group',conversation_id='g1')
+        self.store=ChatStore(self.path,'fixture\0app',clock=lambda:self.now[0])
+        self.addCleanup(lambda:self.store.close())
+
+    def message(self,mid='u1-message',text='我更喜欢鼓和现场音乐',*,speaker='u1',role='user',stamp=None):
+        return dict(message_id=mid,speaker_id=speaker,text=text,timestamp_ms=int(self.now[0]*1000) if stamp is None else stamp,
+                    role=role,reply_to=None,display_name='同一个显示名')
+
+    def begin(self,run='run1',messages=None,scope=None,**kwargs):
+        import json
+        scope=scope or self.scope
+        request=SimpleNamespace(scope=scope,timestamp_ms=int(self.now[0]*1000),trigger='ask')
+        work=SimpleNamespace(delivery=run,request=request,model_snapshot=SimpleNamespace(profile=SimpleNamespace(config_version='fixture-v1')))
+        messages=messages or [self.message()]
+        self.store.begin(work,[dict(role=message['role'],content=json.dumps(message,ensure_ascii=False)) for message in messages],**kwargs)
+        return request
+
+    def delivered(self,run='run1',mid='assistant1',text='我也喜欢鼓。',status='success',allow=True):
+        self.store.event(run,'delivery/'+mid,'delivery',dict(message_id=mid,text=text,status=status,allow_context=allow))
+
+    def test_only_explicit_participation_and_success_receipts_become_memory(self):
+        self.begin('ignored',participating=False)
+        self.assertEqual(self.store.status(self.scope)['messages'],0)
+        self.begin(messages=[self.message(),self.message('fake','未发出的模型历史',role='assistant',speaker='Taki')])
+        self.store.generated('run1','尚未发送的可见生成正文')
+        self.delivered(mid='uncertain',status='uncertain')
+        self.delivered(mid='denied',allow=False)
+        self.assertEqual([r['message_id'] for r in self.store.recent(self.scope)],['u1-message'])
+        self.delivered();self.delivered()
+        self.assertEqual([r['message_id'] for r in self.store.recent(self.scope)],['u1-message','assistant1'])
+        self.assertEqual(self.store.read(self.scope,['fake','uncertain','denied'])['status'],'no_results')
+
+    def test_same_name_and_message_id_remain_scoped_and_speakers_distinct(self):
+        self.begin(messages=[self.message(),self.message('u2-message','我喜欢提前规划',speaker='u2')])
+        other={**self.scope,'conversation_id':'g2'}
+        self.begin('other',messages=[self.message(text='另一个群的秘密')],scope=other)
+        rows=self.store.read(self.scope,['u1-message','u2-message'])['messages']
+        self.assertEqual([r['speaker_id'] for r in rows],['u1','u2'])
+        self.assertEqual(len({r['display_name'] for r in rows}),1)
+        self.assertEqual(self.store.search(self.scope,'秘密')['status'],'no_results')
+        self.assertEqual(self.store.read(other,['u1-message'])['messages'][0]['text'],'另一个群的秘密')
+        with self.assertRaisesRegex(ValueError,'chat_memory_identity'):
+            self.store.search({**self.scope,'instance_id':'other'},'秘密')
+
+    def test_cjk_substrings_short_terms_and_fts_operator_text_are_data(self):
+        self.begin(messages=[self.message(text='喜欢即兴鼓演奏和长期规划')])
+        self.assertEqual(self.store.search(self.scope,'鼓演奏')['status'],'ok')
+        self.assertEqual(self.store.search(self.scope,'即兴')['status'],'ok')
+        self.assertEqual(self.store.search(self.scope,'鼓')['status'],'ok')
+        self.assertEqual(self.store.search(self.scope,'鼓 OR another_scope')['status'],'no_results')
+        with self.assertRaisesRegex(ValueError,'chat_memory_query'):self.store.search(self.scope,'x'*121)
+
+    def test_delete_source_cascades_replies_summaries_index_and_c1_blobs(self):
+        self.begin();self.delivered()
+        first=self.store.read(self.scope,['u1-message','assistant1'])['messages']
+        self.now[0]+=1
+        self.begin('run2',messages=[*first,self.message('u2-message','再解释一下',speaker='u2')])
+        self.delivered('run2','assistant2','这是承接前面观点的解释。')
+        self.store.put_summary(self.scope,'summary','大家讨论了鼓与现场表现',['u1-message','assistant1'])
+        self.assertEqual(len(self.store.summaries(self.scope)),1)
+        self.store.delete_messages(self.scope,['u1-message'])
+        self.assertEqual([r['message_id'] for r in self.store.recent(self.scope)],['u2-message'])
+        self.assertEqual(self.store.summaries(self.scope),[])
+        self.assertEqual(self.store.search(self.scope,'解释')['messages'][0]['message_id'],'u2-message')
+        self.assertEqual(self.store.db.execute('SELECT count(*) FROM memory_fts WHERE kind=\'summary\'').fetchone()[0],0)
+        self.assertEqual(self.store.db.execute('SELECT count(*) FROM runs').fetchone()[0],0)
+        self.assertEqual(self.store.db.execute('SELECT count(*) FROM events').fetchone()[0],0)
+
+    def test_expiry_uses_oldest_source_and_summary_never_renews_retention(self):
+        from ournotes_bot.application.chat_store import RETENTION_SECONDS
+        old=int((self.now[0]-RETENTION_SECONDS+1)*1000)
+        self.begin(messages=[self.message(stamp=old)])
+        summary=self.store.put_summary(self.scope,'summary','一条刚生成的旧来源摘要',['u1-message'])
+        self.assertEqual(summary['expires_at_ms'],old+RETENTION_SECONDS*1000)
+        self.now[0]+=2
+        self.assertEqual(self.store.summaries(self.scope),[])
+        self.assertEqual(self.store.search(self.scope,'现场')['status'],'no_results')
+        self.assertEqual(self.store.db.execute('SELECT count(*) FROM memory_fts').fetchone()[0],0)
+
+    def test_backup_restore_applies_independent_journal_before_read(self):
+        import sqlite3,shutil
+        from contextlib import closing
+        from ournotes_bot.application.chat_store import ChatStore
+        self.begin();self.delivered()
+        backup=self.path.with_name('backup.sqlite3')
+        with closing(sqlite3.connect(backup)) as target:self.store.db.backup(target)
+        self.store.delete_messages(self.scope,['u1-message'])
+        self.store.close();shutil.copyfile(backup,self.path)
+        self.store=ChatStore(self.path,'fixture\0app',clock=lambda:self.now[0])
+        self.assertEqual(self.store.recent(self.scope),[])
+        self.assertEqual(self.store.summaries(self.scope),[])
+        self.assertEqual(self.store.status(self.scope)['message_tombstones'],1)
+
+    def test_clear_group_preserves_other_group_and_accepts_later_new_messages(self):
+        other={**self.scope,'conversation_id':'g2'}
+        self.begin();self.delivered();self.begin('other',scope=other)
+        self.store.clear_scope(self.scope)
+        self.assertEqual(self.store.recent(self.scope),[])
+        self.assertEqual(len(self.store.recent(other)),1)
+        self.begin('repeated',messages=[self.message()])
+        self.assertEqual(self.store.recent(self.scope),[])
+        self.assertEqual(self.store.db.execute('SELECT count(*) FROM runs WHERE id=\'repeated\'').fetchone()[0],0)
+        self.now[0]+=1;self.begin('new',messages=[self.message('new')])
+        self.assertEqual([r['message_id'] for r in self.store.recent(self.scope)],['new'])
+
+    def test_corrupt_or_wrong_identity_deletion_journal_fails_closed(self):
+        from ournotes_bot.application.chat_store import ChatStore
+        self.begin();self.store.delete_messages(self.scope,['u1-message'])
+        self.store.close()
+        journal=self.path.with_suffix('.deletions.json')
+        journal.write_text('broken',encoding='utf-8')
+        with self.assertRaises(ValueError):ChatStore(self.path,'fixture\0app',clock=lambda:self.now[0])
+        journal.unlink()
+        self.store=ChatStore(self.path,'fixture\0app',clock=lambda:self.now[0])
+        state=self.store.deletion_state();state['identity']='another-instance'
+        with self.assertRaisesRegex(ValueError,'chat_deletion_journal'):self.store.restore_deletions(state)
+
+    def test_c1_migration_keeps_meta_contract_and_backfills_only_receipted_assistant(self):
+        import sqlite3,json
+        from contextlib import closing
+        from ournotes_bot.application.chat_store import ChatStore
+        self.store.close()
+        path=self.path.with_name('c1.sqlite3')
+        messages=[self.message(),self.message('fake','不应承认这段假历史',role='assistant',speaker='Taki')]
+        context=[dict(role=m['role'],content=json.dumps(m,ensure_ascii=False)) for m in messages]
+        with closing(sqlite3.connect(path)) as db,db:
+            db.execute('CREATE TABLE meta (key TEXT PRIMARY KEY,value TEXT NOT NULL)')
+            db.executemany('INSERT INTO meta VALUES (?,?)',[('schema','chat/1'),('identity','fixture\0app')])
+            db.execute('CREATE TABLE runs(id TEXT PRIMARY KEY,scope TEXT,source_time REAL,trigger TEXT,persona TEXT,profile TEXT,context TEXT,visible TEXT,status TEXT)')
+            db.execute('CREATE TABLE events(run_id TEXT,event_id TEXT,kind TEXT,data TEXT,PRIMARY KEY(run_id,event_id))')
+            db.execute('INSERT INTO runs VALUES (?,?,?,?,?,?,?,?,?)',('old',json.dumps(self.scope),self.now[0],'ask','v0','fixture',json.dumps(context),'生成内容','finished'))
+            db.execute('INSERT INTO events VALUES (?,?,?,?)',('old','delivery/1','delivery',json.dumps(dict(message_id='actual',text='实际送达',status='success',allow_context=True))))
+            follow_context=[dict(role='assistant',content=json.dumps(self.message('actual','实际送达',role='assistant',speaker='Taki'),ensure_ascii=False)),
+                            dict(role='user',content=json.dumps(self.message('follow-user','追问一下'),ensure_ascii=False))]
+            db.execute('INSERT INTO runs VALUES (?,?,?,?,?,?,?,?,?)',('a-follow-before-old',json.dumps(self.scope),self.now[0],'ask','v0','fixture',json.dumps(follow_context),'追问回答','finished'))
+            db.execute('INSERT INTO events VALUES (?,?,?,?)',('a-follow-before-old','delivery/1','delivery',json.dumps(dict(message_id='follow-answer',text='承接前面的回答',status='success',allow_context=True))))
+        self.store=ChatStore(path,'fixture\0app',clock=lambda:self.now[0])
+        self.assertEqual(dict(self.store.db.execute('SELECT key,value FROM meta')),{'schema':'chat/1','identity':'fixture\0app'})
+        self.assertEqual({r['message_id'] for r in self.store.recent(self.scope)},{'u1-message','actual','follow-user','follow-answer'})
+        self.assertEqual(self.store.read(self.scope,['fake'])['status'],'no_results')
+        self.assertEqual(self.store.db.execute('PRAGMA user_version').fetchone()[0],2)
+        self.store.delete_messages(self.scope,['actual'])
+        self.assertEqual(self.store.read(self.scope,['follow-answer'])['status'],'no_results')
+
+    def test_summary_missing_or_deleted_sources_cannot_be_published(self):
+        self.begin()
+        with self.assertRaisesRegex(ValueError,'chat_memory_source_missing'):
+            self.store.put_summary(self.scope,'summary','缺来源',['missing'])
+        self.store.delete_messages(self.scope,['u1-message'])
+        with self.assertRaisesRegex(ValueError,'chat_memory_source_missing'):
+            self.store.put_summary(self.scope,'summary','已删除来源',['u1-message'])
+
+    def test_c1_rollback_new_runs_are_imported_on_rollforward(self):
+        import sqlite3,json
+        from contextlib import closing
+        from ournotes_bot.application.chat_store import ChatStore
+        self.begin();self.delivered();self.store.close()
+        context=[dict(role='user',content=json.dumps(self.message('during-rollback','回退期间的参与消息'),ensure_ascii=False))]
+        # The unchanged C1 writes only its original runs/events tables.
+        with closing(sqlite3.connect(self.path)) as db,db:
+            db.execute('INSERT INTO runs VALUES (?,?,?,?,?,?,?,?,?)',('rollback-run',json.dumps(self.scope),self.now[0],'ask','v0','fixture',json.dumps(context),'回退回答','finished'))
+            db.execute('INSERT INTO events VALUES (?,?,?,?)',('rollback-run','delivery/1','delivery',json.dumps(dict(message_id='rollback-answer',text='回退时确实送达',status='success',allow_context=True))))
+        self.store=ChatStore(self.path,'fixture\0app',clock=lambda:self.now[0])
+        self.assertEqual(self.store.read(self.scope,['during-rollback','rollback-answer'])['status'],'ok')
+        self.assertEqual(len(self.store.read(self.scope,['during-rollback','rollback-answer'])['messages']),2)
+
+    def test_future_memory_schema_is_rejected_without_rewriting_it(self):
+        import sqlite3
+        from contextlib import closing
+        from ournotes_bot.application.chat_store import ChatStore
+        self.store.close()
+        with closing(sqlite3.connect(self.path)) as db,db:db.execute('PRAGMA user_version=3')
+        with self.assertRaisesRegex(ValueError,'chat_memory_version'):ChatStore(self.path,'fixture\0app')
+        with closing(sqlite3.connect(self.path)) as db,db:
+            self.assertEqual(db.execute('PRAGMA user_version').fetchone()[0],3)
+            db.execute('PRAGMA user_version=2')
+        self.store=ChatStore(self.path,'fixture\0app',clock=lambda:self.now[0])
+
+    def test_context_restores_after_restart_and_invalidates_deleted_cache(self):
+        from ournotes_bot.application.chat_context import ChatContext
+        self.begin();self.delivered()
+        context=ChatContext(store=self.store,clock=lambda:self.now[0])
+        request=SimpleNamespace(scope=self.scope,reference=None,message_id='current',user_id='u2',sender_name='同一个显示名',timestamp_ms=int(self.now[0]*1000))
+        context.trigger(request,'当前的新问题')
+        self.assertEqual(len(context.messages(request)),3)
+        self.store.delete_messages(self.scope,['u1-message'])
+        self.assertFalse(context.contains(request,'assistant1'))
+        self.assertFalse(any('实际' in item['content'] for item in context.messages(request)))
+
+    def test_explicit_older_reference_is_available_only_in_current_scope(self):
+        from ournotes_bot.application.chat_context import ChatContext
+        self.begin()
+        self.now[0]+=1800
+        context=ChatContext(store=self.store,clock=lambda:self.now[0])
+        request=SimpleNamespace(scope=self.scope,reference={'message_id':'u1-message'},message_id='current',user_id='u2',sender_name='',timestamp_ms=int(self.now[0]*1000))
+        context.trigger(request,'引用半小时前的话')
+        self.assertTrue(context.contains(request,'u1-message'))
+        self.assertEqual(len(context.messages(request)),2)
+        other=SimpleNamespace(**{**request.__dict__,'scope':{**self.scope,'conversation_id':'g2'}})
+        self.assertFalse(context.contains(other,'u1-message'))
+        self.assertEqual(context.messages(other),[])
+
+    def test_initial_unpersisted_trigger_is_not_lost_during_cache_restore(self):
+        from ournotes_bot.application.chat_context import ChatContext
+        context=ChatContext(store=self.store,clock=lambda:self.now[0])
+        request=SimpleNamespace(scope=self.scope,reference=None,message_id='current',user_id='u1',sender_name='',timestamp_ms=int(self.now[0]*1000))
+        context.trigger(request,'第一条触发问题')
+        self.assertEqual(len(context.messages(request)),1)
+        self.assertIn('第一条触发问题',context.messages(request)[0]['content'])
+
+
+class ProactiveControllerTests(unittest.TestCase):
+    def setUp(self):
+        from ournotes_bot.application.proactive_chat import ProactiveController, ProactivePolicy
+        self.now = [0.0]
+        self.Policy = ProactivePolicy
+        self.controller = ProactiveController(clock=lambda: self.now[0])
+        self.a, self.b = ('qq', 'group', 'a'), ('qq', 'group', 'b')
+        self.policy = self.Policy(True, 'approved-group-service', 'admin-approval-17', 6, 3, 1000)
+        self.controller.configure(self.a, self.policy)
+
+    def observe(self, message_id='m1', text='我们聊电影吧', *, scope=None, **kwargs):
+        from ournotes_bot.domain.chat import ChatMessage
+        return self.controller.observe(scope or self.a, ChatMessage(message_id, 'u' + message_id,
+            text, int(self.now[0]*1000), display_name='同名'), **kwargs)
+
+    def ready(self, *, reserve=100, scope=None):
+        self.now[0] += 1.5
+        return self.controller.candidate(scope or self.a, reserve_cost_micro=reserve)
+
+    def test_requires_host_approved_group_service_and_explicit_enable(self):
+        for policy in (self.Policy(), self.Policy(True, 'group', '', 6, 3, 1000),
+                       self.Policy(True, '', 'approval', 6, 3, 1000),
+                       self.Policy(True, 'group', 'approval', 6, 3, 0)):
+            self.controller.configure(self.a, policy)
+            self.assertFalse(self.observe())
+            self.assertIsNone(self.ready())
+        self.assertFalse(self.observe(scope=self.b))
+        self.controller.configure(self.a, self.policy)
+        self.assertTrue(self.observe())
+        candidate = self.ready()
+        self.assertEqual(candidate.service_subject_id, 'approved-group-service')
+        self.assertTrue(self.controller.valid(candidate))
+        self.assertFalse(self.controller.can_send(candidate))
+
+    def test_coalesces_without_topic_or_sentiment_filter(self):
+        for message_id, text in (('a', '天气真差'), ('b', '这段剧情什么意思'), ('c', '嗯'), ('d', '昨晚的电影')):
+            self.assertTrue(self.observe(message_id, text))
+            self.assertIsNone(self.controller.candidate(self.a, reserve_cost_micro=100))
+            self.now[0] += .3
+        self.now[0] += 1.2
+        candidate = self.controller.candidate(self.a, reserve_cost_micro=100)
+        self.assertEqual([row.message_id for row in candidate.messages], ['a', 'b', 'c', 'd'])
+        self.assertEqual(len({row.speaker_id for row in candidate.messages}), 4)
+        self.assertIsNone(self.controller.candidate(self.a, reserve_cost_micro=100))
+
+    def test_duplicates_and_bot_messages_do_not_cancel_human_candidate(self):
+        self.observe()
+        candidate = self.ready()
+        self.assertFalse(self.observe())
+        self.assertFalse(self.observe('bot', '机器人循环', is_bot=True))
+        self.assertTrue(self.controller.valid(candidate))
+        self.assertEqual(self.controller.status(self.a)['buffered_messages'], 1)
+
+    def test_new_message_cancels_old_answer_but_stale_call_is_still_charged(self):
+        self.observe()
+        first = self.ready()
+        self.observe('m2', '已经有人回答了')
+        self.assertFalse(self.controller.valid(first))
+        self.assertFalse(self.controller.decide(first, 'reply', actual_cost_micro=17))
+        second = self.ready()
+        self.assertIsNotNone(second)
+        self.assertEqual(second.messages[-1].text, '已经有人回答了')
+        self.assertEqual(self.controller.status(self.a)['hourly_cost_micro'], 117)
+
+    def test_defer_is_version_bound_and_has_at_most_two_rechecks(self):
+        self.observe()
+        candidate = self.ready()
+        self.assertFalse(candidate.deferred)
+        for evaluation in (2, 3):
+            self.assertTrue(self.controller.decide(candidate, 'defer', actual_cost_micro=10))
+            self.now[0] += 1.9
+            self.assertIsNone(self.controller.candidate(self.a, reserve_cost_micro=100))
+            self.now[0] += .1
+            candidate = self.controller.candidate(self.a, reserve_cost_micro=100)
+            self.assertTrue(candidate.deferred)
+            self.assertEqual(candidate.evaluation, evaluation)
+        self.assertTrue(self.controller.decide(candidate, 'defer', actual_cost_micro=10))
+        self.now[0] += 20
+        self.assertIsNone(self.controller.candidate(self.a, reserve_cost_micro=100))
+        self.observe('m2')
+        fresh = self.ready()
+        self.assertFalse(fresh.deferred)
+        self.assertEqual(fresh.evaluation, 1)
+
+    def test_new_message_replaces_deferred_scene_and_skip_does_not_repeat(self):
+        self.observe()
+        old = self.ready()
+        self.controller.decide(old, 'defer', actual_cost_micro=0)
+        self.observe('m2', '话题已经变了')
+        fresh = self.ready()
+        self.assertNotEqual(old.version, fresh.version)
+        self.assertFalse(fresh.deferred)
+        self.controller.decide(fresh, 'skip', actual_cost_micro=13)
+        self.now[0] += 10
+        self.assertIsNone(self.controller.candidate(self.a, reserve_cost_micro=100))
+        self.assertFalse(self.controller.can_send(fresh))
+
+    def test_explicit_dialogue_has_priority_until_receipt_and_groups_are_isolated(self):
+        self.controller.configure(self.b, self.policy)
+        self.observe()
+        a = self.ready()
+        self.observe('b1', scope=self.b)
+        b = self.ready(scope=self.b)
+        self.controller.set_addressed(self.a, True)
+        self.assertFalse(self.controller.valid(a))
+        self.assertTrue(self.controller.valid(b))
+        self.observe('addressed', addressed=True)
+        self.observe('m2')
+        self.assertIsNone(self.ready())
+        self.controller.set_addressed(self.a, False)
+        self.assertIsNone(self.ready())
+        self.observe('m3')
+        self.assertIsNotNone(self.ready())
+
+    def test_disabled_policy_and_clearing_drop_bodies_without_resetting_cost(self):
+        self.observe(text='不能留在诊断中的正文')
+        old = self.ready()
+        self.controller.decide(old, 'reply', actual_cost_micro=21)
+        self.controller.configure(self.a, replace(self.policy, enabled=False))
+        self.assertFalse(self.controller.can_send(old))
+        self.assertEqual(self.controller.retained_bytes(), 0)
+        self.controller.configure(self.a, self.policy)
+        self.controller.clear(self.a)
+        status = self.controller.status(self.a)
+        self.assertEqual((status['hourly_calls'], status['hourly_cost_micro']), (1, 21))
+        self.assertNotIn('正文', str(status))
+
+    def test_only_successful_ack_starts_cooldown_and_ack_is_idempotent(self):
+        self.observe()
+        candidate = self.ready()
+        self.controller.decide(candidate, 'reply', actual_cost_micro=15)
+        self.assertTrue(self.controller.can_send(candidate))
+        self.assertEqual(self.controller.status(self.a)['hourly_replies'], 0)
+        self.assertTrue(self.controller.delivered(candidate))
+        self.assertFalse(self.controller.delivered(candidate))
+        self.observe('m2')
+        self.assertIsNone(self.ready())
+        self.now[0] += 58.5
+        self.assertIsNotNone(self.controller.candidate(self.a, reserve_cost_micro=100))
+
+    def test_late_successful_ack_cancels_replacement_and_counts_after_disable(self):
+        self.observe()
+        old = self.ready()
+        self.controller.decide(old, 'reply', actual_cost_micro=10)
+        self.observe('m2')
+        new = self.ready()
+        self.controller.decide(new, 'reply', actual_cost_micro=10)
+        self.assertTrue(self.controller.delivered(old))
+        self.assertFalse(self.controller.can_send(new))
+        self.controller.configure(self.a, replace(self.policy, enabled=False))
+        self.assertTrue(self.controller.delivered(new))
+        self.assertEqual(self.controller.status(self.a)['hourly_replies'], 2)
+
+    def test_hourly_evaluation_and_cost_budgets_count_skips_and_unknown_usage(self):
+        self.controller.configure(self.a, replace(self.policy, max_calls_per_hour=2,
+                                                  max_cost_micro_per_hour=150))
+        self.observe()
+        unknown = self.ready()
+        self.controller.decide(unknown, 'skip')
+        self.observe('m2')
+        self.assertIsNone(self.ready(reserve=100))
+        self.assertEqual(self.controller.status(self.a)['incomplete_costs'], 1)
+        self.controller.settle(unknown, actual_cost_micro=20)
+        second = self.controller.candidate(self.a, reserve_cost_micro=100)
+        self.controller.decide(second, 'skip', actual_cost_micro=20)
+        self.observe('m3')
+        self.assertIsNone(self.ready(reserve=1))
+        self.now[0] += 3600
+        self.observe('m4')
+        self.assertIsNotNone(self.ready(reserve=100))
+
+    def test_unexpected_real_cost_is_recorded_and_conflicting_settlement_rejected(self):
+        self.controller.configure(self.a, replace(self.policy, max_cost_micro_per_hour=100))
+        self.observe()
+        candidate = self.ready(reserve=80)
+        self.assertFalse(self.controller.decide(candidate, 'reply', actual_cost_micro=110))
+        self.assertFalse(self.controller.can_send(candidate))
+        self.assertEqual(self.controller.status(self.a)['hourly_cost_micro'], 110)
+        with self.assertRaisesRegex(ValueError, 'cost_conflict'):
+            self.controller.settle(candidate, actual_cost_micro=0)
+        self.controller.clear(self.a)
+        self.assertEqual(self.controller.status(self.a)['hourly_cost_micro'], 110)
+
+    def test_expired_candidate_can_settle_but_never_send(self):
+        self.observe()
+        candidate = self.ready()
+        self.now[0] += 60
+        self.assertFalse(self.controller.valid(candidate))
+        self.assertFalse(self.controller.decide(candidate, 'reply', actual_cost_micro=17))
+        self.assertEqual(self.controller.status(self.a)['hourly_cost_micro'], 17)
+
+    def test_message_count_byte_ttl_and_global_memory_bounds(self):
+        for index in range(130):
+            self.observe(str(index))
+        self.assertEqual(self.controller.status(self.a)['buffered_messages'], 120)
+        from ournotes_bot.application.proactive_chat import ProactiveController
+        bounded = ProactiveController(clock=lambda: self.now[0], group_bytes=900, max_bytes=1400)
+        for scope in (self.a, self.b):
+            bounded.configure(scope, self.policy)
+            for index in range(3):
+                from ournotes_bot.domain.chat import ChatMessage
+                bounded.observe(scope, ChatMessage(str(index), 'u', '汉字'*90, 0))
+                self.now[0] += .1
+        self.assertLessEqual(bounded.retained_bytes(), 1400)
+        self.assertTrue(all(bounded.status(scope)['buffered_bytes'] <= 900 for scope in (self.a,self.b)))
+        self.now[0] += 900
+        bounded.sweep()
+        self.controller.sweep()
+        self.assertEqual((bounded.retained_bytes(), self.controller.retained_bytes()), (0, 0))
+
+    def test_oversized_new_message_invalidates_incomplete_scene(self):
+        self.observe()
+        candidate = self.ready()
+        self.assertFalse(self.observe('huge', 'a'*(256*1024)))
+        self.assertFalse(self.controller.valid(candidate))
+        self.assertEqual(self.controller.retained_bytes(), 0)
+        self.assertIsNone(self.ready())
+
+    def test_policy_and_decision_validation_rejects_invalid_budget_values(self):
+        for kwargs in ({'max_calls_per_hour':0}, {'max_cost_micro_per_hour':True},
+                       {'max_replies_per_hour':121}, {'enabled':1}):
+            with self.assertRaises(ValueError):
+                replace(self.policy, **kwargs)
+        self.observe()
+        candidate = self.ready()
+        for decision, fee in (('unknown', 1), ('reply', -1), ('skip', True)):
+            with self.assertRaises(ValueError):
+                self.controller.decide(candidate, decision, actual_cost_micro=fee)
+        self.controller.decide(candidate, 'skip', actual_cost_micro=1)
+        with self.assertRaisesRegex(ValueError, 'decision_conflict'):
+            self.controller.decide(candidate, 'reply', actual_cost_micro=1)
+
+
 if __name__ == "__main__":
     unittest.main()

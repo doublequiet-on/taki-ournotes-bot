@@ -136,7 +136,7 @@ def _profile(row, commit, python_hash=None):
         if row.get('capabilities',[]) != []: raise ValueError('combination_capabilities')
     elif profile == {'major':1,'minor':1}:
         if row.get('capabilities') != ['group_policies_v1']: raise ValueError('combination_capabilities')
-    elif profile == {'major':2,'minor':0}:
+    elif profile in ({'major':2,'minor':0},{'major':2,'minor':1},{'major':2,'minor':2}):
         if row.get('capabilities') != ['group_policies_v1','query_chat_contract_v1']: raise ValueError('combination_capabilities')
     else:
         raise ValueError('combination_protocol')

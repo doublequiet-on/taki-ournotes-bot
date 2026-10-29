@@ -61,6 +61,8 @@ class Work:
     model_snapshot: object = None
     model_subject: str | None = None
     model_error: str | None = None
+    primary_model_snapshot: object = None
+    budget_fallback: bool = False
     model_started_at: float | None = None
     native_claimed: bool = False
     hint: bool = False
@@ -69,6 +71,27 @@ class Work:
     terminal_since: float | None = None
     terminal_retries: int = 0
     terminal_retry_at: float | None = None
+    chat: bool = False
+    story_versions: tuple = ()
+    persona_version: str = 'taki-v0/legacy-derived'
+    memory_sources: tuple = ()
+    image_sources: tuple = ()
+    proactive: object = None
+    service_policy: object = None
+    service_request_id: str = ''
+    participating_history: tuple = ()
+    participation: str = ''
+    addressed_registered: bool = False
+    proactive_delivered: bool = False
+    private_search_texts: tuple = ()
+    private_search_ids: tuple = ()
+    public_question: str = ''
+    entity_evidence: tuple = ()
+    entity_source_version: str = ''
+    web_capability: object = None
+    knowledge_scope: object = None
+    image_deadline: float = float('inf')
+    image_bytes: int = 0
 
 
 class Backend:
@@ -132,6 +155,9 @@ class Backend:
         work.terminal_status = status
         work.terminal_pending = True
         work.active = False
+        if self.model_runtime and self.model_runtime.agent:self.model_runtime.agent.proactive.finish(work)
+        if work.chat and self.model_runtime and self.model_runtime.agent:
+            self.model_runtime.agent.audit(self.model_runtime.agent.store.finish,work.delivery,status)
         self.permissions.abort(work)
         work.ended.set()
         work.prepared = ()
@@ -212,9 +238,11 @@ class Backend:
                 self.permissions.versions.clear()
         return {'gateway_epoch': epoch, 'backend_epoch': self.runtime}
 
-    async def submit(self, payload):
+    async def submit(self, payload, *, proactive=None):
         started = time.perf_counter()
         request = Request.parse(payload, self.instance_id, self.app_id, self.clock(), reference_profiles=self.reference_profiles)
+        require(request.trigger!='observation','request_trigger')
+        require((request.trigger=='proactive')==(proactive is not None),'proactive_admission')
         async with self.admission:
             self.expire()
             existing = self.ledger.request(request.request_id)
@@ -227,13 +255,23 @@ class Backend:
             require(len(self.works) < self.plan_capacity, 'plan_capacity', 503)
             require(self.retained_bytes() < self.byte_capacity, 'byte_capacity', 503)
             commands = split_commands(request.body)
+            chat=bool(getattr(self.settings,'chat_engine','legacy')=='agent' and self.model_runtime and (self.model_runtime.is_chat(request.body)
+                      or not request.body.strip() and request.attachments or proactive is not None)
+                      and (proactive is not None or parse_operation(request.body) is None))
+            if chat: commands=[request.body or '[图片]']
             require(bool(commands), 'empty_commands')
             delivery = uuid.uuid4().hex
             key = ContextKey(request.platform, request.kind, request.conversation_id, request.request_id)
             work = Work(request, delivery, key, None, None, None)
+            work.chat=chat
+            if proactive is not None:
+                work.proactive,work.service_policy,work.model_snapshot,work.service_request_id=proactive
             self.ledger.admit(request, self.runtime, delivery, self.clock())
             self.works[delivery] = work
             try:
+                if self.model_runtime and self.model_runtime.agent:
+                    self.model_runtime.agent.proactive.start_addressed(work)
+                    if proactive is not None:self.model_runtime.agent.store.service_run(delivery,request.scope,work.service_request_id)
                 admission_ms = (time.perf_counter()-started)*1000
                 observed_commands = [{'kind': replies.command_kind(c), 'outcome': None}
                                      for c in commands[:self.settings.multi_command_limit]]
@@ -243,16 +281,19 @@ class Backend:
                 self.diagnostics.admitted(request, delivery, self.runtime, self.clock(), observed_commands)
                 self.diagnostics.span(uuid.uuid4().hex,request.request_id,'admission',admission_ms,self.clock(),outcome='ok')
                 work.operation = parse_operation(commands[0]) if len(commands) == 1 else None
-                work.anchor = self.conversations.resolve(request) if work.operation or request.reference or (
+                work.anchor = self.conversations.resolve(request) if work.operation or request.reference or (not chat and
                     self.model_runtime is not None and len(commands)==1 and replies.is_ai_request(commands[0])) else None
                 work.missing_anchor = request.reference is not None and work.anchor is None
+                if chat and work.missing_anchor and (self.model_runtime.agent.context.contains(request,request.reference['message_id'])
+                        or self.model_runtime.agent.image_contains(request,request.reference['message_id'])):
+                    work.missing_anchor=False
                 if work.anchor is not None:
                     work.key, work.lineage = work.anchor.key, work.anchor.lineage
                     work.content_deadline = min(work.content_deadline, work.anchor.expires)
                 if not work.operation and work.anchor is None:
                     work.lease = self.contexts.begin(work.key)
-                if self.model_runtime is not None and any(replies.is_ai_request(c) for c in commands):
-                    self.model_runtime.capture(work)
+                if self.model_runtime is not None and (chat or any(replies.is_ai_request(c) for c in commands)):
+                    if proactive is None:self.model_runtime.capture(work)
                 work.task = asyncio.create_task(self.prepare(work, commands))
                 self.tasks.add(work.task)
                 work.task.add_done_callback(lambda task: self.preparation_done(work, task))
@@ -262,6 +303,8 @@ class Backend:
             return self.snapshot(self.ledger.request(request.request_id), request.gateway_epoch)
 
     async def prepare_command(self, work, content):
+        if work.chat:
+            return await self.model_runtime.prepare(work,content)
         if self.model_runtime is not None and replies.is_ai_request(content) and work.request.policy.natural_query!='off':
             return await self.model_runtime.prepare(work, content)
         if not replies.is_ai_request(content) or work.request.policy.natural_query == 'off' or not hasattr(self.parser, 'prepare_local'):
@@ -330,7 +373,8 @@ class Backend:
         try:
             self.expire()
             if not work.active: return
-            work.lock = self.contexts.lock(work.key)
+            work.lock = self.contexts.lock(ContextKey(work.request.platform,work.request.kind,
+                work.request.conversation_id,'chat-agent') if work.chat else work.key)
             # Only this topic's predecessor owns the lock through its final ACK.
             await asyncio.wait_for(work.lock.acquire(), max(.001, work.request.timestamp_ms/1000+WINDOW-self.clock()))
             work.lock_acquired = True
@@ -338,6 +382,12 @@ class Backend:
             if not work.active: return
             if work.missing_anchor:
                 parts = [replies.PreparedReply(MISSING)]
+            elif work.chat:
+                # Triggered chat keeps a whole multiline message and serializes
+                # its group through ACK, independently of query topic snapshots.
+                result=await self.prepare_call(work,self.prepare_command(work,commands[0]))
+                parts=[] if work.proactive is not None and not result.text else replies.expand_replies([result],text_limit=text_limit)
+                self.diagnostics.outcomes(work.request.request_id,[result.business_status or 'unknown'])
             elif work.operation or work.anchor is not None:
                 current = (self.contexts.get(work.key) if work.lineage is not None
                            and self.contexts.lineage(work.key) == work.lineage else None)
@@ -445,6 +495,22 @@ class Backend:
 
     def live(self, row, epoch):
         work = self.works.get(row['delivery'])
+        if work and work.chat and getattr(self.settings,'chat_engine','legacy')!='agent':
+            return False
+        if work and work.story_versions and not self.model_runtime.agent.story_valid(work.story_versions):
+            return False
+        if work and work.chat and not self.model_runtime.agent.memory_valid(work):
+            return False
+        if work and work.chat and not self.model_runtime.agent.images_valid(work):
+            return False
+        if work and work.chat and not self.model_runtime.agent.entity_valid(work):
+            return False
+        if work and self.model_runtime and not self.model_runtime.fallback_valid(work):
+            return False
+        if work and work.chat and not self.model_runtime.agent.web_valid(work):
+            return False
+        if work and work.proactive is not None and not self.model_runtime.agent.proactive.valid(work,sending=True):
+            return False
         if not (work and work.active and (row['status'] == 'prepared' or work.hint and row['status']=='preparing')
                 and row['epoch'] == epoch and row['runtime'] == self.runtime and self.ledger.active(epoch)
                 and self.clock() < row['expires']):
@@ -487,7 +553,7 @@ class Backend:
         self.expire()
         row=self.ledger.request(request_id)
         work=self.works.get(row['delivery']) if row else None
-        if (work and work.active and not work.hint and row['status']=='preparing'
+        if (work and work.active and work.proactive is None and not work.hint and row['status']=='preparing'
                 and work.model_started_at is not None and time.monotonic()-work.model_started_at>=8
                 and row['epoch']==epoch and self.ledger.active(epoch)):
             self.ledger.processing_hint(work.delivery)
@@ -518,6 +584,9 @@ class Backend:
         live = self.live(row, payload['gateway_epoch'])
         if kind == 'ack':
             changed = self.ledger.ack(delivery, part_id, payload['attempt_id'], payload['result'], payload['message_id'])
+            if changed and payload['result']=='success' and self.model_runtime and self.model_runtime.agent:
+                self.model_runtime.agent.audit(self.model_runtime.agent.store.service_ack,delivery)
+                if work and work.proactive is not None:work.proactive_delivered=True
             if work and work.hint and part_id=='0':
                 # Progress occupies one ordinary send slot, but creates no topic
                 # and never completes a request whose answer is still preparing.
@@ -533,6 +602,9 @@ class Backend:
                 candidate = reply.context
                 text_limit = 1500 if work.request.kind == 'group' else 1800
                 long_fallback = part['mode'] == 'fallback' and len(reply.text) > text_limit
+                if work.chat and self.model_runtime.agent:
+                    self.model_runtime.agent.acknowledge(work,part_id,payload['message_id'],reply.text,
+                        payload['result'],allow_context=payload.get('allow_context') is not False)
                 if payload['result'] == 'success':
                     if long_fallback: candidate = replies.fallback_cursor(reply,text_limit=text_limit)
                     if candidate is not None and (work.operation or len(split_commands(work.request.body)) == 1
@@ -634,13 +706,15 @@ def create_app(backend, token, initialize=None):
                      'diagnostics_enabled': backend.diagnostics.db is not None,
                      'management_capabilities': ['admin_read_v1', 'telemetry_v1', 'group_policies_v1', 'ops_v1'],
                      'features': ['classify', 'gateway_retire', 'ack_context_guard', 'notice_gateway_v1',
-                                  'quoted_context_v1', 'fixed_snapshot_v1', 'current_model_permit_v1', 'independent_delivery_v1'],
+                                  'quoted_context_v1', 'fixed_snapshot_v1', 'current_model_permit_v1', 'independent_delivery_v1',
+                                  'chat_observation_v1','chat_images_v1'],
                      'reference_profiles': sorted(backend.reference_profiles)}, 200 if accepting else 503)
     async def classify(request):
         value = await read_json(request)
         require(isinstance(value, dict) and set(value) == {'body'} and isinstance(value['body'], str), 'classify_shape')
         require(len(value['body'].encode()) <= 16384, 'body_size')
-        return json({'recognized': replies.recognizes_message(value['body'])})
+        return json({'recognized': replies.recognizes_message(value['body']) or bool(
+            getattr(backend.settings,'chat_engine','legacy')=='agent' and backend.model_runtime and backend.model_runtime.is_chat(value['body']))})
     async def retire(request):
         value = await read_json(request)
         require(isinstance(value, dict) and set(value) == {'gateway_epoch'}, 'epoch_shape')
@@ -703,6 +777,51 @@ def create_app(backend, token, initialize=None):
             runtime=backend.model_runtime;profile=runtime.config.snapshot().for_group(gid).profile
             return json(runtime.usage.group_view(gid,profile))
         except ModelError as exc: raise ProtocolError(str(exc),409) from None
+    async def chat_observation(request):
+        require(backend.accepting(),'not_ready',503)
+        value=await read_json(request)
+        parsed=Request.parse(value,backend.instance_id,backend.app_id,backend.clock())
+        require(parsed.trigger=='observation' and backend.ledger.active(parsed.gateway_epoch),'observation_admission',409)
+        require(0<=backend.clock()-parsed.timestamp_ms/1000<WINDOW,'message_expired',409)
+        agent=backend.model_runtime.agent if backend.model_runtime else None
+        observed=bool(agent and getattr(backend.settings,'chat_engine','legacy')=='agent' and agent.proactive.observe(parsed))
+        return json({'protocol':PROTOCOL,'observed':observed,'delay_ms':1500 if observed else 0})
+    async def chat_candidate(request):
+        from ..domain.model_calls import ModelError
+        require(backend.accepting(),'not_ready',503)
+        value=await read_json(request)
+        parsed=Request.parse(value,backend.instance_id,backend.app_id,backend.clock())
+        require(parsed.trigger=='proactive' and parsed.policy.natural_query=='model'
+                and backend.ledger.active(parsed.gateway_epoch),'proactive_admission',409)
+        require(0<=backend.clock()-parsed.timestamp_ms/1000<WINDOW,'message_expired',409)
+        agent=backend.model_runtime.agent if backend.model_runtime else None
+        if agent is None or getattr(backend.settings,'chat_engine','legacy')!='agent':return json({'protocol':PROTOCOL,'candidate':False})
+        try:
+            existing=backend.ledger.request(parsed.request_id)
+            candidate=agent.proactive.candidate(parsed) if existing is None else None
+            if existing is not None:
+                require(existing['digest']==parsed.content_digest,'request_conflict',409)
+                return json({'protocol':PROTOCOL,'candidate':True,'plan':backend.snapshot(existing,parsed.gateway_epoch)})
+            if candidate is None:return json({'protocol':PROTOCOL,'candidate':False})
+            return json({'protocol':PROTOCOL,'candidate':True,'plan':await backend.submit(value,proactive=candidate)})
+        except ModelError:return json({'protocol':PROTOCOL,'candidate':False})
+        except (sqlite3.Error,OSError,ValueError):raise ProtocolError('chat_service_unavailable',503) from None
+    async def chat_memory(request):
+        require(backend.model_runtime is not None and backend.model_runtime.agent is not None,'chat_unavailable',503)
+        gid=request.match_info['gid']
+        require(re.fullmatch('[A-Za-z0-9_-]{1,128}',gid),'admin_group')
+        scope=dict(instance_id=backend.instance_id,app_id=backend.app_id,platform='qq',kind='group',conversation_id=gid)
+        agent=backend.model_runtime.agent
+        try:
+            if request.method=='GET':return json(agent.store.status(scope))
+            require(backend.ready and not backend.closing,'backend_not_ready',503)
+            require(backend.ledger.active(request.headers.get('X-Taki-Epoch')),'ops_gateway_epoch',409)
+            value=await read_json(request)
+            require(isinstance(value,dict) and (set(value)=={'action'} and value['action']=='clear' or
+                    set(value)=={'action','message_ids'} and value['action']=='delete'),'chat_memory_action')
+            return json(agent.forget(scope,value['message_ids'] if value['action']=='delete' else None))
+        except ValueError as exc:raise ProtocolError(str(exc)) from None
+        except (OSError,sqlite3.Error):raise ProtocolError('chat_memory_unavailable',503) from None
     async def ops_jobs(request): return json(backend.operations.listing())
     async def ops_detail(request): return json(backend.operations.detail(request.match_info['jid']))
     async def ops_submit(request):
@@ -716,6 +835,7 @@ def create_app(backend, token, initialize=None):
     app.add_routes([web.get('/v1/health', health), web.get('/v1/ready', ready),
                     web.post('/v1/gateways', register), web.post('/v1/gateways/retire', retire),
                     web.post('/v1/classify', classify), web.post('/v1/requests', submit),
+                    web.post('/v1/chat/observations',chat_observation),web.post('/v1/chat/candidates',chat_candidate),
                     web.get('/v1/requests/{rid}', lookup),
                     web.post('/v1/requests/{rid}/model-permissions/{aid}', model_permission),
                     web.get('/v1/deliveries/{did}/parts/{pid}/image', image),
@@ -728,6 +848,7 @@ def create_app(backend, token, initialize=None):
                     web.get('/v1/admin/query-metrics', admin_metrics), web.post('/v1/admin/telemetry', admin_telemetry),
                     web.get('/v1/admin/model', model_settings),web.post('/v1/admin/model', model_settings),
                     web.post('/v1/admin/model/probe',model_settings),web.get('/v1/admin/model/groups/{gid}',model_group),
+                    web.get('/v1/admin/chat/groups/{gid}/memory',chat_memory),web.post('/v1/admin/chat/groups/{gid}/memory',chat_memory),
                     web.get('/v1/admin/ops/jobs', ops_jobs), web.post('/v1/admin/ops/jobs', ops_submit),
                     web.get('/v1/admin/ops/jobs/{jid}', ops_detail),
                     web.get('/v1/admin/ops/notice-targets/{gid}', ops_notice_target),

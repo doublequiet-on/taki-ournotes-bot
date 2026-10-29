@@ -1,5 +1,7 @@
 # L2 Data — 资料与领域事实
 
+剧情资料的来源层级和场景记录见 [domain/story.py](ournotes_bot/domain/story.py)、[sources/story_files.py](ournotes_bot/sources/story_files.py)，发布由 Application 独占；不写游戏主缓存。聊天入图的附件契约在 [domain/chat_images.py](ournotes_bot/domain/chat_images.py)，有界公开 CDN 读取在 [sources/chat_images.py](ournotes_bot/sources/chat_images.py)，与 Rendering 的输出图片素材分开，见 [V1](../docs/CHAT_IMAGES_V1.md)。
+
 ## Purpose
 
 为查询和展示提供可识别来源、可区分缺失与陈旧状态的游戏事实。主资料、领域记录和来源适配需要共同解释“系统知道什么”，值得一个完整 Data 域；不把 Catalog、每个网站各升为 L2。

@@ -23,7 +23,7 @@ where = ["src"]
 [tool.setuptools.data-files]
 "share/ournotes-qq-bot" = ["query_aliases.json", "THIRD_PARTY.md"]
 "share/ournotes-qq-bot/docs/knowledge" = ["docs/knowledge/knowledge-draft.md"]
-"share/ournotes-qq-bot/docs" = ["docs/IMAGE_OUTPUT.md", "docs/CUTOFF_HISTORY.md", "docs/QUERY_UPGRADE_V1.md", "docs/META_OPEN.md", "docs/HANEOKA_CATALOG.md", "docs/HANEOKA_CUTOFFS.md", "docs/HANEOKA_META_CONTRACT.md", "docs/HANEOKA_RETIREMENT.md", "docs/HANEOKA_RESEARCH.md", "docs/HANEOKA_UNIFIED.md", "docs/QUERY_CHAT_PACKAGE2B.md", "docs/QUERY_CHAT_PACKAGE3.md", "docs/QUERY_CHAT_PACKAGE4.md", "docs/PERFORMANCE_FOUNDATION.md", "docs/MULTIPLATFORM_CONTRACT.md"]
+"share/ournotes-qq-bot/docs" = ["docs/IMAGE_OUTPUT.md", "docs/CUTOFF_HISTORY.md", "docs/QUERY_UPGRADE_V1.md", "docs/META_OPEN.md", "docs/HANEOKA_CATALOG.md", "docs/HANEOKA_CUTOFFS.md", "docs/HANEOKA_META_CONTRACT.md", "docs/HANEOKA_RETIREMENT.md", "docs/HANEOKA_RESEARCH.md", "docs/HANEOKA_UNIFIED.md", "docs/QUERY_CHAT_PACKAGE2B.md", "docs/QUERY_CHAT_PACKAGE3.md", "docs/QUERY_CHAT_PACKAGE4.md", "docs/PERFORMANCE_FOUNDATION.md", "docs/MULTIPLATFORM_CONTRACT.md", "docs/CHAT_AGENT_BASELINE.md", "docs/CHAT_AGENT_ARCHITECTURE.md", "docs/CHAT_AGENT_ACCEPTANCE.md", "docs/CHAT_AGENT_RUNBOOK.md", "docs/CHAT_AGENT_C2.md", "docs/STORY_ENGINE.md", "docs/STORY_SOURCE_COVERAGE.md", "docs/STORY_PERSONA_RESEARCH.md", "docs/CHAT_MEMORY_C3.md", "docs/CHAT_IMAGES_V1.md", "docs/CHAT_QQ_QUOTE_EVIDENCE.md", "docs/CHAT_PROACTIVE_G1.md", "docs/CHAT_SERVICE_JOBS.md", "docs/CHAT_AGENT_F1.md"]
 "share/ournotes-qq-bot/deploy" = ["deploy/query-upgrade-v1.env.example"]
 "share/ournotes-qq-bot/docs/koishi" = ["docs/KOISHI_BACKEND_V1.md", "docs/KOISHI_MIGRATION_M4.md", "docs/koishi/CONSOLE_V1.md", "docs/koishi/OPERATIONS.md"]
 

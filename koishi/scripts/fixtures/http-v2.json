@@ -4,7 +4,7 @@
       "ready": true,
       "protocol": {
         "major": 2,
-        "minor": 0
+        "minor": 2
       },
       "backend_epoch": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
       "pid": 0,
@@ -35,7 +35,9 @@
         "quoted_context_v1",
         "fixed_snapshot_v1",
         "current_model_permit_v1",
-        "independent_delivery_v1"
+        "independent_delivery_v1",
+        "chat_observation_v1",
+        "chat_images_v1"
       ],
       "reference_profiles": []
     },
@@ -49,7 +51,7 @@
     "preparing": {
       "protocol": {
         "major": 2,
-        "minor": 0
+        "minor": 2
       },
       "request_id": "b461cd01680f7f8ca752bb40cad70f00b672b8dbc02cd4c280662aca55994785",
       "delivery_id": "dddddddddddddddddddddddddddddddd",
@@ -83,7 +85,7 @@
     "preparing_challenge": {
       "protocol": {
         "major": 2,
-        "minor": 0
+        "minor": 2
       },
       "request_id": "b461cd01680f7f8ca752bb40cad70f00b672b8dbc02cd4c280662aca55994785",
       "delivery_id": "dddddddddddddddddddddddddddddddd",
@@ -142,7 +144,7 @@
     "hint_pending": {
       "protocol": {
         "major": 2,
-        "minor": 0
+        "minor": 2
       },
       "request_id": "b461cd01680f7f8ca752bb40cad70f00b672b8dbc02cd4c280662aca55994785",
       "delivery_id": "dddddddddddddddddddddddddddddddd",
@@ -172,7 +174,7 @@
     "hint_sending": {
       "protocol": {
         "major": 2,
-        "minor": 0
+        "minor": 2
       },
       "request_id": "b461cd01680f7f8ca752bb40cad70f00b672b8dbc02cd4c280662aca55994785",
       "delivery_id": "dddddddddddddddddddddddddddddddd",
@@ -200,7 +202,7 @@
       "duplicate": false,
       "protocol": {
         "major": 2,
-        "minor": 0
+        "minor": 2
       },
       "request_id": "b461cd01680f7f8ca752bb40cad70f00b672b8dbc02cd4c280662aca55994785",
       "delivery_id": "dddddddddddddddddddddddddddddddd",
@@ -226,7 +228,7 @@
     "hint_success": {
       "protocol": {
         "major": 2,
-        "minor": 0
+        "minor": 2
       },
       "request_id": "b461cd01680f7f8ca752bb40cad70f00b672b8dbc02cd4c280662aca55994785",
       "delivery_id": "dddddddddddddddddddddddddddddddd",
@@ -252,7 +254,7 @@
     "prepared_image": {
       "protocol": {
         "major": 2,
-        "minor": 0
+        "minor": 2
       },
       "request_id": "b461cd01680f7f8ca752bb40cad70f00b672b8dbc02cd4c280662aca55994785",
       "delivery_id": "dddddddddddddddddddddddddddddddd",
@@ -291,7 +293,7 @@
     "prepared_revoked": {
       "protocol": {
         "major": 2,
-        "minor": 0
+        "minor": 2
       },
       "request_id": "b461cd01680f7f8ca752bb40cad70f00b672b8dbc02cd4c280662aca55994785",
       "delivery_id": "dddddddddddddddddddddddddddddddd",
@@ -322,7 +324,7 @@
     "fallback": {
       "protocol": {
         "major": 2,
-        "minor": 0
+        "minor": 2
       },
       "request_id": "b461cd01680f7f8ca752bb40cad70f00b672b8dbc02cd4c280662aca55994785",
       "delivery_id": "dddddddddddddddddddddddddddddddd",
@@ -369,7 +371,7 @@
       "duplicate": false,
       "protocol": {
         "major": 2,
-        "minor": 0
+        "minor": 2
       },
       "request_id": "b461cd01680f7f8ca752bb40cad70f00b672b8dbc02cd4c280662aca55994785",
       "delivery_id": "dddddddddddddddddddddddddddddddd",
@@ -402,7 +404,7 @@
       "duplicate": true,
       "protocol": {
         "major": 2,
-        "minor": 0
+        "minor": 2
       },
       "request_id": "b461cd01680f7f8ca752bb40cad70f00b672b8dbc02cd4c280662aca55994785",
       "delivery_id": "dddddddddddddddddddddddddddddddd",
@@ -433,7 +435,7 @@
     "terminal": {
       "protocol": {
         "major": 2,
-        "minor": 0
+        "minor": 2
       },
       "request_id": "b461cd01680f7f8ca752bb40cad70f00b672b8dbc02cd4c280662aca55994785",
       "delivery_id": "dddddddddddddddddddddddddddddddd",
@@ -464,7 +466,7 @@
     "batch_finished": {
       "protocol": {
         "major": 2,
-        "minor": 0
+        "minor": 2
       },
       "request_id": "b461cd01680f7f8ca752bb40cad70f00b672b8dbc02cd4c280662aca55994785",
       "delivery_id": "dddddddddddddddddddddddddddddddd",
@@ -495,7 +497,7 @@
     "aborted": {
       "protocol": {
         "major": 2,
-        "minor": 0
+        "minor": 2
       },
       "request_id": "b461cd01680f7f8ca752bb40cad70f00b672b8dbc02cd4c280662aca55994785",
       "delivery_id": "dddddddddddddddddddddddddddddddd",
@@ -528,7 +530,7 @@
       "duplicate": true,
       "protocol": {
         "major": 2,
-        "minor": 0
+        "minor": 2
       },
       "request_id": "b461cd01680f7f8ca752bb40cad70f00b672b8dbc02cd4c280662aca55994785",
       "delivery_id": "dddddddddddddddddddddddddddddddd",
@@ -564,7 +566,7 @@
     "request": {
       "protocol": {
         "major": 2,
-        "minor": 0
+        "minor": 2
       },
       "request_id": "b461cd01680f7f8ca752bb40cad70f00b672b8dbc02cd4c280662aca55994785",
       "instance_id": "fixture",
@@ -593,7 +595,7 @@
       "hint_intent": {
         "protocol": {
           "major": 2,
-          "minor": 0
+          "minor": 2
         },
         "request_id": "b461cd01680f7f8ca752bb40cad70f00b672b8dbc02cd4c280662aca55994785",
         "plan_version": 1,
@@ -605,7 +607,7 @@
       "hint_ack": {
         "protocol": {
           "major": 2,
-          "minor": 0
+          "minor": 2
         },
         "request_id": "b461cd01680f7f8ca752bb40cad70f00b672b8dbc02cd4c280662aca55994785",
         "plan_version": 1,
@@ -620,7 +622,7 @@
       "upload_failed": {
         "protocol": {
           "major": 2,
-          "minor": 0
+          "minor": 2
         },
         "request_id": "b461cd01680f7f8ca752bb40cad70f00b672b8dbc02cd4c280662aca55994785",
         "plan_version": 1,
@@ -632,7 +634,7 @@
       "intent": {
         "protocol": {
           "major": 2,
-          "minor": 0
+          "minor": 2
         },
         "request_id": "b461cd01680f7f8ca752bb40cad70f00b672b8dbc02cd4c280662aca55994785",
         "plan_version": 1,
@@ -644,7 +646,7 @@
       "intent_duplicate": {
         "protocol": {
           "major": 2,
-          "minor": 0
+          "minor": 2
         },
         "request_id": "b461cd01680f7f8ca752bb40cad70f00b672b8dbc02cd4c280662aca55994785",
         "plan_version": 1,
@@ -656,7 +658,7 @@
       "ack": {
         "protocol": {
           "major": 2,
-          "minor": 0
+          "minor": 2
         },
         "request_id": "b461cd01680f7f8ca752bb40cad70f00b672b8dbc02cd4c280662aca55994785",
         "plan_version": 1,
@@ -671,7 +673,7 @@
       "ack_duplicate": {
         "protocol": {
           "major": 2,
-          "minor": 0
+          "minor": 2
         },
         "request_id": "b461cd01680f7f8ca752bb40cad70f00b672b8dbc02cd4c280662aca55994785",
         "plan_version": 1,
@@ -686,7 +688,7 @@
       "batch_finished": {
         "protocol": {
           "major": 2,
-          "minor": 0
+          "minor": 2
         },
         "request_id": "b461cd01680f7f8ca752bb40cad70f00b672b8dbc02cd4c280662aca55994785",
         "plan_version": 1,
@@ -698,7 +700,7 @@
       "aborted": {
         "protocol": {
           "major": 2,
-          "minor": 0
+          "minor": 2
         },
         "request_id": "b461cd01680f7f8ca752bb40cad70f00b672b8dbc02cd4c280662aca55994785",
         "plan_version": 1,

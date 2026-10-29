@@ -33,7 +33,7 @@ class ModelScheduler:
                 self.running[user] += 1
                 future.set_result(None)
 
-    async def run(self, user, operation):
+    async def run(self, user, operation, *, execution_seconds=None):
         require(not self.closed, 'not_ready', 503)
         future = asyncio.get_running_loop().create_future()
         immediate = not self.running[user] and sum(self.running.values()) < self.limit
@@ -56,7 +56,8 @@ class ModelScheduler:
             if isinstance(exc, asyncio.TimeoutError):
                 raise ProtocolError('queue_timeout', 503) from None
             raise
-        deadline = time.monotonic() + self.execution_seconds
+        seconds = self.execution_seconds if execution_seconds is None else execution_seconds
+        deadline = time.monotonic() + seconds
 
         async def execute():
             try:
@@ -73,7 +74,7 @@ class ModelScheduler:
             if not task.cancelled(): task.exception()  # Late completion never publishes a reply.
         task.add_done_callback(done)
         # Timed-out callers stop waiting; the real worker keeps its slot until finished.
-        return await asyncio.wait_for(asyncio.shield(task), self.execution_seconds)
+        return await asyncio.wait_for(asyncio.shield(task), seconds)
 
     async def close(self):
         self.closed = True
@@ -109,7 +110,7 @@ class ModelPermissions:
                 self.backend.ledger.active(request.gateway_epoch), 'policy_denied', 409)
         require(self.clock() < execution_deadline, 'execution_timeout', 409)
         require(work.delivery not in self.pending, 'permission_pending', 409)
-        require(work.model_attempts < min(4,getattr(work,'model_attempt_limit',2)), 'model_attempt_limit', 409)
+        require(work.model_attempts < min(6,getattr(work,'model_attempt_limit',2)), 'model_attempt_limit', 409)
         work.model_attempts += 1
         binding = dict(request_id=request.request_id, attempt_id=attempt_id or uuid.uuid4().hex, nonce=uuid.uuid4().hex,
                        scope=request.scope, user_id=request.user_id, backend_epoch=self.backend.runtime,

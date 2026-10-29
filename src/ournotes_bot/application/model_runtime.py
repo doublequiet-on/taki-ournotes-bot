@@ -10,7 +10,7 @@ import re
 import time
 import uuid
 
-from ..domain.model_calls import ModelError, Usage, require
+from ..domain.model_calls import ModelError, Usage, ProviderAction, require
 from ..domain.knowledge import KnowledgeError
 from ..natural_query.query_agent import DeferredModel, AgentOutcome, AgentState, query_text
 from ..natural_query.query_validation import OutcomeCode
@@ -21,12 +21,14 @@ from ..sources.errors import ChartDataError
 from .site_lookup import SiteLookup
 from .model_config import ModelConfiguration
 from .model_admin import ModelAdmin
-from .usage_ledger import UsageLedger
+from .usage_ledger import UsageLedger, day
 from .conversation_state import ReadOnlyContext
 from .runtime_tasks import finish_thread
 from .backend_protocol import ProtocolError
 from . import replies
 from .persona import VOICE, chat_topic, chat_prompt, chat_needs_evidence
+from .chat_agent import ChatAgent
+from .chat_capabilities import ChatCapabilities
 
 PERSONA = '''你是 Taki，一个以椎名立希为原型的独立查询助手。简体中文，直率认真，简洁、友善，可轻微吐槽，不羞辱玩家。
 围绕用户当前问题表达：先直接给结论或能提供的帮助，再补必要依据、条件和下一步；不复述检索过程，不主动扩展到无关问题。
@@ -93,6 +95,23 @@ ERRORS={
     'knowledge_scope_ambiguous':'请明确想问的游戏版本或日期。',
     'multiple_ai_requests':'需要 AI 处理的问题请分开发送。',
     'multiple_tools':'不同功能的问题请分开发送，我会逐个查询。',
+    'image_capability_unverified':'当前模型的看图能力尚未验收。可以先用文字说明，或稍后重新发图。',
+    'image_not_available':'这张图片当前无法读取，请重新发送原图。',
+    'image_too_large':'这次图片超出读取上限，请压缩或分开发送。',
+    'image_untrusted_source':'这次附件来源不在已接入的QQ图片来源中，请重新发送原图。',
+    'image_unsupported_type':'这次图片格式暂不支持，请发送静态PNG、JPEG、WebP或GIF。',
+    'image_invalid_metadata':'这次图片附件信息不完整，请重新发送原图。',
+    'chat_capability_revoked':'联网能力或模型配置已变化，这次请求已停止。',
+    'usage_unavailable':'本次额度费用尚未核实，暂时不能继续调用模型。',
+    'primary_budget_exceeded':'今天的主模型预算已用完，请稍后再试。',
+    'primary_budget_currency':'主模型预算要求使用美元计价的配置。',
+    'fallback_not_configured':'今天的主模型预算不足，DeepSeek 备用配置尚不可用。',
+    'fallback_configuration':'DeepSeek 备用配置无效，请联系管理员。',
+    'fallback_configuration_changed':'模型配置已变化，请重新提问。',
+    'story_revoked':'引用的剧情资料已变化，这次回答已停止，请重新提问。',
+    'chat_memory_deleted':'所引用的聊天记忆已删除或到期，这次回答已停止。',
+    'query_source_changed':'本轮查询资料的版本已变化，这次回答已停止，请重新提问。',
+    'model_input_too_large':'本轮必要文字或图片超过当前模型输入上限，请缩短问题或分开发图。',
 }
 
 
@@ -123,8 +142,21 @@ class ModelRuntime:
         self.task=None
         self.config=ModelConfiguration(getattr(backend.settings,'ai_profile_file',None),getattr(backend.settings,'query_ai_api_key',''),
                                        backend.instance_id,backend.app_id)
-        self.usage=UsageLedger(path,backend.instance_id+'\0'+backend.app_id)
+        self.usage=UsageLedger(path,backend.instance_id+'\0'+backend.app_id,
+            primary_daily_usd=getattr(backend.settings,'ai_primary_daily_usd','2.5'))
+        self.fallback=ModelConfiguration(getattr(backend.settings,'ai_fallback_profile_file',None)
+            or self.usage.path.with_name('model-fallback-v1.json'),getattr(backend.settings,'fallback_ai_api_key',''),
+            backend.instance_id,backend.app_id)
         self.admin=ModelAdmin(self,self.usage.path.with_name('model-admin-v1.sqlite3'))
+        self.capabilities=ChatCapabilities(self.usage.path.with_name('chat-capabilities-v1.json'))
+        self.agent=(ChatAgent(self,self.usage.path.with_name('chat-v1.sqlite3'))
+                    if getattr(backend.settings,'chat_engine','legacy')=='agent' else None)
+
+    def is_chat(self,content):
+        if self.agent is None or getattr(self.backend.settings,'chat_engine','legacy')!='agent': return False
+        if replies.is_ai_request(content): return True
+        return bool(content.strip() and not content.lstrip().startswith(('/', '／'))
+                    and not replies.recognizes_message(content))
 
     def capture(self,work):
         try:
@@ -135,6 +167,50 @@ class ModelRuntime:
                 self.usage.configuration(work.model_snapshot.profile.config_version,work.model_snapshot.fingerprint)
             work.model_subject=work.model_snapshot.subject(work.request)
         except ModelError as exc: work.model_error=str(exc)
+
+    def use_fallback(self,work):
+        require(not work.budget_fallback and work.model_attempts==0,'primary_budget_exceeded')
+        try: fallback=self.fallback.snapshot()
+        except ModelError: raise ModelError('fallback_not_configured') from None
+        if work.request.kind=='group':fallback=fallback.for_group(work.request.conversation_id)
+        require(fallback.profile.provider=='deepseek','fallback_configuration')
+        require(fallback.profile.price.reference_unit==work.model_snapshot.profile.price.reference_unit,'reference_unit_mismatch')
+        self.usage.configuration(fallback.profile.config_version,fallback.fingerprint)
+        work.primary_model_snapshot=work.model_snapshot
+        # Preserve the primary configuration's verified platform identity.
+        work.model_snapshot=replace(work.model_snapshot,profile=fallback.profile,fingerprint=fallback.fingerprint)
+        work.budget_fallback=True
+
+    def route(self,work):
+        if work.budget_fallback:return
+        profile=work.model_snapshot.profile
+        # Admit a bounded first request and its maximum final response together.
+        amount=2*profile.price.reserve(profile.max_input_tokens,profile.max_output_tokens)
+        try:self.usage.check_primary(day(self.usage.clock()),profile,amount)
+        except ModelError as exc:
+            if str(exc)!='primary_budget_exceeded':raise
+            self.use_fallback(work)
+
+    def fallback_valid(self,work):
+        if not work.budget_fallback:return True
+        try:
+            current=self.config.snapshot();fallback=self.fallback.snapshot()
+            return (current.fingerprint==work.primary_model_snapshot.fingerprint
+                and current.profile.config_version==work.primary_model_snapshot.profile.config_version
+                and fallback.fingerprint==work.model_snapshot.fingerprint
+                and fallback.profile.config_version==work.model_snapshot.profile.config_version)
+        except (ModelError,OSError):return False
+
+    async def routed(self,work,operation,deadline):
+        self.route(work)
+        try:return await operation(deadline)
+        except ModelError as exc:
+            # A competing request may reserve the budget during image/tool IO.
+            # Only a pre-permit rejection may choose another model; never retry HTTP.
+            if str(exc)!='primary_budget_exceeded' or work.model_attempts or work.budget_fallback:raise
+            self.use_fallback(work)
+            work.image_bytes=0
+            return await operation(deadline)
 
     def start(self):
         async def prices():
@@ -147,9 +223,19 @@ class ModelRuntime:
         if self.task:
             self.task.cancel();await asyncio.gather(self.task,return_exceptions=True)
         await self.admin.close()
+        if self.agent: self.agent.close()
         self.usage.close()
 
     def check(self,work,deadline,leases=()):
+        require(self.fallback_valid(work),'fallback_configuration_changed')
+        if getattr(work,'chat',False):
+            require(getattr(self.backend.settings,'chat_engine','legacy')=='agent','policy_denied')
+            require(self.agent.story_valid(work.story_versions),'story_revoked')
+            require(self.agent.memory_valid(work),'chat_memory_deleted')
+            require(self.agent.images_valid(work),'image_not_available')
+            require(self.agent.entity_valid(work),'query_source_changed')
+            require(self.agent.web_valid(work),'chat_capability_revoked')
+            require(self.agent.proactive.valid(work),'proactive_stale')
         require(work.active and time.monotonic()<deadline,'execution_timeout')
         require(time.monotonic()<work.content_deadline,'context_expired')
         if work.anchor:
@@ -188,6 +274,8 @@ class ModelRuntime:
 
     async def prepare(self,work,content):
         question=query_text(content)
+        if getattr(work,'chat',False):
+            return await self.prepare_chat(work,question if replies.is_ai_request(content) else content.strip())
         if not question or len(question)>500:
             return replies.PreparedReply('用法：/问 <问题>，最多 500 字。',business_status='invalid_argument')
         try:
@@ -209,14 +297,14 @@ class ModelRuntime:
                     return await self.backend.gate.run(partial(replies.prepare_reply,log_content=False,outcome=outcome),content,repository,self.backend.parser)
             if work.request.policy.natural_query!='model': return failure('policy_denied')
             if work.model_error: return failure(work.model_error)
-            require(work.model_snapshot is not None and work.model_subject is not None,'model_not_configured')
+            require(work.model_snapshot is not None and (work.model_subject is not None or work.proactive is not None),'model_not_configured')
             require(not work.native_claimed,'multiple_ai_requests')
             work.native_claimed=True
             user=self.usage.key('user',work.model_subject)
             group=self.usage.key('group',work.request.conversation_id) if work.request.kind=='group' else None
             async def operation(deadline):
                 work.model_started_at=time.monotonic()
-                return await self.run(work,question,history,leases,user,group,deadline)
+                return await self.routed(work,lambda end:self.run(work,question,history,leases,user,group,end),deadline)
             reply=await self.backend.models.run(user,operation)
             # Facts carried into an ACK-bound followup retain their absolute limit.
             if isinstance(reply.context,ReadOnlyContext) and reply.context.facts:
@@ -227,41 +315,124 @@ class ModelRuntime:
         except asyncio.TimeoutError:
             return failure('execution_timeout')
 
-    async def attempt(self,work,messages,tools,user,group,deadline,leases=(),*,require_tool=False):
+    async def prepare_chat(self,work,question):
+        try:
+            require(bool(question),'invalid_argument')
+            require(work.request.policy.natural_query=='model','policy_denied')
+            if work.model_error: raise ModelError(work.model_error)
+            require(work.model_snapshot is not None and (work.model_subject is not None or work.proactive is not None),'model_not_configured')
+            require(not work.native_claimed,'multiple_ai_requests')
+            work.native_claimed=True
+            if work.proactive is not None:
+                user=self.usage.key('service',work.request.instance_id,work.request.app_id,work.request.conversation_id,
+                    work.service_policy.service_subject_id,'proactive')
+            else:user=self.usage.key('user',work.model_subject)
+            group=self.usage.key('group',work.request.conversation_id) if work.request.kind=='group' else None
+            async def operation(deadline):
+                work.model_started_at=time.monotonic()
+                return await self.routed(work,lambda end:self.agent.run(work,question,user,group,end),deadline)
+            seconds=min(self.agent.budget.execution_seconds,work.content_deadline-time.monotonic(),
+                        work.request.timestamp_ms/1000+298-self.backend.clock()-5)
+            require(seconds>0,'execution_timeout')
+            return await self.backend.models.run(user,operation,execution_seconds=seconds)
+        except (ModelError,ProtocolError,KnowledgeError) as exc:
+            code=exc.code if isinstance(exc,ProtocolError) else str(exc)
+            self.agent.audit(self.agent.store.finish,work.delivery,code)
+            return replies.PreparedReply('',business_status='proactive_error') if work.proactive is not None else failure(code)
+        except asyncio.TimeoutError:
+            self.agent.audit(self.agent.store.finish,work.delivery,'execution_timeout')
+            return replies.PreparedReply('',business_status='proactive_error') if work.proactive is not None else failure('execution_timeout')
+
+    def input_bound(self,work,messages,tools,*,body=None):
+        from ..sources.model_provider import request_body as bound_body
+        profile=work.model_snapshot.profile
+        image_count=sum(len(message.get('images',())) for message in messages)
+        image_tokens=0
+        if image_count:
+            vision=self.capabilities.vision(work.model_snapshot)
+            require(vision is not None,'image_capability_unverified')
+            require(image_count<=3 and all(message.get('image_detail')==vision.detail for message in messages if message.get('images')),
+                    'image_count_exceeded')
+            image_tokens=image_count*vision.max_image_tokens
+        if body is None or image_count:
+            body=bound_body(profile,[{key:value for key,value in message.items() if key not in ('images','image_detail')} for message in messages],tools)
+        return len(json.dumps(body,ensure_ascii=False,separators=(',',':')).encode())+4096+image_tokens
+
+    async def attempt(self,work,messages,tools,user,group,deadline,leases=(),*,require_tool=False,reservation=None,web=None,billing_request_id=None,service_policy=None):
         profile=work.model_snapshot.profile
         self.check(work,deadline,leases)
+        if service_policy is not None:require(self.agent.services.policy(work.model_snapshot,work.request.conversation_id)==service_policy,'chat_service_revoked')
         body=request_body(profile,messages,tools)
+        action_budget=()
+        if web is not None:
+            require(profile.wire_profile=='openai-responses-v1' and not tools,'chat_capability_unverified')
+            body.update(tools=[{'type':'web_search','search_context_size':'low'}],max_tool_calls=web.max_calls)
+            action_budget=(('web_search',web.max_calls,web.unit_cost_micro),)
         # Verified native wires support required tool choice; no fallback/retry.
         if require_tool and tools and (profile.provider=='deepseek' or profile.wire_profile=='openai-responses-v1'):
             body['tool_choice']='required'
         # Registered text-only byte-BPE profiles: serialized UTF-8 bytes plus
         # 4096 tokens for bounded wire framing is a conservative input ceiling.
-        bound=len(json.dumps(body,ensure_ascii=False,separators=(',',':')).encode())+4096
+        bound=self.input_bound(work,messages,tools,body=body)
         require(bound<=profile.max_input_tokens,'model_input_too_large')
-        attempt=uuid.uuid4().hex
-        self.usage.reserve(work.request.request_id,attempt,user,group,profile,bound)
+        attempt=reservation or uuid.uuid4().hex
+        billing_request_id=billing_request_id or work.service_request_id or work.request.request_id
+        if work.proactive is not None and billing_request_id==work.service_request_id and reservation is None:
+            from .chat_jobs import ServiceError,maximum_cost_micro
+            try:self.agent.service_budget.check(work.service_policy,'proactive',profile,billing_request_id,
+                maximum_cost_micro(profile)+sum(count*rate for _,count,rate in action_budget),
+                reply_times=self.agent.store.proactive_replies(work.request.scope))
+            except ServiceError as exc:
+                raise ModelError('quota_exceeded' if str(exc) in ('chat_service_call_limit','chat_service_cost_limit') else str(exc)) from None
+        if reservation is None:
+            self.usage.reserve(billing_request_id,attempt,user,group,profile,bound,action_budget=action_budget)
+        else:
+            held=self.usage.get(attempt)
+            require(held['request_id']==billing_request_id and held['state']=='reserved','invalid_reservation')
         started=False;began=time.monotonic();kind='generation' if not tools else 'routing'
         try:
             permitted_until=await self.backend.permissions.acquire(work,deadline,attempt_id=attempt)
             self.check(work,deadline,leases)
+            if service_policy is not None:require(self.agent.services.policy(work.model_snapshot,work.request.conversation_id)==service_policy,'chat_service_revoked')
             require(time.monotonic()<permitted_until,'permission_expired')
             self.usage.start(attempt,profile);started=True
             # No await/queue/tool work between the consumed permit and this HTTP.
             result=await asyncio.wait_for(self.client.request(profile,body,timeout=max(.001,deadline-time.monotonic())),
                                           max(.001,deadline-time.monotonic()))
-            self.usage.settle(attempt,result.usage,result.error_code)
+            actions=result.provider_actions or ((ProviderAction('web_search',None),) if web is not None else ())
+            self.usage.settle(attempt,result.usage,result.error_code,actions=actions)
+            if result.status=='ok':
+                require(type(result.native_calls) is int and 0<=result.native_calls<=(web.max_calls if web else 0)
+                        and all(action.count==0 or web is not None and action.count is not None and action.count<=web.max_calls
+                                for action in result.provider_actions),'provider_action_budget_exceeded')
+            if getattr(work,'chat',False) and service_policy is None:
+                self.agent.audit(self.agent.store.event,work.delivery,'model/'+attempt,'model',
+                    {'attempt_id':attempt,'status':result.status,'error_code':result.error_code,
+                     'usage_status':result.usage.status,'visible':result.text or '',
+                     'native_calls':result.native_calls,'provider_actions':[dict(kind=action.kind,count=action.count) for action in result.provider_actions],
+                     'input_total':result.usage.input_total,'output_total':result.usage.output_total,
+                     'elapsed_ms':int((time.monotonic()-began)*1000)})
             if result.tool_calls:
-                kind=result.tool_calls[0].name if result.tool_calls[0].name in TOOLS else 'unrecognized_tool'
+                name=result.tool_calls[0].name
+                kind=name if name in TOOLS or getattr(work,'chat',False) and name in ('web_search','story_search','story_read','group_memory_search','group_memory_read','image_read') else 'unrecognized_tool'
             elif tools: kind='routing_text' if result.status=='ok' else 'routing'
             self.check(work,deadline,leases)
+            if service_policy is not None:require(self.agent.services.policy(work.model_snapshot,work.request.conversation_id)==service_policy,'chat_service_revoked')
             require(result.status=='ok',result.error_code or 'model_protocol_error')
             return result
         except BaseException as exc:
             code=exc.code if isinstance(exc,ProtocolError) else str(exc) if isinstance(exc,(ModelError,KnowledgeError)) else 'attempt_interrupted'
             if not started: self.usage.release(attempt,code)
-            elif self.usage.get(attempt)['state']=='started': self.usage.settle(attempt,Usage(),code)
+            elif self.usage.get(attempt)['state']=='started':
+                self.usage.settle(attempt,Usage(),code,actions=(ProviderAction('web_search',None),) if web is not None else ())
             raise
         finally:
+            if getattr(work,'chat',False) and service_policy is None:
+                recorded=self.usage.get(attempt)
+                self.agent.audit(self.agent.store.event,work.delivery,'model/'+attempt,'model',
+                    {'attempt_id':attempt,'state':recorded['state'],'error_code':recorded['error_code'],
+                     'billing_incomplete':bool(recorded['billing_incomplete']),
+                     'elapsed_ms':int((time.monotonic()-began)*1000)})
             self.usage.observe(attempt,kind,min(3600000,int((time.monotonic()-began)*1000)))
             body.clear()  # No prompt/response state retained by the runtime owner.
 

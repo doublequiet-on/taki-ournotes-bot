@@ -175,7 +175,7 @@ class AdminTests(unittest.IsolatedAsyncioTestCase):
         snapshot = SimpleNamespace(fingerprint='fixture', profile=SimpleNamespace(config_version=1),
                                    subject=lambda request:'subject')
         snapshot.for_group = lambda group:snapshot
-        runtime = SimpleNamespace(config=SimpleNamespace(snapshot=lambda:snapshot),
+        runtime = SimpleNamespace(agent=None,config=SimpleNamespace(snapshot=lambda:snapshot),
             usage=SimpleNamespace(configuration=Mock(side_effect=sqlite3.OperationalError('injected')),
                                   reconcile=lambda:None), close=AsyncMock())
         runtime.capture = MethodType(ModelRuntime.capture, runtime)

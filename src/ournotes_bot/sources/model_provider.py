@@ -8,11 +8,13 @@ import re
 from dataclasses import replace
 from decimal import Decimal, InvalidOperation
 import hashlib
+import ipaddress
 import time
+from urllib.parse import urlsplit
 
 import aiohttp
 
-from ..domain.model_calls import AttemptResult, ModelError, Price, ToolCall, Usage
+from ..domain.model_calls import AttemptResult, ModelError, Price, ToolCall, Usage, ProviderAction,require
 from .json_validation import decode_json
 
 ENDPOINTS = {'deepseek': 'https://api.deepseek.com/chat/completions',
@@ -42,6 +44,10 @@ def responses_payload(payload):
     for item in output:
         if not isinstance(item,dict): return normalized
         if item.get('type')=='reasoning': continue
+        if item.get('type')=='web_search_call':
+            if item.get('status')!='completed' or not isinstance(item.get('action'),dict):return normalized
+            if item['action'].get('type') not in ('search','open_page','find_in_page'):return normalized
+            continue
         if item.get('type')=='function_call':
             if item.get('status')!='completed': return normalized
             calls.append({'type':'function','id':item.get('call_id'),
@@ -96,13 +102,34 @@ def decode_attempt(raw, profile, *, http_status=200):
         return AttemptResult('error',error_code='model_protocol_error')
     if not isinstance(payload,dict):
         return AttemptResult('error',error_code='model_protocol_error')
-    response_items=()
+    response_items=();citations=();provider_actions=();native_calls=0
     if profile.wire_profile=='openai-responses-v1':
         response_items=tuple(payload.get('output',[])) if isinstance(payload.get('output'),list) else ()
+        native_calls=sum(isinstance(item,dict) and item.get('type')=='web_search_call' for item in response_items)
+        if payload.get('status')=='incomplete' and http_status==200 and not payload.get('error'):
+            return AttemptResult('error',usage_from(responses_payload(payload).get('usage'),profile),
+                error_code='model_incomplete',provider_actions=(ProviderAction('web_search',None),) if native_calls else (),native_calls=native_calls)
+        if payload.get('status')=='completed' and http_status==200 and not payload.get('error'):
+            try:
+                searches=0;web_ids=set()
+                for item in response_items:
+                    if not isinstance(item,dict):raise ValueError('response_item')
+                    if item.get('type')!='web_search_call':continue
+                    action=item.get('action');ident=item.get('id')
+                    if (item.get('status')!='completed' or not isinstance(action,dict)
+                            or action.get('type') not in ('search','open_page','find_in_page')
+                            or not isinstance(ident,str) or not ident or ident in web_ids):raise ValueError('web_action')
+                    web_ids.add(ident)
+                    searches+=action['type']=='search'
+                provider_actions=(ProviderAction('web_search',searches),)
+                citations=tuple(response_citations(response_items))
+            except (ValueError,TypeError,KeyError):
+                return AttemptResult('error',usage_from(responses_payload(payload).get('usage'),profile),
+                                     error_code='model_protocol_error',provider_actions=(ProviderAction('web_search',None),),native_calls=native_calls)
         payload=responses_payload(payload)
     usage = usage_from(payload.get('usage'),profile)  # Always before content/tool validation.
     def error(code='model_protocol_error'):
-        return AttemptResult('error',usage,error_code=code)
+        return AttemptResult('error',usage,error_code=code,provider_actions=provider_actions,native_calls=native_calls)
     if http_status != 200 or payload.get('error'):
         return error('provider_error')
     choices = payload.get('choices')
@@ -120,7 +147,7 @@ def decode_attempt(raw, profile, *, http_status=200):
     if calls is None: calls=[]
     if not isinstance(calls,list):
         return error()
-    if len(calls)>1: return error('multiple_tools')
+    if len(calls)>8: return error('multiple_tools')
     if bool(calls)!=(choice['finish_reason']=='tool_calls'): return error()
     parsed=[]
     for call in calls:
@@ -131,14 +158,52 @@ def decode_attempt(raw, profile, *, http_status=200):
                 or not isinstance(function.get('name'),str) or not re.fullmatch(r'[A-Za-z0-9_]{1,64}',function['name'])
                 or not bounded_utf8(function.get('arguments'),12000)):
             return error()
-        parsed.append(ToolCall(call['id'],function['name'],function['arguments'],response_items))
+        if any(previous.id==call['id'] for previous in parsed): return error()
+        # Keep the legacy single-call adapter; new consumers use output_items.
+        parsed.append(ToolCall(call['id'],function['name'],function['arguments'],response_items if len(calls)==1 else ()))
     text=message.get('content')
     if text is not None and (not bounded_utf8(text,16000) or len(text)>4000): return error()
     if not parsed and not (text and text.strip()): return error()
-    return AttemptResult('ok',usage,tuple(parsed),text.strip() if text else None)
+    return AttemptResult('ok',usage,tuple(parsed),text.strip() if text else None,output_items=response_items,
+                         citations=citations,provider_actions=provider_actions,native_calls=native_calls)
+
+
+def response_citations(items):
+    """Only public HTTP(S) links from typed annotations; titles are display data."""
+    seen=set()
+    for item in items:
+        if not isinstance(item,dict):raise ValueError('response_item')
+        if item.get('type')!='message':continue
+        for part in item.get('content',[]):
+            if not isinstance(part,dict):raise ValueError('response_part')
+            for annotation in part.get('annotations',[]):
+                if not isinstance(annotation,dict):raise ValueError('annotation')
+                if annotation.get('type')!='url_citation':continue
+                url=annotation.get('url');title=annotation.get('title')
+                if not isinstance(url,str) or len(url)>2048 or any(c.isspace() or c in '<>\\' for c in url):raise ValueError('citation_url')
+                parsed=urlsplit(url)
+                if '%' in parsed.netloc:raise ValueError('citation_url')
+                if parsed.port not in (None,80,443):raise ValueError('citation_url')
+                if parsed.scheme not in ('https','http') or not parsed.hostname or parsed.username or parsed.password:raise ValueError('citation_url')
+                host=parsed.hostname.rstrip('.')
+                if '.' not in host and ':' not in host or host=='localhost' or host.endswith(('.localhost','.local','.internal','.lan','.home','.test','.invalid')):raise ValueError('citation_url')
+                try:
+                    address=ipaddress.ip_address(host)
+                except ValueError:
+                    if re.fullmatch(r'(?:0x[0-9a-f]+|\d+)(?:\.(?:0x[0-9a-f]+|\d+))*',host,re.I):raise ValueError('citation_url')
+                    address=None
+                if address is not None and not address.is_global:raise ValueError('citation_url')
+                if not isinstance(title,str) or len(title)>300:raise ValueError('citation_title')
+                start,end=annotation.get('start_index'),annotation.get('end_index')
+                if type(start) is not int or type(end) is not int or not 0<=start<=end<=len(part.get('text','')):raise ValueError('citation_span')
+                if url not in seen:
+                    seen.add(url)
+                    yield {'url':url,'title':title,'start_index':annotation.get('start_index'),'end_index':annotation.get('end_index')}
 
 
 def request_body(profile, messages, tools):
+    if any(message.get('images') for message in messages):
+        require(profile.wire_profile=='openai-responses-v1','image_capability_unverified')
     if profile.wire_profile=='openai-responses-v1':
         inputs=[]
         for message in messages:
@@ -150,7 +215,14 @@ def request_body(profile, messages, tools):
                 inputs.append({'type':'function_call_output','call_id':message['tool_call_id'],'output':message['content']})
                 continue
             if message.get('content') is not None:
-                inputs.append({'role':'developer' if role=='system' else role,'content':message['content']})
+                content=message['content']
+                if message.get('images'):
+                    require(role=='user','model_protocol_error')
+                    import base64
+                    content=[{'type':'input_text','text':content},*({'type':'input_image',
+                        'image_url':'data:'+image.mime+';base64,'+base64.b64encode(image.data).decode('ascii'),
+                        'detail':message['image_detail']} for image in message['images'])]
+                inputs.append({'role':'developer' if role=='system' else role,'content':content})
             for call in message.get('tool_calls',[]):
                 inputs.append({'type':'function_call','call_id':call['id'],**call['function']})
         body={'model':profile.model,'input':inputs,'store':False,'stream':False,

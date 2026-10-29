@@ -160,11 +160,12 @@ class KnowledgeAuthorityTests(unittest.TestCase):
         self.assertEqual(len(chunks),6)
         lease=EvidenceLease(self.service.approved_set_revision,KnowledgeScope(),chunks)
         backend=object.__new__(Backend)
+        backend.model_runtime=None
         backend.knowledge=self.service;backend.runtime='runtime';backend.clock=lambda:10
         backend.ledger=SimpleNamespace(active=lambda epoch:True)
         row=dict(delivery='delivery',status='prepared',epoch='epoch',runtime='runtime',expires=20)
         for count in (1,5):
-            work=SimpleNamespace(active=True,hint=False,prepared=[
+            work=SimpleNamespace(active=True,hint=False,chat=False,story_versions=(),proactive=None,prepared=[
                 SimpleNamespace(evidence=(lease,lease),evidence_deadline=None) for _ in range(count)])
             backend.works={'delivery':work}
             with patch.object(self.service,'observe',wraps=self.service.observe) as observe, \
@@ -368,6 +369,203 @@ class KnowledgeAuthorityTests(unittest.TestCase):
         self.service.refresh()
         self.assertEqual(self.retrieve().code, 'empty')
         self.assertEqual(self.service.index, ())
+
+
+class StoryPublicationTests(unittest.TestCase):
+    """Synthetic local bundles exercise source layers; no published story corpus."""
+
+    def setUp(self):
+        import json
+        import tempfile
+        from ournotes_bot.application.story_service import StoryService
+        self.temp=tempfile.TemporaryDirectory();self.addCleanup(self.temp.cleanup)
+        self.root=Path(self.temp.name)
+        self.bundle_path=self.root/'input.json'
+        self.service=StoryService(self.root/'story')
+
+    def bundle(self,*,kind='synthetic_fixture',personas=False):
+        from ournotes_bot.sources.story_files import source_content_hash
+        scenes=[]
+        for index,(speaker,body) in enumerate((('椎名立希','練習を続けよう。'),('高松燈','一緒に歌いたい。'),('椎名立希','ちゃんと聴いている。')),1):
+            scenes.append(dict(scene_id='scene-'+str(index),source_id='test-story',title='合成練習場面 '+str(index),chapter='test-chapter',
+                locator='lines '+str(index*10),participants=['椎名立希','高松燈'],story_time=None,
+                previous_scene='scene-'+str(index-1) if index>1 else None,next_scene='scene-'+str(index+1) if index<3 else None,
+                utterances=[dict(order=1,speaker=speaker,text_ja=body,translation='合成中文辅助检索',locator='line '+str(index*10))]))
+        source=dict(source_id='test-story',work='synthetic-work',medium='synthetic-scene',language='ja',
+            uri='local:synthetic-unit-test',acquisition='synthetic unittest only',source_kind=kind,version='test-v1',
+            content_sha256=source_content_hash(scenes),coverage='collected',published_at=None,
+            acquired_at='2026-10-29T00:00:00Z',use_scope='fixture_only' if kind=='synthetic_fixture' else 'permitted_local',coverage_note='Synthetic fixture, never a real official source.')
+        claim=dict(claim_id='test-claim',text='合成分析：认真听取对方发言。',kind='analysis',source_scene_ids=['scene-3'],
+            review_status='approved',reviewed_by='fixture-reviewer',reviewed_at='2026-10-29T00:00:00Z',confirmation_ref='fixture-human-review')
+        persona=dict(persona_id='test-persona',prompt='认真听取对方发言。',source_claim_ids=['test-claim'],covers_until=None,
+            review_status='draft',reviewed_by=None,reviewed_at=None,confirmation_ref=None)
+        return dict(schema='taki-story-bundle/1',sources=[source],scenes=scenes,claims=[claim] if personas else [],
+                    personas=[persona] if personas else [],aliases={'立希':'椎名立希','灯':'高松燈','练习':'練習'})
+
+    def write(self,value):
+        import json
+        self.bundle_path.write_text(json.dumps(value,ensure_ascii=False),encoding='utf-8')
+        return self.bundle_path
+
+    def publish(self,value=None):
+        return self.service.import_bundle(self.write(value or self.bundle()),allow_fixture=True)
+
+    def test_scene_search_alias_rewrite_read_and_neighbors(self):
+        status=self.publish()
+        result=self.service.search('立希 练习',{'character':'立希'})
+        self.assertEqual(result['status'],'ok')
+        self.assertEqual(result['query_rewrites'],[{'from':'立希','to':'椎名立希'},{'from':'练习','to':'練習'}])
+        first=next(item for item in result['items'] if item['scene_id']=='scene-1')
+        read=self.service.read(first['handle'],before=0,after=2)
+        self.assertEqual(read['status'],'ok')
+        self.assertEqual([scene['scene_id'] for scene in read['scenes']],['scene-1','scene-2','scene-3'])
+        self.assertEqual(read['scenes'][0]['utterances'][0]['speaker'],'椎名立希')
+        self.assertEqual(read['scenes'][0]['utterances'][0]['text_ja'],'練習を続けよう。')
+        self.assertEqual(read['scenes'][0]['source_kind'],'synthetic_fixture')
+        self.assertFalse(read['truncated_after'])
+        self.assertEqual(status['source_revision'],read['source_revision'])
+        self.assertTrue(self.service.valid(read['source_revision'],read['revocation_revision']))
+
+    def test_fixture_cannot_publish_by_default_or_approve_persona(self):
+        from ournotes_bot.domain.story import StoryError
+        bundle=self.bundle(personas=True)
+        with self.assertRaisesRegex(StoryError,'story_fixture_not_publishable'):
+            self.service.import_bundle(self.write(bundle))
+        status=self.publish(bundle)
+        with self.assertRaisesRegex(StoryError,'story_persona_fixture'):
+            self.service.approve_persona('test-persona','fixture-reviewer','fixture-human-review',revision=status['source_revision'])
+        self.assertIsNone(self.service.persona())
+
+    def test_withdrawal_invalidates_existing_handles_and_survives_rollback(self):
+        original=self.publish()['source_revision']
+        handle=self.service.search('立希')['items'][0]['handle']
+        bundle=self.bundle();bundle['aliases']['测试']='合成';self.publish(bundle)
+        self.assertEqual(self.service.read(handle)['status'],'stale')
+        self.assertFalse(self.service.valid(original,0))
+        self.service.withdraw('test-story','fixture withdrawal')
+        restored=self.service.rollback(original)
+        self.assertTrue(restored['sources'][0]['withdrawn'])
+        self.assertEqual(restored['scenes'],0)
+        self.assertEqual(self.service.search('立希')['status'],'no_results')
+        self.assertEqual(self.service.read(handle)['status'],'stale')
+
+    def test_failed_import_keeps_current_snapshot_and_hash(self):
+        from ournotes_bot.domain.story import StoryError
+        original=self.publish()['source_revision']
+        bundle=self.bundle();bundle['scenes'][0]['utterances'][0]['text_ja']='改変した原文。'
+        with self.assertRaisesRegex(StoryError,'story_hash_mismatch'):self.publish(bundle)
+        self.assertEqual(self.service.status()['source_revision'],original)
+
+    def test_missing_sources_remain_inventory_without_invented_scenes(self):
+        bundle=self.bundle();source=dict(bundle['sources'][0])
+        source.update(source_id='missing-story',content_sha256=None,coverage='missing_source',acquired_at=None)
+        bundle['sources'].append(source)
+        status=self.publish(bundle)
+        self.assertEqual(len(status['sources']),2)
+        self.assertEqual(status['sources'][1]['scene_count'],0)
+        self.assertEqual(status['sources'][1]['coverage'],'missing_source')
+
+    def test_source_layer_cannot_upgrade_player_analysis_to_original_fact(self):
+        from ournotes_bot.domain.story import StoryError
+        bundle=self.bundle(kind='fan_analysis',personas=True)
+        bundle['claims'][0]['kind']='original_fact'
+        with self.assertRaisesRegex(StoryError,'story_claim_layer'):self.publish(bundle)
+
+    def test_import_never_activates_approved_persona_and_operator_approval_is_version_bound(self):
+        from ournotes_bot.domain.story import StoryError
+        bundle=self.bundle(kind='official_original',personas=True)
+        status=self.publish(bundle)
+        self.assertIsNone(self.service.persona())
+        approved=self.service.approve_persona('test-persona','fixture-reviewer','fixture-human-confirmation',revision=status['source_revision'])
+        self.assertEqual(approved['review_status'],'approved')
+        self.assertEqual(approved['prompt'],'认真听取对方发言。')
+        bundle['aliases']['鼓手']='ドラマー';self.publish(bundle)
+        self.assertIsNone(self.service.persona())
+        self.service.rollback(status['source_revision'])
+        self.assertEqual(self.service.persona()['persona_id'],'test-persona')
+        self.service.withdraw('test-story','fixture withdrawal')
+        self.assertIsNone(self.service.persona())
+        bundle['personas'][0].update(review_status='approved',reviewed_by='fixture-reviewer',reviewed_at='2026-10-29T00:00:00Z',confirmation_ref='fixture')
+        with self.assertRaisesRegex(StoryError,'story_import_requires_draft'):self.publish(bundle)
+
+    def test_bad_order_adjacency_hash_and_unknown_fields_are_rejected(self):
+        import copy
+        from ournotes_bot.domain.story import StoryError
+        from ournotes_bot.sources.story_files import source_content_hash
+        for mutation in ('order','adjacency','cycle','unknown'):
+            value=copy.deepcopy(self.bundle())
+            if mutation=='order':value['scenes'][0]['utterances'][0]['order']=2
+            elif mutation=='adjacency':value['scenes'][0]['next_scene']='missing'
+            elif mutation=='cycle':
+                value['scenes'][0]['previous_scene']='scene-3';value['scenes'][2]['next_scene']='scene-1'
+            else:value['scenes'][0]['hidden_instruction']='ignored?'
+            value['sources'][0]['content_sha256']=source_content_hash(value['scenes'])
+            with self.subTest(mutation=mutation),self.assertRaises(StoryError):self.publish(value)
+
+    def test_current_pointer_corruption_and_revocation_corruption_fail_closed(self):
+        from ournotes_bot.domain.story import StoryError
+        self.publish()
+        path=self.service.root/'revocations.json';path.write_text('{broken',encoding='utf-8')
+        with self.assertRaises(StoryError):self.service.search('立希')
+        path.unlink()
+        (self.service.root/'current.json').write_text('{"schema":"taki-story-pointer/1","revision":"../outside"}',encoding='utf-8')
+        with self.assertRaisesRegex(StoryError,'story_revision'):self.service.status()
+
+    def test_cli_runs_without_game_or_platform_initialization(self):
+        self.write(self.bundle())
+        root=Path(__file__).resolve().parents[1]
+        env=dict(os.environ,PYTHONPATH=str(root/'src'),QQ_APP_ID='',QQ_APP_SECRET='',AI_API_KEY='')
+        process=subprocess.run([sys.executable,'-B','-m','ournotes_bot.application.story_cli','import',
+            '--root',str(self.service.root),'--bundle',str(self.bundle_path),'--allow-fixture'],
+            env=env,cwd=root,capture_output=True,text=True,encoding='utf-8',timeout=15)
+        self.assertEqual(process.returncode,0,process.stdout+process.stderr)
+        self.assertIn('source_revision',process.stdout)
+
+    def test_persona_withdrawal_cannot_be_undone_by_release_rollback(self):
+        from ournotes_bot.domain.story import StoryError
+        bundle=self.bundle(kind='official_original',personas=True)
+        revision=self.publish(bundle)['source_revision']
+        self.service.approve_persona('test-persona','fixture-reviewer','fixture-confirmation',revision=revision)
+        self.service.withdraw_persona('test-persona','fixture correction')
+        self.service.rollback(revision)
+        self.assertIsNone(self.service.persona())
+        with self.assertRaisesRegex(StoryError,'story_persona_withdrawn'):
+            self.service.approve_persona('test-persona','fixture-reviewer','fixture-confirmation',revision=revision)
+
+    def test_alias_expansion_and_scene_projection_are_bounded(self):
+        from ournotes_bot.domain.story import StoryError
+        from ournotes_bot.sources.story_files import source_content_hash
+        bundle=self.bundle();bundle['aliases']={'a':'b'*100}
+        self.publish(bundle)
+        with self.assertRaisesRegex(StoryError,'story_query_too_complex'):self.service.search('a'*300)
+        bundle=self.bundle()
+        bundle['scenes'][0]['utterances']=[dict(order=i,speaker='椎名立希',text_ja='文'*3000,translation=None,locator='line '+str(i)) for i in range(1,4)]
+        bundle['sources'][0]['content_sha256']=source_content_hash(bundle['scenes'])
+        with self.assertRaisesRegex(StoryError,'story_scene_capacity'):self.publish(bundle)
+
+    def test_pointer_write_failure_keeps_old_release_and_retry_is_safe(self):
+        from unittest.mock import patch
+        from ournotes_bot.sources import story_files
+        original=self.publish()['source_revision']
+        value=self.bundle();value['aliases']['声音']='声';self.write(value)
+        replace=story_files.os.replace
+        def failed(source,target):
+            if Path(target).name=='current.json':raise OSError('fixture atomic pointer failure')
+            return replace(source,target)
+        with patch.object(story_files.os,'replace',side_effect=failed),self.assertRaises(OSError):
+            self.service.import_bundle(self.bundle_path,allow_fixture=True)
+        self.assertEqual(self.service.status()['source_revision'],original)
+        updated=self.service.import_bundle(self.bundle_path,allow_fixture=True)
+        self.assertNotEqual(updated['source_revision'],original)
+        self.assertEqual(self.service.rollback(original)['source_revision'],original)
+
+    def test_second_publisher_cannot_mutate_under_active_operator_lock(self):
+        from ournotes_bot.domain.story import StoryError
+        from ournotes_bot.sources.story_files import publish_lock
+        self.write(self.bundle())
+        with publish_lock(self.service.root),self.assertRaisesRegex(StoryError,'story_publish_busy'):
+            self.service.import_bundle(self.bundle_path,allow_fixture=True)
+        self.assertEqual(self.service.status()['status'],'not_available')
 
 
 if __name__ == "__main__":

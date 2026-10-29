@@ -14,12 +14,13 @@ RESOURCES={'songs':'songs','cards':'cards','support_cards':'support_cards',
 
 
 class SiteLookup:
-    def __init__(self,repository,question,*,notices=None,verify=None):
+    def __init__(self,repository,question,*,notices=None,verify=None,allow_rewrite=False,max_operations=3):
         self.repository,self.question=repository,question
         self.notices,self.verify=notices or Notices(),verify or verify_catalog
         self.catalog=None;self.notice_snapshots={};self.handles={};self.records={}
         self.operations=0;self.evidence=[];self.expires_at=None;self.source_notes=[]
         self.reader_links={}
+        self.allow_rewrite,self.max_operations=allow_rewrite,max_operations
 
     def attribution(self):
         text='\n\n来源：'+'；'.join(self.source_notes)
@@ -55,7 +56,7 @@ class SiteLookup:
                     text_release=self.catalog.metadata['text_version'],observed_at=self.catalog.metadata.get('cached_at'))
 
     def execute(self,name,args,deadline):
-        require(self.operations<3 and time.monotonic()<deadline,'execution_timeout')
+        require(self.operations<self.max_operations and time.monotonic()<deadline,'execution_timeout')
         self.operations+=1
         if name=='site_search':result=self.search(args,deadline)
         else:
@@ -88,7 +89,7 @@ class SiteLookup:
 
     def search(self,args,deadline):
         resource,server,query=args['resource'],args['server'],args['query']
-        require(query==query.strip() and (not query or normalize(query) in normalize(self.question)),
+        require(query==query.strip() and (self.allow_rewrite or not query or normalize(query) in normalize(self.question)),
                 'query_entity_mismatch')
         # Explicit server/date checks are performed by native scope_for before entry.
         if resource=='notices':

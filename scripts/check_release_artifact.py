@@ -57,7 +57,10 @@ def check(path: Path) -> None:
         raise ValueError(f"missing bundled card-947 image in {path.name}")
     if not aliases or not code:
         raise ValueError(f"missing query aliases or bot code in {path.name}")
-    required = {"continuation.py", "field_query.py", "card_query.py", "cutoff_history.py", "cutoff_sampler.py", "cutoff_trends.py",
+    required = {'CHAT_AGENT_C2.md', 'STORY_ENGINE.md', 'STORY_SOURCE_COVERAGE.md', 'STORY_PERSONA_RESEARCH.md', 'CHAT_MEMORY_C3.md', 'CHAT_IMAGES_V1.md', 'CHAT_QQ_QUOTE_EVIDENCE.md', 'CHAT_PROACTIVE_G1.md', 'CHAT_SERVICE_JOBS.md', 'CHAT_AGENT_F1.md',
+                'chat_capabilities.py', 'story_service.py', 'story_cli.py', 'story.py', 'story_files.py', 'story_retrieval.py', 'chat_memory.py', 'chat_images.py', 'chat_jobs.py', 'proactive_chat.py', 'chat_proactive_runtime.py',
+                "chat.py", "chat_agent.py", "chat_context.py", "chat_store.py",
+                "continuation.py", "field_query.py", "card_query.py", "cutoff_history.py", "cutoff_sampler.py", "cutoff_trends.py",
                 "knowledge.py", "knowledge_files.py", "knowledge_embeddings.py", "knowledge_retrieval.py",
                 "knowledge_service.py", "knowledge_cli.py", "QUERY_CHAT_PACKAGE2B.md", "knowledge-draft.md",
                 "model_calls.py", "model_provider.py", "native_tools.py", "model_runtime.py", "model_config.py", "usage_ledger.py", "QUERY_CHAT_PACKAGE3.md",
@@ -67,6 +70,9 @@ def check(path: Path) -> None:
                 "transport.py", "identity.py", "chart_paths.py", "errors.py", "json_validation.py",
                 "NotoSansSC.ttf", "Roboto.ttf", "NotoSansSC-OFL.txt", "Roboto-OFL.txt",
                 "game_assets.json", "visual_skill_contracts.json"}
+    for area in ('domain','sources'):
+        if not any(PurePosixPath(name).parts[-3:]==('ournotes_bot',area,'chat_images.py') for name in names):
+            raise ValueError(f'missing {area}/chat_images.py in {path.name}')
     retired = {"efficiency_query.py", "haneoka_meta_query.py", "meta_parameters.py", "meta_model.py",
                "song_meta.py", "site_meta.py", "moenotes_music_data.py", "verify_meta_reference.py"}
     if retired & documents:

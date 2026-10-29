@@ -2,7 +2,8 @@
 from __future__ import annotations
 import hashlib
 import json
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass, asdict, field
+from ..domain.chat_images import ImageError,parse_attachments
 from ..domain.query_policy import ExecutionPolicy
 from .backend_sources import TRANSPORT_PROTOCOL
 
@@ -57,22 +58,34 @@ class Request:
     trigger: str = 'command'
     reference: dict | None = None
     interaction: dict | None = None
+    sender_name: str = ''
+    attachments: tuple = field(default=(),repr=False)
+    proactive_id: str = ''
 
     @classmethod
     def parse(cls, value, instance_id, app_id, now, *, reference_profiles=()):
         fields = set(cls.__dataclass_fields__)
-        require(isinstance(value, dict) and set(value) == fields | {'protocol'}, 'request_shape')
+        optional={'sender_name','attachments','proactive_id'}
+        require(isinstance(value,dict) and fields-optional | {'protocol'}<=set(value)<=fields | {'protocol'},'request_shape')
+        value={**value,'sender_name':value.get('sender_name',''),'proactive_id':value.get('proactive_id','')}
+        try:value['attachments']=parse_attachments(value.get('attachments'))
+        except ImageError as exc:raise ProtocolError(exc.code) from None
+        require(value['sender_name']=='' or identity(value['sender_name']),'sender_name')
         require_protocol(value['protocol'])
         require(value['instance_id'] == instance_id and value['app_id'] == app_id, 'instance_mismatch', 403)
-        for key in fields - {'timestamp_ms', 'body', 'ingress_seq', 'policy', 'reference', 'interaction'}:
+        for key in fields - {'timestamp_ms', 'body', 'ingress_seq', 'policy', 'reference', 'interaction','sender_name','attachments','proactive_id'}:
             require(identity(value[key]), 'invalid_identity')
         require(value['platform'] == 'qq' and value['kind'] in ('group', 'c2c'), 'conversation_kind')
         require(value['kind'] != 'c2c' or value['conversation_id'] == value['user_id'], 'c2c_identity')
         require(value['capability'] == CAPABILITY, 'capability_profile', 409)
         require(type(value['timestamp_ms']) is int and 0 <= value['timestamp_ms'] < 10**14, 'message_time')
         require(type(value['ingress_seq']) is int and 0 < value['ingress_seq'] < 2**53, 'ingress_seq')
-        require(isinstance(value['body'], str) and 0 < len(value['body'].encode()) <= 16384, 'body_size')
-        require(value['trigger'] in ('command','ask','quoted_reply','button'), 'trigger')
+        require(isinstance(value['body'],str) and len(value['body'].encode())<=16384 and (value['body'] or value['attachments']),'body_size')
+        require(value['trigger'] in ('command','ask','quoted_reply','button','observation','proactive'), 'trigger')
+        if value['trigger']=='proactive':
+            import re
+            require(value['kind']=='group' and isinstance(value['proactive_id'],str) and re.fullmatch('[a-f0-9]{32}',value['proactive_id']),'proactive_identity')
+        else:require(value['proactive_id']=='' and (value['trigger']!='observation' or value['kind']=='group'),'proactive_identity')
         ref, interaction = value['reference'], value['interaction']
         if value['trigger'] == 'quoted_reply':
             require(isinstance(ref, dict) and set(ref) == {'message_id','adapter_profile_version'}
@@ -87,7 +100,8 @@ class Request:
         require(isinstance(policy, dict) and set(policy) == set(ExecutionPolicy.__dataclass_fields__), 'policy_shape')
         require(policy['natural_query'] in ('off','local','model') and identity(policy['epoch']), 'policy_value')
         require(all(type(policy[k]) is int and 0 <= policy[k] < 2**53 for k in ('global_revision','group_revision')), 'policy_revision')
-        expected = digest([instance_id, app_id, 'qq', value['kind'], value['conversation_id'], value['user_id'], value['message_id']])
+        expected = digest([instance_id, app_id, 'qq', value['kind'], value['conversation_id'], value['user_id'], value['message_id']]
+                          +([value['proactive_id']] if value['trigger']=='proactive' else []))
         require(value['request_id'] == expected, 'request_identity')
         # Age is checked after dedupe by the coordinator, so retries can read expired facts.
         return cls(**{key: value[key] for key in fields - {'policy'}}, policy=ExecutionPolicy(**policy))
@@ -99,7 +113,8 @@ class Request:
 
     @property
     def context_id(self):
-        return digest([self.instance_id, self.app_id, self.platform, self.kind, self.conversation_id, self.user_id])
+        return digest([self.instance_id, self.app_id, self.platform, self.kind, self.conversation_id, self.user_id]
+                      +(['proactive',self.proactive_id] if self.trigger=='proactive' else []))
 
     @property
     def scope(self):
