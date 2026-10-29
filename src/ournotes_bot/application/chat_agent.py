@@ -42,13 +42,17 @@ def public_search_query(query,identities=(),*,private_texts=(),public_question='
     folded=normalize(query);question=normalize(public_question)
     require(query and not any(c in query for c in '\r\n') and not any(value and normalize(value) in folded for value in identities),'private_search_query')
     material=tuple(normalize(text) for text in private_texts)
-    secret_pattern=r'(?:pin|密码|口令|password|secret|token|验证码)\s*(?:是|为|is\s+|[:=：]|\s)\s*["\']?([a-z0-9_./-]{1,256})'
-    require(not any(match.group(1) in folded for text in material for match in re.finditer(secret_pattern,text)),
-            'private_search_query')
     secret_head=r'(?:pin|密码|口令|password|secret|token|验证码)\s*(?:是|为|is\s+|[:=：]|\s)\s*["\'“「]?'
     query_terms=re.findall(r'[\w./-]+',folded)
-    require(not any(text[match.end():].startswith(term) for text in material
-                    for match in re.finditer(secret_head,text) for term in query_terms),'private_search_query')
+    for text in material:
+        for match in re.finditer(secret_head,text):
+            tail=text[match.end():]
+            value=re.split(r'[\s,，。;；!?！？"\'”」、]+',tail,maxsplit=1)[0][:256].rstrip('.')
+            # A natural-language admonition terminates the copied value; a
+            # prefix remains private even if the actual secret also contains it.
+            value=re.split(r'请|不要|切勿|勿|别',value,maxsplit=1)[0]
+            require(not value or value not in folded,'private_search_query')
+            require(not any(tail.startswith(term) for term in query_terms),'private_search_query')
     # An external page cannot declassify a private fragment by copying it into
     # a suggested query. Preserve open query rewriting; block known long private
     # copies, including opaque identifiers explicitly present in the current turn.

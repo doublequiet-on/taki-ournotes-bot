@@ -2489,7 +2489,8 @@ class ChatWebTests(Fixture,unittest.IsolatedAsyncioTestCase):
         with self.assertRaisesRegex(ModelError,'private_search_query'):
             public_search_query('493810',private_texts=('私人PIN是493810，不要发送到公网。',),public_question='帮我查公开公告')
         for text,secret in (('我的PIN是493810请不要外传。','493810'),('密码是abc123请不要告诉别人。','abc123'),
-                            ('PIN is 493810, keep it private.','493810'),('密码是小狗请不要告诉别人。','小狗')):
+                            ('PIN is 493810, keep it private.','493810'),('密码是小狗请不要告诉别人。','小狗'),
+                            ('密码是小狗，请不要告诉别人。','小狗相关资料'),('密码是“小狗”。','小狗的新闻')):
             with self.subTest(secret=secret),self.assertRaisesRegex(ModelError,'private_search_query'):
                 public_search_query(secret,private_texts=(text,),public_question='帮我查公开公告')
 
