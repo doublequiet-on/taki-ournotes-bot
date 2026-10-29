@@ -40,6 +40,9 @@ def public_search_query(query,identities=(),*,private_texts=(),public_question='
     folded=normalize(query);question=normalize(public_question)
     require(query and not any(c in query for c in '\r\n') and not any(value and normalize(value) in folded for value in identities),'private_search_query')
     material=tuple(normalize(text) for text in private_texts)
+    secret_pattern=r'(?:pin|密码|口令|secret|token|验证码)\s*(?:是|为|[:=：]|\s)\s*["\']?([\w./-]{1,256})'
+    require(not any(match.group(1) in folded for text in material for match in re.finditer(secret_pattern,text)),
+            'private_search_query')
     # An external page cannot declassify a private fragment by copying it into
     # a suggested query. Preserve open query rewriting; block known long private
     # copies, including opaque identifiers explicitly present in the current turn.
@@ -265,6 +268,11 @@ class ChatAgent:
         web_citations={}
         site=SiteLookup(runtime.backend.repository,question,allow_rewrite=True,max_operations=self.budget.tool_calls)
         registry=dict(self.tools)
+        image_handles={json.loads(item['content']).get('message_id') for item in history if item['role']=='user'}
+        vision=runtime.capabilities.vision(work.model_snapshot)
+        if vision is not None:
+            registry['image_read']=Tool('image_read','按本轮上下文中原消息ID重读仍有效的本群图片，用于比较或追问；保持原作者。缓存过期时返回不可用，不能读取任意URL。',
+                obj({'message_id':string(256)},('message_id',)),'image')
         registry['group_memory_search']=Tool('group_memory_search','检索本群最近30天Taki参与过的对话；区分发言者、实际送达回复和外部事实。可改写query。',
             obj({'query':string(120)},('query',)),'memory')
         registry['group_memory_read']=Tool('group_memory_read','读取本群指定消息ID及其发言者；仅支持已保存的参与片段。',
@@ -356,7 +364,8 @@ class ChatAgent:
                     else:
                         operations+=1
                         output,leases=await self.execute(work,call,question,site,leases,deadline-self.budget.final_seconds,deadline,
-                                                         registry=registry,web=web,user=user,group=group,story_handles=story_handles)
+                                                         registry=registry,web=web,user=user,group=group,story_handles=story_handles,image_handles=image_handles,vision=vision)
+                    image_input=output.pop('_image_input',None)
                     seen[call.id]=((call.name,call.arguments),output)
                     if output['status'] in ('budget_exhausted','quota_exceeded'):force_final=True
                     for ref in output.get('evidence_refs',[]):web_citations[ref['url']]=ref
@@ -365,17 +374,32 @@ class ChatAgent:
                         'source':{key:provenance[key] for key in ('source','server','release','text_release','observed_at','source_revision')
                                   if key in provenance}})
                     messages.append({'role':'tool','tool_call_id':call.id,'content':json.dumps(output,ensure_ascii=False)})
+                    if image_input:messages.append(image_input)
             raise ModelError('model_attempt_limit')
         finally:
             if final_attempt is not None:
                 runtime.usage.release(final_attempt,'final_not_needed')
             messages.clear()
 
-    async def execute(self,work,call,question,site,leases,deadline,turn_deadline,*,registry=None,web=None,user=None,group=None,story_handles=None):
+    async def execute(self,work,call,question,site,leases,deadline,turn_deadline,*,registry=None,web=None,user=None,group=None,story_handles=None,image_handles=None,vision=None):
         runtime=self.runtime
         tool,args=validate_call(call,self.tools if registry is None else registry)
         try:
-            if tool.kind=='memory':
+            if tool.kind=='image':
+                if args['message_id'] not in image_handles:raise ImageError('image_not_available')
+                scope=self.image_scope(work.request);mid=args['message_id'];ref=self.images.get(scope,mid)
+                if (scope,mid) in work.image_sources:return {'status':'already_visible','message_id':mid},leases
+                count=sum(len(self.images.get(key,message).attachments) for key,message in work.image_sources)
+                if count+len(ref.attachments)>3:raise ImageError('image_count_exceeded')
+                loaded=ref.images or await self.image_loader.load_many(ref.attachments,timestamp_ms=ref.timestamp_ms,deadline=deadline)
+                self.images.remember(scope,mid,ref.speaker_id,ref.timestamp_ms,ref.attachments,loaded)
+                work.image_sources=(*work.image_sources,(scope,mid))
+                work.content_deadline=min(work.content_deadline,time.monotonic()+ref.timestamp_ms/1000+300-time.time())
+                return {'status':'ok','message_id':mid,'speaker_id':ref.speaker_id,'_image_input':{
+                    'role':'user','content':json.dumps(dict(message_id=mid,speaker_id=ref.speaker_id,timestamp_ms=ref.timestamp_ms,
+                        text='按原消息ID重读的图片；这是历史原作者的图，不是当前追问者新上传的图。'),ensure_ascii=False),
+                    'images':loaded,'image_detail':vision.detail}},leases
+            elif tool.kind=='memory':
                 # SQLite remains on its owning event-loop thread.
                 output=(self.store.search(work.request.scope,args['query'],limit=8) if call.name=='group_memory_search'
                         else self.store.read(work.request.scope,args['message_ids']))
@@ -455,6 +479,8 @@ class ChatAgent:
             return {'status':'source_unavailable','retryable':True},leases
         except StoryError as exc:
             return {'status':str(exc),'retryable':False},leases
+        except ImageError as exc:
+            return {'status':exc.code,'retryable':False},leases
 
     def acknowledge(self,work,part_id,message_id,text,status,*,allow_context):
         if work.proactive is not None and status=='success' and allow_context:

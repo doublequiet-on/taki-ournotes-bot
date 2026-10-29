@@ -318,7 +318,8 @@ class ModelRuntime:
             try:self.agent.service_budget.check(work.service_policy,'proactive',profile,billing_request_id,
                 maximum_cost_micro(profile)+sum(count*rate for _,count,rate in action_budget),
                 reply_times=self.agent.store.proactive_replies(work.request.scope))
-            except ServiceError as exc:raise ModelError(str(exc)) from None
+            except ServiceError as exc:
+                raise ModelError('quota_exceeded' if str(exc) in ('chat_service_call_limit','chat_service_cost_limit') else str(exc)) from None
         if reservation is None:
             self.usage.reserve(billing_request_id,attempt,user,group,profile,bound,action_budget=action_budget)
         else:
@@ -348,7 +349,7 @@ class ModelRuntime:
                      'elapsed_ms':int((time.monotonic()-began)*1000)})
             if result.tool_calls:
                 name=result.tool_calls[0].name
-                kind=name if name in TOOLS or getattr(work,'chat',False) and name in ('web_search','story_search','story_read','group_memory_search','group_memory_read') else 'unrecognized_tool'
+                kind=name if name in TOOLS or getattr(work,'chat',False) and name in ('web_search','story_search','story_read','group_memory_search','group_memory_read','image_read') else 'unrecognized_tool'
             elif tools: kind='routing_text' if result.status=='ok' else 'routing'
             self.check(work,deadline,leases)
             if service_policy is not None:require(self.agent.services.policy(work.model_snapshot,work.request.conversation_id)==service_policy,'chat_service_revoked')

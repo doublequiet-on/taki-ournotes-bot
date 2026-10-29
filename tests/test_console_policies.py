@@ -2305,6 +2305,21 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
         self.agent.store.recover_service_receipts(self.backend.ledger)
         self.assertEqual(len(self.agent.store.proactive_replies(Request_scope())),1)
 
+    async def test_service_limit_consumes_held_final_and_settles_actual_cost(self):
+        from ournotes_bot.domain.model_calls import ToolCall
+        from fractions import Fraction
+        import math
+        self.policy=replace(self.policy,proactive=replace(self.policy.proactive,max_calls_per_hour=2))
+        self.agent.services.policy.return_value=self.policy
+        value=self.observation();self.tick+=1.6
+        self.client.request.side_effect=[self.result(calls=(ToolCall('help','catalog_info','{"kind":"help","query":""}'),)),
+            self.result('{"participation":"reply","text":"已有资料够了，接着说。"}')]
+        plan,attempts,candidate=await self.candidate(value)
+        self.assertEqual(len(attempts),2);self.assertTrue(plan['send_allowed'])
+        self.event(plan,'intent');self.event(plan,'ack')
+        expected=math.ceil(sum((Fraction(self.backend.model_runtime.usage.get(attempt)['cost']) for attempt in attempts),Fraction()))
+        self.assertEqual(self.agent.proactive.controller.status(candidate[0].scope)['hourly_cost_micro'],expected)
+
     async def test_summary_uses_same_profile_independent_service_job_and_source_deletion(self):
         from ournotes_bot.application.backend_protocol import Request
         from types import SimpleNamespace
@@ -2409,6 +2424,8 @@ class ChatWebTests(Fixture,unittest.IsolatedAsyncioTestCase):
         for query in ('http://192.168.1.1/admin','https://metadata.google.internal/','169.254.169.254','http://localhost/a','http://localhost./','http://127.1/a','ｈｔｔｐ://１９２.１６８.１.１/admin','http://[::1]/','私密昵称 的事情'):
             with self.subTest(query=query),self.assertRaisesRegex(ModelError,'private_search_query'):public_search_query(query,['私密昵称'])
         self.assertEqual(public_search_query('https://example.org/music 音乐新闻'),'https://example.org/music 音乐新闻')
+        with self.assertRaisesRegex(ModelError,'private_search_query'):
+            public_search_query('493810',private_texts=('私人PIN是493810，不要发送到公网。',),public_question='帮我查公开公告')
 
     async def test_incomplete_web_is_local_failure_and_unknown_extra_fee(self):
         from ournotes_bot.application.chat_capabilities import WebCapability
