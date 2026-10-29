@@ -152,6 +152,46 @@ class ModelRuntime:
         self.agent=(ChatAgent(self,self.usage.path.with_name('chat-v1.sqlite3'))
                     if getattr(backend.settings,'chat_engine','legacy')=='agent' else None)
 
+    def cost_status(self):
+        result=self.usage.costs()
+        result['engine']='agent' if self.agent else 'legacy'
+        result['route_reason']='model_not_configured'
+        result['next_route']='blocked'
+        try:
+            profile=self.config.snapshot().profile
+            amount=2*profile.price.reserve(profile.max_input_tokens,profile.max_output_tokens)
+            result['admission_micro']=str(amount*profile.price.reference_rate/1_000_000)
+            try:
+                self.usage.check_primary(day(self.usage.clock()),profile,amount)
+                result.update(next_route='primary',route_reason='primary_budget_available')
+            except ModelError as exc:
+                result['route_reason']=str(exc)
+                if str(exc)=='primary_budget_exceeded':
+                    fallback=self.fallback.snapshot().profile
+                    require(fallback.provider=='deepseek','fallback_configuration')
+                    require(fallback.price.reference_unit==profile.price.reference_unit,'reference_unit_mismatch')
+                    result['next_route']='fallback'
+        except ModelError as exc:
+            result['route_reason']=str(exc)
+        result['primary']=self.config.status()
+        try:
+            fallback=self.fallback.snapshot().profile
+            require(fallback.provider=='deepseek','fallback_configuration')
+            if self.config.current:
+                require(fallback.price.reference_unit==self.config.current.profile.price.reference_unit,'reference_unit_mismatch')
+            result['fallback_ready']=True
+        except ModelError as exc:
+            result['fallback_ready']=False
+            result['fallback_reason']=str(exc)
+        result['fallback']=self.fallback.status()
+        return result
+
+    def record_route(self,work,reason):
+        diagnostics=getattr(self.backend,'diagnostics',None)
+        if diagnostics:
+            diagnostics.span(uuid.uuid4().hex,work.request.request_id,'model_route',0,
+                             self.backend.clock(),outcome=reason)
+
     def is_chat(self,content):
         if self.agent is None or getattr(self.backend.settings,'chat_engine','legacy')!='agent': return False
         if replies.is_ai_request(content): return True
@@ -170,6 +210,7 @@ class ModelRuntime:
 
     def use_fallback(self,work):
         require(not work.budget_fallback and work.model_attempts==0,'primary_budget_exceeded')
+        self.record_route(work,'primary_budget_exceeded')
         try: fallback=self.fallback.snapshot()
         except ModelError: raise ModelError('fallback_not_configured') from None
         if work.request.kind=='group':fallback=fallback.for_group(work.request.conversation_id)
@@ -186,7 +227,9 @@ class ModelRuntime:
         profile=work.model_snapshot.profile
         # Admit a bounded first request and its maximum final response together.
         amount=2*profile.price.reserve(profile.max_input_tokens,profile.max_output_tokens)
-        try:self.usage.check_primary(day(self.usage.clock()),profile,amount)
+        try:
+            self.usage.check_primary(day(self.usage.clock()),profile,amount)
+            self.record_route(work,'primary_budget_available')
         except ModelError as exc:
             if str(exc)!='primary_budget_exceeded':raise
             self.use_fallback(work)
@@ -369,7 +412,7 @@ class ModelRuntime:
             body.update(tools=[{'type':'web_search','search_context_size':'low'}],max_tool_calls=web.max_calls)
             action_budget=(('web_search',web.max_calls,web.unit_cost_micro),)
         # Verified native wires support required tool choice; no fallback/retry.
-        if require_tool and tools and (profile.provider=='deepseek' or profile.wire_profile=='openai-responses-v1'):
+        if require_tool and tools and (profile.provider=='deepseek' and profile.reasoning_effort in (None,'none') or profile.wire_profile=='openai-responses-v1'):
             body['tool_choice']='required'
         # Registered text-only byte-BPE profiles: serialized UTF-8 bytes plus
         # 4096 tokens for bounded wire framing is a conservative input ceiling.
@@ -591,7 +634,7 @@ class ModelRuntime:
             messages=[messages[0],{'role':'user','content':json.dumps(
                 {'待改写的上一问题':focus,'上次展示文本（非事实依据）':getattr(context,'text',''),
                  '本轮改写要求':question},ensure_ascii=False)}]
-        messages.append({'role':'assistant','content':None,'response_items':call.response_items,'tool_calls':[{'id':call.id,'type':'function',
+        messages.append({'role':'assistant','content':None,'response_items':call.response_items,'reasoning_content':result.reasoning_content,'tool_calls':[{'id':call.id,'type':'function',
                           'function':{'name':call.name,'arguments':call.arguments}}]})
         messages.append({'role':'tool','tool_call_id':call.id,'content':evidence})
         generated=await self.attempt(work,messages,[],user,group,deadline,leases)
@@ -641,7 +684,7 @@ class ModelRuntime:
                                           question,history,leases,facts='\n'.join(session.evidence),focus=question)
                     return replace(reply,business_status='success' if complete else 'partial')
             self.check(work,deadline,leases)
-            messages.append({'role':'assistant','content':None,'response_items':call.response_items,'tool_calls':[{'id':call.id,'type':'function',
+            messages.append({'role':'assistant','content':None,'response_items':call.response_items,'reasoning_content':result.reasoning_content,'tool_calls':[{'id':call.id,'type':'function',
                             'function':{'name':call.name,'arguments':call.arguments}}]})
             messages.append({'role':'tool','tool_call_id':call.id,'content':evidence})
             tools=([t.wire() for t in TOOLS.values() if t.kind=='site']

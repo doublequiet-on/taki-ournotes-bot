@@ -79,13 +79,13 @@ async function main(){
   const targets=['pending','sending','uncertain','sent','claimed','permission_unknown'].map((stage,i)=>({group_id:'g'+String(i).padStart(2,'0'),stage,ledger_status:stage,claim:{status:stage}}))
   const noticeFixture={sections:{notices:{data:{targets}},notice_target:{data:{targets}}}}
   const noticeBefore=JSON.stringify(noticeFixture)
-  transport.receiver={client:{request:async url=>{reads++;return url.includes('/notices')||url.includes('/ops/notice-targets/')?noticeFixture:{sections:{}}}},health:()=>({})};ctx.set('takiTransport',transport)
+  transport.receiver={client:{epoch:'fixture-epoch',request:async url=>{reads++;return url.includes('/notices')||url.includes('/ops/notice-targets/')?noticeFixture:{sections:{}}}},health:()=>({})};ctx.set('takiTransport',transport)
   const manager=install(ctx,{port:15143,password:'fixture-console-password-000000',directory:dir},{commit:'b'.repeat(40)})
   const clients=[]
   const methods=['overview','requests/list','requests/detail','sources','notices/list','query-metrics','groups/list','groups/update','settings/update',
     'ops/jobs/list','ops/jobs/detail','ops/jobs/start','ops/export','ops/audit','ops/host','ops/notice-target',
     'ops/controls','ops/controls/start','ops/controls/restore',
-    'model/settings','model/save','model/probe','model/group','ops/trusted','ops/trusted/prepare','ops/trusted/start']
+    'library/status','library/preview','library/compare','library/publish','library/withdraw','chat/status','chat/group/status','chat/group/memory','chat/memory/update','model/fallback/settings','model/fallback/save','model/settings','model/save','model/probe','model/group','ops/trusted','ops/trusted/prepare','ops/trusted/start']
   try{
     await ctx.start();await manager.ready();const a=await connect();clients.push(a.ws)
     for(const m of methods)assert.equal((await a.call('taki/'+m)).error,'unauthorized')
@@ -99,6 +99,18 @@ async function main(){
       assert.equal((await a.call('taki/login','fixture-console-password-000000')).error,'请稍后再登录')
     } finally {Date.now=()=>clock()+offset}
     const state=(await a.call('taki/status')).value
+    for(const method of ['chat/status','chat/group/status','chat/group/memory'])assert.ok((await a.call('taki/'+method,...(method==='chat/status'?[]:['g1']))).value)
+    assert.equal((await a.call('taki/chat/group/memory','../g1')).error,'admin_group')
+    const beforeMemory=reads,mutation={action:'clear',expected_revision:0}
+    assert.equal((await a.call('taki/chat/memory/update',{group_id:'g1',mutation,epoch:'old'})).error,'ops_gateway_epoch')
+    assert.equal((await a.call('taki/chat/memory/update',{group_id:'g1',mutation:{...mutation,expected_revision:'0'},epoch:'fixture-epoch'})).error,'chat_memory_shape')
+    assert.equal(reads,beforeMemory,'rejected memory changes must never reach backend')
+    assert.ok((await a.call('taki/chat/memory/update',{group_id:'g1',mutation,epoch:'fixture-epoch'})).value)
+    const libraryReads=reads
+    assert.equal((await a.call('taki/library/status',{kind:'../story',offset:0})).error,'library_shape')
+    assert.equal((await a.call('taki/library/publish',{epoch:'old',payload:{preview_id:'fixture',confirm_reviewed:true}})).error,'ops_gateway_epoch')
+    assert.equal(reads,libraryReads)
+    assert.ok((await a.call('taki/library/status',{kind:'knowledge',offset:0})).value)
     const {readHostSnapshot}=require('../ops-host.cjs'),hostFile=path.join(dir,'host-fixture.json')
     fs.writeFileSync(hostFile,JSON.stringify({schema:'taki-host-ops-v1',observed_at:Date.now()/1000-120,controller:{current_sha:'a'.repeat(40)}}),{mode:0o600})
     assert.equal(readHostSnapshot(hostFile).stale,true)

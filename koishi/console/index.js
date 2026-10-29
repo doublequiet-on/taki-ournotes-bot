@@ -1,9 +1,11 @@
+import { capabilityView } from './chat.js';
+import { costsView, costAlerts } from './costs.js';
 import { h, ref, watch, onMounted, onUnmounted, resolveComponent } from './runtime.js';
 import { sessionState } from './state.js';
 import { button, overviewView, requestsView, groupsView, settingsView } from './views.js';
 import { attentionView, sourcesView, operationsSettings } from './ops.js';
 import { modelOverview, modelSettings, trustedView } from './model.js';
-const navigation=[['overview','总览','home'],['requests','查询记录','list'],['groups','群管理','groups'],['sources','数据来源','database'],['settings','设置','settings']];
+const navigation=[['overview','总览','home'],['requests','请求记录','list'],['costs','模型与费用','database'],['groups','群管理','groups'],['sources','数据来源','database'],['operations','运行维护','settings'],['settings','设置','settings']];
 const iconPaths={home:'m3 10 9-7 9 7v10a1 1 0 0 1-1 1h-5v-7H9v7H4a1 1 0 0 1-1-1Z',list:'M9 5h12M9 12h12M9 19h12M3 5h.01M3 12h.01M3 19h.01',groups:'M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75M13 7a4 4 0 1 1-8 0 4 4 0 0 1 8 0',database:'M21 5c0 2-4 3-9 3S3 7 3 5s4-3 9-3 9 1 9 3ZM3 5v14c0 2 4 3 9 3s9-1 9-3V5M3 12c0 2 4 3 9 3s9-1 9-3',settings:'M9 3h6l1 3 3 1 2 5-2 5-3 1-1 3H9l-1-3-3-1-2-5 2-5 3-1ZM16 12a4 4 0 1 1-8 0 4 4 0 0 1 8 0',menu:'M4 6h16M4 12h16M4 18h16',logout:'M9 3H3v18h6M9 12h12m-5-5 5 5-5 5',sun:'M12 2v2M12 20v2M2 12h2M20 12h2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41M16 12a4 4 0 1 1-8 0 4 4 0 0 1 8 0'};
 const icon=name=>h('svg',{viewBox:'0 0 24 24',width:20,height:20,fill:'none',stroke:'currentColor','stroke-width':1.7,'stroke-linecap':'round','stroke-linejoin':'round','aria-hidden':'true'},[h('path',{d:iconPaths[name]||iconPaths.list})]);
 const portrait=className=>h('img',{class:className,src:new URL('./brand/taki.png',import.meta.url).href,alt:''});
@@ -21,7 +23,7 @@ function takeRecovery(){
     const snapshot=JSON.parse(value),record=v=>!!v&&typeof v==='object'&&!Array.isArray(v),edit=v=>v===null||(record(v)&&record(v.draft));
     if(!record(snapshot)||snapshot.schema!==1||typeof snapshot.notice!=='string'||!edit(snapshot.global)||!edit(snapshot.group)||!edit(snapshot.model)
       ||snapshot.global&&!Array.isArray(snapshot.global.draft.groupAllowlist)
-      ||snapshot.group&&typeof snapshot.group.id!=='string'||snapshot.model&&!record(snapshot.model.draft.price)
+      ||snapshot.group&&typeof snapshot.group.id!=='string'||snapshot.model&&(!record(snapshot.model.draft.price)||snapshot.model.role!==undefined&&!['primary','fallback'].includes(snapshot.model.role))
       ||!['jobs','controls','probes','trusted'].every(key=>Array.isArray(snapshot[key])&&snapshot[key].every(item=>Array.isArray(item)&&item.length===2)))throw Error('invalid recovery');
     return snapshot;
   }catch{recoveryReadError=true;return null;}
@@ -45,7 +47,7 @@ const Page={setup() {
   const closeDrawer=()=>{drawer.value=false;requestAnimationFrame(()=>document.querySelector('.taki-console .menu-button')?.focus());};
   const openDrawer=()=>{drawer.value=true;requestAnimationFrame(()=>document.querySelector('.console-sidebar nav [aria-current="page"]')?.focus());};
   const openGroup=id=>{inspectorTrigger=document.activeElement;s.selectGroup(id);if(s.groupId.value===id){groupOpen.value=true;if(narrow.value)requestAnimationFrame(()=>document.querySelector('.group-inspector [aria-label="关闭群详情"]')?.focus());}};
-  const selectTab=key=>{const wasOpen=drawer.value;if(tab.value!==key){tab.value=key;const layout=document.querySelector('.taki-console')?.parentElement;if(layout)layout.scrollTop=0;}drawer.value=false;if(key==='groups'&&s.groupDirty.value)groupOpen.value=true;if(wasOpen)requestAnimationFrame(()=>{const target=narrow.value&&key==='groups'&&groupOpen.value?'.group-inspector [aria-label="关闭群详情"]':narrow.value&&key==='requests'&&currentRequest&&s.detail.value?'.request-inspector [aria-label="关闭查询详情"]':'.taki-console .page-panel';document.querySelector(target)?.focus();});if(key==='requests'&&!s.requests.value)search(false);if(['groups','settings'].includes(key)){void s.load(s.model,'model/settings');void s.load(s.trusted,'ops/trusted');}};
+  const selectTab=key=>{const wasOpen=drawer.value;if(tab.value!==key){tab.value=key;const layout=document.querySelector('.taki-console')?.parentElement;if(layout)layout.scrollTop=0;}drawer.value=false;if(key==='groups'&&s.groupDirty.value)groupOpen.value=true;if(wasOpen)requestAnimationFrame(()=>{const target=narrow.value&&key==='groups'&&groupOpen.value?'.group-inspector [aria-label="关闭群详情"]':narrow.value&&key==='requests'&&currentRequest&&s.detail.value?'.request-inspector [aria-label="关闭查询详情"]':'.taki-console .page-panel';document.querySelector(target)?.focus();});if(key==='sources'&&!s.library.value)void s.refreshLibrary();if(key==='requests'&&!s.requests.value)search(false);if(['groups','settings','operations','costs'].includes(key)){void s.refreshModel();void s.load(s.trusted,'ops/trusted');void s.load(s.chat,'chat/status');if(key==='operations')void s.load(s.host,'ops/host');}};
   s.navigate=selectTab;
   const toggleTheme=()=>{theme.value=(theme.value||(document.documentElement.classList.contains('dark')?'dark':'light'))==='dark'?'light':'dark';try{localStorage.setItem('taki.console.theme',theme.value);}catch{}};
   const connection=()=>{const health=s.overview.value?.health;return !health?'尚未采集':health.stale?'状态陈旧':health.ready?'已连接':'状态待核对';};
@@ -59,7 +61,8 @@ const Page={setup() {
         if(currentRequest&&!['complete','failed','closed_unsent'].includes(s.detail.value?.sections?.request?.data?.delivery_state))await s.load(s.detail,'requests/detail',currentRequest);
       }
       if(ticks%3===1)await Promise.all([s.load(s.jobs,'ops/jobs/list'),s.load(s.controls,'ops/controls')]);
-      if(ticks%3===1&&['settings','groups'].includes(tab.value))await Promise.all([s.load(s.model,'model/settings'),s.load(s.trusted,'ops/trusted')]);
+      if(ticks%3===1&&['settings','groups','operations','costs'].includes(tab.value))await Promise.all([s.refreshModel(),s.load(s.trusted,'ops/trusted'),s.load(s.chat,'chat/status')]);
+      if(ticks%12===1&&tab.value==='sources')await s.refreshLibrary(s.library.value?.offset||0);
       if(tab.value==='sources'&&s.jobDetail.value&&['queued','running'].includes(s.jobDetail.value.state))await s.load(s.jobDetail,'ops/jobs/detail',s.jobDetail.value.id);
       if(ticks%12===1)await Promise.all([s.load(s.sources,'sources'),s.load(s.metrics,'query-metrics'),s.load(s.groups,'groups/list'),s.load(s.notices,'notices/list'),s.load(s.audit,'ops/audit'),s.load(s.host,'ops/host')]);
     } finally {polling=false;}
@@ -75,7 +78,7 @@ const Page={setup() {
   const mediaChanged=event=>{narrow.value=event.matches;};
   const stopDetailWatch=watch(s.detail,()=>{if(narrow.value&&tab.value==='requests'&&currentRequest&&s.detail.value&&focusedRequest!==currentRequest){focusedRequest=currentRequest;requestAnimationFrame(()=>document.querySelector('.request-inspector [aria-label="关闭查询详情"]')?.focus());}});
   const syncRecovery=()=>{if(!storeRecovery(s.captureEdits()))storageAvailable.value=false;};
-  const stopRecoveryWatch=watch([s.dirty,s.groupDirty,s.modelDirty,s.draft,s.groupDraft,s.modelDraft,s.modelKey,s.busy,s.message],syncRecovery,{deep:true,flush:'sync'});
+  const stopRecoveryWatch=watch([s.dirty,s.groupDirty,s.modelDirty,s.draft,s.groupDraft,s.modelDraft,s.modelKey,s.modelRole,s.busy,s.message],syncRecovery,{deep:true,flush:'sync'});
   const leaving=event => {const stored=storeRecovery(s.captureEdits());if((!stored&&(s.dirty.value||s.groupDirty.value||s.modelDirty.value))||s.modelKey.value){event.preventDefault();event.returnValue='';}};
   onMounted(() => {try{sessionStorage.setItem(storageKey+'-probe','1');sessionStorage.removeItem(storageKey+'-probe');}catch{storageAvailable.value=false;}
     timer=setInterval(() => void poll(),5000);document.addEventListener('visibilitychange',visible);document.addEventListener('keydown',keydown);media.addEventListener('change',mediaChanged);window.addEventListener('beforeunload',leaving);syncRecovery();});
@@ -87,14 +90,14 @@ const Page={setup() {
       drawer.value&&h('button',{class:'drawer-scrim','aria-label':'关闭导航',onClick:closeDrawer}),
       h('aside',{class:['console-sidebar',drawer.value&&'is-open'],role:narrow.value&&drawer.value?'dialog':undefined,'aria-modal':narrow.value&&drawer.value?'true':undefined,'aria-label':narrow.value&&drawer.value?'导航':undefined},[
         h('div',{class:'sidebar-brand'},[portrait('brand-image'),h('strong','Taki')]),
-        h('nav',{'aria-label':'Taki 工作页面'},navigation.map(([key,label,glyph])=>h('button',{'aria-current':tab.value===key?'page':undefined,onClick:()=>selectTab(key)},[icon(glyph),h('span',label),((key==='settings'&&(s.dirty.value||s.modelDirty.value))||(key==='groups'&&s.groupDirty.value))&&h('i',{class:'draft-dot','aria-label':'有未保存修改'})]))),
+        h('nav',{'aria-label':'Taki 工作页面'},navigation.map(([key,label,glyph])=>h('button',{'aria-current':tab.value===key?'page':undefined,onClick:()=>selectTab(key)},[icon(glyph),h('span',label),(((key==='settings'&&(s.dirty.value||s.modelDirty.value)||key==='costs'&&s.modelDirty.value))||(key==='groups'&&s.groupDirty.value))&&h('i',{class:'draft-dot','aria-label':'有未保存修改'})]))),
         h('div',{class:'sidebar-bottom'},[h('div',{class:'sidebar-instance'},[portrait('small-portrait'),h('div',[h('strong','Taki'),h('small',connection())]),h('i',{class:['status-dot',connection()==='已连接'?'good':'unknown']})]),
           h('button',{class:'sidebar-logout',disabled:s.busy.value,onClick:async()=>{await s.logout();clearRecovery();}},[icon('logout'),h('span','退出登录')])])]),
       h('div',{class:'console-app'},[
         h('header',{class:'topbar'},[h('button',{class:'icon-button menu-button','aria-label':'打开导航','aria-expanded':drawer.value,onClick:()=>drawer.value?closeDrawer():openDrawer()},[icon('menu')]),h('strong',navigation.find(([key])=>key===tab.value)?.[1]||'总览'),h('div',{class:'topbar-actions'},[h('span',{class:'connection-indicator'},connection()),h('button',{class:'icon-button','aria-label':'切换深浅主题',onClick:toggleTheme},[icon('sun')])])]),
         h('div',{class:'page-panel',tabindex:'-1'},[
           s.message.value&&h('p',{role:'status',class:'page-message'},s.message.value),s.readMessage.value&&h('p',{role:'status',class:'page-message'},s.readMessage.value),s.stale.value&&h('p',{role:'alert'},'连接异常：以下保留数据可能已陈旧。'),!storageAvailable.value&&h('p',{role:'alert'},'浏览器无法暂存草稿，刷新页面可能丢失未保存的修改。'),recoveryWarning.value&&h('p',{role:'alert'},'暂存草稿无法读取，请核对服务器设置。'),
-          tab.value==='overview'?h('div',[overviewView(s,open,()=>{selectTab('requests');search(true);}),attentionView(s,()=>{selectTab('requests');search(true);}),modelOverview(s)]):tab.value==='requests'?requestsView(s,open,params,search,cursor => s.load(s.requests,'requests/list',{...params,cursor}),id=>{selectTab('groups');openGroup(id);},closeDetail,currentRequest,narrow.value):tab.value==='groups'?groupsView(s,id=>{params.group_id=id;selectTab('requests');search(false);},openGroup,closeGroup,groupOpen.value,narrow.value):tab.value==='sources'?sourcesView(s):h('div',[h('h1','设置'),settingsView(s),modelSettings(s),trustedView(s),operationsSettings(s)]),
+          tab.value==='overview'?h('div',[costAlerts(s),overviewView(s,open,()=>{selectTab('requests');search(true);}),attentionView(s,()=>{selectTab('requests');search(true);}),modelOverview(s)]):tab.value==='costs'?h('div',[costsView(s),modelSettings(s),capabilityView(s.chat.value)]):tab.value==='requests'?requestsView(s,open,params,search,cursor => s.load(s.requests,'requests/list',{...params,cursor}),id=>{selectTab('groups');openGroup(id);},closeDetail,currentRequest,narrow.value):tab.value==='groups'?groupsView(s,id=>{params.group_id=id;selectTab('requests');search(false);},openGroup,closeGroup,groupOpen.value,narrow.value):tab.value==='sources'?sourcesView(s):tab.value==='operations'?h('div',[h('h1','运行维护'),trustedView(s),operationsSettings(s)]):h('div',[h('h1','设置'),settingsView(s),modelSettings(s)]),
           ]),
         h('footer',{class:'status-bar'},[h('span',connection()),button(s.dirty.value||s.groupDirty.value||s.modelDirty.value?'有未保存修改':'设置',()=>selectTab(s.groupDirty.value?'groups':'settings'))])])])
   ])});

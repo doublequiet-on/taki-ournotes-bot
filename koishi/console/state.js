@@ -5,6 +5,9 @@ export function sessionState() {
   const groupId=ref(''),groupDraft=ref(null),groupRevision=ref(null),groupDirty=ref(false),groupConflict=ref(false);
   const jobs=ref(null),jobDetail=ref(null),audit=ref(null),host=ref(null),noticeTarget=ref(null),controls=ref(null),pendingJobs=new Map(),pendingControls=new Map();
   const model=ref(null),modelDraft=ref(null),modelGuard=ref(null),modelKey=ref(''),modelDirty=ref(false),modelConflict=ref(false),groupUsage=ref(null),trusted=ref(null);
+  const library=ref(null),libraryKind=ref('knowledge'),libraryText=ref(''),libraryPreview=ref(null),libraryConfirmed=ref(false);
+  const modelRole=ref('primary');
+  const chat=ref(null),chatGroup=ref(null),memory=ref(null),memoryIds=ref('');
   const groupRecoveryBlocked=ref(false);
   const pendingProbes=new Map(),pendingTrusted=new Map();
   let generation=0,reauthNotice='',groupEpochBeforeDisconnect;
@@ -14,11 +17,11 @@ export function sessionState() {
     const hadDraft=dirty.value||groupDirty.value||modelDirty.value,hadModelKey=!!modelKey.value;
     if(keepEdits&&groupDirty.value&&groupEpochBeforeDisconnect===undefined)groupEpochBeforeDisconnect=guard.value?.gateway_epoch||null;
     generation++;logged.value=false;failed.clear();sequences.clear();stale.value=false;readMessage.value='';
-    for(const value of [overview,requests,detail,sources,metrics,groups,notices,jobs,jobDetail,audit,host,noticeTarget,controls,model,groupUsage,trusted])value.value=null;
+    for(const value of [overview,requests,detail,sources,metrics,groups,notices,jobs,jobDetail,audit,host,noticeTarget,controls,model,groupUsage,trusted,chat,chatGroup,memory,library,libraryPreview])value.value=null;
     if(!keepEdits||!dirty.value){draft.value=null;guard.value=null;dirty.value=false;conflict.value=false;}
     if(!keepEdits||!groupDirty.value){groupId.value='';groupDraft.value=null;groupRevision.value=null;groupDirty.value=false;groupConflict.value=false;groupRecoveryBlocked.value=false;groupEpochBeforeDisconnect=undefined;}
     if(!keepEdits||!modelDirty.value){modelDraft.value=null;modelGuard.value=null;modelDirty.value=false;modelConflict.value=false;}
-    modelKey.value='';
+    modelKey.value='';memoryIds.value='';libraryText.value='';libraryConfirmed.value=false;
     if(!keepEdits){pendingProbes.clear();pendingTrusted.clear();pendingJobs.clear();pendingControls.clear();reauthNotice='';}
     return {hadDraft,hadModelKey};
   }
@@ -38,7 +41,7 @@ export function sessionState() {
     return {schema:1,notice:modelKey.value?'设置草稿已保留；未提交的密钥已清除，请重新输入。':reauthNotice,
       global:dirty.value?{draft:copy(draft.value),guard:copy(guard.value),conflict:conflict.value}:null,
       group:groupDirty.value?{id:groupId.value,draft:copy(groupDraft.value),revision:groupRevision.value,epoch:groupEpochBeforeDisconnect===undefined?(guard.value?.gateway_epoch||null):groupEpochBeforeDisconnect}:null,
-      model:modelDirty.value?{draft:copy(modelDraft.value),guard:copy(modelGuard.value),conflict:modelConflict.value}:null,
+      model:modelDirty.value?{role:modelRole.value,draft:copy(modelDraft.value),guard:copy(modelGuard.value),conflict:modelConflict.value}:null,
       jobs:copy([...pendingJobs]),controls:copy([...pendingControls]),probes:copy([...pendingProbes]),trusted:copy([...pendingTrusted])};
   }
   function restoreEdits(snapshot) {
@@ -47,7 +50,7 @@ export function sessionState() {
     if(snapshot.global){draft.value=snapshot.global.draft;guard.value=snapshot.global.guard;dirty.value=true;conflict.value=!!snapshot.global.conflict;}
     if(snapshot.group){groupId.value=snapshot.group.id;groupDraft.value=snapshot.group.draft;groupRevision.value=snapshot.group.revision;groupDirty.value=true;
       groupEpochBeforeDisconnect=snapshot.group.epoch;groupRecoveryBlocked.value=true;}
-    if(snapshot.model){modelDraft.value=snapshot.model.draft;modelGuard.value=snapshot.model.guard;modelDirty.value=true;modelConflict.value=!!snapshot.model.conflict;}
+    if(snapshot.model){modelRole.value=snapshot.model.role==='fallback'?'fallback':'primary';modelDraft.value=snapshot.model.draft;modelGuard.value=snapshot.model.guard;modelDirty.value=true;modelConflict.value=!!snapshot.model.conflict;}
     for(const [map,entries] of [[pendingJobs,snapshot.jobs],[pendingControls,snapshot.controls],[pendingProbes,snapshot.probes],[pendingTrusted,snapshot.trusted]])
       if(Array.isArray(entries))for(const [key,value] of entries)map.set(key,value);
     if(reauthNotice)message.value='管理会话已过期，请重新登录。'+reauthNotice;
@@ -80,7 +83,7 @@ export function sessionState() {
         if(!groupDirty.value)selectGroup(groupId.value);
         else if(groupRevision.value!==value.policy?.revision)groupConflict.value=true;
       }
-      if(method==='model/settings')acceptModel(value);
+      if(['model/settings','model/fallback/settings'].includes(method))acceptModel(value);
     } catch (error) {
       if(token!==generation||seq!==sequences.get(target))return;
       if(unauthorized(error))return;
@@ -109,12 +112,13 @@ export function sessionState() {
   }
   function selectGroup(id) {
     if(groupDirty.value){if(id!==groupId.value)message.value='请先保存或放弃当前群草稿。';return;}
+    const changed=id!==groupId.value;
     groupId.value=id;groupDraft.value=structuredClone(toRaw(groups.value?.policy?.groups?.[id])||{label:'',queries:'inherit',notifications:'inherit',natural_query:'inherit'});
     groupRevision.value=groups.value?.policy?.revision;groupDirty.value=false;groupConflict.value=false;groupRecoveryBlocked.value=false;
-    noticeTarget.value=null;
+    noticeTarget.value=null;if(changed){chatGroup.value=null;memory.value=null;memoryIds.value='';}
     groupUsage.value=null;
     if(/^[A-Za-z0-9_-]{1,128}$/.test(id))void load(noticeTarget,'ops/notice-target',id);
-    if(/^[A-Za-z0-9_-]{1,128}$/.test(id))void load(groupUsage,'model/group',id);
+    if(/^[A-Za-z0-9_-]{1,128}$/.test(id)){void load(groupUsage,'model/group',id);void load(chatGroup,'chat/group/status',id);void load(memory,'chat/group/memory',id);}
   }
   async function saveGroup() {
     if(groupRecoveryBlocked.value){message.value='网关状态尚未确认或已变化，请核对群草稿后继续。';return;}
@@ -176,26 +180,32 @@ export function sessionState() {
     if(!modelDirty.value){modelDraft.value=structuredClone(toRaw(value.profile));modelGuard.value=value.guard;}
     else if(JSON.stringify(modelGuard.value)!==JSON.stringify(value.guard))modelConflict.value=true;
   }
+  function refreshModel(){return load(model,modelRole.value==='fallback'?'model/fallback/settings':'model/settings');}
+  function selectModelRole(role){
+    if(modelDirty.value){message.value='请先保存或放弃当前模型草稿，再切换主备配置。';return;}
+    modelRole.value=role;model.value=null;modelDraft.value=null;modelGuard.value=null;modelKey.value='';void refreshModel();
+  }
   async function saveModel(group=null,limits=null){
+    if(group&&modelRole.value!=='primary'){message.value='群额度需要在主模型配置中保存。';return;}
     const token=generation,profile=JSON.stringify(group?model.value?.profile:modelDraft.value),key=modelKey.value;
     if(group&&modelDirty.value){message.value='请先保存或放弃模型设置草稿。';return;}
     busy.value=true;
     try{
       let groups=structuredClone(toRaw(model.value?.groups)||{});
       if(group){if(limits===null)delete groups[group];else groups={...groups,[group]:limits};}
-      const result=await rpc('model/save',{operation_id:crypto.randomUUID().replaceAll('-',''),guard:group?model.value.guard:modelGuard.value,
+      const result=await rpc(modelRole.value==='fallback'?'model/fallback/save':'model/save',{operation_id:crypto.randomUUID().replaceAll('-',''),guard:group?model.value.guard:modelGuard.value,
         profile:JSON.parse(profile),groups,api_key:group?'':key,api_url:JSON.parse(profile).wire_profile==='openai-responses-v1'?'https://api.openai.com/v1/responses':model.value.endpoints[JSON.parse(profile).provider]});
       if(token!==generation)return;
       if(!group)modelDirty.value=JSON.stringify(modelDraft.value)!==profile;
       modelConflict.value=false;model.value=result;modelGuard.value=result.guard;acceptModel(result);message.value='AI 设置已按新版本保存。';
       if(group)await load(groupUsage,'model/group',group);
     }catch(error){if(token!==generation||unauthorized(error))return;modelConflict.value=true;
-      message.value='AI 设置未确认，请核对服务器值：'+String(error?.message||error);await load(model,'model/settings');
+      message.value='AI 设置未确认，请核对服务器值：'+String(error?.message||error);await refreshModel();
     }finally{modelKey.value='';busy.value=false;}
   }
   async function probeModel(){
     const token=generation,version=model.value?.profile?.config_version;
-    if(modelDirty.value||!version)return;
+    if(modelDirty.value||!version||modelRole.value!=='primary')return;
     if(!pendingProbes.has(version))pendingProbes.set(version,{operation_id:crypto.randomUUID().replaceAll('-',''),guard:model.value.guard,confirm:'billable_capability_probe'});
     busy.value=true;
     try{const value=await rpc('model/probe',pendingProbes.get(version));if(token!==generation)return;
@@ -217,7 +227,43 @@ export function sessionState() {
     }catch(error){if(token!==generation||unauthorized(error))return;message.value='控制器状态需要核对：'+String(error?.message||error);await load(trusted,'ops/trusted');}
     finally{busy.value=false;}
   }
-  return {model,modelDraft,modelGuard,modelKey,modelDirty,modelConflict,groupUsage,trusted,saveModel,probeModel,trustedRequest,
+  async function updateMemory(action){
+    if(!memory.value||busy.value||!guard.value?.gateway_epoch)return;
+    const id=groupId.value,token=generation;
+    const mutation={action,expected_revision:memory.value.revision};
+    if(action==='delete')mutation.message_ids=memoryIds.value.split(/\r?\n/).map(v=>v.trim()).filter(Boolean);
+    busy.value=true;
+    try{
+      await rpc('chat/memory/update',{group_id:id,epoch:guard.value.gateway_epoch,mutation});
+      if(token!==generation)return;
+      message.value='群记忆删除已确认，关联摘要及在途回答已失效。';
+      if(groupId.value===id)memoryIds.value='';
+    }catch(error){if(token!==generation||unauthorized(error))return;message.value='删除未确认或记忆版本已变化，请刷新核对后再操作；不会自动重试。';}
+    finally{busy.value=false;if(token===generation&&groupId.value===id)await load(memory,'chat/group/memory',id);}
+  }
+  async function refreshLibrary(offset=0){
+    const previous=JSON.stringify(library.value?.guard),kind=libraryKind.value;
+    await load(library,'library/status',{kind,offset});
+    if(kind===libraryKind.value&&offset>0&&previous&&previous!==JSON.stringify(library.value?.guard)){message.value='资料版本已变化，已回到第一页。';await load(library,'library/status',{kind,offset:0});}
+  }
+  function selectLibrary(kind){if(busy.value)return;libraryKind.value=kind;library.value=null;libraryPreview.value=null;libraryText.value='';libraryConfirmed.value=false;void refreshLibrary();}
+  async function libraryAction(action,extra={}){
+    if(busy.value||!guard.value?.gateway_epoch)return;
+    const token=generation,kind=libraryKind.value,text=libraryText.value;busy.value=true;
+    try{
+      let payload=extra;
+      if(action==='preview')payload={kind,content:libraryText.value};
+      if(action==='publish')payload={preview_id:libraryPreview.value?.preview_id,confirm_reviewed:libraryConfirmed.value};
+      if(action==='withdraw')payload={kind,id:extra.id,reason:extra.reason,guard:library.value?.guard,confirm_withdraw:true};
+      const result=await rpc('library/'+action,{epoch:guard.value.gateway_epoch,payload});
+      if(token!==generation||kind!==libraryKind.value)return;
+      if(['preview','compare'].includes(action)&&text!==libraryText.value){message.value='内容已变化，请重新生成预览。';return;}
+      if(['preview','compare'].includes(action)){libraryPreview.value=result;libraryConfirmed.value=false;message.value='差异预览已生成，请核对内容、来源及人工确认记录。';}
+      else{libraryPreview.value=null;libraryConfirmed.value=false;message.value='资料操作已确认，当前状态已刷新。';await refreshLibrary();}
+    }catch(error){if(token!==generation||unauthorized(error))return;libraryPreview.value=null;libraryConfirmed.value=false;message.value='资料操作未确认：'+String(error?.message||error)+'。请刷新核对后重新预览，不会自动重试。';}
+    finally{busy.value=false;}
+  }
+  return {library,libraryKind,libraryText,libraryPreview,libraryConfirmed,refreshLibrary,selectLibrary,libraryAction,modelRole,refreshModel,selectModelRole,chat,chatGroup,memory,memoryIds,updateMemory,model,modelDraft,modelGuard,modelKey,modelDirty,modelConflict,groupUsage,trusted,saveModel,probeModel,trustedRequest,
     jobs,jobDetail,audit,host,noticeTarget,controls,startControl:(action,ids)=>controlRequest(action,ids),restoreControl:id=>controlRequest('restore',[],id),startJob,exportDiagnostic,logged,busy,message,readMessage,stale,dirty,conflict,overview,requests,detail,sources,metrics,groups,notices,draft,guard,rpc,load,login,logout,save,
     groupId,groupDraft,groupRevision,groupDirty,groupConflict,groupRecoveryBlocked,selectGroup,saveGroup,suspend,captureEdits,restoreEdits,invalidate(){generation++;}};
 }

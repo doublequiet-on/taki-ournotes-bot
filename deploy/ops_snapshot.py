@@ -13,7 +13,7 @@ import sys
 import time
 from pathlib import Path
 
-UNITS = ('taki.service','taki-gateway.service','taki-updater.timer','taki-updater.service','taki-updater-recover.service')
+UNITS = ('taki.service','taki-gateway.service','taki-updater.timer','taki-updater.service','taki-updater-recover.service','taki-business-backup.timer','taki-restore-check.timer')
 OBJECTS = ('code_environment','business_data','console_settings','trusted_configuration','isolated_restore','offsite_copy')
 SHA = re.compile(r'[a-f0-9]{40}')
 
@@ -86,6 +86,56 @@ def coverage(manifests, backup_root, receipt=None):
     return list(rows.values())
 
 
+def database_inventory(root, identity, backup):
+    known=('moenotes-history-v1.sqlite3','haneoka-cutoff-history-v3.sqlite3','deliveries-v1.sqlite3',
+           'operations-v1.sqlite3','diagnostics-v1.sqlite3','knowledge-v1.sqlite3','usage-v1.sqlite3',
+           'model-admin-v1.sqlite3','chat-v1.sqlite3','tracker-total-rankings-v2.sqlite3')
+    try:
+        directory=root/'full-business-backups'/identity
+        if directory.is_symlink():return None
+        manifest=trusted_json(directory/'manifest.json',2097152)
+        if (manifest.get('owner')!='taki-full-backup-v2' or manifest.get('format')!=2
+            or manifest.get('id')!=identity or manifest.get('runtime_sha')!=backup['runtime_sha']):return None
+        files=manifest.get('files')
+        if not isinstance(files,list) or len(files)>2000:return None
+        databases=[r for r in files if isinstance(r,dict) and 'database' in r]
+        if len(databases)!=backup['databases']:return None
+        names={Path(r['path']).name for r in databases if isinstance(r.get('path'),str)}
+        return [{'name':name,'included':name in names} for name in known]
+    except (OSError,ValueError,TypeError):return None
+
+
+def business_recovery(root=Path('/var/lib/taki-ops'), now=None):
+    """Project receipts from the separately installed full-backup/2 procedure."""
+    now=time.time() if now is None else now
+    result={'availability':'unavailable','reason_code':'full_backup_receipt_missing','backup':None,'restore':None}
+    try:
+        backup=trusted_json(root/'backup-latest.json')
+        identity=backup.get('id');stamp=backup.get('created_epoch')
+        if (backup.get('format')!=2 or backup.get('status') not in ('success','already_backed_up_today')
+            or not isinstance(identity,str) or not re.fullmatch(r'b[0-9]{8}T[0-9]{6}Z-[a-f0-9]{8}',identity)
+            or type(stamp) not in (int,float) or not 0<stamp<=now+300
+            or type(backup.get('databases')) is not int or not 0<=backup['databases']<=100
+            or commit(backup.get('runtime_sha')) is None):raise ValueError('full_backup_receipt_invalid')
+        result['backup']={k:backup[k] for k in ('id','created_epoch','runtime_sha','databases')}
+        result['backup']['stale']=now-stamp>36*3600
+        result['backup']['inventory']=database_inventory(root,identity,backup)
+        result.update(availability='partial',reason_code='restore_receipt_missing')
+        restore=trusted_json(root/'restore-latest.json')
+        checked=restore.get('checked_epoch')
+        valid=(restore.get('format')==2 and restore.get('status')=='success'
+            and restore.get('backup_id')==identity and restore.get('runtime_sha')==backup['runtime_sha']
+            and restore.get('databases')==backup['databases'] and restore.get('sqlite_integrity_check')=='ok'
+            and restore.get('aggregate_matches') is True and restore.get('production_data_modified') is False
+            and type(checked) in (int,float) and stamp<=checked<=now+300)
+        if not valid:raise ValueError('restore_receipt_mismatch')
+        result['restore']={'backup_id':identity,'checked_epoch':checked,'stale':now-checked>9*86400,'verified':True}
+        result.update(availability='available',reason_code='trusted_procedure_receipts')
+    except (OSError,ValueError,TypeError):
+        if result['backup'] is not None:result['reason_code']='restore_receipt_missing_or_invalid'
+    return result
+
+
 def directory_size(root, deadline):
     total,complete=0,True
     pending=[root]
@@ -149,6 +199,7 @@ def collect(controller, base, state_dir, output_dir):
     return {'schema':'taki-host-ops-v1','observed_at':now,'controller':project_controller(controller),
             'services':services,'processes':processes,
             'disk':disks,
+            'business_recovery':business_recovery(now=now),
             'sizes':sizes,'backup_coverage':coverage(manifests,backup_root,receipt)}
 
 

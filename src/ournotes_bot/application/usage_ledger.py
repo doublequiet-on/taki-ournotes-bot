@@ -291,6 +291,31 @@ class UsageLedger:
                 'weighted_tokens':str(sum((Fraction(r['charged']) for r in rows),Fraction())),
                 'reference_cost_micro':{k:str(v) for k,v in currencies.items()}}
 
+    def costs(self):
+        """Exact currency amounts; holds are never presented as settled spend."""
+        date=day(self.clock())
+        groups={}
+        for row in self.db.execute("SELECT provider,model,state,price,cost,reserved,billing_incomplete FROM attempts WHERE day=?",(date,)):
+            price=Price(**json.loads(row['price']))
+            key=(row['provider'],row['model'],price.currency)
+            item=groups.setdefault(key,dict(provider=key[0],model=key[1],currency=key[2],cost=Fraction(),pending=Fraction(),unknown=Fraction(),attempts=0,incomplete=0))
+            item['attempts']+=1
+            if row['state']=='released':continue
+            item['cost']+=Fraction(row['cost'])
+            hold=Fraction(row['reserved'])*price.reference_rate/1_000_000
+            item['pending' if row['state'] in ('reserved','started') else 'unknown']+=hold
+            item['incomplete']+=row['billing_incomplete']
+        items=[{k:str(v) if isinstance(v,Fraction) else v for k,v in item.items()} for item in groups.values()]
+        try:
+            spent=self.primary_spent(date)
+            remaining=str(max(Fraction(),self.primary_daily_micro-spent))
+            error=None
+        except ModelError as exc:
+            spent=None;remaining=None;error=str(exc)
+        return dict(day=date,timezone='Asia/Shanghai',limit_micro=str(self.primary_daily_micro),
+                    primary_spent_and_reserved_micro=str(spent) if spent is not None else None,
+                    remaining_micro=remaining,error=error,items=items)
+
     def observe(self, attempt, kind, duration_ms):
         require(isinstance(kind,str) and len(kind)<=64 and kind.replace('_','').isalnum(),'usage_observation')
         require(type(duration_ms) is int and 0<=duration_ms<=3600000,'usage_observation')

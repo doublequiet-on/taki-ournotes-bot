@@ -102,7 +102,8 @@ class ModelProfile:
         require(self.wire_profile == self.provider+'-chat-v1' or
                 (self.provider=='openai' and self.wire_profile=='openai-responses-v1'), 'wire_profile_unsupported')
         require(self.reasoning_effort is None or (self.wire_profile=='openai-responses-v1'
-                and self.reasoning_effort in ('none','low','medium','high','xhigh','max')), 'unsupported_parameter')
+                and self.reasoning_effort in ('none','minimal','low','medium','high','xhigh','max'))
+                or (self.provider=='deepseek' and self.reasoning_effort in ('none','low','high','max')), 'unsupported_parameter')
         require(isinstance(self.model,str) and re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_./:-]{0,119}', self.model), 'model_configuration')
         require(isinstance(self.config_version,str) and re.fullmatch(r'[A-Za-z0-9_.:-]{1,80}',self.config_version), 'model_configuration')
         require(isinstance(self.capability_evidence,str) and re.fullmatch(r'[A-Za-z0-9_.:/-]{1,160}',self.capability_evidence), 'capability_unverified')
@@ -138,6 +139,7 @@ class AttemptResult:
     citations: tuple = ()
     provider_actions: tuple = ()
     native_calls: int | None = 0
+    reasoning_content: str | None = field(default=None,repr=False)
 
 
 @dataclass(frozen=True)

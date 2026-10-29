@@ -451,7 +451,7 @@ class ChatAgent:
                         if item.get('type')!='function_call' or item.get('call_id') not in seen:
                             fresh.append(item)
                     items=tuple(fresh)
-                messages.append({'role':'assistant','content':None,'response_items':items,
+                messages.append({'role':'assistant','content':None,'response_items':items,'reasoning_content':result.reasoning_content,
                     'tool_calls':[{'id':call.id,'type':'function','function':{'name':call.name,'arguments':call.arguments}} for call in calls]})
                 for call in calls:
                     runtime.check(work,deadline,leases)
