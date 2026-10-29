@@ -54,7 +54,7 @@ def build_backend(args, settings):
         SourceOperations(backend).register()
         RuntimeOperations(backend).register()
         if settings.update_notices:
-            notice_ai = AIClient(settings.ai_base_url, settings.ai_api_key, settings.ai_model) if settings.ai_api_key else None
+            notice_ai = AIClient(settings.ai_base_url, settings.ai_api_key, settings.ai_model, settings.ai_reasoning_effort, settings.ai_openai_proxy) if settings.ai_api_key else None
             reports = NoticeReports(CONFIG_ROOT, settings.cache_file.with_name('update-notices.sqlite3'), args.app_id,
                                     source=Path(os.getenv('OURNOTES_RELEASE_SOURCE', str(RELEASE_SOURCE))), ai_client=notice_ai)
             backend.notices = NoticeGateway(backend, reports)

@@ -184,7 +184,7 @@ export function sessionState() {
       let groups=structuredClone(toRaw(model.value?.groups)||{});
       if(group){if(limits===null)delete groups[group];else groups={...groups,[group]:limits};}
       const result=await rpc('model/save',{operation_id:crypto.randomUUID().replaceAll('-',''),guard:group?model.value.guard:modelGuard.value,
-        profile:JSON.parse(profile),groups,api_key:group?'':key,api_url:model.value.endpoints[JSON.parse(profile).provider]});
+        profile:JSON.parse(profile),groups,api_key:group?'':key,api_url:JSON.parse(profile).wire_profile==='openai-responses-v1'?'https://api.openai.com/v1/responses':model.value.endpoints[JSON.parse(profile).provider]});
       if(token!==generation)return;
       if(!group)modelDirty.value=JSON.stringify(modelDraft.value)!==profile;
       modelConflict.value=false;model.value=result;modelGuard.value=result.guard;acceptModel(result);message.value='AI 设置已按新版本保存。';

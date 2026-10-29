@@ -1,4 +1,4 @@
-# L3: Bounded cancellable native Chat Completions and registered price transport.
+# L3: Bounded cancellable Chat Completions / OpenAI Responses and registered prices.
 # Effects: HTTPS to fixed provider origins only; no retries, redirects or logging bodies.
 from __future__ import annotations
 
@@ -18,6 +18,47 @@ from .json_validation import decode_json
 ENDPOINTS = {'deepseek': 'https://api.deepseek.com/chat/completions',
              'openai': 'https://api.openai.com/v1/chat/completions',
              'openrouter': 'https://openrouter.ai/api/v1/chat/completions'}
+
+
+def endpoint(profile):
+    return ('https://api.openai.com/v1/responses' if profile.wire_profile=='openai-responses-v1'
+            else ENDPOINTS[profile.provider])
+
+
+def responses_payload(payload):
+    """Normalize only the registered text/function Responses surface for validation."""
+    raw=payload.get('usage')
+    usage=({'prompt_tokens':raw.get('input_tokens'),'completion_tokens':raw.get('output_tokens'),
+            'total_tokens':raw.get('total_tokens'),'prompt_tokens_details':raw.get('input_tokens_details'),
+            'completion_tokens_details':raw.get('output_tokens_details')} if isinstance(raw,dict) else None)
+    normalized={'usage':usage}
+    if payload.get('error'):
+        normalized['error']=True
+        return normalized
+    if payload.get('status')!='completed': return normalized
+    output=payload.get('output')
+    if not isinstance(output,list): return normalized
+    texts=[];calls=[];refusal=False
+    for item in output:
+        if not isinstance(item,dict): return normalized
+        if item.get('type')=='reasoning': continue
+        if item.get('type')=='function_call':
+            if item.get('status')!='completed': return normalized
+            calls.append({'type':'function','id':item.get('call_id'),
+                          'function':{'name':item.get('name'),'arguments':item.get('arguments')}})
+        elif item.get('type')=='message':
+            if item.get('role')!='assistant' or item.get('status')!='completed': return normalized
+            content=item.get('content')
+            if not isinstance(content,list): return normalized
+            for part in content:
+                if not isinstance(part,dict): return normalized
+                if part.get('type')=='refusal': refusal=True
+                elif part.get('type')=='output_text' and isinstance(part.get('text'),str):texts.append(part['text'])
+                else:return normalized
+        else:return normalized
+    normalized['choices']=[{'finish_reason':'tool_calls' if calls else 'stop',
+        'message':{'role':'assistant','content':''.join(texts) or None,'tool_calls':calls,'refusal':refusal}}]
+    return normalized
 
 
 def bounded_utf8(value,limit):
@@ -55,6 +96,10 @@ def decode_attempt(raw, profile, *, http_status=200):
         return AttemptResult('error',error_code='model_protocol_error')
     if not isinstance(payload,dict):
         return AttemptResult('error',error_code='model_protocol_error')
+    response_items=()
+    if profile.wire_profile=='openai-responses-v1':
+        response_items=tuple(payload.get('output',[])) if isinstance(payload.get('output'),list) else ()
+        payload=responses_payload(payload)
     usage = usage_from(payload.get('usage'),profile)  # Always before content/tool validation.
     def error(code='model_protocol_error'):
         return AttemptResult('error',usage,error_code=code)
@@ -86,7 +131,7 @@ def decode_attempt(raw, profile, *, http_status=200):
                 or not isinstance(function.get('name'),str) or not re.fullmatch(r'[A-Za-z0-9_]{1,64}',function['name'])
                 or not bounded_utf8(function.get('arguments'),12000)):
             return error()
-        parsed.append(ToolCall(call['id'],function['name'],function['arguments']))
+        parsed.append(ToolCall(call['id'],function['name'],function['arguments'],response_items))
     text=message.get('content')
     if text is not None and (not bounded_utf8(text,16000) or len(text)>4000): return error()
     if not parsed and not (text and text.strip()): return error()
@@ -94,7 +139,29 @@ def decode_attempt(raw, profile, *, http_status=200):
 
 
 def request_body(profile, messages, tools):
-    body={'model':profile.model,'messages':messages,'stream':False,
+    if profile.wire_profile=='openai-responses-v1':
+        inputs=[]
+        for message in messages:
+            role=message['role']
+            if role=='assistant' and message.get('response_items'):
+                inputs.extend(message['response_items'])
+                continue
+            if role=='tool':
+                inputs.append({'type':'function_call_output','call_id':message['tool_call_id'],'output':message['content']})
+                continue
+            if message.get('content') is not None:
+                inputs.append({'role':'developer' if role=='system' else role,'content':message['content']})
+            for call in message.get('tool_calls',[]):
+                inputs.append({'type':'function_call','call_id':call['id'],**call['function']})
+        body={'model':profile.model,'input':inputs,'store':False,'stream':False,
+              'max_output_tokens':profile.max_output_tokens,'include':['reasoning.encrypted_content']}
+        if profile.reasoning_effort is not None:body['reasoning']={'effort':profile.reasoning_effort}
+        if tools:
+            body.update(tools=[{'type':'function',**tool['function'],'strict':False} for tool in tools],
+                        tool_choice='auto',parallel_tool_calls=False)
+        return body
+    body={'model':profile.model,'messages':[{k:v for k,v in message.items() if k!='response_items'}
+                                          for message in messages],'stream':False,
           'max_completion_tokens' if profile.provider=='openai' else 'max_tokens':profile.max_output_tokens}
     if tools:
         body['tools']=tools
@@ -111,11 +178,15 @@ def request_body(profile, messages, tools):
 
 
 class NativeClient:
+    def __init__(self, *, openai_proxy=None):
+        self.openai_proxy=openai_proxy
+
     async def request(self, profile, body, *, timeout):
         timeout=aiohttp.ClientTimeout(total=max(.001,timeout),connect=min(5,max(.001,timeout)))
         try:
             async with aiohttp.ClientSession(timeout=timeout,trust_env=False) as session:
-                async with session.post(ENDPOINTS[profile.provider],json=body,allow_redirects=False,
+                async with session.post(endpoint(profile),json=body,allow_redirects=False,
+                        proxy=self.openai_proxy if profile.provider=='openai' else None,
                         headers={'Authorization':'Bearer '+profile.api_key}) as response:
                     chunks=[];size=0
                     async for chunk in response.content.iter_chunked(8192):

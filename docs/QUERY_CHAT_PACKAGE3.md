@@ -96,7 +96,7 @@ v3（`taki-model-config/3`）在 v2 的 `secret`、`groups`、`bindings` 之外�
 
 撤销准入须原子写入新配置版本；此前已受理请求仍按其配置快照处理，如需立即停止模型调用须同时撤销网关许可。回退到只支持 v1／v2 的代码前恢复对应受保护配置；保留用量账和身份核验／批准／撤销记录，不清空额度。旧代码拒绝 v3 配置，不会自动放开权限。
 
-目前 wire profile 为 `deepseek-chat-v1`、`openai-chat-v1`、`openrouter-chat-v1`，端点分别固定在官方 HTTPS 域名；不接受玩家或配置中的自定义 URL，也不跟随重定向。仅接文本 Chat Completions；DeepSeek 请求显式设置 `thinking: {"type":"disabled"}`，响应若仍含非空 reasoning_content，继续按不支持的协议拒绝并保留用量。不支持的 Responses-only／DeepSeek thinking 工具链须另实现适配，不能靠改模型名声称支持。没有 profile／密钥／能力证明／价格时不启动 AI。
+目前 wire profile 为 `deepseek-chat-v1`、`openai-chat-v1`、`openai-responses-v1`、`openrouter-chat-v1`，端点分别固定在官方 HTTPS 域名；不接受玩家或配置中的自定义 URL，也不跟随重定向。文本 Chat Completions 与 OpenAI Responses 分别适配；DeepSeek 请求显式设置 `thinking: {"type":"disabled"}`，响应若仍含非空 reasoning_content，继续按不支持的协议拒绝并保留用量。`openai-responses-v1` 固定访问 `https://api.openai.com/v1/responses`，支持显式 `reasoning_effort`（例如 `high`）、单个函数工具及加密推理项的进程内往返；缓存／推理 token 纳入原用量账本。输出预算包含推理 token，最大 8192，展示文本上限保留。DeepSeek thinking 工具链仍不支持，不能靠改模型名声称支持。没有 profile／密钥／能力证明／价格时不启动 AI。
 
 知识生成提示词区分事实资料日期与整理／访问／批准日期，按证据声明的共通机制范围回答，同时保留实体、材料数和日期条件。省略号及示例凭据不视为真实泄露；代办账号操作请求使用固定拒绝答复，不追加凭据状态判断或操作建议。这些生成约束仍需真实模型逐题验收，不能代替既有证据、权限和响应校验。
 

@@ -95,16 +95,21 @@ class ModelProfile:
     user_rate_requests: int = 3
     group_rate_requests: int = 30
     rate_window_seconds: int = 10
+    reasoning_effort: str | None = None
 
     def __post_init__(self):
         require(self.provider in ('deepseek', 'openai', 'openrouter'), 'provider_unsupported')
-        require(self.wire_profile == self.provider+'-chat-v1', 'wire_profile_unsupported')
+        require(self.wire_profile == self.provider+'-chat-v1' or
+                (self.provider=='openai' and self.wire_profile=='openai-responses-v1'), 'wire_profile_unsupported')
+        require(self.reasoning_effort is None or (self.wire_profile=='openai-responses-v1'
+                and self.reasoning_effort in ('none','low','medium','high','xhigh','max')), 'unsupported_parameter')
         require(isinstance(self.model,str) and re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_./:-]{0,119}', self.model), 'model_configuration')
         require(isinstance(self.config_version,str) and re.fullmatch(r'[A-Za-z0-9_.:-]{1,80}',self.config_version), 'model_configuration')
         require(isinstance(self.capability_evidence,str) and re.fullmatch(r'[A-Za-z0-9_.:/-]{1,160}',self.capability_evidence), 'capability_unverified')
         require(isinstance(self.api_key,str) and 1 <= len(self.api_key) <= 512 and not any(c.isspace() for c in self.api_key), 'model_not_configured')
         require(type(self.max_input_tokens) is int and 8192 <= self.max_input_tokens <= 65536, 'model_configuration')
-        require(type(self.max_output_tokens) is int and 64 <= self.max_output_tokens <= 1536, 'model_configuration')
+        output_limit=8192 if self.wire_profile=='openai-responses-v1' else 1536
+        require(type(self.max_output_tokens) is int and 64 <= self.max_output_tokens <= output_limit, 'model_configuration')
         require(all(type(v) is int and 0 <= v <= 10**12 for v in (self.user_daily_limit,self.group_daily_limit)), 'model_configuration')
         require(all(type(v) is bool for v in (self.parallel_control,self.cache_usage,self.reasoning_usage)), 'model_configuration')
         require(not self.parallel_control or self.provider in ('openai','openrouter'), 'unsupported_parameter')
@@ -118,6 +123,7 @@ class ToolCall:
     id: str
     name: str
     arguments: str
+    response_items: tuple = ()
 
 
 @dataclass(frozen=True)

@@ -11,7 +11,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from typing import Any
-from urllib.request import Request, urlopen
+from urllib.request import Request, urlopen, ProxyHandler, build_opener
 
 
 class AIClientError(Exception):
@@ -29,16 +29,19 @@ class ModelResponse:
 
 
 class AIClient:
-    def __init__(self, base_url: str, api_key: str, model: str) -> None:
+    def __init__(self, base_url: str, api_key: str, model: str, reasoning_effort: str | None = None,
+                 openai_proxy: str | None = None) -> None:
         self.base_url = base_url.rstrip("/")
         self.api_key = api_key
         self.model = model
+        self.reasoning_effort = reasoning_effort
+        self.openai_proxy = openai_proxy
 
     def request(self, system_prompt: str, query: str, *, timeout: float = 12.0,
                 max_tokens: int = 180) -> ModelResponse:
         if not self.base_url.startswith("https://"):
             raise AIClientError("AI API must use HTTPS")
-        body = json.dumps({
+        payload = {
             "model": self.model,
             "temperature": 0,
             "max_tokens": max_tokens,
@@ -47,13 +50,24 @@ class AIClient:
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": query},
             ],
-        }).encode("utf-8")
+        }
+        if self.base_url == 'https://api.openai.com/v1' and self.reasoning_effort is not None:
+            if self.reasoning_effort not in ('none','low','medium','high','xhigh','max'):
+                raise AIClientError('Invalid OpenAI reasoning effort')
+            payload.pop('temperature')
+            payload['max_completion_tokens'] = max_tokens + 4096
+            payload.pop('max_tokens')
+            payload['reasoning_effort'] = self.reasoning_effort
+            payload['store'] = False
+        body = json.dumps(payload).encode('utf-8')
         request = Request(self.base_url + "/chat/completions", data=body, headers={
             "Authorization": "Bearer " + self.api_key,
             "Content-Type": "application/json",
         })
         try:
-            with urlopen(request, timeout=max(0.1, timeout)) as response:
+            open_request=(build_opener(ProxyHandler({'https':self.openai_proxy})).open
+                          if self.base_url=='https://api.openai.com/v1' and self.openai_proxy else urlopen)
+            with open_request(request, timeout=max(0.1, timeout)) as response:
                 raw = response.read(20_001)
         except OSError as exc:
             raise AIClientError("AI provider request failed") from exc

@@ -71,7 +71,8 @@ class ModelAdmin:
                     'reference_rate':1000000,'pricing_version':'','fetched_at':0,'estimated':True,'source':'registered-default'}}
         return {'code':code,'editable':self.config.path is not None and fingerprint is not None,
                 'guard':self.guard(fingerprint),'profile':profile,'groups':groups,'key_configured':key,
-                'endpoints':dict(ENDPOINTS),'api_url':ENDPOINTS[profile['provider']],
+                'endpoints':dict(ENDPOINTS),'api_url':('https://api.openai.com/v1/responses'
+                    if profile.get('wire_profile')=='openai-responses-v1' else ENDPOINTS[profile['provider']]),
                 'capability':self.latest_probe(profile['config_version']),
                 'audit':self.audit(),'timezone':'Asia/Shanghai','price_status':self.config.status()}
 
@@ -117,7 +118,9 @@ class ModelAdmin:
             old,fingerprint=self.config.read()
             require(isinstance(value['profile'],dict),'model_configuration')
             profile=dict(value['profile'])
-            require(value['api_url']==ENDPOINTS.get(profile.get('provider')),'model_endpoint_unsupported')
+            expected_url=('https://api.openai.com/v1/responses' if profile.get('provider')=='openai'
+                          and profile.get('wire_profile')=='openai-responses-v1' else ENDPOINTS.get(profile.get('provider')))
+            require(value['api_url']==expected_url,'model_endpoint_unsupported')
             require(isinstance(value['api_key'],str),'model_configuration')
             secret=value['api_key'] or (old.get('secret',self.config.api_key) if old else self.config.api_key)
             profile['config_version']='console-'+operation
@@ -163,7 +166,8 @@ class ModelAdmin:
 
     async def run_probe(self, operation, snapshot):
         usage=self.runtime.usage;attempt=operation;started=False;reserved=False;began=time.monotonic()
-        profile=replace(snapshot.profile,max_output_tokens=128)
+        profile=replace(snapshot.profile,max_output_tokens=(2048
+            if snapshot.profile.wire_profile=='openai-responses-v1' else 128))
         try:
             # A synthetic, non-business tool. The response is checked then discarded.
             tools=[{'type':'function','function':{'name':'capability_echo','description':'Return the supplied test marker.',

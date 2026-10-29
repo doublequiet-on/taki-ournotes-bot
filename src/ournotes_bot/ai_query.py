@@ -46,7 +46,7 @@ class AIQueryParser:
         self._metrics = QueryMetrics(
             settings.ai_metrics_file or settings.cache_file.with_name("ai-metrics.json")
         )
-        self._client = AIClient(settings.ai_base_url, settings.ai_api_key, settings.ai_model)
+        self._client = AIClient(settings.ai_base_url, settings.ai_api_key, settings.ai_model, settings.ai_reasoning_effort, settings.ai_openai_proxy)
         self._agent = QueryAgent(
             ai_enabled=bool(settings.ai_api_key),
             daily_limit=settings.ai_daily_limit,
