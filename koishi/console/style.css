@@ -139,3 +139,8 @@
 .taki-console .chat-management button,.taki-console .model-settings button{background:var(--tc-raised);color:var(--tc-primary);border-color:var(--tc-line)}
 
 .taki-console .library-management button{background:var(--tc-raised);color:var(--tc-primary);border-color:var(--tc-line)}.taki-console .library-diff{max-height:480px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;background:var(--tc-bg);padding:16px;border-radius:12px;color:var(--tc-text)}
+
+.taki-console .model-settings>label{display:flex;align-items:center;flex-wrap:wrap;gap:10px;margin:16px 0}
+.taki-console .model-settings>label select{min-width:min(240px,100%);max-width:100%}
+.taki-console .budget-editor label{display:block;margin:12px 0}
+.taki-console .budget-editor input{display:block;width:min(100%,260px);margin-top:8px}

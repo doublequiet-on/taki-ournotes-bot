@@ -1,12 +1,13 @@
 import { ref, send, toRaw } from './runtime.js';
 export function sessionState() {
+  const modelFailure=error=>({model_config_permissions:'配置目录不可安全写入，请修复后端目录权限和可写路径。',model_config_conflict:'服务器配置已变化，请核对最新值后再保存。',primary_budget_configuration:'请输入非负美元金额，最多六位小数。',model_admin_busy:'另一个模型管理操作正在执行，请稍后重试。'})[String(error?.message||error)]||String(error?.message||error);
   const logged=ref(false), busy=ref(false), message=ref(''), readMessage=ref(''), stale=ref(false), dirty=ref(false), conflict=ref(false);
   const overview=ref(null), requests=ref(null), detail=ref(null), sources=ref(null), metrics=ref(null), groups=ref(null), notices=ref(null), draft=ref(null), guard=ref(null);
   const groupId=ref(''),groupDraft=ref(null),groupRevision=ref(null),groupDirty=ref(false),groupConflict=ref(false);
   const jobs=ref(null),jobDetail=ref(null),audit=ref(null),host=ref(null),noticeTarget=ref(null),controls=ref(null),pendingJobs=new Map(),pendingControls=new Map();
   const model=ref(null),modelDraft=ref(null),modelGuard=ref(null),modelKey=ref(''),modelDirty=ref(false),modelConflict=ref(false),groupUsage=ref(null),trusted=ref(null);
   const library=ref(null),libraryKind=ref('knowledge'),libraryText=ref(''),libraryPreview=ref(null),libraryConfirmed=ref(false);
-  const modelRole=ref('primary');
+  const modelRole=ref('primary'),budgetEdit=ref(null);
   const chat=ref(null),chatGroup=ref(null),memory=ref(null),memoryIds=ref('');
   const groupRecoveryBlocked=ref(false);
   const pendingProbes=new Map(),pendingTrusted=new Map();
@@ -14,12 +15,13 @@ export function sessionState() {
   const sequences=new Map();
   const failed=new Set();
   function clearProtected(keepEdits=false) {
-    const hadDraft=dirty.value||groupDirty.value||modelDirty.value,hadModelKey=!!modelKey.value;
+    const hadDraft=dirty.value||groupDirty.value||modelDirty.value||budgetEdit.value?.dirty,hadModelKey=!!modelKey.value;
     if(keepEdits&&groupDirty.value&&groupEpochBeforeDisconnect===undefined)groupEpochBeforeDisconnect=guard.value?.gateway_epoch||null;
     generation++;logged.value=false;failed.clear();sequences.clear();stale.value=false;readMessage.value='';
     for(const value of [overview,requests,detail,sources,metrics,groups,notices,jobs,jobDetail,audit,host,noticeTarget,controls,model,groupUsage,trusted,chat,chatGroup,memory,library,libraryPreview])value.value=null;
     if(!keepEdits||!dirty.value){draft.value=null;guard.value=null;dirty.value=false;conflict.value=false;}
     if(!keepEdits||!groupDirty.value){groupId.value='';groupDraft.value=null;groupRevision.value=null;groupDirty.value=false;groupConflict.value=false;groupRecoveryBlocked.value=false;groupEpochBeforeDisconnect=undefined;}
+    if(!keepEdits)budgetEdit.value=null;
     if(!keepEdits||!modelDirty.value){modelDraft.value=null;modelGuard.value=null;modelDirty.value=false;modelConflict.value=false;}
     modelKey.value='';memoryIds.value='';libraryText.value='';libraryConfirmed.value=false;
     if(!keepEdits){pendingProbes.clear();pendingTrusted.clear();pendingJobs.clear();pendingControls.clear();reauthNotice='';}
@@ -39,6 +41,7 @@ export function sessionState() {
     // RPC payloads are JSON values; serialization also unwraps nested Vue proxies.
     const copy=value=>value===undefined?null:JSON.parse(JSON.stringify(value));
     return {schema:1,notice:modelKey.value?'设置草稿已保留；未提交的密钥已清除，请重新输入。':reauthNotice,
+      budget:budgetEdit.value?.dirty?copy(budgetEdit.value):null,
       global:dirty.value?{draft:copy(draft.value),guard:copy(guard.value),conflict:conflict.value}:null,
       group:groupDirty.value?{id:groupId.value,draft:copy(groupDraft.value),revision:groupRevision.value,epoch:groupEpochBeforeDisconnect===undefined?(guard.value?.gateway_epoch||null):groupEpochBeforeDisconnect}:null,
       model:modelDirty.value?{role:modelRole.value,draft:copy(modelDraft.value),guard:copy(modelGuard.value),conflict:modelConflict.value}:null,
@@ -47,6 +50,7 @@ export function sessionState() {
   function restoreEdits(snapshot) {
     if(!snapshot||snapshot.schema!==1)return;
     reauthNotice=snapshot.notice||'';
+    if(snapshot.budget)budgetEdit.value=snapshot.budget;
     if(snapshot.global){draft.value=snapshot.global.draft;guard.value=snapshot.global.guard;dirty.value=true;conflict.value=!!snapshot.global.conflict;}
     if(snapshot.group){groupId.value=snapshot.group.id;groupDraft.value=snapshot.group.draft;groupRevision.value=snapshot.group.revision;groupDirty.value=true;
       groupEpochBeforeDisconnect=snapshot.group.epoch;groupRecoveryBlocked.value=true;}
@@ -176,6 +180,7 @@ export function sessionState() {
     }finally{busy.value=false;}
   }
   function acceptModel(value){
+    if(value.primary_budget&&!budgetEdit.value?.dirty)budgetEdit.value={daily:value.primary_budget.daily_usd,guard:value.primary_budget.guard,dirty:false};
     if(['succeeded','failed'].includes(value.capability?.state))pendingProbes.delete(value.profile?.config_version);
     if(!modelDirty.value){modelDraft.value=structuredClone(toRaw(value.profile));modelGuard.value=value.guard;}
     else if(JSON.stringify(modelGuard.value)!==JSON.stringify(value.guard))modelConflict.value=true;
@@ -184,6 +189,13 @@ export function sessionState() {
   function selectModelRole(role){
     if(modelDirty.value){message.value='请先保存或放弃当前模型草稿，再切换主备配置。';return;}
     modelRole.value=role;model.value=null;modelDraft.value=null;modelGuard.value=null;modelKey.value='';void refreshModel();
+  }
+  async function saveBudget(){
+    if(!/^\d{1,6}(?:\.\d{1,6})?$/.test(budgetEdit.value?.daily||'')){message.value='请输入非负美元金额，最多六位小数。';return;}
+    const token=generation,snapshot=JSON.stringify(budgetEdit.value);busy.value=true;
+    try{const result=await rpc('model/budget/save',{operation_id:crypto.randomUUID().replaceAll('-',''),guard:JSON.parse(snapshot).guard,daily_usd:JSON.parse(snapshot).daily});if(token!==generation)return;if(JSON.stringify(budgetEdit.value)===snapshot)budgetEdit.value.dirty=false;budgetEdit.value.guard=result.primary_budget.guard;message.value='每日主模型预算已保存，重启后仍有效。';await Promise.all([refreshModel(),load(overview,'overview')]);}
+    catch(error){if(token!==generation||unauthorized(error))return;message.value='预算未保存：'+modelFailure(error);}
+    finally{busy.value=false;}
   }
   async function saveModel(group=null,limits=null){
     if(group&&modelRole.value!=='primary'){message.value='群额度需要在主模型配置中保存。';return;}
@@ -200,7 +212,7 @@ export function sessionState() {
       modelConflict.value=false;model.value=result;modelGuard.value=result.guard;acceptModel(result);message.value='AI 设置已按新版本保存。';
       if(group)await load(groupUsage,'model/group',group);
     }catch(error){if(token!==generation||unauthorized(error))return;modelConflict.value=true;
-      message.value='AI 设置未确认，请核对服务器值：'+String(error?.message||error);await refreshModel();
+      message.value='AI 设置未确认，请核对服务器值：'+modelFailure(error);await refreshModel();
     }finally{modelKey.value='';busy.value=false;}
   }
   async function probeModel(){
@@ -263,7 +275,7 @@ export function sessionState() {
     }catch(error){if(token!==generation||unauthorized(error))return;libraryPreview.value=null;libraryConfirmed.value=false;message.value='资料操作未确认：'+String(error?.message||error)+'。请刷新核对后重新预览，不会自动重试。';}
     finally{busy.value=false;}
   }
-  return {library,libraryKind,libraryText,libraryPreview,libraryConfirmed,refreshLibrary,selectLibrary,libraryAction,modelRole,refreshModel,selectModelRole,chat,chatGroup,memory,memoryIds,updateMemory,model,modelDraft,modelGuard,modelKey,modelDirty,modelConflict,groupUsage,trusted,saveModel,probeModel,trustedRequest,
+  return {library,libraryKind,libraryText,libraryPreview,libraryConfirmed,refreshLibrary,selectLibrary,libraryAction,budgetEdit,saveBudget,modelRole,refreshModel,selectModelRole,chat,chatGroup,memory,memoryIds,updateMemory,model,modelDraft,modelGuard,modelKey,modelDirty,modelConflict,groupUsage,trusted,saveModel,probeModel,trustedRequest,
     jobs,jobDetail,audit,host,noticeTarget,controls,startControl:(action,ids)=>controlRequest(action,ids),restoreControl:id=>controlRequest('restore',[],id),startJob,exportDiagnostic,logged,busy,message,readMessage,stale,dirty,conflict,overview,requests,detail,sources,metrics,groups,notices,draft,guard,rpc,load,login,logout,save,
     groupId,groupDraft,groupRevision,groupDirty,groupConflict,groupRecoveryBlocked,selectGroup,saveGroup,suspend,captureEdits,restoreEdits,invalidate(){generation++;}};
 }

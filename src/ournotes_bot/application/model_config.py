@@ -123,6 +123,13 @@ class ModelConfiguration:
             self.current=None;self.code='model_configuration'
             raise ModelError(self.code) from None
 
+    def writable(self):
+        if self.path is None:return False
+        parent=self.path.parent
+        try:
+            return parent.is_dir() and not parent.is_symlink() and os.access(parent,os.W_OK) and (os.name=='nt' or parent.stat().st_mode & 0o022 == 0)
+        except OSError:return False
+
     def write(self, data, expected):
         """Single backend writer; compare current bytes, then replace one private file."""
         from .usage_ledger import encode
@@ -137,8 +144,7 @@ class ModelConfiguration:
         require(len(self.versions)<128 or prior is not None,'config_version_capacity')
         # Never follow an administrator-path symlink or silently create new directories.
         require(self.path.parent.is_dir() and not self.path.parent.is_symlink(),'model_configuration')
-        if os.name!='nt':
-            require(self.path.parent.stat().st_mode & 0o022 == 0,'model_config_permissions')
+        require(self.writable(),'model_config_permissions')
         temporary=self.path.with_name(self.path.name+'.'+data['profile']['config_version']+'.tmp')
         fd=os.open(temporary,os.O_WRONLY|os.O_CREAT|os.O_EXCL,0o600)
         try:

@@ -6,6 +6,7 @@ import asyncio
 from dataclasses import asdict, replace
 import hashlib
 import json
+from fractions import Fraction
 import re
 import sqlite3
 import time
@@ -35,9 +36,38 @@ class ModelAdmin:
         row=self.db.execute('SELECT value FROM identity').fetchone()
         require(row is None or row[0]==identity,'model_admin_identity')
         with self.db:
+            self.db.execute('CREATE TABLE IF NOT EXISTS budget(key TEXT PRIMARY KEY,value TEXT NOT NULL,revision TEXT NOT NULL)')
             self.db.execute('INSERT OR IGNORE INTO identity VALUES(?)',(identity,))
             # Never replay a paid probe or a configuration mutation after a crash.
             self.db.execute("UPDATE actions SET state='interrupted' WHERE state='intent'")
+        row=self.db.execute("SELECT value FROM budget WHERE key='primary_daily_usd'").fetchone()
+        if row:self.runtime.usage.primary_daily_micro=self.budget_amount(row[0])
+
+    @staticmethod
+    def budget_amount(value):
+        require(isinstance(value,str) and re.fullmatch(r'\d{1,6}(?:\.\d{1,6})?',value),'primary_budget_configuration')
+        return Fraction(value)*1000000
+
+    def budget_settings(self):
+        row=self.db.execute("SELECT value,revision FROM budget WHERE key='primary_daily_usd'").fetchone()
+        amount=self.runtime.usage.primary_daily_micro
+        return {'daily_usd':row[0] if row else format(float(amount/1000000),'.6f').rstrip('0').rstrip('.'),
+                'guard':{'backend_epoch':self.backend.runtime,'revision':row[1] if row else 'environment'}}
+
+    def save_budget(self,value):
+        require(isinstance(value,dict) and set(value)=={'operation_id','guard','daily_usd'},'model_admin_shape')
+        if not self.begin(value,'save_budget','budget'):return self.settings()
+        try:
+            require(value['guard']==self.budget_settings()['guard'],'model_config_conflict')
+            amount=self.budget_amount(value['daily_usd'])
+            with self.db:
+                self.db.execute("INSERT OR REPLACE INTO budget VALUES('primary_daily_usd',?,?)",(value['daily_usd'],value['operation_id']))
+                self.db.execute("UPDATE actions SET state='succeeded',result=? WHERE id=?",(encode({'code':'saved'}),value['operation_id']))
+            self.runtime.usage.primary_daily_micro=amount
+        except (ModelError,sqlite3.Error) as exc:
+            self.finish(value['operation_id'],'failed' if isinstance(exc,ModelError) else 'unknown',{'code':str(exc) if isinstance(exc,ModelError) else 'model_save_unconfirmed'})
+            raise
+        return self.settings()
 
     def guard(self, fingerprint):
         return {'backend_epoch':self.backend.runtime,'fingerprint':fingerprint}
@@ -70,7 +100,9 @@ class ModelAdmin:
                 'user_rate_requests':3,'group_rate_requests':30,'rate_window_seconds':10,
                 'price':{'currency':'CNY','input_rate':1000000,'cached_rate':1000000,'output_rate':1000000,
                     'reference_rate':1000000,'pricing_version':'','fetched_at':0,'estimated':True,'source':'registered-default'}}
-        return {'role':'fallback' if fallback else 'primary','code':code,'editable':config.path is not None and fingerprint is not None,
+        writable=config.writable()
+        return {'role':'fallback' if fallback else 'primary','code':code,'editable':writable and fingerprint is not None,
+                'write_reason':None if writable else 'model_config_permissions','primary_budget':self.budget_settings(),
                 'guard':self.guard(fingerprint),'profile':profile,'groups':groups,'key_configured':key,
                 'endpoints':dict(ENDPOINTS),'api_url':('https://api.openai.com/v1/responses'
                     if profile.get('wire_profile')=='openai-responses-v1' else ENDPOINTS[profile['provider']]),
