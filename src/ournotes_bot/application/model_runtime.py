@@ -28,6 +28,7 @@ from .backend_protocol import ProtocolError
 from . import replies
 from .persona import VOICE, chat_topic, chat_prompt, chat_needs_evidence
 from .chat_agent import ChatAgent
+from .chat_capabilities import ChatCapabilities
 
 PERSONA = '''你是 Taki，一个以椎名立希为原型的独立查询助手。简体中文，直率认真，简洁、友善，可轻微吐槽，不羞辱玩家。
 围绕用户当前问题表达：先直接给结论或能提供的帮助，再补必要依据、条件和下一步；不复述检索过程，不主动扩展到无关问题。
@@ -126,6 +127,7 @@ class ModelRuntime:
                                        backend.instance_id,backend.app_id)
         self.usage=UsageLedger(path,backend.instance_id+'\0'+backend.app_id)
         self.admin=ModelAdmin(self,self.usage.path.with_name('model-admin-v1.sqlite3'))
+        self.capabilities=ChatCapabilities(self.usage.path.with_name('chat-capabilities-v1.json'))
         self.agent=(ChatAgent(self,self.usage.path.with_name('chat-v1.sqlite3'))
                     if getattr(backend.settings,'chat_engine','legacy')=='agent' else None)
 
@@ -266,10 +268,15 @@ class ModelRuntime:
             self.agent.audit(self.agent.store.finish,work.delivery,'execution_timeout')
             return failure('execution_timeout')
 
-    async def attempt(self,work,messages,tools,user,group,deadline,leases=(),*,require_tool=False,reservation=None):
+    async def attempt(self,work,messages,tools,user,group,deadline,leases=(),*,require_tool=False,reservation=None,web=None):
         profile=work.model_snapshot.profile
         self.check(work,deadline,leases)
         body=request_body(profile,messages,tools)
+        action_budget=()
+        if web is not None:
+            require(profile.wire_profile=='openai-responses-v1' and not tools,'chat_capability_unverified')
+            body.update(tools=[{'type':'web_search','search_context_size':'low'}],max_tool_calls=web.max_calls)
+            action_budget=(('web_search',web.max_calls,web.unit_cost_micro),)
         # Verified native wires support required tool choice; no fallback/retry.
         if require_tool and tools and (profile.provider=='deepseek' or profile.wire_profile=='openai-responses-v1'):
             body['tool_choice']='required'
@@ -279,7 +286,7 @@ class ModelRuntime:
         require(bound<=profile.max_input_tokens,'model_input_too_large')
         attempt=reservation or uuid.uuid4().hex
         if reservation is None:
-            self.usage.reserve(work.request.request_id,attempt,user,group,profile,bound)
+            self.usage.reserve(work.request.request_id,attempt,user,group,profile,bound,action_budget=action_budget)
         else:
             held=self.usage.get(attempt)
             require(held['request_id']==work.request.request_id and held['state']=='reserved','invalid_reservation')
@@ -292,7 +299,9 @@ class ModelRuntime:
             # No await/queue/tool work between the consumed permit and this HTTP.
             result=await asyncio.wait_for(self.client.request(profile,body,timeout=max(.001,deadline-time.monotonic())),
                                           max(.001,deadline-time.monotonic()))
-            self.usage.settle(attempt,result.usage,result.error_code)
+            self.usage.settle(attempt,result.usage,result.error_code,actions=result.provider_actions)
+            require(all(action.count==0 or web is not None and action.count is not None and action.count<=web.max_calls
+                        for action in result.provider_actions),'provider_action_budget_exceeded')
             if getattr(work,'chat',False):
                 self.agent.audit(self.agent.store.event,work.delivery,'model/'+attempt,'model',
                     {'attempt_id':attempt,'status':result.status,'error_code':result.error_code,
@@ -300,7 +309,8 @@ class ModelRuntime:
                      'input_total':result.usage.input_total,'output_total':result.usage.output_total,
                      'elapsed_ms':int((time.monotonic()-began)*1000)})
             if result.tool_calls:
-                kind=result.tool_calls[0].name if result.tool_calls[0].name in TOOLS else 'unrecognized_tool'
+                name=result.tool_calls[0].name
+                kind=name if name in TOOLS or getattr(work,'chat',False) and name in ('web_search','story_search','story_read','group_memory_search','group_memory_read') else 'unrecognized_tool'
             elif tools: kind='routing_text' if result.status=='ok' else 'routing'
             self.check(work,deadline,leases)
             require(result.status=='ok',result.error_code or 'model_protocol_error')

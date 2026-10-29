@@ -2063,6 +2063,95 @@ class ChatAgentTests(Fixture, unittest.IsolatedAsyncioTestCase):
         self.event(plan,'intent');self.event(plan,'ack')
 
 
+class ChatWebTests(Fixture,unittest.IsolatedAsyncioTestCase):
+    Helpers=ChatAgentTests.Helpers
+    event=ChatAgentTests.event
+    request=ChatAgentTests.request
+    prepare_native=ChatAgentTests.prepare_native
+    def capture_native_bodies(self):
+        from ournotes_bot.application.model_runtime import request_body
+        bodies=[]
+        class CapturedBody(dict):
+            def clear(self):
+                bodies.append(json.loads(json.dumps(self)))
+                super().clear()
+        owned=patch('ournotes_bot.application.model_runtime.request_body',side_effect=lambda *a,**kw:CapturedBody(request_body(*a,**kw)))
+        owned.start();self.addCleanup(owned.stop)
+        return bodies
+    result=ChatAgentTests.result
+    asyncSetUp=ChatAgentTests.asyncSetUp
+
+    def web_result(self,*,url='https://example.org/news',count=1):
+        from ournotes_bot.sources.model_provider import decode_attempt
+        profile=replace(self.snapshot.profile,provider='openai',wire_profile='openai-responses-v1')
+        self.snapshot=replace(self.snapshot,profile=profile)
+        output=[dict(type='web_search_call',id='web'+str(i),status='completed',action={'type':'search','query':'public music'}) for i in range(count)]
+        output.append(dict(type='message',role='assistant',status='completed',content=[dict(type='output_text',text='Public result.',
+            annotations=[dict(type='url_citation',url=url,title='Public source',start_index=0,end_index=6)])]))
+        return decode_attempt(json.dumps(dict(status='completed',output=output,usage={
+            'input_tokens':10,'output_tokens':2,'total_tokens':12,'input_tokens_details':{'cached_tokens':0}})),profile)
+
+    def test_native_web_decode_typed_citations_and_private_url_rejection(self):
+        from ournotes_bot.sources.model_provider import decode_attempt
+        result=self.web_result()
+        self.assertEqual(result.status,'ok')
+        self.assertEqual(result.provider_actions[0].count,1)
+        self.assertEqual(result.citations[0]['url'],'https://example.org/news')
+        for url in ('javascript:alert(1)','https://127.0.0.1/internal','http://localhost/internal','http://169.254.169.254/latest'):
+            self.assertEqual(self.web_result(url=url).error_code,'model_protocol_error')
+        malformed=dict(status='completed',output=[dict(type='web_search_call',id='broken',status='completed',action=None)])
+        self.assertEqual(decode_attempt(json.dumps(malformed),self.snapshot.profile).error_code,'model_protocol_error')
+
+    async def test_isolated_public_search_uses_same_profile_permits_fees_and_visible_sources(self):
+        from ournotes_bot.application.chat_capabilities import WebCapability
+        from ournotes_bot.domain.model_calls import ToolCall
+        bodies=self.capture_native_bodies()
+        native=self.web_result()
+        self.backend.model_runtime.capabilities.web=Mock(return_value=WebCapability(2,10000,'fixture-public-probe'))
+        self.client.request.side_effect=[self.result(calls=(ToolCall('search','web_search','{"query":"公开音乐新闻"}'),)),
+                                         native,self.result('公开资料里的消息。')]
+        plan,attempts=await self.prepare_native('/问 查一下公开音乐新闻')
+        self.assertEqual(len(attempts),3)
+        self.assertEqual(bodies[1]['model'],bodies[0]['model'])
+        self.assertEqual(bodies[1]['tools'],[{'type':'web_search','search_context_size':'low'}])
+        self.assertEqual(bodies[1]['max_tool_calls'],2)
+        self.assertEqual(len(bodies[1]['input']),2)
+        self.assertEqual(bodies[1]['input'][-1]['content'],'公开音乐新闻')
+        self.assertIn('[Public source](https://example.org/news)',plan['parts'][0]['text'])
+        charge=self.backend.model_runtime.usage.get(attempts[1])
+        self.assertEqual(charge['charged'],'10014')
+        self.assertEqual(charge['billing_incomplete'],0)
+        self.event(plan,'intent');self.event(plan,'ack')
+
+    def test_action_unknown_is_not_zero_and_late_known_count_fills_gap(self):
+        from ournotes_bot.domain.model_calls import Usage,ProviderAction
+        ledger=self.backend.model_runtime.usage;profile=self.snapshot.profile
+        ledger.reserve('web-fixture','act','u',None,profile,100,action_budget=(('web_search',2,10000),))
+        ledger.start('act',profile)
+        ledger.settle('act',Usage(10,0,2,None,12,'known'))
+        self.assertEqual(ledger.get('act')['billing_incomplete'],1)
+        self.assertIsNone(ledger.db.execute('SELECT count FROM attempt_actions WHERE attempt=?',('act',)).fetchone()[0])
+        ledger.settle('act',Usage(10,0,2,None,12,'known'),actions=(ProviderAction('web_search',1),))
+        self.assertEqual(ledger.get('act')['charged'],'10014')
+        self.assertEqual(ledger.get('act')['billing_incomplete'],0)
+        with self.assertRaisesRegex(ValueError,'usage_conflict'):
+            ledger.settle('act',Usage(10,0,2,None,12,'known'),actions=(ProviderAction('web_search',2),))
+
+    def test_capability_evidence_is_bound_to_profile_and_currency(self):
+        from ournotes_bot.application.chat_capabilities import ChatCapabilities
+        path=self.repo.cache_file.with_name('capability.json')
+        caps=ChatCapabilities(path)
+        self.assertIsNone(caps.web(self.snapshot))
+        self.snapshot=replace(self.snapshot,profile=replace(self.snapshot.profile,provider='openai',wire_profile='openai-responses-v1'))
+        value=dict(schema='chat-capabilities/1',config_version=self.snapshot.profile.config_version,fingerprint='',
+                   web_search=dict(max_calls=2,unit_cost_micro=10000,currency='USD',evidence_ref='fixture'))
+        path.write_text(json.dumps(value))
+        self.assertEqual(caps.web(self.snapshot).max_calls,2)
+        self.assertIsNone(caps.web(replace(self.snapshot,fingerprint='changed')))
+        value['web_search']['currency']='CNY';path.write_text(json.dumps(value))
+        with self.assertRaisesRegex(ValueError,'chat_capability_unverified'):caps.web(self.snapshot)
+
+
 class NaturalPolicyTests(Fixture, unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         self.setup_repo()

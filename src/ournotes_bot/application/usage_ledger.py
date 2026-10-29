@@ -54,6 +54,10 @@ class UsageLedger:
                 CREATE INDEX IF NOT EXISTS attempts_day ON attempts(day,user_key,group_key);
                 CREATE TABLE IF NOT EXISTS attempt_observations(
                     id TEXT PRIMARY KEY, kind TEXT NOT NULL, duration_ms INTEGER NOT NULL);
+                CREATE TABLE IF NOT EXISTS attempt_actions(
+                    attempt TEXT NOT NULL, kind TEXT NOT NULL, unit_cost_micro INTEGER NOT NULL,
+                    max_count INTEGER NOT NULL, count INTEGER, status TEXT NOT NULL,
+                    PRIMARY KEY(attempt,kind));
             ''')
             with self.db:
                 for key,value in (('schema','1'),('namespace',namespace)):
@@ -102,9 +106,12 @@ class UsageLedger:
         if group is not None:
             require(self.spent(date,group,group=True,exclude=exclude)+amount<=profile.group_daily_limit,'quota_exceeded')
 
-    def reserve(self,request,attempt,user,group,profile,input_bound):
+    def reserve(self,request,attempt,user,group,profile,input_bound,*,action_budget=()):
         self.reconcile()
         now=self.clock();date=day(now);amount=profile.price.reserve(input_bound,profile.max_output_tokens)
+        for kind,count,rate in action_budget:
+            require(kind=='web_search' and type(count) is int and 1<=count<=8 and type(rate) is int and rate>=0,'provider_action_budget')
+            amount+=Fraction(count*rate*1_000_000,profile.price.reference_rate)
         with self.db:
             prior=self.db.execute('SELECT id FROM attempts WHERE id=?',(attempt,)).fetchone()
             require(prior is None,'attempt_reused')
@@ -123,6 +130,8 @@ class UsageLedger:
             self.db.execute('INSERT INTO attempts VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
                 (attempt,request,user,group,profile.provider,profile.model,profile.config_version,encode(asdict(profile.price)),
                  date,now,None,None,'reserved',str(amount),'0','0',encode(asdict(Usage())),None,0))
+            self.db.executemany('INSERT INTO attempt_actions VALUES(?,?,?,?,NULL,?)',
+                                [(attempt,kind,rate,count,'reserved') for kind,count,rate in action_budget])
 
     def start(self,attempt,profile):
         row=self.get(attempt);now=self.clock();date=day(now)
@@ -134,25 +143,42 @@ class UsageLedger:
 
     def release(self,attempt,code):
         with self.db:
-            self.db.execute("UPDATE attempts SET state='released',reserved='0',settled=?,error_code=? WHERE id=? AND state='reserved'",
-                            (self.clock(),code,attempt))
+            changed=self.db.execute("UPDATE attempts SET state='released',reserved='0',settled=?,error_code=? WHERE id=? AND state='reserved'",
+                            (self.clock(),code,attempt)).rowcount
+            if changed:self.db.execute("UPDATE attempt_actions SET status='released' WHERE attempt=?",(attempt,))
 
-    def settle(self,attempt,usage,code=None):
+    def settle(self,attempt,usage,code=None,*,actions=()):
         row=self.get(attempt)
         require(row['started'] is not None,'attempt_not_started')
         require(isinstance(usage,Usage),'usage_shape')
         old=Usage(**json.loads(row['usage']))
         new=encode(asdict(usage))
-        if row['state']=='settled' and row['usage']==new: return False
+        budgets=self.db.execute('SELECT * FROM attempt_actions WHERE attempt=?',(attempt,)).fetchall()
+        counts={action.kind:action.count for action in actions}
+        if row['state']=='settled' and row['usage']==new and all(
+                counts.get(b['kind']) is None or counts[b['kind']]==b['count'] for b in budgets):return False
         # Late partial data may only fill gaps, never silently change known facts.
         for field in ('input_total','input_cached','output_total','output_reasoning','total'):
             a,b=getattr(old,field),getattr(usage,field)
             require(a is None or b==a,'usage_conflict')
         if usage.status=='unknown' and old.status!='unknown': return False
         price=Price(**json.loads(row['price']));charged,cost=price.amount(usage)
+        incomplete=usage.status!='known' or any(count and kind not in {b['kind'] for b in budgets} for kind,count in counts.items())
+        actual=[]
+        for budget in budgets:
+            count=counts.get(budget['kind'],budget['count'])
+            if count is None:count=budget['count']
+            require(budget['count'] is None or count==budget['count'],'usage_conflict')
+            if count is None:incomplete=True
+            else:
+                require(type(count) is int and 0<=count<=100,'provider_action_shape')
+                amount=count*budget['unit_cost_micro']
+                cost+=amount;charged+=Fraction(amount*1_000_000,price.reference_rate)
+            actual.append((count,'unknown' if count is None else 'known',attempt,budget['kind']))
         with self.db:
             self.db.execute("UPDATE attempts SET state='settled',reserved='0',charged=?,cost=?,usage=?,settled=?,error_code=?,billing_incomplete=? WHERE id=?",
-                (str(charged),str(cost),new,self.clock(),code,int(usage.status!='known'),attempt))
+                (str(charged),str(cost),new,self.clock(),code,int(incomplete),attempt))
+            self.db.executemany('UPDATE attempt_actions SET count=?,status=? WHERE attempt=? AND kind=?',actual)
         return True
 
     def reconcile(self):

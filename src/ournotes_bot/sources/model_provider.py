@@ -8,11 +8,13 @@ import re
 from dataclasses import replace
 from decimal import Decimal, InvalidOperation
 import hashlib
+import ipaddress
 import time
+from urllib.parse import urlsplit
 
 import aiohttp
 
-from ..domain.model_calls import AttemptResult, ModelError, Price, ToolCall, Usage
+from ..domain.model_calls import AttemptResult, ModelError, Price, ToolCall, Usage, ProviderAction
 from .json_validation import decode_json
 
 ENDPOINTS = {'deepseek': 'https://api.deepseek.com/chat/completions',
@@ -42,6 +44,10 @@ def responses_payload(payload):
     for item in output:
         if not isinstance(item,dict): return normalized
         if item.get('type')=='reasoning': continue
+        if item.get('type')=='web_search_call':
+            if item.get('status')!='completed' or not isinstance(item.get('action'),dict):return normalized
+            if item['action'].get('type') not in ('search','open_page','find_in_page'):return normalized
+            continue
         if item.get('type')=='function_call':
             if item.get('status')!='completed': return normalized
             calls.append({'type':'function','id':item.get('call_id'),
@@ -96,13 +102,30 @@ def decode_attempt(raw, profile, *, http_status=200):
         return AttemptResult('error',error_code='model_protocol_error')
     if not isinstance(payload,dict):
         return AttemptResult('error',error_code='model_protocol_error')
-    response_items=()
+    response_items=();citations=();provider_actions=()
     if profile.wire_profile=='openai-responses-v1':
         response_items=tuple(payload.get('output',[])) if isinstance(payload.get('output'),list) else ()
+        if payload.get('status')=='completed' and http_status==200 and not payload.get('error'):
+            try:
+                searches=0;web_ids=set()
+                for item in response_items:
+                    if not isinstance(item,dict):raise ValueError('response_item')
+                    if item.get('type')!='web_search_call':continue
+                    action=item.get('action');ident=item.get('id')
+                    if (item.get('status')!='completed' or not isinstance(action,dict)
+                            or action.get('type') not in ('search','open_page','find_in_page')
+                            or not isinstance(ident,str) or not ident or ident in web_ids):raise ValueError('web_action')
+                    web_ids.add(ident)
+                    searches+=action['type']=='search'
+                provider_actions=(ProviderAction('web_search',searches),)
+                citations=tuple(response_citations(response_items))
+            except (ValueError,TypeError,KeyError):
+                return AttemptResult('error',usage_from(responses_payload(payload).get('usage'),profile),
+                                     error_code='model_protocol_error',provider_actions=provider_actions)
         payload=responses_payload(payload)
     usage = usage_from(payload.get('usage'),profile)  # Always before content/tool validation.
     def error(code='model_protocol_error'):
-        return AttemptResult('error',usage,error_code=code)
+        return AttemptResult('error',usage,error_code=code,provider_actions=provider_actions)
     if http_status != 200 or payload.get('error'):
         return error('provider_error')
     choices = payload.get('choices')
@@ -137,7 +160,36 @@ def decode_attempt(raw, profile, *, http_status=200):
     text=message.get('content')
     if text is not None and (not bounded_utf8(text,16000) or len(text)>4000): return error()
     if not parsed and not (text and text.strip()): return error()
-    return AttemptResult('ok',usage,tuple(parsed),text.strip() if text else None,output_items=response_items)
+    return AttemptResult('ok',usage,tuple(parsed),text.strip() if text else None,output_items=response_items,
+                         citations=citations,provider_actions=provider_actions)
+
+
+def response_citations(items):
+    """Only public HTTP(S) links from typed annotations; titles are display data."""
+    seen=set()
+    for item in items:
+        if not isinstance(item,dict):raise ValueError('response_item')
+        if item.get('type')!='message':continue
+        for part in item.get('content',[]):
+            if not isinstance(part,dict):raise ValueError('response_part')
+            for annotation in part.get('annotations',[]):
+                if not isinstance(annotation,dict):raise ValueError('annotation')
+                if annotation.get('type')!='url_citation':continue
+                url=annotation.get('url');title=annotation.get('title')
+                if not isinstance(url,str) or len(url)>2048 or any(c.isspace() or c in '<>\\' for c in url):raise ValueError('citation_url')
+                parsed=urlsplit(url)
+                if parsed.scheme not in ('https','http') or not parsed.hostname or parsed.username or parsed.password:raise ValueError('citation_url')
+                if parsed.hostname=='localhost' or parsed.hostname.endswith(('.localhost','.local','.internal')):raise ValueError('citation_url')
+                try:
+                    address=ipaddress.ip_address(parsed.hostname)
+                except ValueError:address=None
+                if address is not None and not address.is_global:raise ValueError('citation_url')
+                if not isinstance(title,str) or len(title)>300:raise ValueError('citation_title')
+                start,end=annotation.get('start_index'),annotation.get('end_index')
+                if type(start) is not int or type(end) is not int or not 0<=start<=end<=len(part.get('text','')):raise ValueError('citation_span')
+                if url not in seen:
+                    seen.add(url)
+                    yield {'url':url,'title':title,'start_index':annotation.get('start_index'),'end_index':annotation.get('end_index')}
 
 
 def request_body(profile, messages, tools):

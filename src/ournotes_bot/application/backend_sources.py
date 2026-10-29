@@ -10,3 +10,4 @@ CODE_FILES = ('backend.py', 'backend_protocol.py', 'delivery_ledger.py', 'replie
 CODE_FILES += ('model_runtime.py', 'persona.py', 'model_config.py', 'model_admin.py', 'usage_ledger.py', '../domain/model_calls.py',
                '../sources/model_provider.py', '../natural_query/native_tools.py', 'site_lookup.py', '../sources/haneoka/notices.py')
 CODE_FILES += ('chat_agent.py','chat_context.py','chat_store.py','../domain/chat.py')
+CODE_FILES += ('chat_capabilities.py',)
