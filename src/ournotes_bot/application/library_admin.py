@@ -123,7 +123,9 @@ class LibraryAdmin:
             bundle=parse_bundle(data)
             check(all(p.review_status!='approved' for p in bundle.personas),'story_import_requires_draft')
             current=owner.current()
-            before={} if current is None else {k:json.dumps(v,ensure_ascii=False,sort_keys=True,indent=2) for k,v in asdict(current).items() if k!='revision'}
+            current_value={} if current is None else asdict(current)
+            if current is not None:current_value['aliases']=dict(current.aliases)
+            before={k:json.dumps(v,ensure_ascii=False,sort_keys=True,indent=2) for k,v in current_value.items() if k!='revision'}
             after={k:json.dumps(v,ensure_ascii=False,sort_keys=True,indent=2) for k,v in data.items() if k!='schema'}
             revision=bundle.revision
         else:
