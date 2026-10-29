@@ -2627,3 +2627,152 @@ class FreezeTests(unittest.TestCase):
         frozen=json.loads((console/'settings.json').read_bytes())
         self.assertFalse(frozen['queriesEnabled'])
         self.assertFalse(frozen['notificationsEnabled'])
+
+
+class ChatServiceJobsTests(unittest.TestCase):
+    def setUp(self):
+        from ournotes_bot.application.chat_jobs import ChatServices, ServiceBudget
+        from ournotes_bot.application.model_config import ConfigSnapshot
+        from ournotes_bot.application.usage_ledger import UsageLedger
+        self.temp=tempfile.TemporaryDirectory();self.addCleanup(self.temp.cleanup)
+        self.root=Path(self.temp.name);self.now=[1792670000.0]
+        self.profile=native_profile();self.snapshot=ConfigSnapshot(self.profile,(),'a'*64)
+        self.ledger=UsageLedger(self.root/'usage.sqlite3','jobs-fixture',clock=lambda:self.now[0])
+        self.addCleanup(lambda:self.ledger.close())
+        self.services=ChatServices(self.root,'instance','app')
+        self.budget=ServiceBudget(self.ledger,'instance','app',clock=lambda:self.now[0])
+        self.data={'schema':'taki-chat-services/1','instance_id':'instance','app_id':'app',
+            'profile':{'config_version':self.profile.config_version,'fingerprint':self.snapshot.fingerprint,'currency':'USD'},
+            'groups':{'group':{'approved':True,'service_subject_id':'approved-group-service','approval_ref':'approval/fixture',
+                'summary':{'enabled':True,'max_jobs_per_hour':4,'max_cost_micro_per_hour':1000000},
+                'proactive':{'enabled':True,'max_calls_per_hour':4,'max_replies_per_hour':2,
+                    'max_cost_micro_per_hour':1000000,'cooldown_seconds':30}}}}
+
+    def save(self):
+        self.services.path.write_text(json.dumps(self.data),encoding='utf-8')
+        os.chmod(self.services.path,0o600)
+        return self.services.policy(self.snapshot,'group')
+
+    def request(self,task='summary',source='source'):
+        from ournotes_bot.application.chat_jobs import service_request_id
+        return service_request_id(task,'instance','app','group',source)
+
+    def attempt(self,task='summary',source='source',usage=None):
+        policy=self.save();request=self.request(task,source)
+        permit=self.budget.check(policy,task,self.profile,request,2000)
+        attempt='attempt-'+source
+        self.ledger.reserve(request,attempt,permit.user_key,permit.group_key,self.profile,100)
+        self.ledger.start(attempt,self.profile)
+        if usage is not None:self.ledger.settle(attempt,usage)
+        return permit
+
+    def test_absent_unapproved_and_profile_currency_mismatch_disable(self):
+        self.assertIsNone(self.services.policy(self.snapshot,'group'))
+        self.assertEqual(self.services.code,'chat_services_absent')
+        self.data['groups']['group']['approved']=False
+        self.assertIsNone(self.save());self.assertEqual(self.services.code,'chat_service_unapproved')
+        self.data['groups']['group']['approved']=True
+        self.data['profile']['fingerprint']='b'*64
+        self.assertIsNone(self.save());self.assertEqual(self.services.code,'chat_service_profile_mismatch')
+        self.data['profile']['fingerprint']=self.snapshot.fingerprint
+        self.data['profile']['currency']='CNY'
+        self.assertIsNone(self.save());self.assertEqual(self.services.code,'chat_service_currency_mismatch')
+
+    def test_invalid_config_limits_group_count_and_duplicate_json_disable(self):
+        self.data['groups']['group']['summary']['max_jobs_per_hour']=True
+        self.assertIsNone(self.save())
+        self.data['groups']['group']['summary']['max_jobs_per_hour']=4
+        self.data['groups'].update({str(i):{} for i in range(128)})
+        self.assertIsNone(self.save())
+        self.services.path.write_text('{"schema":1,"schema":2}',encoding='utf-8')
+        self.assertIsNone(self.services.policy(self.snapshot,'group'))
+
+    def test_service_identity_and_real_group_accounting_are_separate_from_users(self):
+        policy=self.save()
+        permit=self.budget.check(policy,'summary',self.profile,self.request(),2000)
+        self.assertEqual(permit.user_key,self.ledger.key('service','instance','app','group','approved-group-service','summary'))
+        self.assertEqual(permit.group_key,self.ledger.key('group','group'))
+        self.assertNotEqual(permit.user_key,self.ledger.key('user','approved-group-service'))
+        from ournotes_bot.application.chat_jobs import ServiceError
+        with self.assertRaisesRegex(ServiceError,'chat_service_request'):
+            self.budget.check(policy,'summary',self.profile,'ordinary-turn-request',2000)
+        with self.assertRaisesRegex(ServiceError,'chat_service_currency_mismatch'):
+            self.budget.check(policy,'summary',replace(self.profile,price=replace(self.profile.price,currency='CNY')),self.request(),2000)
+
+    def test_hourly_known_cost_survives_subject_change_and_uses_micro_currency(self):
+        from ournotes_bot.domain.model_calls import Usage
+        from ournotes_bot.application.chat_jobs import ServiceError
+        self.attempt(usage=Usage(80,0,10,None,90,'known'))
+        self.data['groups']['group']['service_subject_id']='new-approved-service'
+        self.data['groups']['group']['summary']['max_cost_micro_per_hour']=101
+        policy=self.save()
+        permit=self.budget.check(policy,'summary',self.profile,self.request(source='next'),1)
+        self.assertEqual(permit.spent_cost_micro,100)
+        with self.assertRaisesRegex(ServiceError,'chat_service_cost_limit'):
+            self.budget.check(policy,'summary',self.profile,self.request(source='next'),2)
+
+    def test_unknown_restart_keeps_full_upper_bound_after_ledger_reconcile(self):
+        from ournotes_bot.application.chat_jobs import ServiceBudget, maximum_cost_micro, ServiceError
+        from ournotes_bot.application.usage_ledger import UsageLedger
+        self.attempt()
+        self.now[0]+=400
+        self.ledger.close();self.ledger=UsageLedger(self.root/'usage.sqlite3','jobs-fixture',clock=lambda:self.now[0])
+        self.assertEqual(self.ledger.get('attempt-source')['reserved'],'0')
+        self.budget=ServiceBudget(self.ledger,'instance','app',clock=lambda:self.now[0])
+        permit=self.budget.check(self.save(),'summary',self.profile,self.request(source='next'),1)
+        self.assertGreaterEqual(permit.spent_cost_micro,maximum_cost_micro(self.profile))
+        self.data['groups']['group']['summary']['max_cost_micro_per_hour']=int(maximum_cost_micro(self.profile))
+        with self.assertRaisesRegex(ServiceError,'chat_service_cost_limit'):
+            self.budget.check(self.save(),'summary',self.profile,self.request(source='next'),1)
+        self.now[0]+=3600
+        with self.assertRaisesRegex(ServiceError,'chat_service_cost_limit'):
+            self.budget.check(self.save(),'summary',self.profile,self.request(source='later'),1)
+
+    def test_hourly_job_call_reply_and_persistent_ack_cooldown_limits(self):
+        from ournotes_bot.application.chat_jobs import ServiceError
+        from ournotes_bot.domain.model_calls import Usage
+        known=Usage(1,0,1,None,2,'known')
+        self.attempt(source='one',usage=known)
+        self.data['groups']['group']['summary']['max_jobs_per_hour']=1
+        with self.assertRaisesRegex(ServiceError,'chat_service_job_limit'):
+            self.budget.check(self.save(),'summary',self.profile,self.request(source='two'),1)
+        self.attempt('proactive','call',known)
+        self.data['groups']['group']['proactive']['max_calls_per_hour']=1
+        with self.assertRaisesRegex(ServiceError,'chat_service_call_limit'):
+            self.budget.check(self.save(),'proactive',self.profile,self.request('proactive','next'),1)
+        self.data['groups']['group']['proactive']['max_calls_per_hour']=4
+        with self.assertRaisesRegex(ServiceError,'chat_service_reply_limit'):
+            self.budget.check(self.save(),'proactive',self.profile,self.request('proactive','next'),1,
+                reply_times=[self.now[0]-100,self.now[0]-50])
+        with self.assertRaisesRegex(ServiceError,'chat_service_cooldown'):
+            self.budget.check(self.save(),'proactive',self.profile,self.request('proactive','next'),1,reply_times=[self.now[0]-1])
+        self.data['groups']['group']['proactive']['cooldown_seconds']=7200
+        with self.assertRaisesRegex(ServiceError,'chat_service_cooldown'):
+            self.budget.check(self.save(),'proactive',self.profile,self.request('proactive','next'),1,reply_times=[self.now[0]-4000])
+
+    def test_summary_only_uses_bounded_recorded_messages_and_rejects_repeated_sources(self):
+        from ournotes_bot.application.chat_jobs import summary_candidate, summary_messages
+        messages=[{'message_id':str(i),'speaker_id':'Taki' if i%2 else 'member','role':'assistant' if i%2 else 'user',
+                   'text':'原观点'+str(i),'timestamp_ms':1000+i} for i in range(60)]
+        self.assertIsNone(summary_candidate(messages[:23]))
+        candidate=summary_candidate(messages)
+        self.assertEqual(len(candidate.original_messages),48)
+        self.assertEqual(candidate.source_ids[0],'12')
+        self.assertIsNone(summary_candidate(messages,{candidate.source_key}))
+        self.assertIsNone(summary_candidate([{'role':'user','content':'wire JSON'}]*24))
+        self.assertIsNone(summary_candidate([{**row,'role':'system'} for row in messages]))
+        self.assertIsNone(summary_candidate([{**row,'role':'user'} for row in messages]))
+        prompt=summary_messages(candidate)
+        self.assertEqual([row['role'] for row in prompt],['system','user'])
+        self.assertEqual(json.loads(prompt[1]['content'])['message_ids'],list(candidate.source_ids))
+
+    def test_summary_validation_rejects_wrong_sources_and_preserves_originals_on_failure(self):
+        from ournotes_bot.application.chat_jobs import summary_candidate, validate_summary
+        messages=[{'message_id':str(i),'speaker_id':'Taki','role':'assistant','text':'已经送达的原文','timestamp_ms':i} for i in range(24)]
+        candidate=summary_candidate(messages)
+        result={'source_key':candidate.source_key,'message_ids':list(candidate.source_ids),'summary':'Taki 先解释观点，仍待回应。'}
+        self.assertEqual(validate_summary(json.dumps(result),candidate),result['summary'])
+        for invalid in ('不是JSON',json.dumps({**result,'source_key':'unknown'}),json.dumps({**result,'message_ids':['outside']}),
+                        json.dumps({**result,'summary':'https://multimedia.nt.qq.com.cn/download?signature=secret'})):
+            self.assertIsNone(validate_summary(invalid,candidate))
+        self.assertEqual(candidate.original_messages,tuple(messages))
