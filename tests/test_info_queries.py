@@ -471,5 +471,111 @@ class ActivityAnnouncementTests(unittest.TestCase):
         repo.activity_announcements.next.assert_called_once_with('jp',NOW)
 
 
+class PublicQueryContractTests(unittest.TestCase):
+    def test_public_id_precision_regions_and_invalid_arguments(self):
+        from ournotes_bot.query.public_queries import parse_player, parse_arena
+        from ournotes_bot.domain.public_queries import PublicQueryError
+        self.assertEqual(parse_player('9223372036854775807').profile_id, '9223372036854775807')
+        for region, ident in [('hk', '21234567890'), ('en', '31234567890'), ('kr', '41234567890')]:
+            self.assertEqual(parse_player(ident + ' ' + region + ' 名片 页3').page, 3)
+        for query in ('0', '9223372036854775808', '31234567890 hk', '1 jp hk', '1 页3', '1 名片 页0'):
+            with self.subTest(query=query), self.assertRaises(PublicQueryError):
+                parse_player(query)
+        self.assertEqual(parse_arena('MyGO!!!!! hk 榜单 排名=90-100').last, 100)
+        for query in ('MyGO!!!!! 榜单 排名=2-1', 'MyGO!!!!! 榜单 排名=1-101', 'MyGO!!!!! jp hk', '不存在的乐队'):
+            with self.subTest(query=query), self.assertRaises(PublicQueryError):
+                parse_arena(query)
+        from ournotes_bot.query.public_queries import inside, rule_text
+        self.assertTrue(inside({'startAt': 1000, 'endAt': 1999}, 1999))
+        self.assertFalse(inside({'startAt': 1000, 'endAt': 1999}, 2999))
+        self.assertIn('COMBO/JUST/LUCK', rule_text({'musicType': 0, 'missions': [0, 3, 0]},
+                                                {'musicType': 1, 'arenaMissions': [1, 1, 2]}))
+
+    def test_pending_and_limits_do_not_cache_or_retry(self):
+        from ournotes_bot.sources.haneoka.public_queries import PublicQueries
+        from ournotes_bot.domain.public_queries import PublicQueryError
+        for status, expected in ((202, 'pending'), (404, 'not_found'), (429, 'rate_limited'), (503, 'data_unavailable')):
+            calls = []
+            def fetch(*args):
+                calls.append(args)
+                return status, b'{}', {'retry-after': '10'}
+            source = PublicQueries(fetch=fetch)
+            with self.assertRaises(PublicQueryError) as result:
+                source.read('/fixture')
+            self.assertEqual(result.exception.status, expected)
+            self.assertEqual(result.exception.retry_after, 10)
+            self.assertEqual(len(calls), 1)
+            self.assertFalse(source.cache)
+            if status in (202, 429):
+                with self.assertRaises(PublicQueryError):
+                    source.read('/fixture')
+                self.assertEqual(len(calls), 1)
+
+    def test_player_identity_and_cache_expiration(self):
+        import json
+        from ournotes_bot.sources.haneoka.public_queries import PublicQueries
+        from ournotes_bot.domain.public_queries import PlayerRequest, PublicQueryError
+        calls, now = [], [100]
+        value = {'region': 'jp', 'profileId': '99', 'profile': {'name': 'fixture', 'rankExp': 0, 'totalFavorite': 0}}
+        def fetch(*args):
+            calls.append(args)
+            return 200, json.dumps(value).encode(), {}
+        source = PublicQueries(fetch=fetch, clock=lambda: now[0])
+        first = source.player(PlayerRequest('99'))
+        self.assertIs(first, source.player(PlayerRequest('99')))
+        self.assertEqual(len(calls), 1)
+        now[0] += 60
+        source.player(PlayerRequest('99'))
+        self.assertEqual(len(calls), 2)
+        value['region'] = 'kr'
+        with self.assertRaises(PublicQueryError):
+            source.player(PlayerRequest('100'))
+
+    def test_source_bound_namecard_does_not_fetch_foreign_or_other_player(self):
+        from ournotes_bot.sources.haneoka.public_queries import PublicQueries
+        from ournotes_bot.domain.public_queries import PlayerRequest, PublicQueryError
+        calls = []
+        source = PublicQueries(fetch=lambda *args: calls.append(args))
+        for path in ('https://evil.invalid/image.png', '/api/v1/game/records/jp/players/100/cards/1/download?file=99_a',
+                     '/api/v1/game/records/jp/players/99/cards/1/download?file=100_a'):
+            with self.assertRaises(PublicQueryError):
+                source.namecard(PlayerRequest('99'), {'page': 1, 'downloadUrl': path})
+        self.assertFalse(calls)
+        source = PublicQueries(fetch=lambda *args: (200, b'{}', {}))
+        with self.assertRaises(PublicQueryError) as failure:
+            source.arena('jp')
+        self.assertEqual(failure.exception.status, 'invalid_source')
+
+    def test_local_grammar_requires_whole_question(self):
+        from ournotes_bot.natural_query.on_query import public_information_command
+        self.assertEqual(public_information_command('玩家 9223372036854775807 jp'), '/查玩家 9223372036854775807 jp')
+        self.assertEqual(public_information_command('MyGO竞技场人数'), '/查竞技场 MyGO 人数')
+        self.assertEqual(public_information_command('本期活动奖励'), '/查活动 奖励')
+        self.assertIsNone(public_information_command('玩家 99 jp 顺便猜一下密码'))
+
+    def test_activity_sections_keep_conditions_unknown_and_explicit_links(self):
+        from ournotes_bot.sources.haneoka.activity_details import project_details
+        from ournotes_bot.query.activity_query import detail_rows
+        from types import SimpleNamespace
+        value = {'effects': [{'targets': {'band': {'name': ['MyGO!!!!!']}}, 'bonusType': 2,
+                             'perRank': [{'rank': 1, 'percent': 15}, {'rank': 2, 'percent': 20}]}],
+                 'rewards': [{'unresolvedRewardId': 71}], 'missions': [], 'recruitments': []}
+        sections = project_details(value)
+        self.assertFalse(next(s for s in sections if s.name == '奖励').complete)
+        result = detail_rows(SimpleNamespace(details=sections), '加成')
+        text = '\n'.join('\n'.join(r.body) for r in result)
+        self.assertIn('档位1：+15%', text)
+        self.assertIn('档位2：+20%', text)
+        self.assertFalse(next(s for s in sections if s.name == '卡池').facts)
+        self.assertFalse(any(s.complete for s in project_details({'effects': None})))
+        from ournotes_bot.query.activity_query import overview_rows
+        from ournotes_bot.query.contracts.info import InfoRow
+        record = SimpleNamespace(details=sections, event_type_id=1, ranking_modes=('歌曲榜',))
+        ordered = overview_rows(record, (InfoRow('挑战曲', label='挑战歌曲', kind='song'),), '/查活动 1')
+        self.assertEqual(ordered[0].title, '活动类型与榜制')
+        self.assertTrue(ordered[1].title.startswith('加成 · '))
+        self.assertEqual(ordered[2].title, '挑战曲')
+
+
 if __name__ == '__main__':
     unittest.main()

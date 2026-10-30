@@ -78,7 +78,27 @@ def color_conditions(text):
     return text
 
 
+def public_information_command(question):
+    """Whole-question grammar; execution and identity checks stay in direct queries."""
+    text = question.strip().strip('？?。！!')
+    text = re.sub(r'^(?:请|帮我|查询|查看|查一下)\s*', '', text)
+    player = re.fullmatch(r'(?:查)?玩家\s+([0-9]{1,19})(?:\s+(jp|hk|tw|kr|en|日服|国服|韩服|英服))?(?:\s+(名片)(?:\s+(页[1-9][0-9]{0,2}))?)?', text, re.I)
+    if player:
+        return '/查玩家 ' + ' '.join(value for value in player.groups() if value)
+    event = re.fullmatch(r'(?:(jp|hk|tw|kr|en|日服|国服|韩服|英服)\s*)?(?:本期|这期|当前)活动(?:的)?(加成|奖励|任务|卡池)', text, re.I)
+    if event:
+        return '/查活动 ' + ' '.join(value for value in event.groups() if value)
+    arena = re.fullmatch(r'(?:(jp|hk|tw|kr|en|日服|国服|韩服|英服)\s*)?(.*?)竞技场(?:的)?(总览|日程|曲池|段位|奖励|榜单|排名|人数)?', text, re.I)
+    if arena:
+        region, band, mode = arena.groups()
+        return '/查竞技场 ' + ' '.join(value for value in (region, band.strip(), '榜单' if mode == '排名' else mode) if value)
+    return None
+
+
 def information_command(question, repository):
+    public = public_information_command(question)
+    if public:
+        return public
     text, saved = protected_text(question, repository)
     if re.search(r"[红蓝绿黄紫黑白橙青灰]色|颜色|属性", color_conditions(text)):
         return None  # Colored members refer to cards, not character profiles.

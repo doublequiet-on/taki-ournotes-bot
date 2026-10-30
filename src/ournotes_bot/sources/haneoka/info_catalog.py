@@ -12,6 +12,7 @@ import re
 from ...domain.info_catalog import ActivityCalendar, ActivityInfo, CardRef, CharacterInfo, GachaInfo, InfoCatalog
 from .catalog_assets import asset_url
 from .catalog_text import LANGUAGES, localized, original, translated
+from .activity_details import project_details
 
 
 def _integer(value, minimum=0, maximum=2**53 - 1):
@@ -198,6 +199,10 @@ def convert_info(documents, identity_jp, fetched_at, identity_intl=None):
                 if music_id is not None:
                     music_id = _integer(music_id)
                 activities.append(ActivityInfo(**base, display_end_at=_time(row.get("displayEndAt")),
+                    details=project_details(row, lambda path: _image(path, release)),
+                    event_type_id=_integer(row['eventType']) if row.get('eventType') is not None else None,
+                    ranking_modes=tuple(label for field, label in (('rankingDisabled','活动排名'),
+                        ('musicRankingDisabled','挑战歌曲单曲榜'),('totalMusicRankingDisabled','挑战歌曲总榜')) if row.get(field) is False),
                     detail_image_url=_image(row.get('backgroundImage'),release),logo_url=_image(row.get('logo'),release),
                     bonus_cards=_card_refs(targets), reward_cards=_card_refs(rewards),
                     pickup_cards=_card_refs(pickups), song_ids=(music_id,) if music_id else (),
@@ -219,6 +224,10 @@ def convert_info(documents, identity_jp, fetched_at, identity_intl=None):
                 raise ValueError('invalid international activity interval')
             names = _text(row, {}, 'title', False)
             intl_records.append(ActivityInfo(ident, names['zh'] or str(ident), names,
+                details=project_details(row, lambda path: _image(path, identity_intl['releaseId'])),
+                event_type_id=_integer(row['eventType']) if row.get('eventType') is not None else None,
+                ranking_modes=tuple(label for field,label in (('rankingDisabled','活动排名'),
+                    ('musicRankingDisabled','挑战歌曲单曲榜'),('totalMusicRankingDisabled','挑战歌曲总榜')) if row.get(field) is False),
                 start_at=start, end_at=end, release=identity_intl['releaseId'],
                 source_id=identity_intl['sourceId'], fetched_at=fetched_at))
         calendars['intl'] = ActivityCalendar(tuple(intl_records), identity_intl['releaseId'],

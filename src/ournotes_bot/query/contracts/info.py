@@ -42,7 +42,7 @@ class InfoView:
     hero_url: str = ""
     rows: tuple[InfoRow, ...] = ()
     footer: tuple[str, ...] = ()
-    layout: Literal["list", "detail", "character", "directory"] = "list"
+    layout: Literal["list", "detail", "character", "directory", "facts"] = "list"
     presentation: Literal["", "activity", "gacha", "character"] = ""
     visual_footer: tuple[str, ...] | None = None
     hero_kind: Literal['banner', 'event'] = 'banner'
@@ -55,6 +55,8 @@ class InfoAnswer:
     status: str = "success"
     views: tuple[InfoView, ...] = ()
     evidence_expires_at: float | None = None
+    captured_images: tuple[tuple[str, bytes], ...] = ()
+    original_image: bytes | None = None
 
 
 def row_text(row: InfoRow) -> str:
