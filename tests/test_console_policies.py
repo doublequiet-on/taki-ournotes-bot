@@ -3380,6 +3380,24 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
         _,_,candidate=await self.candidate(value)
         self.assertIsNotNone(candidate[0].followup)
 
+    async def test_proactive_accepts_json_fence_and_informational_fields(self):
+        value=self.observation();self.tick+=1.6
+        self.client.request.return_value=self.result('```json\n{"participation":"skip","reason":"已有人回答","text":""}\n```')
+        plan,_,_=await self.candidate(value)
+        self.assertEqual(plan['parts'],[])
+        events=self.backend.diagnostics.read(plan['request_id'])['chat_events']
+        self.assertTrue(any(e['kind']=='decision' and e['data']['decision']=='skip' for e in events))
+        view=self.backend.admin.view(self.backend.ledger.request(plan['request_id']))
+        self.assertEqual(view['delivery_reason'],'completed_without_output')
+
+    async def test_proactive_invalid_decision_is_shown_as_failure(self):
+        value=self.observation();self.tick+=1.6
+        self.client.request.return_value=self.result('not a participation decision')
+        plan,_,_=await self.candidate(value)
+        row=self.backend.ledger.request(plan['request_id'])
+        self.assertEqual(self.backend.admin.view(row)['delivery_reason'],'proactive_error')
+        self.assertEqual(next(v for v in self.backend.admin.views() if v['request_id']==plan['request_id'])['delivery_reason'],'proactive_error')
+
     async def test_proactive_reads_own_ack_and_targets_new_speaker_message(self):
         self.policy=replace(self.policy,proactive=replace(self.policy.proactive,cooldown_seconds=0))
         self.agent.services.policy.return_value=self.policy

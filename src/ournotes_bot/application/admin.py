@@ -104,7 +104,10 @@ class Admin:
                 'missing_reason': None if metadata else 'historical_metadata_not_collected'}
         view['delivery_reason'] = ('completed_without_output' if row['status'] == 'finished' and not parts else
             'platform_result_unconfirmed' if view['uncertain_parts'] else None)
-        if metadata and metadata['commands']:
+        if view['delivery_reason']=='completed_without_output' and metadata and (metadata.get('chat_failed')
+                or any(e['kind']=='error' for e in metadata.get('chat_events',[]))):
+            view['delivery_reason']='proactive_error';view['business_outcome']='failed'
+        if metadata and metadata['commands'] and view['delivery_reason']!='proactive_error':
             outcomes = {business_state(c['outcome']) for c in metadata['commands']}
             view['business_outcome'] = next(iter(outcomes)) if len(outcomes) == 1 else 'mixed'
         if detail:

@@ -2,6 +2,7 @@
 # Effects: Bounded observations, scoped receipt history and usage reads; receipts alone persist dialogue.
 import json
 import math
+import re
 import sqlite3
 from collections import Counter
 from dataclasses import asdict,replace
@@ -235,14 +236,21 @@ class ProactiveChat:
 
     def decision(self,work,text):
         require(self.valid(work),'proactive_stale')
+        # Accept a whole JSON code block; never extract an object from prose.
+        if isinstance(text,str):
+            text=text.strip()
+            fenced=re.fullmatch(r'```(?:json)?\s*\n(.*?)\n```',text,re.S|re.I)
+            if fenced:text=fenced.group(1)
         try:value=json.loads(text)
-        except (ValueError,TypeError):raise ModelError('model_protocol_error') from None
+        except (ValueError,TypeError):
+            self.trace(work,'decision',decision='invalid_json')
+            raise ModelError('model_protocol_error') from None
         require(isinstance(value,dict) and value.get('participation') in ('reply','skip','defer'),'model_protocol_error')
         mode=value['participation']
-        require(set(value)==({'participation','text'} if mode=='reply' else {'participation','delay_seconds'} if mode=='defer' else {'participation'}),'model_protocol_error')
+        require(({'participation','text'} if mode=='reply' else {'participation','delay_seconds'} if mode=='defer' else {'participation'})<=set(value),'model_protocol_error')
         if mode=='reply':require(isinstance(value['text'],str) and 0<len(value['text'].strip())<=4000,'model_protocol_error')
         if mode=='defer':require(type(value['delay_seconds']) is int and 2<=value['delay_seconds']<=5,'model_protocol_error')
-        self.controller.decide(work.proactive,mode,actual_cost_micro=self.cost(work),defer_seconds=value.get('delay_seconds',2))
+        self.controller.decide(work.proactive,mode,actual_cost_micro=self.cost(work),defer_seconds=value['delay_seconds'] if mode=='defer' else 2)
         self.trace(work,'decision',decision=mode,model_attempts=work.model_attempts)
         work.participation=mode
         return value['text'].strip() if mode=='reply' else None

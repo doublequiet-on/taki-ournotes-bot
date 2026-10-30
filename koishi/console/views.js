@@ -7,7 +7,7 @@ export const stamp=v => v ? new Date(v*1000).toLocaleString('zh-CN',{timeZone:'A
 export const button=(text,action,disabled=false) => h('button',{onClick:action,disabled},text);
 const guide=(title,text)=>h('details',{class:'guide'},[h('summary',title),h('p',text)]);
 const technical=(title,children)=>h('details',{class:'technical'},[h('summary',title),...children]);
-const deliveryLabel=item=>item.delivery_reason==='completed_without_output'?'已完成，无输出':(labels[item.delivery_state]||item.delivery_state)+(item.uncertain_parts?'（仍有片段结果未确认）':'');
+const deliveryLabel=item=>item.delivery_reason==='proactive_error'?'主动评估失败':item.delivery_reason==='completed_without_output'?'已完成，无输出':(labels[item.delivery_state]||item.delivery_state)+(item.uncertain_parts?'（仍有片段结果未确认）':'');
 const names={meta:'歌曲 Meta',knowledge:'百科批准与索引',error_counts:'今日调用错误',issue_count:'格式问题数',field_coverage:'已知字段数量',duration_seconds:'末判定时长',notes:'Note 数',nps:'NPS',level:'等级',bpm_first:'首 BPM',bpm_min:'最低 BPM',bpm_max:'最高 BPM',
   origin:'来源地址',release_id:'release',source_id:'来源版本',songs:'歌曲总数',charts:'谱面总数',not_observed:'尚无查询观测',
   approved_set_revision:'批准集合版本',index_revision:'索引版本',approved_documents:'可供答文档数',indexed_chunks:'索引片段数',index_error:'索引错误',last_build:'最近索引构建',encoder:'编码器',ready:'就绪',empty:'空库',index_pending:'索引待更新',
