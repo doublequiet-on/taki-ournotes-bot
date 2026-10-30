@@ -88,7 +88,7 @@ ERRORS={
     'query_entity_mismatch':'这次解析的查询对象与问题不一致，已停止查询。可以使用名称或 ID 通过直接指令查询。',
     'query_difficulty_ambiguous':'这句话包含冲突的谱面难度，请只指定一种难度。',
     'query_difficulty_mismatch':'这次解析的谱面难度与问题不一致，已停止查询。可用 /查谱面 加歌曲名和难度查询。',
-    'model_protocol_error':'AI 返回的格式不符合要求，请稍后重新提问。',
+    'model_protocol_error':'这次回复处理失败了。',
     'source_unavailable':'当前资料核实失败，请稍后重试。',
     'execution_timeout':'这次 AI 处理超时，请稍后重试。',
     'policy_denied':'当前策略不允许 AI 调用；可以使用直接查询指令。',
