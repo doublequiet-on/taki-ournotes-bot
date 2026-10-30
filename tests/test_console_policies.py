@@ -2623,7 +2623,13 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
     request=ChatAgentTests.request
     result=ChatAgentTests.result
     prepare_native=NativeRuntimeTests.prepare_native
-    event=NativeRuntimeTests.event
+    def event(self,plan,kind):
+        if kind!='ack':return NativeRuntimeTests.event(self,plan,kind)
+        from ournotes_bot.application.backend_protocol import PROTOCOL
+        work=self.backend.works[plan['delivery_id']]
+        return self.backend.apply_event(plan['delivery_id'],dict(protocol=PROTOCOL,request_id=plan['request_id'],
+            plan_version=1,gateway_epoch='e1',event='ack',part_id=plan['parts'][0]['id'],attempt_id='a1',
+            result='success',message_id='accepted-'+plan['request_id'][:8],group_ingress_seq=work.request.ingress_seq))
 
     async def asyncSetUp(self):
         from ournotes_bot.application.chat_jobs import ServicePolicy,SummaryLimits,ProactiveLimits
@@ -2644,7 +2650,7 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
 
     async def test_acked_question_and_same_person_answer_use_bounded_followup_context(self):
         self.client.request.return_value=self.result('你说的是声优表演，还是唱歌？')
-        plan,_=await self.prepare_native('/聊 哪方面比较权威')
+        plan,_=await self.prepare_native('/聊 A和B谁比较权威')
         self.event(plan,'intent');self.event(plan,'ack')
         self.now+=.01
         value=self.observation('声优表演方面和唱歌方面',seq=2)
@@ -2656,9 +2662,10 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
         self.assertIsNotNone(candidate[0].followup)
         self.assertIn('无关或无法判断时只输出',bodies[0]['messages'][0]['content'])
         messages=bodies[0]['messages'][1:]
-        self.assertEqual(len(messages),2)
-        self.assertIn('声优表演，还是唱歌',messages[0]['content'])
-        self.assertIn('声优表演方面和唱歌方面',messages[1]['content'])
+        self.assertEqual(len(messages),3)
+        self.assertIn('A和B谁比较权威',messages[0]['content'])
+        self.assertIn('声优表演，还是唱歌',messages[1]['content'])
+        self.assertIn('声优表演方面和唱歌方面',messages[2]['content'])
         self.assertEqual(result['parts'],[])
 
     async def test_followup_reply_uses_existing_delivery_and_does_not_save_other_observations(self):
@@ -2691,6 +2698,19 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
         _,_,candidate=await self.candidate(value)
         self.assertIsNone(candidate[0].followup)
 
+    async def test_answer_arriving_before_gateway_ack_does_not_create_followup(self):
+        from ournotes_bot.application.backend_protocol import PROTOCOL
+        self.client.request.return_value=self.result('你说哪方面？')
+        plan,_=await self.prepare_native('/聊 哪个更权威')
+        self.event(plan,'intent')
+        self.backend.apply_event(plan['delivery_id'],dict(protocol=PROTOCOL,request_id=plan['request_id'],
+            plan_version=1,gateway_epoch='e1',event='ack',part_id=plan['parts'][0]['id'],attempt_id='a1',
+            result='success',message_id='sent',group_ingress_seq=2))
+        value=self.observation('唱歌',seq=2);self.tick+=1.6
+        self.client.request.return_value=self.result('{"participation":"skip"}')
+        _,_,candidate=await self.candidate(value)
+        self.assertIsNone(candidate[0].followup)
+
     async def test_duplicate_observation_preserves_match_but_other_speaker_cancels_it(self):
         from ournotes_bot.application.backend_protocol import Request
         self.client.request.return_value=self.result('你说哪方面？')
@@ -2713,7 +2733,7 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
         result,_,candidate=await self.candidate(value)
         work=self.backend.works[result['delivery_id']]
         self.assertTrue(self.agent.proactive.valid(work))
-        self.tick+=45
+        self.tick+=120
         self.assertFalse(self.agent.proactive.valid(work,sending=True))
 
     async def test_deleted_question_invalidates_followup_before_send(self):
@@ -2726,6 +2746,35 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
         work=self.backend.works[result['delivery_id']]
         self.agent.store.delete_messages(work.request.scope,[candidate[0].followup.message_id])
         self.assertFalse(self.agent.proactive.valid(work,sending=True))
+
+    async def test_policy_revocation_sweeps_idle_question(self):
+        self.client.request.return_value=self.result('你说哪方面？')
+        plan,_=await self.prepare_native('/聊 哪个更权威')
+        self.event(plan,'intent');self.event(plan,'ack')
+        self.assertTrue(self.agent.proactive.followups.questions)
+        self.agent.services.policy.return_value=None
+        self.agent.proactive.sweep_followups()
+        self.assertFalse(self.agent.proactive.followups.questions)
+        self.assertFalse(self.agent.proactive.followups.timers)
+
+    async def test_followup_waits_for_existing_cooldown_without_bypassing_it(self):
+        from ournotes_bot.application.backend_protocol import Request
+        self.client.request.return_value=self.result('你说哪方面？')
+        plan,_=await self.prepare_native('/聊 哪个更权威')
+        self.event(plan,'intent');self.event(plan,'ack')
+        self.now+=.01
+        value=self.observation('唱歌',seq=2)
+        request=Request.parse(value,'fixture','app',self.now)
+        group=self.agent.proactive.controller.groups[tuple(request.scope.values())]
+        group.last_delivery_at=self.tick
+        with patch.object(self.agent.store,'proactive_replies',return_value=(self.now,)), patch.object(self.agent.service_budget,'clock',return_value=self.now):
+            delay=self.agent.proactive.observation_delay(request)
+        self.assertEqual(delay,60000)
+        self.assertIsNone(self.agent.proactive.controller.candidate(tuple(request.scope.values()),reserve_cost_micro=1))
+        self.tick+=60
+        self.client.request.return_value=self.result('{"participation":"skip"}')
+        _,_,candidate=await self.candidate(value)
+        self.assertIsNotNone(candidate[0].followup)
 
     async def candidate(self,value,serial=1):
         from ournotes_bot.application.backend_protocol import Request,digest

@@ -6,6 +6,7 @@ import sqlite3
 from collections import Counter
 from dataclasses import asdict,replace
 from fractions import Fraction
+from types import SimpleNamespace
 
 from ..domain.chat import ChatMessage
 from ..domain.chat_images import ImageError
@@ -29,6 +30,15 @@ class ProactiveChat:
         runtime=self.agent.runtime
         return ((self.services,runtime.proactive_capabilities) if runtime.dedicated_proactive()
                 else (self.agent.services,runtime.capabilities))
+
+    def sweep_followups(self):
+        self.followups.sweep()
+        for scope in tuple(self.followups.questions):
+            request=SimpleNamespace(conversation_id=scope[-1])
+            try:
+                snapshot=self.agent.runtime.proactive_snapshot(request.conversation_id)
+                if self.policy(snapshot,request) is None:self.followups.clear(scope)
+            except (ModelError,ServiceError,ValueError,OSError,sqlite3.Error):self.followups.clear(scope)
 
     @staticmethod
     def scope(request):return tuple(request.scope.values())
@@ -93,6 +103,22 @@ class ProactiveChat:
         if snapshot.fingerprint:self.agent.runtime.usage.configuration(snapshot.profile.config_version,snapshot.fingerprint)
         return candidate,policy,snapshot,job
 
+    def observation_delay(self,request):
+        """Wait within the question window without bypassing either cooldown."""
+        scope=self.scope(request)
+        followup=self.followups.match(scope,request.message_id)
+        if followup is None:return 1500
+        snapshot=self.agent.runtime.proactive_snapshot(request.conversation_id)
+        policy=self.policy(snapshot,request)
+        if policy is None:return None
+        group=self.controller.groups.get(scope)
+        if group is None:return None
+        wait=max(1.5,group.last_delivery_at+self.controller.cooldown_seconds-self.controller.clock())
+        replies=self.agent.store.proactive_replies(request.scope)
+        if replies:wait=max(wait,max(replies)+policy.proactive.cooldown_seconds-self.agent.service_budget.clock())
+        if wait+5>=followup.at+self.followups.window-self.controller.clock():return None
+        return math.ceil(wait*1000)
+
     def start_addressed(self,work):
         if work.request.kind!='group' or work.proactive is not None:return
         scope=self.scope(work.request);work.followup_generation=self.followups.changed(scope)
@@ -104,8 +130,11 @@ class ProactiveChat:
         try:
             snapshot=self.agent.runtime.proactive_snapshot(work.request.conversation_id)
             if self.policy(snapshot,work.request) is None:return
+            originals=self.agent.store.read(work.request.scope,[work.request.message_id])['messages']
+            if len(originals)!=1 or originals[0]['role']!='user' or originals[0]['speaker_id']!=work.request.user_id:return
+            original=originals[0]
             self.followups.delivered(self.scope(work.request),getattr(work,'followup_generation',None),
-                work.request.user_id,work.request.message_id,work.request.timestamp_ms,work.request.ingress_seq,work.request.gateway_epoch,message_id,text,
+                work.request.user_id,work.request.message_id,original['text'],original['reply_to'],original['display_name'],original['timestamp_ms'],work.request.ingress_seq,work.request.gateway_epoch,message_id,text,
                 int(self.agent.runtime.backend.clock()*1000))
         except (ModelError,ServiceError,ValueError,OSError,sqlite3.Error):pass
 
@@ -147,6 +176,8 @@ class ProactiveChat:
         while rows and sum(len(row.text.encode()) for row in rows)>24576:rows.pop(0)
         messages=[]
         if followup:
+            messages.append({'role':'user','content':json.dumps(asdict(ChatMessage(followup.source_id,followup.user_id,followup.source_text,
+                followup.source_time,reply_to=followup.source_reply_to,display_name=followup.source_display_name)),ensure_ascii=False)})
             messages.append({'role':'assistant','content':json.dumps(asdict(ChatMessage(followup.message_id,'Taki',followup.text,
                 followup.delivered_ms,'assistant',followup.source_id)),ensure_ascii=False)})
         for row in rows:

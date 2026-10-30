@@ -279,6 +279,8 @@ class ChatAgent:
     def initial_context(self,work,messages,tools):
         """Trim complete old exchanges before the function transcript starts."""
         protected={work.request.message_id}
+        if work.proactive is not None and work.proactive.followup is not None:
+            protected.update((work.proactive.followup.source_id,work.proactive.followup.message_id))
         if work.request.reference:protected.add(work.request.reference['message_id'])
         def required(message):
             if message['role']=='system':return True
@@ -657,4 +659,5 @@ class ChatAgent:
                 while len(self.knowledge_scopes)>1024:self.knowledge_scopes.pop(next(iter(self.knowledge_scopes)))
 
     def close(self):
+        self.proactive.followups.close()
         self.store.close()
