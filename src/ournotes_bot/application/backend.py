@@ -90,6 +90,10 @@ class Work:
     entity_source_version: str = ''
     web_capability: object = None
     knowledge_scope: object = None
+    knowledge_scope_ambiguous: bool = False
+    knowledge_scope_leases: tuple = ()
+    knowledge_context: object = None
+    knowledge_target: object = None
     image_deadline: float = float('inf')
     image_bytes: int = 0
 
