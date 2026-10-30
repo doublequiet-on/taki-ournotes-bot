@@ -4,6 +4,10 @@
 # Pos: Rendering / Core; source names and descriptions keep their own translations.
 # Effects: None.
 LABELS = {
+ '此谱面有 {count} 个技能点位，无法应用五段覆盖时间。':('This chart has {count} skill events; five custom windows cannot be applied.','この譜面のスキル発動は{count}回のため、5つの指定時間を適用できません。'),
+ '参考指标未随覆盖时间重算':('Reference metrics are not recalculated for custom windows','参考指標は指定時間で再計算されません'),
+ '技能 · 自定义':('Skill · custom','スキル・指定'),
+ '技能覆盖（秒）':('Skill windows (sec)','スキル時間（秒）'),
  '全部':('All','すべて'),'张':('cards','枚'),'技能':('Skills','スキル'),
  '展示位置':('Displayed entries','表示位置'),
  '整个激奏':('Full fever','激奏全体'),'效果':('Effect','効果'),
@@ -24,7 +28,7 @@ LABELS = {
  '激奏支援':('Fever support','激奏サポート'),'其他技能':('Other skill','その他のスキル'),
  '相关活动':('Related event','関連イベント'),'相关卡池':('Related gacha','関連ガチャ'),
  '通常':('Normal','通常'),'条件成立':('Conditional','条件成立'),
- '谱面详情':('Chart details','譜面詳細'),'完整谱面':('Full chart','全譜面'),
+ '谱面详情':('Chart details','譜面詳細'),'完整谱面':('Full chart','全譜面'),'镜像谱面':('Mirrored chart','ミラー譜面'),
  '谱面时长':('Chart length', '譜面の長さ'),
  '音符数':('Notes', 'ノーツ数'),
  '每秒音符数':('Notes / sec', '毎秒ノーツ'),

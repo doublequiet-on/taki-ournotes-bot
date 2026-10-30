@@ -2174,6 +2174,9 @@ class ChatAgentTests(Fixture, unittest.IsolatedAsyncioTestCase):
         self.assertFalse(any(r['state']=='reserved' for r in self.backend.model_runtime.usage.request_view(plan['request_id'])))
         self.event(plan,'intent');self.event(plan,'ack')
 
+    # Exercise call permits with a stable tool payload. Repeating the growing
+    # user help can legitimately exhaust the separate transcript input budget.
+    @patch.dict('ournotes_bot.commands.HELP_TEXTS', {'zh':'Taki · 固定帮助测试夹具'})
     async def test_six_permits_and_reserved_final_with_tool_budget_results(self):
         # Exercise permit/tool ceilings independently of prompt size and daily quota.
         self.snapshot=replace(self.snapshot,profile=replace(self.snapshot.profile,
@@ -2198,6 +2201,9 @@ class ChatAgentTests(Fixture, unittest.IsolatedAsyncioTestCase):
             for i in range(5)]+[self.result('收束。')]
         next_plan,attempts=await self.prepare_native('/聊 继续读帮助',seq=2)
         self.assertEqual(len(attempts),6)
+        self.assertNotIn('tools',bodies[-1])
+        self.assertEqual(sum(m['role']=='tool' for m in bodies[-1]['messages']),5)
+        self.assertEqual(next_plan['parts'][0]['business_status'],'success')
         self.event(next_plan,'intent');self.event(next_plan,'ack')
 
     async def test_invalid_tool_calls_can_recover_without_echoing_input(self):

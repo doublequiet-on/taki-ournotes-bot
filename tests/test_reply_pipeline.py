@@ -94,6 +94,65 @@ class ReplyPipelineTests(unittest.TestCase):
         self.assertEqual(select.call_count, 1)
         self.assertEqual([song.id for song in render.call_args.args[0]], [100001])
 
+    def test_mirror_chart_options_reach_the_renderer(self):
+        from ournotes_bot.commands import resolve_command
+        for command in ("/查谱面 1 镜像", "/查谱面 1 反转 EX", "/查谱面 1 EX 镜像"):
+            with self.subTest(command=command), \
+                 patch("ournotes_bot.application.replies.load_chart_score", return_value={"notes": []}), \
+                 patch("ournotes_bot.rendering.chart_layout.render", return_value=(b"chart",)) as render:
+                result = resolve_command(command, self.repo)
+                self.assertTrue(result.chart_mirror)
+                self.assertEqual(result.songs[0].id, 100001)
+                reply = _prepare_reply(command, self.repo, self.parser)
+                self.assertTrue(render.call_args.kwargs["mirror"])
+                self.assertIn("镜像谱面", reply.text)
+
+    def test_custom_chart_coverage_reaches_render_and_rejects_wrong_event_count(self):
+        from ournotes_bot.commands import resolve_command
+        command = "/查谱面 1 覆盖=5/6.5/8/5/5 EX 镜像"
+        expected = (5,6.5,8,5,5)
+        result = resolve_command(command, self.repo)
+        self.assertEqual(result.chart_coverage, expected)
+        self.assertTrue(result.chart_mirror)
+        self.assertEqual(result.parsed, ("chart", "100001", "EXPERT"))
+        for count in (5,4):
+            with patch("ournotes_bot.application.replies.load_chart_score",
+                       return_value={"events":{"skill":list(range(count))}, "notes":[]}), \
+                 patch("ournotes_bot.rendering.chart_layout.render",return_value=(b"chart",)) as render:
+                reply = _prepare_reply(command,self.repo,self.parser)
+                if count == 5:
+                    self.assertEqual(render.call_args.kwargs["skill_durations"],expected)
+                    self.assertIn("5/6.5/8/5/5",reply.text)
+                else:
+                    render.assert_not_called()
+                    self.assertIsNone(reply.image)
+                    self.assertIn("4 个技能点位",reply.text)
+        for value in ("5/5", "0/5/5/5/5", "-1/5/5/5/5", "nan/5/5/5/5", "5/5/5/5/inf"):
+            result = resolve_command("/查谱面 1 覆盖="+value,self.repo)
+            self.assertEqual(result.status,"invalid_arguments")
+            self.assertIn("五个正数",result.hint)
+
+    def test_bare_skill_windows_match_named_option(self):
+        from ournotes_bot.commands import resolve_command
+        for command in ("/查谱面 1 ex 镜像 5/6.5/8/5/5",
+                        "/查谱面 1 ex 5/6.5/8/5/5"):
+            named=command.replace("5/6.5/8/5/5","覆盖=5/6.5/8/5/5")
+            self.assertEqual(resolve_command(command,self.repo),resolve_command(named,self.repo))
+        with patch("ournotes_bot.application.replies.load_chart_score",
+                   return_value={"events":{"skill":[0,1,2,3,4]},"notes":[]}), \
+             patch("ournotes_bot.rendering.chart_layout.render",return_value=(b"chart",)) as render:
+            reply=_prepare_reply("/查谱面 1 ex 镜像 5/5/5/5/5",self.repo,self.parser)
+            self.assertEqual(reply.image,b"chart")
+            self.assertTrue(render.call_args.kwargs["mirror"])
+            self.assertEqual(render.call_args.kwargs["skill_durations"],(5,5,5,5,5))
+        for suffix in ("5/5/5","0/5/5/5/5","-1/5/5/5/5","覆盖=5/5/5/5/5 5/5/5/5/5"):
+            self.assertEqual(resolve_command("/查谱面 1 "+suffix,self.repo).status,"invalid_arguments")
+        from dataclasses import replace
+        self.repo.songs=[replace(self.repo.songs[0],title="Test 24/7",titles=("Test 24/7",),localized={})]
+        result=resolve_command("/查谱面 Test 24/7",self.repo)
+        self.assertEqual(result.status,"success")
+        self.assertFalse(result.chart_coverage)
+
     def test_chart_and_card_text_images_share_one_selection(self):
         from ournotes_bot.query.song_identity import unique_candidates
         with patch("ournotes_bot.query.song_identity.unique_candidates", wraps=unique_candidates) as select, \

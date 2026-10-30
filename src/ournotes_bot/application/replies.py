@@ -721,9 +721,17 @@ def complete_chart_reply(result,repository,locale,candidate):
     from ..rendering.chart_layout import render
     prepared=prepare_chart_reply(song,charts,repository.chart_source,locale,
                                  load_score=load_chart_score,load_data=load_chart_data)
+    from ..rendering.labels import label as ui_label
+    mirror=result.spec.chart_mirror if isinstance(result, QueryResult) else result.chart_mirror
+    coverage=result.spec.chart_coverage if isinstance(result, QueryResult) else result.chart_coverage
+    if coverage and prepared.score is not None:
+        count=len(prepared.score.get('events',{}).get('skill',[]))
+        if count != len(coverage):
+            return PreparedReply(prepared.text + "\n" + ui_label("此谱面有 {count} 个技能点位，无法应用五段覆盖时间。", locale).format(count=count), context=candidate)
     pages=render(prepared.song,prepared.charts,prepared.score,prepared.preview,prepared.locale,
-                 load=visual_asset,notice=prepared.notice)
-    text=prepared.text
+                 load=visual_asset,notice=prepared.notice,mirror=mirror,skill_durations=coverage)
+    text=prepared.text + ("\n" + ui_label("镜像谱面", locale) if mirror else "")
+    if coverage:text += "\n" + ui_label("技能覆盖（秒）", locale) + "：" + "/".join(f"{v:g}" for v in coverage)
     replies=tuple(PreparedReply(text,image,context=candidate) for image in pages)
     return replies[0] if len(replies)==1 else PreparedReply('',pages=replies,context=candidate)
 

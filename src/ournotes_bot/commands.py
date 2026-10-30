@@ -30,7 +30,7 @@ HELP_TEXT = """Taki · Our Notes 日服资料查询
 /查曲 [歌名/ID/乐队] [颜色] [激奏=类型] [EX] [lv<=25] [页N]：歌曲列表
 颜色：红、蓝、绿、黄、紫；例 /查曲 颜色=蓝/绿
 激奏=JUST 表示包含；激奏=纯JUST 表示全段同类；激奏=混合；激奏=JUST/JUST/COMBO 按顺序匹配
-/查谱面 歌名或ID [难度]：查看等级与 Note 数；100001 可简写为 1
+/查谱面 歌名或ID [难度] [镜像／反转] [5/6.5/8/5/5]：查看等级与 Note 数；100001 可简写为 1
 /查榜线 [jp/hk/kr/en] [id1或活动="名称"] [歌名或歌曲ID=100001] [50或20-40] [仅数值]：顺序不限，默认日服全部歌曲；无排名看三曲合图趋势，有排名看分数表；50看40～60名，20-40看区间，50-50查一名，1-100查完整榜；id1查活动1，裸数字仍是排名；指定活动读取本地历史末次观测，非确认终榜
 Haneoka 未确认原始歌曲序号，请用歌名或歌曲ID；旧T50也查附近，旧多T排名最多五个
 /查活动 [jp/hk/kr/en]：当前／最近活动详情；/查活动 列表、/查活动 ID或名称 查询日服收录资料
@@ -82,7 +82,7 @@ Example: /song mygo 27, /chart 100001 EXPERT, /card tomori""",
 
 COMMAND_HELP = {
     "songs": "查询歌曲列表，QQ单图优先，超限完整续发。支持歌名、昵称、乐队、ID、等级；27包含27.5，lv比较式未指定难度时按最高等级。可加颜色=蓝/绿、激奏=JUST、激奏=纯COMBO、激奏=混合或激奏=JUST/JUST/COMBO，并与EX、lv<=25、页N组合。同颜色多选任选，不同维度同时满足；包含全部用 激奏=包含全部JUST/COMBO。\n例：/查曲 蓝色 MyGO EX 激奏=JUST 页2",
-    "chart": "查询谱面等级与 Note 数，支持歌名或曲目 ID。100001 可简写为 1。可选难度：EASY、NORMAL、HARD、EXPERT；不指定时显示全部难度。\n用法：/查谱面 <歌名或ID> [难度]\n示例：/查谱面 1 EXPERT、/查谱面 100001 EXPERT",
+    "chart": "查询谱面等级与 Note 数，支持歌名或曲目 ID。100001 可简写为 1。可选难度：EASY、NORMAL、HARD、EXPERT；不指定时显示全部难度。\n可加镜像或反转，左右翻转音符与划键方向；末尾加 5/6.5/8/5/5 按 S1～S5 指定最终秒数，也兼容 覆盖= 写法。\n用法：/查谱面 <歌名或ID> [难度] [镜像／反转]\n示例：/查谱面 1 EXPERT 镜像、/查谱面 100001 反转",
     "cards": "角色卡条件查询始终返回列表，QQ单图优先，超限完整续发，显示完整总数，剩余内容用 /继续。ID精确查详情，/查卡面 ID 只发公开full卡面。\n用法：/查卡 [BD/SSR/SR/R] [颜色=红色,蓝色] [角色=tmr,skk] [乐队=MyGO] [LIVE=分数提升] [击奏=JUST] [得意=MyGO] [页N]\n不同维度AND、同维度多选OR，得意标签全部包含。BD为生日卡；旧二/三/四星别名保留。",
     "support_cards": "留影卡条件查询返回完整列表，QQ单图优先；ID精确查详情，/查留影卡面 ID 只发卡面。\n用法：/查留影卡 [SSR/EX/SR/R] [颜色=红色,蓝色] [角色=tmr,skk] [乐队=MyGO] [LIVE=技能延长] [击奏=LUCK] [页N]\nLIVE可选分数提升、LIFE回复、判定强化、技能延长；以实际资料为准。角色任选且去重，乐队另行筛选；不支持得意标签；BD仅适用于角色卡。",
     "abbrev": "查询已收录的角色、乐队等昵称；也可直接用昵称查曲或查卡。\n用法：/查缩写 <昵称>\n示例：/查缩写 skk、/查缩写 茉团、/查卡 墨缇丝",
@@ -351,6 +351,40 @@ def page_notice(kind: str, query: str, page: int, total: int, locale: str) -> st
     return summary
 
 
+def chart_coverage_option(query: str) -> tuple[str, tuple[float, ...]]:
+    """Read final durations for chronological S1–S5 windows."""
+    import math
+    words = query.split()
+    options = [word for word in words if word.startswith("覆盖=")]
+    if len(words) > 1 and "/" in words[-1] and re.fullmatch(r"[0-9eE+./-]+", words[-1]):
+        options.append(words[-1])
+    if not options:
+        return query, ()
+    error = "覆盖时间须填写五个正数（秒），例如 5/6.5/8/5/5。"
+    if len(options) != 1:
+        raise ValueError(error)
+    values = options[0].removeprefix("覆盖=").split("/")
+    if len(values) != 5 or any(not re.fullmatch(r"[0-9]+(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?", v) for v in values):
+        raise ValueError(error)
+    durations = tuple(float(v) for v in values)
+    if any(not math.isfinite(v) or v <= 0 for v in durations):
+        raise ValueError(error)
+    return " ".join(word for word in words if word != options[0]), durations
+
+
+def chart_mirror_option(query: str) -> tuple[str, bool]:
+    """Remove a trailing mirror option, before or after the difficulty."""
+    words = query.split()
+    difficulties = {"E", "EASY", "N", "NORMAL", "H", "HARD", "EX", "EXP", "EXPERT", "イージー", "ノーマル", "ハード", "エキスパート", "简单", "普通", "困难", "专家"}
+    index = len(words) - 1
+    if index > 0 and words[index].upper() in difficulties:
+        index -= 1
+    if index > 0 and words[index] in {"镜像", "反转"}:
+        del words[index]
+        return " ".join(words), True
+    return query, False
+
+
 def parse_query(content: str) -> tuple[str, str, str | int | None] | None:
     text = _clean_message(content)
     parts = text.split(None, 1)
@@ -364,6 +398,11 @@ def parse_query(content: str) -> tuple[str, str, str | int | None] | None:
         query, page = _split_page(query)
         return ("songs", query, page) if query else None
     if kind == "chart":
+        try:
+            query, _ = chart_coverage_option(query)
+        except ValueError:
+            return None
+        query, _ = chart_mirror_option(query)
         parts = query.rsplit(None, 1)
         difficulties = {"E": "EASY", "EASY": "EASY", "N": "NORMAL", "NORMAL": "NORMAL", "H": "HARD", "HARD": "HARD", "EX": "EXPERT", "EXP": "EXPERT", "EXPERT": "EXPERT", "イージー": "EASY", "ノーマル": "NORMAL", "ハード": "HARD", "エキスパート": "EXPERT", "简单": "EASY", "普通": "NORMAL", "困难": "HARD", "专家": "EXPERT"}
         if len(parts) == 2 and parts[1].upper() in difficulties:
@@ -515,6 +554,8 @@ class CommandResult:
     query_spec: object | None = None
     activity: object | None = None
     info: InfoAnswer | None = None
+    chart_mirror: bool = False
+    chart_coverage: tuple[float, ...] = ()
 
     def __post_init__(self):
         for answer in (self.cutoff, self.catalog, self.song_selection, self.activity, self.info):
@@ -556,12 +597,22 @@ def resolve_command(content: str, repository: SongRepository) -> CommandResult |
                              cards=() if support else answer.cards,
                              support_cards=answer.cards if support else (), catalog=answer)
     parsed = parse_query(content)
+    mirror = False
+    coverage = ()
     if kind == "chart" and len(parts) > 1:
         from .query.song_identity import exact_songs
         if exact_songs(repository, parts[1]):
             parsed = ("chart", parts[1], None)
-        elif parsed and parsed[2] is not None:
-            original = parts[1].rsplit(None, 1)[0]
+        else:
+            try:
+                chart_query, coverage = chart_coverage_option(parts[1])
+            except ValueError as exc:
+                return CommandResult(("chart", parts[1], None), hint=str(exc), status="invalid_arguments")
+            original_query, mirror = chart_mirror_option(chart_query)
+            if exact_songs(repository, original_query):
+                parsed = ("chart", original_query, None)
+        if parsed and parsed[2] is not None:
+            original = chart_mirror_option(chart_coverage_option(parts[1])[0])[0].rsplit(None, 1)[0]
             if exact_songs(repository, original):
                 parsed = ("chart", original, parsed[2])
     if not parsed:
@@ -588,11 +639,11 @@ def resolve_command(content: str, repository: SongRepository) -> CommandResult |
     from .query.song_identity import unique_candidates, candidate_text, literal_song_match
     matches = unique_candidates(repository, query)
     if len(matches) > 1 or (matches and not literal_song_match(repository, query, matches[0])):
-        return CommandResult(parsed, hint=candidate_text(matches, parsed[2]),
-                             status="ambiguous", candidates=matches)
+        return CommandResult(parsed, hint=candidate_text(matches, parsed[2], mirror=mirror, coverage=coverage),
+                             status="ambiguous", candidates=matches, chart_mirror=mirror, chart_coverage=coverage)
     song = matches[0] if matches else None
     hint = None if song else tr(locale_for(content), "not_found_generic", query=query)
-    return CommandResult(parsed, songs=(song,) if song else (), hint=hint,
+    return CommandResult(parsed, songs=(song,) if song else (), hint=hint, chart_mirror=mirror, chart_coverage=coverage,
                          status="success" if song else "unknown_entity")
 
 
