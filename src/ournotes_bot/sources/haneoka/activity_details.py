@@ -38,9 +38,10 @@ def project_details(event, artwork=lambda path: ''):
         title = '／'.join(filter(None, (constraint, *names))) or '加成对象未确认'
         key = (effect.get('resourceTypeConstraint'), json.dumps(targets, sort_keys=True, ensure_ascii=False))
         if key not in groups:
-            groups[key] = (title, [])
+            groups[key] = (title, [], [])
         groups[key][1].append(kind + '：' + (' · '.join(levels) if levels else '数值未获取'))
-    effects = [ActivityFact(title, tuple(lines)) for title, lines in groups.values()]
+        groups[key][2].append((kind, *levels))
+    effects = [ActivityFact(title, tuple(lines), table=tuple(table)) for title, lines, table in groups.values()]
     result.append(ActivitySection('加成', tuple(effects), isinstance(event.get('effects'), list)))
     rewards = []
     complete = isinstance(event.get('rewards'), list)

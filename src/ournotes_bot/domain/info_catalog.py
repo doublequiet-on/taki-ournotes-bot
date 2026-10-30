@@ -60,6 +60,7 @@ class ActivityFact:
     lines: tuple[str, ...] = ()
     image_url: str = ''
     preview: bool = False
+    table: tuple[tuple[str, ...], ...] = ()
 
 
 @dataclass(frozen=True)

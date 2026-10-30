@@ -174,14 +174,15 @@ def execute_arena(query, repository, *, now=None):
                 board = json.loads(repository.public_queries.board(request, season['seasonId'], thresholds).body)
                 if request.mode == '榜单':
                     rows.extend(InfoRow(f"第{r['rank']}名 · {r['name']}", (f"积分：{r['point']}",
-                        '公开ID：' + (r.get('profileId') or '未获取'))) for r in board['rows'] if request.first <= r['rank'] <= request.last)
+                        '公开ID：' + (r.get('profileId') or '未获取')), kind='standing',
+                        table=((f"第{r['rank']}名",r['name']),)) for r in board['rows'] if request.first <= r['rank'] <= request.last)
                 else:
                     rows.append(InfoRow('联赛上榜人数', (str(board.get('maxRank')) if board.get('maxRank') is not None else '未获取',)))
                     labels = {r['points']: localized(r['name']) for r in league['ranks']}
                     rows.extend(InfoRow(labels.get(r['threshold'], str(r['threshold'])), (f"人数：{r['count']}",)) for r in board['tiers'])
                 rows.append(InfoRow('观测时间', (stamp(board.get('observedAtMs')), '来源：' + board.get('provider', '未获取'))))
         return answer((InfoView(f"{LABELS[request.region]} · 竞技场 · {localized(season['title'])}",
-            request.mode + ' · 北京时间 UTC+8', rows=tuple(rows), layout='facts', footer=(f'Haneoka {snapshot.resource} · {snapshot.release}',)),))
+            request.mode + ' · 北京时间 UTC+8', rows=tuple(rows), layout='facts', presentation='arena', footer=(f'Haneoka {snapshot.resource} · {snapshot.release}',)),))
     except PublicQueryError as exc:
         return InfoAnswer(str(exc) + (f' 建议等待{exc.retry_after}秒。' if exc.retry_after else ''), exc.status)
 
@@ -202,15 +203,15 @@ def execute_player(query, repository):
             level = max(eligible) if eligible else None
         rows = [InfoRow('公开玩家 ID', (request.profile_id,)),
                 InfoRow('等级／经验', (f"等级：{level if level is not None else '未获取'}",
-                    f"经验：{profile.get('rankExp') if profile.get('rankExp') is not None else '未获取'}")),
+                    f"经验：{profile.get('rankExp') if profile.get('rankExp') is not None else '未获取'}"), kind='metric'),
                 InfoRow('获赞', (str(profile.get('totalFavoriteExact') if profile.get('totalFavoriteExact') is not None
-                    else profile.get('totalFavorite')) if profile.get('totalFavoriteExact') is not None or profile.get('totalFavorite') is not None else '未获取',))]
+                    else profile.get('totalFavorite')) if profile.get('totalFavoriteExact') is not None or profile.get('totalFavorite') is not None else '未获取',), kind='metric')]
         favorite = profile.get('favoriteMemberCard')
         if favorite:
             rows.append(InfoRow('展示角色卡', tuple(f'{label}：{favorite.get(key) if favorite.get(key) is not None else "未获取"}'
-                for key, label in (('cardId', '卡牌ID'), ('exp', '经验'), ('awakeCount', '培养'), ('cardRank', '觉醒'),
+                for key, label in (('cardId', '卡牌ID'), ('exp', '经验'), ('awakeCount', '特训'), ('cardRank', '专精'),
                                   ('liveSkillLevel', 'LIVE技能'), ('performanceSkillLevel', '激奏技能'))),
-                image_url=repository.public_queries.player_art(request, favorite.get('cardId'), catalog.source_snapshot), image_kind='portrait'))
+                image_url=repository.public_queries.player_art(request, favorite.get('cardId'), catalog.source_snapshot), image_kind='portrait', kind='showcase'))
         card = profile.get('profileCard')
         if card:
             pages = card.get('pages') or [{'page': i + 1, 'imageUrl': url} for i, url in enumerate(card.get('thumbnailUrls', []))]
@@ -237,7 +238,7 @@ def execute_player(query, repository):
         rows.append(InfoRow('资料时间', (f"来源更新：{stamp(profile.get('lastUpdatedAtMs'))}",
             f"来源采集：{stamp(data.get('fetchedAtMs'))}", *(['来源标记为旧缓存'] if data.get('stale') else []))))
         result = answer((InfoView(f"{LABELS[request.region]} · {profile.get('name') or '未获取昵称'}",
-            '公开玩家资料', hero_url=media[0][0] if media else '', rows=tuple(rows), layout='facts', footer=('资料来源：Haneoka',)),))
+            '公开玩家资料', hero_url=media[0][0] if media else '', rows=tuple(rows), layout='facts', presentation='player', footer=('资料来源：Haneoka',)),))
         return replace(result, captured_images=media,
                        original_image=media[0][1] if request.namecard and media else None)
     except PublicQueryError as exc:

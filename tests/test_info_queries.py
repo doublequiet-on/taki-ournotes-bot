@@ -581,6 +581,7 @@ class PublicQueryContractTests(unittest.TestCase):
                              'perRank': [{'rank': 1, 'percent': 15}, {'rank': 2, 'percent': 20}]}],
                  'rewards': [{'unresolvedRewardId': 71}], 'missions': [], 'recruitments': []}
         sections = project_details(value)
+        self.assertEqual(sections[0].facts[0].table, (('活动道具加成','档位1：+15%','档位2：+20%'),))
         self.assertFalse(next(s for s in sections if s.name == '奖励').complete)
         result = detail_rows(SimpleNamespace(details=sections), '加成')
         text = '\n'.join('\n'.join(r.body) for r in result)
