@@ -8,7 +8,7 @@
 python -B scripts/inspect_model_config.py --config /path/to/model-proactive-v1.json
 ```
 
-该工具只读一个不超过 128 KiB 的普通 JSON 文件，输出 schema、模型／版本、指纹、密钥是否内置、绑定数量和 POSIX owner-only 状态。拒绝符号链接、特殊文件和过大文件；失败只输出固定错误码，不回显配置、路径或原始异常。不加载 dotenv、不发模型请求、不修改批准或配置。`inline_key_present=false` 不代表服务缺少密钥，schema 1 可以使用运行环境中的密钥；Windows 的 ACL 需单独核对。
+该工具只读一个不超过 128 KiB 的普通 JSON 文件，输出 schema、固定枚举的 provider、模型／版本是否存在、文件指纹、顶层密钥是否内置和绑定数量；不输出自由填写的模型或版本文本。指纹基于完整文件，仍应作为敏感诊断信息处理，不能视为匿名化。拒绝最后一个路径分量为符号链接、特殊文件和过大文件；父目录必须可信，此检查不拒绝父目录中的符号链接。缺少无跟随或非阻塞打开能力时（包括当前 Windows 实现）返回 `safe_open_unsupported`，不读取配置。失败只输出固定错误码，不回显配置、路径或原始异常。不加载 dotenv、不发模型请求、不修改批准或配置。`inline_key_present=false` 不代表服务缺少密钥，schema 1 可以使用运行环境中的密钥。`posix_group_other_mode_clear` 仅检查 group/other 权限位，不验证属主或 ACL，须另行核对。
 
 模型配置 JSON 可能包含顶层 `secret`，不要用 `cat`、`Get-Content`、完整 JSON 序列化或通用异常输出查看这些文件。诊断使用白名单投影；未知字段和嵌套对象也不输出。配置目录限服务属主访问（POSIX `0700`），凭据文件、含密钥模型配置及其备份使用 `0600`；不要把原始配置复制进日志、验收记录或 PR。
 
