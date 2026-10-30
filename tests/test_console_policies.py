@@ -2816,12 +2816,181 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
         self.agent.services.policy=Mock(return_value=self.policy)
         self.backend.model_runtime.capabilities.proactive=Mock(return_value=True)
 
-    def observation(self,body='大家继续聊这个问题',seq=1):
+    def observation(self,body='大家继续聊这个问题',seq=1,attachments=None):
         from ournotes_bot.application.backend_protocol import Request
         value=self.request('observed'+str(seq),seq);value.update(body=body,trigger='observation')
+        if attachments is not None:value['attachments']=attachments
         request=Request.parse(value,'fixture','app',self.now)
         self.assertTrue(self.agent.proactive.observe(request))
         return value
+
+    async def test_proactive_next_turn_sees_delivered_reply_and_source(self):
+        bodies=ChatAgentTests.capture_native_bodies(self)
+        self.policy=replace(self.policy,proactive=replace(self.policy.proactive,cooldown_seconds=0))
+        self.agent.services.policy.return_value=self.policy
+        value=self.observation('直接集成到 bot 吧');self.tick+=1.6
+        self.client.request.return_value=self.result('{"participation":"reply","text":"直接集成用起来顺手"}')
+        first,_,_=await self.candidate(value)
+        self.event(first,'intent');self.event(first,'ack')
+        self.now+=.01
+        value=self.observation('还有3939',seq=2);self.tick+=1.6
+        self.client.request.return_value=self.result('{"participation":"skip"}')
+        await self.candidate(value,2)
+        rows=[(m['role'],json.loads(m['content'])) for m in bodies[-1]['messages'] if m['role']!='system']
+        self.assertEqual([role for role,_ in rows],['user','assistant','user'])
+        self.assertEqual(rows[1][1]['text'],'直接集成用起来顺手')
+        self.assertEqual(rows[1][1]['reply_to'],rows[0][1]['message_id'])
+        self.assertEqual(rows[-1][1]['text'],'还有3939')
+
+    async def test_prior_reply_deletion_revokes_prepared_proactive_context(self):
+        self.policy=replace(self.policy,proactive=replace(self.policy.proactive,cooldown_seconds=0))
+        self.agent.services.policy.return_value=self.policy
+        value=self.observation();self.tick+=1.6
+        self.client.request.return_value=self.result('{"participation":"reply","text":"刚才已回应"}')
+        first,_,_=await self.candidate(value)
+        self.event(first,'intent');self.event(first,'ack')
+        previous=next(row['message_id'] for row in self.agent.store.recent(Request_scope()) if row['role']=='assistant')
+        self.now+=.01
+        value=self.observation('补充一点',seq=2);self.tick+=1.6
+        self.client.request.return_value=self.result('{"participation":"reply","text":"接住补充"}')
+        second,_,_=await self.candidate(value,2)
+        self.assertTrue(second['send_allowed'])
+        self.agent.store.delete_messages(Request_scope(),[previous])
+        self.assertFalse(self.backend.lookup(second['request_id'],'e1')['send_allowed'])
+
+    def proactive_picture(self):
+        from io import BytesIO
+        from PIL import Image
+        from unittest.mock import AsyncMock
+        from ournotes_bot.application.chat_capabilities import VisionCapability
+        from ournotes_bot.domain.chat_images import LoadedImage
+        self.snapshot=replace(self.snapshot,profile=replace(self.snapshot.profile,provider='openai',wire_profile='openai-responses-v1'))
+        self.backend.model_runtime.capabilities.vision=Mock(return_value=VisionCapability(128,'low','fixture-vision'))
+        buffer=BytesIO();Image.new('RGB',(80,80),(30,100,200)).save(buffer,format='PNG')
+        image=LoadedImage('pic','image/png',80,80,buffer.getvalue())
+        self.agent.image_loader.load_many=AsyncMock(return_value=(image,))
+        return [dict(id='pic',url='https://multimedia.nt.qq.com.cn/download?signed=PRIVATE_PICTURE',content_type='image/png')]
+
+    async def test_proactive_text_after_picture_gets_native_image_with_original_author(self):
+        bodies=ChatAgentTests.capture_native_bodies(self)
+        attachments=self.proactive_picture()
+        self.current_user='u2';self.observation('',attachments=attachments)
+        self.now+=.01;self.current_user='u1'
+        value=self.observation('额',seq=2);self.tick+=1.6
+        self.client.request.return_value=self.result('{"participation":"reply","text":"接住图里的情绪"}')
+        plan,attempts,_=await self.candidate(value)
+        self.assertEqual(len(attempts),1)
+        visual=next(m for m in bodies[-1]['input'] if isinstance(m.get('content'),list))
+        source=json.loads(visual['content'][0]['text'])
+        self.assertEqual((source['speaker_id'],source['message_id']),('u2','observed1'))
+        self.assertEqual(visual['content'][-1]['type'],'input_image')
+        self.agent.image_loader.load_many.assert_awaited_once()
+        self.event(plan,'intent');self.event(plan,'ack')
+        persisted=' '.join(row[0] for row in self.agent.store.db.execute('SELECT context FROM runs'))
+        self.assertNotIn('PRIVATE_PICTURE',persisted);self.assertNotIn('base64,',persisted)
+
+    async def test_proactive_missing_vision_keeps_text_without_download(self):
+        bodies=ChatAgentTests.capture_native_bodies(self)
+        attachments=self.proactive_picture()
+        self.backend.model_runtime.capabilities.vision.return_value=None
+        self.observation('',attachments=attachments);self.now+=.01
+        value=self.observation('接着聊',seq=2);self.tick+=1.6
+        self.client.request.return_value=self.result('{"participation":"skip"}')
+        await self.candidate(value)
+        self.agent.image_loader.load_many.assert_not_awaited()
+        self.assertFalse(any(isinstance(m.get('content'),list) for m in bodies[-1]['input']))
+
+    async def test_proactive_failed_recent_image_reports_unavailable_and_keeps_text(self):
+        from ournotes_bot.domain.chat_images import ImageError
+        bodies=ChatAgentTests.capture_native_bodies(self)
+        self.observation('',attachments=self.proactive_picture());self.now+=.01
+        value=self.observation('接着聊',seq=2);self.tick+=1.6
+        self.agent.image_loader.load_many.side_effect=ImageError('image_not_available')
+        self.client.request.return_value=self.result('{"participation":"skip"}')
+        plan,_,_=await self.candidate(value)
+        self.agent.image_loader.load_many.assert_awaited_once()
+        rows=[json.loads(m['content']) for m in bodies[-1]['input'] if m['role']=='user']
+        self.assertEqual(rows[0]['image_status'],'image_not_available')
+        self.assertEqual(self.agent.store.db.execute('SELECT count(*) FROM runs').fetchone()[0],0)
+        events=self.backend.diagnostics.read(plan['request_id'])
+        self.assertEqual([e['kind'] for e in events['chat_events']],['image','context','decision','finished'])
+        self.assertEqual(events['chat_events'][0]['data']['status'],'image_not_available')
+        self.assertEqual(events['chat_events'][1]['data']['input_images'],0)
+        self.assertEqual(events['chat_events'][2]['data'],dict(decision='skip',model_attempts=1))
+        self.assertNotIn('PRIVATE_PICTURE',json.dumps(events))
+        detail=self.backend.admin.detail(plan['request_id'])['sections']['request']['data']
+        self.assertEqual(detail['chat_events'],events['chat_events'])
+
+    async def test_proactive_does_not_retransmit_picture_after_delivered_reply(self):
+        self.policy=replace(self.policy,proactive=replace(self.policy.proactive,cooldown_seconds=0))
+        self.agent.services.policy.return_value=self.policy
+        self.observation('',attachments=self.proactive_picture());self.now+=.01
+        value=self.observation('看这个',seq=2);self.tick+=1.6
+        self.client.request.return_value=self.result('{"participation":"reply","text":"看到了蓝色方块"}')
+        first,_,_=await self.candidate(value)
+        self.event(first,'intent');self.event(first,'ack')
+        bodies=ChatAgentTests.capture_native_bodies(self)
+        self.now+=.01;value=self.observation('换个话题',seq=3);self.tick+=1.6
+        self.client.request.return_value=self.result('{"participation":"skip"}')
+        await self.candidate(value,2)
+        self.assertFalse(any(isinstance(m.get('content'),list) for m in bodies[-1]['input']))
+
+    async def test_proactive_old_picture_is_not_automatically_downloaded(self):
+        self.observation('',attachments=self.proactive_picture())
+        self.now+=61
+        value=self.observation('接着聊',seq=2);self.tick+=1.6
+        self.client.request.return_value=self.result('{"participation":"skip"}')
+        await self.candidate(value)
+        self.agent.image_loader.load_many.assert_not_awaited()
+
+    async def test_proactive_picture_outside_last_four_messages_is_not_downloaded(self):
+        self.observation('',attachments=self.proactive_picture())
+        for seq in range(2,6):value=self.observation('其他讨论',seq=seq)
+        self.tick+=1.6
+        self.client.request.return_value=self.result('{"participation":"skip"}')
+        await self.candidate(value)
+        self.agent.image_loader.load_many.assert_not_awaited()
+
+    async def test_proactive_after_image_cache_eviction_keeps_canonical_memory_text(self):
+        self.policy=replace(self.policy,proactive=replace(self.policy.proactive,cooldown_seconds=0))
+        self.agent.services.policy.return_value=self.policy
+        self.observation('',attachments=self.proactive_picture());self.now+=.01
+        value=self.observation('看这个',seq=2);self.tick+=1.6
+        self.client.request.return_value=self.result('{"participation":"reply","text":"看到了蓝色方块"}')
+        first,_,_=await self.candidate(value)
+        self.event(first,'intent');self.event(first,'ack')
+        original=self.agent.store.read(Request_scope(),['observed1'])['messages'][0]['text']
+        self.agent.images.forget_scope(self.agent.image_scope(self.backend.works[first['delivery_id']].request))
+        self.now+=.01;value=self.observation('再补充一点',seq=3);self.tick+=1.6
+        self.client.request.return_value=self.result('{"participation":"reply","text":"接着说"}')
+        second,_,_=await self.candidate(value,2)
+        self.event(second,'intent');self.event(second,'ack')
+        self.assertEqual(self.agent.store.read(Request_scope(),['observed1'])['messages'][0]['text'],original)
+        self.assertEqual(self.agent.audit_failures,0)
+
+    async def test_generated_but_unacked_reply_does_not_enter_proactive_history(self):
+        bodies=ChatAgentTests.capture_native_bodies(self)
+        value=self.observation();self.tick+=1.6
+        self.client.request.return_value=self.result('{"participation":"reply","text":"未送达的生成文本"}')
+        first,_,_=await self.candidate(value)
+        value=self.observation('新的话题',seq=2);self.tick+=1.6
+        self.backend.finish(self.backend.works[first['delivery_id']],'aborted')
+        self.client.request.return_value=self.result('{"participation":"skip"}')
+        await self.candidate(value,2)
+        self.assertFalse(any(m['role']=='assistant' for m in bodies[-1]['messages']))
+
+    async def test_skipped_proactive_tool_is_traceable_without_persisting_its_arguments(self):
+        from ournotes_bot.domain.model_calls import ToolCall
+        value=self.observation();self.tick+=1.6
+        self.client.request.side_effect=[self.result(calls=(ToolCall('search','group_memory_search',
+            '{"query":"PRIVATE_QUERY_FIXTURE"}'),)),self.result('{"participation":"skip"}')]
+        plan,attempts,_=await self.candidate(value)
+        self.assertEqual(len(attempts),2)
+        events=self.backend.diagnostics.read(plan['request_id'])['chat_events']
+        tool=next(e['data'] for e in events if e['kind']=='tool')
+        self.assertEqual(tool,dict(name='group_memory_search',status='no_results'))
+        self.assertNotIn('PRIVATE_QUERY_FIXTURE',json.dumps(events))
+        self.assertEqual(self.agent.store.db.execute('SELECT count(*) FROM runs').fetchone()[0],0)
 
     async def knowledge_followup_fixture(self, *, other_speaker=False, exhausted=False):
         from types import SimpleNamespace

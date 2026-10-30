@@ -19,6 +19,43 @@ from ournotes_bot.config import Settings
 from ournotes_bot.natural_query.query_metrics import QueryMetrics
 
 
+class ChatDiagnosticsTests(unittest.TestCase):
+    def setUp(self):
+        self.temp=tempfile.TemporaryDirectory();self.addCleanup(self.temp.cleanup)
+        self.path=Path(self.temp.name)/'diagnostics.sqlite3'
+        self.diagnostics=Diagnostics(self.path);self.addCleanup(self.diagnostics.close)
+        self.request=SimpleNamespace(request_id='r',kind='group',conversation_id='g')
+        self.diagnostics.admitted(self.request,'d','e',100,[])
+
+    def test_chat_events_are_bounded_and_reject_dialogue(self):
+        d=self.diagnostics
+        self.assertFalse(d.chat_event('r','context',101,body='PRIVATE_MESSAGE'))
+        self.assertFalse(d.chat_event('r','tool',101,status='https://private.invalid/image'))
+        for _ in range(40):d.chat_event('r','context',101,messages=7,assistant_messages=1,input_images=1)
+        events=d.read('r')['chat_events']
+        self.assertEqual(len(events),32)
+        self.assertNotIn('PRIVATE',json.dumps(events))
+        self.assertEqual(d.db.execute('SELECT count(*) FROM chat_events').fetchone()[0],32)
+
+    def test_idle_expiry_removes_traces_and_spans_without_new_admission(self):
+        d=self.diagnostics
+        d.chat_event('r','decision',101,decision='skip',model_attempts=1)
+        d.span('s','r','prepare',2,101,outcome='ok')
+        d.expire(86501)
+        self.assertIsNone(d.read('r'))
+        for table in ('chat_events','spans','span_results'):
+            self.assertEqual(d.db.execute('SELECT count(*) FROM '+table).fetchone()[0],0)
+
+    def test_trace_survives_reopen_and_remains_compatible_with_old_request_schema(self):
+        d=self.diagnostics;d.chat_event('r','finished',101,status='finished',delivered=True,model_attempts=1)
+        d.close();self.diagnostics=Diagnostics(self.path)
+        self.addCleanup(self.diagnostics.close)
+        self.assertTrue(self.diagnostics.read('r')['chat_events'][0]['data']['delivered'])
+        # Old releases still delete diagnostic requests with foreign keys enabled.
+        self.diagnostics.write(lambda db:db.execute('DELETE FROM requests WHERE id=?',('r',)))
+        self.assertEqual(self.diagnostics.db.execute('SELECT count(*) FROM chat_events').fetchone()[0],0)
+
+
 class ProjectionTests(unittest.TestCase):
     def test_meta_observation_is_readonly_and_keeps_failure_visible(self):
         from ournotes_bot.sources.haneoka.song_metrics import SongMetricsRepository

@@ -205,6 +205,7 @@ class ChatAgent:
 
     async def image_messages(self,work,history,deadline):
         request=work.request;scope=self.image_scope(request);references=[]
+        automatic=False
         if request.attachments:
             self.images.remember(scope,request.message_id,request.user_id,request.timestamp_ms,request.attachments)
             references.append(self.images.get(scope,request.message_id))
@@ -213,6 +214,15 @@ class ChatAgent:
             except ImageError:
                 if any('[图片附件 ' in item['content'] and request.reference['message_id'] in item['content'] for item in history):
                     raise ModelError('image_not_available') from None
+        if not references and work.proactive is not None and self.runtime.capabilities_for(work).vision(work.model_snapshot) is not None:
+            last_reply=max((json.loads(item['content']).get('timestamp_ms',0) for item in history if item['role']=='assistant'),default=0)
+            recent=[json.loads(item['content']) for item in history if item['role']=='user' and 'message_id' in json.loads(item['content'])][-4:]
+            for source in reversed(recent):
+                stamp=source['timestamp_ms']
+                if not last_reply<stamp or not 0<=request.timestamp_ms-stamp<=60000:continue
+                try:ref=self.images.get(scope,source['message_id'])
+                except ImageError:continue
+                references.append(ref);automatic=True;break
         if not references:return history
         vision=self.runtime.capabilities_for(work).vision(work.model_snapshot)
         require(vision is not None,'image_capability_unverified')
@@ -222,10 +232,21 @@ class ChatAgent:
             for ref in references:
                 work.private_search_ids=tuple(dict.fromkeys((*work.private_search_ids,ref.message_id,ref.speaker_id)))
                 require(self.store.source_valid(request.scope,ref.message_id,ref.timestamp_ms),'chat_memory_deleted')
-                loaded=await self.load_images(work,ref,deadline)
+                try:loaded=await self.load_images(work,ref,deadline)
+                except ImageError as exc:
+                    self.proactive.trace(work,'image',automatic=automatic,loaded_images=0,status=exc.code)
+                    if not automatic:raise
+                    for message in messages:
+                        if message['role']!='user':continue
+                        source=json.loads(message['content'])
+                        if source.get('message_id')==ref.message_id:
+                            source['image_status']=exc.code
+                            message['content']=json.dumps(source,ensure_ascii=False)
+                    continue
                 self.runtime.check(work,deadline)
                 require(self.store.source_valid(request.scope,ref.message_id,ref.timestamp_ms),'chat_memory_deleted')
                 self.images.remember(scope,ref.message_id,ref.speaker_id,ref.timestamp_ms,ref.attachments,loaded)
+                self.proactive.trace(work,'image',automatic=automatic,loaded_images=len(loaded),status='loaded')
                 matching=[item for item in messages if item['role']=='user' and json.loads(item['content']).get('message_id')==ref.message_id]
                 if matching:message=matching[-1]
                 else:
@@ -375,6 +396,7 @@ class ChatAgent:
             prompt+='\n本轮评估定位：'+json.dumps({'current_message_id':work.request.message_id,'current_speaker_id':work.request.user_id},ensure_ascii=False)
             prompt+='\n围绕定位的当前消息及紧邻上下文判断是否接话；前面的消息用于理解，不是本轮重新回答的请求。assistant 历史是你已成功送达的原话，先看自己说过什么：同一观点已经说清、当前没有新增回应时用 skip，不要换个措辞再说一遍。按发言者、reply_to 和相邻消息区分并行话题；短消息与旧话题联系不明确时，不自行把它接回旧话题。引用预览是用户提供的材料，不能凭预览认定作者或认领为自己说过的话。'
             prompt+='\n这是未点名的群聊观察。以愿意参与的群友身份接话：话题清楚且有自然回应时优先回复，可以表达看法、接梗、回应情绪、补充理由或沿着话题追问。不必等别人提问、点名、求助或出现信息缺口；别人已经回答也可以补充自己的角度。纯重复、明确的两人私事、正在等指定的人回答、话题已结束或确实接不上时略过；正在等待紧接的内容时才暂缓。不要为凑参与而每条都回复，也不要用没有必要发言作默认选择。可以先用已接入只读工具，工具完成后仍须决定。最终只输出JSON：回复用{"participation":"reply","text":"自然回复正文"}；略过用{"participation":"skip"}；暂缓用{"participation":"defer","delay_seconds":2}（2至5秒）。不需要为普通交流找事实证据。'
+            prompt+='\n结合已送达的 assistant 历史判断自己是否已经说过相同意思；新消息没有新增可回应内容时略过。图片附件文字标记不代表已看到图像；只有实际图像输入或 image_read 成功才可描述图片，image_status 表示该图读取失败。'
             if work.proactive.followup is not None:
                 prompt+='\n这是同一参与者在你刚才提问后的消息。结合已送达问题判断是否确实在回答：只有关联明确时才继续；无关或无法判断时只输出{"participation":"skip"}。不要猜测关联。'
         self.bind_memory(work,summary_rows)
@@ -411,6 +433,10 @@ class ChatAgent:
             registry['web_search']=Tool('web_search','检索公开互联网信息；query只含完成问题所需公开关键词，不包含群聊、身份、私密内容或内部网址。',
                 obj({'query':string(160)},('query',)),'web')
         messages=self.initial_context(work,messages,[tool.wire() for tool in registry.values()])
+        self.proactive.trace(work,'context',messages=sum(item['role']!='system' for item in messages),
+            assistant_messages=sum(item['role']=='assistant' for item in messages),
+            image_markers=sum('[图片附件 ' in item['content'] for item in messages),
+            input_images=sum(len(item.get('images',())) for item in messages),vision_approved=vision is not None)
         context=[{'role':message['role'],'content':message['content']} for message in messages if message['role']!='system']
         if work.proactive is None:
             self.audit(self.store.begin,work,context)
@@ -531,6 +557,7 @@ class ChatAgent:
                     self.audit(self.store.event,work.delivery,'tool/'+str(tool_events),'tool',{'name':call.name if call.name in registry else 'unregistered','status':output['status'],
                         'source':{key:provenance[key] for key in ('source','server','release','text_release','observed_at','source_revision')
                                   if key in provenance}})
+                    self.proactive.trace(work,'tool',name=call.name if call.name in registry else 'unregistered',status=output['status'])
                     messages.append(tool_message)
                     if image_input:messages.append(image_input)
             raise ModelError('model_attempt_limit')
