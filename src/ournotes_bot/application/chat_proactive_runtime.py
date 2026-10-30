@@ -4,7 +4,7 @@ import json
 import math
 import sqlite3
 from collections import Counter
-from dataclasses import asdict
+from dataclasses import asdict,replace
 from fractions import Fraction
 
 from ..domain.chat import ChatMessage
@@ -12,6 +12,7 @@ from ..domain.chat_images import ImageError
 from ..domain.model_calls import ModelError,require
 from .chat_jobs import ChatServices,ServiceError,maximum_cost_micro,service_request_id
 from .proactive_chat import ProactiveController,ProactivePolicy
+from .chat_followup import Followups
 from . import replies
 
 
@@ -19,6 +20,7 @@ class ProactiveChat:
     def __init__(self,agent):
         self.agent=agent
         self.controller=ProactiveController()
+        self.followups=Followups(clock=lambda:self.controller.clock())
         self.addressed=Counter()
         self.services=ChatServices(agent.runtime.usage.path.parent,agent.runtime.backend.instance_id,
             agent.runtime.backend.app_id,filename='chat-proactive-services-v1.json')
@@ -55,14 +57,17 @@ class ProactiveChat:
         try:
             if not self.agent.store.source_valid(request.scope,request.message_id,request.timestamp_ms):return False
             snapshot=self.agent.runtime.proactive_snapshot(request.conversation_id)
-            if self.configured(request,snapshot) is None:return False
+            if self.configured(request,snapshot) is None:
+                self.followups.clear(self.scope(request));return False
             if replies.recognizes_message(request.body) and not replies.is_ai_request(request.body):
+                self.followups.changed(self.scope(request))
                 self.controller.cancel(self.scope(request));return False
             if request.attachments:
                 self.agent.images.remember(self.agent.image_scope(request),request.message_id,request.user_id,request.timestamp_ms,request.attachments)
-            self.controller.observe(self.scope(request),ChatMessage(request.message_id,request.user_id,
+            accepted=self.controller.observe(self.scope(request),ChatMessage(request.message_id,request.user_id,
                 request.body,request.timestamp_ms,display_name=request.sender_name))
-            return True
+            if accepted:self.followups.observe(self.scope(request),request.user_id,request.message_id,request.timestamp_ms,request.ingress_seq,request.gateway_epoch)
+            return accepted
         except (ModelError,ServiceError,ValueError,OSError,sqlite3.Error):return False
 
     def candidate(self,request):
@@ -78,6 +83,8 @@ class ProactiveChat:
         last=candidate.messages[-1]
         if (last.message_id,last.speaker_id,last.text,last.timestamp_ms)!=(request.message_id,request.user_id,request.body,request.timestamp_ms):
             self.controller.cancel(self.scope(request));return None
+        followup=self.followups.match(self.scope(request),request.message_id)
+        if followup is not None:candidate=replace(candidate,followup=followup)
         job=service_request_id('proactive',request.instance_id,request.app_id,request.conversation_id,candidate.candidate_id)
         try:self.agent.service_budget.check(policy,'proactive',snapshot.profile,job,cost,
             reply_times=self.agent.store.proactive_replies(request.scope))
@@ -88,8 +95,19 @@ class ProactiveChat:
 
     def start_addressed(self,work):
         if work.request.kind!='group' or work.proactive is not None:return
-        scope=self.scope(work.request);self.addressed[scope]+=1;work.addressed_registered=True
+        scope=self.scope(work.request);work.followup_generation=self.followups.changed(scope)
+        self.addressed[scope]+=1;work.addressed_registered=True
         if scope in self.controller.groups:self.controller.set_addressed(scope,True)
+
+    def remember_question(self,work,message_id,text):
+        if not work.chat or work.proactive is not None or work.request.kind!='group':return
+        try:
+            snapshot=self.agent.runtime.proactive_snapshot(work.request.conversation_id)
+            if self.policy(snapshot,work.request) is None:return
+            self.followups.delivered(self.scope(work.request),getattr(work,'followup_generation',None),
+                work.request.user_id,work.request.message_id,work.request.timestamp_ms,work.request.ingress_seq,work.request.gateway_epoch,message_id,text,
+                int(self.agent.runtime.backend.clock()*1000))
+        except (ModelError,ServiceError,ValueError,OSError,sqlite3.Error):pass
 
     def finish(self,work):
         try:
@@ -112,6 +130,11 @@ class ProactiveChat:
             current=self.agent.runtime.proactive_snapshot(work.request.conversation_id)
             if current!=work.model_snapshot:return False
             policy=self.policy(current,work.request)
+            followup=work.proactive.followup
+            if followup is not None and (self.followups.match(self.scope(work.request),work.request.message_id)!=followup
+                    or not self.agent.store.source_valid(work.request.scope,followup.source_id,followup.source_time)
+                    or not self.agent.store.source_valid(work.request.scope,followup.message_id,followup.delivered_ms)):
+                return False
             return (policy==work.service_policy and all(self.agent.store.source_valid(work.request.scope,row.message_id,row.timestamp_ms)
                     for row in work.proactive.messages)
                     and (self.controller.can_send(work.proactive) if sending else self.controller.valid(work.proactive)))
@@ -119,9 +142,13 @@ class ProactiveChat:
 
     def history(self,work):
         # Only frozen, bounded observation material; never enters persistent context before ACK.
-        rows=list(work.proactive.messages[-48:])
+        followup=work.proactive.followup
+        rows=list(work.proactive.messages[-1:] if followup else work.proactive.messages[-48:])
         while rows and sum(len(row.text.encode()) for row in rows)>24576:rows.pop(0)
         messages=[]
+        if followup:
+            messages.append({'role':'assistant','content':json.dumps(asdict(ChatMessage(followup.message_id,'Taki',followup.text,
+                followup.delivered_ms,'assistant',followup.source_id)),ensure_ascii=False)})
         for row in rows:
             value=asdict(row)
             try:ref=self.agent.images.get(self.agent.image_scope(work.request),row.message_id)
@@ -153,3 +180,4 @@ class ProactiveChat:
 
     def clear(self,scope):
         self.controller.clear(tuple(scope.values()))
+        self.followups.clear(tuple(scope.values()))

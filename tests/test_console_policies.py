@@ -2642,6 +2642,91 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
         self.assertTrue(self.agent.proactive.observe(request))
         return value
 
+    async def test_acked_question_and_same_person_answer_use_bounded_followup_context(self):
+        self.client.request.return_value=self.result('你说的是声优表演，还是唱歌？')
+        plan,_=await self.prepare_native('/聊 哪方面比较权威')
+        self.event(plan,'intent');self.event(plan,'ack')
+        self.now+=.01
+        value=self.observation('声优表演方面和唱歌方面',seq=2)
+        self.tick+=1.6
+        self.client.request.return_value=self.result('{"participation":"skip"}')
+        bodies=ChatAgentTests.capture_native_bodies(self)
+        result,attempts,candidate=await self.candidate(value)
+        self.assertEqual(len(attempts),1)
+        self.assertIsNotNone(candidate[0].followup)
+        self.assertIn('无关或无法判断时只输出',bodies[0]['messages'][0]['content'])
+        messages=bodies[0]['messages'][1:]
+        self.assertEqual(len(messages),2)
+        self.assertIn('声优表演，还是唱歌',messages[0]['content'])
+        self.assertIn('声优表演方面和唱歌方面',messages[1]['content'])
+        self.assertEqual(result['parts'],[])
+
+    async def test_followup_reply_uses_existing_delivery_and_does_not_save_other_observations(self):
+        self.observation('其他人原先的话',seq=1)
+        self.client.request.return_value=self.result('你说哪方面？')
+        plan,_=await self.prepare_native('/聊 哪个更权威',seq=2)
+        self.event(plan,'intent');self.event(plan,'ack')
+        self.now+=.01
+        value=self.observation('声优表演和唱歌',seq=3)
+        self.tick+=1.6
+        self.client.request.return_value=self.result('{"participation":"reply","text":"那就分开说吧"}')
+        result,_,candidate=await self.candidate(value)
+        self.assertIsNotNone(candidate[0].followup)
+        self.event(result,'intent');self.event(result,'ack')
+        stored=' '.join(row[0] for row in self.agent.store.db.execute('SELECT context FROM runs'))
+        self.assertNotIn('其他人原先的话',stored)
+        self.assertIn('声优表演和唱歌',stored)
+
+    async def test_failed_delivery_does_not_create_followup(self):
+        from ournotes_bot.application.backend_protocol import PROTOCOL
+        self.client.request.return_value=self.result('你说哪方面？')
+        plan,_=await self.prepare_native('/聊 哪个更权威')
+        self.event(plan,'intent')
+        self.backend.apply_event(plan['delivery_id'],dict(protocol=PROTOCOL,request_id=plan['request_id'],
+            plan_version=1,gateway_epoch='e1',event='ack',part_id=plan['parts'][0]['id'],attempt_id='a1',
+            result='failure',message_id=None))
+        value=self.observation('声优表演',seq=2)
+        self.tick+=1.6
+        self.client.request.return_value=self.result('{"participation":"skip"}')
+        _,_,candidate=await self.candidate(value)
+        self.assertIsNone(candidate[0].followup)
+
+    async def test_duplicate_observation_preserves_match_but_other_speaker_cancels_it(self):
+        from ournotes_bot.application.backend_protocol import Request
+        self.client.request.return_value=self.result('你说哪方面？')
+        plan,_=await self.prepare_native('/聊 哪个更权威')
+        self.event(plan,'intent');self.event(plan,'ack');self.now+=.01
+        value=self.observation('声优表演',seq=2)
+        request=Request.parse(value,'fixture','app',self.now)
+        self.assertFalse(self.agent.proactive.observe(request))
+        self.assertIsNotNone(self.agent.proactive.followups.match(tuple(request.scope.values()),request.message_id))
+        self.current_user='u2';self.now+=.01
+        self.observation('我先插一句',seq=3)
+        self.assertIsNone(self.agent.proactive.followups.match(tuple(request.scope.values()),request.message_id))
+
+    async def test_followup_candidate_expires_before_send(self):
+        self.client.request.return_value=self.result('你说哪方面？')
+        plan,_=await self.prepare_native('/聊 哪个更权威')
+        self.event(plan,'intent');self.event(plan,'ack');self.now+=.01
+        value=self.observation('唱歌',seq=2);self.tick+=1.6
+        self.client.request.return_value=self.result('{"participation":"reply","text":"那来说唱歌"}')
+        result,_,candidate=await self.candidate(value)
+        work=self.backend.works[result['delivery_id']]
+        self.assertTrue(self.agent.proactive.valid(work))
+        self.tick+=45
+        self.assertFalse(self.agent.proactive.valid(work,sending=True))
+
+    async def test_deleted_question_invalidates_followup_before_send(self):
+        self.client.request.return_value=self.result('你说哪方面？')
+        plan,_=await self.prepare_native('/聊 哪个更权威')
+        self.event(plan,'intent');self.event(plan,'ack');self.now+=.01
+        value=self.observation('唱歌',seq=2);self.tick+=1.6
+        self.client.request.return_value=self.result('{"participation":"reply","text":"那来说唱歌"}')
+        result,_,candidate=await self.candidate(value)
+        work=self.backend.works[result['delivery_id']]
+        self.agent.store.delete_messages(work.request.scope,[candidate[0].followup.message_id])
+        self.assertFalse(self.agent.proactive.valid(work,sending=True))
+
     async def candidate(self,value,serial=1):
         from ournotes_bot.application.backend_protocol import Request,digest
         raw={**value,'trigger':'proactive','proactive_id':format(serial,'032x')}

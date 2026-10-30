@@ -331,7 +331,7 @@ class ChatAgent:
             question+='\n'+''.join('[图片附件 '+item.id+' '+item.content_type+'；图像仅在本轮或有效引用中可见]' for item in work.request.attachments)
         if work.proactive is None:self.context.trigger(work.request,question)
         history=self.context.messages(work.request) if work.proactive is None else self.proactive.history(work)
-        summaries=self.store.summaries(work.request.scope,limit=1)
+        summaries=[] if work.proactive is not None and work.proactive.followup is not None else self.store.summaries(work.request.scope,limit=1)
         summary_rows=[]
         work.public_question=question
         self.privacy_material(work,[json.loads(item['content']) for item in history if 'message_id' in json.loads(item['content'])])
@@ -361,6 +361,8 @@ class ChatAgent:
             prompt+='\n人工批准人格档案：\n'+persona['prompt']
         if work.proactive is not None:
             prompt+='\n这是未点名的群聊观察。由你判断此刻回复是否能接住谈话、补充信息或回应情绪；别人已回答、话题变化或正在等人时可略过/暂缓。可以先用已接入只读工具，工具完成后仍须决定。最终只输出JSON：回复用{"participation":"reply","text":"自然回复正文"}；略过用{"participation":"skip"}；暂缓用{"participation":"defer","delay_seconds":2}（2至5秒）。不需要为普通交流找事实证据。'
+            if work.proactive.followup is not None:
+                prompt+='\n这是同一参与者在你刚才提问后的消息。结合已送达问题判断是否确实在回答：只有关联明确时才继续；无关或无法判断时只输出{"participation":"skip"}。不要猜测关联。'
         self.bind_memory(work,summary_rows)
         messages=[{'role':'system','content':prompt},*await self.image_messages(work,history,deadline-self.budget.final_seconds)]
         leases=tuple(snapshot.pages[work.anchor.page].evidence) if work.anchor else ()

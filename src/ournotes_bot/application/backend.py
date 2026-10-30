@@ -615,6 +615,8 @@ class Backend:
                 if work.chat and self.model_runtime.agent:
                     self.model_runtime.agent.acknowledge(work,part_id,payload['message_id'],reply.text,
                         payload['result'],allow_context=payload.get('allow_context') is not False)
+                    if payload['result']=='success' and len(parts)==1 and not work.hint:
+                        self.model_runtime.agent.proactive.remember_question(work,payload['message_id'],reply.text)
                 if payload['result'] == 'success':
                     if long_fallback: candidate = replies.fallback_cursor(reply,text_limit=text_limit)
                     if candidate is not None and (work.operation or len(split_commands(work.request.body)) == 1
