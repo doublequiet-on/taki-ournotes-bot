@@ -2175,6 +2175,9 @@ class ChatAgentTests(Fixture, unittest.IsolatedAsyncioTestCase):
         self.event(plan,'intent');self.event(plan,'ack')
 
     async def test_six_permits_and_reserved_final_with_tool_budget_results(self):
+        # Exercise permit/tool ceilings independently of prompt size and daily quota.
+        self.snapshot=replace(self.snapshot,profile=replace(self.snapshot.profile,
+            max_input_tokens=65536,user_daily_limit=10**9,group_daily_limit=10**9))
         from ournotes_bot.domain.model_calls import ToolCall
         bodies=self.capture_native_bodies()
         self.backend.model_runtime.agent.budget=replace(self.backend.model_runtime.agent.budget,tool_calls=4)
