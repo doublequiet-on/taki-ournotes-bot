@@ -2727,6 +2727,105 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
         self.assertGreater(self.agent.audit_failures,0)
         self.assertEqual(self.agent.knowledge_scopes[key],old)
 
+    async def test_knowledge_unmentioned_delivery_audit_failure_does_not_update_scope(self):
+        _,key,old,answer=await self.knowledge_followup_fixture()
+        self.event(answer,'intent')
+        self.agent.store.db.executescript("CREATE TRIGGER fail_event BEFORE INSERT ON events BEGIN SELECT RAISE(ABORT,'fixture disk'); END;")
+        self.event(answer,'ack')
+        self.assertGreater(self.agent.audit_failures,0)
+        self.assertEqual(self.agent.knowledge_scopes[key],old)
+
+    async def test_knowledge_unmentioned_prior_temporary_audit_failure_does_not_block_ack(self):
+        _,key,old,answer=await self.knowledge_followup_fixture()
+        self.agent.store.db.executescript("CREATE TRIGGER fail_receipt BEFORE INSERT ON chat_service_receipts BEGIN SELECT RAISE(ABORT,'fixture disk'); END;")
+        self.assertFalse(self.agent.audit(self.agent.store.service_ack,answer['delivery_id']))
+        self.agent.store.db.execute('DROP TRIGGER fail_receipt')
+        self.event(answer,'intent');self.event(answer,'ack')
+        self.assertGreater(self.agent.audit_failures,0)
+        self.assertEqual(self.agent.knowledge_scopes[key][1].server,'jp')
+        self.assertNotEqual(self.agent.knowledge_scopes[key],old)
+
+    async def test_knowledge_unmentioned_other_group_audit_failure_does_not_block_ack(self):
+        _,key,old,answer=await self.knowledge_followup_fixture()
+        other={**Request_scope(),'conversation_id':'g2'}
+        self.agent.store.service_run('other-delivery',other,'other-request')
+        self.agent.store.db.executescript("CREATE TRIGGER fail_receipt BEFORE INSERT ON chat_service_receipts BEGIN SELECT RAISE(ABORT,'fixture disk'); END;")
+        self.assertFalse(self.agent.audit(self.agent.store.service_ack,'other-delivery'))
+        self.agent.store.db.execute('DROP TRIGGER fail_receipt')
+        self.assertTrue(self.agent.audit(self.agent.store.service_ack,'other-delivery'))
+        self.event(answer,'intent');self.event(answer,'ack')
+        self.assertGreater(self.agent.audit_failures,0)
+        self.assertEqual(self.agent.knowledge_scopes[key][1].server,'jp')
+        self.assertNotEqual(self.agent.knowledge_scopes[key],old)
+
+    async def real_knowledge_followup_fixture(self):
+        from ournotes_bot.domain.model_calls import ToolCall
+        file=NativeRuntimeTests.reviewed_fixture(self)
+        call=lambda name: self.result(calls=(ToolCall(name,'knowledge_search',
+            '{"server":"jp","date":null,"version":null,"query":"红色","followup":true}'),))
+        self.client.request.side_effect=[self.result(calls=(ToolCall('start','knowledge_search',
+            '{"server":"jp","date":null,"version":null,"query":"红色"}'),)),self.result('工程夹具')]
+        first,_=await self.prepare_native('/聊 日服红色规则',seq=1)
+        self.event(first,'intent');self.event(first,'ack')
+        key=(self.agent.context.scope(self.backend.works[first['delivery_id']].request),'u1')
+        self.client.request.side_effect=[call('candidate'),self.result('你想了解哪一项？')]
+        question,_=await self.prepare_native('/聊 那这个呢',seq=2)
+        self.event(question,'intent');self.event(question,'ack')
+        old=self.agent.knowledge_scopes[key]
+        self.assertTrue(old[2][0].chunks)
+        self.now+=.01;value=self.observation('红色规则',seq=3);self.tick+=1.6
+        self.client.request.side_effect=[call('candidate2'),call('retrieve'),
+            self.result('{"participation":"reply","text":"红色规则是工程夹具"}')]
+        answer,_,candidate=await self.candidate(value)
+        self.assertIsNotNone(candidate[0].followup)
+        work=self.backend.works[answer['delivery_id']]
+        self.assertTrue(work.knowledge_scope_leases)
+        self.assertTrue(all(lease.chunks for lease in work.knowledge_scope_leases))
+        self.assertTrue(self.backend.knowledge.validate_current(work.knowledge_scope_leases))
+        return file,key,old,answer
+
+    async def test_real_knowledge_unmentioned_success_updates_scope(self):
+        from ournotes_bot.domain.model_calls import ToolCall
+        bodies=ChatAgentTests.capture_native_bodies(self)
+        _,key,old,answer=await self.real_knowledge_followup_fixture()
+        self.event(answer,'intent');self.event(answer,'ack')
+        current=self.agent.knowledge_scopes[key]
+        self.assertNotEqual(current[0],old[0]);self.assertTrue(current[2][0].chunks)
+        self.client.request.side_effect=[self.result(calls=(ToolCall('next','knowledge_search',
+            '{"server":"jp","date":null,"version":null,"followup":true}'),)),self.result('请说明')]
+        await self.prepare_native('/聊 那LUCK呢',seq=4)
+        output=next(json.loads(row['content']) for row in bodies[-1]['messages'] if row['role']=='tool')
+        self.assertEqual(output['status'],'knowledge_context')
+        self.assertEqual(output['data']['server'],'jp')
+
+    async def test_real_knowledge_unmentioned_revoked_approval_does_not_update_scope(self):
+        file,key,old,answer=await self.real_knowledge_followup_fixture()
+        self.event(answer,'intent')
+        path=file.parent/'approvals.json';approval=json.loads(path.read_text(encoding='utf-8'))
+        approval['revision']=2
+        approval['revoked']=[dict(id='fixture',content_sha256=None,revocation_revision=2,
+            revoked_at='2026-10-24',reason='fixture withdrawal')]
+        path.write_text(json.dumps(approval),encoding='utf-8')
+        self.assertFalse(self.backend.knowledge.validate_current(old[2]))
+        self.event(answer,'ack')
+        self.assertEqual(self.agent.knowledge_scopes[key],old)
+
+    async def test_real_knowledge_unmentioned_changed_source_does_not_update_scope(self):
+        file,key,old,answer=await self.real_knowledge_followup_fixture()
+        self.event(answer,'intent');file.write_text(file.read_text(encoding='utf-8')+'\nchanged',encoding='utf-8')
+        self.assertFalse(self.backend.knowledge.validate_current(old[2]))
+        self.event(answer,'ack')
+        self.assertEqual(self.agent.knowledge_scopes[key],old)
+
+    async def test_real_knowledge_unmentioned_failed_ack_does_not_update_scope(self):
+        from ournotes_bot.application.backend_protocol import PROTOCOL
+        _,key,old,answer=await self.real_knowledge_followup_fixture()
+        self.event(answer,'intent')
+        self.backend.apply_event(answer['delivery_id'],dict(protocol=PROTOCOL,request_id=answer['request_id'],
+            plan_version=1,gateway_epoch='e1',event='ack',part_id=answer['parts'][0]['id'],attempt_id='a1',
+            result='failure',message_id=None))
+        self.assertEqual(self.agent.knowledge_scopes[key],old)
+
     async def test_knowledge_unmentioned_failed_ack_does_not_update_scope(self):
         from ournotes_bot.application.backend_protocol import PROTOCOL
         _,key,old,answer=await self.knowledge_followup_fixture()
