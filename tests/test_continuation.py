@@ -1108,6 +1108,46 @@ class ProactiveControllerTests(unittest.TestCase):
         self.now[0] += 58.5
         self.assertIsNotNone(self.controller.candidate(self.a, reserve_cost_micro=100))
 
+    def test_cooldown_is_per_group_and_zero_keeps_other_limits(self):
+        self.controller.configure(self.a, replace(self.policy, cooldown_seconds=0, max_replies_per_hour=2))
+        self.controller.configure(self.b, replace(self.policy, cooldown_seconds=180))
+        for scope in (self.a, self.b):
+            self.observe('first', scope=scope)
+            candidate=self.ready(scope=scope)
+            self.controller.decide(candidate,'reply',actual_cost_micro=10)
+            self.assertTrue(self.controller.delivered(candidate))
+        for scope in (self.a,self.b):
+            self.observe('second',scope=scope)
+        self.assertIsNone(self.controller.candidate(self.a,reserve_cost_micro=10))
+        zero=self.ready(scope=self.a)
+        self.assertIsNotNone(zero)
+        self.assertIsNone(self.controller.candidate(self.b,reserve_cost_micro=10))
+        self.controller.decide(zero,'reply',actual_cost_micro=10)
+        self.assertTrue(self.controller.can_send(zero))
+        self.controller.delivered(zero)
+        self.observe('third')
+        self.assertIsNone(self.ready())  # Hourly reply cap still applies with zero cooldown.
+        self.now[0]+=180
+        self.assertIsNotNone(self.controller.candidate(self.b,reserve_cost_micro=10))
+
+    def test_cooldown_change_cancels_candidate_and_preserves_ack_facts(self):
+        self.controller.configure(self.a,replace(self.policy,cooldown_seconds=0))
+        self.observe();old=self.ready()
+        self.controller.decide(old,'reply',actual_cost_micro=10)
+        self.controller.delivered(old)
+        self.observe('second');pending=self.ready()
+        self.controller.configure(self.a,replace(self.policy,cooldown_seconds=180))
+        self.assertFalse(self.controller.can_send(pending))
+        self.assertEqual(self.controller.status(self.a)['hourly_replies'],1)
+        self.observe('third')
+        self.assertIsNone(self.ready())
+        self.controller.configure(self.a,replace(self.policy,cooldown_seconds=0))
+        self.observe('fourth')
+        self.assertIsNotNone(self.ready())
+        for value in (-1,True,1.5,86401):
+            with self.assertRaisesRegex(ValueError,'proactive_policy_invalid'):
+                replace(self.policy,cooldown_seconds=value)
+
     def test_late_successful_ack_cancels_replacement_and_counts_after_disable(self):
         self.observe()
         old = self.ready()

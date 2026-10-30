@@ -19,6 +19,7 @@ class ProactivePolicy:
     max_calls_per_hour: int = 6
     max_replies_per_hour: int = 3
     max_cost_micro_per_hour: int = 0
+    cooldown_seconds: int = 60
 
     def __post_init__(self):
         if type(self.enabled) is not bool:
@@ -30,6 +31,8 @@ class ProactivePolicy:
                for value in (self.max_calls_per_hour, self.max_replies_per_hour)):
             raise ValueError('proactive_policy_invalid')
         if type(self.max_cost_micro_per_hour) is not int or self.max_cost_micro_per_hour < 0:
+            raise ValueError('proactive_policy_invalid')
+        if type(self.cooldown_seconds) is not int or not 0 <= self.cooldown_seconds <= 86400:
             raise ValueError('proactive_policy_invalid')
 
     @property
@@ -107,10 +110,10 @@ class ProactiveController:
     The host reserves a worst-case *whole evaluation* fee before calling candidate.
     """
     def __init__(self, *, clock=time.monotonic, coalesce_seconds=1.5,
-                 cooldown_seconds=60, candidate_seconds=60, max_defer_rechecks=2,
+                 candidate_seconds=60, max_defer_rechecks=2,
                  max_messages=120, window_seconds=900, group_bytes=256*1024,
                  max_bytes=8*1024*1024, max_scopes=1024):
-        if not 1 <= coalesce_seconds <= 2 or cooldown_seconds < 0 or candidate_seconds <= 0:
+        if not 1 <= coalesce_seconds <= 2 or candidate_seconds <= 0:
             raise ValueError('proactive_limits_invalid')
         if (type(max_defer_rechecks) is not int or not 0 <= max_defer_rechecks <= 2
                 or any(type(value) is not int or value <= 0 for value in
@@ -121,7 +124,6 @@ class ProactiveController:
             raise ValueError('proactive_limits_invalid')
         self.clock = clock
         self.coalesce_seconds = coalesce_seconds
-        self.cooldown_seconds = cooldown_seconds
         self.candidate_seconds = candidate_seconds
         self.max_defer_rechecks = max_defer_rechecks
         self.max_messages, self.window_seconds = max_messages, window_seconds
@@ -246,7 +248,7 @@ class ProactiveController:
         if (group is None or not group.policy.available or group.addressed_active
                 or group.active is not None or not group.rows
                 or now < group.last_message_at + self.coalesce_seconds
-                or now < group.last_delivery_at + self.cooldown_seconds):
+                or now < group.last_delivery_at + group.policy.cooldown_seconds):
             return None
         deferred = group.deferred_at is not None
         if not group.dirty and not (deferred and now >= group.deferred_at):
@@ -282,7 +284,7 @@ class ProactiveController:
                     and group.policy_version == ticket.policy_version
                     and group.policy.service_subject_id == ticket.service_subject_id
                     and self.clock() < ticket.expires_at and not ticket.delivered
-                    and self.clock() >= group.last_delivery_at + self.cooldown_seconds
+                    and self.clock() >= group.last_delivery_at + group.policy.cooldown_seconds
                     and len(group.replies) < group.policy.max_replies_per_hour
                     and self._cost(group) <= group.policy.max_cost_micro_per_hour)
 

@@ -57,7 +57,8 @@ class ProactiveChat:
         limits=policy.proactive if policy else None
         self.controller.configure(scope,ProactivePolicy(bool(policy),policy.service_subject_id if policy else '',
             policy.approval_ref if policy else '',limits.max_calls_per_hour if limits else 6,
-            limits.max_replies_per_hour if limits else 3,limits.max_cost_micro_per_hour if limits else 0))
+            limits.max_replies_per_hour if limits else 3,limits.max_cost_micro_per_hour if limits else 0,
+            cooldown_seconds=limits.cooldown_seconds if limits else 60))
         if self.controller.status(scope)['addressed_active']!=bool(self.addressed[scope]):
             self.controller.set_addressed(scope,bool(self.addressed[scope]))
         return policy
@@ -113,7 +114,7 @@ class ProactiveChat:
         if policy is None:return None
         group=self.controller.groups.get(scope)
         if group is None:return None
-        wait=max(1.5,group.last_delivery_at+self.controller.cooldown_seconds-self.controller.clock())
+        wait=max(1.5,group.last_delivery_at+policy.proactive.cooldown_seconds-self.controller.clock())
         replies=self.agent.store.proactive_replies(request.scope)
         if replies:wait=max(wait,max(replies)+policy.proactive.cooldown_seconds-self.agent.service_budget.clock())
         if wait+5>=followup.at+self.followups.window-self.controller.clock():return None
