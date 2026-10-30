@@ -377,6 +377,7 @@ class ChatAgent:
         seen={}
         output_ids={}
         operations=0
+        tool_events=0
         final_attempt=None
         force_final=False
         web_citations={}
@@ -519,7 +520,8 @@ class ChatAgent:
                     if output['status'] in ('budget_exhausted','quota_exceeded'):force_final=True
                     for ref in output.get('evidence_refs',[]):web_citations[ref['url']]=ref
                     provenance=output.get('data') if isinstance(output.get('data'),dict) else {}
-                    self.audit(self.store.event,work.delivery,'tool/'+call.id,'tool',{'name':call.name,'status':output['status'],
+                    tool_events+=1
+                    self.audit(self.store.event,work.delivery,'tool/'+str(tool_events),'tool',{'name':call.name if call.name in registry else 'unregistered','status':output['status'],
                         'source':{key:provenance[key] for key in ('source','server','release','text_release','observed_at','source_revision')
                                   if key in provenance}})
                     messages.append(tool_message)
@@ -532,7 +534,13 @@ class ChatAgent:
 
     async def execute(self,work,call,question,site,leases,deadline,turn_deadline,*,registry=None,web=None,user=None,group=None,story_handles=None,image_handles=None,vision=None):
         runtime=self.runtime
-        tool,args=validate_call(call,self.tools if registry is None else registry)
+        try:
+            tool,args=validate_call(call,self.tools if registry is None else registry)
+        except ModelError as exc:
+            # Only model-generated call shape errors are recoverable. Never
+            # echo arguments or exception text, and leave host gates fail-closed.
+            if str(exc) not in ('tool_unregistered','tool_arguments_invalid'):raise
+            return {'status':str(exc),'retryable':True},leases
         try:
             if tool.kind=='image':
                 if args['message_id'] not in image_handles:raise ImageError('image_not_available')
