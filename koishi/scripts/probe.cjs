@@ -274,7 +274,7 @@ async function main() {
   await run('Quote preview is text-only user material and never a trusted reference',async()=>{
     const e=createBot()
     try {
-      const raw=event({content:'/聊 那咋了',message_type:103,msg_elements:[{msg_idx:'opaque',content:'那COMBO呢，专挑手忙脚乱的人欺负是吧。',attachments:[{url:'https://untrusted.invalid/image'}]}]})
+      const raw=event({content:'/聊 那咋了',message_type:103,msg_elements:[{msg_idx:'opaque',content:'合成引文：这段 COMBO 练习我想再慢一点。',attachments:[{url:'https://untrusted.invalid/image'}]}]})
       const decoded=await decodeIncoming(e.bot,raw,identity,()=>true)
       assert.equal(decoded.status,'accepted')
       assert.equal(decoded.inbound.body,'/聊 那咋了')

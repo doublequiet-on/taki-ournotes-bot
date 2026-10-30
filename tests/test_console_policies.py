@@ -2332,7 +2332,7 @@ class ChatAgentTests(Fixture, unittest.IsolatedAsyncioTestCase):
     async def test_quote_preview_reaches_chat_as_current_user_material(self):
         bodies=self.capture_native_bodies()
         original=self.request
-        quote='那COMBO呢，专挑手忙脚乱的人欺负是吧。'
+        quote='合成引文：这段 COMBO 练习我想再慢一点。'
         def request(msg,seq):return {**original(msg,seq),'quoted_text':quote}
         self.client.request.return_value=self.result('你是在追问刚才那句COMBO的意思吧。')
         with patch.object(self,'request',side_effect=request):
@@ -2363,6 +2363,29 @@ class ChatAgentTests(Fixture, unittest.IsolatedAsyncioTestCase):
                 Request.parse({**value,'quoted_text':bad},'fixture','app',self.now)
         parsed=Request.parse({**value,'quoted_text':'引用只作为用户材料'},'fixture','app',self.now)
         self.assertIsNone(parsed.reference)
+
+    async def test_chat_receives_registered_band_alias_snapshot(self):
+        bodies=self.capture_native_bodies()
+        self.client.request.return_value=self.result('你说的是 Ave Mujica 吧，活动安排还要核实。')
+        plan,attempts=await self.prepare_native('/聊 下个活动是鸡')
+        prompt=bodies[0]['messages'][0]['content']
+        for term in ('registered_band_aliases','Ave Mujica','母鸡卡','茉团','millsage','家石笨'):
+            self.assertIn(term,prompt)
+        self.assertIn('家里',prompt)
+        self.assertEqual(len(attempts),1)
+        self.event(plan,'intent');self.event(plan,'ack')
+
+    def test_chat_band_alias_reference_uses_configured_file_and_refreshes(self):
+        import os
+        from ournotes_bot.application.chat_agent import band_alias_reference
+        path=self.repo.cache_file.with_name('chat-aliases.json')
+        with patch.dict(os.environ,{'OURNOTES_ALIAS_FILE':str(path)}):
+            path.write_text(json.dumps({'band':{'合成团':'Fixture Band'}}),encoding='utf-8')
+            first=band_alias_reference();self.assertIn('Fixture Band',first)
+            path.write_text(json.dumps({'band':{'新称呼':'Updated Band'}}),encoding='utf-8')
+            second=band_alias_reference();self.assertIn('Updated Band',second);self.assertNotIn('Fixture Band',second)
+            path.write_text('{broken',encoding='utf-8')
+            stale=band_alias_reference();self.assertIn('Updated Band',stale);self.assertIn('stale',stale)
 
     async def test_chat_prefix_and_name_keep_reply_mode(self):
         for seq,body in enumerate(('/聊 今天好累\n想休息','立希，今天好累','TAKI 你好'),1):

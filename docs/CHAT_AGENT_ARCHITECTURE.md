@@ -33,3 +33,5 @@
 K1 的 `story_search(query, filters)` 返回场景 handle、片段、source_kind、source_revision、出处与可继续读取标识；`story_read(handle, before, after)` 返回同发布版本的日文交流片段、发言者、前后场景和截断状态。未知时间保持空，原文／翻译／玩家分析分层。工具由 ChatAgent 的受限 registry 注册，宿主注入范围；没有配置故事库时不注册，不宣称已有剧情全集。
 
 运行人格只接受经独立人工确认的版本，研究稿与运行稿分离，实际版本写入审计。v0 不自动吸收群友偏好或模型推断。C2 原生联网、V1 图片与 G1 主动参与分别受绑定模型的能力证据控制；群级摘要／主动参与另用合法群服务主体及预算。费用、发送和正文生命周期分别归原账本、交付账及 ChatStore，详见 [组合入口与验证边界](CHAT_AGENT_F1.md)。
+
+聊天首轮从查询共用的 `query_aliases.json`（或 `OURNOTES_ALIAS_FILE`）读取乐队别名快照，携带版本与 current/stale/unavailable 状态，作为仅用于理解称呼的有界参考，不另建词表副本、不改写用户原话。单字/单字母须结合乐队或活动语境；映射不证明游戏收录、活动安排、剧情或强度。未知项继续使用现有 catalog_info abbreviation 工具或澄清。下一轮刷新读取；损坏时沿用既有最后有效快照，超出 8 KiB 时只提示按需查缩写，不把过大词表塞满模型输入。
