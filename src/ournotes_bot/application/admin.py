@@ -115,6 +115,7 @@ class Admin:
                                                     if m['position'] == p['position']), None) if metadata else None}
                              for p in parts]
             view['spans'] = metadata['spans'] if metadata else []
+            view['chat_events'] = metadata['chat_events'] if metadata else []
             view['commands'] = metadata['commands'] if metadata else None
             view['part_observations'] = metadata['parts'] if metadata else None
         return view

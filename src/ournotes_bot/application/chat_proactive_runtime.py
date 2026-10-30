@@ -1,5 +1,5 @@
 # L3: Host integration for ephemeral participation and approved group-service billing.
-# Effects: Bounded memory and metadata-only usage reads; receipts alone persist dialogue.
+# Effects: Bounded observations plus scoped delivered history; receipts alone persist dialogue.
 import json
 import math
 import sqlite3
@@ -25,6 +25,11 @@ class ProactiveChat:
         self.addressed=Counter()
         self.services=ChatServices(agent.runtime.usage.path.parent,agent.runtime.backend.instance_id,
             agent.runtime.backend.app_id,filename='chat-proactive-services-v1.json')
+
+    def trace(self,work,kind,**data):
+        if work.proactive is None:return
+        backend=self.agent.runtime.backend
+        backend.diagnostics.chat_event(work.request.request_id,kind,backend.clock(),**data)
 
     def owners(self):
         runtime=self.agent.runtime
@@ -140,6 +145,8 @@ class ProactiveChat:
         except (ModelError,ServiceError,ValueError,OSError,sqlite3.Error):pass
 
     def finish(self,work):
+        self.trace(work,'finished',status=work.terminal_status,delivered=work.proactive_delivered,
+                   model_attempts=work.model_attempts)
         try:
             if work.proactive is not None:
                 self.controller.settle(work.proactive,actual_cost_micro=self.cost(work))
@@ -171,10 +178,28 @@ class ProactiveChat:
         except (ModelError,ServiceError,ValueError,OSError,sqlite3.Error):return False
 
     def history(self,work):
-        # Only frozen, bounded observation material; never enters persistent context before ACK.
+        # Frozen observations plus scoped successful replies; new material persists only after ACK.
         followup=work.proactive.followup
         rows=list(work.proactive.messages[-1:] if followup else work.proactive.messages[-48:])
-        while rows and sum(len(row.text.encode()) for row in rows)>24576:rows.pop(0)
+        remembered={}
+        if not followup:
+            recent=self.agent.store.recent(work.request.scope,since_ms=int((self.agent.store.clock()-900)*1000))
+            sources={row['message_id']:ChatMessage(**row) for row in recent}
+            saved=self.agent.store.read(work.request.scope,[row.message_id for row in rows])['messages']
+            sources.update((row['message_id'],ChatMessage(**row)) for row in saved)
+            # Keep the canonical attachment marker after its volatile cache expires.
+            observed={row.message_id:sources.get(row.message_id,row) for row in rows}
+            for row in sources.values():
+                if row.role!='assistant' or (row.reply_to not in observed and row.reply_to not in sources):continue
+                remembered[row.message_id]=row
+                if row.reply_to in sources:remembered[row.reply_to]=sources[row.reply_to]
+            merged={**remembered,**observed}
+            rows=sorted((row for row in merged.values() if row.message_id!=work.request.message_id),key=lambda row:row.timestamp_ms)
+            rows.append(observed[work.request.message_id])
+        while rows and (len(rows)>48 or sum(len(row.text.encode()) for row in rows)>24576):
+            removed=rows.pop(0).message_id
+            rows[:]=[row for row in rows if row.role!='assistant' or row.reply_to!=removed]
+        self.agent.bind_memory(work,[asdict(row) for row in rows if row.message_id in remembered])
         messages=[]
         if followup:
             messages.append({'role':'user','content':json.dumps(asdict(ChatMessage(followup.source_id,followup.user_id,followup.source_text,
@@ -185,8 +210,11 @@ class ProactiveChat:
             value=asdict(row)
             try:ref=self.agent.images.get(self.agent.image_scope(work.request),row.message_id)
             except ImageError:ref=None
-            if ref:value['text']+='\n'+''.join('[图片附件 '+item.id+' '+item.content_type+'；图像仅在本轮或有效引用中可见]' for item in ref.attachments)
-            messages.append({'role':'user','content':json.dumps(value,ensure_ascii=False)})
+            if ref:
+                for item in ref.attachments:
+                    marker='[图片附件 '+item.id+' '+item.content_type+'；图像仅在本轮或有效引用中可见]'
+                    if marker not in value['text']:value['text']+='\n'+marker
+            messages.append({'role':row.role,'content':json.dumps(value,ensure_ascii=False)})
         return messages
 
     def cost(self,work):
@@ -204,6 +232,7 @@ class ProactiveChat:
         if mode=='reply':require(isinstance(value['text'],str) and 0<len(value['text'].strip())<=4000,'model_protocol_error')
         if mode=='defer':require(type(value['delay_seconds']) is int and 2<=value['delay_seconds']<=5,'model_protocol_error')
         self.controller.decide(work.proactive,mode,actual_cost_micro=self.cost(work),defer_seconds=value.get('delay_seconds',2))
+        self.trace(work,'decision',decision=mode,model_attempts=work.model_attempts)
         work.participation=mode
         return value['text'].strip() if mode=='reply' else None
 

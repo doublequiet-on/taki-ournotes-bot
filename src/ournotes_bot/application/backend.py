@@ -138,6 +138,7 @@ class Backend:
         self.reaper_error = None
 
     def expire(self):
+        self.diagnostics.expire(self.clock())
         self.conversations.sweep()
         if self.model_runtime is not None and self.model_runtime.agent:
             self.model_runtime.agent.proactive.sweep_followups()
