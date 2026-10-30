@@ -593,6 +593,109 @@ class ModelAdminTests(unittest.IsolatedAsyncioTestCase):
             self.admin.save_web(dict(operation_id='f'*32,guard=stale['guard'],enabled=True,max_calls=1))
         self.client.request.assert_not_called()
 
+    def approved_openai(self, proactive=False):
+        from ournotes_bot.application.chat_jobs import ChatServices
+        config=self.runtime.proactive_config if proactive else self.runtime.config
+        data={**self.old,'schema':'taki-model-config/2','secret':'OLD_KEY','groups':{}}
+        data['profile']={**data['profile'],'provider':'openai','wire_profile':'openai-responses-v1','reasoning_effort':'low'}
+        config.path.write_text(json.dumps(data),encoding='utf-8');snapshot=config.snapshot()
+        owner=self.runtime.proactive_capabilities if proactive else self.runtime.capabilities
+        owner.path.write_text(json.dumps(dict(schema='chat-capabilities/3',config_version=snapshot.profile.config_version,
+            fingerprint=snapshot.fingerprint,web_search=dict(max_calls=1,unit_cost_micro=10000,currency='USD',evidence_ref='fixture/web'),
+            vision=dict(max_image_tokens=4096,detail='low',evidence_ref='fixture/vision'),
+            proactive=dict(groups=['g'],receive_evidence_ref='fixture/receive',send_evidence_ref='fixture/send'))),encoding='utf-8')
+        services=ChatServices(self.root,'i','a',filename='chat-proactive-services-v1.json' if proactive else 'chat-services-v1.json')
+        services.path.write_text(json.dumps(dict(schema='taki-chat-services/1',instance_id='i',app_id='a',
+            profile=dict(config_version=snapshot.profile.config_version,fingerprint=snapshot.fingerprint,currency='USD'),
+            groups={'g':dict(approved=True,service_subject_id='service',approval_ref='fixture/group',
+                proactive=dict(enabled=True,max_calls_per_hour=100,max_replies_per_hour=20,max_cost_micro_per_hour=50000,cooldown_seconds=0)),
+                'other':dict(approved=False)})),encoding='utf-8');services.path.chmod(0o600)
+        return config,owner,services
+
+    async def test_tuning_keeps_web_vision_group_evidence_and_limits_for_both_roles(self):
+        for proactive in (False,True):
+            config,owner,services=self.approved_openai(proactive)
+            prior=json.loads(services.path.read_text(encoding='utf-8'))
+            settings=self.admin.settings(proactive=proactive)
+            body=dict(operation_id=('a' if proactive else 'b')*32,guard=settings['guard'],profile=settings['profile'],groups={},api_key='',api_url=settings['api_url'])
+            body['profile']['reasoning_effort']='high'
+            result=self.admin.save(body,proactive=proactive);after=config.snapshot()
+            self.assertTrue(result['web_search']['enabled']);self.assertTrue(owner.proactive(after,'g'))
+            self.assertIsNotNone(owner.vision(after));self.assertFalse(owner.proactive(after,'other'))
+            data,policies,_=services.read(after)
+            self.assertEqual(data['groups'],prior['groups']);self.assertEqual(set(policies),{'g'})
+            self.assertEqual(after.profile.reasoning_effort,'high');self.assertEqual(after.profile.api_key,'OLD_KEY')
+            self.assertEqual(self.admin.save(body,proactive=proactive)['guard'],result['guard'])
+        self.client.request.assert_not_called()
+
+    async def test_disabled_web_can_be_reenabled_after_tuning_without_minting_approval(self):
+        config,owner,_=self.approved_openai()
+        web=self.admin.settings()['web_search']
+        self.admin.save_web(dict(operation_id='a'*32,guard=web['guard'],enabled=False,max_calls=1))
+        body=self.payload('b');body['api_key']='';body['profile']['reasoning_effort']='high'
+        result=self.admin.save(body)
+        self.assertEqual(result['web_search']['code'],'disabled');self.assertTrue(result['web_search']['editable'])
+        self.assertIsNone(owner.web(config.snapshot()))
+        restored=self.admin.save_web(dict(operation_id='c'*32,guard=result['web_search']['guard'],enabled=True,max_calls=1))
+        self.assertTrue(restored['web_search']['enabled']);self.client.request.assert_not_called()
+
+    async def test_model_or_key_change_does_not_rebind_old_approvals(self):
+        for change in ('model','key'):
+            config,owner,services=self.approved_openai()
+            before=(owner.path.read_bytes(),services.path.read_bytes())
+            body=self.payload('a' if change=='model' else 'b');body['api_key']=''
+            if change=='model':body['profile']['model']='different-model'
+            else:body['api_key']='DIFFERENT_PRIVATE_KEY'
+            self.admin.save(body)
+            self.assertIsNone(owner.web(config.snapshot()))
+            self.assertEqual((owner.path.read_bytes(),services.path.read_bytes()),before)
+
+    async def test_rebind_write_failure_reports_saved_config_without_false_success(self):
+        from unittest.mock import patch
+        from ournotes_bot.domain.model_calls import ModelError
+        config,owner,_=self.approved_openai()
+        body=self.payload();body['api_key']='';body['profile']['reasoning_effort']='high'
+        with patch.object(self.admin,'write_web_metadata',side_effect=OSError('fixture disk full')):
+            with self.assertRaisesRegex(ModelError,'model_approval_rebind_unconfirmed'):self.admin.save(body)
+        self.assertEqual(config.snapshot().profile.reasoning_effort,'high')
+        self.assertIsNone(owner.web(config.snapshot()))
+        self.assertEqual(self.admin.audit()[0]['result']['code'],'model_approval_rebind_unconfirmed')
+        with self.assertRaisesRegex(ModelError,'model_approval_rebind_unconfirmed'):self.admin.save(body)
+
+    async def test_tuning_does_not_revive_stale_evidence(self):
+        config,owner,services=self.approved_openai()
+        proof=json.loads(owner.path.read_text(encoding='utf-8'));proof['fingerprint']='0'*64
+        owner.path.write_text(json.dumps(proof),encoding='utf-8')
+        service=json.loads(services.path.read_text(encoding='utf-8'));service['profile']['fingerprint']='0'*64
+        services.path.write_text(json.dumps(service),encoding='utf-8')
+        previous=(owner.path.read_bytes(),services.path.read_bytes())
+        body=self.payload();body['api_key']='';body['profile']['reasoning_effort']='high'
+        result=self.admin.save(body)
+        self.assertEqual(result['web_search']['code'],'unverified')
+        self.assertEqual((owner.path.read_bytes(),services.path.read_bytes()),previous)
+
+    async def test_invalid_service_document_rejects_before_model_write(self):
+        from ournotes_bot.domain.model_calls import ModelError
+        for letter,invalid in [('a',[]),('b',{'profile':[]})]:
+            config,_,services=self.approved_openai()
+            before=config.path.read_bytes()
+            services.path.write_text(json.dumps(invalid),encoding='utf-8')
+            body=self.payload(letter);body['api_key']='';body['profile']['reasoning_effort']='high'
+            with self.assertRaisesRegex(ModelError,'chat_service_configuration'):self.admin.save(body)
+            self.assertEqual(config.path.read_bytes(),before)
+
+    async def test_quota_edit_keeps_evidence_but_pricing_contract_change_does_not(self):
+        config,owner,services=self.approved_openai()
+        body=self.payload();body['api_key']='';body['groups']={'g':dict(group_daily_limit=900000,group_rate_requests=10)}
+        body['profile']['user_daily_limit']=12345
+        self.admin.save(body)
+        self.assertIsNotNone(owner.web(config.snapshot()));self.assertEqual(set(services.read(config.snapshot())[1]),{'g'})
+        previous=(owner.path.read_bytes(),services.path.read_bytes())
+        body=self.payload('b');body['api_key']='';body['profile']['price']['input_rate']+=1
+        self.admin.save(body)
+        self.assertIsNone(owner.web(config.snapshot()))
+        self.assertEqual((owner.path.read_bytes(),services.path.read_bytes()),previous)
+
     def configured_proactive_limits(self):
         body=self.payload();body.update(guard=self.admin.settings(proactive=True)['guard'],api_key='PROACTIVE_PRIVATE_KEY')
         self.admin.save(body,proactive=True)
