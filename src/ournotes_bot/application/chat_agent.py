@@ -18,7 +18,7 @@ from ..domain.model_calls import ModelError, require
 from ..domain.story import StoryError
 from ..domain.chat_images import ImageError, MAX_TOTAL_BYTES
 from ..sources.chat_images import ImageLoader,ImageCache
-from ..natural_query.native_tools import TOOLS, Tool, obj, string, validate_call, execute, scope_for
+from ..natural_query.native_tools import TOOLS, Tool, obj, string, validate_call, execute, scope_for, requested_server
 from ..natural_query.query_validation import EntityEvidence
 from ..query.continuation import catalog_version
 from ..query.entity_lexicon import band_aliases, alias_scope, alias_status, alias_version
@@ -502,10 +502,11 @@ class ChatAgent:
                         work.knowledge_scope=knowledge_scope
                         work.knowledge_scope_leases=(*work.knowledge_scope_leases,knowledge_lease)
                     if knowledge_context is not None and output['status']=='knowledge_context':
-                        saved,rows=knowledge_context
+                        saved,rows,target=knowledge_context
                         self.bind_memory(work,rows)
                         leases=(*leases,*saved[2])
                         work.knowledge_context=saved
+                        work.knowledge_target=target
                     seen[call.id]=((call.name,call.arguments),output)
                     if output['status'] in ('budget_exhausted','quota_exceeded'):force_final=True
                     for ref in output.get('evidence_refs',[]):web_citations[ref['url']]=ref
@@ -607,8 +608,13 @@ class ChatAgent:
                     group=self.context.scope(work.request)
                     saved=work.knowledge_context or self.knowledge_scopes.get((group,work.request.user_id))
                     recent={row.message_id for row in self.context.scopes.get(group,())}
-                    rows=self.store.read(work.request.scope,[saved[0]])['messages'] if saved else []
-                    if not saved or saved[0] not in recent or not rows or not knowledge.validate_current(saved[2]):
+                    pending=saved[3] if saved and len(saved)>3 else None
+                    ids=[saved[0],*([pending[1]] if pending else [])] if saved else []
+                    rows=self.store.read(work.request.scope,ids)['messages'] if ids else []
+                    found={row['message_id']:row for row in rows}
+                    pending_valid=(not pending or pending[1] in recent and pending[1] in found
+                        and found[pending[1]]['role']=='user' and found[pending[1]]['speaker_id']==work.request.user_id)
+                    if not saved or saved[0] not in recent or saved[0] not in found or not pending_valid or not knowledge.validate_current(saved[2]):
                         key=(group,work.request.user_id)
                         if saved is not None and self.knowledge_scopes.get(key)==saved:
                             self.knowledge_scopes.pop(key,None)
@@ -616,12 +622,16 @@ class ChatAgent:
                                 'data':'没有可继承的近期知识范围。若当前问题完整，可独立查询；否则请结合对话自然澄清缺少的条件。'},leases
                     if work.knowledge_context is None:
                         scope=saved[1]
+                        explicit=requested_server(work.request.body)
+                        target=(explicit,work.request.message_id) if explicit else pending
                         return {'status':'knowledge_context','retryable':True,
                                 'data':{'server':scope.server,'date':scope.date,'version':scope.version,
-                                        'note':'当前发言者的近期范围候选；结合问题判断是否相关，切服时判断是否比较相同条件，然后再查询。'},
-                                '_knowledge_context':(saved,rows)},leases
+                                        'pending_server':pending[0] if pending else None,
+                                        'note':'当前发言者近期范围候选；pending_server是其待澄清的明确区服。结合问题判断关联与时间，再查询。'},
+                                '_knowledge_context':(saved,rows,target)},leases
                     previous=saved[1]
-                scope=scope_for(question,args,previous,reset_on_server_change=True)
+                scope=scope_for(question,args,previous,reset_on_server_change=True,
+                                pending_server=work.knowledge_target[0] if args.get('followup') and work.knowledge_target else None)
                 await finish_thread(knowledge.observe)
                 retrieval=await finish_thread(partial(knowledge.retrieve,args.get('query') or question,scope,knowledge.approved_set_revision))
                 if retrieval.code!='ok':
@@ -693,12 +703,18 @@ class ChatAgent:
                         and knowledge is not None and knowledge.validate_current(previous[2]))
                     valid_new=(work.knowledge_scope is not None and not work.knowledge_scope_ambiguous
                         and knowledge is not None and knowledge.validate_current(work.knowledge_scope_leases))
+                    target=work.knowledge_target
+                    target_rows=self.store.read(work.request.scope,[target[1]])['messages'] if target else []
+                    valid_target=(not target or target[1] in recent and any(row['message_id']==target[1]
+                        and row['role']=='user' and row['speaker_id']==work.request.user_id for row in target_rows))
                 except (sqlite3.Error,OSError):
                     valid_previous=valid_new=False
                 if valid_new and (previous is None or valid_previous):
-                    self.knowledge_scopes[key]=(message_id,work.knowledge_scope,work.knowledge_scope_leases)
+                    self.knowledge_scopes[key]=(message_id,work.knowledge_scope,work.knowledge_scope_leases,None)
                     while len(self.knowledge_scopes)>1024:self.knowledge_scopes.pop(next(iter(self.knowledge_scopes)))
-                elif work.knowledge_scope is not None or work.knowledge_scope_ambiguous or not valid_previous:
+                elif valid_previous and valid_target and work.knowledge_scope is None and not work.knowledge_scope_ambiguous:
+                    self.knowledge_scopes[key]=(*previous[:3],target)
+                else:
                     self.knowledge_scopes.pop(key,None)
 
     def close(self):

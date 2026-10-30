@@ -93,6 +93,7 @@ class Work:
     knowledge_scope_ambiguous: bool = False
     knowledge_scope_leases: tuple = ()
     knowledge_context: object = None
+    knowledge_target: object = None
     image_deadline: float = float('inf')
     image_bytes: int = 0
 

@@ -134,13 +134,17 @@ def validate_call(call,registry=None):
     return tool,args
 
 
-def scope_for(question,args,previous=None,*,reset_on_server_change=False):
+def requested_server(question):
     require(not re.search(r'港服|韩服|美服|欧服|\b(?:tw|hk|kr|en)\b',question,re.I),'knowledge_server_unsupported')
     # An explicitly forbidden substitute is not a requested second region.
     region_question=re.sub(r'(?:不能|不要|不可|别)用(?:日服|国际服|國際服|台服|臺服)(?:资料|公告)?(?:代替|替代)', '', question)
     jp=bool(re.search(r'日服|\bjp\b',region_question,re.I))
     intl=bool(re.search(r'国际服|國際服|台服|臺服|\bintl\b',region_question,re.I))
-    server='common' if jp and intl else 'intl' if intl else 'jp' if jp else previous.server if previous else 'jp'
+    return 'common' if jp and intl else 'intl' if intl else 'jp' if jp else None
+
+
+def scope_for(question,args,previous=None,*,reset_on_server_change=False,pending_server=None):
+    server=requested_server(question) or pending_server or (previous.server if previous else 'jp')
     require(args['server']==server,'query_server_mismatch')
     normalized=re.sub(r'(\d{4})年(\d{1,2})月(\d{1,2})日',
                       lambda m:f'{int(m[1]):04d}-{int(m[2]):02d}-{int(m[3]):02d}',question)

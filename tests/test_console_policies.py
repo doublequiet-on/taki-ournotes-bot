@@ -3079,6 +3079,7 @@ class ChatReviewRegressionTests(Fixture,unittest.IsolatedAsyncioTestCase):
         knowledge.retrieve.return_value=SimpleNamespace(code='ok',lease=EvidenceLease('fixture',KnowledgeScope(),()))
         self.backend.knowledge=knowledge
         agent=self.backend.model_runtime.agent
+        bodies=self.capture_native_bodies()
         for index,exhausted in enumerate((False,True)):
             self.current_user='clarify-'+str(index)
             seq=10*index+1
@@ -3094,13 +3095,17 @@ class ChatReviewRegressionTests(Fixture,unittest.IsolatedAsyncioTestCase):
                 '{"server":"jp","date":null,"version":null,"followup":true}'),)),self.result('日服也看同一天吗？')]
             clarify,_=await self.prepare_native('/聊 那日服呢',seq=seq+1)
             self.event(clarify,'intent');self.event(clarify,'ack')
-            self.assertEqual(agent.knowledge_scopes[key],original)
+            pending=agent.knowledge_scopes[key]
+            self.assertEqual(pending[:3],original[:3])
+            self.assertEqual(pending[3][0],'jp')
             agent.budget=old_budget
             self.client.request.side_effect=[self.result(calls=(ToolCall('candidate2','knowledge_search',
                 '{"server":"jp","date":null,"version":null,"followup":true}'),)),
                 self.result(calls=(ToolCall('retrieve','knowledge_search',
                 '{"server":"jp","date":"2020-01-01","version":null,"followup":true}'),)),self.result('已比较')]
-            answer,_=await self.prepare_native('/聊 日服同一天',seq=seq+2)
+            answer,_=await self.prepare_native('/聊 同一天',seq=seq+2)
+            candidate=next(json.loads(row['content']) for row in bodies[-2]['messages'] if row['role']=='tool')
+            self.assertEqual(candidate['data']['pending_server'],'jp')
             self.assertEqual(knowledge.retrieve.call_args.args[1].date,'2020-01-01')
             self.assertEqual(knowledge.retrieve.call_args.args[1].server,'jp')
             self.event(answer,'intent');self.event(answer,'ack')
@@ -3126,6 +3131,72 @@ class ChatReviewRegressionTests(Fixture,unittest.IsolatedAsyncioTestCase):
         work=self.backend.works[clarify['delivery_id']]
         agent.acknowledge(work,clarify['parts'][0]['id'],'clarification-reply','你想问哪一项？','success',allow_context=True)
         self.assertFalse(agent.knowledge_scopes)
+
+    async def test_pending_server_is_isolated_and_revocation_blocks_inheritance(self):
+        from types import SimpleNamespace
+        from ournotes_bot.domain.knowledge import EvidenceLease,KnowledgeScope
+        from ournotes_bot.domain.model_calls import ToolCall
+        knowledge=Mock();knowledge.validate_current.return_value=True
+        knowledge.prepare_evidence.return_value={'text':'夹具'}
+        knowledge.retrieve.return_value=SimpleNamespace(code='ok',lease=EvidenceLease('fixture',KnowledgeScope(),()))
+        self.backend.knowledge=knowledge
+        bodies=self.capture_native_bodies()
+        self.client.request.side_effect=[self.result(calls=(ToolCall('start','knowledge_search',
+            '{"server":"intl","date":"2020-01-01","version":null}'),)),self.result('已回答')]
+        first,_=await self.prepare_native('/聊 国际服2020-01-01规则')
+        self.event(first,'intent');self.event(first,'ack')
+        self.client.request.side_effect=[self.result(calls=(ToolCall('candidate','knowledge_search',
+            '{"server":"jp","date":null,"version":null,"followup":true}'),)),self.result('日服也看同一天吗？')]
+        clarify,_=await self.prepare_native('/聊 那日服呢',seq=2)
+        self.event(clarify,'intent');self.event(clarify,'ack')
+        for seq,user,revoked in ((3,'u2',False),(4,'u1',True)):
+            self.current_user=user
+            if revoked:knowledge.validate_current.return_value=False
+            count=knowledge.retrieve.call_count
+            self.client.request.side_effect=[self.result(calls=(ToolCall('next','knowledge_search',
+                '{"server":"jp","date":"2020-01-01","version":null,"followup":true}'),)),self.result('请再说明')]
+            plan,_=await self.prepare_native('/聊 同一天',seq=seq)
+            output=next(json.loads(row['content']) for row in bodies[-1]['messages'] if row['role']=='tool')
+            self.assertEqual(output['status'],'knowledge_context_unavailable')
+            self.assertNotIn('pending_server',str(output))
+            self.assertEqual(knowledge.retrieve.call_count,count)
+            self.event(plan,'intent');self.event(plan,'ack')
+
+    def test_pending_server_never_overrides_explicit_server(self):
+        from ournotes_bot.domain.knowledge import KnowledgeScope
+        from ournotes_bot.domain.model_calls import ModelError
+        from ournotes_bot.natural_query.native_tools import scope_for
+        old=KnowledgeScope(server='intl',date='2020-01-01')
+        args=dict(server='jp',date='2020-01-01',version=None)
+        with self.assertRaisesRegex(ModelError,'query_server_mismatch'):
+            scope_for('同一天',args,old,reset_on_server_change=True)
+        self.assertEqual(scope_for('同一天',args,old,reset_on_server_change=True,pending_server='jp').server,'jp')
+        with self.assertRaisesRegex(ModelError,'query_server_mismatch'):
+            scope_for('国际服同一天',args,old,reset_on_server_change=True,pending_server='jp')
+
+    async def test_pending_server_requires_successful_clarification_ack(self):
+        from types import SimpleNamespace
+        from ournotes_bot.domain.knowledge import EvidenceLease,KnowledgeScope
+        from ournotes_bot.domain.model_calls import ToolCall
+        from ournotes_bot.application.backend_protocol import PROTOCOL
+        knowledge=Mock();knowledge.validate_current.return_value=True
+        knowledge.prepare_evidence.return_value={'text':'夹具'}
+        knowledge.retrieve.return_value=SimpleNamespace(code='ok',lease=EvidenceLease('fixture',KnowledgeScope(),()))
+        self.backend.knowledge=knowledge
+        agent=self.backend.model_runtime.agent
+        self.client.request.side_effect=[self.result(calls=(ToolCall('start','knowledge_search',
+            '{"server":"intl","date":"2020-01-01","version":null}'),)),self.result('已回答')]
+        first,_=await self.prepare_native('/聊 国际服2020-01-01规则')
+        self.event(first,'intent');self.event(first,'ack')
+        key=(agent.context.scope(self.backend.works[first['delivery_id']].request),self.current_user)
+        old=agent.knowledge_scopes[key]
+        self.client.request.side_effect=[self.result(calls=(ToolCall('candidate','knowledge_search',
+            '{"server":"jp","date":null,"version":null,"followup":true}'),)),self.result('同一天吗？')]
+        clarify,_=await self.prepare_native('/聊 那日服呢',seq=2)
+        self.event(clarify,'intent')
+        self.backend.apply_event(clarify['delivery_id'],dict(protocol=PROTOCOL,request_id=clarify['request_id'],
+            plan_version=1,gateway_epoch='e1',event='ack',part_id=clarify['parts'][0]['id'],attempt_id='a1',result='failure',message_id=None))
+        self.assertEqual(agent.knowledge_scopes[key],old)
 
     async def test_old_clarification_ack_does_not_overwrite_newer_scope(self):
         from types import SimpleNamespace
