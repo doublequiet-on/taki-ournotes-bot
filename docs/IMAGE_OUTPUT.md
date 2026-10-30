@@ -32,6 +32,8 @@ QQ 图片回复使用已确认的 Haneoka 风格：浅底、Noto Sans SC／Robot
 
 ## 模块与素材
 
+活动默认总览使用 `activity-overview`：横幅居上，基础字段紧排，相同加成条件的对象横向分组，歌曲和显式关联卡池独立分区。相同奖励、数量及类别的获取条件可合并，积分／名次区间保持配对；关联卡只有在资源类型、ID 和角色均已覆盖时去重。保留完整档位、原素材比例和文字回退，按编码硬预算续图；详情子项继续使用档位表。
+
 - QQ `_render_prepared` 向新 `*_layout.py` 传入同次查询数据及素材回调。`readable_pages.render_parts` 负责完整分段，`encode_image(preserve_size=True)` 禁止降尺寸。
 - `info_layout.py` 接收纯 `InfoView`／`InfoRow` 与素材回调，不访问查询仓库。`scripts/preview_info_catalog.py` 可生成三类信息的合成离线样图；相关测试为 `test_info_layout.py` 与 `test_info_command_pipeline.py`。
 - `visual_skill_contracts.json` 保存人工确认摘要与机制／日文模板指纹，匹配失败退完整技能；条件增强与等级成长分别展示。

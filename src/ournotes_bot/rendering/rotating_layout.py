@@ -114,7 +114,54 @@ def _entry(parts):
                  badges=tuple(name for p in parts for name in p.badges),children=tuple(parts))
 
 
+def _gallery_panels(row,limit):
+    result=[]
+    for start in range(0,len(row.children),4):
+        children=row.children[start:start+4]
+        captions=tuple((lines(r.title,224,24,True),
+                        tuple(line for value in r.body for line in lines(value,224,24))) for r in children)
+        art_h=max(192 if r.image_kind=='portrait' else 128 if r.image_kind=='wide' else 96 for r in children)
+        caption_h=max(len(a)*34+len(b)*34 for a,b in captions)
+        shared=tuple(line for value in row.body for line in lines(value,WIDTH,28))
+        height=64+art_h+16+caption_h+len(shared)*40+28
+        if height>limit:raise ImageBudgetError('Activity gallery item exceeds readable budget')
+        result.append(Panel(height,'gallery',row_text(replace(row,children=children)),rows=children,
+            title=row.title+('（续）' if start else ''),body=shared,children=captions,
+            requests=tuple((r.image_url,_card_size(r) if r.image_kind!='square' else (96,96)) for r in children if r.image_url)))
+    return result
+
+
+def _activity_overview(view,limit,prose_blocks):
+    result=[]
+    song_sections=set()
+    for row in view.rows:
+        if row.kind=='schedule':
+            if row.schedule is None:raise ValueError('Activity overview requires schedule')
+            result.append(Panel(584 if view.hero_url else 184,'event-banner',row_text(row),rows=(row,),
+                requests=((view.hero_url,(924,396)),) if view.hero_url else ()))
+        elif row.kind=='gallery':result.extend(_gallery_panels(row,limit))
+        elif row.kind=='recruitment':
+            copy=tuple(line for value in (row.title,*row.body) for line in lines(value,WIDTH,28))
+            result.append(Panel(460+len(copy)*40,'recruitment',row_text(row),rows=(row,),
+                title='关联卡池',body=copy,requests=((row.image_url,(924,396)),) if row.image_url else ()))
+        elif row.kind=='card':result.extend(_card_panels((row,),'activity'))
+        elif row.kind=='song':
+            heading=row.label or '关联歌曲'
+            if heading not in song_sections:
+                result.append(Panel(60,'section-title',title=heading));song_sections.add(heading)
+            result.extend(prose_blocks(row,limit,show_command=False))
+        else:result.extend(prose_blocks(row,limit,show_command=False))
+    for note in view.footer if view.visual_footer is None else view.visual_footer:
+        wrapped=lines(note,WIDTH,22)
+        for start in range(0,len(wrapped),max(1,(limit-32)//32)):
+            chunk=wrapped[start:start+max(1,(limit-32)//32)]
+            result.append(Panel(32+len(chunk)*32,'footer',note if start==0 else '',body=chunk))
+    if any(block.height>limit for block in result):raise ImageBudgetError('Activity overview section exceeds budget')
+    return tuple(result)
+
+
 def blocks(view, limit, prose_blocks):
+    if view.layout=='activity-overview':return _activity_overview(view,limit,prose_blocks)
     result=[];rows=view.rows
     for row in rows:
         if row.kind!='schedule':continue
@@ -173,6 +220,43 @@ def _card_art(c,row,x,y,load):
 
 
 def draw(c,panel,y,load):
+    if panel.kind=='section-title':
+        width=max(160,len(panel.title)*28+32)
+        c.box((LEFT,y+10,LEFT+width,y+50),ACCENT,10)
+        c.text(LEFT+16,y+30,panel.title,26,'#ffffff',True)
+        return
+    if panel.kind in {'gallery','event-banner','recruitment'}:
+        c.line(LEFT,y,RIGHT,'#d9d4df')
+        if panel.kind=='event-banner':
+            offset=0
+            if panel.requests:
+                url,size=panel.requests[0];c.paste(load(url,size),LEFT+24,y+12,*size,True,radius=10);offset=408
+            schedule=panel.rows[0].schedule
+            c.text(LEFT,y+offset+28,schedule.identity,26,MUTED)
+            _status(c,schedule.status,RIGHT-max(120,len(schedule.status)*24+32),y+offset+10,RIGHT)
+            c.text(LEFT,y+offset+76,'开始  '+schedule.start,28)
+            c.text(LEFT,y+offset+116,'结束  '+schedule.end,28)
+            c.text(LEFT,y+offset+153,schedule.zone,22,MUTED)
+        elif panel.kind=='recruitment':
+            c.box((30,y-4,1050,y+16),'#fcf8fd',0)
+            c.box((LEFT,y+12,LEFT+164,y+50),ACCENT,10)
+            c.text(LEFT+16,y+31,panel.title,26,'#ffffff',True)
+            c.paste(load(panel.rows[0].image_url,(924,396)),LEFT+24,y+56,924,396,True,radius=10)
+            for i,value in enumerate(panel.body):c.text(LEFT,y+476+i*40,value,28)
+        else:
+            c.text(LEFT,y+28,panel.title,28,ACCENT,True)
+            art_h=max(192 if r.image_kind=='portrait' else 128 if r.image_kind=='wide' else 96 for r in panel.rows)
+            caption_h=0
+            for i,(row,(titles,body)) in enumerate(zip(panel.rows,panel.children)):
+                x=LEFT+i*244;w,h=_card_size(row) if row.image_kind!='square' else (96,96)
+                c.paste(load(row.image_url,(w,h)),x,y+64+art_h-h,w,h,True,radius=6)
+                cy=y+64+art_h+16
+                for value in titles:c.text(x,cy+17,value,24,INK,True);cy+=34
+                for value in body:c.text(x,cy+17,value,24,MUTED);cy+=34
+                caption_h=max(caption_h,cy-y)
+            cy=y+caption_h+8
+            for value in panel.body:c.text(LEFT,cy+20,value,28);cy+=40
+        return
     if panel.kind=='entry':
         c.line(LEFT,y,RIGHT,'#d9d4df')
         cy=y+12

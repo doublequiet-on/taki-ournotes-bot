@@ -14,6 +14,28 @@ class RotatingLayoutTests(unittest.TestCase):
     def render(self,view,**kwargs):
         return info_layout.render_info(InfoAnswer(info_text((view,)),views=(view,)),**kwargs)
 
+    def test_activity_reference_overview_keeps_horizontal_groups_and_paginated_facts(self):
+        children=tuple(InfoRow(f'完整卡名{i}',(f'成员卡 ID {i}',f'所需积分：{i*100}'),
+                          image_url=f'synthetic:{i}',image_kind='portrait') for i in range(5))
+        schedule=InfoRow('活动 ID 7',kind='schedule',schedule=InfoSchedule('活动 ID 7','进行中','开始','结束'))
+        gallery=InfoRow('奖励卡牌',kind='gallery',children=children)
+        pool=InfoRow('关联卡池完整名',('卡池 ID 8',),kind='recruitment',image_url='synthetic:pool')
+        view=InfoView('活动',hero_url='synthetic:banner',rows=(schedule,gallery,pool),
+                      layout='activity-overview',presentation='activity')
+        panels=rotating_layout.blocks(view,7900,info_layout._row_blocks)
+        strips=[p for p in panels if p.kind=='gallery']
+        self.assertEqual([len(p.rows) for p in strips],[4,1])
+        calls=[]
+        def load(url,size):calls.append((url,size));return Image.new('RGB',size,'red')
+        with patch.object(readable_pages,'MAX_IMAGE_EDGE',1200):pages=self.render(view,load=load)
+        text='\n'.join(p.text for p in pages)
+        for row in children:
+            self.assertIn(row.title,text)
+            for value in row.body:self.assertIn(value,text)
+        self.assertIn('卡池 ID 8',text)
+        self.assertEqual(calls.count(('synthetic:banner',(924,396))),1)
+        self.assertTrue(all(size==(144,192) for url,size in calls if url.rsplit(':',1)[-1].isdigit()))
+
     def test_detail_uses_native_banner_beside_dates_and_keeps_diagnostics_in_text(self):
         schedule=InfoSchedule('卡池 ID 12','开放时间未确认','未确认','未确认')
         row=InfoRow('卡池 ID 12',('完整时间事实',),kind='schedule',schedule=schedule)

@@ -27,7 +27,7 @@ class InfoRow:
     rarity: int | None = None
     image_kind: Literal["square", "wide", "portrait"] = "square"
     group: str = ""
-    kind: Literal["row", "fact", "prose", "links", "card", "song", "schedule", "banner", "metric", "showcase", "standing", "bonus"] = "row"
+    kind: Literal["row", "fact", "prose", "links", "card", "song", "schedule", "banner", "metric", "showcase", "standing", "bonus", "gallery", "recruitment"] = "row"
     attribute_url: str = ""
     schedule: InfoSchedule | None = None
     display_title: str = ""
@@ -36,6 +36,7 @@ class InfoRow:
     table: tuple[tuple[str, ...], ...] = ()
     icons: tuple[str, ...] = ()
     game_icon: str = ''
+    reference: tuple[int, int] | None = None
 
 
 @dataclass(frozen=True)
@@ -45,7 +46,7 @@ class InfoView:
     hero_url: str = ""
     rows: tuple[InfoRow, ...] = ()
     footer: tuple[str, ...] = ()
-    layout: Literal["list", "detail", "character", "directory", "facts"] = "list"
+    layout: Literal["list", "detail", "character", "directory", "facts", "activity-overview"] = "list"
     presentation: Literal["", "activity", "gacha", "character", "arena", "player"] = ""
     visual_footer: tuple[str, ...] | None = None
     hero_kind: Literal['banner', 'event'] = 'banner'

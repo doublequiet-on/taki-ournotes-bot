@@ -62,6 +62,8 @@ class ActivityFact:
     preview: bool = False
     table: tuple[tuple[str, ...], ...] = ()
     image_kind: str = 'square'
+    group: str = ''
+    reference: tuple[int, int] | None = None
 
 
 @dataclass(frozen=True)

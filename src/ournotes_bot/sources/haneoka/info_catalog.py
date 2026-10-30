@@ -10,7 +10,7 @@ from datetime import date
 import re
 
 from ...domain.info_catalog import ActivityCalendar, ActivityInfo, CardRef, CharacterInfo, GachaInfo, InfoCatalog
-from .catalog_assets import asset_url
+from .catalog_assets import asset_url, attribute_url
 from .catalog_text import LANGUAGES, localized, original, translated
 from .activity_details import project_details
 
@@ -199,7 +199,8 @@ def convert_info(documents, identity_jp, fetched_at, identity_intl=None):
                 if music_id is not None:
                     music_id = _integer(music_id)
                 activities.append(ActivityInfo(**base, display_end_at=_time(row.get("displayEndAt")),
-                    details=project_details(row, lambda path: _image(path, release)),
+                    details=project_details(row, lambda path: _image(path, release),
+                        lambda value:attribute_url(jp.get('ui-marks',{}),value,release)),
                     event_type_id=_integer(row['eventType']) if row.get('eventType') is not None else None,
                     ranking_modes=tuple(label for field, label in (('rankingDisabled','活动排名'),
                         ('musicRankingDisabled','挑战歌曲单曲榜'),('totalMusicRankingDisabled','挑战歌曲总榜')) if row.get(field) is False),
@@ -224,7 +225,8 @@ def convert_info(documents, identity_jp, fetched_at, identity_intl=None):
                 raise ValueError('invalid international activity interval')
             names = _text(row, {}, 'title', False)
             intl_records.append(ActivityInfo(ident, names['zh'] or str(ident), names,
-                details=project_details(row, lambda path: _image(path, identity_intl['releaseId'])),
+                details=project_details(row, lambda path: _image(path, identity_intl['releaseId']),
+                    lambda value:attribute_url(other.get('ui-marks',{}),value,identity_intl['releaseId'],'intl')),
                 event_type_id=_integer(row['eventType']) if row.get('eventType') is not None else None,
                 ranking_modes=tuple(label for field,label in (('rankingDisabled','活动排名'),
                     ('musicRankingDisabled','挑战歌曲单曲榜'),('totalMusicRankingDisabled','挑战歌曲总榜')) if row.get(field) is False),
