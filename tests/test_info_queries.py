@@ -546,6 +546,26 @@ class PublicQueryContractTests(unittest.TestCase):
             source.arena('jp')
         self.assertEqual(failure.exception.status, 'invalid_source')
 
+    def test_arena_null_song_rules_and_malformed_namecard_reject_at_source(self):
+        import json
+        from ournotes_bot.sources.haneoka.public_queries import arena_document, PublicQueries
+        from ournotes_bot.domain.public_queries import PublicQueryError, PlayerRequest
+        song = {'musicId': 1, 'musicTitle': 'fixture', 'musicType': 1, 'arenaMissions': [1, 2, 3], 'arenaPublishedAt': 0}
+        league = {'id': 1, 'bandId': 1, 'name': 'fixture', 'rules': [], 'ranks': [], 'songs': [song]}
+        document = {'entries': {'1': {'seasonId': 1, 'title': 'fixture', 'startAt': 1, 'endAt': 2, 'leagues': [league]}}}
+        arena_document(document)
+        for field in ('musicType', 'arenaMissions', 'arenaPublishedAt'):
+            original = song[field]
+            song[field] = None
+            with self.subTest(field=field), self.assertRaises(PublicQueryError):
+                arena_document(document)
+            song[field] = original
+        for card in ({'name': 1}, {'pages': [{'page': 1, 'imageUrl': 1}]}):
+            data = {'region': 'jp', 'profileId': '99', 'profile': {'profileCard': card}}
+            source = PublicQueries(fetch=lambda *args: (200, json.dumps(data).encode(), {}))
+            with self.assertRaises(PublicQueryError):
+                source.player(PlayerRequest('99'))
+
     def test_local_grammar_requires_whole_question(self):
         from ournotes_bot.natural_query.on_query import public_information_command
         self.assertEqual(public_information_command('玩家 9223372036854775807 jp'), '/查玩家 9223372036854775807 jp')

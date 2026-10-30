@@ -82,14 +82,13 @@ def arena_document(value):
             for song in objects(league.get('songs')):
                 integer(song.get('musicId'), minimum=1)
                 localized_value(song.get('musicTitle'))
-                if song.get('musicType') is not None:
-                    integer(song['musicType'])
-                if song.get('arenaMissions') is not None:
-                    if not isinstance(song['arenaMissions'], list) or len(song['arenaMissions']) != 3:
-                        raise PublicQueryError('invalid_source', '歌曲激奏任务格式异常。')
-                    for mission in song['arenaMissions']:
-                        integer(mission)
-                timestamp(song.get('arenaPublishedAt'))
+                integer(song.get('musicType'))
+                if not isinstance(song.get('arenaMissions'), list) or len(song['arenaMissions']) != 3:
+                    raise PublicQueryError('invalid_source', '歌曲激奏任务格式异常。')
+                for mission in song['arenaMissions']:
+                    integer(mission)
+                integer(song.get('arenaPublishedAt'))
+                timestamp(song['arenaPublishedAt'])
             for rank in objects(league.get('ranks')):
                 localized_value(rank.get('name'))
                 for key in ('id', 'points', 'resetPoints', 'startAt'):
@@ -228,10 +227,16 @@ class PublicQueries:
         if card is not None:
             if not isinstance(card, dict):
                 raise PublicQueryError('invalid_source', '名片格式异常。')
+            if card.get('name') is not None and not isinstance(card['name'], str):
+                raise PublicQueryError('invalid_source', '名片名称格式异常。')
             if card.get('pages') is not None:
                 pages = objects(card['pages'])
                 if len({integer(p.get('page'), minimum=1) for p in pages}) != len(pages):
                     raise PublicQueryError('invalid_source', '名片页码重复。')
+                for page in pages:
+                    for field in ('imageUrl', 'downloadUrl'):
+                        if page.get(field) is not None and not isinstance(page[field], str):
+                            raise PublicQueryError('invalid_source', '名片图片路径格式异常。')
             elif not isinstance(card.get('thumbnailUrls', []), list) or any(not isinstance(s, str) for s in card.get('thumbnailUrls', [])):
                 raise PublicQueryError('invalid_source', '名片预览格式异常。')
         return snapshot
