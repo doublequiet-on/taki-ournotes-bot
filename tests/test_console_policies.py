@@ -3165,6 +3165,38 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
         _,_,candidate=await self.candidate(value)
         self.assertIsNotNone(candidate[0].followup)
 
+    async def test_zero_group_cooldown_allows_next_observation_after_ack(self):
+        from ournotes_bot.application.backend_protocol import Request
+        self.policy=replace(self.policy,proactive=replace(self.policy.proactive,cooldown_seconds=0))
+        self.agent.services.policy.return_value=self.policy
+        for seq in (1,2):
+            value=self.observation('合成讨论'+str(seq),seq=seq)
+            request=Request.parse(value,'fixture','app',self.now)
+            group=self.agent.proactive.controller.groups[tuple(request.scope.values())]
+            self.assertEqual(group.policy.cooldown_seconds,0)
+            self.tick+=1.6
+            self.client.request.return_value=self.result('{"participation":"reply","text":"接着聊。"}')
+            plan,attempts,candidate=await self.candidate(value,serial=seq)
+            self.assertIsNotNone(candidate)
+            self.assertEqual(len(attempts),1)
+            self.assertEqual(plan['parts'][0]['business_status'],'success')
+            self.event(plan,'intent');self.event(plan,'ack')
+        self.assertEqual(len(self.agent.store.proactive_replies(request.scope)),2)
+
+    async def test_followup_delay_uses_zero_group_cooldown(self):
+        from ournotes_bot.application.backend_protocol import Request
+        self.policy=replace(self.policy,proactive=replace(self.policy.proactive,cooldown_seconds=0))
+        self.agent.services.policy.return_value=self.policy
+        self.client.request.return_value=self.result('你说哪方面？')
+        plan,_=await self.prepare_native('/聊 哪个更权威')
+        self.event(plan,'intent');self.event(plan,'ack')
+        self.now+=.01
+        request=Request.parse(self.observation('唱歌',seq=2),'fixture','app',self.now)
+        group=self.agent.proactive.controller.groups[tuple(request.scope.values())]
+        group.last_delivery_at=self.tick
+        with patch.object(self.agent.store,'proactive_replies',return_value=(self.now,)),patch.object(self.agent.service_budget,'clock',return_value=self.now):
+            self.assertEqual(self.agent.proactive.observation_delay(request),1500)
+
     async def candidate(self,value,serial=1):
         from ournotes_bot.application.backend_protocol import Request,digest
         raw={**value,'trigger':'proactive','proactive_id':format(serial,'032x')}
