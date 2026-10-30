@@ -1218,6 +1218,9 @@ class NativeRuntimeTests(Fixture,unittest.IsolatedAsyncioTestCase):
         body=bodies[-1]
         self.assertNotIn('tools',body);self.assertNotIn('tool_choice',body)
         self.assertIn('本轮人格设定',body['messages'][0]['content'])
+        self.assertIn('不为了延续对话习惯性在回答后反问',body['messages'][0]['content'])
+        self.assertIn('确实需要澄清，或顺着谈话自然想问时可以提问',body['messages'][0]['content'])
+        self.assertIn('不把写作限制复述',body['messages'][0]['content'])
         self.repo.current_query_view.assert_not_called()
         self.assertEqual(self.backend.model_runtime.usage.get(attempts[0])['charged'],'140')
         self.assertFalse(self.backend.conversations.anchors)
@@ -1234,6 +1237,17 @@ class NativeRuntimeTests(Fixture,unittest.IsolatedAsyncioTestCase):
         self.event(second,'intent');self.event(second,'ack')
         anchor=self.backend.conversations.resolve(self.backend.works[second['delivery_id']].request)
         self.assertLessEqual(anchor.expires,expires+.01)
+
+    async def test_legacy_light_chat_receives_followup_guidance(self):
+        from ournotes_bot.domain.model_calls import AttemptResult,Usage
+        bodies=self.capture_native_bodies()
+        self.client.request.return_value=AttemptResult('ok',Usage(10,0,2,None,12,'known'),text='你好。')
+        plan,_=await self.prepare_native('/问 你好')
+        prompt=bodies[0]['messages'][0]['content']
+        self.assertIn('别习惯性反问；必要澄清或顺着对话可提问',prompt)
+        self.assertIn('减少空泛免责声明',prompt)
+        self.assertEqual(plan['parts'][0]['business_status'],'success')
+        self.event(plan,'intent');self.event(plan,'ack')
 
     async def test_persona_without_ack_cannot_publish_followup_topic(self):
         from ournotes_bot.domain.model_calls import AttemptResult,Usage
@@ -1988,8 +2002,8 @@ class ChatAgentTests(Fixture, unittest.IsolatedAsyncioTestCase):
         self.client.request.return_value=self.result('我喜欢鼓点清楚的音乐。')
         plan,_=await self.prepare_native('/聊 你喜欢什么样的音乐？')
         prompt=bodies[0]['messages'][0]['content']
-        self.assertIn('不为了延续对话习惯性在回答后反问',prompt)
-        self.assertIn('不反复解释自己的限制',prompt)
+        self.assertIn('别习惯性反问',prompt)
+        self.assertIn('少用防御性套话',prompt)
         self.assertEqual(plan['parts'][0]['text'],'我喜欢鼓点清楚的音乐')
         self.event(plan,'intent');self.event(plan,'ack')
 
@@ -1997,7 +2011,7 @@ class ChatAgentTests(Fixture, unittest.IsolatedAsyncioTestCase):
         bodies=self.capture_native_bodies()
         self.client.request.return_value=self.result('你说的是哪首歌？')
         plan,_=await self.prepare_native('/聊 那首歌叫什么？')
-        self.assertIn('确实需要澄清，或顺着谈话自然想问时可以提问',bodies[0]['messages'][0]['content'])
+        self.assertIn('必要澄清或顺着对话可提问',bodies[0]['messages'][0]['content'])
         self.assertEqual(plan['parts'][0]['text'],'你说的是哪首歌？')
         self.event(plan,'intent');self.event(plan,'ack')
 
@@ -2097,8 +2111,6 @@ class ChatAgentTests(Fixture, unittest.IsolatedAsyncioTestCase):
     async def test_six_permits_and_reserved_final_with_tool_budget_results(self):
         from ournotes_bot.domain.model_calls import ToolCall
         bodies=self.capture_native_bodies()
-        # Keep this permit-limit test independent of the system prompt's size.
-        self.snapshot=replace(self.snapshot,profile=replace(self.snapshot.profile,max_input_tokens=self.snapshot.profile.max_input_tokens+1024))
         self.backend.model_runtime.agent.budget=replace(self.backend.model_runtime.agent.budget,tool_calls=4)
         # Four rounds, then a response containing two calls with one slot left.
         self.client.request.side_effect=[self.result(calls=(ToolCall(str(i),'catalog_info','{"kind":"help","query":""}'),))
