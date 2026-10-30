@@ -2099,6 +2099,55 @@ class ChatAgentTests(Fixture, unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(attempts),6)
         self.event(next_plan,'intent');self.event(next_plan,'ack')
 
+    async def test_invalid_tool_calls_can_recover_without_echoing_input(self):
+        from ournotes_bot.domain.model_calls import ToolCall
+        from ournotes_bot.sources.model_provider import decode_attempt
+        bodies=self.capture_native_bodies()
+        self.snapshot=replace(self.snapshot,profile=replace(self.snapshot.profile,provider='openai',wire_profile='openai-responses-v1'))
+        invalid=decode_attempt(json.dumps({'status':'completed','output':[
+            {'type':'function_call','status':'completed','call_id':'secret_id','name':'secret_tool_name','arguments':'{}'},
+            {'type':'function_call','status':'completed','call_id':'b','name':'catalog_info','arguments':'{"kind":"secret_value"}'},
+            {'type':'function_call','status':'completed','call_id':'c','name':'catalog_info','arguments':'{bad json'}],
+            'usage':{'input_tokens':10,'output_tokens':2,'total_tokens':12,'input_tokens_details':{'cached_tokens':0}}}),self.snapshot.profile)
+        self.client.request.side_effect=[
+            invalid,
+            self.result(calls=(ToolCall('d','catalog_info','{"kind":"help","query":""}'),)),
+            self.result('可以继续聊。')]
+        plan,attempts=await self.prepare_native('/聊 帮我看看帮助')
+        self.assertEqual(len(attempts),3)
+        outputs=[json.loads(m['output']) for m in bodies[-1]['input'] if m.get('type')=='function_call_output']
+        self.assertEqual([o['status'] for o in outputs],['tool_unregistered','tool_arguments_invalid','tool_arguments_invalid','ok'])
+        self.assertNotIn('secret',json.dumps(outputs))
+        stored=' '.join(str(row) for row in self.backend.model_runtime.agent.store.db.execute('SELECT * FROM events'))
+        self.assertNotIn('secret',stored)
+        self.assertEqual(plan['parts'][0]['business_status'],'success')
+        self.event(plan,'intent');self.event(plan,'ack')
+
+    async def test_invalid_tool_calls_obey_budget_and_security_errors_propagate(self):
+        from ournotes_bot.domain.model_calls import ToolCall,ModelError
+        bodies=self.capture_native_bodies()
+        self.backend.model_runtime.agent.budget=replace(self.backend.model_runtime.agent.budget,tool_calls=2)
+        self.client.request.side_effect=[self.result(calls=(ToolCall('a','unknown','{}'),)),
+            self.result(calls=(ToolCall('b','unknown','{}'),)),self.result('暂时无法查询。')]
+        plan,attempts=await self.prepare_native('/聊 查询资料')
+        self.assertEqual(len(attempts),3)
+        self.assertNotIn('tools',bodies[-1])
+        self.event(plan,'intent');self.event(plan,'ack')
+        agent=self.backend.model_runtime.agent
+        with patch('ournotes_bot.application.chat_agent.validate_call',side_effect=ModelError('chat_capability_revoked')):
+            with self.assertRaisesRegex(ModelError,'chat_capability_revoked'):
+                await agent.execute(None,ToolCall('c','catalog_info','{}'),'',None,(),0,0)
+
+    async def test_invalid_call_does_not_bypass_next_model_permission(self):
+        from ournotes_bot.domain.model_calls import ToolCall
+        self.client.request.return_value=self.result(calls=(ToolCall('a','unknown','{}'),))
+        plan,attempts=await self.prepare_native('/聊 查询资料',allow=lambda n:n==1)
+        self.assertEqual(len(attempts),2)
+        self.assertEqual(self.client.request.await_count,1)
+        self.assertNotEqual(plan['parts'][0]['business_status'],'success')
+        self.assertEqual(self.backend.model_runtime.usage.get(attempts[1])['state'],'released')
+        self.event(plan,'intent');self.event(plan,'ack')
+
     async def test_partial_delivery_never_remembers_unsent_or_uncertain_text(self):
         from ournotes_bot.application.backend_protocol import PROTOCOL
         self.client.request.return_value=self.result('甲'*1400+'乙'*1400+'丙'*1000)
