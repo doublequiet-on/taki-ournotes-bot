@@ -2917,6 +2917,56 @@ class ChatReviewRegressionTests(Fixture,unittest.IsolatedAsyncioTestCase):
     prepare_native=ChatAgentTests.prepare_native
     event=ChatAgentTests.event
     reviewed_fixture=NativeRuntimeTests.reviewed_fixture
+    capture_native_bodies=ChatAgentTests.capture_native_bodies
+
+    async def test_knowledge_scope_is_per_speaker_recent_and_model_selected(self):
+        import time
+        from types import SimpleNamespace
+        from ournotes_bot.domain.model_calls import ToolCall
+        knowledge=Mock();knowledge.retrieve.return_value=SimpleNamespace(code='empty',message='empty')
+        self.backend.knowledge=knowledge
+        bodies=self.capture_native_bodies()
+        async def ask(text,seq,server='jp',date=None,followup=False,user='u1'):
+            self.current_user=user
+            args=json.dumps(dict(server=server,date=date,version=None,followup=followup))
+            self.client.request.side_effect=[self.result(calls=(ToolCall('k'+str(seq),'knowledge_search',args),)),self.result('收到')]
+            plan,_=await self.prepare_native('/聊 '+text,seq=seq)
+            self.event(plan,'intent');self.event(plan,'ack')
+            return plan
+        # A complete question beginning with a discourse marker needs no cache.
+        await ask('那日服的规则是什么',1)
+        self.assertEqual(knowledge.retrieve.call_args.args[1].server,'jp')
+        await ask('国际服2020-01-01规则',2,server='intl',date='2020-01-01')
+        await ask('日服规则',3,user='u2')
+        await ask('那LUCK呢',4,server='intl',date='2020-01-01',followup=True)
+        self.assertEqual(knowledge.retrieve.call_args.args[1].server,'intl')
+        self.assertEqual(knowledge.retrieve.call_args.args[1].date,'2020-01-01')
+        await ask('那现在日服呢',5,server='jp',followup=True)
+        self.assertEqual(knowledge.retrieve.call_args.args[1].server,'jp')
+        self.assertIsNone(knowledge.retrieve.call_args.args[1].date)
+        await ask('刚才看到的国际服新规则是什么',6,server='intl')
+        self.assertEqual(knowledge.retrieve.call_args.args[1].server,'intl')
+        self.assertIsNone(knowledge.retrieve.call_args.args[1].date)
+        # Another speaker cannot take u1's range; missing context is a tool
+        # result, leaving the model free to ask a specific question.
+        count=knowledge.retrieve.call_count
+        await ask('接着呢',7,server='intl',followup=True,user='u3')
+        self.assertEqual(knowledge.retrieve.call_count,count)
+        tool_result=next(json.loads(row['content']) for row in bodies[-1]['messages'] if row['role']=='tool')
+        self.assertEqual(tool_result['status'],'knowledge_context_unavailable')
+        # A delivered unrelated exchange invalidates that speaker's old topic.
+        self.current_user='u1';self.client.request.side_effect=None;self.client.request.return_value=self.result('好')
+        plan,_=await self.prepare_native('/聊 换个话题聊音乐',seq=8)
+        self.event(plan,'intent');self.event(plan,'ack')
+        await ask('继续呢',9,server='intl',followup=True)
+        self.assertEqual(knowledge.retrieve.call_count,count)
+        await ask('国际服规则',10,server='intl')
+        agent=self.backend.model_runtime.agent
+        agent.context.scopes.clear()
+        agent.context.clock=lambda:time.time()+901
+        count=knowledge.retrieve.call_count
+        await ask('那LUCK呢',11,server='intl',followup=True)
+        self.assertEqual(knowledge.retrieve.call_count,count)
 
     async def test_revoked_quote_stops_before_model(self):
         from ournotes_bot.domain.model_calls import ToolCall

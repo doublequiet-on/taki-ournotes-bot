@@ -119,7 +119,7 @@ def chat_tools():
             if name=='site_search' else '读取本轮返回的 handle，可继续阅读已知关联。'))
     tool=tools['knowledge_search']
     tools[tool.name]=replace(tool,schema=obj({**tool.schema['properties'],'query':string(120)},tool.schema['required']),
-        description='检索已审核 ON 规则与玩法。query 可改写检索词；区服、日期、版本仍由宿主核对。支持日服、国际服和明确的共通范围。')
+        description='已审核ON知识。query可改写；区服、日期、版本宿主核对。同一发言者的近期知识追问followup=true；新问题false。')
     return tools
 
 
@@ -304,7 +304,8 @@ class ChatAgent:
         key=tuple(scope.values())
         self.context.scopes.pop(key,None)
         self.context.revisions.pop(key,None)
-        self.knowledge_scopes.pop(key,None)
+        for item in list(self.knowledge_scopes):
+            if item[0]==key:self.knowledge_scopes.pop(item,None)
         self.images.forget_scope(json.dumps(scope,sort_keys=True,separators=(',',':')))
         self.proactive.clear(scope)
         backend=self.runtime.backend
@@ -589,9 +590,13 @@ class ChatAgent:
                 knowledge=runtime.backend.knowledge
                 if knowledge is None: return {'status':'not_available','retryable':False},leases
                 previous=None
-                if args.get('followup') or re.match(r'^(?:那|刚才|之前|接着|继续)',question):
-                    saved=self.knowledge_scopes.get(self.context.scope(work.request))
-                    require(saved is not None and bool(self.store.read(work.request.scope,[saved[0]])['messages']),'context_expired')
+                if args.get('followup'):
+                    group=self.context.scope(work.request)
+                    saved=self.knowledge_scopes.get((group,work.request.user_id))
+                    recent={row.message_id for row in self.context.scopes.get(group,())}
+                    if not saved or saved[0] not in recent or saved[0] not in work.memory_sources or not self.store.read(work.request.scope,[saved[0]])['messages']:
+                        return {'status':'knowledge_context_unavailable','retryable':True,
+                                'data':'没有可继承的近期知识范围。若当前问题完整，可独立查询；否则请结合对话自然澄清缺少的条件。'},leases
                     previous=saved[1]
                 scope=scope_for(question,args,previous)
                 work.knowledge_scope=scope
@@ -649,8 +654,10 @@ class ChatAgent:
                           'allow_context':allow_context,'delivered_at':self.runtime.backend.clock()})
         if status=='success' and allow_context:
             self.context.delivered(work.request,message_id,text)
-            if work.knowledge_scope is not None:
-                key=self.context.scope(work.request)
+            if work.proactive is None:
+                key=(self.context.scope(work.request),work.request.user_id)
+                self.knowledge_scopes.pop(key,None)
+            if work.proactive is None and work.knowledge_scope is not None:
                 self.knowledge_scopes[key]=(message_id,work.knowledge_scope)
                 while len(self.knowledge_scopes)>1024:self.knowledge_scopes.pop(next(iter(self.knowledge_scopes)))
 
