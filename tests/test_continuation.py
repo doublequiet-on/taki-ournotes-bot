@@ -71,6 +71,25 @@ class ContinuationCoreTests(Fixture, unittest.TestCase):
         self.assertEqual(third.page, 3)
         self.assertIsNone(third.selected)
 
+    def test_mirror_chart_survives_difficulty_and_detail_followups(self):
+        context = self.context("/查谱面 1 EX 镜像")
+        self.assertTrue(context.query.chart_mirror)
+        result, context = execute_followup(context, Operation("difficulty", "HARD"), self.repo)
+        self.assertTrue(result.spec.chart_mirror)
+        self.assertEqual(result.chart[1][0].difficulty, "HARD")
+        with patch("ournotes_bot.application.replies.load_chart_score", return_value={"notes": []}), \
+             patch("ournotes_bot.rendering.chart_layout.render", return_value=(b"chart",)) as render:
+            from ournotes_bot.application.replies import complete_chart_reply
+            reply = complete_chart_reply(result, self.repo, "zh", context)
+            self.assertTrue(render.call_args.kwargs["mirror"])
+            self.assertIn("镜像谱面", reply.text)
+        result, _ = execute_followup(context, Operation("detail"), self.repo)
+        self.assertTrue(result.spec.chart_mirror)
+        self.assertEqual(result.chart[1][0].difficulty, "HARD")
+        ordinary = self.context("/查谱面 1 EX")
+        result, _ = execute_followup(ordinary, Operation("difficulty", "HARD"), self.repo)
+        self.assertFalse(result.spec.chart_mirror)
+
     def test_invalid_choice_does_not_guess(self):
         context = self.context()
         for operation in (Operation("detail"), Operation("select", 0), Operation("select", 17),

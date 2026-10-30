@@ -42,6 +42,7 @@ class QuerySpec:
     field: str = ""
     meta_request: MetaQuerySpec | None = None
     card_request: CardRequest | None = None
+    chart_mirror: bool = False
 
     def __post_init__(self):
         if self.card_request is not None:
@@ -116,6 +117,8 @@ class QuerySpec:
         query = self.query_label()
         if self.intent == "chart" and self.difficulty:
             query += f" {self.difficulty}"
+        if self.intent == "chart" and self.chart_mirror:
+            query += " 镜像"
         if self.page > 1:
             query += f" 页{self.page}"
         return f"{name} {query.strip()}".strip()

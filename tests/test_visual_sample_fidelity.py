@@ -179,6 +179,29 @@ class FullChartTests(unittest.TestCase):
         self.assertEqual([c[4] for c in calls[0]],['flick-left','slide-start','flick-right'])
         self.assertEqual([c[4] for c in calls[1]],['flick-right','slide-start','flick-left'])
 
+    def test_mirror_reflects_curved_cross_column_ribbons(self):
+        from PIL import ImageDraw
+        from ournotes_bot.rendering import chart_layout
+        song=Song(1,'Test',('Test',),'Band','','','','','',(Chart('EXPERT',24,24,2,''),))
+        score={'events':{'bpm':[{'t':0,'bpm':120}]}, 'notes':[
+            {'type':'long','node':[{'t':14000,'pos':2,'size':4,'ease':'out'},
+                                   {'t':17000,'pos':15,'size':6}]}]}
+        original=ImageDraw.ImageDraw.polygon
+        ribbons=[]
+        def capture(draw, points, *args, **kwargs):
+            if kwargs.get('fill') == (93,111,233,75):
+                ribbons[-1].append(list(points))
+            return original(draw, points, *args, **kwargs)
+        for mirror in (False,True):
+            ribbons.append([])
+            with patch.object(ImageDraw.ImageDraw,'polygon',capture), patch.object(chart_layout,'draw_note'):
+                chart_layout.render(song,song.charts,score,'EXPERT',load=lambda *a:None,mirror=mirror)
+        self.assertEqual([len(r) for r in ribbons],[2,2])
+        for normal, reflected in zip(*ribbons):
+            for (x,y),(mx,my) in zip(normal,reflected[::-1]):
+                self.assertAlmostEqual(x+mx,chart_layout.TRACK_WIDTH)
+                self.assertEqual(y,my)
+
     def test_source_auto_control_points_do_not_break_chart_or_skill_times(self):
         from ournotes_bot.rendering import chart_layout
         from test_haneoka_charts import SCORE
