@@ -2,7 +2,7 @@
 import type { PolicySnapshot } from './group-policies'
 
 export const protocol = { major: 2, minor: 2 } as const
-export const capability = 'qq-query-chat-v4'
+export const capability = 'qq-query-chat-v5'
 export class BackendError extends Error {
   constructor(public readonly code: string, public readonly status = 0) { super(code) }
 }

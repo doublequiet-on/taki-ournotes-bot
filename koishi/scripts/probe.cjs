@@ -254,6 +254,41 @@ async function main() {
     await assert.rejects(client.chatObservation(proactive,1,base.policy),/observation_identity/)
     assert.equal(seen.length,2)
   })
+  await run('Name classification rechecks pause, disposal and raw conflicts before admission',async()=>{
+    for(const change of ['pause','dispose','conflict']) {
+      const entered=deferred(),release=deferred();let allowed=true
+      const f=receiverFixture({async directChat(){entered.resolve();await release.promise;return true}})
+      f.receiver.config.management={accepts(){return allowed},policySnapshot(){return{natural_query:'model',epoch:'e',global_revision:0,group_revision:0}}}
+      let closing
+      try {
+        const pending=f.receiver.receive(await f.ordinary('race',{content:'立希你好'}))
+        await entered.promise
+        if(change==='pause')allowed=false
+        if(change==='dispose')closing=f.receiver.dispose()
+        if(change==='conflict')await f.ordinary('race',{content:'立希，另一条冲突正文'})
+        release.resolve();await pending
+        assert.equal(f.submitted.length,0,change);assert.equal(f.sent.length,0,change)
+      }finally{release.resolve();if(closing)await closing;await f.close()}
+    }
+  })
+  await run('Quote preview is text-only user material and never a trusted reference',async()=>{
+    const e=createBot()
+    try {
+      const raw=event({content:'/聊 那咋了',message_type:103,msg_elements:[{msg_idx:'opaque',content:'那COMBO呢，专挑手忙脚乱的人欺负是吧。',attachments:[{url:'https://untrusted.invalid/image'}]}]})
+      const decoded=await decodeIncoming(e.bot,raw,identity,()=>true)
+      assert.equal(decoded.status,'accepted')
+      assert.equal(decoded.inbound.body,'/聊 那咋了')
+      assert.equal(decoded.inbound.quotedText,raw.d.msg_elements[0].content)
+      assert.equal(decoded.inbound.reference,undefined)
+      assert.equal(decoded.inbound.attachments,undefined)
+      raw.d.msg_elements[0].content='x'.repeat(4097)
+      const oversized=await decodeIncoming(e.bot,raw,identity,()=>true)
+      assert.equal(oversized.inbound.quotedText,undefined)
+      raw.d.message_type=0;raw.d.msg_elements[0].content='不会被当作引用'
+      const ordinary=await decodeIncoming(e.bot,raw,identity,()=>true)
+      assert.equal(ordinary.inbound.quotedText,undefined)
+    }finally{await e.ctx.stop()}
+  })
   await run('Name or /聊 promotes an ordinary message to one direct request',async()=>{
     for(const content of ['立希，今天好累','/聊 今天好累']) {
       let observations=0

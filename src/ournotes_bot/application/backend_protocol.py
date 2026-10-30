@@ -8,7 +8,7 @@ from ..domain.query_policy import ExecutionPolicy
 from .backend_sources import TRANSPORT_PROTOCOL
 
 PROTOCOL = TRANSPORT_PROTOCOL
-CAPABILITY = 'qq-query-chat-v4'
+CAPABILITY = 'qq-query-chat-v5'
 WINDOW = 298.0
 
 
@@ -58,6 +58,7 @@ class Request:
     trigger: str = 'command'
     reference: dict | None = None
     interaction: dict | None = None
+    quoted_text: str = ''
     sender_name: str = ''
     attachments: tuple = field(default=(),repr=False)
     proactive_id: str = ''
@@ -65,15 +66,17 @@ class Request:
     @classmethod
     def parse(cls, value, instance_id, app_id, now, *, reference_profiles=()):
         fields = set(cls.__dataclass_fields__)
-        optional={'sender_name','attachments','proactive_id'}
+        optional={'sender_name','attachments','proactive_id','quoted_text'}
         require(isinstance(value,dict) and fields-optional | {'protocol'}<=set(value)<=fields | {'protocol'},'request_shape')
-        value={**value,'sender_name':value.get('sender_name',''),'proactive_id':value.get('proactive_id','')}
+        value={**value,'quoted_text':value.get('quoted_text',''),'sender_name':value.get('sender_name',''),'proactive_id':value.get('proactive_id','')}
         try:value['attachments']=parse_attachments(value.get('attachments'))
         except ImageError as exc:raise ProtocolError(exc.code) from None
+        require(isinstance(value['quoted_text'],str) and len(value['quoted_text'].encode())<=4096
+                and not any(ord(c)<32 and c not in '\n\r\t' or ord(c)==127 for c in value['quoted_text']),'quoted_text')
         require(value['sender_name']=='' or identity(value['sender_name']),'sender_name')
         require_protocol(value['protocol'])
         require(value['instance_id'] == instance_id and value['app_id'] == app_id, 'instance_mismatch', 403)
-        for key in fields - {'timestamp_ms', 'body', 'ingress_seq', 'policy', 'reference', 'interaction','sender_name','attachments','proactive_id'}:
+        for key in fields - {'timestamp_ms', 'body', 'ingress_seq', 'policy', 'reference', 'interaction','sender_name','attachments','proactive_id','quoted_text'}:
             require(identity(value[key]), 'invalid_identity')
         require(value['platform'] == 'qq' and value['kind'] in ('group', 'c2c'), 'conversation_kind')
         require(value['kind'] != 'c2c' or value['conversation_id'] == value['user_id'], 'c2c_identity')

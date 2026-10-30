@@ -10,6 +10,12 @@
 
 `message_reference.message_id` 在此 Python SDK 中位于[出站 MessageToCreate](https://github.com/tencent-connect/qqbot-agent-sdk/blob/main/src/qqbot_agent_sdk/dto.py#L278-L323)，用于发送引用。旧 botpy 的[共用频道/私信类型](https://github.com/tencent-connect/botpy/blob/master/botpy/types/gateway.py#L41-L68) 也有 `message_reference`，但共用类型或基类存在该属性，不能单独证明 QQ 群入站事件提供相同字段和语义。不能把出站字段直接套用到群入站引用。
 
+## 已实现的文字预览通路
+
+网关按上述官方 SDK 定义读取 `message_type=103` 的 `msg_elements[0].content`，只接受 4 KiB 内的非空纯文字，非法/缺失预览不影响原正文处理。经 `quoted_text` 传给后端，并作为当前用户提供的引用材料交给聊天。分类只看原正文，不因引文里的名字触发机器人。原始事件去重指纹包含引用字段；预览限长、协议校验与用户材料角色均有离线回归。
+
+这条文字预览通路不依赖猜测引用索引，不授予原作者或原消息身份，不加载嵌套图片，也不把引文当作已 ACK 的机器人回复。可信 `reference` 仍受既有 profile 白名单约束；真实 QQ 的字段下发和客户端引用显示仍待实机验收。短追问在预览存在时可以围绕引文回应，预览缺失时继续使用已参与历史，不编造看不到的内容。
+
 ## 原消息 ID 与引用索引
 
 Node SDK [parseRefIndices](https://github.com/tencent-connect/qqbot-nodejs/blob/main/src/protocol/gateway/event-dispatcher.ts#L98-L139) 从 `message_scene.ext` 提取 `msg_idx=` 和 `ref_msg_idx=`；引用类型 103 存在 `msg_elements[].msg_idx` 时使用其中的索引作为被引索引。普通消息也可能带 `msg_idx`，而原消息业务 ID 仍是 `d.id`。这两个身份不能直接混用。

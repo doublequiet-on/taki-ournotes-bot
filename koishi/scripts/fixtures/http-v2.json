@@ -16,7 +16,7 @@
         "reaper_alive": true,
         "reaper_error": null
       },
-      "capability": "qq-query-chat-v4",
+      "capability": "qq-query-chat-v5",
       "backend_code_digest": "0000000000000000000000000000000000000000000000000000000000000000",
       "background_tasks": false,
       "notices_enabled": false,
@@ -594,7 +594,7 @@
       "message_id": "message",
       "timestamp_ms": 1792382400000,
       "body": "/帮助",
-      "capability": "qq-query-chat-v4",
+      "capability": "qq-query-chat-v5",
       "gateway_epoch": "epoch",
       "ingress_seq": 1,
       "trigger": "command",

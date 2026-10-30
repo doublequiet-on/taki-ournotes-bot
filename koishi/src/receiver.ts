@@ -219,7 +219,7 @@ export class Receiver {
     }
     const now = Date.now()
     for (const [key, value] of this.raw) if (now - value.at > 298000) this.raw.delete(key)
-    const fingerprint = JSON.stringify([type, data.content, data.timestamp, data.author, data.group_id, data.group_openid, data.mentions, data.attachments])
+    const fingerprint = JSON.stringify([type, data.content, data.timestamp, data.author, data.group_id, data.group_openid, data.mentions, data.attachments, data.message_type, data.msg_elements])
     const existing = this.raw.get(data.id)
     if (existing) {
       // Do not let a conflicting raw event replace the first identity/body while decode is waiting.
@@ -305,14 +305,14 @@ export class Receiver {
       if (!this.active) { this.observed('disposed'); return true }
       if (decoded.inbound.trigger!=='observation' && (!decoded.inbound.attachments?.length || /^[/／]/u.test(decoded.inbound.body))
           && !await this.client.recognizes(decoded.inbound.body)) { this.observed('unrecognized'); return false }
-      if (!await this.permitted(canonical)) { this.observed('permission_denied'); return input.trigger!=='observation' }
-      if (!this.active) { this.observed('disposed'); return true }
-      if (this.config.management && !this.config.management.accepts(decoded.inbound)) { this.observed('management_denied'); return input.trigger!=='observation' }
-      if (source.conflict) { this.observed('conflict'); return true }
-      input = decoded.inbound
       if(input.trigger==='observation' && await this.client.directChat(input.body)) {
         input={...input,trigger:'command'}
       }
+      if (!this.active) { this.observed('disposed'); return true }
+      if (!await this.permitted(canonical)) { this.observed('permission_denied'); return input.trigger!=='observation' }
+      if (!this.active) { this.observed('disposed'); return true }
+      if (this.config.management && !this.config.management.accepts(input)) { this.observed('management_denied'); return input.trigger!=='observation' }
+      if (source.conflict) { this.observed('conflict'); return true }
       if(input.trigger==='observation') {
         const policy=this.policy(input)
         if(policy.natural_query!=='model')return false

@@ -258,13 +258,16 @@ class Backend:
             chat=bool(getattr(self.settings,'chat_engine','legacy')=='agent' and self.model_runtime and (self.model_runtime.is_chat(request.body)
                       or not request.body.strip() and request.attachments or proactive is not None)
                       and (proactive is not None or parse_operation(request.body) is None))
-            if chat or re.match(r'^[/／]?查(?:\s|$)', request.body.strip()): commands=[request.body or '[图片]']
+            lines=request.body.strip().splitlines()
+            mixed_modes=bool(any(replies.explicit_chat(line) for line in lines) and
+                             any(replies.recognizes_message(line) and not replies.explicit_chat(line) for line in lines))
+            if chat or mixed_modes or re.match(r'^[/／]?查(?:\s|$)', request.body.strip()): commands=[request.body or '[图片]']
             require(bool(commands), 'empty_commands')
             delivery = uuid.uuid4().hex
             key = ContextKey(request.platform, request.kind, request.conversation_id, request.request_id)
             work = Work(request, delivery, key, None, None, None)
             work.chat=chat
-            work.mixed_modes=bool(re.search(r'(?m)^[/／]聊(?:\s|$)',request.body.strip()) and re.search(r'(?m)^[/／](?:查|问|ask)(?:\s|$)',request.body.strip()))
+            work.mixed_modes=mixed_modes
             if proactive is not None:
                 work.proactive,work.service_policy,work.model_snapshot,work.service_request_id=proactive
             self.ledger.admit(request, self.runtime, delivery, self.clock())

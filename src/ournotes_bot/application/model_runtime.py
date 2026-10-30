@@ -375,9 +375,11 @@ class ModelRuntime:
             work.native_claimed=True
             user=self.usage.key('user',work.model_subject)
             group=self.usage.key('group',work.request.conversation_id) if work.request.kind=='group' else None
+            query_only=bool(re.match(r'^[/／]?查(?:\s|$)',content.strip()) or
+                            getattr(self.backend.settings,'chat_engine','legacy')=='agent' and replies.is_ai_request(content))
             async def operation(deadline):
                 work.model_started_at=time.monotonic()
-                return await self.routed(work,lambda end:self.run(work,question,history,leases,user,group,end),deadline)
+                return await self.routed(work,lambda end:self.run(work,question,history,leases,user,group,end,query_only=query_only),deadline)
             reply=await self.backend.models.run(user,operation)
             # Facts carried into an ACK-bound followup retain their absolute limit.
             if isinstance(reply.context,ReadOnlyContext) and reply.context.facts:
@@ -390,7 +392,8 @@ class ModelRuntime:
 
     async def prepare_chat(self,work,question):
         try:
-            require(bool(question),'invalid_argument')
+            require(bool(question) or bool(work.request.attachments) or bool(work.request.quoted_text),'invalid_argument')
+            question=question or ('[图片]' if work.request.attachments else '[引用消息]')
             require(work.request.policy.natural_query=='model','policy_denied')
             if work.model_error: raise ModelError(work.model_error)
             require(work.model_snapshot is not None and (work.model_subject is not None or work.proactive is not None),'model_not_configured')
@@ -509,7 +512,7 @@ class ModelRuntime:
             self.usage.observe(attempt,kind,min(3600000,int((time.monotonic()-began)*1000)))
             body.clear()  # No prompt/response state retained by the runtime owner.
 
-    async def run(self,work,question,history,leases,user,group,deadline):
+    async def run(self,work,question,history,leases,user,group,deadline,*,query_only=False):
         self.check(work,deadline,leases)
         context=work.anchor.context if work.anchor else None
         topic=getattr(context,'topic','')
@@ -519,8 +522,6 @@ class ModelRuntime:
         if re.search(r'(?:https?://|www\.)\S+',question,re.I) and re.search(r'读|打开|访问|浏览|抓取|爬取|执行|总结|概括',question):
             return self.text_reply('我目前能查 Haneoka 的已登记目录和游戏公告，不能直接读取或执行任意网址。告诉我想查的名称或公告主题即可。',
                                    question,(),leases)
-        query_only=bool(re.match(r'^[/／]?查(?:\s|$)',work.request.body.strip()) or
-                        getattr(self.backend.settings,'chat_engine','legacy')=='agent' and replies.is_ai_request(work.request.body))
         social='' if query_only else chat_topic(question,getattr(context,'chat_topic',''))
         if social:
             messages=[{'role':'system','content':chat_prompt(social)}]

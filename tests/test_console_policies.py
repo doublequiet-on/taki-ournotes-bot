@@ -2310,6 +2310,60 @@ class ChatAgentTests(Fixture, unittest.IsolatedAsyncioTestCase):
         for text in ('版本 1.2','看 https://example.com/a.','`x.y`','好！','为什么？'):
             self.assertEqual(replies.chat_text(text),text)
 
+    async def test_batch_query_does_not_reenable_chat_tools(self):
+        bodies=self.capture_native_bodies()
+        self.client.request.return_value=self.result('这是闲聊正文。')
+        plan,attempts=await self.prepare_native('/查曲 MyGO\n/查 你好')
+        self.assertEqual(len(attempts),1)
+        self.assertEqual(plan['parts'][-1]['business_status'],'query_tool_required')
+        tools=[t['function']['name'] for t in bodies[0]['tools']]
+        self.assertNotIn('chat_response',tools)
+        self.assertNotIn('conversation_reply',tools)
+
+    async def test_mixed_direct_query_and_chat_is_rejected_before_execution(self):
+        for seq,body in enumerate(('/查曲 MyGO\n/聊 今天好累','/聊 今天好累\n/查卡 947'),1):
+            plan,attempts=await self.prepare_native(body,seq=seq)
+            self.assertFalse(attempts)
+            self.assertEqual(len(plan['parts']),1)
+            self.assertEqual(plan['parts'][0]['business_status'],'invalid_argument')
+            self.assertIn('分开发送',plan['parts'][0]['text'])
+            self.event(plan,'intent');self.event(plan,'ack')
+
+    async def test_quote_preview_reaches_chat_as_current_user_material(self):
+        bodies=self.capture_native_bodies()
+        original=self.request
+        quote='那COMBO呢，专挑手忙脚乱的人欺负是吧。'
+        def request(msg,seq):return {**original(msg,seq),'quoted_text':quote}
+        self.client.request.return_value=self.result('你是在追问刚才那句COMBO的意思吧。')
+        with patch.object(self,'request',side_effect=request):
+            plan,attempts=await self.prepare_native('/聊 那咋了')
+        self.assertEqual(len(attempts),1)
+        users=[json.loads(m['content']) for m in bodies[0]['messages'] if m['role']=='user']
+        self.assertIn(quote,users[-1]['text']);self.assertIn('那咋了',users[-1]['text'])
+        self.assertEqual(users[-1]['speaker_id'],'u1')
+        self.assertFalse(any(m['role']=='assistant' for m in bodies[0]['messages']))
+        self.assertFalse(plan['reply_mention'])
+        self.event(plan,'intent');self.event(plan,'ack')
+
+    async def test_chat_prefix_with_only_quote_preview(self):
+        original=self.request
+        def request(msg,seq):return {**original(msg,seq),'quoted_text':'你刚才引用的这句话'}
+        self.client.request.return_value=self.result('我先说说这句引文的意思。')
+        with patch.object(self,'request',side_effect=request):
+            plan,attempts=await self.prepare_native('/聊')
+        self.assertEqual(plan['parts'][0]['business_status'],'success')
+        self.assertEqual(len(attempts),1)
+        self.event(plan,'intent');self.event(plan,'ack')
+
+    def test_quote_preview_limits_and_reference_authority(self):
+        from ournotes_bot.application.backend_protocol import Request
+        value=self.request('quote',1)
+        for bad in ({},'x'*4097,'bad\0text'):
+            with self.assertRaises(ProtocolError):
+                Request.parse({**value,'quoted_text':bad},'fixture','app',self.now)
+        parsed=Request.parse({**value,'quoted_text':'引用只作为用户材料'},'fixture','app',self.now)
+        self.assertIsNone(parsed.reference)
+
     async def test_chat_prefix_and_name_keep_reply_mode(self):
         for seq,body in enumerate(('/聊 今天好累\n想休息','立希，今天好累','TAKI 你好'),1):
             self.client.request.return_value=self.result('休息一下吧。')
@@ -2441,6 +2495,15 @@ class ChatImageIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
         if self.attachments:value['attachments']=self.attachments
         if self.reference:value.update(trigger='quoted_reply',reference=self.reference)
         return value
+
+    async def test_chat_prefix_with_only_attachment_uses_vision(self):
+        self.client.request.return_value=self.result('这是图像说明。')
+        plan,attempts=await self.prepare_native('/聊')
+        self.assertEqual(plan['parts'][0]['business_status'],'success')
+        self.assertEqual(len(attempts),1)
+        self.backend.model_runtime.agent.image_loader.load_many.assert_awaited_once()
+        self.assertFalse(plan['reply_mention'])
+        self.event(plan,'intent');self.event(plan,'ack')
 
     async def referenced_observation(self):
         from ournotes_bot.domain.chat_images import parse_attachments

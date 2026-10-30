@@ -129,6 +129,7 @@ export class BackendClient implements DeliveryEvents {
     return { protocol, request_id: input.requestId, instance_id: input.instanceId,
       app_id: input.appId, platform: input.platform, kind: input.kind, conversation_id: input.conversationId,
       user_id: input.userId, message_id: input.messageId, timestamp_ms: input.timestampMs, body: input.body,
+      ...(input.quotedText===undefined ? {} : {quoted_text:input.quotedText}),
       ...(input.senderName===undefined ? {} : {sender_name:input.senderName}),
       ...(input.attachments===undefined ? {} : {attachments:input.attachments}),
       ...(input.proactiveId===undefined ? {} : {proactive_id:input.proactiveId}),
