@@ -26,6 +26,11 @@ class ProactiveChat:
         self.services=ChatServices(agent.runtime.usage.path.parent,agent.runtime.backend.instance_id,
             agent.runtime.backend.app_id,filename='chat-proactive-services-v1.json')
 
+    def trace(self,work,kind,**data):
+        if work.proactive is None:return
+        backend=self.agent.runtime.backend
+        backend.diagnostics.chat_event(work.request.request_id,kind,backend.clock(),**data)
+
     def owners(self):
         runtime=self.agent.runtime
         return ((self.services,runtime.proactive_capabilities) if runtime.dedicated_proactive()
@@ -153,6 +158,8 @@ class ProactiveChat:
         except (ModelError,ServiceError,ValueError,OSError,sqlite3.Error):pass
 
     def finish(self,work):
+        self.trace(work,'finished',status=work.terminal_status,delivered=work.proactive_delivered,
+                   model_attempts=work.model_attempts)
         try:
             if work.proactive is not None:
                 self.controller.settle(work.proactive,actual_cost_micro=self.cost(work))
@@ -236,6 +243,7 @@ class ProactiveChat:
         if mode=='reply':require(isinstance(value['text'],str) and 0<len(value['text'].strip())<=4000,'model_protocol_error')
         if mode=='defer':require(type(value['delay_seconds']) is int and 2<=value['delay_seconds']<=5,'model_protocol_error')
         self.controller.decide(work.proactive,mode,actual_cost_micro=self.cost(work),defer_seconds=value.get('delay_seconds',2))
+        self.trace(work,'decision',decision=mode,model_attempts=work.model_attempts)
         work.participation=mode
         return value['text'].strip() if mode=='reply' else None
 
