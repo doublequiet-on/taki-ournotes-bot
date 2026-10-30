@@ -66,6 +66,18 @@ async function main(){
   assert.equal(model.modelKey.value,'');assert.equal(model.modelDraft.value.model,'later edit');assert.equal(model.modelDirty.value,true)
   assert.equal(model.modelConflict.value,false)
   await model.logout();assert.equal(model.model.value,null);assert.equal(model.modelDraft.value,null);assert.equal(model.modelKey.value,'')
+  modelValue.role='primary';modelValue.web_search={enabled:true,code:'enabled',editable:true,max_calls:1,guard:{backend_epoch:'e',fingerprint:'web-old'}}
+  globalThis.consoleStateFixture.send=async(method,value)=>{
+    if(method==='taki/model/settings')return structuredClone(modelValue)
+    if(method==='taki/model/web-search/save')return new Promise(resolve=>{receipt=()=>resolve({...structuredClone(modelValue),web_search:{...modelValue.web_search,enabled:value.enabled,max_calls:value.max_calls,guard:{backend_epoch:'e',fingerprint:'web-new'}}})})
+    throw Error('unexpected web RPC '+method)
+  }
+  await model.refreshModel();model.webEdit.value.enabled=false;model.webEdit.value.dirty=true
+  const webSaving=model.saveWeb();model.webEdit.value.max_calls=2;receipt();await webSaving
+  assert.equal(model.webEdit.value.dirty,true);assert.equal(model.webEdit.value.max_calls,2)
+  const webRecovery=sessionState();webRecovery.restoreEdits(model.captureEdits());assert.equal(webRecovery.webEdit.value.max_calls,2)
+  await model.refreshModel();assert.equal(model.webEdit.value.conflict,true)
+  model.selectModelRole('proactive');assert.equal(model.modelRole.value,'primary')
   const dedicated=sessionState(),dedicatedCalls=[]
   globalThis.consoleStateFixture.send=async(method,value)=>{
     dedicatedCalls.push(method)

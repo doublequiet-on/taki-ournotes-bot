@@ -568,6 +568,31 @@ class ModelAdminTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.runtime.usage.get('b'*32)['model'],'cheap-fixture')
         self.assertEqual(self.admin.settings()['profile']['model'],self.old['profile']['model'])
 
+    async def test_web_settings_preserve_other_capabilities_and_restore_approval(self):
+        from ournotes_bot.domain.model_calls import ModelError
+        data=json.loads(self.path.read_text('utf-8'));data['profile'].update(provider='openai',wire_profile='openai-responses-v1')
+        self.path.write_text(json.dumps(data),encoding='utf-8');snapshot=self.runtime.config.snapshot()
+        owner=self.runtime.capabilities
+        proof=dict(schema='chat-capabilities/3',config_version=snapshot.profile.config_version,fingerprint=snapshot.fingerprint,
+            web_search=dict(max_calls=1,unit_cost_micro=10000,currency='USD',evidence_ref='fixture/verified-web'),
+            vision=dict(max_image_tokens=4096,detail='low',evidence_ref='fixture/vision'),proactive=None)
+        owner.path.write_text(json.dumps(proof),encoding='utf-8');model_before=self.path.read_bytes()
+        value=self.admin.settings()['web_search']
+        payload=dict(operation_id='c'*32,guard=value['guard'],enabled=False,max_calls=1)
+        saved=self.admin.save_web(payload);self.assertFalse(saved['web_search']['enabled'])
+        self.assertEqual(saved['web_search']['code'],'disabled');self.assertIsNone(owner.web(snapshot))
+        self.assertEqual(owner.vision(snapshot).detail,'low');self.assertEqual(self.path.read_bytes(),model_before)
+        self.assertEqual(self.admin.save_web(payload)['web_search'],saved['web_search'])
+        with self.assertRaisesRegex(ModelError,'model_config_conflict'):
+            self.admin.save_web({**payload,'operation_id':'d'*32})
+        restored=self.admin.save_web(dict(operation_id='e'*32,guard=saved['web_search']['guard'],enabled=True,max_calls=2))
+        self.assertTrue(restored['web_search']['enabled']);self.assertEqual(owner.web(snapshot).max_calls,2)
+        data['profile']['config_version']='changed';self.path.write_text(json.dumps(data),encoding='utf-8')
+        stale=self.admin.settings()['web_search'];self.assertEqual(stale['code'],'unverified');self.assertFalse(stale['editable'])
+        with self.assertRaisesRegex(ModelError,'chat_capability_unverified'):
+            self.admin.save_web(dict(operation_id='f'*32,guard=stale['guard'],enabled=True,max_calls=1))
+        self.client.request.assert_not_called()
+
     def configured_proactive_limits(self):
         body=self.payload();body.update(guard=self.admin.settings(proactive=True)['guard'],api_key='PROACTIVE_PRIVATE_KEY')
         self.admin.save(body,proactive=True)

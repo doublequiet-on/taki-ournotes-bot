@@ -482,6 +482,11 @@ class AdminTests(unittest.IsolatedAsyncioTestCase):
         probe=await client.post('/v1/admin/model/proactive/probe',json={},headers=headers)
         self.assertEqual(probe.status,409)
         self.assertFalse((self.root/'chat-proactive-capabilities-v1.json').exists())
+        for web_url in ('/v1/admin/model/web-search','/v1/admin/model/proactive/web-search'):
+            self.assertEqual((await client.post(web_url,json={})).status,401)
+            response=await client.post(web_url,json={},headers=headers)
+            self.assertEqual(response.status,409)
+            self.assertEqual((await response.json())['error'],'model_admin_shape')
         url='/v1/admin/model/proactive/groups/group1/limits'
         self.assertEqual((await client.get(url)).status,401)
         limits=await (await client.get(url,headers=headers)).json()

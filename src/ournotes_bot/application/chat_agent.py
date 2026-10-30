@@ -367,7 +367,7 @@ class ChatAgent:
             prompt=prompt.replace('人格初稿是 legacy-derived，尚非剧情研究审核定稿。','人格采用以下人工批准档案。')
             prompt+='\n人工批准人格档案：\n'+persona['prompt']
         if work.proactive is not None:
-            prompt+='\n这是未点名的群聊观察。由你判断此刻回复是否能接住谈话、补充信息或回应情绪；别人已回答、话题变化或正在等人时可略过/暂缓。可以先用已接入只读工具，工具完成后仍须决定。最终只输出JSON：回复用{"participation":"reply","text":"自然回复正文"}；略过用{"participation":"skip"}；暂缓用{"participation":"defer","delay_seconds":2}（2至5秒）。不需要为普通交流找事实证据。'
+            prompt+='\n这是未点名的群聊观察。以愿意参与的群友身份接话：话题清楚且有自然回应时优先回复，可以表达看法、接梗、回应情绪、补充理由或沿着话题追问。不必等别人提问、点名、求助或出现信息缺口；别人已经回答也可以补充自己的角度。纯重复、明确的两人私事、正在等指定的人回答、话题已结束或确实接不上时略过；正在等待紧接的内容时才暂缓。不要为凑参与而每条都回复，也不要用没有必要发言作默认选择。可以先用已接入只读工具，工具完成后仍须决定。最终只输出JSON：回复用{"participation":"reply","text":"自然回复正文"}；略过用{"participation":"skip"}；暂缓用{"participation":"defer","delay_seconds":2}（2至5秒）。不需要为普通交流找事实证据。'
             if work.proactive.followup is not None:
                 prompt+='\n这是同一参与者在你刚才提问后的消息。结合已送达问题判断是否确实在回答：只有关联明确时才继续；无关或无法判断时只输出{"participation":"skip"}。不要猜测关联。'
         self.bind_memory(work,summary_rows)

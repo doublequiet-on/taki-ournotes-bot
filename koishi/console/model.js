@@ -23,7 +23,7 @@ function quantityFractionCurrency(v){const [a,b=1]=String(v).split('/').map(Numb
 export function modelSettings(s){
   const value=s.model.value,p=s.modelDraft.value;
   const fallback=s.modelRole.value==='fallback',proactive=s.modelRole.value==='proactive';
-  const rolePicker=h('label',['管理配置',h('select',{'aria-label':'管理配置',value:s.modelRole.value,disabled:s.busy.value||s.modelDirty.value,onChange:e=>s.selectModelRole(e.target.value)},[h('option',{value:'primary'},'主模型'),h('option',{value:'fallback'},'DeepSeek 备用模型'),h('option',{value:'proactive'},'主动参与模型')])]);
+  const rolePicker=h('label',['管理配置',h('select',{'aria-label':'管理配置',value:s.modelRole.value,disabled:s.busy.value||s.modelDirty.value||s.webEdit.value?.dirty,onChange:e=>s.selectModelRole(e.target.value)},[h('option',{value:'primary'},'主模型'),h('option',{value:'fallback'},'DeepSeek 备用模型'),h('option',{value:'proactive'},'主动参与模型')])]);
   if(!value||!p)return h('section',{class:'model-settings'},[h('h2','模型与额度'),rolePicker,h('p','模型设置尚未取得'),button('读取模型设置',()=>s.refreshModel())]);
   const text=(obj,key,title,type='text',min=null,max=null)=>h('label',[title,h('input',{'aria-label':title,type,value:obj[key],min,max,
     onInput:e=>{obj[key]=type==='number'?Number(e.target.value):e.target.value;s.modelDirty.value=true;}})]);
@@ -54,6 +54,7 @@ export function modelSettings(s){
     s.modelConflict.value&&h('div',[h('p',{role:'alert'},'模型设置版本冲突或保存未确认，草稿仍保留。'),button('以最新版本重试此草稿',()=>{if(window.confirm('将保留你的草稿，并以当前服务器版本作为保存基础，确认继续？')){s.modelGuard.value=value.guard;s.modelConflict.value=false;}})]),
     h('p',{role:'status'},s.modelDirty.value?'有未保存的 AI 设置':'当前显示已载入的 AI 设置'),
     button('保存 AI 设置',()=>s.saveModel(),s.busy.value||!value.editable),button('放弃 AI 草稿并刷新',()=>{s.modelDirty.value=false;s.modelConflict.value=false;s.modelKey.value='';void s.refreshModel();},s.busy.value),
+    !fallback&&webSearchSettings(s),
     proactive&&proactiveQuota(s),
     proactive&&h('p','用于主动观察后的判断与回复；不会自动切换主模型。保存不会启用群发言，仍需单独批准群服务与能力。'),
     fallback&&h('p','备用模型可单独配置；此处付费探测入口支持主模型和主动参与模型。'),h('h3','连接与能力测试'),h('p',probe?`${code(probe.state)} · ${code(probe.result?.code)}`:'此配置版本尚未进行实际测试'),
@@ -61,6 +62,22 @@ export function modelSettings(s){
       fallback||s.busy.value||s.modelDirty.value||!value.key_configured||['intent','unknown','interrupted'].includes(probe?.state)),
     h('small','只在明确确认后调用；打开或刷新页面不会发起模型测试。'),
     h('details',[h('summary','AI 配置与测试记录'),...(value.audit||[]).map(a=>h('p',`${stamp(a.created_at)} · ${a.action} · ${code(a.state)} · ${a.config_version}`))])]);
+}
+function webSearchSettings(s){
+  const value=s.model.value?.web_search,edit=s.webEdit.value;
+  if(!value||!edit)return h('section',{class:'web-search-settings'},[h('h3','联网搜索'),h('p','请先配置模型，随后登记该版本的联网搜索验收记录。')]);
+  const mark=()=>{edit.dirty=true;},blocked=s.busy.value||!value.editable;
+  return h('section',{class:'web-search-settings'},[h('h3','联网搜索'),
+    h('p',{role:'status'},`当前模型：${s.model.value.profile.model} · ${value.code==='enabled'?'已启用':value.code==='disabled'?'已关闭，验收记录保留':'尚未验收'}`),
+    h('label',{class:'toggle'},[h('input',{type:'checkbox','aria-label':'启用联网搜索',checked:edit.enabled,disabled:blocked,onChange:e=>{edit.enabled=e.target.checked;mark();}}),'启用联网搜索']),
+    h('label',['每次搜索请求的调用上限',h('input',{type:'number',min:1,max:2,step:1,'aria-label':'联网搜索调用上限',value:edit.max_calls,disabled:blocked,onInput:e=>{edit.max_calls=Number(e.target.value);mark();}})]),
+    value.evidence_ref?h('div',[h('p',`搜索单价：${value.currency} ${value.unit_cost_micro/1e6} / 次；模型 Token 另计。`),h('p',{style:{overflowWrap:'anywhere'}},`验收依据：${value.evidence_ref}`)]):h('p','当前版本没有可恢复的批准，请先完成实际联网搜索验收。'),
+    h('p','仅发送当前搜索问题，不上传整段群聊。费用沿用现有额度；启用后由模型按需要搜索。'),
+    edit.conflict&&h('p',{role:'alert'},'服务器配置已变化或保存未确认；草稿保留，请先核对最新设置。'),
+    button('保存联网搜索设置',()=>s.saveWeb(),blocked||!edit.dirty||edit.conflict||s.modelDirty.value||!Number.isInteger(edit.max_calls)||edit.max_calls<1||edit.max_calls>2),
+    edit.conflict&&value.editable&&button('核对最新联网设置后保留草稿',()=>{if(window.confirm(`服务器当前联网搜索${value.enabled?'已启用':'已关闭'}，调用上限 ${value.max_calls}。保留草稿并以此版本重试？`)){edit.guard=value.guard;edit.conflict=false;}},s.busy.value),
+    button('放弃联网草稿并刷新',()=>{s.webEdit.value=null;void s.refreshModel();},s.busy.value),
+    h('small',edit.dirty?'有未保存的联网搜索设置':'当前显示已保存的联网搜索设置')]);
 }
 function proactiveQuota(s){
   const value=s.proactiveLimits.value,edit=s.proactiveEdit.value,items=s.groups.value?.sections?.groups?.data||[];
