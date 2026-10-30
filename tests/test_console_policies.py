@@ -3499,6 +3499,34 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
         view=self.backend.admin.view(self.backend.ledger.request(plan['request_id']))
         self.assertEqual(view['delivery_reason'],'completed_without_output')
 
+    async def structured_decision(self,decision):
+        self.snapshot=replace(self.snapshot,profile=replace(self.snapshot.profile,provider='openai',
+            wire_profile='openai-responses-v1'))
+        bodies=[]
+        async def respond(profile,body,**kwargs):
+            bodies.append(json.loads(json.dumps(body)))
+            return self.result(json.dumps(decision))
+        self.client.request.side_effect=respond
+        value=self.observation();self.tick+=1.6
+        plan,_,_=await self.candidate(value)
+        self.assertEqual(bodies[0]['text']['format']['type'],'json_schema')
+        self.assertTrue(bodies[0]['text']['format']['strict'])
+        self.assertEqual(bodies[0]['max_output_tokens'],self.snapshot.profile.max_output_tokens)
+        self.assertEqual(bodies[0]['text']['format']['schema']['additionalProperties'],False)
+        return plan
+
+    async def test_structured_proactive_reply(self):
+        plan=await self.structured_decision({'participation':'reply','text':'我喜欢这段鼓点','delay_seconds':None})
+        self.assertEqual(plan['parts'][0]['text'],'我喜欢这段鼓点')
+
+    async def test_structured_proactive_skip(self):
+        plan=await self.structured_decision({'participation':'skip','text':'','delay_seconds':None})
+        self.assertEqual(plan['parts'],[])
+
+    async def test_structured_proactive_defer(self):
+        plan=await self.structured_decision({'participation':'defer','text':'','delay_seconds':2})
+        self.assertEqual(plan['parts'],[])
+
     async def test_proactive_compares_group_messages_but_allows_a_natural_reaction(self):
         bodies=ChatAgentTests.capture_native_bodies(self)
         self.policy=replace(self.policy,proactive=replace(self.policy.proactive,cooldown_seconds=0))
@@ -3902,8 +3930,14 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
                 provider_actions=(ProviderAction('web_search',1),),native_calls=1,
                 citations=({'url':'https://www.python.org/downloads/release/python-3130/','title':'Python release'},)),
             self.result('{"participation":"reply","text":"查到了发布日期。"}')]
+        responses=iter(self.client.request.side_effect);bodies=[]
+        async def capture(profile,body,**kwargs):
+            bodies.append(json.loads(json.dumps(body)))
+            return next(responses)
+        self.client.request.side_effect=capture
         plan,attempts,candidate=await self.candidate(value)
         self.assertEqual(len(attempts),3)
+        self.assertEqual([bool(body.get('text',{}).get('format')) for body in bodies],[True,False,True])
         self.assertEqual(plan['parts'][0]['business_status'],'success')
         self.event(plan,'intent');self.event(plan,'ack')
         self.assertTrue(candidate[0].reserved_cost_micro<=50000)

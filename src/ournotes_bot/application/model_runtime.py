@@ -441,6 +441,9 @@ class ModelRuntime:
         self.check(work,deadline,leases)
         if service_policy is not None:require(self.agent.services.policy(work.model_snapshot,work.request.conversation_id)==service_policy,'chat_service_revoked')
         body=request_body(profile,messages,tools)
+        if (work.proactive is not None and web is None and service_policy is None
+                and billing_request_id is None and profile.wire_profile=='openai-responses-v1'):
+            body['text']={'format':self.agent.proactive.response_format()}
         action_budget=()
         if web is not None:
             require(profile.wire_profile=='openai-responses-v1' and not tools,'chat_capability_unverified')
