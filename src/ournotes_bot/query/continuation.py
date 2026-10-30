@@ -189,7 +189,8 @@ def capture_context(result, repository, *, catalog_before=None, complete=False,
                 return None
             selected = visible[0]
             spec = QuerySpec("chart", EntityRef("song", selected.entity_id), selected.difficulty,
-                             display_name=str(selected.entity_id), chart_mirror=result.chart_mirror)
+                             display_name=str(selected.entity_id), chart_mirror=result.chart_mirror,
+                             chart_coverage=result.chart_coverage)
     else:
         return None
     if choices is not None:
@@ -258,7 +259,8 @@ def execute_followup(context: QueryContext, operation: Operation, repository):
             spec = QuerySpec("chart", EntityRef("song", selected.entity_id),
                              selected.difficulty if selected.difficulty not in {"", "ALL"} else "EXPERT",
                              display_name=str(selected.entity_id),
-                             chart_mirror=isinstance(context.query, QuerySpec) and context.query.chart_mirror)
+                             chart_mirror=isinstance(context.query, QuerySpec) and context.query.chart_mirror,
+                             chart_coverage=context.query.chart_coverage if isinstance(context.query, QuerySpec) else ())
         else:
             from ..domain.card_query import CardRequest
             spec = QuerySpec(selected.kind, card_request=CardRequest(

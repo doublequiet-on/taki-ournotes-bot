@@ -72,15 +72,17 @@ class ContinuationCoreTests(Fixture, unittest.TestCase):
         self.assertIsNone(third.selected)
 
     def test_mirror_chart_survives_difficulty_and_detail_followups(self):
-        context = self.context("/查谱面 1 EX 镜像")
+        context = self.context("/查谱面 1 EX 镜像 覆盖=5/6.5/8/5/5")
+        self.assertEqual(context.query.chart_coverage,(5,6.5,8,5,5))
         self.assertTrue(context.query.chart_mirror)
         result, context = execute_followup(context, Operation("difficulty", "HARD"), self.repo)
         self.assertTrue(result.spec.chart_mirror)
         self.assertEqual(result.chart[1][0].difficulty, "HARD")
-        with patch("ournotes_bot.application.replies.load_chart_score", return_value={"notes": []}), \
+        with patch("ournotes_bot.application.replies.load_chart_score", return_value={"notes": [],"events":{"skill":[0,1,2,3,4]}}), \
              patch("ournotes_bot.rendering.chart_layout.render", return_value=(b"chart",)) as render:
             from ournotes_bot.application.replies import complete_chart_reply
             reply = complete_chart_reply(result, self.repo, "zh", context)
+            self.assertEqual(render.call_args.kwargs["skill_durations"],(5,6.5,8,5,5))
             self.assertTrue(render.call_args.kwargs["mirror"])
             self.assertIn("镜像谱面", reply.text)
         result, _ = execute_followup(context, Operation("detail"), self.repo)

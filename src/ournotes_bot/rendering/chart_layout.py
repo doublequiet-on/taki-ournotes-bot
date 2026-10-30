@@ -65,10 +65,10 @@ def continuation(c, cx, y, label, color, at_top, label_x=None):
     if label:c.text(cx if label_x is None else label_x,y+(30 if at_top else -30),label,26,color,True,'center')
 
 
-def draw_legend(c, extra, locale):
+def draw_legend(c, extra, locale, skill_durations=()):
     y=104+extra
     offset=560
-    c.text(offset+88,y,ui_label('技能 · 5秒参考',locale),26,ACCENT)
+    c.text(offset+88,y,ui_label('技能 · 自定义' if skill_durations else '技能 · 5秒参考',locale),26,ACCENT)
     c.text(offset+850,y,ui_label('激奏',locale),26,FEVER)
     for kind,label,centers in (('skill','S1',(360,590)),('fever','G1',(1020,1250))):
         for cx,is_end in zip(centers,(False,True)):
@@ -139,11 +139,12 @@ def skill_end_tick(start, bpms, duration=5):
     return tick+remaining*tempo*480/60
 
 
-def draw_markers(c, events, x, w, top, bottom, lo, hi, *, end_tick=None):
+def draw_markers(c, events, x, w, top, bottom, lo, hi, *, end_tick=None, skill_durations=()):
     """Real endpoints are half-open; cuts retain identity without endpoint caps."""
     y=lambda tick:bottom-(tick-lo)/1920*480
     from .song_detail_layout import fever_spans
-    skills=[(t,skill_end_tick(t,events.get('bpm',[]))) for t in sorted(events.get('skill',[]))]
+    skills=[(t,skill_end_tick(t,events.get('bpm',[]),skill_durations[i] if skill_durations else 5))
+            for i,t in enumerate(sorted(events.get('skill',[])))]
     for kind,prefix,spans in (('skill','S',skills),('fever','G',fever_spans(events))):
         color=ACCENT if kind=='skill' else FEVER
         rail=x-16 if kind=='skill' else x+w+18
@@ -169,7 +170,9 @@ def draw_markers(c, events, x, w, top, bottom, lo, hi, *, end_tick=None):
                 endpoint(c,cx,yy,label,kind,is_end)
 
 
-def render(song,charts,score,preview,locale='zh',*,load,notice='',mirror=False):
+def render(song,charts,score,preview,locale='zh',*,load,notice='',mirror=False,skill_durations=()):
+    if skill_durations and score is not None and len(skill_durations) != len(score.get('events',{}).get('skill',[])):
+        raise ValueError('Skill-window count differs from source skill events')
     # Auto control points have no drawable lane/width. As in the legacy chart
     # renderer, connect the surrounding positioned anchors and omit that glyph.
     def positioned(node):return all(type(node.get(k)) in (int,float) for k in ('t','pos','size'))
@@ -246,7 +249,7 @@ def render(song,charts,score,preview,locale='zh',*,load,notice='',mirror=False):
             for value in missions:
                 mission_label(c,48,y,value,28,36);y+=52
         else:c.text(48,y,ui_label('未获取',locale),38,MUTED);y+=52
-        note=ui_label('Haneoka 理论参考 · 效率含 30 秒间隔',locale)
+        note=ui_label('参考指标未随覆盖时间重算' if skill_durations else 'Haneoka 理论参考 · 效率含 30 秒间隔',locale)
         if 'canonical-full-combo-mismatch' in reference.get('warnings',[]):note+=ui_label(' · 源数据音符数不一致',locale)
         y+=24
         for line in lines(note,452,24):
@@ -256,18 +259,22 @@ def render(song,charts,score,preview,locale='zh',*,load,notice='',mirror=False):
         c.text(width-88,46,ui_label('下 → 上 · 左 → 右',locale),28,MUTED,align='right')
         if not nodes:
             c.text(TRACK_LEFT,tracktop+98,ui_label('完整谱面暂不可用',locale),30,MUTED);return c.image
-        draw_legend(c,0,locale)
+        draw_legend(c,0,locale,skill_durations)
+        if skill_durations:
+            c.text(48,y+12,ui_label("技能覆盖（秒）",locale),26,MUTED)
+            for i,duration in enumerate(skill_durations,1):
+                c.text(48,y+12+i*40,f"S{i} · {duration:g} s",28,ACCENT)
         for col in range(columns):
             x=TRACK_LEFT+col*COLUMN_PITCH;w=TRACK_WIDTH;lo=col*8*1920;hi=(col+1)*8*1920
             c.text(x,tracktop-28,f'{col+1:02}',26,MUTED)
             c.box((x-12,tracktop-4,x+w+12,trackbottom+14),'#141723',12)
-            draw_markers(c,(score or {}).get('events',{}),x,w,tracktop,trackbottom,lo,hi,end_tick=end_tick)
+            draw_markers(c,(score or {}).get('events',{}),x,w,tracktop,trackbottom,lo,hi,end_tick=end_tick,skill_durations=skill_durations)
             for lane in range(7):c.draw.line((x+lane*w/6,tracktop,x+lane*w/6,trackbottom),fill='#2c3145',width=1)
             for beat in range(33):
                 yy=trackbottom-beat*120;c.draw.line((x,yy,x+w,yy),fill='#4b5066' if beat%4==0 else '#252b3c',width=2 if beat%4==0 else 1)
             occupied=[]
-            for tick in sorted((score or {}).get('events',{}).get('skill',[])):
-                end=skill_end_tick(tick,bpms)
+            for i,tick in enumerate(sorted((score or {}).get('events',{}).get('skill',[]))):
+                end=skill_end_tick(tick,bpms,skill_durations[i] if skill_durations else 5)
                 occupied.extend((trackbottom-(p-lo)/4,44) for p in (tick,end) if p is not None and lo<=p<hi and p<=end_tick)
                 if end is not None:
                     if tick<lo<end:occupied.append((trackbottom-30,44))
