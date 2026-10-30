@@ -134,6 +134,8 @@ class Backend:
 
     def expire(self):
         self.conversations.sweep()
+        if self.model_runtime is not None and self.model_runtime.agent:
+            self.model_runtime.agent.proactive.sweep_followups()
         sweep = getattr(self.parser, 'sweep', None)
         if sweep is not None: sweep()
         if self.model_runtime is not None: self.model_runtime.usage.reconcile()
@@ -615,6 +617,9 @@ class Backend:
                 if work.chat and self.model_runtime.agent:
                     self.model_runtime.agent.acknowledge(work,part_id,payload['message_id'],reply.text,
                         payload['result'],allow_context=payload.get('allow_context') is not False)
+                    if (payload['result']=='success' and len(parts)==1 and not work.hint
+                            and payload.get('group_ingress_seq')==work.request.ingress_seq):
+                        self.model_runtime.agent.proactive.remember_question(work,payload['message_id'],reply.text)
                 if payload['result'] == 'success':
                     if long_fallback: candidate = replies.fallback_cursor(reply,text_limit=text_limit)
                     if candidate is not None and (work.operation or len(split_commands(work.request.body)) == 1
@@ -804,6 +809,8 @@ def create_app(backend, token, initialize=None):
             return json(runtime.usage.group_view(gid,profile))
         except ModelError as exc: raise ProtocolError(str(exc),409) from None
     async def chat_observation(request):
+        from ..domain.model_calls import ModelError
+        from .chat_jobs import ServiceError
         require(backend.accepting(),'not_ready',503)
         value=await read_json(request)
         parsed=Request.parse(value,backend.instance_id,backend.app_id,backend.clock())
@@ -811,7 +818,9 @@ def create_app(backend, token, initialize=None):
         require(0<=backend.clock()-parsed.timestamp_ms/1000<WINDOW,'message_expired',409)
         agent=backend.model_runtime.agent if backend.model_runtime else None
         observed=bool(agent and getattr(backend.settings,'chat_engine','legacy')=='agent' and agent.proactive.observe(parsed))
-        return json({'protocol':PROTOCOL,'observed':observed,'delay_ms':1500 if observed else 0})
+        try:delay=agent.proactive.observation_delay(parsed) if observed else None
+        except (ModelError,ServiceError,ValueError,OSError,sqlite3.Error):delay=None
+        return json({'protocol':PROTOCOL,'observed':observed and delay is not None,'delay_ms':delay or 0})
     async def chat_candidate(request):
         from ..domain.model_calls import ModelError
         require(backend.accepting(),'not_ready',503)
