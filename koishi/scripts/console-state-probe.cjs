@@ -113,6 +113,13 @@ async function main(){
   assert.equal(actualRecovery.modelRole,'proactive');assert.equal(actualRecovery.proactive.group_id,'alpha')
   assert.equal(readRecovery({...actualRecovery,modelRole:'untrusted-role'}),null)
   await quotaRecovery.logout();assert.equal(quotaRecovery.proactiveEdit.value,null)
+  await dedicated.refreshProactiveLimits('alpha',true)
+  dedicated.modelDraft.value.reasoning_effort='high';dedicated.modelDirty.value=true
+  await dedicated.saveModel()
+  assert.equal(dedicated.proactiveEdit.value.dirty,false)
+  assert.equal(dedicated.proactiveEdit.value.conflict,false,'a clean limit editor must reload after saving the model')
+  assert.equal(dedicated.proactiveLimits.value.group_id,'alpha')
+
 
   let epoch='gateway-before',attempted=[],trustedAttempts=[],finishJob,finishTrusted
   globalThis.consoleStateFixture.send=async(method,value)=>{

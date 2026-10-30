@@ -1,6 +1,6 @@
 import { ref, send, toRaw } from './runtime.js';
 export function sessionState() {
-  const modelFailure=error=>({chat_capability_unverified:'当前模型尚无匹配的联网搜索验收记录。',chat_capability_configuration:'联网搜索批准文件需要核对。',model_config_permissions:'配置目录不可安全写入，请修复后端目录权限和可写路径。',model_config_conflict:'服务器配置已变化，请核对最新值后再保存。',primary_budget_configuration:'请输入非负美元金额，最多六位小数。',model_admin_busy:'另一个模型管理操作正在执行，请稍后重试。',model_not_configured:'请先保存模型配置。',chat_service_profile_mismatch:'主动参与模型版本已变化，请先重新核对本群批准。',chat_service_currency_mismatch:'服务预算币种与当前模型不一致，请核对批准。',chat_service_configuration:'限额配置需要核对；启用时请求、回复和费用上限都须为正数。',proactive_limits_unsupported:'每小时请求和回复上限均不能超过120。'})[String(error?.message||error)]||String(error?.message||error);
+  const modelFailure=error=>({model_approval_rebind_unconfirmed:'模型设置已保存，但部分能力或群服务批准未确认；请核对能力状态和管理记录。',chat_capability_unverified:'当前模型尚无匹配的联网搜索验收记录。',chat_capability_configuration:'联网搜索批准文件需要核对。',model_config_permissions:'配置目录不可安全写入，请修复后端目录权限和可写路径。',model_config_conflict:'服务器配置已变化，请核对最新值后再保存。',primary_budget_configuration:'请输入非负美元金额，最多六位小数。',model_admin_busy:'另一个模型管理操作正在执行，请稍后重试。',model_not_configured:'请先保存模型配置。',chat_service_profile_mismatch:'主动参与模型版本已变化，请先重新核对本群批准。',chat_service_currency_mismatch:'服务预算币种与当前模型不一致，请核对批准。',chat_service_configuration:'限额配置需要核对；启用时请求、回复和费用上限都须为正数。',proactive_limits_unsupported:'每小时请求和回复上限均不能超过120。'})[String(error?.message||error)]||String(error?.message||error);
   const logged=ref(false), busy=ref(false), message=ref(''), readMessage=ref(''), stale=ref(false), dirty=ref(false), conflict=ref(false);
   const overview=ref(null), requests=ref(null), detail=ref(null), sources=ref(null), metrics=ref(null), groups=ref(null), notices=ref(null), draft=ref(null), guard=ref(null);
   const groupId=ref(''),groupDraft=ref(null),groupRevision=ref(null),groupDirty=ref(false),groupConflict=ref(false);
@@ -197,7 +197,10 @@ export function sessionState() {
     if(!modelDirty.value){modelDraft.value=structuredClone(toRaw(value.profile));modelGuard.value=value.guard;}
     else if(JSON.stringify(modelGuard.value)!==JSON.stringify(value.guard))modelConflict.value=true;
   }
-  function refreshModel(){return load(model,modelRole.value==='primary'?'model/settings':`model/${modelRole.value}/settings`);}
+  async function refreshModel(){
+    await load(model,modelRole.value==='primary'?'model/settings':`model/${modelRole.value}/settings`);
+    if(modelRole.value==='proactive'&&proactiveEdit.value?.group_id)await refreshProactiveLimits(proactiveEdit.value.group_id);
+  }
   function selectModelRole(role){
     if(busy.value||modelDirty.value||webEdit.value?.dirty){message.value='请先保存或放弃当前模型和联网草稿，再切换模型配置。';return;}
     if(role==='proactive'&&!groups.value)void load(groups,'groups/list');
@@ -235,7 +238,7 @@ export function sessionState() {
     }catch(error){if(token!==generation||seq!==sequences.get(proactiveLimits)||unauthorized(error))return;message.value='主动参与限额未读取：'+modelFailure(error);}
   }
   async function saveProactiveLimits(){
-    if(!proactiveEdit.value?.dirty)return;
+    if(busy.value||!proactiveEdit.value?.dirty||proactiveEdit.value.conflict||modelDirty.value)return;
     const token=generation,submitted=JSON.stringify(proactiveEdit.value),edit=JSON.parse(submitted);
     const key=JSON.stringify([edit.group_id,edit.guard,edit.limits]);
     if(!pendingProactive.has(key))pendingProactive.set(key,crypto.randomUUID().replaceAll('-',''));
@@ -274,7 +277,7 @@ export function sessionState() {
       if(token!==generation)return;
       if(!group)modelDirty.value=JSON.stringify(modelDraft.value)!==profile;
       modelConflict.value=false;model.value=result;modelGuard.value=result.guard;acceptModel(result);message.value='AI 设置已按新版本保存。';
-      if(modelRole.value==='proactive'&&proactiveEdit.value&&proactiveEdit.value.guard.model_fingerprint!==result.guard.fingerprint)proactiveEdit.value.conflict=true;
+      if(modelRole.value==='proactive'&&proactiveEdit.value)await refreshProactiveLimits(proactiveEdit.value.group_id);
       if(group)await load(groupUsage,'model/group',group);
     }catch(error){if(token!==generation||unauthorized(error))return;modelConflict.value=true;
       message.value='AI 设置未确认，请核对服务器值：'+modelFailure(error);await refreshModel();

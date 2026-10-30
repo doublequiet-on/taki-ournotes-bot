@@ -1,5 +1,5 @@
 # L3: Protected versioned model settings and explicit, billed capability probes.
-# Effects: Private config/capability replacement and metadata-only SQLite audit; never returns credentials or text.
+# Effects: Private config, capability and group-service binding replacement; metadata-only audit, no credentials or text.
 from __future__ import annotations
 
 import asyncio
@@ -116,9 +116,9 @@ class ModelAdmin:
                 'audit':self.audit(),'timezone':'Asia/Shanghai','price_status':config.status()}
 
     @staticmethod
-    def metadata_digest(path):
+    def metadata_digest(path, limit=16384):
         if not path.exists():return 'absent'
-        require(path.is_file() and not path.is_symlink() and path.stat().st_size<=16384,'chat_capability_configuration')
+        require(path.is_file() and not path.is_symlink() and path.stat().st_size<=limit,'chat_capability_configuration')
         return hashlib.sha256(path.read_bytes()).hexdigest()
 
     def web_context(self, proactive=False):
@@ -146,12 +146,12 @@ class ModelAdmin:
                 'unit_cost_micro':verified.unit_cost_micro if verified else None,'currency':snapshot.profile.price.currency,
                 'evidence_ref':verified.evidence_ref if verified else None}
 
-    def write_web_metadata(self, path, data, operation):
+    def write_web_metadata(self, path, data, operation, *, limit=16384):
         parent=path.parent
         require(parent.is_dir() and not parent.is_symlink() and os.access(parent,os.W_OK)
                 and (os.name=='nt' or parent.stat().st_mode & 0o022==0),'model_config_permissions')
-        self.metadata_digest(path)
-        raw=(encode(data)+'\n').encode();require(len(raw)<=16384,'chat_capability_configuration')
+        self.metadata_digest(path,limit)
+        raw=(encode(data)+'\n').encode();require(len(raw)<=limit,'chat_capability_configuration')
         temporary=path.with_name(path.name+'.'+operation+'.tmp')
         try:
             fd=os.open(temporary,os.O_WRONLY|os.O_CREAT|os.O_EXCL,0o600)
@@ -161,7 +161,7 @@ class ModelAdmin:
                 directory=os.open(parent,os.O_RDONLY)
                 try:os.fsync(directory)
                 finally:os.close(directory)
-            require(self.metadata_digest(path)==hashlib.sha256(raw).hexdigest(),'model_config_save_unconfirmed')
+            require(self.metadata_digest(path,limit)==hashlib.sha256(raw).hexdigest(),'model_config_save_unconfirmed')
         finally:temporary.unlink(missing_ok=True)
 
     def save_web(self, value, *, proactive=False):
@@ -268,6 +268,8 @@ class ModelAdmin:
         row=self.db.execute('SELECT * FROM actions WHERE id=?',(operation,)).fetchone()
         if row:
             require(row['digest']==digest and row['action']==action,'model_operation_conflict')
+            if action not in ('probe','probe_proactive'):
+                require(row['state']=='succeeded',json.loads(row['result'] or '{}').get('code','model_save_unconfirmed'))
             return False
         require(self.db.execute("SELECT count(*) FROM actions WHERE state='intent'").fetchone()[0]<1,'model_admin_busy')
         with self.db:
@@ -283,6 +285,40 @@ class ModelAdmin:
                 self.db.execute('UPDATE actions SET state=?,result=? WHERE id=?',(state,encode(result),operation))
         except sqlite3.Error:
             self.error='model_admin_unavailable';raise ModelError(self.error) from None
+
+    def approval_rebindings(self, before, after, *, proactive=False):
+        """Carry existing exact-match evidence across tuning, never a model/key change."""
+        from .chat_jobs import ChatServices
+        tuned=('reasoning_effort','max_input_tokens','max_output_tokens','user_daily_limit',
+               'group_daily_limit','user_rate_requests','group_rate_requests','rate_window_seconds')
+        price=replace(before.profile.price,pricing_version=after.profile.price.pricing_version,
+                      fetched_at=after.profile.price.fetched_at)
+        if replace(before.profile,config_version=after.profile.config_version,price=price,
+                   **{k:getattr(after.profile,k) for k in tuned})!=after.profile:return []
+        owner=self.runtime.proactive_capabilities if proactive else self.runtime.capabilities
+        archive=type(owner)(owner.path.with_name(owner.path.stem+'.web-approved.json'))
+        plan=[]
+        for cap in (owner,archive):
+            digest=self.metadata_digest(cap.path)
+            data=cap.read(before)
+            if data is None:continue
+            cap.web(before);cap.vision(before);cap.proactive(before,'')
+            plan.append((cap.path,digest,{**data,'config_version':after.profile.config_version,
+                                        'fingerprint':after.fingerprint},16384))
+        services=ChatServices(self.runtime.usage.path.parent,*self.config.namespace,
+                              filename='chat-proactive-services-v1.json' if proactive else 'chat-services-v1.json')
+        digest=self.metadata_digest(services.path,131072)
+        if digest!='absent':
+            data=json.loads(services.path.read_text(encoding='utf-8'))
+            require(isinstance(data,dict),'chat_service_configuration')
+            binding=data.get('profile',{})
+            require(isinstance(binding,dict),'chat_service_configuration')
+            if binding.get('config_version')==before.profile.config_version and binding.get('fingerprint')==before.fingerprint:
+                data,_,parsed_digest=services.read(before)
+                require(digest==parsed_digest,'model_config_conflict')
+                plan.append((services.path,digest,{**data,'profile':{**data['profile'],
+                    'config_version':after.profile.config_version,'fingerprint':after.fingerprint}},131072))
+        return plan
 
     def save(self, value, fallback=False, *, proactive=False):
         config=self.selected_config(fallback,proactive)
@@ -308,11 +344,22 @@ class ModelAdmin:
                   'profile':profile,'secret':secret,'bindings':old['bindings'] if old else [],'groups':value['groups']}
             if old and old.get('schema')=='taki-model-config/3':
                 data.update(schema='taki-model-config/3',group_admissions=old['group_admissions'])
-            snapshot=config.parse(data,'')
+            snapshot=config.parse(data,hashlib.sha256((encode(data)+'\n').encode()).hexdigest())
+            rebindings=self.approval_rebindings(config.parse(old,fingerprint),snapshot,proactive=proactive) if old and not fallback and old.get('secret',config.api_key)==secret else []
+            for path,digest,_,limit in rebindings:
+                require(self.metadata_digest(path,limit)==digest,'model_config_conflict')
+                require(path.parent.is_dir() and not path.parent.is_symlink() and os.access(path.parent,os.W_OK)
+                        and (os.name=='nt' or path.parent.stat().st_mode & 0o022==0),'model_config_permissions')
             unit=self.runtime.usage.db.execute("SELECT value FROM meta WHERE key='reference_unit'").fetchone()
             require(unit is None or unit[0]==snapshot.profile.price.reference_unit,'reference_unit_mismatch')
             snapshot=config.write(data,fingerprint)
             self.runtime.usage.configuration(snapshot.profile.config_version,snapshot.fingerprint)
+            try:
+                for path,digest,rebound,limit in rebindings:
+                    require(self.metadata_digest(path,limit)==digest,'model_config_conflict')
+                    self.write_web_metadata(path,rebound,operation,limit=limit)
+            except (OSError,ValueError,TypeError,KeyError,RecursionError):
+                raise ModelError('model_approval_rebind_unconfirmed') from None
             self.finish(operation,'succeeded',{'code':'saved','config_version':snapshot.profile.config_version})
         except (OSError,ValueError,TypeError,KeyError,RecursionError,sqlite3.Error) as exc:
             code=str(exc) if isinstance(exc,ModelError) else 'model_save_unconfirmed'
