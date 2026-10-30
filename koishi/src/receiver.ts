@@ -219,7 +219,7 @@ export class Receiver {
     }
     const now = Date.now()
     for (const [key, value] of this.raw) if (now - value.at > 298000) this.raw.delete(key)
-    const fingerprint = JSON.stringify([type, data.content, data.timestamp, data.author, data.group_id, data.group_openid, data.mentions, data.attachments])
+    const fingerprint = JSON.stringify([type, data.content, data.timestamp, data.author, data.group_id, data.group_openid, data.mentions, data.attachments, data.message_type, data.msg_elements])
     const existing = this.raw.get(data.id)
     if (existing) {
       // Do not let a conflicting raw event replace the first identity/body while decode is waiting.
@@ -305,11 +305,14 @@ export class Receiver {
       if (!this.active) { this.observed('disposed'); return true }
       if (decoded.inbound.trigger!=='observation' && (!decoded.inbound.attachments?.length || /^[/／]/u.test(decoded.inbound.body))
           && !await this.client.recognizes(decoded.inbound.body)) { this.observed('unrecognized'); return false }
+      if(input.trigger==='observation' && await this.client.directChat(input.body)) {
+        input={...input,trigger:'command'}
+      }
+      if (!this.active) { this.observed('disposed'); return true }
       if (!await this.permitted(canonical)) { this.observed('permission_denied'); return input.trigger!=='observation' }
       if (!this.active) { this.observed('disposed'); return true }
-      if (this.config.management && !this.config.management.accepts(decoded.inbound)) { this.observed('management_denied'); return input.trigger!=='observation' }
+      if (this.config.management && !this.config.management.accepts(input)) { this.observed('management_denied'); return input.trigger!=='observation' }
       if (source.conflict) { this.observed('conflict'); return true }
-      input = decoded.inbound
       if(input.trigger==='observation') {
         const policy=this.policy(input)
         if(policy.natural_query!=='model')return false
@@ -385,7 +388,7 @@ export class Receiver {
         acknowledge:this.client.acknowledge.bind(this.client),observe:this.client.observe.bind(this.client),
       }:this.client
       job.delivery = new QQDelivery(api, job.input, job.plan.delivery_id, this.client.epoch, events, alive,
-        undefined, undefined, this.materials)
+        undefined, undefined, this.materials, job.plan.reply_mention)
       while (alive() && job.plan.status === 'preparing') {
         if(job.plan.pending_model_permission) await this.authorizeModel(job,job.plan.pending_model_permission)
         if(job.plan.processing_hint && job.plan.send_allowed && !hint) {

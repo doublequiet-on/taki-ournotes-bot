@@ -17,3 +17,5 @@ CODE_FILES += ('../domain/chat_images.py','../sources/chat_images.py')
 CODE_FILES += ('chat_jobs.py','proactive_chat.py')
 CODE_FILES += ('chat_proactive_runtime.py',)
 CODE_FILES += ('../natural_query/query_validation.py',)
+
+CODE_FILES += ('../query/entity_lexicon.py',)

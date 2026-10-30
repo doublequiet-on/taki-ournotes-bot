@@ -5,7 +5,7 @@ import { setTimeout as delay } from 'node:timers/promises'
 import { Telemetry, Span } from './telemetry'
 import type { PolicySnapshot } from './group-policies'
 
-import { protocol, capability, BackendError, decodeReady, decodeClassify, decodePlan, decodeRecorded,
+import { protocol, capability, BackendError, decodeReady, decodeClassify, decodeDirectChat, decodePlan, decodeRecorded,
   decodeAcknowledgement, decodeIntent, decodeRegistration, decodeRetirement, decodeChatObservation, decodeChatCandidate, object } from './wire'
 import type { Ready, Plan, WirePart, ModelPermission, Recorded } from './wire'
 export { protocol, capability, BackendError } from './wire'
@@ -120,12 +120,16 @@ export class BackendClient implements DeliveryEvents {
   async recognizes(body: string): Promise<boolean> {
     return decodeClassify(await this.retry('/v1/classify', { body }))
   }
+  async directChat(body: string): Promise<boolean> {
+    return decodeDirectChat(await this.retry('/v1/classify', {body}))
+  }
   private encode(input: Inbound, seq: number, policy: PolicySnapshot) {
     if (input.proactiveId!==undefined && (input.trigger!=='proactive' || !/^[a-f0-9]{32}$/.test(input.proactiveId))
         || input.trigger==='proactive' && input.proactiveId===undefined) throw new BackendError('proactive_identity')
     return { protocol, request_id: input.requestId, instance_id: input.instanceId,
       app_id: input.appId, platform: input.platform, kind: input.kind, conversation_id: input.conversationId,
       user_id: input.userId, message_id: input.messageId, timestamp_ms: input.timestampMs, body: input.body,
+      ...(input.quotedText===undefined ? {} : {quoted_text:input.quotedText}),
       ...(input.senderName===undefined ? {} : {sender_name:input.senderName}),
       ...(input.attachments===undefined ? {} : {attachments:input.attachments}),
       ...(input.proactiveId===undefined ? {} : {proactive_id:input.proactiveId}),

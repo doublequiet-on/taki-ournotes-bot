@@ -44,6 +44,7 @@ class DisplaySnapshot:
     created: float
     expires: float
     layout_version: str = 'prepared-reply/1'
+    chat: bool = False
 
     @property
     def retained_bytes(self):
@@ -82,13 +83,14 @@ class Conversations:
             if now >= anchor.expires or anchor.snapshot_id not in self.snapshots:
                 self.recent.pop(key, None)
 
-    def resolve(self, request):
+    def resolve(self, request, *, query_only=False):
         self.sweep()
         scope = self.scope(request)
         if request.reference is not None:
             return self.anchors.get((scope, request.reference['message_id']))
         # Explicit references win; never guess which of two group topics was intended.
-        choices = [a for (s, _), a in self.recent.items() if s == scope]
+        choices = [a for (s, _), a in self.recent.items() if s == scope
+                   and (not query_only or not self.snapshots[a.snapshot_id].chat)]
         return choices[0] if len(choices) == 1 else None
 
     def clear_scope(self,scope):
@@ -112,7 +114,7 @@ class Conversations:
             return None
         snapshot = DisplaySnapshot(work.delivery, self.scope(work.request), work.key,
                                    work.lease.generation if work.lineage is None else work.lineage,
-                                   tuple(pages), self.clock(), deadline)
+                                   tuple(pages), self.clock(), deadline, chat=bool(getattr(work,'chat',False)))
         versions = {p.layout_version for p in pages if p.business_status!='processing_hint'}
         if len(versions) == 1:
             snapshot = replace(snapshot, layout_version=next(iter(versions)))

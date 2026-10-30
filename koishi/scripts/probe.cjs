@@ -70,7 +70,7 @@ async function materialFixture(task) {
 }
 function receiverFixture(overrides={},maxPending=8) {
   const env=createBot(), held=new Map(), submitted=[], sent=[], plans=new Map(), finished=new Set()
-  const client={epoch:'fixture-epoch',deactivate(){},observe(){},async initialize(){},async retire(){},async recognizes(){return true},
+  const client={epoch:'fixture-epoch',deactivate(){},observe(){},async initialize(){},async retire(){},async recognizes(){return true},async directChat(){return false},
     async chatObservation(){return{protocol:wire.protocol,observed:false,delay_ms:0}},
     async chatCandidate(){return{protocol:wire.protocol,candidate:false}},
     async submit(input,seq){
@@ -253,6 +253,68 @@ async function main() {
     await assert.rejects(client.chatCandidate({...proactive,proactiveId:'forged'},1,base.policy),/proactive_identity/)
     await assert.rejects(client.chatObservation(proactive,1,base.policy),/observation_identity/)
     assert.equal(seen.length,2)
+  })
+  await run('Name classification rechecks pause, disposal and raw conflicts before admission',async()=>{
+    for(const change of ['pause','dispose','conflict']) {
+      const entered=deferred(),release=deferred();let allowed=true
+      const f=receiverFixture({async directChat(){entered.resolve();await release.promise;return true}})
+      f.receiver.config.management={accepts(){return allowed},policySnapshot(){return{natural_query:'model',epoch:'e',global_revision:0,group_revision:0}}}
+      let closing
+      try {
+        const pending=f.receiver.receive(await f.ordinary('race',{content:'立希你好'}))
+        await entered.promise
+        if(change==='pause')allowed=false
+        if(change==='dispose')closing=f.receiver.dispose()
+        if(change==='conflict')await f.ordinary('race',{content:'立希，另一条冲突正文'})
+        release.resolve();await pending
+        assert.equal(f.submitted.length,0,change);assert.equal(f.sent.length,0,change)
+      }finally{release.resolve();if(closing)await closing;await f.close()}
+    }
+  })
+  await run('Quote preview is text-only user material and never a trusted reference',async()=>{
+    const e=createBot()
+    try {
+      const raw=event({content:'/聊 那咋了',message_type:103,msg_elements:[{msg_idx:'opaque',content:'合成引文：这段 COMBO 练习我想再慢一点。',attachments:[{url:'https://untrusted.invalid/image'}]}]})
+      const decoded=await decodeIncoming(e.bot,raw,identity,()=>true)
+      assert.equal(decoded.status,'accepted')
+      assert.equal(decoded.inbound.body,'/聊 那咋了')
+      assert.equal(decoded.inbound.quotedText,raw.d.msg_elements[0].content)
+      assert.equal(decoded.inbound.reference,undefined)
+      assert.equal(decoded.inbound.attachments,undefined)
+      raw.d.msg_elements[0].content='x'.repeat(4097)
+      const oversized=await decodeIncoming(e.bot,raw,identity,()=>true)
+      assert.equal(oversized.inbound.quotedText,undefined)
+      raw.d.message_type=0;raw.d.msg_elements[0].content='不会被当作引用'
+      const ordinary=await decodeIncoming(e.bot,raw,identity,()=>true)
+      assert.equal(ordinary.inbound.quotedText,undefined)
+    }finally{await e.ctx.stop()}
+  })
+  await run('Name or /聊 promotes an ordinary message to one direct request',async()=>{
+    for(const content of ['立希，今天好累','/聊 今天好累']) {
+      let observations=0
+      const f=receiverFixture({async directChat(body){assert.equal(body,content);return true},
+        async chatObservation(){observations++;throw Error('must bypass observations')}})
+      try {
+        const session=await f.ordinary('named',{content})
+        f.release('named');await f.receiver.receive(session)
+        assert.equal(f.submitted.length,1);assert.equal(observations,0)
+        assert.equal(f.submitted[0].input.trigger,'command')
+        assert.equal(f.submitted[0].input.userId,'fixture-user')
+        assert.equal(f.sent.length,1)
+      }finally{await f.close()}
+    }
+  })
+  await run('Chat text and image captions have no mention, keeping markup sanitization',async()=>{
+    const e=await setup()
+    const delivery=new QQDelivery(e.bot.internal,e.decoded.inbound,'chat','fixture-epoch',e.events,
+      ()=>true,candidateLimits,()=>now+1,fixtureMaterials(e.bot.internal),false)
+    await delivery.deliver('0',0,png)
+    await delivery.deliver('1',1,{kind:'text',text:'<qqbot-at-user id="other" />正文'})
+    const sends=e.calls.filter(c=>c.url.endsWith('/messages'))
+    assert.equal(sends.length,2)
+    assert.ok(sends.every(c=>!c.data.markdown.content.includes('<qqbot-at-user')))
+    assert.ok(sends[1].data.markdown.content.includes('＜qqbot-at-user'))
+    assert.deepEqual(sends.map(c=>c.data.msg_seq),[1,2])
   })
   await run('G1 backend refusal and failed observation release all ordinary text without classifying or sending',async()=>{
     for(const failed of [false,true]) {

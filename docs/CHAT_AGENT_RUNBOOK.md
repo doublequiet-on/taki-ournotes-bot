@@ -1,6 +1,6 @@
 # 对话 Agent：启用、诊断与回退
 
-默认 `OURNOTES_CHAT_ENGINE=legacy`。Agent 仅用于 Koishi 对应 Python 后端；旧 `bot`／CLI 查询入口沿用旧行为。启用前确认协议 2.2 的网关和后端成对、既有 Terra profile 与身份／群准入有效、模型授权覆盖本次试验；生产操作单独授权。组合状态、配置及未验证项见 [F1](CHAT_AGENT_F1.md)。
+默认 `OURNOTES_CHAT_ENGINE=legacy`。`/查`（兼容 `/问`、`/ask`）查询，`/聊` 聊天；Agent 模式支持非 @正文中的立希或 taki 触发，前提是 QQ 下发该群消息。聊天回复不 @且末尾不加句号，查询继续 @真实发送者。引用消息的有界文字预览可进入聊天作为用户材料；可信引用索引/作者和引用图片仍须 profile 验证。现有自然语言策略仍约束两类模型调用，未增加独立权限开关。Agent 仅用于 Koishi 对应 Python 后端；旧 `bot`／CLI 查询入口沿用旧行为。启用前确认协议 2.2、能力 qq-query-chat-v5 的网关和后端成对、既有 Terra profile 与身份／群准入有效、模型授权覆盖本次试验；生产操作单独授权。组合状态、配置及未验证项见 [F1](CHAT_AGENT_F1.md)。
 
 在后端环境设置 `OURNOTES_CHAT_ENGINE=agent`，经既有部署流程加载配置。继续现有 Terra 的 provider/model/端点/价格/推理设置，不复制另一个项目的配置，不为兼容性切模型；仅按下述每日主模型预算在新轮选择 DeepSeek。无有效身份、当前许可或额度时不调用模型。普通闲聊目标一次调用；六次模型／八次工具／60 秒是资源上限，原 profile 的频率与加权额度可能先到达上限。每个 HTTP 都单独记账，不承诺复杂问题必用满六次。
 

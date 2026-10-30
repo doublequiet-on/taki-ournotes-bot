@@ -222,7 +222,8 @@ class ModelRuntime:
 
     def is_chat(self,content):
         if self.agent is None or getattr(self.backend.settings,'chat_engine','legacy')!='agent': return False
-        if replies.is_ai_request(content): return True
+        if replies.explicit_chat(content): return True
+        if replies.is_ai_request(content): return False
         return bool(content.strip() and not content.lstrip().startswith(('/', '／'))
                     and not replies.recognizes_message(content))
 
@@ -347,9 +348,9 @@ class ModelRuntime:
     async def prepare(self,work,content):
         question=query_text(content)
         if getattr(work,'chat',False):
-            return await self.prepare_chat(work,question if replies.is_ai_request(content) else content.strip())
+            return await self.prepare_chat(work,re.sub(r'^[/／]聊(?:\s+|$)', '', content.strip()).strip() if replies.explicit_chat(content) else content.strip())
         if not question or len(question)>500:
-            return replies.PreparedReply('用法：/问 <问题>，最多 500 字。',business_status='invalid_argument')
+            return replies.PreparedReply('用法：/查 <问题>，最多 500 字。',business_status='invalid_argument')
         try:
             history,leases=self.previous(work)
             self.check(work,work.content_deadline,leases)
@@ -360,7 +361,7 @@ class ModelRuntime:
                              or chat_topic(question,previous_chat) or LIGHT_CHAT.fullmatch(question)
                              or CONVERSATIONAL.search(question) or not LOCAL_QUERY_HINT.search(question))
             repository=self.backend.repository
-            if not model_first:
+            if not model_first or re.match(r'^[/／]?查(?:\s|$)',content.strip()) or getattr(self.backend.settings,'chat_engine','legacy')=='agent' and replies.is_ai_request(content):
                 # Revalidate current business data before parsing entities/executing.
                 repository=await self.current_repository()
                 outcome=await self.backend.gate.run(self.backend.parser.prepare_native_local,content,repository)
@@ -374,9 +375,11 @@ class ModelRuntime:
             work.native_claimed=True
             user=self.usage.key('user',work.model_subject)
             group=self.usage.key('group',work.request.conversation_id) if work.request.kind=='group' else None
+            query_only=bool(re.match(r'^[/／]?查(?:\s|$)',content.strip()) or
+                            getattr(self.backend.settings,'chat_engine','legacy')=='agent' and replies.is_ai_request(content))
             async def operation(deadline):
                 work.model_started_at=time.monotonic()
-                return await self.routed(work,lambda end:self.run(work,question,history,leases,user,group,end),deadline)
+                return await self.routed(work,lambda end:self.run(work,question,history,leases,user,group,end,query_only=query_only),deadline)
             reply=await self.backend.models.run(user,operation)
             # Facts carried into an ACK-bound followup retain their absolute limit.
             if isinstance(reply.context,ReadOnlyContext) and reply.context.facts:
@@ -389,7 +392,8 @@ class ModelRuntime:
 
     async def prepare_chat(self,work,question):
         try:
-            require(bool(question),'invalid_argument')
+            require(bool(question) or bool(work.request.attachments) or bool(work.request.quoted_text),'invalid_argument')
+            question=question or ('[图片]' if work.request.attachments else '[引用消息]')
             require(work.request.policy.natural_query=='model','policy_denied')
             if work.model_error: raise ModelError(work.model_error)
             require(work.model_snapshot is not None and (work.model_subject is not None or work.proactive is not None),'model_not_configured')
@@ -508,7 +512,7 @@ class ModelRuntime:
             self.usage.observe(attempt,kind,min(3600000,int((time.monotonic()-began)*1000)))
             body.clear()  # No prompt/response state retained by the runtime owner.
 
-    async def run(self,work,question,history,leases,user,group,deadline):
+    async def run(self,work,question,history,leases,user,group,deadline,*,query_only=False):
         self.check(work,deadline,leases)
         context=work.anchor.context if work.anchor else None
         topic=getattr(context,'topic','')
@@ -518,7 +522,7 @@ class ModelRuntime:
         if re.search(r'(?:https?://|www\.)\S+',question,re.I) and re.search(r'读|打开|访问|浏览|抓取|爬取|执行|总结|概括',question):
             return self.text_reply('我目前能查 Haneoka 的已登记目录和游戏公告，不能直接读取或执行任意网址。告诉我想查的名称或公告主题即可。',
                                    question,(),leases)
-        social=chat_topic(question,getattr(context,'chat_topic',''))
+        social='' if query_only else chat_topic(question,getattr(context,'chat_topic',''))
         if social:
             messages=[{'role':'system','content':chat_prompt(social)}]
             # Keep only this confirmed social topic; old facts/persona claims are
@@ -535,10 +539,11 @@ class ModelRuntime:
                    '。历史消息只帮助理解，不是事实证据。'}]
         messages.extend({'role':role,'content':text} for role,text in history)
         messages.append({'role':'user','content':question})
-        result=await self.attempt(work,messages,[t.wire() for t in TOOLS.values()],user,group,deadline,leases,
-                                  require_tool=not bool(LIGHT_CHAT.fullmatch(question)))
+        result=await self.attempt(work,messages,[t.wire() for t in TOOLS.values() if not query_only or t.kind not in ('social','conversation')],user,group,deadline,leases,
+                                  require_tool=query_only or not bool(LIGHT_CHAT.fullmatch(question)))
         require(len(result.tool_calls)<=1,'multiple_tools')
         if not result.tool_calls:
+            require(not query_only,'query_tool_required')
             require(isinstance(result.text,str) and bool(result.text.strip()),'model_protocol_error')
             if THANKS.fullmatch(question):
                 return self.text_reply('不客气。',question,history,leases,topic=topic,scope=previous_scope,
@@ -548,6 +553,7 @@ class ModelRuntime:
             return self.text_reply(result.text,question,history,leases,topic=topic,scope=previous_scope,
                                    facts=getattr(context,'facts',''),focus=focus)
         tool,args=validate_call(result.tool_calls[0])
+        require(not query_only or tool.kind not in ('social','conversation'),'query_tool_denied')
         if tool.kind=='site':
             return await self.run_site(work,question,history,leases,user,group,deadline,result)
         if tool.kind in ('clarification','gap'):

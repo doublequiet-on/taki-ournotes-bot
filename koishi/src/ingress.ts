@@ -25,6 +25,7 @@ export interface Inbound {
   messageId: string
   timestampMs: number
   body: string
+  quotedText?: string
   senderName?: string
   attachments?: ImageAttachment[]
   trigger?: 'command' | 'ask' | 'quoted_reply' | 'observation' | 'proactive'
@@ -91,6 +92,15 @@ function imageAttachments(value: unknown, messageId: string): ImageAttachment[] 
   return result
 }
 
+/** Text-only quote preview; no author, source-id, image or permission claim. */
+function quotedText(data: Record<string,unknown>): string | undefined {
+  if (data.message_type !== 103 || !Array.isArray(data.msg_elements)) return
+  const first=record(data.msg_elements[0]), text=first?.content
+  if (typeof text !== 'string' || !text.trim() || Buffer.byteLength(text)>4096
+      || /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/u.test(text)) return
+  return text.trim()
+}
+
 /** Recognizer comes from the business entry manifest; do not duplicate query parsing. */
 export async function decodeIncoming(
   bot: QQBot, raw: unknown, identity: Identity, recognizes: (body: string) => boolean,
@@ -138,9 +148,13 @@ export async function decodeIncoming(
   const attachments = imageAttachments(data.attachments, data.id)
   if (!attachments) return { status: 'rejected', reason: 'invalid_attachments' }
   if ((!attachments.length || /^[/／]/u.test(body)) && (!body || addressed && !recognizes(body))) return { status: 'ignored', reason: 'not_taki' }
+  const quote=quotedText(data)
   const canonical = {
     ...envelope,
-    d: { ...data, author: { ...author, id: userId }, ...(kind === 'group' ? { group_id: conversationId } : {}) },
+    d: { ...data, author: { ...author, id: userId }, ...(kind === 'group' ? { group_id: conversationId } : {}),
+      // The installed adapter decodes nested quote attachments without validation.
+      // Its Session gets only the validated text preview; raw input is untouched.
+      ...(data.message_type===103 ? {msg_elements:[{content:quote ?? '',attachments:[]}]} : {}) },
   }
   // Narrow wire compatibility only. The original object is never mutated.
   const session = await adaptSession(bot, canonical as unknown as QQ.DispatchPayload) as unknown as Session
@@ -155,6 +169,7 @@ export async function decodeIncoming(
     inbound: { requestId, instanceId: identity.instanceId, appId: identity.appId, platform: 'qq',
       kind, conversationId, userId, messageId: data.id, timestampMs, body,
       ...(!addressed ? {trigger:'observation' as const} : {}),
+      ...(quote ? {quotedText:quote} : {}),
       ...(id(author.username) ? {senderName:author.username} : {}),
       ...(attachments.length ? {attachments} : {}) },
   }
