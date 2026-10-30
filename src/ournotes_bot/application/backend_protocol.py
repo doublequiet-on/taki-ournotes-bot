@@ -8,7 +8,7 @@ from ..domain.query_policy import ExecutionPolicy
 from .backend_sources import TRANSPORT_PROTOCOL
 
 PROTOCOL = TRANSPORT_PROTOCOL
-CAPABILITY = 'qq-query-chat-v5'
+CAPABILITY = 'qq-query-chat-v6'
 WINDOW = 298.0
 
 
@@ -138,6 +138,9 @@ def event(value):
     if kind == 'ack' and 'allow_context' in value:
         require(type(value['allow_context']) is bool, 'context_permission')
         extra.add('allow_context')
+    if kind == 'ack' and 'group_ingress_seq' in value:
+        require(type(value['group_ingress_seq']) is int and 0 < value['group_ingress_seq'] < 2**53,'group_ingress_seq')
+        extra.add('group_ingress_seq')
     require(kind in ('intent', 'ack', 'upload_failed', 'aborted', 'batch_finished')
             and set(value) == common | extra, 'event_shape')
     require(value['plan_version'] == 1 and type(value['plan_version']) is int, 'plan_version', 409)

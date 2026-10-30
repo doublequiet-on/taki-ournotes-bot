@@ -223,7 +223,7 @@ async function main() {
   await run('G1 HTTP observation/candidate controls reject malformed or mismatched protocol values',async()=>{
     assert.deepEqual(wire.decodeChatObservation({protocol:wire.protocol,observed:true,delay_ms:1500}),
       {protocol:wire.protocol,observed:true,delay_ms:1500})
-    for(const change of [{observed:1},{delay_ms:-1},{delay_ms:2001},{delay_ms:1.5},{extra:true},
+    for(const change of [{observed:1},{delay_ms:-1},{delay_ms:120001},{delay_ms:1.5},{extra:true},
       {protocol:{major:2,minor:1}}])assert.throws(()=>wire.decodeChatObservation({protocol:wire.protocol,observed:true,delay_ms:1500,...change}))
     assert.equal(wire.decodeChatCandidate({protocol:wire.protocol,candidate:false}).candidate,false)
     assert.equal(wire.decodeChatCandidate({protocol:wire.protocol,candidate:true,plan:httpV2.python_to_ts.terminal}).candidate,true)
@@ -329,6 +329,40 @@ async function main() {
         assert.equal(f.receiver.activity().observation_bytes,0)
       }finally{await f.close()}
     }
+  })
+  await run('Follow-up group sequence ignores other groups but includes unadmitted local activity',async()=>{
+    const observed=[]
+    const f=receiverFixture({async chatObservation(input,seq){observed.push([input.messageId,seq]);return{protocol:wire.protocol,observed:false,delay_ms:0}}})
+    try {
+      await f.receiver.receive(await f.ordinary('first'))
+      await f.receiver.receive(await f.ordinary('other-group',{group_id:'different-group'}))
+      await f.receiver.receive(await f.ordinary('answer'))
+      assert.deepEqual(observed.map(x=>x[1]),[1,2,2])
+      await f.ordinary('unadmitted')
+      await f.receiver.receive(await f.ordinary('later'))
+      assert.deepEqual(observed.at(-1),['later',4])
+    }finally{await f.close()}
+  })
+  await run('Follow-up ACK records group activity observed before the send receipt',async()=>{
+    const markers=[]
+    const f=receiverFixture({async acknowledge(_attempt,_result,seq){markers.push(seq)}})
+    try {
+      const session=await f.session('pending')
+      const delivery=f.receiver.receive(session)
+      while(!f.sent.length)await new Promise(resolve=>setTimeout(resolve,1))
+      await f.ordinary('intervening') // Captured even when not admitted.
+      f.release('pending');await delivery
+      assert.deepEqual(markers,[2])
+    }finally{await f.close()}
+  })
+  await run('Follow-up ACK marker is encoded with the delivery receipt',async()=>{
+    let sent
+    const client=new BackendClient('http://127.0.0.1:8765','x'.repeat(32),'fixture','epoch',async(_url,options)=>{
+      sent=JSON.parse(options.body);return Response.json(httpV2.python_to_ts.ack)
+    })
+    await client.acknowledge({requestId:'r',deliveryId:'d',partId:'0',attemptId:'a',gatewayEpoch:'epoch'},
+      {status:'success',messageId:'sent'},37)
+    assert.equal(sent.group_ingress_seq,37)
   })
   await run('G1 one latest group timer coalesces users and delivers through original intent/ACK owner',async()=>{
     const observed=[],candidates=[]

@@ -51,6 +51,7 @@ class ProactiveCandidate:
     reserved_cost_micro: int
     deferred: bool = False
     evaluation: int = 1
+    followup: object = None
 
 
 @dataclass
