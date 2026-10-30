@@ -2148,6 +2148,52 @@ class ChatAgentTests(Fixture, unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.backend.model_runtime.usage.get(attempts[1])['state'],'released')
         self.event(plan,'intent');self.event(plan,'ack')
 
+    async def test_invalid_call_then_policy_or_deadline_stops_next_tool(self):
+        from ournotes_bot.domain.model_calls import ToolCall
+        agent=self.backend.model_runtime.agent
+        original=agent.execute
+        for seq,condition in enumerate(('policy','deadline'),1):
+            with self.subTest(condition=condition):
+                executed=[]
+                async def execute(work,call,*args,**kwargs):
+                    executed.append(call.name)
+                    result=await original(work,call,*args,**kwargs)
+                    if condition=='policy':self.backend.settings=replace(self.backend.settings,chat_engine='legacy')
+                    else:work.content_deadline=0
+                    return result
+                self.client.request.reset_mock()
+                self.client.request.return_value=self.result(calls=(ToolCall('bad','unknown','{}'),
+                    ToolCall('good','catalog_info','{"kind":"help","query":""}')))
+                with patch.object(agent,'execute',side_effect=execute):
+                    plan,attempts=await self.prepare_native('/聊 查询资料',seq=seq)
+                self.assertEqual(executed,['unknown'])
+                self.assertEqual(self.client.request.await_count,1)
+                if condition=='policy':
+                    self.assertFalse(plan['send_allowed'])
+                else:self.assertEqual(plan['parts'][0]['business_status'],'context_expired')
+                self.assertFalse(any(r['state']=='reserved' for r in self.backend.model_runtime.usage.request_view(plan['request_id'])))
+                self.backend.settings=replace(self.backend.settings,chat_engine='agent')
+                self.backend.finish(self.backend.works[plan['delivery_id']],'aborted')
+
+    async def test_cancel_after_invalid_call_stops_next_tool_and_reply(self):
+        from ournotes_bot.domain.model_calls import ToolCall
+        agent=self.backend.model_runtime.agent;original=agent.execute;executed=[];cancelled=[]
+        async def execute(work,call,*args,**kwargs):
+            executed.append(call.name)
+            result=await original(work,call,*args,**kwargs)
+            cancelled.append(work)
+            self.backend.finish(work,'aborted')
+            return result
+        self.client.request.return_value=self.result(calls=(ToolCall('bad','unknown','{}'),
+            ToolCall('good','catalog_info','{"kind":"help","query":""}')))
+        with patch.object(agent,'execute',side_effect=execute):
+            with self.assertRaisesRegex(AssertionError,'native stopped: aborted'):await self.prepare_native('/聊 查询资料')
+        await asyncio.gather(*list(self.backend.models.tasks),return_exceptions=True)
+        self.assertEqual(executed,['unknown']);self.assertEqual(self.client.request.await_count,1)
+        self.assertFalse(cancelled[0].prepared)
+        self.assertFalse(any(r['state']=='reserved' for r in self.backend.model_runtime.usage.request_view(cancelled[0].request.request_id)))
+        self.assertFalse([row for rows in agent.context.scopes.values() for row in rows if row.role=='assistant'])
+
     async def test_partial_delivery_never_remembers_unsent_or_uncertain_text(self):
         from ournotes_bot.application.backend_protocol import PROTOCOL
         self.client.request.return_value=self.result('甲'*1400+'乙'*1400+'丙'*1000)
@@ -2966,6 +3012,27 @@ class ChatReviewRegressionTests(Fixture,unittest.IsolatedAsyncioTestCase):
     prepare_native=ChatAgentTests.prepare_native
     event=ChatAgentTests.event
     reviewed_fixture=NativeRuntimeTests.reviewed_fixture
+
+    async def test_revoked_evidence_after_invalid_call_stops_next_tool_and_reply(self):
+        from ournotes_bot.domain.model_calls import ToolCall
+        file=self.reviewed_fixture()
+        agent=self.backend.model_runtime.agent;original=agent.execute;executed=[]
+        async def execute(work,call,*args,**kwargs):
+            executed.append(call.name)
+            result=await original(work,call,*args,**kwargs)
+            if call.name=='unknown':file.unlink()
+            return result
+        self.client.request.side_effect=[
+            self.result(calls=(ToolCall('knowledge','knowledge_search','{"server":"jp","date":null,"version":null}'),)),
+            self.result(calls=(ToolCall('bad','unknown','{}'),ToolCall('good','catalog_info','{"kind":"help","query":""}'))),
+            self.result('不能输出的回答')]
+        with patch.object(agent,'execute',side_effect=execute):
+            plan,attempts=await self.prepare_native('/聊 红色规则是什么意思')
+        self.assertEqual(executed,['knowledge_search','unknown'])
+        self.assertEqual(len(attempts),2);self.assertEqual(self.client.request.await_count,2)
+        self.assertEqual(plan['parts'][0]['business_status'],'knowledge_revoked')
+        self.assertNotIn('不能输出的回答',str(plan))
+        self.assertFalse(any(r['state']=='reserved' for r in self.backend.model_runtime.usage.request_view(plan['request_id'])))
 
     async def test_revoked_quote_stops_before_model(self):
         from ournotes_bot.domain.model_calls import ToolCall
