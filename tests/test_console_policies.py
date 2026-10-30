@@ -26,6 +26,21 @@ def native_profile(**changes):
 
 
 class WeightedUsageTests(unittest.TestCase):
+    def test_cache_write_cost_and_late_usage_keep_legacy_usage_shape(self):
+        from fractions import Fraction
+        from ournotes_bot.domain.model_calls import Usage
+        profile=replace(self.profile,provider='openai',wire_profile='openai-responses-v1',model='gpt-6-luna',user_daily_limit=10**7,group_daily_limit=10**7)
+        self.ledger.reserve('r','a','u','g',profile,100)
+        self.ledger.start('a',profile)
+        self.ledger.settle('a',Usage())
+        self.assertEqual(Fraction(self.ledger.get('a')['reserved']),profile.reserve(100,profile.max_output_tokens))
+        usage=Usage(80,10,20,None,100,'known',60)
+        self.ledger.settle('a',usage)
+        row=self.ledger.get('a')
+        self.assertEqual(Fraction(row['cost']),Fraction(70*profile.price.input_rate+10*profile.price.cached_rate+20*profile.price.output_rate,10**6)+Fraction(60*profile.price.input_rate,4*10**6))
+        self.assertNotIn('input_written',json.loads(row['usage']))
+        self.assertFalse(self.ledger.settle('a',usage))
+
     def test_unknown_token_and_missing_action_are_not_free(self):
         from ournotes_bot.domain.model_calls import Usage,ProviderAction,ModelError
         profile=replace(self.profile,user_daily_limit=1000000,group_daily_limit=1000000,user_rate_requests=100,group_rate_requests=100)
@@ -157,7 +172,7 @@ class WeightedUsageTests(unittest.TestCase):
         self.ledger.start('a1',profile);self.ledger.close();self.now[0]+=301
         self.ledger=UsageLedger(self.path,'fixture',clock=lambda:self.now[0])
         row=self.ledger.get('a1')
-        self.assertEqual((row['state'],row['reserved'],row['billing_incomplete']),('settled',str(60000+self.ledger.token_hold(profile.price,Usage())),1))
+        self.assertEqual((row['state'],row['reserved'],row['billing_incomplete']),('settled',str(60000+profile.reserve(100,profile.max_output_tokens)),1))
         with self.assertRaisesRegex(ModelError,'quota_exceeded'):
             self.ledger.reserve('r2','a2','u','g',profile,100,action_budget=(('web_search',1,60000),))
         self.ledger.settle('a1',Usage(100,0,20,None,120,'known'),actions=(ProviderAction('web_search',1),))
@@ -838,6 +853,23 @@ class ModelAdminTests(unittest.IsolatedAsyncioTestCase):
         self.runtime.usage.reserve('r','at','u',None,native_profile(),100)
         self.assertEqual(self.runtime.usage.get('at')['state'],'reserved')
         self.assertEqual(path.read_bytes(),b'broken')
+
+
+class SearchLimitRegressionTests(unittest.TestCase):
+    def test_unprocessed_native_actions_after_limit_do_not_discard_answer(self):
+        from ournotes_bot.sources.model_provider import decode_attempt
+        profile=replace(native_profile(),provider='openai',wire_profile='openai-responses-v1')
+        for kind in ('search','open_page','find_in_page'):
+            payload={'status':'completed','max_tool_calls':1,'usage':{'input_tokens':10,'output_tokens':2,'total_tokens':12,'input_tokens_details':{'cached_tokens':0,'cache_write_tokens':8}},'output':[
+                {'id':'w1','type':'web_search_call','status':'completed','action':{'type':'search'}},
+                {'id':'w2','type':'web_search_call','status':'searching','action':{'type':kind}},
+                {'type':'message','role':'assistant','status':'completed','content':[{'type':'output_text','text':'公开答案'}]}]}
+            result=decode_attempt(json.dumps(payload),profile,max_tool_calls=1)
+            self.assertEqual(result.status,'ok')
+            self.assertEqual(result.native_calls,1)
+            self.assertEqual(result.provider_actions[0].count,1)
+            self.assertEqual(result.usage.input_written,8)
+            self.assertEqual(decode_attempt(json.dumps(payload),profile,max_tool_calls=2).status,'error')
 
 
 class NativeTransportTests(unittest.IsolatedAsyncioTestCase):
@@ -3499,6 +3531,39 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
         view=self.backend.admin.view(self.backend.ledger.request(plan['request_id']))
         self.assertEqual(view['delivery_reason'],'completed_without_output')
 
+    async def test_empty_reply_decision_generates_natural_text_with_same_caps(self):
+        self.snapshot=replace(self.snapshot,profile=replace(self.snapshot.profile,provider='openai',wire_profile='openai-responses-v1'))
+        bodies=[]
+        responses=iter([self.result('{"participation":"reply","text":"","delay_seconds":null}'),self.result('终于打顺了，这一下真痛快')])
+        async def respond(profile,body,**kwargs):
+            bodies.append(json.loads(json.dumps(body)))
+            return next(responses)
+        self.client.request.side_effect=respond
+        value=self.observation('这段鼓终于练顺了');self.tick+=1.6
+        plan,attempts,_=await self.candidate(value)
+        self.assertEqual(len(attempts),2)
+        self.assertEqual(plan['parts'][0]['text'],'终于打顺了，这一下真痛快')
+        self.assertEqual(bodies[0]['text']['format']['schema']['properties']['text']['enum'],[''])
+        self.assertNotIn('text',bodies[1])
+        self.assertEqual([b['max_output_tokens'] for b in bodies],[self.snapshot.profile.max_output_tokens]*2)
+        self.assertNotIn('participation',bodies[1]['input'][0]['content'])
+
+    async def test_staged_reply_keeps_six_call_budget_after_tools(self):
+        from ournotes_bot.domain.model_calls import ToolCall
+        self.snapshot=replace(self.snapshot,profile=replace(self.snapshot.profile,provider='openai',wire_profile='openai-responses-v1'))
+        bodies=[]
+        responses=iter([self.result(calls=(ToolCall('c'+str(i),'catalog_info','{"kind":"help","query":""}'),)) for i in range(4)]+[
+            self.result('{"participation":"reply","text":"","delay_seconds":null}'),self.result('可以从帮助里的入口继续查')])
+        async def respond(profile,body,**kwargs):
+            bodies.append(json.loads(json.dumps(body)));return next(responses)
+        self.client.request.side_effect=respond
+        value=self.observation('这个工具怎么用');self.tick+=1.6
+        plan,attempts,_=await self.candidate(value)
+        self.assertEqual(len(attempts),6)
+        self.assertEqual(plan['parts'][0]['business_status'],'success')
+        self.assertNotIn('tools',bodies[-2]);self.assertNotIn('tools',bodies[-1])
+        self.assertNotIn('text',bodies[-1])
+
     async def structured_decision(self,decision):
         self.snapshot=replace(self.snapshot,profile=replace(self.snapshot.profile,provider='openai',
             wire_profile='openai-responses-v1'))
@@ -5305,7 +5370,7 @@ class ChatServiceJobsTests(unittest.TestCase):
         with self.assertRaisesRegex(ServiceError,'chat_service_cost_limit'):
             self.budget.check(policy,'summary',self.profile,self.request(source='next'),2)
 
-    def test_unknown_restart_keeps_full_upper_bound_after_ledger_reconcile(self):
+    def test_unknown_restart_keeps_request_upper_bound_after_ledger_reconcile(self):
         from ournotes_bot.application.chat_jobs import ServiceBudget, maximum_cost_micro, ServiceError
         from ournotes_bot.application.usage_ledger import UsageLedger
         self.attempt()
@@ -5314,8 +5379,9 @@ class ChatServiceJobsTests(unittest.TestCase):
         self.assertNotEqual(self.ledger.get('attempt-source')['reserved'],'0')
         self.budget=ServiceBudget(self.ledger,'instance','app',clock=lambda:self.now[0])
         permit=self.budget.check(self.save(),'summary',self.profile,self.request(source='next'),1)
-        self.assertGreaterEqual(permit.spent_cost_micro,maximum_cost_micro(self.profile))
-        self.data['groups']['group']['summary']['max_cost_micro_per_hour']=int(maximum_cost_micro(self.profile))
+        expected=self.profile.reserve(100,self.profile.max_output_tokens)*self.profile.price.reference_rate/1_000_000
+        self.assertEqual(permit.spent_cost_micro,expected)
+        self.data['groups']['group']['summary']['max_cost_micro_per_hour']=int(expected)
         with self.assertRaisesRegex(ServiceError,'chat_service_cost_limit'):
             self.budget.check(self.save(),'summary',self.profile,self.request(source='next'),1)
         self.now[0]+=3600

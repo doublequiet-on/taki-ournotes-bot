@@ -90,7 +90,9 @@ def usage_from(raw, profile):
             miss = count(raw.get('prompt_cache_miss_tokens'))
             if miss is not None and miss+cached != inp:
                 return Usage()
-        return Usage(inp,cached,out,reasoning,total,status)
+        written=count(details.get('cache_write_tokens',0))
+        if written is None:return Usage()
+        return Usage(inp,cached,out,reasoning,total,status,written)
     except ModelError:
         return Usage()
 
@@ -115,7 +117,7 @@ def decode_attempt(raw, profile, *, http_status=200, max_tool_calls=None):
                 ident=item.get('id');action=item.get('action')
                 if (item.get('status')=='searching' and completed==max_tool_calls
                         and isinstance(ident,str) and ident and ident not in ids
-                        and isinstance(action,dict) and action.get('type')=='search'):
+                        and isinstance(action,dict) and action.get('type') in ('search','open_page','find_in_page')):
                     ids.add(ident);continue
                 if item.get('status')=='completed':completed+=1
                 if isinstance(ident,str):ids.add(ident)
@@ -298,8 +300,11 @@ class NativeClient:
                         if size>100000: return AttemptResult('error',error_code='model_response_too_large')
                         chunks.append(chunk)
                     return decode_attempt(b''.join(chunks),profile,http_status=response.status,max_tool_calls=body.get('max_tool_calls'))
-        except (aiohttp.ClientError, asyncio.TimeoutError):
-            return AttemptResult('error',error_code='provider_unavailable')
+        except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
+            kind=('disconnected' if isinstance(exc,aiohttp.ServerDisconnectedError) else
+                  'timeout' if isinstance(exc,asyncio.TimeoutError) else
+                  'connect' if isinstance(exc,aiohttp.ClientConnectorError) else 'transport')
+            return AttemptResult('error',error_code='provider_unavailable',transport_error=kind)
 
     async def price(self, profile):
         if profile.provider!='openrouter': return replace(profile.price,estimated=True)

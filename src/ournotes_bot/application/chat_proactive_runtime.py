@@ -24,7 +24,7 @@ class ProactiveChat:
         return {'type':'json_schema','name':'proactive_participation','strict':True,'schema':{
             'type':'object','properties':{
                 'participation':{'type':'string','enum':['reply','skip','defer']},
-                'text':{'type':'string'},'delay_seconds':{'type':['integer','null']}},
+                'text':{'type':'string','enum':['']},'delay_seconds':{'type':['integer','null']}},
             'required':['participation','text','delay_seconds'],'additionalProperties':False}}
 
     def __init__(self,agent):
