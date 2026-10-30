@@ -362,9 +362,22 @@ class ChatAgent:
             prompt+='\n人工批准人格档案：\n'+persona['prompt']
         if work.proactive is not None:
             prompt+='\n这是未点名的群聊观察。由你判断此刻回复是否能接住谈话、补充信息或回应情绪；别人已回答、话题变化或正在等人时可略过/暂缓。可以先用已接入只读工具，工具完成后仍须决定。最终只输出JSON：回复用{"participation":"reply","text":"自然回复正文"}；略过用{"participation":"skip"}；暂缓用{"participation":"defer","delay_seconds":2}（2至5秒）。不需要为普通交流找事实证据。'
+        inherited_leases=()
+        if work.proactive is None and runtime.backend.knowledge is not None:
+            scope_key=self.context.scope(work.request)
+            saved=self.knowledge_scopes.get((scope_key,work.request.user_id))
+            recent={row.message_id for row in self.context.scopes.get(scope_key,())}
+            if saved and saved[0] in recent:
+                rows=self.store.read(work.request.scope,[saved[0]])['messages']
+                if rows and runtime.backend.knowledge.validate_current(saved[2]):
+                    scope=saved[1]
+                    prompt+='\n当前发言者近期知识范围候选：'+json.dumps(
+                        dict(server=scope.server,date=scope.date,version=scope.version),ensure_ascii=False,separators=(',',':'))+'。仅相关追问时参考，新问题独立判断；切服时判断是否比较相同条件。'
+                    self.bind_memory(work,rows)
+                    inherited_leases=saved[2]
         self.bind_memory(work,summary_rows)
         messages=[{'role':'system','content':prompt},*await self.image_messages(work,history,deadline-self.budget.final_seconds)]
-        leases=tuple(snapshot.pages[work.anchor.page].evidence) if work.anchor else ()
+        leases=(*inherited_leases,*(tuple(snapshot.pages[work.anchor.page].evidence) if work.anchor else ()))
         runtime.check(work,deadline,leases)
         seen={}
         output_ids={}

@@ -3025,6 +3025,42 @@ class ChatReviewRegressionTests(Fixture,unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(knowledge.retrieve.call_count,count)
                 self.event(second,'intent');self.event(second,'ack')
 
+    async def test_scope_candidate_survives_input_history_trimming_only_for_speaker(self):
+        from types import SimpleNamespace
+        from ournotes_bot.domain.knowledge import EvidenceLease,KnowledgeScope
+        from ournotes_bot.domain.model_calls import ToolCall
+        knowledge=Mock();knowledge.validate_current.return_value=True
+        knowledge.prepare_evidence.return_value={'text':'夹具'}
+        knowledge.retrieve.return_value=SimpleNamespace(code='ok',lease=EvidenceLease('fixture',KnowledgeScope(),()))
+        self.backend.knowledge=knowledge
+        bodies=self.capture_native_bodies()
+        self.client.request.side_effect=[self.result(calls=(ToolCall('first','knowledge_search',
+            '{"server":"intl","date":"2020-01-01","version":null}'),)),self.result('已回答')]
+        first,_=await self.prepare_native('/聊 国际服2020-01-01规则')
+        self.event(first,'intent');self.event(first,'ack')
+        old_id='accepted-'+first['request_id'][:8]
+        # Seed unrelated exchanges while keeping the old reply in the recent store.
+        for index in range(12):
+            value=self.request('padding'+str(index),index+2)
+            request=Request.parse(value,'fixture','app',self.now)
+            work=SimpleNamespace(request=request,delivery='padding-'+str(index),model_snapshot=self.snapshot)
+            row=dict(message_id=request.message_id,speaker_id='other',text='旧讨论材料'*110,
+                     timestamp_ms=request.timestamp_ms,role='user',reply_to=None,display_name='')
+            self.backend.model_runtime.agent.store.begin(work,[dict(role='user',content=json.dumps(row))])
+            self.backend.model_runtime.agent.store.event(work.delivery,'ack','delivery',dict(status='success',allow_context=True,
+                message_id='padding-reply'+str(index),text='已送达'))
+        self.client.request.side_effect=[self.result(calls=(ToolCall('next','knowledge_search',
+            '{"server":"jp","date":"2020-01-01","version":null,"followup":true}'),)),self.result('已比较')]
+        plan,_=await self.prepare_native('/聊 那日服呢',seq=30)
+        first_body=bodies[-2]
+        self.assertIn('"date":"2020-01-01"',first_body['messages'][0]['content'])
+        self.assertFalse(any(old_id in str(row) for row in first_body['messages'][1:]))
+        self.assertEqual(knowledge.retrieve.call_args.args[1].date,'2020-01-01')
+        self.event(plan,'intent');self.event(plan,'ack')
+        self.current_user='another';self.client.request.side_effect=None;self.client.request.return_value=self.result('好')
+        await self.prepare_native('/聊 那日服呢',seq=31)
+        self.assertNotIn('当前发言者近期知识范围候选',bodies[-1]['messages'][0]['content'])
+
     async def test_revoked_quote_stops_before_model(self):
         from ournotes_bot.domain.model_calls import ToolCall
         file=self.reviewed_fixture()
@@ -3038,6 +3074,63 @@ class ChatReviewRegressionTests(Fixture,unittest.IsolatedAsyncioTestCase):
         plan,attempts=await self.prepare_native(value['body'],seq=2)
         self.assertEqual(attempts,[])
         self.assertEqual(plan['parts'][0]['business_status'],'knowledge_revoked')
+
+    async def test_real_knowledge_scope_requires_visible_evidence_and_successful_ack(self):
+        from ournotes_bot.domain.model_calls import ToolCall
+        file=self.reviewed_fixture()
+        agent=self.backend.model_runtime.agent
+        def responses():
+            return [self.result(calls=(ToolCall('k','knowledge_search',
+                '{"server":"jp","date":null,"version":null,"query":"红色"}'),)),self.result('工程夹具')]
+        self.client.request.side_effect=responses()
+        first,_=await self.prepare_native('/聊 日服红色规则')
+        self.event(first,'intent');self.event(first,'ack')
+        key=(agent.context.scope(self.backend.works[first['delivery_id']].request),'u1')
+        saved=agent.knowledge_scopes[key]
+        self.assertTrue(saved[2][0].chunks)
+        self.assertTrue(self.backend.knowledge.validate_current(saved[2]))
+        file.write_text(file.read_text(encoding='utf-8')+'\nchanged',encoding='utf-8')
+        self.assertFalse(self.backend.knowledge.validate_current(saved[2]))
+        bodies=self.capture_native_bodies()
+        self.client.request.side_effect=[self.result(calls=(ToolCall('follow','knowledge_search',
+            '{"server":"jp","date":null,"version":null,"followup":true}'),)),self.result('请再说明')]
+        second,_=await self.prepare_native('/聊 那LUCK呢',seq=2)
+        self.assertNotIn('当前发言者近期知识范围候选',bodies[-2]['messages'][0]['content'])
+        tool_result=next(json.loads(row['content']) for row in bodies[-1]['messages'] if row['role']=='tool')
+        self.assertEqual(tool_result['status'],'knowledge_context_unavailable')
+        self.event(second,'intent');self.event(second,'ack')
+
+    async def test_real_knowledge_scope_not_cached_after_budget_discard_or_failed_ack(self):
+        from ournotes_bot.domain.model_calls import ToolCall
+        from ournotes_bot.application.backend_protocol import PROTOCOL
+        self.reviewed_fixture()
+        agent=self.backend.model_runtime.agent
+        runtime=self.backend.model_runtime
+        def responses():
+            return [self.result(calls=(ToolCall('k','knowledge_search',
+                '{"server":"jp","date":null,"version":null,"query":"红色"}'),)),self.result('工程夹具')]
+        original=runtime.input_bound
+        def bound(work,messages,tools,**kwargs):
+            if any(row.get('role')=='tool' and '工程夹具' in str(row.get('content')) for row in messages):
+                return work.model_snapshot.profile.max_input_tokens
+            return original(work,messages,tools,**kwargs)
+        bodies=self.capture_native_bodies()
+        self.client.request.side_effect=responses()
+        with patch.object(runtime,'input_bound',side_effect=bound), patch.object(self.backend.knowledge,'retrieve',wraps=self.backend.knowledge.retrieve) as retrieve:
+            discarded,_=await self.prepare_native('/聊 日服红色规则')
+        self.assertEqual(retrieve.call_count,1)
+        result=next(json.loads(row['content']) for row in bodies[-1]['messages'] if row['role']=='tool')
+        self.assertEqual(result['reason'],'tool_result_input_budget')
+        self.event(discarded,'intent');self.event(discarded,'ack')
+        self.assertFalse(agent.knowledge_scopes)
+        self.current_user='ack-failure'
+        self.client.request.side_effect=responses()
+        failed,_=await self.prepare_native('/聊 日服红色规则',seq=2)
+        self.assertIsNotNone(self.backend.works[failed['delivery_id']].knowledge_scope)
+        self.event(failed,'intent')
+        self.backend.apply_event(failed['delivery_id'],dict(protocol=PROTOCOL,request_id=failed['request_id'],
+            plan_version=1,gateway_epoch='e1',event='ack',part_id=failed['parts'][0]['id'],attempt_id='a1',result='failure',message_id=None))
+        self.assertFalse(agent.knowledge_scopes)
 
     async def test_capability_revoked_during_first_response_blocks_native_search(self):
         from ournotes_bot.application.chat_capabilities import WebCapability
