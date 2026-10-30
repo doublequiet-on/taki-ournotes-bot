@@ -8,7 +8,7 @@ from dataclasses import dataclass, replace
 
 from ..query.contracts.info import InfoAnswer, InfoRow, row_text
 from . import readable_pages, rotating_layout
-from .haneoka_theme import Canvas, ACCENT, INK, MUTED, SOFT, SURFACE, frame, lines, prepare_assets
+from .haneoka_theme import Canvas, ACCENT, INK, MUTED, SOFT, SURFACE, frame, lines, prepare_assets, icon
 from .image_output import ImageBudgetError, reclaim_after_render
 
 WIDTH = 1080
@@ -36,6 +36,8 @@ class _Block:
     show_image: bool = False
     children: tuple = ()
     attribute_url: str = ""
+    icons: tuple = ()
+    game_icon: str = ''
 
 
 def _picture_size(kind):
@@ -63,13 +65,30 @@ def _row(row, *, width=None, body=None, title=True, image=True, command=True, co
     art_h = _picture_size(row.image_kind)[1] if image and (row.image_url or force_image) else 0
     text = row_text(row) if body is None else "\n".join(v for v in (
         row.title if title else "", row.label if title else "", *body_lines, row.command if command else "") if v)
-    return _Block(max(art_h, text_h, 40) + 40, text, title_lines, label_lines,
+    return _Block(max(art_h, text_h, 40) + 40 + (60 if any(row.icons) else 0), text, title_lines, label_lines,
                   body_lines, command_lines, row.image_url if image else "", row.image_kind,
-                  row.rarity, show_image=image and bool(row.image_url or force_image),attribute_url=row.attribute_url)
+                  row.rarity, show_image=image and bool(row.image_url or force_image),attribute_url=row.attribute_url,icons=row.icons,game_icon=row.game_icon)
 
 
 def _row_blocks(row, limit, *, force_image=False, show_command=True):
     """Keep a list item whole when possible; split unusually long prose by lines."""
+    if row.kind == 'bonus':
+        art_w,art_h=(168,96) if row.image_kind=='wide' else (96,128) if row.image_kind=='portrait' else (96,96)
+        title = lines(row.title, 924-(art_w+24 if row.image_url else 0), 30, True)
+        children = []
+        for table_row in row.table:
+            label, *cells = table_row
+            # A table is typography only: every captured label/value is retained.
+            wrapped = tuple(tuple(lines(value, 126, 26)) for value in cells)
+            if len(cells) != 5:
+                break
+            children.append(_Block(max(len(lines(label, 230, 26)), max(map(len, wrapped))) * 36 + 24,
+                                   title=lines(label, 230, 26), children=wrapped))
+        else:
+            header=max(len(title)*44,art_h if row.image_url else 0)+24
+            height = header + sum(child.height for child in children) + 44
+            if children and height <= limit:
+                return (_Block(height, row_text(row), title=title, kind='bonus', children=tuple(children),image_url=row.image_url,image_kind=row.image_kind),)
     whole = _row(row, force_image=force_image, command=show_command)
     if whole.height <= limit:
         return (whole,)
@@ -120,7 +139,51 @@ def _blocks(view, limit):
         return rotating_layout.blocks(view, limit, _row_blocks)
     result = []
     rows=view.rows
-    if view.layout=='character':
+    if view.presentation in {'arena', 'player'}:
+        metrics_done=False
+        for row in rows:
+            if row.kind=='metric':
+                if not metrics_done:
+                    metrics=tuple(r for r in rows if r.kind=='metric')
+                    for start in range(0,len(metrics),2):
+                        children=tuple(replace(_row(r,width=420),kind='card-body') for r in metrics[start:start+2])
+                        height=max(b.height for b in children)+12
+                        if height>limit:raise ImageBudgetError('Player metric exceeds readable budget')
+                        result.append(_Block(height,'\n'.join(row_text(r) for r in metrics[start:start+2]),
+                                             kind='metric-pair',children=children))
+                    metrics_done=True
+                continue
+            if row.kind == 'standing' and row.table:
+                rank, name = row.table[0]
+                ranks = lines(rank,88,24,True)
+                names = lines(name, 550, 30, True)
+                points = lines(row.body[0], 250, 30, True)
+                identity = tuple(line for value in row.body[1:] for line in lines(value, 800, 24))
+                height = max(max(len(names)*42, len(points)*42) + len(identity)*34 + 38,len(ranks)*32+44)
+                if height <= limit:
+                    result.append(_Block(height, row_text(row), title=ranks, label=names,
+                                         body=identity, command=points, kind='standing',game_icon=row.game_icon))
+                    continue
+            child = _row(row, width=924-(_picture_size(row.image_kind)[0]+28 if row.image_url else 0))
+            if row.kind == 'showcase':
+                parts = []
+                for index in range(0,len(row.body),2):
+                    parts.append(tuple(lines(value, 312, 28) for value in row.body[index:index+2]))
+                height = max(len(child.title)*44 + sum(max(map(len,p))*40+18 for p in parts) + 48,
+                             len(child.title)*44+352)
+                if height <= limit:
+                    result.append(_Block(height,row_text(row),title=child.title,
+                        image_url=row.image_url,image_kind='portrait',kind='showcase',children=tuple(parts),game_icon=row.game_icon))
+                    continue
+            if child.height + 12 <= limit:
+                result.append(_Block(child.height+12,row_text(row),kind='fact-card',
+                                     children=(replace(child,kind='card-body'),)))
+            else:
+                result.extend(_row_blocks(row,limit))
+        if view.hero_url:
+            result.append(_Block(328,image_url=view.hero_url,kind='hero'))
+        rows=()
+    elif view.layout=='character':
         facts=tuple(row for row in rows if row.kind=='fact')
         fact_width=426 if view.hero_url else 796
         measured=tuple(_Block(max(len(lines(row.title,156,26))*36,
@@ -170,6 +233,60 @@ def _draw_block(c, block, y, load, *, left=LEFT, right=RIGHT):
     if isinstance(block, rotating_layout.Panel):
         rotating_layout.draw(c, block, y, load)
         return
+    if block.kind=='metric-pair':
+        for i,child in enumerate(block.children):
+            x=left+i*504
+            c.box((x,y+2,x+468,y+block.height-12),'#ffffff',20)
+            _draw_block(c,child,y+4,load,left=x+24,right=x+444)
+        return
+    if block.kind in {'fact-card','showcase','bonus'}:
+        c.box((left,y+2,right,y+block.height-12),'#ffffff',20)
+        if block.kind=='fact-card':
+            _draw_block(c,block.children[0],y+4,load,left=left+24,right=right-24)
+            return
+        cy=y+28
+        tx=left+24
+        if block.kind=='bonus' and block.image_url:
+            w,h=(168,96) if block.image_kind=='wide' else (96,128) if block.image_kind=='portrait' else (96,96)
+            c.paste(load(block.image_url,_picture_size(block.image_kind)),tx,cy,w,h,True,radius=6)
+            tx+=w+24
+        for value in block.title:
+            c.text(tx,cy+18,value,30,ACCENT,True);cy+=44
+        if block.kind=='bonus' and block.image_url:cy=max(cy,y+28+h)
+        if block.kind=='bonus':cy+=24
+        if block.kind=='showcase':
+            x=left+24
+            if block.image_url:
+                c.paste(load(block.image_url,(228,304)),x,cy,228,304,True,radius=10)
+                badge=icon(block.game_icon,96,64) if block.game_icon else None
+                if badge is not None:c.paste(badge,x+132,cy+240,96,64,True)
+            else:
+                c.box((x,cy,x+156,cy+180),SURFACE,12)
+                c.text(x+78,cy+90,'卡面未获取',20,MUTED,align='center')
+            for pair in block.children:
+                for i,values in enumerate(pair):
+                    for j,value in enumerate(values):c.text(left+276+i*324,cy+20+j*40,value,28)
+                cy+=max(map(len,pair))*40+18
+        else:
+            for child in block.children:
+                c.box((left+270,cy-4,right-24,cy+child.height-16),SURFACE,10)
+                for i,value in enumerate(child.title):c.text(left+24,cy+18+i*36,value,26,MUTED)
+                for i,values in enumerate(child.children):
+                    for j,value in enumerate(values):c.text(left+282+i*130,cy+18+j*36,value,26,INK)
+                cy+=child.height
+        return
+    if block.kind=='standing':
+        c.box((left,y+2,right,y+block.height-8),'#ffffff',14)
+        badge=icon(block.game_icon,84,84) if block.game_icon else None
+        if badge is not None:c.paste(badge,left+22,y+(block.height-84)/2,84,84,True)
+        else:
+            for i,value in enumerate(block.title):
+                c.text(left+64,y+(block.height-6)/2+(i-(len(block.title)-1)/2)*32,value,24,ACCENT,True,'center')
+        for i,value in enumerate(block.label):c.text(left+138,y+34+i*42,value,30,INK,True)
+        for i,value in enumerate(block.command):c.text(right-24,y+34+i*42,value,30,ACCENT,True,'right')
+        cy=y+max(len(block.label),len(block.command))*42+24
+        for i,value in enumerate(block.body):c.text(left+138,cy+i*34,value,24,MUTED)
+        return
     if block.kind=='profile':
         if block.image_url:
             h=min(860,block.height-24)
@@ -207,7 +324,7 @@ def _draw_block(c, block, y, load, *, left=LEFT, right=RIGHT):
         for i, value in enumerate(block.body):
             c.text(LEFT, y + 18 + i * 34, value, 24, MUTED)
         return
-    c.line(left, y, right, '#e1dce7')
+    if block.kind!='card-body':c.line(left, y, right, '#e1dce7')
     x, cy = left, y + 20
     if block.show_image:
         w, h = _picture_size(block.image_kind)
@@ -236,6 +353,10 @@ def _draw_block(c, block, y, load, *, left=LEFT, right=RIGHT):
         for value in block.command:
             c.text(x, cy + 17, value, 24, ACCENT)
             cy += 34
+    for i,url in enumerate(block.icons):
+        if url:
+            if '/Icon_gekisou_' in url:c.box((x+i*60-3,y+block.height-63,x+i*60+51,y+block.height-9),'#33333d',8)
+            c.paste(load(url,(48,48)),x+i*60,y+block.height-60,48,48,True)
 
 
 @reclaim_after_render
@@ -269,14 +390,19 @@ def render_info(answer: InfoAnswer, *, load=None, try_full_activity=False) -> tu
                     badges.update(block.badges)
                     return
                 if block.image_url:
-                    if block.kind=='profile':size=(330,min(860,block.height-24))
+                    if block.kind=='showcase':size=(228,304)
+                    elif block.kind=='profile':size=(330,min(860,block.height-24))
                     elif block.kind=='hero':size=(972,block.height-48)
                     else:size=_picture_size(block.image_kind)
                     requests.add((block.image_url,size))
+                for url in block.icons:
+                    if url:requests.add((url,(48,48)))
+                if block.game_icon:badges.add(block.game_icon)
                 if block.attribute_url:requests.add((block.attribute_url,(32,32)))
                 rarity={2:'R',3:'SR',4:'SSR',20:'BD',10:'EX'}.get(block.rarity)
                 if rarity:badges.add(f'RarityIconCenter_{rarity}.png')
                 for child in block.children:
+                    if not isinstance(child,_Block):continue
                     if block.kind=='directory':
                         if child.image_url:requests.add((child.image_url,(120,180) if child.image_kind=='portrait' else (120,120)))
                     else:collect(child)
@@ -323,7 +449,7 @@ def render_info(answer: InfoAnswer, *, load=None, try_full_activity=False) -> tu
                     parts = (readable_pages.ImagePart(raw, 0, len(blocks)),)
             if not parts:
                 parts = readable_pages.render_parts(heights, WIDTH, fixed, paint,
-                                                    max_height=2800 if view.presentation in {'activity','gacha'} else None)
+                                                    max_height=None if view.layout=='activity-summary' else 2400 if view.presentation in {'arena','player'} else 2800 if view.presentation in {'activity','gacha'} else None)
             for part in parts:
                 text = '\n'.join(v for v in (view.title, view.subtitle,
                     *(block.text for block in blocks[part.start:part.stop])) if v)

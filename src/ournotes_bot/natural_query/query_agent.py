@@ -50,7 +50,7 @@ TERMINAL_CACHE_TTL_SECONDS = 300.0
 CACHE_CAPACITY = 128
 
 _DIRECT_COMMAND = re.compile(
-    r"^[/／]?(?:查活动|查卡池|查角色|查曲|查谱面|查谱|查卡|查角色卡|查卡面|查留影卡面|查留影卡|查支援卡面|查SNAP卡面|查SNAP|SNAP|查支援卡|支援卡|song|chart|card|support)(?:\s+|$)", re.I,
+    r"^[/／]?(?:查竞技场|查玩家|查活动|查卡池|查角色|查曲|查谱面|查谱|查卡|查角色卡|查卡面|查留影卡面|查留影卡|查支援卡面|查SNAP卡面|查SNAP|SNAP|查支援卡|支援卡|song|chart|card|support)(?:\s+|$)", re.I,
 )
 _UNSUPPORTED_TERMS = re.compile(
     r"推荐|最强|排行|攻略|预测|档线|代练|代肝|账号|抽卡建议|编成|怎么打|如何打|"
@@ -370,6 +370,17 @@ class QueryAgent:
             self._remember_state(question, state)
             return outcome
 
+        from .on_query import public_information_command
+        public_command = (question if re.match(r'^[/／]?(?:查竞技场|查玩家)(?:\s|$)', question)
+                          else public_information_command(question))
+        if public_command is not None:
+            selected = resolve_command(public_command, repository)
+            text = handle_command(public_command, repository, resolved=selected) or UNSUPPORTED
+            state.final_code = self._command_code(selected)
+            state.local_parsed = selected is not None and state.final_code != OutcomeCode.INVALID_ARGUMENTS
+            self._remember_state(question, state)
+            return AgentOutcome(text, selected, state)
+
         cached = self._cache_get(question)
         if cached is not None and not (native and state.natural_mode == 'model'
                                       and cached.code == OutcomeCode.UNKNOWN_ENTITY
@@ -546,6 +557,12 @@ class QueryAgent:
     def _command_code(selected):
         if selected is None:
             return OutcomeCode.UNSUPPORTED
+        if selected.status in {'pending', 'rate_limited'}:
+            return OutcomeCode.TEMPORARY_FAILURE
+        if selected.status == 'invalid_source':
+            return OutcomeCode.DATA_UNAVAILABLE
+        if selected.status == 'not_found':
+            return OutcomeCode.UNKNOWN_ENTITY
         # Information executors use no_results for a valid empty catalog query.
         return OutcomeCode.EMPTY if selected.status == "no_results" else OutcomeCode(selected.status)
 

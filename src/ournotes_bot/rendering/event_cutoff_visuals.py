@@ -9,7 +9,6 @@ import hashlib
 import io
 import math
 import os
-import re
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, replace
@@ -19,7 +18,7 @@ from .image_output import reclaim_after_render
 
 from .. import visuals as v
 from ..query.event_cutoff_query import CutoffAnswer, event_status, song_period_lines
-from ..sources.moenotes_events import ASSETS, SERVERS, SourceError, display_time, zone_label
+from ..sources.moenotes_events import SERVERS, SourceError, display_time, zone_label, is_event_artwork_url
 
 WIDTH = 720
 PAGE_HEIGHT = 2300  # At 2x this remains under the shared pixel/edge budgets.
@@ -37,7 +36,6 @@ def load_artwork(source, event, urls: tuple[str, ...]) -> dict[str, Image.Image 
     from urllib.parse import parse_qs, urlsplit
     from ..sources.haneoka.catalog_assets import is_catalog_asset
     from ..sources.haneoka.transport import public_get
-    prefix = f"{ASSETS}/{event.server}/{SERVERS[event.server][3]}/"
     def decode(raw):
         with Image.open(io.BytesIO(raw)) as original:
             if original.width * original.height > 8_000_000:
@@ -52,9 +50,7 @@ def load_artwork(source, event, urls: tuple[str, ...]) -> dict[str, Image.Image 
                 parse_qs(urlsplit(url).query)['release'][0] != event.metadata_version):
             return None
         if not haneoka:
-            path = url[len(prefix):] if url.startswith(prefix) else ""
-            if not (re.fullmatch(r"(?:Story/Banner/Chapter|Image/Jacket)/([A-Za-z0-9_-]{1,120})/\1\.webp", path)
-                    or re.fullmatch(r"Image/Event/[0-9]{1,3}/Banner/([A-Za-z0-9_-]{1,120})/\1\.webp", path)):
+            if not is_event_artwork_url(url,event.server):
                 return None
         if haneoka:
             prepared=v.runtime_data_dir()/'haneoka-asset-cache'/(hashlib.sha256(url.encode()).hexdigest()+'.png')

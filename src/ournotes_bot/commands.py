@@ -26,12 +26,12 @@ from .bot_info import INTRO
 
 
 HELP_TEXT = """Taki · Our Notes 日服资料查询
-群内查询请先 @机器人；查询回复会 @发送者。启用聊天后，/聊 或叫立希、taki 无需 @，聊天回复不 @。
+群内查询先 @机器人，回复 @发送者；启用聊天后，/聊 或叫立希、taki 无需 @，回复不 @。
 /查曲 [歌名/ID/乐队] [颜色] [激奏=类型] [EX] [lv<=25] [页N]：歌曲列表
 颜色：红、蓝、绿、黄、紫；例 /查曲 颜色=蓝/绿
 激奏=JUST 表示包含；激奏=纯JUST 表示全段同类；激奏=混合；激奏=JUST/JUST/COMBO 按顺序匹配
 /查谱面 歌名或ID [难度]：查看等级与 Note 数；100001 可简写为 1
-/查榜线 [jp/hk/kr/en] [id1或活动="名称"] [歌名或歌曲ID=100001] [50或20-40] [仅数值]：顺序不限，默认日服全部歌曲；无排名看三曲合图趋势，有排名看分数表；50看40～60名，20-40看区间，50-50查一名，1-100查完整榜；id1查活动1，裸数字仍是排名；指定活动读取本地历史末次观测，非确认终榜
+/查榜线 [jp/hk/kr/en] [id1或活动="名称"] [歌名或歌曲ID=100001] [50或20-40] [仅数值]：顺序不限，默认日服全部歌曲；无排名看趋势，有排名看表。50查40～60，20-40查区间，50-50查一名，1-100全榜；id1查往期本地末次观测，非确认终榜，裸数仍为排名
 Haneoka 未确认原始歌曲序号，请用歌名或歌曲ID；旧T50也查附近，旧多T排名最多五个
 /查活动 [jp/hk/kr/en]：当前／最近活动详情；/查活动 列表、/查活动 ID或名称 查询日服收录资料
 /查卡池 [ID或名称]：日服当前卡池与UP卡；/查卡池 历史 查看已结束卡池
@@ -46,16 +46,15 @@ Haneoka 未确认原始歌曲序号，请用歌名或歌曲ID；旧T50也查附�
 /问、/ask：兼容 /查 的旧查询入口
 /查 想查的内容：歌曲、谱面、成员卡和SNAP；活动、卡池和人物资料支持本地固定问法（其他复杂问法需配置 AI）
 需要 AI 的问题会发往配置的 AI 服务；短期上下文最多保留 10 分钟。
-例：/查 蓝色SSR或SR成员卡；/查 高松灯的生日卡；/查 当前的卡池有哪些
 /查 迷星叫 EX 物量：等级、Note、颜色、激奏、难度、数量及明确卡牌类型与ID的技能可本地短答
 /继续：续发未发送完的结果；/详情：查看单项或已选结果；列表详情请按ID查询
 自然续查支持 /查 第 N 个、看详情、换成 EX；10 分钟未成功续查失效，请单独发送
 /数据状态：查看最近同步、缓存、可统计的未确认项与最近新增
-/调试数据：查看本次进程的 AI API 成功调用与有效检索次数
+/调试数据：本进程 AI API 成功调用与有效检索次数
 /帮助：查看本说明
 /介绍：了解 Taki 与数据来源
 示例：/查曲 蓝色 MyGO EX 激奏=JUST；/查 哪些歌是纯COMBO；/查谱面 100001 EX
-歌曲颜色／激奏来自 Haneoka 日服缓存；未获取与旧缓存会明确标注。"""
+歌曲颜色／激奏来自 Haneoka 日服；未获取与旧缓存分别标注。"""
 HELP_TEXTS = {
     "zh": HELP_TEXT + "\n/语言：查看英文和日文指令",
     "en": """Our Notes commands
@@ -79,6 +78,8 @@ Example: /song mygo 27, /chart 100001 EXPERT, /card tomori""",
 /状態：プロセスとデータの状態  /言語：言語案内  /ヘルプ：この案内
 例：/曲 mygo 27、/譜面 100001 EXPERT、/カード ともり""",
 }
+HELP_TEXT += '\n/查竞技场 [服] [乐队] [总览/日程/曲池/段位/奖励/榜单/人数] [赛季=N] [排名=1-20]\n/查玩家 玩家ID [服] [名片 [页N]]\n/查活动 [服或日服ID] 加成/奖励/任务/卡池'
+HELP_TEXTS['zh'] = HELP_TEXT + '\n/语言：查看英文和日文指令'
 
 COMMAND_HELP = {
     "songs": "查询歌曲列表，QQ单图优先，超限完整续发。支持歌名、昵称、乐队、ID、等级；27包含27.5，lv比较式未指定难度时按最高等级。可加颜色=蓝/绿、激奏=JUST、激奏=纯COMBO、激奏=混合或激奏=JUST/JUST/COMBO，并与EX、lv<=25、页N组合。同颜色多选任选，不同维度同时满足；包含全部用 激奏=包含全部JUST/COMBO。\n例：/查曲 蓝色 MyGO EX 激奏=JUST 页2",
@@ -531,6 +532,11 @@ def resolve_command(content: str, repository: SongRepository) -> CommandResult |
     text = _clean_message(content)
     parts = text.split(None, 1)
     head = parts[0].casefold() if parts else ""
+    if head in {"查竞技场", "查玩家"}:
+        from .query.public_queries import execute_arena, execute_player
+        execute = execute_arena if head == "查竞技场" else execute_player
+        answer = execute(parts[1] if len(parts) > 1 else "", repository)
+        return CommandResult(("arena" if head == "查竞技场" else "player", text, None), info=answer)
     if head == "查角色":
         from .query.character_query import execute_character
         answer = execute_character(parts[1] if len(parts) > 1 else "", repository)

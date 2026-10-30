@@ -27,12 +27,16 @@ class InfoRow:
     rarity: int | None = None
     image_kind: Literal["square", "wide", "portrait"] = "square"
     group: str = ""
-    kind: Literal["row", "fact", "prose", "links", "card", "song", "schedule", "banner"] = "row"
+    kind: Literal["row", "fact", "prose", "links", "card", "song", "schedule", "banner", "metric", "showcase", "standing", "bonus", "gallery", "recruitment", "bonus-summary"] = "row"
     attribute_url: str = ""
     schedule: InfoSchedule | None = None
     display_title: str = ""
     tags: tuple[str, ...] = ()
     children: tuple['InfoRow', ...] = ()
+    table: tuple[tuple[str, ...], ...] = ()
+    icons: tuple[str, ...] = ()
+    game_icon: str = ''
+    reference: tuple[int, int] | None = None
 
 
 @dataclass(frozen=True)
@@ -42,8 +46,8 @@ class InfoView:
     hero_url: str = ""
     rows: tuple[InfoRow, ...] = ()
     footer: tuple[str, ...] = ()
-    layout: Literal["list", "detail", "character", "directory"] = "list"
-    presentation: Literal["", "activity", "gacha", "character"] = ""
+    layout: Literal["list", "detail", "character", "directory", "facts", "activity-summary"] = "list"
+    presentation: Literal["", "activity", "gacha", "character", "arena", "player"] = ""
     visual_footer: tuple[str, ...] | None = None
     hero_kind: Literal['banner', 'event'] = 'banner'
     hero_logo_url: str = ''
@@ -55,6 +59,8 @@ class InfoAnswer:
     status: str = "success"
     views: tuple[InfoView, ...] = ()
     evidence_expires_at: float | None = None
+    captured_images: tuple[tuple[str, bytes], ...] = ()
+    original_image: bytes | None = None
 
 
 def row_text(row: InfoRow) -> str:
