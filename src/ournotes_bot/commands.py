@@ -30,7 +30,7 @@ HELP_TEXT = """Taki · Our Notes 日服资料查询
 /查曲 [歌名/ID/乐队] [颜色] [激奏=类型] [EX] [lv<=25] [页N]：歌曲列表
 颜色：红、蓝、绿、黄、紫；例 /查曲 颜色=蓝/绿
 激奏=JUST 表示包含；激奏=纯JUST 表示全段同类；激奏=混合；激奏=JUST/JUST/COMBO 按顺序匹配
-/查谱面 歌名或ID [难度] [镜像／反转] [覆盖=5/6.5/8/5/5]：查看等级与 Note 数；100001 可简写为 1
+/查谱面 歌名或ID [难度] [镜像／反转] [5/6.5/8/5/5]：查看等级与 Note 数；100001 可简写为 1
 /查榜线 [jp/hk/kr/en] [id1或活动="名称"] [歌名或歌曲ID=100001] [50或20-40] [仅数值]：顺序不限，默认日服全部歌曲；无排名看三曲合图趋势，有排名看分数表；50看40～60名，20-40看区间，50-50查一名，1-100查完整榜；id1查活动1，裸数字仍是排名；指定活动读取本地历史末次观测，非确认终榜
 Haneoka 未确认原始歌曲序号，请用歌名或歌曲ID；旧T50也查附近，旧多T排名最多五个
 /查活动 [jp/hk/kr/en]：当前／最近活动详情；/查活动 列表、/查活动 ID或名称 查询日服收录资料
@@ -82,7 +82,7 @@ Example: /song mygo 27, /chart 100001 EXPERT, /card tomori""",
 
 COMMAND_HELP = {
     "songs": "查询歌曲列表，QQ单图优先，超限完整续发。支持歌名、昵称、乐队、ID、等级；27包含27.5，lv比较式未指定难度时按最高等级。可加颜色=蓝/绿、激奏=JUST、激奏=纯COMBO、激奏=混合或激奏=JUST/JUST/COMBO，并与EX、lv<=25、页N组合。同颜色多选任选，不同维度同时满足；包含全部用 激奏=包含全部JUST/COMBO。\n例：/查曲 蓝色 MyGO EX 激奏=JUST 页2",
-    "chart": "查询谱面等级与 Note 数，支持歌名或曲目 ID。100001 可简写为 1。可选难度：EASY、NORMAL、HARD、EXPERT；不指定时显示全部难度。\n可加镜像或反转，左右翻转音符与划键方向；覆盖=5/6.5/8/5/5 按 S1～S5 指定最终秒数。\n用法：/查谱面 <歌名或ID> [难度] [镜像／反转]\n示例：/查谱面 1 EXPERT 镜像、/查谱面 100001 反转",
+    "chart": "查询谱面等级与 Note 数，支持歌名或曲目 ID。100001 可简写为 1。可选难度：EASY、NORMAL、HARD、EXPERT；不指定时显示全部难度。\n可加镜像或反转，左右翻转音符与划键方向；末尾加 5/6.5/8/5/5 按 S1～S5 指定最终秒数，也兼容 覆盖= 写法。\n用法：/查谱面 <歌名或ID> [难度] [镜像／反转]\n示例：/查谱面 1 EXPERT 镜像、/查谱面 100001 反转",
     "cards": "角色卡条件查询始终返回列表，QQ单图优先，超限完整续发，显示完整总数，剩余内容用 /继续。ID精确查详情，/查卡面 ID 只发公开full卡面。\n用法：/查卡 [BD/SSR/SR/R] [颜色=红色,蓝色] [角色=tmr,skk] [乐队=MyGO] [LIVE=分数提升] [击奏=JUST] [得意=MyGO] [页N]\n不同维度AND、同维度多选OR，得意标签全部包含。BD为生日卡；旧二/三/四星别名保留。",
     "support_cards": "留影卡条件查询返回完整列表，QQ单图优先；ID精确查详情，/查留影卡面 ID 只发卡面。\n用法：/查留影卡 [SSR/EX/SR/R] [颜色=红色,蓝色] [角色=tmr,skk] [乐队=MyGO] [LIVE=技能延长] [击奏=LUCK] [页N]\nLIVE可选分数提升、LIFE回复、判定强化、技能延长；以实际资料为准。角色任选且去重，乐队另行筛选；不支持得意标签；BD仅适用于角色卡。",
     "abbrev": "查询已收录的角色、乐队等昵称；也可直接用昵称查曲或查卡。\n用法：/查缩写 <昵称>\n示例：/查缩写 skk、/查缩写 茉团、/查卡 墨缇丝",
@@ -356,12 +356,14 @@ def chart_coverage_option(query: str) -> tuple[str, tuple[float, ...]]:
     import math
     words = query.split()
     options = [word for word in words if word.startswith("覆盖=")]
+    if len(words) > 1 and "/" in words[-1] and re.fullmatch(r"[0-9eE+./-]+", words[-1]):
+        options.append(words[-1])
     if not options:
         return query, ()
-    error = "覆盖时间须填写五个正数（秒），例如 覆盖=5/6.5/8/5/5。"
+    error = "覆盖时间须填写五个正数（秒），例如 5/6.5/8/5/5。"
     if len(options) != 1:
         raise ValueError(error)
-    values = options[0][3:].split("/")
+    values = options[0].removeprefix("覆盖=").split("/")
     if len(values) != 5 or any(not re.fullmatch(r"[0-9]+(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?", v) for v in values):
         raise ValueError(error)
     durations = tuple(float(v) for v in values)

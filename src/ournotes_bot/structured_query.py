@@ -121,7 +121,7 @@ class QuerySpec:
         if self.intent == "chart" and self.chart_mirror:
             query += " 镜像"
         if self.intent == "chart" and self.chart_coverage:
-            query += " 覆盖=" + "/".join(str(v) for v in self.chart_coverage)
+            query += " " + "/".join(str(v) for v in self.chart_coverage)
         if self.page > 1:
             query += f" 页{self.page}"
         return f"{name} {query.strip()}".strip()

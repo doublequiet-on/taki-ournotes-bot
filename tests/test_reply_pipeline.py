@@ -132,6 +132,27 @@ class ReplyPipelineTests(unittest.TestCase):
             self.assertEqual(result.status,"invalid_arguments")
             self.assertIn("五个正数",result.hint)
 
+    def test_bare_skill_windows_match_named_option(self):
+        from ournotes_bot.commands import resolve_command
+        for command in ("/查谱面 1 ex 镜像 5/6.5/8/5/5",
+                        "/查谱面 1 ex 5/6.5/8/5/5"):
+            named=command.replace("5/6.5/8/5/5","覆盖=5/6.5/8/5/5")
+            self.assertEqual(resolve_command(command,self.repo),resolve_command(named,self.repo))
+        with patch("ournotes_bot.application.replies.load_chart_score",
+                   return_value={"events":{"skill":[0,1,2,3,4]},"notes":[]}), \
+             patch("ournotes_bot.rendering.chart_layout.render",return_value=(b"chart",)) as render:
+            reply=_prepare_reply("/查谱面 1 ex 镜像 5/5/5/5/5",self.repo,self.parser)
+            self.assertEqual(reply.image,b"chart")
+            self.assertTrue(render.call_args.kwargs["mirror"])
+            self.assertEqual(render.call_args.kwargs["skill_durations"],(5,5,5,5,5))
+        for suffix in ("5/5/5","0/5/5/5/5","-1/5/5/5/5","覆盖=5/5/5/5/5 5/5/5/5/5"):
+            self.assertEqual(resolve_command("/查谱面 1 "+suffix,self.repo).status,"invalid_arguments")
+        from dataclasses import replace
+        self.repo.songs=[replace(self.repo.songs[0],title="Test 24/7",titles=("Test 24/7",),localized={})]
+        result=resolve_command("/查谱面 Test 24/7",self.repo)
+        self.assertEqual(result.status,"success")
+        self.assertFalse(result.chart_coverage)
+
     def test_chart_and_card_text_images_share_one_selection(self):
         from ournotes_bot.query.song_identity import unique_candidates
         with patch("ournotes_bot.query.song_identity.unique_candidates", wraps=unique_candidates) as select, \
