@@ -65,7 +65,7 @@ def is_ai_request(content: str) -> bool:
 
 def query_text(content: str) -> str:
     cleaned = re.sub(r"<@!?\w+>", "", content).strip()
-    return re.sub(r"^[/／]?(?:查|问|ask)\s*", "", cleaned, flags=re.I).strip()
+    return re.sub(r"^[/／]?(?:查|问|ask)(?:\s+|$)", "", cleaned, flags=re.I).strip()
 
 
 @dataclass(frozen=True)

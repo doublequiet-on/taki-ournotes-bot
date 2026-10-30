@@ -2303,6 +2303,9 @@ class ChatAgentTests(Fixture, unittest.IsolatedAsyncioTestCase):
             self.assertFalse(replies.named_chat(text),text)
         self.assertTrue(is_ai_request('／查 蓝色歌曲'))
         self.assertFalse(is_ai_request('/查卡 947'))
+        from ournotes_bot.natural_query.query_agent import query_text
+        for command in ('/查曲 迷星叫','/查卡 947','/查活动'):
+            self.assertEqual(query_text(command),command)
         self.assertEqual(replies.chat_text('先休息。明天再练。'),'先休息。明天再练')
         for text in ('版本 1.2','看 https://example.com/a.','`x.y`','好！','为什么？'):
             self.assertEqual(replies.chat_text(text),text)
@@ -2404,7 +2407,7 @@ class ChatSourceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
             self.result(calls=(ToolCall('r','group_memory_read',json.dumps(dict(message_ids=[mid]))),)),self.result('承接之前的偏好。')]
         plan,_=await self.prepare_native('/聊 还记得你刚才的选择吗',seq=2)
         rows=[json.loads(item['content']) for item in bodies[-1]['messages'][1:] if item['role'] in ('user','assistant') and item['content']]
-        self.assertIn('我选择准备充分。',[row['text'] for row in rows])
+        self.assertIn('我选择准备充分',[row['text'] for row in rows])
         agent.forget(scope,[mid])
         self.assertFalse(self.backend.lookup(plan['request_id'],'e1')['send_allowed'])
         self.assertFalse(agent.store.search(scope,'准备')['messages'])
@@ -2910,11 +2913,12 @@ class ChatReviewRegressionTests(Fixture,unittest.IsolatedAsyncioTestCase):
         knowledge=Mock();knowledge.retrieve.return_value=SimpleNamespace(code='empty',message='empty')
         self.backend.knowledge=knowledge
         self.client.request.side_effect=[self.result(calls=(ToolCall('a','knowledge_search','{"server":"intl","date":"2020-01-01","version":null}'),)),self.result('fixture'),
-            self.result(calls=(ToolCall('b','knowledge_search','{"server":"jp","date":null,"version":null,"followup":true}'),))]
+            self.result(calls=(ToolCall('b','knowledge_search','{"server":"jp","date":null,"version":null,"followup":true}'),)),self.result('应按刚才的国际服日期继续核实')]
         first,_=await self.prepare_native('/聊 国际服2020-01-01规则')
         self.event(first,'intent');self.event(first,'ack')
         second,_=await self.prepare_native('/聊 那LUCK呢',seq=2)
-        self.assertEqual(second['parts'][0]['business_status'],'query_server_mismatch')
+        self.assertEqual(second['parts'][0]['business_status'],'success')
+        self.assertEqual(second['parts'][0]['text'],'应按刚才的国际服日期继续核实')
         self.assertEqual(knowledge.retrieve.call_count,1)
 
     def test_private_query_and_citation_canonicalization(self):
