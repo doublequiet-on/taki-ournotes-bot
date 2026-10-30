@@ -1218,6 +1218,12 @@ class NativeRuntimeTests(Fixture,unittest.IsolatedAsyncioTestCase):
         body=bodies[-1]
         self.assertNotIn('tools',body);self.assertNotIn('tool_choice',body)
         self.assertIn('本轮人格设定',body['messages'][0]['content'])
+        self.assertIn('认真讨论讲清判断、理由和必要例子',body['messages'][0]['content'])
+        self.assertIn('不总压成一两句',body['messages'][0]['content'])
+        self.assertIn('最多300字',body['messages'][0]['content'])
+        self.assertIn('不为了延续对话习惯性在回答后反问',body['messages'][0]['content'])
+        self.assertIn('确实需要澄清，或顺着谈话自然想问时可以提问',body['messages'][0]['content'])
+        self.assertIn('不把写作限制复述',body['messages'][0]['content'])
         self.repo.current_query_view.assert_not_called()
         self.assertEqual(self.backend.model_runtime.usage.get(attempts[0])['charged'],'140')
         self.assertFalse(self.backend.conversations.anchors)
@@ -1234,6 +1240,19 @@ class NativeRuntimeTests(Fixture,unittest.IsolatedAsyncioTestCase):
         self.event(second,'intent');self.event(second,'ack')
         anchor=self.backend.conversations.resolve(self.backend.works[second['delivery_id']].request)
         self.assertLessEqual(anchor.expires,expires+.01)
+
+    async def test_legacy_light_chat_receives_followup_guidance(self):
+        from ournotes_bot.domain.model_calls import AttemptResult,Usage
+        bodies=self.capture_native_bodies()
+        self.client.request.return_value=AttemptResult('ok',Usage(10,0,2,None,12,'known'),text='你好。')
+        plan,_=await self.prepare_native('/问 你好')
+        prompt=bodies[0]['messages'][0]['content']
+        self.assertIn('别习惯性反问；必要澄清或顺着对话可提问',prompt)
+        self.assertIn('不加自我免责、能力声明或自我否定的铺垫',prompt)
+        self.assertIn('追问回应具体疑点，没懂就换种说法',prompt)
+        self.assertIn('不总压成一两句',prompt)
+        self.assertEqual(plan['parts'][0]['business_status'],'success')
+        self.event(plan,'intent');self.event(plan,'ack')
 
     async def test_persona_without_ack_cannot_publish_followup_topic(self):
         from ournotes_bot.domain.model_calls import AttemptResult,Usage
@@ -1982,6 +2001,42 @@ class ChatAgentTests(Fixture, unittest.IsolatedAsyncioTestCase):
     def result(self,text=None,calls=(),items=()):
         from ournotes_bot.domain.model_calls import AttemptResult,Usage
         return AttemptResult('ok',Usage(10,0,2,None,12,'known'),calls,text,output_items=items)
+
+    async def test_chat_finishes_answer_without_required_followup(self):
+        bodies=self.capture_native_bodies()
+        self.client.request.return_value=self.result('我喜欢鼓点清楚的音乐。')
+        plan,_=await self.prepare_native('/聊 你喜欢什么样的音乐？')
+        prompt=bodies[0]['messages'][0]['content']
+        self.assertIn('别习惯性反问',prompt)
+        self.assertIn('不加自我免责、能力声明或自我否定的铺垫',prompt)
+        self.assertEqual(plan['parts'][0]['text'],'我喜欢鼓点清楚的音乐')
+        self.event(plan,'intent');self.event(plan,'ack')
+
+    async def test_chat_can_ask_for_necessary_clarification(self):
+        bodies=self.capture_native_bodies()
+        self.client.request.return_value=self.result('你说的是哪首歌？')
+        plan,_=await self.prepare_native('/聊 那首歌叫什么？')
+        self.assertIn('必要澄清或顺着对话可提问',bodies[0]['messages'][0]['content'])
+        self.assertEqual(plan['parts'][0]['text'],'你说的是哪首歌？')
+        self.event(plan,'intent');self.event(plan,'ack')
+
+    async def test_chat_discussion_and_followup_preserve_expanded_replies(self):
+        bodies=self.capture_native_bodies()
+        answer='我更在意表达能不能让人听明白。\n\n只给结论，对方可能不知道你为什么这么想；补上理由，就有了继续讨论的地方。\n\n不过已经说清楚的部分也不用反复讲。'
+        explanation='比如你说喜欢鼓点清楚的音乐，可以接着说它让你更容易跟上节奏。\n\n这样对方知道你在意什么，而不是只收到一个偏好标签。'
+        self.client.request.side_effect=[self.result(answer),self.result(explanation)]
+        plan,_=await self.prepare_native('/聊 认真聊聊，你为什么在意把话说明白？')
+        self.assertEqual(plan['parts'][0]['text'],answer.rstrip('。'))
+        self.event(plan,'intent');self.event(plan,'ack')
+        followup,_=await self.prepare_native('/聊 我还是没懂，换个例子讲讲',seq=2)
+        self.assertEqual(followup['parts'][0]['text'],explanation.rstrip('。'))
+        for body in bodies:
+            prompt=body['messages'][0]['content']
+            self.assertIn('认真讨论讲清判断、理由和必要例子',prompt)
+            self.assertIn('追问回应具体疑点，没懂就换种说法',prompt)
+            self.assertIn('按需展开，不凑字数或重复',prompt)
+            self.assertEqual(body['max_tokens'],self.snapshot.profile.max_output_tokens)
+        self.event(followup,'intent');self.event(followup,'ack')
 
     async def test_direct_chat_once_multiline_and_direct_command_zero_model(self):
         bodies=self.capture_native_bodies()
