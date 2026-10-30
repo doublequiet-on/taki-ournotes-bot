@@ -200,7 +200,8 @@ class InformationLayoutTests(unittest.TestCase):
         standing=InfoRow('第999999999名 · '+name, ('积分：999999999999999','公开ID：9223372036854775807'),
                          kind='standing',table=(('第999999999名',name),))
         table=(('成员卡参数加成',*(f'档位{i}：+22.5%' for i in range(1,6))),)
-        bonus=InfoRow('加成 · '+name,('成员卡参数加成：完整五档内容',),kind='bonus',table=table)
+        bonus=InfoRow('加成 · '+name,('成员卡参数加成：完整五档内容',),kind='bonus',table=table,
+                      image_url='synthetic:member',image_kind='portrait')
         player=(InfoRow('公开ID',('9223372036854775807',)),InfoRow('等级／经验',('等级：未获取','经验：0'),kind='metric'),
                 InfoRow('获赞',('0',),kind='metric'),InfoRow('展示角色卡',tuple('培养：0' for _ in range(6)),kind='showcase'))
         original=info_layout.Canvas.text

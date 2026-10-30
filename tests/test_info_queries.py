@@ -472,6 +472,27 @@ class ActivityAnnouncementTests(unittest.TestCase):
 
 
 class PublicQueryContractTests(unittest.TestCase):
+    def test_game_art_is_pinned_allowlisted_and_bonus_art_keeps_native_role(self):
+        from ournotes_bot.sources.haneoka.catalog_assets import asset_url
+        from ournotes_bot.sources.haneoka.public_queries import PublicQueries
+        from ournotes_bot.sources.haneoka.activity_details import project_details
+        release='r-'+'a'*20
+        rank='/runtime/jp/unity/Assets/AddressableResources/UI/Atlas/FixUiSpriteAtlas.spriteatlasv2/rank_gold--Sprite-123.png'
+        mission='/runtime/intl/unity/Assets/AddressableResources/Live/Images/Atlas/LiveAtlas.spriteatlasv2/Icon_gekisou_just--Sprite--123.png'
+        self.assertTrue(asset_url(rank,release).endswith('?release='+release))
+        self.assertIn('/intl/',asset_url(mission,release))
+        for path in (rank.replace('rank_gold','unrelated'),mission.replace('just','arbitrary')):
+            with self.assertRaises(ValueError):asset_url(path,release)
+        mark='runtime/unity/Assets/AddressableResources/UI/Atlas/FixUiSpriteAtlas.spriteatlasv2/sp_icon_live_music_type_99--Sprite-1.png'
+        snapshot={'identities':{'jp':{'releaseId':release}},'documents':{'jp':{'ui-marks':{'sp_icon_live_music_type_99.png':mark}}}}
+        source=PublicQueries(fetch=lambda *args:self.fail('unexpected network'))
+        self.assertTrue(source.arena_attribute('jp',99,snapshot,release))
+        self.assertEqual(source.arena_attribute('en',99,snapshot,release),'')
+        self.assertEqual(source.arena_attribute('jp',99,snapshot,'r-'+'b'*20),'')
+        event={'effects':[{'targets':{'memberCard':{'name':'测试卡','image':'card'}},'resourceTypeConstraint':2}]}
+        fact=project_details(event,lambda path:'verified:'+path if path else '')[0].facts[0]
+        self.assertEqual((fact.image_url,fact.image_kind),('verified:card','portrait'))
+
     def test_public_id_precision_regions_and_invalid_arguments(self):
         from ournotes_bot.query.public_queries import parse_player, parse_arena
         from ournotes_bot.domain.public_queries import PublicQueryError

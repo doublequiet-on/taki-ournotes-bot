@@ -158,8 +158,19 @@ class PublicQueries:
         if not isinstance(value.get('entries'), dict):
             raise PublicQueryError('invalid_source', '竞技场目录不完整。')
         arena_document(value)
+        def artwork(path):
+            try:
+                return asset_url(urlsplit(path).path, identity['releaseId']) if isinstance(path,str) else ''
+            except ValueError:
+                return ''
+        images=value.get('images',{})
+        value['images']={group:{key:artwork(path) for key,path in rows.items()}
+                         for group,rows in images.items() if group in {'ranks','missions'} and isinstance(rows,dict)} if isinstance(images,dict) else {}
         for season in value['entries'].values():
+            for key in ('dailyRewards','seasonRewards','rankingRewards'):
+                for reward in season.get(key,[]):reward['image']=artwork(reward.get('image'))
             for league in season['leagues']:
+                for reward in league.get('promotionRewards',[]):reward['image']=artwork(reward.get('image'))
                 for row, field in [(league, 'image'), *((s, 'jacketThumbUrl') for s in league['songs'])]:
                     path = row.get(field, '')
                     try:
@@ -255,6 +266,18 @@ class PublicQueries:
             return ''
         try:
             return asset_url(path, identity['releaseId'])
+        except ValueError:
+            return ''
+
+    def arena_attribute(self, region, value, snapshot, release):
+        server='jp' if region=='jp' else 'intl'
+        if not snapshot or snapshot.get('identities',{}).get(server,{}).get('releaseId')!=release:
+            return ''
+        path=snapshot.get('documents',{}).get(server,{}).get('ui-marks',{}).get(f'sp_icon_live_music_type_{value}.png')
+        if not isinstance(path,str) or not path.startswith('runtime/'):
+            return ''
+        try:
+            return asset_url(f'/runtime/{server}/'+path.removeprefix('runtime/'),release)
         except ValueError:
             return ''
 

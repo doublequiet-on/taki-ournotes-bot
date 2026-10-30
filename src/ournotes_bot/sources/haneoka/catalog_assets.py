@@ -15,7 +15,9 @@ IMAGE_PATH = re.compile(r"/assets/(?:jp|intl)/Assets/AddressableResources/"
     r"SupportCard/[0-9]+/snap_(?:full|thumbnail)|Story/Banner/Chapter/[A-Za-z0-9_-]+|"
     r"Item/[A-Za-z0-9_-]+/item_icon_[A-Za-z0-9_-]+|Stamp/illust/stamp_illust_[A-Za-z0-9_-]+|Gacha/(?:Banner|Logo)/[A-Za-z0-9_-]+|Image/(?:Stamp|Degree)/(?:[A-Za-z0-9_-]+/){0,5}[A-Za-z0-9_-]+|Image/Event/(?:[0-9]+/(?:Top|Logo|Banner)/)?[A-Za-z0-9_-]+|Character/Skill/icon_skill_[A-Za-z0-9_]+|Band/[0-9]+/band_(?:logo|small_Icon)|Character/Image/[0-9]+/character_(?:face_icon|thumbnail|sprite))\.(?:png|webp)")
 ICON_PATH = re.compile(r"/runtime/(?:jp|intl)/unity/Assets/AddressableResources/UI/Atlas/"
-    r"FixUiSpriteAtlas\.spriteatlasv2/CardType-(?:Red|Blue|Green|Yellow|Purple)--Sprite--?[0-9]+\.png")
+    r"FixUiSpriteAtlas\.spriteatlasv2/(?:CardType-(?:Red|Blue|Green|Yellow|Purple)|rank_(?:beginner|bronze|silver|gold|platinum|diamond|dream)|sp_icon_live_music_type_(?:[1-5]|99))--Sprite--?[0-9]+\.png")
+MISSION_PATH = re.compile(r"/runtime/(?:jp|intl)/unity/Assets/AddressableResources/Live/Images/Atlas/"
+    r"LiveAtlas\.spriteatlasv2/Icon_gekisou_(?:combo|luck|just)--Sprite--?[0-9]+\.png")
 
 
 def attribute_url(marks, color, release, server="jp"):
@@ -44,7 +46,7 @@ def record_attribute_url(record):
 
 
 def asset_url(path, release):
-    if (not isinstance(path, str) or not (IMAGE_PATH.fullmatch(path) or ICON_PATH.fullmatch(path))
+    if (not isinstance(path, str) or not (IMAGE_PATH.fullmatch(path) or ICON_PATH.fullmatch(path) or MISSION_PATH.fullmatch(path))
             or not re.fullmatch(r"r-[a-f0-9]{20}", release)):
         raise ValueError("unverified Haneoka Catalog asset")
     return ORIGIN + path + "?release=" + release

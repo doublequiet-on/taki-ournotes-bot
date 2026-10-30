@@ -61,6 +61,7 @@ class ActivityFact:
     image_url: str = ''
     preview: bool = False
     table: tuple[tuple[str, ...], ...] = ()
+    image_kind: str = 'square'
 
 
 @dataclass(frozen=True)

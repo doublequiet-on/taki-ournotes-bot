@@ -34,6 +34,8 @@ class InfoRow:
     tags: tuple[str, ...] = ()
     children: tuple['InfoRow', ...] = ()
     table: tuple[tuple[str, ...], ...] = ()
+    icons: tuple[str, ...] = ()
+    game_icon: str = ''
 
 
 @dataclass(frozen=True)

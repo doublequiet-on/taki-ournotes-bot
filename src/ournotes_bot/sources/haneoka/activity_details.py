@@ -38,10 +38,12 @@ def project_details(event, artwork=lambda path: ''):
         title = '／'.join(filter(None, (constraint, *names))) or '加成对象未确认'
         key = (effect.get('resourceTypeConstraint'), json.dumps(targets, sort_keys=True, ensure_ascii=False))
         if key not in groups:
-            groups[key] = (title, [], [])
+            target=next((target for target in targets.values() if isinstance(target,dict) and target.get('image')), {})
+            groups[key] = (title, [], [], artwork(target.get('image')), 'wide' if constraint=='留影卡' else 'portrait' if constraint=='成员卡' else 'square')
         groups[key][1].append(kind + '：' + (' · '.join(levels) if levels else '数值未获取'))
         groups[key][2].append((kind, *levels))
-    effects = [ActivityFact(title, tuple(lines), table=tuple(table)) for title, lines, table in groups.values()]
+    effects = [ActivityFact(title, tuple(lines), image_url=image, table=tuple(table),image_kind=kind)
+               for title, lines, table, image, kind in groups.values()]
     result.append(ActivitySection('加成', tuple(effects), isinstance(event.get('effects'), list)))
     rewards = []
     complete = isinstance(event.get('rewards'), list)
@@ -72,7 +74,7 @@ def project_details(event, artwork=lambda path: ''):
         name = text(reward.get('name')) or f"奖励 {row.get('resourceId', '未获取')}"
         count = row.get('resourceCount')
         rewards.append(ActivityFact(name, (category, f'数量：{count if count is not None else "未获取"}', *conditions), artwork(reward.get('image')),
-                                    preview=row.get('resourceType') in {2, 3, 9, 17}))
+                                    preview=row.get('resourceType') in {2, 3, 9, 17},image_kind={2:'portrait',3:'wide'}.get(row.get('resourceType'),'square')))
     result.append(ActivitySection('奖励', tuple(rewards), complete))
     missions = []
     for mission in rows(event.get('missions')):
@@ -86,11 +88,12 @@ def project_details(event, artwork=lambda path: ''):
     gachas = []
     for gacha in rows(event.get('recruitments')):
         gachas.append(ActivityFact(text(gacha.get('title')) or '关联卡池',
-                                  (f"卡池 ID {gacha.get('id', '未获取')}",), artwork(gacha.get('image'))))
+                                  (f"卡池 ID {gacha.get('id', '未获取')}",), artwork(gacha.get('image')),image_kind='wide'))
         for featured in rows(gacha.get('featured')):
             if featured.get('pickup') is True:
                 ref = featured.get('reward') or featured.get('card') or featured
                 gachas.append(ActivityFact('UP · ' + (text(ref.get('name')) or f"卡牌 {featured.get('resourceId', '未获取')}"),
-                    ('成员卡' if featured.get('resourceType') == 2 else '留影卡',), artwork(ref.get('image'))))
+                    ('成员卡' if featured.get('resourceType') == 2 else '留影卡',), artwork(ref.get('image')),
+                    image_kind='portrait' if featured.get('resourceType')==2 else 'wide'))
     result.append(ActivitySection('卡池', tuple(gachas), isinstance(event.get('recruitments'), list)))
     return tuple(result)

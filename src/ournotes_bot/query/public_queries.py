@@ -129,6 +129,12 @@ def execute_arena(query, repository, *, now=None):
         request = parse_arena(query)
         snapshot = repository.public_queries.arena(request.region)
         catalog = json.loads(snapshot.body)
+        images=catalog.get('images',{})
+        source_snapshot=repository.capture_catalog().source_snapshot
+        def mission_icons(rule):
+            if not rule:return ()
+            attribute=repository.public_queries.arena_attribute(request.region,rule.get('musicType'),source_snapshot,snapshot.release)
+            return ((attribute,) if attribute else ())+tuple(images.get('missions',{}).get(str(value),'') for value in rule.get('missions',[]))
         now = (time.time() if now is None else now) * 1000
         seasons = sorted(catalog['entries'].values(), key=lambda s: s['startAt'])
         season = (next((s for s in seasons if s['seasonId'] == request.season), None) if request.season else
@@ -151,16 +157,17 @@ def execute_arena(query, repository, *, now=None):
             if request.mode == '总览':
                 upcoming = next((r for r in rules if r['startAt'] > now), None)
                 rows.append(InfoRow(name, (rule_text(rule) if rule else '当前无生效轮换',
-                    '下次轮换：' + (stamp(upcoming['startAt']) if upcoming else '本赛季无后续轮换')), image_url=league.get('image', '')))
+                    '下次轮换：' + (stamp(upcoming['startAt']) if upcoming else '本赛季无后续轮换')), image_url=league.get('image', ''),icons=mission_icons(rule)))
             elif request.mode == '日程':
-                rows.extend(InfoRow(name, (stamp(r['startAt']) + ' — ' + stamp(r['endAt']), rule_text(r))) for r in rules)
+                rows.extend(InfoRow(name, (stamp(r['startAt']) + ' — ' + stamp(r['endAt']), rule_text(r)),icons=mission_icons(r)) for r in rules)
             elif request.mode == '曲池':
                 rows.extend(InfoRow(localized(s['musicTitle']), (f"歌曲 ID {s['musicId']}",
                     rule_text(rule or {}, s)), image_url=s.get('jacketThumbUrl', ''), command=f"/查曲 {s['musicId']}")
                     for s in league['songs'] if s.get('arenaPublishedAt', 0) <= now)
             elif request.mode == '段位':
                 rows.extend(InfoRow(name + ' · ' + localized(r['name']), (f"积分门槛：{r['points']}",
-                    f"下赛季起始积分：{r['resetPoints']}", '开放：' + (stamp(r['startAt']) if r['startAt'] else '赛季开始'))) for r in league['ranks'])
+                    f"下赛季起始积分：{r['resetPoints']}", '开放：' + (stamp(r['startAt']) if r['startAt'] else '赛季开始')),
+                    image_url=images.get('ranks',{}).get(str(r.get('rank')),'')) for r in league['ranks'])
             elif request.mode == '奖励':
                 ranks = {r['id']: localized(r['name']) for r in league['ranks']}
                 for key, title in (('dailyRewards', '每日'), ('promotionRewards', '晋级'), ('seasonRewards', '赛季'), ('rankingRewards', '名次')):
@@ -168,18 +175,19 @@ def execute_arena(query, repository, *, now=None):
                         if reward.get('leagueId') not in (0, league['id']):
                             continue
                         rows.append(InfoRow(name + ' · ' + title, (localized(reward['name']) + f" ×{reward['count']}",
-                            ranks.get(reward.get('rankId'), '') or f"区间：{reward.get('from')}—{reward.get('to')}")))
+                            ranks.get(reward.get('rankId'), '') or f"区间：{reward.get('from')}—{reward.get('to')}"),image_url=reward.get('image','')))
             else:
                 thresholds = tuple(sorted({r['points'] for r in league['ranks']})) if request.mode == '人数' else ()
                 board = json.loads(repository.public_queries.board(request, season['seasonId'], thresholds).body)
                 if request.mode == '榜单':
                     rows.extend(InfoRow(f"第{r['rank']}名 · {r['name']}", (f"积分：{r['point']}",
                         '公开ID：' + (r.get('profileId') or '未获取')), kind='standing',
-                        table=((f"第{r['rank']}名",r['name']),)) for r in board['rows'] if request.first <= r['rank'] <= request.last)
+                        table=((f"第{r['rank']}名",r['name']),),game_icon={1:'ImageRanking1st.png',2:'ImageRanking2ng.png',3:'ImageRanking3rd.png'}.get(r['rank'],'')) for r in board['rows'] if request.first <= r['rank'] <= request.last)
                 else:
                     rows.append(InfoRow('联赛上榜人数', (str(board.get('maxRank')) if board.get('maxRank') is not None else '未获取',)))
                     labels = {r['points']: localized(r['name']) for r in league['ranks']}
-                    rows.extend(InfoRow(labels.get(r['threshold'], str(r['threshold'])), (f"人数：{r['count']}",)) for r in board['tiers'])
+                    rank_images={r['points']:images.get('ranks',{}).get(str(r.get('rank')),'') for r in league['ranks']}
+                    rows.extend(InfoRow(labels.get(r['threshold'], str(r['threshold'])), (f"人数：{r['count']}",),image_url=rank_images.get(r['threshold'],'')) for r in board['tiers'])
                 rows.append(InfoRow('观测时间', (stamp(board.get('observedAtMs')), '来源：' + board.get('provider', '未获取'))))
         return answer((InfoView(f"{LABELS[request.region]} · 竞技场 · {localized(season['title'])}",
             request.mode + ' · 北京时间 UTC+8', rows=tuple(rows), layout='facts', presentation='arena', footer=(f'Haneoka {snapshot.resource} · {snapshot.release}',)),))
@@ -211,7 +219,8 @@ def execute_player(query, repository):
             rows.append(InfoRow('展示角色卡', tuple(f'{label}：{favorite.get(key) if favorite.get(key) is not None else "未获取"}'
                 for key, label in (('cardId', '卡牌ID'), ('exp', '经验'), ('awakeCount', '特训'), ('cardRank', '专精'),
                                   ('liveSkillLevel', 'LIVE技能'), ('performanceSkillLevel', '激奏技能'))),
-                image_url=repository.public_queries.player_art(request, favorite.get('cardId'), catalog.source_snapshot), image_kind='portrait', kind='showcase'))
+                image_url=repository.public_queries.player_art(request, favorite.get('cardId'), catalog.source_snapshot), image_kind='portrait', kind='showcase',
+                game_icon=f"CardRank{favorite['cardRank']}.png" if type(favorite.get('cardRank')) is int and 0<=favorite['cardRank']<=5 else ''))
         card = profile.get('profileCard')
         if card:
             pages = card.get('pages') or [{'page': i + 1, 'imageUrl': url} for i, url in enumerate(card.get('thumbnailUrls', []))]

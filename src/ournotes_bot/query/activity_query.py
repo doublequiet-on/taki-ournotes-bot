@@ -32,7 +32,7 @@ def detail_rows(record, section='', prefix='/查活动'):
         facts = group.facts if section or group.name != '奖励' else tuple(f for f in group.facts if f.preview)
         for fact in facts:
             result.append(InfoRow(f'{group.name} · {fact.title}', fact.lines, image_url=fact.image_url,
-                                  kind='bonus' if group.name == '加成' else 'row', table=fact.table))
+                                  kind='bonus' if group.name == '加成' else 'row', table=fact.table,image_kind=fact.image_kind))
         if not group.complete:
             result.append(InfoRow(group.name, ('关联资料不完整，缺失部分尚未获取。',)))
         elif not facts:
