@@ -2,7 +2,7 @@
 import type { PolicySnapshot } from './group-policies'
 
 export const protocol = { major: 2, minor: 2 } as const
-export const capability = 'qq-query-chat-v3'
+export const capability = 'qq-query-chat-v4'
 export class BackendError extends Error {
   constructor(public readonly code: string, public readonly status = 0) { super(code) }
 }
@@ -74,6 +74,7 @@ export function decodeReady(value: unknown): Ready {
   return result
 }
 export function decodeClassify(value: unknown): boolean { return boolean(object(value,'classify_shape').recognized,'classify_shape') }
+export function decodeDirectChat(value: unknown): boolean { return boolean(object(value,'classify_shape').direct_chat,'classify_shape') }
 export interface ModelPermission {
   request_id: string; attempt_id: string; nonce: string; user_id: string
   backend_epoch: string; gateway_epoch: string; scope: Record<string,string>
@@ -109,6 +110,7 @@ export interface ImagePart extends PartFacts { kind: 'image'; mode: 'primary'; t
 export type WirePart = FactPart | TextPart | ImagePart
 interface PlanBase {
   protocol: typeof protocol; request_id: string; delivery_id: string; plan_version: 1; expires_at: number
+  reply_mention: boolean
   processing_hint?: boolean; pending_model_permission?: ModelPermission
 }
 export type Plan = PlanBase & (
@@ -137,7 +139,8 @@ export function decodePlan(value: unknown): Plan {
   const v=object(value,'plan_shape'), status=choice(v.status,['preparing','prepared','finished','failure','uncertain','aborted','expired','failed'],'plan_shape')
   requireWire(v.plan_version===1 && Array.isArray(v.parts) && v.parts.length<=5,'plan_shape')
   const base:PlanBase={protocol:wireProtocol(v.protocol),request_id:hex(v.request_id,64,'plan_shape'),
-    delivery_id:hex(v.delivery_id,32,'plan_shape'),plan_version:1,expires_at:finite(v.expires_at,'plan_shape')}
+    delivery_id:hex(v.delivery_id,32,'plan_shape'),plan_version:1,expires_at:finite(v.expires_at,'plan_shape'),
+    reply_mention:boolean(v.reply_mention,'plan_shape')}
   if(v.processing_hint!==undefined)base.processing_hint=boolean(v.processing_hint,'plan_shape')
   if(v.pending_model_permission!==undefined)base.pending_model_permission=decodeModelPermission(v.pending_model_permission)
   if(!boolean(v.send_allowed,'plan_shape')) {

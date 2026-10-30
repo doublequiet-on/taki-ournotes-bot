@@ -258,12 +258,13 @@ class Backend:
             chat=bool(getattr(self.settings,'chat_engine','legacy')=='agent' and self.model_runtime and (self.model_runtime.is_chat(request.body)
                       or not request.body.strip() and request.attachments or proactive is not None)
                       and (proactive is not None or parse_operation(request.body) is None))
-            if chat: commands=[request.body or '[图片]']
+            if chat or re.match(r'^[/／]?查(?:\s|$)', request.body.strip()): commands=[request.body or '[图片]']
             require(bool(commands), 'empty_commands')
             delivery = uuid.uuid4().hex
             key = ContextKey(request.platform, request.kind, request.conversation_id, request.request_id)
             work = Work(request, delivery, key, None, None, None)
             work.chat=chat
+            work.mixed_modes=bool(re.search(r'(?m)^[/／]聊(?:\s|$)',request.body.strip()) and re.search(r'(?m)^[/／](?:查|问|ask)(?:\s|$)',request.body.strip()))
             if proactive is not None:
                 work.proactive,work.service_policy,work.model_snapshot,work.service_request_id=proactive
             self.ledger.admit(request, self.runtime, delivery, self.clock())
@@ -281,7 +282,7 @@ class Backend:
                 self.diagnostics.admitted(request, delivery, self.runtime, self.clock(), observed_commands)
                 self.diagnostics.span(uuid.uuid4().hex,request.request_id,'admission',admission_ms,self.clock(),outcome='ok')
                 work.operation = parse_operation(commands[0]) if len(commands) == 1 else None
-                work.anchor = self.conversations.resolve(request) if work.operation or request.reference or (not chat and
+                work.anchor = self.conversations.resolve(request,query_only=not chat) if work.operation or request.reference or (not chat and
                     self.model_runtime is not None and len(commands)==1 and replies.is_ai_request(commands[0])) else None
                 work.missing_anchor = request.reference is not None and work.anchor is None
                 if chat and work.missing_anchor and (self.model_runtime.agent.context.contains(request,request.reference['message_id'])
@@ -303,6 +304,10 @@ class Backend:
             return self.snapshot(self.ledger.request(request.request_id), request.gateway_epoch)
 
     async def prepare_command(self, work, content):
+        if getattr(work,'mixed_modes',False):
+            return replies.PreparedReply("查询和聊天请分开发送",business_status="invalid_argument")
+        if replies.explicit_chat(content) and not work.chat:
+            return replies.PreparedReply("聊天功能尚未启用，请使用 /查 查询资料。")
         if work.chat:
             return await self.model_runtime.prepare(work,content)
         if self.model_runtime is not None and replies.is_ai_request(content) and work.request.policy.natural_query!='off':
@@ -386,6 +391,7 @@ class Backend:
                 # Triggered chat keeps a whole multiline message and serializes
                 # its group through ACK, independently of query topic snapshots.
                 result=await self.prepare_call(work,self.prepare_command(work,commands[0]))
+                result=replace(result,text=replies.chat_text(result.text))
                 parts=[] if work.proactive is not None and not result.text else replies.expand_replies([result],text_limit=text_limit)
                 self.diagnostics.outcomes(work.request.request_id,[result.business_status or 'unknown'])
             elif work.operation or work.anchor is not None:
@@ -395,9 +401,9 @@ class Backend:
                     current = work.anchor.context
                 work.lease = self.contexts.begin(work.key, clear=False) if current is not None else None
                 if work.request.policy.natural_query == 'off' and replies.is_ai_request(commands[0]):
-                    result = replies.PreparedReply('本群已关闭 /问；请使用直接查询指令。')
+                    result = replies.PreparedReply('本群已关闭 /查；请使用直接查询指令。')
                 elif current is not None and not continuation_allowed(getattr(current,'origin','unknown')):
-                    result = replies.PreparedReply('当前策略不允许继续此前 /问 结果，请重新发送直接查询。')
+                    result = replies.PreparedReply('当前策略不允许继续此前 /查 结果，请重新发送直接查询。')
                 elif current is not None and work.operation and work.operation.kind == 'page':
                     result = self.conversations.page(work.anchor, work.operation.value)
                     result = result or replies.PreparedReply('页码超出范围，或这份结果已过期。')
@@ -526,7 +532,8 @@ class Backend:
         parts = self.ledger.parts(row['delivery'])
         result = {'protocol': PROTOCOL, 'request_id': row['id'], 'delivery_id': row['delivery'],
                   'plan_version': 1, 'status': row['status'], 'send_allowed': live,
-                  'expires_at': row['expires'], 'parts': []}
+                  'expires_at': row['expires'], 'parts': [],
+                  'reply_mention': not bool(work and (work.chat or replies.explicit_chat(work.request.body)))}
         if work and work.hint: result['processing_hint'] = True
         if work and work.active and row['epoch'] == epoch and self.ledger.active(epoch):
             challenge = self.permissions.challenge_view(work)
@@ -558,7 +565,7 @@ class Backend:
                 and row['epoch']==epoch and self.ledger.active(epoch)):
             self.ledger.processing_hint(work.delivery)
             work.hint=True
-            work.prepared=(replies.PreparedReply('还在核实，请稍等。',business_status='processing_hint'),)
+            work.prepared=(replies.PreparedReply('还在核实，请稍等' if work.chat else '还在核实，请稍等。',business_status='processing_hint'),)
         return self.snapshot(self.ledger.request(request_id), epoch)
 
     def image(self, delivery, part_id, epoch):
@@ -713,7 +720,9 @@ def create_app(backend, token, initialize=None):
         value = await read_json(request)
         require(isinstance(value, dict) and set(value) == {'body'} and isinstance(value['body'], str), 'classify_shape')
         require(len(value['body'].encode()) <= 16384, 'body_size')
-        return json({'recognized': replies.recognizes_message(value['body']) or bool(
+        return json({'direct_chat': bool(getattr(backend.settings,'chat_engine','legacy')=='agent' and
+            (replies.explicit_chat(value['body']) or replies.named_chat(value['body']))),
+            'recognized': replies.recognizes_message(value['body']) or bool(
             getattr(backend.settings,'chat_engine','legacy')=='agent' and backend.model_runtime and backend.model_runtime.is_chat(value['body']))})
     async def retire(request):
         value = await read_json(request)

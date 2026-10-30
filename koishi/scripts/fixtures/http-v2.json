@@ -16,7 +16,7 @@
         "reaper_alive": true,
         "reaper_error": null
       },
-      "capability": "qq-query-chat-v3",
+      "capability": "qq-query-chat-v4",
       "backend_code_digest": "0000000000000000000000000000000000000000000000000000000000000000",
       "background_tasks": false,
       "notices_enabled": false,
@@ -42,6 +42,7 @@
       "reference_profiles": []
     },
     "classify": {
+      "direct_chat": false,
       "recognized": true
     },
     "registration": {
@@ -59,7 +60,8 @@
       "status": "preparing",
       "send_allowed": false,
       "expires_at": 1792382698.0,
-      "parts": []
+      "parts": [],
+      "reply_mention": true
     },
     "challenge": {
       "request_id": "b461cd01680f7f8ca752bb40cad70f00b672b8dbc02cd4c280662aca55994785",
@@ -94,6 +96,7 @@
       "send_allowed": false,
       "expires_at": 1792382698.0,
       "parts": [],
+      "reply_mention": true,
       "pending_model_permission": {
         "request_id": "b461cd01680f7f8ca752bb40cad70f00b672b8dbc02cd4c280662aca55994785",
         "attempt_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
@@ -165,6 +168,7 @@
           "text": "还在核实，请稍等。"
         }
       ],
+      "reply_mention": true,
       "processing_hint": true
     },
     "hint_intent": {
@@ -195,6 +199,7 @@
           "text": "还在核实，请稍等。"
         }
       ],
+      "reply_mention": true,
       "processing_hint": true
     },
     "hint_ack": {
@@ -223,6 +228,7 @@
           "text": "还在核实，请稍等。"
         }
       ],
+      "reply_mention": true,
       "processing_hint": true
     },
     "hint_success": {
@@ -249,6 +255,7 @@
           "text": "还在核实，请稍等。"
         }
       ],
+      "reply_mention": true,
       "processing_hint": true
     },
     "prepared_image": {
@@ -288,6 +295,7 @@
           "mime": "image/png"
         }
       ],
+      "reply_mention": true,
       "processing_hint": true
     },
     "prepared_revoked": {
@@ -319,6 +327,7 @@
           "message": null
         }
       ],
+      "reply_mention": true,
       "processing_hint": true
     },
     "fallback": {
@@ -356,6 +365,7 @@
           "text": "fixture answer"
         }
       ],
+      "reply_mention": true,
       "processing_hint": true
     },
     "intent": {
@@ -397,6 +407,7 @@
           "message": "answer-receipt"
         }
       ],
+      "reply_mention": true,
       "processing_hint": true
     },
     "duplicate_ack": {
@@ -430,6 +441,7 @@
           "message": "answer-receipt"
         }
       ],
+      "reply_mention": true,
       "processing_hint": true
     },
     "terminal": {
@@ -461,6 +473,7 @@
           "message": "answer-receipt"
         }
       ],
+      "reply_mention": true,
       "processing_hint": true
     },
     "batch_finished": {
@@ -492,6 +505,7 @@
           "message": "answer-receipt"
         }
       ],
+      "reply_mention": true,
       "processing_hint": true
     },
     "aborted": {
@@ -523,6 +537,7 @@
           "message": "answer-receipt"
         }
       ],
+      "reply_mention": true,
       "processing_hint": true
     },
     "legacy_ack": {
@@ -556,6 +571,7 @@
           "message": "answer-receipt"
         }
       ],
+      "reply_mention": true,
       "processing_hint": true
     },
     "retirement": {
@@ -578,7 +594,7 @@
       "message_id": "message",
       "timestamp_ms": 1792382400000,
       "body": "/帮助",
-      "capability": "qq-query-chat-v3",
+      "capability": "qq-query-chat-v4",
       "gateway_epoch": "epoch",
       "ingress_seq": 1,
       "trigger": "command",

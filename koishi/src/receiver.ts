@@ -310,6 +310,9 @@ export class Receiver {
       if (this.config.management && !this.config.management.accepts(decoded.inbound)) { this.observed('management_denied'); return input.trigger!=='observation' }
       if (source.conflict) { this.observed('conflict'); return true }
       input = decoded.inbound
+      if(input.trigger==='observation' && await this.client.directChat(input.body)) {
+        input={...input,trigger:'command'}
+      }
       if(input.trigger==='observation') {
         const policy=this.policy(input)
         if(policy.natural_query!=='model')return false
@@ -385,7 +388,7 @@ export class Receiver {
         acknowledge:this.client.acknowledge.bind(this.client),observe:this.client.observe.bind(this.client),
       }:this.client
       job.delivery = new QQDelivery(api, job.input, job.plan.delivery_id, this.client.epoch, events, alive,
-        undefined, undefined, this.materials)
+        undefined, undefined, this.materials, job.plan.reply_mention)
       while (alive() && job.plan.status === 'preparing') {
         if(job.plan.pending_model_permission) await this.authorizeModel(job,job.plan.pending_model_permission)
         if(job.plan.processing_hint && job.plan.send_allowed && !hint) {

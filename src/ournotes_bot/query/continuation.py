@@ -62,9 +62,9 @@ def _number(text):
 
 def parse_operation(content: str) -> Operation | None:
     text = unicodedata.normalize("NFKC", content).strip().lstrip("/")
-    if not re.match(r"^(?:问|ask)\s+", text, re.I) and re.match(r"^(?:下一页|上一页|选|难度)", text):
+    if not re.match(r"^(?:查|问|ask)\s+", text, re.I) and re.match(r"^(?:下一页|上一页|选|难度)", text):
         return None
-    text = re.sub(r"^(?:问|ask)\s+", "", text, flags=re.I).strip(" ?？。!")
+    text = re.sub(r"^(?:查|问|ask)\s+", "", text, flags=re.I).strip(" ?？。!")
     if text in {"下一页", "上一页"}:
         return Operation("page", 1 if text == "下一页" else -1)
     if text == "继续":

@@ -332,7 +332,7 @@ class ChatAgent:
                 'note':'已送达引用；历史陈述本身不证明外部事实'},ensure_ascii=False)})
         try: persona=self.story.persona() if self.story else None
         except (StoryError,OSError) as exc: raise ModelError('story_persona_unavailable') from exc
-        prompt=PERSONA
+        prompt=PERSONA+'\n聊天回复的最后一句句尾不要句号，中间可以正常断句；保留问号、感叹号、数字、链接和代码格式。单独的问号通常是在质疑或追问上一句，应结合已参与上下文回应；上下文不足时简短澄清，不把问号本身当成新的资料或区服查询。'
         if persona:
             work.persona_version=persona['persona_id']+'/'+persona['persona_sha256']
             work.story_versions=((persona['source_revision'],persona['revocation_revision']),)
@@ -597,6 +597,11 @@ class ChatAgent:
             if str(exc)=='execution_timeout':
                 runtime.check(work,turn_deadline,leases)
                 return {'status':'tool_timeout','retryable':False},leases
+            if str(exc)=='query_server_mismatch':
+                # Reject the mismatched read before IO; let this chat turn ask
+                # for clarification or explain already delivered material.
+                return {'status':'query_server_mismatch','retryable':False,
+                        'data':'工具参数的区服与本轮已确认范围不一致，这次读取没有执行。请依据当前对话说明或向用户澄清，不猜区服、不把它当作用户主动查询失败。'},leases
             if tool.kind=='chart.get' and str(exc)=='query_difficulty_mismatch':
                 # Do not execute an ungrounded difficulty, but allow the agent to
                 # answer a follow-up from other evidence or request clarification.

@@ -64,6 +64,7 @@ export class QQDelivery {
     private readonly limits: Readonly<Limits> = candidateLimits,
     private readonly now: () => number = Date.now,
     private readonly materials?: ImageMaterials,
+    private readonly mentionSender = true,
   ) {
     if (!deliveryId || !gatewayEpoch || !Number.isInteger(limits.maxSends) || limits.maxSends < 1
         || limits.maxSends > 5 || !Number.isFinite(limits.replyWindowMs) || limits.replyWindowMs <= 0
@@ -83,7 +84,7 @@ export class QQDelivery {
     // Group text mentions render in Markdown; native image captions stay plain.
     // Image mentions are composed only after official material upload succeeds.
     const body = text.replace(/<(?=@|\/?qqbot-)/giu, '＜')
-    return part.kind === 'text' ? `<qqbot-at-user id="${this.inbound.userId}" />\n` + body : body
+    return part.kind === 'text' && this.mentionSender ? `<qqbot-at-user id="${this.inbound.userId}" />\n` + body : body
   }
   dispose(): void { this.disposed = true;this.materialWait.abort() }
   get usedSlots(): number { return this.sequence }
@@ -180,7 +181,7 @@ export class QQDelivery {
     }
     if (!this.valid()) return { status: 'aborted', reason: 'inactive_or_expired' }
     const markdown = this.inbound.kind === 'group'
-    const body = material ? `![查询结果 #${material.width}px #${material.height}px](${material.url})\n<qqbot-at-user id="${this.inbound.userId}" />`
+    const body = material ? `![查询结果 #${material.width}px #${material.height}px](${material.url})` + (this.mentionSender ? `\n<qqbot-at-user id="${this.inbound.userId}" />` : '')
       + (part.kind === 'image' && part.caption ? '\n' + this.content(part) : '') : this.content(part)
     if ([...body].length > this.limits.maxTextChars) return { status: 'upload_failed', reason: 'material_caption_size' }
     const attempt: Attempt = { requestId: this.inbound.requestId, deliveryId: this.deliveryId, partId,

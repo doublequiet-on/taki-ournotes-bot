@@ -8,7 +8,7 @@ from ..domain.query_policy import ExecutionPolicy
 from .backend_sources import TRANSPORT_PROTOCOL
 
 PROTOCOL = TRANSPORT_PROTOCOL
-CAPABILITY = 'qq-query-chat-v3'
+CAPABILITY = 'qq-query-chat-v4'
 WINDOW = 298.0
 
 

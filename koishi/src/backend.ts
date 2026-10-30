@@ -5,7 +5,7 @@ import { setTimeout as delay } from 'node:timers/promises'
 import { Telemetry, Span } from './telemetry'
 import type { PolicySnapshot } from './group-policies'
 
-import { protocol, capability, BackendError, decodeReady, decodeClassify, decodePlan, decodeRecorded,
+import { protocol, capability, BackendError, decodeReady, decodeClassify, decodeDirectChat, decodePlan, decodeRecorded,
   decodeAcknowledgement, decodeIntent, decodeRegistration, decodeRetirement, decodeChatObservation, decodeChatCandidate, object } from './wire'
 import type { Ready, Plan, WirePart, ModelPermission, Recorded } from './wire'
 export { protocol, capability, BackendError } from './wire'
@@ -119,6 +119,9 @@ export class BackendClient implements DeliveryEvents {
   }
   async recognizes(body: string): Promise<boolean> {
     return decodeClassify(await this.retry('/v1/classify', { body }))
+  }
+  async directChat(body: string): Promise<boolean> {
+    return decodeDirectChat(await this.retry('/v1/classify', {body}))
   }
   private encode(input: Inbound, seq: number, policy: PolicySnapshot) {
     if (input.proactiveId!==undefined && (input.trigger!=='proactive' || !/^[a-f0-9]{32}$/.test(input.proactiveId))

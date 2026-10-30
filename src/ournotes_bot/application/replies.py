@@ -31,8 +31,30 @@ from ..visuals import (render_card, render_card_list, render_chart, render_song_
 logger = logging.getLogger("ournotes_bot.replies")
 
 
+def explicit_chat(content: str) -> bool:
+    return bool(re.match(r"^[/／]聊(?:\s|$)", content.strip()))
+
+
+def named_chat(content: str) -> bool:
+    text = content.strip()
+    return bool(text and not text.startswith(('/', '／')) and not recognizes_message(text) and
+                ('立希' in text or re.search(r'(?<![A-Za-z0-9_])taki(?![A-Za-z0-9_])', text, re.I)))
+
+
+def chat_text(text: str) -> str:
+    """Conversational message ending; preserve internal prose, URLs and code."""
+    text = text.rstrip()
+    if text.endswith('。'):
+        return text[:-1].rstrip()
+    if text.endswith('.') and not text.endswith('...') and not re.search(r'https?://\S+$', text):
+        return text[:-1].rstrip()
+    return text
+
+
 def command_kind(content: str) -> str:
     """Finite observation categories; never store query arguments or question text."""
+    if explicit_chat(content) or named_chat(content):
+        return 'chat'
     if is_ai_request(content):
         return 'ask'
     if parse_operation(content) is not None:
@@ -47,6 +69,8 @@ def recognizes_message(content: str) -> bool:
     from ..commands import ALIASES, UNAVAILABLE_COMMANDS
     specials = {"介绍", "about", "简介", "帮助", "help", "菜单", "指令", "ヘルプ",
                 "语言", "language", "言語", "调试数据", "数据状态", "状态", "版本", "status", "状態"}
+    if explicit_chat(content):
+        return True
     for text in split_commands(content):
         head = text.split(None, 1)[0].casefold()
         if (head in ALIASES or head in UNAVAILABLE_COMMANDS
@@ -59,6 +83,8 @@ def recognizes_message(content: str) -> bool:
 def describe(content: str) -> str:
     """Text for the log. Direct commands are shown; /问 bodies stay out of it."""
     cleaned = (content or "").strip()
+    if explicit_chat(cleaned) or named_chat(cleaned):
+        return f'/聊（{len(cleaned)} 字，正文不记录）'
     if is_ai_request(cleaned):
         return f"/问（{len(cleaned)} 字，正文不记录）"
     return cleaned[:60]
@@ -551,11 +577,11 @@ def prepare_followup(context, operation, repository):
         if context.uncertain:
             return PreparedReply('上一张图片的发送回执不确定，暂不自动重发，请重新查询。')
         remaining = tuple(part if continuation_allowed(part.parse_origin) else
-            PreparedReply('当前策略不允许继续此前 /问 结果，请重新发送直接查询。',parse_origin='policy')
+            PreparedReply('当前策略不允许继续此前 /查 结果，请重新发送直接查询。',parse_origin='policy')
             for part in context.remaining)
         return PreparedReply('',pages=remaining,context=replace(context,remaining=remaining),parse_origin='mixed')
     if not continuation_allowed(getattr(context, 'origin', 'unknown')):
-        return PreparedReply('当前 /问 策略不允许继续此来源的旧结果，请重新发送直接查询。')
+        return PreparedReply('当前 /查 策略不允许继续此来源的旧结果，请重新发送直接查询。')
     origin = getattr(context, 'origin', 'unknown')
     if isinstance(context,DeliveryCursor):
         if context.uncertain:
