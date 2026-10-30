@@ -119,7 +119,7 @@ def chat_tools():
             if name=='site_search' else '读取本轮返回的 handle，可继续阅读已知关联。'))
     tool=tools['knowledge_search']
     tools[tool.name]=replace(tool,schema=obj({**tool.schema['properties'],'query':string(120)},tool.schema['required']),
-        description='查审核ON知识。query可改写；同一发言者近期追问followup=true，新问题false。切服时判断是否比较同一时间，不默认沿用旧条件。')
+        description='查审核ON知识。query可改写；近期知识追问followup=true，新问题false。若返回范围候选，结合问题判断条件后再次查询。')
     return tools
 
 
@@ -362,22 +362,9 @@ class ChatAgent:
             prompt+='\n人工批准人格档案：\n'+persona['prompt']
         if work.proactive is not None:
             prompt+='\n这是未点名的群聊观察。由你判断此刻回复是否能接住谈话、补充信息或回应情绪；别人已回答、话题变化或正在等人时可略过/暂缓。可以先用已接入只读工具，工具完成后仍须决定。最终只输出JSON：回复用{"participation":"reply","text":"自然回复正文"}；略过用{"participation":"skip"}；暂缓用{"participation":"defer","delay_seconds":2}（2至5秒）。不需要为普通交流找事实证据。'
-        inherited_leases=()
-        if work.proactive is None and runtime.backend.knowledge is not None:
-            scope_key=self.context.scope(work.request)
-            saved=self.knowledge_scopes.get((scope_key,work.request.user_id))
-            recent={row.message_id for row in self.context.scopes.get(scope_key,())}
-            if saved and saved[0] in recent:
-                rows=self.store.read(work.request.scope,[saved[0]])['messages']
-                if rows and runtime.backend.knowledge.validate_current(saved[2]):
-                    scope=saved[1]
-                    prompt+='\n当前发言者近期知识范围候选：'+json.dumps(
-                        dict(server=scope.server,date=scope.date,version=scope.version),ensure_ascii=False,separators=(',',':'))+'。仅相关追问时参考，新问题独立判断；切服时判断是否比较相同条件。'
-                    self.bind_memory(work,rows)
-                    inherited_leases=saved[2]
         self.bind_memory(work,summary_rows)
         messages=[{'role':'system','content':prompt},*await self.image_messages(work,history,deadline-self.budget.final_seconds)]
-        leases=(*inherited_leases,*(tuple(snapshot.pages[work.anchor.page].evidence) if work.anchor else ()))
+        leases=tuple(snapshot.pages[work.anchor.page].evidence) if work.anchor else ()
         runtime.check(work,deadline,leases)
         seen={}
         output_ids={}
@@ -500,6 +487,7 @@ class ChatAgent:
                     image_input=output.pop('_image_input',None)
                     knowledge_scope=output.pop('_knowledge_scope',None)
                     knowledge_lease=output.pop('_knowledge_lease',None)
+                    knowledge_context=output.pop('_knowledge_context',None)
                     tool_message={'role':'tool','tool_call_id':call.id,'content':json.dumps(output,ensure_ascii=False)}
                     projected=[*messages,tool_message,*([image_input] if image_input else [])]
                     if runtime.input_bound(work,projected,[])>work.model_snapshot.profile.max_input_tokens-1024:
@@ -513,6 +501,11 @@ class ChatAgent:
                             work.knowledge_scope_ambiguous=True
                         work.knowledge_scope=knowledge_scope
                         work.knowledge_scope_leases=(*work.knowledge_scope_leases,knowledge_lease)
+                    if knowledge_context is not None and output['status']=='knowledge_context':
+                        saved,rows=knowledge_context
+                        self.bind_memory(work,rows)
+                        leases=(*leases,*saved[2])
+                        work.knowledge_context=saved
                     seen[call.id]=((call.name,call.arguments),output)
                     if output['status'] in ('budget_exhausted','quota_exceeded'):force_final=True
                     for ref in output.get('evidence_refs',[]):web_citations[ref['url']]=ref
@@ -612,11 +605,18 @@ class ChatAgent:
                 previous=None
                 if args.get('followup'):
                     group=self.context.scope(work.request)
-                    saved=self.knowledge_scopes.get((group,work.request.user_id))
+                    saved=work.knowledge_context or self.knowledge_scopes.get((group,work.request.user_id))
                     recent={row.message_id for row in self.context.scopes.get(group,())}
-                    if not saved or saved[0] not in recent or saved[0] not in work.memory_sources or not self.store.read(work.request.scope,[saved[0]])['messages'] or not knowledge.validate_current(saved[2]):
+                    rows=self.store.read(work.request.scope,[saved[0]])['messages'] if saved else []
+                    if not saved or saved[0] not in recent or not rows or not knowledge.validate_current(saved[2]):
                         return {'status':'knowledge_context_unavailable','retryable':True,
                                 'data':'没有可继承的近期知识范围。若当前问题完整，可独立查询；否则请结合对话自然澄清缺少的条件。'},leases
+                    if work.knowledge_context is None:
+                        scope=saved[1]
+                        return {'status':'knowledge_context','retryable':True,
+                                'data':{'server':scope.server,'date':scope.date,'version':scope.version,
+                                        'note':'当前发言者的近期范围候选；结合问题判断是否相关，切服时判断是否比较相同条件，然后再查询。'},
+                                '_knowledge_context':(saved,rows)},leases
                     previous=saved[1]
                 scope=scope_for(question,args,previous,reset_on_server_change=True)
                 await finish_thread(knowledge.observe)
