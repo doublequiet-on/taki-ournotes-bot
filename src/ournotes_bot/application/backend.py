@@ -94,6 +94,7 @@ class Work:
     knowledge_scope_leases: tuple = ()
     knowledge_context: object = None
     knowledge_target: object = None
+    knowledge_scope_at_start: object = None
     image_deadline: float = float('inf')
     image_bytes: int = 0
 
@@ -600,8 +601,9 @@ class Backend:
         live = self.live(row, payload['gateway_epoch'])
         if kind == 'ack':
             changed = self.ledger.ack(delivery, part_id, payload['attempt_id'], payload['result'], payload['message_id'])
+            service_ack_ok=False
             if changed and payload['result']=='success' and self.model_runtime and self.model_runtime.agent:
-                self.model_runtime.agent.audit(self.model_runtime.agent.store.service_ack,delivery)
+                service_ack_ok=self.model_runtime.agent.audit(self.model_runtime.agent.store.service_ack,delivery)
                 if work and work.proactive is not None:work.proactive_delivered=True
             if work and work.hint and part_id=='0':
                 # Progress occupies one ordinary send slot, but creates no topic
@@ -620,7 +622,7 @@ class Backend:
                 long_fallback = part['mode'] == 'fallback' and len(reply.text) > text_limit
                 if work.chat and self.model_runtime.agent:
                     self.model_runtime.agent.acknowledge(work,part_id,payload['message_id'],reply.text,
-                        payload['result'],allow_context=payload.get('allow_context') is not False)
+                        payload['result'],allow_context=payload.get('allow_context') is not False,service_ack_ok=service_ack_ok)
                     if (payload['result']=='success' and len(parts)==1 and not work.hint
                             and payload.get('group_ingress_seq')==work.request.ingress_seq):
                         self.model_runtime.agent.proactive.remember_question(work,payload['message_id'],reply.text)
