@@ -1399,8 +1399,8 @@ class NativeRuntimeTests(Fixture,unittest.IsolatedAsyncioTestCase):
         self.assertIn('认真讨论讲清判断、理由和必要例子',body['messages'][0]['content'])
         self.assertIn('不总压成一两句',body['messages'][0]['content'])
         self.assertIn('最多300字',body['messages'][0]['content'])
-        self.assertIn('不为了延续对话习惯性在回答后反问',body['messages'][0]['content'])
-        self.assertIn('确实需要澄清，或顺着谈话自然想问时可以提问',body['messages'][0]['content'])
+        self.assertIn('默认用完整陈述自然收尾',body['messages'][0]['content'])
+        self.assertIn('只有当前请求确实缺少必要信息时才问一个具体问题',body['messages'][0]['content'])
         self.assertIn('不把写作限制复述',body['messages'][0]['content'])
         self.repo.current_query_view.assert_not_called()
         self.assertEqual(self.backend.model_runtime.usage.get(attempts[0])['charged'],'140')
@@ -1425,7 +1425,7 @@ class NativeRuntimeTests(Fixture,unittest.IsolatedAsyncioTestCase):
         self.client.request.return_value=AttemptResult('ok',Usage(10,0,2,None,12,'known'),text='你好。')
         plan,_=await self.prepare_native('/问 你好')
         prompt=bodies[0]['messages'][0]['content']
-        self.assertIn('别习惯性反问；必要澄清或顺着对话可提问',prompt)
+        self.assertIn('默认用完整陈述自然收尾',prompt)
         self.assertIn('不加自我免责、能力声明或自我否定的铺垫',prompt)
         self.assertIn('追问回应具体疑点，没懂就换种说法',prompt)
         self.assertIn('不总压成一两句',prompt)
@@ -2185,7 +2185,7 @@ class ChatAgentTests(Fixture, unittest.IsolatedAsyncioTestCase):
         self.client.request.return_value=self.result('我喜欢鼓点清楚的音乐。')
         plan,_=await self.prepare_native('/聊 你喜欢什么样的音乐？')
         prompt=bodies[0]['messages'][0]['content']
-        self.assertIn('别习惯性反问',prompt)
+        self.assertIn('不再接力盘问',prompt)
         self.assertIn('不加自我免责、能力声明或自我否定的铺垫',prompt)
         self.assertEqual(plan['parts'][0]['text'],'我喜欢鼓点清楚的音乐')
         self.event(plan,'intent');self.event(plan,'ack')
@@ -2194,7 +2194,7 @@ class ChatAgentTests(Fixture, unittest.IsolatedAsyncioTestCase):
         bodies=self.capture_native_bodies()
         self.client.request.return_value=self.result('你说的是哪首歌？')
         plan,_=await self.prepare_native('/聊 那首歌叫什么？')
-        self.assertIn('必要澄清或顺着对话可提问',bodies[0]['messages'][0]['content'])
+        self.assertIn('只有当前请求确实缺少必要信息时才问一个具体问题',bodies[0]['messages'][0]['content'])
         self.assertEqual(plan['parts'][0]['text'],'你说的是哪首歌？')
         self.event(plan,'intent');self.event(plan,'ack')
 
@@ -3604,7 +3604,8 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
         prompt=bodies[-1]['messages'][0]['content']
         self.assertIn('最近群友及自己已送达的发言',prompt)
         self.assertIn('别人说过的事、数字或观点换个说法',prompt)
-        self.assertIn('情绪反应',prompt)
+        self.assertIn('自己的反应、看法',prompt)
+        self.assertIn('不靠抛出问题让别人继续说',prompt)
         self.assertIn('不要为了接话编造',prompt)
         self.assertEqual(skipped['parts'],[])
         self.assertEqual(self.agent.store.read(Request_scope(),[value['message_id']])['messages'],[])
