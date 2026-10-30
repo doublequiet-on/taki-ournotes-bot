@@ -759,6 +759,24 @@ class NativeTransportTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(calls),1);self.assertEqual(result.usage.status,'known')
         self.assertEqual(result.error_code,'provider_error')
 
+    async def test_responses_http_threads_sent_tool_limit_to_decoder(self):
+        from aiohttp import web
+        from aiohttp.test_utils import TestServer
+        from ournotes_bot.sources.model_provider import NativeClient
+        async def handler(request):
+            body=await request.json();self.assertEqual(body['max_tool_calls'],1)
+            return web.json_response(dict(status='completed',max_tool_calls=1,output=[
+                dict(type='web_search_call',id='done',status='completed',action={'type':'search'}),
+                dict(type='web_search_call',id='ignored',status='searching',action={'type':'search'}),
+                dict(type='message',status='completed',role='assistant',content=[dict(type='output_text',text='Public answer')])]))
+        app=web.Application();app.router.add_post('/responses',handler)
+        server=TestServer(app);await server.start_server();self.addAsyncCleanup(server.close)
+        profile=replace(native_profile(),provider='openai',wire_profile='openai-responses-v1')
+        with patch('ournotes_bot.sources.model_provider.endpoint',return_value=str(server.make_url('/responses'))):
+            result=await NativeClient().request(profile,{'max_tool_calls':1},timeout=2)
+        self.assertEqual(result.status,'ok');self.assertEqual(result.native_calls,1)
+        self.assertEqual(result.provider_actions[0].count,1)
+
     async def test_actual_http_timeout_and_redirect_do_not_retry(self):
         from aiohttp import web
         from aiohttp.test_utils import TestServer
@@ -2157,6 +2175,9 @@ class ChatAgentTests(Fixture, unittest.IsolatedAsyncioTestCase):
         self.event(plan,'intent');self.event(plan,'ack')
 
     async def test_six_permits_and_reserved_final_with_tool_budget_results(self):
+        # Exercise permit/tool ceilings independently of prompt size and daily quota.
+        self.snapshot=replace(self.snapshot,profile=replace(self.snapshot.profile,
+            max_input_tokens=65536,user_daily_limit=10**9,group_daily_limit=10**9))
         from ournotes_bot.domain.model_calls import ToolCall
         bodies=self.capture_native_bodies()
         self.backend.model_runtime.agent.budget=replace(self.backend.model_runtime.agent.budget,tool_calls=4)
@@ -3359,6 +3380,24 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
         _,_,candidate=await self.candidate(value)
         self.assertIsNotNone(candidate[0].followup)
 
+    async def test_proactive_accepts_json_fence_and_informational_fields(self):
+        value=self.observation();self.tick+=1.6
+        self.client.request.return_value=self.result('```json\n{"participation":"skip","reason":"已有人回答","text":""}\n```')
+        plan,_,_=await self.candidate(value)
+        self.assertEqual(plan['parts'],[])
+        events=self.backend.diagnostics.read(plan['request_id'])['chat_events']
+        self.assertTrue(any(e['kind']=='decision' and e['data']['decision']=='skip' for e in events))
+        view=self.backend.admin.view(self.backend.ledger.request(plan['request_id']))
+        self.assertEqual(view['delivery_reason'],'completed_without_output')
+
+    async def test_proactive_invalid_decision_is_shown_as_failure(self):
+        value=self.observation();self.tick+=1.6
+        self.client.request.return_value=self.result('not a participation decision')
+        plan,_,_=await self.candidate(value)
+        row=self.backend.ledger.request(plan['request_id'])
+        self.assertEqual(self.backend.admin.view(row)['delivery_reason'],'proactive_error')
+        self.assertEqual(next(v for v in self.backend.admin.views() if v['request_id']==plan['request_id'])['delivery_reason'],'proactive_error')
+
     async def test_proactive_reads_own_ack_and_targets_new_speaker_message(self):
         self.policy=replace(self.policy,proactive=replace(self.policy.proactive,cooldown_seconds=0))
         self.agent.services.policy.return_value=self.policy
@@ -4514,6 +4553,24 @@ class ChatWebTests(Fixture,unittest.IsolatedAsyncioTestCase):
             self.assertEqual(self.web_result(url=url).error_code,'model_protocol_error')
         malformed=dict(status='completed',output=[dict(type='web_search_call',id='broken',status='completed',action=None)])
         self.assertEqual(decode_attempt(json.dumps(malformed),self.snapshot.profile).error_code,'model_protocol_error')
+
+    def test_ignored_search_after_requested_limit_preserves_completed_answer(self):
+        from ournotes_bot.sources.model_provider import decode_attempt
+        self.web_result()
+        output=[dict(type='web_search_call',id='done',status='completed',action=dict(type='search')),
+            dict(type='web_search_call',id='ignored',status='searching',action=dict(type='search')),
+            dict(type='message',role='assistant',status='completed',content=[dict(type='output_text',text='公开搜索回答')])]
+        payload=dict(status='completed',max_tool_calls=1,output=output,usage=dict(input_tokens=10,output_tokens=2,total_tokens=12,input_tokens_details={'cached_tokens':0}))
+        result=decode_attempt(json.dumps(payload),self.snapshot.profile,max_tool_calls=1)
+        self.assertEqual(result.status,'ok');self.assertEqual(result.native_calls,1)
+        self.assertEqual(result.provider_actions[0].count,1);self.assertEqual(result.text,'公开搜索回答')
+        for limit in (None,2):
+            self.assertEqual(decode_attempt(json.dumps(payload),self.snapshot.profile,max_tool_calls=limit).error_code,'model_protocol_error')
+        payload['output'][0]['status']='searching'
+        self.assertEqual(decode_attempt(json.dumps(payload),self.snapshot.profile,max_tool_calls=1).error_code,'model_protocol_error')
+        payload['output'][0]['status']='completed';payload['output'][1]['status']='completed'
+        result=decode_attempt(json.dumps(payload),self.snapshot.profile,max_tool_calls=1)
+        self.assertEqual(result.native_calls,2);self.assertEqual(result.provider_actions[0].count,2)
 
     async def test_isolated_public_search_uses_same_profile_permits_fees_and_visible_sources(self):
         from ournotes_bot.application.chat_capabilities import WebCapability

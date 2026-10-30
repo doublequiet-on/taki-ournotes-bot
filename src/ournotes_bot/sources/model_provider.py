@@ -95,13 +95,32 @@ def usage_from(raw, profile):
         return Usage()
 
 
-def decode_attempt(raw, profile, *, http_status=200):
+def decode_attempt(raw, profile, *, http_status=200, max_tool_calls=None):
     try:
         payload = decode_json(raw)
     except (ValueError,UnicodeError,RecursionError):
         return AttemptResult('error',error_code='model_protocol_error')
     if not isinstance(payload,dict):
         return AttemptResult('error',error_code='model_protocol_error')
+    # A completed Responses result can retain a searching attempt ignored after
+    # the request's built-in tool limit. It was not a processed/billable action.
+    # Use the sent limit, never an unsolicited response limit, as the authority.
+    if (profile.wire_profile=='openai-responses-v1' and payload.get('status')=='completed'
+            and http_status==200 and not payload.get('error')
+            and type(payload.get('max_tool_calls')) is int and type(max_tool_calls) is int and max_tool_calls>0
+            and payload.get('max_tool_calls')==max_tool_calls and isinstance(payload.get('output'),list)):
+        kept=[];completed=0;ids=set()
+        for item in payload['output']:
+            if isinstance(item,dict) and item.get('type')=='web_search_call':
+                ident=item.get('id');action=item.get('action')
+                if (item.get('status')=='searching' and completed==max_tool_calls
+                        and isinstance(ident,str) and ident and ident not in ids
+                        and isinstance(action,dict) and action.get('type')=='search'):
+                    ids.add(ident);continue
+                if item.get('status')=='completed':completed+=1
+                if isinstance(ident,str):ids.add(ident)
+            kept.append(item)
+        payload={**payload,'output':kept}
     response_items=();citations=();provider_actions=();native_calls=0
     if profile.wire_profile=='openai-responses-v1':
         response_items=tuple(payload.get('output',[])) if isinstance(payload.get('output'),list) else ()
@@ -278,7 +297,7 @@ class NativeClient:
                         size+=len(chunk)
                         if size>100000: return AttemptResult('error',error_code='model_response_too_large')
                         chunks.append(chunk)
-                    return decode_attempt(b''.join(chunks),profile,http_status=response.status)
+                    return decode_attempt(b''.join(chunks),profile,http_status=response.status,max_tool_calls=body.get('max_tool_calls'))
         except (aiohttp.ClientError, asyncio.TimeoutError):
             return AttemptResult('error',error_code='provider_unavailable')
 

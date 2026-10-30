@@ -179,9 +179,9 @@ class Diagnostics:
             return {}
         try:
             result = {}
-            for row in self.db.execute('SELECT id,scope,group_id,commands,parts FROM requests'):
+            for row in self.db.execute("SELECT id,scope,group_id,commands,parts,EXISTS(SELECT 1 FROM chat_events e WHERE e.request_id=requests.id AND e.kind='error') AS chat_failed FROM requests"):
                 result[row['id']] = {'scope': row['scope'], 'group_id': row['group_id'],
-                    'commands': json.loads(row['commands']),
+                    'commands': json.loads(row['commands']),'chat_failed':bool(row['chat_failed']),
                     'parts': json.loads(row['parts']) if row['parts'] is not None else None}
             return result
         except (sqlite3.Error, ValueError, TypeError):
