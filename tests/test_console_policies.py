@@ -3190,6 +3190,93 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
         _,_,candidate=await self.candidate(value)
         self.assertIsNotNone(candidate[0].followup)
 
+    async def test_proactive_reads_own_ack_and_targets_new_speaker_message(self):
+        self.policy=replace(self.policy,proactive=replace(self.policy.proactive,cooldown_seconds=0))
+        self.agent.services.policy.return_value=self.policy
+        bodies=ChatAgentTests.capture_native_bodies(self)
+        first=self.observation('感觉不如直接集成到bot里',seq=1);self.tick+=1.6
+        self.client.request.return_value=self.result('{"participation":"reply","text":"直接集成进 bot 用起来最顺"}')
+        plan,_,_=await self.candidate(first)
+        self.event(plan,'intent');self.event(plan,'ack')
+        delivered='accepted-'+plan['request_id'][:8]
+        scope=self.backend.works[plan['delivery_id']].request.scope
+        self.agent.context.scopes.clear()  # The delivered history must come from the store.
+        self.current_user='u2'
+        second=self.observation('还有3939',seq=2);self.tick+=1.6
+        self.client.request.return_value=self.result('{"participation":"skip"}')
+        skipped,_,_=await self.candidate(second,serial=2)
+        transcript=bodies[-1]['messages']
+        rows=[json.loads(item['content']) for item in transcript if item['role']!='system']
+        self.assertEqual([row['message_id'] for row in rows].count(first['message_id']),1)
+        self.assertEqual([row['message_id'] for row in rows].count(delivered),1)
+        own=next(row for row in rows if row['message_id']==delivered)
+        self.assertEqual(own['role'],'assistant');self.assertEqual(own['reply_to'],first['message_id'])
+        self.assertIn('直接集成进 bot',own['text'])
+        self.assertEqual(rows[-1]['message_id'],second['message_id']);self.assertEqual(rows[-1]['speaker_id'],'u2')
+        self.assertIn(second['message_id'],transcript[0]['content'])
+        self.assertIn('不要换个措辞再说一遍',transcript[0]['content'])
+        self.assertEqual(skipped['parts'],[])
+        self.assertEqual(self.agent.store.read(scope,[second['message_id']])['messages'],[])
+
+    async def test_proactive_keeps_last_delivered_exchange_under_context_pressure(self):
+        self.client.request.return_value=self.result('我刚才已经解释过集成这个功能')
+        first,_=await self.prepare_native('/聊 集成图片小工具',seq=1)
+        scope=self.backend.works[first['delivery_id']].request.scope
+        self.event(first,'intent');self.event(first,'ack')
+        delivered='accepted-'+first['request_id'][:8]
+        for seq in range(2,30):
+            value=self.observation('其他人的背景讨论'*90,seq=seq)
+        value=self.observation('还有3939',seq=30);self.tick+=1.6
+        bodies=ChatAgentTests.capture_native_bodies(self)
+        self.client.request.return_value=self.result('{"participation":"reply","text":"当前在补充编号"}')
+        plan,_,_=await self.candidate(value)
+        messages=bodies[0]['messages']
+        ids={json.loads(item['content']).get('message_id') for item in messages if item['role']!='system'}
+        self.assertIn(delivered,ids);self.assertIn('native1',ids);self.assertIn(value['message_id'],ids)
+        self.assertLess(len(ids),31)
+        work=self.backend.works[plan['delivery_id']]
+        self.assertTrue(self.agent.memory_valid(work))
+        self.agent.store.delete_messages(scope,[delivered])
+        self.assertFalse(self.agent.memory_valid(work))
+        self.assertFalse(self.backend.lookup(plan['request_id'],'e1')['send_allowed'])
+
+    async def test_proactive_excludes_undelivered_reply_and_preserves_quote_preview(self):
+        self.client.request.return_value=self.result('不能当作已经说过的回复')
+        addressed,_=await self.prepare_native('/聊 集成一下',seq=1)
+        self.event(addressed,'intent')
+        from ournotes_bot.application.backend_protocol import PROTOCOL
+        self.backend.apply_event(addressed['delivery_id'],dict(protocol=PROTOCOL,request_id=addressed['request_id'],
+            plan_version=1,gateway_epoch='e1',event='ack',part_id=addressed['parts'][0]['id'],attempt_id='a1',
+            result='failure',message_id=None))
+        bodies=ChatAgentTests.capture_native_bodies(self)
+        value=self.observation('id不正确',seq=2);value['quoted_text']='6273939'
+        self.tick+=1.6;self.client.request.return_value=self.result('{"participation":"skip"}')
+        await self.candidate(value)
+        transcript=bodies[0]['messages']
+        self.assertFalse(any(item['role']=='assistant' for item in transcript))
+        current=json.loads(transcript[-1]['content'])
+        self.assertEqual(current['text'],'id不正确');self.assertEqual(current['quoted_text'],'6273939')
+        self.assertIn('未经核验',current['quote_status'])
+
+    async def test_proactive_history_stays_in_group_and_recent_window(self):
+        self.client.request.return_value=self.result('这是其他话题已经送达的回答')
+        prior,_=await self.prepare_native('/聊 其他话题',seq=1)
+        self.event(prior,'intent');self.event(prior,'ack')
+        request=self.backend.works[prior['delivery_id']].request
+        # A receipt in another group must never be merged into this group.
+        self.agent.store.db.execute('UPDATE memory_messages SET scope=?',('other-group',));self.agent.store.db.commit()
+        bodies=ChatAgentTests.capture_native_bodies(self)
+        value=self.observation('现在的话题',seq=2);self.tick+=1.6
+        self.client.request.return_value=self.result('{"participation":"skip"}')
+        await self.candidate(value)
+        self.assertNotIn('这是其他话题已经送达的回答',json.dumps(bodies,ensure_ascii=False))
+        # Restore the scope but make the persisted exchange older than the auto window.
+        self.agent.store.db.execute('UPDATE memory_messages SET scope=?,timestamp_ms=?',
+            (self.agent.store._scope(request.scope),int((self.now-901)*1000)));self.agent.store.db.commit()
+        value=self.observation('新话题继续',seq=3);self.tick+=1.6
+        await self.candidate(value,serial=2)
+        self.assertFalse(any(item['role']=='assistant' for item in bodies[-1]['messages']))
+
     async def test_zero_group_cooldown_allows_next_observation_after_ack(self):
         from ournotes_bot.application.backend_protocol import Request
         self.policy=replace(self.policy,proactive=replace(self.policy.proactive,cooldown_seconds=0))
