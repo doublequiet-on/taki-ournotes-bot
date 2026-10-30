@@ -1,6 +1,6 @@
 # Koishi 本机业务后端协议 v1（M2 / M3 / M4）
 
-本文保留 M2–M4 阶段记录。查询聊天包 1 曾将载荷升级为 2.0；可选对话 Agent 的配对协议现为 2.2（能力 `qq-query-chat-v5`），新增可选昵称字段并同步六次许可上限，见 [聊天架构](CHAT_AGENT_ARCHITECTURE.md)。许可与锚点原合同见 [包 1 协议说明](QUERY_CHAT_PACKAGE1.md)，旧请求示例不能直接用于新后端。
+本文保留 M2–M4 阶段记录。查询聊天包 1 曾将载荷升级为 2.0；可选对话 Agent 的配对协议现为 2.2（能力 `qq-query-chat-v6`），新增可选昵称字段并同步六次许可上限，见 [聊天架构](CHAT_AGENT_ARCHITECTURE.md)。许可与锚点原合同见 [包 1 协议说明](QUERY_CHAT_PACKAGE1.md)，旧请求示例不能直接用于新后端。
 
 本阶段以 `b60c12dc2acff3d170894e3fb60c15f12392c65b` 的 M0/M1 为起点，在同一迁移分支继续。实现 Python 常驻查询后端和共享回复准备；Koishi 消息接收器/HTTP 客户端与网关接线已在 [M3](KOISHI_MIGRATION_M3.md) 实现，真实平台送达待验；后台任务和通知发送已在 [M4](KOISHI_MIGRATION_M4.md) 接线。生产切换仍需另行确认。
 
@@ -30,7 +30,7 @@ ournotes-bot backend --instance-id taki-test --app-id APP_ID --state-dir /absolu
 
 请求 JSON 最大 32 KiB；正文 UTF-8 最大 16 KiB；不接受任意本地文件路径或远端图片 URL。当前运输协议严格采用 `{"major":2,"minor":0}`，不兼容版本返回 409。错误是 `{"error":"分类","protocol":...}`，不回显 token、正文、原始 QQ 身份或异常细节。访问日志关闭；业务准备日志在后端模式隐藏查询正文，使用 request_id 关联后端错误。
 
-历史 Console V1a 使用1.0，V1b配对1.1；当前配对协议为2.0与 `qq-query-chat-v5`，仍要求 `group_policies_v1`，不允许混装。新请求必须携带 `policy={natural_query,epoch,global_revision,group_revision}`，模式 off/local/model，revision 为非负安全整数。该不可变快照参与请求摘要；重试复用原快照，身份相同但快照不同返回409，不重新执行。通知领取使用严格的 scope：all+exclude_group_ids、selected+非空group_ids、none；none不生成报告或领取。ACK和撤权继续记事实。共同源码摘要清单为 `application/backend_sources.py`，管理、遥测、分页与隐私契约见 [Console V1](koishi/CONSOLE_V1.md)。
+历史 Console V1a 使用1.0，V1b配对1.1；当前配对协议为2.2与 `qq-query-chat-v6`，仍要求 `group_policies_v1`，不允许混装。新请求必须携带 `policy={natural_query,epoch,global_revision,group_revision}`，模式 off/local/model，revision 为非负安全整数。该不可变快照参与请求摘要；重试复用原快照，身份相同但快照不同返回409，不重新执行。通知领取使用严格的 scope：all+exclude_group_ids、selected+非空group_ids、none；none不生成报告或领取。ACK和撤权继续记事实。共同源码摘要清单为 `application/backend_sources.py`，管理、遥测、分页与隐私契约见 [Console V1](koishi/CONSOLE_V1.md)。
 
 | 端点 | 结果 |
 |---|---|

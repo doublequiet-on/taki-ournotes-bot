@@ -2,7 +2,7 @@
 import type { PolicySnapshot } from './group-policies'
 
 export const protocol = { major: 2, minor: 2 } as const
-export const capability = 'qq-query-chat-v5'
+export const capability = 'qq-query-chat-v6'
 export class BackendError extends Error {
   constructor(public readonly code: string, public readonly status = 0) { super(code) }
 }
@@ -162,7 +162,7 @@ export function decodeChatObservation(value: unknown): ChatObservation {
   const v=object(value,'observation_shape')
   exact(v,['protocol','observed','delay_ms'],'observation_shape')
   return {protocol:wireProtocol(v.protocol),observed:boolean(v.observed,'observation_shape'),
-    delay_ms:integer(v.delay_ms,0,2000,'observation_shape')}
+    delay_ms:integer(v.delay_ms,0,120000,'observation_shape')}
 }
 export type ChatCandidate = { protocol: typeof protocol; candidate: false }
   | { protocol: typeof protocol; candidate: true; plan: Plan }

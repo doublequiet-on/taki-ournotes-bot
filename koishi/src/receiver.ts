@@ -15,9 +15,9 @@ export interface ReceiverConfig extends Identity {
   materialStateDir?: string
   notifications?: boolean; backendUrl: string; tokenEnv: string; permissions: string[]; maxPending: number
 }
-interface Raw { raw: unknown; seq: number; at: number; fingerprint: string; bytes:number; conflict?: boolean }
+interface Raw { raw: unknown; seq: number; backendSeq:number; at: number; fingerprint: string; bytes:number; conflict?: boolean }
 interface Observation {
-  key:string; input:Inbound; session:Session; seq:number; fingerprint:string; bytes:number; attempt:number
+  key:string; input:Inbound; session:Session; seq:number; backendSeq:number; fingerprint:string; bytes:number; attempt:number
   policyVersion:string
   cancelled:boolean; accepted:boolean; timer?:ReturnType<typeof setTimeout>; promise?:Promise<void>
 }
@@ -87,7 +87,7 @@ export class Receiver {
   private flights = new Map<string, Flight>()
   private observations = new Map<string, Observation>()
   private observationTasks = new Set<Observation>()
-  private groupArrivals = new Map<string,{seq:number;at:number}>()
+  private groupArrivals = new Map<string,{seq:number;backendSeq:number;at:number}>()
   private admission: Promise<void> = Promise.resolve()
   readonly ready: Promise<void>
   private log: ReturnType<Context['logger']>
@@ -170,7 +170,7 @@ export class Receiver {
     // The current ingress flight releases its slot on return; the timer takes it.
     if(this.flights.size+this.observationTasks.size-1>=this.config.maxPending
         || this.observationBytes()+bytes>8*1024*1024)return
-    const task:Observation={key,input,session,seq:source.seq,fingerprint:source.fingerprint,bytes,
+    const task:Observation={key,input,session,seq:source.seq,backendSeq:source.backendSeq,fingerprint:source.fingerprint,bytes,
       attempt:0,cancelled:false,accepted:false,policyVersion:this.policyVersion(input)}
     this.observations.set(key,task)
     this.observationTasks.add(task)
@@ -187,7 +187,7 @@ export class Receiver {
         requestId:createHash('sha256').update(JSON.stringify([task.input.instanceId,task.input.appId,'qq','group',
           task.input.conversationId,task.input.userId,task.input.messageId,proactiveId])).digest('hex')}
       task.attempt++
-      const candidate=await this.client.chatCandidate(input,task.seq,this.policy(input))
+      const candidate=await this.client.chatCandidate(input,task.backendSeq,this.policy(input))
       if(!candidate.candidate)return
       const job:Job={input,plan:candidate.plan,session:task.session,permissionAttempts:new Set(),
         promise:Promise.resolve(),proactive:task}
@@ -228,13 +228,17 @@ export class Receiver {
     }
     const group=data.group_id??data.group_openid
     const seq=this.sequence+1
+    let backendSeq=seq
     if(type!=='C2C_MESSAGE_CREATE' && typeof group==='string' && group.length>0 && group.length<=256) {
-      const current=this.observations.get(this.groupKey(group))
+      const groupKey=this.groupKey(group)
+      const previous=this.groupArrivals.get(groupKey)
+      backendSeq=previous ? previous.backendSeq+1 : seq
+      const current=this.observations.get(groupKey)
       if(current?.input.messageId===data.id && current.fingerprint===fingerprint)return
       // Invalidate locally at raw arrival, before permissions/HTTP can reorder.
       this.cancelObservation(this.groupKey(group))
       this.groupArrivals.delete(this.groupKey(group))
-      this.groupArrivals.set(this.groupKey(group),{seq,at:now})
+      this.groupArrivals.set(groupKey,{seq,backendSeq,at:now})
       while(this.groupArrivals.size>512) {
         const oldest=this.groupArrivals.keys().next().value!
         this.cancelObservation(oldest)
@@ -245,7 +249,7 @@ export class Receiver {
     const bytes=Buffer.byteLength(JSON.stringify(data))+Buffer.byteLength(fingerprint)
     if(this.raw.size>=512 || this.observationBytes()+bytes>8*1024*1024)return
     // Assigned at raw arrival, before adapter async work, permissions or HTTP can reorder.
-    this.raw.set(data.id, { raw: { t: type, d: structuredClone(data) }, seq, at: now, fingerprint,bytes })
+    this.raw.set(data.id, { raw: { t: type, d: structuredClone(data) }, seq, backendSeq, at: now, fingerprint,bytes })
   }
   private async permitted(session: Session): Promise<boolean> {
     if (!this.ctx.filter(session)) return false
@@ -319,7 +323,7 @@ export class Receiver {
         const version=this.policyVersion(input)
         let observed
         try {
-          observed=await this.client.chatObservation(input,source.seq,policy)
+          observed=await this.client.chatObservation(input,source.backendSeq,policy)
         } catch(error) {
           this.diagnoseObservation(input,'backend_error')
           throw error
@@ -338,7 +342,7 @@ export class Receiver {
         await existing.promise
         return true
       }
-      const plan = await this.client.submit(input, source.seq, this.config.management?.policySnapshot(input))
+      const plan = await this.client.submit(input, source.backendSeq, this.config.management?.policySnapshot(input))
       const job: Job = { input, plan, promise: Promise.resolve(), session:canonical, permissionAttempts:new Set() }
       this.jobs.set(input.requestId, job)
       flight.accepted = true
@@ -385,8 +389,14 @@ export class Receiver {
       const events=job.proactive ? {
         intent:async(attempt:Parameters<BackendClient['intent']>[0])=>
           alive() && await this.currentProactivePermission(job) && alive()?this.client.intent(attempt):'denied' as const,
-        acknowledge:this.client.acknowledge.bind(this.client),observe:this.client.observe.bind(this.client),
-      }:this.client
+        acknowledge:this.client.acknowledge.bind(this.client),observe:this.client.observe?.bind(this.client),
+      }:{
+        intent:this.client.intent.bind(this.client),
+        acknowledge:(attempt:Parameters<BackendClient['acknowledge']>[0], result:Parameters<BackendClient['acknowledge']>[1])=>
+          this.client.acknowledge(attempt,result,job.input.kind==='group' && result.status==='success'
+            ? this.groupArrivals.get(this.groupKey(job.input.conversationId))?.backendSeq : undefined),
+        observe:this.client.observe?.bind(this.client),
+      }
       job.delivery = new QQDelivery(api, job.input, job.plan.delivery_id, this.client.epoch, events, alive,
         undefined, undefined, this.materials, job.plan.reply_mention)
       while (alive() && job.plan.status === 'preparing') {
