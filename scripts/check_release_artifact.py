@@ -58,7 +58,7 @@ def check(path: Path) -> None:
     if not aliases or not code:
         raise ValueError(f"missing query aliases or bot code in {path.name}")
     required = {'CHAT_AGENT_C2.md', 'STORY_ENGINE.md', 'STORY_SOURCE_COVERAGE.md', 'STORY_PERSONA_RESEARCH.md', 'CHAT_MEMORY_C3.md', 'CHAT_IMAGES_V1.md', 'CHAT_QQ_QUOTE_EVIDENCE.md', 'CHAT_PROACTIVE_G1.md', 'CHAT_SERVICE_JOBS.md', 'CHAT_AGENT_F1.md',
-                'chat_capabilities.py', 'story_service.py', 'story_cli.py', 'story.py', 'story_files.py', 'story_retrieval.py', 'chat_memory.py', 'chat_images.py', 'chat_jobs.py', 'proactive_chat.py', 'chat_proactive_runtime.py',
+                'chat_capabilities.py', 'story_service.py', 'story_cli.py', 'story.py', 'story_files.py', 'story_retrieval.py', 'chat_memory.py', 'chat_images.py', 'chat_jobs.py', 'proactive_chat.py', 'chat_proactive_runtime.py', 'chat_followup.py',
                 "chat.py", "chat_agent.py", "chat_context.py", "chat_store.py",
                 "continuation.py", "field_query.py", "card_query.py", "cutoff_history.py", "cutoff_sampler.py", "cutoff_trends.py",
                 "knowledge.py", "knowledge_files.py", "knowledge_embeddings.py", "knowledge_retrieval.py",

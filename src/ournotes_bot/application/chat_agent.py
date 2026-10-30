@@ -18,7 +18,7 @@ from ..domain.model_calls import ModelError, require
 from ..domain.story import StoryError
 from ..domain.chat_images import ImageError, MAX_TOTAL_BYTES
 from ..sources.chat_images import ImageLoader,ImageCache
-from ..natural_query.native_tools import TOOLS, Tool, obj, string, validate_call, execute, scope_for
+from ..natural_query.native_tools import TOOLS, Tool, obj, string, validate_call, execute, scope_for, requested_server
 from ..natural_query.query_validation import EntityEvidence
 from ..query.continuation import catalog_version
 from ..query.entity_lexicon import band_aliases, alias_scope, alias_status, alias_version
@@ -119,7 +119,7 @@ def chat_tools():
             if name=='site_search' else '读取本轮返回的 handle，可继续阅读已知关联。'))
     tool=tools['knowledge_search']
     tools[tool.name]=replace(tool,schema=obj({**tool.schema['properties'],'query':string(120)},tool.schema['required']),
-        description='检索已审核 ON 规则与玩法。query 可改写检索词；区服、日期、版本仍由宿主核对。支持日服、国际服和明确的共通范围。')
+        description='查审核ON知识。query可改写；近期知识追问followup=true，新问题false。若返回范围候选，结合问题判断条件后再次查询。')
     return tools
 
 
@@ -279,6 +279,8 @@ class ChatAgent:
     def initial_context(self,work,messages,tools):
         """Trim complete old exchanges before the function transcript starts."""
         protected={work.request.message_id}
+        if work.proactive is not None and work.proactive.followup is not None:
+            protected.update((work.proactive.followup.source_id,work.proactive.followup.message_id))
         if work.request.reference:protected.add(work.request.reference['message_id'])
         def required(message):
             if message['role']=='system':return True
@@ -304,7 +306,8 @@ class ChatAgent:
         key=tuple(scope.values())
         self.context.scopes.pop(key,None)
         self.context.revisions.pop(key,None)
-        self.knowledge_scopes.pop(key,None)
+        for item in list(self.knowledge_scopes):
+            if item[0]==key:self.knowledge_scopes.pop(item,None)
         self.images.forget_scope(json.dumps(scope,sort_keys=True,separators=(',',':')))
         self.proactive.clear(scope)
         backend=self.runtime.backend
@@ -331,7 +334,7 @@ class ChatAgent:
             question+='\n'+''.join('[图片附件 '+item.id+' '+item.content_type+'；图像仅在本轮或有效引用中可见]' for item in work.request.attachments)
         if work.proactive is None:self.context.trigger(work.request,question)
         history=self.context.messages(work.request) if work.proactive is None else self.proactive.history(work)
-        summaries=self.store.summaries(work.request.scope,limit=1)
+        summaries=[] if work.proactive is not None and work.proactive.followup is not None else self.store.summaries(work.request.scope,limit=1)
         summary_rows=[]
         work.public_question=question
         self.privacy_material(work,[json.loads(item['content']) for item in history if 'message_id' in json.loads(item['content'])])
@@ -361,6 +364,8 @@ class ChatAgent:
             prompt+='\n人工批准人格档案：\n'+persona['prompt']
         if work.proactive is not None:
             prompt+='\n这是未点名的群聊观察。由你判断此刻回复是否能接住谈话、补充信息或回应情绪；别人已回答、话题变化或正在等人时可略过/暂缓。可以先用已接入只读工具，工具完成后仍须决定。最终只输出JSON：回复用{"participation":"reply","text":"自然回复正文"}；略过用{"participation":"skip"}；暂缓用{"participation":"defer","delay_seconds":2}（2至5秒）。不需要为普通交流找事实证据。'
+            if work.proactive.followup is not None:
+                prompt+='\n这是同一参与者在你刚才提问后的消息。结合已送达问题判断是否确实在回答：只有关联明确时才继续；无关或无法判断时只输出{"participation":"skip"}。不要猜测关联。'
         self.bind_memory(work,summary_rows)
         messages=[{'role':'system','content':prompt},*await self.image_messages(work,history,deadline-self.budget.final_seconds)]
         leases=tuple(snapshot.pages[work.anchor.page].evidence) if work.anchor else ()
@@ -485,6 +490,9 @@ class ChatAgent:
                         output,leases=await self.execute(work,call,question,site,leases,deadline-self.budget.final_seconds,deadline,
                                                          registry=registry,web=web,user=user,group=group,story_handles=story_handles,image_handles=image_handles,vision=vision)
                     image_input=output.pop('_image_input',None)
+                    knowledge_scope=output.pop('_knowledge_scope',None)
+                    knowledge_lease=output.pop('_knowledge_lease',None)
+                    knowledge_context=output.pop('_knowledge_context',None)
                     tool_message={'role':'tool','tool_call_id':call.id,'content':json.dumps(output,ensure_ascii=False)}
                     projected=[*messages,tool_message,*([image_input] if image_input else [])]
                     if runtime.input_bound(work,projected,[])>work.model_snapshot.profile.max_input_tokens-1024:
@@ -493,6 +501,17 @@ class ChatAgent:
                         image_input=None;force_final=True
                     elif runtime.input_bound(work,projected,[tool.wire() for tool in registry.values()])>work.model_snapshot.profile.max_input_tokens-2048:
                         force_final=True
+                    if knowledge_scope is not None and output['status']=='ok':
+                        if work.knowledge_scope is not None and work.knowledge_scope!=knowledge_scope:
+                            work.knowledge_scope_ambiguous=True
+                        work.knowledge_scope=knowledge_scope
+                        work.knowledge_scope_leases=(*work.knowledge_scope_leases,knowledge_lease)
+                    if knowledge_context is not None and output['status']=='knowledge_context':
+                        saved,rows,target=knowledge_context
+                        self.bind_memory(work,rows)
+                        leases=(*leases,*saved[2])
+                        work.knowledge_context=saved
+                        work.knowledge_target=target
                     seen[call.id]=((call.name,call.arguments),output)
                     if output['status'] in ('budget_exhausted','quota_exceeded'):force_final=True
                     for ref in output.get('evidence_refs',[]):web_citations[ref['url']]=ref
@@ -597,19 +616,41 @@ class ChatAgent:
                 knowledge=runtime.backend.knowledge
                 if knowledge is None: return {'status':'not_available','retryable':False},leases
                 previous=None
-                if args.get('followup') or re.match(r'^(?:那|刚才|之前|接着|继续)',question):
-                    saved=self.knowledge_scopes.get(self.context.scope(work.request))
-                    require(saved is not None and bool(self.store.read(work.request.scope,[saved[0]])['messages']),'context_expired')
+                if args.get('followup'):
+                    group=self.context.scope(work.request)
+                    saved=work.knowledge_context or self.knowledge_scopes.get((group,work.request.user_id))
+                    recent={row.message_id for row in self.context.scopes.get(group,())}
+                    pending=saved[3] if saved and len(saved)>3 else None
+                    ids=[saved[0],*([pending[1]] if pending else [])] if saved else []
+                    rows=self.store.read(work.request.scope,ids)['messages'] if ids else []
+                    found={row['message_id']:row for row in rows}
+                    pending_valid=(not pending or pending[1] in recent and pending[1] in found
+                        and found[pending[1]]['role']=='user' and found[pending[1]]['speaker_id']==work.request.user_id)
+                    if not saved or saved[0] not in recent or saved[0] not in found or not pending_valid or not knowledge.validate_current(saved[2]):
+                        key=(group,work.request.user_id)
+                        if saved is not None and self.knowledge_scopes.get(key)==saved:
+                            self.knowledge_scopes.pop(key,None)
+                        return {'status':'knowledge_context_unavailable','retryable':True,
+                                'data':'没有可继承的近期知识范围。若当前问题完整，可独立查询；否则请结合对话自然澄清缺少的条件。'},leases
+                    if work.knowledge_context is None:
+                        scope=saved[1]
+                        explicit=requested_server(work.request.body)
+                        target=(explicit,work.request.message_id) if explicit else pending
+                        return {'status':'knowledge_context','retryable':True,
+                                'data':{'server':scope.server,'date':scope.date,'version':scope.version,
+                                        'pending_server':pending[0] if pending else None,
+                                        'note':'当前发言者近期范围候选；pending_server是其待澄清的明确区服。结合问题判断关联与时间，再查询。'},
+                                '_knowledge_context':(saved,rows,target)},leases
                     previous=saved[1]
-                scope=scope_for(question,args,previous)
-                work.knowledge_scope=scope
+                scope=scope_for(question,args,previous,reset_on_server_change=True,
+                                pending_server=work.knowledge_target[0] if args.get('followup') and work.knowledge_target else None)
                 await finish_thread(knowledge.observe)
                 retrieval=await finish_thread(partial(knowledge.retrieve,args.get('query') or question,scope,knowledge.approved_set_revision))
                 if retrieval.code!='ok':
                     return {'status':retrieval.code,'data':retrieval.message,'retryable':True},leases
                 leases=(*leases,retrieval.lease)
                 evidence=await finish_thread(partial(knowledge.prepare_evidence,retrieval.lease))
-                output={'status':'ok','data':evidence}
+                output={'status':'ok','data':evidence,'_knowledge_scope':scope,'_knowledge_lease':retrieval.lease}
             else:
                 repository=await runtime.current_repository()
                 if work.entity_evidence:
@@ -631,6 +672,9 @@ class ChatAgent:
                 # for clarification or explain already delivered material.
                 return {'status':'query_server_mismatch','retryable':False,
                         'data':'工具参数的区服与本轮已确认范围不一致，这次读取没有执行。请依据当前对话说明或向用户澄清，不猜区服、不把它当作用户主动查询失败。'},leases
+            if tool.kind=='knowledge' and str(exc) in ('query_date_mismatch','query_version_mismatch','knowledge_scope_ambiguous'):
+                return {'status':str(exc),'retryable':True,
+                        'data':'日期或版本未能从当前问题确认；切换区服时不自动沿用旧区条件。请结合对话重新查询，或自然澄清需要的条件。'},leases
             if tool.kind=='chart.get' and str(exc)=='query_difficulty_mismatch':
                 # Do not execute an ungrounded difficulty, but allow the agent to
                 # answer a follow-up from other evidence or request clarification.
@@ -657,10 +701,34 @@ class ChatAgent:
                           'allow_context':allow_context,'delivered_at':self.runtime.backend.clock()})
         if status=='success' and allow_context:
             self.context.delivered(work.request,message_id,text)
-            if work.knowledge_scope is not None:
-                key=self.context.scope(work.request)
-                self.knowledge_scopes[key]=(message_id,work.knowledge_scope)
-                while len(self.knowledge_scopes)>1024:self.knowledge_scopes.pop(next(iter(self.knowledge_scopes)))
+            if work.proactive is None:
+                key=(self.context.scope(work.request),work.request.user_id)
+                previous=work.knowledge_context
+                # Do not resurrect a cleared candidate or overwrite a newer turn.
+                if previous is not None and self.knowledge_scopes.get(key)!=previous:return
+                knowledge=self.runtime.backend.knowledge
+                try:
+                    self.context.sweep()
+                    recent={row.message_id for row in self.context.scopes.get(key[0],())}
+                    valid_previous=(previous is not None and previous[0] in recent
+                        and bool(self.store.read(work.request.scope,[previous[0]])['messages'])
+                        and knowledge is not None and knowledge.validate_current(previous[2]))
+                    valid_new=(work.knowledge_scope is not None and not work.knowledge_scope_ambiguous
+                        and knowledge is not None and knowledge.validate_current(work.knowledge_scope_leases))
+                    target=work.knowledge_target
+                    target_rows=self.store.read(work.request.scope,[target[1]])['messages'] if target else []
+                    valid_target=(not target or target[1] in recent and any(row['message_id']==target[1]
+                        and row['role']=='user' and row['speaker_id']==work.request.user_id for row in target_rows))
+                except (sqlite3.Error,OSError):
+                    valid_previous=valid_new=False
+                if valid_new and (previous is None or valid_previous):
+                    self.knowledge_scopes[key]=(message_id,work.knowledge_scope,work.knowledge_scope_leases,None)
+                    while len(self.knowledge_scopes)>1024:self.knowledge_scopes.pop(next(iter(self.knowledge_scopes)))
+                elif valid_previous and valid_target and work.knowledge_scope is None and not work.knowledge_scope_ambiguous:
+                    self.knowledge_scopes[key]=(*previous[:3],target)
+                else:
+                    self.knowledge_scopes.pop(key,None)
 
     def close(self):
+        self.proactive.followups.close()
         self.store.close()
