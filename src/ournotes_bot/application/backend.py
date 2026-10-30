@@ -800,7 +800,7 @@ def create_app(backend, token, initialize=None):
             require(backend.ready and not backend.closing,'backend_not_ready',503)
             require(backend.ledger.active(request.headers.get('X-Taki-Epoch')),'ops_gateway_epoch',409)
             value=await read_json(request)
-            return json(owner.save_budget(value) if request.path.endswith('/budget') else owner.probe(value,proactive=proactive) if request.path.endswith('/probe') else owner.save(value,fallback,proactive=proactive))
+            return json(owner.save_web(value,proactive=proactive) if request.path.endswith('/web-search') else owner.save_budget(value) if request.path.endswith('/budget') else owner.probe(value,proactive=proactive) if request.path.endswith('/probe') else owner.save(value,fallback,proactive=proactive))
         except ModelError as exc:
             raise ProtocolError(str(exc),409) from None
         except (OSError,sqlite3.Error):
@@ -924,6 +924,7 @@ def create_app(backend, token, initialize=None):
                     web.get('/v1/admin/model/proactive/groups/{gid}/limits',proactive_limits),
                     web.post('/v1/admin/model/proactive/groups/{gid}/limits',proactive_limits),
                     web.get('/v1/admin/model/proactive',model_settings),web.post('/v1/admin/model/proactive',model_settings),
+                    web.post('/v1/admin/model/web-search',model_settings),web.post('/v1/admin/model/proactive/web-search',model_settings),
                     web.post('/v1/admin/model/proactive/probe',model_settings),web.post('/v1/admin/model/probe',model_settings),web.post('/v1/admin/model/budget',model_settings),web.get('/v1/admin/model/groups/{gid}',model_group),
                     web.get('/v1/admin/library/{kind}/{offset:[0-9]+}',library_status),web.post('/v1/admin/library/{action}',library_command),
                     web.get('/v1/admin/chat/status',chat_status),web.get('/v1/admin/chat/groups/{gid}/status',chat_status),

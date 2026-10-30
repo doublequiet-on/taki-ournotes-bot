@@ -14,7 +14,7 @@ const recovery=globalThis[recoveryKey]||=( {current:null,snapshot:null} );
 const storageKey='taki.console.recovery.v1';
 let recoveryReadError=false;
 function storeRecovery(snapshot){
-  try {const hasEdits=snapshot.global||snapshot.group||snapshot.model||snapshot.budget||snapshot.jobs.length||snapshot.controls.length||snapshot.probes.length||snapshot.trusted.length;
+  try {const hasEdits=snapshot.global||snapshot.group||snapshot.model||snapshot.budget||snapshot.proactive||snapshot.web||snapshot.jobs.length||snapshot.controls.length||snapshot.probes.length||snapshot.trusted.length;
     if(!hasEdits){sessionStorage.removeItem(storageKey);return true;}
     const value=JSON.stringify(snapshot);if(value.length>65536)return false;sessionStorage.setItem(storageKey,value);return true;}catch{return false;}
 }
@@ -25,6 +25,8 @@ function takeRecovery(){
       ||snapshot.budget&&(!record(snapshot.budget)||typeof snapshot.budget.daily!=='string'||!record(snapshot.budget.guard)||snapshot.budget.dirty!==true)
       ||snapshot.modelRole!==undefined&&!['primary','fallback','proactive'].includes(snapshot.modelRole)
       ||snapshot.proactive&&(!record(snapshot.proactive)||typeof snapshot.proactive.group_id!=='string'||!record(snapshot.proactive.limits)||!record(snapshot.proactive.guard)||snapshot.proactive.dirty!==true)
+      ||snapshot.web&&(!record(snapshot.web)||!['primary','proactive'].includes(snapshot.web.role)||typeof snapshot.web.enabled!=='boolean'||!Number.isInteger(snapshot.web.max_calls)||snapshot.web.max_calls<1||snapshot.web.max_calls>2||!record(snapshot.web.guard)||snapshot.web.dirty!==true)
+      ||snapshot.webOperations!==undefined&&(!Array.isArray(snapshot.webOperations)||!snapshot.webOperations.every(item=>Array.isArray(item)&&item.length===2))
       ||snapshot.proactiveOperations!==undefined&&(!Array.isArray(snapshot.proactiveOperations)||!snapshot.proactiveOperations.every(item=>Array.isArray(item)&&item.length===2))
       ||snapshot.global&&!Array.isArray(snapshot.global.draft.groupAllowlist)
       ||snapshot.group&&typeof snapshot.group.id!=='string'||snapshot.model&&(!record(snapshot.model.draft.price)||snapshot.model.role!==undefined&&!['primary','fallback','proactive'].includes(snapshot.model.role))
@@ -82,8 +84,8 @@ const Page={setup() {
   const mediaChanged=event=>{narrow.value=event.matches;};
   const stopDetailWatch=watch(s.detail,()=>{if(narrow.value&&tab.value==='requests'&&currentRequest&&s.detail.value&&focusedRequest!==currentRequest){focusedRequest=currentRequest;requestAnimationFrame(()=>document.querySelector('.request-inspector [aria-label="关闭查询详情"]')?.focus());}});
   const syncRecovery=()=>{if(!storeRecovery(s.captureEdits()))storageAvailable.value=false;};
-  const stopRecoveryWatch=watch([s.dirty,s.groupDirty,s.modelDirty,s.draft,s.groupDraft,s.modelDraft,s.modelKey,s.modelRole,s.budgetEdit,s.proactiveEdit,s.busy,s.message],syncRecovery,{deep:true,flush:'sync'});
-  const leaving=event => {const stored=storeRecovery(s.captureEdits());if((!stored&&(s.dirty.value||s.groupDirty.value||s.modelDirty.value||s.budgetEdit.value?.dirty||s.proactiveEdit.value?.dirty))||s.modelKey.value){event.preventDefault();event.returnValue='';}};
+  const stopRecoveryWatch=watch([s.dirty,s.groupDirty,s.modelDirty,s.draft,s.groupDraft,s.modelDraft,s.modelKey,s.modelRole,s.budgetEdit,s.proactiveEdit,s.webEdit,s.busy,s.message],syncRecovery,{deep:true,flush:'sync'});
+  const leaving=event => {const stored=storeRecovery(s.captureEdits());if((!stored&&(s.dirty.value||s.groupDirty.value||s.modelDirty.value||s.budgetEdit.value?.dirty||s.proactiveEdit.value?.dirty||s.webEdit.value?.dirty))||s.modelKey.value){event.preventDefault();event.returnValue='';}};
   onMounted(() => {try{sessionStorage.setItem(storageKey+'-probe','1');sessionStorage.removeItem(storageKey+'-probe');}catch{storageAvailable.value=false;}
     timer=setInterval(() => void poll(),5000);document.addEventListener('visibilitychange',visible);document.addEventListener('keydown',keydown);media.addEventListener('change',mediaChanged);window.addEventListener('beforeunload',leaving);syncRecovery();});
   onUnmounted(() => {clearInterval(timer);stopRecoveryWatch();stopDetailWatch();if(recovery.current===s)releaseState(s);document.removeEventListener('visibilitychange',visible);document.removeEventListener('keydown',keydown);media.removeEventListener('change',mediaChanged);window.removeEventListener('beforeunload',leaving);});
@@ -94,7 +96,7 @@ const Page={setup() {
       drawer.value&&h('button',{class:'drawer-scrim','aria-label':'关闭导航',onClick:closeDrawer}),
       h('aside',{class:['console-sidebar',drawer.value&&'is-open'],role:narrow.value&&drawer.value?'dialog':undefined,'aria-modal':narrow.value&&drawer.value?'true':undefined,'aria-label':narrow.value&&drawer.value?'导航':undefined},[
         h('div',{class:'sidebar-brand'},[portrait('brand-image'),h('strong','Taki')]),
-        h('nav',{'aria-label':'Taki 工作页面'},navigation.map(([key,label,glyph])=>h('button',{'aria-current':tab.value===key?'page':undefined,onClick:()=>selectTab(key)},[icon(glyph),h('span',label),(((key==='settings'&&s.dirty.value||key==='costs'&&(s.modelDirty.value||s.budgetEdit.value?.dirty||s.proactiveEdit.value?.dirty)))||(key==='groups'&&s.groupDirty.value))&&h('i',{class:'draft-dot','aria-label':'有未保存修改'})]))),
+        h('nav',{'aria-label':'Taki 工作页面'},navigation.map(([key,label,glyph])=>h('button',{'aria-current':tab.value===key?'page':undefined,onClick:()=>selectTab(key)},[icon(glyph),h('span',label),(((key==='settings'&&s.dirty.value||key==='costs'&&(s.modelDirty.value||s.budgetEdit.value?.dirty||s.proactiveEdit.value?.dirty||s.webEdit.value?.dirty)))||(key==='groups'&&s.groupDirty.value))&&h('i',{class:'draft-dot','aria-label':'有未保存修改'})]))),
         h('div',{class:'sidebar-bottom'},[h('div',{class:'sidebar-instance'},[portrait('small-portrait'),h('div',[h('strong','Taki'),h('small',connection())]),h('i',{class:['status-dot',connection()==='已连接'?'good':'unknown']})]),
           h('button',{class:'sidebar-logout',disabled:s.busy.value,onClick:async()=>{await s.logout();clearRecovery();}},[icon('logout'),h('span','退出登录')])])]),
       h('div',{class:'console-app'},[
@@ -103,7 +105,7 @@ const Page={setup() {
           s.message.value&&h('p',{role:'status',class:'page-message'},s.message.value),s.readMessage.value&&h('p',{role:'status',class:'page-message'},s.readMessage.value),s.stale.value&&h('p',{role:'alert'},'连接异常：以下保留数据可能已陈旧。'),!storageAvailable.value&&h('p',{role:'alert'},'浏览器无法暂存草稿，刷新页面可能丢失未保存的修改。'),recoveryWarning.value&&h('p',{role:'alert'},'暂存草稿无法读取，请核对服务器设置。'),
           tab.value==='overview'?h('div',[costAlerts(s),overviewView(s,open,()=>{selectTab('requests');search(true);}),attentionView(s,()=>{selectTab('requests');search(true);}),modelOverview(s)]):tab.value==='costs'?h('div',[costsView(s),modelSettings(s),capabilityView(s.chat.value)]):tab.value==='requests'?requestsView(s,open,params,search,cursor => s.load(s.requests,'requests/list',{...params,cursor}),id=>{selectTab('groups');openGroup(id);},closeDetail,currentRequest,narrow.value):tab.value==='groups'?groupsView(s,id=>{params.group_id=id;selectTab('requests');search(false);},openGroup,closeGroup,groupOpen.value,narrow.value):tab.value==='sources'?sourcesView(s):tab.value==='operations'?h('div',[h('h1','运行维护'),trustedView(s),operationsSettings(s)]):h('div',[h('h1','设置'),settingsView(s)]),
           ]),
-        h('footer',{class:'status-bar'},[h('span',connection()),button(s.dirty.value||s.groupDirty.value||s.modelDirty.value||s.budgetEdit.value?.dirty||s.proactiveEdit.value?.dirty?'有未保存修改':'设置',()=>selectTab(s.groupDirty.value?'groups':(s.modelDirty.value||s.budgetEdit.value?.dirty||s.proactiveEdit.value?.dirty)?'costs':'settings'))])])])
+        h('footer',{class:'status-bar'},[h('span',connection()),button(s.dirty.value||s.groupDirty.value||s.modelDirty.value||s.budgetEdit.value?.dirty||s.proactiveEdit.value?.dirty||s.webEdit.value?.dirty?'有未保存修改':'设置',()=>selectTab(s.groupDirty.value?'groups':(s.modelDirty.value||s.budgetEdit.value?.dirty||s.proactiveEdit.value?.dirty||s.webEdit.value?.dirty)?'costs':'settings'))])])])
   ])});
 }};
 export default ctx => ctx.page({path:'/taki',name:'Taki 管理',icon:'settings',order:0,component:Page});

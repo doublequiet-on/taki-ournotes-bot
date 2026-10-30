@@ -1,5 +1,5 @@
 # L3: Protected versioned model settings and explicit, billed capability probes.
-# Effects: Private config replacement and metadata-only SQLite audit; never returns credentials or text.
+# Effects: Private config/capability replacement and metadata-only SQLite audit; never returns credentials or text.
 from __future__ import annotations
 
 import asyncio
@@ -112,7 +112,82 @@ class ModelAdmin:
                 'endpoints':dict(ENDPOINTS),'api_url':('https://api.openai.com/v1/responses'
                     if profile.get('wire_profile')=='openai-responses-v1' else ENDPOINTS[profile['provider']]),
                 'capability':self.latest_probe(profile['config_version'],proactive=proactive),
+                'web_search':self.web_settings(proactive=proactive) if fingerprint is not None and not fallback and code=='ready' else None,
                 'audit':self.audit(),'timezone':'Asia/Shanghai','price_status':config.status()}
+
+    @staticmethod
+    def metadata_digest(path):
+        if not path.exists():return 'absent'
+        require(path.is_file() and not path.is_symlink() and path.stat().st_size<=16384,'chat_capability_configuration')
+        return hashlib.sha256(path.read_bytes()).hexdigest()
+
+    def web_context(self, proactive=False):
+        config=self.selected_config(proactive=proactive)
+        snapshot=config.snapshot()
+        owner=self.runtime.proactive_capabilities if proactive else self.runtime.capabilities
+        # Retain approved evidence when disabled. Old releases still read web_search=null.
+        archive=type(owner)(owner.path.with_name(owner.path.stem+'.web-approved.json'))
+        before=(self.metadata_digest(owner.path),self.metadata_digest(archive.path))
+        current=owner.read(snapshot)
+        proof=current if owner.web(snapshot) else archive.read(snapshot)
+        verified=owner.web(snapshot) or archive.web(snapshot)
+        guard={'backend_epoch':self.backend.runtime,'model_fingerprint':snapshot.fingerprint,
+               'fingerprint':self.metadata_digest(owner.path),'approval_fingerprint':self.metadata_digest(archive.path)}
+        require(before==(guard['fingerprint'],guard['approval_fingerprint']),'model_config_conflict')
+        return snapshot,owner,archive,current,proof,verified,guard
+
+    def web_settings(self, *, proactive=False):
+        snapshot,owner,archive,current,proof,verified,guard=self.web_context(proactive)
+        enabled=owner.web(snapshot) is not None
+        parent=owner.path.parent
+        writable=parent.is_dir() and not parent.is_symlink() and os.access(parent,os.W_OK) and (os.name=='nt' or parent.stat().st_mode & 0o022==0)
+        return {'enabled':enabled,'code':'enabled' if enabled else 'disabled' if verified else 'unverified',
+                'editable':bool(verified and writable),'guard':guard,'max_calls':verified.max_calls if verified else 1,
+                'unit_cost_micro':verified.unit_cost_micro if verified else None,'currency':snapshot.profile.price.currency,
+                'evidence_ref':verified.evidence_ref if verified else None}
+
+    def write_web_metadata(self, path, data, operation):
+        parent=path.parent
+        require(parent.is_dir() and not parent.is_symlink() and os.access(parent,os.W_OK)
+                and (os.name=='nt' or parent.stat().st_mode & 0o022==0),'model_config_permissions')
+        self.metadata_digest(path)
+        raw=(encode(data)+'\n').encode();require(len(raw)<=16384,'chat_capability_configuration')
+        temporary=path.with_name(path.name+'.'+operation+'.tmp')
+        try:
+            fd=os.open(temporary,os.O_WRONLY|os.O_CREAT|os.O_EXCL,0o600)
+            with os.fdopen(fd,'wb') as stream:stream.write(raw);stream.flush();os.fsync(stream.fileno())
+            os.replace(temporary,path)
+            if os.name!='nt':
+                directory=os.open(parent,os.O_RDONLY)
+                try:os.fsync(directory)
+                finally:os.close(directory)
+            require(self.metadata_digest(path)==hashlib.sha256(raw).hexdigest(),'model_config_save_unconfirmed')
+        finally:temporary.unlink(missing_ok=True)
+
+    def save_web(self, value, *, proactive=False):
+        require(isinstance(value,dict) and set(value)=={'operation_id','guard','enabled','max_calls'}
+                and type(value['enabled']) is bool and type(value['max_calls']) is int and 1<=value['max_calls']<=2,'model_admin_shape')
+        action='web_proactive' if proactive else 'web_primary'
+        if not self.begin(value,action,'web-search'):return self.settings(proactive=proactive)
+        try:
+            snapshot,owner,archive,current,proof,verified,guard=self.web_context(proactive)
+            require(guard==value['guard'],'model_config_conflict')
+            require(verified is not None and current is not None,'chat_capability_unverified')
+            web={**proof['web_search'],'max_calls':value['max_calls']}
+            saved={'schema':'chat-capabilities/1','config_version':snapshot.profile.config_version,
+                   'fingerprint':snapshot.fingerprint,'web_search':web}
+            # Save recovery evidence before disabling; a crash cannot discard the approval.
+            require(self.web_context(proactive)[-1]==guard,'model_config_conflict')
+            self.write_web_metadata(archive.path,saved,value['operation_id'])
+            expected={**guard,'approval_fingerprint':self.metadata_digest(archive.path)}
+            require(self.web_context(proactive)[-1]==expected,'model_config_conflict')
+            self.write_web_metadata(owner.path,{**current,'web_search':web if value['enabled'] else None},value['operation_id'])
+            self.finish(value['operation_id'],'succeeded',{'code':'saved','enabled':value['enabled'],'max_calls':value['max_calls']})
+        except (OSError,ValueError,TypeError,KeyError,RecursionError,sqlite3.Error) as exc:
+            code=str(exc) if isinstance(exc,ModelError) else 'model_save_unconfirmed'
+            self.finish(value['operation_id'],'failed' if isinstance(exc,ModelError) else 'unknown',{'code':code})
+            raise ModelError(code) from None
+        return self.settings(proactive=proactive)
 
     def proactive_limits(self, group_id):
         from .chat_jobs import ChatServices,ProactiveLimits,_limits

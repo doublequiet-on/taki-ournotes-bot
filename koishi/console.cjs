@@ -29,7 +29,7 @@ function install(ctx, config, manifest, assetsDirectory = path.join(__dirname, '
   const methods = ['overview', 'requests/list', 'requests/detail', 'sources', 'notices/list', 'query-metrics', 'groups/list', 'groups/update', 'settings/update',
     'ops/jobs/list','ops/jobs/detail','ops/jobs/start','ops/export','ops/audit','ops/host','ops/notice-target',
     'ops/controls','ops/controls/start','ops/controls/restore',
-    'library/status','library/preview','library/compare','library/publish','library/withdraw','chat/status','chat/group/status','chat/group/memory','chat/memory/update','model/budget/save','model/proactive/limits/settings','model/proactive/limits/save','model/proactive/settings','model/proactive/save','model/proactive/probe','model/fallback/settings','model/fallback/save','model/settings','model/save','model/probe','model/group','ops/trusted','ops/trusted/prepare','ops/trusted/start']
+    'library/status','library/preview','library/compare','library/publish','library/withdraw','chat/status','chat/group/status','chat/group/memory','chat/memory/update','model/budget/save','model/proactive/limits/settings','model/proactive/limits/save','model/proactive/settings','model/proactive/save','model/proactive/probe','model/fallback/settings','model/fallback/save','model/web-search/save','model/proactive/web-search/save','model/settings','model/save','model/probe','model/group','ops/trusted','ops/trusted/prepare','ops/trusted/start']
   const journal = new OperationJournal(config.directory, management.groups.snapshot().instance ? JSON.stringify(management.groups.snapshot().instance) : manifest.commit)
   journal.reconcile(management)
   const controls=new Controls(management,journal)
@@ -225,7 +225,7 @@ function install(ctx, config, manifest, assetsDirectory = path.join(__dirname, '
       if(typeof id!=='string'||!/^[A-Za-z0-9_-]{1,128}$/.test(id))throw Error('admin_group')
       return readBackend('model/groups/'+id)
     },{authority:5})
-    for(const [method,url] of [['proactive/save','/v1/admin/model/proactive'],['proactive/probe','/v1/admin/model/proactive/probe'],['budget/save','/v1/admin/model/budget'],['fallback/save','/v1/admin/model/fallback'],['save','/v1/admin/model'],['probe','/v1/admin/model/probe']]){
+    for(const [method,url] of [['web-search/save','/v1/admin/model/web-search'],['proactive/web-search/save','/v1/admin/model/proactive/web-search'],['proactive/save','/v1/admin/model/proactive'],['proactive/probe','/v1/admin/model/proactive/probe'],['budget/save','/v1/admin/model/budget'],['fallback/save','/v1/admin/model/fallback'],['save','/v1/admin/model'],['probe','/v1/admin/model/probe']]){
       listen('taki/model/'+method,async function(value){
         if(!value||typeof value!=='object'||Array.isArray(value))throw Error('model_admin_shape')
         const client=ctx.takiTransport?.receiver?.client

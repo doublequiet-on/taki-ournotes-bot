@@ -1,5 +1,5 @@
 # L3: Host integration for ephemeral participation and approved group-service billing.
-# Effects: Bounded memory and metadata-only usage reads; receipts alone persist dialogue.
+# Effects: Bounded observations, scoped receipt history and usage reads; receipts alone persist dialogue.
 import json
 import math
 import sqlite3
@@ -86,9 +86,22 @@ class ProactiveChat:
         snapshot=self.agent.runtime.proactive_snapshot(request.conversation_id)
         policy=self.configured(request,snapshot)
         if policy is None:return None
-        cost=maximum_cost_micro(snapshot.profile)*self.agent.budget.model_calls
+        model_cost=maximum_cost_micro(snapshot.profile)*self.agent.budget.model_calls
+        cost=model_cost
         web=self.owners()[1].web(snapshot)
-        if web:cost+=self.agent.budget.model_calls*web.max_calls*web.unit_cost_micro
+        if web:
+            cost+=self.agent.budget.model_calls*web.max_calls*web.unit_cost_micro
+            # Reserve the model loop and only the search budget this group can fund.
+            # Each actual HTTP still checks persistent costs before it can start.
+            preflight=service_request_id('proactive',request.instance_id,request.app_id,
+                request.conversation_id,'budget/'+request.request_id)
+            try:
+                permit=self.agent.service_budget.check(policy,'proactive',snapshot.profile,
+                    preflight,math.ceil(model_cost),reply_times=self.agent.store.proactive_replies(request.scope))
+            except ServiceError:return None
+            spent=max(permit.spent_cost_micro,self.controller.status(self.scope(request))['hourly_cost_micro'])
+            cost=min(math.ceil(cost),math.floor(policy.proactive.max_cost_micro_per_hour-spent))
+            if cost<math.ceil(model_cost):return None
         candidate=self.controller.candidate(self.scope(request),reserve_cost_micro=math.ceil(cost))
         if candidate is None:return None
         last=candidate.messages[-1]
@@ -171,10 +184,26 @@ class ProactiveChat:
         except (ModelError,ServiceError,ValueError,OSError,sqlite3.Error):return False
 
     def history(self,work):
-        # Only frozen, bounded observation material; never enters persistent context before ACK.
+        # Merge scoped participating history with frozen observations; only a new ACK persists observations.
         followup=work.proactive.followup
         rows=list(work.proactive.messages[-1:] if followup else work.proactive.messages[-48:])
-        while rows and sum(len(row.text.encode()) for row in rows)>24576:rows.pop(0)
+        saved={}
+        if not followup:
+            saved={row['message_id']:ChatMessage(**row) for row in self.agent.store.recent(work.request.scope,
+                since_ms=int((self.agent.runtime.backend.clock()-900)*1000))}
+            merged=dict(saved)
+            for row in rows:merged.setdefault(row.message_id,row)
+            current=merged.pop(work.request.message_id)
+            rows=sorted(merged.values(),key=lambda row:row.timestamp_ms)
+            # The current observation stays last even when QQ and ACK clocks differ.
+            rows.append(current)
+        protected={work.request.message_id}
+        recent_reply=next((row for row in reversed(rows) if row.role=='assistant'),None)
+        if recent_reply:protected.update((recent_reply.message_id,recent_reply.reply_to))
+        while rows and (len(rows)>48 or sum(len(json.dumps(asdict(row),ensure_ascii=False).encode()) for row in rows)>24576):
+            index=next((i for i,row in enumerate(rows) if row.message_id not in protected),0)
+            rows.pop(index)
+        self.agent.bind_memory(work,[asdict(row) for row in rows if row.message_id in saved])
         messages=[]
         if followup:
             messages.append({'role':'user','content':json.dumps(asdict(ChatMessage(followup.source_id,followup.user_id,followup.source_text,
@@ -183,10 +212,13 @@ class ProactiveChat:
                 followup.delivered_ms,'assistant',followup.source_id)),ensure_ascii=False)})
         for row in rows:
             value=asdict(row)
+            if row.message_id==work.request.message_id and work.request.quoted_text:
+                value['quoted_text']=work.request.quoted_text
+                value['quote_status']='用户提供的引用预览，原作者和原消息身份未经核验'
             try:ref=self.agent.images.get(self.agent.image_scope(work.request),row.message_id)
             except ImageError:ref=None
-            if ref:value['text']+='\n'+''.join('[图片附件 '+item.id+' '+item.content_type+'；图像仅在本轮或有效引用中可见]' for item in ref.attachments)
-            messages.append({'role':'user','content':json.dumps(value,ensure_ascii=False)})
+            if ref:value['image_attachments']=''.join('[图片附件 '+item.id+' '+item.content_type+'；图像仅在本轮或有效引用中可见]' for item in ref.attachments)
+            messages.append({'role':row.role,'content':json.dumps(value,ensure_ascii=False)})
         return messages
 
     def cost(self,work):
