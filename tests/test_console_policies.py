@@ -2034,8 +2034,8 @@ class ChatAgentTests(Fixture, unittest.IsolatedAsyncioTestCase):
             prompt=body['messages'][0]['content']
             self.assertIn('认真讨论讲清判断、理由和必要例子',prompt)
             self.assertIn('追问回应具体疑点，没懂就换种说法',prompt)
-            self.assertIn('不凑字数，不重复已说清的内容',prompt)
-            self.assertEqual(body['max_output_tokens'],self.snapshot.profile.max_output_tokens)
+            self.assertIn('按需展开，不凑字数或重复',prompt)
+            self.assertEqual(body['max_tokens'],self.snapshot.profile.max_output_tokens)
         self.event(followup,'intent');self.event(followup,'ack')
 
     async def test_direct_chat_once_multiline_and_direct_command_zero_model(self):
