@@ -86,9 +86,22 @@ class ProactiveChat:
         snapshot=self.agent.runtime.proactive_snapshot(request.conversation_id)
         policy=self.configured(request,snapshot)
         if policy is None:return None
-        cost=maximum_cost_micro(snapshot.profile)*self.agent.budget.model_calls
+        model_cost=maximum_cost_micro(snapshot.profile)*self.agent.budget.model_calls
+        cost=model_cost
         web=self.owners()[1].web(snapshot)
-        if web:cost+=self.agent.budget.model_calls*web.max_calls*web.unit_cost_micro
+        if web:
+            cost+=self.agent.budget.model_calls*web.max_calls*web.unit_cost_micro
+            # Reserve the model loop and only the search budget this group can fund.
+            # Each actual HTTP still checks persistent costs before it can start.
+            preflight=service_request_id('proactive',request.instance_id,request.app_id,
+                request.conversation_id,'budget/'+request.request_id)
+            try:
+                permit=self.agent.service_budget.check(policy,'proactive',snapshot.profile,
+                    preflight,math.ceil(model_cost),reply_times=self.agent.store.proactive_replies(request.scope))
+            except ServiceError:return None
+            spent=max(permit.spent_cost_micro,self.controller.status(self.scope(request))['hourly_cost_micro'])
+            cost=min(math.ceil(cost),math.floor(policy.proactive.max_cost_micro_per_hour-spent))
+            if cost<math.ceil(model_cost):return None
         candidate=self.controller.candidate(self.scope(request),reserve_cost_micro=math.ceil(cost))
         if candidate is None:return None
         last=candidate.messages[-1]

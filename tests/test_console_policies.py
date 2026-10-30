@@ -3347,6 +3347,80 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
             ServiceBudget(usage,'fixture','app').check(policy,'proactive',profile,
                 service_request_id('proactive','fixture','app','g1','next'),1)
 
+    def test_web_candidate_reserves_only_affordable_searches(self):
+        from ournotes_bot.application.backend_protocol import Request
+        from ournotes_bot.application.chat_capabilities import WebCapability
+        from ournotes_bot.application.chat_jobs import service_request_id
+        from ournotes_bot.domain.model_calls import Price,Usage,ProviderAction
+        profile=replace(self.snapshot.profile,user_daily_limit=10**12,group_daily_limit=10**12,
+            price=Price('USD',100000,10000,500000,300000,'fixture-luna',1,True,'registered-default'))
+        self.snapshot=replace(self.snapshot,profile=profile)
+        self.policy=replace(self.policy,proactive=replace(self.policy.proactive,max_cost_micro_per_hour=50000))
+        self.agent.services.policy.return_value=self.policy
+        self.backend.model_runtime.capabilities.web=Mock(return_value=WebCapability(1,10000,'fixture-web'))
+        usage=self.backend.model_runtime.usage
+        def candidate(seq):
+            value=self.observation('公开讨论'+str(seq),seq=seq)
+            self.tick+=1.6
+            return self.agent.proactive.candidate(Request.parse(value,'fixture','app',self.now))
+        first=candidate(1)
+        self.assertIsNotNone(first)
+        self.assertEqual(first[0].reserved_cost_micro,50000)
+        self.agent.proactive.controller.decide(first[0],'skip',actual_cost_micro=0)
+        for index in range(3):
+            job=service_request_id('proactive','fixture','app','g1','paid-'+str(index))
+            attempt='paid-'+str(index)
+            usage.reserve(job,attempt,usage.key('service','fixture','app','g1','approved-group-service','proactive'),usage.key('group','g1'),profile,10,
+                action_budget=(('web_search',1,10000),))
+            usage.start(attempt,profile)
+            usage.settle(attempt,Usage(10,0,2,None,12,'known'),actions=(ProviderAction('web_search',1),))
+            if index==1:
+                second=candidate(2)
+                self.assertIsNotNone(second)
+                self.assertEqual(second[0].reserved_cost_micro,29996)
+                self.agent.proactive.controller.decide(second[0],'skip',actual_cost_micro=0)
+        self.assertIsNone(candidate(3))
+        self.assertEqual(self.policy.proactive.max_cost_micro_per_hour,50000)
+
+    def test_web_candidate_rejects_unresolved_search_fees(self):
+        from ournotes_bot.application.backend_protocol import Request
+        from ournotes_bot.application.chat_capabilities import WebCapability
+        from ournotes_bot.application.chat_jobs import service_request_id
+        from ournotes_bot.domain.model_calls import Usage,ProviderAction
+        self.backend.model_runtime.capabilities.web=Mock(return_value=WebCapability(1,10000,'fixture-web'))
+        usage=self.backend.model_runtime.usage;profile=replace(self.snapshot.profile,user_daily_limit=10**12,group_daily_limit=10**12)
+        job=service_request_id('proactive','fixture','app','g1','unknown-search')
+        usage.reserve(job,'unknown-search',usage.key('service','fixture','app','g1','approved-group-service','proactive'),usage.key('group','g1'),profile,10,
+            action_budget=(('web_search',1,10**9),))
+        usage.start('unknown-search',profile)
+        usage.settle('unknown-search',Usage(),'provider_unavailable',actions=(ProviderAction('web_search',None),))
+        value=self.observation();self.tick+=1.6
+        self.assertIsNone(self.agent.proactive.candidate(Request.parse(value,'fixture','app',self.now)))
+
+    async def test_proactive_web_search_finishes_with_unchanged_group_budget(self):
+        from ournotes_bot.application.chat_capabilities import WebCapability
+        from ournotes_bot.domain.model_calls import Price,Usage,ProviderAction,ToolCall,AttemptResult
+        profile=replace(self.snapshot.profile,provider='openai',model='fixture-luna',wire_profile='openai-responses-v1',
+            user_daily_limit=10**12,group_daily_limit=10**12,
+            price=Price('USD',100000,10000,500000,300000,'fixture-luna',1,True,'registered-default'))
+        self.snapshot=replace(self.snapshot,profile=profile)
+        self.policy=replace(self.policy,proactive=replace(self.policy.proactive,max_cost_micro_per_hour=50000))
+        self.agent.services.policy.return_value=self.policy
+        self.backend.model_runtime.capabilities.web=Mock(return_value=WebCapability(1,10000,'fixture-web'))
+        value=self.observation('Python 3.13 的发布日期是什么');self.tick+=1.6
+        self.client.request.side_effect=[
+            self.result(calls=(ToolCall('search','web_search','{"query":"Python 3.13 release date"}'),)),
+            AttemptResult('ok',Usage(100,0,10,None,110,'known'),text='公开搜索资料。',
+                provider_actions=(ProviderAction('web_search',1),),native_calls=1,
+                citations=({'url':'https://www.python.org/downloads/release/python-3130/','title':'Python release'},)),
+            self.result('{"participation":"reply","text":"查到了发布日期。"}')]
+        plan,attempts,candidate=await self.candidate(value)
+        self.assertEqual(len(attempts),3)
+        self.assertEqual(plan['parts'][0]['business_status'],'success')
+        self.event(plan,'intent');self.event(plan,'ack')
+        self.assertTrue(candidate[0].reserved_cost_micro<=50000)
+        self.assertEqual(len(self.agent.store.proactive_replies(Request_scope())),1)
+
     def test_missing_service_action_reservation_blocks_budget(self):
         from ournotes_bot.application.chat_jobs import service_request_id,ServiceError
         from ournotes_bot.domain.model_calls import Usage,ProviderAction
