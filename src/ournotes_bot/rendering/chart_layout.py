@@ -169,7 +169,7 @@ def draw_markers(c, events, x, w, top, bottom, lo, hi, *, end_tick=None):
                 endpoint(c,cx,yy,label,kind,is_end)
 
 
-def render(song,charts,score,preview,locale='zh',*,load,notice=''):
+def render(song,charts,score,preview,locale='zh',*,load,notice='',mirror=False):
     # Auto control points have no drawable lane/width. As in the legacy chart
     # renderer, connect the surrounding positioned anchors and omit that glyph.
     def positioned(node):return all(type(node.get(k)) in (int,float) for k in ('t','pos','size'))
@@ -252,7 +252,7 @@ def render(song,charts,score,preview,locale='zh',*,load,notice=''):
         for line in lines(note,452,24):
             c.text(48,y,line,24,MUTED);y+=36
         c.draw.line((544,48,544,height-64),fill='#ded8e2',width=2)
-        c.text(TRACK_LEFT-12,46,ui_label('完整谱面',locale),36,bold=True)
+        c.text(TRACK_LEFT-12,46,ui_label('镜像谱面' if mirror else '完整谱面',locale),36,bold=True)
         c.text(width-88,46,ui_label('下 → 上 · 左 → 右',locale),28,MUTED,align='right')
         if not nodes:
             c.text(TRACK_LEFT,tracktop+98,ui_label('完整谱面暂不可用',locale),30,MUTED);return c.image
@@ -286,7 +286,8 @@ def render(song,charts,score,preview,locale='zh',*,load,notice=''):
                         t=start+(end-start)*step/32;u=(t-a['t'])/(b['t']-a['t'])
                         f=1-(1-u)**2 if a.get('ease')=='out' else u*u if a.get('ease')=='in' else u
                         pos=a['pos']+(b['pos']-a['pos'])*f;size=a['size']+(b['size']-a['size'])*f;y=3840-(t-lo)/1920*480
-                        lefts.append((pos/24*w,y));rights.append(((pos+size)/24*w,y))
+                        left=24-pos-size if mirror else pos
+                        lefts.append((left/24*w,y));rights.append(((left+size)/24*w,y))
                     rd.polygon(lefts+rights[::-1],fill=(93,111,233,75));rd.line(lefts,fill=(148,167,255,125),width=2);rd.line(rights,fill=(148,167,255,125),width=2)
             c.image.paste(ribbon,(x,tracktop),ribbon);ribbon.close()
             for n in notes:
@@ -297,8 +298,10 @@ def render(song,charts,score,preview,locale='zh',*,load,notice=''):
                     kind='trace' if n.get('type')=='trace' else 'tap'
                     if n.get('type')=='long':kind='slide-start' if i==0 else 'slide-end' if i==len(seq)-1 else 'slide-node'
                     if node.get('type')=='flick' or n.get('type')=='flick':
-                        direction=node.get('dir',n.get('dir'));kind='flick-left' if direction=='left' else 'flick-right' if direction=='right' else 'flick'
-                    draw_note(c,x+(node['pos']+node['size']/2)/24*w,trackbottom-(node['t']-lo)/1920*480,node['size']/24*w,kind,node['size'])
+                        direction=node.get('dir',n.get('dir'))
+                        if mirror:direction={'left':'right','right':'left'}.get(direction,direction)
+                        kind='flick-left' if direction=='left' else 'flick-right' if direction=='right' else 'flick'
+                    draw_note(c,x+((24-node['pos']-node['size']/2) if mirror else (node['pos']+node['size']/2))/24*w,trackbottom-(node['t']-lo)/1920*480,node['size']/24*w,kind,node['size'])
         c.text(TRACK_LEFT,trackbottom+66,f"{ui_label('列',locale)} 1–{columns} / {columns} · "+notice,24,MUTED)
         return c.image
     with prepared_render_assets(requests,load,icons+missions) as assets:

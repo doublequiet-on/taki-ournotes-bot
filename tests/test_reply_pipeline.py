@@ -94,6 +94,19 @@ class ReplyPipelineTests(unittest.TestCase):
         self.assertEqual(select.call_count, 1)
         self.assertEqual([song.id for song in render.call_args.args[0]], [100001])
 
+    def test_mirror_chart_options_reach_the_renderer(self):
+        from ournotes_bot.commands import resolve_command
+        for command in ("/查谱面 1 镜像", "/查谱面 1 反转 EX", "/查谱面 1 EX 镜像"):
+            with self.subTest(command=command), \
+                 patch("ournotes_bot.application.replies.load_chart_score", return_value={"notes": []}), \
+                 patch("ournotes_bot.rendering.chart_layout.render", return_value=(b"chart",)) as render:
+                result = resolve_command(command, self.repo)
+                self.assertTrue(result.chart_mirror)
+                self.assertEqual(result.songs[0].id, 100001)
+                reply = _prepare_reply(command, self.repo, self.parser)
+                self.assertTrue(render.call_args.kwargs["mirror"])
+                self.assertIn("镜像谱面", reply.text)
+
     def test_chart_and_card_text_images_share_one_selection(self):
         from ournotes_bot.query.song_identity import unique_candidates
         with patch("ournotes_bot.query.song_identity.unique_candidates", wraps=unique_candidates) as select, \

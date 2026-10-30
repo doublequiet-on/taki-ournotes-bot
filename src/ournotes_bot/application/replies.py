@@ -722,8 +722,9 @@ def complete_chart_reply(result,repository,locale,candidate):
     prepared=prepare_chart_reply(song,charts,repository.chart_source,locale,
                                  load_score=load_chart_score,load_data=load_chart_data)
     pages=render(prepared.song,prepared.charts,prepared.score,prepared.preview,prepared.locale,
-                 load=visual_asset,notice=prepared.notice)
-    text=prepared.text
+                 load=visual_asset,notice=prepared.notice,
+                 mirror=isinstance(result, CommandResult) and result.chart_mirror)
+    text=prepared.text + ("\n镜像谱面" if isinstance(result, CommandResult) and result.chart_mirror else "")
     replies=tuple(PreparedReply(text,image,context=candidate) for image in pages)
     return replies[0] if len(replies)==1 else PreparedReply('',pages=replies,context=candidate)
 

@@ -44,8 +44,8 @@ def unique_candidates(repository, term: str):
     return tuple(repository.search(term, limit=len(repository.songs)))
 
 
-def candidate_text(songs, difficulty: str | None = None) -> str:
-    suffix = f" {difficulty}" if difficulty else ""
+def candidate_text(songs, difficulty: str | None = None, *, mirror: bool = False) -> str:
+    suffix = (f" {difficulty}" if difficulty else "") + (" 镜像" if mirror else "")
     rows = ["匹配到多首歌曲，请用 ID 选择：" if len(songs) > 1 else "未确认完整歌曲名称，请核对候选并用 ID 选择："]
     rows.extend(f"{s.title}（ID {s.id}）→ /查谱面 {s.id}{suffix}" for s in songs[:10])
     if len(songs) > 10:

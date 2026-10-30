@@ -162,6 +162,23 @@ class FullChartTests(unittest.TestCase):
         next_x=88+2*(1800-176)/4
         self.assertLess(x+font(size,True,True).getlength(value),next_x)
 
+    def test_mirror_reverses_note_positions_and_flick_directions(self):
+        from ournotes_bot.rendering import chart_layout
+        song=Song(1,'Test',('Test',),'Band','','','','','',(Chart('EXPERT',24,24,3,''),))
+        score={'events':{'bpm':[{'t':0,'bpm':120}]}, 'notes':[
+            {'type':'flick','t':0,'pos':2,'size':4,'dir':'left'},
+            {'type':'long','node':[{'t':480,'pos':4,'size':6},{'t':960,'pos':12,'size':4,'type':'flick','dir':'right'}]}]}
+        calls=[]
+        for mirror in (False,True):
+            with patch.object(chart_layout,'draw_note') as draw:
+                chart_layout.render(song,song.charts,score,'EXPERT',load=lambda *a:None,mirror=mirror)
+            calls.append([call.args for call in draw.call_args_list])
+        for original, reflected in zip(*calls):
+            self.assertEqual(original[1]+reflected[1],2*chart_layout.TRACK_LEFT+chart_layout.TRACK_WIDTH)
+            self.assertEqual(original[2:4],reflected[2:4])
+        self.assertEqual([c[4] for c in calls[0]],['flick-left','slide-start','flick-right'])
+        self.assertEqual([c[4] for c in calls[1]],['flick-right','slide-start','flick-left'])
+
     def test_source_auto_control_points_do_not_break_chart_or_skill_times(self):
         from ournotes_bot.rendering import chart_layout
         from test_haneoka_charts import SCORE

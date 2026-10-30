@@ -24,7 +24,7 @@ LABELS = {
  '激奏支援':('Fever support','激奏サポート'),'其他技能':('Other skill','その他のスキル'),
  '相关活动':('Related event','関連イベント'),'相关卡池':('Related gacha','関連ガチャ'),
  '通常':('Normal','通常'),'条件成立':('Conditional','条件成立'),
- '谱面详情':('Chart details','譜面詳細'),'完整谱面':('Full chart','全譜面'),
+ '谱面详情':('Chart details','譜面詳細'),'完整谱面':('Full chart','全譜面'),'镜像谱面':('Mirrored chart','ミラー譜面'),
  '谱面时长':('Chart length', '譜面の長さ'),
  '音符数':('Notes', 'ノーツ数'),
  '每秒音符数':('Notes / sec', '毎秒ノーツ'),
