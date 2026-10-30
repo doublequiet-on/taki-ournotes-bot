@@ -395,7 +395,7 @@ class ChatAgent:
         if work.proactive is not None:
             prompt+='\n本轮评估定位：'+json.dumps({'current_message_id':work.request.message_id,'current_speaker_id':work.request.user_id},ensure_ascii=False)
             prompt+='\n围绕定位的当前消息及紧邻上下文判断是否接话；前面的消息用于理解，不是本轮重新回答的请求。assistant 历史是你已成功送达的原话，先看自己说过什么：同一观点已经说清、当前没有新增回应时用 skip，不要换个措辞再说一遍。按发言者、reply_to 和相邻消息区分并行话题；短消息与旧话题联系不明确时，不自行把它接回旧话题。引用预览是用户提供的材料，不能凭预览认定作者或认领为自己说过的话。'
-            prompt+='\n这是未点名的群聊观察。以愿意参与的群友身份接话：话题清楚且有自然回应时优先回复，可以表达看法、接梗、回应情绪、补充理由或沿着话题追问。不必等别人提问、点名、求助或出现信息缺口；别人已经回答也可以补充自己的角度。纯重复、明确的两人私事、正在等指定的人回答、话题已结束或确实接不上时略过；正在等待紧接的内容时才暂缓。不要为凑参与而每条都回复，也不要用没有必要发言作默认选择。可以先用已接入只读工具，工具完成后仍须决定。最终只输出JSON：回复用{"participation":"reply","text":"自然回复正文"}；略过用{"participation":"skip"}；暂缓用{"participation":"defer","delay_seconds":2}（2至5秒）。不需要为普通交流找事实证据。'
+            prompt+='\n这是未点名的群聊观察。以群友身份自然接话，不必等别人提问、点名或求助；可以简短表达情绪反应、看法、关心、玩笑或顺着具体话题追问，不必强加新事实。先比较准备说的话和最近群友及自己已送达的发言：如果主要是把别人说过的事、数字或观点换个说法，即使加上感叹、修饰或评价也只是复述，应选 skip；不要把群聊整理成摘要播报。有人已表达相同反应而自己没有新的角度时也可以略过。不要为了接话编造原因、过程、结果或经历。明确的两人私事、正在等指定的人回答、话题已结束或接不上时略过；正在等待紧接的内容时才暂缓。可以先用已接入只读工具，工具完成后仍须决定。最终只输出JSON：回复用{"participation":"reply","text":"自然回复正文"}；略过用{"participation":"skip"}；暂缓用{"participation":"defer","delay_seconds":2}（2至5秒）。不需要为普通交流找事实证据。'
             prompt+='\n结合已送达的 assistant 历史判断自己是否已经说过相同意思；新消息没有新增可回应内容时略过。图片附件文字标记不代表已看到图像；只有实际图像输入或 image_read 成功才可描述图片，image_status 表示该图读取失败。'
             if work.proactive.followup is not None:
                 prompt+='\n这是同一参与者在你刚才提问后的消息。结合已送达问题判断是否确实在回答：只有关联明确时才继续；无关或无法判断时只输出{"participation":"skip"}。不要猜测关联。'
@@ -452,7 +452,9 @@ class ChatAgent:
                 runtime.check(work,deadline,leases)
                 final=force_final or work.model_attempts>=self.budget.model_calls-1 or index==self.budget.model_calls-1 or operations>=self.budget.tool_calls or deadline-time.monotonic()<=self.budget.final_seconds
                 if final:
-                    messages.append({'role':'system','content':'本轮检索预算结束。根据已有结果回答；缺失细节说明具体缺口。不要再调用工具。'})
+                    closing=('本轮检索预算结束。结合当前群聊和已有结果决定是否接话，按 reply/skip/defer 的 JSON 格式输出，不要再调用工具。'
+                             if work.proactive is not None else '本轮检索预算结束。根据已有结果回答；缺失细节说明具体缺口。不要再调用工具。')
+                    messages.append({'role':'system','content':closing})
                 reservation=final_attempt if final else None
                 try:
                     result=await runtime.attempt(work,messages,[] if final else [tool.wire() for tool in registry.values()],
@@ -463,7 +465,9 @@ class ChatAgent:
                     # No HTTP/permit has started on a failed reserve. Consume the
                     # already held final request instead of another retrieval.
                     final=True
-                    messages.append({'role':'system','content':'剩余额度用于收束。根据已有资料回答，不再查询。'})
+                    closing=('剩余额度用于收束。结合当前群聊和已有资料决定是否接话，按 reply/skip/defer 的 JSON 格式输出，不再查询。'
+                             if work.proactive is not None else '剩余额度用于收束。根据已有资料回答，不再查询。')
+                    messages.append({'role':'system','content':closing})
                     reservation=final_attempt
                     result=await runtime.attempt(work,messages,[],user,group,deadline,leases,reservation=reservation)
                 if not result.tool_calls:
