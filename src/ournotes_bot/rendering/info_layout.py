@@ -413,7 +413,6 @@ def render_info(answer: InfoAnswer, *, load=None, try_full_activity=False) -> tu
             def paint(start, stop, height):
                 c = Canvas(WIDTH, height)
                 try:
-                    if view.layout=='activity-overview':c.box((30,head-8,1050,height-40),'#ffffff',20)
                     cy = 52
                     for value in title:
                         c.text(LEFT, cy + 28, value, 44, INK, True)
@@ -450,7 +449,7 @@ def render_info(answer: InfoAnswer, *, load=None, try_full_activity=False) -> tu
                     parts = (readable_pages.ImagePart(raw, 0, len(blocks)),)
             if not parts:
                 parts = readable_pages.render_parts(heights, WIDTH, fixed, paint,
-                                                    max_height=None if view.layout=='activity-overview' else 2400 if view.presentation in {'arena','player'} else 2800 if view.presentation in {'activity','gacha'} else None)
+                                                    max_height=None if view.layout=='activity-summary' else 2400 if view.presentation in {'arena','player'} else 2800 if view.presentation in {'activity','gacha'} else None)
             for part in parts:
                 text = '\n'.join(v for v in (view.title, view.subtitle,
                     *(block.text for block in blocks[part.start:part.stop])) if v)

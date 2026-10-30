@@ -622,6 +622,9 @@ def _prepare_selected_followup(context, operation, repository, origin):
 
 def visual_asset(url,size):
     from ..visuals import load_visual_asset
+    from ..sources.moenotes_events import is_event_artwork_url, download_event_artwork
+    if is_event_artwork_url(url):
+        return load_visual_asset(url,size,fetch=download_event_artwork)
     return load_visual_asset(url,size)
 
 

@@ -131,20 +131,34 @@ def _gallery_panels(row,limit):
     return result
 
 
-def _activity_overview(view,limit,prose_blocks):
+def _activity_summary(view,limit,prose_blocks):
     result=[]
     song_sections=set()
+    cards_done=False
     for row in view.rows:
         if row.kind=='schedule':
             if row.schedule is None:raise ValueError('Activity overview requires schedule')
-            result.append(Panel(584 if view.hero_url else 184,'event-banner',row_text(row),rows=(row,),
-                requests=((view.hero_url,(924,396)),) if view.hero_url else ()))
+            result.append(Panel(314,'overview',row_text(row),rows=(row,),
+                requests=((view.hero_url,(420,180)),) if view.hero_url else ()))
+        elif row.kind=='bonus-summary':
+            measured=[]
+            for child in row.children:
+                icon_w=min(5,len(child.icons))*38
+                values=tuple(line for value in child.body for line in lines(value,WIDTH-174-icon_w-12,28))
+                name=lines(child.title,160,26,True)
+                measured.append((max(len(values)*38,len(name)*36,((len(child.icons)+4)//5)*38)+12,name,values))
+            notes=tuple(line for value in row.body for line in lines(value,WIDTH,24))
+            result.append(Panel(52+sum(p[0] for p in measured)+len(notes)*34+16,'bonus-summary',row_text(row),
+                rows=row.children,title=row.title,body=notes,children=tuple(measured),
+                requests=tuple((url,(32,32)) for child in row.children for url in child.icons if url)))
         elif row.kind=='gallery':result.extend(_gallery_panels(row,limit))
         elif row.kind=='recruitment':
             copy=tuple(line for value in (row.title,*row.body) for line in lines(value,WIDTH,28))
             result.append(Panel(460+len(copy)*40,'recruitment',row_text(row),rows=(row,),
                 title='关联卡池',body=copy,requests=((row.image_url,(924,396)),) if row.image_url else ()))
-        elif row.kind=='card':result.extend(_card_panels((row,),'activity'))
+        elif row.kind=='card':
+            if not cards_done:
+                result.extend(_card_panels(tuple(r for r in view.rows if r.kind=='card'),'activity'));cards_done=True
         elif row.kind=='song':
             heading=row.label or '关联歌曲'
             if heading not in song_sections:
@@ -161,7 +175,7 @@ def _activity_overview(view,limit,prose_blocks):
 
 
 def blocks(view, limit, prose_blocks):
-    if view.layout=='activity-overview':return _activity_overview(view,limit,prose_blocks)
+    if view.layout=='activity-summary':return _activity_summary(view,limit,prose_blocks)
     result=[];rows=view.rows
     for row in rows:
         if row.kind!='schedule':continue
@@ -220,24 +234,25 @@ def _card_art(c,row,x,y,load):
 
 
 def draw(c,panel,y,load):
+    if panel.kind=='bonus-summary':
+        c.line(LEFT,y,RIGHT,'#d9d4df');c.text(LEFT,y+24,panel.title,28,ACCENT,True)
+        cy=y+52
+        for row,(height,names,values) in zip(panel.rows,panel.children):
+            for i,value in enumerate(names):c.text(LEFT,cy+18+i*36,value,26,INK,True)
+            for i,url in enumerate(row.icons):c.paste(load(url,(32,32)),LEFT+174+(i%5)*38,cy+(i//5)*38,32,32,True)
+            x=LEFT+174+min(5,len(row.icons))*38+12
+            for i,value in enumerate(values):c.text(x,cy+19+i*38,value,28)
+            cy+=height
+        for value in panel.body:c.text(LEFT,cy+17,value,24,MUTED);cy+=34
+        return
     if panel.kind=='section-title':
         width=max(160,len(panel.title)*28+32)
         c.box((LEFT,y+10,LEFT+width,y+50),ACCENT,10)
         c.text(LEFT+16,y+30,panel.title,26,'#ffffff',True)
         return
-    if panel.kind in {'gallery','event-banner','recruitment'}:
+    if panel.kind in {'gallery','recruitment'}:
         c.line(LEFT,y,RIGHT,'#d9d4df')
-        if panel.kind=='event-banner':
-            offset=0
-            if panel.requests:
-                url,size=panel.requests[0];c.paste(load(url,size),LEFT+24,y+12,*size,True,radius=10);offset=408
-            schedule=panel.rows[0].schedule
-            c.text(LEFT,y+offset+28,schedule.identity,26,MUTED)
-            _status(c,schedule.status,RIGHT-max(120,len(schedule.status)*24+32),y+offset+10,RIGHT)
-            c.text(LEFT,y+offset+76,'开始  '+schedule.start,28)
-            c.text(LEFT,y+offset+116,'结束  '+schedule.end,28)
-            c.text(LEFT,y+offset+153,schedule.zone,22,MUTED)
-        elif panel.kind=='recruitment':
+        if panel.kind=='recruitment':
             c.box((30,y-4,1050,y+16),'#fcf8fd',0)
             c.box((LEFT,y+12,LEFT+164,y+50),ACCENT,10)
             c.text(LEFT+16,y+31,panel.title,26,'#ffffff',True)

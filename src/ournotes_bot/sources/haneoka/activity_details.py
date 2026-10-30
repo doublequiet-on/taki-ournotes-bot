@@ -41,11 +41,15 @@ def project_details(event, artwork=lambda path: '', attribute_artwork=lambda val
             target=next((target for target in targets.values() if isinstance(target,dict) and target.get('image')), {})
             reference=(target['resourceType'],target['resourceId']) if target.get('resourceType') in (2,3) and type(target.get('resourceId')) is int else None
             picture=artwork(target.get('image')) or attribute_artwork(effect.get('cardType'))
-            groups[key] = (title, [], [], picture, 'wide' if reference and reference[0]==3 else 'portrait' if reference and reference[0]==2 else 'square',reference)
+            role=('指定成员卡' if reference and reference[0]==2 else '指定留影卡' if reference and reference[0]==3 else
+                  '指定乐队' if 'band' in targets else '指定属性' if effect.get('cardType') else '其他加成')
+            groups[key] = (title, [], [], picture, 'wide' if reference and reference[0]==3 else 'portrait' if reference and reference[0]==2 else 'square',reference,[],role)
         groups[key][1].append(kind + '：' + (' · '.join(levels) if levels else '数值未获取'))
         groups[key][2].append((kind, *levels))
-    effects = [ActivityFact(title, tuple(lines), image_url=image, table=tuple(table),image_kind=kind,reference=ref)
-               for title, lines, table, image, kind, ref in groups.values()]
+        values=[r['percent'] for r in rows(effect.get('perRank')) if type(r.get('rank')) is int and type(r.get('percent')) in (int,float)]
+        if values:groups[key][6].append((kind,min(values),max(values)))
+    effects = [ActivityFact(title, tuple(lines), image_url=image, table=tuple(table),image_kind=kind,reference=ref,bonus_ranges=tuple(bounds),group=role)
+               for title, lines, table, image, kind, ref,bounds,role in groups.values()]
     result.append(ActivitySection('加成', tuple(effects), isinstance(event.get('effects'), list)))
     rewards = []
     complete = isinstance(event.get('rewards'), list)

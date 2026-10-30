@@ -32,7 +32,7 @@ QQ 图片回复使用已确认的 Haneoka 风格：浅底、Noto Sans SC／Robot
 
 ## 模块与素材
 
-活动默认总览使用 `activity-overview`：横幅居上，基础字段紧排，相同加成条件的对象横向分组，歌曲和显式关联卡池独立分区。相同奖励、数量及类别的获取条件可合并，积分／名次区间保持配对；关联卡只有在资源类型、ID 和角色均已覆盖时去重。保留完整档位、原素材比例和文字回退，按编码硬预算续图；详情子项继续使用档位表。
+活动默认总览使用 `activity-summary`：保留横幅与时间并排、成员卡和留影卡各自紧排、歌曲纵排的布局。加成只汇总指定成员卡、留影卡、乐队与属性的数值范围，不重复展开对象卡面或各档数值；完整档位通过 `/查活动 加成` 查看。已在关联卡区展示的奖励卡只补充获取条件。表情及显式关联卡池独立分区，按编码硬预算续图。
 
 - QQ `_render_prepared` 向新 `*_layout.py` 传入同次查询数据及素材回调。`readable_pages.render_parts` 负责完整分段，`encode_image(preserve_size=True)` 禁止降尺寸。
 - `info_layout.py` 接收纯 `InfoView`／`InfoRow` 与素材回调，不访问查询仓库。`scripts/preview_info_catalog.py` 可生成三类信息的合成离线样图；相关测试为 `test_info_layout.py` 与 `test_info_command_pipeline.py`。

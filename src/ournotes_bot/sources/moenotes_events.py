@@ -417,6 +417,26 @@ def event_banner_url(server: str, value) -> str:
     return f"{ASSETS}/{server}/{SERVERS[server][3]}/Image/Event/{group}/Banner/{name}/{name}.webp"
 
 
+def is_event_artwork_url(url: str, server: str | None = None) -> bool:
+    """Recognize only the regional artwork routes emitted by this adapter."""
+    if not isinstance(url,str) or server is not None and server not in SERVERS:return False
+    for region in SERVERS if server is None else (server,):
+        prefix=f'{ASSETS}/{region}/{SERVERS[region][3]}/'
+        if not url.startswith(prefix):continue
+        path=url[len(prefix):]
+        return bool(re.fullmatch(r'(?:Story/Banner/Chapter|Image/Jacket)/([A-Za-z0-9_-]{1,120})/\1\.webp',path)
+                    or re.fullmatch(r'Image/Event/[0-9]{1,3}/Banner/([A-Za-z0-9_-]{1,120})/\1\.webp',path))
+    return False
+
+
+def download_event_artwork(url: str) -> bytes:
+    if not is_event_artwork_url(url):raise SourceError('invalid_url')
+    raw,headers=public_get(url,12)
+    if not headers.get('content-type','').lower().startswith('image/'):
+        raise SourceError('invalid_image')
+    return raw
+
+
 class EventCutoffRepository:
     """Lazy, isolated, per-key coalesced cache. Never changes the main data schema."""
     def __init__(self, cache_dir: Path, *, transport: Callable = public_get,

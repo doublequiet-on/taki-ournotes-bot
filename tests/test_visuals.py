@@ -16,6 +16,33 @@ from ournotes_bot import visuals
 
 
 class VisualTests(unittest.TestCase):
+    def test_tracker_activity_art_is_admitted_by_application_and_cached_after_decode(self):
+        from ournotes_bot.application.replies import visual_asset
+        from ournotes_bot.sources import moenotes_events as source
+        url=source.asset_url('jp','jacket','jkt_001_100001')
+        banner=source.event_banner_url('jp','04/Banner/event_banner_00004.png')
+        for region in ('jp','tw','kr','en'):
+            self.assertTrue(source.is_event_artwork_url(source.asset_url(region,'jacket','jkt_001_100001'),region))
+        self.assertFalse(source.is_event_artwork_url(url,'en'))
+        raw=io.BytesIO();Image.new('RGB',(16,8),'red').save(raw,format='WEBP')
+        with tempfile.TemporaryDirectory() as tmp,patch.object(visuals,'runtime_data_dir',return_value=Path(tmp)), \
+             patch.object(source,'public_get',return_value=(raw.getvalue(),{'content-type':'image/webp'})) as fetch, \
+             patch.object(visuals,'urlopen',side_effect=AssertionError('unscoped fallback')):
+            # The generic loader alone rejects these regional URLs before I/O.
+            self.assertIsNone(visuals._asset(url,(8,8)))
+            fetch.assert_not_called()
+            for value in (url,banner):
+                image=visual_asset(value,(8,8));self.assertIsNotNone(image);image.close()
+                image=visual_asset(value,(8,8));image.close()
+            self.assertEqual(fetch.call_count,2)
+            fetch.return_value=(b'<html>error</html>',{'content-type':'text/html'})
+            self.assertIsNone(visual_asset(source.asset_url('jp','jacket','broken'),(8,8)))
+            self.assertEqual(len(list((Path(tmp)/'asset-cache').glob('*.png'))),2)
+            for value in (url.replace('/jp/ja/','/jp/en/'),url+'?other=1',url.replace('assets.bdon.moe','evil.invalid'),url.replace('100001.webp','100002.webp')):
+                self.assertFalse(source.is_event_artwork_url(value))
+                with self.assertRaises(source.SourceError):source.download_event_artwork(value)
+            self.assertEqual(fetch.call_count,3)
+
     def setUp(self):
         self.song = Song(100001, "迷星叫", ("迷星叫",), "MyGO!!!!!", "", "", "", "", "",
                          (Chart("EXPERT", 25, 25.5, 768, ""),))

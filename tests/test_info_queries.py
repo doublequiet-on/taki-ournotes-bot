@@ -400,6 +400,24 @@ class InformationQueryTests(unittest.TestCase):
         self.assertIn('/查曲 102', result.text)
         self.assert_same_text(result)
 
+    def test_current_activity_uses_same_snapshot_art_only_after_event_identity_matches(self):
+        from dataclasses import replace
+        record=activity(1,'活动',image_url='verified:banner')
+        repo,source=self._current_repository(record)
+        source.value=replace(source.value,banner='tracker:banner',songs=(replace(source.value.songs[0],jacket='tracker:jacket'),))
+        song=SimpleNamespace(id=101,title='静态歌曲',jacket_url='verified:jacket')
+        repo.capture_catalog=lambda:catalog(activities=(record,),songs=(song,))
+        answer=execute_activity('',repo)
+        self.assertEqual(answer.views[0].hero_url,'verified:banner')
+        self.assertEqual(next(r.image_url for r in answer.views[0].rows if r.kind=='song'),'verified:jacket')
+        repo.capture_catalog=lambda:catalog(activities=(replace(record,end_at=NOW+1),),songs=(song,))
+        answer=execute_activity('',repo)
+        self.assertEqual(answer.views[0].hero_url,'tracker:banner')
+        self.assertEqual(next(r.image_url for r in answer.views[0].rows if r.kind=='song'),'tracker:jacket')
+        source.value=replace(source.value,server='en')
+        repo.capture_catalog=lambda:catalog(activities=(record,),songs=(song,))
+        self.assertEqual(next(r.image_url for r in execute_activity('en',repo).views[0].rows if r.kind=='song'),'tracker:jacket')
+
     def test_current_activity_mismatched_window_does_not_attach_wrong_cards(self):
         record = activity(1, '旧复刻', start=NOW - 1000, bonus_cards=(CardRef(2, 7),),
                           available_relations=frozenset({'bonus_cards'}))
@@ -615,34 +633,38 @@ class PublicQueryContractTests(unittest.TestCase):
         record = SimpleNamespace(details=sections, event_type_id=1, ranking_modes=('歌曲榜',))
         ordered = overview_rows(record, (InfoRow('挑战曲', label='挑战歌曲', kind='song'),), '/查活动 1')
         self.assertEqual(ordered[0].title, '活动类型与榜制')
-        self.assertEqual(ordered[1].kind,'gallery')
-        self.assertEqual(ordered[1].children[0].title,'MyGO!!!!!')
+        self.assertEqual(ordered[1].kind,'bonus-summary')
+        self.assertEqual(ordered[1].children[0].children[0].title,'MyGO!!!!!')
         self.assertGreater(next(i for i,r in enumerate(ordered) if r.title=='挑战曲'),
                            next(i for i,r in enumerate(ordered) if r.title=='活动奖励'))
 
-    def test_activity_overview_groups_equal_bonuses_and_keeps_reward_condition_pairs(self):
+    def test_activity_overview_summarizes_bonuses_keeps_cards_and_reward_condition_pairs(self):
         from ournotes_bot.domain.info_catalog import ActivityFact,ActivitySection
         from ournotes_bot.query.activity_query import overview_rows
         from ournotes_bot.query.contracts.info import InfoRow,info_text,InfoView
         from types import SimpleNamespace
         table=(('成员卡参数加成','档位1：+10%','档位2：+15%'),)
-        facts=(ActivityFact('成员卡A',('完整加成',),table=table,reference=(2,1)),
-               ActivityFact('成员卡B',('完整加成',),table=table,reference=(2,2)))
+        facts=(ActivityFact('成员卡A',('档位1：+10%；档位2：+15%',),table=table,reference=(2,1),group='指定成员卡',bonus_ranges=(('成员卡参数加成',10,15),)),
+               ActivityFact('成员卡B',('档位1：+10%；档位2：+15%',),table=table,reference=(2,2),group='指定成员卡',bonus_ranges=(('成员卡参数加成',10,15),)))
         rewards=tuple(ActivityFact('奖励卡',('累计积分','数量：'+str(count),f'所需积分：{point}'),
                     preview=True,group='奖励卡牌',reference=(2,3)) for count,point in ((1,100),(1,200),(2,300)))
         record=SimpleNamespace(event_type_id=1,ranking_modes=(),details=(ActivitySection('加成',facts,True),ActivitySection('奖励',rewards,True)))
         rows=overview_rows(record,(InfoRow('已投影卡',kind='card',reference=(2,1)),
                                   InfoRow('额外奖励关联',kind='card',reference=(2,1),tags=('奖励',))),'/查活动 1')
         bonuses=next(r for r in rows if r.group=='加成')
-        self.assertEqual(len(bonuses.children),2)
-        self.assertIn('+10% / +15%',bonuses.body[0])
+        self.assertEqual(len(bonuses.children),1)
+        self.assertIn('+10～15%',bonuses.children[0].body[0])
+        self.assertEqual(len(bonuses.children[0].children),2)
         reward=next(r for r in rows if r.title=='奖励卡牌')
         self.assertEqual(len(reward.children),2)
         self.assertEqual(reward.children[0].body,('累计积分','数量：1','所需积分：100','所需积分：200','成员卡 ID 3'))
         self.assertEqual(reward.children[1].body,('累计积分','数量：2','所需积分：300','成员卡 ID 3'))
-        self.assertFalse(any(r.title=='已投影卡' for r in rows))
+        self.assertTrue(any(r.title=='已投影卡' for r in rows))
         self.assertTrue(any(r.title=='额外奖励关联' for r in rows))
         self.assertIn('所需积分：300',info_text((InfoView('活动',rows=rows),)))
+        self.assertNotIn('档位1',info_text((InfoView('活动',rows=rows),)))
+        from ournotes_bot.query.activity_query import detail_rows
+        self.assertIn('档位1：+10%', '\n'.join(v for r in detail_rows(record,'加成') for v in r.body))
 
 
 if __name__ == '__main__':

@@ -14,6 +14,19 @@ class RotatingLayoutTests(unittest.TestCase):
     def render(self,view,**kwargs):
         return info_layout.render_info(InfoAnswer(info_text((view,)),views=(view,)),**kwargs)
 
+    def test_bonus_summary_is_compact_and_card_strips_stay_grouped(self):
+        brief=InfoRow('活动加成',('完整档位：/查活动 加成',),kind='bonus-summary',
+            children=tuple(InfoRow(role,('参数 +15～50% · 活动道具 +15～50%',),icons=('synthetic:icon',) if role=='指定属性' else ())
+                           for role in ('指定成员卡','指定留影卡','指定乐队','指定属性')))
+        cards=tuple(InfoRow(f'卡{i}',('成员卡 ID '+str(i),),kind='card',group='成员卡',display_title=f'卡{i}',image_kind='portrait') for i in range(3))
+        view=InfoView('活动',rows=(brief,*cards),layout='activity-summary',presentation='activity')
+        panels=rotating_layout.blocks(view,7900,info_layout._row_blocks)
+        self.assertLessEqual(next(p.height for p in panels if p.kind=='bonus-summary'),420)
+        strips=[p for p in panels if p.kind=='cards']
+        self.assertEqual([len(p.rows) for p in strips],[3])
+        text='\n'.join(p.text for p in self.render(view))
+        self.assertIn('+15～50%',text);self.assertIn('/查活动 加成',text)
+
     def test_activity_reference_overview_keeps_horizontal_groups_and_paginated_facts(self):
         children=tuple(InfoRow(f'完整卡名{i}',(f'成员卡 ID {i}',f'所需积分：{i*100}'),
                           image_url=f'synthetic:{i}',image_kind='portrait') for i in range(5))
@@ -21,7 +34,7 @@ class RotatingLayoutTests(unittest.TestCase):
         gallery=InfoRow('奖励卡牌',kind='gallery',children=children)
         pool=InfoRow('关联卡池完整名',('卡池 ID 8',),kind='recruitment',image_url='synthetic:pool')
         view=InfoView('活动',hero_url='synthetic:banner',rows=(schedule,gallery,pool),
-                      layout='activity-overview',presentation='activity')
+                      layout='activity-summary',presentation='activity')
         panels=rotating_layout.blocks(view,7900,info_layout._row_blocks)
         strips=[p for p in panels if p.kind=='gallery']
         self.assertEqual([len(p.rows) for p in strips],[4,1])
@@ -33,7 +46,7 @@ class RotatingLayoutTests(unittest.TestCase):
             self.assertIn(row.title,text)
             for value in row.body:self.assertIn(value,text)
         self.assertIn('卡池 ID 8',text)
-        self.assertEqual(calls.count(('synthetic:banner',(924,396))),1)
+        self.assertEqual(calls.count(('synthetic:banner',(420,180))),1)
         self.assertTrue(all(size==(144,192) for url,size in calls if url.rsplit(':',1)[-1].isdigit()))
 
     def test_detail_uses_native_banner_beside_dates_and_keeps_diagnostics_in_text(self):

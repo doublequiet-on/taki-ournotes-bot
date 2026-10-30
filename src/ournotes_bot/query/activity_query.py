@@ -52,18 +52,26 @@ def overview_rows(record, related, prefix):
                    for name in ('加成', '奖励', '卡池'))
     grouped = tuple(row for group in groups for row in group)
     bonus_groups={}
-    for row in groups[0]:
-        key=(row.table,row.image_kind) if row.table else (row.title,)
-        bonus_groups.setdefault(key,[]).append(row)
-    bonuses=[]
-    for entries in bonus_groups.values():
-        first=entries[0]
-        if not first.table:
-            bonuses.extend(entries);continue
-        compact=tuple(values[0]+'（档位'+ '/'.join(v.partition('：')[0].removeprefix('档位') for v in values[1:])+'）：'+
-                      ' / '.join(v.partition('：')[2] for v in values[1:]) for values in first.table)
-        bonuses.append(InfoRow('活动加成',compact,kind='gallery',group='加成',
-            children=tuple(replace(r,title=r.title.removeprefix('加成 · '),body=card_id(r),kind='row') for r in entries)))
+    for section in record.details:
+        if section.name!='加成':continue
+        for fact in section.facts:bonus_groups.setdefault(fact.group or '其他加成',[]).append(fact)
+    summaries=[]
+    order={'指定成员卡':0,'指定留影卡':1,'指定乐队':2,'指定属性':3}
+    for role in sorted(bonus_groups,key=lambda role:order.get(role,4)):
+        facts=bonus_groups[role]
+        values={}
+        for fact in facts:
+            for label,low,high in fact.bonus_ranges:
+                old=values.get(label,(low,high));values[label]=(min(old[0],low),max(old[1],high))
+        labels={'成员卡参数加成':'成员参数','留影卡参数加成':'留影参数','活动道具加成':'活动道具'}
+        body=' · '.join(labels.get(label,label)+' '+(f'+{low:g}%' if low==high else f'+{low:g}～{high:g}%')
+                        for label,(low,high) in values.items()) or '数值未确认'
+        if values and any(len(f.bonus_ranges)<len(f.table) for f in facts):body+='（部分数值未获取）'
+        pictures=tuple(dict.fromkeys(f.image_url for f in facts if f.image_url and not f.reference))
+        summaries.append(InfoRow(role,(body,),icons=pictures,
+            children=tuple(InfoRow(f.title) for f in facts)))
+    bonus_notes=tuple(value for row in groups[0] if row.kind!='bonus' for value in row.body)
+    bonuses=(InfoRow('活动加成',('依对象及档位变化；完整档位：'+prefix+' 加成',*bonus_notes),kind='bonus-summary',group='加成',children=tuple(summaries)),) if summaries else tuple(groups[0])
     reward_groups={}
     for row in groups[1]:reward_groups.setdefault((row.group,row.image_kind),[]).append(row)
     rewards=[]
@@ -74,8 +82,12 @@ def overview_rows(record, related, prefix):
             conditions=('；'.join(row.body[2:]),) if row.body[2:] else ()
             if key in unique:unique[key]=replace(unique[key],body=tuple(dict.fromkeys((*unique[key].body,*conditions))))
             else:unique[key]=replace(row,body=(*row.body[:2],*conditions))
-        rewards.append(InfoRow(label or '活动奖励',kind='gallery',
-            children=tuple(replace(r,body=(*r.body,*card_id(r))) for r in unique.values())))
+        shown={r.reference for r in related if r.kind=='card' and r.reference}
+        cards=[r for r in unique.values() if r.reference in shown]
+        other=[r for r in unique.values() if r.reference not in shown]
+        if cards:rewards.append(InfoRow(label or '活动奖励',tuple(' · '.join((*card_id(r),*r.body)) for r in cards)))
+        if other:rewards.append(InfoRow(label or '活动奖励',kind='gallery',
+            children=tuple(replace(r,body=(*r.body,*card_id(r))) for r in other)))
     pools=[]
     for row in groups[2]:
         if row.group=='关联卡池':pools.append(replace(row,kind='recruitment'))
@@ -84,14 +96,8 @@ def overview_rows(record, related, prefix):
             if pools and pools[-1].kind=='gallery':pools[-1]=replace(pools[-1],children=(*pools[-1].children,row))
             else:pools.append(InfoRow('卡池UP卡',kind='gallery',children=(row,)))
         else:pools.append(row)
-    used_roles={}
-    for entries,role in zip(groups,('加成','奖励','展示')):
-        for row in entries:
-            if row.reference:used_roles.setdefault(row.reference,set()).add(role)
-    related=tuple(r for r in related if r.kind!='card' or r.reference not in used_roles or
-                  not set(r.tags).issubset(used_roles[r.reference]))
     return (*tuple(row for row in details if row.title == '活动类型与榜制'), *bonuses,
-            *rewards,*tuple(row for row in related if row.kind!='song'),
+            *tuple(row for row in related if row.kind!='song'),*rewards,
             *tuple(row for row in related if row.kind=='song'),*pools,
             *tuple(row for row in details if row not in grouped and row.title != '活动类型与榜制'))
 
@@ -153,7 +159,7 @@ def _static(query, repository, now, section=''):
         rows = (rows[:1] + list(detail_rows(record, section, f'/查活动 {record.id}')) if section else
                 rows[:1] + list(overview_rows(record, rows[1:], f'/查活动 {record.id}')))
         hero=(record.detail_image_url or record.image_url) if section else (record.image_url or record.detail_image_url)
-        return answer((InfoView(record.title, '日服 · 活动详情', hero, tuple(rows), notes, 'detail' if section else 'activity-overview',
+        return answer((InfoView(record.title, '日服 · 活动详情', hero, tuple(rows), notes, 'detail' if section else 'activity-summary',
                                 presentation='activity',visual_footer=footer(catalog,diagnostics=False),
                                 hero_kind='event' if section and record.detail_image_url else 'banner',hero_logo_url=record.logo_url),))
     rows = (InfoRow(r.title, (f'活动 ID {r.id}', *period(r), f'资料状态：{state(r, now)}'),
@@ -201,6 +207,10 @@ def _current(server, repository, section=''):
                 if server == 'jp':
                     hero,hero_kind,logo=(match.detail_image_url,'event',match.logo_url) if match.detail_image_url else (event.banner,'banner','')
                     if not section:hero,hero_kind,logo=match.image_url or event.banner,'banner',''
+                    local_songs={str(song.id):song for song in catalog.songs}
+                    for index,song in enumerate(event.songs,1):
+                        local=local_songs.get(song.music_id)
+                        if local and local.jacket_url:rows[index]=replace(rows[index],image_url=local.jacket_url)
                     rows.extend(_related_rows(match, catalog,
                         challenge_song_ids={song.music_id for song in event.songs}))
                     notes.extend(footer(catalog))
@@ -216,7 +226,7 @@ def _current(server, repository, section=''):
     notes.append('资料来源：' + ('Haneoka（实时观测经 MoeNotes tracker）' if event.source == 'haneoka' else event.source))
     visual_notes.append(notes[-1])
     return answer((InfoView(event.title, subtitle=f'{SERVERS[server][0]} · 当前／最近活动', hero_url=hero,
-                            rows=tuple(rows), footer=tuple(notes), layout='detail' if section else 'activity-overview',presentation='activity',
+                            rows=tuple(rows), footer=tuple(notes), layout='detail' if section else 'activity-summary',presentation='activity',
                             visual_footer=tuple(visual_notes),hero_kind=hero_kind,hero_logo_url=logo),))
 
 
