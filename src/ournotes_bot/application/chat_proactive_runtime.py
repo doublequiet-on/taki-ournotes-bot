@@ -19,6 +19,14 @@ from . import replies
 
 
 class ProactiveChat:
+    @staticmethod
+    def response_format():
+        return {'type':'json_schema','name':'proactive_participation','strict':True,'schema':{
+            'type':'object','properties':{
+                'participation':{'type':'string','enum':['reply','skip','defer']},
+                'text':{'type':'string','enum':['']},'delay_seconds':{'type':['integer','null']}},
+            'required':['participation','text','delay_seconds'],'additionalProperties':False}}
+
     def __init__(self,agent):
         self.agent=agent
         self.controller=ProactiveController()
@@ -242,8 +250,11 @@ class ProactiveChat:
             fenced=re.fullmatch(r'```(?:json)?\s*\n(.*?)\n```',text,re.S|re.I)
             if fenced:text=fenced.group(1)
         try:value=json.loads(text)
-        except (ValueError,TypeError):
-            self.trace(work,'decision',decision='invalid_json')
+        except (ValueError,TypeError) as exc:
+            shape=('fenced' if isinstance(text,str) and text.startswith('```') else
+                   'object' if isinstance(text,str) and text.startswith('{') else 'other')
+            self.trace(work,'decision',decision='invalid_json',name=shape,
+                       status='json_syntax' if isinstance(exc,json.JSONDecodeError) else 'non_text')
             raise ModelError('model_protocol_error') from None
         require(isinstance(value,dict) and value.get('participation') in ('reply','skip','defer'),'model_protocol_error')
         mode=value['participation']

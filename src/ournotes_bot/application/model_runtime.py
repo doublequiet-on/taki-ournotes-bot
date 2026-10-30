@@ -187,7 +187,7 @@ class ModelRuntime:
         result['next_route']='blocked'
         try:
             profile=self.config.snapshot().profile
-            amount=2*profile.price.reserve(profile.max_input_tokens,profile.max_output_tokens)
+            amount=2*profile.reserve(profile.max_input_tokens,profile.max_output_tokens)
             result['admission_micro']=str(amount*profile.price.reference_rate/1_000_000)
             try:
                 self.usage.check_primary(day(self.usage.clock()),profile,amount)
@@ -255,7 +255,7 @@ class ModelRuntime:
         if work.budget_fallback or work.proactive is not None:return
         profile=work.model_snapshot.profile
         # Admit a bounded first request and its maximum final response together.
-        amount=2*profile.price.reserve(profile.max_input_tokens,profile.max_output_tokens)
+        amount=2*profile.reserve(profile.max_input_tokens,profile.max_output_tokens)
         try:
             self.usage.check_primary(day(self.usage.clock()),profile,amount,user=self.usage.key('user',work.model_subject))
             self.record_route(work,'primary_budget_available')
@@ -441,6 +441,9 @@ class ModelRuntime:
         self.check(work,deadline,leases)
         if service_policy is not None:require(self.agent.services.policy(work.model_snapshot,work.request.conversation_id)==service_policy,'chat_service_revoked')
         body=request_body(profile,messages,tools)
+        if (work.proactive is not None and web is None and service_policy is None
+                and billing_request_id is None and not getattr(work,'proactive_generation',False) and profile.wire_profile=='openai-responses-v1'):
+            body['text']={'format':self.agent.proactive.response_format()}
         action_budget=()
         if web is not None:
             require(profile.wire_profile=='openai-responses-v1' and not tools,'chat_capability_unverified')
@@ -477,6 +480,8 @@ class ModelRuntime:
             # No await/queue/tool work between the consumed permit and this HTTP.
             result=await asyncio.wait_for(self.client.request(profile,body,timeout=max(.001,deadline-time.monotonic())),
                                           max(.001,deadline-time.monotonic()))
+            if result.transport_error and work.proactive is not None:
+                self.agent.proactive.trace(work,'error',status='provider_unavailable',name=result.transport_error)
             actions=result.provider_actions or ((ProviderAction('web_search',None),) if web is not None else ())
             self.usage.settle(attempt,result.usage,result.error_code,actions=actions)
             if result.status=='ok':
@@ -486,7 +491,7 @@ class ModelRuntime:
             if getattr(work,'chat',False) and service_policy is None:
                 self.agent.audit(self.agent.store.event,work.delivery,'model/'+attempt,'model',
                     {'attempt_id':attempt,'status':result.status,'error_code':result.error_code,
-                     'usage_status':result.usage.status,'visible':result.text or '',
+                     'usage_status':result.usage.status,'transport_error':result.transport_error,'visible':result.text or '',
                      'native_calls':result.native_calls,'provider_actions':[dict(kind=action.kind,count=action.count) for action in result.provider_actions],
                      'input_total':result.usage.input_total,'output_total':result.usage.output_total,
                      'elapsed_ms':int((time.monotonic()-began)*1000)})

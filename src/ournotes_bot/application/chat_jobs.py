@@ -11,7 +11,7 @@ import re
 import sqlite3
 import time
 
-from ..domain.model_calls import ModelError, Price
+from ..domain.model_calls import ModelError, Price, Usage
 from ..sources.json_validation import decode_json
 
 
@@ -147,7 +147,7 @@ def service_request_id(task, instance_id, app_id, group_id, source_key):
 
 def maximum_cost_micro(profile):
     """Exact micro-currency upper bound, independent of weighted quota tokens."""
-    return profile.price.reserve(profile.max_input_tokens, profile.max_output_tokens) * profile.price.reference_rate / 1_000_000
+    return profile.reserve(profile.max_input_tokens, profile.max_output_tokens) * profile.price.reference_rate / 1_000_000
 
 
 @dataclass(frozen=True)
@@ -207,9 +207,7 @@ class ServiceBudget:
                 if row['state'] == 'started' or row['billing_incomplete']:
                     # reconcile() may have cleared weighted reservation on unknown usage.
                     # Reconstruct a conservative bound rather than turning that HTTP into free usage.
-                    inputs, outputs = ((profile.max_input_tokens, profile.max_output_tokens)
-                                       if row['config_version'] == profile.config_version else (65536, 8192))
-                    bound = price.reserve(inputs, outputs) * price.reference_rate / 1_000_000
+                    bound = self.usage.bounded_hold(row['id'],price,Usage()) * price.reference_rate / 1_000_000
                     bound += sum(action['max_count']*action['unit_cost_micro'] for action in self.usage.db.execute(
                         'SELECT max_count,unit_cost_micro FROM attempt_actions WHERE attempt=?',(row['id'],)))
                     # Known settled cost and an unresolved action reservation
