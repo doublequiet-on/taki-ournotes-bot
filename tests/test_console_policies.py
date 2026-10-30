@@ -2922,8 +2922,12 @@ class ChatReviewRegressionTests(Fixture,unittest.IsolatedAsyncioTestCase):
     async def test_knowledge_scope_is_per_speaker_recent_and_model_selected(self):
         import time
         from types import SimpleNamespace
+        from ournotes_bot.domain.knowledge import EvidenceLease,KnowledgeScope
         from ournotes_bot.domain.model_calls import ToolCall
-        knowledge=Mock();knowledge.retrieve.return_value=SimpleNamespace(code='empty',message='empty')
+        knowledge=Mock()
+        knowledge.retrieve.return_value=SimpleNamespace(code='ok',lease=EvidenceLease('fixture',KnowledgeScope(),()))
+        knowledge.prepare_evidence.return_value={'text':'工程夹具'}
+        knowledge.validate_current.return_value=True
         self.backend.knowledge=knowledge
         bodies=self.capture_native_bodies()
         async def ask(text,seq,server='jp',date=None,followup=False,user='u1'):
@@ -2941,32 +2945,85 @@ class ChatReviewRegressionTests(Fixture,unittest.IsolatedAsyncioTestCase):
         await ask('那LUCK呢',4,server='intl',date='2020-01-01',followup=True)
         self.assertEqual(knowledge.retrieve.call_args.args[1].server,'intl')
         self.assertEqual(knowledge.retrieve.call_args.args[1].date,'2020-01-01')
-        await ask('那现在日服呢',5,server='jp',followup=True)
+        await ask('那日服呢',5,server='jp',date='2020-01-01',followup=True)
         self.assertEqual(knowledge.retrieve.call_args.args[1].server,'jp')
+        self.assertEqual(knowledge.retrieve.call_args.args[1].date,'2020-01-01')
+        await ask('那国际服呢',6,server='intl',followup=True)
+        self.assertEqual(knowledge.retrieve.call_args.args[1].server,'intl')
         self.assertIsNone(knowledge.retrieve.call_args.args[1].date)
-        await ask('刚才看到的国际服新规则是什么',6,server='intl')
+        await ask('刚才看到的国际服新规则是什么',7,server='intl')
         self.assertEqual(knowledge.retrieve.call_args.args[1].server,'intl')
         self.assertIsNone(knowledge.retrieve.call_args.args[1].date)
         # Another speaker cannot take u1's range; missing context is a tool
         # result, leaving the model free to ask a specific question.
         count=knowledge.retrieve.call_count
-        await ask('接着呢',7,server='intl',followup=True,user='u3')
+        await ask('接着呢',8,server='intl',followup=True,user='u3')
         self.assertEqual(knowledge.retrieve.call_count,count)
+
         tool_result=next(json.loads(row['content']) for row in bodies[-1]['messages'] if row['role']=='tool')
         self.assertEqual(tool_result['status'],'knowledge_context_unavailable')
         # A delivered unrelated exchange invalidates that speaker's old topic.
         self.current_user='u1';self.client.request.side_effect=None;self.client.request.return_value=self.result('好')
-        plan,_=await self.prepare_native('/聊 换个话题聊音乐',seq=8)
+        plan,_=await self.prepare_native('/聊 换个话题聊音乐',seq=9)
         self.event(plan,'intent');self.event(plan,'ack')
-        await ask('继续呢',9,server='intl',followup=True)
+        await ask('继续呢',10,server='intl',followup=True)
         self.assertEqual(knowledge.retrieve.call_count,count)
-        await ask('国际服规则',10,server='intl')
+        await ask('国际服规则',11,server='intl')
         agent=self.backend.model_runtime.agent
         agent.context.scopes.clear()
         agent.context.clock=lambda:time.time()+901
         count=knowledge.retrieve.call_count
-        await ask('那LUCK呢',11,server='intl',followup=True)
+        await ask('那LUCK呢',12,server='intl',followup=True)
         self.assertEqual(knowledge.retrieve.call_count,count)
+
+    def test_chat_cross_server_does_not_inherit_old_date_or_version(self):
+        from ournotes_bot.domain.knowledge import KnowledgeScope
+        from ournotes_bot.natural_query.native_tools import scope_for
+        for field,value in (('date','2020-01-01'),('version','1.2.3')):
+            old=KnowledgeScope(server='intl',**{field:value})
+            args=dict(server='jp',date=None,version=None)
+            scope=scope_for('那日服呢',args,old,reset_on_server_change=True)
+            self.assertIsNone(getattr(scope,field))
+            comparison=scope_for('那日服呢',{**args,field:value},old,reset_on_server_change=True)
+            self.assertEqual(getattr(comparison,field),value)
+            same=scope_for('那LUCK呢',{**args,'server':'intl',field:value},old,reset_on_server_change=True)
+            self.assertEqual(getattr(same,field),value)
+        old=KnowledgeScope(server='intl',date='2020-01-01')
+        explicit=scope_for('那日服2020-01-01呢',dict(server='jp',date='2020-01-01',version=None),old,reset_on_server_change=True)
+        self.assertEqual(explicit.date,'2020-01-01')
+
+    async def test_only_successful_visible_evidence_and_ack_save_scope(self):
+        from types import SimpleNamespace
+        from ournotes_bot.domain.knowledge import EvidenceLease,KnowledgeScope
+        from ournotes_bot.domain.model_calls import ToolCall
+        from ournotes_bot.application.backend_protocol import PROTOCOL
+        knowledge=Mock();knowledge.validate_current.return_value=True
+        knowledge.prepare_evidence.return_value={'text':'夹具'}
+        self.backend.knowledge=knowledge
+        agent=self.backend.model_runtime.agent
+        for seq,case in enumerate(('ok','empty','unavailable','evidence_error','ack_failed','revoked'),1):
+            self.current_user='scope-user-'+str(seq)
+            knowledge.prepare_evidence.side_effect=OSError('fixture') if case=='evidence_error' else None
+            knowledge.retrieve.return_value=(SimpleNamespace(code=case,message='fixture') if case in ('empty','unavailable')
+                else SimpleNamespace(code='ok',lease=EvidenceLease('fixture',KnowledgeScope(),())))
+            self.client.request.side_effect=[self.result(calls=(ToolCall('k'+str(seq),'knowledge_search',
+                '{"server":"jp","date":null,"version":null}'),)),self.result('收到')]
+            plan,_=await self.prepare_native('/聊 日服规则',seq=seq)
+            self.event(plan,'intent')
+            if case=='ack_failed':
+                self.backend.apply_event(plan['delivery_id'],dict(protocol=PROTOCOL,request_id=plan['request_id'],
+                    plan_version=1,gateway_epoch='e1',event='ack',part_id=plan['parts'][0]['id'],attempt_id='a1',result='failure',message_id=None))
+            else:self.event(plan,'ack')
+            key=(agent.context.scope(agent.runtime.backend.works[plan['delivery_id']].request),self.current_user)
+            self.assertEqual(key in agent.knowledge_scopes,case in ('ok','revoked'),case)
+            if case=='revoked':
+                knowledge.validate_current.return_value=False
+                self.client.request.side_effect=[self.result(calls=(ToolCall('next','knowledge_search',
+                    '{"server":"jp","date":null,"version":null,"followup":true}'),)),self.result('请再说明')]
+                count=knowledge.retrieve.call_count
+                second,_=await self.prepare_native('/聊 那LUCK呢',seq=seq+10)
+                self.assertEqual(knowledge.retrieve.call_count,count)
+                self.event(second,'intent');self.event(second,'ack')
 
     async def test_revoked_quote_stops_before_model(self):
         from ournotes_bot.domain.model_calls import ToolCall

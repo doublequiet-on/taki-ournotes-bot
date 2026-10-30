@@ -119,7 +119,7 @@ def chat_tools():
             if name=='site_search' else '读取本轮返回的 handle，可继续阅读已知关联。'))
     tool=tools['knowledge_search']
     tools[tool.name]=replace(tool,schema=obj({**tool.schema['properties'],'query':string(120)},tool.schema['required']),
-        description='已审核ON知识。query可改写；区服、日期、版本宿主核对。同一发言者的近期知识追问followup=true；新问题false。')
+        description='查审核ON知识。query可改写；同一发言者近期追问followup=true，新问题false。切服时判断是否比较同一时间，不默认沿用旧条件。')
     return tools
 
 
@@ -485,6 +485,8 @@ class ChatAgent:
                         output,leases=await self.execute(work,call,question,site,leases,deadline-self.budget.final_seconds,deadline,
                                                          registry=registry,web=web,user=user,group=group,story_handles=story_handles,image_handles=image_handles,vision=vision)
                     image_input=output.pop('_image_input',None)
+                    knowledge_scope=output.pop('_knowledge_scope',None)
+                    knowledge_lease=output.pop('_knowledge_lease',None)
                     tool_message={'role':'tool','tool_call_id':call.id,'content':json.dumps(output,ensure_ascii=False)}
                     projected=[*messages,tool_message,*([image_input] if image_input else [])]
                     if runtime.input_bound(work,projected,[])>work.model_snapshot.profile.max_input_tokens-1024:
@@ -493,6 +495,11 @@ class ChatAgent:
                         image_input=None;force_final=True
                     elif runtime.input_bound(work,projected,[tool.wire() for tool in registry.values()])>work.model_snapshot.profile.max_input_tokens-2048:
                         force_final=True
+                    if knowledge_scope is not None and output['status']=='ok':
+                        if work.knowledge_scope is not None and work.knowledge_scope!=knowledge_scope:
+                            work.knowledge_scope_ambiguous=True
+                        work.knowledge_scope=knowledge_scope
+                        work.knowledge_scope_leases=(*work.knowledge_scope_leases,knowledge_lease)
                     seen[call.id]=((call.name,call.arguments),output)
                     if output['status'] in ('budget_exhausted','quota_exceeded'):force_final=True
                     for ref in output.get('evidence_refs',[]):web_citations[ref['url']]=ref
@@ -594,19 +601,18 @@ class ChatAgent:
                     group=self.context.scope(work.request)
                     saved=self.knowledge_scopes.get((group,work.request.user_id))
                     recent={row.message_id for row in self.context.scopes.get(group,())}
-                    if not saved or saved[0] not in recent or saved[0] not in work.memory_sources or not self.store.read(work.request.scope,[saved[0]])['messages']:
+                    if not saved or saved[0] not in recent or saved[0] not in work.memory_sources or not self.store.read(work.request.scope,[saved[0]])['messages'] or not knowledge.validate_current(saved[2]):
                         return {'status':'knowledge_context_unavailable','retryable':True,
                                 'data':'没有可继承的近期知识范围。若当前问题完整，可独立查询；否则请结合对话自然澄清缺少的条件。'},leases
                     previous=saved[1]
-                scope=scope_for(question,args,previous)
-                work.knowledge_scope=scope
+                scope=scope_for(question,args,previous,reset_on_server_change=True)
                 await finish_thread(knowledge.observe)
                 retrieval=await finish_thread(partial(knowledge.retrieve,args.get('query') or question,scope,knowledge.approved_set_revision))
                 if retrieval.code!='ok':
                     return {'status':retrieval.code,'data':retrieval.message,'retryable':True},leases
                 leases=(*leases,retrieval.lease)
                 evidence=await finish_thread(partial(knowledge.prepare_evidence,retrieval.lease))
-                output={'status':'ok','data':evidence}
+                output={'status':'ok','data':evidence,'_knowledge_scope':scope,'_knowledge_lease':retrieval.lease}
             else:
                 repository=await runtime.current_repository()
                 if work.entity_evidence:
@@ -628,6 +634,9 @@ class ChatAgent:
                 # for clarification or explain already delivered material.
                 return {'status':'query_server_mismatch','retryable':False,
                         'data':'工具参数的区服与本轮已确认范围不一致，这次读取没有执行。请依据当前对话说明或向用户澄清，不猜区服、不把它当作用户主动查询失败。'},leases
+            if tool.kind=='knowledge' and str(exc) in ('query_date_mismatch','query_version_mismatch','knowledge_scope_ambiguous'):
+                return {'status':str(exc),'retryable':True,
+                        'data':'日期或版本未能从当前问题确认；切换区服时不自动沿用旧区条件。请结合对话重新查询，或自然澄清需要的条件。'},leases
             if tool.kind=='chart.get' and str(exc)=='query_difficulty_mismatch':
                 # Do not execute an ungrounded difficulty, but allow the agent to
                 # answer a follow-up from other evidence or request clarification.
@@ -657,8 +666,8 @@ class ChatAgent:
             if work.proactive is None:
                 key=(self.context.scope(work.request),work.request.user_id)
                 self.knowledge_scopes.pop(key,None)
-            if work.proactive is None and work.knowledge_scope is not None:
-                self.knowledge_scopes[key]=(message_id,work.knowledge_scope)
+            if work.proactive is None and work.knowledge_scope is not None and not work.knowledge_scope_ambiguous:
+                self.knowledge_scopes[key]=(message_id,work.knowledge_scope,work.knowledge_scope_leases)
                 while len(self.knowledge_scopes)>1024:self.knowledge_scopes.pop(next(iter(self.knowledge_scopes)))
 
     def close(self):

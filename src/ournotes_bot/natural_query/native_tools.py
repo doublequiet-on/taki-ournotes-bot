@@ -134,7 +134,7 @@ def validate_call(call,registry=None):
     return tool,args
 
 
-def scope_for(question,args,previous=None):
+def scope_for(question,args,previous=None,*,reset_on_server_change=False):
     require(not re.search(r'港服|韩服|美服|欧服|\b(?:tw|hk|kr|en)\b',question,re.I),'knowledge_server_unsupported')
     # An explicitly forbidden substitute is not a requested second region.
     region_question=re.sub(r'(?:不能|不要|不可|别)用(?:日服|国际服|國際服|台服|臺服)(?:资料|公告)?(?:代替|替代)', '', question)
@@ -146,11 +146,14 @@ def scope_for(question,args,previous=None):
                       lambda m:f'{int(m[1]):04d}-{int(m[2]):02d}-{int(m[3]):02d}',question)
     dates=re.findall(r'\d{4}-\d{2}-\d{2}',normalized)
     versions=re.findall(r'\d+\.\d+(?:\.\d+)?(?=\s*(?:版|版本))',question)
-    reset=bool(dates or versions or re.search(r'当前|现在|現時|目前',question))
+    reset=bool(dates or versions or re.search(r'当前|现在|現時|目前',question)
+               or reset_on_server_change and previous and server!=previous.server)
     for key,explicit in (('version',versions),('date',dates)):
         inherited=getattr(previous,key) if previous and not reset else None
+        cross_inherited=(getattr(previous,key) if previous and reset_on_server_change and server!=previous.server
+                         and not dates and not versions and not re.search(r'当前|现在|現時|目前',question) else None)
         if args[key] is not None:
-            require(args[key] in explicit or args[key]==inherited or
+            require(args[key] in explicit or args[key]==inherited or args[key]==cross_inherited or
                     key=='version' and args[key] in question,'query_'+key+'_mismatch')
         if inherited is not None: require(args[key]==inherited,'query_'+key+'_mismatch')
     # An explicitly historical question must not quietly become a current one.
