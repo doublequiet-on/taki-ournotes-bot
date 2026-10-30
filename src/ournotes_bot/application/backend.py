@@ -94,6 +94,7 @@ class Work:
     knowledge_scope_leases: tuple = ()
     knowledge_context: object = None
     knowledge_target: object = None
+    knowledge_scope_at_start: object = None
     image_deadline: float = float('inf')
     image_bytes: int = 0
 
