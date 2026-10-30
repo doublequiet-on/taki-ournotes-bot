@@ -320,9 +320,11 @@ class ChatAgent:
         """Visible audit is secondary to usage and durable delivery facts."""
         try:
             operation(*args)
+            return True
         except sqlite3.Error:
             self.audit_failures+=1
             logger.error('Chat audit unavailable operation=%s failures=%s',operation.__name__,self.audit_failures)
+            return False
 
     async def run(self,work,question,user,group,deadline):
         runtime=self.runtime
@@ -694,17 +696,19 @@ class ChatAgent:
         except ImageError as exc:
             return {'status':exc.code,'retryable':False},leases
 
-    def acknowledge(self,work,part_id,message_id,text,status,*,allow_context):
+    def acknowledge(self,work,part_id,message_id,text,status,*,allow_context,service_ack_ok=False):
+        audit_ok=service_ack_ok
         if work.proactive is not None and status=='success' and allow_context:
-            self.audit(self.store.begin,work,list(work.participating_history))
-            self.audit(self.store.bind_sources,work.delivery,work.request.scope,list(work.memory_sources))
-        self.audit(self.store.event,work.delivery,'delivery/'+part_id,'delivery',
+            began=self.audit(self.store.begin,work,list(work.participating_history))
+            bound=self.audit(self.store.bind_sources,work.delivery,work.request.scope,list(work.memory_sources))
+            audit_ok=audit_ok and began and bound
+        event_ok=self.audit(self.store.event,work.delivery,'delivery/'+part_id,'delivery',
                          {'message_id':message_id,'status':status,'text':text if status=='success' else '',
                           'allow_context':allow_context,'delivered_at':self.runtime.backend.clock()})
         if status=='success' and allow_context:
             self.context.delivered(work.request,message_id,text)
             followup=work.proactive.followup if work.proactive is not None else None
-            trusted_followup=(not self.audit_failures and followup is not None and followup.user_id==work.request.user_id
+            trusted_followup=(audit_ok and event_ok and followup is not None and followup.user_id==work.request.user_id
                 and followup.answer_id==work.request.message_id and self.proactive.valid(work,sending=True))
             if work.proactive is None or trusted_followup:
                 key=(self.context.scope(work.request),work.request.user_id)
@@ -726,9 +730,12 @@ class ChatAgent:
                     target_rows=self.store.read(work.request.scope,[target[1]])['messages'] if target else []
                     valid_target=(not target or target[1] in recent and any(row['message_id']==target[1]
                         and row['role']=='user' and row['speaker_id']==work.request.user_id for row in target_rows))
+                    delivered_rows=self.store.read(work.request.scope,[message_id])['messages'] if trusted_followup else []
+                    valid_delivery=(not trusted_followup or any(row['role']=='assistant'
+                        and row['reply_to']==work.request.message_id for row in delivered_rows))
                 except (sqlite3.Error,OSError):
                     valid_previous=valid_new=False
-                if valid_new and (previous is None or valid_previous) and (not trusted_followup or valid_target):
+                if valid_new and (previous is None or valid_previous) and (not trusted_followup or valid_target and valid_delivery):
                     self.knowledge_scopes[key]=(message_id,work.knowledge_scope,work.knowledge_scope_leases,None)
                     while len(self.knowledge_scopes)>1024:self.knowledge_scopes.pop(next(iter(self.knowledge_scopes)))
                 elif work.proactive is not None:
