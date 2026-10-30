@@ -3390,6 +3390,65 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
         view=self.backend.admin.view(self.backend.ledger.request(plan['request_id']))
         self.assertEqual(view['delivery_reason'],'completed_without_output')
 
+    async def test_proactive_compares_group_messages_but_allows_a_natural_reaction(self):
+        bodies=ChatAgentTests.capture_native_bodies(self)
+        self.policy=replace(self.policy,proactive=replace(self.policy.proactive,cooldown_seconds=0))
+        self.agent.services.policy.return_value=self.policy
+        self.observation('这次抽了很久才出彩',seq=1)
+        self.now+=.01;self.current_user='u2'
+        value=self.observation('最后结果真惊险',seq=2);self.tick+=1.6
+        self.client.request.return_value=self.result('{"participation":"skip"}')
+        skipped,_,_=await self.candidate(value)
+        prompt=bodies[-1]['messages'][0]['content']
+        self.assertIn('最近群友及自己已送达的发言',prompt)
+        self.assertIn('别人说过的事、数字或观点换个说法',prompt)
+        self.assertIn('情绪反应',prompt)
+        self.assertIn('不要为了接话编造',prompt)
+        self.assertEqual(skipped['parts'],[])
+        self.assertEqual(self.agent.store.read(Request_scope(),[value['message_id']])['messages'],[])
+        self.now+=.01;self.current_user='u1'
+        value=self.observation('幸好最后出了',seq=3);self.tick+=1.6
+        self.client.request.return_value=self.result('{"participation":"reply","text":"太好了，替你松口气"}')
+        reply,_,_=await self.candidate(value,serial=2)
+        self.assertEqual(reply['parts'][0]['text'],'太好了，替你松口气')
+        self.event(reply,'intent');self.event(reply,'ack')
+        self.assertTrue(any(row['role']=='assistant' for row in self.agent.store.recent(Request_scope())))
+
+    async def test_proactive_final_budget_retains_skip_while_direct_chat_answers(self):
+        bodies=ChatAgentTests.capture_native_bodies(self)
+        self.agent.budget=replace(self.agent.budget,model_calls=1)
+        value=self.observation('有人已经说出了大家的看法');self.tick+=1.6
+        self.client.request.return_value=self.result('{"participation":"skip"}')
+        skipped,_,_=await self.candidate(value)
+        self.assertIn('reply/skip/defer',bodies[-1]['messages'][-1]['content'])
+        self.assertEqual(skipped['parts'],[])
+        self.client.request.return_value=self.result('我在听。')
+        direct,_=await self.prepare_native('/聊 在吗',seq=2)
+        self.assertNotIn('这是未点名的群聊观察',bodies[-1]['messages'][0]['content'])
+        self.assertIn('根据已有结果回答',bodies[-1]['messages'][-1]['content'])
+        self.assertEqual(direct['parts'][0]['text'],'我在听')
+        self.event(direct,'intent');self.event(direct,'ack')
+
+    async def test_proactive_quota_closing_retains_skip_after_tool(self):
+        from ournotes_bot.domain.model_calls import ModelError,ToolCall
+        runtime=self.backend.model_runtime
+        original=runtime.attempt
+        count=0
+        async def attempt(*args,**kwargs):
+            nonlocal count
+            count+=1
+            if count==2:raise ModelError('quota_exceeded')
+            return await original(*args,**kwargs)
+        bodies=ChatAgentTests.capture_native_bodies(self)
+        value=self.observation('大家正在聊一个问题');self.tick+=1.6
+        self.client.request.side_effect=[self.result(calls=(ToolCall('help','catalog_info','{"kind":"help","query":""}'),)),
+                                        self.result('{"participation":"skip"}')]
+        with patch.object(runtime,'attempt',side_effect=attempt):
+            skipped,_,_=await self.candidate(value)
+        self.assertEqual(count,3)
+        self.assertIn('reply/skip/defer',bodies[-1]['messages'][-1]['content'])
+        self.assertEqual(skipped['parts'],[])
+
     async def test_proactive_invalid_decision_is_shown_as_failure(self):
         value=self.observation();self.tick+=1.6
         self.client.request.return_value=self.result('not a participation decision')
