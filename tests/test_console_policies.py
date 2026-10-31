@@ -3641,11 +3641,11 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
         self.client.request.return_value=self.result('{"participation":"skip"}')
         skipped,_,_=await self.candidate(value)
         prompt=bodies[-1]['messages'][0]['content']
-        self.assertIn('最近群友及自己已送达的发言',prompt)
-        self.assertIn('别人说过的事、数字或观点换个说法',prompt)
-        self.assertIn('自己的反应、看法',prompt)
-        self.assertIn('不靠抛出问题让别人继续说',prompt)
-        self.assertIn('不要为了接话编造',prompt)
+        self.assertIn('比较最近发言',prompt)
+        self.assertIn('重复群友或自己已说过的内容，也选 skip',prompt)
+        self.assertIn('值得交流的不同看法或贴切玩笑，都可以 reply',prompt)
+        self.assertIn('不靠追问续聊',prompt)
+        self.assertIn('不编造原因、经历或游戏规则',prompt)
         self.assertEqual(skipped['parts'],[])
         self.assertEqual(self.agent.store.read(Request_scope(),[value['message_id']])['messages'],[])
         self.now+=.01;self.current_user='u1'

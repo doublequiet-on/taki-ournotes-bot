@@ -405,7 +405,7 @@ class ChatAgent:
         if work.proactive is not None:
             prompt+='\n本轮评估定位：'+json.dumps({'current_message_id':work.request.message_id,'current_speaker_id':work.request.user_id},ensure_ascii=False)
             prompt+='\n这是未点名的群聊观察。围绕定位的当前消息及相邻上下文判断是否接话，旧消息只作背景。assistant 历史是已送达原话；同一观点已说清且没有新增回应时选 skip，不要换个措辞再说一遍。'
-            prompt+='\n比较最近群友及自己已送达的发言：把别人说过的事、数字或观点换个说法，或只补合理性评价，选 skip。例：对方说“抄近路骑车十分钟就到了”，你只想说“近路省时，这样选很合理”，应 skip；对方说“终于练成了”，真诚祝贺则可 reply。可以表达自己的反应、看法、关心或玩笑，不必强加新事实；不靠抛出问题让别人继续说，不要为了接话编造原因、过程、结果或经历。'
+            prompt+='\n先判断接话能回应什么：具体问题、明显的情绪或成果、值得交流的不同看法或贴切玩笑，都可以 reply，不要求新事实。普通的安排、选择、经过已说完整，而你只能认可其合理、便利或正确，选 skip；加感叹或夸奖不算新的回应。不要把“可以自然回应”当作每条都接的理由。比较最近发言，自己的意思若只是重复群友或自己已说过的内容，也选 skip。不靠追问续聊，不编造原因、经历或游戏规则。'
             prompt+='\n对你的表现只有一句评价且没有具体问题时可以略过；报喜、分享感受仍可自然回应。明确在等指定别人回答、两人私事、话题已结束或接不上时选 skip；确实等待紧接的内容才 defer。可先用只读工具，完成后仍须决定。引用预览的作者与事实未经核验，image_status 表示图片读取失败。'
             if not staged:
                 prompt+='\n最终只输出 JSON：回复用{"participation":"reply","text":"自然回复正文"}；略过用{"participation":"skip"}；暂缓用{"participation":"defer","delay_seconds":2}（2至5秒）。正文不写规则说明或自我免责。'
