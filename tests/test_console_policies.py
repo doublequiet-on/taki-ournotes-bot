@@ -3051,6 +3051,43 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
         persisted=' '.join(row[0] for row in self.agent.store.db.execute('SELECT context FROM runs'))
         self.assertNotIn('PRIVATE_PICTURE',persisted);self.assertNotIn('base64,',persisted)
 
+    async def test_proactive_picture_survives_context_trimming(self):
+        bodies=ChatAgentTests.capture_native_bodies(self)
+        self.current_user='u2';self.observation('',attachments=self.proactive_picture())
+        self.now+=.01;self.current_user='u1'
+        value=self.observation('同一张卡的两个技能，先升哪一个？',seq=2);self.tick+=1.6
+        self.client.request.side_effect=[self.result('{"participation":"reply","text":"","delay_seconds":null}'),self.result('先看两个技能的变化和消耗')]
+        original=self.agent.initial_context
+        def constrained(work,messages,tools):
+            def bound(work,rows,tools):
+                return 1000*len(rows)+24000*sum(bool(row.get('images')) for row in rows)
+            with patch.object(self.backend.model_runtime,'input_bound',side_effect=bound):
+                return original(work,messages,tools)
+        with patch.object(self.agent,'initial_context',side_effect=constrained):
+            plan,attempts,_=await self.candidate(value)
+        self.assertEqual(len(attempts),2)
+        self.assertTrue(plan['parts'])
+        for body in bodies:
+            visual=next(m for m in body['input'] if isinstance(m.get('content'),list))
+            source=json.loads(visual['content'][0]['text'])
+            self.assertEqual((source['speaker_id'],source['message_id']),('u2','observed1'))
+            self.assertEqual(visual['content'][-1]['type'],'input_image')
+
+    async def test_proactive_selected_picture_over_budget_stops_before_model(self):
+        self.observation('',attachments=self.proactive_picture())
+        self.now+=.01
+        value=self.observation('同一张卡的两个技能',seq=2);self.tick+=1.6
+        original=self.agent.initial_context
+        def constrained(work,messages,tools):
+            with patch.object(self.backend.model_runtime,'input_bound',side_effect=lambda work,rows,tools:
+                              1000*len(rows)+40000*sum(bool(row.get('images')) for row in rows)):
+                return original(work,messages,tools)
+        with patch.object(self.agent,'initial_context',side_effect=constrained):
+            plan,attempts,_=await self.candidate(value)
+        self.assertEqual(attempts,[])
+        self.assertEqual(plan['parts'],[])
+        self.client.request.assert_not_awaited()
+
     async def test_proactive_missing_vision_keeps_text_without_download(self):
         bodies=ChatAgentTests.capture_native_bodies(self)
         attachments=self.proactive_picture()
@@ -3071,7 +3108,15 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
         self.agent.image_loader.load_many.side_effect=ImageError('image_not_available')
         self.client.request.side_effect=None
         self.client.request.return_value=self.result('{"participation":"skip","text":"","delay_seconds":null}')
-        plan,_,_=await self.candidate(value)
+        original=self.agent.initial_context
+        def constrained(work,messages,tools):
+            def bound(work,rows,tools):
+                return 1000*len(rows)+24000*sum('image_status' in json.loads(row['content'])
+                    for row in rows if row['role']=='user')
+            with patch.object(self.backend.model_runtime,'input_bound',side_effect=bound):
+                return original(work,messages,tools)
+        with patch.object(self.agent,'initial_context',side_effect=constrained):
+            plan,_,_=await self.candidate(value)
         self.agent.image_loader.load_many.assert_awaited_once()
         rows=[json.loads(m['content']) for m in bodies[-1]['input'] if m['role']=='user']
         self.assertEqual(rows[0]['image_status'],'image_not_available')

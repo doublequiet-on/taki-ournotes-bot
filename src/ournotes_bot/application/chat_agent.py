@@ -318,8 +318,11 @@ class ChatAgent:
         if work.request.reference:protected.add(work.request.reference['message_id'])
         def required(message):
             if message['role']=='system':return True
+            # Once selected, visual evidence and its source stay together.
+            if message.get('images'):return True
             data=json.loads(message['content'])
-            return data.get('message_id') in protected or data.get('image_reference',{}).get('message_id') in protected or 'delivered_display' in data
+            return (data.get('message_id') in protected or data.get('image_reference',{}).get('message_id') in protected
+                    or 'delivered_display' in data or 'image_status' in data)
         mandatory=[message for message in messages if required(message)]
         minimum=self.runtime.input_bound(work,mandatory,tools)
         maximum=work.model_snapshot.profile.max_input_tokens
