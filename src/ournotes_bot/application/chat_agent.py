@@ -455,7 +455,8 @@ class ChatAgent:
         self.proactive.trace(work,'context',messages=sum(item['role']!='system' for item in messages),
             assistant_messages=sum(item['role']=='assistant' for item in messages),
             image_markers=sum('[图片附件 ' in item['content'] for item in messages),
-            input_images=sum(len(item.get('images',())) for item in messages),vision_approved=vision is not None)
+            input_images=sum(len(item.get('images',())) for item in messages),vision_approved=vision is not None,
+            image_detail=vision.detail if any(item.get('images') for item in messages) else 'none')
         context=[{'role':message['role'],'content':message['content']} for message in messages if message['role']!='system']
         if work.proactive is None:
             self.audit(self.store.begin,work,context)

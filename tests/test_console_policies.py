@@ -3020,14 +3020,14 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
         self.agent.store.delete_messages(Request_scope(),[previous])
         self.assertFalse(self.backend.lookup(second['request_id'],'e1')['send_allowed'])
 
-    def proactive_picture(self):
+    def proactive_picture(self,detail='low'):
         from io import BytesIO
         from PIL import Image
         from unittest.mock import AsyncMock
         from ournotes_bot.application.chat_capabilities import VisionCapability
         from ournotes_bot.domain.chat_images import LoadedImage
         self.snapshot=replace(self.snapshot,profile=replace(self.snapshot.profile,provider='openai',wire_profile='openai-responses-v1'))
-        self.backend.model_runtime.capabilities.vision=Mock(return_value=VisionCapability(128,'low','fixture-vision'))
+        self.backend.model_runtime.capabilities.vision=Mock(return_value=VisionCapability(128,detail,'fixture-vision'))
         buffer=BytesIO();Image.new('RGB',(80,80),(30,100,200)).save(buffer,format='PNG')
         image=LoadedImage('pic','image/png',80,80,buffer.getvalue())
         self.agent.image_loader.load_many=AsyncMock(return_value=(image,))
@@ -3035,7 +3035,7 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
 
     async def test_proactive_text_after_picture_gets_native_image_with_original_author(self):
         bodies=ChatAgentTests.capture_native_bodies(self)
-        attachments=self.proactive_picture()
+        attachments=self.proactive_picture(detail='high')
         self.current_user='u2';self.observation('',attachments=attachments)
         self.now+=.01;self.current_user='u1'
         value=self.observation('额',seq=2);self.tick+=1.6
@@ -3046,6 +3046,9 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
         source=json.loads(visual['content'][0]['text'])
         self.assertEqual((source['speaker_id'],source['message_id']),('u2','observed1'))
         self.assertEqual(visual['content'][-1]['type'],'input_image')
+        self.assertEqual(visual['content'][-1]['detail'],'high')
+        events=self.backend.diagnostics.read(plan['request_id'])['chat_events']
+        self.assertEqual(next(e['data']['image_detail'] for e in events if e['kind']=='context'),'high')
         self.agent.image_loader.load_many.assert_awaited_once()
         self.event(plan,'intent');self.event(plan,'ack')
         persisted=' '.join(row[0] for row in self.agent.store.db.execute('SELECT context FROM runs'))
@@ -3067,6 +3070,8 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
             plan,attempts,_=await self.candidate(value)
         self.assertEqual(len(attempts),2)
         self.assertTrue(plan['parts'])
+        events=self.backend.diagnostics.read(plan['request_id'])['chat_events']
+        self.assertEqual(next(e['data']['image_detail'] for e in events if e['kind']=='context'),'low')
         for body in bodies:
             visual=next(m for m in body['input'] if isinstance(m.get('content'),list))
             source=json.loads(visual['content'][0]['text'])
@@ -3125,6 +3130,7 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
         self.assertEqual([e['kind'] for e in events['chat_events']],['image','context','decision','finished'])
         self.assertEqual(events['chat_events'][0]['data']['status'],'image_not_available')
         self.assertEqual(events['chat_events'][1]['data']['input_images'],0)
+        self.assertEqual(events['chat_events'][1]['data']['image_detail'],'none')
         self.assertEqual(events['chat_events'][2]['data'],dict(decision='skip',model_attempts=1))
         self.assertNotIn('PRIVATE_PICTURE',json.dumps(events))
         detail=self.backend.admin.detail(plan['request_id'])['sections']['request']['data']
