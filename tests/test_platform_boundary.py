@@ -339,6 +339,22 @@ class KnowledgeAuthorityTests(unittest.TestCase):
         ambiguous=text.replace('最大连击','有\\|转义')
         self.assertEqual(labelled_tables(ambiguous),ambiguous)
 
+    def test_game_name_does_not_promote_source_footer_over_mechanism(self):
+        from ournotes_bot.query.knowledge_retrieval import rank
+        self.write_fixture(text='## 技能强化\n技能强化消耗材料，比较技能等级的变化。\n\n'
+                                '## 来源\nON工程测试说明书。\n')
+        self.service.refresh()
+        ranked=rank('ON技能强化消耗材料',self.service.index,(1.,0.))
+        self.assertIn('## 技能强化',ranked[0].text)
+
+    def test_gameplay_entity_still_prioritizes_matching_passage(self):
+        from ournotes_bot.query.knowledge_retrieval import rank
+        self.write_fixture(text='## 机制\n技能强化消耗材料，比较技能等级的变化。\n\n'
+                                '## 指定区间\nCOMBO工程测试规则。\n')
+        self.service.refresh()
+        ranked=rank('ON COMBO 技能强化消耗材料',self.service.index,(1.,0.))
+        self.assertIn('COMBO工程测试规则',ranked[0].text)
+
     def test_focus_search_keeps_scope_and_shared_evidence_budget(self):
         from ournotes_bot.domain.knowledge import KnowledgeScope,KnowledgeError
         self.write_fixture(server='intl',text='## 入门\n工程测试参与方法。\n## 区间\n工程测试区间。')

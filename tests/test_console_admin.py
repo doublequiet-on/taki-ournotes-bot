@@ -37,6 +37,14 @@ class ChatDiagnosticsTests(unittest.TestCase):
         self.assertNotIn('PRIVATE',json.dumps(events))
         self.assertEqual(d.db.execute('SELECT count(*) FROM chat_events').fetchone()[0],32)
 
+    def test_image_detail_is_a_fixed_metadata_enum(self):
+        d=self.diagnostics
+        for value in ('low','high','none'):
+            self.assertTrue(d.chat_event('r','context',101,image_detail=value))
+        for value in ('auto','PRIVATE_IMAGE_URL',True,1,None):
+            self.assertFalse(d.chat_event('r','context',101,image_detail=value))
+        self.assertEqual([e['data']['image_detail'] for e in d.read('r')['chat_events']],['low','high','none'])
+
     def test_idle_expiry_removes_traces_and_spans_without_new_admission(self):
         d=self.diagnostics
         d.chat_event('r','decision',101,decision='skip',model_attempts=1)
