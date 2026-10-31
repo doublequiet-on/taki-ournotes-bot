@@ -2,6 +2,8 @@
 
 [chat_recovery.py](ournotes_bot/application/chat_recovery.py) 协调最终候选暂存、首回执后的幂等历史投影及撤权清理；不恢复发送或接续资格。存储升级与回退门见 [运行说明](../docs/CHAT_AGENT_RUNBOOK.md#a0-回执恢复与批准代际)。
 
+ChatStore 启动会删除缺少投影来源证明的旧回复、派生摘要及审计副本；保留可识别的人类参与消息、有效候选和新投影。来源清理与 schema 4 升级同事务完成，旧版不得绕过这一迁移。
+
 `/查`（兼容 `/问`、`/ask`）固定走查询；`/聊`、点名普通文本与正文名字触发走可选聊天，模式控制 Plan 的回复 @策略，见 [聊天架构](../docs/CHAT_AGENT_ARCHITECTURE.md)。
 
 可选聊天由 [application/chat_agent.py](ournotes_bot/application/chat_agent.py) 编排，复用 ModelRuntime 许可与结算；[chat_context.py](ournotes_bot/application/chat_context.py) 恢复有界参与片段和成功 ACK 回复；[chat_store.py](ournotes_bot/application/chat_store.py) 独占 30 日记忆、派生关系与删除墓碑。预算、规范化消息和人格 v0 在 [domain/chat.py](ournotes_bot/domain/chat.py)。旧 persona 话题卡仅用于 legacy，以下 U2/U3 保留该范围；协议 2.2 与现状见 [聊天架构](../docs/CHAT_AGENT_ARCHITECTURE.md)。

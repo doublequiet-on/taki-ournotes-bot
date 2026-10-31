@@ -995,7 +995,7 @@ class ChatMemoryStoreTests(unittest.TestCase):
         state=self.store.deletion_state();state['identity']='another-instance'
         with self.assertRaisesRegex(ValueError,'chat_deletion_journal'):self.store.restore_deletions(state)
 
-    def test_c1_migration_keeps_meta_contract_and_backfills_only_receipted_assistant(self):
+    def test_c1_migration_keeps_user_inputs_but_removes_unproven_replies(self):
         import sqlite3,json
         from contextlib import closing
         from ournotes_bot.application.chat_store import ChatStore
@@ -1016,9 +1016,9 @@ class ChatMemoryStoreTests(unittest.TestCase):
             db.execute('INSERT INTO events VALUES (?,?,?,?)',('a-follow-before-old','delivery/1','delivery',json.dumps(dict(message_id='follow-answer',text='承接前面的回答',status='success',allow_context=True))))
         self.store=ChatStore(path,'fixture\0app',clock=lambda:self.now[0])
         self.assertEqual(dict(self.store.db.execute('SELECT key,value FROM meta')),{'schema':'chat/1','identity':'fixture\0app'})
-        self.assertEqual({r['message_id'] for r in self.store.recent(self.scope)},{'u1-message','actual','follow-user','follow-answer'})
+        self.assertEqual({r['message_id'] for r in self.store.recent(self.scope)},{'u1-message','follow-user'})
         self.assertEqual(self.store.read(self.scope,['fake'])['status'],'no_results')
-        self.assertEqual(self.store.db.execute('PRAGMA user_version').fetchone()[0],3)
+        self.assertEqual(self.store.db.execute('PRAGMA user_version').fetchone()[0],4)
         self.store.delete_messages(self.scope,['actual'])
         self.assertEqual(self.store.read(self.scope,['follow-answer'])['status'],'no_results')
 
@@ -1030,7 +1030,57 @@ class ChatMemoryStoreTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError,'chat_memory_source_missing'):
             self.store.put_summary(self.scope,'summary','已删除来源',['u1-message'])
 
-    def test_c1_rollback_new_runs_are_imported_on_rollforward(self):
+    def test_legacy_cleanup_preserves_proven_history_and_removes_mixed_and_orphan_summaries(self):
+        from ournotes_bot.application.chat_store import ChatStore
+        self.begin();self.delivered(text='旧正文需要删除')
+        self.begin('unreceipted');self.store.generated('unreceipted','没有回执的旧审计正文')
+        self.begin('new')
+        self.store.stage_final('new','0',self.scope,'有来源证明的新正文',{},
+            [dict(message_id='u1-message',timestamp_ms=int(self.now[0]*1000))],'u1-message',self.now[0]+86400)
+        self.store.project_final(self.store.final_candidate('new','0'),'verified',self.now[0])
+        self.begin('pending')
+        self.store.stage_final('pending','0',self.scope,'待回执的合法候选',{},
+            [dict(message_id='u1-message',timestamp_ms=int(self.now[0]*1000))],'u1-message',self.now[0]+86400)
+        self.store.put_summary(self.scope,'mixed','混合旧回复的摘要',['assistant1','verified'])
+        self.store.put_summary(self.scope,'valid','仅有来源证明的摘要',['verified'])
+        self.store.put_summary(self.scope,'orphan','无法追溯的摘要',['u1-message'])
+        with self.store.db:
+            self.store.db.execute("DELETE FROM memory_summary_sources WHERE summary_id='orphan'")
+            self.store.db.execute('PRAGMA user_version=3')
+        self.store.close()
+        for _ in range(2):
+            self.store=ChatStore(self.path,'fixture\0app',clock=lambda:self.now[0])
+            self.assertEqual({r['message_id'] for r in self.store.recent(self.scope)},{'u1-message','verified'})
+            self.assertEqual([r['summary_id'] for r in self.store.summaries(self.scope)],['valid'])
+            self.assertEqual(self.store.db.execute("SELECT count(*) FROM memory_fts WHERE item_id IN ('assistant1','mixed','orphan')").fetchone()[0],0)
+            self.assertEqual(self.store.db.execute("SELECT count(*) FROM runs WHERE id='run1'").fetchone()[0],0)
+            self.assertIsNotNone(self.store.projected('new','0'))
+            self.assertIsNotNone(self.store.final_candidate('pending','0'))
+            self.assertEqual({r[0] for r in self.store.db.execute('SELECT id FROM runs')},{'new','pending'})
+            self.assertEqual(self.store.status(self.scope)['memory_version'],4)
+            self.store.close()
+        self.store=ChatStore(self.path,'fixture\0app',clock=lambda:self.now[0])
+
+    def test_legacy_cleanup_failure_rolls_back_body_deletion_and_version(self):
+        import sqlite3
+        from contextlib import closing
+        from ournotes_bot.application.chat_store import ChatStore
+        self.begin();self.delivered()
+        with self.store.db:self.store.db.execute('PRAGMA user_version=3')
+        self.store.close()
+        purge=ChatStore._purge
+        def fail_after_purge(owner,*args):
+            purge(owner,*args)
+            raise sqlite3.OperationalError('fixture interrupted cleanup')
+        with patch.object(ChatStore,'_purge',fail_after_purge):
+            with self.assertRaises(sqlite3.OperationalError):ChatStore(self.path,'fixture\0app',clock=lambda:self.now[0])
+        with closing(sqlite3.connect(self.path)) as db:
+            self.assertEqual(db.execute('PRAGMA user_version').fetchone()[0],3)
+            self.assertEqual(db.execute("SELECT count(*) FROM memory_messages WHERE message_id='assistant1'").fetchone()[0],1)
+        self.store=ChatStore(self.path,'fixture\0app',clock=lambda:self.now[0])
+        self.assertEqual(self.store.read(self.scope,['assistant1'])['status'],'no_results')
+
+    def test_legacy_audit_reimport_does_not_resurrect_unproven_replies(self):
         import sqlite3,json
         from contextlib import closing
         from ournotes_bot.application.chat_store import ChatStore
@@ -1042,17 +1092,17 @@ class ChatMemoryStoreTests(unittest.TestCase):
             db.execute('INSERT INTO events VALUES (?,?,?,?)',('rollback-run','delivery/1','delivery',json.dumps(dict(message_id='rollback-answer',text='回退时确实送达',status='success',allow_context=True))))
         self.store=ChatStore(self.path,'fixture\0app',clock=lambda:self.now[0])
         self.assertEqual(self.store.read(self.scope,['during-rollback','rollback-answer'])['status'],'ok')
-        self.assertEqual(len(self.store.read(self.scope,['during-rollback','rollback-answer'])['messages']),2)
+        self.assertEqual([r['message_id'] for r in self.store.read(self.scope,['during-rollback','rollback-answer'])['messages']],['during-rollback'])
 
     def test_future_memory_schema_is_rejected_without_rewriting_it(self):
         import sqlite3
         from contextlib import closing
         from ournotes_bot.application.chat_store import ChatStore
         self.store.close()
-        with closing(sqlite3.connect(self.path)) as db,db:db.execute('PRAGMA user_version=4')
+        with closing(sqlite3.connect(self.path)) as db,db:db.execute('PRAGMA user_version=5')
         with self.assertRaisesRegex(ValueError,'chat_memory_version'):ChatStore(self.path,'fixture\0app')
         with closing(sqlite3.connect(self.path)) as db,db:
-            self.assertEqual(db.execute('PRAGMA user_version').fetchone()[0],4)
+            self.assertEqual(db.execute('PRAGMA user_version').fetchone()[0],5)
             db.execute('PRAGMA user_version=2')
         self.store=ChatStore(self.path,'fixture\0app',clock=lambda:self.now[0])
 
