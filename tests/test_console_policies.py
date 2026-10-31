@@ -3340,6 +3340,50 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
         self.assertTrue(self.backend.knowledge.validate_current(work.knowledge_scope_leases))
         return file,key,old,answer
 
+    async def staged_reviewed_evidence(self, *, invalidate=False):
+        from ournotes_bot.domain.model_calls import ToolCall
+        body='红色工程夹具：同一测试对象的甲方案花100材料获得10分，乙花50材料获得8分；不是游戏事实。'
+        file=NativeRuntimeTests.reviewed_fixture(self,body)
+        self.snapshot=replace(self.snapshot,profile=replace(self.snapshot.profile,provider='openai',wire_profile='openai-responses-v1'))
+        bodies=[]
+        async def respond(profile,request,**kwargs):
+            bodies.append(json.loads(json.dumps(request)))
+            if len(bodies)==1:
+                return self.result(calls=(ToolCall('evidence','knowledge_search',
+                    '{"server":"jp","date":null,"version":null,"query":"红色","mode":"compare"}'),))
+            if len(bodies)==2:
+                if invalidate:file.write_text(file.read_text(encoding='utf-8')+'\nchanged',encoding='utf-8')
+                return self.result('{"participation":"reply","text":"","delay_seconds":null}')
+            return self.result('仅按工程夹具比较，不作为游戏结论')
+        self.client.request.side_effect=respond
+        value=self.observation('比较红色工程夹具的两个方案',seq=1);self.tick+=1.6
+        plan,attempts,_=await self.candidate(value)
+        return body,bodies,plan,attempts
+
+    async def test_staged_reviewed_evidence_reaches_decision_and_generation(self):
+        body,bodies,plan,attempts=await self.staged_reviewed_evidence()
+        self.assertEqual(len(attempts),3)
+        self.assertTrue(plan['parts'])
+        evidence=[]
+        for request in bodies[1:]:
+            output=json.loads(next(item['output'] for item in request['input']
+                if item.get('type')=='function_call_output' and item['call_id']=='evidence'))
+            self.assertEqual(output['status'],'ok')
+            data=json.loads(output['data']);evidence.append(data)
+            self.assertIn(body,'\n'.join(p['text'] for p in data['passages']))
+            self.assertEqual(data['documents'][0]['doc_id'],'fixture')
+            self.assertEqual(data['documents'][0]['approval_revision'],1)
+            self.assertEqual(data['documents'][0]['source_refs'][0]['uri'],'fixture://isolated')
+            self.assertEqual(data['documents'][0]['servers'],['jp'])
+            self.assertIn('不是游戏事实',data['documents'][0]['limitations'])
+        self.assertEqual(evidence[0],evidence[1])
+
+    async def test_staged_reviewed_source_change_blocks_generation(self):
+        _,bodies,plan,attempts=await self.staged_reviewed_evidence(invalidate=True)
+        self.assertEqual(len(bodies),2)
+        self.assertEqual(len(attempts),2)
+        self.assertEqual(plan['parts'],[])
+
     async def test_real_knowledge_unmentioned_success_updates_scope(self):
         from ournotes_bot.domain.model_calls import ToolCall
         bodies=ChatAgentTests.capture_native_bodies(self)
