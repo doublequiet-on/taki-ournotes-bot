@@ -3410,7 +3410,7 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
         result,attempts,candidate=await self.candidate(value)
         self.assertEqual(len(attempts),1)
         self.assertIsNotNone(candidate[0].followup)
-        self.assertIn('无关或无法判断时只输出',bodies[0]['messages'][0]['content'])
+        self.assertIn('无关或无法判断时选择 skip，并遵守本轮输出格式',bodies[0]['messages'][0]['content'])
         messages=bodies[0]['messages'][1:]
         self.assertEqual(len(messages),3)
         self.assertIn('A和B谁比较权威',messages[0]['content'])
