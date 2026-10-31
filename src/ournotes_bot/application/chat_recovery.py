@@ -96,7 +96,17 @@ class ChatRecovery:
             elif not allowed:
                 self.store.revoke_projection(stored)
                 self.ledger.projection_done(stored['delivery'],stored['part'],'blocked')
-        for receipt in self.ledger.projection_rows(delivery):
+        receipts=self.ledger.projection_rows(delivery)
+        if delivery is None:
+            registered={(row['delivery'],row['part']) for row in receipts}
+            for row in self.store.db.execute('SELECT * FROM chat_final_candidates WHERE (? IS NULL OR scope=?)',
+                                             (scope_key,scope_key)).fetchall():
+                if (row['delivery'],row['part']) in registered:continue
+                allowed=self.valid(json.loads(row['payload'])['proof'])
+                if allowed is None:ready=False
+                elif not allowed:
+                    with self.store.db:self.store.drop_final(row['delivery'],row['part'])
+        for receipt in receipts:
             if receipt['state'] in ('done','expired','gap'):continue
             key=(receipt['delivery'],receipt['part'])
             projected=self.store.projected(*key)

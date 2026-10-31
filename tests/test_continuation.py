@@ -867,6 +867,20 @@ class ChatMemoryStoreTests(unittest.TestCase):
         self.assertEqual(self.store.recent(self.scope),[])
         self.assertIsNone(self.store.projected('final','0'))
 
+    def test_orphan_candidate_is_removed_on_revocation_before_expiry(self):
+        from ournotes_bot.application.chat_recovery import ChatRecovery
+        self.store.stage_final('orphan','0',self.scope,'已撤权的孤立候选',{},
+            [dict(message_id='source',timestamp_ms=int(self.now[0]*1000))],'source',self.now[0]+86400)
+        ledger=SimpleNamespace(projection_rows=lambda delivery:[])
+        agent=SimpleNamespace(store=self.store,runtime=SimpleNamespace(backend=SimpleNamespace(ledger=ledger)))
+        recovery=ChatRecovery(agent)
+        with patch.object(recovery,'valid',return_value=None):
+            self.assertFalse(recovery.recover(scope=self.scope))
+            self.assertIsNotNone(self.store.final_candidate('orphan','0'))
+        with patch.object(recovery,'valid',return_value=False):
+            self.assertTrue(recovery.recover(scope=self.scope))
+        self.assertIsNone(self.store.final_candidate('orphan','0'))
+
     def test_final_projection_is_atomic_with_completion_metadata(self):
         import sqlite3
         self.store.stage_final('final','0',self.scope,'实际送达正文',{},
