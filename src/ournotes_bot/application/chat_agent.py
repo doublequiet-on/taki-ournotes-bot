@@ -28,6 +28,7 @@ from .runtime_tasks import finish_thread
 from .site_lookup import SiteLookup
 from .chat_context import ChatContext
 from .chat_store import ChatStore
+from .chat_recovery import ChatRecovery
 from .story_service import StoryService
 from .chat_jobs import (ChatServices,ServiceBudget,ServiceError,maximum_cost_micro,service_request_id,
                        summary_candidate,summary_messages,validate_summary)
@@ -145,10 +146,12 @@ class ChatAgent:
         self.story=StoryService(root) if root else None
         self.image_loader=ImageLoader()
         self.images=ImageCache()
-        self.services=ChatServices(path.parent,runtime.backend.instance_id,runtime.backend.app_id)
+        self.services=ChatServices(path.parent,runtime.backend.instance_id,runtime.backend.app_id,
+            authority=runtime.admin.db,require_authority=True)
         self.service_budget=ServiceBudget(runtime.usage,runtime.backend.instance_id,runtime.backend.app_id)
         self.service_lock=asyncio.Lock()
         self.proactive=ProactiveChat(self)
+        self.recovery=ChatRecovery(self)
 
     async def maybe_summary(self,work,deadline):
         runtime=self.runtime
@@ -180,11 +183,13 @@ class ChatAgent:
 
     def images_valid(self,work):
         try:
+            if work.vision_capability is not None and self.runtime.capabilities_for(work).vision(work.model_snapshot)!=work.vision_capability:
+                return False
             for scope,mid in work.image_sources:
                 ref=self.images.get(scope,mid)
                 if not self.store.source_valid(work.request.scope,mid,ref.timestamp_ms):return False
             return True
-        except (ImageError,sqlite3.Error):return False
+        except (ImageError,ModelError,OSError,sqlite3.Error):return False
 
     def web_valid(self,work):
         if work.web_capability is None:return True
@@ -234,6 +239,7 @@ class ChatAgent:
         if not references:return history
         vision=self.runtime.capabilities_for(work).vision(work.model_snapshot)
         require(vision is not None,'image_capability_unverified')
+        work.vision_capability=vision
         require(sum(len(ref.attachments) for ref in references)<=3,'image_count_exceeded')
         messages=[dict(item) for item in history]
         try:
@@ -365,6 +371,7 @@ class ChatAgent:
 
     async def run(self,work,question,user,group,deadline):
         runtime=self.runtime
+        require(self.recovery.recover(scope=work.request.scope),'chat_retention_unavailable')
         deadline=min(deadline,work.content_deadline)
         work.model_attempt_limit=self.budget.model_calls
         if work.request.quoted_text:
@@ -427,6 +434,7 @@ class ChatAgent:
         operations=0
         tool_events=0
         final_attempt=None
+        generation_attempt=None
         force_final=False
         web_citations={}
         site=SiteLookup(runtime.backend.repository,question,allow_rewrite=True,max_operations=self.budget.tool_calls)
@@ -465,24 +473,29 @@ class ChatAgent:
         else:work.participating_history=tuple(context)
         try:
             if work.model_snapshot.profile.provider!='deepseek':
+                require(not staged or self.budget.model_calls>=2,'model_attempt_limit')
                 final_attempt=uuid.uuid4().hex
-                runtime.usage.reserve(work.service_request_id or work.request.request_id,final_attempt,user,group,
-                    work.model_snapshot.profile,work.model_snapshot.profile.max_input_tokens)
+                runtime.reserve(work,final_attempt,user,group,work.model_snapshot.profile.max_input_tokens)
+                if staged:
+                    # Distinct D/G holds use the same rows at consumption. Both
+                    # count against service, group and daily limits before HTTP.
+                    generation_attempt=uuid.uuid4().hex
+                    runtime.reserve(work,generation_attempt,user,group,work.model_snapshot.profile.max_input_tokens)
             for index in range(self.budget.model_calls):
                 runtime.check(work,deadline,leases)
                 final=force_final or work.model_attempts>=self.budget.model_calls-1 or index==self.budget.model_calls-1 or operations>=self.budget.tool_calls or deadline-time.monotonic()<=self.budget.final_seconds
+                if staged and work.model_attempts>=self.budget.model_calls-2:final=True
                 if final:
                     closing=('本轮检索预算结束。结合当前群聊和已有结果决定是否接话，按 reply/skip/defer 的 JSON 格式输出，不要再调用工具。'
                              if work.proactive is not None else '本轮检索预算结束。根据已有结果回答；缺失细节说明具体缺口。不要再调用工具。')
                     messages.append({'role':'system','content':closing})
-                if staged and work.model_attempts>=self.budget.model_calls-2:final=True
                 reservation=final_attempt if final else None
                 try:
                     result=await runtime.attempt(work,messages,[] if final else [tool.wire() for tool in registry.values()],
                                                  user,group,deadline,leases,reservation=reservation)
                 except ModelError as exc:
                     if str(exc) not in ('quota_exceeded','primary_budget_exceeded') or final or final_attempt is None: raise
-                    if str(exc)=='primary_budget_exceeded' and work.model_attempts==0:raise
+                    if str(exc)=='primary_budget_exceeded' and work.model_attempts==0 and not staged:raise
                     # No HTTP/permit has started on a failed reserve. Consume the
                     # already held final request instead of another retrieval.
                     final=True
@@ -503,7 +516,7 @@ class ChatAgent:
                             work.proactive_generation=True
                             try:
                                 generated=await runtime.attempt(work,generation,[],user,group,deadline,leases,
-                                    reservation=final_attempt if reservation is None else None)
+                                    reservation=generation_attempt)
                             finally:work.proactive_generation=False
                             require(not generated.tool_calls and isinstance(generated.text,str)
                                     and 0<len(generated.text.strip())<=4000,'model_protocol_error')
@@ -527,12 +540,7 @@ class ChatAgent:
                     try:
                         # Reserve a conservative complete final input and output
                         # before any tool work; other requests cannot spend it.
-                        if work.proactive is not None:
-                            try:self.service_budget.check(work.service_policy,'proactive',work.model_snapshot.profile,work.service_request_id,
-                                maximum_cost_micro(work.model_snapshot.profile),reply_times=self.store.proactive_replies(work.request.scope))
-                            except ServiceError as exc:raise ModelError('quota_exceeded') from exc
-                        runtime.usage.reserve(work.service_request_id or work.request.request_id,candidate,user,group,
-                                              work.model_snapshot.profile,work.model_snapshot.profile.max_input_tokens)
+                        runtime.reserve(work,candidate,user,group,work.model_snapshot.profile.max_input_tokens)
                         final_attempt=candidate
                     except ModelError as exc:
                         if str(exc)!='quota_exceeded': raise
@@ -604,6 +612,8 @@ class ChatAgent:
         finally:
             if final_attempt is not None:
                 runtime.usage.release(final_attempt,'final_not_needed')
+            if generation_attempt is not None:
+                runtime.usage.release(generation_attempt,'generation_not_needed')
             messages.clear()
 
     async def execute(self,work,call,question,site,leases,deadline,turn_deadline,*,registry=None,web=None,user=None,group=None,story_handles=None,image_handles=None,vision=None):
@@ -617,6 +627,8 @@ class ChatAgent:
             return {'status':str(exc),'retryable':True},leases
         try:
             if tool.kind=='image':
+                require(vision is not None and runtime.capabilities_for(work).vision(work.model_snapshot)==vision,'image_capability_unverified')
+                work.vision_capability=vision
                 if args['message_id'] not in image_handles:raise ImageError('image_not_available')
                 scope=self.image_scope(work.request);mid=args['message_id'];ref=self.images.get(scope,mid)
                 if (scope,mid) in work.image_sources:return {'status':'already_visible','message_id':mid},leases
@@ -664,7 +676,8 @@ class ChatAgent:
             elif tool.kind=='web':
                 require(web is not None and runtime.capabilities_for(work).web(work.model_snapshot)==web,'chat_capability_revoked')
                 work.web_capability=web
-                if work.model_attempts>=self.budget.model_calls-1:return {'status':'budget_exhausted','retryable':False},leases
+                final_slots=2 if work.proactive is not None and work.model_snapshot.profile.wire_profile=='openai-responses-v1' else 1
+                if work.model_attempts>=self.budget.model_calls-final_slots:return {'status':'budget_exhausted','retryable':False},leases
                 names=[row.display_name for row in self.context.scopes.get(self.context.scope(work.request),()) if row.role=='user' and len(row.display_name)>=2]
                 query=public_search_query(args['query'].strip(),(work.request.user_id,work.request.conversation_id,
                     work.request.message_id,work.request.app_id,work.request.sender_name,*names,*work.private_search_ids),
@@ -770,15 +783,15 @@ class ChatAgent:
         except ImageError as exc:
             return {'status':exc.code,'retryable':False},leases
 
-    def acknowledge(self,work,part_id,message_id,text,status,*,allow_context,service_ack_ok=False):
+    def acknowledge(self,work,part_id,message_id,text,status,*,allow_context,service_ack_ok=False,record_delivery=True):
         audit_ok=service_ack_ok
         if work.proactive is not None and status=='success' and allow_context:
             began=self.audit(self.store.begin,work,list(work.participating_history))
             bound=self.audit(self.store.bind_sources,work.delivery,work.request.scope,list(work.memory_sources))
             audit_ok=audit_ok and began and bound
         event_ok=self.audit(self.store.event,work.delivery,'delivery/'+part_id,'delivery',
-                         {'message_id':message_id,'status':status,'text':text if status=='success' else '',
-                          'allow_context':allow_context,'delivered_at':self.runtime.backend.clock()})
+                         {'message_id':message_id,'status':status,'text':text if status=='success' and record_delivery else '',
+                          'allow_context':allow_context and record_delivery,'delivered_at':self.runtime.backend.clock()})
         if status=='success' and allow_context:
             self.context.delivered(work.request,message_id,text)
             followup=work.proactive.followup if work.proactive is not None else None

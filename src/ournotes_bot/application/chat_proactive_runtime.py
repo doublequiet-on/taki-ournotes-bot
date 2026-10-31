@@ -45,7 +45,7 @@ class ProactiveChat:
         self.followups=Followups(clock=lambda:self.controller.clock())
         self.addressed=Counter()
         self.services=ChatServices(agent.runtime.usage.path.parent,agent.runtime.backend.instance_id,
-            agent.runtime.backend.app_id,filename='chat-proactive-services-v1.json')
+            agent.runtime.backend.app_id,filename='chat-proactive-services-v1.json',authority=agent.runtime.admin.db,require_authority=True)
 
     def trace(self,work,kind,**data):
         if work.proactive is None:return
@@ -200,6 +200,7 @@ class ProactiveChat:
         try:
             current=self.agent.runtime.proactive_snapshot(work.request.conversation_id)
             if current!=work.model_snapshot:return False
+            if self.agent.runtime.capabilities_for(work).generation(current)!=work.proactive_authority:return False
             policy=self.policy(current,work.request)
             followup=work.proactive.followup
             if followup is not None and (self.followups.match(self.scope(work.request),work.request.message_id)!=followup

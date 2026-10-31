@@ -154,9 +154,13 @@ class ModelRuntime:
         self.proactive_capabilities=ChatCapabilities(self.usage.path.with_name('chat-proactive-capabilities-v1.json'))
         self._dedicated_proactive=bool(getattr(backend.settings,'ai_proactive_profile_file',None))
         self.admin=ModelAdmin(self,self.usage.path.with_name('model-admin-v1.sqlite3'))
-        self.capabilities=ChatCapabilities(self.usage.path.with_name('chat-capabilities-v1.json'))
+        self.proactive_capabilities.authority=self.admin.db
+        self.proactive_capabilities.require_authority=True
+        self.capabilities=ChatCapabilities(self.usage.path.with_name('chat-capabilities-v1.json'),self.admin.db,require_authority=True)
+        if getattr(backend.settings,'chat_engine','legacy')=='agent':self.admin.migrate_chat_authorities()
         self.agent=(ChatAgent(self,self.usage.path.with_name('chat-v1.sqlite3'))
                     if getattr(backend.settings,'chat_engine','legacy')=='agent' else None)
+        if self.agent:self.agent.recovery.recover()
 
     def dedicated_proactive(self):
         # Latch the selected route: removing/revoking its files must never select a dearer model.
@@ -421,6 +425,18 @@ class ModelRuntime:
             self.agent.audit(self.agent.store.finish,work.delivery,'execution_timeout')
             return replies.PreparedReply('',business_status='proactive_error') if work.proactive is not None else failure('execution_timeout')
 
+    def reserve(self,work,attempt,user,group,bound,*,billing_request_id=None,action_budget=()):
+        profile=work.model_snapshot.profile
+        billing_request_id=billing_request_id or work.service_request_id or work.request.request_id
+        if work.proactive is not None and billing_request_id==work.service_request_id:
+            from .chat_jobs import ServiceError,maximum_cost_micro
+            try:self.agent.service_budget.check(work.service_policy,'proactive',profile,billing_request_id,
+                maximum_cost_micro(profile)+sum(count*rate for _,count,rate in action_budget),
+                reply_times=self.agent.store.proactive_replies(work.request.scope))
+            except ServiceError as exc:
+                raise ModelError('quota_exceeded' if str(exc) in ('chat_service_call_limit','chat_service_cost_limit') else str(exc)) from None
+        self.usage.reserve(billing_request_id,attempt,user,group,profile,bound,action_budget=action_budget)
+
     def input_bound(self,work,messages,tools,*,body=None):
         from ..sources.model_provider import request_body as bound_body
         profile=work.model_snapshot.profile
@@ -458,15 +474,8 @@ class ModelRuntime:
         require(bound<=profile.max_input_tokens,'model_input_too_large')
         attempt=reservation or uuid.uuid4().hex
         billing_request_id=billing_request_id or work.service_request_id or work.request.request_id
-        if work.proactive is not None and billing_request_id==work.service_request_id and reservation is None:
-            from .chat_jobs import ServiceError,maximum_cost_micro
-            try:self.agent.service_budget.check(work.service_policy,'proactive',profile,billing_request_id,
-                maximum_cost_micro(profile)+sum(count*rate for _,count,rate in action_budget),
-                reply_times=self.agent.store.proactive_replies(work.request.scope))
-            except ServiceError as exc:
-                raise ModelError('quota_exceeded' if str(exc) in ('chat_service_call_limit','chat_service_cost_limit') else str(exc)) from None
         if reservation is None:
-            self.usage.reserve(billing_request_id,attempt,user,group,profile,bound,action_budget=action_budget)
+            self.reserve(work,attempt,user,group,bound,billing_request_id=billing_request_id,action_budget=action_budget)
         else:
             held=self.usage.get(attempt)
             require(held['request_id']==billing_request_id and held['state']=='reserved','invalid_reservation')
@@ -488,6 +497,9 @@ class ModelRuntime:
                 require(type(result.native_calls) is int and 0<=result.native_calls<=(web.max_calls if web else 0)
                         and all(action.count==0 or web is not None and action.count is not None and action.count<=web.max_calls
                                 for action in result.provider_actions),'provider_action_budget_exceeded')
+            # Settle the external charge first; revoked/deleted inputs cannot
+            # authorize saving the returned visible text in the audit log.
+            self.check(work,deadline,leases)
             if getattr(work,'chat',False) and service_policy is None:
                 self.agent.audit(self.agent.store.event,work.delivery,'model/'+attempt,'model',
                     {'attempt_id':attempt,'status':result.status,'error_code':result.error_code,

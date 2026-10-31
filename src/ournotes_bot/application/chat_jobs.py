@@ -60,6 +60,7 @@ class ServicePolicy:
     currency: str
     summary: SummaryLimits
     proactive: ProactiveLimits
+    generation: str = ''
 
 
 def _limits(value, kind):
@@ -83,13 +84,15 @@ def _limits(value, kind):
 class ChatServices:
     """Missing, unapproved, mismatched or invalid files disable services, never ordinary chat."""
 
-    def __init__(self, state_dir, instance_id, app_id, *, filename="chat-services-v1.json"):
+    def __init__(self, state_dir, instance_id, app_id, *, filename="chat-services-v1.json",authority=None,require_authority=False):
         self.path = Path(state_dir) / filename
         self.namespace = (instance_id, app_id)
         self.code = 'chat_services_absent'
+        self.authority,self.require_authority=authority,require_authority
 
     def read(self, snapshot):
         """Validated administrator document and a digest of exactly the parsed bytes."""
+        _check(not self.require_authority or self.authority is not None,'chat_service_authority_unavailable')
         if not self.path.exists():return None, {}, 'absent'
         info = self.path.lstat()
         _check(self.path.is_file() and not self.path.is_symlink() and info.st_size <= 131072)
@@ -97,9 +100,19 @@ class ChatServices:
         with self.path.open('rb') as stream:
             raw = stream.read(131073)
         _check(len(raw) <= 131072)
+        pinned=None
+        if self.authority is not None:
+            pinned=self.authority.execute('SELECT digest FROM capability_authority WHERE path=?',(str(self.path.resolve()),)).fetchone()
+            _check(pinned is None or pinned['digest']==hashlib.sha256(raw).hexdigest(),'chat_service_revoked')
         data = decode_json(raw)
-        _check(isinstance(data, dict) and set(data) == {'schema', 'instance_id', 'app_id', 'profile', 'groups'})
-        _check(data['schema'] == 'taki-chat-services/1'
+        _check(isinstance(data,dict))
+        fields={'schema','instance_id','app_id','profile','groups'}
+        if data.get('schema')=='taki-chat-services/2':
+            fields.add('authority_generation')
+            _check(isinstance(data.get('authority_generation'),str) and len(data['authority_generation'])==32)
+            _check(not self.require_authority or pinned is not None,'chat_service_revoked')
+        _check(set(data)==fields)
+        _check(data['schema'] in ('taki-chat-services/1','taki-chat-services/2')
                and (data['instance_id'], data['app_id']) == self.namespace)
         binding = data['profile']
         _check(isinstance(binding, dict) and set(binding) == {'config_version', 'fingerprint', 'currency'})
@@ -119,7 +132,7 @@ class ChatServices:
             _check(_id(value.get('service_subject_id')) and _id(value.get('approval_ref')))
             parsed[gid] = ServicePolicy(*self.namespace, gid, value['service_subject_id'], value['approval_ref'],
                 binding['config_version'], binding['fingerprint'], binding['currency'],
-                _limits(value.get('summary'), 'summary'), _limits(value.get('proactive'), 'proactive'))
+                _limits(value.get('summary'), 'summary'), _limits(value.get('proactive'), 'proactive'),data.get('authority_generation',''))
         return data, parsed, hashlib.sha256(raw).hexdigest()
 
     def policy(self, snapshot, group_id) -> ServicePolicy | None:
