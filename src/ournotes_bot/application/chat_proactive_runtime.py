@@ -20,6 +20,18 @@ from . import replies
 
 class ProactiveChat:
     @staticmethod
+    def parse_staged_decision(text):
+        """Validate the decision-only wire contract without changing participation state."""
+        try:value=json.loads(text)
+        except (ValueError,TypeError):raise ModelError('model_protocol_error') from None
+        require(isinstance(value,dict) and set(value)=={'participation','text','delay_seconds'},'model_protocol_error')
+        require(value['participation'] in ('reply','skip','defer') and value['text']=='','model_protocol_error')
+        delay=value['delay_seconds']
+        require((type(delay) is int and 2<=delay<=5) if value['participation']=='defer'
+                else delay is None,'model_protocol_error')
+        return value
+
+    @staticmethod
     def response_format():
         return {'type':'json_schema','name':'proactive_participation','strict':True,'schema':{
             'type':'object','properties':{

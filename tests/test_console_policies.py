@@ -3547,6 +3547,10 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
         self.assertNotIn('text',bodies[1])
         self.assertEqual([b['max_output_tokens'] for b in bodies],[self.snapshot.profile.max_output_tokens]*2)
         self.assertNotIn('participation',bodies[1]['input'][0]['content'])
+        from ournotes_bot.application.chat_agent import CHAT_SEMANTICS
+        for body in bodies:
+            self.assertIn(CHAT_SEMANTICS,body['input'][0]['content'])
+        self.assertNotIn('text 里只写',bodies[0]['input'][0]['content'])
 
     async def test_staged_reply_keeps_six_call_budget_after_tools(self):
         from ournotes_bot.domain.model_calls import ToolCall
@@ -3580,9 +3584,39 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
         self.assertEqual(bodies[0]['text']['format']['schema']['additionalProperties'],False)
         return plan
 
-    async def test_structured_proactive_reply(self):
+    async def test_structured_proactive_reply_cannot_bypass_generation(self):
         plan=await self.structured_decision({'participation':'reply','text':'我喜欢这段鼓点','delay_seconds':None})
-        self.assertEqual(plan['parts'][0]['text'],'我喜欢这段鼓点')
+        self.assertEqual(plan['parts'],[])
+        self.assertEqual(self.client.request.call_count,1)
+        view=self.backend.admin.view(self.backend.ledger.request(plan['request_id']))
+        self.assertEqual(view['delivery_reason'],'proactive_error')
+
+    def test_staged_decision_strict_contract(self):
+        from ournotes_bot.application.chat_proactive_runtime import ProactiveChat
+        from ournotes_bot.domain.model_calls import ModelError
+        parse=ProactiveChat.parse_staged_decision
+        for mode,delay in [('reply',None),('skip',None),('defer',2),('defer',5)]:
+            value=dict(participation=mode,text='',delay_seconds=delay)
+            self.assertEqual(parse(json.dumps(value)),value)
+        invalid=[None,[],{}, {'participation':'reply','text':''},
+                 dict(participation='skip',text='',delay_seconds=2),
+                 dict(participation='reply',text='正文',delay_seconds=None),
+                 dict(participation='skip',text='',delay_seconds=None,reason='多余字段')]
+        invalid += [dict(participation='defer',text='',delay_seconds=d) for d in [None,True,2.0,1,6]]
+        for value in invalid:
+            with self.subTest(value=value),self.assertRaises(ModelError):parse(json.dumps(value))
+        for text in ['not json','```json\n{"participation":"skip","text":"","delay_seconds":null}\n```']:
+            with self.subTest(text=text),self.assertRaises(ModelError):parse(text)
+
+    async def test_staged_empty_generation_does_not_publish_or_commit_reply(self):
+        self.snapshot=replace(self.snapshot,profile=replace(self.snapshot.profile,provider='openai',wire_profile='openai-responses-v1'))
+        self.client.request.side_effect=[self.result('{"participation":"reply","text":"","delay_seconds":null}'),self.result('   ')]
+        value=self.observation();self.tick+=1.6
+        plan,attempts,_=await self.candidate(value)
+        self.assertEqual(len(attempts),2)
+        self.assertEqual(plan['parts'],[])
+        events=self.backend.diagnostics.read(plan['request_id'])['chat_events']
+        self.assertFalse(any(e['kind']=='decision' and e['data']['decision']=='reply' for e in events))
 
     async def test_structured_proactive_skip(self):
         plan=await self.structured_decision({'participation':'skip','text':'','delay_seconds':None})
@@ -3628,6 +3662,8 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
         self.client.request.return_value=self.result('我在听。')
         direct,_=await self.prepare_native('/聊 在吗',seq=2)
         self.assertNotIn('这是未点名的群聊观察',bodies[-1]['messages'][0]['content'])
+        from ournotes_bot.application.chat_agent import CHAT_SEMANTICS
+        self.assertIn(CHAT_SEMANTICS,bodies[-1]['messages'][0]['content'])
         self.assertIn('根据已有结果回答',bodies[-1]['messages'][-1]['content'])
         self.assertEqual(direct['parts'][0]['text'],'我在听')
         self.event(direct,'intent');self.event(direct,'ack')
