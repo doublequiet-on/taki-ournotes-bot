@@ -499,7 +499,7 @@ class ChatAgent:
                             require(work.model_attempts<self.budget.model_calls,'model_attempt_limit')
                             # Generation gets natural conversation context without the decision protocol.
                             generation=[{'role':'system','content':natural_prompt},*[m for m in messages[1:] if m['role']!='system']]
-                            generation.append({'role':'system','content':'只输出本轮回复正文。纠错依据现有材料：撤回无依据的断言不等于确认相反说法。普通分享用陈述收尾，不用追问维持聊天。若当前只是在反馈你的回复方式，简短处理后结束，不再补建议、祝福或自我解释；有实质问题则回答问题。'})
+                            generation.append({'role':'system','content':'只输出本轮正文。回应对方已经说出的事，祝贺可直说可喜之处，不替对方补写经历或描述其内心感受。纠错只撤回无依据的断言，不自动确认相反说法。普通分享用陈述收尾；针对回复方式的反馈简短处理，不补建议、祝福或自我解释；有实质问题就回答。'})
                             work.proactive_generation=True
                             try:
                                 generated=await runtime.attempt(work,generation,[],user,group,deadline,leases,
