@@ -35,6 +35,14 @@ if os.getenv('TAKI_FIXTURE_MODEL_ADMIN') == '1':
     client=SimpleNamespace(request=AsyncMock(return_value=AttemptResult('ok',Usage(100,0,10,None,110,'known'),
         (ToolCall('probe','capability_echo','{"marker":"taki-probe"}'),))),price=AsyncMock(return_value=Price('CNY',1000000,100000,2000000,1000000,'fixture-price',1,True,'registered-default')))
     backend.model_runtime=ModelRuntime(backend,root/'usage.sqlite3',client=client)
+    if os.getenv('TAKI_FIXTURE_CONVERSATION') == '1':
+        read_chat_settings=backend.model_runtime.admin.chat_settings
+        def fixture_chat_settings(group_id):
+            value=read_chat_settings(group_id)
+            value['recent_users']=[dict(user_id='fixture-recent-user',display_name='近期用户（合成验收）')]
+            value['tasks']=dict(active_tasks=2,waiting_tasks=1,partial_tasks=1,completed_tasks=1,window_seconds=900)
+            return value
+        backend.model_runtime.admin.chat_settings=fixture_chat_settings
 if os.getenv('TAKI_FIXTURE_SOURCE_OPS') == '1':
     from ournotes_bot.application.operations_sources import SourceOperations
     repository.data_source='haneoka'
@@ -52,6 +60,12 @@ async def seed(app):
         message_id='message',timestamp_ms=int(now*1000),body='/帮助',capability=CAPABILITY,gateway_epoch='fixture-gateway',ingress_seq=1,
         trigger='command',reference=None,interaction=None,
         policy=dict(natural_query='model',epoch='fixture',global_revision=0,group_revision=0)))
+    if os.getenv('TAKI_FIXTURE_CONVERSATION') == '1':
+        request_id=digest(['fixture','app','qq','group','fixture-group','fixture-user','message'])
+        backend.diagnostics.conversation_event('synthetic-control','fixture-group','control',now,
+            name='observation',status='excluded_user',decision='skip')
+        backend.diagnostics.chat_event(request_id,'task',now,action='result',status='partial',total=4,completed=2,entities=2)
+        backend.diagnostics.chat_event(request_id,'tool',now,name='site_search',status='ok',research_fallback=True,elapsed_ms=183,task_missing=2)
 app=create_app(backend,'fixture-backend-token-000000000000')
 app.on_startup.append(seed)
 web.run_app(app,host='127.0.0.1',port=18765,print=None)
