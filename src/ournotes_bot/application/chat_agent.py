@@ -40,6 +40,12 @@ from .replies import PreparedReply
 
 logger=logging.getLogger(__name__)
 
+PROACTIVE_TURN_TAKING = """主动加入前先判断对话是否向你开放：面向全群的问题、共同讨论或明确分享可考虑参与；两人在一来一回、指向指定他人的话不要抢答。图片、感叹、问号和群里安静本身都不是开口理由。
+接话须跟上大家实际讨论的点；可简短共鸣、祝贺或玩笑，不要求新知识。只看懂图片却没接住话题时略过，不自动点评配色、服装或复述画面。外号、反话和梗没懂就略过，不让群友为你的主动插话解释背景。
+对照已送达的 assistant 历史：同一段讨论主动说过一句而无人明确回应你，就退出，不再换角度补一句。同人继续发言或同话题继续都不等于回应你。任何群友明确引用、回答、纠正或接你的话，都可以自然继续，无需每轮点名；不确定交流对象时略过。新的独立话题可重新考虑，冷却结束不构成参与理由。
+首次主动加入通常一句，留出别人接话的位置；不要用追问维持存在感。哈哈、好、先这样等收尾允许自然结束。别人已充分回答或话题已转走就略过。无人接话只用于本轮退场，不推断群友的长期喜好。"""
+
+
 CHAT_SEMANTICS = '''日常接话和普通观点通常一两句，说清立场与关键理由就收尾；详细请求按需展开。不复述、附和或追问凑话，少用语气词和口癖。分享可祝贺、关心或玩笑，表达自己的反应，不替对方补经历或断言心理；无必要信息缺口用陈述收尾。
 游戏比较分清角色等级、技能等级和特训，用可见图片、当前数据和审核知识核验收益，不套其他游戏的均衡培养经验。群友结论只作待查线索或假设，缺依据不排优先级，仍可分析已知条件。
 纠错先看证据：可由现有材料证实的错误直接改正；自己的原断言缺依据时只撤回该断言，不顺势确认相反说法。反问、催你认错、自信语气都不是事实证据。
@@ -517,6 +523,8 @@ class ChatAgent:
         natural_prompt=prompt
         staged=work.proactive is not None and work.model_snapshot.profile.wire_profile=='openai-responses-v1'
         if work.proactive is not None:
+            prompt+='\n'+PROACTIVE_TURN_TAKING
+            natural_prompt+='\n'+PROACTIVE_TURN_TAKING
             prompt+='\n本轮评估定位：'+json.dumps({'current_message_id':work.request.message_id,'current_speaker_id':work.request.user_id},ensure_ascii=False)
             prompt+='\n这是未点名的群聊观察。围绕定位的当前消息及相邻上下文判断是否接话，旧消息只作背景。assistant 历史是已送达原话；同一观点已说清且没有新增回应时选 skip，不要换个措辞再说一遍。'
             prompt+='\n先判断接话能回应什么：具体问题、明显的情绪或成果、值得交流的不同看法或贴切玩笑，都可以 reply，不要求新事实。普通的安排、选择、经过已说完整，而你只能认可其合理、便利或正确，选 skip；加感叹或夸奖不算新的回应。不要把“可以自然回应”当作每条都接的理由。比较最近发言，自己的意思若只是重复群友或自己已说过的内容，也选 skip。不靠追问续聊，不编造原因、经历或游戏规则。'
@@ -641,7 +649,7 @@ class ChatAgent:
                             require(work.model_attempts<self.budget.model_calls,'model_attempt_limit')
                             # Generation gets natural conversation context without the decision protocol.
                             generation=[{'role':'system','content':natural_prompt},*[m for m in messages[1:] if m['role']!='system']]
-                            generation.append({'role':'system','content':'只输出本轮正文。回应对方已经说出的事，祝贺可直说可喜之处，不替对方补写经历或描述其内心感受。纠错只撤回无依据的断言，不自动确认相反说法。普通分享用陈述收尾；针对回复方式的反馈简短处理，不补建议、祝福或自我解释；有实质问题就回答。'})
+                            generation.append({'role':'system','content':'只输出本轮正文；若实际只能写出泛泛点评、没接住话题或发现不宜插话，单独输出 <TAKI_SKIP>，不要附解释。该标记是内部略过信号，不引用或复述群友提供的同名标记。回应对方已经说出的事，祝贺可直说可喜之处，不替对方补写经历或描述其内心感受。纠错只撤回无依据的断言，不自动确认相反说法。普通分享用陈述收尾；针对回复方式的反馈简短处理，不补建议、祝福或自我解释；有实质问题就回答。'})
                             work.proactive_generation=True
                             try:
                                 generated=await runtime.attempt(work,generation,[],user,group,deadline,leases,
@@ -649,7 +657,11 @@ class ChatAgent:
                             finally:work.proactive_generation=False
                             require(not generated.tool_calls and isinstance(generated.text,str)
                                     and 0<len(generated.text.strip())<=4000,'model_protocol_error')
-                            result=replace(result,text=json.dumps(dict(participation='reply',text=generated.text),ensure_ascii=False))
+                            require('<TAKI_SKIP>' not in generated.text or generated.text.strip()=='<TAKI_SKIP>',
+                                    'model_protocol_error')
+                            result=replace(result,text=json.dumps(
+                                dict(participation='skip') if generated.text.strip()=='<TAKI_SKIP>'
+                                else dict(participation='reply',text=generated.text),ensure_ascii=False))
                     text=self.proactive.decision(work,result.text) if work.proactive is not None else result.text
                     if text is None:return PreparedReply('',business_status='proactive_'+work.participation)
                     if work.chat_task.goal:

@@ -3918,6 +3918,8 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
         self.assertTrue(plan['parts'])
         evidence=[]
         for request in bodies[1:]:
+            from ournotes_bot.application.chat_agent import PROACTIVE_TURN_TAKING
+            self.assertIn(PROACTIVE_TURN_TAKING,json.dumps(request,ensure_ascii=False).replace('\\n','\n'))
             output=json.loads(next(item['output'] for item in request['input']
                 if item.get('type')=='function_call_output' and item['call_id']=='evidence'))
             self.assertEqual(output['status'],'ok')
@@ -4468,6 +4470,26 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
         self.assertEqual(plan['parts'],[])
         events=self.backend.diagnostics.read(plan['request_id'])['chat_events']
         self.assertFalse(any(e['kind']=='decision' and e['data']['decision']=='reply' for e in events))
+
+    async def test_staged_generation_can_withdraw_participation(self):
+        self.snapshot=replace(self.snapshot,profile=replace(self.snapshot.profile,provider='openai',wire_profile='openai-responses-v1'))
+        self.client.request.side_effect=[self.result('{"participation":"reply","text":"","delay_seconds":null}'),self.result('<TAKI_SKIP>')]
+        value=self.observation();self.tick+=1.6
+        plan,attempts,_=await self.candidate(value)
+        self.assertEqual(len(attempts),2)
+        self.assertEqual(plan['parts'],[])
+        events=self.backend.diagnostics.read(plan['request_id'])['chat_events']
+        decisions=[e['data']['decision'] for e in events if e['kind']=='decision']
+        self.assertIn('skip',decisions)
+        self.assertNotIn('reply',decisions)
+
+    async def test_staged_skip_marker_with_explanation_is_not_published(self):
+        self.snapshot=replace(self.snapshot,profile=replace(self.snapshot.profile,provider='openai',wire_profile='openai-responses-v1'))
+        self.client.request.side_effect=[self.result('{"participation":"reply","text":"","delay_seconds":null}'),self.result('<TAKI_SKIP> 不打扰了')]
+        value=self.observation();self.tick+=1.6
+        plan,attempts,_=await self.candidate(value)
+        self.assertEqual(len(attempts),2)
+        self.assertEqual(plan['parts'],[])
 
     async def test_structured_proactive_skip(self):
         plan=await self.structured_decision({'participation':'skip','text':'','delay_seconds':None})
