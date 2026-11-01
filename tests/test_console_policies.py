@@ -3436,6 +3436,34 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
         second,_,_=await self.candidate(value,2)
         self.assertTrue(second['send_allowed'])
 
+    async def test_progress_hint_then_final_ack_opens_user_continuation(self):
+        import time
+        self.agent.services.policy.return_value=None
+        held=asyncio.Event();entered=asyncio.Event()
+        async def provider(*args,**kwargs):
+            entered.set();await held.wait()
+            return self.result('等级28，音符965')
+        self.client.request.side_effect=provider
+        task=asyncio.create_task(self.prepare_native('/聊 查等级和音符数'))
+        await asyncio.wait_for(entered.wait(),3)
+        work=next(iter(self.backend.works.values()));work.model_started_at=time.monotonic()-9
+        hint=self.backend.lookup(work.request.request_id,'e1')
+        self.event(hint,'intent');self.event(hint,'ack')
+        self.assertFalse(self.agent.proactive.followups.questions)
+        held.set();plan,_=await task
+        self.assertEqual(len(plan['parts']),2)
+        final={**plan,'parts':plan['parts'][1:]}
+        self.event(final,'intent');self.event(final,'ack')
+        self.assertIsNotNone(self.agent.proactive.followups.current(tuple(work.request.scope.values()),'u1'))
+        self.now+=.01
+        value=self.observation('那音符数除以等级是多少',seq=2);self.tick+=1.6
+        self.client.request.side_effect=None
+        self.client.request.return_value=self.result('{"participation":"reply","text":"965除以28约为34.46"}')
+        followup,_,candidate=await self.candidate(value)
+        self.assertTrue(candidate[0].continuation)
+        self.assertTrue(followup['send_allowed'])
+        self.assertIsNone(self.backend.works[followup['delivery_id']].service_policy)
+
     async def test_excluded_user_can_address_then_continue_and_other_group_is_independent(self):
         self.save_conversation_settings(excluded_users=[dict(user_id='u1',label='同名成员')])
         raw=self.request('excluded',1);raw.update(body='路过聊两句',trigger='observation')
