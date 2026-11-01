@@ -6,6 +6,7 @@ import asyncio
 from dataclasses import asdict, replace
 import hashlib
 import json
+import logging
 import os
 from fractions import Fraction
 import re
@@ -140,7 +141,8 @@ class ModelAdmin:
 
     def migrate_chat_authorities(self):
         """Upgrade currently bound legacy metadata; never grant a new binding."""
-        from .chat_jobs import ChatServices
+        from .chat_jobs import ChatServices, ServiceError
+        require(self.db is not None,'chat_authority_unavailable')
         migrated=[]
         for proactive in (False,True):
             owner=self.runtime.proactive_capabilities if proactive else self.runtime.capabilities
@@ -148,18 +150,27 @@ class ModelAdmin:
                 filename='chat-proactive-services-v1.json' if proactive else 'chat-services-v1.json',
                 authority=self.db,require_authority=True)
             if not owner.path.exists() and not services.path.exists():continue
-            snapshot=self.selected_config(proactive=proactive).snapshot()
-            previous=self.metadata_digest(owner.path)
-            current=owner.read(snapshot)
-            if current is not None:
-                # Exercise the complete legacy validation before preserving it.
-                owner.web(snapshot);owner.vision(snapshot)
-                for gid in (current.get('proactive') or {}).get('groups',[]):owner.proactive(snapshot,gid)
-            entries=[(owner.path,current,16384,previous)]
-            if services.path.exists():
-                data,_,previous=services.read(snapshot)
-                entries.append((services.path,data,131072,previous))
-            for path,data,limit,previous in entries:
+            try:snapshot=self.selected_config(proactive=proactive).snapshot()
+            except ModelError as exc:
+                logging.getLogger(__name__).warning('chat_authority_migration_skipped proactive=%s code=%s',proactive,str(exc))
+                continue
+            for source,limit in ((owner,16384),(services,131072)):
+                path=source.path
+                try:
+                    if source is services:
+                        data,_,previous=services.read(snapshot)
+                    else:
+                        previous=self.metadata_digest(path)
+                        data=owner.read(snapshot)
+                        if data is not None:
+                            owner.web(snapshot);owner.vision(snapshot)
+                            for gid in (data.get('proactive') or {}).get('groups',[]):owner.proactive(snapshot,gid)
+                except (OSError,ValueError,TypeError,KeyError,RecursionError) as exc:
+                    # Invalid optional input remains denied by its normal reader.
+                    # Authority writes below must still fail visibly and durably.
+                    code=str(exc) if isinstance(exc,(ModelError,ServiceError)) else 'chat_authority_configuration'
+                    logging.getLogger(__name__).warning('chat_authority_migration_skipped file=%s code=%s',path.name,code)
+                    continue
                 if data is None or 'authority_generation' in data:continue
                 operation=uuid.uuid4().hex
                 require(self.metadata_digest(path,limit)==previous,'model_config_conflict')
