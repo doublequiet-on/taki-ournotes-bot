@@ -2310,11 +2310,15 @@ class ResearchContextTests(Fixture,unittest.TestCase):
         now[0]=901;self.assertEqual(store.status(request.scope)['active_tasks'],0)
 
     def test_chat_default_jp_leaves_explicit_state_scope_and_legacy_unchanged(self):
-        from ournotes_bot.natural_query.native_tools import chat_query_question,scope_for
+        from ournotes_bot.natural_query.native_tools import chat_query_question,chat_background_only,scope_for
         from ournotes_bot.domain.model_calls import ModelError
-        self.assertEqual(chat_query_question('国际服这张卡的技能是什么'),'这张卡的技能是什么')
-        for value in ('国际服排行榜','按国际服查卡片','那国际服呢','日服和国际服有什么区别'):
+        self.assertEqual(chat_query_question('我玩国际服，LUCK区间怎么算'),'，LUCK区间怎么算')
+        for value in ('国际服这张卡的技能是什么','日服和国际服对比一下',
+                      '比较日服与国际服的技能','国际服排行榜','按国际服查卡片','那国际服呢','日服和国际服有什么区别'):
             self.assertEqual(chat_query_question(value),value)
+        self.assertIn('国际服这张卡',chat_query_question('我玩日服，但国际服这张卡是什么'))
+        question='我玩国际服，不能用日服代替'
+        self.assertFalse(chat_background_only(question,chat_query_question(question)))
         with self.assertRaisesRegex(ModelError,'query_server_mismatch'):
             scope_for('国际服这张卡的技能是什么',dict(server='jp',date=None,version=None))
 
@@ -3062,7 +3066,7 @@ class ChatResearchTaskTests(Fixture,unittest.IsolatedAsyncioTestCase):
             self.result(calls=(self.call('knowledge_search',server='intl',date=None,version=None),)),
             self.result(calls=(self.call('site_search',resource='songs',server='intl',query='100001'),)),
             self.result(calls=(self.call('site_read',handle='item1'),)),self.result('这首歌属于 MyGO!!!!!。')]
-        plan,_=await self.prepare_native('/聊 国际服合成曲100001是什么歌')
+        plan,_=await self.prepare_native('/聊 我玩国际服，合成曲100001是什么歌')
         self.assertEqual(plan['parts'][0]['business_status'],'success')
         outputs=[json.loads(row['content']) for row in bodies[-1]['messages'] if row['role']=='tool']
         self.assertIn('site_search',outputs[0]['next_step'])
@@ -3081,12 +3085,50 @@ class ChatResearchTaskTests(Fixture,unittest.IsolatedAsyncioTestCase):
         knowledge.retrieve.return_value=SimpleNamespace(code='ok',lease=EvidenceLease('fixture',KnowledgeScope(),()))
         knowledge.prepare_evidence.return_value={'text':'已审核规则'}
         knowledge.validate_current.return_value=True
-        for seq,(question,server) in enumerate((('我玩国际服，LUCK区间怎么算','jp'),('按国际服查询LUCK规则','intl')),1):
-            self.client.request.side_effect=[self.result(calls=(self.call('knowledge_search',server='intl',date=None,version=None),)),self.result('按已审核规则解释。')]
+        cases=(('我玩国际服，LUCK区间怎么算','intl','jp'),
+               ('按国际服查询LUCK规则','intl','intl'),
+               ('国际服这张卡的技能是什么','intl','intl'),
+               ('比较日服与国际服的技能','common','common'),
+               ('我玩日服，但国际服这张卡的技能是什么','intl','intl'))
+        for seq,(question,model_server,server) in enumerate(cases,1):
+            self.client.request.side_effect=[self.result(calls=(self.call('knowledge_search',server=model_server,date=None,version=None),)),self.result('按已审核规则解释。')]
             plan,_=await self.prepare_native('/聊 '+question,seq=seq)
             self.assertEqual(plan['parts'][0]['business_status'],'success')
             self.assertEqual(knowledge.retrieve.call_args.args[1].server,server)
             self.event(plan,'intent');self.event(plan,'ack')
+
+    async def test_explicit_international_never_uses_jp_site_or_knowledge(self):
+        from ournotes_bot.domain.model_calls import ToolCall
+        from unittest.mock import patch
+        bodies=self.capture_native_bodies()
+        self.backend.knowledge=Mock()
+        self.client.request.side_effect=[
+            self.result(calls=(ToolCall('bad-site','site_search',json.dumps(dict(resource='cards',server='jp',query=''))),)),
+            self.result(calls=(ToolCall('bad-knowledge','knowledge_search',json.dumps(dict(server='jp',date=None,version=None))),)),
+            self.result('没有国际服资料。')]
+        with patch('ournotes_bot.application.site_lookup.SiteLookup.execute',side_effect=AssertionError('wrong server')):
+            plan,_=await self.prepare_native('/聊 国际服这张卡的技能是什么')
+        outputs=[json.loads(row['content']) for row in bodies[-1]['messages'] if row['role']=='tool']
+        self.assertEqual([output['status'] for output in outputs],['query_server_mismatch','query_server_mismatch'])
+        self.backend.knowledge.retrieve.assert_not_called()
+        self.assertEqual(plan['parts'][0]['business_status'],'success')
+
+    async def test_comparison_queries_each_server_without_mislabeling(self):
+        from datetime import datetime,timezone
+        notices=Mock()
+        notices.read.side_effect=lambda server,deadline:dict(source='Haneoka',server=server,language='ja' if server=='jp' else 'en',
+            observed_at=datetime.now(timezone.utc).isoformat(),rows=[])
+        bodies=self.capture_native_bodies()
+        self.client.request.side_effect=[
+            self.result(calls=(self.call('site_search',resource='notices',server='jp',query=''),)),
+            self.result(calls=(self.call('site_search',resource='notices',server='intl',query=''),)),
+            self.result('两个公告列表都没有条目。')]
+        with patch('ournotes_bot.application.site_lookup.Notices',return_value=notices):
+            plan,_=await self.prepare_native('/聊 比较日服和国际服公告')
+        outputs=[json.loads(row['content']) for row in bodies[-1]['messages'] if row['role']=='tool']
+        self.assertEqual([output['data']['server'] for output in outputs],['jp','intl'])
+        self.assertEqual([call.args[0] for call in notices.read.call_args_list],['jp','intl'])
+        self.assertIn('国际服英文',plan['parts'][0]['text'])
 
 
 class ChatSourceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
@@ -3189,6 +3231,100 @@ class ChatImageIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
         self.backend.model_runtime.agent.image_loader.load_many.assert_awaited_once()
         self.assertFalse(plan['reply_mention'])
         self.event(plan,'intent');self.event(plan,'ack')
+
+    async def test_text_then_image_supplement_reaches_model_with_original_identity(self):
+        from ournotes_bot.application.backend_protocol import Request
+        bodies=self.capture_native_bodies()
+        self.backend.model_runtime.capabilities.proactive=Mock(return_value=True)
+        attachment=self.attachments[0];self.attachments=[]
+        self.client.request.return_value=self.result('看到了图片。')
+        task=asyncio.create_task(self.prepare_native('/聊 看看这个'))
+        await asyncio.sleep(.02)
+        raw=self.request('supplement-image',2)
+        raw.update(body='',trigger='observation',attachments=[attachment])
+        request=Request.parse(raw,'fixture','app',self.now)
+        self.assertFalse(self.backend.model_runtime.agent.proactive.observe(request))
+        plan,attempts=await task
+        self.assertEqual(len(attempts),1)
+        self.assertEqual(plan['parts'][0]['business_status'],'success')
+        work=self.backend.works[plan['delivery_id']]
+        self.assertEqual(work.chat_addition_images,('supplement-image',))
+        self.assertIn((self.backend.model_runtime.agent.image_scope(request),'supplement-image'),work.image_sources)
+        visual=next(item for item in bodies[0]['input'] if isinstance(item.get('content'),list))
+        metadata=json.loads(visual['content'][0]['text'])
+        self.assertEqual((metadata['message_id'],metadata['speaker_id']),('supplement-image','u1'))
+        self.assertTrue(any(item['type']=='input_image' for item in visual['content']))
+        self.assertNotIn('PRIVATE_FIXTURE',str(bodies))
+        self.event(plan,'intent');self.event(plan,'ack')
+        persisted=' '.join(row[0] for table,column in (('events','data'),('runs','context'),('memory_messages','text'))
+                           for row in self.backend.model_runtime.agent.store.db.execute('SELECT '+column+' FROM '+table))
+        self.assertIn('[图片附件 a',persisted)
+        self.assertNotIn('PRIVATE_FIXTURE',persisted);self.assertNotIn('base64,',persisted)
+        original=self.backend.model_runtime.agent.store.read(request.scope,['supplement-image'])['messages'][0]
+        self.assertIn('[图片附件 a',original['text'])
+
+    async def test_supplemented_images_obey_combined_count_limit(self):
+        from ournotes_bot.application.backend_protocol import Request
+        self.backend.model_runtime.capabilities.proactive=Mock(return_value=True)
+        attachment=self.attachments[0]
+        self.attachments=[{**attachment,'id':key} for key in ('a','b','c')]
+        task=asyncio.create_task(self.prepare_native('/聊 看图'))
+        await asyncio.sleep(.02)
+        raw=self.request('one-more-image',2)
+        raw.update(body='',trigger='observation',attachments=[{**attachment,'id':'d'}])
+        self.assertFalse(self.backend.model_runtime.agent.proactive.observe(Request.parse(raw,'fixture','app',self.now)))
+        plan,attempts=await task
+        self.assertEqual(attempts,[])
+        self.assertEqual(plan['parts'][0]['business_status'],'image_count_exceeded')
+        self.backend.model_runtime.agent.image_loader.load_many.assert_not_awaited()
+
+    async def test_supplement_image_requires_approved_vision(self):
+        from ournotes_bot.application.backend_protocol import Request
+        self.backend.model_runtime.capabilities.proactive=Mock(return_value=True)
+        self.backend.model_runtime.capabilities.vision.return_value=None
+        attachment=self.attachments[0];self.attachments=[]
+        task=asyncio.create_task(self.prepare_native('/聊 看看'))
+        await asyncio.sleep(.02)
+        raw=self.request('unapproved-image',2)
+        raw.update(body='',trigger='observation',attachments=[attachment])
+        self.assertFalse(self.backend.model_runtime.agent.proactive.observe(Request.parse(raw,'fixture','app',self.now)))
+        plan,attempts=await task
+        self.assertEqual(attempts,[])
+        self.assertEqual(plan['parts'][0]['business_status'],'image_capability_unverified')
+        self.client.request.assert_not_awaited()
+
+    async def test_invalid_supplement_image_fails_without_silent_text_reply(self):
+        from ournotes_bot.application.backend_protocol import Request
+        self.backend.model_runtime.capabilities.proactive=Mock(return_value=True)
+        attachment={**self.attachments[0],'url':'https://example.invalid/download?private=fixture'}
+        self.attachments=[]
+        task=asyncio.create_task(self.prepare_native('/聊 看看'))
+        await asyncio.sleep(.02)
+        raw=self.request('invalid-image',2)
+        raw.update(body='',trigger='observation',attachments=[attachment])
+        self.assertFalse(self.backend.model_runtime.agent.proactive.observe(Request.parse(raw,'fixture','app',self.now)))
+        plan,attempts=await task
+        self.assertEqual(attempts,[])
+        self.assertEqual(plan['parts'][0]['business_status'],'image_untrusted_source')
+        self.client.request.assert_not_awaited()
+        self.assertNotIn('example.invalid',str(plan))
+
+    async def test_deleted_supplement_image_does_not_reach_model(self):
+        from ournotes_bot.application.backend_protocol import Request
+        self.backend.model_runtime.capabilities.proactive=Mock(return_value=True)
+        attachment=self.attachments[0];self.attachments=[]
+        start=self.request('start',1);start['body']='/聊 看这个'
+        initial=await self.backend.submit(start)
+        await asyncio.sleep(.02)
+        raw=self.request('deleted-image',2)
+        raw.update(body='',trigger='observation',attachments=[attachment])
+        request=Request.parse(raw,'fixture','app',self.now)
+        agent=self.backend.model_runtime.agent
+        self.assertFalse(agent.proactive.observe(request))
+        agent.forget(request.scope,['deleted-image'])
+        self.assertFalse(self.backend.works[initial['delivery_id']].active)
+        self.assertEqual(self.backend.lookup(start['request_id'],'e1')['status'],'aborted')
+        self.client.request.assert_not_awaited()
 
     async def test_vision_revoked_while_waiting_for_permit_never_dispatches(self):
         from unittest.mock import patch

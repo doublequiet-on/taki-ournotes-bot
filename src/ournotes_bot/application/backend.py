@@ -82,6 +82,8 @@ class Work:
     chat_task_generation: int = 0
     chat_task_pending: object = None
     chat_additions: tuple = ()
+    chat_addition_images: tuple = ()
+    chat_addition_image_error: str | None = None
     chat_coalesce_until: float = 0
     chat_coalesce_deadline: float = 0
     proactive: object = None

@@ -144,13 +144,17 @@ def requested_server(question):
 
 
 def chat_query_question(question):
-    """Ordinary chat uses JP facts; server-bound state and explicit scopes remain exact."""
+    """Remove only a separate personal play-server statement, preserving requested scopes."""
     region = r'(?:日服|国际服|國際服|台服|臺服|港服|韩服|美服|欧服|\b(?:jp|intl|tw|hk|kr|en)\b)'
-    scoped = (re.search(r'排行榜|排名|榜线|榜单|活动|卡池|公告|开服|实装|上线', question)
-              or re.search(r'(?:只(?:查|看|用)?|按|以|查询|查一下|请查|不要用|不能用)\s*' + region, question)
-              or re.fullmatch(r'\s*(?:那|那么)?\s*' + region + r'(?:呢|怎么样|如何)?[?？。\s]*', question)
-              or re.search(region + r'.*' + region + r'.*(?:差异|区别|一样|一致)', question))
-    return question if scoped else re.sub(region, '', question, flags=re.I).strip()
+    background = (r'(?:我|本人)(?:平时|主要|一直|现在)?(?:玩的是|在玩|玩|是)\s*'
+                  + region + r'(?:的?玩家)?(?=\s*(?:[，,。；;！!？?]|\n|$))')
+    return re.sub(background, '', question, flags=re.I).strip()
+
+
+def chat_background_only(question, scoped):
+    """A personal background must not override any remaining server condition."""
+    return (scoped != question and not re.search(
+        r'日服|国际服|國際服|台服|臺服|港服|韩服|美服|欧服|\b(?:jp|intl|tw|hk|kr|en)\b',scoped,re.I))
 
 
 def scope_for(question,args,previous=None,*,reset_on_server_change=False,pending_server=None,default_version=None):

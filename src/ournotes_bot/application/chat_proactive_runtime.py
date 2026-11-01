@@ -184,6 +184,13 @@ class ProactiveChat:
                     if (request.message_id not in {row.message_id for row in active.chat_additions}
                             and len(active.chat_additions)<12
                             and sum(len(row.text.encode()) for row in active.chat_additions)+len(request.body.encode())<=8192):
+                        if request.attachments:
+                            try:
+                                self.agent.images.remember(self.agent.image_scope(request),request.message_id,
+                                    request.user_id,request.timestamp_ms,request.attachments)
+                                active.chat_addition_images+= (request.message_id,)
+                            except ImageError as exc:
+                                active.chat_addition_image_error=exc.code
                         active.chat_additions+= (ChatMessage(request.message_id,request.user_id,request.body,request.timestamp_ms,display_name=request.sender_name),)
                         active.chat_coalesce_until=min(time.monotonic()+settings['coalesce_seconds'],active.chat_coalesce_deadline)
                         self.control_event(request,'supplement_merged')
