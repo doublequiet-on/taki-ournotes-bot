@@ -2268,6 +2268,40 @@ class NativeRuntimeTests(Fixture,unittest.IsolatedAsyncioTestCase):
         self.assertEqual(limited[-1].context.origin,'mixed')
 
 
+class ResearchContextTests(unittest.TestCase):
+    def test_actor_isolation_expiry_and_superseded_ack(self):
+        from types import SimpleNamespace
+        from ournotes_bot.application.chat_tasks import TaskContexts
+        now=[0];store=TaskContexts(clock=lambda:now[0])
+        request=SimpleNamespace(scope={'instance':'i','group':'g'},user_id='u',message_id='m',timestamp_ms=1)
+        task=store.begin(request,lambda *_:True);task.goal='比较';task.requirements=[
+            dict(label='notes',entity_refs=['song:1'],fields=['notes'],knowledge=False,difficulty='EXPERT')]
+        task.entities={'song:1':dict(ref='song:1',kind='song',id=1,name='A')};task.targets=['song:1']
+        task.readings={'song:1':{'notes:HARD'}}
+        self.assertEqual(task.coverage()['status'],'partial')
+        task.readings['song:1'].add('notes:EXPERT')
+        self.assertTrue(store.commit(request,task,'sent'))
+        other=SimpleNamespace(**{**vars(request),'user_id':'other'})
+        self.assertFalse(store.begin(other,lambda *_:True).goal)
+        fresh=store.begin(request,lambda *_:True)
+        self.assertEqual(fresh.targets,['song:1']);self.assertEqual(fresh.coverage()['status'],'waiting')
+        self.assertFalse(store.commit(request,task,'late'))
+        store.clear(request.scope,'u');self.assertFalse(store.commit(request,fresh,'late2'))
+        task=store.begin(request,lambda *_:True);task.goal='任务';self.assertTrue(store.commit(request,task,'s'))
+        self.assertFalse(store.begin(request,lambda *_:False).goal)
+        task=store.begin(request,lambda *_:True);task.goal='任务';store.commit(request,task,'s')
+        now[0]=901;self.assertEqual(store.status(request.scope)['active_tasks'],0)
+
+    def test_chat_default_jp_leaves_explicit_state_scope_and_legacy_unchanged(self):
+        from ournotes_bot.natural_query.native_tools import chat_query_question,scope_for
+        from ournotes_bot.domain.model_calls import ModelError
+        self.assertEqual(chat_query_question('国际服这张卡的技能是什么'),'这张卡的技能是什么')
+        for value in ('国际服排行榜','按国际服查卡片','那国际服呢','日服和国际服有什么区别'):
+            self.assertEqual(chat_query_question(value),value)
+        with self.assertRaisesRegex(ModelError,'query_server_mismatch'):
+            scope_for('国际服这张卡的技能是什么',dict(server='jp',date=None,version=None))
+
+
 class ChatAgentTests(Fixture, unittest.IsolatedAsyncioTestCase):
     """C1 contracts at the real backend entry, permit, provider and ACK boundary."""
     Helpers=NativeRuntimeTests.Helpers
@@ -2887,6 +2921,83 @@ class ChatAgentTests(Fixture, unittest.IsolatedAsyncioTestCase):
         self.assertFalse(plan['reply_mention']);self.assertEqual(len(attempts),2)
         self.assertNotIn('已停止查询',plan['parts'][0]['text'])
         self.assertEqual(json.loads([m for m in bodies[-1]['messages'] if m['role']=='tool'][0]['content'])['status'],'query_server_mismatch')
+        self.event(plan,'intent');self.event(plan,'ack')
+
+
+class ChatResearchTaskTests(Fixture,unittest.IsolatedAsyncioTestCase):
+    Helpers=ChatAgentTests.Helpers
+    asyncSetUp=ChatAgentTests.asyncSetUp
+    event=ChatAgentTests.event
+    request=ChatAgentTests.request
+    result=ChatAgentTests.result
+    prepare_native=ChatAgentTests.prepare_native
+    capture_native_bodies=ChatAgentTests.capture_native_bodies
+
+    def call(self,name,**args):
+        from ournotes_bot.domain.model_calls import ToolCall
+        import uuid
+        return ToolCall(uuid.uuid4().hex,name,json.dumps(args,ensure_ascii=False))
+
+    def task_call(self,refs,fields,difficulty=''):
+        return self.call('research_task',action='set',goal='比较两首歌',entity_refs=refs,
+            requirements=[dict(label=field,entity_refs=refs,fields=[field],knowledge=False,difficulty=difficulty) for field in fields])
+
+    def catalog(self):
+        self.snapshot=replace(self.snapshot,profile=replace(self.snapshot.profile,max_input_tokens=65536,
+                              user_daily_limit=10**7,group_daily_limit=10**7))
+        self.repo.metadata.update(data_source='haneoka',data_version='r-fixture',text_version='t-fixture')
+        verify=patch('ournotes_bot.application.site_lookup.verify_catalog');verify.start();self.addCleanup(verify.stop)
+
+    async def test_compare_then_change_second_target_condition_and_ack_only_commit(self):
+        self.catalog();bodies=self.capture_native_bodies();agent=self.backend.model_runtime.agent
+        refs=['song:100001','song:100002']
+        self.client.request.side_effect=[
+            self.result(calls=tuple(self.call('site_search',resource='songs',server='jp',query=str(i)) for i in (100001,100002))),
+            self.result(calls=tuple(self.call('site_read',handle='item'+str(i)) for i in (1,2))),
+            self.result(calls=(self.task_call(refs,['notes','level'],'EXPERT'),
+                self.call('read_entity_fields',entity_refs=refs,fields=['notes','level'],difficulty='EXPERT'))),
+            self.result('两首的 EXPERT 都是 25 级、200 个音符。')]
+        plan,attempts=await self.prepare_native('/聊 比较合成曲100001和合成曲100002的EXPERT难度与音符数')
+        self.assertEqual(plan['parts'][0]['business_status'],'success');self.assertEqual(len(attempts),4)
+        work=self.backend.works[plan['delivery_id']]
+        self.assertEqual(agent.tasks.status(work.request.scope)['active_tasks'],0)
+        self.assertEqual(work.chat_task.coverage()['status'],'completed')
+        self.event(plan,'intent');self.event(plan,'ack')
+        self.assertEqual(agent.tasks.status(work.request.scope)['completed_tasks'],1)
+        self.client.request.side_effect=[self.result(calls=(self.task_call([refs[1]],['notes'],'HARD'),
+            self.call('read_entity_fields',entity_refs=[refs[1]],fields=['notes'],difficulty='HARD'))),self.result('第二首 HARD 是 100 个音符。')]
+        followup,_=await self.prepare_native('/聊 第二首改看 HARD 的音符数',seq=2)
+        context=[json.loads(row['content']) for row in bodies[-2]['messages'] if row['role']=='user']
+        inherited=next(row['research_task'] for row in context if 'research_task' in row)
+        self.assertEqual([row['ref'] for row in inherited['targets']],refs)
+        self.assertEqual(inherited['coverage']['status'],'waiting')
+        outputs=[json.loads(row['content']) for row in bodies[-1]['messages'] if row['role']=='tool']
+        self.assertEqual(outputs[-1]['data']['items'][0]['fields']['notes'],{'HARD':100})
+        self.assertIn('Haneoka',followup['parts'][0]['text'])
+        self.event(followup,'intent');self.event(followup,'ack')
+        stored=next(iter(agent.tasks.tasks.values()));self.assertEqual(stored.targets,[refs[1]])
+        self.current_user='u2';self.client.request.side_effect=[self.result(calls=(
+            self.call('read_entity_fields',entity_refs=[refs[1]],fields=['notes'],difficulty='HARD'),)),self.result('请告诉我歌曲名。')]
+        other,_=await self.prepare_native('/聊 第二首呢',seq=3)
+        output=json.loads(next(row['content'] for row in bodies[-1]['messages'] if row['role']=='tool'))
+        self.assertEqual(output['status'],'query_entity_mismatch')
+        self.event(other,'intent');self.event(other,'ack')
+
+    async def test_knowledge_fallback_to_haneoka_has_sources_and_finite_diagnostics(self):
+        self.catalog();bodies=self.capture_native_bodies()
+        self.client.request.side_effect=[
+            self.result(calls=(self.call('knowledge_search',server='intl',date=None,version=None),)),
+            self.result(calls=(self.call('site_search',resource='songs',server='intl',query='100001'),)),
+            self.result(calls=(self.call('site_read',handle='item1'),)),self.result('这首歌属于 MyGO!!!!!。')]
+        plan,_=await self.prepare_native('/聊 国际服合成曲100001是什么歌')
+        self.assertEqual(plan['parts'][0]['business_status'],'success')
+        outputs=[json.loads(row['content']) for row in bodies[-1]['messages'] if row['role']=='tool']
+        self.assertIn('site_search',outputs[0]['next_step'])
+        self.assertEqual(outputs[1]['data']['server'],'jp');self.assertEqual(outputs[2]['data']['entity_ref'],'song:100001')
+        events=self.backend.diagnostics.read(plan['request_id'])['chat_events']
+        research=[row['data'] for row in events if row['kind']=='research']
+        self.assertTrue(any(row.get('research_fallback') for row in research))
+        self.assertNotIn('100001',json.dumps(research));self.assertIn('Haneoka',plan['parts'][0]['text'])
         self.event(plan,'intent');self.event(plan,'ack')
 
 
