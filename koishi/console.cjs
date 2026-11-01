@@ -45,7 +45,8 @@ function install(ctx, config, manifest, assetsDirectory = path.join(__dirname, '
     const url = '/v1/admin/' + resource + (query ? '?' + query : '')
     const existing = reads.get(url)
     if (existing && Date.now() < existing.until) return existing.value
-    const value = receiver.client.request(url, undefined, 131072, false, AbortSignal.timeout(2000))
+    const maxResponse = /^chat\/groups\/[A-Za-z0-9_-]+\/settings$/.test(resource) ? 1048576 : 131072
+    const value = receiver.client.request(url, undefined, maxResponse, false, AbortSignal.timeout(2000))
     reads.set(url, { until: Date.now()+5000, value })
     if (reads.size > 64) reads.delete(reads.keys().next().value)
     try { return await value } catch (error) { reads.delete(url); throw Error(error.code || 'backend_unavailable') }
@@ -200,7 +201,7 @@ function install(ctx, config, manifest, assetsDirectory = path.join(__dirname, '
       if(!client)throw Error('backend_unavailable')
       const {operation_id,guard,settings}=value
       try{
-        const result=await client.request('/v1/admin/chat/groups/'+value.group_id+'/settings',{operation_id,guard,settings},131072,false,AbortSignal.timeout(2000))
+        const result=await client.request('/v1/admin/chat/groups/'+value.group_id+'/settings',{operation_id,guard,settings},1048576,false,AbortSignal.timeout(2000))
         management.record('管理员更新了群交流设置');return result
       }finally{reads.clear()}
     },{authority:5})

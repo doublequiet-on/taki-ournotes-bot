@@ -34,7 +34,7 @@ export function conversationSettings(s){
      h('div',{class:'conversation-timing'},[
        h('label',['续聊窗口（秒）',h('input',{type:'number',min:60,max:600,step:1,'aria-label':'续聊窗口（秒）',value:settings.followup_window_seconds,disabled,onInput:e=>{settings.followup_window_seconds=Number(e.target.value);mark();}})]),
        h('label',['合并消息等待（秒）',h('input',{type:'number',min:1,max:2,step:0.1,'aria-label':'合并消息等待（秒）',value:settings.coalesce_seconds,disabled,onInput:e=>{settings.coalesce_seconds=Number(e.target.value);mark();}})])]),
-     h('p',{class:'field-note'},'每次成功续聊后重新计时。连续发送的文字和图片会短暂等待，一起理解。'),
+     h('p',{class:'field-note'},'每次成功续聊后重新计时。连续发送的文字会短暂等待，一起处理。'),
      h('h3','不主动搭话的用户'),
      h('p','名单只阻止 Taki 自行搭话。用户主动 @、点名或发命令时正常回应，之后仍可免 @ 续聊。'),
      h('label',['从近期用户选择',h('select',{'aria-label':'从近期用户选择',value:users.some(user=>user.user_id===s.chatUserId.value)?s.chatUserId.value:'',disabled,onChange:e=>{s.chatUserId.value=e.target.value;s.chatUserLabel.value=(users.find(user=>user.user_id===e.target.value)?.display_name||'').slice(0,80);}},[

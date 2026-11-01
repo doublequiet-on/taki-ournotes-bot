@@ -89,7 +89,7 @@ queries/notifications支持inherit、allow、pause；allow仍受全局范围与�
 
 群详情新增“交流设置”：独立管理免 @ 续聊开关、续聊窗口（默认 180 秒，60–600 秒）、合并消息等待（默认 1.5 秒，1–2 秒）及“不主动搭话的用户”。名单可从近期用户选择，也可填写平台用户 ID 和备注；每群最多 200 人。名单只阻止自行搭话，用户主动 @、点名或发命令后仍可正常回应和续聊。设置存于现有模型管理库的独立群表，重启、切换模型后保留；保存设置不授予平台收发批准。
 
-接口为 `GET/POST /v1/admin/chat/groups/{gid}/settings`，Console RPC 为 `taki/chat/group/settings` 与 `taki/chat/group/settings/save`。读取返回 `group_id,guard,settings,recent_users,tasks,recent_events`；写入提交 `operation_id,guard,settings`，其中 guard 为后端 epoch 与该群 revision。前端保存后再次读取确认，保留保存期间的新编辑；冲突展示服务器当前值并保留草稿。交流草稿和未确认操作标识加入同标签页恢复存储，主动退出清除。有未保存交流设置时，先保存或放弃再切换群。为容纳最多 200 人及中文备注，Console WebSocket frame 上限为 128 KiB；后端只对该设置 POST 使用同样的读取上限。
+接口为 `GET/POST /v1/admin/chat/groups/{gid}/settings`，Console RPC 为 `taki/chat/group/settings` 与 `taki/chat/group/settings/save`。读取返回 `group_id,guard,settings,recent_users,tasks,recent_events`；写入提交 `operation_id,guard,settings`，其中 guard 为后端 epoch 与该群 revision。前端保存后再次读取确认，保留保存期间的新编辑；冲突展示服务器当前值并保留草稿。交流草稿和未确认操作标识加入同标签页恢复存储，主动退出清除。有未保存交流设置时，先保存或放弃再切换群。为容纳最多 200 人及中文备注，Console WebSocket frame 上限为 128 KiB；后端只对该设置 POST 使用同样的输入上限；设置 GET/POST 响应单独允许 1 MiB，覆盖 Unicode 转义后的 200 人名单、120 个近期用户及 50 条诊断事件。
 
 “连续资料任务”显示进行中、待补充、部分完成、资料已齐的任务数及 15 分钟窗口，不提供任务开关。“近期交流记录”展示最近 50 条群级接话／跳过原因、名单命中、续聊状态、资料任务进度、Haneoka 补查及耗时；请求详情的“交流处理记录”展示相应单次处理事件。资料已齐与平台发送状态分别显示。事件来自现有诊断库 `recent_events`／`chat_events`，只记录受限元数据，不展示正文、工具原始参数或密钥；未受理的名单跳过也可在群记录中查看。
 

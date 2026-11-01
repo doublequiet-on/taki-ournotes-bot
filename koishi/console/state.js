@@ -168,7 +168,7 @@ export function sessionState() {
   async function saveChatSettings(){
     const draft=chatEdit.value;
     if(busy.value||!draft?.dirty||draft.conflict||chatReadError.value)return;
-    const token=generation,edit=structuredClone(toRaw(draft));
+    const token=generation,edit=JSON.parse(JSON.stringify(draft));
     const key=JSON.stringify([edit.group_id,edit.guard,edit.settings]);
     if(!pendingChat.has(key))pendingChat.set(key,crypto.randomUUID().replaceAll('-',''));
     busy.value=true;
