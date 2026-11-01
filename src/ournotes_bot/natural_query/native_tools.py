@@ -143,7 +143,7 @@ def requested_server(question):
     return 'common' if jp and intl else 'intl' if intl else 'jp' if jp else None
 
 
-def scope_for(question,args,previous=None,*,reset_on_server_change=False,pending_server=None):
+def scope_for(question,args,previous=None,*,reset_on_server_change=False,pending_server=None,default_version=None):
     server=requested_server(question) or pending_server or (previous.server if previous else 'jp')
     require(args['server']==server,'query_server_mismatch')
     normalized=re.sub(r'(\d{4})年(\d{1,2})月(\d{1,2})日',
@@ -155,6 +155,11 @@ def scope_for(question,args,previous=None,*,reset_on_server_change=False,pending
         r'(?<![\d.])(\d+\.\d+\.\d+)(?![\d.])',question,re.I)]
     reset=bool(dates or versions or re.search(r'当前|现在|現時|目前',question)
                or reset_on_server_change and previous and server!=previous.server)
+    if (default_version is not None and args['version']==default_version and not dates and not versions
+            and not (previous and not reset and (previous.version or previous.date))
+            and not re.search(r'历史|以前|旧版',question)):
+        # Echoing deployment context is not an explicit user version request.
+        args={**args,'version':None}
     for key,explicit in (('version',versions),('date',dates)):
         inherited=getattr(previous,key) if previous and not reset else None
         cross_inherited=(getattr(previous,key) if previous and reset_on_server_change and server!=previous.server

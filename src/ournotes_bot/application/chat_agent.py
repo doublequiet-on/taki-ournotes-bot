@@ -739,9 +739,9 @@ class ChatAgent:
                                         'note':'当前发言者近期范围候选；pending_server是其待澄清的明确区服。结合问题判断关联与时间，再查询。'},
                                 '_knowledge_context':(saved,rows,target)},leases
                     previous=saved[1]
-                scope=scope_for(question,args,previous,reset_on_server_change=True,
-                                pending_server=work.knowledge_target[0] if args.get('followup') and work.knowledge_target else None)
                 context_version=getattr(runtime.backend.settings,'knowledge_chat_version',None)
+                scope=scope_for(question,args,previous,reset_on_server_change=True,default_version=context_version,
+                                pending_server=work.knowledge_target[0] if args.get('followup') and work.knowledge_target else None)
                 if context_version and scope.version is None and scope.date is None:
                     # A configured evidence baseline supplements general documents;
                     # it does not turn their unknown version into a verified one.
