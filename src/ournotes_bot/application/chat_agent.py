@@ -654,7 +654,12 @@ class ChatAgent:
                     if text is None:return PreparedReply('',business_status='proactive_'+work.participation)
                     if work.chat_task.goal:
                         self.task_event(work,'result')
-                    if site.source_notes: text+=site.attribution()
+                    if site.source_notes:
+                        # Replace standalone model-written Haneoka labels with the verified footer.
+                        text=re.sub(r'(?im)^[ \t]*(?:来源|資料來源|资料来源|source)[：:][ \t]*Haneoka'
+                            r'(?:[ \t]*[（(](?:日服|国际服(?:英文)?)[）)]|[ \t]*/[ \t]*(?:日服|国际服英文)'
+                            r'(?:[ \t]*/[ \t]*版本[ \t]+[\w.-]+)?)?[ \t]*$', '', text).rstrip()
+                        text+=site.attribution()
                     if web_citations:
                         text+='\n\n来源：\n'+'\n'.join('['+re.sub(r'[\[\]<>\r\n]',' ',ref['title'])+']('+ref['url'].replace('(','%28').replace(')','%29')+')'
                             for ref in web_citations.values())

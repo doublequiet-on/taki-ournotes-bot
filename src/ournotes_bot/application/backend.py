@@ -648,7 +648,7 @@ class Backend:
                     self.model_runtime.agent.acknowledge(work,part_id,payload['message_id'],reply.text,
                         payload['result'],allow_context=payload.get('allow_context') is not False,service_ack_ok=service_ack_ok,
                         record_delivery=projection is None)
-                    if (payload['result']=='success' and len(parts)==1 and not work.hint
+                    if (payload['result']=='success' and len(parts)==1+int(work.hint)
                             and payload.get('allow_context') is not False):
                         self.model_runtime.agent.proactive.remember_question(work,payload['message_id'],reply.text)
                 if payload['result'] == 'success':
