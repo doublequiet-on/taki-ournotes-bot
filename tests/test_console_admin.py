@@ -63,6 +63,45 @@ class ChatDiagnosticsTests(unittest.TestCase):
         self.diagnostics.write(lambda db:db.execute('DELETE FROM requests WHERE id=?',('r',)))
         self.assertEqual(self.diagnostics.db.execute('SELECT count(*) FROM chat_events').fetchone()[0],0)
 
+    def test_unadmitted_decisions_are_scoped_and_join_task_execution(self):
+        d=self.diagnostics
+        self.assertTrue(d.conversation_event('observation','g','control',101,
+                                            status='excluded_user',name='observation',decision='skip'))
+        self.assertTrue(d.chat_event('r','task',102,action='result',status='partial',total=3,completed=2,entities=2))
+        self.assertTrue(d.conversation_event('another','other','control',103,status='settings_saved'))
+        events=d.group_events('g')
+        self.assertEqual([event['request_id'] for event in events],['r','observation'])
+        self.assertEqual(events[0]['data']['completed'],2)
+        self.assertIsNone(d.read('observation'))
+        self.assertEqual(len(d.group_events('g',limit=1)),1)
+
+    def test_group_diagnostics_do_not_accept_private_payloads(self):
+        d=self.diagnostics
+        for data in ({'body':'private'}, {'arguments':{'user_id':'private'}},
+                     {'source':'https://private.invalid'}, {'elapsed_ms':-1}):
+            self.assertFalse(d.conversation_event('o','g','control',101,**data))
+        self.assertEqual(d.group_events('g'),[])
+        self.assertTrue(d.chat_event('r','tool',102,name='site_read',status='ok',
+                                    elapsed_ms=120,research_fallback=True,source='haneoka'))
+
+    def test_group_diagnostics_survive_restart_and_expire_without_requests(self):
+        d=self.diagnostics
+        d.conversation_event('o','g','control',101,status='followup_candidate',continuation=True)
+        d.close();self.diagnostics=Diagnostics(self.path);self.addCleanup(self.diagnostics.close)
+        self.assertEqual(self.diagnostics.group_events('g')[0]['data']['status'],'followup_candidate')
+        self.diagnostics.expire(86502)
+        self.assertEqual(self.diagnostics.group_events('g'),[])
+
+    def test_group_diagnostics_capacity_discards_oldest_not_other_state(self):
+        d=self.diagnostics
+        with d.db:
+            d.db.executemany('INSERT INTO conversation_events(request_id,group_id,kind,data,observed_at) VALUES(?,?,?,?,?)',
+                            [(str(i),'g','control','{}',100+i) for i in range(4096)])
+        self.assertTrue(d.conversation_event('new','g','control',5000,status='settings_saved'))
+        self.assertEqual(d.db.execute('SELECT count(*) FROM conversation_events').fetchone()[0],4096)
+        self.assertIsNone(d.db.execute("SELECT 1 FROM conversation_events WHERE request_id='0'").fetchone())
+        self.assertIsNotNone(d.read('r'))
+
 
 class ProjectionTests(unittest.TestCase):
     def test_meta_observation_is_readonly_and_keeps_failure_visible(self):
