@@ -97,6 +97,7 @@ class Work:
     public_question: str = ''
     entity_evidence: tuple = ()
     entity_source_version: str = ''
+    entity_owner_version: str = ''
     web_capability: object = None
     knowledge_scope: object = None
     knowledge_scope_ambiguous: bool = False

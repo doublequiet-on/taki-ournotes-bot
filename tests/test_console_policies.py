@@ -2987,6 +2987,38 @@ class ChatResearchTaskTests(Fixture,unittest.IsolatedAsyncioTestCase):
         contexts=' '.join(row[0] for row in self.backend.model_runtime.agent.store.db.execute('SELECT context FROM runs'))
         self.assertNotIn('current_entities',contexts);self.assertNotIn('research_task',contexts)
 
+    async def test_research_uses_verified_current_view_before_owner_publication(self):
+        from copy import copy
+        self.catalog();bodies=self.capture_native_bodies()
+        current=copy(self.repo);current.metadata={**self.repo.metadata,'data_version':'r-next'}
+        self.repo.current_query_view=Mock(return_value=current)
+        self.client.request.side_effect=[self.result(calls=(self.call('read_entity_fields',
+            entity_refs=['song:100001'],fields=['notes'],difficulty='EXPERT'),)),self.result('EXPERT 是 200 个音符。')]
+        plan,attempts=await self.prepare_native('/聊 合成曲100001的EXPERT有多少Note')
+        self.assertEqual(len(attempts),2);self.assertTrue(plan['send_allowed'])
+        self.assertEqual(plan['parts'][0]['business_status'],'success')
+        self.assertIn('r-next',plan['parts'][0]['text'])
+        work=self.backend.works[plan['delivery_id']];agent=self.backend.model_runtime.agent
+        self.assertTrue(agent.entity_valid(work))
+        self.repo.metadata['data_version']='r-next'
+        self.assertTrue(agent.entity_valid(work))
+        self.repo.metadata['data_version']='r-other'
+        self.assertFalse(agent.entity_valid(work))
+        self.assertFalse(self.backend.lookup(plan['request_id'],'e1')['send_allowed'])
+
+    async def test_research_does_not_mix_current_view_versions_between_tools(self):
+        from copy import copy
+        self.catalog()
+        current=copy(self.repo);current.metadata={**self.repo.metadata,'data_version':'r-next'}
+        changed=copy(self.repo);changed.metadata={**self.repo.metadata,'data_version':'r-other'}
+        self.repo.current_query_view=Mock(side_effect=[current,changed])
+        self.client.request.side_effect=[self.result(calls=(self.call('read_entity_fields',
+            entity_refs=['song:100001'],fields=[field],difficulty='EXPERT'),)) for field in ('notes','level')]
+        plan,attempts=await self.prepare_native('/聊 合成曲100001的EXPERT等级和Note')
+        work=self.backend.works[plan['delivery_id']]
+        self.assertEqual(len(attempts),2)
+        self.assertEqual(work.prepared[0].business_status,'query_source_changed')
+
     async def test_compare_then_change_second_target_condition_and_ack_only_commit(self):
         self.catalog();bodies=self.capture_native_bodies();agent=self.backend.model_runtime.agent
         refs=['song:100001','song:100002']
