@@ -150,7 +150,7 @@ class ProactiveChat:
         """Wait within the question window without bypassing either cooldown."""
         scope=self.scope(request)
         followup=self.followups.match(scope,request.message_id)
-        if followup is None:return 1500
+        if followup is None:return math.ceil(self.controller.start_delay(scope)*1000)
         snapshot=self.agent.runtime.proactive_snapshot(request.conversation_id)
         policy=self.policy(snapshot,request)
         if policy is None:return None

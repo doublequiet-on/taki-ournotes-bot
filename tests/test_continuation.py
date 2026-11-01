@@ -1184,6 +1184,40 @@ class ProactiveControllerTests(unittest.TestCase):
         self.assertEqual(len({row.speaker_id for row in candidate.messages}), 4)
         self.assertIsNone(self.controller.candidate(self.a, reserve_cost_micro=100))
 
+    def test_busy_group_starts_after_eight_seconds_but_new_message_still_invalidates(self):
+        self.observe()
+        for second in range(1,8):
+            self.now[0]=second
+            self.observe(str(second))
+            self.assertIsNone(self.controller.candidate(self.a,reserve_cost_micro=100))
+        self.now[0]=8
+        self.observe('latest')
+        self.assertEqual(self.controller.start_delay(self.a),0)
+        first=self.controller.candidate(self.a,reserve_cost_micro=100)
+        self.assertEqual(first.messages[-1].message_id,'latest')
+        self.controller.decide(first,'reply',actual_cost_micro=1)
+        self.observe('newer')
+        self.assertFalse(self.controller.can_send(first))
+        self.assertEqual(self.controller.start_delay(self.a),1.5)
+        second=self.ready()
+        self.assertEqual(first.opportunity_id,second.opportunity_id)
+        self.assertEqual(first.expires_at,second.expires_at)
+
+    def test_opportunity_knowledge_cache_is_dropped_on_clear_and_expiry(self):
+        self.observe();candidate=self.ready()
+        cache=self.controller.knowledge_leases(candidate)
+        cache['fixture']='evidence'
+        self.observe('new')
+        second=self.ready()
+        self.assertIs(self.controller.knowledge_leases(second),cache)
+        self.controller.clear(self.a)
+        self.assertEqual(cache,{})
+        self.observe('third');third=self.ready()
+        cache=self.controller.knowledge_leases(third);cache['fixture']='evidence'
+        self.now[0]=third.expires_at
+        self.controller.sweep()
+        self.assertEqual(cache,{})
+
     def test_duplicates_and_bot_messages_do_not_cancel_human_candidate(self):
         self.observe()
         candidate = self.ready()

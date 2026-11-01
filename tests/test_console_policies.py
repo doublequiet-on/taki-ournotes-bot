@@ -3777,6 +3777,59 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
         self.assertEqual(attempts,[]);self.assertFalse(third['send_allowed'])
         self.assertEqual(len(bodies),6)
 
+    async def test_hot_group_delay_and_candidate_use_same_bounded_wait(self):
+        from ournotes_bot.application.backend_protocol import Request
+        for second in range(9):
+            self.tick=100+second
+            value=self.observation('热群新条件',seq=second+1)
+            request=Request.parse(value,'fixture','app',self.now)
+            self.assertEqual(self.agent.proactive.observation_delay(request),min(1500,(8-second)*1000))
+        self.client.request.return_value=self.result('{"participation":"skip"}')
+        _,attempts,candidate=await self.candidate(value)
+        self.assertEqual(len(attempts),1)
+        self.assertEqual(candidate[0].messages[-1].message_id,value['message_id'])
+
+    async def test_proactive_reuses_approved_knowledge_but_retrieves_again_after_revocation(self):
+        from types import SimpleNamespace
+        from ournotes_bot.domain.knowledge import EvidenceLease
+        from ournotes_bot.domain.model_calls import ToolCall
+        knowledge=Mock();knowledge.approved_set_revision='fixture'
+        revoked=set()
+        knowledge.validate_current.side_effect=lambda leases:all(lease.approved_set_revision not in revoked for lease in leases)
+        knowledge.prepare_evidence.return_value='approved fixture evidence'
+        knowledge.retrieve.side_effect=lambda query,scope,revision:SimpleNamespace(code='ok',
+            lease=EvidenceLease(str(knowledge.retrieve.call_count),scope,()))
+        self.backend.knowledge=knowledge
+        calls=[]
+        for serial in range(1,4):
+            if serial==3:revoked.add('1')
+            value=self.observation('日服技能机制',seq=serial);self.tick+=1.6
+            self.client.request.side_effect=[self.result(calls=(ToolCall(str(serial),'knowledge_search',
+                '{"server":"jp","date":null,"version":null,"query":"技能机制"}'),)),
+                self.result('{"participation":"skip"}')]
+            _,attempts,candidate=await self.candidate(value,serial)
+            self.assertEqual(len(attempts),2)
+            calls.append(knowledge.retrieve.call_count)
+        self.assertEqual(calls,[1,1,2])
+        self.assertEqual(candidate[0].opportunity_id,self.agent.proactive.controller.groups[candidate[0].scope].opportunity.id)
+
+    async def test_opportunity_knowledge_cache_does_not_cross_server_or_publication(self):
+        from types import SimpleNamespace
+        from ournotes_bot.domain.knowledge import EvidenceLease
+        from ournotes_bot.domain.model_calls import ToolCall
+        knowledge=Mock();knowledge.validate_current.return_value=True
+        knowledge.prepare_evidence.return_value='approved fixture evidence'
+        knowledge.retrieve.side_effect=lambda query,scope,revision:SimpleNamespace(code='ok',lease=EvidenceLease(revision,scope,()))
+        self.backend.knowledge=knowledge
+        for serial,(server,publication) in enumerate((('jp','one'),('intl','one'),('intl','two')),1):
+            knowledge.approved_set_revision=publication
+            value=self.observation('日服技能机制' if server=='jp' else '国际服技能机制',seq=serial);self.tick+=1.6
+            self.client.request.side_effect=[self.result(calls=(ToolCall(str(serial),'knowledge_search',
+                json.dumps(dict(server=server,date=None,version=None,query='技能机制'))),)),
+                self.result('{"participation":"skip"}')]
+            await self.candidate(value,serial)
+            self.assertEqual(knowledge.retrieve.call_count,serial)
+
     async def test_recheck_fits_remaining_original_hourly_cost_envelope(self):
         from ournotes_bot.application.chat_jobs import maximum_cost_micro
         from ournotes_bot.application.chat_capabilities import WebCapability
