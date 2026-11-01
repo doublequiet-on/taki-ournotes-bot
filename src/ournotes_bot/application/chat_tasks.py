@@ -66,7 +66,8 @@ class TaskContexts:
         previous = self.tasks.get(key)
         # ChatStore.read accepts 48 sources. Start a fresh plan after a long
         # exchange instead of silently dropping the provenance of old choices.
-        if previous and len(previous.source_messages) >= 40: previous = None
+        if previous and len(previous.source_messages) >= 40:
+            self.tasks.pop(key, None); previous = None
         if previous and not all(valid_source(mid, stamp) for mid, stamp in previous.source_messages.items()):
             self.tasks.pop(key, None); previous = None
         generation = self.generations.get(key, 0) + 1
