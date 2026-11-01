@@ -87,6 +87,12 @@ queries/notifications支持inherit、allow、pause；allow仍受全局范围与�
 
 ## 群能力、记忆及模型管理
 
+群详情新增“交流设置”：独立管理免 @ 续聊开关、续聊窗口（默认 180 秒，60–600 秒）、合并消息等待（默认 1.5 秒，1–2 秒）及“不主动搭话的用户”。名单可从近期用户选择，也可填写平台用户 ID 和备注；每群最多 200 人。名单只阻止自行搭话，用户主动 @、点名或发命令后仍可正常回应和续聊。设置存于现有模型管理库的独立群表，重启、切换模型后保留；保存设置不授予平台收发批准。
+
+接口为 `GET/POST /v1/admin/chat/groups/{gid}/settings`，Console RPC 为 `taki/chat/group/settings` 与 `taki/chat/group/settings/save`。读取返回 `group_id,guard,settings,recent_users,tasks,recent_events`；写入提交 `operation_id,guard,settings`，其中 guard 为后端 epoch 与该群 revision。前端保存后再次读取确认，保留保存期间的新编辑；冲突展示服务器当前值并保留草稿。交流草稿和未确认操作标识加入同标签页恢复存储，主动退出清除。有未保存交流设置时，先保存或放弃再切换群。为容纳最多 200 人及中文备注，Console WebSocket frame 上限为 128 KiB；后端只对该设置 POST 使用同样的输入上限；设置 GET/POST 响应单独允许 1 MiB，覆盖 Unicode 转义后的 200 人名单、120 个近期用户及 50 条诊断事件。
+
+“连续资料任务”显示进行中、待补充、部分完成、资料已齐的任务数及 15 分钟窗口，不提供任务开关。“近期交流记录”展示最近 50 条群级接话／跳过原因、名单命中、续聊状态、资料任务进度、Haneoka 补查及耗时；请求详情的“交流处理记录”展示相应单次处理事件。资料已齐与平台发送状态分别显示。事件来自现有诊断库 `recent_events`／`chat_events`，只记录受限元数据，不展示正文、工具原始参数或密钥；未受理的名单跳过也可在群记录中查看。
+
 `GET /v1/admin/chat/status` 与 `/v1/admin/chat/groups/{gid}/status` 投影主模型、备用模型和独立主动参与模型各自的版本、联网／图片／主动发言批准元数据及群服务每小时上限；不触发探测或修改批准。模型配置、能力批准与当前群策略分别显示，登记证据不等于实际功能验收。群详情通过现有记忆接口读取数量与 30 天保留规则，不返回正文。Console 的删除请求绑定群、当前网关 epoch 和 `expected_revision`；冲突或超时只刷新核对，不自动重放。删除沿用宿主的摘要、图片来源、上下文及在途回答失效流程，保留费用账本。
 
 “模型与费用”及设置页复用同一模型编辑状态，分别管理主模型、DeepSeek 备用与主动参与模型配置。`GET/POST /v1/admin/model/fallback` 复用受保护配置写入、版本保护和元数据审计；备用配置仅允许 DeepSeek，已有计费参考币种／单位不能改变。切换服务商须提供对应新密钥。浏览器恢复草稿保留模型角色归属，不保留密钥；有草稿时先保存或放弃再切换配置。
@@ -106,7 +112,7 @@ OpenAI Responses 发送 `reasoning.effort`，表单提供默认及 API 支持的
 
 管理读接口为 `GET /v1/admin/library/{knowledge|story}/{offset}`，写接口为 `POST /v1/admin/library/{preview|compare|publish|withdraw}`；Console RPC 为 `library/status` 及相应动作，继续使用 authority 5、当前管理会话和活动网关 epoch。`application/library_admin.py` 调用当前宿主拥有的 KnowledgeService／StoryService，不创建第二个数据库 owner、不调用模型或抓取 URL。
 
-浏览器导入入口保持既有 32 KB 管理消息边界，单个 JSON 内容限制 18000 UTF-8 字节。百科包结构为 `{schema:"taki-console-knowledge/1", files:{"相对路径.md":"完整 Markdown"}, approvals:原批准清单, delivery:原交付清单}`；所有批准、哈希、审核人与确认记录仍由内容方提供，并通过原有 `validate_delivery`。剧情使用原 `taki-story-bundle/1`，不接受合成来源或包内已批准人格。更大资料包使用原本地导入工具，不拆成多次整库替换。
+浏览器导入入口单个 JSON 内容仍限制 18000 UTF-8 字节。百科包结构为 `{schema:"taki-console-knowledge/1", files:{"相对路径.md":"完整 Markdown"}, approvals:原批准清单, delivery:原交付清单}`；所有批准、哈希、审核人与确认记录仍由内容方提供，并通过原有 `validate_delivery`。剧情使用原 `taki-story-bundle/1`，不接受合成来源或包内已批准人格。更大资料包使用原本地导入工具，不拆成多次整库替换。
 
 预览比较当前整库与候选，列出新增、移除、修改和正文／审核清单差异，绝不把缺失文件当增量保留。完整差异超过 100 项、20000 字符输入或 30000 字节输出时不提供发布令牌。可发布令牌保存在内存中，10 分钟有效、最多 8 个，绑定后端 epoch、源版本及撤回状态，执行前再次检查；令牌先消费再写入，失败或结果不明不自动重放。编辑正文、切换资料类型或退出会话会清除前端预览；不保存导入草稿到浏览器恢复存储。正式版本变化后页面禁用旧预览。
 

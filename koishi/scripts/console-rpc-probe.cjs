@@ -1,7 +1,27 @@
 // Real local WebSocket authorization and save contracts. No QQ adapter or external network.
 const assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path'),os=require('node:os')
 const {Context}=require('koishi'),WebSocket=require('ws'),{install}=require('../console.cjs')
-const {TakiTransport}=require('../lib')
+const {TakiTransport,BackendClient}=require('../lib')
+async function conversationResponseProbe(connection,transport){
+  const http=require('node:http'),previous=transport.receiver.client;
+  const payload={group_id:'large',guard:{backend_epoch:'fixture',revision:'a'.repeat(32)},settings:{followup_enabled:true,followup_window_seconds:180,coalesce_seconds:1.5,excluded_users:Array.from({length:200},(_,i)=>({user_id:String(i).padStart(256,'u'),label:'𠮷'.repeat(80)}))},recent_users:Array.from({length:120},(_,i)=>({user_id:String(i).padStart(256,'r'),display_name:'𠮷'.repeat(256)})),tasks:{active_tasks:1,waiting_tasks:1,partial_tasks:1,completed_tasks:1,window_seconds:900},recent_events:Array.from({length:50},()=>({request_id:'a'.repeat(64),kind:'research',observed_at:1790000000,data:{action:'a'.repeat(64),status:'s'.repeat(64),name:'n'.repeat(64),decision:'d'.repeat(64),source:'s'.repeat(64),reason:'r'.repeat(64),image_detail:'high',messages:1000000,assistant_messages:1000000,image_markers:1000000,input_images:1000000,vision_approved:true,automatic:true,loaded_images:1000000,model_attempts:1000000,delivered:true,total:1000000,completed:1000000,entities:1000000,elapsed_ms:1000000,task_missing:1000000,research_fallback:true,continuation:true,window_seconds:1000000}}))};
+  // Match Python json_response's default ensure_ascii=True, including surrogate pairs.
+  const body=JSON.stringify(payload).replace(/[\u007f-\uffff]/g,char=>'\\u'+char.charCodeAt(0).toString(16).padStart(4,'0'));
+  assert.ok(Buffer.byteLength(body)>524288&&Buffer.byteLength(body)<1048576);
+  const oversized=JSON.stringify({value:'x'.repeat(1048576)});
+  const server=http.createServer((request,response)=>{request.resume();response.setHeader('Content-Type','application/json');response.end(request.url.includes('/oversized/')?oversized:body)});
+  await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
+  const client=new BackendClient('http://127.0.0.1:'+server.address().port,'fixture-backend-token-000000000000','fixture','fixture');
+  transport.receiver.client=client;
+  try{
+    assert.deepEqual((await connection.call('taki/chat/group/settings','large')).value,payload,'real HTTP client reads the complete bounded settings response');
+    const write={group_id:'large',operation_id:'c'.repeat(32),guard:payload.guard,settings:{...payload.settings,excluded_users:[]}};
+    assert.deepEqual((await connection.call('taki/chat/group/settings/save',write)).value,payload,'save response uses the same complete read budget');
+    assert.equal((await connection.call('taki/chat/group/settings','oversized')).error,'response_size');
+    assert.equal((await connection.call('taki/chat/group/settings/save',{...write,group_id:'oversized'})).error,'response_size');
+    console.log(JSON.stringify({conversationResponseBoundary:true,validAsciiResponseBytes:Buffer.byteLength(body),maximumResponseBytes:1048576,oversizedRejected:true}));
+  }finally{transport.receiver.client=previous;await client.telemetry.close();server.closeAllConnections();await new Promise(resolve=>server.close(resolve))}
+}
 function controlProbe(directory){
   const {Management}=require('../lib/management'),{OperationJournal}=require('../operation-journal.cjs'),{Controls}=require('../ops-controls.cjs')
   const identity={appId:'fixture-app',instanceId:'fixture-instance'},dir=path.join(directory,'control-unit')
@@ -84,7 +104,7 @@ async function main(){
   const clients=[]
   const methods=['overview','requests/list','requests/detail','sources','notices/list','query-metrics','groups/list','groups/update','settings/update',
     'ops/jobs/list','ops/jobs/detail','ops/jobs/start','ops/export','ops/audit','ops/host','ops/notice-target',
-    'ops/controls','ops/controls/start','ops/controls/restore',
+    'ops/controls','ops/controls/start','ops/controls/restore','chat/group/settings','chat/group/settings/save',
     'library/status','library/preview','library/compare','library/publish','library/withdraw','chat/status','chat/group/status','chat/group/memory','chat/memory/update','model/proactive/limits/settings','model/proactive/limits/save','model/proactive/settings','model/proactive/save','model/proactive/probe','model/fallback/settings','model/fallback/save','model/web-search/save','model/proactive/web-search/save','model/settings','model/save','model/probe','model/group','ops/trusted','ops/trusted/prepare','ops/trusted/start']
   try{
     await ctx.start();await manager.ready();const a=await connect();clients.push(a.ws)
@@ -104,6 +124,18 @@ async function main(){
     const state=(await a.call('taki/status')).value
     for(const method of ['chat/status','chat/group/status','chat/group/memory'])assert.ok((await a.call('taki/'+method,...(method==='chat/status'?[]:['g1']))).value)
     assert.equal((await a.call('taki/chat/group/memory','../g1')).error,'admin_group')
+    const chatSettingsReads=reads;
+    assert.equal((await a.call('taki/chat/group/settings','../g1')).error,'admin_group');
+    assert.equal((await a.call('taki/chat/group/settings/save',{group_id:'../g1',operation_id:'a'.repeat(32),guard:{},settings:{}})).error,'chat_settings_shape');
+    assert.equal(reads,chatSettingsReads,'invalid conversation settings never reach backend');
+    assert.ok((await a.call('taki/chat/group/settings','g1')).value);
+    const beforeChatSave=reads;
+    assert.ok((await a.call('taki/chat/group/settings/save',{group_id:'g1',operation_id:'a'.repeat(32),guard:{backend_epoch:'fixture',revision:0},settings:{followup_enabled:true,followup_window_seconds:180,coalesce_seconds:1.5,excluded_users:[]}})).value);
+    assert.ok((await a.call('taki/chat/group/settings','g1')).value);
+    assert.equal(reads,beforeChatSave+2,'save invalidates cached conversation readback');
+    const largeList=Array.from({length:200},(_,i)=>({user_id:String(i).padStart(256,'u'),label:'测'.repeat(80)}));
+    assert.ok((await a.call('taki/chat/group/settings/save',{group_id:'g1',operation_id:'b'.repeat(32),guard:{backend_epoch:'fixture',revision:1},settings:{followup_enabled:true,followup_window_seconds:180,coalesce_seconds:1.5,excluded_users:largeList}})).value,'maximum supported list fits the management frame');
+    await conversationResponseProbe(a,transport);
     const beforeMemory=reads,mutation={action:'clear',expected_revision:0}
     assert.equal((await a.call('taki/chat/memory/update',{group_id:'g1',mutation,epoch:'old'})).error,'ops_gateway_epoch')
     assert.equal((await a.call('taki/chat/memory/update',{group_id:'g1',mutation:{...mutation,expected_revision:'0'},epoch:'fixture-epoch'})).error,'chat_memory_shape')
@@ -181,7 +213,7 @@ async function main(){
     const foreign=await connect('https://foreign.invalid');clients.push(foreign.ws)
     await new Promise(resolve=>foreign.ws.once('close',code=>{assert.equal(code,1008);resolve()}))
     for(const [frame,expected] of [['{invalid',1008],[JSON.stringify({id:'bad',type:'unknown-method',args:[]}),1008],
-      [JSON.stringify({id:'large',type:'taki/login',args:['x'.repeat(33000)]}),1009]]) {
+      [JSON.stringify({id:'large',type:'taki/login',args:['x'.repeat(132000)]}),1009]]) {
       const connection=await connect();clients.push(connection.ws)
       const closed=new Promise(resolve=>connection.ws.once('close',code=>{assert.equal(code,expected);resolve()}))
       connection.ws.send(frame);await closed

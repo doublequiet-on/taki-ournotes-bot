@@ -37,9 +37,10 @@ class ChatRecovery:
             sources[mid]=rows[0]['timestamp_ms']
         for scope,mid in work.image_sources:
             sources[mid]=self.agent.images.get(scope,mid).timestamp_ms
-        proof=dict(scope=work.request.scope,proactive=work.proactive is not None,
-            fingerprint=work.model_snapshot.fingerprint,config_version=work.model_snapshot.profile.config_version,
-            service=asdict(work.service_policy) if work.proactive is not None else None,
+        snapshot=work.primary_model_snapshot if work.budget_fallback else work.model_snapshot
+        proof=dict(scope=work.request.scope,proactive=work.proactive is not None and not work.continuation,
+            fingerprint=snapshot.fingerprint,config_version=snapshot.profile.config_version,
+            service=asdict(work.service_policy) if work.service_policy is not None else None,
             proactive_authority=work.proactive_authority,
             story=list(work.story_versions),knowledge=KnowledgeService.retention_proof(
                 lease for reply in work.prepared for lease in reply.evidence),

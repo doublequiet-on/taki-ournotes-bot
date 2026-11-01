@@ -182,7 +182,7 @@ class ModelRuntime:
         return replace(primary,profile=profile,fingerprint=selected.fingerprint)
 
     def capabilities_for(self,work):
-        return self.proactive_capabilities if work.proactive is not None and self.dedicated_proactive() else self.capabilities
+        return self.proactive_capabilities if work.proactive is not None and not getattr(work,'continuation',False) and self.dedicated_proactive() else self.capabilities
 
     def cost_status(self):
         result=self.usage.costs()
@@ -256,7 +256,7 @@ class ModelRuntime:
         work.budget_fallback=True
 
     def route(self,work):
-        if work.budget_fallback or work.proactive is not None:return
+        if work.budget_fallback or work.proactive is not None and not getattr(work,'continuation',False):return
         profile=work.model_snapshot.profile
         # Admit a bounded first request and its maximum final response together.
         amount=2*profile.reserve(profile.max_input_tokens,profile.max_output_tokens)
@@ -283,7 +283,7 @@ class ModelRuntime:
         except ModelError as exc:
             # A competing request may reserve the budget during image/tool IO.
             # Only a pre-permit rejection may choose another model; never retry HTTP.
-            if str(exc)!='primary_budget_exceeded' or work.model_attempts or work.budget_fallback or work.proactive is not None:raise
+            if str(exc)!='primary_budget_exceeded' or work.model_attempts or work.budget_fallback or work.proactive is not None and not getattr(work,'continuation',False):raise
             self.use_fallback(work)
             work.image_bytes=0
             return await operation(deadline)
@@ -403,7 +403,7 @@ class ModelRuntime:
             require(work.model_snapshot is not None and (work.model_subject is not None or work.proactive is not None),'model_not_configured')
             require(not work.native_claimed,'multiple_ai_requests')
             work.native_claimed=True
-            if work.proactive is not None:
+            if work.proactive is not None and not getattr(work,'continuation',False):
                 user=self.usage.key('service',work.request.instance_id,work.request.app_id,work.request.conversation_id,
                     work.service_policy.service_subject_id,'proactive')
             else:user=self.usage.key('user',work.model_subject)
@@ -432,7 +432,9 @@ class ModelRuntime:
     def reserve(self,work,attempt,user,group,bound,*,billing_request_id=None,action_budget=()):
         profile=work.model_snapshot.profile
         billing_request_id=billing_request_id or work.service_request_id or work.request.request_id
-        if work.proactive is not None and billing_request_id==work.service_request_id:
+        if getattr(work,'continuation',False):
+            self.agent.proactive.check_continuation_budget(work,profile.reserve(bound,profile.max_output_tokens)*profile.price.reference_rate/1_000_000+sum(count*rate for _,count,rate in action_budget))
+        if work.proactive is not None and not getattr(work,'continuation',False) and billing_request_id==work.service_request_id:
             from .chat_jobs import ServiceError,maximum_cost_micro
             try:self.agent.service_budget.check(work.service_policy,'proactive',profile,billing_request_id,
                 maximum_cost_micro(profile)+sum(count*rate for _,count,rate in action_budget),
@@ -515,7 +517,7 @@ class ModelRuntime:
                      'elapsed_ms':int((time.monotonic()-began)*1000)})
             if result.tool_calls:
                 name=result.tool_calls[0].name
-                kind=name if name in TOOLS or getattr(work,'chat',False) and name in ('web_search','story_search','story_read','group_memory_search','group_memory_read','image_read') else 'unrecognized_tool'
+                kind=name if name in TOOLS or getattr(work,'chat',False) and name in ('web_search','story_search','story_read','group_memory_search','group_memory_read','image_read','research_task','read_entity_fields') else 'unrecognized_tool'
             elif tools: kind='routing_text' if result.status=='ok' else 'routing'
             self.check(work,deadline,leases)
             if service_policy is not None:require(self.agent.services.policy(work.model_snapshot,work.request.conversation_id)==service_policy,'chat_service_revoked')

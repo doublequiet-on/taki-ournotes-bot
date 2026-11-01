@@ -400,6 +400,68 @@ async function main() {
       assert.equal([...f.receiver.observations.values()][0].input.messageId,'later')
     }finally{release.resolve();await first;await f.close()}
   })
+  await run('Continuation preserves A through B ordinary arrival while candidate HTTP is pending',async()=>{
+    const entered=deferred(),release=deferred();let aborts=0
+    const f=receiverFixture({async chatObservation(input){return{protocol:wire.protocol,observed:input.userId==='user-a',delay_ms:1500,continuation:input.userId==='user-a'}},
+      async chatCandidate(input,seq){entered.resolve();await release.promise;return{protocol:wire.protocol,candidate:true,plan:await this.submit(input,seq)}},
+      async event(){aborts++}})
+    let running
+    try {
+      await f.receiver.receive(await f.ordinary('continue-a',{author:{id:'user-a'}}))
+      const current=[...f.receiver.observations.values()][0]
+      running=fireObservation(f.receiver);await entered.promise
+      await f.receiver.receive(await f.ordinary('other-b',{author:{id:'user-b'}}))
+      assert.equal(current.cancelled,false);assert.equal(f.receiver.observationAlive(current),true)
+      f.release('continue-a');release.resolve();await running
+      assert.deepEqual(f.sent,['continue-a']);assert.equal(aborts,0)
+      assert.equal(f.finished.has(f.submitted[0].input.requestId),true)
+    }finally{release.resolve();await running;await f.close()}
+  })
+  await run('Continuation observation HTTP may finish after B, but same-speaker replacement stays stale',async()=>{
+    for(const speaker of ['user-b','user-a']) {
+      const entered=deferred(),release=deferred()
+      const f=receiverFixture({async chatObservation(){entered.resolve();await release.promise;return{protocol:wire.protocol,observed:true,delay_ms:1500,continuation:true}}})
+      let first
+      try {
+        first=f.receiver.receive(await f.ordinary('first-a',{author:{id:'user-a'}}));await entered.promise
+        await f.ordinary('later',{author:{id:speaker}})
+        release.resolve();await first
+        assert.equal(f.receiver.observations.size,speaker==='user-b'?1:0)
+      }finally{release.resolve();await first;await f.close()}
+    }
+  })
+  await run('Continuation same speaker cancels pending send and coalesces the latest message',async()=>{
+    const entered=deferred(),release=deferred();let aborts=0
+    const f=receiverFixture({async chatObservation(){return{protocol:wire.protocol,observed:true,delay_ms:1500,continuation:true}},
+      async chatCandidate(input,seq){if(input.messageId==='first-a'){entered.resolve();await release.promise}return{protocol:wire.protocol,candidate:true,plan:await this.submit(input,seq)}},
+      async event(){aborts++}})
+    let running
+    try {
+      await f.receiver.receive(await f.ordinary('first-a',{author:{id:'user-a'}}))
+      running=fireObservation(f.receiver);await entered.promise
+      await f.receiver.receive(await f.ordinary('new-a',{author:{id:'user-a'}}))
+      release.resolve();await running
+      assert.deepEqual(f.sent,[]);assert.equal(aborts,1)
+      f.release('new-a');await fireObservation(f.receiver)
+      assert.deepEqual(f.sent,['new-a'])
+    }finally{release.resolve();await running;await f.close()}
+  })
+  await run('Continuation metadata keeps old wire shape readable and rejects impossible grants',async()=>{
+    const legacy={protocol:wire.protocol,observed:true,delay_ms:1500}
+    assert.deepEqual(wire.decodeChatObservation(legacy),legacy)
+    assert.equal(wire.decodeChatObservation({...legacy,continuation:true}).continuation,true)
+    assert.throws(()=>wire.decodeChatObservation({...legacy,observed:false,continuation:true}),/observation_shape/)
+    let header
+    const client=new BackendClient('http://127.0.0.1:8765','x'.repeat(32),'fixture','epoch',async(_url,options)=>{
+      header=options.headers['X-Taki-Observation'];return Response.json(legacy)
+    })
+    const input={...httpV2.ts_to_python.request,kind:'group',trigger:'observation'}
+    const body={requestId:input.request_id,instanceId:input.instance_id,appId:input.app_id,platform:input.platform,
+      kind:input.kind,conversationId:input.conversation_id,userId:input.user_id,messageId:input.message_id,timestampMs:input.timestamp_ms,
+      body:input.body,trigger:'observation'}
+    await client.chatObservation(body,1,input.policy)
+    assert.equal(header,'continuation-v1')
+  })
   await run('G1 zero-part finished decisions are silent, at most three evaluations with fresh IDs',async()=>{
     const candidates=[];let aborts=0
     const f=receiverFixture({async chatObservation(){return{protocol:wire.protocol,observed:true,delay_ms:1500}},

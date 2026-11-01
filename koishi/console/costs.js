@@ -31,7 +31,32 @@ export function costsView(s){
 }
 export function executionView(detail){
  const attempts=detail.model_attempts,spans=detail.spans||[],routes=spans.filter(v=>v.kind==='model_route');
- return h('section',[h('h3','模型执行详情'),h('p',routes.length?routes.map(v=>reason(v.outcome)).join(' → '):'此记录未采集路由原因；以下按实际调用记录展示。'),
+ return h('section',[chatEventsView(detail.chat_events),h('h3','模型执行详情'),h('p',routes.length?routes.map(v=>reason(v.outcome)).join(' → '):'此记录未采集路由原因；以下按实际调用记录展示。'),
  attempts==null?h('p','模型账本不可用'):!attempts.length?h('p','没有模型尝试记录；不能据此推断未记录的历史调用。'):h('ol',attempts.map(a=>h('li',[h('strong',`${a.provider} / ${a.model}`),h('p',`状态 ${({reserved:'已预留',started:'调用中',settled:'已结算',released:'预留已释放'})[a.state]||a.state} · ${a.error_code||'无错误记录'} · ${a.duration_ms==null?'耗时未采集':a.duration_ms+' ms'}`),h('p',`输入 ${number(a.usage?.input_total)} · 缓存 ${number(a.usage?.input_cached)} · 输出 ${number(a.usage?.output_total)}`),h('p',`${a.price?.currency||''} ${money(a.reference_cost_micro)} · ${a.state==='released'?'未调用，预留已释放':a.state!=='settled'?'尚未结算':a.billing_incomplete?'用量不完整':'用量记录完整'} · ${a.price?.estimated?'登记估算价':'计价快照'}`),h('p',`工具类别：${a.tool_kind||'未采集'} · 预留 ${number(a.reserved_tokens)} 加权 Token`)]))),
  h('h3','处理与发送阶段'),h('ul',spans.filter(v=>v.kind!=='model_route').map(v=>h('li',`${v.kind} · ${v.duration_ms==null?'耗时未采集':v.duration_ms+' ms'} · ${v.outcome||'结果未采集'}`))),h('p',`平台确认 ${detail.confirmed_parts} / ${detail.part_count} 部分；平台回执不代表客户端已读。`)]);
+}
+
+const eventKinds={control:'接话判断',decision:'参与判断',task:'资料任务',tool:'资料工具',research:'资料补查',context:'交流上下文',image:'图片理解',error:'处理失败',finished:'处理结束'};
+const eventValues={excluded_user:'命中不主动搭话名单',followup_disabled:'本群已关闭免 @ 续聊',platform_unapproved:'平台普通群收发尚未批准',followup_candidate:'窗口内的续聊候选',conversation_ended:'用户已结束交流',settings_saved:'交流设置已保存',window_expired:'续聊窗口已结束',observation:'群消息观察',continuation:'免 @ 续聊',settings:'交流设置',skip:'跳过',candidate:'等待语义判断',saved:'已保存',reply:'接话',respond:'接话',ignore:'跳过',set:'建立或更新',cancel:'取消',result:'结果',waiting:'等待补充',partial:'部分完成',completed:'资料已齐',cancelled:'已取消',ok:'成功',not_available:'数据不可用',no_results:'没有匹配资料',source_unavailable:'资料来源暂不可用',tool_timeout:'查询超时',query_source_changed:'资料版本已变化',knowledge_search:'知识库搜索',site_search:'Haneoka 搜索',site_read:'读取 Haneoka 资料',read_entity_fields:'读取对象字段',research_task:'连续资料任务',web_search:'联网搜索',observe:'观察',delivered:'已交给平台',failed:'失败',not_delivered:'未送达'};
+Object.assign(eventValues,{defer:'暂不接话，等待更多上下文',conversation_busy:'正在处理另一位用户发起的交流',supplement_merged:'已合并同一用户的连续补充',budget_exhausted:'本次交流额度已用完',service_disabled:'本群主动参与已关闭',success:'处理成功',proactive_skip:'本轮跳过',proactive_defer:'等待更多上下文',proactive_stale:'交流上下文已变化',model_protocol_error:'模型返回格式不符合要求',invalid_json:'判断结果格式无效',json_syntax:'结构化结果解析失败',non_text:'结果不是文字',loaded:'图片已读取',provider_unavailable:'模型服务暂不可用',quota_exceeded:'额度已用完',deadline:'处理超时',aborted:'处理已终止',expired:'请求已过期',haneoka:'Haneoka',knowledge:'已审核知识库'});
+const eventText=value=>eventValues[value];
+export function chatEventsView(events,{group=false}={}){
+ if(!Array.isArray(events)||!events.length)return group?h('p',{class:'empty-copy'},'近期还没有交流判断或资料任务记录。'):null;
+ return h('div',{class:'conversation-events'},[h('h3',group?'近期交流记录':'交流处理记录'),
+   group&&h('p',{class:'field-note'},'查看接话、跳过和资料补查的原因；只保留操作状态，不展示聊天正文。'),
+   h('ol',events.map(event=>{const data=event.data||{},parts=[];
+     for(const key of ['name','action','decision','status','reason','source'])if(eventText(data[key]))parts.push(eventText(data[key]));
+     if(data.continuation)parts.push('免 @ 续聊');
+     if(data.window_seconds!=null)parts.push(`窗口 ${data.window_seconds} 秒`);
+     if(data.research_fallback)parts.push('知识库后继续补查 Haneoka');
+     if(data.total!=null)parts.push(`字段进度 ${data.completed||0} / ${data.total}`);
+     if(data.entities!=null)parts.push(`${data.entities} 个对象`);
+     if(data.task_missing!=null)parts.push(`待补字段 ${data.task_missing}`);
+     if(data.elapsed_ms!=null)parts.push(`耗时 ${number(data.elapsed_ms)} ms`);
+     if(data.messages!=null)parts.push(`上下文 ${data.messages} 条`);
+     if(data.input_images!=null)parts.push(`输入图片 ${data.input_images} 张`);
+     if(data.loaded_images!=null)parts.push(`读取图片 ${data.loaded_images} 张`);
+     if(data.delivered!=null)parts.push(data.delivered?'已交给平台':'未交给平台');
+     return h('li',[h('div',{class:'event-heading'},[h('strong',eventKinds[event.kind]||'交流事件'),h('time',stamp(event.observed_at))]),h('p',parts.join(' · ')||'状态已记录'),h('details',[h('summary','技术记录'),h('code',JSON.stringify({request_id:event.request_id,kind:event.kind,...data}))])]);
+   }))]);
 }
