@@ -112,6 +112,7 @@ class Settings:
     chart_source: str = "moenotes"
     data_source: str = "yume"
     knowledge_dir: Path | None = None
+    knowledge_chat_version: str | None = None
     knowledge_model_dir: Path | None = None
     ai_profile_file: Path | None = None
     ai_fallback_profile_file: Path | None = None
@@ -178,6 +179,7 @@ class Settings:
         return cls(
             app_id=os.getenv("QQ_APP_ID", "").strip(),
             knowledge_dir=(CONFIG_ROOT / configured_knowledge).resolve(),
+            knowledge_chat_version=os.getenv('OURNOTES_KNOWLEDGE_CHAT_VERSION', '').strip() or None,
             knowledge_model_dir=(CONFIG_ROOT / configured_embedding).resolve() if configured_embedding else None,
             ai_profile_file=(CONFIG_ROOT / configured_profile).resolve() if configured_profile else None,
             ai_fallback_profile_file=(CONFIG_ROOT / fallback_profile).resolve() if fallback_profile else None,
