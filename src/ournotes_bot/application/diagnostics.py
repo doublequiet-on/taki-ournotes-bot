@@ -79,11 +79,13 @@ class Diagnostics:
         """Bounded operational metadata; never accepts dialogue, URLs or tool arguments."""
         def save(db):
             if kind not in ('context','image','tool','decision','error','finished'):raise ValueError('chat_event_kind')
-            fields={'messages','assistant_messages','image_markers','input_images','vision_approved',
+            fields={'messages','assistant_messages','image_markers','input_images','vision_approved','image_detail',
                     'automatic','loaded_images','status','name','decision','model_attempts','delivered'}
+            if 'image_detail' in data and data['image_detail'] not in ('none','low','high'):
+                raise ValueError('chat_event_data')
             if not set(data)<=fields or any(not (
                     type(value) is bool or type(value) is int and 0<=value<=10**6
-                    or key in ('status','name','decision') and isinstance(value,str)
+                    or key in ('status','name','decision','image_detail') and isinstance(value,str)
                     and re.fullmatch('[a-z_]{1,64}',value)) for key,value in data.items()):
                 raise ValueError('chat_event_data')
             if db.execute('SELECT count(*) FROM chat_events WHERE request_id=?',(request_id,)).fetchone()[0]>=32:

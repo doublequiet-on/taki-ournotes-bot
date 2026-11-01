@@ -3020,14 +3020,14 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
         self.agent.store.delete_messages(Request_scope(),[previous])
         self.assertFalse(self.backend.lookup(second['request_id'],'e1')['send_allowed'])
 
-    def proactive_picture(self):
+    def proactive_picture(self,detail='low'):
         from io import BytesIO
         from PIL import Image
         from unittest.mock import AsyncMock
         from ournotes_bot.application.chat_capabilities import VisionCapability
         from ournotes_bot.domain.chat_images import LoadedImage
         self.snapshot=replace(self.snapshot,profile=replace(self.snapshot.profile,provider='openai',wire_profile='openai-responses-v1'))
-        self.backend.model_runtime.capabilities.vision=Mock(return_value=VisionCapability(128,'low','fixture-vision'))
+        self.backend.model_runtime.capabilities.vision=Mock(return_value=VisionCapability(128,detail,'fixture-vision'))
         buffer=BytesIO();Image.new('RGB',(80,80),(30,100,200)).save(buffer,format='PNG')
         image=LoadedImage('pic','image/png',80,80,buffer.getvalue())
         self.agent.image_loader.load_many=AsyncMock(return_value=(image,))
@@ -3035,21 +3035,63 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
 
     async def test_proactive_text_after_picture_gets_native_image_with_original_author(self):
         bodies=ChatAgentTests.capture_native_bodies(self)
-        attachments=self.proactive_picture()
+        attachments=self.proactive_picture(detail='high')
         self.current_user='u2';self.observation('',attachments=attachments)
         self.now+=.01;self.current_user='u1'
         value=self.observation('额',seq=2);self.tick+=1.6
-        self.client.request.return_value=self.result('{"participation":"reply","text":"接住图里的情绪"}')
+        self.client.request.side_effect=[self.result('{"participation":"reply","text":"","delay_seconds":null}'),self.result('接住图里的情绪')]
         plan,attempts,_=await self.candidate(value)
-        self.assertEqual(len(attempts),1)
+        self.assertEqual(len(attempts),2)
         visual=next(m for m in bodies[-1]['input'] if isinstance(m.get('content'),list))
         source=json.loads(visual['content'][0]['text'])
         self.assertEqual((source['speaker_id'],source['message_id']),('u2','observed1'))
         self.assertEqual(visual['content'][-1]['type'],'input_image')
+        self.assertEqual(visual['content'][-1]['detail'],'high')
+        events=self.backend.diagnostics.read(plan['request_id'])['chat_events']
+        self.assertEqual(next(e['data']['image_detail'] for e in events if e['kind']=='context'),'high')
         self.agent.image_loader.load_many.assert_awaited_once()
         self.event(plan,'intent');self.event(plan,'ack')
         persisted=' '.join(row[0] for row in self.agent.store.db.execute('SELECT context FROM runs'))
         self.assertNotIn('PRIVATE_PICTURE',persisted);self.assertNotIn('base64,',persisted)
+
+    async def test_proactive_picture_survives_context_trimming(self):
+        bodies=ChatAgentTests.capture_native_bodies(self)
+        self.current_user='u2';self.observation('',attachments=self.proactive_picture())
+        self.now+=.01;self.current_user='u1'
+        value=self.observation('同一张卡的两个技能，先升哪一个？',seq=2);self.tick+=1.6
+        self.client.request.side_effect=[self.result('{"participation":"reply","text":"","delay_seconds":null}'),self.result('先看两个技能的变化和消耗')]
+        original=self.agent.initial_context
+        def constrained(work,messages,tools):
+            def bound(work,rows,tools):
+                return 1000*len(rows)+24000*sum(bool(row.get('images')) for row in rows)
+            with patch.object(self.backend.model_runtime,'input_bound',side_effect=bound):
+                return original(work,messages,tools)
+        with patch.object(self.agent,'initial_context',side_effect=constrained):
+            plan,attempts,_=await self.candidate(value)
+        self.assertEqual(len(attempts),2)
+        self.assertTrue(plan['parts'])
+        events=self.backend.diagnostics.read(plan['request_id'])['chat_events']
+        self.assertEqual(next(e['data']['image_detail'] for e in events if e['kind']=='context'),'low')
+        for body in bodies:
+            visual=next(m for m in body['input'] if isinstance(m.get('content'),list))
+            source=json.loads(visual['content'][0]['text'])
+            self.assertEqual((source['speaker_id'],source['message_id']),('u2','observed1'))
+            self.assertEqual(visual['content'][-1]['type'],'input_image')
+
+    async def test_proactive_selected_picture_over_budget_stops_before_model(self):
+        self.observation('',attachments=self.proactive_picture())
+        self.now+=.01
+        value=self.observation('同一张卡的两个技能',seq=2);self.tick+=1.6
+        original=self.agent.initial_context
+        def constrained(work,messages,tools):
+            with patch.object(self.backend.model_runtime,'input_bound',side_effect=lambda work,rows,tools:
+                              1000*len(rows)+40000*sum(bool(row.get('images')) for row in rows)):
+                return original(work,messages,tools)
+        with patch.object(self.agent,'initial_context',side_effect=constrained):
+            plan,attempts,_=await self.candidate(value)
+        self.assertEqual(attempts,[])
+        self.assertEqual(plan['parts'],[])
+        self.client.request.assert_not_awaited()
 
     async def test_proactive_missing_vision_keeps_text_without_download(self):
         bodies=ChatAgentTests.capture_native_bodies(self)
@@ -3057,7 +3099,8 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
         self.backend.model_runtime.capabilities.vision.return_value=None
         self.observation('',attachments=attachments);self.now+=.01
         value=self.observation('接着聊',seq=2);self.tick+=1.6
-        self.client.request.return_value=self.result('{"participation":"skip"}')
+        self.client.request.side_effect=None
+        self.client.request.return_value=self.result('{"participation":"skip","text":"","delay_seconds":null}')
         await self.candidate(value)
         self.agent.image_loader.load_many.assert_not_awaited()
         self.assertFalse(any(isinstance(m.get('content'),list) for m in bodies[-1]['input']))
@@ -3068,8 +3111,17 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
         self.observation('',attachments=self.proactive_picture());self.now+=.01
         value=self.observation('接着聊',seq=2);self.tick+=1.6
         self.agent.image_loader.load_many.side_effect=ImageError('image_not_available')
-        self.client.request.return_value=self.result('{"participation":"skip"}')
-        plan,_,_=await self.candidate(value)
+        self.client.request.side_effect=None
+        self.client.request.return_value=self.result('{"participation":"skip","text":"","delay_seconds":null}')
+        original=self.agent.initial_context
+        def constrained(work,messages,tools):
+            def bound(work,rows,tools):
+                return 1000*len(rows)+24000*sum('image_status' in json.loads(row['content'])
+                    for row in rows if row['role']=='user')
+            with patch.object(self.backend.model_runtime,'input_bound',side_effect=bound):
+                return original(work,messages,tools)
+        with patch.object(self.agent,'initial_context',side_effect=constrained):
+            plan,_,_=await self.candidate(value)
         self.agent.image_loader.load_many.assert_awaited_once()
         rows=[json.loads(m['content']) for m in bodies[-1]['input'] if m['role']=='user']
         self.assertEqual(rows[0]['image_status'],'image_not_available')
@@ -3078,6 +3130,7 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
         self.assertEqual([e['kind'] for e in events['chat_events']],['image','context','decision','finished'])
         self.assertEqual(events['chat_events'][0]['data']['status'],'image_not_available')
         self.assertEqual(events['chat_events'][1]['data']['input_images'],0)
+        self.assertEqual(events['chat_events'][1]['data']['image_detail'],'none')
         self.assertEqual(events['chat_events'][2]['data'],dict(decision='skip',model_attempts=1))
         self.assertNotIn('PRIVATE_PICTURE',json.dumps(events))
         detail=self.backend.admin.detail(plan['request_id'])['sections']['request']['data']
@@ -3088,12 +3141,13 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
         self.agent.services.policy.return_value=self.policy
         self.observation('',attachments=self.proactive_picture());self.now+=.01
         value=self.observation('看这个',seq=2);self.tick+=1.6
-        self.client.request.return_value=self.result('{"participation":"reply","text":"看到了蓝色方块"}')
+        self.client.request.side_effect=[self.result('{"participation":"reply","text":"","delay_seconds":null}'),self.result('看到了蓝色方块')]
         first,_,_=await self.candidate(value)
         self.event(first,'intent');self.event(first,'ack')
         bodies=ChatAgentTests.capture_native_bodies(self)
         self.now+=.01;value=self.observation('换个话题',seq=3);self.tick+=1.6
-        self.client.request.return_value=self.result('{"participation":"skip"}')
+        self.client.request.side_effect=None
+        self.client.request.return_value=self.result('{"participation":"skip","text":"","delay_seconds":null}')
         await self.candidate(value,2)
         self.assertFalse(any(isinstance(m.get('content'),list) for m in bodies[-1]['input']))
 
@@ -3101,7 +3155,8 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
         self.observation('',attachments=self.proactive_picture())
         self.now+=61
         value=self.observation('接着聊',seq=2);self.tick+=1.6
-        self.client.request.return_value=self.result('{"participation":"skip"}')
+        self.client.request.side_effect=None
+        self.client.request.return_value=self.result('{"participation":"skip","text":"","delay_seconds":null}')
         await self.candidate(value)
         self.agent.image_loader.load_many.assert_not_awaited()
 
@@ -3109,7 +3164,8 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
         self.observation('',attachments=self.proactive_picture())
         for seq in range(2,6):value=self.observation('其他讨论',seq=seq)
         self.tick+=1.6
-        self.client.request.return_value=self.result('{"participation":"skip"}')
+        self.client.request.side_effect=None
+        self.client.request.return_value=self.result('{"participation":"skip","text":"","delay_seconds":null}')
         await self.candidate(value)
         self.agent.image_loader.load_many.assert_not_awaited()
 
@@ -3118,13 +3174,13 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
         self.agent.services.policy.return_value=self.policy
         self.observation('',attachments=self.proactive_picture());self.now+=.01
         value=self.observation('看这个',seq=2);self.tick+=1.6
-        self.client.request.return_value=self.result('{"participation":"reply","text":"看到了蓝色方块"}')
+        self.client.request.side_effect=[self.result('{"participation":"reply","text":"","delay_seconds":null}'),self.result('看到了蓝色方块')]
         first,_,_=await self.candidate(value)
         self.event(first,'intent');self.event(first,'ack')
         original=self.agent.store.read(Request_scope(),['observed1'])['messages'][0]['text']
         self.agent.images.forget_scope(self.agent.image_scope(self.backend.works[first['delivery_id']].request))
         self.now+=.01;value=self.observation('再补充一点',seq=3);self.tick+=1.6
-        self.client.request.return_value=self.result('{"participation":"reply","text":"接着说"}')
+        self.client.request.side_effect=[self.result('{"participation":"reply","text":"","delay_seconds":null}'),self.result('接着说')]
         second,_,_=await self.candidate(value,2)
         self.event(second,'intent');self.event(second,'ack')
         self.assertEqual(self.agent.store.read(Request_scope(),['observed1'])['messages'][0]['text'],original)
@@ -3290,6 +3346,50 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
         self.assertTrue(self.backend.knowledge.validate_current(work.knowledge_scope_leases))
         return file,key,old,answer
 
+    async def staged_reviewed_evidence(self, *, invalidate=False):
+        from ournotes_bot.domain.model_calls import ToolCall
+        body='红色工程夹具：同一测试对象的甲方案花100材料获得10分，乙花50材料获得8分；不是游戏事实。'
+        file=NativeRuntimeTests.reviewed_fixture(self,body)
+        self.snapshot=replace(self.snapshot,profile=replace(self.snapshot.profile,provider='openai',wire_profile='openai-responses-v1'))
+        bodies=[]
+        async def respond(profile,request,**kwargs):
+            bodies.append(json.loads(json.dumps(request)))
+            if len(bodies)==1:
+                return self.result(calls=(ToolCall('evidence','knowledge_search',
+                    '{"server":"jp","date":null,"version":null,"query":"红色","mode":"compare"}'),))
+            if len(bodies)==2:
+                if invalidate:file.write_text(file.read_text(encoding='utf-8')+'\nchanged',encoding='utf-8')
+                return self.result('{"participation":"reply","text":"","delay_seconds":null}')
+            return self.result('仅按工程夹具比较，不作为游戏结论')
+        self.client.request.side_effect=respond
+        value=self.observation('比较红色工程夹具的两个方案',seq=1);self.tick+=1.6
+        plan,attempts,_=await self.candidate(value)
+        return body,bodies,plan,attempts
+
+    async def test_staged_reviewed_evidence_reaches_decision_and_generation(self):
+        body,bodies,plan,attempts=await self.staged_reviewed_evidence()
+        self.assertEqual(len(attempts),3)
+        self.assertTrue(plan['parts'])
+        evidence=[]
+        for request in bodies[1:]:
+            output=json.loads(next(item['output'] for item in request['input']
+                if item.get('type')=='function_call_output' and item['call_id']=='evidence'))
+            self.assertEqual(output['status'],'ok')
+            data=json.loads(output['data']);evidence.append(data)
+            self.assertIn(body,'\n'.join(p['text'] for p in data['passages']))
+            self.assertEqual(data['documents'][0]['doc_id'],'fixture')
+            self.assertEqual(data['documents'][0]['approval_revision'],1)
+            self.assertEqual(data['documents'][0]['source_refs'][0]['uri'],'fixture://isolated')
+            self.assertEqual(data['documents'][0]['servers'],['jp'])
+            self.assertIn('不是游戏事实',data['documents'][0]['limitations'])
+        self.assertEqual(evidence[0],evidence[1])
+
+    async def test_staged_reviewed_source_change_blocks_generation(self):
+        _,bodies,plan,attempts=await self.staged_reviewed_evidence(invalidate=True)
+        self.assertEqual(len(bodies),2)
+        self.assertEqual(len(attempts),2)
+        self.assertEqual(plan['parts'],[])
+
     async def test_real_knowledge_unmentioned_success_updates_scope(self):
         from ournotes_bot.domain.model_calls import ToolCall
         bodies=ChatAgentTests.capture_native_bodies(self)
@@ -3405,7 +3505,7 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
         result,attempts,candidate=await self.candidate(value)
         self.assertEqual(len(attempts),1)
         self.assertIsNotNone(candidate[0].followup)
-        self.assertIn('无关或无法判断时只输出',bodies[0]['messages'][0]['content'])
+        self.assertIn('无关或无法判断时选择 skip，并遵守本轮输出格式',bodies[0]['messages'][0]['content'])
         messages=bodies[0]['messages'][1:]
         self.assertEqual(len(messages),3)
         self.assertIn('A和B谁比较权威',messages[0]['content'])
@@ -3547,6 +3647,10 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
         self.assertNotIn('text',bodies[1])
         self.assertEqual([b['max_output_tokens'] for b in bodies],[self.snapshot.profile.max_output_tokens]*2)
         self.assertNotIn('participation',bodies[1]['input'][0]['content'])
+        from ournotes_bot.application.chat_agent import CHAT_SEMANTICS
+        for body in bodies:
+            self.assertIn(CHAT_SEMANTICS,body['input'][0]['content'])
+        self.assertNotIn('text 里只写',bodies[0]['input'][0]['content'])
 
     async def test_staged_reply_keeps_six_call_budget_after_tools(self):
         from ournotes_bot.domain.model_calls import ToolCall
@@ -3580,9 +3684,39 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
         self.assertEqual(bodies[0]['text']['format']['schema']['additionalProperties'],False)
         return plan
 
-    async def test_structured_proactive_reply(self):
+    async def test_structured_proactive_reply_cannot_bypass_generation(self):
         plan=await self.structured_decision({'participation':'reply','text':'我喜欢这段鼓点','delay_seconds':None})
-        self.assertEqual(plan['parts'][0]['text'],'我喜欢这段鼓点')
+        self.assertEqual(plan['parts'],[])
+        self.assertEqual(self.client.request.call_count,1)
+        view=self.backend.admin.view(self.backend.ledger.request(plan['request_id']))
+        self.assertEqual(view['delivery_reason'],'proactive_error')
+
+    def test_staged_decision_strict_contract(self):
+        from ournotes_bot.application.chat_proactive_runtime import ProactiveChat
+        from ournotes_bot.domain.model_calls import ModelError
+        parse=ProactiveChat.parse_staged_decision
+        for mode,delay in [('reply',None),('skip',None),('defer',2),('defer',5)]:
+            value=dict(participation=mode,text='',delay_seconds=delay)
+            self.assertEqual(parse(json.dumps(value)),value)
+        invalid=[None,[],{}, {'participation':'reply','text':''},
+                 dict(participation='skip',text='',delay_seconds=2),
+                 dict(participation='reply',text='正文',delay_seconds=None),
+                 dict(participation='skip',text='',delay_seconds=None,reason='多余字段')]
+        invalid += [dict(participation='defer',text='',delay_seconds=d) for d in [None,True,2.0,1,6]]
+        for value in invalid:
+            with self.subTest(value=value),self.assertRaises(ModelError):parse(json.dumps(value))
+        for text in ['not json','```json\n{"participation":"skip","text":"","delay_seconds":null}\n```']:
+            with self.subTest(text=text),self.assertRaises(ModelError):parse(text)
+
+    async def test_staged_empty_generation_does_not_publish_or_commit_reply(self):
+        self.snapshot=replace(self.snapshot,profile=replace(self.snapshot.profile,provider='openai',wire_profile='openai-responses-v1'))
+        self.client.request.side_effect=[self.result('{"participation":"reply","text":"","delay_seconds":null}'),self.result('   ')]
+        value=self.observation();self.tick+=1.6
+        plan,attempts,_=await self.candidate(value)
+        self.assertEqual(len(attempts),2)
+        self.assertEqual(plan['parts'],[])
+        events=self.backend.diagnostics.read(plan['request_id'])['chat_events']
+        self.assertFalse(any(e['kind']=='decision' and e['data']['decision']=='reply' for e in events))
 
     async def test_structured_proactive_skip(self):
         plan=await self.structured_decision({'participation':'skip','text':'','delay_seconds':None})
@@ -3602,11 +3736,11 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
         self.client.request.return_value=self.result('{"participation":"skip"}')
         skipped,_,_=await self.candidate(value)
         prompt=bodies[-1]['messages'][0]['content']
-        self.assertIn('最近群友及自己已送达的发言',prompt)
-        self.assertIn('别人说过的事、数字或观点换个说法',prompt)
-        self.assertIn('自己的反应、看法',prompt)
-        self.assertIn('不靠抛出问题让别人继续说',prompt)
-        self.assertIn('不要为了接话编造',prompt)
+        self.assertIn('比较最近发言',prompt)
+        self.assertIn('重复群友或自己已说过的内容，也选 skip',prompt)
+        self.assertIn('值得交流的不同看法或贴切玩笑，都可以 reply',prompt)
+        self.assertIn('不靠追问续聊',prompt)
+        self.assertIn('不编造原因、经历或游戏规则',prompt)
         self.assertEqual(skipped['parts'],[])
         self.assertEqual(self.agent.store.read(Request_scope(),[value['message_id']])['messages'],[])
         self.now+=.01;self.current_user='u1'
@@ -3628,6 +3762,8 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
         self.client.request.return_value=self.result('我在听。')
         direct,_=await self.prepare_native('/聊 在吗',seq=2)
         self.assertNotIn('这是未点名的群聊观察',bodies[-1]['messages'][0]['content'])
+        from ournotes_bot.application.chat_agent import CHAT_SEMANTICS
+        self.assertIn(CHAT_SEMANTICS,bodies[-1]['messages'][0]['content'])
         self.assertIn('根据已有结果回答',bodies[-1]['messages'][-1]['content'])
         self.assertEqual(direct['parts'][0]['text'],'我在听')
         self.event(direct,'intent');self.event(direct,'ack')
@@ -3995,15 +4131,16 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
             AttemptResult('ok',Usage(100,0,10,None,110,'known'),text='公开搜索资料。',
                 provider_actions=(ProviderAction('web_search',1),),native_calls=1,
                 citations=({'url':'https://www.python.org/downloads/release/python-3130/','title':'Python release'},)),
-            self.result('{"participation":"reply","text":"查到了发布日期。"}')]
+            self.result('{"participation":"reply","text":"","delay_seconds":null}'),
+            self.result('查到了发布日期。')]
         responses=iter(self.client.request.side_effect);bodies=[]
         async def capture(profile,body,**kwargs):
             bodies.append(json.loads(json.dumps(body)))
             return next(responses)
         self.client.request.side_effect=capture
         plan,attempts,candidate=await self.candidate(value)
-        self.assertEqual(len(attempts),3)
-        self.assertEqual([bool(body.get('text',{}).get('format')) for body in bodies],[True,False,True])
+        self.assertEqual(len(attempts),4)
+        self.assertEqual([bool(body.get('text',{}).get('format')) for body in bodies],[True,False,True,False])
         self.assertEqual(plan['parts'][0]['business_status'],'success')
         self.event(plan,'intent');self.event(plan,'ack')
         self.assertTrue(candidate[0].reserved_cost_micro<=50000)
