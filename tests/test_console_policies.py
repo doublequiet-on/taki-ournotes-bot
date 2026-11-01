@@ -3401,11 +3401,15 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
         plan,_,_=await self.candidate(value)
         self.save_conversation_settings(excluded_users=[dict(user_id='u1',label='成员')])
         self.assertTrue(self.backend.lookup(plan['request_id'],'e1')['send_allowed'])
+        self.current_user='u2';self.now+=.01
+        other=self.request('settings-intervening',3);other.update(body='其他人插话',trigger='observation')
+        self.assertFalse(self.agent.proactive.observe(Request.parse(other,'fixture','app',self.now)))
+        self.assertTrue(self.backend.lookup(plan['request_id'],'e1')['send_allowed'])
         self.save_conversation_settings(followup_enabled=False)
         self.assertFalse(self.backend.lookup(plan['request_id'],'e1')['send_allowed'])
         self.agent.services.policy.return_value=self.policy
         self.current_user='u2';self.now+=.01
-        value=self.observation('普通主动话题',seq=3);self.tick+=1.6
+        value=self.observation('普通主动话题',seq=4);self.tick+=1.6
         plan,_,_=await self.candidate(value,2)
         self.save_conversation_settings(excluded_users=[dict(user_id='u1',label='成员'),dict(user_id='u2',label='其他成员')])
         self.assertFalse(self.backend.lookup(plan['request_id'],'e1')['send_allowed'])

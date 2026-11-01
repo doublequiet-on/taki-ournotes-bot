@@ -86,7 +86,8 @@ class ProactiveChat:
             self.followups.resize(scope,after['followup_window_seconds'])
         group=self.controller.groups.get(scope)
         if group:
-            group.rows[:]=[row for row in group.rows if row.message.speaker_id not in excluded]
+            group.rows[:]=[row for row in group.rows if row.message.speaker_id not in excluded
+                or row.message.speaker_id==group.continuation_user_id]
         for work in tuple(self.agent.runtime.backend.works.values()):
             if work.request.conversation_id!=group_id or work.proactive is None:continue
             if ((work.continuation and not after['followup_enabled']) or (not work.continuation
