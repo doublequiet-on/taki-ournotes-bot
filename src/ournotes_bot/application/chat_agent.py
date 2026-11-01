@@ -510,6 +510,9 @@ class ChatAgent:
             prompt=prompt.replace('人格初稿是 legacy-derived，尚非剧情研究审核定稿。','人格采用以下人工批准档案。')
             prompt+='\n人工批准人格档案：\n'+persona['prompt']
         prompt+='\n'+CHAT_SEMANTICS+SOURCE_SEMANTICS
+        scope_note=('本轮资料查询范围已按产品约定确定为日服；用户的游玩服务器只是背景，并未要求跨服核对。直接回答数值和分析，来源尾注由程序添加。'
+                    if chat_query_question(question)!=question else '')
+        if scope_note:prompt+='\n'+scope_note
         if work.proactive is None or getattr(work,'continuation',False):prompt+=RESEARCH_SEMANTICS
         natural_prompt=prompt
         staged=work.proactive is not None and work.model_snapshot.profile.wire_profile=='openai-responses-v1'
@@ -606,6 +609,7 @@ class ChatAgent:
                     closing=('本轮检索预算结束。结合当前群聊和已有结果决定是否接话，按 reply/skip/defer 的 JSON 格式输出，不要再调用工具。'
                              if work.proactive is not None else '本轮检索预算结束。根据已有结果回答；缺失细节说明具体缺口。不要再调用工具。')
                     if work.chat_task.goal:closing+='\n任务完成情况：'+json.dumps(work.chat_task.coverage(),ensure_ascii=False)+'；逐项回应，缺资料的项目直接说具体缺口。'
+                    if scope_note:closing+='\n'+scope_note
                     messages.append({'role':'system','content':closing})
                 reservation=final_attempt if final else None
                 try:
