@@ -251,6 +251,16 @@ class ProactiveController:
     def _cost(group):
         return sum(ticket.charged_cost for ticket in group.tickets.values())
 
+    def remaining_cost(self,scope):
+        group=self.groups.get(scope)
+        opportunity=group.opportunity if group else None
+        if opportunity is None or self.clock()>=opportunity.expires_at:return None
+        # Only settled cost reduces the next candidate's estimate. Unknown
+        # tickets remain held by _cost and the persistent attempt ledger.
+        spent=sum(ticket.cost_micro or 0 for ticket in group.tickets.values()
+                  if ticket.opportunity_id==opportunity.id)
+        return max(0,opportunity.cost_micro-spent)
+
     def candidate(self, scope, *, reserve_cost_micro):
         if type(reserve_cost_micro) is not int or reserve_cost_micro < 0:
             raise ValueError('proactive_reservation_invalid')
@@ -265,6 +275,10 @@ class ProactiveController:
         deferred = group.deferred_at is not None
         if not group.dirty and not (deferred and now >= group.deferred_at):
             return None
+        remaining=self.remaining_cost(scope)
+        if remaining is not None:
+            if not remaining:return None
+            reserve_cost_micro=min(reserve_cost_micro,remaining)
         if (len(group.tickets) >= group.policy.max_calls_per_hour
                 or len(group.replies) >= group.policy.max_replies_per_hour
                 or self._cost(group) + reserve_cost_micro > group.policy.max_cost_micro_per_hour):

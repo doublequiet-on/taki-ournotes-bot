@@ -1201,7 +1201,8 @@ class ProactiveControllerTests(unittest.TestCase):
         second = self.ready()
         self.assertIsNotNone(second)
         self.assertEqual(second.messages[-1].text, '已经有人回答了')
-        self.assertEqual(self.controller.status(self.a)['hourly_cost_micro'], 117)
+        self.assertEqual(second.reserved_cost_micro,83)
+        self.assertEqual(self.controller.status(self.a)['hourly_cost_micro'],100)
 
     def test_defer_is_version_bound_and_has_at_most_two_rechecks(self):
         self.observe()

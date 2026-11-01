@@ -3777,6 +3777,24 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
         self.assertEqual(attempts,[]);self.assertFalse(third['send_allowed'])
         self.assertEqual(len(bodies),6)
 
+    async def test_recheck_fits_remaining_original_hourly_cost_envelope(self):
+        from ournotes_bot.application.chat_jobs import maximum_cost_micro
+        from ournotes_bot.application.chat_capabilities import WebCapability
+        self.snapshot=replace(self.snapshot,profile=replace(self.snapshot.profile,provider='openai',wire_profile='openai-responses-v1'))
+        bound=int(maximum_cost_micro(self.snapshot.profile)*self.agent.budget.model_calls)
+        self.policy=replace(self.policy,proactive=replace(self.policy.proactive,max_cost_micro_per_hour=bound,cooldown_seconds=0))
+        self.agent.services.policy.return_value=self.policy
+        self.backend.model_runtime.capabilities.web=Mock(return_value=WebCapability(1,10000,'fixture-web'))
+        self.client.request.return_value=self.result('{"participation":"skip","text":"","delay_seconds":null}')
+        value=self.observation();self.tick+=1.6
+        _,first_attempts,one=await self.candidate(value)
+        self.assertEqual(len(first_attempts),1)
+        self.now+=.01;value=self.observation('补充新条件',seq=2);self.tick+=1.6
+        _,second_attempts,two=await self.candidate(value,2)
+        self.assertEqual(len(second_attempts),1)
+        self.assertEqual(one[0].opportunity_id,two[0].opportunity_id)
+        self.assertLess(two[0].reserved_cost_micro,one[0].reserved_cost_micro)
+
     async def test_shared_tool_exhaustion_goes_straight_to_held_finals(self):
         from ournotes_bot.domain.model_calls import ToolCall
         self.snapshot=replace(self.snapshot,profile=replace(self.snapshot.profile,provider='openai',wire_profile='openai-responses-v1',

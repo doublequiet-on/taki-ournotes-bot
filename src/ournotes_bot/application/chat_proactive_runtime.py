@@ -113,6 +113,9 @@ class ProactiveChat:
         policy=self.configured(request,snapshot)
         if policy is None:return None
         model_cost=maximum_cost_micro(snapshot.profile)*self.agent.budget.model_calls
+        remaining=self.controller.remaining_cost(self.scope(request))
+        if remaining is not None:model_cost=min(model_cost,remaining)
+        if model_cost<=0:return None
         cost=model_cost
         web=self.owners()[1].web(snapshot)
         if web:
@@ -136,7 +139,7 @@ class ProactiveChat:
         followup=self.followups.match(self.scope(request),request.message_id)
         if followup is not None:candidate=replace(candidate,followup=followup)
         job=service_request_id('proactive',request.instance_id,request.app_id,request.conversation_id,candidate.candidate_id)
-        try:self.agent.service_budget.check(policy,'proactive',snapshot.profile,job,cost,
+        try:self.agent.service_budget.check(policy,'proactive',snapshot.profile,job,candidate.reserved_cost_micro,
             reply_times=self.agent.store.proactive_replies(request.scope))
         except ServiceError:
             self.controller.decide(candidate,'skip',actual_cost_micro=0);return None
