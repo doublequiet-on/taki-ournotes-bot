@@ -3734,7 +3734,7 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
         self.backend.knowledge=knowledge
         def call(name,args):return self.result(calls=(ToolCall(name,'knowledge_search',json.dumps(args)),))
         self.client.request.side_effect=[call('start',dict(server='intl',date='2020-01-01',version=None)),self.result('国际服规则')]
-        first,_=await self.prepare_native('/聊 国际服2020-01-01规则',seq=1)
+        first,_=await self.prepare_native('/聊 按国际服查询2020-01-01规则',seq=1)
         self.event(first,'intent');self.event(first,'ack')
         key=(self.agent.context.scope(self.backend.works[first['delivery_id']].request),'u1')
         self.client.request.side_effect=[call('candidate',dict(server='jp',date=None,version=None,followup=True)),
@@ -4254,7 +4254,7 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
         self.backend.knowledge=knowledge
         for serial,(server,publication) in enumerate((('jp','one'),('intl','one'),('intl','two')),1):
             knowledge.approved_set_revision=publication
-            value=self.observation('日服技能机制' if server=='jp' else '国际服技能机制',seq=serial);self.tick+=1.6
+            value=self.observation('按日服查询技能机制' if server=='jp' else '按国际服查询技能机制',seq=serial);self.tick+=1.6
             self.client.request.side_effect=[self.result(calls=(ToolCall(str(serial),'knowledge_search',
                 json.dumps(dict(server=server,date=None,version=None,query='技能机制'))),)),
                 self.result('{"participation":"skip"}')]
