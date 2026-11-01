@@ -344,6 +344,7 @@ class ChatAgent:
     def initial_context(self,work,messages,tools):
         """Trim complete old exchanges before the function transcript starts."""
         protected={work.request.message_id}
+        protected.update(row.message_id for row in work.chat_additions)
         if work.proactive is not None:
             recent_reply=next((json.loads(item['content']) for item in reversed(messages) if item['role']=='assistant'),None)
             if recent_reply:
@@ -351,6 +352,8 @@ class ChatAgent:
                 if recent_reply.get('reply_to'):protected.add(recent_reply['reply_to'])
         if work.proactive is not None and work.proactive.followup is not None:
             protected.update((work.proactive.followup.source_id,work.proactive.followup.message_id))
+            protected.update(row.message_id for row in work.proactive.messages
+                if row.speaker_id==work.request.user_id and row.message_id in work.proactive.followup.observed_ids)
         if work.request.reference:protected.add(work.request.reference['message_id'])
         def required(message):
             if message['role']=='system':return True
