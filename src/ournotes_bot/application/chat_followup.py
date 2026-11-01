@@ -102,6 +102,11 @@ class Followups:
         self.sweep()
         return self.questions.get((scope,user_id))
 
+    def resize(self,scope,window):
+        for key,question in tuple(self.questions.items()):
+            if key[0]==scope:self._set(key,replace(question,window=window))
+        self.sweep()
+
     def clear(self, scope, user_id=None):
         for key in tuple(self.questions):
             if key[0]==scope and (user_id is None or key[1]==user_id):self._remove(key)

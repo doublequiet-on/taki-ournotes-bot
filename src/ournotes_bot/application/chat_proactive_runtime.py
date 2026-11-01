@@ -82,6 +82,8 @@ class ProactiveChat:
         scope=(self.agent.runtime.backend.instance_id,self.agent.runtime.backend.app_id,'qq','group',group_id)
         excluded={row['user_id'] for row in after['excluded_users']}
         if not after['followup_enabled']:self.followups.clear(scope)
+        elif before['followup_window_seconds']!=after['followup_window_seconds']:
+            self.followups.resize(scope,after['followup_window_seconds'])
         group=self.controller.groups.get(scope)
         if group:
             group.rows[:]=[row for row in group.rows if row.message.speaker_id not in excluded]
@@ -157,9 +159,9 @@ class ProactiveChat:
                 if re.fullmatch(r'(?:不用了|先这样|先不查了|停止|结束|算了)[。！!~～\s]*',request.body.strip()):
                     self.agent.runtime.backend.finish(active,'aborted')
                     self.followups.clear(scope,request.user_id)
-                    if hasattr(self.agent,'tasks'):self.agent.tasks.clear(request.scope,request.user_id)
+                    self.agent.tasks.clear(request.scope,request.user_id)
                     self.control_event(request,'conversation_ended');return False
-                if active.chat_coalesce_until and time.monotonic()<active.chat_coalesce_deadline:
+                if settings['followup_enabled'] and active.chat_coalesce_until and time.monotonic()<active.chat_coalesce_deadline:
                     if (request.message_id not in {row.message_id for row in active.chat_additions}
                             and len(active.chat_additions)<12
                             and sum(len(row.text.encode()) for row in active.chat_additions)+len(request.body.encode())<=8192):
@@ -171,7 +173,7 @@ class ProactiveChat:
             followup=self.followups.match(scope,request.message_id) if settings['followup_enabled'] else None
             if followup is not None and re.fullmatch(r'(?:不用了|先这样|先不查了|停止|结束|算了)[。！!~～\s]*',request.body.strip()):
                 self.followups.clear(scope,request.user_id);self.controller.cancel(scope)
-                if hasattr(self.agent,'tasks'):self.agent.tasks.clear(request.scope,request.user_id)
+                self.agent.tasks.clear(request.scope,request.user_id)
                 self.control_event(request,'conversation_ended')
                 return False
             if followup is not None:
@@ -200,7 +202,8 @@ class ProactiveChat:
         followup=self.followups.match(self.scope(request),request.message_id) if settings['followup_enabled'] else None
         continuation=followup is not None
         if continuation:
-            if not self.platform_allowed(request):return None
+            if not self.platform_allowed(request):
+                self.control_event(request,'platform_unapproved');return None
             snapshot=self.agent.runtime.config.snapshot().for_group(request.conversation_id)
             policy=self.configured(request,snapshot,continuation=True)
         else:

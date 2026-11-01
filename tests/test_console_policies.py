@@ -568,6 +568,10 @@ class ModelAdminTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaisesRegex(ModelError,'model_config_conflict'):
             self.admin.save_chat_settings('g',{**body,'operation_id':'d'*32})
         self.assertEqual(self.admin.chat_settings('g')['settings'],saved['settings'])
+        from ournotes_bot.application.model_admin import ModelAdmin
+        restored=ModelAdmin(self.runtime,self.admin.db.execute('PRAGMA database_list').fetchone()[2])
+        self.addAsyncCleanup(restored.close)
+        self.assertEqual(restored.chat_settings('g')['settings'],saved['settings'])
         self.client.request.assert_not_called()
 
     async def test_chat_settings_reject_duplicate_ids_and_invalid_window(self):
@@ -3308,6 +3312,11 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
         self.assertEqual(row['user_key'],usage.key('user',work.model_subject))
         self.event(followup,'intent');self.event(followup,'ack')
         self.assertIsNotNone(self.agent.proactive.followups.current(candidate[0].scope,'u1'))
+        self.now+=.01
+        value=self.observation('下一部分也这样看',seq=3);self.tick+=1.6
+        self.client.request.return_value=self.result('{"participation":"reply","text":"继续下一部分"}')
+        second,_,_=await self.candidate(value,2)
+        self.assertTrue(second['send_allowed'])
 
     async def test_excluded_user_can_address_then_continue_and_other_group_is_independent(self):
         self.save_conversation_settings(excluded_users=[dict(user_id='u1',label='同名成员')])
@@ -3322,6 +3331,21 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
         followup,_,candidate=await self.candidate(value)
         self.assertTrue(candidate[0].continuation);self.assertTrue(followup['send_allowed'])
         self.assertTrue(any(row['data'].get('status')=='excluded_user' for row in self.backend.diagnostics.group_events('g1')))
+
+    async def test_continuation_uses_primary_budget_fallback_and_receipt_projection(self):
+        runtime=ChatBudgetRoutingTests.configure(self)
+        self.agent.services.policy.return_value=None
+        self.client.request.return_value=self.result('可以继续。')
+        plan,_=await self.prepare_native('/聊 开始吧')
+        self.event(plan,'intent');self.event(plan,'ack');self.now+=.01
+        value=self.observation('接着看',seq=2);self.tick+=1.6
+        self.client.request.return_value=self.result('{"participation":"reply","text":"继续看"}')
+        reply,_,_=await self.candidate(value)
+        work=self.backend.works[reply['delivery_id']]
+        self.assertTrue(work.budget_fallback);self.assertTrue(reply['send_allowed'])
+        self.event(reply,'intent');self.event(reply,'ack')
+        stored=self.agent.store.read(work.request.scope,['accepted-'+reply['request_id'][:8]])['messages']
+        self.assertEqual(stored[0]['text'],'继续看')
 
     async def test_window_and_platform_switches_still_gate_continuation(self):
         self.agent.services.policy.return_value=None
@@ -3876,7 +3900,7 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
         result,attempts,candidate=await self.candidate(value)
         self.assertEqual(len(attempts),1)
         self.assertIsNotNone(candidate[0].followup)
-        self.assertIn('无关或无法判断时选择 skip，并遵守本轮输出格式',bodies[0]['messages'][0]['content'])
+        self.assertIn('明确在回应别人或无法确定交流对象时 skip',bodies[0]['messages'][0]['content'])
         messages=bodies[0]['messages'][1:]
         self.assertEqual(len(messages),3)
         self.assertIn('A和B谁比较权威',messages[0]['content'])

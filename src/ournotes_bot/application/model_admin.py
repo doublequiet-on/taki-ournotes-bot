@@ -75,6 +75,7 @@ class ModelAdmin:
         return self.settings()
 
     def chat_settings(self, group_id):
+        require(not self.error,'model_admin_unavailable')
         require(isinstance(group_id,str) and re.fullmatch('[A-Za-z0-9_-]{1,128}',group_id),'admin_group')
         row=self.db.execute('SELECT value,revision FROM chat_settings WHERE group_id=?',(group_id,)).fetchone()
         settings=json.loads(row['value']) if row else dict(followup_enabled=True,followup_window_seconds=180,
@@ -88,7 +89,7 @@ class ModelAdmin:
             rows.extend(dict(user_id=item['speaker_id'],display_name=item['display_name'])
                 for item in agent.store.recent(scope) if item['role']=='user')
             for item in rows:people[item['user_id']]=item
-        tasks=agent.tasks.status(scope) if agent and hasattr(agent,'tasks') else dict(active_tasks=0,waiting_tasks=0,partial_tasks=0,completed_tasks=0,window_seconds=900)
+        tasks=agent.tasks.status(scope) if agent else dict(active_tasks=0,waiting_tasks=0,partial_tasks=0,completed_tasks=0,window_seconds=900)
         return dict(group_id=group_id,guard=dict(backend_epoch=self.backend.runtime,revision=row['revision'] if row else 'initial'),
                     settings=settings,recent_users=list(people.values())[-120:],tasks=tasks,
                     recent_events=self.backend.diagnostics.group_events(group_id))

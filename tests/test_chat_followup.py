@@ -91,3 +91,8 @@ class FollowupTests(unittest.TestCase):
         self.tracker.observe(self.scope,'u1','answer',201,5,'epoch')
         self.now=45
         self.assertIsNone(self.tracker.match(self.scope,'answer'))
+
+    def test_settings_resize_does_not_renew_existing_window(self):
+        self.delivered();self.now=30
+        self.tracker.resize(self.scope,20)
+        self.assertFalse(self.tracker.questions)
