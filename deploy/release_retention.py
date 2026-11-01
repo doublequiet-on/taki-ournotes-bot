@@ -116,7 +116,7 @@ def plan(config, protected=(), *, references=None):
         txn = current.get('transaction') or {}
         if txn.get('commit'):
             protect(txn['commit'], 'transaction')
-        for key in ('previous', 'candidate'):
+        for key in ('previous', 'candidate', 'repair_from'):
             if txn.get(key):
                 protect(txn[key]['commit'], 'transaction_' + key)
     # A drifted live symlink is protected independently of the recorded state.

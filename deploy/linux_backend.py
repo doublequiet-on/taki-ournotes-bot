@@ -650,7 +650,13 @@ class LinuxBackend:
                 "--repo", candidate.code_dir, "--fixture", self.config["compatibility_fixture"]],
                 "compatibility", offline=True)
 
-    def _check_reviewed_fingerprints(self, previous: Release, candidate: Release) -> None:
+    def verify_repair(self, failed: Release, candidate: Release) -> None:
+        """The fix must still read/write the schema the failed candidate could write."""
+        self._manifest(failed)
+        self._manifest(candidate)
+        self._check_reviewed_fingerprints(failed, candidate, allow_migration=False)
+
+    def _check_reviewed_fingerprints(self, previous: Release, candidate: Release, *, allow_migration=True) -> None:
         try:
             path = Path(self.config["compatibility_policy"])
             trusted(path)
@@ -673,7 +679,17 @@ class LinuxBackend:
                 raise Rejected("compatibility_review_required")
             contracts.append(matches[0]["schema_contract"])
         if contracts[0] != contracts[1]:
-            raise Rejected("persistence_contract_changed")
+            migration = policy.get("forward_only_migration", {})
+            approved = (allow_migration and getattr(self, 'migration_target', None) == candidate.commit
+                and migration.get('previous') == previous.commit
+                and migration.get('candidate') == candidate.commit
+                and migration.get('from_contract') == contracts[0]
+                and migration.get('to_contract') == contracts[1]
+                and migration.get('failure_mode') == 'stop_and_repair_forward'
+                and isinstance(migration.get('evidence'), str) and bool(migration['evidence'].strip())
+                and isinstance(migration.get('authorization'), str) and bool(migration['authorization'].strip()))
+            if not approved:
+                raise Rejected("persistence_contract_changed")
         for field in ("compatibility_gate", "compatibility_fixture"):
             artifact = Path(self.config.get(field, "/missing"))
             trusted(artifact)
@@ -995,11 +1011,14 @@ def human_status(state: dict) -> str:
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description="Taki reviewed public-main Linux updater")
     parser.add_argument("--config", default="/etc/taki-updater.json")
-    parser.add_argument("command", choices=("check", "recover", "status", "cleanup-plan", "resume", "rollback"))
+    parser.add_argument("command", choices=("check", "recover", "status", "cleanup-plan", "resume", "rollback", "migrate"))
     parser.add_argument("--retry-commit")
+    parser.add_argument("--target-commit")
     parser.add_argument("--human", action="store_true", help="Chinese read-only status (status only)")
     args = parser.parse_args(argv)
     try:
+        if args.command not in ("migrate",) and args.target_commit is not None:
+            raise Rejected("migration_target_unexpected")
         if args.human and args.command != "status":
             raise Rejected("human_status_only")
         if os.name != "posix" or os.geteuid() != 0:
@@ -1009,12 +1028,12 @@ def main(argv=None) -> int:
         config = json.loads(path.read_text())
         validate_config(config)
         trusted(Path(config["state_dir"]), directory=True)
-        if args.command == "check":
+        if args.command in ("check", "migrate"):
             marker = Path("/usr/local/lib/taki-updater/installation.json")
             trusted(marker)
             if json.loads(marker.read_text()).get("phase") != "installed":
                 print(json.dumps({"status": "deferred", "reason": "installation_incomplete"}))
-                return 0
+                return 1 if args.command == 'migrate' else 0
         if args.command == 'cleanup-plan':
             try:
                 from .release_retention import plan
@@ -1029,7 +1048,12 @@ def main(argv=None) -> int:
                 print(human_status(result))
                 return 0
         else:
-            engine = Engine(config["state_dir"], LinuxBackend(config))
+            target = args.target_commit if args.command == 'migrate' else None
+            if args.command == 'migrate' and (target is None or not SHA_RE.fullmatch(target)):
+                raise Rejected('migration_target_required')
+            backend = LinuxBackend(config)
+            backend.migration_target = target
+            engine = Engine(config["state_dir"], backend, migration_target=target)
             if engine.backend.koishi: engine.backend.koishi.publish_notice(None)
             if args.command == "resume":
                 result = asdict(engine.resume(retry_commit=args.retry_commit))
@@ -1042,6 +1066,8 @@ def main(argv=None) -> int:
         if args.command not in ("status", "cleanup-plan") and engine.backend.koishi:
             engine.backend.koishi.publish_notice(engine.load_state())
         print(json.dumps(result, ensure_ascii=True, sort_keys=True))
+        if args.command == "migrate":
+            return 0 if result.get("status") in {"updated", "up_to_date"} else 1
         if args.command == "rollback":
             return 0 if result.get("status") == "rolled_back" and result.get("reason") == "operator_requested" else 1
         return 1 if result.get("status") in {"error", "state_error", "paused"} else 0
