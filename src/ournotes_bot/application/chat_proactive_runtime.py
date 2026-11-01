@@ -20,6 +20,18 @@ from . import replies
 
 class ProactiveChat:
     @staticmethod
+    def parse_staged_decision(text):
+        """Validate the decision-only wire contract without changing participation state."""
+        try:value=json.loads(text)
+        except (ValueError,TypeError):raise ModelError('model_protocol_error') from None
+        require(isinstance(value,dict) and set(value)=={'participation','text','delay_seconds'},'model_protocol_error')
+        require(value['participation'] in ('reply','skip','defer') and value['text']=='','model_protocol_error')
+        delay=value['delay_seconds']
+        require((type(delay) is int and 2<=delay<=5) if value['participation']=='defer'
+                else delay is None,'model_protocol_error')
+        return value
+
+    @staticmethod
     def response_format():
         return {'type':'json_schema','name':'proactive_participation','strict':True,'schema':{
             'type':'object','properties':{
@@ -33,7 +45,7 @@ class ProactiveChat:
         self.followups=Followups(clock=lambda:self.controller.clock())
         self.addressed=Counter()
         self.services=ChatServices(agent.runtime.usage.path.parent,agent.runtime.backend.instance_id,
-            agent.runtime.backend.app_id,filename='chat-proactive-services-v1.json')
+            agent.runtime.backend.app_id,filename='chat-proactive-services-v1.json',authority=agent.runtime.admin.db,require_authority=True)
 
     def trace(self,work,kind,**data):
         if work.proactive is None:return
@@ -101,6 +113,9 @@ class ProactiveChat:
         policy=self.configured(request,snapshot)
         if policy is None:return None
         model_cost=maximum_cost_micro(snapshot.profile)*self.agent.budget.model_calls
+        remaining=self.controller.remaining_cost(self.scope(request))
+        if remaining is not None:model_cost=min(model_cost,remaining)
+        if model_cost<=0:return None
         cost=model_cost
         web=self.owners()[1].web(snapshot)
         if web:
@@ -124,7 +139,7 @@ class ProactiveChat:
         followup=self.followups.match(self.scope(request),request.message_id)
         if followup is not None:candidate=replace(candidate,followup=followup)
         job=service_request_id('proactive',request.instance_id,request.app_id,request.conversation_id,candidate.candidate_id)
-        try:self.agent.service_budget.check(policy,'proactive',snapshot.profile,job,cost,
+        try:self.agent.service_budget.check(policy,'proactive',snapshot.profile,job,candidate.reserved_cost_micro,
             reply_times=self.agent.store.proactive_replies(request.scope))
         except ServiceError:
             self.controller.decide(candidate,'skip',actual_cost_micro=0);return None
@@ -135,7 +150,7 @@ class ProactiveChat:
         """Wait within the question window without bypassing either cooldown."""
         scope=self.scope(request)
         followup=self.followups.match(scope,request.message_id)
-        if followup is None:return 1500
+        if followup is None:return math.ceil(self.controller.start_delay(scope)*1000)
         snapshot=self.agent.runtime.proactive_snapshot(request.conversation_id)
         policy=self.policy(snapshot,request)
         if policy is None:return None
@@ -188,6 +203,7 @@ class ProactiveChat:
         try:
             current=self.agent.runtime.proactive_snapshot(work.request.conversation_id)
             if current!=work.model_snapshot:return False
+            if self.agent.runtime.capabilities_for(work).generation(current)!=work.proactive_authority:return False
             policy=self.policy(current,work.request)
             followup=work.proactive.followup
             if followup is not None and (self.followups.match(self.scope(work.request),work.request.message_id)!=followup
@@ -241,6 +257,13 @@ class ProactiveChat:
         rows=self.agent.runtime.usage.request_view(work.service_request_id)
         if any(row['billing_incomplete'] or row['state'] not in ('settled','released') for row in rows):return None
         return math.ceil(sum((Fraction(row['reference_cost_micro']) for row in rows),Fraction()))
+
+    def opportunity_budget(self,work):
+        candidates,cost=self.controller.opportunity_budget(work.proactive)
+        request=work.request
+        return dict(opportunity_requests=tuple(service_request_id('proactive',request.instance_id,
+            request.app_id,request.conversation_id,candidate) for candidate in candidates),
+            opportunity_calls=self.agent.budget.model_calls,opportunity_cost_micro=cost)
 
     def decision(self,work,text):
         require(self.valid(work),'proactive_stale')

@@ -10,6 +10,7 @@ import os
 from fractions import Fraction
 import re
 import sqlite3
+import uuid
 import time
 
 from ..domain.model_calls import ModelError, Usage, require
@@ -38,6 +39,7 @@ class ModelAdmin:
         require(row is None or row[0]==identity,'model_admin_identity')
         with self.db:
             self.db.execute('CREATE TABLE IF NOT EXISTS budget(key TEXT PRIMARY KEY,value TEXT NOT NULL,revision TEXT NOT NULL)')
+            self.db.execute('CREATE TABLE IF NOT EXISTS capability_authority(path TEXT PRIMARY KEY,generation TEXT NOT NULL,digest TEXT NOT NULL)')
             self.db.execute('INSERT OR IGNORE INTO identity VALUES(?)',(identity,))
             # Never replay a paid probe or a configuration mutation after a crash.
             self.db.execute("UPDATE actions SET state='interrupted' WHERE state='intent'")
@@ -136,6 +138,35 @@ class ModelAdmin:
         require(before==(guard['fingerprint'],guard['approval_fingerprint']),'model_config_conflict')
         return snapshot,owner,archive,current,proof,verified,guard
 
+    def migrate_chat_authorities(self):
+        """Upgrade currently bound legacy metadata; never grant a new binding."""
+        from .chat_jobs import ChatServices
+        migrated=[]
+        for proactive in (False,True):
+            owner=self.runtime.proactive_capabilities if proactive else self.runtime.capabilities
+            services=ChatServices(self.runtime.usage.path.parent,*self.config.namespace,
+                filename='chat-proactive-services-v1.json' if proactive else 'chat-services-v1.json',
+                authority=self.db,require_authority=True)
+            if not owner.path.exists() and not services.path.exists():continue
+            snapshot=self.selected_config(proactive=proactive).snapshot()
+            previous=self.metadata_digest(owner.path)
+            current=owner.read(snapshot)
+            if current is not None:
+                # Exercise the complete legacy validation before preserving it.
+                owner.web(snapshot);owner.vision(snapshot)
+                for gid in (current.get('proactive') or {}).get('groups',[]):owner.proactive(snapshot,gid)
+            entries=[(owner.path,current,16384,previous)]
+            if services.path.exists():
+                data,_,previous=services.read(snapshot)
+                entries.append((services.path,data,131072,previous))
+            for path,data,limit,previous in entries:
+                if data is None or 'authority_generation' in data:continue
+                operation=uuid.uuid4().hex
+                require(self.metadata_digest(path,limit)==previous,'model_config_conflict')
+                self.write_web_metadata(path,data,operation,limit=limit)
+                migrated.append(path.name)
+        return tuple(migrated)
+
     def web_settings(self, *, proactive=False):
         snapshot,owner,archive,current,proof,verified,guard=self.web_context(proactive)
         enabled=owner.web(snapshot) is not None
@@ -151,11 +182,26 @@ class ModelAdmin:
         require(parent.is_dir() and not parent.is_symlink() and os.access(parent,os.W_OK)
                 and (os.name=='nt' or parent.stat().st_mode & 0o022==0),'model_config_permissions')
         self.metadata_digest(path,limit)
+        capability=data.get('schema','').startswith('chat-capabilities/')
+        service=data.get('schema','').startswith('taki-chat-services/')
+        if capability:
+            data={**data,'schema':'chat-capabilities/4','authority_generation':operation}
+            data.setdefault('vision',None);data.setdefault('proactive',None)
+        if service:data={**data,'schema':'taki-chat-services/2','authority_generation':operation}
         raw=(encode(data)+'\n').encode();require(len(raw)<=limit,'chat_capability_configuration')
         temporary=path.with_name(path.name+'.'+operation+'.tmp')
         try:
             fd=os.open(temporary,os.O_WRONLY|os.O_CREAT|os.O_EXCL,0o600)
             with os.fdopen(fd,'wb') as stream:stream.write(raw);stream.flush();os.fsync(stream.fileno())
+            if capability or service:
+                # Revoke the old generation durably before publishing the file.
+                # An interrupted publish denies the old grant; it never revives it.
+                with self.db:
+                    previous=self.db.execute('SELECT generation,digest FROM capability_authority WHERE path=?',(str(path.resolve()),)).fetchone()
+                    require(previous is None or previous['generation']!=operation or previous['digest']==hashlib.sha256(raw).hexdigest(),
+                            'chat_authority_generation_reused')
+                    self.db.execute('INSERT OR REPLACE INTO capability_authority VALUES(?,?,?)',
+                        (str(path.resolve()),operation,hashlib.sha256(raw).hexdigest()))
             os.replace(temporary,path)
             if os.name!='nt':
                 directory=os.open(parent,os.O_RDONLY)
@@ -193,7 +239,7 @@ class ModelAdmin:
         from .chat_jobs import ChatServices,ProactiveLimits,_limits
         require(isinstance(group_id,str) and re.fullmatch(r'[A-Za-z0-9_-]{1,128}',group_id),'admin_group')
         snapshot=self.runtime.proactive_config.snapshot().for_group(group_id)
-        owner=ChatServices(self.runtime.usage.path.parent,*self.config.namespace,filename='chat-proactive-services-v1.json')
+        owner=ChatServices(self.runtime.usage.path.parent,*self.config.namespace,filename='chat-proactive-services-v1.json',authority=self.db,require_authority=True)
         data,policies,digest=owner.read(snapshot)
         row=(data or {}).get('groups',{}).get(group_id,{})
         limits=asdict(_limits(row.get('proactive',asdict(ProactiveLimits(False,24,2,500000,600))),'proactive'))
@@ -209,13 +255,12 @@ class ModelAdmin:
         current=self.proactive_limits(group_id)
         if not self.begin({**value,'group_id':group_id},'save_proactive_limits',self.runtime.proactive_config.snapshot().profile.config_version):
             return self.proactive_limits(group_id)
-        temporary=None
         try:
             require(value['guard']==current['guard'],'model_config_conflict')
             limits=_limits(value['limits'],'proactive')
             require(max(limits.max_calls_per_hour,limits.max_replies_per_hour)<=120,'proactive_limits_unsupported')
             snapshot=self.runtime.proactive_config.snapshot().for_group(group_id)
-            owner=ChatServices(self.runtime.usage.path.parent,*self.config.namespace,filename='chat-proactive-services-v1.json')
+            owner=ChatServices(self.runtime.usage.path.parent,*self.config.namespace,filename='chat-proactive-services-v1.json',authority=self.db,require_authority=True)
             data,_,digest=owner.read(snapshot)
             require(digest==current['guard']['fingerprint'],'model_config_conflict')
             if data is None:
@@ -226,29 +271,14 @@ class ModelAdmin:
             row=data['groups'].setdefault(group_id,{'approved':False})
             # Limits never mint platform evidence, a service subject or an approval.
             row['proactive']=asdict(limits)
-            raw=(encode(data)+'\n').encode()
-            require(len(raw)<=131072,'chat_service_configuration')
-            parent=owner.path.parent
-            require(parent.is_dir() and not parent.is_symlink() and os.access(parent,os.W_OK)
-                    and (os.name=='nt' or parent.stat().st_mode & 0o022==0),'model_config_permissions')
-            temporary=owner.path.with_name(owner.path.name+'.'+value['operation_id']+'.tmp')
-            fd=os.open(temporary,os.O_WRONLY|os.O_CREAT|os.O_EXCL,0o600)
-            with os.fdopen(fd,'wb') as stream:stream.write(raw);stream.flush();os.fsync(stream.fileno())
-            # Check both model and service bytes immediately before replacement.
             require(self.proactive_limits(group_id)['guard']==value['guard'],'model_config_conflict')
-            os.replace(temporary,owner.path)
-            if os.name!='nt':
-                directory=os.open(parent,os.O_RDONLY)
-                try:os.fsync(directory)
-                finally:os.close(directory)
-            require(owner.read(snapshot)[2]==hashlib.sha256(raw).hexdigest(),'model_config_save_unconfirmed')
+            self.write_web_metadata(owner.path,data,value['operation_id'],limit=131072)
+            owner.read(snapshot)
             self.finish(value['operation_id'],'succeeded',{'code':'saved'})
         except (OSError,ValueError,TypeError,KeyError,RecursionError,sqlite3.Error) as exc:
             code=str(exc) if isinstance(exc,(ModelError,ServiceError)) else 'model_save_unconfirmed'
             self.finish(value['operation_id'],'failed' if isinstance(exc,(ModelError,ServiceError)) else 'unknown',{'code':code})
             raise ModelError(code) from None
-        finally:
-            if temporary:temporary.unlink(missing_ok=True)
         return self.proactive_limits(group_id)
 
     def latest_probe(self, version, *, proactive=False):
@@ -306,7 +336,7 @@ class ModelAdmin:
             plan.append((cap.path,digest,{**data,'config_version':after.profile.config_version,
                                         'fingerprint':after.fingerprint},16384))
         services=ChatServices(self.runtime.usage.path.parent,*self.config.namespace,
-                              filename='chat-proactive-services-v1.json' if proactive else 'chat-services-v1.json')
+                              filename='chat-proactive-services-v1.json' if proactive else 'chat-services-v1.json',authority=self.db,require_authority=True)
         digest=self.metadata_digest(services.path,131072)
         if digest!='absent':
             data=json.loads(services.path.read_text(encoding='utf-8'))

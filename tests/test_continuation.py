@@ -798,6 +798,106 @@ class ChatMemoryStoreTests(unittest.TestCase):
     def delivered(self,run='run1',mid='assistant1',text='我也喜欢鼓。',status='success',allow=True):
         self.store.event(run,'delivery/'+mid,'delivery',dict(message_id=mid,text=text,status=status,allow_context=allow))
 
+    def test_receipt_projection_recovers_with_reopened_owners_and_no_work_object(self):
+        from ournotes_bot.application.delivery_ledger import Ledger
+        from ournotes_bot.application.chat_store import ChatStore
+        from ournotes_bot.application.chat_recovery import ChatRecovery
+        ledger_path=self.path.with_name('deliveries.sqlite3')
+        ledger=Ledger(ledger_path,'fixture','before',self.now[0])
+        try:
+            ledger.register('gateway')
+            request=SimpleNamespace(gateway_epoch='gateway',context_id='context',ingress_seq=1,
+                request_id='request',content_digest='digest',timestamp_ms=int(self.now[0]*1000))
+            ledger.admit(request,'before','final',self.now[0])
+            staged=self.store.stage_final('final','0',self.scope,'重启后恢复的精确正文',{},
+                [dict(message_id='source',timestamp_ms=int(self.now[0]*1000))],'source',self.now[0]+86400)
+            ledger.prepared('final',1,projections=[staged]);ledger.intent('final','0','attempt')
+            ledger.ack('final','0','attempt','success','sent',now=self.now[0])
+        finally:ledger.close()
+        self.store.close()
+        self.store=ChatStore(self.path,'fixture\0app',clock=lambda:self.now[0])
+        ledger=Ledger(ledger_path,'fixture','after',self.now[0])
+        try:
+            agent=SimpleNamespace(store=self.store,runtime=SimpleNamespace(backend=SimpleNamespace(ledger=ledger)))
+            recovery=ChatRecovery(agent)
+            with patch.object(recovery,'valid',return_value=True):
+                # Simulate the second crash gap: projection commits, Ledger update fails.
+                with patch.object(ledger,'projection_done',side_effect=OSError('fixture crash')):
+                    with self.assertRaises(OSError):recovery.recover()
+                self.assertIsNotNone(self.store.projected('final','0'))
+                self.assertIsNone(self.store.final_candidate('final','0'))
+                recovery.recover();recovery.recover()
+            self.assertEqual([r['text'] for r in self.store.recent(self.scope)],['重启后恢复的精确正文'])
+            self.assertEqual(ledger.projection_rows('final')[0]['state'],'done')
+            self.assertEqual(ledger.parts('final')[0]['attempt'],'attempt')
+            self.assertFalse(ledger.active('gateway'))
+        finally:ledger.close()
+
+    def test_final_candidate_is_not_searchable_and_deleted_source_blocks_projection(self):
+        self.store.stage_final('final','0',self.scope,'未发送正文',{},
+            [dict(message_id='source',timestamp_ms=int(self.now[0]*1000))],'source',self.now[0]+86400)
+        self.assertEqual(self.store.recent(self.scope),[])
+        self.assertEqual(self.store.search(self.scope,'未发送')['status'],'no_results')
+        row=self.store.final_candidate('final','0')
+        self.store.delete_messages(self.scope,['source'])
+        self.assertIsNone(self.store.final_candidate('final','0'))
+        self.assertFalse(self.store.project_final(row,'sent',self.now[0]))
+        self.assertEqual(self.store.recent(self.scope),[])
+
+    def test_final_candidate_expires_without_extending_source_retention(self):
+        from ournotes_bot.application.chat_recovery import ChatRecovery
+        self.store.stage_final('final','0',self.scope,'到期正文',{},
+            [dict(message_id='source',timestamp_ms=int(self.now[0]*1000))],'source',self.now[0]+86400)
+        self.now[0]+=86400
+        # No prepared/receipt row exists: maintenance still sweeps this orphan.
+        ledger=SimpleNamespace(projection_rows=lambda delivery:[])
+        agent=SimpleNamespace(store=self.store,runtime=SimpleNamespace(backend=SimpleNamespace(ledger=ledger)))
+        ChatRecovery(agent).recover()
+        self.assertIsNone(self.store.final_candidate('final','0'))
+        self.assertEqual(self.store.recent(self.scope),[])
+
+    def test_projected_reply_expires_with_source_even_without_archived_source_body(self):
+        source_time=int((self.now[0]-29*86400)*1000)
+        self.store.stage_final('final','0',self.scope,'较早来源的回复',{},
+            [dict(message_id='source-not-archived',timestamp_ms=source_time)],'source-not-archived',self.now[0]+86400)
+        self.assertTrue(self.store.project_final(self.store.final_candidate('final','0'),'sent',self.now[0]))
+        self.assertEqual(len(self.store.recent(self.scope)),1)
+        self.now[0]+=86401
+        self.store.sweep()
+        self.assertEqual(self.store.recent(self.scope),[])
+        self.assertIsNone(self.store.projected('final','0'))
+
+    def test_orphan_candidate_is_removed_on_revocation_before_expiry(self):
+        from ournotes_bot.application.chat_recovery import ChatRecovery
+        self.store.stage_final('orphan','0',self.scope,'已撤权的孤立候选',{},
+            [dict(message_id='source',timestamp_ms=int(self.now[0]*1000))],'source',self.now[0]+86400)
+        ledger=SimpleNamespace(projection_rows=lambda delivery:[])
+        agent=SimpleNamespace(store=self.store,runtime=SimpleNamespace(backend=SimpleNamespace(ledger=ledger)))
+        recovery=ChatRecovery(agent)
+        with patch.object(recovery,'valid',return_value=None):
+            self.assertFalse(recovery.recover(scope=self.scope))
+            self.assertIsNotNone(self.store.final_candidate('orphan','0'))
+        with patch.object(recovery,'valid',return_value=False):
+            self.assertTrue(recovery.recover(scope=self.scope))
+        self.assertIsNone(self.store.final_candidate('orphan','0'))
+
+    def test_final_projection_is_atomic_with_completion_metadata(self):
+        import sqlite3
+        self.store.stage_final('final','0',self.scope,'实际送达正文',{},
+            [dict(message_id='source',timestamp_ms=int(self.now[0]*1000))],'source',self.now[0]+86400)
+        row=self.store.final_candidate('final','0')
+        self.store.db.execute("CREATE TRIGGER fail_projection BEFORE INSERT ON chat_projection_history BEGIN SELECT RAISE(ABORT,'fixture crash'); END")
+        with self.assertRaises(sqlite3.IntegrityError):self.store.project_final(row,'sent',self.now[0])
+        self.assertEqual(self.store.recent(self.scope),[])
+        self.assertIsNotNone(self.store.final_candidate('final','0'))
+        self.store.db.execute('DROP TRIGGER fail_projection')
+        self.assertTrue(self.store.project_final(row,'sent',self.now[0]))
+        self.assertIsNotNone(self.store.projected('final','0'))
+        self.assertIsNone(self.store.final_candidate('final','0'))
+        self.store.delete_messages(self.scope,['source'])
+        self.assertEqual(self.store.recent(self.scope),[])
+        self.assertIsNone(self.store.projected('final','0'))
+
     def test_only_explicit_participation_and_success_receipts_become_memory(self):
         self.begin('ignored',participating=False)
         self.assertEqual(self.store.status(self.scope)['messages'],0)
@@ -895,7 +995,7 @@ class ChatMemoryStoreTests(unittest.TestCase):
         state=self.store.deletion_state();state['identity']='another-instance'
         with self.assertRaisesRegex(ValueError,'chat_deletion_journal'):self.store.restore_deletions(state)
 
-    def test_c1_migration_keeps_meta_contract_and_backfills_only_receipted_assistant(self):
+    def test_c1_migration_keeps_user_inputs_but_removes_unproven_replies(self):
         import sqlite3,json
         from contextlib import closing
         from ournotes_bot.application.chat_store import ChatStore
@@ -916,9 +1016,9 @@ class ChatMemoryStoreTests(unittest.TestCase):
             db.execute('INSERT INTO events VALUES (?,?,?,?)',('a-follow-before-old','delivery/1','delivery',json.dumps(dict(message_id='follow-answer',text='承接前面的回答',status='success',allow_context=True))))
         self.store=ChatStore(path,'fixture\0app',clock=lambda:self.now[0])
         self.assertEqual(dict(self.store.db.execute('SELECT key,value FROM meta')),{'schema':'chat/1','identity':'fixture\0app'})
-        self.assertEqual({r['message_id'] for r in self.store.recent(self.scope)},{'u1-message','actual','follow-user','follow-answer'})
+        self.assertEqual({r['message_id'] for r in self.store.recent(self.scope)},{'u1-message','follow-user'})
         self.assertEqual(self.store.read(self.scope,['fake'])['status'],'no_results')
-        self.assertEqual(self.store.db.execute('PRAGMA user_version').fetchone()[0],2)
+        self.assertEqual(self.store.db.execute('PRAGMA user_version').fetchone()[0],4)
         self.store.delete_messages(self.scope,['actual'])
         self.assertEqual(self.store.read(self.scope,['follow-answer'])['status'],'no_results')
 
@@ -930,7 +1030,57 @@ class ChatMemoryStoreTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError,'chat_memory_source_missing'):
             self.store.put_summary(self.scope,'summary','已删除来源',['u1-message'])
 
-    def test_c1_rollback_new_runs_are_imported_on_rollforward(self):
+    def test_legacy_cleanup_preserves_proven_history_and_removes_mixed_and_orphan_summaries(self):
+        from ournotes_bot.application.chat_store import ChatStore
+        self.begin();self.delivered(text='旧正文需要删除')
+        self.begin('unreceipted');self.store.generated('unreceipted','没有回执的旧审计正文')
+        self.begin('new')
+        self.store.stage_final('new','0',self.scope,'有来源证明的新正文',{},
+            [dict(message_id='u1-message',timestamp_ms=int(self.now[0]*1000))],'u1-message',self.now[0]+86400)
+        self.store.project_final(self.store.final_candidate('new','0'),'verified',self.now[0])
+        self.begin('pending')
+        self.store.stage_final('pending','0',self.scope,'待回执的合法候选',{},
+            [dict(message_id='u1-message',timestamp_ms=int(self.now[0]*1000))],'u1-message',self.now[0]+86400)
+        self.store.put_summary(self.scope,'mixed','混合旧回复的摘要',['assistant1','verified'])
+        self.store.put_summary(self.scope,'valid','仅有来源证明的摘要',['verified'])
+        self.store.put_summary(self.scope,'orphan','无法追溯的摘要',['u1-message'])
+        with self.store.db:
+            self.store.db.execute("DELETE FROM memory_summary_sources WHERE summary_id='orphan'")
+            self.store.db.execute('PRAGMA user_version=3')
+        self.store.close()
+        for _ in range(2):
+            self.store=ChatStore(self.path,'fixture\0app',clock=lambda:self.now[0])
+            self.assertEqual({r['message_id'] for r in self.store.recent(self.scope)},{'u1-message','verified'})
+            self.assertEqual([r['summary_id'] for r in self.store.summaries(self.scope)],['valid'])
+            self.assertEqual(self.store.db.execute("SELECT count(*) FROM memory_fts WHERE item_id IN ('assistant1','mixed','orphan')").fetchone()[0],0)
+            self.assertEqual(self.store.db.execute("SELECT count(*) FROM runs WHERE id='run1'").fetchone()[0],0)
+            self.assertIsNotNone(self.store.projected('new','0'))
+            self.assertIsNotNone(self.store.final_candidate('pending','0'))
+            self.assertEqual({r[0] for r in self.store.db.execute('SELECT id FROM runs')},{'new','pending'})
+            self.assertEqual(self.store.status(self.scope)['memory_version'],4)
+            self.store.close()
+        self.store=ChatStore(self.path,'fixture\0app',clock=lambda:self.now[0])
+
+    def test_legacy_cleanup_failure_rolls_back_body_deletion_and_version(self):
+        import sqlite3
+        from contextlib import closing
+        from ournotes_bot.application.chat_store import ChatStore
+        self.begin();self.delivered()
+        with self.store.db:self.store.db.execute('PRAGMA user_version=3')
+        self.store.close()
+        purge=ChatStore._purge
+        def fail_after_purge(owner,*args):
+            purge(owner,*args)
+            raise sqlite3.OperationalError('fixture interrupted cleanup')
+        with patch.object(ChatStore,'_purge',fail_after_purge):
+            with self.assertRaises(sqlite3.OperationalError):ChatStore(self.path,'fixture\0app',clock=lambda:self.now[0])
+        with closing(sqlite3.connect(self.path)) as db:
+            self.assertEqual(db.execute('PRAGMA user_version').fetchone()[0],3)
+            self.assertEqual(db.execute("SELECT count(*) FROM memory_messages WHERE message_id='assistant1'").fetchone()[0],1)
+        self.store=ChatStore(self.path,'fixture\0app',clock=lambda:self.now[0])
+        self.assertEqual(self.store.read(self.scope,['assistant1'])['status'],'no_results')
+
+    def test_legacy_audit_reimport_does_not_resurrect_unproven_replies(self):
         import sqlite3,json
         from contextlib import closing
         from ournotes_bot.application.chat_store import ChatStore
@@ -942,17 +1092,17 @@ class ChatMemoryStoreTests(unittest.TestCase):
             db.execute('INSERT INTO events VALUES (?,?,?,?)',('rollback-run','delivery/1','delivery',json.dumps(dict(message_id='rollback-answer',text='回退时确实送达',status='success',allow_context=True))))
         self.store=ChatStore(self.path,'fixture\0app',clock=lambda:self.now[0])
         self.assertEqual(self.store.read(self.scope,['during-rollback','rollback-answer'])['status'],'ok')
-        self.assertEqual(len(self.store.read(self.scope,['during-rollback','rollback-answer'])['messages']),2)
+        self.assertEqual([r['message_id'] for r in self.store.read(self.scope,['during-rollback','rollback-answer'])['messages']],['during-rollback'])
 
     def test_future_memory_schema_is_rejected_without_rewriting_it(self):
         import sqlite3
         from contextlib import closing
         from ournotes_bot.application.chat_store import ChatStore
         self.store.close()
-        with closing(sqlite3.connect(self.path)) as db,db:db.execute('PRAGMA user_version=3')
+        with closing(sqlite3.connect(self.path)) as db,db:db.execute('PRAGMA user_version=5')
         with self.assertRaisesRegex(ValueError,'chat_memory_version'):ChatStore(self.path,'fixture\0app')
         with closing(sqlite3.connect(self.path)) as db,db:
-            self.assertEqual(db.execute('PRAGMA user_version').fetchone()[0],3)
+            self.assertEqual(db.execute('PRAGMA user_version').fetchone()[0],5)
             db.execute('PRAGMA user_version=2')
         self.store=ChatStore(self.path,'fixture\0app',clock=lambda:self.now[0])
 
@@ -1034,6 +1184,40 @@ class ProactiveControllerTests(unittest.TestCase):
         self.assertEqual(len({row.speaker_id for row in candidate.messages}), 4)
         self.assertIsNone(self.controller.candidate(self.a, reserve_cost_micro=100))
 
+    def test_busy_group_starts_after_eight_seconds_but_new_message_still_invalidates(self):
+        self.observe()
+        for second in range(1,8):
+            self.now[0]=second
+            self.observe(str(second))
+            self.assertIsNone(self.controller.candidate(self.a,reserve_cost_micro=100))
+        self.now[0]=8
+        self.observe('latest')
+        self.assertEqual(self.controller.start_delay(self.a),0)
+        first=self.controller.candidate(self.a,reserve_cost_micro=100)
+        self.assertEqual(first.messages[-1].message_id,'latest')
+        self.controller.decide(first,'reply',actual_cost_micro=1)
+        self.observe('newer')
+        self.assertFalse(self.controller.can_send(first))
+        self.assertEqual(self.controller.start_delay(self.a),1.5)
+        second=self.ready()
+        self.assertEqual(first.opportunity_id,second.opportunity_id)
+        self.assertEqual(first.expires_at,second.expires_at)
+
+    def test_opportunity_knowledge_cache_is_dropped_on_clear_and_expiry(self):
+        self.observe();candidate=self.ready()
+        cache=self.controller.knowledge_leases(candidate)
+        cache['fixture']='evidence'
+        self.observe('new')
+        second=self.ready()
+        self.assertIs(self.controller.knowledge_leases(second),cache)
+        self.controller.clear(self.a)
+        self.assertEqual(cache,{})
+        self.observe('third');third=self.ready()
+        cache=self.controller.knowledge_leases(third);cache['fixture']='evidence'
+        self.now[0]=third.expires_at
+        self.controller.sweep()
+        self.assertEqual(cache,{})
+
     def test_duplicates_and_bot_messages_do_not_cancel_human_candidate(self):
         self.observe()
         candidate = self.ready()
@@ -1051,7 +1235,8 @@ class ProactiveControllerTests(unittest.TestCase):
         second = self.ready()
         self.assertIsNotNone(second)
         self.assertEqual(second.messages[-1].text, '已经有人回答了')
-        self.assertEqual(self.controller.status(self.a)['hourly_cost_micro'], 117)
+        self.assertEqual(second.reserved_cost_micro,83)
+        self.assertEqual(self.controller.status(self.a)['hourly_cost_micro'],100)
 
     def test_defer_is_version_bound_and_has_at_most_two_rechecks(self):
         self.observe()
@@ -1070,8 +1255,34 @@ class ProactiveControllerTests(unittest.TestCase):
         self.assertIsNone(self.controller.candidate(self.a, reserve_cost_micro=100))
         self.observe('m2')
         fresh = self.ready()
+        self.assertIsNone(fresh)
+        self.now[0]=candidate.expires_at
+        fresh=self.controller.candidate(self.a,reserve_cost_micro=100)
         self.assertFalse(fresh.deferred)
         self.assertEqual(fresh.evaluation, 1)
+
+    def test_new_observations_share_opportunity_deadline_and_tool_limit(self):
+        self.observe();first=self.ready()
+        self.assertTrue(self.controller.take_tool(first,2))
+        self.observe('m2');second=self.ready()
+        self.assertEqual(second.opportunity_id,first.opportunity_id)
+        self.assertEqual(second.expires_at,first.expires_at)
+        self.assertTrue(self.controller.take_tool(second,2))
+        self.assertFalse(self.controller.take_tool(second,2))
+        ids,cost=self.controller.opportunity_budget(second)
+        self.assertEqual(ids,[first.candidate_id,second.candidate_id]);self.assertEqual(cost,100)
+        self.now[0]=first.expires_at
+        self.assertFalse(self.controller.valid(second))
+        self.assertIsNone(self.controller.candidate(self.a,reserve_cost_micro=100))
+
+    def test_late_ack_preserves_newer_active_candidate_and_observation(self):
+        self.controller.configure(self.a,replace(self.policy,cooldown_seconds=0))
+        self.observe();old=self.ready();self.controller.decide(old,'reply',actual_cost_micro=5)
+        self.observe('new');new=self.ready()
+        self.assertTrue(self.controller.delivered(old))
+        self.assertTrue(self.controller.valid(new))
+        self.assertEqual(self.controller.status(self.a)['hourly_replies'],1)
+        self.assertFalse(self.controller.delivered(old))
 
     def test_new_message_replaces_deferred_scene_and_skip_does_not_repeat(self):
         self.observe()

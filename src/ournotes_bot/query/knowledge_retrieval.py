@@ -144,7 +144,9 @@ def rank(query, rows, query_vector):
     query_terms = tokens(query)
     # Explicit Latin names (LUCK, COMBO, SSR) must be present in the
     # passage, not merely repeated in every passage's document keywords.
-    entities = set(re.findall(r'[a-z_]+', normalized(query)))-{'lv','jp','intl','id'}
+    # ON identifies this entire corpus, not a gameplay entity. Treating it as
+    # one promotes source footers ("ON新手教程") above actual skill passages.
+    entities = set(re.findall(r'[a-z_]+', normalized(query)))-{'lv','jp','intl','id','on'}
     bags = [tokens(row.search_text) for row in rows]
     average = sum(sum(bag.values()) for bag in bags)/len(bags) or 1
     frequency = Counter(t for bag in bags for t in bag)

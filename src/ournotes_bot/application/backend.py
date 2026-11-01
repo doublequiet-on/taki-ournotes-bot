@@ -76,7 +76,9 @@ class Work:
     persona_version: str = 'taki-v0/legacy-derived'
     memory_sources: tuple = ()
     image_sources: tuple = ()
+    vision_capability: object = None
     proactive: object = None
+    proactive_authority: str | None = None
     service_policy: object = None
     service_request_id: str = ''
     participating_history: tuple = ()
@@ -218,6 +220,8 @@ class Backend:
         self.retry_terminations()
         try:
             self.expire()
+            if self.model_runtime and self.model_runtime.agent:
+                self.model_runtime.agent.recovery.recover()
         except sqlite3.Error as exc:
             self.reaper_error = type(exc).__name__
             logger.error('Expiry maintenance storage failed type=%s', self.reaper_error)
@@ -278,6 +282,7 @@ class Backend:
             work.mixed_modes=mixed_modes
             if proactive is not None:
                 work.proactive,work.service_policy,work.model_snapshot,work.service_request_id=proactive
+                work.proactive_authority=self.model_runtime.capabilities_for(work).generation(work.model_snapshot)
             self.ledger.admit(request, self.runtime, delivery, self.clock())
             self.works[delivery] = work
             try:
@@ -459,7 +464,8 @@ class Backend:
                 complete.extend(parts[-1].context.remaining)
             self.conversations.capture(work, complete)
             require(self.retained_bytes() <= self.byte_capacity, 'byte_capacity', 503)
-            self.ledger.prepared(work.delivery, len(parts), start=int(work.hint))
+            projections=self.model_runtime.agent.recovery.stage(work) if work.chat and parts else ()
+            self.ledger.prepared(work.delivery, len(parts), start=int(work.hint),projections=projections)
             if not parts:
                 self.finish(work, 'finished')
             else:
@@ -601,7 +607,13 @@ class Backend:
         work = self.works.get(delivery)
         live = self.live(row, payload['gateway_epoch'])
         if kind == 'ack':
-            changed = self.ledger.ack(delivery, part_id, payload['attempt_id'], payload['result'], payload['message_id'])
+            changed = self.ledger.ack(delivery, part_id, payload['attempt_id'], payload['result'], payload['message_id'],
+                allow_context=payload.get('allow_context') is not False,now=self.clock())
+            projection=None
+            if self.model_runtime and self.model_runtime.agent:
+                self.model_runtime.agent.audit(self.model_runtime.agent.recovery.recover,delivery)
+                projection=next((p for p in self.ledger.projection_rows(delivery) if p['part']==part_id),None)
+                if projection is not None and projection['state']!='done' and payload['result']=='success':live=False
             service_ack_ok=False
             if changed and payload['result']=='success' and self.model_runtime and self.model_runtime.agent:
                 service_ack_ok=self.model_runtime.agent.audit(self.model_runtime.agent.store.service_ack,delivery)
@@ -623,7 +635,8 @@ class Backend:
                 long_fallback = part['mode'] == 'fallback' and len(reply.text) > text_limit
                 if work.chat and self.model_runtime.agent:
                     self.model_runtime.agent.acknowledge(work,part_id,payload['message_id'],reply.text,
-                        payload['result'],allow_context=payload.get('allow_context') is not False,service_ack_ok=service_ack_ok)
+                        payload['result'],allow_context=payload.get('allow_context') is not False,service_ack_ok=service_ack_ok,
+                        record_delivery=projection is None)
                     if (payload['result']=='success' and len(parts)==1 and not work.hint
                             and payload.get('group_ingress_seq')==work.request.ingress_seq):
                         self.model_runtime.agent.proactive.remember_question(work,payload['message_id'],reply.text)
@@ -666,6 +679,12 @@ class Backend:
                     and work.prepared[part['position']].image is not None, 'fallback_transition', 409)
             if part['mode'] == 'primary': self.ledger.fallback(delivery, part_id)
             return self.snapshot(row, payload['gateway_epoch'])
+        projection=next((p for p in self.ledger.projection_rows(delivery) if p['part']==part_id),None)
+        if projection is not None:
+            candidate=self.model_runtime.agent.store.final_candidate(delivery,part_id)
+            require(projection['state']=='candidate' and candidate is not None
+                    and candidate['digest']==projection['digest'] and candidate['expires']>self.model_runtime.agent.store.clock(),
+                    'chat_final_unavailable',409)
         granted = self.ledger.intent(delivery, part_id, payload['attempt_id'])
         return {'permission': granted, 'msg_seq': part['position']+1}
 
