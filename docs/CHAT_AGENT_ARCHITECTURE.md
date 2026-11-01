@@ -4,7 +4,7 @@
 
 `Backend.prepare` 通过当前群的弱引用锁串行提交聊天，锁持有到交付结束；不同群与直接查询仍可独立处理。捕获配置、校验身份、调度器排队后，`ModelRuntime.prepare_chat` 委托 `ChatAgent.run`。新循环使用 `domain/chat.py` 的人格和预算，不读取 legacy 话题卡。每次 `ModelRuntime.attempt` 沿用 UsageLedger 的 reserve/start/settle 与 ModelPermissions；提供方错误或取消仍有独立用量状态，未知 usage 不计作已知零费用。
 
-每轮最多六次模型请求、八个本地工具操作、60 秒，含最后收束；工具顺序执行。首次工具执行前另在现有账本预留最坏输入／输出的收束额度；继续检索的 reserve 因日额度不足时，直接消费这笔预留发送无工具收束请求，未多发一次 HTTP。未用预留作为 released 记录保留，不冒称已调用。最后一个请求不暴露工具。上一响应超出剩余工具额度的调用收到 `budget_exhausted` 结果；工具提前截止但总预算仍有效时返回 `tool_timeout`，利用剩余时间收束。实际 profile 的输入／输出、频率与每日额度继续约束每次请求，未增加群额度，也不绕过旧频率限制。
+每轮最多六次模型请求、八个本地工具操作、60 秒，含最后收束；工具顺序执行。Responses 主动路径开始前分别预留最坏输入／输出的 D 决策与 G 正文，其他路径沿用单终轮预留。预留同时受个人、群、每日及服务小时预算约束；后续检索 reserve 失败时直接消费已有终轮预留，不额外重试 HTTP。仅够 D/G 时可直接收束，不能只花掉决策费用再申请正文额度。未用预留作为 released 记录保留，不冒称已调用。最后的 D/G 均不暴露工具；原生联网也不能占掉其调用位置。超出工具额度返回 `budget_exhausted`；工具提前超时而总期限未到时返回 `tool_timeout`，利用剩余时间收束。实际 profile 的输入／输出、频率与每日额度继续生效。
 
 开始函数循环前，还按实际 profile、工具 schema 与图像上界裁剪完整旧交流，保留当前问题及明确引用，给工具／收束留输入空间；不会裁开已开始的函数调用与结果。必要单轮内容仍超限时明确返回输入上限错误。工具结果挤占剩余输入时返回 budget_exhausted 并收束，已有结果保留。
 
@@ -25,6 +25,8 @@
 `ChatStore` 在后端 state-dir 下独占 `chat-v1.sqlite3`，schema `chat/1` 且绑定实例／应用。`runs` 保存参与上下文、可见生成正文、触发类型、人格版本、模型配置版本和最终状态；`events` 保存 attempt 引用、用量状态、耗时、工具名称／结果状态／来源元数据及逐段交付。无工具参数、完整 provider JSON、密钥、隐藏推理或网页全文。普通未参与消息不进入这条链路。启动与每次触发清理 30 日到期记录，整个片段以最早源消息时间到期，重复引用不续期；SQLite secure_delete 开启。提供方费用事实仍由独立 UsageLedger 拥有。
 
 审计库后续写入失败以有限错误日志和进程内 audit_failures 计数诊断，不中断已经结算的模型结果、ACK、许可撤销或交付收尾；实例绑定／schema 错误仍在启动时明确失败。业务查询引用从锚点的冻结展示页读取，兼容 QueryContext 与 DeliveryCursor。
+
+最终正文恢复由 `chat_recovery.py` 单独负责：候选成功暂存后才能发布 prepared，intent 前再次确认候选存在；首回执与待投影状态原子落 Ledger，正文与依赖及投影完成标记原子落 ChatStore。审计容错不能绕过候选写入失败。重复 ACK、启动与维护可补历史但不会重发，也不复活旧接续。删除／撤权清理派生正文，投影未知保持可诊断缺口。存储版本、批准代际、期限及回退限制见 [运行说明](CHAT_AGENT_RUNBOOK.md#a0-回执恢复与批准代际)。
 
 `Backend.apply_event` 在现有 ledger 接受 ACK 后记录逐段交付，只有当前有效、允许上下文且 success 的文本加入 ChatContext。uncertain/failure/aborted 与未发送段不进入“已说过”。发送、顺序、去重、平台被动回复槽位及现有 progress hint 均复用原链路。关闭 Agent 后旧候选不再获得发送许可。
 

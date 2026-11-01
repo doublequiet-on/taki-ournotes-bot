@@ -328,6 +328,28 @@ class KnowledgeService:
                     return False
             return True
 
+    @staticmethod
+    def retention_proof(leases):
+        # Persist identities and hashes, never another copy of reviewed prose.
+        return [dict(scope=asdict(lease.scope),chunks=[dict(doc_id=c.doc_id,chunk_id=c.chunk_id,
+                    digest=digest(canonical(asdict(c)))) for c in lease.chunks]) for lease in leases]
+
+    def validate_retention(self,proof):
+        with self.lock:
+            self.observe()
+            if not self.available:raise KnowledgeError('knowledge_retention_unavailable')
+            leases=[]
+            for item in proof:
+                members=[]
+                for expected in item['chunks']:
+                    pair=self.allowed.get(expected['doc_id'])
+                    if pair is None:return False
+                    chunk=next((c for c in split_document(*pair) if c.chunk_id==expected['chunk_id']),None)
+                    if chunk is None or digest(canonical(asdict(chunk)))!=expected['digest']:return False
+                    members.append(chunk)
+                leases.append(EvidenceLease('',KnowledgeScope(**item['scope']),tuple(members)))
+            return self.validate_current(leases)
+
     def prepare_evidence(self, lease):
         if not lease.chunks or not self.valid(lease):
             raise KnowledgeError('knowledge_evidence_unavailable')

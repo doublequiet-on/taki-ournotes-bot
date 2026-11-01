@@ -583,6 +583,27 @@ class ModelAdminTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.runtime.usage.get('b'*32)['model'],'cheap-fixture')
         self.assertEqual(self.admin.settings()['profile']['model'],self.old['profile']['model'])
 
+    async def test_capability_generation_survives_aba_and_old_file_restore(self):
+        from ournotes_bot.application.chat_capabilities import ChatCapabilities
+        data=json.loads(self.path.read_text('utf-8'));data['profile'].update(provider='openai',wire_profile='openai-responses-v1')
+        self.path.write_text(json.dumps(data),encoding='utf-8');snapshot=self.runtime.config.snapshot()
+        owner=self.runtime.capabilities
+        proof=dict(schema='chat-capabilities/3',config_version=snapshot.profile.config_version,fingerprint=snapshot.fingerprint,
+            web_search=dict(max_calls=1,unit_cost_micro=10000,currency='USD',evidence_ref='fixture/verified-web'),
+            vision=dict(max_image_tokens=4096,detail='low',evidence_ref='fixture/vision'),proactive=None)
+        self.admin.write_web_metadata(owner.path,proof,'a'*32)
+        original=owner.path.read_bytes();before=owner.vision(snapshot)
+        self.admin.write_web_metadata(owner.path,{**proof,'vision':None},'b'*32)
+        self.admin.write_web_metadata(owner.path,proof,'c'*32)
+        after=owner.vision(snapshot)
+        self.assertNotEqual(before,after);self.assertEqual(after.generation,'c'*32)
+        owner.path.write_bytes(original)
+        reopened=ChatCapabilities(owner.path,self.admin.db,require_authority=True)
+        self.assertIsNone(reopened.vision(snapshot))
+        with patch('ournotes_bot.application.model_admin.os.replace',side_effect=OSError('fixture publish crash')):
+            with self.assertRaises(OSError):self.admin.write_web_metadata(owner.path,proof,'d'*32)
+        self.assertIsNone(reopened.vision(snapshot))
+
     async def test_web_settings_preserve_other_capabilities_and_restore_approval(self):
         from ournotes_bot.domain.model_calls import ModelError
         data=json.loads(self.path.read_text('utf-8'));data['profile'].update(provider='openai',wire_profile='openai-responses-v1')
@@ -626,6 +647,22 @@ class ModelAdminTests(unittest.IsolatedAsyncioTestCase):
                 proactive=dict(enabled=True,max_calls_per_hour=100,max_replies_per_hour=20,max_cost_micro_per_hour=50000,cooldown_seconds=0)),
                 'other':dict(approved=False)})),encoding='utf-8');services.path.chmod(0o600)
         return config,owner,services
+
+    async def test_legacy_authority_migration_preserves_scope_and_is_idempotent(self):
+        before={}
+        for proactive in (False,True):
+            _,owner,services=self.approved_openai(proactive)
+            for path in (owner.path,services.path):before[path]=json.loads(path.read_text('utf-8'))
+        self.assertEqual(len(self.admin.migrate_chat_authorities()),4)
+        for path,expected in before.items():
+            actual=json.loads(path.read_text('utf-8'))
+            self.assertEqual(len(actual.pop('authority_generation')),32)
+            actual.pop('schema');expected.pop('schema')
+            self.assertEqual(actual,expected)
+        hashes={path:self.admin.metadata_digest(path,131072) for path in before}
+        self.assertEqual(self.admin.migrate_chat_authorities(),())
+        self.assertEqual(hashes,{path:self.admin.metadata_digest(path,131072) for path in before})
+        self.client.request.assert_not_called()
 
     async def test_tuning_keeps_web_vision_group_evidence_and_limits_for_both_roles(self):
         for proactive in (False,True):
@@ -733,7 +770,8 @@ class ModelAdminTests(unittest.IsolatedAsyncioTestCase):
         value=self.configured_proactive_limits();self.admin.save_proactive_limits('g',self.limits_payload(value))
         path=self.root/'chat-proactive-services-v1.json';data=json.loads(path.read_text(encoding='utf-8'))
         data['groups']['g'].update(approved=True,service_subject_id='existing-service',approval_ref='fixture/reviewed')
-        data['groups']['other']={'approved':False};path.write_text(json.dumps(data),encoding='utf-8');path.chmod(0o600)
+        data['groups']['other']={'approved':False}
+        self.admin.write_web_metadata(path,data,'b'*32,limit=131072)
         value=self.admin.proactive_limits('g');self.assertTrue(value['approved'])
         body=self.limits_payload(value,'d');body['limits'].update(enabled=False,max_replies_per_hour=0)
         self.admin.save_proactive_limits('g',body);saved=json.loads(path.read_text(encoding='utf-8'))
@@ -741,6 +779,24 @@ class ModelAdminTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(saved['groups']['g']['service_subject_id'],'existing-service')
         self.assertTrue(saved['groups']['g']['approved']);self.assertEqual(saved['groups']['other'],data['groups']['other'])
         self.assertFalse(self.admin.proactive_limits('g')['eligible'])
+
+    async def test_service_reenable_has_new_generation_and_old_file_cannot_restore_it(self):
+        config,_,services=self.approved_openai(True)
+        services.authority=self.admin.db;services.require_authority=True
+        snapshot=config.snapshot()
+        data=json.loads(services.path.read_text('utf-8'))
+        self.admin.write_web_metadata(services.path,data,'a'*32,limit=131072)
+        original=services.path.read_bytes();before=services.policy(snapshot,'g')
+        current=self.admin.proactive_limits('g')
+        disabled=self.limits_payload(current,'b');disabled['limits']['enabled']=False
+        self.admin.save_proactive_limits('g',disabled)
+        self.admin.write_web_metadata(services.path,data,'c'*32,limit=131072)
+        after=services.policy(snapshot,'g')
+        self.assertEqual(before.proactive,after.proactive)
+        self.assertNotEqual(before.generation,after.generation)
+        services.path.write_bytes(original)
+        self.assertIsNone(services.policy(snapshot,'g'))
+        self.assertEqual(services.code,'chat_service_revoked')
 
     async def test_proactive_limits_stale_guard_and_unsupported_counts_do_not_overwrite(self):
         from ournotes_bot.domain.model_calls import ModelError
@@ -2865,6 +2921,36 @@ class ChatImageIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
         self.assertFalse(plan['reply_mention'])
         self.event(plan,'intent');self.event(plan,'ack')
 
+    async def test_vision_revoked_while_waiting_for_permit_never_dispatches(self):
+        from unittest.mock import patch
+        permissions=self.backend.permissions
+        acquire=permissions.acquire
+        async def revoke_after_permit(*args,**kwargs):
+            expires=await acquire(*args,**kwargs)
+            self.backend.model_runtime.capabilities.vision.return_value=None
+            return expires
+        self.client.request.return_value=self.result('这段不应被生成')
+        with patch.object(permissions,'acquire',side_effect=revoke_after_permit):
+            plan,_=await self.prepare_native('/聊 看这张图')
+        self.assertEqual(self.client.request.call_count,0)
+        rows=list(self.backend.model_runtime.usage.db.execute('SELECT state,started FROM attempts'))
+        self.assertTrue(rows)
+        self.assertTrue(all(r['state']=='released' and r['started'] is None for r in rows))
+
+    async def test_vision_revoked_after_dispatch_keeps_charge_without_visible_audit(self):
+        async def revoke_after_dispatch(*args,**kwargs):
+            self.backend.model_runtime.capabilities.vision.return_value=None
+            return self.result('已撤权图片产生的私密正文')
+        self.client.request.side_effect=revoke_after_dispatch
+        plan,_=await self.prepare_native('/聊 看这张图')
+        self.assertEqual(self.client.request.call_count,1)
+        rows=list(self.backend.model_runtime.usage.db.execute("SELECT state,charged FROM attempts WHERE started IS NOT NULL"))
+        self.assertEqual(len(rows),1);self.assertEqual(rows[0]['state'],'settled')
+        self.assertNotEqual(rows[0]['charged'],'0')
+        store=self.backend.model_runtime.agent.store
+        self.assertFalse(any(row['role']=='assistant' for row in store.recent(Request_scope())))
+        self.assertFalse(any('已撤权图片产生的私密正文' in row[0] for row in store.db.execute('SELECT data FROM events')))
+
     async def referenced_observation(self):
         from ournotes_bot.domain.chat_images import parse_attachments
         agent=self.backend.model_runtime.agent
@@ -3652,9 +3738,73 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
             self.assertIn(CHAT_SEMANTICS,body['input'][0]['content'])
         self.assertNotIn('text 里只写',bodies[0]['input'][0]['content'])
 
-    async def test_staged_reply_keeps_six_call_budget_after_tools(self):
+    async def test_staged_two_finals_fit_exact_global_cost_budget(self):
+        from ournotes_bot.application.chat_jobs import maximum_cost_micro
+        self.snapshot=replace(self.snapshot,profile=replace(self.snapshot.profile,provider='openai',wire_profile='openai-responses-v1'))
+        usage=self.backend.model_runtime.usage
+        usage.primary_daily_micro=maximum_cost_micro(self.snapshot.profile)*2
+        self.client.request.side_effect=[self.result('{"participation":"reply","text":"","delay_seconds":null}'),self.result('预算内完成正文')]
+        value=self.observation();self.tick+=1.6
+        plan,attempts,_=await self.candidate(value)
+        self.assertTrue(plan['send_allowed']);self.assertEqual(len(attempts),2)
+        self.assertFalse(usage.db.execute("SELECT 1 FROM attempts WHERE state='reserved'").fetchone())
+
+    async def test_staged_weighted_quota_closes_early_without_losing_generation(self):
         from ournotes_bot.domain.model_calls import ToolCall
         self.snapshot=replace(self.snapshot,profile=replace(self.snapshot.profile,provider='openai',wire_profile='openai-responses-v1'))
+        bodies=[]
+        async def respond(profile,body,**kwargs):
+            bodies.append(body)
+            if body.get('tools'):return self.result(calls=(ToolCall('c'+str(len(bodies)),'catalog_info','{"kind":"help","query":""}'),))
+            if 'text' in body:return self.result('{"participation":"reply","text":"","delay_seconds":null}')
+            return self.result('用已有结果完成正文')
+        self.client.request.side_effect=respond
+        value=self.observation('这个工具怎么用');self.tick+=1.6
+        plan,attempts,_=await self.candidate(value)
+        self.assertTrue(plan['send_allowed']);self.assertLess(len(attempts),6)
+        self.assertFalse(bodies[-2].get('tools'));self.assertFalse(bodies[-1].get('tools'))
+        self.assertEqual(self.snapshot.profile.user_daily_limit,100000)
+
+    async def test_staged_two_finals_fit_service_call_limit(self):
+        self.snapshot=replace(self.snapshot,profile=replace(self.snapshot.profile,provider='openai',wire_profile='openai-responses-v1'))
+        self.policy=replace(self.policy,proactive=replace(self.policy.proactive,max_calls_per_hour=2))
+        self.agent.services.policy.return_value=self.policy
+        self.client.request.side_effect=[self.result('{"participation":"reply","text":"","delay_seconds":null}'),self.result('已有资料够了')]
+        value=self.observation();self.tick+=1.6
+        plan,attempts,_=await self.candidate(value)
+        self.assertTrue(plan['send_allowed']);self.assertEqual(len(attempts),2)
+        rows=list(self.backend.model_runtime.usage.db.execute('SELECT state FROM attempts'))
+        self.assertEqual([r['state'] for r in rows],['settled','settled'])
+
+    async def test_staged_one_slot_rejects_before_model_and_releases_hold(self):
+        self.snapshot=replace(self.snapshot,profile=replace(self.snapshot.profile,provider='openai',wire_profile='openai-responses-v1'))
+        self.policy=replace(self.policy,proactive=replace(self.policy.proactive,max_calls_per_hour=1))
+        self.agent.services.policy.return_value=self.policy
+        self.client.request.return_value=self.result('{"participation":"reply","text":"","delay_seconds":null}')
+        value=self.observation();self.tick+=1.6
+        plan,attempts,_=await self.candidate(value)
+        self.assertFalse(plan['send_allowed']);self.assertEqual(attempts,[])
+        self.assertEqual(self.client.request.call_count,0)
+        self.assertFalse(self.backend.model_runtime.usage.db.execute("SELECT 1 FROM attempts WHERE state<>'released'").fetchone())
+
+    async def test_staged_tool_then_two_held_finals(self):
+        from ournotes_bot.domain.model_calls import ToolCall
+        self.snapshot=replace(self.snapshot,profile=replace(self.snapshot.profile,provider='openai',wire_profile='openai-responses-v1'))
+        self.policy=replace(self.policy,proactive=replace(self.policy.proactive,max_calls_per_hour=3))
+        self.agent.services.policy.return_value=self.policy
+        self.client.request.side_effect=[self.result(calls=(ToolCall('help','catalog_info','{"kind":"help","query":""}'),)),
+            self.result('{"participation":"reply","text":"","delay_seconds":null}'),self.result('可以从帮助继续查')]
+        value=self.observation();self.tick+=1.6
+        plan,attempts,_=await self.candidate(value)
+        self.assertTrue(plan['send_allowed']);self.assertEqual(len(attempts),3)
+        self.assertFalse(self.backend.model_runtime.usage.db.execute("SELECT 1 FROM attempts WHERE state='reserved'").fetchone())
+
+    async def test_staged_reply_keeps_six_call_budget_after_tools(self):
+        from ournotes_bot.domain.model_calls import ToolCall
+        # This case isolates the six-position ceiling. Two complete finals plus
+        # the growing retrieval transcript must fit the separate weighted quota.
+        self.snapshot=replace(self.snapshot,profile=replace(self.snapshot.profile,provider='openai',wire_profile='openai-responses-v1',
+            user_daily_limit=200000,group_daily_limit=200000))
         bodies=[]
         responses=iter([self.result(calls=(ToolCall('c'+str(i),'catalog_info','{"kind":"help","query":""}'),)) for i in range(4)]+[
             self.result('{"participation":"reply","text":"","delay_seconds":null}'),self.result('可以从帮助里的入口继续查')])
@@ -4191,6 +4341,75 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
         self.agent.forget(Request_scope())
         self.assertEqual(self.agent.store.recent(Request_scope()),[])
         self.assertEqual(len(self.agent.store.proactive_replies(Request_scope())),1)
+
+    async def test_new_proactive_grant_does_not_revive_old_delivery(self):
+        owner=self.backend.model_runtime.capabilities
+        owner.generation=Mock(return_value='a'*32)
+        value=self.observation();self.tick+=1.6
+        self.client.request.return_value=self.result('{"participation":"reply","text":"旧代际生成的回复"}')
+        plan,_,_=await self.candidate(value)
+        self.event(plan,'intent')
+        owner.generation.return_value='b'*32
+        self.assertFalse(self.backend.lookup(plan['request_id'],'e1')['send_allowed'])
+        self.event(plan,'ack')
+        self.assertEqual(self.backend.ledger.parts(plan['delivery_id'])[0]['receipt'],'success')
+        self.assertFalse(any(row['role']=='assistant' for row in self.agent.store.recent(Request_scope())))
+        self.assertIsNone(self.agent.store.final_candidate(plan['delivery_id'],'0'))
+
+    async def test_proactive_revocation_purges_projected_body_but_preserves_receipt(self):
+        value=self.observation();self.tick+=1.6
+        self.client.request.return_value=self.result('{"participation":"reply","text":"已送达后撤权的正文"}')
+        plan,_,_=await self.candidate(value)
+        self.event(plan,'intent');self.event(plan,'ack')
+        rows=self.agent.store.recent(Request_scope())
+        self.agent.store.put_summary(Request_scope(),'summary','派生摘要',[r['message_id'] for r in rows])
+        self.agent.services.policy.return_value=None
+        self.agent.recovery.recover()
+        self.assertFalse(any(r['role']=='assistant' for r in self.agent.store.recent(Request_scope())))
+        self.assertEqual(self.agent.store.summaries(Request_scope()),[])
+        self.assertEqual(self.backend.ledger.parts(plan['delivery_id'])[0]['receipt'],'success')
+        self.event(plan,'ack')
+        self.assertFalse(any(r['role']=='assistant' for r in self.agent.store.recent(Request_scope())))
+
+    async def test_retention_read_failure_blocks_reuse_without_deleting_history(self):
+        from unittest.mock import patch
+        value=self.observation();self.tick+=1.6
+        self.client.request.return_value=self.result('{"participation":"reply","text":"保留到权限重新可核实"}')
+        plan,_,_=await self.candidate(value)
+        self.event(plan,'intent');self.event(plan,'ack')
+        with patch.object(self.agent.recovery,'_valid',side_effect=OSError('fixture unavailable')):
+            self.assertFalse(self.agent.recovery.recover(scope=Request_scope()))
+        self.assertTrue(any(r['role']=='assistant' for r in self.agent.store.recent(Request_scope())))
+        self.assertTrue(self.agent.recovery.recover(scope=Request_scope()))
+
+    async def test_delivered_text_survives_new_observation_before_ack(self):
+        value=self.observation();self.tick+=1.6
+        self.client.request.return_value=self.result('{"participation":"reply","text":"已送达的原话"}')
+        plan,_,_=await self.candidate(value)
+        self.event(plan,'intent')
+        self.current_user='u2';self.observation('新消息让旧候选失效',seq=2)
+        self.assertFalse(self.backend.lookup(plan['request_id'],'e1')['send_allowed'])
+        self.event(plan,'ack')
+        rows=self.agent.store.recent(Request_scope())
+        self.assertEqual([r['text'] for r in rows if r['role']=='assistant'],['已送达的原话'])
+        self.assertFalse(any(r['text']=='新消息让旧候选失效' for r in rows))
+
+    async def test_duplicate_ack_repairs_projection_after_store_failure(self):
+        import sqlite3
+        from unittest.mock import patch
+        value=self.observation();self.tick+=1.6
+        self.client.request.return_value=self.result('{"participation":"reply","text":"只补历史的一句"}')
+        plan,_,_=await self.candidate(value)
+        self.event(plan,'intent')
+        with patch.object(self.agent.store,'project_final',side_effect=sqlite3.OperationalError('fixture projection write')):
+            self.event(plan,'ack')
+        self.assertEqual(self.backend.ledger.parts(plan['delivery_id'])[0]['receipt'],'success')
+        self.assertFalse(self.agent.store.recent(Request_scope()))
+        self.event(plan,'ack');self.event(plan,'ack')
+        rows=self.agent.store.recent(Request_scope())
+        self.assertEqual([r['text'] for r in rows],['只补历史的一句'])
+        self.assertEqual(self.backend.ledger.projection_rows(plan['delivery_id'])[0]['state'],'done')
+        self.assertEqual(self.client.request.call_count,1)
 
     async def test_new_message_cancels_generated_reply_and_never_archives_observation(self):
         value=self.observation();self.tick+=1.6

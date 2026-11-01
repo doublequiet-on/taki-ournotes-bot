@@ -798,6 +798,106 @@ class ChatMemoryStoreTests(unittest.TestCase):
     def delivered(self,run='run1',mid='assistant1',text='我也喜欢鼓。',status='success',allow=True):
         self.store.event(run,'delivery/'+mid,'delivery',dict(message_id=mid,text=text,status=status,allow_context=allow))
 
+    def test_receipt_projection_recovers_with_reopened_owners_and_no_work_object(self):
+        from ournotes_bot.application.delivery_ledger import Ledger
+        from ournotes_bot.application.chat_store import ChatStore
+        from ournotes_bot.application.chat_recovery import ChatRecovery
+        ledger_path=self.path.with_name('deliveries.sqlite3')
+        ledger=Ledger(ledger_path,'fixture','before',self.now[0])
+        try:
+            ledger.register('gateway')
+            request=SimpleNamespace(gateway_epoch='gateway',context_id='context',ingress_seq=1,
+                request_id='request',content_digest='digest',timestamp_ms=int(self.now[0]*1000))
+            ledger.admit(request,'before','final',self.now[0])
+            staged=self.store.stage_final('final','0',self.scope,'重启后恢复的精确正文',{},
+                [dict(message_id='source',timestamp_ms=int(self.now[0]*1000))],'source',self.now[0]+86400)
+            ledger.prepared('final',1,projections=[staged]);ledger.intent('final','0','attempt')
+            ledger.ack('final','0','attempt','success','sent',now=self.now[0])
+        finally:ledger.close()
+        self.store.close()
+        self.store=ChatStore(self.path,'fixture\0app',clock=lambda:self.now[0])
+        ledger=Ledger(ledger_path,'fixture','after',self.now[0])
+        try:
+            agent=SimpleNamespace(store=self.store,runtime=SimpleNamespace(backend=SimpleNamespace(ledger=ledger)))
+            recovery=ChatRecovery(agent)
+            with patch.object(recovery,'valid',return_value=True):
+                # Simulate the second crash gap: projection commits, Ledger update fails.
+                with patch.object(ledger,'projection_done',side_effect=OSError('fixture crash')):
+                    with self.assertRaises(OSError):recovery.recover()
+                self.assertIsNotNone(self.store.projected('final','0'))
+                self.assertIsNone(self.store.final_candidate('final','0'))
+                recovery.recover();recovery.recover()
+            self.assertEqual([r['text'] for r in self.store.recent(self.scope)],['重启后恢复的精确正文'])
+            self.assertEqual(ledger.projection_rows('final')[0]['state'],'done')
+            self.assertEqual(ledger.parts('final')[0]['attempt'],'attempt')
+            self.assertFalse(ledger.active('gateway'))
+        finally:ledger.close()
+
+    def test_final_candidate_is_not_searchable_and_deleted_source_blocks_projection(self):
+        self.store.stage_final('final','0',self.scope,'未发送正文',{},
+            [dict(message_id='source',timestamp_ms=int(self.now[0]*1000))],'source',self.now[0]+86400)
+        self.assertEqual(self.store.recent(self.scope),[])
+        self.assertEqual(self.store.search(self.scope,'未发送')['status'],'no_results')
+        row=self.store.final_candidate('final','0')
+        self.store.delete_messages(self.scope,['source'])
+        self.assertIsNone(self.store.final_candidate('final','0'))
+        self.assertFalse(self.store.project_final(row,'sent',self.now[0]))
+        self.assertEqual(self.store.recent(self.scope),[])
+
+    def test_final_candidate_expires_without_extending_source_retention(self):
+        from ournotes_bot.application.chat_recovery import ChatRecovery
+        self.store.stage_final('final','0',self.scope,'到期正文',{},
+            [dict(message_id='source',timestamp_ms=int(self.now[0]*1000))],'source',self.now[0]+86400)
+        self.now[0]+=86400
+        # No prepared/receipt row exists: maintenance still sweeps this orphan.
+        ledger=SimpleNamespace(projection_rows=lambda delivery:[])
+        agent=SimpleNamespace(store=self.store,runtime=SimpleNamespace(backend=SimpleNamespace(ledger=ledger)))
+        ChatRecovery(agent).recover()
+        self.assertIsNone(self.store.final_candidate('final','0'))
+        self.assertEqual(self.store.recent(self.scope),[])
+
+    def test_projected_reply_expires_with_source_even_without_archived_source_body(self):
+        source_time=int((self.now[0]-29*86400)*1000)
+        self.store.stage_final('final','0',self.scope,'较早来源的回复',{},
+            [dict(message_id='source-not-archived',timestamp_ms=source_time)],'source-not-archived',self.now[0]+86400)
+        self.assertTrue(self.store.project_final(self.store.final_candidate('final','0'),'sent',self.now[0]))
+        self.assertEqual(len(self.store.recent(self.scope)),1)
+        self.now[0]+=86401
+        self.store.sweep()
+        self.assertEqual(self.store.recent(self.scope),[])
+        self.assertIsNone(self.store.projected('final','0'))
+
+    def test_orphan_candidate_is_removed_on_revocation_before_expiry(self):
+        from ournotes_bot.application.chat_recovery import ChatRecovery
+        self.store.stage_final('orphan','0',self.scope,'已撤权的孤立候选',{},
+            [dict(message_id='source',timestamp_ms=int(self.now[0]*1000))],'source',self.now[0]+86400)
+        ledger=SimpleNamespace(projection_rows=lambda delivery:[])
+        agent=SimpleNamespace(store=self.store,runtime=SimpleNamespace(backend=SimpleNamespace(ledger=ledger)))
+        recovery=ChatRecovery(agent)
+        with patch.object(recovery,'valid',return_value=None):
+            self.assertFalse(recovery.recover(scope=self.scope))
+            self.assertIsNotNone(self.store.final_candidate('orphan','0'))
+        with patch.object(recovery,'valid',return_value=False):
+            self.assertTrue(recovery.recover(scope=self.scope))
+        self.assertIsNone(self.store.final_candidate('orphan','0'))
+
+    def test_final_projection_is_atomic_with_completion_metadata(self):
+        import sqlite3
+        self.store.stage_final('final','0',self.scope,'实际送达正文',{},
+            [dict(message_id='source',timestamp_ms=int(self.now[0]*1000))],'source',self.now[0]+86400)
+        row=self.store.final_candidate('final','0')
+        self.store.db.execute("CREATE TRIGGER fail_projection BEFORE INSERT ON chat_projection_history BEGIN SELECT RAISE(ABORT,'fixture crash'); END")
+        with self.assertRaises(sqlite3.IntegrityError):self.store.project_final(row,'sent',self.now[0])
+        self.assertEqual(self.store.recent(self.scope),[])
+        self.assertIsNotNone(self.store.final_candidate('final','0'))
+        self.store.db.execute('DROP TRIGGER fail_projection')
+        self.assertTrue(self.store.project_final(row,'sent',self.now[0]))
+        self.assertIsNotNone(self.store.projected('final','0'))
+        self.assertIsNone(self.store.final_candidate('final','0'))
+        self.store.delete_messages(self.scope,['source'])
+        self.assertEqual(self.store.recent(self.scope),[])
+        self.assertIsNone(self.store.projected('final','0'))
+
     def test_only_explicit_participation_and_success_receipts_become_memory(self):
         self.begin('ignored',participating=False)
         self.assertEqual(self.store.status(self.scope)['messages'],0)
@@ -918,7 +1018,7 @@ class ChatMemoryStoreTests(unittest.TestCase):
         self.assertEqual(dict(self.store.db.execute('SELECT key,value FROM meta')),{'schema':'chat/1','identity':'fixture\0app'})
         self.assertEqual({r['message_id'] for r in self.store.recent(self.scope)},{'u1-message','actual','follow-user','follow-answer'})
         self.assertEqual(self.store.read(self.scope,['fake'])['status'],'no_results')
-        self.assertEqual(self.store.db.execute('PRAGMA user_version').fetchone()[0],2)
+        self.assertEqual(self.store.db.execute('PRAGMA user_version').fetchone()[0],3)
         self.store.delete_messages(self.scope,['actual'])
         self.assertEqual(self.store.read(self.scope,['follow-answer'])['status'],'no_results')
 
@@ -949,10 +1049,10 @@ class ChatMemoryStoreTests(unittest.TestCase):
         from contextlib import closing
         from ournotes_bot.application.chat_store import ChatStore
         self.store.close()
-        with closing(sqlite3.connect(self.path)) as db,db:db.execute('PRAGMA user_version=3')
+        with closing(sqlite3.connect(self.path)) as db,db:db.execute('PRAGMA user_version=4')
         with self.assertRaisesRegex(ValueError,'chat_memory_version'):ChatStore(self.path,'fixture\0app')
         with closing(sqlite3.connect(self.path)) as db,db:
-            self.assertEqual(db.execute('PRAGMA user_version').fetchone()[0],3)
+            self.assertEqual(db.execute('PRAGMA user_version').fetchone()[0],4)
             db.execute('PRAGMA user_version=2')
         self.store=ChatStore(self.path,'fixture\0app',clock=lambda:self.now[0])
 
