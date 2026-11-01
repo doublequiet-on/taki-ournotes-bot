@@ -747,16 +747,25 @@ class ChatAgent:
                     # it does not turn their unknown version into a verified one.
                     scopes=(scope,replace(scope,version=context_version))
                     await finish_thread(knowledge.observe)
-                    results=await finish_thread(partial(knowledge.retrieve_scopes,
-                        args.get('query') or question,scopes,knowledge.approved_set_revision))
-                    if results[0].code!='ok':
-                        return {'status':results[0].code,'data':results[0].message,'retryable':True},leases
-                    new_leases=tuple(r.lease for r in results if r.lease.chunks)
+                    cache=self.proactive.controller.knowledge_leases(work.proactive) if work.proactive is not None else None
+                    key=(args.get('query') or question,scopes,knowledge.approved_set_revision,work.proactive_authority)
+                    new_leases=cache.get(key) if cache is not None else None
+                    if new_leases is not None and not await finish_thread(partial(knowledge.validate_current,new_leases)):
+                        cache.pop(key,None)
+                        new_leases=None
+                    if new_leases is None:
+                        results=await finish_thread(partial(knowledge.retrieve_scopes,key[0],scopes,knowledge.approved_set_revision))
+                        if results[0].code!='ok':
+                            return {'status':results[0].code,'data':results[0].message,'retryable':True},leases
+                        new_leases=tuple(r.lease for r in results if r.lease.chunks)
                     runtime.check(work,turn_deadline,leases)
                     data=[json.loads(await finish_thread(partial(knowledge.prepare_evidence,lease)))
                           for lease in new_leases]
                     leases=(*leases,*new_leases)
                     runtime.check(work,turn_deadline,leases)
+                    if cache is not None:
+                        if key not in cache and len(cache)>=2:del cache[next(iter(cache))]
+                        cache[key]=new_leases
                     return {'status':'ok','data':data,'version_context':{
                         'version':context_version,'source':'configured_evidence_baseline',
                         'note':'默认两服同步；这是配置的资料版本，不代表已核实线上最新版本。'},
