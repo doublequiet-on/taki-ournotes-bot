@@ -3796,8 +3796,9 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
 
     async def test_knowledge_unmentioned_audit_failure_does_not_update_scope(self):
         _,key,old,answer=await self.knowledge_followup_fixture()
+        self.assertTrue(self.backend.works[answer['delivery_id']].continuation)
         self.event(answer,'intent')
-        self.agent.store.db.executescript("CREATE TRIGGER fail_service_ack BEFORE INSERT ON chat_service_receipts BEGIN SELECT RAISE(ABORT,'fixture disk'); END;")
+        self.agent.store.db.executescript("CREATE TRIGGER fail_history_audit BEFORE INSERT ON runs BEGIN SELECT RAISE(ABORT,'fixture disk'); END;")
         self.event(answer,'ack')
         self.assertGreater(self.agent.audit_failures,0)
         self.assertEqual(self.agent.knowledge_scopes[key],old)
@@ -3812,9 +3813,11 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
 
     async def test_knowledge_unmentioned_prior_temporary_audit_failure_does_not_block_ack(self):
         _,key,old,answer=await self.knowledge_followup_fixture()
-        self.agent.store.db.executescript("CREATE TRIGGER fail_receipt BEFORE INSERT ON chat_service_receipts BEGIN SELECT RAISE(ABORT,'fixture disk'); END;")
-        self.assertFalse(self.agent.audit(self.agent.store.service_ack,answer['delivery_id']))
-        self.agent.store.db.execute('DROP TRIGGER fail_receipt')
+        self.agent.store.db.executescript("CREATE TRIGGER fail_history_audit BEFORE INSERT ON runs BEGIN SELECT RAISE(ABORT,'fixture disk'); END;")
+        work=self.backend.works[answer['delivery_id']]
+        self.assertTrue(work.continuation)
+        self.assertFalse(self.agent.audit(self.agent.store.begin,work,list(work.participating_history)))
+        self.agent.store.db.execute('DROP TRIGGER fail_history_audit')
         self.event(answer,'intent');self.event(answer,'ack')
         self.assertGreater(self.agent.audit_failures,0)
         self.assertEqual(self.agent.knowledge_scopes[key][1].server,'jp')
@@ -3961,7 +3964,7 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
         elif condition=='source':
             work=self.backend.works[answer['delivery_id']]
             self.agent.store.delete_messages(work.request.scope,[work.proactive.followup.message_id])
-        else:self.agent.services.policy.return_value=None
+        else:self.backend.model_runtime.capabilities.proactive.return_value=False
         self.event(answer,'ack')
         self.assertEqual(self.agent.knowledge_scopes[key],old)
 
@@ -4547,13 +4550,15 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
         first,_=await self.prepare_native('/聊 集成图片小工具',seq=1)
         scope=self.backend.works[first['delivery_id']].request.scope
         self.event(first,'intent');self.event(first,'ack')
+        self.agent.proactive.followups.clear(tuple(scope.values()))
         delivered='accepted-'+first['request_id'][:8]
         for seq in range(2,30):
             value=self.observation('其他人的背景讨论'*90,seq=seq)
         value=self.observation('还有3939',seq=30);self.tick+=1.6
         bodies=ChatAgentTests.capture_native_bodies(self)
         self.client.request.return_value=self.result('{"participation":"reply","text":"当前在补充编号"}')
-        plan,_,_=await self.candidate(value)
+        plan,_,candidate=await self.candidate(value)
+        self.assertFalse(candidate[0].continuation)
         messages=bodies[0]['messages']
         ids={json.loads(item['content']).get('message_id') for item in messages if item['role']!='system'}
         self.assertIn(delivered,ids);self.assertIn('native1',ids);self.assertIn(value['message_id'],ids)
@@ -4587,12 +4592,14 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
         prior,_=await self.prepare_native('/聊 其他话题',seq=1)
         self.event(prior,'intent');self.event(prior,'ack')
         request=self.backend.works[prior['delivery_id']].request
+        self.agent.proactive.followups.clear(tuple(request.scope.values()))
         # A receipt in another group must never be merged into this group.
         self.agent.store.db.execute('UPDATE memory_messages SET scope=?',('other-group',));self.agent.store.db.commit()
         bodies=ChatAgentTests.capture_native_bodies(self)
         value=self.observation('现在的话题',seq=2);self.tick+=1.6
         self.client.request.return_value=self.result('{"participation":"skip"}')
-        await self.candidate(value)
+        _,_,candidate=await self.candidate(value)
+        self.assertFalse(candidate[0].continuation)
         self.assertNotIn('这是其他话题已经送达的回答',json.dumps(bodies,ensure_ascii=False))
         # Restore the scope but make the persisted exchange older than the auto window.
         self.agent.store.db.execute('UPDATE memory_messages SET scope=?,timestamp_ms=?',
