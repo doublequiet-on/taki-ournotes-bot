@@ -3345,6 +3345,71 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
         return admin.save_chat_settings('g1',dict(operation_id=os.urandom(16).hex(),guard=state['guard'],
             settings={**state['settings'],**changes}))
 
+    async def continuation_fixture(self):
+        self.agent.services.policy.return_value=None
+        self.client.request.return_value=self.result('可以继续。')
+        initial,_=await self.prepare_native('/聊 开始看这个问题')
+        self.event(initial,'intent');self.event(initial,'ack');self.now+=.01
+        value=self.observation('先看第一部分',seq=2);self.tick+=1.6
+        return value
+
+    async def test_other_speaker_does_not_cancel_inflight_continuation_or_ack(self):
+        value=await self.continuation_fixture()
+        entered=asyncio.Event();release=asyncio.Event()
+        async def response(*args,**kwargs):
+            entered.set();await release.wait()
+            return self.result('{"participation":"reply","text":"第一部分可以这样看"}')
+        self.client.request.side_effect=response
+        task=asyncio.create_task(self.candidate(value))
+        try:
+            await asyncio.wait_for(entered.wait(),3)
+            work=next(work for work in self.backend.works.values() if work.continuation and work.active)
+            self.current_user='u2';self.now+=.01
+            other=self.request('intervening',3);other.update(body='我在和别人说话',trigger='observation')
+            parsed=Request.parse(other,'fixture','app',self.now)
+            self.assertFalse(self.agent.proactive.observe(parsed))
+            self.assertIsNone(self.agent.proactive.candidate(parsed))
+            # Independent bounded context bookkeeping also cannot revoke this speaker's frozen turn.
+            self.agent.proactive.followups.observe(tuple(parsed.scope.values()),'u2',parsed.message_id,parsed.timestamp_ms,3,'e1')
+            self.assertTrue(self.agent.proactive.valid(work))
+        finally:release.set()
+        plan,_,_=await task
+        self.assertTrue(plan['send_allowed'])
+        self.event(plan,'intent');self.event(plan,'ack')
+        stored=self.agent.store.read(work.request.scope,['accepted-'+plan['request_id'][:8]])['messages']
+        self.assertEqual(stored[0]['text'],'第一部分可以这样看')
+
+    async def test_same_speaker_supplement_replaces_continuation_and_keeps_both_inputs(self):
+        value=await self.continuation_fixture()
+        self.client.request.return_value=self.result('{"participation":"reply","text":"原回复"}')
+        old,_,_=await self.candidate(value)
+        old_work=self.backend.works[old['delivery_id']]
+        self.now+=.01
+        newer=self.observation('再加一个限制',seq=3)
+        self.assertFalse(self.agent.proactive.valid(old_work,sending=True))
+        self.assertFalse(self.backend.lookup(old['request_id'],'e1')['send_allowed'])
+        self.tick+=1.6
+        bodies=ChatAgentTests.capture_native_bodies(self)
+        self.client.request.return_value=self.result('{"participation":"reply","text":"一起按新条件看"}')
+        plan,_,_=await self.candidate(newer,2)
+        self.assertTrue(plan['send_allowed'])
+        self.assertIn('先看第一部分',str(bodies));self.assertIn('再加一个限制',str(bodies))
+
+    async def test_conversation_settings_revoke_the_matching_lane(self):
+        value=await self.continuation_fixture()
+        self.client.request.return_value=self.result('{"participation":"reply","text":"准备继续"}')
+        plan,_,_=await self.candidate(value)
+        self.save_conversation_settings(excluded_users=[dict(user_id='u1',label='成员')])
+        self.assertTrue(self.backend.lookup(plan['request_id'],'e1')['send_allowed'])
+        self.save_conversation_settings(followup_enabled=False)
+        self.assertFalse(self.backend.lookup(plan['request_id'],'e1')['send_allowed'])
+        self.agent.services.policy.return_value=self.policy
+        self.current_user='u2';self.now+=.01
+        value=self.observation('普通主动话题',seq=3);self.tick+=1.6
+        plan,_,_=await self.candidate(value,2)
+        self.save_conversation_settings(excluded_users=[dict(user_id='u1',label='成员'),dict(user_id='u2',label='其他成员')])
+        self.assertFalse(self.backend.lookup(plan['request_id'],'e1')['send_allowed'])
+
     async def test_continuation_uses_user_budget_when_proactive_service_is_disabled(self):
         self.agent.services.policy.return_value=None
         self.client.request.return_value=self.result('可以，我们按这个顺序看。')
@@ -4010,7 +4075,8 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
         self.assertFalse(self.agent.proactive.observe(request))
         self.assertIsNotNone(self.agent.proactive.followups.match(tuple(request.scope.values()),request.message_id))
         self.current_user='u2';self.now+=.01
-        self.observation('我先插一句',seq=3)
+        other=self.request('intervening',3);other.update(body='我先插一句',trigger='observation')
+        self.assertFalse(self.agent.proactive.observe(Request.parse(other,'fixture','app',self.now)))
         self.assertIsNotNone(self.agent.proactive.followups.match(tuple(request.scope.values()),request.message_id))
 
     async def test_followup_candidate_expires_before_send(self):

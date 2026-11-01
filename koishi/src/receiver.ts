@@ -4,7 +4,7 @@ import { createHash, randomUUID } from 'node:crypto'
 import { Context, Session, Channel, User } from 'koishi'
 import type { QQBot } from '@satorijs/adapter-qq'
 import { BackendClient, BackendError, Plan, ModelPermission } from './backend'
-import { decodeIncoming, Identity, Inbound } from './ingress'
+import { decodeIncoming, Identity, Inbound, pairId } from './ingress'
 import { QQDelivery, QQInternal } from './delivery'
 import { Notices } from './notices'
 import { MaterialStore, materialRequest } from './materials'
@@ -18,7 +18,7 @@ export interface ReceiverConfig extends Identity {
 interface Raw { raw: unknown; seq: number; backendSeq:number; at: number; fingerprint: string; bytes:number; conflict?: boolean }
 interface Observation {
   key:string; input:Inbound; session:Session; seq:number; backendSeq:number; fingerprint:string; bytes:number; attempt:number
-  policyVersion:string
+  policyVersion:string; continuation:boolean
   cancelled:boolean; accepted:boolean; timer?:ReturnType<typeof setTimeout>; promise?:Promise<void>
 }
 interface ObservationDiagnostic {
@@ -88,6 +88,7 @@ export class Receiver {
   private observations = new Map<string, Observation>()
   private observationTasks = new Set<Observation>()
   private groupArrivals = new Map<string,{seq:number;backendSeq:number;at:number}>()
+  private speakerArrivals = new Map<string,{seq:number;at:number}>()
   private admission: Promise<void> = Promise.resolve()
   readonly ready: Promise<void>
   private log: ReturnType<Context['logger']>
@@ -116,10 +117,16 @@ export class Receiver {
     const now=Date.now()
     for(const [key,value] of this.raw) if(now-value.at>=298000)this.raw.delete(key)
     for(const [key,value] of this.groupArrivals)if(now-value.at>=298000)this.groupArrivals.delete(key)
+    for(const [key,value] of this.speakerArrivals)if(now-value.at>=298000)this.speakerArrivals.delete(key)
     for(const task of this.observations.values()) if(!this.observationAlive(task))this.cancelObservation(task.key)
   }
   private groupKey(group:string):string {
     return JSON.stringify([this.config.instanceId,this.config.appId,'qq','group',group])
+  }
+  private speakerKey(group:string,user:string):string { return JSON.stringify([this.groupKey(group),user]) }
+  private latestObservation(input:Inbound,seq:number,continuation:boolean):boolean {
+    return (continuation?this.speakerArrivals.get(this.speakerKey(input.conversationId,input.userId))
+      :this.groupArrivals.get(this.groupKey(input.conversationId)))?.seq===seq
   }
   private observationBytes():number {
     const sources=new Set([...this.raw.values(),...[...this.flights.values()].map(flight=>flight.source)])
@@ -139,7 +146,7 @@ export class Receiver {
   private observationAlive(task:Observation):boolean {
     const management=this.config.management
     return this.active && !task.cancelled && this.observations.get(task.key)===task
-      && this.groupArrivals.get(task.key)?.seq===task.seq
+      && this.latestObservation(task.input,task.seq,task.continuation)
       && Date.now()<task.input.timestampMs+298000 && (management?.accepts(task.input)??true)
       && (management?.policySnapshot(task.input).natural_query??'model')==='model'
       && this.policyVersion(task.input)===task.policyVersion
@@ -162,16 +169,18 @@ export class Receiver {
     },delayMs)
     task.timer.unref()
   }
-  private queueObservation(input:Inbound,session:Session,source:Raw,delayMs:number):void {
+  private queueObservation(input:Inbound,session:Session,source:Raw,delayMs:number,continuation=false):void {
     const key=this.groupKey(input.conversationId)
-    if(this.groupArrivals.get(key)?.seq!==source.seq)return
+    if(!this.latestObservation(input,source.seq,continuation))return
+    const current=this.observations.get(key)
+    if(current?.continuation && current.input.userId!==input.userId)return
     this.cancelObservation(key)
     const bytes=Buffer.byteLength(JSON.stringify(input))+Buffer.byteLength(JSON.stringify(session.event))
     // The current ingress flight releases its slot on return; the timer takes it.
     if(this.flights.size+this.observationTasks.size-1>=this.config.maxPending
         || this.observationBytes()+bytes>8*1024*1024)return
     const task:Observation={key,input,session,seq:source.seq,backendSeq:source.backendSeq,fingerprint:source.fingerprint,bytes,
-      attempt:0,cancelled:false,accepted:false,policyVersion:this.policyVersion(input)}
+      attempt:0,cancelled:false,accepted:false,policyVersion:this.policyVersion(input),continuation}
     this.observations.set(key,task)
     this.observationTasks.add(task)
     this.scheduleObservation(task,delayMs)
@@ -235,8 +244,16 @@ export class Receiver {
       backendSeq=previous ? previous.backendSeq+1 : seq
       const current=this.observations.get(groupKey)
       if(current?.input.messageId===data.id && current.fingerprint===fingerprint)return
-      // Invalidate locally at raw arrival, before permissions/HTTP can reorder.
-      this.cancelObservation(this.groupKey(group))
+      const author=data.author as Record<string,unknown> | undefined
+      const speaker=pairId(author?.id,author?.member_openid)
+      if(speaker) {
+        const speakerKey=this.speakerKey(group,speaker)
+        this.speakerArrivals.delete(speakerKey);this.speakerArrivals.set(speakerKey,{seq,at:now})
+        while(this.speakerArrivals.size>2048)this.speakerArrivals.delete(this.speakerArrivals.keys().next().value!)
+      }
+      // Ordinary proactive replies track the group; user-initiated continuations track their speaker.
+      if(!current?.continuation || type==='GROUP_AT_MESSAGE_CREATE' || !speaker || speaker===current.input.userId)
+        this.cancelObservation(groupKey)
       this.groupArrivals.delete(this.groupKey(group))
       this.groupArrivals.set(groupKey,{seq,backendSeq,at:now})
       while(this.groupArrivals.size>512) {
@@ -331,7 +348,7 @@ export class Receiver {
         this.diagnoseObservation(input,'backend_response',observed.observed)
         if(observed.observed && this.active && !source.conflict
             && (this.config.management?.accepts(input)??true) && this.policyVersion(input)===version) {
-          this.queueObservation(input,canonical,source,observed.delay_ms)
+          this.queueObservation(input,canonical,source,observed.delay_ms,observed.continuation)
         }
         return false // Observation never consumes another plugin's ordinary message.
       }
@@ -503,6 +520,7 @@ export class Receiver {
     this.raw.clear()
     for(const key of this.observations.keys())this.cancelObservation(key)
     this.groupArrivals.clear()
+    this.speakerArrivals.clear()
     for (const job of this.jobs.values()) job.delivery?.dispose()
     const materialsClosed=this.materials?.close()
     // Retire before waiting for in-flight sends. Their late ACK may record facts, never context.

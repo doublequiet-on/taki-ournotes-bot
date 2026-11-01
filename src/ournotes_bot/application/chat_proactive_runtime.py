@@ -53,7 +53,7 @@ class ProactiveChat:
     def control_event(self,request,status):
         backend=self.agent.runtime.backend
         now=backend.clock()
-        if status in ('excluded_user','followup_disabled','platform_unapproved','service_disabled','budget_exhausted'):
+        if status in ('excluded_user','followup_disabled','platform_unapproved','service_disabled','budget_exhausted','conversation_busy'):
             key=(request.conversation_id,status)
             if key in self.control_times and now-self.control_times[key]<10:return
             self.control_times[key]=now;self.control_times.move_to_end(key)
@@ -131,6 +131,7 @@ class ProactiveChat:
             policy=ProactivePolicy(True,'continuation','explicit-dialogue',120,120,10**15,cooldown_seconds=0)
             self.controller.configure(scope,policy)
             self.controller.groups[scope].coalesce_seconds=self.settings(request.conversation_id)['coalesce_seconds']
+            self.controller.groups[scope].continuation_user_id=request.user_id
             return None
         policy=self.policy(snapshot,request)
         if policy is None and scope not in self.controller.groups:return None
@@ -140,15 +141,32 @@ class ProactiveChat:
             limits.max_replies_per_hour if limits else 3,limits.max_cost_micro_per_hour if limits else 0,
             cooldown_seconds=limits.cooldown_seconds if limits else 60))
         self.controller.groups[scope].coalesce_seconds=None
+        self.controller.groups[scope].continuation_user_id=None
         if self.controller.status(scope)['addressed_active']!=bool(self.addressed[scope]):
             self.controller.set_addressed(scope,bool(self.addressed[scope]))
         return policy
+
+    def continuation_owner(self,scope):
+        group=self.controller.groups.get(scope)
+        if (group is None or group.continuation_user_id is None or not group.rows
+                or group.active is None and not group.dirty and group.deferred_at is None):return None
+        followup=self.followups.match(scope,group.rows[-1].message.message_id)
+        return followup.user_id if followup else None
 
     def observe(self,request):
         if request.kind!='group' or request.policy.natural_query!='model':return False
         try:
             scope=self.scope(request);settings=self.settings(request.conversation_id)
             if not self.agent.store.source_valid(request.scope,request.message_id,request.timestamp_ms):return False
+            owner=self.continuation_owner(scope)
+            if owner is not None and owner!=request.user_id:
+                self.control_event(request,'conversation_busy');return False
+            if owner==request.user_id:
+                for work in tuple(self.agent.runtime.backend.works.values()):
+                    if (work.active and work.continuation and work.request.scope==request.scope
+                            and work.request.user_id==request.user_id and work.request.ingress_seq<request.ingress_seq
+                            and work.request.message_id!=request.message_id):
+                        self.agent.runtime.backend.finish(work,'aborted')
             if replies.recognizes_message(request.body) and not replies.is_ai_request(request.body):
                 self.followups.clear(scope,request.user_id);self.controller.cancel(scope);return False
             active=next((work for work in reversed(tuple(self.agent.runtime.backend.works.values()))
@@ -198,6 +216,8 @@ class ProactiveChat:
 
     def candidate(self,request):
         if self.agent.audit_failures:return None
+        owner=self.continuation_owner(self.scope(request))
+        if owner is not None and owner!=request.user_id:return None
         settings=self.settings(request.conversation_id)
         followup=self.followups.match(self.scope(request),request.message_id) if settings['followup_enabled'] else None
         continuation=followup is not None
@@ -327,7 +347,9 @@ class ProactiveChat:
             if current!=expected:return False
             if self.agent.runtime.capabilities_for(work).generation(current)!=work.proactive_authority:return False
             followup=work.proactive.followup
-            if followup is not None and (self.followups.match(self.scope(work.request),work.request.message_id)!=followup
+            current_followup=self.followups.match(self.scope(work.request),work.request.message_id) if followup else None
+            if followup is not None and (current_followup is None
+                    or replace(current_followup,observed_ids=followup.observed_ids)!=followup
                     or not self.agent.store.source_valid(work.request.scope,followup.source_id,followup.source_time)
                     or not self.agent.store.source_valid(work.request.scope,followup.message_id,followup.delivered_ms)):
                 return False

@@ -157,12 +157,15 @@ export function decodePlan(value: unknown): Plan {
   requireWire(status==='preparing' && base.processing_hint===true && parts.length===1 && parts[0].kind==='text','plan_shape')
   return {...base,status,send_allowed:true,processing_hint:true,parts:[parts[0]]}
 }
-export interface ChatObservation { protocol: typeof protocol; observed: boolean; delay_ms: number }
+export interface ChatObservation { protocol: typeof protocol; observed: boolean; delay_ms: number; continuation?: boolean }
 export function decodeChatObservation(value: unknown): ChatObservation {
   const v=object(value,'observation_shape')
-  exact(v,['protocol','observed','delay_ms'],'observation_shape')
-  return {protocol:wireProtocol(v.protocol),observed:boolean(v.observed,'observation_shape'),
-    delay_ms:integer(v.delay_ms,0,120000,'observation_shape')}
+  exact(v,v.continuation===undefined?['protocol','observed','delay_ms']:['protocol','observed','delay_ms','continuation'],'observation_shape')
+  const observed=boolean(v.observed,'observation_shape')
+  const continuation=v.continuation===undefined?undefined:boolean(v.continuation,'observation_shape')
+  requireWire(!continuation || observed,'observation_shape')
+  return {protocol:wireProtocol(v.protocol),observed,delay_ms:integer(v.delay_ms,0,120000,'observation_shape'),
+    ...(continuation===undefined?{}:{continuation})}
 }
 export type ChatCandidate = { protocol: typeof protocol; candidate: false }
   | { protocol: typeof protocol; candidate: true; plan: Plan }

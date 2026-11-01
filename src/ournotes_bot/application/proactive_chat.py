@@ -117,6 +117,7 @@ class _Group:
     opportunity: _Opportunity | None = None
     pending_since: float | None = None
     coalesce_seconds: float | None = None
+    continuation_user_id: str | None = None
 
 
 class ProactiveController:

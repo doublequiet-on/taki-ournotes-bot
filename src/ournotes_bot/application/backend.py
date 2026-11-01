@@ -857,7 +857,10 @@ def create_app(backend, token, initialize=None):
         observed=bool(agent and getattr(backend.settings,'chat_engine','legacy')=='agent' and agent.proactive.observe(parsed))
         try:delay=agent.proactive.observation_delay(parsed) if observed else None
         except (ModelError,ServiceError,ValueError,OSError,sqlite3.Error):delay=None
-        return json({'protocol':PROTOCOL,'observed':observed and delay is not None,'delay_ms':delay or 0})
+        result={'protocol':PROTOCOL,'observed':observed and delay is not None,'delay_ms':delay or 0}
+        if request.headers.get('X-Taki-Observation')=='continuation-v1':
+            result['continuation']=bool(result['observed'] and agent.proactive.followups.match(agent.proactive.scope(parsed),parsed.message_id))
+        return json(result)
     async def chat_candidate(request):
         from ..domain.model_calls import ModelError
         require(backend.accepting(),'not_ready',503)
