@@ -2970,9 +2970,11 @@ class ChatResearchTaskTests(Fixture,unittest.IsolatedAsyncioTestCase):
         refs=['song:100001','song:100002']
         self.client.request.side_effect=[self.result(calls=(self.task_call(refs,['notes','level'],'EXPERT'),
             self.call('read_entity_fields',entity_refs=refs,fields=['notes','level'],difficulty='EXPERT'))),
-            self.result('两首 EXPERT 都是 25 级、200 个音符。')]
+            self.result('两首 EXPERT 都是 25 级、200 个音符。\n\n来源：Haneoka（日服）\n来源：Haneoka / 日服 / 版本 r-fixture')]
         plan,attempts=await self.prepare_native('/聊 比较合成曲100001和合成曲100002的EXPERT等级和Note')
         self.assertEqual(len(attempts),2);self.assertEqual(plan['parts'][0]['business_status'],'success')
+        self.assertEqual(plan['parts'][0]['text'].count('来源：'),1)
+        self.assertIn('Haneoka / 日服 / 版本 r-fixture',plan['parts'][0]['text'])
         data=[json.loads(row['content']) for row in bodies[0]['messages'] if row['role']=='user']
         self.assertEqual([item['ref'] for row in data for item in row.get('current_entities',[])],refs)
         self.event(plan,'intent');self.event(plan,'ack')
