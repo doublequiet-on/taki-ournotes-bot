@@ -3253,6 +3253,77 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
         self.assertTrue(self.agent.proactive.observe(request))
         return value
 
+    def save_conversation_settings(self,**changes):
+        admin=self.backend.model_runtime.admin
+        state=admin.chat_settings('g1')
+        return admin.save_chat_settings('g1',dict(operation_id=os.urandom(16).hex(),guard=state['guard'],
+            settings={**state['settings'],**changes}))
+
+    async def test_continuation_uses_user_budget_when_proactive_service_is_disabled(self):
+        self.agent.services.policy.return_value=None
+        self.client.request.return_value=self.result('可以，我们按这个顺序看。')
+        plan,_=await self.prepare_native('/聊 一起看这个问题')
+        self.event(plan,'intent');self.event(plan,'ack');self.now+=.01
+        value=self.observation('先看第一部分',seq=2);self.tick+=1.6
+        self.client.request.return_value=self.result('{"participation":"reply","text":"先看第一部分"}')
+        followup,attempts,candidate=await self.candidate(value)
+        work=self.backend.works[followup['delivery_id']]
+        self.assertTrue(work.continuation);self.assertIsNone(work.service_policy)
+        self.assertTrue(attempts);self.assertTrue(followup['send_allowed'])
+        usage=self.backend.model_runtime.usage
+        row=usage.db.execute('SELECT user_key FROM attempts WHERE request_id=?',(work.service_request_id,)).fetchone()
+        self.assertEqual(row['user_key'],usage.key('user',work.model_subject))
+        self.event(followup,'intent');self.event(followup,'ack')
+        self.assertIsNotNone(self.agent.proactive.followups.current(candidate[0].scope,'u1'))
+
+    async def test_excluded_user_can_address_then_continue_and_other_group_is_independent(self):
+        self.save_conversation_settings(excluded_users=[dict(user_id='u1',label='同名成员')])
+        raw=self.request('excluded',1);raw.update(body='路过聊两句',trigger='observation')
+        self.assertFalse(self.agent.proactive.observe(Request.parse(raw,'fixture','app',self.now)))
+        self.assertEqual(self.backend.model_runtime.admin.chat_settings('g2')['settings']['excluded_users'],[])
+        self.client.request.return_value=self.result('好，我听着。')
+        plan,_=await self.prepare_native('/聊 帮我看一下',seq=2)
+        self.event(plan,'intent');self.event(plan,'ack');self.now+=.01
+        value=self.observation('就是刚才那个问题',seq=3);self.tick+=1.6
+        self.client.request.return_value=self.result('{"participation":"reply","text":"可以继续"}')
+        followup,_,candidate=await self.candidate(value)
+        self.assertTrue(candidate[0].continuation);self.assertTrue(followup['send_allowed'])
+        self.assertTrue(any(row['data'].get('status')=='excluded_user' for row in self.backend.diagnostics.group_events('g1')))
+
+    async def test_window_and_platform_switches_still_gate_continuation(self):
+        self.agent.services.policy.return_value=None
+        self.client.request.return_value=self.result('可以继续。')
+        plan,_=await self.prepare_native('/聊 开始吧')
+        self.event(plan,'intent');self.event(plan,'ack');self.now+=.01
+        self.backend.model_runtime.capabilities.proactive.return_value=False
+        raw=self.request('blocked',2);raw.update(body='接着聊',trigger='observation')
+        self.assertFalse(self.agent.proactive.observe(Request.parse(raw,'fixture','app',self.now)))
+        self.backend.model_runtime.capabilities.proactive.return_value=True
+        self.save_conversation_settings(followup_enabled=False)
+        self.assertFalse(self.agent.proactive.followups.questions)
+        self.assertFalse(self.agent.proactive.observe(Request.parse(raw,'fixture','app',self.now)))
+
+    async def test_initial_supplements_are_merged_before_model_call(self):
+        bodies=ChatAgentTests.capture_native_bodies(self)
+        self.client.request.return_value=self.result('按你补充的条件处理。')
+        task=asyncio.create_task(self.prepare_native('/聊 帮我看看这个'))
+        await asyncio.sleep(.02)
+        raw=self.request('addition',2);raw.update(body='只看第一段',trigger='observation')
+        self.assertFalse(self.agent.proactive.observe(Request.parse(raw,'fixture','app',self.now)))
+        plan,_=await task
+        work=self.backend.works[plan['delivery_id']]
+        self.assertEqual([row.text for row in work.chat_additions],['只看第一段'])
+        self.assertIn('帮我看看这个',str(bodies));self.assertIn('只看第一段',str(bodies))
+        self.assertEqual(self.client.request.call_count,1)
+
+    async def test_stop_cancels_initial_pending_chat_before_model_call(self):
+        raw=self.request('start',1);raw['body']='/聊 帮我看看这个'
+        plan=await self.backend.submit(raw)
+        stop=self.request('stop',2);stop.update(body='不用了',trigger='observation')
+        self.assertFalse(self.agent.proactive.observe(Request.parse(stop,'fixture','app',self.now)))
+        self.assertFalse(self.backend.works[plan['delivery_id']].active)
+        self.client.request.assert_not_called()
+
     async def test_proactive_next_turn_sees_delivered_reply_and_source(self):
         bodies=ChatAgentTests.capture_native_bodies(self)
         self.policy=replace(self.policy,proactive=replace(self.policy.proactive,cooldown_seconds=0))
@@ -3810,7 +3881,7 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
         _,_,candidate=await self.candidate(value)
         self.assertIsNone(candidate[0].followup)
 
-    async def test_answer_arriving_before_gateway_ack_does_not_create_followup(self):
+    async def test_intervening_arrival_before_gateway_ack_keeps_followup_window(self):
         from ournotes_bot.application.backend_protocol import PROTOCOL
         self.client.request.return_value=self.result('你说哪方面？')
         plan,_=await self.prepare_native('/聊 哪个更权威')
@@ -3821,9 +3892,9 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
         value=self.observation('唱歌',seq=2);self.tick+=1.6
         self.client.request.return_value=self.result('{"participation":"skip"}')
         _,_,candidate=await self.candidate(value)
-        self.assertIsNone(candidate[0].followup)
+        self.assertIsNotNone(candidate[0].followup)
 
-    async def test_duplicate_observation_preserves_match_but_other_speaker_cancels_it(self):
+    async def test_duplicate_observation_and_other_speaker_preserve_window(self):
         from ournotes_bot.application.backend_protocol import Request
         self.client.request.return_value=self.result('你说哪方面？')
         plan,_=await self.prepare_native('/聊 哪个更权威')
@@ -3834,7 +3905,7 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
         self.assertIsNotNone(self.agent.proactive.followups.match(tuple(request.scope.values()),request.message_id))
         self.current_user='u2';self.now+=.01
         self.observation('我先插一句',seq=3)
-        self.assertIsNone(self.agent.proactive.followups.match(tuple(request.scope.values()),request.message_id))
+        self.assertIsNotNone(self.agent.proactive.followups.match(tuple(request.scope.values()),request.message_id))
 
     async def test_followup_candidate_expires_before_send(self):
         self.client.request.return_value=self.result('你说哪方面？')
@@ -3859,17 +3930,17 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
         self.agent.store.delete_messages(work.request.scope,[candidate[0].followup.message_id])
         self.assertFalse(self.agent.proactive.valid(work,sending=True))
 
-    async def test_policy_revocation_sweeps_idle_question(self):
+    async def test_platform_revocation_sweeps_idle_question(self):
         self.client.request.return_value=self.result('你说哪方面？')
         plan,_=await self.prepare_native('/聊 哪个更权威')
         self.event(plan,'intent');self.event(plan,'ack')
         self.assertTrue(self.agent.proactive.followups.questions)
-        self.agent.services.policy.return_value=None
+        self.backend.model_runtime.capabilities.proactive.return_value=False
         self.agent.proactive.sweep_followups()
         self.assertFalse(self.agent.proactive.followups.questions)
         self.assertFalse(self.agent.proactive.followups.timers)
 
-    async def test_followup_waits_for_existing_cooldown_without_bypassing_it(self):
+    async def test_followup_uses_coalescing_without_unsolicited_cooldown(self):
         from ournotes_bot.application.backend_protocol import Request
         self.client.request.return_value=self.result('你说哪方面？')
         plan,_=await self.prepare_native('/聊 哪个更权威')
@@ -3881,9 +3952,9 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
         group.last_delivery_at=self.tick
         with patch.object(self.agent.store,'proactive_replies',return_value=(self.now,)), patch.object(self.agent.service_budget,'clock',return_value=self.now):
             delay=self.agent.proactive.observation_delay(request)
-        self.assertEqual(delay,60000)
+        self.assertEqual(delay,1500)
         self.assertIsNone(self.agent.proactive.controller.candidate(tuple(request.scope.values()),reserve_cost_micro=1))
-        self.tick+=60
+        self.tick+=1.6
         self.client.request.return_value=self.result('{"participation":"skip"}')
         _,_,candidate=await self.candidate(value)
         self.assertIsNotNone(candidate[0].followup)

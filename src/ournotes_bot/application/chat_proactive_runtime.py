@@ -6,7 +6,7 @@ import json
 import math
 import re
 import sqlite3
-from collections import Counter
+from collections import Counter,OrderedDict
 from dataclasses import asdict,replace
 from fractions import Fraction
 from types import SimpleNamespace
@@ -46,12 +46,19 @@ class ProactiveChat:
         self.controller=ProactiveController()
         self.followups=Followups(clock=lambda:self.controller.clock(),on_expire=self.window_expired)
         self.addressed=Counter()
+        self.control_times=OrderedDict()
         self.services=ChatServices(agent.runtime.usage.path.parent,agent.runtime.backend.instance_id,
             agent.runtime.backend.app_id,filename='chat-proactive-services-v1.json',authority=agent.runtime.admin.db,require_authority=True)
 
     def control_event(self,request,status):
         backend=self.agent.runtime.backend
-        backend.diagnostics.conversation_event(request.request_id,request.conversation_id,'control',backend.clock(),status=status)
+        now=backend.clock()
+        if status in ('excluded_user','followup_disabled','platform_unapproved','service_disabled','budget_exhausted'):
+            key=(request.conversation_id,status)
+            if key in self.control_times and now-self.control_times[key]<10:return
+            self.control_times[key]=now;self.control_times.move_to_end(key)
+            while len(self.control_times)>1024:self.control_times.popitem(last=False)
+        backend.diagnostics.conversation_event(request.request_id,request.conversation_id,'control',now,status=status)
 
     def window_expired(self,scope,question):
         backend=self.agent.runtime.backend
@@ -174,10 +181,13 @@ class ProactiveChat:
                 snapshot=self.agent.runtime.config.snapshot().for_group(request.conversation_id)
                 self.configured(request,snapshot,continuation=True)
             else:
+                if not settings['followup_enabled']:self.control_event(request,'followup_disabled')
                 if request.user_id in {row['user_id'] for row in settings['excluded_users']}:
                     self.control_event(request,'excluded_user');return False
                 snapshot=self.agent.runtime.proactive_snapshot(request.conversation_id)
-                if self.configured(request,snapshot) is None:return False
+                if self.configured(request,snapshot) is None:
+                    status='service_disabled' if self.owners()[1].proactive(snapshot,request.conversation_id) else 'platform_unapproved'
+                    self.control_event(request,status);return False
             if request.attachments:
                 self.agent.images.remember(self.agent.image_scope(request),request.message_id,request.user_id,request.timestamp_ms,request.attachments)
             return self.controller.observe(scope,ChatMessage(request.message_id,request.user_id,
@@ -201,7 +211,8 @@ class ProactiveChat:
         model_cost=maximum_cost_micro(snapshot.profile)*self.agent.budget.model_calls
         remaining=self.controller.remaining_cost(self.scope(request))
         if remaining is not None:model_cost=min(model_cost,remaining)
-        if model_cost<=0:return None
+        if model_cost<=0:
+            self.control_event(request,'budget_exhausted');return None
         cost=model_cost
         web=(self.agent.runtime.capabilities if continuation else self.owners()[1]).web(snapshot)
         if web:
@@ -214,10 +225,12 @@ class ProactiveChat:
             try:
                 permit=self.agent.service_budget.check(policy,'proactive',snapshot.profile,
                     preflight,math.ceil(model_cost),reply_times=self.agent.store.proactive_replies(request.scope))
-            except ServiceError:return None
+            except ServiceError:
+                self.control_event(request,'budget_exhausted');return None
             spent=max(permit.spent_cost_micro,self.controller.status(self.scope(request))['hourly_cost_micro'])
             cost=min(math.ceil(cost),math.floor(policy.proactive.max_cost_micro_per_hour-spent))
-            if cost<math.ceil(model_cost):return None
+            if cost<math.ceil(model_cost):
+                self.control_event(request,'budget_exhausted');return None
         candidate=self.controller.candidate(self.scope(request),reserve_cost_micro=math.ceil(cost))
         if candidate is None:return None
         last=candidate.messages[-1]
@@ -230,6 +243,7 @@ class ProactiveChat:
         try:self.agent.service_budget.check(policy,'proactive',snapshot.profile,job,candidate.reserved_cost_micro,
             reply_times=self.agent.store.proactive_replies(request.scope))
         except ServiceError:
+            self.control_event(request,'budget_exhausted')
             self.controller.decide(candidate,'skip',actual_cost_micro=0);return None
         if snapshot.fingerprint:self.agent.runtime.usage.configuration(snapshot.profile.config_version,snapshot.fingerprint)
         return candidate,policy,snapshot,job
@@ -375,6 +389,7 @@ class ProactiveChat:
         rows=[row for request_id in budget['opportunity_requests'] for row in self.agent.runtime.usage.request_view(request_id)]
         active=[row for row in rows if row['state']!='released']
         require(len(active)<budget['opportunity_calls'],'quota_exceeded')
+        require(all(not row['billing_incomplete'] and row['state'] in ('reserved','settled') for row in active),'usage_unavailable')
         cost=sum((Fraction(row['reserved_tokens'])*Fraction(row['price']['reference_rate'])/1_000_000
                   if row['state'] in ('reserved','started') else Fraction(row['reference_cost_micro']) for row in active),Fraction())
         require(cost+amount<=budget['opportunity_cost_micro'],'quota_exceeded')
