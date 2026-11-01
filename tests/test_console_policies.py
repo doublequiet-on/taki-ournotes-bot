@@ -3064,12 +3064,27 @@ class ChatResearchTaskTests(Fixture,unittest.IsolatedAsyncioTestCase):
         self.assertEqual(plan['parts'][0]['business_status'],'success')
         outputs=[json.loads(row['content']) for row in bodies[-1]['messages'] if row['role']=='tool']
         self.assertIn('site_search',outputs[0]['next_step'])
+        self.assertEqual(outputs[0]['data']['server'],'jp')
         self.assertEqual(outputs[1]['data']['server'],'jp');self.assertEqual(outputs[2]['data']['entity_ref'],'song:100001')
         events=self.backend.diagnostics.read(plan['request_id'])['chat_events']
         research=[row['data'] for row in events if row['kind']=='research']
         self.assertTrue(any(row.get('research_fallback') for row in research))
         self.assertNotIn('100001',json.dumps(research));self.assertIn('Haneoka',plan['parts'][0]['text'])
         self.event(plan,'intent');self.event(plan,'ack')
+
+    async def test_knowledge_background_defaults_jp_but_explicit_region_stays_intl(self):
+        from types import SimpleNamespace
+        from ournotes_bot.domain.knowledge import EvidenceLease,KnowledgeScope
+        knowledge=Mock();self.backend.knowledge=knowledge
+        knowledge.retrieve.return_value=SimpleNamespace(code='ok',lease=EvidenceLease('fixture',KnowledgeScope(),()))
+        knowledge.prepare_evidence.return_value={'text':'已审核规则'}
+        knowledge.validate_current.return_value=True
+        for seq,(question,server) in enumerate((('我玩国际服，LUCK区间怎么算','jp'),('按国际服查询LUCK规则','intl')),1):
+            self.client.request.side_effect=[self.result(calls=(self.call('knowledge_search',server='intl',date=None,version=None),)),self.result('按已审核规则解释。')]
+            plan,_=await self.prepare_native('/聊 '+question,seq=seq)
+            self.assertEqual(plan['parts'][0]['business_status'],'success')
+            self.assertEqual(knowledge.retrieve.call_args.args[1].server,server)
+            self.event(plan,'intent');self.event(plan,'ack')
 
 
 class ChatSourceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
@@ -4281,9 +4296,10 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
     async def test_staged_reply_keeps_six_call_budget_after_tools(self):
         from ournotes_bot.domain.model_calls import ToolCall
         # This case isolates the six-position ceiling. Two complete finals plus
-        # the growing retrieval transcript must fit the separate weighted quota.
+        # the growing retrieval transcript must fit the separate input/weighted
+        # quotas; four complete help results exceed the default 32k input bound.
         self.snapshot=replace(self.snapshot,profile=replace(self.snapshot.profile,provider='openai',wire_profile='openai-responses-v1',
-            user_daily_limit=200000,group_daily_limit=200000))
+            max_input_tokens=65536,user_daily_limit=200000,group_daily_limit=200000))
         bodies=[]
         responses=iter([self.result(calls=(ToolCall('c'+str(i),'catalog_info','{"kind":"help","query":""}'),)) for i in range(4)]+[
             self.result('{"participation":"reply","text":"","delay_seconds":null}'),self.result('可以从帮助里的入口继续查')])
@@ -4296,6 +4312,9 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
         self.assertEqual(plan['parts'][0]['business_status'],'success')
         self.assertNotIn('tools',bodies[-2]);self.assertNotIn('tools',bodies[-1])
         self.assertNotIn('text',bodies[-1])
+        prompt=bodies[0]['input'][0]['content']
+        self.assertNotIn('research_task',str(prompt));self.assertNotIn('read_entity_fields',str(prompt))
+        self.assertIn('Haneoka',str(prompt));self.assertIn('日服',str(prompt))
 
     async def structured_decision(self,decision):
         self.snapshot=replace(self.snapshot,profile=replace(self.snapshot.profile,provider='openai',
@@ -4998,7 +5017,8 @@ class ChatReviewRegressionTests(Fixture,unittest.IsolatedAsyncioTestCase):
         # A complete question beginning with a discourse marker needs no cache.
         await ask('那日服的规则是什么',1)
         self.assertEqual(knowledge.retrieve.call_args.args[1].server,'jp')
-        await ask('国际服2020-01-01规则',2,server='intl',date='2020-01-01')
+        # Explicit scope selection stays distinct from ordinary JP-default facts.
+        await ask('按国际服查询2020-01-01规则',2,server='intl',date='2020-01-01')
         await ask('日服规则',3,user='u2')
         await ask('那LUCK呢',4,server='intl',date='2020-01-01',followup=True)
         self.assertEqual(knowledge.retrieve.call_args.args[1].server,'intl')
@@ -5009,7 +5029,7 @@ class ChatReviewRegressionTests(Fixture,unittest.IsolatedAsyncioTestCase):
         await ask('那国际服呢',6,server='intl',followup=True)
         self.assertEqual(knowledge.retrieve.call_args.args[1].server,'intl')
         self.assertIsNone(knowledge.retrieve.call_args.args[1].date)
-        await ask('刚才看到的国际服新规则是什么',7,server='intl')
+        await ask('按国际服查刚才看到的新规则',7,server='intl')
         self.assertEqual(knowledge.retrieve.call_args.args[1].server,'intl')
         self.assertIsNone(knowledge.retrieve.call_args.args[1].date)
         # Another speaker cannot take u1's range; missing context is a tool
@@ -5026,7 +5046,7 @@ class ChatReviewRegressionTests(Fixture,unittest.IsolatedAsyncioTestCase):
         self.event(plan,'intent');self.event(plan,'ack')
         await ask('继续呢',10,server='intl',followup=True)
         self.assertEqual(knowledge.retrieve.call_count,count)
-        await ask('国际服规则',11,server='intl')
+        await ask('按国际服查规则',11,server='intl')
         agent=self.backend.model_runtime.agent
         agent.context.scopes.clear()
         agent.context.clock=lambda:time.time()+901
