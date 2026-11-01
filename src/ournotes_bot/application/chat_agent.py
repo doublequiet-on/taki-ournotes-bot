@@ -28,7 +28,7 @@ from ..data import DataError
 from .runtime_tasks import finish_thread
 from .site_lookup import SiteLookup
 from .chat_context import ChatContext
-from .chat_tasks import ResearchTask, TaskContexts, FIELDS, RESOURCES, entity_ref, read_entity_fields
+from .chat_tasks import ResearchTask, TaskContexts, FIELDS, RESOURCES, entity_ref, explicit_entities, read_entity_fields
 from .chat_store import ChatStore
 from .chat_recovery import ChatRecovery
 from .story_service import StoryService
@@ -49,7 +49,7 @@ CHAT_SEMANTICS = '''日常接话和普通观点通常一两句，说清立场与
 
 RESEARCH_SEMANTICS = '''
 普通卡片、歌曲、技能和玩法机制默认按日服资料回答，不反复询问区服。提到国际服不构成拒答理由。排行榜、活动进度、当前卡池、公告等状态保留明确服务器；没有指定仍按日服。用户明确要求某服资料或核对服间差异时遵从范围，来源服别在影响结论时说明。
-面对比较、多项查询和连续修改，使用 research_task 维护本次目标、对象顺序和所需字段；先用 site_search/site_read 确认对象，再用 read_entity_fields 读取已签发 entity_ref 的字段。第二张、换成另一张等以 targets 顺序和当前消息为准，变更时更新任务。谱面条件用 requirements.difficulty 保存；后续只改对象时继承未改的难度，不重复追问。歌曲等级和Note比较用 level/notes 字段；song_metrics 用于全曲筛选排序，不能代替多对象字段比较。闲聊不创建任务。
+面对比较、多项查询和连续修改，使用 research_task 维护本次目标、对象顺序和所需字段。宿主提供的 current_entities 和上轮任务引用已确认对象身份，可直接 read_entity_fields，不必重复 site_search/site_read；没有身份时才用站内搜索确认。research_task 和 read_entity_fields 可在同次回复连续调用，最多两个对象可一次读完。第二张、换成另一张等以 targets 顺序和当前消息为准，变更时更新任务。谱面条件用 requirements.difficulty 保存；后续只改对象时继承未改的难度，不重复追问。歌曲等级和Note比较用 level/notes 字段；song_metrics 用于全曲筛选排序，不能代替多对象字段比较。闲聊不创建任务。
 知识库结果是否足够回答比是否搜到更重要：缺具体字段、细节或当前资料时，主动用 site_search/site_read 查 Haneoka 的详情和已知关联，结合审核规则分析。一次检索没找到时可换关键词或资源类型，不立即让用户自行找资料。只在完成问题需要时补查，已有充分依据就回答。
 工具返回 coverage 是实际读取覆盖情况，回答前照顾每项要求。用已查数据和已确认规则做比较与推导，区别资料事实与分析。找不到的部分直说缺哪项并继续说明已知内容；不加“我不敢”“为了严谨”“仅供参考”等铺垫，也不把内部权限、预算或工具步骤讲成免责声明。用户说不用了、先这样或换个问题时，用 research_task cancel 结束旧任务。
 '''
@@ -65,7 +65,7 @@ def research_tools():
         'research_task':Tool('research_task','建立或更新当前资料任务及对象顺序。entity_refs只用已读取详情或有效任务提供的引用；需求用字段和审核知识表达。cancel结束旧任务。',
             obj({'action':{'type':'string','enum':['set','cancel']},'goal':string(240),'entity_refs':refs,
                  'requirements':{'type':'array','items':requirement,'maxItems':6}},('action','goal','entity_refs','requirements')),'research'),
-        'read_entity_fields':Tool('read_entity_fields','按已确认entity_ref读取最多两个对象的字段，可用于比较和换对象。每次重新读取当前资料；notes/level可指定难度，空为全部已收录难度。返回缺项和任务覆盖情况。',
+        'read_entity_fields':Tool('read_entity_fields','优先直接用current_entities或上轮任务中的entity_ref，一次读最多两个对象进行比较，无需再站内搜索详情。每次重新读取当前资料；notes/level可指定难度，空为全部已收录难度。返回缺项和任务覆盖情况。',
             obj({'entity_refs':{**refs,'minItems':1},'fields':{**fields,'minItems':1},
                  'difficulty':difficulty},('entity_refs','fields','difficulty')),'research'),
     }
@@ -353,7 +353,7 @@ class ChatAgent:
             if message.get('images'):return True
             data=json.loads(message['content'])
             return (data.get('message_id') in protected or data.get('image_reference',{}).get('message_id') in protected
-                    or 'delivered_display' in data or 'image_status' in data or 'research_task' in data)
+                    or 'delivered_display' in data or 'image_status' in data or 'research_task' in data or 'current_entities' in data)
         mandatory=[message for message in messages if required(message)]
         minimum=self.runtime.input_bound(work,mandatory,tools)
         maximum=work.model_snapshot.profile.max_input_tokens
@@ -420,6 +420,7 @@ class ChatAgent:
             self.task_event(work,'set')
             return {'status':'ok','data':task.context()}
         require(all(ref in task.entities for ref in args['entity_refs']),'query_entity_mismatch')
+        require(requested_server(chat_query_question(work.public_question)) in (None,'jp'),'query_server_mismatch')
         repository=await self.runtime.current_repository()
         view=repository.capture_catalog();version=catalog_version(view)
         require(not work.entity_source_version or work.entity_source_version==version,'query_source_changed')
@@ -527,6 +528,12 @@ class ChatAgent:
         site=SiteLookup(runtime.backend.repository,chat_query_question(question),allow_rewrite=True,max_operations=self.budget.tool_calls)
         work.chat_task=(self.tasks.begin(work.request,lambda mid,stamp:self.store.source_valid(work.request.scope,mid,stamp))
                         if work.proactive is None or getattr(work,'continuation',False) else ResearchTask())
+        if work.proactive is None or getattr(work,'continuation',False):
+            named=(explicit_entities(runtime.backend.repository,question)
+                   if requested_server(chat_query_question(question)) in (None,'jp') else {})
+            work.chat_task.entities.update(named)
+            if named:messages.append({'role':'user','content':json.dumps({'current_entities':list(named.values()),
+                'note':'宿主从当前用户原文核对的对象身份；直接用于read_entity_fields。这里只提供身份，尚未读取字段。'},ensure_ascii=False)})
         if work.chat_task.goal:
             rows=self.store.read(work.request.scope,list(work.chat_task.source_messages)[:-1])['messages']
             self.bind_memory(work,rows)
@@ -974,7 +981,7 @@ class ChatAgent:
             return {'status':exc.code,'retryable':False},leases
 
     def acknowledge(self,work,part_id,message_id,text,status,*,allow_context,service_ack_ok=False,record_delivery=True):
-        audit_ok=service_ack_ok
+        audit_ok=service_ack_ok or getattr(work,'continuation',False)
         if work.proactive is not None and status=='success' and allow_context:
             began=self.audit(self.store.begin,work,list(work.participating_history))
             bound=self.audit(self.store.bind_sources,work.delivery,work.request.scope,list(work.memory_sources))
@@ -984,10 +991,11 @@ class ChatAgent:
                           'allow_context':allow_context and record_delivery,'delivered_at':self.runtime.backend.clock()})
         if status=='success' and allow_context:
             self.context.delivered(work.request,message_id,text)
-            if getattr(work,'chat_task',None) is not None and (work.proactive is None or getattr(work,'continuation',False)):
+            if (getattr(work,'chat_task',None) is not None and event_ok and (work.proactive is None or
+                    getattr(work,'continuation',False) and audit_ok and self.proactive.valid(work,sending=True))):
                 self.tasks.commit(work.request,work.chat_task,message_id)
             followup=work.proactive.followup if work.proactive is not None else None
-            trusted_followup=((audit_ok or getattr(work,'continuation',False)) and event_ok and followup is not None and followup.user_id==work.request.user_id
+            trusted_followup=(audit_ok and event_ok and followup is not None and followup.user_id==work.request.user_id
                 and followup.answer_id==work.request.message_id and self.proactive.valid(work,sending=True))
             if work.proactive is None or trusted_followup:
                 key=(self.context.scope(work.request),work.request.user_id)

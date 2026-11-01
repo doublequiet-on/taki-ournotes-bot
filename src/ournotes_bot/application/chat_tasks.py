@@ -4,8 +4,9 @@ from collections import OrderedDict
 from copy import deepcopy
 from dataclasses import dataclass, field
 import time
+import re
 
-from ..query.entity_lexicon import EntityRef
+from ..query.entity_lexicon import EntityRef, find_anchor
 from ..structured_query import QuerySpec, resolve_query
 
 
@@ -110,6 +111,24 @@ def entity_ref(kind, ident):
     return f'{kind}:{ident}'
 
 
+def explicit_entities(repository, text):
+    """Reuse the query lexicon for identities literally named in this request."""
+    identities = {}
+    support = bool(re.search(r'SNAP|留影卡|支援卡', text, re.I))
+    intents = ('song', 'support_card' if support else 'card')
+    for part in re.split(r'和|与|跟|、|，|,|\n|比较|对比|换成|改成|\bvs\.?\b', text, flags=re.I)[:24]:
+        if not part.strip(): continue
+        for intent in intents:
+            anchor = find_anchor(intent, part, repository, explicit_card_ids=True)
+            if anchor.entity is None or anchor.entity.kind not in RESOURCES: continue
+            kind, ident = anchor.entity.kind, anchor.entity.value
+            row = next((row for row in getattr(repository, RESOURCES[kind]) if row.id == ident), None)
+            if row is not None:
+                ref = entity_ref(kind, ident)
+                identities[ref] = dict(ref=ref, kind=kind, id=ident, name=row.title)
+    return identities if len(identities) <= 4 else {}
+
+
 def read_entity_fields(repository, identity, fields, difficulty=''):
     """Use the deterministic query entry for an identity already issued by the host."""
     kind, ident = identity['kind'], identity['id']
@@ -144,6 +163,7 @@ def read_entity_fields(repository, identity, fields, difficulty=''):
             elif name in ('level', 'notes'):
                 values[name] = {chart.difficulty: (chart.display_level if name == 'level' else chart.notes)
                                 for chart in result.chart[1] if name != 'notes' or chart.notes is not None}
+                if name == 'notes' and any(chart.notes is None for chart in result.chart[1]): incomplete.add(name)
             elif name == 'difficulties': values[name] = [chart.difficulty for chart in song.charts]
             elif song.traits: values[name] = getattr(song.traits, name)
     selected = {name: values[name] for name in fields if name in values}

@@ -2268,7 +2268,20 @@ class NativeRuntimeTests(Fixture,unittest.IsolatedAsyncioTestCase):
         self.assertEqual(limited[-1].context.origin,'mixed')
 
 
-class ResearchContextTests(unittest.TestCase):
+class ResearchContextTests(Fixture,unittest.TestCase):
+    def test_explicit_names_and_partial_note_counts(self):
+        from ournotes_bot.application.chat_tasks import explicit_entities,read_entity_fields
+        self.setup_repo()
+        named=explicit_entities(self.repo,'比较合成曲100001和合成曲100002的EXPERT等级和Note')
+        self.assertEqual(list(named),['song:100001','song:100002'])
+        song=self.repo.songs[0]
+        self.repo.songs[0]=replace(song,charts=(replace(song.charts[0],notes=0),replace(song.charts[1],notes=None)))
+        output=read_entity_fields(self.repo,named['song:100001'],['notes'])
+        self.assertEqual(output['status'],'partial');self.assertEqual(output['missing_fields'],['notes'])
+        self.assertEqual(output['fields']['notes'],{'HARD':0})
+        missing=read_entity_fields(self.repo,named['song:100001'],['notes'],'EXPERT')
+        self.assertNotEqual(missing['status'],'ok');self.assertIn('notes',missing['missing_fields'])
+
     def test_actor_isolation_expiry_and_superseded_ack(self):
         from types import SimpleNamespace
         from ournotes_bot.application.chat_tasks import TaskContexts
@@ -2947,6 +2960,26 @@ class ChatResearchTaskTests(Fixture,unittest.IsolatedAsyncioTestCase):
                               user_daily_limit=10**7,group_daily_limit=10**7))
         self.repo.metadata.update(data_source='haneoka',data_version='r-fixture',text_version='t-fixture')
         verify=patch('ournotes_bot.application.site_lookup.verify_catalog');verify.start();self.addCleanup(verify.stop)
+
+    async def test_explicit_comparison_and_replacement_need_two_model_calls(self):
+        self.catalog();bodies=self.capture_native_bodies()
+        refs=['song:100001','song:100002']
+        self.client.request.side_effect=[self.result(calls=(self.task_call(refs,['notes','level'],'EXPERT'),
+            self.call('read_entity_fields',entity_refs=refs,fields=['notes','level'],difficulty='EXPERT'))),
+            self.result('两首 EXPERT 都是 25 级、200 个音符。')]
+        plan,attempts=await self.prepare_native('/聊 比较合成曲100001和合成曲100002的EXPERT等级和Note')
+        self.assertEqual(len(attempts),2);self.assertEqual(plan['parts'][0]['business_status'],'success')
+        data=[json.loads(row['content']) for row in bodies[0]['messages'] if row['role']=='user']
+        self.assertEqual([item['ref'] for row in data for item in row.get('current_entities',[])],refs)
+        self.event(plan,'intent');self.event(plan,'ack')
+        replacement=[refs[0],'song:100003']
+        self.client.request.side_effect=[self.result(calls=(self.task_call(replacement,['notes','level'],'EXPERT'),
+            self.call('read_entity_fields',entity_refs=replacement,fields=['notes','level'],difficulty='EXPERT'))),self.result('换成第三首后数值相同。')]
+        next_plan,attempts=await self.prepare_native('/聊 第二首换成合成曲100003',seq=2)
+        self.assertEqual(len(attempts),2);self.assertEqual(next_plan['parts'][0]['business_status'],'success')
+        work=self.backend.works[next_plan['delivery_id']]
+        self.assertEqual(work.chat_task.targets,replacement);self.assertEqual(work.chat_task.coverage()['status'],'completed')
+        self.event(next_plan,'intent');self.event(next_plan,'ack')
 
     async def test_compare_then_change_second_target_condition_and_ack_only_commit(self):
         self.catalog();bodies=self.capture_native_bodies();agent=self.backend.model_runtime.agent
