@@ -55,6 +55,7 @@ class ProactiveCandidate:
     deferred: bool = False
     evaluation: int = 1
     followup: object = None
+    opportunity_id: str = ''
 
 
 @dataclass
@@ -78,10 +79,20 @@ class _Ticket:
     cost_micro: int | None = None
     decision: str = ''
     delivered: bool = False
+    opportunity_id: str = ''
 
     @property
     def charged_cost(self):
         return self.reserved_cost_micro if self.cost_micro is None else self.cost_micro
+
+
+@dataclass
+class _Opportunity:
+    id: str
+    expires_at: float
+    cost_micro: int
+    evaluations: int = 0
+    tools: int = 0
 
 
 @dataclass
@@ -100,14 +111,15 @@ class _Group:
     addressed_active: bool = False
     deferred_at: float | None = None
     evaluation: int = 0
+    opportunity: _Opportunity | None = None
 
 
 class ProactiveController:
     """One host thread owns this controller; approved billing stays with the host.
 
-    A call budget unit is one candidate/participation evaluation, including its
-    tool loop. The shared TurnBudget separately bounds actual model requests.
-    The host reserves a worst-case *whole evaluation* fee before calling candidate.
+    Hourly tickets count candidate evaluations. Replacements and defers share a
+    fixed opportunity deadline, evaluation ceiling and tool count. The host
+    applies its model-call/cost ceiling to their existing persistent attempt rows.
     """
     def __init__(self, *, clock=time.monotonic, coalesce_seconds=1.5,
                  candidate_seconds=60, max_defer_rechecks=2,
@@ -257,15 +269,37 @@ class ProactiveController:
                 or len(group.replies) >= group.policy.max_replies_per_hour
                 or self._cost(group) + reserve_cost_micro > group.policy.max_cost_micro_per_hour):
             return None
+        opportunity=group.opportunity
+        if opportunity is None or now>=opportunity.expires_at:
+            if opportunity is not None and not group.dirty:return None
+            opportunity=group.opportunity=_Opportunity(uuid4().hex,now+self.candidate_seconds,reserve_cost_micro)
+        if opportunity.evaluations>=self.max_defer_rechecks+1:return None
+        opportunity.evaluations+=1
         group.evaluation = group.evaluation + 1 if deferred else 1
         ticket = _Ticket(uuid4().hex, scope, group.version, group.policy_version,
-                         group.policy.service_subject_id, now, now + self.candidate_seconds,
-                         reserve_cost_micro, group.evaluation)
+                         group.policy.service_subject_id, now, opportunity.expires_at,
+                         reserve_cost_micro, group.evaluation,opportunity_id=opportunity.id)
         group.tickets[ticket.candidate_id] = ticket
         group.active, group.deferred_at, group.dirty = ticket.candidate_id, None, False
         return ProactiveCandidate(ticket.candidate_id, scope, ticket.version, ticket.policy_version,
                                   ticket.service_subject_id, tuple(row.message for row in group.rows),
-                                  now, ticket.expires_at, reserve_cost_micro, deferred, group.evaluation)
+                                  now, ticket.expires_at, reserve_cost_micro, deferred, group.evaluation,
+                                  opportunity_id=opportunity.id)
+
+    def opportunity_budget(self,candidate):
+        group,ticket=self._ticket(candidate)
+        opportunity=group.opportunity if group else None
+        if ticket is None or opportunity is None or ticket.opportunity_id!=opportunity.id:
+            raise ValueError('proactive_opportunity_expired')
+        return ([row.candidate_id for row in group.tickets.values() if row.opportunity_id==opportunity.id],
+                opportunity.cost_micro)
+
+    def take_tool(self,candidate,limit):
+        if not self.valid(candidate):return False
+        opportunity=self.groups[candidate.scope].opportunity
+        if opportunity.tools>=limit:return False
+        opportunity.tools+=1
+        return True
 
     def _ticket(self, candidate):
         group = self.groups.get(candidate.scope)
@@ -342,7 +376,8 @@ class ProactiveController:
         now = self.clock()
         group.replies.append(now)
         group.last_delivery_at = now
-        self._cancel(group)
+        if group.active==ticket.candidate_id and group.version==ticket.version:
+            self._cancel(group)
         return True
 
     def status(self, scope):

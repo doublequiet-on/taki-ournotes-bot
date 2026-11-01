@@ -413,6 +413,10 @@ class ModelRuntime:
                 return await self.routed(work,lambda end:self.agent.run(work,question,user,group,end),deadline)
             seconds=min(self.agent.budget.execution_seconds,work.content_deadline-time.monotonic(),
                         work.request.timestamp_ms/1000+298-self.backend.clock()-5)
+            if work.proactive is not None:
+                remaining=work.proactive.expires_at-self.agent.proactive.controller.clock()
+                work.content_deadline=min(work.content_deadline,time.monotonic()+remaining)
+                seconds=min(seconds,remaining)
             require(seconds>0,'execution_timeout')
             return await self.backend.models.run(user,operation,execution_seconds=seconds)
         except (ModelError,ProtocolError,KnowledgeError) as exc:
@@ -432,9 +436,11 @@ class ModelRuntime:
             from .chat_jobs import ServiceError,maximum_cost_micro
             try:self.agent.service_budget.check(work.service_policy,'proactive',profile,billing_request_id,
                 maximum_cost_micro(profile)+sum(count*rate for _,count,rate in action_budget),
-                reply_times=self.agent.store.proactive_replies(work.request.scope))
+                reply_times=self.agent.store.proactive_replies(work.request.scope),
+                **self.agent.proactive.opportunity_budget(work))
             except ServiceError as exc:
-                raise ModelError('quota_exceeded' if str(exc) in ('chat_service_call_limit','chat_service_cost_limit') else str(exc)) from None
+                raise ModelError('quota_exceeded' if str(exc) in ('chat_service_call_limit','chat_service_cost_limit',
+                    'chat_opportunity_call_limit','chat_opportunity_cost_limit') else str(exc)) from None
         self.usage.reserve(billing_request_id,attempt,user,group,profile,bound,action_budget=action_budget)
 
     def input_bound(self,work,messages,tools,*,body=None):

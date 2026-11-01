@@ -179,7 +179,8 @@ class ServiceBudget:
     def __init__(self, usage, instance_id, app_id, *, clock=time.time):
         self.usage, self.namespace, self.clock = usage, (instance_id, app_id), clock
 
-    def check(self, policy, task, profile, request_id, reserve_cost_micro, *, reply_times=()) -> ServicePermit:
+    def check(self, policy, task, profile, request_id, reserve_cost_micro, *, reply_times=(),
+              opportunity_requests=(),opportunity_calls=None,opportunity_cost_micro=None) -> ServicePermit:
         _check(isinstance(policy, ServicePolicy) and (policy.instance_id, policy.app_id) == self.namespace,
                'chat_service_identity')
         prefix = _request_prefix(task, *self.namespace, policy.group_id)
@@ -207,6 +208,7 @@ class ServiceBudget:
                 WHERE a.group_key=? AND a.request_id LIKE ? AND (u.count IS NULL OR u.count<>0) LIMIT 1''',(group,prefix+'%')).fetchone(),
                 'chat_service_usage_unavailable')
             recent, cost = [], Fraction()
+            opportunity_count,opportunity_cost=0,Fraction()
             for row in rows:
                 if row['state'] == 'released':
                     continue
@@ -229,11 +231,17 @@ class ServiceBudget:
                 else:
                     amount += held
                 cost += amount
+                if row['request_id'] in opportunity_requests:
+                    opportunity_count+=1
+                    opportunity_cost+=amount
         except ServiceError:
             raise
         except (sqlite3.Error, ModelError, ValueError, TypeError, KeyError, ZeroDivisionError, AttributeError):
             raise ServiceError('chat_service_usage_unavailable') from None
         _check(cost + reserve_cost_micro <= limits.max_cost_micro_per_hour, 'chat_service_cost_limit')
+        if opportunity_requests:
+            _check(opportunity_count<opportunity_calls,'chat_opportunity_call_limit')
+            _check(opportunity_cost+reserve_cost_micro<=opportunity_cost_micro,'chat_opportunity_cost_limit')
         if task == 'summary':
             jobs = {row['request_id'] for row in recent}
             _check(len(jobs | {request_id}) <= limits.max_jobs_per_hour, 'chat_service_job_limit')

@@ -568,8 +568,11 @@ class ChatAgent:
                     'tool_calls':[{'id':call.id,'type':'function','function':{'name':call.name,'arguments':call.arguments}} for call in calls]})
                 for call in calls:
                     runtime.check(work,deadline,leases)
-                    if force_final or operations>=self.budget.tool_calls or deadline-time.monotonic()<=self.budget.final_seconds or staged and work.model_attempts>=self.budget.model_calls-2:
+                    if (force_final or operations>=self.budget.tool_calls or deadline-time.monotonic()<=self.budget.final_seconds
+                            or staged and work.model_attempts>=self.budget.model_calls-2
+                            or work.proactive is not None and not self.proactive.controller.take_tool(work.proactive,self.budget.tool_calls)):
                         output={'status':'budget_exhausted','retryable':False}
+                        force_final=True
                     else:
                         operations+=1
                         output,leases=await self.execute(work,call,question,site,leases,deadline-self.budget.final_seconds,deadline,

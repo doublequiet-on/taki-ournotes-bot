@@ -1220,8 +1220,34 @@ class ProactiveControllerTests(unittest.TestCase):
         self.assertIsNone(self.controller.candidate(self.a, reserve_cost_micro=100))
         self.observe('m2')
         fresh = self.ready()
+        self.assertIsNone(fresh)
+        self.now[0]=candidate.expires_at
+        fresh=self.controller.candidate(self.a,reserve_cost_micro=100)
         self.assertFalse(fresh.deferred)
         self.assertEqual(fresh.evaluation, 1)
+
+    def test_new_observations_share_opportunity_deadline_and_tool_limit(self):
+        self.observe();first=self.ready()
+        self.assertTrue(self.controller.take_tool(first,2))
+        self.observe('m2');second=self.ready()
+        self.assertEqual(second.opportunity_id,first.opportunity_id)
+        self.assertEqual(second.expires_at,first.expires_at)
+        self.assertTrue(self.controller.take_tool(second,2))
+        self.assertFalse(self.controller.take_tool(second,2))
+        ids,cost=self.controller.opportunity_budget(second)
+        self.assertEqual(ids,[first.candidate_id,second.candidate_id]);self.assertEqual(cost,100)
+        self.now[0]=first.expires_at
+        self.assertFalse(self.controller.valid(second))
+        self.assertIsNone(self.controller.candidate(self.a,reserve_cost_micro=100))
+
+    def test_late_ack_preserves_newer_active_candidate_and_observation(self):
+        self.controller.configure(self.a,replace(self.policy,cooldown_seconds=0))
+        self.observe();old=self.ready();self.controller.decide(old,'reply',actual_cost_micro=5)
+        self.observe('new');new=self.ready()
+        self.assertTrue(self.controller.delivered(old))
+        self.assertTrue(self.controller.valid(new))
+        self.assertEqual(self.controller.status(self.a)['hourly_replies'],1)
+        self.assertFalse(self.controller.delivered(old))
 
     def test_new_message_replaces_deferred_scene_and_skip_does_not_repeat(self):
         self.observe()

@@ -255,6 +255,13 @@ class ProactiveChat:
         if any(row['billing_incomplete'] or row['state'] not in ('settled','released') for row in rows):return None
         return math.ceil(sum((Fraction(row['reference_cost_micro']) for row in rows),Fraction()))
 
+    def opportunity_budget(self,work):
+        candidates,cost=self.controller.opportunity_budget(work.proactive)
+        request=work.request
+        return dict(opportunity_requests=tuple(service_request_id('proactive',request.instance_id,
+            request.app_id,request.conversation_id,candidate) for candidate in candidates),
+            opportunity_calls=self.agent.budget.model_calls,opportunity_cost_micro=cost)
+
     def decision(self,work,text):
         require(self.valid(work),'proactive_stale')
         # Accept a whole JSON code block; never extract an object from prose.
