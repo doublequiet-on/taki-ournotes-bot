@@ -8,7 +8,7 @@ ChatStore 启动会删除缺少投影来源证明的旧回复、派生摘要及�
 
 可选聊天由 [application/chat_agent.py](ournotes_bot/application/chat_agent.py) 编排，复用 ModelRuntime 许可与结算；[chat_context.py](ournotes_bot/application/chat_context.py) 恢复有界参与片段和成功 ACK 回复；[chat_store.py](ournotes_bot/application/chat_store.py) 独占 30 日记忆、派生关系与删除墓碑。预算、规范化消息和人格 v0 在 [domain/chat.py](ournotes_bot/domain/chat.py)。旧 persona 话题卡仅用于 legacy，以下 U2/U3 保留该范围；协议 2.2 与现状见 [聊天架构](../docs/CHAT_AGENT_ARCHITECTURE.md)。
 
-[chat_tasks.py](ournotes_bot/application/chat_tasks.py) 保存按群及发言者隔离、15 分钟有效的研究任务对象与要求，依照工具字段证据计算完成情况，成功 ACK 后提交跨轮状态；旧事实不自动成为新一轮证据。[model_admin.py](ournotes_bot/application/model_admin.py) 持久保存群交流设置与不主动搭话名单，[chat_admin.py](ournotes_bot/application/chat_admin.py) 提供带版本保护的设置读写和任务／日志投影。续聊使用用户聊天模型与额度，独立于群主动服务开关；平台能力和每次发送许可沿用原链路。
+[chat_tasks.py](ournotes_bot/application/chat_tasks.py) 保存按群及发言者隔离、15 分钟有效的研究任务对象与要求，依照工具字段证据计算完成情况，成功 ACK 后提交跨轮状态；旧事实不自动成为新一轮证据。[model_admin.py](ournotes_bot/application/model_admin.py) 持久保存群交流设置与不主动搭话名单，并提供带版本保护的设置读写和任务／日志投影；管理路由在 [backend.py](ournotes_bot/application/backend.py)。续聊使用用户聊天模型与额度，独立于群主动服务开关；平台能力和每次发送许可沿用原链路。
 
 [diagnostics.py](ournotes_bot/application/diagnostics.py) 保存有界请求诊断和未受理交流事件，按群组合展示控制决定、任务进度、资料补查耗时与结果。`conversation_events` 不建立交付请求，日志不授予发送许可；元数据字段白名单与 24 小时清理适用于该通道。
 
