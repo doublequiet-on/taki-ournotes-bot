@@ -1184,6 +1184,40 @@ class ProactiveControllerTests(unittest.TestCase):
         self.assertEqual(len({row.speaker_id for row in candidate.messages}), 4)
         self.assertIsNone(self.controller.candidate(self.a, reserve_cost_micro=100))
 
+    def test_busy_group_starts_after_eight_seconds_but_new_message_still_invalidates(self):
+        self.observe()
+        for second in range(1,8):
+            self.now[0]=second
+            self.observe(str(second))
+            self.assertIsNone(self.controller.candidate(self.a,reserve_cost_micro=100))
+        self.now[0]=8
+        self.observe('latest')
+        self.assertEqual(self.controller.start_delay(self.a),0)
+        first=self.controller.candidate(self.a,reserve_cost_micro=100)
+        self.assertEqual(first.messages[-1].message_id,'latest')
+        self.controller.decide(first,'reply',actual_cost_micro=1)
+        self.observe('newer')
+        self.assertFalse(self.controller.can_send(first))
+        self.assertEqual(self.controller.start_delay(self.a),1.5)
+        second=self.ready()
+        self.assertEqual(first.opportunity_id,second.opportunity_id)
+        self.assertEqual(first.expires_at,second.expires_at)
+
+    def test_opportunity_knowledge_cache_is_dropped_on_clear_and_expiry(self):
+        self.observe();candidate=self.ready()
+        cache=self.controller.knowledge_leases(candidate)
+        cache['fixture']='evidence'
+        self.observe('new')
+        second=self.ready()
+        self.assertIs(self.controller.knowledge_leases(second),cache)
+        self.controller.clear(self.a)
+        self.assertEqual(cache,{})
+        self.observe('third');third=self.ready()
+        cache=self.controller.knowledge_leases(third);cache['fixture']='evidence'
+        self.now[0]=third.expires_at
+        self.controller.sweep()
+        self.assertEqual(cache,{})
+
     def test_duplicates_and_bot_messages_do_not_cancel_human_candidate(self):
         self.observe()
         candidate = self.ready()
@@ -1201,7 +1235,8 @@ class ProactiveControllerTests(unittest.TestCase):
         second = self.ready()
         self.assertIsNotNone(second)
         self.assertEqual(second.messages[-1].text, '已经有人回答了')
-        self.assertEqual(self.controller.status(self.a)['hourly_cost_micro'], 117)
+        self.assertEqual(second.reserved_cost_micro,83)
+        self.assertEqual(self.controller.status(self.a)['hourly_cost_micro'],100)
 
     def test_defer_is_version_bound_and_has_at_most_two_rechecks(self):
         self.observe()
@@ -1220,8 +1255,34 @@ class ProactiveControllerTests(unittest.TestCase):
         self.assertIsNone(self.controller.candidate(self.a, reserve_cost_micro=100))
         self.observe('m2')
         fresh = self.ready()
+        self.assertIsNone(fresh)
+        self.now[0]=candidate.expires_at
+        fresh=self.controller.candidate(self.a,reserve_cost_micro=100)
         self.assertFalse(fresh.deferred)
         self.assertEqual(fresh.evaluation, 1)
+
+    def test_new_observations_share_opportunity_deadline_and_tool_limit(self):
+        self.observe();first=self.ready()
+        self.assertTrue(self.controller.take_tool(first,2))
+        self.observe('m2');second=self.ready()
+        self.assertEqual(second.opportunity_id,first.opportunity_id)
+        self.assertEqual(second.expires_at,first.expires_at)
+        self.assertTrue(self.controller.take_tool(second,2))
+        self.assertFalse(self.controller.take_tool(second,2))
+        ids,cost=self.controller.opportunity_budget(second)
+        self.assertEqual(ids,[first.candidate_id,second.candidate_id]);self.assertEqual(cost,100)
+        self.now[0]=first.expires_at
+        self.assertFalse(self.controller.valid(second))
+        self.assertIsNone(self.controller.candidate(self.a,reserve_cost_micro=100))
+
+    def test_late_ack_preserves_newer_active_candidate_and_observation(self):
+        self.controller.configure(self.a,replace(self.policy,cooldown_seconds=0))
+        self.observe();old=self.ready();self.controller.decide(old,'reply',actual_cost_micro=5)
+        self.observe('new');new=self.ready()
+        self.assertTrue(self.controller.delivered(old))
+        self.assertTrue(self.controller.valid(new))
+        self.assertEqual(self.controller.status(self.a)['hourly_replies'],1)
+        self.assertFalse(self.controller.delivered(old))
 
     def test_new_message_replaces_deferred_scene_and_skip_does_not_repeat(self):
         self.observe()

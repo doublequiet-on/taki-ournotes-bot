@@ -1,5 +1,6 @@
 # L3: Single dialogue loop over existing permits, usage ledger and read-only tools.
-# Effects: ModelRuntime owns HTTP/accounting; tools read registered sources only.
+# Effects: ModelRuntime owns HTTP/accounting; tools read registered sources only;
+# proactive opportunities retain at most two revalidated knowledge leases in memory.
 import json
 import asyncio
 import logging
@@ -568,8 +569,11 @@ class ChatAgent:
                     'tool_calls':[{'id':call.id,'type':'function','function':{'name':call.name,'arguments':call.arguments}} for call in calls]})
                 for call in calls:
                     runtime.check(work,deadline,leases)
-                    if force_final or operations>=self.budget.tool_calls or deadline-time.monotonic()<=self.budget.final_seconds or staged and work.model_attempts>=self.budget.model_calls-2:
+                    if (force_final or operations>=self.budget.tool_calls or deadline-time.monotonic()<=self.budget.final_seconds
+                            or staged and work.model_attempts>=self.budget.model_calls-2
+                            or work.proactive is not None and not self.proactive.controller.take_tool(work.proactive,self.budget.tool_calls)):
                         output={'status':'budget_exhausted','retryable':False}
+                        force_final=True
                     else:
                         operations+=1
                         output,leases=await self.execute(work,call,question,site,leases,deadline-self.budget.final_seconds,deadline,
@@ -758,12 +762,26 @@ class ChatAgent:
                         'note':'默认两服同步；这是配置的资料版本，不代表已核实线上最新版本。'},
                         '_knowledge_scope':scope,'_knowledge_leases':new_leases},leases
                 await finish_thread(knowledge.observe)
-                retrieval=await finish_thread(partial(knowledge.retrieve,args.get('query') or question,scope,knowledge.approved_set_revision))
-                if retrieval.code!='ok':
-                    return {'status':retrieval.code,'data':retrieval.message,'retryable':True},leases
-                leases=(*leases,retrieval.lease)
-                evidence=await finish_thread(partial(knowledge.prepare_evidence,retrieval.lease))
-                output={'status':'ok','data':evidence,'_knowledge_scope':scope,'_knowledge_lease':retrieval.lease}
+                runtime.check(work,turn_deadline,leases)
+                cache=self.proactive.controller.knowledge_leases(work.proactive) if work.proactive is not None else None
+                key=(args.get('query') or question,scope,knowledge.approved_set_revision,work.proactive_authority)
+                lease=cache.get(key) if cache is not None else None
+                if lease is not None and not await finish_thread(partial(knowledge.validate_current,(lease,))):
+                    # A concurrent policy/source clear may already have emptied it.
+                    cache.pop(key,None)
+                    lease=None
+                if lease is None:
+                    retrieval=await finish_thread(partial(knowledge.retrieve,key[0],scope,knowledge.approved_set_revision))
+                    if retrieval.code!='ok':
+                        return {'status':retrieval.code,'data':retrieval.message,'retryable':True},leases
+                    lease=retrieval.lease
+                leases=(*leases,lease)
+                evidence=await finish_thread(partial(knowledge.prepare_evidence,lease))
+                runtime.check(work,turn_deadline,leases)
+                if cache is not None:
+                    if key not in cache and len(cache)>=2:del cache[next(iter(cache))]
+                    cache[key]=lease
+                output={'status':'ok','data':evidence,'_knowledge_scope':scope,'_knowledge_lease':lease}
             else:
                 repository=await runtime.current_repository()
                 if work.entity_evidence:

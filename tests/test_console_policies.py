@@ -3749,6 +3749,142 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
         self.assertTrue(plan['send_allowed']);self.assertEqual(len(attempts),2)
         self.assertFalse(usage.db.execute("SELECT 1 FROM attempts WHERE state='reserved'").fetchone())
 
+    async def test_new_observation_cannot_reset_shared_six_call_budget(self):
+        from ournotes_bot.domain.model_calls import ToolCall
+        self.snapshot=replace(self.snapshot,profile=replace(self.snapshot.profile,provider='openai',wire_profile='openai-responses-v1',
+            user_daily_limit=200000,group_daily_limit=200000))
+        self.policy=replace(self.policy,proactive=replace(self.policy.proactive,cooldown_seconds=0))
+        self.agent.services.policy.return_value=self.policy
+        bodies=[]
+        async def respond(profile,body,**kwargs):
+            bodies.append(body)
+            if len(bodies)<=2:return self.result(calls=(ToolCall('c'+str(len(bodies)),'catalog_info','{"kind":"help","query":""}'),))
+            if 'text' in body:return self.result('{"participation":"reply","text":"","delay_seconds":null}')
+            return self.result('根据现有资料接着回答')
+        self.client.request.side_effect=respond
+        value=self.observation();self.tick+=1.6
+        first,attempts,one=await self.candidate(value)
+        self.assertEqual(len(attempts),4)
+        self.event(first,'intent');self.event(first,'ack')
+        self.now+=.01;value=self.observation('再补充一点',seq=2);self.tick+=1.6
+        second,attempts,two=await self.candidate(value,2)
+        self.assertEqual(len(attempts),2);self.assertTrue(second['send_allowed'])
+        self.assertEqual(one[0].opportunity_id,two[0].opportunity_id)
+        self.assertEqual(one[0].expires_at,two[0].expires_at)
+        self.event(second,'intent');self.event(second,'ack')
+        self.now+=.01;value=self.observation('继续补充',seq=3);self.tick+=1.6
+        third,attempts,_=await self.candidate(value,3)
+        self.assertEqual(attempts,[]);self.assertFalse(third['send_allowed'])
+        self.assertEqual(len(bodies),6)
+
+    async def test_hot_group_delay_and_candidate_use_same_bounded_wait(self):
+        from ournotes_bot.application.backend_protocol import Request
+        for second in range(9):
+            self.tick=100+second
+            value=self.observation('热群新条件',seq=second+1)
+            request=Request.parse(value,'fixture','app',self.now)
+            self.assertEqual(self.agent.proactive.observation_delay(request),min(1500,(8-second)*1000))
+        self.client.request.return_value=self.result('{"participation":"skip"}')
+        _,attempts,candidate=await self.candidate(value)
+        self.assertEqual(len(attempts),1)
+        self.assertEqual(candidate[0].messages[-1].message_id,value['message_id'])
+
+    async def test_proactive_reuses_approved_knowledge_but_retrieves_again_after_revocation(self):
+        from types import SimpleNamespace
+        from ournotes_bot.domain.knowledge import EvidenceLease
+        from ournotes_bot.domain.model_calls import ToolCall
+        knowledge=Mock();knowledge.approved_set_revision='fixture'
+        revoked=set()
+        knowledge.validate_current.side_effect=lambda leases:all(lease.approved_set_revision not in revoked for lease in leases)
+        knowledge.prepare_evidence.return_value='approved fixture evidence'
+        knowledge.retrieve.side_effect=lambda query,scope,revision:SimpleNamespace(code='ok',
+            lease=EvidenceLease(str(knowledge.retrieve.call_count),scope,()))
+        self.backend.knowledge=knowledge
+        calls=[]
+        for serial in range(1,4):
+            if serial==3:revoked.add('1')
+            value=self.observation('日服技能机制',seq=serial);self.tick+=1.6
+            self.client.request.side_effect=[self.result(calls=(ToolCall(str(serial),'knowledge_search',
+                '{"server":"jp","date":null,"version":null,"query":"技能机制"}'),)),
+                self.result('{"participation":"skip"}')]
+            _,attempts,candidate=await self.candidate(value,serial)
+            self.assertEqual(len(attempts),2)
+            calls.append(knowledge.retrieve.call_count)
+        self.assertEqual(calls,[1,1,2])
+        self.assertEqual(candidate[0].opportunity_id,self.agent.proactive.controller.groups[candidate[0].scope].opportunity.id)
+
+    async def test_opportunity_knowledge_cache_does_not_cross_server_or_publication(self):
+        from types import SimpleNamespace
+        from ournotes_bot.domain.knowledge import EvidenceLease
+        from ournotes_bot.domain.model_calls import ToolCall
+        knowledge=Mock();knowledge.validate_current.return_value=True
+        knowledge.prepare_evidence.return_value='approved fixture evidence'
+        knowledge.retrieve.side_effect=lambda query,scope,revision:SimpleNamespace(code='ok',lease=EvidenceLease(revision,scope,()))
+        self.backend.knowledge=knowledge
+        for serial,(server,publication) in enumerate((('jp','one'),('intl','one'),('intl','two')),1):
+            knowledge.approved_set_revision=publication
+            value=self.observation('日服技能机制' if server=='jp' else '国际服技能机制',seq=serial);self.tick+=1.6
+            self.client.request.side_effect=[self.result(calls=(ToolCall(str(serial),'knowledge_search',
+                json.dumps(dict(server=server,date=None,version=None,query='技能机制'))),)),
+                self.result('{"participation":"skip"}')]
+            await self.candidate(value,serial)
+            self.assertEqual(knowledge.retrieve.call_count,serial)
+
+    async def test_recheck_fits_remaining_original_hourly_cost_envelope(self):
+        from ournotes_bot.application.chat_jobs import maximum_cost_micro
+        from ournotes_bot.application.chat_capabilities import WebCapability
+        self.snapshot=replace(self.snapshot,profile=replace(self.snapshot.profile,provider='openai',wire_profile='openai-responses-v1'))
+        bound=int(maximum_cost_micro(self.snapshot.profile)*self.agent.budget.model_calls)
+        self.policy=replace(self.policy,proactive=replace(self.policy.proactive,max_cost_micro_per_hour=bound,cooldown_seconds=0))
+        self.agent.services.policy.return_value=self.policy
+        self.backend.model_runtime.capabilities.web=Mock(return_value=WebCapability(1,10000,'fixture-web'))
+        self.client.request.return_value=self.result('{"participation":"skip","text":"","delay_seconds":null}')
+        value=self.observation();self.tick+=1.6
+        _,first_attempts,one=await self.candidate(value)
+        self.assertEqual(len(first_attempts),1)
+        self.now+=.01;value=self.observation('补充新条件',seq=2);self.tick+=1.6
+        _,second_attempts,two=await self.candidate(value,2)
+        self.assertEqual(len(second_attempts),1)
+        self.assertEqual(one[0].opportunity_id,two[0].opportunity_id)
+        self.assertLess(two[0].reserved_cost_micro,one[0].reserved_cost_micro)
+
+    async def test_shared_tool_exhaustion_goes_straight_to_held_finals(self):
+        from ournotes_bot.domain.model_calls import ToolCall
+        self.snapshot=replace(self.snapshot,profile=replace(self.snapshot.profile,provider='openai',wire_profile='openai-responses-v1',
+            user_daily_limit=200000,group_daily_limit=200000))
+        self.agent.budget=replace(self.agent.budget,tool_calls=1)
+        self.policy=replace(self.policy,proactive=replace(self.policy.proactive,cooldown_seconds=0))
+        self.agent.services.policy.return_value=self.policy
+        bodies=[]
+        async def respond(profile,body,**kwargs):
+            bodies.append(json.loads(json.dumps(body)))
+            if len(bodies) in (1,4):return self.result(calls=(ToolCall('c'+str(len(bodies)),'catalog_info','{"kind":"help","query":""}'),))
+            if 'text' in body:return self.result('{"participation":"reply","text":"","delay_seconds":null}')
+            return self.result('利用现有资料回答')
+        self.client.request.side_effect=respond
+        with patch.object(self.agent,'execute',wraps=self.agent.execute) as execute:
+            value=self.observation();self.tick+=1.6
+            first,_,_=await self.candidate(value)
+            self.event(first,'intent');self.event(first,'ack')
+            self.now+=.01;value=self.observation('补充',seq=2);self.tick+=1.6
+            second,attempts,_=await self.candidate(value,2)
+            self.assertTrue(second['send_allowed']);self.assertEqual(len(attempts),3)
+            self.assertEqual(execute.await_count,1)
+        self.assertEqual(len(bodies),6)
+        self.assertIn('budget_exhausted',json.dumps(bodies[4]))
+        self.assertFalse(bodies[4].get('tools'))
+
+    async def test_queue_wait_cannot_extend_opportunity_lifetime(self):
+        run=self.backend.models.run
+        async def expired_queue(*args,**kwargs):
+            self.tick+=61
+            return await run(*args,**kwargs)
+        value=self.observation();self.tick+=1.6
+        with patch.object(self.backend.models,'run',side_effect=expired_queue):
+            plan,attempts,_=await self.candidate(value)
+        self.assertEqual(attempts,[]);self.assertFalse(plan['send_allowed'])
+        self.client.request.assert_not_called()
+
     async def test_staged_weighted_quota_closes_early_without_losing_generation(self):
         from ournotes_bot.domain.model_calls import ToolCall
         self.snapshot=replace(self.snapshot,profile=replace(self.snapshot.profile,provider='openai',wire_profile='openai-responses-v1'))
@@ -5744,6 +5880,19 @@ class ChatServiceJobsTests(unittest.TestCase):
         self.now[0]+=3600
         with self.assertRaisesRegex(ServiceError,'chat_service_cost_limit'):
             self.budget.check(self.save(),'summary',self.profile,self.request(source='later'),1)
+
+    def test_opportunity_unknown_cost_and_inflight_calls_share_existing_ledger(self):
+        from ournotes_bot.application.chat_jobs import ServiceError
+        self.attempt('proactive','old')
+        policy=self.save();old=self.request('proactive','old');new=self.request('proactive','new')
+        kwargs=dict(opportunity_requests=(old,new),opportunity_calls=1,opportunity_cost_micro=1000000)
+        with self.assertRaisesRegex(ServiceError,'chat_opportunity_call_limit'):
+            self.budget.check(policy,'proactive',self.profile,new,1,**kwargs)
+        kwargs['opportunity_calls']=6
+        expected=self.profile.reserve(100,self.profile.max_output_tokens)*self.profile.price.reference_rate/1000000
+        kwargs['opportunity_cost_micro']=int(expected)
+        with self.assertRaisesRegex(ServiceError,'chat_opportunity_cost_limit'):
+            self.budget.check(policy,'proactive',self.profile,new,1,**kwargs)
 
     def test_hourly_job_call_reply_and_persistent_ack_cooldown_limits(self):
         from ournotes_bot.application.chat_jobs import ServiceError
