@@ -2984,6 +2984,8 @@ class ChatResearchTaskTests(Fixture,unittest.IsolatedAsyncioTestCase):
         work=self.backend.works[next_plan['delivery_id']]
         self.assertEqual(work.chat_task.targets,replacement);self.assertEqual(work.chat_task.coverage()['status'],'completed')
         self.event(next_plan,'intent');self.event(next_plan,'ack')
+        contexts=' '.join(row[0] for row in self.backend.model_runtime.agent.store.db.execute('SELECT context FROM runs'))
+        self.assertNotIn('current_entities',contexts);self.assertNotIn('research_task',contexts)
 
     async def test_compare_then_change_second_target_condition_and_ack_only_commit(self):
         self.catalog();bodies=self.capture_native_bodies();agent=self.backend.model_runtime.agent

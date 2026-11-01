@@ -567,7 +567,9 @@ class ChatAgent:
             image_markers=sum('[图片附件 ' in item['content'] for item in messages),
             input_images=sum(len(item.get('images',())) for item in messages),vision_approved=vision is not None,
             image_detail=vision.detail if any(item.get('images') for item in messages) else 'none')
-        context=[{'role':message['role'],'content':message['content']} for message in messages if message['role']!='system']
+        # Host plans and identity hints are turn-local input, not extra stored dialogue.
+        context=[{'role':message['role'],'content':message['content']} for message in messages if message['role']!='system'
+                 and not {'research_task','current_entities'}.intersection(json.loads(message['content']))]
         if work.proactive is None:
             self.audit(self.store.begin,work,context)
             self.bind_memory(work,[json.loads(item['content']) for item in context if 'message_id' in json.loads(item['content'])])

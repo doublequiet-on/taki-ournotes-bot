@@ -148,7 +148,7 @@ def read_entity_fields(repository, identity, fields, difficulty=''):
                 values['skills'] = [dict(kind=s.kind, name=s.name, description=s.description,
                     localized=s.localized, levels=card.catalog.get('skill_levels', [])[index]
                     if index < len(card.catalog.get('skill_levels', [])) else []) for index, s in enumerate(card.skills)]
-                if not card.catalog.get('skill_index_complete', False): incomplete.add('skills')
+                if not card.catalog.get('skill_index_complete', card.catalog.get('detail_loaded', False)): incomplete.add('skills')
     else:
         for name in fields:
             if name in ('skills', 'attributes'): continue
