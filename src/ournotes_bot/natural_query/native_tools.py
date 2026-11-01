@@ -149,7 +149,10 @@ def scope_for(question,args,previous=None,*,reset_on_server_change=False,pending
     normalized=re.sub(r'(\d{4})年(\d{1,2})月(\d{1,2})日',
                       lambda m:f'{int(m[1]):04d}-{int(m[2]):02d}-{int(m[3]):02d}',question)
     dates=re.findall(r'\d{4}-\d{2}-\d{2}',normalized)
-    versions=re.findall(r'\d+\.\d+(?:\.\d+)?(?=\s*(?:版|版本))',question)
+    versions=[next(value for value in match if value) for match in re.findall(
+        r'(?:版本\s*|\bv)(\d+\.\d+(?:\.\d+)?)(?![\d.])|'
+        r'(\d+\.\d+(?:\.\d+)?)(?=\s*(?:版|版本))|'
+        r'(?<![\d.])(\d+\.\d+\.\d+)(?![\d.])',question,re.I)]
     reset=bool(dates or versions or re.search(r'当前|现在|現時|目前',question)
                or reset_on_server_change and previous and server!=previous.server)
     for key,explicit in (('version',versions),('date',dates)):
