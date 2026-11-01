@@ -84,7 +84,7 @@ async function main(){
   const clients=[]
   const methods=['overview','requests/list','requests/detail','sources','notices/list','query-metrics','groups/list','groups/update','settings/update',
     'ops/jobs/list','ops/jobs/detail','ops/jobs/start','ops/export','ops/audit','ops/host','ops/notice-target',
-    'ops/controls','ops/controls/start','ops/controls/restore',
+    'ops/controls','ops/controls/start','ops/controls/restore','chat/group/settings','chat/group/settings/save',
     'library/status','library/preview','library/compare','library/publish','library/withdraw','chat/status','chat/group/status','chat/group/memory','chat/memory/update','model/proactive/limits/settings','model/proactive/limits/save','model/proactive/settings','model/proactive/save','model/proactive/probe','model/fallback/settings','model/fallback/save','model/web-search/save','model/proactive/web-search/save','model/settings','model/save','model/probe','model/group','ops/trusted','ops/trusted/prepare','ops/trusted/start']
   try{
     await ctx.start();await manager.ready();const a=await connect();clients.push(a.ws)
@@ -104,6 +104,17 @@ async function main(){
     const state=(await a.call('taki/status')).value
     for(const method of ['chat/status','chat/group/status','chat/group/memory'])assert.ok((await a.call('taki/'+method,...(method==='chat/status'?[]:['g1']))).value)
     assert.equal((await a.call('taki/chat/group/memory','../g1')).error,'admin_group')
+    const chatSettingsReads=reads;
+    assert.equal((await a.call('taki/chat/group/settings','../g1')).error,'admin_group');
+    assert.equal((await a.call('taki/chat/group/settings/save',{group_id:'../g1',operation_id:'a'.repeat(32),guard:{},settings:{}})).error,'chat_settings_shape');
+    assert.equal(reads,chatSettingsReads,'invalid conversation settings never reach backend');
+    assert.ok((await a.call('taki/chat/group/settings','g1')).value);
+    const beforeChatSave=reads;
+    assert.ok((await a.call('taki/chat/group/settings/save',{group_id:'g1',operation_id:'a'.repeat(32),guard:{backend_epoch:'fixture',revision:0},settings:{followup_enabled:true,followup_window_seconds:180,coalesce_seconds:1.5,excluded_users:[]}})).value);
+    assert.ok((await a.call('taki/chat/group/settings','g1')).value);
+    assert.equal(reads,beforeChatSave+2,'save invalidates cached conversation readback');
+    const largeList=Array.from({length:200},(_,i)=>({user_id:String(i).padStart(256,'u'),label:'测'.repeat(80)}));
+    assert.ok((await a.call('taki/chat/group/settings/save',{group_id:'g1',operation_id:'b'.repeat(32),guard:{backend_epoch:'fixture',revision:1},settings:{followup_enabled:true,followup_window_seconds:180,coalesce_seconds:1.5,excluded_users:largeList}})).value,'maximum supported list fits the management frame');
     const beforeMemory=reads,mutation={action:'clear',expected_revision:0}
     assert.equal((await a.call('taki/chat/memory/update',{group_id:'g1',mutation,epoch:'old'})).error,'ops_gateway_epoch')
     assert.equal((await a.call('taki/chat/memory/update',{group_id:'g1',mutation:{...mutation,expected_revision:'0'},epoch:'fixture-epoch'})).error,'chat_memory_shape')
@@ -181,7 +192,7 @@ async function main(){
     const foreign=await connect('https://foreign.invalid');clients.push(foreign.ws)
     await new Promise(resolve=>foreign.ws.once('close',code=>{assert.equal(code,1008);resolve()}))
     for(const [frame,expected] of [['{invalid',1008],[JSON.stringify({id:'bad',type:'unknown-method',args:[]}),1008],
-      [JSON.stringify({id:'large',type:'taki/login',args:['x'.repeat(33000)]}),1009]]) {
+      [JSON.stringify({id:'large',type:'taki/login',args:['x'.repeat(132000)]}),1009]]) {
       const connection=await connect();clients.push(connection.ws)
       const closed=new Promise(resolve=>connection.ws.once('close',code=>{assert.equal(code,expected);resolve()}))
       connection.ws.send(frame);await closed

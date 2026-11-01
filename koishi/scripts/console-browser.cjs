@@ -1,6 +1,71 @@
 // Development acceptance only. Pass installed npm asset directory, Playwright package and screenshot directory.
 const assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path')
 const {chromium}=require(process.argv[2]),output=path.resolve(process.argv[3])
+async function verifyConversation(page,browser){
+  const open=async target=>{await target.getByRole('navigation',{name:'Taki 工作页面'}).getByText('群管理',{exact:true}).click();await target.locator('.group-entry').first().click();await target.getByRole('heading',{name:'交流设置',exact:true}).waitFor()}
+  const login=async target=>{await target.goto('http://127.0.0.1:15142/taki',{waitUntil:'networkidle'});await target.getByLabel('管理员密码').fill('fixture-console-password-000000');await target.getByRole('button',{name:'登录',exact:true}).click();await target.getByRole('heading',{name:'总览',exact:true}).waitFor()}
+  const saved=async target=>{await target.getByText('交流设置已保存并确认生效。',{exact:true}).waitFor();await target.getByText('当前显示已保存的交流设置',{exact:true}).waitFor()}
+  await open(page)
+  const settings=page.locator('.conversation-settings'),list=settings.locator('.conversation-exclusions')
+  await page.getByLabel('从近期用户选择',{exact:true}).selectOption('fixture-recent-user')
+  await page.getByRole('button',{name:'添加到名单',exact:true}).click()
+  await page.getByLabel('平台用户 ID',{exact:true}).fill('manual-user-'+'x'.repeat(120))
+  await page.getByLabel('用户备注',{exact:true}).fill('手动用户 · 名单备注与很长的平台 ID 会完整换行')
+  await page.getByRole('button',{name:'添加到名单',exact:true}).click()
+  assert.equal(await list.locator('li').count(),2)
+  await page.getByLabel('从近期用户选择',{exact:true}).selectOption('fixture-recent-user')
+  await page.getByRole('button',{name:'添加到名单',exact:true}).click()
+  await page.getByText('这位用户已在名单中。',{exact:true}).waitFor()
+  assert.equal(await list.locator('li').count(),2)
+  await page.getByLabel('启用免 @ 续聊',{exact:true}).uncheck()
+  await page.getByLabel('续聊窗口（秒）',{exact:true}).fill('240')
+  await page.getByRole('button',{name:'保存交流设置',exact:true}).click();await saved(page)
+  await page.getByRole('button',{name:'刷新交流设置',exact:true}).click()
+  assert.equal(await page.getByLabel('启用免 @ 续聊',{exact:true}).isChecked(),false)
+  await login(page);await open(page)
+  assert.equal(await list.locator('li').count(),2,'saved list persists across browser reload')
+  assert.equal(await page.getByLabel('续聊窗口（秒）',{exact:true}).inputValue(),'240')
+  await page.getByLabel('续聊窗口（秒）',{exact:true}).fill('300')
+  const other=await browser.newPage({viewport:{width:1280,height:960}})
+  await other.route('**/*',route=>new URL(route.request().url()).hostname==='127.0.0.1'?route.continue():route.abort())
+  await login(other);await open(other)
+  await other.getByLabel('合并消息等待（秒）',{exact:true}).fill('1.8')
+  await other.getByRole('button',{name:'保存交流设置',exact:true}).click();await saved(other)
+  await page.getByRole('button',{name:'刷新交流设置',exact:true}).click()
+  await page.getByText('服务器设置已变化或保存未确认，草稿保留。请核对当前值后继续。',{exact:true}).waitFor()
+  assert.equal(await page.getByLabel('续聊窗口（秒）',{exact:true}).inputValue(),'300')
+  await page.getByRole('button',{name:'放弃交流草稿并刷新',exact:true}).click()
+  await page.getByText('当前显示已保存的交流设置',{exact:true}).waitFor()
+  assert.equal(await page.getByLabel('合并消息等待（秒）',{exact:true}).inputValue(),'1.8')
+  await other.close()
+  await page.getByLabel('启用免 @ 续聊',{exact:true}).check()
+  await page.getByRole('button',{name:'保存交流设置',exact:true}).click();await saved(page)
+  await settings.getByText(/命中不主动搭话名单/).waitFor()
+  await settings.getByText(/知识库后继续补查 Haneoka/).waitFor()
+  await settings.getByRole('heading',{name:'交流设置',exact:true}).scrollIntoViewIfNeeded()
+  await page.screenshot({path:path.join(output,'conversation-desktop.png')})
+  await settings.getByRole('heading',{name:'近期交流记录',exact:true}).scrollIntoViewIfNeeded()
+  await page.screenshot({path:path.join(output,'conversation-logs-desktop.png')})
+  await page.setViewportSize({width:320,height:900})
+  await page.evaluate(()=>document.querySelector('.taki-console').dataset.theme='dark')
+  await page.getByRole('button',{name:'移除 近期用户（合成验收）',exact:true}).click()
+  await page.getByRole('button',{name:'保存交流设置',exact:true}).tap();await saved(page)
+  assert.equal(await list.locator('li').count(),1,'mobile removal persists')
+  assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth),true,'mobile document must not overflow')
+  assert.equal(await settings.evaluate(e=>e.scrollWidth<=e.clientWidth),true,'mobile settings must not overflow')
+  await settings.getByRole('heading',{name:'交流设置',exact:true}).scrollIntoViewIfNeeded()
+  await page.screenshot({path:path.join(output,'conversation-mobile-dark.png')})
+  await settings.getByRole('heading',{name:'连续资料任务',exact:true}).scrollIntoViewIfNeeded()
+  await page.screenshot({path:path.join(output,'conversation-mobile-log.png')})
+  await page.getByRole('button',{name:'关闭群详情',exact:true}).click()
+  await page.setViewportSize({width:1280,height:960})
+  await page.getByRole('navigation',{name:'Taki 工作页面'}).getByText('请求记录',{exact:true}).click()
+  await page.getByRole('button',{name:/^查看请求 /}).first().click()
+  await page.getByRole('heading',{name:'交流处理记录',exact:true}).waitFor()
+  await page.getByRole('heading',{name:'交流处理记录',exact:true}).scrollIntoViewIfNeeded()
+  await page.screenshot({path:path.join(output,'conversation-request-log.png')})
+  return {passed:true,syntheticData:true,realAdminSaveReadback:true,recentUserSelection:true,manualId:true,duplicatePrevented:true,reloadPersisted:true,conflictingDraftPreserved:true,mobileRemoval:true,desktopAndMobile:true,groupAndRequestLogs:true}
+}
 async function verifyReconnect(page){
   const nav=()=>page.getByRole('navigation',{name:'Taki 工作页面'})
   const reconnect=async failures=>{
@@ -125,6 +190,10 @@ async function main(){
     await page.getByLabel('管理员密码').fill('fixture-console-password-000000')
     await page.getByRole('button',{name:'登录',exact:true}).click()
     await page.getByRole('heading',{name:'总览',exact:true}).waitFor()
+    if(process.env.TAKI_CONVERSATION_ONLY==='1'){
+      const result=await verifyConversation(page,browser);assert.deepEqual(errors,[]);assert.deepEqual(failed,[])
+      fs.writeFileSync(path.join(output,'conversation.json'),JSON.stringify({...result,errors,failed},null,2));return
+    }
     if(reconnect){
       const result=await verifyReconnect(page);assert.deepEqual(errors,[]);assert.deepEqual(failed,[])
       fs.writeFileSync(path.join(output,'reconnect.json'),JSON.stringify({...result,errors,failed},null,2));return

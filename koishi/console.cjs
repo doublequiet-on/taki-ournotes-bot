@@ -29,7 +29,7 @@ function install(ctx, config, manifest, assetsDirectory = path.join(__dirname, '
   const methods = ['overview', 'requests/list', 'requests/detail', 'sources', 'notices/list', 'query-metrics', 'groups/list', 'groups/update', 'settings/update',
     'ops/jobs/list','ops/jobs/detail','ops/jobs/start','ops/export','ops/audit','ops/host','ops/notice-target',
     'ops/controls','ops/controls/start','ops/controls/restore',
-    'library/status','library/preview','library/compare','library/publish','library/withdraw','chat/status','chat/group/status','chat/group/memory','chat/memory/update','model/budget/save','model/proactive/limits/settings','model/proactive/limits/save','model/proactive/settings','model/proactive/save','model/proactive/probe','model/fallback/settings','model/fallback/save','model/web-search/save','model/proactive/web-search/save','model/settings','model/save','model/probe','model/group','ops/trusted','ops/trusted/prepare','ops/trusted/start']
+    'library/status','library/preview','library/compare','library/publish','library/withdraw','chat/status','chat/group/status','chat/group/memory','chat/memory/update','chat/group/settings','chat/group/settings/save','model/budget/save','model/proactive/limits/settings','model/proactive/limits/save','model/proactive/settings','model/proactive/save','model/proactive/probe','model/fallback/settings','model/fallback/save','model/web-search/save','model/proactive/web-search/save','model/settings','model/save','model/probe','model/group','ops/trusted','ops/trusted/prepare','ops/trusted/start']
   const journal = new OperationJournal(config.directory, management.groups.snapshot().instance ? JSON.stringify(management.groups.snapshot().instance) : manifest.commit)
   journal.reconcile(management)
   const controls=new Controls(management,journal)
@@ -116,7 +116,8 @@ function install(ctx, config, manifest, assetsDirectory = path.join(__dirname, '
         throw safe
       }
     }, options)
-    scoped.server._ws.options.maxPayload = 32768
+    // A bounded 200-user exclusion list can exceed 32 KiB with Chinese remarks.
+    scoped.server._ws.options.maxPayload = 131072
     scoped.console.addEntry(assetsDirectory)
     listen('taki/login', function(password) {
       if (Date.now() < (nextLogin.get(this) || 0)) throw Error('请稍后再登录')
@@ -188,9 +189,20 @@ function install(ctx, config, manifest, assetsDirectory = path.join(__dirname, '
       }finally{reads.clear()}
     },{authority:5})
     listen('taki/chat/status',function(){return readBackend('chat/status')},{authority:5})
-    for(const resource of ['status','memory'])listen('taki/chat/group/'+resource,function(id){
+    for(const resource of ['status','memory','settings'])listen('taki/chat/group/'+resource,function(id){
       if(typeof id!=='string'||!/^[A-Za-z0-9_-]{1,128}$/.test(id))throw Error('admin_group')
       return readBackend('chat/groups/'+id+'/'+resource)
+    },{authority:5})
+    listen('taki/chat/group/settings/save',async function(value){
+      if(!value||typeof value!=='object'||Array.isArray(value)||Object.keys(value).sort().join()!=='group_id,guard,operation_id,settings'
+        ||typeof value.group_id!=='string'||!/^[A-Za-z0-9_-]{1,128}$/.test(value.group_id))throw Error('chat_settings_shape')
+      const client=ctx.takiTransport?.receiver?.client
+      if(!client)throw Error('backend_unavailable')
+      const {operation_id,guard,settings}=value
+      try{
+        const result=await client.request('/v1/admin/chat/groups/'+value.group_id+'/settings',{operation_id,guard,settings},131072,false,AbortSignal.timeout(2000))
+        management.record('管理员更新了群交流设置');return result
+      }finally{reads.clear()}
     },{authority:5})
     listen('taki/chat/memory/update',async function(value){
       if(!value||typeof value!=='object'||Array.isArray(value)||Object.keys(value).sort().join()!=='epoch,group_id,mutation')throw Error('chat_memory_shape')

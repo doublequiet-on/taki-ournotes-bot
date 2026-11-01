@@ -10,24 +10,28 @@ export function sessionState() {
   const webEdit=ref(null),pendingWeb=new Map();
   const modelRole=ref('primary'),budgetEdit=ref(null),proactiveLimits=ref(null),proactiveEdit=ref(null),pendingProactive=new Map();
   const chat=ref(null),chatGroup=ref(null),memory=ref(null),memoryIds=ref('');
+  const chatSettings=ref(null),chatEdit=ref(null),chatUserId=ref(''),chatUserLabel=ref(''),chatReadError=ref(''),pendingChat=new Map();
   const groupRecoveryBlocked=ref(false);
   const pendingProbes=new Map(),pendingTrusted=new Map();
   let generation=0,reauthNotice='',groupEpochBeforeDisconnect;
   const sequences=new Map();
   const failed=new Set();
   function clearProtected(keepEdits=false) {
-    const hadDraft=dirty.value||groupDirty.value||modelDirty.value||budgetEdit.value?.dirty||proactiveEdit.value?.dirty||webEdit.value?.dirty,hadModelKey=!!modelKey.value;
+    const hadDraft=dirty.value||groupDirty.value||modelDirty.value||budgetEdit.value?.dirty||proactiveEdit.value?.dirty||webEdit.value?.dirty||chatEdit.value?.dirty,hadModelKey=!!modelKey.value;
     if(keepEdits&&groupDirty.value&&groupEpochBeforeDisconnect===undefined)groupEpochBeforeDisconnect=guard.value?.gateway_epoch||null;
     generation++;logged.value=false;failed.clear();sequences.clear();stale.value=false;readMessage.value='';
-    for(const value of [overview,requests,detail,sources,metrics,groups,notices,jobs,jobDetail,audit,host,noticeTarget,controls,model,groupUsage,trusted,chat,chatGroup,memory,library,libraryPreview,proactiveLimits])value.value=null;
+    for(const value of [overview,requests,detail,sources,metrics,groups,notices,jobs,jobDetail,audit,host,noticeTarget,controls,model,groupUsage,trusted,chat,chatGroup,memory,library,libraryPreview,proactiveLimits,chatSettings])value.value=null;
     if(!keepEdits||!dirty.value){draft.value=null;guard.value=null;dirty.value=false;conflict.value=false;}
     if(!keepEdits||!groupDirty.value){groupId.value='';groupDraft.value=null;groupRevision.value=null;groupDirty.value=false;groupConflict.value=false;groupRecoveryBlocked.value=false;groupEpochBeforeDisconnect=undefined;}
     if(!keepEdits)budgetEdit.value=null;
     if(!keepEdits||!webEdit.value?.dirty)webEdit.value=null;
     if(!keepEdits||!proactiveEdit.value?.dirty)proactiveEdit.value=null;
+    if(!keepEdits||!chatEdit.value?.dirty)chatEdit.value=null;
+    else groupId.value=chatEdit.value.group_id;
+    chatUserId.value='';chatUserLabel.value='';chatReadError.value='';
     if(!keepEdits||!modelDirty.value){modelDraft.value=null;modelGuard.value=null;modelDirty.value=false;modelConflict.value=false;}
     modelKey.value='';memoryIds.value='';libraryText.value='';libraryConfirmed.value=false;
-    if(!keepEdits){pendingWeb.clear();pendingProactive.clear();pendingProbes.clear();pendingTrusted.clear();pendingJobs.clear();pendingControls.clear();reauthNotice='';}
+    if(!keepEdits){pendingWeb.clear();pendingProactive.clear();pendingChat.clear();pendingProbes.clear();pendingTrusted.clear();pendingJobs.clear();pendingControls.clear();reauthNotice='';}
     return {hadDraft,hadModelKey};
   }
   function unauthorized(error) {
@@ -47,6 +51,7 @@ export function sessionState() {
       web:webEdit.value?.dirty?copy(webEdit.value):null,webOperations:copy([...pendingWeb]),
       budget:budgetEdit.value?.dirty?copy(budgetEdit.value):null,
       proactive:proactiveEdit.value?.dirty?copy(proactiveEdit.value):null,proactiveOperations:copy([...pendingProactive]),
+      chat:chatEdit.value?.dirty?copy(chatEdit.value):null,chatOperations:copy([...pendingChat]),
       global:dirty.value?{draft:copy(draft.value),guard:copy(guard.value),conflict:conflict.value}:null,
       group:groupDirty.value?{id:groupId.value,draft:copy(groupDraft.value),revision:groupRevision.value,epoch:groupEpochBeforeDisconnect===undefined?(guard.value?.gateway_epoch||null):groupEpochBeforeDisconnect}:null,
       model:modelDirty.value?{role:modelRole.value,draft:copy(modelDraft.value),guard:copy(modelGuard.value),conflict:modelConflict.value}:null,
@@ -59,11 +64,12 @@ export function sessionState() {
     if(snapshot.web)webEdit.value=snapshot.web;
     if(snapshot.budget)budgetEdit.value=snapshot.budget;
     if(snapshot.proactive)proactiveEdit.value=snapshot.proactive;
+    if(snapshot.chat){chatEdit.value=snapshot.chat;groupId.value=snapshot.chat.group_id;}
     if(snapshot.global){draft.value=snapshot.global.draft;guard.value=snapshot.global.guard;dirty.value=true;conflict.value=!!snapshot.global.conflict;}
     if(snapshot.group){groupId.value=snapshot.group.id;groupDraft.value=snapshot.group.draft;groupRevision.value=snapshot.group.revision;groupDirty.value=true;
       groupEpochBeforeDisconnect=snapshot.group.epoch;groupRecoveryBlocked.value=true;}
     if(snapshot.model){modelRole.value=['fallback','proactive'].includes(snapshot.model.role)?snapshot.model.role:'primary';modelDraft.value=snapshot.model.draft;modelGuard.value=snapshot.model.guard;modelDirty.value=true;modelConflict.value=!!snapshot.model.conflict;}
-    for(const [map,entries] of [[pendingWeb,snapshot.webOperations],[pendingProactive,snapshot.proactiveOperations],[pendingJobs,snapshot.jobs],[pendingControls,snapshot.controls],[pendingProbes,snapshot.probes],[pendingTrusted,snapshot.trusted]])
+    for(const [map,entries] of [[pendingWeb,snapshot.webOperations],[pendingProactive,snapshot.proactiveOperations],[pendingChat,snapshot.chatOperations],[pendingJobs,snapshot.jobs],[pendingControls,snapshot.controls],[pendingProbes,snapshot.probes],[pendingTrusted,snapshot.trusted]])
       if(Array.isArray(entries))for(const [key,value] of entries)map.set(key,value);
     if(reauthNotice)message.value='管理会话已过期，请重新登录。'+reauthNotice;
   }
@@ -124,13 +130,65 @@ export function sessionState() {
   }
   function selectGroup(id) {
     if(groupDirty.value){if(id!==groupId.value)message.value='请先保存或放弃当前群草稿。';return;}
+    if(chatEdit.value?.dirty&&id!==chatEdit.value.group_id){message.value='请先保存或放弃当前群的交流设置。';return;}
     const changed=id!==groupId.value;
     groupId.value=id;groupDraft.value=structuredClone(toRaw(groups.value?.policy?.groups?.[id])||{label:'',queries:'inherit',notifications:'inherit',natural_query:'inherit'});
     groupRevision.value=groups.value?.policy?.revision;groupDirty.value=false;groupConflict.value=false;groupRecoveryBlocked.value=false;
-    noticeTarget.value=null;if(changed){chatGroup.value=null;memory.value=null;memoryIds.value='';}
+    noticeTarget.value=null;if(changed){chatGroup.value=null;memory.value=null;memoryIds.value='';chatSettings.value=null;chatUserId.value='';chatUserLabel.value='';}
     groupUsage.value=null;
     if(/^[A-Za-z0-9_-]{1,128}$/.test(id))void load(noticeTarget,'ops/notice-target',id);
-    if(/^[A-Za-z0-9_-]{1,128}$/.test(id)){void load(groupUsage,'model/group',id);void load(chatGroup,'chat/group/status',id);void load(memory,'chat/group/memory',id);}
+    if(/^[A-Za-z0-9_-]{1,128}$/.test(id)){void load(groupUsage,'model/group',id);void load(chatGroup,'chat/group/status',id);void load(memory,'chat/group/memory',id);void refreshChatSettings(id);}
+  }
+  async function refreshChatSettings(id=groupId.value,discard=false){
+    if(!id)return;
+    if(chatEdit.value?.dirty&&chatEdit.value.group_id!==id)return;
+    const token=generation,seq=(sequences.get(chatSettings)||0)+1;sequences.set(chatSettings,seq);
+    try{
+      const value=await rpc('chat/group/settings',id);
+      if(token!==generation||seq!==sequences.get(chatSettings)||groupId.value!==id)return;
+      if(!value.settings||!value.guard)throw Error('交流设置暂不可用');
+      chatSettings.value=value;chatReadError.value='';
+      if(discard||!chatEdit.value?.dirty)chatEdit.value={group_id:id,settings:structuredClone(value.settings),guard:value.guard,dirty:false,conflict:false};
+      else if(JSON.stringify(chatEdit.value.guard)!==JSON.stringify(value.guard))chatEdit.value.conflict=true;
+    }catch(error){if(token!==generation||seq!==sequences.get(chatSettings)||unauthorized(error))return;chatReadError.value='交流设置未读取：'+String(error?.message||error);}
+  }
+  function addExcludedUser(userId=chatUserId.value,label=chatUserLabel.value){
+    const edit=chatEdit.value;if(!edit)return;
+    userId=userId.trim();label=label.trim();
+    if(!/^[A-Za-z0-9_-]{1,256}$/.test(userId)||label.length>80){message.value='请输入平台用户 ID，备注最多 80 字。';return;}
+    if(edit.settings.excluded_users.some(user=>user.user_id===userId)){message.value='这位用户已在名单中。';return;}
+    if(edit.settings.excluded_users.length>=200){message.value='每群最多添加 200 位用户。';return;}
+    edit.settings.excluded_users.push({user_id:userId,label});edit.dirty=true;chatUserId.value='';chatUserLabel.value='';
+  }
+  function removeExcludedUser(userId){
+    const edit=chatEdit.value;if(!edit)return;
+    edit.settings.excluded_users=edit.settings.excluded_users.filter(user=>user.user_id!==userId);edit.dirty=true;
+  }
+  const chatSignature=settings=>JSON.stringify([settings.followup_enabled,settings.followup_window_seconds,settings.coalesce_seconds,settings.excluded_users.map(user=>[user.user_id,user.label]).sort((a,b)=>a[0].localeCompare(b[0]))]);
+  async function saveChatSettings(){
+    const draft=chatEdit.value;
+    if(busy.value||!draft?.dirty||draft.conflict||chatReadError.value)return;
+    const token=generation,edit=structuredClone(toRaw(draft));
+    const key=JSON.stringify([edit.group_id,edit.guard,edit.settings]);
+    if(!pendingChat.has(key))pendingChat.set(key,crypto.randomUUID().replaceAll('-',''));
+    busy.value=true;
+    try{
+      await rpc('chat/group/settings/save',{group_id:edit.group_id,operation_id:pendingChat.get(key),guard:edit.guard,settings:edit.settings});
+      if(token!==generation)return;
+      const result=await rpc('chat/group/settings',edit.group_id);
+      if(token!==generation)return;
+      if(!result.settings||chatSignature(result.settings)!==chatSignature(edit.settings))throw Error('保存后的设置已变化，请核对当前值');
+      pendingChat.delete(key);
+      if(chatEdit.value?.group_id===edit.group_id){
+        chatSettings.value=result;chatReadError.value='';
+        chatEdit.value.dirty=chatSignature(chatEdit.value.settings)!==chatSignature(edit.settings);
+        chatEdit.value.guard=result.guard;chatEdit.value.conflict=false;
+      }
+      message.value=chatEdit.value?.dirty?'交流设置已保存，后续编辑仍未保存。':'交流设置已保存并确认生效。';
+    }catch(error){if(token!==generation||unauthorized(error))return;
+      if(chatEdit.value?.group_id===edit.group_id)chatEdit.value.conflict=true;
+      message.value='交流设置未确认，草稿已保留：'+String(error?.message||error);await refreshChatSettings(edit.group_id);
+    }finally{busy.value=false;}
   }
   async function saveGroup() {
     if(groupRecoveryBlocked.value){message.value='网关状态尚未确认或已变化，请核对群草稿后继续。';return;}
@@ -343,7 +401,7 @@ export function sessionState() {
     }catch(error){if(token!==generation||unauthorized(error))return;libraryPreview.value=null;libraryConfirmed.value=false;message.value='资料操作未确认：'+String(error?.message||error)+'。请刷新核对后重新预览，不会自动重试。';}
     finally{busy.value=false;}
   }
-  return {webEdit,saveWeb,proactiveLimits,proactiveEdit,refreshProactiveLimits,saveProactiveLimits,library,libraryKind,libraryText,libraryPreview,libraryConfirmed,refreshLibrary,selectLibrary,libraryAction,budgetEdit,saveBudget,modelRole,refreshModel,selectModelRole,chat,chatGroup,memory,memoryIds,updateMemory,model,modelDraft,modelGuard,modelKey,modelDirty,modelConflict,groupUsage,trusted,saveModel,probeModel,trustedRequest,
+  return {chatSettings,chatEdit,chatUserId,chatUserLabel,chatReadError,refreshChatSettings,saveChatSettings,addExcludedUser,removeExcludedUser,webEdit,saveWeb,proactiveLimits,proactiveEdit,refreshProactiveLimits,saveProactiveLimits,library,libraryKind,libraryText,libraryPreview,libraryConfirmed,refreshLibrary,selectLibrary,libraryAction,budgetEdit,saveBudget,modelRole,refreshModel,selectModelRole,chat,chatGroup,memory,memoryIds,updateMemory,model,modelDraft,modelGuard,modelKey,modelDirty,modelConflict,groupUsage,trusted,saveModel,probeModel,trustedRequest,
     jobs,jobDetail,audit,host,noticeTarget,controls,startControl:(action,ids)=>controlRequest(action,ids),restoreControl:id=>controlRequest('restore',[],id),startJob,exportDiagnostic,logged,busy,message,readMessage,stale,dirty,conflict,overview,requests,detail,sources,metrics,groups,notices,draft,guard,rpc,load,login,logout,save,
     groupId,groupDraft,groupRevision,groupDirty,groupConflict,groupRecoveryBlocked,selectGroup,saveGroup,suspend,captureEdits,restoreEdits,invalidate(){generation++;}};
 }
