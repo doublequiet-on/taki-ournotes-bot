@@ -554,6 +554,7 @@ class ChatAgent:
                     image_input=output.pop('_image_input',None)
                     knowledge_scope=output.pop('_knowledge_scope',None)
                     knowledge_lease=output.pop('_knowledge_lease',None)
+                    knowledge_leases=output.pop('_knowledge_leases',())
                     knowledge_context=output.pop('_knowledge_context',None)
                     tool_message={'role':'tool','tool_call_id':call.id,'content':json.dumps(output,ensure_ascii=False)}
                     projected=[*messages,tool_message,*([image_input] if image_input else [])]
@@ -567,7 +568,8 @@ class ChatAgent:
                         if work.knowledge_scope is not None and work.knowledge_scope!=knowledge_scope:
                             work.knowledge_scope_ambiguous=True
                         work.knowledge_scope=knowledge_scope
-                        work.knowledge_scope_leases=(*work.knowledge_scope_leases,knowledge_lease)
+                        work.knowledge_scope_leases=(*work.knowledge_scope_leases,
+                            *((knowledge_lease,) if knowledge_lease else knowledge_leases))
                     if knowledge_context is not None and output['status']=='knowledge_context':
                         saved,rows,target=knowledge_context
                         self.bind_memory(work,rows)
@@ -705,8 +707,28 @@ class ChatAgent:
                                         'note':'当前发言者近期范围候选；pending_server是其待澄清的明确区服。结合问题判断关联与时间，再查询。'},
                                 '_knowledge_context':(saved,rows,target)},leases
                     previous=saved[1]
-                scope=scope_for(question,args,previous,reset_on_server_change=True,
+                context_version=getattr(runtime.backend.settings,'knowledge_chat_version',None)
+                scope=scope_for(question,args,previous,reset_on_server_change=True,default_version=context_version,
                                 pending_server=work.knowledge_target[0] if args.get('followup') and work.knowledge_target else None)
+                if context_version and scope.version is None and scope.date is None:
+                    # A configured evidence baseline supplements general documents;
+                    # it does not turn their unknown version into a verified one.
+                    scopes=(scope,replace(scope,version=context_version))
+                    await finish_thread(knowledge.observe)
+                    results=await finish_thread(partial(knowledge.retrieve_scopes,
+                        args.get('query') or question,scopes,knowledge.approved_set_revision))
+                    if results[0].code!='ok':
+                        return {'status':results[0].code,'data':results[0].message,'retryable':True},leases
+                    new_leases=tuple(r.lease for r in results if r.lease.chunks)
+                    runtime.check(work,turn_deadline,leases)
+                    data=[json.loads(await finish_thread(partial(knowledge.prepare_evidence,lease)))
+                          for lease in new_leases]
+                    leases=(*leases,*new_leases)
+                    runtime.check(work,turn_deadline,leases)
+                    return {'status':'ok','data':data,'version_context':{
+                        'version':context_version,'source':'configured_evidence_baseline',
+                        'note':'默认两服同步；这是配置的资料版本，不代表已核实线上最新版本。'},
+                        '_knowledge_scope':scope,'_knowledge_leases':new_leases},leases
                 await finish_thread(knowledge.observe)
                 retrieval=await finish_thread(partial(knowledge.retrieve,args.get('query') or question,scope,knowledge.approved_set_revision))
                 if retrieval.code!='ok':
