@@ -542,7 +542,8 @@ class ModelAdminTests(unittest.IsolatedAsyncioTestCase):
             'bindings':[dict(kind='group',conversation_id='g',user_id='u',subject='subject',evidence_ref='fixture/binding')]}
         self.path.write_text(json.dumps(self.old),encoding='utf-8')
         self.client=SimpleNamespace(request=AsyncMock(),price=AsyncMock())
-        backend=SimpleNamespace(instance_id='i',app_id='a',runtime='epoch',models=ModelScheduler(),
+        backend=SimpleNamespace(instance_id='i',app_id='a',runtime='epoch',models=ModelScheduler(),clock=lambda:1000,
+                                diagnostics=SimpleNamespace(group_events=lambda group:[],conversation_event=lambda *args,**kwargs:None),
                                 settings=SimpleNamespace(ai_profile_file=self.path,query_ai_api_key='OLD_KEY'))
         self.runtime=ModelRuntime(backend,self.root/'usage.sqlite3',client=self.client)
         self.addAsyncCleanup(self.runtime.close);self.addAsyncCleanup(backend.models.close)
@@ -552,6 +553,30 @@ class ModelAdminTests(unittest.IsolatedAsyncioTestCase):
         settings=self.admin.settings()
         return dict(operation_id=letter*32,guard=settings['guard'],profile=settings['profile'],groups=settings['groups'],
                     api_key='NEW_PRIVATE_KEY',api_url=settings['api_url'])
+
+    async def test_chat_settings_preserve_groups_and_reject_stale_writes(self):
+        from ournotes_bot.domain.model_calls import ModelError
+        current=self.admin.chat_settings('g')
+        self.assertEqual(current['settings']['followup_window_seconds'],180)
+        body=dict(operation_id='c'*32,guard=current['guard'],settings={**current['settings'],
+            'excluded_users':[dict(user_id='member_openid',label='同名用户')],'followup_enabled':False})
+        saved=self.admin.save_chat_settings('g',body)
+        self.assertFalse(saved['settings']['followup_enabled'])
+        self.assertEqual(saved['settings']['excluded_users'],body['settings']['excluded_users'])
+        self.assertEqual(self.admin.save_chat_settings('g',body)['guard'],saved['guard'])
+        self.assertEqual(self.admin.chat_settings('other')['settings']['excluded_users'],[])
+        with self.assertRaisesRegex(ModelError,'model_config_conflict'):
+            self.admin.save_chat_settings('g',{**body,'operation_id':'d'*32})
+        self.assertEqual(self.admin.chat_settings('g')['settings'],saved['settings'])
+        self.client.request.assert_not_called()
+
+    async def test_chat_settings_reject_duplicate_ids_and_invalid_window(self):
+        from ournotes_bot.domain.model_calls import ModelError
+        current=self.admin.chat_settings('g')
+        for patch in ({'followup_window_seconds':0},{'excluded_users':[dict(user_id='u',label='a'),dict(user_id='u',label='b')]}):
+            with self.subTest(patch=patch),self.assertRaisesRegex(ModelError,'chat_settings_invalid'):
+                self.admin.save_chat_settings('g',dict(operation_id='e'*32,guard=current['guard'],settings={**current['settings'],**patch}))
+        self.assertEqual(self.admin.chat_settings('g')['guard'],current['guard'])
 
     async def test_proactive_settings_save_is_isolated_and_never_inherits_primary_key(self):
         before=self.path.read_bytes();settings=self.admin.settings(proactive=True)

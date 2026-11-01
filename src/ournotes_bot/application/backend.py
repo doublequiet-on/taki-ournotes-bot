@@ -77,6 +77,13 @@ class Work:
     memory_sources: tuple = ()
     image_sources: tuple = ()
     vision_capability: object = None
+    continuation: bool = False
+    chat_task: object = None
+    chat_task_generation: int = 0
+    chat_task_pending: object = None
+    chat_additions: tuple = ()
+    chat_coalesce_until: float = 0
+    chat_coalesce_deadline: float = 0
     proactive: object = None
     proactive_authority: str | None = None
     service_policy: object = None
@@ -282,13 +289,15 @@ class Backend:
             work.mixed_modes=mixed_modes
             if proactive is not None:
                 work.proactive,work.service_policy,work.model_snapshot,work.service_request_id=proactive
+                work.continuation=work.proactive.continuation
+                if work.continuation:self.model_runtime.capture(work)
                 work.proactive_authority=self.model_runtime.capabilities_for(work).generation(work.model_snapshot)
             self.ledger.admit(request, self.runtime, delivery, self.clock())
             self.works[delivery] = work
             try:
                 if self.model_runtime and self.model_runtime.agent:
                     self.model_runtime.agent.proactive.start_addressed(work)
-                    if proactive is not None:self.model_runtime.agent.store.service_run(delivery,request.scope,work.service_request_id)
+                    if proactive is not None and not work.continuation:self.model_runtime.agent.store.service_run(delivery,request.scope,work.service_request_id)
                 admission_ms = (time.perf_counter()-started)*1000
                 observed_commands = [{'kind': replies.command_kind(c), 'outcome': None}
                                      for c in commands[:self.settings.multi_command_limit]]
@@ -325,6 +334,7 @@ class Backend:
         if replies.explicit_chat(content) and not work.chat:
             return replies.PreparedReply("聊天功能尚未启用，请使用 /查 查询资料。")
         if work.chat:
+            content=await self.model_runtime.agent.proactive.coalesce_addressed(work,content)
             return await self.model_runtime.prepare(work,content)
         if self.model_runtime is not None and replies.is_ai_request(content) and work.request.policy.natural_query!='off':
             return await self.model_runtime.prepare(work, content)
@@ -638,7 +648,7 @@ class Backend:
                         payload['result'],allow_context=payload.get('allow_context') is not False,service_ack_ok=service_ack_ok,
                         record_delivery=projection is None)
                     if (payload['result']=='success' and len(parts)==1 and not work.hint
-                            and payload.get('group_ingress_seq')==work.request.ingress_seq):
+                            and payload.get('allow_context') is not False):
                         self.model_runtime.agent.proactive.remember_question(work,payload['message_id'],reply.text)
                 if payload['result'] == 'success':
                     if long_fallback: candidate = replies.fallback_cursor(reply,text_limit=text_limit)
@@ -894,6 +904,17 @@ def create_app(backend, token, initialize=None):
         gid=request.match_info.get('gid')
         require(gid is None or re.fullmatch('[A-Za-z0-9_-]{1,128}',gid),'admin_group')
         return json(status(backend.model_runtime,gid))
+    async def chat_settings(request):
+        from ..domain.model_calls import ModelError
+        require(backend.model_runtime is not None,'chat_unavailable',503)
+        try:
+            owner=backend.model_runtime.admin;gid=request.match_info['gid']
+            if request.method=='GET':return json(owner.chat_settings(gid))
+            require(backend.ready and not backend.closing,'backend_not_ready',503)
+            require(backend.ledger.active(request.headers.get('X-Taki-Epoch')),'ops_gateway_epoch',409)
+            return json(owner.save_chat_settings(gid,await read_json(request.clone(client_max_size=131072))))
+        except ModelError as exc:raise ProtocolError(str(exc),409) from None
+        except (OSError,sqlite3.Error):raise ProtocolError('model_admin_unavailable',503) from None
     async def chat_memory(request):
         if request.method=='GET' and (backend.model_runtime is None or backend.model_runtime.agent is None):
             return json({'availability':'unavailable','reason_code':'chat_unavailable'})
@@ -948,6 +969,7 @@ def create_app(backend, token, initialize=None):
                     web.post('/v1/admin/model/proactive/probe',model_settings),web.post('/v1/admin/model/probe',model_settings),web.post('/v1/admin/model/budget',model_settings),web.get('/v1/admin/model/groups/{gid}',model_group),
                     web.get('/v1/admin/library/{kind}/{offset:[0-9]+}',library_status),web.post('/v1/admin/library/{action}',library_command),
                     web.get('/v1/admin/chat/status',chat_status),web.get('/v1/admin/chat/groups/{gid}/status',chat_status),
+                    web.get('/v1/admin/chat/groups/{gid}/settings',chat_settings),web.post('/v1/admin/chat/groups/{gid}/settings',chat_settings),
                     web.get('/v1/admin/chat/groups/{gid}/memory',chat_memory),web.post('/v1/admin/chat/groups/{gid}/memory',chat_memory),
                     web.get('/v1/admin/ops/jobs', ops_jobs), web.post('/v1/admin/ops/jobs', ops_submit),
                     web.get('/v1/admin/ops/jobs/{jid}', ops_detail),

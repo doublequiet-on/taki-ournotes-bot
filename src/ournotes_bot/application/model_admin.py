@@ -39,6 +39,7 @@ class ModelAdmin:
         row=self.db.execute('SELECT value FROM identity').fetchone()
         require(row is None or row[0]==identity,'model_admin_identity')
         with self.db:
+            self.db.execute('CREATE TABLE IF NOT EXISTS chat_settings(group_id TEXT PRIMARY KEY,value TEXT NOT NULL,revision TEXT NOT NULL)')
             self.db.execute('CREATE TABLE IF NOT EXISTS budget(key TEXT PRIMARY KEY,value TEXT NOT NULL,revision TEXT NOT NULL)')
             self.db.execute('CREATE TABLE IF NOT EXISTS capability_authority(path TEXT PRIMARY KEY,generation TEXT NOT NULL,digest TEXT NOT NULL)')
             self.db.execute('INSERT OR IGNORE INTO identity VALUES(?)',(identity,))
@@ -72,6 +73,53 @@ class ModelAdmin:
             self.finish(value['operation_id'],'failed' if isinstance(exc,ModelError) else 'unknown',{'code':str(exc) if isinstance(exc,ModelError) else 'model_save_unconfirmed'})
             raise
         return self.settings()
+
+    def chat_settings(self, group_id):
+        require(isinstance(group_id,str) and re.fullmatch('[A-Za-z0-9_-]{1,128}',group_id),'admin_group')
+        row=self.db.execute('SELECT value,revision FROM chat_settings WHERE group_id=?',(group_id,)).fetchone()
+        settings=json.loads(row['value']) if row else dict(followup_enabled=True,followup_window_seconds=180,
+            coalesce_seconds=1.5,excluded_users=[])
+        agent=self.runtime.agent
+        scope=dict(instance_id=self.backend.instance_id,app_id=self.backend.app_id,platform='qq',kind='group',conversation_id=group_id)
+        people={}
+        if agent:
+            group=agent.proactive.controller.groups.get(tuple(scope.values()))
+            rows=[dict(user_id=item.message.speaker_id,display_name=item.message.display_name) for item in group.rows] if group else []
+            rows.extend(dict(user_id=item['speaker_id'],display_name=item['display_name'])
+                for item in agent.store.recent(scope) if item['role']=='user')
+            for item in rows:people[item['user_id']]=item
+        tasks=agent.tasks.status(scope) if agent and hasattr(agent,'tasks') else dict(active_tasks=0,waiting_tasks=0,partial_tasks=0,completed_tasks=0,window_seconds=900)
+        return dict(group_id=group_id,guard=dict(backend_epoch=self.backend.runtime,revision=row['revision'] if row else 'initial'),
+                    settings=settings,recent_users=list(people.values())[-120:],tasks=tasks,
+                    recent_events=self.backend.diagnostics.group_events(group_id))
+
+    def save_chat_settings(self,group_id,value):
+        require(isinstance(value,dict) and set(value)=={'operation_id','guard','settings'},'model_admin_shape')
+        current=self.chat_settings(group_id)
+        settings=value['settings']
+        require(isinstance(settings,dict) and set(settings)=={'followup_enabled','followup_window_seconds','coalesce_seconds','excluded_users'},'chat_settings_invalid')
+        require(type(settings['followup_enabled']) is bool and type(settings['followup_window_seconds']) is int
+                and 60<=settings['followup_window_seconds']<=600,'chat_settings_invalid')
+        require(type(settings['coalesce_seconds']) in (int,float) and 1<=settings['coalesce_seconds']<=2,'chat_settings_invalid')
+        users=settings['excluded_users']
+        require(isinstance(users,list) and len(users)<=200,'chat_settings_invalid')
+        for user in users:
+            require(isinstance(user,dict) and set(user)=={'user_id','label'} and isinstance(user['user_id'],str)
+                    and re.fullmatch('[A-Za-z0-9_-]{1,256}',user['user_id']) and isinstance(user['label'],str) and len(user['label'])<=80,'chat_settings_invalid')
+        require(len({user['user_id'] for user in users})==len(users),'chat_settings_invalid')
+        if not self.begin({**value,'group_id':group_id},'chat_settings',group_id):return self.chat_settings(group_id)
+        try:
+            require(value['guard']==current['guard'],'model_config_conflict')
+            with self.db:
+                self.db.execute('INSERT OR REPLACE INTO chat_settings VALUES(?,?,?)',(group_id,encode(settings),value['operation_id']))
+                self.db.execute("UPDATE actions SET state='succeeded',result=? WHERE id=?",(encode({'code':'saved'}),value['operation_id']))
+            if self.runtime.agent:self.runtime.agent.proactive.settings_changed(group_id,current['settings'],settings)
+            self.backend.diagnostics.conversation_event(value['operation_id'],group_id,'control',self.backend.clock(),
+                status='settings_saved',window_seconds=settings['followup_window_seconds'],continuation=settings['followup_enabled'])
+        except (ModelError,sqlite3.Error) as exc:
+            self.finish(value['operation_id'],'failed' if isinstance(exc,ModelError) else 'unknown',{'code':str(exc) if isinstance(exc,ModelError) else 'model_save_unconfirmed'})
+            raise
+        return self.chat_settings(group_id)
 
     def guard(self, fingerprint):
         return {'backend_epoch':self.backend.runtime,'fingerprint':fingerprint}

@@ -57,6 +57,7 @@ class ProactiveCandidate:
     evaluation: int = 1
     followup: object = None
     opportunity_id: str = ''
+    continuation: bool = False
 
 
 @dataclass
@@ -115,6 +116,7 @@ class _Group:
     evaluation: int = 0
     opportunity: _Opportunity | None = None
     pending_since: float | None = None
+    coalesce_seconds: float | None = None
 
 
 class ProactiveController:
@@ -260,7 +262,7 @@ class ProactiveController:
 
     def start_delay(self, scope):
         group = self.groups[scope]
-        ready_at = group.last_message_at + self.coalesce_seconds
+        ready_at = group.last_message_at + (group.coalesce_seconds if group.coalesce_seconds is not None else self.coalesce_seconds)
         if group.pending_since is not None:
             ready_at = min(ready_at, group.pending_since + 8)
         return max(0, ready_at - self.clock())
