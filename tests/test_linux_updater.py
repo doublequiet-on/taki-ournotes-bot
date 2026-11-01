@@ -71,6 +71,9 @@ class FakeBackend:
     def verify_compatibility(self, previous, candidate):
         self._call("compatibility")
 
+    def verify_repair(self, failed, candidate):
+        self._call("repair_compatibility")
+
     def backup(self, previous, candidate):
         return self._call("backup", lambda: "backup-previous-code-env")
 
@@ -117,6 +120,129 @@ class LinuxUpdaterTests(unittest.TestCase):
         self.assertEqual(self.engine.run().status, "up_to_date")
         self.backend.remote = B
         self.backend.calls.clear()
+
+    def test_forward_migration_success_cannot_offer_old_reader_rollback(self):
+        self.initialize()
+        self.engine.migration_target = B
+        self.assertEqual(self.engine.run().status, 'updated')
+        state = self.engine.load_state()
+        self.assertEqual(state['current']['commit'], B)
+        self.assertIsNone(state['previous'])
+        self.assertEqual(self.backend.shared_data['counter'], 9)
+
+    def test_forward_migration_failed_health_stops_without_old_activation(self):
+        self.initialize()
+        self.engine.migration_target = B
+        self.backend.health[B] = False
+        result = self.engine.run()
+        self.assertEqual(result.reason, 'migration_requires_forward_repair')
+        self.assertFalse(self.backend.running)
+        self.assertEqual(self.backend.current.commit, B)
+        self.assertNotIn('activate:' + A, self.backend.calls)
+        self.assertEqual(self.backend.shared_data['counter'], 9)
+        self.assertTrue(self.engine.load_state()['transaction']['forward_only'])
+        self.assertEqual(u.Engine(self.folder, self.backend).run().status, 'paused')
+
+    def test_forward_migration_power_loss_recovery_never_rolls_back(self):
+        for point in ('stop:after', 'activate:' + B + ':after', 'start:' + B + ':after'):
+            with self.subTest(point=point), tempfile.TemporaryDirectory() as folder:
+                backend = FakeBackend()
+                engine = u.Engine(folder, backend, migration_target=B)
+                backend.state_path = engine.state_file
+                backend.failures[point] = PowerLoss()
+                with self.assertRaises(PowerLoss): engine.run()
+                recovered = u.Engine(folder, backend).run(recover_only=True)
+                self.assertEqual(recovered.reason, 'migration_requires_forward_repair')
+                self.assertFalse(backend.running)
+                self.assertNotIn('activate:' + A, backend.calls)
+
+    def test_forward_migration_exact_target_and_preparation_failure_keep_service(self):
+        self.initialize()
+        self.engine.migration_target = C
+        self.assertEqual(self.engine.run().reason, 'migration_target_changed')
+        self.assertNotIn('stop', self.backend.calls)
+        self.engine.migration_target = B
+        self.backend.failures['compatibility'] = u.Rejected('migration_not_reviewed')
+        self.assertEqual(self.engine.run().status, 'rejected')
+        self.assertTrue(self.backend.running)
+        self.assertEqual(self.backend.current.commit, A)
+
+    def failed_migration(self):
+        self.initialize()
+        self.engine.migration_target = B
+        self.backend.health[B] = False
+        self.assertEqual(self.engine.run().status, 'paused')
+        self.backend.calls.clear()
+
+    def test_forward_repair_same_release_after_configuration_fix(self):
+        self.failed_migration()
+        self.assertEqual(self.engine.resume(retry_commit=B).reason, 'migration_requires_explicit_target')
+        self.backend.health[B] = True
+        self.assertEqual(self.engine.run().status, 'updated')
+        self.assertNotIn('install:' + B, self.backend.calls)
+        self.assertIsNone(self.engine.load_state()['previous'])
+        self.assertEqual(self.backend.shared_data['counter'], 10)
+
+    def test_forward_migration_stop_failure_is_retried_without_old_start(self):
+        self.initialize()
+        self.engine.migration_target = B
+        def health(target):
+            self.backend.failures['stop'] = u.Rejected('service_not_stopped')
+            return False
+        self.backend.healthy = health
+        self.assertEqual(self.engine.run().reason, 'migration_stop_failed.service_not_stopped')
+        self.assertTrue(self.backend.running)
+        self.assertEqual(u.Engine(self.folder, self.backend).run().reason, 'migration_requires_forward_repair')
+        self.assertFalse(self.backend.running)
+        self.assertNotIn('start:' + A, self.backend.calls)
+
+    def test_forward_migration_requires_v2_journal(self):
+        self.failed_migration()
+        state = self.engine.load_state()
+        self.assertEqual(state['version'], 2)
+        state['version'] = 1
+        self.engine._save(state)
+        self.assertEqual(self.engine.run().status, 'state_error')
+        self.assertEqual(self.backend.calls, [])
+
+    def test_forward_repair_new_release_preserves_data_and_failure_record(self):
+        self.failed_migration()
+        self.backend.remote = C
+        self.engine.migration_target = C
+        self.assertEqual(self.engine.run().status, 'updated')
+        self.assertIn('repair_compatibility', self.backend.calls)
+        self.assertNotIn('activate:' + A, self.backend.calls)
+        self.assertIn(B, self.engine.load_state()['failed'])
+        self.assertEqual(self.backend.current.commit, C)
+        self.assertEqual(self.backend.shared_data['counter'], 10)
+
+    def test_forward_repair_rejection_and_interruption_stay_stopped(self):
+        for point in ('tests:' + C, 'repair_compatibility', 'backup'):
+            with self.subTest(point=point):
+                self.setUp()
+                self.failed_migration()
+                self.backend.remote = C
+                self.engine.migration_target = C
+                self.backend.failures[point] = PowerLoss()
+                with self.assertRaises(PowerLoss): self.engine.run()
+                reboot = u.Engine(self.folder, self.backend)
+                self.assertEqual(reboot.run(recover_only=True).status, 'paused')
+                self.assertFalse(self.backend.running)
+                self.assertEqual(reboot.load_state()['transaction']['repair_from']['commit'], B)
+                self.assertNotIn('activate:' + A, self.backend.calls)
+                self.assertEqual(self.engine.run().status, 'updated')
+
+    def test_forward_repair_health_failure_can_retry_its_sealed_candidate(self):
+        self.failed_migration()
+        self.backend.remote = C
+        self.engine.migration_target = C
+        self.backend.health[C] = False
+        self.assertEqual(self.engine.run().status, 'paused')
+        self.backend.calls.clear()
+        self.backend.health[C] = True
+        self.assertEqual(self.engine.run().status, 'updated')
+        self.assertNotIn('install:' + C, self.backend.calls)
+        self.assertNotIn('activate:' + A, self.backend.calls)
 
     def test_network_backoff_survives_restarts_and_recovers_after_more_than_three_rounds(self):
         self.initialize()

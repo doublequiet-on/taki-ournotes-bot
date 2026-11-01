@@ -24,6 +24,32 @@ A, B = "a" * 40, "b" * 40
 
 
 class LinuxBackendTests(unittest.TestCase):
+    def test_migrate_cli_requires_explicit_target_and_reports_unsuccessful_exit(self):
+        from types import SimpleNamespace
+        config = self.root / 'cli-config.json'
+        config.write_text(json.dumps(self.config))
+        marker = self.root / 'installation.json'
+        marker.write_text(json.dumps({'phase': 'installed'}))
+        def selected_path(value):
+            return marker if value == '/usr/local/lib/taki-updater/installation.json' else Path(value)
+        backend = Mock(koishi=None)
+        engine = Mock(backend=backend)
+        with patch('deploy.linux_backend.os', SimpleNamespace(name='posix', geteuid=lambda: 0)), \
+             patch('deploy.linux_backend.trusted'), patch('deploy.linux_backend.validate_config'), \
+             patch('deploy.linux_backend.Path', side_effect=selected_path), \
+             patch('deploy.linux_backend.LinuxBackend', return_value=backend), \
+             patch('deploy.linux_backend.Engine', return_value=engine) as factory, patch('builtins.print'):
+            for status in ('updated', 'up_to_date', 'paused', 'rejected', 'deferred', 'busy'):
+                engine.run.return_value = RunResult(status, B)
+                self.assertEqual(main(['--config', str(config), 'migrate', '--target-commit', B]),
+                                 0 if status in ('updated', 'up_to_date') else 1)
+                self.assertEqual(factory.call_args.kwargs['migration_target'], B)
+                self.assertEqual(backend.migration_target, B)
+            self.assertEqual(main(['--config', str(config), 'migrate']), 1)
+            self.assertEqual(main(['--config', str(config), 'check', '--target-commit', B]), 1)
+            marker.write_text(json.dumps({'phase': 'preparing'}))
+            self.assertEqual(main(['--config', str(config), 'migrate', '--target-commit', B]), 1)
+
     @unittest.skipUnless(sys.version_info>=(3,11),'controller runs on CPython 3.12')
     def test_knowledge_cannot_override_a_base_lock_pin(self):
         self.config['knowledge_bundle']={'commit':B,'sha256':'c'*64}
@@ -733,6 +759,11 @@ class LinuxBackendTests(unittest.TestCase):
                    transaction=dict(commit='1'*40, previous=asdict(releases[1]), candidate=asdict(releases[2])))
         report = plan(self.config, references=(set(), True))
         self.assertTrue(all(r['action']=='keep' for r in report['entries']))
+        self.state(current=asdict(releases[5]), previous=releases[4],
+                   transaction=dict(commit='6'*40, repair_from=asdict(releases[0])))
+        row = next(r for r in plan(self.config, references=(set(), True))['entries'] if r['commit']=='1'*40)
+        self.assertEqual(row['action'], 'keep')
+        self.assertIn('transaction_repair_from', row['reasons'])
         self.state(current=asdict(releases[5]), previous=releases[4])
         report = plan(self.config, references=(set(), False))
         self.assertTrue(all(r['action']=='keep' for r in report['entries']))
@@ -893,6 +924,35 @@ class LinuxBackendTests(unittest.TestCase):
         with patch('deploy.linux_backend.trusted'):
             with self.assertRaisesRegex(Rejected, 'persistence_contract_changed'):
                 self.backend._check_reviewed_fingerprints(previous, candidate)
+
+    def test_migration_requires_exact_review_and_repair_keeps_new_schema(self):
+        candidate = self.candidate()
+        policy_path = self.policy()
+        policy = json.loads(policy_path.read_text())
+        (Path(candidate.code_dir)/'critical.py').write_text('new reader')
+        policy['reviews'].append(dict(fingerprints=fingerprints(Path(candidate.code_dir), self.config['compatibility_paths']),
+            forward_and_rollback_data_compatible=True, evidence='new reader reviewed', schema_contract='schema2'))
+        plan = dict(previous=A, candidate=B, from_contract='schema1', to_contract='schema2',
+            failure_mode='stop_and_repair_forward', evidence='isolated migration', authorization='explicit owner choice')
+        policy['forward_only_migration'] = plan
+        atomic_json(policy_path, policy)
+        with patch('deploy.linux_backend.trusted'):
+            with self.assertRaisesRegex(Rejected, 'persistence_contract_changed'):
+                self.backend._check_reviewed_fingerprints(self.baseline, candidate)
+            self.backend.migration_target = B
+            self.backend._check_reviewed_fingerprints(self.baseline, candidate)
+            for field in plan:
+                bad = dict(plan);bad[field] = ''
+                policy['forward_only_migration'] = bad;atomic_json(policy_path, policy)
+                with self.subTest(field=field), self.assertRaisesRegex(Rejected, 'persistence_contract_changed'):
+                    self.backend._check_reviewed_fingerprints(self.baseline, candidate)
+            policy['forward_only_migration'] = plan;atomic_json(policy_path, policy)
+            with self.assertRaisesRegex(Rejected, 'persistence_contract_changed'):
+                self.backend._check_reviewed_fingerprints(self.baseline, candidate, allow_migration=False)
+            self.backend._check_reviewed_fingerprints(candidate, candidate, allow_migration=False)
+            self.backend.migration_target = A
+            with self.assertRaisesRegex(Rejected, 'persistence_contract_changed'):
+                self.backend._check_reviewed_fingerprints(self.baseline, candidate)
 
     def test_environment_changes_are_rejected_before_activation(self):
         release = self.candidate()

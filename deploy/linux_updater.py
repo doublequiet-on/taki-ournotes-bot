@@ -12,8 +12,11 @@ Backend contract:
   checks for that SHA. Deferred is for network/CI pending; Rejected is permanent.
 * prepare installs and tests an isolated candidate as the application account,
   with no live credentials/data, bounded resources, and no QQ/network test calls.
-* verify_compatibility must raise unless the forward AND rollback readers/writers
-  are compatible with shared data and required production fixes are preserved.
+* verify_compatibility requires bidirectional shared-data compatibility, except
+  an explicit exact-target migration reviewed by the trusted backend. Such a
+  transaction persists forward_only and can never activate the previous reader.
+* verify_repair must reject a fix that cannot read/write the failed migration
+  candidate's contract; ordinary resume cannot release this migration pause.
   Passing tests alone is not evidence of data or hotfix compatibility.
 * backup preserves the old code/environment and required recovery metadata before
   stopping. Its opaque reference must contain no credentials. It never implies
@@ -97,6 +100,7 @@ class Backend(Protocol):
     def check_ci(self, commit: str) -> None: ...
     def prepare(self, commit: str) -> Release: ...
     def verify_compatibility(self, previous: Release, candidate: Release) -> None: ...
+    def verify_repair(self, failed: Release, candidate: Release) -> None: ...
     def backup(self, previous: Release, candidate: Release) -> str: ...
     def stop(self) -> None: ...
     def activate(self, release: Release) -> None: ...
@@ -191,11 +195,14 @@ class Engine:
     """One timer invocation. This class never starts a scheduler or sends notices."""
 
     def __init__(self, state_dir: str | Path, backend: Backend,
-                 lock_factory: Callable = FileLock):
+                 lock_factory: Callable = FileLock, *, migration_target: str | None = None):
         self.state_dir = Path(state_dir)
         self.state_file = self.state_dir / "state.json"
         self.backend = backend
         self.lock_factory = lock_factory
+        if migration_target is not None and not SHA_RE.fullmatch(migration_target):
+            raise ValueError("migration requires immutable target")
+        self.migration_target = migration_target
 
     def _ensure_state_directory(self):
         self.state_dir.mkdir(parents=True, exist_ok=True, mode=0o755)
@@ -212,7 +219,7 @@ class Engine:
         except (OSError, ValueError) as exc:
             raise StateError("state_read_failed") from exc
         try:
-            if state["version"] != 1:
+            if state["version"] not in (1, 2):
                 raise ValueError("version")
             Release(**state["current"])
             if state.get("previous") is not None:
@@ -232,6 +239,14 @@ class Engine:
                     raise ValueError("download retries")
             transaction = state.get("transaction")
             if transaction is not None:
+                if transaction.get("forward_only") and state["version"] != 2:
+                    raise ValueError("migration requires v2 journal")
+                if type(transaction.get("forward_only", False)) is not bool:
+                    raise ValueError("migration mode")
+                if transaction.get('repair_from'):
+                    Release(**transaction['repair_from'])
+                    if not transaction.get('forward_only') or not transaction.get('migration_backup'):
+                        raise ValueError('migration repair provenance')
                 if (transaction.get("preparation_step") is not None and
                         transaction["preparation_step"] not in {"downloading", "offline_preparation"}):
                     raise ValueError("preparation step")
@@ -301,7 +316,14 @@ class Engine:
         transaction = state["transaction"]
         commit = transaction["commit"]
         previous = Release(**transaction["previous"])
-        self._failed(state, commit, reason)
+        if not transaction.get("forward_only") or commit not in state["failed"]:
+            self._failed(state, commit, reason)
+        if transaction.get("forward_only"):
+            try:
+                self.backend.stop()
+            except Exception as exc:
+                return self._pause(state, "migration_stop_failed." + _code(exc), commit)
+            return self._pause(state, "migration_requires_forward_repair", commit)
         try:
             self._phase(state, "rollback_stopping")
             self.backend.stop()
@@ -322,6 +344,52 @@ class Engine:
         self._cleanup(state)
         return RunResult("rolled_back", commit, reason)
 
+    def _repair_forward(self, state: dict) -> RunResult:
+        """Explicit migration command only; never restart the old data reader."""
+        transaction = state['transaction']
+        previous = Release(**state['current'])
+        failed = Release(**(transaction.get('repair_from') or transaction['candidate']))
+        existing = Release(**transaction['candidate']) if transaction.get('candidate') else None
+        target = self.migration_target
+        self._pause(state, 'migration_requires_forward_repair', transaction['commit'])
+        try:
+            actual = self.backend.current_release()
+            if actual not in (previous, failed, existing):
+                raise Rejected('migration_release_drift')
+            self.backend.stop()
+            if target == previous.commit or self.backend.resolve_main() != target:
+                raise Rejected('migration_target_changed')
+            self.backend.check_ci(target)
+            # Persist the failed reader and original backup before preparing a fix.
+            # A crash in preparation stays paused; ordinary recover cannot boot old.
+            state['transaction'] = dict(commit=target, previous=asdict(previous),
+                candidate=asdict(existing) if existing and target == existing.commit else None,
+                phase='preparing', compatible=False, backup=None, started_at=_now(),
+                forward_only=True, repair_from=asdict(failed),
+                migration_backup=transaction.get('migration_backup') or transaction['backup'])
+            self._event(state, 'migration_repair_requested', target)
+            self._save(state)
+            candidate = existing if existing and target == existing.commit else self.backend.prepare(target)
+            if not isinstance(candidate, Release) or candidate.commit != target:
+                raise Rejected('prepared_commit_mismatch')
+            state['transaction']['candidate'] = asdict(candidate)
+            self._phase(state, 'verifying')
+            self.backend.verify_compatibility(previous, candidate)
+            self.backend.verify_repair(failed, candidate)
+            state['transaction']['compatible'] = True
+            self._phase(state, 'backing_up')
+            backup = self.backend.backup(failed, candidate)
+            if not isinstance(backup, str) or not backup:
+                raise Rejected('missing_backup')
+            state['transaction']['backup'] = backup
+            state['paused'] = None
+            return self._switch(state, previous, candidate)
+        except StateError:
+            raise
+        except Exception as exc:
+            self._event(state, 'migration_repair_failed', target, _code(exc))
+            return self._pause(state, 'migration_requires_forward_repair', target)
+
     def _run(self, recover_only: bool) -> RunResult:
         state = self.load_state()
         if state is None:
@@ -334,7 +402,13 @@ class Engine:
                          transaction=None, failed={}, events=[], paused=None)
             self._event(state, "initialized", baseline.commit)
             self._save(state)
+        transaction = state.get("transaction")
+        if (not recover_only and self.migration_target is not None and transaction and transaction.get("forward_only")
+                and (transaction["phase"] in MUTATING_PHASES or transaction.get("repair_from"))):
+            return self._repair_forward(state)
         if state.get("paused"):
+            if transaction and transaction.get('forward_only') and transaction['phase'] in MUTATING_PHASES:
+                return self._rollback(state, 'interrupted_migration')
             return RunResult("paused", reason=state["paused"])
         if state.get("transaction"):
             transaction = state["transaction"]
@@ -371,6 +445,8 @@ class Engine:
                 raise Deferred("invalid_remote_commit")
         except Exception as exc:
             return RunResult("deferred", reason=_code(exc))
+        if self.migration_target is not None and commit != self.migration_target:
+            return RunResult("rejected", commit, "migration_target_changed")
         if commit == previous.commit:
             return RunResult("up_to_date", commit)
         if commit in state["failed"]:
@@ -391,6 +467,9 @@ class Engine:
         state["transaction"] = dict(commit=commit, previous=asdict(previous),
                                     candidate=None, phase="preparing", compatible=False,
                                     backup=None, started_at=_now())
+        if self.migration_target is not None:
+            state["version"] = 2  # Older controllers must reject, not roll back this transaction.
+            state["transaction"]["forward_only"] = True
         self._save(state)
         try:
             candidate = self.backend.prepare(commit)
@@ -453,7 +532,7 @@ class Engine:
         except Exception as exc:
             return self._rollback(state, _code(exc))
         state.get("download_retries", {}).pop(commit, None)
-        state["previous"] = asdict(previous)
+        state["previous"] = None if state["transaction"].get("forward_only") else asdict(previous)
         state["current"] = asdict(candidate)
         state["transaction"] = None
         if manual:
@@ -547,6 +626,8 @@ class Engine:
                 state = self.load_state()
                 if state is None:
                     return RunResult("uninitialized")
+                if (state.get('transaction') or {}).get('forward_only'):
+                    return RunResult('rejected', reason='migration_requires_explicit_target')
                 state["paused"] = None
                 if retry_commit is not None:
                     state["failed"].pop(retry_commit, None)

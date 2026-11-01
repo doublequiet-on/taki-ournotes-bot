@@ -664,6 +664,51 @@ class ModelAdminTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(hashes,{path:self.admin.metadata_digest(path,131072) for path in before})
         self.client.request.assert_not_called()
 
+    async def test_model_change_restarts_agent_without_granting_stale_services(self):
+        from ournotes_bot.application.delivery_ledger import Ledger
+        from ournotes_bot.application.model_runtime import ModelRuntime
+        config,owner,services=self.approved_openai()
+        before={p:p.read_bytes() for p in (owner.path,services.path)}
+        change=self.payload('b');change['api_key']='';change['profile']['model']+='-changed'
+        self.admin.save(change)
+        backend=self.runtime.backend
+        backend.settings.chat_engine='agent'
+        backend.ledger=Ledger(self.root/'deliveries.sqlite3','i','epoch',1000)
+        self.addCleanup(backend.ledger.close)
+        restarted=ModelRuntime(backend,self.root/'restarted.sqlite3',client=self.client)
+        self.addAsyncCleanup(restarted.close)
+        self.assertIsNotNone(restarted.agent)
+        self.assertIsNone(restarted.agent.services.policy(restarted.config.snapshot(),'g'))
+        self.assertEqual(restarted.agent.services.code,'chat_service_profile_mismatch')
+        self.assertIsNone(restarted.capabilities.vision(restarted.config.snapshot()))
+        self.assertEqual(before,{p:p.read_bytes() for p in before})
+        self.client.request.assert_not_called()
+
+    async def test_authority_migration_skips_missing_proactive_model(self):
+        config,owner,services=self.approved_openai(proactive=True)
+        before={p:p.read_bytes() for p in (owner.path,services.path)}
+        config.path.unlink()
+        self.assertEqual(self.admin.migrate_chat_authorities(),())
+        self.assertEqual(before,{p:p.read_bytes() for p in before})
+        self.assertEqual(self.admin.db.execute('SELECT count(*) FROM capability_authority').fetchone()[0],0)
+
+    async def test_authority_migration_does_not_restore_revoked_service_file(self):
+        from ournotes_bot.application.chat_jobs import ChatServices
+        config,owner,services=self.approved_openai()
+        old=services.path.read_bytes()
+        self.admin.migrate_chat_authorities()
+        services.path.write_bytes(old)
+        self.assertEqual(self.admin.migrate_chat_authorities(),())
+        pinned=ChatServices(self.root,'i','a',authority=self.admin.db,require_authority=True)
+        self.assertIsNone(pinned.policy(config.snapshot(),'g'))
+        self.assertEqual(pinned.code,'chat_service_revoked')
+        self.assertEqual(services.path.read_bytes(),old)
+
+    async def test_authority_migration_write_failure_still_aborts(self):
+        self.approved_openai()
+        with patch.object(self.admin,'write_web_metadata',side_effect=OSError('fixture disk failure')):
+            with self.assertRaises(OSError):self.admin.migrate_chat_authorities()
+
     async def test_tuning_keeps_web_vision_group_evidence_and_limits_for_both_roles(self):
         for proactive in (False,True):
             config,owner,services=self.approved_openai(proactive)

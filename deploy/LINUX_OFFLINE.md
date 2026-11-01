@@ -146,3 +146,18 @@ sudo /usr/bin/python3 -E -s -B /usr/local/lib/taki-updater/linux_backend.py stat
 素材仍存于 `<base>/data/game-assets` 和 `<base>/data/haneoka-asset-cache`。该步骤只额外挂载这两个目录，不开放整个共享数据目录；候选 Catalog 保存在候选 `test-data` 中，不覆盖正在运行的资料快照。更新、回退和重启沿现有 URL 哈希缓存读取已准备素材。诊断可运行 `python -B scripts/prepare_query_assets.py --cache-dir <隔离数据目录> --catalog <隔离Catalog文件>`；`--snapshot` 固定使用指定已有 Catalog 快照，仍会按其 release 身份请求活动／挑战索引并下载缺失素材；它不是断网开关。榜线绘图读取同一持久图片缓存，不受独立榜线小时缓存是否为空影响。准备耗时应与首次查询、热缓存查询耗时分别记录。
 
 受管理的 Koishi 后端由 `koishi_launcher.py --base <base> backend` 在启动时将 `OURNOTES_RUNTIME_DATA_DIR` 固定为 `<base>/data`，覆盖旧 EnvironmentFile 遗留值，保证预热和查询读取同一目录。直接运行 backend 的隔离目录配置不受影响。安装该启动器须单独核验并备份原文件；应用包更新不会自动安装控制器。上线检查应核对实际进程环境，而不只看 systemd 示例文件。旧运行目录不删除、不合并：其中可重建的成员／谱面缓存将按原刷新规则在新目录建立；必须保留管理模板中显式的 `OURNOTES_CACHE_FILE`，以及已有的额度、历史和统计路径配置，使业务数据继续从原路径读取。若省略主缓存配置，其默认路径和由它派生的业务路径也会随运行目录改变，应先核对并显式固定已有路径，再安装启动器；不自动搬迁数据。切换前检查两个目录的业务数据归属及 `<base>/data` 的写权限，按既有流程备份并先停旧实例。
+
+
+## 单向存储迁移与向前恢复
+
+`check` 仍要求新旧代码双向读写兼容。已明确批准的不可逆升级使用受信控制器的 `migrate --target-commit <完整 SHA>`；目标必须等于当次读取的 main，且通过对应 CI、隔离制品安装、内容指纹、冻结验证器和备份检查。普通更新、网页更新按钮和定时器不能自动启用此模式。
+
+跨合同迁移需在 root 所有的兼容政策中增加 `forward_only_migration`：`previous` 和 `candidate` 是确切提交，`from_contract` / `to_contract` 对应两个已审核指纹记录的合同，`failure_mode` 固定为 `stop_and_repair_forward`，`evidence` 指向迁移、删除、回执及批准绑定的验证记录，`authorization` 记录用户选择。每个版本的兼容记录只证明在其自身合同内读写兼容，不能把不同合同伪写成同一合同。已审核模型/群能力绑定须保留原范围，不能通过迁移扩大批准。
+
+先独立审核、备份并安装支持此命令的 `linux_backend.py`、`linux_updater.py` 与保护失败候选的 `release_retention.py`，再执行迁移。首次迁移把控制器日志升级为 v2；旧控制器会拒读，不能降级日志版本或只回退控制器代码。此标记保留到迁移完成之后，普通 v1 部署仍沿用 v1。应用代码合并不会自动安装受信控制器。
+
+切换前停止网关和后端，并按原流程取得停服后的业务数据快照。保留 ChatStore、Ledger、UsageLedger、管理员授权代际和独立删除日志的对应关系；不要将运行中的逐库副本当成跨库一致备份。新进程负责既定迁移，已撤回的授权和删除事实不因备份而复活。
+
+切换失败或断电恢复时停止服务，保留事务、费用、回执、删除事实及新库；不会激活原版本。普通 `resume` 拒绝解除迁移暂停。用 `status --human` 核对后，在修复配置或准备好已审核修复提交后再次执行 `migrate --target-commit <完整 SHA>`：同一已封存候选可重新验核启动；新提交仍需 main/CI、制品及原迁移源→修复版的明确迁移批准，并额外证明与失败候选的数据合同相同。修复准备中断保持停服，重试不清空旧失败记录，也不恢复旧库。`migrate` 除 `updated`/`up_to_date` 外返回非零退出码。
+
+首次成功后不设置旧格式的 `previous`，因此不能直接 `rollback` 到迁移前版本。后续同合同普通升级仍可建立自己的兼容回退点。备份沿用既有保留规则，不能当成随意回退账本或撤销记录的许可。修复自身再次失败时仍按停服、向前修复处理；生产可用性、真实平台回执及客户端收到须分别验收。
