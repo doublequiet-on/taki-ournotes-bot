@@ -159,8 +159,8 @@ class ProactiveChat:
         try:
             scope=self.scope(request);settings=self.settings(request.conversation_id)
             if not self.agent.store.source_valid(request.scope,request.message_id,request.timestamp_ms):return False
-            self.followups.observe(scope,request.user_id,request.message_id,request.timestamp_ms,request.ingress_seq,request.gateway_epoch)
             owner=self.continuation_owner(scope)
+            self.followups.observe(scope,request.user_id,request.message_id,request.timestamp_ms,request.ingress_seq,request.gateway_epoch)
             if owner is not None and owner!=request.user_id:
                 self.control_event(request,'conversation_busy');return False
             if owner==request.user_id:

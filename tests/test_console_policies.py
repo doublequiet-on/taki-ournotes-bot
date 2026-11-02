@@ -3541,7 +3541,8 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
         self.current_user='u2';self.now+=.01
         other=self.request('settings-intervening',3);other.update(body='其他人插话',trigger='observation')
         self.assertFalse(self.agent.proactive.observe(Request.parse(other,'fixture','app',self.now)))
-        self.assertTrue(self.backend.lookup(plan['request_id'],'e1')['send_allowed'])
+        self.assertTrue(self.agent.proactive.valid(self.backend.works[plan['delivery_id']]))
+        self.assertFalse(self.backend.lookup(plan['request_id'],'e1')['send_allowed'])
         self.save_conversation_settings(followup_enabled=False)
         self.assertFalse(self.backend.lookup(plan['request_id'],'e1')['send_allowed'])
         self.agent.services.policy.return_value=self.policy
