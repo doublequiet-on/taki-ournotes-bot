@@ -1,6 +1,7 @@
 # L3: Versioned local story publication, revocation, read handles and explicit persona approval.
 # Effects: Local operator-owned directory only; never fetches URLs, calls models or sends.
 # Validated immutable bundle reuse is bound to file identity; pointer and withdrawals stay live.
+# Cold loads reject pointer changes before caching; loading remains synchronous.
 from __future__ import annotations
 
 from dataclasses import asdict
@@ -32,7 +33,10 @@ class StoryService:
 
     def current(self):
         path=self.root/'current.json'
-        if not path.exists():return None
+        if not path.exists():
+            self._current_cache=None
+            return None
+        pointer_identity=self._release_identity(path)
         pointer=read_json(path)
         require(isinstance(pointer,dict) and set(pointer)=={'schema','revision'}
                 and pointer['schema']=='taki-story-pointer/1','story_pointer')
@@ -47,6 +51,8 @@ class StoryService:
         bundle=parse_bundle(read_json(release),allow_fixture=True)
         require(bundle.revision==revision,'story_revision_mismatch')
         require(self._release_identity(release)==identity[1],'story_file_changed')
+        require(self._release_identity(path)==pointer_identity and read_json(path)==pointer,
+                'story_pointer_changed')
         self._current_cache=(identity,bundle)
         return bundle
 

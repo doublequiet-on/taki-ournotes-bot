@@ -529,6 +529,40 @@ class StoryPublicationTests(unittest.TestCase):
             with self.assertRaisesRegex(StoryError,'story_file_changed'):service.valid(revision,0)
         self.assertTrue(service.valid(revision,0))
 
+    def test_pointer_changed_during_validation_is_not_cached(self):
+        from unittest.mock import patch
+        from ournotes_bot.application import story_service
+        from ournotes_bot.domain.story import StoryError
+        from ournotes_bot.sources.story_files import atomic_json
+        original=self.publish()['source_revision']
+        updated=self.bundle();updated['aliases']['测试']='合成'
+        newer=self.publish(updated)['source_revision']
+        self.service.rollback(original)
+        service=story_service.StoryService(self.service.root)
+        parse=story_service.parse_bundle
+        def switch_pointer(value,**kwargs):
+            bundle=parse(value,**kwargs)
+            atomic_json(service.root/'current.json',{'schema':'taki-story-pointer/1','revision':newer})
+            return bundle
+        with patch.object(story_service,'parse_bundle',side_effect=switch_pointer):
+            with self.assertRaisesRegex(StoryError,'story_pointer_changed'):service.valid(original,0)
+        self.assertIsNone(service._current_cache)
+        self.assertFalse(service.valid(original,0))
+        self.assertTrue(service.valid(newer,0))
+
+    def test_pointer_deletion_and_corruption_do_not_reuse_cached_release(self):
+        from ournotes_bot.domain.story import StoryError
+        from ournotes_bot.sources.story_files import atomic_json
+        original=self.publish()['source_revision']
+        pointer=self.service.root/'current.json'
+        pointer.write_text('!',encoding='utf-8')
+        with self.assertRaisesRegex(StoryError,'story_json'):self.service.valid(original,0)
+        pointer.unlink()
+        self.assertFalse(self.service.valid(original,0))
+        self.assertIsNone(self.service._current_cache)
+        atomic_json(pointer,{'schema':'taki-story-pointer/1','revision':original})
+        self.assertTrue(self.service.valid(original,0))
+
     def test_withdrawal_invalidates_existing_handles_and_survives_rollback(self):
         original=self.publish()['source_revision']
         handle=self.service.search('立希')['items'][0]['handle']
