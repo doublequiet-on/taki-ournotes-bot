@@ -1412,6 +1412,20 @@ class ProactiveControllerTests(unittest.TestCase):
         self.observe('m4')
         self.assertIsNotNone(self.ready(reserve=100))
 
+    def test_unknown_cost_can_refine_hold_without_marking_usage_known(self):
+        self.controller.configure(self.a,replace(self.policy,max_cost_micro_per_hour=150))
+        self.observe();first=self.ready(reserve=150)
+        self.controller.decide(first,'skip',held_cost_micro=30)
+        self.assertEqual(self.controller.status(self.a)['hourly_cost_micro'],30)
+        self.assertEqual(self.controller.status(self.a)['incomplete_costs'],1)
+        self.observe('m2');second=self.ready(reserve=100)
+        self.assertIsNotNone(second)
+        self.controller.settle(first,actual_cost_micro=20)
+        self.assertEqual(self.controller.status(self.a)['hourly_cost_micro'],120)
+        self.assertEqual(self.controller.status(self.a)['incomplete_costs'],1)
+        self.controller.decide(second,'skip',actual_cost_micro=0)
+        self.assertEqual(self.controller.status(self.a)['incomplete_costs'],0)
+
     def test_unexpected_real_cost_is_recorded_and_conflicting_settlement_rejected(self):
         self.controller.configure(self.a, replace(self.policy, max_cost_micro_per_hour=100))
         self.observe()

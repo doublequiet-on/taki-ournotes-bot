@@ -185,6 +185,21 @@ class ServiceBudget:
     def __init__(self, usage, instance_id, app_id, *, clock=time.time):
         self.usage, self.namespace, self.clock = usage, (instance_id, app_id), clock
 
+    def attempt_cost(self, row):
+        if row['state']=='released':return Fraction(),False
+        price=Price(**json.loads(row['price']))
+        amount=Fraction(row['cost'])
+        held=Fraction(row['reserved'])*price.reference_rate/1_000_000
+        _check(amount>=0 and held>=0,'chat_service_usage_unavailable')
+        uncertain=row['state']=='started' or bool(row['billing_incomplete'])
+        if uncertain:
+            bound=self.usage.bounded_hold(row['id'],price,Usage())*price.reference_rate/1_000_000
+            bound+=sum(action['max_count']*action['unit_cost_micro'] for action in self.usage.db.execute(
+                'SELECT max_count,unit_cost_micro FROM attempt_actions WHERE attempt=?',(row['id'],)))
+            amount=max(amount+held,bound)
+        else:amount+=held
+        return amount,uncertain
+
     def check(self, policy, task, profile, request_id, reserve_cost_micro, *, reply_times=(),
               opportunity_requests=(),opportunity_calls=None,opportunity_cost_micro=None) -> ServicePermit:
         _check(isinstance(policy, ServicePolicy) and (policy.instance_id, policy.app_id) == self.namespace,
@@ -224,21 +239,7 @@ class ServiceBudget:
                     recent.append(row)
                 price = Price(**json.loads(row['price']))
                 _check(price.currency == policy.currency, 'chat_service_currency_mismatch')
-                amount = Fraction(row['cost'])
-                held = Fraction(row['reserved']) * price.reference_rate / 1_000_000
-                _check(amount >= 0 and held >= 0, 'chat_service_usage_unavailable')
-                if row['state'] == 'started' or row['billing_incomplete']:
-                    # reconcile() may have cleared weighted reservation on unknown usage.
-                    # Reconstruct a conservative bound rather than turning that HTTP into free usage.
-                    bound = self.usage.bounded_hold(row['id'],price,Usage()) * price.reference_rate / 1_000_000
-                    bound += sum(action['max_count']*action['unit_cost_micro'] for action in self.usage.db.execute(
-                        'SELECT max_count,unit_cost_micro FROM attempt_actions WHERE attempt=?',(row['id'],)))
-                    # Known settled cost and an unresolved action reservation
-                    # are additive; the full-call bound is a separate floor.
-                    amount = max(amount + held, bound)
-                else:
-                    amount += held
-                uncertain = row['state'] == 'started' or row['billing_incomplete']
+                amount,uncertain=self.attempt_cost(row)
                 if uncertain:unresolved += amount
                 if row['created'] > now - 3600 or uncertain:cost += amount
                 if row['created'] >= start or uncertain:daily_cost += amount

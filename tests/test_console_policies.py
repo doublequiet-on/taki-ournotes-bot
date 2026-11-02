@@ -5279,6 +5279,43 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
         self.assertTrue(self.backend.lookup(plan['request_id'],'e1')['send_allowed'])
         self.event(plan,'intent');self.event(plan,'ack')
 
+    async def test_provider_failure_keeps_attempt_hold_without_blocking_unspent_opportunity(self):
+        import math
+        from ournotes_bot.application.chat_jobs import maximum_cost_micro
+        from ournotes_bot.domain.model_calls import AttemptResult
+        self.agent.store.clock=lambda:self.now
+        call_bound=math.ceil(maximum_cost_micro(self.snapshot.profile))
+        self.policy=replace(self.policy,proactive=replace(self.policy.proactive,max_cost_micro_per_hour=call_bound*3))
+        self.agent.services.policy.return_value=self.policy
+        self.client.request.return_value=AttemptResult('error',error_code='provider_unavailable')
+        value=self.observation('前一轮普通讨论');self.tick+=1.6
+        first,attempts,candidate=await self.candidate(value)
+        self.assertEqual(first['status'],'finished');self.assertEqual(len(attempts),1)
+        usage=self.backend.model_runtime.usage
+        held=usage.get(attempts[0])
+        self.assertTrue(held['billing_incomplete']);self.assertGreater(float(held['reserved']),0)
+        state=self.agent.proactive.controller.status(candidate[0].scope)
+        self.assertEqual(state['incomplete_costs'],1)
+        self.assertGreater(state['hourly_cost_micro'],0)
+        self.assertLessEqual(state['hourly_cost_micro'],call_bound)
+        self.assertGreater(candidate[0].reserved_cost_micro,call_bound)
+        self.current_user='u2';self.now+=20;self.tick+=20
+        value=self.observation('你觉得青木阳菜会弹呲吗',seq=2);self.tick+=1.6
+        if self.snapshot.profile.wire_profile=='openai-responses-v1':
+            self.client.request.side_effect=[self.result('{"participation":"reply","text":"","delay_seconds":null}'),
+                self.result('再熟练的乐手也会失误')]
+        else:self.client.request.return_value=self.result('{"participation":"reply","text":"再熟练的乐手也会失误"}')
+        plan,_,_=await self.candidate(value,2)
+        self.assertTrue(plan['send_allowed'],(plan,self.backend.diagnostics.group_events('g1')))
+        self.event(plan,'intent');self.event(plan,'ack')
+        self.assertEqual(usage.get(attempts[0])['reserved'],held['reserved'])
+        self.assertTrue(usage.get(attempts[0])['billing_incomplete'])
+
+    async def test_responses_provider_failure_keeps_attempt_hold_and_funds_decision_and_reply(self):
+        self.snapshot=replace(self.snapshot,profile=replace(self.snapshot.profile,provider='openai',
+            wire_profile='openai-responses-v1',model='gpt-6.1-terra',max_output_tokens=4096,reasoning_effort='medium',user_daily_limit=1000000))
+        await self.test_provider_failure_keeps_attempt_hold_without_blocking_unspent_opportunity()
+
     async def test_clipped_opportunity_still_funds_decision_and_reply(self):
         from ournotes_bot.application.chat_jobs import maximum_cost_micro
         cost=maximum_cost_micro(self.snapshot.profile)

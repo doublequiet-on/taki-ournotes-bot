@@ -82,10 +82,12 @@ class _Ticket:
     decision: str = ''
     delivered: bool = False
     opportunity_id: str = ''
+    held_cost_micro: int | None = None
 
     @property
     def charged_cost(self):
-        return self.reserved_cost_micro if self.cost_micro is None else self.cost_micro
+        if self.cost_micro is not None:return self.cost_micro
+        return self.reserved_cost_micro if self.held_cost_micro is None else self.held_cost_micro
 
 
 @dataclass
@@ -370,10 +372,11 @@ class ProactiveController:
         _, ticket = self._ticket(candidate)
         return ticket.decision == 'reply'
 
-    def settle(self, candidate, *, actual_cost_micro):
-        """Also settle stale/skip calls. Unknown usage keeps its full reservation."""
-        if actual_cost_micro is not None and (type(actual_cost_micro) is not int or actual_cost_micro < 0):
-            raise ValueError('proactive_cost_invalid')
+    def settle(self, candidate, *, actual_cost_micro, held_cost_micro=None):
+        """Unknown usage retains the attempt ledger bound, or the full opportunity hold."""
+        for value in (actual_cost_micro,held_cost_micro):
+            if value is not None and (type(value) is not int or value < 0):
+                raise ValueError('proactive_cost_invalid')
         _, ticket = self._ticket(candidate)
         if ticket is None:
             return False
@@ -381,14 +384,15 @@ class ProactiveController:
             raise ValueError('proactive_cost_conflict')
         if actual_cost_micro is not None:
             ticket.cost_micro = actual_cost_micro
+        if held_cost_micro is not None:ticket.held_cost_micro=held_cost_micro
         return True
 
-    def decide(self, candidate, decision, *, actual_cost_micro=None, defer_seconds=2):
+    def decide(self, candidate, decision, *, actual_cost_micro=None, held_cost_micro=None, defer_seconds=2):
         if decision not in {'reply', 'skip', 'defer'}:
             raise ValueError('proactive_decision_invalid')
         if not 1 <= defer_seconds <= 5:
             raise ValueError('proactive_defer_invalid')
-        if not self.settle(candidate, actual_cost_micro=actual_cost_micro):
+        if not self.settle(candidate, actual_cost_micro=actual_cost_micro,held_cost_micro=held_cost_micro):
             return False
         group, ticket = self._ticket(candidate)
         if ticket.decision:

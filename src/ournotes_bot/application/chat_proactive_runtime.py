@@ -330,7 +330,7 @@ class ProactiveChat:
                    model_attempts=work.model_attempts)
         try:
             if work.proactive is not None:
-                self.controller.settle(work.proactive,actual_cost_micro=self.cost(work))
+                self.controller.settle(work.proactive,**self.cost(work))
                 if work.proactive_delivered:self.controller.delivered(work.proactive)
                 elif self.controller.valid(work.proactive):self.controller.cancel(self.scope(work.request))
         except (sqlite3.Error,ModelError,ValueError):
@@ -420,9 +420,13 @@ class ProactiveChat:
         return messages
 
     def cost(self,work):
-        rows=self.agent.runtime.usage.request_view(work.service_request_id)
-        if any(row['billing_incomplete'] or row['state'] not in ('settled','released') for row in rows):return None
-        return math.ceil(sum((Fraction(row['reference_cost_micro']) for row in rows),Fraction()))
+        rows=self.agent.runtime.usage.db.execute('SELECT * FROM attempts WHERE request_id=?',
+            (work.service_request_id,)).fetchall()
+        if any(row['state'] not in ('settled','released') for row in rows):return dict(actual_cost_micro=None)
+        amounts=[self.agent.service_budget.attempt_cost(row) for row in rows]
+        held=math.ceil(sum((amount for amount,_ in amounts),Fraction()))
+        return dict(actual_cost_micro=None if any(uncertain for _,uncertain in amounts) else held,
+                    held_cost_micro=held)
 
     def opportunity_budget(self,work):
         candidates,cost=self.controller.opportunity_budget(work.proactive)
@@ -461,7 +465,7 @@ class ProactiveChat:
         require(({'participation','text'} if mode=='reply' else {'participation','delay_seconds'} if mode=='defer' else {'participation'})<=set(value),'model_protocol_error')
         if mode=='reply':require(isinstance(value['text'],str) and 0<len(value['text'].strip())<=4000,'model_protocol_error')
         if mode=='defer':require(type(value['delay_seconds']) is int and 2<=value['delay_seconds']<=5,'model_protocol_error')
-        self.controller.decide(work.proactive,mode,actual_cost_micro=self.cost(work),defer_seconds=value['delay_seconds'] if mode=='defer' else 2)
+        self.controller.decide(work.proactive,mode,**self.cost(work),defer_seconds=value['delay_seconds'] if mode=='defer' else 2)
         self.trace(work,'decision',decision=mode,model_attempts=work.model_attempts)
         work.participation=mode
         return value['text'].strip() if mode=='reply' else None
