@@ -3491,7 +3491,7 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
         value=self.observation('先看第一部分',seq=2);self.tick+=1.6
         return value
 
-    async def test_other_speaker_does_not_cancel_inflight_continuation_or_ack(self):
+    async def test_other_speaker_keeps_generation_but_revokes_unreviewed_send(self):
         value=await self.continuation_fixture()
         entered=asyncio.Event();release=asyncio.Event()
         async def response(*args,**kwargs):
@@ -3512,10 +3512,9 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
             self.assertTrue(self.agent.proactive.valid(work))
         finally:release.set()
         plan,_,_=await task
-        self.assertTrue(plan['send_allowed'])
-        self.event(plan,'intent');self.event(plan,'ack')
-        stored=self.agent.store.read(work.request.scope,['accepted-'+plan['request_id'][:8]])['messages']
-        self.assertEqual(stored[0]['text'],'第一部分可以这样看')
+        self.assertFalse(plan['send_allowed'])
+        self.assertTrue(work.active)
+        self.backend.finish(work,'aborted')
 
     async def test_same_speaker_supplement_replaces_continuation_and_keeps_both_inputs(self):
         value=await self.continuation_fixture()
@@ -5243,6 +5242,40 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
         self.agent.forget(Request_scope(),[summaries[0]['source_message_ids'][0]])
         self.assertEqual(self.agent.store.summaries(Request_scope()),[])
 
+
+    async def test_unreviewed_followup_context_revokes_actual_send_intent(self):
+        value=await self.continuation_fixture()
+        self.client.request.return_value=self.result('{"participation":"reply","text":"旧回复"}')
+        plan,_,_=await self.candidate(value)
+        self.assertTrue(plan['send_allowed'])
+        self.current_user='u2';self.now+=.01
+        raw=self.request('later-context',3);raw.update(body='这个已经回答过了',trigger='observation')
+        self.agent.proactive.observe(Request.parse(raw,'fixture','app',self.now))
+        self.assertFalse(self.backend.lookup(plan['request_id'],'e1')['send_allowed'])
+        with self.assertRaisesRegex(ProtocolError,'inactive_delivery'):
+            self.event(plan,'intent')
+
+    async def test_late_ack_keeps_actual_continuation_delivery(self):
+        value=await self.continuation_fixture()
+        self.client.request.return_value=self.result('{"participation":"reply","text":"实际已经送达"}')
+        plan,_,_=await self.candidate(value)
+        self.event(plan,'intent')
+        self.current_user='u2';self.now+=.01
+        raw=self.request('after-intent',3);raw.update(body='旁边的新消息',trigger='observation')
+        self.agent.proactive.observe(Request.parse(raw,'fixture','app',self.now))
+        self.event(plan,'ack')
+        rows=self.agent.store.read(Request_scope(),['accepted-'+plan['request_id'][:8]])['messages']
+        self.assertEqual(rows[0]['text'],'实际已经送达')
+
+    async def test_explicit_request_survives_other_members_conversation(self):
+        self.client.request.return_value=self.result('你明确问我的结果')
+        plan,_=await self.prepare_native('/聊 明确回答我这个问题')
+        self.assertTrue(plan['send_allowed'])
+        self.current_user='u2';self.now+=.01
+        raw=self.request('side-conversation',2);raw.update(body='我和另一位群友在聊别的',trigger='observation')
+        self.agent.proactive.observe(Request.parse(raw,'fixture','app',self.now))
+        self.assertTrue(self.backend.lookup(plan['request_id'],'e1')['send_allowed'])
+        self.event(plan,'intent');self.event(plan,'ack')
 
     async def test_clipped_opportunity_still_funds_decision_and_reply(self):
         from ournotes_bot.application.chat_jobs import maximum_cost_micro

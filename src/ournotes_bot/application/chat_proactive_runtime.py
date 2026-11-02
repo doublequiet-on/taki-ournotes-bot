@@ -364,6 +364,11 @@ class ProactiveChat:
                     or not self.agent.store.source_valid(work.request.scope,followup.source_id,followup.source_time)
                     or not self.agent.store.source_valid(work.request.scope,followup.message_id,followup.delivered_ms)):
                 return False
+            # Admission is checked again at send intent, after model generation.
+            # Explicit addressed work has no proactive candidate and is unaffected.
+            # A continuation may not claim to have assessed messages received later.
+            if sending and followup is not None and current_followup.observed_ids!=followup.observed_ids:
+                return False
             return (policy==work.service_policy and all(self.agent.store.source_valid(work.request.scope,row.message_id,row.timestamp_ms)
                     for row in work.proactive.messages)
                     and (self.controller.can_send(work.proactive) if sending else self.controller.valid(work.proactive)))
