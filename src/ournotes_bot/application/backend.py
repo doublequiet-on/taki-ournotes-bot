@@ -588,14 +588,6 @@ class Backend:
 
     def lookup(self, request_id, epoch):
         self.expire()
-        row=self.ledger.request(request_id)
-        work=self.works.get(row['delivery']) if row else None
-        if (work and work.active and work.proactive is None and not work.hint and row['status']=='preparing'
-                and work.model_started_at is not None and time.monotonic()-work.model_started_at>=8
-                and row['epoch']==epoch and self.ledger.active(epoch)):
-            self.ledger.processing_hint(work.delivery)
-            work.hint=True
-            work.prepared=(replies.PreparedReply('还在核实，请稍等' if work.chat else '还在核实，请稍等。',business_status='processing_hint'),)
         return self.snapshot(self.ledger.request(request_id), epoch)
 
     def image(self, delivery, part_id, epoch):

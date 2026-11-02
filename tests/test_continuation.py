@@ -447,7 +447,7 @@ class BackendContinuationTests(Fixture, unittest.IsolatedAsyncioTestCase):
         self.assertEqual(plan['parts'][0]['kind'],'image')
         self.assertFalse(plan.get('processing_hint',False))
 
-    async def test_real_slow_hint_keeps_four_image_slots_and_all_remaining_pages(self):
+    async def test_slow_query_stays_silent_and_keeps_five_image_slots(self):
         import time
         entered, held = asyncio.Event(), asyncio.Event()
         pages = tuple(PreparedReply('page-'+str(i), image=b'fixture', context=self.context()) for i in range(6))
@@ -462,17 +462,18 @@ class BackendContinuationTests(Fixture, unittest.IsolatedAsyncioTestCase):
         work = next(iter(self.backend.works.values()))
         work.model_started_at = time.monotonic()-9
         hint = self.backend.lookup(request['request_id'], 'e1')
-        self.assertEqual(len(hint['parts']), 1)
-        self.assertEqual(hint['parts'][0]['business_status'], 'processing_hint')
-        self.event(hint, 'intent'); self.event(hint, 'ack')
+        self.assertEqual(hint['status'], 'preparing')
+        self.assertEqual(hint['parts'], [])
+        self.assertFalse(hint['send_allowed'])
+        self.assertFalse(hint.get('processing_hint',False))
         self.assertFalse(self.backend.conversations.anchors)
         held.set()
         result = await task
-        self.assertEqual([p['kind'] for p in result['parts']], ['text', 'image', 'image', 'image', 'image'])
-        self.assertEqual(result['parts'][0]['status'], 'success')
+        self.assertEqual([p['kind'] for p in result['parts']], ['image'] * 5)
+        self.assertEqual(result['parts'][0]['id'], '0')
         remaining = work.prepared[-1].context.remaining
-        self.assertEqual(len(remaining), 2)
-        self.assertEqual([p.text for p in remaining], ['page-4', 'page-5'])
+        self.assertEqual(len(remaining), 1)
+        self.assertEqual([p.text for p in remaining], ['page-5'])
 
     async def test_long_fallback_notice_keeps_continue_anchor_without_selectable_rows(self):
         self.backend.gate.prepare.return_value=PreparedReply('captured text '*200,image=b'fixture',context=self.context())
@@ -1410,6 +1411,20 @@ class ProactiveControllerTests(unittest.TestCase):
         self.now[0] += 3600
         self.observe('m4')
         self.assertIsNotNone(self.ready(reserve=100))
+
+    def test_unknown_cost_can_refine_hold_without_marking_usage_known(self):
+        self.controller.configure(self.a,replace(self.policy,max_cost_micro_per_hour=150))
+        self.observe();first=self.ready(reserve=150)
+        self.controller.decide(first,'skip',held_cost_micro=30)
+        self.assertEqual(self.controller.status(self.a)['hourly_cost_micro'],30)
+        self.assertEqual(self.controller.status(self.a)['incomplete_costs'],1)
+        self.observe('m2');second=self.ready(reserve=100)
+        self.assertIsNotNone(second)
+        self.controller.settle(first,actual_cost_micro=20)
+        self.assertEqual(self.controller.status(self.a)['hourly_cost_micro'],120)
+        self.assertEqual(self.controller.status(self.a)['incomplete_costs'],1)
+        self.controller.decide(second,'skip',actual_cost_micro=0)
+        self.assertEqual(self.controller.status(self.a)['incomplete_costs'],0)
 
     def test_unexpected_real_cost_is_recorded_and_conflicting_settlement_rejected(self):
         self.controller.configure(self.a, replace(self.policy, max_cost_micro_per_hour=100))

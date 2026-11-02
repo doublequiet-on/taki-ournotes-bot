@@ -2232,7 +2232,7 @@ class NativeRuntimeTests(Fixture,unittest.IsolatedAsyncioTestCase):
         self.assertFalse(attempts);self.client.request.assert_not_awaited()
         self.assertEqual(plan['parts'][0]['business_status'],'source_unavailable')
 
-    async def test_slow_hint_uses_same_ledger_sequence_without_context(self):
+    async def test_slow_query_stays_silent_until_final_reply(self):
         from ournotes_bot.domain.model_calls import AttemptResult,Usage
         import time
         held=asyncio.Event();entered=asyncio.Event()
@@ -2244,13 +2244,14 @@ class NativeRuntimeTests(Fixture,unittest.IsolatedAsyncioTestCase):
         await asyncio.wait_for(entered.wait(),1)
         work=next(iter(self.backend.works.values()));work.model_started_at=time.monotonic()-9
         plan=self.backend.lookup(work.request.request_id,'e1')
-        self.assertEqual(plan['status'],'preparing');self.assertTrue(plan['send_allowed'])
-        self.event(plan,'intent');self.event(plan,'ack')
+        self.assertEqual(plan['status'],'preparing');self.assertFalse(plan['send_allowed'])
+        self.assertEqual(plan['parts'],[]);self.assertFalse(plan.get('processing_hint',False))
         self.assertFalse(self.backend.conversations.anchors)
-        self.assertEqual(len(self.backend.lookup(work.request.request_id,'e1')['parts']),1)
+        self.assertEqual(self.backend.lookup(work.request.request_id,'e1')['parts'],[])
         held.set();plan,_=await task
-        self.assertEqual(len(plan['parts']),2);self.assertEqual(plan['parts'][0]['status'],'success')
-        self.assertEqual(plan['parts'][1]['text'],'最终回答')
+        self.assertEqual(len(plan['parts']),1);self.assertEqual(plan['parts'][0]['id'],'0')
+        self.assertEqual(plan['parts'][0]['text'],'最终回答')
+        self.event(plan,'intent');self.event(plan,'ack')
 
     def test_progress_slot_preserves_all_pages_and_their_entity_contexts(self):
         from ournotes_bot.application.replies import expand_replies,reserve_progress_slot
@@ -2433,6 +2434,7 @@ class ChatAgentTests(Fixture, unittest.IsolatedAsyncioTestCase):
         self.assertLess(len(rows),25)
         ids={row['message_id'] for row in rows}
         self.assertTrue(all(row['reply_to'] in ids for row in rows if row['role']=='assistant'))
+        self.assertTrue({'long10','sent10','long11','sent11'}<=ids,ids)
         self.event(plan,'intent');self.event(plan,'ack')
 
     async def test_multiplayer_history_survives_topic_change_and_fake_system(self):
@@ -2451,6 +2453,41 @@ class ChatAgentTests(Fixture, unittest.IsolatedAsyncioTestCase):
         self.assertIn('我选A，喜欢临场反应',[r['text'] for r in rows if r['role']=='assistant'])
         self.assertEqual(sum(m['role']=='system' for m in bodies[-1]['messages']),1)
         self.event(third,'intent');self.event(third,'ack')
+
+    async def test_community_followups_keep_dialogue_and_scoped_terms_in_model_input(self):
+        bodies=self.capture_native_bodies()
+        self.client.request.return_value=self.result('刚才讨论青木的吉他演奏')
+        first,_=await self.prepare_native('/聊 青木阳菜会弹呲吗')
+        self.event(first,'intent');self.event(first,'ack')
+        self.current_user='u2'
+        self.client.request.return_value=self.result('合成回复')
+        second,_=await self.prepare_native('/聊 那羊可以烤吗',seq=2)
+        rows=[json.loads(m['content']) for m in bodies[-1]['messages'] if m['role']!='system']
+        self.assertIn('刚才讨论青木的吉他演奏',[row['text'] for row in rows])
+        self.assertEqual({row['speaker_id'] for row in rows if row['role']=='user'},{'u1','u2'})
+        prompt=bodies[-1]['messages'][0]['content']
+        self.assertIn('烤羊／烤猫',prompt)
+        self.assertIn('明确在聊食物、做菜或真实动物时仍按字面理解',prompt)
+        self.assertIn('不证明具体跑调、弹错、忘词',prompt)
+        self.event(second,'intent');self.event(second,'ack')
+        third,_=await self.prepare_native('/聊 那忘词呢',seq=3)
+        rows=[json.loads(m['content']) for m in bodies[-1]['messages'] if m['role']!='system']
+        self.assertIn('那羊可以烤吗',[row['text'] for row in rows])
+        self.assertIn('青木阳菜会弹呲吗',[row['text'] for row in rows])
+        self.event(third,'intent');self.event(third,'ack')
+
+    def test_web_sources_do_not_repeat_inline_links_or_merge_distinct_articles(self):
+        from ournotes_bot.application.chat_agent import append_web_sources
+        text='参考[活动记录](https://example.org/post?id=1&utm_source=openai)'
+        refs=[dict(url='https://example.org/post?id=1',title='活动记录'),
+              dict(url='https://example.org/post?id=2',title='另一条记录'*30)]
+        result=append_web_sources(text,refs)
+        self.assertEqual(result.count('id=1'),1)
+        self.assertEqual(result.count('id=2'),1)
+        self.assertEqual(result.count('来源：'),1)
+        self.assertIn('…',result)
+        self.assertEqual(append_web_sources(text,refs[:1]),text)
+        self.assertEqual(append_web_sources('纯文本',[]),'纯文本')
 
     async def test_two_real_tools_with_response_level_reasoning_and_duplicate_id(self):
         from ournotes_bot.domain.model_calls import ToolCall
@@ -3574,7 +3611,7 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
         second,_,_=await self.candidate(value,2)
         self.assertTrue(second['send_allowed'])
 
-    async def test_progress_hint_then_final_ack_opens_user_continuation(self):
+    async def test_slow_chat_stays_silent_then_final_ack_opens_user_continuation(self):
         import time
         self.agent.services.policy.return_value=None
         held=asyncio.Event();entered=asyncio.Event()
@@ -3585,13 +3622,13 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
         task=asyncio.create_task(self.prepare_native('/聊 查等级和音符数'))
         await asyncio.wait_for(entered.wait(),3)
         work=next(iter(self.backend.works.values()));work.model_started_at=time.monotonic()-9
-        hint=self.backend.lookup(work.request.request_id,'e1')
-        self.event(hint,'intent');self.event(hint,'ack')
+        pending=self.backend.lookup(work.request.request_id,'e1')
+        self.assertEqual(pending['status'],'preparing');self.assertEqual(pending['parts'],[])
+        self.assertFalse(pending['send_allowed']);self.assertFalse(pending.get('processing_hint',False))
         self.assertFalse(self.agent.proactive.followups.questions)
         held.set();plan,_=await task
-        self.assertEqual(len(plan['parts']),2)
-        final={**plan,'parts':plan['parts'][1:]}
-        self.event(final,'intent');self.event(final,'ack')
+        self.assertEqual(len(plan['parts']),1);self.assertEqual(plan['parts'][0]['id'],'0')
+        self.event(plan,'intent');self.event(plan,'ack')
         self.assertIsNotNone(self.agent.proactive.followups.current(tuple(work.request.scope.values()),'u1'))
         self.now+=.01
         value=self.observation('那音符数除以等级是多少',seq=2);self.tick+=1.6
@@ -5277,6 +5314,85 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
         self.agent.proactive.observe(Request.parse(raw,'fixture','app',self.now))
         self.assertTrue(self.backend.lookup(plan['request_id'],'e1')['send_allowed'])
         self.event(plan,'intent');self.event(plan,'ack')
+
+    async def test_provider_failure_keeps_attempt_hold_without_blocking_unspent_opportunity(self):
+        import math
+        from ournotes_bot.application.chat_jobs import maximum_cost_micro
+        from ournotes_bot.domain.model_calls import AttemptResult
+        self.agent.store.clock=lambda:self.now
+        call_bound=math.ceil(maximum_cost_micro(self.snapshot.profile))
+        self.policy=replace(self.policy,proactive=replace(self.policy.proactive,max_cost_micro_per_hour=call_bound*3))
+        self.agent.services.policy.return_value=self.policy
+        self.client.request.return_value=AttemptResult('error',error_code='provider_unavailable')
+        value=self.observation('前一轮普通讨论');self.tick+=1.6
+        first,attempts,candidate=await self.candidate(value)
+        self.assertEqual(first['status'],'finished');self.assertEqual(len(attempts),1)
+        usage=self.backend.model_runtime.usage
+        held=usage.get(attempts[0])
+        from fractions import Fraction
+        self.assertTrue(held['billing_incomplete']);self.assertGreater(Fraction(held['reserved']),0)
+        state=self.agent.proactive.controller.status(candidate[0].scope)
+        self.assertEqual(state['incomplete_costs'],1)
+        self.assertGreater(state['hourly_cost_micro'],0)
+        self.assertLessEqual(state['hourly_cost_micro'],call_bound)
+        self.assertGreater(candidate[0].reserved_cost_micro,call_bound)
+        self.current_user='u2';self.now+=20;self.tick+=20
+        value=self.observation('你觉得青木阳菜会弹呲吗',seq=2);self.tick+=1.6
+        if self.snapshot.profile.wire_profile=='openai-responses-v1':
+            self.client.request.side_effect=[self.result('{"participation":"reply","text":"","delay_seconds":null}'),
+                self.result('再熟练的乐手也会失误')]
+        else:self.client.request.return_value=self.result('{"participation":"reply","text":"再熟练的乐手也会失误"}')
+        plan,_,_=await self.candidate(value,2)
+        self.assertTrue(plan['send_allowed'],(plan,self.backend.diagnostics.group_events('g1')))
+        self.event(plan,'intent');self.event(plan,'ack')
+        self.assertEqual(usage.get(attempts[0])['reserved'],held['reserved'])
+        self.assertTrue(usage.get(attempts[0])['billing_incomplete'])
+
+    async def test_cancelled_proactive_refines_hold_when_background_http_finishes(self):
+        import math
+        from fractions import Fraction
+        from ournotes_bot.application.chat_jobs import maximum_cost_micro
+        from ournotes_bot.application.backend_protocol import Request,digest
+        from ournotes_bot.domain.model_calls import AttemptResult
+        entered=asyncio.Event();release=asyncio.Event()
+        async def provider(*args,**kwargs):
+            entered.set();await release.wait()
+            return AttemptResult('error',error_code='provider_unavailable')
+        self.client.request.side_effect=provider
+        value=self.observation();self.tick+=1.6
+        raw={**value,'trigger':'proactive','proactive_id':'1'*32}
+        raw['request_id']=digest(['fixture','app','qq','group','g1',raw['user_id'],raw['message_id'],raw['proactive_id']])
+        candidate=self.agent.proactive.candidate(Request.parse(raw,'fixture','app',self.now))
+        self.assertIsNotNone(candidate)
+        await self.backend.submit(raw,proactive=candidate)
+        work=next(iter(self.backend.works.values()))
+        try:
+            for _ in range(200):
+                pending=self.backend.lookup(raw['request_id'],'e1').get('pending_model_permission')
+                if pending:
+                    decision={key:v for key,v in pending.items() if key not in ('remaining_ms','admission_policy_version')}
+                    decision.update(decision='allow',reason='fixture',ttl_ms=1000,
+                        current_policy_version=dict(epoch='fixture',global_revision=0,group_revision=0))
+                    self.backend.permissions.decide(raw['request_id'],pending['attempt_id'],decision,'e1')
+                if entered.is_set():break
+                await asyncio.sleep(.005)
+            self.assertTrue(entered.is_set())
+            self.backend.finish(work,'aborted')
+            self.assertEqual(self.agent.proactive.controller.status(candidate[0].scope)['hourly_cost_micro'],candidate[0].reserved_cost_micro)
+        finally:release.set()
+        await asyncio.gather(*tuple(self.backend.models.tasks),return_exceptions=True)
+        state=self.agent.proactive.controller.status(candidate[0].scope)
+        self.assertEqual(state['incomplete_costs'],1)
+        self.assertGreater(state['hourly_cost_micro'],0)
+        self.assertLessEqual(state['hourly_cost_micro'],math.ceil(maximum_cost_micro(self.snapshot.profile)))
+        rows=self.backend.model_runtime.usage.request_view(work.service_request_id)
+        self.assertTrue(any(row['billing_incomplete'] and Fraction(row['reserved_tokens'])>0 for row in rows))
+        self.assertEqual(self.backend.ledger.request(raw['request_id'])['status'],'aborted')
+
+    async def test_responses_provider_failure_keeps_attempt_hold_and_funds_decision_and_reply(self):
+        self.snapshot=replace(self.snapshot,profile=replace(self.snapshot.profile,provider='openai',
+            wire_profile='openai-responses-v1',model='gpt-6.1-terra',max_output_tokens=4096,reasoning_effort='medium',user_daily_limit=1000000))
+        await self.test_provider_failure_keeps_attempt_hold_without_blocking_unspent_opportunity()
 
     async def test_clipped_opportunity_still_funds_decision_and_reply(self):
         from ournotes_bot.application.chat_jobs import maximum_cost_micro

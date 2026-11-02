@@ -50,7 +50,7 @@ JSON 和图片响应使用 no-store。未 ready、新任务/账本容量不足�
 
 网关 `src/wire.ts` 将未经验证的 JSON `unknown` 解码为内部类型；图片读取单独返回 `Uint8Array`。普通响应的额外元数据字段允许并忽略；协议对象、许可 scope／策略版本保持精确键校验。未知请求／片段状态、mode、kind 和许可判别值停止本次消费。Classify、登记／退役、intent 与模型决策回执不带 protocol，不套用 Plan 的信封。
 
-Plan 按 `send_allowed` 区分可发正文与持久事实：preparing 可没有正文，也可带进度提示；提示片段在发送中／成功后仍可留在 preparing 计划。prepared 也可能已撤销发送且没有正文（例如终态尚未保存）。`processing_hint=true` 可留在 prepared／终态；终态片段只有身份、顺序、模式、状态、attempt 和 message。`business_status` 保持业务字符串，与交付状态分开。图片 fallback 的原位置不变，ID 为 `i:f`。
+当前后端在 preparing 阶段不生成等待提示，最终回复从片段 `0` 开始。Plan 按 `send_allowed` 区分可发正文与持久事实：为兼容旧后端，preparing 仍允许带进度提示；提示片段在发送中／成功后仍可留在 preparing 计划。prepared 也可能已撤销发送且没有正文（例如终态尚未保存）。`processing_hint=true` 可留在 prepared／终态；终态片段只有身份、顺序、模式、状态、attempt 和 message。`business_status` 保持业务字符串，与交付状态分开。图片 fallback 的原位置不变，ID 为 `i:f`。
 
 结构解码不替代 Receiver 的原请求、双方代次、用户、scope、图片资源和当前平台权限核验。许可 `remaining_ms=0` 是不足一毫秒时可能产生的合法结构值，但既有授权仍拒绝它并停止该交付。expires_at 为秒，入站 timestamp_ms 为毫秒。
 
