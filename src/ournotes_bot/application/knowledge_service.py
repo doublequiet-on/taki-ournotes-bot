@@ -222,23 +222,38 @@ class KnowledgeService:
                     'issues': self.issues, 'last_build': self.last_build, 'encoder': self.encoder.identity}
 
     def retrieve(self, query: str, scope: KnowledgeScope, approved_set_revision: str, limit=6, *, max_chars=6000, focus_query=None) -> Retrieval:
+        return self.retrieve_scopes(query, (scope,), approved_set_revision, limit,
+                                    max_chars=max_chars, focus_query=focus_query)[0]
+
+    def retrieve_scopes(self, query, scopes, approved_set_revision, limit=6, *, max_chars=6000, focus_query=None):
+        """Rank scopes together under one passage budget, retaining separate proofs."""
+        scopes = tuple(dict.fromkeys(scopes))
+        require(bool(scopes), 'knowledge_scope_missing')
         require(isinstance(query, str) and 0 < len(query.strip()) <= 500, 'knowledge_query_size')
         require(focus_query is None or isinstance(focus_query,str) and 0 < len(focus_query.strip()) <= 500, 'knowledge_query_size')
         bounded((), limit, max_chars)
         self.observe()
         with self.lock:
             version = self.approved_set_revision
+            today = datetime.fromtimestamp(self.clock(), timezone.utc).date().isoformat()
             def response(code, chunks=()):
-                return Retrieval(code, EvidenceLease(version, scope, chunks))
+                selected = [[] for _ in scopes]
+                for chunk in chunks:
+                    index = next(i for i, scope in enumerate(scopes)
+                                 if set(scope.servers) <= set(chunk.servers)
+                                 and chunk.applicability.matches(scope, today))
+                    selected[index].append(chunk)
+                return tuple(Retrieval(code, EvidenceLease(version, scope, tuple(items)))
+                             for scope, items in zip(scopes, selected))
             if not self.available:
                 return response('unavailable')
             if approved_set_revision != version:
                 return response('stale')
             if not self.allowed:
                 return response('empty')
-            today = datetime.fromtimestamp(self.clock(), timezone.utc).date().isoformat()
-            allowed = {a.key for doc, a in self.allowed.values() if doc.game == scope.game and set(scope.servers) <= set(doc.servers)
-                       and doc.applicability.matches(scope, today)}
+            allowed = {a.key for doc, a in self.allowed.values() if any(
+                doc.game == scope.game and set(scope.servers) <= set(doc.servers)
+                and doc.applicability.matches(scope, today) for scope in scopes)}
             rows = tuple(row for row in self.index if row.chunk.key in allowed)
             if not rows:
                 return response('unavailable' if self.index_revision != version and allowed else 'missing')
@@ -259,10 +274,10 @@ class KnowledgeService:
         except Exception:
             logger.error('Knowledge retrieval unavailable code=semantic_query_failed')
             return response('unavailable')
-        lease = EvidenceLease(version, scope, chunks)
-        if not self.valid(lease):
+        results = response('ok' if chunks else 'missing', chunks)
+        if not self.validate_current(result.lease for result in results):
             return response('unavailable')
-        return Retrieval('ok' if chunks else 'missing', lease)
+        return results
 
     def valid(self, lease: EvidenceLease) -> bool:
         """Reobserve at each generation, send and context publication boundary."""
@@ -312,6 +327,28 @@ class KnowledgeService:
                 if members:
                     return False
             return True
+
+    @staticmethod
+    def retention_proof(leases):
+        # Persist identities and hashes, never another copy of reviewed prose.
+        return [dict(scope=asdict(lease.scope),chunks=[dict(doc_id=c.doc_id,chunk_id=c.chunk_id,
+                    digest=digest(canonical(asdict(c)))) for c in lease.chunks]) for lease in leases]
+
+    def validate_retention(self,proof):
+        with self.lock:
+            self.observe()
+            if not self.available:raise KnowledgeError('knowledge_retention_unavailable')
+            leases=[]
+            for item in proof:
+                members=[]
+                for expected in item['chunks']:
+                    pair=self.allowed.get(expected['doc_id'])
+                    if pair is None:return False
+                    chunk=next((c for c in split_document(*pair) if c.chunk_id==expected['chunk_id']),None)
+                    if chunk is None or digest(canonical(asdict(chunk)))!=expected['digest']:return False
+                    members.append(chunk)
+                leases.append(EvidenceLease('',KnowledgeScope(**item['scope']),tuple(members)))
+            return self.validate_current(leases)
 
     def prepare_evidence(self, lease):
         if not lease.chunks or not self.valid(lease):

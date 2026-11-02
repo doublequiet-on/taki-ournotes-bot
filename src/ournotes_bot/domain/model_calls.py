@@ -23,10 +23,12 @@ class Usage:
     output_reasoning: int | None = None
     total: int | None = None
     status: str = 'unknown'
+    input_written: int = 0
 
     def __post_init__(self):
         values = (self.input_total, self.input_cached, self.output_total, self.output_reasoning, self.total)
         require(all(v is None or type(v) is int and 0 <= v < 2**53 for v in values), 'usage_shape')
+        require(type(self.input_written) is int and self.input_written >= 0 and (self.input_total is None or self.input_written + (self.input_cached or 0) <= self.input_total), 'usage_shape')
         require(self.status in ('known', 'partial', 'unknown'), 'usage_shape')
         require(self.input_cached is None or self.input_total is None or self.input_cached <= self.input_total, 'usage_shape')
         require(self.output_reasoning is None or self.output_total is None or self.output_reasoning <= self.output_total, 'usage_shape')
@@ -69,6 +71,8 @@ class Price:
         # Do not guess the price split from total tokens or a missing cache count.
         if usage.output_total is not None:
             numerator += usage.output_total*self.output_rate
+        if usage.input_total is not None and (usage.input_cached is not None or self.input_rate==self.cached_rate):
+            numerator += Fraction(usage.input_written*self.input_rate,4)
         return Fraction(numerator, self.reference_rate), Fraction(numerator, 1_000_000)
 
     def reserve(self, input_bound, output_bound):
@@ -119,6 +123,13 @@ class ModelProfile:
         require(type(self.rate_window_seconds) is int and 1 <= self.rate_window_seconds <= 3600, 'model_configuration')
 
 
+    def reserve(self, input_bound, output_bound):
+        amount=self.price.reserve(input_bound,output_bound)
+        if self.wire_profile=='openai-responses-v1' and self.model.startswith(('gpt-6','gpt-5.6')):
+            amount+=Fraction(input_bound*self.price.input_rate,4*self.price.reference_rate)
+        return amount
+
+
 @dataclass(frozen=True)
 class ToolCall:
     id: str
@@ -140,6 +151,7 @@ class AttemptResult:
     provider_actions: tuple = ()
     native_calls: int | None = 0
     reasoning_content: str | None = field(default=None,repr=False)
+    transport_error: str | None = None
 
 
 @dataclass(frozen=True)

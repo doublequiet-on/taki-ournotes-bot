@@ -143,15 +143,37 @@ def requested_server(question):
     return 'common' if jp and intl else 'intl' if intl else 'jp' if jp else None
 
 
-def scope_for(question,args,previous=None,*,reset_on_server_change=False,pending_server=None):
+def chat_query_question(question):
+    """Remove only a separate personal play-server statement, preserving requested scopes."""
+    region = r'(?:日服|国际服|國際服|台服|臺服|港服|韩服|美服|欧服|\b(?:jp|intl|tw|hk|kr|en)\b)'
+    background = (r'(?:我|本人)(?:平时|主要|一直|现在)?(?:玩的是|在玩|玩|是)\s*'
+                  + region + r'(?:的?玩家)?(?=\s*(?:[，,。；;！!？?]|\n|$))')
+    return re.sub(background, '', question, flags=re.I).strip()
+
+
+def chat_background_only(question, scoped):
+    """A personal background must not override any remaining server condition."""
+    return (scoped != question and not re.search(
+        r'日服|国际服|國際服|台服|臺服|港服|韩服|美服|欧服|\b(?:jp|intl|tw|hk|kr|en)\b',scoped,re.I))
+
+
+def scope_for(question,args,previous=None,*,reset_on_server_change=False,pending_server=None,default_version=None):
     server=requested_server(question) or pending_server or (previous.server if previous else 'jp')
     require(args['server']==server,'query_server_mismatch')
     normalized=re.sub(r'(\d{4})年(\d{1,2})月(\d{1,2})日',
                       lambda m:f'{int(m[1]):04d}-{int(m[2]):02d}-{int(m[3]):02d}',question)
     dates=re.findall(r'\d{4}-\d{2}-\d{2}',normalized)
-    versions=re.findall(r'\d+\.\d+(?:\.\d+)?(?=\s*(?:版|版本))',question)
+    versions=[next(value for value in match if value) for match in re.findall(
+        r'(?:版本\s*|\bv)(\d+\.\d+(?:\.\d+)?)(?![\d.])|'
+        r'(\d+\.\d+(?:\.\d+)?)(?=\s*(?:版|版本))|'
+        r'(?<![\d.])(\d+\.\d+\.\d+)(?![\d.])',question,re.I)]
     reset=bool(dates or versions or re.search(r'当前|现在|現時|目前',question)
                or reset_on_server_change and previous and server!=previous.server)
+    if (default_version is not None and args['version']==default_version and not dates and not versions
+            and not (previous and not reset and (previous.version or previous.date))
+            and not re.search(r'历史|以前|旧版',question)):
+        # Echoing deployment context is not an explicit user version request.
+        args={**args,'version':None}
     for key,explicit in (('version',versions),('date',dates)):
         inherited=getattr(previous,key) if previous and not reset else None
         cross_inherited=(getattr(previous,key) if previous and reset_on_server_change and server!=previous.server

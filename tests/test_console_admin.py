@@ -19,6 +19,90 @@ from ournotes_bot.config import Settings
 from ournotes_bot.natural_query.query_metrics import QueryMetrics
 
 
+class ChatDiagnosticsTests(unittest.TestCase):
+    def setUp(self):
+        self.temp=tempfile.TemporaryDirectory();self.addCleanup(self.temp.cleanup)
+        self.path=Path(self.temp.name)/'diagnostics.sqlite3'
+        self.diagnostics=Diagnostics(self.path);self.addCleanup(self.diagnostics.close)
+        self.request=SimpleNamespace(request_id='r',kind='group',conversation_id='g')
+        self.diagnostics.admitted(self.request,'d','e',100,[])
+
+    def test_chat_events_are_bounded_and_reject_dialogue(self):
+        d=self.diagnostics
+        self.assertFalse(d.chat_event('r','context',101,body='PRIVATE_MESSAGE'))
+        self.assertFalse(d.chat_event('r','tool',101,status='https://private.invalid/image'))
+        for _ in range(40):d.chat_event('r','context',101,messages=7,assistant_messages=1,input_images=1)
+        events=d.read('r')['chat_events']
+        self.assertEqual(len(events),32)
+        self.assertNotIn('PRIVATE',json.dumps(events))
+        self.assertEqual(d.db.execute('SELECT count(*) FROM chat_events').fetchone()[0],32)
+
+    def test_image_detail_is_a_fixed_metadata_enum(self):
+        d=self.diagnostics
+        for value in ('low','high','none'):
+            self.assertTrue(d.chat_event('r','context',101,image_detail=value))
+        for value in ('auto','PRIVATE_IMAGE_URL',True,1,None):
+            self.assertFalse(d.chat_event('r','context',101,image_detail=value))
+        self.assertEqual([e['data']['image_detail'] for e in d.read('r')['chat_events']],['low','high','none'])
+
+    def test_idle_expiry_removes_traces_and_spans_without_new_admission(self):
+        d=self.diagnostics
+        d.chat_event('r','decision',101,decision='skip',model_attempts=1)
+        d.span('s','r','prepare',2,101,outcome='ok')
+        d.expire(86501)
+        self.assertIsNone(d.read('r'))
+        for table in ('chat_events','spans','span_results'):
+            self.assertEqual(d.db.execute('SELECT count(*) FROM '+table).fetchone()[0],0)
+
+    def test_trace_survives_reopen_and_remains_compatible_with_old_request_schema(self):
+        d=self.diagnostics;d.chat_event('r','finished',101,status='finished',delivered=True,model_attempts=1)
+        d.close();self.diagnostics=Diagnostics(self.path)
+        self.addCleanup(self.diagnostics.close)
+        self.assertTrue(self.diagnostics.read('r')['chat_events'][0]['data']['delivered'])
+        # Old releases still delete diagnostic requests with foreign keys enabled.
+        self.diagnostics.write(lambda db:db.execute('DELETE FROM requests WHERE id=?',('r',)))
+        self.assertEqual(self.diagnostics.db.execute('SELECT count(*) FROM chat_events').fetchone()[0],0)
+
+    def test_unadmitted_decisions_are_scoped_and_join_task_execution(self):
+        d=self.diagnostics
+        self.assertTrue(d.conversation_event('observation','g','control',101,
+                                            status='excluded_user',name='observation',decision='skip'))
+        self.assertTrue(d.chat_event('r','task',102,action='result',status='partial',total=3,completed=2,entities=2))
+        self.assertTrue(d.conversation_event('another','other','control',103,status='settings_saved'))
+        events=d.group_events('g')
+        self.assertEqual([event['request_id'] for event in events],['r','observation'])
+        self.assertEqual(events[0]['data']['completed'],2)
+        self.assertIsNone(d.read('observation'))
+        self.assertEqual(len(d.group_events('g',limit=1)),1)
+
+    def test_group_diagnostics_do_not_accept_private_payloads(self):
+        d=self.diagnostics
+        for data in ({'body':'private'}, {'arguments':{'user_id':'private'}},
+                     {'source':'https://private.invalid'}, {'elapsed_ms':-1}):
+            self.assertFalse(d.conversation_event('o','g','control',101,**data))
+        self.assertEqual(d.group_events('g'),[])
+        self.assertTrue(d.chat_event('r','tool',102,name='site_read',status='ok',
+                                    elapsed_ms=120,research_fallback=True,source='haneoka'))
+
+    def test_group_diagnostics_survive_restart_and_expire_without_requests(self):
+        d=self.diagnostics
+        d.conversation_event('o','g','control',101,status='followup_candidate',continuation=True)
+        d.close();self.diagnostics=Diagnostics(self.path);self.addCleanup(self.diagnostics.close)
+        self.assertEqual(self.diagnostics.group_events('g')[0]['data']['status'],'followup_candidate')
+        self.diagnostics.expire(86502)
+        self.assertEqual(self.diagnostics.group_events('g'),[])
+
+    def test_group_diagnostics_capacity_discards_oldest_not_other_state(self):
+        d=self.diagnostics
+        with d.db:
+            d.db.executemany('INSERT INTO conversation_events(request_id,group_id,kind,data,observed_at) VALUES(?,?,?,?,?)',
+                            [(str(i),'g','control','{}',100+i) for i in range(4096)])
+        self.assertTrue(d.conversation_event('new','g','control',5000,status='settings_saved'))
+        self.assertEqual(d.db.execute('SELECT count(*) FROM conversation_events').fetchone()[0],4096)
+        self.assertIsNone(d.db.execute("SELECT 1 FROM conversation_events WHERE request_id='0'").fetchone())
+        self.assertIsNotNone(d.read('r'))
+
+
 class ProjectionTests(unittest.TestCase):
     def test_meta_observation_is_readonly_and_keeps_failure_visible(self):
         from ournotes_bot.sources.haneoka.song_metrics import SongMetricsRepository
@@ -482,6 +566,11 @@ class AdminTests(unittest.IsolatedAsyncioTestCase):
         probe=await client.post('/v1/admin/model/proactive/probe',json={},headers=headers)
         self.assertEqual(probe.status,409)
         self.assertFalse((self.root/'chat-proactive-capabilities-v1.json').exists())
+        for web_url in ('/v1/admin/model/web-search','/v1/admin/model/proactive/web-search'):
+            self.assertEqual((await client.post(web_url,json={})).status,401)
+            response=await client.post(web_url,json={},headers=headers)
+            self.assertEqual(response.status,409)
+            self.assertEqual((await response.json())['error'],'model_admin_shape')
         url='/v1/admin/model/proactive/groups/group1/limits'
         self.assertEqual((await client.get(url)).status,401)
         limits=await (await client.get(url,headers=headers)).json()
@@ -1020,7 +1109,10 @@ class HTTPV2ContractTests(unittest.IsolatedAsyncioTestCase):
                 result['ts_to_python']['model_permission']=decision
                 output['model_permission']=backend.permissions.decide(request['request_id'],'a'*32,decision,'epoch')
                 await permission_task
-                work.model_started_at=time.monotonic()-9
+                # Retain wire compatibility coverage for plans from older backends.
+                backend.ledger.processing_hint(work.delivery)
+                work.hint=True
+                work.prepared=(PreparedReply('还在核实，请稍等。',business_status='processing_hint'),)
                 output['hint_pending']=backend.lookup(request['request_id'],'epoch')
                 common=dict(protocol=PROTOCOL,request_id=request['request_id'],plan_version=1,gateway_epoch='epoch',
                     part_id='0',attempt_id='fixture-attempt')

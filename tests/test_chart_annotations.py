@@ -71,6 +71,20 @@ class IntervalEdgeTests(unittest.TestCase):
                 self.assertEqual(alpha.getpixel((32,32)),0 if kind=='skill' and is_end else 255)
                 alpha.close()
 
+    def test_custom_skill_durations_use_chronological_order_and_cross_tempo(self):
+        events={'bpm':[{'t':0,'bpm':120},{'t':9600,'bpm':240}],
+                'skill':[30000,0,9000,20000,40000]}
+        durations=(5,6.5,8,5,5)
+        with patch.object(layout,'endpoint') as endpoints:
+            layout.draw_markers(Mock(),events,100,312,0,20000,0,80000,
+                                skill_durations=durations)
+        ends={v.args[3]:v.args[2] for v in endpoints.call_args_list if v.args[5]}
+        for i,(tick,duration) in enumerate(zip(sorted(events['skill']),durations),1):
+            end_tick=(20000-ends[f'S{i}'])*4
+            self.assertAlmostEqual(seconds_at(end_tick,events['bpm'])-seconds_at(tick,events['bpm']),duration)
+        # S2 starts before the tempo change and crosses into the faster section.
+        self.assertAlmostEqual((20000-ends['S2'])*4,20880)
+
     def test_real_endpoint_glyphs_do_not_overlap_their_vertical_rails(self):
         events={'bpm':[{'t':0,'bpm':120}],'skill':[1000],'fever':[[1000,2000]]}
         with patch.object(layout,'endpoint') as endpoints:

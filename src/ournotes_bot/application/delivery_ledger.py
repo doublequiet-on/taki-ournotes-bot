@@ -3,6 +3,7 @@
 from __future__ import annotations
 import os
 import sqlite3
+import time
 from pathlib import Path
 from .backend_protocol import ProtocolError, require
 
@@ -58,11 +59,16 @@ class Ledger:
                     id TEXT NOT NULL, position INTEGER NOT NULL, mode TEXT NOT NULL,
                     status TEXT NOT NULL, attempt TEXT, message TEXT, receipt TEXT,
                     PRIMARY KEY(delivery,id));
+                CREATE TABLE IF NOT EXISTS projections(
+                    delivery TEXT NOT NULL, part TEXT NOT NULL, digest TEXT NOT NULL,
+                    expires REAL NOT NULL, state TEXT NOT NULL, acknowledged REAL,
+                    PRIMARY KEY(delivery,part),
+                    FOREIGN KEY(delivery,part) REFERENCES parts(delivery,id) ON DELETE CASCADE);
             ''')
             with self.db:
                 schema = self.db.execute("SELECT value FROM meta WHERE key='schema'").fetchone()
-                require(schema is None or schema[0] == '1', 'ledger_schema', 409)
-                self.db.execute("INSERT OR IGNORE INTO meta VALUES('schema','1')")
+                require(schema is None or schema[0] in ('1','2'), 'ledger_schema', 409)
+                self.db.execute("INSERT OR REPLACE INTO meta VALUES('schema','2')")
                 row = self.db.execute("SELECT value FROM meta WHERE key='namespace'").fetchone()
                 require(row is None or row[0] == namespace, 'ledger_namespace', 409)
                 self.db.execute("INSERT OR IGNORE INTO meta VALUES('namespace',?)", (namespace,))
@@ -147,7 +153,8 @@ class Ledger:
             # Unresolved attempts are never forgotten by routine retention cleanup.
             self.db.execute("DELETE FROM requests WHERE created<? AND status NOT IN ('preparing','prepared') "
                             "AND NOT EXISTS (SELECT 1 FROM parts WHERE parts.delivery=requests.delivery "
-                            "AND parts.status IN ('sending','uncertain'))", (now-self.retention,))
+                            "AND parts.status IN ('sending','uncertain')) AND NOT EXISTS "
+                            "(SELECT 1 FROM projections p WHERE p.delivery=requests.delivery AND p.state='pending' AND p.expires>?)", (now-self.retention,now))
             require(self.db.execute('SELECT count(*) FROM requests').fetchone()[0] < self.request_capacity, 'ledger_capacity', 503)
             require(row is not None or self.db.execute('SELECT count(*) FROM highwater').fetchone()[0] < self.context_capacity,
                     'context_capacity', 503)
@@ -160,11 +167,13 @@ class Ledger:
         with self.db:
             self.db.execute("INSERT INTO parts VALUES(?, '0', 0, 'primary', 'pending', NULL, NULL, NULL)",(delivery,))
 
-    def prepared(self, delivery, count, *, start=0):
+    def prepared(self, delivery, count, *, start=0, projections=()):
         with self.db:
             self.db.executemany("INSERT INTO parts VALUES(?,?,?,'primary','pending',NULL,NULL,NULL)",
                                 ((delivery, str(i), i) for i in range(start,count)))
             self.db.execute("UPDATE requests SET status='prepared' WHERE delivery=?", (delivery,))
+            self.db.executemany("INSERT INTO projections VALUES(?,?,?,?,'candidate',NULL)",
+                                [(delivery,part,digest,expires) for part,digest,expires in projections])
 
     def finish(self, delivery, status):
         with self.db:
@@ -187,7 +196,7 @@ class Ledger:
             self.db.execute("UPDATE parts SET status='sending',attempt=? WHERE delivery=? AND id=?", (attempt, delivery, part_id))
         return 'granted'
 
-    def ack(self, delivery, part_id, attempt, status, message):
+    def ack(self, delivery, part_id, attempt, status, message, *, allow_context=True, now=None):
         row = next((p for p in self.parts(delivery) if p['id'] == part_id), None)
         require(row is not None and row['attempt'] == attempt, 'attempt_mismatch', 409)
         if row['receipt'] is not None:
@@ -197,4 +206,15 @@ class Ledger:
         with self.db:
             self.db.execute('UPDATE parts SET status=?,receipt=?,message=? WHERE delivery=? AND id=?',
                             (status, status, message, delivery, part_id))
+            self.db.execute('UPDATE projections SET state=?,acknowledged=? WHERE delivery=? AND part=?',
+                ('pending' if status=='success' and allow_context else 'blocked',time.time() if now is None else now,delivery,part_id))
         return True
+
+    def projection_rows(self,delivery=None):
+        return [dict(row) for row in self.db.execute('''SELECT p.*,s.receipt,s.message,s.attempt
+            FROM projections p JOIN parts s ON s.delivery=p.delivery AND s.id=p.part
+            WHERE (? IS NULL OR p.delivery=?)''',(delivery,delivery))]
+
+    def projection_done(self,delivery,part,state):
+        require(state in ('done','blocked','expired','gap'),'projection_state')
+        with self.db:self.db.execute('UPDATE projections SET state=? WHERE delivery=? AND part=?',(state,delivery,part))

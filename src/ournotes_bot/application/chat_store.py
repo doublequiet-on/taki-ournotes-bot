@@ -1,6 +1,7 @@
-# L3: Trigger-only audit and scoped, receipt-bound memory with source deletion.
+# L3: Scoped receipt-bound memory, short-lived exact finals and source deletion.
 # Effects: Private SQLite + independent deletion journal; no model/network/platform IO.
 import json
+import hashlib
 import os
 import sqlite3
 import time
@@ -35,9 +36,9 @@ class ChatStore:
             self.db.execute('CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY,value TEXT NOT NULL)')
             meta=dict(self.db.execute('SELECT key,value FROM meta'))
             if meta and meta!={'schema':'chat/1','identity':identity}: raise ValueError('chat_store_identity')
-            if self.db.execute('PRAGMA user_version').fetchone()[0] not in (0,2): raise ValueError('chat_memory_version')
+            if self.db.execute('PRAGMA user_version').fetchone()[0] not in (0,2,3,4): raise ValueError('chat_memory_version')
             with self.db:
-                # Preserve the exact C1 meta contract for code-only rollback.
+                # Older readers must not bypass the source-provenance cleanup.
                 self.db.executemany('INSERT OR IGNORE INTO meta VALUES (?,?)',[('schema','chat/1'),('identity',identity)])
                 self.db.execute('''CREATE TABLE IF NOT EXISTS runs (
                     id TEXT PRIMARY KEY, scope TEXT NOT NULL, source_time REAL NOT NULL,
@@ -82,18 +83,28 @@ class ChatStore:
                         delivery TEXT PRIMARY KEY,scope TEXT NOT NULL,request_id TEXT NOT NULL,created REAL NOT NULL);
                     CREATE TABLE IF NOT EXISTS chat_service_receipts (
                         request_id TEXT PRIMARY KEY,scope TEXT NOT NULL,delivered_at REAL NOT NULL);
+                    CREATE TABLE IF NOT EXISTS chat_final_candidates (
+                        delivery TEXT NOT NULL,part TEXT NOT NULL,scope TEXT NOT NULL,
+                        created REAL NOT NULL,expires REAL NOT NULL,payload TEXT NOT NULL,digest TEXT NOT NULL,
+                        PRIMARY KEY(delivery,part));
+                    CREATE TABLE IF NOT EXISTS chat_projection_history (
+                        delivery TEXT NOT NULL,part TEXT NOT NULL,scope TEXT NOT NULL,message_id TEXT NOT NULL,
+                        digest TEXT NOT NULL,proof TEXT NOT NULL,created REAL NOT NULL,expires REAL NOT NULL,
+                        PRIMARY KEY(delivery,part));
                     INSERT OR IGNORE INTO memory_state VALUES ('revision',0);
                     INSERT OR IGNORE INTO memory_state VALUES ('c1_imported',0);
                     CREATE VIRTUAL TABLE IF NOT EXISTS memory_fts USING fts5(
                         scope UNINDEXED, item_id UNINDEXED, kind UNINDEXED, text, tokenize='trigram');
                 ''')
-                self.db.execute('PRAGMA user_version=2')
             if (self.db.execute("SELECT value FROM memory_state WHERE key='c1_imported'").fetchone()[0]==0 or self.db.execute(
                     'SELECT 1 FROM runs r WHERE NOT EXISTS (SELECT 1 FROM memory_run_sources s WHERE s.run_id=r.id) LIMIT 1').fetchone()):
                 self._import_c1()
             # This journal is intentionally outside a restored SQLite snapshot.
             if self.deletions_path.exists(): self.restore_deletions(self._read_journal())
             if restore_state is not None: self.restore_deletions(restore_state)
+            with self.db:
+                self._prune_unproven_history()
+                self.db.execute('PRAGMA user_version=4')
             self.sweep()
         except BaseException:
             self.db.close()
@@ -103,6 +114,37 @@ class ChatStore:
         key=scope_key(scope)
         if scope['instance_id']+'\0'+scope['app_id']!=self.identity: raise ValueError('chat_memory_identity')
         return key
+
+    def _prune_unproven_history(self):
+        # A legacy receipt proves delivery, not the authority of its inputs.
+        # Purge the body and its derivatives; delivery facts remain in Ledger.
+        rows=self.db.execute('''SELECT m.scope,m.message_id FROM memory_messages m
+            WHERE m.role='assistant' AND NOT EXISTS (SELECT 1 FROM chat_projection_history p
+                WHERE p.scope=m.scope AND p.message_id=m.message_id)''').fetchall()
+        for row in rows:self._purge(row['scope'],[row['message_id']])
+        # Legacy audit blobs can contain generated text that never had a receipt
+        # or a memory row. Keep only audits owned by a staged or proven final.
+        for row in self.db.execute('''SELECT id FROM runs r WHERE NOT EXISTS
+                (SELECT 1 FROM chat_projection_history p WHERE p.delivery=r.id)
+            AND NOT EXISTS (SELECT 1 FROM chat_final_candidates c WHERE c.delivery=r.id)''').fetchall():
+            self.db.execute('DELETE FROM events WHERE run_id=?',(row['id'],))
+            self.db.execute('DELETE FROM memory_run_sources WHERE run_id=?',(row['id'],))
+            self.db.execute('DELETE FROM runs WHERE id=?',(row['id'],))
+        self.db.execute('DELETE FROM events WHERE NOT EXISTS (SELECT 1 FROM runs r WHERE r.id=events.run_id)')
+        # Mixed summaries are already cascaded above. Remove untraceable summaries
+        # that have no source list or whose listed source was never retained.
+        rows=self.db.execute('''SELECT s.scope,s.summary_id FROM memory_summaries s
+            WHERE NOT EXISTS (SELECT 1 FROM memory_summary_sources d
+                WHERE d.scope=s.scope AND d.summary_id=s.summary_id)
+            OR EXISTS (SELECT 1 FROM memory_summary_sources d
+                WHERE d.scope=s.scope AND d.summary_id=s.summary_id AND NOT EXISTS
+                    (SELECT 1 FROM memory_messages m WHERE m.scope=d.scope AND m.message_id=d.source_message_id))''').fetchall()
+        for row in rows:
+            key=(row['scope'],row['summary_id'])
+            self.db.execute("DELETE FROM memory_fts WHERE scope=? AND item_id=? AND kind='summary'",key)
+            self.db.execute('DELETE FROM memory_summary_sources WHERE scope=? AND summary_id=?',key)
+            self.db.execute('DELETE FROM memory_summaries WHERE scope=? AND summary_id=?',key)
+        if rows:self._changed()
 
     def _changed(self):
         self.db.execute("UPDATE memory_state SET value=value+1 WHERE key='revision'")
@@ -268,6 +310,7 @@ class ChatStore:
             self.db.execute('DELETE FROM memory_summaries WHERE scope=? AND summary_id=?',(scope,sid))
             self.db.execute('DELETE FROM memory_summary_sources WHERE scope=? AND summary_id=?',(scope,sid))
         for mid in removed:
+            self.db.execute('DELETE FROM chat_projection_history WHERE scope=? AND message_id=?',(scope,mid))
             self.db.execute('DELETE FROM memory_fts WHERE scope=? AND item_id=? AND kind=\'message\'',(scope,mid))
             self.db.execute('DELETE FROM memory_messages WHERE scope=? AND message_id=?',(scope,mid))
             self.db.execute('DELETE FROM memory_media_sources WHERE scope=? AND message_id=?',(scope,mid))
@@ -279,12 +322,19 @@ class ChatStore:
             self.db.execute('DELETE FROM events WHERE run_id=?',(run,))
             self.db.execute('DELETE FROM runs WHERE id=?',(run,))
             self.db.execute('DELETE FROM memory_run_sources WHERE run_id=?',(run,))
+        for row in self.db.execute('SELECT delivery,part,payload FROM chat_final_candidates WHERE scope=?',(scope,)).fetchall():
+            if any(source['message_id'] in removed for source in json.loads(row['payload'])['sources']):
+                self.drop_final(row['delivery'],row['part'])
         if removed or summary_ids or run_ids: self._changed()
         return len(removed)
 
     def sweep(self):
         cutoff=int((self.clock()-RETENTION_SECONDS)*1000)
         with self.db:
+            for row in self.db.execute('SELECT delivery,part FROM chat_final_candidates WHERE expires<=?',(self.clock(),)).fetchall():
+                self.drop_final(row['delivery'],row['part'])
+            for row in self.db.execute('SELECT scope,message_id FROM chat_projection_history WHERE expires<=?',(self.clock(),)).fetchall():
+                self._purge(row['scope'],[row['message_id']])
             scopes=[r[0] for r in self.db.execute('SELECT scope FROM memory_messages WHERE timestamp_ms<=? UNION SELECT scope FROM memory_media_sources WHERE timestamp_ms<=?',(cutoff,cutoff))]
             for scope in scopes:
                 self._purge(scope,[r[0] for r in self.db.execute('SELECT message_id FROM memory_messages WHERE scope=? AND timestamp_ms<=? UNION SELECT message_id FROM memory_media_sources WHERE scope=? AND timestamp_ms<=?',(scope,cutoff,scope,cutoff))])
@@ -427,6 +477,10 @@ class ChatStore:
                 if key in scopes: ids.update(r[0] for r in self.db.execute('SELECT message_id FROM memory_messages WHERE scope=? AND timestamp_ms<=?',(key,scopes[key])))
                 if key in scopes: ids.update(r[0] for r in self.db.execute('SELECT message_id FROM memory_media_sources WHERE scope=? AND timestamp_ms<=?',(key,scopes[key])))
                 self._purge(key,ids)
+                for row in self.db.execute('SELECT * FROM chat_final_candidates WHERE scope=?',(key,)).fetchall():
+                    if key in scopes and (row['created']*1000<=scopes[key] or any(
+                            source['timestamp_ms']<=scopes[key] for source in json.loads(row['payload'])['sources'])):
+                        self.drop_final(row['delivery'],row['part'])
             self._changed()
         self.sweep()
 
@@ -446,7 +500,7 @@ class ChatStore:
 
     def status(self,scope):
         self.sweep();key=self._scope(scope)
-        return {'schema':'chat/1','memory_version':2,'retention_days':30,'revision':self.revision,
+        return {'schema':'chat/1','memory_version':4,'retention_days':30,'revision':self.revision,
                 'messages':self.db.execute('SELECT count(*) FROM memory_messages WHERE scope=?',(key,)).fetchone()[0],
                 'media_sources':self.db.execute('SELECT count(*) FROM memory_media_sources WHERE scope=?',(key,)).fetchone()[0],
                 'summaries':self.db.execute('SELECT count(*) FROM memory_summaries WHERE scope=?',(key,)).fetchone()[0],
@@ -479,6 +533,57 @@ class ChatStore:
                 if any(part['status']=='success' for part in ledger.parts(row['delivery'])):
                     self.db.execute('INSERT OR IGNORE INTO chat_service_receipts VALUES (?,?,?)',
                         (row['request_id'],row['scope'],min(self.clock(),row['created']+298)))
+
+    def stage_final(self,delivery,part,scope,text,proof,sources,reply_to,expires):
+        self.sweep();key=self._scope(scope);now=self.clock()
+        payload=encoded(dict(text=text,proof=proof,sources=sources,reply_to=reply_to))
+        if not text or len(payload.encode())>262144 or not now<expires<=now+86400:raise ValueError('chat_final_candidate')
+        if any(self._blocked(key,s['message_id'],s['timestamp_ms']) for s in sources):raise ValueError('chat_memory_deleted')
+        digest=hashlib.sha256(payload.encode()).hexdigest()
+        with self.db:
+            count,size=self.db.execute('SELECT count(*),coalesce(sum(length(CAST(payload AS BLOB))),0) FROM chat_final_candidates').fetchone()
+            if count>=4096 or size+len(payload.encode())>16*1024*1024:raise ValueError('chat_final_capacity')
+            self.db.execute('INSERT INTO chat_final_candidates VALUES(?,?,?,?,?,?,?)',(delivery,part,key,now,expires,payload,digest))
+        return part,digest,expires
+
+    def final_candidate(self,delivery,part):
+        row=self.db.execute('SELECT * FROM chat_final_candidates WHERE delivery=? AND part=?',(delivery,part)).fetchone()
+        return dict(row) if row else None
+
+    def projected(self,delivery,part):
+        row=self.db.execute('SELECT * FROM chat_projection_history WHERE delivery=? AND part=?',(delivery,part)).fetchone()
+        return dict(row) if row else None
+
+    def drop_final(self,delivery,part):
+        # Also remove an explicit-chat audit copy of this uncommitted answer.
+        # Do not open a nested transaction: callers may be deleting or projecting.
+        self.db.execute('DELETE FROM chat_final_candidates WHERE delivery=? AND part=?',(delivery,part))
+        self.db.execute('DELETE FROM events WHERE run_id=?',(delivery,))
+        self.db.execute('DELETE FROM runs WHERE id=?',(delivery,))
+        self.db.execute('DELETE FROM memory_run_sources WHERE run_id=?',(delivery,))
+
+    def project_final(self,row,message,acknowledged):
+        payload=json.loads(row['payload']);scope=row['scope']
+        if hashlib.sha256(row['payload'].encode()).hexdigest()!=row['digest']:raise ValueError('chat_final_digest')
+        with self.db:
+            if row['expires']<=self.clock() or any(self._blocked(scope,s['message_id'],s['timestamp_ms']) for s in payload['sources']):
+                self.drop_final(row['delivery'],row['part']);return False
+            value=dict(message_id=message,speaker_id='Taki',role='assistant',display_name='Taki',text=payload['text'],
+                       timestamp_ms=max(int(acknowledged*1000),max((s['timestamp_ms']+1 for s in payload['sources']),default=0)),
+                       reply_to=payload['reply_to'])
+            if not self._put_message(scope,value):
+                self.drop_final(row['delivery'],row['part']);return False
+            self.db.executemany('INSERT OR IGNORE INTO memory_dependencies VALUES(?,?,?)',
+                [(scope,message,s['message_id']) for s in payload['sources'] if s['message_id']!=message])
+            self.db.execute('INSERT OR IGNORE INTO memory_run_sources VALUES(?,?,?)',(row['delivery'],scope,message))
+            expires=min([acknowledged+RETENTION_SECONDS,*[s['timestamp_ms']/1000+RETENTION_SECONDS for s in payload['sources']]])
+            self.db.execute('INSERT INTO chat_projection_history VALUES(?,?,?,?,?,?,?,?)',
+                (row['delivery'],row['part'],scope,message,row['digest'],encoded(payload['proof']),acknowledged,expires))
+            self.db.execute('DELETE FROM chat_final_candidates WHERE delivery=? AND part=?',(row['delivery'],row['part']))
+        return True
+
+    def revoke_projection(self,row):
+        with self.db:self._purge(row['scope'],[row['message_id']])
 
     def close(self):
         self.db.close()

@@ -1,7 +1,8 @@
 # L3: Bounded group observation and versioned participation opportunities.
 # Input: Host-approved group policy, normalized human ChatMessages and model decisions.
 # Output: Immutable candidates and send-time validity; body-free budget diagnostics.
-# Effects: Volatile memory only; no model, platform, ledger or persistent data access.
+# Effects: Volatile observations and opportunity knowledge leases only; no model,
+# platform, ledger or persistent data access. Startup waits at most eight seconds.
 from collections import OrderedDict
 from dataclasses import asdict, dataclass, field
 import json
@@ -19,6 +20,7 @@ class ProactivePolicy:
     max_calls_per_hour: int = 6
     max_replies_per_hour: int = 3
     max_cost_micro_per_hour: int = 0
+    cooldown_seconds: int = 60
 
     def __post_init__(self):
         if type(self.enabled) is not bool:
@@ -30,6 +32,8 @@ class ProactivePolicy:
                for value in (self.max_calls_per_hour, self.max_replies_per_hour)):
             raise ValueError('proactive_policy_invalid')
         if type(self.max_cost_micro_per_hour) is not int or self.max_cost_micro_per_hour < 0:
+            raise ValueError('proactive_policy_invalid')
+        if type(self.cooldown_seconds) is not int or not 0 <= self.cooldown_seconds <= 86400:
             raise ValueError('proactive_policy_invalid')
 
     @property
@@ -52,6 +56,8 @@ class ProactiveCandidate:
     deferred: bool = False
     evaluation: int = 1
     followup: object = None
+    opportunity_id: str = ''
+    continuation: bool = False
 
 
 @dataclass
@@ -75,10 +81,23 @@ class _Ticket:
     cost_micro: int | None = None
     decision: str = ''
     delivered: bool = False
+    opportunity_id: str = ''
+    held_cost_micro: int | None = None
 
     @property
     def charged_cost(self):
-        return self.reserved_cost_micro if self.cost_micro is None else self.cost_micro
+        if self.cost_micro is not None:return self.cost_micro
+        return self.reserved_cost_micro if self.held_cost_micro is None else self.held_cost_micro
+
+
+@dataclass
+class _Opportunity:
+    id: str
+    expires_at: float
+    cost_micro: int
+    evaluations: int = 0
+    tools: int = 0
+    knowledge_leases: dict = field(default_factory=dict)
 
 
 @dataclass
@@ -97,20 +116,24 @@ class _Group:
     addressed_active: bool = False
     deferred_at: float | None = None
     evaluation: int = 0
+    opportunity: _Opportunity | None = None
+    pending_since: float | None = None
+    coalesce_seconds: float | None = None
+    continuation_user_id: str | None = None
 
 
 class ProactiveController:
     """One host thread owns this controller; approved billing stays with the host.
 
-    A call budget unit is one candidate/participation evaluation, including its
-    tool loop. The shared TurnBudget separately bounds actual model requests.
-    The host reserves a worst-case *whole evaluation* fee before calling candidate.
+    Hourly tickets count candidate evaluations. Replacements and defers share a
+    fixed opportunity deadline, evaluation ceiling and tool count. The host
+    applies its model-call/cost ceiling to their existing persistent attempt rows.
     """
     def __init__(self, *, clock=time.monotonic, coalesce_seconds=1.5,
-                 cooldown_seconds=60, candidate_seconds=60, max_defer_rechecks=2,
+                 candidate_seconds=60, max_defer_rechecks=2,
                  max_messages=120, window_seconds=900, group_bytes=256*1024,
                  max_bytes=8*1024*1024, max_scopes=1024):
-        if not 1 <= coalesce_seconds <= 2 or cooldown_seconds < 0 or candidate_seconds <= 0:
+        if not 1 <= coalesce_seconds <= 2 or candidate_seconds <= 0:
             raise ValueError('proactive_limits_invalid')
         if (type(max_defer_rechecks) is not int or not 0 <= max_defer_rechecks <= 2
                 or any(type(value) is not int or value <= 0 for value in
@@ -121,7 +144,6 @@ class ProactiveController:
             raise ValueError('proactive_limits_invalid')
         self.clock = clock
         self.coalesce_seconds = coalesce_seconds
-        self.cooldown_seconds = cooldown_seconds
         self.candidate_seconds = candidate_seconds
         self.max_defer_rechecks = max_defer_rechecks
         self.max_messages, self.window_seconds = max_messages, window_seconds
@@ -142,6 +164,7 @@ class ProactiveController:
             return
         group.policy, group.policy_version = policy, group.policy_version + 1
         self._cancel(group)
+        if group.opportunity is not None:group.opportunity.knowledge_leases.clear()
         if not policy.available:
             group.rows.clear()
             group.seen.clear()
@@ -150,6 +173,7 @@ class ProactiveController:
     def _cancel(group):
         group.version += 1
         group.active, group.deferred_at, group.dirty = None, None, False
+        group.pending_since = None
         group.evaluation = 0
 
     def cancel(self, scope):
@@ -171,12 +195,15 @@ class ProactiveController:
         group = self.groups.get(scope)
         if group is not None:
             self._cancel(group)
+            if group.opportunity is not None:group.opportunity.knowledge_leases.clear()
             group.rows.clear()
             group.seen.clear()
 
     def sweep(self):
         now = self.clock()
         for group in self.groups.values():
+            if group.opportunity is not None and group.opportunity.expires_at <= now:
+                group.opportunity.knowledge_leases.clear()
             retained = [row for row in group.rows if row.at > now - self.window_seconds]
             if len(retained) != len(group.rows):
                 group.rows = retained
@@ -214,6 +241,7 @@ class ProactiveController:
         if message.message_id in group.seen:
             return False
         now = self.clock()
+        pending_since = group.pending_since
         self._cancel(group)
         group.last_message_at = now
         group.seen[message.message_id] = now
@@ -230,12 +258,37 @@ class ProactiveController:
                or sum(row.size for row in group.rows) > self.group_bytes):
             group.rows.pop(0)
         group.dirty = not addressed
+        if group.dirty:
+            group.pending_since = pending_since if pending_since is not None else now
         self.sweep()
         return True
+
+    def start_delay(self, scope):
+        group = self.groups[scope]
+        ready_at = group.last_message_at + (group.coalesce_seconds if group.coalesce_seconds is not None else self.coalesce_seconds)
+        if group.pending_since is not None:
+            ready_at = min(ready_at, group.pending_since + 8)
+        return max(0, ready_at - self.clock())
+
+    def knowledge_leases(self, candidate):
+        group, _ = self._ticket(candidate)
+        if not self.valid(candidate):
+            raise ValueError('proactive_opportunity_expired')
+        return group.opportunity.knowledge_leases
 
     @staticmethod
     def _cost(group):
         return sum(ticket.charged_cost for ticket in group.tickets.values())
+
+    def remaining_cost(self,scope):
+        group=self.groups.get(scope)
+        opportunity=group.opportunity if group else None
+        if opportunity is None or self.clock()>=opportunity.expires_at:return None
+        # Only settled cost reduces the next candidate's estimate. Unknown
+        # tickets remain held by _cost and the persistent attempt ledger.
+        spent=sum(ticket.cost_micro or 0 for ticket in group.tickets.values()
+                  if ticket.opportunity_id==opportunity.id)
+        return max(0,opportunity.cost_micro-spent)
 
     def candidate(self, scope, *, reserve_cost_micro):
         if type(reserve_cost_micro) is not int or reserve_cost_micro < 0:
@@ -245,25 +298,52 @@ class ProactiveController:
         now = self.clock()
         if (group is None or not group.policy.available or group.addressed_active
                 or group.active is not None or not group.rows
-                or now < group.last_message_at + self.coalesce_seconds
-                or now < group.last_delivery_at + self.cooldown_seconds):
+                or self.start_delay(scope) > 0
+                or now < group.last_delivery_at + group.policy.cooldown_seconds):
             return None
         deferred = group.deferred_at is not None
         if not group.dirty and not (deferred and now >= group.deferred_at):
             return None
+        remaining=self.remaining_cost(scope)
+        if remaining is not None:
+            if not remaining:return None
+            reserve_cost_micro=min(reserve_cost_micro,remaining)
         if (len(group.tickets) >= group.policy.max_calls_per_hour
                 or len(group.replies) >= group.policy.max_replies_per_hour
                 or self._cost(group) + reserve_cost_micro > group.policy.max_cost_micro_per_hour):
             return None
+        opportunity=group.opportunity
+        if opportunity is None or now>=opportunity.expires_at:
+            if opportunity is not None and not group.dirty:return None
+            opportunity=group.opportunity=_Opportunity(uuid4().hex,now+self.candidate_seconds,reserve_cost_micro)
+        if opportunity.evaluations>=self.max_defer_rechecks+1:return None
+        opportunity.evaluations+=1
         group.evaluation = group.evaluation + 1 if deferred else 1
         ticket = _Ticket(uuid4().hex, scope, group.version, group.policy_version,
-                         group.policy.service_subject_id, now, now + self.candidate_seconds,
-                         reserve_cost_micro, group.evaluation)
+                         group.policy.service_subject_id, now, opportunity.expires_at,
+                         reserve_cost_micro, group.evaluation,opportunity_id=opportunity.id)
         group.tickets[ticket.candidate_id] = ticket
         group.active, group.deferred_at, group.dirty = ticket.candidate_id, None, False
+        group.pending_since = None
         return ProactiveCandidate(ticket.candidate_id, scope, ticket.version, ticket.policy_version,
                                   ticket.service_subject_id, tuple(row.message for row in group.rows),
-                                  now, ticket.expires_at, reserve_cost_micro, deferred, group.evaluation)
+                                  now, ticket.expires_at, reserve_cost_micro, deferred, group.evaluation,
+                                  opportunity_id=opportunity.id)
+
+    def opportunity_budget(self,candidate):
+        group,ticket=self._ticket(candidate)
+        opportunity=group.opportunity if group else None
+        if ticket is None or opportunity is None or ticket.opportunity_id!=opportunity.id:
+            raise ValueError('proactive_opportunity_expired')
+        return ([row.candidate_id for row in group.tickets.values() if row.opportunity_id==opportunity.id],
+                opportunity.cost_micro)
+
+    def take_tool(self,candidate,limit):
+        if not self.valid(candidate):return False
+        opportunity=self.groups[candidate.scope].opportunity
+        if opportunity.tools>=limit:return False
+        opportunity.tools+=1
+        return True
 
     def _ticket(self, candidate):
         group = self.groups.get(candidate.scope)
@@ -282,7 +362,7 @@ class ProactiveController:
                     and group.policy_version == ticket.policy_version
                     and group.policy.service_subject_id == ticket.service_subject_id
                     and self.clock() < ticket.expires_at and not ticket.delivered
-                    and self.clock() >= group.last_delivery_at + self.cooldown_seconds
+                    and self.clock() >= group.last_delivery_at + group.policy.cooldown_seconds
                     and len(group.replies) < group.policy.max_replies_per_hour
                     and self._cost(group) <= group.policy.max_cost_micro_per_hour)
 
@@ -292,10 +372,11 @@ class ProactiveController:
         _, ticket = self._ticket(candidate)
         return ticket.decision == 'reply'
 
-    def settle(self, candidate, *, actual_cost_micro):
-        """Also settle stale/skip calls. Unknown usage keeps its full reservation."""
-        if actual_cost_micro is not None and (type(actual_cost_micro) is not int or actual_cost_micro < 0):
-            raise ValueError('proactive_cost_invalid')
+    def settle(self, candidate, *, actual_cost_micro, held_cost_micro=None):
+        """Unknown usage retains the attempt ledger bound, or the full opportunity hold."""
+        for value in (actual_cost_micro,held_cost_micro):
+            if value is not None and (type(value) is not int or value < 0):
+                raise ValueError('proactive_cost_invalid')
         _, ticket = self._ticket(candidate)
         if ticket is None:
             return False
@@ -303,14 +384,15 @@ class ProactiveController:
             raise ValueError('proactive_cost_conflict')
         if actual_cost_micro is not None:
             ticket.cost_micro = actual_cost_micro
+        if held_cost_micro is not None:ticket.held_cost_micro=held_cost_micro
         return True
 
-    def decide(self, candidate, decision, *, actual_cost_micro=None, defer_seconds=2):
+    def decide(self, candidate, decision, *, actual_cost_micro=None, held_cost_micro=None, defer_seconds=2):
         if decision not in {'reply', 'skip', 'defer'}:
             raise ValueError('proactive_decision_invalid')
         if not 1 <= defer_seconds <= 5:
             raise ValueError('proactive_defer_invalid')
-        if not self.settle(candidate, actual_cost_micro=actual_cost_micro):
+        if not self.settle(candidate, actual_cost_micro=actual_cost_micro,held_cost_micro=held_cost_micro):
             return False
         group, ticket = self._ticket(candidate)
         if ticket.decision:
@@ -340,7 +422,8 @@ class ProactiveController:
         now = self.clock()
         group.replies.append(now)
         group.last_delivery_at = now
-        self._cancel(group)
+        if group.active==ticket.candidate_id and group.version==ticket.version:
+            self._cancel(group)
         return True
 
     def status(self, scope):

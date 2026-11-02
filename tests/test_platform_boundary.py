@@ -147,6 +147,20 @@ class KnowledgeAuthorityTests(unittest.TestCase):
         from ournotes_bot.domain.knowledge import KnowledgeScope
         return self.service.retrieve('工程测试', KnowledgeScope(**scope), self.service.approved_set_revision)
 
+    def test_retention_proof_rechecks_authority_without_copying_evidence_text(self):
+        import json
+        self.write_fixture(text='仅用于哈希恢复测试的合成正文。')
+        self.service.refresh()
+        lease=self.retrieve().lease
+        self.assertTrue(lease.chunks)
+        proof=self.service.retention_proof((lease,))
+        self.assertNotIn('合成正文',json.dumps(proof,ensure_ascii=False))
+        self.assertTrue(self.service.validate_retention(proof))
+        forged=json.loads(json.dumps(proof));forged[0]['chunks'][0]['digest']='0'*64
+        self.assertFalse(self.service.validate_retention(forged))
+        self.write_fixture(2,text='替换后的合成正文。')
+        self.assertFalse(self.service.validate_retention(proof))
+
     def test_one_boundary_observes_once_and_splits_each_referenced_document_once(self):
         import time
         from types import SimpleNamespace
@@ -338,6 +352,22 @@ class KnowledgeAuthorityTests(unittest.TestCase):
         self.assertIn('区间：JUST；首要比较：JUST数量',result)
         ambiguous=text.replace('最大连击','有\\|转义')
         self.assertEqual(labelled_tables(ambiguous),ambiguous)
+
+    def test_game_name_does_not_promote_source_footer_over_mechanism(self):
+        from ournotes_bot.query.knowledge_retrieval import rank
+        self.write_fixture(text='## 技能强化\n技能强化消耗材料，比较技能等级的变化。\n\n'
+                                '## 来源\nON工程测试说明书。\n')
+        self.service.refresh()
+        ranked=rank('ON技能强化消耗材料',self.service.index,(1.,0.))
+        self.assertIn('## 技能强化',ranked[0].text)
+
+    def test_gameplay_entity_still_prioritizes_matching_passage(self):
+        from ournotes_bot.query.knowledge_retrieval import rank
+        self.write_fixture(text='## 机制\n技能强化消耗材料，比较技能等级的变化。\n\n'
+                                '## 指定区间\nCOMBO工程测试规则。\n')
+        self.service.refresh()
+        ranked=rank('ON COMBO 技能强化消耗材料',self.service.index,(1.,0.))
+        self.assertIn('COMBO工程测试规则',ranked[0].text)
 
     def test_focus_search_keeps_scope_and_shared_evidence_budget(self):
         from ournotes_bot.domain.knowledge import KnowledgeScope,KnowledgeError

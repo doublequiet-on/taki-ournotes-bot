@@ -10,8 +10,9 @@ from pathlib import Path
 import re
 import sqlite3
 import time
+from datetime import datetime, timedelta, timezone
 
-from ..domain.model_calls import ModelError, Price
+from ..domain.model_calls import ModelError, Price, Usage
 from ..sources.json_validation import decode_json
 
 
@@ -46,6 +47,8 @@ class ProactiveLimits:
     max_replies_per_hour: int = 0
     max_cost_micro_per_hour: int = 0
     cooldown_seconds: int = 300
+    max_cost_micro_per_day: int = 0  # Zero preserves legacy policies without a daily cap.
+    max_evaluations_per_hour: int = 0  # Zero uses the legacy call ceiling.
 
 
 @dataclass(frozen=True)
@@ -60,6 +63,7 @@ class ServicePolicy:
     currency: str
     summary: SummaryLimits
     proactive: ProactiveLimits
+    generation: str = ''
 
 
 def _limits(value, kind):
@@ -68,6 +72,7 @@ def _limits(value, kind):
         return cls()
     _check(isinstance(value, dict) and not set(value) - set(cls.__dataclass_fields__))
     result = cls(**value)
+    if kind == 'proactive':_check(_integer(result.max_evaluations_per_hour,120))
     _check(type(result.enabled) is bool)
     for key in cls.__dataclass_fields__:
         if key == 'enabled':
@@ -75,7 +80,7 @@ def _limits(value, kind):
         number = getattr(result, key)
         _check(_integer(number, 86400 if key == 'cooldown_seconds' else
                         1000 if key in ('max_jobs_per_hour', 'max_calls_per_hour', 'max_replies_per_hour') else 10**12))
-        if result.enabled and key != 'cooldown_seconds':
+        if result.enabled and key not in ('cooldown_seconds', 'max_cost_micro_per_day', 'max_evaluations_per_hour'):
             _check(number > 0)
     return result
 
@@ -83,13 +88,15 @@ def _limits(value, kind):
 class ChatServices:
     """Missing, unapproved, mismatched or invalid files disable services, never ordinary chat."""
 
-    def __init__(self, state_dir, instance_id, app_id, *, filename="chat-services-v1.json"):
+    def __init__(self, state_dir, instance_id, app_id, *, filename="chat-services-v1.json",authority=None,require_authority=False):
         self.path = Path(state_dir) / filename
         self.namespace = (instance_id, app_id)
         self.code = 'chat_services_absent'
+        self.authority,self.require_authority=authority,require_authority
 
     def read(self, snapshot):
         """Validated administrator document and a digest of exactly the parsed bytes."""
+        _check(not self.require_authority or self.authority is not None,'chat_service_authority_unavailable')
         if not self.path.exists():return None, {}, 'absent'
         info = self.path.lstat()
         _check(self.path.is_file() and not self.path.is_symlink() and info.st_size <= 131072)
@@ -97,9 +104,19 @@ class ChatServices:
         with self.path.open('rb') as stream:
             raw = stream.read(131073)
         _check(len(raw) <= 131072)
+        pinned=None
+        if self.authority is not None:
+            pinned=self.authority.execute('SELECT digest FROM capability_authority WHERE path=?',(str(self.path.resolve()),)).fetchone()
+            _check(pinned is None or pinned['digest']==hashlib.sha256(raw).hexdigest(),'chat_service_revoked')
         data = decode_json(raw)
-        _check(isinstance(data, dict) and set(data) == {'schema', 'instance_id', 'app_id', 'profile', 'groups'})
-        _check(data['schema'] == 'taki-chat-services/1'
+        _check(isinstance(data,dict))
+        fields={'schema','instance_id','app_id','profile','groups'}
+        if data.get('schema')=='taki-chat-services/2':
+            fields.add('authority_generation')
+            _check(isinstance(data.get('authority_generation'),str) and len(data['authority_generation'])==32)
+            _check(not self.require_authority or pinned is not None,'chat_service_revoked')
+        _check(set(data)==fields)
+        _check(data['schema'] in ('taki-chat-services/1','taki-chat-services/2')
                and (data['instance_id'], data['app_id']) == self.namespace)
         binding = data['profile']
         _check(isinstance(binding, dict) and set(binding) == {'config_version', 'fingerprint', 'currency'})
@@ -119,7 +136,7 @@ class ChatServices:
             _check(_id(value.get('service_subject_id')) and _id(value.get('approval_ref')))
             parsed[gid] = ServicePolicy(*self.namespace, gid, value['service_subject_id'], value['approval_ref'],
                 binding['config_version'], binding['fingerprint'], binding['currency'],
-                _limits(value.get('summary'), 'summary'), _limits(value.get('proactive'), 'proactive'))
+                _limits(value.get('summary'), 'summary'), _limits(value.get('proactive'), 'proactive'),data.get('authority_generation',''))
         return data, parsed, hashlib.sha256(raw).hexdigest()
 
     def policy(self, snapshot, group_id) -> ServicePolicy | None:
@@ -147,7 +164,7 @@ def service_request_id(task, instance_id, app_id, group_id, source_key):
 
 def maximum_cost_micro(profile):
     """Exact micro-currency upper bound, independent of weighted quota tokens."""
-    return profile.price.reserve(profile.max_input_tokens, profile.max_output_tokens) * profile.price.reference_rate / 1_000_000
+    return profile.reserve(profile.max_input_tokens, profile.max_output_tokens) * profile.price.reference_rate / 1_000_000
 
 
 @dataclass(frozen=True)
@@ -158,6 +175,8 @@ class ServicePermit:
     task: str
     spent_cost_micro: Fraction
     requested_cost_micro: Fraction
+    available_cost_micro: Fraction = Fraction()
+    unresolved_cost_micro: Fraction = Fraction()
 
 
 class ServiceBudget:
@@ -166,7 +185,23 @@ class ServiceBudget:
     def __init__(self, usage, instance_id, app_id, *, clock=time.time):
         self.usage, self.namespace, self.clock = usage, (instance_id, app_id), clock
 
-    def check(self, policy, task, profile, request_id, reserve_cost_micro, *, reply_times=()) -> ServicePermit:
+    def attempt_cost(self, row):
+        if row['state']=='released':return Fraction(),False
+        price=Price(**json.loads(row['price']))
+        amount=Fraction(row['cost'])
+        held=Fraction(row['reserved'])*price.reference_rate/1_000_000
+        _check(amount>=0 and held>=0,'chat_service_usage_unavailable')
+        uncertain=row['state']=='started' or bool(row['billing_incomplete'])
+        if uncertain:
+            bound=self.usage.bounded_hold(row['id'],price,Usage())*price.reference_rate/1_000_000
+            bound+=sum(action['max_count']*action['unit_cost_micro'] for action in self.usage.db.execute(
+                'SELECT max_count,unit_cost_micro FROM attempt_actions WHERE attempt=?',(row['id'],)))
+            amount=max(amount+held,bound)
+        else:amount+=held
+        return amount,uncertain
+
+    def check(self, policy, task, profile, request_id, reserve_cost_micro, *, reply_times=(),
+              opportunity_requests=(),opportunity_calls=None,opportunity_cost_micro=None) -> ServicePermit:
         _check(isinstance(policy, ServicePolicy) and (policy.instance_id, policy.app_id) == self.namespace,
                'chat_service_identity')
         prefix = _request_prefix(task, *self.namespace, policy.group_id)
@@ -180,6 +215,8 @@ class ServiceBudget:
         reserve_cost_micro = Fraction(reserve_cost_micro)
         now = self.clock()
         _check(type(now) in (int, float) and math.isfinite(now), 'chat_service_clock')
+        start = datetime.fromtimestamp(now, timezone(timedelta(hours=8))).replace(hour=0,minute=0,second=0,microsecond=0).timestamp()
+        earliest = min(start, now - 3600) if getattr(limits, 'max_cost_micro_per_day', 0) else now - 3600
         user = self.usage.key('service', *self.namespace, policy.group_id, policy.service_subject_id, task)
         group = self.usage.key('group', policy.group_id)
         try:
@@ -187,13 +224,14 @@ class ServiceBudget:
             # Old uncertain attempts remain held even after the rolling hour ends.
             rows = self.usage.db.execute('''SELECT id,request_id,config_version,price,created,state,
                 reserved,cost,billing_incomplete FROM attempts WHERE group_key=? AND request_id LIKE ?
-                AND (created>? OR state='started' OR billing_incomplete=1) ORDER BY created LIMIT 4097''',
-                (group, prefix + '%', now - 3600)).fetchall()
+                AND (created>=? OR state='started' OR billing_incomplete=1) ORDER BY created LIMIT 4097''',
+                (group, prefix + '%', earliest)).fetchall()
             _check(len(rows) <= 4096, 'chat_service_budget_capacity')
             _check(not self.usage.db.execute('''SELECT 1 FROM attempts a JOIN unbounded_actions u ON u.attempt=a.id
                 WHERE a.group_key=? AND a.request_id LIKE ? AND (u.count IS NULL OR u.count<>0) LIMIT 1''',(group,prefix+'%')).fetchone(),
                 'chat_service_usage_unavailable')
-            recent, cost = [], Fraction()
+            recent, cost, daily_cost, unresolved = [], Fraction(), Fraction(), Fraction()
+            opportunity_count,opportunity_cost=0,Fraction()
             for row in rows:
                 if row['state'] == 'released':
                     continue
@@ -201,40 +239,41 @@ class ServiceBudget:
                     recent.append(row)
                 price = Price(**json.loads(row['price']))
                 _check(price.currency == policy.currency, 'chat_service_currency_mismatch')
-                amount = Fraction(row['cost'])
-                held = Fraction(row['reserved']) * price.reference_rate / 1_000_000
-                _check(amount >= 0 and held >= 0, 'chat_service_usage_unavailable')
-                if row['state'] == 'started' or row['billing_incomplete']:
-                    # reconcile() may have cleared weighted reservation on unknown usage.
-                    # Reconstruct a conservative bound rather than turning that HTTP into free usage.
-                    inputs, outputs = ((profile.max_input_tokens, profile.max_output_tokens)
-                                       if row['config_version'] == profile.config_version else (65536, 8192))
-                    bound = price.reserve(inputs, outputs) * price.reference_rate / 1_000_000
-                    bound += sum(action['max_count']*action['unit_cost_micro'] for action in self.usage.db.execute(
-                        'SELECT max_count,unit_cost_micro FROM attempt_actions WHERE attempt=?',(row['id'],)))
-                    # Known settled cost and an unresolved action reservation
-                    # are additive; the full-call bound is a separate floor.
-                    amount = max(amount + held, bound)
-                else:
-                    amount += held
-                cost += amount
+                amount,uncertain=self.attempt_cost(row)
+                if uncertain:unresolved += amount
+                if row['created'] > now - 3600 or uncertain:cost += amount
+                if row['created'] >= start or uncertain:daily_cost += amount
+                if row['request_id'] in opportunity_requests:
+                    opportunity_count+=1
+                    opportunity_cost+=amount
         except ServiceError:
             raise
         except (sqlite3.Error, ModelError, ValueError, TypeError, KeyError, ZeroDivisionError, AttributeError):
             raise ServiceError('chat_service_usage_unavailable') from None
         _check(cost + reserve_cost_micro <= limits.max_cost_micro_per_hour, 'chat_service_cost_limit')
+        available = Fraction(limits.max_cost_micro_per_hour) - cost
+        daily_limit = getattr(limits, 'max_cost_micro_per_day', 0)
+        if daily_limit:
+            _check(daily_cost + reserve_cost_micro <= daily_limit, 'chat_service_daily_cost_limit')
+            available = min(available, daily_limit - daily_cost)
+        if opportunity_requests:
+            _check(opportunity_count<opportunity_calls,'chat_opportunity_call_limit')
+            _check(opportunity_cost+reserve_cost_micro<=opportunity_cost_micro,'chat_opportunity_cost_limit')
         if task == 'summary':
             jobs = {row['request_id'] for row in recent}
             _check(len(jobs | {request_id}) <= limits.max_jobs_per_hour, 'chat_service_job_limit')
         else:
             _check(len(recent) < limits.max_calls_per_hour, 'chat_service_call_limit')
+            if limits.max_evaluations_per_hour:
+                jobs = {row['request_id'] for row in recent}
+                _check(len(jobs | {request_id}) <= limits.max_evaluations_per_hour, 'chat_service_evaluation_limit')
             _check(isinstance(reply_times, (tuple, list)) and len(reply_times) <= 10000, 'chat_service_reply_facts')
             _check(all(type(stamp) in (int, float) and math.isfinite(stamp) for stamp in reply_times),
                    'chat_service_reply_facts')
             replies = [stamp for stamp in reply_times if stamp > now - 3600]
             _check(len(replies) < limits.max_replies_per_hour, 'chat_service_reply_limit')
             _check(not reply_times or now - max(reply_times) >= limits.cooldown_seconds, 'chat_service_cooldown')
-        return ServicePermit(user, group, request_id, task, cost, reserve_cost_micro)
+        return ServicePermit(user, group, request_id, task, cost, reserve_cost_micro, available, unresolved)
 
 
 @dataclass(frozen=True)

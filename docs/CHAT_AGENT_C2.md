@@ -15,3 +15,5 @@ UsageLedger 使用增量 attempt_actions 表记录额外工具费预算、实际
 离线验收包含：原生搜索响应／出处、内层请求只含公开词、三个独立许可、同 profile、额外费用预留及迟到结算、未知费用、能力证据失效及 C1／旧账回归。实际 API 兼容性和付费对照尚未执行；需要在全部批次统一审核时核对有效授权后运行，未批准前不宣称真实联网可用。
 
 协议依据（2026-10-29核对）：[Responses web search](https://developers.openai.com/api/docs/guides/tools-web-search)、[max_tool_calls](https://developers.openai.com/api/reference/python/resources/responses/methods/create)。这些只证明 API 合同，不证明当前 Terra profile 已通过能力探测。
+
+完成的 Responses 响应达到请求 max_tool_calls 后，未执行的 searching/search、open_page、find_in_page 均不作为实际操作；仍核对响应上限和唯一动作 ID。GPT-5.6/6 Responses 默认 30m 缓存写入按输入价 1.25 倍计入费用与预留。写入数量及请求边界放在独立增量表，旧 attempts 与 usage JSON 保持可读；新请求未知用量按实际边界保留，历史无边界记录继续采用通用上界。连接失败额外记录固定 transport_error 类别，不记录原始异常、URL 或凭据，不自动重放结果不明的 HTTP。

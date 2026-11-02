@@ -66,6 +66,18 @@ async function main(){
   assert.equal(model.modelKey.value,'');assert.equal(model.modelDraft.value.model,'later edit');assert.equal(model.modelDirty.value,true)
   assert.equal(model.modelConflict.value,false)
   await model.logout();assert.equal(model.model.value,null);assert.equal(model.modelDraft.value,null);assert.equal(model.modelKey.value,'')
+  modelValue.role='primary';modelValue.web_search={enabled:true,code:'enabled',editable:true,max_calls:1,guard:{backend_epoch:'e',fingerprint:'web-old'}}
+  globalThis.consoleStateFixture.send=async(method,value)=>{
+    if(method==='taki/model/settings')return structuredClone(modelValue)
+    if(method==='taki/model/web-search/save')return new Promise(resolve=>{receipt=()=>resolve({...structuredClone(modelValue),web_search:{...modelValue.web_search,enabled:value.enabled,max_calls:value.max_calls,guard:{backend_epoch:'e',fingerprint:'web-new'}}})})
+    throw Error('unexpected web RPC '+method)
+  }
+  await model.refreshModel();model.webEdit.value.enabled=false;model.webEdit.value.dirty=true
+  const webSaving=model.saveWeb();model.webEdit.value.max_calls=2;receipt();await webSaving
+  assert.equal(model.webEdit.value.dirty,true);assert.equal(model.webEdit.value.max_calls,2)
+  const webRecovery=sessionState();webRecovery.restoreEdits(model.captureEdits());assert.equal(webRecovery.webEdit.value.max_calls,2)
+  await model.refreshModel();assert.equal(model.webEdit.value.conflict,true)
+  model.selectModelRole('proactive');assert.equal(model.modelRole.value,'primary')
   const dedicated=sessionState(),dedicatedCalls=[]
   globalThis.consoleStateFixture.send=async(method,value)=>{
     dedicatedCalls.push(method)
@@ -85,12 +97,14 @@ async function main(){
   assert.equal(dedicatedCalls.includes('taki/model/proactive/save'),true)
   assert.equal(dedicatedCalls.includes('taki/model/proactive/probe'),true)
   assert.equal(dedicatedCalls.some(m=>m==='taki/model/save'||m==='taki/model/probe'),false)
-  await dedicated.refreshProactiveLimits('alpha');dedicated.proactiveEdit.value.limits.max_calls_per_hour=30;dedicated.proactiveEdit.value.dirty=true
+  await dedicated.refreshProactiveLimits('alpha');dedicated.proactiveEdit.value.limits.max_calls_per_hour=30;dedicated.proactiveEdit.value.limits.max_cost_micro_per_day=2000000;dedicated.proactiveEdit.value.limits.max_evaluations_per_hour=30;dedicated.proactiveEdit.value.dirty=true
   const savingLimits=dedicated.saveProactiveLimits();dedicated.proactiveEdit.value.limits.max_replies_per_hour=6;receipt();await savingLimits
   assert.equal(dedicated.proactiveLimits.value.limits.max_calls_per_hour,30)
+  assert.equal(dedicated.proactiveLimits.value.limits.max_cost_micro_per_day,2000000)
+  assert.equal(dedicated.proactiveLimits.value.limits.max_evaluations_per_hour,30)
   assert.equal(dedicated.proactiveEdit.value.limits.max_replies_per_hour,6);assert.equal(dedicated.proactiveEdit.value.dirty,true)
   const quotaRecovery=sessionState();quotaRecovery.restoreEdits(dedicated.captureEdits())
-  assert.equal(quotaRecovery.modelRole.value,'proactive');
+  assert.equal(quotaRecovery.modelRole.value,'proactive');assert.equal(quotaRecovery.proactiveEdit.value.limits.max_cost_micro_per_day,2000000);assert.equal(quotaRecovery.proactiveEdit.value.limits.max_evaluations_per_hour,30);
   assert.equal(quotaRecovery.proactiveEdit.value.group_id,'alpha');assert.equal(quotaRecovery.proactiveEdit.value.limits.max_replies_per_hour,6)
   await dedicated.refreshProactiveLimits('alpha');assert.equal(dedicated.proactiveEdit.value.conflict,true)
   assert.equal(dedicated.proactiveEdit.value.limits.max_replies_per_hour,6)
@@ -101,6 +115,13 @@ async function main(){
   assert.equal(actualRecovery.modelRole,'proactive');assert.equal(actualRecovery.proactive.group_id,'alpha')
   assert.equal(readRecovery({...actualRecovery,modelRole:'untrusted-role'}),null)
   await quotaRecovery.logout();assert.equal(quotaRecovery.proactiveEdit.value,null)
+  await dedicated.refreshProactiveLimits('alpha',true)
+  dedicated.modelDraft.value.reasoning_effort='high';dedicated.modelDirty.value=true
+  await dedicated.saveModel()
+  assert.equal(dedicated.proactiveEdit.value.dirty,false)
+  assert.equal(dedicated.proactiveEdit.value.conflict,false,'a clean limit editor must reload after saving the model')
+  assert.equal(dedicated.proactiveLimits.value.group_id,'alpha')
+
 
   let epoch='gateway-before',attempted=[],trustedAttempts=[],finishJob,finishTrusted
   globalThis.consoleStateFixture.send=async(method,value)=>{
@@ -147,6 +168,32 @@ async function main(){
   const status=sessionState();await status.load(status.groups,'groups/list');status.selectGroup('alpha');status.groupDraft.value.label='fixture';status.groupDirty.value=true
   await status.saveGroup();assert.equal(status.message.value,'群策略已保存。新查询使用新规则，在途查询继续完成。')
   assert.match(status.readMessage.value,/读取失败/);assert.equal(status.stale.value,true)
-  console.log(JSON.stringify({passed:true,proactiveQuotaSaveRace:true,proactiveQuotaRecovery:true,proactiveQuotaConflict:true,proactiveRoleRouting:true,proactiveDraftRecovery:true,saveDraftRace:true,groupSaveDraftRace:true,groupSwitchDuringSave:true,invalidatedSave:true,recoveredDrafts:true,secretCleared:true,groupEpochBlocked:true,operationIdReused:true,logoutCleared:true,actionAndReadStatusSeparated:true}))
+  let chatServer={followup_enabled:true,followup_window_seconds:180,coalesce_seconds:1.5,excluded_users:[]},chatRevision=0,chatRelease;
+  const chatAttempts=[];
+  globalThis.consoleStateFixture.send=async(method,value)=>{
+    if(method==='taki/chat/group/settings')return {group_id:value,guard:{backend_epoch:'fixture',revision:chatRevision},settings:structuredClone(chatServer),recent_users:[{user_id:'u1',display_name:'同名'}],tasks:{active_tasks:0,waiting_tasks:0,partial_tasks:0,completed_tasks:0,window_seconds:900}};
+    if(method==='taki/chat/group/settings/save'){chatAttempts.push(value);return new Promise(resolve=>{chatRelease=()=>{chatServer=structuredClone(value.settings);chatRevision++;resolve({});};});}
+    if(method==='taki/logout')return true;
+    if(method==='taki/model/group'||method==='taki/ops/notice-target'||method.startsWith('taki/chat/group/'))return {};
+    throw Error('unexpected conversation RPC '+method);
+  };
+  const conversation=sessionState();conversation.groupId.value='alpha';await conversation.refreshChatSettings();
+  conversation.addExcludedUser('u1','同名');conversation.addExcludedUser('u1','重复');
+  assert.equal(conversation.chatEdit.value.settings.excluded_users.length,1);
+  conversation.selectGroup('beta');assert.equal(conversation.groupId.value,'alpha','dirty conversation settings hold their group');
+  const chatSaving=conversation.saveChatSettings();conversation.chatEdit.value.settings.followup_window_seconds=240;chatRelease();await chatSaving;
+  assert.equal(conversation.chatEdit.value.dirty,true,'edits made while saving survive readback');
+  assert.equal(conversation.chatSettings.value.settings.followup_window_seconds,180);
+  assert.equal(conversation.chatEdit.value.settings.followup_window_seconds,240);
+  conversation.suspend();const chatRecovery=conversation.captureEdits(),chatRestored=sessionState();chatRestored.restoreEdits(chatRecovery);
+  assert.equal(chatRestored.groupId.value,'alpha');assert.equal(chatRestored.chatEdit.value.settings.followup_window_seconds,240);
+  chatRevision++;await chatRestored.refreshChatSettings();assert.equal(chatRestored.chatEdit.value.conflict,true);
+  assert.equal(chatRestored.chatEdit.value.settings.followup_window_seconds,240,'refresh never replaces a draft');
+  await chatRestored.refreshChatSettings('alpha',true);chatRestored.removeExcludedUser('u1');
+  const removal=chatRestored.saveChatSettings();chatRelease();await removal;
+  assert.equal(chatRestored.chatEdit.value.dirty,false);assert.deepEqual(chatRestored.chatSettings.value.settings.excluded_users,[]);
+  assert.equal(chatRestored.message.value,'交流设置已保存并确认生效。');
+  await chatRestored.logout();assert.equal(chatRestored.captureEdits().chat,null);
+  console.log(JSON.stringify({passed:true,chatSettingsReadback:true,chatSettingsSaveRace:true,chatSettingsRecovery:true,chatSettingsConflict:true,chatSettingsGroupIsolation:true,proactiveQuotaSaveRace:true,proactiveQuotaRecovery:true,proactiveQuotaConflict:true,proactiveRoleRouting:true,proactiveDraftRecovery:true,saveDraftRace:true,groupSaveDraftRace:true,groupSwitchDuringSave:true,invalidatedSave:true,recoveredDrafts:true,secretCleared:true,groupEpochBlocked:true,operationIdReused:true,logoutCleared:true,actionAndReadStatusSeparated:true}))
 }
 main().catch(error=>{console.error(error);process.exitCode=1}).finally(()=>{delete globalThis.consoleStateFixture})

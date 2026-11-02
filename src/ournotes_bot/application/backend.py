@@ -76,7 +76,18 @@ class Work:
     persona_version: str = 'taki-v0/legacy-derived'
     memory_sources: tuple = ()
     image_sources: tuple = ()
+    vision_capability: object = None
+    continuation: bool = False
+    chat_task: object = None
+    chat_task_generation: int = 0
+    chat_task_pending: object = None
+    chat_additions: tuple = ()
+    chat_addition_images: tuple = ()
+    chat_addition_image_error: str | None = None
+    chat_coalesce_until: float = 0
+    chat_coalesce_deadline: float = 0
     proactive: object = None
+    proactive_authority: str | None = None
     service_policy: object = None
     service_request_id: str = ''
     participating_history: tuple = ()
@@ -88,12 +99,14 @@ class Work:
     public_question: str = ''
     entity_evidence: tuple = ()
     entity_source_version: str = ''
+    entity_owner_version: str = ''
     web_capability: object = None
     knowledge_scope: object = None
     knowledge_scope_ambiguous: bool = False
     knowledge_scope_leases: tuple = ()
     knowledge_context: object = None
     knowledge_target: object = None
+    knowledge_scope_at_start: object = None
     image_deadline: float = float('inf')
     image_bytes: int = 0
 
@@ -137,6 +150,7 @@ class Backend:
         self.reaper_error = None
 
     def expire(self):
+        self.diagnostics.expire(self.clock())
         self.conversations.sweep()
         if self.model_runtime is not None and self.model_runtime.agent:
             self.model_runtime.agent.proactive.sweep_followups()
@@ -216,6 +230,8 @@ class Backend:
         self.retry_terminations()
         try:
             self.expire()
+            if self.model_runtime and self.model_runtime.agent:
+                self.model_runtime.agent.recovery.recover()
         except sqlite3.Error as exc:
             self.reaper_error = type(exc).__name__
             logger.error('Expiry maintenance storage failed type=%s', self.reaper_error)
@@ -276,12 +292,15 @@ class Backend:
             work.mixed_modes=mixed_modes
             if proactive is not None:
                 work.proactive,work.service_policy,work.model_snapshot,work.service_request_id=proactive
+                work.continuation=work.proactive.continuation
+                if work.continuation:self.model_runtime.capture(work)
+                work.proactive_authority=self.model_runtime.capabilities_for(work).generation(work.model_snapshot)
             self.ledger.admit(request, self.runtime, delivery, self.clock())
             self.works[delivery] = work
             try:
                 if self.model_runtime and self.model_runtime.agent:
                     self.model_runtime.agent.proactive.start_addressed(work)
-                    if proactive is not None:self.model_runtime.agent.store.service_run(delivery,request.scope,work.service_request_id)
+                    if proactive is not None and not work.continuation:self.model_runtime.agent.store.service_run(delivery,request.scope,work.service_request_id)
                 admission_ms = (time.perf_counter()-started)*1000
                 observed_commands = [{'kind': replies.command_kind(c), 'outcome': None}
                                      for c in commands[:self.settings.multi_command_limit]]
@@ -318,6 +337,7 @@ class Backend:
         if replies.explicit_chat(content) and not work.chat:
             return replies.PreparedReply("聊天功能尚未启用，请使用 /查 查询资料。")
         if work.chat:
+            content=await self.model_runtime.agent.proactive.coalesce_addressed(work,content)
             return await self.model_runtime.prepare(work,content)
         if self.model_runtime is not None and replies.is_ai_request(content) and work.request.policy.natural_query!='off':
             return await self.model_runtime.prepare(work, content)
@@ -457,7 +477,8 @@ class Backend:
                 complete.extend(parts[-1].context.remaining)
             self.conversations.capture(work, complete)
             require(self.retained_bytes() <= self.byte_capacity, 'byte_capacity', 503)
-            self.ledger.prepared(work.delivery, len(parts), start=int(work.hint))
+            projections=self.model_runtime.agent.recovery.stage(work) if work.chat and parts else ()
+            self.ledger.prepared(work.delivery, len(parts), start=int(work.hint),projections=projections)
             if not parts:
                 self.finish(work, 'finished')
             else:
@@ -567,14 +588,6 @@ class Backend:
 
     def lookup(self, request_id, epoch):
         self.expire()
-        row=self.ledger.request(request_id)
-        work=self.works.get(row['delivery']) if row else None
-        if (work and work.active and work.proactive is None and not work.hint and row['status']=='preparing'
-                and work.model_started_at is not None and time.monotonic()-work.model_started_at>=8
-                and row['epoch']==epoch and self.ledger.active(epoch)):
-            self.ledger.processing_hint(work.delivery)
-            work.hint=True
-            work.prepared=(replies.PreparedReply('还在核实，请稍等' if work.chat else '还在核实，请稍等。',business_status='processing_hint'),)
         return self.snapshot(self.ledger.request(request_id), epoch)
 
     def image(self, delivery, part_id, epoch):
@@ -599,9 +612,16 @@ class Backend:
         work = self.works.get(delivery)
         live = self.live(row, payload['gateway_epoch'])
         if kind == 'ack':
-            changed = self.ledger.ack(delivery, part_id, payload['attempt_id'], payload['result'], payload['message_id'])
+            changed = self.ledger.ack(delivery, part_id, payload['attempt_id'], payload['result'], payload['message_id'],
+                allow_context=payload.get('allow_context') is not False,now=self.clock())
+            projection=None
+            if self.model_runtime and self.model_runtime.agent:
+                self.model_runtime.agent.audit(self.model_runtime.agent.recovery.recover,delivery)
+                projection=next((p for p in self.ledger.projection_rows(delivery) if p['part']==part_id),None)
+                if projection is not None and projection['state']!='done' and payload['result']=='success':live=False
+            service_ack_ok=False
             if changed and payload['result']=='success' and self.model_runtime and self.model_runtime.agent:
-                self.model_runtime.agent.audit(self.model_runtime.agent.store.service_ack,delivery)
+                service_ack_ok=self.model_runtime.agent.audit(self.model_runtime.agent.store.service_ack,delivery)
                 if work and work.proactive is not None:work.proactive_delivered=True
             if work and work.hint and part_id=='0':
                 # Progress occupies one ordinary send slot, but creates no topic
@@ -620,9 +640,10 @@ class Backend:
                 long_fallback = part['mode'] == 'fallback' and len(reply.text) > text_limit
                 if work.chat and self.model_runtime.agent:
                     self.model_runtime.agent.acknowledge(work,part_id,payload['message_id'],reply.text,
-                        payload['result'],allow_context=payload.get('allow_context') is not False)
-                    if (payload['result']=='success' and len(parts)==1 and not work.hint
-                            and payload.get('group_ingress_seq')==work.request.ingress_seq):
+                        payload['result'],allow_context=payload.get('allow_context') is not False,service_ack_ok=service_ack_ok,
+                        record_delivery=projection is None)
+                    if (payload['result']=='success' and len(parts)==1+int(work.hint)
+                            and payload.get('allow_context') is not False):
                         self.model_runtime.agent.proactive.remember_question(work,payload['message_id'],reply.text)
                 if payload['result'] == 'success':
                     if long_fallback: candidate = replies.fallback_cursor(reply,text_limit=text_limit)
@@ -663,6 +684,12 @@ class Backend:
                     and work.prepared[part['position']].image is not None, 'fallback_transition', 409)
             if part['mode'] == 'primary': self.ledger.fallback(delivery, part_id)
             return self.snapshot(row, payload['gateway_epoch'])
+        projection=next((p for p in self.ledger.projection_rows(delivery) if p['part']==part_id),None)
+        if projection is not None:
+            candidate=self.model_runtime.agent.store.final_candidate(delivery,part_id)
+            require(projection['state']=='candidate' and candidate is not None
+                    and candidate['digest']==projection['digest'] and candidate['expires']>self.model_runtime.agent.store.clock(),
+                    'chat_final_unavailable',409)
         granted = self.ledger.intent(delivery, part_id, payload['attempt_id'])
         return {'permission': granted, 'msg_seq': part['position']+1}
 
@@ -798,7 +825,7 @@ def create_app(backend, token, initialize=None):
             require(backend.ready and not backend.closing,'backend_not_ready',503)
             require(backend.ledger.active(request.headers.get('X-Taki-Epoch')),'ops_gateway_epoch',409)
             value=await read_json(request)
-            return json(owner.save_budget(value) if request.path.endswith('/budget') else owner.probe(value,proactive=proactive) if request.path.endswith('/probe') else owner.save(value,fallback,proactive=proactive))
+            return json(owner.save_web(value,proactive=proactive) if request.path.endswith('/web-search') else owner.save_budget(value) if request.path.endswith('/budget') else owner.probe(value,proactive=proactive) if request.path.endswith('/probe') else owner.save(value,fallback,proactive=proactive))
         except ModelError as exc:
             raise ProtocolError(str(exc),409) from None
         except (OSError,sqlite3.Error):
@@ -824,7 +851,10 @@ def create_app(backend, token, initialize=None):
         observed=bool(agent and getattr(backend.settings,'chat_engine','legacy')=='agent' and agent.proactive.observe(parsed))
         try:delay=agent.proactive.observation_delay(parsed) if observed else None
         except (ModelError,ServiceError,ValueError,OSError,sqlite3.Error):delay=None
-        return json({'protocol':PROTOCOL,'observed':observed and delay is not None,'delay_ms':delay or 0})
+        result={'protocol':PROTOCOL,'observed':observed and delay is not None,'delay_ms':delay or 0}
+        if request.headers.get('X-Taki-Observation')=='continuation-v1':
+            result['continuation']=bool(result['observed'] and agent.proactive.followups.match(agent.proactive.scope(parsed),parsed.message_id))
+        return json(result)
     async def chat_candidate(request):
         from ..domain.model_calls import ModelError
         require(backend.accepting(),'not_ready',503)
@@ -872,6 +902,17 @@ def create_app(backend, token, initialize=None):
         gid=request.match_info.get('gid')
         require(gid is None or re.fullmatch('[A-Za-z0-9_-]{1,128}',gid),'admin_group')
         return json(status(backend.model_runtime,gid))
+    async def chat_settings(request):
+        from ..domain.model_calls import ModelError
+        require(backend.model_runtime is not None,'chat_unavailable',503)
+        try:
+            owner=backend.model_runtime.admin;gid=request.match_info['gid']
+            if request.method=='GET':return json(owner.chat_settings(gid))
+            require(backend.ready and not backend.closing,'backend_not_ready',503)
+            require(backend.ledger.active(request.headers.get('X-Taki-Epoch')),'ops_gateway_epoch',409)
+            return json(owner.save_chat_settings(gid,await read_json(request.clone(client_max_size=131072))))
+        except ModelError as exc:raise ProtocolError(str(exc),409) from None
+        except (OSError,sqlite3.Error):raise ProtocolError('model_admin_unavailable',503) from None
     async def chat_memory(request):
         if request.method=='GET' and (backend.model_runtime is None or backend.model_runtime.agent is None):
             return json({'availability':'unavailable','reason_code':'chat_unavailable'})
@@ -922,9 +963,11 @@ def create_app(backend, token, initialize=None):
                     web.get('/v1/admin/model/proactive/groups/{gid}/limits',proactive_limits),
                     web.post('/v1/admin/model/proactive/groups/{gid}/limits',proactive_limits),
                     web.get('/v1/admin/model/proactive',model_settings),web.post('/v1/admin/model/proactive',model_settings),
+                    web.post('/v1/admin/model/web-search',model_settings),web.post('/v1/admin/model/proactive/web-search',model_settings),
                     web.post('/v1/admin/model/proactive/probe',model_settings),web.post('/v1/admin/model/probe',model_settings),web.post('/v1/admin/model/budget',model_settings),web.get('/v1/admin/model/groups/{gid}',model_group),
                     web.get('/v1/admin/library/{kind}/{offset:[0-9]+}',library_status),web.post('/v1/admin/library/{action}',library_command),
                     web.get('/v1/admin/chat/status',chat_status),web.get('/v1/admin/chat/groups/{gid}/status',chat_status),
+                    web.get('/v1/admin/chat/groups/{gid}/settings',chat_settings),web.post('/v1/admin/chat/groups/{gid}/settings',chat_settings),
                     web.get('/v1/admin/chat/groups/{gid}/memory',chat_memory),web.post('/v1/admin/chat/groups/{gid}/memory',chat_memory),
                     web.get('/v1/admin/ops/jobs', ops_jobs), web.post('/v1/admin/ops/jobs', ops_submit),
                     web.get('/v1/admin/ops/jobs/{jid}', ops_detail),

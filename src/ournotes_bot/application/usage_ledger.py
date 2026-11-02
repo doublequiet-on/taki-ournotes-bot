@@ -65,6 +65,8 @@ class UsageLedger:
                     PRIMARY KEY(attempt,kind));
             ''')
             with self.db:
+                self.db.execute('CREATE TABLE IF NOT EXISTS attempt_bounds(attempt TEXT PRIMARY KEY,input_bound INTEGER,output_bound INTEGER,input_rate INTEGER)')
+                self.db.execute('CREATE TABLE IF NOT EXISTS attempt_cache_writes(attempt TEXT PRIMARY KEY,count INTEGER NOT NULL)')
                 for key,value in (('schema','1'),('namespace',namespace)):
                     old=self.db.execute('SELECT value FROM meta WHERE key=?',(key,)).fetchone()
                     require(old is None or old[0]==value,'usage_ledger_identity')
@@ -153,7 +155,7 @@ class UsageLedger:
 
     def reserve(self,request,attempt,user,group,profile,input_bound,*,action_budget=()):
         self.reconcile()
-        now=self.clock();date=day(now);amount=profile.price.reserve(input_bound,profile.max_output_tokens)
+        now=self.clock();date=day(now);amount=profile.reserve(input_bound,profile.max_output_tokens)
         for kind,count,rate in action_budget:
             require(kind=='web_search' and type(count) is int and 1<=count<=8 and type(rate) is int and rate>=0,'provider_action_budget')
             amount+=Fraction(count*rate*1_000_000,profile.price.reference_rate)
@@ -174,7 +176,8 @@ class UsageLedger:
             self.check(date,user,group,amount,profile)
             self.db.execute('INSERT INTO attempts VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
                 (attempt,request,user,group,profile.provider,profile.model,profile.config_version,encode(asdict(profile.price)),
-                 date,now,None,None,'reserved',str(amount),'0','0',encode(asdict(Usage())),None,0))
+                 date,now,None,None,'reserved',str(amount),'0','0',encode({k:v for k,v in asdict(Usage()).items() if k!='input_written'}),None,0))
+            self.db.execute('INSERT INTO attempt_bounds VALUES(?,?,?,?)',(attempt,input_bound,profile.max_output_tokens,str(profile.reserve(1,0)*profile.price.reference_rate)))
             self.db.executemany('INSERT INTO attempt_actions VALUES(?,?,?,?,NULL,?)',
                                 [(attempt,kind,rate,count,'reserved') for kind,count,rate in action_budget])
             self.db.executemany('INSERT INTO expected_actions VALUES(?,?)',[(attempt,kind) for kind,_,_ in action_budget])
@@ -198,13 +201,16 @@ class UsageLedger:
         require(row['started'] is not None,'attempt_not_started')
         require(isinstance(usage,Usage),'usage_shape')
         old=Usage(**json.loads(row['usage']))
-        new=encode(asdict(usage))
+        stored=asdict(usage);stored.pop('input_written')
+        new=encode(stored)
+        written=self.db.execute('SELECT count FROM attempt_cache_writes WHERE attempt=?',(attempt,)).fetchone()
+        require(written is None or written[0]==usage.input_written,'usage_conflict')
         budgets=self.db.execute('SELECT * FROM attempt_actions WHERE attempt=?',(attempt,)).fetchall()
         counts={action.kind:action.count for action in actions}
         for expected in self.db.execute('SELECT kind FROM expected_actions WHERE attempt=?',(attempt,)):
             if expected['kind'] not in {b['kind'] for b in budgets}:counts.setdefault(expected['kind'],None)
         missing=set(counts)-{b['kind'] for b in budgets}
-        if row['state']=='settled' and row['usage']==new and not missing and all(
+        if row['state']=='settled' and row['usage']==new and (written is not None or usage.input_written==0) and not missing and all(
                 counts.get(b['kind']) is None or counts[b['kind']]==b['count'] for b in budgets):return False
         # Late partial data may only fill gaps, never silently change known facts.
         for field in ('input_total','input_cached','output_total','output_reasoning','total'):
@@ -213,7 +219,7 @@ class UsageLedger:
         if usage.status=='unknown' and old.status!='unknown': return False
         price=Price(**json.loads(row['price']));charged,cost=price.amount(usage)
         incomplete=usage.status!='known' or any(counts[k]!=0 for k in missing)
-        actual=[];unknown_hold=self.token_hold(price,usage)
+        actual=[];unknown_hold=self.bounded_hold(attempt,price,usage)
         for budget in budgets:
             count=counts.get(budget['kind'],budget['count'])
             if count is None:count=budget['count']
@@ -229,6 +235,8 @@ class UsageLedger:
                 cost+=amount;charged+=Fraction(amount*1_000_000,price.reference_rate)
             actual.append((count,'unknown' if count is None else 'known',attempt,budget['kind']))
         with self.db:
+            if usage.input_total is not None:
+                self.db.execute('INSERT OR IGNORE INTO attempt_cache_writes VALUES(?,?)',(attempt,usage.input_written))
             for kind in missing:
                 count=counts[kind]
                 prior=self.db.execute('SELECT kind,count FROM unbounded_actions WHERE attempt=?',(attempt,)).fetchone()
@@ -250,7 +258,7 @@ class UsageLedger:
             rows=self.db.execute("SELECT id,price FROM attempts WHERE state='started' AND started<=?",(now-300,)).fetchall()
             for row in rows:
                 price=Price(**json.loads(row['price']))
-                hold=self.token_hold(price,Usage())+sum((Fraction(a['max_count']*a['unit_cost_micro']*1_000_000,price.reference_rate)
+                hold=self.bounded_hold(row['id'],price,Usage())+sum((Fraction(a['max_count']*a['unit_cost_micro']*1_000_000,price.reference_rate)
                           for a in self.db.execute('SELECT max_count,unit_cost_micro FROM attempt_actions WHERE attempt=?',(row['id'],))),Fraction())
                 self.db.execute("UPDATE attempts SET state='settled',reserved=?,settled=?,error_code='usage_unknown_after_restart',billing_incomplete=1 WHERE id=? AND state='started'",
                                 (str(hold),now,row['id']))
@@ -263,10 +271,21 @@ class UsageLedger:
             rows=self.db.execute("SELECT id,price,reserved,usage FROM attempts WHERE state='settled' AND billing_incomplete=1").fetchall()
             for row in rows:
                 price=Price(**json.loads(row['price']))
-                hold=self.token_hold(price,Usage(**json.loads(row['usage'])))+sum((Fraction(a['max_count']*a['unit_cost_micro']*1_000_000,price.reference_rate)
+                hold=self.bounded_hold(row['id'],price,Usage(**json.loads(row['usage'])))+sum((Fraction(a['max_count']*a['unit_cost_micro']*1_000_000,price.reference_rate)
                           for a in self.db.execute("SELECT max_count,unit_cost_micro FROM attempt_actions WHERE attempt=? AND count IS NULL AND status IN ('reserved','unknown')",(row['id'],))),Fraction())
                 if hold>Fraction(row['reserved']):
                     self.db.execute('UPDATE attempts SET reserved=? WHERE id=?',(str(hold),row['id']))
+
+    def bounded_hold(self,attempt,price,usage):
+        row=self.db.execute('SELECT * FROM attempt_bounds WHERE attempt=?',(attempt,)).fetchone()
+        if row is None:return self.token_hold(price,usage)
+        amount=Fraction()
+        if usage.input_total is None:
+            amount+=Fraction(row['input_bound']*Fraction(row['input_rate']),price.reference_rate)
+        elif usage.input_cached is None and price.input_rate!=price.cached_rate:
+            amount+=Fraction(usage.input_total*Fraction(row['input_rate']),price.reference_rate)
+        if usage.output_total is None:amount+=Fraction(row['output_bound']*price.output_rate,price.reference_rate)
+        return amount
 
     @staticmethod
     def token_hold(price,usage):

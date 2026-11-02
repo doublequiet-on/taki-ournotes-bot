@@ -31,7 +31,7 @@ from .chat_agent import ChatAgent
 from .chat_capabilities import ChatCapabilities
 
 PERSONA = '''你是 Taki，一个以椎名立希为原型的独立查询助手。简体中文，直率认真，简洁、友善，可轻微吐槽，不羞辱玩家。
-围绕用户当前问题表达：先直接给结论或能提供的帮助，再补必要依据、条件和下一步；不复述检索过程，不主动扩展到无关问题。答完自然收尾，别习惯性反问；必要澄清或顺着对话可提问。
+围绕用户当前问题表达：先直接给结论或能提供的帮助，再补必要依据、条件和下一步；不复述检索过程，不主动扩展到无关问题。默认用完整陈述自然收尾。用户补充了上一问的答案时，把新信息用进回应，不再接力盘问。普通吐槽不自动转成劝休息、布置任务或操作建议。只有当前请求确实缺少必要信息时才问一个具体问题，或按用户明确要求提问。
 按话题需要展开：闲聊接住话题后可补充想法或理由，不总压成一两句；认真讨论讲清判断、理由和必要例子，追问回应具体疑点，没懂就换种说法。不凑字数，不重复已说清的内容。用具体事实和自然短句，不加自我免责、能力声明或自我否定的铺垫，不反复道歉或添加“作为AI”“仅供参考”“遗憾的是”等套话；不刻意用“虽然……但是”削弱已有结论，也不靠夸张或讨好增强语气。
 已核验的事实直接说清；证据中的推断、未知项和影响结论的区服、版本、日期、限制须准确保留。缺资料时简短说明具体缺口，有合适的已支持查询或必要澄清时再给下一步，不无故让用户反复重试。
 这些表达原则不扩大证据支持的范围，不隐藏失败，不把未确认说成已确认，也不添加证据没有的风险或建议。
@@ -88,7 +88,7 @@ ERRORS={
     'query_entity_mismatch':'这次解析的查询对象与问题不一致，已停止查询。可以使用名称或 ID 通过直接指令查询。',
     'query_difficulty_ambiguous':'这句话包含冲突的谱面难度，请只指定一种难度。',
     'query_difficulty_mismatch':'这次解析的谱面难度与问题不一致，已停止查询。可用 /查谱面 加歌曲名和难度查询。',
-    'model_protocol_error':'AI 返回的格式不符合要求，请稍后重新提问。',
+    'model_protocol_error':'这次回复处理失败了。',
     'source_unavailable':'当前资料核实失败，请稍后重试。',
     'execution_timeout':'这次 AI 处理超时，请稍后重试。',
     'policy_denied':'当前策略不允许 AI 调用；可以使用直接查询指令。',
@@ -154,9 +154,13 @@ class ModelRuntime:
         self.proactive_capabilities=ChatCapabilities(self.usage.path.with_name('chat-proactive-capabilities-v1.json'))
         self._dedicated_proactive=bool(getattr(backend.settings,'ai_proactive_profile_file',None))
         self.admin=ModelAdmin(self,self.usage.path.with_name('model-admin-v1.sqlite3'))
-        self.capabilities=ChatCapabilities(self.usage.path.with_name('chat-capabilities-v1.json'))
+        self.proactive_capabilities.authority=self.admin.db
+        self.proactive_capabilities.require_authority=True
+        self.capabilities=ChatCapabilities(self.usage.path.with_name('chat-capabilities-v1.json'),self.admin.db,require_authority=True)
+        if getattr(backend.settings,'chat_engine','legacy')=='agent':self.admin.migrate_chat_authorities()
         self.agent=(ChatAgent(self,self.usage.path.with_name('chat-v1.sqlite3'))
                     if getattr(backend.settings,'chat_engine','legacy')=='agent' else None)
+        if self.agent:self.agent.recovery.recover()
 
     def dedicated_proactive(self):
         # Latch the selected route: removing/revoking its files must never select a dearer model.
@@ -178,7 +182,7 @@ class ModelRuntime:
         return replace(primary,profile=profile,fingerprint=selected.fingerprint)
 
     def capabilities_for(self,work):
-        return self.proactive_capabilities if work.proactive is not None and self.dedicated_proactive() else self.capabilities
+        return self.proactive_capabilities if work.proactive is not None and not getattr(work,'continuation',False) and self.dedicated_proactive() else self.capabilities
 
     def cost_status(self):
         result=self.usage.costs()
@@ -187,7 +191,7 @@ class ModelRuntime:
         result['next_route']='blocked'
         try:
             profile=self.config.snapshot().profile
-            amount=2*profile.price.reserve(profile.max_input_tokens,profile.max_output_tokens)
+            amount=2*profile.reserve(profile.max_input_tokens,profile.max_output_tokens)
             result['admission_micro']=str(amount*profile.price.reference_rate/1_000_000)
             try:
                 self.usage.check_primary(day(self.usage.clock()),profile,amount)
@@ -252,10 +256,10 @@ class ModelRuntime:
         work.budget_fallback=True
 
     def route(self,work):
-        if work.budget_fallback or work.proactive is not None:return
+        if work.budget_fallback or work.proactive is not None and not getattr(work,'continuation',False):return
         profile=work.model_snapshot.profile
         # Admit a bounded first request and its maximum final response together.
-        amount=2*profile.price.reserve(profile.max_input_tokens,profile.max_output_tokens)
+        amount=2*profile.reserve(profile.max_input_tokens,profile.max_output_tokens)
         try:
             self.usage.check_primary(day(self.usage.clock()),profile,amount,user=self.usage.key('user',work.model_subject))
             self.record_route(work,'primary_budget_available')
@@ -279,7 +283,7 @@ class ModelRuntime:
         except ModelError as exc:
             # A competing request may reserve the budget during image/tool IO.
             # Only a pre-permit rejection may choose another model; never retry HTTP.
-            if str(exc)!='primary_budget_exceeded' or work.model_attempts or work.budget_fallback or work.proactive is not None:raise
+            if str(exc)!='primary_budget_exceeded' or work.model_attempts or work.budget_fallback or work.proactive is not None and not getattr(work,'continuation',False):raise
             self.use_fallback(work)
             work.image_bytes=0
             return await operation(deadline)
@@ -399,7 +403,7 @@ class ModelRuntime:
             require(work.model_snapshot is not None and (work.model_subject is not None or work.proactive is not None),'model_not_configured')
             require(not work.native_claimed,'multiple_ai_requests')
             work.native_claimed=True
-            if work.proactive is not None:
+            if work.proactive is not None and not getattr(work,'continuation',False):
                 user=self.usage.key('service',work.request.instance_id,work.request.app_id,work.request.conversation_id,
                     work.service_policy.service_subject_id,'proactive')
             else:user=self.usage.key('user',work.model_subject)
@@ -409,15 +413,37 @@ class ModelRuntime:
                 return await self.routed(work,lambda end:self.agent.run(work,question,user,group,end),deadline)
             seconds=min(self.agent.budget.execution_seconds,work.content_deadline-time.monotonic(),
                         work.request.timestamp_ms/1000+298-self.backend.clock()-5)
+            if work.proactive is not None:
+                remaining=work.proactive.expires_at-self.agent.proactive.controller.clock()
+                work.content_deadline=min(work.content_deadline,time.monotonic()+remaining)
+                seconds=min(seconds,remaining)
             require(seconds>0,'execution_timeout')
             return await self.backend.models.run(user,operation,execution_seconds=seconds)
         except (ModelError,ProtocolError,KnowledgeError) as exc:
             code=exc.code if isinstance(exc,ProtocolError) else str(exc)
+            self.agent.proactive.trace(work,'error',status=code,model_attempts=work.model_attempts)
             self.agent.audit(self.agent.store.finish,work.delivery,code)
             return replies.PreparedReply('',business_status='proactive_error') if work.proactive is not None else failure(code)
         except asyncio.TimeoutError:
+            self.agent.proactive.trace(work,'error',status='execution_timeout',model_attempts=work.model_attempts)
             self.agent.audit(self.agent.store.finish,work.delivery,'execution_timeout')
             return replies.PreparedReply('',business_status='proactive_error') if work.proactive is not None else failure('execution_timeout')
+
+    def reserve(self,work,attempt,user,group,bound,*,billing_request_id=None,action_budget=()):
+        profile=work.model_snapshot.profile
+        billing_request_id=billing_request_id or work.service_request_id or work.request.request_id
+        if getattr(work,'continuation',False):
+            self.agent.proactive.check_continuation_budget(work,profile.reserve(bound,profile.max_output_tokens)*profile.price.reference_rate/1_000_000+sum(count*rate for _,count,rate in action_budget))
+        if work.proactive is not None and not getattr(work,'continuation',False) and billing_request_id==work.service_request_id:
+            from .chat_jobs import ServiceError
+            try:self.agent.service_budget.check(work.service_policy,'proactive',profile,billing_request_id,
+                profile.reserve(bound,profile.max_output_tokens)*profile.price.reference_rate/1_000_000+sum(count*rate for _,count,rate in action_budget),
+                reply_times=self.agent.store.proactive_replies(work.request.scope),
+                **self.agent.proactive.opportunity_budget(work))
+            except ServiceError as exc:
+                raise ModelError('quota_exceeded' if str(exc) in ('chat_service_call_limit','chat_service_cost_limit',
+                    'chat_service_daily_cost_limit','chat_opportunity_call_limit','chat_opportunity_cost_limit') else str(exc)) from None
+        self.usage.reserve(billing_request_id,attempt,user,group,profile,bound,action_budget=action_budget)
 
     def input_bound(self,work,messages,tools,*,body=None):
         from ..sources.model_provider import request_body as bound_body
@@ -439,6 +465,9 @@ class ModelRuntime:
         self.check(work,deadline,leases)
         if service_policy is not None:require(self.agent.services.policy(work.model_snapshot,work.request.conversation_id)==service_policy,'chat_service_revoked')
         body=request_body(profile,messages,tools)
+        if (work.proactive is not None and web is None and service_policy is None
+                and billing_request_id is None and not getattr(work,'proactive_generation',False) and profile.wire_profile=='openai-responses-v1'):
+            body['text']={'format':self.agent.proactive.response_format()}
         action_budget=()
         if web is not None:
             require(profile.wire_profile=='openai-responses-v1' and not tools,'chat_capability_unverified')
@@ -453,15 +482,8 @@ class ModelRuntime:
         require(bound<=profile.max_input_tokens,'model_input_too_large')
         attempt=reservation or uuid.uuid4().hex
         billing_request_id=billing_request_id or work.service_request_id or work.request.request_id
-        if work.proactive is not None and billing_request_id==work.service_request_id and reservation is None:
-            from .chat_jobs import ServiceError,maximum_cost_micro
-            try:self.agent.service_budget.check(work.service_policy,'proactive',profile,billing_request_id,
-                maximum_cost_micro(profile)+sum(count*rate for _,count,rate in action_budget),
-                reply_times=self.agent.store.proactive_replies(work.request.scope))
-            except ServiceError as exc:
-                raise ModelError('quota_exceeded' if str(exc) in ('chat_service_call_limit','chat_service_cost_limit') else str(exc)) from None
         if reservation is None:
-            self.usage.reserve(billing_request_id,attempt,user,group,profile,bound,action_budget=action_budget)
+            self.reserve(work,attempt,user,group,bound,billing_request_id=billing_request_id,action_budget=action_budget)
         else:
             held=self.usage.get(attempt)
             require(held['request_id']==billing_request_id and held['state']=='reserved','invalid_reservation')
@@ -475,22 +497,27 @@ class ModelRuntime:
             # No await/queue/tool work between the consumed permit and this HTTP.
             result=await asyncio.wait_for(self.client.request(profile,body,timeout=max(.001,deadline-time.monotonic())),
                                           max(.001,deadline-time.monotonic()))
+            if result.transport_error and work.proactive is not None:
+                self.agent.proactive.trace(work,'error',status='provider_unavailable',name=result.transport_error)
             actions=result.provider_actions or ((ProviderAction('web_search',None),) if web is not None else ())
             self.usage.settle(attempt,result.usage,result.error_code,actions=actions)
             if result.status=='ok':
                 require(type(result.native_calls) is int and 0<=result.native_calls<=(web.max_calls if web else 0)
                         and all(action.count==0 or web is not None and action.count is not None and action.count<=web.max_calls
                                 for action in result.provider_actions),'provider_action_budget_exceeded')
+            # Settle the external charge first; revoked/deleted inputs cannot
+            # authorize saving the returned visible text in the audit log.
+            self.check(work,deadline,leases)
             if getattr(work,'chat',False) and service_policy is None:
                 self.agent.audit(self.agent.store.event,work.delivery,'model/'+attempt,'model',
                     {'attempt_id':attempt,'status':result.status,'error_code':result.error_code,
-                     'usage_status':result.usage.status,'visible':result.text or '',
+                     'usage_status':result.usage.status,'transport_error':result.transport_error,'visible':result.text or '',
                      'native_calls':result.native_calls,'provider_actions':[dict(kind=action.kind,count=action.count) for action in result.provider_actions],
                      'input_total':result.usage.input_total,'output_total':result.usage.output_total,
                      'elapsed_ms':int((time.monotonic()-began)*1000)})
             if result.tool_calls:
                 name=result.tool_calls[0].name
-                kind=name if name in TOOLS or getattr(work,'chat',False) and name in ('web_search','story_search','story_read','group_memory_search','group_memory_read','image_read') else 'unrecognized_tool'
+                kind=name if name in TOOLS or getattr(work,'chat',False) and name in ('web_search','story_search','story_read','group_memory_search','group_memory_read','image_read','research_task','read_entity_fields') else 'unrecognized_tool'
             elif tools: kind='routing_text' if result.status=='ok' else 'routing'
             self.check(work,deadline,leases)
             if service_policy is not None:require(self.agent.services.policy(work.model_snapshot,work.request.conversation_id)==service_policy,'chat_service_revoked')

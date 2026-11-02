@@ -45,7 +45,7 @@ function id(value: unknown): value is string {
   return typeof value === 'string' && value.length > 0 && value.length <= 256
     && value.trim() === value && !/[\u0000-\u001f\u007f]/u.test(value)
 }
-function pair(current: unknown, legacy: unknown): string | undefined {
+export function pairId(current: unknown, legacy: unknown): string | undefined {
   if (current !== undefined && !id(current) || legacy !== undefined && !id(legacy)) return
   if (current !== undefined && legacy !== undefined && current !== legacy) return
   return (current ?? legacy) as string | undefined
@@ -122,8 +122,8 @@ export async function decodeIncoming(
   if (!data || !author) return { status: 'rejected', reason: 'missing_identity' }
   if (author.bot === true) return { status: 'ignored', reason: 'bot_message' }
   const kind = type === 'C2C_MESSAGE_CREATE' ? 'c2c' : 'group'
-  const userId = pair(author.id, kind === 'group' ? author.member_openid : author.user_openid)
-  const conversationId = kind === 'c2c' ? userId : pair(data.group_id, data.group_openid)
+  const userId = pairId(author.id, kind === 'group' ? author.member_openid : author.user_openid)
+  const conversationId = kind === 'c2c' ? userId : pairId(data.group_id, data.group_openid)
   if (!userId || !conversationId || !id(data.id)) {
     return { status: 'rejected', reason: 'missing_or_conflicting_identity' }
   }
