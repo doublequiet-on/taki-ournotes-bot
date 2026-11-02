@@ -4812,7 +4812,8 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
             self.assertEqual(len(attempts),1)
             self.assertEqual(plan['parts'][0]['business_status'],'success')
             self.event(plan,'intent');self.event(plan,'ack')
-        self.assertEqual(len(self.agent.store.proactive_replies(request.scope)),2)
+        self.assertTrue(candidate[0].continuation)
+        self.assertEqual(len(self.agent.store.proactive_replies(request.scope)),1)
 
     async def test_followup_delay_uses_zero_group_cooldown(self):
         from ournotes_bot.application.backend_protocol import Request
@@ -5010,7 +5011,9 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
                 self.assertIsNotNone(second)
                 self.assertEqual(second[0].reserved_cost_micro,29996)
                 self.agent.proactive.controller.decide(second[0],'skip',actual_cost_micro=0)
-        self.assertIsNone(candidate(3))
+        third=candidate(3)
+        self.assertIsNotNone(third)
+        self.assertEqual(third[0].reserved_cost_micro,19994)
         self.assertEqual(self.policy.proactive.max_cost_micro_per_hour,50000)
 
     def test_web_candidate_rejects_unresolved_search_fees(self):
@@ -5241,8 +5244,55 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.agent.store.summaries(Request_scope()),[])
 
 
+    async def test_clipped_opportunity_still_funds_decision_and_reply(self):
+        from ournotes_bot.application.chat_jobs import maximum_cost_micro
+        cost=maximum_cost_micro(self.snapshot.profile)
+        self.policy=replace(self.policy,proactive=replace(self.policy.proactive,max_cost_micro_per_hour=int(cost*3)))
+        self.agent.services.policy.return_value=self.policy
+        self.client.request.return_value=self.result('{"participation":"skip"}')
+        value=self.observation();self.tick+=1.6
+        plan,attempts,candidate=await self.candidate(value)
+        self.assertTrue(attempts)
+        self.assertLessEqual(candidate[0].reserved_cost_micro,int(cost*3))
+
+    async def test_followup_keeps_other_speakers_context_before_deciding_skip(self):
+        self.client.request.return_value=self.result('好，明天再试')
+        plan,_=await self.prepare_native('/聊 我打算明天再试')
+        self.event(plan,'intent');self.event(plan,'ack')
+        self.current_user='u2';self.now+=.01
+        self.observation('甲，你刚说的那个我也试了',seq=2)
+        self.current_user='u1';self.now+=.01
+        value=self.observation('对，我们明天一起试',seq=3);self.tick+=1.6
+        bodies=ChatAgentTests.capture_native_bodies(self)
+        self.client.request.return_value=self.result('{"participation":"skip"}')
+        plan,_,_=await self.candidate(value)
+        prompt=bodies[0]['messages'][0]['content']
+        context=json.dumps(bodies[0]['messages'][1:],ensure_ascii=False)
+        self.assertIn('续聊窗口只提供判断机会',prompt)
+        self.assertIn('两位群友正在互相回应',prompt)
+        self.assertIn('甲，你刚说的那个我也试了',context)
+        self.assertIn('u2',context)
+        self.assertIn('对，我们明天一起试',context)
+        self.assertEqual(plan['parts'],[])
+
+
+    async def test_proactive_reply_opens_window_before_cooldown(self):
+        self.client.request.return_value=self.result('{"participation":"reply","text":"这下练顺了"}')
+        value=self.observation('这段终于练顺了');self.tick+=1.6
+        plan,_,_=await self.candidate(value)
+        self.event(plan,'intent');self.event(plan,'ack')
+        self.now+=.01
+        value=self.observation('对，比昨天好多了',seq=2)
+        self.tick+=1.6
+        self.client.request.return_value=self.result('{"participation":"reply","text":"嗯，进步挺明显"}')
+        _,_,candidate=await self.candidate(value,2)
+        self.assertTrue(candidate[0].continuation)
+
+
+
 def Request_scope():
     return dict(instance_id='fixture',app_id='app',platform='qq',kind='group',conversation_id='g1')
+
 
 
 class ChatReviewRegressionTests(Fixture,unittest.IsolatedAsyncioTestCase):
@@ -6570,3 +6620,35 @@ class ChatServiceJobsTests(unittest.TestCase):
                         json.dumps({**result,'summary':'https://multimedia.nt.qq.com.cn/download?signature=secret'})):
             self.assertIsNone(validate_summary(invalid,candidate))
         self.assertEqual(candidate.original_messages,tuple(messages))
+
+
+    def test_day_and_hour_are_independent(self):
+        from ournotes_bot.domain.model_calls import Usage
+        from ournotes_bot.application.chat_jobs import ServiceError
+        self.attempt('proactive',usage=Usage(80,0,10,None,90,'known'))
+        self.now[0]+=3601
+        policy=self.save();policy=replace(policy,proactive=replace(policy.proactive,max_cost_micro_per_day=100))
+        with self.assertRaisesRegex(ServiceError,'daily_cost_limit'):
+            self.budget.check(policy,'proactive',self.profile,self.request('proactive','new'),1)
+        self.now[0]+=86400
+        self.budget.check(policy,'proactive',self.profile,self.request('proactive','new'),1)
+
+
+    def test_midnight_and_unknown_do_not_release_money(self):
+        from ournotes_bot.domain.model_calls import Usage
+        from ournotes_bot.application.chat_jobs import ServiceError
+        self.attempt('proactive')
+        self.now[0]+=86400
+        policy=self.save();policy=replace(policy,proactive=replace(policy.proactive,max_cost_micro_per_day=1))
+        with self.assertRaisesRegex(ServiceError,'daily_cost_limit'):
+            self.budget.check(policy,'proactive',self.profile,self.request('proactive','new'),1)
+
+
+    def test_evaluations_count_requests_not_tool_calls(self):
+        from ournotes_bot.domain.model_calls import Usage
+        from ournotes_bot.application.chat_jobs import ServiceError
+        self.attempt('proactive',usage=Usage(80,0,10,None,90,'known'))
+        p=self.save();p=replace(p,proactive=replace(p.proactive,max_evaluations_per_hour=1))
+        self.budget.check(p,'proactive',self.profile,self.request('proactive'),1)
+        with self.assertRaisesRegex(ServiceError,'evaluation_limit'):
+            self.budget.check(p,'proactive',self.profile,self.request('proactive','new'),1)

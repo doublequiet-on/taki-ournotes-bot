@@ -82,7 +82,7 @@ function webSearchSettings(s){
 function proactiveQuota(s){
   const value=s.proactiveLimits.value,edit=s.proactiveEdit.value,items=s.groups.value?.sections?.groups?.data||[];
   const ids=[...new Set([...items.map(g=>g.group_id),...Object.keys(s.groups.value?.policy?.groups||{}),s.groupId.value,edit?.group_id].filter(Boolean))];
-  const fields=[['max_calls_per_hour','每小时最多模型请求',120],['max_replies_per_hour','每小时最多主动回复',120],['cooldown_seconds','回复冷却（秒）',86400]];
+  const fields=[['max_calls_per_hour','每小时最多模型请求',120],['max_replies_per_hour','每小时最多主动回复',120],['cooldown_seconds','主动发起间隔（秒）',86400]];
   const mark=()=>{edit.dirty=true;};
   return h('section',{class:'proactive-quota'},[h('h3','主动参与限额'),
     h('label',['目标群',h('select',{'aria-label':'主动参与目标群',value:edit?.group_id||'',disabled:s.busy.value||edit?.dirty,onChange:e=>s.refreshProactiveLimits(e.target.value)},[
@@ -94,8 +94,10 @@ function proactiveQuota(s){
       h('p',value?.approved?(value.capability_approved?'本群已有服务和能力批准':'群服务已批准，能力尚待核对'):'本群尚未批准自动发言；可先保存限额'),
       h('label',{class:'toggle'},[h('input',{type:'checkbox',checked:edit.limits.enabled,onChange:e=>{edit.limits.enabled=e.target.checked;mark();}}),'启用主动参与（仍须本群批准）']),
       h('div',{class:'form-grid'},fields.map(([key,title,max])=>h('label',[title,h('input',{type:'number',min:0,max,step:1,'aria-label':title,value:edit.limits[key],onInput:e=>{edit.limits[key]=Number(e.target.value);mark();}})]))),
+      h('label',['每小时接话判断上限（0 沿用调用上限）',h('input',{type:'number',min:0,max:120,value:edit.limits.max_evaluations_per_hour||0,onInput:e=>{edit.limits.max_evaluations_per_hour=Number(e.target.value);mark();}})]),
       h('label',[`每小时费用上限（${value?.currency||'当前币种'}）`,h('input',{type:'number',min:0,max:1000000,step:'0.01','aria-label':'主动参与每小时费用上限',value:edit.limits.max_cost_micro_per_hour/1e6,onInput:e=>{edit.limits.max_cost_micro_per_hour=Math.round(Number(e.target.value)*1e6);mark();}})]),
-      h('p','模型请求数包含判断、略过、暂缓和工具续接；成功回复另计次数。费用上限也要容纳整轮预留，达到限额后停止主动参与。'),
+      h('label',[`每日费用上限（北京时间，0 为沿用旧配置不设日上限）（${value?.currency||'当前币种'}）`,h('input',{type:'number',min:0,max:1000000,step:'0.01','aria-label':'主动参与每日费用上限（北京时间，0 为沿用旧配置不设日上限）',value:(edit.limits.max_cost_micro_per_day||0)/1e6,onInput:e=>{edit.limits.max_cost_micro_per_day=Math.round(Number(e.target.value)*1e6);mark();}})]),
+      h('p','模型请求数包含判断、略过、暂缓和工具续接；成功回复另计次数。每小时判断次数另限；实际模型调用还包括正文生成及工具续接。每次按实际输入上界预留，待核账费用继续占用限额。主动发起间隔不限制已进入正常续聊的回应。'),
       edit.conflict&&h('p',{role:'alert'},'服务器配置已变化或保存未确认；草稿保留，请先读取最新值核对。'),
       button('保存主动参与限额',()=>s.saveProactiveLimits(),s.busy.value||!edit.dirty||edit.conflict||s.modelDirty.value),
       edit.conflict&&value?.group_id===edit.group_id&&button('核对最新限额后保留草稿',()=>{if(window.confirm(`服务器当前限额：每小时 ${value.limits.max_calls_per_hour} 次请求、${value.limits.max_replies_per_hour} 次回复、${value.currency} ${value.limits.max_cost_micro_per_hour/1e6}。保留你的草稿并以此版本重试？`)){edit.guard=value.guard;edit.conflict=false;}},s.busy.value),

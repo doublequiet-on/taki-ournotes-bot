@@ -53,7 +53,7 @@ class ProactiveChat:
     def control_event(self,request,status):
         backend=self.agent.runtime.backend
         now=backend.clock()
-        if status in ('excluded_user','followup_disabled','platform_unapproved','service_disabled','budget_exhausted','conversation_busy'):
+        if status.startswith('chat_service_') or status in ('excluded_user','followup_disabled','platform_unapproved','service_disabled','budget_exhausted','conversation_busy'):
             key=(request.conversation_id,status)
             if key in self.control_times and now-self.control_times[key]<10:return
             self.control_times[key]=now;self.control_times.move_to_end(key)
@@ -138,7 +138,7 @@ class ProactiveChat:
         if policy is None and scope not in self.controller.groups:return None
         limits=policy.proactive if policy else None
         self.controller.configure(scope,ProactivePolicy(bool(policy),policy.service_subject_id if policy else '',
-            policy.approval_ref if policy else '',limits.max_calls_per_hour if limits else 6,
+            policy.approval_ref if policy else '',min(limits.max_calls_per_hour,limits.max_evaluations_per_hour or limits.max_calls_per_hour) if limits else 6,
             limits.max_replies_per_hour if limits else 3,limits.max_cost_micro_per_hour if limits else 0,
             cooldown_seconds=limits.cooldown_seconds if limits else 60))
         self.controller.groups[scope].coalesce_seconds=None
@@ -152,13 +152,14 @@ class ProactiveChat:
         if (group is None or group.continuation_user_id is None or not group.rows
                 or group.active is None and not group.dirty and group.deferred_at is None):return None
         followup=self.followups.match(scope,group.rows[-1].message.message_id)
-        return followup.user_id if followup else None
+        return group.continuation_user_id if followup else None
 
     def observe(self,request):
         if request.kind!='group' or request.policy.natural_query!='model':return False
         try:
             scope=self.scope(request);settings=self.settings(request.conversation_id)
             if not self.agent.store.source_valid(request.scope,request.message_id,request.timestamp_ms):return False
+            self.followups.observe(scope,request.user_id,request.message_id,request.timestamp_ms,request.ingress_seq,request.gateway_epoch)
             owner=self.continuation_owner(scope)
             if owner is not None and owner!=request.user_id:
                 self.control_event(request,'conversation_busy');return False
@@ -195,7 +196,6 @@ class ProactiveChat:
                         active.chat_coalesce_until=min(time.monotonic()+settings['coalesce_seconds'],active.chat_coalesce_deadline)
                         self.control_event(request,'supplement_merged')
                     return False
-            self.followups.observe(scope,request.user_id,request.message_id,request.timestamp_ms,request.ingress_seq,request.gateway_epoch)
             followup=self.followups.match(scope,request.message_id) if settings['followup_enabled'] else None
             if followup is not None and re.fullmatch(r'(?:不用了|先这样|先不查了|停止|结束|算了)[。！!~～\s]*',request.body.strip()):
                 self.followups.clear(scope,request.user_id);self.controller.cancel(scope)
@@ -250,18 +250,21 @@ class ProactiveChat:
             cost+=self.agent.budget.model_calls*web.max_calls*web.unit_cost_micro
             # Reserve the model loop and only the search budget this group can fund.
             # Each actual HTTP still checks persistent costs before it can start.
-        if not continuation and web:
+        if not continuation:
             preflight=service_request_id('proactive',request.instance_id,request.app_id,
                 request.conversation_id,'budget/'+request.request_id)
             try:
                 permit=self.agent.service_budget.check(policy,'proactive',snapshot.profile,
-                    preflight,math.ceil(model_cost),reply_times=self.agent.store.proactive_replies(request.scope))
-            except ServiceError:
-                self.control_event(request,'budget_exhausted');return None
+                    preflight,1,reply_times=self.agent.store.proactive_replies(request.scope))
+            except ServiceError as exc:
+                self.control_event(request,str(exc));return None
             spent=max(permit.spent_cost_micro,self.controller.status(self.scope(request))['hourly_cost_micro'])
-            cost=min(math.ceil(cost),math.floor(policy.proactive.max_cost_micro_per_hour-spent))
-            if cost<math.ceil(model_cost):
-                self.control_event(request,'budget_exhausted');return None
+            cost=min(math.ceil(cost),math.floor(permit.available_cost_micro),
+                     math.floor(policy.proactive.max_cost_micro_per_hour-spent))
+            # Fund the decision and final reply; tools/rechecks spend only what remains.
+            minimum=maximum_cost_micro(snapshot.profile)*(2 if snapshot.profile.wire_profile=='openai-responses-v1' else 1)
+            if cost<math.ceil(minimum):
+                self.control_event(request,'chat_service_reservation_limit');return None
         candidate=self.controller.candidate(self.scope(request),reserve_cost_micro=math.ceil(cost))
         if candidate is None:return None
         last=candidate.messages[-1]
@@ -273,8 +276,8 @@ class ProactiveChat:
         job=service_request_id('proactive',request.instance_id,request.app_id,request.conversation_id,candidate.candidate_id)
         try:self.agent.service_budget.check(policy,'proactive',snapshot.profile,job,candidate.reserved_cost_micro,
             reply_times=self.agent.store.proactive_replies(request.scope))
-        except ServiceError:
-            self.control_event(request,'budget_exhausted')
+        except ServiceError as exc:
+            self.control_event(request,str(exc))
             self.controller.decide(candidate,'skip',actual_cost_micro=0);return None
         if snapshot.fingerprint:self.agent.runtime.usage.configuration(snapshot.profile.config_version,snapshot.fingerprint)
         return candidate,policy,snapshot,job
@@ -305,11 +308,11 @@ class ProactiveChat:
         return content
 
     def remember_question(self,work,message_id,text):
-        if not work.chat or (work.proactive is not None and not work.continuation) or work.request.kind!='group':return
+        if not work.chat or work.request.kind!='group':return
         try:
             settings=self.settings(work.request.conversation_id)
             if not settings['followup_enabled'] or not self.platform_allowed(work.request):return
-            generation=(self.followups.changed(self.scope(work.request),work.request.user_id) if work.continuation
+            generation=(self.followups.changed(self.scope(work.request),work.request.user_id) if work.proactive is not None
                         else getattr(work,'followup_generation',None))
             originals=self.agent.store.read(work.request.scope,[work.request.message_id])['messages']
             if len(originals)!=1 or originals[0]['role']!='user' or originals[0]['speaker_id']!=work.request.user_id:return
@@ -318,7 +321,7 @@ class ProactiveChat:
                 work.request.user_id,work.request.message_id,original['text'],original['reply_to'],original['display_name'],original['timestamp_ms'],work.request.ingress_seq,work.request.gateway_epoch,message_id,text,
                 int(self.agent.runtime.backend.clock()*1000),window=settings['followup_window_seconds'],request_id=work.request.request_id)
             group=self.controller.groups.get(self.scope(work.request))
-            if group and group.opportunity is not None:
+            if group and group.opportunity is not None and work.proactive is None:
                 group.opportunity.knowledge_leases.clear();group.opportunity=None
         except (ModelError,ServiceError,ValueError,OSError,sqlite3.Error):pass
 
@@ -372,6 +375,12 @@ class ProactiveChat:
         rows=list(work.proactive.messages[-12:] if followup else work.proactive.messages[-48:])
         if followup:rows=[row for row in rows if row.message_id in followup.observed_ids]
         saved={}
+        if followup:
+            saved={row['message_id']:ChatMessage(**row) for row in self.agent.store.read(work.request.scope,followup.observed_ids)['messages']}
+            merged={**saved,**{row.message_id:row for row in rows}}
+            rows=sorted(merged.values(),key=lambda row:row.timestamp_ms)
+            current=next((row for row in rows if row.message_id==work.request.message_id),None)
+            if current:rows=[row for row in rows if row.message_id!=current.message_id]+[current]
         if not followup:
             saved={row['message_id']:ChatMessage(**row) for row in self.agent.store.recent(work.request.scope,
                 since_ms=int((self.agent.runtime.backend.clock()-900)*1000))}
@@ -413,8 +422,9 @@ class ProactiveChat:
     def opportunity_budget(self,work):
         candidates,cost=self.controller.opportunity_budget(work.proactive)
         request=work.request
-        return dict(opportunity_requests=tuple(('continuation/'+candidate if work.continuation else service_request_id('proactive',request.instance_id,
-            request.app_id,request.conversation_id,candidate)) for candidate in candidates),
+        return dict(opportunity_requests=tuple(value for candidate in candidates for value in (
+            'continuation/'+candidate, service_request_id('proactive',request.instance_id,
+            request.app_id,request.conversation_id,candidate))),
             opportunity_calls=self.agent.budget.model_calls,opportunity_cost_micro=cost)
 
     def check_continuation_budget(self,work,amount):

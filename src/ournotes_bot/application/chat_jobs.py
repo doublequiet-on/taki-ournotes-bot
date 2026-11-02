@@ -10,6 +10,7 @@ from pathlib import Path
 import re
 import sqlite3
 import time
+from datetime import datetime, timedelta, timezone
 
 from ..domain.model_calls import ModelError, Price, Usage
 from ..sources.json_validation import decode_json
@@ -46,6 +47,8 @@ class ProactiveLimits:
     max_replies_per_hour: int = 0
     max_cost_micro_per_hour: int = 0
     cooldown_seconds: int = 300
+    max_cost_micro_per_day: int = 0  # Zero preserves legacy policies without a daily cap.
+    max_evaluations_per_hour: int = 0  # Zero uses the legacy call ceiling.
 
 
 @dataclass(frozen=True)
@@ -69,6 +72,7 @@ def _limits(value, kind):
         return cls()
     _check(isinstance(value, dict) and not set(value) - set(cls.__dataclass_fields__))
     result = cls(**value)
+    if kind == 'proactive':_check(_integer(result.max_evaluations_per_hour,120))
     _check(type(result.enabled) is bool)
     for key in cls.__dataclass_fields__:
         if key == 'enabled':
@@ -76,7 +80,7 @@ def _limits(value, kind):
         number = getattr(result, key)
         _check(_integer(number, 86400 if key == 'cooldown_seconds' else
                         1000 if key in ('max_jobs_per_hour', 'max_calls_per_hour', 'max_replies_per_hour') else 10**12))
-        if result.enabled and key != 'cooldown_seconds':
+        if result.enabled and key not in ('cooldown_seconds', 'max_cost_micro_per_day', 'max_evaluations_per_hour'):
             _check(number > 0)
     return result
 
@@ -171,6 +175,8 @@ class ServicePermit:
     task: str
     spent_cost_micro: Fraction
     requested_cost_micro: Fraction
+    available_cost_micro: Fraction = Fraction()
+    unresolved_cost_micro: Fraction = Fraction()
 
 
 class ServiceBudget:
@@ -194,6 +200,8 @@ class ServiceBudget:
         reserve_cost_micro = Fraction(reserve_cost_micro)
         now = self.clock()
         _check(type(now) in (int, float) and math.isfinite(now), 'chat_service_clock')
+        start = datetime.fromtimestamp(now, timezone(timedelta(hours=8))).replace(hour=0,minute=0,second=0,microsecond=0).timestamp()
+        earliest = min(start, now - 3600) if getattr(limits, 'max_cost_micro_per_day', 0) else now - 3600
         user = self.usage.key('service', *self.namespace, policy.group_id, policy.service_subject_id, task)
         group = self.usage.key('group', policy.group_id)
         try:
@@ -201,13 +209,13 @@ class ServiceBudget:
             # Old uncertain attempts remain held even after the rolling hour ends.
             rows = self.usage.db.execute('''SELECT id,request_id,config_version,price,created,state,
                 reserved,cost,billing_incomplete FROM attempts WHERE group_key=? AND request_id LIKE ?
-                AND (created>? OR state='started' OR billing_incomplete=1) ORDER BY created LIMIT 4097''',
-                (group, prefix + '%', now - 3600)).fetchall()
+                AND (created>=? OR state='started' OR billing_incomplete=1) ORDER BY created LIMIT 4097''',
+                (group, prefix + '%', earliest)).fetchall()
             _check(len(rows) <= 4096, 'chat_service_budget_capacity')
             _check(not self.usage.db.execute('''SELECT 1 FROM attempts a JOIN unbounded_actions u ON u.attempt=a.id
                 WHERE a.group_key=? AND a.request_id LIKE ? AND (u.count IS NULL OR u.count<>0) LIMIT 1''',(group,prefix+'%')).fetchone(),
                 'chat_service_usage_unavailable')
-            recent, cost = [], Fraction()
+            recent, cost, daily_cost, unresolved = [], Fraction(), Fraction(), Fraction()
             opportunity_count,opportunity_cost=0,Fraction()
             for row in rows:
                 if row['state'] == 'released':
@@ -230,7 +238,10 @@ class ServiceBudget:
                     amount = max(amount + held, bound)
                 else:
                     amount += held
-                cost += amount
+                uncertain = row['state'] == 'started' or row['billing_incomplete']
+                if uncertain:unresolved += amount
+                if row['created'] > now - 3600 or uncertain:cost += amount
+                if row['created'] >= start or uncertain:daily_cost += amount
                 if row['request_id'] in opportunity_requests:
                     opportunity_count+=1
                     opportunity_cost+=amount
@@ -239,6 +250,11 @@ class ServiceBudget:
         except (sqlite3.Error, ModelError, ValueError, TypeError, KeyError, ZeroDivisionError, AttributeError):
             raise ServiceError('chat_service_usage_unavailable') from None
         _check(cost + reserve_cost_micro <= limits.max_cost_micro_per_hour, 'chat_service_cost_limit')
+        available = Fraction(limits.max_cost_micro_per_hour) - cost
+        daily_limit = getattr(limits, 'max_cost_micro_per_day', 0)
+        if daily_limit:
+            _check(daily_cost + reserve_cost_micro <= daily_limit, 'chat_service_daily_cost_limit')
+            available = min(available, daily_limit - daily_cost)
         if opportunity_requests:
             _check(opportunity_count<opportunity_calls,'chat_opportunity_call_limit')
             _check(opportunity_cost+reserve_cost_micro<=opportunity_cost_micro,'chat_opportunity_cost_limit')
@@ -247,13 +263,16 @@ class ServiceBudget:
             _check(len(jobs | {request_id}) <= limits.max_jobs_per_hour, 'chat_service_job_limit')
         else:
             _check(len(recent) < limits.max_calls_per_hour, 'chat_service_call_limit')
+            if limits.max_evaluations_per_hour:
+                jobs = {row['request_id'] for row in recent}
+                _check(len(jobs | {request_id}) <= limits.max_evaluations_per_hour, 'chat_service_evaluation_limit')
             _check(isinstance(reply_times, (tuple, list)) and len(reply_times) <= 10000, 'chat_service_reply_facts')
             _check(all(type(stamp) in (int, float) and math.isfinite(stamp) for stamp in reply_times),
                    'chat_service_reply_facts')
             replies = [stamp for stamp in reply_times if stamp > now - 3600]
             _check(len(replies) < limits.max_replies_per_hour, 'chat_service_reply_limit')
             _check(not reply_times or now - max(reply_times) >= limits.cooldown_seconds, 'chat_service_cooldown')
-        return ServicePermit(user, group, request_id, task, cost, reserve_cost_micro)
+        return ServicePermit(user, group, request_id, task, cost, reserve_cost_micro, available, unresolved)
 
 
 @dataclass(frozen=True)

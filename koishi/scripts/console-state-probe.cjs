@@ -97,12 +97,14 @@ async function main(){
   assert.equal(dedicatedCalls.includes('taki/model/proactive/save'),true)
   assert.equal(dedicatedCalls.includes('taki/model/proactive/probe'),true)
   assert.equal(dedicatedCalls.some(m=>m==='taki/model/save'||m==='taki/model/probe'),false)
-  await dedicated.refreshProactiveLimits('alpha');dedicated.proactiveEdit.value.limits.max_calls_per_hour=30;dedicated.proactiveEdit.value.dirty=true
+  await dedicated.refreshProactiveLimits('alpha');dedicated.proactiveEdit.value.limits.max_calls_per_hour=30;dedicated.proactiveEdit.value.limits.max_cost_micro_per_day=2000000;dedicated.proactiveEdit.value.limits.max_evaluations_per_hour=30;dedicated.proactiveEdit.value.dirty=true
   const savingLimits=dedicated.saveProactiveLimits();dedicated.proactiveEdit.value.limits.max_replies_per_hour=6;receipt();await savingLimits
   assert.equal(dedicated.proactiveLimits.value.limits.max_calls_per_hour,30)
+  assert.equal(dedicated.proactiveLimits.value.limits.max_cost_micro_per_day,2000000)
+  assert.equal(dedicated.proactiveLimits.value.limits.max_evaluations_per_hour,30)
   assert.equal(dedicated.proactiveEdit.value.limits.max_replies_per_hour,6);assert.equal(dedicated.proactiveEdit.value.dirty,true)
   const quotaRecovery=sessionState();quotaRecovery.restoreEdits(dedicated.captureEdits())
-  assert.equal(quotaRecovery.modelRole.value,'proactive');
+  assert.equal(quotaRecovery.modelRole.value,'proactive');assert.equal(quotaRecovery.proactiveEdit.value.limits.max_cost_micro_per_day,2000000);assert.equal(quotaRecovery.proactiveEdit.value.limits.max_evaluations_per_hour,30);
   assert.equal(quotaRecovery.proactiveEdit.value.group_id,'alpha');assert.equal(quotaRecovery.proactiveEdit.value.limits.max_replies_per_hour,6)
   await dedicated.refreshProactiveLimits('alpha');assert.equal(dedicated.proactiveEdit.value.conflict,true)
   assert.equal(dedicated.proactiveEdit.value.limits.max_replies_per_hour,6)
