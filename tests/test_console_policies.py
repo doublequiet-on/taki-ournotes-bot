@@ -5348,6 +5348,47 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
         self.assertEqual(usage.get(attempts[0])['reserved'],held['reserved'])
         self.assertTrue(usage.get(attempts[0])['billing_incomplete'])
 
+    async def test_cancelled_proactive_refines_hold_when_background_http_finishes(self):
+        import math
+        from fractions import Fraction
+        from ournotes_bot.application.chat_jobs import maximum_cost_micro
+        from ournotes_bot.application.backend_protocol import Request,digest
+        from ournotes_bot.domain.model_calls import AttemptResult
+        entered=asyncio.Event();release=asyncio.Event()
+        async def provider(*args,**kwargs):
+            entered.set();await release.wait()
+            return AttemptResult('error',error_code='provider_unavailable')
+        self.client.request.side_effect=provider
+        value=self.observation();self.tick+=1.6
+        raw={**value,'trigger':'proactive','proactive_id':'1'*32}
+        raw['request_id']=digest(['fixture','app','qq','group','g1',raw['user_id'],raw['message_id'],raw['proactive_id']])
+        candidate=self.agent.proactive.candidate(Request.parse(raw,'fixture','app',self.now))
+        self.assertIsNotNone(candidate)
+        await self.backend.submit(raw,proactive=candidate)
+        work=next(iter(self.backend.works.values()))
+        try:
+            for _ in range(200):
+                pending=self.backend.lookup(raw['request_id'],'e1').get('pending_model_permission')
+                if pending:
+                    decision={key:v for key,v in pending.items() if key not in ('remaining_ms','admission_policy_version')}
+                    decision.update(decision='allow',reason='fixture',ttl_ms=1000,
+                        current_policy_version=dict(epoch='fixture',global_revision=0,group_revision=0))
+                    self.backend.permissions.decide(raw['request_id'],pending['attempt_id'],decision,'e1')
+                if entered.is_set():break
+                await asyncio.sleep(.005)
+            self.assertTrue(entered.is_set())
+            self.backend.finish(work,'aborted')
+            self.assertEqual(self.agent.proactive.controller.status(candidate[0].scope)['hourly_cost_micro'],candidate[0].reserved_cost_micro)
+        finally:release.set()
+        await asyncio.gather(*tuple(self.backend.models.tasks),return_exceptions=True)
+        state=self.agent.proactive.controller.status(candidate[0].scope)
+        self.assertEqual(state['incomplete_costs'],1)
+        self.assertGreater(state['hourly_cost_micro'],0)
+        self.assertLessEqual(state['hourly_cost_micro'],math.ceil(maximum_cost_micro(self.snapshot.profile)))
+        rows=self.backend.model_runtime.usage.request_view(work.service_request_id)
+        self.assertTrue(any(row['billing_incomplete'] and Fraction(row['reserved_tokens'])>0 for row in rows))
+        self.assertEqual(self.backend.ledger.request(raw['request_id'])['status'],'aborted')
+
     async def test_responses_provider_failure_keeps_attempt_hold_and_funds_decision_and_reply(self):
         self.snapshot=replace(self.snapshot,profile=replace(self.snapshot.profile,provider='openai',
             wire_profile='openai-responses-v1',model='gpt-6.1-terra',max_output_tokens=4096,reasoning_effort='medium',user_daily_limit=1000000))

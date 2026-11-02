@@ -325,12 +325,15 @@ class ProactiveChat:
                 group.opportunity.knowledge_leases.clear();group.opportunity=None
         except (ModelError,ServiceError,ValueError,OSError,sqlite3.Error):pass
 
+    def settle_cost(self,work):
+        return self.controller.settle(work.proactive,**self.cost(work))
+
     def finish(self,work):
         self.trace(work,'finished',status=work.terminal_status,delivered=work.proactive_delivered,
                    model_attempts=work.model_attempts)
         try:
             if work.proactive is not None:
-                self.controller.settle(work.proactive,**self.cost(work))
+                self.settle_cost(work)
                 if work.proactive_delivered:self.controller.delivered(work.proactive)
                 elif self.controller.valid(work.proactive):self.controller.cancel(self.scope(work.request))
         except (sqlite3.Error,ModelError,ValueError):

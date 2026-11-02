@@ -836,6 +836,8 @@ class ChatAgent:
                 runtime.usage.release(final_attempt,'final_not_needed')
             if generation_attempt is not None:
                 runtime.usage.release(generation_attempt,'generation_not_needed')
+            if work.proactive is not None and not work.active:
+                self.audit(self.proactive.settle_cost,work)
             messages.clear()
 
     async def execute(self,work,call,question,site,leases,deadline,turn_deadline,*,registry=None,web=None,user=None,group=None,story_handles=None,image_handles=None,vision=None):
