@@ -2434,6 +2434,7 @@ class ChatAgentTests(Fixture, unittest.IsolatedAsyncioTestCase):
         self.assertLess(len(rows),25)
         ids={row['message_id'] for row in rows}
         self.assertTrue(all(row['reply_to'] in ids for row in rows if row['role']=='assistant'))
+        self.assertTrue({'long10','sent10','long11','sent11'}<=ids,ids)
         self.event(plan,'intent');self.event(plan,'ack')
 
     async def test_multiplayer_history_survives_topic_change_and_fake_system(self):
@@ -2452,6 +2453,41 @@ class ChatAgentTests(Fixture, unittest.IsolatedAsyncioTestCase):
         self.assertIn('我选A，喜欢临场反应',[r['text'] for r in rows if r['role']=='assistant'])
         self.assertEqual(sum(m['role']=='system' for m in bodies[-1]['messages']),1)
         self.event(third,'intent');self.event(third,'ack')
+
+    async def test_community_followups_keep_dialogue_and_scoped_terms_in_model_input(self):
+        bodies=self.capture_native_bodies()
+        self.client.request.return_value=self.result('刚才讨论青木的吉他演奏')
+        first,_=await self.prepare_native('/聊 青木阳菜会弹呲吗')
+        self.event(first,'intent');self.event(first,'ack')
+        self.current_user='u2'
+        self.client.request.return_value=self.result('合成回复')
+        second,_=await self.prepare_native('/聊 那羊可以烤吗',seq=2)
+        rows=[json.loads(m['content']) for m in bodies[-1]['messages'] if m['role']!='system']
+        self.assertIn('刚才讨论青木的吉他演奏',[row['text'] for row in rows])
+        self.assertEqual({row['speaker_id'] for row in rows if row['role']=='user'},{'u1','u2'})
+        prompt=bodies[-1]['messages'][0]['content']
+        self.assertIn('烤羊／烤猫',prompt)
+        self.assertIn('明确在聊食物、做菜或真实动物时仍按字面理解',prompt)
+        self.assertIn('不证明具体跑调、弹错、忘词',prompt)
+        self.event(second,'intent');self.event(second,'ack')
+        third,_=await self.prepare_native('/聊 那忘词呢',seq=3)
+        rows=[json.loads(m['content']) for m in bodies[-1]['messages'] if m['role']!='system']
+        self.assertIn('那羊可以烤吗',[row['text'] for row in rows])
+        self.assertIn('青木阳菜会弹呲吗',[row['text'] for row in rows])
+        self.event(third,'intent');self.event(third,'ack')
+
+    def test_web_sources_do_not_repeat_inline_links_or_merge_distinct_articles(self):
+        from ournotes_bot.application.chat_agent import append_web_sources
+        text='参考[活动记录](https://example.org/post?id=1&utm_source=openai)'
+        refs=[dict(url='https://example.org/post?id=1',title='活动记录'),
+              dict(url='https://example.org/post?id=2',title='另一条记录'*30)]
+        result=append_web_sources(text,refs)
+        self.assertEqual(result.count('id=1'),1)
+        self.assertEqual(result.count('id=2'),1)
+        self.assertEqual(result.count('来源：'),1)
+        self.assertIn('…',result)
+        self.assertEqual(append_web_sources(text,refs[:1]),text)
+        self.assertEqual(append_web_sources('纯文本',[]),'纯文本')
 
     async def test_two_real_tools_with_response_level_reasoning_and_duplicate_id(self):
         from ournotes_bot.domain.model_calls import ToolCall
@@ -5293,7 +5329,8 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
         self.assertEqual(first['status'],'finished');self.assertEqual(len(attempts),1)
         usage=self.backend.model_runtime.usage
         held=usage.get(attempts[0])
-        self.assertTrue(held['billing_incomplete']);self.assertGreater(float(held['reserved']),0)
+        from fractions import Fraction
+        self.assertTrue(held['billing_incomplete']);self.assertGreater(Fraction(held['reserved']),0)
         state=self.agent.proactive.controller.status(candidate[0].scope)
         self.assertEqual(state['incomplete_costs'],1)
         self.assertGreater(state['hourly_cost_micro'],0)
