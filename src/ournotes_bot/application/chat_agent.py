@@ -370,8 +370,8 @@ class ChatAgent:
                 if recent_reply.get('reply_to'):protected.add(recent_reply['reply_to'])
         if work.proactive is not None and work.proactive.followup is not None:
             protected.update((work.proactive.followup.source_id,work.proactive.followup.message_id))
-            protected.update(row.message_id for row in work.proactive.messages
-                if row.speaker_id==work.request.user_id and row.message_id in work.proactive.followup.observed_ids)
+            # Other speakers may show that the original user has turned away from Taki.
+            protected.update(work.proactive.followup.observed_ids)
         if work.request.reference:protected.add(work.request.reference['message_id'])
         def required(message):
             if message['role']=='system':return True
@@ -546,7 +546,7 @@ class ChatAgent:
             if not staged:
                 prompt+='\n最终只输出 JSON：回复用{"participation":"reply","text":"自然回复正文"}；略过用{"participation":"skip"}；暂缓用{"participation":"defer","delay_seconds":2}（2至5秒）。正文不写规则说明或自我免责。'
             if work.proactive.followup is not None:
-                prompt+='\n这是同一用户主动找你聊过后的新消息。判断他是否仍在对你说话：追问、修正、补充或明显继续向你发问时 reply；即使换了话题也可接。明确在回应别人或无法确定交流对象时 skip，不问“你在叫我吗”。无需上一句是问句。先这样、不用了等收尾可简短回应并结束任务。'
+                prompt+='\n这是你已回复过的话题后续，续聊窗口只提供判断机会，不代表对方仍在找你。结合中间其他人的发言判断交流对象：明确接你的话、追问、修正或补充时 reply；原交流对象明显向你开新话题也可接。两位群友正在互相回应，或原交流对象已转向另一位群友时 skip，不因为窗口未结束而抢答；一人接过你的话不代表两人后续都向你开放。明确在回应别人或无法确定交流对象时 skip，不问“你在叫我吗”。无需上一句是问句。先这样、不用了等收尾可简短回应并结束任务。'
         if staged:
             natural_prompt+='\n本轮回应消息：'+work.request.message_id+'，发言人：'+work.request.user_id+'。围绕这条消息与相邻上下文接话，保留发言者和引用关系，前面的讨论用于理解当前话题。'
             prompt+='\n最终只输出包含 participation、text、delay_seconds 三个字段的 JSON 对象，不加代码围栏或说明。participation 为 reply、skip 或 defer；text 固定为空字符串；仅 defer 的 delay_seconds 为 2 至 5 的整数，其余为 null。选择 reply 后另一步直接写群聊正文，本次不拟正文。'

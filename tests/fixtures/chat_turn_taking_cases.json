@@ -1,0 +1,345 @@
+{
+  "provenance": "Synthetic manual contrast cases. Expected decisions are review labels, not measured model outputs.",
+  "cases": [
+    {
+      "id": "C01A",
+      "pair": "引用对象",
+      "context": [
+        {
+          "id": "1",
+          "speaker": "Taki",
+          "text": "先核对版本",
+          "replyTo": null
+        },
+        {
+          "id": "2",
+          "speaker": "甲",
+          "text": "先重启试试",
+          "replyTo": null
+        }
+      ],
+      "currentMessage": {
+        "id": "3",
+        "speaker": "乙",
+        "text": "这个不行",
+        "replyTo": "1"
+      },
+      "expectedAction": "reply"
+    },
+    {
+      "id": "C01B",
+      "pair": "引用对象",
+      "context": [
+        {
+          "id": "1",
+          "speaker": "Taki",
+          "text": "先核对版本",
+          "replyTo": null
+        },
+        {
+          "id": "2",
+          "speaker": "甲",
+          "text": "先重启试试",
+          "replyTo": null
+        }
+      ],
+      "currentMessage": {
+        "id": "3",
+        "speaker": "乙",
+        "text": "这个不行",
+        "replyTo": "2"
+      },
+      "expectedAction": "skip"
+    },
+    {
+      "id": "C02A",
+      "pair": "补充是否结束",
+      "context": [
+        {
+          "id": "1",
+          "speaker": "甲",
+          "text": "我发现个问题",
+          "replyTo": null
+        },
+        {
+          "id": "2",
+          "speaker": "甲",
+          "text": "这个活动",
+          "replyTo": null
+        }
+      ],
+      "currentMessage": {
+        "id": "3",
+        "speaker": "甲",
+        "text": "我再发一张图",
+        "replyTo": null
+      },
+      "expectedAction": "defer"
+    },
+    {
+      "id": "C02B",
+      "pair": "补充是否结束",
+      "context": [
+        {
+          "id": "1",
+          "speaker": "甲",
+          "text": "我发现个问题",
+          "replyTo": null
+        },
+        {
+          "id": "2",
+          "speaker": "甲",
+          "text": "这个活动",
+          "replyTo": null
+        }
+      ],
+      "currentMessage": {
+        "id": "3",
+        "speaker": "甲",
+        "text": "Taki，我说完了，你怎么看？",
+        "replyTo": null
+      },
+      "expectedAction": "reply"
+    },
+    {
+      "id": "C03A",
+      "pair": "转述与呼叫",
+      "context": [
+        {
+          "id": "1",
+          "speaker": "甲",
+          "text": "昨天查过一次",
+          "replyTo": null
+        }
+      ],
+      "currentMessage": {
+        "id": "2",
+        "speaker": "乙",
+        "text": "昨天 Taki 跟我说先核对版本",
+        "replyTo": null
+      },
+      "expectedAction": "skip"
+    },
+    {
+      "id": "C03B",
+      "pair": "转述与呼叫",
+      "context": [
+        {
+          "id": "1",
+          "speaker": "甲",
+          "text": "昨天查过一次",
+          "replyTo": null
+        }
+      ],
+      "currentMessage": {
+        "id": "2",
+        "speaker": "乙",
+        "text": "Taki，你看我这个版本对吗？",
+        "replyTo": null
+      },
+      "expectedAction": "reply"
+    },
+    {
+      "id": "C04A",
+      "pair": "旁聊与续聊",
+      "context": [
+        {
+          "id": "1",
+          "speaker": "Taki",
+          "text": "这段终于练顺了",
+          "replyTo": null
+        },
+        {
+          "id": "2",
+          "speaker": "乙",
+          "text": "甲，我们明天一起试吗？",
+          "replyTo": null
+        }
+      ],
+      "currentMessage": {
+        "id": "3",
+        "speaker": "甲",
+        "text": "乙，好，明天一起",
+        "replyTo": null
+      },
+      "expectedAction": "skip"
+    },
+    {
+      "id": "C04B",
+      "pair": "旁聊与续聊",
+      "context": [
+        {
+          "id": "1",
+          "speaker": "Taki",
+          "text": "这段终于练顺了",
+          "replyTo": null
+        },
+        {
+          "id": "2",
+          "speaker": "乙",
+          "text": "甲，我们明天一起试吗？",
+          "replyTo": null
+        }
+      ],
+      "currentMessage": {
+        "id": "3",
+        "speaker": "甲",
+        "text": "Taki，对，比昨天好多了",
+        "replyTo": "1"
+      },
+      "expectedAction": "reply"
+    },
+    {
+      "id": "C05A",
+      "pair": "开放话题与回声",
+      "context": [
+        {
+          "id": "1",
+          "speaker": "甲",
+          "text": "中午吃什么？",
+          "replyTo": null
+        }
+      ],
+      "currentMessage": {
+        "id": "2",
+        "speaker": "乙",
+        "text": "大家有没有主意？",
+        "replyTo": null
+      },
+      "expectedAction": "reply"
+    },
+    {
+      "id": "C05B",
+      "pair": "开放话题与回声",
+      "context": [
+        {
+          "id": "1",
+          "speaker": "甲",
+          "text": "中午吃什么？",
+          "replyTo": null
+        }
+      ],
+      "currentMessage": {
+        "id": "2",
+        "speaker": "乙",
+        "text": "猪排饭",
+        "replyTo": null
+      },
+      "expectedAction": "skip"
+    },
+    {
+      "id": "C06A",
+      "pair": "疑问与感叹",
+      "context": [
+        {
+          "id": "1",
+          "speaker": "甲",
+          "text": "这个表情太好笑了",
+          "replyTo": null
+        }
+      ],
+      "currentMessage": {
+        "id": "2",
+        "speaker": "乙",
+        "text": "这谁顶得住啊",
+        "replyTo": null
+      },
+      "expectedAction": "skip"
+    },
+    {
+      "id": "C06B",
+      "pair": "疑问与感叹",
+      "context": [
+        {
+          "id": "1",
+          "speaker": "甲",
+          "text": "这个表情太好笑了",
+          "replyTo": null
+        }
+      ],
+      "currentMessage": {
+        "id": "2",
+        "speaker": "乙",
+        "text": "Taki，这个缩写是什么意思？",
+        "replyTo": null
+      },
+      "expectedAction": "reply"
+    },
+    {
+      "id": "C07A",
+      "pair": "收尾与追问",
+      "context": [
+        {
+          "id": "1",
+          "speaker": "Taki",
+          "text": "先核对版本",
+          "replyTo": null
+        }
+      ],
+      "currentMessage": {
+        "id": "2",
+        "speaker": "甲",
+        "text": "懂了，谢谢",
+        "replyTo": "1"
+      },
+      "expectedAction": "skip"
+    },
+    {
+      "id": "C07B",
+      "pair": "收尾与追问",
+      "context": [
+        {
+          "id": "1",
+          "speaker": "Taki",
+          "text": "先核对版本",
+          "replyTo": null
+        }
+      ],
+      "currentMessage": {
+        "id": "2",
+        "speaker": "甲",
+        "text": "怎么核对版本？",
+        "replyTo": "1"
+      },
+      "expectedAction": "reply"
+    },
+    {
+      "id": "C08A",
+      "pair": "媒体缺口",
+      "context": [
+        {
+          "id": "1",
+          "speaker": "甲",
+          "text": "[图片不可用]",
+          "replyTo": null
+        }
+      ],
+      "currentMessage": {
+        "id": "2",
+        "speaker": "甲",
+        "text": "Taki，这里为什么这样？",
+        "replyTo": null
+      },
+      "expectedAction": "defer"
+    },
+    {
+      "id": "C08B",
+      "pair": "媒体缺口",
+      "context": [
+        {
+          "id": "1",
+          "speaker": "甲",
+          "text": "[图片不可用]",
+          "replyTo": null
+        }
+      ],
+      "currentMessage": {
+        "id": "2",
+        "speaker": "甲",
+        "text": "Taki，我补充一下：实际数值是 8，预期是 10，帮我算差值",
+        "replyTo": null
+      },
+      "expectedAction": "reply"
+    }
+  ]
+}

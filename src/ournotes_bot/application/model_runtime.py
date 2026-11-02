@@ -435,14 +435,14 @@ class ModelRuntime:
         if getattr(work,'continuation',False):
             self.agent.proactive.check_continuation_budget(work,profile.reserve(bound,profile.max_output_tokens)*profile.price.reference_rate/1_000_000+sum(count*rate for _,count,rate in action_budget))
         if work.proactive is not None and not getattr(work,'continuation',False) and billing_request_id==work.service_request_id:
-            from .chat_jobs import ServiceError,maximum_cost_micro
+            from .chat_jobs import ServiceError
             try:self.agent.service_budget.check(work.service_policy,'proactive',profile,billing_request_id,
-                maximum_cost_micro(profile)+sum(count*rate for _,count,rate in action_budget),
+                profile.reserve(bound,profile.max_output_tokens)*profile.price.reference_rate/1_000_000+sum(count*rate for _,count,rate in action_budget),
                 reply_times=self.agent.store.proactive_replies(work.request.scope),
                 **self.agent.proactive.opportunity_budget(work))
             except ServiceError as exc:
                 raise ModelError('quota_exceeded' if str(exc) in ('chat_service_call_limit','chat_service_cost_limit',
-                    'chat_opportunity_call_limit','chat_opportunity_cost_limit') else str(exc)) from None
+                    'chat_service_daily_cost_limit','chat_opportunity_call_limit','chat_opportunity_cost_limit') else str(exc)) from None
         self.usage.reserve(billing_request_id,attempt,user,group,profile,bound,action_budget=action_budget)
 
     def input_bound(self,work,messages,tools,*,body=None):
