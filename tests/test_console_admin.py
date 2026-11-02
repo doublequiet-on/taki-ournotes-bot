@@ -1109,7 +1109,10 @@ class HTTPV2ContractTests(unittest.IsolatedAsyncioTestCase):
                 result['ts_to_python']['model_permission']=decision
                 output['model_permission']=backend.permissions.decide(request['request_id'],'a'*32,decision,'epoch')
                 await permission_task
-                work.model_started_at=time.monotonic()-9
+                # Retain wire compatibility coverage for plans from older backends.
+                backend.ledger.processing_hint(work.delivery)
+                work.hint=True
+                work.prepared=(PreparedReply('还在核实，请稍等。',business_status='processing_hint'),)
                 output['hint_pending']=backend.lookup(request['request_id'],'epoch')
                 common=dict(protocol=PROTOCOL,request_id=request['request_id'],plan_version=1,gateway_epoch='epoch',
                     part_id='0',attempt_id='fixture-attempt')

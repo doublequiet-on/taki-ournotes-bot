@@ -447,7 +447,7 @@ class BackendContinuationTests(Fixture, unittest.IsolatedAsyncioTestCase):
         self.assertEqual(plan['parts'][0]['kind'],'image')
         self.assertFalse(plan.get('processing_hint',False))
 
-    async def test_real_slow_hint_keeps_four_image_slots_and_all_remaining_pages(self):
+    async def test_slow_query_stays_silent_and_keeps_five_image_slots(self):
         import time
         entered, held = asyncio.Event(), asyncio.Event()
         pages = tuple(PreparedReply('page-'+str(i), image=b'fixture', context=self.context()) for i in range(6))
@@ -462,17 +462,18 @@ class BackendContinuationTests(Fixture, unittest.IsolatedAsyncioTestCase):
         work = next(iter(self.backend.works.values()))
         work.model_started_at = time.monotonic()-9
         hint = self.backend.lookup(request['request_id'], 'e1')
-        self.assertEqual(len(hint['parts']), 1)
-        self.assertEqual(hint['parts'][0]['business_status'], 'processing_hint')
-        self.event(hint, 'intent'); self.event(hint, 'ack')
+        self.assertEqual(hint['status'], 'preparing')
+        self.assertEqual(hint['parts'], [])
+        self.assertFalse(hint['send_allowed'])
+        self.assertFalse(hint.get('processing_hint',False))
         self.assertFalse(self.backend.conversations.anchors)
         held.set()
         result = await task
-        self.assertEqual([p['kind'] for p in result['parts']], ['text', 'image', 'image', 'image', 'image'])
-        self.assertEqual(result['parts'][0]['status'], 'success')
+        self.assertEqual([p['kind'] for p in result['parts']], ['image'] * 5)
+        self.assertEqual(result['parts'][0]['id'], '0')
         remaining = work.prepared[-1].context.remaining
-        self.assertEqual(len(remaining), 2)
-        self.assertEqual([p.text for p in remaining], ['page-4', 'page-5'])
+        self.assertEqual(len(remaining), 1)
+        self.assertEqual([p.text for p in remaining], ['page-5'])
 
     async def test_long_fallback_notice_keeps_continue_anchor_without_selectable_rows(self):
         self.backend.gate.prepare.return_value=PreparedReply('captured text '*200,image=b'fixture',context=self.context())

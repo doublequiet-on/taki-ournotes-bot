@@ -2232,7 +2232,7 @@ class NativeRuntimeTests(Fixture,unittest.IsolatedAsyncioTestCase):
         self.assertFalse(attempts);self.client.request.assert_not_awaited()
         self.assertEqual(plan['parts'][0]['business_status'],'source_unavailable')
 
-    async def test_slow_hint_uses_same_ledger_sequence_without_context(self):
+    async def test_slow_query_stays_silent_until_final_reply(self):
         from ournotes_bot.domain.model_calls import AttemptResult,Usage
         import time
         held=asyncio.Event();entered=asyncio.Event()
@@ -2244,13 +2244,14 @@ class NativeRuntimeTests(Fixture,unittest.IsolatedAsyncioTestCase):
         await asyncio.wait_for(entered.wait(),1)
         work=next(iter(self.backend.works.values()));work.model_started_at=time.monotonic()-9
         plan=self.backend.lookup(work.request.request_id,'e1')
-        self.assertEqual(plan['status'],'preparing');self.assertTrue(plan['send_allowed'])
-        self.event(plan,'intent');self.event(plan,'ack')
+        self.assertEqual(plan['status'],'preparing');self.assertFalse(plan['send_allowed'])
+        self.assertEqual(plan['parts'],[]);self.assertFalse(plan.get('processing_hint',False))
         self.assertFalse(self.backend.conversations.anchors)
-        self.assertEqual(len(self.backend.lookup(work.request.request_id,'e1')['parts']),1)
+        self.assertEqual(self.backend.lookup(work.request.request_id,'e1')['parts'],[])
         held.set();plan,_=await task
-        self.assertEqual(len(plan['parts']),2);self.assertEqual(plan['parts'][0]['status'],'success')
-        self.assertEqual(plan['parts'][1]['text'],'最终回答')
+        self.assertEqual(len(plan['parts']),1);self.assertEqual(plan['parts'][0]['id'],'0')
+        self.assertEqual(plan['parts'][0]['text'],'最终回答')
+        self.event(plan,'intent');self.event(plan,'ack')
 
     def test_progress_slot_preserves_all_pages_and_their_entity_contexts(self):
         from ournotes_bot.application.replies import expand_replies,reserve_progress_slot
@@ -3574,7 +3575,7 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
         second,_,_=await self.candidate(value,2)
         self.assertTrue(second['send_allowed'])
 
-    async def test_progress_hint_then_final_ack_opens_user_continuation(self):
+    async def test_slow_chat_stays_silent_then_final_ack_opens_user_continuation(self):
         import time
         self.agent.services.policy.return_value=None
         held=asyncio.Event();entered=asyncio.Event()
@@ -3585,13 +3586,13 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
         task=asyncio.create_task(self.prepare_native('/聊 查等级和音符数'))
         await asyncio.wait_for(entered.wait(),3)
         work=next(iter(self.backend.works.values()));work.model_started_at=time.monotonic()-9
-        hint=self.backend.lookup(work.request.request_id,'e1')
-        self.event(hint,'intent');self.event(hint,'ack')
+        pending=self.backend.lookup(work.request.request_id,'e1')
+        self.assertEqual(pending['status'],'preparing');self.assertEqual(pending['parts'],[])
+        self.assertFalse(pending['send_allowed']);self.assertFalse(pending.get('processing_hint',False))
         self.assertFalse(self.agent.proactive.followups.questions)
         held.set();plan,_=await task
-        self.assertEqual(len(plan['parts']),2)
-        final={**plan,'parts':plan['parts'][1:]}
-        self.event(final,'intent');self.event(final,'ack')
+        self.assertEqual(len(plan['parts']),1);self.assertEqual(plan['parts'][0]['id'],'0')
+        self.event(plan,'intent');self.event(plan,'ack')
         self.assertIsNotNone(self.agent.proactive.followups.current(tuple(work.request.scope.values()),'u1'))
         self.now+=.01
         value=self.observation('那音符数除以等级是多少',seq=2);self.tick+=1.6
