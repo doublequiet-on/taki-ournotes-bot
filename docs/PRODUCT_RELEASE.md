@@ -50,3 +50,22 @@
 08须给固定SHA的符号级共享查询闭包、能力矩阵、聊天排除清单（含文档、编译代码、source maps）、所选P165入口与资源索引。00须给统一装配候选及依赖完整SHA。947、品牌、游戏素材、知识正文的保留/替换/排除均待产品选择；审计建议不是选择。个人缓存、真实账号/名片、日志、生产库不得进入发行。Haneoka是外部serverless数据服务；其R2/D1、采集状态、账号和部署均不打包。
 
 Node完整许可证的交付位置为 `licenses/node/LICENSE`。具体来源、完整性及Console 5.30.11材料核对见 [发行材料](RELEASE_MATERIALS.md)。清单匹配只是字节证据，许可证内容充分性与物理裁剪语义仍需11审计。
+
+## 可执行基础与使用顺序
+
+以下命令使用本checkout受信脚本，绝不加载候选内校验器：
+
+```text
+python -B scripts/product_release.py stage --checkout <repo> --selection <reviewed-selection.json> --output <new-tree>
+python -B scripts/product_release.py inventory <artifact-or-install-tree> --output <inventory-outside-tree.json>
+python -B scripts/product_release.py verify <artifact-or-install-tree> --inventory <reviewed-inventory.json> --inventory-sha256 <external-sha256>
+python -B scripts/product_release.py identity --candidate <product-manifest.json> --expected <external-instance.json> --observed <controller-observations.json>
+```
+
+selection格式为 `{source_commit:完整SHA, files:{精确仓库POSIX路径:SHA256}}`。只从该提交的普通Git blob装配到新目录，拒绝链接/子模块、错hash、已有输出；不读工作区未提交文件，不按文件名猜测聊天边界。它是构建前的裁剪基础，尚不调用wheel/npm构建，也不自动产生最终产品selection。
+
+inventory格式为 `{inventory_version:1,files:{路径:{size,sha256,parent_sha256}}}`；目录内文件使用相对路径，单工件保留文件名，归档子成员以 `!` 分隔。每个压缩层也记hash和父hash。包括source maps、源码包、wheel、许可证、rollback以及安装树中的普通文件；不会执行脚本或解析语义。单文件/每层解压256MiB，总读取2GiB，100000文件/归档条目，嵌套深度8；超限拒绝，不出部分通过结果。7z/rar与不可读的声明归档拒绝。空目录不构成文件证据，权限/可执行位和目标平台安装检查仍归10。
+
+inventory生成是待审记录，不能自动批准自身；11审阅其全部字节和选中闭包后，由外部权威固定inventory原始文件SHA，并写入候选manifest的inventory_sha256，最终再固定manifest原始文件SHA。组合文件摘要不含manifest自身，避免循环摘要。组件分组及源SHA由08/09的最终装配清单给定，独立测量后传入observed；CLI只代为实算manifest文件摘要。此阶段不把人工provided components称为自动运行探测。
+
+10应先隔离外发，按外部摘要验证inventory，再验证identity，然后检查05当前范围权威、07当前删除权威与存储、实际安装/protocol握手，最后按10激活门决定。任一reject/manual保持隔离。检查顺序属于10，09不另建恢复框架。

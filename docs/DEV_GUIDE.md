@@ -175,3 +175,5 @@ Moenotes 可选 open 榜线：`sources/moenotes_open.py::OpenClient`、`OpenEven
 ## 控制台运维
 
 操作契约与分批验收见 [运维控制台](koishi/OPERATIONS.md)。后端任务在 application/operations.py、operations_sources.py，群能力元数据在 application/chat_admin.py，知识发布管理在 application/library_admin.py（复用 knowledge_service/story_service 当前 owner，回归 test_platform_boundary.py），主模型、备用与独立主动参与模型设置在 application/model_admin.py，群记忆删除沿 backend.py 的 chat_memory；受信主机采集在 deploy/ops_snapshot.py；管理与通知读取测试使用 test_console_admin.py，主机投影使用 test_linux_backend.py，网关运行 console-rpc-probe.cjs 与 console-state-probe.cjs。
+
+产品身份/发行基础：见 [PRODUCT_RELEASE](PRODUCT_RELEASE.md)。离线入口为 `scripts/product_release.py`；回归运行 `python -B -m unittest discover -s tests -p test_offline_release_build.py -q` 和 `test_offline_bundle.py`。现有个人版构建/安装smoke不能作为定制版物理裁剪证明。
