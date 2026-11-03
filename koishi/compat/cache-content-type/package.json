@@ -1,0 +1,13 @@
+{
+  "name": "@taki/cache-content-type-cjs",
+  "version": "0.1.0",
+  "private": true,
+  "license": "MIT",
+  "description": "Taki CJS function adapter for cache-content-type 2.1.0",
+  "main": "index.cjs",
+  "files": ["index.cjs", "README.md", "LICENSE", "upstream-materials.json"],
+  "engines": { "node": ">=24.19.0 <25" },
+  "dependencies": {
+    "cache-content-type-upstream": "npm:cache-content-type@2.1.0"
+  }
+}
