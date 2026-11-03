@@ -5,6 +5,8 @@ include scripts/check_release_artifact.py
 include scripts/product_release.py deploy/product_identity.py
 include scripts/console_source_materials.py docs/CONSOLE_SOURCE_MATERIALS.md
 include docs/CONSOLE_TRACE_ROUND5.md
+include scripts/build_downstream_console.py docs/CONSOLE_DOWNSTREAM.md
+include deploy/licenses/koishi-console/downstream-build.cjs deploy/licenses/koishi-console/downstream-inputs.json
 include docs/PRODUCT_RELEASE.md docs/RELEASE_MATERIALS.md
 recursive-include deploy/licenses LICENSE *.md
 include deploy/licenses/koishi-console/reproduce.sh deploy/licenses/koishi-console/taki-reconnect-source.patch
