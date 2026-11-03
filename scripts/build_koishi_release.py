@@ -87,7 +87,7 @@ def build(python_artifact, node, output):
         'console.log(JSON.stringify({version:process.version,platform:process.platform,arch:process.arch}))'],text=True))
     if identity['version'] != 'v24.19.0': raise ValueError('Unexpected Node version')
     package=json.loads((ROOT/'koishi/node_modules/@koishijs/plugin-console/package.json').read_text())
-    downstream=package['version']=='5.30.10-taki.1'
+    downstream=package['version']=='5.30.10-taki.3'
     if not downstream and package['version']!='5.30.11':
         raise ValueError('Unknown Console component version')
     component=verify_downstream(ROOT/'koishi') if downstream else {'kind':'official-npm','version':'5.30.11'}
@@ -96,7 +96,7 @@ def build(python_artifact, node, output):
         stage=Path(folder)
         copy_release_materials(stage, downstream)
         gateway=stage/'gateway';gateway.mkdir()
-        for name in ('scripts','node_modules','console'):
+        for name in ('scripts','node_modules','console','compat'):
             shutil.copytree(ROOT/'koishi'/name,gateway/name,ignore=shutil.ignore_patterns('.bin','*.tsbuildinfo'))
         if downstream:
             shutil.copytree(ROOT/'koishi/vendor',gateway/'vendor')

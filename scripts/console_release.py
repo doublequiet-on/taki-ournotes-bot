@@ -7,12 +7,20 @@ import os
 from pathlib import Path, PurePosixPath
 import tarfile
 
-COMPONENT_SHA = '72c286da0c53feb6820c54e4b283d2c752b3b4d7198db1b6f7d38e405b495612'
-LOCK_SHA = '91200cca290e997ef56fe577516460982b9cb318fc47e8a519b2ccbaf401974f'
-BINDING_SHA = 'de6278ed27fa042bc298e30afa40364bb1fb419ec3583fa0507958c3b8514ae7'
-SOURCE_COMMIT = '91bf8b91a8bcb1cf2b822d3eb38e2e11d301ad3f'
-COMPONENT_FILE = 'taki-console-0.1.0-candidate.1.tgz'
+COMPONENT_SHA = 'ea92ea91d816648023e61cf6ce7dfe2de98aece38e1ca8dd9292166f5537d1fb'
+LOCK_SHA = '587178bda427fcaf3aa115798fbedf0830ab7ee83e06cf6ae4e7edf26867aeed'
+BINDING_SHA = '034af3c7b4ca599aacc825188cf0d8069d6ad94024f556e492b650fe93ce294d'
+SOURCE_COMMIT = 'ca7a64175aa4c359c018b8a7e1dc6c506fbd6552'
+COMPONENT_FILE = 'taki-console-0.1.0-candidate.3.tgz'
 PACKAGE = 'node_modules/@koishijs/plugin-console'
+CACHE_SPEC = 'file:compat/cache-content-type'
+CACHE_FILES = {
+    'LICENSE': 'fbeaf669089d0b5f9b44ebfa64050b53fa4ef2419f9c781bab5f54e4e3b1e588',
+    'README.md': '5df20324096732e66724429e2326243864c9516860bb96c34cb6afff4169276b',
+    'index.cjs': '09a4349090840dfcc1fd4fbe5d2d4f058392e084ef49d1c35c1f04305b4955ab',
+    'package.json': 'e95e9afed2c2f5c97737598ec9f530b36e2b3407ccbc49a19d55ac70009ff180',
+    'upstream-materials.json': 'f025ccd28c596c44e28886d80bda3f4bd7c3ed89d9168fbae2f66b3ec14ef378',
+}
 
 
 def digest(data):
@@ -56,8 +64,9 @@ def verify_downstream(gateway):
         raise ValueError('Unreviewed downstream source binding')
     data = (gateway / 'vendor' / COMPONENT_FILE).read_bytes()
     integrity = 'sha512-' + base64.b64encode(hashlib.sha512(data).digest()).decode()
-    expected = dict(file=COMPONENT_FILE, version='0.1.0-candidate.1', package_version='5.30.10-taki.1',
-                    sha256=COMPONENT_SHA, integrity=integrity, size=634221)
+    expected = dict(file=COMPONENT_FILE, version='0.1.0-candidate.3', package_version='5.30.10-taki.3',
+                    sha256=COMPONENT_SHA, integrity=integrity, size=634671, files=168,
+                    license_index_entries=135)
     if digest(data) != COMPONENT_SHA or binding['component'] != expected or binding['source_commit'] != SOURCE_COMMIT:
         raise ValueError('Unknown or altered downstream Console')
     if binding['legacy_byte_patch'] != 'forbidden':
@@ -76,6 +85,19 @@ def verify_downstream(gateway):
             or lock['packages'][PACKAGE]['integrity'] != integrity
             or lock['packages'][PACKAGE]['version'] != expected['package_version']):
         raise ValueError('Downstream Console lock binding mismatch')
+    cache = gateway / 'compat/cache-content-type'
+    if (package_json['dependencies'].get('cache-content-type') != CACHE_SPEC
+            or package_json.get('overrides', {}).get('cache-content-type') != '$cache-content-type'
+            or lock['packages']['']['dependencies'].get('cache-content-type') != CACHE_SPEC
+            or lock['packages']['node_modules/cache-content-type'] != {'resolved': 'compat/cache-content-type', 'link': True}
+            or set(p.name for p in cache.iterdir() if p.is_file()) != set(CACHE_FILES)
+            or any(digest((cache / name).read_bytes()) != expected_sha for name, expected_sha in CACHE_FILES.items())):
+        raise ValueError('Unreviewed cache-content-type file dependency')
+    installed_cache = gateway / 'node_modules/cache-content-type'
+    if any(not (installed_cache / name).is_file()
+           or digest((installed_cache / name).read_bytes()) != expected_sha
+           for name, expected_sha in CACHE_FILES.items()):
+        raise ValueError('Installed cache-content-type adapter differs')
     for name, row in binding['external_dependencies'].items():
         actual = lock['packages']['node_modules/' + name]
         if any(actual.get(key) != value for key, value in row.items()):
@@ -91,6 +113,8 @@ def verify_downstream(gateway):
     identity = json.loads(files['TAKI-CONSOLE.json'])
     if (identity['legacy_byte_patch'] != 'forbidden; source patch already applied'
             or identity['reconnect_source_after'] != 'cf21a5e49c75deeda40a064e9dba2f65933a97c9357beda743337dee4be60e49'
+            or identity['markdown_security_patch_sha256'] != 'f5a928102fbf6dd184776c6b84ebf3d494153e3c63ef3ebc36f568774b7e24d1'
+            or identity['inputs_sha256'] != 'c6261043446d4d717af86a3466733f3f284021dbfd996082464ec202b2a68e0b'
             or identity['version'] != expected['version']):
         raise ValueError('Downstream source reconnect binding mismatch')
     for name in ('LICENSE', 'TAKI-MODIFICATIONS.txt', 'licenses/index.json', 'licenses/NOTICE.txt'):
@@ -101,6 +125,7 @@ def verify_downstream(gateway):
             raise ValueError('Downstream license hash mismatch')
     return dict(kind='taki-downstream', component_sha256=COMPONENT_SHA, source_commit=SOURCE_COMMIT,
                 lock_canonical_sha256=LOCK_SHA, legacy_byte_patch='not applied',
+                cache_content_type='taki-cjs-adapter/0.1.0 + upstream/2.1.0',
                 complete_corresponding_source=False, product_release=False)
 
 

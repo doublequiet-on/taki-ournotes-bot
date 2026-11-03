@@ -11,6 +11,6 @@
 
 2026-11-03核对 npm tarball 的SHA-512与发布integrity一致；其27个成员没有LICENSE文件。这里补注册信息指向的固定源码文本，不把npm元数据当作实际随包材料。构建时保留node_modules原有LICENSE/NOTICE，不根据根许可证覆盖第三方条件。
 
-对应源码参考：[完整固定源码树](https://github.com/koishijs/webui/tree/896882b50cc91d16f522a52ded9644045d461c26)。Taki的reconnect补丁由 `scripts/build_koishi_release.py::patch_koishi_client` 执行，构建输出 `licenses/koishi-console/taki-reconnect-patch.json` 列原hash与逐字节替换；修改资产同目录有 `TAKI-MODIFICATIONS.txt` 标识Taki源码commit。现有补丁功能来自之前的个人版，任务09仅补随行材料。
+对应源码参考：[完整固定源码树](https://github.com/koishijs/webui/tree/896882b50cc91d16f522a52ded9644045d461c26)。官方npm5.30.11兼容路径仍由 `scripts/build_koishi_release.py::patch_koishi_client` 执行并记录逐字节替换；下游candidate.3在首选源码中一次性应用重连和Markdown安全补丁，包内 `TAKI-CONSOLE.json`、`TAKI-MODIFICATIONS.txt` 及发行绑定记录精确输入和摘要，发行器禁止再次运行旧字节补丁。
 
 提供这些参考不表示对应源码/构建依赖/源码获取渠道与网络交互条款已经完整验收。最终选择保留Console时须完成 RELEASE_MATERIALS.md 的逐项核对，并确定向接收方提供源码、补丁、构建材料及网络用户获取方式。本次不对整个Taki作许可结论。

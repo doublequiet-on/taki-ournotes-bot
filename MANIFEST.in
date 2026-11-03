@@ -5,7 +5,8 @@ include scripts/check_release_artifact.py
 include scripts/console_release.py scripts/build_koishi_release.py scripts/check_koishi_release.py
 include scripts/rebuild_console_sources.py deploy/licenses/koishi-console/gateway-notices.json
 include docs/CONSOLE_ASSEMBLY.md
-include koishi/vendor/taki-console-0.1.0-candidate.1.tgz koishi/vendor/console-candidate.json
+include koishi/vendor/taki-console-0.1.0-candidate.3.tgz koishi/vendor/console-candidate.json
+recursive-include koishi/compat/cache-content-type LICENSE README.md index.cjs package.json upstream-materials.json
 include koishi/package.json koishi/package-lock.json
 include scripts/product_release.py deploy/product_identity.py
 include scripts/console_source_materials.py docs/CONSOLE_SOURCE_MATERIALS.md

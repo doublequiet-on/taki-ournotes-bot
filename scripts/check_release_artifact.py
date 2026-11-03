@@ -31,6 +31,14 @@ SDIST_BUILD_JSON = {
     ("koishi", "vendor", "console-candidate.json"),
     ("koishi", "package.json"),
     ("koishi", "package-lock.json"),
+    ("koishi", "compat", "cache-content-type", "package.json"),
+    ("koishi", "compat", "cache-content-type", "upstream-materials.json"),
+}
+SDIST_REQUIRED = SDIST_BUILD_JSON | {
+    ("koishi", "vendor", "taki-console-0.1.0-candidate.3.tgz"),
+    ("koishi", "compat", "cache-content-type", "LICENSE"),
+    ("koishi", "compat", "cache-content-type", "README.md"),
+    ("koishi", "compat", "cache-content-type", "index.cjs"),
 }
 MEDIA_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".mp4", ".mp3"}
 
@@ -48,8 +56,11 @@ def check(path: Path) -> None:
     aliases = False
     code = False
     documents: set[str] = set()
+    source_paths: set[tuple[str, ...]] = set()
     for name in names:
         parts = PurePosixPath(name).parts
+        if path.name.endswith(".tar.gz") and len(parts) > 1:
+            source_paths.add(parts[1:])
         leaf = parts[-1]
         aliases |= leaf == "query_aliases.json"
         code |= len(parts) >= 2 and parts[-2:] == ("ournotes_bot", "commands.py")
@@ -97,6 +108,9 @@ def check(path: Path) -> None:
     if not {"event_cutoffs.py", "HANEOKA_CUTOFFS.md"} <= documents:
         raise ValueError(f"missing Haneoka cutoff preview resources in {path.name}")
     if path.name.endswith(".tar.gz"):
+        missing_build_inputs = SDIST_REQUIRED - source_paths
+        if missing_build_inputs:
+            raise ValueError(f"missing source build inputs in {path.name}: {sorted(missing_build_inputs)}")
         needed = {"README.md", "THIRD_PARTY.md", "LOCAL_QQ_TEST.md", "昵称词表维护规范.md", ".env.example",
                   "更新日志.md"}
         if not needed.issubset(documents):

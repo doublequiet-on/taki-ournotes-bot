@@ -37,9 +37,9 @@ def verify(root, expected_commit):
     component=manifest.get('console_component')
     package_path=root/'gateway/node_modules/@koishijs/plugin-console/package.json'
     package_version=json.loads(package_path.read_text())['version'] if package_path.exists() else None
-    if package_version and package_version not in ('5.30.10-taki.1','5.30.11'):
+    if package_version and package_version not in ('5.30.10-taki.3','5.30.11'):
         raise ValueError('Unknown installed Console version')
-    if package_version=='5.30.10-taki.1' or (component and component.get('kind')=='taki-downstream'):
+    if package_version=='5.30.10-taki.3' or (component and component.get('kind')=='taki-downstream'):
         if component!=verify_downstream(root/'gateway'):
             raise ValueError('Console component identity')
         materials=json.loads((root/'licenses/npm-installation.json').read_text())
