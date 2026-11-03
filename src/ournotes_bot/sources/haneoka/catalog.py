@@ -386,6 +386,7 @@ class CatalogRepository:
                 self._query_publication = publication
                 self._limit_derived(publication)
             published = self._publication(result)
+            published[1]['identity_checked_at'] = self.clock()
             return published[0], published[1], published.info
 
     def synchronize_with_info(self, force=False):

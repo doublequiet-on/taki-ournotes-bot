@@ -5,14 +5,29 @@
 # Effects: Pure conversion; no inferred cross-event or cross-server links.
 from ...domain.info_catalog import ActivityFact, ActivitySection
 import json
+import math
 
 
 def text(value):
     if isinstance(value, str):
         return value
     if isinstance(value, list):
+        if any(not isinstance(part, str) for part in value):
+            raise ValueError('Invalid localized event text')
         return next((value[i] for i in (3, 2, 0, 1, 4) if i < len(value) and value[i]), '')
     return ''
+
+
+def number(value):
+    return type(value) in (int, float) and math.isfinite(value) and value >= 0
+
+
+def count_text(value):
+    if value is None:
+        return '未获取'
+    if type(value) is not int or value < 0:
+        raise ValueError('Invalid reward count')
+    return str(value)
 
 
 def rows(value):
@@ -33,7 +48,7 @@ def project_details(event, artwork=lambda path: '', attribute_artwork=lambda val
         names = [text(target.get('name')) for target in targets.values() if isinstance(target, dict)]
         kind = {0: '成员卡参数加成', 1: '留影卡参数加成', 2: '活动道具加成'}.get(effect.get('bonusType'), '加成效果未确认')
         levels = tuple(f"档位{r['rank']}：+{r['percent']}%" for r in rows(effect.get('perRank'))
-                       if type(r.get('rank')) is int and type(r.get('percent')) in (int, float))
+                       if type(r.get('rank')) is int and r['rank'] >= 0 and number(r.get('percent')))
         constraint = {2: '成员卡', 3: '留影卡'}.get(effect.get('resourceTypeConstraint'), '')
         title = '／'.join(filter(None, (constraint, *names))) or '加成对象未确认'
         key = (effect.get('resourceTypeConstraint'), json.dumps(targets, sort_keys=True, ensure_ascii=False))
@@ -46,7 +61,7 @@ def project_details(event, artwork=lambda path: '', attribute_artwork=lambda val
             groups[key] = (title, [], [], picture, 'wide' if reference and reference[0]==3 else 'portrait' if reference and reference[0]==2 else 'square',reference,[],role)
         groups[key][1].append(kind + '：' + (' · '.join(levels) if levels else '数值未获取'))
         groups[key][2].append((kind, *levels))
-        values=[r['percent'] for r in rows(effect.get('perRank')) if type(r.get('rank')) is int and type(r.get('percent')) in (int,float)]
+        values=[r['percent'] for r in rows(effect.get('perRank')) if type(r.get('rank')) is int and r['rank'] >= 0 and number(r.get('percent'))]
         if values:groups[key][6].append((kind,min(values),max(values)))
     effects = [ActivityFact(title, tuple(lines), image_url=image, table=tuple(table),image_kind=kind,reference=ref,bonus_ranges=tuple(bounds),group=role)
                for title, lines, table, image, kind, ref,bounds,role in groups.values()]
@@ -62,6 +77,8 @@ def project_details(event, artwork=lambda path: '', attribute_artwork=lambda val
             rewards.append(ActivityFact('奖励未解析', (f"奖励 ID {row['unresolvedRewardId']}",)))
             continue
         raw = row.get('raw', {})
+        if not isinstance(raw, dict):
+            raise ValueError('Invalid reward conditions')
         conditions = tuple(f'{label}：{raw[key]}' for key, label in (
             ('_eventPoint', '所需活动积分'), ('_point', '所需积分'), ('_requiredPoint', '所需积分'),
             ('_rankStart', '起始名次'), ('_rankEnd', '结束名次'), ('_rank', '名次'), ('_ranking', '名次'),
@@ -79,7 +96,7 @@ def project_details(event, artwork=lambda path: '', attribute_artwork=lambda val
                     'MasterEventRankingReward': '排名奖励', 'MasterEventBoxGachaReward': '活动奖励箱'}.get(row.get('sourceTable'), '活动奖励')
         name = text(reward.get('name')) or f"奖励 {row.get('resourceId', '未获取')}"
         count = row.get('resourceCount')
-        rewards.append(ActivityFact(name, (category, f'数量：{count if count is not None else "未获取"}', *conditions), artwork(reward.get('image')),
+        rewards.append(ActivityFact(name, (category, f'数量：{count_text(count)}', *conditions), artwork(reward.get('image')),
                                     preview=row.get('resourceType') in {2, 3, 9, 17},image_kind={2:'portrait',3:'wide'}.get(row.get('resourceType'),'square'),
                                     group={'MemberCard':'奖励卡牌','SupportCard':'奖励卡牌','Stamp':'活动表情','Degree':'活动称号'}.get(reward.get('kind'),'活动奖励'),
                                     reference=(row['resourceType'],row['resourceId']) if row.get('resourceType') in (2,3) and type(row.get('resourceId')) is int else None))
@@ -89,7 +106,9 @@ def project_details(event, artwork=lambda path: '', attribute_artwork=lambda val
         granted = []
         for reward in rows(mission.get('rewards')):
             ref = reward.get('reward', {})
-            granted.append(text(ref.get('name')) + ' ×' + str(reward.get('resourceCount', '未获取'))
+            if not isinstance(ref, dict):
+                raise ValueError('Invalid mission reward')
+            granted.append(text(ref.get('name')) + ' ×' + count_text(reward.get('resourceCount'))
                            if not reward.get('unresolvedRewardId') else f"奖励 ID {reward['unresolvedRewardId']} 未解析")
         missions.append(ActivityFact(text(mission.get('description')) or '任务条件未获取', tuple(granted)))
     result.append(ActivitySection('任务', tuple(missions), isinstance(event.get('missions'), list)))

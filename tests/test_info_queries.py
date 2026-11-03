@@ -517,7 +517,7 @@ class PublicQueryContractTests(unittest.TestCase):
         self.assertEqual(parse_player('9223372036854775807').profile_id, '9223372036854775807')
         for region, ident in [('hk', '21234567890'), ('en', '31234567890'), ('kr', '41234567890')]:
             self.assertEqual(parse_player(ident + ' ' + region + ' 名片 页3').page, 3)
-        for query in ('0', '9223372036854775808', '31234567890 hk', '1 jp hk', '1 页3', '1 名片 页0'):
+        for query in ('0', '01', '9223372036854775808', '31234567890 hk', '1 jp hk', '1 页3', '1 名片 页0'):
             with self.subTest(query=query), self.assertRaises(PublicQueryError):
                 parse_player(query)
         self.assertEqual(parse_arena('MyGO!!!!! hk 榜单 排名=90-100').last, 100)
@@ -533,7 +533,7 @@ class PublicQueryContractTests(unittest.TestCase):
     def test_pending_and_limits_do_not_cache_or_retry(self):
         from ournotes_bot.sources.haneoka.public_queries import PublicQueries
         from ournotes_bot.domain.public_queries import PublicQueryError
-        for status, expected in ((202, 'pending'), (404, 'not_found'), (429, 'rate_limited'), (503, 'data_unavailable')):
+        for status, expected in ((202, 'pending'), (404, 'data_unavailable'), (429, 'rate_limited'), (503, 'data_unavailable')):
             calls = []
             def fetch(*args):
                 calls.append(args)
@@ -550,6 +550,38 @@ class PublicQueryContractTests(unittest.TestCase):
                     source.read('/fixture')
                 self.assertEqual(len(calls), 1)
 
+    def test_records_error_body_overrides_ambiguous_http_status(self):
+        from ournotes_bot.sources.haneoka.transport import response_failure
+        import json
+        for status in (404, 503):
+            self.assertEqual(response_failure(status, json.dumps({'error': {'kind': 'pending', 'retryAfter': 3}}).encode(), {}), ('pending', 3))
+        self.assertEqual(response_failure(404, b'{"error":{"kind":"not_found"}}', {}), ('not_found', None))
+        self.assertEqual(response_failure(404, b'not json', {}), ('data_unavailable', None))
+        self.assertEqual(response_failure(429, b'{}', {'retry-after': '10'}), ('rate_limited', 10))
+
+    def test_arena_position_window_tie_and_freshness(self):
+        from ournotes_bot.sources.haneoka.public_queries import PublicQueries
+        from ournotes_bot.domain.public_queries import ArenaRequest, PublicQueryError
+        import json
+        now = [2000.0]
+        data = {'region': 'jp', 'seasonId': '1', 'bandId': '1', 'start': 100, 'end': 199,
+                'observedAtMs': 800000, 'serverTimeMs': 2000000, 'provider': 'official',
+                'rows': [{'rank': 99, 'point': 0, 'name': 'zero'}, {'rank': 101, 'point': None, 'name': 'missing'}]}
+        source = PublicQueries(fetch=lambda *a: (200, json.dumps(data).encode(), {}), clock=lambda: now[0])
+        request = ArenaRequest(band=1, mode='榜单', first=100, last=101)
+        first = source.board(request, 1)
+        self.assertEqual(first.freshness, 'fresh')
+        rows = json.loads(first.body)['rows']
+        self.assertEqual([r['position'] for r in rows], [100, 101])
+        self.assertEqual([r['rawRank'] for r in rows], [None, None])
+        self.assertEqual([r['pointState'] for r in rows], ['source_zero', 'null'])
+        now[0] += 1
+        self.assertEqual(source.board(request, 1).freshness, 'stale')
+        for region in ('cn', 'intl'):
+            with self.assertRaises(PublicQueryError):
+                source.arena(region)
+
+
     def test_player_identity_and_cache_expiration(self):
         import json
         from ournotes_bot.sources.haneoka.public_queries import PublicQueries
@@ -561,7 +593,7 @@ class PublicQueryContractTests(unittest.TestCase):
             return 200, json.dumps(value).encode(), {}
         source = PublicQueries(fetch=fetch, clock=lambda: now[0])
         first = source.player(PlayerRequest('99'))
-        self.assertIs(first, source.player(PlayerRequest('99')))
+        self.assertEqual(first, source.player(PlayerRequest('99')))
         self.assertEqual(len(calls), 1)
         now[0] += 60
         source.player(PlayerRequest('99'))

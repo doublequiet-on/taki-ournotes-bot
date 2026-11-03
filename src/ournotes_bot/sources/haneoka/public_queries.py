@@ -4,6 +4,7 @@
 # Pos: Sources / Haneoka public query reads, independent of catalog publication.
 # Effects: Anonymous HTTPS reads; bounded memory cache, no collection or credentials.
 from collections import OrderedDict
+from dataclasses import replace
 from functools import partial
 import json
 import math
@@ -15,8 +16,8 @@ from urllib.parse import urlencode, urlsplit, parse_qs
 from ...domain.public_queries import PublicQueryError, PublicSnapshot
 from ..errors import ChartDataError
 from ..json_validation import decode_json
-from .identity import release_identity
-from .transport import ORIGIN, public_response
+from .identity import release_identity, GAME_REGIONS
+from .transport import ORIGIN, public_response, response_failure
 from .catalog_assets import asset_url
 
 
@@ -42,6 +43,47 @@ def timestamp(value):
     if value is not None and (type(value) not in (int, float) or not math.isfinite(value)
                               or not 0 <= value <= 253402300799999):
         raise PublicQueryError('invalid_source', '来源时间格式异常。')
+
+
+def region_value(region):
+    region = 'tw' if region == 'hk' else region
+    if not isinstance(region, str) or region not in GAME_REGIONS:
+        raise PublicQueryError('invalid_arguments', '不支持的游戏区。')
+    return region
+
+
+def profile_id(value, region):
+    pattern = r'[1-9][0-9]{0,18}' if region == 'jp' else {'tw': '2', 'en': '3', 'kr': '4'}[region] + r'[0-9]{10}'
+    if not isinstance(value, str) or not re.fullmatch(pattern, value) or int(value) > 9223372036854775807:
+        raise PublicQueryError('invalid_arguments', '公开玩家ID格式或区域不匹配。')
+
+
+def observed_snapshot(snapshot, value, region, now, ttl):
+    provider = value.get('provider')
+    if provider is not None and (not isinstance(provider, str) or not provider or len(provider) > 64):
+        raise PublicQueryError('invalid_source', '来源身份格式异常。')
+    observed = value.get('observedAtMs', value.get('fetchedAtMs'))
+    server = value.get('serverTimeMs')
+    timestamp(observed)
+    timestamp(server)
+    if any(v is not None and type(v) is not int for v in (observed, server)):
+        raise PublicQueryError('invalid_source', '来源观测时间必须是毫秒整数。')
+    stale = value.get('stale')
+    if stale is not None and type(stale) is not bool:
+        raise PublicQueryError('invalid_source', '来源新鲜度格式异常。')
+    sid = value.get('snapshotId')
+    if sid is not None and (not isinstance(sid, str) or len(sid) > 1024):
+        raise PublicQueryError('invalid_source', '快照身份格式异常。')
+    age = ((server - observed) / 1000 + max(0, now - snapshot.fetched_at)
+           if observed is not None and server is not None and server >= observed else None)
+    freshness = 'stale' if stale is True or age is not None and age > ttl else 'fresh' if age is not None else 'unknown'
+    time_kind = 'source_observed' if value.get('observedAtMs') is not None else 'source_fetched'
+    if provider == 'moenotes' and value.get('observedAtMs') is None:
+        time_kind = 'bridge_fetched'
+        if freshness == 'fresh':
+            freshness = 'unknown'
+    return replace(snapshot, provider=provider, game_region=region, observed_ms=observed,
+                   server_ms=server, snapshot_id=sid, freshness=freshness, age_seconds=age, time_kind=time_kind)
 
 
 def rewards(value):
@@ -97,7 +139,7 @@ def arena_document(value):
 
 class PublicQueries:
     def __init__(self, *, fetch=None, clock=time.time):
-        self.fetch, self.clock = fetch if fetch is not None else partial(public_response, header_retry=False), clock
+        self.fetch, self.clock = fetch if fetch is not None else partial(public_response, header_retry=False, error_body=True), clock
         self.cache, self.lock = OrderedDict(), RLock()
         self.cooldowns = OrderedDict()
 
@@ -115,14 +157,11 @@ class PublicQueries:
             except (ChartDataError, OSError) as exc:
                 raise PublicQueryError('data_unavailable', '公开资料读取失败，请稍后重试。') from exc
             if status != 200:
-                retry = headers.get('retry-after', '')
-                retry = int(retry) if re.fullmatch(r'[0-9]{1,6}', retry) else None
-                code, message = {
-                    202: ('pending', '统计尚未就绪，请稍后重新查询。'),
-                    404: ('not_found', '该服没有找到对应的公开资料。'),
-                    429: ('rate_limited', '来源限流，请稍后重新查询。'),
-                }.get(status, ('data_unavailable', '来源暂不可用，请稍后重试。'))
-                if retry is not None and status in (202, 429):
+                code, retry = response_failure(status, body, headers)
+                message = {'pending': '统计尚未就绪，请稍后重新查询。',
+                           'not_found': '该服没有找到对应的公开资料。',
+                           'rate_limited': '来源限流，请稍后重新查询。'}.get(code, '来源暂不可用，请稍后重试。')
+                if retry is not None and code in ('pending', 'rate_limited'):
                     self.cooldowns[path] = (self.clock() + retry, code, message)
                     self.cooldowns.move_to_end(path)
                     while len(self.cooldowns) > 128:
@@ -132,7 +171,7 @@ class PublicQueries:
                 value = decode_json(body)
                 if not isinstance(value, dict):
                     raise ValueError('Expected object')
-            except (ValueError, UnicodeError) as exc:
+            except (ValueError, UnicodeError, RecursionError) as exc:
                 raise PublicQueryError('invalid_source', '来源资料格式异常。') from exc
             snapshot = PublicSnapshot(body, self.clock(), path)
             self.cache[path] = snapshot
@@ -143,6 +182,7 @@ class PublicQueries:
             return snapshot
 
     def arena(self, region):
+        region = region_value(region)
         server = 'jp' if region == 'jp' else 'intl'
         try:
             identity = release_identity(decode_json(self.read(
@@ -177,9 +217,15 @@ class PublicQueries:
                         row[field] = asset_url(urlsplit(path).path, identity['releaseId']) if isinstance(path, str) else ''
                     except ValueError:
                         row[field] = ''
-        return PublicSnapshot(json.dumps(value, ensure_ascii=False).encode(), snapshot.fetched_at, server, identity['releaseId'])
+        return PublicSnapshot(json.dumps(value, ensure_ascii=False).encode(), snapshot.fetched_at, server, identity['releaseId'],
+                              provider='haneoka', game_region=region, resource_server=server,
+                              source_id=identity['sourceId'], freshness='fresh')
 
     def board(self, request, season, thresholds=()):
+        request = replace(request, region=region_value(request.region))
+        if (type(request.first) is not int or type(request.last) is not int or request.first < 1
+                or not request.first <= request.last < request.first + 100):
+            raise PublicQueryError('invalid_arguments', '排名位置窗口必须为连续最多100行。')
         operation = 'population' if request.mode == '人数' else 'ranking'
         query = {'thresholds': ','.join(map(str, thresholds))} if thresholds else {'start': request.first}
         path = (f'/api/v1/game/records/{request.region}/arena/seasons/{season}/leagues/{request.band}/'
@@ -201,16 +247,32 @@ class PublicQueries:
             for row in tiers:
                 integer(row.get('count'))
         else:
-            for row in objects(value.get('rows')):
-                rank = integer(row.get('rank'), minimum=1)
-                integer(row.get('point'))
-                if not request.first <= rank < request.first + 100 or not isinstance(row.get('name'), str):
+            rows = objects(value.get('rows'))
+            if len(rows) > 100 or value.get('start', request.first) != request.first or value.get('end', request.first + 99) != request.first + 99:
+                raise PublicQueryError('invalid_source', '排名位置窗口异常。')
+            previous = 0
+            for position, row in enumerate(rows, request.first):
+                rank = row.get('rank')
+                if rank is not None:
+                    integer(rank, minimum=1)
+                    if not previous <= rank <= position:
+                        raise PublicQueryError('invalid_source', '显示名次顺序异常。')
+                    previous = rank
+                point = row.get('point')
+                if point is not None:
+                    integer(point)
+                if not isinstance(row.get('name'), str):
                     raise PublicQueryError('invalid_source', '排名窗口异常。')
                 if row.get('profileId') is not None and not isinstance(row['profileId'], str):
                     raise PublicQueryError('invalid_source', '公开玩家ID格式异常。')
-        return snapshot
+                row.update(position=position, rawRank=None,
+                           pointState='source_zero' if point == 0 else 'value' if point is not None else 'null' if 'point' in row else 'missing')
+            snapshot = replace(snapshot, body=json.dumps(value, ensure_ascii=False).encode())
+        return observed_snapshot(snapshot, value, request.region, self.clock(), 1800 if request.mode == '人数' else 1200)
 
     def player(self, request):
+        request = replace(request, region=region_value(request.region))
+        profile_id(request.profile_id, request.region)
         snapshot = self.read(f'/api/v1/game/records/{request.region}/players/{request.profile_id}')
         value = decode_json(snapshot.body)
         if (value.get('region') != request.region or value.get('profileId') != request.profile_id
@@ -250,7 +312,7 @@ class PublicQueries:
                             raise PublicQueryError('invalid_source', '名片图片路径格式异常。')
             elif not isinstance(card.get('thumbnailUrls', []), list) or any(not isinstance(s, str) for s in card.get('thumbnailUrls', [])):
                 raise PublicQueryError('invalid_source', '名片预览格式异常。')
-        return snapshot
+        return observed_snapshot(snapshot, value, request.region, self.clock(), 21600)
 
     def player_art(self, request, card_id, snapshot):
         server = 'jp' if request.region == 'jp' else 'intl'

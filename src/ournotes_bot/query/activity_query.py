@@ -176,7 +176,9 @@ def _current(server, repository, section=''):
         with source.foreground():
             event = source.event(server, source.deadline())
     except SourceError as exc:
-        return InfoAnswer('当前没有可用活动资料。' if exc.code == 'not_found' else '活动资料暂不可用，请稍后重试。', 'data_unavailable')
+        return InfoAnswer({'not_found': '当前没有可用活动资料。', 'pending': '活动资料尚未就绪，请稍后重试。',
+                           'rate_limited': '来源限流，请稍后重试。'}.get(exc.code, '活动资料暂不可用，请稍后重试。'),
+                          exc.code if exc.code in {'not_found', 'pending', 'rate_limited'} else 'data_unavailable')
     label = {'nowOn': '进行中', 'ended': '已结束', 'upcoming': '尚未开始', 'finished': '已结束'}.get(event.status, event.status)
     rows = [InfoRow(f'{event.title}（活动 ID {event.event_id}）',
                     (f'来源状态：{label}', f'开始：{display_time(event.start_ms, server)}',

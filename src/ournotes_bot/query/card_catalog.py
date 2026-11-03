@@ -47,6 +47,11 @@ class CardAnswer:
     cards: tuple = ()
     error: str = ""
     status: str = "success"
+    cache_state: str = 'unknown'
+
+    @property
+    def cache_notice(self):
+        return '\n当前使用旧缓存；未命中不代表最新资料不存在。' if self.cache_state == 'stale' else ''
 
     def __post_init__(self):
         if self.status == "success" and not self.cards:
@@ -69,19 +74,19 @@ class CardAnswer:
             text += f"\n下一页：{req.command} {req.query} 页{req.page + 1}"
         if any(c.catalog.get("detail_stale") for c in self.cards):
             text += "\n部分详情使用上次有效缓存。"
-        return text
+        return text + self.cache_notice
 
     def text(self, locale="zh"):
         if self.error:
-            return self.error
+            return self.error + self.cache_notice
         req = self.request
         title = "留影卡（SNAP）" if req.support else "角色卡"
         if not self.cards:
-            return f"{title}：未找到符合条件的卡牌。条件：{req.query or '不限'}（未放宽筛选）"
+            return f"{title}：未找到符合条件的卡牌。条件：{req.query or '不限'}（未放宽筛选）" + self.cache_notice
         if req.mode == "detail":
-            return detail_text(self.cards[0], locale)
+            return detail_text(self.cards[0], locale) + self.cache_notice
         if req.mode == "art":
-            return f"{title} ID {self.cards[0].id} · 卡面（公开 full 版本）"
+            return f"{title} ID {self.cards[0].id} · 卡面（公开 full 版本）" + self.cache_notice
         lines = [f"{title}列表 · 条件：{req.query or '不限'}"]
         for index, card in enumerate(self.visible, 1):
             live, gek = labels(card)
@@ -282,17 +287,18 @@ def parse_card_request(query, repository, *, support=False, art=False):
 
 
 def execute_card_request(req, repository):
+    cache_state = repository.capture_catalog().cache_state
     cards = repository.support_cards if req.support else repository.cards
     if req.card_id is not None:
         matches = [c for c in cards if c.id == req.card_id]
         if len(matches) > 1:
-            return CardAnswer(req, error="卡牌 ID 映射冲突，请等待数据核对。", status="ambiguous")
+            return CardAnswer(req, error="卡牌 ID 映射冲突，请等待数据核对。", status="ambiguous", cache_state=cache_state)
         if not matches:
-            return CardAnswer(req, error=f"未找到{'SNAP' if req.support else '角色卡'} ID {req.card_id}，没有改查其他对象。", status="unknown_entity")
+            return CardAnswer(req, error=f"未找到{'SNAP' if req.support else '角色卡'} ID {req.card_id}，没有改查其他对象。", status="unknown_entity", cache_state=cache_state)
         if req.mode == "art":
-            return CardAnswer(req, (matches[0],))
+            return CardAnswer(req, (matches[0],), cache_state=cache_state)
         detail = repository.support_card_with_detail if req.support else repository.card_with_detail
-        return CardAnswer(req, (detail(matches[0]),))
+        return CardAnswer(req, (detail(matches[0]),), cache_state=cache_state)
     selected = []
     missing = set()
     for card in {c.id: c for c in cards}.values():
@@ -339,11 +345,11 @@ def execute_card_request(req, repository):
             else:
                 selected.append(card)
     if missing:
-        return CardAnswer(req, error="卡牌索引不完整（" + "、".join(sorted(missing)) + "），不能保证完整筛选；请等待数据同步后重试，未将未知分类当作无技能。", status="data_unavailable")
+        return CardAnswer(req, error="卡牌索引不完整（" + "、".join(sorted(missing)) + "），不能保证完整筛选；请等待数据同步后重试，未将未知分类当作无技能。", status="data_unavailable", cache_state=cache_state)
     if req.mode == "detail" and selected:
         detail = repository.support_card_with_detail if req.support else repository.card_with_detail
         selected = [detail(selected[0])]
-    return CardAnswer(req, tuple(sorted(selected, key=lambda c: (-c.rarity, c.id))))
+    return CardAnswer(req, tuple(sorted(selected, key=lambda c: (-c.rarity, c.id))), cache_state=cache_state)
 
 
 def query_cards(query, repository, *, support=False, art=False):

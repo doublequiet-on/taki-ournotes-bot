@@ -442,6 +442,16 @@ class SongRepository:
             return self._captured_catalog
         with self._song_lock:
             publication = self._records_publication
+            state = self.cache_state
+            source = self._published_source_snapshot
+            metadata = self.metadata
+            if self.data_source == 'haneoka' and source is not None:
+                clock = self._catalog_repository.clock if self._catalog_repository is not None else time.time
+                checked = metadata.get('identity_checked_at', source.get('fetched_at'))
+                if type(checked) in (int, float):
+                    age = clock() - checked
+                    if age < 0 or age >= self.cache_ttl_hours * 3600:
+                        state = 'stale'
             # The digest belongs to the final converted records. Replacing a
             # collection outside the Haneoka owner falls back to the full hash.
             version = (getattr(publication, 'fingerprint', None)
@@ -449,7 +459,7 @@ class SongRepository:
                        and all(current is captured for current, captured in
                                zip((self.songs, self.cards, self.support_cards), publication)) else None)
             return CatalogView(self.songs, self.cards, self.support_cards, self.metadata,
-                               self.cache_state, self.last_successful_sync_at,
+                               state, self.last_successful_sync_at,
                                self.characters, self.gachas, self.activities, self.activity_calendars, version,
                                self._published_source_snapshot)
 
