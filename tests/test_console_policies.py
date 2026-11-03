@@ -6517,7 +6517,9 @@ class FreezeTests(unittest.TestCase):
     def test_combination_verifier_does_not_create_bytecode_in_payload(self):
         import hashlib,shutil,zipfile
         from scripts.check_koishi_release import verify
+        from scripts.build_koishi_release import copy_release_materials
         stage=self.root/'combination';(stage/'controller').mkdir(parents=True)
+        copy_release_materials(stage)
         shutil.copyfile(Path(__file__).resolve().parents[1]/'deploy/koishi_control.py',stage/'controller/koishi_control.py')
         commit='a'*40
         with zipfile.ZipFile(stage/'python.zip','w') as archive:archive.writestr('manifest.json',json.dumps({'commit':commit}))
@@ -6529,6 +6531,13 @@ class FreezeTests(unittest.TestCase):
         with patch('scripts.check_koishi_release.subprocess.check_output',return_value=json.dumps(node)),patch('scripts.check_koishi_release.subprocess.run'):
             self.assertEqual(verify(stage,commit),manifest)
         self.assertFalse(list(stage.rglob('*.pyc')))
+        license_path=stage/'licenses/node/LICENSE'
+        original_license=license_path.read_bytes()
+        license_path.unlink()
+        with self.assertRaises(FileNotFoundError):verify(stage,commit)
+        license_path.write_bytes(b'not the full Node license')
+        with self.assertRaisesRegex(ValueError,'Release license mismatch'):verify(stage,commit)
+        license_path.write_bytes(original_license)
         from deploy.koishi_control import verify_combination
         upgraded={**manifest,'protocol':{'major':2,'minor':0},
                   'capabilities':['group_policies_v1','query_chat_contract_v1']}
