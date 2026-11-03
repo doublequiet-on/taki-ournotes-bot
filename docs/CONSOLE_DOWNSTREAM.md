@@ -2,9 +2,11 @@
 
 用户已选择保留网页管理后台并维护下游构建。方案A历史版本组合探索停止。此处定义独立组件候选、构建输入与08接入边界，不是个人/定制最终发行或范围批准。
 
+当前构建规格已推进到 candidate.2，原 candidate.1 与已装配包保持冻结。新增输入、逐输出比较、工具材料边界和08验收要求见[第七轮构建修复](CONSOLE_BUILD_REPAIR.md)。以下初版记录中的安装树和已完成验证不自动转移给新候选。
+
 ## 固定选择与独立身份
 
-- 组件身份 `taki-console@0.1.0-candidate.1`；兼容安装路径保留 `@koishijs/plugin-console`，包版本明确为 `5.30.10-taki.1`，不标成官方npm5.30.11。
+- 当前构建组件身份 `taki-console@0.1.0-candidate.2`；兼容安装路径保留 `@koishijs/plugin-console`，包版本明确为 `5.30.10-taki.2`，不标成官方npm5.30.11。
 - webui源码 `896882b50cc91d16f522a52ded9644045d461c26`。选此基线是因为已有全部源码、许可证、lib重建与前端构建证据，能延续当前管理入口；不要求重现历史npm前端。
 - 复用已验证的下游解析：Vue3.5.44、Router4.6.4、I18n9.14.5、VueUse11.3.0、Element Plus2.7.7源码；固定Node24.19.0、Yarn4.10.3、Vite5.4.21、TypeScript5.9.3。为了从Element Plus TSX源码编译，新增精确 `@vitejs/plugin-vue-jsx@4.2.0`，显式提供根Vue/Vite peer；新解析锁和缓存都冻结在输入包。没有升级Taki网关依赖或更换08接线。
 - 唯一输入规格是 [downstream-inputs.json](../deploy/licenses/koishi-console/downstream-inputs.json)，完整输入文件集合/hash是输入ZIP内 `input-manifest.json`；候选 `TAKI-CONSOLE.json` 另绑定builder、recipe、重连patch摘要。源码Git提交和Taki最终提交分别记录，输入内容摘要优先于路径名称。
@@ -28,7 +30,7 @@ devtools编译保留其tsconfig的严格函数/this检查及原skipLibCheck设�
 
 ```sh
 python3 scripts/build_downstream_console.py \
-  --inputs /absolute/console-downstream-inputs-v2.zip \
+  --inputs /absolute/console-candidate2-inputs.zip \
   --work /absolute/new-isolated-work \
   --output /absolute/new-evidence-and-candidate
 ```

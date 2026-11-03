@@ -59,6 +59,11 @@ def build(inputs: Path, work: Path, output: Path) -> None:
             path = work.joinpath(*name.parts)
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_bytes(data)
+    for recipe in ('downstream-build.cjs', 'taki-reconnect-source.patch'):
+        if (work / 'recipe' / recipe).read_bytes() != (RECIPES / recipe).read_bytes():
+            raise ValueError('Recipe differs from pinned build inputs')
+    if '@napi-rs/lzma' in (work / 'source/yarn.lock').read_text(encoding='utf-8'):
+        raise ValueError('Excluded build-only lzma dependency returned')
     # The pinned official Node tool archive has internal bin/npm links. Python's
     # data filter confines them to this isolated tools directory, not a product.
     with tarfile.open(work / 'tools/node-v24.19.0-linux-x64.tar.xz') as archive:
@@ -83,6 +88,8 @@ def build(inputs: Path, work: Path, output: Path) -> None:
     dump(logs / 'environment.json', dict(system=list(os.uname()), node=config['node'], yarn=config['yarn'],
                                        network='Yarn disabled; not OS network isolation'))
     run('install', yarn + ['install', '--immutable', '--immutable-cache', '--mode=skip-build'])
+    if list((source / 'node_modules/@napi-rs').glob('lzma*')):
+        raise ValueError('Excluded lzma installed')
     # Stable component build stages; do not invoke the upstream broken client dispatcher.
     run('types', yarn + ['yakumo', '--import', 'tsx', 'tsc'])
     run('lib', yarn + ['yakumo', '--import', 'tsx', 'esbuild'])
@@ -113,6 +120,7 @@ def build(inputs: Path, work: Path, output: Path) -> None:
     package['version'] = config['package_version']
     package['description'] += ' — Taki downstream candidate (not upstream npm release)'
     package.pop('devDependencies', None)
+    package['files'] = ['lib', 'dist', 'src', 'licenses', 'LICENSE', 'TAKI-CONSOLE.json', 'TAKI-MODIFICATIONS.txt']
     dump(payload / 'package.json', package)
     shutil.copyfile(RECIPES / 'LICENSE', payload / 'LICENSE')
     licenses = payload / 'licenses'
@@ -132,7 +140,7 @@ def build(inputs: Path, work: Path, output: Path) -> None:
             dest.write_bytes(data)
             license_index.append(dict(component=component['name'], version=component['version'],
                                       origin=entry['origin'], original_path=entry['path'], path=name, sha256=sha(data)))
-    for label in ('element-plus', 'devtools'):
+    for label in ('element-plus', 'devtools', 'marked-vue'):
         data = (source / 'taki-sources' / label / 'LICENSE').read_bytes()
         dest = licenses / (label + '-source-LICENSE')
         dest.write_bytes(data)
@@ -153,9 +161,11 @@ def build(inputs: Path, work: Path, output: Path) -> None:
                    complete_corresponding_source=False, product_release=False)
     dump(payload / 'TAKI-CONSOLE.json', binding)
     (payload / 'TAKI-MODIFICATIONS.txt').write_text(
-        'Taki downstream Console candidate; 2026-11-03. See TAKI-CONSOLE.json.\n'
+        'Taki downstream Console candidate; 2026-11-04. See TAKI-CONSOLE.json.\n'
         'Reconnect URL preservation is compiled from source exactly once.\n'
         'Cordis uses npm TS; devtools/Element Plus use pinned source; lodash-unified browser imports use a new Taki adapter generated from lodash-es public exports.\n'
+        'marked-vue fixed TS and exact npm reggol 1.7.1 TS generate ESM with explicit externals, keepNames and no type edits.\n'
+        'Build-only Rollup metadata excludes unused lzma; executable tool bytes are unchanged.\n'
         'Do not apply the upstream-npm byte patch. Not a final product release.\n', encoding='utf-8')
     files = [dict(path=p.relative_to(payload).as_posix(), size=p.stat().st_size, sha256=sha(p.read_bytes()))
              for p in sorted(payload.rglob('*')) if p.is_file()]

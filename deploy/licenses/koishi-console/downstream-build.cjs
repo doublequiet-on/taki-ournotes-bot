@@ -78,6 +78,31 @@ for (const name of ['@cordisjs/core', '@cordisjs/logger', '@cordisjs/schema', '@
   fs.writeFileSync(path.join(report, 'generate-' + name.replaceAll('/', '_') + '.json'), JSON.stringify(result.metafile, null, 2));
   aliases[name] = outfile;
 }
+// Preferred-source browser modules; dependencies remain explicit externals at
+// this stage and are resolved by the locked Vite graph in the final chunks.
+for (const [name, entry, externals] of [
+  ['marked-vue', 'taki-sources/marked-vue/src/index.ts', ['vue', 'marked', 'xss']],
+  ['reggol', 'node_modules/reggol/src/browser.ts', ['cosmokit', 'supports-color', 'object-inspect']],
+]) {
+  if (name === 'reggol' && JSON.parse(fs.readFileSync('node_modules/reggol/package.json')).version !== '1.7.1') {
+    throw Error('Expected exact npm reggol 1.7.1 sources');
+  }
+  const outfile = path.join(root, 'taki-generated', name + '.mjs');
+  const options = {
+    absWorkingDir: root, entryPoints: [entry], outfile, bundle: true,
+    external: externals, format: 'esm', platform: 'browser', target: 'es2022',
+    keepNames: true, sourcemap: true, sourcesContent: true, metafile: true, legalComments: 'eof',
+  };
+  const result = require('esbuild').buildSync(options);
+  fs.writeFileSync(path.join(report, 'generate-' + name + '.json'), JSON.stringify({
+    generator: 'esbuild', version: require('esbuild').version, options,
+    type_modifications: [], name_policy: 'keepNames; no minification at source generation',
+    preferred_source: name === 'reggol' ? 'exact npm 1.7.1 bundled TS' : '86f4fa602bc4ad588661bbddcc0fee5126c295b7 (tree package version 1.2.3)',
+    inputs: Object.fromEntries(Object.keys(result.metafile.inputs).map(p => [p, hash(fs.readFileSync(p))])),
+    metafile: result.metafile,
+  }, null, 2));
+  aliases[name] = outfile;
+}
 fs.writeFileSync(ep + '/packages/element-plus/version.ts', "export const version = '2.7.7-taki.1'\n");
 const recipe = path.join(root, 'packages/client/scripts/client.ts');
 let script = fs.readFileSync(recipe, 'utf8');
