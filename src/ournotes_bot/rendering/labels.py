@@ -4,6 +4,8 @@
 # Pos: Rendering / Core; source names and descriptions keep their own translations.
 # Effects: None.
 LABELS = {
+ '{n} 位成员':('{n} members','{n}人のメンバー'),
+ '成员资料未获取':('Member data unavailable','メンバー情報未取得'),
  '此谱面有 {count} 个技能点位，无法应用五段覆盖时间。':('This chart has {count} skill events; five custom windows cannot be applied.','この譜面のスキル発動は{count}回のため、5つの指定時間を適用できません。'),
  '参考指标未随覆盖时间重算':('Reference metrics are not recalculated for custom windows','参考指標は指定時間で再計算されません'),
  '技能 · 自定义':('Skill · custom','スキル・指定'),

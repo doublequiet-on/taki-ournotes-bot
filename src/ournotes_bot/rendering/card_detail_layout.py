@@ -9,7 +9,7 @@ from .labels import label as ui_label
 from datetime import datetime, timedelta, timezone
 from PIL import ImageOps
 from ..data import SupportCard, localized_text
-from .haneoka_theme import Canvas, MUTED, ACCENT, SOFT, SURFACE, frame, lines, prepared_render_assets
+from .haneoka_theme import Canvas, MUTED, ACCENT, SOFT, SURFACE, frame, lines, font, prepared_render_assets
 from .readable_pages import render_parts
 from .image_output import _release_image_memory
 
@@ -60,8 +60,6 @@ def _render(card,locale,load,shared,game_names,fitted_logo):
         return assets[(url,size)] if url else None
     title=localized_text(card,'title',locale);titlelines=lines(title,820,44,True)
     identity=localized_text(card,'character',locale)
-    logos=card.catalog.get('band_logos',[])
-    header_h=max(152,82+len(titlelines)*56)
     blocks=[]
     picture=art(card.full_url,(972,1458))
     ah=round(972*picture.height/picture.width) if picture else (547 if support else 1296)
@@ -70,8 +68,23 @@ def _render(card,locale,load,shared,game_names,fitted_logo):
     if card.catalog.get('source') != 'haneoka' and not any(stats):
         stats = None
     people=sorted(card.catalog.get('people',[]),key=lambda p:(p.get('band') or 999,p.get('order',999),p['id']))
+    # Relationships come from people, never from optional logo artwork.
+    bands={p.get('band') for p in people if p.get('band') is not None}
     if support and len(people)>1:
-        blocks.append(('people',126,people))
+        identity=(ui_label('跨乐队 · {n} 位成员',locale).format(n=len(people))
+                  if len(bands)>1 else ui_label('{n} 位成员',locale).format(n=len(people)))
+        for start in range(0,len(people),3):
+            group=people[start:start+3]
+            names=[p.get('name',{}).get(locale) or p.get('name',{}).get('ja') or ui_label('未知',locale) for p in group]
+            wrapped=[lines(name,972/len(group)-24,28) for name in names]
+            blocks.append(('people',100+max(map(len,wrapped))*40,list(zip(group,wrapped))))
+    elif support and not people:
+        identity=' · '.join(v for v in (identity,ui_label('成员资料未获取',locale)) if v)
+    identity_x=54+(fitted_logo.width+14 if fitted_logo is not None else 0)
+    id_width=font(30,False,True).getlength(f'ID {card.id}')
+    identity_width=max(100,1026-id_width-24-identity_x)
+    identity_lines=lines(identity,identity_width,30)
+    header_h=40+len(titlelines)*56+max(44,len(identity_lines)*42)
     blocks.append(('stats',256 if support else 318,stats))
     levels=card.catalog.get('skill_levels',[])
     for index,skill in sorted(enumerate(card.skills),key=lambda pair:{'liveSkill':0,'gekisouSkill':1,'leaderSkill':2}.get(pair[1].kind,0)):
@@ -110,7 +123,7 @@ def _render(card,locale,load,shared,game_names,fitted_logo):
                 if label=='条件成立' and contract and locale=='zh':
                     last=contract['levels']['5'];label=last.get('enhanced_target','条件成立') if isinstance(last,dict) else label
                 if label.startswith('效果 '):label=label.replace('效果',ui_label('效果',locale),1)
-                wrapped=[lines(v,150 if label else 182,32 if support else 36) for v in values]
+                wrapped=[lines(v,150 if label else 182,32 if support else 36,k==4) for k,v in enumerate(values)]
                 label=ui_label(label,locale)
                 row_height=max(max(map(len,wrapped))*50,len(lines(label,150,28))*36+6 if label else 0)+2
                 rows.append((label,wrapped,row_height))
@@ -143,14 +156,10 @@ def _render(card,locale,load,shared,game_names,fitted_logo):
             c.header(ui_label('留影卡详情',locale) if support else ui_label('角色卡详情',locale),f"/{'查留影卡' if support else '查卡'} {card.id}")
             c.box((30,160,1050,160+header_h),SURFACE,24)
             for i,line in enumerate(titlelines):c.text(54,208+i*56,line,44,bold=True)
-            cy=160+header_h-45
-            if len(logos)==1:
-                logo_width=fitted_logo.width if fitted_logo is not None else 164
-                if fitted_logo is not None:
-                    c.paste(fitted_logo,54,round(cy-fitted_logo.height/2),fitted_logo.width,fitted_logo.height)
-                else:c.paste(None,54,cy-24,164,48)
-                if not support or len(people)==1:c.paragraph(54+logo_width+14,cy-22,identity,806-logo_width-14,34,44,color=MUTED)
-            else:c.text(54,cy,ui_label('跨乐队 · {n} 位成员',locale).format(n=len(card.catalog.get('people',[]))) if support else identity,30,MUTED)
+            cy=160+header_h-max(44,len(identity_lines)*42)+21
+            if fitted_logo is not None:
+                c.paste(fitted_logo,54,round(cy-fitted_logo.height/2),fitted_logo.width,fitted_logo.height)
+            for i,line in enumerate(identity_lines):c.text(identity_x,cy+i*42,line,30,MUTED)
             attr=card.catalog.get('attribute_icon')
             if attr:c.paste(art(attr,(64,64)),962,176,64,64,True,trim=True)
             c.text(1026,cy,f'ID {card.id}',30,ACCENT,align='right')
@@ -180,11 +189,9 @@ def _render(card,locale,load,shared,game_names,fitted_logo):
                             c.text(1026,cy,f'{value:g}%' if support else f'{value:,}',38,align='right')
                     else:c.text(54,y+112,ui_label('基础数值未确认',locale),30,MUTED)
                 elif kind=='people':
-                    for i,p in enumerate(data):
-                        cx=54+(i+.5)*972/len(data);c.paste(art(p.get('face'),(72,72)),round(cx-36),y-12,72,72,True,radius=36)
-                        name=p.get('name',{}).get(locale) or ui_label('未知',locale)
-                        if p.get('band')==2:name=name.rsplit(' / ',1)[-1]
-                        c.text(cx,y+84,name,28,align='center')
+                    for i,(p,wrapped) in enumerate(data):
+                        cx=54+(i+.5)*972/len(data);c.paste(art(p.get('face'),(72,72)),round(cx-36),y,72,72,True,radius=36)
+                        for n,line in enumerate(wrapped):c.text(cx,y+96+n*40,line,28,align='center')
                 elif kind=='skill':
                     index,heading,body,rows,hh=data;c.line(54,y,1026)
                     icons=card.catalog.get('skill_icons',[])
@@ -214,7 +221,7 @@ def _render(card,locale,load,shared,game_names,fitted_logo):
                             dt=datetime.fromisoformat(value).astimezone(timezone(timedelta(hours=9)))
                             return dt.strftime('%m/%d %H:%M') if dt.year>1970 else ui_label('未获取',locale)
                         except (ValueError,TypeError):return ui_label('未获取',locale)
-                    c.text(498,y+max(218,90+len(lines(name,528,40))*52+24),ui_label('活动加成卡',locale) if relation['kind']=='相关活动' else 'Pick Up',32,ACCENT)
+                    c.text(498,y+max(218,90+len(lines(name,528,40,True))*52+24),ui_label('活动加成卡',locale) if relation['kind']=='相关活动' else 'Pick Up',32,ACCENT)
                     c.text(54,y+bh-40,date(relation['start'])+' — '+date(relation['end'])+'  (UTC+09:00)',32,MUTED)
                 else:c.text(54,y+40,ui_label('技能详情未获取',locale),32,MUTED)
                 y+=bh
@@ -232,7 +239,7 @@ def _render(card,locale,load,shared,game_names,fitted_logo):
         requests=set()
         for kind,_,data in blocks[start:max_stop]:
             if kind=='people':
-                requests.update((person.get('face'),(72,72)) for person in data)
+                requests.update((person.get('face'),(72,72)) for person,_ in data)
             elif kind=='skill':
                 icons=card.catalog.get('skill_icons',[])
                 if data[0]<len(icons):requests.add((icons[data[0]],(56,56)))

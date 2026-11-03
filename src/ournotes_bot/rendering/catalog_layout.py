@@ -182,7 +182,7 @@ def _memory_headings(people, locale, fallback):
     for person in people:
         wrapped = []
         for part in name(person).split(' / '):
-            size = max(12, min(18, int(18*72/max(1, font(18, True, part.isascii()).getlength(part)))))
+            size = 18
             wrapped.extend((line, size) for line in lines(part, 72, size, True))
         texts.append(tuple(wrapped))
     headings, top = [], 0

@@ -12,7 +12,7 @@
 
 ## Inputs
 
-已选歌曲及分页文本、Song/Chart 和可选 score 字典。当前 `render_song_list` 接收歌曲列表，不直接接收整个 SongAnswer。
+已选歌曲及分页文本、Song/Chart 和可选 score 字典。歌曲详情同时接收准备层从同次 ChartData 捕获的 notice，保留来源／旧缓存或未获取提示；图文使用同一提示，不在绘图时重查。当前 `render_song_list` 接收歌曲列表，不直接接收整个 SongAnswer。
 
 ## Outputs
 

@@ -35,10 +35,15 @@ def chart(c,answer,board,box,display_time,heading=True):
         return
     first,last=view.points[0].time_ms,view.points[-1].time_ms
     low,high=min(values),max(values);pad=max(1,(high-low)//8);low=max(0,low-pad);high+=pad
-    plot=(x if w>1500 else x+76,y+(58 if w>1500 else 76),w if w>1500 else w-86,h-(126 if w>1500 else 172));bounds=(first,last,low,high)
-    for i in range(4):
-        value=low+(high-low)*i//3;py=plot[1]+plot[3]-(value-low)*plot[3]//max(1,high-low)
-        c.line(plot[0],py,plot[0]+plot[2],color='#e5e0e9');c.text(plot[0]-18,py,f'{value/1000000:.{min(6,max(2,math.ceil(-math.log10(max(1,high-low)/1000000))+1))}f}',34 if w>1500 else 24,MUTED,align='right')
+    precision=min(6,max(2,math.ceil(-math.log10(max(1,high-low)/1000000))+1))
+    ticks=[low+(high-low)*i//3 for i in range(4)]
+    labels=[f'{value/1000000:.{precision}f}' for value in ticks]
+    tick_size=34 if w>1500 else 24
+    gutter=math.ceil(max(font(tick_size,False,True).getlength(label) for label in labels))+24
+    plot=(x+gutter,y+(58 if w>1500 else 76),w-gutter-10,h-(158 if w>1500 else 204));bounds=(first,last,low,high)
+    for value,label in zip(ticks,labels):
+        py=plot[1]+plot[3]-(value-low)*plot[3]//max(1,high-low)
+        c.line(plot[0],py,plot[0]+plot[2],color='#e5e0e9');c.text(plot[0]-18,py,label,tick_size,MUTED,align='right')
     for i,rank in enumerate(chart_ranks(answer)):
         if not view.points or i>=len(view.points[0].scores):continue
         for group in segments(view,i):
@@ -48,9 +53,11 @@ def chart(c,answer,board,box,display_time,heading=True):
                 px,py=pts[-1];c.draw.ellipse((px-3,py-3,px+3,py+3),fill=color)
     for stamp,px,align in ((first,plot[0],'left'),((first+last)//2,plot[0]+plot[2]/2,'center'),(last,plot[0]+plot[2],'right')):
         label=display_time(stamp,answer.event.server)
-        c.text(px,y+h-45,label[5:10],34 if w>1500 else 22,MUTED,align=align)
-        c.text(px,y+h-16,label[11:16],32 if w>1500 else 22,MUTED,align=align)
-    if len(view.points)==1:c.text(x+110,y+h-12,'仅 1 个历史点，尚未形成曲线',22,MUTED)
+        c.text(px,y+h-77,label[5:10],34 if w>1500 else 22,MUTED,align=align)
+        c.text(px,y+h-48,label[11:16],32 if w>1500 else 22,MUTED,align=align)
+    if len(view.points)==1:c.text(x,y+h-12,'仅 1 个历史点，尚未形成曲线',22,MUTED)
+    elif any(len([v for v in p.scores if v is not None]) != len(set(v for v in p.scores if v is not None)) for p in view.points):
+        c.text(x,y+h-12,'同分观测的曲线可能重合',22,MUTED)
 
 
 def render(answer,*,assets,load,display_time,server_label,timezone_label,catalogs=({},{}),bonus_marks=(),song_bands=None):
@@ -144,8 +151,8 @@ def render(answer,*,assets,load,display_time,server_label,timezone_label,catalog
             th=max(148,len(lines(song_title(board),width-270,54,True))*64+76)
             blocks.append(('song',th,board))
             for rank in answer.ranks:
-                name=lines(answer.name_label(board,rank),trend_name_width(board,rank),42)
-                identity=lines('ID '+answer.id_label(board,rank),650,26)
+                name=lines(answer.name_label(board,rank),trend_name_width(board,rank),42,True)
+                identity=lines('ID '+answer.id_label(board,rank),650,32)
                 blocks.append(('rank',100 if historical and not answer.has_players(board) else max(156,24+len(name)*50+len(identity)*38), (board,rank)))
             blocks.append(('chart',780 if answer.history_for(board).points else 180,board))
     else:
@@ -153,8 +160,8 @@ def render(answer,*,assets,load,display_time,server_label,timezone_label,catalog
         title_heights={b.song.music_id:len(lines(song_title(b),int(cw)-110,30,True))*40 for b in boards}
         columns=max(max(title_heights.values())+(122 if historical else 60),188 if historical else 126)
         def name_width(board,rank):
-            score_width=font(32,True,True).getlength(score_text(board,rank))
-            return max(90,int(cw)-(40 if historical else 144)-int(score_width))
+            score_width=font(42 if width==1080 else 32,True,True).getlength(score_text(board,rank))
+            return max(90,int(cw)-(40 if historical else 166 if width==1080 else 144)-int(score_width))
         def row_height(board,rank):
             name_size = 36 if width==1080 else 28
             id_size = 28 if width==1080 else 24

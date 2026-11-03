@@ -751,7 +751,7 @@ def song_detail_reply(result,repository,locale,candidate):
     prepared=prepare_song_reply(song,repository.chart_source,locale,
                                 load_score=load_chart_score,load_data=load_chart_data)
     return PreparedReply(prepared.text,render(prepared.song,prepared.score,prepared.locale,
-                         load=visual_asset,band_logos=prepared.band_logos),context=candidate)
+                         load=visual_asset,band_logos=prepared.band_logos,notice=prepared.notice),context=candidate)
 
 
 

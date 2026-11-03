@@ -53,6 +53,7 @@ MISSION_ICON_URLS = {
     for kind in ("JUST", "COMBO", "LUCK")
 }
 FONT_PATHS = [
+    str(Path(__file__).resolve().parent / "rendering" / "assets" / "NotoSansSC.ttf"),
     "C:/Windows/Fonts/msyh.ttc",
     "C:/Windows/Fonts/simhei.ttf",
     "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
