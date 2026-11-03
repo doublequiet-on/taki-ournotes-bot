@@ -23,6 +23,15 @@ BUNDLED_JSON = {
     ("ournotes_bot", "sources", "haneoka", "visual_skill_contracts.json"),
     ("ournotes_bot", "sources", "haneoka", "game_assets.json"),
 }
+# Source-only public build inputs: required by build_downstream_console.py.
+# Match the entire path below the single sdist root, never a filename/suffix.
+SDIST_BUILD_JSON = {
+    ("deploy", "licenses", "koishi-console", "downstream-inputs.json"),
+    ("deploy", "licenses", "koishi-console", "gateway-notices.json"),
+    ("koishi", "vendor", "console-candidate.json"),
+    ("koishi", "package.json"),
+    ("koishi", "package-lock.json"),
+}
 MEDIA_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".mp4", ".mp3"}
 
 
@@ -48,7 +57,8 @@ def check(path: Path) -> None:
         runtime_dir = ("asset-cache" in parts or "runtime" in parts
                        or ("data" in parts and not path.name.endswith(".whl")))
         private_env = leaf.startswith(".env.") and leaf != ".env.example"
-        if (leaf in PRIVATE_NAMES or private_env or (leaf.endswith(".json") and leaf != "query_aliases.json" and parts[-4:] not in BUNDLED_JSON)
+        source_build_json = path.name.endswith(".tar.gz") and parts[1:] in SDIST_BUILD_JSON
+        if (leaf in PRIVATE_NAMES or private_env or (leaf.endswith(".json") and leaf != "query_aliases.json" and parts[-4:] not in BUNDLED_JSON and not source_build_json)
                 or leaf.endswith((".log", ".pyc", ".sqlite", ".db", ".sqlite3", ".sqlite3-journal", ".sqlite3-wal", ".sqlite3-shm"))
                 or (PurePosixPath(leaf).suffix.lower() in MEDIA_SUFFIXES
                     and parts[-len(BUNDLED_MEDIA):] != BUNDLED_MEDIA) or runtime_dir):

@@ -9,6 +9,11 @@ import subprocess
 import tempfile
 import zipfile
 
+try:
+    from scripts.console_release import verify_downstream, installed_npm_materials
+except ModuleNotFoundError:
+    from console_release import verify_downstream, installed_npm_materials
+
 ROOT = Path(__file__).resolve().parents[1]
 KOISHI_CLIENT_SHA256 = '55a68e89eda7e3fe59305b09e6c4de19481a8d7aa5df97579822c819ebf3ccaf'
 LICENSE_SHA256 = {
@@ -39,7 +44,7 @@ def patch_koishi_client(path):
     path.write_bytes(data)
 
 
-def copy_release_materials(stage):
+def copy_release_materials(stage, downstream=False):
     """Preserve full pinned license texts and the exact downstream patch recipe."""
     for name, expected in LICENSE_SHA256.items():
         source = ROOT / 'deploy/licenses' / name
@@ -52,6 +57,10 @@ def copy_release_materials(stage):
     shutil.copy2(ROOT / 'docs/RELEASE_MATERIALS.md', stage / 'licenses/RELEASE_MATERIALS.md')
     shutil.copy2(ROOT / 'LICENSE', stage / 'licenses/TAKI-LICENSE')
     shutil.copy2(ROOT / 'THIRD_PARTY.md', stage / 'licenses/THIRD_PARTY.md')
+    if downstream:
+        shutil.copy2(ROOT / 'docs/CONSOLE_DOWNSTREAM.md', stage / 'licenses/koishi-console/CONSOLE_DOWNSTREAM.md')
+        shutil.copy2(ROOT / 'deploy/licenses/koishi-console/gateway-notices.json', stage / 'licenses/koishi-console/gateway-notices.json')
+        return
     patch = {'upstream_version': '5.30.11', 'upstream_git_head': '896882b50cc91d16f522a52ded9644045d461c26',
              'referenced_source_package_version': '5.30.10', 'source_match_status': 'unresolved',
              'path': 'gateway/node_modules/@koishijs/plugin-console/dist/client.js',
@@ -65,7 +74,7 @@ def copy_release_materials(stage):
 def build(python_artifact, node, output):
     if subprocess.check_output(['git','status','--porcelain','--untracked-files=no'],cwd=ROOT):
         raise ValueError('Combination requires committed tracked source')
-    if subprocess.check_output(['git','ls-files','--others','--exclude-standard','--','koishi/src','koishi/scripts','koishi/console'],cwd=ROOT):
+    if subprocess.check_output(['git','ls-files','--others','--exclude-standard','--','koishi/src','koishi/scripts','koishi/console','koishi/vendor'],cwd=ROOT):
         raise ValueError('Untracked gateway sources')
     commit = subprocess.check_output(['git','rev-parse','HEAD'],cwd=ROOT,text=True).strip()
     if python_artifact.suffix == '.zip':
@@ -77,15 +86,26 @@ def build(python_artifact, node, output):
     identity = json.loads(subprocess.check_output([str(node),'-e',
         'console.log(JSON.stringify({version:process.version,platform:process.platform,arch:process.arch}))'],text=True))
     if identity['version'] != 'v24.19.0': raise ValueError('Unexpected Node version')
+    package=json.loads((ROOT/'koishi/node_modules/@koishijs/plugin-console/package.json').read_text())
+    downstream=package['version']=='5.30.10-taki.1'
+    if not downstream and package['version']!='5.30.11':
+        raise ValueError('Unknown Console component version')
+    component=verify_downstream(ROOT/'koishi') if downstream else {'kind':'official-npm','version':'5.30.11'}
+    npm_materials=installed_npm_materials(ROOT/'koishi') if downstream else None
     with tempfile.TemporaryDirectory(prefix='taki-combination-') as folder:
         stage=Path(folder)
-        copy_release_materials(stage)
+        copy_release_materials(stage, downstream)
         gateway=stage/'gateway';gateway.mkdir()
         for name in ('scripts','node_modules','console'):
             shutil.copytree(ROOT/'koishi'/name,gateway/name,ignore=shutil.ignore_patterns('.bin','*.tsbuildinfo'))
-        patch_koishi_client(gateway/'node_modules/@koishijs/plugin-console/dist/client.js')
+        if downstream:
+            shutil.copytree(ROOT/'koishi/vendor',gateway/'vendor')
+            (stage/'licenses/npm-installation.json').write_text(json.dumps(npm_materials,indent=2)+'\n',encoding='utf-8')
+        else:
+            patch_koishi_client(gateway/'node_modules/@koishijs/plugin-console/dist/client.js')
         # Sidecar notice sits beside the modified asset; preserve the upstream asset syntax.
-        (gateway/'node_modules/@koishijs/plugin-console/dist/TAKI-MODIFICATIONS.txt').write_text(
+        if not downstream:
+            (gateway/'node_modules/@koishijs/plugin-console/dist/TAKI-MODIFICATIONS.txt').write_text(
             'Modified by Taki: reconnect URL preservation.\n'
             'Modification documentation added: 2026-11-03; patch predates this material update.\n'
             f'Taki source commit: {commit}\n'
@@ -93,6 +113,8 @@ def build(python_artifact, node, output):
             'and licenses/SOURCES.md at combination root.\n', encoding='utf-8')
         for name in ('package.json','package-lock.json','run.cjs','console.cjs','health.cjs','operation-journal.cjs','ops-host.cjs','ops-controls.cjs','trusted-actions.cjs'):
             shutil.copy2(ROOT/'koishi'/name,gateway/name)
+        if downstream:
+            verify_downstream(gateway)
         subprocess.run([str(node),'node_modules/typescript/bin/tsc','-p','tsconfig.json','--outDir',str(gateway/'lib')],cwd=ROOT/'koishi',check=True)
         subprocess.run([str(node),'scripts/probe.cjs'],cwd=gateway,check=True,stdout=subprocess.DEVNULL)
         binary=stage/'bin'/('node.exe' if identity['platform']=='win32' else 'node')
@@ -117,7 +139,7 @@ def build(python_artifact, node, output):
                   'backend_code_digest':hashlib.sha256(b''.join((application/n).read_bytes() for n in code_files)).hexdigest(),
                   'protocol':inventory['TRANSPORT_PROTOCOL'],'capabilities':['group_policies_v1','query_chat_contract_v1'],
                   'data_schema':1,'rollback':'code-only; freeze settings before unsupported policy runtimes',
-                  'files':files}
+                  'files':files,'console_component':component}
         (stage/'combination.json').write_text(json.dumps(manifest,indent=2)+'\n',encoding='utf-8')
         output.parent.mkdir(parents=True,exist_ok=True)
         with zipfile.ZipFile(output,'w',zipfile.ZIP_DEFLATED) as archive:
