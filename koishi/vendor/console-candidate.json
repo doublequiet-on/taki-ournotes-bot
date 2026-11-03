@@ -1,14 +1,16 @@
 {
   "schema": "taki-console-integration/1",
-  "integration_base": "eed7e70fa8b5194befc379a9929ce72e7617707a",
-  "source_commit": "91bf8b91a8bcb1cf2b822d3eb38e2e11d301ad3f",
+  "integration_base": "e5e532a29cff792d1a7f2a17f704917f96580e79",
+  "source_commit": "e4c0cebade52272e4e2b2f249d1d66d5ce27f722",
   "component": {
-    "file": "taki-console-0.1.0-candidate.1.tgz",
-    "version": "0.1.0-candidate.1",
-    "package_version": "5.30.10-taki.1",
-    "sha256": "72c286da0c53feb6820c54e4b283d2c752b3b4d7198db1b6f7d38e405b495612",
-    "integrity": "sha512-ejPht+BDv2D5OxADH7yHCX5n1XOvPLlYTOucZT/13KUVcegK/XJr+QC/UnnPVg2pKCtdYv9Nc2Cup0c181c4lg==",
-    "size": 634221
+    "file": "taki-console-0.1.0-candidate.2.tgz",
+    "version": "0.1.0-candidate.2",
+    "package_version": "5.30.10-taki.2",
+    "sha256": "5b73df05ece95041f0586177bd077e72cb4bdd0df7c996c5ad7017909bad62dc",
+    "integrity": "sha512-VKB3O9HZjW8Dro7d+ADwSsygj/f+bxLqjiHXWwO2mCYOSbvuQTGS6pPIdJ4JJnZUHxEt1nUwIzSst6biaSnpsg==",
+    "size": 634437,
+    "files": 168,
+    "license_index_entries": 135
   },
   "external_dependencies": {
     "@koishijs/console": {
@@ -38,12 +40,29 @@
     }
   },
   "source_materials": {
-    "sha256": "09a803dbd14079550245bac4ffce5b0a0b2e61c48ac5c61a0c1cb11a375392b5",
-    "relative_path": "sources/72c286da0c53feb6820c54e4b283d2c752b3b4d7198db1b6f7d38e405b495612/source-materials.zip",
+    "source_commit": "e4c0cebade52272e4e2b2f249d1d66d5ce27f722",
+    "bundles": [
+      {
+        "file": "console-candidate2-inputs.zip",
+        "size": 128358736,
+        "sha256": "04e7bb6a403b28e33eb4cc278734720dab2ebec091a1841450bb214f6b16275f"
+      },
+      {
+        "file": "console-candidate2-source-support.zip",
+        "size": 4419328,
+        "sha256": "3762c2145fe2fdae8a74d7a81d46c2085becaf57ef8a6e79545161dc63cd05f8"
+      }
+    ],
     "hosting_url": null,
     "published": false
   },
   "legacy_byte_patch": "forbidden",
   "complete_corresponding_source": false,
-  "product_release": false
+  "product_release": false,
+  "acceptance": {
+    "status": "blocked",
+    "reason": "markdown_link_attribute_injection",
+    "owner": "09",
+    "also_present_in_candidate1": true
+  }
 }
