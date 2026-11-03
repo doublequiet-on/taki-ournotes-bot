@@ -4,6 +4,7 @@ include 更新日志.md
 include scripts/check_release_artifact.py
 include scripts/product_release.py deploy/product_identity.py
 include scripts/console_source_materials.py docs/CONSOLE_SOURCE_MATERIALS.md
+include docs/CONSOLE_TRACE_ROUND5.md
 include docs/PRODUCT_RELEASE.md docs/RELEASE_MATERIALS.md
 recursive-include deploy/licenses LICENSE *.md
 include deploy/licenses/koishi-console/reproduce.sh deploy/licenses/koishi-console/taki-reconnect-source.patch
