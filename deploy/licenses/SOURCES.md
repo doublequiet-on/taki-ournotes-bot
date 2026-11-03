@@ -1,7 +1,9 @@
 # 固定版本随行许可证
 
+2026-11-03补充复核：npm的10个src文件与下列固定Git树逐字节一致；package版本和三处依赖值由5.30.10变为5.30.11。三个lib source maps均无sourcesContent；参考树没有依赖锁。源码子集匹配不证明lib/dist来源，源码完整性仍未验收。具体构建配置、参考archive摘要及剩余阻塞见随行 `RELEASE_MATERIALS.md` 的Console固定源码复核。
+
 - `node/LICENSE`：Node v24.19.0 [完整上游文本](https://raw.githubusercontent.com/nodejs/node/v24.19.0/LICENSE)，157606 bytes，SHA-256 `148eacf7863ef4329224a29398623077200a27194aa075569faf4a0a85566ca5`。含其捆绑第三方材料，不能换成MIT摘要。
-- `koishi-console/LICENSE`：Console npm 5.30.11的gitHead `896882b50cc91d16f522a52ded9644045d461c26` 指向的 [webui许可证参考](https://raw.githubusercontent.com/koishijs/webui/896882b50cc91d16f522a52ded9644045d461c26/LICENSE)，34523 bytes，SHA-256 `8486a10c4393cee1c25392769ddd3b2d6c242d6ec7928e1414efff7dfb2f07ef`。其[精确package.json](https://github.com/koishijs/webui/blob/896882b50cc91d16f522a52ded9644045d461c26/plugins/console/package.json)版本实际为5.30.10，声明AGPL-3.0；与npm 5.30.11不一致，对应源码匹配尚未确认。
+- `koishi-console/LICENSE`：Console npm 5.30.11的gitHead `896882b50cc91d16f522a52ded9644045d461c26` 指向的 [webui许可证参考](https://raw.githubusercontent.com/koishijs/webui/896882b50cc91d16f522a52ded9644045d461c26/LICENSE)，34523 bytes，SHA-256 `8486a10c4393cee1c25392769ddd3b2d6c242d6ec7928e1414efff7dfb2f07ef`。其[精确package.json](https://github.com/koishijs/webui/blob/896882b50cc91d16f522a52ded9644045d461c26/plugins/console/package.json)版本实际为5.30.10，声明AGPL-3.0；与npm 5.30.11不一致，完整对应源码及编译产物来源尚未确认。
 
 2026-11-03核对 npm tarball 的SHA-512与发布integrity一致；其27个成员没有LICENSE文件。这里补注册信息指向的固定源码文本，不把npm元数据当作实际随包材料。构建时保留node_modules原有LICENSE/NOTICE，不根据根许可证覆盖第三方条件。
 

@@ -58,6 +58,28 @@ class ProductIdentityTests(unittest.TestCase):
         self.c['capabilities'].append('chat.proactive')
         self.assertEqual(check_identity(self.c, self.e, self.o)['reason'], 'capability_exceeded')
 
+    def test_history_physical_107_does_not_hide_logical_4_on_rollback(self):
+        # Synthetic contract inputs only: actual SQLite inspection belongs to 10/07.
+        physical = 'cutoff_history.fixture.physical'
+        logical = 'cutoff_history.fixture.logical'
+        self.e['schemas'] = {'cutoff_history_provider': 4, physical: 107, logical: 4}
+        self.c['schemas'] = {key: {'read': [value, value], 'write': [value, value]}
+                             for key, value in self.e['schemas'].items()}
+        self.assertEqual(check_identity(self.c, self.e, self.o)['status'], 'allow')
+        binding = {'contract_version': 1, 'manifest_sha256': self.e['manifest_sha256']}
+        for mode in ('read', 'write'):
+            candidate = copy.deepcopy(self.c)
+            candidate['schemas'][logical][mode] = [1, 3]
+            result = check_scope_binding(binding, candidate, self.e, self.o)
+            self.assertEqual((result['outcome'], result['reason']), ('manual', 'schema_incompatible'))
+        del self.c['schemas'][logical]
+        self.assertEqual(check_identity(self.c, self.e, self.o)['reason'], 'schema_incompatible')
+        self.c['schemas'][logical] = {'read': [4, 4], 'write': [4, 4]}
+        self.e['schemas'][physical] = 4
+        self.assertEqual(check_identity(self.c, self.e, self.o)['reason'], 'schema_incompatible')
+        self.c['schemas'][physical] = {'read': [4, 4], 'write': [4, 4]}
+        self.assertEqual(check_identity(self.c, self.e, self.o)['status'], 'allow')
+
     def test_missing_unknown_and_invalid_types_fail_closed(self):
         for key in self.c:
             candidate = dict(self.c)

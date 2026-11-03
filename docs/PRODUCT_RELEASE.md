@@ -16,7 +16,7 @@
 
 未知顶层字段拒绝，布尔值不是整数。所有字段必填、不可null。组件集合必须完全一致，不只校验交集；能力必须在外部上限内。定制版永远拒绝 `chat.free` 与 `chat.proactive`，08须提交完整能力名称和符号闭包；这个检查不证明物理裁剪。schema当前版本须同时落在读写闭区间，集合也必须一致，不能用缺省版本1绕过未知存储。protocol须major一致且minor在外部支持范围；最低控制器按受信版本比较，不读取候选提供的可执行校验器。
 
-组件摘要由所用归档字节或规范文件清单生成：各文件以POSIX相对路径排序，每行 `path\0sha256\n`，UTF-8无BOM后SHA-256；不能复用未包含全部选中模块的旧backend digest。现有 `backend_sources.CODE_FILES/TRANSPORT_PROTOCOL` 仍是个人版运行协议来源；08固定共享闭包后才能提供定制inventory。不得按model/knowledge/query_agent文件名整删。源commit与component摘要分别记录；不同依赖SHA可以是经审核的明确装配，未登记混搭拒绝。
+组件摘要由所用归档字节或规范文件清单生成：各文件以POSIX相对路径排序，每行 `path\0sha256\n`，UTF-8无BOM后SHA-256；不能复用未包含全部选中模块的旧backend digest。现有 `backend_sources.CODE_FILES/TRANSPORT_PROTOCOL` 仍是个人版运行协议来源；08固定共享闭包后才能提供定制inventory。不得按model/knowledge/query_agent文件名整删。源commit与component摘要分别记录；不同依赖SHA只作依赖登记；源码装配须收口到一个经审核的固定组合提交，外部组件另按明确版本与摘要登记，未登记混搭拒绝。
 
 ## C6：判定与回退
 
@@ -34,6 +34,26 @@
 
 回滚目标必须作为候选重新校验，外部权威明确锁定其manifest和允许的序号下限；05/07权威不能从旧包恢复。controller rollback、代码回退和数据恢复独立。首装的schemas由10明确提供实际初始化计划，不能伪装现有存储。个人旧baseline没有自动豁免：旧流程仅维持已部署个人实例的现状；进入新合同需按精确旧commit/组件/协议/schema重新审阅并出具新manifest，不能把任意旧包标成兼容。当前未认证任何旧baseline的新合同迁移或定制回退目标。
 
+## 07历史格式的具体映射（10采集，09预检）
+
+固定输入为07 `a63de717df487f896ff2182ea5bf6008672db4ad` 的 `docs/HISTORY_DATA_CONTRACT.md`，其真实base为03 `17212e5df76cf948aa990af571ed6daf5c66ec25`；本分支base仍为 `8d9e7301392ad548fe9554c4f4b09a0d53f615fa`，没有合入07代码。以下声明须在最终统一候选实现验证后才能填入其manifest，不能据此宣称本分支已支持schema4。
+
+沿用现有schemas映射，不新增第二套兼容入口。启用provider历史的候选登记 `cutoff_history_provider`，07对应read/write均为 `[4,4]`。每个实际数据库副本另登记 `cutoff_history.<replica_id>.physical` 和 `.logical` 两个键；replica_id由10在包外的受信存储清单分配，绑定具体副本及partition身份，不使用真实账户或用户路径。expected填实测单值，candidate填经验证读写区间。未压缩schema4为physical=4、logical=4；压缩后为physical=107、logical=4。旧1/2/3同样按实际格式单独登记，不能把 `[1,107]` 写成支持范围，不能仅登记107而遗漏logical。不使用provider能力标记代替逐库证据。
+
+| 目标代码 / 实际数据 | 读写与回退边界 |
+| --- | --- |
+| 07 / 原有1、2、3或107(logical1/2/3) | 按原存储路径和原读写约束；不原地迁移，不自动认定所有旧writer可写所有旧版本 |
+| 07 / provider schema4 | 仅新分区；保留provider、normalization、time_kind以及observation/quarantine provenance |
+| 07 / 107(logical4) | 需同时具有107压缩实现和logical4支持；export恢复logical4，不是降级到3 |
+| 03旧代码 / schema4或107(logical4) | 拒绝新分区；在09中读或写范围不覆盖4即manual/schema_incompatible，保持隔离；即使允许回退release_seq也不能绕过 |
+| 旧代码 / 未变的旧文件 | 只允许已验证旧格式路径；不代表新分区可恢复，provider/2写门仍按旧代码拒绝 |
+
+10必须从实际SQLite的user_version、store_meta.legacy_version（107）、完整状态和partition_identity采集两维版本，并核provider/normalization/time_kind及路径身份；未知、损坏或缺逻辑版本时保持manual，不编造版本或遗漏副本。check_identity本身不打开数据库：它只比较完整键集合及读写区间。候选和expected同时遗漏某库不会由纯比较发现，因此完整存储枚举、未选存储的隔离和实际打开验证是10的独立必过门。首次安装以明确初始化计划单列，不冒充已存在数据库。实例存储集合变化使原manifest绑定失效，须重新审核并预检。
+
+代码回退不是数据恢复。不得改user_version、把v4改名到v3路径或用旧库覆盖现状求兼容。恢复还须单独调用07 `history_retention.check_recovery(candidate, current_authority)`；其allow/reject/manual与reason/evidence不由09身份allow代替，当前删除权威来自恢复树、DB及journal之外。旧库与旧journal、旧库与未应用删除的副本不能因身份相符获准恢复。
+
+最终选择历史功能时，08/09须核选中入口到 `sources/history_partitions.py`、`cutoff_history.py`、`haneoka/event_cutoffs.py`、`moenotes_events.py` 的真实闭包；选择压缩/归档/恢复时再核 `history_compression.py`、`history_archive.py`、`history_retention.py`。随行包含07历史合同、保留/恢复说明及适用的 `scripts/inspect_history_data.py` 工具。此列表是核对入口，不能替代符号闭包或整文件allowlist。实际DB、WAL/SHM、旧备份、名片和生产缓存不作为发行材料。
+
 ## 发行清单与后续输入
 
 两个通道分别出候选、manifest和审计回执。同仓不代表同工件；本阶段没有完整组合候选。
@@ -50,6 +70,12 @@
 08须给固定SHA的符号级共享查询闭包、能力矩阵、聊天排除清单（含文档、编译代码、source maps）、所选P165入口与资源索引。00须给统一装配候选及依赖完整SHA。947、品牌、游戏素材、知识正文的保留/替换/排除均待产品选择；审计建议不是选择。个人缓存、真实账号/名片、日志、生产库不得进入发行。Haneoka是外部serverless数据服务；其R2/D1、采集状态、账号和部署均不打包。
 
 Node完整许可证的交付位置为 `licenses/node/LICENSE`。具体来源、完整性及Console 5.30.11材料核对见 [发行材料](RELEASE_MATERIALS.md)。清单匹配只是字节证据，许可证内容充分性与物理裁剪语义仍需11审计。
+
+### 08静态输入与精确selection门槛
+
+固定08输入为 `509abc81efc2433cbc197050ddc5d64c40f48f5a` 的 `docs/TASK08_PRODUCT_BOUNDARY.md` 与 `docs/task08-product/assembly-input.json`，分析源码基于191 `e1a86a6db1f327a6dd0cc53fd860c4ababf50923`。`assembly_ready=false`；静态import图是保守上界，不是获批selection。本轮只读引用，不合入或拼接这些SHA的文件。
+
+生成selection前依次需要：00固定能力/入口/区服/群与C2C、947/品牌/素材/知识及公告选择；08完成共享parser、followup、查询依赖与聊天运行路径拆分，给出聊天排除清单；05/07/02等接口在单一组合提交接通并验证；按该提交核完整Python包数据、npm/Console编译及source maps、controller/rollback与许可材料。随后从该**单一固定提交**生成精确文件/hash，重算backend_sources/组件摘要，两个通道分别构建。不能将212个静态输入文件直接当发行清单，也不能把多SHA摘取文件称作统一候选。物理裁剪、个人功能回归、11递归审计和10隔离安装均在真实工件上另验。
 
 ## 可执行基础与使用顺序
 
@@ -70,7 +96,9 @@ inventory生成是待审记录，不能自动批准自身；11审阅其全部字
 
 10应先隔离外发，按外部摘要验证inventory，再验证identity，然后检查05当前范围权威、07当前删除权威与存储、实际安装/protocol握手，最后按10激活门决定。任一reject/manual保持隔离。检查顺序属于10，09不另建恢复框架。
 
-## 05 opaque binding接线（固定接口）
+## 05 opaque binding接线（唯一接口）
+
+以下函数/字段为09唯一调用合同；05新版适配仍消费同一合同，不再定义另一份跨语言身份算法。本轮未改05文件。下述05提交只作为已核调用边界的版本依据，不能代表05移动分支的最新实现。08固定输入509abc81efc2433cbc197050ddc5d64c40f48f5a也确认此调用顺序，实际集成须再固定05最终SHA。
 
 已核对05提交 `6b64e027b25d197981f456d6c87f32db54da6c51` 的 `koishi/src/scope-authority.ts`：`ScopeAuthority.identity(binding)` 是同步回调，`ScopeStore.inspect()` 每次先调用identity，只有allow才调用独立approval。05只把binding当对象，尚无09接线；本分支没有叠加05。
 

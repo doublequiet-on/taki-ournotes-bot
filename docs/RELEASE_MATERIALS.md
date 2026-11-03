@@ -1,5 +1,18 @@
 # 发行材料与验收门
 
+## Console固定源码复核（2026-11-03）
+
+对象是 npm `@koishijs/plugin-console@5.30.11`，不是对整个项目的许可结论。[npm固定包](https://registry.npmjs.org/@koishijs/plugin-console/-/plugin-console-5.30.11.tgz)已核发布integrity；其gitHead指向[webui固定源码](https://github.com/koishijs/webui/tree/896882b50cc91d16f522a52ded9644045d461c26)，该树plugin package版本为5.30.10。逐项比对结果：
+
+- npm的10个src文件（三个TS入口、七个locale）与该Git树完全同字节。package.json只有version及三处依赖版本值不同：peer/dev的`@koishijs/client`和dependency的`@koishijs/console`从`^5.30.10`到`^5.30.11`。这证明已比对的源码子集对应，不证明lib/dist由这棵树构建。
+- npm的三个lib source maps指回src，但均无sourcesContent；不能用它们补齐前端dist对应源码或完整构建输入。
+- 固定树声明yarn@4.10.3；`yakumo.yml`的build依次为tsc、esbuild、client，根scripts含`yakumo version`和`yakumo publish`。树中没有依赖锁文件。版本变化可能发生于发布步骤，但目前没有实际发布日志、完整依赖解析或重建字节证据，不能把这一推测当版本对应证明。
+- 下载的固定参考源码archive为289746 bytes，SHA-256 `85528dd1b9407b0f7158ca7c049156088c53de850dad8e3ef695f1d96198e1b9`。它只作为本地审计参考，不自动复制到发行包，不标记为完整对应源码。详细逐文件hash与构建配置保留在任务09回执的`console-source-comparison.json`。
+
+交付阻塞仍包括：确定发布对应源码和完整构建依赖/步骤，验证实际lib/dist来源，形成接收方可取得的源码及Taki修改/补丁材料，确定网络用户源码获取方式并验收。现有reconnect recipe记录的是已发布client字节替换，不是从源码重建证明；最终08裁剪还会产生额外修改，须按最终固定候选重新出补丁/说明。未执行上游构建、未发布源码服务。不得把参考archive或已有LICENSE视为这些要求已满足。
+
+## 全部交付层
+
 本表承接任务11源码审计，区分已核对文本与尚未形成的实际交付。任务09基础阶段未形成定制产品工件；不得把个人版CI产物用作定制裁剪证明。
 
 | 材料 | 当前证据与构建行为 | 最终候选仍须提供 |
