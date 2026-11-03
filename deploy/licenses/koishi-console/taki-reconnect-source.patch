@@ -1,0 +1,27 @@
+--- a/packages/client/client/data.ts
++++ b/packages/client/client/data.ts
+@@ -61,7 +61,7 @@
+   }
+ })
+ 
+-export function connect(ctx: Context, callback: () => Universal.WebSocket) {
++export function connect(ctx: Context, callback: () => Universal.WebSocket, takiReconnectUrl?: string) {
+   const value = callback()
+ 
+   let sendTimer: number
+@@ -75,13 +75,14 @@
+   }
+ 
+   const reconnect = () => {
++    takiReconnectUrl ??= location.href
+     socket.value = null
+     for (const key in store) {
+       store[key] = undefined
+     }
+     console.log('[koishi] websocket disconnected, will retry in 1s...')
+     setTimeout(() => {
+-      connect(ctx, callback).then(location.reload, () => {
++      connect(ctx, callback, takiReconnectUrl).then(() => location.replace(takiReconnectUrl), () => {
+         console.log('[koishi] websocket disconnected, will retry in 1s...')
+       })
+     }, 1000)

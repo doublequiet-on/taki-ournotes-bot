@@ -1,5 +1,7 @@
 # 发行材料与验收门
 
+2026-11-03方案A续轮见 [Console来源与重建材料](CONSOLE_SOURCE_MATERIALS.md)：已重建全部lib/dist，16项中9项与原npm同字节，7项前端不同；独立新目录使用本次锁/缓存离线重放16项一致。历史来源仍未全部证明；材料包不是最终产品工件，不能解除本表对应门禁。
+
 ## Console固定源码复核（2026-11-03）
 
 对象是 npm `@koishijs/plugin-console@5.30.11`，不是对整个项目的许可结论。[npm固定包](https://registry.npmjs.org/@koishijs/plugin-console/-/plugin-console-5.30.11.tgz)已核发布integrity；其gitHead指向[webui固定源码](https://github.com/koishijs/webui/tree/896882b50cc91d16f522a52ded9644045d461c26)，该树plugin package版本为5.30.10。逐项比对结果：

@@ -1,5 +1,7 @@
 # 固定版本随行许可证
 
+方案A续轮已形成独立研究材料包：全部lib/dist逐文件来源/差异、实际前端模块图、本次解析锁/缓存及许可索引、源码补丁与复现脚本。16项重建9项同npm、7项不同，历史前端来源仍待闭合；不是最终发行材料全部齐备。详见仓库docs/CONSOLE_SOURCE_MATERIALS.md及原task09回执。此处reproduce.sh按材料包根目录布局使用，不是产品安装脚本；源码patch也不自动应用到当前npm。
+
 2026-11-03补充复核：npm的10个src文件与下列固定Git树逐字节一致；package版本和三处依赖值由5.30.10变为5.30.11。三个lib source maps均无sourcesContent；参考树没有依赖锁。源码子集匹配不证明lib/dist来源，源码完整性仍未验收。具体构建配置、参考archive摘要及剩余阻塞见随行 `RELEASE_MATERIALS.md` 的Console固定源码复核。
 
 - `node/LICENSE`：Node v24.19.0 [完整上游文本](https://raw.githubusercontent.com/nodejs/node/v24.19.0/LICENSE)，157606 bytes，SHA-256 `148eacf7863ef4329224a29398623077200a27194aa075569faf4a0a85566ca5`。含其捆绑第三方材料，不能换成MIT摘要。
