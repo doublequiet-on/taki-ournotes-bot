@@ -18,7 +18,7 @@
 | devtools | 固定 `df6ab6bb7791a7a525a97990de73b3ea5e9a1941` 的packages/api TS（树版本6.6.3），独立登记6.6.3-taki.1；完整TypeScript程序生成ES2015，再由Vite装配 | 保留上游const enum和类型重导出的擦除语义；将已失效expect-error改成显式可选全局属性类型，运行表达式不变，保留before/after hash。完整诊断无错误才emit；三项导出、即时hook和排队注册合成对照通过。不再冒充npm6.6.4来源；真实浏览器握手仍待08 |
 | Element Plus | 固定 `8c0180c37ae4741f40969a26a9704c1068be4d93` 完整Vue/TS/TSX/SCSS；显式生成version.ts=`2.7.7-taki.1`；Vue/JSX插件编译全部管理所用组件，Sass从theme-chalk/src/index.scss生成主题 | 不依赖原npm编译组件或两个未解释map输入。实际Vue虚拟export-helper内容/hash、module图和生成配置保存；保留全部组件入口，视觉/交互回归仍需08 |
 
-其余实际前端36个npm包取得准确npm、官方固定Git树及原许可/NOTICE，见输入 `materials/component-materials.json` 与 `materials/actual-sources/`。这些源码用于随行追溯；未声称每个第三方npm编译文件都已独立重建。webui、Element Plus及devtools源码另在source内。候选 `licenses/index.json` 记录随行原文的原始路径/hash；根许可不覆盖包级例外。工具、研究缓存、组件外部服务依赖和最终安装树分别审查。
+实际前端共36个npm包（含上述从npm TS取源的包）取得准确npm、官方固定Git树及原许可/NOTICE，见输入 `materials/component-materials.json` 与 `materials/actual-sources/`。这些源码用于随行追溯；未声称每个第三方npm编译文件都已独立重建。webui、Element Plus及devtools源码另在source内。候选 `licenses/index.json` 记录随行原文的原始路径/hash；根许可不覆盖包级例外。工具、研究缓存、组件外部服务依赖和最终安装树分别审查。
 
 devtools编译保留其tsconfig的严格函数/this检查及原skipLibCheck设置，覆盖module=ES2015、声明/maps、noEmitOnError=true。该API没有webpack全局引用，ambient types明确只取锁定Node声明，不要求未使用的webpack-env；没有忽略编译错误或改成transpile-only。
 
