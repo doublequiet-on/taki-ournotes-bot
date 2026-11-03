@@ -34,7 +34,7 @@ python3 scripts/rebuild_console_sources.py --inputs /absolute/console-reduced-re
 
 22包逐实际文件→源码/生成配置→证据→缺口见本轮`source-matrix/matrix-22.json`及追加记录：async-validator、normalize-wheel-es的实际map源码全文与固定源逐字节相同；marked的11份map内容实际是TS擦除后的JS，固定TS5.9.3重放10份同字节、全部11份规范化语法相同，不能把`.ts`文件名误当原TS全文。Floating UI core/dom1.8.0的原gitHead树无对应包，精确官方tag均解引用到`12d94738472e922e1b3fa31b02b2b61b9ed77e6a`，对应包版本/入口/rollup配置已补，原错误树作为历史保留。其余包的实际npm文件、首选源码树、版本、build脚本/配置/锁摘要逐项列出；未建立完整输出生成关系的项目仍标待证明，不机械重建全部上游或重启方案A版本组合搜索。
 
-最小源码包中的500工具/传递包有46项未检出独立命名许可文件，需要核README、包级例外及适用源码条件；未据此断言46项均无许可。Node、Yarn、编译器/native工具来源和外部依赖仍需11按实际交付范围复核。`complete_corresponding_source=false`、`product_release=false`保持。
+最小源码包中的500工具/传递包最初有46项未检出独立命名许可文件；已复用22项原文，其余24项的逐包结果与新的材料hash见[2026-11-04材料增量](CONSOLE_MATERIALS_FOLLOWUP.md)。未据文件命名断言无许可。冻结包不被增量覆盖，Node、Yarn、编译器/native工具来源和外部依赖仍需11按实际交付范围复核。`complete_corresponding_source=false`、`product_release=false`保持。
 
 ## 验证与下一包
 

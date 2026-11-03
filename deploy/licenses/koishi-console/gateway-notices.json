@@ -326,7 +326,45 @@
         "directory": "packages/core"
       },
       "git_head": "d06e1e9b2ad1d7ae7e31efc7f11249b1133d9450",
-      "gap": "HTTP Error 404: Not Found"
+      "materials_followup_20261104": {
+        "note": "Exact npm gitHead is in koishijs/koishi, not metadata repository; all runtime wrapper JS/declarations match. Source package version predates npm metadata; no rebuild/version claim. Wrapper JS is preferred form; delegated Cordis package remains separately licensed.",
+        "npm_sha256": "3fc813dfefea83993103784da11d196424f5a13812886d9212014d637f86b8e8",
+        "followup": {
+          "source_sha256": "979174b8f609758314b9f92d2544e7526f02b5729a5e905eeeb69823b7ab3759",
+          "source_commit": "d06e1e9b2ad1d7ae7e31efc7f11249b1133d9450",
+          "source_repository": "koishijs/koishi",
+          "packages": [
+            [
+              "plugins/http/package.json",
+              "0.6.1"
+            ]
+          ],
+          "npm_matches": {
+            "index.cjs": [
+              "plugins/http/index.cjs"
+            ],
+            "index.d.ts": [
+              "plugins/http/index.d.ts",
+              "plugins/http/index.mjs"
+            ],
+            "index.mjs": [
+              "plugins/http/index.d.ts",
+              "plugins/http/index.mjs"
+            ],
+            "package.json": [],
+            "readme.md": [
+              "plugins/http/readme.md"
+            ]
+          }
+        }
+      },
+      "original_texts": [
+        {
+          "path": "followup-source:LICENSE",
+          "sha256": "e60d87e606797ace86cbb510df9f75a9b858b5cc9f9dcfebfe47b31961a7c559",
+          "text": "MIT License\n\nCopyright (c) 2019-present Shigma\n\nPermission is hereby granted, free of charge, to any person obtaining a copy\nof this software and associated documentation files (the \"Software\"), to deal\nin the Software without restriction, including without limitation the rights\nto use, copy, modify, merge, publish, distribute, sublicense, and/or sell\ncopies of the Software, and to permit persons to whom the Software is\nfurnished to do so, subject to the following conditions:\n\nThe above copyright notice and this permission notice shall be included in all\ncopies or substantial portions of the Software.\n\nTHE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR\nIMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,\nFITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE\nAUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER\nLIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,\nOUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE\nSOFTWARE.\n"
+        }
+      ]
     },
     {
       "name": "@koishijs/plugin-proxy-agent",
@@ -341,7 +379,45 @@
         "directory": "packages/proxy-agent"
       },
       "git_head": "b2462893f99a78e7e98bd0ef110f253eebf0a337",
-      "gap": "HTTP Error 404: Not Found"
+      "materials_followup_20261104": {
+        "note": "Exact npm gitHead is in koishijs/koishi, not metadata repository; all runtime wrapper JS/declarations match. Source package version predates npm metadata; no rebuild/version claim. Wrapper JS is preferred form; delegated Cordis package remains separately licensed.",
+        "npm_sha256": "826f26551762f9db75c03cdc8087c1a45b8a793c4f9317cf68f23fc2171816ef",
+        "followup": {
+          "source_sha256": "6dbcff3966bff01fef4061cac20f05592eefb426556d83d592e40996cef16093",
+          "source_commit": "b2462893f99a78e7e98bd0ef110f253eebf0a337",
+          "source_repository": "koishijs/koishi",
+          "packages": [
+            [
+              "plugins/proxy-agent/package.json",
+              "0.3.2"
+            ]
+          ],
+          "npm_matches": {
+            "index.cjs": [
+              "plugins/proxy-agent/index.cjs"
+            ],
+            "index.d.ts": [
+              "plugins/proxy-agent/index.d.ts",
+              "plugins/proxy-agent/index.mjs"
+            ],
+            "index.mjs": [
+              "plugins/proxy-agent/index.d.ts",
+              "plugins/proxy-agent/index.mjs"
+            ],
+            "package.json": [],
+            "readme.md": [
+              "plugins/proxy-agent/readme.md"
+            ]
+          }
+        }
+      },
+      "original_texts": [
+        {
+          "path": "followup-source:LICENSE",
+          "sha256": "e60d87e606797ace86cbb510df9f75a9b858b5cc9f9dcfebfe47b31961a7c559",
+          "text": "MIT License\n\nCopyright (c) 2019-present Shigma\n\nPermission is hereby granted, free of charge, to any person obtaining a copy\nof this software and associated documentation files (the \"Software\"), to deal\nin the Software without restriction, including without limitation the rights\nto use, copy, modify, merge, publish, distribute, sublicense, and/or sell\ncopies of the Software, and to permit persons to whom the Software is\nfurnished to do so, subject to the following conditions:\n\nThe above copyright notice and this permission notice shall be included in all\ncopies or substantial portions of the Software.\n\nTHE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR\nIMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,\nFITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE\nAUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER\nLIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,\nOUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE\nSOFTWARE.\n"
+        }
+      ]
     },
     {
       "name": "@koishijs/plugin-server",
@@ -526,7 +602,28 @@
       "source_file": "node-modules_cache-content-type-8a43ff8b3f800aef8fa366d99e0a2828705a9ffe.tar.gz",
       "source_sha256": "e8a973809b71c5e35d1eff7107a52a66e3d09dbabb52bc0600d449636f093afb",
       "original_texts": [],
-      "gap": "No applicable root/package original license file found"
+      "gap": "Exact gitHead source and npm JS/README inspected. Later LICENSE exists at 919c1f36..., but source is a TS/ylru2 rewrite; applicability to old 1.0.1 remains unconfirmed. Do not substitute mime-types license.",
+      "materials_followup_20261104": {
+        "note": "Exact gitHead source and npm JS/README inspected. Later LICENSE exists at 919c1f36..., but source is a TS/ylru2 rewrite; applicability to old 1.0.1 remains unconfirmed. Do not substitute mime-types license.",
+        "npm_sha256": "246c59ef49381b15188da64a307e6e3211b657fbb9cc78665413b20b903aa73a",
+        "followup": {
+          "source_url": "https://codeload.github.com/node-modules/cache-content-type/tar.gz/919c1f36b9873b6a3606b90ac49f4e4462b3a55c",
+          "source_commit": "919c1f36b9873b6a3606b90ac49f4e4462b3a55c",
+          "source_sha256": "d338598aee97181485e8addddc2dd3193e5439bf10674dbb77506b79efd7c0ec",
+          "packages": [
+            [
+              "package.json",
+              "2.0.0"
+            ]
+          ],
+          "npm_matches": {
+            "package.json": [],
+            "History.md": [],
+            "index.js": [],
+            "README.md": []
+          }
+        }
+      }
     },
     {
       "name": "cordis",
@@ -567,8 +664,36 @@
       "source_url": "https://codeload.github.com/koajs/compose/tar.gz/06e82e65a368ac12cd6405beaf19fd5d208a1477",
       "source_file": "koajs_compose-06e82e65a368ac12cd6405beaf19fd5d208a1477.tar.gz",
       "source_sha256": "c2e4ef4eb3e7ef77ab5a50cdb51af67aaca5a81aed3e4ce81d8fde06b59738f5",
-      "original_texts": [],
-      "gap": "No applicable root/package original license file found"
+      "original_texts": [
+        {
+          "path": "followup-source:LICENSE",
+          "sha256": "44a7ca64cb59fbe6481a7260e4317ff0177127a6e50e6077a9bfa60f89f905a2",
+          "text": "\nThe MIT License (MIT)\n\nCopyright (c) 2013 TJ Holowaychuk tj@apex.sh\n\nPermission is hereby granted, free of charge, to any person obtaining a copy\nof this software and associated documentation files (the \"Software\"), to deal\nin the Software without restriction, including without limitation the rights\nto use, copy, modify, merge, publish, distribute, sublicense, and/or sell\ncopies of the Software, and to permit persons to whom the Software is\nfurnished to do so, subject to the following conditions:\n\nThe above copyright notice and this permission notice shall be included in\nall copies or substantial portions of the Software.\n\nTHE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR\nIMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,\nFITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE\nAUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER\nLIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,\nOUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN\nTHE SOFTWARE.\n"
+        }
+      ],
+      "materials_followup_20261104": {
+        "note": "Exact npm source declares MIT. Official LICENSE-add commit 903480c36957776f8561a33a840cdd0a06ad611f supplies original full text; runtime JS differs only by removing one semicolon. This is later same-project text, not a file present in 4.1.0 npm. Difference retained.",
+        "npm_sha256": "878ca5a547ac938f33fb153ff3304150b9c621c366bad174ddb5ef13a09f06b1",
+        "followup": {
+          "source_url": "https://codeload.github.com/koajs/compose/tar.gz/903480c36957776f8561a33a840cdd0a06ad611f",
+          "source_commit": "903480c36957776f8561a33a840cdd0a06ad611f",
+          "source_sha256": "140dfcf376b17b524812b9fc05479e639bde41509516ba26f85c86709aa7813f",
+          "packages": [
+            [
+              "package.json",
+              "4.2.0"
+            ]
+          ],
+          "npm_matches": {
+            "package.json": [],
+            "History.md": [
+              "History.md"
+            ],
+            "index.js": [],
+            "Readme.md": []
+          }
+        }
+      }
     },
     {
       "name": "koishi",
@@ -629,7 +754,48 @@
         "type": "git"
       },
       "git_head": null,
-      "gap": "No fixed gitHead/repository in exact npm metadata"
+      "materials_followup_20261104": {
+        "note": "Exact npm Readme.md contains full MIT text; official 0.0.2 tag 61a61534ffadb26ac6171d604a6774d2420d3010 matches all five non-package.json files; JS is preferred source.",
+        "npm_sha256": "94512326421b3c25aa63b891a3f0f48022385620de23c8e191b6abd918d13592",
+        "followup": {
+          "source_url": "https://codeload.github.com/tj/node-only/tar.gz/61a61534ffadb26ac6171d604a6774d2420d3010",
+          "source_commit": "61a61534ffadb26ac6171d604a6774d2420d3010",
+          "source_sha256": "b90168a9d598761941ac66f64127a1d07f8b38c4d16f0f1eb8742c3fb729118c",
+          "packages": [
+            [
+              "package.json",
+              "0.0.2"
+            ]
+          ],
+          "npm_matches": {
+            "package.json": [
+              "package.json"
+            ],
+            ".npmignore": [
+              ".npmignore"
+            ],
+            "index.js": [
+              "index.js"
+            ],
+            "History.md": [
+              "History.md"
+            ],
+            "Makefile": [
+              "Makefile"
+            ],
+            "Readme.md": [
+              "Readme.md"
+            ]
+          }
+        }
+      },
+      "original_texts": [
+        {
+          "path": "npm:Readme.md",
+          "sha256": "d7f53d74f8c810c4516d316c309360b771e511189923b4def4169085e742bfa6",
+          "text": "\n# only\n\n  Return whitelisted properties of an object.\n\n## Installation\n\n    $ npm install only\n\n## API\n\n An array or space-delimited string may be given:\n\n```js\nvar obj = {\n  name: 'tobi',\n  last: 'holowaychuk',\n  email: 'tobi@learnboost.com',\n  _id: '12345'\n};\n\nvar user = only(obj, 'name last email');\n```\n\nyields:\n\n```js\n{\n  name: 'tobi',\n  last: 'holowaychuk',\n  email: 'tobi@learnboost.com'\n}\n```\n\n## License \n\n(The MIT License)\n\nCopyright (c) 2012 TJ Holowaychuk &lt;tj@vision-media.ca&gt;\n\nPermission is hereby granted, free of charge, to any person obtaining\na copy of this software and associated documentation files (the\n'Software'), to deal in the Software without restriction, including\nwithout limitation the rights to use, copy, modify, merge, publish,\ndistribute, sublicense, and/or sell copies of the Software, and to\npermit persons to whom the Software is furnished to do so, subject to\nthe following conditions:\n\nThe above copyright notice and this permission notice shall be\nincluded in all copies or substantial portions of the Software.\n\nTHE SOFTWARE IS PROVIDED 'AS IS', WITHOUT WARRANTY OF ANY KIND,\nEXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF\nMERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.\nIN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY\nCLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,\nTORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE\nSOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE."
+        }
+      ]
     },
     {
       "name": "readable-web-to-node-stream",
