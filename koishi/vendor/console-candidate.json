@@ -1,0 +1,49 @@
+{
+  "schema": "taki-console-integration/1",
+  "integration_base": "eed7e70fa8b5194befc379a9929ce72e7617707a",
+  "source_commit": "91bf8b91a8bcb1cf2b822d3eb38e2e11d301ad3f",
+  "component": {
+    "file": "taki-console-0.1.0-candidate.1.tgz",
+    "version": "0.1.0-candidate.1",
+    "package_version": "5.30.10-taki.1",
+    "sha256": "72c286da0c53feb6820c54e4b283d2c752b3b4d7198db1b6f7d38e405b495612",
+    "integrity": "sha512-ejPht+BDv2D5OxADH7yHCX5n1XOvPLlYTOucZT/13KUVcegK/XJr+QC/UnnPVg2pKCtdYv9Nc2Cup0c181c4lg==",
+    "size": 634221
+  },
+  "external_dependencies": {
+    "@koishijs/console": {
+      "version": "5.30.11",
+      "resolved": "https://registry.npmjs.org/@koishijs/console/-/console-5.30.11.tgz",
+      "integrity": "sha512-F/NpSBmFUGcLTTwHLOt3OOaqMFD53aeoJL83Nwq4ZmudEpVQAA/uJusflvXadjf61HjHCu+DQArkPj0HGG7dhA=="
+    },
+    "koishi": {
+      "version": "4.18.11",
+      "resolved": "https://registry.npmjs.org/koishi/-/koishi-4.18.11.tgz",
+      "integrity": "sha512-WPpPFb5G/bChcV+cKF4EU3o5kmdQHc0Wg9nWP2/QT4dTzADSIYOmgwssO706fo97tfGF8Xa716CINHTzAPbXlg=="
+    },
+    "open": {
+      "version": "8.4.2",
+      "resolved": "https://registry.npmjs.org/open/-/open-8.4.2.tgz",
+      "integrity": "sha512-7x81NCL719oNbsq/3mh+hVrAWmFuEYUqrq/Iw3kUzH8ReypT9QQ0BLoJS7/G9k6N81XjW4qHWtjWwe/9eLy1EQ=="
+    },
+    "uuid": {
+      "version": "8.3.2",
+      "resolved": "https://registry.npmjs.org/uuid/-/uuid-8.3.2.tgz",
+      "integrity": "sha512-+NYs2QeMWy+GWFOEm9xnn6HCDp0l7QBD7ml8zLUmJ+93Q5NF0NocErnwkTkXVFNiX3/fpC6afS8Dhb/gz7R7eg=="
+    },
+    "ws": {
+      "version": "8.22.0",
+      "resolved": "https://registry.npmjs.org/ws/-/ws-8.22.0.tgz",
+      "integrity": "sha512-Ydggc987+RO0AnWtZ/7Wq9FtNvcrL1b/RO0ud9mWjUPgDrsAAwQSF51sm2hm1XofbU/4jkpGEsLFsZZxU+1DOg=="
+    }
+  },
+  "source_materials": {
+    "sha256": "09a803dbd14079550245bac4ffce5b0a0b2e61c48ac5c61a0c1cb11a375392b5",
+    "relative_path": "sources/72c286da0c53feb6820c54e4b283d2c752b3b4d7198db1b6f7d38e405b495612/source-materials.zip",
+    "hosting_url": null,
+    "published": false
+  },
+  "legacy_byte_patch": "forbidden",
+  "complete_corresponding_source": false,
+  "product_release": false
+}

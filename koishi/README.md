@@ -10,6 +10,8 @@ M3 已接通查询、续查与逐片段交付；`enabled` 默认 false，仅注�
 
 ## 重现离线探针
 
+网页后台现接入[固定下游 Console 候选](vendor/README.md)，使用仓库内 tgz 与 npm lock，尚待09完成组合发行装配；禁止再应用旧 npm 字节补丁。版本和隔离浏览器验收见[任务08记录](../docs/task08-integration/CONSOLE_CANDIDATE.md)。
+
 使用 `.node-version` 的 Node 24.19.0 和 `packageManager` 的 npm 12.2.0，在本目录执行：
 
 ```sh

@@ -1,5 +1,7 @@
 # 任务08：共用源码组合与查询共享拆分
 
+后续 final4 网页后台接入、固定依赖和发行装配待办见 [Console 候选记录](task08-integration/CONSOLE_CANDIDATE.md)。该轮不改下述查询/聊天源码及已固定组合证据。
+
 ## PR200续轮：开发查询根完整网关握手
 
 当前有效源码：握手独立提交 `bd17ec53da0cff3f8cf28e6175d5a0eb5dbb0954`；随后接收07的组合提交 `56cd2f0f7fe0d1e65e7d991ead30aa47e0659a2b`。07输入为真实HANDOFF及远端一致的 `3686da76a939345690d556d7ddeb40198e15a979`，直接父为原 `a63de717df487f896ff2182ea5bf6008672db4ad`，仅5文件增量。无冲突，03 public_queries/activity_details与最新03相同，visuals仍与04相同；未合入09新材料或10接线。新assembly-input.json绑定56cd组合，保留original_inputs、握手SHA、最新07输入及父边；下文037d/126375只作上一阶段证据。

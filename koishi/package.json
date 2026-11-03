@@ -15,7 +15,7 @@
   },
   "dependencies": {
     "@koishijs/plugin-adapter-qq": "4.14.0",
-    "@koishijs/plugin-console": "5.30.11",
+    "@koishijs/plugin-console": "file:vendor/taki-console-0.1.0-candidate.1.tgz",
     "@koishijs/plugin-http": "0.6.3",
     "@koishijs/plugin-server": "3.2.9",
     "@satorijs/adapter-qq": "4.14.0",
