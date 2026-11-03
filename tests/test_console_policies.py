@@ -3809,6 +3809,58 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
         self.assertEqual(plan['parts'],[])
         self.client.request.assert_not_awaited()
 
+    async def test_staged_default_budget_keeps_two_images_and_full_generation_rules(self):
+        from ournotes_bot.application.chat_capabilities import VisionCapability
+        from ournotes_bot.application.chat_agent import CHAT_SEMANTICS, PROACTIVE_TURN_TAKING
+        bodies=[]
+        attachments=self.proactive_picture()
+        image=self.agent.image_loader.load_many.return_value[0]
+        self.agent.image_loader.load_many.return_value=(image,replace(image,attachment_id='second'))
+        attachments.append({**attachments[0],'id':'second'})
+        self.backend.model_runtime.capabilities.vision.return_value=VisionCapability(4096,'low','fixture-vision')
+        self.snapshot=replace(self.snapshot,profile=replace(self.snapshot.profile,max_input_tokens=32768,
+            user_daily_limit=10**7,group_daily_limit=10**7))
+        self.agent.story=Mock()
+        self.agent.story.persona.return_value=dict(persona_id='fixture',persona_sha256='a'*64,
+            source_revision='b'*64,revocation_revision=0,prompt='人工批准人格档案。'*60)
+        self.agent.story.valid.return_value=True
+        value=self.observation('这两张图里的变化挺明显',attachments=attachments);self.tick+=1.6
+        async def respond(profile,body,**kwargs):
+            bodies.append(json.loads(json.dumps(body)))
+            return (self.result('{"participation":"reply","text":"","delay_seconds":null}')
+                    if len(bodies)==1 else self.result('两张图要结合具体内容看'))
+        self.client.request.side_effect=respond
+        plan,attempts,_=await self.candidate(value)
+        self.assertEqual(len(attempts),2)
+        self.assertTrue(plan['parts'])
+        decision=bodies[0]['input'][0]['content'];generation=bodies[1]['input'][0]['content']
+        self.assertNotIn(CHAT_SEMANTICS,decision)
+        self.assertIn(CHAT_SEMANTICS,generation)
+        self.assertIn('不再接力盘问',generation)
+        self.assertIn(PROACTIVE_TURN_TAKING,decision)
+        self.assertIn(PROACTIVE_TURN_TAKING,generation)
+        for body in bodies:
+            images=[part for row in body['input'] if isinstance(row.get('content'),list)
+                    for part in row['content'] if part.get('type')=='input_image']
+            self.assertEqual(len(images),2)
+        self.assertTrue(bodies[0]['tools'])
+
+    async def test_proactive_required_input_overflow_reports_sizes_without_content(self):
+        self.proactive_picture()
+        self.snapshot=replace(self.snapshot,profile=replace(self.snapshot.profile,max_input_tokens=8192))
+        value=self.observation('PRIVATE_BUDGET_FIXTURE');self.tick+=1.6
+        plan,attempts,_=await self.candidate(value)
+        self.assertEqual(attempts,[])
+        self.assertEqual(plan['parts'],[])
+        self.client.request.assert_not_awaited()
+        events=self.backend.diagnostics.read(plan['request_id'])['chat_events']
+        budget=next(e['data'] for e in events if 'input_required' in e['data'])
+        self.assertGreater(budget['input_required'],budget['input_limit'])
+        self.assertEqual(budget['input_limit'],8192)
+        self.assertGreater(budget['system_bytes'],0)
+        self.assertGreater(budget['tool_bytes'],0)
+        self.assertNotIn('PRIVATE_BUDGET_FIXTURE',json.dumps(events))
+
     async def test_proactive_missing_vision_keeps_text_without_download(self):
         bodies=ChatAgentTests.capture_native_bodies(self)
         attachments=self.proactive_picture()

@@ -90,7 +90,8 @@ class Diagnostics:
         fields={'messages','assistant_messages','image_markers','input_images','vision_approved','image_detail',
                 'automatic','loaded_images','status','name','decision','model_attempts','delivered',
                 'action','total','completed','entities','elapsed_ms','task_missing','research_fallback',
-                'source','reason','continuation','window_seconds'}
+                'source','reason','continuation','window_seconds',
+                'input_required','input_limit','system_bytes','tool_bytes'}
         codes={'status','name','decision','image_detail','action','source','reason'}
         if 'image_detail' in data and data['image_detail'] not in ('none','low','high'):
             raise ValueError('chat_event_data')
