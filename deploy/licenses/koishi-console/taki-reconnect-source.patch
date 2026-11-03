@@ -1,0 +1,10 @@
+--- a/packages/client/client/data.ts
++++ b/packages/client/client/data.ts
+@@ -64 +64 @@
+-export function connect(ctx: Context, callback: () => Universal.WebSocket) {
++export function connect(ctx: Context, callback: () => Universal.WebSocket, takiReconnectUrl?: string) {
+@@ -77,0 +78 @@
++    takiReconnectUrl ??= location.href
+@@ -84 +85 @@
+-      connect(ctx, callback).then(location.reload, () => {
++      connect(ctx, callback, takiReconnectUrl).then(() => location.replace(takiReconnectUrl), () => {

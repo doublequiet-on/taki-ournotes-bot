@@ -34,6 +34,31 @@
 
 回滚目标必须作为候选重新校验，外部权威明确锁定其manifest和允许的序号下限；05/07权威不能从旧包恢复。controller rollback、代码回退和数据恢复独立。首装的schemas由10明确提供实际初始化计划，不能伪装现有存储。个人旧baseline没有自动豁免：旧流程仅维持已部署个人实例的现状；进入新合同需按精确旧commit/组件/协议/schema重新审阅并出具新manifest，不能把任意旧包标成兼容。当前未认证任何旧baseline的新合同迁移或定制回退目标。
 
+## 200固定候选的发行增量（2026-11-03）
+
+方案B轮的固定接口参考更新为08 `eed7e70fa8b5194befc379a9929ce72e7617707a`，只读未合入；[下游Console](CONSOLE_DOWNSTREAM.md)候选具有独立组件身份，需要00安排08隔离接入，尚不能替换最终产品组件摘要或selection。05可信checker来源不随该组合SHA改变。
+
+以下矩阵源于第四轮：当时08统一源码输入为 `20b8cb2179475df2bf0ae365a2088403702557c5`，拆分源码检查点 `037d08333338bdbbfc122ac658293b5c48f30fc4`。其已包含09 `9a3eca0b21dd7a7724143f988def59a5fc558dca`，不能再次叠加09全历史。09仍在原B0分支维护；后续只把审阅后的发行增量移入200，不能用09旧backend/Console文件覆盖08拆分。未合入200、10或移动分支。
+
+| 层 | 个人准备 | 定制准备（无默认selection） |
+| --- | --- | --- |
+| 共享查询 | 保持原入口并验证新LocalQueryParser/QueryRuntime委托 | 保留parser、QueryAgent本地分支、query_context/continuation、协议/账本/ACK、所选来源/渲染；domain/chat_images是共享输入校验，不能整删 |
+| 聊天叶子 | personal_runtime及聊天/剧情/主动任务保持 | 08清单20个personal_leaf是排除候选；先消除共享引用，再精确排除，当前不能直接删文件装包 |
+| 混合文件 | 兼容回归 | backend未注册个人函数/惰性导入、query_agent/query_capabilities模型路由、replies兼容分支、RuntimeTasks知识分支、admin/operations投影、backend_sources个人表仍待08拆分 |
+| 可选能力 | 原配置保持 | ai_query/model/knowledge/notice/site_lookup按独立用途决定，不按名称归为聊天；范围、采样/留存、947/品牌/资源仍待选 |
+| 网关/Console/包层 | 当前npm与补丁保留 | console.cjs、RPC/页面/轮询/旧草稿、main/qq入口、pyproject脚本/extras/data-files及全量发布脚本继续待选和拆分；开发查询根零模型不等于无聊天字节 |
+| 历史/控制器 | 保留07格式边界及原事务语义 | 每库physical/logical+partition与07恢复权威照常验证；10工具必须单独登记实际控制器源/hash、版本、rollback及安装树，不因200已组合就认定包含199 |
+
+10参考固定 `ca34d361b083626777927997f7379bb2ae71e063`，已有真实05/07/09调用及逐库只读观察证据，但安装恢复/自动激活未接通。12未完成审查不作放行依据。08机器清单及本轮读取hash保留在task09材料索引；它不是获批selection。
+
+### 受信checker来源与发行绑定
+
+05当前只接受 `checkerCommit=3dda6d29955328777f7e526c21bfd2828dbbea8a`。已独立比较该提交、09/9a3eca0、08/20b8cb三处 `deploy/product_identity.py`，字节SHA-256均为 `736c983ae4b0d03e39c893a886df07d3839b434381dd6fbef406ab2143ca1d98`。相同字节不授权伪贴来源：不能把200组合SHA填入checkerCommit，也不能将从200提取的文件宣称从3dda6d2取得。
+
+10的受信控制器材料应实际从上述3dda6d2 Git对象导出该文件，记录repo、完整来源commit、路径、字节hash及控制器材料自身hash，由恢复树外管理权威锁定；在控制器受信安装区加载，绝不加载待验候选自带checker。原来源导出与hash核对成功后才将真实checkerCommit连同当前check_scope_binding结果交05会话。产品candidate.source_commit仍写最终组合提交，组件摘要仍测实际工件，两种来源分别记录。先beginCheck使旧会话失效，再由受信路径publish；失败或变更/恢复/重启必须invalidate并保持隔离。
+
+这些是发行/控制器材料要求，本轮未实现10运行接线。如果将来checker字节需要改变，须05与10显式审核新来源及失效测试后升级；09不会自行扩大05允许集合。当前check_identity/check_scope_binding函数、字段、reason/evidence及预检含义保持不变，范围批准政策仍未代选。
+
 ## 07历史格式的具体映射（10采集，09预检）
 
 固定输入为07 `a63de717df487f896ff2182ea5bf6008672db4ad` 的 `docs/HISTORY_DATA_CONTRACT.md`，其真实base为03 `17212e5df76cf948aa990af571ed6daf5c66ec25`；本分支base仍为 `8d9e7301392ad548fe9554c4f4b09a0d53f615fa`，没有合入07代码。以下声明须在最终统一候选实现验证后才能填入其manifest，不能据此宣称本分支已支持schema4。
