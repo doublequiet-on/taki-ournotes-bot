@@ -37,6 +37,8 @@
 
 原npm client hash `55a68e89eda7e3fe59305b09e6c4de19481a8d7aa5df97579822c819ebf3ccaf`；既有字节补丁后 `1fa7b172bfc85d51e04ee2f5955f2f50cb6ba488e0972f2964e7eabc8a07557d`。实验源码补丁也已构建，但不等同原npm修改产物；没有用实验产物替换当前组件，重连/RPC/认证行为最终验收未执行。08后续产品裁剪仍须生成其真实增量补丁。
 
+仓库patch使用零上下文格式，核对固定源hash后用 `git apply --unidiff-zero taki-reconnect-source.patch`；已实际应用到独立原源码副本，结果SHA256为 `cf21a5e49c75deeda40a064e9dba2f65933a97c9357beda743337dee4be60e49`，与实验构建输入一致。材料保留最初全上下文patch作过程证据，二者只差上下文表示，不改变源码。
+
 原参考archive唯一内部链接 `packages/online/app/assets -> ../../client/app/assets`：只接受该固定路径/目标，验证归一化落在源树内，在材料源码树显式物化为普通文件并记录转换。原归档hash和链接语义仍保存；不静默丢弃。不放宽product_release对安装包链接的拒绝。工具链Node发行archive内部链接按独立工具解压处理，不能当产品包许可。
 
 ## 材料布局与剩余门槛
