@@ -1,11 +1,14 @@
 # L3: Versioned local story publication, revocation, read handles and explicit persona approval.
 # Effects: Local operator-owned directory only; never fetches URLs, calls models or sends.
+# Validated immutable bundle reuse is bound to file identity; pointer and withdrawals stay live.
+# Cold loads reject pointer changes before caching; loading remains synchronous.
 from __future__ import annotations
 
 from dataclasses import asdict
 from datetime import datetime,timezone
 from pathlib import Path
 import re
+import stat
 
 from ..domain.story import StoryError,require
 from ..sources.story_files import (atomic_json,canonical,digest,identifier,optional_time,parse_bundle,publish_lock,read_json,text)
@@ -20,17 +23,37 @@ class StoryService:
     def __init__(self,root):
         self.root=Path(root)
         require(not self.root.is_symlink(),'story_file')
+        self._current_cache=None
+
+    @staticmethod
+    def _release_identity(path):
+        info=path.lstat()
+        require(stat.S_ISREG(info.st_mode),'story_file')
+        return (info.st_dev,info.st_ino,info.st_size,info.st_mtime_ns,info.st_ctime_ns)
 
     def current(self):
         path=self.root/'current.json'
-        if not path.exists():return None
+        if not path.exists():
+            self._current_cache=None
+            return None
+        pointer_identity=self._release_identity(path)
         pointer=read_json(path)
         require(isinstance(pointer,dict) and set(pointer)=={'schema','revision'}
                 and pointer['schema']=='taki-story-pointer/1','story_pointer')
         revision=pointer['revision']
         require(isinstance(revision,str) and re.fullmatch('[a-f0-9]{64}',revision),'story_revision')
-        bundle=parse_bundle(read_json(self.release_path(revision)),allow_fixture=True)
+        release=self.release_path(revision)
+        identity=(revision,self._release_identity(release))
+        cached=self._current_cache
+        if cached is not None and cached[0]==identity:return cached[1]
+        # Never fall back to a formerly valid release after a failed reload.
+        self._current_cache=None
+        bundle=parse_bundle(read_json(release),allow_fixture=True)
         require(bundle.revision==revision,'story_revision_mismatch')
+        require(self._release_identity(release)==identity[1],'story_file_changed')
+        require(self._release_identity(path)==pointer_identity and read_json(path)==pointer,
+                'story_pointer_changed')
+        self._current_cache=(identity,bundle)
         return bundle
 
     def release_path(self,revision):
