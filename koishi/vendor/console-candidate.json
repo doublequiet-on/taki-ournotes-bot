@@ -1,14 +1,14 @@
 {
   "schema": "taki-console-integration/1",
-  "integration_base": "e5e532a29cff792d1a7f2a17f704917f96580e79",
-  "source_commit": "e4c0cebade52272e4e2b2f249d1d66d5ce27f722",
+  "integration_base": "399cc8a47bf84aa550ff2eb3d1e3d640101c2033",
+  "source_commit": "ca7a64175aa4c359c018b8a7e1dc6c506fbd6552",
   "component": {
-    "file": "taki-console-0.1.0-candidate.2.tgz",
-    "version": "0.1.0-candidate.2",
-    "package_version": "5.30.10-taki.2",
-    "sha256": "5b73df05ece95041f0586177bd077e72cb4bdd0df7c996c5ad7017909bad62dc",
-    "integrity": "sha512-VKB3O9HZjW8Dro7d+ADwSsygj/f+bxLqjiHXWwO2mCYOSbvuQTGS6pPIdJ4JJnZUHxEt1nUwIzSst6biaSnpsg==",
-    "size": 634437,
+    "file": "taki-console-0.1.0-candidate.3.tgz",
+    "version": "0.1.0-candidate.3",
+    "package_version": "5.30.10-taki.3",
+    "sha256": "ea92ea91d816648023e61cf6ce7dfe2de98aece38e1ca8dd9292166f5537d1fb",
+    "integrity": "sha512-VDLAD2fzeR1RQ2xpIxkRzAC+9+CcWTN0HUaVSydJGagwES8s8J+JaWWlbPDZUogM40xp14RQHyqkthwUPLRsWA==",
+    "size": 634671,
     "files": 168,
     "license_index_entries": 135
   },
@@ -40,12 +40,12 @@
     }
   },
   "source_materials": {
-    "source_commit": "e4c0cebade52272e4e2b2f249d1d66d5ce27f722",
+    "source_commit": "ca7a64175aa4c359c018b8a7e1dc6c506fbd6552",
     "bundles": [
       {
-        "file": "console-candidate2-inputs.zip",
-        "size": 128358736,
-        "sha256": "04e7bb6a403b28e33eb4cc278734720dab2ebec091a1841450bb214f6b16275f"
+        "file": "console-candidate3-security-inputs-v2.zip",
+        "size": 128359885,
+        "sha256": "c6261043446d4d717af86a3466733f3f284021dbfd996082464ec202b2a68e0b"
       },
       {
         "file": "console-candidate2-source-support.zip",
@@ -60,9 +60,9 @@
   "complete_corresponding_source": false,
   "product_release": false,
   "acceptance": {
-    "status": "blocked",
-    "reason": "markdown_link_attribute_injection",
-    "owner": "09",
-    "also_present_in_candidate1": true
+    "status": "gateway_self_check_passed",
+    "resolved_issue": "markdown_link_attribute_injection",
+    "independent_review": false,
+    "release_assembly": "pending_task09"
   }
 }
