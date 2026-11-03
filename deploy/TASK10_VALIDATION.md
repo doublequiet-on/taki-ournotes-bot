@@ -104,3 +104,48 @@ python3 -B -m unittest discover -s runtime/task10 -p 'test*.py' -v
 个人/定制统一候选、实际工件与hash、范围批准模式、删除权威与留存政策/实现、目标宿主与完整主机资源盘点均未齐。05新版binding已提供并完成本轮真实接口验证；仍需实际安装版本登记和跨进程受信接线。18项实际候选故障矩阵未执行；没有实际 installer/restore/activation adapter，没有双实例服务运行证明、QQ或目标机验收。应用wheel/sdist与产品发行构建未执行：本轮控制器工具独立留在Git/deploy，不改产品打包清单，不宣称已经随发行交付。head CI 状态在PR回执另报。
 
 不写持久业务格式，不修改既有个人控制器运行路径、启动permit或事务。代码回退不回退共享数据；未来恢复/迁移仍必须经过当前备份、兼容、事务与forward-only门禁。缺政策不能激活；没有合并、部署、重启真实服务、QQ消息、付费调用、生产数据写入或Haneoka仓库改动。
+
+## 2026-11-04：PR201实际组合包独立验证
+
+本节更新上轮“尚无实际工件”的时点结论；旧记录中的未执行保持历史事实。本轮只验证并补充此记录，没有修改部署/业务代码。
+
+- 任务10基线 `ca34d361b083626777927997f7379bb2ae71e063`，原目录 `.worktrees/plan-20261103-10`、分支 `codex/plan-20261103-10`、草稿PR199继续使用；base不变。
+- 实际候选 `a8bdc799c81ce655b76d45ff5a0b13e9b923c5bf` / PR201；组合ZIP SHA256 `8810db8ebaad54db68da1d2dc7dcbc9edb96fdc7322bf38406f6bcac4d2e0b12`，100522262字节。交接9个文件大小/hash及组合3292个文件全部核验通过。
+- 输入08 `8d57eebb7efa279279166be53a6d9c102e6d90d1`，09装配输入 `610f14f8fd6ad55368a73e7ac4afea5f29e347a9`，Console组件源 `91bf8b91a8bcb1cf2b822d3eb38e2e11d301ad3f`。本轮05执行安装包的scope-identity/scope-authority编译模块，07执行安装venv内history_retention/archive。09 checker直接导出自 `3dda6d29955328777f7e526c21bfd2828dbbea8a`，文件SHA256 `736c983ae4b0d03e39c893a886df07d3839b434381dd6fbef406ab2143ca1d98`，保存在包外；未用组合SHA冒充来源。
+- 外置清单SHA256 `93f1b9f623c2bcb63bde5df5c66f7f8b422cf4b5beb3f692cf8054b9e331121d`；包内原始清单SHA256 `64582024fd05e89551f7a8196647bd0dd7ca23fc350374cb1b2769d545473a15`。包内多一个末尾LF，JSON相同，不能宣称字节一致。身份测试绑定包内摘要。
+
+Linux环境为Ubuntu24.04.5 / WSL2 Linux6.18.54.1 x86_64、Python3.12.3、包内Node24.19.0。独立安装位于 `/home/lyy/.cache/taki-task10-actual-20261104/installed`，venv同父目录。使用 `unshare --net` 仅开loopback；Console15143/15144及合成后端随机端口仅在该私有命名空间。首轮/tmp安装通过后目录在后续WSL调用消失，已保留日志并在持久专属目录重新完整安装通过。
+
+已完成：真实stage_combination暂存、组合完整性/安装探针、离线require-hashes wheel安装/pip check、71已安装模块与资源检查、Python实际入口--help；安装后的Console RPC46个鉴权方法和前端状态探针；另独立HTTP200/WS登录、退出撤权、重连重新认证、撤销设置保持和旧guard拒绝，使用实际BackendClient连接合成离线HTTP后端。未启动run.cjs的真实QQ适配器。
+
+真实安装05/07+可信09接口12项通过，ScopeStore/session27断言。C1产品、实例、AppID和政策仍是合成输入；source_commit、protocol/capabilities、清单摘要和7项组件绑定实际工件，expected来自已核验清单，observed另读安装文件。它不是正式产品C1签发或范围批准。实际07制备schema1/2/3/4及107/logical1/2/3/4合成库，只读观察和缺元数据/分区/副本/读取异常均验证；观察前后hash不变。旧历史行和synthetic-deleted-topic备份复制到隔离恢复目录，由备份树外当前合成权威拒绝；只改代际标签但保留旧内容也拒绝；当前合成快照allow仍不激活，无权威manual。没有实现或证明生产话题恢复适配器。
+
+Windows控制器回归32项：31通过、1项Linux检查跳过；Linux32项全通过。实物暂存故障检查10条：错hash/commit/Python拒绝；提取/校验/rename异常清理未发布目录；最终ownership回执失败保留已发布目录和staging记录；真实SIGKILL提取保留intent与孤儿目录；已有安装拒绝覆盖且原树重验不变。后两类必须manual reconcile，不得按目录存在自动接管。
+
+完整18项逐项结果及复现脚本/日志保留在本工作区忽略目录 `runtime/task10/actual-20261104/`：`REPORT.md`、`matrix-results.json`、`delivery-verification.json`、`retained-fault-records.json`、`environment-final.json`，以及install-linux、installed-smoke、interfaces-linux、staging-faults、restore-simulation、windows-regression、linux-regression等日志。新增本地测试按AGENTS不纳入PR。故障大副本已在保存状态记录后清理，最终安装/venv、少量合成恢复数据和复现脚本保留；无测试应用进程残留。
+
+复现从本工作区运行 `python runtime/task10/actual-20261104/verify_input.py` 和 `verify_delivery.py`（后者同目录）。安装脚本默认拒绝已有目录；重复验收需在脚本中一致设置新的独立base。先执行prepare_actual_interfaces.py再执行measure_actual_components.py生成最终组件测量测试；Linux私有网络命名空间内运行install_linux.py、run_probes.py、run_restore.py。不得把源码测试当作安装后探针；这些日志明确记录实际installed/venv路径。
+
+给00的未完成项：没有提供固定旧完整应用工件，升级及B→C失败回B仍blocked；本包3个旧控制器实物与 `0359a8d515db5cd32a66617852edb29b25862580` 逐字节相等，但不能代替旧应用，未执行其新事务回退。双实例实际服务、半启动/停写超时、current指针/fsync断电、真实磁盘耗尽、宿主移交和Haneoka故障语义仍未完成。需补旧完整ZIP/hash、正式C1/外部expected、可信快照所有者与失效接线、当前删除权威及逐副本清单、宿主停写证明和manual事务恢复入口。最终能力裁剪、源码托管、批准/删除/留存政策及生产宿主仍未定；本包仍含聊天代码且delivery标记product_release=false、complete_corresponding_source=false。
+
+层级结论：控制器暂存与隔离Console进程验证通过；恢复是合成数据门禁模拟；生产激活未实施，`activation_permitted=false`。所有allow均不是锁、激活令牌或真实范围批准。没有合并、部署、真实服务重启、QQ、付费模型或生产数据写入。
+| 原矩阵项 | 本轮结果 | 证据与边界 |
+|---|---|---|
+| two_instances | partial | 32项控制器回归中双实例计划隔离通过；未运行双实例服务 |
+| aliases | partial | Linux真实软/硬链接只读拒绝通过；未做实际服务bind mount恢复 |
+| wrong_package | passed_isolated | 实物wrong hash/commit/Python拒绝；09合成身份变更拒绝 |
+| first_install | partial | 实物暂存、离线wheel安装、入口及组件探针通过；提取/校验/rename/回执/进程死亡注入完成；无生产事务安装 |
+| half_started | blocked | 无固定旧完整工件及部署服务适配器；未启动QQ适配器 |
+| gateway_stop | blocked | 未接入真实服务控制器/PID停写证明 |
+| migration | partial | 真实07生成107与只读logical兼容检查通过；旧完整工件读新数据回退未执行 |
+| backup_missing | passed_simulation | 漏库、多库、sidecar、缺元数据/分区/来源、读取失败均manual且无部分成功 |
+| current_switch | partial | 实物stage rename失败清理；最终回执失败保留manual；current事务指针/fsync断电未执行 |
+| low_disk | not_run | 未执行真实文件系统容量耗尽；提取OSError不能代替低磁盘验收 |
+| old_scope | passed_simulation | 实际安装05 ScopeStore旧宽范围拒绝；Console旧guard不能恢复撤销权限 |
+| old_deletions | passed_simulation | 实际安装07拒绝旧history/topics快照及伪造新代际标签；无权威manual |
+| authority_down | passed_simulation | 合成权威缺失/异常与证据变化fail closed；无生产权威 |
+| code_rollback | blocked | 未提供固定旧完整应用工件；不以本包旧控制器或源码代替 |
+| controller_rollback | partial | 实物3个旧控制器文件逐字节匹配0359a8d；新事务格式兼容/回退执行未验 |
+| restore_recheck | passed_simulation | 逐库观察与全部revision失效验证；不产生激活许可 |
+| host_handoff | blocked | 未提供目标宿主及旧主机停写证明 |
+| upstream_down | not_run | 使用合成离线HTTP后端；不代表真实Haneoka故障语义验收 |
