@@ -26,6 +26,18 @@ def snapshot():
 
 
 class SongTraitsTests(unittest.TestCase):
+    def test_old_catalog_miss_keeps_stale_state_at_query_time(self):
+        from types import SimpleNamespace
+        self.repo.data_source = 'haneoka'
+        self.repo.cache_state = 'fresh'
+        self.repo._published_source_snapshot = {'fetched_at': 100}
+        self.repo._catalog_repository = SimpleNamespace(clock=lambda: 100000)
+        captured = self.repo.capture_query_view()
+        self.assertEqual(captured.cache_state, 'stale')
+        result = execute(parse_filter('不存在的歌曲 蓝色'), captured)
+        self.assertIn('旧缓存', result.warning)
+        self.assertTrue(result.unknown_entity)
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)

@@ -470,7 +470,7 @@ class CutoffTests(unittest.TestCase):
                 "payload": {"eventId": "1", "challengeRankings": "bad"}, "headers": {}}), encoding="utf-8")
         self.assertEqual(len(self.ask().boards), 3)
         self.http.errors["/tw/events/current"] = SourceError("not_found")
-        self.assertEqual(self.ask("/查榜线 tw").status, "data_unavailable")
+        self.assertEqual(self.ask("/查榜线 tw").status, "not_found")
         count = len(self.http.calls)
         self.ask("/查榜线 tw")
         self.assertEqual(len(self.http.calls), count)

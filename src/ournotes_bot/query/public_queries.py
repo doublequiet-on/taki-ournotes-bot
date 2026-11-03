@@ -91,7 +91,7 @@ def parse_player(query):
     if not tokens:
         raise PublicQueryError('invalid_arguments', PLAYER_HELP)
     ident = tokens.pop(0)
-    pattern = r'[0-9]{1,19}' if region == 'jp' else {'tw': '2', 'en': '3', 'kr': '4'}[region] + r'[0-9]{10}'
+    pattern = r'[1-9][0-9]{0,18}' if region == 'jp' else {'tw': '2', 'en': '3', 'kr': '4'}[region] + r'[0-9]{10}'
     if not re.fullmatch(pattern, ident) or not 0 < int(ident) <= 9223372036854775807:
         raise PublicQueryError('invalid_arguments', '请输入该服有效的公开玩家ID。' + PLAYER_HELP)
     card, page = False, None
@@ -106,7 +106,7 @@ def parse_player(query):
             page = int(match[1])
     if tokens:
         raise PublicQueryError('invalid_arguments', PLAYER_HELP)
-    return PlayerRequest(str(int(ident)), region, card, page)
+    return PlayerRequest(ident, region, card, page)
 
 
 def rule_text(rule, song=None):
@@ -122,6 +122,11 @@ def rule_text(rule, song=None):
 
 def inside(row, now):
     return row['startAt'] <= now < row['endAt'] + 1000
+
+
+def quality_lines(snapshot):
+    return ('来源：' + (snapshot.provider or '未声明'),
+            '新鲜度：' + {'fresh': '新鲜', 'stale': '旧快照', 'unknown': '未知'}.get(snapshot.freshness, '未知'))
 
 
 def execute_arena(query, repository, *, now=None):
@@ -178,17 +183,23 @@ def execute_arena(query, repository, *, now=None):
                             ranks.get(reward.get('rankId'), '') or f"区间：{reward.get('from')}—{reward.get('to')}"),image_url=reward.get('image','')))
             else:
                 thresholds = tuple(sorted({r['points'] for r in league['ranks']})) if request.mode == '人数' else ()
-                board = json.loads(repository.public_queries.board(request, season['seasonId'], thresholds).body)
+                board_snapshot = repository.public_queries.board(request, season['seasonId'], thresholds)
+                board = json.loads(board_snapshot.body)
                 if request.mode == '榜单':
-                    rows.extend(InfoRow(f"第{r['rank']}名 · {r['name']}", (f"积分：{r['point']}",
+                    selected = [r for i, r in enumerate(board['rows'], request.first) if request.first <= r.get('position', i) <= request.last]
+                    if not any(r.get('point') is not None for r in selected):
+                        return answer((InfoView('竞技场榜单', '窗口为空或积分均未获取。', footer=quality_lines(board_snapshot)),), 'data_unavailable')
+                    rows.extend(InfoRow(f"显示名次 {r.get('rank') if r.get('rank') is not None else '未知'} · {r['name']}", (f"积分：{r.get('point') if r.get('point') is not None else '未获取'}",
                         '公开ID：' + (r.get('profileId') or '未获取')), kind='standing',
-                        table=((f"第{r['rank']}名",r['name']),),game_icon={1:'ImageRanking1st.png',2:'ImageRanking2ng.png',3:'ImageRanking3rd.png'}.get(r['rank'],'')) for r in board['rows'] if request.first <= r['rank'] <= request.last)
+                        table=((f"显示 {r.get('rank') if r.get('rank') is not None else '?'}",r['name']),),game_icon={1:'ImageRanking1st.png',2:'ImageRanking2ng.png',3:'ImageRanking3rd.png'}.get(r.get('rank'),'')) for r in selected)
+                    rows.append(InfoRow('窗口口径', (f'响应位置 {request.first}—{request.last}；显示名次可并列，边界并列未保证收齐。',
+                        '零值为来源返回值，协议默认零与业务零无法从此DTO区分。')))
                 else:
                     rows.append(InfoRow('联赛上榜人数', (str(board.get('maxRank')) if board.get('maxRank') is not None else '未获取',)))
                     labels = {r['points']: localized(r['name']) for r in league['ranks']}
                     rank_images={r['points']:images.get('ranks',{}).get(str(r.get('rank')),'') for r in league['ranks']}
                     rows.extend(InfoRow(labels.get(r['threshold'], str(r['threshold'])), (f"人数：{r['count']}",),image_url=rank_images.get(r['threshold'],'')) for r in board['tiers'])
-                rows.append(InfoRow('观测时间', (stamp(board.get('observedAtMs')), '来源：' + board.get('provider', '未获取'))))
+                rows.append(InfoRow('观测时间', (stamp(board.get('observedAtMs')), *quality_lines(board_snapshot))))
         return answer((InfoView(f"{LABELS[request.region]} · 竞技场 · {localized(season['title'])}",
             request.mode + ' · 北京时间 UTC+8', rows=tuple(rows), layout='facts', presentation='arena', footer=(f'Haneoka {snapshot.resource} · {snapshot.release}',)),))
     except PublicQueryError as exc:
@@ -201,6 +212,10 @@ def execute_player(query, repository):
         snapshot = repository.public_queries.player(request)
         data = json.loads(snapshot.body)
         profile = data['profile']
+        if not any(profile.get(key) is not None and profile.get(key) not in ('', {}, [])
+                   for key in ('name', 'level', 'rankExp', 'totalFavorite', 'totalFavoriteExact',
+                               'favoriteMemberCard', 'profileCard')):
+            return answer((InfoView('公开玩家资料', '来源未提供可查询的资料字段。', footer=quality_lines(snapshot)),), 'data_unavailable')
         catalog = repository.capture_catalog()
         level = profile.get('level')
         if level is None and type(profile.get('rankExp')) is int:
@@ -245,7 +260,7 @@ def execute_player(query, repository):
             except PublicQueryError as exc:
                 rows.append(InfoRow('名片图片', (str(exc),)))
         rows.append(InfoRow('资料时间', (f"来源更新：{stamp(profile.get('lastUpdatedAtMs'))}",
-            f"来源采集：{stamp(data.get('fetchedAtMs'))}", *(['来源标记为旧缓存'] if data.get('stale') else []))))
+            f"来源采集：{stamp(data.get('fetchedAtMs'))}", *quality_lines(snapshot))))
         result = answer((InfoView(f"{LABELS[request.region]} · {profile.get('name') or '未获取昵称'}",
             '公开玩家资料', hero_url=media[0][0] if media else '', rows=tuple(rows), layout='facts', presentation='player', footer=('资料来源：Haneoka',)),))
         return replace(result, captured_images=media,
