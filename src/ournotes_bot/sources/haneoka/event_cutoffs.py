@@ -354,13 +354,13 @@ class HaneokaEventCutoffRepository(EventCutoffRepository):
                       'not_found': '来源已确认榜单不存在'}
             return replace(empty, status=labels.get(exc.code, "Haneoka 榜线暂不可用，请稍后重试"), error_code=exc.code)
         board = self._snapshot(event, song, entry)
-        if self.history and board.provider is not None:
+        if self.history and board.provider is not None and not getattr(self.history, 'supports_provider_history', False):
             self._note_retrieval('history_result', 'provider_schema_pending')
             board = replace(board, notes=board.notes + ('当前观测未写入旧历史库：等待来源隔离合同迁移。',))
         elif self.history:
             if entry.late:
                 self.history.record(event, self._snapshot(event, song, entry.late))
-            if entry.fallback:
+            if entry.fallback and board.provider is None:
                 self.history.failure(event.server, event.event_id, song.challenge_id, "source_fallback")
             stored = self.history.record(event, board)
             self._note_retrieval('history_result',stored)

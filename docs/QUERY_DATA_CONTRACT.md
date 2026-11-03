@@ -65,7 +65,7 @@ InfoAnswer/InfoView不新增平行状态结构；公开查询把来源与新鲜�
 
 仍接受schema1。无provider的活动可以只读接收原avatar-v2缓存：不改旧文件，不批量重写零；display/raw rank缺失为None，value_states为legacy_unknown，normalization_version为legacy/1。新缓存写入独立quality-v2键；回退旧代码仍读取旧键。源字段类型不合格则拒绝，不能通过移除校验装成兼容。
 
-旧历史schema没有provider分区。未声明provider的旧合同保留contract_version=/1及原读写；显式provider的快照标contract_version=/2，本包不写入、不拼接旧历史；scheduled采样也不能绕过。诊断history_result=`provider_schema_pending`。07需实现provider、normalization_version、时间语义的存储身份与旧记录unknown分区，提供兼容后才能接通这些观测。旧历史数据不删除、不迁移，显式历史查询仍可读取。新EventSnapshot附加JSON字段被旧读取器忽略；旧零和旧排名不作推断性迁移。
+03固定候选的旧历史schema没有provider分区。未声明provider的旧合同保留contract_version=/1及原读写；显式provider快照为/2。任务07现通过 `ProviderHistory` 接入独立schema4分区，按provider、normalization_version、time_kind隔离，按需与后台均走相同writer；查询使用 `read_board` 只读该分区。未配置分区能力的调用方仍返回 `provider_schema_pending`，不写入或拼接旧历史。旧历史数据不删除、不原位迁移，provider为unknown，旧零和旧排名不作推断性迁移。完整兼容、回退与恢复合同见 [HISTORY_DATA_CONTRACT](HISTORY_DATA_CONTRACT.md)。
 
 ## 可复现夹具
 
