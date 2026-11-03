@@ -47,11 +47,11 @@ python3 -B deploy/instance_preflight.py --inventory /review/instance-plan.json -
 
 1. `read_isolation()` 读取当前控制器的独立证据。四个事实必须均为 true：`outbound_isolated`、`writers_stopped`、`triggers_inhibited`、`controller_exclusive`。这不是停写实现；传入 true 不能代替实际隔离。
 2. `check_identity()`：受信09实现 `check_identity(candidate,expected,observed)` 的无参闭包；manifest、外部 expected、实测组件、当前 schema/协议/控制器由同次受信快照提供。身份非 allow 立即停止，不调用范围或删除检查。
-3. `check_scope()`：05 `ScopeStore.recovery()` 的受信同步桥接回执 `{outcome,reason,evidence}`，其中 deny 映射 reject；缺接口/未选独立批准政策返回 manual。必须包含当前身份校验及独立 approval，不得拿旧备份的 scope 自证批准。**本轮没有接通 Python/TS 桥，也没有解决05与09固定版本的 binding 差异。**
+3. `check_scope()`：05 `ScopeStore.recovery()` 的受信同步桥接回执 `{outcome,reason,evidence}`，其中 deny 映射 reject；缺接口/未选独立批准政策返回 manual。必须包含当前身份校验及独立 approval，不得拿旧备份的 scope 自证批准。本轮已用固定05真实适配器/ScopeStore和09/07真实函数验证；生产跨进程可信通道仍由08/10组合根接线，离线测试输入输出不是该通道。
 4. `check_deletion(candidate,current_authority)`：注入07原始 `check_recovery`；candidate 是07规定的测量结果，而 `current_authority` 原样传为**无参回调**，在检查时读取备份和恢复树之外的当前权威。不可传预先读出的 dict、从备份闭包读取的权威或把旧 journal 当最新记录。
 5. 每个检查前、全部检查后重读隔离与修订证据；变化返回 `manual/preflight_evidence_invalidated`。全部通过返回 `checked/preflight_only_activation_pending`，不是锁、permit 或实际激活决定。
 
-09/07要求 `contract_version=1,status=allow|reject|manual,reason,evidence`；05使用 `outcome=allow|deny|manual`。allow 必须有非空 evidence；拒绝/待人工允许空证据。缺回调、隔离未证明或 OSError/TimeoutError 为 manual；坏判定结构为 reject；编程异常向调用者抛出，不能吞成成功。任何失败都不得产生外发动作。
+09/07要求 `contract_version=1,status=allow|reject|manual,reason,evidence`；05使用 `outcome=allow|deny|manual`，allow还须携带 `identity_evidence`，与本次09检查的evidence完全一致，否则 `reject/scope_identity_evidence_mismatch`。回执保留该字段。allow 必须有非空 evidence；拒绝/待人工允许空证据。缺回调、隔离未证明或 OSError/TimeoutError 为 manual；坏判定结构为 reject；编程异常向调用者抛出，不能吞成成功。任何失败都不得产生外发动作。
 
 `read_isolation().revisions` 严格包含 session、inventory、candidate、components、controller、storage、expected、scope、deletion 九个 SHA256。它们由当前独立权威快照/测量生成，不能从恢复树提交。这些字段是任务10的失效输入，不重定义09身份或07删除语义。结果保留本次 revisions 和有序 steps，供审计。它们不提供身份认证或锁；宿主 adapter 的实现与来源验证仍是待接线门禁。
 
@@ -82,15 +82,43 @@ python3 -B deploy/recovery_matrix.py --parameters /review/task10-acceptance-inpu
 
 覆盖两实例、路径别名/端口、错身份工件、首装中断/半启动、停网关失败、迁移不兼容、备份缺项、切 current 失败、低盘、旧宽范围、旧删除 journal、权威离线/变化、代码/控制器回退、恢复后失效、跨主机 AppID 切换和上游故障。Linux合成 realpath/硬链接和离线事务单测不代替以上实际工件矩阵。
 
+## 给08：真实05会话边界
+
+固定05已删除完整candidate旧binding。唯一链路为09 `check_scope_binding` → `TrustedScopeBindingCheck` → `ProductIdentitySession` → `productScopeAuthority` → `ScopeStore.recovery()` → 独立approval。不再把“05新版接口未提供”列为阻塞。
+
+受信启动/管理组合根持有会话对象，`beginCheck()`清空旧快照并返回不透明ticket；传入 `publish(ticket,{binding,decision,checkerCommit})` 的decision必须是受信09原样结果。发布一次即消费ticket。`invalidate()`同时清空快照与所有在途ticket；旧ticket、跨会话ticket、重复发布不能重开，新会话从空开始。发布/读取均复制，外部对象变更不改活动快照。身份allow后仍调用独立approval；未注入政策为manual。
+
+版本细节：05固定代码仍要求 `checkerCommit=3dda6d29955328777f7e526c21bfd2828dbbea8a`。此commit与最新09 `9a3eca0b21dd7a7724143f988def59a5fc558dca` 的 `deploy/product_identity.py` Git blob均为 `8be5187d99bcd4b1cb04ed6dc45c2f9c726d0139`。本轮分别加载两份固定blob，验证判定完全一致；可接受的会话使用实际从3dda6d2提取的校验器和真实来源标签。直接标9a3eca0会被当前05拒绝，不能把新来源伪标成旧来源，也没有修改05的版本白名单。若实际安装校验器按9a3eca0登记，应由05负责人更新接受版本并重新验证。
+
+跨进程传递必须沿现有受信启动/管理边界，受信控制器独立读取expected、实测observed和逐库存储，网关不能接受来自Console客户端、候选、旧备份或任意磁盘JSON的allow。ticket由网关会话本身创建，不从传输反序列化。控制器身份、文件所有权和通道认证仍需实际部署证明；SHA/evidence仅用于审计与关联，不是签名。
+
+变化**之前**由08关闭接纳/停发并invalidate：manifest/绑定、expected权限或下限、observed组件/控制器/protocol、逐库存储集合/格式、范围或删除权威、安装/恢复/回退、控制通道失联和新鲜性未知。10重读隔离证据并重测，08再用新ticket发布。未收到可靠变更通知时不能保留旧allow。无需逐查询spawn Python，不新增通用RPC；业务组合根、Console/receiver的实际接线仍归08。
+
+## 逐库只读观察
+
+```text
+python3 -B deploy/storage_observation.py --inventory /review/history-copies.json --isolated-checkpointed-copy
+```
+
+清单严格为 `{version:1,roots:[绝对专用历史目录],replicas:{不含用户信息的副本ID:{path:绝对库路径,partition:null或[provider,normalization,time_kind]}}}`。清单由恢复树之外的当前管理者提供，path与partition共同绑定副本；不能从文件名推断provider。旧1/2/3为null/unknown，新4和107/logical4必须有外部预期分区三元组。
+
+只在显式已隔离、停写、完成checkpoint的副本上使用。工具不做checkpoint，不复制/迁移数据库，也不打开业务store。扫描专用roots的全部普通文件，逐一与受信副本集合比较，拒绝漏列/缺失、副本别名、符号链接/多硬链接和特殊文件；WAL/SHM/journal即使为空也使覆盖不一致，不能被immutable静默忽略。未知目录、未登记主机/离线备份/导出不会自动发现，必须先补完整外部清单。
+
+SQLite固定 `mode=ro&immutable=1`、`query_only=ON`、`trusted_schema=OFF`，检查SQLite完整性、基础表/列、实际user_version；107另核 `store_meta.legacy_version/state=complete/players_codec/source_sha/schema`，不把107当逻辑版本。schema4核singleton分区身份及每条observations的provenance provider/normalization/time_kind，缺失或错分区保持manual。格式完整性不是业务语义和压缩payload全量解码证明；后者仍需07正式恢复检查/实际候选回归。观察查询有VM预算，超限按读取失败报告。
+
+读前/后复核全部文件集合和摘要；任何库失败、漂移或覆盖不完整，都保持 `schemas={}`，不给09部分成功的投影。成功 `status=observed` 仅产生 `cutoff_history.<replica_id>.physical/.logical` 和原始文件摘要，`coverage_complete`只针对登记roots；不生成provider能力标记、删除代际、当前批准或07的verified许可。`cutoff_history_provider=4`属于候选代码能力，需要08/09验证后明确登记，不能从一个数据库反推。
+
+09的expected.schemas须组合这些实测键与经过验证的其他存储/能力键；不得复制candidate区间成为观测。07恢复candidate的删除代际/应用状态还须独立验证，不能把此处的库SHA或observed直接升级为07 verified。存储evidence用于 `read_isolation.revisions.storage`；恢复/变更后重新采集，完整集合变化须重新审核manifest绑定。CLI观察完成返回0、manual返回2，但所有结果 `activation_permitted=false`，0不代表允许启动。
+
 ## 交00与下一包
 
 本轮 base 为 main，无代码堆叠；05/07/09/08仅固定接口参考，未复制其业务实现：
 
 | 包 | 固定参考 SHA | 仍需接口 |
 |---|---|---|
-| 05 / #195 | `226ecce11299be42c349cc815f35de12cf463eac` | 对齐09新版 binding 的已提交 head；独立批准模式、当前权威与同步桥接的失效生命周期。固定05仍描述完整 candidate binding，不能声称与09已组合通过。 |
+| 05 / #195 | `a9c27d7eb94833df713995b8e6f9a85fc45ea0d5` | 新binding、会话/ticket及真实ScopeStore已验证。仍需独立批准模式/权威、跨进程通知与受信来源接线。 |
 | 07 / #198 | `a63de717df487f896ff2182ea5bf6008672db4ad` | 当前删除权威实现/政策、完整副本清单与实际测量、schema 到09契约映射。入口 `check_recovery(candidate,current_authority)` 已做独立函数组合验证。 |
-| 09 / #194 | `3dda6d29955328777f7e526c21bfd2828dbbea8a` | 两产品实际工件、组件精确映射、inventory/manifest、外部 expected、回退目标及最低控制器；固定 binding 为 `{contract_version,manifest_sha256}`。 |
+| 09 / #194 | `9a3eca0b21dd7a7724143f988def59a5fc558dca` | 两产品实际工件、组件精确映射、inventory/manifest、外部 expected、回退目标及最低控制器；固定 binding 为 `{contract_version,manifest_sha256}`。 |
 | 08 / #197 | `509abc81efc2433cbc197050ddc5d64c40f48f5a` | 最终组合根与能力选择、实际接纳/外发门。10不修改其装配文件。 |
 
 00还需确认目标宿主、同AppID全局接收者、安装/备份责任和恢复目标；本轮不联系其他对话。Haneoka为外部 serverless 数据服务，Taki宿主待定；不假定 localhost、共享磁盘或可直接读数据库。Haneoka R2/D1/采集状态不归本包恢复；连接端点/权限/上游失败语义由03/09实际合同提供。

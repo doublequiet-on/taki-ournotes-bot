@@ -107,7 +107,13 @@ def recovery_preflight(candidate, *, read_isolation=None, check_identity=None,
                     and (stage == 'scope' or type(decision.get('contract_version')) is int
                          and decision['contract_version'] == 1)):
                 return result('reject', stage + '_decision_invalid')
-            steps.append({'stage': stage, **{k: decision[k] for k in (key, 'reason', 'evidence')}})
+            if stage == 'scope' and decision[key] == 'allow':
+                if decision.get('identity_evidence') != steps[0]['evidence']:
+                    return result('reject', 'scope_identity_evidence_mismatch')
+            step = {'stage': stage, **{k: decision[k] for k in (key, 'reason', 'evidence')}}
+            if stage == 'scope' and 'identity_evidence' in decision:
+                step['identity_evidence'] = decision['identity_evidence']
+            steps.append(step)
             if statuses[decision[key]] != 'allow':
                 return result(statuses[decision[key]], stage + ':' + decision['reason'])
         if isolation() != initial:
