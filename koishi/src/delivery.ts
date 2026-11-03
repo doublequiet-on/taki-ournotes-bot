@@ -3,7 +3,8 @@
 import { createHash, randomUUID } from 'node:crypto'
 import type { QQBot } from '@satorijs/adapter-qq'
 import type { Inbound } from './ingress'
-import { MaterialAborted, type ImageMaterials, type MaterialLease } from './materials'
+import { imageShape, MaterialAborted, type ImageMaterials, type MaterialLease } from './materials'
+import { outputLimits } from './wire'
 
 export type QQInternal = Pick<QQBot['internal'], 'sendFileGuild' | 'sendFilePrivate' | 'sendMessage' | 'sendPrivateMessage'>
 export type Part =
@@ -25,9 +26,7 @@ export interface Limits {
   maxImageBytes: number
   maxTextChars: number
 }
-export const candidateLimits: Readonly<Limits> = Object.freeze({
-  maxSends: 5, replyWindowMs: 298_000, maxImageBytes: 3_000_000, maxTextChars: 1800,
-})
+export const candidateLimits: Readonly<Limits> = outputLimits
 
 function object(value: unknown): Record<string, unknown> | undefined {
   return value !== null && typeof value === 'object' ? value as Record<string, unknown> : undefined
@@ -97,7 +96,11 @@ export class QQDelivery {
     if ([...this.content(part)].length > this.limits.maxTextChars || (part.kind === 'image'
       ? !part.bytes.length || part.bytes.length > this.limits.maxImageBytes
       : !part.text)) {
-      return Promise.resolve({ status: 'aborted', reason: 'part_size' })
+      return Promise.resolve({ status: part.kind === 'image' ? 'upload_failed' : 'aborted', reason: 'part_size' })
+    }
+    if (part.kind === 'image') {
+      try { imageShape(part.bytes) }
+      catch { return Promise.resolve({status:'upload_failed',reason:'image_encoding'}) }
     }
     const key = fingerprint(part), existing = this.parts.get(partId)
     if (existing) {

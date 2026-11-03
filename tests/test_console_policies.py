@@ -1249,14 +1249,30 @@ class NativeRuntimeTests(Fixture,unittest.IsolatedAsyncioTestCase):
         self.assertLessEqual(new.prepared[0].evidence_deadline,cutoff)
         self.event(second,'intent');self.event(second,'ack')
         self.assertLessEqual(self.backend.conversations.resolve(new.request).expires,cutoff)
+        facts={p['delivery_id']:self.backend.ledger.parts(p['delivery_id']) for p in (plan,second)}
         self.backend.conversations.clock=lambda:cutoff+1
         request=self.request('expired-ref',3)
         request.update(body='/问 说简单点',trigger='quoted_reply',reference={'message_id':'accepted-'+second['request_id'][:8],
                                                      'adapter_profile_version':'fixture'})
         self.client.request.reset_mock()
         expired=await self.Helpers.prepare(self,request)
-        self.assertNotIn('无公告。',expired['parts'][0]['text'])
+        # C2 rejects expired references without creating a sendable notice.
+        self.assertEqual(expired['status'],'aborted')
+        self.assertFalse(expired['send_allowed'])
+        self.assertEqual(expired['parts'],[])
+        with patch.object(self.backend.ledger,'intent',wraps=self.backend.ledger.intent) as intent:
+            with self.assertRaisesRegex(ProtocolError,'inactive_delivery'):
+                self.event({**expired,'parts':[{'id':'0'}]},'intent')
+            intent.assert_not_called()
+        self.assertEqual(self.backend.ledger.parts(expired['delivery_id']),[])
+        for previous in (plan,second):
+            self.assertTrue(self.event(previous,'ack')['duplicate'])
+            self.assertEqual(self.backend.ledger.parts(previous['delivery_id']),facts[previous['delivery_id']])
+        self.assertIsNone(self.backend.conversations.resolve(new.request))
         self.client.request.assert_not_awaited()
+        fresh=await self.Helpers.prepare(self,self.request('fresh-after-expiry',4))
+        self.assertTrue(fresh['send_allowed'])
+        self.assertEqual(self.event(fresh,'intent')['permission'],'granted')
 
     def test_evidence_deadline_survives_chunking_and_image_fallback(self):
         from ournotes_bot.application.replies import expand_replies,fallback_cursor

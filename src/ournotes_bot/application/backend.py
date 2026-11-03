@@ -1,5 +1,6 @@
 # L3: Authenticated loopback API + single repository/parser/context owner.
-# Effects: Bounded background preparations, SQLite delivery facts; never imports QQ or sends.
+# Effects: Bounded preparations; durable ACK facts precede volatile query cursor/anchor
+# commits. Terminal unknown revokes the whole query topic; never imports QQ or sends.
 from __future__ import annotations
 import asyncio
 import hmac
@@ -18,6 +19,8 @@ from dataclasses import dataclass, field, replace, fields, is_dataclass
 
 from aiohttp import web
 from ..commands import split_commands, locale_for
+from ..config import QQ_PASSIVE_REPLY_LIMIT
+from ..rendering.image_output import MAX_IMAGE_BYTES
 from ..i18n import tr
 from ..query.continuation import ContextKey, ContextStore, MISSING, parse_operation
 from . import replies
@@ -171,6 +174,15 @@ class Backend:
     def finish(self, work, status):
         if work.terminal_status is not None or not work.active:
             return
+        # A granted attempt without a durable receipt is unknown, even when the
+        # transport closes as aborted/expired. Revoke the entire topic first.
+        if not work.chat:
+            try:
+                unknown = self.ledger.has_unknown(work.delivery)
+            except sqlite3.Error:
+                unknown = True
+            if unknown or status == 'uncertain':
+                self.invalidate_topic(work)
         # Revoke permission immediately, but retain ownership until the fact is durable.
         work.terminal_status = status
         work.terminal_pending = True
@@ -187,6 +199,11 @@ class Backend:
         if status in ('expired', 'aborted') and work.task is not None and work.task is not asyncio.current_task():
             work.task.cancel()
         self.persist_termination(work)
+
+    def invalidate_topic(self, work):
+        if not work.chat:
+            lineage = work.lineage if work.lineage is not None else getattr(work.lease, 'generation', None)
+            self.conversations.invalidate(work.key, lineage)
 
     def persist_termination(self, work):
         try:
@@ -414,6 +431,12 @@ class Backend:
             work.lock_acquired = True
             self.expire()
             if not work.active: return
+            # Binding happened at admission. Never resolve again after queueing,
+            # nor turn an unavailable old operation into a fresh sendable topic.
+            if not work.chat and (work.operation or work.request.reference is not None):
+                if work.anchor is None or self.contexts.lineage(work.key) != work.lineage:
+                    self.finish(work, 'aborted')
+                    return
             if work.missing_anchor:
                 parts = [replies.PreparedReply(MISSING)]
             elif work.chat:
@@ -426,7 +449,8 @@ class Backend:
             elif work.operation or work.anchor is not None:
                 current = (self.contexts.get(work.key) if work.lineage is not None
                            and self.contexts.lineage(work.key) == work.lineage else None)
-                if work.request.reference is not None and current is not None:
+                if (work.request.reference is not None and current is not None
+                        and not (work.operation and work.operation.kind == 'continue')):
                     current = work.anchor.context
                 work.lease = self.contexts.begin(work.key, clear=False) if current is not None else None
                 if work.request.policy.natural_query == 'off' and replies.is_ai_request(commands[0]):
@@ -476,6 +500,7 @@ class Backend:
             if parts and isinstance(parts[-1].context, replies.DeliveryCursor):
                 complete.extend(parts[-1].context.remaining)
             self.conversations.capture(work, complete)
+            require(len(parts) <= QQ_PASSIVE_REPLY_LIMIT, 'send_budget', 422)
             require(self.retained_bytes() <= self.byte_capacity, 'byte_capacity', 503)
             projections=self.model_runtime.agent.recovery.stage(work) if work.chat and parts else ()
             self.ledger.prepared(work.delivery, len(parts), start=int(work.hint),projections=projections)
@@ -531,6 +556,8 @@ class Backend:
 
     def live(self, row, epoch):
         work = self.works.get(row['delivery'])
+        if work and not work.chat and not self.contexts.active(work.lease):
+            return False
         if work and work.chat and getattr(self.settings,'chat_engine','legacy')!='agent':
             return False
         if work and work.story_versions and not self.model_runtime.agent.story_valid(work.story_versions):
@@ -599,6 +626,9 @@ class Backend:
         require(part is not None and part['mode'] == 'primary', 'unknown_image', 404)
         data = self.works[delivery].prepared[part['position']].image
         require(data is not None, 'unknown_image', 404)
+        require(0 < len(data) <= MAX_IMAGE_BYTES and
+                (data.startswith(b'\x89PNG\r\n\x1a\n') or data.startswith(b'\xff\xd8\xff')),
+                'image_admission', 422)
         return data
 
     def apply_event(self, delivery, payload):
@@ -612,8 +642,14 @@ class Backend:
         work = self.works.get(delivery)
         live = self.live(row, payload['gateway_epoch'])
         if kind == 'ack':
-            changed = self.ledger.ack(delivery, part_id, payload['attempt_id'], payload['result'], payload['message_id'],
-                allow_context=payload.get('allow_context') is not False,now=self.clock())
+            try:
+                changed = self.ledger.ack(delivery, part_id, payload['attempt_id'], payload['result'], payload['message_id'],
+                    allow_context=payload.get('allow_context') is not False,now=self.clock())
+            except sqlite3.Error:
+                if work and not work.chat:
+                    self.invalidate_topic(work)
+                    self.finish(work, 'failed')
+                raise
             projection=None
             if self.model_runtime and self.model_runtime.agent:
                 self.model_runtime.agent.audit(self.model_runtime.agent.recovery.recover,delivery)
@@ -630,6 +666,7 @@ class Backend:
                     self.finish(work,'aborted')
                 return {'recorded':True,'duplicate':not changed,**self.snapshot(self.ledger.by_delivery(delivery),payload['gateway_epoch'])}
             if changed and live and payload.get('allow_context') is False:
+                self.invalidate_topic(work)
                 self.finish(work, 'aborted')
                 live = False
             if changed and live:
@@ -650,18 +687,31 @@ class Backend:
                     if candidate is not None and (work.operation or len(split_commands(work.request.body)) == 1
                                                   or isinstance(candidate, replies.DeliveryCursor)):
                         work.candidate = candidate
-                    if work.operation:
+                    if work.chat:
                         self.contexts.commit(work.lease, candidate, confirmed=True)
-                    elif candidate is not None:
-                        self.contexts.commit(work.lease, candidate, confirmed=True)
-                    self.conversations.confirm(work, payload['message_id'], part['position'], candidate,
-                                               fallback_notice=long_fallback)
-                elif payload['result'] == 'uncertain' and isinstance(candidate, replies.DeliveryCursor):
+                        self.conversations.confirm(work, payload['message_id'], part['position'], candidate,
+                                                   fallback_notice=long_fallback)
+                    else:
+                        try:
+                            committed = self.contexts.commit(work.lease, candidate, confirmed=True)
+                            confirmed = committed and self.conversations.confirm(
+                                work, payload['message_id'], part['position'], candidate, fallback_notice=long_fallback)
+                        except Exception:
+                            # ACK is already durable. Never retry its cursor projection.
+                            self.invalidate_topic(work)
+                            self.finish(work, 'failed')
+                            raise
+                        if not confirmed:
+                            self.invalidate_topic(work)
+                            self.finish(work, 'failed')
+                            return {'recorded': True, 'duplicate': False,
+                                    **self.snapshot(self.ledger.by_delivery(delivery), payload['gateway_epoch'])}
+                elif work.chat and payload['result'] == 'uncertain' and isinstance(candidate, replies.DeliveryCursor):
                     work.candidate = replace(candidate, uncertain=True)
                     if work.operation: self.contexts.commit(work.lease, work.candidate, confirmed=True)
                 terminal = (payload['result'] != 'success' or long_fallback or part['position'] == len(parts)-1)
                 if terminal:
-                    if not work.operation:
+                    if work.chat and not work.operation:
                         self.contexts.commit(work.lease, work.candidate, confirmed=work.candidate is not None)
                     self.finish(work, 'finished' if payload['result'] == 'success' else payload['result'])
             return {'recorded': True, 'duplicate': not changed, **self.snapshot(self.ledger.by_delivery(delivery), payload['gateway_epoch'])}

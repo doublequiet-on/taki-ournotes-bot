@@ -5,7 +5,7 @@ import { setTimeout as delay } from 'node:timers/promises'
 import { Telemetry, Span } from './telemetry'
 import type { PolicySnapshot } from './group-policies'
 
-import { protocol, capability, BackendError, decodeReady, decodeClassify, decodeDirectChat, decodePlan, decodeRecorded,
+import { outputLimits, protocol, capability, BackendError, decodeReady, decodeClassify, decodeDirectChat, decodePlan, decodeRecorded,
   decodeAcknowledgement, decodeIntent, decodeRegistration, decodeRetirement, decodeChatObservation, decodeChatCandidate, object } from './wire'
 import type { Ready, Plan, WirePart, ModelPermission, Recorded } from './wire'
 export { protocol, capability, BackendError } from './wire'
@@ -14,6 +14,7 @@ const safeBackendErrors = new Set([
   'ledger_capacity', 'context_capacity', 'epoch_capacity', 'plan_capacity', 'byte_capacity',
   'not_ready', 'inactive_epoch', 'retired_epoch', 'stale_admission', 'request_conflict',
   'message_expired', 'instance_mismatch', 'protocol_version', 'capability_profile',
+  'image_admission',
 ])
 
 function responseError(bytes: Buffer, status: number): BackendError {
@@ -161,7 +162,7 @@ export class BackendClient implements DeliveryEvents {
   async image(plan: Plan, part: WirePart): Promise<Uint8Array> {
     const path = `/v1/deliveries/${plan.delivery_id}/parts/${part.id}/image`
     if (part.image !== path) throw new BackendError('image_identity')
-    return this.request(path, undefined, 3_000_000, true)
+    return this.request(path, undefined, outputLimits.maxImageBytes, true)
   }
   async event(plan: Pick<Plan, 'request_id' | 'delivery_id'>, kind: 'upload_failed' | 'aborted' | 'batch_finished', part = 'batch', attempt = 'none'): Promise<Plan> {
     return decodePlan(await this.retry(`/v1/deliveries/${plan.delivery_id}/events`, { protocol,
@@ -174,11 +175,11 @@ export class BackendClient implements DeliveryEvents {
       event: 'intent', part_id: a.partId, attempt_id: a.attemptId }))
     return value.permission
   }
-  async acknowledge(a: Attempt, result: Outcome, groupIngressSeq?: number): Promise<void> {
+  async acknowledge(a: Attempt, result: Outcome, groupIngressSeq?: number, allowContext:()=>boolean=()=>true): Promise<void> {
     decodeAcknowledgement(await this.retry(`/v1/deliveries/${a.deliveryId}/events`, () => ({ protocol,
       request_id: a.requestId, plan_version: 1, gateway_epoch: a.gatewayEpoch,
       event: 'ack', part_id: a.partId, attempt_id: a.attemptId,
-      result: result.status, message_id: result.messageId ?? null, allow_context: this.contextAllowed,
+      result: result.status, message_id: result.messageId ?? null, allow_context: this.contextAllowed && allowContext(),
       ...(groupIngressSeq===undefined?{}:{group_ingress_seq:groupIngressSeq}) })))
   }
   async retire(): Promise<{retired:true}> { return decodeRetirement(await this.retry('/v1/gateways/retire', { gateway_epoch: this.epoch })) }
