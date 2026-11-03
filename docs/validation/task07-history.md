@@ -1,0 +1,31 @@
+# 任务07自查证据
+
+基础：03 `17212e5df76cf948aa990af571ed6daf5c66ec25`，其直接依赖191 `e1a86a6db1f327a6dd0cc53fd860c4ababf50923`。这是实现者自查，不是独立审查、生产验收或05/09/10组合验收。
+
+环境：Windows、Python 3.12，复用入口仓库 `.venv` 的依赖，`PYTHONPATH=src`；QQ_APP_ID/QQ_APP_SECRET/AI_API_KEY/MOENOTES_OPEN_SECRET/BDON_OPENPLATFORM 在测试解释器内清空。临时目录显式指向本工作区 `runtime/task07/tmp`，全部输入为合成数据。
+
+## 已执行
+
+- 最终相关168项通过：`test_cutoff_history.py`、`test_cutoff_player_history.py`、`test_cutoff_archive.py`、`test_haneoka_cutoffs.py`、`test_moenotes_open.py`、`test_cutoff_query_v2.py`、`test_event_cutoffs.py`。已有 `test_provider_history_gate_and_total_capability` 扩展为先证旧store门禁，再证ProviderHistory接线和C3/C4读回，随PR提交。
+- 本地专项18项通过：provider/unknown隔离，零/null/排名读回，关闭历史不删数据，低盘拒绝，按需与后台写入，实际当前/历史查询，时钟隔离证据保留，归档恢复续写，失败.partial保留并可续跑，dry-run不改源，合成跨副本投影及恢复拒绝矩阵。
+- 专项跨版本用 `git archive` 提取固定03的src，独立Python子进程验证其schema1/2/3读写导出；v4旧读取器拒绝。原输入字节均保持不变。107(logical4)可继续写入，导出仍是4。
+- 删除传播在合成DB、缓存、冻结JSON、压缩归档和备份的独立副本上验证：缺任一已应用摘要/代际即reject；重新构建的投影归档无已删除的字典项，原副本保留。保护的非valid观测和分数逻辑摘要保持不变。该实验不提供生产apply工具。
+- `python -B scripts/check_architecture.py` 与 `git diff --check` 通过。
+- wheel/sdist构建和 `scripts/check_release_artifact.py` 通过；wheel安装到隔离target，`-I`解释器校验模块路径并禁止socket.create_connection，运行相同专项18项通过。没有声称完成Linux断网安装、05/09身份组合或QQ验收。
+
+新增专项测试文件按当前AGENTS留在本地，不纳入提交/PR。实际路径：`E:/CodexData/Codex/taki/work/taki-dev/.worktrees/plan-20261103-07/runtime/task07/test_task07.py`；日志同目录 `task07-tests.log`、`final-regression.log`、`installed-tests.log`。复现跨版本用例前，以固定03 SHA导出src到 `runtime/task07/base/src`。测试设TEMP/TMP为工作区临时目录后执行 `python -B runtime/task07/test_task07.py -v`。CI中的已提交回归不能替代这些未提交专项验证。
+
+## 空间测量
+
+| 合成观测数 | 原库字节 | 107压缩字节 | 完整导出字节 | 节省字节 |
+| --- | ---: | ---: | ---: | ---: |
+| 1 | 65536 | 98304 | 65536 | -32768 |
+| 500 | 1425408 | 471040 | 1425408 | 954368 |
+
+固定四槽分数/玩家、重复结构、变化时刻，每组逐表逻辑摘要一致；不是生产抽样或容量估计。压缩保留身份字典，anonymous=false。脚本 `runtime/task07/measure_space.py`，完整JSON `runtime/task07/space-evidence.json`；小样本变大说明不得用“压缩”承诺空间释放。
+
+## 失败定位与待验
+
+最初使用沙箱系统TEMP时，缓存原子rename被拒绝，引出4项缓存失败。固定03在同环境复现同样1 failure＋3 errors；将TEMP/TMP限定到本工作区后168项通过。未为该环境问题改业务缓存语义。
+
+扩展全套离线测试另行启动，启动后补过分区边界校验，不能将其当最终head全套证据；最终改动由上述相关回归及专项验证覆盖。完整全套/最终head CI状态由交付回执记录。Linux满盘/掉电/跨进程恢复激活、真实宿主副本覆盖和异地备份责任待10，生产删除权威及期限/字段政策待用户决定。

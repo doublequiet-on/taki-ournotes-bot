@@ -514,7 +514,7 @@ class EventCutoffRepository:
         capture={};self._diagnostic_local.capture=capture
         try:
             board=self.board(event,song,deadline)
-            if self.scheduled_history_only and self.history and board.provider is None:
+            if self.scheduled_history_only and self.history and (board.provider is None or getattr(self.history, 'supports_provider_history', False)):
                 if not getattr(self.history, 'supports_clock_calibration', False) and board.received_ms and (
                         (board.server_ms and abs(board.server_ms-board.received_ms) > 60000)
                         or (board.fetched_ms and board.fetched_ms > board.received_ms+1000)):

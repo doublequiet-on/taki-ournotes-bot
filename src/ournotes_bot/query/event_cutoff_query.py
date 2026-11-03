@@ -662,8 +662,18 @@ def _execute_cutoff(request: CutoffRequest, repository) -> CutoffAnswer:
         return CutoffAnswer(request, event, message='所选排名暂无有效历史分数。\n' + '\n'.join(details), status='data_unavailable')
     history_ranks=tuple(dict.fromkeys(ranks[round(i*(len(ranks)-1)/4)] for i in range(5)))
     if not request.numeric_only:
-        histories = tuple((b.song.challenge_id, HistoryView(warning='当前provider与旧历史未建立隔离映射，暂不拼接曲线。') if b.provider is not None else source.history.read(event, b.song, history_ranks) if source.history
-                           else HistoryView(warning="历史记录未配置；当前值仍可查询。")) for b in boards)
+        views = []
+        for board in boards:
+            if not source.history:
+                view = HistoryView(warning="历史记录未配置；当前值仍可查询。")
+            elif hasattr(source.history, 'read_board'):
+                view = source.history.read_board(event, board, history_ranks)
+            elif board.provider is not None:
+                view = HistoryView(warning='当前provider与旧历史未建立隔离映射，暂不拼接曲线。')
+            else:
+                view = source.history.read(event, board.song, history_ranks)
+            views.append((board.song.challenge_id, view))
+        histories = tuple(views)
         if historical:
             histories = tuple((key, replace(view, warning=view.warning.replace('当前值', '最近一次有效观测')
                                             .replace('当前榜线仍可查询', '最近一次有效观测单独显示'))) for key, view in histories)

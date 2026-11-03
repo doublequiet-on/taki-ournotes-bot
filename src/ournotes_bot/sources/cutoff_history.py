@@ -66,6 +66,8 @@ class HistoryPoint:
     quality: str = "valid"
     source: str = "tracker"
     time_kind: str = "tracker_observed"
+    provider: str | None = None
+    normalization_version: str = "legacy/1"
 
 
 @dataclass(frozen=True)
@@ -195,7 +197,7 @@ class CutoffHistory:
     def _save_details(self, db, ident, board, scores, server):
         from .moenotes_events import valid_ranking_detail
         values = board.player_details
-        if self.source != 'tracker' or not values:
+        if (self.source != 'tracker' and getattr(self, 'schema_version', None) != 4) or not values:
             return
         size = len(board.observed_scores if board.observed_scores is not None else board.scores)
         if len(values) != size:
@@ -304,6 +306,7 @@ class CutoffHistory:
                                    (*key, source or -1, digest)).fetchone()[0]
                 self._save_players(db, ident, board, scores)
                 self._save_details(db, ident, board, scores, event.server)
+                self._save_provenance(db, ident, board)
                 if _clock_provenance is not None:
                     db.execute("CREATE TABLE IF NOT EXISTS clock_calibrations (server TEXT, event TEXT, challenge TEXT, source_ms INTEGER, received_ms INTEGER, raw_source_ms INTEGER, raw_server_ms INTEGER, http_date_ms INTEGER, PRIMARY KEY(server,event,challenge,source_ms,received_ms))")
                     db.execute("INSERT OR IGNORE INTO clock_calibrations VALUES(?,?,?,?,?,?,?,?)",
@@ -326,6 +329,15 @@ class CutoffHistory:
             return "storage_error"
         finally:
             self._lock.release()
+
+    def _save_provenance(self, db, ident, board):
+        """Partition stores persist C3/C4 metadata in the observation transaction."""
+
+    def _restore_provenance(self, db, ident, board):
+        return board
+
+    def _save_quarantine_provenance(self, db, event, board):
+        """Partition stores retain rejected C3/C4 payloads beside clock evidence."""
 
     def failure(self, server, event="", challenge="", code="source_error"):
         """Record a missing collection attempt, without fabricating a score/time point."""
@@ -492,11 +504,12 @@ class CutoffHistory:
                                 details = tuple(self._read_details(stored[0], stored[1], scores, event.server))
                             except (ValueError, TypeError):
                                 detail_note = '该次观测的玩家资料记录损坏，未显示资料。'
-                    return replace(empty, scores=tuple(scores), fetched_ms=stamp, received_ms=received,
+                    return self._restore_provenance(db, ident, replace(empty, scores=tuple(scores), fetched_ms=stamp, received_ms=received,
                                    player_ids=tuple(p[0] for p in players), player_names=tuple(p[1] for p in players),
                                    player_details=details,
+                                   value_states=('legacy_unknown',) * len(scores),
                                    status='最近一次有效观测',
-                                   notes=(*skipped, *(note for note in (player_note, detail_note) if note), '不是确认终榜。'))
+                                   notes=(*skipped, *(note for note in (player_note, detail_note) if note), '不是确认终榜。')))
             return replace(empty, quality='unusable', status='暂无有效历史观测', notes=tuple(skipped))
         except (sqlite3.Error, OSError, ValueError, TypeError):
             self.last_error = 'storage_error'
@@ -604,6 +617,7 @@ class HaneokaCutoffHistory(OpenCutoffHistory):
                            (*key, str(board.song.music_id), received, board.fetched_ms, board.server_ms,
                             board.http_date_ms, scores, board.source, board.time_kind, board.contract_version,
                             board.quality, board.song.collect_status))
+                self._save_quarantine_provenance(db, event, board)
                 db.execute("INSERT INTO clock_pending VALUES(?,?,?,?,?) ON CONFLICT(server,event,challenge) DO UPDATE SET first_ms=min(first_ms,excluded.first_ms),last_ms=max(last_ms,excluded.last_ms)",
                            (*key, received, received))
                 db.execute("INSERT OR IGNORE INTO gaps VALUES(?,?,?,?,?)", (*key, received, 'clock_skew'))
@@ -721,6 +735,20 @@ class SourceHistory:
     def supports_clock_calibration(self):
         return bool(getattr(self.writer, "supports_clock_calibration", False))
 
+    @property
+    def supports_provider_history(self):
+        return bool(getattr(self.writer, 'supports_provider_history', False))
+
+    def read_board(self, event, board, ranks, **kwargs):
+        store = self.stores.get(board.source)
+        if store is None:
+            return HistoryView(warning='该来源没有历史存储。')
+        if board.provider is not None:
+            if not getattr(store, 'supports_provider_history', False):
+                return HistoryView(warning='provider历史分区未接线。')
+            return store.read_board(event, board, ranks, **kwargs)
+        return store.read(event, board.song, ranks, **kwargs)
+
     def record(self, event, board):
         source = getattr(board, "source", "tracker")
         if source != self.active:
@@ -750,6 +778,11 @@ class SourceHistory:
     def latest(self, event, song):
         from .moenotes_events import display_time, zone_label
         boards = {key: store.latest(event, song) for key, store in self.stores.items()}
+        partitioned = [b for b in boards.values() if b.provider is not None and b.has_values]
+        if partitioned:
+            # Source clocks are not comparable. Select a whole received observation;
+            # read_board subsequently selects only its exact partition.
+            return max(partitioned, key=lambda b: b.received_ms or -1)
         notes = [n for b in boards.values() for n in b.notes]
         while True:
             latest = max(boards.values(), key=lambda b: (b.fetched_ms or -1, b.received_ms or -1))
@@ -817,6 +850,8 @@ def configure_sources(repository, settings):
                               enabled=settings.cutoff_history_enabled, min_free_mb=settings.cutoff_history_min_free_mb)
     haneoka = HaneokaCutoffHistory(settings.cache_file.with_name("haneoka-cutoff-history-v3.sqlite3"),
                                   enabled=settings.cutoff_history_enabled, min_free_mb=settings.cutoff_history_min_free_mb)
+    from .history_partitions import ProviderHistory
+    haneoka = ProviderHistory(haneoka)
     source.history = SourceHistory(legacy, formal, active=settings.cutoff_source, haneoka=haneoka)
     source.score_display_limit = settings.cutoff_score_display_limit
     from .total_rankings import TotalRankingHistory, TotalRankingRepository, fetch_moenotes_total
