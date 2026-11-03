@@ -1,6 +1,6 @@
 # 管理范围与撤权接口（任务05 / C5、C6）
 
-本包堆叠于 PR #192 固定提交 `d9240dffecee0f0a0066d5f70c8357fc9a398632`，沿用 [查询投递合同](QUERY_DELIVERY_SAFETY.md)，不修改02话题协议。定制产品装配尚未完成：09身份适配及用户批准政策未接线，08负责构造与 Console/RPC 页面。不能据此宣称定制版可激活。
+本包堆叠于 PR #192 固定提交 `d9240dffecee0f0a0066d5f70c8357fc9a398632`，沿用 [查询投递合同](QUERY_DELIVERY_SAFETY.md)，不修改02话题协议。定制产品装配尚未完成：05范围侧身份适配已提供；08/10受信控制器接线及用户批准政策未完成，08负责构造与 Console/RPC 页面。不能据此宣称定制版可激活。
 
 ## 给08：管理入口
 
@@ -18,7 +18,21 @@ receiver 在后端识别前过滤管理范围；每次普通查询 intent 前重
 
 ## 给09：唯一身份权威
 
-`ScopeAuthority.identity(binding)` 必须由09将实例外部预期与候选身份比较；本包没有另建产品身份体系。需要09提供 product、instance、AppID、channel、capabilities、组件摘要、protocol、schema读写范围、最低控制器具体类型及验证入口，以及个人旧 baseline 兼容范围。binding 在本包仅校验为对象，不解释字段，也不以候选自报字段证明身份。
+09合同版本绑定 PR #194 的 `b29d69fd3d76b5be81610228ec3cfbb65fd044bf`，实际入口为该提交的 `deploy/product_identity.py::check_identity(candidate, expected, observed)`。本包不复制其身份解释或按旧备份自证身份。09后续版本须按实际SHA重新验收。
+
+05提供 `koishi/src/scope-identity.ts::productIdentityAdapter(readTrustedCheck)` 及 `productScopeAuthority(readTrustedCheck, approval?)`。binding具体为09 `read_json` 严格解析得到的完整candidate对象；05只对它与受信回执中的candidate作深相等校验，不解释产品字段。它不是expected、observed或预检结果。不能拿A候选的allow去批准B的binding。
+
+08/10提供的无参数回调必须从当前受信控制器读取 `TrustedIdentityCheck`，每次许可重新读取；不能从scope文件、恢复树、候选载荷或客户端RPC取得回执，也不能长期复用已失效的预检缓存。控制器用固定受信09实现校验，不执行候选内脚本。控制器必须从同一次读取的manifest原始字节实算摘要并严格解析candidate；expected在发行/备份/恢复树之外，observed来自独立测量。纯函数适配不提供这些信任来源，不是密码学签名验证。
+
+回调字段：`candidate`、`verdict={status,reason,contract_version}`、`manifestSha256`（64位小写hex原始manifest摘要）、`checkerCommit`（40位实际受信09实现SHA）、`expectedRevision`/`observationRevision`（各64位受信输入快照摘要，绑定本次校验的expected/observed）。这些证据由控制器产生，05不从candidate补造。回调缺失返回manual/identity_check_pending，异常返回deny/identity_authority_unavailable；缺摘要、未知版本/原因/状态组合拒绝。
+
+| 09判定 | 05身份判定 | 含义 |
+| --- | --- | --- |
+| allow / identity_verified | allow | 仅身份预检通过，仍执行独立C5批准 |
+| reject / 09已定义拒绝原因 | deny，保留reason | 不调用范围批准 |
+| manual / schema_incompatible | manual，保留reason | 保持隔离，不调用范围批准 |
+
+身份evidence为 `c1/v1:checkerCommit:manifestSha256:expectedRevision:observationRevision`，范围最终判定额外保留 `identity_evidence`，原evidence继续表示范围批准证据。`productScopeAuthority`未传独立approval时返回manual/scope_approval_policy_pending，即使09为allow也不能激活。09不认证任意个人旧baseline：旧实例维持原流程，进入新合同须单独审阅；本包不增加旧包豁免。
 
 `ScopeAuthority.approval(candidate,digest)` 必须查询候选恢复内容之外的当前批准权威，返回 `{outcome:'allow'|'deny'|'manual',reason,evidence}`。generation/approval/hash 都只是候选信息；合法旧备份中的高代际、合法身份、完整文件均不等于最新批准。测试中的合成权威只证明接口拒绝旧宽范围，不是生产批准实现。
 

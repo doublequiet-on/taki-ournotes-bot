@@ -13,7 +13,7 @@ export interface ScopeDocument {
   c2c:Scope
   announcements:Scope
 }
-export interface ScopeDecision { outcome:'allow'|'deny'|'manual'; reason:string; evidence:string }
+export interface ScopeDecision { outcome:'allow'|'deny'|'manual'; reason:string; evidence:string; identity_evidence?:string }
 export interface ScopeAuthority {
   // External expectation versus candidate binding, provided by 09.
   identity(binding:unknown):ScopeDecision
@@ -60,7 +60,7 @@ export class ScopeStore {
       if(identity.outcome!=='allow')return {...candidate,decision:identity}
       const decision=this.authority.approval(structuredClone(candidate.document),candidate.digest)
       if(!['allow','deny','manual'].includes(decision.outcome)||!decision.evidence)throw Error('authority_invalid')
-      return {...candidate,decision}
+      return {...candidate,decision:{...decision,identity_evidence:identity.evidence}}
     }catch{return {...candidate,decision:{outcome:'deny',reason:'authority_unavailable',evidence:candidate.digest}}}
   }
   allows(channel:'groups'|'c2c'|'announcements',id:string){

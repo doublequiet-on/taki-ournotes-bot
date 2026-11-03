@@ -1455,6 +1455,20 @@ async function main() {
     await client.acknowledge({requestId:'r',deliveryId:'d',partId:'0',attemptId:'a',gatewayEpoch:'e'},{status:'success',messageId:'m'})
     assert.deepEqual(guards,[true,false])
   })
+  await run('Scope identity adapts trusted09 verdicts without granting scope approval',async()=>{
+    const {productIdentityAdapter,productScopeAuthority}=require('../lib/scope-identity')
+    const candidate={opaque:'synthetic-manifest'}, evidence={candidate,manifestSha256:'a'.repeat(64),checkerCommit:'b'.repeat(40),expectedRevision:'c'.repeat(64),observationRevision:'d'.repeat(64)}
+    for(const [status,reason,outcome] of [['allow','identity_verified','allow'],['reject','identity_mismatch','deny'],['manual','schema_incompatible','manual']]){
+      const adapter=productIdentityAdapter(()=>({...evidence,verdict:{status,reason,contract_version:1}}))
+      assert.equal(adapter(candidate).outcome,outcome);assert.equal(adapter(candidate).reason,reason)
+      assert.equal(adapter({opaque:'other'}).outcome,'deny')
+    }
+    const authority=productScopeAuthority(()=>({...evidence,verdict:{status:'allow',reason:'identity_verified',contract_version:1}}))
+    assert.equal(authority.identity(candidate).outcome,'allow')
+    assert.equal(authority.approval({},'e'.repeat(64)).outcome,'manual')
+    assert.equal(productIdentityAdapter(()=>undefined)(candidate).outcome,'manual')
+    assert.equal(productIdentityAdapter(()=>({...evidence,verdict:{status:'allow',reason:'schema_incompatible',contract_version:1}}))(candidate).outcome,'deny')
+  })
   await run('M3 ACK retry rechecks revoked scope context guard', async () => {
     const guards=[];let allowed=true
     const client=new BackendClient('http://127.0.0.1:8765','x'.repeat(32),'i','e',async (url,opts)=>{
