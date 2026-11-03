@@ -40,7 +40,8 @@ HTTP 双端样例位于 `scripts/fixtures/http-v2.json`，随组合包的 script
 | `src/notices.ts` | 群许可事件、独立主动通知、逐次许可/intent/ACK，使用后端唯一账本。 |
 | `run.cjs` | 双进程网关入口，显式启用、受认证 loopback 健康、顺序卸载。 |
 | `console.cjs`、`console/` | 官方 Koishi 控制台接入、独立管理员会话与管理页面。 |
-| `src/management.ts` | 接收/通知范围设置校验、原子持久保存和管理记录。 |
+| `src/management.ts` | 接收/通知范围设置校验、原子持久保存和管理记录；停新接纳与紧急停发。 |
+| `src/scope-authority.ts` | 定制三通道范围校验、独立批准权威接口、恢复判定和CAS暂存；[接线合同](../docs/MANAGEMENT_SCOPE_SAFETY.md)。 |
 | `src/group-policies.ts` | 实例绑定群策略、持久 revision、有效规则、通知 all/selected/none。 |
 | `src/telemetry.ts`、`health.cjs` | 有界旁路耗时采集、共享实时健康读取。 |
 | `src/index.ts` | 默认关闭的配置、运输服务与受管 receiver 生命周期。 |

@@ -175,11 +175,11 @@ export class BackendClient implements DeliveryEvents {
       event: 'intent', part_id: a.partId, attempt_id: a.attemptId }))
     return value.permission
   }
-  async acknowledge(a: Attempt, result: Outcome, groupIngressSeq?: number): Promise<void> {
+  async acknowledge(a: Attempt, result: Outcome, groupIngressSeq?: number, allowContext:()=>boolean=()=>true): Promise<void> {
     decodeAcknowledgement(await this.retry(`/v1/deliveries/${a.deliveryId}/events`, () => ({ protocol,
       request_id: a.requestId, plan_version: 1, gateway_epoch: a.gatewayEpoch,
       event: 'ack', part_id: a.partId, attempt_id: a.attemptId,
-      result: result.status, message_id: result.messageId ?? null, allow_context: this.contextAllowed,
+      result: result.status, message_id: result.messageId ?? null, allow_context: this.contextAllowed && allowContext(),
       ...(groupIngressSeq===undefined?{}:{group_ingress_seq:groupIngressSeq}) })))
   }
   async retire(): Promise<{retired:true}> { return decodeRetirement(await this.retry('/v1/gateways/retire', { gateway_epoch: this.epoch })) }

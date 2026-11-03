@@ -18,7 +18,7 @@ import tempfile
 from concurrent.futures import ThreadPoolExecutor
 from functools import lru_cache
 from pathlib import Path
-from urllib.request import Request, urlopen
+from urllib.request import Request, urlopen, build_opener, HTTPRedirectHandler
 
 import aiohttp
 
@@ -351,6 +351,26 @@ def _draw_skills(draw: ImageDraw.ImageDraw, skills: tuple[Skill, ...], x: int, y
     return y
 
 
+class _NoAssetRedirect(HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        raise ValueError("asset redirect forbidden")
+
+
+def _fixed_icon_bytes(url: str, referer: str) -> bytes:
+    # Fixed icons never enter the legacy transport fallback or follow redirects.
+    with build_opener(_NoAssetRedirect()).open(
+            Request(url, headers={"User-Agent": "Mozilla/5.0", "Referer": referer}), timeout=12) as response:
+        if response.status != 200:
+            raise ValueError("asset response status")
+        length = response.headers.get("Content-Length")
+        if length is not None and (not length.isdecimal() or int(length) > 6_000_000):
+            raise ValueError("asset size limit")
+        raw = response.read(6_000_001)
+        if len(raw) > 6_000_000:
+            raise ValueError("asset size limit")
+        return raw
+
+
 def _asset(url: str, size: tuple[int, int], *, contain: bool = False, native: bool = False) -> Image.Image | None:
     from .sources.haneoka.catalog_assets import is_catalog_asset, download_asset
     catalog_asset = is_catalog_asset(url)
@@ -381,7 +401,9 @@ def _asset(url: str, size: tuple[int, int], *, contain: bool = False, native: bo
             except Exception:
                 pass  # Old bad cache is retried once through the existing fetch path.
         try:
-            if catalog_asset:
+            if url in icons or url in MISSION_ICON_URLS.values():
+                raw = _fixed_icon_bytes(url, "https://haneoka.org/" if url in MISSION_ICON_URLS.values() else BASE + "/")
+            elif catalog_asset:
                 raw = download_asset(url)
             else:
                 raw = None
@@ -390,7 +412,7 @@ def _asset(url: str, size: tuple[int, int], *, contain: bool = False, native: bo
                 with urlopen(Request(url, headers={"User-Agent": "Mozilla/5.0", "Referer": referer}), timeout=12) as response:
                     raw = response.read(6_000_001)
         except Exception:
-            if catalog_asset:
+            if catalog_asset or url in icons or url in MISSION_ICON_URLS.values():
                 raise
             async def download() -> bytes:
                 async with aiohttp.ClientSession() as session:

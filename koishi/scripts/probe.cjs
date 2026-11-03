@@ -1455,6 +1455,16 @@ async function main() {
     await client.acknowledge({requestId:'r',deliveryId:'d',partId:'0',attemptId:'a',gatewayEpoch:'e'},{status:'success',messageId:'m'})
     assert.deepEqual(guards,[true,false])
   })
+  await run('M3 ACK retry rechecks revoked scope context guard', async () => {
+    const guards=[];let allowed=true
+    const client=new BackendClient('http://127.0.0.1:8765','x'.repeat(32),'i','e',async (url,opts)=>{
+      guards.push(JSON.parse(opts.body).allow_context)
+      if(guards.length===1){allowed=false;throw Error('lost before commit')}
+      return Response.json(httpV2.python_to_ts.ack)
+    })
+    await client.acknowledge({requestId:'r',deliveryId:'d',partId:'0',attemptId:'a',gatewayEpoch:'e'},{status:'success',messageId:'m'},undefined,()=>allowed)
+    assert.deepEqual(guards,[true,false])
+  })
   await run('M3 gateway normalization retains actual path and query', async () => {
     assert.equal(normalizeGateway('wss://api.sgroup.qq.com/socket/path?a=1&b=two'),'wss://api.bot.qq.com/socket/path?a=1&b=two')
     assert.equal(normalizeGateway('wss://other.example/socket?a=1'),'wss://other.example/socket?a=1')
@@ -1710,7 +1720,7 @@ async function main() {
     const fork=env.ctx.plugin(ctx=>{receiver=new Receiver(ctx,{...identity,backendUrl:'http://127.0.0.1:8765',tokenEnv:'unused',permissions:[],maxPending:8},client)})
     receiver.authorizeModel=async()=>{decisions++;releaseHint()}
     try{
-      const job={input,plan:hint(),permissionAttempts:new Set()}
+      const job={input,session:decoded.session,plan:hint(),permissionAttempts:new Set()}
       await receiver.deliver(job,env.bot)
       assert.equal(decisions,1);assert.equal(env.calls.length,2)
       assert.deepEqual(env.calls.map(c=>c.data.msg_seq),[1,2])
@@ -1733,7 +1743,7 @@ async function main() {
     const fork=env.ctx.plugin(ctx=>{receiver=new Receiver(ctx,{...identity,backendUrl:'http://127.0.0.1:8765',tokenEnv:'unused',permissions:[],maxPending:8},client)})
     try{
       receiver.materials=fixtureMaterials(env.bot.internal)
-      await receiver.deliver({input,plan:plan(),permissionAttempts:new Set()},env.bot)
+      await receiver.deliver({input,session:env.bot.session({}),plan:plan(),permissionAttempts:new Set()},env.bot)
       const sends=env.calls.filter(c=>c.url.endsWith('/messages'))
       assert.equal(completed,5);assert.deepEqual(sends.map(c=>c.data.msg_seq),[1,2,3,4,5])
       assert.deepEqual(sends.map(c=>c.data.msg_type),[2,2,2,2,2])
@@ -1755,7 +1765,7 @@ async function main() {
         async event(p,event){assert.equal(event,'upload_failed');assert.equal(intents,0);fallback=true;return plan()}}
       const fork=env.ctx.plugin(ctx=>{receiver=new Receiver(ctx,{...identity,backendUrl:'http://127.0.0.1:8765',tokenEnv:'unused',permissions:[],maxPending:8},client)})
       try{
-        await receiver.deliver({input,plan:plan(),permissionAttempts:new Set()},env.bot)
+        await receiver.deliver({input,session:env.bot.session({}),plan:plan(),permissionAttempts:new Set()},env.bot)
         assert.equal(intents,1);assert(completed);assert.equal(env.calls.length,1)
         assert.equal(env.calls[0].data.msg_seq,1);assert(env.calls[0].data.markdown.content.includes('captured fallback'))
       }finally{await receiver.dispose();await fork.dispose();await env.ctx.stop()}
@@ -1782,7 +1792,7 @@ async function main() {
     const fork=env.ctx.plugin(ctx=>{receiver=new Receiver(ctx,{...identity,materialStateDir:directory,
       backendUrl:'http://127.0.0.1:8765',tokenEnv:'unused',permissions:[],maxPending:8},client)})
     try{
-      await receiver.deliver({input,plan:plan(),permissionAttempts:new Set()},env.bot)
+      await receiver.deliver({input,session:env.bot.session({}),plan:plan(),permissionAttempts:new Set()},env.bot)
       assert.equal(puts,1);assert.equal(completed,true)
       assert.deepEqual(env.calls.map(c=>c.url),['/v2/media-images/prepare','/v2/media-images/complete','/v2/groups/fixture-group/messages'])
       const body=env.calls.at(-1).data
@@ -2146,7 +2156,7 @@ async function main() {
     })
     await run('Pausing new queries leaves an admitted receiver job and its ACK running',async()=>{
       const env=createBot();let paused=false,submissions=0,acked=false,receiver,plan
-      const management={accepts:()=>!paused,policySnapshot:()=>({natural_query:'local',epoch:'policy',global_revision:0,group_revision:0})}
+      const management={accepts:()=>!paused,sendsAllowed:()=>true,policySnapshot:()=>({natural_query:'local',epoch:'policy',global_revision:0,group_revision:0})}
       const client={epoch:'e',deactivate(){},async initialize(){},async recognizes(){return true},async retire(){},
         async submit(input){submissions++;paused=true;return plan={request_id:input.requestId,delivery_id:'d'.repeat(32),plan_version:1,status:'prepared',send_allowed:true,expires_at:Date.now()/1000+290,
           parts:[{id:'0',position:0,mode:'primary',status:'pending',kind:'text',text:'fixture'}]}},
@@ -2158,6 +2168,27 @@ async function main() {
         await env.ctx.parallel('internal/session',env.bot.session({type:'internal',_type:'qq/group-at-message-create',_data:raw.d}))
         await receiver.receive(env.ctx.reflect.trace(await adaptSession(env.bot,raw)))
         assert.equal(submissions,1);assert.equal(acked,true);assert.equal(env.calls.filter(c=>c.data?.msg_type===2).length,1)
+      }finally{await receiver.dispose();await fork.dispose();await env.ctx.stop()}
+    })
+    for(const boundary of ['excluded','before-intent','after-grant'])await run('Scope revocation '+boundary,async()=>{
+      const env=createBot();let receiver,allowed=true,intents=0,acks=0,context,plan,recognitions=0
+      const management={inScope:()=>boundary!=='excluded',accepts:()=>allowed,sendsAllowed:()=>allowed,policySnapshot:()=>({natural_query:'local',epoch:'policy',global_revision:0,group_revision:0})}
+      const client={epoch:'e',deactivate(){},async initialize(){},async recognizes(){recognitions++;return true},async retire(){},
+        async submit(input){if(boundary==='before-intent')allowed=false;return plan={request_id:input.requestId,delivery_id:'e'.repeat(32),plan_version:1,status:'prepared',send_allowed:true,expires_at:Date.now()/1000+290,
+          parts:[{id:'0',position:0,mode:'primary',status:'pending',kind:'text',text:'fixture'}]}},
+        async intent(){intents++;allowed=false;return 'granted'},
+        async acknowledge(a,r,seq,allow){acks++;context=allow()},
+        async lookup(){return {...plan,status:'finished',send_allowed:false,parts:[]}},async event(){return {}}}
+      const fork=env.ctx.plugin(ctx=>{receiver=new Receiver(ctx,{...identity,backendUrl:'http://127.0.0.1:8765',tokenEnv:'unused',permissions:[],maxPending:8,management},client)})
+      receiver.permitted=async()=>true
+      try{
+        const raw=event({timestamp:new Date().toISOString()})
+        await env.ctx.parallel('internal/session',env.bot.session({type:'internal',_type:'qq/group-at-message-create',_data:raw.d}))
+        await receiver.receive(env.ctx.reflect.trace(await adaptSession(env.bot,raw)))
+        assert.equal(intents,boundary==='after-grant'?1:0)
+        assert.equal(acks,boundary==='after-grant'?1:0)
+        if(boundary==='excluded')assert.equal(recognitions,0)
+        if(acks)assert.equal(context,false,'late grant receipt cannot project revoked context')
       }finally{await receiver.dispose();await fork.dispose();await env.ctx.stop()}
     })
     await run('Actual gateway keeps policy enforcement when the Console web UI is disabled',async()=>{
