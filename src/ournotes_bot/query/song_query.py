@@ -203,9 +203,12 @@ class SongAnswer:
 
 def execute(request, repository, page=1):
     from ..commands import _song_name_matches
+    catalog = repository.capture_catalog()
+    stale = catalog.cache_state == 'stale'
     candidates = _song_name_matches(repository, request.term) if request.term else list(repository.songs)
     if request.term and not candidates:
-        return SongAnswer(request, page=page, unknown_entity=True)
+        return SongAnswer(request, page=page, unknown_entity=True,
+                          warning='Haneoka 旧缓存；未命中不代表最新资料不存在。' if stale else '')
     def charts_match(song):
         charts = [c for c in song.charts if request.difficulty in {"", "ALL"} or c.difficulty == request.difficulty]
         if not charts:
@@ -232,7 +235,7 @@ def execute(request, repository, page=1):
     warning = f"有 {unknown} 首歌曲缺少所需颜色／激奏数据，未参与筛选。" if unknown else ""
     if candidates and unknown == len(candidates):
         warning = "歌曲颜色／激奏数据暂不可用，等待后台同步后重试。"
-    if any(s.traits and s.traits.stale for s in candidates):
+    if stale or any(s.traits and s.traits.stale for s in candidates):
         warning += " Haneoka 旧缓存。"
     return SongAnswer(request, tuple(matches), page, warning, bool(candidates and unknown == len(candidates)))
 

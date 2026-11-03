@@ -118,6 +118,19 @@ class Session(Response):
 
 
 class HaneokaFacilityTests(unittest.TestCase):
+    def test_records_error_body_is_bounded_and_legacy_get_still_rejects(self):
+        response = Session()
+        response.status = 503
+        response.chunks = (b'{"error":{"kind":"pending","retryAfter":3}}',)
+        with patch('aiohttp.ClientSession', return_value=response):
+            status, body, headers = transport.public_response(transport.ORIGIN + '/test', 100000, 2, error_body=True)
+        self.assertEqual(transport.response_failure(status, body, headers), ('pending', 3))
+        with patch('aiohttp.ClientSession', return_value=response), self.assertRaises(ChartDataError):
+            transport.public_get(transport.ORIGIN + '/test', 100000, 2)
+        response.chunks = (b'x' * 65537,)
+        with patch('aiohttp.ClientSession', return_value=response), self.assertRaisesRegex(ChartDataError, 'too large'):
+            transport.public_response(transport.ORIGIN + '/test', 100000, 2, error_body=True)
+
     def test_scoped_connections_reuse_tcp_and_close_after_success_or_failure(self):
         clients, cookies, sessions = [], [], []
 

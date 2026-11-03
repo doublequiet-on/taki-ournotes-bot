@@ -37,3 +37,15 @@ class PublicSnapshot:
     fetched_at: float
     resource: str
     release: str = ''
+    provider: str | None = None
+    game_region: str | None = None
+    observed_ms: int | None = None
+    server_ms: int | None = None
+    snapshot_id: str | None = None
+    normalization_version: str = 'public/2'
+    freshness: str = 'unknown'
+    age_seconds: float | None = None
+    resource_server: str | None = None
+    source_id: str | None = None
+    source: str = 'haneoka'
+    time_kind: str = 'unknown'

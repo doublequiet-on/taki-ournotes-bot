@@ -14,7 +14,7 @@ from dataclasses import replace
 from email.utils import parsedate_to_datetime
 from urllib.parse import urlsplit
 
-from .transport import public_get
+from .transport import public_response, response_failure
 from .identity import matches_game_region
 from ..json_validation import decode_json as strict_json
 from ..moenotes_events import (
@@ -24,6 +24,7 @@ from ..moenotes_events import (
 
 API = "https://haneoka.org/api/v1/game/records"
 CONTRACT = "haneoka:challenge-ranking/1"
+NORMALIZATION = "haneoka:challenge-ranking/2"
 TIME_KIND = "tracker_observed_via_haneoka"
 MAX_BYTES = 524288
 MAX_SCORE = 2**53 - 1
@@ -42,7 +43,7 @@ def timestamp(value):
 
 
 def event_identity(event):
-    return (event.server, event.event_id, event.start_ms, event.end_ms,
+    return (event.server, event.event_id, event.start_ms, event.end_ms, event.provider,
             tuple((s.challenge_id, s.music_id, s.enabled, s.collect_status,
                    s.effective_start_ms, s.effective_end_ms) for s in event.songs))
 
@@ -52,6 +53,8 @@ def decode_current(data, region):
         raise SourceError("invalid_event")
     timestamp(data.get("fetchedAtMs"))
     row = data.get("event")
+    if 'event' not in data:
+        raise SourceError('invalid_event')
     if row is None:
         raise SourceError("not_found")
     if not isinstance(row, dict):
@@ -80,8 +83,19 @@ def decode_current(data, region):
     status = row.get("status")
     if not isinstance(status, str) or len(status) > 40:
         raise SourceError("invalid_event")
+    total = row.get('totalRankingEnabled')
+    if total is not None and type(total) is not bool:
+        raise SourceError('invalid_event')
     return EventSnapshot(region, ident, f"活动 {ident}", status, start, end, tuple(songs),
-                         source="haneoka", challenge_order_verified=False, metadata_version="")
+                         source="haneoka", challenge_order_verified=False, metadata_version="",
+                         total_ranking_enabled=total, provider=provider(data))
+
+
+def provider(data):
+    value = data.get('provider')
+    if value is not None and (not isinstance(value, str) or not value or len(value) > 64):
+        raise SourceError('invalid_provider')
+    return value
 
 
 def player_detail(row):
@@ -127,23 +141,39 @@ def decode_board(data, event, song):
     rows = data.get("rows")
     if not isinstance(rows, list) or len(rows) > 100:
         raise SourceError("invalid_board")
-    scores, ids, names, details = [], [], [], []
+    scores, ids, names, details, ranks, states = [], [], [], [], [], []
+    source = provider(data)
+    sid = data.get('snapshotId')
+    if sid is not None and (not isinstance(sid, str) or len(sid) > 1024):
+        raise SourceError('invalid_identity')
+    previous = 0
     unsafe = False
     for position, row in enumerate(rows, 1):
         # Null/non-object rows occupy their original slot. Never compact or sort.
-        row = row if isinstance(row, dict) else {}
-        if row and (type(row.get("rank")) is not int or row["rank"] != position):
-            raise SourceError("unknown_position")
+        if row is not None and not isinstance(row, dict):
+            raise SourceError('invalid_board')
+        row = row or {}
+        rank = row.get('rank')
+        if rank is not None:
+            if type(rank) is not int or not previous <= rank <= position or rank < 1:
+                raise SourceError('invalid_rank')
+            previous = rank
+        ranks.append(rank)
         score = row.get("score")
         valid = type(score) is int and 0 <= score <= MAX_SCORE
         unsafe |= score is not None and not valid
         scores.append(score if valid else None)
+        states.append('source_zero' if valid and score == 0 else 'value' if valid else
+                      'null' if 'score' in row and score is None else 'invalid' if 'score' in row else 'missing')
         public_id = row.get("profileId")  # Never substitute opaque playerId.
         ids.append(_player_id(public_id) if valid and isinstance(public_id, str) else None)
         names.append(_player_name(row.get("name")) if valid else None)
         details.append(player_detail(row) if valid else None)
     return {"scores": scores, "player_ids": ids, "player_names": names, "player_details": details,
-            "fetched": fetched, "server": server, "stale": data["stale"], "unsafe": unsafe}
+            "fetched": fetched, "server": server, "stale": data["stale"], "unsafe": unsafe,
+            "display_ranks": ranks, "value_states": states, "provider": source,
+            "snapshot_id": data.get('snapshotId'), "observed_ms": timestamp(data.get('observedAtMs')),
+            "normalization_version": NORMALIZATION}
 
 
 class HaneokaEventCutoffRepository(EventCutoffRepository):
@@ -157,7 +187,11 @@ class HaneokaEventCutoffRepository(EventCutoffRepository):
     @staticmethod
     def _transport(url, timeout):
         try:
-            return public_get(url, MAX_BYTES, timeout)
+            status, body, headers = public_response(url, MAX_BYTES, timeout, error_body=True)
+            if status != 200:
+                code, retry = response_failure(status, body, headers)
+                raise SourceError(code, retry if retry is not None else 30)
+            return body, headers
         except RuntimeError as exc:
             raise SourceError("upstream") from exc
 
@@ -180,7 +214,7 @@ class HaneokaEventCutoffRepository(EventCutoffRepository):
             if "error" in data:
                 error = data["error"]
                 kind = error.get("kind") if isinstance(error, dict) else None
-                raise SourceError(kind if kind in {"not_found", "pending", "rate_limited"} else "upstream")
+                raise SourceError(kind if isinstance(kind, str) and kind in {"not_found", "pending", "rate_limited"} else "upstream")
             return data, headers
         except (ValueError, UnicodeError, RecursionError) as exc:
             raise SourceError("invalid_json") from exc
@@ -192,6 +226,7 @@ class HaneokaEventCutoffRepository(EventCutoffRepository):
                 return True
             if key.startswith("board:"):
                 return (super()._valid_payload(key, payload)
+                        and self._valid_quality(payload)
                         and all(n is None or type(n) is int and 0 <= n <= MAX_SCORE for n in payload["scores"])
                         and ("player_details" not in payload or isinstance(payload["player_details"],list)
                              and len(payload["player_details"])==len(payload["scores"])
@@ -202,6 +237,30 @@ class HaneokaEventCutoffRepository(EventCutoffRepository):
         except (SourceError, KeyError, TypeError):
             pass
         return False
+
+    @staticmethod
+    def _valid_quality(payload):
+        provider(payload)
+        timestamp(payload.get('observed_ms'))
+        sid = payload.get('snapshot_id')
+        if sid is not None and (not isinstance(sid, str) or len(sid) > 1024):
+            return False
+        if payload.get('normalization_version', 'legacy/1') not in {'legacy/1', NORMALIZATION}:
+            return False
+        ranks = payload.get('display_ranks')
+        states = payload.get('value_states')
+        length = len(payload.get('scores', []))
+        if ranks is not None:
+            if not isinstance(ranks, list) or len(ranks) != length:
+                return False
+            previous = 0
+            for position, rank in enumerate(ranks, 1):
+                if rank is not None:
+                    if type(rank) is not int or not max(1, previous) <= rank <= position:
+                        return False
+                    previous = rank
+        return (states is None or isinstance(states, list) and len(states) == length
+                and all(s in {'value', 'source_zero', 'missing', 'null', 'invalid', 'legacy_unknown'} for s in states))
 
     def _load(self, key):
         if key in self._entries:
@@ -252,7 +311,7 @@ class HaneokaEventCutoffRepository(EventCutoffRepository):
         return event
 
     def board(self, event, song, deadline):
-        empty = BoardSnapshot(song, source=self.source, time_kind=TIME_KIND, contract_version=CONTRACT)
+        empty = BoardSnapshot(song, source=self.source, time_kind=TIME_KIND, contract_version=CONTRACT, game_region=event.server)
         expected = event_identity(event)
         def matches():
             with self._guard:
@@ -264,7 +323,14 @@ class HaneokaEventCutoffRepository(EventCutoffRepository):
             return replace(empty, status="本曲挑战榜未开放或尚未采集")
         digest = hashlib.sha256(json.dumps(expected).encode()).hexdigest()
         # Old readers validate exact player-detail keys. Keep their cache intact.
-        key = f"board:{event.server}:{event.event_id}:{song.challenge_id}:{digest}:avatar-v2"
+        key = f"board:{event.server}:{event.event_id}:{song.challenge_id}:{digest}:quality-v2"
+        # Read pre-C4 cache without rewriting it or inventing lost provider/ranks.
+        if event.provider is None and self._load(key) is None:
+            old_identity = expected[:4] + expected[5:]
+            old_digest = hashlib.sha256(json.dumps(old_identity).encode()).hexdigest()
+            old = self._load(f'board:{event.server}:{event.event_id}:{song.challenge_id}:{old_digest}:avatar-v2')
+            if old is not None:
+                self._entries[key] = old
         def load():
             data, headers = self._json(f"{API}/{event.server}/events/{event.event_id}/challenges/{song.challenge_id}/ranking", deadline)
             payload = decode_board(data, event, song)
@@ -282,11 +348,16 @@ class HaneokaEventCutoffRepository(EventCutoffRepository):
             if not matches():
                 raise SourceError("identity_changed")
         except SourceError as exc:
-            if self.history:
+            if self.history and event.provider is None:
                 self.history.failure(event.server, event.event_id, song.challenge_id, exc.code)
-            return replace(empty, status="Haneoka 榜线暂不可用，请稍后重试")
+            labels = {'pending': '榜单尚未就绪，请稍后重试', 'rate_limited': '来源限流，请稍后重试',
+                      'not_found': '来源已确认榜单不存在'}
+            return replace(empty, status=labels.get(exc.code, "Haneoka 榜线暂不可用，请稍后重试"), error_code=exc.code)
         board = self._snapshot(event, song, entry)
-        if self.history:
+        if self.history and board.provider is not None:
+            self._note_retrieval('history_result', 'provider_schema_pending')
+            board = replace(board, notes=board.notes + ('当前观测未写入旧历史库：等待来源隔离合同迁移。',))
+        elif self.history:
             if entry.late:
                 self.history.record(event, self._snapshot(event, song, entry.late))
             if entry.fallback:
@@ -310,6 +381,17 @@ class HaneokaEventCutoffRepository(EventCutoffRepository):
         # An absolute clock offset does not invalidate source-relative freshness.
         # Keep raw timestamps; history calibrates only with a verified HTTP Date.
         notes = [note for note in board.notes if note != "来源时钟与本机有偏差"]
+        notes.append('Tn按响应位置取值；Top100最多100行，边界并列可能未收齐。')
+        notes.append('实际提供者：' + (entry.payload.get('provider') or '旧数据未声明'))
+        time_kind = TIME_KIND
+        freshness = 'stale' if entry.payload['stale'] else board.freshness
+        if entry.payload.get('provider') == 'official':
+            time_kind = 'official_observed_via_haneoka'
+        elif entry.payload.get('provider') == 'moenotes':
+            time_kind = 'bridge_fetched_via_haneoka'
+            notes.append('MoeNotes桥接仅提供获取时间，原始观测时间未知。')
+            if freshness == 'fresh':
+                freshness = 'unknown'
         quality = board.quality
         scores, status = board.scores, board.status
         if not fetched or not server:
@@ -325,9 +407,17 @@ class HaneokaEventCutoffRepository(EventCutoffRepository):
         if entry.payload["unsafe"]:
             notes.append("部分分数格式或安全整数精度未通过校验，保留原位空槽。")
         if entry.payload["stale"]:
-            quality = "stale"
+            if quality in {'valid', 'fallback'}:
+                quality = "stale"
+        ranks = tuple(entry.payload.get('display_ranks', [None] * len(board.observed_scores or ())))
         details = entry.payload.get('player_details', [])
         details = tuple(player_detail(d) if isinstance(d, dict) else None for d in details) if (
             isinstance(details, list) and len(details) == len(board.observed_scores or ())) else ()
         return replace(board, scores=scores, status=status, quality=quality, notes=tuple(notes), player_details=details,
-                       source=self.source, time_kind=TIME_KIND, contract_version=CONTRACT, http_date_ms=date)
+                       source=self.source, time_kind=time_kind,
+                       contract_version=NORMALIZATION if entry.payload.get('provider') is not None else CONTRACT, http_date_ms=date,
+                       display_ranks=ranks, raw_ranks=(None,) * len(ranks),
+                       value_states=tuple(entry.payload.get('value_states', ['legacy_unknown'] * len(ranks))),
+                       provider=entry.payload.get('provider'), snapshot_id=entry.payload.get('snapshot_id'),
+                       normalization_version=entry.payload.get('normalization_version', 'legacy/1'),
+                       freshness=freshness, game_region=event.server, observed_ms=entry.payload.get('observed_ms'))
