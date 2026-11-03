@@ -12,7 +12,7 @@ M3 已接通查询、续查与逐片段交付；`enabled` 默认 false，仅注�
 
 Koa 的 Content-Type 缓存使用[本地CJS适配](compat/cache-content-type/README.md)和固定上游2.1.0；干净安装必须带上compat目录。版本材料、定向HTTP/浏览器验收及09封装接口见[适配记录](../docs/task08-integration/CACHE_CONTENT_TYPE.md)。
 
-网页后台现接入[固定下游 Console candidate.2](vendor/README.md)，使用仓库内 tgz 与 npm lock。默认Markdown链接属性注入阻塞验收，待09修复组件并完成组合发行装配；禁止再应用旧 npm 字节补丁。复现和隔离浏览器验收见[任务08记录](../docs/task08-integration/CONSOLE_CANDIDATE2.md)。
+网页后台现接入[固定下游 Console candidate.3](vendor/README.md)，使用仓库内 tgz 与 npm lock。原Markdown链接属性注入已通过网关浏览器复验，待09完成组合发行装配及12独立复核；禁止再应用旧 npm 字节补丁。复现和隔离浏览器验收见[任务08记录](../docs/task08-integration/CONSOLE_CANDIDATE3.md)。
 
 使用 `.node-version` 的 Node 24.19.0 和 `packageManager` 的 npm 12.2.0，在本目录执行：
 
