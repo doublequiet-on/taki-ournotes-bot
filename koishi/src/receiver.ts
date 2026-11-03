@@ -319,6 +319,7 @@ export class Receiver {
       const decoded = await decodeIncoming(session.bot as unknown as QQBot, source.raw, this.config, () => true,true)
       if (decoded.status !== 'accepted') { this.observed(decoded.status === 'ignored' ? 'decode_ignored' : 'decode_rejected'); return false }
       input=decoded.inbound
+      if(this.config.management?.inScope && !this.config.management.inScope(input)){this.observed('management_denied');return false}
       if(input.trigger==='observation')this.diagnoseObservation(input,'decoded')
       const canonical = this.ctx.reflect.trace(decoded.session)
       if (!this.ctx.filter(canonical)) { this.observed('scope_denied'); return false }
@@ -378,6 +379,12 @@ export class Receiver {
       if (this.flights.get(key) === flight) this.flights.delete(key)
     }
   }
+  private async currentDeliveryPermission(job:Job):Promise<boolean> {
+    if(!this.active||!(this.config.management?.sendsAllowed(job.input)??true))return false
+    const current=this.ctx.reflect.trace(job.session.bot.session({...job.session.event}))
+    return this.ctx.filter(current)&&await this.permitted(current)&&this.active
+      &&(this.config.management?.sendsAllowed(job.input)??true)
+  }
   private validate(plan: Plan, input: Inbound): void {
     if (plan.request_id !== input.requestId || !/^[a-f0-9]{32}$/.test(plan.delivery_id) || plan.plan_version !== 1
         || typeof plan.send_allowed !== 'boolean' || !Number.isFinite(plan.expires_at)
@@ -406,12 +413,18 @@ export class Receiver {
       const events=job.proactive ? {
         intent:async(attempt:Parameters<BackendClient['intent']>[0])=>
           alive() && await this.currentProactivePermission(job) && alive()?this.client.intent(attempt):'denied' as const,
-        acknowledge:this.client.acknowledge.bind(this.client),observe:this.client.observe?.bind(this.client),
+        acknowledge:(attempt:Parameters<BackendClient['acknowledge']>[0],result:Parameters<BackendClient['acknowledge']>[1])=>
+          this.client.acknowledge(attempt,result,undefined,()=>this.active&&(this.config.management?.sendsAllowed(job.input)??true)),observe:this.client.observe?.bind(this.client),
       }:{
-        intent:this.client.intent.bind(this.client),
-        acknowledge:(attempt:Parameters<BackendClient['acknowledge']>[0], result:Parameters<BackendClient['acknowledge']>[1])=>
-          this.client.acknowledge(attempt,result,job.input.kind==='group' && result.status==='success'
-            ? this.groupArrivals.get(this.groupKey(job.input.conversationId))?.backendSeq : undefined),
+        intent:async(attempt:Parameters<BackendClient['intent']>[0])=>
+          alive() && await this.currentDeliveryPermission(job) && alive()?this.client.intent(attempt):'denied' as const,
+        acknowledge:async(attempt:Parameters<BackendClient['acknowledge']>[0], result:Parameters<BackendClient['acknowledge']>[1])=> {
+          let permitted=false
+          try{permitted=await this.currentDeliveryPermission(job)}catch{ /* ACK facts must still be stored. */ }
+          return this.client.acknowledge(attempt,result,job.input.kind==='group' && result.status==='success'
+            ? this.groupArrivals.get(this.groupKey(job.input.conversationId))?.backendSeq : undefined,
+            ()=>permitted&&this.active&&(this.config.management?.sendsAllowed(job.input)??true))
+        },
         observe:this.client.observe?.bind(this.client),
       }
       job.delivery = new QQDelivery(api, job.input, job.plan.delivery_id, this.client.epoch, events, alive,
