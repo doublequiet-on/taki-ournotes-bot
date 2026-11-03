@@ -34,9 +34,11 @@ QQ 图片回复使用已确认的 Haneoka 风格：浅底、Noto Sans SC／Robot
 
 图片消费 [查询数据合同](QUERY_DATA_CONTRACT.md)，不在绘图时重查或修补 DTO。榜单的 Tn 表示响应位置，另列来源显示名次；并列、跳号以及 Top100 边界并列未收齐的限制保留。数值零不改写为空，`source_zero` 单独说明业务含义未确认；missing/null/invalid/legacy_unknown 保留各自提示。来源、观测／获取时间、新鲜度和错误信息同时进入成功图片与完整备用正文。新 provider 尚未接通历史时明确提示，不拼接旧历史或暗示完整曲线。
 
-卡牌列表与详情接收同次 `CardAnswer.cache_state/cache_notice`；歌曲筛选列表接收 `SongAnswer.warning`。竞技场／玩家续图重复已投影到 Info 行与 footer 的来源、时间及新鲜度。渲染层不从显示标题反推缺失的逐行位置或数值状态；公开查询尚未投影的字段需由数据包补齐。
+卡牌列表与详情接收同次 `CardAnswer.cache_state/cache_notice`；歌曲筛选列表接收 `SongAnswer.warning`。竞技场／玩家续图重复已投影到 Info 行与 footer 的来源、时间及新鲜度。竞技场直接消费 InfoRow.position/point_state，显示响应位置与数值状态说明，不从标题反推。公开查询投影后的 PublicSnapshot 时间和来源身份进入每张续图；body 未重复观测字段也不会丢失快照时间。
 
 公开名片保留原页码、原尺寸和原画面，另附同次捕获 Info 生成的状态图；原图不重排、不覆盖文字。原图和状态伴图仍使用既有回复分页与编码预算。
+
+固定 CardType／激奏图标使用专用禁重定向 opener，读取最多 6,000,001 字节并拒绝超过 6,000,000 字节的响应；异常 Content-Length 或非200响应前置拒绝，失败不进入旧下载回退。该区段来自05固定提交226ecce11299be42c349cc815f35de12cf463eac；只组合安全下载及对应离线来源测试，不包含05管理或02投递代码。兼容随包字体优先与191 Application注入的区域素材校验下载器，固定图标不会绕到注入下载器。
 
 ## 模块与素材
 

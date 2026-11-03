@@ -134,6 +134,26 @@ def _row_blocks(row, limit, *, force_image=False, show_command=True):
     return tuple(result)
 
 
+def _standing_row(row):
+    """Format C3/C4 fields; the displayed rank remains the producer's table label."""
+    body=list(row.body)
+    labels={
+        'value':'已提供数值', 'source_zero':'来源零，业务含义未确认',
+        'null':'来源为空', 'missing':'字段缺失', 'invalid':'数值无效',
+        'legacy_unknown':'旧值语义未知',
+    }
+    replacements=[]
+    if row.position is not None:
+        replacements.append((f'响应位置：{row.position}', f'响应位置：T{row.position}（第{row.position}行）'))
+    if row.point_state is not None:
+        replacements.append(('积分状态：'+row.point_state,
+            '积分状态：'+labels.get(row.point_state,'未声明状态')+'（'+row.point_state+'）'))
+    for captured, visible in replacements:
+        if captured in body:body[body.index(captured)]=visible
+        else:body.append(visible)
+    return replace(row,body=tuple(body))
+
+
 def _blocks(view, limit):
     if view.presentation in {'activity', 'gacha'}:
         return rotating_layout.blocks(view, limit, _row_blocks)
@@ -154,6 +174,7 @@ def _blocks(view, limit):
                     metrics_done=True
                 continue
             if row.kind == 'standing' and row.table:
+                row=_standing_row(row)
                 rank, name = row.table[0]
                 ranks = lines(rank,88,24,True)
                 names = lines(name, 550, 30, True)

@@ -11,6 +11,21 @@ from ournotes_bot.rendering.image_output import MAX_IMAGE_BYTES, MAX_IMAGE_PIXEL
 
 
 class InformationLayoutTests(unittest.TestCase):
+    def test_standing_uses_captured_position_and_value_state_without_parsing_title(self):
+        rows=tuple(InfoRow('不可推断位置的标题',('积分：'+point,'公开ID：未获取'),kind='standing',
+            table=(('显示 99','完整姓名 Long Alias'),),position=position,point_state=state)
+            for position,point,state in ((99,'0','source_zero'),(100,'未获取','null')))
+        view=InfoView('竞技场边界并列',rows=rows,presentation='arena',footer=('新鲜度：未知',))
+        drawn=[];original=info_layout.Canvas.text
+        def capture(canvas,x,y,value,*args,**kwargs):
+            drawn.append(str(value));return original(canvas,x,y,value,*args,**kwargs)
+        with patch.object(info_layout.Canvas,'text',capture):pages=info_layout.render_info(self.answer(view))
+        visible=''.join(drawn);text='\n'.join(page.text for page in pages)
+        for token in ('T99','T100','来源零，业务含义未确认','source_zero','来源为空','null','新鲜度：未知'):
+            self.assertIn(token,visible);self.assertIn(token,text)
+        self.assertEqual(drawn.count('显示 99'),2)
+        self.assertIn('积分：0',visible);self.assertIn('积分：未获取',visible)
+
     def test_roster_keeps_band_headers_and_names_but_commands_only_in_text(self):
         rows=tuple(InfoRow(f'角色{i}',(f'角色 ID {i}',),image_url=f'synthetic:{i}',
                           command=f'/查角色 {i}',group=f'乐队{i//5}') for i in range(25))
