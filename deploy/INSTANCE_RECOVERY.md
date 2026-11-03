@@ -124,3 +124,42 @@ SQLite固定 `mode=ro&immutable=1`、`query_only=ON`、`trusted_schema=OFF`，�
 00还需确认目标宿主、同AppID全局接收者、安装/备份责任和恢复目标；本轮不联系其他对话。Haneoka为外部 serverless 数据服务，Taki宿主待定；不假定 localhost、共享磁盘或可直接读数据库。Haneoka R2/D1/采集状态不归本包恢复；连接端点/权限/上游失败语义由03/09实际合同提供。
 
 验证与完整文件清单见 [任务10自查记录](TASK10_VALIDATION.md)。
+
+## Manual reconcile 最小接口提案（2026-11-04，未实现）
+
+本接口只解释组合暂存中断的现存证据，不接管服务、不修写ownership/事务、不清理stage。适用于 `koishi_control.stage_combination` 的发布后回执失败，以及提取时SIGKILL。它不是 `Engine.run(recover_only=True)`：后者可能执行事务恢复、启动进程，不能用作只读检查。历史故障实物上轮已清理，本轮只参照 `retained-fault-records.json` 与日志，不能把旧路径当成当前仍存在的孤儿目录；本轮没有再制造或删除失败状态。
+
+### 输入与只读证据
+
+由既有受信控制器配置提供base/state/combinations根、实例标识和控制器代码完整SHA/hash，不接受候选指定控制根。每次观察须记录采集时间、可用性和来源；缺项写unknown，不补默认停止或批准。
+
+1. 外部固定候选源码SHA、归档大小/hash、Python配对hash、manifest原始字节hash。ownership中的 `manifest_sha256` 是 `release_retention.manifest_digest` 的规范JSON摘要，必须另列 `manifest_canonical_sha256`；不能拿包内字节hash或外置清单hash直接比较。
+2. ownership原始文件字节hash、schema/owner/phase/commit/destination/stage；可信读取校验使用现有 `release_retention.read_record` 的权限与所有者要求，再补严格键/重复键/类型/大小、单硬链接、祖先路径无别名检查。不能仅凭文件名或相同SHA目录认领。
+3. stage/destination的存在性、真实路径、lstat(dev,ino,mode,uid,nlink,ctime/mtime)、挂载身份；不跟随符号链接，不打开FIFO/device，不遍历配置根之外。缺权限不等于不存在。逐文件清单、大小/hash、Python配对、Node目标和组合profile均从内容核验；复用受信版本 `inspect_combination_archive`/`verify_combination`，不执行包内控制器或应用。
+4. `state.json`、release manifest、cleanup intent及失败记录的原始hash和current/previous/candidate/repair_from/phase引用；current链接本体与解析目标分别记录。任何引用缺失、漂移或未知都要显式保留。`release_retention.plan` 只提供保留引用信息，不是“可接管”或“可删除”结论。
+5. 现有锁持有者/控制器会话可用性，以及目标实例service/timer/socket与PID、cwd/exe引用的只读快照；不可读取密钥/进程环境。目标宿主或进程引用覆盖不足标unknown。本接口不创建锁文件；不以“未发现PID”等同停写证明。未来执行者需在既有FileLock内重新采集完整证据并验证实际停写，检查报告不能代替锁。
+6. 采集开始/结束对记录和目录身份/摘要重验，任何变化返回unstable并使先前报告失效。报告绑定实例、控制器、候选、根目录/挂载、记录、树及引用集合；稳定两次仍只证明观测窗口，不证明未来不会变化或历史fsync成功。
+
+### 状态与返回边界
+
+提议输出普通本地报告字段：`schema=task10-manual-reconcile/1`、`mode=read_only`、`classification`、`evidence`（分项来源/hash/可用性）、`conflicts`、`missing`、`next_review`、`activation_permitted=false`。不输出allow、执行token或能直接被Console提交的动作计划；无需通用RPC。缺真实宿主/停写证明时仅给artifact-level分类，必须同时返回runtime状态unknown。
+
+| ownership / 目录观测 | 分类 | 必须保留的结论 |
+|---|---|---|
+| staging；stage缺失；destination完整且配对/规范摘要匹配 | published_receipt_unconfirmed | 符合rename后回执丢失；不证明Python prepared、事务完成或可运行。人工核对关联事务后，另行审阅是否补发独立回执；本轮不写 |
+| staging；stage存在且部分内容；destination缺失 | staging_interrupted | 不发布、不续写、不删除；保留intent及文件，待审批独立重试位置 |
+| staging；stage完整；destination缺失 | verified_stage_unpublished | 完整字节也不能推定rename许可或停写；仍人工处理 |
+| stage与destination同时存在 | ambiguous_multiple_trees | 即使内容相同也拒绝自动认领/覆盖；需查并发控制器/重复尝试与目录身份 |
+| 两者均缺失；但记录仍存在 | recorded_paths_missing | 保留记录；不能改成成功或删除记录“修复” |
+| 无owner但有目录、owner损坏/越界、phase未知、digest不符、目录被替换 | ownership_unproven_or_conflict | 拒绝认领；不按目录名创建ownership |
+| published但destination不完整、stage仍存在，或current/txn/cleanup引用冲突 | inconsistent_published_state | 不降级为普通缓存；保护所有可能被引用路径，交人工审查 |
+| 读取失败、进程/锁未知、两次采集漂移 | evidence_incomplete_or_unstable | 不推断任何否定事实；仅报告缺证据，保持隔离 |
+
+### 归属与下一步
+
+- 10负责本提案、暂存证据与纯观察输出边界；未来若实施，优先接在现有 `koishi_control`/`release_retention` 的只读面，不另建框架。
+- 既有 `linux_updater.Engine`/`linux_backend` 的受信控制器维护者负责事务关联、FileLock和任何后续修写；具体执行改动由00确认归属后单独审阅。不能由08 Console补写ownership。
+- 08只展示分类、缺证据和人工交接；不能把 `published_receipt_unconfirmed` 映射成“恢复/启动”。09负责发行/组件来源与清单解释；05的范围批准和07的当前删除权威仍独立，reconcile不能代签。
+- 本轮没有选定真实批准、删除政策或宿主，也没有实现任何修写、重命名、删除、自动接管或激活端点。
+
+未来实现前必须验证：两类原始中断快照；完整stage未发布；双目录/双控制器；缺owner/坏JSON/重复键/未知phase；符号链接、硬链接、挂载别名、dev/ino替换、读取失败；全部摘要类型错配和缺/多成员；current/previous/txn/cleanup引用冲突；PID和锁覆盖未知；采集中漂移；同一报告重放、重启/锁切换失效。纯观察调用前后所有树与记录hash/文件集合必须不变，禁止mkdir/atomic_json/rename/unlink/rmtree/systemctl；未来执行验证还须覆盖断电及回执重复，不能沿用只读报告作为授权。

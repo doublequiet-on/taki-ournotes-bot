@@ -149,3 +149,28 @@ Windows控制器回归32项：31通过、1项Linux检查跳过；Linux32项全�
 | restore_recheck | passed_simulation | 逐库观察与全部revision失效验证；不产生激活许可 |
 | host_handoff | blocked | 未提供目标宿主及旧主机停写证明 |
 | upstream_down | not_run | 使用合成离线HTTP后端；不代表真实Haneoka故障语义验收 |
+
+## 2026-11-04续轮：旧发行查找与最小reconcile提案
+
+按用户要求未重跑已通过的首装、RPC与合成恢复。新组合继续固定a8bdc799c81ce655b76d45ff5a0b13e9b923c5bf，ZIP SHA256 8810db8ebaad54db68da1d2dc7dcbc9edb96fdc7322bf38406f6bcac4d2e0b12，实际读取摘要未变；没有换包或改checker来源。
+
+一次有边界的查找覆盖本项目deploy发行说明、Checks发布流程、任务10既有交付记录，以及 `E:/CodexData/Codex/taki/artifacts`、`dist` 的归档文件名和明确发行清单；没有读取生产目录/配置/数据库或其他任务未提交业务代码。pr37本地记录只有旧wheel/sdist，不是配对组合；controller-settings/controller-review/source ZIP均排除。本地cutoff-query-v2基础Python包manifest提交71160ad5572c948c4c125c225c5f723b6dcc4ade、14352589字节、SHA256 c6606de82d4d58039a9b6c975b582b0130092af183cac1c05ada21fa1c43b52e，没有网关组合，不选为本次回退基线。
+
+GitHub读取第一页20个Release后定位基线的精确标签，不继续无界翻页：
+- [旧完整发行](https://github.com/doublequiet-on/taki-ournotes-bot/releases/tag/linux-8d9e7301392ad548fe9554c4f4b09a0d53f615fa)，源码 `8d9e7301392ad548fe9554c4f4b09a0d53f615fa`，新组合的Git祖先；发布时标prerelease。它是Linux x86_64/CPython3.12/Node24.19.0、协议2.2基础组合，不含可选knowledge附加包或新的最终定制批准。
+- Release asset ID702175395：taki-koishi-linux-x64.zip，98544160字节；GitHub公布及本地实测SHA256均 `3f2e1db6c5bffcc5da2147300a0746374ed139e5c83654baf4130e78ce2e52d9`。下载至本工作区 `runtime/task10/old-artifact-20261104/taki-koishi-linux-x64.zip`，3136个成员由真实暂存校验器全部核验，包内清单原始hash `4093139032e2d57154793033e3526be562530cd8f3f673788c77a9509230b16c`。嵌套Python摘要 `734b7aba196a4223d98ab17ab5433c7db668d301b1fb8d1e8241a1ccb8bbb719`，与同Release基础Python资产一致。
+- [Checks push运行41468776232](https://github.com/doublequiet-on/taki-ournotes-bot/actions/runs/41468776232) head为同SHA且success。Actions中koishi-combination ID13154742488未过期，外层97809065字节/hash cb18fc21964ebe44ce73511f07c2d3ad7d912a65a533dbb446d0bb1ab75ef1f8；linux-offline-release ID13154198560亦未过期。Actions只是独立来源记录，没有把其包装ZIP摘要当Release ZIP摘要；实际下载使用正式Release资产。元数据存github-source.json，找到适用基线后停止搜索。
+
+在新建 `/home/lyy/.cache/taki-task10-transition-20261104` 和私有离线网络空间，旧包暂存后，运行真实旧/新gateway/lib/management与group-policies：旧版本写入两份合成管理文件→固定新包读取并撤销查询/通知权限→返回真实旧包读取，新撤权状态保持。返回旧代码前后settings/group-policies两个文件的SHA256相同，未恢复旧数据。新包复用上轮本任务安装，只做本次所需完整性重验，没有重跑首装/RPC探针。测试目录中harness-code-pointer由测试脚本切换，不是LinuxBackend.activate或真实服务事务；不能记成完整升级/回退成功。
+
+实际调用既有LinuxBackend._check_reviewed_fingerprints，在独立目录缺批准policy时返回compatibility_review_required。没有补默认批准或伪造prepared/停写记录。原矩阵code_rollback从“缺旧工件blocked”更新为“管理格式/代码返回部分通过；完整服务事务仍blocked”，half_started的旧工件缺口解除，服务适配器缺口保留。迁移、B→C失败回B、current fsync断电及完整应用健康仍未执行，不以两个管理文件的兼容代表全库兼容。
+
+[Manual reconcile最小提案](INSTANCE_RECOVERY.md#manual-reconcile-最小接口提案2026-11-04未实现)已整理只读证据、摘要类型、状态区分、歧义拒绝、既有模块责任与待验证集合；未实现。历史故障目录上轮已清理，本轮只引用留存快照，不宣称仍有可接管实物；本轮未删除任何失败记录、孤儿目录或事务状态。
+
+复现文件在 `runtime/task10/old-artifact-20261104/`：github-source.json、原ZIP、run_transition.py、transition.cjs、transition-linux.log、transition-results.json；脚本base要求新独立空目录，使用上轮本任务新包安装路径，在unshare --net仅loopback且env白名单下执行。本轮只改本文与INSTANCE_RECOVERY.md，代码仍ca34d361b083626777927997f7379bb2ae71e063；未新增实现包/PR。完整服务升级/回退仍须真实服务适配器、兼容批准、宿主停写证明和相关权威，不可由本次合成数据代替。activation_permitted=false。
+
+| 原矩阵项 | 续轮最新状态 | 剩余门禁 |
+|---|---|---|
+| code_rollback | partial：真实旧→新→旧管理文件兼容及数据不回退通过 | 完整服务事务仍blocked；兼容批准/服务适配器/停写证明未齐 |
+| half_started | blocked：旧完整工件已齐 | 尚无服务半启动与停写控制验证 |
+| current_switch | partial：沿用上轮证据；新增manual reconcile方案，未执行 | 真正事务指针/fsync中断恢复未验，不以测试指针代证 |
