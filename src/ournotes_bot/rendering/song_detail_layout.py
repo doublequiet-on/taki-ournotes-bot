@@ -1,5 +1,5 @@
 # L3
-# Input: Captured song/charts and optional validated score events.
+# Input: Captured song/charts, optional validated score events and their source/cache notice.
 # Output: Approved song detail layout with source skill timing on a real time axis.
 # Pos: Rendering / Song details.
 # Effects: Pillow and injected asset loading only.
@@ -115,7 +115,8 @@ def timeline(score):
     return dict(duration=duration,density=density,windows=windows,fever=fever)
 
 
-def render(song,score,locale='zh',*,load,band_logos=()):
+def render(song,score,locale='zh',*,load,band_logos=(),notice=''):
+    """Render captured chart facts and their source/cache notice together."""
     import math
     title=localized_text(song,'title',locale);tl=lines(title,862,58,True)
     band=localized_text(song,'band',locale);bl=lines(band,570,38)
@@ -128,6 +129,8 @@ def render(song,score,locale='zh',*,load,band_logos=()):
     timing_extra=max(0,math.ceil(len(windows)/3)-2)*86
     reward_rows=max(len(song.catalog.get('score_rewards',[])),len(song.catalog.get('combo_rewards',{}).get('expert',[])))
     height=2080+extra+credit_extra+timing_extra+max(0,reward_rows-5)*60
+    notice_lines=lines(notice,1292,28,True) if notice else ()
+    height+=len(notice_lines)*40
     logos=band_logos or song.catalog.get('band_logos',[])
     requests={(song.jacket_url,(386,386))}
     if logos:requests.add((logos[0],(190,68)))
@@ -158,8 +161,9 @@ def render(song,score,locale='zh',*,load,band_logos=()):
             c.paragraph(584,cy,value,404,30,38)
             cy+=row_height
         c.text(484,cy+19,ui_label('发布',locale),30,MUTED);c.text(584,cy+19,str(song.start_at or ui_label('未获取',locale))[:10].replace('-','/'),32)
-        duration=(song.catalog.get('duration_ms') or 0)/1000 or (data['duration']-2 if data else 0)
-        c.text(1004,348+extra,ui_label('时长',locale),30,MUTED);c.text(1346,348+extra,f'{int(duration)//60}:{int(duration)%60:02}' if duration else ui_label('未获取',locale),34,align='right')
+        duration_ms=song.catalog.get('duration_ms')
+        duration=duration_ms/1000 if duration_ms is not None else (data['duration']-2 if data else None)
+        c.text(1004,348+extra,ui_label('时长',locale),30,MUTED);c.text(1346,348+extra,f'{int(duration)//60}:{int(duration)%60:02}' if duration is not None else ui_label('未获取',locale),34,align='right')
         vals=[v['bpm'] for v in bpms];bpm=f'{min(vals):.2f}–{max(vals):.2f}' if vals and min(vals)!=max(vals) else f'{vals[0]:g}' if vals else ui_label('未获取',locale)
         c.text(1004,406+extra,'BPM',30,MUTED);c.text(1346,406+extra,bpm,32,align='right')
         extra+=credit_extra
@@ -204,8 +208,10 @@ def render(song,score,locale='zh',*,load,band_logos=()):
             for i,row in enumerate(values):
                 x=54 if col==0 else 752;y=1784+offset+i*60;tier=row['tier']
                 label=({3:'C',4:'B',5:'A',6:'S',7:'SS'} if col==0 else {0:'25%',1:'50%',2:'75%',3:'FULL COMBO'}).get(tier,str(tier));c.text(x,y,label,28,ACCENT,col==0)
-                value=ranks.get(tier) if col==0 else math.ceil(expert.notes*(tier+1)/4) if expert and expert.notes and 0<=tier<=3 else None
+                value=ranks.get(tier) if col==0 else math.ceil(expert.notes*(tier+1)/4) if expert and expert.notes is not None and 0<=tier<=3 else None
                 c.text(410 if col==0 else 1030,y,f'{value:,}' if value is not None else ui_label('未知',locale),32,align='right')
                 if row['image']:c.paste(art(row['image'],(42,42)),532 if col==0 else 1186,y-21,42,42,True,trim=True)
                 c.text(636 if col==0 else 1346,y,f'×{row["count"]:,}',30,align='right')
+        for i,line in enumerate(notice_lines):
+            c.text(54,height-len(notice_lines)*40+20+i*40,line,28,ACCENT,True)
         return encode_image(c.image,close_input=True,preserve_size=True)

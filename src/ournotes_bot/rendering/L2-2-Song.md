@@ -12,7 +12,7 @@
 
 ## Inputs
 
-已选歌曲及分页文本、Song/Chart 和可选 score 字典。当前 `render_song_list` 接收歌曲列表，不直接接收整个 SongAnswer。
+已选歌曲及分页文本、Song/Chart 和可选 score 字典。歌曲详情同时接收准备层从同次 ChartData 捕获的 notice，保留来源／旧缓存或未获取提示；图文使用同一提示，不在绘图时重查。`song_layout.render_list` 另接收准备层捕获的 SongAnswer.warning。榜线使用同次 BoardSnapshot 的位置／显示名次、数值状态、provider、时间和新鲜度，完整文字与图片共享捕获结果；历史未接通时保留提示。
 
 ## Outputs
 

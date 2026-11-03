@@ -134,6 +134,26 @@ def _row_blocks(row, limit, *, force_image=False, show_command=True):
     return tuple(result)
 
 
+def _standing_row(row):
+    """Format C3/C4 fields; the displayed rank remains the producer's table label."""
+    body=list(row.body)
+    labels={
+        'value':'已提供数值', 'source_zero':'来源零，业务含义未确认',
+        'null':'来源为空', 'missing':'字段缺失', 'invalid':'数值无效',
+        'legacy_unknown':'旧值语义未知',
+    }
+    replacements=[]
+    if row.position is not None:
+        replacements.append((f'响应位置：{row.position}', f'响应位置：T{row.position}（第{row.position}行）'))
+    if row.point_state is not None:
+        replacements.append(('积分状态：'+row.point_state,
+            '积分状态：'+labels.get(row.point_state,'未声明状态')+'（'+row.point_state+'）'))
+    for captured, visible in replacements:
+        if captured in body:body[body.index(captured)]=visible
+        else:body.append(visible)
+    return replace(row,body=tuple(body))
+
+
 def _blocks(view, limit):
     if view.presentation in {'activity', 'gacha'}:
         return rotating_layout.blocks(view, limit, _row_blocks)
@@ -154,6 +174,7 @@ def _blocks(view, limit):
                     metrics_done=True
                 continue
             if row.kind == 'standing' and row.table:
+                row=_standing_row(row)
                 rank, name = row.table[0]
                 ranks = lines(rank,88,24,True)
                 names = lines(name, 550, 30, True)
@@ -375,14 +396,21 @@ def render_info(answer: InfoAnswer, *, load=None, try_full_activity=False) -> tu
     pages = []
     try:
         for view in answer.views:
+            # Public snapshots must keep their captured quality on every continuation image.
+            quality_rows=tuple(row for row in view.rows if row.title in {'观测时间','资料时间'}) if view.presentation in {'arena','player'} else ()
+            quality_text=tuple(value for row in quality_rows for value in (row.title,*row.body))
+            if view.presentation in {'arena','player'}:quality_text+=view.footer
+            quality_lines=tuple(line for value in quality_text for line in lines(value,972,24))
+            content_view=replace(view,rows=tuple(row for row in view.rows if row not in quality_rows),footer=()) if quality_text else view
             title = lines(view.title, 820, 44, True)
             subtitle = lines(view.subtitle, 972, 24) if view.subtitle else ()
             head = 52 + len(title) * 56 + len(subtitle) * 34 + 28
-            fixed = head + 46
+            quality_height=len(quality_lines)*34+(24 if quality_lines else 0)
+            fixed = head + 46+quality_height
             limit = min(readable_pages.MAX_IMAGE_EDGE, readable_pages.MAX_IMAGE_PIXELS // WIDTH) - fixed
             if limit < 120:
                 raise ImageBudgetError("Information page heading exceeds the readable budget")
-            blocks = _blocks(view, limit)
+            blocks = _blocks(content_view, limit)
             requests=set();badges=set()
             def collect(block):
                 if isinstance(block, rotating_layout.Panel):
@@ -426,6 +454,10 @@ def render_info(answer: InfoAnswer, *, load=None, try_full_activity=False) -> tu
                     for block in blocks[start:stop]:
                         _draw_block(c, block, y, artwork)
                         y += block.height
+                    if quality_lines:
+                        top=height-46-quality_height
+                        c.line(LEFT,top,RIGHT)
+                        for i,line in enumerate(quality_lines):c.text(LEFT,top+26+i*34,line,24,MUTED)
                     c.text(LEFT, height - 22, 'Taki · Our Notes', 18, MUTED)
                     if start or stop < len(blocks):
                         c.text(RIGHT, height - 22, '内容续图' if start else '内容见后续图片', 18, MUTED, align='right')
@@ -452,7 +484,7 @@ def render_info(answer: InfoAnswer, *, load=None, try_full_activity=False) -> tu
                                                     max_height=None if view.layout=='activity-summary' else 2400 if view.presentation in {'arena','player'} else 2800 if view.presentation in {'activity','gacha'} else None)
             for part in parts:
                 text = '\n'.join(v for v in (view.title, view.subtitle,
-                    *(block.text for block in blocks[part.start:part.stop])) if v)
+                    *(block.text for block in blocks[part.start:part.stop]),*quality_text) if v)
                 pages.append(InfoPage(text, part.image))
         return tuple(pages)
     finally:
