@@ -40,14 +40,18 @@ class PartitionStore(HaneokaCutoffHistory):
         self.key = tuple(key)
         self.provider, self.normalization_version, self.time_kind = self.key
 
+    def _initialize_store(self, db):
+        # Only a pristine database can acquire a provider identity. Existing
+        # schema4 without identity is untrusted, not an initialization candidate.
+        if db.execute('SELECT 1 FROM sqlite_master LIMIT 1').fetchone():
+            raise sqlite3.DatabaseError('unidentified existing partition schema')
+        db.execute('CREATE TABLE partition_identity (singleton INTEGER PRIMARY KEY CHECK(singleton=1), identity TEXT NOT NULL)')
+        db.execute('INSERT INTO partition_identity VALUES(1,?)', (json.dumps(self.key),))
+        db.execute('CREATE TABLE observation_provenance (observation_id INTEGER PRIMARY KEY, payload TEXT NOT NULL)')
+
     def _connect(self, *, write=False):
-        existed = self.path.exists()
         db = super()._connect(write=write)
         try:
-            if write and not existed:
-                db.execute('CREATE TABLE IF NOT EXISTS partition_identity (singleton INTEGER PRIMARY KEY CHECK(singleton=1), identity TEXT NOT NULL)')
-                db.execute('INSERT OR IGNORE INTO partition_identity VALUES(1,?)', (json.dumps(self.key),))
-                db.execute('CREATE TABLE IF NOT EXISTS observation_provenance (observation_id INTEGER PRIMARY KEY, payload TEXT NOT NULL)')
             row = db.execute('SELECT identity FROM partition_identity WHERE singleton=1').fetchone()
             if row is None or tuple(json.loads(row[0])) != self.key:
                 raise sqlite3.DatabaseError('history partition identity mismatch')

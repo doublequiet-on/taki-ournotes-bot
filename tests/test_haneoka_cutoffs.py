@@ -110,9 +110,17 @@ class HaneokaCutoffTests(unittest.TestCase):
         self.assertEqual(board.game_region, 'jp')
         self.assertEqual(self.source.history.status()['points'], 0)
         self.assertIn('未写入旧历史库', ' '.join(board.notes))
-        from ournotes_bot.sources.history_partitions import ProviderHistory, identity
+        from ournotes_bot.sources.history_partitions import PartitionStore, ProviderHistory, identity
         self.source.history = ProviderHistory(self.source.history)
+        with patch.object(PartitionStore, '_save_provenance', side_effect=sqlite3.OperationalError('synthetic disk full')):
+            _, failed = self.board()
+        self.assertIn('历史保存暂停或失败', ' '.join(failed.notes))
+        initialized = self.source.history.store(identity(board))
+        with closing(sqlite3.connect(initialized.path)) as db:
+            self.assertEqual(db.execute('SELECT count(*) FROM observations').fetchone()[0], 0)
+            self.assertEqual(json.loads(db.execute('SELECT identity FROM partition_identity').fetchone()[0]), list(identity(board)))
         event, board = self.board()
+        self.assertNotIn('历史保存暂停或失败', ' '.join(board.notes))
         store = self.source.history.store(identity(board))
         self.assertEqual(store.status()['points'], 1)
         restored = store.latest(event, board.song)

@@ -1,5 +1,16 @@
 # 任务07自查证据
 
+## 任务12 P1修复复验（2026-11-03）
+
+本次增量基于被审head `a63de717df487f896ff2182ea5bf6008672db4ad`，未合入其他任务。任务12原始 `runtime/task12-review/evidence/REVIEW.md`、`repro_writer.py`及日志保留不动；仅用合成临时库运行原脚本。修复前首次与重试均为storage_error；修复后首次注入故障仍为storage_error，重试为valid。
+
+- 初始化身份、schema和版本在同一写锁事务提交；首笔观测失败不再撤销身份。初始化事务本身故障整体回滚，可重试。
+- 本地专项15项通过（5项本次故障/并发/入口验证，10项原任务07回归）：同一writer和重新打开writer恢复；两个独立SQLite连接同时读到版本0后竞争创建，连续10轮各保留两笔观测且身份唯一；错误provider/normalization/time_kind、不可信版本0/4文件仍拒绝且字节不变；按需和后台实际仓库入口失败提示与重试恢复通过。
+- 本次重新执行相关168项回归通过，覆盖正常分区、旧schema1/2/3、107/logical4、压缩归档、查询和低盘拒绝；架构检查及diff检查通过。未进行跨进程/掉电/生产验收。
+- 本次日志与本地专项脚本位于本工作区 `runtime/task07/p1/`：`before.log`、`after.log`、`initialization.log`、`regression.log`、`test_initialization.py`。TEMP/TMP指向同目录tmp；新增专项脚本按AGENTS不提交，已有 `tests/test_haneoka_cutoffs.py` 已补充真实按需入口回归。
+
+已有schema4缺失身份的旧故障文件仍需隔离人工审阅；本修复不补猜身份、不删除或重建已有文件。08仅消费上述被审head之后的修复增量，12按新head复审；原始基础和此前验证记录如下。
+
 基础：03 `17212e5df76cf948aa990af571ed6daf5c66ec25`，其直接依赖191 `e1a86a6db1f327a6dd0cc53fd860c4ababf50923`。这是实现者自查，不是独立审查、生产验收或05/09/10组合验收。
 
 环境：Windows、Python 3.12，复用入口仓库 `.venv` 的依赖，`PYTHONPATH=src`；QQ_APP_ID/QQ_APP_SECRET/AI_API_KEY/MOENOTES_OPEN_SECRET/BDON_OPENPLATFORM 在测试解释器内清空。临时目录显式指向本工作区 `runtime/task07/tmp`，全部输入为合成数据。
