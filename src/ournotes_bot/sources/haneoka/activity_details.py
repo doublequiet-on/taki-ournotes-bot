@@ -19,13 +19,14 @@ def text(value):
 
 
 def number(value):
-    return type(value) in (int, float) and math.isfinite(value) and value >= 0
+    return (type(value) is int and 0 <= value <= 2**53 - 1
+            or type(value) is float and math.isfinite(value) and 0 <= value <= 2**53 - 1)
 
 
 def count_text(value):
     if value is None:
         return '未获取'
-    if type(value) is not int or value < 0:
+    if type(value) is not int or not 0 <= value <= 2**53 - 1:
         raise ValueError('Invalid reward count')
     return str(value)
 

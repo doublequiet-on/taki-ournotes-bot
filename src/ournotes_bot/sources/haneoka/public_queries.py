@@ -7,7 +7,6 @@ from collections import OrderedDict
 from dataclasses import replace
 from functools import partial
 import json
-import math
 import re
 from threading import RLock
 import time
@@ -22,7 +21,7 @@ from .catalog_assets import asset_url
 
 
 def integer(value, *, minimum=0):
-    if type(value) is not int or value < minimum:
+    if type(value) is not int or not minimum <= value <= 2**53 - 1:
         raise PublicQueryError('invalid_source', '来源整数格式异常。')
     return value
 
@@ -40,8 +39,7 @@ def localized_value(value):
 
 
 def timestamp(value):
-    if value is not None and (type(value) not in (int, float) or not math.isfinite(value)
-                              or not 0 <= value <= 253402300799999):
+    if value is not None and (type(value) not in (int, float) or not 0 <= value <= 253402300799999):
         raise PublicQueryError('invalid_source', '来源时间格式异常。')
 
 

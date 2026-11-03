@@ -558,6 +558,14 @@ class PublicQueryContractTests(unittest.TestCase):
         self.assertEqual(response_failure(404, b'{"error":{"kind":"not_found"}}', {}), ('not_found', None))
         self.assertEqual(response_failure(404, b'not json', {}), ('data_unavailable', None))
         self.assertEqual(response_failure(429, b'{}', {'retry-after': '10'}), ('rate_limited', 10))
+        self.assertEqual(response_failure(503, b'{"error":{"kind":[]}}', {}), ('data_unavailable', None))
+        from ournotes_bot.sources.haneoka.public_queries import timestamp, integer
+        from ournotes_bot.domain.public_queries import PublicQueryError
+        for value in (True, 2**4000, float('inf'), float('nan'), '0', []):
+            with self.subTest(value=type(value)), self.assertRaises(PublicQueryError):
+                timestamp(value)
+        with self.assertRaises(PublicQueryError):
+            integer(2**53)
 
     def test_arena_position_window_tie_and_freshness(self):
         from ournotes_bot.sources.haneoka.public_queries import PublicQueries

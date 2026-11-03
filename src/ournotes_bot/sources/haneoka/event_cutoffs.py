@@ -214,7 +214,7 @@ class HaneokaEventCutoffRepository(EventCutoffRepository):
             if "error" in data:
                 error = data["error"]
                 kind = error.get("kind") if isinstance(error, dict) else None
-                raise SourceError(kind if kind in {"not_found", "pending", "rate_limited"} else "upstream")
+                raise SourceError(kind if isinstance(kind, str) and kind in {"not_found", "pending", "rate_limited"} else "upstream")
             return data, headers
         except (ValueError, UnicodeError, RecursionError) as exc:
             raise SourceError("invalid_json") from exc
