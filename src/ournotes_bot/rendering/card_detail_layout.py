@@ -34,7 +34,7 @@ def table_rows(descriptions):
     return [('',descriptions)]
 
 
-def render(card,locale='zh',*,load):
+def render(card,locale='zh',*,load,notice=''):
     support=isinstance(card,SupportCard)
     logos=card.catalog.get('band_logos',[])
     shared_requests={(card.full_url,(972,1458)),(card.catalog.get('attribute_icon'),(64,64))}
@@ -51,10 +51,10 @@ def render(card,locale='zh',*,load):
             owned.callback(trimmed.close)
             fitted=ImageOps.contain(trimmed,(196,60) if support and len(card.catalog.get('people',[]))>1 else (164,48))
             owned.callback(fitted.close)
-        return _render(card,locale,load,shared,game_names,fitted)
+        return _render(card,locale,load,shared,game_names,fitted,notice)
 
 
-def _render(card,locale,load,shared,game_names,fitted_logo):
+def _render(card,locale,load,shared,game_names,fitted_logo,notice=''):
     support=isinstance(card,SupportCard);assets=shared
     def art(url,size):
         return assets[(url,size)] if url else None
@@ -149,6 +149,10 @@ def _render(card,locale,load,shared,game_names,fitted_logo):
         name=relation.get('name',{}).get(locale) or relation.get('name',{}).get('ja') or ui_label('未知',locale)
         rh=max(364,100+len(lines(name,528,40,True))*52+160)
         blocks.append(('related',rh,(relation,name)))
+    notices=[notice] if notice else []
+    if card.catalog.get('detail_stale'):notices.append(ui_label('使用上次有效资料',locale))
+    notice_lines=tuple(line for value in notices for line in lines(value,972,24))
+    footer_h=48+len(notice_lines)*34
     head=160+header_h+24
     def paint(start,stop,height):
         c=Canvas(1080,height)
@@ -225,7 +229,7 @@ def _render(card,locale,load,shared,game_names,fitted_logo):
                     c.text(54,y+bh-40,date(relation['start'])+' — '+date(relation['end'])+'  (UTC+09:00)',32,MUTED)
                 else:c.text(54,y+40,ui_label('技能详情未获取',locale),32,MUTED)
                 y+=bh
-            if card.catalog.get('detail_stale'):c.text(54,height-24,ui_label('使用上次有效资料',locale),22,MUTED)
+            for i,line in enumerate(notice_lines):c.text(54,height-footer_h+30+i*34,line,24,ACCENT)
             # Prepared assets stay owned across encoding retries. Return freed
             # drawing buffers before the encoder allocates its JPEG workspace.
             _release_image_memory(c.image.width*c.image.height)
@@ -251,4 +255,4 @@ def _render(card,locale,load,shared,game_names,fitted_logo):
             assets={**shared,**page}
             try:yield
             finally:assets=shared
-    return render_parts(tuple(b[1] for b in blocks),1080,head+48,paint,page_scope=page_scope)
+    return render_parts(tuple(b[1] for b in blocks),1080,head+footer_h,paint,page_scope=page_scope)

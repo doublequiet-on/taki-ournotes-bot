@@ -196,7 +196,7 @@ def _memory_headings(people, locale, fallback):
     return tuple(headings), top
 
 
-def _render_memory_list(cards, query, locale, load):
+def _render_memory_list(cards, query, locale, load,notice=''):
     """Merged character cells, colour rows and descending rarity within each row."""
     groups = defaultdict(list)
     group_people = {}
@@ -233,7 +233,7 @@ def _render_memory_list(cards, query, locale, load):
     subtitle = lines(f'{query or ui_label("全部", locale)} · {len(records)} '+ui_label('张', locale)
                      +' · '+ui_label('技能', locale)+' Lv.5', width-76, 25)
     head = 140+(len(title)-1)*56+(len(subtitle)-1)*34
-    notices = []
+    notices = [notice] if notice else []
     if any(c.catalog.get('detail_stale') for c in cards):
         notices.append(ui_label('部分详情使用上次有效缓存。', locale))
     if any(not c.catalog.get('detail_loaded') for c in cards):
@@ -317,12 +317,12 @@ def _render_memory_list(cards, query, locale, load):
     return parts, records, ranges
 
 
-def render_list(cards,query,locale='zh',*,load,characters=(),bands=()):
+def render_list(cards,query,locale='zh',*,load,characters=(),bands=(),notice=''):
     cards=ordered(cards)
     if not cards:return (),cards,()
     support=isinstance(cards[0],SupportCard)
     if support:
-        return _render_memory_list(cards, query, locale, load)
+        return _render_memory_list(cards, query, locale, load,notice)
     # Approved member-list growth V3 and SNAP-list V4, rendered at 2x scale.
     # The left person gutter and each attribute's own row are intentional.
     pitch,artw,arth,textw=(432,288,162,280) if support else (256,192,192,196)
@@ -395,7 +395,7 @@ def render_list(cards,query,locale='zh',*,load,characters=(),bands=()):
     subtitle=query_label+' · '+skill_label
     if len(lines(subtitle,width-112,42))>1:
         subtitle=query_label+'\n'+skill_label
-    notices = []
+    notices = [notice] if notice else []
     if any(c.catalog.get('detail_stale') for c in cards):
         notices.append(ui_label('部分详情使用上次有效缓存。',locale))
     if any(not c.catalog.get('detail_loaded') for c in cards):

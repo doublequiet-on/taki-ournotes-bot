@@ -633,6 +633,8 @@ def complete_list_reply(result,repository,locale,candidate):
         return None
     if isinstance(result,QueryResult) and result.spec.field:
         return None
+    from .reply_preparation import captured_catalog_notice
+    notice=captured_catalog_notice(result,locale)
     cards=();songs=();label=''
     if result.catalog is not None:
         answer=result.catalog
@@ -655,10 +657,10 @@ def complete_list_reply(result,repository,locale,candidate):
         from ..rendering.catalog_layout import render_list
         characters=result.catalog.request.filters.character if result.catalog else ()
         bands=result.catalog.request.filters.band if result.catalog else ()
-        parts,records,ranges=render_list(cards,label,locale,load=visual_asset,characters=characters,bands=bands)
+        parts,records,ranges=render_list(cards,label,locale,load=visual_asset,characters=characters,bands=bands,notice=notice)
     elif songs:
         from ..rendering.song_layout import render_list
-        parts,ranges=render_list(songs,label,locale,load=visual_asset);records=tuple(songs)
+        parts,ranges=render_list(songs,label,locale,load=visual_asset,notice=notice);records=tuple(songs)
     else:return None
     if candidate is not None and not candidate.complete:
         candidate=capture_context(result,repository,catalog_before=candidate.version[0],complete=True)
@@ -680,6 +682,7 @@ def complete_list_reply(result,repository,locale,candidate):
         if cards:
             from ..query.card_catalog import catalog_notice
             text += catalog_notice(records)
+        if notice:text+='\n'+notice
         ctx=replace(candidate,visible=candidate.visible[:stop]) if candidate else None
         pages.append(PreparedReply(text,part.image,context=ctx,visible_indices=tuple(range(start+1,stop+1))))
     return pages[0] if len(pages)==1 else PreparedReply('',pages=tuple(pages),context=candidate)
@@ -705,8 +708,10 @@ def complete_detail_reply(result,repository,locale,candidate):
     if card is None:return None
     from ..query.card_catalog import detail_text
     from ..rendering.card_detail_layout import render
-    text = detail_text(card, locale)
-    parts = render(card, locale, load=visual_asset)
+    from .reply_preparation import captured_catalog_notice
+    notice=captured_catalog_notice(result,locale)
+    text = detail_text(card, locale)+('\n'+notice if notice else '')
+    parts = render(card, locale, load=visual_asset,notice=notice)
     pages = tuple(PreparedReply(text, p.image, context=candidate) for p in parts)
     return pages[0] if len(pages) == 1 else PreparedReply(text, pages=pages, context=candidate)
 
@@ -799,7 +804,14 @@ def render_prepared_inner(reply, result, repository, locale, candidate=None):
                     check_geometry(original.size)
                     original.load()
                     encoded = encode_image(original, preserve_size=True, strategy='png-first')
-                return PreparedReply(answer.text, encoded, complete_text=True)
+                original_page=PreparedReply(answer.text, encoded, complete_text=True)
+                # Preserve original pixels/page identity; render captured status as a companion.
+                views=tuple(replace(view,hero_url='') for view in answer.views if view.presentation=='player')
+                if views:
+                    status_pages=tuple(PreparedReply(page.text,page.image,complete_text=True)
+                                       for page in render_info(replace(answer,views=views,original_image=None),load=visual_asset))
+                    return PreparedReply(answer.text,pages=(original_page,*status_pages),complete_text=True)
+                return original_page
             captured = dict(answer.captured_images)
             def information_asset(url, size):
                 if url not in captured:
@@ -824,9 +836,10 @@ def render_prepared_inner(reply, result, repository, locale, candidate=None):
             return full
         if result is not None and result.cutoff is not None:
             from ..rendering.event_cutoff_visuals import load_artwork
-            from ..rendering.ranking_layout import render
+            from ..rendering.ranking_layout import render, captured_text
             from ..sources.haneoka.ranking_art import cards_for, event_marks, bands_for
             answer=result.cutoff
+            reply=captured_text(answer)
             source=getattr(repository,'_catalog_repository',None)
             saved=source.saved if source else None
             from ..data import Card, SupportCard
@@ -864,17 +877,21 @@ def complete_fallback(reply, result, locale, candidate, repository):
         if answer is not None:
             return answer.text, candidate
     if result is not None and result.cutoff is not None:
-        return result.cutoff.text, candidate
+        from ..rendering.ranking_layout import captured_text
+        return captured_text(result.cutoff), candidate
     if result is None or result.status != 'success':
         return reply, candidate
     if isinstance(result, QueryResult) and result.spec.field:
         return reply, candidate
     if result.cutoff is not None:
-        return result.cutoff.text, candidate
+        from ..rendering.ranking_layout import captured_text
+        return captured_text(result.cutoff), candidate
     card = detail_card(result, repository)
     if card is not None:
         from ..query.card_catalog import detail_text
-        return detail_text(card, locale), candidate
+        from .reply_preparation import captured_catalog_notice
+        notice=captured_catalog_notice(result,locale)
+        return detail_text(card, locale)+('\n'+notice if notice else ''), candidate
     from ..data import localized_text
     cards = result.cards or result.support_cards
     songs = result.songs
@@ -903,6 +920,8 @@ def complete_fallback(reply, result, locale, candidate, repository):
         choices = {choice.entity_id:choice for choice in candidate.visible}
         candidate = replace(candidate,visible=tuple(choices[r.id] for r in records))
     from ..query.card_catalog import catalog_notice
-    return '\n\n'.join(rows)+f'\n共 {len(records)} 条。'+(catalog_notice(records) if cards else ''), candidate
+    from .reply_preparation import captured_catalog_notice
+    notice=captured_catalog_notice(result,locale)
+    return '\n\n'.join(rows)+f'\n共 {len(records)} 条。'+(catalog_notice(records) if cards else '')+('\n'+notice if notice else ''), candidate
 
 

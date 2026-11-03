@@ -4,6 +4,7 @@
 # Pos: Rendering / Song rankings; approved overview and range geometry.
 # Effects: Pillow rendering; no ranking/history queries or platform operations.
 from dataclasses import replace
+from datetime import datetime, timezone
 import math
 from .haneoka_theme import Canvas,MUTED,ACCENT,SOFT,SURFACE,lines,font,icon,prepare_assets
 from .catalog_layout import card_face, card_level as level
@@ -12,11 +13,43 @@ from .cutoff_trends import segments,coordinates,COLORS
 from .event_cutoff_visuals import CutoffPage
 
 
+def position_detail(board, position):
+    """Use aligned C3/C4 slots; never infer a displayed rank from position."""
+    index=position-1
+    rank=board.display_ranks[index] if 0<=index<len(board.display_ranks) else None
+    state=board.value_states[index] if 0<=index<len(board.value_states) else 'legacy_unknown'
+    states={'value':'数值已提供','source_zero':'来源零（业务含义未确认）','missing':'字段缺失',
+            'null':'来源为空','invalid':'数值无效','legacy_unknown':'旧值语义未知'}
+    return f'显示名次 {rank if rank is not None else "未知"} · '+states.get(state,'数值状态未知')
+
+
+def quality_notes(answer, board):
+    stamp=lambda value: datetime.fromtimestamp(value/1000,timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC') if value is not None else '未知'
+    notes=[f'{board.song.title} · 服务 {board.source} · 提供者 {board.provider or "未声明"} · 游戏区 {board.game_region or "未知"}',
+           '新鲜度：'+{'fresh':'新鲜','stale':'旧快照','unknown':'未知'}.get(board.freshness,'未知')+f' · 质量：{board.quality}',
+           '来源观测：'+stamp(board.observed_ms)+' · 来源获取：'+stamp(board.fetched_ms),
+           '时间语义：'+board.time_kind+' · 归一化：'+board.normalization_version]
+    for title, value in (('来源服务器',board.server_ms),('本机接收',board.received_ms),('HTTP Date',board.http_date_ms)):
+        if value is not None:notes.append(title+'：'+stamp(value))
+    if board.error_code:notes.append('来源错误：'+board.error_code)
+    if board.snapshot_id:notes.append('快照：'+board.snapshot_id)
+    if board.provider and not answer.historical:
+        notes.append('provider_schema_pending：此来源的新观测尚未接通历史；不代表完整历史。')
+    return tuple(notes)
+
+
+def captured_text(answer):
+    """Full fallback uses the identical captured boards, even without an image."""
+    if answer.event is None or not answer.boards or answer.request.numeric_only:return answer.text
+    notes=['Tn 按响应位置；显示名次可并列或跳号。Top100 最多100行，边界并列未保证收齐。']
+    for board in answer.boards:
+        notes.extend(quality_notes(answer,board))
+        notes.extend(f'位置 T{position} · '+position_detail(board,position) for position in answer.ranks)
+    return answer.text+'\n'+'\n'.join(notes)
+
+
 def rank_marker(c,rank,x,y,size,color=ACCENT):
-    name={1:'ImageRanking1st.png',2:'ImageRanking2ng.png',3:'ImageRanking3rd.png'}.get(rank)
-    mark=icon(name,size,size) if name else None
-    if mark is not None:c.paste(mark,round(x-size/2),round(y-size/2),size,size,True)
-    else:c.text(x,y,f'#{rank}',30 if size<70 else 40,color,align='center')
+    c.text(x,y,f'T{rank}',30 if size<70 else 40,color,align='center')
 
 
 def chart_ranks(answer):
@@ -94,6 +127,8 @@ def render(answer,*,assets,load,display_time,server_label,timezone_label,catalog
     footer=[' · '.join((b.song.title,b.status,display_time(b.fetched_ms,event.server)+' '+timezone_label)) for b in boards]
     footer += [n for b in boards for n in b.notes]+list(event.notes)
     footer += [*answer.ranking_notes]
+    footer += [note for board in boards for note in quality_notes(answer,board)]
+    footer += ['Tn 按响应位置；显示名次可并列/跳号。Top100 最多100行，边界并列未保证收齐。']
     footer += [answer.history_for(b).warning for b in boards if answer.history_for(b).warning]
     if any(b.score(r) is not None and b.score(r)>answer.score_display_limit for b in boards for r in answer.ranks):
         footer.append('* 表示当前异常分数，完整原值和来源排名保留。')
@@ -144,7 +179,7 @@ def render(answer,*,assets,load,display_time,server_label,timezone_label,catalog
             else:bx+=380 if trend else 310
         c.line(54,event_head-(12 if width==1800 else 48),width-54)
         for i,rank in enumerate(chart_ranks(answer) if trend else ()):
-            x=1690+i*170;c.draw.line((x,head-20,x+35,head-20),fill=COLORS[i%5],width=4);c.text(x+44,head-20,f'#{rank}',34,MUTED)
+            x=1690+i*170;c.draw.line((x,head-20,x+35,head-20),fill=COLORS[i%5],width=4);c.text(x+44,head-20,f'T{rank}',34,MUTED)
     blocks=[]
     if trend:
         for board in boards:
@@ -153,7 +188,8 @@ def render(answer,*,assets,load,display_time,server_label,timezone_label,catalog
             for rank in answer.ranks:
                 name=lines(answer.name_label(board,rank),trend_name_width(board,rank),42,True)
                 identity=lines('ID '+answer.id_label(board,rank),650,32)
-                blocks.append(('rank',100 if historical and not answer.has_players(board) else max(156,24+len(name)*50+len(identity)*38), (board,rank)))
+                meta=lines(position_detail(board,rank),850,24)
+                blocks.append(('rank',max(156,24+len(name)*50+len(identity)*38)+len(meta)*34, (board,rank)))
             blocks.append(('chart',780 if answer.history_for(board).points else 180,board))
     else:
         cw=(width-200)/len(boards)
@@ -174,6 +210,7 @@ def render(answer,*,assets,load,display_time,server_label,timezone_label,catalog
             return height+12
         for rank in answer.ranks:
             rh=72 if historical and not any(answer.has_players(b) for b in boards) else max(max(row_height(b,rank) for b in boards),112)
+            rh+=max(len(lines(position_detail(b,rank),int(cw)-40,22)) for b in boards)*32
             blocks.append(('table',rh,rank))
         plot_height=404 if any(answer.history_for(b).points for b in boards) else 180
         head+=columns+plot_height+88
@@ -196,8 +233,8 @@ def render(answer,*,assets,load,display_time,server_label,timezone_label,catalog
             span=min(174,(width-200)/len(ranks));left=(width-span*len(ranks))/2
             for i,rank in enumerate(ranks):
                 x=left+i*span;ly=event_head+columns+22 if width==1080 else head-42;c.draw.line((x,ly,x+28,ly),fill=COLORS[i%5],width=4)
-                c.text(x+38,ly,f'#{rank}',26,MUTED)
-            c.text(100,head-18,'排名',26,MUTED,align='center')
+                c.text(x+38,ly,f'T{rank}',26,MUTED)
+            c.text(100,head-18,'位置',26,MUTED,align='center')
             for i in range(len(boards)):
                 if answer.has_players(boards[i]):c.text(156+i*cw,head-18,'玩家',26,MUTED)
                 c.text(156+(i+1)*cw-24,head-18,'分数',26,MUTED,align='right')
@@ -213,11 +250,13 @@ def render(answer,*,assets,load,display_time,server_label,timezone_label,catalog
             elif kind=='chart':chart(c,answer,data,(148,y,width-216,bh-24),display_time)
             elif kind=='rank':
                 board,rank=data;detail=board.player_detail(rank) or {};color=COLORS[answer.ranks.index(rank)%5]
+                meta=lines(position_detail(board,rank),850,24)
+                for n,line in enumerate(meta):c.text(148,y+bh-len(meta)*34+n*34+16,line,24,MUTED)
                 if historical:
                     if answer.has_players(board):
                         c.paragraph(148,y+23,answer.name_label(board,rank),trend_name_width(board,rank),42,50,bold=True)
-                        c.paragraph(148,y+bh-65,'ID '+answer.id_label(board,rank),650,32,38,color=MUTED)
-                    c.text(94,y+48,f'#{rank}',32,color,align='center')
+                        c.paragraph(148,y+23+len(lines(answer.name_label(board,rank),trend_name_width(board,rank),42,True))*50,'ID '+answer.id_label(board,rank),650,32,38,color=MUTED)
+                    c.text(94,y+48,f'T{rank}',32,color,align='center')
                     c.text(1030,y+48,score_text(board,rank),50,bold=True,align='right')
                     c.text(1120,y+48,'观测 '+display_time(board.fetched_ms,event.server),32,MUTED)
                     y+=bh
@@ -225,7 +264,7 @@ def render(answer,*,assets,load,display_time,server_label,timezone_label,catalog
                 c.draw.line((40,y+18,40,y+bh-18),fill=color,width=5);rank_marker(c,rank,94,y+78,72,color)
                 avatar(c,board,rank,148,y+28,96)
                 c.paragraph(274,y+23,answer.name_label(board,rank),trend_name_width(board,rank),42,50,bold=True)
-                c.paragraph(274,y+bh-70,'ID '+answer.id_label(board,rank),650,32,38,color=MUTED)
+                c.paragraph(274,y+23+len(lines(answer.name_label(board,rank),trend_name_width(board,rank),42,True))*50,'ID '+answer.id_label(board,rank),650,32,38,color=MUTED)
                 c.text(1030,y+48,score_text(board,rank),50,bold=True,align='right')
                 if player_info(board,rank):c.text(1030,y+103,player_info(board,rank),32,MUTED,align='right')
                 for i,slot in enumerate(detail.get('cards',[])):
@@ -237,9 +276,11 @@ def render(answer,*,assets,load,display_time,server_label,timezone_label,catalog
                 rank=data
                 if rank!=answer.request.target_rank and answer.ranks.index(rank)%2==0:c.box((48,y,width-48,y+bh),'#f7f4f9',0)
                 if rank==answer.request.target_rank:c.box((48,y,width-48,y+bh),SOFT,8)
-                if historical:c.text(100,y+34,f'#{rank}',26,ACCENT,align='center')
+                if historical:c.text(100,y+34,f'T{rank}',26,ACCENT,align='center')
                 else:rank_marker(c,rank,100,y+42,64)
                 for i,b in enumerate(boards):
+                    meta=lines(position_detail(b,rank),int(cw)-40,22)
+                    for n,line in enumerate(meta):c.text(156+i*cw,y+bh-len(meta)*32+n*32+16,line,22,MUTED)
                     if historical:
                         if answer.has_players(b):
                             tx=156+i*cw
@@ -309,7 +350,7 @@ def render(answer,*,assets,load,display_time,server_label,timezone_label,catalog
             parts=render_parts(sizes,width,head+footheight,lambda a,z,h:paint(groups[a],groups[z],h))
         else:
             parts=render_parts(tuple(b[1] for b in blocks),width,head+footheight,paint)
-        return total_pages+tuple(CutoffPage(p.image,answer.text if trend else replace(answer,display_ranks=tuple(b[2] for b in blocks[p.start:p.stop])).text) for p in parts)
+        return total_pages+tuple(CutoffPage(p.image,captured_text(answer) if trend else captured_text(replace(answer,display_ranks=tuple(b[2] for b in blocks[p.start:p.stop])))) for p in parts)
     finally:
         for image in cache.values():
             if image is not None:image.close()

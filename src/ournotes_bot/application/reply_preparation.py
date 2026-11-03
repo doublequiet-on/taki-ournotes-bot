@@ -71,3 +71,20 @@ def prepare_song_reply(song,source,locale,*,load_score=load_chart_score,load_dat
         text+='\n'+label+'：'+' / '.join(str(row['tier'])+' '+(row['label'].get(locale) or row['label'].get('ja') or '道具')+' ×'+str(row['count']) for row in rows)
     if notice:text+='\n'+notice
     return SongReply(song,score,locale,tuple(logos),text,notice)
+
+
+def captured_catalog_notice(result, locale='zh'):
+    """Present the already captured query notice without re-reading catalogue age."""
+    from ..rendering.labels import label
+    if result is None:return ''
+    if result.catalog is not None:
+        answer=result.catalog
+        notice=answer.cache_notice.strip()
+        if notice:return label(notice,locale)
+        return label({'fresh':'资料新鲜度：新鲜','unknown':'资料新鲜度：未知'}.get(answer.cache_state,'资料新鲜度：未知'),locale)
+    if result.song_selection is not None:
+        warning=result.song_selection.warning.strip()
+        for phrase in ('Haneoka 旧缓存；未命中不代表最新资料不存在。','Haneoka 旧缓存。'):
+            warning=warning.replace(phrase,label(phrase,locale))
+        return warning
+    return ''

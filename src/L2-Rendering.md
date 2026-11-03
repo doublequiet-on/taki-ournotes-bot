@@ -28,7 +28,7 @@ QQ 新卡牌／歌曲入口接收完整捕获结果；旧兼容入口仍接受�
 - [Rendering Core](ournotes_bot/rendering/L2-2-Core.md)：共享主题、素材、布局原语和编码。
 - [Song Rendering](ournotes_bot/rendering/L2-2-Song.md)：歌曲身份、谱面时间线、效率表的业务投影。
 - [Card Rendering](ournotes_bot/rendering/L2-2-Card.md)：成员/SNAP、列表/详情/原卡面的分派及视觉语义。
-- [info_layout.py](ournotes_bot/rendering/info_layout.py)：活动、卡池、人物目录及详情，以及竞技场排名行、玩家摘要和活动加成表；共用 Haneoka 主题和完整内容分图。`InfoRow.kind/table` 显式携带展示角色与表格，渲染不从正文反推事实；返回每图对应的完整文字和图片字节。竞技场／玩家按约2400像素高分页，完整单元优先。
+- [info_layout.py](ournotes_bot/rendering/info_layout.py)：活动、卡池、人物目录及详情，以及竞技场排名行、玩家摘要和活动加成表；共用 Haneoka 主题和完整内容分图。`InfoRow.kind/table` 显式携带展示角色与表格，渲染不从正文反推事实；返回每图对应的完整文字和图片字节。竞技场／玩家按约2400像素高分页，完整单元优先，每页重复已捕获的质量行和 footer；名片原图由准备层保留原尺寸，另附同次 Info 状态图。
   `InfoRow.icons` 携带同版本游戏素材 URL，`game_icon` 指向既有校验清单中的排名／专精标识；统一预取后绘制。竞技场段位、奖励及活动加成对象保留源徽章、物品图、卡面／乐队图，缺图退文字，保留真实素材比例。
   活动 `activity-summary` 保留横幅与时间并排、成员／留影卡各自紧排、歌曲纵排的布局；`bonus-summary` 仅展示分类加成范围，完整档位留在加成详情。素材下载器由 Application 按来源严格校验并注入，渲染复用解码、大小限制与原子缓存；参见 [图片输出约定](../docs/IMAGE_OUTPUT.md)。
   人物目录按乐队显示五人行，档案立绘与事实并排、简介在下方；卡牌关联保持成员／留影卡比例并使用同一原生稀有度及属性图标。展示契约中的 `group/kind` 决定分组与字段位置，绘图不从文案猜测业务类别；素材经注入加载器去重并发准备。

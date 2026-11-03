@@ -4,6 +4,11 @@
 # Pos: Rendering / Core; source names and descriptions keep their own translations.
 # Effects: None.
 LABELS = {
+ '当前使用旧缓存；未命中不代表最新资料不存在。':('Using stale cache; a miss does not prove the latest record is absent.','旧キャッシュを使用中。未検出でも最新資料に存在しないとは限りません。'),
+ '资料新鲜度：新鲜':('Data freshness: fresh','資料の鮮度：最新'),
+ '资料新鲜度：未知':('Data freshness: unknown','資料の鮮度：不明'),
+ 'Haneoka 旧缓存。':('Haneoka stale cache.','Haneoka 旧キャッシュ。'),
+ 'Haneoka 旧缓存；未命中不代表最新资料不存在。':('Haneoka stale cache; a miss does not prove the latest record is absent.','Haneoka 旧キャッシュ。未検出でも最新資料に存在しないとは限りません。'),
  '{n} 位成员':('{n} members','{n}人のメンバー'),
  '成员资料未获取':('Member data unavailable','メンバー情報未取得'),
  '此谱面有 {count} 个技能点位，无法应用五段覆盖时间。':('This chart has {count} skill events; five custom windows cannot be applied.','この譜面のスキル発動は{count}回のため、5つの指定時間を適用できません。'),
