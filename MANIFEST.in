@@ -2,6 +2,11 @@ include LICENSE README.md THIRD_PARTY.md LOCAL_QQ_TEST.md .env.example query_ali
 include 昵称词表维护规范.md
 include 更新日志.md
 include scripts/check_release_artifact.py
+include scripts/console_release.py scripts/build_koishi_release.py scripts/check_koishi_release.py
+include scripts/rebuild_console_sources.py deploy/licenses/koishi-console/gateway-notices.json
+include docs/CONSOLE_ASSEMBLY.md
+include koishi/vendor/taki-console-0.1.0-candidate.1.tgz koishi/vendor/console-candidate.json
+include koishi/package.json koishi/package-lock.json
 include scripts/product_release.py deploy/product_identity.py
 include scripts/console_source_materials.py docs/CONSOLE_SOURCE_MATERIALS.md
 include docs/CONSOLE_TRACE_ROUND5.md
