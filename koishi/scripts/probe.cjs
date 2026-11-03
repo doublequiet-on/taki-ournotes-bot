@@ -1360,7 +1360,11 @@ async function main() {
     }
   })
   await run('HTTP v2 semantic decode failures never enter request retries',async()=>{
-    const legacy=structuredClone(httpV2.python_to_ts.ready)
+    const personal=structuredClone(httpV2.python_to_ts.ready)
+    assert.equal(personal.execution_profile,'personal-v1')
+    assert.equal(wire.decodeReady(personal).execution_profile,'personal-v1')
+    const legacy=structuredClone(personal)
+    delete legacy.execution_profile
     assert.equal(wire.decodeReady(legacy).execution_profile,'personal-v1')
     const shared=['classify','gateway_retire','ack_context_guard','quoted_context_v1','fixed_snapshot_v1','independent_delivery_v1']
     const query={...legacy,execution_profile:'query-local-v1',features:shared,notices_enabled:false}
