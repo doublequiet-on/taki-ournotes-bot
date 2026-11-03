@@ -4422,8 +4422,8 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
         self.assertEqual([b['max_output_tokens'] for b in bodies],[self.snapshot.profile.max_output_tokens]*2)
         self.assertNotIn('participation',bodies[1]['input'][0]['content'])
         from ournotes_bot.application.chat_agent import CHAT_SEMANTICS
-        for body in bodies:
-            self.assertIn(CHAT_SEMANTICS,body['input'][0]['content'])
+        self.assertNotIn(CHAT_SEMANTICS,bodies[0]['input'][0]['content'])
+        self.assertIn(CHAT_SEMANTICS,bodies[1]['input'][0]['content'])
         self.assertNotIn('text 里只写',bodies[0]['input'][0]['content'])
 
     async def test_staged_two_finals_fit_exact_global_cost_budget(self):
