@@ -6,6 +6,7 @@ Output: structured verdict; see docs/PRODUCT_RELEASE.md. Pos: deploy/L2.md.
 from __future__ import annotations
 
 import json
+import hashlib
 import re
 from pathlib import Path
 
@@ -72,8 +73,10 @@ def _identity(value):
 
 def check_identity(candidate, expected, observed):
     """Allow only the identity check, never the overall activation or restore."""
+    evidence = ''
+
     def result(reason, status='reject'):
-        return {'status': status, 'reason': reason, 'contract_version': 1}
+        return {'status': status, 'reason': reason, 'contract_version': 1, 'evidence': evidence}
 
     if not (_keys(candidate, 'contract_version product instance app_id channel release_seq source_commit '
                             'capabilities components protocol schemas min_controller inventory_sha256')
@@ -99,6 +102,9 @@ def check_identity(candidate, expected, observed):
             and _schemas(c['schemas']) and isinstance(e['schemas'], dict) and bool(e['schemas'])
             and all(_text(k) and _number(v) for k, v in e['schemas'].items())):
         return result('malformed_contract')
+    evidence = hashlib.sha256(json.dumps(
+        {'contract_version': 1, 'candidate': c, 'expected': e, 'observed': o},
+        sort_keys=True, separators=(',', ':'), ensure_ascii=True).encode('ascii')).hexdigest()
     channels = {'taki-personal': 'personal', 'haneoka-custom': 'custom'}
     if (channels.get(c['product']) != c['channel']
             or any(c[k] != e[k] for k in ('product', 'instance', 'app_id', 'channel'))):
@@ -123,3 +129,23 @@ def check_identity(candidate, expected, observed):
                     for mode in ('read', 'write')) for k, version in e['schemas'].items())):
         return result('schema_incompatible', 'manual')
     return result('identity_verified', 'allow')
+
+
+def check_scope_binding(binding, candidate, expected, observed):
+    """Task05 synchronous identity decision shape; never grants scope approval.
+
+    Trusted composition supplies current C1 inputs separately from restored binding.
+    Evidence is an audit fingerprint, not a signature or reusable authorization.
+    """
+    decision = check_identity(candidate, expected, observed)
+    outcome = {'allow': 'allow', 'reject': 'deny', 'manual': 'manual'}[decision['status']]
+    result = {'outcome': outcome, 'reason': decision['reason'], 'evidence': decision['evidence']}
+    if outcome != 'allow':
+        return result
+    if not (_keys(binding, 'contract_version manifest_sha256')
+            and type(binding['contract_version']) is int and binding['contract_version'] == 1
+            and _hash(binding['manifest_sha256'])):
+        return {**result, 'outcome': 'deny', 'reason': 'scope_binding_malformed'}
+    if binding['manifest_sha256'] != expected['manifest_sha256']:
+        return {**result, 'outcome': 'deny', 'reason': 'scope_binding_mismatch'}
+    return result

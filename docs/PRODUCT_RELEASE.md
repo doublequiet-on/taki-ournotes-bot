@@ -4,7 +4,7 @@
 
 ## C1：外部预期与自报
 
-入口 `deploy/product_identity.py::check_identity(candidate, expected, observed)`，三个参数均为 JSON object，返回 `{status, reason, contract_version}`；status 为 `allow/reject/manual`，allow 只表示本项匹配，10仍须组合05/07和实际安装检查。错误不包含AppID、路径或输入值。读取JSON使用同模块 `read_json`，拒绝重复键和非有限数值。
+入口 `deploy/product_identity.py::check_identity(candidate, expected, observed)`，三个参数均为 JSON object，返回 `{status, reason, contract_version, evidence}`；status 为 `allow/reject/manual`，allow 只表示本项匹配，10仍须组合05/07和实际安装检查。错误不包含AppID、路径或输入值。读取JSON使用同模块 `read_json`，拒绝重复键和非有限数值。
 
 `candidate` 是发行附带的 `product-manifest.json`；`expected` 来自实例的外部受信配置，必须位于发行包、备份及待恢复树之外，由当前管理权威取得。不得用候选自报、旧备份或环境变量填补缺失字段。`observed` 来自受信控制器的独立测量，不能直接复制候选内容。此接口不决定05的每次启动批准/最新批准锚点模式。
 
@@ -69,3 +69,22 @@ inventory格式为 `{inventory_version:1,files:{路径:{size,sha256,parent_sha25
 inventory生成是待审记录，不能自动批准自身；11审阅其全部字节和选中闭包后，由外部权威固定inventory原始文件SHA，并写入候选manifest的inventory_sha256，最终再固定manifest原始文件SHA。组合文件摘要不含manifest自身，避免循环摘要。组件分组及源SHA由08/09的最终装配清单给定，独立测量后传入observed；CLI只代为实算manifest文件摘要。此阶段不把人工provided components称为自动运行探测。
 
 10应先隔离外发，按外部摘要验证inventory，再验证identity，然后检查05当前范围权威、07当前删除权威与存储、实际安装/protocol握手，最后按10激活门决定。任一reject/manual保持隔离。检查顺序属于10，09不另建恢复框架。
+
+## 05 opaque binding接线（固定接口）
+
+已核对05提交 `6b64e027b25d197981f456d6c87f32db54da6c51` 的 `koishi/src/scope-authority.ts`：`ScopeAuthority.identity(binding)` 是同步回调，`ScopeStore.inspect()` 每次先调用identity，只有allow才调用独立approval。05只把binding当对象，尚无09接线；本分支没有叠加05。
+
+09定义binding为严格对象 `{contract_version:1, manifest_sha256:64位小写hex}`。它只引用当前经外部批准的发行manifest，不携带可信status、expected或observed。具体适配入口 `check_scope_binding(binding, candidate, expected, observed)` 每次先调用check_identity，再核binding，返回05需要的 `{outcome,reason,evidence}`；reject映射deny，manual保留，allow仍只表示身份预检。新原因 `scope_binding_malformed` / `scope_binding_mismatch` 均deny。换发行manifest必须显式重新绑定；这不决定范围批准如何获得。
+
+check_identity对格式合法的三份输入生成evidence：`SHA256(ASCII JSON({contract_version:1,candidate,expected,observed}, sort_keys=True, separators=(',', ':'), ensure_ascii=True))`。字段不合法时evidence为空。它绑定证据快照，不是签名、授权token或可信来源证明，不能用候选自带evidence或上次allow绕过重验。check_scope_binding的evidence指向当前C1输入，binding失败由reason说明；完整binding保留在05文档及其独立摘要中，不回显AppID。
+
+08/10接线顺序：受信控制器先读取恢复树外的当前expected，实测candidate原始文件摘要与组件/控制器/schema，再运行09预检。05的同步回调必须由受信组合根注入；不能直接执行候选内Python，也不能从approved-scope恢复expected。若网关与Python分进程，08/10先在现有受信启动/管理边界取得当前会话的预检快照，再由同步回调核binding并映射结果；不得每次查询spawn Python或新增通用RPC框架。快照只在对应组件、实例配置、控制器、存储版本和外部预期不变的当前会话有效；变化/恢复/重启先隔离并重新预检，缺失或无法确定新鲜性返回manual/deny。这个生命周期需要08/10实际接线与验证，本包不宣称已实现网关信任传递。
+
+直接Python调用示意（可信输入来源由调用方负责）：
+
+```python
+identity = check_scope_binding(scope_document['binding'], candidate, external_expected, measured)
+# identity['outcome'] != 'allow' 时保持隔离；allow后仍须05当前approval和07恢复检查。
+```
+
+05现有接口无需修改，独立批准回调仍是必需项；本包未选择每次启动人工批准或最新批准锚点。恢复旧scope的合法binding不能批准旧宽范围，个人模式也不能作为身份失败的回退。

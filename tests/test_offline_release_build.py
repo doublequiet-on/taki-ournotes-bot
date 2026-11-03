@@ -11,7 +11,7 @@ import zipfile
 from scripts import build_offline_release as builder
 from scripts import check_release_artifact
 from scripts import product_release
-from deploy.product_identity import check_identity, read_json
+from deploy.product_identity import check_identity, check_scope_binding, read_json
 import copy
 import hashlib
 
@@ -74,6 +74,22 @@ class ProductIdentityTests(unittest.TestCase):
                 path.write_text(raw, encoding='utf-8')
                 with self.assertRaises(ValueError):
                     read_json(path)
+
+    def test_scope_binding_uses_current_external_preflight_not_saved_verdict(self):
+        binding = {'contract_version': 1, 'manifest_sha256': self.e['manifest_sha256']}
+        result = check_scope_binding(binding, self.c, self.e, self.o)
+        self.assertEqual(result['outcome'], 'allow')
+        self.assertEqual(len(result['evidence']), 64)
+        self.assertEqual(check_scope_binding({**binding, 'status': 'allow'}, self.c, self.e, self.o)['outcome'], 'deny')
+        self.assertEqual(check_scope_binding({**binding, 'manifest_sha256': 'e'*64}, self.c, self.e, self.o)['reason'], 'scope_binding_mismatch')
+        # A legitimate old binding and its previous success cannot approve a new instance.
+        self.e['instance'] = 'new-external-instance'
+        rejected = check_scope_binding(binding, self.c, self.e, self.o)
+        self.assertEqual(rejected['outcome'], 'deny')
+        self.assertNotEqual(rejected['evidence'], result['evidence'])
+        self.e['instance'] = self.c['instance']
+        self.e['schemas']['ledger'] = 1
+        self.assertEqual(check_scope_binding(binding, self.c, self.e, self.o)['outcome'], 'manual')
 
 
 class ProductInventoryTests(unittest.TestCase):
