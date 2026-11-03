@@ -18,21 +18,38 @@ receiver 在后端识别前过滤管理范围；每次普通查询 intent 前重
 
 ## 给09：唯一身份权威
 
-09合同版本绑定 PR #194 的 `b29d69fd3d76b5be81610228ec3cfbb65fd044bf`，实际入口为该提交的 `deploy/product_identity.py::check_identity(candidate, expected, observed)`。本包不复制其身份解释或按旧备份自证身份。09后续版本须按实际SHA重新验收。
+唯一支持版本为09 PR #194 的 `3dda6d29955328777f7e526c21bfd2828dbbea8a`，唯一生产判定入口为其 `deploy/product_identity.py::check_scope_binding(binding, candidate, expected, observed)`。该函数每次先调用 `check_identity`，再检查binding；09负责身份解释以及 allow/reject/manual → allow/deny/manual 映射。05不再直接消费check_identity结果，不保留旧完整candidate绑定路径。
 
-05提供 `koishi/src/scope-identity.ts::productIdentityAdapter(readTrustedCheck)` 及 `productScopeAuthority(readTrustedCheck, approval?)`。binding具体为09 `read_json` 严格解析得到的完整candidate对象；05只对它与受信回执中的candidate作深相等校验，不解释产品字段。它不是expected、observed或预检结果。不能拿A候选的allow去批准B的binding。
+binding固定为严格对象 `{contract_version:1, manifest_sha256:64位小写hex}`，仅引用发行manifest，不携带expected、observed或判定。旧完整candidate对象不自动迁移/批准，按新合同拒绝，须在认证管理恢复流程重新暂存绑定；范围批准仍独立。
 
-08/10提供的无参数回调必须从当前受信控制器读取 `TrustedIdentityCheck`，每次许可重新读取；不能从scope文件、恢复树、候选载荷或客户端RPC取得回执，也不能长期复用已失效的预检缓存。控制器用固定受信09实现校验，不执行候选内脚本。控制器必须从同一次读取的manifest原始字节实算摘要并严格解析candidate；expected在发行/备份/恢复树之外，observed来自独立测量。纯函数适配不提供这些信任来源，不是密码学签名验证。
+### 同步接口及可信来源（08/10）
 
-回调字段：`candidate`、`verdict={status,reason,contract_version}`、`manifestSha256`（64位小写hex原始manifest摘要）、`checkerCommit`（40位实际受信09实现SHA）、`expectedRevision`/`observationRevision`（各64位受信输入快照摘要，绑定本次校验的expected/observed）。这些证据由控制器产生，05不从candidate补造。回调缺失返回manual/identity_check_pending，异常返回deny/identity_authority_unavailable；缺摘要、未知版本/原因/状态组合拒绝。
+`koishi/src/scope-identity.ts` 提供 `ProductIdentitySession`、`productIdentityAdapter(session.read)` 和 `productScopeAuthority(session.read, approval?)`。08/10受信组合根创建会话，按下列顺序接入；普通查询只读内存快照，不spawn Python，不新增RPC框架。
 
-| 09判定 | 05身份判定 | 含义 |
-| --- | --- | --- |
-| allow / identity_verified | allow | 仅身份预检通过，仍执行独立C5批准 |
-| reject / 09已定义拒绝原因 | deny，保留reason | 不调用范围批准 |
-| manual / schema_incompatible | manual，保留reason | 保持隔离，不调用范围批准 |
+1. 启动时会话为空（manual）。调用 `ticket=session.beginCheck()`：立即清空旧快照，获得本次校验的进程内ticket。
+2. 受信控制器获取发行/备份/恢复树之外的当前expected；从同一次读取的manifest原始字节实算摘要、经09 `read_json`严格解析candidate；独立测量components、controller和实际schema。不得把candidate字段复制成observed，也不得恢复expected或执行候选内校验器。
+3. 在已有受信启动/管理边界调用固定09 `check_scope_binding`，将 `TrustedScopeBindingCheck={binding,decision,checkerCommit}` 交 `session.publish(ticket,snapshot)`。decision是09原样 `{outcome,reason,evidence}`；checkerCommit必须为上述固定SHA。ticket跨会话、已消费、被取代或失效均返回false。publish只接收会话内检查结果，不是范围批准。
+4. 同步 `ScopeAuthority.identity(binding)` 每次读取该session快照。请求binding必须与快照实际校验binding深相等；未匹配不能复用allow。只作结果形状/版本/证据和绑定关联检查，不重写09产品/能力/schema规则。缺快照manual，异常/不合法结果deny。
+5. identity allow后仍调用独立C5 approval。未注入approval时返回manual/scope_approval_policy_pending。预检不是激活，10仍组合07与安装/握手检查。
 
-身份evidence为 `c1/v1:checkerCommit:manifestSha256:expectedRevision:observationRevision`，范围最终判定额外保留 `identity_evidence`，原evidence继续表示范围批准证据。`productScopeAuthority`未传独立approval时返回manual/scope_approval_policy_pending，即使09为allow也不能激活。09不认证任意个人旧baseline：旧实例维持原流程，进入新合同须单独审阅；本包不增加旧包豁免。
+### 生命周期及失效
+
+快照只属于当前网关会话，不写磁盘、不进备份、不跨重启恢复。`invalidate()`立即清空快照并撤销未完成ticket；beginCheck也会先失效。发布与读取均复制对象，外部修改旧对象不能改变活动快照；同一ticket不能二次发布。
+
+08/10必须在**变化之前**隔离外发并调用invalidate：候选manifest/组件、绑定、实例/AppID/通道配置、外部expected及其权限/下限、控制器版本、存储schema、安装/回退/恢复、受信控制通道失联或新鲜性无法确认。然后独立重测、重新beginCheck/publish；晚到的旧检查不能重开。新会话从空开始。无法保证这些变更通知/隔离时不得发布可用快照。该类只执行显式失效，不自动侦测文件、跨进程状态或网络断开；实际可信通道、事件接线、认证Console由08/10负责且仍未组合验收。
+
+### 判定与证据
+
+| 09内部check_identity | 09 check_scope_binding / 05保留判定 |
+| --- | --- |
+| allow / identity_verified且binding匹配 | allow，仅身份检查；不代替C5批准 |
+| reject / 拒绝reason | deny，保留reason，不调用approval |
+| manual / schema_incompatible | manual，保留reason，不调用approval |
+| 身份allow但binding非法/不匹配 | deny / scope_binding_malformed或scope_binding_mismatch |
+
+09 evidence是对 `{contract_version:1,candidate,expected,observed}` 以09规定的ASCII JSON编码得到的SHA256；05原样保留，并由范围最终判定的identity_evidence带出。它不是签名或可复用授权。格式非法的C1输入由09返回deny/malformed_contract及空evidence，05保留拒绝；其他缺失/非法evidence一律deny。05拒绝未知版本、原因/状态组合及旧三字段check_identity回执。可信来源靠08/10组合根，不靠候选自带hash。
+
+09仍未认证任意个人旧baseline；本包不增加旧包豁免，也不将身份失败降为个人模式。
 
 `ScopeAuthority.approval(candidate,digest)` 必须查询候选恢复内容之外的当前批准权威，返回 `{outcome:'allow'|'deny'|'manual',reason,evidence}`。generation/approval/hash 都只是候选信息；合法旧备份中的高代际、合法身份、完整文件均不等于最新批准。测试中的合成权威只证明接口拒绝旧宽范围，不是生产批准实现。
 
