@@ -126,7 +126,8 @@ def pack(work, output, candidate):
     for name in ('rollup-metadata.json', 'lock.diff', 'relock.log', 'relock.exit'):
         members['materials/build-repair/' + name] = (work / name).read_bytes()
     if candidate:
-        members['recipe/downstream-build.cjs'] = (ROOT / 'deploy/licenses/koishi-console/downstream-build.cjs').read_bytes()
+        for name in ('downstream-build.cjs', 'marked-vue-href.patch'):
+            members['recipe/' + name] = (ROOT / 'deploy/licenses/koishi-console' / name).read_bytes()
     manifest = dict(base_inputs_sha256=BASE_SHA, expected_code=old['expected_code'],
         component_sha256=old['component_sha256'], complete_corresponding_source=False, product_release=False)
     entries = {n: dict(size=len(b), sha256=sha(b)) for n, b in sorted(members.items())}

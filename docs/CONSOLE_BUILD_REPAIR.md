@@ -71,3 +71,19 @@ Rollup仅携带Linux x64 glibc native，包4.67.4、binary SHAa6f7167810c4a34d66
 显式feature：napi禁默认、启napi4；Linux x64 glibc选mimalloc-safe/local_dynamic_tls；不启aarch64专用no_opt_arch；parse_ast的swc_common/parking_lot；xxhash-rust/xxh3。准确直接解析版本/checksum在native-materials/rollup-target.json；bindings_wasm不是该native入口。未重建200个Cargo包，也没有把Cargo.lock所有项当成实际Linux运行闭包。全传递feature/条款逐项对应和原native发布工具链证明仍未完成，记录false。删除本Console不用的lzma不能证明未来Rollup native交叉构建无需它。
 
 新输入和材料仍是拟公开集合候选；完整来源/许可审查、公开托管位置/访问范围/维护责任及显著源码链接尚待11和用户决定，不提供虚构公开URL，不标最终个人/定制发行通过。
+
+## P1安全修复：candidate.3（作者自查）
+
+08固定399cc8a47bf84aa550ff2eb3d1e3d640101c2033发现默认unsafe=false时HTTPS href内的原始双引号越出属性，生成onclick并在真实点击时执行fixture标记。candidate.1/2均在真实浏览器复现，属于继承缺陷；此前普通XSS用例通过不能关闭此边界。
+
+修复在首选marked-vue TS上应用`marked-vue-href.patch`，recipe核before/after/patch摘要并拒绝重复应用；没有修改压缩dist或安装文件。顺序是：先把原始引号编码后在惰性template中按浏览器**属性**规则解码一次，读取完整href值；用原有URL构造与http/https/mailto/tel协议清单校验；最后先编码amp，再编码引号/尖括号输出。这样协议检查与浏览器最终收到的值一致，双重实体不二次解码。template不插入DOM，不加载资源；这个Console浏览器组件的sanitize链接路径现在明确依赖document，未声称Node直载或SSR支持。相对链接、片段和四种协议保留，未扩大协议清单，title原编码路径保留。
+
+源码before 810c43dcad4749eb6e1c00670d13f5929aac2252ba77f05b1cddc1307d8964a6；after 19e78466c78037a5a18e1dedc64f6420e90f895f587b6651e4b09e59e3104930。完整types/lib/client构建通过，16输出仅client.js改变。
+
+最终输入console-candidate3-security-inputs-v2.zip 128359885 bytes / SHA256 c6261043446d4d717af86a3466733f3f284021dbfd996082464ec202b2a68e0b。相对candidate.2输入只更换recipe、增加安全patch，lock和498缓存不变，因此仍携带cache-content-type1.0.1材料缺口。初次构建输入及组件保留为中间证据；最终patch改用零上下文格式清除自身尾随空格，生成的首选TS与client.js运行字节不变，组件身份和输入摘要随后重新生成。安全修复没有以改运行依赖或重锁掩盖该缺口。
+
+最终组件taki-console@0.1.0-candidate.3 / npm兼容版本5.30.10-taki.3，634671 bytes / SHA256 ea92ea91d816648023e61cf6ce7dfe2de98aece38e1ca8dd9292166f5537d1fb；manifest SHA256 ed8de5188b9a208266d7aaae18587d833fe3fbcb76336b857f6b8d6e8a95018d。初次安全构建组件保留为中间证据；最终组件的26个lib/dist/src运行文件与浏览器自查组件逐字节相同，差异仅为TAKI-CONSOLE.json中的最终输入/patch身份。原组件和旧失败证据保留。
+
+作者Chrome156浏览器自查加载tgz的实际client.js注册的k-markdown（不是单独字符串函数）：26个链接/点击用例覆盖原08失败、单双引号、命名/数值/双重实体、tab/CRLF/NUL/前导控制字符、危险与未批准协议、合法相对/片段/http/https/mailto/tel、query amp及title；不得出现事件属性，点击fixture标记保持0。普通标题/列表/强调和props响应式更新通过。旧两组件同一原失败均产生onclick且标记1。浏览器只访问loopback，capture preventDefault仅阻止导航，不阻止事件传播。完整输入、DOM、点击结果及截图在本轮security-20261104证据中。
+
+这是09作者自查通过，不是08网关接线或12独立审查关闭。新固定包交00供08接入、12复核；统一装包继续等待固定接线与安全验收。cache构建依赖处置、Rollup传递源码/原文、esbuild历史未知及公开托管仍单列，complete_corresponding_source/product_release/published继续false。安全修复单独提交，不被材料工作延迟。

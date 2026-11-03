@@ -78,6 +78,19 @@ for (const name of ['@cordisjs/core', '@cordisjs/logger', '@cordisjs/schema', '@
   fs.writeFileSync(path.join(report, 'generate-' + name.replaceAll('/', '_') + '.json'), JSON.stringify(result.metafile, null, 2));
   aliases[name] = outfile;
 }
+// Security patch applies to preferred TS before compilation, never minified JS.
+const markdownSource = path.join(root, 'taki-sources/marked-vue/src/index.ts');
+const markdownBefore = hash(fs.readFileSync(markdownSource));
+if (markdownBefore !== '810c43dcad4749eb6e1c00670d13f5929aac2252ba77f05b1cddc1307d8964a6') throw Error('Unexpected marked-vue source; refuse repeated security patch');
+require('node:child_process').execFileSync('git', ['-c', 'core.autocrlf=false', 'apply', '--unidiff-zero',
+  path.join(root, '../recipe/marked-vue-href.patch')], { cwd: root });
+const markdownAfter = hash(fs.readFileSync(markdownSource));
+if (markdownAfter !== '19e78466c78037a5a18e1dedc64f6420e90f895f587b6651e4b09e59e3104930') throw Error('Unexpected marked-vue security patch result');
+fs.writeFileSync(path.join(report, 'marked-vue-security-patch.json'), JSON.stringify({
+  path: 'taki-sources/marked-vue/src/index.ts', before: markdownBefore, after: markdownAfter,
+  patch_sha256: hash(fs.readFileSync(path.join(root, '../recipe/marked-vue-href.patch'))),
+  purpose: 'HTML attribute decode once, unchanged URL protocol allowlist, then attribute encoding',
+}, null, 2));
 // Preferred-source browser modules; dependencies remain explicit externals at
 // this stage and are resolved by the locked Vite graph in the final chunks.
 for (const [name, entry, externals] of [

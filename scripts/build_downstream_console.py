@@ -59,7 +59,7 @@ def build(inputs: Path, work: Path, output: Path) -> None:
             path = work.joinpath(*name.parts)
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_bytes(data)
-    for recipe in ('downstream-build.cjs', 'taki-reconnect-source.patch'):
+    for recipe in ('downstream-build.cjs', 'taki-reconnect-source.patch', 'marked-vue-href.patch'):
         if (work / 'recipe' / recipe).read_bytes() != (RECIPES / recipe).read_bytes():
             raise ValueError('Recipe differs from pinned build inputs')
     if '@napi-rs/lzma' in (work / 'source/yarn.lock').read_text(encoding='utf-8'):
@@ -155,6 +155,7 @@ def build(inputs: Path, work: Path, output: Path) -> None:
                    upstream_commit=config['upstream_commit'], inputs_sha256=config['inputs_sha256'],
                    recipe_sha256=sha((RECIPES / 'downstream-build.cjs').read_bytes()),
                    builder_sha256=sha(Path(__file__).read_bytes()), patch_sha256=sha(patch.read_bytes()),
+                   markdown_security_patch_sha256=sha((RECIPES / 'marked-vue-href.patch').read_bytes()),
                    reconnect_source_before=before, reconnect_source_after=sha(reconnect_source.read_bytes()),
                    legacy_byte_patch='forbidden; source patch already applied',
                    source_download={'relative_path': 'sources/{component_sha256}/source-materials.zip', 'published': False},
@@ -166,6 +167,7 @@ def build(inputs: Path, work: Path, output: Path) -> None:
         'Cordis uses npm TS; devtools/Element Plus use pinned source; lodash-unified browser imports use a new Taki adapter generated from lodash-es public exports.\n'
         'marked-vue fixed TS and exact npm reggol 1.7.1 TS generate ESM with explicit externals, keepNames and no type edits.\n'
         'Build-only Rollup metadata excludes unused lzma; executable tool bytes are unchanged.\n'
+        'marked-vue href: decode HTML attribute once, validate unchanged protocols, encode ampersands/quotes before HTML output.\n'
         'Do not apply the upstream-npm byte patch. Not a final product release.\n', encoding='utf-8')
     files = [dict(path=p.relative_to(payload).as_posix(), size=p.stat().st_size, sha256=sha(p.read_bytes()))
              for p in sorted(payload.rglob('*')) if p.is_file()]
