@@ -110,6 +110,19 @@ class HaneokaCutoffTests(unittest.TestCase):
         self.assertEqual(board.game_region, 'jp')
         self.assertEqual(self.source.history.status()['points'], 0)
         self.assertIn('未写入旧历史库', ' '.join(board.notes))
+        from ournotes_bot.sources.history_partitions import ProviderHistory, identity
+        self.source.history = ProviderHistory(self.source.history)
+        event, board = self.board()
+        store = self.source.history.store(identity(board))
+        self.assertEqual(store.status()['points'], 1)
+        restored = store.latest(event, board.song)
+        self.assertEqual(restored.provider, 'official')
+        self.assertEqual(restored.display_ranks, board.display_ranks)
+        self.assertEqual(restored.value_states, board.value_states)
+        self.assertFalse(self.source.history.legacy.path.exists())
+        view = self.source.history.read_board(event, board, (1, 3))
+        self.assertEqual(view.points[0].provider, 'official')
+        self.assertEqual(view.points[0].scores, (100, 0))
 
     def test_boundary_tie_is_position_limited(self):
         self.fixture.rows = [{'rank': min(i, 99), 'score': 1000 - min(i, 99)} for i in range(1, 101)]
