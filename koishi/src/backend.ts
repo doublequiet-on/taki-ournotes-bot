@@ -144,14 +144,17 @@ export class BackendClient implements DeliveryEvents {
     return decodePlan(await this.retry('/v1/requests', this.encode(input,seq,policy)))
   }
   async chatObservation(input: Inbound, seq: number, policy: PolicySnapshot) {
+    if(this.readiness?.execution_profile==='query-local-v1')throw new BackendError('incompatible_backend')
     if(input.kind!=='group' || input.trigger!=='observation' || input.proactiveId!==undefined) throw new BackendError('observation_identity')
     return decodeChatObservation(await this.retry('/v1/chat/observations',this.encode(input,seq,policy)))
   }
   async chatCandidate(input: Inbound, seq: number, policy: PolicySnapshot) {
+    if(this.readiness?.execution_profile==='query-local-v1')throw new BackendError('incompatible_backend')
     if(input.kind!=='group' || input.trigger!=='proactive') throw new BackendError('candidate_identity')
     return decodeChatCandidate(await this.retry('/v1/chat/candidates',this.encode(input,seq,policy)))
   }
   async modelPermission(challenge:ModelPermission, policy:PolicySnapshot, allowed:boolean):Promise<Recorded> {
+    if(this.readiness?.execution_profile==='query-local-v1')throw new BackendError('incompatible_backend')
     const { admission_policy_version, remaining_ms, ...binding } = challenge
     const { natural_query, ...current_policy_version } = policy
     return decodeRecorded(await this.request(`/v1/requests/${encodeURIComponent(challenge.request_id)}/model-permissions/${encodeURIComponent(challenge.attempt_id)}`,

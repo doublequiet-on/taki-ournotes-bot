@@ -801,6 +801,7 @@ def create_app(backend, token, initialize=None):
         return json({'ready': accepting, 'protocol': PROTOCOL, 'backend_epoch': backend.runtime, 'pid': os.getpid(),
                      'maintenance': backend.maintenance_status(),
                      'capability': CAPABILITY, 'backend_code_digest': backend.code_digest,
+                     'execution_profile': 'personal-v1' if backend.query_runtime is None else 'query-local-v1',
                      'background_tasks': bool(backend.runtime_tasks and backend.runtime_tasks.tasks and all(not task.done() for task in backend.runtime_tasks.tasks)),
                      'notices_enabled': backend.notices is not None,
                      'diagnostics_enabled': backend.diagnostics.db is not None,
@@ -1034,7 +1035,8 @@ def create_app(backend, token, initialize=None):
     if backend.query_runtime is not None:
         # Development query composition, not a product capability selection.
         routes = [route for route in routes if not route.path.startswith((
-            '/v1/chat/', '/v1/admin/chat/', '/v1/admin/model', '/v1/admin/library', '/v1/notices'))]
+            '/v1/chat/', '/v1/admin/chat/', '/v1/admin/model', '/v1/admin/library', '/v1/notices'))
+            and '/model-permissions/' not in route.path]
     app.add_routes(routes)
     async def lifetime(app):
         async def load():

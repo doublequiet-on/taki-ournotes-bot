@@ -106,6 +106,12 @@ class QueryCompositionTests(Fixture, unittest.IsolatedAsyncioTestCase):
             response = await self.client.post(path, json={})
             self.assertEqual(response.status,404)
         ready = await (await self.client.get('/v1/ready')).json()
+        self.assertEqual(ready['execution_profile'],'query-local-v1')
+        self.assertFalse(ready['notices_enabled'])
+        self.assertNotIn('current_model_permit_v1',ready['features'])
+        self.assertNotIn('notice_gateway_v1',ready['features'])
+        response=await self.client.post('/v1/requests/'+'a'*64+'/model-permissions/'+'b'*32,json={})
+        self.assertEqual(response.status,404)
         self.assertNotIn('chat_observation_v1', ready['features'])
         for seq, body in enumerate(('/聊 你好','立希你好','普通聊天'), 1):
             request = self.request('chat'+str(seq), seq); request['body'] = body

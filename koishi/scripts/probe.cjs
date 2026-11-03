@@ -1360,6 +1360,25 @@ async function main() {
     }
   })
   await run('HTTP v2 semantic decode failures never enter request retries',async()=>{
+    const legacy=structuredClone(httpV2.python_to_ts.ready)
+    assert.equal(wire.decodeReady(legacy).execution_profile,'personal-v1')
+    const shared=['classify','gateway_retire','ack_context_guard','quoted_context_v1','fixed_snapshot_v1','independent_delivery_v1']
+    const query={...legacy,execution_profile:'query-local-v1',features:shared,notices_enabled:false}
+    assert.equal(wire.decodeReady(query).execution_profile,'query-local-v1')
+    for(const mutate of [v=>delete v.execution_profile,v=>v.execution_profile='query-local-v2',
+      v=>v.execution_profile='personal-v1',v=>v.notices_enabled=true,v=>v.protocol.minor++,
+      v=>v.capability='qq-query-future',v=>v.features.push('current_model_permit_v1'),
+      v=>v.features.push('notice_gateway_v1'),v=>v.features.push('chat_observation_v1'),
+      v=>v.features.push('unknown'),v=>v.features.push(v.features[0])]) {
+      const v=structuredClone(query);mutate(v);assert.throws(()=>wire.decodeReady(v),/incompatible_backend/)
+    }
+    for(const feature of shared)assert.throws(()=>wire.decodeReady({...query,features:shared.filter(f=>f!==feature)}))
+    for(const feature of ['notice_gateway_v1','current_model_permit_v1'])
+      assert.throws(()=>wire.decodeReady({...legacy,features:legacy.features.filter(f=>f!==feature)}))
+    const isolated=new BackendClient('http://127.0.0.1:8765','x'.repeat(32),'fixture','epoch',async()=>{throw Error('must not call HTTP')})
+    isolated.readiness=wire.decodeReady(query)
+    for(const invoke of [()=>isolated.chatObservation({},1,{}),()=>isolated.chatCandidate({},1,{}),()=>isolated.modelPermission({}, {},true)])
+      await assert.rejects(invoke,/incompatible_backend/)
     const r=httpV2.ts_to_python.request,p=httpV2.python_to_ts.preparing,a={requestId:r.request_id,deliveryId:p.delivery_id,partId:'0',attemptId:'a',gatewayEpoch:'epoch'}
     const calls=[c=>c.recognizes('fixture'),c=>c.lookup(r.request_id),c=>c.submit({},1),c=>c.event(p,'aborted'),
       c=>c.intent(a),c=>c.acknowledge(a,{status:'success',messageId:'receipt'}),

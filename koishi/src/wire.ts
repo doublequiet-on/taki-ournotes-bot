@@ -62,19 +62,30 @@ function strings(value: unknown, code: string): string[] {
 }
 export interface Ready {
   protocol: typeof protocol; ready: boolean; capability: typeof capability
+  execution_profile: 'personal-v1' | 'query-local-v1'
   backend_epoch: string; backend_code_digest: string; notices_enabled: boolean; diagnostics_enabled: boolean
   features: string[]; management_capabilities: string[]
 }
 export function decodeReady(value: unknown): Ready {
   const v = object(value, 'ready_shape')
   const result = { protocol:wireProtocol(v.protocol,'incompatible_backend'), ready:boolean(v.ready,'ready_shape'),
+    execution_profile:choice(v.execution_profile === undefined ? 'personal-v1' : v.execution_profile,
+      ['personal-v1','query-local-v1'] as const,'incompatible_backend'),
     capability:choice(v.capability,[capability],'incompatible_backend'), backend_epoch:hex(v.backend_epoch,32,'ready_shape'),
     backend_code_digest:hex(v.backend_code_digest,64,'ready_shape'), notices_enabled:boolean(v.notices_enabled,'ready_shape'),
     diagnostics_enabled:boolean(v.diagnostics_enabled,'ready_shape'), features:strings(v.features,'ready_shape'),
     management_capabilities:strings(v.management_capabilities,'ready_shape') }
-  requireWire(result.management_capabilities.includes('group_policies_v1') && ['classify','gateway_retire','ack_context_guard',
-    'notice_gateway_v1','quoted_context_v1','fixed_snapshot_v1','current_model_permit_v1','independent_delivery_v1']
+  const shared = ['classify','gateway_retire','ack_context_guard','quoted_context_v1','fixed_snapshot_v1','independent_delivery_v1']
+  requireWire(result.management_capabilities.includes('group_policies_v1') && shared
     .every(feature => result.features.includes(feature)), 'incompatible_backend')
+  // An absent profile retains the original personal handshake, never infers query
+  // mode from missing features or credentials. This is not product authorization.
+  if (result.execution_profile === 'personal-v1') {
+    requireWire(['notice_gateway_v1','current_model_permit_v1'].every(f => result.features.includes(f)), 'incompatible_backend')
+  } else {
+    requireWire(!result.notices_enabled && result.features.length === shared.length
+      && new Set(result.features).size === shared.length, 'incompatible_backend')
+  }
   return result
 }
 export function decodeClassify(value: unknown): boolean { return boolean(object(value,'classify_shape').recognized,'classify_shape') }

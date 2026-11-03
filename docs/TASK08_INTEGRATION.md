@@ -1,5 +1,15 @@
 # 任务08：共用源码组合与查询共享拆分
 
+## PR200续轮：开发查询根完整网关握手
+
+从 `20b8cb2179475df2bf0ae365a2088403702557c5` 继续同一独立工作区。06测量确认开发查询根被旧decodeReady无条件要求公告/模型许可而拒绝。现引入显式execution_profile，个人保持原必需项，查询仅声明真实六项共用能力；未知/混搭或缺投递能力拒绝。Receiver普通观察不会进入查询根聊天路由，BackendClient的聊天/模型许可调用被拒绝，查询HTTP不注册model-permissions。详细合同见 [后端协议](KOISHI_BACKEND_V1.md)。不更改02账本、grant、ACK及unknown处理。
+
+独立本地完整链驱动在 `runtime/task08-handshake/{prepare.py,run.py,cases.cjs}`，从仓库benchmark基座生成serve.py/chain.cjs，固定目录/素材、loopback HTTP和假QQ。命令：先以本项目Python执行prepare.py，再执行run.py（可选query/personal）；Koishi须从当前源码tsc。真正调用build_query_backend/build_backend、Receiver、BackendClient、QueryGate、绘图编码、平台适配器与ACK；仅源数据/外部平台/后台调度使用替身。当前key为fixture-key，无真实模型或平台。
+
+群/C2C分别覆盖帮助、成功图片、上传失败完整正文逐片相等、多命令多页和/查 上一页、ACK后详情、三种本地规则别名、uncertain后旧派生intent=0、迟到重复ACK不复活及冲突成功ACK409、新查询可用；查询根无个人owner、无聊天/公告/模型许可HTTP调用。个人组合完成同套链。前期夹具失败日志保留：多独立话题导致不猜测续查、无实例头导致403、假C2C上传缺headers、使用非正式/上一页语法、把uncertain事实误当可改写成功；只修验收夹具，没有放宽业务断言。
+
+209项Python查询/个人运行时/续查/平台边界回归通过；TypeScript编译、adapter及Console RPC/state三个探针通过，能力组合的正反例在已有probe中。架构门禁通过。本节源码版本以续轮交付/清单为准，下文保留原组合历史。
+
 本轮交付独立源码候选，保持个人入口，并让确定性查询不再初始化聊天运行时。不是最终定制 selection、范围批准、物理裁剪工件或上线证明。旧191静态清单只作历史记录。
 
 工作区：`E:/CodexData/Codex/taki/work/taki-dev/runtime/plan-20261103-08-integration`；分支 `codex/plan-20261103-08-integration`。原191、197分支和其他任务工作树不改。进程占用枚举受环境权限限制，因此从已提交对象建立独立 clone；不复用原第二阶段目录。只消费以下固定提交。

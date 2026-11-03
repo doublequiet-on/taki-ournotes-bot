@@ -336,6 +336,7 @@ export class Receiver {
       if (this.config.management && !this.config.management.accepts(input)) { this.observed('management_denied'); return input.trigger!=='observation' }
       if (source.conflict) { this.observed('conflict'); return true }
       if(input.trigger==='observation') {
+        if(this.client.readiness?.execution_profile==='query-local-v1')return false
         const policy=this.policy(input)
         if(policy.natural_query!=='model')return false
         const version=this.policyVersion(input)
