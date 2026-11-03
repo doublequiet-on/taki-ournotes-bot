@@ -18,7 +18,7 @@ import tempfile
 from concurrent.futures import ThreadPoolExecutor
 from functools import lru_cache
 from pathlib import Path
-from urllib.request import Request, urlopen
+from urllib.request import Request, urlopen, build_opener, HTTPRedirectHandler
 
 import aiohttp
 
@@ -53,6 +53,7 @@ MISSION_ICON_URLS = {
     for kind in ("JUST", "COMBO", "LUCK")
 }
 FONT_PATHS = [
+    str(Path(__file__).resolve().parent / "rendering" / "assets" / "NotoSansSC.ttf"),
     "C:/Windows/Fonts/msyh.ttc",
     "C:/Windows/Fonts/simhei.ttf",
     "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
@@ -351,12 +352,32 @@ def _draw_skills(draw: ImageDraw.ImageDraw, skills: tuple[Skill, ...], x: int, y
     return y
 
 
-def _asset(url: str, size: tuple[int, int], *, contain: bool = False, native: bool = False) -> Image.Image | None:
+class _NoAssetRedirect(HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        raise ValueError("asset redirect forbidden")
+
+
+def _fixed_icon_bytes(url: str, referer: str) -> bytes:
+    # Fixed icons never enter the legacy transport fallback or follow redirects.
+    with build_opener(_NoAssetRedirect()).open(
+            Request(url, headers={"User-Agent": "Mozilla/5.0", "Referer": referer}), timeout=12) as response:
+        if response.status != 200:
+            raise ValueError("asset response status")
+        length = response.headers.get("Content-Length")
+        if length is not None and (not length.isdecimal() or int(length) > 6_000_000):
+            raise ValueError("asset size limit")
+        raw = response.read(6_000_001)
+        if len(raw) > 6_000_000:
+            raise ValueError("asset size limit")
+        return raw
+
+
+def _asset(url: str, size: tuple[int, int], *, contain: bool = False, native: bool = False, fetch=None) -> Image.Image | None:
     from .sources.haneoka.catalog_assets import is_catalog_asset, download_asset
     catalog_asset = is_catalog_asset(url)
     icons = {f"{BASE}/images/CardType{i}.webp" for i in range(1, 6)}
     music_jacket = re.fullmatch(r"https://assets\.bdon\.moe/ja/Image/Jacket/([A-Za-z0-9_-]+)/\1\.webp", url)
-    if not catalog_asset and not url.startswith(ASSETS + "/") and not music_jacket and url not in icons and url not in MISSION_ICON_URLS.values():
+    if fetch is None and not catalog_asset and not url.startswith(ASSETS + "/") and not music_jacket and url not in icons and url not in MISSION_ICON_URLS.values():
         return None
     def decode(raw):
         if len(raw) > 6_000_000:
@@ -381,7 +402,11 @@ def _asset(url: str, size: tuple[int, int], *, contain: bool = False, native: bo
             except Exception:
                 pass  # Old bad cache is retried once through the existing fetch path.
         try:
-            if catalog_asset:
+            if url in icons or url in MISSION_ICON_URLS.values():
+                raw = _fixed_icon_bytes(url, "https://haneoka.org/" if url in MISSION_ICON_URLS.values() else BASE + "/")
+            elif fetch is not None:
+                raw = fetch(url)
+            elif catalog_asset:
                 raw = download_asset(url)
             else:
                 raw = None
@@ -390,7 +415,7 @@ def _asset(url: str, size: tuple[int, int], *, contain: bool = False, native: bo
                 with urlopen(Request(url, headers={"User-Agent": "Mozilla/5.0", "Referer": referer}), timeout=12) as response:
                     raw = response.read(6_000_001)
         except Exception:
-            if catalog_asset:
+            if catalog_asset or fetch is not None or url in icons or url in MISSION_ICON_URLS.values():
                 raise
             async def download() -> bytes:
                 async with aiohttp.ClientSession() as session:
@@ -878,8 +903,8 @@ def invalidate_visual_assets(urls, *, failures_only=False):
                 image.close()
 
 
-def load_visual_asset(url, size):
-    """Validated transparent artwork; caller owns the returned image."""
+def load_visual_asset(url, size, *, fetch=None):
+    """Owned artwork; Application may inject a source-validated bounded fetcher."""
     with _NATIVE_ASSET_LOCK:
         key = (url, size)
         if key in _NATIVE_ASSETS:
@@ -890,10 +915,10 @@ def load_visual_asset(url, size):
             lock = threading.Lock()
             _NATIVE_ASSET_FLIGHTS[url] = lock
     with lock:
-        return _load_visual_asset(url, size)
+        return _load_visual_asset(url, size, fetch=fetch)
 
 
-def _load_visual_asset(url, size):
+def _load_visual_asset(url, size, *, fetch=None):
     from .sources.haneoka.catalog_assets import is_catalog_asset
     global _NATIVE_ASSET_BYTES
     pinned = is_catalog_asset(url)
@@ -905,7 +930,7 @@ def _load_visual_asset(url, size):
                 return _NATIVE_ASSETS[key].copy()
             if time.monotonic() < _NATIVE_ASSET_FAILED.get(url, 0):
                 return None
-    image = _asset(url, size, contain=True)
+    image = _asset(url, size, contain=True, **({'fetch':fetch} if fetch is not None else {}))
     if pinned:
         with _NATIVE_ASSET_LOCK:
             if image is None:

@@ -13,6 +13,7 @@ import uuid
 from ..domain.model_calls import ModelError, Usage, ProviderAction, require
 from ..domain.knowledge import KnowledgeError
 from ..natural_query.query_agent import DeferredModel, AgentOutcome, AgentState, query_text
+from ..natural_query.on_query import public_information_command
 from ..natural_query.query_validation import OutcomeCode
 from ..natural_query.native_tools import TOOLS, validate_call, execute, scope_for
 from ..sources.model_provider import NativeClient, request_body
@@ -365,7 +366,9 @@ class ModelRuntime:
                              or chat_topic(question,previous_chat) or LIGHT_CHAT.fullmatch(question)
                              or CONVERSATIONAL.search(question) or not LOCAL_QUERY_HINT.search(question))
             repository=self.backend.repository
-            if not model_first or re.match(r'^[/／]?查(?:\s|$)',content.strip()) or getattr(self.backend.settings,'chat_engine','legacy')=='agent' and replies.is_ai_request(content):
+            if (not model_first or public_information_command(question) is not None
+                    or re.match(r'^[/／]?查(?:\s|$)',content.strip())
+                    or getattr(self.backend.settings,'chat_engine','legacy')=='agent' and replies.is_ai_request(content)):
                 # Revalidate current business data before parsing entities/executing.
                 repository=await self.current_repository()
                 outcome=await self.backend.gate.run(self.backend.parser.prepare_native_local,content,repository)

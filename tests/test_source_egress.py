@@ -109,6 +109,12 @@ class SourceEgressTests(unittest.TestCase):
                        'ournotes_bot.sources.haneoka.song_traits.urlopen',
                        'ournotes_bot.sources.haneoka.haneoka_members.urlopen'):
             self.stack.enter_context(patch(target, side_effect=lambda req, **kw: self.request(req.full_url, 'urllib', kw)))
+        # Fixed icons use a dedicated no-redirect opener; capture that consumer too.
+        def icon_opener(*handlers):
+            self.assertEqual(len(handlers), 1)
+            self.assertIsInstance(handlers[0], visuals._NoAssetRedirect)
+            return SimpleNamespace(open=lambda req, **kw: self.request(req.full_url, 'urllib', kw))
+        self.stack.enter_context(patch.object(visuals, 'build_opener', side_effect=icon_opener))
         self.stack.enter_context(patch.object(visuals, 'runtime_data_dir', return_value=self.root))
         image = Image.new('RGB', (16, 16), '#777777')
         buf = io.BytesIO()

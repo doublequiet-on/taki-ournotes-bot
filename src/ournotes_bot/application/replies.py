@@ -74,7 +74,7 @@ def recognizes_message(content: str) -> bool:
     for text in split_commands(content):
         head = text.split(None, 1)[0].casefold()
         if (head in ALIASES or head in UNAVAILABLE_COMMANDS
-                or head in {"查角色", "查卡池", "查活动", "event", "イベント"}
+                or head in {"查角色", "查卡池", "查活动", "查竞技场", "查玩家", "event", "イベント"}
                 or text.casefold() in specials or parse_operation(text) is not None or is_ai_request(text)):
             return True
     return False
@@ -622,6 +622,9 @@ def _prepare_selected_followup(context, operation, repository, origin):
 
 def visual_asset(url,size):
     from ..visuals import load_visual_asset
+    from ..sources.moenotes_events import is_event_artwork_url, download_event_artwork
+    if is_event_artwork_url(url):
+        return load_visual_asset(url,size,fetch=download_event_artwork)
     return load_visual_asset(url,size)
 
 
@@ -630,6 +633,8 @@ def complete_list_reply(result,repository,locale,candidate):
         return None
     if isinstance(result,QueryResult) and result.spec.field:
         return None
+    from .reply_preparation import captured_catalog_notice
+    notice=captured_catalog_notice(result,locale)
     cards=();songs=();label=''
     if result.catalog is not None:
         answer=result.catalog
@@ -652,10 +657,10 @@ def complete_list_reply(result,repository,locale,candidate):
         from ..rendering.catalog_layout import render_list
         characters=result.catalog.request.filters.character if result.catalog else ()
         bands=result.catalog.request.filters.band if result.catalog else ()
-        parts,records,ranges=render_list(cards,label,locale,load=visual_asset,characters=characters,bands=bands)
+        parts,records,ranges=render_list(cards,label,locale,load=visual_asset,characters=characters,bands=bands,notice=notice)
     elif songs:
         from ..rendering.song_layout import render_list
-        parts,ranges=render_list(songs,label,locale,load=visual_asset);records=tuple(songs)
+        parts,ranges=render_list(songs,label,locale,load=visual_asset,notice=notice);records=tuple(songs)
     else:return None
     if candidate is not None and not candidate.complete:
         candidate=capture_context(result,repository,catalog_before=candidate.version[0],complete=True)
@@ -677,6 +682,7 @@ def complete_list_reply(result,repository,locale,candidate):
         if cards:
             from ..query.card_catalog import catalog_notice
             text += catalog_notice(records)
+        if notice:text+='\n'+notice
         ctx=replace(candidate,visible=candidate.visible[:stop]) if candidate else None
         pages.append(PreparedReply(text,part.image,context=ctx,visible_indices=tuple(range(start+1,stop+1))))
     return pages[0] if len(pages)==1 else PreparedReply('',pages=tuple(pages),context=candidate)
@@ -702,8 +708,10 @@ def complete_detail_reply(result,repository,locale,candidate):
     if card is None:return None
     from ..query.card_catalog import detail_text
     from ..rendering.card_detail_layout import render
-    text = detail_text(card, locale)
-    parts = render(card, locale, load=visual_asset)
+    from .reply_preparation import captured_catalog_notice
+    notice=captured_catalog_notice(result,locale)
+    text = detail_text(card, locale)+('\n'+notice if notice else '')
+    parts = render(card, locale, load=visual_asset,notice=notice)
     pages = tuple(PreparedReply(text, p.image, context=candidate) for p in parts)
     return pages[0] if len(pages) == 1 else PreparedReply(text, pages=pages, context=candidate)
 
@@ -748,7 +756,7 @@ def song_detail_reply(result,repository,locale,candidate):
     prepared=prepare_song_reply(song,repository.chart_source,locale,
                                 load_score=load_chart_score,load_data=load_chart_data)
     return PreparedReply(prepared.text,render(prepared.song,prepared.score,prepared.locale,
-                         load=visual_asset,band_logos=prepared.band_logos),context=candidate)
+                         load=visual_asset,band_logos=prepared.band_logos,notice=prepared.notice),context=candidate)
 
 
 
@@ -788,8 +796,35 @@ def render_prepared_inner(reply, result, repository, locale, candidate=None):
         if isinstance(result, CommandResult) and (result.info is not None or result.activity is not None):
             from ..rendering.info_layout import render_info
             answer = result.info if result.info is not None else result.activity
+            if answer.original_image is not None:
+                from io import BytesIO
+                from PIL import Image
+                from ..rendering.image_output import encode_image, check_geometry
+                with Image.open(BytesIO(answer.original_image)) as original:
+                    check_geometry(original.size)
+                    original.load()
+                    encoded = encode_image(original, preserve_size=True, strategy='png-first')
+                original_page=PreparedReply(answer.text, encoded, complete_text=True)
+                # Preserve original pixels/page identity; render captured status as a companion.
+                views=tuple(replace(view,hero_url='') for view in answer.views if view.presentation=='player')
+                if views:
+                    status_pages=tuple(PreparedReply(page.text,page.image,complete_text=True)
+                                       for page in render_info(replace(answer,views=views,original_image=None),load=visual_asset))
+                    return PreparedReply(answer.text,pages=(original_page,*status_pages),complete_text=True)
+                return original_page
+            captured = dict(answer.captured_images)
+            def information_asset(url, size):
+                if url not in captured:
+                    return visual_asset(url, size)
+                from io import BytesIO
+                from PIL import Image, ImageOps
+                from ..rendering.image_output import check_geometry
+                with Image.open(BytesIO(captured[url])) as source:
+                    check_geometry(source.size)
+                    source.load()
+                    return ImageOps.contain(source.convert('RGB'), size)
             pages = tuple(PreparedReply(page.text, page.image, complete_text=True)
-                          for page in render_info(answer, load=visual_asset))
+                          for page in render_info(answer, load=information_asset))
             if pages:
                 return pages[0] if len(pages) == 1 else PreparedReply(reply, pages=pages, complete_text=True)
             return PreparedReply(answer.text, complete_text=True)
@@ -801,9 +836,10 @@ def render_prepared_inner(reply, result, repository, locale, candidate=None):
             return full
         if result is not None and result.cutoff is not None:
             from ..rendering.event_cutoff_visuals import load_artwork
-            from ..rendering.ranking_layout import render
+            from ..rendering.ranking_layout import render, captured_text
             from ..sources.haneoka.ranking_art import cards_for, event_marks, bands_for
             answer=result.cutoff
+            reply=captured_text(answer)
             source=getattr(repository,'_catalog_repository',None)
             saved=source.saved if source else None
             from ..data import Card, SupportCard
@@ -841,17 +877,21 @@ def complete_fallback(reply, result, locale, candidate, repository):
         if answer is not None:
             return answer.text, candidate
     if result is not None and result.cutoff is not None:
-        return result.cutoff.text, candidate
+        from ..rendering.ranking_layout import captured_text
+        return captured_text(result.cutoff), candidate
     if result is None or result.status != 'success':
         return reply, candidate
     if isinstance(result, QueryResult) and result.spec.field:
         return reply, candidate
     if result.cutoff is not None:
-        return result.cutoff.text, candidate
+        from ..rendering.ranking_layout import captured_text
+        return captured_text(result.cutoff), candidate
     card = detail_card(result, repository)
     if card is not None:
         from ..query.card_catalog import detail_text
-        return detail_text(card, locale), candidate
+        from .reply_preparation import captured_catalog_notice
+        notice=captured_catalog_notice(result,locale)
+        return detail_text(card, locale)+('\n'+notice if notice else ''), candidate
     from ..data import localized_text
     cards = result.cards or result.support_cards
     songs = result.songs
@@ -880,6 +920,8 @@ def complete_fallback(reply, result, locale, candidate, repository):
         choices = {choice.entity_id:choice for choice in candidate.visible}
         candidate = replace(candidate,visible=tuple(choices[r.id] for r in records))
     from ..query.card_catalog import catalog_notice
-    return '\n\n'.join(rows)+f'\n共 {len(records)} 条。'+(catalog_notice(records) if cards else ''), candidate
+    from .reply_preparation import captured_catalog_notice
+    notice=captured_catalog_notice(result,locale)
+    return '\n\n'.join(rows)+f'\n共 {len(records)} 条。'+(catalog_notice(records) if cards else '')+('\n'+notice if notice else ''), candidate
 
 

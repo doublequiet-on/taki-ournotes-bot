@@ -32,14 +32,15 @@ def font(size, bold=False, numeric=False):
 @lru_cache(maxsize=4096)
 def lines(text, width, size, bold=False):
     """Wrap all content; numeric tokens stay together when they fit."""
-    f = font(size, bold, str(text).isascii())
+    def measure(value):
+        return font(size,bold,value.isascii()).getlength(value)
     result = []
     for paragraph in str(text).split('\n'):
         current = ''
-        for token in re.findall(r'[+≥×]?\d+(?:\.\d+)?(?:→\d+(?:\.\d+)?)?(?:%|秒|s|pt)?|[A-Za-z]+[!！?？]*|.', paragraph):
-            pieces = [token] if f.getlength(token) <= width else list(token)
+        for token in re.findall(r'[+≥×]?\d+(?:\.\d+)?(?:→\d+(?:\.\d+)?)?(?:%|毫秒|秒|ms|s|pt| Note)?|[A-Za-z]+[!！?？]*|.', paragraph):
+            pieces = [token] if measure(token) <= width else list(token)
             for piece in pieces:
-                if current and f.getlength(current+piece) > width:
+                if current and measure(current+piece) > width:
                     if piece[0] in '，。、；：！？）】」』〉》)]}%' and len(current)>1:
                         result.append(current[:-1])
                         current=current[-1]
