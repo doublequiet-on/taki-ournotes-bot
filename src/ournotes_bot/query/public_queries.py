@@ -125,7 +125,14 @@ def inside(row, now):
 
 
 def quality_lines(snapshot):
-    return ('来源：' + (snapshot.provider or '未声明'),
+    return ('来源：' + snapshot.source + ' / ' + (snapshot.provider or '未声明'),
+            '游戏区：' + (snapshot.game_region or '未声明') + '；资源区：' + (snapshot.resource_server or '未声明'),
+            '来源ID：' + (snapshot.source_id or '未获取') + '；快照ID：' + (snapshot.snapshot_id or '未获取'),
+            '资源版本：' + (snapshot.release or '未获取') + '；归一化：' + snapshot.normalization_version,
+            '时间口径：' + snapshot.time_kind + '；北京时间 UTC+8',
+            '来源观测：' + stamp(snapshot.observed_ms),
+            '来源参考时钟：' + stamp(snapshot.server_ms),
+            '本机接收：' + stamp(snapshot.fetched_at * 1000),
             '新鲜度：' + {'fresh': '新鲜', 'stale': '旧快照', 'unknown': '未知'}.get(snapshot.freshness, '未知'))
 
 
@@ -190,7 +197,10 @@ def execute_arena(query, repository, *, now=None):
                     if not any(r.get('point') is not None for r in selected):
                         return answer((InfoView('竞技场榜单', '窗口为空或积分均未获取。', footer=quality_lines(board_snapshot)),), 'data_unavailable')
                     rows.extend(InfoRow(f"显示名次 {r.get('rank') if r.get('rank') is not None else '未知'} · {r['name']}", (f"积分：{r.get('point') if r.get('point') is not None else '未获取'}",
-                        '公开ID：' + (r.get('profileId') or '未获取')), kind='standing',
+                        '公开ID：' + (r.get('profileId') or '未获取'),
+                        f"响应位置：{r.get('position') if r.get('position') is not None else '未知'}",
+                        '积分状态：' + (r.get('pointState') or '未声明')), kind='standing',
+                        position=r.get('position'), point_state=r.get('pointState'),
                         table=((f"显示 {r.get('rank') if r.get('rank') is not None else '?'}",r['name']),),game_icon={1:'ImageRanking1st.png',2:'ImageRanking2ng.png',3:'ImageRanking3rd.png'}.get(r.get('rank'),'')) for r in selected)
                     rows.append(InfoRow('窗口口径', (f'响应位置 {request.first}—{request.last}；显示名次可并列，边界并列未保证收齐。',
                         '零值为来源返回值，协议默认零与业务零无法从此DTO区分。')))
@@ -199,7 +209,7 @@ def execute_arena(query, repository, *, now=None):
                     labels = {r['points']: localized(r['name']) for r in league['ranks']}
                     rank_images={r['points']:images.get('ranks',{}).get(str(r.get('rank')),'') for r in league['ranks']}
                     rows.extend(InfoRow(labels.get(r['threshold'], str(r['threshold'])), (f"人数：{r['count']}",),image_url=rank_images.get(r['threshold'],'')) for r in board['tiers'])
-                rows.append(InfoRow('观测时间', (stamp(board.get('observedAtMs')), *quality_lines(board_snapshot))))
+                rows.append(InfoRow('观测时间', quality_lines(board_snapshot)))
         return answer((InfoView(f"{LABELS[request.region]} · 竞技场 · {localized(season['title'])}",
             request.mode + ' · 北京时间 UTC+8', rows=tuple(rows), layout='facts', presentation='arena', footer=(f'Haneoka {snapshot.resource} · {snapshot.release}',)),))
     except PublicQueryError as exc:

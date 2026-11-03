@@ -490,6 +490,35 @@ class ActivityAnnouncementTests(unittest.TestCase):
 
 
 class PublicQueryContractTests(unittest.TestCase):
+
+    def test_public_projection_preserves_positions_states_and_snapshot_times(self):
+        import json
+        from types import SimpleNamespace
+        from ournotes_bot.domain.public_queries import PublicSnapshot
+        from ournotes_bot.query.public_queries import execute_arena, execute_player, quality_lines, stamp
+        league = {'id': 1, 'bandId': 1, 'name': 'MyGO!!!!!', 'rules': [], 'ranks': []}
+        catalog = {'entries': {'1': {'seasonId': 1, 'title': 'fixture', 'startAt': 1, 'endAt': 9999999999999, 'leagues': [league]}}}
+        board = {'rows': [{'position': 99, 'rank': 99, 'point': 0, 'pointState': 'source_zero', 'name': 'zero'}, {'position': 100, 'rank': 99, 'point': None, 'pointState': 'null', 'name': 'unknown'}]}
+        snapshot = PublicSnapshot(json.dumps(board).encode(), 1791388500, 'arena-board', provider='official', observed_ms=1791388000000, server_ms=1791388500000, game_region='jp', snapshot_id='fixture')
+        source = SimpleNamespace(arena=lambda region: PublicSnapshot(json.dumps(catalog).encode(), 1791388500, 'arena'), board=lambda *a: snapshot)
+        repo = SimpleNamespace(public_queries=source, capture_catalog=lambda: SimpleNamespace(source_snapshot=None))
+        result = execute_arena('jp MyGO 榜单 排名=99-100', repo, now=1791388500)
+        self.assertEqual(result.status, 'success')
+        rows = [r for r in result.views[0].rows if r.kind == 'standing']
+        self.assertEqual([(r.position, r.point_state) for r in rows], [(99, 'source_zero'), (100, 'null')])
+        self.assertIn('来源观测：' + stamp(snapshot.observed_ms), result.text)
+        self.assertIn('本机接收：' + stamp(1791388500000), result.text)
+        self.assertIn('source_zero', result.text)
+        self.assertIn('null', result.text)
+        from dataclasses import replace
+        source.player = lambda request: replace(snapshot, body=b'{"profile":{"name":"fixture"}}')
+        player = execute_player('1', repo)
+        self.assertEqual(player.status, 'success')
+        self.assertIn('来源观测：' + stamp(snapshot.observed_ms), player.text)
+        self.assertIn('来源更新：未获取', player.text)
+        self.assertIn('来源观测：未获取', quality_lines(replace(snapshot, observed_ms=None)))
+
+
     def test_game_art_is_pinned_allowlisted_and_bonus_art_keeps_native_role(self):
         from ournotes_bot.sources.haneoka.catalog_assets import asset_url
         from ournotes_bot.sources.haneoka.public_queries import PublicQueries

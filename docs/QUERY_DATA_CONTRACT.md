@@ -79,3 +79,9 @@ InfoAnswer/InfoView不新增平行状态结构；公开查询把来源与新鲜�
 - `test_song_traits.SongTraitsTests.test_old_catalog_miss_keeps_stale_state_at_query_time`：启动后年龄跨阈值、查询未命中仍stale。
 
 02的投递合同绑定`d9240dffecee0f0a0066d5f70c8357fc9a398632`。本分支未叠加02；query/L2-2保留191公开查询地图，并登记组合核对点，不把02尚未合入的行为写成本分支已实现。
+
+## 04投影补充（兼容旧head）
+
+InfoRow末尾追加position:int|None=None、point_state:str|None=None，仅standing行从body.position/pointState原样投影；旧构造兼容。显示名次仍是原rank，不能从标题反推响应位置。正文同样列出响应位置及积分状态，source_zero与null分别保留。源缺字段为None，不由积分推断状态。
+
+quality_lines以PublicSnapshot为唯一观测/参考时钟来源：observed_ms/server_ms为epoch毫秒，fetched_at为本机接收epoch秒（显示前乘1000）；统一北京时间UTC+8。缺失观测显示未获取，不以接收或服务器时间代替；body无需重复observedAtMs。玩家lastUpdatedAtMs（来源更新）和body.fetchedAtMs（来源采集）仍独立展示，不与本机接收混淆。来源、provider、游戏/资源区、source_id、snapshot_id、release、归一化与time_kind进入共享正文。04可直接消费新增逐行属性及body/quality行；07历史schema和来源DTO不变，无数据迁移。

@@ -37,6 +37,8 @@ class InfoRow:
     icons: tuple[str, ...] = ()
     game_icon: str = ''
     reference: tuple[int, int] | None = None
+    position: int | None = None
+    point_state: str | None = None
 
 
 @dataclass(frozen=True)
