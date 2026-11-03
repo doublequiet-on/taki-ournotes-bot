@@ -1,7 +1,7 @@
 {
   "schema": 1,
   "purpose": "review input, not product_release selection or physical-pruning evidence",
-  "source_sha": "037d08333338bdbbfc122ac658293b5c48f30fc4",
+  "source_sha": "56cd2f0f7fe0d1e65e7d991ead30aa47e0659a2b",
   "checkpoint_sha": "12637558b1b3da8c38b1ca3596cc281f5b2f9dc4",
   "inputs": {
     "B0": "8d9e7301392ad548fe9554c4f4b09a0d53f615fa",
@@ -11,7 +11,7 @@
     "task03": "4d754dfaf10a2e598532c3d4dd291a26f6fa6627",
     "task04": "f31722d9913491855ffd47b33556553542941da1",
     "task05": "a9c27d7eb94833df713995b8e6f9a85fc45ea0d5",
-    "task07": "a63de717df487f896ff2182ea5bf6008672db4ad",
+    "task07": "3686da76a939345690d556d7ddeb40198e15a979",
     "task09": "9a3eca0b21dd7a7724143f988def59a5fc558dca",
     "task08_docs": "509abc81efc2433cbc197050ddc5d64c40f48f5a"
   },
@@ -41,6 +41,7 @@
     "M\tdocs/DEV_GUIDE.md",
     "A\tdocs/HISTORY_DATA_CONTRACT.md",
     "M\tdocs/IMAGE_OUTPUT.md",
+    "M\tdocs/KOISHI_BACKEND_V1.md",
     "M\tdocs/L2.md",
     "A\tdocs/MANAGEMENT_SCOPE_SAFETY.md",
     "A\tdocs/PRODUCT_RELEASE.md",
@@ -50,6 +51,7 @@
     "M\tdocs/STORY_ENGINE.md",
     "A\tdocs/TASK08_INTEGRATION.md",
     "A\tdocs/TASK08_PRODUCT_BOUNDARY.md",
+    "A\tdocs/task08-integration/assembly-input.json",
     "A\tdocs/task08-product/assembly-input.json",
     "A\tdocs/validation/task07-history.md",
     "M\tkoishi/README.md",
@@ -147,8 +149,16 @@
     "M\ttests/test_visuals.py"
   ],
   "new_split_files": [
+    "M\tdocs/HISTORY_DATA_CONTRACT.md",
+    "M\tdocs/KOISHI_BACKEND_V1.md",
     "A\tdocs/TASK08_INTEGRATION.md",
     "M\tdocs/TASK08_PRODUCT_BOUNDARY.md",
+    "A\tdocs/task08-integration/assembly-input.json",
+    "M\tdocs/validation/task07-history.md",
+    "M\tkoishi/scripts/probe.cjs",
+    "M\tkoishi/src/backend.ts",
+    "M\tkoishi/src/receiver.ts",
+    "M\tkoishi/src/wire.ts",
     "M\tsrc/L2-Application.md",
     "M\tsrc/ournotes_bot/ai_query.py",
     "M\tsrc/ournotes_bot/application/backend.py",
@@ -162,7 +172,10 @@
     "A\tsrc/ournotes_bot/domain/query_context.py",
     "M\tsrc/ournotes_bot/natural_query/L2-2.md",
     "A\tsrc/ournotes_bot/natural_query/parser.py",
+    "M\tsrc/ournotes_bot/sources/cutoff_history.py",
+    "M\tsrc/ournotes_bot/sources/history_partitions.py",
     "M\ttests/test_console_policies.py",
+    "M\ttests/test_haneoka_cutoffs.py",
     "M\ttests/test_platform_boundary.py"
   ],
   "inventory": [
@@ -462,14 +475,14 @@
     },
     {
       "path": "koishi/scripts/probe.cjs",
-      "sha256": "c6303ee5a644691dbdf728c7dd196c98c03321ff2b08e3e9534268bec17b16af",
-      "bytes": 163017,
+      "sha256": "b382db4f1227cd6b1beee3f2056fad5ba5fe4fefe34eeebd2a6aeb25456e88e9",
+      "bytes": 164700,
       "classification": "review_shared_or_optional_not_final_selection"
     },
     {
       "path": "koishi/src/backend.ts",
-      "sha256": "1576f05425f245efd9ab91d03e6f6d309a25b4e51d7e15ee9e7d6557eb9bf2bd",
-      "bytes": 12019,
+      "sha256": "3aa22b2e41119fea2cd35c3a174956bc85dc8dcaadd833fb665892355d13366c",
+      "bytes": 12340,
       "classification": "review_shared_or_optional_not_final_selection"
     },
     {
@@ -522,8 +535,8 @@
     },
     {
       "path": "koishi/src/receiver.ts",
-      "sha256": "162b635c05fe77621c3d73bdb5fe6f6f14d741b194011b5e7bb449dfc5d9aadf",
-      "bytes": 33385,
+      "sha256": "2d91d640067fb9bc2a80bed1b6649c1d2816783bb33da088dbb1f208cdf0fe39",
+      "bytes": 33469,
       "classification": "review_shared_or_optional_not_final_selection"
     },
     {
@@ -546,8 +559,8 @@
     },
     {
       "path": "koishi/src/wire.ts",
-      "sha256": "4ef7a7a3acc1aad4747ad3a81c775336e7ec89e3922ad076acc5e58ee4b1a595",
-      "bytes": 14214,
+      "sha256": "435b4987079728dd0e589d55751439e723f0427f5f6ceb42b146c3087bb38479",
+      "bytes": 14944,
       "classification": "review_shared_or_optional_not_final_selection"
     },
     {
@@ -642,8 +655,8 @@
     },
     {
       "path": "src/ournotes_bot/application/backend.py",
-      "sha256": "dbc495a4c7de5ef757ed8b7931837edc8f75562d81f4989a225d6feab742a159",
-      "bytes": 68044,
+      "sha256": "1117a3a20b9ee9743d6809b17141c2656f654f174d1effb3733d704dbafbb102",
+      "bytes": 68212,
       "classification": "review_shared_or_optional_not_final_selection"
     },
     {
@@ -1452,8 +1465,8 @@
     },
     {
       "path": "src/ournotes_bot/sources/cutoff_history.py",
-      "sha256": "3936e5a77cdf258b8f9cbd5e935708593d34754435223584e1e1f13473d7f782",
-      "bytes": 53586,
+      "sha256": "b7787c90928f5f2c1fd385451c19da18005e78b46a1ecd65f8ae8b117b86327e",
+      "bytes": 54270,
       "classification": "review_shared_or_optional_not_final_selection"
     },
     {
@@ -1644,8 +1657,8 @@
     },
     {
       "path": "src/ournotes_bot/sources/history_partitions.py",
-      "sha256": "7996acd20efe5bd097a11ebdd0f3ea5479342b6334acbdf2a3a4c7f169a91bd6",
-      "bytes": 10671,
+      "sha256": "28b627a73c514098d59c872a0d337f30813a7f77fe08fce1ad7e0869fffa2581",
+      "bytes": 10886,
       "classification": "review_shared_or_optional_not_final_selection"
     },
     {
@@ -1730,7 +1743,7 @@
   "static_graph": {
     "modules": 173,
     "imports": 1608,
-    "symbols": 2155,
+    "symbols": 2157,
     "local_path": "runtime/task08-integration/query-import-graph.json"
   },
   "pending": [
@@ -1740,7 +1753,47 @@
     "physical pruning across backend/Console/package layers",
     "real-source and QQ acceptance"
   ],
+  "original_inputs": {
+    "B0": "8d9e7301392ad548fe9554c4f4b09a0d53f615fa",
+    "task01": "7ae92a28cfa2c01b4fa8ae42207b61ae0afe7f48",
+    "P165": "e1a86a6db1f327a6dd0cc53fd860c4ababf50923",
+    "task02": "c6048b58ad054979be29542176776bd0cbe3551a",
+    "task03": "4d754dfaf10a2e598532c3d4dd291a26f6fa6627",
+    "task04": "f31722d9913491855ffd47b33556553542941da1",
+    "task05": "a9c27d7eb94833df713995b8e6f9a85fc45ea0d5",
+    "task07": "a63de717df487f896ff2182ea5bf6008672db4ad",
+    "task09": "9a3eca0b21dd7a7724143f988def59a5fc558dca",
+    "task08_docs": "509abc81efc2433cbc197050ddc5d64c40f48f5a"
+  },
+  "handshake_fix_sha": "bd17ec53da0cff3f8cf28e6175d5a0eb5dbb0954",
+  "previous_delivery_sha": "20b8cb2179475df2bf0ae365a2088403702557c5",
+  "combined_p1_sha": "56cd2f0f7fe0d1e65e7d991ead30aa47e0659a2b",
   "commit_graph_since_B0": [
+    {
+      "sha": "56cd2f0f7fe0d1e65e7d991ead30aa47e0659a2b",
+      "parents": [
+        "bd17ec53da0cff3f8cf28e6175d5a0eb5dbb0954",
+        "3686da76a939345690d556d7ddeb40198e15a979"
+      ]
+    },
+    {
+      "sha": "bd17ec53da0cff3f8cf28e6175d5a0eb5dbb0954",
+      "parents": [
+        "20b8cb2179475df2bf0ae365a2088403702557c5"
+      ]
+    },
+    {
+      "sha": "3686da76a939345690d556d7ddeb40198e15a979",
+      "parents": [
+        "a63de717df487f896ff2182ea5bf6008672db4ad"
+      ]
+    },
+    {
+      "sha": "20b8cb2179475df2bf0ae365a2088403702557c5",
+      "parents": [
+        "037d08333338bdbbfc122ac658293b5c48f30fc4"
+      ]
+    },
     {
       "sha": "037d08333338bdbbfc122ac658293b5c48f30fc4",
       "parents": [
@@ -1992,7 +2045,23 @@
       ]
     }
   ],
-  "delivery_only_files": [
-    "docs/task08-integration/assembly-input.json"
-  ]
+  "this_round_files": [
+    "M\tdocs/HISTORY_DATA_CONTRACT.md",
+    "M\tdocs/KOISHI_BACKEND_V1.md",
+    "M\tdocs/TASK08_INTEGRATION.md",
+    "M\tdocs/validation/task07-history.md",
+    "M\tkoishi/scripts/probe.cjs",
+    "M\tkoishi/src/backend.ts",
+    "M\tkoishi/src/receiver.ts",
+    "M\tkoishi/src/wire.ts",
+    "M\tsrc/ournotes_bot/application/backend.py",
+    "M\tsrc/ournotes_bot/sources/cutoff_history.py",
+    "M\tsrc/ournotes_bot/sources/history_partitions.py",
+    "M\ttests/test_console_policies.py",
+    "M\ttests/test_haneoka_cutoffs.py"
+  ],
+  "execution_profiles": {
+    "personal-v1": "original mandatory notice/model capabilities; default for legacy absent field",
+    "query-local-v1": "six shared features exactly; notices=false; not product identity or approval"
+  }
 }

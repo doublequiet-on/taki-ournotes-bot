@@ -2,6 +2,10 @@
 
 ## PR200续轮：开发查询根完整网关握手
 
+当前有效源码：握手独立提交 `bd17ec53da0cff3f8cf28e6175d5a0eb5dbb0954`；随后接收07的组合提交 `56cd2f0f7fe0d1e65e7d991ead30aa47e0659a2b`。07输入为真实HANDOFF及远端一致的 `3686da76a939345690d556d7ddeb40198e15a979`，直接父为原 `a63de717df487f896ff2182ea5bf6008672db4ad`，仅5文件增量。无冲突，03 public_queries/activity_details与最新03相同，visuals仍与04相同；未合入09新材料或10接线。新assembly-input.json绑定56cd组合，保留original_inputs、握手SHA、最新07输入及父边；下文037d/126375只作上一阶段证据。
+
+组合后168项历史/查询回归通过，包含首次_save_provenance故障后身份仍在、按需入口重试恢复及旧schema/107读写。07的并发专项15项属于作者证据，本轮没有冒称独立重跑；既有schema4缺身份旧文件仍须隔离审阅，不自动修复。组合后重新执行query/personal完整网关链均通过。最终证据目录分别为 `runtime/task08-handshake/query-1793705401738700800` 和 `personal-1793705411471630800`，result.json保存请求/响应、真实账本投影、完整正文与假平台回执；日志同目录。编译/探针与209项非历史回归绑定握手源码，组合仅增07已验证历史修复；本轮未重跑全量1834项或全量打包，最终head CI另查，不沿用旧head绿灯。
+
 从 `20b8cb2179475df2bf0ae365a2088403702557c5` 继续同一独立工作区。06测量确认开发查询根被旧decodeReady无条件要求公告/模型许可而拒绝。现引入显式execution_profile，个人保持原必需项，查询仅声明真实六项共用能力；未知/混搭或缺投递能力拒绝。Receiver普通观察不会进入查询根聊天路由，BackendClient的聊天/模型许可调用被拒绝，查询HTTP不注册model-permissions。详细合同见 [后端协议](KOISHI_BACKEND_V1.md)。不更改02账本、grant、ACK及unknown处理。
 
 独立本地完整链驱动在 `runtime/task08-handshake/{prepare.py,run.py,cases.cjs}`，从仓库benchmark基座生成serve.py/chain.cjs，固定目录/素材、loopback HTTP和假QQ。命令：先以本项目Python执行prepare.py，再执行run.py（可选query/personal）；Koishi须从当前源码tsc。真正调用build_query_backend/build_backend、Receiver、BackendClient、QueryGate、绘图编码、平台适配器与ACK；仅源数据/外部平台/后台调度使用替身。当前key为fixture-key，无真实模型或平台。
