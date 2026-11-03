@@ -540,6 +540,9 @@ class OpenCutoffHistory(CutoffHistory):
     contract_version = "moenotes:challenge-ranking/1"
     schema_version = 2
 
+    def _initialize_store(self, db):
+        """Initialize subclass identity inside the schema transaction, before any data."""
+
     def _connect(self, *, write=False):
         if write:
             self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -557,8 +560,17 @@ class OpenCutoffHistory(CutoffHistory):
                 if version == 0:
                     # This happens only in the independent file. A v1 file is
                     # rejected before DDL and is never migrated in place.
-                    db.executescript("BEGIN IMMEDIATE;\n" + SCHEMA)
-                    if db.execute("PRAGMA user_version").fetchone()[0] == 0:
+                    db.execute("BEGIN IMMEDIATE")
+                    # Another writer may have initialized while this one waited.
+                    version = db.execute("PRAGMA user_version").fetchone()[0]
+                    if version not in {0, self.schema_version}:
+                        raise sqlite3.DatabaseError("unsupported formal history version")
+                    if version == 0:
+                        self._initialize_store(db)
+                        # executescript would commit the identity transaction first.
+                        for statement in SCHEMA.split(';'):
+                            if statement.strip():
+                                db.execute(statement)
                         if db.execute("SELECT count(*) FROM observations").fetchone()[0]:
                             raise sqlite3.DatabaseError("unidentified existing observations")
                         columns = {r[1] for r in db.execute("PRAGMA table_info(observations)")}

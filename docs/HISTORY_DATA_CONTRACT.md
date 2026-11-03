@@ -28,6 +28,8 @@
 
 `sources/history_partitions.ProviderHistory` 包装原Haneoka v3 store。新文件位于原库同级 `<旧库stem>-partitions-v4/<sha256>.sqlite3`，身份为固定顺序JSON `[provider, normalization_version, time_kind]` 的 SHA-256；文件内 `partition_identity`再次核对完整值，不信任文件名。
 
+初始化先取得SQLite `BEGIN IMMEDIATE`写锁并重新核对版本，分区身份、provenance表、基础schema及user_version在同一事务提交，之后才开始首笔观测事务。首笔观测回滚不撤销已提交身份；初始化本身失败则整体回滚。仅版本0且sqlite_master为空的分区可初始化；已有schema4缺失/错配身份（包括旧缺陷留下的文件）继续拒绝，需隔离审阅，不自动补身份、清库或重建。
+
 当前接受的组合来自03：
 
 | provider | normalization_version / contract_version | time_kind |
