@@ -4,7 +4,9 @@ import os
 from dataclasses import replace
 from pathlib import Path
 from aiohttp import web
-from ..ai_query import AIQueryParser
+from ..natural_query.parser import LocalQueryParser
+from .query_runtime import QueryRuntime
+from .backend_sources import CODE_FILES, QUERY_CODE_FILES
 from ..data import SongRepository
 from ..sources.cutoff_history import configure_sources
 from .backend import Backend, create_app
@@ -12,17 +14,24 @@ from .data_owner import DataOwner
 from .runtime_tasks import RuntimeTasks
 from .operations_sources import SourceOperations
 from .operations_runtime import RuntimeOperations
-from .notice_reports import NoticeReports, RELEASE_SOURCE
-from .notice_gateway import NoticeGateway
-from ..ai_client import AIClient
-from ..config import CONFIG_ROOT
 from .backend_protocol import ProtocolError, require
-from .knowledge_service import KnowledgeService
-from ..sources.knowledge_embeddings import LocalBgeEncoder
-from .model_runtime import ModelRuntime
 
 
 def build_backend(args, settings):
+    """Existing personal composition; unchanged CLI default."""
+    return _build_backend(args, settings, query_only=False)
+
+
+def build_query_backend(args, settings):
+    """Explicit development query composition, not a custom product approval.
+
+    No environment flag selects this root. Final identity/scope activation belongs
+    to the trusted 09/10 composition; this function never grants a management scope.
+    """
+    return _build_backend(args, settings, query_only=True)
+
+
+def _build_backend(args, settings, *, query_only):
     token = os.environ.get('OURNOTES_BACKEND_TOKEN', '')
     require(len(token) >= 32, 'backend_token_required')
     require(1 <= args.port <= 65535, 'backend_port')
@@ -40,24 +49,27 @@ def build_backend(args, settings):
     backend = None
     try:
         settings = replace(settings, app_id='', app_secret='')
+        if query_only:
+            settings = replace(settings, ai_api_key='', chat_engine='legacy', update_notices=False)
+            parser = LocalQueryParser(settings)
+        else:
+            from ..ai_query import AIQueryParser
+            parser = AIQueryParser(settings)
         repository = SongRepository(settings.data_base, settings.cache_file, settings.cache_ttl_hours,
                                     chart_source=settings.chart_source, data_source=settings.data_source)
         configure_sources(repository, settings)
-        backend = Backend(repository, AIQueryParser(settings), settings, instance_id=args.instance_id,
+        backend = Backend(repository, parser, settings, instance_id=args.instance_id,
                           app_id=args.app_id, ledger_path=Path(args.state_dir)/'deliveries-v1.sqlite3',
-                          diagnostics_enabled=diagnostics=='1', **capacities)
-        backend.knowledge = KnowledgeService(settings.knowledge_dir or CONFIG_ROOT/'knowledge'/'on',
-            Path(args.state_dir)/'knowledge-v1.sqlite3', LocalBgeEncoder(settings.knowledge_model_dir))
-        backend.knowledge.observe()
-        backend.model_runtime = ModelRuntime(backend, Path(args.state_dir)/'usage-v1.sqlite3')
+                          diagnostics_enabled=diagnostics=='1',
+                          code_files=QUERY_CODE_FILES if query_only else CODE_FILES, **capacities)
+        if query_only:
+            backend.query_runtime = QueryRuntime(backend)
+        else:
+            from .personal_runtime import configure_personal
+            configure_personal(backend, args, settings)
         backend.runtime_tasks = RuntimeTasks(repository, settings, backend.knowledge)
         SourceOperations(backend).register()
         RuntimeOperations(backend).register()
-        if settings.update_notices:
-            notice_ai = AIClient(settings.ai_base_url, settings.ai_api_key, settings.ai_model, settings.ai_reasoning_effort, settings.ai_openai_proxy) if settings.ai_api_key else None
-            reports = NoticeReports(CONFIG_ROOT, settings.cache_file.with_name('update-notices.sqlite3'), args.app_id,
-                                    source=Path(os.getenv('OURNOTES_RELEASE_SOURCE', str(RELEASE_SOURCE))), ai_client=notice_ai)
-            backend.notices = NoticeGateway(backend, reports)
         backend.data_owner = owner
         return create_app(backend, token, repository.load)
     except BaseException:

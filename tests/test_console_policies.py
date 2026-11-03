@@ -25,6 +25,134 @@ def native_profile(**changes):
                         'fixture-key',**changes)
 
 
+class QueryCompositionTests(Fixture, unittest.IsolatedAsyncioTestCase):
+    """Real shared composition/HTTP entry; public data and remote IO are fixtures."""
+    from test_continuation import BackendContinuationTests as Helpers
+    request = Helpers.request
+    event = Helpers.event
+
+    async def asyncSetUp(self):
+        import time
+        from types import SimpleNamespace
+        from aiohttp.test_utils import TestClient, TestServer
+        from ournotes_bot.config import Settings
+        from ournotes_bot.application import backend_bootstrap as bootstrap
+        self.setup_repo()
+        self.now = time.time()
+        root = self.repo.cache_file.parent
+        settings = Settings('', '', self.repo.data_base, self.repo.cache_file, 6,
+                            ai_api_key='fixture-valid-key', chat_engine='agent', update_notices=True)
+        args = SimpleNamespace(port=8765, instance_id='fixture', app_id='app', state_dir=str(root/'state'))
+        real_create = bootstrap.create_app
+        def create(backend, *args):
+            self.backend = backend
+            return real_create(backend, *args)
+        self.repo.load = Mock()
+        self.repo.refresh = Mock()
+        self.repo.refresh_song_traits = Mock()
+        self.repo.current_query_view = Mock(return_value=self.repo)
+        with patch.dict(os.environ, {'OURNOTES_BACKEND_TOKEN':'x'*32, 'OURNOTES_RUNTIME_DATA_DIR':str(root/'runtime')}), \
+             patch.object(bootstrap, 'SongRepository', return_value=self.repo), \
+             patch.object(bootstrap, 'create_app', side_effect=create):
+            app = bootstrap.build_query_backend(args, settings)
+        self.client = TestClient(TestServer(app), headers={'Authorization':'Bearer '+'x'*32, 'X-Taki-Instance':'fixture'})
+        await self.client.start_server()
+        self.addAsyncCleanup(self.client.close)
+        for _ in range(100):
+            if self.backend.ready: break
+            await asyncio.sleep(.01)
+        self.assertTrue(self.backend.ready)
+        await self.backend.register('e1')
+        self.backend.reference_profiles = frozenset({'fixture'})
+
+    async def prepare_http(self, request):
+        response = await self.client.post('/v1/requests', json=request)
+        self.assertLess(response.status, 300, await response.text())
+        for _ in range(500):
+            response = await self.client.get('/v1/requests/'+request['request_id'], headers={'X-Taki-Epoch':'e1'})
+            value = await response.json()
+            if value.get('status') != 'preparing': return value
+            await asyncio.sleep(.01)
+        self.fail('query composition did not prepare')
+
+    async def test_real_group_c2c_rules_with_key_do_not_construct_personal_owners(self):
+        from ournotes_bot.application.backend_protocol import digest
+        from ournotes_bot.query.contracts.info import InfoAnswer
+        from ournotes_bot.natural_query.parser import LocalQueryParser
+        self.assertIsInstance(self.backend.parser, LocalQueryParser)
+        self.assertIsNone(self.backend.model_runtime)
+        self.assertIsNone(self.backend.knowledge)
+        self.assertIsNone(self.backend.notices)
+        self.assertFalse(self.backend.parser.policy_capabilities()['model_configured'])
+        with patch.object(self.backend.parser._agent, 'run_model', side_effect=AssertionError('model called')), \
+             patch('ournotes_bot.query.public_queries.execute_arena', return_value=InfoAnswer('捕获的联赛人数', 'success')) as execute:
+            for seq, alias in enumerate(('/查', '/问', '/ask'), 1):
+                request = self.request('local'+str(seq), seq)
+                request['body'] = alias+' MyGO竞技场人数'
+                if seq == 2:
+                    request.update(kind='c2c', conversation_id='u1')
+                    request['request_id'] = digest(['fixture','app','qq','c2c','u1','u1',request['message_id']])
+                plan = await self.prepare_http(request)
+                self.assertEqual(plan['parts'][0]['text'], '捕获的联赛人数')
+                self.assertNotIn('pending_model_permission', plan)
+                self.event(plan,'intent'); self.event(plan,'ack')
+            self.assertEqual(execute.call_count, 3)
+        self.assertEqual(set(self.backend.runtime_tasks.named_tasks), {'catalog','traits'})
+        self.assertFalse(list(self.repo.cache_file.parent.rglob('chat*.sqlite3')))
+        self.assertFalse(list(self.repo.cache_file.parent.rglob('usage*.sqlite3')))
+
+    async def test_direct_chat_admin_and_old_agent_settings_cannot_enable_chat(self):
+        for path in ('/v1/chat/observations','/v1/chat/candidates','/v1/admin/model','/v1/admin/chat/groups/g1/settings'):
+            response = await self.client.post(path, json={})
+            self.assertEqual(response.status,404)
+        ready = await (await self.client.get('/v1/ready')).json()
+        self.assertNotIn('chat_observation_v1', ready['features'])
+        for seq, body in enumerate(('/聊 你好','立希你好','普通聊天'), 1):
+            request = self.request('chat'+str(seq), seq); request['body'] = body
+            plan = await self.prepare_http(request)
+            self.assertNotIn('pending_model_permission', plan)
+            self.assertFalse(any(work.chat for work in self.backend.works.values()))
+        self.assertIsNone(self.backend.model_runtime)
+
+    async def test_shared_detail_rechecks_after_current_source_read(self):
+        import time
+        from types import SimpleNamespace
+        from unittest.mock import AsyncMock
+        work = SimpleNamespace(active=True, content_deadline=time.monotonic()+30, anchor=None, lease=None)
+        def invalidate():
+            work.active=False
+            return self.repo
+        self.repo.current_query_view.side_effect=invalidate
+        with patch.object(self.backend.gate,'prepare_followup',new_callable=AsyncMock) as prepare:
+            result=await self.backend.query_runtime.followup(work,self.context(),Operation('detail',''))
+            self.assertEqual(result.business_status,'execution_timeout')
+            prepare.assert_not_awaited()
+
+    async def test_local_ack_detail_then_unknown_invalidates_query_topic(self):
+        with patch('ournotes_bot.application.replies.render_prepared',
+                   side_effect=lambda reply,result,repository,locale,candidate=None: PreparedReply(reply,context=candidate)):
+            request=self.request('list',1);request['body']='/查 查曲 MyGO'
+            first=await self.prepare_http(request)
+            self.event(first,'intent');self.event(first,'ack')
+            self.repo.current_query_view.reset_mock()
+            request=self.request('detail',2);request['body']='/查 选 1'
+            detail=await self.prepare_http(request)
+            self.assertEqual(detail['status'],'prepared')
+            self.repo.current_query_view.assert_called_once()
+            self.assertEqual(self.event(detail,'intent')['permission'],'granted')
+            self.event(detail,'aborted')
+            self.assertTrue(self.backend.ledger.has_unknown(detail['delivery_id']))
+            request=self.request('expired',3);request['body']='/继续'
+            expired=await self.prepare_http(request)
+            self.assertEqual(expired['parts'],[])
+            self.assertFalse(expired['send_allowed'])
+            self.event(detail,'ack')
+            self.assertFalse(self.backend.conversations.anchors)
+            request=self.request('new',4);request['body']='/查 查曲 MyGO'
+            fresh=await self.prepare_http(request)
+            self.assertEqual(self.event(fresh,'intent')['permission'],'granted')
+
+
 class WeightedUsageTests(unittest.TestCase):
     def test_cache_write_cost_and_late_usage_keep_legacy_usage_shape(self):
         from fractions import Fraction

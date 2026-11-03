@@ -17,7 +17,7 @@ from ..natural_query.on_query import public_information_command
 from ..natural_query.query_validation import OutcomeCode
 from ..natural_query.native_tools import TOOLS, validate_call, execute, scope_for
 from ..sources.model_provider import NativeClient, request_body
-from ..data import DataError
+from .query_runtime import QueryRuntime, check_query_work, confirmed_page
 from ..sources.errors import ChartDataError
 from .site_lookup import SiteLookup
 from .model_config import ModelConfiguration
@@ -314,41 +314,21 @@ class ModelRuntime:
             require(self.agent.entity_valid(work),'query_source_changed')
             require(self.agent.web_valid(work),'chat_capability_revoked')
             require(self.agent.proactive.valid(work),'proactive_stale')
-        require(work.active and time.monotonic()<deadline,'execution_timeout')
-        require(time.monotonic()<work.content_deadline,'context_expired')
-        if work.anchor:
-            require(time.monotonic()<work.anchor.expires and work.anchor.snapshot_id in self.backend.conversations.snapshots,'context_expired')
-        if work.lease:
-            require(self.backend.contexts.active(work.lease),'context_expired')
-        require(self.backend.valid_evidence(leases),'knowledge_revoked')
+        check_query_work(self.backend,work,deadline,leases)
 
     def previous(self,work):
         if not work.anchor: return (),()
-        snapshot=self.backend.conversations.snapshots.get(work.anchor.snapshot_id)
-        require(snapshot is not None and 0<=work.anchor.page<len(snapshot.pages),'context_expired')
-        page=snapshot.pages[work.anchor.page]
+        page=confirmed_page(self.backend,work)
         context=work.anchor.context
         history=getattr(context,'history',()) or (('assistant',page.text[:6000]),)
         return history,tuple(getattr(context,'evidence',()))
 
     async def current_repository(self):
-        try:
-            view = await self.backend.gate.run(self.backend.repository.current_query_view)
-            require(not isinstance(view,replies.PreparedReply),'query_busy')
-            return view
-        except (DataError,OSError,ValueError,KeyError,TypeError):
-            raise ModelError('source_unavailable') from None
+        return await QueryRuntime(self.backend).current_repository()
 
     async def followup(self,work,context,operation):
-        """Native result details use the same current-version contract as queries."""
-        try:
-            _,leases=self.previous(work)
-            self.check(work,work.content_deadline,leases)
-            repository=await self.current_repository()
-            self.check(work,work.content_deadline,leases)
-            return await self.backend.gate.prepare_followup(context,operation,repository)
-        except (ModelError,ProtocolError) as exc:
-            return failure(exc.code if isinstance(exc,ProtocolError) else str(exc))
+        return await QueryRuntime(self.backend).followup(work,context,operation,
+                                                        validate=self.check,failure=failure)
 
     async def prepare(self,work,content):
         question=query_text(content)

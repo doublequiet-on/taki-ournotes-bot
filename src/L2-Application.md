@@ -1,5 +1,7 @@
 # L2 Application Runtime — 启动与运行支撑
 
+`backend_bootstrap.build_backend` 保持个人入口；`build_query_backend` 是显式开发验证组合根，使用 `natural_query.parser.LocalQueryParser` 和 [query_runtime.py](ournotes_bot/application/query_runtime.py)，不初始化聊天、模型用量账、知识服务或公告。它不是已批准的定制发行入口。个人初始化移至 [personal_runtime.py](ournotes_bot/application/personal_runtime.py)；ModelRuntime 委托同一 QueryRuntime 完成当前目录详情与双重有效性检查。共享 `ReadOnlyContext` 位于 [domain/query_context.py](ournotes_bot/domain/query_context.py)，conversation_state 保留兼容导出。新组合证据及物理裁剪剩余项见 [任务08集成](../docs/TASK08_INTEGRATION.md)。
+
 [chat_recovery.py](ournotes_bot/application/chat_recovery.py) 协调最终候选暂存、首回执后的幂等历史投影及撤权清理；不恢复发送或接续资格。存储升级与回退门见 [运行说明](../docs/CHAT_AGENT_RUNBOOK.md#a0-回执恢复与批准代际)。
 
 ChatStore 启动会删除缺少投影来源证明的旧回复、派生摘要及审计副本；保留可识别的人类参与消息、有效候选和新投影。来源清理与 schema 4 升级同事务完成，旧版不得绕过这一迁移。

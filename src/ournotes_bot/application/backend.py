@@ -116,7 +116,7 @@ class Work:
 
 class Backend:
     def __init__(self, repository, parser, settings, *, instance_id, app_id, ledger_path,
-                 clock=time.time, plan_capacity=64, byte_capacity=128_000_000, diagnostics_enabled=True,
+                 clock=time.time, code_files=CODE_FILES, plan_capacity=64, byte_capacity=128_000_000, diagnostics_enabled=True,
                  reference_profiles=(), ledger_request_capacity=4096,
                  ledger_context_capacity=4096, ledger_epoch_capacity=4096):
         require(identity(instance_id) and identity(app_id), 'configured_identity')
@@ -124,7 +124,7 @@ class Backend:
         self.instance_id, self.app_id, self.clock = instance_id, app_id, clock
         self.runtime = uuid.uuid4().hex
         self.code_digest = hashlib.sha256(b''.join((Path(__file__).parent/name).read_bytes()
-            for name in CODE_FILES)).hexdigest()
+            for name in code_files)).hexdigest()
         self.ledger = Ledger(ledger_path, instance_id+'\0'+app_id, self.runtime, clock(),
                              request_capacity=ledger_request_capacity, context_capacity=ledger_context_capacity,
                              epoch_capacity=ledger_epoch_capacity)
@@ -146,6 +146,7 @@ class Backend:
         self.runtime_tasks = None
         self.knowledge = None
         self.model_runtime = None
+        self.query_runtime = None
         self.notices = None
         self.data_owner = None
         self._close_task = None
@@ -356,6 +357,8 @@ class Backend:
         if work.chat:
             content=await self.model_runtime.agent.proactive.coalesce_addressed(work,content)
             return await self.model_runtime.prepare(work,content)
+        if self.query_runtime is not None and replies.is_ai_request(content) and work.request.policy.natural_query!='off':
+            return await self.query_runtime.prepare(work, content)
         if self.model_runtime is not None and replies.is_ai_request(content) and work.request.policy.natural_query!='off':
             return await self.model_runtime.prepare(work, content)
         if not replies.is_ai_request(content) or work.request.policy.natural_query == 'off' or not hasattr(self.parser, 'prepare_local'):
@@ -464,10 +467,11 @@ class Backend:
                     result = await self.prepare_command(work, commands[0]) if current is not None else replies.PreparedReply(MISSING)
                 else:
                     query_context = current.query_context if isinstance(current,replies.DeliveryCursor) else current
-                    native_detail = (self.model_runtime is not None and work.operation.kind != 'continue'
+                    detail_runtime = self.model_runtime or self.query_runtime
+                    native_detail = (detail_runtime is not None and work.operation.kind != 'continue'
                                      and getattr(current,'origin','unknown') in ('local','model')
                                      and getattr(query_context,'meta',None) is None)
-                    result = (await self.prepare_call(work,self.model_runtime.followup(work,current,work.operation)
+                    result = (await self.prepare_call(work,detail_runtime.followup(work,current,work.operation)
                               if native_detail else self.gate.prepare_followup(current, work.operation, self.repository))
                               if current is not None else replies.PreparedReply(MISSING))
                 parts = replies.expand_replies([result],text_limit=text_limit)
@@ -803,7 +807,9 @@ def create_app(backend, token, initialize=None):
                      'management_capabilities': ['admin_read_v1', 'telemetry_v1', 'group_policies_v1', 'ops_v1'],
                      'features': ['classify', 'gateway_retire', 'ack_context_guard', 'notice_gateway_v1',
                                   'quoted_context_v1', 'fixed_snapshot_v1', 'current_model_permit_v1', 'independent_delivery_v1',
-                                  'chat_observation_v1','chat_images_v1'],
+                                  'chat_observation_v1','chat_images_v1'] if backend.query_runtime is None else
+                                 ['classify','gateway_retire','ack_context_guard','quoted_context_v1',
+                                  'fixed_snapshot_v1','independent_delivery_v1'],
                      'reference_profiles': sorted(backend.reference_profiles)}, 200 if accepting else 503)
     async def classify(request):
         value = await read_json(request)
@@ -925,8 +931,10 @@ def create_app(backend, token, initialize=None):
             return json({'protocol':PROTOCOL,'candidate':True,'plan':await backend.submit(value,proactive=candidate)})
         except ModelError:return json({'protocol':PROTOCOL,'candidate':False})
         except (sqlite3.Error,OSError,ValueError):raise ProtocolError('chat_service_unavailable',503) from None
-    from .library_admin import LibraryAdmin
-    library=LibraryAdmin(backend)
+    library = None
+    if backend.query_runtime is None:
+        from .library_admin import LibraryAdmin
+        library = LibraryAdmin(backend)
     async def library_status(request):
         from ..domain.story import StoryError
         from ..domain.knowledge import KnowledgeError
@@ -994,7 +1002,7 @@ def create_app(backend, token, initialize=None):
     async def ops_notice_target(request): return json(backend.admin.notice_target(request.match_info['gid']))
     async def admin_telemetry(request):
         return json(backend.admin.telemetry(await read_json(request), request.headers.get('X-Taki-Epoch')))
-    app.add_routes([web.get('/v1/health', health), web.get('/v1/ready', ready),
+    routes = [web.get('/v1/health', health), web.get('/v1/ready', ready),
                     web.post('/v1/gateways', register), web.post('/v1/gateways/retire', retire),
                     web.post('/v1/classify', classify), web.post('/v1/requests', submit),
                     web.post('/v1/chat/observations',chat_observation),web.post('/v1/chat/candidates',chat_candidate),
@@ -1022,7 +1030,12 @@ def create_app(backend, token, initialize=None):
                     web.get('/v1/admin/ops/jobs', ops_jobs), web.post('/v1/admin/ops/jobs', ops_submit),
                     web.get('/v1/admin/ops/jobs/{jid}', ops_detail),
                     web.get('/v1/admin/ops/notice-targets/{gid}', ops_notice_target),
-                    web.get('/v1/admin/ops/export', ops_export), web.get('/v1/admin/ops/export/{rid}', ops_export)])
+                    web.get('/v1/admin/ops/export', ops_export), web.get('/v1/admin/ops/export/{rid}', ops_export)]
+    if backend.query_runtime is not None:
+        # Development query composition, not a product capability selection.
+        routes = [route for route in routes if not route.path.startswith((
+            '/v1/chat/', '/v1/admin/chat/', '/v1/admin/model', '/v1/admin/library', '/v1/notices'))]
+    app.add_routes(routes)
     async def lifetime(app):
         async def load():
             try:

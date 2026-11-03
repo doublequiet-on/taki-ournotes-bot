@@ -8,7 +8,7 @@ from collections import OrderedDict
 from dataclasses import dataclass, replace, asdict
 
 from ..query.continuation import ContextKey, QueryContext
-from ..domain.knowledge import KnowledgeScope
+from ..domain.query_context import ReadOnlyContext
 
 
 @dataclass(frozen=True)
@@ -19,20 +19,6 @@ class Anchor:
     snapshot_id: str
     page: int
     expires: float
-
-
-@dataclass(frozen=True)
-class ReadOnlyContext:
-    text: str
-    origin: str = 'direct'
-    evidence: tuple = ()
-    history: tuple = ()
-    facts: str = ''
-    # Last grounded knowledge request; volatile, ACK-bound and never a fact source.
-    topic: str = ''
-    knowledge_scope: KnowledgeScope | None = None
-    focus: str = ''
-    chat_topic: str = ''
 
 
 @dataclass(frozen=True)

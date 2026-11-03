@@ -11,7 +11,8 @@ from functools import partial
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from importlib.resources import files
-from ..ai_query import AIQueryParser, is_ai_request
+from ..natural_query.parser import LocalQueryParser
+from ..natural_query.query_agent import is_ai_request
 from ..sources.chart_data import ChartDataError, load_chart_data, load_chart_score
 from ..commands import (CommandResult, handle_command, locale_for, page_notice,
                        page_slice, resolve_command, split_commands)
@@ -249,7 +250,7 @@ class QueryGate:
         self.redact = redact
 
     async def prepare(self, content: str, repository: SongRepository,
-                      ai_parser: AIQueryParser) -> PreparedReply | None:
+                      ai_parser: LocalQueryParser) -> PreparedReply | None:
         function = partial(prepare_reply, log_content=False) if self.redact else prepare_reply
         return await self._run(function, content, repository, ai_parser)
 
@@ -332,7 +333,7 @@ class ReplySequencer:
 
 
 async def prepare_commands(commands: list[str], gate: "QueryGate", repository: SongRepository,
-                           ai_parser: AIQueryParser, limit: int, *, observe=None, prepare=None, text_limit=1800) -> tuple[list["PreparedReply"], int]:
+                           ai_parser: LocalQueryParser, limit: int, *, observe=None, prepare=None, text_limit=1800) -> tuple[list["PreparedReply"], int]:
     """Prepare several commands concurrently and return replies in asked order.
 
     Preparation is bounded by `gate`, so a burst queues instead of swamping the
@@ -474,7 +475,7 @@ def _captured_query(repository, *, enabled=True):
         yield capture() if enabled else repository
 
 
-def image_reply(content: str, repository: SongRepository, ai_parser: AIQueryParser | None = None) -> bytes | None:
+def image_reply(content: str, repository: SongRepository, ai_parser: LocalQueryParser | None = None) -> bytes | None:
     """Compatibility helper for local previews; live replies use prepare_reply."""
     with _captured_query(repository, enabled=not is_ai_request(content)) as view:
         return _image_reply(content, view, ai_parser)
@@ -492,7 +493,7 @@ def _image_reply(content, repository, ai_parser):
 
 
 def prepare_reply(content: str, repository: SongRepository,
-                   ai_parser: AIQueryParser, *, log_content: bool = True, outcome=None,
+                   ai_parser: LocalQueryParser, *, log_content: bool = True, outcome=None,
                    catalog_before=None) -> PreparedReply | None:
     with _captured_query(repository, enabled=not is_ai_request(content)) as view:
         return _prepare_reply(content, view, ai_parser, log_content=log_content,

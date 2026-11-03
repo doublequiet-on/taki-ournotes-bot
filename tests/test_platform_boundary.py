@@ -11,6 +11,53 @@ import unittest
 
 
 class PlatformBoundaryTests(unittest.TestCase):
+    def test_query_composition_has_no_personal_runtime_import_or_digest_reads(self):
+        probe = textwrap.dedent("""
+            import asyncio
+            import importlib.abc
+            import os
+            from pathlib import Path
+            import sys
+            import tempfile
+            from types import SimpleNamespace
+            from unittest.mock import patch
+            class NoPersonal(importlib.abc.MetaPathFinder):
+                def find_spec(self, fullname, path=None, target=None):
+                    if fullname.startswith(('ournotes_bot.application.chat_', 'ournotes_bot.sources.chat_')) or fullname in {
+                        'ournotes_bot.application.personal_runtime','ournotes_bot.application.model_runtime',
+                        'ournotes_bot.application.persona','ournotes_bot.application.story_service',
+                        'ournotes_bot.application.knowledge_service','ournotes_bot.sources.knowledge_embeddings'}:
+                        raise AssertionError('personal import: '+fullname)
+            sys.meta_path.insert(0,NoPersonal())
+            from ournotes_bot.config import Settings
+            from ournotes_bot.application import backend_bootstrap as bootstrap
+            captured=[]
+            create=bootstrap.create_app
+            def actual_app(backend,*args):
+                captured.append(backend)
+                return create(backend,*args)
+            read=Path.read_bytes
+            def query_digest(path):
+                if path.name in {'model_runtime.py','chat_agent.py','personal_runtime.py','persona.py'}:
+                    raise AssertionError('personal digest read: '+path.name)
+                return read(path)
+            with tempfile.TemporaryDirectory() as folder:
+                root=Path(folder)
+                settings=Settings('','','https://fixture.invalid',root/'data/cache.json',6,
+                                  ai_api_key='fixture-key',chat_engine='agent',update_notices=True)
+                args=SimpleNamespace(port=8765,instance_id='fixture',app_id='app',state_dir=str(root/'state'))
+                with patch.dict(os.environ,{'OURNOTES_BACKEND_TOKEN':'x'*32,'OURNOTES_RUNTIME_DATA_DIR':str(root/'data')}), \
+                     patch.object(bootstrap,'create_app',side_effect=actual_app), patch.object(Path,'read_bytes',query_digest):
+                    app=bootstrap.build_query_backend(args,settings)
+                assert captured[0].model_runtime is None and captured[0].knowledge is None
+                assert not any('/v1/chat/' in str(r.resource) for r in app.router.routes())
+                asyncio.run(captured[0].close())
+        """)
+        env={**os.environ,'PYTHONPATH':str(Path(__file__).resolve().parents[1]/'src'),
+             'QQ_APP_ID':'','QQ_APP_SECRET':'','AI_API_KEY':''}
+        result=subprocess.run([sys.executable,'-B','-c',probe],env=env,capture_output=True,text=True)
+        self.assertEqual(result.returncode,0,result.stdout+result.stderr)
+
     def test_core_works_without_qq_or_credentials(self):
         # A fresh interpreter prevents other tests' imports from hiding a dependency.
         probe = textwrap.dedent("""

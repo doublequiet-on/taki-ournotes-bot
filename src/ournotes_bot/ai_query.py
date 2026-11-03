@@ -21,7 +21,7 @@ from .natural_query.local_query import (
 )
 from .natural_query.query_agent import AgentOutcome, AgentState, QueryAgent, is_ai_request, query_text
 from .natural_query.query_capabilities import GLOBAL_RULES
-from .natural_query.query_metrics import QueryMetrics
+from .natural_query.parser import LocalQueryParser
 from .natural_query.query_validation import AMBIGUOUS_ENTITY, UNKNOWN_ENTITY, UNSUPPORTED, OutcomeCode
 from .structured_query import QueryResult, QuerySpec
 
@@ -31,21 +31,12 @@ SYSTEM_PROMPT = GLOBAL_RULES
 _query_text = query_text
 
 
-class AIQueryParser:
+class AIQueryParser(LocalQueryParser):
     """Thin facade retained for main.py, qq.py and existing integrations."""
 
-    def metrics_snapshot(self):
-        return self._metrics.snapshot()
-
-    def policy_capabilities(self):
-        return {'model_configured': self._agent.ai_enabled, 'daily_limit': self._agent.daily_limit}
-
     def __init__(self, settings: Settings) -> None:
-        self.settings = settings
+        super().__init__(settings)
         self._quota = DailyQuota(settings.ai_quota_file or settings.cache_file.with_name("ai-quota.json"))
-        self._metrics = QueryMetrics(
-            settings.ai_metrics_file or settings.cache_file.with_name("ai-metrics.json")
-        )
         self._client = AIClient(settings.ai_base_url, settings.ai_api_key, settings.ai_model, settings.ai_reasoning_effort, settings.ai_openai_proxy)
         self._agent = QueryAgent(
             ai_enabled=bool(settings.ai_api_key),
@@ -56,25 +47,6 @@ class AIQueryParser:
                 question, prompt, timeout,
             ),
         )
-
-    def command_for(self, content: str) -> str | None:
-        return self._agent.command_for(content)
-
-    def spec_for(self, content: str) -> QuerySpec | None:
-        return self._agent.spec_for(content)
-
-    def outcome_code_for(self, content: str) -> OutcomeCode | None:
-        return self._agent.outcome_code_for(content)
-
-    def state_for(self, content: str) -> AgentState | None:
-        return self._agent.state_for(content)
-
-    def answer(self, content: str, repository: SongRepository) -> str:
-        return self.answer_with_outcome(content, repository).text
-
-    def answer_with_plan(self, content: str, repository: SongRepository) -> tuple[str, QueryResult | CommandResult | None]:
-        outcome = self.answer_with_outcome(content, repository)
-        return outcome.text, outcome.result
 
     def answer_with_outcome(self, content: str, repository: SongRepository) -> AgentOutcome:
         return self._agent.run(content, repository)
@@ -87,9 +59,6 @@ class AIQueryParser:
 
     def resume_model(self, deferred, repository):
         return self._agent.resume(deferred, repository)
-
-    def sweep(self):
-        self._agent.sweep()
 
     def _request(self, query: str, system_prompt: str = SYSTEM_PROMPT,
                  timeout: float = 12.0) -> ModelResponse:
