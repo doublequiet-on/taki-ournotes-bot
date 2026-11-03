@@ -466,6 +466,103 @@ class StoryPublicationTests(unittest.TestCase):
             self.service.approve_persona('test-persona','fixture-reviewer','fixture-human-review',revision=status['source_revision'])
         self.assertIsNone(self.service.persona())
 
+    def test_repeated_retention_checks_parse_release_once_and_observe_withdrawals(self):
+        from unittest.mock import patch
+        from ournotes_bot.application import story_service
+        revision=self.publish()['source_revision']
+        service=story_service.StoryService(self.service.root)
+        with patch.object(story_service,'parse_bundle',wraps=story_service.parse_bundle) as parse:
+            for _ in range(14):self.assertTrue(service.valid(revision,0))
+            self.assertEqual(parse.call_count,1)
+            self.service.withdraw('test-story','fixture withdrawal')
+            self.assertFalse(service.valid(revision,0))
+            self.assertEqual(parse.call_count,1)
+            updated=self.bundle();updated['aliases']['测试']='合成'
+            next_revision=self.publish(updated)['source_revision']
+            parse.reset_mock()
+            self.assertFalse(service.valid(revision,1))
+            self.assertTrue(service.valid(next_revision,1))
+            self.assertEqual(parse.call_count,1)
+            self.service.rollback(revision)
+            parse.reset_mock()
+            self.assertTrue(service.valid(revision,1))
+            self.assertEqual(parse.call_count,1)
+
+    def test_cached_release_replacement_corruption_and_deletion_fail_closed(self):
+        import os
+        from ournotes_bot.domain.story import StoryError
+        revision=self.publish()['source_revision']
+        release=self.service.release_path(revision)
+        original=release.read_bytes();info=release.stat()
+        # Same size and mtime: atomic replacement still changes file identity.
+        replacement=release.with_suffix('.tmp')
+        replacement.write_bytes(b'!'+original[1:])
+        os.utime(replacement,ns=(info.st_atime_ns,info.st_mtime_ns))
+        os.replace(replacement,release)
+        for _ in range(2):
+            with self.assertRaisesRegex(StoryError,'story_json'):self.service.valid(revision,0)
+        release.write_bytes(original)
+        self.assertTrue(self.service.valid(revision,0))
+        from ournotes_bot.sources.story_files import atomic_json
+        altered=self.bundle();altered['aliases']['测试']='合成'
+        atomic_json(release,altered)
+        with self.assertRaisesRegex(StoryError,'story_revision_mismatch'):self.service.valid(revision,0)
+        release.unlink()
+        with self.assertRaises(FileNotFoundError):self.service.valid(revision,0)
+
+    def test_release_changed_during_validation_is_not_cached(self):
+        from unittest.mock import patch
+        from ournotes_bot.application import story_service
+        from ournotes_bot.domain.story import StoryError
+        revision=self.publish()['source_revision']
+        service=story_service.StoryService(self.service.root)
+        release=service.release_path(revision)
+        read=story_service.read_json
+        def replace_after_read(path):
+            value=read(path)
+            if path==release:
+                replacement=release.with_suffix('.tmp')
+                replacement.write_bytes(release.read_bytes())
+                replacement.replace(release)
+            return value
+        with patch.object(story_service,'read_json',side_effect=replace_after_read):
+            with self.assertRaisesRegex(StoryError,'story_file_changed'):service.valid(revision,0)
+        self.assertTrue(service.valid(revision,0))
+
+    def test_pointer_changed_during_validation_is_not_cached(self):
+        from unittest.mock import patch
+        from ournotes_bot.application import story_service
+        from ournotes_bot.domain.story import StoryError
+        from ournotes_bot.sources.story_files import atomic_json
+        original=self.publish()['source_revision']
+        updated=self.bundle();updated['aliases']['测试']='合成'
+        newer=self.publish(updated)['source_revision']
+        self.service.rollback(original)
+        service=story_service.StoryService(self.service.root)
+        parse=story_service.parse_bundle
+        def switch_pointer(value,**kwargs):
+            bundle=parse(value,**kwargs)
+            atomic_json(service.root/'current.json',{'schema':'taki-story-pointer/1','revision':newer})
+            return bundle
+        with patch.object(story_service,'parse_bundle',side_effect=switch_pointer):
+            with self.assertRaisesRegex(StoryError,'story_pointer_changed'):service.valid(original,0)
+        self.assertIsNone(service._current_cache)
+        self.assertFalse(service.valid(original,0))
+        self.assertTrue(service.valid(newer,0))
+
+    def test_pointer_deletion_and_corruption_do_not_reuse_cached_release(self):
+        from ournotes_bot.domain.story import StoryError
+        from ournotes_bot.sources.story_files import atomic_json
+        original=self.publish()['source_revision']
+        pointer=self.service.root/'current.json'
+        pointer.write_text('!',encoding='utf-8')
+        with self.assertRaisesRegex(StoryError,'story_json'):self.service.valid(original,0)
+        pointer.unlink()
+        self.assertFalse(self.service.valid(original,0))
+        self.assertIsNone(self.service._current_cache)
+        atomic_json(pointer,{'schema':'taki-story-pointer/1','revision':original})
+        self.assertTrue(self.service.valid(original,0))
+
     def test_withdrawal_invalidates_existing_handles_and_survives_rollback(self):
         original=self.publish()['source_revision']
         handle=self.service.search('立希')['items'][0]['handle']
