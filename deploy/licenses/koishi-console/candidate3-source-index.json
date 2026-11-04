@@ -1,5 +1,5 @@
 {
-  "identity": "taki-console-candidate3-source-index.6",
+  "identity": "taki-console-candidate3-source-index.7",
   "license_material_status": {
     "newly_assembled_package_mappings": 24,
     "supplement_index_sha256": "34ced28faba576b74d35b553a187dfcd5245e8a0d9d662f30bcb1cb021c5cae9",
@@ -151,7 +151,7 @@
     },
     {
       "id": "icu_two_data_generation_v2",
-      "role": "ICU normalizer/properties 2.4.0 fixed generator recipe and preferred input relationships; no datagen execution; CLDR full archive referenced by official digest but not included",
+      "role": "Historical ICU generation relation v2; icuexportdata.cpp was recorded but omitted from ZIP. Preserved as audited evidence; superseded by icu_two_data_generation_v3, not an active complete delivery",
       "path": "runtime/task09/icu-generation-20261104/icu-data-generation-materials-v2.zip",
       "size": 10442583,
       "sha256": "e235455cdd54e3fdd48abdc980596c2f0061ba120f8de68489145aed882f2072"
@@ -162,6 +162,15 @@
       "path": "runtime/task09/license-assembly-20261104/rollup-license-supplement24-v1.zip",
       "size": 94916,
       "sha256": "0922573405ad4e38eb9bc1cb10e2d927cabc4a71f581c2a1ea4d81835bb30f04"
+    },
+    {
+      "id": "icu_two_data_generation_v3",
+      "role": "Corrected ICU delivery includes fixed 39287-byte icuexportdata.cpp; 57 embedded source/input declarations verified; no datagen execution, no complete offline tool/input promise",
+      "supersedes_material_id": "icu_two_data_generation_v2",
+      "path": "runtime/task09/icu-origin-fix-20261104/icu-data-generation-materials-v3.zip",
+      "size": 10458779,
+      "sha256": "9a4101997da99da7fb250b6068d6804903bc39cdb78668c1c0c4181d8c4300d0",
+      "manifest_sha256": "65ce49943fc85b2ad2735552323218de7028ac2779a3599875c4c11b3f611f6a"
     }
   ],
   "rebuild_profiles": [
