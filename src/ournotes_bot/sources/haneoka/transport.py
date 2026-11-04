@@ -1,6 +1,6 @@
 # L3
 # Input: Anonymous Haneoka HTTPS URL, caller-owned response cap and total timeout.
-# Output: Bounded decoded bytes and lowercase response headers, or ChartDataError.
+# Output: public_get bytes/headers; public_response status/bytes/headers, or ChartDataError.
 # Pos: Data / Sources Haneoka public HTTP facility; see ../L2-2.md.
 # Effects/Dependencies: Scoped thread-local connections; HTTPS only, no redirects/implicit proxy.
 """Public transport; resource permissions and refresh budgets belong to callers."""
@@ -62,6 +62,14 @@ def public_proxy_options():
 
 
 def public_get(url, limit, timeout):
+    status, body, headers = public_response(url, limit, timeout)
+    if status != 200:
+        raise ChartDataError(f"Haneoka HTTP {status}")
+    return body, headers
+
+
+def public_response(url, limit, timeout, *, header_retry=True):
+    """Bounded anonymous response, including pending and rate-limit status."""
     parts = urlsplit(url)
     if parts.scheme != "https" or parts.netloc != "haneoka.org" or parts.fragment:
         raise ChartDataError("Invalid Haneoka URL")
@@ -75,7 +83,7 @@ def public_get(url, limit, timeout):
                     timeout=aiohttp.ClientTimeout(total=timeout), trust_env=False,
                     cookie_jar=aiohttp.DummyCookieJar()))
             session = state['session']
-            for attempt in range(2):
+            for attempt in range(2 if header_retry else 1):
                 received_headers = False
                 try:
                     async with AsyncExitStack() as stack:
@@ -85,20 +93,23 @@ def public_get(url, limit, timeout):
                             timeout=aiohttp.ClientTimeout(total=timeout),
                             headers={"User-Agent": "Taki-chart/1", "Accept-Encoding": "gzip"},
                             **public_proxy_options(),
-                        )), timeout / 2 if attempt == 0 else None)
+                        )), timeout / 2 if header_retry and attempt == 0 else None)
                         received_headers = True
                         if response.status != 200:
-                            raise ChartDataError(f"Haneoka HTTP {response.status}")
+                            # Existing public_get rejects these at headers; public
+                            # queries need status/Retry-After, never an error body.
+                            return response.status, b'', {
+                                key.lower(): value for key, value in response.headers.items()}
                         chunks, size = [], 0
                         async for chunk in response.content.iter_chunked(65536):
                             size += len(chunk)
                             if size > limit:
                                 raise ChartDataError("Haneoka response is too large")
                             chunks.append(chunk)
-                        return b"".join(chunks), {
+                        return response.status, b"".join(chunks), {
                             key.lower(): value for key, value in response.headers.items()}
                 except (aiohttp.ClientConnectionError, asyncio.TimeoutError, ConnectionResetError) as exc:
-                    if attempt or received_headers or isinstance(exc, aiohttp.ClientSSLError):
+                    if not header_retry or attempt or received_headers or isinstance(exc, aiohttp.ClientSSLError):
                         raise
         try:
             # Both attempts, response bodies and cleanup share the caller's deadline.

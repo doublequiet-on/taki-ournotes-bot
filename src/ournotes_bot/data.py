@@ -274,6 +274,8 @@ class SongRepository:
         self.activity_calendars = {}
         from .sources.haneoka.activity_announcements import ActivityAnnouncements
         self.activity_announcements = ActivityAnnouncements()
+        from .sources.haneoka.public_queries import PublicQueries
+        self.public_queries = PublicQueries()
         self.metadata: dict[str, Any] = {}
         self._detail_cards: dict[int, Card] = {}
         self._detail_support_cards: dict[int, SupportCard] = {}

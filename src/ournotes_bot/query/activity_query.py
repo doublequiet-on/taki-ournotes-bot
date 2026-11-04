@@ -18,6 +18,90 @@ from ..sources.moenotes_events import SERVERS, SourceError, display_time, zone_l
 HELP = '/查活动 [jp/hk/kr/en]：当前／最近活动；/查活动 列表；/查活动 历史 [名称]；/查活动 ID或名称（日服）。'
 
 
+def detail_rows(record, section='', prefix='/查活动'):
+    result = []
+    if not section and hasattr(record, 'event_type_id'):
+        result.append(InfoRow('活动类型与榜制', (
+            f'活动类型 ID {record.event_type_id}（类型名称未确认）' if record.event_type_id is not None else '活动类型未获取',
+            '开放：' + '、'.join(record.ranking_modes) if record.ranking_modes else '开放榜制未获取')))
+    for group in record.details:
+        if section and group.name != section:
+            continue
+        if not section and group.name == '任务':
+            continue
+        facts = group.facts if section or group.name != '奖励' else tuple(f for f in group.facts if f.preview)
+        for fact in facts:
+            result.append(InfoRow(f'{group.name} · {fact.title}', fact.lines, image_url=fact.image_url,
+                                  kind='bonus' if group.name == '加成' else 'row', table=fact.table,image_kind=fact.image_kind,group=fact.group,reference=fact.reference))
+        if not group.complete:
+            result.append(InfoRow(group.name, ('关联资料不完整，缺失部分尚未获取。',)))
+        elif not facts:
+            result.append(InfoRow(group.name, ('没有已收录条目。' if section else f'完整明细：{prefix} {group.name}',)))
+    if not record.details:
+        result.append(InfoRow('详情资料', ('当前缓存尚未收录该项明细。',)))
+    if not section:
+        result.append(InfoRow('详情查询', tuple(prefix + ' ' + name for name in ('加成', '奖励', '任务', '卡池'))))
+    return tuple(result)
+
+
+def overview_rows(record, related, prefix):
+    def card_id(row):
+        return (('成员卡' if row.reference[0]==2 else '留影卡')+f' ID {row.reference[1]}',) if row.reference else ()
+    details = detail_rows(record, prefix=prefix)
+    groups = tuple(tuple(row for row in details if row.title.startswith(name + ' · ') or row.title == name)
+                   for name in ('加成', '奖励', '卡池'))
+    grouped = tuple(row for group in groups for row in group)
+    bonus_groups={}
+    for section in record.details:
+        if section.name!='加成':continue
+        for fact in section.facts:bonus_groups.setdefault(fact.group or '其他加成',[]).append(fact)
+    summaries=[]
+    order={'指定成员卡':0,'指定留影卡':1,'指定乐队':2,'指定属性':3}
+    for role in sorted(bonus_groups,key=lambda role:order.get(role,4)):
+        facts=bonus_groups[role]
+        values={}
+        for fact in facts:
+            for label,low,high in fact.bonus_ranges:
+                old=values.get(label,(low,high));values[label]=(min(old[0],low),max(old[1],high))
+        labels={'成员卡参数加成':'成员参数','留影卡参数加成':'留影参数','活动道具加成':'活动道具'}
+        body=' · '.join(labels.get(label,label)+' '+(f'+{low:g}%' if low==high else f'+{low:g}～{high:g}%')
+                        for label,(low,high) in values.items()) or '数值未确认'
+        if values and any(len(f.bonus_ranges)<len(f.table) for f in facts):body+='（部分数值未获取）'
+        pictures=tuple(dict.fromkeys(f.image_url for f in facts if f.image_url and not f.reference))
+        summaries.append(InfoRow(role,(body,),icons=pictures,
+            children=tuple(InfoRow(f.title) for f in facts)))
+    bonus_notes=tuple(value for row in groups[0] if row.kind!='bonus' for value in row.body)
+    bonuses=(InfoRow('活动加成',('依对象及档位变化；完整档位：'+prefix+' 加成',*bonus_notes),kind='bonus-summary',group='加成',children=tuple(summaries)),) if summaries else tuple(groups[0])
+    reward_groups={}
+    for row in groups[1]:reward_groups.setdefault((row.group,row.image_kind),[]).append(row)
+    rewards=[]
+    for (label,_),entries in reward_groups.items():
+        unique={}
+        for row in entries:
+            key=(row.reference,row.title,row.image_url,row.body[:2])
+            conditions=('；'.join(row.body[2:]),) if row.body[2:] else ()
+            if key in unique:unique[key]=replace(unique[key],body=tuple(dict.fromkeys((*unique[key].body,*conditions))))
+            else:unique[key]=replace(row,body=(*row.body[:2],*conditions))
+        shown={r.reference for r in related if r.kind=='card' and r.reference}
+        cards=[r for r in unique.values() if r.reference in shown]
+        other=[r for r in unique.values() if r.reference not in shown]
+        if cards:rewards.append(InfoRow(label or '活动奖励',tuple(' · '.join((*card_id(r),*r.body)) for r in cards)))
+        if other:rewards.append(InfoRow(label or '活动奖励',kind='gallery',
+            children=tuple(replace(r,body=(*r.body,*card_id(r))) for r in other)))
+    pools=[]
+    for row in groups[2]:
+        if row.group=='关联卡池':pools.append(replace(row,kind='recruitment'))
+        elif row.group=='卡池UP卡':
+            row=replace(row,body=(*row.body,*card_id(row)))
+            if pools and pools[-1].kind=='gallery':pools[-1]=replace(pools[-1],children=(*pools[-1].children,row))
+            else:pools.append(InfoRow('卡池UP卡',kind='gallery',children=(row,)))
+        else:pools.append(row)
+    return (*tuple(row for row in details if row.title == '活动类型与榜制'), *bonuses,
+            *tuple(row for row in related if row.kind!='song'),*rewards,
+            *tuple(row for row in related if row.kind=='song'),*pools,
+            *tuple(row for row in details if row not in grouped and row.title != '活动类型与榜制'))
+
+
 def _related_rows(record, catalog, *, challenge_song_ids=(), include_songs=True):
     cards = {}
     notes = []
@@ -29,7 +113,7 @@ def _related_rows(record, catalog, *, challenge_song_ids=(), include_songs=True)
             notes.append(label+'关联不完整；这里只列已确认的卡牌。')
     tags={'指定加成卡':'加成','卡牌奖励':'奖励','活动展示卡':'展示'}
     rows=[replace(card_rows((ref,),catalog,'')[0],label=' · '.join(labels),
-                  tags=tuple(tags[label] for label in labels)) for ref,labels in sorted(cards.items())]
+                  tags=tuple(tags[label] for label in labels),reference=(ref.resource_type,ref.id)) for ref,labels in sorted(cards.items())]
     if notes:rows.append(InfoRow('关联资料说明',tuple(notes)))
     if not include_songs:
         return tuple(rows)
@@ -44,7 +128,7 @@ def _related_rows(record, catalog, *, challenge_song_ids=(), include_songs=True)
     return tuple(rows)
 
 
-def _static(query, repository, now):
+def _static(query, repository, now, section=''):
     mode, term = 'search', query
     if query in {'列表', '全部'}:
         mode, term = 'list', ''
@@ -72,9 +156,12 @@ def _static(query, repository, now):
         if description:
             rows.append(InfoRow('活动说明', (description,)))
         rows.extend(_related_rows(record, catalog))
-        return answer((InfoView(record.title, '日服 · 活动详情', record.detail_image_url or record.image_url, tuple(rows), notes, 'detail',
+        rows = (rows[:1] + list(detail_rows(record, section, f'/查活动 {record.id}')) if section else
+                rows[:1] + list(overview_rows(record, rows[1:], f'/查活动 {record.id}')))
+        hero=(record.detail_image_url or record.image_url) if section else (record.image_url or record.detail_image_url)
+        return answer((InfoView(record.title, '日服 · 活动详情', hero, tuple(rows), notes, 'detail' if section else 'activity-summary',
                                 presentation='activity',visual_footer=footer(catalog,diagnostics=False),
-                                hero_kind='event' if record.detail_image_url else 'banner',hero_logo_url=record.logo_url),))
+                                hero_kind='event' if section and record.detail_image_url else 'banner',hero_logo_url=record.logo_url),))
     rows = (InfoRow(r.title, (f'活动 ID {r.id}', *period(r), f'资料状态：{state(r, now)}'),
                     r.image_url, f'/查活动 {r.id}', image_kind='wide',kind='banner',schedule=schedule(r,now,'活动'),
                     children=_related_rows(r,catalog,include_songs=False)) for r in records)
@@ -83,7 +170,7 @@ def _static(query, repository, now):
                             presentation='activity',visual_footer=footer(catalog,diagnostics=False)),))
 
 
-def _current(server, repository):
+def _current(server, repository, section=''):
     source = repository.event_cutoffs
     try:
         with source.foreground():
@@ -105,23 +192,41 @@ def _current(server, repository):
     notes = list(event.notes)
     visual_notes = list(event.notes)
     hero, hero_kind, logo = event.banner, 'banner', ''
-    if server == 'jp' and hasattr(repository, 'capture_catalog'):
+    matched = False
+    if hasattr(repository, 'capture_catalog'):
         catalog = repository.capture_catalog()
-        if available(catalog, 'activities'):
-            match = next((record for record in catalog.activities if str(record.id) == event.event_id
+        calendar = getattr(catalog, 'activity_calendars', {}).get('jp' if server == 'jp' else 'intl')
+        records = catalog.activities if server == 'jp' else calendar.records if calendar else ()
+        if records:
+            match = next((record for record in records if str(record.id) == event.event_id
                           and record.start_at is not None and record.end_at is not None
                           and round(record.start_at * 1000) == event.start_ms
                           and round(record.end_at * 1000) == event.end_ms), None)
             if match:
-                hero,hero_kind,logo=(match.detail_image_url,'event',match.logo_url) if match.detail_image_url else (event.banner,'banner','')
-                rows.extend(_related_rows(match, catalog,
-                    challenge_song_ids={song.music_id for song in event.songs}))
-                notes.extend(footer(catalog))
-                visual_notes.extend(footer(catalog,diagnostics=False))
+                matched = True
+                if server == 'jp':
+                    hero,hero_kind,logo=(match.detail_image_url,'event',match.logo_url) if match.detail_image_url else (event.banner,'banner','')
+                    if not section:hero,hero_kind,logo=match.image_url or event.banner,'banner',''
+                    local_songs={str(song.id):song for song in catalog.songs}
+                    for index,song in enumerate(event.songs,1):
+                        local=local_songs.get(song.music_id)
+                        if local and local.jacket_url:rows[index]=replace(rows[index],image_url=local.jacket_url)
+                    rows.extend(_related_rows(match, catalog,
+                        challenge_song_ids={song.music_id for song in event.songs}))
+                    notes.extend(footer(catalog))
+                    visual_notes.extend(footer(catalog,diagnostics=False))
+                else:
+                    visual_notes.append('补充资料来源：Haneoka intl（已核对活动身份与时间）')
+                prefix = '/查活动 ' + ('hk' if server == 'tw' else server)
+                rows = (rows[:1] + list(detail_rows(match, section, prefix)) if section else
+                        rows[:1] + list(overview_rows(match, rows[1:], prefix)))
+    if not matched:
+        missing = InfoRow(section or '补充资料', ('尚未取得与该服本期活动身份及时间一致的详情资料。',))
+        rows = rows[:1] + [missing] if section else rows + [missing]
     notes.append('资料来源：' + ('Haneoka（实时观测经 MoeNotes tracker）' if event.source == 'haneoka' else event.source))
     visual_notes.append(notes[-1])
     return answer((InfoView(event.title, subtitle=f'{SERVERS[server][0]} · 当前／最近活动', hero_url=hero,
-                            rows=tuple(rows), footer=tuple(notes), layout='detail',presentation='activity',
+                            rows=tuple(rows), footer=tuple(notes), layout='detail' if section else 'activity-summary',presentation='activity',
                             visual_footer=tuple(visual_notes),hero_kind=hero_kind,hero_logo_url=logo),))
 
 
@@ -203,6 +308,10 @@ def _calendar(server, mode, repository, now):
 
 def execute_activity(query, repository, *, now=None):
     query = query.strip()
+    parts = query.rsplit(None, 1)
+    section = parts[-1] if parts and parts[-1] in {'加成', '奖励', '任务', '卡池'} else ''
+    if section:
+        query = parts[0] if len(parts) > 1 else ''
     tokens = query.lower().split()
     server = 'jp'
     if tokens and tokens[-1] in {'日程', '日程开始', '下期'}:
@@ -216,9 +325,9 @@ def execute_activity(query, repository, *, now=None):
     if query and not normalize(query):
         return InfoAnswer(HELP, 'invalid_arguments')
     if not query or query in {'当前', '最近'}:
-        return _current(server, repository)
+        return _current(server, repository, section)
     if server != 'jp':
         return InfoAnswer('其他服务器目前只支持当前／最近活动。' + HELP, 'invalid_arguments')
     if not hasattr(repository, 'capture_catalog'):
         return InfoAnswer(HELP, 'invalid_arguments')
-    return _static(query, repository, time.time() if now is None else now)
+    return _static(query, repository, time.time() if now is None else now, section)

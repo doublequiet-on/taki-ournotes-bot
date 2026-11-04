@@ -1099,6 +1099,19 @@ class NativeRuntimeTests(Fixture,unittest.IsolatedAsyncioTestCase):
             await asyncio.sleep(.005)
         self.fail('native did not finish')
 
+    async def test_public_arena_grammar_stays_local_for_all_query_aliases(self):
+        from ournotes_bot.query.contracts.info import InfoAnswer
+        answer = InfoAnswer('合成竞技场人数：0')
+        for seq, alias in enumerate(('/查', '/问', '/ask'), 1):
+            with patch('ournotes_bot.query.public_queries.execute_arena', return_value=answer) as execute:
+                plan, attempts = await self.prepare_native(alias + ' MyGO竞技场人数', seq=seq)
+            self.assertEqual(attempts, [])
+            self.assertEqual(plan['parts'][0]['business_status'], 'success')
+            self.assertEqual(plan['parts'][0]['text'], answer.text)
+            execute.assert_called_once_with('MyGO 人数', self.repo)
+            self.event(plan, 'intent'); self.event(plan, 'ack')
+        self.client.request.assert_not_awaited()
+
     def social_responses(self, *, followup=False, text='这次我站原神，单纯偏心。', topic='general'):
         from ournotes_bot.domain.model_calls import AttemptResult,ToolCall,Usage
         return [AttemptResult('ok',Usage(10,0,2,None,12,'known'),
