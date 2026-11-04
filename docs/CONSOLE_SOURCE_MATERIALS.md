@@ -24,7 +24,9 @@
 - `napi 3.15.0` → `napi-sys 3.4.1` → `libloading/cfg-if`；
 - `swc_common 26.0.0` / `parking_lot 0.12.5` → `parking_lot_core/lock_api/scopeguard/smallvec/libc/cfg-if`。
 
-`redox_syscall`和`windows-link`按目标条件登记为非Linux选择，不混入选中源码集合。16个选中crate的官方`.crate`字节逐Cargo.lock checksum核验，27份原LICENSE/COPYING/NOTICE及Cargo.toml许可表达式进入`rollup-4.67.4-linux-x64-glibc-transitive-materials.zip`：3367015 bytes，SHA-256 `0a70a0e6412abf0fb75d60fb31ee7812278e27338bb365ba43c4a0e15f3a4197`。该材料没有重建Rollup原生二进制，也不恢复esbuild历史工具链搜索。
+`redox_syscall`和`windows-link`按目标条件登记为非Linux选择，不混入选中源码集合。已核的16个crate/27份原文保持关闭，不重复核验；它们只闭合上述三条链，不代表整个native闭包。针对11指出的真实差集，新增`rollup-4.67.4-linux-x64-glibc-napi-delta.zip`：1175096 bytes，SHA-256 `679f946e568ffea8bc0e2bd21cdd3f3bebbb451a757ab272e0194e08f21baf7a`。其中21个固定crate、40份原许可材料逐Cargo.lock checksum核验，补bitflags、`ctor(default-features=false)`、futures默认闭包、nohash-hasher、rustc-hash以及host build依赖napi-build 2.6.0；wasi-heap-sync不作用于本目标。
+
+`deploy/licenses/koishi-console/rollup-linux-x64-glibc-coverage.json`逐入口记录目标、feature、复用、排除和缺口。当前mimalloc与napi选中链闭合；napi-derive仍缺napi-derive/backend/convert_case外部源码材料，parse_ast仍缺SWC/anyhow外部闭包，xxhash仍缺base-encode/xxhash-rust材料。该有界差集没有重建native二进制、全部Cargo依赖或esbuild历史工具链，因此不得据构建成功写成完整对应源码。
 
 ## 原始摘要与换行
 
@@ -43,4 +45,13 @@
 
 ## 仍未放行
 
-版本化本地索引`deploy/licenses/koishi-console/candidate3-source-index.json`绑定当前builder/spec/两份patch、新v2输入、旧3762父材料及本轮Rollup增量；旧补充包中的builder不得覆盖索引指向的当前提交。`hosting_url`保持空、`published=false`。公开位置、访问范围、保留责任、个人/定制selection、物理裁剪、真实安装恢复和公开分发仍需后续决定，因此`complete_corresponding_source=false`、`product_release=false`保持。
+版本化本地索引`deploy/licenses/koishi-console/candidate3-source-index.json`按机器ID绑定当前builder、两份规格、两份patch、新v2输入、旧3762父材料及两份Rollup材料。`downstream-inputs-public-v2.json`以版本化字节保存，SHA-256为`6867d09aca933575eec2680872af21a72db51f4913156afd93727bdf2665a788`；原运行规格`downstream-inputs.json`保持不变。可移植复建方式是在全新Linux目录复制固定提交，将public-v2规格临时覆盖到该副本的`deploy/licenses/koishi-console/downstream-inputs.json`，然后执行：
+
+```sh
+python3 scripts/build_downstream_console.py \
+  --inputs /absolute/path/console-candidate3-public-source-v2.zip \
+  --work /absolute/new/work \
+  --output /absolute/new/output
+```
+
+校验器要求实际输入ZIP摘要、重建包`TAKI-CONSOLE.json.inputs_sha256`及索引`public_source_v2`角色三方一致，内部manifest自洽但错配的输入会被拒绝。旧补充包中的builder不得覆盖索引指向的当前提交。`hosting_url`保持空、`published=false`。公开位置、访问范围、保留责任、个人/定制selection、物理裁剪、真实安装恢复和公开分发仍需后续决定，因此`complete_corresponding_source=false`、`product_release=false`保持。

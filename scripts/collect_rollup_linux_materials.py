@@ -18,7 +18,7 @@ import urllib.request
 import zipfile
 
 
-SELECTED = {
+BASE_SELECTED = {
     'mimalloc-safe': 'parent: Linux glibc local_dynamic_tls allocator selection',
     'libmimalloc-sys2': 'normal: bundled mimalloc C source and build script',
     'cc': 'build: libmimalloc-sys2 C compiler driver',
@@ -37,6 +37,30 @@ SELECTED = {
     'cfg-if': 'normal: Linux cfg selection for libloading and parking_lot_core',
 }
 
+NAPI_DELTA_SELECTED = {
+    'bitflags': 'normal: napi default-disabled napi4 feature closure',
+    'ctor': 'normal: napi dependency selected with default-features=false',
+    'futures': 'normal: napi async support dependency selected by the fixed lock',
+    'futures-channel': 'normal: futures default feature closure',
+    'futures-core': 'normal: futures shared traits',
+    'futures-executor': 'normal: futures default executor',
+    'futures-io': 'normal: futures I/O traits',
+    'futures-macro': 'proc-macro: futures async/await helpers',
+    'futures-sink': 'normal: futures sink traits',
+    'futures-task': 'normal: futures task traits',
+    'futures-util': 'normal: futures utility implementation',
+    'memchr': 'normal: futures-util byte search dependency',
+    'nohash-hasher': 'normal: napi fixed-hash collection dependency',
+    'pin-project-lite': 'normal: futures-util pin projection dependency',
+    'proc-macro2': 'proc-macro support: futures-macro',
+    'quote': 'proc-macro support: futures-macro',
+    'rustc-hash': 'normal: napi hash implementation dependency',
+    'slab': 'normal: futures-util allocation dependency',
+    'syn': 'proc-macro parser: futures-macro',
+    'unicode-ident': 'proc-macro identifier support',
+    'napi-build': 'host build dependency: emits Node-API build/link directives; wasi-heap-sync is target-gated',
+}
+
 EXCLUDED = {
     'redox_syscall': 'target_os=redox; excluded for x86_64-unknown-linux-gnu',
     'windows-link': 'cfg(windows); excluded for x86_64-unknown-linux-gnu',
@@ -47,22 +71,23 @@ def digest(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
-def locked(lock: Path) -> dict[str, dict]:
+def locked(lock: Path, selected: dict[str, str]) -> dict[str, dict]:
     packages = tomllib.loads(lock.read_text(encoding='utf-8'))['package']
     by_name = {row['name']: row for row in packages if row.get('source', '').startswith('registry+')}
-    missing = (set(SELECTED) | set(EXCLUDED)) - set(by_name)
+    missing = (set(selected) | set(EXCLUDED)) - set(by_name)
     if missing:
         raise ValueError('Fixed Cargo.lock is missing: ' + ', '.join(sorted(missing)))
     return by_name
 
 
-def collect(lock: Path, output: Path) -> None:
+def collect(lock: Path, output: Path, profile: str) -> None:
     if output.exists():
         raise ValueError('Refusing to overwrite material archive')
-    packages = locked(lock)
+    selected = BASE_SELECTED if profile == 'base' else NAPI_DELTA_SELECTED
+    packages = locked(lock, selected)
     members: dict[str, bytes] = {}
     rows = []
-    for name, role in SELECTED.items():
+    for name, role in selected.items():
         package = packages[name]
         version = package['version']
         url = f'https://static.crates.io/crates/{name}/{name}-{version}.crate'
@@ -119,10 +144,14 @@ def collect(lock: Path, output: Path) -> None:
         'reason': reason,
     } for name, reason in EXCLUDED.items()]
     index = {
-        'identity': 'rollup-4.67.4-linux-x64-glibc-transitive-materials.1',
+        'identity': ('rollup-4.67.4-linux-x64-glibc-transitive-materials.1'
+                     if profile == 'base' else
+                     'rollup-4.67.4-linux-x64-glibc-napi-delta.1'),
         'target': 'x86_64-unknown-linux-gnu',
         'rollup_source_commit': '18b5cb60e55926f6d917cc1aeb17fd81d0da5cc6',
-        'scope': 'three Task11 open transitive branches; no native binary rebuild',
+        'scope': ('three Task11 open transitive branches; no native binary rebuild'
+                  if profile == 'base' else
+                  'Task11 fixed napi uncovered edges and their locked support closure; no native binary rebuild'),
         'selected': rows,
         'excluded_target_packages': excluded,
         'all_archives_match_fixed_cargo_lock': True,
@@ -144,5 +173,6 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--lock', type=Path, required=True)
     parser.add_argument('--output', type=Path, required=True)
+    parser.add_argument('--profile', choices=('base', 'napi-delta'), default='base')
     args = parser.parse_args()
-    collect(args.lock, args.output)
+    collect(args.lock, args.output, args.profile)

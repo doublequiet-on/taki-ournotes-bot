@@ -1,6 +1,6 @@
 # 固定版本随行许可证
 
-用户已选择方案B：下游独立身份与实际源码生成见 [CONSOLE_DOWNSTREAM.md](../../docs/CONSOLE_DOWNSTREAM.md)。`downstream-inputs.json`绑定固定源码/锁/工具和原许可，`downstream-build.cjs`编译首选源码及新Taki Lodash适配层，源码reconnect patch仅应用一次。现有个人builder仍使用下述旧npm路径；新候选不得叠加旧字节补丁。以下方案A材料保留为历史，不继续版本组合探索。
+用户已选择方案B：下游独立身份与实际源码生成见 [CONSOLE_DOWNSTREAM.md](../../docs/CONSOLE_DOWNSTREAM.md)。`downstream-inputs.json`保留冻结运行构建规格；`downstream-inputs-public-v2.json`绑定缩小后的可公开重建输入，不能互换摘要。`downstream-build.cjs`编译首选源码及新Taki Lodash适配层，源码reconnect patch仅应用一次。现有个人builder仍使用下述旧npm路径；新候选不得叠加旧字节补丁。以下方案A材料保留为历史，不继续版本组合探索。
 
 方案A续轮已形成独立研究材料包：全部lib/dist逐文件来源/差异、实际前端模块图、本次解析锁/缓存及许可索引、源码补丁与复现脚本。16项重建9项同npm、7项不同，历史前端来源仍待闭合；不是最终发行材料全部齐备。详见仓库docs/CONSOLE_SOURCE_MATERIALS.md及原task09回执。此处reproduce.sh按材料包根目录布局使用，不是产品安装脚本；源码patch也不自动应用到当前npm。
 

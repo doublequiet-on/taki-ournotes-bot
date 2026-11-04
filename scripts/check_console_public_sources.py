@@ -26,6 +26,7 @@ def files(root: Path) -> dict[str, str]:
 
 
 def main(inputs: Path, frozen: Path, rebuilt: Path, output: Path, index_path: Path | None) -> None:
+    actual_inputs_sha256 = sha(inputs)
     with zipfile.ZipFile(inputs) as archive:
         manifest = json.loads(archive.read('input-manifest.json'))
         expected = {row['path']: row for row in manifest['files']}
@@ -63,11 +64,13 @@ def main(inputs: Path, frozen: Path, rebuilt: Path, output: Path, index_path: Pa
         raise ValueError('Candidate.3 runtime bytes changed')
     frozen_binding = json.loads((frozen / 'TAKI-CONSOLE.json').read_text(encoding='utf-8'))
     rebuilt_binding = json.loads((rebuilt / 'TAKI-CONSOLE.json').read_text(encoding='utf-8'))
+    if rebuilt_binding.get('inputs_sha256') != actual_inputs_sha256:
+        raise ValueError('Rebuilt package input digest does not match the actual public-source input')
     stable = set(frozen_binding) - {'inputs_sha256'}
     if any(frozen_binding[key] != rebuilt_binding[key] for key in stable):
         raise ValueError('Candidate.3 binding changed beyond input digest')
     result = {
-        'inputs': {'path': str(inputs), 'size': inputs.stat().st_size, 'sha256': sha(inputs)},
+        'inputs': {'path': str(inputs), 'size': inputs.stat().st_size, 'sha256': actual_inputs_sha256},
         'input_members': len(expected) + 1,
         'old_cache_content_type_1_0_1': {'lock': False, 'cache': False, 'installed_source': False},
         'replacement_source_paths': sorted(required),
@@ -91,6 +94,23 @@ def main(inputs: Path, frozen: Path, rebuilt: Path, output: Path, index_path: Pa
             path = Path(row['path'])
             if path.stat().st_size != row['size'] or sha(path) != row['sha256']:
                 raise ValueError('Indexed local material differs: ' + row['path'])
+        public_inputs = [row for row in index['local_materials'] if row.get('id') == 'public_source_v2']
+        if len(public_inputs) != 1:
+            raise ValueError('Source index must identify exactly one public_source_v2 material')
+        public_input = public_inputs[0]
+        if (Path(public_input['path']).resolve() != inputs.resolve()
+                or public_input['size'] != inputs.stat().st_size
+                or public_input['sha256'] != actual_inputs_sha256):
+            raise ValueError('Indexed public_source_v2 material does not match the actual input')
+        profiles = [row for row in index.get('rebuild_profiles', [])
+                    if row.get('id') == 'candidate3_public_source_v2']
+        if len(profiles) != 1 or profiles[0].get('inputs_material_id') != 'public_source_v2':
+            raise ValueError('Source index does not bind the public_source_v2 rebuild profile')
+        spec = profiles[0].get('inputs_spec', {})
+        spec_path = Path(spec.get('path', ''))
+        if (not spec_path.is_file() or spec.get('size') != spec_path.stat().st_size
+                or spec.get('sha256') != sha(spec_path)):
+            raise ValueError('Indexed public_source_v2 input specification differs')
         allow = set(index['product_vendor_allowlist'])
         excluded = set(index['product_vendor_excluded_internal_history'])
         if allow & excluded or not all(Path(path).is_file() for path in allow | excluded):

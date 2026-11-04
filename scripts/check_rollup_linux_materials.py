@@ -12,12 +12,14 @@ def sha(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
-def main(materials: Path) -> None:
+def main(materials: Path, expected_identity: str | None) -> None:
     with zipfile.ZipFile(materials) as archive:
         member_count = len(archive.namelist())
         if member_count != len(set(archive.namelist())):
             raise ValueError('Duplicate material member')
         index = json.loads(archive.read('index.json'))
+        if expected_identity and index['identity'] != expected_identity:
+            raise ValueError('Unexpected material identity')
         for row in index['selected']:
             data = archive.read(row['archive_path'])
             if sha(data) != row['archive_sha256'] or sha(data) != row['cargo_lock_checksum']:
@@ -25,9 +27,8 @@ def main(materials: Path) -> None:
             for license_row in row['license_materials']:
                 if sha(archive.read(license_row['path'])) != license_row['sha256']:
                     raise ValueError(row['name'] + ' license checksum differs')
-        excluded = {row['name'] for row in index['excluded_target_packages']}
-        if excluded != {'redox_syscall', 'windows-link'}:
-            raise ValueError('Unexpected target exclusion set')
+        if index['target'] != 'x86_64-unknown-linux-gnu':
+            raise ValueError('Unexpected target')
     print(json.dumps({
         'path': str(materials),
         'size': materials.stat().st_size,
@@ -43,5 +44,6 @@ def main(materials: Path) -> None:
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--materials', type=Path, required=True)
+    parser.add_argument('--expected-identity')
     args = parser.parse_args()
-    main(args.materials)
+    main(args.materials, args.expected_identity)

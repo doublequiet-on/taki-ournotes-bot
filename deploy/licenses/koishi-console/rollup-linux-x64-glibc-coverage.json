@@ -1,0 +1,63 @@
+{
+  "identity": "rollup-4.67.4-linux-x64-glibc-coverage.1",
+  "rollup_source_commit": "18b5cb60e55926f6d917cc1aeb17fd81d0da5cc6",
+  "target": "x86_64-unknown-linux-gnu",
+  "root": "rust/bindings_napi",
+  "root_features": {
+    "napi": {
+      "default_features": false,
+      "features": ["napi4"]
+    },
+    "mimalloc-safe": ["local_dynamic_tls"]
+  },
+  "entry_coverage": [
+    {
+      "entry": "mimalloc-safe",
+      "status": "reused_material_complete_for_selected_branch",
+      "materials": ["rollup-4.67.4-linux-x64-glibc-transitive-materials.zip"],
+      "notes": "16-crate archive covers bundled C/build and Linux allocator branch"
+    },
+    {
+      "entry": "napi",
+      "status": "selected_branch_material_complete",
+      "materials": ["rollup-4.67.4-linux-x64-glibc-transitive-materials.zip", "rollup-4.67.4-linux-x64-glibc-napi-delta.zip"],
+      "notes": "reuses napi/napi-sys/libloading/libc/cfg-if and adds the fixed bitflags/ctor/futures/nohash-hasher/rustc-hash closure"
+    },
+    {
+      "entry": "napi-build",
+      "status": "selected_host_build_material_complete",
+      "materials": ["rollup-4.67.4-linux-x64-glibc-napi-delta.zip"],
+      "notes": "2.6.0 is a host build dependency; its build script emits Node-API link/build directives. wasi-heap-sync behavior is not selected for x86_64-unknown-linux-gnu."
+    },
+    {
+      "entry": "napi-derive",
+      "status": "partial",
+      "reused": ["ctor", "proc-macro2", "quote", "syn", "unicode-ident"],
+      "missing_external_sources": ["napi-derive", "napi-derive-backend", "convert_case"],
+      "notes": "the root manifest selects napi-derive 3.6.13; only support crates shared with the napi delta are currently carried"
+    },
+    {
+      "entry": "parse_ast",
+      "status": "partial",
+      "reused": ["parking_lot", "parking_lot_core", "lock_api", "scopeguard", "smallvec", "libc", "cfg-if"],
+      "missing_external_sources": ["anyhow", "swc_compiler_base", "swc_config", "swc_common", "swc_ecma_ast", "swc_ecma_parser"],
+      "notes": "the selected swc_common parking_lot feature is represented, but the broader SWC registry closure is not in the bounded archives"
+    },
+    {
+      "entry": "xxhash",
+      "status": "missing_external_sources",
+      "missing_external_sources": ["base-encode", "xxhash-rust"],
+      "features": {"xxhash-rust": ["xxh3"]}
+    }
+  ],
+  "excluded_for_target_or_entry": [
+    {"entry": "bindings_wasm", "reason": "not the bindings_napi Linux package entry"},
+    {"entry": "mimalloc-safe/no_opt_arch", "reason": "aarch64-only feature branch"},
+    {"entry": "redox_syscall", "reason": "Redox target only"},
+    {"entry": "windows-link", "reason": "Windows target only"},
+    {"entry": "napi-build/wasi-heap-sync", "reason": "WASI-specific target effect; package source is still carried"}
+  ],
+  "native_binary_rebuilt": false,
+  "complete_corresponding_source": false,
+  "product_release": false
+}

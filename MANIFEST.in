@@ -13,7 +13,8 @@ include scripts/console_source_materials.py docs/CONSOLE_SOURCE_MATERIALS.md
 include docs/CONSOLE_TRACE_ROUND5.md
 include scripts/build_downstream_console.py scripts/prepare_console_build_inputs.py
 include docs/CONSOLE_DOWNSTREAM.md docs/CONSOLE_BUILD_REPAIR.md
-include deploy/licenses/koishi-console/downstream-build.cjs deploy/licenses/koishi-console/downstream-inputs.json
+include deploy/licenses/koishi-console/downstream-build.cjs deploy/licenses/koishi-console/downstream-inputs.json deploy/licenses/koishi-console/downstream-inputs-public-v2.json
+include deploy/licenses/koishi-console/candidate3-source-index.json deploy/licenses/koishi-console/rollup-linux-x64-glibc-coverage.json
 include docs/PRODUCT_RELEASE.md docs/RELEASE_MATERIALS.md
 recursive-include deploy/licenses LICENSE *.md
 include deploy/licenses/koishi-console/reproduce.sh deploy/licenses/koishi-console/taki-reconnect-source.patch
