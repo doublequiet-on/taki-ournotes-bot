@@ -1,5 +1,12 @@
 {
-  "identity": "taki-console-candidate3-source-index.5",
+  "identity": "taki-console-candidate3-source-index.6",
+  "license_material_status": {
+    "newly_assembled_package_mappings": 24,
+    "supplement_index_sha256": "34ced28faba576b74d35b553a187dfcd5245e8a0d9d662f30bcb1cb021c5cae9",
+    "remaining_full_text_blockers": ["base-encode@0.3.1"],
+    "independent_increment_review": "pending",
+    "assembled_into_frozen_product": false
+  },
   "component": {
     "name": "taki-console",
     "version": "0.1.0-candidate.3",
@@ -10,7 +17,7 @@
     "source_commit": "0026159bc369c768e783294e8447de99a5f1973a",
     "combination_sha256": "4ce3e43013199145e19e3a13caa089dd7b826fd431c22182192ece182bf9ca32"
   },
-  "current_material_commit": "27ca52861075ed374f6b3d11f4d08f6a473abc1c",
+  "current_material_commit": "1f6b93d0d19f5d6b5750ece98636f23d3dc0c8c9",
   "current_build_files": [
     {
       "path": "scripts/build_downstream_console.py",
@@ -50,7 +57,7 @@
     },
     {
       "path": "deploy/licenses/koishi-console/rollup-linux-x64-glibc-coverage.json",
-      "sha256": "295d58576b8e873b2d0a4ce0a2c5bf958da219acf266bb015100ad7b3dd01918"
+      "sha256": "aa5063d4f0b3944c6a924d333ed37951801bc1bdd17b4aa0e4a160dd6add45b0"
     },
     {
       "path": "scripts/collect_rollup_source_closure.py",
@@ -63,6 +70,26 @@
     {
       "path": "scripts/supplement_rollup_closure_licenses.py",
       "sha256": "82e92fcbf7a3e18a9ec3bd8a7fbb8bef285c1d043d20cb37080721771ba408f9"
+    },
+    {
+      "path": "deploy/licenses/koishi-console/rollup-license-supplement/apache-2.0/LICENSE",
+      "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+    },
+    {
+      "path": "deploy/licenses/koishi-console/rollup-license-supplement/swc-attribution-snapshot/LICENSE",
+      "sha256": "21da174fa23042e1b27dce5a4f691c0340f8df53dbc3e435f2646a9d0ea8c3ec"
+    },
+    {
+      "path": "deploy/licenses/koishi-console/rollup-license-supplement/sourcemap-bsd/LICENSE",
+      "sha256": "7516e1cf340213f60d96bca77bb012882dbf80e7cca5922c914174f605d9ef71"
+    },
+    {
+      "path": "deploy/licenses/koishi-console/rollup-license-supplement/README.md",
+      "sha256": "2d37bc629097a7ca321c2cf531b0a27a8dc8adf566b1200be4525cd0872974bf"
+    },
+    {
+      "path": "docs/CONSOLE_ROLLUP_LICENSES.md",
+      "sha256": "09d4da286b725ce641f5f626dc5cf80f03998a223d32f854f1d70d2c09f9b941"
     }
   ],
   "local_materials": [
@@ -103,7 +130,7 @@
     },
     {
       "id": "rollup_remaining_target_closure_v4",
-      "role": "148 remaining exact source crates; target-selected feature/edge graph; 25 original-text gaps remain",
+      "role": "Historical 148-source baseline and target graph; its 25 missing separate texts are supplemented by license_supplement24_v1 for 24 mappings, leaving base-encode only",
       "path": "runtime/task09/material-recovery-20261104/rollup-linux-target-source-materials-v4.zip",
       "size": 12054447,
       "sha256": "0fe03bf985205730b7217f2598e96c1546492b672a400666acf69b348ce345a7"
@@ -128,6 +155,13 @@
       "path": "runtime/task09/icu-generation-20261104/icu-data-generation-materials-v2.zip",
       "size": 10442583,
       "sha256": "e235455cdd54e3fdd48abdc980596c2f0061ba120f8de68489145aed882f2072"
+    },
+    {
+      "id": "license_supplement24_v1",
+      "role": "23 exact Apache declarations with authoritative text and retained Rust headers/Apache branch; swc_sourcemap 10.0.2 inherited BSD text and explicit derivation; no source replacement or product assembly",
+      "path": "runtime/task09/license-assembly-20261104/rollup-license-supplement24-v1.zip",
+      "size": 94916,
+      "sha256": "0922573405ad4e38eb9bc1cb10e2d927cabc4a71f581c2a1ea4d81835bb30f04"
     }
   ],
   "rebuild_profiles": [
