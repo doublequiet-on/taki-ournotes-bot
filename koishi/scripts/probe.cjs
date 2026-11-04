@@ -462,6 +462,32 @@ async function main() {
     await client.chatObservation(body,1,input.policy)
     assert.equal(header,'continuation-v1')
   })
+  await run('Abort reason is sent only to a backend advertising the additive capability',async()=>{
+    const sent=[]
+    const client=new BackendClient('http://127.0.0.1:8765','x'.repeat(32),'fixture','epoch',async(_url,options)=>{
+      sent.push(JSON.parse(options.body));return Response.json(httpV2.python_to_ts.terminal)
+    })
+    client.readiness={features:[]}
+    await client.event(httpV2.python_to_ts.terminal,'aborted','batch','none','observation_replaced')
+    assert.equal('reason' in sent[0],false)
+    client.readiness={features:['abort_reason_v1']}
+    await client.event(httpV2.python_to_ts.terminal,'aborted','batch','none','observation_replaced')
+    assert.equal(sent[1].reason,'observation_replaced')
+    await client.event(httpV2.python_to_ts.terminal,'batch_finished','batch','none','gateway_error')
+    assert.equal('reason' in sent[2],false)
+  })
+  await run('G1 polled zero-part finished decision closes without an abort event',async()=>{
+    let plan,aborts=0
+    const f=receiverFixture({async chatObservation(){return{protocol:wire.protocol,observed:true,delay_ms:1500}},
+      async chatCandidate(input,seq){plan={...await this.submit(input,seq),status:'preparing',send_allowed:false,parts:[]};
+        return{protocol:wire.protocol,candidate:true,plan}},
+      async lookup(){return{...plan,status:'finished'}},async event(){aborts++}})
+    try {
+      await f.receiver.receive(await f.ordinary('poll-skip'))
+      await fireObservation(f.receiver)
+      assert.equal(f.calls.length,0);assert.equal(aborts,0)
+    }finally{await f.close()}
+  })
   await run('G1 zero-part finished decisions are silent, at most three evaluations with fresh IDs',async()=>{
     const candidates=[];let aborts=0
     const f=receiverFixture({async chatObservation(){return{protocol:wire.protocol,observed:true,delay_ms:1500}},
@@ -478,10 +504,10 @@ async function main() {
     }finally{await f.close()}
   })
   await run('G1 new raw activity cancels an in-flight candidate before its reply reaches QQ',async()=>{
-    const entered=deferred(),release=deferred();let aborts=0
+    const entered=deferred(),release=deferred();let aborts=0,reason
     const f=receiverFixture({async chatObservation(){return{protocol:wire.protocol,observed:true,delay_ms:1500}},
       async chatCandidate(input,seq){entered.resolve();await release.promise;
-        return{protocol:wire.protocol,candidate:true,plan:await this.submit(input,seq)}},async event(){aborts++}})
+        return{protocol:wire.protocol,candidate:true,plan:await this.submit(input,seq)}},async event(_plan,_kind,_part,_attempt,why){aborts++;reason=why}})
     let running
     try {
       await f.receiver.receive(await f.ordinary('inflight'))
@@ -489,6 +515,7 @@ async function main() {
       await f.ordinary('new-raw')
       release.resolve();await running
       assert.equal(f.calls.length,0);assert.equal(aborts,1)
+      assert.equal(reason,'observation_replaced')
       assert.equal(f.receiver.activity().pending_total,0)
     }finally{release.resolve();await running;await f.close()}
   })

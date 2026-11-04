@@ -76,6 +76,8 @@ python -B scripts/inspect_model_config.py --config /path/to/model-proactive-v1.j
 
 试点范围继续由现有群管理及模型群准入控制，默认使用同一 v0 人格；版本库中经独立人工批准的人格可替换草稿。关闭群内模型权限后，每次新模型请求仍需当前许可，网关发送前也重验策略。联网、看图、群级摘要和主动参与还须各自的能力／服务批准，缺失时保持关闭，详见 F1 配置表。服务任务记到明确批准的群服务主体，不记到当前发消息者。
 
+中止诊断在 finished 事件中记录固定 reason 与 stage（preparation／decision／generation／model／delivery），保留第一次终态原因。网关可区分新观察替换、候选过期、策略或群权限变化、网关停止、网关异常与未完成交付；旧网关不提供原因时标为 gateway_abort。后端另区分准备任务取消、网关代次切换、设置变化、对话结束、上下文撤销、记忆删除与关闭。错误事件也记录阶段；这些字段不含正文或异常原文。budget_reconciled 群事件中的 controller_before_micro／controller_after_micro 显示准入前按账本校准的变化，单位为整数微币种，旧未知费用仍保留。
+
 诊断先查现有交付账与加权用量账，按 request/attempt ID 区分 reserve、started、settled、released 及 billing_incomplete。聊天库只保存必要可见信息，可据此区分生成、工具失败和逐段交付；不要导出真实正文至公开 CI。实例 state-dir 的 `chat-v1.sqlite3` 独立于 `usage-v1.sqlite3`，不要拿聊天库清理来重置额度。
 
 联网操作次数未知时，已结算记录仍会在 `reserved` 中保留该操作的费用上界，继续计入用户及群额度；服务预算也按未知上界处理。打开旧账本时会依据已有未知操作记录重建缺失的预留，不改变已知费用或次数。若之后收到可核对的实际次数，账本结算实际费用并释放该部分预留。不要将 `billing_incomplete` 当作零费用，也不要为恢复额度删除账本。配置非零日上限的主动服务只让满一小时且已结束的未知调用退出小时统计，原记录及日预算占用继续保留；旧策略无日上限时维持原小时保护。

@@ -421,11 +421,11 @@ class ModelRuntime:
             return await self.backend.models.run(user,operation,execution_seconds=seconds)
         except (ModelError,ProtocolError,KnowledgeError) as exc:
             code=exc.code if isinstance(exc,ProtocolError) else str(exc)
-            self.agent.proactive.trace(work,'error',status=code,model_attempts=work.model_attempts)
+            self.agent.proactive.trace(work,'error',status=code,model_attempts=work.model_attempts,stage=work.model_stage)
             self.agent.audit(self.agent.store.finish,work.delivery,code)
             return replies.PreparedReply('',business_status='proactive_error') if work.proactive is not None else failure(code)
         except asyncio.TimeoutError:
-            self.agent.proactive.trace(work,'error',status='execution_timeout',model_attempts=work.model_attempts)
+            self.agent.proactive.trace(work,'error',status='execution_timeout',model_attempts=work.model_attempts,stage=work.model_stage)
             self.agent.audit(self.agent.store.finish,work.delivery,'execution_timeout')
             return replies.PreparedReply('',business_status='proactive_error') if work.proactive is not None else failure('execution_timeout')
 
@@ -488,6 +488,8 @@ class ModelRuntime:
             held=self.usage.get(attempt)
             require(held['request_id']==billing_request_id and held['state']=='reserved','invalid_reservation')
         started=False;began=time.monotonic();kind='generation' if not tools else 'routing'
+        work.model_stage=('generation' if getattr(work,'proactive_generation',False)
+                          else 'decision' if work.proactive is not None else 'model')
         try:
             permitted_until=await self.backend.permissions.acquire(work,deadline,attempt_id=attempt)
             self.check(work,deadline,leases)

@@ -48,6 +48,22 @@ class ChatDiagnosticsTests(unittest.TestCase):
         self.assertFalse(d.chat_event('r','context',102,messages=2000000))
         self.assertEqual(len(d.group_events('g')),1)
 
+    def test_abort_reason_wire_is_optional_and_rejects_private_or_unrelated_fields(self):
+        from ournotes_bot.application.backend_protocol import event,ProtocolError
+        base=dict(protocol=PROTOCOL,request_id='r',plan_version=1,gateway_epoch='epoch',
+            event='aborted',part_id='batch',attempt_id='none')
+        self.assertEqual(event(base),base)
+        for reason in ('observation_replaced','candidate_expired','policy_changed','scope_denied',
+                       'gateway_stopped','gateway_error','delivery_incomplete'):
+            self.assertEqual(event(dict(base,reason=reason))['reason'],reason)
+        for invalid in ('PRIVATE_MESSAGE','https://private.invalid',{},None):
+            with self.assertRaises(ProtocolError):
+                event(dict(base,reason=invalid))
+        with self.assertRaises(ProtocolError):event(dict(base,event='batch_finished',reason='gateway_error'))
+        self.assertTrue(self.diagnostics.chat_event('r','finished',101,status='aborted',
+            reason='observation_replaced',stage='generation',model_attempts=2,delivered=False))
+        self.assertFalse(self.diagnostics.chat_event('r','finished',102,stage='PRIVATE_MESSAGE'))
+
     def test_image_detail_is_a_fixed_metadata_enum(self):
         d=self.diagnostics
         for value in ('low','high','none'):

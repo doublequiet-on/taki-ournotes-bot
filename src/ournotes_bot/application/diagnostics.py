@@ -90,13 +90,14 @@ class Diagnostics:
         fields={'messages','assistant_messages','image_markers','input_images','vision_approved','image_detail',
                 'automatic','loaded_images','status','name','decision','model_attempts','delivered',
                 'action','total','completed','entities','elapsed_ms','task_missing','research_fallback',
-                'source','reason','continuation','window_seconds',
+                'source','reason','stage','continuation','window_seconds',
                 'input_required','input_limit','system_bytes','tool_bytes'}
         budget_fields={'hour_limit_micro','day_limit_micro','hour_cost_micro','day_cost_micro',
                        'hour_known_micro','hour_unknown_micro','hour_reserved_micro','unknown_cost_micro',
-                       'requested_cost_micro','available_cost_micro','controller_cost_micro'}
+                       'requested_cost_micro','available_cost_micro','controller_cost_micro',
+                       'controller_before_micro','controller_after_micro'}
         fields |= budget_fields
-        codes={'status','name','decision','image_detail','action','source','reason'}
+        codes={'status','name','decision','image_detail','action','source','reason','stage'}
         if 'image_detail' in data and data['image_detail'] not in ('none','low','high'):
             raise ValueError('chat_event_data')
         if not set(data)<=fields or any(not (

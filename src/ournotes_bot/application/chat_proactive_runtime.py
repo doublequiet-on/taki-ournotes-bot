@@ -92,7 +92,7 @@ class ProactiveChat:
             if work.request.conversation_id!=group_id or work.proactive is None:continue
             if ((work.continuation and not after['followup_enabled']) or (not work.continuation
                     and any(row.speaker_id in excluded for row in work.proactive.messages))):
-                self.agent.runtime.backend.finish(work,'aborted')
+                self.agent.runtime.backend.finish(work,'aborted',reason='chat_settings_changed')
                 self.controller.cancel(scope)
 
     def platform_allowed(self,request):
@@ -168,7 +168,7 @@ class ProactiveChat:
                     if (work.active and work.continuation and work.request.scope==request.scope
                             and work.request.user_id==request.user_id and work.request.ingress_seq<request.ingress_seq
                             and work.request.message_id!=request.message_id):
-                        self.agent.runtime.backend.finish(work,'aborted')
+                        self.agent.runtime.backend.finish(work,'aborted',reason='continuation_replaced')
             if replies.recognizes_message(request.body) and not replies.is_ai_request(request.body):
                 self.followups.clear(scope,request.user_id);self.controller.cancel(scope);return False
             active=next((work for work in reversed(tuple(self.agent.runtime.backend.works.values()))
@@ -177,7 +177,7 @@ class ProactiveChat:
                 and work.request.ingress_seq<request.ingress_seq),None)
             if active and self.platform_allowed(request):
                 if re.fullmatch(r'(?:不用了|先这样|先不查了|停止|结束|算了)[。！!~～\s]*',request.body.strip()):
-                    self.agent.runtime.backend.finish(active,'aborted')
+                    self.agent.runtime.backend.finish(active,'aborted',reason='conversation_ended')
                     self.followups.clear(scope,request.user_id)
                     self.agent.tasks.clear(request.scope,request.user_id)
                     self.control_event(request,'conversation_ended');return False
@@ -239,6 +239,9 @@ class ProactiveChat:
             snapshot=self.agent.runtime.proactive_snapshot(request.conversation_id)
             policy=self.configured(request,snapshot)
             if policy is None:return None
+        try:self.reconcile_costs(request)
+        except (sqlite3.Error, ModelError, ServiceError, ValueError):
+            self.control_event(request,'chat_service_usage_unavailable');return None
         model_cost=maximum_cost_micro(snapshot.profile)*self.agent.budget.model_calls
         remaining=self.controller.remaining_cost(self.scope(request))
         if remaining is not None:model_cost=min(model_cost,remaining)
@@ -333,7 +336,8 @@ class ProactiveChat:
 
     def finish(self,work):
         self.trace(work,'finished',status=work.terminal_status,delivered=work.proactive_delivered,
-                   model_attempts=work.model_attempts)
+                   model_attempts=work.model_attempts,reason=work.terminal_reason or 'reason_unknown',
+                   stage='delivery' if work.prepared else work.model_stage)
         try:
             if work.proactive is not None:
                 self.settle_cost(work)
@@ -428,11 +432,40 @@ class ProactiveChat:
     def cost(self,work):
         rows=self.agent.runtime.usage.db.execute('SELECT * FROM attempts WHERE request_id=?',
             (work.service_request_id,)).fetchall()
+        return self.row_cost(rows)
+
+    def row_cost(self,rows):
         if any(row['state'] not in ('settled','released') for row in rows):return dict(actual_cost_micro=None)
         amounts=[self.agent.service_budget.attempt_cost(row) for row in rows]
         held=math.ceil(sum((amount for amount,_ in amounts),Fraction()))
         return dict(actual_cost_micro=None if any(uncertain for _,uncertain in amounts) else held,
                     held_cost_micro=held)
+
+    def reconcile_costs(self,request):
+        """Converge unfinished memory holds from terminal ledger facts before admission."""
+        scope=self.scope(request)
+        candidates=self.controller.pending_costs(scope)
+        if not candidates:return
+        jobs={job:candidate for candidate in candidates for job in (
+            service_request_id('proactive',request.instance_id,request.app_id,request.conversation_id,candidate),
+            'continuation/'+candidate)}
+        # A live worker can still reserve another call after a completed tool round.
+        live={work.service_request_id for work in self.agent.runtime.backend.works.values() if work.active}
+        jobs={job:candidate for job,candidate in jobs.items() if job not in live}
+        if not jobs:return
+        rows=self.agent.runtime.usage.db.execute(
+            'SELECT * FROM attempts WHERE group_key=? AND request_id IN ('+','.join('?' for _ in jobs)+')',
+            (self.agent.runtime.usage.key('group',request.conversation_id),*jobs)).fetchall()
+        grouped={candidate:[] for candidate in candidates}
+        for row in rows:grouped[jobs[row['request_id']]].append(row)
+        before=self.controller.status(scope)['hourly_cost_micro']
+        for candidate,attempts in grouped.items():
+            # Missing records and live reservations cannot prove that a request is free.
+            if attempts and all(row['state'] in ('settled','released') for row in attempts):
+                self.controller.reconcile_cost(scope,candidate,**self.row_cost(attempts))
+        after=self.controller.status(scope)['hourly_cost_micro']
+        if after!=before:
+            self.control_event(request,'budget_reconciled',controller_before_micro=before,controller_after_micro=after)
 
     def opportunity_budget(self,work):
         candidates,cost=self.controller.opportunity_budget(work.proactive)
