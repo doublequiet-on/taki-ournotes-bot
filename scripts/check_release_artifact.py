@@ -27,6 +27,9 @@ BUNDLED_JSON = {
 # Match the entire path below the single sdist root, never a filename/suffix.
 SDIST_BUILD_JSON = {
     ("deploy", "licenses", "koishi-console", "downstream-inputs.json"),
+    ("deploy", "licenses", "koishi-console", "downstream-inputs-public-v2.json"),
+    ("deploy", "licenses", "koishi-console", "candidate3-source-index.json"),
+    ("deploy", "licenses", "koishi-console", "rollup-linux-x64-glibc-coverage.json"),
     ("deploy", "licenses", "koishi-console", "gateway-notices.json"),
     ("koishi", "vendor", "console-candidate.json"),
     ("koishi", "package.json"),

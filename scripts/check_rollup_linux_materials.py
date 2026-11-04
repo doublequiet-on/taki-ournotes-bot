@@ -29,6 +29,9 @@ def main(materials: Path, expected_identity: str | None) -> None:
                     raise ValueError(row['name'] + ' license checksum differs')
         if index['target'] != 'x86_64-unknown-linux-gnu':
             raise ValueError('Unexpected target')
+        excluded = {row['name'] for row in index['excluded_target_packages']}
+        if excluded != {'redox_syscall', 'windows-link'}:
+            raise ValueError('Unexpected target exclusion set')
     print(json.dumps({
         'path': str(materials),
         'size': materials.stat().st_size,
