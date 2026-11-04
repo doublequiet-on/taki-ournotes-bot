@@ -1,5 +1,7 @@
 # Console第七轮后构建修复（candidate.2）
 
+candidate.3的最新材料收敛、旧cache参与性探针、Rollup Linux传递材料及版本化索引见[Console candidate.3源码材料收敛](CONSOLE_SOURCE_MATERIALS.md)。本页以下保留candidate.2/安全修复的历史构建依据，不用它覆盖当前builder和安全patch。
+
 本轮基于09 `07ad693f7a32b5c3d63e313514ec5c1144c6747c`，独立构建候选；不合入08移动分支、不改网关package-lock或业务。旧组件、组合包与旧材料完整保留。新组件待08定向回归和11材料复核，`complete_corresponding_source=false`、`product_release=false`。
 
 ## 固定输入与结果

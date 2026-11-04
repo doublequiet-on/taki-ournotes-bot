@@ -1,5 +1,7 @@
 # 下游Console固定候选装配
 
+11第九轮和12整包复核已补充确认固定`0026159…`准入、安装树、负例与无网验包；这关闭原“08接入待独立复核”口径，不等于完整对应源码、首装恢复、最终双发行或物理裁剪通过。冻结组合及原摘要不变；后续源码材料增量见[Console candidate.3源码材料收敛](CONSOLE_SOURCE_MATERIALS.md)。
+
 当前装配分支先保留09安全修复 `ca7a64175aa4c359c018b8a7e1dc6c506fbd6552`，再按08已提交祖先链接收 `e5e532a…`（cache适配）、`399cc8a…`（candidate.2基线）和固定接入 `982f042889d9de84e13aa2aedaca51faeea5bd5b`。唯一冲突是 `docs/L2.md` 导航，双方入口均保留；vendor、package/lock、compat和业务字节均按08提交接收。没有合并GitHub PR/main或读取08未提交文件。
 
 ## 两条组件路径

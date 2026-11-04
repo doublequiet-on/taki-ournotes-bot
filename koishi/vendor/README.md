@@ -18,4 +18,4 @@ SHA256：`ea92ea91d816648023e61cf6ce7dfe2de98aece38e1ca8dd9292166f5537d1fb`，63
 AGPL-3.0 组件的对应源码完整性及公开材料放行仍待09/11；`product_release=false`。
 严禁再次应用旧 npm client 字节补丁。现有组合发行器尚未支持此候选，接入必须由09提供显式分支。
 本目录不授权发布、最终 selection 或物理裁剪。实际验收和装配缺口见
-[任务08 Console 接入记录](../../docs/task08-integration/CONSOLE_CANDIDATE.md)。原candidate.1/2 tgz及其历史证据保留，当前package/lock不引用它；原版本同样复现上述链接属性问题。
+[任务08 Console 接入记录](../../docs/task08-integration/CONSOLE_CANDIDATE.md)。原candidate.1/2 tgz及其历史证据保留，当前package/lock不引用它；原版本同样复现上述链接属性问题。它们只属于内部历史证据，不是安全rollback候选。冻结组合保留现状；后续最终产品复制白名单只含本README、`console-candidate.json`和candidate.3 tgz，准确排除清单及新工件要求见[源码材料收敛](../../docs/CONSOLE_SOURCE_MATERIALS.md)。
