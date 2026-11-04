@@ -23,7 +23,7 @@ Haneoka 默认主资料：`OURNOTES_DATA_SOURCE=haneoka` 使用[公开 Catalog �
   - 游戏图片和数据的权利仍归原权利方，代码许可不授予素材再分发权。本仓库不附素材或榜单包，不绕过认证、限流或反爬，不请求账号数据；如上游调整开放范围应停止对应读取并重新核实。
 - **可选 AI 服务**：配置后，仅用于将自然语言识别为受限查询条件；事实由可靠来源检索产生。本地支持的歌曲、卡牌与榜线问法不调用模型；需要模型的其他 `/问` 会把问题内容发送给所配置的 API 服务，模型不得生成榜分或名次。
 - **QQ 官方机器人**：使用 QQ 开放平台接口；需要部署者自己的 AppID、AppSecret 和相应权限。不得提交这些凭据。
-- **Python 依赖**：`qq-botpy`、`Pillow`、`aiohttp` 由各自的许可证授权，安装时由包管理器获取。本仓库不打包虚拟环境或依赖源码。
+- **Python 依赖**：`qq-botpy`、`Pillow`、`aiohttp` 由各自的许可证授权。在线源码安装由包管理器获取；Linux离线包实际携带锁定wheelhouse，组合包另含Node、gateway与Console及其依赖，不能概括为“不打包依赖”。各wheel/npm包及原生库的LICENSE/NOTICE须按实际候选保留核验；Node完整LICENSE、Console固定版本与补丁材料见[发行材料](docs/RELEASE_MATERIALS.md)及[来源清单](deploy/licenses/SOURCES.md)。根MIT不替代第三方条件。
 
 本项目为非官方社区工具，与游戏版权方、QQ 平台及上述数据服务均无隶属关系。如需就素材展示提出调整，可通过 Bilibili @Adeliae 联系维护者。
 

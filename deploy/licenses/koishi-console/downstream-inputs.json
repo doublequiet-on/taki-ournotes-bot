@@ -1,0 +1,15 @@
+{
+  "component": "taki-console",
+  "version": "0.1.0-candidate.1",
+  "package_version": "5.30.10-taki.1",
+  "upstream_commit": "896882b50cc91d16f522a52ded9644045d461c26",
+  "inputs_file": "console-downstream-inputs-v2.zip",
+  "inputs_size": 165333816,
+  "inputs_sha256": "e0f6ae2ba1d0100879407af108126da282a90db6a8e62e6d66bb6ab8ad903151",
+  "node": "24.19.0",
+  "yarn": "4.10.3",
+  "element_plus_commit": "8c0180c37ae4741f40969a26a9704c1068be4d93",
+  "devtools_commit": "df6ab6bb7791a7a525a97990de73b3ea5e9a1941",
+  "source_complete": false,
+  "product_release": false
+}
