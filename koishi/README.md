@@ -10,6 +10,10 @@ M3 已接通查询、续查与逐片段交付；`enabled` 默认 false，仅注�
 
 ## 重现离线探针
 
+Koa 的 Content-Type 缓存使用[本地CJS适配](compat/cache-content-type/README.md)和固定上游2.1.0；干净安装必须带上compat目录。版本材料、定向HTTP/浏览器验收及09封装接口见[适配记录](../docs/task08-integration/CACHE_CONTENT_TYPE.md)。
+
+网页后台现接入[固定下游 Console candidate.3](vendor/README.md)，使用仓库内 tgz 与 npm lock。原Markdown链接属性注入已通过网关浏览器复验，待09完成组合发行装配及12独立复核；禁止再应用旧 npm 字节补丁。复现和隔离浏览器验收见[任务08记录](../docs/task08-integration/CONSOLE_CANDIDATE3.md)。
+
 使用 `.node-version` 的 Node 24.19.0 和 `packageManager` 的 npm 12.2.0，在本目录执行：
 
 ```sh
@@ -40,7 +44,9 @@ HTTP 双端样例位于 `scripts/fixtures/http-v2.json`，随组合包的 script
 | `src/notices.ts` | 群许可事件、独立主动通知、逐次许可/intent/ACK，使用后端唯一账本。 |
 | `run.cjs` | 双进程网关入口，显式启用、受认证 loopback 健康、顺序卸载。 |
 | `console.cjs`、`console/` | 官方 Koishi 控制台接入、独立管理员会话与管理页面。 |
-| `src/management.ts` | 接收/通知范围设置校验、原子持久保存和管理记录。 |
+| `src/management.ts` | 接收/通知范围设置校验、原子持久保存和管理记录；停新接纳与紧急停发。 |
+| `src/scope-authority.ts` | 定制三通道范围校验、独立批准权威接口、恢复判定和CAS暂存；[接线合同](../docs/MANAGEMENT_SCOPE_SAFETY.md)。 |
+| `src/scope-identity.ts` | 消费09固定check_scope_binding结果及进程内失效快照；不另解释身份，不替代批准或激活。 |
 | `src/group-policies.ts` | 实例绑定群策略、持久 revision、有效规则、通知 all/selected/none。 |
 | `src/telemetry.ts`、`health.cjs` | 有界旁路耗时采集、共享实时健康读取。 |
 | `src/index.ts` | 默认关闭的配置、运输服务与受管 receiver 生命周期。 |

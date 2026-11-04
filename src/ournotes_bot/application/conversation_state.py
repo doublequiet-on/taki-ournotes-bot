@@ -1,5 +1,6 @@
 # L3: Receipt-bound scoped topics and immutable prepared display snapshots.
-# Effects: Bounded volatile memory; no repository reads, rendering or platform IO.
+# Effects: Bounded volatile memory; lineage invalidation removes all derived anchors.
+# confirm explicitly reports projection failure; no repository reads/rendering/platform IO.
 from __future__ import annotations
 import time
 import json
@@ -7,7 +8,7 @@ from collections import OrderedDict
 from dataclasses import dataclass, replace, asdict
 
 from ..query.continuation import ContextKey, QueryContext
-from ..domain.knowledge import KnowledgeScope
+from ..domain.query_context import ReadOnlyContext
 
 
 @dataclass(frozen=True)
@@ -18,20 +19,6 @@ class Anchor:
     snapshot_id: str
     page: int
     expires: float
-
-
-@dataclass(frozen=True)
-class ReadOnlyContext:
-    text: str
-    origin: str = 'direct'
-    evidence: tuple = ()
-    history: tuple = ()
-    facts: str = ''
-    # Last grounded knowledge request; volatile, ACK-bound and never a fact source.
-    topic: str = ''
-    knowledge_scope: KnowledgeScope | None = None
-    focus: str = ''
-    chat_topic: str = ''
 
 
 @dataclass(frozen=True)
@@ -102,6 +89,17 @@ class Conversations:
                 if key[0]==scope:mapping.pop(key,None)
         for key in keys:self.contexts.discard(key)
 
+    def invalidate(self, key, lineage):
+        """Revoke all pages/anchors of a topic; durable delivery facts live elsewhere."""
+        self.contexts.invalidate(key, lineage)
+        for identity, snapshot in list(self.snapshots.items()):
+            if snapshot.key == key and snapshot.lineage == lineage:
+                self.snapshots.pop(identity, None)
+        for mapping in (self.anchors, self.recent):
+            for identity, anchor in list(mapping.items()):
+                if anchor.key == key and anchor.lineage == lineage:
+                    mapping.pop(identity, None)
+
     def capture(self, work, pages):
         self.sweep()
         if work.anchor is not None and work.operation is not None and work.operation.kind == 'page':
@@ -144,11 +142,11 @@ class Conversations:
         if is_page:
             page = work.anchor.page + work.operation.value
         if snapshot is None or not 0 <= page < len(snapshot.pages):
-            return
+            return False
         if not self.valid_evidence(snapshot.pages[page].evidence):
-            return
+            return False
         if self.contexts.lineage(work.key) != snapshot.lineage:
-            return
+            return False
         indices = snapshot.pages[page].visible_indices
         query = getattr(context, 'query_context', context)
         if fallback_notice:
@@ -169,7 +167,7 @@ class Conversations:
         existing = self.anchors.get((snapshot.scope, message_id))
         if existing is not None and existing != anchor:
             # A conflicting receipt cannot silently redirect an already visible message.
-            return
+            return False
         self.anchors[(snapshot.scope, message_id)] = anchor
         self.recent[(snapshot.scope, snapshot.key)] = anchor
         scoped = [key for key in self.anchors if key[0] == snapshot.scope]
@@ -178,6 +176,7 @@ class Conversations:
             self.anchors.popitem(last=False)
         while len(self.recent) > self.capacity:
             self.recent.popitem(last=False)
+        return True
 
     def page(self, anchor, offset):
         self.sweep()

@@ -1,0 +1,68 @@
+{
+  "schema": "taki-console-integration/1",
+  "integration_base": "399cc8a47bf84aa550ff2eb3d1e3d640101c2033",
+  "source_commit": "ca7a64175aa4c359c018b8a7e1dc6c506fbd6552",
+  "component": {
+    "file": "taki-console-0.1.0-candidate.3.tgz",
+    "version": "0.1.0-candidate.3",
+    "package_version": "5.30.10-taki.3",
+    "sha256": "ea92ea91d816648023e61cf6ce7dfe2de98aece38e1ca8dd9292166f5537d1fb",
+    "integrity": "sha512-VDLAD2fzeR1RQ2xpIxkRzAC+9+CcWTN0HUaVSydJGagwES8s8J+JaWWlbPDZUogM40xp14RQHyqkthwUPLRsWA==",
+    "size": 634671,
+    "files": 168,
+    "license_index_entries": 135
+  },
+  "external_dependencies": {
+    "@koishijs/console": {
+      "version": "5.30.11",
+      "resolved": "https://registry.npmjs.org/@koishijs/console/-/console-5.30.11.tgz",
+      "integrity": "sha512-F/NpSBmFUGcLTTwHLOt3OOaqMFD53aeoJL83Nwq4ZmudEpVQAA/uJusflvXadjf61HjHCu+DQArkPj0HGG7dhA=="
+    },
+    "koishi": {
+      "version": "4.18.11",
+      "resolved": "https://registry.npmjs.org/koishi/-/koishi-4.18.11.tgz",
+      "integrity": "sha512-WPpPFb5G/bChcV+cKF4EU3o5kmdQHc0Wg9nWP2/QT4dTzADSIYOmgwssO706fo97tfGF8Xa716CINHTzAPbXlg=="
+    },
+    "open": {
+      "version": "8.4.2",
+      "resolved": "https://registry.npmjs.org/open/-/open-8.4.2.tgz",
+      "integrity": "sha512-7x81NCL719oNbsq/3mh+hVrAWmFuEYUqrq/Iw3kUzH8ReypT9QQ0BLoJS7/G9k6N81XjW4qHWtjWwe/9eLy1EQ=="
+    },
+    "uuid": {
+      "version": "8.3.2",
+      "resolved": "https://registry.npmjs.org/uuid/-/uuid-8.3.2.tgz",
+      "integrity": "sha512-+NYs2QeMWy+GWFOEm9xnn6HCDp0l7QBD7ml8zLUmJ+93Q5NF0NocErnwkTkXVFNiX3/fpC6afS8Dhb/gz7R7eg=="
+    },
+    "ws": {
+      "version": "8.22.0",
+      "resolved": "https://registry.npmjs.org/ws/-/ws-8.22.0.tgz",
+      "integrity": "sha512-Ydggc987+RO0AnWtZ/7Wq9FtNvcrL1b/RO0ud9mWjUPgDrsAAwQSF51sm2hm1XofbU/4jkpGEsLFsZZxU+1DOg=="
+    }
+  },
+  "source_materials": {
+    "source_commit": "ca7a64175aa4c359c018b8a7e1dc6c506fbd6552",
+    "bundles": [
+      {
+        "file": "console-candidate3-security-inputs-v2.zip",
+        "size": 128359885,
+        "sha256": "c6261043446d4d717af86a3466733f3f284021dbfd996082464ec202b2a68e0b"
+      },
+      {
+        "file": "console-candidate2-source-support.zip",
+        "size": 4419328,
+        "sha256": "3762c2145fe2fdae8a74d7a81d46c2085becaf57ef8a6e79545161dc63cd05f8"
+      }
+    ],
+    "hosting_url": null,
+    "published": false
+  },
+  "legacy_byte_patch": "forbidden",
+  "complete_corresponding_source": false,
+  "product_release": false,
+  "acceptance": {
+    "status": "gateway_self_check_passed",
+    "resolved_issue": "markdown_link_attribute_injection",
+    "independent_review": false,
+    "release_assembly": "pending_task09"
+  }
+}

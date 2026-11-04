@@ -7,11 +7,19 @@ from pathlib import Path
 import subprocess
 import sys
 
+try:
+    from scripts.build_koishi_release import LICENSE_SHA256
+except ModuleNotFoundError:
+    from build_koishi_release import LICENSE_SHA256
+
 
 def verify(root, expected_commit):
     root=root.resolve()
     manifest=json.loads((root/'combination.json').read_text(encoding='utf-8'))
     if manifest['schema']!=1 or manifest['commit']!=expected_commit: raise ValueError('Combination identity')
+    for name, expected in LICENSE_SHA256.items():
+        if hashlib.sha256((root / 'licenses' / name).read_bytes()).hexdigest() != expected:
+            raise ValueError('Release license mismatch')
     # The same strict pairing checked by the trusted controller, before runtime probes.
     # Do not import from the payload: normal imports can create an unlisted .pyc.
     controller=runpy.run_path(str(root/'controller/koishi_control.py'))

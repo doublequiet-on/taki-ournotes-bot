@@ -9,7 +9,7 @@ from types import SimpleNamespace
 from unittest.mock import Mock, AsyncMock, patch
 
 from ournotes_bot.commands import CommandResult, HELP_TEXT
-from ournotes_bot.data import SongRepository
+from ournotes_bot.data import SongRepository, SupportCard
 from ournotes_bot.natural_query.local_query import parse_local_query
 from ournotes_bot.platforms.qq.qq import PreparedReply, _deliver_reply, _render_prepared
 from ournotes_bot.query.card_catalog import CardAnswer, CardRequest, detail_text
@@ -32,7 +32,7 @@ class ReviewRegressionTests(unittest.TestCase):
         self.addCleanup(assets.stop)
 
     def result(self, card, mode):
-        support = card in self.repo.support_cards
+        support = isinstance(card, SupportCard)
         answer = CardAnswer(CardRequest(support=support, mode=mode, card_id=card.id, query='SSR'), (card,))
         return answer, CommandResult(('support_cards' if support else 'cards', str(card.id) if mode=='detail' else 'SSR', 1), catalog=answer)
 
@@ -41,12 +41,20 @@ class ReviewRegressionTests(unittest.TestCase):
             card = replace(base, catalog={**base.catalog, 'detail_stale': True,
                 'relations': [{'kind': '活动', 'id': 123, 'name': {'zh': '关联测试'}}]})
             answer, result = self.result(card, 'detail')
-            with patch.object(card_detail_layout, 'render', side_effect=ValueError('oversize')):
-                reply = _render_prepared(answer.text(), result, self.repo, 'zh')
-            self.assertEqual(reply.text, detail_text(card))
-            for expected in ('满级基础值', '关联测试', '上次有效缓存', 'Haneoka JP', 'LIVE'):
-                self.assertIn(expected, reply.text)
-            self.assertNotIn('Lv.1 / Rank 1', reply.text)
+            for state, notice in (
+                    ('fresh', '资料新鲜度：新鲜'),
+                    ('stale', '当前使用旧缓存；未命中不代表最新资料不存在。'),
+                    ('unknown', '资料新鲜度：未知')):
+                with self.subTest(card_type=type(card).__name__, cache_state=state):
+                    captured = replace(answer, cache_state=state)
+                    selection = replace(result, catalog=captured)
+                    with patch.object(card_detail_layout, 'render', side_effect=ValueError('oversize')):
+                        reply = _render_prepared(captured.text(), selection, self.repo, 'zh')
+                    self.assertIsNone(reply.image)
+                    self.assertEqual(reply.text, detail_text(card) + '\n' + notice)
+                    for expected in ('满级基础值', '关联测试', '上次有效缓存', 'Haneoka JP', 'LIVE'):
+                        self.assertIn(expected, reply.text)
+                    self.assertNotIn('Lv.1 / Rank 1', reply.text)
 
     def test_detail_image_uses_same_max_values_as_text(self):
         for card in (self.repo.cards[0], self.repo.support_cards[0]):

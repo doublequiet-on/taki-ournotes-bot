@@ -1,0 +1,2067 @@
+{
+  "schema": 1,
+  "purpose": "review input, not product_release selection or physical-pruning evidence",
+  "source_sha": "56cd2f0f7fe0d1e65e7d991ead30aa47e0659a2b",
+  "checkpoint_sha": "12637558b1b3da8c38b1ca3596cc281f5b2f9dc4",
+  "inputs": {
+    "B0": "8d9e7301392ad548fe9554c4f4b09a0d53f615fa",
+    "task01": "7ae92a28cfa2c01b4fa8ae42207b61ae0afe7f48",
+    "P165": "e1a86a6db1f327a6dd0cc53fd860c4ababf50923",
+    "task02": "c6048b58ad054979be29542176776bd0cbe3551a",
+    "task03": "4d754dfaf10a2e598532c3d4dd291a26f6fa6627",
+    "task04": "f31722d9913491855ffd47b33556553542941da1",
+    "task05": "a9c27d7eb94833df713995b8e6f9a85fc45ea0d5",
+    "task07": "3686da76a939345690d556d7ddeb40198e15a979",
+    "task09": "9a3eca0b21dd7a7724143f988def59a5fc558dca",
+    "task08_docs": "509abc81efc2433cbc197050ddc5d64c40f48f5a"
+  },
+  "reference_only_task10": "cab373c65a98424f37b817c22c7837e53155893b",
+  "input_ancestor_checks": {
+    "B0": true,
+    "task01": true,
+    "P165": true,
+    "task02": true,
+    "task03": true,
+    "task04": true,
+    "task05": true,
+    "task07": true,
+    "task09": true,
+    "task08_docs": true
+  },
+  "cumulative_files": [
+    "M\tMANIFEST.in",
+    "M\tREADME.md",
+    "M\tTHIRD_PARTY.md",
+    "M\tdeploy/L2.md",
+    "A\tdeploy/licenses/SOURCES.md",
+    "A\tdeploy/licenses/koishi-console/LICENSE",
+    "A\tdeploy/licenses/node/LICENSE",
+    "A\tdeploy/product_identity.py",
+    "M\tdocs/CUTOFF_HISTORY.md",
+    "M\tdocs/DEV_GUIDE.md",
+    "A\tdocs/HISTORY_DATA_CONTRACT.md",
+    "M\tdocs/IMAGE_OUTPUT.md",
+    "M\tdocs/KOISHI_BACKEND_V1.md",
+    "M\tdocs/L2.md",
+    "A\tdocs/MANAGEMENT_SCOPE_SAFETY.md",
+    "A\tdocs/PRODUCT_RELEASE.md",
+    "A\tdocs/QUERY_DATA_CONTRACT.md",
+    "A\tdocs/QUERY_DELIVERY_SAFETY.md",
+    "A\tdocs/RELEASE_MATERIALS.md",
+    "M\tdocs/STORY_ENGINE.md",
+    "A\tdocs/TASK08_INTEGRATION.md",
+    "A\tdocs/TASK08_PRODUCT_BOUNDARY.md",
+    "A\tdocs/task08-integration/assembly-input.json",
+    "A\tdocs/task08-product/assembly-input.json",
+    "A\tdocs/validation/task07-history.md",
+    "M\tkoishi/README.md",
+    "M\tkoishi/scripts/probe.cjs",
+    "M\tkoishi/src/backend.ts",
+    "M\tkoishi/src/delivery.ts",
+    "M\tkoishi/src/group-policies.ts",
+    "M\tkoishi/src/management.ts",
+    "M\tkoishi/src/receiver.ts",
+    "A\tkoishi/src/scope-authority.ts",
+    "A\tkoishi/src/scope-identity.ts",
+    "M\tkoishi/src/wire.ts",
+    "M\tscripts/L2.md",
+    "M\tscripts/build_koishi_release.py",
+    "M\tscripts/check_koishi_release.py",
+    "A\tscripts/inspect_history_data.py",
+    "A\tscripts/product_release.py",
+    "M\tsrc/L2-Application.md",
+    "M\tsrc/L2-Rendering.md",
+    "M\tsrc/ournotes_bot/ai_query.py",
+    "M\tsrc/ournotes_bot/application/backend.py",
+    "M\tsrc/ournotes_bot/application/backend_bootstrap.py",
+    "M\tsrc/ournotes_bot/application/backend_sources.py",
+    "M\tsrc/ournotes_bot/application/conversation_state.py",
+    "M\tsrc/ournotes_bot/application/delivery_ledger.py",
+    "M\tsrc/ournotes_bot/application/model_runtime.py",
+    "A\tsrc/ournotes_bot/application/personal_runtime.py",
+    "A\tsrc/ournotes_bot/application/query_runtime.py",
+    "M\tsrc/ournotes_bot/application/replies.py",
+    "M\tsrc/ournotes_bot/application/reply_preparation.py",
+    "M\tsrc/ournotes_bot/application/story_service.py",
+    "M\tsrc/ournotes_bot/bot_info.py",
+    "M\tsrc/ournotes_bot/commands.py",
+    "M\tsrc/ournotes_bot/data.py",
+    "M\tsrc/ournotes_bot/domain/info_catalog.py",
+    "A\tsrc/ournotes_bot/domain/public_queries.py",
+    "A\tsrc/ournotes_bot/domain/query_context.py",
+    "M\tsrc/ournotes_bot/natural_query/L2-2.md",
+    "M\tsrc/ournotes_bot/natural_query/on_query.py",
+    "A\tsrc/ournotes_bot/natural_query/parser.py",
+    "M\tsrc/ournotes_bot/natural_query/query_agent.py",
+    "M\tsrc/ournotes_bot/platforms/qq/menu.py",
+    "M\tsrc/ournotes_bot/query/L2-2.md",
+    "M\tsrc/ournotes_bot/query/activity_query.py",
+    "M\tsrc/ournotes_bot/query/card_catalog.py",
+    "M\tsrc/ournotes_bot/query/continuation.py",
+    "M\tsrc/ournotes_bot/query/contracts/info.py",
+    "M\tsrc/ournotes_bot/query/event_cutoff_query.py",
+    "A\tsrc/ournotes_bot/query/public_queries.py",
+    "M\tsrc/ournotes_bot/query/song_query.py",
+    "M\tsrc/ournotes_bot/rendering/L2-2-Core.md",
+    "M\tsrc/ournotes_bot/rendering/L2-2-Song.md",
+    "M\tsrc/ournotes_bot/rendering/card_detail_layout.py",
+    "M\tsrc/ournotes_bot/rendering/catalog_layout.py",
+    "M\tsrc/ournotes_bot/rendering/event_cutoff_visuals.py",
+    "M\tsrc/ournotes_bot/rendering/haneoka_theme.py",
+    "M\tsrc/ournotes_bot/rendering/info_layout.py",
+    "M\tsrc/ournotes_bot/rendering/labels.py",
+    "M\tsrc/ournotes_bot/rendering/ranking_layout.py",
+    "M\tsrc/ournotes_bot/rendering/rotating_layout.py",
+    "M\tsrc/ournotes_bot/rendering/song_detail_layout.py",
+    "M\tsrc/ournotes_bot/rendering/song_layout.py",
+    "M\tsrc/ournotes_bot/sources/L2-2.md",
+    "M\tsrc/ournotes_bot/sources/cutoff_history.py",
+    "A\tsrc/ournotes_bot/sources/haneoka/activity_details.py",
+    "M\tsrc/ournotes_bot/sources/haneoka/catalog.py",
+    "M\tsrc/ournotes_bot/sources/haneoka/catalog_assets.py",
+    "M\tsrc/ournotes_bot/sources/haneoka/event_cutoffs.py",
+    "M\tsrc/ournotes_bot/sources/haneoka/game_assets.json",
+    "M\tsrc/ournotes_bot/sources/haneoka/info_catalog.py",
+    "A\tsrc/ournotes_bot/sources/haneoka/public_queries.py",
+    "M\tsrc/ournotes_bot/sources/haneoka/transport.py",
+    "M\tsrc/ournotes_bot/sources/history_archive.py",
+    "M\tsrc/ournotes_bot/sources/history_compression.py",
+    "A\tsrc/ournotes_bot/sources/history_partitions.py",
+    "A\tsrc/ournotes_bot/sources/history_retention.py",
+    "M\tsrc/ournotes_bot/sources/moenotes_events.py",
+    "M\tsrc/ournotes_bot/visuals.py",
+    "M\ttests/test_console_policies.py",
+    "M\ttests/test_continuation.py",
+    "M\ttests/test_event_cutoffs.py",
+    "M\ttests/test_haneoka_cutoffs.py",
+    "M\ttests/test_haneoka_facilities.py",
+    "M\ttests/test_info_command_pipeline.py",
+    "M\ttests/test_info_layout.py",
+    "M\ttests/test_info_queries.py",
+    "M\ttests/test_menu.py",
+    "M\ttests/test_offline_bundle.py",
+    "M\ttests/test_offline_release_build.py",
+    "M\ttests/test_platform_boundary.py",
+    "M\ttests/test_pr60_regressions.py",
+    "M\ttests/test_rotating_layout.py",
+    "M\ttests/test_song_traits.py",
+    "M\ttests/test_source_egress.py",
+    "M\ttests/test_visuals.py"
+  ],
+  "new_split_files": [
+    "M\tdocs/HISTORY_DATA_CONTRACT.md",
+    "M\tdocs/KOISHI_BACKEND_V1.md",
+    "A\tdocs/TASK08_INTEGRATION.md",
+    "M\tdocs/TASK08_PRODUCT_BOUNDARY.md",
+    "A\tdocs/task08-integration/assembly-input.json",
+    "M\tdocs/validation/task07-history.md",
+    "M\tkoishi/scripts/probe.cjs",
+    "M\tkoishi/src/backend.ts",
+    "M\tkoishi/src/receiver.ts",
+    "M\tkoishi/src/wire.ts",
+    "M\tsrc/L2-Application.md",
+    "M\tsrc/ournotes_bot/ai_query.py",
+    "M\tsrc/ournotes_bot/application/backend.py",
+    "M\tsrc/ournotes_bot/application/backend_bootstrap.py",
+    "M\tsrc/ournotes_bot/application/backend_sources.py",
+    "M\tsrc/ournotes_bot/application/conversation_state.py",
+    "M\tsrc/ournotes_bot/application/model_runtime.py",
+    "A\tsrc/ournotes_bot/application/personal_runtime.py",
+    "A\tsrc/ournotes_bot/application/query_runtime.py",
+    "M\tsrc/ournotes_bot/application/replies.py",
+    "A\tsrc/ournotes_bot/domain/query_context.py",
+    "M\tsrc/ournotes_bot/natural_query/L2-2.md",
+    "A\tsrc/ournotes_bot/natural_query/parser.py",
+    "M\tsrc/ournotes_bot/sources/cutoff_history.py",
+    "M\tsrc/ournotes_bot/sources/history_partitions.py",
+    "M\ttests/test_console_policies.py",
+    "M\ttests/test_haneoka_cutoffs.py",
+    "M\ttests/test_platform_boundary.py"
+  ],
+  "inventory": [
+    {
+      "path": "THIRD_PARTY.md",
+      "sha256": "78d32b33796d548b4f54119744ab47de3e7d009f5064e387d87f6cd3ecdba27c",
+      "bytes": 14408,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "koishi/.node-version",
+      "sha256": "7e8a2fa94951112b894a3dbe3d05efef5e9263741fa49125f0a70f40fedab4cc",
+      "bytes": 8,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "koishi/.npmrc",
+      "sha256": "c23951b936c0b6fdb40ea86f4bb3454ad76b34a93641de654ddaa651de80f839",
+      "bytes": 96,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "koishi/README.md",
+      "sha256": "7f884f259ac184738bf499bb9c43e9db488fbe861f09ddd87d4aea6e82135ba8",
+      "bytes": 13012,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "koishi/console.cjs",
+      "sha256": "ff02b47833879f0ab5ff2821b8f2af8c9ee4c460883828189fdd71cb44fd1fdd",
+      "bytes": 26326,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "koishi/console/brand/README.md",
+      "sha256": "a90f99786d24998df565ed60613677575267d82f3ea905cf7358e4b7d579c0d4",
+      "bytes": 776,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "koishi/console/brand/haneoka.svg",
+      "sha256": "5acfca8125d90935146d3541f3a39b3a68e464caed6b5d5ef6944c76d3015166",
+      "bytes": 4381,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "koishi/console/brand/moenotes.png",
+      "sha256": "76739ea6584aca08f3a9a1bbc6f7eee7a3d28decdad68c23b33c78ef59d98070",
+      "bytes": 284978,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "koishi/console/brand/taki.png",
+      "sha256": "c2fc36c8ed7f46d3e93d674cc4646fb1b175017e25b8f7f9f8a9989554805440",
+      "bytes": 638451,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "koishi/console/chat.js",
+      "sha256": "5289db182658e782fc7986438e3a1dc93a774b7b919d859c49a6596b8e9f4a18",
+      "bytes": 10182,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "koishi/console/costs.js",
+      "sha256": "b757130ede025e628e95e8c44d7e0857a3aefaee47e0c634bef97a618f2252eb",
+      "bytes": 10452,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "koishi/console/index.js",
+      "sha256": "8a2f36e646bea7acea593398a44e0d2b91b2150b1914cc54fd244c2bb280378f",
+      "bytes": 17697,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "koishi/console/library.js",
+      "sha256": "4753da24458f4158107e0dc2f575ad3b23c71c670214d20f62cf10226349f258",
+      "bytes": 7112,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "koishi/console/model.js",
+      "sha256": "9d668e0e56a77e4810d4bb6b749acbae23a32f751b7f8771e5a3f4e7884c28de",
+      "bytes": 20783,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "koishi/console/ops.js",
+      "sha256": "32a646d118cd13b3b0465bb8a86ab27bc6ade4590e353711468c461c0c15dace",
+      "bytes": 9740,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "koishi/console/package.json",
+      "sha256": "755db0ef1b8a181a4debf14df4efd7789082a9e568d06a0cfa2cc2622cf98c75",
+      "bytes": 221,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "koishi/console/runtime.js",
+      "sha256": "46d651942602ae8de970dd232e0126dedc67f6525bfbe7de59ea9280ac326d8b",
+      "bytes": 208,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "koishi/console/state.js",
+      "sha256": "ac1b5d8a9322fe69da4d776fa35b2cf8cd1ca956377f2407164a701ae3782c42",
+      "bytes": 35323,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "koishi/console/style.css",
+      "sha256": "95b55596f055c97d66db95b4708c2c6d7c61654dc757f236baa712d4cad83238",
+      "bytes": 26640,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "koishi/console/views.js",
+      "sha256": "df4c6b515a1c9c9cd2a2b0f93594d08b29ebef1e6f51df6257db0ef99ed1eb23",
+      "bytes": 27315,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "koishi/health.cjs",
+      "sha256": "a51e53b664995cd32e839c3592b145c0082737e5da1a3a77fe4860cda9c88f4f",
+      "bytes": 1679,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "koishi/operation-journal.cjs",
+      "sha256": "e04ebb5e80d93bf9f2f081b35895dcb30c011a8a2ef1498ce07426497934525b",
+      "bytes": 7545,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "koishi/ops-controls.cjs",
+      "sha256": "9b2831c8374bb7b8359953085a25d88b849ffaa75822a63ee844c495cf79de8b",
+      "bytes": 6928,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "koishi/ops-host.cjs",
+      "sha256": "743f269af7d1f8cff6c5481f2b6a1ffa8d79c220161ab5518edf77ba17f1788b",
+      "bytes": 1258,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "koishi/package-lock.json",
+      "sha256": "901203e6cc4b55fe922d7a85117032132a11c255877d4290369ef4cb7b52919a",
+      "bytes": 78215,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "koishi/package.json",
+      "sha256": "359e857885924001caceecf525bd7918bc533cd274b4d548d56831063d26056e",
+      "bytes": 792,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "koishi/preview/.gitignore",
+      "sha256": "68719d3d05a180b0dafc7ea7cf94121a29edd8bacc226647a312488fa5e230e7",
+      "bytes": 14,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "koishi/preview/README.md",
+      "sha256": "d4575a97b48a8f9c0dbbbde49997c2e6200c4506d414069adeb3f0051ed2baaa",
+      "bytes": 3331,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "koishi/preview/astro.config.mjs",
+      "sha256": "f5458e2d2dd3c689f35e1332ee022e774d7101f33b0538fda7a59b039078acbf",
+      "bytes": 228,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "koishi/preview/package-lock.json",
+      "sha256": "fcde66cec71f9e8d2b7bba303892e92c809f823e9d193be885d88c065562f572",
+      "bytes": 197207,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "koishi/preview/package.json",
+      "sha256": "b9678efab25ec952854f93beed11ee7d2846b6067f35345ba89b173c181fb27c",
+      "bytes": 315,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "koishi/preview/public/brand/README.md",
+      "sha256": "a90f99786d24998df565ed60613677575267d82f3ea905cf7358e4b7d579c0d4",
+      "bytes": 776,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "koishi/preview/public/brand/haneoka.svg",
+      "sha256": "5acfca8125d90935146d3541f3a39b3a68e464caed6b5d5ef6944c76d3015166",
+      "bytes": 4381,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "koishi/preview/public/brand/moenotes.png",
+      "sha256": "76739ea6584aca08f3a9a1bbc6f7eee7a3d28decdad68c23b33c78ef59d98070",
+      "bytes": 284978,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "koishi/preview/public/brand/taki.png",
+      "sha256": "c2fc36c8ed7f46d3e93d674cc4646fb1b175017e25b8f7f9f8a9989554805440",
+      "bytes": 638451,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "koishi/preview/src/client.ts",
+      "sha256": "f73515b20a799534dd1beddd00b7e6a251403a0327b666c878f028dd7f8d1295",
+      "bytes": 22286,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "koishi/preview/src/components/Icon.astro",
+      "sha256": "8f81d800bfed42afe8cbb2b322a611b89fcd64e1560ca0503ed435873c843c90",
+      "bytes": 1660,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "koishi/preview/src/components/TakiAvatar.astro",
+      "sha256": "c45812f648f2bf26e14da986d34521a266def6f724e7f0dcf4c97e5e79e507fd",
+      "bytes": 171,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "koishi/preview/src/data.ts",
+      "sha256": "65d4d305e394db9ceb17d669683d29674dc6c71eb9448c1d3da83b67f17512d1",
+      "bytes": 3061,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "koishi/preview/src/pages/index.astro",
+      "sha256": "7226edb091e6d21caba478e1ef1ff4d1fffab7d92b775e3ffde6b5eb76a787ff",
+      "bytes": 23332,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "koishi/preview/src/style.css",
+      "sha256": "e5d4b758dc9042332772cd950c96218e309d0da923634f132ec88b9aa48f52ca",
+      "bytes": 32547,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "koishi/preview/src/workbench.css",
+      "sha256": "f57872154b6e373428d1606e81770702f870d729e81504be949264e30f107ebe",
+      "bytes": 10615,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "koishi/run.cjs",
+      "sha256": "7a415d0a0d98596bdd7ab6aa95b4696632478e5fad735a8bf748383e294bdf10",
+      "bytes": 4085,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "koishi/scripts/benchmark-queries.cjs",
+      "sha256": "df44407d0f709d7a3204f72541fbab7675bc7a6a512a602111cf34c08d9e1607",
+      "bytes": 9322,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "koishi/scripts/console-browser.cjs",
+      "sha256": "9776e137c0e61ee89cbd9df4e2795394217144d5faabfd24c0c63524c349ee38",
+      "bytes": 25343,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "koishi/scripts/console-rpc-probe.cjs",
+      "sha256": "60dcc644322905608a9d448aa8291fb02e4a7ebf28f51bc26d89beca7834c174",
+      "bytes": 24333,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "koishi/scripts/console-server.cjs",
+      "sha256": "3d795ef2ab1616413549676bea6fb7b78b8cb37ffa07d87e368a0b924f5fdf60",
+      "bytes": 1609,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "koishi/scripts/console-state-probe.cjs",
+      "sha256": "46192da31e1274e2097e88a91db3d76053e9ea0e313528d2e926be5b14080635",
+      "bytes": 19755,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "koishi/scripts/fixtures/http-v2.json",
+      "sha256": "8cd6ea96ac2005b7972538412a10173292d692eff6e271de4ec1b372e353e867",
+      "bytes": 23587,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "koishi/scripts/probe.cjs",
+      "sha256": "b382db4f1227cd6b1beee3f2056fad5ba5fe4fefe34eeebd2a6aeb25456e88e9",
+      "bytes": 164700,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "koishi/src/backend.ts",
+      "sha256": "3aa22b2e41119fea2cd35c3a174956bc85dc8dcaadd833fb665892355d13366c",
+      "bytes": 12340,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "koishi/src/delivery.ts",
+      "sha256": "82b3bfeff343339a4a2a411cb4f462e627c4c5d006a37239bcca2fd13270692b",
+      "bytes": 12535,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "koishi/src/gateway.ts",
+      "sha256": "071b927306a085037cf00e6b2f28293f9da1f438212cf86eb767bd93c733b4b6",
+      "bytes": 1391,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "koishi/src/group-policies.ts",
+      "sha256": "16a4cad4a0c9ac630a7241b9bf06e866fec9d93187fd26139b8fde61e7f078f3",
+      "bytes": 7618,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "koishi/src/index.ts",
+      "sha256": "e156d943e2e13343ef6d5f12917e7e710402542df2fd555be7fadf129e82d1e4",
+      "bytes": 3494,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "koishi/src/ingress.ts",
+      "sha256": "d4531b2cb247b71e27e0adf432a727131cb6212eed15ce5566aff2d5ba82b614",
+      "bytes": 10374,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "koishi/src/management.ts",
+      "sha256": "43efd57d8073161347d35aef601bc0c1ac53b4cc1c930217e49bb8d6f2b88fc6",
+      "bytes": 9517,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "koishi/src/materials.ts",
+      "sha256": "dabeac5941b44f96b49b23b70c962742461e42be10f5c8c8627fadfc48bacd93",
+      "bytes": 18566,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "koishi/src/notices.ts",
+      "sha256": "5e87739afb49f31a3b99d3da66f901a4ccaae9109c81039dfad0209c5c514b13",
+      "bytes": 6658,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "koishi/src/receiver.ts",
+      "sha256": "2d91d640067fb9bc2a80bed1b6649c1d2816783bb33da088dbb1f208cdf0fe39",
+      "bytes": 33469,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "koishi/src/scope-authority.ts",
+      "sha256": "e57f56ceaf23888f58c1e46f2c634293ebc14cad6662315223a7f65da19eb1b1",
+      "bytes": 5762,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "koishi/src/scope-identity.ts",
+      "sha256": "c0f5c101b2c701a8c1a47b36dad3a6bcc0be8348101e926d95f7cc53aa5c9a0d",
+      "bytes": 3958,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "koishi/src/telemetry.ts",
+      "sha256": "2797ed304ae6169cadfb19171c482334612e29cbf6da5f7be89d208185eaa822",
+      "bytes": 2174,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "koishi/src/wire.ts",
+      "sha256": "435b4987079728dd0e589d55751439e723f0427f5f6ceb42b146c3087bb38479",
+      "bytes": 14944,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "koishi/trusted-actions.cjs",
+      "sha256": "9efd977f326f0ff84272fe07a703ef11369fda494bbd03ddde7196ab5e1f09ab",
+      "bytes": 6559,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "koishi/tsconfig.json",
+      "sha256": "44c02c03e4a1478ad9e11208812c3231743a07f6c46a38c0974beac494aef5f2",
+      "bytes": 285,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "pyproject.toml",
+      "sha256": "2281b01586800efd35adb2e0174dfc12967a51b6eb19fad73c2a27719161704d",
+      "bytes": 2123,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "query_aliases.json",
+      "sha256": "b258ec8e853b3f1a53aa115e5b5b76648d038b64743559429636b8b2f56c8b5d",
+      "bytes": 2543,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "src/L2-Application.md",
+      "sha256": "12c02033a2c0fd5162b7012763a5b0fcd36e46f75ad9a47ab7a13a521e34dc67",
+      "bytes": 16312,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "src/L2-Data.md",
+      "sha256": "f36a33f9b41fc926b53142e395a49c117ca1bb3b79376a83711350db3ff814e0",
+      "bytes": 5103,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "src/L2-QQ.md",
+      "sha256": "f0d674ee8ee85069d0c8a9e598b99c031a444eaa0bb5bff17f005a645057cebb",
+      "bytes": 7860,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "src/L2-Query.md",
+      "sha256": "49451521bf4fc27e6f9b9d9f74e9f22b8b90fa1afa31d364204f1df3e117042e",
+      "bytes": 4782,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "src/L2-Rendering.md",
+      "sha256": "02a294de9d86f72eaa18bc9ef56b7dcdfd759781607bf69913a39c2ed7960441",
+      "bytes": 6247,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "src/ournotes_bot/L2-2-Catalog.md",
+      "sha256": "178612e0047ed0aa493713bf9dce4734133f989f3ae82bff3aaead4333e3e87c",
+      "bytes": 6864,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "src/ournotes_bot/__init__.py",
+      "sha256": "5730c2b3285071bf85f4ca9ad99c2ef6ccdad6ab228ba131488fde0180969990",
+      "bytes": 310,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "src/ournotes_bot/ai_client.py",
+      "sha256": "d856dbd54f852291a98b69da1e0921559730b2ccf70d593a2fb386578f5eaa51",
+      "bytes": 4442,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "src/ournotes_bot/ai_query.py",
+      "sha256": "a60bf1e0f4e7931fcaa5908835cf8070a5360ebf49098ca0470ace899fd02517",
+      "bytes": 3067,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "src/ournotes_bot/application/__init__.py",
+      "sha256": "7ef04522a9517ca604f692aab563eb9e4456062d1f5db6075177c19f0131963d",
+      "bytes": 70,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "src/ournotes_bot/application/admin.py",
+      "sha256": "2cf4d8bf2ef99c5c5a29eae23e16f554bba15cfe08d09b3e7eef3decd02a2171",
+      "bytes": 25014,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "src/ournotes_bot/application/backend.py",
+      "sha256": "1117a3a20b9ee9743d6809b17141c2656f654f174d1effb3733d704dbafbb102",
+      "bytes": 68212,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "src/ournotes_bot/application/backend_bootstrap.py",
+      "sha256": "9875d8c85003220db1dbe1f67baac9b3d28f8c857f5a159ff5338b47893f7cb2",
+      "bytes": 4465,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "src/ournotes_bot/application/backend_protocol.py",
+      "sha256": "a2d5ba2fca78caedc8ad426a74b9569363a6a99de858a4bec519322e7775aedd",
+      "bytes": 8147,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "src/ournotes_bot/application/backend_sources.py",
+      "sha256": "193d6012f7d1cf3c4897e660ea155e93fe40b970b7bb1ee78e493fbfa9643de8",
+      "bytes": 2778,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "src/ournotes_bot/application/chat_admin.py",
+      "sha256": "8134743fbb66217586bc81d16627cb92bc947ae20128c72453dbad5882002d8d",
+      "bytes": 3249,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "src/ournotes_bot/application/chat_agent.py",
+      "sha256": "9d4867bc5ded7a943d5cc62adcedb564ba14bb1112ea2708ee5da97147a36f76",
+      "bytes": 90536,
+      "classification": "personal_leaf_exclude_after_references_removed"
+    },
+    {
+      "path": "src/ournotes_bot/application/chat_capabilities.py",
+      "sha256": "7d478eaae2bc4301b147bfea9cfc3c395d26ee11c246b3cac0df5b77c4d5d357",
+      "bytes": 5082,
+      "classification": "personal_leaf_exclude_after_references_removed"
+    },
+    {
+      "path": "src/ournotes_bot/application/chat_context.py",
+      "sha256": "2fa1feebaf202efb0b55f2c6982aca38e035e330ccc6e954562d7bcdf05e6d46",
+      "bytes": 3864,
+      "classification": "personal_leaf_exclude_after_references_removed"
+    },
+    {
+      "path": "src/ournotes_bot/application/chat_followup.py",
+      "sha256": "c5dc46731bf399bbe0c0b2252a90b5d049f6fea28b4cfccf5d47b699eb539137",
+      "bytes": 4947,
+      "classification": "personal_leaf_exclude_after_references_removed"
+    },
+    {
+      "path": "src/ournotes_bot/application/chat_jobs.py",
+      "sha256": "1771680d8018bfe733819524196806f1c73dcbe00b200c69bf8ee3ac41002285",
+      "bytes": 18433,
+      "classification": "personal_leaf_exclude_after_references_removed"
+    },
+    {
+      "path": "src/ournotes_bot/application/chat_proactive_runtime.py",
+      "sha256": "63bef2c5816b6db4a0e07709d5b993f8a65cca836936a3bfee77316299baf018",
+      "bytes": 32115,
+      "classification": "personal_leaf_exclude_after_references_removed"
+    },
+    {
+      "path": "src/ournotes_bot/application/chat_recovery.py",
+      "sha256": "dff40dd1c7c02773f5aa5ccd74783cc2ba49f15a5f02c8d145dd3173f963f041",
+      "bytes": 8247,
+      "classification": "personal_leaf_exclude_after_references_removed"
+    },
+    {
+      "path": "src/ournotes_bot/application/chat_store.py",
+      "sha256": "2bd471bd29daf295a4f5eda172be6c5b993bbd7973da4ca680ab759f3bc94ac2",
+      "bytes": 41335,
+      "classification": "personal_leaf_exclude_after_references_removed"
+    },
+    {
+      "path": "src/ournotes_bot/application/chat_tasks.py",
+      "sha256": "d6dcfcf29e3fa29fdefcd0836797052979d2dd1232fa68d70e1836a2789842c1",
+      "bytes": 9547,
+      "classification": "personal_leaf_exclude_after_references_removed"
+    },
+    {
+      "path": "src/ournotes_bot/application/conversation_state.py",
+      "sha256": "887f55487f3628769178cd268d07395e852148dd0d6d0c6edce094483ea326e4",
+      "bytes": 9541,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "src/ournotes_bot/application/data_owner.py",
+      "sha256": "7210e5084b9e66508ba5fb33cfb1d3936c80e5f13d3167c336db8713a260b15a",
+      "bytes": 1530,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "src/ournotes_bot/application/delivery_ledger.py",
+      "sha256": "2b68819f52162a12ff45939cc3808b33336c7cd2e53553e472891b5d0faeb1fd",
+      "bytes": 13365,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "src/ournotes_bot/application/diagnostics.py",
+      "sha256": "f1163546dba9f1aea7d7b735fc59abd8d969650e457444eb2fd1c8e6d73ec4f6",
+      "bytes": 12979,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "src/ournotes_bot/application/knowledge_cli.py",
+      "sha256": "dc8b401f0ae6283b702dbf2161033159b9d948702e995820d9fc4ac2c81c05c8",
+      "bytes": 3598,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "src/ournotes_bot/application/knowledge_service.py",
+      "sha256": "9f92a5e1d92b223eff22dd87f6b29183db4033f1f4d4024539e278b9d6020a42",
+      "bytes": 26206,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "src/ournotes_bot/application/library_admin.py",
+      "sha256": "ec805e2045a6ef5761eade0adf51256a2cdea87251b56847860de2a57f3917ca",
+      "bytes": 10921,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "src/ournotes_bot/application/model_admin.py",
+      "sha256": "671513d86e28927b52a5f923c3d5cda3d466c9c58b8e4bd533c4873ee20731e0",
+      "bytes": 37251,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "src/ournotes_bot/application/model_config.py",
+      "sha256": "ebfc1338b26aad47b8b4d4fac630a3956d3f34fe9c1350a9e3cd29bb019cde85",
+      "bytes": 10680,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "src/ournotes_bot/application/model_execution.py",
+      "sha256": "4edf0d0c6df409c7afec1fc40dd80332561b8dfdb3e16ae43eb0650910c678b4",
+      "bytes": 9249,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "src/ournotes_bot/application/model_runtime.py",
+      "sha256": "4bb68778ca6d3bc70f1260b7202d958d606fb05c99d0d33392bf1488e7a5b0d5",
+      "bytes": 61282,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "src/ournotes_bot/application/notice_gateway.py",
+      "sha256": "ba5f252c7df700d7439b542042797f88d4565f22eb3eaf901ba7ba94c6d77f8e",
+      "bytes": 14875,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "src/ournotes_bot/application/notice_reports.py",
+      "sha256": "b28efee5861f8d4916d5a5db980dd2218c800976979371c6d88b14e134d0c8d7",
+      "bytes": 12840,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "src/ournotes_bot/application/operations.py",
+      "sha256": "c3f0452b3376da4ae34c68fcb407d5b87388e147febf0d83e1ab14a64184661c",
+      "bytes": 11415,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "src/ournotes_bot/application/operations_runtime.py",
+      "sha256": "6ceb968193b6f0c23865a68e751b33a88dd06c5bee1f53e6d1638ff426e10a3e",
+      "bytes": 2361,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "src/ournotes_bot/application/operations_sources.py",
+      "sha256": "b0ce645d9147a53f2ea70d741e61c6300e1fe400f53fdb8132193c28b99a164c",
+      "bytes": 7820,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "src/ournotes_bot/application/persona.py",
+      "sha256": "e6069054062725ce4d4d837e990a1dfcf829d0a15f26ce6417096acde1d22b98",
+      "bytes": 9219,
+      "classification": "personal_leaf_exclude_after_references_removed"
+    },
+    {
+      "path": "src/ournotes_bot/application/personal_runtime.py",
+      "sha256": "37de47164adf4ddb2519c01b6859dbb7e46fd6f931167e94e0b3374c6e7b80e4",
+      "bytes": 1527,
+      "classification": "personal_leaf_exclude_after_references_removed"
+    },
+    {
+      "path": "src/ournotes_bot/application/proactive_chat.py",
+      "sha256": "28a768ba0fb2339e1903985c0378613a0ebf61012ac5b0ad5f83d6033c3d4d42",
+      "bytes": 19647,
+      "classification": "personal_leaf_exclude_after_references_removed"
+    },
+    {
+      "path": "src/ournotes_bot/application/query_runtime.py",
+      "sha256": "4563a083fd1d558312abc6a328bf7a981f2c2653f2ec3a361fe6d2cf65b6ce54",
+      "bytes": 4190,
+      "classification": "shared_required"
+    },
+    {
+      "path": "src/ournotes_bot/application/replies.py",
+      "sha256": "b6af5e9b05fb74985281fff6c04265085cee44884dbd12a2fe2f0833c3e5848a",
+      "bytes": 50000,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "src/ournotes_bot/application/reply_preparation.py",
+      "sha256": "b40b2fea360f06b449624c72f3d0f1210e54f116ea5e4a4092f0e7eb5160dc9a",
+      "bytes": 4562,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "src/ournotes_bot/application/runtime_tasks.py",
+      "sha256": "28552b73f4e471783171df9246984844d55fb04ae4625c6d94b87b4c9e88e6e5",
+      "bytes": 7041,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "src/ournotes_bot/application/site_lookup.py",
+      "sha256": "a8d1905ba054dd8565f9c27c575f171936aa4a7275b60825ae448df27ddb529a",
+      "bytes": 12888,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "src/ournotes_bot/application/story_cli.py",
+      "sha256": "78a68816cf08fff55d663c561fb030225456765149c686f6b1b016dd2c40901c",
+      "bytes": 2725,
+      "classification": "personal_leaf_exclude_after_references_removed"
+    },
+    {
+      "path": "src/ournotes_bot/application/story_service.py",
+      "sha256": "0f381da2fb17255ee3bc7a39b84fa0c494a0f38ca8fee67e097997a01e586300",
+      "bytes": 15234,
+      "classification": "personal_leaf_exclude_after_references_removed"
+    },
+    {
+      "path": "src/ournotes_bot/application/usage_ledger.py",
+      "sha256": "169d2e75b6cc9be5bb51bcd4b10fbaee1d7d8ca1f8d058dd86643b513aae4dc0",
+      "bytes": 26365,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "src/ournotes_bot/bot_info.py",
+      "sha256": "7a50a1a9321321be75fcd606a8c3effbb6e9634f61172ff6fd3fc0768d805853",
+      "bytes": 992,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "src/ournotes_bot/commands.py",
+      "sha256": "56323ae75e7521623274cfc439035bb5edea14772fd6298fc071a8235cc7dd21",
+      "bytes": 55127,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "src/ournotes_bot/config.py",
+      "sha256": "2e0fd047e4ef805385a64be289f4faaee0d79e913c1f9ced322c9a5f32a6986f",
+      "bytes": 12441,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "src/ournotes_bot/data.py",
+      "sha256": "08cf7f8046fe5d1d64dcce05c4c154c5c60547ff41c9703c7aa7ee8e6ae228ff",
+      "bytes": 40005,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "src/ournotes_bot/domain/__init__.py",
+      "sha256": "761915a0661502e1b7438173ddb9a81562d7a330499befb2f705db0e49b8012a",
+      "bytes": 68,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "src/ournotes_bot/domain/card_query.py",
+      "sha256": "c83ff2f9a5eba50e5e81ee5461ed1c0465a4d2ee9aa66fc2d8733c46b18709c9",
+      "bytes": 2454,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "src/ournotes_bot/domain/chat.py",
+      "sha256": "891327cbe0bc3d00b8da0e41808202fecd27042ffa5498327c9c54f3cbfe2825",
+      "bytes": 3435,
+      "classification": "personal_leaf_exclude_after_references_removed"
+    },
+    {
+      "path": "src/ournotes_bot/domain/chat_images.py",
+      "sha256": "4f4d291a2a38d7e41326a84f5a5cd5d4fb77304e69b8da79669b2059e95a5176",
+      "bytes": 4497,
+      "classification": "shared_required"
+    },
+    {
+      "path": "src/ournotes_bot/domain/chat_memory.py",
+      "sha256": "1e3eca0854b31649d24bfc818c370d0cf1df7bde109fba0b84bf761ef5e54ed1",
+      "bytes": 1220,
+      "classification": "personal_leaf_exclude_after_references_removed"
+    },
+    {
+      "path": "src/ournotes_bot/domain/info_catalog.py",
+      "sha256": "8a0bfe1054a334601c706ff48a1a2ea1e30f178f991382db7251b0c9350a151c",
+      "bytes": 3544,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "src/ournotes_bot/domain/knowledge.py",
+      "sha256": "051fab37ec82e35f61b4e71b2bd8345ea9901fbcde9221a4d31a743fc5e70fa5",
+      "bytes": 4953,
+      "classification": "shared_required"
+    },
+    {
+      "path": "src/ournotes_bot/domain/meta_query.py",
+      "sha256": "7c99b72819b0a910d3908408849479bd286f046db4a53ff557f3439aadf25157",
+      "bytes": 9123,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "src/ournotes_bot/domain/model_calls.py",
+      "sha256": "794e319fa75d86ee26da04cfbd0a229597d9ebba482380a37b19563337883a42",
+      "bytes": 7902,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "src/ournotes_bot/domain/public_queries.py",
+      "sha256": "9a8e778a60c5e721477f91ef12fd1599b291a590135195ec0f1106550d0a3daf",
+      "bytes": 1400,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "src/ournotes_bot/domain/query_context.py",
+      "sha256": "f4d04388a7839f27fde81aabbc5538858bf8abe8555ed4352cc65bf1af275846",
+      "bytes": 633,
+      "classification": "shared_required"
+    },
+    {
+      "path": "src/ournotes_bot/domain/query_policy.py",
+      "sha256": "ef695842cdf18e382d403e72c8ee1ee6429743ef569e58a50875a7bb6c2ed0fb",
+      "bytes": 974,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "src/ournotes_bot/domain/story.py",
+      "sha256": "922ae12265e382a4e2cb4d7732d764f5cfe6adfa42fbc9885d4f797c42f34f8c",
+      "bytes": 1815,
+      "classification": "personal_leaf_exclude_after_references_removed"
+    },
+    {
+      "path": "src/ournotes_bot/domain/total_rankings.py",
+      "sha256": "6def40aa4ed2eca7f5e19cb8e5cc6b2799862622cb3cc09a206c615ff1f5c01d",
+      "bytes": 1460,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "src/ournotes_bot/i18n.py",
+      "sha256": "260660b3ba71b72e37b9ae01bc94ad672d065632680cf2dfe6761d9ce0c4fb6e",
+      "bytes": 13424,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "src/ournotes_bot/main.py",
+      "sha256": "91d2a9279ac258b2fc70a7095151bacb2a805210c9b3c356aae7fed685b6850f",
+      "bytes": 5352,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "src/ournotes_bot/natural_query/L2-2.md",
+      "sha256": "2f98a2a9379689f8da952d2564488138cf8051f179d7b6122a56ac1f9b4ddc7d",
+      "bytes": 10077,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "src/ournotes_bot/natural_query/__init__.py",
+      "sha256": "f70048af7cc75d4afea35d9d02e0fa0d1adff8330763581714370b9b20c131f0",
+      "bytes": 122,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "src/ournotes_bot/natural_query/ai_quota.py",
+      "sha256": "e2171a63871535f7f788b1d8200dae13d346a4a762b4ff648447dbcb5adbde2e",
+      "bytes": 3459,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "src/ournotes_bot/natural_query/catalog_arguments.py",
+      "sha256": "b9e4128c06927da793f09cdf05aa918d035003fb64bf4f2ca818f691f423470c",
+      "bytes": 6221,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "src/ournotes_bot/natural_query/local_query.py",
+      "sha256": "b4e36b22a0e1ed5e7e3169a534cb8b5f9db7a81ef19e465947ac570f8544d937",
+      "bytes": 14455,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "src/ournotes_bot/natural_query/native_tools.py",
+      "sha256": "a2143f35276711399ca274ffb3530e96770cff02bffdc368fbb63d95ed19da6d",
+      "bytes": 20082,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "src/ournotes_bot/natural_query/on_query.py",
+      "sha256": "bb35e34a12eefc92e3467654aca48cae5a88629126f37bbf7d2a7716bfb3aac9",
+      "bytes": 15689,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "src/ournotes_bot/natural_query/parser.py",
+      "sha256": "e1b382f711ede2dd75b4387b0166704e56eff8143f1ff0a058b7078fc15542df",
+      "bytes": 2470,
+      "classification": "shared_required"
+    },
+    {
+      "path": "src/ournotes_bot/natural_query/query_agent.py",
+      "sha256": "a534d7886ba34a92807fa9f878cb43a0c68c96078f1a54fd21c0eb2b2a4aea54",
+      "bytes": 36348,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "src/ournotes_bot/natural_query/query_capabilities.py",
+      "sha256": "89deeff068bd6cc108854c4adbd37458526974d63bbdda80e8efd3ef6a27396a",
+      "bytes": 13044,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "src/ournotes_bot/natural_query/query_debug.py",
+      "sha256": "12496d21371be5f1431bc153009d1fa77698a5c5e1749847cc0f3ea090ef1db1",
+      "bytes": 1697,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "src/ournotes_bot/natural_query/query_metrics.py",
+      "sha256": "72e30e825b2acf9803db08cbe722c49171755589bdd3dea9b5c792ebae43af82",
+      "bytes": 5942,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "src/ournotes_bot/natural_query/query_terms.py",
+      "sha256": "e0df3690f2451d6bd88f583844bb763ded404533fb8868713ca76dfbbcd6cc7f",
+      "bytes": 988,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "src/ournotes_bot/natural_query/query_validation.py",
+      "sha256": "2273f23e6a945b8f89479bd095a0d7cf25dd97aca46b8f8f7e118be56be4b45d",
+      "bytes": 18015,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "src/ournotes_bot/platforms/__init__.py",
+      "sha256": "8c39a1cba309be9a20af5e30bbf6aa28c9cb7f75f62c2afb3931a9945173bc78",
+      "bytes": 134,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "src/ournotes_bot/platforms/qq/__init__.py",
+      "sha256": "f73c84caf004ec03d01154f47205c42b45bffbff24bc29736bd9ecb871e10ba7",
+      "bytes": 124,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "src/ournotes_bot/platforms/qq/assets/card-947.jpg",
+      "sha256": "ed23f7f33a54c01b5b636cb312f606662d177cfb3d74cdb459d0b6c1315aa81c",
+      "bytes": 92178,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "src/ournotes_bot/platforms/qq/menu.py",
+      "sha256": "67b3b2d9a7581f5df35e2f7d98e3508bed58a1fa64d14754cf45b588a83e1056",
+      "bytes": 7338,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "src/ournotes_bot/platforms/qq/qq.py",
+      "sha256": "2266ccbadbb5bb3e347b729aff40527398d99d2a188a38f6ddc8321f0a5934db",
+      "bytes": 25102,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "src/ournotes_bot/query/L2-2.md",
+      "sha256": "aa8b986e9e8f6110e7253212fb9dd0feab3c7db7d2c02a8dedc1efee51b378ff",
+      "bytes": 12887,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "src/ournotes_bot/query/__init__.py",
+      "sha256": "26f0703d22e9fbdd12ecea643c37d03dd4b562c6e687ff6e08b1651470d2cd4f",
+      "bytes": 149,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "src/ournotes_bot/query/activity_query.py",
+      "sha256": "69112c8c5ce6d7396c98c151a87311668e6e32982fd861fb450a4399907bb5a8",
+      "bytes": 21001,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "src/ournotes_bot/query/card_catalog.py",
+      "sha256": "e5cdacc12a59c573d9f58466198bf334028ec405fd3dfafd7dbcbf35a095bb31",
+      "bytes": 23734,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "src/ournotes_bot/query/character_query.py",
+      "sha256": "2bd2859638718e5d29424e87e5dae85d68ad877b90e94dbe9fcf0fb27c3dd984",
+      "bytes": 8095,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "src/ournotes_bot/query/continuation.py",
+      "sha256": "5f1c4d9bd5b5d59ed135a6cdc59498c1a0bf75610c5dd99874fad98eb0bf07c6",
+      "bytes": 17548,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "src/ournotes_bot/query/contracts/__init__.py",
+      "sha256": "fc1f51032d220afe36f2f5b9b8283886e4b8a0f3f4eae1ff7b77e856fef6fd5f",
+      "bytes": 60,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "src/ournotes_bot/query/contracts/info.py",
+      "sha256": "350d5e8328476695f973eea2150836dc9212790c68d9fb611fbe4be04a850cf5",
+      "bytes": 2629,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "src/ournotes_bot/query/entity_lexicon.py",
+      "sha256": "d56b1df0dca152941fb135005c8f3b3f6e8f003525e4456e28527eefc6d55a7e",
+      "bytes": 27108,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "src/ournotes_bot/query/event_cutoff_query.py",
+      "sha256": "f1be9fe572c17b11b8b55caa0a297fba90e9e2e182afba816f945a967de33041",
+      "bytes": 41960,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "src/ournotes_bot/query/field_query.py",
+      "sha256": "56a8225ad422c6617301afc2b0dec7bc2a5d83a923bfb8b591f344e73028ec14",
+      "bytes": 10424,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "src/ournotes_bot/query/gacha_query.py",
+      "sha256": "5d91631a2c695db19be306a19a069869bdef1fcf2882d5e29c0063187db24bcd",
+      "bytes": 4272,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "src/ournotes_bot/query/info_query.py",
+      "sha256": "8b937e80c98e41c52a7d2631967210f7c145f450a30174771a071008dd4f4e4b",
+      "bytes": 4739,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "src/ournotes_bot/query/knowledge_retrieval.py",
+      "sha256": "1e2f9a085fc22d522f5dcaf1f8cc9256b505f47009cc905f7a6d913a53376b1d",
+      "bytes": 10213,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "src/ournotes_bot/query/public_queries.py",
+      "sha256": "5a74083be2bc49a852efc744286bf0e1ad470a73493e53575e86542ee844378f",
+      "bytes": 18445,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "src/ournotes_bot/query/song_conditions.py",
+      "sha256": "c79c8709f73bed8a6d6bb56a3adb0cf9246fc7abd50694bee254bf165e8055fb",
+      "bytes": 4680,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "src/ournotes_bot/query/song_identity.py",
+      "sha256": "7997609f338607735a4ea48566bc7d06b8fef97e595cefd1fcf04b1b1198d459",
+      "bytes": 3300,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "src/ournotes_bot/query/song_metrics.py",
+      "sha256": "55c0b222b767406da8856fe63d720dca0b1174ef6792ec6ace7cc2ad32cd725f",
+      "bytes": 12135,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "src/ournotes_bot/query/song_query.py",
+      "sha256": "a969a98d4dee32a05fcc61a5e3d8d4b8c5e696c84b08b51ae9213f252f29c6d3",
+      "bytes": 13954,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "src/ournotes_bot/query/story_retrieval.py",
+      "sha256": "314a6592fefc39283a877090645bb034fb5ff6899fb3d973e5ebe5b320e7923b",
+      "bytes": 3841,
+      "classification": "personal_leaf_exclude_after_references_removed"
+    },
+    {
+      "path": "src/ournotes_bot/rendering/L2-2-Card.md",
+      "sha256": "7a187721d52272d2f236c59dbb63b68ea9f6f753a0f46b20833d9e393661fa43",
+      "bytes": 5955,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "src/ournotes_bot/rendering/L2-2-Core.md",
+      "sha256": "62133ddc2d17918102fa69bc5ce929271a6ebb025a73736642b6281270eac146",
+      "bytes": 5126,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "src/ournotes_bot/rendering/L2-2-Song.md",
+      "sha256": "30989aad6bd4fa45a75e9224928f2c118234ed72a753c5263e3068ca50272dfa",
+      "bytes": 7966,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "src/ournotes_bot/rendering/__init__.py",
+      "sha256": "d99726e72461479ac3e0e711d4da6ff459f797fe082365c395c9695c45756b86",
+      "bytes": 168,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "src/ournotes_bot/rendering/assets/NotoSansSC-OFL.txt",
+      "sha256": "babcfe66c8a098b2fa279bc724a3a342f8124f77ce18941fbcc1bbb39823cded",
+      "bytes": 4387,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "src/ournotes_bot/rendering/assets/NotoSansSC.ttf",
+      "sha256": "a3041811a78c361b1de50f953c805e0244951c21c5bd412f7232ef0d899af0da",
+      "bytes": 17772300,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "src/ournotes_bot/rendering/assets/Roboto-OFL.txt",
+      "sha256": "ee94f8704aa81e9a3bf4271e8320e99d975a3ee08ea45a088b494b918476ec12",
+      "bytes": 4393,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "src/ournotes_bot/rendering/assets/Roboto.ttf",
+      "sha256": "d7598e12c5dbef095ff8272cfc55da0250bd07fbdecbac8a530b9b277872a134",
+      "bytes": 488584,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "src/ournotes_bot/rendering/card_detail_layout.py",
+      "sha256": "d75a4e2b6501357c61dfb36888f6c934b287e012a6588835d2a680928db95c43",
+      "bytes": 17794,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "src/ournotes_bot/rendering/card_visuals.py",
+      "sha256": "3ff5828e8bbc7b1c352620ccae39b9f7e651b269a9546b9291f37b9cdacefbec",
+      "bytes": 3056,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "src/ournotes_bot/rendering/catalog_layout.py",
+      "sha256": "940e37656ffd41448fe07899fa19a139b7eaa44d2ceec5395ec73f361b502b83",
+      "bytes": 25736,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "src/ournotes_bot/rendering/chart_judgments.py",
+      "sha256": "9e821af3271e63e2d1209d139a7f1a89ab02082600e1974dd7d192ae400345e4",
+      "bytes": 7987,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "src/ournotes_bot/rendering/chart_layout.py",
+      "sha256": "00f4e1df8af6850f92cd6278eb3915267ad25fa89ce55caa5f018cead3ea3c8b",
+      "bytes": 18161,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "src/ournotes_bot/rendering/cutoff_trends.py",
+      "sha256": "5f446ee6a91b7a50de548f56e8e44f782ba5299d5ba7c7f21e50220758e5c119",
+      "bytes": 17343,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "src/ournotes_bot/rendering/event_cutoff_visuals.py",
+      "sha256": "f6102178f7559f76270f1998a6e2d30d4a317818881ba04efbb476de931da9fa",
+      "bytes": 14884,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "src/ournotes_bot/rendering/haneoka_theme.py",
+      "sha256": "3ca65cbb8d4f34f0b389ce1f265f64c0cc7543b84d4d23b73f2d51b4fa23a2f5",
+      "bytes": 11222,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "src/ournotes_bot/rendering/image_output.py",
+      "sha256": "f8defff3a0e21a067182fea31fa040ba816d163640e44f4487b67626b2799c84",
+      "bytes": 8977,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "src/ournotes_bot/rendering/info_layout.py",
+      "sha256": "9778da06d0cc908fb7ab1d5d1b686639ffeca559d44ecfeaa7be4dd63d8e3bfd",
+      "bytes": 26043,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "src/ournotes_bot/rendering/labels.py",
+      "sha256": "5f2ce5e3c6f766d666c27cc4da6c763789f2f561766d5f3cef145f01e130f59f",
+      "bytes": 7691,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "src/ournotes_bot/rendering/member_detail_visuals.py",
+      "sha256": "187a4e43d41d8b3af8d96d448c9a36ef9405f562ec532bd39f11fcecd4ccff26",
+      "bytes": 7750,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "src/ournotes_bot/rendering/member_list_visuals.py",
+      "sha256": "f00038fad34cdcc30ea1d12770de9ff6170f5fb054d4f1da86b76ab7d09e5f04",
+      "bytes": 9722,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "src/ournotes_bot/rendering/note_skin.py",
+      "sha256": "1fa8d1670edf0f4f55d28eea2320380783fe7522496f69eec521a79ecbb1b01d",
+      "bytes": 3214,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "src/ournotes_bot/rendering/ranking_layout.py",
+      "sha256": "3da73e116531bceda2669efd01b57fd4e04dcfb27ff21189820f74bd8151b946",
+      "bytes": 24604,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "src/ournotes_bot/rendering/readable_pages.py",
+      "sha256": "c89ad53bbf153275cf8d0b6772b79c27c73f7a5b128edf9fe4e9eb29b5d001dd",
+      "bytes": 3165,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "src/ournotes_bot/rendering/rotating_layout.py",
+      "sha256": "dce6816421a5a352bf65d81fd4a8baf5ffea45c8bb956f0995bdd80defea4240",
+      "bytes": 16529,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "src/ournotes_bot/rendering/song_detail_layout.py",
+      "sha256": "77fb281b42ac17b7e60354e10a72739b74fd4fda462291689f5675507608fb7c",
+      "bytes": 13637,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "src/ournotes_bot/rendering/song_layout.py",
+      "sha256": "d9978e3a89b27aaabc87a9415bbb88caef29b3087de8a87c17124c0ee4286d4c",
+      "bytes": 6558,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "src/ournotes_bot/rendering/song_metrics_layout.py",
+      "sha256": "3afb4c246f8aa46f0b23dd3f9dfa0fed4d42ea0e6297a4a990e157b1aeb3c883",
+      "bytes": 4297,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "src/ournotes_bot/rendering/support_summary.py",
+      "sha256": "69f8728e9152e7d471b4831962355dab65d7d65d764583d88e0f26de17a044e6",
+      "bytes": 4804,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "src/ournotes_bot/rendering/support_visuals.py",
+      "sha256": "7bb6652543375cbeae349140cfd51b5d156f8a7a8dcac3c29ca60656fcfb967e",
+      "bytes": 8865,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "src/ournotes_bot/rendering/total_rankings.py",
+      "sha256": "ef77479d81f924193818c11bf46a38cc7d656947b9b44653500c2021f3cd6d42",
+      "bytes": 7830,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "src/ournotes_bot/sources/L2-2.md",
+      "sha256": "61042ed321f07dac5fced59786cf6589600e7dfdfb07900e0f8d65dae619a247",
+      "bytes": 19189,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "src/ournotes_bot/sources/__init__.py",
+      "sha256": "346068144135c7043ed84ab8864e47013353744d253b39acb856c10567afffc9",
+      "bytes": 147,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "src/ournotes_bot/sources/chart_data.py",
+      "sha256": "96e21c3466684b6b283987a38c2aedb07d380ab36ff741cca377b00b11c03e41",
+      "bytes": 5021,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "src/ournotes_bot/sources/chat_images.py",
+      "sha256": "647a3d4983203ed6683a5181a7533d4fffd4fc9064b9723a08abc0ea8298a4bf",
+      "bytes": 12202,
+      "classification": "personal_leaf_exclude_after_references_removed"
+    },
+    {
+      "path": "src/ournotes_bot/sources/cutoff_history.py",
+      "sha256": "b7787c90928f5f2c1fd385451c19da18005e78b46a1ecd65f8ae8b117b86327e",
+      "bytes": 54270,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "src/ournotes_bot/sources/cutoff_sampler.py",
+      "sha256": "860706353211a50379e22f57dd50cd5a93f02a8af123654d7029a47d49372fba",
+      "bytes": 9446,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "src/ournotes_bot/sources/errors.py",
+      "sha256": "add0b4d90d0cfc477c8c42b822b6000c1cb53d19f69c844999070b6e3b625dc1",
+      "bytes": 448,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "src/ournotes_bot/sources/haneoka/__init__.py",
+      "sha256": "88192ee06a8da12368cd9f0876c22fd41431733730ab65df7fa21c01460f5cd0",
+      "bytes": 165,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "src/ournotes_bot/sources/haneoka/activity_announcements.py",
+      "sha256": "c66c16c882b7cf58f7221cd39777ebb207fa60b6c3e4aef5eb12d628e2d1268c",
+      "bytes": 5584,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "src/ournotes_bot/sources/haneoka/activity_details.py",
+      "sha256": "c967c831e999cb2de239f2ccd455b643bfbb0bfa816dd93d481e2359d78a49ef",
+      "bytes": 8619,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "src/ournotes_bot/sources/haneoka/catalog.py",
+      "sha256": "9936d51fe94d6d31c874a81d14cf09e41b0c5c526afe69444d2235041d386d05",
+      "bytes": 24034,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "src/ournotes_bot/sources/haneoka/catalog_assets.py",
+      "sha256": "265e00793bfba1dfea21c6fb95d8823083dbb8bb96d48c45e57ce727fc722397",
+      "bytes": 3877,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "src/ournotes_bot/sources/haneoka/catalog_records.py",
+      "sha256": "70a6c834d5c60cf17eaebad186960d5f1610ecd8509bba6d56622d9b05962e3f",
+      "bytes": 25511,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "src/ournotes_bot/sources/haneoka/catalog_text.py",
+      "sha256": "5131819b2925ed2c9a17c30c1a1999f261d6587e22c43e413bb1b18ab7c05540",
+      "bytes": 8245,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "src/ournotes_bot/sources/haneoka/chart_data.py",
+      "sha256": "baf94ae7d4ef90d42cfb4073047df1fb52ed3f431cd73f28fe5ba15757143572",
+      "bytes": 9248,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "src/ournotes_bot/sources/haneoka/chart_paths.py",
+      "sha256": "8148fbd43916d257db50ebd3f05fa6dd7741d003e62e0e10bcfc6855b28d83e4",
+      "bytes": 969,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "src/ournotes_bot/sources/haneoka/event_cutoffs.py",
+      "sha256": "54d14777c58070cd547d6c5dac59ad3dc37f9ce5abd0b781caeab0c7fe4b43df",
+      "bytes": 22894,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "src/ournotes_bot/sources/haneoka/event_metadata.py",
+      "sha256": "1752c6993504f540ac637b59924ad3f7c93fb4d8276d52c9a0ea5af0d0cf72a0",
+      "bytes": 6465,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "src/ournotes_bot/sources/haneoka/game_assets.json",
+      "sha256": "879cadd184d775d397f9803cad3c83740cdceb2cb71d227618bcc96cde87ade8",
+      "bytes": 7782,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "src/ournotes_bot/sources/haneoka/game_assets.py",
+      "sha256": "44249b4c0db9fbd5f246fcf413ed63d740f6fca9f522f6ac1716778d9a8f8f9c",
+      "bytes": 5444,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "src/ournotes_bot/sources/haneoka/haneoka_member_contracts.py",
+      "sha256": "0c4a2568208f0f478c50e75a721fbae91d5e8c68b78d58e70928a0d113b2ecbf",
+      "bytes": 4166,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "src/ournotes_bot/sources/haneoka/haneoka_members.py",
+      "sha256": "f718dfa41c3d0ddc81bdd3b9f65bef02f316178bda5b41859eb6bb6f212919f0",
+      "bytes": 16315,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "src/ournotes_bot/sources/haneoka/identity.py",
+      "sha256": "04611f11c73c22b2f444fd9809467e612a4a966b1a63ff339c5743bc57591e0b",
+      "bytes": 2076,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "src/ournotes_bot/sources/haneoka/info_catalog.py",
+      "sha256": "a96199abc834634306c27728bee37c9e22b9ca0138393eec6dd92d4883519365",
+      "bytes": 12355,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "src/ournotes_bot/sources/haneoka/leader_summary.py",
+      "sha256": "3f24c661ea2f4769e0128cc3a777aa0c16bdcabff8a612723052ef755242b9c6",
+      "bytes": 5466,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "src/ournotes_bot/sources/haneoka/notices.py",
+      "sha256": "77f19ae0bf58a5827cc2b7268c67a9c5392e8f240410f7744276b09af2f4ca05",
+      "bytes": 4604,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "src/ournotes_bot/sources/haneoka/prepare_catalog_assets.py",
+      "sha256": "847ad6b9c1cda825064b046094bd45456b3f79ba6639ac59203362fd69852efc",
+      "bytes": 5418,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "src/ournotes_bot/sources/haneoka/public_queries.py",
+      "sha256": "0074d408d5f8e1075e2b1abd6f2763aec7b2c400efdf0ddf0258303acea9c12d",
+      "bytes": 20577,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "src/ournotes_bot/sources/haneoka/ranking_art.py",
+      "sha256": "949bb0355a67a3d1738922df3cd1368bb4562ac494dc4d4bfba6d46221498a62",
+      "bytes": 3656,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "src/ournotes_bot/sources/haneoka/song_metrics.py",
+      "sha256": "33838df31b2e9cdc993542c19cc596bad11f756ea33d7e26a9410e083d97624b",
+      "bytes": 12421,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "src/ournotes_bot/sources/haneoka/song_traits.py",
+      "sha256": "ad0e25e99a4931afb58b12d1c76b729e5aaf7d7766b4e047b12af9c7ac0f47da",
+      "bytes": 8957,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "src/ournotes_bot/sources/haneoka/transport.py",
+      "sha256": "4de08d895acfd7dab8c6b8a23728982fcb46ec07d60e3ce4808e673e094393f4",
+      "bytes": 6865,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "src/ournotes_bot/sources/haneoka/visual_skill_contracts.json",
+      "sha256": "094c6c044c3a1f62005c57d770c5f0ce812cd194c3b317423f24831e0fa9d72e",
+      "bytes": 219447,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "src/ournotes_bot/sources/haneoka/visual_skill_contracts.py",
+      "sha256": "b4a51172ad3c7e7e0d7f77d884640a2caf351a35e5017989a7b898ce50016704",
+      "bytes": 3118,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "src/ournotes_bot/sources/history_archive.py",
+      "sha256": "56ab2e45cb839020deef5cd6b93ac87f1138207722ca790dfd1beae5c152fe4f",
+      "bytes": 12195,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "src/ournotes_bot/sources/history_compression.py",
+      "sha256": "dcfc2aaff5a9a24dd3b10f9d67a440ee49ad890598a0e585e6242a4b0aae7786",
+      "bytes": 8886,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "src/ournotes_bot/sources/history_partitions.py",
+      "sha256": "28b627a73c514098d59c872a0d337f30813a7f77fe08fce1ad7e0869fffa2581",
+      "bytes": 10886,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "src/ournotes_bot/sources/history_retention.py",
+      "sha256": "18720dade3000008b220a1709cd8892d5f8dc4c3b9ac438947c71ddce81ad171",
+      "bytes": 8731,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "src/ournotes_bot/sources/json_validation.py",
+      "sha256": "384e71ab400cdf8d0e3d60633a793d5f38bcf7b1dc26913402d0640354d42f1d",
+      "bytes": 981,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "src/ournotes_bot/sources/knowledge_embeddings.py",
+      "sha256": "6b9393775ed161f01434b6bba0016f7f6052153a311953ef154f7c7188be1ccd",
+      "bytes": 3638,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "src/ournotes_bot/sources/knowledge_files.py",
+      "sha256": "18dc58b58763cf754c94bbe1b6577ff8293468d1bdc61250762c30b8902aa72a",
+      "bytes": 14658,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "src/ournotes_bot/sources/model_provider.py",
+      "sha256": "d12f794548cc94a81c066914b83cf2aeda2d64533182c51e845546555875d989",
+      "bytes": 20647,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "src/ournotes_bot/sources/moenotes_events.py",
+      "sha256": "badfe2c13b819e0cff2ec301ebad9c56d7e703a5e0c12254d02c5f66a09e1a81",
+      "bytes": 45356,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "src/ournotes_bot/sources/moenotes_open.py",
+      "sha256": "b30028cba5dbe94f554f178bace5c8edbf4cf3e2583c58fdc73a00049186d716",
+      "bytes": 17871,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "src/ournotes_bot/sources/story_files.py",
+      "sha256": "be06d9dcf5b001ada822c0260a47af64fde95c9de8e1b2968ffd6ee11dc5c051",
+      "bytes": 11053,
+      "classification": "personal_leaf_exclude_after_references_removed"
+    },
+    {
+      "path": "src/ournotes_bot/sources/total_rankings.py",
+      "sha256": "92451105db91f8674c7b3f8c5cde6062b2de88b990bbc3a633e2095bdbc593d4",
+      "bytes": 23787,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "src/ournotes_bot/sources/yatta.py",
+      "sha256": "cd97310ae22b2f5f131ee2ffcf0655069bdeb109de1cfee50934f3a1d80d8d05",
+      "bytes": 14833,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "src/ournotes_bot/structured_query.py",
+      "sha256": "a0b026c09f14d646021fb68e55c9dae50ff9431f22d0b91e25dcb47167011c55",
+      "bytes": 21350,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "src/ournotes_bot/update_notice.py",
+      "sha256": "641d6d7aaf2f20bbdac98d8b55baeea20be44b572396c7f25c17481e6b559bb2",
+      "bytes": 3632,
+      "classification": "review_shared_or_optional_not_final_selection"
+    },
+    {
+      "path": "src/ournotes_bot/visuals.py",
+      "sha256": "ed48db4d428d3292c7b72a286d7f368741827faf839fd2ce4d1f586f0102ebbb",
+      "bytes": 49285,
+      "classification": "review_shared_or_optional_not_final_selection"
+    }
+  ],
+  "static_graph": {
+    "modules": 173,
+    "imports": 1608,
+    "symbols": 2157,
+    "local_path": "runtime/task08-integration/query-import-graph.json"
+  },
+  "pending": [
+    "product feature selection",
+    "scope approval authority/activation",
+    "retention policy",
+    "physical pruning across backend/Console/package layers",
+    "real-source and QQ acceptance"
+  ],
+  "original_inputs": {
+    "B0": "8d9e7301392ad548fe9554c4f4b09a0d53f615fa",
+    "task01": "7ae92a28cfa2c01b4fa8ae42207b61ae0afe7f48",
+    "P165": "e1a86a6db1f327a6dd0cc53fd860c4ababf50923",
+    "task02": "c6048b58ad054979be29542176776bd0cbe3551a",
+    "task03": "4d754dfaf10a2e598532c3d4dd291a26f6fa6627",
+    "task04": "f31722d9913491855ffd47b33556553542941da1",
+    "task05": "a9c27d7eb94833df713995b8e6f9a85fc45ea0d5",
+    "task07": "a63de717df487f896ff2182ea5bf6008672db4ad",
+    "task09": "9a3eca0b21dd7a7724143f988def59a5fc558dca",
+    "task08_docs": "509abc81efc2433cbc197050ddc5d64c40f48f5a"
+  },
+  "handshake_fix_sha": "bd17ec53da0cff3f8cf28e6175d5a0eb5dbb0954",
+  "previous_delivery_sha": "20b8cb2179475df2bf0ae365a2088403702557c5",
+  "combined_p1_sha": "56cd2f0f7fe0d1e65e7d991ead30aa47e0659a2b",
+  "commit_graph_since_B0": [
+    {
+      "sha": "56cd2f0f7fe0d1e65e7d991ead30aa47e0659a2b",
+      "parents": [
+        "bd17ec53da0cff3f8cf28e6175d5a0eb5dbb0954",
+        "3686da76a939345690d556d7ddeb40198e15a979"
+      ]
+    },
+    {
+      "sha": "bd17ec53da0cff3f8cf28e6175d5a0eb5dbb0954",
+      "parents": [
+        "20b8cb2179475df2bf0ae365a2088403702557c5"
+      ]
+    },
+    {
+      "sha": "3686da76a939345690d556d7ddeb40198e15a979",
+      "parents": [
+        "a63de717df487f896ff2182ea5bf6008672db4ad"
+      ]
+    },
+    {
+      "sha": "20b8cb2179475df2bf0ae365a2088403702557c5",
+      "parents": [
+        "037d08333338bdbbfc122ac658293b5c48f30fc4"
+      ]
+    },
+    {
+      "sha": "037d08333338bdbbfc122ac658293b5c48f30fc4",
+      "parents": [
+        "12637558b1b3da8c38b1ca3596cc281f5b2f9dc4"
+      ]
+    },
+    {
+      "sha": "12637558b1b3da8c38b1ca3596cc281f5b2f9dc4",
+      "parents": [
+        "a201c0dfff30efb49da682aa950c720c8db8105c",
+        "509abc81efc2433cbc197050ddc5d64c40f48f5a"
+      ]
+    },
+    {
+      "sha": "a201c0dfff30efb49da682aa950c720c8db8105c",
+      "parents": [
+        "9ec2d31e579d7d4c67fd70fbda7841c7f0186f93",
+        "9a3eca0b21dd7a7724143f988def59a5fc558dca"
+      ]
+    },
+    {
+      "sha": "9ec2d31e579d7d4c67fd70fbda7841c7f0186f93",
+      "parents": [
+        "89e17087bca89fb54c9a841e95ae71747b57808b",
+        "7ae92a28cfa2c01b4fa8ae42207b61ae0afe7f48"
+      ]
+    },
+    {
+      "sha": "89e17087bca89fb54c9a841e95ae71747b57808b",
+      "parents": [
+        "82c0de25f200659768fc3ec19d9ca500a780ca1c",
+        "a63de717df487f896ff2182ea5bf6008672db4ad"
+      ]
+    },
+    {
+      "sha": "82c0de25f200659768fc3ec19d9ca500a780ca1c",
+      "parents": [
+        "1d4f196515b43cf018bf65944c0f74aad8124668",
+        "a9c27d7eb94833df713995b8e6f9a85fc45ea0d5"
+      ]
+    },
+    {
+      "sha": "1d4f196515b43cf018bf65944c0f74aad8124668",
+      "parents": [
+        "8d9e7301392ad548fe9554c4f4b09a0d53f615fa",
+        "f31722d9913491855ffd47b33556553542941da1"
+      ]
+    },
+    {
+      "sha": "f31722d9913491855ffd47b33556553542941da1",
+      "parents": [
+        "31207c2277fdb0e61d8aa5c2ea9f4d563aeb11d3"
+      ]
+    },
+    {
+      "sha": "9a3eca0b21dd7a7724143f988def59a5fc558dca",
+      "parents": [
+        "3dda6d29955328777f7e526c21bfd2828dbbea8a"
+      ]
+    },
+    {
+      "sha": "31207c2277fdb0e61d8aa5c2ea9f4d563aeb11d3",
+      "parents": [
+        "2049b066aebe146e32a813a436447e3094db8b45",
+        "4d754dfaf10a2e598532c3d4dd291a26f6fa6627"
+      ]
+    },
+    {
+      "sha": "a9c27d7eb94833df713995b8e6f9a85fc45ea0d5",
+      "parents": [
+        "226ecce11299be42c349cc815f35de12cf463eac"
+      ]
+    },
+    {
+      "sha": "4d754dfaf10a2e598532c3d4dd291a26f6fa6627",
+      "parents": [
+        "17212e5df76cf948aa990af571ed6daf5c66ec25"
+      ]
+    },
+    {
+      "sha": "2049b066aebe146e32a813a436447e3094db8b45",
+      "parents": [
+        "2fcb80eb344376d9b366e75c720ecbb6a5969058"
+      ]
+    },
+    {
+      "sha": "a63de717df487f896ff2182ea5bf6008672db4ad",
+      "parents": [
+        "17212e5df76cf948aa990af571ed6daf5c66ec25"
+      ]
+    },
+    {
+      "sha": "2fcb80eb344376d9b366e75c720ecbb6a5969058",
+      "parents": [
+        "9afc20a418bd6a62a6d41b9bbe700978acd85b3d"
+      ]
+    },
+    {
+      "sha": "509abc81efc2433cbc197050ddc5d64c40f48f5a",
+      "parents": [
+        "e1a86a6db1f327a6dd0cc53fd860c4ababf50923"
+      ]
+    },
+    {
+      "sha": "226ecce11299be42c349cc815f35de12cf463eac",
+      "parents": [
+        "bac744a765fb68467c5a03047fbcf5f00aecf434",
+        "c6048b58ad054979be29542176776bd0cbe3551a"
+      ]
+    },
+    {
+      "sha": "bac744a765fb68467c5a03047fbcf5f00aecf434",
+      "parents": [
+        "6f7d653ed4b0030aab43afd47fe196f6fffa2755"
+      ]
+    },
+    {
+      "sha": "6f7d653ed4b0030aab43afd47fe196f6fffa2755",
+      "parents": [
+        "6b64e027b25d197981f456d6c87f32db54da6c51"
+      ]
+    },
+    {
+      "sha": "c6048b58ad054979be29542176776bd0cbe3551a",
+      "parents": [
+        "d9240dffecee0f0a0066d5f70c8357fc9a398632"
+      ]
+    },
+    {
+      "sha": "3dda6d29955328777f7e526c21bfd2828dbbea8a",
+      "parents": [
+        "b29d69fd3d76b5be81610228ec3cfbb65fd044bf"
+      ]
+    },
+    {
+      "sha": "9afc20a418bd6a62a6d41b9bbe700978acd85b3d",
+      "parents": [
+        "101e148523b3087386f46946369b2ec9ec895ce5",
+        "17212e5df76cf948aa990af571ed6daf5c66ec25"
+      ]
+    },
+    {
+      "sha": "17212e5df76cf948aa990af571ed6daf5c66ec25",
+      "parents": [
+        "5cabe18d6e7325f7e8cf6ddf7c86ce1fcde7c156"
+      ]
+    },
+    {
+      "sha": "5cabe18d6e7325f7e8cf6ddf7c86ce1fcde7c156",
+      "parents": [
+        "e1a86a6db1f327a6dd0cc53fd860c4ababf50923"
+      ]
+    },
+    {
+      "sha": "6b64e027b25d197981f456d6c87f32db54da6c51",
+      "parents": [
+        "d9240dffecee0f0a0066d5f70c8357fc9a398632"
+      ]
+    },
+    {
+      "sha": "b29d69fd3d76b5be81610228ec3cfbb65fd044bf",
+      "parents": [
+        "457123bdf25a5423199e5c0ba26c3daba5919280"
+      ]
+    },
+    {
+      "sha": "101e148523b3087386f46946369b2ec9ec895ce5",
+      "parents": [
+        "e1a86a6db1f327a6dd0cc53fd860c4ababf50923"
+      ]
+    },
+    {
+      "sha": "457123bdf25a5423199e5c0ba26c3daba5919280",
+      "parents": [
+        "8d9e7301392ad548fe9554c4f4b09a0d53f615fa"
+      ]
+    },
+    {
+      "sha": "d9240dffecee0f0a0066d5f70c8357fc9a398632",
+      "parents": [
+        "d7b53792a379321494406e19531edf2df59aa818"
+      ]
+    },
+    {
+      "sha": "d7b53792a379321494406e19531edf2df59aa818",
+      "parents": [
+        "8d9e7301392ad548fe9554c4f4b09a0d53f615fa"
+      ]
+    },
+    {
+      "sha": "e1a86a6db1f327a6dd0cc53fd860c4ababf50923",
+      "parents": [
+        "ef95abd41fad36b6ba25dc6749c7377eeeb5b35f"
+      ]
+    },
+    {
+      "sha": "ef95abd41fad36b6ba25dc6749c7377eeeb5b35f",
+      "parents": [
+        "5e88749ea2aacca19e82af490acdc8c43449fef4",
+        "8d9e7301392ad548fe9554c4f4b09a0d53f615fa"
+      ]
+    },
+    {
+      "sha": "7ae92a28cfa2c01b4fa8ae42207b61ae0afe7f48",
+      "parents": [
+        "12f621de13a897e395e38e332fa4b0fbb8cfa442"
+      ]
+    },
+    {
+      "sha": "12f621de13a897e395e38e332fa4b0fbb8cfa442",
+      "parents": [
+        "8d9e7301392ad548fe9554c4f4b09a0d53f615fa"
+      ]
+    },
+    {
+      "sha": "5e88749ea2aacca19e82af490acdc8c43449fef4",
+      "parents": [
+        "56a1eb952e93ab66d50fee88084116e2a3e15f06"
+      ]
+    },
+    {
+      "sha": "56a1eb952e93ab66d50fee88084116e2a3e15f06",
+      "parents": [
+        "c338f2441e81e22a0d26dcfd39ade3bc78cb6fce"
+      ]
+    },
+    {
+      "sha": "c338f2441e81e22a0d26dcfd39ade3bc78cb6fce",
+      "parents": [
+        "d359402dc4328ee2ac6687f44636345c0744eca5"
+      ]
+    },
+    {
+      "sha": "d359402dc4328ee2ac6687f44636345c0744eca5",
+      "parents": [
+        "e80d62e8d0aa30290699586b1902abf1a4ba02c2"
+      ]
+    },
+    {
+      "sha": "e80d62e8d0aa30290699586b1902abf1a4ba02c2",
+      "parents": [
+        "a52c2fa48826eca00446668759df8553adf9954b"
+      ]
+    },
+    {
+      "sha": "a52c2fa48826eca00446668759df8553adf9954b",
+      "parents": [
+        "8bb486ec69205fc6a571900dbc9509d852c5e046"
+      ]
+    }
+  ],
+  "this_round_files": [
+    "M\tdocs/HISTORY_DATA_CONTRACT.md",
+    "M\tdocs/KOISHI_BACKEND_V1.md",
+    "M\tdocs/TASK08_INTEGRATION.md",
+    "M\tdocs/validation/task07-history.md",
+    "M\tkoishi/scripts/probe.cjs",
+    "M\tkoishi/src/backend.ts",
+    "M\tkoishi/src/receiver.ts",
+    "M\tkoishi/src/wire.ts",
+    "M\tsrc/ournotes_bot/application/backend.py",
+    "M\tsrc/ournotes_bot/sources/cutoff_history.py",
+    "M\tsrc/ournotes_bot/sources/history_partitions.py",
+    "M\ttests/test_console_policies.py",
+    "M\ttests/test_haneoka_cutoffs.py"
+  ],
+  "execution_profiles": {
+    "personal-v1": "original mandatory notice/model capabilities; default for legacy absent field",
+    "query-local-v1": "six shared features exactly; notices=false; not product identity or approval"
+  }
+}

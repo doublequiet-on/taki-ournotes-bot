@@ -15,13 +15,17 @@
   },
   "dependencies": {
     "@koishijs/plugin-adapter-qq": "4.14.0",
-    "@koishijs/plugin-console": "5.30.11",
+    "@koishijs/plugin-console": "file:vendor/taki-console-0.1.0-candidate.3.tgz",
     "@koishijs/plugin-http": "0.6.3",
     "@koishijs/plugin-server": "3.2.9",
     "@satorijs/adapter-qq": "4.14.0",
     "@satorijs/core": "4.6.0",
+    "cache-content-type": "file:compat/cache-content-type",
     "koishi": "4.18.11",
     "taki-console-assets": "file:console"
+  },
+  "overrides": {
+    "cache-content-type": "$cache-content-type"
   },
   "devDependencies": {
     "@types/node": "24.10.1",

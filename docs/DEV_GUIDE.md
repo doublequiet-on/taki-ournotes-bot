@@ -39,6 +39,8 @@ Koishi 迁移候选入口：[M0/M1 基线与门禁](KOISHI_MIGRATION_M0_M1.md) �
 
 ## 任务导航
 
+竞技场／玩家查询入口为 `query/public_queries.py`，纯请求与快照在 `domain/public_queries.py`，匿名来源与有界缓存位于 `sources/haneoka/public_queries.py`。活动明细转换在 `sources/haneoka/activity_details.py`，经 `ActivityInfo.details` 到 `activity_query.py`。图文继续使用 `InfoAnswer` 与既有回复分页；捕获名片图仅在固定玩家／页码下载路径校验后进入现有编码器。目标验证为 `test_info_queries.py`、`test_info_catalog.py`、`test_info_command_pipeline.py`、`test_info_layout.py`、`test_rotating_layout.py`、`test_menu.py`；共享传输或回复链变动追加完整离线回归。四服实源验收不连接 QQ、不调用模型，分别记录区域、资料版本、200／202／限流／不可用状态。
+
 查询字段与入口能力核对见 [查询规格](QUERY_SPEC.md)，固定跨入口样例为 `tests/test_query_spec.py`；具体行为仍以所绑定版本的源码和测试为准。
 
 Haneoka 公共设施：`sources/haneoka/transport.py`、`identity.py` 与 `sources/json_validation.py`；单份异常 `sources/errors.py`，谱面路径权限 `haneoka/chart_paths.py`。测试 `test_haneoka_facilities.py`、`test_architecture.py` 及调用方 `test_haneoka_catalog.py`、`test_haneoka_charts.py`、`test_haneoka_event_metadata.py`、`test_source_egress.py`；涉及公共传输时扩大到完整离线回归和隔离安装。聚合预算/缓存/回退仍由各适配器负责。
@@ -175,3 +177,5 @@ Moenotes 可选 open 榜线：`sources/moenotes_open.py::OpenClient`、`OpenEven
 ## 控制台运维
 
 操作契约与分批验收见 [运维控制台](koishi/OPERATIONS.md)。后端任务在 application/operations.py、operations_sources.py，群能力元数据在 application/chat_admin.py，知识发布管理在 application/library_admin.py（复用 knowledge_service/story_service 当前 owner，回归 test_platform_boundary.py），主模型、备用与独立主动参与模型设置在 application/model_admin.py，群记忆删除沿 backend.py 的 chat_memory；受信主机采集在 deploy/ops_snapshot.py；管理与通知读取测试使用 test_console_admin.py，主机投影使用 test_linux_backend.py，网关运行 console-rpc-probe.cjs 与 console-state-probe.cjs。
+
+产品身份/发行基础：见 [PRODUCT_RELEASE](PRODUCT_RELEASE.md)。离线入口为 `scripts/product_release.py`；回归运行 `python -B -m unittest discover -s tests -p test_offline_release_build.py -q` 和 `test_offline_bundle.py`。现有个人版构建/安装smoke不能作为定制版物理裁剪证明。

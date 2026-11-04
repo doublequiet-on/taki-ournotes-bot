@@ -11,6 +11,10 @@ import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
 KOISHI_CLIENT_SHA256 = '55a68e89eda7e3fe59305b09e6c4de19481a8d7aa5df97579822c819ebf3ccaf'
+LICENSE_SHA256 = {
+    'node/LICENSE': '148eacf7863ef4329224a29398623077200a27194aa075569faf4a0a85566ca5',
+    'koishi-console/LICENSE': '8486a10c4393cee1c25392769ddd3b2d6c242d6ec7928e1414efff7dfb2f07ef',
+}
 KOISHI_RECONNECT_PATCHES = (
     (b'function p2(e,t){', b'function p2(e,t,takiReconnectUrl){'),
     (b'o=()=>{cr.value=null;for(const a in ot)ot[a]=void 0;',
@@ -35,6 +39,29 @@ def patch_koishi_client(path):
     path.write_bytes(data)
 
 
+def copy_release_materials(stage):
+    """Preserve full pinned license texts and the exact downstream patch recipe."""
+    for name, expected in LICENSE_SHA256.items():
+        source = ROOT / 'deploy/licenses' / name
+        if sha(source) != expected:
+            raise ValueError('Release license differs from reviewed upstream bytes')
+        target = stage / 'licenses' / name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source, target)
+    shutil.copy2(ROOT / 'deploy/licenses/SOURCES.md', stage / 'licenses/SOURCES.md')
+    shutil.copy2(ROOT / 'docs/RELEASE_MATERIALS.md', stage / 'licenses/RELEASE_MATERIALS.md')
+    shutil.copy2(ROOT / 'LICENSE', stage / 'licenses/TAKI-LICENSE')
+    shutil.copy2(ROOT / 'THIRD_PARTY.md', stage / 'licenses/THIRD_PARTY.md')
+    patch = {'upstream_version': '5.30.11', 'upstream_git_head': '896882b50cc91d16f522a52ded9644045d461c26',
+             'referenced_source_package_version': '5.30.10', 'source_match_status': 'unresolved',
+             'path': 'gateway/node_modules/@koishijs/plugin-console/dist/client.js',
+             'before_sha256': KOISHI_CLIENT_SHA256,
+             'modification': 'Taki: preserve initial disconnect URL across reconnect retries',
+             'replacements': [{'old': old.decode(), 'new': new.decode()} for old, new in KOISHI_RECONNECT_PATCHES]}
+    (stage / 'licenses/koishi-console/taki-reconnect-patch.json').write_text(
+        json.dumps(patch, indent=2) + '\n', encoding='utf-8')
+
+
 def build(python_artifact, node, output):
     if subprocess.check_output(['git','status','--porcelain','--untracked-files=no'],cwd=ROOT):
         raise ValueError('Combination requires committed tracked source')
@@ -52,10 +79,18 @@ def build(python_artifact, node, output):
     if identity['version'] != 'v24.19.0': raise ValueError('Unexpected Node version')
     with tempfile.TemporaryDirectory(prefix='taki-combination-') as folder:
         stage=Path(folder)
+        copy_release_materials(stage)
         gateway=stage/'gateway';gateway.mkdir()
         for name in ('scripts','node_modules','console'):
             shutil.copytree(ROOT/'koishi'/name,gateway/name,ignore=shutil.ignore_patterns('.bin','*.tsbuildinfo'))
         patch_koishi_client(gateway/'node_modules/@koishijs/plugin-console/dist/client.js')
+        # Sidecar notice sits beside the modified asset; preserve the upstream asset syntax.
+        (gateway/'node_modules/@koishijs/plugin-console/dist/TAKI-MODIFICATIONS.txt').write_text(
+            'Modified by Taki: reconnect URL preservation.\n'
+            'Modification documentation added: 2026-11-03; patch predates this material update.\n'
+            f'Taki source commit: {commit}\n'
+            'Patch and upstream source reference: licenses/koishi-console/taki-reconnect-patch.json '
+            'and licenses/SOURCES.md at combination root.\n', encoding='utf-8')
         for name in ('package.json','package-lock.json','run.cjs','console.cjs','health.cjs','operation-journal.cjs','ops-host.cjs','ops-controls.cjs','trusted-actions.cjs'):
             shutil.copy2(ROOT/'koishi'/name,gateway/name)
         subprocess.run([str(node),'node_modules/typescript/bin/tsc','-p','tsconfig.json','--outDir',str(gateway/'lib')],cwd=ROOT/'koishi',check=True)

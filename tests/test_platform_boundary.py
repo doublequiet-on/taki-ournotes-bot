@@ -11,6 +11,53 @@ import unittest
 
 
 class PlatformBoundaryTests(unittest.TestCase):
+    def test_query_composition_has_no_personal_runtime_import_or_digest_reads(self):
+        probe = textwrap.dedent("""
+            import asyncio
+            import importlib.abc
+            import os
+            from pathlib import Path
+            import sys
+            import tempfile
+            from types import SimpleNamespace
+            from unittest.mock import patch
+            class NoPersonal(importlib.abc.MetaPathFinder):
+                def find_spec(self, fullname, path=None, target=None):
+                    if fullname.startswith(('ournotes_bot.application.chat_', 'ournotes_bot.sources.chat_')) or fullname in {
+                        'ournotes_bot.application.personal_runtime','ournotes_bot.application.model_runtime',
+                        'ournotes_bot.application.persona','ournotes_bot.application.story_service',
+                        'ournotes_bot.application.knowledge_service','ournotes_bot.sources.knowledge_embeddings'}:
+                        raise AssertionError('personal import: '+fullname)
+            sys.meta_path.insert(0,NoPersonal())
+            from ournotes_bot.config import Settings
+            from ournotes_bot.application import backend_bootstrap as bootstrap
+            captured=[]
+            create=bootstrap.create_app
+            def actual_app(backend,*args):
+                captured.append(backend)
+                return create(backend,*args)
+            read=Path.read_bytes
+            def query_digest(path):
+                if path.name in {'model_runtime.py','chat_agent.py','personal_runtime.py','persona.py'}:
+                    raise AssertionError('personal digest read: '+path.name)
+                return read(path)
+            with tempfile.TemporaryDirectory() as folder:
+                root=Path(folder)
+                settings=Settings('','','https://fixture.invalid',root/'data/cache.json',6,
+                                  ai_api_key='fixture-key',chat_engine='agent',update_notices=True)
+                args=SimpleNamespace(port=8765,instance_id='fixture',app_id='app',state_dir=str(root/'state'))
+                with patch.dict(os.environ,{'OURNOTES_BACKEND_TOKEN':'x'*32,'OURNOTES_RUNTIME_DATA_DIR':str(root/'data')}), \
+                     patch.object(bootstrap,'create_app',side_effect=actual_app), patch.object(Path,'read_bytes',query_digest):
+                    app=bootstrap.build_query_backend(args,settings)
+                assert captured[0].model_runtime is None and captured[0].knowledge is None
+                assert not any('/v1/chat/' in str(r.resource) for r in app.router.routes())
+                asyncio.run(captured[0].close())
+        """)
+        env={**os.environ,'PYTHONPATH':str(Path(__file__).resolve().parents[1]/'src'),
+             'QQ_APP_ID':'','QQ_APP_SECRET':'','AI_API_KEY':''}
+        result=subprocess.run([sys.executable,'-B','-c',probe],env=env,capture_output=True,text=True)
+        self.assertEqual(result.returncode,0,result.stdout+result.stderr)
+
     def test_core_works_without_qq_or_credentials(self):
         # A fresh interpreter prevents other tests' imports from hiding a dependency.
         probe = textwrap.dedent("""
@@ -168,6 +215,7 @@ class KnowledgeAuthorityTests(unittest.TestCase):
         from ournotes_bot.application import knowledge_service as ks
         from ournotes_bot.application.backend import Backend
         from ournotes_bot.domain.knowledge import EvidenceLease, KnowledgeScope
+        from ournotes_bot.query.continuation import ContextKey, ContextStore
         self.write_fixture(text='## 工程测试\n'+'隔离测试内容。'*300)
         self.service.refresh()
         chunks=tuple(row.chunk for row in self.service.index[:6])
@@ -177,9 +225,11 @@ class KnowledgeAuthorityTests(unittest.TestCase):
         backend.model_runtime=None
         backend.knowledge=self.service;backend.runtime='runtime';backend.clock=lambda:10
         backend.ledger=SimpleNamespace(active=lambda epoch:True)
+        backend.contexts=ContextStore(clock=lambda:10)
+        ticket=backend.contexts.begin(ContextKey('qq','group','fixture','topic'))
         row=dict(delivery='delivery',status='prepared',epoch='epoch',runtime='runtime',expires=20)
         for count in (1,5):
-            work=SimpleNamespace(active=True,hint=False,chat=False,story_versions=(),proactive=None,prepared=[
+            work=SimpleNamespace(active=True,hint=False,chat=False,lease=ticket,story_versions=(),proactive=None,prepared=[
                 SimpleNamespace(evidence=(lease,lease),evidence_deadline=None) for _ in range(count)])
             backend.works={'delivery':work}
             with patch.object(self.service,'observe',wraps=self.service.observe) as observe, \

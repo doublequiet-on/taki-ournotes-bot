@@ -400,6 +400,24 @@ class InformationQueryTests(unittest.TestCase):
         self.assertIn('/查曲 102', result.text)
         self.assert_same_text(result)
 
+    def test_current_activity_uses_same_snapshot_art_only_after_event_identity_matches(self):
+        from dataclasses import replace
+        record=activity(1,'活动',image_url='verified:banner')
+        repo,source=self._current_repository(record)
+        source.value=replace(source.value,banner='tracker:banner',songs=(replace(source.value.songs[0],jacket='tracker:jacket'),))
+        song=SimpleNamespace(id=101,title='静态歌曲',jacket_url='verified:jacket')
+        repo.capture_catalog=lambda:catalog(activities=(record,),songs=(song,))
+        answer=execute_activity('',repo)
+        self.assertEqual(answer.views[0].hero_url,'verified:banner')
+        self.assertEqual(next(r.image_url for r in answer.views[0].rows if r.kind=='song'),'verified:jacket')
+        repo.capture_catalog=lambda:catalog(activities=(replace(record,end_at=NOW+1),),songs=(song,))
+        answer=execute_activity('',repo)
+        self.assertEqual(answer.views[0].hero_url,'tracker:banner')
+        self.assertEqual(next(r.image_url for r in answer.views[0].rows if r.kind=='song'),'tracker:jacket')
+        source.value=replace(source.value,server='en')
+        repo.capture_catalog=lambda:catalog(activities=(record,),songs=(song,))
+        self.assertEqual(next(r.image_url for r in execute_activity('en',repo).views[0].rows if r.kind=='song'),'tracker:jacket')
+
     def test_current_activity_mismatched_window_does_not_attach_wrong_cards(self):
         record = activity(1, '旧复刻', start=NOW - 1000, bonus_cards=(CardRef(2, 7),),
                           available_relations=frozenset({'bonus_cards'}))
@@ -469,6 +487,253 @@ class ActivityAnnouncementTests(unittest.TestCase):
         self.assertIn('/announcements/10/',result.text);self.assertNotIn('清 CP',result.text)
         self.assertNotIn('还不能确定',result.text)
         repo.activity_announcements.next.assert_called_once_with('jp',NOW)
+
+
+class PublicQueryContractTests(unittest.TestCase):
+
+    def test_public_projection_preserves_positions_states_and_snapshot_times(self):
+        import json
+        from types import SimpleNamespace
+        from ournotes_bot.domain.public_queries import PublicSnapshot
+        from ournotes_bot.query.public_queries import execute_arena, execute_player, quality_lines, stamp
+        league = {'id': 1, 'bandId': 1, 'name': 'MyGO!!!!!', 'rules': [], 'ranks': []}
+        catalog = {'entries': {'1': {'seasonId': 1, 'title': 'fixture', 'startAt': 1, 'endAt': 9999999999999, 'leagues': [league]}}}
+        board = {'rows': [{'position': 99, 'rank': 99, 'point': 0, 'pointState': 'source_zero', 'name': 'zero'}, {'position': 100, 'rank': 99, 'point': None, 'pointState': 'null', 'name': 'unknown'}]}
+        snapshot = PublicSnapshot(json.dumps(board).encode(), 1791388500, 'arena-board', provider='official', observed_ms=1791388000000, server_ms=1791388500000, game_region='jp', snapshot_id='fixture')
+        source = SimpleNamespace(arena=lambda region: PublicSnapshot(json.dumps(catalog).encode(), 1791388500, 'arena'), board=lambda *a: snapshot)
+        repo = SimpleNamespace(public_queries=source, capture_catalog=lambda: SimpleNamespace(source_snapshot=None))
+        result = execute_arena('jp MyGO 榜单 排名=99-100', repo, now=1791388500)
+        self.assertEqual(result.status, 'success')
+        rows = [r for r in result.views[0].rows if r.kind == 'standing']
+        self.assertEqual([(r.position, r.point_state) for r in rows], [(99, 'source_zero'), (100, 'null')])
+        self.assertIn('来源观测：' + stamp(snapshot.observed_ms), result.text)
+        self.assertIn('本机接收：' + stamp(1791388500000), result.text)
+        self.assertIn('source_zero', result.text)
+        self.assertIn('null', result.text)
+        from dataclasses import replace
+        source.player = lambda request: replace(snapshot, body=b'{"profile":{"name":"fixture"}}')
+        player = execute_player('1', repo)
+        self.assertEqual(player.status, 'success')
+        self.assertIn('来源观测：' + stamp(snapshot.observed_ms), player.text)
+        self.assertIn('来源更新：未获取', player.text)
+        self.assertIn('来源观测：未获取', quality_lines(replace(snapshot, observed_ms=None)))
+
+
+    def test_game_art_is_pinned_allowlisted_and_bonus_art_keeps_native_role(self):
+        from ournotes_bot.sources.haneoka.catalog_assets import asset_url
+        from ournotes_bot.sources.haneoka.public_queries import PublicQueries
+        from ournotes_bot.sources.haneoka.activity_details import project_details
+        release='r-'+'a'*20
+        rank='/runtime/jp/unity/Assets/AddressableResources/UI/Atlas/FixUiSpriteAtlas.spriteatlasv2/rank_gold--Sprite-123.png'
+        mission='/runtime/intl/unity/Assets/AddressableResources/Live/Images/Atlas/LiveAtlas.spriteatlasv2/Icon_gekisou_just--Sprite--123.png'
+        self.assertTrue(asset_url(rank,release).endswith('?release='+release))
+        self.assertIn('/intl/',asset_url(mission,release))
+        for path in (rank.replace('rank_gold','unrelated'),mission.replace('just','arbitrary')):
+            with self.assertRaises(ValueError):asset_url(path,release)
+        mark='runtime/unity/Assets/AddressableResources/UI/Atlas/FixUiSpriteAtlas.spriteatlasv2/sp_icon_live_music_type_99--Sprite-1.png'
+        snapshot={'identities':{'jp':{'releaseId':release}},'documents':{'jp':{'ui-marks':{'sp_icon_live_music_type_99.png':mark}}}}
+        source=PublicQueries(fetch=lambda *args:self.fail('unexpected network'))
+        self.assertTrue(source.arena_attribute('jp',99,snapshot,release))
+        self.assertEqual(source.arena_attribute('en',99,snapshot,release),'')
+        self.assertEqual(source.arena_attribute('jp',99,snapshot,'r-'+'b'*20),'')
+        event={'effects':[{'targets':{'memberCard':{'name':'测试卡','image':'card','resourceType':2,'resourceId':7}},'resourceTypeConstraint':2}]}
+        fact=project_details(event,lambda path:'verified:'+path if path else '')[0].facts[0]
+        self.assertEqual((fact.image_url,fact.image_kind),('verified:card','portrait'))
+
+    def test_public_id_precision_regions_and_invalid_arguments(self):
+        from ournotes_bot.query.public_queries import parse_player, parse_arena
+        from ournotes_bot.domain.public_queries import PublicQueryError
+        self.assertEqual(parse_player('9223372036854775807').profile_id, '9223372036854775807')
+        for region, ident in [('hk', '21234567890'), ('en', '31234567890'), ('kr', '41234567890')]:
+            self.assertEqual(parse_player(ident + ' ' + region + ' 名片 页3').page, 3)
+        for query in ('0', '01', '9223372036854775808', '31234567890 hk', '1 jp hk', '1 页3', '1 名片 页0'):
+            with self.subTest(query=query), self.assertRaises(PublicQueryError):
+                parse_player(query)
+        self.assertEqual(parse_arena('MyGO!!!!! hk 榜单 排名=90-100').last, 100)
+        for query in ('MyGO!!!!! 榜单 排名=2-1', 'MyGO!!!!! 榜单 排名=1-101', 'MyGO!!!!! jp hk', '不存在的乐队'):
+            with self.subTest(query=query), self.assertRaises(PublicQueryError):
+                parse_arena(query)
+        from ournotes_bot.query.public_queries import inside, rule_text
+        self.assertTrue(inside({'startAt': 1000, 'endAt': 1999}, 1999))
+        self.assertFalse(inside({'startAt': 1000, 'endAt': 1999}, 2999))
+        self.assertIn('COMBO/JUST/LUCK', rule_text({'musicType': 0, 'missions': [0, 3, 0]},
+                                                {'musicType': 1, 'arenaMissions': [1, 1, 2]}))
+
+    def test_pending_and_limits_do_not_cache_or_retry(self):
+        from ournotes_bot.sources.haneoka.public_queries import PublicQueries
+        from ournotes_bot.domain.public_queries import PublicQueryError
+        for status, expected in ((202, 'pending'), (404, 'data_unavailable'), (429, 'rate_limited'), (503, 'data_unavailable')):
+            calls = []
+            def fetch(*args):
+                calls.append(args)
+                return status, b'{}', {'retry-after': '10'}
+            source = PublicQueries(fetch=fetch)
+            with self.assertRaises(PublicQueryError) as result:
+                source.read('/fixture')
+            self.assertEqual(result.exception.status, expected)
+            self.assertEqual(result.exception.retry_after, 10)
+            self.assertEqual(len(calls), 1)
+            self.assertFalse(source.cache)
+            if status in (202, 429):
+                with self.assertRaises(PublicQueryError):
+                    source.read('/fixture')
+                self.assertEqual(len(calls), 1)
+
+    def test_records_error_body_overrides_ambiguous_http_status(self):
+        from ournotes_bot.sources.haneoka.transport import response_failure
+        import json
+        for status in (404, 503):
+            self.assertEqual(response_failure(status, json.dumps({'error': {'kind': 'pending', 'retryAfter': 3}}).encode(), {}), ('pending', 3))
+        self.assertEqual(response_failure(404, b'{"error":{"kind":"not_found"}}', {}), ('not_found', None))
+        self.assertEqual(response_failure(404, b'not json', {}), ('data_unavailable', None))
+        self.assertEqual(response_failure(429, b'{}', {'retry-after': '10'}), ('rate_limited', 10))
+        self.assertEqual(response_failure(503, b'{"error":{"kind":[]}}', {}), ('data_unavailable', None))
+        from ournotes_bot.sources.haneoka.public_queries import timestamp, integer
+        from ournotes_bot.domain.public_queries import PublicQueryError
+        for value in (True, 2**4000, float('inf'), float('nan'), '0', []):
+            with self.subTest(value=type(value)), self.assertRaises(PublicQueryError):
+                timestamp(value)
+        with self.assertRaises(PublicQueryError):
+            integer(2**53)
+
+    def test_arena_position_window_tie_and_freshness(self):
+        from ournotes_bot.sources.haneoka.public_queries import PublicQueries
+        from ournotes_bot.domain.public_queries import ArenaRequest, PublicQueryError
+        import json
+        now = [2000.0]
+        data = {'region': 'jp', 'seasonId': '1', 'bandId': '1', 'start': 100, 'end': 199,
+                'observedAtMs': 800000, 'serverTimeMs': 2000000, 'provider': 'official',
+                'rows': [{'rank': 99, 'point': 0, 'name': 'zero'}, {'rank': 101, 'point': None, 'name': 'missing'}]}
+        source = PublicQueries(fetch=lambda *a: (200, json.dumps(data).encode(), {}), clock=lambda: now[0])
+        request = ArenaRequest(band=1, mode='榜单', first=100, last=101)
+        first = source.board(request, 1)
+        self.assertEqual(first.freshness, 'fresh')
+        rows = json.loads(first.body)['rows']
+        self.assertEqual([r['position'] for r in rows], [100, 101])
+        self.assertEqual([r['rawRank'] for r in rows], [None, None])
+        self.assertEqual([r['pointState'] for r in rows], ['source_zero', 'null'])
+        now[0] += 1
+        self.assertEqual(source.board(request, 1).freshness, 'stale')
+        for region in ('cn', 'intl'):
+            with self.assertRaises(PublicQueryError):
+                source.arena(region)
+
+
+    def test_player_identity_and_cache_expiration(self):
+        import json
+        from ournotes_bot.sources.haneoka.public_queries import PublicQueries
+        from ournotes_bot.domain.public_queries import PlayerRequest, PublicQueryError
+        calls, now = [], [100]
+        value = {'region': 'jp', 'profileId': '99', 'profile': {'name': 'fixture', 'rankExp': 0, 'totalFavorite': 0}}
+        def fetch(*args):
+            calls.append(args)
+            return 200, json.dumps(value).encode(), {}
+        source = PublicQueries(fetch=fetch, clock=lambda: now[0])
+        first = source.player(PlayerRequest('99'))
+        self.assertEqual(first, source.player(PlayerRequest('99')))
+        self.assertEqual(len(calls), 1)
+        now[0] += 60
+        source.player(PlayerRequest('99'))
+        self.assertEqual(len(calls), 2)
+        value['region'] = 'kr'
+        with self.assertRaises(PublicQueryError):
+            source.player(PlayerRequest('100'))
+
+    def test_source_bound_namecard_does_not_fetch_foreign_or_other_player(self):
+        from ournotes_bot.sources.haneoka.public_queries import PublicQueries
+        from ournotes_bot.domain.public_queries import PlayerRequest, PublicQueryError
+        calls = []
+        source = PublicQueries(fetch=lambda *args: calls.append(args))
+        for path in ('https://evil.invalid/image.png', '/api/v1/game/records/jp/players/100/cards/1/download?file=99_a',
+                     '/api/v1/game/records/jp/players/99/cards/1/download?file=100_a'):
+            with self.assertRaises(PublicQueryError):
+                source.namecard(PlayerRequest('99'), {'page': 1, 'downloadUrl': path})
+        self.assertFalse(calls)
+        source = PublicQueries(fetch=lambda *args: (200, b'{}', {}))
+        with self.assertRaises(PublicQueryError) as failure:
+            source.arena('jp')
+        self.assertEqual(failure.exception.status, 'invalid_source')
+
+    def test_arena_null_song_rules_and_malformed_namecard_reject_at_source(self):
+        import json
+        from ournotes_bot.sources.haneoka.public_queries import arena_document, PublicQueries
+        from ournotes_bot.domain.public_queries import PublicQueryError, PlayerRequest
+        song = {'musicId': 1, 'musicTitle': 'fixture', 'musicType': 1, 'arenaMissions': [1, 2, 3], 'arenaPublishedAt': 0}
+        league = {'id': 1, 'bandId': 1, 'name': 'fixture', 'rules': [], 'ranks': [], 'songs': [song]}
+        document = {'entries': {'1': {'seasonId': 1, 'title': 'fixture', 'startAt': 1, 'endAt': 2, 'leagues': [league]}}}
+        arena_document(document)
+        for field in ('musicType', 'arenaMissions', 'arenaPublishedAt'):
+            original = song[field]
+            song[field] = None
+            with self.subTest(field=field), self.assertRaises(PublicQueryError):
+                arena_document(document)
+            song[field] = original
+        for card in ({'name': 1}, {'pages': [{'page': 1, 'imageUrl': 1}]}):
+            data = {'region': 'jp', 'profileId': '99', 'profile': {'profileCard': card}}
+            source = PublicQueries(fetch=lambda *args: (200, json.dumps(data).encode(), {}))
+            with self.assertRaises(PublicQueryError):
+                source.player(PlayerRequest('99'))
+
+    def test_local_grammar_requires_whole_question(self):
+        from ournotes_bot.natural_query.on_query import public_information_command
+        self.assertEqual(public_information_command('玩家 9223372036854775807 jp'), '/查玩家 9223372036854775807 jp')
+        self.assertEqual(public_information_command('MyGO竞技场人数'), '/查竞技场 MyGO 人数')
+        self.assertEqual(public_information_command('本期活动奖励'), '/查活动 奖励')
+        self.assertIsNone(public_information_command('玩家 99 jp 顺便猜一下密码'))
+
+    def test_activity_sections_keep_conditions_unknown_and_explicit_links(self):
+        from ournotes_bot.sources.haneoka.activity_details import project_details
+        from ournotes_bot.query.activity_query import detail_rows
+        from types import SimpleNamespace
+        value = {'effects': [{'targets': {'band': {'name': ['MyGO!!!!!']}}, 'bonusType': 2,
+                             'perRank': [{'rank': 1, 'percent': 15}, {'rank': 2, 'percent': 20}]}],
+                 'rewards': [{'unresolvedRewardId': 71}], 'missions': [], 'recruitments': []}
+        sections = project_details(value)
+        self.assertEqual(sections[0].facts[0].table, (('活动道具加成','档位1：+15%','档位2：+20%'),))
+        self.assertFalse(next(s for s in sections if s.name == '奖励').complete)
+        result = detail_rows(SimpleNamespace(details=sections), '加成')
+        text = '\n'.join('\n'.join(r.body) for r in result)
+        self.assertIn('档位1：+15%', text)
+        self.assertIn('档位2：+20%', text)
+        self.assertFalse(next(s for s in sections if s.name == '卡池').facts)
+        self.assertFalse(any(s.complete for s in project_details({'effects': None})))
+        from ournotes_bot.query.activity_query import overview_rows
+        from ournotes_bot.query.contracts.info import InfoRow
+        record = SimpleNamespace(details=sections, event_type_id=1, ranking_modes=('歌曲榜',))
+        ordered = overview_rows(record, (InfoRow('挑战曲', label='挑战歌曲', kind='song'),), '/查活动 1')
+        self.assertEqual(ordered[0].title, '活动类型与榜制')
+        self.assertEqual(ordered[1].kind,'bonus-summary')
+        self.assertEqual(ordered[1].children[0].children[0].title,'MyGO!!!!!')
+        self.assertGreater(next(i for i,r in enumerate(ordered) if r.title=='挑战曲'),
+                           next(i for i,r in enumerate(ordered) if r.title=='活动奖励'))
+
+    def test_activity_overview_summarizes_bonuses_keeps_cards_and_reward_condition_pairs(self):
+        from ournotes_bot.domain.info_catalog import ActivityFact,ActivitySection
+        from ournotes_bot.query.activity_query import overview_rows
+        from ournotes_bot.query.contracts.info import InfoRow,info_text,InfoView
+        from types import SimpleNamespace
+        table=(('成员卡参数加成','档位1：+10%','档位2：+15%'),)
+        facts=(ActivityFact('成员卡A',('档位1：+10%；档位2：+15%',),table=table,reference=(2,1),group='指定成员卡',bonus_ranges=(('成员卡参数加成',10,15),)),
+               ActivityFact('成员卡B',('档位1：+10%；档位2：+15%',),table=table,reference=(2,2),group='指定成员卡',bonus_ranges=(('成员卡参数加成',10,15),)))
+        rewards=tuple(ActivityFact('奖励卡',('累计积分','数量：'+str(count),f'所需积分：{point}'),
+                    preview=True,group='奖励卡牌',reference=(2,3)) for count,point in ((1,100),(1,200),(2,300)))
+        record=SimpleNamespace(event_type_id=1,ranking_modes=(),details=(ActivitySection('加成',facts,True),ActivitySection('奖励',rewards,True)))
+        rows=overview_rows(record,(InfoRow('已投影卡',kind='card',reference=(2,1)),
+                                  InfoRow('额外奖励关联',kind='card',reference=(2,1),tags=('奖励',))),'/查活动 1')
+        bonuses=next(r for r in rows if r.group=='加成')
+        self.assertEqual(len(bonuses.children),1)
+        self.assertIn('+10～15%',bonuses.children[0].body[0])
+        self.assertEqual(len(bonuses.children[0].children),2)
+        reward=next(r for r in rows if r.title=='奖励卡牌')
+        self.assertEqual(len(reward.children),2)
+        self.assertEqual(reward.children[0].body,('累计积分','数量：1','所需积分：100','所需积分：200','成员卡 ID 3'))
+        self.assertEqual(reward.children[1].body,('累计积分','数量：2','所需积分：300','成员卡 ID 3'))
+        self.assertTrue(any(r.title=='已投影卡' for r in rows))
+        self.assertTrue(any(r.title=='额外奖励关联' for r in rows))
+        self.assertIn('所需积分：300',info_text((InfoView('活动',rows=rows),)))
+        self.assertNotIn('档位1',info_text((InfoView('活动',rows=rows),)))
+        from ournotes_bot.query.activity_query import detail_rows
+        self.assertIn('档位1：+10%', '\n'.join(v for r in detail_rows(record,'加成') for v in r.body))
 
 
 if __name__ == '__main__':

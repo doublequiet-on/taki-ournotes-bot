@@ -1360,6 +1360,29 @@ async function main() {
     }
   })
   await run('HTTP v2 semantic decode failures never enter request retries',async()=>{
+    const personal=structuredClone(httpV2.python_to_ts.ready)
+    assert.equal(personal.execution_profile,'personal-v1')
+    assert.equal(wire.decodeReady(personal).execution_profile,'personal-v1')
+    const legacy=structuredClone(personal)
+    delete legacy.execution_profile
+    assert.equal(wire.decodeReady(legacy).execution_profile,'personal-v1')
+    const shared=['classify','gateway_retire','ack_context_guard','quoted_context_v1','fixed_snapshot_v1','independent_delivery_v1']
+    const query={...legacy,execution_profile:'query-local-v1',features:shared,notices_enabled:false}
+    assert.equal(wire.decodeReady(query).execution_profile,'query-local-v1')
+    for(const mutate of [v=>delete v.execution_profile,v=>v.execution_profile='query-local-v2',
+      v=>v.execution_profile='personal-v1',v=>v.notices_enabled=true,v=>v.protocol.minor++,
+      v=>v.capability='qq-query-future',v=>v.features.push('current_model_permit_v1'),
+      v=>v.features.push('notice_gateway_v1'),v=>v.features.push('chat_observation_v1'),
+      v=>v.features.push('unknown'),v=>v.features.push(v.features[0])]) {
+      const v=structuredClone(query);mutate(v);assert.throws(()=>wire.decodeReady(v),/incompatible_backend/)
+    }
+    for(const feature of shared)assert.throws(()=>wire.decodeReady({...query,features:shared.filter(f=>f!==feature)}))
+    for(const feature of ['notice_gateway_v1','current_model_permit_v1'])
+      assert.throws(()=>wire.decodeReady({...legacy,features:legacy.features.filter(f=>f!==feature)}))
+    const isolated=new BackendClient('http://127.0.0.1:8765','x'.repeat(32),'fixture','epoch',async()=>{throw Error('must not call HTTP')})
+    isolated.readiness=wire.decodeReady(query)
+    for(const invoke of [()=>isolated.chatObservation({},1,{}),()=>isolated.chatCandidate({},1,{}),()=>isolated.modelPermission({}, {},true)])
+      await assert.rejects(invoke,/incompatible_backend/)
     const r=httpV2.ts_to_python.request,p=httpV2.python_to_ts.preparing,a={requestId:r.request_id,deliveryId:p.delivery_id,partId:'0',attemptId:'a',gatewayEpoch:'epoch'}
     const calls=[c=>c.recognizes('fixture'),c=>c.lookup(r.request_id),c=>c.submit({},1),c=>c.event(p,'aborted'),
       c=>c.intent(a),c=>c.acknowledge(a,{status:'success',messageId:'receipt'}),
@@ -1453,6 +1476,37 @@ async function main() {
       return Response.json(httpV2.python_to_ts.ack)
     })
     await client.acknowledge({requestId:'r',deliveryId:'d',partId:'0',attemptId:'a',gatewayEpoch:'e'},{status:'success',messageId:'m'})
+    assert.deepEqual(guards,[true,false])
+  })
+  await run('Scope identity consumes09 binding decisions and invalidates session snapshots',async()=>{
+    const {productIdentityAdapter,productScopeAuthority,ProductIdentitySession,productIdentityChecker}=require('../lib/scope-identity')
+    const binding={contract_version:1,manifest_sha256:'a'.repeat(64)}
+    const snapshot={binding,checkerCommit:productIdentityChecker,decision:{outcome:'allow',reason:'identity_verified',evidence:'b'.repeat(64)}}
+    for(const [outcome,reason] of [['allow','identity_verified'],['deny','identity_mismatch'],['manual','schema_incompatible']]){
+      const adapter=productIdentityAdapter(()=>({...snapshot,decision:{outcome,reason,evidence:'b'.repeat(64)}}))
+      assert.equal(adapter(binding).outcome,outcome)
+      assert.equal(adapter({...binding,manifest_sha256:'c'.repeat(64)}).outcome,'deny')
+    }
+    const session=new ProductIdentitySession()
+    assert.equal(session.publish(undefined,snapshot),false)
+    const old=session.beginCheck(),ticket=session.beginCheck()
+    assert.equal(session.publish(old,snapshot),false);assert(session.publish(ticket,snapshot))
+    const authority=productScopeAuthority(session.read)
+    assert.equal(authority.identity(binding).outcome,'allow')
+    assert.equal(authority.approval({},'e'.repeat(64)).outcome,'manual')
+    session.invalidate();assert.equal(authority.identity(binding).outcome,'manual')
+    assert.equal(session.publish(ticket,snapshot),false)
+    assert.equal(productIdentityAdapter(()=>({...snapshot,decision:{...snapshot.decision,evidence:''}}))(binding).outcome,'deny')
+    assert.equal(productIdentityAdapter(()=>({...snapshot,binding:{opaque:'old-candidate'}}))({opaque:'old-candidate'}).outcome,'deny')
+  })
+  await run('M3 ACK retry rechecks revoked scope context guard', async () => {
+    const guards=[];let allowed=true
+    const client=new BackendClient('http://127.0.0.1:8765','x'.repeat(32),'i','e',async (url,opts)=>{
+      guards.push(JSON.parse(opts.body).allow_context)
+      if(guards.length===1){allowed=false;throw Error('lost before commit')}
+      return Response.json(httpV2.python_to_ts.ack)
+    })
+    await client.acknowledge({requestId:'r',deliveryId:'d',partId:'0',attemptId:'a',gatewayEpoch:'e'},{status:'success',messageId:'m'},undefined,()=>allowed)
     assert.deepEqual(guards,[true,false])
   })
   await run('M3 gateway normalization retains actual path and query', async () => {
@@ -1710,7 +1764,7 @@ async function main() {
     const fork=env.ctx.plugin(ctx=>{receiver=new Receiver(ctx,{...identity,backendUrl:'http://127.0.0.1:8765',tokenEnv:'unused',permissions:[],maxPending:8},client)})
     receiver.authorizeModel=async()=>{decisions++;releaseHint()}
     try{
-      const job={input,plan:hint(),permissionAttempts:new Set()}
+      const job={input,session:decoded.session,plan:hint(),permissionAttempts:new Set()}
       await receiver.deliver(job,env.bot)
       assert.equal(decisions,1);assert.equal(env.calls.length,2)
       assert.deepEqual(env.calls.map(c=>c.data.msg_seq),[1,2])
@@ -1733,7 +1787,7 @@ async function main() {
     const fork=env.ctx.plugin(ctx=>{receiver=new Receiver(ctx,{...identity,backendUrl:'http://127.0.0.1:8765',tokenEnv:'unused',permissions:[],maxPending:8},client)})
     try{
       receiver.materials=fixtureMaterials(env.bot.internal)
-      await receiver.deliver({input,plan:plan(),permissionAttempts:new Set()},env.bot)
+      await receiver.deliver({input,session:env.bot.session({}),plan:plan(),permissionAttempts:new Set()},env.bot)
       const sends=env.calls.filter(c=>c.url.endsWith('/messages'))
       assert.equal(completed,5);assert.deepEqual(sends.map(c=>c.data.msg_seq),[1,2,3,4,5])
       assert.deepEqual(sends.map(c=>c.data.msg_type),[2,2,2,2,2])
@@ -1741,6 +1795,25 @@ async function main() {
       assert.ok(sends.slice(1).every(c=>c.data.markdown.content.includes('qqbot-at-user')))
       assert.equal(env.calls.filter(c=>c.url.endsWith('/files')).length,4)
     }finally{await receiver.dispose();await fork.dispose();await env.ctx.stop()}
+  })
+  await run('Receiver falls back only for image acquisition before intent',async()=>{
+    for (const code of ['image_admission','response_size','image_mime','backend_transport']) {
+      const env=createBot();let receiver,completed=false,fallback=false,intents=0
+      const decoded=await decodeIncoming(env.bot,event(),identity,recognizes)
+      const input={...decoded.inbound,timestampMs:Date.now()}
+      const plan=()=>({request_id:input.requestId,delivery_id:'a'.repeat(32),plan_version:1,status:completed?'finished':'prepared',
+        send_allowed:!completed,expires_at:Date.now()/1000+290,parts:[{id:fallback?'0:f':'0',position:0,
+        mode:fallback?'fallback':'primary',status:completed?'success':'pending',kind:fallback?'text':'image',text:'captured fallback'}]})
+      const client={epoch:'epoch',deactivate(){},async initialize(){},async retire(){},async image(){throw new BackendError(code)},
+        async lookup(){return plan()},async intent(){assert(fallback);intents++;return 'granted'},async acknowledge(){completed=true},
+        async event(p,event){assert.equal(event,'upload_failed');assert.equal(intents,0);fallback=true;return plan()}}
+      const fork=env.ctx.plugin(ctx=>{receiver=new Receiver(ctx,{...identity,backendUrl:'http://127.0.0.1:8765',tokenEnv:'unused',permissions:[],maxPending:8},client)})
+      try{
+        await receiver.deliver({input,session:env.bot.session({}),plan:plan(),permissionAttempts:new Set()},env.bot)
+        assert.equal(intents,1);assert(completed);assert.equal(env.calls.length,1)
+        assert.equal(env.calls[0].data.msg_seq,1);assert(env.calls[0].data.markdown.content.includes('captured fallback'))
+      }finally{await receiver.dispose();await fork.dispose();await env.ctx.stop()}
+    }
   })
   await run('Receiver wires official material APIs to one passive Markdown image and real mention',async()=>{
     const env=createBot();let receiver,completed=false,puts=0
@@ -1763,7 +1836,7 @@ async function main() {
     const fork=env.ctx.plugin(ctx=>{receiver=new Receiver(ctx,{...identity,materialStateDir:directory,
       backendUrl:'http://127.0.0.1:8765',tokenEnv:'unused',permissions:[],maxPending:8},client)})
     try{
-      await receiver.deliver({input,plan:plan(),permissionAttempts:new Set()},env.bot)
+      await receiver.deliver({input,session:env.bot.session({}),plan:plan(),permissionAttempts:new Set()},env.bot)
       assert.equal(puts,1);assert.equal(completed,true)
       assert.deepEqual(env.calls.map(c=>c.url),['/v2/media-images/prepare','/v2/media-images/complete','/v2/groups/fixture-group/messages'])
       const body=env.calls.at(-1).data
@@ -2127,7 +2200,7 @@ async function main() {
     })
     await run('Pausing new queries leaves an admitted receiver job and its ACK running',async()=>{
       const env=createBot();let paused=false,submissions=0,acked=false,receiver,plan
-      const management={accepts:()=>!paused,policySnapshot:()=>({natural_query:'local',epoch:'policy',global_revision:0,group_revision:0})}
+      const management={accepts:()=>!paused,sendsAllowed:()=>true,policySnapshot:()=>({natural_query:'local',epoch:'policy',global_revision:0,group_revision:0})}
       const client={epoch:'e',deactivate(){},async initialize(){},async recognizes(){return true},async retire(){},
         async submit(input){submissions++;paused=true;return plan={request_id:input.requestId,delivery_id:'d'.repeat(32),plan_version:1,status:'prepared',send_allowed:true,expires_at:Date.now()/1000+290,
           parts:[{id:'0',position:0,mode:'primary',status:'pending',kind:'text',text:'fixture'}]}},
@@ -2139,6 +2212,27 @@ async function main() {
         await env.ctx.parallel('internal/session',env.bot.session({type:'internal',_type:'qq/group-at-message-create',_data:raw.d}))
         await receiver.receive(env.ctx.reflect.trace(await adaptSession(env.bot,raw)))
         assert.equal(submissions,1);assert.equal(acked,true);assert.equal(env.calls.filter(c=>c.data?.msg_type===2).length,1)
+      }finally{await receiver.dispose();await fork.dispose();await env.ctx.stop()}
+    })
+    for(const boundary of ['excluded','before-intent','after-grant'])await run('Scope revocation '+boundary,async()=>{
+      const env=createBot();let receiver,allowed=true,intents=0,acks=0,context,plan,recognitions=0
+      const management={inScope:()=>boundary!=='excluded',accepts:()=>allowed,sendsAllowed:()=>allowed,policySnapshot:()=>({natural_query:'local',epoch:'policy',global_revision:0,group_revision:0})}
+      const client={epoch:'e',deactivate(){},async initialize(){},async recognizes(){recognitions++;return true},async retire(){},
+        async submit(input){if(boundary==='before-intent')allowed=false;return plan={request_id:input.requestId,delivery_id:'e'.repeat(32),plan_version:1,status:'prepared',send_allowed:true,expires_at:Date.now()/1000+290,
+          parts:[{id:'0',position:0,mode:'primary',status:'pending',kind:'text',text:'fixture'}]}},
+        async intent(){intents++;allowed=false;return 'granted'},
+        async acknowledge(a,r,seq,allow){acks++;context=allow()},
+        async lookup(){return {...plan,status:'finished',send_allowed:false,parts:[]}},async event(){return {}}}
+      const fork=env.ctx.plugin(ctx=>{receiver=new Receiver(ctx,{...identity,backendUrl:'http://127.0.0.1:8765',tokenEnv:'unused',permissions:[],maxPending:8,management},client)})
+      receiver.permitted=async()=>true
+      try{
+        const raw=event({timestamp:new Date().toISOString()})
+        await env.ctx.parallel('internal/session',env.bot.session({type:'internal',_type:'qq/group-at-message-create',_data:raw.d}))
+        await receiver.receive(env.ctx.reflect.trace(await adaptSession(env.bot,raw)))
+        assert.equal(intents,boundary==='after-grant'?1:0)
+        assert.equal(acks,boundary==='after-grant'?1:0)
+        if(boundary==='excluded')assert.equal(recognitions,0)
+        if(acks)assert.equal(context,false,'late grant receipt cannot project revoked context')
       }finally{await receiver.dispose();await fork.dispose();await env.ctx.stop()}
     })
     await run('Actual gateway keeps policy enforcement when the Console web UI is disabled',async()=>{

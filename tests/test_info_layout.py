@@ -11,6 +11,21 @@ from ournotes_bot.rendering.image_output import MAX_IMAGE_BYTES, MAX_IMAGE_PIXEL
 
 
 class InformationLayoutTests(unittest.TestCase):
+    def test_standing_uses_captured_position_and_value_state_without_parsing_title(self):
+        rows=tuple(InfoRow('不可推断位置的标题',('积分：'+point,'公开ID：未获取'),kind='standing',
+            table=(('显示 99','完整姓名 Long Alias'),),position=position,point_state=state)
+            for position,point,state in ((99,'0','source_zero'),(100,'未获取','null')))
+        view=InfoView('竞技场边界并列',rows=rows,presentation='arena',footer=('新鲜度：未知',))
+        drawn=[];original=info_layout.Canvas.text
+        def capture(canvas,x,y,value,*args,**kwargs):
+            drawn.append(str(value));return original(canvas,x,y,value,*args,**kwargs)
+        with patch.object(info_layout.Canvas,'text',capture):pages=info_layout.render_info(self.answer(view))
+        visible=''.join(drawn);text='\n'.join(page.text for page in pages)
+        for token in ('T99','T100','来源零，业务含义未确认','source_zero','来源为空','null','新鲜度：未知'):
+            self.assertIn(token,visible);self.assertIn(token,text)
+        self.assertEqual(drawn.count('显示 99'),2)
+        self.assertIn('积分：0',visible);self.assertIn('积分：未获取',visible)
+
     def test_roster_keeps_band_headers_and_names_but_commands_only_in_text(self):
         rows=tuple(InfoRow(f'角色{i}',(f'角色 ID {i}',),image_url=f'synthetic:{i}',
                           command=f'/查角色 {i}',group=f'乐队{i//5}') for i in range(25))
@@ -193,6 +208,36 @@ class InformationLayoutTests(unittest.TestCase):
 
     def test_failed_answers_stay_text_only(self):
         self.assertEqual(info_layout.render_info(InfoAnswer('暂不可用', 'data_unavailable')), ())
+
+    def test_public_layout_long_names_ids_and_bonus_table_keep_all_text_in_bounds(self):
+        from ournotes_bot.rendering.haneoka_theme import font
+        name='很长的中日文玩家昵称とLongPlayerName'*5
+        standing=InfoRow('第999999999名 · '+name, ('积分：999999999999999','公开ID：9223372036854775807'),
+                         kind='standing',table=(('第999999999名',name),))
+        table=(('成员卡参数加成',*(f'档位{i}：+22.5%' for i in range(1,6))),)
+        bonus=InfoRow('加成 · '+name,('成员卡参数加成：完整五档内容',),kind='bonus',table=table,
+                      image_url='synthetic:member',image_kind='portrait')
+        player=(InfoRow('公开ID',('9223372036854775807',)),InfoRow('等级／经验',('等级：未获取','经验：0'),kind='metric'),
+                InfoRow('获赞',('0',),kind='metric'),InfoRow('展示角色卡',tuple('培养：0' for _ in range(6)),kind='showcase'))
+        original=info_layout.Canvas.text
+        def capture(canvas,x,cy,value,size=28,color=None,bold=False,align='left',**kwargs):
+            width=font(size,bold,str(value).isascii()).getlength(str(value))
+            start=x-width if align=='right' else x-width/2 if align=='center' else x
+            self.assertGreaterEqual(start,-1)
+            self.assertLessEqual(start+width,canvas.image.width+1)
+            self.assertGreaterEqual(cy-size,0)
+            self.assertLessEqual(cy+size,canvas.image.height)
+            return original(canvas,x,cy,value,size,color or '#1b1b1f',bold,align,**kwargs)
+        with patch.object(info_layout.Canvas,'text',capture):
+            for view in (InfoView(name,rows=(standing,)*24,layout='facts',presentation='arena'),
+                         InfoView(name,rows=player,layout='facts',presentation='player'),
+                         InfoView(name,rows=(bonus,),presentation='activity')):
+                pages=info_layout.render_info(self.answer(view))
+                self.assertTrue(pages)
+                text='\n'.join(page.text for page in pages)
+                for row in view.rows:
+                    self.assertIn(row.title,text)
+                    for value in row.body:self.assertIn(value,text)
 
 
 if __name__ == '__main__':
