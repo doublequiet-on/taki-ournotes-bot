@@ -24,7 +24,7 @@ function configuration(env) {
 }
 
 function install(ctx, config, manifest, assetsDirectory = path.join(__dirname, 'node_modules/taki-console-assets')) {
-  const management = new Management(config.directory, config.identity)
+  const management = new Management(config.directory, config.identity, config.scope, config.assertRecoveryCurrent)
   const readHealth = config.readHealth || require('./health.cjs').healthReader(ctx, manifest, config.identity || {})
   const methods = ['overview', 'requests/list', 'requests/detail', 'sources', 'notices/list', 'query-metrics', 'groups/list', 'groups/update', 'settings/update',
     'ops/jobs/list','ops/jobs/detail','ops/jobs/start','ops/export','ops/audit','ops/host','ops/notice-target',
@@ -34,7 +34,7 @@ function install(ctx, config, manifest, assetsDirectory = path.join(__dirname, '
   journal.reconcile(management)
   const controls=new Controls(management,journal)
   const trusted=new TrustedActions(management,journal,{socket:config.actionSocket,instance:config.identity?.instanceId})
-  ctx.setInterval(()=>journal.prune(),60000)
+  ctx.setInterval(()=>{try{management.assertRuntimeCurrent()}catch{return}journal.prune()},60000)
   const reads = new Map()
   const groupPages = new Map()
   let lastObservedGroups, lastNoticeGroups
@@ -110,7 +110,10 @@ function install(ctx, config, manifest, assetsDirectory = path.join(__dirname, '
   const consoleScope = ctx.plugin(LocalConsole, { uiPath: '', apiPath: '/status', open: false, devMode: false })
   const registration = ctx.inject(['console', 'server'], scoped => {
     const listen = (name, callback, options) => scoped.console.addListener(name, async function(...args) {
-      try { return await callback.apply(this, args) }
+      try {
+        management.assertRuntimeCurrent()
+        return await callback.apply(this, args)
+      }
       catch (error) {
         const safe = Error(typeof error === 'string' ? error : error.message || 'management_failed')
         safe.stack = safe.message

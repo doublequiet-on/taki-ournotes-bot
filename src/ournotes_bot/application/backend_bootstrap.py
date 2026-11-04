@@ -17,21 +17,27 @@ from .operations_runtime import RuntimeOperations
 from .backend_protocol import ProtocolError, require
 
 
-def build_backend(args, settings):
+def build_backend(args, settings, *, assert_recovery_current=None):
     """Existing personal composition; unchanged CLI default."""
-    return _build_backend(args, settings, query_only=False)
+    return _build_backend(args, settings, query_only=False, assert_recovery_current=assert_recovery_current)
 
 
-def build_query_backend(args, settings):
+def build_query_backend(args, settings, *, assert_recovery_current=None):
     """Explicit development query composition, not a custom product approval.
 
     No environment flag selects this root. Final identity/scope activation belongs
     to the trusted 09/10 composition; this function never grants a management scope.
     """
-    return _build_backend(args, settings, query_only=True)
+    return _build_backend(args, settings, query_only=True, assert_recovery_current=assert_recovery_current)
 
 
-def _build_backend(args, settings, *, query_only):
+def _build_backend(args, settings, *, query_only, assert_recovery_current=None):
+    # This is a pre-construction barrier, not a running-writer isolation proof.
+    # A trusted launcher must keep this root unconstructed until both roles have
+    # been reviewed. No environment/Console boolean can authorize recovery here.
+    if assert_recovery_current is not None:
+        require(callable(assert_recovery_current), 'trusted_recovery_check_required')
+        require(assert_recovery_current() is None, 'trusted_recovery_check_required')
     token = os.environ.get('OURNOTES_BACKEND_TOKEN', '')
     require(len(token) >= 32, 'backend_token_required')
     require(1 <= args.port <= 65535, 'backend_port')

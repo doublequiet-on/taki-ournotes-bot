@@ -39,7 +39,9 @@ export class Management {
   private admissionStopped=false
   private sendStopped=false
   private unavailable=false
-  constructor(directory: string, identity?: { appId:string; instanceId:string }, readonly scope?:ScopeStore) {
+  constructor(directory: string, identity?: { appId:string; instanceId:string }, readonly scope?:ScopeStore,
+    private readonly assertRecoveryCurrent?:()=>void) {
+    this.assertRuntimeCurrent()
     if (!isAbsolute(directory)) throw Error('console state directory must be absolute')
     mkdirSync(directory, { recursive: true, mode: 0o700 })
     this.file = join(directory, 'settings.json')
@@ -120,9 +122,21 @@ export class Management {
     return this.snapshot()
   }
   private available():boolean {
+    try{this.assertRuntimeCurrent()}catch{return false}
     if(!this.scope)return true
     if(this.unavailable)return false
     try{this.assertPersistent();this.groups.assertPersistent(true);return true}catch{return false}
+  }
+  // Trusted composition callback only; never supplied by Console JSON/settings.
+  // Once lost, this process cannot be reopened by restoring an old snapshot.
+  private recoveryRevoked=false
+  assertRuntimeCurrent():void {
+    if(this.recoveryRevoked)throw Error('recovery_session_revoked')
+    if(this.assertRecoveryCurrent===undefined)return
+    try {
+      if(typeof this.assertRecoveryCurrent!=='function'||this.assertRecoveryCurrent()!==undefined)
+        throw Error('trusted_recovery_check_required')
+    }catch{this.recoveryRevoked=true;throw Error('recovery_session_revoked')}
   }
   sendsAllowed(input:Pick<Inbound,'kind'|'conversationId'>):boolean {
     if(this.sendStopped||!this.available())return false
