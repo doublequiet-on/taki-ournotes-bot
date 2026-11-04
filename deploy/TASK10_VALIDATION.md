@@ -217,3 +217,26 @@ GitHub读取第一页20个Release后定位基线的精确标签，不继续无�
 | upstream_down | not_run | 离线fixture后端不代表Haneoka故障验收 |
 
 本轮回读Checks41738407065：push/head0026159bc369c768e783294e8447de99a5f1973a，7项验证success，publish-linux-bundle skipped。此CI仅说明固定候选检查通过，不是产品发布或任务10完整激活验收。
+
+## 2026-11-04：服务事务边界增量（不重跑已绿矩阵）
+
+开工head c3d782c90d24802ebfa057a151b60aaaf268c185，Checks41744977067本轮已确认success。固定候选0026159bc369c768e783294e8447de99a5f1973a/整包hash4ce3e43013199145e19e3a13caa089dd7b826fd431c22182192ece182bf9ca32未变；外层hash重新核对，包内0359旧控制器字节与Git固定对象一致。已有首装/RPC/逐库恢复测试未重复。
+
+入口核对发现：服务停启、current切换和失败回退已实现，原先主要缺隔离驱动；独立实例配置/permit/launcher参数化、previous=null首装事务、05/07/09实际激活接线确实未实现。现有CLI配置白名单固定既有实例，未放宽。具体入口/责任及待决选项见INSTANCE_RECOVERY.md“现有服务事务入口定位”。
+
+本轮从candidate3-20261104/candidate-source的固定Git代码导入LinuxBackend/KoishiControl/Engine；在 `/home/lyy/.cache/taki-task10-service-boundary-20261104`、私有仅loopback网络中执行六个新场景。运行真实控制器stop/activate/start、FileLock、状态phase持久化和恢复逻辑；systemctl仅由本地驱动解释为专属HTTP子进程启停，绝不调用宿主systemctl。manifest、健康、预批准、snapshot边界及A/B版本ID为SYNTHETIC，不是整包实际业务服务或生产政策。activation_permitted=false。
+
+| 本轮新检查 | 结果 | 证据边界 |
+|---|---|---|
+| 两个同时运行的实例 | 4个实时端口不同；操作alpha后beta PID/permit/当前版本不变 | 独立进程/目录通过，不等于独立Linux用户/unit/cgroup验收 |
+| 后端已启动、候选网关启动失败 | Engine真实_switch→_rollback回transaction.previous，旧合成双进程健康 | 模拟网关start错误，健康来自合成HTTP；不证明真实应用可回退 |
+| 网关停写超时 | 实际子进程在限定等待后仍存活，暂停并保留事务；backend未被停、current未变 | 驱动缩短等待为0.15秒，不冒称实际systemd的90秒超时测试 |
+| 实际activate的os.replace失败 | current仍指向旧目录 | 文件系统异常注入，不等同断电 |
+| 实际activate目录fsync失败 | rename已可见、新指针保留，但没有后续启动或耐久成功结论 | 需要recover/人工核对，不能把可见性当持久化证明 |
+| current切换后模拟进程中断 | 持久phase仍activating；Engine.run(recover_only=True)回事务previous；共享数据标记未变 | BaseException中断模拟，无真实机器断电；恢复动作仅专属合成进程 |
+| 包内固定0359旧控制器读取version=2 | 拒绝state_invalid；当前控制器可读，文件字节未变 | 仅格式拒绝门，未安装/回滚真实控制器 |
+| 空首装recover与独立配置 | uninitialized；controller_configuration_out_of_scope | 直接证明当前入口没有独立空机首装能力，不能用旧baseline冒充 |
+
+所有新检查按预期完成，子进程finally全部退出；probe.log/service-results.json/controller-boundary.json含实际结果，未出现未解决测试失败。原候选3矩阵仅把two_instances、half_started、gateway_stop、current_switch、controller_rollback增加isolated_driver/格式拒绝证据，整体仍partial；不把服务真实环境的blocked消除。没有新增生产实现；测试驱动、固定旧控制器副本和合成状态按AGENTS保留在本工作区忽略目录 `runtime/task10/service-boundary-20261104/`，包括probe.py、controller_boundary.py、binding.json及日志。所有状态保留，不删除旧故障记录。
+
+具体决定已整理为兼容双向升级/单向前向修复、安全回退版本名单、每次批准/独立范围锚点、外部删除服务/人工当前快照、专属systemd宿主/既有宿主明确隔离资源、个人/定制选择的选项与影响，均未代选。需实现的10接口和需00/用户/05/07/08/09提供的输入明确分开。本轮只改两份deploy文档；无PR202、合并部署、真实服务、QQ、付费模型、生产数据或其他对话操作。

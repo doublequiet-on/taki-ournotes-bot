@@ -163,3 +163,33 @@ SQLite固定 `mode=ro&immutable=1`、`query_only=ON`、`trusted_schema=OFF`，�
 - 本轮没有选定真实批准、删除政策或宿主，也没有实现任何修写、重命名、删除、自动接管或激活端点。
 
 未来实现前必须验证：两类原始中断快照；完整stage未发布；双目录/双控制器；缺owner/坏JSON/重复键/未知phase；符号链接、硬链接、挂载别名、dev/ino替换、读取失败；全部摘要类型错配和缺/多成员；current/previous/txn/cleanup引用冲突；PID和锁覆盖未知；采集中漂移；同一报告重放、重启/锁切换失效。纯观察调用前后所有树与记录hash/文件集合必须不变，禁止mkdir/atomic_json/rename/unlink/rmtree/systemctl；未来执行验证还须覆盖断电及回执重复，不能沿用只读报告作为授权。
+
+## 现有服务事务入口定位（2026-11-04增量）
+
+“缺服务事务适配器”不能理解为没有停启/回退代码。`LinuxBackend.stop/activate/start`、`KoishiControl.stop/start`、`Engine._switch/_rollback/run(recover_only=True)`已有实际实现；本轮从固定0026159 Git源码使用这些方法完成隔离子进程验证，不改生产默认配置。
+
+| 类别 | 真实入口与现状 | 下一步/归属 |
+|---|---|---|
+| 已实现，原来缺隔离驱动 | linux_backend.py:stop先停gateway再backend并核PID；activate创建临时链接→os.replace→目录fsync；start先写permit再启动两进程 | 10本轮用局部systemctl解释驱动＋专属HTTP子进程验证，后续真实systemd沙箱仍需独立宿主/完整服务夹具 |
+| 已实现，原来缺隔离驱动 | linux_updater.py:_switch先持久phase；_rollback使用transaction.previous；recover处理未完成事务 | 本轮真实状态文件、FileLock、文件系统和子进程验证半启动/超时/切换中断，未重跑已绿套件 |
+| 已实现的控制器格式保护 | load_state只认可支持的版本；单向迁移采用version=2，旧0359控制器拒绝 | 本轮直接加载候选包内旧控制器比对固定Git字节，验证拒绝，未替换任何已安装控制器 |
+| 真正缺独立实例正式实现 | validate_config硬绑定/home/ubuntu/taki、既有baseline、/var/lib/taki-updater；_service/unit、KoishiControl unit、runtime_directory和launcher均固定taki名称/路径 | 10需在独立实例接口确定后接线配置、unit模板、permit与launcher；本轮没有放宽白名单或修改固定生产路径 |
+| 真正缺独立首装事务 | Engine无state时要求current_release及健康baseline；空recover返回uninitialized；CLI check/migrate要求installation.json installed | 10需设计/实现previous=null的独立首装状态与失败恢复。现有baseline模式不能补成首装成功，也不能假造健康baseline |
+| 真正缺实际恢复/激活接线 | recovery_preflight纯函数已有05/07/09顺序，但linux_backend/launcher未调用此链；现有prepare_start仅group_policy_guard | 10负责受信执行边界，08只提供既定快照注入/管理接线；需实际external expected/批准与删除权威来源，不能持久allow自证 |
+| 已有但受具体审查阻塞 | _check_reviewed_fingerprints核critical_paths、指纹和双向兼容批准；migrate显式target并用version=2保护 | 准备与候选绑定的兼容证据后由有权人员批准；10不为测试生成真实policy，不因CI成功跳过 |
+| 缺真实运行证据 | systemd/cgroup、unit/timer/socket、实例用户、开机恢复、真实应用健康、跨机停写 | 需专属测试宿主或受控服务环境及真实参数；局部进程驱动不代表这些验收完成 |
+
+本轮驱动只替换systemctl命令执行、runtime目录、manifest、健康、数据快照边界和预批准输入。`compatible=true`、A/B release ID、permit中的policy_guard均明确SYNTHETIC，不是05或用户批准；通过直接调用已批准事务阶段测试控制流，未调用生产CLI或跳过其校验后上线。子进程只提供loopback合成HTTP，未运行QQ或真实业务。双实例测试证明独立目录/端口/进程/permit不串写控，未证明不同Linux用户/cgroup隔离。`LinuxBackend.activate`确实执行于专属合成目录；报告activation_permitted=false仍表示没有真实产品激活许可。
+
+### 需要00/用户作出的具体决定（本轮未选择）
+
+| 决定 | 可选方式 | 对实施/验收的影响 |
+|---|---|---|
+| 升级兼容模式 | 经指纹与数据证据审查的双向兼容升级；或显式单向migrate＋前向修复 | 前者才可保留previous并验代码回退；后者不得启动旧读者，需version=2及前向修复目标。两者均需固定候选、critical_paths、schema及兼容审查，不仅是批准一句“升级” |
+| 可接受回退版本 | 仅经过当前安全/数据兼容审核的旧完整组合；或暂无安全旧版本，使用停机＋前向修复 | 8d9旧包能读管理文件不代表已获候选3安全批准；候选3修复前版本不得由10默认作为可上线退路 |
+| 范围恢复批准 | 每次启动/恢复由当前管理员批准；或备份树外独立最新批准锚点（实例、范围摘要、代际及撤销） | 前者必须有值守，重启不能静默批准；后者需明确权威存储、可用性、可信读取和撤销传播，离线未知保持manual。05定义范围，08/10接现有边界 |
+| 删除权威来源 | 独立服务/外部账本按代际提供当前副本清单；或每次恢复经人工核对的当前外部快照 | 前者依赖服务可用及所有副本传播；后者需值守与新鲜度核对。二者都不能取自旧备份自身，也不由10代定保留期限/删除范围，07负责合同，用户确认策略 |
+| 宿主与运行隔离 | 专属Linux测试VM/容器内完整systemd环境；或现有宿主上明确分配的独立用户、unit/端口/路径 | 前者更易验证完整生命周期且不触及真实实例；后者必须先盘点资源和权限、证明与既有控制器隔离。跨机迁移还要旧实例停止/隔离凭据。当前只运行了普通隔离子进程 |
+| 产品/数据范围 | 个人完整能力选择；或定制选择矩阵及物理裁剪后候选 | 决定需安装组件、数据副本与恢复覆盖，09负责实物，10只消费已冻结清单；不按当前含聊天整包代定定制产品 |
+
+以上是待审选项，不是默认推荐生效或生产授权。本轮仍不实现manual reconcile接管、补发ownership或清理失败状态。
