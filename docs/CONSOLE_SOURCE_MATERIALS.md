@@ -18,6 +18,20 @@
 
 ## Rollup Linux原生传递材料
 
+### 25项原文停止条件与最小后续方案
+
+仅对40a968a已登记的25项查询了官方crates.io准确版本记录，25/25 checksum与固定锁一致；保存发布记录、原始/规范化Cargo声明、README及源码内许可标记，未再次请求已证404的SWC Git路径。新证据`runtime/task09/spec-binding-20261104/original-text-followup25-v1.zip`：80512 bytes / SHA256 `d60bede26813b5403c5c5844979151080cb33b3b1cce10da16c342e47f53e782`，原文关闭项仍为0。
+
+`swc_common26.0.0`中11个Rust来源文件保留Rust Project Developers版权和Apache-2.0/MIT双许可头（路径/hash/原行见followup25.json），不能仅以crate的Apache声明覆盖这些文件。其余两项copyright搜索命中分别为注释处理代码和测试样例字串，不据此创造新许可义务。24项SWC原文仍缺固定发布源对应的根许可及这些复制代码所指原文；base-encode0.3.1只有MIT声明，固定树及随包README未给全文。该证据不等于项目无许可证，也不等于缺项已放行。
+
+可交用户的最小方案如下，当前均未执行：
+
+- 保持冻结候选用于已授权隔离验证，暂停公开源码材料放行，等待能够证明适用于这些准确版本的原文。当前没有足够证据用另一个版本的LICENSE代替；没有联系第三方。
+- base-encode若选择下游独立实现，改动仅限构建工具的`rust/xxhash/src/lib.rs`两处base36/base64-url调用及相应Cargo边。须按16字节输入、字节序、字符表和前导零语义独立实现；校验全零/前导零/边界/固定随机样本及两目录Console输出。它是数字进制编码，不可直接换成标准RFC base64。先交新工具/输入/输出hash，保持当前组件冻结，由00决定后续候选回归。
+- SWC不适合小范围重写。若原文始终不能证齐，最小技术替代是另选可公开核对完整源码和原文的固定Rollup工具链，再验证准确normal/build/proc-macro闭包、Linux目标、插件API、hash命名及16输出。需要新工具输入、锁和双目录复建；如组件字节变化须新候选及08/12回归。当前没有选版本、改锁或替换运行依赖。
+
+本轮已完成声明/精确版本适用关系补证，到此停止25项来源分支；原文及包级适用范围交11独立核查，是否选择替代路线交用户/00。
+
 本轮继续补齐固定目标的剩余源码差集。Cargo1.99.1/rustc1.99.1仅用于元数据解析，工具来自官方固定2026-10-15归档并验SHA256；不替代源码的nightly-2025-07-25构建工具链，也未编译native。隔离目录执行`cargo metadata --locked --filter-platform x86_64-unknown-linux-gnu --format-version 1`，再以`cargo tree --locked -p bindings_napi --target x86_64-unknown-linux-gnu -e normal,build --prefix none --format '{p}|{f}'`交叉核对。两者包集合一致，workspace元数据有5组额外features，因此材料以入口树的feature集合为准，保留host/target不同集合及原始元数据供复核。
 
 完整图为188节点：3个Rollup本地源码、37个已有材料、148个新增准确crate。新`rollup-linux-target-source-materials-v4.zip`为12054447 bytes / SHA256 `0fe03bf985205730b7217f2598e96c1546492b672a400666acf69b348ce345a7`，含所有新增`.crate`首选Rust源码、Cargo原始/规范化配置、build脚本、图/锁/feature证据和199条许可原文索引引用。全部148份crate按原Cargo.lock校验；没有重新取得已核37份作为新增材料。工具可按`--metadata/--tree/--lock/--cache/--reuse/--output`重放，已有结果禁止覆盖。

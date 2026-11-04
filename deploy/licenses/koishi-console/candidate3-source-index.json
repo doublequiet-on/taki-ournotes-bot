@@ -1,5 +1,5 @@
 {
-  "identity": "taki-console-candidate3-source-index.3",
+  "identity": "taki-console-candidate3-source-index.4",
   "component": {
     "name": "taki-console",
     "version": "0.1.0-candidate.3",
@@ -10,7 +10,7 @@
     "source_commit": "0026159bc369c768e783294e8447de99a5f1973a",
     "combination_sha256": "4ce3e43013199145e19e3a13caa089dd7b826fd431c22182192ece182bf9ca32"
   },
-  "current_material_commit": "d9f59b2bb45fd293d0ec1935c48d5614e78ea043",
+  "current_material_commit": "27ca52861075ed374f6b3d11f4d08f6a473abc1c",
   "current_build_files": [
     {
       "path": "scripts/build_downstream_console.py",
@@ -38,7 +38,7 @@
     },
     {
       "path": "scripts/check_console_public_sources.py",
-      "sha256": "baeb97a2b4eba102696f43498f08fb1595f0c231c134465684efb71be60c7bca"
+      "sha256": "6a102c61a9704c57d05d11c53fd5e63f6d1e6d4d59b191a6d838c866fe25e426"
     },
     {
       "path": "scripts/collect_rollup_linux_materials.py",
@@ -114,6 +114,13 @@
       "path": "runtime/task09/material-recovery-20261104/rollup-target-closure-evidence-v1.zip",
       "size": 31057,
       "sha256": "fab148c4cb23d6be407be6d87dbc00f6e1f524ba9d8583baf5cee99761ff9854"
+    },
+    {
+      "id": "original_text_followup25_v1",
+      "role": "25 exact official registry checksum/declaration records and file-level original notices; closes zero missing full license texts",
+      "path": "runtime/task09/spec-binding-20261104/original-text-followup25-v1.zip",
+      "size": 80512,
+      "sha256": "d60bede26813b5403c5c5844979151080cb33b3b1cce10da16c342e47f53e782"
     }
   ],
   "rebuild_profiles": [
