@@ -11,6 +11,7 @@ import re
 import hashlib
 import os
 import stat
+import copy
 
 
 def measure_components(files):
@@ -121,3 +122,55 @@ def recovery_preflight(candidate, *, read_isolation=None, check_identity=None,
     except (OSError, TimeoutError):
         return result('manual', 'current_authority_or_measurement_unavailable')
     return result('checked', 'preflight_only_activation_pending')
+
+class ManualRecoveryReview:
+    """One in-memory human review of a fresh, trusted recovery_preflight callback.
+
+    The composition root must obtain current scope/deletion authority outside the
+    backup tree. This is not a JSON/RPC approval endpoint, a lock, or a start
+    permit. Restart, invalidate, a second begin or any changed evidence revokes
+    the pending review. The operator must confirm both current authorities.
+    """
+    def __init__(self, check_current):
+        if not callable(check_current):
+            raise ValueError('current_recovery_check_required')
+        self._check = check_current
+        self.invalidate()
+
+    def invalidate(self):
+        self._ticket = None
+        self._snapshot = None
+
+    def begin(self):
+        self.invalidate()
+        try:
+            value = self._check()
+        except (OSError, TimeoutError):
+            return None, dict(status='manual', reason='current_authority_unavailable', activation_permitted=False)
+        if (not isinstance(value, dict) or value.get('status') != 'checked'
+                or value.get('activation_permitted') is not False
+                or value.get('contract_version') != 1 or not isinstance(value.get('revisions'), dict)
+                or not isinstance(value.get('steps'), list) or len(value['steps']) != 3):
+            if isinstance(value, dict) and value.get('status') in ('manual', 'reject') and value.get('activation_permitted') is False:
+                return None, copy.deepcopy(value)
+            return None, dict(status='manual', reason='current_recovery_report_invalid', activation_permitted=False)
+        self._snapshot = copy.deepcopy(value)
+        self._ticket = object()
+        return self._ticket, copy.deepcopy(value)
+
+    def confirm(self, ticket, *, current_permissions_confirmed=False, current_deletions_confirmed=False):
+        def result(status, reason):
+            return dict(status=status, reason=reason, activation_permitted=False)
+        if self._ticket is None or ticket is not self._ticket:
+            return result('manual', 'manual_review_missing_or_invalidated')
+        snapshot = self._snapshot
+        self.invalidate()  # Consume before rechecking, including failed confirmations.
+        if current_permissions_confirmed is not True or current_deletions_confirmed is not True:
+            return result('reject', 'current_permissions_and_deletions_not_confirmed')
+        try:
+            current = self._check()
+        except (OSError, TimeoutError):
+            return result('manual', 'current_authority_unavailable')
+        if current != snapshot:
+            return result('manual', 'manual_review_evidence_changed')
+        return result('reviewed', 'manual_review_current_activation_pending')

@@ -192,4 +192,20 @@ SQLite固定 `mode=ro&immutable=1`、`query_only=ON`、`trusted_schema=OFF`，�
 | 宿主与运行隔离 | 专属Linux测试VM/容器内完整systemd环境；或现有宿主上明确分配的独立用户、unit/端口/路径 | 前者更易验证完整生命周期且不触及真实实例；后者必须先盘点资源和权限、证明与既有控制器隔离。跨机迁移还要旧实例停止/隔离凭据。当前只运行了普通隔离子进程 |
 | 产品/数据范围 | 个人完整能力选择；或定制选择矩阵及物理裁剪后候选 | 决定需安装组件、数据副本与恢复覆盖，09负责实物，10只消费已冻结清单；不按当前含聊天整包代定定制产品 |
 
-以上是待审选项，不是默认推荐生效或生产授权。本轮仍不实现manual reconcile接管、补发ownership或清理失败状态。
+以上记录该轮待审选项，不是生产授权。后续选择和实现见下节；仍不实现manual reconcile接管、补发ownership或清理失败状态。
+
+## 独立首装准备与人工恢复会话（2026-11-04）
+
+已选择的流程是恢复前人工核对当前权限和删除记录，未知即不恢复；完整服务验收使用专用Linux VM或完整systemd容器。这不是任何具体恢复、启动或生产宿主的授权。当前机器只发现共享Ubuntu-24.04 WSL（PID1为systemd）；未发现Docker、Podman、Multipass、VirtualBox、systemd-nspawn或现成machine目录。共享WSL不能当作专属服务验收宿主，未安装虚拟化工具或修改全局配置。
+
+`instance_install.layout(settings)`接受精确字段：`version=1`、`instance`、`parent`、非root `user`、三个互异的`backend_port/console_port/health_port`（1024–65535）。生成独立目录和unit名称；它不证明宿主端口空闲、用户存在、AppID或范围合规，仍需instance_preflight实际盘点。端口只是待接线配置，不表示应用已经采用这些端口。
+
+`unit_drafts(settings)`只返回backend/gateway文本。gateway依赖并绑定backend，均使用实例专属`--instance-config`入口；不写入systemd、不enable、不创建用户。`koishi_launcher.py --instance-config <json> backend|gateway`目前只检查配置并返回manual/退出2。原`--base`入口行为保留。草稿不能作为可运行安装成果：Python环境、配置权限、真实端口接线及受信启动许可尚未完成。
+
+`prepare_first_install(settings, archive, commit, archive_sha256, python_sha256)`是显式有副作用的暂存API，不是check。只在已经存在、控制器拥有且所有祖先无链接/组写/其他写权限的Linux父目录中运行；不接受已有内容的实例。复用现有组合校验、FileLock、atomic_json和stage_combination。状态写入`<parent>/<instance>/controller-state/first-install.json`，固定`previous=null,current=null,activation_permitted=false`，先持久`staging`，成功暂存后变为`staged_pending_manual_review`。不构造假baseline、不写current/permit、不安装依赖、不启动服务；任何异常保留intent和既有stage/ownership，重复运行拒绝。该记录是独立准备事务，不是Engine已安装状态，也不能传给旧Engine当作state.json。
+
+`inspect_first_install(settings)`只读取准备记录并给manual。它不重新核包、不证明ownership或停写，因此不能代替manual reconcile或后续激活预检。失败状态、孤儿目录和旧记录均保留。
+
+`ManualRecoveryReview(check_current)`接受组合根注入的受信无参回调，回调须完整运行既有`recovery_preflight`隔离→09身份→05独立范围批准→07恢复检查，且当前权威来自备份树外。`begin()`仅为checked报告建立内存ticket；`confirm(ticket,current_permissions_confirmed=True,current_deletions_confirmed=True)`消费ticket并重跑完整检查，报告任何变化即manual。确认缺一项即reject，invalidate、再次begin、重启均使旧ticket失效；重复/迟到提交manual。成功只返回reviewed且activation_permitted=false，不代表范围批准、恢复执行或启动许可。
+
+上述确认参数只能来自受信人工操作流程，不可直接映射Console/RPC传入布尔值。05会话/09 checker来源/07外部权威约束不变；08负责业务组合根和Console身份接线，10负责受信执行边界。真实权威/停写证明缺失时，人工选择流程也不能补成checked。剩余实施需要具体宿主和独立实例参数、用户/unit/cgroup隔离、完整Python与Node运行环境、当前范围与删除证据、兼容批准，以及锁内恢复后重验和短期启动许可；本轮未接这些实际执行动作。

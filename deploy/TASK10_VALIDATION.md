@@ -240,3 +240,28 @@ GitHub读取第一页20个Release后定位基线的精确标签，不继续无�
 所有新检查按预期完成，子进程finally全部退出；probe.log/service-results.json/controller-boundary.json含实际结果，未出现未解决测试失败。原候选3矩阵仅把two_instances、half_started、gateway_stop、current_switch、controller_rollback增加isolated_driver/格式拒绝证据，整体仍partial；不把服务真实环境的blocked消除。没有新增生产实现；测试驱动、固定旧控制器副本和合成状态按AGENTS保留在本工作区忽略目录 `runtime/task10/service-boundary-20261104/`，包括probe.py、controller_boundary.py、binding.json及日志。所有状态保留，不删除旧故障记录。
 
 具体决定已整理为兼容双向升级/单向前向修复、安全回退版本名单、每次批准/独立范围锚点、外部删除服务/人工当前快照、专属systemd宿主/既有宿主明确隔离资源、个人/定制选择的选项与影响，均未代选。需实现的10接口和需00/用户/05/07/08/09提供的输入明确分开。本轮只改两份deploy文档；无PR202、合并部署、真实服务、QQ、付费模型、生产数据或其他对话操作。
+
+## 2026-11-04：独立首装准备实现与人工复核会话
+
+基于b07b75c1ceaacee2bf7eaf0ec4f11ec6a2b204f7继续原工作区/分支/PR199；固定运行候选仍0026159bc369c768e783294e8447de99a5f1973a，ZIP SHA256仍4ce3e43013199145e19e3a13caa089dd7b826fd431c22182192ece182bf9ca32。未以材料提交替换运行来源，未纳入PR202。
+
+本次代码只在deploy：新增instance_install.py；修改koishi_launcher.py、recovery_preflight.py，文档更新INSTANCE_RECOVERY.md、L2.md及本记录。独立配置/unit草稿、previous=null暂存记录和一次性人工复核会话已实现；原生产配置/launcher、Engine状态与单向格式保护未修改。草稿launcher只返回manual/退出2，未实现完整独立安装或实际恢复/激活。activation_permitted始终false。
+
+流程选择为每次恢复人工检查当前权限及删除记录，未知即不恢复；这不提供任何具体范围批准或当前删除证据。完整服务验收选择专用Linux VM/完整systemd容器。本机仅发现共享WSL Ubuntu-24.04，PID1 systemd；未发现Docker/Podman/Multipass/VirtualBox/systemd-nspawn或已配置machine。没有改全局虚拟化、装新服务或用共享WSL接管unit。
+
+新验证目录为runtime/task10/first-install-20261104/，Linux实际暂存目录/var/lib/taki-task10-firstinstall-20261104。root拥有目录与祖先，在unshare --net、仅loopback环境运行；不调用宿主systemctl。alpha用固定实物完成暂存，previous/current为null，无current链接/permit；beta注入stage失败后保留staging intent，重复调用拒绝，alpha记录不变。这里不是首次应用安装/RPC重跑，而是新首装准备事务验证。所有失败状态保留。
+
+验证结果：
+- 新增4项本地测试：Windows 3通过、Linux实物项跳过；Linux4通过。最后人工报告错误状态调整后只重跑3项非实物检查，均通过。
+- 原预检/逐库接口32项在Windows工作区临时目录运行，31通过、1项Linux检查跳过。Linux控制器/接口合计116项，115通过、1跳过；同一初次命令额外的Console测试模块因未设置tests导入路径失败，不能把整条命令称全绿。补PYTHONPATH=src:tests后单独FreezeTests 9项全部通过（含原launcher）。
+- Windows默认沙箱TEMP的rename访问拒绝、初次合成identity/deletion夹具缺contract_version、测试导入路径和Windows缺PIL均留失败日志。TEMP改到本任务目录后接口通过；夹具补真实合同字段后通过；Console回归使用已有完整Linux venv通过。未放松实现或测试预期，未为Windows安装全局依赖。
+- python -B scripts/check_architecture.py通过；git diff --check通过。旧实物RPC、HTTP/WS与合成恢复已绿套件未重复。
+
+复现入口（在本worktree，日志同上述目录）：
+1. Windows：python -B runtime/task10/first-install-20261104/test_prepare.py。接口测试需TEMP/TMP指向本任务可写目录。
+2. Linux：unshare --net后ip link set lo up；使用现有candidate3隔离venv，PYTHONPATH=src:tests，执行python -B -m unittest runtime.task10.test_preflight runtime.task10.test_interfaces_storage tests.test_linux_backend，以及python -B -m unittest tests.test_console_policies.FreezeTests。
+3. 实物暂存脚本test_prepare.py要求Linux root与全新专属父目录（默认/var/lib/taki-task10-firstinstall-20261104）。现目录已保留，重复运行必须拒绝；复现者在脚本settings中显式换新专属目录，不能删除旧intent求通过。工件参数完整写在脚本和first-install-result.json。
+
+矩阵增量：first_install仍partial，仅新增真实包首装准备事务证据；two_instances新增配置/unit名称及失败不串写，不代证不同用户/cgroup；恢复人工会话的invalidate/重启/重复/当前证据变化按预期拒绝或manual。完整systemd首装、升级、回退、开机恢复仍blocked。其余18项矩阵维持原状态。
+
+给00的下一包：提供专用完整systemd测试环境及实例用户/路径/端口；确认受信人工入口与备份外当前权限/删除证据来源；完成Python/Node环境、端口、permit/launcher和锁内恢复后重验接线。08负责组合根/Console，05/07/09接口与checker来源仍由各负责人维护。manual reconcile仍仅方案，不补写ownership、不删除孤儿目录、不实现接管。未合并、部署、操作真实服务、QQ、付费模型或生产数据。新增测试和全部日志依AGENTS仅保留在忽略runtime目录，不纳入PR。
