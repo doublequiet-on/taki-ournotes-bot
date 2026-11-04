@@ -1,5 +1,5 @@
 {
-  "identity": "taki-console-candidate3-source-index.2",
+  "identity": "taki-console-candidate3-source-index.3",
   "component": {
     "name": "taki-console",
     "version": "0.1.0-candidate.3",
@@ -10,7 +10,7 @@
     "source_commit": "0026159bc369c768e783294e8447de99a5f1973a",
     "combination_sha256": "4ce3e43013199145e19e3a13caa089dd7b826fd431c22182192ece182bf9ca32"
   },
-  "current_material_commit": "c8fac35f6d477473e91799fa8f25de918de9bbca",
+  "current_material_commit": "d9f59b2bb45fd293d0ec1935c48d5614e78ea043",
   "current_build_files": [
     {
       "path": "scripts/build_downstream_console.py",
@@ -46,11 +46,23 @@
     },
     {
       "path": "scripts/check_rollup_linux_materials.py",
-      "sha256": "e690111513cb925cb1ae941453163f42a4230cb04083591da3ac9d91c0e373e3"
+      "sha256": "64d4e39e089dd568a1238ed9823be00290efdd8654ba3d89d2ed9f9cf35fcada"
     },
     {
       "path": "deploy/licenses/koishi-console/rollup-linux-x64-glibc-coverage.json",
-      "sha256": "09dfa31a7ac688105f41c5760f0a770b9b7ffb4448b4e1d8fb625b3109eeee42"
+      "sha256": "295d58576b8e873b2d0a4ce0a2c5bf958da219acf266bb015100ad7b3dd01918"
+    },
+    {
+      "path": "scripts/collect_rollup_source_closure.py",
+      "sha256": "8bee3f44bd40e593d60bef05f407eea46d128352cc8ac7a17ee54de12a1d8559"
+    },
+    {
+      "path": "scripts/check_rollup_source_closure.py",
+      "sha256": "8ccf8d83d20f18cd9ddee1b984f7b1d0243ef1c5c4960bd9d46998578615e7cd"
+    },
+    {
+      "path": "scripts/supplement_rollup_closure_licenses.py",
+      "sha256": "82e92fcbf7a3e18a9ec3bd8a7fbb8bef285c1d043d20cb37080721771ba408f9"
     }
   ],
   "local_materials": [
@@ -88,6 +100,20 @@
       "path": "runtime/task09/material-recovery-20261104/rollup-4.67.4-linux-x64-glibc-napi-delta.zip",
       "size": 1175096,
       "sha256": "679f946e568ffea8bc0e2bd21cdd3f3bebbb451a757ab272e0194e08f21baf7a"
+    },
+    {
+      "id": "rollup_remaining_target_closure_v4",
+      "role": "148 remaining exact source crates; target-selected feature/edge graph; 25 original-text gaps remain",
+      "path": "runtime/task09/material-recovery-20261104/rollup-linux-target-source-materials-v4.zip",
+      "size": 12054447,
+      "sha256": "0fe03bf985205730b7217f2598e96c1546492b672a400666acf69b348ce345a7"
+    },
+    {
+      "id": "rollup_target_closure_evidence_v1",
+      "role": "Fixed tooling and acquisition evidence; full CSV; failures and bounded reproduction instructions",
+      "path": "runtime/task09/material-recovery-20261104/rollup-target-closure-evidence-v1.zip",
+      "size": 31057,
+      "sha256": "fab148c4cb23d6be407be6d87dbc00f6e1f524ba9d8583baf5cee99761ff9854"
     }
   ],
   "rebuild_profiles": [
