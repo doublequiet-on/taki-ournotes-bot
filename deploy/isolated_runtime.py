@@ -128,14 +128,17 @@ class IsolatedRuntime:
         """
         if not callable(confirm_current):
             raise ValueError('trusted_human_confirmation_required')
-        if self._measure() != self.installed:
-            self.invalidate()
-            raise ValueError('installed_runtime_changed')
         with self.guard:
             self.generation += 1
             self.permits.clear()
             self.review.invalidate()
             generation = self.generation
+        if self._measure() != self.installed:
+            self.invalidate()
+            raise ValueError('installed_runtime_changed')
+        with self.guard:
+            if generation != self.generation:
+                return {'status': 'manual', 'reason': 'session_invalidated', 'activation_permitted': False}, {}
         ticket, snapshot = self.review.begin()
         if ticket is None:
             return snapshot, {}

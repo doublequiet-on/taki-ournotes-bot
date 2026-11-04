@@ -304,3 +304,9 @@ Windows原预检/串行会话/launcher拒绝/profile23项，22通过1项Linux检
 复现文件：transfer.py打包本任务deploy快照及固定工件到全新专属目录；exercise.py执行两套安装，run.py在同一WSL会话创建仅lo namespace并systemd-run；exercise_resume.py只重用已成功安装的封印环境，在新合成权威目录验证13项；exercise_final.py针对最后线程/停止保护跑5项。脚本绑定目录已存在时不可直接重装，需另选全新专属案例目录或显式核对已有installed记录，禁止删除意图求绿。binding.json记录两份源码文件hash及真实依赖源；evidence/保留每实例first-install/installed/session回执及install.log。新增验证脚本按AGENTS不纳入提交。
 
 精确下一包已列INSTANCE_RECOVERY.md末表：独立launcher CLI跨进程可信会话入口与角色/实例绑定、真实全部writer/trigger隔离证明、第一进程启动到第二进程检查期间的业务禁写门、真实当前05/07权威注入及运行中撤权、实际恢复执行与恢复后副本全量测量。当前CLI仍manual；本轮实际运行通过受信进程内API，不把磁盘allow当可信桥。缺生产批准不阻挡上述独立实现；缺可信接口也不由10伪造。专属环境已就绪，最终产品selection/安全回退目标/具体生产恢复未授权。PR202排除，无合并部署、生产/QQ/付费模型或其他对话联系。
+
+## 2026-11-04：12新增P2—首次测量前绑定取消代际
+
+573c7586c3e05d2699c31e6523e68c70521a7df1的IsolatedRuntime.approve在首次_measure后才捕获代际，使该测量期间invalidate被覆盖。现从首次测量前原子建立操作代际并清旧票，测量后立即核代际再进入人工复核，最终签票检查仍保留。未修改已闭的ManualRecoveryReview修复。
+
+复用12具名check_runtime.py，仅改源码定位、缺陷预期及新增第二次approve首次测量取消例；专属WSL仅loopback、测量/Popen明确替身，10场景通过。原ManualRecoveryReview六项竞态回归通过。证据runtime/task10/initial-measure-fix-20261104；未重跑实物安装/旧矩阵。独立P2提交后再处理08固定37af64177389c4faa944d4dd7a9360f73980aaa6合同，P2通过不等于整体恢复或生产激活通过。
