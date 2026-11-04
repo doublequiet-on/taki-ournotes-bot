@@ -5367,6 +5367,55 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
         self.assertTrue(self.backend.lookup(plan['request_id'],'e1')['send_allowed'])
         self.event(plan,'intent');self.event(plan,'ack')
 
+
+    async def test_old_unknown_daily_hold_allows_actual_staged_skip_after_hour(self):
+        from ournotes_bot.application.chat_jobs import service_request_id,maximum_cost_micro
+        from ournotes_bot.domain.model_calls import Usage
+        self.snapshot=replace(self.snapshot,profile=replace(self.snapshot.profile,provider='openai',
+            wire_profile='openai-responses-v1',model='gpt-6.1-terra',max_input_tokens=32768,max_output_tokens=4096,
+            user_daily_limit=10**8,group_daily_limit=10**8,
+            price=replace(self.snapshot.profile.price,input_rate=1000000,cached_rate=50000,output_rate=5000000)))
+        maximum=maximum_cost_micro(self.snapshot.profile)
+        self.policy=replace(self.policy,proactive=replace(self.policy.proactive,
+            max_cost_micro_per_hour=int(maximum*2),max_cost_micro_per_day=2000000))
+        self.agent.services.policy.return_value=self.policy
+        usage=self.backend.model_runtime.usage
+        usage.clock=lambda:self.now-7200
+        request=service_request_id('proactive','fixture','app','g1','old-unknown')
+        user=usage.key('service','fixture','app','g1','approved-group-service','proactive')
+        usage.reserve(request,'old-unknown',user,usage.key('group','g1'),self.snapshot.profile,32768)
+        usage.start('old-unknown',self.snapshot.profile);usage.settle('old-unknown',Usage())
+        before=usage.get('old-unknown')
+        usage.clock=lambda:self.now
+        self.agent.service_budget.clock=lambda:self.now
+        value=self.observation('PRIVATE_BUDGET_FIXTURE');self.tick+=1.6
+        self.client.request.return_value=self.result('{"participation":"skip","text":"","delay_seconds":null}')
+        plan,attempts,_=await self.candidate(value)
+        self.assertEqual(len(attempts),1)
+        self.client.request.assert_awaited_once()
+        self.assertEqual(plan['parts'],[])
+        self.assertEqual(usage.get('old-unknown'),before)
+        self.assertTrue(any(e['data'].get('decision')=='skip'
+            for e in self.backend.diagnostics.read(plan['request_id'])['chat_events']))
+
+    async def test_reservation_denial_logs_budget_sizes_without_calling_model(self):
+        import math
+        from ournotes_bot.application.chat_jobs import maximum_cost_micro
+        minimum=math.ceil(maximum_cost_micro(self.snapshot.profile)*
+            (2 if self.snapshot.profile.wire_profile=='openai-responses-v1' else 1))
+        self.policy=replace(self.policy,proactive=replace(self.policy.proactive,
+            max_cost_micro_per_hour=minimum-1,max_cost_micro_per_day=2000000))
+        self.agent.services.policy.return_value=self.policy
+        value=self.observation('PRIVATE_BUDGET_FIXTURE');self.tick+=1.6
+        self.assertIsNone(self.agent.proactive.candidate(Request.parse(value,'fixture','app',self.now)))
+        self.client.request.assert_not_awaited()
+        events=self.backend.diagnostics.group_events('g1')
+        data=next(e['data'] for e in events if e['data'].get('status')=='chat_service_reservation_limit')
+        self.assertEqual(data['requested_cost_micro'],minimum)
+        self.assertEqual(data['available_cost_micro'],minimum-1)
+        self.assertEqual(data['day_limit_micro'],2000000)
+        self.assertNotIn('PRIVATE',json.dumps(events))
+
     async def test_provider_failure_keeps_attempt_hold_without_blocking_unspent_opportunity(self):
         import math
         from ournotes_bot.application.chat_jobs import maximum_cost_micro
@@ -6823,6 +6872,107 @@ class ChatServiceJobsTests(unittest.TestCase):
             self.assertIsNone(validate_summary(invalid,candidate))
         self.assertEqual(candidate.original_messages,tuple(messages))
 
+
+
+    def test_settled_unknown_exits_hour_at_boundary_but_keeps_daily_hold(self):
+        from fractions import Fraction
+        from ournotes_bot.domain.model_calls import Usage
+        from ournotes_bot.application.chat_jobs import ServiceError
+        self.attempt('proactive', usage=Usage())
+        row=self.ledger.get('attempt-source')
+        held=Fraction(row['reserved'])*self.profile.price.reference_rate/1000000
+        policy=self.save()
+        policy=replace(policy,proactive=replace(policy.proactive,
+            max_cost_micro_per_hour=1,max_cost_micro_per_day=int(held)+1))
+        self.now[0]+=3599
+        with self.assertRaisesRegex(ServiceError,'chat_service_cost_limit'):
+            self.budget.check(policy,'proactive',self.profile,self.request('proactive','next'),1)
+        self.now[0]+=1
+        permit=self.budget.check(policy,'proactive',self.profile,self.request('proactive','next'),1)
+        self.assertEqual(permit.spent_cost_micro,0)
+        details=dict(permit.budget_details)
+        self.assertEqual(details['day_cost_micro'],held)
+        self.assertEqual(details['unknown_cost_micro'],held)
+        self.assertEqual(self.ledger.get('attempt-source'),row)
+        with self.assertRaisesRegex(ServiceError,'chat_service_daily_cost_limit') as caught:
+            self.budget.check(replace(policy,proactive=replace(policy.proactive,max_cost_micro_per_hour=2)),
+                'proactive',self.profile,self.request('proactive','next'),2)
+        self.assertEqual(dict(caught.exception.budget_details)['hour_cost_micro'],0)
+
+    def test_old_unbounded_action_still_blocks_daily_capped_proactive_service(self):
+        from ournotes_bot.domain.model_calls import Usage,ProviderAction
+        from ournotes_bot.application.chat_jobs import ServiceError
+        self.attempt('proactive',usage=Usage(80,0,10,None,90,'known'))
+        self.ledger.settle('attempt-source',Usage(80,0,10,None,90,'known'),
+            actions=(ProviderAction('web_search',None),))
+        self.now[0]+=86400
+        policy=self.save()
+        policy=replace(policy,proactive=replace(policy.proactive,max_cost_micro_per_day=2000000))
+        with self.assertRaisesRegex(ServiceError,'chat_service_usage_unavailable'):
+            self.budget.check(policy,'proactive',self.profile,self.request('proactive','next'),1)
+
+    def test_unknown_without_daily_cap_retains_legacy_hourly_protection(self):
+        from ournotes_bot.domain.model_calls import Usage
+        from ournotes_bot.application.chat_jobs import ServiceError
+        self.attempt('proactive',usage=Usage())
+        self.now[0]+=86400
+        policy=self.save()
+        policy=replace(policy,proactive=replace(policy.proactive,max_cost_micro_per_hour=1))
+        with self.assertRaisesRegex(ServiceError,'chat_service_cost_limit'):
+            self.budget.check(policy,'proactive',self.profile,self.request('proactive','next'),1)
+
+    def test_old_unknown_survives_restart_midnight_and_subject_change_until_late_usage(self):
+        from ournotes_bot.domain.model_calls import Usage
+        from ournotes_bot.application.chat_jobs import ServiceBudget,ServiceError
+        from ournotes_bot.application.usage_ledger import UsageLedger
+        self.attempt('proactive',usage=Usage())
+        before=self.ledger.get('attempt-source')
+        self.now[0]+=86400
+        self.ledger.close()
+        self.ledger=UsageLedger(self.root/'usage.sqlite3','jobs-fixture',clock=lambda:self.now[0])
+        self.budget=ServiceBudget(self.ledger,'instance','app',clock=lambda:self.now[0])
+        self.data['groups']['group']['service_subject_id']='new-service'
+        policy=self.save()
+        policy=replace(policy,proactive=replace(policy.proactive,max_cost_micro_per_hour=1,max_cost_micro_per_day=1))
+        with self.assertRaisesRegex(ServiceError,'chat_service_daily_cost_limit'):
+            self.budget.check(policy,'proactive',self.profile,self.request('proactive','next'),1)
+        self.assertEqual(self.ledger.get('attempt-source'),before)
+        self.ledger.settle('attempt-source',Usage(80,0,10,None,90,'known'))
+        self.assertEqual(self.ledger.get('attempt-source')['reserved'],'0')
+        permit=self.budget.check(policy,'proactive',self.profile,self.request('proactive','next'),1)
+        self.assertEqual(dict(permit.budget_details)['day_cost_micro'],0)
+        self.assertEqual(self.ledger.db.execute('SELECT COUNT(*) FROM attempts').fetchone()[0],1)
+
+    def test_old_inflight_reservations_still_block_hour_and_new_concurrent_reserves(self):
+        from ournotes_bot.domain.model_calls import Usage
+        from ournotes_bot.application.chat_jobs import ServiceError
+        policy=self.save()
+        first=self.budget.check(policy,'proactive',self.profile,self.request('proactive'),1)
+        self.ledger.reserve(self.request('proactive'),'pending',first.user_key,first.group_key,self.profile,100)
+        self.now[0]+=86400
+        policy=replace(policy,proactive=replace(policy.proactive,max_cost_micro_per_hour=1,max_cost_micro_per_day=1000000))
+        for state in ('reserved','started'):
+            with self.subTest(state=state):
+                if state=='started':self.ledger.start('pending',self.profile)
+                with self.assertRaisesRegex(ServiceError,'chat_service_cost_limit') as caught:
+                    self.budget.check(policy,'proactive',self.profile,self.request('proactive','next'),1)
+                self.assertGreater(dict(caught.exception.budget_details)['hour_reserved_micro'],0)
+        self.ledger.settle('pending',Usage())
+        self.budget.check(policy,'proactive',self.profile,self.request('proactive','next'),1)
+
+    def test_budget_metadata_separates_known_unknown_and_reserved_cost(self):
+        from ournotes_bot.domain.model_calls import Usage
+        self.attempt('proactive','known',Usage(80,0,10,None,90,'known'))
+        self.attempt('proactive','unknown',Usage())
+        permit=self.budget.check(self.save(),'proactive',self.profile,self.request('proactive','reserved'),1)
+        self.ledger.reserve(self.request('proactive','reserved'),'reserved',permit.user_key,permit.group_key,self.profile,100)
+        permit=self.budget.check(self.save(),'proactive',self.profile,self.request('proactive','next'),1)
+        details=dict(permit.budget_details)
+        self.assertEqual(details['hour_known_micro'],100)
+        self.assertGreater(details['hour_unknown_micro'],0)
+        self.assertGreater(details['hour_reserved_micro'],0)
+        self.assertEqual(sum(details[k] for k in ('hour_known_micro','hour_unknown_micro','hour_reserved_micro')),
+                         details['hour_cost_micro'])
 
     def test_day_and_hour_are_independent(self):
         from ournotes_bot.domain.model_calls import Usage

@@ -50,7 +50,7 @@ class ProactiveChat:
         self.services=ChatServices(agent.runtime.usage.path.parent,agent.runtime.backend.instance_id,
             agent.runtime.backend.app_id,filename='chat-proactive-services-v1.json',authority=agent.runtime.admin.db,require_authority=True)
 
-    def control_event(self,request,status):
+    def control_event(self,request,status,**data):
         backend=self.agent.runtime.backend
         now=backend.clock()
         if status.startswith('chat_service_') or status in ('excluded_user','followup_disabled','platform_unapproved','service_disabled','budget_exhausted','conversation_busy'):
@@ -58,7 +58,7 @@ class ProactiveChat:
             if key in self.control_times and now-self.control_times[key]<10:return
             self.control_times[key]=now;self.control_times.move_to_end(key)
             while len(self.control_times)>1024:self.control_times.popitem(last=False)
-        backend.diagnostics.conversation_event(request.request_id,request.conversation_id,'control',now,status=status)
+        backend.diagnostics.conversation_event(request.request_id,request.conversation_id,'control',now,status=status,**data)
 
     def window_expired(self,scope,question):
         backend=self.agent.runtime.backend
@@ -257,14 +257,17 @@ class ProactiveChat:
                 permit=self.agent.service_budget.check(policy,'proactive',snapshot.profile,
                     preflight,1,reply_times=self.agent.store.proactive_replies(request.scope))
             except ServiceError as exc:
-                self.control_event(request,str(exc));return None
+                self.control_event(request,str(exc),**dict(exc.budget_details));return None
             spent=max(permit.spent_cost_micro,self.controller.status(self.scope(request))['hourly_cost_micro'])
             cost=min(math.ceil(cost),math.floor(permit.available_cost_micro),
                      math.floor(policy.proactive.max_cost_micro_per_hour-spent))
             # Fund the decision and final reply; tools/rechecks spend only what remains.
             minimum=maximum_cost_micro(snapshot.profile)*(2 if snapshot.profile.wire_profile=='openai-responses-v1' else 1)
             if cost<math.ceil(minimum):
-                self.control_event(request,'chat_service_reservation_limit');return None
+                details = dict(permit.budget_details)
+                details.update(requested_cost_micro=math.ceil(minimum), available_cost_micro=max(0, cost),
+                               controller_cost_micro=math.ceil(spent))
+                self.control_event(request,'chat_service_reservation_limit',**details);return None
         candidate=self.controller.candidate(self.scope(request),reserve_cost_micro=math.ceil(cost))
         if candidate is None:return None
         last=candidate.messages[-1]
@@ -277,7 +280,7 @@ class ProactiveChat:
         try:self.agent.service_budget.check(policy,'proactive',snapshot.profile,job,candidate.reserved_cost_micro,
             reply_times=self.agent.store.proactive_replies(request.scope))
         except ServiceError as exc:
-            self.control_event(request,str(exc))
+            self.control_event(request,str(exc),**dict(exc.budget_details))
             self.controller.decide(candidate,'skip',actual_cost_micro=0);return None
         if snapshot.fingerprint:self.agent.runtime.usage.configuration(snapshot.profile.config_version,snapshot.fingerprint)
         return candidate,policy,snapshot,job

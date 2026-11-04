@@ -92,12 +92,17 @@ class Diagnostics:
                 'action','total','completed','entities','elapsed_ms','task_missing','research_fallback',
                 'source','reason','continuation','window_seconds',
                 'input_required','input_limit','system_bytes','tool_bytes'}
+        budget_fields={'hour_limit_micro','day_limit_micro','hour_cost_micro','day_cost_micro',
+                       'hour_known_micro','hour_unknown_micro','hour_reserved_micro','unknown_cost_micro',
+                       'requested_cost_micro','available_cost_micro','controller_cost_micro'}
+        fields |= budget_fields
         codes={'status','name','decision','image_detail','action','source','reason'}
         if 'image_detail' in data and data['image_detail'] not in ('none','low','high'):
             raise ValueError('chat_event_data')
         if not set(data)<=fields or any(not (
-                type(value) is bool or type(value) is int and 0<=value<=10**6
-                or key in codes and isinstance(value,str) and re.fullmatch('[a-z_]{1,64}',value)
+                (type(value) is int and 0<=value<=10**12) if key in budget_fields else
+                (type(value) is bool or type(value) is int and 0<=value<=10**6
+                 or key in codes and isinstance(value,str) and re.fullmatch('[a-z_]{1,64}',value))
                 ) for key,value in data.items()):
             raise ValueError('chat_event_data')
         return json.dumps(data)

@@ -6,7 +6,7 @@
 
 `GET /v1/admin/chat/groups/{gid}/settings` 返回设置、版本 guard、最近用户、任务计数和最近诊断事件；`POST` 使用 `operation_id`、原 guard 和完整 settings 保存。并发版本变化时重新读取再确认草稿。该接口复用现有管理鉴权，不提供公开访问或模型自改设置能力。
 
-研究任务按群及发言者保留 15 分钟。任务摘要展示待补资料、部分完成、已完成的数量；单请求诊断显示工具结果、耗时、知识不足后的站内补查及最终送达状态。未受理的名单过滤、窗口到期等决定也进入群级日志。诊断只保存固定元数据，24 小时后清理；请求记录与群控制事件各上限 4096 条。诊断降级状态保留在健康信息中，费用以 UsageLedger、发送以 Delivery Ledger 为准。
+研究任务按群及发言者保留 15 分钟。任务摘要展示待补资料、部分完成、已完成的数量；单请求诊断显示工具结果、耗时、知识不足后的站内补查及最终送达状态。未受理的名单过滤、窗口到期等决定也进入群级日志。诊断只保存固定元数据，24 小时后清理；请求记录与群控制事件各上限 4096 条。诊断降级状态保留在健康信息中，费用以 UsageLedger、发送以 Delivery Ledger 为准。主动候选的小时／日费用与预留不足拦截附带 hour_limit_micro、day_limit_micro、hour_cost_micro、day_cost_micro、hour_known_micro、hour_unknown_micro、hour_reserved_micro、unknown_cost_micro、requested_cost_micro、available_cost_micro；预留不足另附 controller_cost_micro（持久账与内存占用的较大值）。unknown_cost_micro 是读入历史已结束记录的未知部分，不包含已知费用或仍在途预留。这些数值以原币种的微单位向上取整，只用于诊断；实际准入继续精确计算，余额按更保守的整数值执行。同群同原因仍按 10 秒限频，不记录正文或密钥。
 
 本批新增 ModelAdmin `chat_settings` 表和 Diagnostics `conversation_events` 表，不改既有表内容。兼容旧代码可读取原有记录，但不会执行新增名单和续聊设置；回退时需关闭旧版主动参与以保留“不主动搭话”的行为。任务及续聊窗口不持久化，重启不会恢复旧任务或发送机会。下述 A0 存储回退门仍适用。
 
@@ -78,7 +78,7 @@ python -B scripts/inspect_model_config.py --config /path/to/model-proactive-v1.j
 
 诊断先查现有交付账与加权用量账，按 request/attempt ID 区分 reserve、started、settled、released 及 billing_incomplete。聊天库只保存必要可见信息，可据此区分生成、工具失败和逐段交付；不要导出真实正文至公开 CI。实例 state-dir 的 `chat-v1.sqlite3` 独立于 `usage-v1.sqlite3`，不要拿聊天库清理来重置额度。
 
-联网操作次数未知时，已结算记录仍会在 `reserved` 中保留该操作的费用上界，继续计入用户及群额度；服务预算也按未知上界处理。打开旧账本时会依据已有未知操作记录重建缺失的预留，不改变已知费用或次数。若之后收到可核对的实际次数，账本结算实际费用并释放该部分预留。不要将 `billing_incomplete` 当作零费用，也不要为恢复额度删除账本。
+联网操作次数未知时，已结算记录仍会在 `reserved` 中保留该操作的费用上界，继续计入用户及群额度；服务预算也按未知上界处理。打开旧账本时会依据已有未知操作记录重建缺失的预留，不改变已知费用或次数。若之后收到可核对的实际次数，账本结算实际费用并释放该部分预留。不要将 `billing_incomplete` 当作零费用，也不要为恢复额度删除账本。配置非零日上限的主动服务只让满一小时且已结束的未知调用退出小时统计，原记录及日预算占用继续保留；旧策略无日上限时维持原小时保护。
 
 工具执行前会预留最终收束的加权额度，未用时记录为 `released/final_not_needed`；summary 的记录数包含这种占位，真实调用数按 started_at 非空核对。聊天审计写入故障会记录 `Chat audit unavailable` 与进程内 audit_failures，继续完成已结算结果和 ACK；不能因此忽略必需用量账或交付账故障。
 
