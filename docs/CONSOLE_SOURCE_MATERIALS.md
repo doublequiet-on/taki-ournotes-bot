@@ -18,6 +18,12 @@
 
 ## Rollup Linux原生传递材料
 
+本轮继续补齐固定目标的剩余源码差集。Cargo1.99.1/rustc1.99.1仅用于元数据解析，工具来自官方固定2026-10-15归档并验SHA256；不替代源码的nightly-2025-07-25构建工具链，也未编译native。隔离目录执行`cargo metadata --locked --filter-platform x86_64-unknown-linux-gnu --format-version 1`，再以`cargo tree --locked -p bindings_napi --target x86_64-unknown-linux-gnu -e normal,build --prefix none --format '{p}|{f}'`交叉核对。两者包集合一致，workspace元数据有5组额外features，因此材料以入口树的feature集合为准，保留host/target不同集合及原始元数据供复核。
+
+完整图为188节点：3个Rollup本地源码、37个已有材料、148个新增准确crate。新`rollup-linux-target-source-materials-v4.zip`为12054447 bytes / SHA256 `0fe03bf985205730b7217f2598e96c1546492b672a400666acf69b348ce345a7`，含所有新增`.crate`首选Rust源码、Cargo原始/规范化配置、build脚本、图/锁/feature证据和199条许可原文索引引用。全部148份crate按原Cargo.lock校验；没有重新取得已核37份作为新增材料。工具可按`--metadata/--tree/--lock/--cache/--reuse/--output`重放，已有结果禁止覆盖。
+
+31个未随crate带独立原文的对象沿其`.cargo_vcs_info`固定树有界补证，6项取得根原文及对应Cargo声明：NAPI derive/backend、base64-simd/vsimd、bytes-str/par-core，仍须11核包级适用范围。其余25项在ZIP的`index.json`逐准确版本/仓库/提交/路径/HTTP结果登记：24项SWC的固定根/包级路径404，代表提交API422；base-encode0.3.1固定树41bdeb57488beec4ed63180e848ce1e99fba227d可读，但树和README缺原文。源码已取得，原文缺口保持阻塞，不继续猜历史版本或借其他项目许可覆盖。ICU等随crate生成的数据和上游生成关系仍需材料审计；本轮只做源码材料闭包和原文补证，不把源码存在等同上游字节重建。
+
 固定目标为`x86_64-unknown-linux-gnu`、入口`rust/bindings_napi`、Rollup源码提交`18b5cb60e55926f6d917cc1aeb17fd81d0da5cc6`。现有15个直接/关联解析不重做；新增材料只覆盖11点名的三条传递链：
 
 - `mimalloc-safe 0.1.69` → `libmimalloc-sys2 0.1.65`，包括mimalloc C源码及`cc/cmake/find-msvc-tools/shlex/libc`构建链；

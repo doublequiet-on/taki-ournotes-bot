@@ -1,5 +1,18 @@
 {
-  "identity": "rollup-4.67.4-linux-x64-glibc-coverage.1",
+  "identity": "rollup-4.67.4-linux-x64-glibc-coverage.2",
+  "resolved_material_delta": {
+    "path": "runtime/task09/material-recovery-20261104/rollup-linux-target-source-materials-v4.zip",
+    "size": 12054447,
+    "sha256": "0fe03bf985205730b7217f2598e96c1546492b672a400666acf69b348ce345a7",
+    "selected_nodes": 188,
+    "local_rollup_nodes": 3,
+    "reused_crates": 37,
+    "new_exact_crates": 148,
+    "missing_original_license_texts": 25,
+    "full_package_edge_and_feature_table": "index.json",
+    "selection_evidence": "evidence/cargo-tree-summary.txt",
+    "metadata_note": "Workspace metadata unions extra features. Package set agrees with the native-entry cargo tree; selected feature sets come from that tree, retaining distinct host/target unit sets."
+  },
   "rollup_source_commit": "18b5cb60e55926f6d917cc1aeb17fd81d0da5cc6",
   "target": "x86_64-unknown-linux-gnu",
   "root": "rust/bindings_napi",
@@ -31,22 +44,23 @@
     },
     {
       "entry": "napi-derive",
-      "status": "partial",
+      "status": "exact_sources_collected_original_texts_acquired_scope_review_pending",
       "reused": ["ctor", "proc-macro2", "quote", "syn", "unicode-ident"],
-      "missing_external_sources": ["napi-derive", "napi-derive-backend", "convert_case"],
-      "notes": "the root manifest selects napi-derive 3.6.13; only support crates shared with the napi delta are currently carried"
+      "new_sources": ["napi-derive", "napi-derive-backend", "convert_case"],
+      "notes": "Full selected normal/build/proc-macro closure is in the new delta; napi-rs root MIT text and root/package Cargo manifests are retained at exact d9cb526c15e63ba30e06b4d169068c9854180595."
     },
     {
       "entry": "parse_ast",
-      "status": "partial",
+      "status": "exact_sources_collected_24_swc_original_text_gaps",
       "reused": ["parking_lot", "parking_lot_core", "lock_api", "scopeguard", "smallvec", "libc", "cfg-if"],
-      "missing_external_sources": ["anyhow", "swc_compiler_base", "swc_config", "swc_common", "swc_ecma_ast", "swc_ecma_parser"],
-      "notes": "the selected swc_common parking_lot feature is represented, but the broader SWC registry closure is not in the bounded archives"
+      "new_sources": ["anyhow", "swc_compiler_base", "swc_config", "swc_common", "swc_ecma_ast", "swc_ecma_parser"],
+      "notes": "All selected source crates and downstream graph are collected. 24 exact SWC crate VCS commits return 404 on recorded raw root/package text paths; representative commit API returns 422. Original license texts remain missing; declarations alone do not close them."
     },
     {
       "entry": "xxhash",
-      "status": "missing_external_sources",
-      "missing_external_sources": ["base-encode", "xxhash-rust"],
+      "status": "exact_sources_collected_base_encode_original_text_gap",
+      "new_sources": ["base-encode", "xxhash-rust"],
+      "notes": "base-encode 0.3.1 fixed Git tree is reachable but has no license file; README has no original license text. xxhash-rust exact crate includes its original texts.",
       "features": {"xxhash-rust": ["xxh3"]}
     }
   ],
