@@ -1,5 +1,5 @@
 {
-  "identity": "taki-console-candidate3-source-index.4",
+  "identity": "taki-console-candidate3-source-index.5",
   "component": {
     "name": "taki-console",
     "version": "0.1.0-candidate.3",
@@ -121,6 +121,13 @@
       "path": "runtime/task09/spec-binding-20261104/original-text-followup25-v1.zip",
       "size": 80512,
       "sha256": "d60bede26813b5403c5c5844979151080cb33b3b1cce10da16c342e47f53e782"
+    },
+    {
+      "id": "icu_two_data_generation_v2",
+      "role": "ICU normalizer/properties 2.4.0 fixed generator recipe and preferred input relationships; no datagen execution; CLDR full archive referenced by official digest but not included",
+      "path": "runtime/task09/icu-generation-20261104/icu-data-generation-materials-v2.zip",
+      "size": 10442583,
+      "sha256": "e235455cdd54e3fdd48abdc980596c2f0061ba120f8de68489145aed882f2072"
     }
   ],
   "rebuild_profiles": [

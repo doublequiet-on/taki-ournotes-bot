@@ -32,7 +32,7 @@
 
 本轮已完成声明/精确版本适用关系补证，到此停止25项来源分支；原文及包级适用范围交11独立核查，是否选择替代路线交用户/00。
 
-本轮继续补齐固定目标的剩余源码差集。Cargo1.99.1/rustc1.99.1仅用于元数据解析，工具来自官方固定2026-10-15归档并验SHA256；不替代源码的nightly-2025-07-25构建工具链，也未编译native。隔离目录执行`cargo metadata --locked --filter-platform x86_64-unknown-linux-gnu --format-version 1`，再以`cargo tree --locked -p bindings_napi --target x86_64-unknown-linux-gnu -e normal,build --prefix none --format '{p}|{f}'`交叉核对。两者包集合一致，workspace元数据有5组额外features，因此材料以入口树的feature集合为准，保留host/target不同集合及原始元数据供复核。
+本轮继续补齐固定目标的剩余源码差集。Cargo1.99.1/rustc1.99.1仅用于元数据解析，工具来自官方固定2026-10-15归档并验SHA256；不替代源码的nightly-2025-07-25构建工具链，也未编译native。隔离目录执行`cargo metadata --locked --filter-platform x86_64-unknown-linux-gnu --format-version 1`，再以`cargo tree --locked -p bindings_napi --target x86_64-unknown-linux-gnu -e normal,build --prefix none --format '{p}|{f}'`交叉核对。两者包集合一致；11复核确认4包feature并集减少（mimalloc-safe、libmimalloc-sys2、syn3、serde_core），phf_shared并集仍为std而保留空/std两种单元，memchr也有两组单元。原“5组额外features”说法过粗；材料以已交入口树的单元集合为准，保留原始metadata供复核，未改组件字节。
 
 完整图为188节点：3个Rollup本地源码、37个已有材料、148个新增准确crate。新`rollup-linux-target-source-materials-v4.zip`为12054447 bytes / SHA256 `0fe03bf985205730b7217f2598e96c1546492b672a400666acf69b348ce345a7`，含所有新增`.crate`首选Rust源码、Cargo原始/规范化配置、build脚本、图/锁/feature证据和199条许可原文索引引用。全部148份crate按原Cargo.lock校验；没有重新取得已核37份作为新增材料。工具可按`--metadata/--tree/--lock/--cache/--reuse/--output`重放，已有结果禁止覆盖。
 
@@ -46,7 +46,7 @@
 
 `redox_syscall`和`windows-link`按目标条件登记为非Linux选择，不混入选中源码集合。已核的16个crate/27份原文保持关闭，不重复核验；它们只闭合上述三条链，不代表整个native闭包。针对11指出的真实差集，新增`rollup-4.67.4-linux-x64-glibc-napi-delta.zip`：1175096 bytes，SHA-256 `679f946e568ffea8bc0e2bd21cdd3f3bebbb451a757ab272e0194e08f21baf7a`。其中21个固定crate、40份原许可材料逐Cargo.lock checksum核验，补bitflags、`ctor(default-features=false)`、futures默认闭包、nohash-hasher、rustc-hash以及host build依赖napi-build 2.6.0；wasi-heap-sync不作用于本目标。
 
-`deploy/licenses/koishi-console/rollup-linux-x64-glibc-coverage.json`逐入口记录目标、feature、复用、排除和缺口。当前mimalloc与napi选中链闭合；napi-derive仍缺napi-derive/backend/convert_case外部源码材料，parse_ast仍缺SWC/anyhow外部闭包，xxhash仍缺base-encode/xxhash-rust材料。该有界差集没有重建native二进制、全部Cargo依赖或esbuild历史工具链，因此不得据构建成功写成完整对应源码。
+`deploy/licenses/koishi-console/rollup-linux-x64-glibc-coverage.json`逐入口记录目标、feature、复用、排除和缺口。11的40a轮已关闭148项源码取得/锁绑定和六项补充原文的适用关系；25项原文仍缺（23 Apache-2.0、1 BSD-3-Clause、1 MIT），按00要求暂停继续搜索或替代。两项ICU数据本身和Unicode原文已交，本轮只补[固定生成关系与首选输入](CONSOLE_ICU_DATA.md)，不重编native或重取全闭包；没有由材料取得推导完整对应源码放行。
 
 ## 原始摘要与换行
 
