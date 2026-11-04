@@ -37,6 +37,17 @@ class ChatDiagnosticsTests(unittest.TestCase):
         self.assertNotIn('PRIVATE',json.dumps(events))
         self.assertEqual(d.db.execute('SELECT count(*) FROM chat_events').fetchone()[0],32)
 
+    def test_budget_metadata_accepts_micro_currency_but_rejects_unbounded_or_private_data(self):
+        d=self.diagnostics
+        self.assertTrue(d.conversation_event('o','g','control',101,status='chat_service_reservation_limit',
+            day_limit_micro=2000000,hour_known_micro=5176,hour_unknown_micro=0,
+            hour_reserved_micro=0,unknown_cost_micro=475023,requested_cost_micro=122880))
+        for value in (-1,10**12+1,1.5,True,'PRIVATE'):
+            self.assertFalse(d.conversation_event('o','g','control',102,hour_cost_micro=value))
+        self.assertFalse(d.conversation_event('o','g','control',102,body='PRIVATE'))
+        self.assertFalse(d.chat_event('r','context',102,messages=2000000))
+        self.assertEqual(len(d.group_events('g')),1)
+
     def test_image_detail_is_a_fixed_metadata_enum(self):
         d=self.diagnostics
         for value in ('low','high','none'):
