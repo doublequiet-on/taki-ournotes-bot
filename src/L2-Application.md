@@ -1,5 +1,7 @@
 # L2 Application Runtime — 启动与运行支撑
 
+原生模型的 transport 阶段、耗时和受限上游请求 ID 由 model_runtime 按 request／attempt 关联到既有诊断库及运行日志；不保存请求/响应正文，不更改模型调用次数与费用收口。字段及阶段边界见[运行说明](../docs/CHAT_AGENT_RUNBOOK.md#模型传输诊断)。
+
 [chat_recovery.py](ournotes_bot/application/chat_recovery.py) 协调最终候选暂存、首回执后的幂等历史投影及撤权清理；不恢复发送或接续资格。存储升级与回退门见 [运行说明](../docs/CHAT_AGENT_RUNBOOK.md#a0-回执恢复与批准代际)。
 
 ChatStore 启动会删除缺少投影来源证明的旧回复、派生摘要及审计副本；保留可识别的人类参与消息、有效候选和新投影。来源清理与 schema 4 升级同事务完成，旧版不得绕过这一迁移。

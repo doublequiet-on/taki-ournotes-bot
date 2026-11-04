@@ -100,6 +100,16 @@ python -B scripts/inspect_model_config.py --config /path/to/model-proactive-v1.j
 
 主动观察在接纳及发送前核验删除墓碑；重试不能重新带入已删正文。知识引用继承原页租约；ACK 绑定的知识范围用于明确追问，重启后缺少范围须重新说明。联网批准在每次请求前及交付前重验。图片字节与十秒读取期限按整轮累计，覆盖当前图、引用和工具重读。带图的明确斜杠命令仍须通过命令识别。
 
+## 模型传输诊断
+
+每次原生模型 HTTP 在结束或中断时写一条 `transport` 事件，并在 `ournotes_bot.model_transport` 日志中以 request／attempt ID 关联。阶段为 connect、dns、upload、wait_headers、read_body、complete；固定 name 区分 disconnected、timeout、connect、transport、cancelled、response_too_large、interrupted 和正常 none。费用未知仍按原账本上界处理，不因诊断重试请求。
+
+记录总耗时与实际经过的 dns_ms、connect_ms、upload_ms、wait_headers_ms、read_ms，单位毫秒；未发生的阶段不补零。connect 包含客户端 DNS、代理 CONNECT 及 TLS，当前不能单独拆出 CONNECT 和 TLS；代理节点内部 DNS 也不在客户端观测范围。upload 以 aiohttp 提交请求体的事件为界，不证明对端已收到或执行。
+
+headers_received 表明是否收到 HTTP 响应头；收到时记录状态码，以及符合固定格式的 x-request-id。proxied 只表明客户端使用了显式代理，不能证明代理的具体出口。字段白名单不接收正文、URL、凭据、任意响应头或异常原文；诊断库沿用既有容量和保留期限，日志沿用已有 journal 策略。诊断字段校验失败只记录固定警告，不改变已知费用或回复。
+
+排查断连时先看阶段：connect／dns 关注建连；wait_headers 表示客户端已提交请求、尚无响应头；read_body 表示已收到头但响应体未读完。阶段只能缩小范围，不能单凭 wait_headers 判定 OpenAI 或代理哪一端关闭了连接。优先观察自然请求，不重发原问题来补日志。
+
 ## 每日主模型预算与 DeepSeek 备用
 
 服务器可设置 `OURNOTES_AI_QUOTA_EXEMPT_SUBJECTS`（逗号分隔的已验证 model subject，默认空）豁免指定账号的个人／群每日加权额度及主模型美元预算。使用受信接收记录核验平台身份，并复用已有跨场景绑定；不能把 QQ 号码、昵称或消息中声明的号码直接当成 subject。环境变更须按部署流程加载。频率、并发、单轮 token／工具预算、权限及未知账单保护继续生效。

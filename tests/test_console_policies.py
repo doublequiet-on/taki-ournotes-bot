@@ -1015,14 +1015,20 @@ class NativeTransportTests(unittest.IsolatedAsyncioTestCase):
             self.assertNotIn('parallel_tool_calls',body)
             return web.json_response({'usage':{'prompt_tokens':8,'prompt_cache_hit_tokens':0,'completion_tokens':4,'total_tokens':12},
                 'choices':[{'finish_reason':'tool_calls','message':{'role':'assistant','tool_calls':[{'id':'c','type':'function',
-                  'function':{'name':'field_query','arguments':'not json'}}]}}]},status=500)
+                  'function':{'name':'field_query','arguments':'not json'}}]}}]},status=500,headers={'x-request-id':'req_fixture123'})
         app=web.Application();app.router.add_post('/chat',handler)
         server=TestServer(app);await server.start_server();self.addAsyncCleanup(server.close)
         profile=native_profile();body=request_body(profile,[{'role':'user','content':'TEST'}],[TOOLS['field_query'].wire()])
+        transport={}
         with patch.dict(ENDPOINTS,deepseek=str(server.make_url('/chat'))):
-            result=await NativeClient().request(profile,body,timeout=2)
+            result=await NativeClient().request(profile,body,timeout=2,transport=transport)
         self.assertEqual(len(calls),1);self.assertEqual(result.usage.status,'known')
         self.assertEqual(result.error_code,'provider_error')
+        self.assertEqual((transport['stage'],transport['http_status'],transport['headers_received']),('complete',500,True))
+        self.assertEqual(transport['provider_request_id'],'req_fixture123')
+        self.assertFalse(transport['proxied'])
+        self.assertTrue(all(type(transport[k]) is int and transport[k]>=0 for k in
+            ('elapsed_ms','connect_ms','upload_ms','wait_headers_ms','read_ms')))
 
     async def test_responses_http_threads_sent_tool_limit_to_decoder(self):
         from aiohttp import web
@@ -1058,6 +1064,88 @@ class NativeTransportTests(unittest.IsolatedAsyncioTestCase):
                 result=await NativeClient().request(native_profile(),{},timeout=1 if path=='/redirect' else .5)
             self.assertEqual(result.status,'error');self.assertEqual(result.usage.status,'unknown')
         self.assertEqual(calls,['/redirect','/timeout'])
+
+    async def test_disconnect_before_headers_records_wait_stage_without_retry_or_private_data(self):
+        from aiohttp import web
+        from aiohttp.test_utils import TestServer
+        from ournotes_bot.sources.model_provider import NativeClient,ENDPOINTS
+        calls=[]
+        async def handler(request):
+            calls.append(await request.json());request.transport.close()
+            return web.Response()
+        app=web.Application();app.router.add_post('/chat',handler)
+        server=TestServer(app);await server.start_server();self.addAsyncCleanup(server.close)
+        transport={}
+        with patch.dict(ENDPOINTS,deepseek=str(server.make_url('/chat'))):
+            result=await NativeClient().request(native_profile(),{'PRIVATE_PROMPT':'PRIVATE_BODY'},timeout=2,transport=transport)
+        self.assertEqual(len(calls),1)
+        self.assertEqual((result.error_code,result.transport_error),('provider_unavailable','disconnected'))
+        self.assertEqual((transport['stage'],transport['name'],transport['headers_received']),('wait_headers','disconnected',False))
+        self.assertNotIn('http_status',transport);self.assertNotIn('PRIVATE',json.dumps(transport))
+
+    async def test_partial_response_records_body_phase_and_rejects_untrusted_request_identity(self):
+        from aiohttp import web
+        from aiohttp.test_utils import TestServer
+        from ournotes_bot.sources.model_provider import NativeClient,ENDPOINTS
+        async def handler(request):
+            response=web.StreamResponse(headers={'Content-Length':'100','x-request-id':'https://PRIVATE.invalid/secret'})
+            await response.prepare(request);await response.write(b'{');request.transport.close()
+            return response
+        app=web.Application();app.router.add_post('/chat',handler)
+        server=TestServer(app);await server.start_server();self.addAsyncCleanup(server.close)
+        transport={}
+        with patch.dict(ENDPOINTS,deepseek=str(server.make_url('/chat'))):
+            result=await NativeClient().request(native_profile(),{},timeout=2,transport=transport)
+        self.assertEqual(result.error_code,'provider_unavailable')
+        self.assertEqual((transport['stage'],transport['headers_received'],transport['http_status']),('read_body',True,200))
+        self.assertNotIn('provider_request_id',transport);self.assertNotIn('PRIVATE',json.dumps(transport))
+
+    async def test_timeout_and_cancel_keep_stage_and_preserve_cancellation(self):
+        from aiohttp import web
+        from aiohttp.test_utils import TestServer
+        from ournotes_bot.sources.model_provider import NativeClient,ENDPOINTS
+        entered=asyncio.Event();release=asyncio.Event()
+        async def handler(request):
+            entered.set();await release.wait();return web.json_response({})
+        app=web.Application();app.router.add_post('/chat',handler)
+        server=TestServer(app);await server.start_server();self.addAsyncCleanup(server.close)
+        try:
+            with patch.dict(ENDPOINTS,deepseek=str(server.make_url('/chat'))):
+                transport={};result=await NativeClient().request(native_profile(),{},timeout=.1,transport=transport)
+                self.assertEqual((result.transport_error,transport['stage']),('timeout','wait_headers'))
+                self.assertEqual(transport['name'],'timeout')
+                entered.clear();cancelled={}
+                task=asyncio.create_task(NativeClient().request(native_profile(),{},timeout=2,transport=cancelled))
+                await entered.wait();task.cancel()
+                with self.assertRaises(asyncio.CancelledError):await task
+                self.assertEqual((cancelled['stage'],cancelled['name']),('wait_headers','cancelled'))
+        finally:release.set()
+
+    async def test_connect_failure_records_connect_phase(self):
+        import socket
+        from ournotes_bot.sources.model_provider import NativeClient,ENDPOINTS
+        with socket.socket() as occupied:
+            occupied.bind(('127.0.0.1',0));transport={}
+            with patch.dict(ENDPOINTS,deepseek='http://127.0.0.1:'+str(occupied.getsockname()[1])+'/chat'):
+                result=await NativeClient().request(native_profile(),{},timeout=3,transport=transport)
+        self.assertEqual((result.transport_error,transport['stage'],transport['headers_received']),('connect','connect',False))
+
+    async def test_actual_proxy_path_is_marked_without_logging_proxy_or_request(self):
+        from aiohttp import web
+        from aiohttp.test_utils import TestServer
+        from ournotes_bot.sources.model_provider import NativeClient
+        calls=[]
+        async def handler(request):
+            calls.append(request.raw_path);await request.read()
+            return web.json_response({},status=401)
+        app=web.Application();app.router.add_post('/{path:.*}',handler)
+        server=TestServer(app);await server.start_server();self.addAsyncCleanup(server.close)
+        transport={};profile=replace(native_profile(),provider='openai',wire_profile='openai-responses-v1')
+        with patch('ournotes_bot.sources.model_provider.endpoint',return_value='http://provider.invalid/PRIVATE'):
+            result=await NativeClient(openai_proxy=str(server.make_url('/'))).request(profile,{},timeout=2,transport=transport)
+        self.assertEqual(calls,['http://provider.invalid/PRIVATE'])
+        self.assertTrue(transport['proxied']);self.assertEqual(transport['http_status'],401)
+        self.assertNotIn('PRIVATE',json.dumps(transport));self.assertNotIn('http',json.dumps(transport).replace('http_status',''))
 
 
 class NativeRuntimeTests(Fixture,unittest.IsolatedAsyncioTestCase):
@@ -2361,6 +2449,38 @@ class ChatAgentTests(Fixture, unittest.IsolatedAsyncioTestCase):
     def result(self,text=None,calls=(),items=()):
         from ournotes_bot.domain.model_calls import AttemptResult,Usage
         return AttemptResult('ok',Usage(10,0,2,None,12,'known'),calls,text,output_items=items)
+
+    async def test_transport_observation_is_correlated_without_changing_usage_or_logging_prompt(self):
+        answer=self.client.request.return_value
+        async def provider(*args,transport,**kwargs):
+            transport.update(stage='complete',name='none',elapsed_ms=321,proxied=True,headers_received=True,
+                http_status=200,connect_ms=100,upload_ms=1,wait_headers_ms=200,read_ms=20,
+                provider_request_id='req_fixture123')
+            return answer
+        self.client.request.side_effect=provider
+        with self.assertLogs('ournotes_bot.model_transport',level='INFO') as log:
+            plan,attempts=await self.prepare_native('/聊 PRIVATE_TRANSPORT_PROMPT')
+        self.assertEqual(plan['parts'][0]['business_status'],'success')
+        self.assertEqual(len(attempts),1)
+        event=next(e for e in self.backend.diagnostics.read(plan['request_id'])['chat_events'] if e['kind']=='transport')
+        self.assertEqual(event['data']['attempt_id'],attempts[0])
+        self.assertEqual(event['data']['provider_request_id'],'req_fixture123')
+        self.assertNotIn('PRIVATE',str(log.output));self.assertNotIn('PRIVATE',json.dumps(event))
+        self.assertIn(plan['request_id'],str(log.output))
+        row=self.backend.model_runtime.usage.get(attempts[0])
+        self.assertEqual(row['state'],'settled');self.assertFalse(row['billing_incomplete'])
+
+    async def test_invalid_transport_metadata_does_not_override_known_billing_or_answer(self):
+        answer=self.client.request.return_value
+        async def provider(*args,transport,**kwargs):
+            transport.update(stage='PRIVATE_STAGE',name='none',elapsed_ms=1,proxied=True,headers_received=False)
+            return answer
+        self.client.request.side_effect=provider
+        with self.assertLogs('ournotes_bot.model_transport',level='WARNING') as log:
+            plan,attempts=await self.prepare_native('/聊 PRIVATE_TRANSPORT_PROMPT')
+        self.assertEqual(plan['parts'][0]['business_status'],'success')
+        self.assertNotIn('PRIVATE',str(log.output))
+        self.assertFalse(self.backend.model_runtime.usage.get(attempts[0])['billing_incomplete'])
 
     async def test_chat_finishes_answer_without_required_followup(self):
         bodies=self.capture_native_bodies()
