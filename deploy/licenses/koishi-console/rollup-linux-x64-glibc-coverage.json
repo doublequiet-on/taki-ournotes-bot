@@ -1,5 +1,13 @@
 {
-  "identity": "rollup-4.67.4-linux-x64-glibc-coverage.2",
+  "identity": "rollup-4.67.4-linux-x64-glibc-coverage.3",
+  "license_supplement": {
+    "path": "runtime/task09/license-assembly-20261104/rollup-license-supplement24-v1.zip",
+    "sha256": "0922573405ad4e38eb9bc1cb10e2d927cabc4a71f581c2a1ea4d81835bb30f04",
+    "index_sha256": "34ced28faba576b74d35b553a187dfcd5245e8a0d9d662f30bcb1cb021c5cae9",
+    "assembled_packages": 24,
+    "remaining_text_blocker": "base-encode@0.3.1",
+    "assembled_into_frozen_product": false
+  },
   "resolved_material_delta": {
     "path": "runtime/task09/material-recovery-20261104/rollup-linux-target-source-materials-v4.zip",
     "size": 12054447,
@@ -8,7 +16,7 @@
     "local_rollup_nodes": 3,
     "reused_crates": 37,
     "new_exact_crates": 148,
-    "missing_original_license_texts": 25,
+    "historical_source_zip_missing_separate_texts": 25,
     "full_package_edge_and_feature_table": "index.json",
     "selection_evidence": "evidence/cargo-tree-summary.txt",
     "metadata_note": "Workspace metadata unions extra features. Package set agrees with the native-entry cargo tree; selected feature sets come from that tree, retaining distinct host/target unit sets."
@@ -44,17 +52,17 @@
     },
     {
       "entry": "napi-derive",
-      "status": "exact_sources_collected_original_texts_acquired_scope_review_pending",
+      "status": "exact_sources_and_license_scope_checked_by_task11",
       "reused": ["ctor", "proc-macro2", "quote", "syn", "unicode-ident"],
       "new_sources": ["napi-derive", "napi-derive-backend", "convert_case"],
       "notes": "Full selected normal/build/proc-macro closure is in the new delta; napi-rs root MIT text and root/package Cargo manifests are retained at exact d9cb526c15e63ba30e06b4d169068c9854180595."
     },
     {
       "entry": "parse_ast",
-      "status": "exact_sources_collected_24_swc_original_text_gaps",
+      "status": "exact_sources_collected_24_text_mappings_assembled_for_audit",
       "reused": ["parking_lot", "parking_lot_core", "lock_api", "scopeguard", "smallvec", "libc", "cfg-if"],
       "new_sources": ["anyhow", "swc_compiler_base", "swc_config", "swc_common", "swc_ecma_ast", "swc_ecma_parser"],
-      "notes": "All selected source crates and downstream graph are collected. 24 exact SWC crate VCS commits return 404 on recorded raw root/package text paths; representative commit API returns 422. Original license texts remain missing; declarations alone do not close them."
+      "notes": "All selected sources are collected. Task11 round13 authorizes 23 exact Apache declarations mapped to authoritative text plus retained attribution, and one explicit BSD derivation. The new supplement assembles these mappings; historical 404s are preserved, not retried or treated as missing source. Product inclusion is not yet accepted."
     },
     {
       "entry": "xxhash",

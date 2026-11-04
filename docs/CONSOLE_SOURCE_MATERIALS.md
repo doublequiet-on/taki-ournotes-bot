@@ -18,25 +18,19 @@
 
 ## Rollup Linux原生传递材料
 
-### 25项原文停止条件与最小后续方案
+### 24项随行材料装配与单项阻塞
 
-仅对40a968a已登记的25项查询了官方crates.io准确版本记录，25/25 checksum与固定锁一致；保存发布记录、原始/规范化Cargo声明、README及源码内许可标记，未再次请求已证404的SWC Git路径。新证据`runtime/task09/spec-binding-20261104/original-text-followup25-v1.zip`：80512 bytes / SHA256 `d60bede26813b5403c5c5844979151080cb33b3b1cce10da16c342e47f53e782`，原文关闭项仍为0。
+历史`original-text-followup25-v1.zip`只新增声明/文件头，原文新增数0，保留原SHA256 `d60bede26813b5403c5c5844979151080cb33b3b1cce10da16c342e47f53e782`。按11第十三轮，本次不再将25项一概列为“必须找回历史根LICENSE，否则换Rollup”。23项准确Apache声明可映射权威全文，swc_sourcemap10.0.2有明确派生BSD原文；这24项已完成[随行装配](CONSOLE_ROLLUP_LICENSES.md)，等待11核实际增量。
 
-`swc_common26.0.0`中11个Rust来源文件保留Rust Project Developers版权和Apache-2.0/MIT双许可头（路径/hash/原行见followup25.json），不能仅以crate的Apache声明覆盖这些文件。其余两项copyright搜索命中分别为注释处理代码和测试样例字串，不据此创造新许可义务。24项SWC原文仍缺固定发布源对应的根许可及这些复制代码所指原文；base-encode0.3.1只有MIT声明，固定树及随包README未给全文。该证据不等于项目无许可证，也不等于缺项已放行。
+新`rollup-license-supplement24-v1.zip`：94916 bytes，SHA256 `0922573405ad4e38eb9bc1cb10e2d927cabc4a71f581c2a1ea4d81835bb30f04`；内置索引SHA256 `34ced28faba576b74d35b553a187dfcd5245e8a0d9d662f30bcb1cb021c5cae9`。它保存三份全文、24项源hash/准确Cargo及registry适用映射和11个原始Rust文件头，明确采用Apache任选分支；准确源文件未改。sourcemap的9.3.4 Cargo只作许可派生证据，绝不替代10.0.2源码。
 
-可交用户的最小方案如下，当前均未执行：
-
-- 保持冻结候选用于已授权隔离验证，暂停公开源码材料放行，等待能够证明适用于这些准确版本的原文。当前没有足够证据用另一个版本的LICENSE代替；没有联系第三方。
-- base-encode若选择下游独立实现，改动仅限构建工具的`rust/xxhash/src/lib.rs`两处base36/base64-url调用及相应Cargo边。须按16字节输入、字节序、字符表和前导零语义独立实现；校验全零/前导零/边界/固定随机样本及两目录Console输出。它是数字进制编码，不可直接换成标准RFC base64。先交新工具/输入/输出hash，保持当前组件冻结，由00决定后续候选回归。
-- SWC不适合小范围重写。若原文始终不能证齐，最小技术替代是另选可公开核对完整源码和原文的固定Rollup工具链，再验证准确normal/build/proc-macro闭包、Linux目标、插件API、hash命名及16输出。需要新工具输入、锁和双目录复建；如组件字节变化须新候选及08/12回归。当前没有选版本、改锁或替换运行依赖。
-
-本轮已完成声明/精确版本适用关系补证，到此停止25项来源分支；原文及包级适用范围交11独立核查，是否选择替代路线交用户/00。
+本组只剩base-encode0.3.1的有出处版权/完整MIT随行材料阻塞；不以authors或模板代填，不替换工具。是否授权它的两处数字进制编码独立实现仍交00/用户。本轮没有重试404、替换Rollup或重编native；已授权隔离验证可继续，公开获取、实际产品随行及最终分发仍有各自门禁。
 
 本轮继续补齐固定目标的剩余源码差集。Cargo1.99.1/rustc1.99.1仅用于元数据解析，工具来自官方固定2026-10-15归档并验SHA256；不替代源码的nightly-2025-07-25构建工具链，也未编译native。隔离目录执行`cargo metadata --locked --filter-platform x86_64-unknown-linux-gnu --format-version 1`，再以`cargo tree --locked -p bindings_napi --target x86_64-unknown-linux-gnu -e normal,build --prefix none --format '{p}|{f}'`交叉核对。两者包集合一致；11复核确认4包feature并集减少（mimalloc-safe、libmimalloc-sys2、syn3、serde_core），phf_shared并集仍为std而保留空/std两种单元，memchr也有两组单元。原“5组额外features”说法过粗；材料以已交入口树的单元集合为准，保留原始metadata供复核，未改组件字节。
 
 完整图为188节点：3个Rollup本地源码、37个已有材料、148个新增准确crate。新`rollup-linux-target-source-materials-v4.zip`为12054447 bytes / SHA256 `0fe03bf985205730b7217f2598e96c1546492b672a400666acf69b348ce345a7`，含所有新增`.crate`首选Rust源码、Cargo原始/规范化配置、build脚本、图/锁/feature证据和199条许可原文索引引用。全部148份crate按原Cargo.lock校验；没有重新取得已核37份作为新增材料。工具可按`--metadata/--tree/--lock/--cache/--reuse/--output`重放，已有结果禁止覆盖。
 
-31个未随crate带独立原文的对象沿其`.cargo_vcs_info`固定树有界补证，6项取得根原文及对应Cargo声明：NAPI derive/backend、base64-simd/vsimd、bytes-str/par-core，仍须11核包级适用范围。其余25项在ZIP的`index.json`逐准确版本/仓库/提交/路径/HTTP结果登记：24项SWC的固定根/包级路径404，代表提交API422；base-encode0.3.1固定树41bdeb57488beec4ed63180e848ce1e99fba227d可读，但树和README缺原文。源码已取得，原文缺口保持阻塞，不继续猜历史版本或借其他项目许可覆盖。ICU等随crate生成的数据和上游生成关系仍需材料审计；本轮只做源码材料闭包和原文补证，不把源码存在等同上游字节重建。
+31个未随crate带独立原文的对象中，NAPI derive/backend、base64-simd/vsimd、bytes-str/par-core六项根原文适用关系已由11的40a轮关闭；历史ZIP仍保存其余25项的HTTP结果，不修改旧记录。本次24项补充映射覆盖其中23项Apache及1项BSD，只留base-encode0.3.1单项阻塞。ICU两项生成关系另由固定96cecd9增量交11复核，不把源码存在等同逐字节重生。
 
 固定目标为`x86_64-unknown-linux-gnu`、入口`rust/bindings_napi`、Rollup源码提交`18b5cb60e55926f6d917cc1aeb17fd81d0da5cc6`。现有15个直接/关联解析不重做；新增材料只覆盖11点名的三条传递链：
 
@@ -46,7 +40,7 @@
 
 `redox_syscall`和`windows-link`按目标条件登记为非Linux选择，不混入选中源码集合。已核的16个crate/27份原文保持关闭，不重复核验；它们只闭合上述三条链，不代表整个native闭包。针对11指出的真实差集，新增`rollup-4.67.4-linux-x64-glibc-napi-delta.zip`：1175096 bytes，SHA-256 `679f946e568ffea8bc0e2bd21cdd3f3bebbb451a757ab272e0194e08f21baf7a`。其中21个固定crate、40份原许可材料逐Cargo.lock checksum核验，补bitflags、`ctor(default-features=false)`、futures默认闭包、nohash-hasher、rustc-hash以及host build依赖napi-build 2.6.0；wasi-heap-sync不作用于本目标。
 
-`deploy/licenses/koishi-console/rollup-linux-x64-glibc-coverage.json`逐入口记录目标、feature、复用、排除和缺口。11的40a轮已关闭148项源码取得/锁绑定和六项补充原文的适用关系；25项原文仍缺（23 Apache-2.0、1 BSD-3-Clause、1 MIT），按00要求暂停继续搜索或替代。两项ICU数据本身和Unicode原文已交，本轮只补[固定生成关系与首选输入](CONSOLE_ICU_DATA.md)，不重编native或重取全闭包；没有由材料取得推导完整对应源码放行。
+`deploy/licenses/koishi-console/rollup-linux-x64-glibc-coverage.json`逐入口记录目标、feature、复用、排除和当前缺口。148项源码/锁绑定已闭，本次24项随行映射已装配待验，base-encode单项未齐。两项ICU数据本身和Unicode原文已交，[固定生成关系与首选输入](CONSOLE_ICU_DATA.md)由96cecd9另交；没有由材料取得推导完整对应源码或公开分发放行。
 
 ## 原始摘要与换行
 

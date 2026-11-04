@@ -11,6 +11,7 @@ include koishi/package.json koishi/package-lock.json
 include scripts/product_release.py deploy/product_identity.py
 include scripts/console_source_materials.py docs/CONSOLE_SOURCE_MATERIALS.md
 include docs/CONSOLE_ICU_DATA.md
+include docs/CONSOLE_ROLLUP_LICENSES.md
 include docs/CONSOLE_TRACE_ROUND5.md
 include scripts/build_downstream_console.py scripts/prepare_console_build_inputs.py
 include docs/CONSOLE_DOWNSTREAM.md docs/CONSOLE_BUILD_REPAIR.md
