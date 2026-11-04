@@ -310,3 +310,19 @@ Windows原预检/串行会话/launcher拒绝/profile23项，22通过1项Linux检
 573c7586c3e05d2699c31e6523e68c70521a7df1的IsolatedRuntime.approve在首次_measure后才捕获代际，使该测量期间invalidate被覆盖。现从首次测量前原子建立操作代际并清旧票，测量后立即核代际再进入人工复核，最终签票检查仍保留。未修改已闭的ManualRecoveryReview修复。
 
 复用12具名check_runtime.py，仅改源码定位、缺陷预期及新增第二次approve首次测量取消例；专属WSL仅loopback、测量/Popen明确替身，10场景通过。原ManualRecoveryReview六项竞态回归通过。证据runtime/task10/initial-measure-fix-20261104；未重跑实物安装/旧矩阵。独立P2提交后再处理08固定37af64177389c4faa944d4dd7a9360f73980aaa6合同，P2通过不等于整体恢复或生产激活通过。
+
+## 2026-11-04：10可信子会话与双角色屏障
+
+基线及独立P2修复 `fb1b3187586e64392d4f0022caa884f1e8c209c0`；消费08合同 `3d51c9335cf9b65b78d99de4d034728b74a694dc`，不修改08文件或替换冻结工件。实现仅deploy/isolated_runtime.py、recovery_session.py、recovery_session.cjs及对应文档。原未跟踪草稿归本任务，已保留副本，改为保留生命周期通道而非撤销即断开；无自动接管/通用RPC。
+
+专属Taki-Task10-2404，root控制器/systemd、私有仅loopback netns、现有gamma安装的Python3.12与固定组合0026159包内Node：真实降权UID999的两个进程在首角色等待期间不import业务；双方ready和重审后才加载测量过的合成entry；运行阶段不再调用停写preflight；scope代际变化后quiesce→drain→close，双进程退出，停止确认前锁保持，最后context释放。5条实物检查通过。应用entry/批准/当前权威/宿主停止事实明确SYNTHETIC；不宣称运行了08真实业务lifecycle或验证生产全writer。
+
+协议负例15项通过：旧停写报告不能充当running authority且撤权粘滞；运行snapshot必须匹配当次审阅；人工回调取消；读取器内invalidate；错角色；断联；越序关闭；pending终止记录保锁；缺宿主停止证明保锁；分段帧跨poll超时；不完整帧不阻止监测撤销；第二角色坏票撤销等待同伴；真实Python/Node等待进程半启动死亡；控制通道关闭；不合作进程有界强停。前12项使用真实私有socket与实际会话/人工检查逻辑，安装测量和进程观察为替身；后三项启动真实UID999等待/阻塞进程，不加载应用、不开放端口或发出网络请求。协议驱动运行于专属发行版，不声称它是systemd完整业务恢复测试。
+
+新代码上首次_measure P2的10项回归（专属WSL unshare仅loopback）及原ManualRecoveryReview六项Windows竞态回归通过；Python语法、Node语法、架构门禁和diff检查通过。未重跑原首装安装、RPC、历史格式、旧包回退矩阵。
+
+保留失败：首次Windows tar导出带组写权限，wrapper trusted校验按预期拒绝，未加载业务；第二次新目录将导出控制器固定root:root/0644后通过。协议结果第一次导出时Windows GBK控制台不能编码WSL提示，Linux测试exit0和原日志保留；修复仅日志输出后导出成功。没有放宽权限、生命周期或测试断言。
+
+本地证据目录runtime/task10/trusted-session-20261104：exercise.py、protocol.py、run.py/run_protocol.py/run_p2.py、results.json、protocol-results.json、systemd.log、attempt1-permissions.log、p2-regression.log。Linux实物源/脚本/结果在 /var/lib/taki-task10/trusted-session-v3，协议负例在v2；首失败v1及首成功v2日志保留。复现run.py需新专属目录、唯一unit/entry/marker名称，拒绝覆写原证据。run_protocol.py只运行等待器与合成状态，不调用真实服务。最终实物正例已重验运行期守卫及独立监测；随后完善强停回执与串行stop，协议负例重验强停标记为true/orderly=false。三份控制器源码按本地binding.json核验。
+
+下一包由08消费文档定义的start(session)、assert_current/assertCurrent、state/report；接真实Backend quiesce/close及网关drain。生产05/07/09及宿主读取器逐字段缺口见INSTANCE_RECOVERY.md，不把SYNTHETIC的current/stop回执当生产批准。activation_permitted始终false，独立CLI仍manual，未合并部署、生产/QQ/付费或PR202操作。

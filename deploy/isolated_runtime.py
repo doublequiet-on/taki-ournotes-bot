@@ -6,6 +6,7 @@ stops them before releasing it. No RPC, persistent permit or production activati
 See INSTANCE_RECOVERY.md for the outstanding standalone launcher authority bridge.
 """
 import copy
+import json
 import os
 from pathlib import Path
 import pwd
@@ -50,12 +51,14 @@ class IsolatedRuntime:
         self.stop_writers = stop_writers
         self.review = ManualRecoveryReview(check_current)
         self.guard = threading.Lock()
+        self.stop_guard = threading.Lock()
         self.generation = 0
         self.permits = {}
         self.children = []
         self.lock = None
         self.used = False
         self.owner_thread = None
+        self.recovery_session = None
 
     def invalidate(self):
         with self.guard:
@@ -128,6 +131,8 @@ class IsolatedRuntime:
         """
         if not callable(confirm_current):
             raise ValueError('trusted_human_confirmation_required')
+        if self.recovery_session is not None and self.recovery_session.phase not in ('waiting', 'preparing'):
+            raise ValueError('stopped_review_unavailable_during_runtime')
         with self.guard:
             self.generation += 1
             self.permits.clear()
@@ -162,13 +167,20 @@ class IsolatedRuntime:
             self.permits = {t: (role, generation, expires, copy.deepcopy(snapshot)) for role, t in tickets.items()}
             return result, tickets
 
-    def start(self, role, ticket):
+    def start(self, role, ticket, *, session=None):
         """Consume once, recheck under FileLock, then run the measured fixture as app UID."""
         with self.guard:
             permit = self.permits.pop(ticket, None)
-            if permit is None or permit[0] != role or permit[1] != self.generation:
-                raise ValueError('isolated_permit_invalid')
+            invalid = permit is None or permit[0] != role or permit[1] != self.generation
+        if invalid:
+            if self.recovery_session is not None:
+                self.recovery_session.revoke('recovery_role_permit_invalid')
+            raise ValueError('isolated_permit_invalid')
         try:
+            if self.recovery_session is not session:
+                raise ValueError('recovery_session_required')
+            if session is not None and session.phase != 'waiting':
+                raise ValueError('recovery_barrier_not_waiting')
             measured = self._measure()
             current = self.check()
             if measured != self.installed or current != permit[3]:
@@ -187,17 +199,29 @@ class IsolatedRuntime:
                    'TAKI_COMBINATION': str(combo), 'TAKI_TEST_MODE': 'synthetic-offline'}
             args = ([str(root/'venv/bin/python'), '-I', '-B'] if role == 'backend'
                     else [str(combo/'bin/node')]) + [self.entries[role]]
+            pass_fds = ()
+            if session is not None:
+                if session.runtime is not self:
+                    raise ValueError('recovery_session_owner_mismatch')
+                fd, binding = session.prepare_child(role)
+                env.update(TAKI_RECOVERY_FD=str(fd), TAKI_RECOVERY_BINDING=json.dumps(binding))
+                args = args[:-1] + [session.wrappers[role], '--entry', self.entries[role]]
+                pass_fds = (fd,)
             with self.guard:
                 if permit[1] != self.generation or time.monotonic() >= permit[2]:
                     raise ValueError('isolated_permit_expired_or_invalidated')
                 # No untrusted preexec callback; Popen drops all supplementary groups.
                 child = subprocess.Popen(args, env=env, cwd=self.paths['base'],
                                          user=user.pw_uid, group=user.pw_gid, extra_groups=[],
-                                         start_new_session=True)
+                                         start_new_session=True, pass_fds=pass_fds)
                 self.children.append(child)
-                return child
+            if session is not None:
+                session.attach(role, child)
+            return child
         except BaseException:
             self.invalidate()
+            if session is not None:
+                session.revoke('recovery_role_start_failed')
             raise
 
     def after_restore(self):
@@ -205,12 +229,19 @@ class IsolatedRuntime:
         if threading.get_ident() != self.owner_thread:
             raise ValueError('controller_session_thread_mismatch')
         self.invalidate()
+        if self.recovery_session is not None:
+            if self.recovery_session.confirm_stopped()['status'] != 'stopped':
+                raise ValueError('host_writer_stop_unknown_lock_retained')
         self._stop_children()
         self.stop_writers()
         self._measure()
         return self.check()  # Caller must obtain a new manual review before any start.
 
     def _stop_children(self):
+        with self.stop_guard:
+            self._stop_children_locked()
+
+    def _stop_children_locked(self):
         for child in self.children:
             if child.poll() is None:
                 try:
@@ -227,6 +258,9 @@ class IsolatedRuntime:
         self.invalidate()
         # Do not release the writer lock if termination cannot be established.
         # The owning systemd control group is the final process-lifetime boundary.
+        if self.recovery_session is not None:
+            if self.recovery_session.confirm_stopped()['status'] != 'stopped':
+                raise ValueError('host_writer_stop_unknown_lock_retained')
         self._stop_children()
         try:
             atomic_json(Path(self.paths['state'])/'isolated-session.json',

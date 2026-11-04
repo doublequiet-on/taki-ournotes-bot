@@ -241,3 +241,45 @@ after_restore不执行数据拷贝：先撤销许可、停止本会话子进程�
 | 恢复执行与持续撤权 | 现有备份/事务保护内实际恢复动作、恢复后实际全量副本测量；运行中撤销的停写/停发时序。本轮after_restore只是执行后重验入口，不恢复数据，也不监控未来所有变更 | 10事务边界，07删除覆盖，08持续业务执行 |
 
 这些是未实现/未接线的具体部分；专属环境已存在，不能再记成缺环境，也不能用缺真实生产批准阻止独立实现和合成隔离验收。最终产品selection、安全旧回退版本和具体生产恢复仍未批准。
+
+## 继承FD可信会话与双角色屏障（10交08，2026-11-04）
+
+消费08固定 `3d51c9335cf9b65b78d99de4d034728b74a694dc` 的 `RECOVERY_BUSINESS_GATE.md` 与 `RECOVERY_LIFECYCLE.md`。新增控制器模块 `recovery_session.py`、Node等待入口 `recovery_session.cjs`；不修改08业务文件、不替换冻结应用包。原未提交草稿归本任务，其副本保存在本地验收目录。独立launcher CLI仍manual，这不是生产启动批准。
+
+### 控制器入口与信任边界
+
+在已进入的 `IsolatedRuntime` 持锁会话内：
+
+1. 原 `runtime.approve(confirm_current)` 运行停写预检及人工双项确认，获得两角色一次性短期票。
+2. 构造 `RecoverySession(runtime, read_running=..., read_stopped=..., drain_timeout=10)`。两个读取器无默认值；需当前安装测量一致、无已启动子进程、此前未创建过RecoverySession。包装器本身须root所有、路径无链接/组写/其他写，并测量hash；每次准备子进程重新核对。
+3. 分别 `runtime.start('backend', ticket, session=session)`、gateway同理。每个角色只有一对socketpair；通过Popen pass_fds继承，不监听端口、不写授权文件、不接受Console JSON。旧fixture入口未提供session时仍为旧路径，不能用于新的恢复组合根。
+4. 第一进程只执行Python/Node等待器，业务entry在双方ready、重新测量/身份/范围/删除/人工检查通过后才import/require。`session.commit(confirm_current)` 在双方等待期间重审；缺一角色返回manual。提交还要求运行权威九项revision与该次人工复核快照完全一致，清除额外票后才放行。等待限30秒，失败/取消/超时撤销双方。
+5. 所有报告仍 `activation_permitted=false`。`isolated_active` 只表示隔离夹具屏障已提交，不能转换为产品激活或范围批准。
+
+每个私有端点绑定随机会话、实例、角色、boot_id和启动代际，帧序号严格递增。启动代际在该端点内固定；提交后控制器另外持有当前runtime代际，持续比较，不接受旧代际重开。控制器存活以私有通道存活确认，另核FileLock fd/dev/ino及两进程；恢复/显式invalidate/进程退出/通道断开/当前权威变化都会粘滞撤销。此信任依赖root控制器和已测量受信entry，不是抵抗已失陷应用进程伪造自身生命周期事实的证明；宿主停止仍由独立读取器确认。
+
+`read_running()` 每次新读、线程安全，严格返回 `{status:'current', revisions:{session,inventory,candidate,components,controller,storage,expected,scope,deletion}}`，每项小写64位摘要。它不返回停写报告，不含writers_stopped；运行后approve和再次start均拒绝，不再重放停写事实。各摘要应绑定已审权威/安装/格式/副本覆盖代际；不能把正常运行期间可变的数据库内容摘要当恒定当前权威。生产端如何生成这些代际仍须相应所有者提供，不能用固定字符串顶替。读取器必须有界；通道1秒读写超时会拒绝，不能把超时补成成功。
+
+### 给08的子进程接口与生命周期
+
+包装器先wait再加载已测量entry。Python entry导出 `start(session)`，Node entry导出 `exports.start = async session => ...`。这里的session由包装器在进程内构造，环境中的FD/binding随后删除；不允许业务从磁盘重新构造许可。Python `session.assert_current()` 成功只返回None；Node `session.assertCurrent()` 成功只返回undefined，分别注入08既有组合根。任一次断言失败后，该子进程永不重新授权，但仍保留生命周期回执通道。
+
+- `session.state()` 同步查询阶段：waiting/preparing/active/quiesce/drain/close/stopped。Python `session.report(stage, facts)` 与Node同名；只有三个固定阶段回执，无通用方法分发或RPC路由。
+- 撤销先进入quiesce，双方assert拒绝新业务。08在Backend事件循环控制协程中 `revoke_recovery()`，等待 `quiesce_recovery()`，然后backend报告 `quiesced`，原样字段为 `business_writers_stopped:true, receipt_tail_open:true, pending_terminations:非负整数`。
+- 控制器收到有效quiesced才进入drain。网关已关闭接纳，需按08现有retire/发送/ACK排空顺序完成，报告 `drained,{gateway_drained:true}`。该布尔必须来自真实close完成；10不制造它。若08内部close已经自动完成，可在drain阶段回报真实已完成事实。
+- 然后进入close，Backend才调用 `close_recovery()`，报告 `closed,{stores_closed:true,pending_terminations:非负整数}`，再runner.cleanup并退出。重复/错角色/越序回执拒绝，不自动跳过阶段。不能在被跟踪HTTP handler里等待自身排空。
+- 失联时断言抛错；08仍须本地撤销/排空，无法回报时不得视为干净关闭。控制器保留隔离和锁，在有界等待后SIGTERM→等待5秒→SIGKILL→等待5秒停止直接进程组。不合作线程/孙进程最终仍需宿主cgroup与全writer证明；强停不等于排空成功。
+
+`session.confirm_stopped()` 仅控制线程调用，先撤销，等待生命周期/退出，再确认子进程停止，最后调用无参 `read_stopped()`；后者必须来自当前宿主独立观察，严格返回 `{writers_stopped:true,evidence:非空证据标识}`。缺失、异常、pending_terminations非零或终止异常返回manual。`IsolatedRuntime.__exit__`/`after_restore` 遇manual抛错并保留FileLock，不写“已停止”回执、不继续恢复。成功回执同时区分 `orderly` 与 `forced`；强停后即使宿主确证停止，orderly仍false，不能声称数据干净恢复。控制器进程自身死亡会由OS释放锁；此时必须由宿主隔离/cgroup接管停止核实，下一控制器不可凭旧锁消失恢复或启动。
+
+### 尚缺生产输入，交00逐字段确认
+
+| 所有者 | 必需输入 | 当前处理 |
+|---|---|---|
+| 09/00 | 固定candidate、独立expected、实际observed、原始manifest摘要、逐组件映射/来源、physical/logical schemas、可信checker完整SHA、产品selection | 不由组合SHA代签checker，不选最终产品；缺项manual |
+| 05/08 | 固定真实ProductIdentitySession→TrustedScopeBindingCheck/ScopeStore接线、binding原样decision与checkerCommit、独立approval及当前撤销代际 | 本接口只承载当前性，不传磁盘allow，不实现第二套批准；08负责本地真实ScopeStore |
+| 07/00 | 备份树外current_authority来源；contract_version/binding/policy_generation/deletion_generation/journal_sha256/evidence_version/全部replicas，恢复候选逐副本verified证据 | 无当前可信来源或漏副本manual，不补合成政策 |
+| 10/宿主所有者 | 全writer/trigger清单、实际停写及进程组/cgroup观察、锁/挂载/实例归属、read_running九项revision生产者、read_stopped证据标识 | 专属离线夹具已验；生产读取器未提供，保持manual |
+| 08 | 已测量entry对上述session接口、真实Backend lifecycle及网关drain完成事件的组合 | 本轮交固定宿主接口；未把源码08接口冒充已进入冻结组合包 |
+
+验收脚本/失败日志见 `runtime/task10/trusted-session-20261104`，测试新增文件按AGENTS不提交。整个接口仍不执行备份恢复、不接管服务/开机任务、不删除任何失败或事务状态。
