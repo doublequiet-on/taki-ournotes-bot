@@ -209,3 +209,5 @@ SQLite固定 `mode=ro&immutable=1`、`query_only=ON`、`trusted_schema=OFF`，�
 `ManualRecoveryReview(check_current)`接受组合根注入的受信无参回调，回调须完整运行既有`recovery_preflight`隔离→09身份→05独立范围批准→07恢复检查，且当前权威来自备份树外。`begin()`仅为checked报告建立内存ticket；`confirm(ticket,current_permissions_confirmed=True,current_deletions_confirmed=True)`消费ticket并重跑完整检查，报告任何变化即manual。确认缺一项即reject，invalidate、再次begin、重启均使旧ticket失效；重复/迟到提交manual。成功只返回reviewed且activation_permitted=false，不代表范围批准、恢复执行或启动许可。
 
 上述确认参数只能来自受信人工操作流程，不可直接映射Console/RPC传入布尔值。05会话/09 checker来源/07外部权威约束不变；08负责业务组合根和Console身份接线，10负责受信执行边界。真实权威/停写证明缺失时，人工选择流程也不能补成checked。剩余实施需要具体宿主和独立实例参数、用户/unit/cgroup隔离、完整Python与Node运行环境、当前范围与删除证据、兼容批准，以及锁内恢复后重验和短期启动许可；本轮未接这些实际执行动作。
+
+人工复核并发约束补充：每次begin/confirm绑定进程内失效代际；短临界区只保护代际与ticket，check_current在锁外。invalidate或第二次begin发生在回调期间时，旧操作不得发布ticket/reviewed；confirm原子消费防止并发重复确认。此同步仅属该会话，不替代FileLock、跨进程权威或激活前重验。

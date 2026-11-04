@@ -265,3 +265,11 @@ GitHub读取第一页20个Release后定位基线的精确标签，不继续无�
 矩阵增量：first_install仍partial，仅新增真实包首装准备事务证据；two_instances新增配置/unit名称及失败不串写，不代证不同用户/cgroup；恢复人工会话的invalidate/重启/重复/当前证据变化按预期拒绝或manual。完整systemd首装、升级、回退、开机恢复仍blocked。其余18项矩阵维持原状态。
 
 给00的下一包：提供专用完整systemd测试环境及实例用户/路径/端口；确认受信人工入口与备份外当前权限/删除证据来源；完成Python/Node环境、端口、permit/launcher和锁内恢复后重验接线。08负责组合根/Console，05/07/09接口与checker来源仍由各负责人维护。manual reconcile仍仅方案，不补写ownership、不删除孤儿目录、不实现接管。未合并、部署、操作真实服务、QQ、付费模型或生产数据。新增测试和全部日志依AGENTS仅保留在忽略runtime目录，不纳入PR。
+
+## 2026-11-04：12复核P2—人工会话在途失效修复
+
+被审f3faea3953c4c925b03dd0031ce695c5f4953242的begin/confirm在回调期间invalidate可复活ticket或返回reviewed，采纳任务12复现。recovery_preflight.py增加实例内Lock与单调代际：begin在锁内撤销旧票并捕获代际；confirm在锁内原子消费票并捕获新代际；回调与报告复制/比较在锁外；发布ticket或reviewed前锁内复核代际。invalidate和第二次begin可立即撤销在途检查，不等待长回调。重复确认仅一次消费；没有新RPC或持久批准，activation_permitted仍false。
+
+本地独立事件屏障测试6项，覆盖begin/confirm期间invalidate、第二次begin分别越过两阶段、跨线程重复confirm及回调内直接invalidate。相同测试对旧Git固定源码5项失败、1通过；修复后Windows/Linux各6通过。原纯预检/串行人工会话/launcher拒绝与profile共23项，22通过、1 Linux路径检查跳过。架构门禁及diff检查通过。未重跑实物安装/RPC/恢复矩阵。测试和完整日志按AGENTS仅在runtime/task10/review-race-20261104保留；复现命令python -B runtime/task10/review-race-20261104/test_race.py，基线由git show f3faea3:deploy/recovery_preflight.py导出并以TASK10_REVIEW_SOURCE指定。
+
+此修复只保证内存会话操作的同步和在途撤销，不是跨进程锁或启动许可；返回完成后发生的后续失效仍须实际执行边界重验。完整launcher、独立安装完成态及锁内05/07/09接线尚未实现。原head CI41752494642最终7项success、publish skipped；新head CI须另绑定。专属WSL环境创建已获用户单独授权，后续环境记录不得与本P2纯内存验证混为一项。

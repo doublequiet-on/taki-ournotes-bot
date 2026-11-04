@@ -12,6 +12,7 @@ import hashlib
 import os
 import stat
 import copy
+import threading
 
 
 def measure_components(files):
@@ -135,14 +136,24 @@ class ManualRecoveryReview:
         if not callable(check_current):
             raise ValueError('current_recovery_check_required')
         self._check = check_current
+        self._lock = threading.Lock()
+        self._generation = 0
         self.invalidate()
 
     def invalidate(self):
+        with self._lock:
+            self._invalidate_locked()
+
+    def _invalidate_locked(self):
+        # Caller holds _lock; callbacks must never execute under this lock.
+        self._generation += 1
         self._ticket = None
         self._snapshot = None
 
     def begin(self):
-        self.invalidate()
+        with self._lock:
+            self._invalidate_locked()
+            generation = self._generation
         try:
             value = self._check()
         except (OSError, TimeoutError):
@@ -154,17 +165,24 @@ class ManualRecoveryReview:
             if isinstance(value, dict) and value.get('status') in ('manual', 'reject') and value.get('activation_permitted') is False:
                 return None, copy.deepcopy(value)
             return None, dict(status='manual', reason='current_recovery_report_invalid', activation_permitted=False)
-        self._snapshot = copy.deepcopy(value)
-        self._ticket = object()
-        return self._ticket, copy.deepcopy(value)
+        snapshot = copy.deepcopy(value)
+        report = copy.deepcopy(value)
+        with self._lock:
+            if generation != self._generation:
+                return None, dict(status='manual', reason='manual_review_missing_or_invalidated', activation_permitted=False)
+            self._snapshot = snapshot
+            self._ticket = object()
+            return self._ticket, report
 
     def confirm(self, ticket, *, current_permissions_confirmed=False, current_deletions_confirmed=False):
         def result(status, reason):
             return dict(status=status, reason=reason, activation_permitted=False)
-        if self._ticket is None or ticket is not self._ticket:
-            return result('manual', 'manual_review_missing_or_invalidated')
-        snapshot = self._snapshot
-        self.invalidate()  # Consume before rechecking, including failed confirmations.
+        with self._lock:
+            if self._ticket is None or ticket is not self._ticket:
+                return result('manual', 'manual_review_missing_or_invalidated')
+            snapshot = self._snapshot
+            self._invalidate_locked()  # Consume atomically before rechecking.
+            generation = self._generation
         if current_permissions_confirmed is not True or current_deletions_confirmed is not True:
             return result('reject', 'current_permissions_and_deletions_not_confirmed')
         try:
@@ -173,4 +191,7 @@ class ManualRecoveryReview:
             return result('manual', 'current_authority_unavailable')
         if current != snapshot:
             return result('manual', 'manual_review_evidence_changed')
-        return result('reviewed', 'manual_review_current_activation_pending')
+        with self._lock:
+            if generation != self._generation:
+                return result('manual', 'manual_review_missing_or_invalidated')
+            return result('reviewed', 'manual_review_current_activation_pending')
