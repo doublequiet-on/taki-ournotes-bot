@@ -60,4 +60,4 @@ python3 scripts/build_downstream_console.py \
   --output /absolute/new/output
 ```
 
-校验器要求实际输入ZIP摘要、重建包`TAKI-CONSOLE.json.inputs_sha256`及索引`public_source_v2`角色三方一致，内部manifest自洽但错配的输入会被拒绝。旧补充包中的builder不得覆盖索引指向的当前提交。`hosting_url`保持空、`published=false`。公开位置、访问范围、保留责任、个人/定制selection、物理裁剪、真实安装恢复和公开分发仍需后续决定，因此`complete_corresponding_source=false`、`product_release=false`保持。
+校验器要求实际输入ZIP摘要、重建包`TAKI-CONSOLE.json.inputs_sha256`及索引`public_source_v2`角色三方一致，内部manifest自洽但错配的输入会被拒绝。规格文件还须在自身hash/size核验后解析：`inputs_file/inputs_size/inputs_sha256`必须描述实际输入（size严格为整数），builder写入绑定的`component/version/package_version/upstream_commit`须与重建组件一致，Node/Yarn标签须对应已验ZIP的固定工具成员。旧c626规格即使文件hash自洽也拒绝；builder未使用的element_plus/devtools/source_complete等说明字段不被冒称为生成过程验证。旧补充包中的builder不得覆盖索引指向的当前提交。`hosting_url`保持空、`published=false`。公开位置、访问范围、保留责任、个人/定制selection、物理裁剪、真实安装恢复和公开分发仍需后续决定，因此`complete_corresponding_source=false`、`product_release=false`保持。

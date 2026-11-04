@@ -111,6 +111,23 @@ def main(inputs: Path, frozen: Path, rebuilt: Path, output: Path, index_path: Pa
         if (not spec_path.is_file() or spec.get('size') != spec_path.stat().st_size
                 or spec.get('sha256') != sha(spec_path)):
             raise ValueError('Indexed public_source_v2 input specification differs')
+        config = json.loads(spec_path.read_text(encoding='utf-8'))
+        if (not isinstance(config, dict)
+                or type(config.get('inputs_size')) is not int
+                or config['inputs_size'] != inputs.stat().st_size
+                or config.get('inputs_sha256') != actual_inputs_sha256
+                or config.get('inputs_file') != inputs.name):
+            raise ValueError('Input specification does not describe the actual public_source_v2 archive')
+        # Identity fields copied by the builder into package/binding metadata;
+        # tool versions must describe members of this already verified ZIP.
+        for key in ('component', 'version', 'package_version', 'upstream_commit'):
+            if (not isinstance(config.get(key), str) or not config[key]
+                    or config[key] != rebuilt_binding.get(key)):
+                raise ValueError('Input specification component identity differs: ' + key)
+        if (not isinstance(config.get('node'), str) or not isinstance(config.get('yarn'), str)
+                or f"tools/node-v{config['node']}-linux-x64.tar.xz" not in names
+                or f"tools/yarn-{config['yarn']}.cjs" not in names):
+            raise ValueError('Input specification tool versions differ from the actual input members')
         allow = set(index['product_vendor_allowlist'])
         excluded = set(index['product_vendor_excluded_internal_history'])
         if allow & excluded or not all(Path(path).is_file() for path in allow | excluded):
@@ -123,6 +140,8 @@ def main(inputs: Path, frozen: Path, rebuilt: Path, output: Path, index_path: Pa
             'current_material_commit': commit,
             'build_files': len(index['current_build_files']),
             'local_materials': len(index['local_materials']),
+            'inputs_spec_semantically_bound': True,
+            'inputs_spec_sha256': sha(spec_path),
             'hosting_url': None,
             'published': False,
         }
