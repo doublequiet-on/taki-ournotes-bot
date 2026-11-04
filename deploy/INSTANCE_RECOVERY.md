@@ -1,6 +1,6 @@
 # 独立实例计划与恢复预检（任务10）
 
-本轮实现部署侧纯计划、恢复检查编排与文件测量。**没有安装器、数据恢复执行器或自动激活入口**。`checked` 只表示此次受信回调检查完成；所有输出均为 `activation_permitted=false`。缺候选、缺政策、缺当前权威均不会补成批准。
+部署侧提供纯计划、恢复检查编排、文件测量、独立首装离线运行环境安装，以及受信控制器进程内的隔离夹具启动会话。**没有生产自动激活或数据恢复执行器**。`checked` 只表示此次受信回调检查完成；所有回执均为 `activation_permitted=false`。缺候选、缺政策、缺当前权威均不会补成批准。隔离夹具进程运行与真实产品激活分别记账，最新接线边界见文末。
 
 ## 已核对入口与副作用
 
@@ -211,3 +211,33 @@ SQLite固定 `mode=ro&immutable=1`、`query_only=ON`、`trusted_schema=OFF`，�
 上述确认参数只能来自受信人工操作流程，不可直接映射Console/RPC传入布尔值。05会话/09 checker来源/07外部权威约束不变；08负责业务组合根和Console身份接线，10负责受信执行边界。真实权威/停写证明缺失时，人工选择流程也不能补成checked。剩余实施需要具体宿主和独立实例参数、用户/unit/cgroup隔离、完整Python与Node运行环境、当前范围与删除证据、兼容批准，以及锁内恢复后重验和短期启动许可；本轮未接这些实际执行动作。
 
 人工复核并发约束补充：每次begin/confirm绑定进程内失效代际；短临界区只保护代际与ticket，check_current在锁外。invalidate或第二次begin发生在回调期间时，旧操作不得发布ticket/reviewed；confirm原子消费防止并发重复确认。此同步仅属该会话，不替代FileLock、跨进程权威或激活前重验。
+
+## 离线运行环境与锁内隔离执行接线（2026-11-04）
+
+`instance_install.install_runtime(settings)`要求实际Linux root、Python3.12/x86_64和只有lo的调用者网络命名空间。它在现有FileLock内消费已暂存固定组合，写installed.json的installing意图，复用unpack_bundle/extract_archive、venv --copies、pip --no-index --require-hashes及pip check，最后用原tree_digest/environment_digest与freeze_release记录installed。previous为空；这个installed只代表依赖/源码准备完成，不代表Engine active/current或产品批准。失败保留意图、安装日志与目录，存在旧记录/目录时拒绝自动续装。没有改变旧LinuxBackend、迁移v2、备份或代码回退语义，也不安装QQ凭据。
+
+`isolated_runtime.IsolatedRuntime(settings,check_current,stop_writers,entries)`是受信Python控制器内的特定隔离验收接口，不是RPC或可持久化授权框架。check_current必须每次调用现有recovery_preflight及真实05/07/09；stop_writers必须覆盖当前实例所有登记writer和trigger，且在FileLock内执行，随后由read_isolation证实停写。调用者不能传Console JSON或备份中的allow替代可信回调。entries精确为backend/gateway两个已审核的合成入口文件，位于实例root拥有的controller目录；不支持任意产品启动命令或默认批准。
+
+会话进入后保持实例FileLock直到所有直接子进程停止。运行时重新校验installed设置摘要、整包清单、代码/venv摘要、实际解释器及入口文件；不使用包内控制器替换受信模块。approve(confirm_current)先取得新报告，由受信人工回调明确返回current_permissions_confirmed/current_deletions_confirmed，再通过ManualRecoveryReview复查。只有reviewed才生成两张独立角色、不透明、30秒有效、仅内存存在的一次性许可。start消费后重新检查当前报告及安装测量，最后核代际/期限，再以目标UID/GID、空附加组、最小环境启动实际Python或Node进程。实例/端口/Console-state从settings传给离线夹具，不能从继承环境带入真实token。
+
+invalidate可以跨线程撤销在途操作和未用许可；执行/测量/恢复后重验限定创建会话的控制线程。回调不持短线程锁；同一实例FileLock仍保护完整操作窗口。第二次approve、重启、新会话、角色错配、重复消费、超时、组件/范围/删除证据变化均不重用旧票。许可是本控制器会话的隔离夹具启动许可，所有结果仍activation_permitted=false，不能序列化交给独立launcher或恢复为真实批准。
+
+after_restore不执行数据拷贝：先撤销许可、停止本会话子进程并调用stop_writers，再测量和执行当前检查；即使checked也须重新人工复核。停止不能确认时不释放writer锁；外层必须由专属systemd控制组保证控制器异常退出后的子进程清理。本接口不是通用后台进程监护器，入口必须是已审核的离线夹具；生产运行中的持续撤权/禁写仍由08业务生命周期和未来受信执行边界负责。
+
+### 本轮真正运行的范围
+
+专属Taki-Task10-2404、实际systemd控制器unit、显式NetworkNamespacePath只有lo，gamma/delta两个root安装树、UID999/997，固定候选0026159包各自离线安装venv/Node。后台是已安装Python包导入后运行的合成HTTP后端；网关是包内真实Console/Koishi/BackendClient，用合成密码和仅loopback后端，没有加载QQ adapter。两对实际进程分别使用29100/29101/29102和29200/29201/29202。管理状态为合成数据。
+
+检查函数使用固定可信09源码3dda6d29955328777f7e526c21bfd2828dbbea8a和包内05 ProductIdentitySession/ScopeStore、07 check_recovery；SQLite physical/logical3经只读观察器生成schemas。产品身份、独立范围approval、当前删除authority、人工确认和部分隔离修订值明确是SYNTHETIC fixture，不构成生产权威。两实例为全新对象，stop_writers实际确认对应writer units不存在且FileLock已持有；恢复后测试则真实停止本会话子进程。未把这个全新夹具的stop回调宣称为通用生产停写适配器。
+
+### 仍缺的具体接线，交00分配
+
+| 接口 | 当前边界及需要的精确输入 | 负责人 |
+|---|---|---|
+| 独立launcher CLI | --instance-config仍manual/退出2；本轮已运行的是控制器内IsolatedRuntime路径。需要固定可信控制器会话入口、实例/角色与调用者绑定、失联/重启撤销、与FileLock一致的进程生命周期。不能用磁盘allow替代；本轮不创建通用RPC | 10受信执行边界；08提供现有组合根入口 |
+| 当前身份和范围 | check_current每次需要同次candidate/expected/observed、原始manifest摘要、组件映射、schema、checker来源；05需要可信ProductIdentitySession、check_scope_binding原样结果、独立approval及代际/撤销来源 | 09合同和映射；05会话合同；08注入可信当前快照；10消费并重验 |
+| 当前删除权威 | 备份树外无参读取器，绑定binding/policy_generation/deletion_generation/journal_sha256/evidence_version与全部replicas；candidate须来自实际恢复副本测量。人工确认不能生成缺失字段 | 07语义；00/08确定实际权威源；10复测 |
+| 生产停写/双进程启动隔离 | 明确全部writer/timer/socket/controller清单、cgroup/PID/锁/触发器停止证明及恢复顺序；第一进程启动后第二次检查如何维持禁止业务写入的状态，需要真实运行门。不能把夹具只读后端当作生产backend的禁写能力 | 10宿主适配，08业务接纳/写入门 |
+| 恢复执行与持续撤权 | 现有备份/事务保护内实际恢复动作、恢复后实际全量副本测量；运行中撤销的停写/停发时序。本轮after_restore只是执行后重验入口，不恢复数据，也不监控未来所有变更 | 10事务边界，07删除覆盖，08持续业务执行 |
+
+这些是未实现/未接线的具体部分；专属环境已存在，不能再记成缺环境，也不能用缺真实生产批准阻止独立实现和合成隔离验收。最终产品selection、安全旧回退版本和具体生产恢复仍未批准。

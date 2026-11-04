@@ -8,6 +8,8 @@ from pathlib import Path, PurePosixPath
 import os
 import re
 import stat
+import subprocess
+import sys
 
 try:
     from .instance_preflight import digest, read_document
@@ -124,3 +126,73 @@ def inspect_first_install(settings):
             or value.get('phase') not in ('staging', 'staged_pending_manual_review')):
         raise ValueError('first_install_record_invalid')
     return dict(status='manual', reason=value['phase'], record=value, activation_permitted=False)
+
+
+def require_loopback():
+    """Check the actual caller namespace, not the systemctl client's intent."""
+    import json
+    if sys.platform != 'linux' or os.geteuid() != 0:
+        raise ValueError('isolated_controller_requires_linux_root')
+    interfaces = json.loads(subprocess.check_output(['/usr/sbin/ip', '-j', 'addr'], text=True))
+    routes = json.loads(subprocess.check_output(['/usr/sbin/ip', '-j', 'route'], text=True))
+    routes6 = json.loads(subprocess.check_output(['/usr/sbin/ip', '-6', '-j', 'route'], text=True))
+    if not interfaces or any(i['ifname'] != 'lo' for i in interfaces) or routes or routes6:
+        raise ValueError('loopback_namespace_required')
+
+
+def install_runtime(settings):
+    """Complete offline runtime preparation, never activate or resume a failure.
+
+    Uses the existing bundle/extraction/environment seal conventions. The installed
+    record denotes code and dependencies only, not approved product activation.
+    """
+    try:
+        from .offline_bundle import require_target, unpack_bundle
+        from .linux_backend import extract_archive, freeze_release, environment_digest, tree_digest
+        from .koishi_control import verify_combination
+    except ImportError:
+        from offline_bundle import require_target, unpack_bundle
+        from linux_backend import extract_archive, freeze_release, environment_digest, tree_digest
+        from koishi_control import verify_combination
+    require_loopback()
+    require_target()
+    p = layout(settings)
+    _trusted_directory(p['state'])
+    with FileLock(Path(p['state'])/'update.lock'):
+        staged = inspect_first_install(settings)['record']
+        if staged['phase'] != 'staged_pending_manual_review':
+            raise ValueError('first_install_not_staged')
+        record = Path(p['state'])/'installed.json'
+        root = Path(p['base'])/'application'
+        if record.exists() or record.is_symlink() or root.exists() or root.is_symlink():
+            raise ValueError('runtime_install_requires_manual_reconcile')
+        combo = Path(p['combinations'])/staged['commit']
+        verify_combination(combo, staged['commit'], staged['python_sha256'])
+        value = dict(kind='taki-independent-runtime/1', phase='installing',
+                     settings_sha256=digest(settings), commit=staged['commit'],
+                     python_sha256=staged['python_sha256'], previous=None,
+                     activation_permitted=False)
+        atomic_json(record, value)
+        root.mkdir(mode=0o755)
+        payload = root/'payload'
+        unpack_bundle(combo/'python/taki-linux-x86_64-cp312.zip', payload,
+                      staged['commit'], staged['python_sha256'])
+        extract_archive(payload/'source.tar.gz', root/'code', staged['commit'])
+        env = {'PATH': '/usr/bin:/bin', 'HOME': str(root), 'LANG': 'C.UTF-8',
+               'PYTHONDONTWRITEBYTECODE': '1', 'PIP_CONFIG_FILE': '/dev/null',
+               'PIP_DISABLE_PIP_VERSION_CHECK': '1', 'PIP_NO_CACHE_DIR': '1'}
+        with (root/'install.log').open('xb') as log:
+            def run(args):
+                subprocess.run([str(a) for a in args], env=env, cwd=root, check=True,
+                               stdout=log, stderr=subprocess.STDOUT, timeout=240)
+            run([sys.executable, '-m', 'venv', '--copies', root/'venv'])
+            python = root/'venv/bin/python'
+            run([python, '-m', 'pip', 'install', '--no-index', '--no-compile',
+                 '--find-links', payload/'wheelhouse', '--require-hashes',
+                 '-r', payload/'requirements.lock'])
+            run([python, '-m', 'pip', 'check'])
+        freeze_release(root)
+        value.update(phase='installed', code_digest=tree_digest(root/'code'),
+                     environment_digest=environment_digest(root/'venv'))
+        atomic_json(record, value)
+        return value

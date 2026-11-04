@@ -273,3 +273,34 @@ GitHub读取第一页20个Release后定位基线的精确标签，不继续无�
 本地独立事件屏障测试6项，覆盖begin/confirm期间invalidate、第二次begin分别越过两阶段、跨线程重复confirm及回调内直接invalidate。相同测试对旧Git固定源码5项失败、1通过；修复后Windows/Linux各6通过。原纯预检/串行人工会话/launcher拒绝与profile共23项，22通过、1 Linux路径检查跳过。架构门禁及diff检查通过。未重跑实物安装/RPC/恢复矩阵。测试和完整日志按AGENTS仅在runtime/task10/review-race-20261104保留；复现命令python -B runtime/task10/review-race-20261104/test_race.py，基线由git show f3faea3:deploy/recovery_preflight.py导出并以TASK10_REVIEW_SOURCE指定。
 
 此修复只保证内存会话操作的同步和在途撤销，不是跨进程锁或启动许可；返回完成后发生的后续失效仍须实际执行边界重验。完整launcher、独立安装完成态及锁内05/07/09接线尚未实现。原head CI41752494642最终7项success、publish skipped；新head CI须另绑定。专属WSL环境创建已获用户单独授权，后续环境记录不得与本P2纯内存验证混为一项。
+
+## 2026-11-04：独立离线安装与实际隔离进程接线
+
+开工固定head d4be5dabb121c2758f378b812c0035da8e44b9b7；继续原工作区/分支/PR199。本轮新增deploy/isolated_runtime.py，扩展instance_install.py，并更新本记录、INSTANCE_RECOVERY.md和L2.md。未改旧生产launcher/Engine或05/07/08/09源码。
+
+install_runtime现已实际建立Python venv、安装固定带hash离线wheel和验证依赖、使用组合内Node、提取并封印代码/环境，记录installing→installed及previous=null；installed不是激活态。新增IsolatedRuntime在既有FileLock内调用受信停写/身份/范围/删除检查和人工复核，按30秒、每角色一次的内存许可启动已测量隔离入口，组件或当前证据变化拒绝。执行线程固定，invalidate可跨线程；恢复后先撤销并停子进程再重验，新启动须重新批准。源码完整测量与原封印约定复用，未设计通用RPC或持久allow文件。
+
+实际验证仅在已授权Taki-Task10-2404，systemd-run的NetworkNamespacePath指定仅lo。全新/var/lib/taki-task10/wiring/instances/gamma、delta各自安装固定候选0026159bc369c768e783294e8447de99a5f1973a/ZIP SHA256 4ce3e43013199145e19e3a13caa089dd7b826fd431c22182192ece182bf9ca32；Python配对hash da2e78d7c72dc40059cba678673c232ff366977a4bbbc79210fd5b24f814ca6b。可信09 checker字节再次比对Git3dda6d29955328777f7e526c21bfd2828dbbea8a:deploy/product_identity.py完全一致，hash736c983ae4b0d03e39c893a886df07d3839b434381dd6fbef406ab2143ca1d98，未用组合SHA代源。
+
+本地证据runtime/task10/runtime-wiring-20261104/：两条installed回执、13项矩阵增量、最终5项回归均按预期；新进程真实运行包内Console/Koishi/BackendClient，Python为安装包导入后的合成HTTP后端。实际UID999/997，端口29100/29101/29102与29200/29201/29202，HTML及健康/后端HTTP通过。没有加载QQ适配器、真实账号或模型。
+
+| 新场景 | 实际结果 |
+|---|---|
+| 两套运行环境安装与重复安装 | installed记录及代码/venv封印形成，重复安装拒绝，不覆盖原记录 |
+| 09身份allow、05未注入approval | manual/scope_approval_policy_pending，未产生票 |
+| 人工确认缺字段 | reject，未产生票 |
+| 当前范围/删除代际/入口文件变化 | 启动前重验拒绝并撤销未用票 |
+| invalidate、过期、第二次approve、重复消费 | 旧票拒绝；重复backend不能再次启动，独立gateway票仅正常消费一次 |
+| 同时两实例真实进程 | 两个不同UID、不同端口，真实Console页面可访问，回执activation_permitted=false |
+| 恢复后删除权威变更 | first.after_restore真实停止gamma子进程，07拒绝旧代际；delta PID继续存活且HTTP正常，未复活旧数据 |
+| 最终并发/停止边界 | 人工回调期间invalidate无票；非控制线程测量拒绝；恢复后重验使旧票失效，全部直接子进程停止后释放锁 |
+
+调用05的包内ProductIdentitySession/ScopeStore、09真实check_identity/check_scope_binding和07真实check_recovery；历史SQLite physical/logical3由只读观察器生成schemas。范围批准、当前删除权威、产品selection、人工确认与部分隔离修订值均明确合成。stop回调在FileLock下实际核对这些全新实例没有登记writer unit，恢复后真实停止本会话子进程；这不是生产全writer/timer/socket停写适配器。未运行真实数据恢复、完整生产双进程启动或不安全旧版回退。
+
+失败日志保留：首次systemd退出225/NETWORK，原因是WSL空闲终止后/run/netns消失，未退回共享网络；改为同一调用内建立并核验namespace再启动unit。首次历史夹具缺boards/gaps/health被observer拒绝；在新合成authority目录补齐要求，不改观察器、不删除旧库或成功安装。一次本地驱动字符串替换误改日志目录日期，命令未启动；修正后继续。matrix-passed.log与systemd-run.log分别绑定13项和最后5项通过，namespace-missing.log/incomplete-fixture.log保留失败。
+
+Windows原预检/串行会话/launcher拒绝/profile23项，22通过1项Linux检查跳过；架构门禁与diff检查通过。没有重跑原RPC、所有历史格式或旧完整故障矩阵。本次first_install从只有暂存推进到installed准备态与真实隔离双进程；生产安装/恢复仍partial，18项总矩阵没有改成全通过。
+
+复现文件：transfer.py打包本任务deploy快照及固定工件到全新专属目录；exercise.py执行两套安装，run.py在同一WSL会话创建仅lo namespace并systemd-run；exercise_resume.py只重用已成功安装的封印环境，在新合成权威目录验证13项；exercise_final.py针对最后线程/停止保护跑5项。脚本绑定目录已存在时不可直接重装，需另选全新专属案例目录或显式核对已有installed记录，禁止删除意图求绿。binding.json记录两份源码文件hash及真实依赖源；evidence/保留每实例first-install/installed/session回执及install.log。新增验证脚本按AGENTS不纳入提交。
+
+精确下一包已列INSTANCE_RECOVERY.md末表：独立launcher CLI跨进程可信会话入口与角色/实例绑定、真实全部writer/trigger隔离证明、第一进程启动到第二进程检查期间的业务禁写门、真实当前05/07权威注入及运行中撤权、实际恢复执行与恢复后副本全量测量。当前CLI仍manual；本轮实际运行通过受信进程内API，不把磁盘allow当可信桥。缺生产批准不阻挡上述独立实现；缺可信接口也不由10伪造。专属环境已就绪，最终产品selection/安全回退目标/具体生产恢复未授权。PR202排除，无合并部署、生产/QQ/付费模型或其他对话联系。
