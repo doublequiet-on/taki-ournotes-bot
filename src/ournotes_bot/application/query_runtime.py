@@ -18,6 +18,7 @@ def confirmed_page(backend, work):
 
 
 def check_query_work(backend, work, deadline, leases=()):
+    require(not backend.recovery_revoked, 'execution_timeout')
     require(work.active and time.monotonic() < deadline, 'execution_timeout')
     require(time.monotonic() < work.content_deadline, 'context_expired')
     if work.anchor:

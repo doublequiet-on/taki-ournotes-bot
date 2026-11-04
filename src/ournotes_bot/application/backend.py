@@ -152,6 +152,35 @@ class Backend:
         self._close_task = None
         self.reaper_task = None
         self.reaper_error = None
+        self.recovery_revoked = False
+        self.recovery_finalizing = False
+        self._business_drain_task = None
+        self._recovery_quiesce = None
+        self._recovery_close = None
+
+    def revoke_recovery(self):
+        """Loop-thread only: latch denial; retain stores for in-flight receipts."""
+        self.recovery_revoked = True
+        self.closing, self.ready = True, False
+        self.operations.closing = True
+        if self._recovery_quiesce is not None: self._recovery_quiesce()
+
+    async def quiesce_recovery(self):
+        """Drain business writers, keeping the bounded receipt tail open."""
+        require(self._recovery_quiesce is not None, 'backend_lifecycle_not_started', 503)
+        self.revoke_recovery()
+        await drain_task(self._recovery_quiesce())
+        return {'business_writers_stopped': True, 'receipt_tail_open': not self.recovery_finalizing,
+                'pending_terminations': sum(work.terminal_pending for work in self.works.values())}
+
+    async def close_recovery(self):
+        """Caller must first retire/drain the gateway; no further ACK can enter."""
+        require(self._recovery_close is not None, 'backend_lifecycle_not_started', 503)
+        self.revoke_recovery()
+        self.recovery_finalizing = True
+        await drain_task(self._recovery_close())
+        return {'stores_closed': True,
+                'pending_terminations': sum(work.terminal_pending for work in self.works.values())}
 
     def expire(self):
         self.diagnostics.expire(self.clock())
@@ -279,6 +308,7 @@ class Backend:
         return {'gateway_epoch': epoch, 'backend_epoch': self.runtime}
 
     async def submit(self, payload, *, proactive=None):
+        require(not self.recovery_revoked, 'recovery_session_revoked', 503)
         started = time.perf_counter()
         request = Request.parse(payload, self.instance_id, self.app_id, self.clock(), reference_profiles=self.reference_profiles)
         require(request.trigger!='observation','request_trigger')
@@ -559,6 +589,7 @@ class Backend:
         return total
 
     def live(self, row, epoch):
+        if self.recovery_revoked: return False
         work = self.works.get(row['delivery'])
         if work and not work.chat and not self.contexts.active(work.lease):
             return False
@@ -637,7 +668,12 @@ class Backend:
 
     def apply_event(self, delivery, payload):
         payload = event(payload)
-        self.expire()
+        if self.recovery_revoked:
+            require(not self.recovery_finalizing, 'recovery_session_closed', 503)
+            require(payload['event'] in ('ack', 'aborted', 'batch_finished'), 'recovery_session_revoked', 503)
+            if payload['event'] == 'ack': payload = {**payload, 'allow_context': False}
+        else:
+            self.expire()
         row = self.ledger.by_delivery(delivery)
         require(row is not None and row['id'] == payload['request_id'], 'delivery_identity', 404)
         require(row['epoch'] == payload['gateway_epoch'], 'owner_epoch', 409)
@@ -753,16 +789,9 @@ class Backend:
         await drain_task(self._close_task)
 
     async def _close(self):
-        self.closing, self.ready = True, False
-        for work in list(self.works.values()): self.finish(work, 'aborted')
-        # Cancellation retains QueryGate's thread slot until its actual work ends.
-        tasks = list(self.tasks)
-        for task in tasks: task.cancel()
-        await asyncio.gather(*tasks, return_exceptions=True)
-        await self.models.close()
+        await self.quiesce_business()
         self.conversations.clear()
         self.contexts.clear()
-        if self.runtime_tasks: await self.runtime_tasks.close()
         if self.model_runtime is not None: await self.model_runtime.close()
         if self.knowledge is not None: self.knowledge.close()
         await self.operations.close()
@@ -770,9 +799,53 @@ class Backend:
         self.diagnostics.close()
         if self.data_owner: self.data_owner.close()
 
+    async def quiesce_business(self):
+        if self._business_drain_task is None:
+            self._business_drain_task = asyncio.create_task(self._quiesce_business())
+        await drain_task(self._business_drain_task)
 
-def create_app(backend, token, initialize=None):
+    async def _quiesce_business(self):
+        self.closing, self.ready = True, False
+        self.operations.closing = True
+        for work in list(self.works.values()): self.finish(work, 'aborted')
+        # Cancellation retains QueryGate's thread slot until its actual work ends.
+        tasks = list(self.tasks)
+        for task in tasks: task.cancel()
+        drains = [self.models.close(), self.operations.quiesce()]
+        if self.runtime_tasks: drains.append(self.runtime_tasks.close())
+        if self.model_runtime is not None: drains.append(self.model_runtime.quiesce())
+        results = await asyncio.gather(*tasks, *drains, return_exceptions=True)
+        for result in results[len(tasks):]:
+            if isinstance(result, BaseException): raise result
+
+
+RECOVERY_BACKEND = web.AppKey('taki_recovery_backend', Backend)
+
+
+def create_app(backend, token, initialize=None, *, assert_recovery_current=None):
     require(isinstance(token, str) and len(token) >= 32, 'backend_token_required')
+    active_http = set()
+    business_http = set()
+
+    def check_current():
+        if assert_recovery_current is not None and not backend.recovery_revoked:
+            try:
+                require(callable(assert_recovery_current) and assert_recovery_current() is None,
+                        'trusted_recovery_check_required')
+            except Exception:
+                backend.revoke_recovery()
+
+    def tail(request):
+        return request.method == 'POST' and (request.path == '/v1/gateways/retire'
+            or request.path.startswith(('/v1/deliveries/', '/v1/notices/')) and request.path.endswith('/events'))
+
+    def check_request(request):
+        check_current()
+        if not backend.recovery_revoked: return
+        if request.path == '/v1/health': return
+        require(not backend.recovery_finalizing, 'recovery_session_closed', 503)
+        require(not backend.recovery_revoked or tail(request) or request.path == '/v1/ready',
+                'recovery_session_revoked', 503)
 
     @web.middleware
     async def boundary(request, handler):
@@ -780,19 +853,33 @@ def create_app(backend, token, initialize=None):
             supplied = request.headers.get('Authorization', '')
             require(hmac.compare_digest(supplied.encode(), ('Bearer '+token).encode()), 'unauthorized', 401)
             require(request.headers.get('X-Taki-Instance') == backend.instance_id, 'instance_mismatch', 403)
+            check_request(request)
             if request.path.startswith('/v1/admin/') and request.method == 'GET':
                 require(len(request.query) == len(set(request.query)), 'admin_parameters')
                 if request.path not in ('/v1/admin/requests','/v1/admin/notices'):
                     require(not request.query, 'admin_parameters')
-            return await handler(request)
+            current = asyncio.current_task()
+            active_http.add(current)
+            if not tail(request) and request.path not in ('/v1/health', '/v1/ready'): business_http.add(current)
+            try:
+                return await handler(request)
+            finally:
+                active_http.discard(current)
+                business_http.discard(current)
         except ProtocolError as exc:
             return web.json_response({'error': exc.code, 'protocol': PROTOCOL}, status=exc.status)
 
     app = web.Application(middlewares=[boundary], client_max_size=32768)
+    app[RECOVERY_BACKEND] = backend
     def json(value, status=200): return web.json_response(value, status=status, headers={'Cache-Control': 'no-store'})
     async def read_json(request):
         try:
-            return await request.json()
+            value = await request.json()
+            check_request(request)
+            if backend.recovery_revoked and tail(request) and request.path.endswith('/events'):
+                require(isinstance(value, dict) and value.get('event') in ('ack', 'aborted', 'batch_finished'),
+                        'recovery_session_revoked', 503)
+            return value
         except (jsonlib.JSONDecodeError, UnicodeError):
             raise ProtocolError('invalid_json') from None
     async def health(request): return json({'alive': True, 'protocol': PROTOCOL})
@@ -1041,6 +1128,8 @@ def create_app(backend, token, initialize=None):
     async def lifetime(app):
         async def load():
             try:
+                check_current()
+                if backend.closing: return
                 if initialize is not None: await finish_thread(initialize)
                 if not backend.closing:
                     if backend.runtime_tasks: backend.runtime_tasks.start()
@@ -1068,24 +1157,62 @@ def create_app(backend, token, initialize=None):
         expiry = asyncio.create_task(reaper())
         backend.reaper_task = expiry
         observation = asyncio.create_task(flush_observation())
+        quiescing = None
+        closing = None
+
+        async def quiesce():
+            # No cancellation can detach a finish_thread owner from its writer.
+            results = await asyncio.gather(task, expiry, observation, backend.quiesce_business(),
+                                           *list(business_http), return_exceptions=True)
+            # Request failures/cancelled lifetime loops are not writer failures.
+            if isinstance(results[3], BaseException): raise results[3]
+
+        def start_quiesce():
+            nonlocal quiescing
+            if quiescing is None:
+                # Signal synchronously, before another ready callback can start
+                # a refresh, probe or preparation. Draining remains async.
+                task.cancel()
+                expiry.cancel()
+                observation.cancel()
+                for work_task in list(backend.tasks): work_task.cancel()
+                backend.models.closed = True
+                if backend.runtime_tasks: backend.runtime_tasks.request_stop()
+                if backend.model_runtime: backend.model_runtime.request_stop()
+                quiescing = asyncio.create_task(quiesce(), name='backend-recovery-quiesce')
+            return quiescing
+
         async def shutdown():
-            backend.closing = True
-            expiry.cancel()
-            observation.cancel()
-            try:
-                await asyncio.gather(expiry, observation, return_exceptions=True)
-            finally:
-                # Even a separately cancelled initializer owns its real thread
-                # until finish_thread settles. Close stores only afterwards.
-                try:
-                    await task
-                finally:
-                    await backend.close()
+            backend.revoke_recovery()
+            backend.recovery_finalizing = True
+            await drain_task(start_quiesce())
+            # Receipt requests admitted before sealing retain their stores.
+            await asyncio.gather(*list(active_http), return_exceptions=True)
+            await backend.close()
+
+        def start_shutdown():
+            nonlocal closing
+            if closing is None:
+                closing = asyncio.create_task(shutdown(), name='backend-recovery-close')
+            return closing
+
+        backend._recovery_quiesce = start_quiesce
+        backend._recovery_close = start_shutdown
+        if backend.recovery_revoked: start_quiesce()
+
+        async def watch_recovery():
+            while not backend.recovery_revoked:
+                check_current()
+                await asyncio.sleep(.1)
+        watcher = asyncio.create_task(watch_recovery()) if assert_recovery_current is not None else None
         try:
             yield
         finally:
             # HTTP cleanup is a waiter, not the owner of the shutdown sequence.
             # Cancellation must not skip initializer draining or store closure.
-            await drain_task(asyncio.create_task(shutdown()))
+            if watcher is not None:
+                watcher.cancel()
+                await asyncio.gather(watcher, return_exceptions=True)
+            await drain_task(start_shutdown())
     app.cleanup_ctx.append(lifetime)
     return app

@@ -297,9 +297,18 @@ class ModelRuntime:
                 await asyncio.sleep(3600)
         self.task=asyncio.create_task(prices())
 
-    async def close(self):
+    def request_stop(self):
+        if self.task: self.task.cancel()
+        self.admin.request_stop()
+
+    async def quiesce(self):
+        self.request_stop()
         if self.task:
-            self.task.cancel();await asyncio.gather(self.task,return_exceptions=True)
+            await asyncio.gather(self.task,return_exceptions=True)
+        await self.admin.quiesce()
+
+    async def close(self):
+        await self.quiesce()
         await self.admin.close()
         if self.agent: self.agent.close()
         self.usage.close()

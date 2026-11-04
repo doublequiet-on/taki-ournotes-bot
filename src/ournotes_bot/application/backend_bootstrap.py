@@ -77,7 +77,9 @@ def _build_backend(args, settings, *, query_only, assert_recovery_current=None):
         SourceOperations(backend).register()
         RuntimeOperations(backend).register()
         backend.data_owner = owner
-        return create_app(backend, token, repository.load)
+        if assert_recovery_current is None:
+            return create_app(backend, token, repository.load)
+        return create_app(backend, token, repository.load, assert_recovery_current=assert_recovery_current)
     except BaseException:
         if backend is not None:
             if backend.knowledge is not None: backend.knowledge.close()

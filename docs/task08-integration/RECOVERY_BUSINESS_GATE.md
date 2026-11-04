@@ -1,5 +1,7 @@
 # 恢复组合根：业务拒绝点与待接接口
 
+后续Backend进程内排空接口已实现，见[撤权生命周期](RECOVERY_LIFECYCLE.md)。下文是37af641阶段的固定范围；跨进程会话/双角色屏障仍未完成。
+
 本轮基线 `982f042889d9de84e13aa2aedaca51faeea5bd5b`，原08工作区、分支及PR200。只读10固定提交 `573c7586c3e05d2699c31e6523e68c70521a7df1` 的INSTANCE_RECOVERY、TASK10_VALIDATION、isolated_runtime及recovery_preflight。未合入10执行代码，PR202排除。
 
 **交付是可接线的拒绝点，不是已完成的恢复运行链。** 用户已选人工核对当前权限和删除记录、未知不恢复。专用WSL已存在，本轮没有占用它；缺口是业务/控制器接口，不是环境或用户还没批准人工模式。

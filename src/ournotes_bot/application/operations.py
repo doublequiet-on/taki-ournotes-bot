@@ -201,12 +201,15 @@ class Operations:
                 self.error = 'ops_result_unconfirmed'
                 return
 
-    async def close(self):
+    async def quiesce(self):
         self.closing = True
         if self.worker is not None:
             await asyncio.shield(self.worker)
         while self.notice_queue:
             await asyncio.to_thread(self.flush_notices)
+
+    async def close(self):
+        await self.quiesce()
         if self.db is not None:
             self.db.close()
             self.db=None
