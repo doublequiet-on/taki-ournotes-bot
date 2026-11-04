@@ -168,6 +168,7 @@ class KnowledgeAuthorityTests(unittest.TestCase):
         from ournotes_bot.application import knowledge_service as ks
         from ournotes_bot.application.backend import Backend
         from ournotes_bot.domain.knowledge import EvidenceLease, KnowledgeScope
+        from ournotes_bot.query.continuation import ContextKey, ContextStore
         self.write_fixture(text='## 工程测试\n'+'隔离测试内容。'*300)
         self.service.refresh()
         chunks=tuple(row.chunk for row in self.service.index[:6])
@@ -177,9 +178,11 @@ class KnowledgeAuthorityTests(unittest.TestCase):
         backend.model_runtime=None
         backend.knowledge=self.service;backend.runtime='runtime';backend.clock=lambda:10
         backend.ledger=SimpleNamespace(active=lambda epoch:True)
+        backend.contexts=ContextStore(clock=lambda:10)
+        ticket=backend.contexts.begin(ContextKey('qq','group','fixture','topic'))
         row=dict(delivery='delivery',status='prepared',epoch='epoch',runtime='runtime',expires=20)
         for count in (1,5):
-            work=SimpleNamespace(active=True,hint=False,chat=False,story_versions=(),proactive=None,prepared=[
+            work=SimpleNamespace(active=True,hint=False,chat=False,lease=ticket,story_versions=(),proactive=None,prepared=[
                 SimpleNamespace(evidence=(lease,lease),evidence_deadline=None) for _ in range(count)])
             backend.works={'delivery':work}
             with patch.object(self.service,'observe',wraps=self.service.observe) as observe, \

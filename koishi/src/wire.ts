@@ -3,6 +3,10 @@ import type { PolicySnapshot } from './group-policies'
 
 export const protocol = { major: 2, minor: 2 } as const
 export const capability = 'qq-query-chat-v6'
+// Official passive ceilings: group 5/300s, C2C 5/3600s (2026-11-03).
+// Taki deliberately keeps a shorter, common 298s admission lifetime.
+export const outputLimits = Object.freeze({maxSends:5, replyWindowMs:298_000,
+  maxImageBytes:3_000_000, maxTextChars:1800})
 export class BackendError extends Error {
   constructor(public readonly code: string, public readonly status = 0) { super(code) }
 }
@@ -137,7 +141,7 @@ function payloadPart(value: unknown, position: number): TextPart | ImagePart {
 }
 export function decodePlan(value: unknown): Plan {
   const v=object(value,'plan_shape'), status=choice(v.status,['preparing','prepared','finished','failure','uncertain','aborted','expired','failed'],'plan_shape')
-  requireWire(v.plan_version===1 && Array.isArray(v.parts) && v.parts.length<=5,'plan_shape')
+  requireWire(v.plan_version===1 && Array.isArray(v.parts) && v.parts.length<=outputLimits.maxSends,'plan_shape')
   const base:PlanBase={protocol:wireProtocol(v.protocol),request_id:hex(v.request_id,64,'plan_shape'),
     delivery_id:hex(v.delivery_id,32,'plan_shape'),plan_version:1,expires_at:finite(v.expires_at,'plan_shape'),
     reply_mention:boolean(v.reply_mention,'plan_shape')}
@@ -183,7 +187,7 @@ export function decodeRecorded(value: unknown): Recorded {
 export function decodeAcknowledgement(value: unknown): Recorded & Plan { return {...decodeRecorded(value),...decodePlan(value)} }
 export function decodeIntent(value: unknown): {permission:'granted'|'existing'|'denied';msg_seq:number} {
   const v=object(value,'intent_shape')
-  return {permission:choice(v.permission,['granted','existing','denied'],'intent_shape'),msg_seq:integer(v.msg_seq,1,5,'intent_shape')}
+  return {permission:choice(v.permission,['granted','existing','denied'],'intent_shape'),msg_seq:integer(v.msg_seq,1,outputLimits.maxSends,'intent_shape')}
 }
 export function decodeRegistration(value: unknown): {gateway_epoch:string;backend_epoch:string} {
   const v=object(value,'gateway_shape')

@@ -1742,6 +1742,25 @@ async function main() {
       assert.equal(env.calls.filter(c=>c.url.endsWith('/files')).length,4)
     }finally{await receiver.dispose();await fork.dispose();await env.ctx.stop()}
   })
+  await run('Receiver falls back only for image acquisition before intent',async()=>{
+    for (const code of ['image_admission','response_size','image_mime','backend_transport']) {
+      const env=createBot();let receiver,completed=false,fallback=false,intents=0
+      const decoded=await decodeIncoming(env.bot,event(),identity,recognizes)
+      const input={...decoded.inbound,timestampMs:Date.now()}
+      const plan=()=>({request_id:input.requestId,delivery_id:'a'.repeat(32),plan_version:1,status:completed?'finished':'prepared',
+        send_allowed:!completed,expires_at:Date.now()/1000+290,parts:[{id:fallback?'0:f':'0',position:0,
+        mode:fallback?'fallback':'primary',status:completed?'success':'pending',kind:fallback?'text':'image',text:'captured fallback'}]})
+      const client={epoch:'epoch',deactivate(){},async initialize(){},async retire(){},async image(){throw new BackendError(code)},
+        async lookup(){return plan()},async intent(){assert(fallback);intents++;return 'granted'},async acknowledge(){completed=true},
+        async event(p,event){assert.equal(event,'upload_failed');assert.equal(intents,0);fallback=true;return plan()}}
+      const fork=env.ctx.plugin(ctx=>{receiver=new Receiver(ctx,{...identity,backendUrl:'http://127.0.0.1:8765',tokenEnv:'unused',permissions:[],maxPending:8},client)})
+      try{
+        await receiver.deliver({input,plan:plan(),permissionAttempts:new Set()},env.bot)
+        assert.equal(intents,1);assert(completed);assert.equal(env.calls.length,1)
+        assert.equal(env.calls[0].data.msg_seq,1);assert(env.calls[0].data.markdown.content.includes('captured fallback'))
+      }finally{await receiver.dispose();await fork.dispose();await env.ctx.stop()}
+    }
+  })
   await run('Receiver wires official material APIs to one passive Markdown image and real mention',async()=>{
     const env=createBot();let receiver,completed=false,puts=0
     const directory=fs.mkdtempSync(path.join(require('node:os').tmpdir(),'taki-material-receiver-'))

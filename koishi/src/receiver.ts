@@ -5,7 +5,7 @@ import { Context, Session, Channel, User } from 'koishi'
 import type { QQBot } from '@satorijs/adapter-qq'
 import { BackendClient, BackendError, Plan, ModelPermission } from './backend'
 import { decodeIncoming, Identity, Inbound, pairId } from './ingress'
-import { QQDelivery, QQInternal } from './delivery'
+import { QQDelivery, QQInternal, type Outcome } from './delivery'
 import { Notices } from './notices'
 import { MaterialStore, materialRequest } from './materials'
 import type { Management } from './management'
@@ -449,9 +449,18 @@ export class Receiver {
         // A resumed plan with any prior attempt belongs to the original sender; never rebuild sequence state.
         if (!alive() || part.status !== 'pending') return
         if (part.kind !== 'text' && part.kind !== 'image' || typeof part.text !== 'string') throw new BackendError('part_shape')
-        const payload = part.kind === 'text' ? { kind: 'text' as const, text: part.text }
-          : { kind: 'image' as const, bytes: await this.client.image(job.plan, part), caption: part.text }
-        let result = await job.delivery.deliver(part.id, index, payload)
+        let result: Outcome
+        let bytes: Uint8Array | undefined
+        try {
+          if (part.kind === 'image') bytes = await this.client.image(job.plan, part)
+        } catch (error) {
+          // Image acquisition precedes intent. Only these bounded acquisition
+          // failures may ask the backend to replace this still-pending part.
+          if (!(error instanceof BackendError) || !['image_admission','response_size','image_mime','backend_transport'].includes(error.code)) throw error
+        }
+        if (part.kind === 'image' && !bytes) result = {status:'upload_failed',reason:'image_acquisition'}
+        else result = await job.delivery.deliver(part.id, index, part.kind === 'text'
+          ? {kind:'text',text:part.text} : {kind:'image',bytes:bytes!,caption:part.text})
         if (result.status === 'upload_failed') {
           const fallback: Plan = await this.client.event(job.plan, 'upload_failed', part.id)
           this.validate(fallback, job.input)
