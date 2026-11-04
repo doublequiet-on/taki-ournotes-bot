@@ -43,4 +43,4 @@
 
 ## 仍未放行
 
-版本化本地索引绑定当前builder/spec/两份patch、新v2输入、旧3762父材料及本轮Rollup增量；`hosting_url`保持空、`published=false`。公开位置、访问范围、保留责任、个人/定制selection、物理裁剪、真实安装恢复和公开分发仍需后续决定，因此`complete_corresponding_source=false`、`product_release=false`保持。
+版本化本地索引`deploy/licenses/koishi-console/candidate3-source-index.json`绑定当前builder/spec/两份patch、新v2输入、旧3762父材料及本轮Rollup增量；旧补充包中的builder不得覆盖索引指向的当前提交。`hosting_url`保持空、`published=false`。公开位置、访问范围、保留责任、个人/定制selection、物理裁剪、真实安装恢复和公开分发仍需后续决定，因此`complete_corresponding_source=false`、`product_release=false`保持。

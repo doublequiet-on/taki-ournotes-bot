@@ -1,0 +1,87 @@
+{
+  "identity": "taki-console-candidate3-source-index.1",
+  "component": {
+    "name": "taki-console",
+    "version": "0.1.0-candidate.3",
+    "package_version": "5.30.10-taki.3",
+    "sha256": "ea92ea91d816648023e61cf6ce7dfe2de98aece38e1ca8dd9292166f5537d1fb"
+  },
+  "frozen_release": {
+    "source_commit": "0026159bc369c768e783294e8447de99a5f1973a",
+    "combination_sha256": "4ce3e43013199145e19e3a13caa089dd7b826fd431c22182192ece182bf9ca32"
+  },
+  "current_material_commit": "9b192e03b48f3fac528d8b22fdf1d74554e0a13c",
+  "current_build_files": [
+    {
+      "path": "scripts/build_downstream_console.py",
+      "sha256": "4061b9c6dd0a2b65135e7441158fbf398b5ddf097be7fc3d8105b122fac36a48"
+    },
+    {
+      "path": "deploy/licenses/koishi-console/downstream-inputs.json",
+      "sha256": "c0e8137b187d267c7a5c55111edb5614dc06b8dc348d52ab1a6a741a9d3cdc7d"
+    },
+    {
+      "path": "deploy/licenses/koishi-console/downstream-build.cjs",
+      "sha256": "928e30c0cf980851da1ccaf07c5778b766ca6b27082c9f3ce82ea47e4659fc5c"
+    },
+    {
+      "path": "deploy/licenses/koishi-console/taki-reconnect-source.patch",
+      "sha256": "317eef2f366c2c1dc0e1a4f3e2fabe98fb7ac18fa65f638e98d4917b991761a0"
+    },
+    {
+      "path": "deploy/licenses/koishi-console/marked-vue-href.patch",
+      "sha256": "f5a928102fbf6dd184776c6b84ebf3d494153e3c63ef3ebc36f568774b7e24d1"
+    }
+  ],
+  "local_materials": [
+    {
+      "role": "frozen historical build input",
+      "path": "runtime/task09/security-20261104/console-candidate3-security-inputs-v2.zip",
+      "size": 128359885,
+      "sha256": "c6261043446d4d717af86a3466733f3f284021dbfd996082464ec202b2a68e0b"
+    },
+    {
+      "role": "candidate.2 parent source support; current builder and security patch are superseded by current_material_commit",
+      "path": "runtime/task09/build-repair-20261104/console-candidate2-source-support.zip",
+      "size": 4419328,
+      "sha256": "3762c2145fe2fdae8a74d7a81d46c2085becaf57ef8a6e79545161dc63cd05f8"
+    },
+    {
+      "role": "candidate.3 reduced corresponding-source candidate without cache-content-type 1.0.1",
+      "path": "runtime/task09/material-closure-20261104/console-candidate3-public-source-v2.zip",
+      "size": 128378153,
+      "sha256": "5b8f58153d17b2df4ecb26a218f57b7b0662fced3c89b63d9360f55c03d3c67f"
+    },
+    {
+      "role": "Rollup 4.67.4 Linux x64 glibc selected transitive sources and license texts",
+      "path": "runtime/task09/material-closure-20261104/rollup-4.67.4-linux-x64-glibc-transitive-materials.zip",
+      "size": 3367015,
+      "sha256": "0a70a0e6412abf0fb75d60fb31ee7812278e27338bb365ba43c4a0e15f3a4197"
+    }
+  ],
+  "rebuild_evidence": {
+    "runtime_files_compared": 26,
+    "runtime_bytes_equal_frozen_candidate3": true,
+    "only_changed_package_file": "TAKI-CONSOLE.json",
+    "rebuilt_tgz_sha256": "30e585e0f7749147c2609a424528a636c266949601b0000c43d8d654f2da6677",
+    "rebuilt_tgz_is_release_candidate": false
+  },
+  "product_vendor_allowlist": [
+    "koishi/vendor/README.md",
+    "koishi/vendor/console-candidate.json",
+    "koishi/vendor/taki-console-0.1.0-candidate.3.tgz"
+  ],
+  "product_vendor_excluded_internal_history": [
+    "koishi/vendor/taki-console-0.1.0-candidate.1.tgz",
+    "koishi/vendor/taki-console-0.1.0-candidate.2.tgz"
+  ],
+  "acquisition": {
+    "mode": "versioned local index only",
+    "hosting_url": null,
+    "access_scope": null,
+    "retention_owner": null,
+    "published": false
+  },
+  "complete_corresponding_source": false,
+  "product_release": false
+}

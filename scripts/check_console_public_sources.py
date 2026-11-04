@@ -10,6 +10,7 @@ import argparse
 import hashlib
 import json
 from pathlib import Path
+import subprocess
 import zipfile
 
 
@@ -24,7 +25,7 @@ def files(root: Path) -> dict[str, str]:
     }
 
 
-def main(inputs: Path, frozen: Path, rebuilt: Path, output: Path) -> None:
+def main(inputs: Path, frozen: Path, rebuilt: Path, output: Path, index_path: Path | None) -> None:
     with zipfile.ZipFile(inputs) as archive:
         manifest = json.loads(archive.read('input-manifest.json'))
         expected = {row['path']: row for row in manifest['files']}
@@ -79,6 +80,32 @@ def main(inputs: Path, frozen: Path, rebuilt: Path, output: Path) -> None:
         'complete_corresponding_source': False,
         'product_release': False,
     }
+    if index_path:
+        index = json.loads(index_path.read_text(encoding='utf-8'))
+        commit = index['current_material_commit']
+        for row in index['current_build_files']:
+            blob = subprocess.check_output(['git', 'show', f"{commit}:{row['path']}"])
+            if hashlib.sha256(blob).hexdigest() != row['sha256']:
+                raise ValueError('Indexed Git blob differs: ' + row['path'])
+        for row in index['local_materials']:
+            path = Path(row['path'])
+            if path.stat().st_size != row['size'] or sha(path) != row['sha256']:
+                raise ValueError('Indexed local material differs: ' + row['path'])
+        allow = set(index['product_vendor_allowlist'])
+        excluded = set(index['product_vendor_excluded_internal_history'])
+        if allow & excluded or not all(Path(path).is_file() for path in allow | excluded):
+            raise ValueError('Product vendor allow/exclude index is invalid')
+        if index['acquisition']['hosting_url'] is not None or index['acquisition']['published']:
+            raise ValueError('Unpublished local source index claims hosting')
+        result['source_index'] = {
+            'path': str(index_path),
+            'sha256': sha(index_path),
+            'current_material_commit': commit,
+            'build_files': len(index['current_build_files']),
+            'local_materials': len(index['local_materials']),
+            'hosting_url': None,
+            'published': False,
+        }
     output.write_text(json.dumps(result, indent=2) + '\n', encoding='utf-8')
     print(json.dumps(result, indent=2))
 
@@ -89,5 +116,6 @@ if __name__ == '__main__':
     parser.add_argument('--frozen-package', type=Path, required=True)
     parser.add_argument('--rebuilt-package', type=Path, required=True)
     parser.add_argument('--output', type=Path, required=True)
+    parser.add_argument('--index', type=Path)
     args = parser.parse_args()
-    main(args.inputs, args.frozen_package, args.rebuilt_package, args.output)
+    main(args.inputs, args.frozen_package, args.rebuilt_package, args.output, args.index)
