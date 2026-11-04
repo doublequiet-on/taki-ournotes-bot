@@ -174,3 +174,46 @@ GitHub读取第一页20个Release后定位基线的精确标签，不继续无�
 | code_rollback | partial：真实旧→新→旧管理文件兼容及数据不回退通过 | 完整服务事务仍blocked；兼容批准/服务适配器/停写证明未齐 |
 | half_started | blocked：旧完整工件已齐 | 尚无服务半启动与停写控制验证 |
 | current_switch | partial：沿用上轮证据；新增manual reconcile方案，未执行 | 真正事务指针/fsync中断恢复未验，不以测试指针代证 |
+
+## 2026-11-04：候选3整包独立验收（00转交）
+
+本轮固定PR201候选 `0026159bc369c768e783294e8447de99a5f1973a`，整包SHA256 `4ce3e43013199145e19e3a13caa089dd7b826fd431c22182192ece182bf9ca32`、103111283字节；3317成员逐项核验。输入为09 `candidate3-assembly-20261104/final/` 中ZIP、artifact-manifest、source-material-binding和combination，4份outputs/2份附属manifest摘要通过。旧a8bd证据保留，不沿用旧通过结论。08输入982f042889d9de84e13aa2aedaca51faeea5bd5b，09安全来源ca7a64175aa4c359c018b8a7e1dc6c506fbd6552；12在candidate3-gateway/REVIEW.md已关闭08接入复核，09交接/绑定里的pending文字落后，归09更新，10未改其文件。未纳入PR202。
+
+包内清单418369字节/hash `2b55d44febfcf7054de8a667b044f1aee90f253ac612ef46bbd069afb1399564`；外置421722字节/hash `b97ee009ebaf8ff850f3e3984f46bb5cf639f7750c774f8cfbedb9e05a20b6ba`。首次严格字节assert失败；查明3353处CRLF/LF差异（只转换CRLF即逐字节相同），JSON相同。后续逐成员/hash核验保持严格，身份合成检查绑定包内原始摘要，不混用ownership规范JSON摘要。
+
+新独立Linux安装 `/home/lyy/.cache/taki-task10-candidate3-20261104/installed`，venv同父目录；旧/新管理格式演练位于 `/home/lyy/.cache/taki-task10-candidate3-transition-20261104`。Ubuntu24.04.5/WSL2、Python3.12.3、包内Node24.19.0，私有网络命名空间仅loopback和env白名单；15143/15144/15145无宿主服务接管。
+
+实际结果：
+
+- 真实暂存、组合校验、离线require-hashes安装/pip check、71已安装模块与资源、实际入口--help通过。安装包Console RPC46方法、状态探针、HTTP200/WS登录/退出撤权/重新认证、旧guard拒绝通过。
+- HTTP实际返回client.js与安装文件逐字节相同，JS MIME正确，SHA256 `60cdbd1f96efaf4f252de51d9f3732f8739105a7c36e30abb3aa87b979dfc20b`匹配12已审candidate.3，安装版本5.30.10-taki.3。没有重称浏览器全安全矩阵。
+- 实际安装05/07＋包外固定可信09的12项接口测试通过，27个ScopeStore/session断言。checker仍真实导出自3dda6d29955328777f7e526c21bfd2828dbbea8a，hash736c983ae4b0d03e39c893a886df07d3839b434381dd6fbef406ab2143ca1d98。源码逐字对比证明05两模块、09checker、07retention和stage controller与旧固定a8bd未变，仅复用驱动，结果均在候选3上重跑。
+- 真实07生成schema1/2/3/4与107/logical1/2/3/4；逐库只读检查、错误分区/元数据/副本/读取失败、观察漂移通过预期。恢复模拟拒绝旧history/topics、伪造新代际的旧字节；缺当前权威manual。产品身份选择、approval和删除权威仍明确合成，不产生真实批准。
+- 真实旧完整Release8d9e7301392ad548fe9554c4f4b09a0d53f615fa（ZIP hash3f2e1db6c5bffcc5da2147300a0746374ed139e5c83654baf4130e78ce2e52d9）的3136成员重新核验；旧→候选3→旧管理模块验证新撤权保持，返回旧代码前后两份管理文件hash不变。测试指针不等于LinuxBackend.activate，真实兼容门仍compatibility_review_required。旧Console未获候选3安全修复放行，此结果不能批准安全回退或全库兼容。
+- 10条暂存故障检查按预期通过：错包拒绝，提取/校验/rename失败无发布，最终回执失败和SIGKILL保留manual状态，重复安装拒绝覆盖。两个故障的原ownership及目录均保留，没有自动接管/删除/重试；manual reconcile仍为方案。
+
+完整本轮报告、18项矩阵、失败和复现记录：本工作区 `runtime/task10/candidate3-20261104/REPORT.md`、`matrix-results.json`、`input-verification.json`、`install-linux.log`、`interfaces-linux.log`、`installed-smoke.log`、`served-component.log`、`restore-simulation.log`、`transition-results.json`、`staging-faults.log`、`retained-fault-records.json`、`environment.json`及evidence-sha256.json。脚本仅本地按AGENTS不纳入PR。复现用固定Git源码与原ZIP，在新的独立base内依次运行install_linux.py、run_all.py、served-component.cjs；现有故障目录不可为重跑而删除。Windows仅做实际输入/成员核验，未重跑未变10全套32回归；不拿历史32项结果替代本包验收。
+
+首装通过范围为组件安装和隔离进程，未安装真实用户/unit/timer/socket；完整服务升级/回退、半启动/停写超时、单向应用迁移、磁盘耗尽、current/fsync断电、跨宿主、真实上游故障仍未完成。缺兼容批准、服务适配器、宿主/停写证明、真实范围批准及删除权威，不能补成合成默认值。最终个人/定制选择、物理裁剪/完整源码/发布仍阻塞，delivery的product_release/complete_corresponding_source/published=false保持。activation_permitted=false；未合并、部署、真实服务重启、QQ、付费模型或生产数据操作。代码基线仍ca34d361b083626777927997f7379bb2ae71e063。
+| 原矩阵项 | 本轮结果 | 证据与边界 |
+|---|---|---|
+| two_instances | not_run | 候选3双实例服务未执行；10既有纯计划检查不替代整包实例验收 |
+| aliases | not_run | 候选3服务路径别名未执行；既有10控制器代码未变 |
+| wrong_package | passed_isolated | 实际整包错hash/commit/Python拒绝；真实09 expected/observed变化拒绝 |
+| first_install | partial | 新空目录暂存、离线wheel安装、71模块/入口、安装后HTTP/WS及46方法通过；无生产服务首装 |
+| half_started | blocked | 缺隔离服务事务适配器；未启动QQ适配器 |
+| gateway_stop | blocked | 无真实service/PID停写证明或超时场景 |
+| migration | partial | 真实07生成schema1/2/3/4及107/logical1/2/3/4，观察与不兼容检查通过；应用跨版迁移未执行 |
+| backup_missing | passed_simulation | 漏库/多库/sidecar/缺元数据及分区/读取失败无部分成功 |
+| current_switch | partial | 实际stage rename异常清理、最终回执失败保留manual；版本测试指针不代证真实updater current/fsync |
+| low_disk | not_run | 未执行真实磁盘耗尽，OSError注入不等于该场景 |
+| old_scope | passed_simulation | 候选3实际05旧宽范围拒绝、无独立approval保持manual；Console旧guard拒绝 |
+| old_deletions | passed_simulation | 真实07拒绝旧history/topics及伪改代际；当前合成快照allow不激活 |
+| authority_down | partial | 缺删除权威manual、会话失效/重启拒绝；生产权威未选择 |
+| code_rollback | partial | 真实8d9旧→候选3→旧管理格式与数据hash通过；完整服务回退blocked，旧Console未经候选3安全放行 |
+| controller_rollback | not_run | 包内rollback成员完整性核验不等于旧控制器执行新事务 |
+| restore_recheck | partial | 实际12项接口测试含独立expected/observed/schema变化和观察漂移；全服务重验未执行 |
+| host_handoff | blocked | 无目标宿主及旧宿主停写证明 |
+| upstream_down | not_run | 离线fixture后端不代表Haneoka故障验收 |
+
+本轮回读Checks41738407065：push/head0026159bc369c768e783294e8447de99a5f1973a，7项验证success，publish-linux-bundle skipped。此CI仅说明固定候选检查通过，不是产品发布或任务10完整激活验收。
