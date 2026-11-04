@@ -1,5 +1,5 @@
 {
-  "identity": "taki-console-candidate3-source-index.1",
+  "identity": "taki-console-candidate3-source-index.2",
   "component": {
     "name": "taki-console",
     "version": "0.1.0-candidate.3",
@@ -10,7 +10,7 @@
     "source_commit": "0026159bc369c768e783294e8447de99a5f1973a",
     "combination_sha256": "4ce3e43013199145e19e3a13caa089dd7b826fd431c22182192ece182bf9ca32"
   },
-  "current_material_commit": "9b192e03b48f3fac528d8b22fdf1d74554e0a13c",
+  "current_material_commit": "c8fac35f6d477473e91799fa8f25de918de9bbca",
   "current_build_files": [
     {
       "path": "scripts/build_downstream_console.py",
@@ -19,6 +19,10 @@
     {
       "path": "deploy/licenses/koishi-console/downstream-inputs.json",
       "sha256": "c0e8137b187d267c7a5c55111edb5614dc06b8dc348d52ab1a6a741a9d3cdc7d"
+    },
+    {
+      "path": "deploy/licenses/koishi-console/downstream-inputs-public-v2.json",
+      "sha256": "6867d09aca933575eec2680872af21a72db51f4913156afd93727bdf2665a788"
     },
     {
       "path": "deploy/licenses/koishi-console/downstream-build.cjs",
@@ -31,32 +35,78 @@
     {
       "path": "deploy/licenses/koishi-console/marked-vue-href.patch",
       "sha256": "f5a928102fbf6dd184776c6b84ebf3d494153e3c63ef3ebc36f568774b7e24d1"
+    },
+    {
+      "path": "scripts/check_console_public_sources.py",
+      "sha256": "baeb97a2b4eba102696f43498f08fb1595f0c231c134465684efb71be60c7bca"
+    },
+    {
+      "path": "scripts/collect_rollup_linux_materials.py",
+      "sha256": "ef12de030f31e23c4feed6c7a54cb470490d71c541be29f44c666bd994b2cf0b"
+    },
+    {
+      "path": "scripts/check_rollup_linux_materials.py",
+      "sha256": "e690111513cb925cb1ae941453163f42a4230cb04083591da3ac9d91c0e373e3"
+    },
+    {
+      "path": "deploy/licenses/koishi-console/rollup-linux-x64-glibc-coverage.json",
+      "sha256": "09dfa31a7ac688105f41c5760f0a770b9b7ffb4448b4e1d8fb625b3109eeee42"
     }
   ],
   "local_materials": [
     {
+      "id": "historical_candidate3_input",
       "role": "frozen historical build input",
       "path": "runtime/task09/security-20261104/console-candidate3-security-inputs-v2.zip",
       "size": 128359885,
       "sha256": "c6261043446d4d717af86a3466733f3f284021dbfd996082464ec202b2a68e0b"
     },
     {
+      "id": "candidate2_parent_support",
       "role": "candidate.2 parent source support; current builder and security patch are superseded by current_material_commit",
       "path": "runtime/task09/build-repair-20261104/console-candidate2-source-support.zip",
       "size": 4419328,
       "sha256": "3762c2145fe2fdae8a74d7a81d46c2085becaf57ef8a6e79545161dc63cd05f8"
     },
     {
+      "id": "public_source_v2",
       "role": "candidate.3 reduced corresponding-source candidate without cache-content-type 1.0.1",
       "path": "runtime/task09/material-closure-20261104/console-candidate3-public-source-v2.zip",
       "size": 128378153,
       "sha256": "5b8f58153d17b2df4ecb26a218f57b7b0662fced3c89b63d9360f55c03d3c67f"
     },
     {
+      "id": "rollup_transitive_v1",
       "role": "Rollup 4.67.4 Linux x64 glibc selected transitive sources and license texts",
       "path": "runtime/task09/material-closure-20261104/rollup-4.67.4-linux-x64-glibc-transitive-materials.zip",
       "size": 3367015,
       "sha256": "0a70a0e6412abf0fb75d60fb31ee7812278e27338bb365ba43c4a0e15f3a4197"
+    },
+    {
+      "id": "rollup_napi_delta_v1",
+      "role": "Rollup 4.67.4 Linux x64 glibc fixed napi uncovered edges and locked support closure",
+      "path": "runtime/task09/material-recovery-20261104/rollup-4.67.4-linux-x64-glibc-napi-delta.zip",
+      "size": 1175096,
+      "sha256": "679f946e568ffea8bc0e2bd21cdd3f3bebbb451a757ab272e0194e08f21baf7a"
+    }
+  ],
+  "rebuild_profiles": [
+    {
+      "id": "candidate3_public_source_v2",
+      "inputs_material_id": "public_source_v2",
+      "inputs_spec": {
+        "path": "deploy/licenses/koishi-console/downstream-inputs-public-v2.json",
+        "size": 578,
+        "sha256": "6867d09aca933575eec2680872af21a72db51f4913156afd93727bdf2665a788"
+      },
+      "preparation": "copy the fixed Git commit to a new Linux directory and replace only deploy/licenses/koishi-console/downstream-inputs.json in that copy with downstream-inputs-public-v2.json",
+      "command": [
+        "python3",
+        "scripts/build_downstream_console.py",
+        "--inputs", "/absolute/path/console-candidate3-public-source-v2.zip",
+        "--work", "/absolute/new/work",
+        "--output", "/absolute/new/output"
+      ]
     }
   ],
   "rebuild_evidence": {
