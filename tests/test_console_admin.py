@@ -20,6 +20,17 @@ from ournotes_bot.natural_query.query_metrics import QueryMetrics
 
 
 class ChatDiagnosticsTests(unittest.TestCase):
+    def test_transport_metadata_accepts_only_fixed_stages_timings_and_safe_ids(self):
+        from ournotes_bot.application.diagnostics import Diagnostics
+        data=dict(stage='wait_headers',name='disconnected',elapsed_ms=17000,proxied=True,headers_received=False,
+            connect_ms=200,upload_ms=1,wait_headers_ms=16799,attempt_id='a'*32)
+        self.assertEqual(json.loads(Diagnostics.chat_metadata('transport',data)),data)
+        for change in ({'stage':'PRIVATE'},{'name':'PRIVATE'},{'elapsed_ms':-1},{'elapsed_ms':True},
+                       {'http_status':999},{'proxied':'yes'},{'headers_received':1},{'prompt':'PRIVATE'},
+                       {'provider_request_id':'https://PRIVATE.invalid'},{'attempt_id':'PRIVATE'}):
+            with self.subTest(change=change),self.assertRaises(ValueError):
+                Diagnostics.chat_metadata('transport',{**data,**change})
+
     def setUp(self):
         self.temp=tempfile.TemporaryDirectory();self.addCleanup(self.temp.cleanup)
         self.path=Path(self.temp.name)/'diagnostics.sqlite3'
@@ -47,6 +58,22 @@ class ChatDiagnosticsTests(unittest.TestCase):
         self.assertFalse(d.conversation_event('o','g','control',102,body='PRIVATE'))
         self.assertFalse(d.chat_event('r','context',102,messages=2000000))
         self.assertEqual(len(d.group_events('g')),1)
+
+    def test_abort_reason_wire_is_optional_and_rejects_private_or_unrelated_fields(self):
+        from ournotes_bot.application.backend_protocol import event,ProtocolError
+        base=dict(protocol=PROTOCOL,request_id='r',plan_version=1,gateway_epoch='epoch',
+            event='aborted',part_id='batch',attempt_id='none')
+        self.assertEqual(event(base),base)
+        for reason in ('observation_replaced','candidate_expired','policy_changed','scope_denied',
+                       'gateway_stopped','gateway_error','delivery_incomplete'):
+            self.assertEqual(event(dict(base,reason=reason))['reason'],reason)
+        for invalid in ('PRIVATE_MESSAGE','https://private.invalid',{},None):
+            with self.assertRaises(ProtocolError):
+                event(dict(base,reason=invalid))
+        with self.assertRaises(ProtocolError):event(dict(base,event='batch_finished',reason='gateway_error'))
+        self.assertTrue(self.diagnostics.chat_event('r','finished',101,status='aborted',
+            reason='observation_replaced',stage='generation',model_attempts=2,delivered=False))
+        self.assertFalse(self.diagnostics.chat_event('r','finished',102,stage='PRIVATE_MESSAGE'))
 
     def test_image_detail_is_a_fixed_metadata_enum(self):
         d=self.diagnostics

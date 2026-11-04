@@ -85,18 +85,34 @@ class Diagnostics:
 
     @staticmethod
     def chat_metadata(kind, data):
+        if kind=='transport':
+            required={'stage','name','elapsed_ms','proxied','headers_received'}
+            timing={'elapsed_ms','dns_ms','connect_ms','upload_ms','wait_headers_ms','read_ms'}
+            optional=timing|{'http_status','provider_request_id','attempt_id'}
+            if (not required<=set(data) or not set(data)<=required|optional
+                    or data['stage'] not in ('connect','dns','upload','wait_headers','read_body','complete')
+                    or data['name'] not in ('none','interrupted','cancelled','disconnected','timeout','connect','transport','response_too_large')
+                    or any(type(data[k]) is not bool for k in ('proxied','headers_received'))
+                    or any(type(data[k]) is not int or not 0<=data[k]<=3600000 for k in timing&set(data))
+                    or 'http_status' in data and (type(data['http_status']) is not int or not 100<=data['http_status']<=599)
+                    or 'attempt_id' in data and not (isinstance(data['attempt_id'],str) and re.fullmatch('[0-9a-f]{32}',data['attempt_id']))
+                    or 'provider_request_id' in data and not (isinstance(data['provider_request_id'],str) and re.fullmatch(
+                        r'req_[A-Za-z0-9_-]{1,96}|[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}',data['provider_request_id']))):
+                raise ValueError('chat_transport_data')
+            return json.dumps(data)
         if kind not in ('context','image','tool','decision','error','finished','control','task','research'):
             raise ValueError('chat_event_kind')
         fields={'messages','assistant_messages','image_markers','input_images','vision_approved','image_detail',
                 'automatic','loaded_images','status','name','decision','model_attempts','delivered',
                 'action','total','completed','entities','elapsed_ms','task_missing','research_fallback',
-                'source','reason','continuation','window_seconds',
+                'source','reason','stage','continuation','window_seconds',
                 'input_required','input_limit','system_bytes','tool_bytes'}
         budget_fields={'hour_limit_micro','day_limit_micro','hour_cost_micro','day_cost_micro',
                        'hour_known_micro','hour_unknown_micro','hour_reserved_micro','unknown_cost_micro',
-                       'requested_cost_micro','available_cost_micro','controller_cost_micro'}
+                       'requested_cost_micro','available_cost_micro','controller_cost_micro',
+                       'controller_before_micro','controller_after_micro'}
         fields |= budget_fields
-        codes={'status','name','decision','image_detail','action','source','reason'}
+        codes={'status','name','decision','image_detail','action','source','reason','stage'}
         if 'image_detail' in data and data['image_detail'] not in ('none','low','high'):
             raise ValueError('chat_event_data')
         if not set(data)<=fields or any(not (

@@ -123,6 +123,8 @@ QueryGate 沿用配置的并发/排队（默认 2+4），全后端最多持有 6
 
 持久接纳成功后立即登记 Work，后续初始化失败记为 failed。终态落库失败时先停止该请求的发送许可，保留 Work 和固定目标终态；新接纳及 ready 为 503，原因 `delivery_storage_unavailable`，查询仍展示实际账本状态且不允许发送。reaper 在其他过期维护前按 1、2、4 秒最多重试三次幂等终态写，不重执行业务或再次扣额。全部写成且维护恢复后才恢复接纳；耗尽后保留故障，修复存储并重启，由上述既有恢复规则收口。reaper 的 SQLite 错误会记录并在下一轮维护复查；未知异常停止任务并保持不可接纳。账本 schema 与协议版本不变。
 
+`ready.features` 中的 `abort_reason_v1` 表示 aborted 事件可附带可选的 reason 字段，值限定为 observation_replaced、candidate_expired、policy_changed、scope_denied、gateway_stopped、gateway_error、delivery_incomplete。新网关仅在后端声明此能力时发送该字段；旧网关省略仍可接收。reason 只写入既有诊断元数据，不改变终态、ACK、发送许可、数据库格式或协议版本。轮询中返回 finished 且无片段的主动 skip／defer 视为已完成，不再追加 aborted 事件。
+
 ## 主动通知协议（M4 已接线）
 
 下列路由已认证并接入唯一 NoticeStore；通知关闭时返回 503 `notifications_disabled`。仅已提交部署且已有/生成有效报告才能领取；后端 ready 不构成公告条件。群许可、通知意图和 ACK 追加事实见 M4 运行准备。领取响应为 `{"claims":[...]}`，空结果不落请求元数据；相同空轮询 ID 后来可以观察新任务，非空领取则持久幂等。

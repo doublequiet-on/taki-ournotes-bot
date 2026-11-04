@@ -374,10 +374,25 @@ class ProactiveController:
 
     def settle(self, candidate, *, actual_cost_micro, held_cost_micro=None):
         """Unknown usage retains the attempt ledger bound, or the full opportunity hold."""
+        _, ticket = self._ticket(candidate)
+        return self._settle_cost(ticket, actual_cost_micro, held_cost_micro)
+
+    def pending_costs(self, scope):
+        """Billing identities only; never grants candidate or sending permission."""
+        group = self.groups.get(scope)
+        return tuple(key for key, ticket in group.tickets.items() if ticket.cost_micro is None) if group else ()
+
+    def reconcile_cost(self, scope, candidate_id, *, actual_cost_micro, held_cost_micro=None):
+        group = self.groups.get(scope)
+        ticket = group.tickets.get(candidate_id) if group else None
+        if ticket is None or ticket.cost_micro is not None:return False
+        return self._settle_cost(ticket, actual_cost_micro, held_cost_micro)
+
+    @staticmethod
+    def _settle_cost(ticket, actual_cost_micro, held_cost_micro):
         for value in (actual_cost_micro,held_cost_micro):
             if value is not None and (type(value) is not int or value < 0):
                 raise ValueError('proactive_cost_invalid')
-        _, ticket = self._ticket(candidate)
         if ticket is None:
             return False
         if ticket.cost_micro is not None and actual_cost_micro not in (None, ticket.cost_micro):

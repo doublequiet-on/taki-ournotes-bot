@@ -1,4 +1,4 @@
-# L3: Strict local wire contracts -> validated immutable request; no SDK/data access.
+# L3: Strict local wire contracts, including optional fixed abort reasons; no SDK/data access.
 from __future__ import annotations
 import hashlib
 import json
@@ -135,6 +135,10 @@ def event(value):
         require_protocol(value.get('protocol'))
     kind = value.get('event')
     extra = {'result', 'message_id'} if kind == 'ack' else set()
+    if kind == 'aborted' and 'reason' in value:
+        require(value['reason'] in ('observation_replaced','candidate_expired','policy_changed',
+                'scope_denied','gateway_stopped','gateway_error','delivery_incomplete'), 'abort_reason')
+        extra.add('reason')
     if kind == 'ack' and 'allow_context' in value:
         require(type(value['allow_context']) is bool, 'context_permission')
         extra.add('allow_context')

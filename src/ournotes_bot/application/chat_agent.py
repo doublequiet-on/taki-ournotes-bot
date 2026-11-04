@@ -450,7 +450,7 @@ class ChatAgent:
         backend=self.runtime.backend
         backend.conversations.clear_scope(key)
         for work in list(backend.works.values()):
-            if work.request.scope==scope:backend.finish(work,'aborted')
+            if work.request.scope==scope:backend.finish(work,'aborted',reason='chat_memory_deleted')
         return result
 
     def audit(self,operation,*args):

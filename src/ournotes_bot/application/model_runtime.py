@@ -1,11 +1,13 @@
 # L3: Native /ask orchestration, current permits and exact usage ownership.
 # Effects: Normal two attempts; bounded site lookup up to three operations/four attempts.
+# Observations: Bounded transport metadata correlated by request/attempt, without bodies or secrets.
 from __future__ import annotations
 
 import asyncio
 from dataclasses import replace
 from functools import partial
 import json
+import logging
 import re
 import time
 import uuid
@@ -29,6 +31,8 @@ from . import replies
 from .persona import VOICE, chat_topic, chat_prompt, chat_needs_evidence
 from .chat_agent import ChatAgent
 from .chat_capabilities import ChatCapabilities
+
+logger=logging.getLogger('ournotes_bot.model_transport')
 
 PERSONA = '''你是 Taki，一个以椎名立希为原型的独立查询助手。简体中文，直率认真，简洁、友善，可轻微吐槽，不羞辱玩家。
 围绕用户当前问题表达：先直接给结论或能提供的帮助，再补必要依据、条件和下一步；不复述检索过程，不主动扩展到无关问题。默认用完整陈述自然收尾。用户补充了上一问的答案时，把新信息用进回应，不再接力盘问。普通吐槽不自动转成劝休息、布置任务或操作建议。只有当前请求确实缺少必要信息时才问一个具体问题，或按用户明确要求提问。
@@ -421,11 +425,11 @@ class ModelRuntime:
             return await self.backend.models.run(user,operation,execution_seconds=seconds)
         except (ModelError,ProtocolError,KnowledgeError) as exc:
             code=exc.code if isinstance(exc,ProtocolError) else str(exc)
-            self.agent.proactive.trace(work,'error',status=code,model_attempts=work.model_attempts)
+            self.agent.proactive.trace(work,'error',status=code,model_attempts=work.model_attempts,stage=work.model_stage)
             self.agent.audit(self.agent.store.finish,work.delivery,code)
             return replies.PreparedReply('',business_status='proactive_error') if work.proactive is not None else failure(code)
         except asyncio.TimeoutError:
-            self.agent.proactive.trace(work,'error',status='execution_timeout',model_attempts=work.model_attempts)
+            self.agent.proactive.trace(work,'error',status='execution_timeout',model_attempts=work.model_attempts,stage=work.model_stage)
             self.agent.audit(self.agent.store.finish,work.delivery,'execution_timeout')
             return replies.PreparedReply('',business_status='proactive_error') if work.proactive is not None else failure('execution_timeout')
 
@@ -487,7 +491,9 @@ class ModelRuntime:
         else:
             held=self.usage.get(attempt)
             require(held['request_id']==billing_request_id and held['state']=='reserved','invalid_reservation')
-        started=False;began=time.monotonic();kind='generation' if not tools else 'routing'
+        started=False;began=time.monotonic();kind='generation' if not tools else 'routing';transport={}
+        work.model_stage=('generation' if getattr(work,'proactive_generation',False)
+                          else 'decision' if work.proactive is not None else 'model')
         try:
             permitted_until=await self.backend.permissions.acquire(work,deadline,attempt_id=attempt)
             self.check(work,deadline,leases)
@@ -495,7 +501,7 @@ class ModelRuntime:
             require(time.monotonic()<permitted_until,'permission_expired')
             self.usage.start(attempt,profile);started=True
             # No await/queue/tool work between the consumed permit and this HTTP.
-            result=await asyncio.wait_for(self.client.request(profile,body,timeout=max(.001,deadline-time.monotonic())),
+            result=await asyncio.wait_for(self.client.request(profile,body,timeout=max(.001,deadline-time.monotonic()),transport=transport),
                                           max(.001,deadline-time.monotonic()))
             if result.transport_error and work.proactive is not None:
                 self.agent.proactive.trace(work,'error',status='provider_unavailable',name=result.transport_error)
@@ -530,6 +536,15 @@ class ModelRuntime:
                 self.usage.settle(attempt,Usage(),code,actions=(ProviderAction('web_search',None),) if web is not None else ())
             raise
         finally:
+            if transport:
+                data={**transport,'attempt_id':attempt}
+                # Validate the same allowlist before either sink sees provider metadata.
+                try:payload=self.backend.diagnostics.chat_metadata('transport',data)
+                except ValueError:
+                    logger.warning('Model transport metadata rejected request=%s',work.request.request_id)
+                else:
+                    logger.info('Model transport request=%s data=%s',work.request.request_id,payload)
+                    self.backend.diagnostics.chat_event(work.request.request_id,'transport',self.backend.clock(),**data)
             if getattr(work,'chat',False) and service_policy is None:
                 recorded=self.usage.get(attempt)
                 self.agent.audit(self.agent.store.event,work.delivery,'model/'+attempt,'model',

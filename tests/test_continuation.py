@@ -1159,6 +1159,21 @@ class ProactiveControllerTests(unittest.TestCase):
         self.now[0] += 1.5
         return self.controller.candidate(scope or self.a, reserve_cost_micro=reserve)
 
+    def test_cost_reconciliation_preserves_unknown_and_cannot_restore_send_permission(self):
+        self.observe();candidate=self.ready(reserve=100)
+        self.controller.cancel(self.a)
+        self.assertEqual(self.controller.pending_costs(self.a),(candidate.candidate_id,))
+        self.assertTrue(self.controller.reconcile_cost(self.a,candidate.candidate_id,
+            actual_cost_micro=None,held_cost_micro=30))
+        self.assertEqual(self.controller.status(self.a)['hourly_cost_micro'],30)
+        self.assertFalse(self.controller.can_send(candidate))
+        self.assertFalse(self.controller.reconcile_cost(self.b,candidate.candidate_id,actual_cost_micro=0))
+        self.assertTrue(self.controller.reconcile_cost(self.a,candidate.candidate_id,actual_cost_micro=7))
+        self.assertEqual(self.controller.pending_costs(self.a),())
+        self.assertFalse(self.controller.reconcile_cost(self.a,candidate.candidate_id,actual_cost_micro=0))
+        self.assertEqual(self.controller.status(self.a)['hourly_cost_micro'],7)
+        self.assertFalse(self.controller.can_send(candidate))
+
     def test_requires_host_approved_group_service_and_explicit_enable(self):
         for policy in (self.Policy(), self.Policy(True, 'group', '', 6, 3, 1000),
                        self.Policy(True, '', 'approval', 6, 3, 1000),

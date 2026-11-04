@@ -1,5 +1,7 @@
 # L2 Application Runtime — 启动与运行支撑
 
+原生模型的 transport 阶段、耗时和受限上游请求 ID 由 model_runtime 按 request／attempt 关联到既有诊断库及运行日志；不保存请求/响应正文，不更改模型调用次数与费用收口。字段及阶段边界见[运行说明](../docs/CHAT_AGENT_RUNBOOK.md#模型传输诊断)。
+
 [chat_recovery.py](ournotes_bot/application/chat_recovery.py) 协调最终候选暂存、首回执后的幂等历史投影及撤权清理；不恢复发送或接续资格。存储升级与回退门见 [运行说明](../docs/CHAT_AGENT_RUNBOOK.md#a0-回执恢复与批准代际)。
 
 ChatStore 启动会删除缺少投影来源证明的旧回复、派生摘要及审计副本；保留可识别的人类参与消息、有效候选和新投影。来源清理与 schema 4 升级同事务完成，旧版不得绕过这一迁移。
@@ -10,7 +12,7 @@ ChatStore 启动会删除缺少投影来源证明的旧回复、派生摘要及�
 
 [chat_tasks.py](ournotes_bot/application/chat_tasks.py) 保存按群及发言者隔离、15 分钟有效的研究任务对象与要求，依照工具字段证据计算完成情况，成功 ACK 后提交跨轮状态；旧事实不自动成为新一轮证据。[model_admin.py](ournotes_bot/application/model_admin.py) 持久保存群交流设置与不主动搭话名单，并提供带版本保护的设置读写和任务／日志投影；管理路由在 [backend.py](ournotes_bot/application/backend.py)。续聊使用用户聊天模型与额度，独立于群主动服务开关；平台能力和每次发送许可沿用原链路。
 
-[diagnostics.py](ournotes_bot/application/diagnostics.py) 保存有界请求诊断和未受理交流事件，按群组合展示控制决定、任务进度、资料补查耗时与结果。`conversation_events` 不建立交付请求，日志不授予发送许可；元数据字段白名单与 24 小时清理适用于该通道。
+[diagnostics.py](ournotes_bot/application/diagnostics.py) 保存有界请求诊断和未受理交流事件，按群组合展示控制决定、任务进度、资料补查耗时与结果。`conversation_events` 不建立交付请求，日志不授予发送许可；元数据字段白名单与 24 小时清理适用于该通道。中止原因／阶段和按持久账本校准内存费用的前后数值也沿用该通道，不授予发送许可。
 
 [story_service.py](ournotes_bot/application/story_service.py)／[story_cli.py](ournotes_bot/application/story_cli.py) 拥有本地版本化剧情发布、撤回与独立人格批准；[chat_capabilities.py](ournotes_bot/application/chat_capabilities.py) 绑定模型能力证据；[chat_admin.py](ournotes_bot/application/chat_admin.py) 只读投影主模型、备用及独立主动参与模型的能力批准与群服务上限，不返回对话正文或写入批准；[chat_jobs.py](ournotes_bot/application/chat_jobs.py) 拥有群服务批准、小时／北京时间日预算与摘要材料（有日上限的主动服务让满一小时的已结束未知调用退出小时统计，日上限继续保留历史未知费用）；[proactive_chat.py](ournotes_bot/application/proactive_chat.py) 是无 IO 观察控制器，[chat_proactive_runtime.py](ournotes_bot/application/chat_proactive_runtime.py) 接宿主许可、候选、已送达历史和 ACK，[chat_followup.py](ournotes_bot/application/chat_followup.py) 保管有界的短时接续机会。主动图片选择由 chat_agent 编排；判断元数据由 diagnostics 保存，backend 定期清理，见 [G1](../docs/CHAT_PROACTIVE_G1.md#主动判断诊断日志)。配置与验证边界见 [F1](../docs/CHAT_AGENT_F1.md)。
 

@@ -10,6 +10,8 @@ import { protocol, capability, BackendError, decodeReady, decodeClassify, decode
 import type { Ready, Plan, WirePart, ModelPermission, Recorded } from './wire'
 export { protocol, capability, BackendError } from './wire'
 export type { Plan, WirePart, ModelPermission } from './wire'
+export type AbortReason = 'observation_replaced' | 'candidate_expired' | 'policy_changed' | 'scope_denied'
+  | 'gateway_stopped' | 'gateway_error' | 'delivery_incomplete'
 const safeBackendErrors = new Set([
   'ledger_capacity', 'context_capacity', 'epoch_capacity', 'plan_capacity', 'byte_capacity',
   'not_ready', 'inactive_epoch', 'retired_epoch', 'stale_admission', 'request_conflict',
@@ -163,9 +165,10 @@ export class BackendClient implements DeliveryEvents {
     if (part.image !== path) throw new BackendError('image_identity')
     return this.request(path, undefined, 3_000_000, true)
   }
-  async event(plan: Pick<Plan, 'request_id' | 'delivery_id'>, kind: 'upload_failed' | 'aborted' | 'batch_finished', part = 'batch', attempt = 'none'): Promise<Plan> {
+  async event(plan: Pick<Plan, 'request_id' | 'delivery_id'>, kind: 'upload_failed' | 'aborted' | 'batch_finished', part = 'batch', attempt = 'none', reason?: AbortReason): Promise<Plan> {
     return decodePlan(await this.retry(`/v1/deliveries/${plan.delivery_id}/events`, { protocol,
-      request_id: plan.request_id, plan_version: 1, gateway_epoch: this.epoch, event: kind, part_id: part, attempt_id: attempt }))
+      request_id: plan.request_id, plan_version: 1, gateway_epoch: this.epoch, event: kind, part_id: part, attempt_id: attempt,
+      ...(kind==='aborted' && reason && this.readiness?.features.includes('abort_reason_v1') ? {reason} : {}) }))
   }
   async intent(a: Attempt): Promise<'granted' | 'existing' | 'denied'> {
     // No retry: a lost permission reply must never become a second send.
