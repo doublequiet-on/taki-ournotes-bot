@@ -49,3 +49,5 @@ python3 -B scripts/build_downstream_console.py \
 ```
 
 配方从两份独立源码副本按固定 lock 构建 `bindings_napi`。Zig 提供 glibc 2.17 目标，编译器包装只折叠 cc-rs 对同一目标的重复标注。Console 输入生成器只换 Yarn cache 内的平台 native 成员，保留 JS 包和 lock。构建器逐字节核对已安装文件，并验证 Rollup 实际加载该文件。新 tarball 绑定 `taki-console@0.1.0-candidate.4`、npm `5.30.10-taki.4` 与独立输入规格。candidate.4 走单独的验收路径，旧产品安装准入仍使用 candidate.3。配方不包含浏览器验收或安装恢复。
+
+两份独立 native 和 Console 输入 ZIP 分别逐字节一致。Console 的两次正式构建只在 `dist/index.js` 有字节差异，观察到导入排列与压缩符号名差异。B2 的全部 16 个 `lib/` 和 `dist/` 文件与冻结 candidate.3 一致，整包仅三个身份或说明成员变化，故选 B2 交后续验收。A2 作为比较证据保留，整包字节复现仍未通过。工件摘要和材料入口见 [candidate.4 来源索引](../deploy/licenses/koishi-console/candidate4-source-index.json)。
