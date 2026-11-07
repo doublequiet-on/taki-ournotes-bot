@@ -6,8 +6,12 @@
 
 - ICU4X 固定提交 `031d9e89f6a3fd26a14491e090729d46094328fd` 的完整归档来自 [上游固定提交](https://github.com/unicode-org/icu4x/tree/031d9e89f6a3fd26a14491e090729d46094328fd)。11,305 个 blob（含三个内部符号链接）和目录树逐项核对，Git 根树为 `09134758a00950e8edb04d35dd3f0d19283a0ec2`。原根 LICENSE 和工具声明随树保存。
 - 已取得 [CLDR49 官方发行实物](https://github.com/unicode-org/cldr-json/releases/tag/49.0.0)，精确匹配官方资产 664174369 的 76,248,823 字节和 SHA-256。38,491 个 ZIP 成员通过路径和 CRC 检查。保留原根及包级 26 个 LICENSE 成员并逐项记摘要，核验 coverageLevels、availableLocales、parentLocales、likelySubtags 的实际 ZIP 路径和 JSON。已有 ICU export、UCD、emoji 从旧材料复用原字节。
-- 在 Linux x64 glibc，以固定 `Cargo.lock` 解析 `bakeddata` 的 normal/build 依赖和 proc macro。101 个外部源归档逐一匹配 lock checksum，并保留原包和许可成员清单。41 个 workspace 包已在完整树中。保留选中 feature 与依赖边，独立 Cargo home 的 `cargo tree --offline --locked` 也成功。Cargo/rustc 1.99.1 仅用于依赖取证。生成所需的 Rust 1.98.0、Cargo、rustfmt、系统编译工具和可搬移离线缓存仍需单独提供。
+- 在 Linux x64 glibc，以固定 `Cargo.lock` 解析 `bakeddata` 的 normal/build 依赖和 proc macro。101 个外部源归档逐一匹配 lock checksum，并保留原包和许可成员清单。41 个 workspace 包已在完整树中。保留选中 feature 与依赖边，独立 Cargo home 的 `cargo tree --offline --locked` 也成功。解析日志记录 `cargo 1.99.1 (5f94df478 2026-08-27)` 和 `rustc 1.99.1 (58cf8f9c3 2026-10-13)`。两者用于依赖取证。
 - `prepare.py` 实际在新的 Linux 副本核输入、布置四项数据并应用 `local-inputs.patch`。以绝对 `TAKI_ICU_INPUTS` 指定输入根，保存驱动改动前后摘要和配置。补件 README 有具体命令。datagen、生成器编译及 7＋141 项重生比较尚未执行。
+
+补件的 `provenance/resolver-tools.json` 中，Cargo 的旧 `version` 字段逐字抄自留存的 Rust 发行清单 `[pkg.cargo].version`，值为 `0.100.0 (5f94df478 2026-08-27)`。同一清单的 Linux x64 glibc 下载项指向 `cargo-1.99.1-x86_64-unknown-linux-gnu.tar.xz`，而 `resolve.sh` 在该归档解出的 Cargo 上调用 `--version`，实际输出写入 `resolver.log`。索引 .9 分开登记发行清单标签与命令行版本，保留原 ZIP 字节。
+
+ICU 生成配方声明 Rust 1.98.0，该工具链的编译与 datagen 均未执行，生成所需工具和可搬移离线缓存仍需另备。Rollup candidate.4 的实际 native 构建另有 `evidence/native-setup.log`，记录 `cargo 1.90.0-nightly (6833aa715 2025-07-13)` 和 `rustc 1.90.0-nightly (b56aaec52 2025-07-24)`，对应 `nightly-2025-07-25`。这份日志属于 Rollup 的 Linux x64 glibc 构建。
 
 补件范围为生成器源码、选中的必要源依赖、四项数据输入和本地接线。与旧 v3 及冻结组合分别登记，完整离线工具环境、最终发行和公开获取仍按各自门禁处理。
 

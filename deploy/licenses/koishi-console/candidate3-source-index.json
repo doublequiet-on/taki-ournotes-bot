@@ -1,5 +1,5 @@
 {
-  "identity": "taki-console-candidate3-source-index.8",
+  "identity": "taki-console-candidate3-source-index.9",
   "license_material_status": {
     "newly_assembled_package_mappings": 24,
     "supplement_index_sha256": "34ced28faba576b74d35b553a187dfcd5245e8a0d9d662f30bcb1cb021c5cae9",
@@ -178,7 +178,22 @@
       "path": "runtime/task09/icu-datagen-inputs-20261108/icu-datagen-source-and-inputs-v1.zip",
       "size": 133898892,
       "sha256": "7a866f4edc3ec7e8c1d75f3a9d08c5a6ebd38aefd3b6d5d51b3c63ad6627756d",
-      "manifest_sha256": "8c277af6b4d1e9c88e1b51577af80bf1631c6e550f0df90189d1342354da59e8"
+      "manifest_sha256": "8c277af6b4d1e9c88e1b51577af80bf1631c6e550f0df90189d1342354da59e8",
+      "resolver_version_evidence": {
+        "purpose": "Locked dependency resolution for bakeddata on x86_64-unknown-linux-gnu; no ICU compile or datagen",
+        "cargo_cli_version": "1.99.1 (5f94df478 2026-08-27)",
+        "rustc_cli_version": "1.99.1 (58cf8f9c3 2026-10-13)",
+        "resolver_log_member": "resolver.log",
+        "resolver_log_sha256": "9d7f8273c983a0b39d3e87d91b0949a8a18a263bd9588212abb28a331cb85536",
+        "legacy_tools_record_member": "provenance/resolver-tools.json",
+        "legacy_tools_record_sha256": "0f95e2dd4d8e58c316a1167b8503382b46a89d81e693a79814f34a90161c341c",
+        "legacy_cargo_version_origin": "Saved Rust distribution manifest pkg.cargo.version; the original ZIP field is not cargo --version output",
+        "distribution_manifest_cargo_label": "0.100.0 (5f94df478 2026-08-27)",
+        "distribution_manifest_sha256": "fb152be80975c194aa5fc684b2aec3a6e14e2b855efe2faa4e5f8ae6e590f463",
+        "cargo_archive_sha256": "53f3521949404d595efb06a55c12c5658d4ed1c75566f33d3d514eaebe70bd8a",
+        "upstream_datagen_rust_toolchain": "1.98.0",
+        "upstream_datagen_toolchain_executed": false
+      }
     }
   ],
   "rebuild_profiles": [
