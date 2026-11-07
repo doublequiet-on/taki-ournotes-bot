@@ -1,14 +1,14 @@
 {
   "schema": "taki-console-integration/1",
-  "integration_base": "399cc8a47bf84aa550ff2eb3d1e3d640101c2033",
-  "source_commit": "ca7a64175aa4c359c018b8a7e1dc6c506fbd6552",
+  "integration_base": "d1e53b0c09c856857bdde9766a31056833feab67",
+  "source_commit": "a526abab715989145ed1368ce1610413213a1a8c",
   "component": {
-    "file": "taki-console-0.1.0-candidate.3.tgz",
-    "version": "0.1.0-candidate.3",
-    "package_version": "5.30.10-taki.3",
-    "sha256": "ea92ea91d816648023e61cf6ce7dfe2de98aece38e1ca8dd9292166f5537d1fb",
-    "integrity": "sha512-VDLAD2fzeR1RQ2xpIxkRzAC+9+CcWTN0HUaVSydJGagwES8s8J+JaWWlbPDZUogM40xp14RQHyqkthwUPLRsWA==",
-    "size": 634671,
+    "file": "taki-console-0.1.0-candidate.4.tgz",
+    "version": "0.1.0-candidate.4",
+    "package_version": "5.30.10-taki.4",
+    "sha256": "1668e57b5b387814aab60f79f2d157f7017299088b5413e49690ef8aa5b5f0c9",
+    "integrity": "sha512-HyhENm6Ij2qaYI4+KU3LUpAor1dq1ViyGeFB1GZW6aju6/PDnRj5KHoVd3AjnPyWKeuGlbsS4Lh1oRl8ZKCZXA==",
+    "size": 635218,
     "files": 168,
     "license_index_entries": 135
   },
@@ -40,29 +40,36 @@
     }
   },
   "source_materials": {
-    "source_commit": "ca7a64175aa4c359c018b8a7e1dc6c506fbd6552",
+    "source_commit": "a526abab715989145ed1368ce1610413213a1a8c",
     "bundles": [
       {
-        "file": "console-candidate3-security-inputs-v2.zip",
-        "size": 128359885,
-        "sha256": "c6261043446d4d717af86a3466733f3f284021dbfd996082464ec202b2a68e0b"
+        "file": "console-candidate4-build-inputs.zip",
+        "size": 128960704,
+        "sha256": "40eea95ef2fb80d9bc0f675065276ee12b7428588c19bfbc3172d9e13ca99888"
       },
       {
-        "file": "console-candidate2-source-support.zip",
-        "size": 4419328,
-        "sha256": "3762c2145fe2fdae8a74d7a81d46c2085becaf57ef8a6e79545161dc63cd05f8"
+        "file": "rollup-native-material-delta-selected-v1.zip",
+        "size": 2370676,
+        "sha256": "82c6ca57001b90514c83cf766a7d16750a39a68dbe5b7b28efc792cfdb494942"
       }
     ],
     "hosting_url": null,
-    "published": false
+    "published": false,
+    "fixed_index": {
+      "path": "deploy/licenses/koishi-console/candidate4-source-index.json",
+      "sha256": "0409d8cc56c21e37802dba05169b9ea4f3f3d3b6fc6dbb476fe5ee70f6967be5",
+      "commit": "a526abab715989145ed1368ce1610413213a1a8c"
+    },
+    "reuses_candidate3_source_index_at": "785710fca3f4d63c8326520c00211792c9af2b82"
   },
   "legacy_byte_patch": "forbidden",
   "complete_corresponding_source": false,
   "product_release": false,
   "acceptance": {
-    "status": "gateway_self_check_passed",
-    "resolved_issue": "markdown_link_attribute_injection",
+    "status": "isolated_gateway_self_check_passed",
     "independent_review": false,
-    "release_assembly": "pending_task09"
+    "release_assembly": "pending_task09",
+    "console_tgz_byte_reproducible": false,
+    "ab_difference_review": "pending_task12"
   }
 }

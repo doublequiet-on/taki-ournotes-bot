@@ -512,7 +512,14 @@ class ModelAdmin:
         finally:
             if reserved: usage.observe(attempt,'capability_probe',min(3600000,int((time.monotonic()-began)*1000)))
 
-    async def close(self):
+    def request_stop(self):
+        if self.task and not self.task.done(): self.task.cancel()
+
+    async def quiesce(self):
+        self.request_stop()
         if self.task and not self.task.done():
-            self.task.cancel();await asyncio.gather(self.task,return_exceptions=True)
+            await asyncio.gather(self.task,return_exceptions=True)
+
+    async def close(self):
+        await self.quiesce()
         if self.db is not None: self.db.close();self.db=None

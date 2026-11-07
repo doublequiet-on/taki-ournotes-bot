@@ -9,10 +9,10 @@ import sys
 
 try:
     from scripts.build_koishi_release import LICENSE_SHA256
-    from scripts.console_release import verify_downstream
+    from scripts.console_release import PACKAGE_VERSION, VENDOR_FILES, verify_downstream, verify_downstream_materials
 except ModuleNotFoundError:
     from build_koishi_release import LICENSE_SHA256
-    from console_release import verify_downstream
+    from console_release import PACKAGE_VERSION, VENDOR_FILES, verify_downstream, verify_downstream_materials
 
 
 def verify(root, expected_commit):
@@ -37,16 +37,23 @@ def verify(root, expected_commit):
     component=manifest.get('console_component')
     package_path=root/'gateway/node_modules/@koishijs/plugin-console/package.json'
     package_version=json.loads(package_path.read_text())['version'] if package_path.exists() else None
-    if package_version and package_version not in ('5.30.10-taki.3','5.30.11'):
+    if package_version and package_version not in (PACKAGE_VERSION,'5.30.11'):
         raise ValueError('Unknown installed Console version')
-    if package_version=='5.30.10-taki.3' or (component and component.get('kind')=='taki-downstream'):
+    if package_version==PACKAGE_VERSION or (component and component.get('kind')=='taki-downstream'):
         if component!=verify_downstream(root/'gateway'):
             raise ValueError('Console component identity')
+        if {p.name for p in (root/'gateway/vendor').iterdir()} != set(VENDOR_FILES):
+            raise ValueError('Combination vendor member set differs')
+        verify_downstream_materials(root/'licenses/koishi-console')
         materials=json.loads((root/'licenses/npm-installation.json').read_text())
         notices=json.loads((root/'licenses/koishi-console/gateway-notices.json').read_text())
         if notices['lock_canonical_sha256']!=component['lock_canonical_sha256']:
             raise ValueError('Gateway notice lock mismatch')
+        lock=json.loads((root/'gateway/package-lock.json').read_text())
         for package in notices['packages']:
+            row=lock['packages'].get(package['location'], {})
+            if row.get('version')!=package['version'] or row.get('integrity')!=package['npm_integrity']:
+                raise ValueError('Gateway notice package differs from lock')
             for notice in package.get('original_texts',[]):
                 if hashlib.sha256(notice['text'].encode()).hexdigest()!=notice['sha256']:
                     raise ValueError('Gateway original notice mismatch')

@@ -10,9 +10,11 @@ import tempfile
 import zipfile
 
 try:
-    from scripts.console_release import verify_downstream, installed_npm_materials
+    from scripts.console_release import (PACKAGE_VERSION, SOURCE_METADATA, VENDOR_FILES,
+                                         installed_npm_materials, verify_downstream, verify_downstream_materials)
 except ModuleNotFoundError:
-    from console_release import verify_downstream, installed_npm_materials
+    from console_release import (PACKAGE_VERSION, SOURCE_METADATA, VENDOR_FILES,
+                                 installed_npm_materials, verify_downstream, verify_downstream_materials)
 
 ROOT = Path(__file__).resolve().parents[1]
 KOISHI_CLIENT_SHA256 = '55a68e89eda7e3fe59305b09e6c4de19481a8d7aa5df97579822c819ebf3ccaf'
@@ -58,6 +60,10 @@ def copy_release_materials(stage, downstream=False):
     shutil.copy2(ROOT / 'LICENSE', stage / 'licenses/TAKI-LICENSE')
     shutil.copy2(ROOT / 'THIRD_PARTY.md', stage / 'licenses/THIRD_PARTY.md')
     if downstream:
+        sources = ROOT / 'deploy/licenses/koishi-console'
+        verify_downstream_materials(sources)
+        for name in SOURCE_METADATA:
+            shutil.copy2(sources / name, stage / 'licenses/koishi-console' / name)
         shutil.copy2(ROOT / 'docs/CONSOLE_DOWNSTREAM.md', stage / 'licenses/koishi-console/CONSOLE_DOWNSTREAM.md')
         shutil.copy2(ROOT / 'deploy/licenses/koishi-console/gateway-notices.json', stage / 'licenses/koishi-console/gateway-notices.json')
         return
@@ -87,7 +93,7 @@ def build(python_artifact, node, output):
         'console.log(JSON.stringify({version:process.version,platform:process.platform,arch:process.arch}))'],text=True))
     if identity['version'] != 'v24.19.0': raise ValueError('Unexpected Node version')
     package=json.loads((ROOT/'koishi/node_modules/@koishijs/plugin-console/package.json').read_text())
-    downstream=package['version']=='5.30.10-taki.3'
+    downstream=package['version']==PACKAGE_VERSION
     if not downstream and package['version']!='5.30.11':
         raise ValueError('Unknown Console component version')
     component=verify_downstream(ROOT/'koishi') if downstream else {'kind':'official-npm','version':'5.30.11'}
@@ -99,7 +105,9 @@ def build(python_artifact, node, output):
         for name in ('scripts','node_modules','console','compat'):
             shutil.copytree(ROOT/'koishi'/name,gateway/name,ignore=shutil.ignore_patterns('.bin','*.tsbuildinfo'))
         if downstream:
-            shutil.copytree(ROOT/'koishi/vendor',gateway/'vendor')
+            (gateway/'vendor').mkdir()
+            for name in VENDOR_FILES:
+                shutil.copy2(ROOT/'koishi/vendor'/name, gateway/'vendor'/name)
             (stage/'licenses/npm-installation.json').write_text(json.dumps(npm_materials,indent=2)+'\n',encoding='utf-8')
         else:
             patch_koishi_client(gateway/'node_modules/@koishijs/plugin-console/dist/client.js')

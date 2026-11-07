@@ -1,21 +1,15 @@
 # 固定下游 Console 开发候选
 
-当前依赖为原始 `taki-console-0.1.0-candidate.3.tgz`，安装名为
-`@koishijs/plugin-console`，包版本 `5.30.10-taki.3`。不是 npm-repack 包，也不是最终发行包。
-**原Markdown链接属性注入已在实际网关浏览器复验通过；发行装配和12独立复核仍待完成。**
-版本绑定及08自查见 [candidate.3记录](../../docs/task08-integration/CONSOLE_CANDIDATE3.md)。
+当前依赖为原始 B2 `taki-console-0.1.0-candidate.4.tgz`，安装名
+`@koishijs/plugin-console`，包版本 `5.30.10-taki.4`。只用于隔离候选接入。
+来源固定提交 `a526abab715989145ed1368ce1610413213a1a8c`，未合入09移动分支。
+SHA256 `1668e57b5b387814aab60f79f2d157f7017299088b5413e49690ef8aa5b5f0c9`，635218字节、168文件。
 
-来源提交：`ca7a64175aa4c359c018b8a7e1dc6c506fbd6552`（仅消费固定组件，未合入其分支）。
-SHA256：`ea92ea91d816648023e61cf6ce7dfe2de98aece38e1ca8dd9292166f5537d1fb`，634671字节、168文件。
-包内 `TAKI-CONSOLE.json` 记录上游、源码重连修复及构建输入。
+package/lock 使用仓库相对 file 依赖及完整性摘要，npm 12.2.0 `npm ci --ignore-scripts` 可安装。
+外部依赖及 cache-content-type 兼容层保持；不能覆盖dist或重复应用旧重连字节补丁。
+机器接口 [console-candidate.json](console-candidate.json) 绑定固定源码索引、输入材料及准入状态。
 
-`package.json` 使用仓库相对 file 依赖；`package-lock.json` 锁 SHA512 与完整外部依赖树。
-在 koishi 目录使用 npm 12.2.0 `npm ci --ignore-scripts`，不覆盖 dist、不使用个人路径。
-`console-candidate.json` 是给09/11的机器可读版本接口，登记外部依赖及源码材料 hash。
-源码输入和source-support两包已按hash绑定，尚未发布，`hosting_url=null`。
-
-服务仍使用现有 `console.cjs::install` 的默认插件类、服务注入、addEntry/addListener 和认证。
-AGPL-3.0 组件的对应源码完整性及公开材料放行仍待09/11；`product_release=false`。
-严禁再次应用旧 npm client 字节补丁。现有组合发行器尚未支持此候选，接入必须由09提供显式分支。
-本目录不授权发布、最终 selection 或物理裁剪。实际验收和装配缺口见
-[任务08 Console 接入记录](../../docs/task08-integration/CONSOLE_CANDIDATE.md)。原candidate.1/2 tgz及其历史证据保留，当前package/lock不引用它；原版本同样复现上述链接属性问题。它们只属于内部历史证据，不是安全rollback候选。冻结组合保留现状；后续最终产品复制白名单只含本README、`console-candidate.json`和candidate.3 tgz，准确排除清单及新工件要求见[源码材料收敛](../../docs/CONSOLE_SOURCE_MATERIALS.md)。
+本轮实际安装/浏览器/RPC证据见 [candidate.4自查](../../docs/task08-integration/CONSOLE_CANDIDATE4.md)。
+12确认 A2/B2 的 dist/index.js 还差一次 ElConfigProvider 的 withInstall 调用，根因待定。固定 B2 可接续工件验收，整包字节可复现和最终产品发行仍待验。
+09组合包的 vendor 仅携带本 README、绑定和固定 B2。旧 client 字节门禁保持。公开地址为 null，完整对应源码及 product_release 为 false。
+历史candidate.1/2/3原包与各自验证记录保留，不混用旧证据作为本轮验收。

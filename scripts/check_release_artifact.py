@@ -29,6 +29,8 @@ SDIST_BUILD_JSON = {
     ("deploy", "licenses", "koishi-console", "downstream-inputs.json"),
     ("deploy", "licenses", "koishi-console", "downstream-inputs-public-v2.json"),
     ("deploy", "licenses", "koishi-console", "candidate3-source-index.json"),
+    ("deploy", "licenses", "koishi-console", "candidate4-source-index.json"),
+    ("deploy", "licenses", "koishi-console", "downstream-inputs-candidate4.json"),
     ("deploy", "licenses", "koishi-console", "rollup-linux-x64-glibc-coverage.json"),
     ("deploy", "licenses", "koishi-console", "gateway-notices.json"),
     ("koishi", "vendor", "console-candidate.json"),
@@ -38,7 +40,8 @@ SDIST_BUILD_JSON = {
     ("koishi", "compat", "cache-content-type", "upstream-materials.json"),
 }
 SDIST_REQUIRED = SDIST_BUILD_JSON | {
-    ("koishi", "vendor", "taki-console-0.1.0-candidate.3.tgz"),
+    ("koishi", "vendor", "taki-console-0.1.0-candidate.4.tgz"),
+    ("koishi", "vendor", "README.md"),
     ("koishi", "compat", "cache-content-type", "LICENSE"),
     ("koishi", "compat", "cache-content-type", "README.md"),
     ("koishi", "compat", "cache-content-type", "index.cjs"),
@@ -111,6 +114,8 @@ def check(path: Path) -> None:
     if not {"event_cutoffs.py", "HANEOKA_CUTOFFS.md"} <= documents:
         raise ValueError(f"missing Haneoka cutoff preview resources in {path.name}")
     if path.name.endswith(".tar.gz"):
+        if any(path[:2] == ("koishi", "vendor") and path not in SDIST_REQUIRED for path in source_paths):
+            raise ValueError(f"unexpected Console vendor member in {path.name}")
         missing_build_inputs = SDIST_REQUIRED - source_paths
         if missing_build_inputs:
             raise ValueError(f"missing source build inputs in {path.name}: {sorted(missing_build_inputs)}")

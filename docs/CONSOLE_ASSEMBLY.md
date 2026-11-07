@@ -1,5 +1,17 @@
 # 下游Console固定候选装配
 
+## 当前装配：candidate.4 B2
+
+本轮以09固定 `5ad4e3c234705c642f920aaa760e5707a72f1149` 接收08固定 `a7ca40d1c50d2a4d1a216f21cb3c8e87c2bd511f`。保留08恢复业务门、Backend生命周期、d1夹具及既有 cache 适配。包、锁、vendor 绑定采用08固定文件，README以08版本为基础补充准入信息，导航保留两边记录。10后续接线另计。
+
+装配器仅接收原始 B2，npm 版本 `5.30.10-taki.4`，SHA-256 `1668e57b5b387814aab60f79f2d157f7017299088b5413e49690ef8aa5b5f0c9`。组件来源固定 `a526abab715989145ed1368ce1610413213a1a8c`。准入核 vendor 绑定、完整 lock、tgz 与168安装成员、重连和 Markdown 源码标记、构建输入与 native 绑定，以及135项许可。旧官方5.30.11仍使用原字节校验和补丁。B2 分支直接复制原始字节。
+
+组合和 sdist 的 vendor 仅收固定 B2、绑定和 README。组合随带固定来源索引及构建输入规格。新 lock 的 registry 条目及本地 compat 和冻结组合一致，沿用原网关声明与原文，只更新其 lock 绑定。Node LICENSE、控制器/回退材料及配对检查继续适用。
+
+08 的[隔离网关记录](task08-integration/CONSOLE_CANDIDATE4.md)绑定同一 B2。12 的独立审查允许该固定工件接续验收，并确认 A2/B2 还差一次 ElConfigProvider 的 withInstall 调用。根因未定，整包字节复现尚未通过。11 对新候选的 base-encode 材料缺口已收口，公开分发及最终产品仍待验。
+
+## 历史装配：冻结 candidate.3
+
 11第九轮和12整包复核已补充确认固定`0026159…`准入、安装树、负例与无网验包；这关闭原“08接入待独立复核”口径，不等于完整对应源码、首装恢复、最终双发行或物理裁剪通过。冻结组合及原摘要不变；后续源码材料增量见[Console candidate.3源码材料收敛](CONSOLE_SOURCE_MATERIALS.md)。
 
 当前装配分支先保留09安全修复 `ca7a64175aa4c359c018b8a7e1dc6c506fbd6552`，再按08已提交祖先链接收 `e5e532a…`（cache适配）、`399cc8a…`（candidate.2基线）和固定接入 `982f042889d9de84e13aa2aedaca51faeea5bd5b`。唯一冲突是 `docs/L2.md` 导航，双方入口均保留；vendor、package/lock、compat和业务字节均按08提交接收。没有合并GitHub PR/main或读取08未提交文件。

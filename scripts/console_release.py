@@ -7,11 +7,19 @@ import os
 from pathlib import Path, PurePosixPath
 import tarfile
 
-COMPONENT_SHA = 'ea92ea91d816648023e61cf6ce7dfe2de98aece38e1ca8dd9292166f5537d1fb'
-LOCK_SHA = '587178bda427fcaf3aa115798fbedf0830ab7ee83e06cf6ae4e7edf26867aeed'
-BINDING_SHA = '034af3c7b4ca599aacc825188cf0d8069d6ad94024f556e492b650fe93ce294d'
-SOURCE_COMMIT = 'ca7a64175aa4c359c018b8a7e1dc6c506fbd6552'
-COMPONENT_FILE = 'taki-console-0.1.0-candidate.3.tgz'
+COMPONENT_SHA = '1668e57b5b387814aab60f79f2d157f7017299088b5413e49690ef8aa5b5f0c9'
+LOCK_SHA = '39286e685316aca581d35e018ae634b2837325e6ca2e1380f3843a53227e9984'
+BINDING_SHA = '3ac93b01d0dcf9158852b8380920c7c4eb615a4f801f3d53d809d1bb3879432e'
+SOURCE_COMMIT = 'a526abab715989145ed1368ce1610413213a1a8c'
+COMPONENT_FILE = 'taki-console-0.1.0-candidate.4.tgz'
+PACKAGE_VERSION = '5.30.10-taki.4'
+VENDOR_FILES = ('README.md', 'console-candidate.json', COMPONENT_FILE)
+SOURCE_METADATA = {
+    'candidate4-source-index.json': '0409d8cc56c21e37802dba05169b9ea4f3f3d3b6fc6dbb476fe5ee70f6967be5',
+    'downstream-inputs-candidate4.json': 'a6b1211ff840561a2c8ea0bc33bf71c36ce3a05c846065d9f805e3b8113b05fa',
+}
+INPUTS_SHA = '40eea95ef2fb80d9bc0f675065276ee12b7428588c19bfbc3172d9e13ca99888'
+NATIVE_SHA = '2528c930b780a24079c04c94f92db33787fff19eef6c1fed5de7ad3efddfbdb4'
 PACKAGE = 'node_modules/@koishijs/plugin-console'
 CACHE_SPEC = 'file:compat/cache-content-type'
 CACHE_FILES = {
@@ -57,6 +65,13 @@ def tar_files(data, identical_aliases=None):
     return files
 
 
+def verify_downstream_materials(directory):
+    for name, expected in SOURCE_METADATA.items():
+        path = directory / name
+        if not path.is_file() or digest(path.read_bytes()) != expected:
+            raise ValueError('Missing or altered downstream source metadata: ' + name)
+
+
 def verify_downstream(gateway):
     """Recheck fixed tar, lock, metadata and every installed component file; never patch."""
     binding = read(gateway / 'vendor/console-candidate.json')
@@ -64,8 +79,8 @@ def verify_downstream(gateway):
         raise ValueError('Unreviewed downstream source binding')
     data = (gateway / 'vendor' / COMPONENT_FILE).read_bytes()
     integrity = 'sha512-' + base64.b64encode(hashlib.sha512(data).digest()).decode()
-    expected = dict(file=COMPONENT_FILE, version='0.1.0-candidate.3', package_version='5.30.10-taki.3',
-                    sha256=COMPONENT_SHA, integrity=integrity, size=634671, files=168,
+    expected = dict(file=COMPONENT_FILE, version='0.1.0-candidate.4', package_version=PACKAGE_VERSION,
+                    sha256=COMPONENT_SHA, integrity=integrity, size=635218, files=168,
                     license_index_entries=135)
     if digest(data) != COMPONENT_SHA or binding['component'] != expected or binding['source_commit'] != SOURCE_COMMIT:
         raise ValueError('Unknown or altered downstream Console')
@@ -114,17 +129,24 @@ def verify_downstream(gateway):
     if (identity['legacy_byte_patch'] != 'forbidden; source patch already applied'
             or identity['reconnect_source_after'] != 'cf21a5e49c75deeda40a064e9dba2f65933a97c9357beda743337dee4be60e49'
             or identity['markdown_security_patch_sha256'] != 'f5a928102fbf6dd184776c6b84ebf3d494153e3c63ef3ebc36f568774b7e24d1'
-            or identity['inputs_sha256'] != 'c6261043446d4d717af86a3466733f3f284021dbfd996082464ec202b2a68e0b'
+            or identity['inputs_sha256'] != INPUTS_SHA
+            or identity['rollup_native']['installed_binary']['sha256'] != NATIVE_SHA
+            or identity['package_version'] != PACKAGE_VERSION
             or identity['version'] != expected['version']):
         raise ValueError('Downstream source reconnect binding mismatch')
     for name in ('LICENSE', 'TAKI-MODIFICATIONS.txt', 'licenses/index.json', 'licenses/NOTICE.txt'):
         if name not in files:
             raise ValueError('Missing downstream materials')
-    for row in json.loads(files['licenses/index.json']):
+    licenses = json.loads(files['licenses/index.json'])
+    if len(files) != expected['files'] or len(licenses) != expected['license_index_entries']:
+        raise ValueError('Downstream material count differs')
+    for row in licenses:
         if digest(files['licenses/' + row['path']]) != row['sha256']:
             raise ValueError('Downstream license hash mismatch')
     return dict(kind='taki-downstream', component_sha256=COMPONENT_SHA, source_commit=SOURCE_COMMIT,
                 lock_canonical_sha256=LOCK_SHA, legacy_byte_patch='not applied',
+                source_inputs_sha256=INPUTS_SHA, build_only_rollup_native_sha256=NATIVE_SHA,
+                source_index_sha256=SOURCE_METADATA['candidate4-source-index.json'],
                 cache_content_type='taki-cjs-adapter/0.1.0 + upstream/2.1.0',
                 complete_corresponding_source=False, product_release=False)
 

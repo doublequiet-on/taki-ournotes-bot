@@ -1,5 +1,5 @@
 {
-  "lock_canonical_sha256": "587178bda427fcaf3aa115798fbedf0830ab7ee83e06cf6ae4e7edf26867aeed",
+  "lock_canonical_sha256": "39286e685316aca581d35e018ae634b2837325e6ca2e1380f3843a53227e9984",
   "packages": [
     {
       "name": "@cordisjs/core",
