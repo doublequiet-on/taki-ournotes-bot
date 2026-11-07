@@ -26,8 +26,26 @@
 
 冻结ea92组件、002/4ce3整包未装入本增量、未重造；新索引只绑定材料，产品实际随行仍须将原准确源材料与本增量配对验收。ICU生成说明、公开获取入口、最终selection、物理裁剪及安装恢复等按各自门禁继续。`complete_corresponding_source=false`、`product_release=false`、`published=false`保持；本次不是法律批准、公开分发或最终产品验收。
 
-### base-encode 的最小替代范围（待 00 决定）
+### candidate.4 的 base-encode 替代
 
-固定 Rollup `18b5cb60e55926f6d917cc1aeb17fd81d0da5cc6` 的 Rust 工作区由 `rust/xxhash/Cargo.toml` 引入 `base-encode@0.3.1`，`rust/xxhash/src/lib.rs` 只用其 `to_string` 实现 `xxhash_base64_url` 和 `xxhash_base36`。最小方案是在该文件独立实现固定 16 字节的基数转换，移除 crate 声明并重锁 `rust/Cargo.lock`。保留 xxh3-128、两套现有字母表和 base16 路径。兼容规则是把 hash 的小端字节序列作为大端整数做除余转换，同时逐字节保留开头的零为字母表首字符。普通 Base64 编码不能复用这一契约。
+固定 Rollup `18b5cb60e55926f6d917cc1aeb17fd81d0da5cc6` 的 `rust/xxhash` 由补丁独立实现 16 字节数字编码。保留 xxh3-128、base16 和 base36/base64-url 现有字母表。hash 小端字节序列按大端整数转换，每个前导零字节单独输出字母表首字符。补丁移除 `rust/xxhash/Cargo.toml` 的唯一外部声明及 `rust/Cargo.lock` 对应包和边，其余锁项相同。N-API 和 WASM 继续调用同一 `xxhash` crate。WASM 不在本轮构建目标。
 
-先用隔离旧实现采样固定测试向量，覆盖全零、前导零、边界进位、两种基数、base16 及真实 chunk 命名。若获批，先重建并标识新的 Linux x64 glibc Rollup native 工具，复查 `bindings_napi` 导出、共享 `bindings_wasm` 调用契约和 chunk/hash 名称，再更新 Console 配方中的 native 包/完整性锁和实际源许可索引。重建比较 Console 运行输出。如果运行字节变化，分配新组件及组合包身份并交 08/12 回归。当前交付仅登记方案，既有 native 工具与来源缺口继续按其原身份记录。
+[源码补丁](../deploy/licenses/koishi-console/rollup-xxhash-base.patch)保留原 Rollup MIT 来源，新代码按本仓 MIT 条款随行。原树归档 SHA-256 为 `951175a04825fabbf078497a7de4ff0d318cc9727b449614a704ee1fe4556f2a`。新 Cargo.lock SHA-256 为 `4419e784a43fe1546066b7c350e3fc52c55776992558243a369a1a2fc2f3fab6`。目标 `x86_64-unknown-linux-gnu` 的 normal/build 闭包和启用 features 与原清单相比只去掉 `base-encode@0.3.1`。187 个包中的 184 个 registry 源沿三份已交材料逐项匹配固定 checksum，另三个是固定 Rollup 树内包。此前 24 项原文仍按原版本映射。旧版闭包中的 base-encode 证据仅对应旧工具。
+
+在新的 Linux x86_64 工作目录中，准备固定 Rollup 源归档、具有 Cargo 索引和准确 crate 的隔离缓存，并把已核工具放在新输出目录下的 `tools/`。从 [Rust 日期清单](https://static.rust-lang.org/dist/2025-07-25/channel-rust-nightly.toml)取得 nightly-2025-07-25 的 cargo、rustc、rust-std，从 [Zig 索引](https://ziglang.org/download/index.json)取得 Zig 0.15.2。mimalloc 构建还用 [CMake 3.31.8](https://github.com/Kitware/CMake/releases/tag/v3.31.8) 和 [Ninja 1.13.1](https://github.com/ninja-build/ninja/releases/tag/v1.13.1)。配方在解包前逐个核 SHA-256。执行：
+
+```sh
+bash deploy/licenses/koishi-console/rebuild-rollup-native.sh /absolute/new/native-output \
+  /absolute/rollup-source.tar.gz deploy/licenses/koishi-console/rollup-xxhash-base.patch \
+  /absolute/seed-cargo-home/registry
+python3 -B scripts/prepare_console_native_candidate.py \
+  --base /absolute/console-candidate3-public-source-v2.zip \
+  --native /absolute/new/native-output/rollup.linux-x64-gnu-A.node \
+  --output /absolute/new/candidate4-inputs
+python3 -B scripts/build_downstream_console.py \
+  --inputs /absolute/new/candidate4-inputs/console-candidate4-build-inputs.zip \
+  --spec /absolute/new/candidate4-inputs/downstream-inputs-candidate4.json \
+  --work /absolute/new/console-work --output /absolute/new/console-output
+```
+
+配方从两份独立源码副本按固定 lock 构建 `bindings_napi`。Zig 提供 glibc 2.17 目标，编译器包装只折叠 cc-rs 对同一目标的重复标注。Console 输入生成器只换 Yarn cache 内的平台 native 成员，保留 JS 包和 lock。构建器逐字节核对已安装文件，并验证 Rollup 实际加载该文件。新 tarball 绑定 `taki-console@0.1.0-candidate.4`、npm `5.30.10-taki.4` 与独立输入规格。candidate.4 走单独的验收路径，旧产品安装准入仍使用 candidate.3。配方不包含浏览器验收或安装恢复。

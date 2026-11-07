@@ -63,3 +63,6 @@ include docs/CHAT_AGENT_BASELINE.md docs/CHAT_AGENT_ARCHITECTURE.md docs/CHAT_AG
 include docs/CHAT_AGENT_C2.md docs/STORY_ENGINE.md docs/STORY_SOURCE_COVERAGE.md docs/STORY_PERSONA_RESEARCH.md docs/CHAT_MEMORY_C3.md docs/CHAT_IMAGES_V1.md docs/CHAT_QQ_QUOTE_EVIDENCE.md docs/CHAT_PROACTIVE_G1.md docs/CHAT_SERVICE_JOBS.md docs/CHAT_AGENT_F1.md
 
 include deploy/licenses/koishi-console/marked-vue-href.patch
+
+include scripts/prepare_console_native_candidate.py
+include deploy/licenses/koishi-console/rollup-xxhash-base.patch deploy/licenses/koishi-console/rebuild-rollup-native.sh

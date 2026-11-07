@@ -32,8 +32,16 @@ def dump(path: Path, value) -> None:
     path.write_text(json.dumps(value, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
 
 
-def build(inputs: Path, work: Path, output: Path) -> None:
-    config = json.loads((RECIPES / 'downstream-inputs.json').read_text(encoding='utf-8'))
+def build(inputs: Path, work: Path, output: Path, spec: Path | None = None) -> None:
+    config = json.loads((spec or RECIPES / 'downstream-inputs.json').read_text(encoding='utf-8'))
+    native = config.get('rollup_native')
+    if spec is not None and (
+        config['version'] != '0.1.0-candidate.4'
+        or config['package_version'] != '5.30.10-taki.4'
+        or not isinstance(native, dict)
+        or not native
+    ):
+        raise ValueError('The alternate specification must bind the candidate.4 native tool')
     if os.name != 'posix' or not work.is_absolute() or work.exists() or output.exists():
         raise ValueError('Linux and new absolute work/output directories required')
     if inputs.stat().st_size != config['inputs_size'] or sha(inputs.read_bytes()) != config['inputs_sha256']:
@@ -62,6 +70,15 @@ def build(inputs: Path, work: Path, output: Path) -> None:
     for recipe in ('downstream-build.cjs', 'taki-reconnect-source.patch', 'marked-vue-href.patch'):
         if (work / 'recipe' / recipe).read_bytes() != (RECIPES / recipe).read_bytes():
             raise ValueError('Recipe differs from pinned build inputs')
+    if native:
+        if json.loads((work / 'materials/rollup-native-rebuild.json').read_bytes()) != native:
+            raise ValueError('Rollup native provenance differs from the specification')
+        for recipe, digest in (
+            ('rollup-xxhash-base.patch', native['patch_sha256']),
+            ('rebuild-rollup-native.sh', native['native_recipe_sha256']),
+        ):
+            if sha((RECIPES / recipe).read_bytes()) != digest or sha((work / 'recipe' / recipe).read_bytes()) != digest:
+                raise ValueError('Rollup native recipe differs from the specification')
     if '@napi-rs/lzma' in (work / 'source/yarn.lock').read_text(encoding='utf-8'):
         raise ValueError('Excluded build-only lzma dependency returned')
     # The pinned official Node tool archive has internal bin/npm links. Python's
@@ -90,6 +107,15 @@ def build(inputs: Path, work: Path, output: Path) -> None:
     run('install', yarn + ['install', '--immutable', '--immutable-cache', '--mode=skip-build'])
     if list((source / 'node_modules/@napi-rs').glob('lzma*')):
         raise ValueError('Excluded lzma installed')
+    if native:
+        module = 'node_modules/@rollup/rollup-linux-x64-gnu/rollup.linux-x64-gnu.node'
+        data = (source / module).read_bytes()
+        if native['installed_binary'] != dict(path=module, size=len(data), sha256=sha(data)):
+            raise ValueError('Installed Rollup native tool differs from the specification')
+        run('rollup-native-probe', ['node', '-e',
+            "require('rollup'); const expected = require('node:fs').realpathSync(process.argv[1]); "
+            "if (!require.cache[expected]) throw Error('Rollup did not load the bound native tool'); "
+            "console.log(expected);", module])
     # Stable component build stages; do not invoke the upstream broken client dispatcher.
     run('types', yarn + ['yakumo', '--import', 'tsx', 'tsc'])
     run('lib', yarn + ['yakumo', '--import', 'tsx', 'esbuild'])
@@ -160,13 +186,19 @@ def build(inputs: Path, work: Path, output: Path) -> None:
                    legacy_byte_patch='forbidden; source patch already applied',
                    source_download={'relative_path': 'sources/{component_sha256}/source-materials.zip', 'published': False},
                    complete_corresponding_source=False, product_release=False)
+    if native:
+        binding['rollup_native'] = native
     dump(payload / 'TAKI-CONSOLE.json', binding)
+    rollup_note = (
+        'Build-only Rollup excludes unused lzma and uses the bound downstream Linux native tool.'
+        if native else 'Build-only Rollup metadata excludes unused lzma; executable tool bytes are unchanged.'
+    )
     (payload / 'TAKI-MODIFICATIONS.txt').write_text(
         'Taki downstream Console candidate; 2026-11-04. See TAKI-CONSOLE.json.\n'
         'Reconnect URL preservation is compiled from source exactly once.\n'
         'Cordis uses npm TS; devtools/Element Plus use pinned source; lodash-unified browser imports use a new Taki adapter generated from lodash-es public exports.\n'
         'marked-vue fixed TS and exact npm reggol 1.7.1 TS generate ESM with explicit externals, keepNames and no type edits.\n'
-        'Build-only Rollup metadata excludes unused lzma; executable tool bytes are unchanged.\n'
+        f'{rollup_note}\n'
         'marked-vue href: decode HTML attribute once, validate unchanged protocols, encode ampersands/quotes before HTML output.\n'
         'Do not apply the upstream-npm byte patch. Not a final product release.\n', encoding='utf-8')
     files = [dict(path=p.relative_to(payload).as_posix(), size=p.stat().st_size, sha256=sha(p.read_bytes()))
@@ -191,5 +223,6 @@ if __name__ == '__main__':
     parser.add_argument('--inputs', type=Path, required=True)
     parser.add_argument('--work', type=Path, required=True)
     parser.add_argument('--output', type=Path, required=True)
+    parser.add_argument('--spec', type=Path, help='fixed alternate candidate.4 input specification')
     args = parser.parse_args()
-    build(args.inputs.resolve(), args.work, args.output.resolve())
+    build(args.inputs.resolve(), args.work, args.output.resolve(), args.spec)

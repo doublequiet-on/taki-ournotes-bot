@@ -1,0 +1,72 @@
+diff --git a/rust/xxhash/src/lib.rs b/rust/xxhash/src/lib.rs
+--- a/rust/xxhash/src/lib.rs
++++ b/rust/xxhash/src/lib.rs
+@@ -1,4 +1,3 @@
+-use base_encode::to_string;
+ use xxhash_rust::xxh3::xxh3_128;
+ 
+ const CHARACTERS_BASE64: &[u8; 64] =
+@@ -6,12 +5,28 @@
+ 
+ const CHARACTERS_BASE36: &[u8; 36] = b"abcdefghijklmnopqrstuvwxyz0123456789";
+ 
++// Treat the little-endian hash bytes as a big-endian digit sequence.
++fn encode_hash(bytes: [u8; 16], alphabet: &[u8]) -> String {
++  let leading_zeroes = bytes.iter().take_while(|&&byte| byte == 0).count();
++  let radix = alphabet.len() as u128;
++  let mut value = u128::from_be_bytes(bytes);
++  let mut digits = Vec::with_capacity(25);
++
++  while value != 0 {
++    digits.push(alphabet[(value % radix) as usize]);
++    value /= radix;
++  }
++  digits.extend(std::iter::repeat_n(alphabet[0], leading_zeroes));
++  digits.reverse();
++  String::from_utf8(digits).expect("hash alphabet is ASCII")
++}
++
+ pub fn xxhash_base64_url(input: &[u8]) -> String {
+-  to_string(&xxh3_128(input).to_le_bytes(), 64, CHARACTERS_BASE64).unwrap()
++  encode_hash(xxh3_128(input).to_le_bytes(), CHARACTERS_BASE64)
+ }
+ 
+ pub fn xxhash_base36(input: &[u8]) -> String {
+-  to_string(&xxh3_128(input).to_le_bytes(), 36, CHARACTERS_BASE36).unwrap()
++  encode_hash(xxh3_128(input).to_le_bytes(), CHARACTERS_BASE36)
+ }
+ 
+ pub fn xxhash_base16(input: &[u8]) -> String {
+diff --git a/rust/xxhash/Cargo.toml b/rust/xxhash/Cargo.toml
+--- a/rust/xxhash/Cargo.toml
++++ b/rust/xxhash/Cargo.toml
+@@ -6,5 +6,4 @@
+ # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+ 
+ [dependencies]
+-base-encode = "0.3.1"
+ xxhash-rust = { version = "0.8.19", features = ["xxh3"] }
+diff --git a/rust/Cargo.lock b/rust/Cargo.lock
+--- a/rust/Cargo.lock
++++ b/rust/Cargo.lock
+@@ -72,12 +72,6 @@
+ version = "1.5.1"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "f2032f911046de80f0a198e0901378627c33f59ea0ac00e363d481118bd70a53"
+-
+-[[package]]
+-name = "base-encode"
+-version = "0.3.1"
+-source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "a17bd29f7c70f32e9387f4d4acfa5ea7b7749ef784fb78cf382df97069337b8c"
+ 
+ [[package]]
+ name = "base64"
+@@ -1848,7 +1842,6 @@
+ name = "xxhash"
+ version = "0.0.0"
+ dependencies = [
+- "base-encode",
+  "xxhash-rust",
+ ]
+ 
