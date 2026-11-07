@@ -20,6 +20,9 @@ async function start(env=process.env, recovery) {
   if(recovery!==undefined && (typeof recovery?.assertCurrent!=='function'
     ||!(recovery.scope instanceof require('./lib/scope-authority').ScopeStore)
     ||recovery.assertCurrent()!==undefined))throw Error('trusted_recovery_check_required')
+  if(recovery?.session && (recovery.session.assertCurrent!==recovery.assertCurrent
+    ||recovery.session.binding?.version!==1||recovery.session.binding.role!=='gateway'
+    ||recovery.session.binding.instance!==env.TAKI_INSTANCE_ID))throw Error('recovery_entry_binding_mismatch')
   const config=configuration(env)
   const managementConfig=require('./console.cjs').configuration(env)
   const manifest=JSON.parse(fs.readFileSync(path.join(__dirname,'../combination.json'),'utf8'))
@@ -62,14 +65,19 @@ async function start(env=process.env, recovery) {
     await dispose();await ctx.stop();throw error
   }
   let closing
+  const recoveryReceiver=ctx.takiTransport?.receiver
   let recoveryWatch
   const close=()=>closing ||= (async()=>{clearInterval(recoveryWatch);const stopped=new Promise(resolve=>server.close(resolve));await dispose();await stopped;await ctx.stop()})()
-  if(recovery)recoveryWatch=setInterval(()=>{
+  if(recovery && !recovery.session)recoveryWatch=setInterval(()=>{
     try{config.plugin.management.assertRuntimeCurrent()}catch{void close().catch(()=>{process.exitCode=1})}
   },100)
-  return {ctx,server,close}
+  return {ctx,server,close,recoveryDrained:()=>recoveryReceiver?.recoveryDrained()===true}
 }
-module.exports={configuration,start}
+async function startRecovery(session,scope,env=process.env) {
+  return require('./recovery.cjs').serveRecoveryGateway(session,env.TAKI_INSTANCE_ID,
+    assertCurrent=>start(env,{assertCurrent,scope,session}))
+}
+module.exports={configuration,start,startRecovery}
 if(require.main===module)start().then(runtime=>{
   for(const signal of ['SIGTERM','SIGINT'])process.once(signal,()=>runtime.close().then(()=>process.exit(0)))
 }).catch(()=>{console.error('Taki gateway startup failed');process.exitCode=1})

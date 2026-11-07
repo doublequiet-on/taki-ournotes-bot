@@ -34,3 +34,4 @@ QUERY_CODE_FILES = (
     '../query/entity_lexicon.py', 'model_execution.py', 'conversation_state.py', 'query_runtime.py',
 )
 CODE_FILES += ('../natural_query/parser.py', '../domain/query_context.py', 'query_runtime.py', 'personal_runtime.py')
+CODE_FILES += ('recovery_entry.py',)
