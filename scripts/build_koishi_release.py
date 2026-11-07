@@ -11,10 +11,12 @@ import zipfile
 
 try:
     from scripts.console_release import (PACKAGE_VERSION, SOURCE_METADATA, VENDOR_FILES,
-                                         installed_npm_materials, verify_downstream, verify_downstream_materials)
+                                         installed_npm_materials, verify_downstream, verify_downstream_materials,
+                                         verify_source_vendor)
 except ModuleNotFoundError:
     from console_release import (PACKAGE_VERSION, SOURCE_METADATA, VENDOR_FILES,
-                                 installed_npm_materials, verify_downstream, verify_downstream_materials)
+                                 installed_npm_materials, verify_downstream, verify_downstream_materials,
+                                 verify_source_vendor)
 
 ROOT = Path(__file__).resolve().parents[1]
 KOISHI_CLIENT_SHA256 = '55a68e89eda7e3fe59305b09e6c4de19481a8d7aa5df97579822c819ebf3ccaf'
@@ -97,6 +99,8 @@ def build(python_artifact, node, output):
     if not downstream and package['version']!='5.30.11':
         raise ValueError('Unknown Console component version')
     component=verify_downstream(ROOT/'koishi') if downstream else {'kind':'official-npm','version':'5.30.11'}
+    if downstream:
+        verify_source_vendor(python_artifact)
     npm_materials=installed_npm_materials(ROOT/'koishi') if downstream else None
     with tempfile.TemporaryDirectory(prefix='taki-combination-') as folder:
         stage=Path(folder)

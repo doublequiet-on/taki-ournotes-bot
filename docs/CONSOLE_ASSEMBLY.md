@@ -6,7 +6,7 @@
 
 装配器仅接收原始 B2，npm 版本 `5.30.10-taki.4`，SHA-256 `1668e57b5b387814aab60f79f2d157f7017299088b5413e49690ef8aa5b5f0c9`。组件来源固定 `a526abab715989145ed1368ce1610413213a1a8c`。准入核 vendor 绑定、完整 lock、tgz 与168安装成员、重连和 Markdown 源码标记、构建输入与 native 绑定，以及135项许可。旧官方5.30.11仍使用原字节校验和补丁。B2 分支直接复制原始字节。
 
-组合和 sdist 的 vendor 仅收固定 B2、绑定和 README。组合随带固定来源索引及构建输入规格。新 lock 的 registry 条目及本地 compat 和冻结组合一致，沿用原网关声明与原文，只更新其 lock 绑定。Node LICENSE、控制器/回退材料及配对检查继续适用。
+组合、sdist 及内嵌 Git 源归档的 vendor 仅收固定 B2、绑定和 README。旧 tgz 保留在仓库和各自冻结工件。组合随带固定来源索引及构建输入规格。新 lock 的 registry 条目及本地 compat 和冻结组合一致，沿用原网关声明与原文，只更新其 lock 绑定。Node LICENSE、控制器/回退材料及配对检查继续适用。
 
 08 的[隔离网关记录](task08-integration/CONSOLE_CANDIDATE4.md)绑定同一 B2。12 的独立审查允许该固定工件接续验收，并确认 A2/B2 还差一次 ElConfigProvider 的 withInstall 调用。根因未定，整包字节复现尚未通过。11 对新候选的 base-encode 材料缺口已收口，公开分发及最终产品仍待验。
 

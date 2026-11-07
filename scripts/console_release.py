@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path, PurePosixPath
 import tarfile
+import zipfile
 
 COMPONENT_SHA = '1668e57b5b387814aab60f79f2d157f7017299088b5413e49690ef8aa5b5f0c9'
 LOCK_SHA = '39286e685316aca581d35e018ae634b2837325e6ca2e1380f3843a53227e9984'
@@ -63,6 +64,25 @@ def tar_files(data, identical_aliases=None):
                 identical_aliases.append(dict(member=member.name, path=name, sha256=digest(content)))
             files[name] = content
     return files
+
+
+def verify_source_vendor(python_bundle):
+    """Verify the same fixed vendor selection in the nested Git source archive."""
+    files = {}
+    with zipfile.ZipFile(python_bundle) as bundle, bundle.open('source.tar.gz') as source:
+        with tarfile.open(fileobj=source, mode='r|gz') as archive:
+            for member in archive:
+                parts = PurePosixPath(member.name).parts
+                if parts[1:3] != ('koishi', 'vendor') or len(parts) == 3 and member.isdir():
+                    continue
+                if len(parts) != 4 or not member.isfile() or parts[-1] in files:
+                    raise ValueError('Unexpected Console vendor entry in nested source archive')
+                files[parts[-1]] = archive.extractfile(member).read()
+    if set(files) != set(VENDOR_FILES) or digest(files[COMPONENT_FILE]) != COMPONENT_SHA:
+        raise ValueError('Console vendor selection differs in nested source archive')
+    binding = json.loads(files['console-candidate.json'])
+    if digest(json.dumps(binding, sort_keys=True, separators=(',', ':')).encode()) != BINDING_SHA:
+        raise ValueError('Console vendor binding differs in nested source archive')
 
 
 def verify_downstream_materials(directory):

@@ -9,10 +9,12 @@ import sys
 
 try:
     from scripts.build_koishi_release import LICENSE_SHA256
-    from scripts.console_release import PACKAGE_VERSION, VENDOR_FILES, verify_downstream, verify_downstream_materials
+    from scripts.console_release import (PACKAGE_VERSION, VENDOR_FILES, verify_downstream,
+                                         verify_downstream_materials, verify_source_vendor)
 except ModuleNotFoundError:
     from build_koishi_release import LICENSE_SHA256
-    from console_release import PACKAGE_VERSION, VENDOR_FILES, verify_downstream, verify_downstream_materials
+    from console_release import (PACKAGE_VERSION, VENDOR_FILES, verify_downstream,
+                                 verify_downstream_materials, verify_source_vendor)
 
 
 def verify(root, expected_commit):
@@ -45,6 +47,7 @@ def verify(root, expected_commit):
         if {p.name for p in (root/'gateway/vendor').iterdir()} != set(VENDOR_FILES):
             raise ValueError('Combination vendor member set differs')
         verify_downstream_materials(root/'licenses/koishi-console')
+        verify_source_vendor(artifact)
         materials=json.loads((root/'licenses/npm-installation.json').read_text())
         notices=json.loads((root/'licenses/koishi-console/gateway-notices.json').read_text())
         if notices['lock_canonical_sha256']!=component['lock_canonical_sha256']:

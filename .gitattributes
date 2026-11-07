@@ -1,1 +1,5 @@
 * text=auto eol=lf
+# Historical Console candidates stay in Git as evidence, outside release source archives.
+/koishi/vendor/taki-console-0.1.0-candidate.1.tgz export-ignore
+/koishi/vendor/taki-console-0.1.0-candidate.2.tgz export-ignore
+/koishi/vendor/taki-console-0.1.0-candidate.3.tgz export-ignore
