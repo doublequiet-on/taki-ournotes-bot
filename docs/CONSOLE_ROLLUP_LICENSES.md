@@ -25,3 +25,9 @@
 24项现已完成本次随行文本和归属映射的作者装配，待11验新包；不再统一列为“25项许可未知”或“缺SWC源码”。本组仅`base-encode0.3.1`继续缺有出处的版权/完整随行MIT材料，不以authors代填、不制造MIT版权模板，也不自行独立实现或替换Rollup。
 
 冻结ea92组件、002/4ce3整包未装入本增量、未重造；新索引只绑定材料，产品实际随行仍须将原准确源材料与本增量配对验收。ICU生成说明、公开获取入口、最终selection、物理裁剪及安装恢复等按各自门禁继续。`complete_corresponding_source=false`、`product_release=false`、`published=false`保持；本次不是法律批准、公开分发或最终产品验收。
+
+### base-encode 的最小替代范围（待 00 决定）
+
+固定 Rollup `18b5cb60e55926f6d917cc1aeb17fd81d0da5cc6` 的 Rust 工作区由 `rust/xxhash/Cargo.toml` 引入 `base-encode@0.3.1`，`rust/xxhash/src/lib.rs` 只用其 `to_string` 实现 `xxhash_base64_url` 和 `xxhash_base36`。最小方案是在该文件独立实现固定 16 字节的基数转换，移除 crate 声明并重锁 `rust/Cargo.lock`。保留 xxh3-128、两套现有字母表和 base16 路径。兼容规则是把 hash 的小端字节序列作为大端整数做除余转换，同时逐字节保留开头的零为字母表首字符。普通 Base64 编码不能复用这一契约。
+
+先用隔离旧实现采样固定测试向量，覆盖全零、前导零、边界进位、两种基数、base16 及真实 chunk 命名。若获批，先重建并标识新的 Linux x64 glibc Rollup native 工具，复查 `bindings_napi` 导出、共享 `bindings_wasm` 调用契约和 chunk/hash 名称，再更新 Console 配方中的 native 包/完整性锁和实际源许可索引。重建比较 Console 运行输出。如果运行字节变化，分配新组件及组合包身份并交 08/12 回归。当前交付仅登记方案，既有 native 工具与来源缺口继续按其原身份记录。

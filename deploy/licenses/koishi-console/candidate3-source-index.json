@@ -1,5 +1,5 @@
 {
-  "identity": "taki-console-candidate3-source-index.7",
+  "identity": "taki-console-candidate3-source-index.8",
   "license_material_status": {
     "newly_assembled_package_mappings": 24,
     "supplement_index_sha256": "34ced28faba576b74d35b553a187dfcd5245e8a0d9d662f30bcb1cb021c5cae9",
@@ -171,6 +171,14 @@
       "size": 10458779,
       "sha256": "9a4101997da99da7fb250b6068d6804903bc39cdb78668c1c0c4181d8c4300d0",
       "manifest_sha256": "65ce49943fc85b2ad2735552323218de7028ac2779a3599875c4c11b3f611f6a"
+    },
+    {
+      "id": "icu_bakeddata_source_and_inputs_v1",
+      "role": "Internal companion to ICU v3: complete fixed ICU4X Git tree, original CLDR49 asset and notices, four pinned data inputs, locked Linux bakeddata source dependencies and tested local-input preparation. Datagen and compiler run not executed; tool binaries and standalone offline cache not included.",
+      "path": "runtime/task09/icu-datagen-inputs-20261108/icu-datagen-source-and-inputs-v1.zip",
+      "size": 133898892,
+      "sha256": "7a866f4edc3ec7e8c1d75f3a9d08c5a6ebd38aefd3b6d5d51b3c63ad6627756d",
+      "manifest_sha256": "8c277af6b4d1e9c88e1b51577af80bf1631c6e550f0df90189d1342354da59e8"
     }
   ],
   "rebuild_profiles": [

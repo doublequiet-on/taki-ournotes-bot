@@ -1,5 +1,18 @@
 # Console构建材料：ICU两项生成数据
 
+## 2026-11-08 源码和输入补件
+
+第十六轮已关闭 ICU v3 的 cpp 漏装和静态对应。以下旧记录保留 v3 的交付范围。新增内部补件 `icu-datagen-source-and-inputs-v1.zip` 与 v3 配套，以 `candidate3-source-index.json` 的路径和摘要定位。
+
+- ICU4X 固定提交 `031d9e89f6a3fd26a14491e090729d46094328fd` 的完整归档来自 [上游固定提交](https://github.com/unicode-org/icu4x/tree/031d9e89f6a3fd26a14491e090729d46094328fd)。11,305 个 blob（含三个内部符号链接）和目录树逐项核对，Git 根树为 `09134758a00950e8edb04d35dd3f0d19283a0ec2`。原根 LICENSE 和工具声明随树保存。
+- 已取得 [CLDR49 官方发行实物](https://github.com/unicode-org/cldr-json/releases/tag/49.0.0)，精确匹配官方资产 664174369 的 76,248,823 字节和 SHA-256。38,491 个 ZIP 成员通过路径和 CRC 检查。保留原根及包级 26 个 LICENSE 成员并逐项记摘要，核验 coverageLevels、availableLocales、parentLocales、likelySubtags 的实际 ZIP 路径和 JSON。已有 ICU export、UCD、emoji 从旧材料复用原字节。
+- 在 Linux x64 glibc，以固定 `Cargo.lock` 解析 `bakeddata` 的 normal/build 依赖和 proc macro。101 个外部源归档逐一匹配 lock checksum，并保留原包和许可成员清单。41 个 workspace 包已在完整树中。保留选中 feature 与依赖边，独立 Cargo home 的 `cargo tree --offline --locked` 也成功。Cargo/rustc 1.99.1 仅用于依赖取证。生成所需的 Rust 1.98.0、Cargo、rustfmt、系统编译工具和可搬移离线缓存仍需单独提供。
+- `prepare.py` 实际在新的 Linux 副本核输入、布置四项数据并应用 `local-inputs.patch`。以绝对 `TAKI_ICU_INPUTS` 指定输入根，保存驱动改动前后摘要和配置。补件 README 有具体命令。datagen、生成器编译及 7＋141 项重生比较尚未执行。
+
+补件范围为生成器源码、选中的必要源依赖、四项数据输入和本地接线。与旧 v3 及冻结组合分别登记，完整离线工具环境、最终发行和公开获取仍按各自门禁处理。
+
+## 旧 v3 的静态关系与来源记录
+
 本说明只补固定`icu_normalizer_data@2.4.0`与`icu_properties_data@2.4.0`的生成关系。准确crate和Unicode-3.0原文已随`rollup-linux-target-source-materials-v4.zip`交付，本轮复用，不重新取得148项源码。固定ICU4X提交为`031d9e89f6a3fd26a14491e090729d46094328fd`，包目录分别为`provider/data/normalizer`、`provider/data/properties`。
 
 ## 数据与生成入口
