@@ -82,7 +82,7 @@ def assemble(base, native, output):
                     raise ValueError(f"input member differs: {name}")
                 result.writestr(zipfile.ZipInfo(name, (1980, 1, 1, 0, 0, 0)), data,
                                 compress_type=zipfile.ZIP_DEFLATED)
-            result.writestr("input-manifest.json", encoded(manifest))
+            result.writestr(zipfile.ZipInfo("input-manifest.json", (1980, 1, 1, 0, 0, 0)), encoded(manifest))
     spec.update(version=VERSION, package_version=NPM_VERSION, inputs_file=bundle.name,
                 inputs_size=bundle.stat().st_size, inputs_sha256=sha(bundle.read_bytes()),
                 rollup_native=provenance)
