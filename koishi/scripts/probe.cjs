@@ -2349,11 +2349,12 @@ async function main() {
         assert.equal(unparsed.inbound.quoteHint,'unknown')
         const client=new BackendClient('http://127.0.0.1:8765','x'.repeat(32),identity.instanceId,'fixture-epoch',deny)
         const policy={natural_query:'model',epoch:'fixture-epoch',global_revision:0,group_revision:0}
-        const baseline=wire.decodeReady(httpV2.python_to_ts.ready)
-        client.readiness=baseline
+        const ready=wire.decodeReady(httpV2.python_to_ts.ready)
+        assert.ok(ready.features.includes('chat_quote_hint_v1'))
+        client.readiness={...ready,features:ready.features.filter(feature=>feature!=='chat_quote_hint_v1')}
         const old=client.encode(parsed.inbound,1,policy)
         assert.deepEqual(old,client.encode(ordinary.inbound,1,policy))
-        client.readiness=wire.decodeReady({...httpV2.python_to_ts.ready,features:[...baseline.features,'chat_quote_hint_v1']})
+        client.readiness=ready
         const request=client.encode(mixed.inbound,1,policy)
         assert.equal(request.quote_hint,'image')
         assert.equal(request.quoted_text,'合成引文')
