@@ -1,5 +1,7 @@
 # 恢复组合根：业务拒绝点与待接接口
 
+后续已接10固定a6e102a的实际跨进程业务入口，当前范围与残留见[FD会话接线](RECOVERY_SESSION_WIRING.md)。下文保留本阶段版本证据。
+
 后续Backend进程内排空接口已实现，见[撤权生命周期](RECOVERY_LIFECYCLE.md)。下文是37af641阶段的固定范围；跨进程会话/双角色屏障仍未完成。
 
 本轮基线 `982f042889d9de84e13aa2aedaca51faeea5bd5b`，原08工作区、分支及PR200。只读10固定提交 `573c7586c3e05d2699c31e6523e68c70521a7df1` 的INSTANCE_RECOVERY、TASK10_VALIDATION、isolated_runtime及recovery_preflight。未合入10执行代码，PR202排除。

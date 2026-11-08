@@ -1,6 +1,12 @@
 # 下游Console固定候选装配
 
-## 当前装配：candidate.4 B2
+## 当前增量：恢复业务入口
+
+以固定 B2 组合源码 `cf1f09176e8e2d5dda310586a454a7d4ecac8d42` 为底，接收08 `a384335f69e0514190c51c5dfce5808b55a19f60` 相对 a7ca 的九文件增量。组合显式携带 `gateway/recovery.cjs`，与 `gateway/run.cjs` 的入口及配对 wheel 内的 `recovery_entry.py` 一起写入 manifest 摘要。验包同时核对配对 Git 源归档中的入口、实际 wheel 的 `CODE_FILES` 聚合摘要及单项摘要。
+
+[恢复入口合同](task08-integration/RECOVERY_SESSION_WIRING.md)引用10固定协议 `a6e102a5b94be6af65652985fe0063491352cbf5`。本组合仅带08业务入口，未装入10的 `isolated_runtime.py` 和 Python/Node `recovery_session` 宿主。独立05/07/09/10权威、宿主停写与真实恢复继续按原门禁，装配测量不授予批准。
+
+## B2 固定准入
 
 本轮以09固定 `5ad4e3c234705c642f920aaa760e5707a72f1149` 接收08固定 `a7ca40d1c50d2a4d1a216f21cb3c8e87c2bd511f`。保留08恢复业务门、Backend生命周期、d1夹具及既有 cache 适配。包、锁、vendor 绑定采用08固定文件，README以08版本为基础补充准入信息，导航保留两边记录。10后续接线另计。
 

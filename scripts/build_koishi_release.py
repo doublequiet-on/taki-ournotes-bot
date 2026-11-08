@@ -1,11 +1,15 @@
 """Build a pinned, offline two-process combination; never installs or starts services."""
 import argparse
 import hashlib
+import io
 import json
 import os
-from pathlib import Path
+from pathlib import Path, PurePosixPath
+import posixpath
+import runpy
 import shutil
 import subprocess
+import tarfile
 import tempfile
 import zipfile
 
@@ -19,6 +23,9 @@ except ModuleNotFoundError:
                                  verify_source_vendor)
 
 ROOT = Path(__file__).resolve().parents[1]
+APPLICATION = ROOT / 'src/ournotes_bot/application'
+RECOVERY_PROTOCOL_SOURCE = 'a6e102a5b94be6af65652985fe0063491352cbf5'
+RECOVERY_HOST_FILES = ('isolated_runtime.py', 'recovery_session.py', 'recovery_session.cjs')
 KOISHI_CLIENT_SHA256 = '55a68e89eda7e3fe59305b09e6c4de19481a8d7aa5df97579822c819ebf3ccaf'
 LICENSE_SHA256 = {
     'node/LICENSE': '148eacf7863ef4329224a29398623077200a27194aa075569faf4a0a85566ca5',
@@ -35,6 +42,64 @@ KOISHI_RECONNECT_PATCHES = (
 
 def sha(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def measure_recovery_entries(python_bundle, gateway, commit):
+    """Measure actual release entries and the installed CODE_FILES inventory."""
+    inventory = runpy.run_path(str(APPLICATION / 'backend_sources.py'))
+    code_files = inventory['CODE_FILES']
+    python_entry = 'recovery_entry.py'
+    if python_entry not in code_files:
+        raise ValueError('Recovery Python entry missing from CODE_FILES')
+    wheel_names = [posixpath.normpath('ournotes_bot/application/' + name) for name in code_files]
+    source = {}
+    for name in ('run.cjs', 'recovery.cjs'):
+        path = gateway / name
+        if not path.is_file():
+            raise ValueError('Missing packaged gateway recovery entry: ' + name)
+        source['koishi/' + name] = path.read_bytes()
+    with zipfile.ZipFile(python_bundle) as bundle:
+        wheels = [n for n in bundle.namelist()
+                  if n.startswith('wheelhouse/taki_ournotes_bot-') and n.endswith('.whl')]
+        if len(wheels) != 1:
+            raise ValueError('Expected one paired application wheel')
+        with zipfile.ZipFile(io.BytesIO(bundle.read(wheels[0]))) as wheel:
+            members = wheel.namelist()
+            if any(members.count(name) != 1 for name in wheel_names):
+                raise ValueError('Missing or duplicate installed CODE_FILES member')
+            installed = [wheel.read(name) for name in wheel_names]
+        python_bytes = installed[code_files.index(python_entry)]
+        source['src/ournotes_bot/application/' + python_entry] = python_bytes
+        prefix = 'taki-ournotes-bot-' + commit + '/'
+        host_paths = {prefix + 'deploy/' + name for name in RECOVERY_HOST_FILES}
+        expected_source = {prefix + name: data for name, data in source.items()}
+        seen = set()
+        with bundle.open('source.tar.gz') as stream, tarfile.open(fileobj=stream, mode='r|gz') as archive:
+            for member in archive:
+                if member.name in host_paths:
+                    raise ValueError('Unexpected recovery host in paired source archive')
+                if member.name in expected_source:
+                    if (member.name in seen or not member.isfile()
+                            or archive.extractfile(member).read() != expected_source[member.name]):
+                        raise ValueError('Recovery entry differs from paired source: ' + member.name)
+                    seen.add(member.name)
+        if seen != expected_source.keys():
+            raise ValueError('Recovery entry missing in paired source archive')
+    if any((gateway.parent / 'controller' / name).exists() for name in RECOVERY_HOST_FILES):
+        raise ValueError('Unexpected recovery host in controller payload')
+    backend_digest = hashlib.sha256(b''.join(installed)).hexdigest()
+    if backend_digest != hashlib.sha256(b''.join((APPLICATION / n).read_bytes() for n in code_files)).hexdigest():
+        raise ValueError('Installed CODE_FILES bytes differ from fixed backend source')
+    return backend_digest, {
+        'gateway': {'path': 'gateway/run.cjs', 'export': 'startRecovery',
+                    'sha256': hashlib.sha256(source['koishi/run.cjs']).hexdigest()},
+        'gateway_lifecycle': {'path': 'gateway/recovery.cjs', 'export': 'serveRecoveryGateway',
+                              'sha256': hashlib.sha256(source['koishi/recovery.cjs']).hexdigest()},
+        'python': {'wheel_member': 'ournotes_bot/application/recovery_entry.py',
+                   'export': 'serve_recovery_backend', 'sha256': hashlib.sha256(python_bytes).hexdigest()},
+        'protocol_source_commit': RECOVERY_PROTOCOL_SOURCE,
+        'host_bundled': False,
+    }
 
 
 def patch_koishi_client(path):
@@ -123,7 +188,7 @@ def build(python_artifact, node, output):
             f'Taki source commit: {commit}\n'
             'Patch and upstream source reference: licenses/koishi-console/taki-reconnect-patch.json '
             'and licenses/SOURCES.md at combination root.\n', encoding='utf-8')
-        for name in ('package.json','package-lock.json','run.cjs','console.cjs','health.cjs','operation-journal.cjs','ops-host.cjs','ops-controls.cjs','trusted-actions.cjs'):
+        for name in ('package.json','package-lock.json','run.cjs','recovery.cjs','console.cjs','health.cjs','operation-journal.cjs','ops-host.cjs','ops-controls.cjs','trusted-actions.cjs'):
             shutil.copy2(ROOT/'koishi'/name,gateway/name)
         if downstream:
             verify_downstream(gateway)
@@ -142,13 +207,11 @@ def build(python_artifact, node, output):
         for name in ('linux_backend.py','linux_updater.py','offline_bundle.py'):
             (rollback/name).write_bytes(subprocess.check_output(['git','show',rollback_ref+':deploy/'+name],cwd=ROOT))
         files={p.relative_to(stage).as_posix():sha(p) for p in sorted(stage.rglob('*')) if p.is_file()}
-        application=ROOT/'src/ournotes_bot/application'
-        import runpy
-        inventory=runpy.run_path(str(application/'backend_sources.py'))
-        code_files=inventory['CODE_FILES']
+        inventory=runpy.run_path(str(APPLICATION/'backend_sources.py'))
+        backend_digest, recovery_entries = measure_recovery_entries(python, gateway, commit)
         manifest={'schema':1,'commit':commit,'controller_rollback_commit':rollback_ref,'node':identity,'lock_sha256':sha(gateway/'package-lock.json'),
                   'python_artifact':python.relative_to(stage).as_posix(),'python_sha256':sha(python),
-                  'backend_code_digest':hashlib.sha256(b''.join((application/n).read_bytes() for n in code_files)).hexdigest(),
+                  'backend_code_digest':backend_digest,'recovery_entrypoints':recovery_entries,
                   'protocol':inventory['TRANSPORT_PROTOCOL'],'capabilities':['group_policies_v1','query_chat_contract_v1'],
                   'data_schema':1,'rollback':'code-only; freeze settings before unsupported policy runtimes',
                   'files':files,'console_component':component}

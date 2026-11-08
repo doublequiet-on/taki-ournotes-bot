@@ -533,6 +533,9 @@ export class Receiver {
     await this.client.modelPermission(challenge,policy,allowed)
   }
   private closing?: Promise<void>
+  private retired = false
+  private drained = false
+  recoveryDrained(): boolean { return this.retired && this.drained }
   dispose(): Promise<void> {
     return this.closing ??= this.drain()
   }
@@ -547,12 +550,13 @@ export class Receiver {
     for (const job of this.jobs.values()) job.delivery?.dispose()
     const materialsClosed=this.materials?.close()
     // Retire before waiting for in-flight sends. Their late ACK may record facts, never context.
-    try { await this.ready; await this.client.retire() }
+    try { await this.ready; await this.client.retire(); this.retired = true }
     catch { this.log.warn('gateway retirement unconfirmed; no new local sends') }
     await Promise.allSettled([...this.flights.values()].map(flight => flight.promise))
     await Promise.allSettled([...this.observationTasks].map(task=>task.promise))
     await (materialsClosed ?? this.materials?.close())
     await noticesClosed
     await this.client.telemetry?.close()
+    this.drained = true
   }
 }

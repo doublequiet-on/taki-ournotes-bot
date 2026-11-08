@@ -42,6 +42,7 @@ SDIST_BUILD_JSON = {
 SDIST_REQUIRED = SDIST_BUILD_JSON | {
     ("koishi", "vendor", "taki-console-0.1.0-candidate.4.tgz"),
     ("koishi", "vendor", "README.md"),
+    ("koishi", "recovery.cjs"),
     ("koishi", "compat", "cache-content-type", "LICENSE"),
     ("koishi", "compat", "cache-content-type", "README.md"),
     ("koishi", "compat", "cache-content-type", "index.cjs"),
@@ -109,6 +110,8 @@ def check(path: Path) -> None:
         raise ValueError(f"development architecture gate in {path.name}")
     if not required.issubset(documents):
         raise ValueError(f"missing query upgrade modules or instructions in {path.name}")
+    if not any(PurePosixPath(name).parts[-3:] == ("ournotes_bot", "application", "recovery_entry.py") for name in names):
+        raise ValueError(f"missing recovery backend entry in {path.name}")
     if not any(PurePosixPath(name).parts[-3:] == ("ournotes_bot", "domain", "card_query.py") for name in names):
         raise ValueError(f"missing canonical card query domain in {path.name}")
     if not {"event_cutoffs.py", "HANEOKA_CUTOFFS.md"} <= documents:

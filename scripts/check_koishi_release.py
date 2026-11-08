@@ -8,11 +8,11 @@ import subprocess
 import sys
 
 try:
-    from scripts.build_koishi_release import LICENSE_SHA256
+    from scripts.build_koishi_release import LICENSE_SHA256, measure_recovery_entries
     from scripts.console_release import (PACKAGE_VERSION, VENDOR_FILES, verify_downstream,
                                          verify_downstream_materials, verify_source_vendor)
 except ModuleNotFoundError:
-    from build_koishi_release import LICENSE_SHA256
+    from build_koishi_release import LICENSE_SHA256, measure_recovery_entries
     from console_release import (PACKAGE_VERSION, VENDOR_FILES, verify_downstream,
                                  verify_downstream_materials, verify_source_vendor)
 
@@ -68,6 +68,10 @@ def verify(root, expected_commit):
     import zipfile
     with zipfile.ZipFile(artifact) as archive:
         if json.loads(archive.read('manifest.json'))['commit']!=expected_commit: raise ValueError('Python commit')
+    if package_version==PACKAGE_VERSION or 'recovery_entrypoints' in manifest:
+        backend_digest, entries = measure_recovery_entries(artifact, root/'gateway', expected_commit)
+        if manifest.get('recovery_entrypoints') != entries or manifest['backend_code_digest'] != backend_digest:
+            raise ValueError('Recovery entry measurements differ')
     node=root/'bin'/('node.exe' if manifest['node']['platform']=='win32' else 'node')
     identity=json.loads(subprocess.check_output([str(node),'-e','console.log(JSON.stringify({version:process.version,platform:process.platform,arch:process.arch}))'],text=True))
     if identity!=manifest['node']: raise ValueError('Runtime identity')
