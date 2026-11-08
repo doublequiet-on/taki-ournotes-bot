@@ -3519,6 +3519,37 @@ class ChatResearchTaskTests(Fixture,unittest.IsolatedAsyncioTestCase):
         self.assertEqual(output['status'],'query_entity_mismatch')
         self.event(other,'intent');self.event(other,'ack')
 
+    async def test_switch_to_named_topic_pauses_old_entities_until_explicit_return(self):
+        self.catalog();bodies=self.capture_native_bodies();agent=self.backend.model_runtime.agent
+        old_refs=['song:100001','song:100002']
+        def read(refs):
+            return self.call('read_entity_fields',entity_refs=refs,fields=['notes'],difficulty='HARD')
+        self.client.request.side_effect=[self.result(calls=(self.task_call(old_refs,['notes'],'HARD'),read(old_refs))),
+                                         self.result('两首的 HARD 已比较。')]
+        first,_=await self.prepare_native('/聊 比较合成曲100001和合成曲100002的HARD音符数')
+        self.event(first,'intent');self.event(first,'ack')
+        scope=self.backend.works[first['delivery_id']].request.scope
+        self.client.request.side_effect=[self.result(calls=(read(old_refs[:1]),read(['song:100003']))),
+                                         self.result('只看第三首的 HARD。')]
+        switch,_=await self.prepare_native('/聊 换个话题，合成曲100003 的 HARD 有多少 Note？',seq=2)
+        self.assertEqual(agent.tasks.status(scope)['active_tasks'],1)
+        context=[json.loads(row['content']) for row in bodies[-2]['messages'] if row['role']=='user']
+        self.assertFalse(any('research_task' in row for row in context))
+        outputs=[json.loads(row['content']) for row in bodies[-1]['messages'] if row['role']=='tool']
+        self.assertEqual([row['status'] for row in outputs],['query_entity_mismatch','ok'])
+        self.event(switch,'intent');self.event(switch,'ack')
+        self.assertEqual(agent.tasks.status(scope)['active_tasks'],0)
+        for seq,question,status in ((3,'第二首呢？','query_entity_mismatch'),
+                                   (4,'回到刚才的话题，第二首的 HARD 呢？','ok')):
+            calls=(read(old_refs[1:]),) if seq==3 else (self.task_call(old_refs[1:],['notes'],'HARD'),read(old_refs[1:]))
+            self.client.request.side_effect=[self.result(calls=calls),self.result('回应当前问题。')]
+            plan,_=await self.prepare_native('/聊 '+question,seq=seq)
+            output=json.loads(next(row['content'] for row in reversed(bodies[-1]['messages']) if row['role']=='tool'))
+            self.assertEqual(output['status'],status)
+            self.event(plan,'intent');self.event(plan,'ack')
+        self.assertEqual(agent.tasks.status(scope)['completed_tasks'],1)
+        self.assertEqual(next(iter(agent.tasks.tasks.values())).targets,old_refs[1:])
+
     async def test_knowledge_fallback_to_haneoka_has_sources_and_finite_diagnostics(self):
         self.catalog();bodies=self.capture_native_bodies()
         self.client.request.side_effect=[
@@ -3681,6 +3712,68 @@ class ChatImageIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
         if self.attachments:value['attachments']=self.attachments
         if self.reference:value.update(trigger='quoted_reply',reference=self.reference)
         return value
+
+    async def test_missing_image_followups_cannot_reopen_neighbor_image(self):
+        from ournotes_bot.domain.model_calls import ToolCall
+        bodies=self.capture_native_bodies()
+        self.client.request.return_value=self.result('邻近图片是旧话题。')
+        old,_=await self.prepare_native('/聊 旧话题')
+        self.event(old,'intent');self.event(old,'ack')
+        self.attachments=[]
+        for seq,question in enumerate(('taki为什么？','taki那呢？','taki这张图呢？','为什么？'),2):
+            raw={**self.request('native'+str(seq),seq),'quote_hint':'image'}
+            with patch.object(self,'request',return_value=raw):
+                plan,attempts=await self.prepare_native(question,seq=seq)
+            self.assertEqual(attempts,[])
+            self.assertEqual(plan['parts'][0]['business_status'],'quote_unavailable')
+            self.event(plan,'intent');self.event(plan,'ack')
+        raw={**self.request('native6',6),'quote_hint':'image'}
+        self.client.request.side_effect=[self.result(calls=(ToolCall('old','image_read','{"message_id":"native1"}'),)),
+                                         self.result('二加二等于四。')]
+        with patch.object(self,'request',return_value=raw):
+            plan,attempts=await self.prepare_native('taki这张图呢？另外二加二是多少？',seq=6)
+        self.assertEqual(len(attempts),2)
+        output=json.loads(next(item['output'] for item in bodies[-1]['input'] if item.get('type')=='function_call_output'))
+        self.assertEqual(output['status'],'image_not_available')
+        self.assertNotIn('data:image/',json.dumps(bodies[-2:]))
+        self.assertIn('等于四',plan['parts'][0]['text'])
+        self.event(plan,'intent');self.event(plan,'ack')
+
+    async def test_failed_trusted_quote_image_answers_preview_with_revocable_source(self):
+        from ournotes_bot.domain.chat_images import ImageError,parse_attachments
+        agent=self.backend.model_runtime.agent;bodies=self.capture_native_bodies()
+        self.backend.reference_profiles=frozenset({'fixture'})
+        scope=Request_scope();stamp=int(self.now*1000)-1000
+        key=json.dumps(scope,sort_keys=True,separators=(',',':'))
+        attachments=parse_attachments(self.attachments)
+        self.attachments=[]
+        agent.image_loader.load_many.side_effect=ImageError('image_not_available')
+        self.client.request.return_value=self.result('这段话建议给新人留练习位置。')
+        for seq,mid in enumerate(('quote-delivered','quote-revoked'),1):
+            agent.images.remember(key,mid,'u2',stamp,attachments)
+            self.reference=dict(message_id=mid,adapter_profile_version='fixture')
+            raw={**self.request('native'+str(seq),seq),'quote_hint':'image','quoted_text':'合成预览：给新人留练习位置'}
+            with patch.object(self,'request',return_value=raw):
+                plan,attempts=await self.prepare_native('taki你怎么看？',seq=seq)
+            self.assertEqual(len(attempts),1)
+            self.assertEqual(plan['parts'][0]['business_status'],'success')
+            self.assertIn('image_unavailable',str(bodies[-1]['input']))
+            self.assertIn(raw['quoted_text'],str(bodies[-1]['input']))
+            self.assertNotIn('data:image/',json.dumps(bodies[-1]))
+            work=self.backend.works[plan['delivery_id']]
+            self.assertEqual(work.unavailable_quote_image,(mid,stamp))
+            stored=agent.store.db.execute('SELECT context FROM runs WHERE id=?',(work.delivery,)).fetchone()[0]
+            self.assertIn(mid,stored);self.assertNotIn(raw['quoted_text'],stored)
+            if seq==1:
+                self.event(plan,'intent');self.event(plan,'ack')
+                self.assertTrue(any(row['role']=='assistant' for row in agent.store.recent(scope)))
+                agent.forget(scope,[mid])
+                self.assertFalse(any(row['role']=='assistant' for row in agent.store.recent(scope)))
+            else:
+                agent.store.delete_messages(scope,[mid])
+                self.assertFalse(self.backend.lookup(raw['request_id'],'e1')['send_allowed'])
+                with self.assertRaisesRegex(ProtocolError,'inactive_delivery'):
+                    self.event(plan,'intent')
 
     async def test_chat_prefix_with_only_attachment_uses_vision(self):
         self.client.request.return_value=self.result('这是图像说明。')

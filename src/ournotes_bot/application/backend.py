@@ -59,6 +59,7 @@ class Work:
     anchor: object = None
     missing_anchor: bool = False
     quote_preview_reference: str | None = None
+    unavailable_quote_image: tuple[str, int] | None = None
     model_attempts: int = 0
     model_stage: str = 'preparation'
     model_attempt_limit: int = 2
