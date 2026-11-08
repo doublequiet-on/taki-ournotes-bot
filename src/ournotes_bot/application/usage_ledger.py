@@ -1,5 +1,5 @@
 # L3: Exact weighted usage and whole-bot primary USD budget; independent of legacy call counts.
-# Effects: SQLite reservations/settlements, missing-action markers and deletion trigger; no messages or credentials.
+# Effects: SQLite reservations, settlements, and late adjustments; no messages or credentials.
 from __future__ import annotations
 
 from dataclasses import asdict
@@ -9,6 +9,7 @@ from fractions import Fraction
 import hashlib
 import hmac
 import json
+import logging
 import os
 import re
 from pathlib import Path
@@ -17,6 +18,9 @@ import sqlite3
 import time
 
 from ..domain.model_calls import ModelError, Price, Usage, require
+
+
+logger = logging.getLogger(__name__)
 
 
 def day(now):
@@ -63,6 +67,10 @@ class UsageLedger:
                     attempt TEXT NOT NULL, kind TEXT NOT NULL, unit_cost_micro INTEGER NOT NULL,
                     max_count INTEGER NOT NULL, count INTEGER, status TEXT NOT NULL,
                     PRIMARY KEY(attempt,kind));
+                CREATE TABLE IF NOT EXISTS attempt_adjustments(
+                    id INTEGER PRIMARY KEY, attempt TEXT NOT NULL, kind TEXT NOT NULL,
+                    day TEXT NOT NULL, observed REAL NOT NULL, evidence_ref TEXT UNIQUE,
+                    evidence_digest TEXT, before TEXT NOT NULL, after TEXT NOT NULL);
             ''')
             with self.db:
                 self.db.execute('CREATE TABLE IF NOT EXISTS attempt_bounds(attempt TEXT PRIMARY KEY,input_bound INTEGER,output_bound INTEGER,input_rate INTEGER)')
@@ -153,13 +161,18 @@ class UsageLedger:
         if group is not None:
             require(self.spent(date,group,group=True,exclude=exclude)+amount<=profile.group_daily_limit,'quota_exceeded')
 
-    def reserve(self,request,attempt,user,group,profile,input_bound,*,action_budget=()):
+    def reserve(self,request,attempt,user,group,profile,input_bound,*,action_budget=(),admit=None):
         self.reconcile()
-        now=self.clock();date=day(now);amount=profile.reserve(input_bound,profile.max_output_tokens)
+        amount=profile.reserve(input_bound,profile.max_output_tokens)
         for kind,count,rate in action_budget:
             require(kind=='web_search' and type(count) is int and 1<=count<=8 and type(rate) is int and rate>=0,'provider_action_budget')
             amount+=Fraction(count*rate*1_000_000,profile.price.reference_rate)
         with self.db:
+            if admit is not None:
+                self.db.execute('BEGIN IMMEDIATE')
+            now=self.clock();date=day(now)
+            if admit is not None:
+                admit(now, amount * profile.price.reference_rate / 1_000_000)
             prior=self.db.execute('SELECT id FROM attempts WHERE id=?',(attempt,)).fetchone()
             require(prior is None,'attempt_reused')
             unit=self.db.execute("SELECT value FROM meta WHERE key='reference_unit'").fetchone()
@@ -182,13 +195,24 @@ class UsageLedger:
                                 [(attempt,kind,rate,count,'reserved') for kind,count,rate in action_budget])
             self.db.executemany('INSERT INTO expected_actions VALUES(?,?)',[(attempt,kind) for kind,_,_ in action_budget])
 
-    def start(self,attempt,profile):
-        row=self.get(attempt);now=self.clock();date=day(now)
-        require(row['state']=='reserved','attempt_already_started')
+    def start(self,attempt,profile,*,admit_rollover=None):
         with self.db:
+            if admit_rollover is not None:
+                self.db.execute('BEGIN IMMEDIATE')
+            row=self.get(attempt);now=self.clock();date=day(now)
+            require(row['state']=='reserved','attempt_already_started')
+            amount=Fraction(row['reserved'])
+            created=row['created']
+            if admit_rollover is not None and date!=row['day']:
+                admit_rollover(now, amount * profile.price.reference_rate / 1_000_000)
+                # Old proactive readers account by created. Retain the original
+                # reservation timestamp while giving them the correct billing day.
+                self._adjustment(attempt,'billing_day',date,now,
+                    {'day':row['day'],'created':created},{'day':date,'created':now})
+                created=now
             # A permit crossing midnight is charged to the actual start day.
-            self.check(date,row['user_key'],row['group_key'],Fraction(row['reserved']),profile,exclude=attempt)
-            self.db.execute("UPDATE attempts SET state='started',started=?,day=? WHERE id=?",(now,date,attempt))
+            self.check(date,row['user_key'],row['group_key'],amount,profile,exclude=attempt)
+            self.db.execute("UPDATE attempts SET state='started',started=?,day=?,created=? WHERE id=?",(now,date,created,attempt))
 
     def release(self,attempt,code):
         with self.db:
@@ -196,10 +220,33 @@ class UsageLedger:
                             (self.clock(),code,attempt)).rowcount
             if changed:self.db.execute("UPDATE attempt_actions SET status='released' WHERE attempt=?",(attempt,))
 
-    def settle(self,attempt,usage,code=None,*,actions=()):
+    def _adjustment(self,attempt,kind,date,observed,before,after,*,evidence_ref=None,evidence_digest=None):
+        self.db.execute('''INSERT INTO attempt_adjustments
+            (attempt,kind,day,observed,evidence_ref,evidence_digest,before,after) VALUES(?,?,?,?,?,?,?,?)''',
+            (attempt,kind,date,observed,evidence_ref,evidence_digest,encode(before),encode(after)))
+
+    def settle(self,attempt,usage,code=None,*,actions=(),evidence_ref=None):
+        """Apply attributable usage; a late receipt may fill gaps on the original billing day."""
+        with self.db:
+            self.db.execute('BEGIN IMMEDIATE')
+            return self._settle(attempt,usage,code,actions=actions,evidence_ref=evidence_ref)
+
+    def _settle(self,attempt,usage,code,*,actions,evidence_ref):
         row=self.get(attempt)
         require(row['started'] is not None,'attempt_not_started')
         require(isinstance(usage,Usage),'usage_shape')
+        late=row['state']=='settled'
+        evidence_digest=None
+        if evidence_ref is not None:
+            require(late and isinstance(evidence_ref,str) and re.fullmatch(r'[A-Za-z0-9_.:/-]{1,128}',evidence_ref),
+                    'usage_evidence')
+            action_evidence=sorted(((action.kind,action.count) for action in actions),key=lambda item:item[0])
+            evidence_digest=hashlib.sha256(encode([attempt,asdict(usage),action_evidence]).encode()).hexdigest()
+            applied=self.db.execute('SELECT evidence_digest FROM attempt_adjustments WHERE evidence_ref=?',
+                                    (evidence_ref,)).fetchone()
+            if applied is not None:
+                require(applied[0]==evidence_digest,'usage_evidence_conflict')
+                return False
         old=Usage(**json.loads(row['usage']))
         stored=asdict(usage);stored.pop('input_written')
         new=encode(stored)
@@ -210,8 +257,15 @@ class UsageLedger:
         for expected in self.db.execute('SELECT kind FROM expected_actions WHERE attempt=?',(attempt,)):
             if expected['kind'] not in {b['kind'] for b in budgets}:counts.setdefault(expected['kind'],None)
         missing=set(counts)-{b['kind'] for b in budgets}
-        if row['state']=='settled' and row['usage']==new and (written is not None or usage.input_written==0) and not missing and all(
-                counts.get(b['kind']) is None or counts[b['kind']]==b['count'] for b in budgets):return False
+        before=dict(cost=row['cost'], reserved=row['reserved'], charged=row['charged'],
+                    usage=json.loads(row['usage']), input_written=written[0] if written is not None else None,
+                    billing_incomplete=bool(row['billing_incomplete']))
+        if late and row['usage']==new and (written is not None or usage.input_written==0) and not missing and all(
+                counts.get(b['kind']) is None or counts[b['kind']]==b['count'] for b in budgets):
+            if evidence_ref is not None:
+                self._adjustment(attempt,'late_usage',row['day'],self.clock(),before,before,
+                                 evidence_ref=evidence_ref,evidence_digest=evidence_digest)
+            return False
         # Late partial data may only fill gaps, never silently change known facts.
         for field in ('input_total','input_cached','output_total','output_reasoning','total'):
             a,b=getattr(old,field),getattr(usage,field)
@@ -234,21 +288,31 @@ class UsageLedger:
                 amount=count*budget['unit_cost_micro']
                 cost+=amount;charged+=Fraction(amount*1_000_000,price.reference_rate)
             actual.append((count,'unknown' if count is None else 'known',attempt,budget['kind']))
-        with self.db:
-            if usage.input_total is not None:
-                self.db.execute('INSERT OR IGNORE INTO attempt_cache_writes VALUES(?,?)',(attempt,usage.input_written))
-            for kind in missing:
-                count=counts[kind]
-                prior=self.db.execute('SELECT kind,count FROM unbounded_actions WHERE attempt=?',(attempt,)).fetchone()
-                require(prior is None or prior['kind']==kind and (prior['count'] is None or count is None or prior['count']==count),'usage_conflict')
-                expected=self.db.execute('SELECT 1 FROM expected_actions WHERE attempt=? AND kind=?',(attempt,kind)).fetchone()
-                if count!=0 or prior is not None or expected:
-                    self.db.execute('INSERT OR REPLACE INTO unbounded_actions VALUES(?,?,?)',
-                        (attempt,kind,count if count is not None else prior['count'] if prior else None))
-            incomplete=incomplete or bool(self.db.execute('SELECT 1 FROM unbounded_actions WHERE attempt=? AND (count IS NULL OR count<>0)',(attempt,)).fetchone())
-            self.db.execute("UPDATE attempts SET state='settled',reserved=?,charged=?,cost=?,usage=?,settled=?,error_code=?,billing_incomplete=? WHERE id=?",
-                (str(unknown_hold),str(charged),str(cost),new,self.clock(),code,int(incomplete),attempt))
-            self.db.executemany('UPDATE attempt_actions SET count=?,status=? WHERE attempt=? AND kind=?',actual)
+        observed=self.clock()
+        if usage.input_total is not None:
+            self.db.execute('INSERT OR IGNORE INTO attempt_cache_writes VALUES(?,?)',(attempt,usage.input_written))
+        for kind in missing:
+            count=counts[kind]
+            prior=self.db.execute('SELECT kind,count FROM unbounded_actions WHERE attempt=?',(attempt,)).fetchone()
+            require(prior is None or prior['kind']==kind and (prior['count'] is None or count is None or prior['count']==count),'usage_conflict')
+            expected=self.db.execute('SELECT 1 FROM expected_actions WHERE attempt=? AND kind=?',(attempt,kind)).fetchone()
+            if count!=0 or prior is not None or expected:
+                self.db.execute('INSERT OR REPLACE INTO unbounded_actions VALUES(?,?,?)',
+                    (attempt,kind,count if count is not None else prior['count'] if prior else None))
+        incomplete=incomplete or bool(self.db.execute('SELECT 1 FROM unbounded_actions WHERE attempt=? AND (count IS NULL OR count<>0)',(attempt,)).fetchone())
+        self.db.execute("UPDATE attempts SET state='settled',reserved=?,charged=?,cost=?,usage=?,settled=?,error_code=?,billing_incomplete=? WHERE id=?",
+            (str(unknown_hold),str(charged),str(cost),new,row['settled'] if late else observed,
+             row['error_code'] if late else code,int(incomplete),attempt))
+        self.db.executemany('UPDATE attempt_actions SET count=?,status=? WHERE attempt=? AND kind=?',actual)
+        if late:
+            after=dict(cost=str(cost), reserved=str(unknown_hold), charged=str(charged), usage=stored,
+                       input_written=usage.input_written if usage.input_total is not None else None,
+                       billing_incomplete=incomplete)
+            self._adjustment(attempt,'late_usage',row['day'],observed,before,after,
+                             evidence_ref=evidence_ref,evidence_digest=evidence_digest)
+        if cost + unknown_hold * price.reference_rate / 1_000_000 > (
+                Fraction(row['cost']) + Fraction(row['reserved']) * price.reference_rate / 1_000_000):
+            logger.warning('Model usage exceeded its previous bound attempt=%s day=%s',attempt,row['day'])
         return True
 
     def reconcile(self):

@@ -112,7 +112,8 @@ class Diagnostics:
                        'requested_cost_micro','available_cost_micro','controller_cost_micro',
                        'controller_before_micro','controller_after_micro',
                        'day_known_micro','day_unknown_micro','day_reserved_micro','day_carry_micro',
-                       'day_released_micro','day_unreleased_micro','day_paced_available_micro'}
+                       'day_released_micro','day_unreleased_micro','day_paced_available_micro',
+                       'risk_limit_micro','risk_unknown_micro','risk_reserved_micro','risk_available_micro','risk_warning'}
         fields |= budget_fields
         codes={'status','name','decision','image_detail','action','source','reason','stage'}
         if 'image_detail' in data and data['image_detail'] not in ('none','low','high'):

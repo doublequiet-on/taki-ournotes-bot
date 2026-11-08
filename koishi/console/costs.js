@@ -41,6 +41,8 @@ const eventValues={excluded_user:'命中不主动搭话名单',followup_disabled
 Object.assign(eventValues,{defer:'暂不接话，等待更多上下文',conversation_busy:'正在处理另一位用户发起的交流',supplement_merged:'已合并同一用户的连续补充',budget_exhausted:'本次交流额度已用完',chat_service_cost_limit:'本群每小时费用额度不足（包含待核账占用）',chat_service_daily_cost_limit:'本群每日费用额度不足（包含待核账占用）',chat_service_reservation_limit:'剩余额度不足以预留判断和回复',chat_service_evaluation_limit:'本群每小时接话判断次数已达上限',chat_service_call_limit:'本群每小时模型调用次数已达上限',chat_service_reply_limit:'本群每小时主动回复次数已达上限',chat_service_cooldown:'尚在主动发起间隔内',service_disabled:'本群主动参与已关闭',success:'处理成功',proactive_skip:'本轮跳过',proactive_defer:'等待更多上下文',proactive_stale:'交流上下文已变化',model_protocol_error:'模型返回格式不符合要求',invalid_json:'判断结果格式无效',json_syntax:'结构化结果解析失败',non_text:'结果不是文字',loaded:'图片已读取',provider_unavailable:'模型服务暂不可用',quota_exceeded:'额度已用完',deadline:'处理超时',aborted:'处理已终止',expired:'请求已过期',haneoka:'Haneoka',knowledge:'已审核知识库'});
 const eventText=value=>eventValues[value];
 eventValues.chat_service_pacing_limit='当前已释放额度不足，剩余额度将分时释放';
+eventValues.chat_service_risk_limit='累计待核费用与在途预留已接近上限，本次额度不足';
+eventValues.chat_service_risk_warning='累计风险余额不足两次完整接话预留';
 export function chatEventsView(events,{group=false}={}){
  if(!Array.isArray(events)||!events.length)return group?h('p',{class:'empty-copy'},'近期还没有交流判断或资料任务记录。'):null;
  return h('div',{class:'conversation-events'},[h('h3',group?'近期交流记录':'交流处理记录'),

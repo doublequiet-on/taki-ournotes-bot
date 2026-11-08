@@ -1,5 +1,5 @@
 # L3: Approved group-service configuration, restart-aware usage budgets and summary material.
-# Effects: Reads administrator JSON and usage; paces new proactive spend within the existing daily cap.
+# Effects: Reads administrator JSON and usage; paces daily proactive spend and bounds outstanding risk.
 from dataclasses import dataclass
 from fractions import Fraction
 import hashlib
@@ -14,6 +14,9 @@ from datetime import datetime, timedelta, timezone
 
 from ..domain.model_calls import ModelError, Price, Usage
 from ..sources.json_validation import decode_json
+
+
+PROACTIVE_RISK_LIMIT_MICRO = 2_000_000
 
 
 class ServiceError(ValueError):
@@ -177,6 +180,10 @@ def proactive_minimum_cost_micro(profile):
     return math.ceil(maximum_cost_micro(profile) * calls)
 
 
+def uses_proactive_risk(policy):
+    return policy.currency == 'USD' and policy.proactive.max_cost_micro_per_day > 0
+
+
 def _paced_release(fresh_budget, minimum, seconds_since_midnight):
     """Open one refundable opportunity and release the remaining budget throughout the day."""
     initial = min(minimum, fresh_budget)
@@ -202,7 +209,7 @@ class ServiceBudget:
     def __init__(self, usage, instance_id, app_id, *, clock=time.time):
         self.usage, self.namespace, self.clock = usage, (instance_id, app_id), clock
 
-    def attempt_cost(self, row):
+    def attempt_cost(self, row, *, remaining_only=False):
         if row['state']=='released':return Fraction(),False
         price=Price(**json.loads(row['price']))
         amount=Fraction(row['cost'])
@@ -210,15 +217,20 @@ class ServiceBudget:
         _check(amount>=0 and held>=0,'chat_service_usage_unavailable')
         uncertain=row['state']=='started' or bool(row['billing_incomplete'])
         if uncertain:
-            bound=self.usage.bounded_hold(row['id'],price,Usage())*price.reference_rate/1_000_000
-            bound+=sum(action['max_count']*action['unit_cost_micro'] for action in self.usage.db.execute(
-                'SELECT max_count,unit_cost_micro FROM attempt_actions WHERE attempt=?',(row['id'],)))
+            observed = Usage(**json.loads(row['usage'])) if remaining_only else Usage()
+            bound = self.usage.bounded_hold(row['id'], price, observed) * price.reference_rate / 1_000_000
+            bound += sum(action['max_count'] * action['unit_cost_micro'] for action in self.usage.db.execute(
+                'SELECT max_count,unit_cost_micro,count FROM attempt_actions WHERE attempt=?', (row['id'],))
+                if not remaining_only or action['count'] is None)
+            if remaining_only:
+                bound += amount
             amount=max(amount+held,bound)
         else:amount+=held
         return amount,uncertain
 
     def check(self, policy, task, profile, request_id, reserve_cost_micro, *, reply_times=(),
-              opportunity_requests=(),opportunity_calls=None,opportunity_cost_micro=None) -> ServicePermit:
+              opportunity_requests=(), opportunity_calls=None, opportunity_cost_micro=None,
+              at=None, replacing_attempt=None) -> ServicePermit:
         _check(isinstance(policy, ServicePolicy) and (policy.instance_id, policy.app_id) == self.namespace,
                'chat_service_identity')
         prefix = _request_prefix(task, *self.namespace, policy.group_id)
@@ -230,10 +242,13 @@ class ServiceBudget:
         _check(limits.enabled, 'chat_service_disabled')
         _check(type(reserve_cost_micro) in (int, Fraction) and reserve_cost_micro > 0, 'chat_service_cost')
         reserve_cost_micro = Fraction(reserve_cost_micro)
-        now = self.clock()
+        now = self.clock() if at is None else at
         _check(type(now) in (int, float) and math.isfinite(now), 'chat_service_clock')
-        start = datetime.fromtimestamp(now, timezone(timedelta(hours=8))).replace(hour=0,minute=0,second=0,microsecond=0).timestamp()
+        local = datetime.fromtimestamp(now, timezone(timedelta(hours=8)))
+        today = local.date().isoformat()
+        start = local.replace(hour=0, minute=0, second=0, microsecond=0).timestamp()
         daily_limit = getattr(limits, 'max_cost_micro_per_day', 0)
+        separate_risk = task == 'proactive' and uses_proactive_risk(policy)
         earliest = min(start, now - 3600) if daily_limit else now - 3600
         user = self.usage.key('service', *self.namespace, policy.group_id, policy.service_subject_id, task)
         group = self.usage.key('group', policy.group_id)
@@ -241,10 +256,10 @@ class ServiceBudget:
             # Group + request namespace keeps costs visible across administrator subject changes.
             # Daily-capped proactive services age settled uncertainty out of the hour only.
             # Summary and legacy policies without a daily cap retain their original holds.
-            rows = self.usage.db.execute('''SELECT id,request_id,config_version,price,created,state,
-                reserved,cost,billing_incomplete FROM attempts WHERE group_key=? AND request_id LIKE ?
-                AND (created>=? OR state IN ('reserved','started') OR billing_incomplete=1) ORDER BY created LIMIT 4097''',
-                (group, prefix + '%', earliest)).fetchall()
+            rows = self.usage.db.execute('''SELECT id,request_id,price,day,created,started,state,
+                reserved,cost,usage,billing_incomplete FROM attempts WHERE group_key=? AND request_id LIKE ?
+                AND (created>=? OR day=? OR state IN ('reserved','started') OR billing_incomplete=1)
+                ORDER BY created LIMIT 4097''', (group, prefix + '%', earliest, today if separate_risk else '')).fetchall()
             _check(len(rows) <= 4096, 'chat_service_budget_capacity')
             _check(not self.usage.db.execute('''SELECT 1 FROM attempts a JOIN unbounded_actions u ON u.attempt=a.id
                 WHERE a.group_key=? AND a.request_id LIKE ? AND (u.count IS NULL OR u.count<>0) LIMIT 1''',(group,prefix+'%')).fetchone(),
@@ -253,33 +268,41 @@ class ServiceBudget:
             opportunity_count,opportunity_cost=0,Fraction()
             hourly_known, hourly_unknown, hourly_reserved, unknown = (Fraction() for _ in range(4))
             day_known, day_unknown, day_reserved, carry = (Fraction() for _ in range(4))
+            risk_reserved = Fraction()
             for row in rows:
-                if row['state'] == 'released':
+                if row['state'] == 'released' or row['id'] == replacing_attempt:
                     continue
-                if row['created'] > now - 3600:
+                occurred = row['started'] if separate_risk and row['started'] is not None else row['created']
+                if occurred > now - 3600:
                     recent.append(row)
                 price = Price(**json.loads(row['price']))
                 _check(price.currency == policy.currency, 'chat_service_currency_mismatch')
-                amount,uncertain=self.attempt_cost(row)
+                amount,uncertain=self.attempt_cost(row, remaining_only=separate_risk)
                 if uncertain:unresolved += amount
                 known = Fraction(row['cost'])
                 in_flight = row['state'] in ('reserved', 'started')
                 if uncertain and not in_flight:unknown += amount - known
-                if (row['created'] > now - 3600 or in_flight
+                if separate_risk and in_flight:
+                    risk_reserved += amount - known
+                if (occurred > now - 3600 or in_flight
                         or uncertain and not (task == 'proactive' and daily_limit)):
                     cost += amount
                     hourly_known += known
                     if in_flight:hourly_reserved += amount - known
                     else:hourly_unknown += amount - known
-                if row['created'] >= start or uncertain or in_flight:
+                counts_today = (row['day'] == today or row['state'] == 'reserved') if separate_risk else (
+                    row['created'] >= start or uncertain or in_flight)
+                if counts_today:
                     daily_cost += amount
                     day_known += known
                     if in_flight:
                         day_reserved += amount - known
                     else:
                         day_unknown += amount - known
-                    if row['created'] < start:
+                    if not separate_risk and row['created'] < start:
                         carry += amount
+                elif separate_risk and (uncertain or in_flight):
+                    carry += amount - known
                 if row['request_id'] in opportunity_requests:
                     opportunity_count+=1
                     opportunity_cost+=amount
@@ -289,14 +312,23 @@ class ServiceBudget:
             raise ServiceError('chat_service_usage_unavailable') from None
         available = Fraction(limits.max_cost_micro_per_hour) - cost
         if daily_limit:available = min(available, daily_limit - daily_cost)
+        risk_available = None
+        risk_details = ()
+        if separate_risk:
+            risk_available = PROACTIVE_RISK_LIMIT_MICRO - unknown - risk_reserved
+            available = min(available, risk_available)
+            risk_details = (
+                ('risk_limit_micro', PROACTIVE_RISK_LIMIT_MICRO), ('risk_unknown_micro', unknown),
+                ('risk_reserved_micro', risk_reserved), ('risk_available_micro', max(0, risk_available)),
+                ('risk_warning', int(risk_available < 2 * proactive_minimum_cost_micro(profile))))
         paced_available = None
         pacing_details = ()
         if task == 'proactive' and daily_limit:
-            # Carry consumes the hard daily cap but does not consume today's released tranche twice.
-            fresh_budget = max(Fraction(), daily_limit - carry)
+            daily_carry = 0 if separate_risk else carry
+            fresh_budget = max(Fraction(), daily_limit - daily_carry)
             released = _paced_release(
                 fresh_budget, proactive_minimum_cost_micro(profile), int(now - start))
-            paced_available = released - (daily_cost - carry)
+            paced_available = released - (daily_cost - daily_carry)
             available = min(available, paced_available)
             pacing_details = (
                 ('day_known_micro', day_known), ('day_unknown_micro', day_unknown),
@@ -310,13 +342,18 @@ class ServiceBudget:
             ('hour_known_micro', hourly_known), ('hour_unknown_micro', hourly_unknown),
             ('hour_reserved_micro', hourly_reserved), ('unknown_cost_micro', unknown),
             ('requested_cost_micro', reserve_cost_micro), ('available_cost_micro', max(0, available)))
-        details = tuple((key, math.ceil(value)) for key, value in budget_amounts + pacing_details)
+        details = tuple((key, math.ceil(value)) for key, value in budget_amounts + pacing_details + risk_details)
         if cost + reserve_cost_micro > limits.max_cost_micro_per_hour:
             raise ServiceError('chat_service_cost_limit', budget_details=details)
         if daily_limit and daily_cost + reserve_cost_micro > daily_limit:
             raise ServiceError('chat_service_daily_cost_limit', budget_details=details)
+        if risk_available is not None and risk_available < reserve_cost_micro:
+            raise ServiceError('chat_service_risk_limit', budget_details=details)
         if paced_available is not None and paced_available < reserve_cost_micro:
             raise ServiceError('chat_service_pacing_limit', budget_details=details)
+        if replacing_attempt is not None:
+            # Starting an existing hold only transfers its billing date.
+            return ServicePermit(user, group, request_id, task, cost, reserve_cost_micro, available, unresolved, details)
         if opportunity_requests:
             _check(opportunity_count<opportunity_calls,'chat_opportunity_call_limit')
             _check(opportunity_cost+reserve_cost_micro<=opportunity_cost_micro,'chat_opportunity_cost_limit')
