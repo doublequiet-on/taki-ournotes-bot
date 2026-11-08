@@ -47,7 +47,8 @@ PARAMETERS={
 }
 METRIC_FIELDS=('song_id','band_ids','duration_seconds','level','notes','nps','bpm_first','bpm_min','bpm_max')
 META_SCHEMA=obj({
-    'resource_server':enum(('jp','intl')),'difficulty':enum(('easy','normal','hard','expert')),
+    'resource_server':enum(('jp','intl')),
+    'difficulty':{'type':['string','null'],'enum':['easy','normal','hard','expert',None]},
     'band_ids':array({'type':'integer','minimum':1},5),
     'filters':array(obj({'field':enum(METRIC_FIELDS),'op':enum(('eq','in','gte','lte')),
                         'value':{'anyOf':[{'type':'number'},{'type':'string'},array({'type':['integer','string']},100)]}},('field','op','value')),8),
@@ -89,7 +90,7 @@ TOOLS.update({
     'visible_result':Tool('visible_result','解释或简化已成功发送的上一回答（说简单点、没懂）；只使用其仍有效的原始证据。新问题、纠错或切换区服应重新检索。',obj({}),'visible'),
     'conversation_reply':Tool('conversation_reply','简短致谢/告别，或确实缺少对象的指代请求才澄清。问偏好不是缺少查询对象。不能作为不会回答时的通用出口；不回答游戏事实。仅选择固定回复类型。',
         obj({'intent':enum(('thanks','goodbye','clarify'))},('intent',)),'conversation'),
-    'song_metrics':Tool('song_metrics','歌曲末判定时长、等级、Note、NPS、BPM；默认日服，谱面指标必须明确难度。同类最短和最长最多4组；不可配队、算分。',
+    'song_metrics':Tool('song_metrics','歌曲级末判定时长、等级、Note、NPS、BPM 的全库筛选和排序；默认日服。时长无需难度，未指定可省略 difficulty 或填 null；等级、Note、NPS、BPM 需要明确难度。保留原句条件，不补猜。覆盖不全时只报告已知范围。',
                        obj({'queries':{**array(META_SCHEMA,4),'minItems':1}},('queries',)),'meta',('jp','intl')),
     'field_query':Tool('field_query','查询原句明确要求的单个歌曲、卡或角色字段；字段由程序解析。',obj({}),'field'),
     'event_cutoff':Tool('event_cutoff','查询原句中的活动挑战歌曲榜线观测及历史；不预测、不宣称终榜。',obj({}),'cutoff',('jp','tw','kr','en')),
