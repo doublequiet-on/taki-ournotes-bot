@@ -10,6 +10,10 @@ class ChildSession {
     delete process.env.TAKI_RECOVERY_FD
     delete process.env.TAKI_RECOVERY_BINDING
     if (!Number.isInteger(this.fd) || this.fd < 3) throw new Error('recovery_fd_invalid')
+    if (!Number.isInteger(this.binding.startup_timeout) || this.binding.startup_timeout < 1 || this.binding.startup_timeout > 300) {
+      fs.closeSync(this.fd)
+      throw new Error('invalid_startup_timeout')
+    }
     this.sequence = 0
     this.closed = false
     this.revoked = false
@@ -38,7 +42,7 @@ class ChildSession {
     }
   }
   async wait() {
-    const deadline = Date.now() + 30000
+    const deadline = Date.now() + this.binding.startup_timeout * 1000
     while (Date.now() < deadline) {
       const state = this.request('wait')
       if (state === 'active') return

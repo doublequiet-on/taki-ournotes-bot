@@ -326,3 +326,36 @@ Windows原预检/串行会话/launcher拒绝/profile23项，22通过1项Linux检
 本地证据目录runtime/task10/trusted-session-20261104：exercise.py、protocol.py、run.py/run_protocol.py/run_p2.py、results.json、protocol-results.json、systemd.log、attempt1-permissions.log、p2-regression.log。Linux实物源/脚本/结果在 /var/lib/taki-task10/trusted-session-v3，协议负例在v2；首失败v1及首成功v2日志保留。复现run.py需新专属目录、唯一unit/entry/marker名称，拒绝覆写原证据。run_protocol.py只运行等待器与合成状态，不调用真实服务。最终实物正例已重验运行期守卫及独立监测；随后完善强停回执与串行stop，协议负例重验强停标记为true/orderly=false。三份控制器源码按本地binding.json核验。
 
 下一包由08消费文档定义的start(session)、assert_current/assertCurrent、state/report；接真实Backend quiesce/close及网关drain。生产05/07/09及宿主读取器逐字段缺口见INSTANCE_RECOVERY.md，不把SYNTHETIC的current/stop回执当生产批准。activation_permitted始终false，独立CLI仍manual，未合并部署、生产/QQ/付费或PR202操作。
+
+
+## 2026-11-08 固定602/85bace实际双实例恢复入口验收
+
+本增量独立消费09 `602a95f49fd059deb7a59377be74becb4d55e008`，含08 `a384335f69e0514190c51c5dfce5808b55a19f60`，没有修改08/09工作树。实际ZIP为100644962字节，SHA256 `85bacefd41f444c24d4df5e11ffd79c11ef840c85bed90a137766c2a44c03eb3`；配对Python ZIP SHA256 `4715054076c3d2eb690bff8ea8e88893c3a8d11c1f41b717b889f4505fbb9dab`。3318项文件逐项核验，包内/外原样manifest均为 `eb23da0e0ab14b7d63204ff5c3d0d4f1225e7ca7a2b670bdc6f35c930a7d0ae3`。B2 tgz为 `1668e57b5b387814aab60f79f2d157f7017299088b5413e49690ef8aa5b5f0c9`，实际Node v24.19.0；不用旧002包或旧夹具通过结果代替本次验收。
+
+独立宿主从Git `a6e102a5b94be6af65652985fe0063491352cbf5` 导出，三个会话文件确实不在产品组合内。本轮实际测得a6原屏障30秒不足，且先approve再构造会话的完整测量消耗启动票时间，均在业务放行前拒绝。本提交仅修改deploy/recovery_session.py、recovery_session.cjs及两份说明：无业务屏障默认120秒、严格1–300整数；新增approve_start先完成构造测量再显式初审，原30秒启动票不变，commit仍重审。实际运行controller-v4的Python包装器hash `fd6b91392d76f61ed9c4b1b2502b541161c197233f8a8c5121dbac9608ba7980`、Node包装器 `49854bd0074bed85a04271742006f4cc35e1f50acefa4a8e94ad533f6821b3e1`；isolated_runtime.py仍为a6原字节 `ae659d3ee763690e4f71c586ef6afd96d086e36b0da6377449fcd96be832df58`。这属于独立宿主修复，不能声称原a6不变即可通过。最终提交绑定见本地报告binding.json。
+
+环境为专属WSL Taki-Task10-2404 / Ubuntu24.04.5 / Python3.12，真实systemd、taki-task10.slice、仅loopback的taki-task10-b2网络空间，进程不可访问/mnt、/media、/init。独立根 `/var/lib/taki-task10/b2-recovery-20261108`；b2alpha用户taki-test-a UID999/端口30100–30102，b2beta用户taki-test-b UID997/端口30200–30202。两个真实离线venv/网关安装均成功；进程使用包内Node，不接真实服务或真实QQ。root控制器目录0755/文件0644，应用角色以各自UID/GID运行。
+
+| 实际场景 | 结果与边界 |
+|---|---|
+| 两实例离线安装、独立测量 | passed_isolated；prepare_first_install/install_runtime、pip check和安装封印成功；最终再核Python恢复entry、gateway/run.cjs、recovery.cjs与B2摘要 |
+| backend先启动 / gateway先启动 | passed_isolated；两种顺序第一角色均等待且无业务import，双方ready及重新审阅后才加载实际包入口 |
+| 实际业务入口 | passed_isolated；安装wheel的serve_recovery_backend、包内startRecovery/serveRecoveryGateway、真实Koishi/ScopeStore/Receiver/Backend/SQLite；两实例HTTP ready与Console HTML成功 |
+| 权限证据撤销与ACK排空 | passed_isolated；alpha撤销后quiesced→晚到HTTP ACK→drained→closed，forced=false/orderly=true；beta仍ready；运行期未重放停写预检 |
+| 晚到ACK存储观察 | passed_readonly；停止后的mode=ro&immutable=1读取成功回执，数据库hash不变；/帮助没有projection行，不宣称话题投影阻断已测 |
+| 半启动端口占用 / 控制通道断开 | passed_isolated_rejection；真实业务失败后两角色均退出，forced=true/orderly=false；不冒充有序排空，停止确认前FileLock仍持有 |
+| 停止确认与锁 | passed_isolated；注册的两角色进程组为空、独立锁竞争拒绝；上下文退出后锁可重取，最终无本轮Python/Node应用进程，三个运行unit均inactive/dead/success |
+| 恢复候选与旧会话 | passed_isolated_rejection；复制合成schema3历史库，真实只读physical/logical=3观察；备份外删除代际变更使07拒绝deletion_authority_mismatch；旧ticket/旧session不能重启，新控制器重审同样reject且children=0 |
+| 完整生产恢复/升级/回退 | 未执行；上述是实际安装后的隔离运行与复制候选恢复重验，不是生产备份导入或全库数据恢复 |
+
+实际接口为安装包的05 ProductIdentitySession/ScopeStore/productScopeAuthority、安装venv的07 history_retention.check_recovery，以及从Git `3dda6d29955328777f7e526c21bfd2828dbbea8a:deploy/product_identity.py` 独立导出的09 checker，SHA256 `736c983ae4b0d03e39c893a886df07d3839b434381dd6fbef406ab2143ca1d98`。调用保持隔离→身份→独立范围批准→07当前权威回调，checker来源没有填成602。candidate产品/实例/AppID/selection、批准与删除记录、人工双项确认均显式SYNTHETIC。运行中revision来自测试当前记录，恢复权威来自备份/恢复树外；配置JSON仅本次root控制测试输入，不是生产可信RPC。只证明已声明两角色writer范围的进程停止，不覆盖生产宿主全部writer/trigger。
+
+离线替身边界：仅替换QQ平台插件和SongRepository.load的外部采集，禁用采样/更新通知/付费模型，使用合成消息及合成平台flight；真实Receiver排空该flight，真实BackendClient经认证HTTP向实际SQLite写ACK。没有QQ网络请求或真实账号。最终只读账本请求efebf63fb9a13c6213cbf7c8bc90e56c6510bb8d95f53201a716436afa124229的receipt=success/message=synthetic-late-success，projection=NULL。最初错误要求blocked的观察断言和原日志保留，改为按真实请求类型报告；话题投影/完整旧话题恢复本轮未覆盖，不能以无投影行补成通过。
+
+本轮宿主自查：6组等待预算/首次审阅检查通过（含6种非法预算、Python/Node实际1秒等待拒绝、30秒票不延长及初审取消），15项协议/进程故障回归、10项首次测量P2回归、6项ManualRecoveryReview竞态回归通过；架构、Node语法、diff检查通过。协议回归中安装观察和部分进程对象明确为替身，另有真实等待进程；它与上表实际包业务验收分列。未重跑旧RPC/历史全格式/旧发行矩阵；旧18项不改成全通过。
+
+失败记录均在本地runtime/task10/b2-recovery-20261108保留：最初历史夹具缺表、Git archive组写权限拒绝、a6屏障超时、测试entry漏runtime目录导致权限拒绝、HTTP探针缺X-Taki-Instance、第二实例票过期、最终无projection断言失败。business-07.log为修复后的实际业务成功，faults-01.log保留预期端口冲突/失联异常；不清理原目录/failed unit/事务记录，不覆盖为成功日志。
+
+复现入口均在上述本地目录：verify.py（原工件校验）、install.py/transfer.py（新空隔离根安装）、exercise.py/run.py（真实业务）、faults.py/run_faults.py（失败与恢复拒绝）、timeouts.py/check_host.py（宿主定向验证）、protocol.py（协议回归）、collect.py/collect_windows.py（最终只读观察）。重复完整执行必须使用新的任务专属空ROOT、独立实例/端口/unit名、root所有且无组写的固定宿主归档，并替换所有脚本ROOT/实例引用，不能直接覆盖本轮证据。入口脚本和实际配置均须先测量；sudo/WSL目标只限已授权专属发行版。原脚本最初失败版本另存attempt快照。
+
+给00：a6两个启动时序缺陷已在10责任区最小修复并实际测量；08/09无本轮代码修改。用户选定“人工核当前记录、未知不恢复”，因此无须另建权限服务，但当前生产范围/删除记录、真实人工签核、目标宿主及全部writer停止证明仍需实际提供；合成测试不代签。最终产品selection/聊天裁剪、源码公开获取责任未定。恢复后真实业务重新开放及完整数据恢复未获生产验收；所有回执activation_permitted=false。没有合并、上线、真实服务重启、QQ、付费调用或生产数据操作。

@@ -250,10 +250,10 @@ after_restore不执行数据拷贝：先撤销许可、停止本会话子进程�
 
 在已进入的 `IsolatedRuntime` 持锁会话内：
 
-1. 原 `runtime.approve(confirm_current)` 运行停写预检及人工双项确认，获得两角色一次性短期票。
-2. 构造 `RecoverySession(runtime, read_running=..., read_stopped=..., drain_timeout=10)`。两个读取器无默认值；需当前安装测量一致、无已启动子进程、此前未创建过RecoverySession。包装器本身须root所有、路径无链接/组写/其他写，并测量hash；每次准备子进程重新核对。
+1. 构造 `RecoverySession(runtime, read_running=..., read_stopped=..., drain_timeout=10, startup_timeout=120)`，完成安装/包装器测量。两个读取器无默认值；需当前安装测量一致、无已启动子进程、此前未创建过RecoverySession。包装器本身须root所有、路径无链接/组写/其他写，并测量hash；每次准备子进程重新核对。
+2. 调用 `session.approve_start(confirm_current)` 显式运行停写预检及人工双项确认，获得原有30秒、两角色一次性短期票；不续期旧票。
 3. 分别 `runtime.start('backend', ticket, session=session)`、gateway同理。每个角色只有一对socketpair；通过Popen pass_fds继承，不监听端口、不写授权文件、不接受Console JSON。旧fixture入口未提供session时仍为旧路径，不能用于新的恢复组合根。
-4. 第一进程只执行Python/Node等待器，业务entry在双方ready、重新测量/身份/范围/删除/人工检查通过后才import/require。`session.commit(confirm_current)` 在双方等待期间重审；缺一角色返回manual。提交还要求运行权威九项revision与该次人工复核快照完全一致，清除额外票后才放行。等待限30秒，失败/取消/超时撤销双方。
+4. 第一进程只执行Python/Node等待器，业务entry在双方ready、重新测量/身份/范围/删除/人工检查通过后才import/require。`session.commit(confirm_current)` 在双方等待期间重审；缺一角色返回manual。提交还要求运行权威九项revision与该次人工复核快照完全一致，清除额外票后才放行。等待默认120秒，受信构造参数startup_timeout仅接受1–300的整数；预算绑定私有FD帧，Python/Node均严格校验。启动票仍30秒，已运行断言的读写超时仍1秒；失败/取消/超时撤销双方。
 5. 所有报告仍 `activation_permitted=false`。`isolated_active` 只表示隔离夹具屏障已提交，不能转换为产品激活或范围批准。
 
 每个私有端点绑定随机会话、实例、角色、boot_id和启动代际，帧序号严格递增。启动代际在该端点内固定；提交后控制器另外持有当前runtime代际，持续比较，不接受旧代际重开。控制器存活以私有通道存活确认，另核FileLock fd/dev/ino及两进程；恢复/显式invalidate/进程退出/通道断开/当前权威变化都会粘滞撤销。此信任依赖root控制器和已测量受信entry，不是抵抗已失陷应用进程伪造自身生命周期事实的证明；宿主停止仍由独立读取器确认。
@@ -283,3 +283,10 @@ after_restore不执行数据拷贝：先撤销许可、停止本会话子进程�
 | 08 | 已测量entry对上述session接口、真实Backend lifecycle及网关drain完成事件的组合 | 本轮交固定宿主接口；未把源码08接口冒充已进入冻结组合包 |
 
 验收脚本/失败日志见 `runtime/task10/trusted-session-20261104`，测试新增文件按AGENTS不提交。整个接口仍不执行备份恢复、不接管服务/开机任务、不删除任何失败或事务状态。
+
+
+## 2026-11-08 新整包首装等待与初审时序
+
+固定602a95f49fd059deb7a59377be74becb4d55e008新包在专属双实例实测暴露两个时间窗口：a6固定30秒等待不足以完成真实完整树测量及提交前重验；先签票再构造会话又会让构造测量占用原30秒票的有效期。本增量只将无业务屏障预算改为默认120秒、有界1–300秒，并提供approve_start将会话构造测量移到显式初审之前。它不延长启动票、不自动重签、不省略commit重验、不允许运行中重放停写事实。
+
+正确顺序为进入IsolatedRuntime持锁→构造RecoverySession→approve_start人工初审→两个start(session=...)→commit人工重审。若角色已创建，approve_start拒绝；测量/人工回调期间invalidate仍无票。受信预算只控制无业务等待，不能来自Console批准或产品候选。宿主Python/Node包装器与父会话须成组安装并测量；新包装器拒绝缺失或非法startup_timeout的旧binding，不提供默认放行兼容。实际08 a384335f69e0514190c51c5dfce5808b55a19f60入口仍消费version1角色/实例及state/report，不修改其业务接口。

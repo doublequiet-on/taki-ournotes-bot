@@ -45,11 +45,13 @@ class RecoverySession:
     read_stopped() is invoked only after direct child exit; it must additionally
     prove all host writers/triggers stopped, or return unknown. No default reader.
     """
-    def __init__(self, runtime, *, read_running, read_stopped, drain_timeout=10):
+    def __init__(self, runtime, *, read_running, read_stopped, drain_timeout=10, startup_timeout=120):
         if not callable(read_running) or not callable(read_stopped):
             raise ValueError('running_and_stopped_authority_readers_required')
         if not 0 < drain_timeout <= 60:
             raise ValueError('invalid_drain_timeout')
+        if type(startup_timeout) is not int or not 1 <= startup_timeout <= 300:
+            raise ValueError('invalid_startup_timeout')
         if runtime._measure() != runtime.installed or runtime.children or runtime.recovery_session is not None:
             raise ValueError('fresh_measured_runtime_required')
         self.runtime = runtime
@@ -62,7 +64,8 @@ class RecoverySession:
         self.session = secrets.token_hex(32)
         self.generation = runtime.generation
         self.baseline = None
-        self.deadline = time.monotonic() + 30
+        self.startup_timeout = startup_timeout
+        self.deadline = time.monotonic() + startup_timeout
         self.drain_timeout = drain_timeout
         self.pending = 0
         self.stop_error = None
@@ -81,6 +84,33 @@ class RecoverySession:
             trusted(Path(path))
         return measure_components(self.wrappers)
 
+    def approve_start(self, confirm_current):
+        """Measure the session before issuing the existing 30-second start tickets.
+
+        No role exists yet. This is an explicit fresh review, never extension or
+        renewal of an old ticket. commit() still reviews again with both waiting.
+        """
+        with self.guard:
+            if self.phase != 'waiting' or self.roles:
+                raise ValueError('fresh_waiting_session_required')
+            self.phase = 'preparing'
+        try:
+            result, tickets = self.runtime.approve(confirm_current)
+            if result['status'] != 'reviewed':
+                self.revoke('initial_review_not_current')
+                return result, {}
+            with self.guard, self.runtime.guard:
+                if (self.phase != 'preparing' or set(tickets) != {'backend', 'gateway'}
+                        or any(t not in self.runtime.permits or self.runtime.permits[t][1] != self.runtime.generation
+                               for t in tickets.values())):
+                    raise ValueError('initial_review_invalidated')
+                self.generation, self.phase = self.runtime.generation, 'waiting'
+            self._alive()
+            return result, tickets
+        except BaseException:
+            self.revoke('initial_review_failed')
+            raise
+
     def prepare_child(self, role):
         if self._measure_wrappers() != self.wrapper_hashes:
             raise ValueError('recovery_wrapper_changed')
@@ -93,7 +123,8 @@ class RecoverySession:
             child.setsockopt(socket.SOL_SOCKET, socket.SO_RCVTIMEO, struct.pack('ll', 1, 0))
             child.setsockopt(socket.SOL_SOCKET, socket.SO_SNDTIMEO, struct.pack('ll', 1, 0))
             binding = dict(version=1, session=self.session, instance=self.runtime.settings['instance'],
-                           role=role, generation=self.generation, boot=self.boot)
+                           role=role, generation=self.generation, boot=self.boot,
+                           startup_timeout=self.startup_timeout)
             self.roles[role] = dict(parent=parent, child=child, binding=binding,
                                     process=None, ready=False, sequence=0, stage=None)
             return child.fileno(), binding
@@ -313,6 +344,9 @@ class ChildSession:
     def __init__(self):
         self.socket = socket.socket(fileno=int(os.environ.pop('TAKI_RECOVERY_FD')))
         self.binding = json.loads(os.environ.pop('TAKI_RECOVERY_BINDING'))
+        if type(self.binding.get('startup_timeout')) is not int or not 1 <= self.binding['startup_timeout'] <= 300:
+            self.socket.close()
+            raise ValueError('invalid_startup_timeout')
         self.sequence = 0
         self.closed = False
         self.revoked = False
@@ -335,7 +369,7 @@ class ChildSession:
                 raise RuntimeError('recovery_session_closed') from None
 
     def wait(self):
-        deadline = time.monotonic() + 30
+        deadline = time.monotonic() + self.binding['startup_timeout']
         while time.monotonic() < deadline:
             state = self._request('wait')
             if state == 'active':
