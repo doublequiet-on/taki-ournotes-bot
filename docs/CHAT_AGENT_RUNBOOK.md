@@ -6,7 +6,7 @@
 
 `GET /v1/admin/chat/groups/{gid}/settings` 返回设置、版本 guard、最近用户、任务计数和最近诊断事件；`POST` 使用 `operation_id`、原 guard 和完整 settings 保存。并发版本变化时重新读取再确认草稿。该接口复用现有管理鉴权，不提供公开访问或模型自改设置能力。
 
-研究任务按群及发言者保留 15 分钟。任务摘要展示待补资料、部分完成、已完成的数量；单请求诊断显示工具结果、耗时、知识不足后的站内补查及最终送达状态。未受理的名单过滤、窗口到期等决定也进入群级日志。诊断只保存固定元数据，24 小时后清理；请求记录与群控制事件各上限 4096 条。诊断降级状态保留在健康信息中，费用以 UsageLedger、发送以 Delivery Ledger 为准。
+研究任务按群及发言者保留 15 分钟。任务摘要展示待补资料、部分完成、已完成的数量；单请求诊断显示工具结果、耗时、知识不足后的站内补查及最终送达状态。未受理的名单过滤、窗口到期等决定也进入群级日志。诊断只保存固定元数据，24 小时后清理；请求记录与群控制事件各上限 4096 条。诊断降级状态保留在健康信息中，费用以 UsageLedger、发送以 Delivery Ledger 为准。主动候选的小时／日费用与预留不足拦截附带 hour_limit_micro、day_limit_micro、hour_cost_micro、day_cost_micro、hour_known_micro、hour_unknown_micro、hour_reserved_micro、unknown_cost_micro、requested_cost_micro、available_cost_micro；预留不足另附 controller_cost_micro（持久账与内存占用的较大值）。unknown_cost_micro 是读入历史已结束记录的未知部分，不包含已知费用或仍在途预留。这些数值以原币种的微单位向上取整，只用于诊断；实际准入继续精确计算，余额按更保守的整数值执行。同群同原因仍按 10 秒限频，不记录正文或密钥。
 
 本批新增 ModelAdmin `chat_settings` 表和 Diagnostics `conversation_events` 表，不改既有表内容。兼容旧代码可读取原有记录，但不会执行新增名单和续聊设置；回退时需关闭旧版主动参与以保留“不主动搭话”的行为。任务及续聊窗口不持久化，重启不会恢复旧任务或发送机会。下述 A0 存储回退门仍适用。
 
@@ -76,9 +76,11 @@ python -B scripts/inspect_model_config.py --config /path/to/model-proactive-v1.j
 
 试点范围继续由现有群管理及模型群准入控制，默认使用同一 v0 人格；版本库中经独立人工批准的人格可替换草稿。关闭群内模型权限后，每次新模型请求仍需当前许可，网关发送前也重验策略。联网、看图、群级摘要和主动参与还须各自的能力／服务批准，缺失时保持关闭，详见 F1 配置表。服务任务记到明确批准的群服务主体，不记到当前发消息者。
 
+中止诊断在 finished 事件中记录固定 reason 与 stage（preparation／decision／generation／model／delivery），保留第一次终态原因。网关可区分新观察替换、候选过期、策略或群权限变化、网关停止、网关异常与未完成交付；旧网关不提供原因时标为 gateway_abort。后端另区分准备任务取消、网关代次切换、设置变化、对话结束、上下文撤销、记忆删除与关闭。错误事件也记录阶段；这些字段不含正文或异常原文。budget_reconciled 群事件中的 controller_before_micro／controller_after_micro 显示准入前按账本校准的变化，单位为整数微币种，旧未知费用仍保留。
+
 诊断先查现有交付账与加权用量账，按 request/attempt ID 区分 reserve、started、settled、released 及 billing_incomplete。聊天库只保存必要可见信息，可据此区分生成、工具失败和逐段交付；不要导出真实正文至公开 CI。实例 state-dir 的 `chat-v1.sqlite3` 独立于 `usage-v1.sqlite3`，不要拿聊天库清理来重置额度。
 
-联网操作次数未知时，已结算记录仍会在 `reserved` 中保留该操作的费用上界，继续计入用户及群额度；服务预算也按未知上界处理。打开旧账本时会依据已有未知操作记录重建缺失的预留，不改变已知费用或次数。若之后收到可核对的实际次数，账本结算实际费用并释放该部分预留。不要将 `billing_incomplete` 当作零费用，也不要为恢复额度删除账本。
+联网操作次数未知时，已结算记录仍会在 `reserved` 中保留该操作的费用上界，继续计入用户及群额度；服务预算也按未知上界处理。打开旧账本时会依据已有未知操作记录重建缺失的预留，不改变已知费用或次数。若之后收到可核对的实际次数，账本结算实际费用并释放该部分预留。不要将 `billing_incomplete` 当作零费用，也不要为恢复额度删除账本。配置非零日上限的主动服务只让满一小时且已结束的未知调用退出小时统计，原记录及日预算占用继续保留；旧策略无日上限时维持原小时保护。
 
 工具执行前会预留最终收束的加权额度，未用时记录为 `released/final_not_needed`；summary 的记录数包含这种占位，真实调用数按 started_at 非空核对。聊天审计写入故障会记录 `Chat audit unavailable` 与进程内 audit_failures，继续完成已结算结果和 ACK；不能因此忽略必需用量账或交付账故障。
 
@@ -97,6 +99,16 @@ python -B scripts/inspect_model_config.py --config /path/to/model-proactive-v1.j
 `expected_actions`、`unbounded_actions` 和删除检测 trigger 是共享用量库的增量 schema；上线前必须按受管流程核对兼容指纹、备份策略及新旧版本隔离恢复，不把源码合并当作控制器或备份合同批准。
 
 主动观察在接纳及发送前核验删除墓碑；重试不能重新带入已删正文。知识引用继承原页租约；ACK 绑定的知识范围用于明确追问，重启后缺少范围须重新说明。联网批准在每次请求前及交付前重验。图片字节与十秒读取期限按整轮累计，覆盖当前图、引用和工具重读。带图的明确斜杠命令仍须通过命令识别。
+
+## 模型传输诊断
+
+每次原生模型 HTTP 在结束或中断时写一条 `transport` 事件，并在 `ournotes_bot.model_transport` 日志中以 request／attempt ID 关联。阶段为 connect、dns、upload、wait_headers、read_body、complete；固定 name 区分 disconnected、timeout、connect、transport、cancelled、response_too_large、interrupted 和正常 none。费用未知仍按原账本上界处理，不因诊断重试请求。
+
+记录总耗时与实际经过的 dns_ms、connect_ms、upload_ms、wait_headers_ms、read_ms，单位毫秒；未发生的阶段不补零。connect 包含客户端 DNS、代理 CONNECT 及 TLS，当前不能单独拆出 CONNECT 和 TLS；代理节点内部 DNS 也不在客户端观测范围。upload 以 aiohttp 提交请求体的事件为界，不证明对端已收到或执行。
+
+headers_received 表明是否收到 HTTP 响应头；收到时记录状态码，以及符合固定格式的 x-request-id。proxied 只表明客户端使用了显式代理，不能证明代理的具体出口。字段白名单不接收正文、URL、凭据、任意响应头或异常原文；诊断库沿用既有容量和保留期限，日志沿用已有 journal 策略。诊断字段校验失败只记录固定警告，不改变已知费用或回复。
+
+排查断连时先看阶段：connect／dns 关注建连；wait_headers 表示客户端已提交请求、尚无响应头；read_body 表示已收到头但响应体未读完。阶段只能缩小范围，不能单凭 wait_headers 判定 OpenAI 或代理哪一端关闭了连接。优先观察自然请求，不重发原问题来补日志。
 
 ## 每日主模型预算与 DeepSeek 备用
 

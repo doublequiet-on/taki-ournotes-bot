@@ -1,5 +1,5 @@
 # L3: Bounded cancellable Chat Completions / OpenAI Responses and registered prices.
-# Effects: HTTPS to fixed provider origins only; no retries, redirects or logging bodies.
+# Effects: HTTPS to fixed origins; optional bounded transport timings, no retries or body logging.
 from __future__ import annotations
 
 import asyncio
@@ -283,28 +283,78 @@ def request_body(profile, messages, tools):
     return body
 
 
+class _TransportTrace:
+    """Client-side milestones only; CONNECT and TLS are included in connect_ms."""
+    def __init__(self, proxied):
+        self.started=time.monotonic();self.times={};self.stage='connect';self.error='none'
+        self.proxied=proxied;self.status=None;self.request_id=None
+        self.config=aiohttp.TraceConfig()
+        for signal,mark,stage in (
+                ('on_connection_create_start','connect_start','connect'),
+                ('on_dns_resolvehost_start','dns_start','dns'),
+                ('on_dns_resolvehost_end','dns_end','connect'),
+                ('on_connection_create_end','connected','upload'),
+                ('on_request_headers_sent','upload_start','upload'),
+                ('on_request_chunk_sent','upload_end','wait_headers')):
+            async def record(*args, mark=mark, stage=stage):
+                self.times[mark]=time.monotonic();self.stage=stage
+            getattr(self.config,signal).append(record)
+
+    def headers(self, response):
+        self.times['headers']=time.monotonic();self.stage='read_body';self.status=response.status
+        value=response.headers.get('x-request-id','')
+        # Only bounded request identities, never arbitrary header contents.
+        if re.fullmatch(r'req_[A-Za-z0-9_-]{1,96}|[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}',value):
+            self.request_id=value
+
+    def snapshot(self):
+        end=time.monotonic()
+        elapsed=lambda start,stop: min(3600000,max(0,int((stop-start)*1000)))
+        data=dict(stage=self.stage,name=self.error if self.error!='none' or self.stage=='complete' else 'interrupted',
+            elapsed_ms=elapsed(self.started,end),proxied=self.proxied,headers_received=self.status is not None)
+        for name,start,stop in (('dns_ms','dns_start','dns_end'),('connect_ms','connect_start','connected'),
+                ('upload_ms','upload_start','upload_end'),('wait_headers_ms','upload_end','headers'),
+                ('read_ms','headers','complete')):
+            if start in self.times:data[name]=elapsed(self.times[start],self.times.get(stop,end))
+        if self.status is not None:data['http_status']=self.status
+        if self.request_id is not None:data['provider_request_id']=self.request_id
+        return data
+
+
 class NativeClient:
     def __init__(self, *, openai_proxy=None):
         self.openai_proxy=openai_proxy
 
-    async def request(self, profile, body, *, timeout):
+    async def request(self, profile, body, *, timeout, transport=None):
         timeout=aiohttp.ClientTimeout(total=max(.001,timeout),connect=min(5,max(.001,timeout)))
+        trace=_TransportTrace(bool(self.openai_proxy and profile.provider=='openai')) if transport is not None else None
         try:
-            async with aiohttp.ClientSession(timeout=timeout,trust_env=False) as session:
+            async with aiohttp.ClientSession(timeout=timeout,trust_env=False,
+                    trace_configs=[trace.config] if trace else []) as session:
                 async with session.post(endpoint(profile),json=body,allow_redirects=False,
                         proxy=self.openai_proxy if profile.provider=='openai' else None,
                         headers={'Authorization':'Bearer '+profile.api_key}) as response:
+                    if trace:trace.headers(response)
                     chunks=[];size=0
                     async for chunk in response.content.iter_chunked(8192):
                         size+=len(chunk)
-                        if size>100000: return AttemptResult('error',error_code='model_response_too_large')
+                        if size>100000:
+                            if trace:trace.error='response_too_large'
+                            return AttemptResult('error',error_code='model_response_too_large')
                         chunks.append(chunk)
+                    if trace:trace.times['complete']=time.monotonic();trace.stage='complete'
                     return decode_attempt(b''.join(chunks),profile,http_status=response.status,max_tool_calls=body.get('max_tool_calls'))
+        except asyncio.CancelledError:
+            if trace:trace.error='cancelled'
+            raise
         except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
             kind=('disconnected' if isinstance(exc,aiohttp.ServerDisconnectedError) else
                   'timeout' if isinstance(exc,asyncio.TimeoutError) else
                   'connect' if isinstance(exc,aiohttp.ClientConnectorError) else 'transport')
+            if trace:trace.error=kind
             return AttemptResult('error',error_code='provider_unavailable',transport_error=kind)
+        finally:
+            if trace:transport.update(trace.snapshot())
 
     async def price(self, profile):
         if profile.provider!='openrouter': return replace(profile.price,estimated=True)

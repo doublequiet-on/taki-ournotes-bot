@@ -59,6 +59,7 @@ class Work:
     anchor: object = None
     missing_anchor: bool = False
     model_attempts: int = 0
+    model_stage: str = 'preparation'
     model_attempt_limit: int = 2
     content_deadline: float = field(default_factory=lambda: time.monotonic()+600)
     model_snapshot: object = None
@@ -70,6 +71,7 @@ class Work:
     native_claimed: bool = False
     hint: bool = False
     terminal_status: str | None = None
+    terminal_reason: str | None = None
     terminal_pending: bool = False
     terminal_since: float | None = None
     terminal_retries: int = 0
@@ -201,7 +203,7 @@ class Backend:
         leases = tuple(leases)
         return not leases or self.knowledge is not None and self.knowledge.validate_current(leases)
 
-    def finish(self, work, status):
+    def finish(self, work, status, *, reason=None):
         if work.terminal_status is not None or not work.active:
             return
         # A granted attempt without a durable receipt is unknown, even when the
@@ -215,6 +217,7 @@ class Backend:
                 self.invalidate_topic(work)
         # Revoke permission immediately, but retain ownership until the fact is durable.
         work.terminal_status = status
+        work.terminal_reason = reason or ('reason_unknown' if status == 'aborted' else status)
         work.terminal_pending = True
         work.active = False
         if self.model_runtime and self.model_runtime.agent:self.model_runtime.agent.proactive.finish(work)
@@ -288,7 +291,7 @@ class Backend:
     def preparation_done(self, work, task):
         self.tasks.discard(task)
         if task.cancelled():
-            self.finish(work, 'aborted')
+            self.finish(work, 'aborted',reason='preparation_cancelled')
         else:
             error = task.exception()
             if error is not None:
@@ -303,7 +306,7 @@ class Backend:
             changed = self.ledger.register(epoch)
             if changed:
                 for work in list(self.works.values()):
-                    self.finish(work, 'aborted')
+                    self.finish(work, 'aborted',reason='gateway_epoch_changed')
                 self.permissions.versions.clear()
         return {'gateway_epoch': epoch, 'backend_epoch': self.runtime}
 
@@ -545,7 +548,7 @@ class Backend:
         except asyncio.TimeoutError:
             self.finish(work, 'expired')
         except asyncio.CancelledError:
-            self.finish(work, 'aborted')
+            self.finish(work, 'aborted',reason='preparation_cancelled')
             raise
         except Exception as exc:
             logger.error('Preparation failed request=%s type=%s', work.request.request_id, type(exc).__name__)
@@ -703,11 +706,11 @@ class Backend:
                 # Progress occupies one ordinary send slot, but creates no topic
                 # and never completes a request whose answer is still preparing.
                 if changed and (payload['result']!='success' or payload.get('allow_context') is False):
-                    self.finish(work,'aborted')
+                    self.finish(work,'aborted',reason='hint_delivery_failed')
                 return {'recorded':True,'duplicate':not changed,**self.snapshot(self.ledger.by_delivery(delivery),payload['gateway_epoch'])}
             if changed and live and payload.get('allow_context') is False:
                 self.invalidate_topic(work)
-                self.finish(work, 'aborted')
+                self.finish(work, 'aborted', reason='ack_context_revoked')
                 live = False
             if changed and live:
                 part = next(p for p in parts if p['id'] == part_id)
@@ -758,7 +761,8 @@ class Backend:
         if kind in ('aborted', 'batch_finished'):
             if kind == 'batch_finished':
                 require(all(p['status'] == 'success' for p in parts), 'batch_incomplete', 409)
-            if work: self.finish(work, 'aborted' if kind == 'aborted' else 'finished')
+            if work: self.finish(work, 'aborted' if kind == 'aborted' else 'finished',
+                                 reason=payload.get('reason','gateway_abort') if kind == 'aborted' else None)
             return self.snapshot(self.ledger.by_delivery(delivery), payload['gateway_epoch'])
         # No new permission after expiry/reload, including a repeat of an old intent.
         require(live, 'inactive_delivery', 409)
@@ -807,7 +811,7 @@ class Backend:
     async def _quiesce_business(self):
         self.closing, self.ready = True, False
         self.operations.closing = True
-        for work in list(self.works.values()): self.finish(work, 'aborted')
+        for work in list(self.works.values()): self.finish(work, 'aborted', reason='backend_shutdown')
         # Cancellation retains QueryGate's thread slot until its actual work ends.
         tasks = list(self.tasks)
         for task in tasks: task.cancel()
@@ -895,7 +899,7 @@ def create_app(backend, token, initialize=None, *, assert_recovery_current=None)
                      'management_capabilities': ['admin_read_v1', 'telemetry_v1', 'group_policies_v1', 'ops_v1'],
                      'features': ['classify', 'gateway_retire', 'ack_context_guard', 'notice_gateway_v1',
                                   'quoted_context_v1', 'fixed_snapshot_v1', 'current_model_permit_v1', 'independent_delivery_v1',
-                                  'chat_observation_v1','chat_images_v1'] if backend.query_runtime is None else
+                                   'chat_observation_v1','chat_images_v1','abort_reason_v1'] if backend.query_runtime is None else
                                  ['classify','gateway_retire','ack_context_guard','quoted_context_v1',
                                   'fixed_snapshot_v1','independent_delivery_v1'],
                      'reference_profiles': sorted(backend.reference_profiles)}, 200 if accepting else 503)
@@ -915,7 +919,7 @@ def create_app(backend, token, initialize=None, *, assert_recovery_current=None)
         async with backend.admission:
             backend.ledger.retire(epoch)
             for work in list(backend.works.values()):
-                if work.request.gateway_epoch == epoch: backend.finish(work, 'aborted')
+                if work.request.gateway_epoch == epoch: backend.finish(work, 'aborted',reason='gateway_retired')
         return json({'retired': True})
     async def register(request):
         value = await read_json(request)

@@ -3,7 +3,7 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { Context, Session, Channel, User } from 'koishi'
 import type { QQBot } from '@satorijs/adapter-qq'
-import { BackendClient, BackendError, Plan, ModelPermission } from './backend'
+import { BackendClient, BackendError, Plan, ModelPermission, AbortReason } from './backend'
 import { decodeIncoming, Identity, Inbound, pairId } from './ingress'
 import { QQDelivery, QQInternal, type Outcome } from './delivery'
 import { Notices } from './notices'
@@ -19,7 +19,7 @@ interface Raw { raw: unknown; seq: number; backendSeq:number; at: number; finger
 interface Observation {
   key:string; input:Inbound; session:Session; seq:number; backendSeq:number; fingerprint:string; bytes:number; attempt:number
   policyVersion:string; continuation:boolean
-  cancelled:boolean; accepted:boolean; timer?:ReturnType<typeof setTimeout>; promise?:Promise<void>
+  cancelled:boolean; accepted:boolean; cancelReason?:AbortReason; timer?:ReturnType<typeof setTimeout>; promise?:Promise<void>
 }
 interface ObservationDiagnostic {
   at: number; correlation: string; event_type: 'GROUP_MESSAGE_CREATE'; trigger: 'observation'; stage: 'decoded' | 'backend_response' | 'backend_error'; observed: boolean | null
@@ -118,7 +118,7 @@ export class Receiver {
     for(const [key,value] of this.raw) if(now-value.at>=298000)this.raw.delete(key)
     for(const [key,value] of this.groupArrivals)if(now-value.at>=298000)this.groupArrivals.delete(key)
     for(const [key,value] of this.speakerArrivals)if(now-value.at>=298000)this.speakerArrivals.delete(key)
-    for(const task of this.observations.values()) if(!this.observationAlive(task))this.cancelObservation(task.key)
+    for(const task of this.observations.values()) if(!this.observationAlive(task))this.cancelObservation(task.key,this.observationStopReason(task))
   }
   private groupKey(group:string):string {
     return JSON.stringify([this.config.instanceId,this.config.appId,'qq','group',group])
@@ -133,9 +133,10 @@ export class Receiver {
     return [...sources].reduce((total,item)=>total+item.bytes,0)
       + [...this.observationTasks].reduce((total,item)=>total+item.bytes,0)
   }
-  private cancelObservation(key:string):void {
+  private cancelObservation(key:string,reason:AbortReason='observation_replaced'):void {
     const task=this.observations.get(key)
     if(!task)return
+    task.cancelReason=reason
     task.cancelled=true
     if(task.timer)clearTimeout(task.timer)
     task.timer=undefined
@@ -150,6 +151,14 @@ export class Receiver {
       && Date.now()<task.input.timestampMs+298000 && (management?.accepts(task.input)??true)
       && (management?.policySnapshot(task.input).natural_query??'model')==='model'
       && this.policyVersion(task.input)===task.policyVersion
+  }
+  private observationStopReason(task:Observation):AbortReason {
+    if(!this.active)return 'gateway_stopped'
+    if(Date.now()>=task.input.timestampMs+298000)return 'candidate_expired'
+    if(!(this.config.management?.accepts(task.input)??true))return 'scope_denied'
+    if((this.config.management?.policySnapshot(task.input).natural_query??'model')!=='model'
+      || this.policyVersion(task.input)!==task.policyVersion)return 'policy_changed'
+    return 'observation_replaced'
   }
   private policy(input:Inbound) {
     return this.config.management?.policySnapshot(input)
@@ -396,6 +405,7 @@ export class Receiver {
   }
   private async deliver(job: Job, bot: QQBot): Promise<void> {
     let completed = false
+    let stopReason:AbortReason = 'delivery_incomplete'
     let hint: Promise<boolean> | undefined
     const alive = () => this.active && Date.now() < job.input.timestampMs + 298000
       && (!job.proactive || this.observationAlive(job.proactive))
@@ -454,7 +464,13 @@ export class Receiver {
         job.plan=await this.client.lookup(job.input.requestId)
         this.validate(job.plan,job.input)
       }
-      if (!alive() || !job.plan.send_allowed) return
+      if(job.proactive && job.plan.status==='finished' && !job.plan.parts.length) {completed=true;return}
+      if (!alive()) {
+        stopReason=job.proactive ? job.proactive.cancelReason ?? this.observationStopReason(job.proactive)
+          : !this.active?'gateway_stopped':'candidate_expired'
+        return
+      }
+      if (!job.plan.send_allowed) return
       // Keep installed official methods and live token headers, but bound each transport call.
       // A per-delivery facade avoids changing other plugins' HTTP configuration.
       for (let index = 0; index < job.plan.parts.length; index++) {
@@ -491,10 +507,17 @@ export class Receiver {
         if (!job.plan.send_allowed) { completed = job.plan.status === 'finished'; return }
       }
       completed = true
+    } catch(error) {
+      stopReason='gateway_error'
+      throw error
     } finally {
       job.delivery?.dispose()
       if (job.plan && !completed) {
-        try { await this.client.event(job.plan, 'aborted') }
+        // Diagnostic lookup must not prevent the existing abort cleanup request.
+        if(job.proactive?.cancelReason)stopReason=job.proactive.cancelReason
+        else if(!this.active)stopReason='gateway_stopped'
+        else if(Date.now()>=job.input.timestampMs+298000)stopReason='candidate_expired'
+        try { await this.client.event(job.plan, 'aborted','batch','none',stopReason) }
         catch { this.log.warn('delivery close unconfirmed; backend expiry retains unresolved intent') }
       }
       // Polling may fail while the hint still owns a send/ACK. Stop new sends
@@ -544,7 +567,7 @@ export class Receiver {
     this.client.deactivate()
     const noticesClosed=this.notices?.close()
     this.raw.clear()
-    for(const key of this.observations.keys())this.cancelObservation(key)
+    for(const key of this.observations.keys())this.cancelObservation(key,'gateway_stopped')
     this.groupArrivals.clear()
     this.speakerArrivals.clear()
     for (const job of this.jobs.values()) job.delivery?.dispose()

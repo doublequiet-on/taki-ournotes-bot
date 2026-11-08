@@ -65,9 +65,9 @@
 
 `ServiceBudget(usage, instance_id, app_id).check(policy, task, profile, request_id, reserve_cost_micro, reply_times=())` 同步读取注入的 UsageLedger，返回 `ServicePermit`。`.user_key` 严格使用 `usage.key('service', instance, app, group, subject, task)`，`.group_key` 使用现有 `usage.key('group', group)`；宿主必须把这些 key 和独立请求 ID 交给原有 `reserve/start/settle`。原群每日额度和频率仍适用。宿主在自己的服务接纳锁内紧邻实际用量预留执行检查，不能拿旧的检查结果跨异步等待后直接放行。
 
-费用单位是精确 micro currency，使用 `Fraction`，不把 weighted tokens 当钱，不转换 USD/CNY。`maximum_cost_micro(profile)` 返回完整模型输入/输出上限的预留费用；调用方也可提供经过已有估算器证明的本次上界。小时窗口按账本 `created` 计算，摘要限制独立 job 数，主动参与限制模型 attempt 数；同群同任务的历史不会因更换服务主体而消失。预算助手只读账本，不迁移表、不拥有 SQLite 连接、不在线程中使用宿主连接。
+费用单位是精确 micro currency，使用 `Fraction`，不把 weighted tokens 当钱，不转换 USD/CNY。`maximum_cost_micro(profile)` 返回完整模型输入/输出上限的预留费用；调用方也可提供经过已有估算器证明的本次上界。小时窗口按账本 `created` 计算，摘要限制独立 job 数，主动参与限制模型 attempt 数；同群同任务的历史不会因更换服务主体而消失。预算助手只读账本，不迁移表、不拥有 SQLite 连接、不在线程中使用宿主连接。`ServicePermit.budget_details` 及费用拒绝异常的同名属性携带整数微币种诊断，不参与准入计算。
 
-已知费用按真实 `cost` 计算，未开始的有效预留按 `reserved` 换算。已开始、部分用量和未知费用至少保留完整模型上界，即使 UsageLedger 重启调和后清空了 weighted reservation，也不会变成零成本。旧版本的不完整记录使用受支持模型输入/输出的保守上界；未解决费用跨小时继续占用，直到账本补齐真实用量。币种不一致、账本不可读或记录超过读取上限时拒绝新的服务任务。
+已知费用按真实 `cost` 计算，未开始的有效预留按 `reserved` 换算。已开始、部分用量和未知费用至少保留完整模型上界，即使 UsageLedger 重启调和后清空了 weighted reservation，也不会变成零成本。旧版本的不完整记录使用受支持模型输入/输出的保守上界；配置了非零日费用上限的主动服务按 created 的滚动一小时统计已结束调用（边界为 created > now - 3600）；已结束的未知费用满一小时后退出小时统计，仍跨日占用日预算直到补齐真实用量。仍处于 reserved／started 的调用继续占用小时及日预算。摘要及未配置日费用上限的旧主动策略维持未知费用跨小时占用。币种不一致、账本不可读或记录超过读取上限时拒绝新的服务任务。
 
 主动回复次数与冷却使用宿主从持久化成功交付回执得到的 `reply_times`（Unix 秒），不能使用“已经生成”的时间代替。宿主应提供至少 `max(3600, cooldown_seconds)` 回溯范围的已送达事实，并在实际发送前重新检查回复预算和当前许可。助手不声称模型完成等于群中送达，也不从调用数推断回复数。
 

@@ -38,7 +38,8 @@
         "current_model_permit_v1",
         "independent_delivery_v1",
         "chat_observation_v1",
-        "chat_images_v1"
+        "chat_images_v1",
+        "abort_reason_v1"
       ],
       "reference_profiles": []
     },

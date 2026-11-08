@@ -1149,14 +1149,20 @@ class NativeTransportTests(unittest.IsolatedAsyncioTestCase):
             self.assertNotIn('parallel_tool_calls',body)
             return web.json_response({'usage':{'prompt_tokens':8,'prompt_cache_hit_tokens':0,'completion_tokens':4,'total_tokens':12},
                 'choices':[{'finish_reason':'tool_calls','message':{'role':'assistant','tool_calls':[{'id':'c','type':'function',
-                  'function':{'name':'field_query','arguments':'not json'}}]}}]},status=500)
+                  'function':{'name':'field_query','arguments':'not json'}}]}}]},status=500,headers={'x-request-id':'req_fixture123'})
         app=web.Application();app.router.add_post('/chat',handler)
         server=TestServer(app);await server.start_server();self.addAsyncCleanup(server.close)
         profile=native_profile();body=request_body(profile,[{'role':'user','content':'TEST'}],[TOOLS['field_query'].wire()])
+        transport={}
         with patch.dict(ENDPOINTS,deepseek=str(server.make_url('/chat'))):
-            result=await NativeClient().request(profile,body,timeout=2)
+            result=await NativeClient().request(profile,body,timeout=2,transport=transport)
         self.assertEqual(len(calls),1);self.assertEqual(result.usage.status,'known')
         self.assertEqual(result.error_code,'provider_error')
+        self.assertEqual((transport['stage'],transport['http_status'],transport['headers_received']),('complete',500,True))
+        self.assertEqual(transport['provider_request_id'],'req_fixture123')
+        self.assertFalse(transport['proxied'])
+        self.assertTrue(all(type(transport[k]) is int and transport[k]>=0 for k in
+            ('elapsed_ms','connect_ms','upload_ms','wait_headers_ms','read_ms')))
 
     async def test_responses_http_threads_sent_tool_limit_to_decoder(self):
         from aiohttp import web
@@ -1192,6 +1198,88 @@ class NativeTransportTests(unittest.IsolatedAsyncioTestCase):
                 result=await NativeClient().request(native_profile(),{},timeout=1 if path=='/redirect' else .5)
             self.assertEqual(result.status,'error');self.assertEqual(result.usage.status,'unknown')
         self.assertEqual(calls,['/redirect','/timeout'])
+
+    async def test_disconnect_before_headers_records_wait_stage_without_retry_or_private_data(self):
+        from aiohttp import web
+        from aiohttp.test_utils import TestServer
+        from ournotes_bot.sources.model_provider import NativeClient,ENDPOINTS
+        calls=[]
+        async def handler(request):
+            calls.append(await request.json());request.transport.close()
+            return web.Response()
+        app=web.Application();app.router.add_post('/chat',handler)
+        server=TestServer(app);await server.start_server();self.addAsyncCleanup(server.close)
+        transport={}
+        with patch.dict(ENDPOINTS,deepseek=str(server.make_url('/chat'))):
+            result=await NativeClient().request(native_profile(),{'PRIVATE_PROMPT':'PRIVATE_BODY'},timeout=2,transport=transport)
+        self.assertEqual(len(calls),1)
+        self.assertEqual((result.error_code,result.transport_error),('provider_unavailable','disconnected'))
+        self.assertEqual((transport['stage'],transport['name'],transport['headers_received']),('wait_headers','disconnected',False))
+        self.assertNotIn('http_status',transport);self.assertNotIn('PRIVATE',json.dumps(transport))
+
+    async def test_partial_response_records_body_phase_and_rejects_untrusted_request_identity(self):
+        from aiohttp import web
+        from aiohttp.test_utils import TestServer
+        from ournotes_bot.sources.model_provider import NativeClient,ENDPOINTS
+        async def handler(request):
+            response=web.StreamResponse(headers={'Content-Length':'100','x-request-id':'https://PRIVATE.invalid/secret'})
+            await response.prepare(request);await response.write(b'{');request.transport.close()
+            return response
+        app=web.Application();app.router.add_post('/chat',handler)
+        server=TestServer(app);await server.start_server();self.addAsyncCleanup(server.close)
+        transport={}
+        with patch.dict(ENDPOINTS,deepseek=str(server.make_url('/chat'))):
+            result=await NativeClient().request(native_profile(),{},timeout=2,transport=transport)
+        self.assertEqual(result.error_code,'provider_unavailable')
+        self.assertEqual((transport['stage'],transport['headers_received'],transport['http_status']),('read_body',True,200))
+        self.assertNotIn('provider_request_id',transport);self.assertNotIn('PRIVATE',json.dumps(transport))
+
+    async def test_timeout_and_cancel_keep_stage_and_preserve_cancellation(self):
+        from aiohttp import web
+        from aiohttp.test_utils import TestServer
+        from ournotes_bot.sources.model_provider import NativeClient,ENDPOINTS
+        entered=asyncio.Event();release=asyncio.Event()
+        async def handler(request):
+            entered.set();await release.wait();return web.json_response({})
+        app=web.Application();app.router.add_post('/chat',handler)
+        server=TestServer(app);await server.start_server();self.addAsyncCleanup(server.close)
+        try:
+            with patch.dict(ENDPOINTS,deepseek=str(server.make_url('/chat'))):
+                transport={};result=await NativeClient().request(native_profile(),{},timeout=.1,transport=transport)
+                self.assertEqual((result.transport_error,transport['stage']),('timeout','wait_headers'))
+                self.assertEqual(transport['name'],'timeout')
+                entered.clear();cancelled={}
+                task=asyncio.create_task(NativeClient().request(native_profile(),{},timeout=2,transport=cancelled))
+                await entered.wait();task.cancel()
+                with self.assertRaises(asyncio.CancelledError):await task
+                self.assertEqual((cancelled['stage'],cancelled['name']),('wait_headers','cancelled'))
+        finally:release.set()
+
+    async def test_connect_failure_records_connect_phase(self):
+        import socket
+        from ournotes_bot.sources.model_provider import NativeClient,ENDPOINTS
+        with socket.socket() as occupied:
+            occupied.bind(('127.0.0.1',0));transport={}
+            with patch.dict(ENDPOINTS,deepseek='http://127.0.0.1:'+str(occupied.getsockname()[1])+'/chat'):
+                result=await NativeClient().request(native_profile(),{},timeout=3,transport=transport)
+        self.assertEqual((result.transport_error,transport['stage'],transport['headers_received']),('connect','connect',False))
+
+    async def test_actual_proxy_path_is_marked_without_logging_proxy_or_request(self):
+        from aiohttp import web
+        from aiohttp.test_utils import TestServer
+        from ournotes_bot.sources.model_provider import NativeClient
+        calls=[]
+        async def handler(request):
+            calls.append(request.raw_path);await request.read()
+            return web.json_response({},status=401)
+        app=web.Application();app.router.add_post('/{path:.*}',handler)
+        server=TestServer(app);await server.start_server();self.addAsyncCleanup(server.close)
+        transport={};profile=replace(native_profile(),provider='openai',wire_profile='openai-responses-v1')
+        with patch('ournotes_bot.sources.model_provider.endpoint',return_value='http://provider.invalid/PRIVATE'):
+            result=await NativeClient(openai_proxy=str(server.make_url('/'))).request(profile,{},timeout=2,transport=transport)
+        self.assertEqual(calls,['http://provider.invalid/PRIVATE'])
+        self.assertTrue(transport['proxied']);self.assertEqual(transport['http_status'],401)
+        self.assertNotIn('PRIVATE',json.dumps(transport));self.assertNotIn('http',json.dumps(transport).replace('http_status',''))
 
 
 class NativeRuntimeTests(Fixture,unittest.IsolatedAsyncioTestCase):
@@ -2524,6 +2612,38 @@ class ChatAgentTests(Fixture, unittest.IsolatedAsyncioTestCase):
     def result(self,text=None,calls=(),items=()):
         from ournotes_bot.domain.model_calls import AttemptResult,Usage
         return AttemptResult('ok',Usage(10,0,2,None,12,'known'),calls,text,output_items=items)
+
+    async def test_transport_observation_is_correlated_without_changing_usage_or_logging_prompt(self):
+        answer=self.client.request.return_value
+        async def provider(*args,transport,**kwargs):
+            transport.update(stage='complete',name='none',elapsed_ms=321,proxied=True,headers_received=True,
+                http_status=200,connect_ms=100,upload_ms=1,wait_headers_ms=200,read_ms=20,
+                provider_request_id='req_fixture123')
+            return answer
+        self.client.request.side_effect=provider
+        with self.assertLogs('ournotes_bot.model_transport',level='INFO') as log:
+            plan,attempts=await self.prepare_native('/聊 PRIVATE_TRANSPORT_PROMPT')
+        self.assertEqual(plan['parts'][0]['business_status'],'success')
+        self.assertEqual(len(attempts),1)
+        event=next(e for e in self.backend.diagnostics.read(plan['request_id'])['chat_events'] if e['kind']=='transport')
+        self.assertEqual(event['data']['attempt_id'],attempts[0])
+        self.assertEqual(event['data']['provider_request_id'],'req_fixture123')
+        self.assertNotIn('PRIVATE',str(log.output));self.assertNotIn('PRIVATE',json.dumps(event))
+        self.assertIn(plan['request_id'],str(log.output))
+        row=self.backend.model_runtime.usage.get(attempts[0])
+        self.assertEqual(row['state'],'settled');self.assertFalse(row['billing_incomplete'])
+
+    async def test_invalid_transport_metadata_does_not_override_known_billing_or_answer(self):
+        answer=self.client.request.return_value
+        async def provider(*args,transport,**kwargs):
+            transport.update(stage='PRIVATE_STAGE',name='none',elapsed_ms=1,proxied=True,headers_received=False)
+            return answer
+        self.client.request.side_effect=provider
+        with self.assertLogs('ournotes_bot.model_transport',level='WARNING') as log:
+            plan,attempts=await self.prepare_native('/聊 PRIVATE_TRANSPORT_PROMPT')
+        self.assertEqual(plan['parts'][0]['business_status'],'success')
+        self.assertNotIn('PRIVATE',str(log.output))
+        self.assertFalse(self.backend.model_runtime.usage.get(attempts[0])['billing_incomplete'])
 
     async def test_chat_finishes_answer_without_required_followup(self):
         bodies=self.capture_native_bodies()
@@ -3972,6 +4092,58 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
         self.assertEqual(plan['parts'],[])
         self.client.request.assert_not_awaited()
 
+    async def test_staged_default_budget_keeps_two_images_and_full_generation_rules(self):
+        from ournotes_bot.application.chat_capabilities import VisionCapability
+        from ournotes_bot.application.chat_agent import CHAT_SEMANTICS, PROACTIVE_TURN_TAKING
+        bodies=[]
+        attachments=self.proactive_picture()
+        image=self.agent.image_loader.load_many.return_value[0]
+        self.agent.image_loader.load_many.return_value=(image,replace(image,attachment_id='second'))
+        attachments.append({**attachments[0],'id':'second'})
+        self.backend.model_runtime.capabilities.vision.return_value=VisionCapability(4096,'low','fixture-vision')
+        self.snapshot=replace(self.snapshot,profile=replace(self.snapshot.profile,max_input_tokens=32768,
+            user_daily_limit=10**7,group_daily_limit=10**7))
+        self.agent.story=Mock()
+        self.agent.story.persona.return_value=dict(persona_id='fixture',persona_sha256='a'*64,
+            source_revision='b'*64,revocation_revision=0,prompt='人工批准人格档案。'*60)
+        self.agent.story.valid.return_value=True
+        value=self.observation('这两张图里的变化挺明显',attachments=attachments);self.tick+=1.6
+        async def respond(profile,body,**kwargs):
+            bodies.append(json.loads(json.dumps(body)))
+            return (self.result('{"participation":"reply","text":"","delay_seconds":null}')
+                    if len(bodies)==1 else self.result('两张图要结合具体内容看'))
+        self.client.request.side_effect=respond
+        plan,attempts,_=await self.candidate(value)
+        self.assertEqual(len(attempts),2)
+        self.assertTrue(plan['parts'])
+        decision=bodies[0]['input'][0]['content'];generation=bodies[1]['input'][0]['content']
+        self.assertNotIn(CHAT_SEMANTICS,decision)
+        self.assertIn(CHAT_SEMANTICS,generation)
+        self.assertIn('不再接力盘问',generation)
+        self.assertIn(PROACTIVE_TURN_TAKING,decision)
+        self.assertIn(PROACTIVE_TURN_TAKING,generation)
+        for body in bodies:
+            images=[part for row in body['input'] if isinstance(row.get('content'),list)
+                    for part in row['content'] if part.get('type')=='input_image']
+            self.assertEqual(len(images),2)
+        self.assertTrue(bodies[0]['tools'])
+
+    async def test_proactive_required_input_overflow_reports_sizes_without_content(self):
+        self.proactive_picture()
+        self.snapshot=replace(self.snapshot,profile=replace(self.snapshot.profile,max_input_tokens=8192))
+        value=self.observation('PRIVATE_BUDGET_FIXTURE');self.tick+=1.6
+        plan,attempts,_=await self.candidate(value)
+        self.assertEqual(attempts,[])
+        self.assertEqual(plan['parts'],[])
+        self.client.request.assert_not_awaited()
+        events=self.backend.diagnostics.read(plan['request_id'])['chat_events']
+        budget=next(e['data'] for e in events if 'input_required' in e['data'])
+        self.assertGreater(budget['input_required'],budget['input_limit'])
+        self.assertEqual(budget['input_limit'],8192)
+        self.assertGreater(budget['system_bytes'],0)
+        self.assertGreater(budget['tool_bytes'],0)
+        self.assertNotIn('PRIVATE_BUDGET_FIXTURE',json.dumps(events))
+
     async def test_proactive_missing_vision_keeps_text_without_download(self):
         bodies=ChatAgentTests.capture_native_bodies(self)
         attachments=self.proactive_picture()
@@ -4533,8 +4705,8 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
         self.assertEqual([b['max_output_tokens'] for b in bodies],[self.snapshot.profile.max_output_tokens]*2)
         self.assertNotIn('participation',bodies[1]['input'][0]['content'])
         from ournotes_bot.application.chat_agent import CHAT_SEMANTICS
-        for body in bodies:
-            self.assertIn(CHAT_SEMANTICS,body['input'][0]['content'])
+        self.assertNotIn(CHAT_SEMANTICS,bodies[0]['input'][0]['content'])
+        self.assertIn(CHAT_SEMANTICS,bodies[1]['input'][0]['content'])
         self.assertNotIn('text 里只写',bodies[0]['input'][0]['content'])
 
     async def test_staged_two_finals_fit_exact_global_cost_budget(self):
@@ -5478,6 +5650,55 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
         self.assertTrue(self.backend.lookup(plan['request_id'],'e1')['send_allowed'])
         self.event(plan,'intent');self.event(plan,'ack')
 
+
+    async def test_old_unknown_daily_hold_allows_actual_staged_skip_after_hour(self):
+        from ournotes_bot.application.chat_jobs import service_request_id,maximum_cost_micro
+        from ournotes_bot.domain.model_calls import Usage
+        self.snapshot=replace(self.snapshot,profile=replace(self.snapshot.profile,provider='openai',
+            wire_profile='openai-responses-v1',model='gpt-6.1-terra',max_input_tokens=32768,max_output_tokens=4096,
+            user_daily_limit=10**8,group_daily_limit=10**8,
+            price=replace(self.snapshot.profile.price,input_rate=1000000,cached_rate=50000,output_rate=5000000)))
+        maximum=maximum_cost_micro(self.snapshot.profile)
+        self.policy=replace(self.policy,proactive=replace(self.policy.proactive,
+            max_cost_micro_per_hour=int(maximum*2),max_cost_micro_per_day=2000000))
+        self.agent.services.policy.return_value=self.policy
+        usage=self.backend.model_runtime.usage
+        usage.clock=lambda:self.now-7200
+        request=service_request_id('proactive','fixture','app','g1','old-unknown')
+        user=usage.key('service','fixture','app','g1','approved-group-service','proactive')
+        usage.reserve(request,'old-unknown',user,usage.key('group','g1'),self.snapshot.profile,32768)
+        usage.start('old-unknown',self.snapshot.profile);usage.settle('old-unknown',Usage())
+        before=usage.get('old-unknown')
+        usage.clock=lambda:self.now
+        self.agent.service_budget.clock=lambda:self.now
+        value=self.observation('PRIVATE_BUDGET_FIXTURE');self.tick+=1.6
+        self.client.request.return_value=self.result('{"participation":"skip","text":"","delay_seconds":null}')
+        plan,attempts,_=await self.candidate(value)
+        self.assertEqual(len(attempts),1)
+        self.client.request.assert_awaited_once()
+        self.assertEqual(plan['parts'],[])
+        self.assertEqual(usage.get('old-unknown'),before)
+        self.assertTrue(any(e['data'].get('decision')=='skip'
+            for e in self.backend.diagnostics.read(plan['request_id'])['chat_events']))
+
+    async def test_reservation_denial_logs_budget_sizes_without_calling_model(self):
+        import math
+        from ournotes_bot.application.chat_jobs import maximum_cost_micro
+        minimum=math.ceil(maximum_cost_micro(self.snapshot.profile)*
+            (2 if self.snapshot.profile.wire_profile=='openai-responses-v1' else 1))
+        self.policy=replace(self.policy,proactive=replace(self.policy.proactive,
+            max_cost_micro_per_hour=minimum-1,max_cost_micro_per_day=2000000))
+        self.agent.services.policy.return_value=self.policy
+        value=self.observation('PRIVATE_BUDGET_FIXTURE');self.tick+=1.6
+        self.assertIsNone(self.agent.proactive.candidate(Request.parse(value,'fixture','app',self.now)))
+        self.client.request.assert_not_awaited()
+        events=self.backend.diagnostics.group_events('g1')
+        data=next(e['data'] for e in events if e['data'].get('status')=='chat_service_reservation_limit')
+        self.assertEqual(data['requested_cost_micro'],minimum)
+        self.assertEqual(data['available_cost_micro'],minimum-1)
+        self.assertEqual(data['day_limit_micro'],2000000)
+        self.assertNotIn('PRIVATE',json.dumps(events))
+
     async def test_provider_failure_keeps_attempt_hold_without_blocking_unspent_opportunity(self):
         import math
         from ournotes_bot.application.chat_jobs import maximum_cost_micro
@@ -5510,6 +5731,158 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
         self.event(plan,'intent');self.event(plan,'ack')
         self.assertEqual(usage.get(attempts[0])['reserved'],held['reserved'])
         self.assertTrue(usage.get(attempts[0])['billing_incomplete'])
+
+    async def completed_memory_cost_gap(self, unknown=False):
+        import math
+        from ournotes_bot.application.chat_jobs import maximum_cost_micro
+        self.snapshot=replace(self.snapshot,profile=replace(self.snapshot.profile,provider='openai',
+            wire_profile='openai-responses-v1',model='gpt-6.1-terra',max_input_tokens=32768,
+            max_output_tokens=4096,user_daily_limit=10**8,group_daily_limit=10**8))
+        bound=math.ceil(maximum_cost_micro(self.snapshot.profile))
+        self.policy=replace(self.policy,proactive=replace(self.policy.proactive,
+            max_cost_micro_per_hour=bound*3,max_cost_micro_per_day=bound*30))
+        self.agent.services.policy.return_value=self.policy
+        self.agent.service_budget.clock=lambda:self.now
+        self.backend.model_runtime.usage.clock=lambda:self.now
+        value=self.observation('PRIVATE_RECONCILE_FIXTURE');self.tick+=1.6
+        from ournotes_bot.domain.model_calls import AttemptResult
+        self.client.request.return_value=(AttemptResult('error',error_code='provider_unavailable') if unknown else
+            self.result('{"participation":"skip","text":"","delay_seconds":null}'))
+        # Inject the observed gap: ledger completion succeeds, memory completion is lost.
+        with patch.object(self.agent.proactive.controller,'settle',return_value=False):
+            plan,attempts,old=await self.candidate(value)
+        self.assertEqual(plan['status'],'finished')
+        rows=self.backend.model_runtime.usage.db.execute('SELECT * FROM attempts WHERE request_id=?',(old[3],)).fetchall()
+        before=[dict(r) for r in rows]
+        self.assertTrue(all(r['state'] in ('settled','released') for r in rows))
+        self.assertEqual(self.agent.proactive.controller.status(old[0].scope)['hourly_cost_micro'],bound*3)
+        self.now+=10;self.tick+=10
+        newer=self.observation('NEW_RECONCILE_FIXTURE',seq=2);self.tick+=1.6
+        self.assertIsNotNone(self.agent.proactive.candidate(Request.parse(newer,'fixture','app',self.now)))
+        events=self.backend.diagnostics.group_events('g1')
+        data=next(e['data'] for e in events if e['data'].get('status')=='budget_reconciled')
+        self.assertEqual(data['controller_before_micro'],bound*3)
+        self.assertEqual(data['controller_after_micro'],math.ceil(sum(self.agent.service_budget.attempt_cost(r)[0] for r in rows)))
+        self.assertEqual([dict(r) for r in self.backend.model_runtime.usage.db.execute(
+            'SELECT * FROM attempts WHERE request_id=?',(old[3],))],before)
+        self.client.request.assert_awaited_once()
+        self.assertNotIn('PRIVATE',json.dumps(events))
+
+    async def test_completed_ledger_reconciles_missed_memory_hold_before_next_candidate(self):
+        await self.completed_memory_cost_gap()
+
+    async def test_reconciliation_keeps_unknown_cost_after_missed_completion(self):
+        await self.completed_memory_cost_gap(unknown=True)
+
+    async def test_reconciliation_preserves_inflight_and_missing_attempt_holds(self):
+        value=self.observation('PRIVATE_LIVE_FIXTURE');self.tick+=1.6
+        candidate=self.agent.proactive.candidate(Request.parse(value,'fixture','app',self.now))
+        self.assertIsNotNone(candidate)
+        scope=candidate[0].scope
+        before=self.agent.proactive.controller.status(scope)['hourly_cost_micro']
+        request=Request.parse(value,'fixture','app',self.now)
+        self.agent.proactive.reconcile_costs(request)
+        self.assertEqual(self.agent.proactive.controller.status(scope)['hourly_cost_micro'],before)
+        usage=self.backend.model_runtime.usage
+        usage.reserve(candidate[3],'live-reservation',usage.key('service','fixture','app','g1',
+            'approved-group-service','proactive'),usage.key('group','g1'),self.snapshot.profile,100)
+        for state in ('reserved','started'):
+            if state=='started':usage.start('live-reservation',self.snapshot.profile)
+            self.agent.proactive.reconcile_costs(request)
+            self.assertEqual(self.agent.proactive.controller.status(scope)['hourly_cost_micro'],before,state)
+        from types import SimpleNamespace
+        from ournotes_bot.domain.model_calls import Usage
+        usage.settle('live-reservation',Usage(10,0,2,None,12,'known'))
+        with patch.dict(self.backend.works,{'live-worker':SimpleNamespace(active=True,service_request_id=candidate[3])}):
+            self.agent.proactive.reconcile_costs(request)
+        self.assertEqual(self.agent.proactive.controller.status(scope)['hourly_cost_micro'],before)
+        self.client.request.assert_not_awaited()
+
+    async def test_reconciliation_database_failure_blocks_admission_without_resetting_hold(self):
+        import sqlite3
+        value=self.observation('PRIVATE_DB_FIXTURE');self.tick+=1.6
+        request=Request.parse(value,'fixture','app',self.now)
+        candidate=self.agent.proactive.candidate(request)
+        before=self.agent.proactive.controller.status(candidate[0].scope)['hourly_cost_micro']
+        db=Mock();db.execute.side_effect=sqlite3.OperationalError('PRIVATE_DB_ERROR')
+        with patch.object(self.backend.model_runtime.usage,'db',db):
+            self.assertIsNone(self.agent.proactive.candidate(request))
+        self.assertEqual(self.agent.proactive.controller.status(candidate[0].scope)['hourly_cost_micro'],before)
+        events=self.backend.diagnostics.group_events('g1')
+        self.assertTrue(any(e['data'].get('status')=='chat_service_usage_unavailable' for e in events))
+        self.assertNotIn('PRIVATE',json.dumps(events))
+        self.client.request.assert_not_awaited()
+
+    async def cancelled_known_cost(self, generation=False):
+        import math
+        from ournotes_bot.application.chat_jobs import maximum_cost_micro
+        from ournotes_bot.application.backend_protocol import PROTOCOL,Request,digest
+        self.snapshot=replace(self.snapshot,profile=replace(self.snapshot.profile,provider='openai',
+            wire_profile='openai-responses-v1',model='gpt-6.1-terra',max_input_tokens=32768,
+            max_output_tokens=4096,user_daily_limit=10**8,group_daily_limit=10**8))
+        self.agent.service_budget.clock=lambda:self.now
+        self.backend.model_runtime.usage.clock=lambda:self.now
+        bound=math.ceil(maximum_cost_micro(self.snapshot.profile))
+        self.policy=replace(self.policy,proactive=replace(self.policy.proactive,
+            max_cost_micro_per_hour=bound*6,max_cost_micro_per_day=bound*30))
+        self.agent.services.policy.return_value=self.policy
+        entered=asyncio.Event();release=asyncio.Event();calls=0
+        async def provider(*args,**kwargs):
+            nonlocal calls
+            calls+=1
+            if generation and calls==1:
+                return self.result('{"participation":"reply","text":"","delay_seconds":null}')
+            entered.set();await release.wait()
+            return self.result('Final fixture answer' if generation else
+                '{"participation":"skip","text":"","delay_seconds":null}')
+        self.client.request.side_effect=provider
+        value=self.observation('PRIVATE_CANCEL_FIXTURE');self.tick+=1.6
+        raw={**value,'trigger':'proactive','proactive_id':'a'*32}
+        raw['request_id']=digest(['fixture','app','qq','group','g1',raw['user_id'],raw['message_id'],raw['proactive_id']])
+        candidate=self.agent.proactive.candidate(Request.parse(raw,'fixture','app',self.now))
+        self.assertIsNotNone(candidate)
+        await self.backend.submit(raw,proactive=candidate)
+        work=next(iter(self.backend.works.values()))
+        permitted=set()
+        try:
+            for _ in range(600):
+                pending=self.backend.lookup(raw['request_id'],'e1').get('pending_model_permission')
+                if pending and pending['attempt_id'] not in permitted:
+                    permitted.add(pending['attempt_id'])
+                    decision={k:v for k,v in pending.items() if k not in ('remaining_ms','admission_policy_version')}
+                    decision.update(decision='allow',reason='fixture',ttl_ms=1000,
+                        current_policy_version=dict(epoch='fixture',global_revision=0,group_revision=0))
+                    self.backend.permissions.decide(raw['request_id'],pending['attempt_id'],decision,'e1')
+                if entered.is_set():break
+                await asyncio.sleep(.005)
+            self.assertTrue(entered.is_set())
+            self.now+=.01
+            self.observation('NEW_OBSERVATION_FIXTURE',seq=2)
+            abort=dict(protocol=PROTOCOL,request_id=raw['request_id'],plan_version=1,
+                gateway_epoch='e1',event='aborted',part_id='batch',attempt_id='none',
+                reason='observation_replaced')
+            self.backend.apply_event(work.delivery,abort)
+            self.backend.apply_event(work.delivery,dict(abort,reason='gateway_error'))
+        finally:release.set()
+        await asyncio.gather(*tuple(self.backend.models.tasks),return_exceptions=True)
+        await asyncio.gather(*tuple(self.backend.tasks),return_exceptions=True)
+        rows=self.backend.model_runtime.usage.db.execute('SELECT * FROM attempts WHERE request_id=?',
+            (work.service_request_id,)).fetchall()
+        self.assertTrue(all(r['state'] in ('settled','released') and not r['billing_incomplete'] for r in rows))
+        cost=math.ceil(sum(self.agent.service_budget.attempt_cost(r)[0] for r in rows))
+        actual=self.agent.proactive.controller.status(candidate[0].scope)['hourly_cost_micro']
+        self.assertEqual(actual,cost)
+        self.assertEqual(self.backend.ledger.request(raw['request_id'])['status'],'aborted')
+        self.assertEqual(self.backend.ledger.parts(work.delivery),[])
+        last=self.backend.diagnostics.read(raw['request_id'])['chat_events'][-1]['data']
+        self.assertEqual(last['reason'],'observation_replaced')
+        self.assertEqual(last['stage'],'generation' if generation else 'decision')
+
+    async def test_cancelled_known_decision_reconciles_controller_after_late_completion(self):
+        await self.cancelled_known_cost()
+
+    async def test_cancelled_known_generation_reconciles_controller_after_late_completion(self):
+        await self.cancelled_known_cost(generation=True)
 
     async def test_cancelled_proactive_refines_hold_when_background_http_finishes(self):
         import math
@@ -6943,6 +7316,107 @@ class ChatServiceJobsTests(unittest.TestCase):
             self.assertIsNone(validate_summary(invalid,candidate))
         self.assertEqual(candidate.original_messages,tuple(messages))
 
+
+
+    def test_settled_unknown_exits_hour_at_boundary_but_keeps_daily_hold(self):
+        from fractions import Fraction
+        from ournotes_bot.domain.model_calls import Usage
+        from ournotes_bot.application.chat_jobs import ServiceError
+        self.attempt('proactive', usage=Usage())
+        row=self.ledger.get('attempt-source')
+        held=Fraction(row['reserved'])*self.profile.price.reference_rate/1000000
+        policy=self.save()
+        policy=replace(policy,proactive=replace(policy.proactive,
+            max_cost_micro_per_hour=1,max_cost_micro_per_day=int(held)+1))
+        self.now[0]+=3599
+        with self.assertRaisesRegex(ServiceError,'chat_service_cost_limit'):
+            self.budget.check(policy,'proactive',self.profile,self.request('proactive','next'),1)
+        self.now[0]+=1
+        permit=self.budget.check(policy,'proactive',self.profile,self.request('proactive','next'),1)
+        self.assertEqual(permit.spent_cost_micro,0)
+        details=dict(permit.budget_details)
+        self.assertEqual(details['day_cost_micro'],held)
+        self.assertEqual(details['unknown_cost_micro'],held)
+        self.assertEqual(self.ledger.get('attempt-source'),row)
+        with self.assertRaisesRegex(ServiceError,'chat_service_daily_cost_limit') as caught:
+            self.budget.check(replace(policy,proactive=replace(policy.proactive,max_cost_micro_per_hour=2)),
+                'proactive',self.profile,self.request('proactive','next'),2)
+        self.assertEqual(dict(caught.exception.budget_details)['hour_cost_micro'],0)
+
+    def test_old_unbounded_action_still_blocks_daily_capped_proactive_service(self):
+        from ournotes_bot.domain.model_calls import Usage,ProviderAction
+        from ournotes_bot.application.chat_jobs import ServiceError
+        self.attempt('proactive',usage=Usage(80,0,10,None,90,'known'))
+        self.ledger.settle('attempt-source',Usage(80,0,10,None,90,'known'),
+            actions=(ProviderAction('web_search',None),))
+        self.now[0]+=86400
+        policy=self.save()
+        policy=replace(policy,proactive=replace(policy.proactive,max_cost_micro_per_day=2000000))
+        with self.assertRaisesRegex(ServiceError,'chat_service_usage_unavailable'):
+            self.budget.check(policy,'proactive',self.profile,self.request('proactive','next'),1)
+
+    def test_unknown_without_daily_cap_retains_legacy_hourly_protection(self):
+        from ournotes_bot.domain.model_calls import Usage
+        from ournotes_bot.application.chat_jobs import ServiceError
+        self.attempt('proactive',usage=Usage())
+        self.now[0]+=86400
+        policy=self.save()
+        policy=replace(policy,proactive=replace(policy.proactive,max_cost_micro_per_hour=1))
+        with self.assertRaisesRegex(ServiceError,'chat_service_cost_limit'):
+            self.budget.check(policy,'proactive',self.profile,self.request('proactive','next'),1)
+
+    def test_old_unknown_survives_restart_midnight_and_subject_change_until_late_usage(self):
+        from ournotes_bot.domain.model_calls import Usage
+        from ournotes_bot.application.chat_jobs import ServiceBudget,ServiceError
+        from ournotes_bot.application.usage_ledger import UsageLedger
+        self.attempt('proactive',usage=Usage())
+        before=self.ledger.get('attempt-source')
+        self.now[0]+=86400
+        self.ledger.close()
+        self.ledger=UsageLedger(self.root/'usage.sqlite3','jobs-fixture',clock=lambda:self.now[0])
+        self.budget=ServiceBudget(self.ledger,'instance','app',clock=lambda:self.now[0])
+        self.data['groups']['group']['service_subject_id']='new-service'
+        policy=self.save()
+        policy=replace(policy,proactive=replace(policy.proactive,max_cost_micro_per_hour=1,max_cost_micro_per_day=1))
+        with self.assertRaisesRegex(ServiceError,'chat_service_daily_cost_limit'):
+            self.budget.check(policy,'proactive',self.profile,self.request('proactive','next'),1)
+        self.assertEqual(self.ledger.get('attempt-source'),before)
+        self.ledger.settle('attempt-source',Usage(80,0,10,None,90,'known'))
+        self.assertEqual(self.ledger.get('attempt-source')['reserved'],'0')
+        permit=self.budget.check(policy,'proactive',self.profile,self.request('proactive','next'),1)
+        self.assertEqual(dict(permit.budget_details)['day_cost_micro'],0)
+        self.assertEqual(self.ledger.db.execute('SELECT COUNT(*) FROM attempts').fetchone()[0],1)
+
+    def test_old_inflight_reservations_still_block_hour_and_new_concurrent_reserves(self):
+        from ournotes_bot.domain.model_calls import Usage
+        from ournotes_bot.application.chat_jobs import ServiceError
+        policy=self.save()
+        first=self.budget.check(policy,'proactive',self.profile,self.request('proactive'),1)
+        self.ledger.reserve(self.request('proactive'),'pending',first.user_key,first.group_key,self.profile,100)
+        self.now[0]+=86400
+        policy=replace(policy,proactive=replace(policy.proactive,max_cost_micro_per_hour=1,max_cost_micro_per_day=1000000))
+        for state in ('reserved','started'):
+            with self.subTest(state=state):
+                if state=='started':self.ledger.start('pending',self.profile)
+                with self.assertRaisesRegex(ServiceError,'chat_service_cost_limit') as caught:
+                    self.budget.check(policy,'proactive',self.profile,self.request('proactive','next'),1)
+                self.assertGreater(dict(caught.exception.budget_details)['hour_reserved_micro'],0)
+        self.ledger.settle('pending',Usage())
+        self.budget.check(policy,'proactive',self.profile,self.request('proactive','next'),1)
+
+    def test_budget_metadata_separates_known_unknown_and_reserved_cost(self):
+        from ournotes_bot.domain.model_calls import Usage
+        self.attempt('proactive','known',Usage(80,0,10,None,90,'known'))
+        self.attempt('proactive','unknown',Usage())
+        permit=self.budget.check(self.save(),'proactive',self.profile,self.request('proactive','reserved'),1)
+        self.ledger.reserve(self.request('proactive','reserved'),'reserved',permit.user_key,permit.group_key,self.profile,100)
+        permit=self.budget.check(self.save(),'proactive',self.profile,self.request('proactive','next'),1)
+        details=dict(permit.budget_details)
+        self.assertEqual(details['hour_known_micro'],100)
+        self.assertGreater(details['hour_unknown_micro'],0)
+        self.assertGreater(details['hour_reserved_micro'],0)
+        self.assertEqual(sum(details[k] for k in ('hour_known_micro','hour_unknown_micro','hour_reserved_micro')),
+                         details['hour_cost_micro'])
 
     def test_day_and_hour_are_independent(self):
         from ournotes_bot.domain.model_calls import Usage

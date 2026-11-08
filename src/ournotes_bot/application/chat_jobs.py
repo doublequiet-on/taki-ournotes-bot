@@ -1,5 +1,5 @@
 # L3: Approved group-service configuration, restart-aware usage budgets and summary material.
-# Effects: Reads one administrator JSON and the injected usage ledger on its owning thread.
+# Effects: Reads administrator JSON and usage on its owning thread; returns exact permits and bounded budget diagnostics.
 from dataclasses import dataclass
 from fractions import Fraction
 import hashlib
@@ -17,7 +17,11 @@ from ..sources.json_validation import decode_json
 
 
 class ServiceError(ValueError):
-    """Finite diagnostic code; no group content or credentials."""
+    """Finite diagnostic code and bounded budget metadata; no dialogue or credentials."""
+
+    def __init__(self, code, *, budget_details=()):
+        super().__init__(code)
+        self.budget_details = budget_details
 
 
 def _check(value, code='chat_service_configuration'):
@@ -177,6 +181,7 @@ class ServicePermit:
     requested_cost_micro: Fraction
     available_cost_micro: Fraction = Fraction()
     unresolved_cost_micro: Fraction = Fraction()
+    budget_details: tuple[tuple[str, int], ...] = ()
 
 
 class ServiceBudget:
@@ -216,15 +221,17 @@ class ServiceBudget:
         now = self.clock()
         _check(type(now) in (int, float) and math.isfinite(now), 'chat_service_clock')
         start = datetime.fromtimestamp(now, timezone(timedelta(hours=8))).replace(hour=0,minute=0,second=0,microsecond=0).timestamp()
-        earliest = min(start, now - 3600) if getattr(limits, 'max_cost_micro_per_day', 0) else now - 3600
+        daily_limit = getattr(limits, 'max_cost_micro_per_day', 0)
+        earliest = min(start, now - 3600) if daily_limit else now - 3600
         user = self.usage.key('service', *self.namespace, policy.group_id, policy.service_subject_id, task)
         group = self.usage.key('group', policy.group_id)
         try:
             # Group + request namespace keeps costs visible across administrator subject changes.
-            # Old uncertain attempts remain held even after the rolling hour ends.
+            # Daily-capped proactive services age settled uncertainty out of the hour only.
+            # Summary and legacy policies without a daily cap retain their original holds.
             rows = self.usage.db.execute('''SELECT id,request_id,config_version,price,created,state,
                 reserved,cost,billing_incomplete FROM attempts WHERE group_key=? AND request_id LIKE ?
-                AND (created>=? OR state='started' OR billing_incomplete=1) ORDER BY created LIMIT 4097''',
+                AND (created>=? OR state IN ('reserved','started') OR billing_incomplete=1) ORDER BY created LIMIT 4097''',
                 (group, prefix + '%', earliest)).fetchall()
             _check(len(rows) <= 4096, 'chat_service_budget_capacity')
             _check(not self.usage.db.execute('''SELECT 1 FROM attempts a JOIN unbounded_actions u ON u.attempt=a.id
@@ -232,6 +239,7 @@ class ServiceBudget:
                 'chat_service_usage_unavailable')
             recent, cost, daily_cost, unresolved = [], Fraction(), Fraction(), Fraction()
             opportunity_count,opportunity_cost=0,Fraction()
+            hourly_known, hourly_unknown, hourly_reserved, unknown = (Fraction() for _ in range(4))
             for row in rows:
                 if row['state'] == 'released':
                     continue
@@ -241,8 +249,16 @@ class ServiceBudget:
                 _check(price.currency == policy.currency, 'chat_service_currency_mismatch')
                 amount,uncertain=self.attempt_cost(row)
                 if uncertain:unresolved += amount
-                if row['created'] > now - 3600 or uncertain:cost += amount
-                if row['created'] >= start or uncertain:daily_cost += amount
+                known = Fraction(row['cost'])
+                in_flight = row['state'] in ('reserved', 'started')
+                if uncertain and not in_flight:unknown += amount - known
+                if (row['created'] > now - 3600 or in_flight
+                        or uncertain and not (task == 'proactive' and daily_limit)):
+                    cost += amount
+                    hourly_known += known
+                    if in_flight:hourly_reserved += amount - known
+                    else:hourly_unknown += amount - known
+                if row['created'] >= start or uncertain or in_flight:daily_cost += amount
                 if row['request_id'] in opportunity_requests:
                     opportunity_count+=1
                     opportunity_cost+=amount
@@ -250,12 +266,19 @@ class ServiceBudget:
             raise
         except (sqlite3.Error, ModelError, ValueError, TypeError, KeyError, ZeroDivisionError, AttributeError):
             raise ServiceError('chat_service_usage_unavailable') from None
-        _check(cost + reserve_cost_micro <= limits.max_cost_micro_per_hour, 'chat_service_cost_limit')
         available = Fraction(limits.max_cost_micro_per_hour) - cost
-        daily_limit = getattr(limits, 'max_cost_micro_per_day', 0)
-        if daily_limit:
-            _check(daily_cost + reserve_cost_micro <= daily_limit, 'chat_service_daily_cost_limit')
-            available = min(available, daily_limit - daily_cost)
+        if daily_limit:available = min(available, daily_limit - daily_cost)
+        # Diagnostics use whole micro-currency, rounded up; admission stays exact.
+        details = tuple((key, math.ceil(value)) for key, value in (
+            ('hour_limit_micro', limits.max_cost_micro_per_hour), ('day_limit_micro', daily_limit),
+            ('hour_cost_micro', cost), ('day_cost_micro', daily_cost),
+            ('hour_known_micro', hourly_known), ('hour_unknown_micro', hourly_unknown),
+            ('hour_reserved_micro', hourly_reserved), ('unknown_cost_micro', unknown),
+            ('requested_cost_micro', reserve_cost_micro), ('available_cost_micro', max(0, available))))
+        if cost + reserve_cost_micro > limits.max_cost_micro_per_hour:
+            raise ServiceError('chat_service_cost_limit', budget_details=details)
+        if daily_limit and daily_cost + reserve_cost_micro > daily_limit:
+            raise ServiceError('chat_service_daily_cost_limit', budget_details=details)
         if opportunity_requests:
             _check(opportunity_count<opportunity_calls,'chat_opportunity_call_limit')
             _check(opportunity_cost+reserve_cost_micro<=opportunity_cost_micro,'chat_opportunity_cost_limit')
@@ -273,7 +296,7 @@ class ServiceBudget:
             replies = [stamp for stamp in reply_times if stamp > now - 3600]
             _check(len(replies) < limits.max_replies_per_hour, 'chat_service_reply_limit')
             _check(not reply_times or now - max(reply_times) >= limits.cooldown_seconds, 'chat_service_cooldown')
-        return ServicePermit(user, group, request_id, task, cost, reserve_cost_micro, available, unresolved)
+        return ServicePermit(user, group, request_id, task, cost, reserve_cost_micro, available, unresolved, details)
 
 
 @dataclass(frozen=True)
