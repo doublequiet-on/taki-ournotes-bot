@@ -48,6 +48,22 @@ class ChatDiagnosticsTests(unittest.TestCase):
         self.assertNotIn('PRIVATE',json.dumps(events))
         self.assertEqual(d.db.execute('SELECT count(*) FROM chat_events').fetchone()[0],32)
 
+    def test_persona_event_requires_only_fixed_reason_and_matching_version(self):
+        from ournotes_bot.domain.chat import PERSONA_VERSION
+        diagnostics=self.diagnostics
+        fallback=dict(reason='approval_missing',persona_version=PERSONA_VERSION)
+        approved=dict(reason='approved',persona_version='a'*64)
+        self.assertTrue(diagnostics.chat_event('r','persona',101,**fallback))
+        self.assertTrue(diagnostics.chat_event('r','persona',102,**approved))
+        for data in ({**fallback,'reason':'other_valid_looking_reason'},
+                     {**fallback,'persona_version':'arbitrary-version'}, {**fallback,'prompt':'PRIVATE'},
+                     {**fallback,'persona_version':approved['persona_version']},
+                     {**approved,'persona_version':PERSONA_VERSION},
+                     {**approved,'persona_version':'private-id/'+'a'*64}, {'reason':'approved'}):
+            with self.subTest(data=data):
+                self.assertFalse(diagnostics.chat_event('r','persona',103,**data))
+        self.assertEqual([row['data'] for row in diagnostics.read('r')['chat_events']],[fallback,approved])
+
     def test_budget_metadata_accepts_micro_currency_but_rejects_unbounded_or_private_data(self):
         d=self.diagnostics
         self.assertTrue(d.conversation_event('o','g','control',101,status='chat_service_reservation_limit',

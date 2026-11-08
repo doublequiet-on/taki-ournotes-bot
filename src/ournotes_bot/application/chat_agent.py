@@ -14,7 +14,7 @@ from dataclasses import replace, asdict
 from functools import partial
 from urllib.parse import urlsplit, unquote, parse_qsl
 
-from ..domain.chat import PERSONA, TurnBudget, COMMUNITY_TERMS
+from ..domain.chat import PERSONA, PERSONA_VERSION, TurnBudget, COMMUNITY_TERMS
 from ..domain.model_calls import ModelError, require
 from ..domain.story import StoryError
 from ..domain.chat_images import ImageError, MAX_TOTAL_BYTES
@@ -652,8 +652,10 @@ class ChatAgent:
                 'referenced_message_id':work.request.reference['message_id'] if work.request.reference else None,
                 'delivered_display':snapshot.pages[work.anchor.page].text,
                 'note':'已送达引用；历史陈述本身不证明外部事实'},ensure_ascii=False)})
-        try: persona=self.story.persona() if self.story else None
+        try: persona,persona_reason=self.story.persona_selection() if self.story else (None,'story_not_configured')
         except (StoryError,OSError) as exc: raise ModelError('story_persona_unavailable') from exc
+        runtime.backend.diagnostics.chat_event(work.request.request_id,'persona',runtime.backend.clock(),
+            reason=persona_reason,persona_version=persona['persona_sha256'] if persona else PERSONA_VERSION)
         prompt=PERSONA+'\n'+COMMUNITY_TERMS+band_alias_reference()+'\n聊天回复的最后一句句尾不要句号，中间可以正常断句；保留问号、感叹号、数字、链接和代码格式。当前消息附带引用文字时，先结合引文理解“那咋了”“所以呢”等短追问；引用可见时不要声称看不到上下文，可以解释其中的意思，但不能默认认领引文或把它当成已核实事实。单独的问号通常是在质疑或追问上一句，应结合已参与上下文回应；上下文不足时简短澄清，不把问号本身当成新的资料或区服查询。'
         if has_quote:
             prompt+='\n以当前可见引用为短追问对象。quote_preview 是用户提供的文字预览，原作者和原消息身份未经核验。' \

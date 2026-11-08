@@ -3777,13 +3777,56 @@ class ChatSourceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
         from test_platform_boundary import StoryPublicationTests
         fixture=StoryPublicationTests();fixture.setUp();self.addCleanup(fixture.doCleanups)
         status=fixture.publish(fixture.bundle(kind='official_original',personas=True))
-        fixture.service.approve_persona('test-persona','fixture-human','fixture-only-confirmation',revision=status['source_revision'])
+        approved=fixture.service.approve_persona('test-persona','fixture-human','fixture-only-confirmation',revision=status['source_revision'])
         self.backend.model_runtime.agent.story=fixture.service
         self.client.request.return_value=self.result('认真听到了。')
         plan,_=await self.prepare_native('/聊 随便聊两句')
         persona=self.backend.model_runtime.agent.store.db.execute('SELECT persona FROM runs').fetchone()[0]
         self.assertTrue(persona.startswith('test-persona/'))
+        events=self.backend.diagnostics.read(plan['request_id'])['chat_events']
+        self.assertEqual([row['data'] for row in events if row['kind']=='persona'],
+                         [dict(reason='approved',persona_version=approved['persona_sha256'])])
         self.event(plan,'intent');self.event(plan,'ack')
+
+    async def test_default_persona_diagnostic_is_bound_to_each_request(self):
+        from ournotes_bot.domain.chat import PERSONA_VERSION
+        from test_platform_boundary import StoryPublicationTests
+        fixture=StoryPublicationTests();fixture.setUp();self.addCleanup(fixture.doCleanups)
+        fixture.publish(fixture.bundle(kind='official_original',personas=True))
+        self.client.request.return_value=self.result('我在听。')
+        for seq,(story,reason) in enumerate(((None,'story_not_configured'),(fixture.service,'approval_missing')),1):
+            self.backend.model_runtime.agent.story=story
+            plan,attempts=await self.prepare_native('/聊 这是本轮私有测试正文',seq=seq)
+            self.assertEqual(len(attempts),1)
+            self.assertEqual(plan['parts'][0]['business_status'],'success')
+            events=self.backend.diagnostics.read(plan['request_id'])['chat_events']
+            self.assertEqual([row['data'] for row in events if row['kind']=='persona'],
+                             [dict(reason=reason,persona_version=PERSONA_VERSION)])
+            self.event(plan,'intent');self.event(plan,'ack')
+
+    async def test_persona_read_failures_keep_original_error_without_default_diagnostic(self):
+        from test_platform_boundary import StoryPublicationTests
+        fixture=StoryPublicationTests();fixture.setUp();self.addCleanup(fixture.doCleanups)
+        status=fixture.publish(fixture.bundle(kind='official_original',personas=True))
+        fixture.service.approve_persona('test-persona','fixture-human','fixture-confirmation',revision=status['source_revision'])
+        self.backend.model_runtime.agent.story=fixture.service
+        approval_path=fixture.service.root/'persona.json'
+        saved=approval_path.read_text(encoding='utf-8')
+        async def check(seq):
+            plan,attempts=await self.prepare_native('/聊 这轮不能降级为默认人格',seq=seq)
+            self.assertEqual(attempts,[])
+            self.assertEqual(plan['parts'][0]['business_status'],'story_persona_unavailable')
+            events=self.backend.diagnostics.read(plan['request_id'])['chat_events']
+            self.assertFalse(any(row['kind']=='persona' for row in events))
+            self.event(plan,'intent');self.event(plan,'ack')
+        approval_path.write_text('{broken',encoding='utf-8')
+        await check(1)
+        approval_path.write_text(json.dumps({**json.loads(saved),'persona_sha256':'0'*64}),encoding='utf-8')
+        await check(2)
+        approval_path.write_text(saved,encoding='utf-8')
+        with patch('ournotes_bot.application.story_service.read_json',side_effect=PermissionError('private-path')):
+            await check(3)
+        self.client.request.assert_not_awaited()
 
     async def test_story_search_read_and_withdrawal_recheck_before_intent(self):
         from test_platform_boundary import StoryPublicationTests
@@ -4479,8 +4522,8 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
         self.snapshot=replace(self.snapshot,profile=replace(self.snapshot.profile,max_input_tokens=32768,
             user_daily_limit=10**7,group_daily_limit=10**7))
         self.agent.story=Mock()
-        self.agent.story.persona.return_value=dict(persona_id='fixture',persona_sha256='a'*64,
-            source_revision='b'*64,revocation_revision=0,prompt='人工批准人格档案。'*60)
+        self.agent.story.persona_selection.return_value=(dict(persona_id='fixture',persona_sha256='a'*64,
+            source_revision='b'*64,revocation_revision=0,prompt='人工批准人格档案。'*60),'approved')
         self.agent.story.valid.return_value=True
         value=self.observation('这两张图里的变化挺明显',attachments=attachments);self.tick+=1.6
         async def respond(profile,body,**kwargs):
@@ -4532,6 +4575,7 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
         self.assertFalse(any(isinstance(m.get('content'),list) for m in bodies[-1]['input']))
 
     async def test_proactive_failed_recent_image_reports_unavailable_and_keeps_text(self):
+        from ournotes_bot.domain.chat import PERSONA_VERSION
         from ournotes_bot.domain.chat_images import ImageError
         bodies=ChatAgentTests.capture_native_bodies(self)
         self.observation('',attachments=self.proactive_picture());self.now+=.01
@@ -4553,11 +4597,13 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
         self.assertEqual(rows[0]['image_status'],'image_not_available')
         self.assertEqual(self.agent.store.db.execute('SELECT count(*) FROM runs').fetchone()[0],0)
         events=self.backend.diagnostics.read(plan['request_id'])
-        self.assertEqual([e['kind'] for e in events['chat_events']],['image','context','decision','finished'])
-        self.assertEqual(events['chat_events'][0]['data']['status'],'image_not_available')
-        self.assertEqual(events['chat_events'][1]['data']['input_images'],0)
-        self.assertEqual(events['chat_events'][1]['data']['image_detail'],'none')
-        self.assertEqual(events['chat_events'][2]['data'],dict(decision='skip',model_attempts=1))
+        self.assertEqual([e['kind'] for e in events['chat_events']],['persona','image','context','decision','finished'])
+        persona,image,context,decision,_=events['chat_events']
+        self.assertEqual(persona['data'],dict(reason='story_not_configured',persona_version=PERSONA_VERSION))
+        self.assertEqual(image['data']['status'],'image_not_available')
+        self.assertEqual(context['data']['input_images'],0)
+        self.assertEqual(context['data']['image_detail'],'none')
+        self.assertEqual(decision['data'],dict(decision='skip',model_attempts=1))
         self.assertNotIn('PRIVATE_PICTURE',json.dumps(events))
         detail=self.backend.admin.detail(plan['request_id'])['sections']['request']['data']
         self.assertEqual(detail['chat_events'],events['chat_events'])
