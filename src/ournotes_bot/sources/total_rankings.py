@@ -26,6 +26,9 @@ from .json_validation import decode_json
 
 CONTRACT = 'taki:total-ranking/1'
 MAX_SCORE = 2**53 - 1
+_HISTORY_LIMIT = 20000
+_HISTORY_BATCH = 16
+_CLOCK_PREFIX = 4096
 
 
 def event_window(event):
@@ -74,12 +77,15 @@ def validate(event, snapshot, source):
 
 def observation_time(snapshot):
     """Keep upstream timestamps unchanged; derive graph time only from a fresh HTTP Date."""
-    if abs(snapshot.server_ms-snapshot.received_ms) <= 60000:
-        return snapshot.fetched_ms
-    if (snapshot.http_date_ms is None or abs(snapshot.http_date_ms-snapshot.received_ms) > 5000
-            or snapshot.fetched_ms > snapshot.server_ms+1000):
+    return _observation_time(snapshot.fetched_ms, snapshot.server_ms, snapshot.received_ms, snapshot.http_date_ms)
+
+
+def _observation_time(fetched, server, received, http_date):
+    if abs(server - received) <= 60000:
+        return fetched
+    if http_date is None or abs(http_date - received) > 5000 or fetched > server + 1000:
         return None
-    return snapshot.fetched_ms + snapshot.http_date_ms - snapshot.server_ms
+    return fetched + http_date - server
 
 
 def quality(event, snapshot, now_ms):
@@ -96,7 +102,7 @@ def quality(event, snapshot, now_ms):
     return 'valid'
 
 
-def decode(payload):
+def _snapshot_text(payload):
     if isinstance(payload, bytes):
         try:
             unpacker = zlib.decompressobj()
@@ -108,7 +114,11 @@ def decode(payload):
             raise ValueError('invalid compressed total snapshot') from exc
     if len(payload.encode('utf-8')) > 262144:
         raise ValueError('total snapshot size limit')
-    row = decode_json(payload)
+    return payload
+
+
+def decode(payload):
+    row = decode_json(_snapshot_text(payload))
     for key in ('scores', 'player_ids', 'player_names', 'notes'):
         row[key] = tuple(row[key])
     if 'player_details' in row:
@@ -116,6 +126,22 @@ def decode(payload):
     if row.get('observed_scores') is not None:
         row['observed_scores'] = tuple(row['observed_scores'])
     return TotalRankingSnapshot(**row)
+
+
+def _clock_header(prefix):
+    # The writer serializes dataclass fields in order, with player_details last.
+    # Limit the inflate even if the whole compressed value fits in the prefix.
+    if isinstance(prefix, bytes):
+        prefix = zlib.decompressobj().decompress(prefix, 32768)
+        header, marker, _ = prefix.partition(b', "player_details": ')
+        return decode_json((header + b'}').decode('utf-8')) if marker else None
+    header, marker, _ = prefix.partition(', "player_details": ')
+    return decode_json(header + '}') if marker else None
+
+
+def _sample_count(db, key, limit):
+    return db.execute('SELECT COUNT(*) FROM (SELECT 1 FROM samples WHERE key=? LIMIT ?)',
+                      (key, limit)).fetchone()[0]
 
 
 def fetch_moenotes_total(source, event, deadline):
@@ -311,51 +337,98 @@ class TotalRankingHistory:
         except (sqlite3.Error,OSError,ValueError,KeyError,TypeError,SourceError) as exc:
             raise SourceError('total_history_unavailable') from exc
 
-    def _rows(self, event, max_points):
-        if not self.enabled or not self.path.exists():
-            return [],[]
-        with self.lock, closing(self._connect()) as db:
-            rows=db.execute('SELECT stamp,payload,quality FROM samples WHERE key=? ORDER BY stamp',
-                            (event_key(event),)).fetchmany(max_points+1)
-            gaps=[r[0] for r in db.execute('SELECT stamp FROM gaps WHERE key=? ORDER BY stamp',(event_key(event),))]
-            return rows,gaps
-
     def latest(self, event):
         try:
-            rows,_=self._rows(event,20000)
-            if len(rows)>20000:
-                raise ValueError('total history budget')
-            boards = [validate(event,decode(payload),self.source) for _,payload,state in rows if state == 'valid']
-            if not boards:
+            if not self.enabled or not self.path.exists():
                 return None
-            board = max(boards, key=lambda item: (observation_time(item) or -1, item.received_ms))
+            key = event_key(event)
+            with self.lock, closing(self._connect()) as db:
+                db.execute('BEGIN')
+                if _sample_count(db, key, _HISTORY_LIMIT + 1) > _HISTORY_LIMIT:
+                    raise ValueError('total history budget')
+                best = None
+                # Raw source stamps can move in either direction under HTTP Date correction.
+                # Stream clock fields and fetch a complete board only for the winner.
+                for rowid, prefix in db.execute(
+                    "SELECT rowid,substr(payload,1,?) FROM samples WHERE key=? AND quality='valid' ORDER BY stamp",
+                    (_CLOCK_PREFIX, key),
+                ):
+                    row = _clock_header(prefix)
+                    if row is None or not {'fetched_ms', 'server_ms', 'received_ms', 'http_date_ms'} <= row.keys():
+                        # Fall back per row for a wide header or an older JSON layout.
+                        payload, = db.execute('SELECT payload FROM samples WHERE rowid=?', (rowid,)).fetchone()
+                        row = decode_json(_snapshot_text(payload))
+                        del payload
+                    if (row['event_key'] != key or row['source'] != self.source or event.source != self.source
+                            or row.get('contract', CONTRACT) != CONTRACT):
+                        raise ValueError('invalid total snapshot identity')
+                    received = row.get('received_ms', 0)
+                    stamp = _observation_time(row['fetched_ms'], row['server_ms'], received, row.get('http_date_ms'))
+                    if stamp is not None and (best is None or (stamp, received) > best):
+                        best = (stamp, received)
+                        best_rowid = rowid
+                    del row
+                if best is None:
+                    return None
+                payload, = db.execute('SELECT payload FROM samples WHERE rowid=?', (best_rowid,)).fetchone()
+                board = validate(event, decode(payload), self.source)
+                if (observation_time(board), board.received_ms) != best:
+                    raise ValueError('invalid total observation time')
             return replace(board,status='综合榜最后有效观测，非确认终榜')
-        except (sqlite3.Error,OSError,ValueError,KeyError,TypeError,SourceError) as exc:
+        except (sqlite3.Error,OSError,ValueError,KeyError,TypeError,SourceError,zlib.error) as exc:
             raise SourceError('total_history_unavailable') from exc
 
-    def read(self, event, ranks, *, max_points=20000):
+    def read(self, event, ranks, *, max_points=_HISTORY_LIMIT):
         try:
-            rows,gaps=self._rows(event,max_points)
-            if len(rows)>max_points:
-                return HistoryView(warning='综合榜历史超出绘图预算；原始记录保留。',total=len(rows))
-            points=[]; broken=False; previous=None
-            decoded = [(validate(event,decode(payload),self.source),state) for _,payload,state in rows]
-            decoded.sort(key=lambda item: ((observation_time(item[0]) or item[0].received_ms)
-                                           if item[1] == 'valid' else item[0].received_ms))
-            for board,state in decoded:
-                stamp = observation_time(board) if state == 'valid' else board.received_ms
-                if state!='valid':
-                    broken=True
-                    continue
-                broken |= previous is not None and any(previous < t <= stamp for t in gaps)
-                points.append(HistoryPoint(stamp,tuple(board.score(r) for r in ranks),board.received_ms,
-                                           broken,source=self.source,time_kind='total_ranking_observed'))
-                previous=stamp; broken=False
-            warnings = ['综合榜异常时间或冲突观测已排除，缺口断线。'] if len(points)!=len(rows) else []
-            if any(state == 'valid' and observation_time(board) != board.fetched_ms for board,state in decoded):
+            if not self.enabled or not self.path.exists():
+                return HistoryView()
+            key = event_key(event)
+            with self.lock, closing(self._connect()) as db:
+                # Keep the budget check, payloads and gap lookups on one SQLite snapshot.
+                db.execute('BEGIN')
+                total = _sample_count(db, key, max_points + 1)
+                if total > max_points:
+                    return HistoryView(warning='综合榜历史超出绘图预算；原始记录保留。', total=total)
+
+                timeline = []
+                calibrated = False
+                rows = db.execute('SELECT payload,quality FROM samples WHERE key=? ORDER BY stamp', (key,))
+                while batch := rows.fetchmany(_HISTORY_BATCH):
+                    for payload, state in batch:
+                        board = validate(event, decode(payload), self.source)
+                        stamp = observation_time(board) if state == 'valid' else None
+                        if stamp is not None:
+                            calibrated |= stamp != board.fetched_ms
+                            point = HistoryPoint(stamp, tuple(board.score(r) for r in ranks), board.received_ms,
+                                                 source=self.source, time_kind='total_ranking_observed')
+                            timeline.append((stamp, point))
+                        else:
+                            timeline.append((board.received_ms, None))
+                        del board
+                    del batch, payload
+
+                # The stable sort preserves source-stamp order for equal calibrated times.
+                timeline.sort(key=lambda item: item[0])
+                points = []
+                broken = False
+                previous = None
+                for stamp, point in timeline:
+                    if point is None:
+                        broken = True
+                        continue
+                    if not broken and previous is not None:
+                        broken = db.execute(
+                            'SELECT 1 FROM gaps WHERE key=? AND stamp>? AND stamp<=? LIMIT 1',
+                            (key, previous, stamp),
+                        ).fetchone() is not None
+                    points.append(replace(point, break_before=True) if broken else point)
+                    previous = stamp
+                    broken = False
+            warnings = ['综合榜异常时间或冲突观测已排除，缺口断线。'] if len(points) != total else []
+            if calibrated:
                 warnings.append('部分历史时间按 HTTP Date 与来源相对年龄校准，含秒精度及网络误差。')
             warning = '；'.join(warnings)
-            return HistoryView(tuple(points),warning,len(rows))
+            return HistoryView(tuple(points), warning, total)
         except (sqlite3.Error,OSError,ValueError,KeyError,TypeError,SourceError):
             return HistoryView(warning='综合榜历史暂不可用，未改查单曲历史。')
 
