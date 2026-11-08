@@ -92,4 +92,4 @@ M1 候选额度不是实测平台额度。真实事件、群/C2C 权限、回复
 
 联网搜索位于“模型与费用 → 模型与额度”，主模型与主动参与模型分别管理开关和每次搜索请求的调用上限（1–2）。页面显示当前版本的验收依据及搜索单价；保存即时生效，不改模型版本、群范围或预算。关闭时保留匹配该版本的批准用于恢复；模型版本变化后须重新验收。普通工具连接测试不会批准联网能力。
 
-恢复范围批准使用 `src/recovery-scope.ts::createRecoveryScope` 连接05内存ticket与受信指定管理员；普通Console登录不获得审批权。个人由用户指定管理员，定制由接收方指定，未配置拒绝。当前来源和10宿主接线边界见[恢复权威组合](../docs/task08-integration/RECOVERY_AUTHORITY_WIRING.md)。
+恢复范围批准使用 `src/recovery-scope.ts::createRecoveryScope` 连接05内存ticket与受信指定管理员；普通Console登录不获得审批权。个人由用户指定管理员，定制由接收方指定，未配置拒绝。05 `ManualScopeApproval` 在确认前重读范围、09 身份、07 删除证据及撤销代际，`read().revision` 供恢复当前性检查。当前来源和10宿主接线边界见[恢复权威组合](../docs/task08-integration/RECOVERY_AUTHORITY_WIRING.md)。
