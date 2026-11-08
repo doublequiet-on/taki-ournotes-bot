@@ -366,3 +366,18 @@ Windows原预检/串行会话/launcher拒绝/profile23项，22通过1项Linux检
 收到00转达的管理员与不可改写备份决定后，只补INSTANCE_RECOVERY.md末节的具体配置方案：/etc/taki/instances/<instance>/host-control.json与/var/lib/taki-control/<instance>分离、root权限、现有FileLock控制器唯一代际写入者、内存独立07批准绑定管理员、05 ticket认证关联、deletion_evidence精确摘要算法及缺项拒绝。固定读取05 054a101276f5ca451ad78d9397531534a2ce0249、07 8bdde8392ab79180ebf32a11fc05ed0a5190fd1e实际接口。未修改两任务代码，也没有把新接口声称已打入602工件。
 
 本轮未实施配置读取/权限写入/代际生产或新RPC；08正在唯一跨包注入，先交上述明确所需/所供字段，避免并发产生第二套批准路径。文档静态核对05严格五字段、07七字段与读取器参数、现有digest算法和FileLock位置；diff检查通过。纯方案不重跑已通过实际602测试，不新增WSL运行结果。管理员具体ID、实际宿主配置未给出，必须保持未配置拒绝。不可改写备份仍列完整清单、禁止恢复，不冒充verified或从覆盖中静默移除；固定07对隔离不可恢复副本覆盖的表达仍需07/00明确。12修复反馈尚未到达本对话，后续只测受影响项。
+
+
+## 2026-11-08 最小宿主实现与个人版收尾
+
+本轮新增deploy/host_authority.py，原23839bc宿主/602整包路径不变。固定08 4fd680b9096ac7283facf8c9735aaa88b9147a6f、05 054a101276f5ca451ad78d9397531534a2ce0249、07 8bdde8392ab79180ebf32a11fc05ed0a5190fd1e、09 checker 3dda6d29955328777f7e526c21bfd2828dbbea8a仅从Git对象导出到本任务目录，不修改08/09工作树。10复用08的deletion_scope_review指纹及四个RecoveryScopeSources形状，未实现ea1ed方案中的另一摘要算法。
+
+实现范围：严格root配置/权限/祖先路径、单硬链接/软链接/bind别名、独立于应用与恢复树的控制状态；现有FileLock下唯一owner线程及原子撤销写入；指定管理员身份/认证会话与独立07精确字节批准绑定；重新审阅先持久撤销、实时读取漂移失效、重启空批准、持久化失败粘滞关闭。配置/初始代际必须由受信宿主配置流程明确提供，无默认管理员/初始化/持久allow/RPC/权限服务。认证对象只接受受信宿主callback结果，不能反序列化客户端JSON；不承担生产登录认证。
+
+专属Taki-Task10-2404新目录 /var/lib/taki-task10/host-authority-20261108，root测试控制器，命名空间禁网；bind测试另用私有mount namespace且结束前卸载自己创建的挂载。包内Node24.19.0运行固定08/05接口，Python运行固定08/07/09函数与本次10。28项主检查及6项补充检查通过：缺配置/空名单、非root/组写/不安全祖先/树内路径/软硬链接、伪造JSON身份/非指定管理员/错产品实例、票重放/跨实例、认证中途变化、重启无批准、真实FileLock竞争/锁丢失、唯一owner写线程、代际倒退/溢出、revocation与authority的A→B→A、读失败/排除根替换、文件/目录fsync与rename失败。个人/定制真实05/07/08/09实时检查均覆盖无批准manual→人工合成批准checked→删除代际不符reject及撤销关闭。
+
+自查发现新审阅应主动调用08 invalidate而非等轮询，已补齐；另区分root权威路径与应用用户所有的排除目录，允许合法应用目录并固定其身份。保留attempt01/02/03/04与extra分轮日志及全部合成故障目录。最终34项源为相同代码CRLF字节；提交前按仓库eol=lf规范化，并在精确LF源上只重验个人版真实组合，通过personal-final.log；runtime-binding.json绑定最终字节。未重跑旧238/B2业务、RPC、历史全格式或旧工件套件。架构、Python语法和diff检查通过。测试脚本按AGENTS留在忽略runtime，不入PR。
+
+本轮明确合成的部分：管理员与认证callback、产品身份candidate/expected/observed、删除journal/副本摘要、runtime观察对象、隔离事实及Node/Python测试stdio桥。真实FileLock、权限/路径、原子落盘与失败注入、05/07/08/09函数实际执行。测试桥不交付为生产认证/传输；未声称有新整包、真实副本测量或生产恢复。未触碰生产数据、服务、QQ、付费模型，也未删除既有失败/事务状态。
+
+用户随后收窄为个人版必要收尾：本实现保存为独立待审成果，不继续定制、C6 v2隔离备份、生产认证传输或完整跨实例恢复平台。源码引用核对：deploy/src现有入口没有import host_authority；koishi_launcher的原--base路径未改，--instance-config仍返回manual/independent_start_authority_not_connected并退出2。新类亦要求显式配置与受信callback，缺管理员拒绝。它不是现有个人入口的新增上线前置；既有个人功能和安全门禁仍保留，不能因未接入新模块绕过已有检查。下一步仅接受针对本独立提交的审查反馈；管理员与实际宿主未配置，activation_permitted=false。

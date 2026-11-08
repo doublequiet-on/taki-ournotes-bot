@@ -350,3 +350,63 @@ excluded_roots由宿主完整登记：实例base、外置数据、所有组合/�
 不可改写旧备份在宿主完整清单中保留稳定ID、实物位置/hash、原期限起点/到期点、隔离与禁止恢复标记；这些标记不是07的verified。恢复选择器必须拒绝该实物，不能因改名、复制或过期自动变成可恢复；期限未知保持隔离人工处理，不能重新起算。到期处理仍独立授权执行，本轮不删除文件或记录。不能为使07通过而从replicas清单静默省略旧副本，也不能给07严格七字段对象额外塞quarantined。07当前合同如何表达“仍存在但永远禁止恢复”的副本覆盖，须由07/00明确适配；在固定8bdde83语义未能证明完整覆盖前，相关恢复保持manual，不自行缩小范围。
 
 待08固定接线后的定向验证：两个合成产品及不同管理员；空名单/错产品/未登录/同显示名不同subject/客户端伪造actor拒绝；begin与confirm间撤权、管理员替换、跨实例/跨会话/重复确认、重启空批准；非root或组写、软硬链接/挂载别名、权威落恢复树拒绝；单写者锁竞争、代际倒退/溢出/ABA、fsync失败；独立批准摘要错配/撤销/双读变化；实际05新接口与07读取器allow/manual/reject；12提出的宿主受影响项。全部仅在专属WSL新合成目录执行；不重复旧工件全套，不启动QQ。未完成这些接线验证前，本节是可审阅配置合同，生产字段与管理员未配置始终不获准入。
+
+
+## 2026-11-08 宿主受信配置最小实现（取代上节方案中的待实现接口）
+
+`host_authority.py::HostAuthority`现在提供配置加载、路径/文件权限与身份检查、唯一写入者撤销代际、独立07批准及实时08输入。消费08 `4fd680b9096ac7283facf8c9735aaa88b9147a6f`（内含05 054a101276f5ca451ad78d9397531534a2ce0249、07 8bdde8392ab79180ebf32a11fc05ed0a5190fd1e）；不修改08文件、不把这些新接口声称已装进602冻结组合。23839bc实际包验收及ea1ed方案历史保留。
+
+**以08实际合同为准**：05输入的deletion_evidence使用08 `deletion_scope_review(...).review_sha256`，即其format=`taki-scope-deletion-review/1`的candidate/authority/decision摘要；上节拟定的task10-deletion-review/1不实现、不另算。08管理员subject为单个字符串，10用 `principal(issuer,subject)` 返回 `principal:`加现有canonical JSON SHA256，避免两个认证体系同名碰撞；操作者与管理员列表使用同一映射。这个字符串不是认证凭证。
+
+实际配置严格八字段（不接受方案中尚未实现的source/audit字段）：
+
+| 字段 | 内容 |
+|---|---|
+| schema | `task10-host-control/1` |
+| instance / product | 实例名与personal或custom；必须匹配runtime设置和受信09映射所得当前身份，不用该字段选择个人降级模式 |
+| authority_root | 例如`/var/lib/taki-control/alpha`，已存在root:root 0700 |
+| deletion_record / revocation_record | 已存在的树外普通文件、root:root 0600、单硬链接；父目录0700；必须属于authority_root且彼此不同 |
+| excluded_roots | 非空、完整的规范绝对目录列表，至少覆盖该实例整个base；额外外置数据/备份/恢复树必须显式登记。允许应用用户拥有排除树，但固定目录dev/ino/权限，拒绝别名与变化 |
+| administrators | 非空且无重复的`{issuer,subject}`列表，必须来自用户/接收方指定；无默认值 |
+
+配置建议路径仍为`/etc/taki/instances/alpha/host-control.json`，root:root 0600、直接父目录0700，所有受信路径祖先root所有且无组/其他写。文件打开使用O_NOFOLLOW及前后fstat/lstat核对；读失败、重复JSON键、非有限数字、文件超限、软/硬链接、绑定挂载别名、权威落入排除树拒绝。配置上限128KiB，07记录上限16MiB。目录内容变化不等于目录身份变化；应用可写排除树不会因正常文件增删被误作权威目录。配置/撤销文件每次读取均与会话开始时字节及inode/ctime等比较；已批准07文件每次实时读取均核对，A→B→A写回同字节仍失效。
+
+撤销文件严格为`{schema:'task10-revocation/1',instance,generation,event_id}`，generation为1至9007199254740991整数，event_id为64位hex。配置、目录、初始记录的受信配置阶段须由宿主操作者明确完成，加载器不创建、不补默认代际、不恢复备份；缺任一项即异常/未配置拒绝。它不提供一个用候选JSON自助初始化生产的CLI。完整副本清单及不可改写备份语义仍由07/00明确；excluded_roots只排除权威来源，不代表副本可省略或已完成传播。
+
+### 实际调用与认证边界
+
+在现有IsolatedRuntime进入FileLock后、任何批准/子进程启动前，由受信组合根构造：
+
+```python
+host = HostAuthority(config_path, runtime,
+    read_operator=authenticated_host_entry.read_operator,
+    read_identity=verified_identity_mapping,
+    invalidate_scope=invalidate_live_08_scope,
+    read_deletion_review=read_fresh_08_deletion_review)
+```
+
+这些是受信本地callable，不来自配置或网络对象；代码来源由安装控制器固定，不动态import候选路径。`read_operator`只能返回 `AuthenticatedOperator(issuer,subject,session,product,instance)`；普通dict/客户端JSON拒绝。该类型是已认证宿主入口的交接对象，不负责认证本身，持有root代码执行权可以构造它，不能当密码/签名。当前没有生产管理员ID或认证入口配置，因此没有生产批准者；本轮测试只注入明确SYNTHETIC对象，没有把root UID或Console登录自动认作管理员。
+
+`read_identity`每次返回严格`{product,instance,identity_evidence}`，来自受信组合根对实际09allow及产品映射的核对；hash形状检查不替代09。两个回调的会话/身份变化未经预先revoke会使HostAuthority粘滞阻塞，不能通过值恢复重开。正式受信认证入口及Python/Node跨包运行注入仍由08/宿主共同接线，本实现不新增RPC、监听器或认证服务。
+
+独立07批准顺序：`begin_deletion_review()`先在owner线程调用revoke，立即invalidate10票、现有RecoverySession及08身份/范围，再递增并持久化宿主代际，然后才返回本进程不透明ticket及审阅副本。人工核对当前删除文件/来源及摘要后 `confirm_deletion_review(ticket)`重新读管理员会话、身份、配置、代际、07文件身份与精确摘要，原样一致才记录内存批准。票一次消费、不序列化；错票亦消费待审票，迟到/重复/跨实例拒绝。confirm不是完整恢复批准，也不批准05范围。新的05审阅必须在08重新校验/发布09身份后进行。
+
+`revoke()`唯一在runtime.owner_thread、同一既有FileLock下写撤销记录：先清内存并通知08，后复用linux_updater.atomic_json进行文件fsync→replace→目录fsync，最后回读确认。一个runtime只绑定一个HostAuthority；另一个锁持有者及非owner线程拒绝。任何写入/回读/通知失败粘滞阻塞，不重试旧事件，不延续旧批准。目录fsync失败时文件可能已是新代际，但回执仍失败并关闭；不能把落盘的新字节当成功。重启创建新HostAuthority和随机controller_session，内存批准为空；不自动读取审计日志恢复批准。没有实现方案中的审计日志写入，审阅副本可由受信入口留痕但不能作为可重载许可。
+
+### 给08的实时函数
+
+| 10函数 | 08接点/语义 |
+|---|---|
+| read_administrators() | readAdministrators：精确product/instance/subjects/revision/identity_evidence；revision绑定配置、控制会话和宿主撤销代际 |
+| read_operator() | readOperator：精确subject/session/product/instance；重新读取受信认证源并核指定名单 |
+| read_revocation_generation() | readRevocationGeneration：当前持锁且未被外部替换的代际 |
+| read_deletion_review() | readDeletionReview：每次调用注入的真实08 deletion_scope_review，不缓存review_sha256；期间失效不返回旧结果 |
+| read_approved_sha256() | 07/08独立批准回调：当前管理员、配置、锁、代际、07字节与内存审阅均一致才返回原文件摘要，否则None |
+| read_revision() | 10当前性证据，绑定会话/boot/配置/代际/身份/批准；仅摘要，不是allow或票 |
+
+读取错误会清批准、通知失效并返回None，blocked保存诊断；不保留最后成功值。有意更换认证/身份/文件前先由仍有效指定管理员revoke，然后受信流程更新来源并重新审阅；配置改写/意外漂移须新的控制器会话，不自动接管。外部特权程序绕过唯一写入者会被观测到的inode/ctime/摘要变化拒绝；完整宿主离线回滚或root恶意伪造不由本地文件保证解决，当前真实记录无法独立核实时仍禁止批准。
+
+本轮专属WSL定向证据在runtime/task10/host-authority-20261108。Python调用固定08组合与真实07/09；包内Node24.19.0运行固定08/05的TypeScript源（仅测试副本将相对import加.ts，Node原生transform-types），以本地测试stdio实时往返读取上述函数。该stdio桥只为验证，未交付为认证/生产传输。实例、管理员、身份候选、删除记录、副本摘要和隔离事实均明确合成；不以接口通过代替真实全副本测量、产品选择或生产激活。未重跑238/B2业务全套、旧工件或生产恢复。
+
+
+个人版收尾范围更新：本模块独立待审，现有个人入口未引用host_authority，原--base不变；未接权威的--instance-config继续manual/退出2。本轮不再推进定制、C6 v2或生产认证传输；完整跨实例恢复平台不是现有个人版上线前置。新恢复入口缺管理员/配置继续拒绝，不影响或绕过既有个人安全门禁。
