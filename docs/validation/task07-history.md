@@ -1,5 +1,13 @@
 # 任务07自查证据
 
+## 当前权威读取收尾（2026-11-08）
+
+基于07 `3686da76a939345690d556d7ddeb40198e15a979`，只读核查固定集成 `602a95f49fd059deb7a59377be74becb4d55e008`；聊天删除journal和发行清理journal不能充当历史完整副本权威。未读取生产账本。来源范围、明确缺项和08/10接线要求见数据合同“首版人工当前记录读取”。
+
+合成专项10项通过：树外完整批准可读，缺文件/批准撤销/旧字节重放/读取期间换代均manual；恢复树路径和缺排除配置拒绝；重复键、坏JSON、NaN、journal不一致拒绝；缺WAL副本/传播未完成不allow；错误binding/政策/删除代际/证据版本拒绝；批准读取IO失败manual。原07专项18项重新通过，包含分区/归档/跨旧版本/低盘及恢复判定；architecture/diff通过。本次只改读取合同，未重新进行全套/包构建、宿主停写或组合激活验收。
+
+本地脚本 `runtime/task07/test_authority_reader.py`（按AGENTS不提交）；日志 `runtime/task07/authority-reader.log` 和 `authority-regression.log`。全部用合成临时文件，TEMP/TMP指定本工作区runtime/task07/tmp。生产没有真实外部批准记录时仍manual；双读不是宿主持续性或防回滚证明。
+
 ## 任务12 P1修复复验（2026-11-03）
 
 本次增量基于被审head `a63de717df487f896ff2182ea5bf6008672db4ad`，未合入其他任务。任务12原始 `runtime/task12-review/evidence/REVIEW.md`、`repro_writer.py`及日志保留不动；仅用合成临时库运行原脚本。修复前首次与重试均为storage_error；修复后首次注入故障仍为storage_error，重试为valid。

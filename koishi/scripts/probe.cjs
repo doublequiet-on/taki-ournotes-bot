@@ -1499,6 +1499,47 @@ async function main() {
     assert.equal(productIdentityAdapter(()=>({...snapshot,decision:{...snapshot.decision,evidence:''}}))(binding).outcome,'deny')
     assert.equal(productIdentityAdapter(()=>({...snapshot,binding:{opaque:'old-candidate'}}))({opaque:'old-candidate'}).outcome,'deny')
   })
+  await run('Manual scope approval requires current independent evidence and revokes stale reviews',async()=>{
+    const {ManualScopeApproval}=require('../lib/scope-authority')
+    const document={schema:1,generation:1,approval:'synthetic-review',binding:{contract_version:1,manifest_sha256:'a'.repeat(64)},
+      groups:{kind:'selected',ids:['synthetic-group']},c2c:{kind:'none'},announcements:{kind:'none'}}
+    const original={document,digest:'b'.repeat(64),revocation_generation:1,identity_evidence:'c'.repeat(64),deletion_evidence:'d'.repeat(64)}
+    let current=structuredClone(original),throws=false
+    const approval=new ManualScopeApproval(()=>{if(throws)throw Error('offline');return current})
+    const identity={outcome:'allow',reason:'identity_verified',evidence:original.identity_evidence}
+    const decide=()=>approval.approval(document,original.digest,identity)
+    assert.equal(decide().outcome,'manual');assert.equal(approval.confirm(true),false)
+    const old=approval.begin(),review=approval.begin()
+    assert.equal(approval.confirm(old.ticket),false)
+    review.review.document.groups.kind='all' // returned copies cannot broaden the stored review
+    assert(approval.confirm(review.ticket));assert.equal(approval.confirm(review.ticket),false)
+    assert.equal(decide().outcome,'allow')
+    const revision=approval.read().revision;assert.equal(approval.read().revision,revision)
+    approval.revoke();assert.notEqual(approval.read().revision,revision);assert.equal(decide().outcome,'manual')
+    let revocation=10
+    for(const mutate of [v=>v.revocation_generation++,v=>v.identity_evidence='e'.repeat(64),
+      v=>v.deletion_evidence='f'.repeat(64),v=>v.digest='e'.repeat(64),v=>v.document.groups={kind:'all'}]){
+      current=structuredClone(original);current.revocation_generation=(revocation+=2)
+      const pending=approval.begin();assert(pending)
+      mutate(current);assert.equal(approval.confirm(pending.ticket),false);assert.notEqual(decide().outcome,'allow')
+      current=structuredClone(original);current.revocation_generation=(revocation+=2)
+      assert.equal(decide().outcome,'manual') // old evidence never reopens an invalidated approval
+    }
+    current=structuredClone(original);current.revocation_generation=100
+    assert(approval.confirm(approval.begin().ticket));throws=true;assert.equal(decide().outcome,'manual')
+    throws=false;assert.equal(decide().outcome,'manual')
+    for(const value of [undefined,{...current,extra:true},{...current,deletion_evidence:''},{...current,revocation_generation:99}]){
+      const saved=current;current=value;assert.equal(approval.begin(),undefined);current=saved
+    }
+    assert(approval.confirm(approval.begin().ticket))
+    assert.equal(approval.approval(document,original.digest,{...identity,evidence:'f'.repeat(64)}).outcome,'deny')
+    assert.equal(decide().outcome,'manual')
+    assert(approval.confirm(approval.begin().ticket))
+    assert.equal(approval.approval({...document,groups:{kind:'all'}},original.digest,identity).outcome,'deny')
+    const restarted=new ManualScopeApproval(()=>current)
+    assert.equal(restarted.approval(document,original.digest,identity).outcome,'manual')
+    assert.equal(restarted.confirm(approval.begin().ticket),false)
+  })
   await run('M3 ACK retry rechecks revoked scope context guard', async () => {
     const guards=[];let allowed=true
     const client=new BackendClient('http://127.0.0.1:8765','x'.repeat(32),'i','e',async (url,opts)=>{

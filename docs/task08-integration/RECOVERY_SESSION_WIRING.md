@@ -35,6 +35,8 @@
 
 ## 交00及09/10的具体缺项
 
+下表保留a384历史状态；05/07固定接口与批准政策已更新，当前读取组合和10新时序依赖见[恢复权威组合](RECOVERY_AUTHORITY_WIRING.md)。真实宿主来源与最终装配仍未完成。
+
 | 归属 | 固定依赖与所需输入 | 本轮边界 |
 |---|---|---|
 | 05/00 | 当前TS ProductIdentitySession/ScopeStore来自 `a9c27d7eb94833df713995b8e6f9a85fc45ea0d5`；可信读取器严格提供binding、decision、checkerCommit，独立approval及当前撤销代际 | 本轮复用ScopeStore，未自动批准。实际恢复的独立批准读取器、Python对应身份合同来源仍需固定 |

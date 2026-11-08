@@ -5,6 +5,7 @@
 # Effects: Read-only local inspection. No production policy, deletion or activation.
 """Retention planning is not approval; restored journals are not authority."""
 import hashlib
+import json
 import re
 import sqlite3
 from contextlib import closing
@@ -85,9 +86,92 @@ def inspect_history(source, *, before_ms=None):
 
 def journal_digest(records):
     """Hash exact ordered deletion records; identifiers should be opaque, not PII."""
-    import json
     return hashlib.sha256(json.dumps(records, sort_keys=True, separators=(',', ':'),
                                     ensure_ascii=True, allow_nan=False).encode()).hexdigest()
+
+
+def read_current_authority(path, *, excluded_roots, read_approved_sha256):
+    """Read a manually approved external record, never bootstrap an authority.
+
+    The trusted host supplies ALL restore/backup roots and a fresh independent
+    approval reader. Its return is the SHA256 of exact approved file bytes, or
+    None when current approval cannot be established. Neither input may come
+    from the candidate. Host ownership, revocation and locking remain with 10.
+    Invalid/unapproved records return None; IO failures propagate to C6 manual.
+    """
+    if (not callable(read_approved_sha256) or not isinstance(excluded_roots, (list, tuple))
+            or not excluded_roots):
+        return None
+    if not Path(path).is_absolute() or any(not Path(root).is_absolute() for root in excluded_roots):
+        return None
+    approved = read_approved_sha256()
+    if not isinstance(approved, str) or not re.fullmatch('[a-f0-9]{64}', approved):
+        return None
+    source = Path(path)
+    if source.is_symlink():
+        return None
+    source = source.resolve(strict=True)
+    if not source.is_file():
+        return None
+    for root in excluded_roots:
+        if source.is_relative_to(Path(root).resolve()):
+            return None
+    with source.open('rb') as stream:
+        raw = stream.read(16 * 1024 * 1024 + 1)
+    if len(raw) > 16 * 1024 * 1024 or hashlib.sha256(raw).hexdigest() != approved:
+        return None
+
+    def unique_pairs(pairs):
+        result = {}
+        for key, value in pairs:
+            if key in result:
+                raise ValueError('duplicate authority field')
+            result[key] = value
+        return result
+
+    try:
+        record = json.loads(raw, object_pairs_hook=unique_pairs)
+        if not isinstance(record, dict) or set(record) != {'authority', 'journal'}:
+            return None
+        authority = record['authority']
+        if not _valid_evidence(authority) or not isinstance(record['journal'], list):
+            return None
+        if journal_digest(record['journal']) != authority['journal_sha256']:
+            return None
+    except (ValueError, UnicodeError, RecursionError):
+        return None
+    if read_approved_sha256() != approved:
+        return None
+    return authority
+
+
+def _valid_evidence(value, candidate=False):
+    keys = {'contract_version', 'binding', 'policy_generation', 'deletion_generation',
+            'journal_sha256', 'replicas', 'evidence_version'}
+    if not isinstance(value, dict) or set(value) != keys:
+        return False
+    if type(value['contract_version']) is not int or value['contract_version'] != CONTRACT_VERSION:
+        return False
+    if any(not isinstance(value[k], str) or not value[k] for k in ('binding', 'evidence_version')):
+        return False
+    if any(type(value[k]) is not int or value[k] < 0 for k in ('policy_generation', 'deletion_generation')):
+        return False
+    if not isinstance(value['journal_sha256'], str) or not re.fullmatch('[a-f0-9]{64}', value['journal_sha256']):
+        return False
+    replicas = value['replicas']
+    if not isinstance(replicas, dict) or not replicas:
+        return False
+    for name, row in replicas.items():
+        if not isinstance(name, str) or not name or not isinstance(row, dict):
+            return False
+        expected = {'generation', 'sha256', 'state'} if candidate else {'generation', 'sha256'}
+        if set(row) != expected or type(row['generation']) is not int or row['generation'] < 0:
+            return False
+        if not isinstance(row['sha256'], str) or not re.fullmatch('[a-f0-9]{64}', row['sha256']):
+            return False
+        if candidate and (not isinstance(row['state'], str) or row['state'] not in ('verified', 'pending', 'unavailable')):
+            return False
+    return True
 
 
 def check_recovery(candidate, current_authority):
@@ -95,7 +179,8 @@ def check_recovery(candidate, current_authority):
 
     10 supplies measured candidate coverage, after quiescing writers. 09 owns
     identity; binding is its opaque verified instance token, not a new identity
-    scheme. No current authority implementation is selected by task07.
+    scheme. read_current_authority supports an externally approved record;
+    it does not provision a production authority or confer approval itself.
     """
     def result(status, reason, evidence=None):
         return {'status': status, 'reason': reason, 'contract_version': CONTRACT_VERSION,
@@ -108,40 +193,15 @@ def check_recovery(candidate, current_authority):
         authority = current_authority()
     except (OSError, TimeoutError):
         return result('manual', 'current_deletion_authority_unavailable')
-    keys = {'contract_version', 'binding', 'policy_generation', 'deletion_generation',
-            'journal_sha256', 'replicas', 'evidence_version'}
-    def valid(value, candidate=False):
-        if not isinstance(value, dict) or set(value) != keys:
-            return False
-        if type(value['contract_version']) is not int or value['contract_version'] != CONTRACT_VERSION:
-            return False
-        if any(not isinstance(value[k], str) or not value[k] for k in ('binding', 'evidence_version')):
-            return False
-        if any(type(value[k]) is not int or value[k] < 0 for k in ('policy_generation', 'deletion_generation')):
-            return False
-        if not isinstance(value['journal_sha256'], str) or not re.fullmatch('[a-f0-9]{64}', value['journal_sha256']):
-            return False
-        replicas = value['replicas']
-        if not isinstance(replicas, dict) or not replicas:
-            return False
-        for name, row in replicas.items():
-            if not isinstance(name, str) or not name or not isinstance(row, dict):
-                return False
-            expected = {'generation', 'sha256', 'state'} if candidate else {'generation', 'sha256'}
-            if set(row) != expected or type(row['generation']) is not int or row['generation'] < 0:
-                return False
-            if not isinstance(row['sha256'], str) or not re.fullmatch('[a-f0-9]{64}', row['sha256']):
-                return False
-            if candidate and (not isinstance(row['state'], str) or row['state'] not in ('verified', 'pending', 'unavailable')):
-                return False
-        return True
-    if not valid(authority):
+    if not _valid_evidence(authority):
         return result('manual', 'current_deletion_authority_invalid')
     evidence = authority['evidence_version']
-    if not valid(candidate, True):
+    if not _valid_evidence(candidate, True):
         return result('reject', 'malformed_deletion_evidence', evidence)
     if candidate['binding'] != authority['binding']:
         return result('reject', 'deletion_binding_mismatch', evidence)
+    if candidate['evidence_version'] != evidence:
+        return result('reject', 'deletion_evidence_version_mismatch', evidence)
     for field in ('policy_generation', 'deletion_generation', 'journal_sha256'):
         if candidate[field] != authority[field]:
             return result('reject', 'deletion_authority_mismatch', evidence)

@@ -66,7 +66,7 @@ python -B scripts/inspect_history_data.py <隔离历史副本> --before-ms <明�
 
 ## 给10的C6恢复判定
 
-入口 `history_retention.check_recovery(candidate, current_authority)`，返回 `{status: allow|reject|manual, reason, contract_version:1, evidence: str|null}`。current_authority是**无参回调**，必须由受信控制器从待恢复目录、旧DB、旧journal及备份之外获取当前权威；None/不可用/不合法为manual。本包不选择生产权威实现。外部权威的证据版本进入返回值，候选不能自报最新。
+入口 `history_retention.check_recovery(candidate, current_authority)`，返回 `{status: allow|reject|manual, reason, contract_version:1, evidence: str|null}`。current_authority是**无参回调**，必须由受信控制器从待恢复目录、旧DB、旧journal及备份之外获取当前权威；None/不可用/不合法为manual。首版人工核当前记录批准、无法确认不恢复；读取适配器如下，尚未配置生产权威。外部权威的证据版本进入返回值，候选不能自报最新。
 
 candidate 与回调返回对象共同字段（全部必填，不接受额外字段）：
 
@@ -76,7 +76,7 @@ candidate 与回调返回对象共同字段（全部必填，不接受额外字�
 | binding | 非空不透明字符串；来自09已验证的实例绑定，07不解释product/AppID |
 | policy_generation / deletion_generation | 非负整数；须精确等于当前权威，不默认初始化 |
 | journal_sha256 | 64位小写hex；当前删除记录精确摘要，缺失拒绝 |
-| evidence_version | 非空证据版本字符串；返回值采用外部权威版本 |
+| evidence_version | 非空证据版本字符串；候选须等于当前权威版本，返回值采用外部权威版本 |
 | replicas | 非空 `{opaque_replica_name: {generation, sha256}}`；candidate每项另有state=`verified|pending|unavailable` |
 
 sha256是权威批准的副本状态摘要，candidate摘要须由10独立测量（包括字典/payload、导出、缓存、冻结数据、WAL及备份传播结果），不能从候选journal复制。精确摘要批准不适合作为后台自动清理的替代；后续生产权威/活跃数据证据设计须结合政策再定。本接口不接收路径或执行候选脚本。
@@ -86,14 +86,41 @@ sha256是权威批准的副本状态摘要，candidate摘要须由10独立测量
 | 判定 | reason |
 | --- | --- |
 | allow | deletion_state_verified：代际/journal/绑定/全部副本摘要和已应用代际一致，且每份verified；只代表本项通过 |
-| reject | malformed_deletion_evidence、deletion_binding_mismatch、deletion_authority_mismatch、replica_deletion_not_applied |
+| reject | malformed_deletion_evidence、deletion_binding_mismatch、deletion_evidence_version_mismatch、deletion_authority_mismatch、replica_deletion_not_applied |
 | manual | current_deletion_authority_missing/unavailable/invalid、replica_coverage_incomplete、replica_not_verified、authority_propagation_incomplete |
 
 旧DB＋旧journal会与当前代际冲突；旧DB＋新journal仍因副本代际/摘要不符拒绝；只有旧备份且无当前权威一律manual。漏字典、漏冻结副本、未完成备份传播不能allow。受信控制器须停相关写入并保持隔离，避免检查后状态改变；此函数不是锁、激活令牌或跨进程TOCTOU解决方案。
 
 10先完成09身份检查，再组合05 `allow/deny/manual`（deny映射拒绝）和07 `allow/reject/manual`，按自身激活门决定；任一manual/reject继续隔离。实际组合、Linux恢复/低盘演练、真实QQ、目标宿主、异地备份均未由本包验收。
 
-## 用户必须决定的政策
+## 首版人工当前记录读取（2026-11-08）
+
+核查固定集成提交 `602a95f49fd059deb7a59377be74becb4d55e008` 的src/scripts/deploy：`application/chat_store.py::deletion_state/_read_journal` 提供 `taki-chat-deletions/1`（identity/messages/scopes），只证明聊天删除集合；`deploy/release_retention.py` 的记录证明发行目录归属与清理进度。两者均不提供历史分区的policy_generation、完整replicas或当前人工批准，不能适配为07权威。`inventory`始终discovery_complete=false，也不能替代完整登记。未读取生产库/实际账本，本次源码核查没有找到可直接消费的历史删除权威生产者；不能据此断言生产从未删除过。
+
+固定最小接口：`read_current_authority(path, *, excluded_roots, read_approved_sha256)`。08可将其包装为check_recovery的无参回调。path为受信宿主配置的绝对路径，excluded_roots为非空绝对路径列表，必须包含全部候选/恢复/备份树；候选、Console和待恢复配置均不能决定这两个参数。解析后的文件路径在任一排除树中即不接受，文件自身符号链接拒绝；祖先目录/文件的所有权、替换权限及整个检查期间的隔离锁由10负责，路径检查不是权限证明。
+
+文件UTF JSON的顶层恰为 `{"authority": <上述完整七字段对象>, "journal": <按顺序的真实删除记录列表>}`；最大16MiB，拒绝重复JSON键、非有限数字及journal摘要不符。列表内容由人工核实的真实账本提供，07不创造记录字段或默认空账本；空列表仅在外部批准明确证明无删除记录时成立。authority中的replicas是人工逐项核对的完整登记，不是从候选复制；generation均须达到deletion_generation才能由check_recovery通过。
+
+`read_approved_sha256()`由受信宿主每次读取**独立于该文件和备份树**的当前人工批准，返回批准文件精确字节SHA256；缺失、撤销或不能证明当前性返回None。不能用常量、启动时缓存、文件自身的hash或随备份恢复的批准记录作为生产回调。读取器前后各调用一次，摘要须相同并匹配读取字节；不匹配/非法返回None，check_recovery映射manual/current_deletion_authority_invalid；IO/Timeout由check_recovery映射manual/current_deletion_authority_unavailable。每次调用重新读取，不保存最后成功值；它不写文件或批准记录。
+
+人工换代顺序：先撤销当前批准并停用恢复准入；核对当前journal、政策与所有副本，更新记录后重新批准其精确摘要。政策/字段范围改变递增policy_generation，删除集合变化递增deletion_generation，批准版本/副本集合或测量结果变化必须换唯一evidence_version。任何无法证明代际连续性的旧快照不获批准。生产回调的独立防回滚锚点与撤销保全由宿主落实；07不生成它。双读只检测读取期间批准变化，不代替10的持续撤销观察/停写证明，也不消除批准撤销再恢复的ABA问题；禁止复用已撤销版本。
+
+08消费此回调和已有C6结果；10独立测量candidate（包括各副本state），在启动屏障与持续观察中重新核验，并将批准摘要/版本纳入自己的deletion代际证据。07不修改两包的组合接口。恢复身份仍由09固定，05的批准不替代07记录。
+
+当前可交付的是上述读取合同；**当前真实来源缺项**为：宿主外部记录绝对路径及管理者、独立当前批准读取来源及撤销机制、09已验证binding、批准政策代际、真实journal及删除代际、全部本地/异地副本名称与应用证明。没有这些实物即manual，不填合成值，不把旧DB+旧journal当当前权威。
+
+## 已确认期限与仍需决定的执行政策
+
+此前已确认：分数/来源长期保留；身份/昵称/名片/编成30天，起算为Taki首次持久接收，复制/读取/压缩/导出/恢复不重置；玩家缓存24小时，个人素材7天，公开素材连续30天未使用并设容量上限；本地每日业务备份14天、加密异地备份30天。起算未知的记录隔离人工处理；unknown/facts/防复活记录不因清理删除。本次不执行这些生产政策。
+
+执行前仍须落实的具体选择（建议不构成批准）：
+
+- 不可改写/离线旧备份：建议先登记为不可恢复并隔离，待原保留期到期销毁；另一选项是在可验证重建后替换。未完成传播的副本不得标verified。
+- 完整登记与批准责任：建议指定一名宿主管理者维护树外登记及撤销锚点；也可由两人复核。未指定管理者及可信保存位置前保持manual。
+- 公开素材容量上限：需按实际盘点选择固定字节上限或磁盘水位；本轮不提供未经容量测量的默认数值。
+- 定向删除请求的字段范围、平台已发内容边界、异地备份传播时限及RPO/RTO仍需明确；到期留存批准不自动扩大到这些动作。
+
+以下原执行范围清单继续用于落实，不再表示上述期限尚未确认：
 
 1. 保留字段：公开ID、昵称、名片缩略图/URL、收藏卡/编成、分数与时间，分别保留或投影；去ID不等于匿名。
 2. 各数据层期限及起算时刻：观测、当前缓存、素材、导出、冻结输出、备份；是否仅按到期或支持定向请求。
