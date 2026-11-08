@@ -2626,13 +2626,19 @@ class ChatAgentTests(Fixture, unittest.IsolatedAsyncioTestCase):
             ('/聊 国际服 Our Notes 时长最短的是哪首歌','','intl','source_unavailable'),
             ('/聊 国际服 Our Notes 时长最短的是哪首歌','','jp','invalid_argument'),
             ('/聊 日服 时长最长的是哪首歌？另外，国际服 时长最短的是哪首歌','','intl','invalid_argument'),
+            ('taki你怎么看；另外，国际服 Our Notes 时长最短的是哪首歌','日服只是引文','intl','ok'),
+            ('taki你怎么看; 另外，Our Notes 时长最短的是哪首歌','国际服只是引文','jp','ok'),
+            ('taki你怎么看；另外，国际服 Our Notes 时长最短的是哪首歌','','jp','invalid_argument'),
+            ('taki你怎么看；另外，日服与国际服时长最短的是哪首歌','','intl','invalid_argument'),
+            ('taki你怎么看；另外，国际服 HARD 25级以上时长最短的是哪首歌','','intl','invalid_argument'),
+            ('taki你怎么看？\n国际服 Our Notes 时长最短的是哪首歌','','intl','invalid_argument'),
         )
         for seq,(question,preview,server,status) in enumerate(cases,1):
             with self.subTest(question=question,status=status):
                 self.repo.song_metrics.current.reset_mock()
                 self.repo.song_metrics.current.side_effect=(
                     MetaError('source_unavailable','合成上游超时') if status=='source_unavailable' else None)
-                self.repo.song_metrics.current.return_value=snapshot
+                self.repo.song_metrics.current.return_value=replace(snapshot,source=replace(snapshot.source,server=server))
                 args=dict(queries=[dict(resource_server=server,order_by=[dict(field='duration_seconds',direction='asc')],limit=1)])
                 if seq==2:args['queries'][0]['difficulty']=None
                 self.client.request.side_effect=[self.result(calls=(ToolCall('metrics','song_metrics',json.dumps(args)),)),
@@ -2645,7 +2651,7 @@ class ChatAgentTests(Fixture, unittest.IsolatedAsyncioTestCase):
                 output=json.loads(next(row['content'] for row in bodies[-1]['messages'] if row['role']=='tool'))
                 self.assertEqual(output['status'],status)
                 if status=='invalid_argument':self.repo.song_metrics.current.assert_not_called()
-                else:self.repo.song_metrics.current.assert_called_once_with('intl')
+                else:self.repo.song_metrics.current.assert_called_once_with(server)
                 if status=='ok':self.assertIn('合成短曲',str(output['data']))
                 self.event(plan,'intent');self.event(plan,'ack')
 
