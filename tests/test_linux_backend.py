@@ -16,7 +16,7 @@ from deploy.linux_backend import (GIB, JOBS, LinuxBackend, Rejected, Deferred,
                                  extract_archive, fingerprints, tree_digest)
 from deploy.linux_backend import environment_digest, recover_engine, validate_config
 from deploy.linux_backend import run_bounded, freeze_release, status_document, human_status, main
-from deploy.linux_backend import knowledge_bundle_spec
+from deploy.linux_backend import knowledge_bundle_spec, backup_file_budget
 from deploy.linux_updater import Engine, Release, RunResult, atomic_json
 
 
@@ -1003,6 +1003,97 @@ class LinuxBackendTests(unittest.TestCase):
         self.assertEqual(archive.read_bytes(), b'code archive')
         self.assertEqual(self.calls[0][1]['budget_root'], self.backend.backups)
         self.assertEqual(self.calls[0][1]['budget_file'], archive)
+        self.assertEqual(self.calls[0][1]['file_budget_bytes'], 2 * GIB)
+
+    def test_backup_file_budget_is_explicit_and_strict(self):
+        self.assertEqual(backup_file_budget({}), 2 * GIB)
+        for value in (2 * GIB, 3 * GIB, 4 * GIB):
+            self.assertEqual(backup_file_budget({'backup_file_budget_bytes': value}), value)
+        for value in (None, True, '3221225472', 3.0 * GIB, 0, 2 * GIB - 1, 4 * GIB + 1, {}):
+            with self.subTest(value=value):
+                config = dict(self.config, backup_file_budget_bytes=value)
+                with self.assertRaisesRegex(Rejected, 'backup_file_budget_configuration_invalid'):
+                    LinuxBackend(config)
+                with self.assertRaisesRegex(Rejected, 'backup_file_budget_configuration_invalid'):
+                    validate_config(config)
+
+    def test_configured_budget_reaches_code_and_data_tar(self):
+        self.backend = LinuxBackend(dict(self.config, backup_file_budget_bytes=3 * GIB))
+        release = self.candidate()
+        (self.base / 'data').mkdir()
+        def runner(argv, **kwargs):
+            self.calls.append((argv, kwargs))
+            kwargs['budget_file'].write_bytes(b'synthetic archive')
+        self.backend.run = runner
+        archive = Path(self.backend.backup(self.baseline, release))
+        self.state(transaction=dict(phase='stopping', backup=str(archive)))
+        self.backend._snapshot_stopped_data()
+        self.assertEqual([c[1]['file_budget_bytes'] for c in self.calls], [3 * GIB, 3 * GIB])
+
+    def test_data_preflight_rejects_before_backup_is_published(self):
+        unit = 64 * 1024
+        release = self.candidate()
+        (self.base / 'data').mkdir()
+        (self.base / 'data/history').write_bytes(b'x' * (2 * unit))
+        def runner(argv, **kwargs):
+            kwargs['budget_file'].write_bytes(b'code')
+        with patch('deploy.linux_backend.GIB', unit):
+            self.backend = LinuxBackend(self.config)
+            self.backend.run = runner
+            with self.assertRaisesRegex(Rejected, 'data_backup_file_budget'):
+                self.backend.backup(self.baseline, release)
+        self.assertEqual(list(self.backend.backups.iterdir()), [])
+        self.assertEqual((self.base / 'data/history').stat().st_size, 2 * unit)
+
+    def test_injected_snapshot_runner_cannot_bypass_final_size_limit(self):
+        unit = 64 * 1024
+        with patch('deploy.linux_backend.GIB', unit):
+            self.backend = LinuxBackend(self.config)
+            archive = self.backend.backups / 'owned.tar'
+            archive.write_bytes(b'preserved code')
+            atomic_json(archive.with_suffix('.json'), dict(owner='taki-linux-updater-v1', archive=archive.name))
+            (self.base / 'data').mkdir()
+            self.state(transaction=dict(phase='stopping', backup=str(archive)))
+            def runner(argv, **kwargs):
+                kwargs['budget_file'].write_bytes(b'x' * (2 * unit + 1))
+            self.backend.run = runner
+            with self.assertRaisesRegex(Rejected, 'backup_disk_budget'):
+                self.backend._snapshot_stopped_data()
+        self.assertEqual(archive.read_bytes(), b'preserved code')
+        self.assertNotIn('data_archive', json.loads(archive.with_suffix('.json').read_text()))
+        self.assertFalse(archive.with_name('owned-data.tar').exists())
+
+    def test_snapshot_budget_failure_rolls_back_code_but_not_forward_only_data(self):
+        release = self.candidate()
+        (self.base / 'data').mkdir()
+        original = b'x' * (128 * 1024)
+        (self.base / 'data/history').write_bytes(original)
+        archive = self.backend.backups / 'owned.tar'
+        archive.write_bytes(b'preserved code')
+        atomic_json(archive.with_suffix('.json'), dict(owner='taki-linux-updater-v1', archive=archive.name))
+        for forward_only in (False, True):
+            with self.subTest(forward_only=forward_only), patch('deploy.linux_backend.GIB', 64 * 1024):
+                self.backend = LinuxBackend(self.config)
+                self.backend.run = self.runner
+                self.backend._service = Mock(return_value=dict(MainPID='0', ActiveState='inactive'))
+                self.backend.activate = Mock()
+                self.backend.start = Mock()
+                self.backend.healthy = Mock(return_value=True)
+                self.backend.cleanup = Mock()
+                self.state(version=2 if forward_only else 1, transaction=dict(commit=B, phase='backing_up', previous=asdict(self.baseline),
+                    candidate=asdict(release), compatible=True, backup=str(archive),
+                    forward_only=forward_only, migration_backup=str(archive)))
+                engine = Engine(self.backend.state, self.backend)
+                result = engine._switch(engine.load_state(), self.baseline, release)
+                self.assertEqual(result.status, 'paused' if forward_only else 'rolled_back')
+                if forward_only:
+                    self.backend.activate.assert_not_called()
+                    self.backend.start.assert_not_called()
+                else:
+                    self.backend.activate.assert_called_once_with(self.baseline)
+                    self.backend.start.assert_called_once()
+                self.assertIn(B, engine.load_state()['failed'])
+                self.assertEqual((self.base / 'data/history').read_bytes(), original)
 
     def test_stopped_data_snapshot_is_separate_and_never_restored(self):
         archive = self.backend.backups / "owned.tar"
@@ -1023,6 +1114,7 @@ class LinuxBackendTests(unittest.TestCase):
         self.assertEqual((self.base / 'data/cache.json').read_text(), 'live data')
         self.assertNotIn('--extract', self.calls[0][0])
         self.assertEqual(self.calls[0][1]['budget_file'], self.backend.backups / 'owned-data.tar')
+        self.assertEqual(self.calls[0][1]['file_budget_bytes'], 2 * GIB)
         self.state(transaction=dict(phase="rollback_stopping", backup=str(archive)))
         self.backend._snapshot_stopped_data()
         self.assertEqual(len(self.calls), 1)
@@ -1238,6 +1330,21 @@ class BoundedProcessTests(unittest.TestCase):
                 with self.assertRaisesRegex(Rejected, 'candidate_disk_budget'):
                     run_bounded([sys.executable, '-c', 'pass'], timeout=5,
                                 budget_root=root, budget_file=root / 'not-created.tar')
+
+    def test_custom_archive_budget_does_not_expand_other_budgets(self):
+        with tempfile.TemporaryDirectory() as folder, patch('deploy.linux_backend.GIB', 1024):
+            root = Path(folder)
+            archive = root / 'current.tar'
+            command = [sys.executable, '-c',
+                       "import pathlib,sys; pathlib.Path(sys.argv[1]).write_bytes(b'x' * 2500)", str(archive)]
+            run_bounded(command, timeout=5, budget_root=root, budget_file=archive, file_budget_bytes=3072)
+            with self.assertRaisesRegex(Rejected, 'candidate_disk_budget'):
+                run_bounded(command, timeout=5, budget_root=root, budget_file=archive)
+            with self.assertRaises(ValueError):
+                run_bounded(command, budget_root=root, file_budget_bytes=3072)
+            with patch('deploy.linux_backend.shutil.disk_usage', return_value=Mock(free=2047)):
+                with self.assertRaisesRegex(Rejected, 'candidate_disk_budget'):
+                    run_bounded(command, timeout=5, budget_root=root, budget_file=archive, file_budget_bytes=3072)
 
     def test_candidate_directory_still_has_a_total_size_budget(self):
         with tempfile.TemporaryDirectory() as folder:
