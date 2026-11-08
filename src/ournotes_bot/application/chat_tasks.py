@@ -52,6 +52,7 @@ class TaskContexts:
         self.clock, self.window, self.capacity = clock, window, capacity
         self.tasks = OrderedDict()
         self.paused = {}
+        self.topic_cutoffs = {}
         self.generations = OrderedDict()
 
     @staticmethod
@@ -63,6 +64,20 @@ class TaskContexts:
         for tasks in (self.tasks, self.paused):
             for key, task in list(tasks.items()):
                 if now - task.updated >= self.window: tasks.pop(key, None)
+        for key, (_, _, updated) in list(self.topic_cutoffs.items()):
+            if now - updated >= self.window: self.topic_cutoffs.pop(key, None)
+
+    def topic_cutoff(self, request, valid_source, transition):
+        if transition == 'switch': return request.message_id, request.timestamp_ms
+        if transition == 'resume': return None
+        key = self.key(request)
+        cutoff = self.topic_cutoffs.get(key)
+        if cutoff is None: return None
+        mid, stamp, updated = cutoff
+        if self.clock() - updated >= self.window or not valid_source(mid, stamp):
+            self.topic_cutoffs.pop(key, None)
+            return None
+        return mid, stamp
 
     def begin(self, request, valid_source, *, inherit=True, transition=''):
         self.sweep()
@@ -81,6 +96,7 @@ class TaskContexts:
         while len(self.generations) > self.capacity:
             old, _ = self.generations.popitem(last=False)
             self.tasks.pop(old, None); self.paused.pop(old, None)
+            self.topic_cutoffs.pop(old, None)
         task = deepcopy(previous) if previous else ResearchTask()
         task.revision = generation
         task.transition = transition
@@ -91,26 +107,35 @@ class TaskContexts:
     def commit(self, request, task, delivery):
         key = self.key(request)
         if self.generations.get(key) != task.revision: return False
+        now = self.clock()
         if task.transition == 'switch':
+            self.topic_cutoffs[key] = (request.message_id, request.timestamp_ms, now)
             previous = self.tasks.pop(key, None)
             if previous: self.paused[key] = previous
+        elif task.transition == 'resume':
+            self.topic_cutoffs.pop(key, None)
+        elif key in self.topic_cutoffs:
+            mid, stamp, updated = self.topic_cutoffs[key]
+            if now - updated < self.window: self.topic_cutoffs[key] = (mid, stamp, now)
+            else: self.topic_cutoffs.pop(key, None)
         if not task.goal: return False
         if task.transition == 'resume': self.paused.pop(key, None)
         saved = deepcopy(task)
         retained = set(saved.targets) | {ref for item in saved.requirements for ref in item['entity_refs']}
         saved.entities = {ref: identity for ref, identity in saved.entities.items() if ref in retained}
         saved.readings = {ref: values for ref, values in saved.readings.items() if ref in retained}
-        saved.updated = self.clock(); saved.delivery = delivery
+        saved.updated = now; saved.delivery = delivery
         self.tasks[key] = saved; self.tasks.move_to_end(key)
         while len(self.tasks) > self.capacity: self.tasks.popitem(last=False)
         return True
 
-    def clear(self, scope, user_id=None):
+    def clear(self, scope, user_id=None, *, clear_topic=True):
         scope = tuple(scope.values()) if isinstance(scope, dict) else scope
         for key in list(self.generations):
             if key[0] == scope and (user_id is None or key[1] == user_id):
                 self.generations[key] += 1
                 self.tasks.pop(key, None); self.paused.pop(key, None)
+                if clear_topic: self.topic_cutoffs.pop(key, None)
 
     def status(self, scope):
         self.sweep()

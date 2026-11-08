@@ -221,7 +221,7 @@ class ChatAgent:
         self.proactive=ProactiveChat(self)
         self.recovery=ChatRecovery(self)
 
-    async def maybe_summary(self,work,deadline):
+    async def maybe_summary(self,work,deadline,*,after_ms=None):
         runtime=self.runtime
         # Low priority: ordinary replies have finished first, and this task may
         # use only spare permits/time with no queued request waiting for a slot.
@@ -230,6 +230,7 @@ class ChatAgent:
         policy=self.services.policy(work.model_snapshot,work.request.conversation_id)
         if policy is None or not policy.summary.enabled:return
         rows=self.store.recent(work.request.scope,limit=48,max_bytes=24576)
+        if after_ms is not None:rows=[row for row in rows if row['timestamp_ms']>after_ms]
         candidate=summary_candidate(rows,[summary['summary_id'].removeprefix('summary/') for summary in self.store.summaries(work.request.scope)])
         if candidate is None:return
         job=service_request_id('summary',runtime.backend.instance_id,runtime.backend.app_id,policy.group_id,candidate.source_key)
@@ -517,7 +518,7 @@ class ChatAgent:
         if name=='research_task':
             if args['action']=='cancel':
                 if not work.quote_preview_reference and task.transition!='switch':
-                    self.tasks.clear(work.request.scope,work.request.user_id)
+                    self.tasks.clear(work.request.scope,work.request.user_id,clear_topic=False)
                     task.revision=self.tasks.generations.get(self.tasks.key(work.request),task.revision)
                 task.goal='';task.requirements=[];task.targets=[];task.readings={};task.knowledge=False
                 self.task_event(work,'cancel')
@@ -587,6 +588,12 @@ class ChatAgent:
         user_question=question
         quote_focus=(work.proactive is None and has_quote and not work.chat_additions
                      and not work.chat_addition_images and quote_followup(question))
+        task_enabled=work.proactive is None or getattr(work,'continuation',False)
+        transition=task_transition(user_question) if task_enabled and not quote_focus else ''
+        def valid_source(mid,stamp):
+            return self.store.source_valid(request.scope,mid,stamp)
+        topic_cutoff=self.tasks.topic_cutoff(request,valid_source,transition)
+        summary_cutoff=topic_cutoff[1] if topic_cutoff else None
         if quote_focus and not (preview or context_request.reference or request.attachments):
             text=('我读不到这条引用里的图片，请把原图再发一次' if request.quote_hint=='image'
                   else '我读不到这条引用，请把原文或图片再发一次')
@@ -609,10 +616,21 @@ class ChatAgent:
             focus_ids={request.message_id}
             if context_request.reference:focus_ids.add(context_request.reference['message_id'])
             history=[item for item in history if json.loads(item['content']).get('message_id') in focus_ids]
+        elif topic_cutoff and work.proactive is None:
+            # An old assistant reply can carry the old summary as a retention source.
+            # Keep the switch itself, the current turn and any explicit reference.
+            rows=[(item,json.loads(item['content'])) for item in history]
+            current_ids={topic_cutoff[0],request.message_id}|{
+                row['message_id'] for item,row in rows if item['role']=='user' and row['timestamp_ms']>summary_cutoff}
+            reference_id=context_request.reference['message_id'] if context_request.reference else None
+            history=[item for item,row in rows if row['message_id'] in current_ids or row['message_id']==reference_id or
+                     item['role']=='assistant' and row.get('reply_to') in current_ids]
         history_ids={json.loads(item['content']).get('message_id') for item in history}
         history.extend({'role':'user','content':json.dumps(asdict(row),ensure_ascii=False)}
                        for row in getattr(work,'chat_additions',()) if row.message_id not in history_ids)
-        summaries=[] if quote_focus or (work.proactive is not None and work.proactive.followup is not None) else self.store.summaries(work.request.scope,limit=1)
+        summaries=[] if (transition=='switch' or quote_focus or
+                         work.proactive is not None and work.proactive.followup is not None) else self.store.summaries(
+                             request.scope,limit=1,after_ms=summary_cutoff)
         summary_rows=[]
         work.public_question=question
         self.privacy_material(work,[json.loads(item['content']) for item in history if 'message_id' in json.loads(item['content'])])
@@ -621,8 +639,9 @@ class ChatAgent:
             recent_ids={json.loads(item['content']).get('message_id') for item in history}
             if not set(summary['source_message_ids'])<=recent_ids:
                 summary_rows=self.store.read(work.request.scope,summary['source_message_ids'])['messages']
-                history.insert(0,{'role':'user','content':json.dumps({'derived_summary':summary,
-                    'note':'本群已参与对话的派生摘要；可按来源消息ID读取原文，不证明外部事实。'},ensure_ascii=False)})
+                if len(summary_rows)==len(summary['source_message_ids']):
+                    history.insert(0,{'role':'user','content':json.dumps({'derived_summary':summary,
+                         'note':'本群已参与对话的派生摘要；可按来源消息ID读取原文，不证明外部事实。'},ensure_ascii=False)})
         # A validated explicit reference to a business display is conversation
         # material, never a new system message or a substitute source lease.
         if work.anchor:
@@ -678,7 +697,6 @@ class ChatAgent:
         if staged:
             natural_prompt+='\n本轮回应消息：'+work.request.message_id+'，发言人：'+work.request.user_id+'。围绕这条消息与相邻上下文接话，保留发言者和引用关系，前面的讨论用于理解当前话题。'
             prompt+='\n最终只输出包含 participation、text、delay_seconds 三个字段的 JSON 对象，不加代码围栏或说明。participation 为 reply、skip 或 defer；text 固定为空字符串；仅 defer 的 delay_seconds 为 2 至 5 的整数，其余为 null。选择 reply 后另一步直接写群聊正文，本次不拟正文。'
-        self.bind_memory(work,summary_rows)
         visible=await self.image_messages(work,history,deadline,quote_preview=preview)
         quote_status=None
         if work.unavailable_quote_image or request.quote_hint=='image' and not (context_request.reference and
@@ -707,12 +725,9 @@ class ChatAgent:
         coverage_checked=False
         web_citations={}
         site=SiteLookup(runtime.backend.repository,chat_query_question(question),allow_rewrite=True,max_operations=self.budget.tool_calls)
-        task_enabled=work.proactive is None or getattr(work,'continuation',False)
         named=(explicit_entities(runtime.backend.repository,user_question)
                if task_enabled and requested_server(chat_query_question(user_question)) in (None,'jp') else {})
-        transition=task_transition(user_question) if not quote_focus else ''
-        work.chat_task=(self.tasks.begin(request,lambda mid,stamp:self.store.source_valid(request.scope,mid,stamp),
-                                         inherit=not quote_focus,transition=transition)
+        work.chat_task=(self.tasks.begin(request,valid_source,inherit=not quote_focus,transition=transition)
                         if retain_turn and task_enabled else ResearchTask())
         if task_enabled:
             work.chat_task.entities.update(named)
@@ -758,6 +773,7 @@ class ChatAgent:
             if message['role']=='system':continue
             data=json.loads(message['content'])
             if {'research_task','current_entities'}.intersection(data):continue
+            if 'derived_summary' in data:self.bind_memory(work,summary_rows)
             content=message['content']
             if data.pop('quote_preview',None) is not None:
                 content=json.dumps(data,ensure_ascii=False)
@@ -844,7 +860,7 @@ class ChatAgent:
                     runtime.check(work,deadline,leases)
                     if work.proactive is None and retain_turn:
                         self.audit(self.store.generated,work.delivery,text)
-                        await self.maybe_summary(work,deadline)
+                        await self.maybe_summary(work,deadline,after_ms=summary_cutoff)
                     runtime.check(work,deadline,leases)
                     return PreparedReply(text,parse_origin='model',processing_route='model',business_status='success',
                                          evidence=leases,evidence_deadline=work.content_deadline if leases else None)

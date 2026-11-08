@@ -2561,6 +2561,32 @@ class ResearchContextTests(Fixture,unittest.TestCase):
         task=store.begin(request,lambda *_:True);task.goal='任务';store.commit(request,task,'s')
         now[0]=901;self.assertEqual(store.status(request.scope)['active_tasks'],0)
 
+    def test_topic_cutoff_requires_ack_and_follows_actor_expiry_and_revocation(self):
+        from types import SimpleNamespace
+        from ournotes_bot.application.chat_tasks import TaskContexts
+        now=[0];contexts=TaskContexts(clock=lambda:now[0],window=10,capacity=2)
+        request=SimpleNamespace(scope={'instance':'i','group':'g'},user_id='u',message_id='switch',timestamp_ms=15)
+        valid=lambda *_:True
+        switch=contexts.begin(request,valid,transition='switch')
+        self.assertEqual(contexts.topic_cutoff(request,valid,'switch'),('switch',15))
+        self.assertIsNone(contexts.topic_cutoff(request,valid,''))
+        contexts.commit(request,switch,'ack')
+        self.assertEqual(contexts.topic_cutoff(request,valid,''),('switch',15))
+        other=SimpleNamespace(**{**vars(request),'user_id':'other'})
+        self.assertIsNone(contexts.topic_cutoff(other,valid,''))
+        now[0]=9
+        contexts.commit(request,contexts.begin(request,valid),'more')
+        now[0]=18
+        self.assertEqual(contexts.topic_cutoff(request,valid,''),('switch',15))
+        self.assertIsNone(contexts.topic_cutoff(request,valid,'resume'))
+        self.assertIsNone(contexts.topic_cutoff(request,lambda *_:False,''))
+        contexts.commit(request,contexts.begin(request,valid,transition='switch'),'again')
+        now[0]=28
+        self.assertIsNone(contexts.topic_cutoff(request,valid,''))
+        contexts.commit(request,contexts.begin(request,valid,transition='switch'),'clear')
+        contexts.clear(request.scope,'u')
+        self.assertIsNone(contexts.topic_cutoff(request,valid,''))
+
     def test_chat_default_jp_leaves_explicit_state_scope_and_legacy_unchanged(self):
         from ournotes_bot.natural_query.native_tools import chat_query_question,chat_background_only,scope_for
         from ournotes_bot.domain.model_calls import ModelError
@@ -3571,6 +3597,59 @@ class ChatResearchTaskTests(Fixture,unittest.IsolatedAsyncioTestCase):
                 output=json.loads(next(row['content'] for row in bodies[-1]['messages'] if row['role']=='tool'))
                 self.assertEqual(output['status'],'query_entity_mismatch')
                 self.assertEqual(agent.tasks.status(scope)['active_tasks'],0)
+
+    async def test_topic_cutoff_filters_old_summary_but_retains_explicit_memory(self):
+        from types import SimpleNamespace
+        from ournotes_bot.application.backend_protocol import PROTOCOL,Request
+        self.catalog();bodies=self.capture_native_bodies();agent=self.backend.model_runtime.agent
+        self.now=(int(self.now*1000)-10)/1000+.0005
+        source_id='old-summary-source'
+        raw={**self.request(source_id,1),'timestamp_ms':int(self.now*1000)-1_200_000}
+        source=Request.parse(raw,'fixture','app',self.now)
+        seed=SimpleNamespace(request=source,delivery='summary-seed',model_snapshot=self.snapshot)
+        agent.store.begin(seed,[{'role':'user','content':json.dumps(dict(message_id=source_id,speaker_id='u1',
+            text='原话题是选哪两首歌',timestamp_ms=source.timestamp_ms,role='user',display_name='',reply_to=None))}])
+        agent.store.put_summary(source.scope,'fixture-summary','原话题是比较歌曲',[source_id])
+        seq=0
+        async def turn(body,*,old_summary,ack=True,calls=()):
+            nonlocal seq
+            seq+=1;self.now+=.05
+            self.client.request.side_effect=[self.result(calls=calls),self.result('合成答复。')] if calls else [self.result('合成答复。')]
+            index=len(bodies)
+            plan,attempts=await self.prepare_native('/聊 '+body,seq=seq)
+            self.assertEqual(len(attempts),2 if calls else 1)
+            rows=[json.loads(row['content']) for row in bodies[index]['messages'] if row['role']=='user']
+            self.assertEqual(any('derived_summary' in row for row in rows),old_summary)
+            work=self.backend.works[plan['delivery_id']]
+            self.assertEqual(source_id in work.memory_sources,old_summary or bool(calls))
+            self.event(plan,'intent')
+            if not ack:
+                self.backend.apply_event(plan['delivery_id'],dict(protocol=PROTOCOL,request_id=plan['request_id'],
+                    plan_version=1,gateway_epoch='e1',event='ack',part_id=plan['parts'][0]['id'],attempt_id='a1',
+                    result='failure',message_id=None))
+                return None
+            return self.event(plan,'ack')['parts'][0]['message']
+
+        await turn('继续刚才的讨论',old_summary=True)
+        await turn('换个话题，先聊排练',old_summary=False,ack=False)
+        await turn('那你继续说',old_summary=True)
+        switched=await turn('换个话题，今天排练几点开门',old_summary=False)
+        followup=await turn('那呢？',old_summary=False)
+        self.assertIn(switched,[json.loads(row['content']).get('message_id') for row in bodies[-1]['messages']
+                                if row['role']=='assistant'])
+        explicit=await turn('另查一下群记忆里的原话',old_summary=False,
+                            calls=(self.call('group_memory_read',message_ids=[source_id]),))
+        output=json.loads(next(row['content'] for row in bodies[-1]['messages'] if row['role']=='tool'))
+        self.assertEqual([row['message_id'] for row in output['messages']],[source_id])
+        self.current_user='u2'
+        await turn('我还在聊原来的两首歌',old_summary=True)
+        self.current_user='u1'
+        await turn('回到刚才的话题',old_summary=True)
+        await turn('那两首呢？',old_summary=True)
+        self.assertFalse(agent.tasks.tasks)
+        agent.forget(source.scope,[source_id])
+        remaining={row['message_id'] for row in agent.store.read(source.scope,[switched,followup,explicit])['messages']}
+        self.assertEqual(remaining,{switched,followup})
 
     async def test_knowledge_fallback_to_haneoka_has_sources_and_finite_diagnostics(self):
         self.catalog();bodies=self.capture_native_bodies()

@@ -411,7 +411,7 @@ class ChatStore:
             self._changed()
         return {'summary_id':sid,'source_message_ids':ids,'expires_at_ms':min(r['timestamp_ms'] for r in sources)+RETENTION_SECONDS*1000}
 
-    def summaries(self,scope,query='',*,limit=8):
+    def summaries(self,scope,query='',*,limit=8,after_ms=None):
         self.sweep();key=self._scope(scope)
         if type(limit) is not int or not 1<=limit<=20: raise ValueError('chat_memory_limit')
         terms=search_terms(query) if query else ()
@@ -421,8 +421,10 @@ class ChatStore:
             ids=[r[0] for r in self.db.execute('SELECT source_message_id FROM memory_summary_sources WHERE scope=? AND summary_id=?',(key,row['summary_id']))]
             sources=self.read(scope,ids)['messages'] if ids else []
             if len(sources)!=len(ids) or not sources: continue
+            oldest=min(r['timestamp_ms'] for r in sources)
+            if after_ms is not None and oldest<=after_ms: continue
             rows.append(dict(summary_id=row['summary_id'],text=row['text'],source_message_ids=ids,
-                             expires_at_ms=min(r['timestamp_ms'] for r in sources)+RETENTION_SECONDS*1000,source_kind='derived_summary'))
+                             expires_at_ms=oldest+RETENTION_SECONDS*1000,source_kind='derived_summary'))
             if len(rows)>=limit: break
         return rows
 

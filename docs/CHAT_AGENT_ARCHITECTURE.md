@@ -36,6 +36,8 @@
 
 `ChatContext` 只记录本实例参与的触发消息和成功 ACK 回复。作用域是 instance/app/platform/kind/conversation；保留 message_id、可信 speaker_id、可选显示名、时间、reply_to 和 role。用户正文与名称中的 system／assistant 标签不改变 role。每群最多 48 条、24 KiB 文本、15 分钟，实例最多 1024 群／8 MiB，旧交流从头裁剪；重启从有效参与记忆恢复。月度检索和派生摘要按来源删除／到期，不建立跨群个人画像，见 [C3](CHAT_MEMORY_C3.md)。
 
+明确换题会在当前回合过滤换题前的自动摘要和近期旧对话，显式引用仍可使用。成功 ACK 后，在同一会话和发言者的进程内续接窗口保持边界，明确回题可恢复原上下文。显式群记忆工具仍按作用域和来源权限读取，使用的原文继续参与删除传播。
+
 `ChatStore` 在后端 state-dir 下独占 `chat-v1.sqlite3`，schema `chat/1` 且绑定实例／应用。`runs` 保存参与上下文、可见生成正文、触发类型、人格版本、模型配置版本和最终状态；`events` 保存 attempt 引用、用量状态、耗时、工具名称／结果状态／来源元数据及逐段交付。无工具参数、完整 provider JSON、密钥、隐藏推理或网页全文。普通未参与消息不进入这条链路。启动与每次触发清理 30 日到期记录，整个片段以最早源消息时间到期，重复引用不续期；SQLite secure_delete 开启。提供方费用事实仍由独立 UsageLedger 拥有。
 
 审计库后续写入失败以有限错误日志和进程内 audit_failures 计数诊断，不中断已经结算的模型结果、ACK、许可撤销或交付收尾；实例绑定／schema 错误仍在启动时明确失败。业务查询引用从锚点的冻结展示页读取，兼容 QueryContext 与 DeliveryCursor。
