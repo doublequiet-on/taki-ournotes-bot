@@ -1,6 +1,7 @@
 // C5 independent validation and recovery boundary. No QQ or product identity authority.
 import { readFileSync, lstatSync, openSync, closeSync, writeFileSync, renameSync, unlinkSync, fsyncSync } from 'node:fs'
 import { join } from 'node:path'
+import { isDeepStrictEqual } from 'node:util'
 import { createHash, randomUUID } from 'node:crypto'
 
 export type Scope = { kind:'none' } | { kind:'all' } | { kind:'selected'; ids:string[] }
@@ -17,8 +18,8 @@ export interface ScopeDecision { outcome:'allow'|'deny'|'manual'; reason:string;
 export interface ScopeAuthority {
   // External expectation versus candidate binding, provided by 09.
   identity(binding:unknown):ScopeDecision
-  // Must consult current authority outside the restored candidate. Policy is not chosen here.
-  approval(candidate:Readonly<ScopeDocument>, digest:string):ScopeDecision
+  // Must consult current authority outside the restored candidate; identity is the current C1 result.
+  approval(candidate:Readonly<ScopeDocument>, digest:string, identity?:Readonly<ScopeDecision>):ScopeDecision
 }
 function scope(value:unknown):Scope {
   const v=value as Scope
@@ -51,6 +52,8 @@ export class ScopeStore {
     if(raw.length>131072)throw Error('scope_document_invalid')
     return {document:validateScopeDocument(JSON.parse(raw.toString('utf8'))),digest:createHash('sha256').update(raw).digest('hex')}
   }
+  // Trusted management review input only; never implies permission. Throws on unavailable data.
+  readCandidate(){return this.read()}
   inspect():{decision:ScopeDecision;document?:ScopeDocument;digest?:string} {
     let candidate:ReturnType<ScopeStore['read']>
     try{candidate=this.read()}catch(e){return {decision:{outcome:'deny',reason:(e as NodeJS.ErrnoException).code==='ENOENT'?'scope_missing':'scope_unavailable',evidence:''}}}
@@ -58,7 +61,7 @@ export class ScopeStore {
     try {
       const identity=this.authority.identity(structuredClone(candidate.document.binding))
       if(identity.outcome!=='allow')return {...candidate,decision:identity}
-      const decision=this.authority.approval(structuredClone(candidate.document),candidate.digest)
+      const decision=this.authority.approval(structuredClone(candidate.document),candidate.digest,identity)
       if(!['allow','deny','manual'].includes(decision.outcome)||!decision.evidence)throw Error('authority_invalid')
       return {...candidate,decision:{...decision,identity_evidence:identity.evidence}}
     }catch{return {...candidate,decision:{outcome:'deny',reason:'authority_unavailable',evidence:candidate.digest}}}
@@ -93,4 +96,82 @@ export class ScopeStore {
     }catch(e){if((e as NodeJS.ErrnoException).code==='ENOENT')return null;throw e}
   }
   recovery(){return this.inspect().decision}
+}
+
+/** Trusted composition supplies fresh inputs outside the recovery tree. Deletion
+ * evidence comes from 07's current authority/check, never a restored journal hash.
+ * This object is not accepted from Console JSON or persisted as an approval.
+ */
+export interface ScopeApprovalReview {
+  document:ScopeDocument
+  digest:string
+  revocation_generation:number
+  identity_evidence:string
+  deletion_evidence:string
+}
+
+/** Explicit human scope review, independent of login and 10's recovery review.
+ * No persistence, RPC, authority service or automatic approval. Call revoke before
+ * mutations/disconnect; every read rechecks the trusted current source as well.
+ */
+export class ManualScopeApproval {
+  private readonly epoch=randomUUID()
+  private generation=0
+  private highestRevocation=0
+  private current?:ScopeApprovalReview
+  private ticket?:object
+  private approved=false
+  constructor(private readCurrent:()=>ScopeApprovalReview|undefined){}
+  revoke():void {this.generation++;this.ticket=undefined;this.approved=false;this.current=undefined}
+  private refresh():ScopeApprovalReview|undefined {
+    let next:ScopeApprovalReview|undefined
+    try {
+      const value=this.readCurrent()
+      if(value) {
+        const hash=(v:unknown)=>typeof v==='string'&&/^[a-f0-9]{64}$/.test(v)
+        if(Object.keys(value).sort().join()!=='deletion_evidence,digest,document,identity_evidence,revocation_generation'
+          ||!Number.isSafeInteger(value.revocation_generation)||value.revocation_generation<1
+          ||value.revocation_generation<this.highestRevocation
+          ||![value.digest,value.identity_evidence,value.deletion_evidence].every(hash))throw Error('scope_review_invalid')
+        next={...structuredClone(value),document:validateScopeDocument(value.document)}
+        this.highestRevocation=value.revocation_generation
+      }
+    }catch{next=undefined}
+    if(!isDeepStrictEqual(next,this.current)) {this.revoke();this.current=next}
+    return next
+  }
+  begin():{ticket:object;review:ScopeApprovalReview}|undefined {
+    this.revoke()
+    const review=this.refresh()
+    if(!review)return undefined
+    this.ticket={}
+    return {ticket:this.ticket,review:structuredClone(review)}
+  }
+  // Only the authenticated management action after human review may call confirm.
+  // Boolean/serialized/replayed tickets cannot replace the in-process capability.
+  confirm(ticket:object):boolean {
+    this.refresh()
+    if(!this.ticket||ticket!==this.ticket)return false
+    this.ticket=undefined;this.approved=true;this.generation++
+    return true
+  }
+  private revision():string {
+    return createHash('sha256').update(JSON.stringify([this.epoch,this.generation,this.current])).digest('hex')
+  }
+  // Synchronous current generation for 10 revisions.scope; not a permission token.
+  read=():{revision:string;approved:boolean;revocation_generation?:number}=>{
+    this.refresh()
+    return {revision:this.revision(),
+      approved:this.approved,revocation_generation:this.current?.revocation_generation}
+  }
+  approval:ScopeAuthority['approval']=(candidate,digest,identity)=>{
+    const current=this.refresh(),evidence=this.revision()
+    if(!current||!this.approved)return {outcome:'manual',reason:'scope_manual_review_required',evidence}
+    if(digest!==current.digest||!isDeepStrictEqual(candidate,current.document)
+      ||identity?.outcome!=='allow'||identity.evidence!==current.identity_evidence) {
+      this.revoke()
+      return {outcome:'deny',reason:'scope_review_mismatch',evidence:this.revision()}
+    }
+    return {outcome:'allow',reason:'scope_manually_approved',evidence}
+  }
 }
