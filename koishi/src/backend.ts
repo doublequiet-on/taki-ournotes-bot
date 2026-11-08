@@ -134,6 +134,8 @@ export class BackendClient implements DeliveryEvents {
       app_id: input.appId, platform: input.platform, kind: input.kind, conversation_id: input.conversationId,
       user_id: input.userId, message_id: input.messageId, timestamp_ms: input.timestampMs, body: input.body,
       ...(input.quotedText===undefined ? {} : {quoted_text:input.quotedText}),
+      ...(input.quoteHint && this.readiness?.execution_profile==='personal-v1'
+        && this.readiness.features.includes('chat_quote_hint_v1') ? {quote_hint:input.quoteHint} : {}),
       ...(input.senderName===undefined ? {} : {sender_name:input.senderName}),
       ...(input.attachments===undefined ? {} : {attachments:input.attachments}),
       ...(input.proactiveId===undefined ? {} : {proactive_id:input.proactiveId}),

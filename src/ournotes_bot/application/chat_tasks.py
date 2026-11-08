@@ -26,6 +26,7 @@ class ResearchTask:
     updated: float = 0
     revision: int = 0
     delivery: str = ''
+    transition: str = ''
 
     def coverage(self):
         rows = []
@@ -50,6 +51,8 @@ class TaskContexts:
     def __init__(self, *, clock=time.monotonic, window=900, capacity=1024):
         self.clock, self.window, self.capacity = clock, window, capacity
         self.tasks = OrderedDict()
+        self.paused = {}
+        self.topic_cutoffs = {}
         self.generations = OrderedDict()
 
     @staticmethod
@@ -57,47 +60,82 @@ class TaskContexts:
         return tuple(request.scope.values()), request.user_id
 
     def sweep(self):
-        for key, task in list(self.tasks.items()):
-            if self.clock() - task.updated >= self.window: self.tasks.pop(key, None)
+        now = self.clock()
+        for tasks in (self.tasks, self.paused):
+            for key, task in list(tasks.items()):
+                if now - task.updated >= self.window: tasks.pop(key, None)
+        for key, (_, _, updated) in list(self.topic_cutoffs.items()):
+            if now - updated >= self.window: self.topic_cutoffs.pop(key, None)
 
-    def begin(self, request, valid_source):
+    def topic_cutoff(self, request, valid_source, transition):
+        if transition == 'switch': return request.message_id, request.timestamp_ms
+        if transition == 'resume': return None
+        key = self.key(request)
+        cutoff = self.topic_cutoffs.get(key)
+        if cutoff is None: return None
+        mid, stamp, updated = cutoff
+        if self.clock() - updated >= self.window or not valid_source(mid, stamp):
+            self.topic_cutoffs.pop(key, None)
+            return None
+        return mid, stamp
+
+    def begin(self, request, valid_source, *, inherit=True, transition=''):
         self.sweep()
         key = self.key(request)
-        previous = self.tasks.get(key)
+        source = self.paused if transition == 'resume' and key in self.paused else self.tasks
+        previous = source.get(key) if inherit and transition != 'switch' else None
         # ChatStore.read accepts 48 sources. Start a fresh plan after a long
         # exchange instead of silently dropping the provenance of old choices.
         if previous and len(previous.source_messages) >= 40:
-            self.tasks.pop(key, None); previous = None
+            source.pop(key, None); previous = None
         if previous and not all(valid_source(mid, stamp) for mid, stamp in previous.source_messages.items()):
-            self.tasks.pop(key, None); previous = None
+            source.pop(key, None); previous = None
         generation = self.generations.get(key, 0) + 1
         self.generations[key] = generation
         self.generations.move_to_end(key)
         while len(self.generations) > self.capacity:
-            old, _ = self.generations.popitem(last=False); self.tasks.pop(old, None)
+            old, _ = self.generations.popitem(last=False)
+            self.tasks.pop(old, None); self.paused.pop(old, None)
+            self.topic_cutoffs.pop(old, None)
         task = deepcopy(previous) if previous else ResearchTask()
         task.revision = generation
+        task.transition = transition
         task.readings = {}; task.knowledge = False
         task.source_messages[request.message_id] = request.timestamp_ms
         return task
 
     def commit(self, request, task, delivery):
         key = self.key(request)
-        if not task.goal or self.generations.get(key) != task.revision: return False
+        if self.generations.get(key) != task.revision: return False
+        now = self.clock()
+        if task.transition == 'switch':
+            self.topic_cutoffs[key] = (request.message_id, request.timestamp_ms, now)
+            previous = self.tasks.pop(key, None)
+            if previous: self.paused[key] = previous
+        elif task.transition == 'resume':
+            self.topic_cutoffs.pop(key, None)
+        elif key in self.topic_cutoffs:
+            mid, stamp, updated = self.topic_cutoffs[key]
+            if now - updated < self.window: self.topic_cutoffs[key] = (mid, stamp, now)
+            else: self.topic_cutoffs.pop(key, None)
+        if not task.goal: return False
+        if task.transition == 'resume': self.paused.pop(key, None)
         saved = deepcopy(task)
         retained = set(saved.targets) | {ref for item in saved.requirements for ref in item['entity_refs']}
         saved.entities = {ref: identity for ref, identity in saved.entities.items() if ref in retained}
         saved.readings = {ref: values for ref, values in saved.readings.items() if ref in retained}
-        saved.updated = self.clock(); saved.delivery = delivery
+        saved.updated = now; saved.delivery = delivery
         self.tasks[key] = saved; self.tasks.move_to_end(key)
         while len(self.tasks) > self.capacity: self.tasks.popitem(last=False)
         return True
 
-    def clear(self, scope, user_id=None):
+    def clear(self, scope, user_id=None, *, clear_topic=True):
         scope = tuple(scope.values()) if isinstance(scope, dict) else scope
         for key in list(self.generations):
             if key[0] == scope and (user_id is None or key[1] == user_id):
-                self.generations[key] += 1; self.tasks.pop(key, None)
+                self.generations[key] += 1
+                self.tasks.pop(key, None); self.paused.pop(key, None)
+                if clear_topic: self.topic_cutoffs.pop(key, None)
 
     def status(self, scope):
         self.sweep()
@@ -106,6 +144,15 @@ class TaskContexts:
         return dict(active_tasks=len(statuses), waiting_tasks=statuses.count('waiting'),
                     partial_tasks=statuses.count('partial'), completed_tasks=statuses.count('completed'),
                     window_seconds=self.window)
+
+
+def task_transition(question):
+    text = re.sub(r'^(?:taki(?![a-z0-9_])|立希)[\s，,、：:]*', '', question.strip(), flags=re.I)
+    if re.match(r'^(?:我们)?(?:先|来)?(?:换(?:一个|个)?(?:话题|问题)|聊点别的)', text):
+        return 'switch'
+    if re.match(r'^(?:我们)?(?:先)?(?:回到|接着聊)(?:刚才|上一个|之前)(?:的)?(?:话题|问题)', text):
+        return 'resume'
+    return ''
 
 
 def entity_ref(kind, ident):

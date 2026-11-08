@@ -2328,6 +2328,45 @@ async function main() {
         fs.rmSync(dir,{recursive:true,force:true})
       }
     })
+    await run('Quote hints preserve the input gap and only cross a negotiated personal wire', async()=>{
+      const env=createBot()
+      try {
+        const attachment={content_type:'image/png',url:'https://untrusted.invalid/quoted-private-url'}
+        const raw=event({content:'taki你怎么看',message_type:103,
+          msg_elements:[{msg_idx:'opaque-index',content:'',attachments:[attachment]}]})
+        const parsed=await decodeIncoming(env.bot,raw,identity,()=>true)
+        const ordinary=await decodeIncoming(env.bot,event({content:raw.d.content}),identity,()=>true)
+        assert.equal(parsed.status,'accepted')
+        assert.equal(ordinary.status,'accepted')
+        assert.deepEqual(parsed.inbound,{...ordinary.inbound,quoteHint:'image'})
+        assert.equal(raw.d.msg_elements[0].attachments[0].url,attachment.url)
+        const withText=structuredClone(raw)
+        withText.d.msg_elements[0].content='合成引文'
+        const mixed=await decodeIncoming(env.bot,withText,identity,()=>true)
+        assert.equal(mixed.inbound.quoteHint,'image')
+        assert.equal(mixed.inbound.quotedText,'合成引文')
+        const unparsed=await decodeIncoming(env.bot,event({content:raw.d.content,message_type:103}),identity,()=>true)
+        assert.equal(unparsed.inbound.quoteHint,'unknown')
+        const client=new BackendClient('http://127.0.0.1:8765','x'.repeat(32),identity.instanceId,'fixture-epoch',deny)
+        const policy={natural_query:'model',epoch:'fixture-epoch',global_revision:0,group_revision:0}
+        const ready=wire.decodeReady(httpV2.python_to_ts.ready)
+        assert.ok(ready.features.includes('chat_quote_hint_v1'))
+        client.readiness={...ready,features:ready.features.filter(feature=>feature!=='chat_quote_hint_v1')}
+        const old=client.encode(parsed.inbound,1,policy)
+        assert.deepEqual(old,client.encode(ordinary.inbound,1,policy))
+        client.readiness=ready
+        const request=client.encode(mixed.inbound,1,policy)
+        assert.equal(request.quote_hint,'image')
+        assert.equal(request.quoted_text,'合成引文')
+        assert.equal(request.reference,null)
+        assert.ok(!('attachments' in request))
+        assert.ok(!JSON.stringify(request).includes('quoted-private-url'))
+        assert.ok(!JSON.stringify(request).includes('opaque-index'))
+        assert.deepEqual(client.encode(ordinary.inbound,1,policy),old)
+        client.readiness={...client.readiness,execution_profile:'query-local-v1'}
+        assert.deepEqual(client.encode(parsed.inbound,1,policy),old)
+      } finally { await env.ctx.stop() }
+    })
     const lock = JSON.parse(fs.readFileSync(path.join(root, 'package-lock.json')))
   const versions = Object.fromEntries(['koishi', '@koishijs/core', '@koishijs/plugin-adapter-qq', '@satorijs/adapter-qq', '@satorijs/core', 'typescript'].map(name => {
     const version = JSON.parse(fs.readFileSync(path.join(root, 'node_modules', name, 'package.json'))).version

@@ -28,7 +28,7 @@ from ..data import DataError
 from .runtime_tasks import finish_thread
 from .site_lookup import SiteLookup
 from .chat_context import ChatContext
-from .chat_tasks import ResearchTask, TaskContexts, FIELDS, RESOURCES, entity_ref, explicit_entities, read_entity_fields
+from .chat_tasks import ResearchTask, TaskContexts, FIELDS, RESOURCES, entity_ref, explicit_entities, read_entity_fields, task_transition
 from .chat_store import ChatStore
 from .chat_recovery import ChatRecovery
 from .story_service import StoryService
@@ -64,8 +64,19 @@ SOURCE_SEMANTICS = '''
 
 RESEARCH_SEMANTICS = '''
 面对比较、多项查询和连续修改，使用 research_task 维护本次目标、对象顺序和所需字段。宿主提供的 current_entities 和上轮任务引用已确认对象身份，可直接 read_entity_fields，不必重复 site_search/site_read；没有身份时才用站内搜索确认。research_task 和 read_entity_fields 可在同次回复连续调用，最多两个对象可一次读完。第二张、换成另一张等以 targets 顺序和当前消息为准，变更时更新任务。谱面条件用 requirements.difficulty 保存；后续只改对象时继承未改的难度，不重复追问。歌曲等级和Note比较用 level/notes 字段；song_metrics 用于全曲筛选排序，不能代替多对象字段比较。闲聊不创建任务。
-工具返回 coverage 是实际读取覆盖情况，回答前照顾每项要求。用户说不用了、先这样或换个问题时，用 research_task cancel 结束旧任务。
+工具返回 coverage 是实际读取覆盖情况，回答前照顾每项要求。用户说不用了、先这样时，用 research_task cancel 结束当前任务。明确换题时使用当前对象。
 '''
+
+
+def quote_followup(question):
+    # Only a whole, objectless follow-up can be answered locally when the
+    # quoted material is missing. A second question must reach the agent.
+    text=re.sub(r'^(?:taki(?![a-z0-9_])|立希)[\s，,、：:]*','',question.strip(),flags=re.I)
+    return re.fullmatch(
+        r'(?:\[引用消息\]|(?:那|所以|这图|这张图|这条引用)?(?:你)?(?:怎么看|怎么想|觉得呢|怎么评价|有何看法)'
+        r'(?:这张图|这条引用|这句话)?|(?:这|它|这段|这句话|图里|这张图)?(?:是)?(?:什么意思|说了什么|是什么)'
+        r'|(?:那|所以|这)?(?:为什么|为啥|怎么回事)|(?:那|这个|这图|这张图|这条引用)呢|那咋了|所以呢)?'
+        r'[呢啊呀嘛]?[？?！!。\s]*',text) is not None
 
 
 def research_tools():
@@ -210,7 +221,7 @@ class ChatAgent:
         self.proactive=ProactiveChat(self)
         self.recovery=ChatRecovery(self)
 
-    async def maybe_summary(self,work,deadline):
+    async def maybe_summary(self,work,deadline,*,after_ms=None):
         runtime=self.runtime
         # Low priority: ordinary replies have finished first, and this task may
         # use only spare permits/time with no queued request waiting for a slot.
@@ -219,6 +230,7 @@ class ChatAgent:
         policy=self.services.policy(work.model_snapshot,work.request.conversation_id)
         if policy is None or not policy.summary.enabled:return
         rows=self.store.recent(work.request.scope,limit=48,max_bytes=24576)
+        if after_ms is not None:rows=[row for row in rows if row['timestamp_ms']>after_ms]
         candidate=summary_candidate(rows,[summary['summary_id'].removeprefix('summary/') for summary in self.store.summaries(work.request.scope)])
         if candidate is None:return
         job=service_request_id('summary',runtime.backend.instance_id,runtime.backend.app_id,policy.group_id,candidate.source_key)
@@ -273,8 +285,10 @@ class ChatAgent:
             return self.store.source_valid(request.scope,mid,ref.timestamp_ms)
         except ImageError:return False
 
-    async def image_messages(self,work,history,deadline):
+    async def image_messages(self,work,history,deadline,*,quote_preview=''):
         request=work.request;scope=self.image_scope(request);references=[]
+        image_deadline=deadline-self.budget.final_seconds
+        quoted_id=request.reference['message_id'] if request.reference and not work.missing_anchor else None
         automatic=False
         if request.attachments:
             self.images.remember(scope,request.message_id,request.user_id,request.timestamp_ms,request.attachments)
@@ -284,12 +298,15 @@ class ChatAgent:
             references.extend(self.images.get(scope,mid) for mid in work.chat_addition_images)
         except ImageError as exc:
             raise ModelError(exc.code) from None
-        if request.reference:
-            try:references.insert(0,self.images.get(scope,request.reference['message_id']))
+        if quoted_id:
+            try:references.insert(0,self.images.get(scope,quoted_id))
             except ImageError:
-                if any('[图片附件 ' in item['content'] and request.reference['message_id'] in item['content'] for item in history):
+                if not quote_preview and any('[图片附件 ' in item['content'] and
+                        json.loads(item['content']).get('message_id')==request.reference['message_id'] for item in history):
                     raise ModelError('image_not_available') from None
-        if not references and work.proactive is not None and self.runtime.capabilities_for(work).vision(work.model_snapshot) is not None:
+        if (not references and work.proactive is not None
+                and not (request.quote_hint or request.quoted_text or request.reference)
+                and self.runtime.capabilities_for(work).vision(work.model_snapshot) is not None):
             last_reply=max((json.loads(item['content']).get('timestamp_ms',0) for item in history if item['role']=='assistant'),default=0)
             recent=[json.loads(item['content']) for item in history if item['role']=='user' and 'message_id' in json.loads(item['content'])][-4:]
             for source in reversed(recent):
@@ -308,9 +325,20 @@ class ChatAgent:
             for ref in references:
                 work.private_search_ids=tuple(dict.fromkeys((*work.private_search_ids,ref.message_id,ref.speaker_id)))
                 require(self.store.source_valid(request.scope,ref.message_id,ref.timestamp_ms),'chat_memory_deleted')
-                try:loaded=await self.load_images(work,ref,deadline)
+                try:loaded=await self.load_images(work,ref,image_deadline)
                 except ImageError as exc:
                     self.proactive.trace(work,'image',automatic=automatic,loaded_images=0,status=exc.code)
+                    if (exc.code=='image_not_available' and quote_preview and ref.message_id==quoted_id
+                            and ref.message_id!=request.message_id
+                            and ref.message_id not in work.chat_addition_images):
+                        require(self.store.source_valid(request.scope,ref.message_id,ref.timestamp_ms),'chat_memory_deleted')
+                        work.unavailable_quote_image=(ref.message_id,ref.timestamp_ms)
+                        # Retain the verified source identity for revocation and recovery, without image bytes or preview text.
+                        messages.insert(0,{'role':'user','content':json.dumps({'image_reference':{
+                            'message_id':ref.message_id,'speaker_id':ref.speaker_id,'timestamp_ms':ref.timestamp_ms},
+                            'timestamp_ms':ref.timestamp_ms,'text':'引用图片未能读取。'},ensure_ascii=False)})
+                        self.runtime.check(work,deadline)
+                        continue
                     if not automatic:raise
                     for message in messages:
                         if message['role']!='user':continue
@@ -353,15 +381,28 @@ class ChatAgent:
         except (OSError,ValueError,DataError):return False
 
     def memory_valid(self,work):
-        if not work.memory_sources:return True
-        try:return all(len(self.store.read(work.request.scope,list(work.memory_sources[i:i+48]))['messages'])==len(work.memory_sources[i:i+48])
+        request=work.request
+        try:
+            if work.unavailable_quote_image and not self.store.source_valid(request.scope,*work.unavailable_quote_image):
+                return False
+            if work.quote_preview_reference:
+                if not self.store.detached_quote_valid(request.scope,work.quote_preview_reference):
+                    return False
+                if not self.store.source_valid(request.scope,request.message_id,request.timestamp_ms):
+                    return False
+                for item in work.participating_history:
+                    row=json.loads(item['content'])
+                    if 'message_id' in row and not self.store.source_valid(request.scope,row['message_id'],row['timestamp_ms']):
+                        return False
+            return all(len(self.store.read(request.scope,list(work.memory_sources[i:i+48]))['messages'])==len(work.memory_sources[i:i+48])
                        for i in range(0,len(work.memory_sources),48))
         except sqlite3.Error:return False
 
     def bind_memory(self,work,rows):
         work.memory_sources=tuple(dict.fromkeys((*work.memory_sources,*(row['message_id'] for row in rows))))
         require(len(work.memory_sources)<=120,'chat_memory_limit')
-        self.audit(self.store.bind_sources,work.delivery,work.request.scope,[row['message_id'] for row in rows])
+        if not work.quote_preview_reference:
+            self.audit(self.store.bind_sources,work.delivery,work.request.scope,[row['message_id'] for row in rows])
         self.privacy_material(work,rows)
         if rows:
             expires=min(row['timestamp_ms'] for row in rows)/1000+30*86400
@@ -468,16 +509,18 @@ class ChatAgent:
         data=dict(action=action,status='cancelled' if action=='cancel' else coverage['status'],
                   total=len(coverage['items']),completed=sum(item['complete'] for item in coverage['items']),
                   entities=len(work.chat_task.targets))
-        self.audit(self.store.event,work.delivery,'task/'+uuid.uuid4().hex,'task',data)
+        if not work.quote_preview_reference:
+            self.audit(self.store.event,work.delivery,'task/'+uuid.uuid4().hex,'task',data)
         self.runtime.backend.diagnostics.chat_event(work.request.request_id,'task',self.runtime.backend.clock(),**data)
 
     async def research(self,work,name,args,site,deadline,turn_deadline,leases):
         task=work.chat_task
         if name=='research_task':
             if args['action']=='cancel':
-                self.tasks.clear(work.request.scope,work.request.user_id)
+                if not work.quote_preview_reference and task.transition!='switch':
+                    self.tasks.clear(work.request.scope,work.request.user_id,clear_topic=False)
+                    task.revision=self.tasks.generations.get(self.tasks.key(work.request),task.revision)
                 task.goal='';task.requirements=[];task.targets=[];task.readings={};task.knowledge=False
-                task.revision=self.tasks.generations.get(self.tasks.key(work.request),task.revision)
                 self.task_event(work,'cancel')
                 return {'status':'ok','data':{'task':'cancelled'}}
             refs=[*args['entity_refs'],*(ref for item in args['requirements'] for ref in item['entity_refs'])]
@@ -531,18 +574,64 @@ class ChatAgent:
         require(self.recovery.recover(scope=work.request.scope),'chat_retention_unavailable')
         deadline=min(deadline,work.content_deadline)
         work.model_attempt_limit=self.budget.model_calls
-        if work.request.quoted_text:
-            question+='\n[当前消息引用的文字预览；原作者和原消息身份未经核验，作为用户提供的材料]\n'+work.request.quoted_text
+        request=work.request
+        preview=request.quoted_text
+        context_request=request
+        if work.missing_anchor:
+            context_request=replace(request,reference=None)
+            if preview:
+                mid=request.reference['message_id']
+                if self.store.detached_quote_valid(request.scope,mid):
+                    work.quote_preview_reference=mid
+                else:
+                    preview=''
+        has_quote=bool(request.reference or request.quote_hint or preview)
+        user_question=question
+        quote_focus=(work.proactive is None and has_quote and not work.chat_additions
+                     and not work.chat_addition_images and quote_followup(question))
+        task_enabled=work.proactive is None or getattr(work,'continuation',False)
+        transition=task_transition(user_question) if task_enabled and not quote_focus else ''
+        def valid_source(mid,stamp):
+            return self.store.source_valid(request.scope,mid,stamp)
+        topic_cutoff=self.tasks.topic_cutoff(request,valid_source,transition)
+        summary_cutoff=topic_cutoff[1] if topic_cutoff else None
+        if quote_focus and not (preview or context_request.reference or request.attachments):
+            text=('我读不到这条引用里的图片，请把原图再发一次' if request.quote_hint=='image'
+                  else '我读不到这条引用，请把原文或图片再发一次')
+            return PreparedReply(text,business_status='quote_unavailable')
+        retain_turn=not work.quote_preview_reference
+        separate_preview=bool(preview and (work.quote_preview_reference or context_request.reference and
+                              (request.quote_hint=='image' or self.image_contains(request,context_request.reference['message_id']))))
+        if separate_preview:
+            self.privacy_material(work,[dict(text=preview,message_id=request.message_id,
+                                             speaker_id=request.user_id,role='user')])
+        elif preview:
+            question+='\n[当前消息引用的文字预览；原作者和原消息身份未经核验，作为用户提供的材料]\n'+preview
         if work.request.attachments:
             question+='\n'+''.join('[图片附件 '+item.id+' '+item.content_type+'；图像仅在本轮或有效引用中可见]' for item in work.request.attachments)
-        if work.proactive is None:self.context.trigger(work.request,question)
+        if work.proactive is None:self.context.trigger(context_request,question)
         elif work.proactive.followup is not None:
             work.knowledge_scope_at_start=self.knowledge_scopes.get((self.context.scope(work.request),work.request.user_id))
-        history=self.context.messages(work.request) if work.proactive is None else self.proactive.history(work)
+        history=self.context.messages(context_request) if work.proactive is None else self.proactive.history(work)
+        if quote_focus:
+            focus_ids={request.message_id}
+            if context_request.reference:focus_ids.add(context_request.reference['message_id'])
+            history=[item for item in history if json.loads(item['content']).get('message_id') in focus_ids]
+        elif topic_cutoff and work.proactive is None:
+            # An old assistant reply can carry the old summary as a retention source.
+            # Keep the switch itself, the current turn and any explicit reference.
+            rows=[(item,json.loads(item['content'])) for item in history]
+            current_ids={topic_cutoff[0],request.message_id}|{
+                row['message_id'] for item,row in rows if item['role']=='user' and row['timestamp_ms']>summary_cutoff}
+            reference_id=context_request.reference['message_id'] if context_request.reference else None
+            history=[item for item,row in rows if row['message_id'] in current_ids or row['message_id']==reference_id or
+                     item['role']=='assistant' and row.get('reply_to') in current_ids]
         history_ids={json.loads(item['content']).get('message_id') for item in history}
         history.extend({'role':'user','content':json.dumps(asdict(row),ensure_ascii=False)}
                        for row in getattr(work,'chat_additions',()) if row.message_id not in history_ids)
-        summaries=[] if work.proactive is not None and work.proactive.followup is not None else self.store.summaries(work.request.scope,limit=1)
+        summaries=[] if (transition=='switch' or quote_focus or
+                         work.proactive is not None and work.proactive.followup is not None) else self.store.summaries(
+                             request.scope,limit=1,after_ms=summary_cutoff)
         summary_rows=[]
         work.public_question=question
         self.privacy_material(work,[json.loads(item['content']) for item in history if 'message_id' in json.loads(item['content'])])
@@ -551,8 +640,9 @@ class ChatAgent:
             recent_ids={json.loads(item['content']).get('message_id') for item in history}
             if not set(summary['source_message_ids'])<=recent_ids:
                 summary_rows=self.store.read(work.request.scope,summary['source_message_ids'])['messages']
-                history.insert(0,{'role':'user','content':json.dumps({'derived_summary':summary,
-                    'note':'本群已参与对话的派生摘要；可按来源消息ID读取原文，不证明外部事实。'},ensure_ascii=False)})
+                if len(summary_rows)==len(summary['source_message_ids']):
+                    history.insert(0,{'role':'user','content':json.dumps({'derived_summary':summary,
+                         'note':'本群已参与对话的派生摘要；可按来源消息ID读取原文，不证明外部事实。'},ensure_ascii=False)})
         # A validated explicit reference to a business display is conversation
         # material, never a new system message or a substitute source lease.
         if work.anchor:
@@ -565,6 +655,9 @@ class ChatAgent:
         try: persona=self.story.persona() if self.story else None
         except (StoryError,OSError) as exc: raise ModelError('story_persona_unavailable') from exc
         prompt=PERSONA+'\n'+COMMUNITY_TERMS+band_alias_reference()+'\n聊天回复的最后一句句尾不要句号，中间可以正常断句；保留问号、感叹号、数字、链接和代码格式。当前消息附带引用文字时，先结合引文理解“那咋了”“所以呢”等短追问；引用可见时不要声称看不到上下文，可以解释其中的意思，但不能默认认领引文或把它当成已核实事实。单独的问号通常是在质疑或追问上一句，应结合已参与上下文回应；上下文不足时简短澄清，不把问号本身当成新的资料或区服查询。'
+        if has_quote:
+            prompt+='\n以当前可见引用为短追问对象。quote_preview 是用户提供的文字预览，原作者和原消息身份未经核验。' \
+                    'quote_status 表示引用材料有缺口。说明影响回答的缺口，并回答可读预览或独立问题，不用无关旧话题或邻近图片代替引用。'
         if persona:
             work.persona_version=persona['persona_id']+'/'+persona['persona_sha256']
             work.story_versions=((persona['source_revision'],persona['revocation_revision']),)
@@ -605,8 +698,22 @@ class ChatAgent:
         if staged:
             natural_prompt+='\n本轮回应消息：'+work.request.message_id+'，发言人：'+work.request.user_id+'。围绕这条消息与相邻上下文接话，保留发言者和引用关系，前面的讨论用于理解当前话题。'
             prompt+='\n最终只输出包含 participation、text、delay_seconds 三个字段的 JSON 对象，不加代码围栏或说明。participation 为 reply、skip 或 defer；text 固定为空字符串；仅 defer 的 delay_seconds 为 2 至 5 的整数，其余为 null。选择 reply 后另一步直接写群聊正文，本次不拟正文。'
-        self.bind_memory(work,summary_rows)
-        messages=[{'role':'system','content':prompt},*await self.image_messages(work,history,deadline-self.budget.final_seconds)]
+        visible=await self.image_messages(work,history,deadline,quote_preview=preview)
+        quote_status=None
+        if work.unavailable_quote_image or request.quote_hint=='image' and not (context_request.reference and
+                (self.image_scope(request),context_request.reference['message_id']) in work.image_sources):
+            quote_status='image_unavailable'
+        elif not preview and not context_request.reference and (work.missing_anchor or request.quote_hint):
+            quote_status='quote_unavailable'
+        if quote_status or separate_preview:
+            for index,message in enumerate(visible):
+                data=json.loads(message['content'])
+                if message['role']=='user' and data.get('message_id')==request.message_id:
+                    if quote_status:data['quote_status']=quote_status
+                    if separate_preview:data['quote_preview']=preview
+                    visible[index]={**message,'content':json.dumps(data,ensure_ascii=False)}
+                    break
+        messages=[{'role':'system','content':prompt},*visible]
         leases=tuple(snapshot.pages[work.anchor.page].evidence) if work.anchor else ()
         runtime.check(work,deadline,leases)
         seen={}
@@ -619,11 +726,11 @@ class ChatAgent:
         coverage_checked=False
         web_citations={}
         site=SiteLookup(runtime.backend.repository,chat_query_question(question),allow_rewrite=True,max_operations=self.budget.tool_calls)
-        work.chat_task=(self.tasks.begin(work.request,lambda mid,stamp:self.store.source_valid(work.request.scope,mid,stamp))
-                        if work.proactive is None or getattr(work,'continuation',False) else ResearchTask())
-        if work.proactive is None or getattr(work,'continuation',False):
-            named=(explicit_entities(runtime.backend.repository,question)
-                   if requested_server(chat_query_question(question)) in (None,'jp') else {})
+        named=(explicit_entities(runtime.backend.repository,user_question)
+               if task_enabled and requested_server(chat_query_question(user_question)) in (None,'jp') else {})
+        work.chat_task=(self.tasks.begin(request,valid_source,inherit=not quote_focus,transition=transition)
+                        if retain_turn and task_enabled else ResearchTask())
+        if task_enabled:
             work.chat_task.entities.update(named)
             if named:messages.append({'role':'user','content':json.dumps({'current_entities':list(named.values()),
                 'note':'宿主从当前用户原文核对的对象身份；直接用于read_entity_fields。这里只提供身份，尚未读取字段。'},ensure_ascii=False)})
@@ -634,7 +741,8 @@ class ChatAgent:
         work.chat_task.source_messages.update({row.message_id:row.timestamp_ms for row in getattr(work,'chat_additions',())})
         registry=dict(self.tools)
         if work.proactive is None or getattr(work,'continuation',False):registry.update(research_tools())
-        image_handles={json.loads(item['content']).get('message_id') for item in history if item['role']=='user'}
+        image_handles=({json.loads(item['content']).get('message_id') for item in history if item['role']=='user'}
+                       if quote_status!='image_unavailable' else set())
         image_handles.update(mid for _,mid in work.image_sources)
         vision=runtime.capabilities_for(work).vision(work.model_snapshot)
         if vision is not None:
@@ -660,10 +768,18 @@ class ChatAgent:
             image_markers=sum('[图片附件 ' in item['content'] for item in messages),
             input_images=sum(len(item.get('images',())) for item in messages),vision_approved=vision is not None,
             image_detail=vision.detail if any(item.get('images') for item in messages) else 'none')
-        # Host plans and identity hints are turn-local input, not extra stored dialogue.
-        context=[{'role':message['role'],'content':message['content']} for message in messages if message['role']!='system'
-                 and not {'research_task','current_entities'}.intersection(json.loads(message['content']))]
-        if work.proactive is None:
+        # Host plans, identity hints and separate quote previews are turn-local.
+        context=[]
+        for message in messages:
+            if message['role']=='system':continue
+            data=json.loads(message['content'])
+            if {'research_task','current_entities'}.intersection(data):continue
+            if 'derived_summary' in data:self.bind_memory(work,summary_rows)
+            content=message['content']
+            if data.pop('quote_preview',None) is not None:
+                content=json.dumps(data,ensure_ascii=False)
+            context.append({'role':message['role'],'content':content})
+        if work.proactive is None and retain_turn:
             self.audit(self.store.begin,work,context)
             self.bind_memory(work,[json.loads(item['content']) for item in context if 'message_id' in json.loads(item['content'])])
             self.audit(self.store.bind_sources,work.delivery,work.request.scope,list(work.memory_sources))
@@ -743,9 +859,9 @@ class ChatAgent:
                         text+=site.attribution()
                     if web_citations:text=append_web_sources(text,web_citations.values())
                     runtime.check(work,deadline,leases)
-                    if work.proactive is None:
+                    if work.proactive is None and retain_turn:
                         self.audit(self.store.generated,work.delivery,text)
-                        await self.maybe_summary(work,deadline)
+                        await self.maybe_summary(work,deadline,after_ms=summary_cutoff)
                     runtime.check(work,deadline,leases)
                     return PreparedReply(text,parse_origin='model',processing_route='model',business_status='success',
                                          evidence=leases,evidence_deadline=work.content_deadline if leases else None)
@@ -837,15 +953,17 @@ class ChatAgent:
                     for ref in output.get('evidence_refs',[]):web_citations[ref['url']]=ref
                     provenance=output.get('data') if isinstance(output.get('data'),dict) else {}
                     tool_events+=1
-                    self.audit(self.store.event,work.delivery,'tool/'+str(tool_events),'tool',{'name':call.name if call.name in registry else 'unregistered','status':output['status'],
-                        'elapsed_ms':round((time.monotonic()-tool_started)*1000),
-                        'source':{key:provenance[key] for key in ('source','server','release','text_release','observed_at','source_revision')
-                                  if key in provenance}})
+                    if retain_turn:
+                        self.audit(self.store.event,work.delivery,'tool/'+str(tool_events),'tool',{'name':call.name if call.name in registry else 'unregistered','status':output['status'],
+                            'elapsed_ms':round((time.monotonic()-tool_started)*1000),
+                            'source':{key:provenance[key] for key in ('source','server','release','text_release','observed_at','source_revision')
+                                      if key in provenance}})
                     if call.name in ('knowledge_search','site_search','site_read','read_entity_fields'):
                         fallback=call.name in ('site_search','site_read') and any(key[0]=='knowledge_search' for key,value in seen.values())
                         data=dict(action=call.name,status=output['status'],elapsed_ms=round((time.monotonic()-tool_started)*1000),
                                   research_fallback=fallback,task_missing=sum(not item['complete'] for item in work.chat_task.coverage()['items']))
-                        self.audit(self.store.event,work.delivery,'research/'+str(tool_events),'research',data)
+                        if retain_turn:
+                            self.audit(self.store.event,work.delivery,'research/'+str(tool_events),'research',data)
                         self.runtime.backend.diagnostics.chat_event(work.request.request_id,'research',self.runtime.backend.clock(),**data)
                     self.proactive.trace(work,'tool',name=call.name if call.name in registry else 'unregistered',status=output['status'])
                     messages.append(tool_message)

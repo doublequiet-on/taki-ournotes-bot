@@ -58,6 +58,8 @@ class Work:
     task: object = None
     anchor: object = None
     missing_anchor: bool = False
+    quote_preview_reference: str | None = None
+    unavailable_quote_image: tuple[str, int] | None = None
     model_attempts: int = 0
     model_stage: str = 'preparation'
     model_attempt_limit: int = 2
@@ -473,7 +475,7 @@ class Backend:
                 if work.anchor is None or self.contexts.lineage(work.key) != work.lineage:
                     self.finish(work, 'aborted')
                     return
-            if work.missing_anchor:
+            if work.missing_anchor and not work.chat:
                 parts = [replies.PreparedReply(MISSING)]
             elif work.chat:
                 # Triggered chat keeps a whole multiline message and serializes
@@ -536,7 +538,8 @@ class Backend:
             complete = list(parts)
             if parts and isinstance(parts[-1].context, replies.DeliveryCursor):
                 complete.extend(parts[-1].context.remaining)
-            self.conversations.capture(work, complete)
+            if not work.quote_preview_reference:
+                self.conversations.capture(work, complete)
             require(len(parts) <= QQ_PASSIVE_REPLY_LIMIT, 'send_budget', 422)
             require(self.retained_bytes() <= self.byte_capacity, 'byte_capacity', 503)
             projections=self.model_runtime.agent.recovery.stage(work) if work.chat and parts else ()
@@ -712,7 +715,11 @@ class Backend:
                 self.invalidate_topic(work)
                 self.finish(work, 'aborted', reason='ack_context_revoked')
                 live = False
-            if changed and live:
+            if changed and live and work.quote_preview_reference:
+                # Record delivery without publishing a derived reply or task for reuse.
+                if payload['result']!='success' or part_id==parts[-1]['id']:
+                    self.finish(work,'finished' if payload['result']=='success' else payload['result'])
+            elif changed and live:
                 part = next(p for p in parts if p['id'] == part_id)
                 reply = work.prepared[part['position']]
                 candidate = reply.context
@@ -899,7 +906,7 @@ def create_app(backend, token, initialize=None, *, assert_recovery_current=None)
                      'management_capabilities': ['admin_read_v1', 'telemetry_v1', 'group_policies_v1', 'ops_v1'],
                      'features': ['classify', 'gateway_retire', 'ack_context_guard', 'notice_gateway_v1',
                                   'quoted_context_v1', 'fixed_snapshot_v1', 'current_model_permit_v1', 'independent_delivery_v1',
-                                   'chat_observation_v1','chat_images_v1','abort_reason_v1'] if backend.query_runtime is None else
+                                   'chat_observation_v1','chat_images_v1','chat_quote_hint_v1','abort_reason_v1'] if backend.query_runtime is None else
                                  ['classify','gateway_retire','ack_context_guard','quoted_context_v1',
                                   'fixed_snapshot_v1','independent_delivery_v1'],
                      'reference_profiles': sorted(backend.reference_profiles)}, 200 if accepting else 503)

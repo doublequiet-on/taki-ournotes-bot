@@ -2561,6 +2561,32 @@ class ResearchContextTests(Fixture,unittest.TestCase):
         task=store.begin(request,lambda *_:True);task.goal='任务';store.commit(request,task,'s')
         now[0]=901;self.assertEqual(store.status(request.scope)['active_tasks'],0)
 
+    def test_topic_cutoff_requires_ack_and_follows_actor_expiry_and_revocation(self):
+        from types import SimpleNamespace
+        from ournotes_bot.application.chat_tasks import TaskContexts
+        now=[0];contexts=TaskContexts(clock=lambda:now[0],window=10,capacity=2)
+        request=SimpleNamespace(scope={'instance':'i','group':'g'},user_id='u',message_id='switch',timestamp_ms=15)
+        valid=lambda *_:True
+        switch=contexts.begin(request,valid,transition='switch')
+        self.assertEqual(contexts.topic_cutoff(request,valid,'switch'),('switch',15))
+        self.assertIsNone(contexts.topic_cutoff(request,valid,''))
+        contexts.commit(request,switch,'ack')
+        self.assertEqual(contexts.topic_cutoff(request,valid,''),('switch',15))
+        other=SimpleNamespace(**{**vars(request),'user_id':'other'})
+        self.assertIsNone(contexts.topic_cutoff(other,valid,''))
+        now[0]=9
+        contexts.commit(request,contexts.begin(request,valid),'more')
+        now[0]=18
+        self.assertEqual(contexts.topic_cutoff(request,valid,''),('switch',15))
+        self.assertIsNone(contexts.topic_cutoff(request,valid,'resume'))
+        self.assertIsNone(contexts.topic_cutoff(request,lambda *_:False,''))
+        contexts.commit(request,contexts.begin(request,valid,transition='switch'),'again')
+        now[0]=28
+        self.assertIsNone(contexts.topic_cutoff(request,valid,''))
+        contexts.commit(request,contexts.begin(request,valid,transition='switch'),'clear')
+        contexts.clear(request.scope,'u')
+        self.assertIsNone(contexts.topic_cutoff(request,valid,''))
+
     def test_chat_default_jp_leaves_explicit_state_scope_and_legacy_unchanged(self):
         from ournotes_bot.natural_query.native_tools import chat_query_question,chat_background_only,scope_for
         from ournotes_bot.domain.model_calls import ModelError
@@ -3244,6 +3270,145 @@ class ChatAgentTests(Fixture, unittest.IsolatedAsyncioTestCase):
         parsed=Request.parse({**value,'quoted_text':'引用只作为用户材料'},'fixture','app',self.now)
         self.assertIsNone(parsed.reference)
 
+    def test_quote_hint_preserves_legacy_digest_and_reference_authority(self):
+        from dataclasses import asdict
+        from ournotes_bot.application.backend_protocol import digest
+        raw=self.request('quote-digest',1)
+        legacy=Request.parse(raw,'fixture','app',self.now)
+        old_shape={k:v for k,v in asdict(legacy).items()
+                   if k not in ('gateway_epoch','ingress_seq','quote_hint')}
+        self.assertEqual(legacy.content_digest,digest(old_shape))
+        image=Request.parse({**raw,'quote_hint':'image'},'fixture','app',self.now)
+        self.assertNotEqual(image.content_digest,legacy.content_digest)
+        self.assertIsNone(image.reference)
+        self.assertFalse(image.attachments)
+        for hint in (None,True,'url',{'image':True}):
+            with self.subTest(hint=hint),self.assertRaises(ProtocolError):
+                Request.parse({**raw,'quote_hint':hint},'fixture','app',self.now)
+        with self.assertRaises(ProtocolError):
+            Request.parse({**raw,'quote_hint':'image','trigger':'quoted_reply',
+                           'reference':{'message_id':'unverified','adapter_profile_version':'other'}},
+                          'fixture','app',self.now)
+
+    async def test_unreadable_quote_image_gets_local_reply_and_keeps_replay_identity(self):
+        self.client.request.return_value=self.result('旧乐队话题。')
+        old,_=await self.prepare_native('/聊 聊聊旧乐队话题',seq=1)
+        self.event(old,'intent');self.event(old,'ack')
+        self.client.request.reset_mock()
+        raw={**self.request('native2',2),'body':'taki你怎么看？','quote_hint':'image'}
+        with patch.object(self,'request',return_value=raw):
+            plan,attempts=await self.prepare_native(raw['body'],seq=2)
+        self.assertEqual(attempts,[])
+        self.assertEqual(plan['parts'][0]['business_status'],'quote_unavailable')
+        self.assertIn('原图',plan['parts'][0]['text'])
+        self.assertNotIn('旧乐队',plan['parts'][0]['text'])
+        self.client.request.assert_not_awaited()
+        self.event(plan,'intent');self.event(plan,'ack')
+        repeated=await self.backend.submit(raw)
+        self.assertEqual(repeated['delivery_id'],plan['delivery_id'])
+        with self.assertRaises(ProtocolError) as conflict:
+            await self.backend.submit({**raw,'quote_hint':'unknown'})
+        self.assertEqual(conflict.exception.code,'request_conflict')
+
+    async def test_expired_reference_uses_visible_preview_without_old_topic(self):
+        self.backend.reference_profiles=frozenset({'fixture'})
+        self.client.request.return_value=self.result('旧乐队话题。')
+        old,_=await self.prepare_native('/聊 聊聊旧乐队话题',seq=1)
+        self.event(old,'intent');self.event(old,'ack')
+        bodies=self.capture_native_bodies()
+        raw={**self.request('native2',2),'trigger':'quoted_reply','quote_hint':'image',
+             'reference':{'message_id':'expired-source','adapter_profile_version':'fixture'},
+             'quoted_text':'合成引文：要不要给新人留一个练习位置？'}
+        self.client.request.return_value=self.result('给新人留一个练习位置挺合适。')
+        with patch.object(self,'request',return_value=raw):
+            plan,attempts=await self.prepare_native('taki你怎么看',seq=2)
+        self.assertEqual(len(attempts),1)
+        self.assertEqual(plan['parts'][0]['business_status'],'success')
+        messages=bodies[0]['messages']
+        self.assertNotIn('旧乐队',json.dumps(messages,ensure_ascii=False))
+        latest=json.loads(next(m['content'] for m in reversed(messages) if m['role']=='user'))
+        self.assertEqual(raw['quoted_text'],latest['quote_preview'])
+        self.assertEqual(latest['quote_status'],'image_unavailable')
+        self.assertIsNone(latest['reply_to'])
+        agent=self.backend.model_runtime.agent
+        scope=self.backend.works[plan['delivery_id']].request.scope
+        self.assertIsNone(agent.store.final_candidate(plan['delivery_id'],'0'))
+        self.assertEqual(self.backend.ledger.projection_rows(plan['delivery_id']),[])
+        self.event(plan,'intent')
+        receipt=self.event(plan,'ack')
+        self.assertEqual(receipt['status'],'finished')
+        self.assertEqual(receipt['parts'][0]['status'],'success')
+        self.assertTrue(self.event(plan,'ack')['duplicate'])
+        self.assertFalse(agent.store.read(scope,['native2',receipt['parts'][0]['message']])['messages'])
+        self.assertIsNone(agent.store.projected(plan['delivery_id'],'0'))
+        self.assertIsNone(agent.store.db.execute('SELECT 1 FROM runs WHERE id=?',(plan['delivery_id'],)).fetchone())
+        self.assertIsNone(agent.store.db.execute('SELECT 1 FROM events WHERE run_id=?',(plan['delivery_id'],)).fetchone())
+        self.assertNotIn(plan['delivery_id'],self.backend.conversations.snapshots)
+        self.assertFalse(any(row.role=='assistant' and row.message_id==receipt['parts'][0]['message']
+                             for rows in agent.context.scopes.values() for row in rows))
+
+    async def test_quote_image_gap_keeps_an_independent_question(self):
+        bodies=self.capture_native_bodies()
+        raw={**self.request('native1',1),'quote_hint':'image'}
+        self.client.request.return_value=self.result('二加二等于四。')
+        with patch.object(self,'request',return_value=raw):
+            plan,attempts=await self.prepare_native('taki你怎么看？另外二加二是多少？')
+        self.assertEqual(len(attempts),1)
+        latest=json.loads(next(m['content'] for m in reversed(bodies[0]['messages']) if m['role']=='user'))
+        self.assertIn('二加二是多少',latest['text'])
+        self.assertEqual(latest['quote_status'],'image_unavailable')
+        self.assertIn('等于四',plan['parts'][0]['text'])
+        self.event(plan,'intent');self.event(plan,'ack')
+
+    async def test_revoked_detached_quote_preview_cannot_be_sent(self):
+        self.backend.reference_profiles=frozenset({'fixture'})
+        agent=self.backend.model_runtime.agent
+        raw={**self.request('native1',1),'trigger':'quoted_reply',
+             'reference':{'message_id':'withdrawn-source','adapter_profile_version':'fixture'},
+             'quoted_text':'合成待撤回引文'}
+        self.client.request.return_value=self.result('根据引文拟的回复。')
+        with patch.object(self,'request',return_value=raw):
+            plan,attempts=await self.prepare_native('taki你怎么看')
+        self.assertEqual(len(attempts),1)
+        work=self.backend.works[plan['delivery_id']]
+        self.assertEqual(work.quote_preview_reference,'withdrawn-source')
+        self.assertIsNone(agent.store.final_candidate(work.delivery,'0'))
+        agent.store.delete_messages(work.request.scope,['withdrawn-source'])
+        self.assertFalse(agent.memory_valid(work))
+        self.assertFalse(self.backend.lookup(raw['request_id'],'e1')['send_allowed'])
+        with self.assertRaisesRegex(ProtocolError,'inactive_delivery'):
+            self.event(plan,'intent')
+
+    async def test_detached_quote_tool_task_and_multipart_ack_stay_in_current_turn(self):
+        from ournotes_bot.domain.model_calls import ToolCall
+        self.backend.reference_profiles=frozenset({'fixture'})
+        agent=self.backend.model_runtime.agent
+        agent.budget=replace(agent.budget,execution_seconds=60)
+        raw={**self.request('native1',1),'trigger':'quoted_reply',
+             'reference':{'message_id':'expired-source','adapter_profile_version':'fixture'},
+             'quoted_text':'合成任务材料'}
+        args=dict(action='set',goal='根据失效引用整理任务',entity_refs=[],
+                  requirements=[dict(label='待查资料',entity_refs=[],fields=[],knowledge=True,difficulty='')])
+        self.client.request.side_effect=[self.result(calls=(ToolCall('task','research_task',json.dumps(args)),)),
+                                         self.result('还缺资料。'),self.result('派生正文'*430)]
+        with patch.object(self,'request',return_value=raw):
+            plan,attempts=await self.prepare_native('taki你怎么看')
+        self.assertEqual(len(attempts),3)
+        self.assertGreater(len(plan['parts']),1)
+        work=self.backend.works[plan['delivery_id']]
+        self.assertEqual(work.chat_task.goal,args['goal'])
+        self.assertEqual(agent.tasks.status(work.request.scope)['active_tasks'],0)
+        for part in plan['parts']:
+            one={**plan,'parts':[part]}
+            self.event(one,'intent')
+            receipt=self.event(one,'ack')
+        self.assertEqual(receipt['status'],'finished')
+        self.assertTrue(all(part['status']=='success' for part in receipt['parts']))
+        self.assertEqual(agent.tasks.status(work.request.scope)['active_tasks'],0)
+        self.assertEqual(self.backend.ledger.projection_rows(work.delivery),[])
+        self.assertIsNone(agent.store.db.execute('SELECT 1 FROM runs WHERE id=?',(work.delivery,)).fetchone())
+        self.assertIsNone(agent.store.db.execute('SELECT 1 FROM events WHERE run_id=?',(work.delivery,)).fetchone())
+
     async def test_chat_receives_registered_band_alias_snapshot(self):
         bodies=self.capture_native_bodies()
         self.client.request.return_value=self.result('你说的是 Ave Mujica 吧，活动安排还要核实。')
@@ -3422,6 +3587,112 @@ class ChatResearchTaskTests(Fixture,unittest.IsolatedAsyncioTestCase):
         self.assertEqual(output['status'],'query_entity_mismatch')
         self.event(other,'intent');self.event(other,'ack')
 
+    async def test_switch_to_named_topic_pauses_old_entities_until_explicit_return(self):
+        self.catalog();bodies=self.capture_native_bodies();agent=self.backend.model_runtime.agent
+        old_refs=['song:100001','song:100002']
+        def read(refs):
+            return self.call('read_entity_fields',entity_refs=refs,fields=['notes'],difficulty='HARD')
+        self.client.request.side_effect=[self.result(calls=(self.task_call(old_refs,['notes'],'HARD'),read(old_refs))),
+                                         self.result('两首的 HARD 已比较。')]
+        first,_=await self.prepare_native('/聊 比较合成曲100001和合成曲100002的HARD音符数')
+        self.event(first,'intent');self.event(first,'ack')
+        scope=self.backend.works[first['delivery_id']].request.scope
+        self.client.request.side_effect=[self.result(calls=(read(old_refs[:1]),read(['song:100003']))),
+                                         self.result('只看第三首的 HARD。')]
+        switch,_=await self.prepare_native('/聊 换个话题，合成曲100003 的 HARD 有多少 Note？',seq=2)
+        self.assertEqual(agent.tasks.status(scope)['active_tasks'],1)
+        context=[json.loads(row['content']) for row in bodies[-2]['messages'] if row['role']=='user']
+        self.assertFalse(any('research_task' in row for row in context))
+        outputs=[json.loads(row['content']) for row in bodies[-1]['messages'] if row['role']=='tool']
+        self.assertEqual([row['status'] for row in outputs],['query_entity_mismatch','ok'])
+        self.event(switch,'intent');self.event(switch,'ack')
+        self.assertEqual(agent.tasks.status(scope)['active_tasks'],0)
+        for seq,question,status in ((3,'第二首呢？','query_entity_mismatch'),
+                                   (4,'回到刚才的话题，第二首的 HARD 呢？','ok')):
+            calls=(read(old_refs[1:]),) if seq==3 else (self.task_call(old_refs[1:],['notes'],'HARD'),read(old_refs[1:]))
+            self.client.request.side_effect=[self.result(calls=calls),self.result('回应当前问题。')]
+            plan,_=await self.prepare_native('/聊 '+question,seq=seq)
+            output=json.loads(next(row['content'] for row in reversed(bodies[-1]['messages']) if row['role']=='tool'))
+            self.assertEqual(output['status'],status)
+            self.event(plan,'intent');self.event(plan,'ack')
+        self.assertEqual(agent.tasks.status(scope)['completed_tasks'],1)
+        self.assertEqual(next(iter(agent.tasks.tasks.values())).targets,old_refs[1:])
+
+    async def test_explicit_topic_switch_pauses_task_without_a_named_jp_entity(self):
+        self.catalog();bodies=self.capture_native_bodies();agent=self.backend.model_runtime.agent
+        refs=['song:100001','song:100002']
+        def read():
+            return self.call('read_entity_fields',entity_refs=refs,fields=['notes'],difficulty='HARD')
+        for seq,question in enumerate(('换个话题，今天好累','换个话题，国际服时长最短的是哪首歌？'),1):
+            with self.subTest(question=question):
+                self.client.request.side_effect=[self.result(calls=(self.task_call(refs,['notes'],'HARD'),read())),
+                                                 self.result('两首的 HARD 已比较。')]
+                first,_=await self.prepare_native('/聊 比较合成曲100001和合成曲100002的HARD音符数',seq=2*seq-1)
+                self.event(first,'intent');self.event(first,'ack')
+                scope=self.backend.works[first['delivery_id']].request.scope
+                first_body=len(bodies)
+                self.client.request.side_effect=[self.result(calls=(read(),)),self.result('回应当前问题。')]
+                plan,_=await self.prepare_native('/聊 '+question,seq=2*seq)
+                self.event(plan,'intent');self.event(plan,'ack')
+                context=[json.loads(row['content']) for row in bodies[first_body]['messages'] if row['role']=='user']
+                self.assertFalse(any('research_task' in row for row in context))
+                output=json.loads(next(row['content'] for row in bodies[-1]['messages'] if row['role']=='tool'))
+                self.assertEqual(output['status'],'query_entity_mismatch')
+                self.assertEqual(agent.tasks.status(scope)['active_tasks'],0)
+
+    async def test_topic_cutoff_filters_old_summary_but_retains_explicit_memory(self):
+        from types import SimpleNamespace
+        from ournotes_bot.application.backend_protocol import PROTOCOL,Request
+        self.catalog();bodies=self.capture_native_bodies();agent=self.backend.model_runtime.agent
+        self.now=(int(self.now*1000)-10)/1000+.0005
+        source_id='old-summary-source'
+        raw={**self.request(source_id,1),'timestamp_ms':int(self.now*1000)-1_200_000}
+        source=Request.parse(raw,'fixture','app',self.now)
+        seed=SimpleNamespace(request=source,delivery='summary-seed',model_snapshot=self.snapshot)
+        agent.store.begin(seed,[{'role':'user','content':json.dumps(dict(message_id=source_id,speaker_id='u1',
+            text='原话题是选哪两首歌',timestamp_ms=source.timestamp_ms,role='user',display_name='',reply_to=None))}])
+        agent.store.put_summary(source.scope,'fixture-summary','原话题是比较歌曲',[source_id])
+        seq=0
+        async def turn(body,*,old_summary,ack=True,calls=()):
+            nonlocal seq
+            seq+=1;self.now+=.05
+            self.client.request.side_effect=[self.result(calls=calls),self.result('合成答复。')] if calls else [self.result('合成答复。')]
+            index=len(bodies)
+            plan,attempts=await self.prepare_native('/聊 '+body,seq=seq)
+            self.assertEqual(len(attempts),2 if calls else 1)
+            rows=[json.loads(row['content']) for row in bodies[index]['messages'] if row['role']=='user']
+            self.assertEqual(any('derived_summary' in row for row in rows),old_summary)
+            work=self.backend.works[plan['delivery_id']]
+            self.assertEqual(source_id in work.memory_sources,old_summary or bool(calls))
+            self.event(plan,'intent')
+            if not ack:
+                self.backend.apply_event(plan['delivery_id'],dict(protocol=PROTOCOL,request_id=plan['request_id'],
+                    plan_version=1,gateway_epoch='e1',event='ack',part_id=plan['parts'][0]['id'],attempt_id='a1',
+                    result='failure',message_id=None))
+                return None
+            return self.event(plan,'ack')['parts'][0]['message']
+
+        await turn('继续刚才的讨论',old_summary=True)
+        await turn('换个话题，先聊排练',old_summary=False,ack=False)
+        await turn('那你继续说',old_summary=True)
+        switched=await turn('换个话题，今天排练几点开门',old_summary=False)
+        followup=await turn('那呢？',old_summary=False)
+        self.assertIn(switched,[json.loads(row['content']).get('message_id') for row in bodies[-1]['messages']
+                                if row['role']=='assistant'])
+        explicit=await turn('另查一下群记忆里的原话',old_summary=False,
+                            calls=(self.call('group_memory_read',message_ids=[source_id]),))
+        output=json.loads(next(row['content'] for row in bodies[-1]['messages'] if row['role']=='tool'))
+        self.assertEqual([row['message_id'] for row in output['messages']],[source_id])
+        self.current_user='u2'
+        await turn('我还在聊原来的两首歌',old_summary=True)
+        self.current_user='u1'
+        await turn('回到刚才的话题',old_summary=True)
+        await turn('那两首呢？',old_summary=True)
+        self.assertFalse(agent.tasks.tasks)
+        agent.forget(source.scope,[source_id])
+        remaining={row['message_id'] for row in agent.store.read(source.scope,[switched,followup,explicit])['messages']}
+        self.assertEqual(remaining,{switched,followup})
+
     async def test_knowledge_fallback_to_haneoka_has_sources_and_finite_diagnostics(self):
         self.catalog();bodies=self.capture_native_bodies()
         self.client.request.side_effect=[
@@ -3584,6 +3855,68 @@ class ChatImageIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
         if self.attachments:value['attachments']=self.attachments
         if self.reference:value.update(trigger='quoted_reply',reference=self.reference)
         return value
+
+    async def test_missing_image_followups_cannot_reopen_neighbor_image(self):
+        from ournotes_bot.domain.model_calls import ToolCall
+        bodies=self.capture_native_bodies()
+        self.client.request.return_value=self.result('邻近图片是旧话题。')
+        old,_=await self.prepare_native('/聊 旧话题')
+        self.event(old,'intent');self.event(old,'ack')
+        self.attachments=[]
+        for seq,question in enumerate(('taki为什么？','taki那呢？','taki这张图呢？','为什么？'),2):
+            raw={**self.request('native'+str(seq),seq),'quote_hint':'image'}
+            with patch.object(self,'request',return_value=raw):
+                plan,attempts=await self.prepare_native(question,seq=seq)
+            self.assertEqual(attempts,[])
+            self.assertEqual(plan['parts'][0]['business_status'],'quote_unavailable')
+            self.event(plan,'intent');self.event(plan,'ack')
+        raw={**self.request('native6',6),'quote_hint':'image'}
+        self.client.request.side_effect=[self.result(calls=(ToolCall('old','image_read','{"message_id":"native1"}'),)),
+                                         self.result('二加二等于四。')]
+        with patch.object(self,'request',return_value=raw):
+            plan,attempts=await self.prepare_native('taki这张图呢？另外二加二是多少？',seq=6)
+        self.assertEqual(len(attempts),2)
+        output=json.loads(next(item['output'] for item in bodies[-1]['input'] if item.get('type')=='function_call_output'))
+        self.assertEqual(output['status'],'image_not_available')
+        self.assertNotIn('data:image/',json.dumps(bodies[-2:]))
+        self.assertIn('等于四',plan['parts'][0]['text'])
+        self.event(plan,'intent');self.event(plan,'ack')
+
+    async def test_failed_trusted_quote_image_answers_preview_with_revocable_source(self):
+        from ournotes_bot.domain.chat_images import ImageError,parse_attachments
+        agent=self.backend.model_runtime.agent;bodies=self.capture_native_bodies()
+        self.backend.reference_profiles=frozenset({'fixture'})
+        scope=Request_scope();stamp=int(self.now*1000)-1000
+        key=json.dumps(scope,sort_keys=True,separators=(',',':'))
+        attachments=parse_attachments(self.attachments)
+        self.attachments=[]
+        agent.image_loader.load_many.side_effect=ImageError('image_not_available')
+        self.client.request.return_value=self.result('这段话建议给新人留练习位置。')
+        for seq,mid in enumerate(('quote-delivered','quote-revoked'),1):
+            agent.images.remember(key,mid,'u2',stamp,attachments)
+            self.reference=dict(message_id=mid,adapter_profile_version='fixture')
+            raw={**self.request('native'+str(seq),seq),'quote_hint':'image','quoted_text':'合成预览：给新人留练习位置'}
+            with patch.object(self,'request',return_value=raw):
+                plan,attempts=await self.prepare_native('taki你怎么看？',seq=seq)
+            self.assertEqual(len(attempts),1)
+            self.assertEqual(plan['parts'][0]['business_status'],'success')
+            self.assertIn('image_unavailable',str(bodies[-1]['input']))
+            self.assertIn(raw['quoted_text'],str(bodies[-1]['input']))
+            self.assertNotIn('data:image/',json.dumps(bodies[-1]))
+            work=self.backend.works[plan['delivery_id']]
+            self.assertEqual(work.unavailable_quote_image,(mid,stamp))
+            stored=agent.store.db.execute('SELECT context FROM runs WHERE id=?',(work.delivery,)).fetchone()[0]
+            self.assertIn(mid,stored);self.assertNotIn(raw['quoted_text'],stored)
+            if seq==1:
+                self.event(plan,'intent');self.event(plan,'ack')
+                self.assertTrue(any(row['role']=='assistant' for row in agent.store.recent(scope)))
+                agent.forget(scope,[mid])
+                self.assertFalse(any(row['role']=='assistant' for row in agent.store.recent(scope)))
+            else:
+                agent.store.delete_messages(scope,[mid])
+                self.assertFalse(self.backend.lookup(raw['request_id'],'e1')['send_allowed'])
+                with self.assertRaisesRegex(ProtocolError,'inactive_delivery'):
+                    self.event(plan,'intent')
 
     async def test_chat_prefix_with_only_attachment_uses_vision(self):
         self.client.request.return_value=self.result('这是图像说明。')

@@ -19,6 +19,9 @@ class ChatRecovery:
         self.ledger=self.runtime.backend.ledger
 
     def stage(self,work):
+        # Old readers cannot revoke derivatives of an original with no verified timestamp.
+        if work.quote_preview_reference:
+            return ()
         context=work.participating_history
         if work.proactive is None:
             row=self.store.db.execute('SELECT context FROM runs WHERE id=?',(work.delivery,)).fetchone()
@@ -59,6 +62,9 @@ class ChatRecovery:
         except (OSError,ModelError,KnowledgeError,StoryError,ServiceError):return None
 
     def _valid(self,proof,*,projected):
+        # Retain revocation checks for candidates produced by earlier builds.
+        if proof.get('quote_preview_reference') and not self.store.detached_quote_valid(
+                proof['scope'],proof['quote_preview_reference']):return False
         if proof['story'] and (self.agent.story is None or not all(self.agent.story.valid(*v) for v in proof['story'])):return False
         knowledge=self.runtime.backend.knowledge
         if proof['knowledge'] and (knowledge is None or not knowledge.validate_retention(proof['knowledge'])):return False
