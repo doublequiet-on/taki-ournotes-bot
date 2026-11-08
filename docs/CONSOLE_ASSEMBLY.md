@@ -1,6 +1,9 @@
 # 下游Console固定候选装配
 
-当前个人隔离候选在 602a95f 上接入固定 08 `4fd680b9096ac7283facf8c9735aaa88b9147a6f`。组合额外测量编译的 `createRecoveryScope` 和 controller 内的身份、删除权威预检文件，Python sdist 随行两份源码。恢复仍需独立可信宿主和已指定管理员；普通 Console 登录无批准权。个人正常启动及原功能沿用，当前工件用于个人隔离审查。
+本次个人组合携带固定 07 C6 v2 源码以及固定 10 安装预检。controller 安装树包含 `koishi_launcher.py` 和用于读取实例布局的两份模块；新实例配置入口只返回 manual，旧个人 `--base` 启动路径保留。七份宿主恢复模块随配对 Git 源归档逐字节测量，仍不进入 controller 安装树；没有真实管理员、当前隔离观测、恢复配置或启动许可。Python sdist 仍为 Python 源码包。
+
+
+此前 bad669b 个人隔离候选在 602a95f 上接入固定 08 `4fd680b9096ac7283facf8c9735aaa88b9147a6f`。组合额外测量编译的 `createRecoveryScope` 和 controller 内的身份、删除权威预检文件，Python sdist 随行两份源码。恢复仍需独立可信宿主和已指定管理员；普通 Console 登录无批准权。个人正常启动及原功能沿用，当前工件用于个人隔离审查。
 
 ## 当前增量：恢复业务入口
 

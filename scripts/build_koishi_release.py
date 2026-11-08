@@ -25,7 +25,11 @@ except ModuleNotFoundError:
 ROOT = Path(__file__).resolve().parents[1]
 APPLICATION = ROOT / 'src/ournotes_bot/application'
 RECOVERY_PROTOCOL_SOURCE = 'a6e102a5b94be6af65652985fe0063491352cbf5'
-RECOVERY_HOST_FILES = ('isolated_runtime.py', 'recovery_session.py', 'recovery_session.cjs')
+RECOVERY_HOST_SOURCE = '29c4230f07364899b11a55ad03d07654238e1731'
+RECOVERY_HOST_SOURCE_ONLY = ('host_authority.py', 'isolated_runtime.py', 'recovery_matrix.py',
+                             'recovery_preflight.py', 'recovery_session.py', 'recovery_session.cjs',
+                             'storage_observation.py')
+RECOVERY_LAUNCHER_FILES = ('koishi_launcher.py', 'instance_install.py', 'instance_preflight.py')
 RECOVERY_AUTHORITY_FILES = ('product_identity.py', 'recovery_authority.py')
 KOISHI_CLIENT_SHA256 = '55a68e89eda7e3fe59305b09e6c4de19481a8d7aa5df97579822c819ebf3ccaf'
 LICENSE_SHA256 = {
@@ -59,11 +63,19 @@ def measure_recovery_entries(python_bundle, gateway, commit):
         if not path.is_file():
             raise ValueError('Missing packaged gateway recovery entry: ' + name)
         source['koishi/' + name] = path.read_bytes()
-    for name in RECOVERY_AUTHORITY_FILES:
-        path = gateway.parent / 'controller' / name
-        if not path.is_file() or path.read_bytes() != (ROOT / 'deploy' / name).read_bytes():
-            raise ValueError('Missing or different packaged recovery authority: ' + name)
-        source['deploy/' + name] = path.read_bytes()
+    controller = gateway.parent / 'controller'
+    for name in (*RECOVERY_AUTHORITY_FILES, *RECOVERY_LAUNCHER_FILES):
+        path = controller / name
+        if not path.is_file():
+            raise ValueError('Missing packaged controller entry: ' + name)
+        data = path.read_bytes()
+        if data != (ROOT / 'deploy' / name).read_bytes():
+            raise ValueError('Different packaged controller entry: ' + name)
+        source['deploy/' + name] = data
+    for name in RECOVERY_HOST_SOURCE_ONLY:
+        if (controller / name).exists():
+            raise ValueError('Unexpected recovery host in controller payload: ' + name)
+        source['deploy/' + name] = (ROOT / 'deploy' / name).read_bytes()
     compiled = gateway / 'lib/recovery-scope.js'
     if not compiled.is_file():
         raise ValueError('Missing compiled recovery scope entry')
@@ -80,13 +92,10 @@ def measure_recovery_entries(python_bundle, gateway, commit):
         python_bytes = installed[code_files.index(python_entry)]
         source['src/ournotes_bot/application/' + python_entry] = python_bytes
         prefix = 'taki-ournotes-bot-' + commit + '/'
-        host_paths = {prefix + 'deploy/' + name for name in RECOVERY_HOST_FILES}
         expected_source = {prefix + name: data for name, data in source.items()}
         seen = set()
         with bundle.open('source.tar.gz') as stream, tarfile.open(fileobj=stream, mode='r|gz') as archive:
             for member in archive:
-                if member.name in host_paths:
-                    raise ValueError('Unexpected recovery host in paired source archive')
                 if member.name in expected_source:
                     if (member.name in seen or not member.isfile()
                             or archive.extractfile(member).read() != expected_source[member.name]):
@@ -94,8 +103,6 @@ def measure_recovery_entries(python_bundle, gateway, commit):
                     seen.add(member.name)
         if seen != expected_source.keys():
             raise ValueError('Recovery entry missing in paired source archive')
-    if any((gateway.parent / 'controller' / name).exists() for name in RECOVERY_HOST_FILES):
-        raise ValueError('Unexpected recovery host in controller payload')
     backend_digest = hashlib.sha256(b''.join(installed)).hexdigest()
     if backend_digest != hashlib.sha256(b''.join((APPLICATION / n).read_bytes() for n in code_files)).hexdigest():
         raise ValueError('Installed CODE_FILES bytes differ from fixed backend source')
@@ -111,6 +118,11 @@ def measure_recovery_entries(python_bundle, gateway, commit):
         'python': {'wheel_member': 'ournotes_bot/application/recovery_entry.py',
                    'export': 'serve_recovery_backend', 'sha256': hashlib.sha256(python_bytes).hexdigest()},
         'protocol_source_commit': RECOVERY_PROTOCOL_SOURCE,
+        'host_source_commit': RECOVERY_HOST_SOURCE,
+        'host_source_only': {'deploy/' + name: hashlib.sha256(source['deploy/' + name]).hexdigest()
+                             for name in RECOVERY_HOST_SOURCE_ONLY},
+        'launcher_files': {'controller/' + name: hashlib.sha256(source['deploy/' + name]).hexdigest()
+                           for name in RECOVERY_LAUNCHER_FILES},
         'host_bundled': False,
     }
 
@@ -211,8 +223,8 @@ def build(python_artifact, node, output):
         binary.parent.mkdir();shutil.copy2(node,binary)
         python=stage/'python'/python_artifact.name;python.parent.mkdir();shutil.copy2(python_artifact,python)
         recovery=stage/'controller';recovery.mkdir()
-        for name in ('koishi_control.py','koishi_launcher.py','group_policy_guard.py','linux_backend.py','linux_updater.py','offline_bundle.py','release_retention.py','ops_snapshot.py','trusted_actions.py',
-                     *RECOVERY_AUTHORITY_FILES):
+        for name in ('koishi_control.py','group_policy_guard.py','linux_backend.py','linux_updater.py','offline_bundle.py','release_retention.py','ops_snapshot.py','trusted_actions.py',
+                     *RECOVERY_AUTHORITY_FILES, *RECOVERY_LAUNCHER_FILES):
             shutil.copy2(ROOT/'deploy'/name,recovery/name)
         shutil.copytree(ROOT/'deploy/koishi',recovery/'service-templates')
         shutil.copy2(ROOT/'docs/KOISHI_MIGRATION_M4.md',stage/'RUNBOOK.md')
