@@ -3550,6 +3550,28 @@ class ChatResearchTaskTests(Fixture,unittest.IsolatedAsyncioTestCase):
         self.assertEqual(agent.tasks.status(scope)['completed_tasks'],1)
         self.assertEqual(next(iter(agent.tasks.tasks.values())).targets,old_refs[1:])
 
+    async def test_explicit_topic_switch_pauses_task_without_a_named_jp_entity(self):
+        self.catalog();bodies=self.capture_native_bodies();agent=self.backend.model_runtime.agent
+        refs=['song:100001','song:100002']
+        def read():
+            return self.call('read_entity_fields',entity_refs=refs,fields=['notes'],difficulty='HARD')
+        for seq,question in enumerate(('换个话题，今天好累','换个话题，国际服时长最短的是哪首歌？'),1):
+            with self.subTest(question=question):
+                self.client.request.side_effect=[self.result(calls=(self.task_call(refs,['notes'],'HARD'),read())),
+                                                 self.result('两首的 HARD 已比较。')]
+                first,_=await self.prepare_native('/聊 比较合成曲100001和合成曲100002的HARD音符数',seq=2*seq-1)
+                self.event(first,'intent');self.event(first,'ack')
+                scope=self.backend.works[first['delivery_id']].request.scope
+                first_body=len(bodies)
+                self.client.request.side_effect=[self.result(calls=(read(),)),self.result('回应当前问题。')]
+                plan,_=await self.prepare_native('/聊 '+question,seq=2*seq)
+                self.event(plan,'intent');self.event(plan,'ack')
+                context=[json.loads(row['content']) for row in bodies[first_body]['messages'] if row['role']=='user']
+                self.assertFalse(any('research_task' in row for row in context))
+                output=json.loads(next(row['content'] for row in bodies[-1]['messages'] if row['role']=='tool'))
+                self.assertEqual(output['status'],'query_entity_mismatch')
+                self.assertEqual(agent.tasks.status(scope)['active_tasks'],0)
+
     async def test_knowledge_fallback_to_haneoka_has_sources_and_finite_diagnostics(self):
         self.catalog();bodies=self.capture_native_bodies()
         self.client.request.side_effect=[

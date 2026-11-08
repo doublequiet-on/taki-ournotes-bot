@@ -121,9 +121,9 @@ class TaskContexts:
                     window_seconds=self.window)
 
 
-def task_transition(question, named):
+def task_transition(question):
     text = re.sub(r'^(?:taki(?![a-z0-9_])|立希)[\s，,、：:]*', '', question.strip(), flags=re.I)
-    if named and re.match(r'^(?:我们)?(?:先|来)?(?:换(?:一个|个)?(?:话题|问题)|聊点别的)', text):
+    if re.match(r'^(?:我们)?(?:先|来)?(?:换(?:一个|个)?(?:话题|问题)|聊点别的)', text):
         return 'switch'
     if re.match(r'^(?:我们)?(?:先)?(?:回到|接着聊)(?:刚才|上一个|之前)(?:的)?(?:话题|问题)', text):
         return 'resume'

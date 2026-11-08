@@ -710,7 +710,7 @@ class ChatAgent:
         task_enabled=work.proactive is None or getattr(work,'continuation',False)
         named=(explicit_entities(runtime.backend.repository,user_question)
                if task_enabled and requested_server(chat_query_question(user_question)) in (None,'jp') else {})
-        transition=task_transition(user_question,named) if not quote_focus else ''
+        transition=task_transition(user_question) if not quote_focus else ''
         work.chat_task=(self.tasks.begin(request,lambda mid,stamp:self.store.source_valid(request.scope,mid,stamp),
                                          inherit=not quote_focus,transition=transition)
                         if retain_turn and task_enabled else ResearchTask())
