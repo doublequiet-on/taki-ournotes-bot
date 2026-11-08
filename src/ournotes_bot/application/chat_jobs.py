@@ -1,5 +1,5 @@
 # L3: Approved group-service configuration, restart-aware usage budgets and summary material.
-# Effects: Reads administrator JSON and usage on its owning thread; returns exact permits and bounded budget diagnostics.
+# Effects: Reads administrator JSON and usage; paces new proactive spend within the existing daily cap.
 from dataclasses import dataclass
 from fractions import Fraction
 import hashlib
@@ -171,6 +171,18 @@ def maximum_cost_micro(profile):
     return profile.reserve(profile.max_input_tokens, profile.max_output_tokens) * profile.price.reference_rate / 1_000_000
 
 
+def proactive_minimum_cost_micro(profile):
+    """Reserve the decision and reply together for staged Responses profiles."""
+    calls = 2 if profile.wire_profile == 'openai-responses-v1' else 1
+    return math.ceil(maximum_cost_micro(profile) * calls)
+
+
+def _paced_release(fresh_budget, minimum, seconds_since_midnight):
+    """Open one refundable opportunity and release the remaining budget throughout the day."""
+    initial = min(minimum, fresh_budget)
+    return initial + (fresh_budget - initial) * Fraction(seconds_since_midnight, 86400)
+
+
 @dataclass(frozen=True)
 class ServicePermit:
     user_key: str
@@ -240,6 +252,7 @@ class ServiceBudget:
             recent, cost, daily_cost, unresolved = [], Fraction(), Fraction(), Fraction()
             opportunity_count,opportunity_cost=0,Fraction()
             hourly_known, hourly_unknown, hourly_reserved, unknown = (Fraction() for _ in range(4))
+            day_known, day_unknown, day_reserved, carry = (Fraction() for _ in range(4))
             for row in rows:
                 if row['state'] == 'released':
                     continue
@@ -258,7 +271,15 @@ class ServiceBudget:
                     hourly_known += known
                     if in_flight:hourly_reserved += amount - known
                     else:hourly_unknown += amount - known
-                if row['created'] >= start or uncertain or in_flight:daily_cost += amount
+                if row['created'] >= start or uncertain or in_flight:
+                    daily_cost += amount
+                    day_known += known
+                    if in_flight:
+                        day_reserved += amount - known
+                    else:
+                        day_unknown += amount - known
+                    if row['created'] < start:
+                        carry += amount
                 if row['request_id'] in opportunity_requests:
                     opportunity_count+=1
                     opportunity_cost+=amount
@@ -268,17 +289,34 @@ class ServiceBudget:
             raise ServiceError('chat_service_usage_unavailable') from None
         available = Fraction(limits.max_cost_micro_per_hour) - cost
         if daily_limit:available = min(available, daily_limit - daily_cost)
+        paced_available = None
+        pacing_details = ()
+        if task == 'proactive' and daily_limit:
+            # Carry consumes the hard daily cap but does not consume today's released tranche twice.
+            fresh_budget = max(Fraction(), daily_limit - carry)
+            released = _paced_release(
+                fresh_budget, proactive_minimum_cost_micro(profile), int(now - start))
+            paced_available = released - (daily_cost - carry)
+            available = min(available, paced_available)
+            pacing_details = (
+                ('day_known_micro', day_known), ('day_unknown_micro', day_unknown),
+                ('day_reserved_micro', day_reserved), ('day_carry_micro', carry),
+                ('day_released_micro', released), ('day_unreleased_micro', fresh_budget - released),
+                ('day_paced_available_micro', max(0, paced_available)))
         # Diagnostics use whole micro-currency, rounded up; admission stays exact.
-        details = tuple((key, math.ceil(value)) for key, value in (
+        budget_amounts = (
             ('hour_limit_micro', limits.max_cost_micro_per_hour), ('day_limit_micro', daily_limit),
             ('hour_cost_micro', cost), ('day_cost_micro', daily_cost),
             ('hour_known_micro', hourly_known), ('hour_unknown_micro', hourly_unknown),
             ('hour_reserved_micro', hourly_reserved), ('unknown_cost_micro', unknown),
-            ('requested_cost_micro', reserve_cost_micro), ('available_cost_micro', max(0, available))))
+            ('requested_cost_micro', reserve_cost_micro), ('available_cost_micro', max(0, available)))
+        details = tuple((key, math.ceil(value)) for key, value in budget_amounts + pacing_details)
         if cost + reserve_cost_micro > limits.max_cost_micro_per_hour:
             raise ServiceError('chat_service_cost_limit', budget_details=details)
         if daily_limit and daily_cost + reserve_cost_micro > daily_limit:
             raise ServiceError('chat_service_daily_cost_limit', budget_details=details)
+        if paced_available is not None and paced_available < reserve_cost_micro:
+            raise ServiceError('chat_service_pacing_limit', budget_details=details)
         if opportunity_requests:
             _check(opportunity_count<opportunity_calls,'chat_opportunity_call_limit')
             _check(opportunity_cost+reserve_cost_micro<=opportunity_cost_micro,'chat_opportunity_cost_limit')

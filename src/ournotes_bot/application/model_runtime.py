@@ -438,7 +438,8 @@ class ModelRuntime:
                 **self.agent.proactive.opportunity_budget(work))
             except ServiceError as exc:
                 raise ModelError('quota_exceeded' if str(exc) in ('chat_service_call_limit','chat_service_cost_limit',
-                    'chat_service_daily_cost_limit','chat_opportunity_call_limit','chat_opportunity_cost_limit') else str(exc)) from None
+                    'chat_service_daily_cost_limit','chat_service_pacing_limit','chat_opportunity_call_limit',
+                    'chat_opportunity_cost_limit') else str(exc)) from None
         self.usage.reserve(billing_request_id,attempt,user,group,profile,bound,action_budget=action_budget)
 
     def input_bound(self,work,messages,tools,*,body=None):

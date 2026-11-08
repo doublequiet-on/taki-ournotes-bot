@@ -14,7 +14,7 @@ from types import SimpleNamespace
 from ..domain.chat import ChatMessage
 from ..domain.chat_images import ImageError
 from ..domain.model_calls import ModelError,require
-from .chat_jobs import ChatServices,ServiceError,maximum_cost_micro,service_request_id
+from .chat_jobs import ChatServices, ServiceError, maximum_cost_micro, proactive_minimum_cost_micro, service_request_id
 from .proactive_chat import ProactiveController,ProactivePolicy
 from .chat_followup import Followups
 from . import replies
@@ -256,19 +256,21 @@ class ProactiveChat:
         if not continuation:
             preflight=service_request_id('proactive',request.instance_id,request.app_id,
                 request.conversation_id,'budget/'+request.request_id)
+            minimum = proactive_minimum_cost_micro(snapshot.profile)
+            # Check the actual staged minimum so pacing and hard budget denials stay distinguishable.
+            required = minimum if policy.proactive.max_cost_micro_per_day else 1
             try:
                 permit=self.agent.service_budget.check(policy,'proactive',snapshot.profile,
-                    preflight,1,reply_times=self.agent.store.proactive_replies(request.scope))
+                    preflight,required,reply_times=self.agent.store.proactive_replies(request.scope))
             except ServiceError as exc:
                 self.control_event(request,str(exc),**dict(exc.budget_details));return None
             spent=max(permit.spent_cost_micro,self.controller.status(self.scope(request))['hourly_cost_micro'])
             cost=min(math.ceil(cost),math.floor(permit.available_cost_micro),
                      math.floor(policy.proactive.max_cost_micro_per_hour-spent))
             # Fund the decision and final reply; tools/rechecks spend only what remains.
-            minimum=maximum_cost_micro(snapshot.profile)*(2 if snapshot.profile.wire_profile=='openai-responses-v1' else 1)
-            if cost<math.ceil(minimum):
+            if cost<minimum:
                 details = dict(permit.budget_details)
-                details.update(requested_cost_micro=math.ceil(minimum), available_cost_micro=max(0, cost),
+                details.update(requested_cost_micro=minimum, available_cost_micro=max(0, cost),
                                controller_cost_micro=math.ceil(spent))
                 self.control_event(request,'chat_service_reservation_limit',**details);return None
         candidate=self.controller.candidate(self.scope(request),reserve_cost_micro=math.ceil(cost))

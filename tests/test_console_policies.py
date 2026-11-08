@@ -5681,7 +5681,7 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
         self.assertTrue(any(e['data'].get('decision')=='skip'
             for e in self.backend.diagnostics.read(plan['request_id'])['chat_events']))
 
-    async def test_reservation_denial_logs_budget_sizes_without_calling_model(self):
+    async def test_hourly_minimum_denial_logs_budget_sizes_without_calling_model(self):
         import math
         from ournotes_bot.application.chat_jobs import maximum_cost_micro
         minimum=math.ceil(maximum_cost_micro(self.snapshot.profile)*
@@ -5693,11 +5693,71 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(self.agent.proactive.candidate(Request.parse(value,'fixture','app',self.now)))
         self.client.request.assert_not_awaited()
         events=self.backend.diagnostics.group_events('g1')
-        data=next(e['data'] for e in events if e['data'].get('status')=='chat_service_reservation_limit')
+        data=next(e['data'] for e in events if e['data'].get('status')=='chat_service_cost_limit')
         self.assertEqual(data['requested_cost_micro'],minimum)
         self.assertEqual(data['available_cost_micro'],minimum-1)
         self.assertEqual(data['day_limit_micro'],2000000)
         self.assertNotIn('PRIVATE',json.dumps(events))
+
+    async def paced_midnight_opportunity(self, *, reply):
+        from ournotes_bot.application.chat_jobs import proactive_minimum_cost_micro, service_request_id
+        from ournotes_bot.domain.model_calls import Usage
+        self.now = (int(self.now) + 8*3600) // 86400 * 86400 - 8*3600
+        self.snapshot = replace(self.snapshot, profile=replace(self.snapshot.profile, provider='openai',
+            wire_profile='openai-responses-v1', model='gpt-6.1-terra', max_input_tokens=32768,
+            max_output_tokens=4096, user_daily_limit=10**8, group_daily_limit=10**8))
+        profile = self.snapshot.profile
+        minimum = proactive_minimum_cost_micro(profile)
+        self.policy = replace(self.policy, proactive=replace(self.policy.proactive,
+            max_cost_micro_per_hour=minimum*4, max_cost_micro_per_day=minimum*16))
+        self.agent.services.policy.return_value = self.policy
+        self.agent.service_budget.clock = lambda: self.now
+        usage = self.backend.model_runtime.usage
+        user = usage.key('service','fixture','app','g1','approved-group-service','proactive')
+        group = usage.key('group','g1')
+        old = service_request_id('proactive','fixture','app','g1','prior-day')
+        usage.clock = lambda: self.now - 7200
+        usage.reserve(old,'prior-day',user,group,profile,32768)
+        usage.start('prior-day',profile)
+        usage.settle('prior-day',Usage())
+        carried = usage.get('prior-day')
+        usage.clock = lambda: self.now
+        competing = service_request_id('proactive','fixture','app','g1','competing')
+        usage.reserve(competing,'competing',user,group,profile,100)
+        value = self.observation('PRIVATE_PACING_FIXTURE')
+        self.tick += 1.6
+        self.assertIsNone(self.agent.proactive.candidate(Request.parse(value,'fixture','app',self.now)))
+        self.client.request.assert_not_awaited()
+        denial = next(e['data'] for e in self.backend.diagnostics.group_events('g1')
+                      if e['data'].get('status') == 'chat_service_pacing_limit')
+        self.assertEqual(denial['day_released_micro'],minimum)
+        self.assertEqual(denial['requested_cost_micro'],minimum)
+        self.assertGreater(denial['day_reserved_micro'],0)
+        self.assertEqual(denial['day_unknown_micro'],denial['day_carry_micro'])
+        usage.release('competing','cancelled_before_start')
+        choice = 'reply' if reply else 'skip'
+        results = iter([self.result(json.dumps(dict(participation=choice,text='',delay_seconds=None))),
+                        self.result('A fixture reply')])
+        offered_tools = []
+        async def respond(profile,body,**kwargs):
+            offered_tools.append(bool(body.get('tools')))
+            return next(results)
+        self.client.request.side_effect = respond
+        plan, attempts, _ = await self.candidate(value)
+        if reply:
+            self.assertEqual(plan['parts'][0]['business_status'],'success')
+        else:
+            self.assertEqual(plan['parts'],[])
+        self.assertEqual(len(attempts),2 if reply else 1)
+        self.assertEqual(offered_tools,[False,False] if reply else [False])
+        self.assertFalse(usage.db.execute("SELECT 1 FROM attempts WHERE state='reserved'").fetchone())
+        self.assertEqual(usage.get('prior-day'),carried)
+
+    async def test_midnight_pacing_refunds_cancelled_hold_and_funds_both_stages(self):
+        await self.paced_midnight_opportunity(reply=True)
+
+    async def test_midnight_pacing_releases_unused_generation_after_skip(self):
+        await self.paced_midnight_opportunity(reply=False)
 
     async def test_provider_failure_keeps_attempt_hold_without_blocking_unspent_opportunity(self):
         import math
@@ -7317,6 +7377,70 @@ class ChatServiceJobsTests(unittest.TestCase):
         self.assertEqual(candidate.original_messages,tuple(messages))
 
 
+
+    def test_full_day_release_matches_production_headroom_without_evening_jump(self):
+        from fractions import Fraction
+        from ournotes_bot.application.chat_jobs import _paced_release
+        budget, minimum = Fraction(330580), 122880
+        expected = {0:122880, 6:174805, 12:226730, 18:278655, 24:330580}
+        for hour, amount in expected.items():
+            with self.subTest(hour=hour):
+                self.assertEqual(_paced_release(budget,minimum,hour*3600),amount)
+        self.assertLess(_paced_release(budget,minimum,18*3600)
+                        - _paced_release(budget,minimum,18*3600-1),3)
+        self.assertEqual(_paced_release(Fraction(120017),minimum,0),120017)
+
+    def test_low_daily_balance_cannot_fund_an_opportunity_at_any_hour(self):
+        from ournotes_bot.application.chat_jobs import ServiceError, proactive_minimum_cost_micro
+        minimum = proactive_minimum_cost_micro(self.profile)
+        midnight = 20000 * 86400 - 8 * 3600
+        policy = self.save()
+        policy = replace(policy,proactive=replace(policy.proactive,max_cost_micro_per_hour=minimum*2,
+            max_cost_micro_per_day=minimum-1))
+        for offset in (0, 12*3600, 86399, 86400):
+            self.now[0] = midnight + offset
+            with self.subTest(offset=offset), self.assertRaisesRegex(ServiceError,'chat_service_daily_cost_limit'):
+                self.budget.check(policy,'proactive',self.profile,self.request('proactive'),minimum)
+
+    def test_pacing_gate_releases_more_after_known_settlement_and_preserves_daily_components(self):
+        from fractions import Fraction
+        from ournotes_bot.application.chat_jobs import ServiceError, proactive_minimum_cost_micro
+        from ournotes_bot.domain.model_calls import Usage
+        minimum = proactive_minimum_cost_micro(self.profile)
+        midnight = 20000 * 86400 - 8 * 3600
+        self.now[0] = midnight - 7200
+        self.attempt('proactive','unknown',Usage())
+        prior = self.ledger.get('attempt-unknown')
+        carry, uncertain = self.budget.attempt_cost(prior)
+        self.assertTrue(uncertain)
+        self.now[0] = midnight
+        policy = self.save()
+        policy = replace(policy,proactive=replace(policy.proactive,max_cost_micro_per_hour=minimum*2,
+            max_cost_micro_per_day=int(carry)+minimum*8))
+        request = self.request('proactive','known')
+        permit = self.budget.check(policy,'proactive',self.profile,request,minimum)
+        self.assertEqual(permit.available_cost_micro,minimum)
+        self.ledger.reserve(request,'daytime',permit.user_key,permit.group_key,self.profile,100)
+        with self.assertRaisesRegex(ServiceError,'chat_service_pacing_limit'):
+            self.budget.check(policy,'proactive',self.profile,self.request('proactive','other'),minimum)
+        self.ledger.start('daytime',self.profile)
+        self.ledger.settle('daytime',Usage(80,0,10,None,90,'known'))
+        with self.assertRaisesRegex(ServiceError,'chat_service_pacing_limit'):
+            self.budget.check(policy,'proactive',self.profile,self.request('proactive','other'),minimum)
+        self.now[0] += 12 * 3600
+        permit = self.budget.check(policy,'proactive',self.profile,self.request('proactive','other'),minimum)
+        fields = dict(permit.budget_details)
+        self.assertEqual(fields['day_known_micro'],100)
+        self.assertEqual(fields['day_reserved_micro'],0)
+        self.assertEqual(fields['day_unknown_micro'],fields['day_carry_micro'])
+        self.assertEqual(fields['day_cost_micro'],fields['day_known_micro']+fields['day_unknown_micro'])
+        self.now[0] = midnight + 86400
+        permit = self.budget.check(policy,'proactive',self.profile,self.request('proactive','tomorrow'),minimum)
+        fields = dict(permit.budget_details)
+        self.assertEqual(fields['day_known_micro'],0)
+        self.assertEqual(fields['day_released_micro'],minimum)
+        self.assertEqual(permit.available_cost_micro,minimum)
+        self.assertEqual(self.ledger.get('attempt-unknown'),prior)
 
     def test_settled_unknown_exits_hour_at_boundary_but_keeps_daily_hold(self):
         from fractions import Fraction
