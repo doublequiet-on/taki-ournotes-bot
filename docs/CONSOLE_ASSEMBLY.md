@@ -1,5 +1,7 @@
 # 下游Console固定候选装配
 
+当前个人隔离候选在 602a95f 上接入固定 08 `4fd680b9096ac7283facf8c9735aaa88b9147a6f`。组合额外测量编译的 `createRecoveryScope` 和 controller 内的身份、删除权威预检文件，Python sdist 随行两份源码。恢复仍需独立可信宿主和已指定管理员；普通 Console 登录无批准权。个人正常启动及原功能沿用，当前工件用于个人隔离审查。
+
 ## 当前增量：恢复业务入口
 
 以固定 B2 组合源码 `cf1f09176e8e2d5dda310586a454a7d4ecac8d42` 为底，接收08 `a384335f69e0514190c51c5dfce5808b55a19f60` 相对 a7ca 的九文件增量。组合显式携带 `gateway/recovery.cjs`，与 `gateway/run.cjs` 的入口及配对 wheel 内的 `recovery_entry.py` 一起写入 manifest 摘要。验包同时核对配对 Git 源归档中的入口、实际 wheel 的 `CODE_FILES` 聚合摘要及单项摘要。

@@ -43,6 +43,8 @@ SDIST_REQUIRED = SDIST_BUILD_JSON | {
     ("koishi", "vendor", "taki-console-0.1.0-candidate.4.tgz"),
     ("koishi", "vendor", "README.md"),
     ("koishi", "recovery.cjs"),
+    ("deploy", "product_identity.py"),
+    ("deploy", "recovery_authority.py"),
     ("koishi", "compat", "cache-content-type", "LICENSE"),
     ("koishi", "compat", "cache-content-type", "README.md"),
     ("koishi", "compat", "cache-content-type", "index.cjs"),

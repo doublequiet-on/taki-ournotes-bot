@@ -8,7 +8,7 @@ include docs/CONSOLE_ASSEMBLY.md
 include koishi/vendor/taki-console-0.1.0-candidate.4.tgz koishi/vendor/console-candidate.json koishi/vendor/README.md
 recursive-include koishi/compat/cache-content-type LICENSE README.md index.cjs package.json upstream-materials.json
 include koishi/package.json koishi/package-lock.json koishi/recovery.cjs
-include scripts/product_release.py deploy/product_identity.py
+include scripts/product_release.py deploy/product_identity.py deploy/recovery_authority.py
 include scripts/console_source_materials.py docs/CONSOLE_SOURCE_MATERIALS.md
 include docs/CONSOLE_ICU_DATA.md
 include docs/CONSOLE_ROLLUP_LICENSES.md

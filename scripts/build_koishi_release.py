@@ -26,6 +26,7 @@ ROOT = Path(__file__).resolve().parents[1]
 APPLICATION = ROOT / 'src/ournotes_bot/application'
 RECOVERY_PROTOCOL_SOURCE = 'a6e102a5b94be6af65652985fe0063491352cbf5'
 RECOVERY_HOST_FILES = ('isolated_runtime.py', 'recovery_session.py', 'recovery_session.cjs')
+RECOVERY_AUTHORITY_FILES = ('product_identity.py', 'recovery_authority.py')
 KOISHI_CLIENT_SHA256 = '55a68e89eda7e3fe59305b09e6c4de19481a8d7aa5df97579822c819ebf3ccaf'
 LICENSE_SHA256 = {
     'node/LICENSE': '148eacf7863ef4329224a29398623077200a27194aa075569faf4a0a85566ca5',
@@ -58,6 +59,14 @@ def measure_recovery_entries(python_bundle, gateway, commit):
         if not path.is_file():
             raise ValueError('Missing packaged gateway recovery entry: ' + name)
         source['koishi/' + name] = path.read_bytes()
+    for name in RECOVERY_AUTHORITY_FILES:
+        path = gateway.parent / 'controller' / name
+        if not path.is_file() or path.read_bytes() != (ROOT / 'deploy' / name).read_bytes():
+            raise ValueError('Missing or different packaged recovery authority: ' + name)
+        source['deploy/' + name] = path.read_bytes()
+    compiled = gateway / 'lib/recovery-scope.js'
+    if not compiled.is_file():
+        raise ValueError('Missing compiled recovery scope entry')
     with zipfile.ZipFile(python_bundle) as bundle:
         wheels = [n for n in bundle.namelist()
                   if n.startswith('wheelhouse/taki_ournotes_bot-') and n.endswith('.whl')]
@@ -91,6 +100,10 @@ def measure_recovery_entries(python_bundle, gateway, commit):
     if backend_digest != hashlib.sha256(b''.join((APPLICATION / n).read_bytes() for n in code_files)).hexdigest():
         raise ValueError('Installed CODE_FILES bytes differ from fixed backend source')
     return backend_digest, {
+        'gateway_scope': {'path': 'gateway/lib/recovery-scope.js', 'export': 'createRecoveryScope',
+                          'sha256': sha(compiled)},
+        'authority_files': {'controller/' + name: hashlib.sha256(source['deploy/' + name]).hexdigest()
+                            for name in RECOVERY_AUTHORITY_FILES},
         'gateway': {'path': 'gateway/run.cjs', 'export': 'startRecovery',
                     'sha256': hashlib.sha256(source['koishi/run.cjs']).hexdigest()},
         'gateway_lifecycle': {'path': 'gateway/recovery.cjs', 'export': 'serveRecoveryGateway',
@@ -198,7 +211,8 @@ def build(python_artifact, node, output):
         binary.parent.mkdir();shutil.copy2(node,binary)
         python=stage/'python'/python_artifact.name;python.parent.mkdir();shutil.copy2(python_artifact,python)
         recovery=stage/'controller';recovery.mkdir()
-        for name in ('koishi_control.py','koishi_launcher.py','group_policy_guard.py','linux_backend.py','linux_updater.py','offline_bundle.py','release_retention.py','ops_snapshot.py','trusted_actions.py'):
+        for name in ('koishi_control.py','koishi_launcher.py','group_policy_guard.py','linux_backend.py','linux_updater.py','offline_bundle.py','release_retention.py','ops_snapshot.py','trusted_actions.py',
+                     *RECOVERY_AUTHORITY_FILES):
             shutil.copy2(ROOT/'deploy'/name,recovery/name)
         shutil.copytree(ROOT/'deploy/koishi',recovery/'service-templates')
         shutil.copy2(ROOT/'docs/KOISHI_MIGRATION_M4.md',stage/'RUNBOOK.md')
