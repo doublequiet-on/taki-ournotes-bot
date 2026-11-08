@@ -11,6 +11,11 @@ from ..domain.meta_query import (MetaError, MetaFilter, MetaOrder, MetaQuerySpec
 from .entity_lexicon import band_aliases, band_name_variants
 
 
+NOTE = r'(?<![a-z0-9_])note(?![a-z0-9_])'
+GAME_PREFIX = (r'^(?:我们\s*(?:的\s*)?)?(?:(?:bang\s+dream\s*!?\s*)?our\s*notes?|on)(?![a-z0-9_])'
+               r'\s*(?:里面|里|中)?[\s,:]*')
+
+
 BANDS = {1: 'MyGO!!!!!', 2: 'Ave Mujica', 3: '梦限大MewType', 4: 'millsage', 5: '一家Dumb Rock!'}
 
 
@@ -19,12 +24,16 @@ def parse_meta_question(question, repository):
     # Card skill durations are not song timing; preserve their established route.
     if re.search(r'成员卡|角色卡|卡牌|留影卡|支援卡|号卡|技能|(?<![a-z])(?:cards?|snap|support)(?![a-z])', text):
         return None
-    if not re.search(r'最短|最长|时长|時間|秒|nps|bpm|密度|note.*(?:最多|最少|至少|至多|[<>])|(?:最多|最少).*note|按.*(?:等级|音符)|谱面指标', text):
+    if not re.search(rf'最短|最长|时长|時間|秒|nps|bpm|密度|{NOTE}.*(?:最多|最少|至少|至多|[<>])|(?:最多|最少).*{NOTE}|按.*(?:等级|音符)|谱面指标', text):
         return None
     if re.search(r'音频|音源|结算|效率|得分|预测|配队|估计|定数', text):
         raise MetaError('unsupported_field', '这里支持谱面末判定时长、等级、Note 数、NPS 和 BPM；不支持该指标。')
     if re.search(r'台服|港服|韩服|美服|欧服|(?<![a-z])(?:hk|tw|kr|en)(?![a-z])', text):
         raise MetaError('invalid_argument', '歌曲指标按资源区服查询，请指定日服 jp 或国际服 intl。')
+    # Scope and address words are accepted only as a question prefix.
+    text = re.sub(r'^(?:(?:请问|请|帮我|查一下|查询|找出|找一下|看看|taki(?![a-z0-9_])|立希)[\s,:]*)+', '', text)
+    text, game_prefix = re.subn(GAME_PREFIX, '', text)
+    text = re.sub(r'^当前\s*(?=日服|国际服|國際服|jp(?![a-z])|intl(?![a-z]))', '', text)
     servers = []
     for pattern, server in ((r'日服|(?<![a-z])jp(?![a-z])', 'jp'), (r'国际服|國際服|(?<![a-z])intl(?![a-z])', 'intl')):
         if re.search(pattern, text):
@@ -32,6 +41,8 @@ def parse_meta_question(question, repository):
             text = re.sub(pattern, ' ', text)
     if len(servers) > 1:
         raise MetaError('invalid_argument', '请一次查询一个资源区服。')
+    if servers and not game_prefix:
+        text = re.sub(GAME_PREFIX, '', text.lstrip())
     text = re.sub(r'^(?:请问|请|帮我|查一下|查询|找出|找一下|看看|\s)+', '', text)
     difficulty = None
     aliases = {'ez':'easy', 'easy':'easy', 'nm':'normal', 'normal':'normal', 'hd':'hard', 'hard':'hard', 'ex':'expert', 'expert':'expert',
@@ -73,29 +84,31 @@ def parse_meta_question(question, repository):
         raise MetaError('invalid_argument', '请只指定一个结果数量。')
     limit = count(limits[0]) if limits else None
     sort_patterns = ((r'最短', 'duration_seconds', 'asc'), (r'最长', 'duration_seconds', 'desc'),
-        (r'(?:note\s*数?|音符数?)(?:最多|最高)', 'notes', 'desc'),
-        (r'(?:note\s*数?|音符数?)(?:最少|最低)', 'notes', 'asc'),
+        (rf'(?:{NOTE}\s*数?|音符数?)\s*(?:最多|最高)', 'notes', 'desc'),
+        (rf'(?:{NOTE}\s*数?|音符数?)\s*(?:最少|最低)', 'notes', 'asc'),
         (r'(?:nps|密度)(?:最高|最大)', 'nps', 'desc'), (r'(?:nps|密度)(?:最低|最小)', 'nps', 'asc'),
         (r'bpm最高|最高bpm', 'bpm_max', 'desc'), (r'bpm最低|最低bpm', 'bpm_min', 'asc'))
     for pattern, field, direction in sort_patterns:
         pattern = '(?:' + pattern + r')(?!\s*(?:>=|<=|=|至少|至多|不低于|不高于|等于))'
         if re.search(pattern, text):
             order.append(MetaOrder(field, direction)); text = re.sub(pattern, ' ', text)
-    fields = {'谱面时长':'duration_seconds','时长':'duration_seconds','等级':'level','lv':'level',
-              'note数':'notes','note':'notes','音符数':'notes','nps':'nps','密度':'nps',
-              '首bpm':'bpm_first','最低bpm':'bpm_min','最高bpm':'bpm_max','bpm':'bpm_min'}
-    for label in sorted(fields, key=len, reverse=True):
-        pattern = r'按\s*' + re.escape(label) + r'\s*(升序|降序|从小到大|从大到小)'
+    labels = {
+        '谱面时长':'duration_seconds', '时长':'duration_seconds', '等级':'level', 'lv':'level',
+        NOTE + r'\s*数':'notes', NOTE:'notes', '音符数':'notes', 'nps':'nps', '密度':'nps',
+        '首bpm':'bpm_first', '最低bpm':'bpm_min', '最高bpm':'bpm_max', 'bpm':'bpm_min',
+    }
+    for label_pattern, field in labels.items():
+        pattern = r'按\s*' + label_pattern + r'\s*(升序|降序|从小到大|从大到小)'
         for match in re.finditer(pattern, text):
-            order.append(MetaOrder(fields[label], 'asc' if match[1] in ('升序','从小到大') else 'desc'))
+            order.append(MetaOrder(field, 'asc' if match[1] in ('升序','从小到大') else 'desc'))
         text = re.sub(pattern, ' ', text)
     operator = r'(>=|<=|=|至少|至多|不低于|不高于|等于)'
-    for label in sorted(fields, key=len, reverse=True):
-        pattern = re.escape(label) + r'\s*' + operator + r'\s*(\d+(?:\.\d+)?)\s*(?:秒|级)?'
+    for label_pattern, field in labels.items():
+        pattern = label_pattern + r'\s*' + operator + r'\s*(\d+(?:\.\d+)?)\s*(?:秒|级)?'
         for match in re.finditer(pattern, text):
             op = {'>=':'gte','至少':'gte','不低于':'gte','<=':'lte','至多':'lte','不高于':'lte','=':'eq','等于':'eq'}[match[1]]
             value = float(match[2]); value = int(value) if value.is_integer() else value
-            filters.append(MetaFilter(fields[label], op, value))
+            filters.append(MetaFilter(field, op, value))
         text = re.sub(pattern, ' ', text)
     # Natural suffix comparisons, including "EX 27 级以上" and "120 秒以内".
     pattern = r'(\d+(?:\.\d+)?)\s*(秒|级)\s*(以上|以下|以内)'
@@ -113,10 +126,10 @@ def parse_meta_question(question, repository):
         if match:
             limit = count(match[1]);text = text[:match.start()] + ' ' + text[match.end():]
     # A metric-only detail still requires an explicit difficulty for chart metrics.
-    mentioned = {field for label, field in fields.items() if label in text}
+    mentioned = {field for pattern, field in labels.items() if re.search(pattern, text)}
     if mentioned - {'duration_seconds'} and not difficulty:
         raise MetaError('invalid_argument', '请指定难度：EASY / NORMAL / HARD / EXPERT（EZ / NM / HD / EX）。')
-    text = re.sub('|'.join(re.escape(v) for v in sorted(fields,key=len,reverse=True)), ' ', text)
+    text = re.sub('|'.join(labels), ' ', text)
     text = re.sub(r'请问|帮我|查一下|查询|找出|显示|告诉我|有哪些|是哪一首|是哪首|哪首|哪些|歌曲|谱面指标|谱面|乐队|难度|排序|全部|所有|的|歌|是|多少|和|、|[,，?？。!！\s]', '', text)
     if text:
         raise MetaError('invalid_argument', f'尚不能确认条件“{text[:40]}”。例：家团 EX 27级以上最短的前3首。')

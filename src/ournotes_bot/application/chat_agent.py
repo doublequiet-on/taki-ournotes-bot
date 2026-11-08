@@ -526,6 +526,7 @@ class ChatAgent:
                               items=items,second_minus_first=differences))
 
     async def run(self,work,question,user,group,deadline):
+        meta_question=question
         runtime=self.runtime
         require(self.recovery.recover(scope=work.request.scope),'chat_retention_unavailable')
         deadline=min(deadline,work.content_deadline)
@@ -791,7 +792,8 @@ class ChatAgent:
                     else:
                         operations+=1
                         output,leases=await self.execute(work,call,question,site,leases,deadline-self.budget.final_seconds,deadline,
-                                                         registry=registry,web=web,user=user,group=group,story_handles=story_handles,image_handles=image_handles,vision=vision)
+                                                         registry=registry,web=web,user=user,group=group,story_handles=story_handles,image_handles=image_handles,vision=vision,
+                                                         meta_question=meta_question)
                     image_input=output.pop('_image_input',None)
                     knowledge_scope=output.pop('_knowledge_scope',None)
                     knowledge_lease=output.pop('_knowledge_lease',None)
@@ -858,7 +860,7 @@ class ChatAgent:
                 self.audit(self.proactive.settle_cost,work)
             messages.clear()
 
-    async def execute(self,work,call,question,site,leases,deadline,turn_deadline,*,registry=None,web=None,user=None,group=None,story_handles=None,image_handles=None,vision=None):
+    async def execute(self,work,call,question,site,leases,deadline,turn_deadline,*,registry=None,web=None,user=None,group=None,story_handles=None,image_handles=None,vision=None,meta_question=None):
         runtime=self.runtime
         try:
             tool,args=validate_call(call,self.tools if registry is None else registry)
@@ -1048,9 +1050,16 @@ class ChatAgent:
                 repository=await runtime.current_repository()
                 if work.entity_evidence:
                     require(catalog_version(repository.capture_catalog())==work.entity_source_version,'query_source_changed')
-                output=await runtime.backend.gate.run(partial(execute,entity_evidence=work.entity_evidence),tool,args,chat_query_question(question),repository)
+                query_text=meta_question if tool.kind=='meta' and meta_question is not None else question
+                output=await runtime.backend.gate.run(partial(execute,entity_evidence=work.entity_evidence),tool,args,chat_query_question(query_text),repository)
                 if isinstance(output,PreparedReply):
                     output={'status':output.business_status or 'not_available','retryable':True}
+                elif tool.kind=='meta':
+                    statuses={result.meta.status for result in output.results}
+                    output={'status':next(iter(statuses)) if len(statuses)==1 else 'partial',
+                            'data':list(output.texts)}
+                    if statuses != {'ok'}:
+                        output['note']='按每组结果的来源和覆盖作答。字段缺失为未知，部分覆盖不能确认全库极值。'
                 else: output={'status':output.status or 'ok','data':list(output.texts)}
             runtime.check(work,turn_deadline,leases)
             return output,leases
@@ -1059,7 +1068,10 @@ class ChatAgent:
             # host turn. Source availability affects only this tool result.
             if tool.kind=='research' and str(exc) in ('query_entity_mismatch','tool_arguments_invalid'):
                 return {'status':str(exc),'retryable':True,'data':'先读取对象详情取得entity_ref，再按字段更新任务。'},leases
-            if tool.kind in ('meta','field','info') and str(exc) in ('invalid_argument','query_entity_mismatch','tool_arguments_invalid'):
+            if tool.kind=='meta' and str(exc) in ('invalid_argument','unsupported_field'):
+                return {'status':str(exc),'retryable':str(exc)=='invalid_argument',
+                        'data':'歌曲指标查询未执行。按原句核对区服、难度、筛选、排序和数量；条件无法确认时只问缺少的条件。不能用候选详情替代全库排序。'},leases
+            if tool.kind in ('field','info') and str(exc) in ('invalid_argument','query_entity_mismatch','tool_arguments_invalid'):
                 return {'status':str(exc),'retryable':True,
                         'data':'此工具未能对应当前多项条件。可用site_search/site_read确认对象，再用research_task和read_entity_fields逐项读取比较。'},leases
             if str(exc)=='execution_timeout':
