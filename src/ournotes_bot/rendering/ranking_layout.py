@@ -71,8 +71,8 @@ def chart(c,answer,board,box,display_time,heading=True):
     if archive:
         first = min(first, board.song.effective_start_ms or answer.event.start_ms or first)
         view = replace(view, points=tuple(point for point in view.points if point.source != 'haneoka_archive'))
-        legend_y = y + (22 if heading else 53)
-        legend_x = x + w / 2
+        legend_y = y + (22 if w > 1500 and heading else 53)
+        legend_x = x + (w / 2 if w > 1500 else 8)
         c.draw.ellipse((legend_x - 7, legend_y - 7, legend_x + 7, legend_y + 7), outline=MUTED, width=3)
         c.text(legend_x + 17, legend_y, 'Haneoka 补录', 30 if w > 1500 else 24, MUTED)
     low,high=min(values),max(values);pad=max(1,(high-low)//8);low=max(0,low-pad);high+=pad
