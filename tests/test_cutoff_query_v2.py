@@ -608,6 +608,265 @@ class TotalRankingOfflineTests(unittest.TestCase):
         self.assertEqual(len(view.points),1)
         self.assertTrue(view.points[0].break_before)
 
+    def test_latest_orders_by_corrected_time_and_only_decodes_the_winner(self):
+        from ournotes_bot.sources import total_rankings as totals
+
+        history = totals.TotalRankingHistory(self.history.path, 'tracker', compressed=True, min_free_mb=0)
+        base = replace(self.snapshot(), received_ms=int(self.now * 1000))
+        skew = 3 * 60 * 60 * 1000
+        late = replace(base, received_ms=base.received_ms + skew, http_date_ms=base.server_ms + skew)
+        self.assertEqual(history.record(self.event, late), 'valid')
+        for step in range(1, 20):
+            offset = step * 300_000
+            newer_raw = replace(base, fetched_ms=base.fetched_ms + offset,
+                                server_ms=base.server_ms + offset, received_ms=base.received_ms + offset)
+            self.assertEqual(history.record(self.event, newer_raw), 'valid')
+        quarantined = replace(newer_raw, fetched_ms=newer_raw.fetched_ms + skew, http_date_ms=None)
+        self.assertEqual(history.record(self.event, quarantined), 'clock_unknown')
+        with patch.object(totals, 'decode', wraps=totals.decode) as decode:
+            latest = history.latest(self.event)
+        decode.assert_called_once()
+        self.assertEqual(latest.fetched_ms, late.fetched_ms)
+        self.assertEqual(latest.received_ms, late.received_ms)
+        self.assertEqual(latest.player_names, late.player_names)
+        self.totals.history = history
+        with patch.object(history, 'read', side_effect=AssertionError('numeric history read')):
+            answer = self.case.ask('id4 总榜 1 仅数值')
+        self.assertEqual(answer.total.received_ms, late.received_ms)
+        self.assertEqual(answer.total.score(1), late.score(1))
+
+    def test_latest_accepts_legacy_json_and_validates_selected_full_payload(self):
+        import json
+        import sqlite3
+
+        from ournotes_bot.sources.moenotes_events import SourceError
+        from ournotes_bot.sources import total_rankings as totals
+
+        snapshot = replace(self.snapshot(), received_ms=int(self.now * 1000))
+        self.assertEqual(self.history.record(self.event, snapshot), 'valid')
+        with sqlite3.connect(self.history.path) as db:
+            payload = json.loads(db.execute('SELECT payload FROM samples').fetchone()[0])
+            del payload['player_details']
+            db.execute('UPDATE samples SET payload=?', (json.dumps(payload),))
+        with patch.object(totals, '_snapshot_text', wraps=totals._snapshot_text) as full_payload:
+            self.assertEqual(self.history.latest(self.event).scores, snapshot.scores)
+        self.assertEqual(full_payload.call_count, 2)  # Legacy layout plus selected full validation.
+        with sqlite3.connect(self.history.path) as db:
+            payload['player_details'] = [{'invalid_detail': 1}] * 100
+            db.execute('UPDATE samples SET payload=?', (json.dumps(payload),))
+        with self.assertRaisesRegex(SourceError, 'total_history_unavailable'):
+            self.history.latest(self.event)
+
+    def test_latest_wide_headers_do_not_parse_every_full_payload(self):
+        import random
+        import string
+
+        from ournotes_bot.sources import total_rankings as totals
+
+        history = totals.TotalRankingHistory(self.history.path, 'tracker', compressed=True, min_free_mb=0)
+        rng = random.Random(204)
+        for _ in range(24):
+            self.now += 300
+            names = tuple(''.join(rng.choices(string.ascii_letters, k=80)) for _ in range(100))
+            snapshot = replace(self.snapshot(), player_names=names, received_ms=int(self.now * 1000))
+            self.assertEqual(history.record(self.event, snapshot), 'valid')
+        with (patch.object(totals, '_snapshot_text', wraps=totals._snapshot_text) as inflate,
+              patch.object(totals, 'decode_json', wraps=totals.decode_json) as parse):
+            latest = history.latest(self.event)
+        inflate.assert_called_once()
+        self.assertEqual(sum('"player_details":' in call.args[0] for call in parse.call_args_list), 1)
+        self.assertEqual(latest.player_names, names)
+
+    def test_history_writer_can_commit_during_decode_and_reader_retries_conflict(self):
+        from concurrent.futures import ThreadPoolExecutor
+
+        from ournotes_bot.sources import total_rankings as totals
+
+        first = replace(self.snapshot(), received_ms=int(self.now * 1000))
+        self.assertEqual(self.history.record(self.event, first), 'valid')
+        self.now += 300
+        second = replace(self.snapshot(), received_ms=int(self.now * 1000))
+        self.assertEqual(self.history.record(self.event, second), 'valid')
+        conflicting = replace(first, scores=(first.scores[0] + 1, *first.scores[1:]))
+        decode = totals.decode
+        commits = []
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            def write_during_decode(payload):
+                if not commits:
+                    commits.append(pool.submit(self.history.record, self.event, conflicting).result(timeout=3))
+                return decode(payload)
+
+            with (patch.object(totals, 'decode', side_effect=write_during_decode),
+                  patch.object(totals, '_HISTORY_BATCH', 1)):
+                view = self.history.read(self.event, (1,), max_points=3)
+        self.assertEqual(commits, ['conflict'])
+        self.assertEqual(view.total, 3)
+        self.assertEqual([point.time_ms for point in view.points], [second.fetched_ms])
+        self.assertTrue(view.points[0].break_before)
+
+    def test_total_history_cooperates_with_entry_deadline(self):
+        from ournotes_bot.sources import total_rankings as totals
+
+        for _ in range(2):
+            self.now += 300
+            self.assertEqual(self.history.record(
+                self.event, replace(self.snapshot(), received_ms=int(self.now * 1000))), 'valid')
+        decode = totals.decode
+        clock = [0]
+        calls = []
+
+        def advance_during_read(payload):
+            calls.append(payload)
+            if len(calls) == 2:  # The first decode belongs to latest().
+                clock[0] = 12
+            return decode(payload)
+
+        with (patch.object(self.case.source, 'monotonic', side_effect=lambda: clock[0]),
+              patch.object(totals, 'decode', side_effect=advance_during_read)):
+            answer = self.case.ask('id4 总榜')
+        self.assertIsNotNone(answer.total)
+        self.assertFalse(answer.total_history.points)
+        self.assertIn('时间预算', answer.total_history.warning)
+        self.assertEqual(len(calls), 2)
+
+    def test_total_history_stops_when_query_gate_cancels(self):
+        import asyncio
+        import threading
+
+        from ournotes_bot.application.replies import QueryGate
+        from ournotes_bot.domain.query_cancellation import thread_cancel_event
+        from ournotes_bot.sources import total_rankings as totals
+
+        for _ in range(2):
+            self.now += 300
+            self.assertEqual(self.history.record(
+                self.event, replace(self.snapshot(), received_ms=int(self.now * 1000))), 'valid')
+        entered = threading.Event()
+        signal_seen = []
+        calls = []
+        decode = totals.decode
+
+        def pause_during_read(payload):
+            calls.append(payload)
+            if len(calls) == 2:
+                entered.set()
+                signal_seen.append(thread_cancel_event.get().wait(2))
+            return decode(payload)
+
+        async def run():
+            gate = QueryGate(1, 0)
+            query = asyncio.create_task(gate.run(self.case.ask, 'id4 总榜'))
+            self.assertTrue(await asyncio.to_thread(entered.wait, 3))
+            query.cancel()
+            with self.assertRaises(asyncio.CancelledError):
+                await query
+            self.assertEqual(gate._pending, 0)
+
+        with patch.object(totals, 'decode', side_effect=pause_during_read):
+            asyncio.run(run())
+        self.assertEqual(signal_seen, [True])
+        self.assertEqual(len(calls), 2)
+
+    def test_total_history_budget_sort_and_gap_use_corrected_times(self):
+        from ournotes_bot.sources import total_rankings as totals
+
+        base = replace(self.snapshot(), received_ms=int(self.now * 1000))
+        # Raw order is corrected, quarantined, base. Plot order starts with base.
+        skew = 120_000
+        later = replace(base, fetched_ms=base.fetched_ms - skew, server_ms=base.server_ms - skew,
+                        received_ms=base.received_ms + 300_000, http_date_ms=base.server_ms + 300_000)
+        bad = replace(base, fetched_ms=base.fetched_ms - 60_000, server_ms=base.server_ms - skew,
+                      received_ms=base.received_ms + 150_000)
+        self.assertEqual(self.history.record(self.event, later), 'valid')
+        self.assertEqual(self.history.record(self.event, bad), 'clock_unknown')
+        self.assertEqual(self.history.record(self.event, base), 'valid')
+        self.now += 600
+        final = replace(self.snapshot(), received_ms=int(self.now * 1000))
+        self.assertEqual(self.history.record(self.event, final), 'valid')
+        with patch.object(self.history, 'clock', return_value=final.fetched_ms / 1000):
+            self.history.failure(self.event, 'offline')
+
+        with patch.object(totals, 'decode', side_effect=AssertionError('budget decoded a payload')):
+            over_budget = self.history.read(self.event, (100, 1), max_points=2)
+        self.assertEqual(over_budget.total, 3)
+        self.assertFalse(over_budget.points)
+        self.assertIn('超出绘图预算', over_budget.warning)
+        view = self.history.read(self.event, (100, 1), max_points=4)
+        self.assertEqual(view.total, 4)
+        self.assertEqual([point.time_ms for point in view.points],
+                         [base.fetched_ms, base.fetched_ms + 300_000, final.fetched_ms])
+        self.assertEqual([point.break_before for point in view.points], [False, True, True])
+        self.assertEqual(view.points[1].scores, (base.score(100), base.score(1)))
+        self.assertEqual(view.points[1].received_ms, later.received_ms)
+        self.assertIn('冲突观测已排除', view.warning)
+        self.assertIn('按 HTTP Date', view.warning)
+        original_db = self.history.path.read_bytes()
+        self.assertEqual(self.history.build_projection(), 4)
+        self.assertEqual(self.history.path.read_bytes(), original_db)
+        with patch.object(totals, 'decode', side_effect=AssertionError('valid projection decoded raw')):
+            self.assertEqual(self.history.read(self.event, (100, 1), max_points=4), view)
+            wrong_source = self.history.read(replace(self.event, source='open'), (100, 1))
+        self.assertIn('暂不可用', wrong_source.warning)
+        self.assertFalse(wrong_source.points)
+
+    def test_projection_tracks_raw_conflict_and_ignores_stale_rows(self):
+        import json
+        import sqlite3
+
+        from ournotes_bot.sources import total_rankings as totals
+
+        first = replace(self.snapshot(), received_ms=int(self.now * 1000))
+        self.assertEqual(self.history.record(self.event, first), 'valid')
+        self.assertEqual(self.history.build_projection(), 1)
+        conflict = replace(first, scores=(first.scores[0] + 1, *first.scores[1:]))
+        self.assertEqual(self.history.record(self.event, conflict), 'conflict')
+        self.now += 300
+        second = replace(self.snapshot(), received_ms=int(self.now * 1000))
+        self.assertEqual(self.history.record(self.event, second), 'valid')
+        with patch.object(totals, 'decode', side_effect=AssertionError('record did not update projection')):
+            view = self.history.read(self.event, (1,))
+        self.assertEqual(view.total, 3)
+        self.assertEqual([p.time_ms for p in view.points], [second.fetched_ms])
+        self.assertTrue(view.points[0].break_before)
+
+        self.now += 300
+        older_writer_sample = replace(self.snapshot(), received_ms=int(self.now * 1000))
+        with patch.object(self.history, '_update_projection', return_value=None):
+            self.assertEqual(self.history.record(self.event, older_writer_sample), 'valid')
+        with sqlite3.connect(self.history.projection_path) as db:
+            db.execute("UPDATE score_points SET point='[]' WHERE stamp=?", (second.fetched_ms,))
+        with patch.object(totals, 'decode', wraps=totals.decode) as decoded:
+            view = self.history.read(self.event, (1,))
+        self.assertEqual(decoded.call_count, 2)
+        self.assertEqual([p.time_ms for p in view.points], [second.fetched_ms, older_writer_sample.fetched_ms])
+
+        # A cached point cannot cover a corrupted original even at the same key.
+        with sqlite3.connect(self.history.path) as db:
+            payload = json.loads(db.execute('SELECT payload FROM samples WHERE stamp=?',
+                                            (first.fetched_ms,)).fetchone()[0])
+            payload['source'] = 'wrong'
+            db.execute('UPDATE samples SET payload=? WHERE stamp=?',
+                       (json.dumps(payload), first.fetched_ms))
+        self.assertIn('暂不可用', self.history.read(self.event, (1,)).warning)
+
+    def test_interrupted_projection_build_preserves_previous_cache(self):
+        from ournotes_bot.sources import total_rankings as totals
+
+        snapshot = replace(self.snapshot(), received_ms=int(self.now * 1000))
+        self.assertEqual(self.history.record(self.event, snapshot), 'valid')
+        self.assertEqual(self.history.build_projection(), 1)
+        previous = self.history.projection_path.read_bytes()
+        decode = totals.decode
+
+        def change_raw(payload):
+            self.history.failure(self.event, 'offline')
+            return decode(payload)
+
+        with patch.object(totals, 'decode', side_effect=change_raw):
+            with self.assertRaisesRegex(ValueError, 'source changed'):
+                self.history.build_projection()
+        self.assertEqual(self.history.projection_path.read_bytes(), previous)
+
 
 if __name__ == '__main__':
     unittest.main()

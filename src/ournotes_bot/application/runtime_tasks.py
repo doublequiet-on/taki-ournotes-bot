@@ -3,12 +3,13 @@ import asyncio
 import logging
 import time
 import threading
+from ..domain.query_cancellation import thread_cancel_event
 from ..sources.cutoff_sampler import HistorySampler
 
 logger = logging.getLogger(__name__)
 
 
-async def drain_task(task):
+async def drain_task(task, *, on_cancel=None):
     """Keep ownership until task settles, then propagate the caller's cancellation."""
     cancelled = False
     while True:
@@ -18,6 +19,8 @@ async def drain_task(task):
         except asyncio.CancelledError:
             if task.done() and task.cancelled():
                 raise
+            if not cancelled and on_cancel is not None:
+                on_cancel()
             cancelled = True
         except BaseException:
             if cancelled:
@@ -30,7 +33,13 @@ async def drain_task(task):
 
 async def finish_thread(function, *args):
     # The awaiting owner stays registered even after repeated cancellation.
-    return await drain_task(asyncio.create_task(asyncio.to_thread(function, *args)))
+    stop = threading.Event()
+    token = thread_cancel_event.set(stop)
+    try:
+        task = asyncio.create_task(asyncio.to_thread(function, *args))
+    finally:
+        thread_cancel_event.reset(token)
+    return await drain_task(task, on_cancel=stop.set)
 
 
 class RuntimeTasks:

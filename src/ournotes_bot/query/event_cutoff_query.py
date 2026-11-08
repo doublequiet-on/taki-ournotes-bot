@@ -14,6 +14,7 @@ from ..sources.moenotes_events import (BoardSnapshot, EventSnapshot, EventSong, 
                                       display_time, zone_label, event_ranking_format)
 from .entity_lexicon import scoped_song_matches
 from ..sources.cutoff_history import HistoryView
+from ..domain.query_cancellation import thread_cancel_event
 from ..domain.total_rankings import TotalRankingSnapshot
 
 NODES = (1, 2, 3, 10, 100)
@@ -550,18 +551,27 @@ def _execute_cutoff(request: CutoffRequest, repository) -> CutoffAnswer:
         request.query or request.song_number is not None or request.song_id or request.extra_queries))
     if include_total and totals is not None and (rules.total_enabled is True or rules.total_enabled is None and (historical or totals.connected)):
         if historical or totals.connected:
+            stop = thread_cancel_event.get()
+
+            def should_stop():
+                return (stop is not None and stop.is_set()) or source.monotonic() >= deadline
+
             total_status = '综合榜来源或历史暂不可用，单曲榜单独查询。'
             try:
-                total = totals.history.latest(event) if historical else totals.capture(event,deadline)
+                total = (totals.history.latest(event, should_stop=should_stop)
+                         if historical else totals.capture(event, deadline))
                 if total is None and not historical:
                     total_status = totals.unavailable_status(event)
                 if not request.numeric_only:
-                    total_history = totals.history.read(event,request.ranks or NODES)
+                    total_history = totals.history.read(event, request.ranks or NODES, should_stop=should_stop)
                 if total is not None and not any(s is not None for s in total.scores) and not total_history.points:
                     total_status=total.status
                     total=None
-            except SourceError:
-                total_status = '综合榜历史暂不可用，未改查单曲历史。'
+            except SourceError as exc:
+                total_status = ('综合榜历史查询达到时间预算，请稍后重试。' if exc.code == 'total_history_interrupted'
+                                else '综合榜历史暂不可用，未改查单曲历史。')
+            if stop is not None and stop.is_set():
+                return CutoffAnswer(request, event, status='data_unavailable')
     if request.board_scope == 'total':
         if total is not None:
             return CutoffAnswer(request,event,total=total,total_history=total_history,
