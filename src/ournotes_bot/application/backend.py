@@ -537,7 +537,8 @@ class Backend:
             complete = list(parts)
             if parts and isinstance(parts[-1].context, replies.DeliveryCursor):
                 complete.extend(parts[-1].context.remaining)
-            self.conversations.capture(work, complete)
+            if not work.quote_preview_reference:
+                self.conversations.capture(work, complete)
             require(len(parts) <= QQ_PASSIVE_REPLY_LIMIT, 'send_budget', 422)
             require(self.retained_bytes() <= self.byte_capacity, 'byte_capacity', 503)
             projections=self.model_runtime.agent.recovery.stage(work) if work.chat and parts else ()
@@ -713,7 +714,11 @@ class Backend:
                 self.invalidate_topic(work)
                 self.finish(work, 'aborted', reason='ack_context_revoked')
                 live = False
-            if changed and live:
+            if changed and live and work.quote_preview_reference:
+                # Record delivery without publishing a derived reply or task for reuse.
+                if payload['result']!='success' or part_id==parts[-1]['id']:
+                    self.finish(work,'finished' if payload['result']=='success' else payload['result'])
+            elif changed and live:
                 part = next(p for p in parts if p['id'] == part_id)
                 reply = work.prepared[part['position']]
                 candidate = reply.context

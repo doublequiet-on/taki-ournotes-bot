@@ -366,18 +366,26 @@ class ChatAgent:
         except (OSError,ValueError,DataError):return False
 
     def memory_valid(self,work):
+        request=work.request
         try:
-            if work.quote_preview_reference and not self.store.detached_quote_valid(
-                    work.request.scope,work.quote_preview_reference):
-                return False
-            return all(len(self.store.read(work.request.scope,list(work.memory_sources[i:i+48]))['messages'])==len(work.memory_sources[i:i+48])
+            if work.quote_preview_reference:
+                if not self.store.detached_quote_valid(request.scope,work.quote_preview_reference):
+                    return False
+                if not self.store.source_valid(request.scope,request.message_id,request.timestamp_ms):
+                    return False
+                for item in work.participating_history:
+                    row=json.loads(item['content'])
+                    if 'message_id' in row and not self.store.source_valid(request.scope,row['message_id'],row['timestamp_ms']):
+                        return False
+            return all(len(self.store.read(request.scope,list(work.memory_sources[i:i+48]))['messages'])==len(work.memory_sources[i:i+48])
                        for i in range(0,len(work.memory_sources),48))
         except sqlite3.Error:return False
 
     def bind_memory(self,work,rows):
         work.memory_sources=tuple(dict.fromkeys((*work.memory_sources,*(row['message_id'] for row in rows))))
         require(len(work.memory_sources)<=120,'chat_memory_limit')
-        self.audit(self.store.bind_sources,work.delivery,work.request.scope,[row['message_id'] for row in rows])
+        if not work.quote_preview_reference:
+            self.audit(self.store.bind_sources,work.delivery,work.request.scope,[row['message_id'] for row in rows])
         self.privacy_material(work,rows)
         if rows:
             expires=min(row['timestamp_ms'] for row in rows)/1000+30*86400
@@ -484,16 +492,18 @@ class ChatAgent:
         data=dict(action=action,status='cancelled' if action=='cancel' else coverage['status'],
                   total=len(coverage['items']),completed=sum(item['complete'] for item in coverage['items']),
                   entities=len(work.chat_task.targets))
-        self.audit(self.store.event,work.delivery,'task/'+uuid.uuid4().hex,'task',data)
+        if not work.quote_preview_reference:
+            self.audit(self.store.event,work.delivery,'task/'+uuid.uuid4().hex,'task',data)
         self.runtime.backend.diagnostics.chat_event(work.request.request_id,'task',self.runtime.backend.clock(),**data)
 
     async def research(self,work,name,args,site,deadline,turn_deadline,leases):
         task=work.chat_task
         if name=='research_task':
             if args['action']=='cancel':
-                self.tasks.clear(work.request.scope,work.request.user_id)
+                if not work.quote_preview_reference:
+                    self.tasks.clear(work.request.scope,work.request.user_id)
+                    task.revision=self.tasks.generations.get(self.tasks.key(work.request),task.revision)
                 task.goal='';task.requirements=[];task.targets=[];task.readings={};task.knowledge=False
-                task.revision=self.tasks.generations.get(self.tasks.key(work.request),task.revision)
                 self.task_event(work,'cancel')
                 return {'status':'ok','data':{'task':'cancelled'}}
             refs=[*args['entity_refs'],*(ref for item in args['requirements'] for ref in item['entity_refs'])]
@@ -564,6 +574,7 @@ class ChatAgent:
             text=('我读不到这条引用里的图片，请把原图再发一次' if request.quote_hint=='image'
                   else '我读不到这条引用，请把原文或图片再发一次')
             return PreparedReply(text,business_status='quote_unavailable')
+        retain_turn=not work.quote_preview_reference
         if work.quote_preview_reference:
             self.privacy_material(work,[dict(text=preview,message_id=request.message_id,
                                              speaker_id=request.user_id,role='user')])
@@ -679,7 +690,7 @@ class ChatAgent:
         site=SiteLookup(runtime.backend.repository,chat_query_question(question),allow_rewrite=True,max_operations=self.budget.tool_calls)
         work.chat_task=(self.tasks.begin(work.request,lambda mid,stamp:self.store.source_valid(work.request.scope,mid,stamp),
                                         inherit=not quote_focus)
-                        if work.proactive is None or getattr(work,'continuation',False) else ResearchTask())
+                        if retain_turn and (work.proactive is None or getattr(work,'continuation',False)) else ResearchTask())
         if work.proactive is None or getattr(work,'continuation',False):
             named=(explicit_entities(runtime.backend.repository,question)
                    if requested_server(chat_query_question(question)) in (None,'jp') else {})
@@ -729,7 +740,7 @@ class ChatAgent:
             if data.pop('quote_preview',None) is not None:
                 content=json.dumps(data,ensure_ascii=False)
             context.append({'role':message['role'],'content':content})
-        if work.proactive is None:
+        if work.proactive is None and retain_turn:
             self.audit(self.store.begin,work,context)
             self.bind_memory(work,[json.loads(item['content']) for item in context if 'message_id' in json.loads(item['content'])])
             self.audit(self.store.bind_sources,work.delivery,work.request.scope,list(work.memory_sources))
@@ -809,7 +820,7 @@ class ChatAgent:
                         text+=site.attribution()
                     if web_citations:text=append_web_sources(text,web_citations.values())
                     runtime.check(work,deadline,leases)
-                    if work.proactive is None:
+                    if work.proactive is None and retain_turn:
                         self.audit(self.store.generated,work.delivery,text)
                         await self.maybe_summary(work,deadline)
                     runtime.check(work,deadline,leases)
@@ -902,15 +913,17 @@ class ChatAgent:
                     for ref in output.get('evidence_refs',[]):web_citations[ref['url']]=ref
                     provenance=output.get('data') if isinstance(output.get('data'),dict) else {}
                     tool_events+=1
-                    self.audit(self.store.event,work.delivery,'tool/'+str(tool_events),'tool',{'name':call.name if call.name in registry else 'unregistered','status':output['status'],
-                        'elapsed_ms':round((time.monotonic()-tool_started)*1000),
-                        'source':{key:provenance[key] for key in ('source','server','release','text_release','observed_at','source_revision')
-                                  if key in provenance}})
+                    if retain_turn:
+                        self.audit(self.store.event,work.delivery,'tool/'+str(tool_events),'tool',{'name':call.name if call.name in registry else 'unregistered','status':output['status'],
+                            'elapsed_ms':round((time.monotonic()-tool_started)*1000),
+                            'source':{key:provenance[key] for key in ('source','server','release','text_release','observed_at','source_revision')
+                                      if key in provenance}})
                     if call.name in ('knowledge_search','site_search','site_read','read_entity_fields'):
                         fallback=call.name in ('site_search','site_read') and any(key[0]=='knowledge_search' for key,value in seen.values())
                         data=dict(action=call.name,status=output['status'],elapsed_ms=round((time.monotonic()-tool_started)*1000),
                                   research_fallback=fallback,task_missing=sum(not item['complete'] for item in work.chat_task.coverage()['items']))
-                        self.audit(self.store.event,work.delivery,'research/'+str(tool_events),'research',data)
+                        if retain_turn:
+                            self.audit(self.store.event,work.delivery,'research/'+str(tool_events),'research',data)
                         self.runtime.backend.diagnostics.chat_event(work.request.request_id,'research',self.runtime.backend.clock(),**data)
                     self.proactive.trace(work,'tool',name=call.name if call.name in registry else 'unregistered',status=output['status'])
                     messages.append(tool_message)

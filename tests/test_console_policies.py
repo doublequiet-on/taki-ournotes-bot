@@ -3264,10 +3264,20 @@ class ChatAgentTests(Fixture, unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(latest['reply_to'])
         agent=self.backend.model_runtime.agent
         scope=self.backend.works[plan['delivery_id']].request.scope
-        self.event(plan,'intent');self.event(plan,'ack')
-        saved=agent.store.read(scope,['native2'])['messages']
-        self.assertEqual(len(saved),1)
-        self.assertNotIn(raw['quoted_text'],saved[0]['text'])
+        self.assertIsNone(agent.store.final_candidate(plan['delivery_id'],'0'))
+        self.assertEqual(self.backend.ledger.projection_rows(plan['delivery_id']),[])
+        self.event(plan,'intent')
+        receipt=self.event(plan,'ack')
+        self.assertEqual(receipt['status'],'finished')
+        self.assertEqual(receipt['parts'][0]['status'],'success')
+        self.assertTrue(self.event(plan,'ack')['duplicate'])
+        self.assertFalse(agent.store.read(scope,['native2',receipt['parts'][0]['message']])['messages'])
+        self.assertIsNone(agent.store.projected(plan['delivery_id'],'0'))
+        self.assertIsNone(agent.store.db.execute('SELECT 1 FROM runs WHERE id=?',(plan['delivery_id'],)).fetchone())
+        self.assertIsNone(agent.store.db.execute('SELECT 1 FROM events WHERE run_id=?',(plan['delivery_id'],)).fetchone())
+        self.assertNotIn(plan['delivery_id'],self.backend.conversations.snapshots)
+        self.assertFalse(any(row.role=='assistant' and row.message_id==receipt['parts'][0]['message']
+                             for rows in agent.context.scopes.values() for row in rows))
 
     async def test_quote_image_gap_keeps_an_independent_question(self):
         bodies=self.capture_native_bodies()
@@ -3293,11 +3303,43 @@ class ChatAgentTests(Fixture, unittest.IsolatedAsyncioTestCase):
             plan,attempts=await self.prepare_native('taki你怎么看')
         self.assertEqual(len(attempts),1)
         work=self.backend.works[plan['delivery_id']]
-        proof=json.loads(agent.store.final_candidate(work.delivery,'0')['payload'])['proof']
-        self.assertEqual(proof['quote_preview_reference'],'withdrawn-source')
+        self.assertEqual(work.quote_preview_reference,'withdrawn-source')
+        self.assertIsNone(agent.store.final_candidate(work.delivery,'0'))
         agent.store.delete_messages(work.request.scope,['withdrawn-source'])
-        self.assertFalse(agent.recovery.valid(proof))
+        self.assertFalse(agent.memory_valid(work))
         self.assertFalse(self.backend.lookup(raw['request_id'],'e1')['send_allowed'])
+        with self.assertRaisesRegex(ProtocolError,'inactive_delivery'):
+            self.event(plan,'intent')
+
+    async def test_detached_quote_tool_task_and_multipart_ack_stay_in_current_turn(self):
+        from ournotes_bot.domain.model_calls import ToolCall
+        self.backend.reference_profiles=frozenset({'fixture'})
+        agent=self.backend.model_runtime.agent
+        agent.budget=replace(agent.budget,execution_seconds=60)
+        raw={**self.request('native1',1),'trigger':'quoted_reply',
+             'reference':{'message_id':'expired-source','adapter_profile_version':'fixture'},
+             'quoted_text':'合成任务材料'}
+        args=dict(action='set',goal='根据失效引用整理任务',entity_refs=[],
+                  requirements=[dict(label='待查资料',entity_refs=[],fields=[],knowledge=True,difficulty='')])
+        self.client.request.side_effect=[self.result(calls=(ToolCall('task','research_task',json.dumps(args)),)),
+                                         self.result('还缺资料。'),self.result('派生正文'*430)]
+        with patch.object(self,'request',return_value=raw):
+            plan,attempts=await self.prepare_native('taki你怎么看')
+        self.assertEqual(len(attempts),3)
+        self.assertGreater(len(plan['parts']),1)
+        work=self.backend.works[plan['delivery_id']]
+        self.assertEqual(work.chat_task.goal,args['goal'])
+        self.assertEqual(agent.tasks.status(work.request.scope)['active_tasks'],0)
+        for part in plan['parts']:
+            one={**plan,'parts':[part]}
+            self.event(one,'intent')
+            receipt=self.event(one,'ack')
+        self.assertEqual(receipt['status'],'finished')
+        self.assertTrue(all(part['status']=='success' for part in receipt['parts']))
+        self.assertEqual(agent.tasks.status(work.request.scope)['active_tasks'],0)
+        self.assertEqual(self.backend.ledger.projection_rows(work.delivery),[])
+        self.assertIsNone(agent.store.db.execute('SELECT 1 FROM runs WHERE id=?',(work.delivery,)).fetchone())
+        self.assertIsNone(agent.store.db.execute('SELECT 1 FROM events WHERE run_id=?',(work.delivery,)).fetchone())
 
     async def test_chat_receives_registered_band_alias_snapshot(self):
         bodies=self.capture_native_bodies()
