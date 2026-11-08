@@ -66,9 +66,9 @@ python -B scripts/inspect_history_data.py <隔离历史副本> --before-ms <明�
 
 ## 给10的C6恢复判定
 
-入口 `history_retention.check_recovery(candidate, current_authority)`，返回 `{status: allow|reject|manual, reason, contract_version:1, evidence: str|null}`。current_authority是**无参回调**，必须由受信控制器从待恢复目录、旧DB、旧journal及备份之外获取当前权威；None/不可用/不合法为manual。首版人工核当前记录批准、无法确认不恢复；读取适配器如下，尚未配置生产权威。外部权威的证据版本进入返回值，候选不能自报最新。
+入口 `history_retention.check_recovery(candidate, current_authority, *, current_isolation=None)`，返回 `{status: allow|reject|manual, reason, contract_version:1|2, evidence: str|null}`。有效权威决定返回版本；无有效权威时返回1/manual。current_authority是**无参回调**，必须由受信控制器从待恢复目录、旧DB、旧journal及备份之外获取当前权威；None/不可用/不合法为manual。首版人工核当前记录批准、无法确认不恢复；读取适配器如下，尚未配置生产权威。外部权威的证据版本进入返回值，候选不能自报最新。
 
-candidate 与回调返回对象共同字段（全部必填，不接受额外字段）：
+v1 candidate 与回调返回对象共同字段（全部必填，不接受额外字段；v2扩展见下一节）：
 
 | 字段 | 类型 |
 | --- | --- |
@@ -93,6 +93,36 @@ sha256是权威批准的副本状态摘要，candidate摘要须由10独立测量
 
 10先完成09身份检查，再组合05 `allow/deny/manual`（deny映射拒绝）和07 `allow/reject/manual`，按自身激活门决定；任一manual/reject继续隔离。实际组合、Linux恢复/低盘演练、真实QQ、目标宿主、异地备份均未由本包验收。
 
+## C6 v2：完整登记中的隔离禁止恢复副本
+
+对照10固定 `ea1ed3000b6300678c7ede53c43aeefea990e08d` 的 `deploy/INSTANCE_RECOVERY.md`：实体旧备份即使禁止恢复仍须保留在完整登记中。v1不能表达此状态，继续原有全部副本已应用删除规则；不在v1塞额外字段或静默缩小replicas。
+
+v2 authority仍为上述七字段，contract_version=2；candidate增加且必须有 `selection`，是非空、不重复的副本ID列表，明确本次将进入恢复的实物。候选与权威版本必须一致，否则reject/deletion_contract_version_mismatch。**完整replicas键集合仍须一致**，selection从来不取代完整登记。每份副本的字段如下：
+
+| disposition | authority副本字段 | candidate额外字段/要求 |
+| --- | --- | --- |
+| restorable | generation、sha256、disposition | state；全部此类副本仍须verified且generation等于当前deletion_generation，未选中也不能豁免传播 |
+| quarantined | generation、sha256、disposition、isolation_sha256 | state必须为quarantined；其余字段与权威精确相同，generation保留真实已应用代际，可低于但不能高于当前删除代际 |
+
+隔离副本sha256是仍存在实物的测量摘要，不是假造的“删除后摘要”；isolation_sha256是人工批准的宿主隔离登记精确字节SHA256。登记由10维护稳定ID、实物位置/文件身份/hash、原期限起止、禁止恢复与隔离规则及修订证据；07只比对不写入。候选不得给隔离副本state=verified，不能漏掉它；选中权威标为quarantined的副本直接reject/quarantined_replica_selected。改名、复制、过期、人工仅修改标记均不能解除禁令；重建出的合格新副本必须另登记、独立测量并换批准版本，原实体在销毁核验前继续登记。旧备份的删除传播仍未完成，不把隔离说成已删除。
+
+只有存在quarantined条目时，07额外调用受信 `current_isolation()` 无参回调。**验证者是10宿主观察器**，由08注入，不允许候选或Console提供静态声明。返回对象必须恰为：
+
+```text
+{contract_version:2, binding:<当前实例>, evidence_version:<当前权威版本>,
+ selection_sha256:journal_digest(sorted(candidate.selection)),
+ replicas:{<每个隔离副本ID>:{sha256:<实物摘要>, isolation_sha256:<批准隔离登记摘要>,
+                            restore_denied:true, writers_denied:true}}}
+```
+
+证明的replicas恰好覆盖完整登记中所有quarantined项，不接受额外/缺失项；两个true必须是真布尔值而非整数。10必须在受信锁/停写边界内重新观测实物身份、隔离登记及访问规则，并核实所绑定selection的恢复树、所有writer/trigger与导入/导出/恢复选择入口不能读取、写入或重新接纳该旧实物（包括别名、硬链接和已知副本）。restore_denied承诺所有业务/恢复读取入口均被隔离，writers_denied承诺所有业务写入/触发器均被隔离；人工审阅路径不因此获恢复许可。不能以“文件在另一个目录”“已过期”或DB未打开替代验证。任何入口/副本不可见、未知或无法证明时，回调返回None或抛IO错误，07保持manual。
+
+该证明不是删除豁免或永久许可。路径/身份/hash、隔离权限或规则、完整副本集合、selection、批准版本变化，管理员撤销、宿主观察失联或停写证明失效时必须立即失效。10负责持续复核并撤销现有恢复会话；独立批准/防回滚按已有合同，禁止复用撤销版本。07在隔离回调后再次读取current_authority，任何变化均manual；这不能代替宿主锁、持续观察或解决ABA。本轮没有实现或伪造10宿主观察器；未接入可信当前证明的实际环境继续manual。
+
+v2通过且含隔离对象时reason=`deletion_state_verified_with_quarantine`，只允许selection及其余原恢复门条件下的恢复，绝不授权隔离对象。无隔离对象时仍为deletion_state_verified。新增reject：deletion_contract_version_mismatch、quarantined_replica_selected、replica_disposition_mismatch、quarantined_replica_mismatch；新增manual：quarantine_generation_invalid、current_isolation_missing/unavailable/invalid/mismatch、isolation_coverage_incomplete、current_deletion_authority_changed。v1原判定不变。
+
+08/10必须显式支持返回contract_version=2及新reason，并把selection与隔离登记证据纳入当前会话绑定，实际选择器独立拒绝隔离实物；不把allow解释为“全部replicas均可恢复”。固定旧消费者 `8bdde8392ab79180ebf32a11fc05ed0a5190fd1e` 对v2权威返回manual；仅改version数字也因额外字段拒绝。禁止通过删除字段把v2降级成v1。07的读取器复用同一人工批准文件格式校验v1/v2，无新存储框架。
+
 ## 首版人工当前记录读取（2026-11-08）
 
 核查固定集成提交 `602a95f49fd059deb7a59377be74becb4d55e008` 的src/scripts/deploy：`application/chat_store.py::deletion_state/_read_journal` 提供 `taki-chat-deletions/1`（identity/messages/scopes），只证明聊天删除集合；`deploy/release_retention.py` 的记录证明发行目录归属与清理进度。两者均不提供历史分区的policy_generation、完整replicas或当前人工批准，不能适配为07权威。`inventory`始终discovery_complete=false，也不能替代完整登记。未读取生产库/实际账本，本次源码核查没有找到可直接消费的历史删除权威生产者；不能据此断言生产从未删除过。
@@ -113,19 +143,22 @@ sha256是权威批准的副本状态摘要，candidate摘要须由10独立测量
 
 此前已确认：分数/来源长期保留；身份/昵称/名片/编成30天，起算为Taki首次持久接收，复制/读取/压缩/导出/恢复不重置；玩家缓存24小时，个人素材7天，公开素材连续30天未使用并设容量上限；本地每日业务备份14天、加密异地备份30天。起算未知的记录隔离人工处理；unknown/facts/防复活记录不因清理删除。本次不执行这些生产政策。
 
-执行前仍须落实的具体选择（建议不构成批准）：
+2026-11-08用户确认按推荐执行的政策（本轮仅固定合同）：
 
-- 不可改写/离线旧备份：建议先登记为不可恢复并隔离，待原保留期到期销毁；另一选项是在可验证重建后替换。未完成传播的副本不得标verified。
-- 完整登记与批准责任：建议指定一名宿主管理者维护树外登记及撤销锚点；也可由两人复核。未指定管理者及可信保存位置前保持manual。
-- 公开素材容量上限：需按实际盘点选择固定字节上限或磁盘水位；本轮不提供未经容量测量的默认数值。
-- 定向删除请求的字段范围、平台已发内容边界、异地备份传播时限及RPO/RTO仍需明确；到期留存批准不自动扩大到这些动作。
+- 不可改写旧备份标记为禁止恢复并隔离，按已确认保留期限到期处理。未核实不能恢复，未完成传播的副本不得标verified；禁止恢复/隔离登记不代表已物理销毁。本轮没有写生产隔离标记，也不执行到期删除，真实销毁须另行执行并核验结果。
+- 人工批准责任：个人模式由用户指定管理员，定制模式由接收方指定管理员；具体管理员身份未配置时保持manual。独立批准及防回滚来源由10配置、08注入，07不另建批准框架或生产写入器。
+
+仍需实际落实/测量：
+
+- 公开素材容量上限及RPO/RTO等待实际测量，不编默认数值，不重问既定期限。
+- 受信记录位置、管理员身份配置、异地备份传播时限、定向删除请求的字段范围及平台已发内容边界仍需落实；到期留存批准不自动扩大到这些动作。
 
 以下原执行范围清单继续用于落实，不再表示上述期限尚未确认：
 
 1. 保留字段：公开ID、昵称、名片缩略图/URL、收藏卡/编成、分数与时间，分别保留或投影；去ID不等于匿名。
 2. 各数据层期限及起算时刻：观测、当前缓存、素材、导出、冻结输出、备份；是否仅按到期或支持定向请求。
 3. 删除范围及失效顺序：内存、磁盘、字典、空闲页、WAL、归档、异地备份、QQ平台已发内容的责任界限。
-4. 当前删除权威与策略代际存放在哪里、由谁批准/撤销、如何独立防回滚；防复活journal和unknown/facts不得随清理删除。
-5. 备份责任、可接受传播时限、无法物理改写的备份如何隔离，以及恢复目标/RPO/RTO。
+4. 按上述已确认责任配置管理员、当前删除权威存放位置、批准/撤销及独立防回滚来源；防复活journal和unknown/facts不得随清理删除。
+5. 落实备份责任、传播时限及旧备份禁止恢复/隔离登记；实测恢复目标RPO/RTO，物理销毁另行执行核验。
 
-以上决定阻塞生产删除执行、自动留存和恢复激活，不阻塞本包独立分区写入、dry-run与隔离验证。
+上述尚未落实的记录、配置和测量继续阻塞生产删除执行、自动留存和恢复激活，不阻塞本包独立分区写入、dry-run与隔离验证。

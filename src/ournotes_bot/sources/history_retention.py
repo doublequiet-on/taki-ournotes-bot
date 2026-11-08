@@ -1,11 +1,12 @@
 # L3
-# Input: Explicit offline copies, caller-selected cutoff, external current authority.
+# Input: Explicit offline copies, cutoff, external authority and host isolation proof.
 # Output: Dry-run inventory/projection plan and C6 allow/reject/manual decisions.
 # Pos: Sources / history maintenance; see docs/HISTORY_DATA_CONTRACT.md.
 # Effects: Read-only local inspection. No production policy, deletion or activation.
 """Retention planning is not approval; restored journals are not authority."""
 import hashlib
 import json
+from copy import deepcopy
 import re
 import sqlite3
 from contextlib import closing
@@ -148,9 +149,12 @@ def read_current_authority(path, *, excluded_roots, read_approved_sha256):
 def _valid_evidence(value, candidate=False):
     keys = {'contract_version', 'binding', 'policy_generation', 'deletion_generation',
             'journal_sha256', 'replicas', 'evidence_version'}
+    version = value.get('contract_version') if isinstance(value, dict) else None
+    if candidate and version == 2:
+        keys = keys | {'selection'}
     if not isinstance(value, dict) or set(value) != keys:
         return False
-    if type(value['contract_version']) is not int or value['contract_version'] != CONTRACT_VERSION:
+    if type(version) is not int or version not in (1, 2):
         return False
     if any(not isinstance(value[k], str) or not value[k] for k in ('binding', 'evidence_version')):
         return False
@@ -161,29 +165,79 @@ def _valid_evidence(value, candidate=False):
     replicas = value['replicas']
     if not isinstance(replicas, dict) or not replicas:
         return False
+    if candidate and version == 2:
+        selection = value['selection']
+        if (not isinstance(selection, list) or not selection
+                or any(not isinstance(name, str) or name not in replicas for name in selection)
+                or len(set(selection)) != len(selection)):
+            return False
     for name, row in replicas.items():
         if not isinstance(name, str) or not name or not isinstance(row, dict):
             return False
         expected = {'generation', 'sha256', 'state'} if candidate else {'generation', 'sha256'}
+        if version == 2:
+            if row.get('disposition') not in ('restorable', 'quarantined'):
+                return False
+            expected = expected | {'disposition'}
+            if row['disposition'] == 'quarantined':
+                expected = expected | {'isolation_sha256'}
+                digest = row.get('isolation_sha256')
+                if not isinstance(digest, str) or not re.fullmatch('[a-f0-9]{64}', digest):
+                    return False
         if set(row) != expected or type(row['generation']) is not int or row['generation'] < 0:
             return False
         if not isinstance(row['sha256'], str) or not re.fullmatch('[a-f0-9]{64}', row['sha256']):
             return False
-        if candidate and (not isinstance(row['state'], str) or row['state'] not in ('verified', 'pending', 'unavailable')):
+        states = ('verified', 'pending', 'unavailable', 'quarantined') if version == 2 else ('verified', 'pending', 'unavailable')
+        if candidate and (not isinstance(row['state'], str) or row['state'] not in states):
             return False
     return True
 
 
-def check_recovery(candidate, current_authority):
+def _check_isolation(candidate, authority, current_isolation):
+    """Validate 10's fresh host proof, never infer isolation from a label."""
+    if not callable(current_isolation):
+        return 'current_isolation_missing'
+    try:
+        proof = current_isolation()
+    except (OSError, TimeoutError):
+        return 'current_isolation_unavailable'
+    keys = {'contract_version', 'binding', 'evidence_version', 'selection_sha256', 'replicas'}
+    if not isinstance(proof, dict) or set(proof) != keys:
+        return 'current_isolation_invalid'
+    if (type(proof['contract_version']) is not int or proof['contract_version'] != 2
+            or proof['binding'] != authority['binding']
+            or proof['evidence_version'] != authority['evidence_version']
+            or proof['selection_sha256'] != journal_digest(sorted(candidate['selection']))):
+        return 'current_isolation_mismatch'
+    quarantined = {name: row for name, row in authority['replicas'].items()
+                   if row['disposition'] == 'quarantined'}
+    if not isinstance(proof['replicas'], dict) or set(proof['replicas']) != set(quarantined):
+        return 'isolation_coverage_incomplete'
+    for name, expected in quarantined.items():
+        observed = proof['replicas'][name]
+        keys = {'sha256', 'isolation_sha256', 'restore_denied', 'writers_denied'}
+        if not isinstance(observed, dict) or set(observed) != keys:
+            return 'current_isolation_invalid'
+        if (observed['restore_denied'] is not True or observed['writers_denied'] is not True
+                or any(observed[key] != expected[key] for key in ('sha256', 'isolation_sha256'))):
+            return 'current_isolation_mismatch'
+    return None
+
+
+def check_recovery(candidate, current_authority, *, current_isolation=None):
     """C6 only. current_authority() MUST query outside the candidate/backup tree.
 
     10 supplies measured candidate coverage, after quiescing writers. 09 owns
     identity; binding is its opaque verified instance token, not a new identity
     scheme. read_current_authority supports an externally approved record;
     it does not provision a production authority or confer approval itself.
+    V2 may retain unselected quarantine objects only with current_isolation(),
+    an independent host observation by 10, not a candidate-supplied claim.
     """
+    version = 1
     def result(status, reason, evidence=None):
-        return {'status': status, 'reason': reason, 'contract_version': CONTRACT_VERSION,
+        return {'status': status, 'reason': reason, 'contract_version': version,
                 'evidence': evidence}
     if current_authority is None:
         return result('manual', 'current_deletion_authority_missing')
@@ -195,9 +249,13 @@ def check_recovery(candidate, current_authority):
         return result('manual', 'current_deletion_authority_unavailable')
     if not _valid_evidence(authority):
         return result('manual', 'current_deletion_authority_invalid')
+    authority = deepcopy(authority)
+    version = authority['contract_version']
     evidence = authority['evidence_version']
     if not _valid_evidence(candidate, True):
         return result('reject', 'malformed_deletion_evidence', evidence)
+    if candidate['contract_version'] != version:
+        return result('reject', 'deletion_contract_version_mismatch', evidence)
     if candidate['binding'] != authority['binding']:
         return result('reject', 'deletion_binding_mismatch', evidence)
     if candidate['evidence_version'] != evidence:
@@ -207,12 +265,39 @@ def check_recovery(candidate, current_authority):
             return result('reject', 'deletion_authority_mismatch', evidence)
     if set(candidate['replicas']) != set(authority['replicas']):
         return result('manual', 'replica_coverage_incomplete', evidence)
+    if version == 2:
+        for name in candidate['selection']:
+            if authority['replicas'][name]['disposition'] == 'quarantined':
+                return result('reject', 'quarantined_replica_selected', evidence)
+    has_quarantine = False
     for name, expected in authority['replicas'].items():
         observed = candidate['replicas'][name]
+        if version == 2:
+            if observed['disposition'] != expected['disposition']:
+                return result('reject', 'replica_disposition_mismatch', evidence)
+            if expected['disposition'] == 'quarantined':
+                has_quarantine = True
+                if (observed['state'] != 'quarantined'
+                        or any(observed[key] != expected[key]
+                               for key in ('generation', 'sha256', 'isolation_sha256'))):
+                    return result('reject', 'quarantined_replica_mismatch', evidence)
+                if expected['generation'] > authority['deletion_generation']:
+                    return result('manual', 'quarantine_generation_invalid', evidence)
+                continue
         if observed['state'] != 'verified':
             return result('manual', 'replica_not_verified', evidence)
         if any(observed[k] != expected[k] for k in ('generation', 'sha256')):
             return result('reject', 'replica_deletion_not_applied', evidence)
         if observed['generation'] != authority['deletion_generation']:
             return result('manual', 'authority_propagation_incomplete', evidence)
+    if has_quarantine:
+        reason = _check_isolation(candidate, authority, current_isolation)
+        if reason:
+            return result('manual', reason, evidence)
+        try:
+            if current_authority() != authority:
+                return result('manual', 'current_deletion_authority_changed', evidence)
+        except (OSError, TimeoutError):
+            return result('manual', 'current_deletion_authority_unavailable', evidence)
+        return result('allow', 'deletion_state_verified_with_quarantine', evidence)
     return result('allow', 'deletion_state_verified', evidence)

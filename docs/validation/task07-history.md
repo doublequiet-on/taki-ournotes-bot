@@ -1,5 +1,13 @@
 # 任务07自查证据
 
+## 隔离副本完整登记C6 v2（2026-11-08）
+
+基于07政策提交 `ec6992bcb0b41f45a25bbd636e9937b25ca580fe`，只读对照10 `ea1ed3000b6300678c7ede53c43aeefea990e08d` 的INSTANCE_RECOVERY末节。未改10宿主代码。v2完整保留quarantined实体，selection不能选它；其旧代际不伪装已应用删除，只有可信当前宿主隔离证明才能使其他已应用删除的副本通过本项检查。
+
+17项合成正负例通过：完整v2及无隔离v2、旧备份选中（含伪标verified）拒绝、漏备份manual、篡改disposition/state拒绝、缺/漏/失效/IO错误的宿主证明manual、绑定/证据版本/selection/hash/真布尔检查、核验期间撤销权威、其他restorable仍未传播时不allow、隔离实物变化、空/重复/未知selection、未来隔离代际。实际加载固定旧 `8bdde8392ab79180ebf32a11fc05ed0a5190fd1e` 的history_retention源码验证v2权威拒绝，伪降version也拒绝。原读取器10项及07专项18项重新通过，架构/diff通过。原v1判定仍受回归保护。
+
+本地脚本 `runtime/task07/test_quarantine_contract.py`，日志quarantine-tests.log、quarantine-v1-reader.log、quarantine-v1-regression.log；依AGENTS不提交新增测试文件。宿主证明明确是合成替身；没有执行生产隔离、销毁、实际宿主观察器或08/10组合验收。实际current_isolation未配置/无法核实仍manual。本轮不重跑全套或包构建。
+
 ## 当前权威读取收尾（2026-11-08）
 
 基于07 `3686da76a939345690d556d7ddeb40198e15a979`，只读核查固定集成 `602a95f49fd059deb7a59377be74becb4d55e008`；聊天删除journal和发行清理journal不能充当历史完整副本权威。未读取生产账本。来源范围、明确缺项和08/10接线要求见数据合同“首版人工当前记录读取”。
