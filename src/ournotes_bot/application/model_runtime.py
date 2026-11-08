@@ -32,6 +32,7 @@ from . import replies
 from .persona import VOICE, chat_topic, chat_prompt, chat_needs_evidence
 from .chat_agent import ChatAgent
 from .chat_capabilities import ChatCapabilities
+from .chat_jobs import ServiceError, uses_proactive_risk
 
 logger=logging.getLogger('ournotes_bot.model_transport')
 
@@ -426,21 +427,38 @@ class ModelRuntime:
             self.agent.audit(self.agent.store.finish,work.delivery,'execution_timeout')
             return replies.PreparedReply('',business_status='proactive_error') if work.proactive is not None else failure('execution_timeout')
 
+    def proactive_charge_check(self,work,billing_request_id,*,replacing_attempt=None):
+        if (work.proactive is None or getattr(work,'continuation',False)
+                or billing_request_id!=work.service_request_id):
+            return None
+        policy=work.service_policy
+        if replacing_attempt is not None and not uses_proactive_risk(policy):
+            return None
+        def check(at,amount):
+            return self.agent.service_budget.check(policy,'proactive',work.model_snapshot.profile,billing_request_id,
+                amount,at=at,replacing_attempt=replacing_attempt,
+                reply_times=self.agent.store.proactive_replies(work.request.scope) if replacing_attempt is None else (),
+                **(self.agent.proactive.opportunity_budget(work) if replacing_attempt is None else {}))
+        return check
+
+    def proactive_charge_denied(self,work,exc):
+        data=dict(exc.budget_details)
+        self.agent.proactive.budget_warning(work.request,data)
+        self.agent.proactive.control_event(work.request,str(exc),**data)
+        raise ModelError('quota_exceeded' if str(exc) in ('chat_service_call_limit','chat_service_cost_limit',
+            'chat_service_daily_cost_limit','chat_service_pacing_limit','chat_service_risk_limit',
+            'chat_opportunity_call_limit','chat_opportunity_cost_limit') else str(exc)) from None
+
     def reserve(self,work,attempt,user,group,bound,*,billing_request_id=None,action_budget=()):
         profile=work.model_snapshot.profile
         billing_request_id=billing_request_id or work.service_request_id or work.request.request_id
         if getattr(work,'continuation',False):
             self.agent.proactive.check_continuation_budget(work,profile.reserve(bound,profile.max_output_tokens)*profile.price.reference_rate/1_000_000+sum(count*rate for _,count,rate in action_budget))
-        if work.proactive is not None and not getattr(work,'continuation',False) and billing_request_id==work.service_request_id:
-            from .chat_jobs import ServiceError
-            try:self.agent.service_budget.check(work.service_policy,'proactive',profile,billing_request_id,
-                profile.reserve(bound,profile.max_output_tokens)*profile.price.reference_rate/1_000_000+sum(count*rate for _,count,rate in action_budget),
-                reply_times=self.agent.store.proactive_replies(work.request.scope),
-                **self.agent.proactive.opportunity_budget(work))
-            except ServiceError as exc:
-                raise ModelError('quota_exceeded' if str(exc) in ('chat_service_call_limit','chat_service_cost_limit',
-                    'chat_service_daily_cost_limit','chat_opportunity_call_limit','chat_opportunity_cost_limit') else str(exc)) from None
-        self.usage.reserve(billing_request_id,attempt,user,group,profile,bound,action_budget=action_budget)
+        try:
+            self.usage.reserve(billing_request_id,attempt,user,group,profile,bound,action_budget=action_budget,
+                               admit=self.proactive_charge_check(work,billing_request_id))
+        except ServiceError as exc:
+            self.proactive_charge_denied(work,exc)
 
     def input_bound(self,work,messages,tools,*,body=None):
         from ..sources.model_provider import request_body as bound_body
@@ -492,7 +510,12 @@ class ModelRuntime:
             self.check(work,deadline,leases)
             if service_policy is not None:require(self.agent.services.policy(work.model_snapshot,work.request.conversation_id)==service_policy,'chat_service_revoked')
             require(time.monotonic()<permitted_until,'permission_expired')
-            self.usage.start(attempt,profile);started=True
+            try:
+                self.usage.start(attempt,profile,admit_rollover=self.proactive_charge_check(
+                    work,billing_request_id,replacing_attempt=attempt))
+            except ServiceError as exc:
+                self.proactive_charge_denied(work,exc)
+            started=True
             # No await/queue/tool work between the consumed permit and this HTTP.
             result=await asyncio.wait_for(self.client.request(profile,body,timeout=max(.001,deadline-time.monotonic()),transport=transport),
                                           max(.001,deadline-time.monotonic()))

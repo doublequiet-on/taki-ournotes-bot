@@ -14,7 +14,9 @@ from types import SimpleNamespace
 from ..domain.chat import ChatMessage
 from ..domain.chat_images import ImageError
 from ..domain.model_calls import ModelError,require
-from .chat_jobs import ChatServices,ServiceError,maximum_cost_micro,service_request_id
+from .chat_jobs import (
+    ChatServices, ServiceError, maximum_cost_micro, proactive_minimum_cost_micro, service_request_id, uses_proactive_risk,
+)
 from .proactive_chat import ProactiveController,ProactivePolicy
 from .chat_followup import Followups
 from . import replies
@@ -59,6 +61,10 @@ class ProactiveChat:
             self.control_times[key]=now;self.control_times.move_to_end(key)
             while len(self.control_times)>1024:self.control_times.popitem(last=False)
         backend.diagnostics.conversation_event(request.request_id,request.conversation_id,'control',now,status=status,**data)
+
+    def budget_warning(self,request,data):
+        if data.get('risk_warning'):
+            self.control_event(request,'chat_service_risk_warning',**data)
 
     def window_expired(self,scope,question):
         backend=self.agent.runtime.backend
@@ -239,7 +245,7 @@ class ProactiveChat:
             snapshot=self.agent.runtime.proactive_snapshot(request.conversation_id)
             policy=self.configured(request,snapshot)
             if policy is None:return None
-        try:self.reconcile_costs(request)
+        try:self.reconcile_costs(request,policy if not continuation else None)
         except (sqlite3.Error, ModelError, ServiceError, ValueError):
             self.control_event(request,'chat_service_usage_unavailable');return None
         model_cost=maximum_cost_micro(snapshot.profile)*self.agent.budget.model_calls
@@ -256,19 +262,24 @@ class ProactiveChat:
         if not continuation:
             preflight=service_request_id('proactive',request.instance_id,request.app_id,
                 request.conversation_id,'budget/'+request.request_id)
+            minimum = proactive_minimum_cost_micro(snapshot.profile)
+            # Check the actual staged minimum so pacing and hard budget denials stay distinguishable.
+            required = minimum if policy.proactive.max_cost_micro_per_day else 1
             try:
                 permit=self.agent.service_budget.check(policy,'proactive',snapshot.profile,
-                    preflight,1,reply_times=self.agent.store.proactive_replies(request.scope))
+                    preflight,required,reply_times=self.agent.store.proactive_replies(request.scope))
             except ServiceError as exc:
-                self.control_event(request,str(exc),**dict(exc.budget_details));return None
+                data=dict(exc.budget_details)
+                self.budget_warning(request,data)
+                self.control_event(request,str(exc),**data);return None
+            self.budget_warning(request,dict(permit.budget_details))
             spent=max(permit.spent_cost_micro,self.controller.status(self.scope(request))['hourly_cost_micro'])
             cost=min(math.ceil(cost),math.floor(permit.available_cost_micro),
                      math.floor(policy.proactive.max_cost_micro_per_hour-spent))
             # Fund the decision and final reply; tools/rechecks spend only what remains.
-            minimum=maximum_cost_micro(snapshot.profile)*(2 if snapshot.profile.wire_profile=='openai-responses-v1' else 1)
-            if cost<math.ceil(minimum):
+            if cost<minimum:
                 details = dict(permit.budget_details)
-                details.update(requested_cost_micro=math.ceil(minimum), available_cost_micro=max(0, cost),
+                details.update(requested_cost_micro=minimum, available_cost_micro=max(0, cost),
                                controller_cost_micro=math.ceil(spent))
                 self.control_event(request,'chat_service_reservation_limit',**details);return None
         candidate=self.controller.candidate(self.scope(request),reserve_cost_micro=math.ceil(cost))
@@ -432,16 +443,18 @@ class ProactiveChat:
     def cost(self,work):
         rows=self.agent.runtime.usage.db.execute('SELECT * FROM attempts WHERE request_id=?',
             (work.service_request_id,)).fetchall()
-        return self.row_cost(rows)
+        policy=work.service_policy
+        return self.row_cost(rows,remaining_only=policy is not None and uses_proactive_risk(policy)
+                             and not getattr(work,'continuation',False))
 
-    def row_cost(self,rows):
+    def row_cost(self,rows,*,remaining_only=False):
         if any(row['state'] not in ('settled','released') for row in rows):return dict(actual_cost_micro=None)
-        amounts=[self.agent.service_budget.attempt_cost(row) for row in rows]
+        amounts=[self.agent.service_budget.attempt_cost(row,remaining_only=remaining_only) for row in rows]
         held=math.ceil(sum((amount for amount,_ in amounts),Fraction()))
         return dict(actual_cost_micro=None if any(uncertain for _,uncertain in amounts) else held,
                     held_cost_micro=held)
 
-    def reconcile_costs(self,request):
+    def reconcile_costs(self,request,policy=None):
         """Converge unfinished memory holds from terminal ledger facts before admission."""
         scope=self.scope(request)
         candidates=self.controller.pending_costs(scope)
@@ -462,7 +475,8 @@ class ProactiveChat:
         for candidate,attempts in grouped.items():
             # Missing records and live reservations cannot prove that a request is free.
             if attempts and all(row['state'] in ('settled','released') for row in attempts):
-                self.controller.reconcile_cost(scope,candidate,**self.row_cost(attempts))
+                remaining_only=policy is not None and uses_proactive_risk(policy) and not attempts[0]['request_id'].startswith('continuation/')
+                self.controller.reconcile_cost(scope,candidate,**self.row_cost(attempts,remaining_only=remaining_only))
         after=self.controller.status(scope)['hourly_cost_micro']
         if after!=before:
             self.control_event(request,'budget_reconciled',controller_before_micro=before,controller_after_micro=after)
