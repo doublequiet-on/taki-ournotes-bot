@@ -359,3 +359,10 @@ Windows原预检/串行会话/launcher拒绝/profile23项，22通过1项Linux检
 复现入口均在上述本地目录：verify.py（原工件校验）、install.py/transfer.py（新空隔离根安装）、exercise.py/run.py（真实业务）、faults.py/run_faults.py（失败与恢复拒绝）、timeouts.py/check_host.py（宿主定向验证）、protocol.py（协议回归）、collect.py/collect_windows.py（最终只读观察）。重复完整执行必须使用新的任务专属空ROOT、独立实例/端口/unit名、root所有且无组写的固定宿主归档，并替换所有脚本ROOT/实例引用，不能直接覆盖本轮证据。入口脚本和实际配置均须先测量；sudo/WSL目标只限已授权专属发行版。原脚本最初失败版本另存attempt快照。
 
 给00：a6两个启动时序缺陷已在10责任区最小修复并实际测量；08/09无本轮代码修改。用户选定“人工核当前记录、未知不恢复”，因此无须另建权限服务，但当前生产范围/删除记录、真实人工签核、目标宿主及全部writer停止证明仍需实际提供；合成测试不代签。最终产品selection/聊天裁剪、源码公开获取责任未定。恢复后真实业务重新开放及完整数据恢复未获生产验收；所有回执activation_permitted=false。没有合并、上线、真实服务重启、QQ、付费调用或生产数据操作。
+
+
+## 2026-11-08 05/07人工批准宿主配置方案
+
+收到00转达的管理员与不可改写备份决定后，只补INSTANCE_RECOVERY.md末节的具体配置方案：/etc/taki/instances/<instance>/host-control.json与/var/lib/taki-control/<instance>分离、root权限、现有FileLock控制器唯一代际写入者、内存独立07批准绑定管理员、05 ticket认证关联、deletion_evidence精确摘要算法及缺项拒绝。固定读取05 054a101276f5ca451ad78d9397531534a2ce0249、07 8bdde8392ab79180ebf32a11fc05ed0a5190fd1e实际接口。未修改两任务代码，也没有把新接口声称已打入602工件。
+
+本轮未实施配置读取/权限写入/代际生产或新RPC；08正在唯一跨包注入，先交上述明确所需/所供字段，避免并发产生第二套批准路径。文档静态核对05严格五字段、07七字段与读取器参数、现有digest算法和FileLock位置；diff检查通过。纯方案不重跑已通过实际602测试，不新增WSL运行结果。管理员具体ID、实际宿主配置未给出，必须保持未配置拒绝。不可改写备份仍列完整清单、禁止恢复，不冒充verified或从覆盖中静默移除；固定07对隔离不可恢复副本覆盖的表达仍需07/00明确。12修复反馈尚未到达本对话，后续只测受影响项。

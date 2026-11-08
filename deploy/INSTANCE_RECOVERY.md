@@ -290,3 +290,63 @@ after_restore不执行数据拷贝：先撤销许可、停止本会话子进程�
 固定602a95f49fd059deb7a59377be74becb4d55e008新包在专属双实例实测暴露两个时间窗口：a6固定30秒等待不足以完成真实完整树测量及提交前重验；先签票再构造会话又会让构造测量占用原30秒票的有效期。本增量只将无业务屏障预算改为默认120秒、有界1–300秒，并提供approve_start将会话构造测量移到显式初审之前。它不延长启动票、不自动重签、不省略commit重验、不允许运行中重放停写事实。
 
 正确顺序为进入IsolatedRuntime持锁→构造RecoverySession→approve_start人工初审→两个start(session=...)→commit人工重审。若角色已创建，approve_start拒绝；测量/人工回调期间invalidate仍无票。受信预算只控制无业务等待，不能来自Console批准或产品候选。宿主Python/Node包装器与父会话须成组安装并测量；新包装器拒绝缺失或非法startup_timeout的旧binding，不提供默认放行兼容。实际08 a384335f69e0514190c51c5dfce5808b55a19f60入口仍消费version1角色/实例及state/report，不修改其业务接口。
+
+
+## 2026-11-08 宿主受信配置约定（待08唯一注入；本节为方案）
+
+消费固定05 `054a101276f5ca451ad78d9397531534a2ce0249` 的ManualScopeApproval及07 `8bdde8392ab79180ebf32a11fc05ed0a5190fd1e` 的read_current_authority；独立宿主代码仍为23839bc05850009131f9c73311b1e6ba42295e38。本节没有实现配置加载器、持久批准、代际写入或新权限服务，也没有声称这两个新接口已经进入602/85bace冻结包。待08固定唯一组合接线后，仅增量验收其实际装配；12反馈前不重复旧工件全套。
+
+已确认产品政策：个人版只有用户指定管理员，定制版只有接收方指定管理员可批准/撤销。Console登录或操作系统root不是产品批准资格。现有“人工核当前记录，未知不恢复”保持；不可改写旧备份隔离、禁止恢复，按既定留存期限到期处理，本轮不执行删除。管理员名单尚无实际ID，因此配置状态为unconfigured；禁止提供默认管理员、按首次登录自动认领或把空名单解释为所有人。
+
+### 具体路径、权限与配置输入
+
+建议部署路径如下，由10安装器的受信操作者明确配置，不从候选、Console参数、应用配置、备份内容或环境变量推导；下列绝对位置是技术选型，不需要用户决定chmod或目录布局。本轮不创建这些生产目录。
+
+| 用途 | 具体路径 | owner/mode与用途 |
+|---|---|---|
+| 当前宿主配置 | `/etc/taki/instances/<instance>/host-control.json` | root:root 0600；实例目录0700，受信祖先root所有且不可组/其他写；只在管理员受信安装/配置流程更新 |
+| 树外控制状态根 | `/var/lib/taki-control/<instance>` | root:root 0700；必须与该实例全部application/config/console/data/combination/backup/recovery树不相交，禁止随业务备份恢复 |
+| 当前07记录 | 上述根下 `deletion/current.json` | root:root 0600，父目录0700；原样07 `{authority,journal}`，不是批准文件 |
+| 唯一撤销记录 | 上述根下 `revocation.json` | root:root 0600；仅现有持锁控制器写，记录实例、连续代际及本次事件ID；不存allow |
+| 人工审阅留痕 | 上述根下 `review-events.jsonl` | root:root 0600；记录操作者不透明ID/证据摘要/批准或撤销事件；日志不是可重载的批准 |
+| 当前有效批准 | 现有root控制器内存；05当前网关对象内存 | 无批准文件；重启、通道失联、锁切换或源变化即清空，07回调不读取历史审阅日志作为当前批准 |
+
+应用UID没有控制状态读写权限。08跨包注入只接收经审核的当前输出，不把root文件开放为应用组可读或可写。不沿用现有 `layout(settings).state` 作为07权威根：它仍管安装/更新事务，不更名、不搬迁、不清理旧事务。继续持有该实例既有 `FileLock(state/update.lock)`，树外状态写入也必须在同一实例控制器锁内；无第二套锁协议。
+
+配置字段建议固定为：`schema=task10-host-control/1`、`instance`、`product`（仅比对09已验证身份，不选择/降级产品）、`authority_root`、`deletion_record`、`revocation_record`、`review_audit`、`excluded_roots`、`administrators`、`identity_source`、`scope_source_commit`、`deletion_source_commit`。`identity_source`固定09 checker完整SHA及代码摘要；另两source固定本节05/07SHA，候选不能选择解释器。`administrators`必须为非空的 `{issuer,subject}` 精确列表，issuer是08已核对的认证体系标识，subject为稳定管理员ID；不按显示名、群角色、客户端自报ID或通用Console密码授权，不包含凭据。每个实例名单独立，不继承另一产品管理员。ID未知时没有可用配置，不能落一个可通过校验的示例。
+
+excluded_roots由宿主完整登记：实例base、外置数据、所有组合/候选、全部本地与挂载备份、恢复工作树；不得只列本次候选路径。配置加载须验证严格字段/类型、大小/重复键、正规范绝对路径、实例/09产品绑定、root身份、文件0600与单硬链接、目录权限、全部祖先无符号链接、相同inode/挂载别名及包含冲突。缺文件/缺管理员/不可信路径/不可枚举覆盖均输出 `manual/host_authority_unconfigured` 或具体拒绝原因，应用准入保持关闭。不得由检查自动mkdir、chmod、创建初始generation或恢复最后一次成功配置。读取前后比较配置与文件身份/摘要，漂移失效；host root被攻破不在此隔离保证内。
+
+### 唯一撤销生产者与当前人工批准
+
+唯一宿主 `revocation_generation` 生产者是持有该实例FileLock的现有root控制器，由08已认证管理员动作请求它执行；05的进程内generation和10的runtime.generation是各自票据失效计数，不能反写或替代宿主代际。宿主代际为1至9007199254740991的整数；任何撤销、管理员列表/认证来源改变、身份/删除权威替换或新安装/恢复，必须先关闭准入、撤销05批准及09会话、invalidate10票，再持锁递增并fsync记录和父目录，然后才能发布新证据。溢出、写失败、代际不连续、并发写入或来源不可证均保持关闭；不得回绕、自动补1或从备份还原。控制器不能承诺没有08确认回执的旧活动会话已停止，失联按现有revoke/停止确认处理。
+
+同一进程保留已观察最高代际和事件ID，不接受倒退或同代际不同事件；禁止绕过唯一写入者的A→B→A文件替换。每次控制器启动产生新的随机controller_session及boot绑定，05和07批准均为空；即使磁盘代际相同也不沿用旧批准。离线宿主状态丢失或可能整体回滚时，单个本地计数/日志不能证明最新；没有独立可核对的当前记录及连续性证据就人工阻塞，不把文件hash或本方案称为外部防回滚锚点。未来管理员名单更换须由个人用户/定制接收方通过受信配置流程重新指定，既有管理员不能借批准动作扩大自身名单。
+
+人工动作在08认证边界先解析真实 `{issuer,subject}`，核对该实例当前名单，再为具体动作建立当前认证会话绑定；10仅消费该受信边界的结果，不接受浏览器JSON中的actor或approved=true。begin/confirm/revoke均重新核对管理员、实例、会话仍有效及配置摘要。日志中的管理员ID不构成认证。系统安全失效可以自动关闭准入，但不冒充管理员批准/撤销决定。08负责其认证实现及唯一跨进程绑定证明；本节不新增监听端口或通用RPC，也不假定现有只承载state/report的私有FD已经传送这些新字段。
+
+07独立批准的内存条目应包含 `instance,controller_session,boot_id,actor:{issuer,subject},auth_session_revision,config_sha256,revocation_generation,review_nonce,authority_file_sha256,identity_evidence`，以及本次人工核验的journal/replica清单摘要。它绑定具体管理员的本次动作与07文件精确原始字节，不能由scope批准或C6 allow生成。历史审阅只留审计；重启必须新审。`read_approved_sha256()`每次重验条目当前性、管理员仍在名单、认证动作的受信关联、配置/代际、锁及当前文件身份；不匹配即撤销并返回None，只在匹配时返回authority_file_sha256。07本身再次前后双读并比对文件摘要；独立批准摘要不可写进current.json自证，不从恢复树、启动常量或最后成功缓存获得。
+
+05 begin/confirm的进程内ticket由08保留，绑定发起管理员、认证会话、实例、controller_session和host代际；浏览器只携带08自己的短期请求关联，不序列化05 ticket。confirm只有同一经核验管理员会话可消费；另一位管理员需要自己的新审阅。任何有权管理员可请求撤销，但须重新核名单并先使旧票失效。10 ManualRecoveryReview的双项确认仅在上述身份和两项独立审阅均成立后执行，不能反过来批准07文件或05范围。
+
+### 10与08/05/07所需、所供字段
+
+| 方向 | 固定值/语义 | 缺项行为 |
+|---|---|---|
+| 08→10 | 经受信边界验证的actor、认证会话revision、实例、动作与审阅关联；不可用JSON声明代替认证 | 拒绝人工动作，不产生票或批准 |
+| 10→08 | 当前controller_session/boot、配置摘要、唯一revocation_generation、管理员精确匹配结果、独立07批准revision/摘要；事件发生前必须撤销通知并确认隔离 | 未配置/失联无可用快照 |
+| 08→05 | `readCurrent()`严格仅document/digest/revocation_generation/identity_evidence/deletion_evidence；document/digest用scope.readCandidate，identity来自真实09，不能把host字段追加进05严格对象 | 返回undefined，05 manual |
+| 10→07 | `read_current_authority(绝对deletion_record, excluded_roots=完整宿主清单, read_approved_sha256=当前内存批准读取器)`；外层包装为无参current_authority | None/异常沿07 manual，不缓存成功 |
+| 07→08/10 | 当前check_recovery完整结果；只有allow且独立批准仍当前可产生下述deletion_evidence | reject/manual不签发05输入 |
+| 05→10 | scope.recovery原样决策；manual.read().revision作为revisions.scope，approved仅诊断 | 不能单用approved或revision当许可 |
+| 10→既有屏障 | 九项revisions；deletion绑定下述证据，session绑定boot/controller_session/代际，controller绑定独立宿主代码和配置摘要 | 任一变化invalidate；停写未知不commit |
+
+固定 `deletion_evidence` 算法由10现有 `instance_preflight.digest` 计算：对严格对象 `{kind:'task10-deletion-review/1',instance,controller_session,revocation_generation,approval_revision,authority_file_sha256,identity_evidence,candidate_evidence_sha256,c6}` 按sort_keys=True/separators=(',',':')/ensure_ascii=True/allow_nan=False的UTF-8 JSON取SHA256。candidate_evidence_sha256是实际07候选完整对象（含逐副本state/代际/独立摘要）的同算法digest，c6为本次07原样返回；只有c6.status=allow、全部输入当前且本次人工批准有效时才计算。approval_revision是上述独立07内存审阅条目的同算法digest（不包含凭据），不是authority文件自身hash。身份证据必须与本次09相同。07 evidence_version原样留在c6，不强行当64位hash。
+
+这个证据只在隔离、停写及复核期绑定具体恢复候选。正常业务写入不能把活跃DB的每次内容变化当作撤销；运行期跟踪已审发布的权威/格式/覆盖及批准revision，恢复前重新停写并测量所有副本，不复用旧候选快照。先取得独立07审阅及C6结果，再05人工审阅，最后10完整preflight/人工复核/双角色屏障；05 readCurrent不回调完整preflight，避免循环。每个确认点均重新读取，allow始终不是激活令牌。
+
+### 不可改写备份与待验门禁
+
+不可改写旧备份在宿主完整清单中保留稳定ID、实物位置/hash、原期限起点/到期点、隔离与禁止恢复标记；这些标记不是07的verified。恢复选择器必须拒绝该实物，不能因改名、复制或过期自动变成可恢复；期限未知保持隔离人工处理，不能重新起算。到期处理仍独立授权执行，本轮不删除文件或记录。不能为使07通过而从replicas清单静默省略旧副本，也不能给07严格七字段对象额外塞quarantined。07当前合同如何表达“仍存在但永远禁止恢复”的副本覆盖，须由07/00明确适配；在固定8bdde83语义未能证明完整覆盖前，相关恢复保持manual，不自行缩小范围。
+
+待08固定接线后的定向验证：两个合成产品及不同管理员；空名单/错产品/未登录/同显示名不同subject/客户端伪造actor拒绝；begin与confirm间撤权、管理员替换、跨实例/跨会话/重复确认、重启空批准；非root或组写、软硬链接/挂载别名、权威落恢复树拒绝；单写者锁竞争、代际倒退/溢出/ABA、fsync失败；独立批准摘要错配/撤销/双读变化；实际05新接口与07读取器allow/manual/reject；12提出的宿主受影响项。全部仅在专属WSL新合成目录执行；不重复旧工件全套，不启动QQ。未完成这些接线验证前，本节是可审阅配置合同，生产字段与管理员未配置始终不获准入。
