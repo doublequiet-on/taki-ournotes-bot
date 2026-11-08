@@ -47,6 +47,14 @@ READY = re.compile(r"ournotes_bot\.qq\b.*机器人 .+ 已上线")
 ERROR = re.compile(r"\b(?:ERROR|CRITICAL|Traceback|ModuleNotFoundError|ImportError)\b")
 
 
+def backup_file_budget(config: dict) -> int:
+    """Only backup tar files may opt into a larger, explicitly bounded budget."""
+    value = config.get('backup_file_budget_bytes', 2 * GIB)
+    if type(value) is not int or not 2 * GIB <= value <= 4 * GIB:
+        raise Rejected('backup_file_budget_configuration_invalid')
+    return value
+
+
 def knowledge_bundle_spec(config: dict):
     if 'knowledge_bundle' not in config:
         return None
@@ -197,10 +205,17 @@ def extract_archive(archive: Path, target: Path, expected_commit: str | None = N
 
 def run_bounded(argv: list[str], *, timeout: int = 120, log: Path | None = None,
                 budget_root: Path | None = None, budget_file: Path | None = None,
-                success_codes: tuple[int, ...] = (0,)) -> str:
+                success_codes: tuple[int, ...] = (0,),
+                file_budget_bytes: int | None = None) -> str:
     """Drain output with a fixed memory/log cap and kill timed-out process groups."""
     if budget_file is not None and (budget_root is None or budget_file.parent != budget_root):
         raise ValueError("Budget file must belong to its budget directory")
+    if file_budget_bytes is not None:
+        if budget_file is None:
+            raise ValueError("A custom file budget requires a budget file")
+        file_budget_bytes = backup_file_budget({'backup_file_budget_bytes': file_budget_bytes})
+    else:
+        file_budget_bytes = 2 * GIB
 
     def over_budget():
         if budget_root is None:
@@ -209,7 +224,7 @@ def run_bounded(argv: list[str], *, timeout: int = 120, log: Path | None = None,
             used = directory_bytes(budget_root)
         else:
             used = budget_file.stat().st_size if budget_file.exists() else 0
-        return used > 2 * GIB or shutil.disk_usage(budget_root).free < 2 * GIB
+        return used > file_budget_bytes or shutil.disk_usage(budget_root).free < 2 * GIB
 
     process = subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                stdin=subprocess.DEVNULL, start_new_session=True,
@@ -265,6 +280,7 @@ def run_bounded(argv: list[str], *, timeout: int = 120, log: Path | None = None,
 class LinuxBackend:
     def __init__(self, config: dict):
         self.config = config
+        self.backup_file_budget_bytes = backup_file_budget(config)
         self.koishi = None
         if config.get('runtime_mode') == 'koishi':
             try:
@@ -707,15 +723,60 @@ class LinuxBackend:
             self.run(["/usr/bin/tar", "--create", "--file=" + str(path), "--exclude=.env",
                       "--exclude=" + previous.code_dir.lstrip("/") + "/data", "--exclude=__pycache__", "--directory=/",
                       previous.code_dir.lstrip("/"), previous.venv_dir.lstrip("/")], timeout=120,
-                     budget_root=self.backups, budget_file=path)
-            if path.stat().st_size > 2 * GIB:
-                raise Rejected("backup_disk_budget")
+                     budget_root=self.backups, budget_file=path,
+                     file_budget_bytes=self.backup_file_budget_bytes)
+            self._check_backup_file(path)
+            self._preflight_data_backup()
             atomic_json(self.backups / (name + ".json"), {"owner": "taki-linux-updater-v1", "archive": path.name,
                          "previous": old, "candidate": new, "shared_data_restore": False})
         except Exception:
             path.unlink(missing_ok=True)
             raise
         return str(path)
+
+    def _check_backup_file(self, path: Path) -> None:
+        if (path.stat().st_size > self.backup_file_budget_bytes
+                or shutil.disk_usage(self.backups).free < 2 * GIB):
+            raise Rejected("backup_disk_budget")
+
+    def _preflight_data_backup(self) -> None:
+        """Reject a known oversized snapshot before stop, without reading contents.
+
+        Count tar's minimum headers/padding and unique regular-file payloads.
+        GNU long-name records and concurrent growth can add more: the actual tar
+        still has a bounded writer and final check. No consistent snapshot claim.
+        """
+        data = self.base / "data"
+        if not data.exists() and not data.is_symlink():
+            return  # Code-only preparation; stopped snapshot still requires data.
+        if data.is_symlink() or data.resolve() != data or not data.is_dir():
+            raise Rejected("shared_data_path_changed")
+        size, seen = 512 + 1024, set()  # data directory header and end blocks
+
+        def unavailable(error):
+            raise error
+
+        try:
+            for parent, dirs, files in os.walk(data, followlinks=False, onerror=unavailable):
+                dirs[:] = [n for n in dirs if n != '.env'
+                           and not (Path(parent) == data and n == 'haneoka-asset-cache')]
+                size += len(dirs) * 512
+                for name in files:
+                    if name == '.env' or (Path(parent) == data and name == 'haneoka-asset-cache'):
+                        continue
+                    info = (Path(parent) / name).lstat()
+                    size += 512
+                    key = (info.st_dev, info.st_ino)
+                    if stat.S_ISREG(info.st_mode) and key not in seen:
+                        seen.add(key)
+                        size += ((info.st_size + 511) // 512) * 512
+            minimum = ((size + 10239) // 10240) * 10240
+        except OSError as exc:
+            raise Rejected("backup_preflight_unavailable") from exc
+        if minimum > self.backup_file_budget_bytes:
+            raise Rejected("data_backup_file_budget")
+        if shutil.disk_usage(self.backups).free < minimum + 2 * GIB:
+            raise Rejected("insufficient_backup_disk")
 
     def _service(self) -> dict:
         output = self.run(["/usr/bin/systemctl", "show", "taki.service", "--property=ActiveState,SubState,MainPID,InvocationID,NRestarts"], timeout=15)
@@ -749,11 +810,14 @@ class LinuxBackend:
         data = self.base / "data"
         if data.is_symlink() or data.resolve() != data or not data.is_dir():
             raise Rejected("shared_data_path_changed")
+        self._preflight_data_backup()
         snapshot = archive.with_name(archive.stem + "-data.tar")
         try:
             self.run(["/usr/bin/tar", "--create", "--file=" + str(snapshot), "--directory=" + str(self.base),
                       "--exclude=.env", "--anchored", "--exclude=data/haneoka-asset-cache", "data"], timeout=120,
-                     budget_root=self.backups, budget_file=snapshot)
+                     budget_root=self.backups, budget_file=snapshot,
+                     file_budget_bytes=self.backup_file_budget_bytes)
+            self._check_backup_file(snapshot)
             row["data_archive"] = snapshot.name
             row["excluded_rebuildable_paths"] = ["data/haneoka-asset-cache"]
             row["shared_data_restore"] = False
@@ -907,6 +971,7 @@ def validate_config(config: dict) -> None:
     """The installed controller is scoped to the already-reviewed Taki instance."""
     base, control = "/home/ubuntu/taki", "/usr/local/lib/taki-updater"
     knowledge_bundle_spec(config)
+    backup_file_budget(config)
     pins = config.get('retention_pins', [])
     if not isinstance(pins, list) or any(not isinstance(p, str) or not SHA_RE.fullmatch(p) for p in pins):
         raise Rejected('retention_pins_invalid')
