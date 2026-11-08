@@ -6,6 +6,8 @@ import re
 import sqlite3
 from pathlib import Path
 
+from ..domain.chat import PERSONA_VERSION
+
 
 class Diagnostics:
     """One backend writer; explicitly degraded on storage failure, without ledger changes."""
@@ -85,6 +87,18 @@ class Diagnostics:
 
     @staticmethod
     def chat_metadata(kind, data):
+        if kind=='persona':
+            if set(data)!={'reason','persona_version'}:
+                raise ValueError('chat_persona_data')
+            reason,version=data['reason'],data['persona_version']
+            if reason=='approved':
+                if not (isinstance(version,str) and re.fullmatch('[0-9a-f]{64}',version)):
+                    raise ValueError('chat_persona_data')
+            elif (reason not in ('story_not_configured','approval_missing','current_missing',
+                                 'revision_mismatch','source_withdrawn','persona_withdrawn')
+                  or version!=PERSONA_VERSION):
+                raise ValueError('chat_persona_data')
+            return json.dumps(data)
         if kind=='transport':
             required={'stage','name','elapsed_ms','proxied','headers_received'}
             timing={'elapsed_ms','dns_ms','connect_ms','upload_ms','wait_headers_ms','read_ms'}

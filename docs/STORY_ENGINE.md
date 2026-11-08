@@ -62,6 +62,10 @@ python -B -m ournotes_bot.application.story_cli status --root runtime/story-fixt
 
 人格批准另需 `approve-persona --persona-id ... --revision ... --reviewer ... --approval-ref ... --confirm-human-review`，这个参数确认来自人工内容所有者。采集或生成任务不应调用该命令。当前工作没有执行真实人格批准。
 
+现有请求诊断开启时，每次聊天选定人格会按请求 ID 记录 `persona` 事件，可在请求详情的「交流处理记录 → 技术记录」查看。默认人格版本为 `taki-v0/legacy-derived`。原因码包括 `story_not_configured`（未配置 Story）、`approval_missing`（没有审批）、`current_missing`（没有当前包）、`revision_mismatch`（审批与当前包版本不符）、`source_withdrawn`（依赖来源已撤回）和 `persona_withdrawn`（人格已撤回）。来源与人格同时撤回时记录来源撤回。使用已批准人格时记录 `approved` 和批准档案的 SHA-256 版本。
+
+事件只保存原因码和版本，沿用既有诊断权限、请求关联和保留周期。审批文件损坏、哈希不符和读盘失败仍返回 `story_persona_unavailable`，不记为默认人格。旧请求缺少事件时，无法从历史 `legacy-derived` 版本反推原因。
+
 ## 验收与边界
 
 `tests/test_platform_boundary.py::StoryPublicationTests` 使用纯合成临时 bundle，覆盖日中改写、原文与邻接读取、默认拒绝合成发布、合成人格拒绝、原文哈希、缺来源清单、分析分层、人工批准版本绑定、撤回后回退、错误元数据和脱离游戏／QQ 的 CLI。带 official_original 标签的单元夹具也仍是合成合同测试，不是已采集官方原文或真实审核。

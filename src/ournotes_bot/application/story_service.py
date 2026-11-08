@@ -220,8 +220,13 @@ class StoryService:
         return self.persona()
 
     def persona(self):
+        persona,_=self.persona_selection()
+        return persona
+
+    def persona_selection(self):
+        """Resolve the approved persona and a fixed reason from the same reads."""
         pointer=self.root/'persona.json'
-        if not pointer.exists():return None
+        if not pointer.exists():return None,'approval_missing'
         row=read_json(pointer)
         require(isinstance(row,dict) and set(row)=={'schema','source_revision','persona_id','persona_sha256','reviewed_by','confirmation_ref','approved_at'}
                 and row['schema']=='taki-story-persona-approval/1','story_persona_approval')
@@ -230,15 +235,17 @@ class StoryService:
         require(all(isinstance(row[key],str) and re.fullmatch('[a-f0-9]{64}',row[key])
                     for key in ('source_revision','persona_sha256')),'story_persona_approval')
         bundle=self.current()
-        if bundle is None or row['source_revision']!=bundle.revision:return None
+        if bundle is None:return None,'current_missing'
+        if row['source_revision']!=bundle.revision:return None,'revision_mismatch'
         persona=next((p for p in bundle.personas if p.persona_id==row['persona_id']),None)
         require(persona is not None and digest(asdict(persona))==row['persona_sha256'],'story_persona_hash')
         claims={claim.claim_id:claim for claim in bundle.claims};scenes={scene.scene_id:scene for scene in bundle.scenes}
         source_ids={scenes[scene_id].source_id for cid in persona.source_claim_ids for scene_id in claims[cid].source_scene_ids}
         withdrawals=self.revocations()
-        if source_ids & withdrawals['sources'].keys() or persona.persona_id in withdrawals['personas']:return None
+        if source_ids & withdrawals['sources'].keys():return None,'source_withdrawn'
+        if persona.persona_id in withdrawals['personas']:return None,'persona_withdrawn'
         return {'persona_id':persona.persona_id,'prompt':persona.prompt,'source_revision':bundle.revision,
                 'revocation_revision':withdrawals['revision'],
                 'source_claim_ids':list(persona.source_claim_ids),'covers_until':persona.covers_until,
                 'review_status':'approved','reviewed_by':row['reviewed_by'],'confirmation_ref':row['confirmation_ref'],
-                'approved_at':row['approved_at'],'persona_sha256':row['persona_sha256']}
+                'approved_at':row['approved_at'],'persona_sha256':row['persona_sha256']},'approved'
