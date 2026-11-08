@@ -12,6 +12,8 @@ from .entity_lexicon import band_aliases, band_name_variants
 
 
 NOTE = r'(?<![a-z0-9_])note(?![a-z0-9_])'
+GAME_PREFIX = (r'^(?:我们\s*(?:的\s*)?)?(?:(?:bang\s+dream\s*!?\s*)?our\s*notes?|on)(?![a-z0-9_])'
+               r'\s*(?:里面|里|中)?[\s,:]*')
 
 
 BANDS = {1: 'MyGO!!!!!', 2: 'Ave Mujica', 3: '梦限大MewType', 4: 'millsage', 5: '一家Dumb Rock!'}
@@ -30,8 +32,7 @@ def parse_meta_question(question, repository):
         raise MetaError('invalid_argument', '歌曲指标按资源区服查询，请指定日服 jp 或国际服 intl。')
     # Scope and address words are accepted only as a question prefix.
     text = re.sub(r'^(?:(?:请问|请|帮我|查一下|查询|找出|找一下|看看|taki(?![a-z0-9_])|立希)[\s,:]*)+', '', text)
-    text = re.sub(r'^(?:我们\s*(?:的\s*)?)?(?:(?:bang\s+dream\s*!?\s*)?our\s*notes?|on)(?![a-z0-9_])'
-                  r'\s*(?:里面|里|中)?[\s,:]*', '', text)
+    text, game_prefix = re.subn(GAME_PREFIX, '', text)
     text = re.sub(r'^当前\s*(?=日服|国际服|國際服|jp(?![a-z])|intl(?![a-z]))', '', text)
     servers = []
     for pattern, server in ((r'日服|(?<![a-z])jp(?![a-z])', 'jp'), (r'国际服|國際服|(?<![a-z])intl(?![a-z])', 'intl')):
@@ -40,6 +41,8 @@ def parse_meta_question(question, repository):
             text = re.sub(pattern, ' ', text)
     if len(servers) > 1:
         raise MetaError('invalid_argument', '请一次查询一个资源区服。')
+    if servers and not game_prefix:
+        text = re.sub(GAME_PREFIX, '', text.lstrip())
     text = re.sub(r'^(?:请问|请|帮我|查一下|查询|找出|找一下|看看|\s)+', '', text)
     difficulty = None
     aliases = {'ez':'easy', 'easy':'easy', 'nm':'normal', 'normal':'normal', 'hd':'hard', 'hard':'hard', 'ex':'expert', 'expert':'expert',

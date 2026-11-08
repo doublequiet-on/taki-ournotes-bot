@@ -191,6 +191,12 @@ def scope_for(question,args,previous=None,*,reset_on_server_change=False,pending
 
 
 def meta_questions(question):
+    # Only split a complete reaction followed by an explicit new question.
+    # Region, difficulty and filters on a ranking clause stay with that clause.
+    question=re.sub(
+        r'^(?:(?:taki(?![a-z0-9_])|立希)[\s，,：:]*)?'
+        r'(?:(?:这张图|这条引用|这段话|这句话)?(?:你)?(?:怎么看|怎么想|怎么评价)|(?:这段话|这句话|这)?什么意思)'
+        r'[呢啊呀嘛]?[？?！!。]\s*(?:另外|另问|还有个问题)[\s，,：:]*', '', question, flags=re.I)
     # One logical call may return two opposite rankings over identical explicit conditions.
     if '最短' in question and '最长' in question:
         return tuple(re.sub(r'和|以及|、',' ',question.replace(other,'')) for other in ('最长','最短'))

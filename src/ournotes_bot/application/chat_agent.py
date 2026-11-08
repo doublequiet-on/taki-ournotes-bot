@@ -526,6 +526,7 @@ class ChatAgent:
                               items=items,second_minus_first=differences))
 
     async def run(self,work,question,user,group,deadline):
+        meta_question=question
         runtime=self.runtime
         require(self.recovery.recover(scope=work.request.scope),'chat_retention_unavailable')
         deadline=min(deadline,work.content_deadline)
@@ -791,7 +792,8 @@ class ChatAgent:
                     else:
                         operations+=1
                         output,leases=await self.execute(work,call,question,site,leases,deadline-self.budget.final_seconds,deadline,
-                                                         registry=registry,web=web,user=user,group=group,story_handles=story_handles,image_handles=image_handles,vision=vision)
+                                                         registry=registry,web=web,user=user,group=group,story_handles=story_handles,image_handles=image_handles,vision=vision,
+                                                         meta_question=meta_question)
                     image_input=output.pop('_image_input',None)
                     knowledge_scope=output.pop('_knowledge_scope',None)
                     knowledge_lease=output.pop('_knowledge_lease',None)
@@ -858,7 +860,7 @@ class ChatAgent:
                 self.audit(self.proactive.settle_cost,work)
             messages.clear()
 
-    async def execute(self,work,call,question,site,leases,deadline,turn_deadline,*,registry=None,web=None,user=None,group=None,story_handles=None,image_handles=None,vision=None):
+    async def execute(self,work,call,question,site,leases,deadline,turn_deadline,*,registry=None,web=None,user=None,group=None,story_handles=None,image_handles=None,vision=None,meta_question=None):
         runtime=self.runtime
         try:
             tool,args=validate_call(call,self.tools if registry is None else registry)
@@ -1048,7 +1050,8 @@ class ChatAgent:
                 repository=await runtime.current_repository()
                 if work.entity_evidence:
                     require(catalog_version(repository.capture_catalog())==work.entity_source_version,'query_source_changed')
-                output=await runtime.backend.gate.run(partial(execute,entity_evidence=work.entity_evidence),tool,args,chat_query_question(question),repository)
+                query_text=meta_question if tool.kind=='meta' and meta_question is not None else question
+                output=await runtime.backend.gate.run(partial(execute,entity_evidence=work.entity_evidence),tool,args,chat_query_question(query_text),repository)
                 if isinstance(output,PreparedReply):
                     output={'status':output.business_status or 'not_available','retryable':True}
                 elif tool.kind=='meta':

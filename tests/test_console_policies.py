@@ -2613,6 +2613,42 @@ class ChatAgentTests(Fixture, unittest.IsolatedAsyncioTestCase):
         from ournotes_bot.domain.model_calls import AttemptResult,Usage
         return AttemptResult('ok',Usage(10,0,2,None,12,'known'),calls,text,output_items=items)
 
+    async def test_chat_meta_grounds_independent_ranking_before_reading_resources(self):
+        from ournotes_bot.domain.meta_query import MetaError,MetaSnapshot,MetaSong,MetaSource
+        from ournotes_bot.domain.model_calls import ToolCall
+        bodies=self.capture_native_bodies()
+        snapshot=MetaSnapshot(MetaSource('intl','fixture-release','fixture-source',1),(
+            MetaSong('100001','合成短曲',(1,),'MyGO!!!!!','',71.0,((),(),(),())),))
+        self.repo.song_metrics.current=Mock()
+        cases=(
+            ('/聊 Our Notes 国际服 时长最短的是哪首歌','日服给新人留一个练习位置。','intl','ok'),
+            ('taki你怎么看？另外，Our Notes 国际服 时长最短的是哪首歌','合成独立引文','intl','ok'),
+            ('/聊 国际服 Our Notes 时长最短的是哪首歌','','intl','source_unavailable'),
+            ('/聊 国际服 Our Notes 时长最短的是哪首歌','','jp','invalid_argument'),
+            ('/聊 日服 时长最长的是哪首歌？另外，国际服 时长最短的是哪首歌','','intl','invalid_argument'),
+        )
+        for seq,(question,preview,server,status) in enumerate(cases,1):
+            with self.subTest(question=question,status=status):
+                self.repo.song_metrics.current.reset_mock()
+                self.repo.song_metrics.current.side_effect=(
+                    MetaError('source_unavailable','合成上游超时') if status=='source_unavailable' else None)
+                self.repo.song_metrics.current.return_value=snapshot
+                args=dict(queries=[dict(resource_server=server,order_by=[dict(field='duration_seconds',direction='asc')],limit=1)])
+                if seq==2:args['queries'][0]['difficulty']=None
+                self.client.request.side_effect=[self.result(calls=(ToolCall('metrics','song_metrics',json.dumps(args)),)),
+                                                 self.result('完成当前问题。')]
+                raw={**self.request('native'+str(seq),seq),'quoted_text':preview}
+                with patch.object(self,'request',return_value=raw):
+                    plan,attempts=await self.prepare_native(question,seq=seq)
+                self.assertEqual(len(attempts),2)
+                if preview:self.assertIn(preview,str(bodies[-2]))
+                output=json.loads(next(row['content'] for row in bodies[-1]['messages'] if row['role']=='tool'))
+                self.assertEqual(output['status'],status)
+                if status=='invalid_argument':self.repo.song_metrics.current.assert_not_called()
+                else:self.repo.song_metrics.current.assert_called_once_with('intl')
+                if status=='ok':self.assertIn('合成短曲',str(output['data']))
+                self.event(plan,'intent');self.event(plan,'ack')
+
     async def test_transport_observation_is_correlated_without_changing_usage_or_logging_prompt(self):
         answer=self.client.request.return_value
         async def provider(*args,transport,**kwargs):
