@@ -21,3 +21,17 @@ CODE_FILES += ('chat_tasks.py','chat_recovery.py')
 CODE_FILES += ('../natural_query/query_validation.py',)
 
 CODE_FILES += ('../query/entity_lexicon.py',)
+
+# Shared runtime digest for the explicit development query composition only.
+# This is not task09's product selection or recursive artifact inventory.
+QUERY_CODE_FILES = (
+    'backend.py', 'backend_protocol.py', 'delivery_ledger.py', 'replies.py',
+    'backend_bootstrap.py', 'runtime_tasks.py', 'data_owner.py', 'backend_sources.py',
+    'admin.py', 'diagnostics.py', 'operations.py', 'operations_sources.py', 'operations_runtime.py',
+    '../natural_query/parser.py', '../natural_query/query_agent.py', '../natural_query/query_metrics.py',
+    '../natural_query/query_validation.py', '../domain/query_policy.py', '../domain/query_context.py',
+    '../domain/knowledge.py', '../domain/model_calls.py', '../query/continuation.py',
+    '../query/entity_lexicon.py', 'model_execution.py', 'conversation_state.py', 'query_runtime.py',
+)
+CODE_FILES += ('../natural_query/parser.py', '../domain/query_context.py', 'query_runtime.py', 'personal_runtime.py')
+CODE_FILES += ('recovery_entry.py',)

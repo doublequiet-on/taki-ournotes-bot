@@ -7,7 +7,7 @@ import hashlib
 import tempfile
 from pathlib import Path
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from PIL import Image, ImageChops, ImageDraw
 
@@ -16,6 +16,66 @@ from ournotes_bot import visuals
 
 
 class VisualTests(unittest.TestCase):
+    def test_tracker_activity_art_is_admitted_by_application_and_cached_after_decode(self):
+        from ournotes_bot.application.replies import visual_asset
+        from ournotes_bot.sources import moenotes_events as source
+        url=source.asset_url('jp','jacket','jkt_001_100001')
+        banner=source.event_banner_url('jp','04/Banner/event_banner_00004.png')
+        for region in ('jp','tw','kr','en'):
+            self.assertTrue(source.is_event_artwork_url(source.asset_url(region,'jacket','jkt_001_100001'),region))
+        self.assertFalse(source.is_event_artwork_url(url,'en'))
+        raw=io.BytesIO();Image.new('RGB',(16,8),'red').save(raw,format='WEBP')
+        with tempfile.TemporaryDirectory() as tmp,patch.object(visuals,'runtime_data_dir',return_value=Path(tmp)), \
+             patch.object(source,'public_get',return_value=(raw.getvalue(),{'content-type':'image/webp'})) as fetch, \
+             patch.object(visuals,'urlopen',side_effect=AssertionError('unscoped fallback')):
+            # The generic loader alone rejects these regional URLs before I/O.
+            self.assertIsNone(visuals._asset(url,(8,8)))
+            fetch.assert_not_called()
+            for value in (url,banner):
+                image=visual_asset(value,(8,8));self.assertIsNotNone(image);image.close()
+                image=visual_asset(value,(8,8));image.close()
+            self.assertEqual(fetch.call_count,2)
+            fetch.return_value=(b'<html>error</html>',{'content-type':'text/html'})
+            self.assertIsNone(visual_asset(source.asset_url('jp','jacket','broken'),(8,8)))
+            self.assertEqual(len(list((Path(tmp)/'asset-cache').glob('*.png'))),2)
+            for value in (url.replace('/jp/ja/','/jp/en/'),url+'?other=1',url.replace('assets.bdon.moe','evil.invalid'),url.replace('100001.webp','100002.webp')):
+                self.assertFalse(source.is_event_artwork_url(value))
+                with self.assertRaises(source.SourceError):source.download_event_artwork(value)
+            self.assertEqual(fetch.call_count,3)
+
+    def test_fixed_icons_reject_redirects_status_and_excess_before_decode(self):
+        from urllib.request import Request
+        handler=visuals._NoAssetRedirect()
+        for code in (301,302,303,307,308):
+            with self.subTest(code=code),self.assertRaisesRegex(ValueError,'redirect forbidden'):
+                handler.redirect_request(Request(visuals.BASE+'/images/CardType1.webp'),None,code,'',{},'http://127.0.0.1/private')
+        for status,length,raw,reads in ((302,None,b'',0),(200,'6000001',b'',0),
+                (200,'invalid',b'',0),(200,None,b'x'*6000001,1),(200,'6000000',b'x'*6000000,1)):
+            response=Mock(status=status,headers={} if length is None else {'Content-Length':length})
+            response.read.return_value=raw
+            response.__enter__=Mock(return_value=response);response.__exit__=Mock(return_value=False)
+            opener=Mock();opener.open.return_value=response
+            with self.subTest(status=status,length=length),patch.object(visuals,'build_opener',return_value=opener) as build:
+                if len(raw)==6000000:
+                    self.assertEqual(visuals._fixed_icon_bytes(visuals.BASE+'/images/CardType1.webp',visuals.BASE+'/'),raw)
+                else:
+                    with self.assertRaises(ValueError):visuals._fixed_icon_bytes(visuals.BASE+'/images/CardType1.webp',visuals.BASE+'/')
+                self.assertIsInstance(build.call_args.args[0],visuals._NoAssetRedirect)
+                self.assertEqual(response.read.call_count,reads)
+                if reads:response.read.assert_called_once_with(6000001)
+
+    def test_fixed_icon_rejection_has_no_injected_or_legacy_fallback(self):
+        with tempfile.TemporaryDirectory() as tmp,patch.object(visuals,'runtime_data_dir',return_value=Path(tmp)), \
+             patch.object(visuals,'_fixed_icon_bytes',side_effect=ValueError('blocked')) as fixed, \
+             patch.object(visuals,'urlopen') as legacy,patch.object(visuals.aiohttp,'ClientSession') as asynchronous:
+            injected=Mock(side_effect=AssertionError('fixed icon bypass'))
+            for url in (visuals.BASE+'/images/CardType1.webp',*visuals.MISSION_ICON_URLS.values()):
+                self.assertIsNone(visuals._asset(url,(8,8),fetch=injected))
+            self.assertIsNone(visuals._asset('https://evil.invalid/icon.webp',(8,8)))
+            self.assertEqual(fixed.call_count,1+len(visuals.MISSION_ICON_URLS))
+            injected.assert_not_called();legacy.assert_not_called();asynchronous.assert_not_called()
+            self.assertFalse(list(Path(tmp).rglob('*.png')))
+
     def setUp(self):
         self.song = Song(100001, "迷星叫", ("迷星叫",), "MyGO!!!!!", "", "", "", "", "",
                          (Chart("EXPERT", 25, 25.5, 768, ""),))

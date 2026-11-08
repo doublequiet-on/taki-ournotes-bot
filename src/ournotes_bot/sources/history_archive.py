@@ -15,6 +15,7 @@ from pathlib import Path
 from . import history_compression as c
 
 BUSINESS = {'boards', 'observations', 'gaps', 'health', 'event_metadata',
+            'partition_identity', 'observation_provenance', 'quarantine_provenance',
             'observation_players', 'observation_player_details', 'clock_calibrations', 'clock_quarantine', 'clock_pending'}
 FIELDS = {'observations': 'scores', 'observation_players': 'players'}
 PLAYER_SCHEMA = 'CREATE TABLE observation_players (observation_id INTEGER PRIMARY KEY, players TEXT NOT NULL, quality TEXT NOT NULL)'
@@ -146,8 +147,8 @@ def migrate(source, target):
     with closing(ro(source)) as src:
         src.execute('BEGIN')
         legacy = src.execute('PRAGMA user_version').fetchone()[0]
-        if legacy not in (1, 2, 3):
-            raise c.Damage('expected legacy history schema 1, 2 or 3')
+        if legacy not in (1, 2, 3, 4):
+            raise c.Damage('expected history schema 1, 2, 3 or 4')
         checked(src)
         if not partial.exists():
             create(partial, src, source_hash, legacy)
@@ -185,7 +186,9 @@ def migrate(source, target):
             if db.execute('PRAGMA wal_checkpoint(TRUNCATE)').fetchone()[0]:
                 raise c.Damage('output checkpoint busy')
     publish(partial, target)
-    return {'legacy_version': legacy, 'tables': expected, 'bytes': target.stat().st_size}
+    return {'legacy_version': legacy, 'tables': expected, 'bytes': target.stat().st_size,
+            'source_bytes': source.stat().st_size, 'saved_bytes': source.stat().st_size - target.stat().st_size,
+            'anonymous': False}
 
 
 def legacy_version(source):
@@ -193,7 +196,7 @@ def legacy_version(source):
         if db.execute('PRAGMA user_version').fetchone()[0] != c.VERSION:
             raise c.Damage('expected compressed history schema')
         row = db.execute("SELECT value FROM store_meta WHERE key='legacy_version'").fetchone()
-        if not row or row[0] not in ('1', '2', '3'):
+        if not row or row[0] not in ('1', '2', '3', '4'):
             raise c.Damage('invalid legacy schema')
         return int(row[0])
 

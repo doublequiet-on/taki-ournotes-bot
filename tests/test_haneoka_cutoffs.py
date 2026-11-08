@@ -64,6 +64,123 @@ class Fixture:
 
 
 class HaneokaCutoffTests(unittest.TestCase):
+    def test_c3_ties_positions_and_unknown_raw_ranks(self):
+        self.fixture.rows = [{'rank': rank, 'score': score, 'profileId': str(i)}
+                             for i, (rank, score) in enumerate(((1, 100), (1, 100), (3, 0)), 1)]
+        _, board = self.board()
+        self.assertEqual(board.display_ranks, (1, 1, 3))
+        self.assertEqual(board.positions, (1, 2, 3))
+        self.assertEqual(board.raw_ranks, (None, None, None))
+        self.assertEqual((board.score(1), board.score(2), board.score(3)), (100, 100, 0))
+        self.assertEqual(board.value_states, ('value', 'value', 'source_zero'))
+        self.assertIn('边界并列', ' '.join(board.notes))
+
+    def test_c4_empty_missing_invalid_and_zero(self):
+        from ournotes_bot.sources.haneoka.event_cutoffs import decode_board
+        event, _ = self.board()
+        base = {'region': 'jp', 'eventId': event.event_id, 'challengeId': event.songs[0].challenge_id,
+                'stale': False, 'rows': [None, {}, {'rank': 3, 'score': None},
+                                        {'rank': 4, 'score': False}, {'rank': 5, 'score': 0}]}
+        value = decode_board(base, event, event.songs[0])
+        self.assertEqual(value['scores'], [None, None, None, None, 0])
+        self.assertEqual(value['value_states'], ['missing', 'missing', 'null', 'invalid', 'source_zero'])
+        for bad in ('1', True, [], 1.5):
+            with self.subTest(bad=bad), self.assertRaises(SourceError):
+                decode_board({**base, 'rows': [bad]}, event, event.songs[0])
+        self.fixture.rows = [None, {}]
+        self.fixture.now += 61  # Expire the preceding successful persisted fixture.
+        source = self.repository()
+        result = execute_cutoff(parse_cutoff('仅数值'), SimpleNamespace(event_cutoffs=source))
+        self.assertEqual(result.status, 'data_unavailable')
+
+    def test_provider_history_gate_and_total_capability(self):
+        original = self.fixture
+        def fetch(url, timeout):
+            raw, headers = original(url, timeout)
+            value = json.loads(raw)
+            value['provider'] = 'official'
+            if 'event' in value:
+                value['event']['totalRankingEnabled'] = False
+            return json.dumps(value).encode(), headers
+        self.source.transport = fetch
+        self.source.history = HaneokaCutoffHistory(self.path / 'provider.db', min_free_mb=0)
+        event, board = self.board()
+        self.assertIs(event.total_ranking_enabled, False)
+        self.assertEqual(board.provider, 'official')
+        self.assertEqual(board.game_region, 'jp')
+        self.assertEqual(self.source.history.status()['points'], 0)
+        self.assertIn('未写入旧历史库', ' '.join(board.notes))
+        from ournotes_bot.sources.history_partitions import PartitionStore, ProviderHistory, identity
+        self.source.history = ProviderHistory(self.source.history)
+        with patch.object(PartitionStore, '_save_provenance', side_effect=sqlite3.OperationalError('synthetic disk full')):
+            _, failed = self.board()
+        self.assertIn('历史保存暂停或失败', ' '.join(failed.notes))
+        initialized = self.source.history.store(identity(board))
+        with closing(sqlite3.connect(initialized.path)) as db:
+            self.assertEqual(db.execute('SELECT count(*) FROM observations').fetchone()[0], 0)
+            self.assertEqual(json.loads(db.execute('SELECT identity FROM partition_identity').fetchone()[0]), list(identity(board)))
+        event, board = self.board()
+        self.assertNotIn('历史保存暂停或失败', ' '.join(board.notes))
+        store = self.source.history.store(identity(board))
+        self.assertEqual(store.status()['points'], 1)
+        restored = store.latest(event, board.song)
+        self.assertEqual(restored.provider, 'official')
+        self.assertEqual(restored.display_ranks, board.display_ranks)
+        self.assertEqual(restored.value_states, board.value_states)
+        self.assertFalse(self.source.history.legacy.path.exists())
+        view = self.source.history.read_board(event, board, (1, 3))
+        self.assertEqual(view.points[0].provider, 'official')
+        self.assertEqual(view.points[0].scores, (100, 0))
+
+    def test_boundary_tie_is_position_limited(self):
+        self.fixture.rows = [{'rank': min(i, 99), 'score': 1000 - min(i, 99)} for i in range(1, 101)]
+        _, board = self.board()
+        self.assertEqual(len(board.scores), 100)
+        self.assertEqual(board.display_ranks[-2:], (99, 99))
+        self.assertIsNone(board.score(101))
+
+    def test_old_avatar_cache_is_read_without_rewriting_zero_or_rank(self):
+        import hashlib
+        from ournotes_bot.sources.moenotes_events import _Entry
+        from ournotes_bot.sources.haneoka.event_cutoffs import decode_board, event_identity
+        event = self.source.event('jp', self.source.deadline())
+        raw, _ = self.fixture('https://haneoka.org/api/v1/game/records/jp/events/1/challenges/11/ranking', 1)
+        payload = decode_board(json.loads(raw), event, event.songs[0])
+        for field in ('provider', 'snapshot_id', 'display_ranks', 'value_states', 'normalization_version', 'observed_ms'):
+            payload.pop(field)
+        identity = event_identity(event)
+        digest = hashlib.sha256(json.dumps(identity[:4] + identity[5:]).encode()).hexdigest()
+        key = f'board:jp:1:11:{digest}:avatar-v2'
+        entry = _Entry(payload, self.source._time_headers(payload), self.fixture.now, self.source.monotonic())
+        self.source._save(key, entry)
+        before = self.source._path(key).read_bytes()
+        board = self.source.board(event, event.songs[0], self.source.deadline())
+        self.assertEqual(board.score(3), 0)
+        self.assertEqual(board.display_ranks, (None, None, None))
+        self.assertEqual(board.value_states, ('legacy_unknown',) * 3)
+        self.assertEqual(self.source._path(key).read_bytes(), before)
+
+    def test_provider_switch_does_not_apply_other_provider_late_snapshot(self):
+        active = ['official']
+        original = self.fixture
+        def fetch(url, timeout):
+            raw, headers = original(url, timeout)
+            value = json.loads(raw)
+            if 'rows' in value:
+                value['provider'] = active[0]
+            return json.dumps(value).encode(), headers
+        self.source.transport = fetch
+        _, first = self.board()
+        active[0] = 'moenotes'
+        self.fixture.now += 61
+        self.fixture.fetched -= 1000
+        self.fixture.rows[0]['score'] = 90
+        _, second = self.board()
+        self.assertEqual((first.provider, second.provider), ('official', 'moenotes'))
+        self.assertEqual(second.score(1), 90)
+        self.assertEqual(second.time_kind, 'bridge_fetched_via_haneoka')
+        self.assertEqual(second.freshness, 'unknown')
+
     def setUp(self):
         temp = tempfile.TemporaryDirectory()
         self.addCleanup(temp.cleanup)

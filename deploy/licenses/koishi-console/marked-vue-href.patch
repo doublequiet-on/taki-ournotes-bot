@@ -1,0 +1,17 @@
+--- a/taki-sources/marked-vue/src/index.ts
++++ b/taki-sources/marked-vue/src/index.ts
+@@ -38,0 +39,8 @@
++// Decode exactly once using the browser's HTML attribute rules. The template
++// is inert; raw quotes are encoded before parsing so input stays in one attribute.
++function decodeHrefAttribute(value: string) {
++  const template = document.createElement('template')
++  template.innerHTML = `<a href="${xss.escapeAttrValue(value)}"></a>`
++  return template.content.firstElementChild!.getAttribute('href') || ''
++}
++
+@@ -53 +61,4 @@
+-            attrs[name] = checkUrl(value) ? value : '#'
++            const decoded = decodeHrefAttribute(value)
++            // Validate the decoded URL, then encode ampersands before quotes so
++            // the output parser receives that same value without a second decode.
++            attrs[name] = xss.escapeAttrValue((checkUrl(decoded) ? decoded : '#').replace(/&/g, '&amp;'))

@@ -1,5 +1,7 @@
 # L2 Application Runtime — 启动与运行支撑
 
+`backend_bootstrap.build_backend` 保持个人入口；`build_query_backend` 是显式开发验证组合根，使用 `natural_query.parser.LocalQueryParser` 和 [query_runtime.py](ournotes_bot/application/query_runtime.py)，不初始化聊天、模型用量账、知识服务或公告。它不是已批准的定制发行入口。个人初始化移至 [personal_runtime.py](ournotes_bot/application/personal_runtime.py)；ModelRuntime 委托同一 QueryRuntime 完成当前目录详情与双重有效性检查。共享 `ReadOnlyContext` 位于 [domain/query_context.py](ournotes_bot/domain/query_context.py)，conversation_state 保留兼容导出。新组合证据及物理裁剪剩余项见 [任务08集成](../docs/TASK08_INTEGRATION.md)。
+
 原生模型的 transport 阶段、耗时和受限上游请求 ID 由 model_runtime 按 request／attempt 关联到既有诊断库及运行日志；不保存请求/响应正文，不更改模型调用次数与费用收口。字段及阶段边界见[运行说明](../docs/CHAT_AGENT_RUNBOOK.md#模型传输诊断)。
 
 [chat_recovery.py](ournotes_bot/application/chat_recovery.py) 协调最终候选暂存、首回执后的幂等历史投影及撤权清理；不恢复发送或接续资格。存储升级与回退门见 [运行说明](../docs/CHAT_AGENT_RUNBOOK.md#a0-回执恢复与批准代际)。
@@ -110,3 +112,5 @@ U3 站内回答只陈述当前字段和匹配方式；来源由程序统一追�
 
 
 知识管理由 [application/library_admin.py](ournotes_bot/application/library_admin.py) 提供分页来源元数据、整库差异预览及一次性版本保护的发布计划，调用既有宿主 owner。`knowledge_service.import_confirmed(expected=...)` 核对预览时的内容／批准版本；`withdraw_document` 先持久化禁止使用下限再写原撤回清单。`story_service.import_value/withdraw(expected=...)` 在原发布锁内比较来源与撤回版本。管理接口不生成审核材料，不批准人格；协议与限制见 [Console 契约](../docs/koishi/CONSOLE_V1.md#知识资料管理)。
+
+规则查询的终局 unknown 撤销整条 volatile 话题，ACK 事实先于游标/锚点提交；上下文提交失败禁止续发。状态、错误与输出接纳边界见 [查询投递安全合同](../docs/QUERY_DELIVERY_SAFETY.md)。

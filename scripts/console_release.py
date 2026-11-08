@@ -1,0 +1,220 @@
+"""Pinned downstream Console admission and installed npm byte provenance (no service I/O)."""
+import base64
+import hashlib
+import io
+import json
+import os
+from pathlib import Path, PurePosixPath
+import tarfile
+import zipfile
+
+COMPONENT_SHA = '1668e57b5b387814aab60f79f2d157f7017299088b5413e49690ef8aa5b5f0c9'
+LOCK_SHA = '39286e685316aca581d35e018ae634b2837325e6ca2e1380f3843a53227e9984'
+BINDING_SHA = '3ac93b01d0dcf9158852b8380920c7c4eb615a4f801f3d53d809d1bb3879432e'
+SOURCE_COMMIT = 'a526abab715989145ed1368ce1610413213a1a8c'
+COMPONENT_FILE = 'taki-console-0.1.0-candidate.4.tgz'
+PACKAGE_VERSION = '5.30.10-taki.4'
+VENDOR_FILES = ('README.md', 'console-candidate.json', COMPONENT_FILE)
+SOURCE_METADATA = {
+    'candidate4-source-index.json': '0409d8cc56c21e37802dba05169b9ea4f3f3d3b6fc6dbb476fe5ee70f6967be5',
+    'downstream-inputs-candidate4.json': 'a6b1211ff840561a2c8ea0bc33bf71c36ce3a05c846065d9f805e3b8113b05fa',
+}
+INPUTS_SHA = '40eea95ef2fb80d9bc0f675065276ee12b7428588c19bfbc3172d9e13ca99888'
+NATIVE_SHA = '2528c930b780a24079c04c94f92db33787fff19eef6c1fed5de7ad3efddfbdb4'
+PACKAGE = 'node_modules/@koishijs/plugin-console'
+CACHE_SPEC = 'file:compat/cache-content-type'
+CACHE_FILES = {
+    'LICENSE': 'fbeaf669089d0b5f9b44ebfa64050b53fa4ef2419f9c781bab5f54e4e3b1e588',
+    'README.md': '5df20324096732e66724429e2326243864c9516860bb96c34cb6afff4169276b',
+    'index.cjs': '09a4349090840dfcc1fd4fbe5d2d4f058392e084ef49d1c35c1f04305b4955ab',
+    'package.json': 'e95e9afed2c2f5c97737598ec9f530b36e2b3407ccbc49a19d55ac70009ff180',
+    'upstream-materials.json': 'f025ccd28c596c44e28886d80bda3f4bd7c3ed89d9168fbae2f66b3ec14ef378',
+}
+
+
+def digest(data):
+    return hashlib.sha256(data).hexdigest()
+
+
+def read(path):
+    return json.loads(path.read_text(encoding='utf-8'))
+
+
+def tar_files(data, identical_aliases=None):
+    files = {}
+    with tarfile.open(fileobj=io.BytesIO(data), mode='r:gz') as archive:
+        for member in archive:
+            path = PurePosixPath(member.name)
+            if path.is_absolute() or '..' in path.parts or '\\' in member.name:
+                raise ValueError('Unsafe npm member')
+            if member.isdir():
+                continue
+            if len(path.parts) < 2:
+                raise ValueError('Missing npm package root')
+            name = '/'.join(path.parts[1:])
+            if not member.isfile():
+                raise ValueError('Nonregular or duplicate npm member')
+            content = archive.extractfile(member).read()
+            if name in files:
+                # Some locked registry tars contain both package/./x and package/x.
+                # Record only identical aliases after SRI verification; component tars
+                # and conflicting duplicate bytes remain rejected.
+                if identical_aliases is None or files[name] != content:
+                    raise ValueError('Nonregular or duplicate npm member')
+                identical_aliases.append(dict(member=member.name, path=name, sha256=digest(content)))
+            files[name] = content
+    return files
+
+
+def verify_source_vendor(python_bundle):
+    """Verify the same fixed vendor selection in the nested Git source archive."""
+    files = {}
+    with zipfile.ZipFile(python_bundle) as bundle, bundle.open('source.tar.gz') as source:
+        with tarfile.open(fileobj=source, mode='r|gz') as archive:
+            for member in archive:
+                parts = PurePosixPath(member.name).parts
+                if parts[1:3] != ('koishi', 'vendor') or len(parts) == 3 and member.isdir():
+                    continue
+                if len(parts) != 4 or not member.isfile() or parts[-1] in files:
+                    raise ValueError('Unexpected Console vendor entry in nested source archive')
+                files[parts[-1]] = archive.extractfile(member).read()
+    if set(files) != set(VENDOR_FILES) or digest(files[COMPONENT_FILE]) != COMPONENT_SHA:
+        raise ValueError('Console vendor selection differs in nested source archive')
+    binding = json.loads(files['console-candidate.json'])
+    if digest(json.dumps(binding, sort_keys=True, separators=(',', ':')).encode()) != BINDING_SHA:
+        raise ValueError('Console vendor binding differs in nested source archive')
+
+
+def verify_downstream_materials(directory):
+    for name, expected in SOURCE_METADATA.items():
+        path = directory / name
+        if not path.is_file() or digest(path.read_bytes()) != expected:
+            raise ValueError('Missing or altered downstream source metadata: ' + name)
+
+
+def verify_downstream(gateway):
+    """Recheck fixed tar, lock, metadata and every installed component file; never patch."""
+    binding = read(gateway / 'vendor/console-candidate.json')
+    if digest(json.dumps(binding, sort_keys=True, separators=(',', ':')).encode()) != BINDING_SHA:
+        raise ValueError('Unreviewed downstream source binding')
+    data = (gateway / 'vendor' / COMPONENT_FILE).read_bytes()
+    integrity = 'sha512-' + base64.b64encode(hashlib.sha512(data).digest()).decode()
+    expected = dict(file=COMPONENT_FILE, version='0.1.0-candidate.4', package_version=PACKAGE_VERSION,
+                    sha256=COMPONENT_SHA, integrity=integrity, size=635218, files=168,
+                    license_index_entries=135)
+    if digest(data) != COMPONENT_SHA or binding['component'] != expected or binding['source_commit'] != SOURCE_COMMIT:
+        raise ValueError('Unknown or altered downstream Console')
+    if binding['legacy_byte_patch'] != 'forbidden':
+        raise ValueError('Downstream Console must not be byte patched')
+    lock = read(gateway / 'package-lock.json')
+    if digest(json.dumps(lock, sort_keys=True, separators=(',', ':')).encode()) != LOCK_SHA:
+        raise ValueError('Unreviewed downstream gateway lock')
+    package_json = read(gateway / 'package.json')
+    if any(package_json.get(key, {}) != lock['packages'][''].get(key, {})
+           for key in ('dependencies', 'devDependencies')):
+        raise ValueError('Gateway package and lock differ')
+    spec = 'file:vendor/' + COMPONENT_FILE
+    if (read(gateway / 'package.json')['dependencies']['@koishijs/plugin-console'] != spec
+            or lock['packages']['']['dependencies']['@koishijs/plugin-console'] != spec
+            or lock['packages'][PACKAGE]['resolved'] != spec
+            or lock['packages'][PACKAGE]['integrity'] != integrity
+            or lock['packages'][PACKAGE]['version'] != expected['package_version']):
+        raise ValueError('Downstream Console lock binding mismatch')
+    cache = gateway / 'compat/cache-content-type'
+    if (package_json['dependencies'].get('cache-content-type') != CACHE_SPEC
+            or package_json.get('overrides', {}).get('cache-content-type') != '$cache-content-type'
+            or lock['packages']['']['dependencies'].get('cache-content-type') != CACHE_SPEC
+            or lock['packages']['node_modules/cache-content-type'] != {'resolved': 'compat/cache-content-type', 'link': True}
+            or set(p.name for p in cache.iterdir() if p.is_file()) != set(CACHE_FILES)
+            or any(digest((cache / name).read_bytes()) != expected_sha for name, expected_sha in CACHE_FILES.items())):
+        raise ValueError('Unreviewed cache-content-type file dependency')
+    installed_cache = gateway / 'node_modules/cache-content-type'
+    if any(not (installed_cache / name).is_file()
+           or digest((installed_cache / name).read_bytes()) != expected_sha
+           for name, expected_sha in CACHE_FILES.items()):
+        raise ValueError('Installed cache-content-type adapter differs')
+    for name, row in binding['external_dependencies'].items():
+        actual = lock['packages']['node_modules/' + name]
+        if any(actual.get(key) != value for key, value in row.items()):
+            raise ValueError('External Console dependency mismatch')
+    files = tar_files(data)
+    installed = gateway / PACKAGE
+    actual = {p.relative_to(installed).as_posix() for p in installed.rglob('*') if p.is_file()}
+    if actual != set(files) or any(p.is_symlink() for p in installed.rglob('*')):
+        raise ValueError('Installed Console member set differs')
+    for name, content in files.items():
+        if (installed / name).read_bytes() != content:
+            raise ValueError('Installed Console bytes differ: ' + name)
+    identity = json.loads(files['TAKI-CONSOLE.json'])
+    if (identity['legacy_byte_patch'] != 'forbidden; source patch already applied'
+            or identity['reconnect_source_after'] != 'cf21a5e49c75deeda40a064e9dba2f65933a97c9357beda743337dee4be60e49'
+            or identity['markdown_security_patch_sha256'] != 'f5a928102fbf6dd184776c6b84ebf3d494153e3c63ef3ebc36f568774b7e24d1'
+            or identity['inputs_sha256'] != INPUTS_SHA
+            or identity['rollup_native']['installed_binary']['sha256'] != NATIVE_SHA
+            or identity['package_version'] != PACKAGE_VERSION
+            or identity['version'] != expected['version']):
+        raise ValueError('Downstream source reconnect binding mismatch')
+    for name in ('LICENSE', 'TAKI-MODIFICATIONS.txt', 'licenses/index.json', 'licenses/NOTICE.txt'):
+        if name not in files:
+            raise ValueError('Missing downstream materials')
+    licenses = json.loads(files['licenses/index.json'])
+    if len(files) != expected['files'] or len(licenses) != expected['license_index_entries']:
+        raise ValueError('Downstream material count differs')
+    for row in licenses:
+        if digest(files['licenses/' + row['path']]) != row['sha256']:
+            raise ValueError('Downstream license hash mismatch')
+    return dict(kind='taki-downstream', component_sha256=COMPONENT_SHA, source_commit=SOURCE_COMMIT,
+                lock_canonical_sha256=LOCK_SHA, legacy_byte_patch='not applied',
+                source_inputs_sha256=INPUTS_SHA, build_only_rollup_native_sha256=NATIVE_SHA,
+                source_index_sha256=SOURCE_METADATA['candidate4-source-index.json'],
+                cache_content_type='taki-cjs-adapter/0.1.0 + upstream/2.1.0',
+                complete_corresponding_source=False, product_release=False)
+
+
+def installed_npm_materials(gateway):
+    """Verify registry tarballs from npm's integrity cache against the actual locked install.
+
+    Cache only supplies bytes: each tarball is rehashed against the committed SRI.
+    The record distinguishes absent notice text from a license declaration.
+    """
+    cache = Path(os.environ.get('npm_config_cache', Path.home() / '.npm')) / '_cacache/content-v2'
+    result = []
+    lock = read(gateway / 'package-lock.json')
+    for location, row in sorted(lock['packages'].items()):
+        if not location.startswith('node_modules/') or row.get('link') or location == PACKAGE:
+            continue
+        algorithm, encoded = row['integrity'].split('-', 1)
+        if algorithm != 'sha512' or not row['resolved'].startswith('https://registry.npmjs.org/'):
+            raise ValueError('Unsupported locked npm source')
+        checksum = base64.b64decode(encoded, validate=True).hex()
+        data = (cache / algorithm / checksum[:2] / checksum[2:4] / checksum[4:]).read_bytes()
+        if hashlib.sha512(data).hexdigest() != checksum:
+            raise ValueError('npm cache integrity mismatch')
+        aliases = []
+        try:
+            files = tar_files(data, aliases)
+        except ValueError as error:
+            raise ValueError(location + ': ' + str(error)) from error
+        package = gateway / location
+        # npm may install nested dependencies and bin links; they are checked by their own owner.
+        actual = {p.relative_to(package).as_posix() for p in package.rglob('*')
+                  if p.is_file() and 'node_modules' not in p.relative_to(package).parts}
+        if actual != set(files):
+            raise ValueError('Installed npm member set differs: ' + location)
+        for name, content in files.items():
+            if (package / name).is_symlink() or (package / name).read_bytes() != content:
+                raise ValueError('Installed npm bytes differ: ' + location + '/' + name)
+        metadata = json.loads(files['package.json'])
+        if metadata['version'] != row['version']:
+            raise ValueError('Installed npm version mismatch')
+        notices = {name: digest(content) for name, content in files.items()
+                   if any(word in PurePosixPath(name).name.lower() for word in ('license', 'notice', 'copying', 'copyright'))}
+        result.append(dict(location=location, name=metadata['name'], version=row['version'],
+                           resolved=row['resolved'], integrity=row['integrity'], tar_sha256=digest(data),
+                           repository=metadata.get('repository'), git_head=metadata.get('gitHead'),
+                           license_declaration=metadata.get('license'), notices=notices,
+                           source_sufficiency='not certified', dev=bool(row.get('dev')), identical_tar_aliases=aliases,
+                           files={name: digest(content) for name, content in files.items()}))
+    return dict(lock_canonical_sha256=LOCK_SHA, packages=result,
+                missing_notice_packages=[r['name'] for r in result if not r['notices']],
+                complete_corresponding_source=False, product_release=False)

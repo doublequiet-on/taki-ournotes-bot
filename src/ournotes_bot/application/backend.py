@@ -1,5 +1,6 @@
 # L3: Authenticated loopback API + single repository/parser/context owner.
-# Effects: Bounded background preparations, SQLite delivery facts; never imports QQ or sends.
+# Effects: Bounded preparations; durable ACK facts precede volatile query cursor/anchor
+# commits. Terminal unknown revokes the whole query topic; never imports QQ or sends.
 from __future__ import annotations
 import asyncio
 import hmac
@@ -18,6 +19,8 @@ from dataclasses import dataclass, field, replace, fields, is_dataclass
 
 from aiohttp import web
 from ..commands import split_commands, locale_for
+from ..config import QQ_PASSIVE_REPLY_LIMIT
+from ..rendering.image_output import MAX_IMAGE_BYTES
 from ..i18n import tr
 from ..query.continuation import ContextKey, ContextStore, MISSING, parse_operation
 from . import replies
@@ -115,7 +118,7 @@ class Work:
 
 class Backend:
     def __init__(self, repository, parser, settings, *, instance_id, app_id, ledger_path,
-                 clock=time.time, plan_capacity=64, byte_capacity=128_000_000, diagnostics_enabled=True,
+                 clock=time.time, code_files=CODE_FILES, plan_capacity=64, byte_capacity=128_000_000, diagnostics_enabled=True,
                  reference_profiles=(), ledger_request_capacity=4096,
                  ledger_context_capacity=4096, ledger_epoch_capacity=4096):
         require(identity(instance_id) and identity(app_id), 'configured_identity')
@@ -123,7 +126,7 @@ class Backend:
         self.instance_id, self.app_id, self.clock = instance_id, app_id, clock
         self.runtime = uuid.uuid4().hex
         self.code_digest = hashlib.sha256(b''.join((Path(__file__).parent/name).read_bytes()
-            for name in CODE_FILES)).hexdigest()
+            for name in code_files)).hexdigest()
         self.ledger = Ledger(ledger_path, instance_id+'\0'+app_id, self.runtime, clock(),
                              request_capacity=ledger_request_capacity, context_capacity=ledger_context_capacity,
                              epoch_capacity=ledger_epoch_capacity)
@@ -145,11 +148,41 @@ class Backend:
         self.runtime_tasks = None
         self.knowledge = None
         self.model_runtime = None
+        self.query_runtime = None
         self.notices = None
         self.data_owner = None
         self._close_task = None
         self.reaper_task = None
         self.reaper_error = None
+        self.recovery_revoked = False
+        self.recovery_finalizing = False
+        self._business_drain_task = None
+        self._recovery_quiesce = None
+        self._recovery_close = None
+
+    def revoke_recovery(self):
+        """Loop-thread only: latch denial; retain stores for in-flight receipts."""
+        self.recovery_revoked = True
+        self.closing, self.ready = True, False
+        self.operations.closing = True
+        if self._recovery_quiesce is not None: self._recovery_quiesce()
+
+    async def quiesce_recovery(self):
+        """Drain business writers, keeping the bounded receipt tail open."""
+        require(self._recovery_quiesce is not None, 'backend_lifecycle_not_started', 503)
+        self.revoke_recovery()
+        await drain_task(self._recovery_quiesce())
+        return {'business_writers_stopped': True, 'receipt_tail_open': not self.recovery_finalizing,
+                'pending_terminations': sum(work.terminal_pending for work in self.works.values())}
+
+    async def close_recovery(self):
+        """Caller must first retire/drain the gateway; no further ACK can enter."""
+        require(self._recovery_close is not None, 'backend_lifecycle_not_started', 503)
+        self.revoke_recovery()
+        self.recovery_finalizing = True
+        await drain_task(self._recovery_close())
+        return {'stores_closed': True,
+                'pending_terminations': sum(work.terminal_pending for work in self.works.values())}
 
     def expire(self):
         self.diagnostics.expire(self.clock())
@@ -173,6 +206,15 @@ class Backend:
     def finish(self, work, status, *, reason=None):
         if work.terminal_status is not None or not work.active:
             return
+        # A granted attempt without a durable receipt is unknown, even when the
+        # transport closes as aborted/expired. Revoke the entire topic first.
+        if not work.chat:
+            try:
+                unknown = self.ledger.has_unknown(work.delivery)
+            except sqlite3.Error:
+                unknown = True
+            if unknown or status == 'uncertain':
+                self.invalidate_topic(work)
         # Revoke permission immediately, but retain ownership until the fact is durable.
         work.terminal_status = status
         work.terminal_reason = reason or ('reason_unknown' if status == 'aborted' else status)
@@ -190,6 +232,11 @@ class Backend:
         if status in ('expired', 'aborted') and work.task is not None and work.task is not asyncio.current_task():
             work.task.cancel()
         self.persist_termination(work)
+
+    def invalidate_topic(self, work):
+        if not work.chat:
+            lineage = work.lineage if work.lineage is not None else getattr(work.lease, 'generation', None)
+            self.conversations.invalidate(work.key, lineage)
 
     def persist_termination(self, work):
         try:
@@ -264,6 +311,7 @@ class Backend:
         return {'gateway_epoch': epoch, 'backend_epoch': self.runtime}
 
     async def submit(self, payload, *, proactive=None):
+        require(not self.recovery_revoked, 'recovery_session_revoked', 503)
         started = time.perf_counter()
         request = Request.parse(payload, self.instance_id, self.app_id, self.clock(), reference_profiles=self.reference_profiles)
         require(request.trigger!='observation','request_trigger')
@@ -342,6 +390,8 @@ class Backend:
         if work.chat:
             content=await self.model_runtime.agent.proactive.coalesce_addressed(work,content)
             return await self.model_runtime.prepare(work,content)
+        if self.query_runtime is not None and replies.is_ai_request(content) and work.request.policy.natural_query!='off':
+            return await self.query_runtime.prepare(work, content)
         if self.model_runtime is not None and replies.is_ai_request(content) and work.request.policy.natural_query!='off':
             return await self.model_runtime.prepare(work, content)
         if not replies.is_ai_request(content) or work.request.policy.natural_query == 'off' or not hasattr(self.parser, 'prepare_local'):
@@ -417,6 +467,12 @@ class Backend:
             work.lock_acquired = True
             self.expire()
             if not work.active: return
+            # Binding happened at admission. Never resolve again after queueing,
+            # nor turn an unavailable old operation into a fresh sendable topic.
+            if not work.chat and (work.operation or work.request.reference is not None):
+                if work.anchor is None or self.contexts.lineage(work.key) != work.lineage:
+                    self.finish(work, 'aborted')
+                    return
             if work.missing_anchor:
                 parts = [replies.PreparedReply(MISSING)]
             elif work.chat:
@@ -429,7 +485,8 @@ class Backend:
             elif work.operation or work.anchor is not None:
                 current = (self.contexts.get(work.key) if work.lineage is not None
                            and self.contexts.lineage(work.key) == work.lineage else None)
-                if work.request.reference is not None and current is not None:
+                if (work.request.reference is not None and current is not None
+                        and not (work.operation and work.operation.kind == 'continue')):
                     current = work.anchor.context
                 work.lease = self.contexts.begin(work.key, clear=False) if current is not None else None
                 if work.request.policy.natural_query == 'off' and replies.is_ai_request(commands[0]):
@@ -443,10 +500,11 @@ class Backend:
                     result = await self.prepare_command(work, commands[0]) if current is not None else replies.PreparedReply(MISSING)
                 else:
                     query_context = current.query_context if isinstance(current,replies.DeliveryCursor) else current
-                    native_detail = (self.model_runtime is not None and work.operation.kind != 'continue'
+                    detail_runtime = self.model_runtime or self.query_runtime
+                    native_detail = (detail_runtime is not None and work.operation.kind != 'continue'
                                      and getattr(current,'origin','unknown') in ('local','model')
                                      and getattr(query_context,'meta',None) is None)
-                    result = (await self.prepare_call(work,self.model_runtime.followup(work,current,work.operation)
+                    result = (await self.prepare_call(work,detail_runtime.followup(work,current,work.operation)
                               if native_detail else self.gate.prepare_followup(current, work.operation, self.repository))
                               if current is not None else replies.PreparedReply(MISSING))
                 parts = replies.expand_replies([result],text_limit=text_limit)
@@ -479,6 +537,7 @@ class Backend:
             if parts and isinstance(parts[-1].context, replies.DeliveryCursor):
                 complete.extend(parts[-1].context.remaining)
             self.conversations.capture(work, complete)
+            require(len(parts) <= QQ_PASSIVE_REPLY_LIMIT, 'send_budget', 422)
             require(self.retained_bytes() <= self.byte_capacity, 'byte_capacity', 503)
             projections=self.model_runtime.agent.recovery.stage(work) if work.chat and parts else ()
             self.ledger.prepared(work.delivery, len(parts), start=int(work.hint),projections=projections)
@@ -533,7 +592,10 @@ class Backend:
         return total
 
     def live(self, row, epoch):
+        if self.recovery_revoked: return False
         work = self.works.get(row['delivery'])
+        if work and not work.chat and not self.contexts.active(work.lease):
+            return False
         if work and work.chat and getattr(self.settings,'chat_engine','legacy')!='agent':
             return False
         if work and work.story_versions and not self.model_runtime.agent.story_valid(work.story_versions):
@@ -602,11 +664,19 @@ class Backend:
         require(part is not None and part['mode'] == 'primary', 'unknown_image', 404)
         data = self.works[delivery].prepared[part['position']].image
         require(data is not None, 'unknown_image', 404)
+        require(0 < len(data) <= MAX_IMAGE_BYTES and
+                (data.startswith(b'\x89PNG\r\n\x1a\n') or data.startswith(b'\xff\xd8\xff')),
+                'image_admission', 422)
         return data
 
     def apply_event(self, delivery, payload):
         payload = event(payload)
-        self.expire()
+        if self.recovery_revoked:
+            require(not self.recovery_finalizing, 'recovery_session_closed', 503)
+            require(payload['event'] in ('ack', 'aborted', 'batch_finished'), 'recovery_session_revoked', 503)
+            if payload['event'] == 'ack': payload = {**payload, 'allow_context': False}
+        else:
+            self.expire()
         row = self.ledger.by_delivery(delivery)
         require(row is not None and row['id'] == payload['request_id'], 'delivery_identity', 404)
         require(row['epoch'] == payload['gateway_epoch'], 'owner_epoch', 409)
@@ -615,8 +685,14 @@ class Backend:
         work = self.works.get(delivery)
         live = self.live(row, payload['gateway_epoch'])
         if kind == 'ack':
-            changed = self.ledger.ack(delivery, part_id, payload['attempt_id'], payload['result'], payload['message_id'],
-                allow_context=payload.get('allow_context') is not False,now=self.clock())
+            try:
+                changed = self.ledger.ack(delivery, part_id, payload['attempt_id'], payload['result'], payload['message_id'],
+                    allow_context=payload.get('allow_context') is not False,now=self.clock())
+            except sqlite3.Error:
+                if work and not work.chat:
+                    self.invalidate_topic(work)
+                    self.finish(work, 'failed')
+                raise
             projection=None
             if self.model_runtime and self.model_runtime.agent:
                 self.model_runtime.agent.audit(self.model_runtime.agent.recovery.recover,delivery)
@@ -633,7 +709,8 @@ class Backend:
                     self.finish(work,'aborted',reason='hint_delivery_failed')
                 return {'recorded':True,'duplicate':not changed,**self.snapshot(self.ledger.by_delivery(delivery),payload['gateway_epoch'])}
             if changed and live and payload.get('allow_context') is False:
-                self.finish(work, 'aborted',reason='ack_context_revoked')
+                self.invalidate_topic(work)
+                self.finish(work, 'aborted', reason='ack_context_revoked')
                 live = False
             if changed and live:
                 part = next(p for p in parts if p['id'] == part_id)
@@ -653,18 +730,31 @@ class Backend:
                     if candidate is not None and (work.operation or len(split_commands(work.request.body)) == 1
                                                   or isinstance(candidate, replies.DeliveryCursor)):
                         work.candidate = candidate
-                    if work.operation:
+                    if work.chat:
                         self.contexts.commit(work.lease, candidate, confirmed=True)
-                    elif candidate is not None:
-                        self.contexts.commit(work.lease, candidate, confirmed=True)
-                    self.conversations.confirm(work, payload['message_id'], part['position'], candidate,
-                                               fallback_notice=long_fallback)
-                elif payload['result'] == 'uncertain' and isinstance(candidate, replies.DeliveryCursor):
+                        self.conversations.confirm(work, payload['message_id'], part['position'], candidate,
+                                                   fallback_notice=long_fallback)
+                    else:
+                        try:
+                            committed = self.contexts.commit(work.lease, candidate, confirmed=True)
+                            confirmed = committed and self.conversations.confirm(
+                                work, payload['message_id'], part['position'], candidate, fallback_notice=long_fallback)
+                        except Exception:
+                            # ACK is already durable. Never retry its cursor projection.
+                            self.invalidate_topic(work)
+                            self.finish(work, 'failed')
+                            raise
+                        if not confirmed:
+                            self.invalidate_topic(work)
+                            self.finish(work, 'failed')
+                            return {'recorded': True, 'duplicate': False,
+                                    **self.snapshot(self.ledger.by_delivery(delivery), payload['gateway_epoch'])}
+                elif work.chat and payload['result'] == 'uncertain' and isinstance(candidate, replies.DeliveryCursor):
                     work.candidate = replace(candidate, uncertain=True)
                     if work.operation: self.contexts.commit(work.lease, work.candidate, confirmed=True)
                 terminal = (payload['result'] != 'success' or long_fallback or part['position'] == len(parts)-1)
                 if terminal:
-                    if not work.operation:
+                    if work.chat and not work.operation:
                         self.contexts.commit(work.lease, work.candidate, confirmed=work.candidate is not None)
                     self.finish(work, 'finished' if payload['result'] == 'success' else payload['result'])
             return {'recorded': True, 'duplicate': not changed, **self.snapshot(self.ledger.by_delivery(delivery), payload['gateway_epoch'])}
@@ -703,16 +793,9 @@ class Backend:
         await drain_task(self._close_task)
 
     async def _close(self):
-        self.closing, self.ready = True, False
-        for work in list(self.works.values()): self.finish(work, 'aborted',reason='backend_shutdown')
-        # Cancellation retains QueryGate's thread slot until its actual work ends.
-        tasks = list(self.tasks)
-        for task in tasks: task.cancel()
-        await asyncio.gather(*tasks, return_exceptions=True)
-        await self.models.close()
+        await self.quiesce_business()
         self.conversations.clear()
         self.contexts.clear()
-        if self.runtime_tasks: await self.runtime_tasks.close()
         if self.model_runtime is not None: await self.model_runtime.close()
         if self.knowledge is not None: self.knowledge.close()
         await self.operations.close()
@@ -720,9 +803,53 @@ class Backend:
         self.diagnostics.close()
         if self.data_owner: self.data_owner.close()
 
+    async def quiesce_business(self):
+        if self._business_drain_task is None:
+            self._business_drain_task = asyncio.create_task(self._quiesce_business())
+        await drain_task(self._business_drain_task)
 
-def create_app(backend, token, initialize=None):
+    async def _quiesce_business(self):
+        self.closing, self.ready = True, False
+        self.operations.closing = True
+        for work in list(self.works.values()): self.finish(work, 'aborted', reason='backend_shutdown')
+        # Cancellation retains QueryGate's thread slot until its actual work ends.
+        tasks = list(self.tasks)
+        for task in tasks: task.cancel()
+        drains = [self.models.close(), self.operations.quiesce()]
+        if self.runtime_tasks: drains.append(self.runtime_tasks.close())
+        if self.model_runtime is not None: drains.append(self.model_runtime.quiesce())
+        results = await asyncio.gather(*tasks, *drains, return_exceptions=True)
+        for result in results[len(tasks):]:
+            if isinstance(result, BaseException): raise result
+
+
+RECOVERY_BACKEND = web.AppKey('taki_recovery_backend', Backend)
+
+
+def create_app(backend, token, initialize=None, *, assert_recovery_current=None):
     require(isinstance(token, str) and len(token) >= 32, 'backend_token_required')
+    active_http = set()
+    business_http = set()
+
+    def check_current():
+        if assert_recovery_current is not None and not backend.recovery_revoked:
+            try:
+                require(callable(assert_recovery_current) and assert_recovery_current() is None,
+                        'trusted_recovery_check_required')
+            except Exception:
+                backend.revoke_recovery()
+
+    def tail(request):
+        return request.method == 'POST' and (request.path == '/v1/gateways/retire'
+            or request.path.startswith(('/v1/deliveries/', '/v1/notices/')) and request.path.endswith('/events'))
+
+    def check_request(request):
+        check_current()
+        if not backend.recovery_revoked: return
+        if request.path == '/v1/health': return
+        require(not backend.recovery_finalizing, 'recovery_session_closed', 503)
+        require(not backend.recovery_revoked or tail(request) or request.path == '/v1/ready',
+                'recovery_session_revoked', 503)
 
     @web.middleware
     async def boundary(request, handler):
@@ -730,19 +857,33 @@ def create_app(backend, token, initialize=None):
             supplied = request.headers.get('Authorization', '')
             require(hmac.compare_digest(supplied.encode(), ('Bearer '+token).encode()), 'unauthorized', 401)
             require(request.headers.get('X-Taki-Instance') == backend.instance_id, 'instance_mismatch', 403)
+            check_request(request)
             if request.path.startswith('/v1/admin/') and request.method == 'GET':
                 require(len(request.query) == len(set(request.query)), 'admin_parameters')
                 if request.path not in ('/v1/admin/requests','/v1/admin/notices'):
                     require(not request.query, 'admin_parameters')
-            return await handler(request)
+            current = asyncio.current_task()
+            active_http.add(current)
+            if not tail(request) and request.path not in ('/v1/health', '/v1/ready'): business_http.add(current)
+            try:
+                return await handler(request)
+            finally:
+                active_http.discard(current)
+                business_http.discard(current)
         except ProtocolError as exc:
             return web.json_response({'error': exc.code, 'protocol': PROTOCOL}, status=exc.status)
 
     app = web.Application(middlewares=[boundary], client_max_size=32768)
+    app[RECOVERY_BACKEND] = backend
     def json(value, status=200): return web.json_response(value, status=status, headers={'Cache-Control': 'no-store'})
     async def read_json(request):
         try:
-            return await request.json()
+            value = await request.json()
+            check_request(request)
+            if backend.recovery_revoked and tail(request) and request.path.endswith('/events'):
+                require(isinstance(value, dict) and value.get('event') in ('ack', 'aborted', 'batch_finished'),
+                        'recovery_session_revoked', 503)
+            return value
         except (jsonlib.JSONDecodeError, UnicodeError):
             raise ProtocolError('invalid_json') from None
     async def health(request): return json({'alive': True, 'protocol': PROTOCOL})
@@ -751,13 +892,16 @@ def create_app(backend, token, initialize=None):
         return json({'ready': accepting, 'protocol': PROTOCOL, 'backend_epoch': backend.runtime, 'pid': os.getpid(),
                      'maintenance': backend.maintenance_status(),
                      'capability': CAPABILITY, 'backend_code_digest': backend.code_digest,
+                     'execution_profile': 'personal-v1' if backend.query_runtime is None else 'query-local-v1',
                      'background_tasks': bool(backend.runtime_tasks and backend.runtime_tasks.tasks and all(not task.done() for task in backend.runtime_tasks.tasks)),
                      'notices_enabled': backend.notices is not None,
                      'diagnostics_enabled': backend.diagnostics.db is not None,
                      'management_capabilities': ['admin_read_v1', 'telemetry_v1', 'group_policies_v1', 'ops_v1'],
                      'features': ['classify', 'gateway_retire', 'ack_context_guard', 'notice_gateway_v1',
                                   'quoted_context_v1', 'fixed_snapshot_v1', 'current_model_permit_v1', 'independent_delivery_v1',
-                                  'chat_observation_v1','chat_images_v1','abort_reason_v1'],
+                                   'chat_observation_v1','chat_images_v1','abort_reason_v1'] if backend.query_runtime is None else
+                                 ['classify','gateway_retire','ack_context_guard','quoted_context_v1',
+                                  'fixed_snapshot_v1','independent_delivery_v1'],
                      'reference_profiles': sorted(backend.reference_profiles)}, 200 if accepting else 503)
     async def classify(request):
         value = await read_json(request)
@@ -879,8 +1023,10 @@ def create_app(backend, token, initialize=None):
             return json({'protocol':PROTOCOL,'candidate':True,'plan':await backend.submit(value,proactive=candidate)})
         except ModelError:return json({'protocol':PROTOCOL,'candidate':False})
         except (sqlite3.Error,OSError,ValueError):raise ProtocolError('chat_service_unavailable',503) from None
-    from .library_admin import LibraryAdmin
-    library=LibraryAdmin(backend)
+    library = None
+    if backend.query_runtime is None:
+        from .library_admin import LibraryAdmin
+        library = LibraryAdmin(backend)
     async def library_status(request):
         from ..domain.story import StoryError
         from ..domain.knowledge import KnowledgeError
@@ -948,7 +1094,7 @@ def create_app(backend, token, initialize=None):
     async def ops_notice_target(request): return json(backend.admin.notice_target(request.match_info['gid']))
     async def admin_telemetry(request):
         return json(backend.admin.telemetry(await read_json(request), request.headers.get('X-Taki-Epoch')))
-    app.add_routes([web.get('/v1/health', health), web.get('/v1/ready', ready),
+    routes = [web.get('/v1/health', health), web.get('/v1/ready', ready),
                     web.post('/v1/gateways', register), web.post('/v1/gateways/retire', retire),
                     web.post('/v1/classify', classify), web.post('/v1/requests', submit),
                     web.post('/v1/chat/observations',chat_observation),web.post('/v1/chat/candidates',chat_candidate),
@@ -976,10 +1122,18 @@ def create_app(backend, token, initialize=None):
                     web.get('/v1/admin/ops/jobs', ops_jobs), web.post('/v1/admin/ops/jobs', ops_submit),
                     web.get('/v1/admin/ops/jobs/{jid}', ops_detail),
                     web.get('/v1/admin/ops/notice-targets/{gid}', ops_notice_target),
-                    web.get('/v1/admin/ops/export', ops_export), web.get('/v1/admin/ops/export/{rid}', ops_export)])
+                    web.get('/v1/admin/ops/export', ops_export), web.get('/v1/admin/ops/export/{rid}', ops_export)]
+    if backend.query_runtime is not None:
+        # Development query composition, not a product capability selection.
+        routes = [route for route in routes if not route.path.startswith((
+            '/v1/chat/', '/v1/admin/chat/', '/v1/admin/model', '/v1/admin/library', '/v1/notices'))
+            and '/model-permissions/' not in route.path]
+    app.add_routes(routes)
     async def lifetime(app):
         async def load():
             try:
+                check_current()
+                if backend.closing: return
                 if initialize is not None: await finish_thread(initialize)
                 if not backend.closing:
                     if backend.runtime_tasks: backend.runtime_tasks.start()
@@ -1007,24 +1161,62 @@ def create_app(backend, token, initialize=None):
         expiry = asyncio.create_task(reaper())
         backend.reaper_task = expiry
         observation = asyncio.create_task(flush_observation())
+        quiescing = None
+        closing = None
+
+        async def quiesce():
+            # No cancellation can detach a finish_thread owner from its writer.
+            results = await asyncio.gather(task, expiry, observation, backend.quiesce_business(),
+                                           *list(business_http), return_exceptions=True)
+            # Request failures/cancelled lifetime loops are not writer failures.
+            if isinstance(results[3], BaseException): raise results[3]
+
+        def start_quiesce():
+            nonlocal quiescing
+            if quiescing is None:
+                # Signal synchronously, before another ready callback can start
+                # a refresh, probe or preparation. Draining remains async.
+                task.cancel()
+                expiry.cancel()
+                observation.cancel()
+                for work_task in list(backend.tasks): work_task.cancel()
+                backend.models.closed = True
+                if backend.runtime_tasks: backend.runtime_tasks.request_stop()
+                if backend.model_runtime: backend.model_runtime.request_stop()
+                quiescing = asyncio.create_task(quiesce(), name='backend-recovery-quiesce')
+            return quiescing
+
         async def shutdown():
-            backend.closing = True
-            expiry.cancel()
-            observation.cancel()
-            try:
-                await asyncio.gather(expiry, observation, return_exceptions=True)
-            finally:
-                # Even a separately cancelled initializer owns its real thread
-                # until finish_thread settles. Close stores only afterwards.
-                try:
-                    await task
-                finally:
-                    await backend.close()
+            backend.revoke_recovery()
+            backend.recovery_finalizing = True
+            await drain_task(start_quiesce())
+            # Receipt requests admitted before sealing retain their stores.
+            await asyncio.gather(*list(active_http), return_exceptions=True)
+            await backend.close()
+
+        def start_shutdown():
+            nonlocal closing
+            if closing is None:
+                closing = asyncio.create_task(shutdown(), name='backend-recovery-close')
+            return closing
+
+        backend._recovery_quiesce = start_quiesce
+        backend._recovery_close = start_shutdown
+        if backend.recovery_revoked: start_quiesce()
+
+        async def watch_recovery():
+            while not backend.recovery_revoked:
+                check_current()
+                await asyncio.sleep(.1)
+        watcher = asyncio.create_task(watch_recovery()) if assert_recovery_current is not None else None
         try:
             yield
         finally:
             # HTTP cleanup is a waiter, not the owner of the shutdown sequence.
             # Cancellation must not skip initializer draining or store closure.
-            await drain_task(asyncio.create_task(shutdown()))
+            if watcher is not None:
+                watcher.cancel()
+                await asyncio.gather(watcher, return_exceptions=True)
+            await drain_task(start_shutdown())
     app.cleanup_ctx.append(lifetime)
     return app

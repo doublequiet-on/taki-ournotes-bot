@@ -23,6 +23,32 @@ BUNDLED_JSON = {
     ("ournotes_bot", "sources", "haneoka", "visual_skill_contracts.json"),
     ("ournotes_bot", "sources", "haneoka", "game_assets.json"),
 }
+# Source-only public build inputs: required by build_downstream_console.py.
+# Match the entire path below the single sdist root, never a filename/suffix.
+SDIST_BUILD_JSON = {
+    ("deploy", "licenses", "koishi-console", "downstream-inputs.json"),
+    ("deploy", "licenses", "koishi-console", "downstream-inputs-public-v2.json"),
+    ("deploy", "licenses", "koishi-console", "candidate3-source-index.json"),
+    ("deploy", "licenses", "koishi-console", "candidate4-source-index.json"),
+    ("deploy", "licenses", "koishi-console", "downstream-inputs-candidate4.json"),
+    ("deploy", "licenses", "koishi-console", "rollup-linux-x64-glibc-coverage.json"),
+    ("deploy", "licenses", "koishi-console", "gateway-notices.json"),
+    ("koishi", "vendor", "console-candidate.json"),
+    ("koishi", "package.json"),
+    ("koishi", "package-lock.json"),
+    ("koishi", "compat", "cache-content-type", "package.json"),
+    ("koishi", "compat", "cache-content-type", "upstream-materials.json"),
+}
+SDIST_REQUIRED = SDIST_BUILD_JSON | {
+    ("koishi", "vendor", "taki-console-0.1.0-candidate.4.tgz"),
+    ("koishi", "vendor", "README.md"),
+    ("koishi", "recovery.cjs"),
+    ("deploy", "product_identity.py"),
+    ("deploy", "recovery_authority.py"),
+    ("koishi", "compat", "cache-content-type", "LICENSE"),
+    ("koishi", "compat", "cache-content-type", "README.md"),
+    ("koishi", "compat", "cache-content-type", "index.cjs"),
+}
 MEDIA_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".mp4", ".mp3"}
 
 
@@ -39,8 +65,11 @@ def check(path: Path) -> None:
     aliases = False
     code = False
     documents: set[str] = set()
+    source_paths: set[tuple[str, ...]] = set()
     for name in names:
         parts = PurePosixPath(name).parts
+        if path.name.endswith(".tar.gz") and len(parts) > 1:
+            source_paths.add(parts[1:])
         leaf = parts[-1]
         aliases |= leaf == "query_aliases.json"
         code |= len(parts) >= 2 and parts[-2:] == ("ournotes_bot", "commands.py")
@@ -48,7 +77,8 @@ def check(path: Path) -> None:
         runtime_dir = ("asset-cache" in parts or "runtime" in parts
                        or ("data" in parts and not path.name.endswith(".whl")))
         private_env = leaf.startswith(".env.") and leaf != ".env.example"
-        if (leaf in PRIVATE_NAMES or private_env or (leaf.endswith(".json") and leaf != "query_aliases.json" and parts[-4:] not in BUNDLED_JSON)
+        source_build_json = path.name.endswith(".tar.gz") and parts[1:] in SDIST_BUILD_JSON
+        if (leaf in PRIVATE_NAMES or private_env or (leaf.endswith(".json") and leaf != "query_aliases.json" and parts[-4:] not in BUNDLED_JSON and not source_build_json)
                 or leaf.endswith((".log", ".pyc", ".sqlite", ".db", ".sqlite3", ".sqlite3-journal", ".sqlite3-wal", ".sqlite3-shm"))
                 or (PurePosixPath(leaf).suffix.lower() in MEDIA_SUFFIXES
                     and parts[-len(BUNDLED_MEDIA):] != BUNDLED_MEDIA) or runtime_dir):
@@ -82,11 +112,18 @@ def check(path: Path) -> None:
         raise ValueError(f"development architecture gate in {path.name}")
     if not required.issubset(documents):
         raise ValueError(f"missing query upgrade modules or instructions in {path.name}")
+    if not any(PurePosixPath(name).parts[-3:] == ("ournotes_bot", "application", "recovery_entry.py") for name in names):
+        raise ValueError(f"missing recovery backend entry in {path.name}")
     if not any(PurePosixPath(name).parts[-3:] == ("ournotes_bot", "domain", "card_query.py") for name in names):
         raise ValueError(f"missing canonical card query domain in {path.name}")
     if not {"event_cutoffs.py", "HANEOKA_CUTOFFS.md"} <= documents:
         raise ValueError(f"missing Haneoka cutoff preview resources in {path.name}")
     if path.name.endswith(".tar.gz"):
+        if any(path[:2] == ("koishi", "vendor") and path not in SDIST_REQUIRED for path in source_paths):
+            raise ValueError(f"unexpected Console vendor member in {path.name}")
+        missing_build_inputs = SDIST_REQUIRED - source_paths
+        if missing_build_inputs:
+            raise ValueError(f"missing source build inputs in {path.name}: {sorted(missing_build_inputs)}")
         needed = {"README.md", "THIRD_PARTY.md", "LOCAL_QQ_TEST.md", "昵称词表维护规范.md", ".env.example",
                   "更新日志.md"}
         if not needed.issubset(documents):

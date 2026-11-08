@@ -1,0 +1,811 @@
+{
+  "lock_canonical_sha256": "39286e685316aca581d35e018ae634b2837325e6ca2e1380f3843a53227e9984",
+  "packages": [
+    {
+      "name": "@cordisjs/core",
+      "version": "3.18.1",
+      "location": "node_modules/@cordisjs/core",
+      "npm_integrity": "sha512-yRuATOamFxeD1ztE2L3o1SaHuT2zw5DTXijQYxt9azVNeILbvtomfGG6sLZegrynJO9XZbNvXbOlQ7LBJDOlAg==",
+      "metadata_url": "https://registry.npmjs.org/%40cordisjs%2Fcore/3.18.1",
+      "metadata_sha256": "5dd3fc2c6f5b889ab955b9829f6ecda899cc19288053b8cb64e4b07d25f8c89b",
+      "repository": {
+        "url": "git+https://github.com/cordiverse/cordis.git",
+        "type": "git",
+        "directory": "packages/core"
+      },
+      "git_head": "4658414e9414464ff1d08d076882fb66c1a3bb1c",
+      "source_url": "https://codeload.github.com/cordiverse/cordis/tar.gz/4658414e9414464ff1d08d076882fb66c1a3bb1c",
+      "source_file": "cordiverse_cordis-4658414e9414464ff1d08d076882fb66c1a3bb1c.tar.gz",
+      "source_sha256": "065d639344b5fc37916d5d87391f60d359646dac3965a94d8c0d630bbb4d026b",
+      "original_texts": [
+        {
+          "path": "LICENSE",
+          "sha256": "034fb52b1d57360ecbae6cb1632a88f86fd7c3d3f5631a5f082710203dda0be7",
+          "text": "MIT License\n\nCopyright (c) 2021-present Shigma\n\nPermission is hereby granted, free of charge, to any person obtaining a copy\nof this software and associated documentation files (the \"Software\"), to deal\nin the Software without restriction, including without limitation the rights\nto use, copy, modify, merge, publish, distribute, sublicense, and/or sell\ncopies of the Software, and to permit persons to whom the Software is\nfurnished to do so, subject to the following conditions:\n\nThe above copyright notice and this permission notice shall be included in all\ncopies or substantial portions of the Software.\n\nTHE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR\nIMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,\nFITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE\nAUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER\nLIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,\nOUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE\nSOFTWARE.\n"
+        }
+      ]
+    },
+    {
+      "name": "@cordisjs/loader",
+      "version": "0.13.1",
+      "location": "node_modules/@cordisjs/loader",
+      "npm_integrity": "sha512-YGw22gT1F/jXT1UeWMjIavt7WHMfEmKve83v4PTg63SW4eC2s89ivsN4RQWi5YWe0LQNNg8LItL66FeEcgQS5w==",
+      "metadata_url": "https://registry.npmjs.org/%40cordisjs%2Floader/0.13.1",
+      "metadata_sha256": "1379eaf5b248cfd2dcbb61cd8caad26d6dd2b6c3be82889e741bbaed72b5f466",
+      "repository": {
+        "url": "git+https://github.com/cordiverse/cordis.git",
+        "type": "git",
+        "directory": "packages/loader"
+      },
+      "git_head": "4658414e9414464ff1d08d076882fb66c1a3bb1c",
+      "source_url": "https://codeload.github.com/cordiverse/cordis/tar.gz/4658414e9414464ff1d08d076882fb66c1a3bb1c",
+      "source_file": "cordiverse_cordis-4658414e9414464ff1d08d076882fb66c1a3bb1c.tar.gz",
+      "source_sha256": "065d639344b5fc37916d5d87391f60d359646dac3965a94d8c0d630bbb4d026b",
+      "original_texts": [
+        {
+          "path": "LICENSE",
+          "sha256": "034fb52b1d57360ecbae6cb1632a88f86fd7c3d3f5631a5f082710203dda0be7",
+          "text": "MIT License\n\nCopyright (c) 2021-present Shigma\n\nPermission is hereby granted, free of charge, to any person obtaining a copy\nof this software and associated documentation files (the \"Software\"), to deal\nin the Software without restriction, including without limitation the rights\nto use, copy, modify, merge, publish, distribute, sublicense, and/or sell\ncopies of the Software, and to permit persons to whom the Software is\nfurnished to do so, subject to the following conditions:\n\nThe above copyright notice and this permission notice shall be included in all\ncopies or substantial portions of the Software.\n\nTHE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR\nIMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,\nFITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE\nAUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER\nLIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,\nOUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE\nSOFTWARE.\n"
+        }
+      ]
+    },
+    {
+      "name": "@cordisjs/logger",
+      "version": "0.3.3",
+      "location": "node_modules/@cordisjs/logger",
+      "npm_integrity": "sha512-UcyZRXAL86YLAEEta+fxJM1CcDanJvoIMD9ywCyP2AZJuib68UynENGTFo4mYkeg+8WMXrlA/aNNwENMiLUlXA==",
+      "metadata_url": "https://registry.npmjs.org/%40cordisjs%2Flogger/0.3.3",
+      "metadata_sha256": "09a8360975ffbf4a18797f00c8b13aebf47a19645e98038b9dca0b83ea8caf67",
+      "repository": {
+        "url": "git+https://github.com/cordiverse/cordis.git",
+        "type": "git",
+        "directory": "packages/logger"
+      },
+      "git_head": "a2ea5b1c94971440942878aaa35ce165e45352b8",
+      "source_url": "https://codeload.github.com/cordiverse/cordis/tar.gz/a2ea5b1c94971440942878aaa35ce165e45352b8",
+      "source_file": "cordiverse_cordis-a2ea5b1c94971440942878aaa35ce165e45352b8.tar.gz",
+      "source_sha256": "0c8f0f3b901011b8e428647a562ee73838387650793154974320aedcf911ae5a",
+      "original_texts": [
+        {
+          "path": "LICENSE",
+          "sha256": "034fb52b1d57360ecbae6cb1632a88f86fd7c3d3f5631a5f082710203dda0be7",
+          "text": "MIT License\n\nCopyright (c) 2021-present Shigma\n\nPermission is hereby granted, free of charge, to any person obtaining a copy\nof this software and associated documentation files (the \"Software\"), to deal\nin the Software without restriction, including without limitation the rights\nto use, copy, modify, merge, publish, distribute, sublicense, and/or sell\ncopies of the Software, and to permit persons to whom the Software is\nfurnished to do so, subject to the following conditions:\n\nThe above copyright notice and this permission notice shall be included in all\ncopies or substantial portions of the Software.\n\nTHE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR\nIMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,\nFITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE\nAUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER\nLIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,\nOUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE\nSOFTWARE.\n"
+        }
+      ]
+    },
+    {
+      "name": "@cordisjs/plugin-http",
+      "version": "0.6.3",
+      "location": "node_modules/@cordisjs/plugin-http",
+      "npm_integrity": "sha512-kmw4G1t39ZZzFGpBKUNuTv2aefEUtxa1e4qu4+bTrM5Z8uYHTRzPpyJfkj9zuZwopP/Vz271OUr2UfDN5lrJKQ==",
+      "metadata_url": "https://registry.npmjs.org/%40cordisjs%2Fplugin-http/0.6.3",
+      "metadata_sha256": "33a502ed583b1880af0da49d76af0f608905ecc2bbb3bb8903c9db16a7b5f2a7",
+      "repository": {
+        "url": "git+https://github.com/cordiverse/http.git",
+        "type": "git",
+        "directory": "packages/core"
+      },
+      "git_head": "b2da31b7cfef8b8490961037b2ba08c6efc6d03f",
+      "source_url": "https://codeload.github.com/cordiverse/http/tar.gz/b2da31b7cfef8b8490961037b2ba08c6efc6d03f",
+      "source_file": "cordiverse_http-b2da31b7cfef8b8490961037b2ba08c6efc6d03f.tar.gz",
+      "source_sha256": "3f9af3169904ba1ce966355dcc88285faa89cd946b1421dd54e8be11f4d9fede",
+      "original_texts": [
+        {
+          "path": "LICENSE",
+          "sha256": "58c80144e4c5506a1b16f12193ab60d654267362d0152120c1c39afe8bc25385",
+          "text": "MIT License\n\nCopyright (c) 2020-present Shigma\n\nPermission is hereby granted, free of charge, to any person obtaining a copy\nof this software and associated documentation files (the \"Software\"), to deal\nin the Software without restriction, including without limitation the rights\nto use, copy, modify, merge, publish, distribute, sublicense, and/or sell\ncopies of the Software, and to permit persons to whom the Software is\nfurnished to do so, subject to the following conditions:\n\nThe above copyright notice and this permission notice shall be included in all\ncopies or substantial portions of the Software.\n\nTHE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR\nIMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,\nFITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE\nAUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER\nLIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,\nOUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE\nSOFTWARE.\n"
+        }
+      ]
+    },
+    {
+      "name": "@cordisjs/plugin-proxy-agent",
+      "version": "0.3.3",
+      "location": "node_modules/@cordisjs/plugin-proxy-agent",
+      "npm_integrity": "sha512-iOM44+bducWGdfF/eD+dH7Fhi3r5eBZqSNIXvfUjK9z0tZ06oeVk/655nAlNxff31umUXhgmRQ14KwG+ylggcQ==",
+      "metadata_url": "https://registry.npmjs.org/%40cordisjs%2Fplugin-proxy-agent/0.3.3",
+      "metadata_sha256": "332c3bec48ac2f1e130b2a957a3a02721efc8ef336a66688a7d188118e56224c",
+      "repository": {
+        "url": "git+https://github.com/cordiverse/http.git",
+        "type": "git",
+        "directory": "packages/proxy-agent"
+      },
+      "git_head": "f6138b57081ff6cf9dc85df67023cc8d51982256",
+      "source_url": "https://codeload.github.com/cordiverse/http/tar.gz/f6138b57081ff6cf9dc85df67023cc8d51982256",
+      "source_file": "cordiverse_http-f6138b57081ff6cf9dc85df67023cc8d51982256.tar.gz",
+      "source_sha256": "af4c22baaceea032e816e9576bd836adfd37bc44edce355b2e64901b44829657",
+      "original_texts": [
+        {
+          "path": "LICENSE",
+          "sha256": "58c80144e4c5506a1b16f12193ab60d654267362d0152120c1c39afe8bc25385",
+          "text": "MIT License\n\nCopyright (c) 2020-present Shigma\n\nPermission is hereby granted, free of charge, to any person obtaining a copy\nof this software and associated documentation files (the \"Software\"), to deal\nin the Software without restriction, including without limitation the rights\nto use, copy, modify, merge, publish, distribute, sublicense, and/or sell\ncopies of the Software, and to permit persons to whom the Software is\nfurnished to do so, subject to the following conditions:\n\nThe above copyright notice and this permission notice shall be included in all\ncopies or substantial portions of the Software.\n\nTHE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR\nIMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,\nFITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE\nAUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER\nLIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,\nOUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE\nSOFTWARE.\n"
+        }
+      ]
+    },
+    {
+      "name": "@cordisjs/plugin-server",
+      "version": "0.2.9",
+      "location": "node_modules/@cordisjs/plugin-server",
+      "npm_integrity": "sha512-XMr9r3A4tvig6G51PbMIau+cKm2AIHypNc0gn6MykM4HSI3YHMozrlOw0zhuMDuUEWRSx7bGQVFUNrJRmDtAgQ==",
+      "metadata_url": "https://registry.npmjs.org/%40cordisjs%2Fplugin-server/0.2.9",
+      "metadata_sha256": "f4c117cb3376ec2cbc9fc7220481af2b1d0ce81686d366062aa2b34441530895",
+      "repository": {
+        "url": "git+https://github.com/cordiverse/server.git",
+        "type": "git",
+        "directory": "packages/core"
+      },
+      "git_head": "116bbd9612a393d625f8c1ea61ba4798c52ffea0",
+      "source_url": "https://codeload.github.com/cordiverse/server/tar.gz/116bbd9612a393d625f8c1ea61ba4798c52ffea0",
+      "source_file": "cordiverse_server-116bbd9612a393d625f8c1ea61ba4798c52ffea0.tar.gz",
+      "source_sha256": "cf17faf7d69232ac669632046e5c8acd81a698a47533e596f04926fe8a22033a",
+      "original_texts": [
+        {
+          "path": "LICENSE",
+          "sha256": "034fb52b1d57360ecbae6cb1632a88f86fd7c3d3f5631a5f082710203dda0be7",
+          "text": "MIT License\n\nCopyright (c) 2021-present Shigma\n\nPermission is hereby granted, free of charge, to any person obtaining a copy\nof this software and associated documentation files (the \"Software\"), to deal\nin the Software without restriction, including without limitation the rights\nto use, copy, modify, merge, publish, distribute, sublicense, and/or sell\ncopies of the Software, and to permit persons to whom the Software is\nfurnished to do so, subject to the following conditions:\n\nThe above copyright notice and this permission notice shall be included in all\ncopies or substantial portions of the Software.\n\nTHE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR\nIMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,\nFITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE\nAUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER\nLIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,\nOUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE\nSOFTWARE.\n"
+        }
+      ]
+    },
+    {
+      "name": "@cordisjs/schema",
+      "version": "0.1.1",
+      "location": "node_modules/@cordisjs/schema",
+      "npm_integrity": "sha512-AYTSyEXEASO6uVHqXBHIId+8OGFs0idtFoj3q7qee9J7OGcMjVEUsrsdiP9SnmzTR4ea17esShledUC50fco1g==",
+      "metadata_url": "https://registry.npmjs.org/%40cordisjs%2Fschema/0.1.1",
+      "metadata_sha256": "f2bdbb0c26536b896e86ba4c962eb4b92f245d9e85c713cc938107e7c1b95bad",
+      "repository": {
+        "url": "git+https://github.com/cordiverse/cordis.git",
+        "type": "git",
+        "directory": "packages/schema"
+      },
+      "git_head": "a2ea5b1c94971440942878aaa35ce165e45352b8",
+      "source_url": "https://codeload.github.com/cordiverse/cordis/tar.gz/a2ea5b1c94971440942878aaa35ce165e45352b8",
+      "source_file": "cordiverse_cordis-a2ea5b1c94971440942878aaa35ce165e45352b8.tar.gz",
+      "source_sha256": "0c8f0f3b901011b8e428647a562ee73838387650793154974320aedcf911ae5a",
+      "original_texts": [
+        {
+          "path": "LICENSE",
+          "sha256": "034fb52b1d57360ecbae6cb1632a88f86fd7c3d3f5631a5f082710203dda0be7",
+          "text": "MIT License\n\nCopyright (c) 2021-present Shigma\n\nPermission is hereby granted, free of charge, to any person obtaining a copy\nof this software and associated documentation files (the \"Software\"), to deal\nin the Software without restriction, including without limitation the rights\nto use, copy, modify, merge, publish, distribute, sublicense, and/or sell\ncopies of the Software, and to permit persons to whom the Software is\nfurnished to do so, subject to the following conditions:\n\nThe above copyright notice and this permission notice shall be included in all\ncopies or substantial portions of the Software.\n\nTHE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR\nIMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,\nFITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE\nAUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER\nLIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,\nOUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE\nSOFTWARE.\n"
+        }
+      ]
+    },
+    {
+      "name": "@cordisjs/timer",
+      "version": "0.3.2",
+      "location": "node_modules/@cordisjs/timer",
+      "npm_integrity": "sha512-frdIvc+1AqKVHMWnNacqqZ2Cm52FfoYKPpBQ+kZgr/cFs7HXDKqetL35CLy/EZAF22l/6VTvpQOYUwS6tvVJZA==",
+      "metadata_url": "https://registry.npmjs.org/%40cordisjs%2Ftimer/0.3.2",
+      "metadata_sha256": "143f2d875106f7058701bd0fbe8a2858d0dd0d64723594b58affaec88a435e81",
+      "repository": {
+        "url": "git+https://github.com/cordiverse/cordis.git",
+        "type": "git",
+        "directory": "packages/timer"
+      },
+      "git_head": "6327f6f43e95aef85420479f23f793fb8755e7c2",
+      "source_url": "https://codeload.github.com/cordiverse/cordis/tar.gz/6327f6f43e95aef85420479f23f793fb8755e7c2",
+      "source_file": "cordiverse_cordis-6327f6f43e95aef85420479f23f793fb8755e7c2.tar.gz",
+      "source_sha256": "b025fedc553b6784965afe3293565bbd657fd1cd2e657d0b0a3faf7b224dcd08",
+      "original_texts": [
+        {
+          "path": "LICENSE",
+          "sha256": "034fb52b1d57360ecbae6cb1632a88f86fd7c3d3f5631a5f082710203dda0be7",
+          "text": "MIT License\n\nCopyright (c) 2021-present Shigma\n\nPermission is hereby granted, free of charge, to any person obtaining a copy\nof this software and associated documentation files (the \"Software\"), to deal\nin the Software without restriction, including without limitation the rights\nto use, copy, modify, merge, publish, distribute, sublicense, and/or sell\ncopies of the Software, and to permit persons to whom the Software is\nfurnished to do so, subject to the following conditions:\n\nThe above copyright notice and this permission notice shall be included in all\ncopies or substantial portions of the Software.\n\nTHE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR\nIMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,\nFITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE\nAUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER\nLIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,\nOUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE\nSOFTWARE.\n"
+        }
+      ]
+    },
+    {
+      "name": "@koishijs/console",
+      "version": "5.30.11",
+      "location": "node_modules/@koishijs/console",
+      "npm_integrity": "sha512-F/NpSBmFUGcLTTwHLOt3OOaqMFD53aeoJL83Nwq4ZmudEpVQAA/uJusflvXadjf61HjHCu+DQArkPj0HGG7dhA==",
+      "metadata_url": "https://registry.npmjs.org/%40koishijs%2Fconsole/5.30.11",
+      "metadata_sha256": "c3d32630710d5aae013e42d4ef4e3b96c4db3a06fc9e9def261be44dc4fba20a",
+      "repository": {
+        "url": "git+https://github.com/koishijs/webui.git",
+        "type": "git",
+        "directory": "packages/console"
+      },
+      "git_head": "896882b50cc91d16f522a52ded9644045d461c26",
+      "source_url": "https://codeload.github.com/koishijs/webui/tar.gz/896882b50cc91d16f522a52ded9644045d461c26",
+      "source_file": "koishijs_webui-896882b50cc91d16f522a52ded9644045d461c26.tar.gz",
+      "source_sha256": "85528dd1b9407b0f7158ca7c049156088c53de850dad8e3ef695f1d96198e1b9",
+      "original_texts": [
+        {
+          "path": "LICENSE",
+          "sha256": "8486a10c4393cee1c25392769ddd3b2d6c242d6ec7928e1414efff7dfb2f07ef",
+          "text": "                    GNU AFFERO GENERAL PUBLIC LICENSE\n                       Version 3, 19 November 2007\n\n Copyright (C) 2007 Free Software Foundation, Inc. <https://fsf.org/>\n Everyone is permitted to copy and distribute verbatim copies\n of this license document, but changing it is not allowed.\n\n                            Preamble\n\n  The GNU Affero General Public License is a free, copyleft license for\nsoftware and other kinds of works, specifically designed to ensure\ncooperation with the community in the case of network server software.\n\n  The licenses for most software and other practical works are designed\nto take away your freedom to share and change the works.  By contrast,\nour General Public Licenses are intended to guarantee your freedom to\nshare and change all versions of a program--to make sure it remains free\nsoftware for all its users.\n\n  When we speak of free software, we are referring to freedom, not\nprice.  Our General Public Licenses are designed to make sure that you\nhave the freedom to distribute copies of free software (and charge for\nthem if you wish), that you receive source code or can get it if you\nwant it, that you can change the software or use pieces of it in new\nfree programs, and that you know you can do these things.\n\n  Developers that use our General Public Licenses protect your rights\nwith two steps: (1) assert copyright on the software, and (2) offer\nyou this License which gives you legal permission to copy, distribute\nand/or modify the software.\n\n  A secondary benefit of defending all users' freedom is that\nimprovements made in alternate versions of the program, if they\nreceive widespread use, become available for other developers to\nincorporate.  Many developers of free software are heartened and\nencouraged by the resulting cooperation.  However, in the case of\nsoftware used on network servers, this result may fail to come about.\nThe GNU General Public License permits making a modified version and\nletting the public access it on a server without ever releasing its\nsource code to the public.\n\n  The GNU Affero General Public License is designed specifically to\nensure that, in such cases, the modified source code becomes available\nto the community.  It requires the operator of a network server to\nprovide the source code of the modified version running there to the\nusers of that server.  Therefore, public use of a modified version, on\na publicly accessible server, gives the public access to the source\ncode of the modified version.\n\n  An older license, called the Affero General Public License and\npublished by Affero, was designed to accomplish similar goals.  This is\na different license, not a version of the Affero GPL, but Affero has\nreleased a new version of the Affero GPL which permits relicensing under\nthis license.\n\n  The precise terms and conditions for copying, distribution and\nmodification follow.\n\n                       TERMS AND CONDITIONS\n\n  0. Definitions.\n\n  \"This License\" refers to version 3 of the GNU Affero General Public License.\n\n  \"Copyright\" also means copyright-like laws that apply to other kinds of\nworks, such as semiconductor masks.\n\n  \"The Program\" refers to any copyrightable work licensed under this\nLicense.  Each licensee is addressed as \"you\".  \"Licensees\" and\n\"recipients\" may be individuals or organizations.\n\n  To \"modify\" a work means to copy from or adapt all or part of the work\nin a fashion requiring copyright permission, other than the making of an\nexact copy.  The resulting work is called a \"modified version\" of the\nearlier work or a work \"based on\" the earlier work.\n\n  A \"covered work\" means either the unmodified Program or a work based\non the Program.\n\n  To \"propagate\" a work means to do anything with it that, without\npermission, would make you directly or secondarily liable for\ninfringement under applicable copyright law, except executing it on a\ncomputer or modifying a private copy.  Propagation includes copying,\ndistribution (with or without modification), making available to the\npublic, and in some countries other activities as well.\n\n  To \"convey\" a work means any kind of propagation that enables other\nparties to make or receive copies.  Mere interaction with a user through\na computer network, with no transfer of a copy, is not conveying.\n\n  An interactive user interface displays \"Appropriate Legal Notices\"\nto the extent that it includes a convenient and prominently visible\nfeature that (1) displays an appropriate copyright notice, and (2)\ntells the user that there is no warranty for the work (except to the\nextent that warranties are provided), that licensees may convey the\nwork under this License, and how to view a copy of this License.  If\nthe interface presents a list of user commands or options, such as a\nmenu, a prominent item in the list meets this criterion.\n\n  1. Source Code.\n\n  The \"source code\" for a work means the preferred form of the work\nfor making modifications to it.  \"Object code\" means any non-source\nform of a work.\n\n  A \"Standard Interface\" means an interface that either is an official\nstandard defined by a recognized standards body, or, in the case of\ninterfaces specified for a particular programming language, one that\nis widely used among developers working in that language.\n\n  The \"System Libraries\" of an executable work include anything, other\nthan the work as a whole, that (a) is included in the normal form of\npackaging a Major Component, but which is not part of that Major\nComponent, and (b) serves only to enable use of the work with that\nMajor Component, or to implement a Standard Interface for which an\nimplementation is available to the public in source code form.  A\n\"Major Component\", in this context, means a major essential component\n(kernel, window system, and so on) of the specific operating system\n(if any) on which the executable work runs, or a compiler used to\nproduce the work, or an object code interpreter used to run it.\n\n  The \"Corresponding Source\" for a work in object code form means all\nthe source code needed to generate, install, and (for an executable\nwork) run the object code and to modify the work, including scripts to\ncontrol those activities.  However, it does not include the work's\nSystem Libraries, or general-purpose tools or generally available free\nprograms which are used unmodified in performing those activities but\nwhich are not part of the work.  For example, Corresponding Source\nincludes interface definition files associated with source files for\nthe work, and the source code for shared libraries and dynamically\nlinked subprograms that the work is specifically designed to require,\nsuch as by intimate data communication or control flow between those\nsubprograms and other parts of the work.\n\n  The Corresponding Source need not include anything that users\ncan regenerate automatically from other parts of the Corresponding\nSource.\n\n  The Corresponding Source for a work in source code form is that\nsame work.\n\n  2. Basic Permissions.\n\n  All rights granted under this License are granted for the term of\ncopyright on the Program, and are irrevocable provided the stated\nconditions are met.  This License explicitly affirms your unlimited\npermission to run the unmodified Program.  The output from running a\ncovered work is covered by this License only if the output, given its\ncontent, constitutes a covered work.  This License acknowledges your\nrights of fair use or other equivalent, as provided by copyright law.\n\n  You may make, run and propagate covered works that you do not\nconvey, without conditions so long as your license otherwise remains\nin force.  You may convey covered works to others for the sole purpose\nof having them make modifications exclusively for you, or provide you\nwith facilities for running those works, provided that you comply with\nthe terms of this License in conveying all material for which you do\nnot control copyright.  Those thus making or running the covered works\nfor you must do so exclusively on your behalf, under your direction\nand control, on terms that prohibit them from making any copies of\nyour copyrighted material outside their relationship with you.\n\n  Conveying under any other circumstances is permitted solely under\nthe conditions stated below.  Sublicensing is not allowed; section 10\nmakes it unnecessary.\n\n  3. Protecting Users' Legal Rights From Anti-Circumvention Law.\n\n  No covered work shall be deemed part of an effective technological\nmeasure under any applicable law fulfilling obligations under article\n11 of the WIPO copyright treaty adopted on 20 December 1996, or\nsimilar laws prohibiting or restricting circumvention of such\nmeasures.\n\n  When you convey a covered work, you waive any legal power to forbid\ncircumvention of technological measures to the extent such circumvention\nis effected by exercising rights under this License with respect to\nthe covered work, and you disclaim any intention to limit operation or\nmodification of the work as a means of enforcing, against the work's\nusers, your or third parties' legal rights to forbid circumvention of\ntechnological measures.\n\n  4. Conveying Verbatim Copies.\n\n  You may convey verbatim copies of the Program's source code as you\nreceive it, in any medium, provided that you conspicuously and\nappropriately publish on each copy an appropriate copyright notice;\nkeep intact all notices stating that this License and any\nnon-permissive terms added in accord with section 7 apply to the code;\nkeep intact all notices of the absence of any warranty; and give all\nrecipients a copy of this License along with the Program.\n\n  You may charge any price or no price for each copy that you convey,\nand you may offer support or warranty protection for a fee.\n\n  5. Conveying Modified Source Versions.\n\n  You may convey a work based on the Program, or the modifications to\nproduce it from the Program, in the form of source code under the\nterms of section 4, provided that you also meet all of these conditions:\n\n    a) The work must carry prominent notices stating that you modified\n    it, and giving a relevant date.\n\n    b) The work must carry prominent notices stating that it is\n    released under this License and any conditions added under section\n    7.  This requirement modifies the requirement in section 4 to\n    \"keep intact all notices\".\n\n    c) You must license the entire work, as a whole, under this\n    License to anyone who comes into possession of a copy.  This\n    License will therefore apply, along with any applicable section 7\n    additional terms, to the whole of the work, and all its parts,\n    regardless of how they are packaged.  This License gives no\n    permission to license the work in any other way, but it does not\n    invalidate such permission if you have separately received it.\n\n    d) If the work has interactive user interfaces, each must display\n    Appropriate Legal Notices; however, if the Program has interactive\n    interfaces that do not display Appropriate Legal Notices, your\n    work need not make them do so.\n\n  A compilation of a covered work with other separate and independent\nworks, which are not by their nature extensions of the covered work,\nand which are not combined with it such as to form a larger program,\nin or on a volume of a storage or distribution medium, is called an\n\"aggregate\" if the compilation and its resulting copyright are not\nused to limit the access or legal rights of the compilation's users\nbeyond what the individual works permit.  Inclusion of a covered work\nin an aggregate does not cause this License to apply to the other\nparts of the aggregate.\n\n  6. Conveying Non-Source Forms.\n\n  You may convey a covered work in object code form under the terms\nof sections 4 and 5, provided that you also convey the\nmachine-readable Corresponding Source under the terms of this License,\nin one of these ways:\n\n    a) Convey the object code in, or embodied in, a physical product\n    (including a physical distribution medium), accompanied by the\n    Corresponding Source fixed on a durable physical medium\n    customarily used for software interchange.\n\n    b) Convey the object code in, or embodied in, a physical product\n    (including a physical distribution medium), accompanied by a\n    written offer, valid for at least three years and valid for as\n    long as you offer spare parts or customer support for that product\n    model, to give anyone who possesses the object code either (1) a\n    copy of the Corresponding Source for all the software in the\n    product that is covered by this License, on a durable physical\n    medium customarily used for software interchange, for a price no\n    more than your reasonable cost of physically performing this\n    conveying of source, or (2) access to copy the\n    Corresponding Source from a network server at no charge.\n\n    c) Convey individual copies of the object code with a copy of the\n    written offer to provide the Corresponding Source.  This\n    alternative is allowed only occasionally and noncommercially, and\n    only if you received the object code with such an offer, in accord\n    with subsection 6b.\n\n    d) Convey the object code by offering access from a designated\n    place (gratis or for a charge), and offer equivalent access to the\n    Corresponding Source in the same way through the same place at no\n    further charge.  You need not require recipients to copy the\n    Corresponding Source along with the object code.  If the place to\n    copy the object code is a network server, the Corresponding Source\n    may be on a different server (operated by you or a third party)\n    that supports equivalent copying facilities, provided you maintain\n    clear directions next to the object code saying where to find the\n    Corresponding Source.  Regardless of what server hosts the\n    Corresponding Source, you remain obligated to ensure that it is\n    available for as long as needed to satisfy these requirements.\n\n    e) Convey the object code using peer-to-peer transmission, provided\n    you inform other peers where the object code and Corresponding\n    Source of the work are being offered to the general public at no\n    charge under subsection 6d.\n\n  A separable portion of the object code, whose source code is excluded\nfrom the Corresponding Source as a System Library, need not be\nincluded in conveying the object code work.\n\n  A \"User Product\" is either (1) a \"consumer product\", which means any\ntangible personal property which is normally used for personal, family,\nor household purposes, or (2) anything designed or sold for incorporation\ninto a dwelling.  In determining whether a product is a consumer product,\ndoubtful cases shall be resolved in favor of coverage.  For a particular\nproduct received by a particular user, \"normally used\" refers to a\ntypical or common use of that class of product, regardless of the status\nof the particular user or of the way in which the particular user\nactually uses, or expects or is expected to use, the product.  A product\nis a consumer product regardless of whether the product has substantial\ncommercial, industrial or non-consumer uses, unless such uses represent\nthe only significant mode of use of the product.\n\n  \"Installation Information\" for a User Product means any methods,\nprocedures, authorization keys, or other information required to install\nand execute modified versions of a covered work in that User Product from\na modified version of its Corresponding Source.  The information must\nsuffice to ensure that the continued functioning of the modified object\ncode is in no case prevented or interfered with solely because\nmodification has been made.\n\n  If you convey an object code work under this section in, or with, or\nspecifically for use in, a User Product, and the conveying occurs as\npart of a transaction in which the right of possession and use of the\nUser Product is transferred to the recipient in perpetuity or for a\nfixed term (regardless of how the transaction is characterized), the\nCorresponding Source conveyed under this section must be accompanied\nby the Installation Information.  But this requirement does not apply\nif neither you nor any third party retains the ability to install\nmodified object code on the User Product (for example, the work has\nbeen installed in ROM).\n\n  The requirement to provide Installation Information does not include a\nrequirement to continue to provide support service, warranty, or updates\nfor a work that has been modified or installed by the recipient, or for\nthe User Product in which it has been modified or installed.  Access to a\nnetwork may be denied when the modification itself materially and\nadversely affects the operation of the network or violates the rules and\nprotocols for communication across the network.\n\n  Corresponding Source conveyed, and Installation Information provided,\nin accord with this section must be in a format that is publicly\ndocumented (and with an implementation available to the public in\nsource code form), and must require no special password or key for\nunpacking, reading or copying.\n\n  7. Additional Terms.\n\n  \"Additional permissions\" are terms that supplement the terms of this\nLicense by making exceptions from one or more of its conditions.\nAdditional permissions that are applicable to the entire Program shall\nbe treated as though they were included in this License, to the extent\nthat they are valid under applicable law.  If additional permissions\napply only to part of the Program, that part may be used separately\nunder those permissions, but the entire Program remains governed by\nthis License without regard to the additional permissions.\n\n  When you convey a copy of a covered work, you may at your option\nremove any additional permissions from that copy, or from any part of\nit.  (Additional permissions may be written to require their own\nremoval in certain cases when you modify the work.)  You may place\nadditional permissions on material, added by you to a covered work,\nfor which you have or can give appropriate copyright permission.\n\n  Notwithstanding any other provision of this License, for material you\nadd to a covered work, you may (if authorized by the copyright holders of\nthat material) supplement the terms of this License with terms:\n\n    a) Disclaiming warranty or limiting liability differently from the\n    terms of sections 15 and 16 of this License; or\n\n    b) Requiring preservation of specified reasonable legal notices or\n    author attributions in that material or in the Appropriate Legal\n    Notices displayed by works containing it; or\n\n    c) Prohibiting misrepresentation of the origin of that material, or\n    requiring that modified versions of such material be marked in\n    reasonable ways as different from the original version; or\n\n    d) Limiting the use for publicity purposes of names of licensors or\n    authors of the material; or\n\n    e) Declining to grant rights under trademark law for use of some\n    trade names, trademarks, or service marks; or\n\n    f) Requiring indemnification of licensors and authors of that\n    material by anyone who conveys the material (or modified versions of\n    it) with contractual assumptions of liability to the recipient, for\n    any liability that these contractual assumptions directly impose on\n    those licensors and authors.\n\n  All other non-permissive additional terms are considered \"further\nrestrictions\" within the meaning of section 10.  If the Program as you\nreceived it, or any part of it, contains a notice stating that it is\ngoverned by this License along with a term that is a further\nrestriction, you may remove that term.  If a license document contains\na further restriction but permits relicensing or conveying under this\nLicense, you may add to a covered work material governed by the terms\nof that license document, provided that the further restriction does\nnot survive such relicensing or conveying.\n\n  If you add terms to a covered work in accord with this section, you\nmust place, in the relevant source files, a statement of the\nadditional terms that apply to those files, or a notice indicating\nwhere to find the applicable terms.\n\n  Additional terms, permissive or non-permissive, may be stated in the\nform of a separately written license, or stated as exceptions;\nthe above requirements apply either way.\n\n  8. Termination.\n\n  You may not propagate or modify a covered work except as expressly\nprovided under this License.  Any attempt otherwise to propagate or\nmodify it is void, and will automatically terminate your rights under\nthis License (including any patent licenses granted under the third\nparagraph of section 11).\n\n  However, if you cease all violation of this License, then your\nlicense from a particular copyright holder is reinstated (a)\nprovisionally, unless and until the copyright holder explicitly and\nfinally terminates your license, and (b) permanently, if the copyright\nholder fails to notify you of the violation by some reasonable means\nprior to 60 days after the cessation.\n\n  Moreover, your license from a particular copyright holder is\nreinstated permanently if the copyright holder notifies you of the\nviolation by some reasonable means, this is the first time you have\nreceived notice of violation of this License (for any work) from that\ncopyright holder, and you cure the violation prior to 30 days after\nyour receipt of the notice.\n\n  Termination of your rights under this section does not terminate the\nlicenses of parties who have received copies or rights from you under\nthis License.  If your rights have been terminated and not permanently\nreinstated, you do not qualify to receive new licenses for the same\nmaterial under section 10.\n\n  9. Acceptance Not Required for Having Copies.\n\n  You are not required to accept this License in order to receive or\nrun a copy of the Program.  Ancillary propagation of a covered work\noccurring solely as a consequence of using peer-to-peer transmission\nto receive a copy likewise does not require acceptance.  However,\nnothing other than this License grants you permission to propagate or\nmodify any covered work.  These actions infringe copyright if you do\nnot accept this License.  Therefore, by modifying or propagating a\ncovered work, you indicate your acceptance of this License to do so.\n\n  10. Automatic Licensing of Downstream Recipients.\n\n  Each time you convey a covered work, the recipient automatically\nreceives a license from the original licensors, to run, modify and\npropagate that work, subject to this License.  You are not responsible\nfor enforcing compliance by third parties with this License.\n\n  An \"entity transaction\" is a transaction transferring control of an\norganization, or substantially all assets of one, or subdividing an\norganization, or merging organizations.  If propagation of a covered\nwork results from an entity transaction, each party to that\ntransaction who receives a copy of the work also receives whatever\nlicenses to the work the party's predecessor in interest had or could\ngive under the previous paragraph, plus a right to possession of the\nCorresponding Source of the work from the predecessor in interest, if\nthe predecessor has it or can get it with reasonable efforts.\n\n  You may not impose any further restrictions on the exercise of the\nrights granted or affirmed under this License.  For example, you may\nnot impose a license fee, royalty, or other charge for exercise of\nrights granted under this License, and you may not initiate litigation\n(including a cross-claim or counterclaim in a lawsuit) alleging that\nany patent claim is infringed by making, using, selling, offering for\nsale, or importing the Program or any portion of it.\n\n  11. Patents.\n\n  A \"contributor\" is a copyright holder who authorizes use under this\nLicense of the Program or a work on which the Program is based.  The\nwork thus licensed is called the contributor's \"contributor version\".\n\n  A contributor's \"essential patent claims\" are all patent claims\nowned or controlled by the contributor, whether already acquired or\nhereafter acquired, that would be infringed by some manner, permitted\nby this License, of making, using, or selling its contributor version,\nbut do not include claims that would be infringed only as a\nconsequence of further modification of the contributor version.  For\npurposes of this definition, \"control\" includes the right to grant\npatent sublicenses in a manner consistent with the requirements of\nthis License.\n\n  Each contributor grants you a non-exclusive, worldwide, royalty-free\npatent license under the contributor's essential patent claims, to\nmake, use, sell, offer for sale, import and otherwise run, modify and\npropagate the contents of its contributor version.\n\n  In the following three paragraphs, a \"patent license\" is any express\nagreement or commitment, however denominated, not to enforce a patent\n(such as an express permission to practice a patent or covenant not to\nsue for patent infringement).  To \"grant\" such a patent license to a\nparty means to make such an agreement or commitment not to enforce a\npatent against the party.\n\n  If you convey a covered work, knowingly relying on a patent license,\nand the Corresponding Source of the work is not available for anyone\nto copy, free of charge and under the terms of this License, through a\npublicly available network server or other readily accessible means,\nthen you must either (1) cause the Corresponding Source to be so\navailable, or (2) arrange to deprive yourself of the benefit of the\npatent license for this particular work, or (3) arrange, in a manner\nconsistent with the requirements of this License, to extend the patent\nlicense to downstream recipients.  \"Knowingly relying\" means you have\nactual knowledge that, but for the patent license, your conveying the\ncovered work in a country, or your recipient's use of the covered work\nin a country, would infringe one or more identifiable patents in that\ncountry that you have reason to believe are valid.\n\n  If, pursuant to or in connection with a single transaction or\narrangement, you convey, or propagate by procuring conveyance of, a\ncovered work, and grant a patent license to some of the parties\nreceiving the covered work authorizing them to use, propagate, modify\nor convey a specific copy of the covered work, then the patent license\nyou grant is automatically extended to all recipients of the covered\nwork and works based on it.\n\n  A patent license is \"discriminatory\" if it does not include within\nthe scope of its coverage, prohibits the exercise of, or is\nconditioned on the non-exercise of one or more of the rights that are\nspecifically granted under this License.  You may not convey a covered\nwork if you are a party to an arrangement with a third party that is\nin the business of distributing software, under which you make payment\nto the third party based on the extent of your activity of conveying\nthe work, and under which the third party grants, to any of the\nparties who would receive the covered work from you, a discriminatory\npatent license (a) in connection with copies of the covered work\nconveyed by you (or copies made from those copies), or (b) primarily\nfor and in connection with specific products or compilations that\ncontain the covered work, unless you entered into that arrangement,\nor that patent license was granted, prior to 28 March 2007.\n\n  Nothing in this License shall be construed as excluding or limiting\nany implied license or other defenses to infringement that may\notherwise be available to you under applicable patent law.\n\n  12. No Surrender of Others' Freedom.\n\n  If conditions are imposed on you (whether by court order, agreement or\notherwise) that contradict the conditions of this License, they do not\nexcuse you from the conditions of this License.  If you cannot convey a\ncovered work so as to satisfy simultaneously your obligations under this\nLicense and any other pertinent obligations, then as a consequence you may\nnot convey it at all.  For example, if you agree to terms that obligate you\nto collect a royalty for further conveying from those to whom you convey\nthe Program, the only way you could satisfy both those terms and this\nLicense would be to refrain entirely from conveying the Program.\n\n  13. Remote Network Interaction; Use with the GNU General Public License.\n\n  Notwithstanding any other provision of this License, if you modify the\nProgram, your modified version must prominently offer all users\ninteracting with it remotely through a computer network (if your version\nsupports such interaction) an opportunity to receive the Corresponding\nSource of your version by providing access to the Corresponding Source\nfrom a network server at no charge, through some standard or customary\nmeans of facilitating copying of software.  This Corresponding Source\nshall include the Corresponding Source for any work covered by version 3\nof the GNU General Public License that is incorporated pursuant to the\nfollowing paragraph.\n\n  Notwithstanding any other provision of this License, you have\npermission to link or combine any covered work with a work licensed\nunder version 3 of the GNU General Public License into a single\ncombined work, and to convey the resulting work.  The terms of this\nLicense will continue to apply to the part which is the covered work,\nbut the work with which it is combined will remain governed by version\n3 of the GNU General Public License.\n\n  14. Revised Versions of this License.\n\n  The Free Software Foundation may publish revised and/or new versions of\nthe GNU Affero General Public License from time to time.  Such new versions\nwill be similar in spirit to the present version, but may differ in detail to\naddress new problems or concerns.\n\n  Each version is given a distinguishing version number.  If the\nProgram specifies that a certain numbered version of the GNU Affero General\nPublic License \"or any later version\" applies to it, you have the\noption of following the terms and conditions either of that numbered\nversion or of any later version published by the Free Software\nFoundation.  If the Program does not specify a version number of the\nGNU Affero General Public License, you may choose any version ever published\nby the Free Software Foundation.\n\n  If the Program specifies that a proxy can decide which future\nversions of the GNU Affero General Public License can be used, that proxy's\npublic statement of acceptance of a version permanently authorizes you\nto choose that version for the Program.\n\n  Later license versions may give you additional or different\npermissions.  However, no additional obligations are imposed on any\nauthor or copyright holder as a result of your choosing to follow a\nlater version.\n\n  15. Disclaimer of Warranty.\n\n  THERE IS NO WARRANTY FOR THE PROGRAM, TO THE EXTENT PERMITTED BY\nAPPLICABLE LAW.  EXCEPT WHEN OTHERWISE STATED IN WRITING THE COPYRIGHT\nHOLDERS AND/OR OTHER PARTIES PROVIDE THE PROGRAM \"AS IS\" WITHOUT WARRANTY\nOF ANY KIND, EITHER EXPRESSED OR IMPLIED, INCLUDING, BUT NOT LIMITED TO,\nTHE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR\nPURPOSE.  THE ENTIRE RISK AS TO THE QUALITY AND PERFORMANCE OF THE PROGRAM\nIS WITH YOU.  SHOULD THE PROGRAM PROVE DEFECTIVE, YOU ASSUME THE COST OF\nALL NECESSARY SERVICING, REPAIR OR CORRECTION.\n\n  16. Limitation of Liability.\n\n  IN NO EVENT UNLESS REQUIRED BY APPLICABLE LAW OR AGREED TO IN WRITING\nWILL ANY COPYRIGHT HOLDER, OR ANY OTHER PARTY WHO MODIFIES AND/OR CONVEYS\nTHE PROGRAM AS PERMITTED ABOVE, BE LIABLE TO YOU FOR DAMAGES, INCLUDING ANY\nGENERAL, SPECIAL, INCIDENTAL OR CONSEQUENTIAL DAMAGES ARISING OUT OF THE\nUSE OR INABILITY TO USE THE PROGRAM (INCLUDING BUT NOT LIMITED TO LOSS OF\nDATA OR DATA BEING RENDERED INACCURATE OR LOSSES SUSTAINED BY YOU OR THIRD\nPARTIES OR A FAILURE OF THE PROGRAM TO OPERATE WITH ANY OTHER PROGRAMS),\nEVEN IF SUCH HOLDER OR OTHER PARTY HAS BEEN ADVISED OF THE POSSIBILITY OF\nSUCH DAMAGES.\n\n  17. Interpretation of Sections 15 and 16.\n\n  If the disclaimer of warranty and limitation of liability provided\nabove cannot be given local legal effect according to their terms,\nreviewing courts shall apply local law that most closely approximates\nan absolute waiver of all civil liability in connection with the\nProgram, unless a warranty or assumption of liability accompanies a\ncopy of the Program in return for a fee.\n\n                     END OF TERMS AND CONDITIONS\n\n            How to Apply These Terms to Your New Programs\n\n  If you develop a new program, and you want it to be of the greatest\npossible use to the public, the best way to achieve this is to make it\nfree software which everyone can redistribute and change under these terms.\n\n  To do so, attach the following notices to the program.  It is safest\nto attach them to the start of each source file to most effectively\nstate the exclusion of warranty; and each file should have at least\nthe \"copyright\" line and a pointer to where the full notice is found.\n\n    <one line to give the program's name and a brief idea of what it does.>\n    Copyright (C) <year>  <name of author>\n\n    This program is free software: you can redistribute it and/or modify\n    it under the terms of the GNU Affero General Public License as published\n    by the Free Software Foundation, either version 3 of the License, or\n    (at your option) any later version.\n\n    This program is distributed in the hope that it will be useful,\n    but WITHOUT ANY WARRANTY; without even the implied warranty of\n    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the\n    GNU Affero General Public License for more details.\n\n    You should have received a copy of the GNU Affero General Public License\n    along with this program.  If not, see <https://www.gnu.org/licenses/>.\n\nAlso add information on how to contact you by electronic and paper mail.\n\n  If your software can interact with users remotely through a computer\nnetwork, you should also make sure that it provides a way for users to\nget its source.  For example, if your program is a web application, its\ninterface could display a \"Source\" link that leads users to an archive\nof the code.  There are many ways you could offer source, and different\nsolutions will be better for different programs; see section 13 for the\nspecific requirements.\n\n  You should also get your employer (if you work as a programmer) or school,\nif any, to sign a \"copyright disclaimer\" for the program, if necessary.\nFor more information on this, and how to apply and follow the GNU AGPL, see\n<https://www.gnu.org/licenses/>.\n"
+        }
+      ]
+    },
+    {
+      "name": "@koishijs/core",
+      "version": "4.18.11",
+      "location": "node_modules/@koishijs/core",
+      "npm_integrity": "sha512-qzc1A14Y5C04a3/yDyz+xaQ90Uz9TeUUvScQuhOiuJNGKg9HUeFKqoNN/2IX5/vgAHauxJJi6eJcN2ZrLt4HeA==",
+      "metadata_url": "https://registry.npmjs.org/%40koishijs%2Fcore/4.18.11",
+      "metadata_sha256": "ffe8f435ed9a46a6df13129b7ec354541b7d6407980ac1ccdcdb8afa59e0dbbb",
+      "repository": {
+        "url": "git+https://github.com/koishijs/koishi.git",
+        "type": "git",
+        "directory": "packages/core"
+      },
+      "git_head": "506be1ef16d9c0c0f04069fb4b2f0a403cc19833",
+      "source_url": "https://codeload.github.com/koishijs/koishi/tar.gz/506be1ef16d9c0c0f04069fb4b2f0a403cc19833",
+      "source_file": "koishijs_koishi-506be1ef16d9c0c0f04069fb4b2f0a403cc19833.tar.gz",
+      "source_sha256": "9bc757670aa916eb0b07a2d9824bf4f5442eadd2317eea55cc90971779aef6bd",
+      "original_texts": [
+        {
+          "path": "LICENSE",
+          "sha256": "e60d87e606797ace86cbb510df9f75a9b858b5cc9f9dcfebfe47b31961a7c559",
+          "text": "MIT License\n\nCopyright (c) 2019-present Shigma\n\nPermission is hereby granted, free of charge, to any person obtaining a copy\nof this software and associated documentation files (the \"Software\"), to deal\nin the Software without restriction, including without limitation the rights\nto use, copy, modify, merge, publish, distribute, sublicense, and/or sell\ncopies of the Software, and to permit persons to whom the Software is\nfurnished to do so, subject to the following conditions:\n\nThe above copyright notice and this permission notice shall be included in all\ncopies or substantial portions of the Software.\n\nTHE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR\nIMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,\nFITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE\nAUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER\nLIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,\nOUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE\nSOFTWARE.\n"
+        }
+      ]
+    },
+    {
+      "name": "@koishijs/i18n-utils",
+      "version": "1.0.1",
+      "location": "node_modules/@koishijs/i18n-utils",
+      "npm_integrity": "sha512-N58UAnhMMtqS4+VGW5IwJ6U9xwXZpzrcPaJrdEBzUJ4yBKKrkHfG1ck9tvQ99SnzxhZGGcBa/SKWnHQf/omrvg==",
+      "metadata_url": "https://registry.npmjs.org/%40koishijs%2Fi18n-utils/1.0.1",
+      "metadata_sha256": "07c78919b3ae8b6356a034d1f062a7617a7b427b623b7d1f410edbec3017571e",
+      "repository": {
+        "url": "git+https://github.com/koishijs/koishi.git",
+        "type": "git",
+        "directory": "packages/i18n-utils"
+      },
+      "git_head": "0820bfbbbabb3b6928f429be2286f18e1a20370f",
+      "source_url": "https://codeload.github.com/koishijs/koishi/tar.gz/0820bfbbbabb3b6928f429be2286f18e1a20370f",
+      "source_file": "koishijs_koishi-0820bfbbbabb3b6928f429be2286f18e1a20370f.tar.gz",
+      "source_sha256": "ea15ae2131821bbc60ac185dcd87a7cd7bb0a488b33d6605b6e09046792d4473",
+      "original_texts": [
+        {
+          "path": "LICENSE",
+          "sha256": "e60d87e606797ace86cbb510df9f75a9b858b5cc9f9dcfebfe47b31961a7c559",
+          "text": "MIT License\n\nCopyright (c) 2019-present Shigma\n\nPermission is hereby granted, free of charge, to any person obtaining a copy\nof this software and associated documentation files (the \"Software\"), to deal\nin the Software without restriction, including without limitation the rights\nto use, copy, modify, merge, publish, distribute, sublicense, and/or sell\ncopies of the Software, and to permit persons to whom the Software is\nfurnished to do so, subject to the following conditions:\n\nThe above copyright notice and this permission notice shall be included in all\ncopies or substantial portions of the Software.\n\nTHE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR\nIMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,\nFITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE\nAUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER\nLIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,\nOUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE\nSOFTWARE.\n"
+        }
+      ]
+    },
+    {
+      "name": "@koishijs/loader",
+      "version": "4.6.11",
+      "location": "node_modules/@koishijs/loader",
+      "npm_integrity": "sha512-0cJyHwtnFjtOx7jgIXOSuVjDriL12rv8CXsqSw+aqQyt0iuD8ChDqfwhiOFRsuVvq89ZS9PhxmZ0l+YqQ5ZrPg==",
+      "metadata_url": "https://registry.npmjs.org/%40koishijs%2Floader/4.6.11",
+      "metadata_sha256": "e448f8977fccb0047dc7d8b9f60f4b76580a91a27504f383a5fac83328a026f8",
+      "repository": {
+        "url": "git+https://github.com/koishijs/koishi.git",
+        "type": "git",
+        "directory": "packages/loader"
+      },
+      "git_head": "506be1ef16d9c0c0f04069fb4b2f0a403cc19833",
+      "source_url": "https://codeload.github.com/koishijs/koishi/tar.gz/506be1ef16d9c0c0f04069fb4b2f0a403cc19833",
+      "source_file": "koishijs_koishi-506be1ef16d9c0c0f04069fb4b2f0a403cc19833.tar.gz",
+      "source_sha256": "9bc757670aa916eb0b07a2d9824bf4f5442eadd2317eea55cc90971779aef6bd",
+      "original_texts": [
+        {
+          "path": "LICENSE",
+          "sha256": "e60d87e606797ace86cbb510df9f75a9b858b5cc9f9dcfebfe47b31961a7c559",
+          "text": "MIT License\n\nCopyright (c) 2019-present Shigma\n\nPermission is hereby granted, free of charge, to any person obtaining a copy\nof this software and associated documentation files (the \"Software\"), to deal\nin the Software without restriction, including without limitation the rights\nto use, copy, modify, merge, publish, distribute, sublicense, and/or sell\ncopies of the Software, and to permit persons to whom the Software is\nfurnished to do so, subject to the following conditions:\n\nThe above copyright notice and this permission notice shall be included in all\ncopies or substantial portions of the Software.\n\nTHE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR\nIMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,\nFITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE\nAUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER\nLIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,\nOUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE\nSOFTWARE.\n"
+        }
+      ]
+    },
+    {
+      "name": "@koishijs/plugin-adapter-qq",
+      "version": "4.14.0",
+      "location": "node_modules/@koishijs/plugin-adapter-qq",
+      "npm_integrity": "sha512-8j0LUSud0KcVoCSSwe361m9O1Bybv1KiQgz52YWL6ijr5sVfEL52NS5o/kMbv3XrP+EwECn/jgezI90KFTlIfg==",
+      "metadata_url": "https://registry.npmjs.org/%40koishijs%2Fplugin-adapter-qq/4.14.0",
+      "metadata_sha256": "852bd5a6a8242e5ce74dd38a5ba40f5ad0a607b1d89aa6e6c439b5c339fb7944",
+      "repository": {
+        "url": "git+https://github.com/koishijs/upstream.git",
+        "type": "git",
+        "directory": "adapters/qq"
+      },
+      "git_head": "705f3f418ece873e1bedc463500743b97a785060",
+      "source_url": "https://codeload.github.com/koishijs/upstream/tar.gz/705f3f418ece873e1bedc463500743b97a785060",
+      "source_file": "koishijs_upstream-705f3f418ece873e1bedc463500743b97a785060.tar.gz",
+      "source_sha256": "da89ef38d15e45a2c3c53a8de9944ba1957ecf7cd900ab51e1cdf311d464e15d",
+      "original_texts": [
+        {
+          "path": "LICENSE",
+          "sha256": "e60d87e606797ace86cbb510df9f75a9b858b5cc9f9dcfebfe47b31961a7c559",
+          "text": "MIT License\n\nCopyright (c) 2019-present Shigma\n\nPermission is hereby granted, free of charge, to any person obtaining a copy\nof this software and associated documentation files (the \"Software\"), to deal\nin the Software without restriction, including without limitation the rights\nto use, copy, modify, merge, publish, distribute, sublicense, and/or sell\ncopies of the Software, and to permit persons to whom the Software is\nfurnished to do so, subject to the following conditions:\n\nThe above copyright notice and this permission notice shall be included in all\ncopies or substantial portions of the Software.\n\nTHE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR\nIMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,\nFITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE\nAUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER\nLIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,\nOUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE\nSOFTWARE.\n"
+        }
+      ]
+    },
+    {
+      "name": "@koishijs/plugin-http",
+      "version": "0.6.3",
+      "location": "node_modules/@koishijs/plugin-http",
+      "npm_integrity": "sha512-alw51yjc6bykgZD2EsbTn03Yjwp9Mkidb1BsQn25SDwaBQqla0bZAVivFxNW1J60lneP9uymu3EUnPspvBuxog==",
+      "metadata_url": "https://registry.npmjs.org/%40koishijs%2Fplugin-http/0.6.3",
+      "metadata_sha256": "13bc71488180214a601135ce8cb8bf20397f777bd2d0bcdc0c3ef1bf4a9acab3",
+      "repository": {
+        "url": "git+https://github.com/cordiverse/http.git",
+        "type": "git",
+        "directory": "packages/core"
+      },
+      "git_head": "d06e1e9b2ad1d7ae7e31efc7f11249b1133d9450",
+      "materials_followup_20261104": {
+        "note": "Exact npm gitHead is in koishijs/koishi, not metadata repository; all runtime wrapper JS/declarations match. Source package version predates npm metadata; no rebuild/version claim. Wrapper JS is preferred form; delegated Cordis package remains separately licensed.",
+        "npm_sha256": "3fc813dfefea83993103784da11d196424f5a13812886d9212014d637f86b8e8",
+        "followup": {
+          "source_sha256": "979174b8f609758314b9f92d2544e7526f02b5729a5e905eeeb69823b7ab3759",
+          "source_commit": "d06e1e9b2ad1d7ae7e31efc7f11249b1133d9450",
+          "source_repository": "koishijs/koishi",
+          "packages": [
+            [
+              "plugins/http/package.json",
+              "0.6.1"
+            ]
+          ],
+          "npm_matches": {
+            "index.cjs": [
+              "plugins/http/index.cjs"
+            ],
+            "index.d.ts": [
+              "plugins/http/index.d.ts",
+              "plugins/http/index.mjs"
+            ],
+            "index.mjs": [
+              "plugins/http/index.d.ts",
+              "plugins/http/index.mjs"
+            ],
+            "package.json": [],
+            "readme.md": [
+              "plugins/http/readme.md"
+            ]
+          }
+        }
+      },
+      "original_texts": [
+        {
+          "path": "followup-source:LICENSE",
+          "sha256": "e60d87e606797ace86cbb510df9f75a9b858b5cc9f9dcfebfe47b31961a7c559",
+          "text": "MIT License\n\nCopyright (c) 2019-present Shigma\n\nPermission is hereby granted, free of charge, to any person obtaining a copy\nof this software and associated documentation files (the \"Software\"), to deal\nin the Software without restriction, including without limitation the rights\nto use, copy, modify, merge, publish, distribute, sublicense, and/or sell\ncopies of the Software, and to permit persons to whom the Software is\nfurnished to do so, subject to the following conditions:\n\nThe above copyright notice and this permission notice shall be included in all\ncopies or substantial portions of the Software.\n\nTHE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR\nIMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,\nFITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE\nAUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER\nLIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,\nOUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE\nSOFTWARE.\n"
+        }
+      ]
+    },
+    {
+      "name": "@koishijs/plugin-proxy-agent",
+      "version": "0.3.3",
+      "location": "node_modules/@koishijs/plugin-proxy-agent",
+      "npm_integrity": "sha512-pOpsHNVn3RVpPwdQjHNBRFsuq02sAS5NRVSuWWSHBPwIQ+QWu5232Au9RVH/DHBvx6XLWOm+WePMo4gRaxsVgg==",
+      "metadata_url": "https://registry.npmjs.org/%40koishijs%2Fplugin-proxy-agent/0.3.3",
+      "metadata_sha256": "0b7c50a6e3d32378955830c3a00c1bbdff48f28900d751b4b81c23fcd7032811",
+      "repository": {
+        "url": "git+https://github.com/cordiverse/http.git",
+        "type": "git",
+        "directory": "packages/proxy-agent"
+      },
+      "git_head": "b2462893f99a78e7e98bd0ef110f253eebf0a337",
+      "materials_followup_20261104": {
+        "note": "Exact npm gitHead is in koishijs/koishi, not metadata repository; all runtime wrapper JS/declarations match. Source package version predates npm metadata; no rebuild/version claim. Wrapper JS is preferred form; delegated Cordis package remains separately licensed.",
+        "npm_sha256": "826f26551762f9db75c03cdc8087c1a45b8a793c4f9317cf68f23fc2171816ef",
+        "followup": {
+          "source_sha256": "6dbcff3966bff01fef4061cac20f05592eefb426556d83d592e40996cef16093",
+          "source_commit": "b2462893f99a78e7e98bd0ef110f253eebf0a337",
+          "source_repository": "koishijs/koishi",
+          "packages": [
+            [
+              "plugins/proxy-agent/package.json",
+              "0.3.2"
+            ]
+          ],
+          "npm_matches": {
+            "index.cjs": [
+              "plugins/proxy-agent/index.cjs"
+            ],
+            "index.d.ts": [
+              "plugins/proxy-agent/index.d.ts",
+              "plugins/proxy-agent/index.mjs"
+            ],
+            "index.mjs": [
+              "plugins/proxy-agent/index.d.ts",
+              "plugins/proxy-agent/index.mjs"
+            ],
+            "package.json": [],
+            "readme.md": [
+              "plugins/proxy-agent/readme.md"
+            ]
+          }
+        }
+      },
+      "original_texts": [
+        {
+          "path": "followup-source:LICENSE",
+          "sha256": "e60d87e606797ace86cbb510df9f75a9b858b5cc9f9dcfebfe47b31961a7c559",
+          "text": "MIT License\n\nCopyright (c) 2019-present Shigma\n\nPermission is hereby granted, free of charge, to any person obtaining a copy\nof this software and associated documentation files (the \"Software\"), to deal\nin the Software without restriction, including without limitation the rights\nto use, copy, modify, merge, publish, distribute, sublicense, and/or sell\ncopies of the Software, and to permit persons to whom the Software is\nfurnished to do so, subject to the following conditions:\n\nThe above copyright notice and this permission notice shall be included in all\ncopies or substantial portions of the Software.\n\nTHE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR\nIMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,\nFITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE\nAUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER\nLIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,\nOUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE\nSOFTWARE.\n"
+        }
+      ]
+    },
+    {
+      "name": "@koishijs/plugin-server",
+      "version": "3.2.9",
+      "location": "node_modules/@koishijs/plugin-server",
+      "npm_integrity": "sha512-LP7Y36Y73d1DjZ4U7rDwsb4/hSBhPIPMBSS3xt4gcmbe5VZLdFHJsRewbXdIzuiYjBN1v+Ft/h+ejrM7liVNLg==",
+      "metadata_url": "https://registry.npmjs.org/%40koishijs%2Fplugin-server/3.2.9",
+      "metadata_sha256": "64e30d7986e64301aa14e6c956ab5c47672fe7d8a5f373bed30f1f4ecdb2e25d",
+      "repository": {
+        "url": "git+https://github.com/koishijs/koishi.git",
+        "type": "git",
+        "directory": "plugins/server"
+      },
+      "git_head": "fb6e2c092242c0387f07f36e21082d5715c48449",
+      "source_url": "https://codeload.github.com/koishijs/koishi/tar.gz/fb6e2c092242c0387f07f36e21082d5715c48449",
+      "source_file": "koishijs_koishi-fb6e2c092242c0387f07f36e21082d5715c48449.tar.gz",
+      "source_sha256": "0850b55776dfc0f83baf395de349fd3c37435c91097bbdcbb8d4c83ec37f5046",
+      "original_texts": [
+        {
+          "path": "LICENSE",
+          "sha256": "e60d87e606797ace86cbb510df9f75a9b858b5cc9f9dcfebfe47b31961a7c559",
+          "text": "MIT License\n\nCopyright (c) 2019-present Shigma\n\nPermission is hereby granted, free of charge, to any person obtaining a copy\nof this software and associated documentation files (the \"Software\"), to deal\nin the Software without restriction, including without limitation the rights\nto use, copy, modify, merge, publish, distribute, sublicense, and/or sell\ncopies of the Software, and to permit persons to whom the Software is\nfurnished to do so, subject to the following conditions:\n\nThe above copyright notice and this permission notice shall be included in all\ncopies or substantial portions of the Software.\n\nTHE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR\nIMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,\nFITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE\nAUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER\nLIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,\nOUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE\nSOFTWARE.\n"
+        }
+      ]
+    },
+    {
+      "name": "@koishijs/utils",
+      "version": "7.3.2",
+      "location": "node_modules/@koishijs/utils",
+      "npm_integrity": "sha512-x9kEB/nM6l+Uqtnaqqf/FyuOxcT7snp+zu0oTEgV8Z7aZ7eBfuf3Ac1CTAlaiyGPW1aOgXMUg7WL44yVIfRlOw==",
+      "metadata_url": "https://registry.npmjs.org/%40koishijs%2Futils/7.3.2",
+      "metadata_sha256": "4c9bf45a3f41864c1af61c99b30631201cd8190cb94b9e487c65d91b10a056c6",
+      "repository": {
+        "url": "git+https://github.com/koishijs/koishi.git",
+        "type": "git",
+        "directory": "packages/utils"
+      },
+      "git_head": "d1dade95dc0c833ec5dc0bd3b89cdb9dfe9e0f1c",
+      "source_url": "https://codeload.github.com/koishijs/koishi/tar.gz/d1dade95dc0c833ec5dc0bd3b89cdb9dfe9e0f1c",
+      "source_file": "koishijs_koishi-d1dade95dc0c833ec5dc0bd3b89cdb9dfe9e0f1c.tar.gz",
+      "source_sha256": "f9177e8702e6ed6fda6294af0a0c2df8375a8b61ef48d075fe4d271c28968489",
+      "original_texts": [
+        {
+          "path": "LICENSE",
+          "sha256": "e60d87e606797ace86cbb510df9f75a9b858b5cc9f9dcfebfe47b31961a7c559",
+          "text": "MIT License\n\nCopyright (c) 2019-present Shigma\n\nPermission is hereby granted, free of charge, to any person obtaining a copy\nof this software and associated documentation files (the \"Software\"), to deal\nin the Software without restriction, including without limitation the rights\nto use, copy, modify, merge, publish, distribute, sublicense, and/or sell\ncopies of the Software, and to permit persons to whom the Software is\nfurnished to do so, subject to the following conditions:\n\nThe above copyright notice and this permission notice shall be included in all\ncopies or substantial portions of the Software.\n\nTHE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR\nIMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,\nFITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE\nAUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER\nLIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,\nOUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE\nSOFTWARE.\n"
+        }
+      ]
+    },
+    {
+      "name": "@satorijs/adapter-qq",
+      "version": "4.14.0",
+      "location": "node_modules/@satorijs/adapter-qq",
+      "npm_integrity": "sha512-poe/T0XWGAyheBX/A5q4eaFx/59wlV1Bw2CPDt4tCH/WGwJpfJtINNcBwpt6ubh0eNAV7d9b2LzczSKZYP9bKQ==",
+      "metadata_url": "https://registry.npmjs.org/%40satorijs%2Fadapter-qq/4.14.0",
+      "metadata_sha256": "51e524a60e5342bdd45d2cbab584c2044ad3cc641e7a333e8c354890aa1034ca",
+      "repository": {
+        "url": "git+https://github.com/satorijs/satori.git",
+        "type": "git",
+        "directory": "adapters/qq"
+      },
+      "git_head": "fbc093fd730b97171f41c4f7ff6219326ff05c1c",
+      "source_url": "https://codeload.github.com/satorijs/satori/tar.gz/fbc093fd730b97171f41c4f7ff6219326ff05c1c",
+      "source_file": "satorijs_satori-fbc093fd730b97171f41c4f7ff6219326ff05c1c.tar.gz",
+      "source_sha256": "99d911ee3029700eeccdcb8aad881e0a1d486c5fb008269ca7427e48c67e391e",
+      "original_texts": [
+        {
+          "path": "LICENSE",
+          "sha256": "e60d87e606797ace86cbb510df9f75a9b858b5cc9f9dcfebfe47b31961a7c559",
+          "text": "MIT License\n\nCopyright (c) 2019-present Shigma\n\nPermission is hereby granted, free of charge, to any person obtaining a copy\nof this software and associated documentation files (the \"Software\"), to deal\nin the Software without restriction, including without limitation the rights\nto use, copy, modify, merge, publish, distribute, sublicense, and/or sell\ncopies of the Software, and to permit persons to whom the Software is\nfurnished to do so, subject to the following conditions:\n\nThe above copyright notice and this permission notice shall be included in all\ncopies or substantial portions of the Software.\n\nTHE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR\nIMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,\nFITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE\nAUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER\nLIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,\nOUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE\nSOFTWARE.\n"
+        }
+      ]
+    },
+    {
+      "name": "@satorijs/core",
+      "version": "4.6.0",
+      "location": "node_modules/@satorijs/core",
+      "npm_integrity": "sha512-qckF668QfV3ifGLlyvmfyrghD7kTotgEbo3BBQsaOa4QTccBbvUhIayy2GgBQh1/scEkRuhTFlOgIdmCX8i2DQ==",
+      "metadata_url": "https://registry.npmjs.org/%40satorijs%2Fcore/4.6.0",
+      "metadata_sha256": "1b9e90b0ffb6faab23bf0682c67a0db53a868d50986e53eaa7d247ce10fe5ab8",
+      "repository": {
+        "url": "git+https://github.com/satorijs/satori.git",
+        "type": "git",
+        "directory": "packages/core"
+      },
+      "git_head": "0c6a7ddd9a1979c4ccc43b3145b11faf9d2ad7fd",
+      "source_url": "https://codeload.github.com/satorijs/satori/tar.gz/0c6a7ddd9a1979c4ccc43b3145b11faf9d2ad7fd",
+      "source_file": "satorijs_satori-0c6a7ddd9a1979c4ccc43b3145b11faf9d2ad7fd.tar.gz",
+      "source_sha256": "cd550238503d24814f5caea685946d4618bd28e7b4c2ca73f2a7c7259b191e40",
+      "original_texts": [
+        {
+          "path": "LICENSE",
+          "sha256": "e60d87e606797ace86cbb510df9f75a9b858b5cc9f9dcfebfe47b31961a7c559",
+          "text": "MIT License\n\nCopyright (c) 2019-present Shigma\n\nPermission is hereby granted, free of charge, to any person obtaining a copy\nof this software and associated documentation files (the \"Software\"), to deal\nin the Software without restriction, including without limitation the rights\nto use, copy, modify, merge, publish, distribute, sublicense, and/or sell\ncopies of the Software, and to permit persons to whom the Software is\nfurnished to do so, subject to the following conditions:\n\nThe above copyright notice and this permission notice shall be included in all\ncopies or substantial portions of the Software.\n\nTHE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR\nIMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,\nFITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE\nAUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER\nLIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,\nOUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE\nSOFTWARE.\n"
+        }
+      ]
+    },
+    {
+      "name": "@satorijs/element",
+      "version": "3.2.0",
+      "location": "node_modules/@satorijs/element",
+      "npm_integrity": "sha512-33qcYGDmNNjG2zIDpOfMgUsxPK1EqAkiyz4O78X4G96P8RixBH14KeCyxl8ufEqDUQahGz1BIO3jk+TKpfw8jA==",
+      "metadata_url": "https://registry.npmjs.org/%40satorijs%2Felement/3.2.0",
+      "metadata_sha256": "deffd9add1aec2ec2608a9ac6434e316caf08d8241417eb0335d5ee2b67a16fc",
+      "repository": {
+        "url": "git+https://github.com/satorijs/satori.git",
+        "type": "git",
+        "directory": "packages/message"
+      },
+      "git_head": "0c6a7ddd9a1979c4ccc43b3145b11faf9d2ad7fd",
+      "source_url": "https://codeload.github.com/satorijs/satori/tar.gz/0c6a7ddd9a1979c4ccc43b3145b11faf9d2ad7fd",
+      "source_file": "satorijs_satori-0c6a7ddd9a1979c4ccc43b3145b11faf9d2ad7fd.tar.gz",
+      "source_sha256": "cd550238503d24814f5caea685946d4618bd28e7b4c2ca73f2a7c7259b191e40",
+      "original_texts": [
+        {
+          "path": "LICENSE",
+          "sha256": "e60d87e606797ace86cbb510df9f75a9b858b5cc9f9dcfebfe47b31961a7c559",
+          "text": "MIT License\n\nCopyright (c) 2019-present Shigma\n\nPermission is hereby granted, free of charge, to any person obtaining a copy\nof this software and associated documentation files (the \"Software\"), to deal\nin the Software without restriction, including without limitation the rights\nto use, copy, modify, merge, publish, distribute, sublicense, and/or sell\ncopies of the Software, and to permit persons to whom the Software is\nfurnished to do so, subject to the following conditions:\n\nThe above copyright notice and this permission notice shall be included in all\ncopies or substantial portions of the Software.\n\nTHE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR\nIMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,\nFITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE\nAUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER\nLIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,\nOUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE\nSOFTWARE.\n"
+        }
+      ]
+    },
+    {
+      "name": "@satorijs/protocol",
+      "version": "1.7.0",
+      "location": "node_modules/@satorijs/protocol",
+      "npm_integrity": "sha512-ODSBVzdn7s9tw3XGFGYZ1MnjbA1jctwSleJTsyk/lAjyNziOFKNP5nIBAcw0r547dvXBweZNudnCqod6Ts+hqw==",
+      "metadata_url": "https://registry.npmjs.org/%40satorijs%2Fprotocol/1.7.0",
+      "metadata_sha256": "546258baebc7824aa431bf01905bbfdaa60e5837c46c0213453bc738035b04a9",
+      "repository": {
+        "url": "git+https://github.com/satorijs/satori.git",
+        "type": "git",
+        "directory": "packages/protocol"
+      },
+      "git_head": "0c6a7ddd9a1979c4ccc43b3145b11faf9d2ad7fd",
+      "source_url": "https://codeload.github.com/satorijs/satori/tar.gz/0c6a7ddd9a1979c4ccc43b3145b11faf9d2ad7fd",
+      "source_file": "satorijs_satori-0c6a7ddd9a1979c4ccc43b3145b11faf9d2ad7fd.tar.gz",
+      "source_sha256": "cd550238503d24814f5caea685946d4618bd28e7b4c2ca73f2a7c7259b191e40",
+      "original_texts": [
+        {
+          "path": "LICENSE",
+          "sha256": "e60d87e606797ace86cbb510df9f75a9b858b5cc9f9dcfebfe47b31961a7c559",
+          "text": "MIT License\n\nCopyright (c) 2019-present Shigma\n\nPermission is hereby granted, free of charge, to any person obtaining a copy\nof this software and associated documentation files (the \"Software\"), to deal\nin the Software without restriction, including without limitation the rights\nto use, copy, modify, merge, publish, distribute, sublicense, and/or sell\ncopies of the Software, and to permit persons to whom the Software is\nfurnished to do so, subject to the following conditions:\n\nThe above copyright notice and this permission notice shall be included in all\ncopies or substantial portions of the Software.\n\nTHE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR\nIMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,\nFITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE\nAUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER\nLIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,\nOUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE\nSOFTWARE.\n"
+        }
+      ]
+    },
+    {
+      "name": "@tokenizer/token",
+      "version": "0.3.0",
+      "location": "node_modules/@tokenizer/token",
+      "npm_integrity": "sha512-OvjF+z51L3ov0OyAU0duzsYuvO01PH7x4t6DJx+guahgTnBHkhJdG7soQeTSFLWN3efnHyibZ4Z8l2EuWwJN3A==",
+      "metadata_url": "https://registry.npmjs.org/%40tokenizer%2Ftoken/0.3.0",
+      "metadata_sha256": "506b2cbb65b0292a53d41d07ebe17712f7c885772e49e5151ae27fbd3ba87b11",
+      "repository": {
+        "url": "git+https://github.com/Borewit/tokenizer-token.git",
+        "type": "git"
+      },
+      "git_head": "e068a455370090f44c757946b8571bb3fb1f117e",
+      "source_url": "https://codeload.github.com/Borewit/tokenizer-token/tar.gz/e068a455370090f44c757946b8571bb3fb1f117e",
+      "source_file": "Borewit_tokenizer-token-e068a455370090f44c757946b8571bb3fb1f117e.tar.gz",
+      "source_sha256": "050991be0ad19d721514ecbf2d2b08fd4c89c7a5c725f97e3486a032b7bb8a48",
+      "original_texts": [
+        {
+          "path": "README.md",
+          "sha256": "844148fa5d91a03c6ada823a207f43aabdcd4c79d73ceb2276571127787c9228",
+          "text": "[![npm version](https://badge.fury.io/js/%40tokenizer%2Ftoken.svg)](https://www.npmjs.com/package/@tokenizer/token)\n[![npm downloads](http://img.shields.io/npm/dm/@tokenizer/token.svg)](https://npmcharts.com/compare/@tokenizer/token?interval=30)\n\n# @tokenizer/token\n\nTypeScript definition of an [strtok3](https://github.com/Borewit/strtok3) token.\n\n## Licence\n\n(The MIT License)\n\nCopyright (c) 2020 Borewit\n\nPermission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the 'Software'), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:\n\nThe above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.\n\nTHE SOFTWARE IS PROVIDED 'AS IS', WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.\n\n"
+        }
+      ]
+    },
+    {
+      "name": "cordis",
+      "version": "3.18.1",
+      "location": "node_modules/cordis",
+      "npm_integrity": "sha512-9IbthFbFBVJ15WBDNPqHdl59TyEAMNWxF1Dxsdi14625ePQkMX35WvcqgGno0BcXlpXDbUaBZgQ+jfBYT+uuSQ==",
+      "metadata_url": "https://registry.npmjs.org/cordis/3.18.1",
+      "metadata_sha256": "5e4defae41832c30b4392bdbbc623d23108042512a5f32f706c3e5fbb6dfdf10",
+      "repository": {
+        "url": "git+https://github.com/cordiverse/cordis.git",
+        "type": "git",
+        "directory": "packages/cli"
+      },
+      "git_head": "4658414e9414464ff1d08d076882fb66c1a3bb1c",
+      "source_url": "https://codeload.github.com/cordiverse/cordis/tar.gz/4658414e9414464ff1d08d076882fb66c1a3bb1c",
+      "source_file": "cordiverse_cordis-4658414e9414464ff1d08d076882fb66c1a3bb1c.tar.gz",
+      "source_sha256": "065d639344b5fc37916d5d87391f60d359646dac3965a94d8c0d630bbb4d026b",
+      "original_texts": [
+        {
+          "path": "LICENSE",
+          "sha256": "034fb52b1d57360ecbae6cb1632a88f86fd7c3d3f5631a5f082710203dda0be7",
+          "text": "MIT License\n\nCopyright (c) 2021-present Shigma\n\nPermission is hereby granted, free of charge, to any person obtaining a copy\nof this software and associated documentation files (the \"Software\"), to deal\nin the Software without restriction, including without limitation the rights\nto use, copy, modify, merge, publish, distribute, sublicense, and/or sell\ncopies of the Software, and to permit persons to whom the Software is\nfurnished to do so, subject to the following conditions:\n\nThe above copyright notice and this permission notice shall be included in all\ncopies or substantial portions of the Software.\n\nTHE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR\nIMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,\nFITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE\nAUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER\nLIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,\nOUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE\nSOFTWARE.\n"
+        }
+      ]
+    },
+    {
+      "name": "koa-compose",
+      "version": "4.1.0",
+      "location": "node_modules/koa-compose",
+      "npm_integrity": "sha512-8ODW8TrDuMYvXRwra/Kh7/rJo9BtOfPc6qO8eAfC80CnCvSjSl0bkRM24X6/XBBEyj0v1nRUQ1LyOy3dbqOWXw==",
+      "metadata_url": "https://registry.npmjs.org/koa-compose/4.1.0",
+      "metadata_sha256": "c41a797135b0075815bafb078f865ee34f460f76de0810ed36c430f361dff317",
+      "repository": {
+        "url": "git+https://github.com/koajs/compose.git",
+        "type": "git"
+      },
+      "git_head": "06e82e65a368ac12cd6405beaf19fd5d208a1477",
+      "source_url": "https://codeload.github.com/koajs/compose/tar.gz/06e82e65a368ac12cd6405beaf19fd5d208a1477",
+      "source_file": "koajs_compose-06e82e65a368ac12cd6405beaf19fd5d208a1477.tar.gz",
+      "source_sha256": "c2e4ef4eb3e7ef77ab5a50cdb51af67aaca5a81aed3e4ce81d8fde06b59738f5",
+      "original_texts": [
+        {
+          "path": "followup-source:LICENSE",
+          "sha256": "44a7ca64cb59fbe6481a7260e4317ff0177127a6e50e6077a9bfa60f89f905a2",
+          "text": "\nThe MIT License (MIT)\n\nCopyright (c) 2013 TJ Holowaychuk tj@apex.sh\n\nPermission is hereby granted, free of charge, to any person obtaining a copy\nof this software and associated documentation files (the \"Software\"), to deal\nin the Software without restriction, including without limitation the rights\nto use, copy, modify, merge, publish, distribute, sublicense, and/or sell\ncopies of the Software, and to permit persons to whom the Software is\nfurnished to do so, subject to the following conditions:\n\nThe above copyright notice and this permission notice shall be included in\nall copies or substantial portions of the Software.\n\nTHE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR\nIMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,\nFITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE\nAUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER\nLIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,\nOUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN\nTHE SOFTWARE.\n"
+        }
+      ],
+      "materials_followup_20261104": {
+        "note": "Exact npm source declares MIT. Official LICENSE-add commit 903480c36957776f8561a33a840cdd0a06ad611f supplies original full text; runtime JS differs only by removing one semicolon. This is later same-project text, not a file present in 4.1.0 npm. Difference retained.",
+        "npm_sha256": "878ca5a547ac938f33fb153ff3304150b9c621c366bad174ddb5ef13a09f06b1",
+        "followup": {
+          "source_url": "https://codeload.github.com/koajs/compose/tar.gz/903480c36957776f8561a33a840cdd0a06ad611f",
+          "source_commit": "903480c36957776f8561a33a840cdd0a06ad611f",
+          "source_sha256": "140dfcf376b17b524812b9fc05479e639bde41509516ba26f85c86709aa7813f",
+          "packages": [
+            [
+              "package.json",
+              "4.2.0"
+            ]
+          ],
+          "npm_matches": {
+            "package.json": [],
+            "History.md": [
+              "History.md"
+            ],
+            "index.js": [],
+            "Readme.md": []
+          }
+        }
+      }
+    },
+    {
+      "name": "koishi",
+      "version": "4.18.11",
+      "location": "node_modules/koishi",
+      "npm_integrity": "sha512-WPpPFb5G/bChcV+cKF4EU3o5kmdQHc0Wg9nWP2/QT4dTzADSIYOmgwssO706fo97tfGF8Xa716CINHTzAPbXlg==",
+      "metadata_url": "https://registry.npmjs.org/koishi/4.18.11",
+      "metadata_sha256": "1baf55f54abc05f539f2ac22fc2c0c5a4678a4669e6cb8ef1a3fa3d5bc4ef0e8",
+      "repository": {
+        "url": "git+https://github.com/koishijs/koishi.git",
+        "type": "git"
+      },
+      "git_head": "506be1ef16d9c0c0f04069fb4b2f0a403cc19833",
+      "source_url": "https://codeload.github.com/koishijs/koishi/tar.gz/506be1ef16d9c0c0f04069fb4b2f0a403cc19833",
+      "source_file": "koishijs_koishi-506be1ef16d9c0c0f04069fb4b2f0a403cc19833.tar.gz",
+      "source_sha256": "9bc757670aa916eb0b07a2d9824bf4f5442eadd2317eea55cc90971779aef6bd",
+      "original_texts": [
+        {
+          "path": "LICENSE",
+          "sha256": "e60d87e606797ace86cbb510df9f75a9b858b5cc9f9dcfebfe47b31961a7c559",
+          "text": "MIT License\n\nCopyright (c) 2019-present Shigma\n\nPermission is hereby granted, free of charge, to any person obtaining a copy\nof this software and associated documentation files (the \"Software\"), to deal\nin the Software without restriction, including without limitation the rights\nto use, copy, modify, merge, publish, distribute, sublicense, and/or sell\ncopies of the Software, and to permit persons to whom the Software is\nfurnished to do so, subject to the following conditions:\n\nThe above copyright notice and this permission notice shall be included in all\ncopies or substantial portions of the Software.\n\nTHE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR\nIMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,\nFITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE\nAUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER\nLIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,\nOUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE\nSOFTWARE.\n"
+        }
+      ]
+    },
+    {
+      "name": "minato",
+      "version": "3.7.0",
+      "location": "node_modules/minato",
+      "npm_integrity": "sha512-xAzwgAYq5oGVjIe+d5iSPhNjxqU6Pxp7C4d+W1ux5v5yvobCVZx88SQB53IrfIEUPJIsEwebd7DM/aCDhc+u4g==",
+      "metadata_url": "https://registry.npmjs.org/minato/3.7.0",
+      "metadata_sha256": "e85771253db299f5c5b57b61c7e7ad481677b6cca783e4f7cdfdec888c8a1180",
+      "repository": {
+        "url": "git+https://github.com/cordiverse/minato.git",
+        "type": "git",
+        "directory": "packages/core"
+      },
+      "git_head": "e64c38b34bd745a0d7d07180e72b556ff2fa9ece",
+      "source_url": "https://codeload.github.com/cordiverse/minato/tar.gz/e64c38b34bd745a0d7d07180e72b556ff2fa9ece",
+      "source_file": "cordiverse_minato-e64c38b34bd745a0d7d07180e72b556ff2fa9ece.tar.gz",
+      "source_sha256": "ae2c4f6d1371a31673379f08df5b41a98cb28c6a2445e931e8a40d54d8a2c15c",
+      "original_texts": [
+        {
+          "path": "LICENSE",
+          "sha256": "e60d87e606797ace86cbb510df9f75a9b858b5cc9f9dcfebfe47b31961a7c559",
+          "text": "MIT License\n\nCopyright (c) 2019-present Shigma\n\nPermission is hereby granted, free of charge, to any person obtaining a copy\nof this software and associated documentation files (the \"Software\"), to deal\nin the Software without restriction, including without limitation the rights\nto use, copy, modify, merge, publish, distribute, sublicense, and/or sell\ncopies of the Software, and to permit persons to whom the Software is\nfurnished to do so, subject to the following conditions:\n\nThe above copyright notice and this permission notice shall be included in all\ncopies or substantial portions of the Software.\n\nTHE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR\nIMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,\nFITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE\nAUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER\nLIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,\nOUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE\nSOFTWARE.\n"
+        }
+      ]
+    },
+    {
+      "name": "only",
+      "version": "0.0.2",
+      "location": "node_modules/only",
+      "npm_integrity": "sha512-Fvw+Jemq5fjjyWz6CpKx6w9s7xxqo3+JCyM0WXWeCSOboZ8ABkyvP8ID4CZuChA/wxSx+XSJmdOm8rGVyJ1hdQ==",
+      "metadata_url": "https://registry.npmjs.org/only/0.0.2",
+      "metadata_sha256": "4dc020a58674db4028901eba2e7e9833a02eb884c9c85946b0dbf2f943387b65",
+      "repository": {
+        "url": "git://github.com/visionmedia/node-only",
+        "type": "git"
+      },
+      "git_head": null,
+      "materials_followup_20261104": {
+        "note": "Exact npm Readme.md contains full MIT text; official 0.0.2 tag 61a61534ffadb26ac6171d604a6774d2420d3010 matches all five non-package.json files; JS is preferred source.",
+        "npm_sha256": "94512326421b3c25aa63b891a3f0f48022385620de23c8e191b6abd918d13592",
+        "followup": {
+          "source_url": "https://codeload.github.com/tj/node-only/tar.gz/61a61534ffadb26ac6171d604a6774d2420d3010",
+          "source_commit": "61a61534ffadb26ac6171d604a6774d2420d3010",
+          "source_sha256": "b90168a9d598761941ac66f64127a1d07f8b38c4d16f0f1eb8742c3fb729118c",
+          "packages": [
+            [
+              "package.json",
+              "0.0.2"
+            ]
+          ],
+          "npm_matches": {
+            "package.json": [
+              "package.json"
+            ],
+            ".npmignore": [
+              ".npmignore"
+            ],
+            "index.js": [
+              "index.js"
+            ],
+            "History.md": [
+              "History.md"
+            ],
+            "Makefile": [
+              "Makefile"
+            ],
+            "Readme.md": [
+              "Readme.md"
+            ]
+          }
+        }
+      },
+      "original_texts": [
+        {
+          "path": "npm:Readme.md",
+          "sha256": "d7f53d74f8c810c4516d316c309360b771e511189923b4def4169085e742bfa6",
+          "text": "\n# only\n\n  Return whitelisted properties of an object.\n\n## Installation\n\n    $ npm install only\n\n## API\n\n An array or space-delimited string may be given:\n\n```js\nvar obj = {\n  name: 'tobi',\n  last: 'holowaychuk',\n  email: 'tobi@learnboost.com',\n  _id: '12345'\n};\n\nvar user = only(obj, 'name last email');\n```\n\nyields:\n\n```js\n{\n  name: 'tobi',\n  last: 'holowaychuk',\n  email: 'tobi@learnboost.com'\n}\n```\n\n## License \n\n(The MIT License)\n\nCopyright (c) 2012 TJ Holowaychuk &lt;tj@vision-media.ca&gt;\n\nPermission is hereby granted, free of charge, to any person obtaining\na copy of this software and associated documentation files (the\n'Software'), to deal in the Software without restriction, including\nwithout limitation the rights to use, copy, modify, merge, publish,\ndistribute, sublicense, and/or sell copies of the Software, and to\npermit persons to whom the Software is furnished to do so, subject to\nthe following conditions:\n\nThe above copyright notice and this permission notice shall be\nincluded in all copies or substantial portions of the Software.\n\nTHE SOFTWARE IS PROVIDED 'AS IS', WITHOUT WARRANTY OF ANY KIND,\nEXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF\nMERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.\nIN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY\nCLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,\nTORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE\nSOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE."
+        }
+      ]
+    },
+    {
+      "name": "readable-web-to-node-stream",
+      "version": "3.0.4",
+      "location": "node_modules/readable-web-to-node-stream",
+      "npm_integrity": "sha512-9nX56alTf5bwXQ3ZDipHJhusu9NTQJ/CVPtb/XHAJCXihZeitfJvIRS4GqQ/mfIoOE3IelHMrpayVrosdHBuLw==",
+      "metadata_url": "https://registry.npmjs.org/readable-web-to-node-stream/3.0.4",
+      "metadata_sha256": "67fb3c0143c1a3e3901a854bfc827b7380371c468e162c5253db1c766b0b6e7e",
+      "repository": {
+        "url": "git+https://github.com/Borewit/readable-web-to-node-stream.git",
+        "type": "git"
+      },
+      "git_head": "dcaea1e302f51bcb7d401fbd67374bb4c22bf788",
+      "source_url": "https://codeload.github.com/Borewit/readable-web-to-node-stream/tar.gz/dcaea1e302f51bcb7d401fbd67374bb4c22bf788",
+      "source_file": "Borewit_readable-web-to-node-stream-dcaea1e302f51bcb7d401fbd67374bb4c22bf788.tar.gz",
+      "source_sha256": "7fdc234a990136efbd3423e0f1fcac6f49ff9a213fdfbe4be960188002844aaa",
+      "original_texts": [
+        {
+          "path": "README.md",
+          "sha256": "bf6632af37c616d926818df6abb4af91d5b6d79959901504654ed4aa88c3f4d9",
+          "text": "[![CI browser tests](https://github.com/Borewit/readable-web-to-node-stream/actions/workflows/xvfb-ci.yml/badge.svg)](https://github.com/Borewit/readable-web-to-node-stream/actions/workflows/xvfb-ci.yml)\n[![NPM version](https://badge.fury.io/js/readable-web-to-node-stream.svg)](https://npmjs.org/package/readable-web-to-node-stream)\n[![npm downloads](http://img.shields.io/npm/dm/readable-web-to-node-stream.svg)](https://npmcharts.com/compare/readable-web-to-node-stream)\n[![Known Vulnerabilities](https://snyk.io/test/github/Borewit/readable-web-to-node-stream/badge.svg?targetFile=package.json)](https://snyk.io/test/github/Borewit/readable-web-to-node-stream?targetFile=package.json)\n[![Codacy Badge](https://app.codacy.com/project/badge/Grade/d4b511481b3a4634b6ca5c0724407eb9)](https://www.codacy.com/gh/Borewit/peek-readable/dashboard?utm_source=github.com&amp;utm_medium=referral&amp;utm_content=Borewit/peek-readable&amp;utm_campaign=Badge_Grade)\n[![Coverage Status](https://coveralls.io/repos/github/Borewit/readable-web-to-node-stream/badge.svg?branch=master)](https://coveralls.io/github/Borewit/readable-web-to-node-stream?branch=master)\n[![Minified size](https://badgen.net/bundlephobia/min/readable-web-to-node-stream)](https://bundlephobia.com/result?p=readable-web-to-node-stream)\n\n# readable-web-to-node-stream\n\nConverts a [Web-API readable stream](https://developer.mozilla.org/en-US/docs/Web/API/ReadableStreamDefaultReader) into a [Node.js readable stream](https://nodejs.org/api/stream.html#stream_readable_streams).\n\nTo covert the other way around, from [Node.js readable stream](https://nodejs.org/api/stream.html#stream_readable_streams) to [Web-API readable stream](https://developer.mozilla.org/en-US/docs/Web/API/ReadableStreamDefaultReader), \nyou may use [node-readable-to-web-readable-stream](https://github.com/Borewit/node-readable-to-web-readable-stream).\n\n## Installation\nInstall via [npm](http://npmjs.org/):\n\n```bash\nnpm install readable-web-to-node-stream\n```\nor [yarn](https://yarnpkg.com/):\n```bash\nyarn add readable-web-to-node-stream\n```\n\n## Compatibility\n\nSource is written in TypeScript and compiled to ECMAScript 2017 (ES8).\n\nUnit tests are performed on the following browsers:\n*   Latest Google Chrome 74.0\n\n \n## Example\n\nImport readable-web-stream-to-node in JavaScript:\n```js\nconst {ReadableWebToNodeStream} = require('readable-web-to-node-stream');\n\nasync function download(url) {\n    const response = await fetch(url);\n    const readableWebStream = response.body;\n    const nodeStream = new ReadableWebToNodeStream(readableWebStream);\n}\n```\n\n## API\n\n**constructor(stream: ReadableStream): Promise<void>**\n\n`stream: ReadableStream`: the [Web-API readable stream](https://developer.mozilla.org/en-US/docs/Web/API/ReadableStreamDefaultReader).\n\n**close(): Promise<void>**\nWill cancel close the Readable-node stream, and will release Web-API-readable-stream.\n\n**waitForReadToComplete(): Promise<void>**\nIf there is no unresolved read call to Web-API Readable​Stream immediately returns, otherwise it will wait until the read is resolved.\n\n## Licence\n\n(The MIT License)\n\nCopyright (c) 2019 Borewit\n\nPermission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the 'Software'), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:\n\nThe above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.\n\nTHE SOFTWARE IS PROVIDED 'AS IS', WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.\n"
+        }
+      ]
+    },
+    {
+      "name": "schemastery",
+      "version": "3.18.0",
+      "location": "node_modules/schemastery",
+      "npm_integrity": "sha512-Jw2uxjoyyqc/yeurmChUEc/jbi8GsrdXV/KmqRUDZXJAXAmrJiPsz8vKa17l/VckyzljHZ9oGaul443CQiXxtA==",
+      "metadata_url": "https://registry.npmjs.org/schemastery/3.18.0",
+      "metadata_sha256": "95f2ce7fb386dd50ba738535387bd8abf92ea71c60d682273d0b66241d770060",
+      "repository": {
+        "url": "git+https://github.com/shigma/schemastery.git",
+        "type": "git",
+        "directory": "packages/core"
+      },
+      "git_head": "9e1f54f8ff785a4e51a022922999634205b61e1f",
+      "source_url": "https://codeload.github.com/shigma/schemastery/tar.gz/9e1f54f8ff785a4e51a022922999634205b61e1f",
+      "source_file": "shigma_schemastery-9e1f54f8ff785a4e51a022922999634205b61e1f.tar.gz",
+      "source_sha256": "04b032277834a3c5baec5c91509149a29a35a35ee6f89127ff1c0d399565d185",
+      "original_texts": [
+        {
+          "path": "LICENSE",
+          "sha256": "034fb52b1d57360ecbae6cb1632a88f86fd7c3d3f5631a5f082710203dda0be7",
+          "text": "MIT License\n\nCopyright (c) 2021-present Shigma\n\nPermission is hereby granted, free of charge, to any person obtaining a copy\nof this software and associated documentation files (the \"Software\"), to deal\nin the Software without restriction, including without limitation the rights\nto use, copy, modify, merge, publish, distribute, sublicense, and/or sell\ncopies of the Software, and to permit persons to whom the Software is\nfurnished to do so, subject to the following conditions:\n\nThe above copyright notice and this permission notice shall be included in all\ncopies or substantial portions of the Software.\n\nTHE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR\nIMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,\nFITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE\nAUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER\nLIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,\nOUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE\nSOFTWARE.\n"
+        }
+      ]
+    }
+  ],
+  "complete_corresponding_source": false,
+  "product_release": false
+}

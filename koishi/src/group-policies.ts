@@ -41,11 +41,15 @@ export class GroupPolicies {
     for(const [id,policy] of Object.entries(p.groups)){if(!gid(id))throw Error('invalid_group_id');validateGroupPolicy(policy)}
     return p
   }
+  reloadRecovered() {
+    const next=this.read()
+    this.value=next;this.error=null
+  }
   snapshot(){return {...structuredClone(this.value),availability:this.error?'unavailable':'available',reason_code:this.error}}
   get(id:string):GroupPolicy { return Object.hasOwn(this.value.groups,id)?structuredClone(this.value.groups[id]):{...inherited} }
-  assertPersistent() {
+  assertPersistent(required=false) {
     let disk=this.value
-    try{disk=this.read()}catch(error){if((error as NodeJS.ErrnoException).code!=='ENOENT'||this.value.revision!==0)throw Error('group_policy_conflict')}
+    try{disk=this.read()}catch(error){if(required||(error as NodeJS.ErrnoException).code!=='ENOENT'||this.value.revision!==0)throw Error('group_policy_conflict')}
     if(!isDeepStrictEqual(disk,this.value))throw Error('group_policy_conflict')
   }
   persistenceTag() {

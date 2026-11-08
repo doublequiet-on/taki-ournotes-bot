@@ -1,0 +1,31 @@
+{
+  "component": "taki-console",
+  "version": "0.1.0-candidate.4",
+  "package_version": "5.30.10-taki.4",
+  "upstream_commit": "896882b50cc91d16f522a52ded9644045d461c26",
+  "inputs_file": "console-candidate4-build-inputs.zip",
+  "inputs_size": 128960704,
+  "inputs_sha256": "40eea95ef2fb80d9bc0f675065276ee12b7428588c19bfbc3172d9e13ca99888",
+  "node": "24.19.0",
+  "yarn": "4.10.3",
+  "element_plus_commit": "8c0180c37ae4741f40969a26a9704c1068be4d93",
+  "devtools_commit": "df6ab6bb7791a7a525a97990de73b3ea5e9a1941",
+  "source_complete": false,
+  "product_release": false,
+  "rollup_native": {
+    "component": "@rollup/rollup-linux-x64-gnu",
+    "upstream_version": "4.67.4",
+    "upstream_commit": "18b5cb60e55926f6d917cc1aeb17fd81d0da5cc6",
+    "target": "x86_64-unknown-linux-gnu",
+    "source_archive_sha256": "951175a04825fabbf078497a7de4ff0d318cc9727b449614a704ee1fe4556f2a",
+    "cargo_lock_sha256": "4419e784a43fe1546066b7c350e3fc52c55776992558243a369a1a2fc2f3fab6",
+    "patch_sha256": "c07fbd1666fa8237e02865372101129ef46fc592ed0af5d92c66b84d31ddcb51",
+    "native_recipe_sha256": "db3253282e96c085368679493819e919411d0f7af19f9bf3034f3b5955ca59f0",
+    "upstream_binary_sha256": "a6f7167810c4a34d66083eb2c148878a0d44960b3ec204e88cdd37292a6d38fb",
+    "installed_binary": {
+      "path": "node_modules/@rollup/rollup-linux-x64-gnu/rollup.linux-x64-gnu.node",
+      "size": 2214840,
+      "sha256": "2528c930b780a24079c04c94f92db33787fff19eef6c1fed5de7ad3efddfbdb4"
+    }
+  }
+}

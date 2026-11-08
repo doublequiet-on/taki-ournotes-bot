@@ -537,8 +537,10 @@ def _execute_cutoff(request: CutoffRequest, repository) -> CutoffAnswer:
     except SourceError as exc:
         if historical:
             return CutoffAnswer(request, message='历史库暂不可用或活动身份冲突，未改查当前活动。', status='data_unavailable')
-        message = "该服务器当前没有可用活动。" if exc.code == "not_found" else "该服务器的活动信息暂不可用，请稍后重试。"
-        return CutoffAnswer(request, message=SERVERS[request.server][0] + "：" + message, status="data_unavailable")
+        message = {'not_found': '该服务器当前没有可用活动。', 'pending': '活动观测尚未就绪，请稍后重试。',
+                   'rate_limited': '来源限流，请稍后重试。'}.get(exc.code, '该服务器的活动信息暂不可用，请稍后重试。')
+        return CutoffAnswer(request, message=SERVERS[request.server][0] + "：" + message,
+                            status=exc.code if exc.code in {'not_found', 'pending', 'rate_limited'} else 'data_unavailable')
     rules = event_ranking_format(event)
     totals = getattr(source,'total_rankings',None)
     total = None
@@ -660,16 +662,26 @@ def _execute_cutoff(request: CutoffRequest, repository) -> CutoffAnswer:
         return CutoffAnswer(request, event, message='所选排名暂无有效历史分数。\n' + '\n'.join(details), status='data_unavailable')
     history_ranks=tuple(dict.fromkeys(ranks[round(i*(len(ranks)-1)/4)] for i in range(5)))
     if not request.numeric_only:
-        histories = tuple((b.song.challenge_id, source.history.read(event, b.song, history_ranks) if source.history
-                           else HistoryView(warning="历史记录未配置；当前值仍可查询。")) for b in boards)
+        views = []
+        for board in boards:
+            if not source.history:
+                view = HistoryView(warning="历史记录未配置；当前值仍可查询。")
+            elif hasattr(source.history, 'read_board'):
+                view = source.history.read_board(event, board, history_ranks)
+            elif board.provider is not None:
+                view = HistoryView(warning='当前provider与旧历史未建立隔离映射，暂不拼接曲线。')
+            else:
+                view = source.history.read(event, board.song, history_ranks)
+            views.append((board.song.challenge_id, view))
+        histories = tuple(views)
         if historical:
             histories = tuple((key, replace(view, warning=view.warning.replace('当前值', '最近一次有效观测')
                                             .replace('当前榜线仍可查询', '最近一次有效观测单独显示'))) for key, view in histories)
-    answer = CutoffAnswer(request, event, boards, status="success" if any(b.scores for b in boards) or total and total.scores else "data_unavailable",
+    answer = CutoffAnswer(request, event, boards, status="success" if any(b.has_values for b in boards) or total and any(v is not None for v in total.scores) else "data_unavailable",
                           histories=histories,history_ranks=history_ranks,total=total,total_history=total_history,total_status=total_status)
     # A real saved history remains useful during an outage. With no current
     # values or history, avoid sending several empty trend/table images.
-    if not historical and total is None and not any(b.scores for b in boards) and not any(view.points for _, view in histories):
+    if not historical and total is None and not any(b.has_values for b in boards) and not any(view.points for _, view in histories):
         details = tuple(dict.fromkeys(b.status for b in boards))
         return replace(answer, message=f'{SERVERS[event.server][0]} · {event.title}\n'
                        + '本期所选单曲榜暂无可用分数，请稍后重试。\n'

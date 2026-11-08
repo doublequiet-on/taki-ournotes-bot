@@ -399,7 +399,7 @@ class BackendContinuationTests(Fixture, unittest.IsolatedAsyncioTestCase):
         await self.backend.submit(request)
         for _ in range(100):
             value = self.backend.lookup(request['request_id'], 'e1')
-            if value['status'] == 'prepared':
+            if value['status'] in ('prepared', 'aborted'):
                 return value
             await asyncio.sleep(.005)
         self.fail('backend did not prepare the captured result')
@@ -409,7 +409,7 @@ class BackendContinuationTests(Fixture, unittest.IsolatedAsyncioTestCase):
         event = dict(protocol=PROTOCOL, request_id=plan['request_id'], plan_version=1,
                      gateway_epoch='e1', event=kind, part_id=plan['parts'][0]['id'], attempt_id='a1')
         if kind == 'ack':
-            event.update(result='success', message_id='accepted-'+plan['request_id'][:8])
+            event.update(result='success', message_id='accepted-'+plan['request_id'][:8]+('' if plan['parts'][0]['position']==0 else '-'+str(plan['parts'][0]['position'])))
         return self.backend.apply_event(plan['delivery_id'], event)
 
     def assert_native_image(self,plan):
@@ -436,6 +436,45 @@ class BackendContinuationTests(Fixture, unittest.IsolatedAsyncioTestCase):
         sent.extend(self.backend.works[second['delivery_id']].prepared[p['position']].text.split('\n结果 ',1)[0] for p in second['parts'])
         self.assertEqual(sent,['page-'+str(i) for i in range(6)])
         self.backend.gate.prepare.assert_awaited_once()
+
+    async def test_unknown_batch_invalidates_queued_old_topic_and_late_ack_is_fact_only(self):
+        self.backend.gate.prepare.return_value=PreparedReply('',pages=tuple(
+            PreparedReply('P'+str(i),context=self.context()) for i in range(1,4)),context=self.context())
+        first=await self.prepare(self.request('unknown',1))
+        self.event(first,'intent');self.event(first,'ack')
+        second_part={**first,'parts':[first['parts'][1]]}
+        self.event(second_part,'intent')
+        queued=self.quote('queued',2,first,body='/继续',user='u2')
+        await self.backend.submit(queued)
+        await asyncio.sleep(.01)
+        self.assertEqual(self.backend.lookup(queued['request_id'],'e1')['status'],'preparing')
+        self.event(first,'aborted')
+        for _ in range(100):
+            blocked=self.backend.lookup(queued['request_id'],'e1')
+            if blocked['status']!='preparing':break
+            await asyncio.sleep(.005)
+        self.assertFalse(blocked['send_allowed']);self.assertEqual(blocked['parts'],[])
+        self.assertTrue(self.backend.ledger.has_unknown(first['delivery_id']))
+        self.event(second_part,'ack')
+        self.assertEqual(self.backend.ledger.parts(first['delivery_id'])[1]['receipt'],'success')
+        self.assertFalse(self.backend.conversations.anchors)
+        for seq,body in enumerate(('/继续','/查 下一页','/查 选 1'),3):
+            blocked=await self.prepare(self.quote('old'+str(seq),seq,first,body=body,user='u2'))
+            self.assertFalse(blocked['send_allowed']);self.assertEqual(blocked['parts'],[])
+        fresh=await self.prepare(self.request('independent',6))
+        self.assertEqual(self.event(fresh,'intent')['permission'],'granted')
+
+    async def test_context_projection_failure_retains_ack_but_revokes_whole_topic(self):
+        for seq,target in enumerate((self.backend.contexts,self.backend.conversations),1):
+            plan=await self.prepare(self.request('projection'+str(seq),seq))
+            self.event(plan,'intent')
+            with patch.object(target,'commit' if target is self.backend.contexts else 'confirm',return_value=False):
+                result=self.event(plan,'ack')
+            self.assertTrue(result['recorded']);self.assertFalse(result['send_allowed'])
+            self.assertEqual(result['status'],'failed')
+            self.assertEqual(self.backend.ledger.parts(plan['delivery_id'])[0]['receipt'],'success')
+            self.assertTrue(self.event(plan,'ack')['duplicate'])
+            self.assertFalse(self.backend.conversations.anchors)
 
     async def test_private_image_does_not_add_group_introduction(self):
         from ournotes_bot.application.backend_protocol import digest
@@ -586,7 +625,9 @@ class BackendContinuationTests(Fixture, unittest.IsolatedAsyncioTestCase):
         self.assertEqual(second['parts'][0]['text'],'same-topic')
         self.assertEqual(self.backend.works[second['delivery_id']].key.user, first['request_id'])
         cross=await self.prepare(self.quote('C',3,first,user='u2',group='other'))
-        self.assertEqual(cross['parts'][0]['text'],MISSING)
+        self.assertEqual(cross['status'],'aborted')
+        self.assertFalse(cross['send_allowed'])
+        self.assertEqual(cross['parts'],[])
 
     async def test_snapshot_paging_does_not_read_repository_after_update(self):
         ctx=self.context()
@@ -654,7 +695,9 @@ class BackendContinuationTests(Fixture, unittest.IsolatedAsyncioTestCase):
     async def test_unconfirmed_quote_cannot_see_pending_snapshot(self):
         first=await self.prepare(self.request('A',1))
         second=await self.prepare(self.quote('B',2,first))
-        self.assertEqual(second['parts'][0]['text'],MISSING)
+        self.assertEqual(second['status'],'aborted')
+        self.assertFalse(second['send_allowed'])
+        self.assertEqual(second['parts'],[])
 
     async def test_each_attempt_requires_bound_current_permission(self):
         from ournotes_bot.application.backend_protocol import ProtocolError

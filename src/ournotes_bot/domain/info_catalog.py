@@ -55,6 +55,26 @@ class GachaInfo:
 
 
 @dataclass(frozen=True)
+class ActivityFact:
+    title: str
+    lines: tuple[str, ...] = ()
+    image_url: str = ''
+    preview: bool = False
+    table: tuple[tuple[str, ...], ...] = ()
+    image_kind: str = 'square'
+    group: str = ''
+    reference: tuple[int, int] | None = None
+    bonus_ranges: tuple[tuple[str, float, float], ...] = ()
+
+
+@dataclass(frozen=True)
+class ActivitySection:
+    name: str
+    facts: tuple[ActivityFact, ...] = ()
+    complete: bool = False
+
+
+@dataclass(frozen=True)
 class ActivityInfo:
     id: int
     title: str
@@ -74,6 +94,9 @@ class ActivityInfo:
     fetched_at: str = ""
     detail_image_url: str = ""
     logo_url: str = ""
+    details: tuple[ActivitySection, ...] = ()
+    event_type_id: int | None = None
+    ranking_modes: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)

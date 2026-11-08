@@ -31,6 +31,8 @@ class InfoCommandPipelineTests(unittest.TestCase):
             ('/查角色 tmr', 'character_query', 'execute_character', 'info'),
             ('/查卡池 12', 'gacha_query', 'execute_gacha', 'info'),
             ('/查活动 hk', 'activity_query', 'execute_activity', 'activity'),
+            ('/查竞技场 hk MyGO!!!!! 榜单', 'public_queries', 'execute_arena', 'info'),
+            ('/查玩家 9223372036854775807 jp', 'public_queries', 'execute_player', 'info'),
         ):
             with self.subTest(command=command), \
                  patch(f'ournotes_bot.query.{module}.{function}', return_value=self.answer) as execute, \
@@ -54,6 +56,9 @@ class InfoCommandPipelineTests(unittest.TestCase):
             ('/问 本期卡池什么时候结束呢', 'gacha_query', 'execute_gacha'),
             ('/问 这期活动详情', 'activity_query', 'execute_activity'),
             ('/问 本期卡池啥时候结束', 'gacha_query', 'execute_gacha'),
+            ('/查 MyGO竞技场人数', 'public_queries', 'execute_arena'),
+            ('/查 玩家 9223372036854775807 jp', 'public_queries', 'execute_player'),
+            ('/查 本期活动奖励', 'activity_query', 'execute_activity'),
         ):
             with self.subTest(question=question), \
                  patch(f'ournotes_bot.query.{module}.{function}', return_value=self.answer) as execute, \
@@ -187,6 +192,25 @@ class InfoCommandPipelineTests(unittest.TestCase):
             result = resolve_command('/查卡池', self.repo)
             self.assertEqual(result.status, 'data_unavailable')
             self.assertEqual(handle_command('/查卡池', self.repo, resolved=result), answer.text)
+
+    def test_original_namecard_keeps_geometry_and_broken_image_falls_back_to_text(self):
+        from io import BytesIO
+        from dataclasses import replace
+        from PIL import Image
+        data = BytesIO()
+        Image.new('RGB', (640, 960), 'white').save(data, format='PNG')
+        for body in (data.getvalue(), b'broken-image'):
+            answer = replace(self.answer, original_image=body)
+            with self.subTest(valid=body == data.getvalue()), \
+                 patch('ournotes_bot.query.public_queries.execute_player', return_value=answer), \
+                 patch('ournotes_bot.rendering.info_layout.render_info', side_effect=AssertionError('re-rendered original')):
+                reply = _prepare_reply('/查玩家 99 名片', self.repo, self.parser)
+                self.assertEqual(reply.text, answer.text)
+                if body == data.getvalue():
+                    with Image.open(BytesIO(reply.image)) as image:
+                        self.assertEqual(image.size, (640, 960))
+                else:
+                    self.assertIsNone(reply.image)
 
     def test_joined_arguments_have_correct_command_hint_and_character_card_is_preserved(self):
         for command in ('查活动', '查卡池', '查角色'):

@@ -2,6 +2,25 @@ include LICENSE README.md THIRD_PARTY.md LOCAL_QQ_TEST.md .env.example query_ali
 include 昵称词表维护规范.md
 include 更新日志.md
 include scripts/check_release_artifact.py
+include scripts/console_release.py scripts/build_koishi_release.py scripts/check_koishi_release.py
+include scripts/rebuild_console_sources.py deploy/licenses/koishi-console/gateway-notices.json
+include docs/CONSOLE_ASSEMBLY.md
+include koishi/vendor/taki-console-0.1.0-candidate.4.tgz koishi/vendor/console-candidate.json koishi/vendor/README.md
+recursive-include koishi/compat/cache-content-type LICENSE README.md index.cjs package.json upstream-materials.json
+include koishi/package.json koishi/package-lock.json koishi/recovery.cjs
+include scripts/product_release.py deploy/product_identity.py deploy/recovery_authority.py
+include scripts/console_source_materials.py docs/CONSOLE_SOURCE_MATERIALS.md
+include docs/CONSOLE_ICU_DATA.md
+include docs/CONSOLE_ROLLUP_LICENSES.md
+include docs/CONSOLE_TRACE_ROUND5.md
+include scripts/build_downstream_console.py scripts/prepare_console_build_inputs.py
+include docs/CONSOLE_DOWNSTREAM.md docs/CONSOLE_BUILD_REPAIR.md
+include deploy/licenses/koishi-console/downstream-build.cjs deploy/licenses/koishi-console/downstream-inputs.json deploy/licenses/koishi-console/downstream-inputs-public-v2.json
+include deploy/licenses/koishi-console/candidate3-source-index.json deploy/licenses/koishi-console/rollup-linux-x64-glibc-coverage.json
+include deploy/licenses/koishi-console/candidate4-source-index.json deploy/licenses/koishi-console/downstream-inputs-candidate4.json
+include docs/PRODUCT_RELEASE.md docs/RELEASE_MATERIALS.md
+recursive-include deploy/licenses LICENSE *.md
+include deploy/licenses/koishi-console/reproduce.sh deploy/licenses/koishi-console/taki-reconnect-source.patch
 include scripts/compress_cutoff_history.py
 include scripts/check_installed_query_upgrade.py
 include scripts/update_bot.py scripts/install-update-task.ps1
@@ -43,3 +62,8 @@ include docs/PERFORMANCE_FOUNDATION.md docs/MULTIPLATFORM_CONTRACT.md
 include docs/CHAT_AGENT_BASELINE.md docs/CHAT_AGENT_ARCHITECTURE.md docs/CHAT_AGENT_ACCEPTANCE.md docs/CHAT_AGENT_RUNBOOK.md
 
 include docs/CHAT_AGENT_C2.md docs/STORY_ENGINE.md docs/STORY_SOURCE_COVERAGE.md docs/STORY_PERSONA_RESEARCH.md docs/CHAT_MEMORY_C3.md docs/CHAT_IMAGES_V1.md docs/CHAT_QQ_QUOTE_EVIDENCE.md docs/CHAT_PROACTIVE_G1.md docs/CHAT_SERVICE_JOBS.md docs/CHAT_AGENT_F1.md
+
+include deploy/licenses/koishi-console/marked-vue-href.patch
+
+include scripts/prepare_console_native_candidate.py
+include deploy/licenses/koishi-console/rollup-xxhash-base.patch deploy/licenses/koishi-console/rebuild-rollup-native.sh

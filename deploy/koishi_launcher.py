@@ -49,6 +49,32 @@ def launch(base, role):
     os.execv(args[0],args)
 
 
+def check_instance(path):
+    """Independent profile inspection only; no legacy permit fallback or exec.
+
+    A manual review workflow is chosen, but no concrete restore/start is approved.
+    Keep this gate closed until the trusted controller can recheck 05/07/09 and
+    issue a current-session permit for the independent instance.
+    """
+    try:
+        from .instance_install import layout
+        from .instance_preflight import read_document
+    except ImportError:
+        from instance_install import layout
+        from instance_preflight import read_document
+    paths = layout(read_document(path))
+    return dict(status='manual', reason='independent_start_authority_not_connected',
+                layout=paths, activation_permitted=False)
+
+
 if __name__=='__main__':
-    p=argparse.ArgumentParser(description=__doc__);p.add_argument('--base',type=Path,required=True);p.add_argument('role',choices=['backend','gateway'])
-    a=p.parse_args();launch(a.base,a.role)
+    p=argparse.ArgumentParser(description=__doc__)
+    location=p.add_mutually_exclusive_group(required=True)
+    location.add_argument('--base',type=Path)
+    location.add_argument('--instance-config',type=Path)
+    p.add_argument('role',choices=['backend','gateway'])
+    a=p.parse_args()
+    if a.instance_config is not None:
+        print(json.dumps(check_instance(a.instance_config),sort_keys=True))
+        raise SystemExit(2)
+    launch(a.base,a.role)

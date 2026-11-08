@@ -181,6 +181,11 @@ class Ledger:
             self.db.execute("UPDATE parts SET status='expired' WHERE delivery=? AND status='pending'", (delivery,))
             self.db.execute("UPDATE parts SET status='uncertain' WHERE delivery=? AND status='sending'", (delivery,))
 
+    def has_unknown(self, delivery):
+        """A grant without a receipt is unknown; a definite rejection is not."""
+        return self.db.execute("SELECT 1 FROM parts WHERE delivery=? AND status IN ('sending','uncertain') LIMIT 1",
+                               (delivery,)).fetchone() is not None
+
     def fallback(self, delivery, part_id):
         with self.db:
             self.db.execute("UPDATE parts SET mode='fallback',id=? WHERE delivery=? AND id=?", (part_id+':f', delivery, part_id))

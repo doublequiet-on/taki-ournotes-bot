@@ -310,6 +310,7 @@ class EventSnapshot:
     total_ranking_enabled: bool | None = None  # Explicit normalized capability; never inferred from raw flags.
     api_start_ms: int | None = None
     api_end_ms: int | None = None
+    provider: str | None = None
 
 
 @dataclass(frozen=True)
@@ -369,6 +370,26 @@ class BoardSnapshot:
     contract_version: str = "tracker/1"
     player_details: tuple[dict | None, ...] = ()
     http_date_ms: int | None = None
+    # All arrays retain response positions (1-based accessors). Raw ranks are not inferred.
+    display_ranks: tuple[int | None, ...] = ()
+    raw_ranks: tuple[int | None, ...] = ()
+    value_states: tuple[str, ...] = ()
+    provider: str | None = None
+    snapshot_id: str | None = None
+    normalization_version: str = 'legacy/1'
+    freshness: str = 'unknown'
+    error_code: str | None = None
+    game_region: str | None = None
+    observed_ms: int | None = None
+
+    @property
+    def has_values(self):
+        return any(value is not None for value in self.scores)
+
+    @property
+    def positions(self) -> tuple[int, ...]:
+        observed = self.observed_scores if self.observed_scores is not None else self.scores
+        return tuple(range(1, len(observed) + 1))
 
     def player_detail(self, rank: int) -> dict | None:
         if self.score(rank) is None or not 1 <= rank <= len(self.player_details):
@@ -415,6 +436,26 @@ def event_banner_url(server: str, value) -> str:
         return ""
     group, name = match.groups()
     return f"{ASSETS}/{server}/{SERVERS[server][3]}/Image/Event/{group}/Banner/{name}/{name}.webp"
+
+
+def is_event_artwork_url(url: str, server: str | None = None) -> bool:
+    """Recognize only the regional artwork routes emitted by this adapter."""
+    if not isinstance(url,str) or server is not None and server not in SERVERS:return False
+    for region in SERVERS if server is None else (server,):
+        prefix=f'{ASSETS}/{region}/{SERVERS[region][3]}/'
+        if not url.startswith(prefix):continue
+        path=url[len(prefix):]
+        return bool(re.fullmatch(r'(?:Story/Banner/Chapter|Image/Jacket)/([A-Za-z0-9_-]{1,120})/\1\.webp',path)
+                    or re.fullmatch(r'Image/Event/[0-9]{1,3}/Banner/([A-Za-z0-9_-]{1,120})/\1\.webp',path))
+    return False
+
+
+def download_event_artwork(url: str) -> bytes:
+    if not is_event_artwork_url(url):raise SourceError('invalid_url')
+    raw,headers=public_get(url,12)
+    if not headers.get('content-type','').lower().startswith('image/'):
+        raise SourceError('invalid_image')
+    return raw
 
 
 class EventCutoffRepository:
@@ -473,7 +514,7 @@ class EventCutoffRepository:
         capture={};self._diagnostic_local.capture=capture
         try:
             board=self.board(event,song,deadline)
-            if self.scheduled_history_only and self.history:
+            if self.scheduled_history_only and self.history and (board.provider is None or getattr(self.history, 'supports_provider_history', False)):
                 if not getattr(self.history, 'supports_clock_calibration', False) and board.received_ms and (
                         (board.server_ms and abs(board.server_ms-board.received_ms) > 60000)
                         or (board.fetched_ms and board.fetched_ms > board.received_ms+1000)):
@@ -580,7 +621,7 @@ class EventCutoffRepository:
                     raise SourceError("budget")
                 payload, headers = loader()
                 entry = _Entry(payload, headers, self.clock(), self.monotonic())
-                if key.startswith("board:") and old:
+                if key.startswith("board:") and old and old.payload.get('provider') == payload.get('provider'):
                     before, after = _ms(old.headers.get("x-fetched-at")), _ms(headers.get("x-fetched-at"))
                     if before and after and after < before:
                         if fresh_board:
@@ -843,6 +884,10 @@ class EventCutoffRepository:
                 scores, status = (), "旧缓存超限，暂无分数"
             else:
                 status = "来源故障，暂用旧快照"
+        freshness = ('unknown' if age is None else 'stale' if entry.fallback or age > 120
+                     or headers.get('x-stale', '').lower() in {'true', '1'} else 'fresh')
+        if not any(value is not None for value in scores) and status == '源榜单快照':
+            status, quality = '榜单为空或没有可信分数', 'no_values'
         ids = entry.payload.get("player_ids")
         player_ids = tuple(_player_id(n) for n in ids) if isinstance(ids, list) and len(ids) == len(observed) else ()
         names = entry.payload.get('player_names')
@@ -857,7 +902,8 @@ class EventCutoffRepository:
         except (ValueError, TypeError, OverflowError):
             pass
         return BoardSnapshot(song, scores, fetched, server, int(entry.received * 1000), age, status, tuple(notes), observed, quality,
-                             player_ids, player_names, player_details=player_details, http_date_ms=http_date)
+                             player_ids, player_names, player_details=player_details, http_date_ms=http_date,
+                             freshness=freshness)
 
     def boards(self, event: EventSnapshot, songs: tuple[EventSong, ...], deadline: float) -> tuple[BoardSnapshot, ...]:
         with ThreadPoolExecutor(max_workers=3) as pool:

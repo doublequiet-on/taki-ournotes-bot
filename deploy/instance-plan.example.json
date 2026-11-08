@@ -1,0 +1,88 @@
+{
+  "version": 1,
+  "host": "synthetic-linux-host",
+  "instances": [
+    {
+      "instance": "alpha",
+      "product": "taki-personal",
+      "app_id": "10001",
+      "channel": "personal",
+      "user": "taki-alpha",
+      "uid": 21001,
+      "controller_uid": 0,
+      "paths": {
+        "base": "/srv/taki-alpha",
+        "config": "/etc/taki-alpha",
+        "environment": "/etc/taki-alpha/runtime.env",
+        "data": "/srv/taki-alpha/data",
+        "console_state": "/srv/taki-alpha/console-state",
+        "ledger": "/srv/taki-alpha/data/delivery",
+        "history": "/srv/taki-alpha/history",
+        "controller": "/usr/local/lib/taki-alpha",
+        "controller_state": "/var/lib/taki-alpha-controller",
+        "runtime": "/run/taki-alpha",
+        "combinations": "/opt/taki-alpha-combinations",
+        "backups": "/var/backups/taki-alpha",
+        "recovery": "/srv/taki-alpha-recovery",
+        "authority": "/etc/taki-alpha-authority"
+      },
+      "units": {
+        "service": [
+          "taki-alpha.service",
+          "taki-alpha-gateway.service",
+          "taki-alpha-updater.service",
+          "taki-alpha-recover.service"
+        ],
+        "timer": [
+          "taki-alpha-updater.timer"
+        ],
+        "socket": []
+      },
+      "ports": {
+        "backend": 18765,
+        "gateway": 18766
+      }
+    },
+    {
+      "instance": "beta",
+      "product": "haneoka-custom",
+      "app_id": "10002",
+      "channel": "custom",
+      "user": "taki-beta",
+      "uid": 21002,
+      "controller_uid": 0,
+      "paths": {
+        "base": "/srv/taki-beta",
+        "config": "/etc/taki-beta",
+        "environment": "/etc/taki-beta/runtime.env",
+        "data": "/srv/taki-beta/data",
+        "console_state": "/srv/taki-beta/console-state",
+        "ledger": "/srv/taki-beta/data/delivery",
+        "history": "/srv/taki-beta/history",
+        "controller": "/usr/local/lib/taki-beta",
+        "controller_state": "/var/lib/taki-beta-controller",
+        "runtime": "/run/taki-beta",
+        "combinations": "/opt/taki-beta-combinations",
+        "backups": "/var/backups/taki-beta",
+        "recovery": "/srv/taki-beta-recovery",
+        "authority": "/etc/taki-beta-authority"
+      },
+      "units": {
+        "service": [
+          "taki-beta.service",
+          "taki-beta-gateway.service",
+          "taki-beta-updater.service",
+          "taki-beta-recover.service"
+        ],
+        "timer": [
+          "taki-beta-updater.timer"
+        ],
+        "socket": []
+      },
+      "ports": {
+        "backend": 18775,
+        "gateway": 18776
+      }
+    }
+  ]
+}

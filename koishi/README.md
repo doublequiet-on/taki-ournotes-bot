@@ -10,6 +10,10 @@ M3 已接通查询、续查与逐片段交付；`enabled` 默认 false，仅注�
 
 ## 重现离线探针
 
+Koa 的 Content-Type 缓存使用[本地CJS适配](compat/cache-content-type/README.md)和固定上游2.1.0；干净安装必须带上compat目录。版本材料、定向HTTP/浏览器验收及09封装接口见[适配记录](../docs/task08-integration/CACHE_CONTENT_TYPE.md)。
+
+网页后台现接入[固定下游 Console candidate.4 B2](vendor/README.md)，使用仓库内原始tgz与npm lock。实际安装、浏览器及RPC验证见[任务08记录](../docs/task08-integration/CONSOLE_CANDIDATE4.md)。12确认 A2/B2 还差一次 ElConfigProvider 的 withInstall 调用，根因待定，整包字节可复现未通过。09组合仅准入固定 B2，禁止重复应用旧重连字节补丁。
+
 使用 `.node-version` 的 Node 24.19.0 和 `packageManager` 的 npm 12.2.0，在本目录执行：
 
 ```sh
@@ -40,7 +44,9 @@ HTTP 双端样例位于 `scripts/fixtures/http-v2.json`，随组合包的 script
 | `src/notices.ts` | 群许可事件、独立主动通知、逐次许可/intent/ACK，使用后端唯一账本。 |
 | `run.cjs` | 双进程网关入口，显式启用、受认证 loopback 健康、顺序卸载。 |
 | `console.cjs`、`console/` | 官方 Koishi 控制台接入、独立管理员会话与管理页面。 |
-| `src/management.ts` | 接收/通知范围设置校验、原子持久保存和管理记录。 |
+| `src/management.ts` | 接收/通知范围设置校验、原子持久保存和管理记录；停新接纳与紧急停发。 |
+| `src/scope-authority.ts` | 定制三通道范围校验、独立批准权威接口、恢复判定和CAS暂存；[接线合同](../docs/MANAGEMENT_SCOPE_SAFETY.md)。 |
+| `src/scope-identity.ts` | 消费09固定check_scope_binding结果及进程内失效快照；不另解释身份，不替代批准或激活。 |
 | `src/group-policies.ts` | 实例绑定群策略、持久 revision、有效规则、通知 all/selected/none。 |
 | `src/telemetry.ts`、`health.cjs` | 有界旁路耗时采集、共享实时健康读取。 |
 | `src/index.ts` | 默认关闭的配置、运输服务与受管 receiver 生命周期。 |
@@ -85,3 +91,5 @@ M1 候选额度不是实测平台额度。真实事件、群/C2C 权限、回复
 `node scripts/console-rpc-probe.cjs` 使用本机隔离 WebSocket。`scripts/console-server.cjs`、`console-browser.cjs` 及 Python `tests/fixtures/console_backend.py` 只作隔离浏览器验收，不进入生产启动链。浏览器证据必须使用打包后的模块，不能以源码预览替代。设置 TAKI_SCROLL_ONLY=1 可单独检查桌面滚轮、手机触摸滚动及模拟设置保存。
 
 联网搜索位于“模型与费用 → 模型与额度”，主模型与主动参与模型分别管理开关和每次搜索请求的调用上限（1–2）。页面显示当前版本的验收依据及搜索单价；保存即时生效，不改模型版本、群范围或预算。关闭时保留匹配该版本的批准用于恢复；模型版本变化后须重新验收。普通工具连接测试不会批准联网能力。
+
+恢复范围批准使用 `src/recovery-scope.ts::createRecoveryScope` 连接05内存ticket与受信指定管理员；普通Console登录不获得审批权。个人由用户指定管理员，定制由接收方指定，未配置拒绝。05 `ManualScopeApproval` 在确认前重读范围、09 身份、07 删除证据及撤销代际，`read().revision` 供恢复当前性检查。当前来源和10宿主接线边界见[恢复权威组合](../docs/task08-integration/RECOVERY_AUTHORITY_WIRING.md)。

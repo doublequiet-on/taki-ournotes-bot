@@ -99,7 +99,9 @@ request_id 等于紧凑 JSON 数组 `[instance_id,app_id,"qq",kind,conversation_
 
 片段包含 `id, position, mode, status, attempt, message`；有发送权时额外返回 kind、纯文本 text，图片还返回 image 受控路径和 mime。初始片段 ID 为位置的十进制字符串，position 从 0 开始；当前最多五片段，复用共享 `expand_replies` 的分页与余图语义。send_allowed 只说明计划当前有效，**不能代替每片段 intent 的发送许可**。
 
-所有事件共同字段：`protocol,request_id,plan_version,gateway_epoch,event,part_id,attempt_id`，严格拒绝额外字段。M3 ready.features 包含 `classify`、`gateway_retire`、`ack_context_guard`、`notice_gateway_v1`，新网关要求四者齐备。ACK 允许可选布尔 `allow_context`，false 只补记发送事实并终结活动批，不提交上下文；省略保留 M2 兼容语义。ACK 还必须包含 `result,message_id`；success 要求非空消息 ID，其余 result 的 message_id 必须为 null。结果可为 success/failure/uncertain/aborted；审核中由网关映射为 uncertain。
+所有事件共同字段：`protocol,request_id,plan_version,gateway_epoch,event,part_id,attempt_id`，严格拒绝额外字段。ACK 允许可选布尔 `allow_context`，false 只补记发送事实并终结活动批，不提交上下文；省略保留 M2 兼容语义。ACK 还必须包含 `result,message_id`；success 要求非空消息 ID，其余 result 的 message_id 必须为 null。结果可为 success/failure/uncertain/aborted；审核中由网关映射为 uncertain。
+
+ready.execution_profile 显式区分 `personal-v1` 与开发 `query-local-v1`，不是产品身份/范围批准，也不按模型key推断。省略字段只兼容原个人握手。两者均要求 protocol 2.2、原 capability、group_policies_v1及 classify/gateway_retire/ack_context_guard/quoted_context_v1/fixed_snapshot_v1/independent_delivery_v1。个人组合另要求 notice_gateway_v1/current_model_permit_v1，保持原校验；查询组合恰好提供上述六项features且notices_enabled=false。未知profile、错版本、缺共享能力、重复/额外query feature或公告开启均拒绝。查询根不注册模型许可、聊天/模型/知识管理及公告路由；Receiver不向它投递聊天观察，BackendClient拒绝其聊天/模型许可调用；Notices按false关闭。不改变投递接纳、grant、ACK、unknown或防重复合同。
 
 | event | 前置条件与行为 |
 |---|---|

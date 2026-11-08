@@ -299,7 +299,7 @@ class AdminTests(unittest.IsolatedAsyncioTestCase):
         snapshot.for_group = lambda group:snapshot
         runtime = SimpleNamespace(agent=None,config=SimpleNamespace(snapshot=lambda:snapshot),
             usage=SimpleNamespace(configuration=Mock(side_effect=sqlite3.OperationalError('injected')),
-                                  reconcile=lambda:None), close=AsyncMock())
+                                  reconcile=lambda:None), quiesce=AsyncMock(), close=AsyncMock())
         runtime.capture = MethodType(ModelRuntime.capture, runtime)
         self.backend.model_runtime = runtime
         payload = self.payload(); payload['body']='/问 fixture'

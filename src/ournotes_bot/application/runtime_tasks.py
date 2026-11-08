@@ -140,12 +140,15 @@ class RuntimeTasks:
         self.tasks=list(self.named_tasks.values())
         return {'code':'background_tasks_checked','restored':restored,'unchanged':unchanged,'sampling_enabled':self.sampler is not None}
 
-    async def close(self):
+    def request_stop(self):
         self.closing=True
         if self.sampler:
             self.sampler.stop()
         for task in self.tasks:
             task.cancel()
+
+    async def close(self):
+        self.request_stop()
         try:
             await drain_task(asyncio.gather(*self.tasks, return_exceptions=True))
         finally:

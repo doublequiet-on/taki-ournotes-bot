@@ -11,7 +11,7 @@ from .readable_pages import ImagePart
 from .image_output import MAX_IMAGE_EDGE, MAX_IMAGE_PIXELS, ImageBudgetError, encode_image
 
 
-def render_list(songs,query,locale='zh',*,load):
+def render_list(songs,query,locale='zh',*,load,notice=''):
     songs=tuple(songs)
     if not songs:return (),()
     cols=1 if len(songs)==1 else 2
@@ -26,6 +26,8 @@ def render_list(songs,query,locale='zh',*,load):
         return rows,heights
     subtitle=query+' · '+ui_label('共 {n} 首',locale).format(n=len(songs))
     head=136+len(lines(subtitle,width-108,24))*34
+    notice_lines=lines(notice,width-108,24) if notice else ()
+    footer_h=44+len(notice_lines)*34
     repeated = Counter((song.jacket_url, (128,128)) for song in songs)
     repeated.update((song.traits.attribute_icon, (48,48)) for song in songs
                     if song.traits and song.traits.attribute_icon)
@@ -35,7 +37,7 @@ def render_list(songs,query,locale='zh',*,load):
     def paint(start,stop,height):
         rows,heights=page_rows(start,stop)
         c=Canvas(width,height);c.header(ui_label('歌曲列表',locale),subtitle);y=head
-        for col in range(cols):c.box((28+col*868,head-22,864+col*868,height-42),'white',24)
+        for col in range(cols):c.box((28+col*868,head-22,864+col*868,height-footer_h+2),'white',24)
         for ri in range(len(rows)):
             row=rows[ri];titleh=max(68,max(len(lines(localized_text(s,'title',locale),342,36,True))*44 for _,s in row))
             bandheight=max(48,max(len(lines(localized_text(s,'band',locale),550,34))*42 for _,s in row))
@@ -68,6 +70,7 @@ def render_list(songs,query,locale='zh',*,load):
                 else:c.text(x+148,y+titleh+bandheight+33,ui_label('激奏资料未确认',locale),29,MUTED)
                 c.line(x,y+heights[ri]-10,x+796)
             y+=heights[ri]
+        for i,line in enumerate(notice_lines):c.text(54,height-footer_h+17+i*34,line,24,MUTED)
         c.text(54,height-22,f'{start+1}–{stop} / {len(songs)} · '+ui_label('/查谱面 ID 难度',locale),22,MUTED)
         return c.image
     try:
@@ -76,9 +79,9 @@ def render_list(songs,query,locale='zh',*,load):
         while start<len(songs):
             # A complete row is at least 196px. Test candidates from largest to smallest:
             # moving the column break can change which long titles share a row.
-            stop=min(len(songs),start+max(1,(limit-head-44)//196)*cols)
+            stop=min(len(songs),start+max(1,(limit-head-footer_h)//196)*cols)
             while stop>start:
-                _,heights=page_rows(start,stop);height=head+44+sum(heights)
+                _,heights=page_rows(start,stop);height=head+footer_h+sum(heights)
                 if height<=limit:
                     # Fetch only this bounded page, before drawing. Shared artwork
                     # survives retries/pages; unique art is released after this paint.

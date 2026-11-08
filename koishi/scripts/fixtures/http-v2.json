@@ -18,6 +18,7 @@
       },
       "capability": "qq-query-chat-v6",
       "backend_code_digest": "0000000000000000000000000000000000000000000000000000000000000000",
+      "execution_profile": "personal-v1",
       "background_tasks": false,
       "notices_enabled": false,
       "diagnostics_enabled": true,

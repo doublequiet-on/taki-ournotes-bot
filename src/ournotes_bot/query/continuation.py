@@ -1,6 +1,6 @@
 # L3
 # Input: 普通平台／会话／用户键、已捕获查询结果和有限续查操作；不接受 SDK 消息。
-# Output: 可见 ID／难度、完整规范条件；至多30个选择，仅成功发送后提交上下文。
+# Output: 可见 ID／难度、完整规范条件；至多30个选择，显式提交结果及按话题撤销租约。
 # Pos: Query / Deterministic 的有界连续查询；见 L2-2.md。
 # Effects/Dependencies: 最多 1024 个内存上下文，10 分钟 TTL；执行复用查询器，可按 ID 获取详情；无模型、发送或持久化。
 """Small, receipt-committed conversations over actually displayed query results."""
@@ -327,6 +327,14 @@ class ContextStore:
 
     def discard(self,key):
         self._entries.pop(key,None)
+
+    def invalidate(self, key, lineage):
+        """Revoke one volatile topic, including tickets held by queued descendants."""
+        entry = self._entries.get(key)
+        if entry is not None and entry.lineage == lineage:
+            self._entries.pop(key, None)
+            return True
+        return False
 
     def deadline(self, key):
         entry = self._entries.get(key)

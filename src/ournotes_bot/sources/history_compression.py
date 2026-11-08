@@ -40,7 +40,7 @@ def open_store(path, *, write=False, legacy_version, require_complete=True):
         columns = {row[1] for row in db.execute('PRAGMA table_info(observations_data)')}
         required = {'id', 'server', 'event', 'challenge', 'music', 'source_ms',
                     'received_ms', 'scores', 'digest', 'quality'}
-        if legacy_version in (2, 3):
+        if legacy_version in (2, 3, 4):
             required |= {'source', 'time_kind', 'contract_version'}
         if not required <= columns:
             raise Damage('missing history columns')

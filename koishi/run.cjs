@@ -14,19 +14,28 @@ function configuration(env) {
     adapter:{id:env.QQ_APP_ID,secret:env.QQ_APP_SECRET,type:'public',protocol:'websocket',sandbox:false,
       intents:1<<25,endpoint:'https://api.bot.qq.com',retryWhen:[]}}
 }
-async function start(env=process.env) {
+async function start(env=process.env, recovery) {
+  // Trusted local composition only. A restored process must not open stores or
+  // attach the QQ adapter until the controller has completed both-role review.
+  if(recovery!==undefined && (typeof recovery?.assertCurrent!=='function'
+    ||!(recovery.scope instanceof require('./lib/scope-authority').ScopeStore)
+    ||recovery.assertCurrent()!==undefined))throw Error('trusted_recovery_check_required')
+  if(recovery?.session && (recovery.session.assertCurrent!==recovery.assertCurrent
+    ||recovery.session.binding?.version!==1||recovery.session.binding.role!=='gateway'
+    ||recovery.session.binding.instance!==env.TAKI_INSTANCE_ID))throw Error('recovery_entry_binding_mismatch')
   const config=configuration(env)
   const managementConfig=require('./console.cjs').configuration(env)
   const manifest=JSON.parse(fs.readFileSync(path.join(__dirname,'../combination.json'),'utf8'))
   if(!/^[a-f0-9]{40}$/.test(manifest.commit))throw Error('release identity')
   const ctx=new Context()
   if(managementConfig)managementConfig.identity=config.plugin
+  if(managementConfig){managementConfig.assertRecoveryCurrent=recovery?.assertCurrent;managementConfig.scope=recovery?.scope}
   const readHealth=require('./health.cjs').healthReader(ctx,manifest,config.plugin)
   if(managementConfig)managementConfig.readHealth=readHealth
   ctx.plugin(require('@koishijs/plugin-http').default)
   const management=managementConfig ? require('./console.cjs').install(ctx,managementConfig,manifest) : undefined
   // Policy enforcement belongs to the gateway lifecycle, including when its web UI is disabled.
-  config.plugin.management=management?.management||new(require('./lib/management').Management)(env.TAKI_CONSOLE_STATE_DIR,config.plugin)
+  config.plugin.management=management?.management||new(require('./lib/management').Management)(env.TAKI_CONSOLE_STATE_DIR,config.plugin,recovery?.scope,recovery?.assertCurrent)
   const taki=ctx.plugin(require('./lib'),config.plugin)
   const adapter=ctx.plugin(require('@koishijs/plugin-adapter-qq').default,config.adapter)
   const server=http.createServer(async(req,res)=>{
@@ -44,20 +53,31 @@ async function start(env=process.env) {
     taki.dispose();adapter.dispose();await management?.close()
   }
   try {
+    config.plugin.management.assertRuntimeCurrent()
     await ctx.start()
     await management?.ready()
     const receiver=ctx.takiTransport?.receiver
     if(!receiver)throw Error('gateway receiver unavailable')
     await receiver.ready
+    config.plugin.management.assertRuntimeCurrent()
     await new Promise((resolve,reject)=>{server.once('error',reject);server.listen(config.port,'127.0.0.1',resolve)})
   } catch(error) {
     await dispose();await ctx.stop();throw error
   }
   let closing
-  const close=()=>closing ||= (async()=>{const stopped=new Promise(resolve=>server.close(resolve));await dispose();await stopped;await ctx.stop()})()
-  return {ctx,server,close}
+  const recoveryReceiver=ctx.takiTransport?.receiver
+  let recoveryWatch
+  const close=()=>closing ||= (async()=>{clearInterval(recoveryWatch);const stopped=new Promise(resolve=>server.close(resolve));await dispose();await stopped;await ctx.stop()})()
+  if(recovery && !recovery.session)recoveryWatch=setInterval(()=>{
+    try{config.plugin.management.assertRuntimeCurrent()}catch{void close().catch(()=>{process.exitCode=1})}
+  },100)
+  return {ctx,server,close,recoveryDrained:()=>recoveryReceiver?.recoveryDrained()===true}
 }
-module.exports={configuration,start}
+async function startRecovery(session,scope,env=process.env) {
+  return require('./recovery.cjs').serveRecoveryGateway(session,env.TAKI_INSTANCE_ID,
+    assertCurrent=>start(env,{assertCurrent,scope,session}))
+}
+module.exports={configuration,start,startRecovery}
 if(require.main===module)start().then(runtime=>{
   for(const signal of ['SIGTERM','SIGINT'])process.once(signal,()=>runtime.close().then(()=>process.exit(0)))
 }).catch(()=>{console.error('Taki gateway startup failed');process.exitCode=1})

@@ -15,10 +15,11 @@ import uuid
 from ..domain.model_calls import ModelError, Usage, ProviderAction, require
 from ..domain.knowledge import KnowledgeError
 from ..natural_query.query_agent import DeferredModel, AgentOutcome, AgentState, query_text
+from ..natural_query.on_query import public_information_command
 from ..natural_query.query_validation import OutcomeCode
 from ..natural_query.native_tools import TOOLS, validate_call, execute, scope_for
 from ..sources.model_provider import NativeClient, request_body
-from ..data import DataError
+from .query_runtime import QueryRuntime, check_query_work, confirmed_page
 from ..sources.errors import ChartDataError
 from .site_lookup import SiteLookup
 from .model_config import ModelConfiguration
@@ -300,9 +301,18 @@ class ModelRuntime:
                 await asyncio.sleep(3600)
         self.task=asyncio.create_task(prices())
 
-    async def close(self):
+    def request_stop(self):
+        if self.task: self.task.cancel()
+        self.admin.request_stop()
+
+    async def quiesce(self):
+        self.request_stop()
         if self.task:
-            self.task.cancel();await asyncio.gather(self.task,return_exceptions=True)
+            await asyncio.gather(self.task,return_exceptions=True)
+        await self.admin.quiesce()
+
+    async def close(self):
+        await self.quiesce()
         await self.admin.close()
         if self.agent: self.agent.close()
         self.usage.close()
@@ -317,41 +327,21 @@ class ModelRuntime:
             require(self.agent.entity_valid(work),'query_source_changed')
             require(self.agent.web_valid(work),'chat_capability_revoked')
             require(self.agent.proactive.valid(work),'proactive_stale')
-        require(work.active and time.monotonic()<deadline,'execution_timeout')
-        require(time.monotonic()<work.content_deadline,'context_expired')
-        if work.anchor:
-            require(time.monotonic()<work.anchor.expires and work.anchor.snapshot_id in self.backend.conversations.snapshots,'context_expired')
-        if work.lease:
-            require(self.backend.contexts.active(work.lease),'context_expired')
-        require(self.backend.valid_evidence(leases),'knowledge_revoked')
+        check_query_work(self.backend,work,deadline,leases)
 
     def previous(self,work):
         if not work.anchor: return (),()
-        snapshot=self.backend.conversations.snapshots.get(work.anchor.snapshot_id)
-        require(snapshot is not None and 0<=work.anchor.page<len(snapshot.pages),'context_expired')
-        page=snapshot.pages[work.anchor.page]
+        page=confirmed_page(self.backend,work)
         context=work.anchor.context
         history=getattr(context,'history',()) or (('assistant',page.text[:6000]),)
         return history,tuple(getattr(context,'evidence',()))
 
     async def current_repository(self):
-        try:
-            view = await self.backend.gate.run(self.backend.repository.current_query_view)
-            require(not isinstance(view,replies.PreparedReply),'query_busy')
-            return view
-        except (DataError,OSError,ValueError,KeyError,TypeError):
-            raise ModelError('source_unavailable') from None
+        return await QueryRuntime(self.backend).current_repository()
 
     async def followup(self,work,context,operation):
-        """Native result details use the same current-version contract as queries."""
-        try:
-            _,leases=self.previous(work)
-            self.check(work,work.content_deadline,leases)
-            repository=await self.current_repository()
-            self.check(work,work.content_deadline,leases)
-            return await self.backend.gate.prepare_followup(context,operation,repository)
-        except (ModelError,ProtocolError) as exc:
-            return failure(exc.code if isinstance(exc,ProtocolError) else str(exc))
+        return await QueryRuntime(self.backend).followup(work,context,operation,
+                                                        validate=self.check,failure=failure)
 
     async def prepare(self,work,content):
         question=query_text(content)
@@ -369,7 +359,9 @@ class ModelRuntime:
                              or chat_topic(question,previous_chat) or LIGHT_CHAT.fullmatch(question)
                              or CONVERSATIONAL.search(question) or not LOCAL_QUERY_HINT.search(question))
             repository=self.backend.repository
-            if not model_first or re.match(r'^[/／]?查(?:\s|$)',content.strip()) or getattr(self.backend.settings,'chat_engine','legacy')=='agent' and replies.is_ai_request(content):
+            if (not model_first or public_information_command(question) is not None
+                    or re.match(r'^[/／]?查(?:\s|$)',content.strip())
+                    or getattr(self.backend.settings,'chat_engine','legacy')=='agent' and replies.is_ai_request(content)):
                 # Revalidate current business data before parsing entities/executing.
                 repository=await self.current_repository()
                 outcome=await self.backend.gate.run(self.backend.parser.prepare_native_local,content,repository)

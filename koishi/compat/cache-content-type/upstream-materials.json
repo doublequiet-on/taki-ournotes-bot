@@ -1,0 +1,29 @@
+{
+  "cache-content-type": {
+    "version": "2.1.0",
+    "gitHead": "b4d59700bf3f0d4aad25db504cb316526fc029fa",
+    "tarball": "https://registry.npmjs.org/cache-content-type/-/cache-content-type-2.1.0.tgz",
+    "integrity": "sha512-cunyfzwf3p86sXOE3PyWFWlPtIb21DyLV9KAq1HhrqLupxx+mtLrqXdEe9vxUmLpTLk/jP/Zf4YyAlSoAbEVEg==",
+    "sha256": "2ee7f6c454996e6780d41eb31309910cbe6cde522bd939aeb77ef5d3beb4315f",
+    "dependencies": {
+      "ylru": "^2.0.0",
+      "mime-types": "^2.1.35"
+    },
+    "license_sha256": "db1cb24ed79e242f829c4c123dfdf1023ed760bc8e88607e1b0316ca8cd6a906",
+    "source_url": "https://codeload.github.com/node-modules/cache-content-type/tar.gz/b4d59700bf3f0d4aad25db504cb316526fc029fa",
+    "source_sha256": "441da0730f9af0fb817acef39c08356e85bddf9299a5b9579f9f1390992572c7",
+    "npm_source_and_license_equal": true
+  },
+  "ylru": {
+    "version": "2.0.0",
+    "gitHead": "dafd9b0a90e6ac912a6d8ec90fb82ada7ff1602b",
+    "tarball": "https://registry.npmjs.org/ylru/-/ylru-2.0.0.tgz",
+    "integrity": "sha512-T6hTrKcr9lKeUG0MQ/tO72D3UGptWVohgzpHG8ljU1jeBt2RCjcWxvsTPD8ZzUq1t1FvwROAw1kxg2euvg/THg==",
+    "sha256": "51e41cf4f814bb3d7aee0760546e0e6091239e42649930e5f4f754096de45da5",
+    "dependencies": {},
+    "license_sha256": "8ac207dc39896782980709bdd145ea1d47aec4dbce486509cc27d1c79e0b53e3",
+    "source_url": "https://codeload.github.com/node-modules/ylru/tar.gz/dafd9b0a90e6ac912a6d8ec90fb82ada7ff1602b",
+    "source_sha256": "114abc0ba061eb8b0b34ebda556b25bfa0ac8da899f96a3d32c919ad8c1e2196",
+    "npm_source_and_license_equal": true
+  }
+}

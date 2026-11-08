@@ -22,6 +22,19 @@ COMMIT = "a" * 40
 
 
 class KoishiClientPatchTests(unittest.TestCase):
+    def test_full_pinned_release_licenses_and_patch_recipe(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            koishi_release.copy_release_materials(root)
+            for name, expected in koishi_release.LICENSE_SHA256.items():
+                self.assertEqual(hashlib.sha256((root / 'licenses' / name).read_bytes()).hexdigest(), expected)
+            recipe = json.loads((root / 'licenses/koishi-console/taki-reconnect-patch.json').read_text())
+            self.assertEqual(recipe['before_sha256'], koishi_release.KOISHI_CLIENT_SHA256)
+            self.assertEqual(len(recipe['replacements']), 3)
+            with patch.dict(koishi_release.LICENSE_SHA256, {'node/LICENSE': '0' * 64}):
+                with self.assertRaisesRegex(ValueError, 'license differs'):
+                    koishi_release.copy_release_materials(root)
+
     def test_pinned_reload_fix_and_unexpected_asset_rejection(self):
         original = b'fixture:' + b'|'.join(old for old, _ in koishi_release.KOISHI_RECONNECT_PATCHES) + b'end'
         with tempfile.TemporaryDirectory() as directory:
