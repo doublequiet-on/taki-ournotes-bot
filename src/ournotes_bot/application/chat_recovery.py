@@ -46,6 +46,8 @@ class ChatRecovery:
                 lease for reply in work.prepared for lease in reply.evidence),
             vision=asdict(work.vision_capability) if work.vision_capability else None,
             web=asdict(work.web_capability) if work.web_capability else None)
+        if work.quote_preview_reference:
+            proof['quote_preview_reference']=work.quote_preview_reference
         expires=min(self.store.clock()+86400,self.store.clock()+work.content_deadline-time.monotonic())
         staged=[]
         for position,reply in enumerate(work.prepared):
@@ -59,6 +61,8 @@ class ChatRecovery:
         except (OSError,ModelError,KnowledgeError,StoryError,ServiceError):return None
 
     def _valid(self,proof,*,projected):
+        if proof.get('quote_preview_reference') and not self.store.detached_quote_valid(
+                proof['scope'],proof['quote_preview_reference']):return False
         if proof['story'] and (self.agent.story is None or not all(self.agent.story.valid(*v) for v in proof['story'])):return False
         knowledge=self.runtime.backend.knowledge
         if proof['knowledge'] and (knowledge is None or not knowledge.validate_retention(proof['knowledge'])):return False

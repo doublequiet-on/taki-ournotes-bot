@@ -60,10 +60,10 @@ class TaskContexts:
         for key, task in list(self.tasks.items()):
             if self.clock() - task.updated >= self.window: self.tasks.pop(key, None)
 
-    def begin(self, request, valid_source):
+    def begin(self, request, valid_source, *, inherit=True):
         self.sweep()
         key = self.key(request)
-        previous = self.tasks.get(key)
+        previous = self.tasks.get(key) if inherit else None
         # ChatStore.read accepts 48 sources. Start a fresh plan after a long
         # exchange instead of silently dropping the provenance of old choices.
         if previous and len(previous.source_messages) >= 40:

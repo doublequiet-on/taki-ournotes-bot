@@ -392,7 +392,8 @@ class ModelRuntime:
 
     async def prepare_chat(self,work,question):
         try:
-            require(bool(question) or bool(work.request.attachments) or bool(work.request.quoted_text),'invalid_argument')
+            require(bool(question or work.request.attachments or work.request.quoted_text
+                         or work.request.quote_hint or work.missing_anchor),'invalid_argument')
             question=question or ('[图片]' if work.request.attachments else '[引用消息]')
             require(work.request.policy.natural_query=='model','policy_denied')
             if work.model_error: raise ModelError(work.model_error)

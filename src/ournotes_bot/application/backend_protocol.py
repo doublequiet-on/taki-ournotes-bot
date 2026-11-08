@@ -62,13 +62,17 @@ class Request:
     sender_name: str = ''
     attachments: tuple = field(default=(),repr=False)
     proactive_id: str = ''
+    quote_hint: str | None = None
 
     @classmethod
     def parse(cls, value, instance_id, app_id, now, *, reference_profiles=()):
         fields = set(cls.__dataclass_fields__)
-        optional={'sender_name','attachments','proactive_id','quoted_text'}
+        optional={'sender_name','attachments','proactive_id','quoted_text','quote_hint'}
         require(isinstance(value,dict) and fields-optional | {'protocol'}<=set(value)<=fields | {'protocol'},'request_shape')
-        value={**value,'quoted_text':value.get('quoted_text',''),'sender_name':value.get('sender_name',''),'proactive_id':value.get('proactive_id','')}
+        if 'quote_hint' in value:
+            require(value['quote_hint'] in ('image','unknown'),'quote_hint')
+        value={**value,'quoted_text':value.get('quoted_text',''),'sender_name':value.get('sender_name',''),
+               'proactive_id':value.get('proactive_id',''),'quote_hint':value.get('quote_hint')}
         try:value['attachments']=parse_attachments(value.get('attachments'))
         except ImageError as exc:raise ProtocolError(exc.code) from None
         require(isinstance(value['quoted_text'],str) and len(value['quoted_text'].encode())<=4096
@@ -76,7 +80,7 @@ class Request:
         require(value['sender_name']=='' or identity(value['sender_name']),'sender_name')
         require_protocol(value['protocol'])
         require(value['instance_id'] == instance_id and value['app_id'] == app_id, 'instance_mismatch', 403)
-        for key in fields - {'timestamp_ms', 'body', 'ingress_seq', 'policy', 'reference', 'interaction','sender_name','attachments','proactive_id','quoted_text'}:
+        for key in fields - {'timestamp_ms', 'body', 'ingress_seq', 'policy', 'reference', 'interaction','sender_name','attachments','proactive_id','quoted_text','quote_hint'}:
             require(identity(value[key]), 'invalid_identity')
         require(value['platform'] == 'qq' and value['kind'] in ('group', 'c2c'), 'conversation_kind')
         require(value['kind'] != 'c2c' or value['conversation_id'] == value['user_id'], 'c2c_identity')
@@ -112,7 +116,8 @@ class Request:
     @property
     def content_digest(self):
         return digest({key: value for key, value in asdict(self).items()
-                       if key not in ('gateway_epoch', 'ingress_seq')})
+                       if key not in ('gateway_epoch', 'ingress_seq')
+                       and (key != 'quote_hint' or value is not None)})
 
     @property
     def context_id(self):

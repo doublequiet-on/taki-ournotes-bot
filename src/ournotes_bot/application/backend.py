@@ -58,6 +58,7 @@ class Work:
     task: object = None
     anchor: object = None
     missing_anchor: bool = False
+    quote_preview_reference: str | None = None
     model_attempts: int = 0
     model_stage: str = 'preparation'
     model_attempt_limit: int = 2
@@ -473,7 +474,7 @@ class Backend:
                 if work.anchor is None or self.contexts.lineage(work.key) != work.lineage:
                     self.finish(work, 'aborted')
                     return
-            if work.missing_anchor:
+            if work.missing_anchor and not work.chat:
                 parts = [replies.PreparedReply(MISSING)]
             elif work.chat:
                 # Triggered chat keeps a whole multiline message and serializes
@@ -899,7 +900,7 @@ def create_app(backend, token, initialize=None, *, assert_recovery_current=None)
                      'management_capabilities': ['admin_read_v1', 'telemetry_v1', 'group_policies_v1', 'ops_v1'],
                      'features': ['classify', 'gateway_retire', 'ack_context_guard', 'notice_gateway_v1',
                                   'quoted_context_v1', 'fixed_snapshot_v1', 'current_model_permit_v1', 'independent_delivery_v1',
-                                   'chat_observation_v1','chat_images_v1','abort_reason_v1'] if backend.query_runtime is None else
+                                   'chat_observation_v1','chat_images_v1','chat_quote_hint_v1','abort_reason_v1'] if backend.query_runtime is None else
                                  ['classify','gateway_retire','ack_context_guard','quoted_context_v1',
                                   'fixed_snapshot_v1','independent_delivery_v1'],
                      'reference_profiles': sorted(backend.reference_profiles)}, 200 if accepting else 503)

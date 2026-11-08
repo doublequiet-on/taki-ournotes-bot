@@ -3202,6 +3202,103 @@ class ChatAgentTests(Fixture, unittest.IsolatedAsyncioTestCase):
         parsed=Request.parse({**value,'quoted_text':'引用只作为用户材料'},'fixture','app',self.now)
         self.assertIsNone(parsed.reference)
 
+    def test_quote_hint_preserves_legacy_digest_and_reference_authority(self):
+        from dataclasses import asdict
+        from ournotes_bot.application.backend_protocol import digest
+        raw=self.request('quote-digest',1)
+        legacy=Request.parse(raw,'fixture','app',self.now)
+        old_shape={k:v for k,v in asdict(legacy).items()
+                   if k not in ('gateway_epoch','ingress_seq','quote_hint')}
+        self.assertEqual(legacy.content_digest,digest(old_shape))
+        image=Request.parse({**raw,'quote_hint':'image'},'fixture','app',self.now)
+        self.assertNotEqual(image.content_digest,legacy.content_digest)
+        self.assertIsNone(image.reference)
+        self.assertFalse(image.attachments)
+        for hint in (None,True,'url',{'image':True}):
+            with self.subTest(hint=hint),self.assertRaises(ProtocolError):
+                Request.parse({**raw,'quote_hint':hint},'fixture','app',self.now)
+        with self.assertRaises(ProtocolError):
+            Request.parse({**raw,'quote_hint':'image','trigger':'quoted_reply',
+                           'reference':{'message_id':'unverified','adapter_profile_version':'other'}},
+                          'fixture','app',self.now)
+
+    async def test_unreadable_quote_image_gets_local_reply_and_keeps_replay_identity(self):
+        self.client.request.return_value=self.result('旧乐队话题。')
+        old,_=await self.prepare_native('/聊 聊聊旧乐队话题',seq=1)
+        self.event(old,'intent');self.event(old,'ack')
+        self.client.request.reset_mock()
+        raw={**self.request('native2',2),'body':'taki你怎么看？','quote_hint':'image'}
+        with patch.object(self,'request',return_value=raw):
+            plan,attempts=await self.prepare_native(raw['body'],seq=2)
+        self.assertEqual(attempts,[])
+        self.assertEqual(plan['parts'][0]['business_status'],'quote_unavailable')
+        self.assertIn('原图',plan['parts'][0]['text'])
+        self.assertNotIn('旧乐队',plan['parts'][0]['text'])
+        self.client.request.assert_not_awaited()
+        self.event(plan,'intent');self.event(plan,'ack')
+        repeated=await self.backend.submit(raw)
+        self.assertEqual(repeated['delivery_id'],plan['delivery_id'])
+        with self.assertRaises(ProtocolError) as conflict:
+            await self.backend.submit({**raw,'quote_hint':'unknown'})
+        self.assertEqual(conflict.exception.code,'request_conflict')
+
+    async def test_expired_reference_uses_visible_preview_without_old_topic(self):
+        self.backend.reference_profiles=frozenset({'fixture'})
+        self.client.request.return_value=self.result('旧乐队话题。')
+        old,_=await self.prepare_native('/聊 聊聊旧乐队话题',seq=1)
+        self.event(old,'intent');self.event(old,'ack')
+        bodies=self.capture_native_bodies()
+        raw={**self.request('native2',2),'trigger':'quoted_reply','quote_hint':'image',
+             'reference':{'message_id':'expired-source','adapter_profile_version':'fixture'},
+             'quoted_text':'合成引文：要不要给新人留一个练习位置？'}
+        self.client.request.return_value=self.result('给新人留一个练习位置挺合适。')
+        with patch.object(self,'request',return_value=raw):
+            plan,attempts=await self.prepare_native('taki你怎么看',seq=2)
+        self.assertEqual(len(attempts),1)
+        self.assertEqual(plan['parts'][0]['business_status'],'success')
+        messages=bodies[0]['messages']
+        self.assertNotIn('旧乐队',json.dumps(messages,ensure_ascii=False))
+        latest=json.loads(next(m['content'] for m in reversed(messages) if m['role']=='user'))
+        self.assertEqual(raw['quoted_text'],latest['quote_preview'])
+        self.assertEqual(latest['quote_status'],'image_unavailable')
+        self.assertIsNone(latest['reply_to'])
+        agent=self.backend.model_runtime.agent
+        scope=self.backend.works[plan['delivery_id']].request.scope
+        self.event(plan,'intent');self.event(plan,'ack')
+        saved=agent.store.read(scope,['native2'])['messages']
+        self.assertEqual(len(saved),1)
+        self.assertNotIn(raw['quoted_text'],saved[0]['text'])
+
+    async def test_quote_image_gap_keeps_an_independent_question(self):
+        bodies=self.capture_native_bodies()
+        raw={**self.request('native1',1),'quote_hint':'image'}
+        self.client.request.return_value=self.result('二加二等于四。')
+        with patch.object(self,'request',return_value=raw):
+            plan,attempts=await self.prepare_native('taki你怎么看？另外二加二是多少？')
+        self.assertEqual(len(attempts),1)
+        latest=json.loads(next(m['content'] for m in reversed(bodies[0]['messages']) if m['role']=='user'))
+        self.assertIn('二加二是多少',latest['text'])
+        self.assertEqual(latest['quote_status'],'image_unavailable')
+        self.assertIn('等于四',plan['parts'][0]['text'])
+        self.event(plan,'intent');self.event(plan,'ack')
+
+    async def test_revoked_detached_quote_preview_cannot_be_sent(self):
+        self.backend.reference_profiles=frozenset({'fixture'})
+        agent=self.backend.model_runtime.agent
+        raw={**self.request('native1',1),'trigger':'quoted_reply',
+             'reference':{'message_id':'withdrawn-source','adapter_profile_version':'fixture'},
+             'quoted_text':'合成待撤回引文'}
+        self.client.request.return_value=self.result('根据引文拟的回复。')
+        with patch.object(self,'request',return_value=raw):
+            plan,attempts=await self.prepare_native('taki你怎么看')
+        self.assertEqual(len(attempts),1)
+        work=self.backend.works[plan['delivery_id']]
+        proof=json.loads(agent.store.final_candidate(work.delivery,'0')['payload'])['proof']
+        self.assertEqual(proof['quote_preview_reference'],'withdrawn-source')
+        agent.store.delete_messages(work.request.scope,['withdrawn-source'])
+        self.assertFalse(agent.recovery.valid(proof))
+        self.assertFalse(self.backend.lookup(raw['request_id'],'e1')['send_allowed'])
+
     async def test_chat_receives_registered_band_alias_snapshot(self):
         bodies=self.capture_native_bodies()
         self.client.request.return_value=self.result('你说的是 Ave Mujica 吧，活动安排还要核实。')
