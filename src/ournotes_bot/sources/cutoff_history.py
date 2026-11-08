@@ -759,7 +759,61 @@ class SourceHistory:
             if not getattr(store, 'supports_provider_history', False):
                 return HistoryView(warning='provider历史分区未接线。')
             return store.read_board(event, board, ranks, **kwargs)
-        return store.read(event, board.song, ranks, **kwargs)
+        view = store.read(event, board.song, ranks, **kwargs)
+        if board.source == "tracker" and store.enabled:
+            return self._with_archive(event, board.song, ranks, view, max_points=kwargs.get("max_points", 20000))
+        return view
+
+    def _with_archive(self, event, song, ranks, view, *, max_points):
+        path = self.legacy.path.with_name("haneoka-cutoff-archive-v1.sqlite3")
+        if view.total > max_points or not path.is_file():
+            return view
+        try:
+            with closing(sqlite3.connect(path.as_uri() + "?mode=ro", uri=True, timeout=0.15)) as db:
+                if db.execute("PRAGMA user_version").fetchone() != (1,):
+                    raise ValueError("unsupported archive schema")
+                rows = db.execute(
+                    "SELECT observed_ms,scores FROM observations WHERE server=? AND event=? AND challenge=? AND music=? "
+                    "ORDER BY observed_ms LIMIT ?",
+                    (event.server, str(event.event_id), str(song.challenge_id), str(song.music_id), max_points + 1),
+                ).fetchall()
+            if len(rows) > max_points:
+                raise ValueError("archive exceeds point budget")
+            stamps, breaks = [], []
+            previous_valid = False
+            for point in view.points:
+                valid = point.quality == "valid"
+                if valid:
+                    stamps.append(point.time_ms)
+                    breaks.append(point.break_before or not previous_valid)
+                previous_valid = valid
+            archive = []
+            for stamp, encoded in rows:
+                slot = bisect.bisect_left(stamps, stamp)
+                if slot < len(stamps) and (stamp == stamps[slot] or not breaks[slot]):
+                    continue
+                scores = json.loads(encoded)
+                if (type(stamp) is not int or stamp <= 0 or not isinstance(scores, list) or not 0 < len(scores) <= 100
+                        or any(type(score) is not int or score < 0 for score in scores)):
+                    raise ValueError("invalid archive observation")
+                values = tuple(scores[rank - 1] if rank <= len(scores) else None for rank in ranks)
+                if any(value is not None for value in values):
+                    # No Taki receipt time exists for these observations.
+                    archive.append(HistoryPoint(stamp, values, 0, break_before=True, source="haneoka_archive",
+                                                time_kind="official_observed_via_haneoka", provider="official"))
+            if view.total + len(archive) > max_points:
+                raise ValueError("combined history exceeds point budget")
+        except (OSError, sqlite3.Error, ValueError, TypeError, IndexError):
+            return replace(view, warning=" ".join(filter(None, (view.warning, "Haneoka 补录暂不可用。"))))
+        if not archive:
+            return view
+        points = []
+        for point in sorted((*view.points, *archive), key=lambda point: point.time_ms):
+            if points and point.source != points[-1].source and not point.break_before:
+                point = replace(point, break_before=True)
+            points.append(point)
+        note = "Haneoka 补录按实际观测时间显示，缺测处留空。"
+        return HistoryView(tuple(points), " ".join(filter(None, (view.warning, note))), view.total + len(archive))
 
     def record(self, event, board):
         source = getattr(board, "source", "tracker")

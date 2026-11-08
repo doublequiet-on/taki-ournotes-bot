@@ -67,6 +67,14 @@ def chart(c,answer,board,box,display_time,heading=True):
         c.paragraph(x+12,y+max(72,(h-len(message)*36)/2),'无可绘制有效观测',w-24,26,36,color=MUTED)
         return
     first,last=view.points[0].time_ms,view.points[-1].time_ms
+    archive = tuple(point for point in view.points if point.source == 'haneoka_archive')
+    if archive:
+        first = min(first, board.song.effective_start_ms or answer.event.start_ms or first)
+        view = replace(view, points=tuple(point for point in view.points if point.source != 'haneoka_archive'))
+        legend_y = y + (22 if heading else 53)
+        legend_x = x + w / 2
+        c.draw.ellipse((legend_x - 7, legend_y - 7, legend_x + 7, legend_y + 7), outline=MUTED, width=3)
+        c.text(legend_x + 17, legend_y, 'Haneoka 补录', 30 if w > 1500 else 24, MUTED)
     low,high=min(values),max(values);pad=max(1,(high-low)//8);low=max(0,low-pad);high+=pad
     precision=min(6,max(2,math.ceil(-math.log10(max(1,high-low)/1000000))+1))
     ticks=[low+(high-low)*i//3 for i in range(4)]
@@ -78,9 +86,15 @@ def chart(c,answer,board,box,display_time,heading=True):
         py=plot[1]+plot[3]-(value-low)*plot[3]//max(1,high-low)
         c.line(plot[0],py,plot[0]+plot[2],color='#e5e0e9');c.text(plot[0]-18,py,label,tick_size,MUTED,align='right')
     for i,rank in enumerate(chart_ranks(answer)):
+        color=COLORS[i%len(COLORS)]
+        for point in archive:
+            if point.scores[i] is not None:
+                px, py = coordinates(point.time_ms, point.scores[i], bounds, plot)
+                radius = 6 if w > 1500 else 4
+                c.draw.ellipse((px-radius,py-radius,px+radius,py+radius),outline=color,width=2)
         if not view.points or i>=len(view.points[0].scores):continue
         for group in segments(view,i):
-            pts=[coordinates(t,s,bounds,plot) for t,s in group];color=COLORS[i%len(COLORS)]
+            pts=[coordinates(t,s,bounds,plot) for t,s in group]
             if len(pts)>1:c.draw.line(pts,fill=color,width=5 if w>1500 else 3)
             if pts:
                 px,py=pts[-1];c.draw.ellipse((px-3,py-3,px+3,py+3),fill=color)
