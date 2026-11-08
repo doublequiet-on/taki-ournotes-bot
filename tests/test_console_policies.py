@@ -5795,6 +5795,8 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
     async def completed_memory_cost_gap(self, unknown=False):
         import math
         from ournotes_bot.application.chat_jobs import maximum_cost_micro
+        # Exercise ledger reconciliation after enough of the daily budget has opened.
+        self.now = (int(self.now) + 8*3600) // 86400 * 86400 + 4*3600
         self.snapshot=replace(self.snapshot,profile=replace(self.snapshot.profile,provider='openai',
             wire_profile='openai-responses-v1',model='gpt-6.1-terra',max_input_tokens=32768,
             max_output_tokens=4096,user_daily_limit=10**8,group_daily_limit=10**8))
@@ -7378,17 +7380,17 @@ class ChatServiceJobsTests(unittest.TestCase):
 
 
 
-    def test_full_day_release_matches_production_headroom_without_evening_jump(self):
+    def test_full_day_release_is_uniform_without_evening_jump(self):
         from fractions import Fraction
         from ournotes_bot.application.chat_jobs import _paced_release
-        budget, minimum = Fraction(330580), 122880
-        expected = {0:122880, 6:174805, 12:226730, 18:278655, 24:330580}
+        budget, minimum = Fraction(400_000), 100_000
+        expected = {0:100_000, 6:175_000, 12:250_000, 18:325_000, 24:400_000}
         for hour, amount in expected.items():
             with self.subTest(hour=hour):
                 self.assertEqual(_paced_release(budget,minimum,hour*3600),amount)
         self.assertLess(_paced_release(budget,minimum,18*3600)
-                        - _paced_release(budget,minimum,18*3600-1),3)
-        self.assertEqual(_paced_release(Fraction(120017),minimum,0),120017)
+                        - _paced_release(budget,minimum,18*3600-1),4)
+        self.assertEqual(_paced_release(Fraction(90_000),minimum,0),90_000)
 
     def test_low_daily_balance_cannot_fund_an_opportunity_at_any_hour(self):
         from ournotes_bot.application.chat_jobs import ServiceError, proactive_minimum_cost_micro
