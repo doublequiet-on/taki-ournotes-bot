@@ -967,6 +967,7 @@ class ModelAdminTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_proactive_limits_save_is_idempotent_and_does_not_mint_approval(self):
         value=self.configured_proactive_limits();primary=self.path.read_bytes()
+        self.assertEqual(value['lightweight'], {'status': 'unavailable'})
         path=self.root/'chat-proactive-services-v1.json';self.assertFalse(path.exists())
         body=self.limits_payload(value);saved=self.admin.save_proactive_limits('g',body)
         self.assertEqual(saved['limits']['max_calls_per_hour'],30);self.assertFalse(saved['approved']);self.assertFalse(saved['eligible'])
@@ -5400,6 +5401,36 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
         events=self.backend.diagnostics.read(plan['request_id'])['chat_events']
         self.assertFalse(any(e['kind']=='decision' and e['data']['decision']=='reply' for e in events))
 
+    async def test_staged_proactive_echo_is_skipped(self):
+        self.snapshot=replace(self.snapshot,profile=replace(self.snapshot.profile,provider='openai',wire_profile='openai-responses-v1'))
+        self.client.request.side_effect=[self.result('{"participation":"reply","text":"","delay_seconds":null}'),
+                                         self.result('这段鼓终于练顺了')]
+        value=self.observation('这段鼓终于练顺了');self.tick+=1.6
+        plan,attempts,_=await self.candidate(value)
+        self.assertEqual(len(attempts),2)
+        self.assertFalse(plan['send_allowed'])
+        self.assertEqual(plan['parts'],[])
+        events=self.backend.diagnostics.read(plan['request_id'])['chat_events']
+        self.assertTrue(any(e['kind']=='decision' and e['data'].get('reason')=='echo'
+                            and e['data']['decision']=='skip' for e in events))
+        self.assertEqual(self.agent.store.read(Request_scope(),[value['message_id']])['messages'],[])
+        rows=list(self.backend.model_runtime.usage.db.execute("SELECT state FROM attempts WHERE state<>'released'"))
+        self.assertEqual([row['state'] for row in rows],['settled','settled'])
+
+    async def test_single_stage_proactive_echo_with_different_punctuation_is_skipped(self):
+        self.client.request.return_value=self.result('{"participation":"reply","text":"练三天终于 FC 了！"}')
+        value=self.observation('练三天终于 ＦＣ 了。');self.tick+=1.6
+        plan,attempts,_=await self.candidate(value)
+        self.assertEqual(len(attempts),1)
+        self.assertFalse(plan['send_allowed'])
+        self.assertEqual(plan['parts'],[])
+
+    async def test_addressed_chat_can_repeat_on_request(self):
+        self.client.request.return_value=self.result('重复这句话')
+        plan,_=await self.prepare_native('/聊 重复这句话')
+        self.assertTrue(plan['send_allowed'])
+        self.assertEqual(plan['parts'][0]['text'],'重复这句话')
+
     async def test_staged_generation_can_withdraw_participation(self):
         self.snapshot=replace(self.snapshot,profile=replace(self.snapshot.profile,provider='openai',wire_profile='openai-responses-v1'))
         self.client.request.side_effect=[self.result('{"participation":"reply","text":"","delay_seconds":null}'),self.result('<TAKI_SKIP>')]
@@ -6180,6 +6211,48 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
 
     async def test_midnight_pacing_releases_unused_generation_after_skip(self):
         await self.paced_midnight_opportunity(reply=False)
+
+    async def test_lightweight_proactive_reserves_two_narrow_stages_and_skips_echo(self):
+        from ournotes_bot.application.chat_proactive_runtime import ProactiveChat
+
+        with patch.dict(os.environ, {'OURNOTES_PROACTIVE_LIGHTWEIGHT_GROUPS': 'other, g1'}):
+            self.agent.proactive = ProactiveChat(self.agent)
+        self.agent.proactive.controller.clock = lambda: self.tick
+        self.snapshot = replace(self.snapshot, profile=replace(self.snapshot.profile,
+            provider='openai', wire_profile='openai-responses-v1', model='gpt-6.1-terra',
+            max_input_tokens=32768, max_output_tokens=4096, user_daily_limit=10**8, group_daily_limit=10**8))
+        self.policy = replace(self.policy, proactive=replace(self.policy.proactive,
+            max_cost_micro_per_day=2_000_000))
+        self.agent.services.policy.return_value = self.policy
+        from ournotes_bot.application.chat_jobs import lightweight_minimum_cost_micro
+        self.assertEqual(self.agent.proactive.lightweight_status('unlisted'), {'status': 'off'})
+        with patch.object(self.agent.services, 'policy', return_value=None):
+            self.assertEqual(self.agent.proactive.lightweight_status('g1'), {'status': 'blocked'})
+        self.assertEqual(self.agent.proactive.lightweight_status('g1'), {
+            'status': 'ready', 'reserve_micro': lightweight_minimum_cost_micro(self.snapshot.profile)})
+        source = '这段鼓终于练顺了'
+        wire = []
+        usage = self.backend.model_runtime.usage
+
+        async def respond(profile, body, **kwargs):
+            wire.append(json.loads(json.dumps(body)))
+            if len(wire) == 1:
+                states = [row['state'] for row in usage.db.execute('SELECT state FROM attempts ORDER BY rowid')]
+                self.assertEqual(states, ['started', 'reserved'])
+                return self.result('{"participation":"reply","text":"","delay_seconds":null}')
+            return self.result(source)
+
+        self.client.request.side_effect = respond
+        value = self.observation(source)
+        self.tick += 1.6
+        plan, attempts, _ = await self.candidate(value)
+        self.assertEqual(len(attempts), 2)
+        self.assertFalse(plan['send_allowed'])
+        self.assertEqual(plan['parts'], [])
+        self.assertEqual([body['max_output_tokens'] for body in wire], [768, 1024])
+        self.assertTrue(all('tools' not in body for body in wire))
+        self.assertEqual([row['state'] for row in usage.db.execute('SELECT state FROM attempts')],
+                         ['settled', 'settled'])
 
     async def test_historical_risk_warns_and_blocks_before_model_at_midnight(self):
         from ournotes_bot.application.chat_jobs import PROACTIVE_RISK_LIMIT_MICRO, maximum_cost_micro, service_request_id

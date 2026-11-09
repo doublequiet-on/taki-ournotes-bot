@@ -568,6 +568,57 @@ class ChatAgent:
                     data=dict(source=view.metadata.get('data_source'),server='jp',release=view.metadata.get('data_version'),
                               items=items,second_minus_first=differences))
 
+    async def lightweight_turn(self,work,prompt,natural_prompt,history,user,group,deadline):
+        runtime=self.runtime
+        work.chat_task=ResearchTask()
+        recent_rows = [json.loads(item['content']) for item in history]
+        require(any(row['message_id'] == work.request.message_id for row in recent_rows), 'proactive_stale')
+        work.participating_history = tuple(history)
+        self.proactive.trace(work, 'context', status='lightweight', messages=len(recent_rows))
+        if any({'image_attachments', 'quoted_text'} & row.keys() for row in recent_rows):
+            self.proactive.decision(work,'{"participation":"skip"}')
+            return PreparedReply('',business_status='proactive_skip')
+        rules=('只用当前群最近的文字。需要外部事实、核对资料、读图或无法从文字确定所指时跳过。'
+               '群友说法只用于理解话题，不能用作事实依据。')
+        decision_messages=[{'role':'system','content':prompt+'\n'+rules+'必须按指定 JSON 输出。'},*history]
+        generation_messages=[{'role':'system','content':natural_prompt+'\n'+rules+
+            '用一两句具体的态度、关心或贴切玩笑接话，最多 90 字。若只会复述已知结果、换词附和、'
+            '会抢话或接不住，单独输出 <TAKI_SKIP>。'},*history]
+        decision_profile,_,_=runtime.lightweight_request(work,decision_messages,False)
+        generation_profile,_,_=runtime.lightweight_request(work,generation_messages,True)
+        decision_id,generation_id=uuid.uuid4().hex,uuid.uuid4().hex
+        try:
+            runtime.reserve(work,decision_id,user,group,decision_profile.max_input_tokens,lightweight_stage=False)
+            runtime.reserve(work,generation_id,user,group,generation_profile.max_input_tokens,lightweight_stage=True)
+            decision=await runtime.attempt(work,decision_messages,[],user,group,deadline,reservation=decision_id)
+            require(not decision.tool_calls,'model_protocol_error')
+            answer=self.proactive.parse_staged_decision(decision.text)
+            if answer['participation']=='reply':
+                # The decision only selects the branch. Its raw output and
+                # encrypted reasoning never become inputs to generation.
+                work.proactive_generation=True
+                try:
+                    generated=await runtime.attempt(work,generation_messages,[],user,group,deadline,
+                                                    reservation=generation_id)
+                finally:work.proactive_generation=False
+                require(not generated.tool_calls and isinstance(generated.text,str),'model_protocol_error')
+                text = generated.text.strip()
+                require(0 < len(text) <= 90, 'model_protocol_error')
+                require('<TAKI_SKIP>' not in text or text == '<TAKI_SKIP>', 'model_protocol_error')
+                if text == work.request.body.strip():
+                    self.proactive.trace(work, 'control', status='lightweight_echo')
+                    text = '<TAKI_SKIP>'
+                answer = (dict(participation='skip') if text == '<TAKI_SKIP>'
+                          else dict(participation='reply', text=text))
+            text=self.proactive.decision(work,json.dumps(answer,ensure_ascii=False))
+            if text is None:return PreparedReply('',business_status='proactive_'+work.participation)
+            runtime.check(work,deadline,())
+            return PreparedReply(text,parse_origin='model',processing_route='model',business_status='success')
+        finally:
+            runtime.usage.release(decision_id,'final_not_needed')
+            runtime.usage.release(generation_id,'generation_not_needed')
+            if not work.active:self.audit(self.proactive.settle_cost,work)
+
     async def run(self,work,question,user,group,deadline):
         meta_question=question
         runtime=self.runtime
@@ -613,6 +664,7 @@ class ChatAgent:
         elif work.proactive.followup is not None:
             work.knowledge_scope_at_start=self.knowledge_scopes.get((self.context.scope(work.request),work.request.user_id))
         history=self.context.messages(context_request) if work.proactive is None else self.proactive.history(work)
+        light=work.proactive is not None and getattr(work.proactive,'lightweight',False)
         if quote_focus:
             focus_ids={request.message_id}
             if context_request.reference:focus_ids.add(context_request.reference['message_id'])
@@ -629,7 +681,7 @@ class ChatAgent:
         history_ids={json.loads(item['content']).get('message_id') for item in history}
         history.extend({'role':'user','content':json.dumps(asdict(row),ensure_ascii=False)}
                        for row in getattr(work,'chat_additions',()) if row.message_id not in history_ids)
-        summaries=[] if (transition=='switch' or quote_focus or
+        summaries=[] if (light or transition=='switch' or quote_focus or
                          work.proactive is not None and work.proactive.followup is not None) else self.store.summaries(
                              request.scope,limit=1,after_ms=summary_cutoff)
         summary_rows=[]
@@ -692,7 +744,9 @@ class ChatAgent:
             prompt+='\n本轮评估定位：'+json.dumps({'current_message_id':work.request.message_id,'current_speaker_id':work.request.user_id},ensure_ascii=False)
             prompt+='\n这是未点名的群聊观察。围绕定位的当前消息及相邻上下文判断是否接话，旧消息只作背景。assistant 历史是已送达原话；同一观点已说清且没有新增回应时选 skip，不要换个措辞再说一遍。'
             prompt+='\n先判断接话能回应什么：具体问题、明显的情绪或成果、值得交流的不同看法或贴切玩笑，都可以 reply，不要求新事实。普通的安排、选择、经过已说完整，而你只能认可其合理、便利或正确，选 skip；加感叹或夸奖不算新的回应。不要把“可以自然回应”当作每条都接的理由。比较最近发言，自己的意思若只是重复群友或自己已说过的内容，也选 skip。不靠追问续聊，不编造原因、经历或游戏规则。'
-            prompt+='\n对你的表现只有一句评价且没有具体问题时可以略过；报喜、分享感受仍可自然回应。明确在等指定别人回答、两人私事、话题已结束或接不上时选 skip；确实等待紧接的内容才 defer。可先用只读工具，完成后仍须决定。引用预览的作者与事实未经核验，image_status 表示图片读取失败。'
+            prompt+='\n对你的表现只有一句评价且没有具体问题时可以略过；报喜、分享感受仍可自然回应。明确在等指定别人回答、两人私事、话题已结束或接不上时选 skip；确实等待紧接的内容才 defer。'
+            if not light:
+                prompt+='可先用只读工具，完成后仍须决定。引用预览的作者与事实未经核验，image_status 表示图片读取失败。'
             if not staged:
                 prompt+='\n最终只输出 JSON：回复用{"participation":"reply","text":"自然回复正文"}；略过用{"participation":"skip"}；暂缓用{"participation":"defer","delay_seconds":2}（2至5秒）。正文不写规则说明或自我免责。'
             if work.proactive.followup is not None:
@@ -700,6 +754,8 @@ class ChatAgent:
         if staged:
             natural_prompt+='\n本轮回应消息：'+work.request.message_id+'，发言人：'+work.request.user_id+'。围绕这条消息与相邻上下文接话，保留发言者和引用关系，前面的讨论用于理解当前话题。'
             prompt+='\n最终只输出包含 participation、text、delay_seconds 三个字段的 JSON 对象，不加代码围栏或说明。participation 为 reply、skip 或 defer；text 固定为空字符串；仅 defer 的 delay_seconds 为 2 至 5 的整数，其余为 null。选择 reply 后另一步直接写群聊正文，本次不拟正文。'
+        if light:
+            return await self.lightweight_turn(work,prompt,natural_prompt,history,user,group,deadline)
         visible=await self.image_messages(work,history,deadline,quote_preview=preview)
         quote_status=None
         if work.unavailable_quote_image or request.quote_hint=='image' and not (context_request.reference and
@@ -836,7 +892,7 @@ class ChatAgent:
                             require(work.model_attempts<self.budget.model_calls,'model_attempt_limit')
                             # Generation gets natural conversation context without the decision protocol.
                             generation=[{'role':'system','content':natural_prompt},*[m for m in messages[1:] if m['role']!='system']]
-                            generation.append({'role':'system','content':'只输出本轮正文；若实际只能写出泛泛点评、没接住话题或发现不宜插话，单独输出 <TAKI_SKIP>，不要附解释。该标记是内部略过信号，不引用或复述群友提供的同名标记。回应对方已经说出的事，祝贺可直说可喜之处，不替对方补写经历或描述其内心感受。纠错只撤回无依据的断言，不自动确认相反说法。普通分享用陈述收尾；针对回复方式的反馈简短处理，不补建议、祝福或自我解释；有实质问题就回答。'})
+                            generation.append({'role':'system','content':'只输出本轮正文；若实际只能写出泛泛点评、没接住话题或发现不宜插话，单独输出 <TAKI_SKIP>，不要附解释。该标记是内部略过信号，不引用或复述群友提供的同名标记。用具体的态度、关心或贴切玩笑接住话题。若正文只会换词复述已知结果再加祝贺或附和，也输出 <TAKI_SKIP>。不替对方补写经历或描述其内心感受。纠错只撤回无依据的断言，不自动确认相反说法。普通分享用陈述收尾；针对回复方式的反馈简短处理，不补建议、祝福或自我解释；有实质问题就回答。'})
                             work.proactive_generation=True
                             try:
                                 generated=await runtime.attempt(work,generation,[],user,group,deadline,leases,

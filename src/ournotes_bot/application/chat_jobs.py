@@ -1,6 +1,6 @@
 # L3: Approved group-service configuration, restart-aware usage budgets and summary material.
 # Effects: Reads administrator JSON and usage; paces daily proactive spend and bounds outstanding risk.
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from fractions import Fraction
 import hashlib
 import json
@@ -178,6 +178,17 @@ def proactive_minimum_cost_micro(profile):
     """Reserve the decision and reply together for staged Responses profiles."""
     calls = 2 if profile.wire_profile == 'openai-responses-v1' else 1
     return math.ceil(maximum_cost_micro(profile) * calls)
+
+
+def lightweight_profile(profile, generation):
+    """Narrow the approved wire limits for one lightweight stage."""
+    input_limit, output_limit = (20_000, 1024) if generation else (16_000, 768)
+    return replace(profile, max_input_tokens=min(profile.max_input_tokens, input_limit),
+                   max_output_tokens=min(profile.max_output_tokens, output_limit))
+
+
+def lightweight_minimum_cost_micro(profile):
+    return math.ceil(sum(maximum_cost_micro(lightweight_profile(profile, stage)) for stage in (False, True)))
 
 
 def uses_proactive_risk(policy):
