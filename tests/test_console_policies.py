@@ -967,6 +967,7 @@ class ModelAdminTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_proactive_limits_save_is_idempotent_and_does_not_mint_approval(self):
         value=self.configured_proactive_limits();primary=self.path.read_bytes()
+        self.assertEqual(value['lightweight'], {'status': 'unavailable'})
         path=self.root/'chat-proactive-services-v1.json';self.assertFalse(path.exists())
         body=self.limits_payload(value);saved=self.admin.save_proactive_limits('g',body)
         self.assertEqual(saved['limits']['max_calls_per_hour'],30);self.assertFalse(saved['approved']);self.assertFalse(saved['eligible'])
@@ -6193,6 +6194,12 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
         self.policy = replace(self.policy, proactive=replace(self.policy.proactive,
             max_cost_micro_per_day=2_000_000))
         self.agent.services.policy.return_value = self.policy
+        from ournotes_bot.application.chat_jobs import lightweight_minimum_cost_micro
+        self.assertEqual(self.agent.proactive.lightweight_status('unlisted'), {'status': 'off'})
+        with patch.object(self.agent.services, 'policy', return_value=None):
+            self.assertEqual(self.agent.proactive.lightweight_status('g1'), {'status': 'blocked'})
+        self.assertEqual(self.agent.proactive.lightweight_status('g1'), {
+            'status': 'ready', 'reserve_micro': lightweight_minimum_cost_micro(self.snapshot.profile)})
         source = '这段鼓终于练顺了'
         wire = []
         usage = self.backend.model_runtime.usage

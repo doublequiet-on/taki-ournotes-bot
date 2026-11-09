@@ -305,7 +305,9 @@ class ModelAdmin:
         limits=asdict(_limits(row.get('proactive',asdict(ProactiveLimits(False,24,2,500000,600))),'proactive'))
         approved=group_id in policies
         proof=self.runtime.proactive_capabilities.proactive(snapshot,group_id)
-        return {'group_id':group_id,'currency':snapshot.profile.price.currency,'limits':limits,
+        agent = self.runtime.agent
+        lightweight = agent.proactive.lightweight_status(group_id) if agent else {'status': 'unavailable'}
+        return {'group_id':group_id,'currency':snapshot.profile.price.currency,'limits':limits,'lightweight':lightweight,
                 'approved':approved,'capability_approved':proof,'eligible':self.runtime.agent is not None and approved and proof and limits['enabled'] and max(limits['max_calls_per_hour'],limits['max_replies_per_hour'])<=120,
                 'guard':{'backend_epoch':self.backend.runtime,'fingerprint':digest,'model_fingerprint':snapshot.fingerprint}}
 

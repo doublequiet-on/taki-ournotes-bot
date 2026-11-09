@@ -140,6 +140,22 @@ class ProactiveChat:
         if max(policy.proactive.max_calls_per_hour,policy.proactive.max_replies_per_hour)>120:return None
         return policy
 
+    def uses_lightweight(self, group_id, profile, policy):
+        return (group_id in self.lightweight_groups and policy is not None and uses_proactive_risk(policy)
+                and profile.wire_profile == 'openai-responses-v1' and profile.model == 'gpt-6.1-terra')
+
+    def lightweight_status(self, group_id):
+        if group_id not in self.lightweight_groups:
+            return {'status': 'off'}
+        try:
+            snapshot = self.agent.runtime.proactive_snapshot(group_id)
+        except ModelError:
+            return {'status': 'blocked'}
+        policy = self.policy(snapshot, SimpleNamespace(conversation_id=group_id))
+        if not self.uses_lightweight(group_id, snapshot.profile, policy):
+            return {'status': 'blocked'}
+        return {'status': 'ready', 'reserve_micro': lightweight_minimum_cost_micro(snapshot.profile)}
+
     def configured(self,request,snapshot,*,continuation=False):
         scope=self.scope(request)
         if continuation:
@@ -255,9 +271,7 @@ class ProactiveChat:
             policy=self.configured(request,snapshot)
             if policy is None:return None
         profile = snapshot.profile
-        lightweight = (not continuation and request.conversation_id in self.lightweight_groups
-                       and uses_proactive_risk(policy) and profile.wire_profile == 'openai-responses-v1'
-                       and profile.model == 'gpt-6.1-terra')
+        lightweight = not continuation and self.uses_lightweight(request.conversation_id, profile, policy)
         if lightweight and (not request.body.strip() or request.attachments or request.reference
                             or request.quote_hint or request.quoted_text or replies.is_ai_request(request.body)
                             or chat_needs_evidence(request.body)

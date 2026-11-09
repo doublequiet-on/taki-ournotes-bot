@@ -84,6 +84,15 @@ function proactiveQuota(s){
   const ids=[...new Set([...items.map(g=>g.group_id),...Object.keys(s.groups.value?.policy?.groups||{}),s.groupId.value,edit?.group_id].filter(Boolean))];
   const fields=[['max_calls_per_hour','每小时最多模型请求',120],['max_replies_per_hour','每小时最多主动回复',120],['cooldown_seconds','主动发起间隔（秒）',86400]];
   const mark=()=>{edit.dirty=true;};
+  const lightweight=value?.group_id===edit?.group_id?value?.lightweight:null;
+  const lightweightLabel={
+    off:'未启用',
+    blocked:'已列入启用名单，当前主动模型、批准或限额条件未满足',
+    unavailable:'聊天 Agent 未启用',
+  }[lightweight?.status]||'后端未报告状态';
+  const lightweightSummary=lightweight?.status==='ready'
+    ? `符合启用条件 · 两段预留上界 USD ${(lightweight.reserve_micro/1e6).toFixed(6)}`
+    : lightweightLabel;
   return h('section',{class:'proactive-quota'},[h('h3','主动参与限额'),
     h('label',['目标群',h('select',{'aria-label':'主动参与目标群',value:edit?.group_id||'',disabled:s.busy.value||edit?.dirty,onChange:e=>s.refreshProactiveLimits(e.target.value)},[
       h('option',{value:''},'请选择群'),...ids.map(id=>h('option',{value:id},items.find(g=>g.group_id===id)?.policy?.label||s.groups.value?.policy?.groups?.[id]?.label||`群 …${id.slice(-6)}`))])]),
@@ -92,6 +101,7 @@ function proactiveQuota(s){
     edit?.dirty&&h('p','请先保存或放弃当前群限额，再切换目标群。'),
     edit&&h('div',[
       h('p',value?.approved?(value.capability_approved?'本群已有服务和能力批准':'群服务已批准，能力尚待核对'):'本群尚未批准自动发言；可先保存限额'),
+      h('p',{class:'field-note'},[h('strong','轻量纯文本 '),lightweightSummary]),
       h('label',{class:'toggle'},[h('input',{type:'checkbox',checked:edit.limits.enabled,onChange:e=>{edit.limits.enabled=e.target.checked;mark();}}),'启用主动参与（仍须本群批准）']),
       h('div',{class:'form-grid'},fields.map(([key,title,max])=>h('label',[title,h('input',{type:'number',min:0,max,step:1,'aria-label':title,value:edit.limits[key],onInput:e=>{edit.limits[key]=Number(e.target.value);mark();}})]))),
       h('label',['每小时接话判断上限（0 沿用调用上限）',h('input',{type:'number',min:0,max:120,value:edit.limits.max_evaluations_per_hour||0,onInput:e=>{edit.limits.max_evaluations_per_hour=Number(e.target.value);mark();}})]),
