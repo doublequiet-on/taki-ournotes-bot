@@ -86,7 +86,7 @@ function webSearchSettings(s){
     h('small',edit.dirty?'有未保存的联网搜索设置':'当前显示已保存的联网搜索设置')]);
 }
 export function groupQuota(s){
-  if(s.modelRole.value!=='primary')return h('section',[h('h3','群 AI 额度'),h('p','群额度管理使用主模型配置。各模型的默认额度在模型配置中单独保存。'),button('切换到主模型配置',()=>s.selectModelRole('primary'),s.modelDirty.value||s.busy.value)]);
+  if(s.modelRole.value!=='primary')return h('section',[h('h3','群 AI 额度'),h('p','群额度管理使用主模型配置。各模型的默认额度在模型配置中单独保存。'),button('切换到主模型配置',()=>s.selectModelRole('primary','groups'),s.modelDirty.value||s.busy.value)]);
   const v=s.groupUsage.value,id=s.groupId.value,model=s.model.value;
   const override=model?.groups?.[id];
   return h('section',[h('h3','群 AI 额度'),v?h('p',`今日已用与预留 ${quantity(v.spent_and_reserved)} / ${v.daily_limit} · ${v.rate_window_seconds} 秒内 ${v.rate_requests} 次`):h('p','群额度尚未取得'),

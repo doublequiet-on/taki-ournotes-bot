@@ -156,7 +156,7 @@ async function main(){
       await current.load(current.overview,'overview');current.suspend();const next=sessionState();next.restoreEdits(current.captureEdits());await next.load(next.overview,'overview')
       assert.equal(next.groupRecoveryBlocked.value,true,'repeated reconnects must not replace the draft original gateway identity')
       assert.equal(next.captureEdits().group.epoch,original,'the original gateway must stay unchanged until the draft is discarded')
-      await next.saveGroup();assert.match(next.message.value,/网关状态尚未确认或已变化/);current=next
+      await next.saveGroup();assert.match(next.pageMessages.value.groups,/网关状态尚未确认或已变化/);current=next
     }
   }
   globalThis.consoleStateFixture.send=async(method,value)=>{
@@ -166,7 +166,7 @@ async function main(){
     throw Error('unexpected status RPC '+method)
   }
   const status=sessionState();await status.load(status.groups,'groups/list');status.selectGroup('alpha');status.groupDraft.value.label='fixture';status.groupDirty.value=true
-  await status.saveGroup();assert.equal(status.message.value,'群策略已保存。新查询使用新规则，在途查询继续完成。')
+  await status.saveGroup();assert.equal(status.pageMessages.value.groups,'群策略已保存。新查询使用新规则，在途查询继续完成。')
   assert.match(status.readMessage.value,/读取失败/);assert.equal(status.stale.value,true)
   let chatServer={followup_enabled:true,followup_window_seconds:180,coalesce_seconds:1.5,excluded_users:[]},chatRevision=0,chatRelease;
   const chatAttempts=[];
@@ -192,7 +192,7 @@ async function main(){
   await chatRestored.refreshChatSettings('alpha',true);chatRestored.removeExcludedUser('u1');
   const removal=chatRestored.saveChatSettings();chatRelease();await removal;
   assert.equal(chatRestored.chatEdit.value.dirty,false);assert.deepEqual(chatRestored.chatSettings.value.settings.excluded_users,[]);
-  assert.equal(chatRestored.message.value,'交流设置已保存并确认生效。');
+  assert.equal(chatRestored.pageMessages.value.groups,'交流设置已保存并确认生效。');
   await chatRestored.logout();assert.equal(chatRestored.captureEdits().chat,null);
   console.log(JSON.stringify({passed:true,chatSettingsReadback:true,chatSettingsSaveRace:true,chatSettingsRecovery:true,chatSettingsConflict:true,chatSettingsGroupIsolation:true,proactiveQuotaSaveRace:true,proactiveQuotaRecovery:true,proactiveQuotaConflict:true,proactiveRoleRouting:true,proactiveDraftRecovery:true,saveDraftRace:true,groupSaveDraftRace:true,groupSwitchDuringSave:true,invalidatedSave:true,recoveredDrafts:true,secretCleared:true,groupEpochBlocked:true,operationIdReused:true,logoutCleared:true,actionAndReadStatusSeparated:true}))
 }

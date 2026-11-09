@@ -35,7 +35,7 @@ export function attentionView(s,search) {
   if(catalog&&['stale','unsaved','unknown'].includes(catalog.cache_state))problems.push(['资料同步需要关注','查看来源',()=>s.navigate('sources')]);
   if(v?.policy_health?.availability==='unavailable'||['frozen','conflict'].includes(v?.recovery_policy?.state))problems.push(['策略限制或恢复冲突','查看设置',()=>s.navigate('settings')]);
   if(v?.gateway_observation?.dropped_events||v?.backend?.sections?.observation?.data?.dropped_events)problems.push(['存在缺失的诊断观测','查看采集',()=>s.navigate('sources')]);
-  return h('section',[h('h2','需要处理'),!problems.length?h('p',v?'暂无已知异常':'尚未取得状态'):h('ul',problems.map(([label,text,fn])=>h('li',[label,button(text,fn)]))),button('导出诊断',()=>s.exportDiagnostic())]);
+  return h('section',[h('h2','需要处理'),!problems.length?h('p',v?'暂无已知异常':'尚未取得状态'):h('ul',problems.map(([label,text,fn])=>h('li',[label,button(text,fn)]))),button('导出诊断',()=>s.exportDiagnostic(null,'overview'))]);
 }
 export function operationsSettings(s) {
   const host=s.host.value,data=host?.data,runtime=data?.runtime,controller=data?.controller;

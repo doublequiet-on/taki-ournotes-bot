@@ -143,20 +143,18 @@ const Page={setup() {
       if(items.length&&(!panel.contains(document.activeElement)||(event.shiftKey&&document.activeElement===items[0])||(!event.shiftKey&&document.activeElement===items[items.length-1]))){event.preventDefault();(event.shiftKey?items[items.length-1]:items[0]).focus();}}
   };
   const mediaChanged=event=>{narrow.value=event.matches;};
-  const messagePage=ref(tab.value);
-  const stopMessageWatch=watch(s.message,()=>{messagePage.value=tab.value;},{flush:'sync'});
   const stopDetailWatch=watch(s.detail,()=>{if(narrow.value&&tab.value==='requests'&&currentRequest&&s.detail.value&&focusedRequest!==currentRequest){focusedRequest=currentRequest;requestAnimationFrame(()=>document.querySelector('.request-inspector [aria-label="关闭查询详情"]')?.focus());}});
   const syncRecovery=()=>{if(!storeRecovery(s.captureEdits()))storageAvailable.value=false;};
   const stopRecoveryWatch=watch([s.dirty,s.groupDirty,s.modelDirty,s.draft,s.groupDraft,s.modelDraft,s.modelKey,s.modelRole,s.budgetEdit,s.proactiveEdit,s.webEdit,s.chatEdit,s.busy,s.message],syncRecovery,{deep:true,flush:'sync'});
   const leaving=event => {const stored=storeRecovery(s.captureEdits());if((!stored&&(s.dirty.value||s.groupDirty.value||s.modelDirty.value||s.budgetEdit.value?.dirty||s.proactiveEdit.value?.dirty||s.webEdit.value?.dirty||s.chatEdit.value?.dirty))||s.modelKey.value){event.preventDefault();event.returnValue='';}};
   onMounted(() => {try{sessionStorage.setItem(storageKey+'-probe','1');sessionStorage.removeItem(storageKey+'-probe');}catch{storageAvailable.value=false;}
     timer=setInterval(() => void poll(),5000);document.addEventListener('visibilitychange',visible);document.addEventListener('keydown',keydown);media.addEventListener('change',mediaChanged);window.addEventListener('beforeunload',leaving);syncRecovery();});
-  onUnmounted(() => {clearInterval(timer);stopRecoveryWatch();stopDetailWatch();stopMessageWatch();if(recovery.current===s)releaseState(s);document.removeEventListener('visibilitychange',visible);document.removeEventListener('keydown',keydown);media.removeEventListener('change',mediaChanged);window.removeEventListener('beforeunload',leaving);});
+  onUnmounted(() => {clearInterval(timer);stopRecoveryWatch();stopDetailWatch();if(recovery.current===s)releaseState(s);document.removeEventListener('visibilitychange',visible);document.removeEventListener('keydown',keydown);media.removeEventListener('change',mediaChanged);window.removeEventListener('beforeunload',leaving);});
   const hasDraft=key=>({
     settings:s.dirty.value,model:s.modelDirty.value||s.webEdit.value?.dirty,costs:s.budgetEdit.value?.dirty,
     groups:s.groupDirty.value||s.chatEdit.value?.dirty||s.proactiveEdit.value?.dirty,
   })[key];
-  const message=()=>messagePage.value===tab.value&&s.message.value&&h('p',{role:'status',class:'page-message'},s.message.value);
+  const message=()=>{const text=s.pageMessages.value[tab.value]||s.message.value;return text&&h('p',{role:'status',class:'page-message'},text);};
   const pageContent=()=>({
     overview:()=>h('div',[overviewView(s,open,()=>{selectTab('requests');search(true);}),
       h('div',{class:'dashboard-grid'},[attentionView(s,()=>{selectTab('requests');search(true);}),costAlerts(s)]),modelOverview(s)]),
