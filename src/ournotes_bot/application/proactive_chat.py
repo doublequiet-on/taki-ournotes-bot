@@ -58,6 +58,7 @@ class ProactiveCandidate:
     followup: object = None
     opportunity_id: str = ''
     continuation: bool = False
+    lightweight: bool = False
 
 
 @dataclass

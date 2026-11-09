@@ -529,6 +529,11 @@ class ChatStore:
     def service_run(self,delivery,scope,request_id):
         with self.db:self.db.execute('INSERT INTO chat_service_runs VALUES (?,?,?,?)',(delivery,self._scope(scope),request_id,self.clock()))
 
+    def service_billing_id(self,delivery,scope):
+        row=self.db.execute('SELECT request_id FROM chat_service_runs WHERE delivery=? AND scope=?',
+                            (delivery,self._scope(scope))).fetchone()
+        return row[0] if row else None
+
     def service_ack(self,delivery):
         with self.db:
             self.db.execute('INSERT OR IGNORE INTO chat_service_receipts SELECT request_id,scope,? FROM chat_service_runs WHERE delivery=?',(self.clock(),delivery))

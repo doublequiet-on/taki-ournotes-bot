@@ -1,6 +1,6 @@
 # L3: Approved group-service configuration, restart-aware usage budgets and summary material.
 # Effects: Reads administrator JSON and usage; paces daily proactive spend and bounds outstanding risk.
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from fractions import Fraction
 import hashlib
 import json
@@ -180,6 +180,17 @@ def proactive_minimum_cost_micro(profile):
     return math.ceil(maximum_cost_micro(profile) * calls)
 
 
+def lightweight_profile(profile, generation):
+    """Narrow the approved wire limits for one lightweight stage."""
+    input_limit, output_limit = (20_000, 1024) if generation else (16_000, 768)
+    return replace(profile, max_input_tokens=min(profile.max_input_tokens, input_limit),
+                   max_output_tokens=min(profile.max_output_tokens, output_limit))
+
+
+def lightweight_minimum_cost_micro(profile):
+    return math.ceil(sum(maximum_cost_micro(lightweight_profile(profile, stage)) for stage in (False, True)))
+
+
 def uses_proactive_risk(policy):
     return policy.currency == 'USD' and policy.proactive.max_cost_micro_per_day > 0
 
@@ -230,7 +241,7 @@ class ServiceBudget:
 
     def check(self, policy, task, profile, request_id, reserve_cost_micro, *, reply_times=(),
               opportunity_requests=(), opportunity_calls=None, opportunity_cost_micro=None,
-              at=None, replacing_attempt=None) -> ServicePermit:
+              at=None, replacing_attempt=None, lightweight=False) -> ServicePermit:
         _check(isinstance(policy, ServicePolicy) and (policy.instance_id, policy.app_id) == self.namespace,
                'chat_service_identity')
         prefix = _request_prefix(task, *self.namespace, policy.group_id)
@@ -317,10 +328,12 @@ class ServiceBudget:
         if separate_risk:
             risk_available = PROACTIVE_RISK_LIMIT_MICRO - unknown - risk_reserved
             available = min(available, risk_available)
+            round_cost = (lightweight_minimum_cost_micro(profile) if lightweight
+                          else proactive_minimum_cost_micro(profile))
             risk_details = (
                 ('risk_limit_micro', PROACTIVE_RISK_LIMIT_MICRO), ('risk_unknown_micro', unknown),
                 ('risk_reserved_micro', risk_reserved), ('risk_available_micro', max(0, risk_available)),
-                ('risk_warning', int(risk_available < 2 * proactive_minimum_cost_micro(profile))))
+                ('risk_round_micro', round_cost), ('risk_warning', int(risk_available < 2 * round_cost)))
         paced_available = None
         pacing_details = ()
         if task == 'proactive' and daily_limit:

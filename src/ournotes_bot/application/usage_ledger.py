@@ -418,9 +418,10 @@ class UsageLedger:
             self.observation_error='usage_observation_unavailable'
             return False  # Optional diagnostics cannot suppress a settled business reply.
 
-    def request_view(self, request):
+    def request_view(self, request, *, group_key=None):
         rows=self.db.execute('''SELECT a.*,o.kind,o.duration_ms FROM attempts a
-            LEFT JOIN attempt_observations o ON a.id=o.id WHERE request_id=? ORDER BY created LIMIT 8''',(request,))
+            LEFT JOIN attempt_observations o ON a.id=o.id WHERE request_id=?
+            AND (? IS NULL OR group_key=?) ORDER BY a.created,a.rowid LIMIT 8''',(request,group_key,group_key))
         return [dict(attempt_id=r['id'],provider=r['provider'],model=r['model'],config_version=r['config_version'],
             day=r['day'],state=r['state'],started_at=r['started'],settled_at=r['settled'],
             tool_kind=r['kind'],duration_ms=r['duration_ms'],usage=json.loads(r['usage']),

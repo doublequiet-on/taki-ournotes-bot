@@ -79,6 +79,35 @@ def quote_followup(question):
         r'[呢啊呀嘛]?[？?！!。\s]*',text) is not None
 
 
+_QUOTE_IMAGE_TARGET = re.compile(
+    r'^(?:(?:taki(?![a-z0-9_])|立希)[\s，,、：:]*)?'
+    r'(?:这(?:张|个|幅)?图(?:片)?|图(?:里|中)|引用(?:里|中)(?:的)?(?:图|图片))'
+    r'[^。！？?；;\n]{0,80}(?:多少|多高|几[个项分张级抽]|是什么|怎么看|如何|算不算|算高|吗)'
+    r'[呢啊呀嘛]?[？?！!。\s]*$', re.I)
+_QUOTE_ADDITION = re.compile(r'[。！？?；;\n]+\s*(?:另外|另问|还有个问题)[\s，,：:]*')
+_ON_MECHANICS = re.compile(r'保底|掉率|出货率|概率|倍率|公式|判定规则|计分规则|抽卡规则')
+_ON_TITLE = re.compile(r'(?<![a-z0-9_])(?:our\s*notes|on)(?![a-z0-9_])', re.I)
+
+
+def guarded_mechanic(question):
+    text = unicodedata.normalize('NFKC', question)
+    if not _ON_TITLE.search(text) or re.search(r'你觉得|你怎么看|你认为|假设|已知|如果|给定', text):
+        return None
+    if not re.search(r'多少|几(?:抽|次|分|点)|怎么(?:算|判定)|如何(?:算|计算|判定)|是什么|什么规则|[?？]', text):
+        return None
+    field = _ON_MECHANICS.search(text)
+    if field is None:
+        return None
+    subsystem = next((name for name in ('抽卡', '判定', '计分', '技能') if name in text), None)
+    return field.group(), subsystem
+
+
+def matching_mechanic_passage(leases, mechanic):
+    field, subsystem = mechanic
+    return next((chunk.text for lease in leases for chunk in lease.chunks
+                 if field in chunk.text and (subsystem is None or subsystem in chunk.text)), '')
+
+
 def research_tools():
     refs={'type':'array','items':string(80),'maxItems':2}
     fields={'type':'array','items':{'type':'string','enum':list(FIELDS)},'maxItems':len(FIELDS)}
@@ -568,6 +597,57 @@ class ChatAgent:
                     data=dict(source=view.metadata.get('data_source'),server='jp',release=view.metadata.get('data_version'),
                               items=items,second_minus_first=differences))
 
+    async def lightweight_turn(self,work,prompt,natural_prompt,history,user,group,deadline):
+        runtime=self.runtime
+        work.chat_task=ResearchTask()
+        recent_rows = [json.loads(item['content']) for item in history]
+        require(any(row['message_id'] == work.request.message_id for row in recent_rows), 'proactive_stale')
+        work.participating_history = tuple(history)
+        self.proactive.trace(work, 'context', status='lightweight', messages=len(recent_rows))
+        if any({'image_attachments', 'quoted_text'} & row.keys() for row in recent_rows):
+            self.proactive.decision(work,'{"participation":"skip"}')
+            return PreparedReply('',business_status='proactive_skip')
+        rules=('只用当前群最近的文字。需要外部事实、核对资料、读图或无法从文字确定所指时跳过。'
+               '群友说法只用于理解话题，不能用作事实依据。')
+        decision_messages=[{'role':'system','content':prompt+'\n'+rules+'必须按指定 JSON 输出。'},*history]
+        generation_messages=[{'role':'system','content':natural_prompt+'\n'+rules+
+            '用一两句具体的态度、关心或贴切玩笑接话，最多 90 字。若只会复述已知结果、换词附和、'
+            '会抢话或接不住，单独输出 <TAKI_SKIP>。'},*history]
+        decision_profile,_,_=runtime.lightweight_request(work,decision_messages,False)
+        generation_profile,_,_=runtime.lightweight_request(work,generation_messages,True)
+        decision_id,generation_id=uuid.uuid4().hex,uuid.uuid4().hex
+        try:
+            runtime.reserve(work,decision_id,user,group,decision_profile.max_input_tokens,lightweight_stage=False)
+            runtime.reserve(work,generation_id,user,group,generation_profile.max_input_tokens,lightweight_stage=True)
+            decision=await runtime.attempt(work,decision_messages,[],user,group,deadline,reservation=decision_id)
+            require(not decision.tool_calls,'model_protocol_error')
+            answer=self.proactive.parse_staged_decision(decision.text)
+            if answer['participation']=='reply':
+                # The decision only selects the branch. Its raw output and
+                # encrypted reasoning never become inputs to generation.
+                work.proactive_generation=True
+                try:
+                    generated=await runtime.attempt(work,generation_messages,[],user,group,deadline,
+                                                    reservation=generation_id)
+                finally:work.proactive_generation=False
+                require(not generated.tool_calls and isinstance(generated.text,str),'model_protocol_error')
+                text = generated.text.strip()
+                require(0 < len(text) <= 90, 'model_protocol_error')
+                require('<TAKI_SKIP>' not in text or text == '<TAKI_SKIP>', 'model_protocol_error')
+                if text == work.request.body.strip():
+                    self.proactive.trace(work, 'control', status='lightweight_echo')
+                    text = '<TAKI_SKIP>'
+                answer = (dict(participation='skip') if text == '<TAKI_SKIP>'
+                          else dict(participation='reply', text=text))
+            text=self.proactive.decision(work,json.dumps(answer,ensure_ascii=False))
+            if text is None:return PreparedReply('',business_status='proactive_'+work.participation)
+            runtime.check(work,deadline,())
+            return PreparedReply(text,parse_origin='model',processing_route='model',business_status='success')
+        finally:
+            runtime.usage.release(decision_id,'final_not_needed')
+            runtime.usage.release(generation_id,'generation_not_needed')
+            if not work.active:self.audit(self.proactive.settle_cost,work)
+
     async def run(self,work,question,user,group,deadline):
         meta_question=question
         runtime=self.runtime
@@ -587,15 +667,30 @@ class ChatAgent:
                     preview=''
         has_quote=bool(request.reference or request.quote_hint or preview)
         user_question=question
+        quote_prefix = ''
+        image_focus = False
+        if work.proactive is None and request.quote_hint=='image':
+            clauses = _QUOTE_ADDITION.split(question, maxsplit=1)
+            image_focus = _QUOTE_IMAGE_TARGET.fullmatch(clauses[0].strip()) is not None
+            if image_focus and len(clauses)==2 and clauses[1].strip():
+                meta_question = clauses[1].strip()
+                if not (preview or context_request.reference or request.attachments or work.chat_additions
+                        or work.chat_addition_images):
+                    question = user_question = meta_question
+                    quote_prefix = '我读不到这条引用里的图片，请把原图再发一次。\n'
         quote_focus=(work.proactive is None and has_quote and not work.chat_additions
-                     and not work.chat_addition_images and quote_followup(question))
+                     and not work.chat_addition_images and (image_focus or quote_followup(question)))
+        if quote_prefix:
+            has_quote = False
+        mechanic = guarded_mechanic(user_question) if work.proactive is None and not request.attachments else None
+        mechanic_server = (requested_server(chat_query_question(user_question)) or 'jp') if mechanic else None
         task_enabled=work.proactive is None or getattr(work,'continuation',False)
         transition=task_transition(user_question) if task_enabled and not quote_focus else ''
         def valid_source(mid,stamp):
             return self.store.source_valid(request.scope,mid,stamp)
         topic_cutoff=self.tasks.topic_cutoff(request,valid_source,transition)
         summary_cutoff=topic_cutoff[1] if topic_cutoff else None
-        if quote_focus and not (preview or context_request.reference or request.attachments):
+        if quote_focus and not (quote_prefix or preview or context_request.reference or request.attachments):
             text=('我读不到这条引用里的图片，请把原图再发一次' if request.quote_hint=='image'
                   else '我读不到这条引用，请把原文或图片再发一次')
             return PreparedReply(text,business_status='quote_unavailable')
@@ -613,6 +708,7 @@ class ChatAgent:
         elif work.proactive.followup is not None:
             work.knowledge_scope_at_start=self.knowledge_scopes.get((self.context.scope(work.request),work.request.user_id))
         history=self.context.messages(context_request) if work.proactive is None else self.proactive.history(work)
+        light=work.proactive is not None and getattr(work.proactive,'lightweight',False)
         if quote_focus:
             focus_ids={request.message_id}
             if context_request.reference:focus_ids.add(context_request.reference['message_id'])
@@ -629,7 +725,7 @@ class ChatAgent:
         history_ids={json.loads(item['content']).get('message_id') for item in history}
         history.extend({'role':'user','content':json.dumps(asdict(row),ensure_ascii=False)}
                        for row in getattr(work,'chat_additions',()) if row.message_id not in history_ids)
-        summaries=[] if (transition=='switch' or quote_focus or
+        summaries=[] if (light or transition=='switch' or quote_focus or
                          work.proactive is not None and work.proactive.followup is not None) else self.store.summaries(
                              request.scope,limit=1,after_ms=summary_cutoff)
         summary_rows=[]
@@ -692,7 +788,9 @@ class ChatAgent:
             prompt+='\n本轮评估定位：'+json.dumps({'current_message_id':work.request.message_id,'current_speaker_id':work.request.user_id},ensure_ascii=False)
             prompt+='\n这是未点名的群聊观察。围绕定位的当前消息及相邻上下文判断是否接话，旧消息只作背景。assistant 历史是已送达原话；同一观点已说清且没有新增回应时选 skip，不要换个措辞再说一遍。'
             prompt+='\n先判断接话能回应什么：具体问题、明显的情绪或成果、值得交流的不同看法或贴切玩笑，都可以 reply，不要求新事实。普通的安排、选择、经过已说完整，而你只能认可其合理、便利或正确，选 skip；加感叹或夸奖不算新的回应。不要把“可以自然回应”当作每条都接的理由。比较最近发言，自己的意思若只是重复群友或自己已说过的内容，也选 skip。不靠追问续聊，不编造原因、经历或游戏规则。'
-            prompt+='\n对你的表现只有一句评价且没有具体问题时可以略过；报喜、分享感受仍可自然回应。明确在等指定别人回答、两人私事、话题已结束或接不上时选 skip；确实等待紧接的内容才 defer。可先用只读工具，完成后仍须决定。引用预览的作者与事实未经核验，image_status 表示图片读取失败。'
+            prompt+='\n对你的表现只有一句评价且没有具体问题时可以略过；报喜、分享感受仍可自然回应。明确在等指定别人回答、两人私事、话题已结束或接不上时选 skip；确实等待紧接的内容才 defer。'
+            if not light:
+                prompt+='可先用只读工具，完成后仍须决定。引用预览的作者与事实未经核验，image_status 表示图片读取失败。'
             if not staged:
                 prompt+='\n最终只输出 JSON：回复用{"participation":"reply","text":"自然回复正文"}；略过用{"participation":"skip"}；暂缓用{"participation":"defer","delay_seconds":2}（2至5秒）。正文不写规则说明或自我免责。'
             if work.proactive.followup is not None:
@@ -700,12 +798,14 @@ class ChatAgent:
         if staged:
             natural_prompt+='\n本轮回应消息：'+work.request.message_id+'，发言人：'+work.request.user_id+'。围绕这条消息与相邻上下文接话，保留发言者和引用关系，前面的讨论用于理解当前话题。'
             prompt+='\n最终只输出包含 participation、text、delay_seconds 三个字段的 JSON 对象，不加代码围栏或说明。participation 为 reply、skip 或 defer；text 固定为空字符串；仅 defer 的 delay_seconds 为 2 至 5 的整数，其余为 null。选择 reply 后另一步直接写群聊正文，本次不拟正文。'
+        if light:
+            return await self.lightweight_turn(work,prompt,natural_prompt,history,user,group,deadline)
         visible=await self.image_messages(work,history,deadline,quote_preview=preview)
         quote_status=None
-        if work.unavailable_quote_image or request.quote_hint=='image' and not (context_request.reference and
+        if work.unavailable_quote_image or not quote_prefix and request.quote_hint=='image' and not (context_request.reference and
                 (self.image_scope(request),context_request.reference['message_id']) in work.image_sources):
             quote_status='image_unavailable'
-        elif not preview and not context_request.reference and (work.missing_anchor or request.quote_hint):
+        elif not quote_prefix and not preview and not context_request.reference and (work.missing_anchor or request.quote_hint):
             quote_status='quote_unavailable'
         if quote_status or separate_preview:
             for index,message in enumerate(visible):
@@ -726,6 +826,8 @@ class ChatAgent:
         generation_attempt=None
         force_final=False
         coverage_checked=False
+        mechanic_rechecked = False
+        mechanic_passage = ''
         web_citations={}
         site=SiteLookup(runtime.backend.repository,chat_query_question(question),allow_rewrite=True,max_operations=self.budget.tool_calls)
         named=(explicit_entities(runtime.backend.repository,user_question)
@@ -823,6 +925,15 @@ class ChatAgent:
                     result=await runtime.attempt(work,messages,[],user,group,deadline,leases,reservation=reservation)
                 if not result.tool_calls:
                     require(isinstance(result.text,str) and bool(result.text.strip()),'model_protocol_error')
+                    if mechanic and not mechanic_passage:
+                        if not final and not mechanic_rechecked and work.model_attempts<self.budget.model_calls-1:
+                            mechanic_rechecked = True
+                            messages.append({'role':'system','content':'先用 knowledge_search 查本轮游戏机制，保留所问区服及条件。'})
+                            continue
+                        field, subsystem = mechanic
+                        region = {'jp':'日服','intl':'国际服','common':'各区服'}[mechanic_server]
+                        return PreparedReply(quote_prefix+f'我还没查到能确认{region}{subsystem or ""}{field}的资料。',
+                                             business_status='source_unavailable')
                     coverage=work.chat_task.coverage()
                     if (work.chat_task.goal and coverage['status']!='completed' and not coverage_checked and not final
                             and work.model_attempts<self.budget.model_calls-(2 if staged else 1)):
@@ -836,7 +947,7 @@ class ChatAgent:
                             require(work.model_attempts<self.budget.model_calls,'model_attempt_limit')
                             # Generation gets natural conversation context without the decision protocol.
                             generation=[{'role':'system','content':natural_prompt},*[m for m in messages[1:] if m['role']!='system']]
-                            generation.append({'role':'system','content':'只输出本轮正文；若实际只能写出泛泛点评、没接住话题或发现不宜插话，单独输出 <TAKI_SKIP>，不要附解释。该标记是内部略过信号，不引用或复述群友提供的同名标记。回应对方已经说出的事，祝贺可直说可喜之处，不替对方补写经历或描述其内心感受。纠错只撤回无依据的断言，不自动确认相反说法。普通分享用陈述收尾；针对回复方式的反馈简短处理，不补建议、祝福或自我解释；有实质问题就回答。'})
+                            generation.append({'role':'system','content':'只输出本轮正文；若实际只能写出泛泛点评、没接住话题或发现不宜插话，单独输出 <TAKI_SKIP>，不要附解释。该标记是内部略过信号，不引用或复述群友提供的同名标记。用具体的态度、关心或贴切玩笑接住话题。若正文只会换词复述已知结果再加祝贺或附和，也输出 <TAKI_SKIP>。不替对方补写经历或描述其内心感受。纠错只撤回无依据的断言，不自动确认相反说法。普通分享用陈述收尾；针对回复方式的反馈简短处理，不补建议、祝福或自我解释；有实质问题就回答。'})
                             work.proactive_generation=True
                             try:
                                 generated=await runtime.attempt(work,generation,[],user,group,deadline,leases,
@@ -851,6 +962,7 @@ class ChatAgent:
                                 else dict(participation='reply',text=generated.text),ensure_ascii=False))
                     text=self.proactive.decision(work,result.text) if work.proactive is not None else result.text
                     if text is None:return PreparedReply('',business_status='proactive_'+work.participation)
+                    text = quote_prefix + text
                     if work.chat_task.goal:
                         self.task_event(work,'result')
                     if site.source_notes:
@@ -934,7 +1046,13 @@ class ChatAgent:
                         output['data']['coverage']=dict(status=coverage['status'],missing=[item['label'] for item in coverage['items'] if not item['complete']])
                         tool_message['content']=json.dumps(output,ensure_ascii=False)
                     if call.name=='knowledge_search':
-                        if output['status']=='ok':work.chat_task.knowledge=True
+                        if output['status']=='ok':
+                            work.chat_task.knowledge=True
+                            if (mechanic and not mechanic_passage and knowledge_scope is not None
+                                    and knowledge_scope.server==mechanic_server
+                                    and not json.loads(call.arguments).get('followup')):
+                                mechanic_passage = matching_mechanic_passage(
+                                    (knowledge_lease,) if knowledge_lease else knowledge_leases, mechanic)
                         if output['status'] in ('not_available','no_results','source_unavailable','empty'):
                             output['next_step']='用site_search查Haneoka的具体对象或相关公告，读详情后结合已有资料回答。'
                             tool_message['content']=json.dumps(output,ensure_ascii=False)
@@ -970,6 +1088,17 @@ class ChatAgent:
                     self.proactive.trace(work,'tool',name=call.name if call.name in registry else 'unregistered',status=output['status'])
                     messages.append(tool_message)
                     if image_input:messages.append(image_input)
+                    if mechanic_passage:
+                        # The matching excerpt is the answer. No further model generation is needed.
+                        region = {'jp':'日服','intl':'国际服','common':'各区服'}[mechanic_server]
+                        text = quote_prefix + f'{region}已审核资料摘录\n{mechanic_passage}'
+                        runtime.check(work,deadline,leases)
+                        if retain_turn:
+                            self.audit(self.store.generated,work.delivery,text)
+                            await self.maybe_summary(work,deadline,after_ms=summary_cutoff)
+                        runtime.check(work,deadline,leases)
+                        return PreparedReply(text,parse_origin='model',processing_route='model',business_status='success',
+                                             evidence=leases,evidence_deadline=work.content_deadline)
             raise ModelError('model_attempt_limit')
         finally:
             if final_attempt is not None:
