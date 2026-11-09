@@ -29,6 +29,9 @@ class Diagnostics:
                     id TEXT PRIMARY KEY, delivery TEXT UNIQUE, epoch TEXT, created REAL,
                     scope TEXT, group_id TEXT, commands TEXT, parts TEXT);
                 CREATE INDEX IF NOT EXISTS diagnostic_created ON requests(created);
+                CREATE TABLE IF NOT EXISTS request_billing(
+                    request_id TEXT PRIMARY KEY REFERENCES requests(id) ON DELETE CASCADE,
+                    billing_id TEXT NOT NULL);
                 CREATE TABLE IF NOT EXISTS spans(
                     event_id TEXT PRIMARY KEY, request_id TEXT REFERENCES requests(id) ON DELETE CASCADE,
                     kind TEXT, position INTEGER, attempt TEXT, duration_ms REAL, observed_at REAL);
@@ -66,7 +69,7 @@ class Diagnostics:
             self.dropped += 1
             return False
 
-    def admitted(self, request, delivery, epoch, now, commands):
+    def admitted(self, request, delivery, epoch, now, commands, *, billing_id=None):
         def save(db):
             db.execute('DELETE FROM requests WHERE created<?', (now-86400,))
             db.execute('''DELETE FROM requests WHERE id IN
@@ -75,6 +78,8 @@ class Diagnostics:
                        (request.request_id, delivery, epoch, now, request.kind,
                         request.conversation_id if request.kind == 'group' else None,
                         json.dumps(commands)))
+            if billing_id is not None:
+                db.execute('INSERT OR IGNORE INTO request_billing VALUES (?,?)',(request.request_id,billing_id))
         return self.write(save)
 
     def expire(self, now):
@@ -99,15 +104,22 @@ class Diagnostics:
                   or version!=PERSONA_VERSION):
                 raise ValueError('chat_persona_data')
             return json.dumps(data)
+        if kind=='attempt_stage':
+            if (set(data)!={'attempt_id','stage'} or data['stage'] not in ('decision','generation')
+                    or not isinstance(data['attempt_id'],str) or not re.fullmatch('[0-9a-f]{32}',data['attempt_id'])):
+                raise ValueError('chat_attempt_stage_data')
+            return json.dumps(data)
         if kind=='transport':
             required={'stage','name','elapsed_ms','proxied','headers_received'}
             timing={'elapsed_ms','dns_ms','connect_ms','upload_ms','wait_headers_ms','read_ms'}
-            optional=timing|{'http_status','provider_request_id','attempt_id'}
+            optional=timing|{'http_status','provider_request_id','attempt_id','input_images','model_stage'}
             if (not required<=set(data) or not set(data)<=required|optional
                     or data['stage'] not in ('connect','dns','upload','wait_headers','read_body','complete')
                     or data['name'] not in ('none','interrupted','cancelled','disconnected','timeout','connect','transport','response_too_large')
                     or any(type(data[k]) is not bool for k in ('proxied','headers_received'))
                     or any(type(data[k]) is not int or not 0<=data[k]<=3600000 for k in timing&set(data))
+                    or 'input_images' in data and (type(data['input_images']) is not int or not 0<=data['input_images']<=3)
+                    or 'model_stage' in data and data['model_stage'] not in ('model','decision','generation')
                     or 'http_status' in data and (type(data['http_status']) is not int or not 100<=data['http_status']<=599)
                     or 'attempt_id' in data and not (isinstance(data['attempt_id'],str) and re.fullmatch('[0-9a-f]{32}',data['attempt_id']))
                     or 'provider_request_id' in data and not (isinstance(data['provider_request_id'],str) and re.fullmatch(
@@ -127,7 +139,7 @@ class Diagnostics:
                        'controller_before_micro','controller_after_micro',
                        'day_known_micro','day_unknown_micro','day_reserved_micro','day_carry_micro',
                        'day_released_micro','day_unreleased_micro','day_paced_available_micro',
-                       'risk_limit_micro','risk_unknown_micro','risk_reserved_micro','risk_available_micro','risk_warning'}
+                       'risk_limit_micro','risk_unknown_micro','risk_reserved_micro','risk_available_micro','risk_warning','risk_round_micro'}
         fields |= budget_fields
         codes={'status','name','decision','image_detail','action','source','reason','stage'}
         if 'image_detail' in data and data['image_detail'] not in ('none','low','high'):
@@ -236,6 +248,9 @@ class Diagnostics:
             if row is None:
                 return None
             result = dict(row)
+            billing = self.db.execute('SELECT billing_id FROM request_billing WHERE request_id=?',(request_id,)).fetchone()
+            if billing is not None:
+                result['billing_id'] = billing['billing_id']
             result['commands'] = json.loads(result['commands'])
             result['parts'] = json.loads(result['parts']) if result['parts'] is not None else None
             result['spans'] = [dict(s) for s in self.db.execute(

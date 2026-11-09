@@ -307,7 +307,8 @@ class ProactiveChat:
             required = minimum if policy.proactive.max_cost_micro_per_day else 1
             try:
                 permit=self.agent.service_budget.check(policy,'proactive',snapshot.profile,
-                    preflight,required,reply_times=self.agent.store.proactive_replies(request.scope))
+                    preflight,required,reply_times=self.agent.store.proactive_replies(request.scope),
+                    lightweight=lightweight)
             except ServiceError as exc:
                 data=dict(exc.budget_details)
                 self.budget_warning(request,data)
@@ -333,7 +334,7 @@ class ProactiveChat:
         if lightweight:candidate=replace(candidate,lightweight=True)
         job=service_request_id('proactive',request.instance_id,request.app_id,request.conversation_id,candidate.candidate_id)
         try:self.agent.service_budget.check(policy,'proactive',snapshot.profile,job,candidate.reserved_cost_micro,
-            reply_times=self.agent.store.proactive_replies(request.scope))
+            reply_times=self.agent.store.proactive_replies(request.scope),lightweight=lightweight)
         except ServiceError as exc:
             self.control_event(request,str(exc),**dict(exc.budget_details))
             self.controller.decide(candidate,'skip',actual_cost_micro=0);return None

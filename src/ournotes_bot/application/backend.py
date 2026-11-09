@@ -360,7 +360,8 @@ class Backend:
                 observed_commands[0]['total_commands'] = len(commands)
                 if len(commands) > self.settings.multi_command_limit:
                     observed_commands.append({'kind':'overflow','outcome':'invalid_arguments'})
-                self.diagnostics.admitted(request, delivery, self.runtime, self.clock(), observed_commands)
+                self.diagnostics.admitted(request, delivery, self.runtime, self.clock(), observed_commands,
+                                          billing_id=work.service_request_id)
                 self.diagnostics.span(uuid.uuid4().hex,request.request_id,'admission',admission_ms,self.clock(),outcome='ok')
                 work.operation = parse_operation(commands[0]) if len(commands) == 1 else None
                 work.anchor = self.conversations.resolve(request,query_only=not chat) if work.operation or request.reference or (not chat and

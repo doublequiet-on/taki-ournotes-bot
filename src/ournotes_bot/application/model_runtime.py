@@ -438,6 +438,7 @@ class ModelRuntime:
         def check(at,amount):
             return self.agent.service_budget.check(policy,'proactive',work.model_snapshot.profile,billing_request_id,
                 amount,at=at,replacing_attempt=replacing_attempt,
+                lightweight=getattr(work.proactive,'lightweight',False),
                 reply_times=self.agent.store.proactive_replies(work.request.scope) if replacing_attempt is None else (),
                 **(self.agent.proactive.opportunity_budget(work) if replacing_attempt is None else {}))
         return check
@@ -464,6 +465,9 @@ class ModelRuntime:
                                admit=self.proactive_charge_check(work,billing_request_id))
         except ServiceError as exc:
             self.proactive_charge_denied(work,exc)
+        if lightweight_stage is not None:
+            self.backend.diagnostics.chat_event(work.request.request_id,'attempt_stage',self.backend.clock(),
+                attempt_id=attempt,stage='generation' if lightweight_stage else 'decision')
 
     def input_bound(self,work,messages,tools,*,body=None):
         from ..sources.model_provider import request_body as bound_body
@@ -585,7 +589,8 @@ class ModelRuntime:
             raise
         finally:
             if transport:
-                data={**transport,'attempt_id':attempt}
+                data={**transport,'attempt_id':attempt,'model_stage':work.model_stage,
+                      'input_images':sum(len(message.get('images',())) for message in messages)}
                 # Validate the same allowlist before either sink sees provider metadata.
                 try:payload=self.backend.diagnostics.chat_metadata('transport',data)
                 except ValueError:

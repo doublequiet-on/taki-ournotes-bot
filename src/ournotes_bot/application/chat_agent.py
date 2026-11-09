@@ -79,6 +79,35 @@ def quote_followup(question):
         r'[呢啊呀嘛]?[？?！!。\s]*',text) is not None
 
 
+_QUOTE_IMAGE_TARGET = re.compile(
+    r'^(?:(?:taki(?![a-z0-9_])|立希)[\s，,、：:]*)?'
+    r'(?:这(?:张|个|幅)?图(?:片)?|图(?:里|中)|引用(?:里|中)(?:的)?(?:图|图片))'
+    r'[^。！？?；;\n]{0,80}(?:多少|多高|几[个项分张级抽]|是什么|怎么看|如何|算不算|算高|吗)'
+    r'[呢啊呀嘛]?[？?！!。\s]*$', re.I)
+_QUOTE_ADDITION = re.compile(r'[。！？?；;\n]+\s*(?:另外|另问|还有个问题)[\s，,：:]*')
+_ON_MECHANICS = re.compile(r'保底|掉率|出货率|概率|倍率|公式|判定规则|计分规则|抽卡规则')
+_ON_TITLE = re.compile(r'(?<![a-z0-9_])(?:our\s*notes|on)(?![a-z0-9_])', re.I)
+
+
+def guarded_mechanic(question):
+    text = unicodedata.normalize('NFKC', question)
+    if not _ON_TITLE.search(text) or re.search(r'你觉得|你怎么看|你认为|假设|已知|如果|给定', text):
+        return None
+    if not re.search(r'多少|几(?:抽|次|分|点)|怎么(?:算|判定)|如何(?:算|计算|判定)|是什么|什么规则|[?？]', text):
+        return None
+    field = _ON_MECHANICS.search(text)
+    if field is None:
+        return None
+    subsystem = next((name for name in ('抽卡', '判定', '计分', '技能') if name in text), None)
+    return field.group(), subsystem
+
+
+def matching_mechanic_passage(leases, mechanic):
+    field, subsystem = mechanic
+    return next((chunk.text for lease in leases for chunk in lease.chunks
+                 if field in chunk.text and (subsystem is None or subsystem in chunk.text)), '')
+
+
 def research_tools():
     refs={'type':'array','items':string(80),'maxItems':2}
     fields={'type':'array','items':{'type':'string','enum':list(FIELDS)},'maxItems':len(FIELDS)}
@@ -638,15 +667,30 @@ class ChatAgent:
                     preview=''
         has_quote=bool(request.reference or request.quote_hint or preview)
         user_question=question
+        quote_prefix = ''
+        image_focus = False
+        if work.proactive is None and request.quote_hint=='image':
+            clauses = _QUOTE_ADDITION.split(question, maxsplit=1)
+            image_focus = _QUOTE_IMAGE_TARGET.fullmatch(clauses[0].strip()) is not None
+            if image_focus and len(clauses)==2 and clauses[1].strip():
+                meta_question = clauses[1].strip()
+                if not (preview or context_request.reference or request.attachments or work.chat_additions
+                        or work.chat_addition_images):
+                    question = user_question = meta_question
+                    quote_prefix = '我读不到这条引用里的图片，请把原图再发一次。\n'
         quote_focus=(work.proactive is None and has_quote and not work.chat_additions
-                     and not work.chat_addition_images and quote_followup(question))
+                     and not work.chat_addition_images and (image_focus or quote_followup(question)))
+        if quote_prefix:
+            has_quote = False
+        mechanic = guarded_mechanic(user_question) if work.proactive is None and not request.attachments else None
+        mechanic_server = (requested_server(chat_query_question(user_question)) or 'jp') if mechanic else None
         task_enabled=work.proactive is None or getattr(work,'continuation',False)
         transition=task_transition(user_question) if task_enabled and not quote_focus else ''
         def valid_source(mid,stamp):
             return self.store.source_valid(request.scope,mid,stamp)
         topic_cutoff=self.tasks.topic_cutoff(request,valid_source,transition)
         summary_cutoff=topic_cutoff[1] if topic_cutoff else None
-        if quote_focus and not (preview or context_request.reference or request.attachments):
+        if quote_focus and not (quote_prefix or preview or context_request.reference or request.attachments):
             text=('我读不到这条引用里的图片，请把原图再发一次' if request.quote_hint=='image'
                   else '我读不到这条引用，请把原文或图片再发一次')
             return PreparedReply(text,business_status='quote_unavailable')
@@ -758,10 +802,10 @@ class ChatAgent:
             return await self.lightweight_turn(work,prompt,natural_prompt,history,user,group,deadline)
         visible=await self.image_messages(work,history,deadline,quote_preview=preview)
         quote_status=None
-        if work.unavailable_quote_image or request.quote_hint=='image' and not (context_request.reference and
+        if work.unavailable_quote_image or not quote_prefix and request.quote_hint=='image' and not (context_request.reference and
                 (self.image_scope(request),context_request.reference['message_id']) in work.image_sources):
             quote_status='image_unavailable'
-        elif not preview and not context_request.reference and (work.missing_anchor or request.quote_hint):
+        elif not quote_prefix and not preview and not context_request.reference and (work.missing_anchor or request.quote_hint):
             quote_status='quote_unavailable'
         if quote_status or separate_preview:
             for index,message in enumerate(visible):
@@ -782,6 +826,8 @@ class ChatAgent:
         generation_attempt=None
         force_final=False
         coverage_checked=False
+        mechanic_rechecked = False
+        mechanic_passage = ''
         web_citations={}
         site=SiteLookup(runtime.backend.repository,chat_query_question(question),allow_rewrite=True,max_operations=self.budget.tool_calls)
         named=(explicit_entities(runtime.backend.repository,user_question)
@@ -879,6 +925,15 @@ class ChatAgent:
                     result=await runtime.attempt(work,messages,[],user,group,deadline,leases,reservation=reservation)
                 if not result.tool_calls:
                     require(isinstance(result.text,str) and bool(result.text.strip()),'model_protocol_error')
+                    if mechanic and not mechanic_passage:
+                        if not final and not mechanic_rechecked and work.model_attempts<self.budget.model_calls-1:
+                            mechanic_rechecked = True
+                            messages.append({'role':'system','content':'先用 knowledge_search 查本轮游戏机制，保留所问区服及条件。'})
+                            continue
+                        field, subsystem = mechanic
+                        region = {'jp':'日服','intl':'国际服','common':'各区服'}[mechanic_server]
+                        return PreparedReply(quote_prefix+f'我还没查到能确认{region}{subsystem or ""}{field}的资料。',
+                                             business_status='source_unavailable')
                     coverage=work.chat_task.coverage()
                     if (work.chat_task.goal and coverage['status']!='completed' and not coverage_checked and not final
                             and work.model_attempts<self.budget.model_calls-(2 if staged else 1)):
@@ -907,6 +962,7 @@ class ChatAgent:
                                 else dict(participation='reply',text=generated.text),ensure_ascii=False))
                     text=self.proactive.decision(work,result.text) if work.proactive is not None else result.text
                     if text is None:return PreparedReply('',business_status='proactive_'+work.participation)
+                    text = quote_prefix + text
                     if work.chat_task.goal:
                         self.task_event(work,'result')
                     if site.source_notes:
@@ -990,7 +1046,13 @@ class ChatAgent:
                         output['data']['coverage']=dict(status=coverage['status'],missing=[item['label'] for item in coverage['items'] if not item['complete']])
                         tool_message['content']=json.dumps(output,ensure_ascii=False)
                     if call.name=='knowledge_search':
-                        if output['status']=='ok':work.chat_task.knowledge=True
+                        if output['status']=='ok':
+                            work.chat_task.knowledge=True
+                            if (mechanic and not mechanic_passage and knowledge_scope is not None
+                                    and knowledge_scope.server==mechanic_server
+                                    and not json.loads(call.arguments).get('followup')):
+                                mechanic_passage = matching_mechanic_passage(
+                                    (knowledge_lease,) if knowledge_lease else knowledge_leases, mechanic)
                         if output['status'] in ('not_available','no_results','source_unavailable','empty'):
                             output['next_step']='用site_search查Haneoka的具体对象或相关公告，读详情后结合已有资料回答。'
                             tool_message['content']=json.dumps(output,ensure_ascii=False)
@@ -1026,6 +1088,17 @@ class ChatAgent:
                     self.proactive.trace(work,'tool',name=call.name if call.name in registry else 'unregistered',status=output['status'])
                     messages.append(tool_message)
                     if image_input:messages.append(image_input)
+                    if mechanic_passage:
+                        # The matching excerpt is the answer. No further model generation is needed.
+                        region = {'jp':'日服','intl':'国际服','common':'各区服'}[mechanic_server]
+                        text = quote_prefix + f'{region}已审核资料摘录\n{mechanic_passage}'
+                        runtime.check(work,deadline,leases)
+                        if retain_turn:
+                            self.audit(self.store.generated,work.delivery,text)
+                            await self.maybe_summary(work,deadline,after_ms=summary_cutoff)
+                        runtime.check(work,deadline,leases)
+                        return PreparedReply(text,parse_origin='model',processing_route='model',business_status='success',
+                                             evidence=leases,evidence_deadline=work.content_deadline)
             raise ModelError('model_attempt_limit')
         finally:
             if final_attempt is not None:

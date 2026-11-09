@@ -2697,10 +2697,41 @@ class ChatAgentTests(Fixture, unittest.IsolatedAsyncioTestCase):
         event=next(e for e in self.backend.diagnostics.read(plan['request_id'])['chat_events'] if e['kind']=='transport')
         self.assertEqual(event['data']['attempt_id'],attempts[0])
         self.assertEqual(event['data']['provider_request_id'],'req_fixture123')
+        self.assertEqual(event['data']['input_images'],0)
+        self.assertEqual(event['data']['model_stage'],'model')
         self.assertNotIn('PRIVATE',str(log.output));self.assertNotIn('PRIVATE',json.dumps(event))
         self.assertIn(plan['request_id'],str(log.output))
         row=self.backend.model_runtime.usage.get(attempts[0])
         self.assertEqual(row['state'],'settled');self.assertFalse(row['billing_incomplete'])
+
+    async def test_explicit_on_mechanic_does_not_publish_unverified_numbers(self):
+        self.client.request.return_value=self.result('日服抽卡保底是 777 抽。')
+        plan,attempts=await self.prepare_native('/聊 Our Notes 日服抽卡保底多少抽？')
+        self.assertEqual(len(attempts),2)
+        self.assertEqual(plan['parts'][0]['business_status'],'source_unavailable')
+        self.assertNotIn('777',plan['parts'][0]['text'])
+        self.assertIn('日服抽卡保底',plan['parts'][0]['text'])
+
+    async def test_on_mechanic_uses_a_matching_approved_passage(self):
+        from types import SimpleNamespace
+        from ournotes_bot.domain.knowledge import Applicability,EvidenceChunkV1,EvidenceLease,KnowledgeScope
+        from ournotes_bot.domain.model_calls import ToolCall
+        passage = '合成资料：国际服抽卡规则记录的保底为 200 抽。'
+        chunk=EvidenceChunkV1('mechanic','0'*64,1,'mechanic#1','1'*64,passage,(),
+            Applicability('current',None,None,None,''),'official',(),('intl',))
+        knowledge=Mock()
+        self.backend.knowledge=knowledge
+        knowledge.retrieve.return_value=SimpleNamespace(
+            code='ok',lease=EvidenceLease('fixture',KnowledgeScope(server='intl'),(chunk,)))
+        knowledge.prepare_evidence.return_value={'passages':[{'text':passage}]}
+        knowledge.validate_current.return_value=True
+        args=json.dumps(dict(server='intl',date=None,version=None))
+        self.client.request.return_value=self.result(calls=(ToolCall('approved','knowledge_search',args),))
+        plan,attempts=await self.prepare_native('/聊 Our Notes 国际服抽卡保底多少抽？')
+        self.assertEqual(len(attempts),1)
+        self.assertEqual(knowledge.retrieve.call_args.args[1].server,'intl')
+        self.assertIn('200 抽',plan['parts'][0]['text'])
+        self.assertNotIn('777',plan['parts'][0]['text'])
 
     async def test_invalid_transport_metadata_does_not_override_known_billing_or_answer(self):
         answer=self.client.request.return_value
@@ -3360,6 +3391,34 @@ class ChatAgentTests(Fixture, unittest.IsolatedAsyncioTestCase):
         self.assertEqual(latest['quote_status'],'image_unavailable')
         self.assertIn('等于四',plan['parts'][0]['text'])
         self.event(plan,'intent');self.event(plan,'ack')
+
+    async def test_image_detail_question_without_reference_uses_local_gap_reply(self):
+        self.client.request.return_value=self.result('旧乐队话题。')
+        old,_=await self.prepare_native('/聊 聊聊旧乐队话题')
+        self.event(old,'intent');self.event(old,'ack')
+        raw={**self.request('native2',2),'quote_hint':'image'}
+        with patch.object(self,'request',return_value=raw):
+            plan,attempts=await self.prepare_native('/聊 这张图里红框那项数值是多少？',seq=2)
+        self.assertEqual(attempts,[])
+        self.assertEqual(plan['parts'][0]['business_status'],'quote_unavailable')
+        self.assertIn('原图',plan['parts'][0]['text'])
+
+    async def test_missing_image_detail_and_explicit_new_question_keep_only_new_question(self):
+        self.client.request.return_value=self.result('旧乐队话题。')
+        old,_=await self.prepare_native('/聊 聊聊旧乐队话题')
+        self.event(old,'intent');self.event(old,'ack')
+        bodies=self.capture_native_bodies()
+        raw={**self.request('native2',2),'quote_hint':'image'}
+        self.client.request.return_value=self.result('二加二等于四。')
+        with patch.object(self,'request',return_value=raw):
+            plan,attempts=await self.prepare_native('/聊 这张图里红框那项数值是多少？另外二加二是多少？',seq=2)
+        self.assertEqual(len(attempts),1)
+        self.assertIn('原图',plan['parts'][0]['text'])
+        self.assertIn('二加二等于四',plan['parts'][0]['text'])
+        visible=json.dumps(bodies[0]['messages'],ensure_ascii=False)
+        self.assertIn('二加二是多少',visible)
+        self.assertNotIn('旧乐队',visible)
+        self.assertNotIn('红框',visible)
 
     async def test_revoked_detached_quote_preview_cannot_be_sent(self):
         self.backend.reference_profiles=frozenset({'fixture'})
@@ -4305,6 +4364,8 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
         usage=self.backend.model_runtime.usage
         row=usage.db.execute('SELECT user_key FROM attempts WHERE request_id=?',(work.service_request_id,)).fetchone()
         self.assertEqual(row['user_key'],usage.key('user',work.model_subject))
+        detail=self.backend.admin.view(self.backend.ledger.request(followup['request_id']),detail=True)
+        self.assertEqual([item['attempt_id'] for item in detail['model_attempts']],attempts)
         self.event(followup,'intent');self.event(followup,'ack')
         self.assertIsNotNone(self.agent.proactive.followups.current(candidate[0].scope,'u1'))
         self.now+=.01
@@ -6253,6 +6314,14 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
         self.assertTrue(all('tools' not in body for body in wire))
         self.assertEqual([row['state'] for row in usage.db.execute('SELECT state FROM attempts')],
                          ['settled', 'settled'])
+        detail=self.backend.admin.view(self.backend.ledger.request(plan['request_id']),detail=True)
+        self.assertEqual([item['attempt_id'] for item in detail['model_attempts']],attempts)
+        self.assertEqual([e['data']['stage'] for e in detail['chat_events'] if e['kind']=='attempt_stage'],
+                         ['decision','generation'])
+        with self.backend.diagnostics.db:
+            self.backend.diagnostics.db.execute('DELETE FROM request_billing WHERE request_id=?',(plan['request_id'],))
+        old_detail=self.backend.admin.view(self.backend.ledger.request(plan['request_id']),detail=True)
+        self.assertEqual([item['attempt_id'] for item in old_detail['model_attempts']],attempts)
 
     async def test_historical_risk_warns_and_blocks_before_model_at_midnight(self):
         from ournotes_bot.application.chat_jobs import PROACTIVE_RISK_LIMIT_MICRO, maximum_cost_micro, service_request_id

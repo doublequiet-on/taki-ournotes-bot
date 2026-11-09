@@ -241,7 +241,7 @@ class ServiceBudget:
 
     def check(self, policy, task, profile, request_id, reserve_cost_micro, *, reply_times=(),
               opportunity_requests=(), opportunity_calls=None, opportunity_cost_micro=None,
-              at=None, replacing_attempt=None) -> ServicePermit:
+              at=None, replacing_attempt=None, lightweight=False) -> ServicePermit:
         _check(isinstance(policy, ServicePolicy) and (policy.instance_id, policy.app_id) == self.namespace,
                'chat_service_identity')
         prefix = _request_prefix(task, *self.namespace, policy.group_id)
@@ -328,10 +328,12 @@ class ServiceBudget:
         if separate_risk:
             risk_available = PROACTIVE_RISK_LIMIT_MICRO - unknown - risk_reserved
             available = min(available, risk_available)
+            round_cost = (lightweight_minimum_cost_micro(profile) if lightweight
+                          else proactive_minimum_cost_micro(profile))
             risk_details = (
                 ('risk_limit_micro', PROACTIVE_RISK_LIMIT_MICRO), ('risk_unknown_micro', unknown),
                 ('risk_reserved_micro', risk_reserved), ('risk_available_micro', max(0, risk_available)),
-                ('risk_warning', int(risk_available < 2 * proactive_minimum_cost_micro(profile))))
+                ('risk_round_micro', round_cost), ('risk_warning', int(risk_available < 2 * round_cost)))
         paced_available = None
         pacing_details = ()
         if task == 'proactive' and daily_limit:

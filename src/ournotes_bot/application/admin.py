@@ -111,7 +111,20 @@ class Admin:
             outcomes = {business_state(c['outcome']) for c in metadata['commands']}
             view['business_outcome'] = next(iter(outcomes)) if len(outcomes) == 1 else 'mixed'
         if detail:
-            view['model_attempts'] = self.backend.model_runtime.usage.request_view(row['id']) if self.backend.model_runtime else None
+            runtime = self.backend.model_runtime
+            attempts = None
+            if runtime:
+                billing_id = None
+                group = view['group_id']
+                if group and metadata['scope']=='group' and metadata.get('delivery')==row['delivery']:
+                    billing_id = metadata.get('billing_id')
+                    if billing_id is None and runtime.agent is not None:
+                        scope=dict(instance_id=self.backend.instance_id,app_id=self.backend.app_id,
+                                   platform='qq',kind='group',conversation_id=group)
+                        billing_id=runtime.agent.store.service_billing_id(row['delivery'],scope)
+                attempts = (runtime.usage.request_view(billing_id,group_key=runtime.usage.key('group',group))
+                            if billing_id else runtime.usage.request_view(row['id']))
+            view['model_attempts'] = attempts
             view['parts'] = [{k: p[k] for k in ('id', 'position', 'mode', 'status')} |
                              {'platform_confirmed': p['status'] == 'success',
                               'primary_kind': next((m['kind'] for m in (metadata['parts'] or [])
