@@ -1,11 +1,14 @@
 # L3: Host integration for ephemeral participation and approved group-service billing.
 # Effects: Bounded observations, scoped receipt history and usage reads; receipts alone persist dialogue.
+# Input: Optional backend allowlist for approved lightweight proactive groups.
 import asyncio
 import time
 import json
 import math
+import os
 import re
 import sqlite3
+import unicodedata
 from collections import Counter,OrderedDict
 from dataclasses import asdict,replace
 from fractions import Fraction
@@ -15,10 +18,12 @@ from ..domain.chat import ChatMessage
 from ..domain.chat_images import ImageError
 from ..domain.model_calls import ModelError,require
 from .chat_jobs import (
-    ChatServices, ServiceError, maximum_cost_micro, proactive_minimum_cost_micro, service_request_id, uses_proactive_risk,
+    ChatServices, ServiceError, lightweight_minimum_cost_micro, lightweight_profile, maximum_cost_micro,
+    proactive_minimum_cost_micro, service_request_id, uses_proactive_risk,
 )
 from .proactive_chat import ProactiveController,ProactivePolicy
 from .chat_followup import Followups
+from .persona import chat_needs_evidence
 from . import replies
 
 
@@ -49,6 +54,10 @@ class ProactiveChat:
         self.followups=Followups(clock=lambda:self.controller.clock(),on_expire=self.window_expired)
         self.addressed=Counter()
         self.control_times=OrderedDict()
+        self.lightweight_groups = frozenset(
+            group_id.strip() for group_id in os.getenv('OURNOTES_PROACTIVE_LIGHTWEIGHT_GROUPS', '').split(',')
+            if group_id.strip()
+        )
         self.services=ChatServices(agent.runtime.usage.path.parent,agent.runtime.backend.instance_id,
             agent.runtime.backend.app_id,filename='chat-proactive-services-v1.json',authority=agent.runtime.admin.db,require_authority=True)
 
@@ -245,16 +254,29 @@ class ProactiveChat:
             snapshot=self.agent.runtime.proactive_snapshot(request.conversation_id)
             policy=self.configured(request,snapshot)
             if policy is None:return None
+        profile = snapshot.profile
+        lightweight = (not continuation and request.conversation_id in self.lightweight_groups
+                       and uses_proactive_risk(policy) and profile.wire_profile == 'openai-responses-v1'
+                       and profile.model == 'gpt-6.1-terra')
+        if lightweight and (not request.body.strip() or request.attachments or request.reference
+                            or request.quote_hint or request.quoted_text or replies.is_ai_request(request.body)
+                            or chat_needs_evidence(request.body)
+                            or re.search(r'[a-z][a-z0-9+.-]*://|www\.', unicodedata.normalize('NFKC', request.body), re.I)):
+            self.control_event(request,'chat_service_lightweight_skip')
+            return None
         try:self.reconcile_costs(request,policy if not continuation else None)
         except (sqlite3.Error, ModelError, ServiceError, ValueError):
             self.control_event(request,'chat_service_usage_unavailable');return None
-        model_cost=maximum_cost_micro(snapshot.profile)*self.agent.budget.model_calls
+        minimum = (lightweight_minimum_cost_micro(snapshot.profile) if lightweight
+                   else proactive_minimum_cost_micro(snapshot.profile))
+        model_cost = (minimum + maximum_cost_micro(lightweight_profile(snapshot.profile, False)) if lightweight
+                      else maximum_cost_micro(snapshot.profile)*self.agent.budget.model_calls)
         remaining=self.controller.remaining_cost(self.scope(request))
         if remaining is not None:model_cost=min(model_cost,remaining)
         if model_cost<=0:
             self.control_event(request,'budget_exhausted');return None
         cost=model_cost
-        web=(self.agent.runtime.capabilities if continuation else self.owners()[1]).web(snapshot)
+        web=None if lightweight else (self.agent.runtime.capabilities if continuation else self.owners()[1]).web(snapshot)
         if web:
             cost+=self.agent.budget.model_calls*web.max_calls*web.unit_cost_micro
             # Reserve the model loop and only the search budget this group can fund.
@@ -262,7 +284,6 @@ class ProactiveChat:
         if not continuation:
             preflight=service_request_id('proactive',request.instance_id,request.app_id,
                 request.conversation_id,'budget/'+request.request_id)
-            minimum = proactive_minimum_cost_micro(snapshot.profile)
             # Check the actual staged minimum so pacing and hard budget denials stay distinguishable.
             required = minimum if policy.proactive.max_cost_micro_per_day else 1
             try:
@@ -290,6 +311,7 @@ class ProactiveChat:
         followup=self.followups.match(self.scope(request),request.message_id)
         if followup is not None:candidate=replace(candidate,followup=followup,continuation=True)
         if continuation:return candidate,None,snapshot,'continuation/'+candidate.candidate_id
+        if lightweight:candidate=replace(candidate,lightweight=True)
         job=service_request_id('proactive',request.instance_id,request.app_id,request.conversation_id,candidate.candidate_id)
         try:self.agent.service_budget.check(policy,'proactive',snapshot.profile,job,candidate.reserved_cost_micro,
             reply_times=self.agent.store.proactive_replies(request.scope))
@@ -416,6 +438,8 @@ class ProactiveChat:
             rows=sorted(merged.values(),key=lambda row:row.timestamp_ms)
             # The current observation stays last even when QQ and ACK clocks differ.
             rows.append(current)
+        if work.proactive.lightweight:
+            rows = [row for row in rows if row.timestamp_ms >= work.request.timestamp_ms - 300_000][-6:]
         protected={work.request.message_id}
         recent_reply=next((row for row in reversed(rows) if row.role=='assistant'),None)
         if recent_reply:protected.update((recent_reply.message_id,recent_reply.reply_to))

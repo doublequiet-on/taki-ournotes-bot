@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import replace
+from fractions import Fraction
 from functools import partial
 import json
 import logging
@@ -32,7 +33,7 @@ from . import replies
 from .persona import VOICE, chat_topic, chat_prompt, chat_needs_evidence
 from .chat_agent import ChatAgent
 from .chat_capabilities import ChatCapabilities
-from .chat_jobs import ServiceError, uses_proactive_risk
+from .chat_jobs import ServiceError, lightweight_profile, uses_proactive_risk
 
 logger=logging.getLogger('ournotes_bot.model_transport')
 
@@ -449,8 +450,12 @@ class ModelRuntime:
             'chat_service_daily_cost_limit','chat_service_pacing_limit','chat_service_risk_limit',
             'chat_opportunity_call_limit','chat_opportunity_cost_limit') else str(exc)) from None
 
-    def reserve(self,work,attempt,user,group,bound,*,billing_request_id=None,action_budget=()):
+    def reserve(self,work,attempt,user,group,bound,*,billing_request_id=None,action_budget=(),lightweight_stage=None):
         profile=work.model_snapshot.profile
+        if lightweight_stage is not None:
+            require(work.proactive is not None and work.proactive.lightweight and not action_budget,'invalid_reservation')
+            profile=lightweight_profile(profile,lightweight_stage)
+            require(bound==profile.max_input_tokens,'invalid_reservation')
         billing_request_id=billing_request_id or work.service_request_id or work.request.request_id
         if getattr(work,'continuation',False):
             self.agent.proactive.check_continuation_budget(work,profile.reserve(bound,profile.max_output_tokens)*profile.price.reference_rate/1_000_000+sum(count*rate for _,count,rate in action_budget))
@@ -475,12 +480,30 @@ class ModelRuntime:
             body=bound_body(profile,[{key:value for key,value in message.items() if key not in ('images','image_detail')} for message in messages],tools)
         return len(json.dumps(body,ensure_ascii=False,separators=(',',':')).encode())+4096+image_tokens
 
+    def lightweight_request(self,work,messages,generation):
+        profile=lightweight_profile(work.model_snapshot.profile,generation)
+        require(all(m['role'] in ('system','user','assistant')
+                    and set(m)=={'role','content'} and isinstance(m['content'],str) for m in messages),
+                'model_protocol_error')
+        body=request_body(profile,messages,[])
+        if not generation:
+            body['text']={'format':self.agent.proactive.response_format()}
+        bound=self.input_bound(work,messages,[],body=body)
+        require(bound<=profile.max_input_tokens,'model_input_too_large')
+        return profile,body,bound
+
     async def attempt(self,work,messages,tools,user,group,deadline,leases=(),*,require_tool=False,reservation=None,web=None,billing_request_id=None,service_policy=None):
         profile=work.model_snapshot.profile
+        light=work.proactive is not None and getattr(work.proactive,'lightweight',False)
         self.check(work,deadline,leases)
         if service_policy is not None:require(self.agent.services.policy(work.model_snapshot,work.request.conversation_id)==service_policy,'chat_service_revoked')
-        body=request_body(profile,messages,tools)
-        if (work.proactive is not None and web is None and service_policy is None
+        if light:
+            require(reservation is not None and not tools and not require_tool and web is None
+                    and billing_request_id is None and service_policy is None,'invalid_reservation')
+            profile,body,bound=self.lightweight_request(work,messages,getattr(work,'proactive_generation',False))
+        else:
+            body=request_body(profile,messages,tools)
+        if (not light and work.proactive is not None and web is None and service_policy is None
                 and billing_request_id is None and not getattr(work,'proactive_generation',False) and profile.wire_profile=='openai-responses-v1'):
             body['text']={'format':self.agent.proactive.response_format()}
         action_budget=()
@@ -493,8 +516,9 @@ class ModelRuntime:
             body['tool_choice']='required'
         # Registered text-only byte-BPE profiles: serialized UTF-8 bytes plus
         # 4096 tokens for bounded wire framing is a conservative input ceiling.
-        bound=self.input_bound(work,messages,tools,body=body)
-        require(bound<=profile.max_input_tokens,'model_input_too_large')
+        if not light:
+            bound=self.input_bound(work,messages,tools,body=body)
+            require(bound<=profile.max_input_tokens,'model_input_too_large')
         attempt=reservation or uuid.uuid4().hex
         billing_request_id=billing_request_id or work.service_request_id or work.request.request_id
         if reservation is None:
@@ -502,6 +526,14 @@ class ModelRuntime:
         else:
             held=self.usage.get(attempt)
             require(held['request_id']==billing_request_id and held['state']=='reserved','invalid_reservation')
+            if light:
+                limits=self.usage.db.execute(
+                    'SELECT input_bound,output_bound FROM attempt_bounds WHERE attempt=?',(attempt,)).fetchone()
+                require(limits is not None and tuple(limits)==(profile.max_input_tokens,profile.max_output_tokens)
+                        and bound<=limits['input_bound'] and body['max_output_tokens']<=limits['output_bound']
+                        and held['config_version']==profile.config_version
+                        and Fraction(held['reserved'])>=profile.reserve(bound,body['max_output_tokens']),
+                        'invalid_reservation')
         started=False;began=time.monotonic();kind='generation' if not tools else 'routing';transport={}
         work.model_stage=('generation' if getattr(work,'proactive_generation',False)
                           else 'decision' if work.proactive is not None else 'model')

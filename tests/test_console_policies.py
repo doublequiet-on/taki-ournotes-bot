@@ -6181,6 +6181,42 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
     async def test_midnight_pacing_releases_unused_generation_after_skip(self):
         await self.paced_midnight_opportunity(reply=False)
 
+    async def test_lightweight_proactive_reserves_two_narrow_stages_and_skips_echo(self):
+        from ournotes_bot.application.chat_proactive_runtime import ProactiveChat
+
+        with patch.dict(os.environ, {'OURNOTES_PROACTIVE_LIGHTWEIGHT_GROUPS': 'other, g1'}):
+            self.agent.proactive = ProactiveChat(self.agent)
+        self.agent.proactive.controller.clock = lambda: self.tick
+        self.snapshot = replace(self.snapshot, profile=replace(self.snapshot.profile,
+            provider='openai', wire_profile='openai-responses-v1', model='gpt-6.1-terra',
+            max_input_tokens=32768, max_output_tokens=4096, user_daily_limit=10**8, group_daily_limit=10**8))
+        self.policy = replace(self.policy, proactive=replace(self.policy.proactive,
+            max_cost_micro_per_day=2_000_000))
+        self.agent.services.policy.return_value = self.policy
+        source = '这段鼓终于练顺了'
+        wire = []
+        usage = self.backend.model_runtime.usage
+
+        async def respond(profile, body, **kwargs):
+            wire.append(json.loads(json.dumps(body)))
+            if len(wire) == 1:
+                states = [row['state'] for row in usage.db.execute('SELECT state FROM attempts ORDER BY rowid')]
+                self.assertEqual(states, ['started', 'reserved'])
+                return self.result('{"participation":"reply","text":"","delay_seconds":null}')
+            return self.result(source)
+
+        self.client.request.side_effect = respond
+        value = self.observation(source)
+        self.tick += 1.6
+        plan, attempts, _ = await self.candidate(value)
+        self.assertEqual(len(attempts), 2)
+        self.assertFalse(plan['send_allowed'])
+        self.assertEqual(plan['parts'], [])
+        self.assertEqual([body['max_output_tokens'] for body in wire], [768, 1024])
+        self.assertTrue(all('tools' not in body for body in wire))
+        self.assertEqual([row['state'] for row in usage.db.execute('SELECT state FROM attempts')],
+                         ['settled', 'settled'])
+
     async def test_historical_risk_warns_and_blocks_before_model_at_midnight(self):
         from ournotes_bot.application.chat_jobs import PROACTIVE_RISK_LIMIT_MICRO, maximum_cost_micro, service_request_id
         from ournotes_bot.domain.model_calls import Usage
