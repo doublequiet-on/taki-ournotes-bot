@@ -199,7 +199,7 @@ const Page={setup() {
           s.stale.value&&h('p',{role:'alert'},'连接异常：以下保留数据可能已陈旧。'),
           !storageAvailable.value&&h('p',{role:'alert'},'浏览器无法暂存草稿，刷新页面可能丢失未保存的修改。'),
           recoveryWarning.value&&h('p',{role:'alert'},'暂存草稿无法读取，请核对服务器设置。'),
-          pageContent(),
+          h('div',{key:tab.value},[pageContent()]),
         ]),
       ]),
     ])

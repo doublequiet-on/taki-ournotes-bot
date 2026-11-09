@@ -11,13 +11,14 @@ export function jobsView(s) {
     s.jobDetail.value&&section({availability:'available',observed_at:s.jobDetail.value.finished_at,data:s.jobDetail.value},'操作详情'),
     s.jobs.value?.items?.length===0&&h('p','暂无操作记录')]);
 }
+const sourceNames={catalog:'游戏主目录',meta:'歌曲 Meta',knowledge:'百科批准与索引',background:'后台刷新与采样',other_sources:'其他来源'};
 export function sourcesView(s) {
   const supported=s.jobs.value?.health?.actions||[];
   return h('div',{class:'sources-page'},[
     h('h1','数据来源'),h('p',{class:'page-intro'},'审阅知识资料，核对游戏数据的采集状态和同步记录。'),
     h('div',{class:'source-workspace'},[libraryView(s),h('div',[
     h('section',[h('h2','采集状态'),
-      ...Object.entries(s.sources.value?.sections||{}).map(([key,item])=>h('details',[h('summary',key==='catalog'?'游戏主目录':key==='other_sources'?'其他来源':key),section(item,key)])),
+      ...Object.entries(s.sources.value?.sections||{}).map(([key,item])=>h('details',[h('summary',sourceNames[key]||key),section(item,key)])),
       !s.sources.value&&h('p','尚未取得来源状态。'),
       button('刷新来源状态',()=>s.load(s.sources,'sources')),
     ]),

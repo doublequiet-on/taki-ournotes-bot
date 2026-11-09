@@ -131,13 +131,14 @@ async function verifySettingsScroll(page){
     const hit=await page.evaluate(({x,y})=>document.elementFromPoint(x,y)?.closest('button')?.textContent.trim(),{x:box.x+box.width/2,y:box.y+box.height/2})
     return {bounds,box,ready:box.y>=bounds.y&&box.y+box.height<=bounds.y+bounds.height&&hit==='保存设置'}
   }
-  await page.setViewportSize({width:1280,height:720})
+  // The desktop settings grid is shorter. Use a short viewport to exercise wheel scrolling.
+  await page.setViewportSize({width:1280,height:480})
   await page.getByRole('navigation',{name:'Taki 工作页面'}).getByRole('button',{name:'设置',exact:true}).click()
   const initial=await toggle.isChecked();await toggle.setChecked(!initial)
   await layout.evaluate(e=>e.scrollTop=0)
   let {bounds,box}=await position()
   assert.ok(await layout.evaluate(e=>e.scrollHeight>e.clientHeight),'fixture must include content below the visible viewport')
-  await page.mouse.move(900,500);await page.mouse.wheel(0,300);await page.waitForTimeout(300)
+  await page.mouse.move(900,350);await page.mouse.wheel(0,300);await page.waitForTimeout(300)
   assert.ok(await layout.evaluate(e=>e.scrollTop)>100,'mouse wheel must scroll the Taki page')
   let current=await position()
   for(let attempt=0;attempt<10&&!current.ready;attempt++){
