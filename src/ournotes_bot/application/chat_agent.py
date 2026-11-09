@@ -609,8 +609,14 @@ class ChatAgent:
             return PreparedReply('',business_status='proactive_skip')
         rules=('只用当前群最近的文字。需要外部事实、核对资料、读图或无法从文字确定所指时跳过。'
                '群友说法只用于理解话题，不能用作事实依据。')
-        decision_messages=[{'role':'system','content':prompt+'\n'+rules+'必须按指定 JSON 输出。'},*history]
+        decision_messages=[{'role':'system','content':prompt+'\n'+rules+
+            '先看当前这句是谁对谁说的。若它只是回答了前文、接完已有的梗、致谢或确认安排，'
+            '而没有重新打开话题，选 skip。已经被群友接住的旧消息只作背景。'
+            '新出现的报喜可以简短祝贺，开放接龙有新的笑点也可以接。必须按指定 JSON 输出。'},*history]
         generation_messages=[{'role':'system','content':natural_prompt+'\n'+rules+
+            '写正文前再核对当前一句和发言者。若这句已经收束对话，或正文绕过当前一句去回答、安慰更早的另一人，'
+            '单独输出 <TAKI_SKIP>。已经接完的梗也不要换句话再说。'
+            '新出现的报喜可直接简短祝贺，开放接龙可用新的笑点回应。'
             '用一两句具体的态度、关心或贴切玩笑接话，最多 90 字。若只会复述已知结果、换词附和、'
             '会抢话或接不住，单独输出 <TAKI_SKIP>。'},*history]
         decision_profile,_,_=runtime.lightweight_request(work,decision_messages,False)
