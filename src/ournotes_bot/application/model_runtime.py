@@ -484,7 +484,7 @@ class ModelRuntime:
             body=bound_body(profile,[{key:value for key,value in message.items() if key not in ('images','image_detail')} for message in messages],tools)
         return len(json.dumps(body,ensure_ascii=False,separators=(',',':')).encode())+4096+image_tokens
 
-    def lightweight_request(self,work,messages,generation):
+    def lightweight_request(self,work,messages,generation,*,check_bound=True):
         profile=lightweight_profile(work.model_snapshot.profile,generation)
         require(all(m['role'] in ('system','user','assistant')
                     and set(m)=={'role','content'} and isinstance(m['content'],str) for m in messages),
@@ -493,7 +493,8 @@ class ModelRuntime:
         if not generation:
             body['text']={'format':self.agent.proactive.response_format()}
         bound=self.input_bound(work,messages,[],body=body)
-        require(bound<=profile.max_input_tokens,'model_input_too_large')
+        if check_bound:
+            require(bound<=profile.max_input_tokens,'model_input_too_large')
         return profile,body,bound
 
     async def attempt(self,work,messages,tools,user,group,deadline,leases=(),*,require_tool=False,reservation=None,web=None,billing_request_id=None,service_policy=None):

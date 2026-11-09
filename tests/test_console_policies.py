@@ -6304,7 +6304,8 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
             return self.result(source)
 
         self.client.request.side_effect = respond
-        value = self.observation(source)
+        earlier = [self.observation(f'排练时第{i}段的讨论：'+'练'*218, seq=i) for i in range(1,6)]
+        value = self.observation(source, seq=6)
         self.tick += 1.6
         plan, attempts, _ = await self.candidate(value)
         self.assertEqual(len(attempts), 2)
@@ -6312,6 +6313,11 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
         self.assertEqual(plan['parts'], [])
         self.assertEqual([body['max_output_tokens'] for body in wire], [768, 1024])
         self.assertTrue(all('tools' not in body for body in wire))
+        expected_ids = [event['message_id'] for event in [*earlier[1:], value]]
+        for body in wire:
+            context = [json.loads(item['content']) for item in body['input'][1:]]
+            self.assertEqual([row['message_id'] for row in context], expected_ids)
+            self.assertEqual(context[-1]['text'], source)
         self.assertEqual([row['state'] for row in usage.db.execute('SELECT state FROM attempts')],
                          ['settled', 'settled'])
         detail=self.backend.admin.view(self.backend.ledger.request(plan['request_id']),detail=True)
