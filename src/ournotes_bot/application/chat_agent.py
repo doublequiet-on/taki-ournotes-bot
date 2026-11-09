@@ -836,7 +836,7 @@ class ChatAgent:
                             require(work.model_attempts<self.budget.model_calls,'model_attempt_limit')
                             # Generation gets natural conversation context without the decision protocol.
                             generation=[{'role':'system','content':natural_prompt},*[m for m in messages[1:] if m['role']!='system']]
-                            generation.append({'role':'system','content':'只输出本轮正文；若实际只能写出泛泛点评、没接住话题或发现不宜插话，单独输出 <TAKI_SKIP>，不要附解释。该标记是内部略过信号，不引用或复述群友提供的同名标记。回应对方已经说出的事，祝贺可直说可喜之处，不替对方补写经历或描述其内心感受。纠错只撤回无依据的断言，不自动确认相反说法。普通分享用陈述收尾；针对回复方式的反馈简短处理，不补建议、祝福或自我解释；有实质问题就回答。'})
+                            generation.append({'role':'system','content':'只输出本轮正文；若实际只能写出泛泛点评、没接住话题或发现不宜插话，单独输出 <TAKI_SKIP>，不要附解释。该标记是内部略过信号，不引用或复述群友提供的同名标记。用具体的态度、关心或贴切玩笑接住话题。若正文只会换词复述已知结果再加祝贺或附和，也输出 <TAKI_SKIP>。不替对方补写经历或描述其内心感受。纠错只撤回无依据的断言，不自动确认相反说法。普通分享用陈述收尾；针对回复方式的反馈简短处理，不补建议、祝福或自我解释；有实质问题就回答。'})
                             work.proactive_generation=True
                             try:
                                 generated=await runtime.attempt(work,generation,[],user,group,deadline,leases,

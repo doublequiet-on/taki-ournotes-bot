@@ -5400,6 +5400,36 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
         events=self.backend.diagnostics.read(plan['request_id'])['chat_events']
         self.assertFalse(any(e['kind']=='decision' and e['data']['decision']=='reply' for e in events))
 
+    async def test_staged_proactive_echo_is_skipped(self):
+        self.snapshot=replace(self.snapshot,profile=replace(self.snapshot.profile,provider='openai',wire_profile='openai-responses-v1'))
+        self.client.request.side_effect=[self.result('{"participation":"reply","text":"","delay_seconds":null}'),
+                                         self.result('这段鼓终于练顺了')]
+        value=self.observation('这段鼓终于练顺了');self.tick+=1.6
+        plan,attempts,_=await self.candidate(value)
+        self.assertEqual(len(attempts),2)
+        self.assertFalse(plan['send_allowed'])
+        self.assertEqual(plan['parts'],[])
+        events=self.backend.diagnostics.read(plan['request_id'])['chat_events']
+        self.assertTrue(any(e['kind']=='decision' and e['data'].get('reason')=='echo'
+                            and e['data']['decision']=='skip' for e in events))
+        self.assertEqual(self.agent.store.read(Request_scope(),[value['message_id']])['messages'],[])
+        rows=list(self.backend.model_runtime.usage.db.execute("SELECT state FROM attempts WHERE state<>'released'"))
+        self.assertEqual([row['state'] for row in rows],['settled','settled'])
+
+    async def test_single_stage_proactive_echo_with_different_punctuation_is_skipped(self):
+        self.client.request.return_value=self.result('{"participation":"reply","text":"练三天终于 FC 了！"}')
+        value=self.observation('练三天终于 ＦＣ 了。');self.tick+=1.6
+        plan,attempts,_=await self.candidate(value)
+        self.assertEqual(len(attempts),1)
+        self.assertFalse(plan['send_allowed'])
+        self.assertEqual(plan['parts'],[])
+
+    async def test_addressed_chat_can_repeat_on_request(self):
+        self.client.request.return_value=self.result('重复这句话')
+        plan,_=await self.prepare_native('/聊 重复这句话')
+        self.assertTrue(plan['send_allowed'])
+        self.assertEqual(plan['parts'][0]['text'],'重复这句话')
+
     async def test_staged_generation_can_withdraw_participation(self):
         self.snapshot=replace(self.snapshot,profile=replace(self.snapshot.profile,provider='openai',wire_profile='openai-responses-v1'))
         self.client.request.side_effect=[self.result('{"participation":"reply","text":"","delay_seconds":null}'),self.result('<TAKI_SKIP>')]

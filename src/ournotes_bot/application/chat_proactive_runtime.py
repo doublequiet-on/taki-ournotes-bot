@@ -6,6 +6,7 @@ import json
 import math
 import re
 import sqlite3
+import unicodedata
 from collections import Counter,OrderedDict
 from dataclasses import asdict,replace
 from fractions import Fraction
@@ -20,6 +21,11 @@ from .chat_jobs import (
 from .proactive_chat import ProactiveController,ProactivePolicy
 from .chat_followup import Followups
 from . import replies
+
+
+def _echo_key(text: str) -> str:
+    folded = unicodedata.normalize('NFKC', text).casefold()
+    return ' '.join(folded.split()).rstrip(' .!?。…')
 
 
 class ProactiveChat:
@@ -516,10 +522,17 @@ class ProactiveChat:
         require(isinstance(value,dict) and value.get('participation') in ('reply','skip','defer'),'model_protocol_error')
         mode=value['participation']
         require(({'participation','text'} if mode=='reply' else {'participation','delay_seconds'} if mode=='defer' else {'participation'})<=set(value),'model_protocol_error')
-        if mode=='reply':require(isinstance(value['text'],str) and 0<len(value['text'].strip())<=4000,'model_protocol_error')
+        metadata = {}
+        if mode=='reply':
+            require(isinstance(value['text'],str) and 0<len(value['text'].strip())<=4000,'model_protocol_error')
+            if not work.continuation:
+                reply_key = _echo_key(value['text'])
+                if reply_key and reply_key == _echo_key(work.request.body):
+                    mode = 'skip'
+                    metadata['reason'] = 'echo'
         if mode=='defer':require(type(value['delay_seconds']) is int and 2<=value['delay_seconds']<=5,'model_protocol_error')
         self.controller.decide(work.proactive,mode,**self.cost(work),defer_seconds=value['delay_seconds'] if mode=='defer' else 2)
-        self.trace(work,'decision',decision=mode,model_attempts=work.model_attempts)
+        self.trace(work,'decision',decision=mode,model_attempts=work.model_attempts,**metadata)
         work.participation=mode
         return value['text'].strip() if mode=='reply' else None
 
