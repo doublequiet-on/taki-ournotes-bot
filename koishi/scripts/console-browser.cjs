@@ -2,7 +2,7 @@
 const assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path')
 const {chromium}=require(process.argv[2]),output=path.resolve(process.argv[3])
 async function verifyConversation(page,browser){
-  const open=async target=>{const menu=target.getByRole('button',{name:'打开导航'});if(await menu.isVisible())await menu.click();await target.getByRole('navigation',{name:'Taki 工作页面'}).getByText('群管理',{exact:true}).click();await target.locator('.group-entry').first().click();await target.getByText('当前显示已保存的交流设置',{exact:true}).waitFor()}
+  const open=async target=>{const menu=target.getByRole('button',{name:'打开导航'});if(await menu.isVisible())await menu.click();await target.getByRole('navigation',{name:'Taki 工作页面'}).getByText('群管理',{exact:true}).click();await target.locator('.group-entry').first().click();await target.getByRole('button',{name:'交流与记忆',exact:true}).click();await target.getByText('当前显示已保存的交流设置',{exact:true}).waitFor()}
   const login=async target=>{await target.goto('http://127.0.0.1:15142/taki',{waitUntil:'networkidle'});await target.getByLabel('管理员密码').fill('fixture-console-password-000000');await target.getByRole('button',{name:'登录',exact:true}).click();await target.getByRole('heading',{name:'总览',exact:true}).waitFor()}
   const saved=async target=>{await target.getByText('交流设置已保存并确认生效。',{exact:true}).waitFor();await target.getByText('当前显示已保存的交流设置',{exact:true}).waitFor()}
   await open(page)
@@ -89,10 +89,11 @@ async function verifyReconnect(page){
   await nav().getByText('设置',{exact:true}).click()
   const toggle=page.getByLabel('允许私聊',{exact:true}),initial=await toggle.isChecked()
   await toggle.setChecked(!initial)
-  await nav().getByText('模型与费用',{exact:true}).click()
+  await nav().getByText('模型配置',{exact:true}).click()
   await page.getByLabel('模型 ID',{exact:true}).fill('fixture-unsaved-reconnect-model')
   await page.getByLabel('新密钥',{exact:true}).fill('fixture-never-persist-this-key')
   await nav().getByText('群管理',{exact:true}).click();await page.locator('.group-entry').first().click()
+  await page.getByRole('button',{name:'查询策略',exact:true}).click()
   await page.getByLabel('群备注',{exact:true}).fill('重连保留草稿')
   const stored=await page.evaluate(()=>sessionStorage.getItem('taki.console.recovery.v1'))
   assert.ok(stored.includes('重连保留草稿')&&stored.includes('fixture-unsaved-reconnect-model'))
@@ -100,7 +101,7 @@ async function verifyReconnect(page){
   await reconnect(2)
   await nav().getByText('设置',{exact:true}).click()
   assert.equal(await toggle.isChecked(),!initial)
-  await nav().getByText('模型与费用',{exact:true}).click()
+  await nav().getByText('模型配置',{exact:true}).click()
   assert.equal(await page.getByLabel('模型 ID',{exact:true}).inputValue(),'fixture-unsaved-reconnect-model')
   assert.equal(await page.getByLabel('新密钥',{exact:true}).inputValue(),'')
   await nav().getByText('群管理',{exact:true}).click()
@@ -108,7 +109,7 @@ async function verifyReconnect(page){
   await page.getByRole('button',{name:'保存群策略',exact:true}).click()
   await page.getByText('群策略已保存。新查询使用新规则，在途查询继续完成。',{exact:true}).waitFor()
   await nav().getByText('设置',{exact:true}).click()
-  await nav().getByText('模型与费用',{exact:true}).click()
+  await nav().getByText('模型配置',{exact:true}).click()
   await page.getByRole('button',{name:'放弃 AI 草稿并刷新',exact:true}).click()
   await nav().getByText('设置',{exact:true}).click()
   await page.getByRole('button',{name:'保存设置',exact:true}).click()
@@ -130,13 +131,14 @@ async function verifySettingsScroll(page){
     const hit=await page.evaluate(({x,y})=>document.elementFromPoint(x,y)?.closest('button')?.textContent.trim(),{x:box.x+box.width/2,y:box.y+box.height/2})
     return {bounds,box,ready:box.y>=bounds.y&&box.y+box.height<=bounds.y+bounds.height&&hit==='保存设置'}
   }
-  await page.setViewportSize({width:1280,height:720})
+  // The desktop settings grid is shorter. Use a short viewport to exercise wheel scrolling.
+  await page.setViewportSize({width:1280,height:480})
   await page.getByRole('navigation',{name:'Taki 工作页面'}).getByRole('button',{name:'设置',exact:true}).click()
   const initial=await toggle.isChecked();await toggle.setChecked(!initial)
   await layout.evaluate(e=>e.scrollTop=0)
   let {bounds,box}=await position()
   assert.ok(await layout.evaluate(e=>e.scrollHeight>e.clientHeight),'fixture must include content below the visible viewport')
-  await page.mouse.move(900,500);await page.mouse.wheel(0,300);await page.waitForTimeout(300)
+  await page.mouse.move(900,350);await page.mouse.wheel(0,300);await page.waitForTimeout(300)
   assert.ok(await layout.evaluate(e=>e.scrollTop)>100,'mouse wheel must scroll the Taki page')
   let current=await position()
   for(let attempt=0;attempt<10&&!current.ready;attempt++){
@@ -238,6 +240,7 @@ async function main(){
     await page.locator('.group-entry').first().waitFor()
     if(manager){
       await page.locator('.group-entry').first().click()
+      await page.getByRole('button',{name:'查询策略',exact:true}).click()
       await page.getByLabel('群备注',{exact:true}).fill('尚未保存甲')
       const other=await browser.newPage()
       await other.route('**/*',route=>new URL(route.request().url()).hostname==='127.0.0.1'?route.continue():route.abort())
@@ -247,6 +250,7 @@ async function main(){
       await other.getByRole('heading',{name:'总览',exact:true}).waitFor()
       await other.getByRole('navigation',{name:'Taki 工作页面'}).getByText('群管理',{exact:true}).click()
       await other.locator('.group-entry').first().click()
+      await other.getByRole('button',{name:'查询策略',exact:true}).click()
       await other.getByLabel('群备注',{exact:true}).fill('服务器已保存乙')
       await other.getByRole('button',{name:'保存群策略',exact:true}).click()
       await other.getByText('群策略已保存。新查询使用新规则，在途查询继续完成。',{exact:true}).waitFor()
@@ -268,8 +272,8 @@ async function main(){
       await page.getByRole('button',{name:'检查并同步',exact:true}).click()
       await page.getByText(/^操作已受理：/).waitFor()
     }
-    await nav.getByText('模型与费用',{exact:true}).click()
-    await page.getByRole('heading',{name:'模型与额度',exact:true}).waitFor()
+    await nav.getByText('模型配置',{exact:true}).click()
+    await page.getByRole('heading',{name:'模型参数',exact:true}).waitFor()
     await nav.getByText('运行维护',{exact:true}).click()
     await page.getByRole('heading',{name:'维护与恢复',exact:true}).waitFor()
     assert.equal(await page.getByRole('button',{name:'进入维护',exact:true}).isDisabled(),true,'a dirty draft must block maintenance')
@@ -277,7 +281,7 @@ async function main(){
     await page.emulateMedia({colorScheme:'dark'})
     // Explicit host theme: OS preference alone need not switch a saved Koishi theme.
     await page.evaluate(()=>document.documentElement.classList.add('dark'))
-    assert.notEqual(await page.locator('.taki-console').evaluate(e=>getComputedStyle(e).getPropertyValue('--bg1').trim()),'#f9f9fa')
+    assert.notEqual(await page.locator('.taki-console').evaluate(e=>getComputedStyle(e).getPropertyValue('--bg').trim()),'#f4f3f7')
     assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth),true,'320px horizontal overflow')
     await page.keyboard.press('Tab')
     assert.equal(await page.evaluate(()=>document.activeElement!==document.body),true)
@@ -286,7 +290,7 @@ async function main(){
     await page.getByRole('button',{name:'打开导航'}).tap()
     const navigationDialog=page.getByRole('dialog',{name:'导航',exact:true});await navigationDialog.waitFor()
     assert.equal(await navigationDialog.evaluate(e=>e.contains(document.activeElement)),true,'opening navigation must move keyboard focus inside')
-    await navigationDialog.getByText('总览',{exact:true}).focus();await page.keyboard.press('Shift+Tab')
+    await navigationDialog.getByRole('button',{name:'总览',exact:true}).focus();await page.keyboard.press('Shift+Tab')
     assert.equal(await navigationDialog.evaluate(e=>e.contains(document.activeElement)),true,'navigation must retain keyboard focus')
     await page.keyboard.press('Escape')
     assert.equal(await page.getByRole('button',{name:'打开导航'}).evaluate(e=>e===document.activeElement),true,'closing navigation must return focus')

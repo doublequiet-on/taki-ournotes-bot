@@ -11,13 +11,21 @@ export function jobsView(s) {
     s.jobDetail.value&&section({availability:'available',observed_at:s.jobDetail.value.finished_at,data:s.jobDetail.value},'操作详情'),
     s.jobs.value?.items?.length===0&&h('p','暂无操作记录')]);
 }
+const sourceNames={catalog:'游戏主目录',meta:'歌曲 Meta',knowledge:'百科批准与索引',background:'后台刷新与采样',other_sources:'其他来源'};
 export function sourcesView(s) {
   const supported=s.jobs.value?.health?.actions||[];
-  return h('div',[h('h1','数据来源'),libraryView(s),...Object.entries(s.sources.value?.sections||{}).map(([key,item])=>section(item,key)),
+  return h('div',{class:'sources-page'},[
+    h('h1','数据来源'),h('p',{class:'page-intro'},'审阅知识资料，核对游戏数据的采集状态和同步记录。'),
+    h('div',{class:'source-workspace'},[libraryView(s),h('div',[
+    h('section',[h('h2','采集状态'),
+      ...Object.entries(s.sources.value?.sections||{}).map(([key,item])=>h('details',[h('summary',sourceNames[key]||key),section(item,key)])),
+      !s.sources.value&&h('p','尚未取得来源状态。'),
+      button('刷新来源状态',()=>s.load(s.sources,'sources')),
+    ]),
     h('section',[h('h2','同步与修复'),...Object.entries(actions).map(([action,label])=>button(label,()=>{
       if(['catalog_reload','assets_repair','assets_retry'].includes(action)&&!window.confirm(label+'？将获取上游资料或图片，不重启机器人。'))return;
       void s.startJob(action);
-    },s.busy.value||!supported.includes(action))),!supported.length&&h('p','后端尚未提供可执行运维能力')]),jobsView(s)]);
+    },s.busy.value||!supported.includes(action))),!supported.length&&h('p','后端尚未提供可执行运维能力')]),jobsView(s)])])]);
 }
 export function attentionView(s,search) {
   const v=s.overview.value,stats=v?.backend?.sections?.requests?.data,problems=[];
@@ -27,21 +35,21 @@ export function attentionView(s,search) {
   if(catalog&&['stale','unsaved','unknown'].includes(catalog.cache_state))problems.push(['资料同步需要关注','查看来源',()=>s.navigate('sources')]);
   if(v?.policy_health?.availability==='unavailable'||['frozen','conflict'].includes(v?.recovery_policy?.state))problems.push(['策略限制或恢复冲突','查看设置',()=>s.navigate('settings')]);
   if(v?.gateway_observation?.dropped_events||v?.backend?.sections?.observation?.data?.dropped_events)problems.push(['存在缺失的诊断观测','查看采集',()=>s.navigate('sources')]);
-  return h('section',[h('h2','需要处理'),!problems.length?h('p',v?'暂无已知异常':'尚未取得状态'):h('ul',problems.map(([label,text,fn])=>h('li',[label,button(text,fn)]))),button('导出诊断',()=>s.exportDiagnostic())]);
+  return h('section',[h('h2','需要处理'),!problems.length?h('p',v?'暂无已知异常':'尚未取得状态'):h('ul',problems.map(([label,text,fn])=>h('li',[label,button(text,fn)]))),button('导出诊断',()=>s.exportDiagnostic(null,'overview'))]);
 }
 export function operationsSettings(s) {
   const host=s.host.value,data=host?.data,runtime=data?.runtime,controller=data?.controller;
   const timer=data?.services?.['taki-updater.timer'];
   const short=v=>v?v.slice(0,8):'尚未采集',proof=v=>v===true?'有记录':v===false?'未通过':'尚未采集';
   const objects={code_environment:'代码与环境',business_data:'业务数据',console_settings:'设置与群策略',trusted_configuration:'控制器与系统配置',isolated_restore:'隔离恢复',offsite_copy:'异地副本'};
-  return h('div',[recoveryView(s),controlView(s),h('section',[h('h2','运行与恢复准备'),button('刷新主机状态',()=>s.load(s.host,'ops/host')),
+  return h('div',[h('section',[h('h2','运行与恢复准备'),button('刷新主机状态',()=>s.load(s.host,'ops/host')),
     h('div',{class:'stats'},[[short(data?.processes?.backend?.cwd_release_sha),'后端进程目录版本'],[short(controller?.observed_target),'最近观察目标'],[short(runtime?.gateway_sha),'网关运行版本'],[short(controller?.current_sha),'控制器记录'],[short(controller?.previous_sha),'前一版本']].map(([value,label])=>h('div',[h('strong',value),h('span',label)]))),
     controller?.paused&&h('p','更新控制器已暂停'),host?.reason_code&&h('p',({host_collector_not_installed:'主机采集器尚未安装',host_snapshot_stale:'主机快照已过期',host_clock_changed:'主机观测时间需要核对'})[host.reason_code]||'主机观测暂不可用'),
     timer&&h('p',`自动更新定时器：${timer.UnitFileState==='disabled'||timer.UnitFileState==='masked'?'已停用':timer.UnitFileState||'未知'} · ${timer.ActiveState==='active'?'已激活':timer.ActiveState==='inactive'?'未激活':'状态未知'}`),
     data?.backup_coverage&&h('details',[h('summary','备份覆盖与核验记录'),h('ul',data.backup_coverage.map(row=>h('li',[
       h('strong',objects[row.object]||row.object),h('span',`归档存在：${row.archive_exists===true?'是':row.archive_exists===false?'否':'未知'} · 摘要核验：${proof(row.checksum_verified)} · 恢复核验：${proof(row.restore_verified)}`),
       row.evidence_at&&h('small',`外部受信记录 ${stamp(row.evidence_at)}`)])))]),
-    host&&h('details',[h('summary','运行、空间与恢复详情'),section(host,'主机状态')])]),
+    host&&h('details',[h('summary','运行、空间与恢复详情'),section(host,'主机状态')])]),controlView(s),recoveryView(s),
     h('section',[h('h2','管理记录'),button('刷新管理记录',()=>s.load(s.audit,'ops/audit')),
       s.audit.value&&!s.audit.value.available&&h('p',{role:'alert'},'管理记录不可用'),
       h('ul',(s.audit.value?.items||[]).slice(0,25).map(e=>h('li',[h('details',[h('summary',`${new Date(e.at).toLocaleString()} · ${e.action} · ${states[e.state]||e.state}`),
