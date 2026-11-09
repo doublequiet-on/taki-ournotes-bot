@@ -1,151 +1,474 @@
-/* Koishi's layout clips its default slot; only the Taki page needs scrolling. */
-.layout-container .main-container .layout-main:has(> .taki-console) { overflow-y:auto; }
-/* Haneoka-inspired Material surfaces; host colours follow the Koishi theme. */
-.taki-console { --accent:#6569bd; --ink:var(--fg1,#272733); --surface:var(--bg1,#fff); --soft:var(--bg2,#f2f1f8); --line:color-mix(in srgb,var(--ink) 16%,transparent); max-width:1120px; margin:24px auto; padding:0 24px 40px; line-height:1.7; overflow-wrap:anywhere; color:var(--ink); font-family:"Segoe UI","Microsoft YaHei",sans-serif; }
-.taki-console * { box-sizing:border-box; }
-.taki-console h1 { font-size:clamp(26px,4vw,36px); font-weight:650; letter-spacing:-.04em; margin:28px 0 8px; line-height:1.25; }
-.taki-console h2 { font-size:21px; line-height:1.4; margin:0 0 12px; }
-.taki-console h3 { font-size:16px; margin:24px 0 8px; }
-.taki-console p { margin:8px 0 14px; }
-.taki-console .console-header { display:flex; align-items:center; justify-content:space-between; gap:16px; padding:8px 0 16px; }
-.taki-console .console-header>button { flex:none; white-space:nowrap; }
-.taki-console .console-header p { margin:4px 0; }
-.taki-console .eyebrow { font-size:12px; font-weight:750; letter-spacing:.14em; }
-.taki-console nav { display:flex; gap:8px; padding:6px; background:var(--soft); border-radius:28px; width:fit-content; max-width:100%; }
-.taki-console button { padding:10px 18px; margin:6px 8px 6px 0; min-height:44px; cursor:pointer; color:inherit; font:inherit; font-size:14px; font-weight:600; background:var(--soft); border:1px solid var(--line); border-radius:24px; transition:background .15s; }
-.taki-console button:hover:not(:disabled) { background:color-mix(in srgb,var(--accent) 18%,var(--surface)); }
-.taki-console nav button { border:0; background:transparent; margin:0; }
-.taki-console nav button[aria-current=page] { background:var(--accent); color:#fff; }
-.taki-console button:disabled { cursor:default; opacity:.55; }
-.taki-console :focus-visible { outline:3px solid var(--accent); outline-offset:3px; }
-.taki-console section { margin:20px 0; padding:24px; background:var(--surface); border:1px solid var(--line); border-radius:24px; }
-.taki-console .health-card { background:color-mix(in srgb,var(--accent) 12%,var(--surface)); border-color:transparent; }
-.taki-console .health-card h2 { font-size:28px; margin-top:8px; }
-.taki-console .guide { display:block; background:var(--soft); border-radius:18px; padding:16px 20px; margin:18px 0; border-inline-start:3px solid var(--accent); font-size:14px; }
-.taki-console .guide p { margin:4px 0 0; }
-.taki-console .stats { display:grid; grid-template-columns:repeat(auto-fit,minmax(120px,1fr)); gap:10px; }
-.taki-console .stats>div { background:var(--soft); border-radius:16px; padding:16px; }
-.taki-console .stats strong { display:block; font-size:30px; font-weight:600; line-height:1.4; }
-.taki-console .stats span { font-size:13px; }
-.taki-console .toggle { display:flex; align-items:center; justify-content:space-between; gap:16px; padding:14px 0; border-bottom:1px solid var(--line); }
-.taki-console .toggle:has(input) { justify-content:flex-start; }
-.taki-console input[type=checkbox] { accent-color:var(--accent); width:22px; height:22px; flex:none; }
-.taki-console input:not([type=checkbox]),.taki-console select,.taki-console textarea { color:inherit; background:var(--surface); border:1px solid var(--line); border-radius:12px; padding:12px; font:inherit; min-height:44px; max-width:100%; }
-.taki-console input:not([type=checkbox]) { display:block; width:100%; margin:8px 0; }
-.taki-console textarea { display:block; width:100%; margin-top:8px; resize:vertical; }
-.taki-console .toggle select { min-width:0; max-width:65%; }
-.taki-console .muted,.taki-console small { opacity:.78; font-size:13px; }
-.taki-console small { display:block; }
-.taki-console .draft-status { font-size:14px; font-weight:600; padding-top:12px; }
-.taki-console [role=alert] { background:color-mix(in srgb,#d89a38 18%,var(--surface)); border-inline-start:3px solid #b87816; padding:14px 18px; border-radius:12px; }
-.taki-console>p[role=status] { padding:14px 18px; background:var(--soft); border-radius:12px; }
-.taki-console ul { padding-left:20px; }
-.taki-console li { margin:10px 0; }
-.taki-console .record-list { list-style:none; padding:0; }
-.taki-console .record-list>li { padding:14px 16px; border:1px solid var(--line); border-radius:18px; margin:10px 0; }
-.taki-console .record-list span { display:block; font-size:14px; }
-.taki-console .technical { border:1px solid var(--line); border-radius:18px; margin:16px 0; padding:4px 18px; background:var(--surface); }
-.taki-console summary { cursor:pointer; min-height:48px; padding:12px 0; font-size:14px; font-weight:600; }
-.taki-console .technical section { margin:10px 0; border-radius:16px; }
-.taki-console .fact { display:grid; grid-template-columns:minmax(90px,180px) minmax(0,1fr); gap:12px; padding:6px 0; border-bottom:1px solid var(--line); font-size:14px; }
-.taki-console dt { opacity:.78; }
-.taki-console dd { margin:0; min-width:0; }
-.taki-console footer { border-top:1px solid var(--line); margin-top:32px; padding-top:20px; }
-.taki-console form { max-width:480px; margin:8vh auto; padding:32px; border-radius:28px; background:var(--surface); border:1px solid var(--line); }
-.taki-console form button[type=submit] { background:var(--accent); color:#fff; width:100%; margin:16px 0; }
-@media(max-width:600px) { .taki-console { margin:12px auto; padding:0 12px 24px; } .taki-console section { padding:16px; border-radius:20px; } .taki-console .console-header { align-items:flex-start; } .taki-console .console-header p { font-size:13px; } .taki-console nav { width:100%; gap:2px; } .taki-console nav button { flex:1; padding:10px 8px; font-size:13px; } .taki-console .fact { grid-template-columns:1fr; gap:0; } .taki-console .technical { padding:4px 12px; } .taki-console .guide { padding:14px; } .taki-console form { margin:24px auto; padding:24px 18px; } }
-@media(prefers-reduced-motion:reduce) { .taki-console button { transition:none; } }
+/* Koishi clips its default slot. Keep scroll inside the Taki page. */
+.layout-container .main-container .layout-main:has(> .taki-console) { overflow-y: auto; scroll-padding-top: 64px; }
+.layout-container .main-container .layout-main:has(> .taki-console .quota-actions.is-active) { scroll-padding-bottom: 102px; }
+.taki-console {
+  --bg: #f4f3f7;
+  --paper: #fff;
+  --quiet: #f6f5fa;
+  --ink: #232032;
+  --muted: #645f73;
+  --line: #e3e0ea;
+  --accent: #5b468f;
+  --on-accent: #fff;
+  --selected: #ece5fa;
+  --good: #276149;
+  --good-bg: #e4f2ea;
+  --warn: #814e0c;
+  --warn-bg: #fff1da;
+  --rail: #221b32;
+  --rail-text: #f4edf9;
+  --rail-muted: #c4b8d1;
+  --rail-selected: #47345e;
+  min-height: 100%;
+  background: var(--bg);
+  color: var(--ink);
+  font: 14px/1.55 "Segoe UI", "Microsoft YaHei", sans-serif;
+  overflow-wrap: anywhere;
+}
+.taki-console[data-theme=dark], .dark .taki-console:not([data-theme=light]) {
+  --bg: #201d27;
+  --paper: #2a2633;
+  --quiet: #322d3e;
+  --ink: #f1ebf7;
+  --muted: #c1b8ce;
+  --line: #484052;
+  --accent: #d0baf9;
+  --on-accent: #291941;
+  --selected: #483758;
+  --good: #b3e4c7;
+  --good-bg: #2a4438;
+  --warn: #f9cb84;
+  --warn-bg: #4a3829;
+  --rail: #19141f;
+  color-scheme: dark;
+}
+.taki-console[data-theme=light] { color-scheme: light; }
+.taki-console * { box-sizing: border-box; }
+.taki-console h1, .taki-console h2, .taki-console h3, .taki-console h4 { margin: 0 0 10px; line-height: 1.3; }
+.taki-console h1 { font-size: clamp(28px, 3vw, 36px); letter-spacing: -.035em; }
+.taki-console h2 { font-size: 18px; }
+.taki-console h3 { font-size: 16px; }
+.taki-console h4 { margin-top: 16px; font-size: 14px; }
+.taki-console p { margin: 8px 0 12px; }
+.taki-console small, .taki-console .muted, .taki-console .field-note { color: var(--muted); font-size: 12px; }
+.taki-console small { display: block; }
+.taki-console section {
+  min-width: 0;
+  margin: 16px 0;
+  padding: 20px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: var(--paper);
+}
+.taki-console :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.taki-console button {
+  min-height: 40px;
+  max-width: 100%;
+  margin: 4px 8px 4px 0;
+  padding: 8px 12px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--paper);
+  color: var(--accent);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.taki-console button:hover:not(:disabled) { background: var(--selected); }
+.taki-console button:disabled { opacity: .55; cursor: default; }
+.taki-console .primary-button, .taki-console .login-screen button[type=submit], .taki-console .conversation-actions button:last-child,
+.taki-console .settings-actions button:last-child {
+  border-color: transparent;
+  background: var(--accent);
+  color: var(--on-accent);
+}
+.taki-console .primary-button:hover:not(:disabled) { filter: brightness(1.15); background: var(--accent); }
+.taki-console label { display: block; font-weight: 600; }
+.taki-console input:not([type=checkbox]), .taki-console select, .taki-console textarea {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  min-height: 44px;
+  margin: 5px 0 0;
+  padding: 9px 11px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--paper);
+  color: var(--ink);
+  font: inherit;
+  font-weight: 400;
+}
+.taki-console textarea { resize: vertical; }
+.taki-console input[type=checkbox] { width: 20px; height: 20px; flex: none; accent-color: var(--accent); }
+.taki-console .toggle { display: flex; align-items: center; gap: 10px; min-height: 44px; padding: 8px 0; }
+.taki-console .toggle select { width: auto; min-width: 0; }
+.taki-console .form-grid { display: grid; grid-template-columns: repeat(auto-fit,minmax(min(100%,180px),1fr)); gap: 14px; }
+.taki-console label small { margin-top: 4px; font-weight: 400; }
+.taki-console .form-actions, .taki-console .settings-actions, .taki-console .conversation-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 16px;
+  padding: 12px 0 0;
+  border-top: 1px solid var(--line);
+}
+.taki-console .form-actions button, .taki-console .settings-actions button, .taki-console .conversation-actions button { margin: 0; }
+.taki-console .form-actions > small, .taki-console .form-feedback, .taki-console .settings-actions > span { flex: 1 1 12em; }
+.taki-console .form-feedback strong { display: block; margin-top: 4px; font-size: 12px; }
+.taki-console .inline-callout { margin: 12px 0; padding: 12px 14px; border-radius: 10px; background: var(--quiet); }
+.taki-console .page-message, .taki-console [role=alert] {
+  padding: 10px 14px;
+  border-inline-start: 3px solid var(--accent);
+  border-radius: 8px;
+  background: var(--selected);
+}
+.taki-console [role=alert] { border-color: var(--warn); background: var(--warn-bg); color: var(--warn); }
+.taki-console .page-panel > .page-message:first-child { margin-top: 0; }
 
-/* Operations workbench: Koishi navigation with Haneoka surfaces. */
-.taki-console{font-family:system-ui,"Microsoft YaHei",sans-serif}
-.taki-console .brand{display:flex;align-items:center;gap:12px}
-.taki-console .brand-image{width:54px;height:54px;object-fit:cover;object-position:40% 25%;border-radius:18px}
-.taki-console .status-bar{position:sticky;bottom:0;display:flex;align-items:center;justify-content:space-between;background:var(--surface);z-index:2;padding:6px 16px;border-radius:18px}
-.taki-console :is(p,dd,li,strong,span){overflow-wrap:anywhere}
-.taki-console .guide{padding:8px 16px;border:0;background:var(--soft)}
-.taki-console .guide summary{min-height:32px;padding:4px 0}
-.taki-console .form-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,250px),1fr));gap:16px}
-.taki-console .form-grid select{display:block;width:100%;margin-top:8px}
-.taki-console form.quota-form{margin:12px 0;padding:0;border:0;max-width:none;background:none}
-@media(min-width:1000px){.taki-console>div{padding-left:180px}.taki-console nav{position:fixed;top:128px;width:160px;flex-direction:column;align-items:stretch;margin-left:-180px;border-radius:20px}.taki-console nav button{text-align:left}}
-@media(max-width:600px){.taki-console nav{flex-wrap:wrap}.taki-console .status-bar{font-size:12px}.taki-console .status-bar button{margin:0}}
+.taki-console .console-layout { display: grid; grid-template-columns: 210px minmax(0,1fr); min-height: calc(100dvh - 56px); }
+.taki-console .console-sidebar {
+  position: sticky;
+  top: 0;
+  align-self: start;
+  display: flex;
+  flex-direction: column;
+  height: 100dvh;
+  max-height: calc(100dvh - 56px);
+  overflow-y: auto;
+  padding: 20px 12px 12px;
+  background: var(--rail);
+  color: var(--rail-text);
+  z-index: 8;
+}
+.taki-console .sidebar-brand { display: flex; align-items: center; gap: 10px; padding: 4px 8px 16px; }
+.taki-console .sidebar-brand strong { display: block; font-size: 21px; line-height: 1.2; }
+.taki-console .sidebar-brand small { color: var(--rail-muted); font-size: 11px; margin-top: 3px; }
+.taki-console .brand-image, .taki-console .instance-portrait, .taki-console .login-portrait {
+  object-fit: cover;
+  object-position: 40% 25%;
+  border-radius: 10px;
+}
+.taki-console .brand-image { width: 39px; height: 39px; }
+.taki-console .instance-portrait { width: 46px; height: 46px; }
+.taki-console .nav-group { display: grid; gap: 2px; margin: 12px 0 16px; }
+.taki-console .nav-label { padding: 0 12px 4px; color: var(--rail-muted); font-size: 11px; font-weight: 600; }
+.taki-console .console-sidebar button {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  margin: 0;
+  padding: 9px 11px;
+  border-color: transparent;
+  background: transparent;
+  color: var(--rail-muted);
+  text-align: start;
+}
+.taki-console .console-sidebar button[aria-current=page], .taki-console .console-sidebar button:hover:not(:disabled) {
+  background: var(--rail-selected);
+  color: var(--rail-text);
+}
+.taki-console .console-sidebar :focus-visible { outline-color: var(--rail-text); }
+.taki-console .sidebar-bottom { margin-top: auto; padding-top: 10px; border-top: 1px solid #ffffff20; }
+.taki-console .draft-dot { width: 7px; height: 7px; flex: none; border-radius: 50%; background: currentColor; }
+.taki-console .console-sidebar .draft-dot { margin-left: auto; background: #eac187; }
+.taki-console .console-app { min-width: 0; }
+.taki-console .topbar {
+  position: sticky;
+  top: 0;
+  z-index: 6;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 56px;
+  padding: 0 24px;
+  border-bottom: 1px solid var(--line);
+  background: var(--paper);
+}
+.taki-console .topbar-path, .taki-console .topbar-actions, .taki-console .connection-indicator { display: flex; align-items: center; gap: 10px; }
+.taki-console .topbar-path span { color: var(--muted); font-size: 11px; letter-spacing: .08em; }
+.taki-console .topbar-actions { margin-left: auto; }
+.taki-console .connection-indicator { color: var(--muted); font-size: 12px; white-space: nowrap; }
+.taki-console .status-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+.taki-console .status-dot.good { background: var(--good); }
+.taki-console .icon-button { display: inline-grid; place-items: center; width: 44px; height: 44px; margin: 0; padding: 0; border-color: transparent; }
+.taki-console .menu-button, .taki-console .drawer-scrim, .taki-console .inspector-scrim { display: none; }
+.taki-console .page-panel { max-width: 1460px; margin: 0 auto; padding: 28px 28px 52px; }
+.taki-console .page-heading, .taki-console .card-heading, .taki-console .card-foot, .taki-console .risk-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.taki-console .page-heading { align-items: flex-start; margin-bottom: 18px; }
+.taki-console .page-heading h1, .taki-console .card-heading h2, .taki-console .card-heading h3 { margin: 0; }
+.taki-console .page-intro { color: var(--muted); }
+.taki-console .card-heading > button, .taki-console .card-foot > button { flex: none; margin: 0; }
+.taki-console .page-heading > button { flex: none; }
+.taki-console .card-foot { margin-top: 14px; }
+.taki-console .card-foot > button { border-color: transparent; background: transparent; }
+.taki-console .card-foot > button:hover:not(:disabled) { background: var(--selected); }
 
-/* Production workbench: the preview's visual language, with the real Console data. */
-.taki-console{--tc-bg:#efedf3;--tc-pane:#fbf9ff;--tc-card:#f3f0f7;--tc-raised:#fff;--tc-text:#25232b;--tc-muted:#76717f;--tc-primary:#615897;--tc-on-primary:#fff;--tc-selected:#e4dffb;--tc-line:#e1dce8;--tc-green:#44745e;--tc-green-bg:#e4efe7;--tc-warm:#956c24;--tc-warm-bg:#f6ecd6;--accent:var(--tc-primary);--ink:var(--tc-text);--surface:var(--tc-card);--soft:var(--tc-bg);--line:var(--tc-line);max-width:none;min-height:100%;margin:0;padding:0;background:var(--tc-bg);color:var(--tc-text);font-size:14px;line-height:1.6}
-.taki-console[data-theme=dark],.dark .taki-console:not([data-theme=light]){--tc-bg:#211f28;--tc-pane:#25232d;--tc-card:#302d39;--tc-raised:#37333f;--tc-text:#e8e2ed;--tc-muted:#b0a9bb;--tc-primary:#c7bcfa;--tc-on-primary:#342855;--tc-selected:#48405f;--tc-line:#45404f;--tc-green:#a0cfb4;--tc-green-bg:#32483c;--tc-warm:#e8c37d;--tc-warm-bg:#4e4230;color-scheme:dark}
-.taki-console .console-layout{display:grid;grid-template-columns:236px minmax(0,1fr);min-height:calc(100dvh - 76px)}
-.taki-console>.console-layout{padding-left:0}
-.taki-console .console-sidebar{position:sticky;top:0;align-self:start;height:calc(100dvh - 76px);display:flex;flex-direction:column;padding:24px 16px 16px;background:var(--tc-bg);z-index:8}
-.taki-console .sidebar-brand{display:flex;align-items:center;gap:12px;margin:0 16px 38px;font-size:22px}
-.taki-console .brand-image,.taki-console .small-portrait,.taki-console .instance-portrait,.taki-console .login-portrait{object-fit:cover;object-position:40% 25%;border-radius:16px}
-.taki-console .brand-image{width:44px;height:44px}.taki-console .small-portrait{width:38px;height:38px}.taki-console .instance-portrait{width:52px;height:52px}
-.taki-console .console-sidebar nav{position:static;display:flex;flex-direction:column;align-items:stretch;gap:4px;width:auto;max-width:none;margin:0;padding:0;background:none;border-radius:0}
-.taki-console .console-sidebar nav button{display:flex;align-items:center;gap:14px;width:100%;min-height:50px;margin:0;padding:12px 18px;text-align:left;border:0;border-radius:26px;background:transparent;color:var(--tc-muted);font-size:14px}
-.taki-console .console-sidebar nav button[aria-current=page]{background:var(--tc-selected);color:var(--tc-primary)}
-.taki-console .draft-dot{width:7px;height:7px;margin-left:auto;border-radius:50%;background:var(--tc-primary)}
-.taki-console .sidebar-bottom{margin-top:auto;border-top:1px solid var(--tc-line);padding:16px 8px 0}
-.taki-console .sidebar-instance{display:flex;align-items:center;gap:10px}.taki-console .sidebar-instance>div{display:flex;flex:1;flex-direction:column}.taki-console .sidebar-instance small{color:var(--tc-muted);font-size:11px}.taki-console .status-dot{width:7px;height:7px;border-radius:50%;background:var(--tc-muted)}.taki-console .status-dot.good{background:var(--tc-green)}
-.taki-console .sidebar-logout{display:flex;align-items:center;gap:9px;width:100%;padding:9px 0;margin:12px 0 0;border:0;background:none;color:var(--tc-muted);font-size:12px;text-align:left}
-.taki-console .console-app{min-width:0;padding:0 20px 44px 0}
-.taki-console .topbar{position:sticky;top:0;z-index:6;display:flex;align-items:center;justify-content:space-between;gap:12px;min-height:74px;padding:0 26px;background:var(--tc-bg);color:var(--tc-text)}
-.taki-console .topbar-actions{display:flex;align-items:center;gap:12px;margin-left:auto}.taki-console .connection-indicator{color:var(--tc-muted);font-size:11px}
-.taki-console .icon-button{display:inline-flex;align-items:center;justify-content:center;width:42px;height:42px;min-height:42px;padding:0;margin:0;border:0;background:transparent;color:var(--tc-primary)}
-.taki-console .menu-button,.taki-console .drawer-scrim{display:none}
-.taki-console .page-panel{min-height:calc(100dvh - 165px);padding:34px 44px 42px;background:var(--tc-pane);border-radius:30px}
-.taki-console .page-panel>div>h1,.taki-console .page-heading h1{margin:0;font-size:28px;letter-spacing:-.04em}
-.taki-console .page-heading,.taki-console .card-heading{display:flex;align-items:center;justify-content:space-between;gap:12px}.taki-console .page-heading{margin:0 0 24px}.taki-console .card-heading h2{margin:0}
-.taki-console h2{font-size:18px}.taki-console small,.taki-console .muted{color:var(--tc-muted);opacity:1}.taki-console section{margin:16px 0;padding:24px;background:var(--tc-card);border:1px solid transparent;border-radius:26px}
-.taki-console button{border-color:var(--tc-line);background:var(--tc-bg);color:var(--tc-primary);font-size:13px}
-.taki-console button:hover:not(:disabled){background:var(--tc-selected)}
-.taki-console .page-message{padding:12px 16px;background:var(--tc-selected);border-radius:14px}
-.taki-console .overview-top,.taki-console .overview-bottom{display:grid;grid-template-columns:minmax(0,1.65fr) minmax(260px,1fr);gap:20px}
-.taki-console .overview-top>section,.taki-console .overview-bottom>section,.taki-console .overview-side>section{margin:0}
-.taki-console .health-card{background:var(--tc-selected);padding:24px 26px 18px}.taki-console .instance-heading{display:flex;align-items:center;gap:14px}.taki-console .instance-heading h2{font-size:24px;margin:0}.taki-console .instance-heading>div{flex:1}.taki-console .instance-heading>span{margin-left:auto}
-.taki-console .service-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px;margin:24px 0}.taki-console .service-grid>div{display:flex;flex-direction:column;gap:5px}.taki-console .service-grid strong{font-size:14px}
-.taki-console .card-foot{display:flex;align-items:center;justify-content:space-between;gap:12px;border-top:1px solid var(--tc-line);padding-top:10px}.taki-console .card-foot button,.taki-console .card-heading button,.taki-console .quick-card>button{border:0;background:transparent;padding:6px;margin:0}
-.taki-console .card-foot button{white-space:nowrap}
-.taki-console .quick-row{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:13px 0;border-bottom:1px solid var(--tc-line)}.taki-console .quick-row strong{font-size:12px;color:var(--tc-muted)}
-.taki-console .overview-stats{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:16px;margin:18px 0}.taki-console .overview-stat{display:flex;flex-direction:column;gap:6px;margin:0;padding:18px 20px}.taki-console .overview-stat>span{font-size:12px}.taki-console .overview-stat>strong{font-size:30px;line-height:1.3}.taki-console .overview-stat>small{font-size:11px}
-.taki-console .overview-stat button{align-self:flex-start;margin:0;padding:2px 0;min-height:28px;border:0;background:transparent;font-size:11px}
-.taki-console .overview-side{display:flex;flex-direction:column;gap:16px}.taki-console .source-mini{display:flex;align-items:center;gap:10px;padding:12px 0;border-bottom:1px solid var(--tc-line)}.taki-console .source-mini:last-child{border:0}.taki-console .source-mini img{width:36px;height:36px;border-radius:12px;object-fit:cover}.taki-console .source-mini>span:nth-child(2){flex:1}.taki-console .source-mini strong{font-size:12px}.taki-console .source-mini small{font-size:10px}.taki-console .ask-total{display:block;font-size:28px;margin-top:14px}.taki-console .ask-card p{font-size:11px;color:var(--tc-muted)}
-.taki-console .record-list{list-style:none;padding:0;margin:12px 0}.taki-console .record-list>li{padding:0;margin:0;border:0;border-bottom:1px solid var(--tc-line);border-radius:0}.taki-console .record-list>li:last-child{border:0}
-.taki-console .request-entry{display:flex;align-items:center;gap:12px;width:100%;margin:0;padding:14px 4px;background:transparent;border:0;border-radius:12px;text-align:left;color:var(--tc-text)}
-.taki-console .request-avatar,.taki-console .group-avatar{display:grid;place-items:center;flex:none;width:38px;height:38px;border-radius:13px;background:var(--tc-selected);color:var(--tc-primary);font-size:17px}.taki-console .request-copy,.taki-console .group-copy{display:flex;flex:1;min-width:0;flex-direction:column;gap:3px}.taki-console .request-copy strong,.taki-console .group-copy strong{font-size:13px}.taki-console .request-copy small,.taki-console .group-copy small{font-size:11px}
-.taki-console .state-pill{display:inline-block;flex:none;padding:4px 8px;border-radius:8px;background:var(--tc-bg);color:var(--tc-muted);font-size:11px;font-weight:600;line-height:1.4}.taki-console .state-pill.complete{background:var(--tc-green-bg);color:var(--tc-green)}.taki-console .state-pill.partial,.taki-console .state-pill.uncertain{background:var(--tc-warm-bg);color:var(--tc-warm)}.taki-console .state-pill.processing{background:var(--tc-selected);color:var(--tc-primary)}
-.taki-console .request-entry .state-pill,.taki-console .group-entry .state-pill{max-width:42%;overflow-wrap:anywhere}
-.taki-console .request-toolbar{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}.taki-console .filter-tabs{display:flex;gap:4px;padding:4px;border-radius:24px;background:var(--tc-card)}.taki-console .filter-tabs button{border:0;margin:0}.taki-console .request-toolbar label{display:flex;align-items:center;gap:8px}
-.taki-console .filter-tabs button[aria-pressed=true]{background:var(--tc-selected)}
-.taki-console .record-workspace,.taki-console .group-workspace{display:grid;grid-template-columns:minmax(0,1.45fr) minmax(260px,1fr);gap:20px;align-items:start}.taki-console .record-workspace>section,.taki-console .group-workspace>section{margin:16px 0}.taki-console .inspector-empty{display:grid;place-items:center;min-height:240px;color:var(--tc-muted);border:1px dashed var(--tc-line)}
-.taki-console .inspector-scrim{display:none}
-.taki-console .group-list>li{padding:4px 0}.taki-console .group-entry{display:flex;align-items:center;gap:12px;width:100%;margin:0;padding:14px;border:0;border-radius:16px;text-align:left;background:transparent;color:var(--tc-text)}.taki-console .group-entry[aria-pressed=true]{background:var(--tc-selected)}.taki-console .group-list>li>button:not(.group-entry){margin:0 0 6px 60px;padding:4px 8px;min-height:32px;border:0;background:transparent}
-.taki-console .settings-card .toggle{flex-direction:row-reverse;justify-content:space-between;gap:20px;padding:16px 0}.taki-console input[type=checkbox]{appearance:none;position:relative;width:38px;height:22px;min-height:22px;border:1px solid var(--tc-muted);border-radius:20px;background:var(--tc-bg);cursor:pointer}.taki-console input[type=checkbox]::after{content:'';position:absolute;top:3px;left:3px;width:14px;height:14px;border-radius:50%;background:var(--tc-muted)}.taki-console input[type=checkbox]:checked{border-color:var(--tc-primary);background:var(--tc-primary)}.taki-console input[type=checkbox]:checked::after{left:19px;background:var(--tc-on-primary)}
-.taki-console .settings-actions{position:sticky;bottom:50px;z-index:4;display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 16px;background:var(--tc-pane);border:1px solid var(--tc-line);border-radius:18px;box-shadow:0 8px 28px #25203d14}.taki-console .settings-actions .draft-status{padding:0;font-size:12px}.taki-console .settings-actions>div{display:flex;align-items:center}.taki-console .settings-actions button{white-space:nowrap}.taki-console .settings-actions button:last-child{background:var(--tc-primary);color:var(--tc-on-primary);border-color:transparent}
-.taki-console input:not([type=checkbox]),.taki-console select,.taki-console textarea{background:var(--tc-pane);border-color:var(--tc-line);color:var(--tc-text)}
-.taki-console .status-bar{position:sticky;bottom:0;display:flex;align-items:center;justify-content:space-between;gap:10px;margin:12px 0 0;padding:6px 20px;background:var(--tc-bg);border-top:1px solid var(--tc-line);border-radius:0;color:var(--tc-muted);font-size:11px}.taki-console .status-bar button{min-height:32px;padding:4px 10px;margin:0;border:0;background:none}
-.taki-console .login-screen{display:grid;place-items:center;min-height:calc(100dvh - 76px);padding:24px}.taki-console .login-screen form{width:min(100%,420px);margin:0;background:var(--tc-pane);text-align:center}.taki-console .login-portrait{width:72px;height:72px}.taki-console .login-screen h1{margin:12px 0 22px}.taki-console .login-screen label{display:block;text-align:left}.taki-console .login-screen button[type=submit]{background:var(--tc-primary);color:var(--tc-on-primary)}
-.taki-console>.login-screen{padding-left:24px}
-@media(max-width:1050px){.taki-console .overview-top,.taki-console .overview-bottom{grid-template-columns:1fr}.taki-console .overview-side{display:grid;grid-template-columns:1fr 1fr}.taki-console .overview-stats{grid-template-columns:repeat(2,minmax(0,1fr))}}
-@media(max-width:760px){.taki-console .console-layout{display:block}.taki-console .console-sidebar{position:fixed;top:0;left:0;bottom:0;width:260px;height:100dvh;visibility:hidden;transform:translateX(-105%);transition:transform .2s ease;z-index:101;box-shadow:0 0 40px #0003}.taki-console .console-sidebar.is-open{visibility:visible;transform:translateX(0)}.taki-console .drawer-scrim{display:block;position:fixed;inset:0;z-index:100;width:100%;height:100%;margin:0;padding:0;border:0;border-radius:0;background:#0006}.taki-console .menu-button{display:inline-flex}.taki-console .console-app{padding:0 10px 28px}.taki-console .topbar{min-height:60px;padding:0 6px}.taki-console .page-panel{padding:24px 16px 28px;border-radius:22px;min-height:calc(100dvh - 135px)}.taki-console .record-workspace,.taki-console .group-workspace{grid-template-columns:1fr;gap:0}.taki-console .overview-side{grid-template-columns:1fr}.taki-console .service-grid{gap:8px}.taki-console .request-entry{gap:8px}.taki-console .request-avatar{width:32px;height:32px}.taki-console .connection-indicator{display:none}.taki-console section{padding:18px}}
-@media(max-width:380px){.taki-console .overview-stats{gap:8px}.taki-console .overview-stat{padding:14px}.taki-console .overview-stat>strong{font-size:25px}.taki-console .state-pill{font-size:10px}}
-@media(max-width:760px){.taki-console .settings-actions{bottom:42px;align-items:flex-start;flex-direction:column}.taki-console .settings-actions>div{display:flex;width:100%;justify-content:flex-end}.taki-console .settings-actions button{margin:0 0 0 6px;padding:8px 12px}}
-@media(max-width:760px){.layout-container .main-container .layout-main:has(> .taki-console [data-inspector]){overflow:hidden}.taki-console .inspector-scrim{display:block;position:fixed;inset:0;z-index:110;background:#0008}.taki-console .request-inspector[data-inspector],.taki-console .group-inspector[data-inspector]{position:fixed;z-index:111;left:0;right:0;bottom:0;max-height:calc(100dvh - 24px);overflow-y:auto;overscroll-behavior:contain;margin:0;padding:22px 18px 72px;border-radius:24px 24px 0 0;box-shadow:0 -10px 45px #0003}}
-@media(prefers-reduced-motion:reduce){.taki-console .console-sidebar{transition:none}}
+.taki-console .overview-top, .taki-console .overview-bottom, .taki-console .dashboard-grid {
+  display: grid;
+  grid-template-columns: minmax(0,1.6fr) minmax(0,1fr);
+  gap: 14px;
+  margin-bottom: 14px;
+}
+.taki-console .overview-top > section, .taki-console .overview-bottom > section, .taki-console .dashboard-grid > section { margin: 0; }
+.taki-console .dashboard-grid:has(> .dashboard-card) { grid-template-columns: repeat(3,minmax(0,1fr)); }
+.taki-console .health-card { border-color: transparent; background: var(--rail); color: var(--rail-text); }
+.taki-console .health-card small { color: var(--rail-muted); }
+.taki-console .health-card .card-foot { border-top: 1px solid #ffffff28; padding-top: 6px; }
+.taki-console .health-card .card-foot button { color: var(--rail-text); }
+.taki-console .health-card .card-foot button:hover { background: var(--rail-selected); }
+.taki-console .health-card .technical { background: transparent; border-color: #ffffff28; margin-bottom: 0; }
+.taki-console .health-card :focus-visible { outline-color: var(--rail-text); }
+.taki-console .instance-heading { display: flex; align-items: center; gap: 12px; }
+.taki-console .instance-heading > div { flex: 1; }
+.taki-console .instance-heading h2 { margin: 0; font-size: 21px; }
+.taki-console .service-grid { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 10px; margin-top: 16px; }
+.taki-console .service-grid > div { padding: 8px 10px; background: #ffffff0d; border-radius: 8px; }
+.taki-console .service-grid small { margin-bottom: 3px; }
+.taki-console .quick-row, .taki-console .summary-rows > div { display: flex; justify-content: space-between; gap: 12px; padding: 9px 0; border-bottom: 1px solid var(--line); }
+.taki-console .quick-card > button { margin: 12px 0 0; }
+.taki-console .summary-rows { margin: 8px 0; }
+.taki-console .summary-rows dt { flex: none; color: var(--muted); }
+.taki-console .summary-rows dd { text-align: end; font-weight: 650; }
+.taki-console .metric-focus { display: grid; gap: 2px; }
+.taki-console .metric-focus strong, .taki-console .risk-value { display: block; font-size: 20px; font-variant-numeric: tabular-nums; }
+.taki-console .selected-group-name { font-weight: 700; }
+.taki-console .overview-stats { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap: 12px; margin-bottom: 14px; }
+.taki-console .overview-stat { display: grid; gap: 4px; align-content: start; margin: 0; padding: 14px; }
+.taki-console .overview-stat > strong, .taki-console .ask-total { font-size: 25px; font-variant-numeric: tabular-nums; }
+.taki-console .overview-stat button { justify-self: start; }
+.taki-console .overview-side > section:first-child { margin-top: 0; }
+.taki-console .overview-side > section:last-child { margin-bottom: 0; }
+.taki-console .source-mini { display: flex; align-items: center; gap: 10px; padding: 10px 0; }
+.taki-console .source-mini img { width: 34px; height: 34px; border-radius: 8px; object-fit: cover; }
+.taki-console .source-mini > span:nth-child(2) { flex: 1; }
 
-.taki-console .cost-table-scroll{overflow-x:auto}.taki-console .cost-table{width:100%;border-collapse:collapse;text-align:left}.taki-console .cost-table th,.taki-console .cost-table td{padding:12px;border-bottom:1px solid currentColor;vertical-align:top}.taki-console .cost-table td{font-variant-numeric:tabular-nums;white-space:nowrap}
+.taki-console .state-pill {
+  display: inline-block;
+  flex: none;
+  padding: 4px 8px;
+  border-radius: 8px;
+  background: var(--quiet);
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 650;
+  line-height: 1.4;
+}
+.taki-console .state-pill.complete { color: var(--good); background: var(--good-bg); }
+.taki-console .state-pill.partial, .taki-console .state-pill.uncertain, .taki-console .state-pill.failed { color: var(--warn); background: var(--warn-bg); }
+.taki-console .state-pill.processing { color: var(--accent); background: var(--selected); }
+.taki-console .record-list, .taki-console .conversation-exclusions { list-style: none; padding: 0; margin: 10px 0; }
+.taki-console .record-list > li { padding: 8px 0; border-bottom: 1px solid var(--line); }
+.taki-console .record-list > li:last-child { border: 0; }
+.taki-console .request-entry, .taki-console .group-entry {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  margin: 0;
+  padding: 9px 8px;
+  border-color: transparent;
+  color: var(--ink);
+  text-align: start;
+}
+.taki-console .group-entry[aria-pressed=true] { background: var(--selected); border-color: var(--accent); }
+.taki-console .request-avatar, .taki-console .group-avatar {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  background: var(--selected);
+  color: var(--accent);
+}
+.taki-console .request-copy, .taki-console .group-copy { min-width: 0; flex: 1; }
+.taki-console .request-entry .state-pill, .taki-console .group-entry .state-pill { max-width: 38%; }
+.taki-console .group-count { padding-left: 48px; }
+.taki-console .group-list > li > button:not(.group-entry) { margin: 0 0 0 40px; border-color: transparent; }
+.taki-console .request-toolbar { display: flex; align-items: end; flex-wrap: wrap; gap: 10px; }
+.taki-console .filter-tabs { display: flex; flex-wrap: wrap; gap: 4px; padding: 4px; border-radius: 10px; background: var(--quiet); }
+.taki-console .filter-tabs button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; margin: 0; border-color: transparent; background: transparent; }
+.taki-console .filter-tabs button[aria-pressed=true] { border-color: var(--line); background: var(--paper); color: var(--accent); }
+.taki-console .record-workspace, .taki-console .group-workspace { display: grid; align-items: start; gap: 14px; grid-template-columns: repeat(2,minmax(0,1fr)); }
+.taki-console .group-workspace { grid-template-columns: minmax(220px,1fr) minmax(0,2.1fr); }
+.taki-console .group-workspace > section { margin-top: 0; }
+.taki-console .group-search { margin: 12px 0 6px; }
+.taki-console .group-search, .taki-console .group-directory small { color: var(--muted); font-size: 12px; }
+.taki-console .group-inspector { padding: 0; }
+.taki-console .group-inspector-header { padding: 16px 18px; border-bottom: 1px solid var(--line); }
+.taki-console .group-inspector-header .filter-tabs { margin-top: 12px; }
+.taki-console .group-pane { padding: 0 18px 8px; }
+.taki-console .group-pane section { padding: 14px; }
+.taki-console .group-inspector > .page-message { margin-inline: 18px; }
+.taki-console .inspector-empty { min-height: 150px; display: grid; place-items: center; text-align: center; color: var(--muted); border-style: dashed; }
+.taki-console .approval-grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 10px; margin: 12px 0; }
+@media (min-width: 1101px) {
+  .taki-console .approval-grid { grid-template-columns: repeat(4,minmax(0,1fr)); }
+}
+.taki-console .approval-grid > div { display: grid; gap: 4px; justify-items: start; }
+.taki-console .risk-observation { padding: 12px; border-radius: 10px; background: var(--quiet); }
+.taki-console .risk-observation summary { min-height: 36px; padding: 8px 0 0; font-size: 12px; }
+.taki-console .risk-observation p:last-child { margin-bottom: 0; }
+.taki-console .risk-value { margin: 4px 0; }
+.taki-console .quota-actions { margin-inline: -8px; padding: 9px 8px; background: var(--paper); }
+.taki-console .quota-actions.is-active { position: sticky; bottom: 0; z-index: 2; }
 
-.taki-console .cost-table{min-width:620px}.taki-console .costs-page .stats strong{font-size:1.4rem;white-space:nowrap}.taki-console .costs-page .stats{grid-template-columns:repeat(auto-fit,minmax(155px,1fr))}
-.taki-console .cost-table,.taki-console .cost-table caption,.taki-console .cost-table th,.taki-console .cost-table td{color:var(--tc-text);border-color:var(--tc-line)}
+.taki-console .stats, .taki-console .budget-stats, .taki-console .cost-definitions {
+  display: grid;
+  grid-template-columns: repeat(auto-fit,minmax(min(100%,145px),1fr));
+  gap: 8px;
+  margin: 12px 0;
+}
+.taki-console .stats > div, .taki-console .budget-stats > div, .taki-console .cost-definitions > div { min-width: 0; padding: 10px; border-radius: 8px; background: var(--quiet); }
+.taki-console .stats strong, .taki-console .budget-stats dd { display: block; font-size: 16px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.taki-console .budget-stats dt, .taki-console .stats span { font-size: 12px; color: var(--muted); }
+.taki-console dd { min-width: 0; margin: 0; }
+.taki-console .cost-definitions dt { font-weight: 650; }
+.taki-console .cost-definitions dd { margin-top: 4px; color: var(--muted); font-size: 12px; }
+.taki-console .cost-table-scroll { overflow-x: auto; }
+.taki-console .cost-table { width: 100%; border-collapse: collapse; text-align: start; }
+.taki-console .cost-table caption { text-align: start; margin: 12px 0 8px; color: var(--muted); font-size: 12px; }
+.taki-console .cost-table th, .taki-console .cost-table td { padding: 10px 8px; border-bottom: 1px solid var(--line); text-align: start; vertical-align: top; }
+.taki-console .cost-table td { font-variant-numeric: tabular-nums; }
+.taki-console .mobile-cell-label { display: none; }
+.taki-console .budget-editor input { max-width: 260px; margin-bottom: 8px; }
+.taki-console .model-settings > label, .taki-console .web-search-settings > label { margin: 12px 0; }
+.taki-console .model-settings > label select { width: min(100%,330px); }
+.taki-console .model-settings > .form-grid { margin: 8px 0 18px; }
+.taki-console .model-settings details label { margin: 8px 0; }
+.taki-console .settings-workspace { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 12px; }
+.taki-console .settings-workspace > :not(.settings-card) { grid-column: 1 / -1; }
+.taki-console .settings-card { margin: 0; }
+.taki-console .settings-card .toggle { flex-direction: row-reverse; justify-content: space-between; border-bottom: 1px solid var(--line); }
+.taki-console .settings-actions { justify-content: space-between; margin: 0; padding: 10px; background: var(--paper); border: 1px solid var(--line); border-radius: 10px; }
+.taki-console .settings-actions > div { display: flex; gap: 8px; }
+.taki-console .technical, .taki-console .guide {
+  margin: 12px 0;
+  padding: 0 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--paper);
+}
+.taki-console summary { min-height: 40px; padding: 10px 0; font-weight: 600; cursor: pointer; }
+.taki-console .fact { display: grid; grid-template-columns: minmax(90px,180px) minmax(0,1fr); gap: 8px; padding: 6px 0; border-bottom: 1px solid var(--line); }
+.taki-console .fact dt { color: var(--muted); }
+.taki-console .quota-form, .taki-console .inline-form { margin: 12px 0; }
+.taki-console .quota-form label { margin: 8px 0; }
+.taki-console .library-diff { max-height: 480px; overflow: auto; padding: 12px; border-radius: 8px; background: var(--quiet); white-space: pre-wrap; }
+.taki-console .source-workspace { display: grid; grid-template-columns: minmax(0,1.4fr) minmax(0,1fr); align-items: start; gap: 14px; }
+.taki-console .source-workspace > * { min-width: 0; }
+.taki-console .library-management .filter-tabs { margin-bottom: 6px; }
+.taki-console .conversation-settings label:not(.toggle) { margin: 8px 0; }
+.taki-console .conversation-timing, .taki-console .conversation-user-inputs { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 10px; }
+.taki-console .conversation-exclusions > li { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-bottom: 1px solid var(--line); }
+.taki-console .conversation-exclusions > li > div { min-width: 0; flex: 1; }
+.taki-console .conversation-exclusions code { display: block; font-size: 11px; color: var(--muted); }
+.taki-console .conversation-tasks, .taki-console .conversation-events { margin-top: 16px; padding-top: 10px; border-top: 1px solid var(--line); }
+.taki-console .conversation-events ol { max-height: 440px; margin: 0; padding: 0; overflow: auto; list-style: none; }
+.taki-console .conversation-events li { padding: 10px 0; border-bottom: 1px solid var(--line); }
+.taki-console .event-heading { display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: 8px; }
+.taki-console .event-heading time, .taki-console .conversation-events details { color: var(--muted); font-size: 11px; }
+.taki-console .conversation-events p { margin: 4px 0; font-size: 12px; }
+.taki-console .conversation-events code { display: block; margin: 6px 0; }
+.taki-console .login-screen { display: grid; place-items: center; min-height: calc(100dvh - 56px); padding: 24px; }
+.taki-console .login-screen form { width: min(100%,380px); padding: 28px; border: 1px solid var(--line); border-radius: 16px; background: var(--paper); }
+.taki-console .login-screen h1 { margin: 10px 0 18px; }
+.taki-console .login-portrait { width: 60px; height: 60px; }
+.taki-console .login-screen button { width: 100%; margin: 14px 0; }
 
-.taki-console .chat-management button,.taki-console .model-settings button{background:var(--tc-raised);color:var(--tc-primary);border-color:var(--tc-line)}
-
-.taki-console .library-management button{background:var(--tc-raised);color:var(--tc-primary);border-color:var(--tc-line)}.taki-console .library-diff{max-height:480px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;background:var(--tc-bg);padding:16px;border-radius:12px;color:var(--tc-text)}
-
-.taki-console .model-settings>label{display:flex;align-items:center;flex-wrap:wrap;gap:10px;margin:16px 0}
-.taki-console .model-settings>label select{min-width:min(240px,100%);max-width:100%}
-.taki-console .budget-editor label{display:block;margin:12px 0}
-.taki-console .budget-editor input{display:block;width:min(100%,260px);margin-top:8px}
-.taki-console .conversation-settings .toggle{display:flex;align-items:center;gap:10px}.taki-console .conversation-settings label{display:block;margin:12px 0}.taki-console .conversation-settings input:not([type=checkbox]),.taki-console .conversation-settings select{display:block;width:100%;margin-top:6px;min-width:0}.taki-console .conversation-timing,.taki-console .conversation-user-inputs{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}.taki-console .conversation-settings .field-note,.taki-console .conversation-settings .empty-copy{font-size:12px;color:var(--tc-muted)}.taki-console .conversation-exclusions{padding:0;list-style:none}.taki-console .conversation-exclusions>li{display:flex;align-items:center;gap:12px;padding:12px 0;border-bottom:1px solid var(--tc-line)}.taki-console .conversation-exclusions>li>div{flex:1;min-width:0}.taki-console .conversation-exclusions strong,.taki-console .conversation-exclusions code{display:block;overflow-wrap:anywhere}.taki-console .conversation-exclusions code{font-size:11px;color:var(--tc-muted);margin-top:4px}.taki-console .conversation-exclusions button{flex:none}.taki-console .conversation-actions{display:flex;justify-content:flex-end;flex-wrap:wrap;gap:8px;margin-top:16px}.taki-console .conversation-actions button{margin:0}.taki-console .conversation-actions button:last-child{background:var(--tc-primary);color:var(--tc-on-primary)}.taki-console .conversation-tasks{border-top:1px solid var(--tc-line);margin-top:20px;padding-top:8px}.taki-console .conversation-conflict{overflow-wrap:anywhere}
-@media(max-width:480px){.taki-console .conversation-timing,.taki-console .conversation-user-inputs{grid-template-columns:1fr;gap:0}.taki-console .conversation-actions button{flex:1 1 100%}}
-.taki-console .conversation-events{border-top:1px solid var(--tc-line);margin-top:20px;padding-top:8px}.taki-console .conversation-events ol{list-style:none;margin:0;padding:0;max-height:460px;overflow:auto}.taki-console .conversation-events li{padding:12px 0;border-bottom:1px solid var(--tc-line)}.taki-console .conversation-events li:last-child{border:0}.taki-console .event-heading{display:flex;align-items:baseline;justify-content:space-between;gap:8px;flex-wrap:wrap}.taki-console .event-heading time{color:var(--tc-muted);font-size:11px}.taki-console .conversation-events p{margin:6px 0;font-size:12px}.taki-console .conversation-events small{font-size:10px}
-@media(min-width:761px){.taki-console .group-workspace{grid-template-columns:minmax(180px,.7fr) minmax(0,1.3fr)}}
-.taki-console .conversation-events details{font-size:11px;color:var(--tc-muted)}.taki-console .conversation-events code{display:block;overflow-wrap:anywhere;margin:8px 0}
+@media (min-width: 761px) and (max-width: 1100px) {
+  .taki-console .console-layout { grid-template-columns: 172px minmax(0,1fr); }
+  .taki-console .page-panel { padding-inline: 18px; }
+  .taki-console .dashboard-grid:has(> .dashboard-card) { grid-template-columns: repeat(2,minmax(0,1fr)); }
+  .taki-console .dashboard-card:last-child { grid-column: 1 / -1; }
+}
+@media (max-width: 760px) {
+  .taki-console .console-layout { display: block; }
+  .taki-console .console-sidebar {
+    position: fixed;
+    inset: 0 auto 0 0;
+    width: min(280px,90vw);
+    height: 100dvh;
+    max-height: none;
+    visibility: hidden;
+    transform: translateX(-105%);
+    transition: transform .18s ease;
+    z-index: 101;
+  }
+  .taki-console .console-sidebar.is-open { visibility: visible; transform: translateX(0); }
+  .taki-console .drawer-scrim, .taki-console .drawer-scrim:hover:not(:disabled), .taki-console .inspector-scrim {
+    display: block;
+    position: fixed;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    z-index: 100;
+    margin: 0;
+    padding: 0;
+    border: 0;
+    border-radius: 0;
+    background: #1710219c;
+  }
+  .taki-console .menu-button { display: inline-grid; }
+  .taki-console .topbar { min-height: 52px; gap: 6px; padding: 0 6px; }
+  .taki-console .topbar-actions { gap: 2px; }
+  .taki-console .topbar-path > span { display: none; }
+  .taki-console .page-panel { padding: 18px 12px 36px; }
+  .taki-console section { padding: 14px; }
+  .taki-console .overview-top, .taki-console .overview-bottom, .taki-console .dashboard-grid,
+  .taki-console .dashboard-grid:has(> .dashboard-card), .taki-console .record-workspace, .taki-console .group-workspace,
+  .taki-console .source-workspace, .taki-console .settings-workspace { grid-template-columns: minmax(0,1fr); }
+  .taki-console .overview-stats { grid-template-columns: repeat(2,minmax(0,1fr)); }
+  .taki-console .inspector-empty { min-height: 0; }
+  .taki-console .record-workspace > section { margin-top: 0; }
+  .taki-console .group-inspector[data-inspector], .taki-console .request-inspector[data-inspector] {
+    position: fixed;
+    inset: 0;
+    max-height: 100dvh;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    z-index: 111;
+    margin: 0;
+    border: 0;
+    border-radius: 0;
+  }
+  .taki-console .group-inspector[data-inspector] { padding: 0; scroll-padding-top: 138px; }
+  .taki-console .group-inspector[data-inspector]:has(.quota-actions.is-active) { scroll-padding-bottom: 110px; }
+  .taki-console .group-inspector-header {
+    position: sticky;
+    top: 0;
+    z-index: 4;
+    padding: 12px 14px 8px;
+    background: var(--paper);
+  }
+  .taki-console .group-inspector-header .filter-tabs button { flex: 1; padding-inline: 5px; }
+  .taki-console .group-pane { padding: 0 12px 20px; }
+  .taki-console .group-pane section { padding: 12px; }
+  .taki-console button { min-height: 44px; }
+  .taki-console .fact { grid-template-columns: minmax(0,1fr); gap: 2px; }
+  .layout-container .main-container .layout-main:has(> .taki-console [data-inspector], > .taki-console .console-sidebar.is-open) { overflow: hidden; }
+}
+@media (max-width: 520px) {
+  .taki-console .cost-table, .taki-console .cost-table tbody, .taki-console .cost-table tr, .taki-console .cost-table th, .taki-console .cost-table td { display: block; }
+  .taki-console .cost-table thead { position: absolute; width: 1px; height: 1px; clip-path: inset(50%); overflow: hidden; }
+  .taki-console .cost-table caption { display: block; }
+  .taki-console .cost-table tbody tr { margin-bottom: 8px; padding: 5px 8px; border: 1px solid var(--line); border-radius: 8px; }
+  .taki-console .cost-table td { display: flex; justify-content: space-between; gap: 8px; }
+  .taki-console .cost-table tr > :last-child { border-bottom: 0; }
+  .taki-console .mobile-cell-label { display: inline; color: var(--muted); font-size: 12px; }
+  .taki-console .conversation-timing, .taki-console .conversation-user-inputs { grid-template-columns: 1fr; gap: 0; }
+  .taki-console .form-actions button { flex: 1 1 auto; }
+  .taki-console .form-feedback { flex-basis: 100%; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .taki-console .console-sidebar { transition: none; }
+}

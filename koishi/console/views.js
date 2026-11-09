@@ -1,10 +1,10 @@
-import { groupChatView } from './chat.js';
-import { executionView } from './costs.js';
+import { groupChatView, lightweightStatus, proactiveSettings, proactiveStatus } from './chat.js';
+import { dailyCostSummary, executionView, riskObservation } from './costs.js';
 import { h } from './runtime.js';
 import { groupQuota } from './model.js';
 export const labels={processing:'处理中',complete:'平台确认全部发送',partial:'部分发送',failed:'已确认失败',uncertain:'发送结果不确定',closed_unsent:'已关闭，未确认发送',unknown:'未知'};
 export const stamp=v => v ? new Date(v*1000).toLocaleString('zh-CN',{timeZone:'Asia/Hong_Kong'}) : '尚未采集';
-export const button=(text,action,disabled=false) => h('button',{onClick:action,disabled},text);
+export const button=(text,action,disabled=false) => h('button',{type:'button',onClick:action,disabled},text);
 const guide=(title,text)=>h('details',{class:'guide'},[h('summary',title),h('p',text)]);
 const technical=(title,children)=>h('details',{class:'technical'},[h('summary',title),...children]);
 const deliveryLabel=item=>item.delivery_reason==='proactive_error'?'主动评估失败':item.delivery_reason==='completed_without_output'?'已完成，无输出':(labels[item.delivery_state]||item.delivery_state)+(item.uncertain_parts?'（仍有片段结果未确认）':'');
@@ -74,13 +74,17 @@ export function overviewView(s,open,attentionSearch) {
   const sourceText=source?.stale?'陈旧':({fresh:'可用',cached:'缓存',stale:'陈旧',unsaved:'未保存'})[source?.data?.cache_state]||'尚未采集';
   const attention=stats&&['processing','partial','uncertain'].every(key=>typeof stats.states?.[key]==='number')?stats.states.processing+stats.states.partial+stats.states.uncertain:null;
   const card=(title,value,caption,action)=>h('section',{class:'overview-stat'},[h('span',title),h('strong',value),h('small',caption),action&&button('查看记录',action)]);
-  return h('div',{class:'overview-page'},[h('div',{class:'page-heading'},[h('h1','总览'),button('刷新',()=>s.load(s.overview,'overview'))]),
+  return h('div',{class:'overview-page'},[h('div',{class:'page-heading'},[
+    h('div',[h('h1','总览'),h('p',{class:'page-intro'},'核对服务状态、模型配置和接话预算。')]),
+    button('刷新',()=>s.load(s.overview,'overview')),
+    ]),
     ['conflict','frozen'].includes(value?.recovery_policy?.state)&&h('p',{role:'alert'},value.recovery_policy.state==='frozen'?'回退保护已暂停全局查询和通知。':'恢复开关发生冲突：保留人工修改，请核对全局与群策略。'),
     value?.policy_health?.availability==='unavailable'&&h('p',{role:'alert'},'群策略损坏或实例不匹配：新群查询和通知已限制，私聊仍按全局规则处理。'),
-    h('div',{class:'overview-top'},[h('section',{class:'health-card'},[h('div',{class:'instance-heading'},[h('img',{class:'instance-portrait',src:new URL('./brand/taki.png',import.meta.url).href,alt:''}),h('div',[h('h2','Taki'),h('small','机器人状态')]),h('span',{class:['state-pill',health?.ready&&!health?.stale?'complete':'unknown']},health?.stale?'状态陈旧':state(health?.ready,'运行正常','需要关注'))]),
+    h('div',{class:'overview-top'},[h('section',{class:'health-card'},[h('div',{class:'instance-heading'},[h('img',{class:'instance-portrait',src:new URL('./brand/taki.png',import.meta.url).href,alt:''}),h('div',[h('h2','服务状态'),h('small','Taki · 机器人与网关')]),h('span',{class:['state-pill',health?.ready&&!health?.stale?'complete':'unknown']},health?.stale?'状态陈旧':state(health?.ready,'运行正常','需要关注'))]),
       h('div',{class:'service-grid'},[['QQ 连接',state(health?.qq_online,'在线','未在线')],['业务后端',state(health?.backend_ready,'就绪','未就绪')],['网关握手',state(health?.handshake,'已建立','未建立')]].map(([label,text])=>h('div',[h('small',label),h('strong',text)]))),
-      h('div',{class:'card-foot'},[h('small',`观测 ${stamp(health?.observed_at)}${health?.stale?' · 陈旧':''}`),button('管理设置',()=>s.navigate('settings'))]),technical('运行版本（排障时使用）',[h('small',health?.release_sha||'尚未采集')])]),
-      h('section',{class:'quick-card'},[h('h2','接收与推送'),...[['新查询',state(settings?.queriesEnabled,'接收中','已暂停')],['群查询',state(settings?.groupsEnabled,'按群规则','已暂停')],['主动通知',state(settings?.notificationsEnabled,'按群规则','已暂停')]].map(([label,text])=>h('div',{class:'quick-row'},[h('span',label),h('strong',text)])),button('群管理',()=>s.navigate('groups'))])]),
+      h('div',{class:'card-foot'},[h('small',`观测 ${stamp(health?.observed_at)}${health?.stale?' · 陈旧':''}`),button('运行维护',()=>s.navigate('operations'))]),technical('运行版本（排障时使用）',[h('small',health?.release_sha||'尚未采集')])]),
+      h('section',{class:'quick-card'},[h('h2','接收与推送'),...[['新查询',state(settings?.queriesEnabled,'接收中','已暂停')],['群查询',state(settings?.groupsEnabled,'按群规则','已暂停')],['主动通知',state(settings?.notificationsEnabled,'按群规则','已暂停')]].map(([label,text])=>h('div',{class:'quick-row'},[h('span',label),h('strong',text)])),button('全局设置',()=>s.navigate('settings'))])]),
+    h('div',{class:'dashboard-grid'},[modelSnapshot(s),dailyCostSummary(s),groupSnapshot(s)]),
     h('div',{class:'overview-stats'},[card('已受理请求',number(stats?.total),'最近 24 小时'),card('平台已确认',number(stats?.states?.complete),'不代表客户端已读'),card('需要关注',number(attention),'最近 24 小时',attentionSearch),card('准备耗时中位数','—','尚未采集')]),
     h('div',{class:'overview-bottom'},[h('section',{class:'recent-card'},[h('div',{class:'card-heading'},[h('h2','最近查询'),button('全部记录',()=>s.navigate('requests'))]),
       !stats?h('p','查询统计尚未采集'):stats.recent?.length?h('ul',{class:'record-list'},stats.recent.map(item=>row(item,open,s.groups.value))):h('p','此时间范围内没有已受理的查询记录。'),
@@ -96,6 +100,32 @@ export function overviewView(s,open,attentionSearch) {
     ...Object.entries(s.sources.value?.sections||{}).map(([key,item]) => section(item,`来源：${names[key]||key}`))]),
     technical('/问 使用统计 · 仅统计已采集的数据',Object.values(s.metrics.value?.sections||{}).map(item => section(item,'/问 匿名指标')))]);
 }
+function modelSnapshot(s){
+  const costs=s.overview.value?.backend?.sections?.service;
+  const profiles=s.chat.value?.profiles||[],c=costs?.data?.model_costs;
+  return h('section',{class:'dashboard-card'},[
+    h('div',{class:'card-heading'},[h('h2','当前模型'),button('模型配置',()=>s.navigate('model'))]),
+    h('dl',{class:'summary-rows'},[
+      ['主模型',c?.primary?.model||profiles.find(p=>p.role==='primary')?.model],
+      ['备用模型',c?.fallback?.model||profiles.find(p=>p.role==='fallback')?.model],
+      ['主动接话',profiles.find(p=>p.role==='proactive')?.model],
+    ].map(([label,model])=>h('div',[h('dt',label),h('dd',model||'未取得配置')]))),
+    h('small',s.chat.value?.engine?'聊天引擎 '+s.chat.value.engine+(costs?.stale?' · 模型观测已陈旧':''):'聊天引擎尚未采集'),
+  ]);
+}
+function groupSnapshot(s){
+  const id=s.groupId.value,value=s.proactiveLimits.value?.group_id===id?s.proactiveLimits.value:null;
+  const label=s.groups.value?.policy?.groups?.[id]?.label||'群 …'+id.slice(-6);
+  return h('section',{class:'dashboard-card'},[
+    h('div',{class:'card-heading'},[h('h2','群主动接话'),button(id?'群详情':'选择群',s.navigateGroup)]),
+    id?h('div',[
+      h('p',{class:'selected-group-name'},label),
+      h('p',{class:'field-note'},proactiveStatus(value)+' · 轻量纯文本 '+lightweightStatus(value)),
+      s.proactiveReadError.value&&h('p',{class:'field-note'},'限额读取失败，以上状态可能已陈旧。'),
+      riskObservation(s,{compact:true}),
+    ]):h('p','选择一个群后，可在这里核对该群的接话审批、轻量模式与最近风险观测。'),
+  ]);
+}
 export function requestsView(s,open,params,search,more,group,close,selected,narrow) {
   const list=s.requests.value?.sections?.requests?.data,detail=selected&&s.detail.value?.sections?.request?.data;
   return h('div',{class:'requests-page'},[h('div',{class:'page-heading'},[h('h1','请求记录'),h('small','最近 24 小时')]),
@@ -110,44 +140,106 @@ export function requestsView(s,open,params,search,more,group,close,selected,narr
       detail?h('section',{class:'request-inspector',role:narrow?'dialog':undefined,'aria-modal':narrow?'true':undefined,'aria-label':narrow?'查询详情':undefined,'data-inspector':narrow?'request':undefined},[h('div',{class:'card-heading'},[h('h2','查询详情'),h('button',{'aria-label':'关闭查询详情',onClick:close},'关闭')]),detail.group_id&&button('查看关联群',()=>group(detail.group_id)),h('p',{class:['state-pill',detail.delivery_state]},deliveryLabel(detail)),h('p',`业务结果：${names[detail.business_outcome]||detail.business_outcome} · 观测：${names[detail.observation]||detail.observation}`),
         h('p',names[detail.missing_reason]||'准备是生成回复的时间；上传与发送是交给平台的时间。缺失阶段不代表耗时为零。'),button('导出此请求诊断',()=>s.exportDiagnostic(selected)),executionView(detail),technical('查看完整记录与阶段耗时',[h('p','各阶段采用各进程单调时钟，不跨进程相减。'),facts(detail)])]):h('section',{class:'inspector-empty'},selected?'正在读取查询详情':'选择一条记录查看详情')])]);
 }
-export function groupsView(s,requests,openGroup,closeGroup,groupOpen,narrow) {
-  const items=s.groups.value?.sections?.groups?.data||[];
-  const value=s.groups.value?.policy,edit=s.groupDraft.value;
-  const choice=(key,title,options)=>h('label',{class:'toggle'},[title,h('select',{'aria-label':title,value:edit[key],onChange:e=>{edit[key]=e.target.value;s.groupDirty.value=true;}},options.map(([value,label])=>h('option',{value},label)))]);
-  const current=items.find(item=>item.group_id===s.groupId.value);
-  return h('div',{class:'groups-page'},[h('div',{class:'page-heading'},[h('h1','群管理'),h('small',`${items.length} 个已观察群`)]),
-    guide('先选群，再改设置','点击下方群名称，先填写一个容易识别的备注。通常保留“继承”即可；只想暂停某个群时，在该群中改为“暂停”并保存。这里的允许不会越过全局限制。'),
-    s.groups.value?.sections?.groups?.stale&&h('p',{role:'alert'},'群观察读取失败：保留上次观察，配置规则仍取当前值。'),
+const groupPanes=[['proactive','主动接话'],['conversation','交流与记忆'],['policy','查询策略']];
+export function groupsView(s,requests,openGroup,closeGroup,groupOpen,narrow,pane,filter,message) {
+  const observed=s.groups.value?.sections?.groups,items=observed?.data||[];
+  const value=s.groups.value?.policy,edit=s.groupDraft.value,id=s.groupId.value;
+  const current=items.find(item=>item.group_id===id);
+  const label=value?.groups?.[id]?.label||current?.policy?.label||'群 …'+id.slice(-6);
+  const query=filter.value.trim().toLocaleLowerCase();
+  const visible=items.filter(item=>!query||[item.group_id,item.policy?.label].some(text=>text?.toLocaleLowerCase().includes(query)));
+  const open=!!(groupOpen&&edit);
+  const modal=narrow&&open;
+  const hasDraft=key=>({
+    proactive:s.proactiveEdit.value?.group_id===id&&s.proactiveEdit.value.dirty,
+    conversation:s.chatEdit.value?.group_id===id&&s.chatEdit.value.dirty,
+    policy:s.groupDirty.value,
+  })[key];
+  const body={
+    proactive:()=>proactiveSettings(s,openGroup),
+    conversation:()=>groupChatView(s,current?.effective),
+    policy:()=>groupPolicy(s,current,value,edit),
+  };
+  return h('div',{class:'groups-page'},[
+    h('div',{class:'page-heading'},[h('div',[h('h1','群管理'),h('p',{class:'page-intro'},'选群后查看主动接话、交流设置和查询策略。')])]),
+    observed?.stale&&h('p',{role:'alert'},'群观察读取失败：保留上次观察，配置规则仍取当前值。'),
     value?.reason_code&&h('p',{role:'alert'},'群策略不可用：新群查询及通知已限制，请检查配置文件。'),
-    h('div',{class:'group-workspace'},[h('section',{class:'group-directory'},[h('div',{class:'card-heading'},[h('h2','已观察群'),h('small',String(items.length))]),
-    !items.length&&h('p','还没有可显示的群记录。'),
-    h('ul',{class:'record-list group-list'},items.map(item => h('li',[h('button',{class:'group-entry','aria-pressed':s.groupId.value===item.group_id,onClick:()=>openGroup(item.group_id)},[
-      h('span',{class:'group-avatar'},(item.policy?.label||'群').slice(0,1)),h('span',{class:'group-copy'},[h('strong',item.policy?.label||`群 …${item.group_id.slice(-6)}`),h('small',`最近受理 ${stamp(item.last_seen)} · ${item.accepted_requests??'未采集'} 条`)]),
-      h('span',{class:'state-pill'},item.effective?.queries===true?'接收中':item.effective?.queries===false?'已暂停':'未知')]),button('查看此群请求',()=>requests(item.group_id))]))),
-    h('p',`当前 ${items.length} 条，可关联记录共 ${s.groups.value?.sections?.groups?.total??'尚未采集'} 条`),
-    button('刷新群记录',()=>s.load(s.groups,'groups/list')),
-    s.groups.value?.sections?.groups?.next_cursor&&button('下一页群记录',()=>s.load(s.groups,'groups/list',{cursor:s.groups.value.sections.groups.next_cursor})),
-    technical('手动关联群（管理员高级入口）',[h('p','OpenID 是 QQ 平台给机器人的群标识，不是你在 QQ 里看到的群号。已有群记录时，直接点击上方群名称即可。'),h('label',['管理员关联群 OpenID',h('input',{value:s.groupId.value,onChange:e=>openGroup(e.target.value),'aria-label':'群 OpenID'})]),
-    button('编辑此群',()=>openGroup(s.groupId.value),!value||!!value.reason_code)])]),
-    narrow&&edit&&groupOpen&&h('div',{class:'inspector-scrim','aria-hidden':'true',onClick:closeGroup}),
-    edit&&groupOpen?h('section',{class:'group-inspector',role:narrow?'dialog':undefined,'aria-modal':narrow?'true':undefined,'aria-label':narrow?'群详情':undefined,'data-inspector':narrow?'group':undefined},[h('div',{class:'card-heading'},[h('h2',edit.label||`群 …${s.groupId.value.slice(-6)}`),h('button',{'aria-label':'关闭群详情',onClick:closeGroup},'关闭')]),
-      h('label',['群备注（最多80字）',h('input',{value:edit.label,onInput:e=>{edit.label=e.target.value;s.groupDirty.value=true;},'aria-label':'群备注'})]),
-      choice('queries','新查询',[['inherit','继承全局'],['allow','允许（受全局限制）'],['pause','暂停']]),
-      choice('notifications','主动通知',[['inherit','继承全局'],['allow','允许（受全局和平台限制）'],['pause','暂停']]),
-      choice('natural_query','/问 模式',[['inherit','继承后端能力'],['off','关闭'],['local','仅本地解析'],['model','允许模型（受配置与额度限制）']]),
-      h('p',{class:'guide'},'新查询决定是否接收新指令；主动通知决定是否允许机器人主动推送。/问 的“仅本地解析”不调用模型；/查卡、/查曲等直接指令始终不调用模型。'),
-      current&&section({availability:'available',observed_at:s.groups.value.generated_at,data:current.effective},'当前已生效规则'),
-      s.noticeTarget.value?.sections?.notice_target&&section(s.noticeTarget.value.sections.notice_target,'通知状态'),
-      groupQuota(s),groupChatView(s,current?.effective),
-      button('临时仅本地解析',()=>{if(window.confirm('将此群的模型解析收紧为本地解析？关闭模式保持关闭；之后需手动恢复。'))void s.startControl('local',[s.groupId.value]);},
-        s.busy.value||s.dirty.value||s.groupDirty.value||!s.controls.value?.available||!s.controls.value?.persistent_matches_live||!/^[A-Za-z0-9_-]{1,128}$/.test(s.groupId.value)),
+    h('div',{class:'group-workspace'},[
+      h('section',{class:'group-directory',inert:modal||undefined},[
+        h('div',{class:'card-heading'},[h('h2','已观察群'),button('刷新群记录',()=>s.load(s.groups,'groups/list'))]),
+        !open&&id&&groupPanes.some(([key])=>hasDraft(key))&&h('div',{class:'inline-callout'},[
+          h('p',label+'有未保存修改。'),button('继续编辑群草稿',()=>openGroup(id),s.busy.value),
+        ]),
+        h('label',{class:'group-search'},['筛选当前页',h('input',{type:'search',placeholder:'群备注或 OpenID',value:filter.value,onInput:e=>filter.value=e.target.value})]),
+        h('small',observed?'当前 '+visible.length+' / '+items.length+' 条 · 共 '+(observed.total??'未知')+' 条':'尚未取得群记录'),
+        !visible.length&&h('p',{class:'field-note'},query?'当前页没有匹配的群。':'还没有可显示的群记录。'),
+        h('ul',{class:'record-list group-list'},visible.map(item=>h('li',{key:item.group_id},[
+          h('button',{class:'group-entry','aria-pressed':open&&id===item.group_id,disabled:s.busy.value,onClick:()=>openGroup(item.group_id)},[
+            h('span',{class:'group-avatar'},(item.policy?.label||'群').slice(0,1)),
+            h('span',{class:'group-copy'},[h('strong',item.policy?.label||'群 …'+item.group_id.slice(-6)),h('small',stamp(item.last_seen))]),
+            h('span',{class:'state-pill'},item.effective?.queries===true?'接收中':item.effective?.queries===false?'已暂停':'未知'),
+          ]),
+          h('small',{class:'group-count'},'已受理 '+(item.accepted_requests??'未采集')+' 条'),
+          button('查看此群请求',()=>requests(item.group_id)),
+        ]))),
+        observed?.next_cursor&&button('下一页群记录',()=>s.load(s.groups,'groups/list',{cursor:observed.next_cursor})),
+        technical('手动关联群',[
+          h('p','填写 QQ 平台提供的群 OpenID。'),
+          h('form',{class:'inline-form',onSubmit:e=>{e.preventDefault();openGroup(String(new FormData(e.target).get('group')).trim());}},[
+            h('label',['群 OpenID',h('input',{name:'group',required:true,pattern:'[A-Za-z0-9_\\-]{1,128}'})]),
+            h('button',{type:'submit',disabled:s.busy.value||!value||!!value.reason_code},'编辑此群'),
+          ]),
+        ]),
+      ]),
+      modal&&h('div',{class:'inspector-scrim','aria-hidden':'true',onClick:closeGroup}),
+      open?h('section',{class:'group-inspector',role:modal?'dialog':undefined,'aria-modal':modal?'true':undefined,'aria-label':modal?'群详情':undefined,'data-inspector':modal?'group':undefined},[
+        h('header',{class:'group-inspector-header'},[
+          h('div',{class:'card-heading'},[
+            h('div',[h('small','群详情 · …'+id.slice(-6)),h('h2',label)]),
+            h('button',{'aria-label':'关闭群详情',onClick:closeGroup},modal?'返回群列表':'关闭'),
+          ]),
+          h('div',{class:'filter-tabs','aria-label':'群详情页面',role:'group'},groupPanes.map(([key,text])=>
+            h('button',{'aria-pressed':pane.value===key,onClick:e=>{
+              if(pane.value!==key&&modal)e.currentTarget.closest('[data-inspector]').scrollTop=0;
+              pane.value=key;
+            }},[text,hasDraft(key)&&h('i',{class:'draft-dot','aria-label':'有未保存修改'})]))),
+        ]),
+        modal&&message(),
+        h('div',{class:'group-pane',key:pane.value},[body[pane.value]()]),
+      ]):h('section',{class:'inspector-empty'},[h('div',[h('h2','选择一个群'),h('p','从群列表打开详情，查看审批与轻量模式，再按需修改限额。')])]),
+    ]),
+    technical('通知记录与平台许可', [...Object.values(s.notices.value?.sections||{}).map(item=>section(item,'通知与平台许可')),
+      s.notices.value?.sections?.notices?.data?.next_cursor&&button('下一页通知记录',()=>s.load(s.notices,'notices/list',{cursor:s.notices.value.sections.notices.data.next_cursor}))]),
+  ]);
+}
+function groupPolicy(s,current,value,edit){
+  const choice=(key,title,options)=>h('label',[title,h('select',{'aria-label':title,value:edit[key],onChange:e=>{edit[key]=e.target.value;s.groupDirty.value=true;}},options.map(([value,label])=>h('option',{value},label)))]);
+  return h('div',[
+    h('section',[
+      h('h3','群查询与通知'),
+      h('label',['群备注（最多80字）',h('input',{value:edit.label,maxlength:80,onInput:e=>{edit.label=e.target.value;s.groupDirty.value=true;},'aria-label':'群备注'})]),
+      h('div',{class:'form-grid'},[
+        choice('queries','新查询',[['inherit','继承全局'],['allow','允许（受全局限制）'],['pause','暂停']]),
+        choice('notifications','主动通知',[['inherit','继承全局'],['allow','允许（受全局和平台限制）'],['pause','暂停']]),
+        choice('natural_query','/问 模式',[['inherit','继承后端能力'],['off','关闭'],['local','仅本地解析'],['model','允许模型（受配置与额度限制）']]),
+      ]),
+      h('p',{class:'field-note'},'新查询决定是否接收新指令。主动通知在发送前再次检查当前规则。/问 的“仅本地解析”及 /查卡、/查曲等直接指令均在本地执行。'),
       (s.groupConflict.value||s.groupRecoveryBlocked.value)&&h('p',{role:'alert'},s.groupRecoveryBlocked.value?'网关状态尚未确认或已变化，群草稿仍保留；请核对后再继续。':'群策略版本冲突或保存未确认；草稿仍保留。'),
       s.groupConflict.value&&section({availability:'available',observed_at:s.groups.value?.generated_at,data:value?.groups?.[s.groupId.value]},'服务器当前值'),
-      h('p',{role:'status',class:'draft-status'},s.groupDirty.value?'有未保存的群设置，点击保存后才会生效。':'当前显示已载入的群设置。'),button('保存群策略',s.saveGroup,s.busy.value||!!value?.reason_code||s.groupRecoveryBlocked.value),
-      button('放弃群草稿并载入服务器值',()=>{s.groupDirty.value=false;s.selectGroup(s.groupId.value);}),
-      h('p','群策略与全局设置分别保存；已有查询保留接纳时规则，通知发送前再次检查当前规则。')]):h('section',{class:'inspector-empty'},'选择一个群查看设置')]),
-    technical('通知记录与平台许可', [...Object.values(s.notices.value?.sections||{}).map(item => section(item,'通知与平台许可')),
-    s.notices.value?.sections?.notices?.data?.next_cursor&&button('下一页通知记录',()=>s.load(s.notices,'notices/list',{cursor:s.notices.value.sections.notices.data.next_cursor}))])]);
+      h('div',{class:'form-actions'},[
+        h('small',{role:'status'},s.groupDirty.value?'有未保存的群设置，点击保存后才会生效。':'当前显示已载入的群设置。'),
+        button('放弃群草稿并载入服务器值',()=>{s.groupDirty.value=false;s.selectGroup(s.groupId.value);},s.busy.value||!s.groupDirty.value),
+        h('button',{class:'primary-button',onClick:s.saveGroup,disabled:s.busy.value||!!value?.reason_code||s.groupRecoveryBlocked.value||!s.groupDirty.value},'保存群策略'),
+      ]),
+      h('small','群策略与全局设置分别保存，已有查询保留接纳时规则。'),
+    ]),
+    current&&technical('当前已生效规则',[section({availability:'available',observed_at:s.groups.value.generated_at,data:current.effective},'当前已生效规则')]),
+    s.noticeTarget.value?.sections?.notice_target&&section(s.noticeTarget.value.sections.notice_target,'通知状态'),
+    groupQuota(s),
+    h('section',[h('h3','临时收紧查询方式'),button('临时仅本地解析',()=>{
+      if(window.confirm('将此群的模型解析收紧为本地解析？关闭模式保持关闭；之后需手动恢复。'))void s.startControl('local',[s.groupId.value]);
+    },s.busy.value||s.dirty.value||s.groupDirty.value||!s.controls.value?.available||!s.controls.value?.persistent_matches_live||!/^[A-Za-z0-9_-]{1,128}$/.test(s.groupId.value))]),
+  ]);
 }
 export function settingsView(s) {
   if(!s.draft.value)return null;

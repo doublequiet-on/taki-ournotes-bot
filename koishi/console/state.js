@@ -8,7 +8,7 @@ export function sessionState() {
   const model=ref(null),modelDraft=ref(null),modelGuard=ref(null),modelKey=ref(''),modelDirty=ref(false),modelConflict=ref(false),groupUsage=ref(null),trusted=ref(null);
   const library=ref(null),libraryKind=ref('knowledge'),libraryText=ref(''),libraryPreview=ref(null),libraryConfirmed=ref(false);
   const webEdit=ref(null),pendingWeb=new Map();
-  const modelRole=ref('primary'),budgetEdit=ref(null),proactiveLimits=ref(null),proactiveEdit=ref(null),pendingProactive=new Map();
+  const modelRole=ref('primary'),budgetModel=ref(null),budgetEdit=ref(null),proactiveLimits=ref(null),proactiveEdit=ref(null),proactiveReadError=ref(''),proactiveMessage=ref(''),pendingProactive=new Map();
   const chat=ref(null),chatGroup=ref(null),memory=ref(null),memoryIds=ref('');
   const chatSettings=ref(null),chatEdit=ref(null),chatUserId=ref(''),chatUserLabel=ref(''),chatReadError=ref(''),pendingChat=new Map();
   const groupRecoveryBlocked=ref(false);
@@ -20,12 +20,14 @@ export function sessionState() {
     const hadDraft=dirty.value||groupDirty.value||modelDirty.value||budgetEdit.value?.dirty||proactiveEdit.value?.dirty||webEdit.value?.dirty||chatEdit.value?.dirty,hadModelKey=!!modelKey.value;
     if(keepEdits&&groupDirty.value&&groupEpochBeforeDisconnect===undefined)groupEpochBeforeDisconnect=guard.value?.gateway_epoch||null;
     generation++;logged.value=false;failed.clear();sequences.clear();stale.value=false;readMessage.value='';
-    for(const value of [overview,requests,detail,sources,metrics,groups,notices,jobs,jobDetail,audit,host,noticeTarget,controls,model,groupUsage,trusted,chat,chatGroup,memory,library,libraryPreview,proactiveLimits,chatSettings])value.value=null;
+    for(const value of [overview,requests,detail,sources,metrics,groups,notices,jobs,jobDetail,audit,host,noticeTarget,controls,model,budgetModel,groupUsage,trusted,chat,chatGroup,memory,library,libraryPreview,proactiveLimits,chatSettings])value.value=null;
     if(!keepEdits||!dirty.value){draft.value=null;guard.value=null;dirty.value=false;conflict.value=false;}
     if(!keepEdits||!groupDirty.value){groupId.value='';groupDraft.value=null;groupRevision.value=null;groupDirty.value=false;groupConflict.value=false;groupRecoveryBlocked.value=false;groupEpochBeforeDisconnect=undefined;}
-    if(!keepEdits)budgetEdit.value=null;
+    if(!keepEdits||!budgetEdit.value?.dirty)budgetEdit.value=null;
     if(!keepEdits||!webEdit.value?.dirty)webEdit.value=null;
     if(!keepEdits||!proactiveEdit.value?.dirty)proactiveEdit.value=null;
+    else if(!groupId.value)groupId.value=proactiveEdit.value.group_id;
+    proactiveReadError.value='';proactiveMessage.value='';
     if(!keepEdits||!chatEdit.value?.dirty)chatEdit.value=null;
     else groupId.value=chatEdit.value.group_id;
     chatUserId.value='';chatUserLabel.value='';chatReadError.value='';
@@ -63,7 +65,7 @@ export function sessionState() {
     if(['primary','fallback','proactive'].includes(snapshot.modelRole))modelRole.value=snapshot.modelRole;
     if(snapshot.web)webEdit.value=snapshot.web;
     if(snapshot.budget)budgetEdit.value=snapshot.budget;
-    if(snapshot.proactive)proactiveEdit.value=snapshot.proactive;
+    if(snapshot.proactive){proactiveEdit.value=snapshot.proactive;groupId.value=snapshot.proactive.group_id;}
     if(snapshot.chat){chatEdit.value=snapshot.chat;groupId.value=snapshot.chat.group_id;}
     if(snapshot.global){draft.value=snapshot.global.draft;guard.value=snapshot.global.guard;dirty.value=true;conflict.value=!!snapshot.global.conflict;}
     if(snapshot.group){groupId.value=snapshot.group.id;groupDraft.value=snapshot.group.draft;groupRevision.value=snapshot.group.revision;groupDirty.value=true;
@@ -101,7 +103,8 @@ export function sessionState() {
         if(!groupDirty.value)selectGroup(groupId.value);
         else if(groupRevision.value!==value.policy?.revision)groupConflict.value=true;
       }
-      if(['model/settings','model/fallback/settings','model/proactive/settings'].includes(method))acceptModel(value);
+      if(target===model)acceptModel(value);
+      if(target===budgetModel)acceptBudget(value.primary_budget);
     } catch (error) {
       if(token!==generation||seq!==sequences.get(target))return;
       if(unauthorized(error))return;
@@ -131,7 +134,15 @@ export function sessionState() {
   function selectGroup(id) {
     if(groupDirty.value){if(id!==groupId.value)message.value='请先保存或放弃当前群草稿。';return;}
     if(chatEdit.value?.dirty&&id!==chatEdit.value.group_id){message.value='请先保存或放弃当前群的交流设置。';return;}
+    if(proactiveEdit.value?.dirty&&groupId.value===proactiveEdit.value.group_id&&id!==groupId.value){
+      message.value='请先保存或放弃当前群的主动参与限额。';return;
+    }
     const changed=id!==groupId.value;
+    if(changed){
+      sequences.set(proactiveLimits,(sequences.get(proactiveLimits)||0)+1);
+      proactiveLimits.value=null;proactiveReadError.value='';proactiveMessage.value='';
+      if(!proactiveEdit.value?.dirty)proactiveEdit.value=null;
+    }
     groupId.value=id;groupDraft.value=structuredClone(toRaw(groups.value?.policy?.groups?.[id])||{label:'',queries:'inherit',notifications:'inherit',natural_query:'inherit'});
     groupRevision.value=groups.value?.policy?.revision;groupDirty.value=false;groupConflict.value=false;groupRecoveryBlocked.value=false;
     noticeTarget.value=null;if(changed){chatGroup.value=null;memory.value=null;memoryIds.value='';chatSettings.value=null;chatUserId.value='';chatUserLabel.value='';}
@@ -245,19 +256,20 @@ export function sessionState() {
       await load(controls,'ops/controls');
     }finally{busy.value=false;}
   }
+  function acceptBudget(budget){
+    if(budget&&!budgetEdit.value?.dirty)budgetEdit.value={daily:budget.daily_usd,guard:budget.guard,dirty:false};
+  }
   function acceptModel(value){
     if(value.web_search){
       if(!webEdit.value?.dirty)webEdit.value={role:value.role||modelRole.value,enabled:value.web_search.enabled,max_calls:value.web_search.max_calls,guard:value.web_search.guard,dirty:false,conflict:false};
       else if(webEdit.value.role!==(value.role||modelRole.value)||JSON.stringify(webEdit.value.guard)!==JSON.stringify(value.web_search.guard))webEdit.value.conflict=true;
     }else if(!webEdit.value?.dirty)webEdit.value=null;
-    if(value.primary_budget&&!budgetEdit.value?.dirty)budgetEdit.value={daily:value.primary_budget.daily_usd,guard:value.primary_budget.guard,dirty:false};
     if(['succeeded','failed'].includes(value.capability?.state))pendingProbes.delete((value.role||modelRole.value)+'/'+value.profile?.config_version);
     if(!modelDirty.value){modelDraft.value=structuredClone(toRaw(value.profile));modelGuard.value=value.guard;}
     else if(JSON.stringify(modelGuard.value)!==JSON.stringify(value.guard))modelConflict.value=true;
   }
   async function refreshModel(){
     await load(model,modelRole.value==='primary'?'model/settings':`model/${modelRole.value}/settings`);
-    if(modelRole.value==='proactive'&&proactiveEdit.value?.group_id)await refreshProactiveLimits(proactiveEdit.value.group_id);
   }
   function selectModelRole(role){
     if(busy.value||modelDirty.value||webEdit.value?.dirty){message.value='请先保存或放弃当前模型和联网草稿，再切换模型配置。';return;}
@@ -285,22 +297,24 @@ export function sessionState() {
     }finally{busy.value=false;}
   }
   async function refreshProactiveLimits(id=proactiveEdit.value?.group_id||groupId.value,discard=false){
-    if(!id)return;
+    if(!id||!/^[A-Za-z0-9_-]{1,128}$/.test(id))return;
     if(proactiveEdit.value?.dirty&&proactiveEdit.value.group_id!==id){message.value='请先保存或放弃当前群的主动参与限额。';return;}
     const token=generation,seq=(sequences.get(proactiveLimits)||0)+1;sequences.set(proactiveLimits,seq);
     try{
       const value=await rpc('model/proactive/limits/settings',id);if(token!==generation||seq!==sequences.get(proactiveLimits))return;
-      proactiveLimits.value=value;
+      if(value.group_id!==id||!value.limits||!value.guard)throw Error('限额设置暂不可用');
+      proactiveLimits.value=value;proactiveReadError.value='';
       if(discard||!proactiveEdit.value?.dirty)proactiveEdit.value={group_id:id,limits:structuredClone(value.limits),guard:value.guard,dirty:false,conflict:false};
       else if(JSON.stringify(proactiveEdit.value.guard)!==JSON.stringify(value.guard))proactiveEdit.value.conflict=true;
-    }catch(error){if(token!==generation||seq!==sequences.get(proactiveLimits)||unauthorized(error))return;message.value='主动参与限额未读取：'+modelFailure(error);}
+    }catch(error){if(token!==generation||seq!==sequences.get(proactiveLimits)||unauthorized(error))return;proactiveReadError.value='主动参与限额未读取：'+modelFailure(error);}
   }
   async function saveProactiveLimits(){
-    if(busy.value||!proactiveEdit.value?.dirty||proactiveEdit.value.conflict||modelDirty.value)return;
+    if(busy.value||!proactiveEdit.value?.dirty||proactiveEdit.value.conflict||proactiveReadError.value||modelDirty.value)return;
     const token=generation,submitted=JSON.stringify(proactiveEdit.value),edit=JSON.parse(submitted);
     const key=JSON.stringify([edit.group_id,edit.guard,edit.limits]);
     if(!pendingProactive.has(key))pendingProactive.set(key,crypto.randomUUID().replaceAll('-',''));
-    busy.value=true;
+    sequences.set(proactiveLimits,(sequences.get(proactiveLimits)||0)+1);
+    busy.value=true;proactiveMessage.value='';
     try{
       const result=await rpc('model/proactive/limits/save',{operation_id:pendingProactive.get(key),group_id:edit.group_id,guard:edit.guard,limits:edit.limits});
       if(token!==generation)return;pendingProactive.delete(key);
@@ -309,18 +323,34 @@ export function sessionState() {
         proactiveEdit.value.dirty=JSON.stringify(proactiveEdit.value.limits)!==JSON.stringify(edit.limits);
         proactiveEdit.value.guard=result.guard;proactiveEdit.value.conflict=false;
       }
-      message.value=result.approved&&result.capability_approved?'主动参与限额已保存。后续任务使用新限额。':'主动参与限额已保存，群服务或能力尚待批准，暂不自动发言。';
+      proactiveMessage.value=proactiveEdit.value?.dirty?'提交时的限额已保存，后续编辑仍未保存。':
+        result.approved&&result.capability_approved?'主动参与限额已保存。后续任务使用新限额。':'主动参与限额已保存，群服务或能力尚待批准，暂不自动发言。';
     }catch(error){if(token!==generation||unauthorized(error))return;
-      if(proactiveEdit.value)proactiveEdit.value.conflict=true;message.value='主动参与限额未确认，草稿已保留：'+modelFailure(error);
+      if(proactiveEdit.value)proactiveEdit.value.conflict=true;proactiveMessage.value='主动参与限额未确认，草稿已保留：'+modelFailure(error);
       await refreshProactiveLimits(edit.group_id);
     }finally{busy.value=false;}
   }
+  const refreshBudget=()=>load(budgetModel,'model/settings');
   async function saveBudget(){
-    if(!/^\d{1,6}(?:\.\d{1,6})?$/.test(budgetEdit.value?.daily||'')){message.value='请输入非负美元金额，最多六位小数。';return;}
-    const token=generation,snapshot=JSON.stringify(budgetEdit.value);busy.value=true;
-    try{const result=await rpc('model/budget/save',{operation_id:crypto.randomUUID().replaceAll('-',''),guard:JSON.parse(snapshot).guard,daily_usd:JSON.parse(snapshot).daily});if(token!==generation)return;if(JSON.stringify(budgetEdit.value)===snapshot)budgetEdit.value.dirty=false;budgetEdit.value.guard=result.primary_budget.guard;message.value='每日主模型预算已保存，重启后仍有效。';await Promise.all([refreshModel(),load(overview,'overview')]);}
-    catch(error){if(token!==generation||unauthorized(error))return;message.value='预算未保存：'+modelFailure(error);}
-    finally{busy.value=false;}
+    const edit=budgetEdit.value;
+    if(busy.value||!edit?.dirty)return;
+    if(!/^\d{1,6}(?:\.\d{1,6})?$/.test(edit.daily)){message.value='请输入非负美元金额，最多六位小数。';return;}
+    const token=generation,daily=edit.daily;
+    busy.value=true;
+    try{
+      const result=await rpc('model/budget/save',{operation_id:crypto.randomUUID().replaceAll('-',''),guard:edit.guard,daily_usd:daily});
+      if(token!==generation)return;
+      edit.dirty=edit.daily!==daily;
+      edit.guard=result.primary_budget.guard;
+      budgetModel.value=result;
+      acceptBudget(result.primary_budget);
+      message.value='每日主模型预算已保存，重启后仍有效。';
+      await Promise.all([refreshBudget(),load(overview,'overview')]);
+    }catch(error){
+      if(token!==generation||unauthorized(error))return;
+      message.value='预算保存未确认，草稿已保留：'+modelFailure(error);
+      await refreshBudget();
+    }finally{busy.value=false;}
   }
   async function saveModel(group=null,limits=null){
     if(group&&modelRole.value!=='primary'){message.value='群额度需要在主模型配置中保存。';return;}
@@ -401,7 +431,7 @@ export function sessionState() {
     }catch(error){if(token!==generation||unauthorized(error))return;libraryPreview.value=null;libraryConfirmed.value=false;message.value='资料操作未确认：'+String(error?.message||error)+'。请刷新核对后重新预览，不会自动重试。';}
     finally{busy.value=false;}
   }
-  return {chatSettings,chatEdit,chatUserId,chatUserLabel,chatReadError,refreshChatSettings,saveChatSettings,addExcludedUser,removeExcludedUser,webEdit,saveWeb,proactiveLimits,proactiveEdit,refreshProactiveLimits,saveProactiveLimits,library,libraryKind,libraryText,libraryPreview,libraryConfirmed,refreshLibrary,selectLibrary,libraryAction,budgetEdit,saveBudget,modelRole,refreshModel,selectModelRole,chat,chatGroup,memory,memoryIds,updateMemory,model,modelDraft,modelGuard,modelKey,modelDirty,modelConflict,groupUsage,trusted,saveModel,probeModel,trustedRequest,
+  return {proactiveReadError,proactiveMessage,chatSettings,chatEdit,chatUserId,chatUserLabel,chatReadError,refreshChatSettings,saveChatSettings,addExcludedUser,removeExcludedUser,webEdit,saveWeb,proactiveLimits,proactiveEdit,refreshProactiveLimits,saveProactiveLimits,library,libraryKind,libraryText,libraryPreview,libraryConfirmed,refreshLibrary,selectLibrary,libraryAction,budgetModel,budgetEdit,refreshBudget,saveBudget,modelRole,refreshModel,selectModelRole,chat,chatGroup,memory,memoryIds,updateMemory,model,modelDraft,modelGuard,modelKey,modelDirty,modelConflict,groupUsage,trusted,saveModel,probeModel,trustedRequest,
     jobs,jobDetail,audit,host,noticeTarget,controls,startControl:(action,ids)=>controlRequest(action,ids),restoreControl:id=>controlRequest('restore',[],id),startJob,exportDiagnostic,logged,busy,message,readMessage,stale,dirty,conflict,overview,requests,detail,sources,metrics,groups,notices,draft,guard,rpc,load,login,logout,save,
     groupId,groupDraft,groupRevision,groupDirty,groupConflict,groupRecoveryBlocked,selectGroup,saveGroup,suspend,captureEdits,restoreEdits,invalidate(){generation++;}};
 }

@@ -1,8 +1,8 @@
 // L3: Read-only complete-ledger costs, budget routing explanations and execution facts; no model calls.
 import { h } from './runtime.js';
-import { stamp } from './views.js';
+import { button, stamp } from './views.js';
 const number=v=>{if(v==null)return '未知';const [a,b=1]=String(v).split('/').map(Number);return Number.isFinite(a/b)?(a/b).toLocaleString('zh-CN',{maximumFractionDigits:6}):'未知';};
-const money=v=>v==null?'未知':numberFraction(v,1e6);
+export const money=v=>v==null?'未知':numberFraction(v,1e6);
 function numberFraction(v,d){const [a,b=1]=String(v).split('/').map(Number);return number(a/b/d);}
 const reasons={primary_budget_available:'主模型预算可覆盖首轮与最终回复的安全预留',primary_budget_exceeded:'主模型余额不足以覆盖安全预留',fallback_not_configured:'备用模型尚未配置',model_not_configured:'模型尚未配置',fallback_configuration:'备用模型配置不符合要求',reference_unit_mismatch:'主备计价单位不一致',primary_budget_currency:'主模型预算需要美元计价',usage_unavailable:'存在无法确定上限的用量，已暂停模型准入'};
 const reason=v=>reasons[v]||v||'原因未采集';
@@ -16,18 +16,98 @@ export function costAlerts(s){
  if(c&&c.fallback_ready!==true)alerts.push('备用模型未就绪：'+reason(c.fallback_reason)+'；主模型预算不足时无法继续服务');
  if(u?.billing_incomplete)alerts.push(`${u.billing_incomplete} 条用量未完整结算，相关预留继续保留`);
  if(c?.next_route==='fallback')alerts.push('下一轮预计使用 DeepSeek：'+reason(c.route_reason));
- return h('section',[h('h2','运行关注'),...alerts.map(t=>h('p',{role:'status'},t)),!alerts.length&&h('p','当前未发现模型费用或准入异常'),h('small','配置就绪不代表服务商连通已验证；实际调用仍受群权限、个人额度与并发限制。')]);
+ return h('section',[h('h2','模型费用提醒'),...alerts.map(t=>h('p',{role:'status'},t)),!alerts.length&&h('p','当前未发现模型费用或准入异常'),h('small','配置就绪不代表服务商连通已验证；实际调用仍受群权限、个人额度与并发限制。')]);
+}
+const usd=value=>value==null?'未知':'USD '+money(value);
+const route=value=>({primary:'主模型',fallback:'DeepSeek 备用',blocked:'暂停准入'})[value]||'尚未采集';
+const stats=items=>h('dl',{class:'budget-stats'},items.map(([label,value])=>h('div',[h('dt',label),h('dd',value)])));
+
+export function dailyCostSummary(s){
+ const section=data(s),c=section?.data?.model_costs,u=section?.data?.weighted_usage;
+ const totals=c&&u?.day===c.day?Object.entries(u.reference_cost_micro||{}):[];
+ return h('section',{class:'dashboard-card'},[
+   h('div',{class:'card-heading'},[h('h2','今日费用与预算'),button('查看费用',()=>s.navigate('costs'))]),
+   c?h('div',[
+     h('p',{class:'field-note'},[c.day,' · 北京时间',section.stale?' · 数据陈旧':'']),
+     h('div',{class:'metric-focus'},[h('small','已发生参考费用'),h('strong',totals.length?totals.map(([currency,value])=>currency+' '+money(value)).join(' · '):c.items?.length?'尚未采集':'暂无记录')]),
+     stats([['主模型每日上限',usd(c.limit_micro)],['主模型预算余量',usd(c.remaining_micro)]]),
+     h('small','参考费用按登记价格估算。预算余量已扣除适用的费用和预留。'),
+   ]):h('p','费用尚未采集。'),
+ ]);
+}
+export function riskObservation(s,{compact=false,collapsed=false}={}){
+ const settings=s.chatSettings.value;
+ const event=settings?.group_id===s.groupId.value&&settings.recent_events?.find(e=>e.data?.risk_available_micro!=null);
+ if(!event)return h('div',{class:'risk-observation'},[
+   h('strong','累计风险余量'),h('p',{class:'field-note'},s.chatReadError.value?'风险事件读取失败。':'近期交流记录中没有风险余量快照。'),
+ ]);
+ const value=event.data;
+ const details=()=>[
+   stats([['风险上限',usd(value.risk_limit_micro)],['待核费用占用',usd(value.risk_unknown_micro)],['在途预留',usd(value.risk_reserved_micro)],['当时每轮预留',usd(value.risk_round_micro)]]),
+   h('p',{class:'field-note'},'累计风险余量在接话评估时记录，扣除待核费用及在途预留。它与每日预算独立，跨日待核费用仍可占用风险额度。'),
+ ];
+ return h('div',{class:'risk-observation'},[
+   h('div',{class:'risk-heading'},[h('strong','累计风险余量'),h('span',{class:['state-pill',value.risk_warning?'uncertain':null]},value.risk_warning?'历史观测 · 余量偏低':'历史观测')]),
+   h('strong',{class:'risk-value'},usd(value.risk_available_micro)),
+   h('small',stamp(event.observed_at)+(s.chatReadError.value?' · 读取失败，保留上次数据':'')),
+   !compact&&(collapsed?h('details',[h('summary','风险占用明细'),...details()]):h('div',details())),
+ ]);
 }
 export function costsView(s){
  const section=data(s),c=section?.data?.model_costs;
- return h('div',{class:'costs-page'},[h('h1','模型与费用'),h('p','全机器人共享主模型预算；DeepSeek 费用另计。参考费用依据登记价格与用量，不等同于提供方最终账单。'),
- !c?h('p','费用尚未取得，请等待总览刷新。'):h('section',[h('h2',`${c.day} · 北京时间`),h('small',`每日 00:00 重置 · 采集于 ${stamp(s.overview.value?.backend?.generated_at)}`),
- h('div',{class:'stats'},[[c.limit_micro,'主模型每日上限'],[c.primary_spent_and_reserved_micro,'已用与预留合计'],[c.remaining_micro,'可用余额']].map(([v,t])=>h('div',[h('strong','USD '+money(v)),h('span',t)]))),
- h('p',`引擎：${c.engine} · 下一轮预计：${({primary:'主模型',fallback:'DeepSeek',blocked:'暂停准入'})[c.next_route]||'未知'}`),h('p',reason(c.route_reason)),
- h('p',`首轮与最终回复安全预留：USD ${money(c.admission_micro)}。余额大于零也可能不足以接收新一轮；在途请求保留原模型，不因 HTTP 错误自动重试或切换。`),
- h('p',`主模型：${c.primary?.model||'未配置'} · 备用：${c.fallback?.model||'未配置'}`),
- h('p','表格可左右滚动查看预留与不完整记录。'),h('div',{class:'cost-table-scroll'},[h('table',{class:'cost-table'},[h('caption','今日按实际模型汇总（完整账本）'),h('thead',[h('tr',['模型 / 币种','已发生参考费用','进行中预留','待核定预留','尝试 / 不完整'].map(t=>h('th',t)))]),h('tbody',(c.items||[]).map(i=>h('tr',[h('th',`${i.provider} / ${i.model} · ${i.currency}`),...[i.cost,i.pending,i.unknown].map(v=>h('td',money(v))),h('td',`${i.attempts} / ${i.incomplete}`)])))])]),
- !(c.items||[]).length&&h('p','今日暂无模型尝试。'),h('small','释放的最终回复预留不代表实际付费调用。未知用量的预留不会当作已发生费用，也不会自动清零。')]),costAlerts(s)]);
+ const columns=['模型 / 币种','已发生参考费用','进行中预留','待核定预留','尝试 / 不完整'];
+ return h('div',{class:'costs-page'},[
+   h('div',{class:'page-heading'},[h('div',[h('h1','费用与预算'),h('p',{class:'page-intro'},'查看今日模型账本、准入预算和各类预留。')]),button('刷新费用',()=>s.load(s.overview,'overview'))]),
+   !c?h('section',[h('p','费用尚未取得，请等待总览刷新。')]):h('div',[
+     h('section',[h('h2','主模型准入预算'),h('small',c.day+' · 北京时间 00:00 重置 · 采集于 '+stamp(s.overview.value?.backend?.generated_at)),
+       stats([['每日配置上限',usd(c.limit_micro)],['已用与预留合计',usd(c.primary_spent_and_reserved_micro)],['当前预算余量',usd(c.remaining_micro)]]),
+       h('p',['下一轮预计：',h('strong',route(c.next_route)),' · ',reason(c.route_reason)]),
+       h('small','首轮与最终回复安全预留 '+usd(c.admission_micro)+'。在途请求保留原模型。备用模型及豁免调用的费用仍计入下方账本。'),
+     ]),
+     h('section',[h('h2','今日费用账本'),
+       h('dl',{class:'cost-definitions'},[
+         ['已发生参考费用','按已取得的用量与登记价格计算。服务商账单需另行核对。'],
+         ['进行中预留','给待调用或在途请求占用的额度，结算或释放后更新。'],
+         ['待核定预留','用量缺失或不完整时继续保留的额度，未计入已发生费用。'],
+       ].map(([term,description])=>h('div',[h('dt',term),h('dd',description)]))),
+       c.items?.length?h('div',{class:'cost-table-scroll'},[
+         h('table',{class:'cost-table'},[
+           h('caption','按实际模型与币种分组'),
+           h('thead',[h('tr',columns.map(label=>h('th',{scope:'col'},label)))]),
+           h('tbody',c.items.map(i=>h('tr',[
+             h('th',{scope:'row'},[i.provider+' / '+i.model,h('small',i.currency)]),
+             ...[money(i.cost),money(i.pending),money(i.unknown),i.attempts+' / '+i.incomplete].map((value,index)=>
+               h('td',[h('span',{class:'mobile-cell-label','aria-hidden':'true'},columns[index+1]),value])),
+           ]))),
+         ]),
+       ]):h('p','今日暂无模型尝试。'),
+     ]),
+   ]),
+   h('section',[h('div',{class:'card-heading'},[h('h2','主动接话累计风险'),button('查看群风险',s.navigateGroup)]),
+     s.groupId.value?riskObservation(s):h('p','从群管理选择一个群，查看该群最近一次接话评估记录的风险余量。'),
+   ]),
+ ]);
+}
+
+export function budgetEditor(s){
+ const model=s.budgetModel.value,budget=model?.primary_budget,edit=s.budgetEdit.value;
+ const conflict=edit?.dirty&&budget&&JSON.stringify(edit.guard)!==JSON.stringify(budget.guard);
+ return h('section',{class:'budget-editor'},[
+   h('h2','编辑每日主模型上限'),
+   !budget||!edit?h('div',[h('p','每日预算设置尚未取得。'),button('读取预算设置',s.refreshBudget,s.busy.value)]):h('div',[
+     h('p','当前生效：'+'USD '+budget.daily_usd),
+     h('label',['每日上限（美元）',h('input',{type:'text',inputmode:'decimal','aria-label':'每日主模型预算（美元）',value:edit.daily,disabled:s.busy.value,
+       onInput:e=>{edit.daily=e.target.value;edit.dirty=true;}})]),
+     h('small','最多六位小数。保存即时生效并持久保存。0 表示普通账号直接使用备用模型，服务器配置的额度豁免继续生效。'),
+     conflict&&h('p',{role:'alert'},'服务器预算版本已变化，请核对当前生效金额后继续。'),
+     h('div',{class:'form-actions'},[
+       h('small',{role:'status'},edit.dirty?'有未保存的每日预算':'当前显示已保存的预算'),
+       button('放弃预算草稿',()=>{s.budgetEdit.value=null;void s.refreshBudget();},s.busy.value||!edit.dirty),
+       conflict&&button('核对最新预算后保留草稿',()=>{if(window.confirm('服务器当前预算为 USD '+budget.daily_usd+'。保留你的金额并以此版本重试？'))edit.guard=budget.guard;},s.busy.value),
+       h('button',{class:'primary-button',disabled:s.busy.value||!edit.dirty||conflict,onClick:s.saveBudget},'保存每日预算'),
+     ]),
+   ]),
+ ]);
 }
 const modelStages={decision:'判断',generation:'正文生成',model:'模型调用'};
 const transportStages={connect:'连接',dns:'域名解析',upload:'上传',wait_headers:'等待响应头',read_body:'读取响应正文',complete:'传输完成'};
