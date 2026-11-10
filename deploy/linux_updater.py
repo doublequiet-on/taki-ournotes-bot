@@ -98,6 +98,7 @@ class Backend(Protocol):
     def current_release(self) -> Release: ...
     def resolve_main(self) -> str: ...
     def check_ci(self, commit: str) -> None: ...
+    def ready_successor(self, commit: str, blocked: set[str]) -> str | None: ...
     def prepare(self, commit: str) -> Release: ...
     def verify_compatibility(self, previous: Release, candidate: Release) -> None: ...
     def verify_repair(self, failed: Release, candidate: Release) -> None: ...
@@ -480,6 +481,16 @@ class Engine:
             state["transaction"]["candidate"] = asdict(candidate)
             self._phase(state, "verifying")
             self.backend.verify_compatibility(previous, candidate)
+            if self.migration_target is None:
+                blocked = set(state["failed"]) | {previous.commit}
+                blocked.update(sha for sha, retry in state.get("download_retries", {}).items()
+                               if retry["after"] > time.time())
+                newer = self.backend.ready_successor(commit, blocked)
+                if isinstance(newer, str) and newer not in blocked | {commit} and SHA_RE.fullmatch(newer):
+                    state["transaction"] = None
+                    self._event(state, "superseded", commit, "newer_release_ready")
+                    self._save(state)
+                    return RunResult("deferred", newer, "candidate_superseded")
             state["transaction"]["compatible"] = True
             self._phase(state, "backing_up")
             backup = self.backend.backup(previous, candidate)

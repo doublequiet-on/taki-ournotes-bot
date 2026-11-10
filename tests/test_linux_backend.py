@@ -1251,6 +1251,59 @@ class LinuxBackendTests(unittest.TestCase):
             self.backend._manifest(release)
             self.assertEqual(content.call_count, 3)
 
+    def test_successor_requires_current_main_and_successful_publish(self):
+        with patch.object(self.backend, 'resolve_main', return_value=B), \
+                patch.object(self.backend, 'check_ci', side_effect=Deferred('ci_pending')) as ci:
+            self.assertIsNone(self.backend.ready_successor(B, set()))
+            self.assertIsNone(self.backend.ready_successor(A, {B}))
+            ci.assert_not_called()
+            self.assertIsNone(self.backend.ready_successor(A, set()))
+            ci.assert_called_once_with(B)
+        runs, jobs = self.ci_rows()
+        with patch.object(self.backend, 'resolve_main', return_value=B), \
+                patch.object(self.backend, '_json', side_effect=[runs, jobs]):
+            self.assertIsNone(self.backend.ready_successor(A, set()))
+        jobs['jobs'].append(dict(jobs['jobs'][0], name='publish-linux-bundle'))
+        for status in ('ahead', 'behind', 'diverged'):
+            relation = dict(status=status, merge_base_commit={'sha': A})
+            with self.subTest(status=status), patch.object(self.backend, 'resolve_main', return_value=B), \
+                    patch.object(self.backend, '_json', side_effect=[runs, jobs, relation]):
+                expected = B if status == 'ahead' else None
+                self.assertEqual(self.backend.ready_successor(A, set()), expected)
+
+    def test_watch_ready_wakes_only_exact_published_main_and_deduplicates(self):
+        self.state()
+        engine = Engine(self.backend.state, self.backend)
+        runs, jobs = self.ci_rows()
+        jobs['jobs'].append(dict(jobs['jobs'][0], name='publish-linux-bundle'))
+        self.backend.run = Mock(return_value='inactive')
+        with patch.object(self.backend, '_json', side_effect=[runs, runs, jobs, runs]), \
+                patch.object(self.backend, 'resolve_main', return_value=B) as resolve, \
+                patch.object(self.backend, 'runtime_directory', return_value=self.root), \
+                patch('deploy.linux_backend.trusted'):
+            self.assertEqual(self.backend.watch_ready(engine), RunResult('watch_triggered', B))
+            self.assertEqual(self.backend.watch_ready(engine), RunResult('watch_idle', B))
+            resolve.assert_called_once()
+        starts = [call for call in self.backend.run.call_args_list if '--no-block' in call.args[0]]
+        self.assertEqual(len(starts), 1)
+        self.assertEqual(starts[0].args[0][-1], 'taki-updater.service')
+        self.assertEqual(json.loads((self.root/'release-wakeup.json').read_text())['commit'], B)
+
+    def test_watch_ready_avoids_an_older_success_and_active_transaction(self):
+        self.state()
+        engine = Engine(self.backend.state, self.backend)
+        runs, _ = self.ci_rows()
+        self.backend.run = Mock(return_value='inactive')
+        with patch.object(self.backend, '_json', return_value=runs) as api, \
+                patch.object(self.backend, 'resolve_main', return_value='c'*40), \
+                patch.object(self.backend, 'runtime_directory', return_value=self.root):
+            self.assertEqual(self.backend.watch_ready(engine), RunResult('watch_idle', B))
+            self.state(transaction=dict(phase='preparing', commit=B, previous=asdict(self.baseline),
+                                        candidate=None))
+            self.assertEqual(self.backend.watch_ready(engine), RunResult('watch_idle'))
+            api.assert_called_once()
+        self.assertFalse(any('--no-block' in call.args[0] for call in self.backend.run.call_args_list))
+
     def test_offline_ci_reuse_requires_a_published_run_and_exact_archive_proof(self):
         runs, jobs = self.ci_rows()
         publish = dict(name="publish-linux-bundle", head_sha=B, run_id=123,

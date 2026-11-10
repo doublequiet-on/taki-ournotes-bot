@@ -413,6 +413,65 @@ class LinuxBackend:
         if succeeded("publish-linux-bundle"):
             self._published_ci_run = (commit, run_id)
 
+    def ready_successor(self, commit: str, blocked: set[str]) -> str | None:
+        # Only a ready newer main supersedes a prepared candidate.
+        try:
+            latest = self.resolve_main()
+            if latest == commit or latest in blocked:
+                return None
+            self.check_ci(latest)
+            if self._published_ci_run is None or self._published_ci_run[0] != latest:
+                return None
+            relation = self._json(API + f"/compare/{commit}...{latest}?per_page=1")
+            base = relation.get("merge_base_commit")
+            if relation.get("status") == "ahead" and isinstance(base, dict) and base.get("sha") == commit:
+                return latest
+        except (Deferred, Rejected):
+            pass
+        return None
+
+    def watch_ready(self, engine: Engine) -> RunResult:
+        """Check GitHub readiness and wake the normal updater once per released SHA."""
+        state = engine.load_state()
+        if not state or state.get("paused") or state.get("transaction"):
+            return RunResult("watch_idle")
+        unit = self.run(["/usr/bin/systemctl", "show", "taki-updater.service",
+                         "--property=ActiveState", "--value"], timeout=10).strip()
+        if unit != "inactive":
+            return RunResult("watch_idle")
+        try:
+            result = self._json(API + "/actions/workflows/checks.yml/runs?"
+                                "branch=main&event=push&status=success&per_page=1")
+            rows = result.get("workflow_runs")
+            run = rows[0] if isinstance(rows, list) and rows and isinstance(rows[0], dict) else {}
+            head = run.get("head_sha")
+            if (not isinstance(head, str) or not SHA_RE.fullmatch(head)
+                    or run.get("head_branch") != "main" or run.get("event") != "push"
+                    or run.get("status") != "completed" or run.get("conclusion") != "success"
+                    or run.get("name") != "Checks" or run.get("path") != ".github/workflows/checks.yml"):
+                return RunResult("watch_idle")
+            retry = state.get("download_retries", {}).get(head)
+            if (head == state["current"]["commit"] or head in state["failed"]
+                    or (retry and retry["after"] > time.time())):
+                return RunResult("watch_idle", head)
+            receipt = self.runtime_directory() / "release-wakeup.json"
+            if receipt.exists() or receipt.is_symlink():
+                trusted(receipt)
+                if receipt.stat().st_size > 256:
+                    raise Rejected("release_wakeup_receipt_invalid")
+                if json.loads(receipt.read_text()).get("commit") == head:
+                    return RunResult("watch_idle", head)
+            if self.resolve_main() != head:
+                return RunResult("watch_idle", head)
+            self.check_ci(head)
+            if self._published_ci_run is None or self._published_ci_run[0] != head:
+                return RunResult("watch_idle", head)
+        except (Deferred, Rejected) as exc:
+            return RunResult("deferred", reason=exc.code)
+        self.run(["/usr/bin/systemctl", "start", "--no-block", "taki-updater.service"], timeout=15)
+        atomic_json(receipt, {"commit": head})
+        return RunResult("watch_triggered", head)
+
     def _offline_ci_run(self, commit: str, bundle_hash: str, knowledge) -> int | None:
         # Keep the host tests for base-only installs and releases without exact CI evidence.
         if self._published_ci_run is None or self._published_ci_run[0] != commit or knowledge is None:
@@ -1207,7 +1266,7 @@ def human_status(state: dict) -> str:
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description="Taki reviewed public-main Linux updater")
     parser.add_argument("--config", default="/etc/taki-updater.json")
-    parser.add_argument("command", choices=("check", "recover", "status", "cleanup-plan", "resume", "rollback", "migrate"))
+    parser.add_argument("command", choices=("check", "recover", "status", "cleanup-plan", "resume", "rollback", "migrate", "watch-ready"))
     parser.add_argument("--retry-commit")
     parser.add_argument("--target-commit")
     parser.add_argument("--human", action="store_true", help="Chinese read-only status (status only)")
@@ -1224,7 +1283,7 @@ def main(argv=None) -> int:
         config = json.loads(path.read_text())
         validate_config(config)
         trusted(Path(config["state_dir"]), directory=True)
-        if args.command in ("check", "migrate"):
+        if args.command in ("check", "migrate", "watch-ready"):
             marker = Path("/usr/local/lib/taki-updater/installation.json")
             trusted(marker)
             if json.loads(marker.read_text()).get("phase") != "installed":
@@ -1250,8 +1309,11 @@ def main(argv=None) -> int:
             backend = LinuxBackend(config)
             backend.migration_target = target
             engine = Engine(config["state_dir"], backend, migration_target=target)
-            if engine.backend.koishi: engine.backend.koishi.publish_notice(None)
-            if args.command == "resume":
+            if args.command != "watch-ready" and engine.backend.koishi:
+                engine.backend.koishi.publish_notice(None)
+            if args.command == "watch-ready":
+                result = asdict(engine.backend.watch_ready(engine))
+            elif args.command == "resume":
                 result = asdict(engine.resume(retry_commit=args.retry_commit))
             elif args.command == "rollback":
                 result = asdict(engine.rollback())
@@ -1259,7 +1321,7 @@ def main(argv=None) -> int:
                 result = asdict(recover_engine(engine))
             else:
                 result = asdict(engine.run())
-        if args.command not in ("status", "cleanup-plan") and engine.backend.koishi:
+        if args.command not in ("status", "cleanup-plan", "watch-ready") and engine.backend.koishi:
             engine.backend.koishi.publish_notice(engine.load_state())
         print(json.dumps(result, ensure_ascii=True, sort_keys=True))
         if args.command == "migrate":
