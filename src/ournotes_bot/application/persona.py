@@ -71,6 +71,38 @@ def chat_prompt(topic):
 不输出工具调用。\n本轮人格设定：'''+CARDS[topic]
 
 
+_JUST_TERM = re.compile(r'(?<![a-z0-9_])just(?![a-z0-9_]|\s+[a-z])|判定卡|判卡|判定.{0,4}扩窗|扩窗.{0,8}叠|留影.{0,40}(?:变宽|变久|扩判|扩窗)', re.I)
+_OTHER_RHYTHM_GAME = re.compile(
+    r'(?<![a-z])(?:pjsk|arcaea|maimai|chunithm|phigros|gbp)(?![a-z])|世界计划|中二节奏|音击|少女乐团派对', re.I)
+_JUST_ASK = re.compile(
+    r'怎么(?:算|计算|计分|叠|判定|触发|生效)|如何(?:算|计算|计分|叠|判定|触发)|是什么|什么规则|多久|多宽|多长|几秒|变宽还是变久|能不能叠|是否叠|是不是叠|怎么排|怎么比|如何排|如何比')
+_JUST_MINIMUM = re.compile(
+    r'(?:到底|实际|至少|最少|请问).{0,16}几张|(?:^|[，,。])\s*(?:需要|要)几张|几张.{0,16}[?]|几张.{0,16}才够')
+_BAND_STORY = re.compile(r'海希|希海|海铃.{0,8}立希|立希.{0,8}海铃|邦邦|BanG\s*Dream|MyGO|Ave\s*Mujica|CRYCHIC|一辈子乐队|ANON TOKYO', re.I)
+_STORY_FACT_ASK = re.compile(r'什么关系|是什么关系|出自|出处|哪来的|哪[一几]?[集话章]|第几[集话章]|谁(?:说|配音)|为什么.{0,20}(?:退出|加入)')
+
+
+def explicit_evidence_route(question):
+    text = unicodedata.normalize('NFKC', question).strip()
+    if (_JUST_TERM.search(text) and not _OTHER_RHYTHM_GAME.search(text)
+            and not re.search(r'保底|抽卡|招募|掉率|出货率|概率', text)):
+        if _JUST_MINIMUM.search(text):
+            return 'just_minimum'
+        if _JUST_ASK.search(text):
+            if re.search(r'满破|突破|留影|判定卡|判卡|持续|多久|几秒|变久|时长', text):
+                return 'just_card'
+            window = re.search(r'扩窗|扩判|判定窗|判定范围|多宽|叠', text)
+            score = re.search(r'区间|计分|得分|分数|排名', text)
+            if window and not score:
+                return 'just_window'
+            if score and not window:
+                return 'just_score'
+            return 'just_clarify'
+    if _BAND_STORY.search(text) and _STORY_FACT_ASK.search(text):
+        return 'story_fact'
+    return ''
+
+
 # This is a fail-closed supplement to semantic routing, not a list of allowed
 # chat sentences. It catches explicit fact requests misrouted to free chat.
 _FACT_REQUEST = re.compile(
@@ -81,4 +113,28 @@ _FACT_REQUEST = re.compile(
 
 
 def chat_needs_evidence(question):
-    return bool(_FACT_REQUEST.search(unicodedata.normalize('NFKC',question)))
+    return bool(explicit_evidence_route(question) or _FACT_REQUEST.search(unicodedata.normalize('NFKC',question)))
+
+
+_LIGHTWEIGHT_MECHANIC_TERM = re.compile(
+    r'概率|保底|掉率|倍率|数值|机制|规则|公式|算分|配队|combo|luck|just|bpm|nps', re.I)
+_LIGHTWEIGHT_MECHANIC_CONTEXT = re.compile(r'满破|判定卡|判卡')
+_LIGHTWEIGHT_OPINION = re.compile(r'^(?:我(?:觉得|感觉|打起来)|个人(?:觉得|感觉)|对我来说)')
+_LIGHTWEIGHT_QUESTION = re.compile(
+    r'\?|吗[。!\s]*$|到底|请问|谁知道|想知道|是不是|怎么|如何|什么|哪[个张种]|'
+    r'能不能|有没有|对不对|帮(?:我)?(?:查|核实|算)|'
+    r'(?:^|[，,。；;]|但|实际)\s*(?:还)?(?:要|需要|得)\s*几张')
+
+
+def lightweight_needs_evidence(question):
+    text = unicodedata.normalize('NFKC', question).strip()
+    if explicit_evidence_route(text):
+        return True
+    matches = _FACT_REQUEST.findall(text)
+    if (matches or _LIGHTWEIGHT_MECHANIC_CONTEXT.search(text)) and _LIGHTWEIGHT_QUESTION.search(text):
+        return True
+    if _LIGHTWEIGHT_OPINION.match(text):
+        # A gameplay term can name the subject of an opinion. Other fact
+        # triggers still take precedence over the opening stance.
+        return any(not _LIGHTWEIGHT_MECHANIC_TERM.fullmatch(match) for match in matches)
+    return bool(matches)

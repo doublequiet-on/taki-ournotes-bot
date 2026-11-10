@@ -2733,6 +2733,123 @@ class ChatAgentTests(Fixture, unittest.IsolatedAsyncioTestCase):
         self.assertIn('200 抽',plan['parts'][0]['text'])
         self.assertNotIn('777',plan['parts'][0]['text'])
 
+    def test_evidence_route_distinguishes_opinions_game_and_fact_questions(self):
+        from ournotes_bot.application.persona import explicit_evidence_route
+
+        cases = {
+            '我觉得 JUST 最吃卡': '', '你觉得JUST最吃卡吗': '', '海希好嗑': '',
+            'JUST Dance 是什么游戏': '', 'Arcaea 的 JUST 怎么算': '',
+            '激奏 JUST 区间怎么计分': 'just_score', 'Our Notes 抽卡概率是什么': '',
+            'JUST 怎么算': 'just_clarify', 'JUST 扩窗怎么叠': 'just_window',
+            '判卡满破了是变宽还是变久？': 'just_card', '留影31 Lv4到Lv5 是变宽还是变久': 'just_card',
+            '到底要几张满破判定卡？': 'just_minimum', '海希什么关系': 'story_fact',
+        }
+        for question, route in cases.items():
+            with self.subTest(question=question):
+                self.assertEqual(explicit_evidence_route(question), route)
+
+    async def test_just_count_uses_scoped_approved_expansion_passage_without_guessing(self):
+        from types import SimpleNamespace
+        from ournotes_bot.domain.knowledge import Applicability,EvidenceChunkV1,EvidenceLease,KnowledgeScope
+        from ournotes_bot.domain.model_calls import ToolCall
+
+        question = '我觉得JUST吃卡，但实际要几张满破判定卡？'
+        passage = '工程夹具：扩窗按各实例独立计算。'
+        scope = KnowledgeScope(server='jp')
+        chunk = EvidenceChunkV1('jp110-just-window-structure','0'*64,1,'mechanic#1','1'*64,passage,(),
+            Applicability('current',None,None,None,'工程范围'), 'reviewed_analysis',(),('jp',))
+        knowledge = Mock()
+        self.backend.knowledge = knowledge
+        knowledge.retrieve.return_value = SimpleNamespace(code='ok',lease=EvidenceLease('fixture',scope,(chunk,)))
+        knowledge.prepare_evidence.return_value = {'passages':[{'text':passage}]}
+        knowledge.validate_current.return_value = True
+        args = json.dumps(dict(query='irrelevant fixture rewrite',server='intl',date=None,version=None))
+        self.client.request.return_value = self.result(calls=(ToolCall('approved','knowledge_search',args),))
+
+        plan, attempts = await self.prepare_native('/聊 '+question)
+        self.assertEqual(len(attempts),1)
+        self.assertEqual(knowledge.retrieve.call_args.args[:2],(question,scope))
+        self.assertEqual(knowledge.retrieve.call_args.kwargs['focus_query'],'两个JUST扩窗怎么叠加')
+        self.assertTrue(plan['parts'][0]['text'].startswith('还定不了要几张满破判定卡'))
+        self.assertNotIn(passage,plan['parts'][0]['text'])
+
+    async def test_just_ambiguity_is_clarified_and_the_selected_mode_reaches_its_source(self):
+        from types import SimpleNamespace
+        from ournotes_bot.domain.knowledge import Applicability,EvidenceChunkV1,EvidenceLease,KnowledgeScope
+        from ournotes_bot.domain.model_calls import ToolCall
+
+        first,attempts = await self.prepare_native('/聊 JUST 怎么算')
+        self.assertEqual(attempts,[])
+        self.assertIn('扩窗',first['parts'][0]['text'])
+        self.assertIn('区间怎么计分',first['parts'][0]['text'])
+        self.client.request.assert_not_awaited()
+        self.event(first,'intent');self.event(first,'ack')
+
+        scope = KnowledgeScope(server='jp')
+        chunk = EvidenceChunkV1('on-09-score','0'*64,1,'score#1','1'*64,
+            '|JUST|区间JUST数量|区间得分，再比较PERFECT数量|',(),
+            Applicability('current',None,None,None,'工程范围'),'reviewed_analysis',(),('jp',))
+        knowledge = Mock()
+        self.backend.knowledge = knowledge
+        knowledge.retrieve.return_value = SimpleNamespace(code='ok',lease=EvidenceLease('fixture',scope,(chunk,)))
+        knowledge.prepare_evidence.return_value = {'passages':[{'text':chunk.text}]}
+        knowledge.validate_current.return_value = True
+        args = json.dumps(dict(server='jp',date=None,version=None))
+        self.client.request.side_effect = [
+            self.result(calls=(ToolCall('approved','knowledge_search',args),)),
+            self.result('区间先比 JUST 数，再比区间得分和 PERFECT 数。'),
+        ]
+        plan,attempts = await self.prepare_native('/聊 区间计分',seq=2)
+        self.assertEqual(len(attempts),2)
+        self.assertEqual(plan['parts'][0]['business_status'],'success')
+        self.assertIn('激奏区间怎样比较',knowledge.retrieve.call_args.kwargs['focus_query'])
+
+    async def test_just_card_comparison_waits_for_identity_and_levels_and_filters_other_cards(self):
+        from types import SimpleNamespace
+        from ournotes_bot.domain.knowledge import Applicability,EvidenceChunkV1,EvidenceLease,KnowledgeScope
+        from ournotes_bot.domain.model_calls import ToolCall
+
+        first,attempts = await self.prepare_native('/聊 判卡满破了是变宽还是变久？')
+        self.assertEqual(attempts,[])
+        self.assertIn('卡名或 ID',first['parts'][0]['text'])
+        self.assertIn('技能从几级到几级',first['parts'][0]['text'])
+        self.event(first,'intent');self.event(first,'ack')
+
+        scope = KnowledgeScope(server='jp')
+        applicable = Applicability('current',None,None,None,'工程范围')
+        wrong = EvidenceChunkV1('jp110-just-support-levels','0'*64,1,'skill#1','1'*64,
+            '留影54的固定持续配置，合成数据。',(),applicable,'reviewed_analysis',(),('jp',))
+        correct = replace(wrong,chunk_id='skill#2',text='留影31的固定持续配置，合成数据。')
+        knowledge = Mock()
+        self.backend.knowledge = knowledge
+        knowledge.retrieve.return_value = SimpleNamespace(code='ok',lease=EvidenceLease('fixture',scope,(wrong,correct)))
+        knowledge.prepare_evidence.return_value = {'passages':[{'text':correct.text}]}
+        knowledge.validate_current.return_value = True
+        args = json.dumps(dict(server='jp',date=None,version=None))
+        self.client.request.side_effect = [
+            self.result(calls=(ToolCall('approved','knowledge_search',args),)),
+            self.result('这张留影只查到持续配置，范围还缺资料。'),
+        ]
+        plan,attempts = await self.prepare_native('/聊 留影31 技能Lv4到Lv5',seq=2)
+        self.assertEqual(len(attempts),2)
+        self.assertEqual(plan['parts'][0]['business_status'],'success')
+        self.assertIn('留影31',knowledge.retrieve.call_args.kwargs['focus_query'])
+        self.assertEqual(knowledge.prepare_evidence.call_args.args[0].chunks,(correct,))
+
+    async def test_unverified_just_and_story_answers_are_not_published(self):
+        self.client.request.return_value=self.result('未经核对的工程答案。')
+        from test_platform_boundary import StoryPublicationTests
+        fixture=StoryPublicationTests();fixture.setUp();self.addCleanup(fixture.doCleanups)
+        fixture.publish()
+        self.backend.model_runtime.agent.story=fixture.service
+        for seq,question in enumerate(('JUST 扩窗怎么叠','海希什么关系'),1):
+            with self.subTest(question=question):
+                plan,attempts=await self.prepare_native('/聊 '+question,seq=seq)
+                self.assertEqual(len(attempts),1)
+                self.assertEqual(plan['parts'][0]['business_status'],'source_unavailable')
+                self.assertNotIn('未经核对',plan['parts'][0]['text'])
+                self.event(plan,'intent');self.event(plan,'ack')
+
     async def test_on_mechanic_definition_accepts_an_approved_numeric_pity_rule(self):
         from types import SimpleNamespace
         from ournotes_bot.domain.knowledge import Applicability,EvidenceChunkV1,EvidenceLease,KnowledgeScope
@@ -6421,6 +6538,69 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
         old_detail=self.backend.admin.view(self.backend.ledger.request(plan['request_id']),detail=True)
         self.assertEqual([item['attempt_id'] for item in old_detail['model_attempts']],attempts)
 
+    async def test_lightweight_mechanic_opinion_after_image_and_explicit_evidence_guard(self):
+        from ournotes_bot.application.backend_protocol import Request
+        from ournotes_bot.sources.chat_images import ImageCache
+
+        self.agent.images = ImageCache(wall_clock=lambda: self.now)
+
+        picture = self.proactive_picture()
+        self.snapshot = replace(self.snapshot, profile=replace(self.snapshot.profile,
+            model='gpt-6.1-terra', max_input_tokens=32768, max_output_tokens=4096))
+        self.policy = replace(self.policy, proactive=replace(self.policy.proactive,
+            max_cost_micro_per_day=2_000_000))
+        self.agent.services.policy.return_value = self.policy
+        self.agent.proactive.lightweight_groups = frozenset({'g1'})
+        for seq, question in enumerate((
+            'JUST 怎么算', '到底要几张满破判定卡？',
+            '我觉得 JUST 最吃卡，但实际要几张满破判定卡',
+            '我觉得满破判定卡挺有用，但至少需要三张吗',
+            '海希什么关系',
+        ), 1):
+            with self.subTest(question=question):
+                self.now += 11
+                value = self.observation(question, seq=seq)
+                request = Request.parse(value, 'fixture', 'app', self.now)
+                self.assertIsNone(self.agent.proactive.candidate(request))
+                event = self.backend.diagnostics.group_events('g1')[-1]
+                self.assertEqual(event['data']['status'], 'chat_service_lightweight_evidence_required')
+        self.client.request.assert_not_awaited()
+
+        self.now += 1
+        self.observation('', seq=6, attachments=picture)
+        self.now += 1
+        self.observation('这句在最后一张图之前', seq=7)
+        self.now += 1
+        self.observation('', seq=8, attachments=picture)
+        self.now += 1
+        first = self.observation('我觉得just挺吃卡', seq=9)
+        self.now += 1
+        second = self.observation('必须要几张满破判卡 不然就靠手硬凹', seq=10)
+        self.tick += 1.6
+
+        wire = []
+        def respond(profile, body, **kwargs):
+            wire.append(json.loads(json.dumps(body)))
+            if len(wire) == 1:
+                return self.result('{"participation":"reply","text":"","delay_seconds":null}')
+            return self.result('卡不够的时候，手就得来加班了。')
+
+        self.client.request.side_effect = respond
+        plan, attempts, _ = await self.candidate(second)
+        self.assertTrue(plan['send_allowed'])
+        self.assertEqual(len(attempts), 2)
+        self.agent.image_loader.load_many.assert_not_awaited()
+        for body in wire:
+            self.assertNotIn('tools', body)
+            self.assertIn('当前句必须能独立于图片理解', body['input'][0]['content'])
+            rows = [json.loads(item['content']) for item in body['input'][1:]]
+            self.assertEqual([row['message_id'] for row in rows], [first['message_id'], second['message_id']])
+            self.assertTrue(all('image_attachments' not in row for row in rows))
+        events = self.backend.diagnostics.read(plan['request_id'])['chat_events']
+        self.assertIn(('control', 'lightweight_initial', 'reply'),
+                      [(event['kind'], event['data'].get('status'), event['data'].get('decision')) for event in events])
+        self.assertEqual([event['data']['decision'] for event in events if event['kind'] == 'decision'], ['reply'])
+
     async def test_old_uncertain_cost_allows_lightweight_reply_with_current_day_capacity(self):
         from ournotes_bot.application.chat_jobs import lightweight_minimum_cost_micro, maximum_cost_micro, service_request_id
         from ournotes_bot.domain.model_calls import Usage
@@ -6435,6 +6615,7 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
             max_cost_micro_per_hour=800_000, max_cost_micro_per_day=2_500_000))
         self.agent.services.policy.return_value = self.policy
         self.agent.service_budget.clock = lambda: self.now
+        self.agent.store.clock = lambda: self.now
         usage = self.backend.model_runtime.usage
         user = usage.key('service','fixture','app','g1','approved-group-service','proactive')
         group = usage.key('group','g1')

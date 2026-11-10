@@ -33,7 +33,7 @@ def rewrite(query,aliases):
     return value,trace
 
 
-def search_scenes(bundle:StoryBundle,query,filters=None,*,limit=6,excluded_sources=()):
+def search_scenes(bundle:StoryBundle,query,filters=None,*,limit=6,excluded_sources=(),facts_only=False):
     require(isinstance(query,str) and 0<len(query.strip())<=300,'story_query')
     require(type(limit) is int and 1<=limit<=10,'story_limit')
     filters={} if filters is None else filters
@@ -46,6 +46,9 @@ def search_scenes(bundle:StoryBundle,query,filters=None,*,limit=6,excluded_sourc
     for scene in bundle.scenes:
         source=sources[scene.source_id]
         if scene.source_id in excluded:continue
+        # The published expression namespace contains original dialogue
+        # examples. Those examples are useful for tone, never story evidence.
+        if facts_only and scene.scene_id.startswith('taki-expression-guide-'):continue
         match_values={'work':source.work,'source_kind':source.source_kind,'source_id':source.source_id,'chapter':scene.chapter}
         if any(normalized(value)!=normalized(match_values[key]) for key,value in filters.items() if key!='character'):continue
         if 'character' in filters:
@@ -58,10 +61,16 @@ def search_scenes(bundle:StoryBundle,query,filters=None,*,limit=6,excluded_sourc
         words=terms(haystack)
         score=sum(min(count,words[term])*(2 if len(term)>2 else 1) for term,count in needles.items())
         if rewritten in normalized(haystack):score+=8
-        if score:scored.append((score,scene.scene_id,scene))
-    scored.sort(key=lambda row:(-row[0],row[1]))
+        if score:
+            if facts_only:
+                titles = re.split(r'[／/｜|]', scene.title.split('｜',1)[0])
+                if any(len(title.strip())>=2 and normalized(title.strip()) in rewritten for title in titles):
+                    score+=8
+            source_priority = {'official_original': 0, 'official_summary': 1}.get(source.source_kind, 2) if facts_only else 0
+            scored.append((score,source_priority,scene.scene_id,scene))
+    scored.sort(key=lambda row:(-row[0],row[1],row[2]))
     return {'query_rewrites':trace,'rewritten_query':rewritten,'total_matches':len(scored),
-            'truncated':len(scored)>limit,'scenes':[row[2] for row in scored[:limit]]}
+            'truncated':len(scored)>limit,'scenes':[row[3] for row in scored[:limit]]}
 
 
 def scene_data(scene,source):
