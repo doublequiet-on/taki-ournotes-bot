@@ -16,7 +16,7 @@ from deploy.linux_backend import (GIB, JOBS, LinuxBackend, Rejected, Deferred,
                                  extract_archive, fingerprints, tree_digest)
 from deploy.linux_backend import environment_digest, recover_engine, validate_config
 from deploy.linux_backend import run_bounded, freeze_release, status_document, human_status, main
-from deploy.linux_backend import knowledge_bundle_spec, backup_file_budget
+from deploy.linux_backend import knowledge_bundle_spec, backup_file_budget, offline_ci_artifact_name
 from deploy.linux_updater import Engine, Release, RunResult, atomic_json
 
 
@@ -1203,7 +1203,51 @@ class LinuxBackendTests(unittest.TestCase):
                 self.backend.verify_compatibility(self.baseline, candidate)
         self.assertFalse(self.calls)
 
+    def test_offline_ci_reuse_requires_a_published_run_and_exact_archive_proof(self):
+        runs, jobs = self.ci_rows()
+        publish = dict(name="publish-linux-bundle", head_sha=B, run_id=123,
+                       status="completed", conclusion="success")
+        knowledge = {"resolved_spec": {"sha256": "d" * 64}}
+        bundle_hash = "f" * 64
+        name = offline_ci_artifact_name(bundle_hash, "d" * 64)
+        artifact = dict(name=name, expired=False, workflow_run=dict(id=123, head_sha=B, head_branch="main"))
+        result = dict(total_count=1, artifacts=[artifact])
+        with patch.object(self.backend, "_json", side_effect=[runs, jobs, result]) as api:
+            self.backend.check_ci(B)
+            self.assertIsNone(self.backend._offline_ci_run(B, bundle_hash, knowledge))
+            self.assertEqual(api.call_count, 2)
+
+        jobs["jobs"].append(publish)
+        with patch.object(self.backend, "_json", side_effect=[runs, jobs, result]) as api:
+            self.backend.check_ci(B)
+            self.assertIsNone(self.backend._offline_ci_run(A, bundle_hash, knowledge))
+            self.assertIsNone(self.backend._offline_ci_run(B, bundle_hash, None))
+            self.assertEqual(self.backend._offline_ci_run(B, bundle_hash, knowledge), 123)
+            self.assertTrue(api.call_args.args[0].endswith(f"/actions/runs/123/artifacts?name={name}&per_page=2"))
+
+        invalid_proofs = [
+            dict(total_count=0, artifacts=[]),
+            dict(total_count=2, artifacts=[artifact, artifact]),
+            dict(total_count=1, artifacts=[dict(artifact, expired=True)]),
+            dict(total_count=1, artifacts=[dict(artifact, workflow_run=dict(id=456, head_sha=B, head_branch="main"))]),
+            dict(total_count=1, artifacts=[dict(artifact, workflow_run=dict(id=123, head_sha=A, head_branch="main"))]),
+        ]
+        for proof in invalid_proofs:
+            with self.subTest(proof=proof), patch.object(self.backend, "_json", return_value=proof):
+                self.assertIsNone(self.backend._offline_ci_run(B, bundle_hash, knowledge))
+        with patch.object(self.backend, "_json", return_value=result):
+            self.assertIsNone(self.backend._offline_ci_run(B, "e" * 64, knowledge))
+            self.assertIsNone(self.backend._offline_ci_run(B, bundle_hash, {"resolved_spec": {"sha256": "e" * 64}}))
+        with patch.object(self.backend, "_json", side_effect=Deferred("github_unavailable")):
+            self.assertIsNone(self.backend._offline_ci_run(B, bundle_hash, knowledge))
+
     def test_candidate_preparation_keeps_install_offline_and_prepares_note_cache_before_freeze(self):
+        self._check_candidate_preparation()
+
+    def test_candidate_with_ci_proof_skips_only_duplicate_test_suite(self):
+        self._check_candidate_preparation(offline_ci_run=123)
+
+    def _check_candidate_preparation(self, offline_ci_run=None):
         self.state(transaction=dict(phase="preparing", commit=B, previous=asdict(self.baseline), candidate=None))
         self.backend.current_release = lambda: self.baseline
         def unpack(archive, payload, commit, expected):
@@ -1222,9 +1266,17 @@ class LinuxBackendTests(unittest.TestCase):
                 patch('deploy.linux_backend.unpack_bundle', side_effect=unpack), \
                 patch('deploy.linux_backend.extract_archive', side_effect=extract), \
                 patch('deploy.linux_backend.freeze_release'), \
-                patch.object(self.backend, '_check_reviewed_fingerprints'), \
+                patch.object(self.backend, '_check_reviewed_fingerprints') as compatibility, \
+                patch.object(self.backend, '_offline_ci_run', return_value=offline_ci_run), \
                 patch.object(self.backend, '_sandbox') as sandbox:
             release = self.backend.prepare(B)
+        compatibility.assert_called_once_with(self.baseline, release)
+        stages = [call.args[2] for call in sandbox.call_args_list]
+        expected = ['venv', 'install', 'installed', 'dependencies', 'help', 'wheel', 'sdist', 'artifacts',
+                    'note-assets', 'query-assets']
+        if offline_ci_run is None:
+            expected.insert(4, 'tests')
+        self.assertEqual(stages, expected)
         note_step = next(call for call in sandbox.call_args_list if call.args[2] == 'note-assets')
         self.assertEqual(note_step.kwargs, {'offline': False, 'note_cache': True})
         self.assertEqual(note_step.args[1][-2:], ['--cache-dir', str(self.base / 'data/game-assets')])
@@ -1238,7 +1290,11 @@ class LinuxBackendTests(unittest.TestCase):
             self.assertIn(option, install)
         self.assertNotIn('-e', install)
         self.assertEqual(release.commit, B)
-        self.assertEqual(json.loads((self.backend.manifests / (B + '.json')).read_text())['bundle_sha256'], 'f' * 64)
+        manifest = json.loads((self.backend.manifests / (B + '.json')).read_text())
+        self.assertEqual(manifest['bundle_sha256'], 'f' * 64)
+        validation = ({"source": "host"} if offline_ci_run is None else
+                      {"source": "github_actions", "run_id": offline_ci_run})
+        self.assertEqual(manifest['offline_validation'], validation)
 
     def test_interrupted_transient_units_stop_before_another_candidate(self):
         self.candidate()
