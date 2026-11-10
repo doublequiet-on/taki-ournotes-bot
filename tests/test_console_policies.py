@@ -2733,6 +2733,74 @@ class ChatAgentTests(Fixture, unittest.IsolatedAsyncioTestCase):
         self.assertIn('200 抽',plan['parts'][0]['text'])
         self.assertNotIn('777',plan['parts'][0]['text'])
 
+    async def test_on_mechanic_keeps_adjacent_number_and_condition_in_source_order(self):
+        from types import SimpleNamespace
+        from ournotes_bot.domain.knowledge import Applicability,EvidenceLease,KnowledgeScope
+        from ournotes_bot.domain.model_calls import ToolCall
+        from ournotes_bot.query.knowledge_retrieval import CHUNK_CHARS,split_document
+
+        heading = '## 国际服抽卡保底'
+        width = CHUNK_CHARS - len(heading) - 2
+        background_text = '这里说明示例规则的背景。'.ljust(width, '甲')
+        number_text = '累计达到 200 抽可兑换。'.ljust(width, '乙')
+        body = (f'{heading}\n{background_text}\n{number_text}\n'
+                f'仅限当期卡池，点数不跨期。\n{heading}\n另一种规则：仅限其他卡池。')
+        doc = SimpleNamespace(id='mechanic',content_sha256='0'*64,body=body,sources=(),
+            applicability=Applicability('current',None,None,None,''),evidence_type='official',
+            limitations=(),servers=('intl',))
+        chunks = tuple(split_document(doc,SimpleNamespace(approval_revision=1)))
+        number = next(chunk for chunk in chunks if '200 抽' in chunk.text)
+        condition = next(chunk for chunk in chunks if '点数不跨期' in chunk.text)
+        other = next(chunk for chunk in chunks if '其他卡池' in chunk.text)
+        background = chunks[0]
+        self.assertEqual(len({background,number,condition}),3)
+        knowledge = Mock()
+        self.backend.knowledge = knowledge
+        knowledge.retrieve.return_value = SimpleNamespace(code='ok',
+            lease=EvidenceLease('fixture',KnowledgeScope(server='intl'),(background,other,condition,number)))
+        knowledge.prepare_evidence.return_value = {'passages':[]}
+        knowledge.validate_current.return_value = True
+        args = json.dumps(dict(server='intl',date=None,version=None))
+        self.client.request.return_value = self.result(calls=(ToolCall('approved','knowledge_search',args),))
+        plan, attempts = await self.prepare_native('/聊 Our Notes 国际服抽卡保底多少抽？有什么限制？')
+        text = plan['parts'][0]['text']
+        self.assertEqual(len(attempts),1)
+        self.assertEqual(plan['parts'][0]['business_status'],'success')
+        self.assertIn('200 抽',text)
+        self.assertIn('仅限当期卡池，点数不跨期',text)
+        self.assertLess(text.index('200 抽'),text.index('仅限当期卡池'))
+        self.assertEqual(text.count(heading),1)
+        self.assertNotIn('其他卡池',text)
+
+    async def test_on_mechanic_does_not_fill_a_missing_condition_from_another_section(self):
+        from types import SimpleNamespace
+        from ournotes_bot.domain.knowledge import Applicability,EvidenceLease,KnowledgeScope
+        from ournotes_bot.domain.model_calls import ToolCall
+        from ournotes_bot.query.knowledge_retrieval import split_document
+
+        body = ('## 国际服抽卡保底\n累计达到 200 抽可兑换。\n'
+                '## 国际服抽卡保底\n仅限另一类卡池。')
+        doc = SimpleNamespace(id='mechanic',content_sha256='0'*64,body=body,sources=(),
+            applicability=Applicability('current',None,None,None,''),evidence_type='official',
+            limitations=(),servers=('intl',))
+        chunks = tuple(split_document(doc,SimpleNamespace(approval_revision=1)))
+        knowledge = Mock()
+        self.backend.knowledge = knowledge
+        knowledge.retrieve.return_value = SimpleNamespace(code='ok',
+            lease=EvidenceLease('fixture',KnowledgeScope(server='intl'),chunks))
+        knowledge.prepare_evidence.return_value = {'passages':[]}
+        knowledge.validate_current.return_value = True
+        args = json.dumps(dict(server='intl',date=None,version=None))
+        guessed = self.result('保底是 777 抽，所有卡池都可以。')
+        self.client.request.side_effect = [
+            self.result(calls=(ToolCall('approved','knowledge_search',args),)),guessed,guessed,
+        ]
+        plan, attempts = await self.prepare_native('/聊 Our Notes 国际服抽卡保底多少抽？有什么限制？')
+        self.assertEqual(len(attempts),3)
+        self.assertEqual(plan['parts'][0]['business_status'],'source_unavailable')
+        self.assertNotIn('777',plan['parts'][0]['text'])
+        self.assertNotIn('另一类卡池',plan['parts'][0]['text'])
+
     async def test_invalid_transport_metadata_does_not_override_known_billing_or_answer(self):
         answer=self.client.request.return_value
         async def provider(*args,transport,**kwargs):

@@ -102,10 +102,68 @@ def guarded_mechanic(question):
     return field.group(), subsystem
 
 
-def matching_mechanic_passage(leases, mechanic):
+_MECHANIC_CHUNK = re.compile(r'(.+:s\d+):p([1-9]\d*):[0-9a-f]{16}')
+_MECHANIC_HEADING = re.compile(r'(?:#{1,4} [^\n]*\n)+')
+_MECHANIC_QUANTITY = re.compile(r'(?:多少|几)\s*(分钟|抽|次|分|点|倍|秒|张|个)|多少|多大|多高')
+_MECHANIC_NUMBER = r'(?:\d+(?:[.,]\d+)*|[零〇一二两三四五六七八九十百千万点]+)'
+_MECHANIC_CONDITION_QUESTION = re.compile(r'条件|限制|适用|前提|什么情况|什么时候|(?:能|可|会)否|跨期|跨池|继承')
+_MECHANIC_CONDITION = re.compile(r'仅限|只(?:能|在|限)|才|必须|须|限于|适用于|不能|不(?:跨|继承|计入|累计)|(?:达到|满足).+后|(?:各|每)(?:期|个卡池).+单独')
+_MECHANIC_RULE = re.compile(r'为(?!了)|等于|是指|指的是|达到|累计|触发|兑换|判定为|计为|按.+(?:计算|计分)|[=×÷]')
+_PITY_THRESHOLD = re.compile(r'必(?:出|得)|保证|触发|兑(?:换|取)|交换|换取|(?:次数|阈值|标准)[:：]')
+
+
+def _mechanic_passage_covers(text, body, mechanic, question):
     field, subsystem = mechanic
-    return next((chunk.text for lease in leases for chunk in lease.chunks
-                 if field in chunk.text and (subsystem is None or subsystem in chunk.text)), '')
+    if field not in text or (subsystem is not None and subsystem not in text):
+        return False
+    if _MECHANIC_CONDITION_QUESTION.search(question) and not _MECHANIC_CONDITION.search(body):
+        return False
+    quantity = _MECHANIC_QUANTITY.search(question)
+    if quantity:
+        units = quantity[1] or {
+            '保底': '(?:连)?抽|次', '掉率': '%|％', '出货率': '%|％',
+            '概率': '%|％', '倍率': '倍|%|％',
+        }.get(field)
+        number = _MECHANIC_NUMBER
+        if units:
+            number += rf'\s*(?:{units})'
+        if field in ('掉率','出货率','概率') and not quantity[1]:
+            number = rf'(?:{number}|百分之\s*{_MECHANIC_NUMBER})'
+        rule = _PITY_THRESHOLD if field == '保底' else _MECHANIC_RULE
+        return any(re.search(number, clause) and (field in clause or rule.search(clause))
+                   for clause in re.split(r'[。；;\n!?！？]', body))
+    if field == '公式':
+        return bool(re.search(r'[=×÷]|乘以|除以|相加|加权|取整', body))
+    return bool(_MECHANIC_RULE.search(body) or _MECHANIC_CONDITION.search(body))
+
+
+def matching_mechanic_passage(leases, mechanic, question):
+    question = unicodedata.normalize('NFKC', question)
+    for lease in leases:
+        sections = {}
+        for chunk in lease.chunks:
+            match = _MECHANIC_CHUNK.fullmatch(chunk.chunk_id)
+            section, part = (match[1], int(match[2])) if match else (chunk.chunk_id, 1)
+            sections.setdefault((chunk.key, section), {})[part] = chunk.text
+        for parts in sections.values():
+            # Ranked evidence can arrive in reverse order or with gaps.
+            # Join only consecutive members of the same approved section.
+            runs = []
+            previous = 0
+            for part, text in sorted(parts.items()):
+                if not runs or part != previous + 1:
+                    runs.append([])
+                runs[-1].append(text)
+                previous = part
+            for run in runs:
+                heading = _MECHANIC_HEADING.match(run[0])
+                prefix = heading[0] if heading else ''
+                body = ''.join(text.removeprefix(prefix) for text in run)
+                passage = prefix + body
+                if _mechanic_passage_covers(unicodedata.normalize('NFKC', passage),
+                                           unicodedata.normalize('NFKC', body), mechanic, question):
+                    return passage.strip()
+    return ''
 
 
 def research_tools():
@@ -1072,8 +1130,10 @@ class ChatAgent:
                             if (mechanic and not mechanic_passage and knowledge_scope is not None
                                     and knowledge_scope.server==mechanic_server
                                     and not json.loads(call.arguments).get('followup')):
+                                scoped_leases = (knowledge_lease,) if knowledge_lease else knowledge_leases
                                 mechanic_passage = matching_mechanic_passage(
-                                    (knowledge_lease,) if knowledge_lease else knowledge_leases, mechanic)
+                                    (lease for lease in scoped_leases if lease.scope.server == mechanic_server),
+                                    mechanic, user_question)
                         if output['status'] in ('not_available','no_results','source_unavailable','empty'):
                             output['next_step']='用site_search查Haneoka的具体对象或相关公告，读详情后结合已有资料回答。'
                             tool_message['content']=json.dumps(output,ensure_ascii=False)
@@ -1110,7 +1170,7 @@ class ChatAgent:
                     messages.append(tool_message)
                     if image_input:messages.append(image_input)
                     if mechanic_passage:
-                        # The matching excerpt is the answer. No further model generation is needed.
+                        # The approved excerpt covers the requested details without synthesis.
                         region = {'jp':'日服','intl':'国际服','common':'各区服'}[mechanic_server]
                         text = quote_prefix + f'{region}已审核资料摘录\n{mechanic_passage}'
                         runtime.check(work,deadline,leases)
