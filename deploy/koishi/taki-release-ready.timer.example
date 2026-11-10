@@ -1,0 +1,11 @@
+[Unit]
+Description=Observe successful Taki main releases
+
+[Timer]
+OnBootSec=2min
+OnUnitInactiveSec=2min
+AccuracySec=5s
+Unit=taki-release-ready.service
+
+[Install]
+WantedBy=timers.target

@@ -63,6 +63,9 @@ class FakeBackend:
     def check_ci(self, commit):
         self._call("ci:" + commit)
 
+    def ready_successor(self, commit, blocked):
+        return None
+
     def prepare(self, commit):
         self._call("install:" + commit)
         self._call("tests:" + commit)
@@ -346,6 +349,20 @@ class LinuxUpdaterTests(unittest.TestCase):
         self.assertEqual(self.engine.run().status, "rejected")
         self.assertNotIn("stop", self.backend.calls)
         self.assertNotIn(B, self.engine.load_state().get("download_retries", {}))
+
+    def test_ready_newer_release_supersedes_before_backup_or_stop(self):
+        self.initialize()
+        self.backend.ready_successor = lambda current, blocked: C
+        result = self.engine.run()
+        self.assertEqual(result, u.RunResult("deferred", C, "candidate_superseded"))
+        state = self.engine.load_state()
+        self.assertEqual(state["current"]["commit"], A)
+        self.assertIsNone(state["transaction"])
+        self.assertNotIn(B, state["failed"])
+        self.assertTrue(self.backend.running)
+        self.assertNotIn("backup", self.backend.calls)
+        self.assertNotIn("stop", self.backend.calls)
+        self.assertEqual(state["events"][-1]["status"], "superseded")
 
     def test_success_records_known_good_only_after_health_and_preserves_backup(self):
         result = self.engine.run()
