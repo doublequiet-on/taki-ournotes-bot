@@ -8,4 +8,3 @@ Type=oneshot
 UMask=0077
 TimeoutStartSec=150
 ExecStart=/usr/bin/python3.12 -B /usr/local/lib/taki-updater/linux_backend.py --config /etc/taki-updater.json watch-ready
-

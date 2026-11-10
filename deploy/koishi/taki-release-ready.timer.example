@@ -9,4 +9,3 @@ Unit=taki-release-ready.service
 
 [Install]
 WantedBy=timers.target
-
