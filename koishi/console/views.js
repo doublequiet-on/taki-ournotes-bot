@@ -1,5 +1,5 @@
 import { groupChatView, lightweightStatus, proactiveSettings, proactiveStatus } from './chat.js';
-import { dailyCostSummary, executionView, riskObservation } from './costs.js';
+import { dailyCostSummary, executionView, proactiveBudgetObservation } from './costs.js';
 import { h } from './runtime.js';
 import { groupQuota } from './model.js';
 export const labels={processing:'处理中',complete:'平台确认全部发送',partial:'部分发送',failed:'已确认失败',uncertain:'发送结果不确定',closed_unsent:'已关闭，未确认发送',unknown:'未知'};
@@ -122,7 +122,7 @@ function groupSnapshot(s){
       h('p',{class:'selected-group-name'},label),
       h('p',{class:'field-note'},proactiveStatus(value)+' · 轻量纯文本 '+lightweightStatus(value)),
       s.proactiveReadError.value&&h('p',{class:'field-note'},'限额读取失败，以上状态可能已陈旧。'),
-      riskObservation(s,{compact:true}),
+      proactiveBudgetObservation(s,{compact:true}),
     ]):h('p','选择一个群后，可在这里核对该群的接话审批、轻量模式与最近风险观测。'),
   ]);
 }

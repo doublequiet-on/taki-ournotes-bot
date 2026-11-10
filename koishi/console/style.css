@@ -197,7 +197,7 @@
 .taki-console .icon-button { display: inline-grid; place-items: center; width: 44px; height: 44px; margin: 0; padding: 0; border-color: transparent; }
 .taki-console .menu-button, .taki-console .drawer-scrim, .taki-console .inspector-scrim { display: none; }
 .taki-console .page-panel { max-width: 1460px; margin: 0 auto; padding: 28px 28px 52px; }
-.taki-console .page-heading, .taki-console .card-heading, .taki-console .card-foot, .taki-console .risk-heading {
+.taki-console .page-heading, .taki-console .card-heading, .taki-console .card-foot, .taki-console .proactive-budget-heading {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -239,7 +239,7 @@
 .taki-console .summary-rows dt { flex: none; color: var(--muted); }
 .taki-console .summary-rows dd { text-align: end; font-weight: 650; }
 .taki-console .metric-focus { display: grid; gap: 2px; }
-.taki-console .metric-focus strong, .taki-console .risk-value { display: block; font-size: 20px; font-variant-numeric: tabular-nums; }
+.taki-console .metric-focus strong, .taki-console .proactive-budget-value { display: block; font-size: 20px; font-variant-numeric: tabular-nums; }
 .taki-console .selected-group-name { font-weight: 700; }
 .taki-console .overview-stats { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap: 12px; margin-bottom: 14px; }
 .taki-console .overview-stat { display: grid; gap: 4px; align-content: start; margin: 0; padding: 14px; }
@@ -315,10 +315,10 @@
   .taki-console .approval-grid { grid-template-columns: repeat(4,minmax(0,1fr)); }
 }
 .taki-console .approval-grid > div { display: grid; gap: 4px; justify-items: start; }
-.taki-console .risk-observation { padding: 12px; border-radius: 10px; background: var(--quiet); }
-.taki-console .risk-observation summary { min-height: 36px; padding: 8px 0 0; font-size: 12px; }
-.taki-console .risk-observation p:last-child { margin-bottom: 0; }
-.taki-console .risk-value { margin: 4px 0; }
+.taki-console .proactive-budget-observation { padding: 12px; border-radius: 10px; background: var(--quiet); }
+.taki-console .proactive-budget-observation summary { min-height: 36px; padding: 8px 0 0; font-size: 12px; }
+.taki-console .proactive-budget-observation p:last-child { margin-bottom: 0; }
+.taki-console .proactive-budget-value { margin: 4px 0; }
 .taki-console .quota-actions { margin-inline: -8px; padding: 9px 8px; background: var(--paper); }
 .taki-console .quota-actions.is-active { position: sticky; bottom: 0; z-index: 2; }
 
