@@ -17,9 +17,15 @@ Checks 的 `offline-linux-bundle` 在 Ubuntu 24.04 / Python 3.12 从完整提交
 - 标签：`linux-<40位提交号>`，直接指向该提交。
 - 文件：`taki-linux-x86_64-cp312.zip`、`taki-koishi-linux-x64.zip`、`taki-knowledge-linux-x86_64-cp312.zip`。三者绑定同一提交；组合还绑定 Python 归档摘要。
 - 重跑只接受相同标签及相同资产摘要，不覆盖已发布内容；这不是对 GitHub 仓库管理员的不可变性保证。
-- PR 和其他分支只生成有保留期限的 CI artifact，不发布 Release。
+- PR 生成有保留期限的 CI artifact。向普通分支推送由 PR 触发检查，main 推送另外执行该提交的发布检查。
 
 服务器校验 main 的精确 Checks、标签指向、GitHub 资产摘要、包内提交号／平台／逐文件摘要。下载首次成功后缓存；首次取得的摘要也会保留，用于拒绝同一提交的资产被替换。缓存损坏会拒绝更新，不以删除锁定摘要绕过检查。最多保留三个已验证归档；回退版本和环境由原有独立保留策略保护。
+
+## 生产准备复用 CI 的断网回归
+
+断网全量测试成功后，CI 用 Python 包和知识依赖包的 SHA256 生成 Actions artifact 名称。组合构建和发布任务从同一运行下载该 artifact。受信更新器核对精确提交的成功发布任务，并按实际校验过的两个下载包摘要查询同一运行的 artifact。仅在名称、运行、提交和有效期都吻合时复用全量回归，候选清单的 `offline_validation` 记录来源和运行编号。基础包单独安装，或者证据缺失、过期、查询失败、摘要不匹配时，服务器执行全量回归。
+
+生产机仍执行断网安装、依赖和资源检查、包构建、兼容性和素材检查、Koishi probe、备份与双进程健康验收。提速需要单独审核并安装受信 `linux_backend.py`。应用发布仍通过既有事务切换和回退。
 
 ## 已审核知识依赖附加包
 
@@ -35,7 +41,7 @@ python -B scripts/build_knowledge_bundle.py --commit <应用完整SHA> --wheelho
 
 人工固定模式的 `knowledge_bundle` 对象字段为 `commit`（40位应用提交号）及 `sha256`（附加包摘要）。审核后的ZIP预先存入root管理的 `<state_dir>/knowledge-bundles/<commit>.zip`。没有该配置时沿用基础安装；配置存在而提交不匹配、包缺失或改动时拒绝候选，不能静默跳过。
 
-控制器检查根所有权、路径、外层摘要、平台、提交、成员清单、锁与每个wheel的对应关系；三个直接依赖还必须与候选pyproject的knowledge声明一致；与基础锁重叠的分发名必须具有相同版本和wheel摘要，不能覆盖基础环境的既定版本。随后在原断网、非root、限资源沙箱执行 `pip install --no-index --find-links ... --require-hashes --no-deps`，导入并核定版本，继续原安装检查、pip check、测试、兼容与素材门禁，最后才冻结环境，记录附加包身份和完整环境摘要。
+控制器检查根所有权、路径、外层摘要、平台、提交、成员清单、锁与每个wheel的对应关系；三个直接依赖还必须与候选pyproject的knowledge声明一致；与基础锁重叠的分发名必须具有相同版本和wheel摘要，不能覆盖基础环境的既定版本。随后在原断网、非root、限资源沙箱执行 `pip install --no-index --find-links ... --require-hashes --no-deps`，导入并核定版本，继续安装检查、pip check、回归验收、兼容与素材门禁，最后才冻结环境，记录附加包身份和完整环境摘要。
 
 ONNX Runtime初始化需要CPU信息。启用附加包的沙箱把宿主 `/proc` 替换为空的只读tmpfs，仅挂载控制器保存在root私有目录中的只读 `/proc/cpuinfo` 快照，不暴露宿主PID、environ、fd、maps或mountinfo。凭证隐藏、PrivateNetwork、User和资源限制保持原设置。未配置附加包时继续完整隐藏/proc。真实导入和进程信息不可见性需一起验收。
 

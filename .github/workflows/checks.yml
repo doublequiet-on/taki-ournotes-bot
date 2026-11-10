@@ -2,6 +2,7 @@ name: Checks
 
 on:
   push:
+    branches: [main]
   pull_request:
 
 permissions:
@@ -97,6 +98,8 @@ jobs:
 
   offline-linux-bundle:
     runs-on: ubuntu-24.04
+    outputs:
+      artifact_name: ${{ steps.offline-tests.outputs.artifact_name }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -113,14 +116,16 @@ jobs:
           python -m pip download --require-hashes --no-deps --only-binary=:all: -r deploy/linux-knowledge-cp312.lock -d "$RUNNER_TEMP/knowledge-wheels"
           python scripts/build_knowledge_bundle.py --commit "$GITHUB_SHA" --wheelhouse "$RUNNER_TEMP/knowledge-wheels" --output "$RUNNER_TEMP/offline-release/taki-knowledge-linux-x86_64-cp312.zip"
       - name: Prove installation and regression with networking disabled
+        id: offline-tests
         run: |
           # Local authenticated HTTP fixtures need lo; the namespace still has no external interface.
           sudo unshare --net -- /bin/bash -c 'set -e; ip link set lo up; exec "$@"' -- "$(command -v python)" scripts/check_offline_release.py \
             "$RUNNER_TEMP/offline-release/taki-linux-x86_64-cp312.zip" "$(git rev-parse HEAD)" \
-            --knowledge "$RUNNER_TEMP/offline-release/taki-knowledge-linux-x86_64-cp312.zip"
+            --knowledge "$RUNNER_TEMP/offline-release/taki-knowledge-linux-x86_64-cp312.zip" \
+            --github-output "$GITHUB_OUTPUT"
       - uses: actions/upload-artifact@v4
         with:
-          name: linux-offline-release
+          name: ${{ steps.offline-tests.outputs.artifact_name }}
           path: ${{ runner.temp }}/offline-release/
           if-no-files-found: error
           retention-days: 14
@@ -142,7 +147,7 @@ jobs:
           python-version: '3.12'
       - uses: actions/download-artifact@v4
         with:
-          name: linux-offline-release
+          name: ${{ needs.offline-linux-bundle.outputs.artifact_name }}
           path: ${{ runner.temp }}/python-release
       - name: Install pinned gateway dependencies without lifecycle scripts
         working-directory: koishi
@@ -178,7 +183,7 @@ jobs:
           python-version: '3.12'
       - uses: actions/download-artifact@v4
         with:
-          name: linux-offline-release
+          name: ${{ needs.offline-linux-bundle.outputs.artifact_name }}
           path: ${{ runner.temp }}/offline-release
       - uses: actions/download-artifact@v4
         with:

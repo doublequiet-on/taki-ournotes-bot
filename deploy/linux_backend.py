@@ -47,6 +47,12 @@ READY = re.compile(r"ournotes_bot\.qq\b.*机器人 .+ 已上线")
 ERROR = re.compile(r"\b(?:ERROR|CRITICAL|Traceback|ModuleNotFoundError|ImportError)\b")
 
 
+def offline_ci_artifact_name(bundle_hash: str, knowledge_hash: str) -> str:
+    """Identify the two exact Release archives exercised together by offline CI."""
+    tested = hashlib.sha256(f"{bundle_hash}\n{knowledge_hash}\n".encode("ascii")).hexdigest()
+    return "linux-offline-tested-v1-" + tested
+
+
 def backup_file_budget(config: dict) -> int:
     """Only backup tar files may opt into a larger, explicitly bounded budget."""
     value = config.get('backup_file_budget_bytes', 2 * GIB)
@@ -300,6 +306,7 @@ class LinuxBackend:
         self.health_seconds = int(config.get("health_seconds", 120))
         self.stable_seconds = int(config.get("stable_seconds", 20))
         self.started_at = None
+        self._published_ci_run: tuple[str, int] | None = None
         for folder in (self.manifests, self.logs, self.backups):
             folder.mkdir(mode=0o700, parents=True, exist_ok=True)
 
@@ -327,6 +334,7 @@ class LinuxBackend:
         return sha
 
     def check_ci(self, commit: str) -> None:
+        self._published_ci_run = None
         if not SHA_RE.fullmatch(commit):
             raise Rejected("invalid_commit")
         result = self._json(API + "/actions/workflows/checks.yml/runs?branch=main&event=push&head_sha=" + commit + "&per_page=100")
@@ -352,11 +360,38 @@ class LinuxBackend:
         required_jobs = JOBS | ({'koishi-combination'} if self.koishi else set())
         if not required_jobs.issubset(found):
             raise Rejected("ci_required_jobs_missing")
-        for name in required_jobs:
-            job = found[name]
-            if (job.get("head_sha") != commit or job.get("run_id") != run_id
-                    or job.get("status") != "completed" or job.get("conclusion") != "success"):
-                raise Rejected("ci_required_job_failed")
+
+        def succeeded(name):
+            job = found.get(name, {})
+            return (job.get("head_sha") == commit and job.get("run_id") == run_id
+                    and job.get("status") == "completed" and job.get("conclusion") == "success")
+
+        if not all(succeeded(name) for name in required_jobs):
+            raise Rejected("ci_required_job_failed")
+        if succeeded("publish-linux-bundle"):
+            self._published_ci_run = (commit, run_id)
+
+    def _offline_ci_run(self, commit: str, bundle_hash: str, knowledge) -> int | None:
+        # Keep the host tests for base-only installs and releases without exact CI evidence.
+        if self._published_ci_run is None or self._published_ci_run[0] != commit or knowledge is None:
+            return None
+        _, run_id = self._published_ci_run
+        name = offline_ci_artifact_name(bundle_hash, knowledge["resolved_spec"]["sha256"])
+        try:
+            result = self._json(API + f"/actions/runs/{run_id}/artifacts?name={name}&per_page=2")
+        except Deferred:
+            return None
+        artifacts = result.get("artifacts")
+        if result.get("total_count") != 1 or not isinstance(artifacts, list) or len(artifacts) != 1:
+            return None
+        artifact = artifacts[0]
+        if not isinstance(artifact, dict) or artifact.get("name") != name or artifact.get("expired") is not False:
+            return None
+        run = artifact.get("workflow_run")
+        if (isinstance(run, dict) and run.get("id") == run_id
+                and run.get("head_sha") == commit and run.get("head_branch") == "main"):
+            return run_id
+        return None
 
     def _manifest(self, release: Release) -> dict:
         if release == self.baseline:
@@ -526,7 +561,9 @@ class LinuxBackend:
                 'knowledge-imports', offline=True)
         self._sandbox(release, [python, "-I", "scripts/check_installed_query_upgrade.py"], "installed", offline=True)
         self._sandbox(release, [python, "-m", "pip", "check"], "dependencies", offline=True)
-        self._sandbox(release, [python, "-B", "-m", "unittest", "discover", "-s", "tests", "-q"], "tests", offline=True)
+        offline_ci_run = self._offline_ci_run(commit, bundle_hash, knowledge)
+        if offline_ci_run is None:
+            self._sandbox(release, [python, "-B", "-m", "unittest", "discover", "-s", "tests", "-q"], "tests", offline=True)
         self._sandbox(release, [python, "-B", "-m", "ournotes_bot.main", "--help"], "help", offline=True)
         self._sandbox(release, [python, "-m", "pip", "wheel", ".", "--no-deps", "--no-build-isolation", "-w", "dist"], "wheel", offline=True)
         self._sandbox(release, [python, "-c", "from setuptools.build_meta import build_sdist; build_sdist('dist')"], "sdist", offline=True)
@@ -539,6 +576,8 @@ class LinuxBackend:
         record = {"owner": "taki-linux-updater-v1", "release": asdict(release),
                     "digest": digest, "environment_digest": environment_digest(Path(release.venv_dir)),
                     "bundle_sha256": bundle_hash, "prepared": True}
+        record["offline_validation"] = ({"source": "github_actions", "run_id": offline_ci_run}
+                                        if offline_ci_run is not None else {"source": "host"})
         if knowledge is not None:
             record['knowledge_bundle'] = dict(knowledge.get('resolved_spec', knowledge_bundle_spec(self.config)), roots=knowledge['roots'])
         atomic_json(self.manifests / (commit + ".json"), record)
