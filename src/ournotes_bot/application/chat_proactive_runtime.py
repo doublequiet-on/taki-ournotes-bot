@@ -23,7 +23,7 @@ from .chat_jobs import (
 )
 from .proactive_chat import ProactiveController,ProactivePolicy
 from .chat_followup import Followups
-from .persona import chat_needs_evidence
+from .persona import lightweight_needs_evidence
 from . import replies
 
 
@@ -275,9 +275,11 @@ class ProactiveChat:
         lightweight = not continuation and self.uses_lightweight(request.conversation_id, profile, policy)
         if lightweight and (not request.body.strip() or request.attachments or request.reference
                             or request.quote_hint or request.quoted_text or replies.is_ai_request(request.body)
-                            or chat_needs_evidence(request.body)
                             or re.search(r'[a-z][a-z0-9+.-]*://|www\.', unicodedata.normalize('NFKC', request.body), re.I)):
             self.control_event(request,'chat_service_lightweight_skip')
+            return None
+        if lightweight and lightweight_needs_evidence(request.body):
+            self.control_event(request,'chat_service_lightweight_evidence_required')
             return None
         try:self.reconcile_costs(request,policy if not continuation else None)
         except (sqlite3.Error, ModelError, ServiceError, ValueError):
