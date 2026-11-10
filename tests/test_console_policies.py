@@ -8194,6 +8194,36 @@ class ChatServiceJobsTests(unittest.TestCase):
         self.budget.check(policy,'proactive',self.profile,self.request('proactive','new'),1)
 
 
+    def test_previous_day_unknown_uses_actual_start_for_hourly_window(self):
+        from ournotes_bot.application.chat_jobs import ServiceError
+        from ournotes_bot.domain.model_calls import Usage
+
+        midnight = 20000 * 86400 - 8 * 3600
+        self.now[0] = midnight - 3602
+        policy = self.save()
+        request = self.request('proactive', 'crosses-hour-cutoff')
+        permit = self.budget.check(policy, 'proactive', self.profile, request, 1)
+        self.ledger.reserve(request, 'previous', permit.user_key, permit.group_key, self.profile, 100)
+        self.now[0] = midnight - 3598
+        self.ledger.start('previous', self.profile)
+        self.ledger.settle('previous', Usage())
+        previous = self.ledger.get('previous')
+
+        policy = replace(policy, proactive=replace(policy.proactive,
+            max_cost_micro_per_hour=1, max_cost_micro_per_day=2_500_000))
+        next_request = self.request('proactive', 'next')
+        self.now[0] = midnight
+        with self.assertRaisesRegex(ServiceError, 'chat_service_cost_limit') as denied:
+            self.budget.check(policy, 'proactive', self.profile, next_request, 1)
+        fields = dict(denied.exception.budget_details)
+        self.assertGreater(fields['hour_unknown_micro'], 0)
+        self.assertEqual(fields['day_cost_micro'], 0)
+
+        self.now[0] = previous['started'] + 3600
+        available = self.budget.check(policy, 'proactive', self.profile, next_request, 1)
+        self.assertEqual(dict(available.budget_details)['hour_unknown_micro'], 0)
+        self.assertEqual(self.ledger.get('previous'), previous)
+
     def test_midnight_keeps_settled_unknown_on_original_day(self):
         from ournotes_bot.application.chat_jobs import ServiceError
         from ournotes_bot.domain.model_calls import Usage

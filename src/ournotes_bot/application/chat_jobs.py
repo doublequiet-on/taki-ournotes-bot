@@ -266,9 +266,10 @@ class ServiceBudget:
             # settled uncertainty stays on its billing day for later reconciliation.
             rows = self.usage.db.execute('''SELECT id,request_id,price,day,created,started,state,
                 reserved,cost,usage,billing_incomplete FROM attempts WHERE group_key=? AND request_id LIKE ?
-                AND (created>=? OR day=? OR state IN ('reserved','started') OR (? AND billing_incomplete=1))
-                ORDER BY created LIMIT 4097''', (group, prefix + '%', earliest, today if day_scoped else '',
-                                                not day_scoped)).fetchall()
+                AND ((CASE WHEN ? THEN COALESCE(started,created) ELSE created END)>=? OR day=?
+                     OR state IN ('reserved','started') OR (? AND billing_incomplete=1))
+                ORDER BY created LIMIT 4097''', (group, prefix + '%', day_scoped, earliest,
+                                                today if day_scoped else '', not day_scoped)).fetchall()
             _check(len(rows) <= 4096, 'chat_service_budget_capacity')
             _check(not self.usage.db.execute('''SELECT 1 FROM attempts a JOIN unbounded_actions u ON u.attempt=a.id
                 WHERE a.group_key=? AND a.request_id LIKE ? AND (u.count IS NULL OR u.count<>0) LIMIT 1''',(group,prefix+'%')).fetchone(),
