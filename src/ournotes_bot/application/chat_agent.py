@@ -119,19 +119,23 @@ def _mechanic_passage_covers(text, body, mechanic, question):
     if _MECHANIC_CONDITION_QUESTION.search(question) and not _MECHANIC_CONDITION.search(body):
         return False
     quantity = _MECHANIC_QUANTITY.search(question)
-    if quantity:
-        units = quantity[1] or {
+    if quantity or field == '保底':
+        asked_unit = quantity[1] if quantity else None
+        units = asked_unit or {
             '保底': '(?:连)?抽|次', '掉率': '%|％', '出货率': '%|％',
             '概率': '%|％', '倍率': '倍|%|％',
         }.get(field)
         number = _MECHANIC_NUMBER
         if units:
             number += rf'\s*(?:{units})'
-        if field in ('掉率','出货率','概率') and not quantity[1]:
+        if field in ('掉率','出货率','概率') and not asked_unit:
             number = rf'(?:{number}|百分之\s*{_MECHANIC_NUMBER})'
         rule = _PITY_THRESHOLD if field == '保底' else _MECHANIC_RULE
-        return any(re.search(number, clause) and (field in clause or rule.search(clause))
-                   for clause in re.split(r'[。；;\n!?！？]', body))
+        if any(re.search(number, clause) and (field in clause or rule.search(clause))
+               for clause in re.split(r'[。；;\n!?！？]', body)):
+            return True
+        if quantity:
+            return False
     if field == '公式':
         return bool(re.search(r'[=×÷]|乘以|除以|相加|加权|取整', body))
     return bool(_MECHANIC_RULE.search(body) or _MECHANIC_CONDITION.search(body))

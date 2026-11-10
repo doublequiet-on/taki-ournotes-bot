@@ -364,6 +364,51 @@ class LinuxUpdaterTests(unittest.TestCase):
         self.assertNotIn("stop", self.backend.calls)
         self.assertEqual(state["events"][-1]["status"], "superseded")
 
+    def test_consecutive_supersessions_run_retention_before_next_prepare(self):
+        self.initialize()
+        self.assertEqual(self.engine.run(), u.RunResult("updated", B))
+        self.backend.calls.clear()
+        d, e = "d" * 40, "e" * 40
+        self.backend.health[e] = True
+        successors = {C: d, d: e}
+        self.backend.ready_successor = lambda commit, blocked: successors.get(commit)
+
+        # One free candidate slot. Retention makes it reusable once the
+        # superseded transaction has been durably cleared.
+        staged = set()
+        prepare = self.backend.prepare
+        cleanup = self.backend.cleanup
+
+        def prepare_in_slot(commit):
+            if staged:
+                raise u.Rejected("insufficient_free_disk")
+            candidate = prepare(commit)
+            staged.add(candidate)
+            return candidate
+
+        def run_retention(protected):
+            self.assertIsNone(self.engine.load_state()["transaction"])
+            staged.intersection_update(protected)
+            cleanup(protected)
+
+        self.backend.prepare = prepare_in_slot
+        self.backend.cleanup = run_retention
+        for commit, newer in successors.items():
+            with self.subTest(commit=commit):
+                self.backend.remote = commit
+                self.assertEqual(self.engine.run(), u.RunResult("deferred", newer, "candidate_superseded"))
+                self.assertEqual(set(self.backend.protected), {release(A), release(B)})
+                self.assertEqual(self.engine.load_state()["failed"], {})
+                self.assertEqual(self.backend.current, release(B))
+        self.assertNotIn("backup", self.backend.calls)
+        self.assertNotIn("stop", self.backend.calls)
+        self.assertEqual(self.backend.calls.count("cleanup"), 2)
+
+        self.backend.remote = e
+        self.assertEqual(self.engine.run(), u.RunResult("updated", e))
+        self.assertEqual(set(self.backend.protected), {release(B), release(e)})
+        self.assertEqual(self.engine.load_state()["failed"], {})
+
     def test_success_records_known_good_only_after_health_and_preserves_backup(self):
         result = self.engine.run()
         self.assertEqual(result, u.RunResult("updated", B))

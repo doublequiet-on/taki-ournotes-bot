@@ -490,6 +490,7 @@ class Engine:
                     state["transaction"] = None
                     self._event(state, "superseded", commit, "newer_release_ready")
                     self._save(state)
+                    self._cleanup(state)
                     return RunResult("deferred", newer, "candidate_superseded")
             state["transaction"]["compatible"] = True
             self._phase(state, "backing_up")

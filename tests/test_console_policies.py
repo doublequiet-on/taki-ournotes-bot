@@ -2733,6 +2733,30 @@ class ChatAgentTests(Fixture, unittest.IsolatedAsyncioTestCase):
         self.assertIn('200 抽',plan['parts'][0]['text'])
         self.assertNotIn('777',plan['parts'][0]['text'])
 
+    async def test_on_mechanic_definition_accepts_an_approved_numeric_pity_rule(self):
+        from types import SimpleNamespace
+        from ournotes_bot.domain.knowledge import Applicability,EvidenceChunkV1,EvidenceLease,KnowledgeScope
+        from ournotes_bot.domain.model_calls import ToolCall
+
+        passage = '## 国际服抽卡保底\n200 抽必出 SSR。'
+        chunk = EvidenceChunkV1('mechanic','0'*64,1,'mechanic#1','1'*64,passage,(),
+            Applicability('current',None,None,None,''),'official',(),('intl',))
+        knowledge = Mock()
+        self.backend.knowledge = knowledge
+        knowledge.retrieve.return_value = SimpleNamespace(code='ok',
+            lease=EvidenceLease('fixture',KnowledgeScope(server='intl'),(chunk,)))
+        knowledge.prepare_evidence.return_value = {'passages':[{'text':passage}]}
+        knowledge.validate_current.return_value = True
+        args = json.dumps(dict(server='intl',date=None,version=None))
+        ungrounded = self.result('保底是 777 抽。')
+        self.client.request.side_effect = [
+            self.result(calls=(ToolCall('approved','knowledge_search',args),)),ungrounded,ungrounded,
+        ]
+        plan, attempts = await self.prepare_native('/聊 Our Notes 国际服抽卡保底是什么？')
+        self.assertEqual(plan['parts'][0]['business_status'],'success')
+        self.assertEqual(len(attempts),1)
+        self.assertIn('200 抽必出 SSR',plan['parts'][0]['text'])
+
     async def test_on_mechanic_keeps_adjacent_number_and_condition_in_source_order(self):
         from types import SimpleNamespace
         from ournotes_bot.domain.knowledge import Applicability,EvidenceLease,KnowledgeScope
