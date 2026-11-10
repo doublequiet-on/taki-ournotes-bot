@@ -114,7 +114,7 @@ python -B scripts/inspect_model_config.py --config /path/to/model-proactive-v1.j
 
 主动群服务的日上限与全局主模型日上限分别检查。控制台保存的全局日上限优先于进程环境值。`chat_service_pacing_limit` 表示日内已释放金额不足，`chat_service_daily_cost_limit` 表示完整日额度也无法覆盖本次预留。设置了日上限的美元主动群按香港时间零点开放至多一次完整判断和回复的预留，其余在全天连续释放。当天消耗与临时预留都会扣减已释放金额，取消未发起调用或结算低于预留时，退回的余额可再用。
 
-`day_known_micro`、`day_unknown_micro`、`day_reserved_micro` 分别记录本日已知成本、已结束待核占用和在途预留。美元策略的 `day_carry_micro` 显示来自旧日的待核及在途占用，已计入累计风险。累计风险上限按群为 $2，包含所有日期的剩余待核上界和在途预留。准入与预留在同一写事务完成。`chat_service_risk_limit` 表示剩余风险额度容不下本次预留，判断主动机会时若剩余风险额度不足两份完整预留，会记录 `chat_service_risk_warning`。技术记录包含 `risk_limit_micro`、`risk_unknown_micro`、`risk_reserved_micro` 和 `risk_available_micro`。实际接话还受日内释放、小时、全局额度、频率、冷却和模型判断限制。
+`day_known_micro`、`day_unknown_micro`、`day_reserved_micro` 分别记录本日已知成本、已结束待核占用和在途预留。按日计费的美元策略将已经结束的待核请求保留在原计费日，迟到回执修正原日记录。跨日仍在途的预留继续计入当前日的准入，`day_carry_micro` 标出这部分占用。小时额度仍按滚动窗口计算。准入与预留在同一写事务完成，实际接话还受日内释放、全局额度、频率、冷却和模型判断限制。
 
 跨零点的未开始预留在开始发送前复查日额度，开始后费用记入当日。保留的 SQLite `attempts.created` 在这次日期转移时更新以兼容旧版预算，原预留时间记录在 `attempt_adjustments`。晚到的同一调用用量可用 `UsageLedger.settle` 补齐原日缺失字段，并可附带独立凭证编号。相同凭证重复输入幂等，凭证内容冲突或试图改写已知字段会拒绝。日汇总和本地参考价格用于核对，不能作为单次调用的结算凭证。冲正及日期转移记录与账本更新同事务保存。回退旧版后，新表可保留，旧版重新执行跨日占用规则，主动群可能因历史上界而暂停。
 

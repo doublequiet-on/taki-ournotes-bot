@@ -33,7 +33,7 @@ from . import replies
 from .persona import VOICE, chat_topic, chat_prompt, chat_needs_evidence
 from .chat_agent import ChatAgent
 from .chat_capabilities import ChatCapabilities
-from .chat_jobs import ServiceError, lightweight_profile, uses_proactive_risk
+from .chat_jobs import ServiceError, lightweight_profile, uses_proactive_day_accounting
 
 logger=logging.getLogger('ournotes_bot.model_transport')
 
@@ -433,22 +433,20 @@ class ModelRuntime:
                 or billing_request_id!=work.service_request_id):
             return None
         policy=work.service_policy
-        if replacing_attempt is not None and not uses_proactive_risk(policy):
+        if replacing_attempt is not None and not uses_proactive_day_accounting(policy):
             return None
         def check(at,amount):
             return self.agent.service_budget.check(policy,'proactive',work.model_snapshot.profile,billing_request_id,
                 amount,at=at,replacing_attempt=replacing_attempt,
-                lightweight=getattr(work.proactive,'lightweight',False),
                 reply_times=self.agent.store.proactive_replies(work.request.scope) if replacing_attempt is None else (),
                 **(self.agent.proactive.opportunity_budget(work) if replacing_attempt is None else {}))
         return check
 
     def proactive_charge_denied(self,work,exc):
         data=dict(exc.budget_details)
-        self.agent.proactive.budget_warning(work.request,data)
         self.agent.proactive.control_event(work.request,str(exc),**data)
         raise ModelError('quota_exceeded' if str(exc) in ('chat_service_call_limit','chat_service_cost_limit',
-            'chat_service_daily_cost_limit','chat_service_pacing_limit','chat_service_risk_limit',
+            'chat_service_daily_cost_limit','chat_service_pacing_limit',
             'chat_opportunity_call_limit','chat_opportunity_cost_limit') else str(exc)) from None
 
     def reserve(self,work,attempt,user,group,bound,*,billing_request_id=None,action_budget=(),lightweight_stage=None):

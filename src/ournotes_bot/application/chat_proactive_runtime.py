@@ -19,7 +19,7 @@ from ..domain.chat_images import ImageError
 from ..domain.model_calls import ModelError,require
 from .chat_jobs import (
     ChatServices, ServiceError, lightweight_minimum_cost_micro, lightweight_profile, maximum_cost_micro,
-    proactive_minimum_cost_micro, service_request_id, uses_proactive_risk,
+    proactive_minimum_cost_micro, service_request_id, uses_proactive_day_accounting,
 )
 from .proactive_chat import ProactiveController,ProactivePolicy
 from .chat_followup import Followups
@@ -75,10 +75,6 @@ class ProactiveChat:
             self.control_times[key]=now;self.control_times.move_to_end(key)
             while len(self.control_times)>1024:self.control_times.popitem(last=False)
         backend.diagnostics.conversation_event(request.request_id,request.conversation_id,'control',now,status=status,**data)
-
-    def budget_warning(self,request,data):
-        if data.get('risk_warning'):
-            self.control_event(request,'chat_service_risk_warning',**data)
 
     def window_expired(self,scope,question):
         backend=self.agent.runtime.backend
@@ -146,7 +142,7 @@ class ProactiveChat:
         return policy
 
     def uses_lightweight(self, group_id, profile, policy):
-        return (group_id in self.lightweight_groups and policy is not None and uses_proactive_risk(policy)
+        return (group_id in self.lightweight_groups and policy is not None and uses_proactive_day_accounting(policy)
                 and profile.wire_profile == 'openai-responses-v1' and profile.model == 'gpt-6.1-terra')
 
     def lightweight_status(self, group_id):
@@ -307,13 +303,10 @@ class ProactiveChat:
             required = minimum if policy.proactive.max_cost_micro_per_day else 1
             try:
                 permit=self.agent.service_budget.check(policy,'proactive',snapshot.profile,
-                    preflight,required,reply_times=self.agent.store.proactive_replies(request.scope),
-                    lightweight=lightweight)
+                    preflight,required,reply_times=self.agent.store.proactive_replies(request.scope))
             except ServiceError as exc:
                 data=dict(exc.budget_details)
-                self.budget_warning(request,data)
                 self.control_event(request,str(exc),**data);return None
-            self.budget_warning(request,dict(permit.budget_details))
             spent=max(permit.spent_cost_micro,self.controller.status(self.scope(request))['hourly_cost_micro'])
             cost=min(math.ceil(cost),math.floor(permit.available_cost_micro),
                      math.floor(policy.proactive.max_cost_micro_per_hour-spent))
@@ -334,7 +327,7 @@ class ProactiveChat:
         if lightweight:candidate=replace(candidate,lightweight=True)
         job=service_request_id('proactive',request.instance_id,request.app_id,request.conversation_id,candidate.candidate_id)
         try:self.agent.service_budget.check(policy,'proactive',snapshot.profile,job,candidate.reserved_cost_micro,
-            reply_times=self.agent.store.proactive_replies(request.scope),lightweight=lightweight)
+            reply_times=self.agent.store.proactive_replies(request.scope))
         except ServiceError as exc:
             self.control_event(request,str(exc),**dict(exc.budget_details))
             self.controller.decide(candidate,'skip',actual_cost_micro=0);return None
@@ -488,7 +481,7 @@ class ProactiveChat:
         rows=self.agent.runtime.usage.db.execute('SELECT * FROM attempts WHERE request_id=?',
             (work.service_request_id,)).fetchall()
         policy=work.service_policy
-        return self.row_cost(rows,remaining_only=policy is not None and uses_proactive_risk(policy)
+        return self.row_cost(rows,remaining_only=policy is not None and uses_proactive_day_accounting(policy)
                              and not getattr(work,'continuation',False))
 
     def row_cost(self,rows,*,remaining_only=False):
@@ -519,7 +512,7 @@ class ProactiveChat:
         for candidate,attempts in grouped.items():
             # Missing records and live reservations cannot prove that a request is free.
             if attempts and all(row['state'] in ('settled','released') for row in attempts):
-                remaining_only=policy is not None and uses_proactive_risk(policy) and not attempts[0]['request_id'].startswith('continuation/')
+                remaining_only=policy is not None and uses_proactive_day_accounting(policy) and not attempts[0]['request_id'].startswith('continuation/')
                 self.controller.reconcile_cost(scope,candidate,**self.row_cost(attempts,remaining_only=remaining_only))
         after=self.controller.status(scope)['hourly_cost_micro']
         if after!=before:

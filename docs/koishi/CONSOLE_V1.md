@@ -97,7 +97,7 @@ queries/notifications支持inherit、allow、pause；allow仍受全局范围与�
 
 「模型配置」分别管理主模型、DeepSeek 备用与主动参与模型配置。`GET/POST /v1/admin/model/fallback` 复用受保护配置写入、版本保护和元数据审计；备用配置仅允许 DeepSeek，已有计费参考币种／单位不能改变。切换服务商须提供对应新密钥。浏览器恢复草稿保留模型角色归属，不保留密钥；有草稿时先保存或放弃再切换配置。
 
-「群管理 → 主动接话」展示群服务审批、能力审批和后端报告的轻量纯文本状态，并按群编辑启用状态、调用及回复次数、费用上限和间隔。群累计风险余量取本群最近一条包含风险字段的交流事件，显示事件时间。该观测随接话评估产生，当前接口未提供实时风险余额。后端为 `GET/POST /v1/admin/model/proactive/groups/{gid}/limits`，Console RPC 为 `model/proactive/limits/settings` 与 `model/proactive/limits/save`。保存沿用管理鉴权和网关 epoch，增加服务文件与模型双指纹保护；不重置历史预算、不授予新群批准。未批准群可先保存限额，仍不会自动发言。
+「群管理 → 主动接话」展示群服务审批、能力审批和后端报告的轻量纯文本状态，并按群编辑启用状态、调用及回复次数、费用上限和间隔。群日预算观测取本群最近一条日预算检查事件，显示当时已开放的可用额度、当日待核、在途预留和记录时间。后端为 `GET/POST /v1/admin/model/proactive/groups/{gid}/limits`，Console RPC 为 `model/proactive/limits/settings` 与 `model/proactive/limits/save`。保存沿用管理鉴权和网关 epoch，增加服务文件与模型双指纹保护；不重置历史预算、不授予新群批准。未批准群可先保存限额，仍不会自动发言。
 
 独立主动参与使用 `GET/POST /v1/admin/model/proactive` 和 `POST /v1/admin/model/proactive/probe`，对应 Console RPC 为 `model/proactive/settings`、`model/proactive/save`、`model/proactive/probe`。权限、网关 epoch、版本冲突及探测幂等要求与原主模型入口一致。密钥独立保存；读取或保存不触发付费测试，也不批准群内发送。具体配置文件、群服务批准和账本约束见 [独立主动参与模型](../CHAT_SERVICE_JOBS.md#独立主动参与模型)。
 

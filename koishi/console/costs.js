@@ -35,22 +35,22 @@ export function dailyCostSummary(s){
    ]):h('p','费用尚未采集。'),
  ]);
 }
-export function riskObservation(s,{compact=false,collapsed=false}={}){
+export function proactiveBudgetObservation(s,{compact=false,collapsed=false}={}){
  const settings=s.chatSettings.value;
- const event=settings?.group_id===s.groupId.value&&settings.recent_events?.find(e=>e.data?.risk_available_micro!=null);
- if(!event)return h('div',{class:'risk-observation'},[
-   h('strong','累计风险余量'),h('p',{class:'field-note'},s.chatReadError.value?'风险事件读取失败。':'近期交流记录中没有风险余量快照。'),
+ const event=settings?.group_id===s.groupId.value&&settings.recent_events?.find(e=>e.data?.day_paced_available_micro!=null&&e.data.risk_limit_micro==null);
+ if(!event)return h('div',{class:'proactive-budget-observation'},[
+   h('strong','日内可用额度'),h('p',{class:'field-note'},s.chatReadError.value?'预算记录读取失败。':'近期没有日预算检查记录。'),
  ]);
  const value=event.data;
  const details=()=>[
-   stats([['风险上限',usd(value.risk_limit_micro)],['待核费用占用',usd(value.risk_unknown_micro)],['在途预留',usd(value.risk_reserved_micro)],['当时每轮预留',usd(value.risk_round_micro)]]),
-   h('p',{class:'field-note'},'累计风险余量在接话评估时记录，扣除待核费用及在途预留。它与每日预算独立，跨日待核费用仍可占用风险额度。'),
+   stats([['日上限',usd(value.day_limit_micro)],['已确认费用',usd(value.day_known_micro)],['当日待核',usd(value.day_unknown_micro)],['在途预留',usd(value.day_reserved_micro)]]),
+   h('p',{class:'field-note'},'显示该次预算检查时已开放的可用额度。已结束的待核费用归原计费日，跨日仍在途的请求继续占用额度。'),
  ];
- return h('div',{class:'risk-observation'},[
-   h('div',{class:'risk-heading'},[h('strong','累计风险余量'),h('span',{class:['state-pill',value.risk_warning?'uncertain':null]},value.risk_warning?'历史观测 · 余量偏低':'历史观测')]),
-   h('strong',{class:'risk-value'},usd(value.risk_available_micro)),
+ return h('div',{class:'proactive-budget-observation'},[
+   h('div',{class:'proactive-budget-heading'},[h('strong','日内可用额度'),h('span',{class:'state-pill'},'检查时记录')]),
+   h('strong',{class:'proactive-budget-value'},usd(value.day_paced_available_micro)),
    h('small',stamp(event.observed_at)+(s.chatReadError.value?' · 读取失败，保留上次数据':'')),
-   !compact&&(collapsed?h('details',[h('summary','风险占用明细'),...details()]):h('div',details())),
+   !compact&&(collapsed?h('details',[h('summary','日预算占用明细'),...details()]):h('div',details())),
  ]);
 }
 export function costsView(s){
@@ -83,8 +83,8 @@ export function costsView(s){
        ]):h('p','今日暂无模型尝试。'),
      ]),
    ]),
-   h('section',[h('div',{class:'card-heading'},[h('h2','主动接话累计风险'),button('查看群风险',s.navigateGroup)]),
-     s.groupId.value?riskObservation(s):h('p','从群管理选择一个群，查看该群最近一次接话评估记录的风险余量。'),
+   h('section',[h('div',{class:'card-heading'},[h('h2','主动接话日预算'),button('查看群预算',s.navigateGroup)]),
+     s.groupId.value?proactiveBudgetObservation(s):h('p','从群管理选择一个群，查看该群最近一次预算检查的日内额度。'),
    ]),
  ]);
 }
@@ -147,8 +147,8 @@ Object.assign(eventValues,{echo:'主动回复重复当前消息，已跳过',lig
  chat_service_lightweight_skip:'消息不符合轻量纯文本范围'});
 const eventText=value=>eventValues[value];
 eventValues.chat_service_pacing_limit='当前已释放额度不足，剩余额度将分时释放';
-eventValues.chat_service_risk_limit='累计待核费用与在途预留已接近上限，本次额度不足';
-eventValues.chat_service_risk_warning='累计风险余额不足两次完整接话预留';
+eventValues.chat_service_risk_limit='旧规则下累计风险额度不足';
+eventValues.chat_service_risk_warning='旧规则下累计风险余额偏低';
 export function chatEventsView(events,{group=false}={}){
  const visible=Array.isArray(events)?events.filter(e=>e.kind!=='attempt_stage'):[];
  if(!visible.length)return group?h('p',{class:'empty-copy'},'近期还没有交流判断或资料任务记录。'):null;
@@ -172,6 +172,7 @@ export function chatEventsView(events,{group=false}={}){
      if(data.input_images!=null)parts.push(`输入图片 ${data.input_images} 张`);
      if(data.loaded_images!=null)parts.push(`读取图片 ${data.loaded_images} 张`);
      if(data.delivered!=null)parts.push(data.delivered?'已交给平台':'未交给平台');
+     if(data.day_paced_available_micro!=null&&data.risk_limit_micro==null)parts.push('日内可用 USD '+money(data.day_paced_available_micro));
      if(data.risk_available_micro!=null)parts.push('风险余量 USD '+money(data.risk_available_micro));
      if(data.risk_round_micro!=null)parts.push('本模式每轮预留 USD '+money(data.risk_round_micro));
      if(data.risk_unknown_micro!=null)parts.push('待核 USD '+money(data.risk_unknown_micro));

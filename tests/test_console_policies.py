@@ -6247,7 +6247,7 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
         self.assertEqual(denial['requested_cost_micro'],minimum)
         self.assertGreater(denial['day_reserved_micro'],0)
         self.assertEqual(denial['day_unknown_micro'],0)
-        self.assertEqual(denial['risk_unknown_micro'],denial['day_carry_micro'])
+        self.assertEqual(denial['day_carry_micro'],0)
         usage.release('competing','cancelled_before_start')
         choice = 'reply' if reply else 'skip'
         results = iter([self.result(json.dumps(dict(participation=choice,text='',delay_seconds=None))),
@@ -6329,41 +6329,47 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
         old_detail=self.backend.admin.view(self.backend.ledger.request(plan['request_id']),detail=True)
         self.assertEqual([item['attempt_id'] for item in old_detail['model_attempts']],attempts)
 
-    async def test_historical_risk_warns_and_blocks_before_model_at_midnight(self):
-        from ournotes_bot.application.chat_jobs import PROACTIVE_RISK_LIMIT_MICRO, maximum_cost_micro, service_request_id
+    async def test_old_uncertain_cost_allows_lightweight_reply_with_current_day_capacity(self):
+        from ournotes_bot.application.chat_jobs import lightweight_minimum_cost_micro, maximum_cost_micro, service_request_id
         from ournotes_bot.domain.model_calls import Usage
         self.now = (int(self.now) + 8*3600) // 86400 * 86400 - 8*3600
         self.snapshot = replace(self.snapshot, profile=replace(self.snapshot.profile, provider='openai',
             wire_profile='openai-responses-v1', model='gpt-6.1-terra', max_input_tokens=32768,
             max_output_tokens=4096, user_daily_limit=10**8, group_daily_limit=10**8))
+        self.now += 14*3600 + 20*60
         profile = self.snapshot.profile
+        self.agent.proactive.lightweight_groups = frozenset({'g1'})
         self.policy = replace(self.policy, proactive=replace(self.policy.proactive,
-            max_cost_micro_per_hour=600_000, max_cost_micro_per_day=2_000_000))
+            max_cost_micro_per_hour=800_000, max_cost_micro_per_day=2_500_000))
         self.agent.services.policy.return_value = self.policy
         self.agent.service_budget.clock = lambda: self.now
         usage = self.backend.model_runtime.usage
         user = usage.key('service','fixture','app','g1','approved-group-service','proactive')
         group = usage.key('group','g1')
         bound = maximum_cost_micro(profile)
-        count = (PROACTIVE_RISK_LIMIT_MICRO - 2*bound) // bound + 1
+        count = (2_000_000 - lightweight_minimum_cost_micro(profile)) // bound + 1
         for n in range(count):
-            usage.clock = lambda n=n: self.now - 7200 + n*12
+            usage.clock = lambda n=n: self.now - 86400 + n*12
             attempt = f'old-{n}'
             request = service_request_id('proactive','fixture','app','g1',attempt)
             usage.reserve(request,attempt,user,group,profile,32768)
             usage.start(attempt,profile)
             usage.settle(attempt,Usage())
+        old = {f'old-{n}':usage.get(f'old-{n}') for n in range(count)}
+        self.assertTrue(all(row['billing_incomplete'] for row in old.values()))
         usage.clock = lambda: self.now
-        value = self.observation('PRIVATE_RISK_FIXTURE')
+        self.client.request.side_effect = [
+            self.result('{"participation":"reply","text":"","delay_seconds":null}'),
+            self.result('That deserves a celebration!'),
+        ]
+        value = self.observation('这段鼓终于练顺了')
         self.tick += 1.6
-        self.assertIsNone(self.agent.proactive.candidate(Request.parse(value,'fixture','app',self.now)))
-        events = {event['data'].get('status'):event['data'] for event in self.backend.diagnostics.group_events('g1')}
-        self.assertIn('chat_service_risk_warning',events)
-        denied = events['chat_service_risk_limit']
-        self.assertEqual(denied['day_cost_micro'],0)
-        self.assertGreater(denied['risk_unknown_micro'],0)
-        self.assertLess(denied['risk_available_micro'],denied['requested_cost_micro'])
-        self.client.request.assert_not_awaited()
+        plan, attempts, _ = await self.candidate(value)
+        self.assertEqual(len(attempts),2)
+        self.assertEqual(plan['parts'][0]['business_status'],'success')
+        self.event(plan,'intent');self.event(plan,'ack')
+        self.assertEqual(self.client.request.await_count,2)
+        self.assertEqual({attempt:usage.get(attempt) for attempt in old},old)
 
     async def test_provider_failure_keeps_attempt_hold_without_blocking_unspent_opportunity(self):
         import math
@@ -8041,7 +8047,7 @@ class ChatServiceJobsTests(unittest.TestCase):
         self.assertEqual(fields['day_known_micro'],100)
         self.assertEqual(fields['day_reserved_micro'],0)
         self.assertEqual(fields['day_unknown_micro'],0)
-        self.assertEqual(fields['risk_unknown_micro'],fields['day_carry_micro'])
+        self.assertEqual(fields['day_carry_micro'],0)
         self.assertEqual(fields['day_cost_micro'],fields['day_known_micro']+fields['day_unknown_micro'])
         self.now[0] = midnight + 86400
         permit = self.budget.check(policy,'proactive',self.profile,self.request('proactive','tomorrow'),minimum)
@@ -8113,7 +8119,7 @@ class ChatServiceJobsTests(unittest.TestCase):
         policy=replace(policy,proactive=replace(policy.proactive,max_cost_micro_per_hour=1,max_cost_micro_per_day=1))
         permit=self.budget.check(policy,'proactive',self.profile,self.request('proactive','next'),1)
         self.assertEqual(dict(permit.budget_details)['day_cost_micro'],0)
-        self.assertGreater(dict(permit.budget_details)['risk_unknown_micro'],0)
+        self.assertEqual(dict(permit.budget_details)['unknown_cost_micro'],0)
         self.assertEqual(self.ledger.get('attempt-source'),before)
         usage=Usage(80,0,10,None,90,'known')
         self.assertTrue(self.ledger.settle('attempt-source',usage,evidence_ref='receipt/test'))
@@ -8121,7 +8127,7 @@ class ChatServiceJobsTests(unittest.TestCase):
         self.assertEqual(self.ledger.get('attempt-source')['reserved'],'0')
         permit=self.budget.check(policy,'proactive',self.profile,self.request('proactive','next'),1)
         self.assertEqual(dict(permit.budget_details)['day_cost_micro'],0)
-        self.assertEqual(dict(permit.budget_details)['risk_unknown_micro'],0)
+        self.assertEqual(dict(permit.budget_details)['unknown_cost_micro'],0)
         audit=self.ledger.db.execute('SELECT day,evidence_ref FROM attempt_adjustments').fetchone()
         self.assertEqual(tuple(audit),(before['day'],'receipt/test'))
         self.assertEqual(self.ledger.db.execute('SELECT COUNT(*) FROM attempts').fetchone()[0],1)
@@ -8132,15 +8138,31 @@ class ChatServiceJobsTests(unittest.TestCase):
         policy=self.save()
         first=self.budget.check(policy,'proactive',self.profile,self.request('proactive'),1)
         self.ledger.reserve(self.request('proactive'),'pending',first.user_key,first.group_key,self.profile,100)
+        self.ledger.reserve(self.request('proactive','started'),'started',first.user_key,first.group_key,self.profile,100)
+        self.ledger.start('started',self.profile)
         self.now[0]+=86400
+        daily = replace(policy,proactive=replace(policy.proactive,max_cost_micro_per_day=1))
+        with self.assertRaisesRegex(ServiceError,'chat_service_daily_cost_limit') as caught:
+            self.budget.check(daily,'proactive',self.profile,self.request('proactive','next'),1)
+        both = dict(caught.exception.budget_details)
+        self.ledger.release('pending','cancelled_before_start')
+        with self.assertRaisesRegex(ServiceError,'chat_service_daily_cost_limit') as caught:
+            self.budget.check(daily,'proactive',self.profile,self.request('proactive','next'),1)
+        started = dict(caught.exception.budget_details)
+        self.assertGreater(both['day_reserved_micro'],started['day_reserved_micro'])
+        self.assertGreater(started['day_reserved_micro'],0)
+        self.assertEqual(started['day_carry_micro'],started['day_reserved_micro'])
+        self.ledger.settle('started',Usage())
+        self.budget.check(daily,'proactive',self.profile,self.request('proactive','next'),1)
+        self.ledger.reserve(self.request('proactive'),'new-pending',first.user_key,first.group_key,self.profile,100)
         policy=replace(policy,proactive=replace(policy.proactive,max_cost_micro_per_hour=1,max_cost_micro_per_day=1000000))
         for state in ('reserved','started'):
             with self.subTest(state=state):
-                if state=='started':self.ledger.start('pending',self.profile)
+                if state=='started':self.ledger.start('new-pending',self.profile)
                 with self.assertRaisesRegex(ServiceError,'chat_service_cost_limit') as caught:
                     self.budget.check(policy,'proactive',self.profile,self.request('proactive','next'),1)
                 self.assertGreater(dict(caught.exception.budget_details)['hour_reserved_micro'],0)
-        self.ledger.settle('pending',Usage())
+        self.ledger.settle('new-pending',Usage())
         with self.assertRaisesRegex(ServiceError,'chat_service_cost_limit'):
             self.budget.check(policy,'proactive',self.profile,self.request('proactive','next'),1)
         self.now[0]+=3600
@@ -8172,17 +8194,19 @@ class ChatServiceJobsTests(unittest.TestCase):
         self.budget.check(policy,'proactive',self.profile,self.request('proactive','new'),1)
 
 
-    def test_midnight_moves_unknown_from_daily_to_cumulative_risk(self):
+    def test_midnight_keeps_settled_unknown_on_original_day(self):
         from ournotes_bot.application.chat_jobs import ServiceError
         from ournotes_bot.domain.model_calls import Usage
         self.attempt('proactive',usage=Usage())
+        previous = self.ledger.get('attempt-source')
         policy=self.save();policy=replace(policy,proactive=replace(policy.proactive,max_cost_micro_per_day=1))
         with self.assertRaisesRegex(ServiceError,'daily_cost_limit'):
             self.budget.check(policy,'proactive',self.profile,self.request('proactive','new'),1)
         self.now[0]+=86400
         permit=self.budget.check(policy,'proactive',self.profile,self.request('proactive','new'),1)
         self.assertEqual(dict(permit.budget_details)['day_unknown_micro'],0)
-        self.assertGreater(dict(permit.budget_details)['risk_unknown_micro'],0)
+        self.assertEqual(dict(permit.budget_details)['unknown_cost_micro'],0)
+        self.assertEqual(self.ledger.get('attempt-source'),previous)
 
 
     def test_evaluations_count_requests_not_tool_calls(self):

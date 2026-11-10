@@ -1,7 +1,7 @@
 // L3: Group conversation settings, approval metadata and guarded memory deletion; no chat bodies.
 import { h } from './runtime.js';
 import { button, stamp } from './views.js';
-import { chatEventsView, money, riskObservation } from './costs.js';
+import { chatEventsView, money, proactiveBudgetObservation } from './costs.js';
 const names={primary:'主模型',fallback:'备用模型',web:'联网搜索',vision:'图片理解',proactive:'主动发言',summary:'摘要'};
 const reasons={dedicated_proactive_model:'主动发言使用独立模型',approved:'已有批准记录',agent_disabled:'Agent 尚未启用',group_required:'请在群详情核对批准范围',approval_absent_or_profile_changed:'未批准或批准绑定的模型版本已变化',model_not_configured:'模型尚未配置',chat_services_absent:'群服务未配置',chat_service_unapproved:'本群服务未批准',chat_service_profile_mismatch:'群服务绑定的模型版本已变化',service_disabled:'群服务配置为关闭',proactive_limits_unsupported:'主动发言限额超出当前支持范围',ready:'已有本群服务批准',chat_capability_configuration:'能力配置格式需要核对',chat_capability_unverified:'接口或币种不符合批准要求',capability_read_failed:'能力文件读取失败'};
 const reason=v=>reasons[v]||v||'尚未采集';
@@ -128,7 +128,7 @@ export function proactiveSettings(s,openGroup){
      value.lightweight?.status==='ready'&&value.lightweight.reserve_micro!=null&&
        h('small','轻量模式两段预留上界 USD '+money(value.lightweight.reserve_micro)+'。每条消息仍须通过准入判断。'),
    ]),
-   riskObservation(s,{collapsed:true}),
+   proactiveBudgetObservation(s,{collapsed:true}),
    h('section',{class:'proactive-quota'},[
      h('h3','主动参与限额'),
      h('p',{class:'field-note'},'开关和限额按群保存。自动接话仍需群服务与能力审批。'),
