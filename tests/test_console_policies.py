@@ -2733,6 +2733,59 @@ class ChatAgentTests(Fixture, unittest.IsolatedAsyncioTestCase):
         self.assertIn('200 抽',plan['parts'][0]['text'])
         self.assertNotIn('777',plan['parts'][0]['text'])
 
+    def test_evidence_route_distinguishes_opinions_game_and_fact_questions(self):
+        from ournotes_bot.application.persona import explicit_evidence_route
+
+        cases = {
+            '我觉得 JUST 最吃卡': '', '你觉得JUST最吃卡吗': '', '海希好嗑': '',
+            'JUST Dance 是什么游戏': '', 'Arcaea 的 JUST 怎么算': '',
+            '激奏 JUST 区间怎么计算': '', 'Our Notes 抽卡概率是什么': '',
+            'JUST 怎么算': 'just_window', '判卡满破了是变宽还是变久？': 'just_card',
+            '到底要几张满破判定卡？': 'just_minimum', '海希什么关系': 'story_fact',
+        }
+        for question, route in cases.items():
+            with self.subTest(question=question):
+                self.assertEqual(explicit_evidence_route(question), route)
+
+    async def test_just_count_uses_scoped_approved_expansion_passage_without_guessing(self):
+        from types import SimpleNamespace
+        from ournotes_bot.domain.knowledge import Applicability,EvidenceChunkV1,EvidenceLease,KnowledgeScope
+        from ournotes_bot.domain.model_calls import ToolCall
+
+        question = '我觉得JUST吃卡，但实际要几张满破判定卡？'
+        passage = '工程夹具：扩窗按各实例独立计算。'
+        scope = KnowledgeScope(server='jp')
+        chunk = EvidenceChunkV1('jp110-just-window-structure','0'*64,1,'mechanic#1','1'*64,passage,(),
+            Applicability('current',None,None,None,'工程范围'), 'reviewed_analysis',(),('jp',))
+        knowledge = Mock()
+        self.backend.knowledge = knowledge
+        knowledge.retrieve.return_value = SimpleNamespace(code='ok',lease=EvidenceLease('fixture',scope,(chunk,)))
+        knowledge.prepare_evidence.return_value = {'passages':[{'text':passage}]}
+        knowledge.validate_current.return_value = True
+        args = json.dumps(dict(query='irrelevant fixture rewrite',server='intl',date=None,version=None))
+        self.client.request.return_value = self.result(calls=(ToolCall('approved','knowledge_search',args),))
+
+        plan, attempts = await self.prepare_native('/聊 '+question)
+        self.assertEqual(len(attempts),1)
+        self.assertEqual(knowledge.retrieve.call_args.args[:2],(question,scope))
+        self.assertEqual(knowledge.retrieve.call_args.kwargs['focus_query'],'两个JUST扩窗怎么叠加')
+        self.assertIn(passage,plan['parts'][0]['text'])
+        self.assertIn('没有核实固定需要几张',plan['parts'][0]['text'])
+
+    async def test_unverified_just_and_story_answers_are_not_published(self):
+        self.client.request.return_value=self.result('未经核对的工程答案。')
+        from test_platform_boundary import StoryPublicationTests
+        fixture=StoryPublicationTests();fixture.setUp();self.addCleanup(fixture.doCleanups)
+        fixture.publish()
+        self.backend.model_runtime.agent.story=fixture.service
+        for seq,question in enumerate(('JUST 怎么算','海希什么关系'),1):
+            with self.subTest(question=question):
+                plan,attempts=await self.prepare_native('/聊 '+question,seq=seq)
+                self.assertEqual(len(attempts),1)
+                self.assertEqual(plan['parts'][0]['business_status'],'source_unavailable')
+                self.assertNotIn('未经核对',plan['parts'][0]['text'])
+                self.event(plan,'intent');self.event(plan,'ack')
+
     async def test_on_mechanic_definition_accepts_an_approved_numeric_pity_rule(self):
         from types import SimpleNamespace
         from ournotes_bot.domain.knowledge import Applicability,EvidenceChunkV1,EvidenceLease,KnowledgeScope

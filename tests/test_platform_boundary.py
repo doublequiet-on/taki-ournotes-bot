@@ -507,6 +507,21 @@ class StoryPublicationTests(unittest.TestCase):
         self.assertEqual(status['source_revision'],read['source_revision'])
         self.assertTrue(self.service.valid(read['source_revision'],read['revocation_revision']))
 
+    def test_story_facts_exclude_expression_guides_but_keep_reference_scenes(self):
+        from ournotes_bot.sources.story_files import source_content_hash
+
+        bundle = self.bundle()
+        scenes = bundle['scenes']
+        scenes[0].update(title='海希什么关系 口吻示例', scene_id='taki-expression-guide-fixture')
+        scenes[1].update(title='海希／希海 关系资料', previous_scene=scenes[0]['scene_id'])
+        scenes[0]['utterances'][0]['translation'] = '海希什么关系 合成示例'
+        bundle['sources'][0]['content_sha256'] = source_content_hash(scenes)
+        self.publish(bundle)
+        ordinary = self.service.search('海希什么关系')['items']
+        facts = self.service.search('海希什么关系', facts_only=True)['items']
+        self.assertEqual(ordinary[0]['scene_id'], scenes[0]['scene_id'])
+        self.assertEqual([item['scene_id'] for item in facts], ['scene-2'])
+
     def test_fixture_cannot_publish_by_default_or_approve_persona(self):
         from ournotes_bot.domain.story import StoryError
         bundle=self.bundle(personas=True)

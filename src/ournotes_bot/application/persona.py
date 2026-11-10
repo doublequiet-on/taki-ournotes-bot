@@ -71,6 +71,36 @@ def chat_prompt(topic):
 不输出工具调用。\n本轮人格设定：'''+CARDS[topic]
 
 
+_JUST_TERM = re.compile(r'(?<![a-z0-9_])just(?![a-z0-9_]|\s+[a-z])|判定卡|判卡|判定.{0,4}扩窗|扩窗.{0,8}叠', re.I)
+_OTHER_RHYTHM_GAME = re.compile(
+    r'(?<![a-z])(?:pjsk|arcaea|maimai|chunithm|phigros|gbp)(?![a-z])|世界计划|中二节奏|音击|少女乐团派对', re.I)
+_JUST_ASK = re.compile(
+    r'怎么(?:算|计算|叠|判定|触发|生效)|如何(?:算|计算|叠|判定|触发)|是什么|什么规则|多久|多宽|多长|几秒|变宽还是变久|能不能叠|是否叠|是不是叠')
+_JUST_MINIMUM = re.compile(
+    r'(?:到底|实际|至少|最少|请问).{0,16}几张|(?:^|[，,。])\s*(?:需要|要)几张|几张.{0,16}[?]|几张.{0,16}才够')
+_BAND_STORY = re.compile(r'海希|希海|海铃.{0,8}立希|立希.{0,8}海铃|邦邦|BanG\s*Dream|MyGO|Ave\s*Mujica|CRYCHIC|一辈子乐队|ANON TOKYO', re.I)
+_STORY_FACT_ASK = re.compile(r'什么关系|是什么关系|出自|出处|哪来的|哪[一几]?[集话章]|第几[集话章]|谁(?:说|配音)|为什么.{0,20}(?:退出|加入)')
+
+
+def explicit_evidence_route(question):
+    text = unicodedata.normalize('NFKC', question).strip()
+    if (_JUST_TERM.search(text) and not _OTHER_RHYTHM_GAME.search(text)
+            and not re.search(r'区间|计分|得分|分数|排名|保底|抽卡|招募|掉率|出货率|概率', text)):
+        if _JUST_MINIMUM.search(text):
+            return 'just_minimum'
+        if _JUST_ASK.search(text):
+            if re.search(r'满破|突破', text):
+                return 'just_card'
+            if re.search(r'持续|多久|几秒|变久|时长', text):
+                return 'just_duration'
+            if re.search(r'留影|判定卡|判卡', text):
+                return 'just_card'
+            return 'just_window'
+    if _BAND_STORY.search(text) and _STORY_FACT_ASK.search(text):
+        return 'story_fact'
+    return ''
+
+
 # This is a fail-closed supplement to semantic routing, not a list of allowed
 # chat sentences. It catches explicit fact requests misrouted to free chat.
 _FACT_REQUEST = re.compile(
@@ -81,4 +111,4 @@ _FACT_REQUEST = re.compile(
 
 
 def chat_needs_evidence(question):
-    return bool(_FACT_REQUEST.search(unicodedata.normalize('NFKC',question)))
+    return bool(explicit_evidence_route(question) or _FACT_REQUEST.search(unicodedata.normalize('NFKC',question)))
