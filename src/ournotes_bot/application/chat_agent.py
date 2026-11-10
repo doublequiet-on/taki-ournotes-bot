@@ -112,9 +112,9 @@ _JUST_EVIDENCE = {
 _REGION_NAME = {'jp':'日服','intl':'国际服','common':'各区服'}
 _JUST_CLARIFY = '你问的是 JUST 扩窗怎么叠，还是激奏里 JUST 区间怎么计分？'
 _JUST_CARD_ID = re.compile(r'(?:留影|支援卡|判定卡|判卡)\s*(?:ID\s*|#\s*)?(\d+(?:\s*[/、]\s*\d+)*)(?![\d星级])', re.I)
-_JUST_LEVEL = re.compile(r'(?:\bLv\.?\s*([1-5])(?!\d)|(?<!\d)([1-5])\s*级)', re.I)
+_JUST_LEVEL = re.compile(r'(?:(?<![a-z])Lv\.?\s*([1-5])(?!\d)|(?<!\d)([1-5])\s*级)', re.I)
 _JUST_LEVEL_RANGE = re.compile(
-    r'(?:技能(?:等级)?|\bLv\.?)\s*([1-5])\s*级?\s*(?:升到?|到|至|→|[-–])\s*(?:Lv\.?\s*)?([1-5])(?!\d)', re.I)
+    r'(?:技能(?:等级)?|(?<![a-z])Lv\.?)\s*([1-5])\s*级?\s*(?:升到?|到|至|→|[-–])\s*(?:Lv\.?\s*)?([1-5])(?!\d)', re.I)
 
 
 def just_card_question(question, named):
@@ -819,7 +819,7 @@ class ChatAgent:
         if explicit_text and not route:
             short = unicodedata.normalize('NFKC',user_question).strip().rstrip('。!！?？')
             selection = ('JUST 扩窗怎么叠' if short in ('扩窗','判定窗','扩判') else
-                         '激奏 JUST 区间怎么计分' if short in ('区间','区间计分','区间得分','激奏区间') else '')
+                         '激奏 JUST 区间怎么计分' if short in ('区间','区间计分','区间得分','激奏区间','区间怎么计分','区间怎么算') else '')
             if selection or _JUST_CARD_ID.search(short) or _JUST_LEVEL.search(short):
                 history_rows = [json.loads(item['content']) for item in self.context.messages(context_request)]
                 if len(history_rows)>=2:
@@ -1029,7 +1029,7 @@ class ChatAgent:
             messages[0]['content']+='\n本轮在问邦邦事实。先检索并读取相关场景，再用自己的话答。区分原作、官方简介和社区解读；关系短称或同人称呼不能证明官方关系。资料只支持一部分时说清缺项。'
             if '一辈子乐队' in unicodedata.normalize('NFKC',user_question):
                 messages[0]['content']+=(
-                    '\n回答出处时分开说两层证据：官方简介支持谁向谁发出长期组乐队的邀请，具体集数若来自社区资料，'
+                    '\n回答出处时分开说两层证据：官方简介支持长期组乐队的邀请，人物按对应资料说明。具体集数若来自社区资料，'
                     '就在同一句用“社区资料把这段定位在第……集”明确归因。没有核到正片时间码或完整台词时，不补猜。'
                     '用两句自然中文，结论放前面。')
         elif just_evidence and not local_answer:
@@ -1037,7 +1037,7 @@ class ChatAgent:
                 '\n本轮在问 JUST 机制。先查对应区服的已审核资料，再用两三句群聊中文回答，'
                 '开头直接说结论或证据缺口。只说当前问的这一层，版本和条件简短放在后面。不要整段引用、文档标题或内部字段编号。')
             if route == 'just_score':
-                messages[0]['content']+='本轮只解释激奏 JUST 区间怎么比较，别把扩窗机制或整曲得分公式混进来。'
+                messages[0]['content']+='本轮问激奏 JUST 区间。区间排名规则和区间得分公式分开说，查不到所问的公式就指出缺口。'
             if route == 'just_card':
                 messages[0]['content']+=(
                     f'本轮核对的是留影 ID {just_card}，技能等级 {", ".join(just_levels)}。'

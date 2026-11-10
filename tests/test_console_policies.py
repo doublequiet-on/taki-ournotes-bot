@@ -2830,7 +2830,7 @@ class ChatAgentTests(Fixture, unittest.IsolatedAsyncioTestCase):
             self.result(calls=(ToolCall('approved','knowledge_search',args),)),
             self.result('这张留影只查到持续配置，范围还缺资料。'),
         ]
-        plan,attempts = await self.prepare_native('/聊 留影31，Lv4到Lv5',seq=2)
+        plan,attempts = await self.prepare_native('/聊 留影31 技能Lv4到Lv5',seq=2)
         self.assertEqual(len(attempts),2)
         self.assertEqual(plan['parts'][0]['business_status'],'success')
         self.assertIn('留影31',knowledge.retrieve.call_args.kwargs['focus_query'])
