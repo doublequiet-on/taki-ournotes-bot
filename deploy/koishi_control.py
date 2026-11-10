@@ -185,6 +185,9 @@ class KoishiControl:
         return self.combination(release)
 
     def combination(self, release):
+        proof = self.backend._verified_switch(release)
+        if proof is not None and proof.combination is not None:
+            return proof.combination
         try:
             from .linux_backend import trusted
         except ImportError:

@@ -1203,6 +1203,54 @@ class LinuxBackendTests(unittest.TestCase):
                 self.backend.verify_compatibility(self.baseline, candidate)
         self.assertFalse(self.calls)
 
+    def _preverified_switch_fixture(self):
+        release = self.candidate()
+        self.backend._prepared_release = release
+
+        def identity(path):
+            info = path.lstat()
+            return info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns
+
+        # Ownership is exercised on Linux. Keep the real inode fingerprint in Windows tests.
+        for context in (patch('deploy.linux_backend.trusted'),
+                        patch('deploy.linux_backend._sealed_identity', side_effect=identity),
+                        patch.object(self.backend, '_check_backup_file')):
+            context.start()
+            self.addCleanup(context.stop)
+        backup = self.backend.backup(self.baseline, release)
+        transaction = dict(phase="activating", commit=B, previous=asdict(self.baseline),
+                           candidate=asdict(release), backup=backup)
+        self.state(transaction=transaction)
+        return release, transaction
+
+    def test_preverified_activation_rejects_payload_changes_before_switch(self):
+        release, _ = self._preverified_switch_fixture()
+        Path(release.code_dir, "critical.py").write_text("tampered after proof")
+        with self.assertRaisesRegex(Rejected, "candidate_changed_since_preverification"):
+            self.backend.activate(release)
+        self.assertFalse(self.backend._switch_proof.checked)
+
+    def test_preverified_manifest_is_bound_to_activation_and_transaction(self):
+        release, transaction = self._preverified_switch_fixture()
+        proof = self.backend._switch_proof
+        with patch('deploy.linux_backend.tree_digest', wraps=tree_digest) as content:
+            self.backend._manifest(release)
+            self.assertEqual(content.call_count, 1)
+            proof.checked = True
+            transaction['phase'] = 'starting'
+            self.state(transaction=transaction)
+            self.assertIs(self.backend._manifest(release), proof.manifest)
+            self.assertEqual(content.call_count, 1)
+            transaction['phase'] = 'rollback_activating'
+            self.state(transaction=transaction)
+            self.backend._manifest(release)
+            self.assertEqual(content.call_count, 2)
+            transaction['phase'] = 'activating'
+            transaction['backup'] += '.different'
+            self.state(transaction=transaction)
+            self.backend._manifest(release)
+            self.assertEqual(content.call_count, 3)
+
     def test_offline_ci_reuse_requires_a_published_run_and_exact_archive_proof(self):
         runs, jobs = self.ci_rows()
         publish = dict(name="publish-linux-bundle", head_sha=B, run_id=123,
