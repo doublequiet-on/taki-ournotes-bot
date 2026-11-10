@@ -6421,6 +6421,68 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
         old_detail=self.backend.admin.view(self.backend.ledger.request(plan['request_id']),detail=True)
         self.assertEqual([item['attempt_id'] for item in old_detail['model_attempts']],attempts)
 
+    async def test_lightweight_mechanic_opinion_after_image_and_explicit_evidence_guard(self):
+        from ournotes_bot.application.backend_protocol import Request
+        from ournotes_bot.sources.chat_images import ImageCache
+
+        self.agent.images = ImageCache(wall_clock=lambda: self.now)
+
+        picture = self.proactive_picture()
+        self.snapshot = replace(self.snapshot, profile=replace(self.snapshot.profile,
+            model='gpt-6.1-terra', max_input_tokens=32768, max_output_tokens=4096))
+        self.policy = replace(self.policy, proactive=replace(self.policy.proactive,
+            max_cost_micro_per_day=2_000_000))
+        self.agent.services.policy.return_value = self.policy
+        self.agent.proactive.lightweight_groups = frozenset({'g1'})
+        for seq, question in enumerate((
+            'JUST 怎么算', '到底要几张满破判定卡？',
+            '我觉得 JUST 最吃卡，但实际要几张满破判定卡',
+            '我觉得满破判定卡挺有用，但至少需要三张吗',
+        ), 1):
+            with self.subTest(question=question):
+                self.now += 11
+                value = self.observation(question, seq=seq)
+                request = Request.parse(value, 'fixture', 'app', self.now)
+                self.assertIsNone(self.agent.proactive.candidate(request))
+                event = self.backend.diagnostics.group_events('g1')[-1]
+                self.assertEqual(event['data']['status'], 'chat_service_lightweight_evidence_required')
+        self.client.request.assert_not_awaited()
+
+        self.now += 1
+        self.observation('', seq=5, attachments=picture)
+        self.now += 1
+        self.observation('这句在最后一张图之前', seq=6)
+        self.now += 1
+        self.observation('', seq=7, attachments=picture)
+        self.now += 1
+        first = self.observation('我觉得just挺吃卡', seq=8)
+        self.now += 1
+        second = self.observation('必须要几张满破判卡 不然就靠手硬凹', seq=9)
+        self.tick += 1.6
+
+        wire = []
+        def respond(profile, body, **kwargs):
+            wire.append(json.loads(json.dumps(body)))
+            if len(wire) == 1:
+                return self.result('{"participation":"reply","text":"","delay_seconds":null}')
+            return self.result('卡不够的时候，手就得来加班了。')
+
+        self.client.request.side_effect = respond
+        plan, attempts, _ = await self.candidate(second)
+        self.assertTrue(plan['send_allowed'])
+        self.assertEqual(len(attempts), 2)
+        self.agent.image_loader.load_many.assert_not_awaited()
+        for body in wire:
+            self.assertNotIn('tools', body)
+            self.assertIn('当前句必须能独立于图片理解', body['input'][0]['content'])
+            rows = [json.loads(item['content']) for item in body['input'][1:]]
+            self.assertEqual([row['message_id'] for row in rows], [first['message_id'], second['message_id']])
+            self.assertTrue(all('image_attachments' not in row for row in rows))
+        events = self.backend.diagnostics.read(plan['request_id'])['chat_events']
+        self.assertIn(('control', 'lightweight_initial', 'reply'),
+                      [(event['kind'], event['data'].get('status'), event['data'].get('decision')) for event in events])
+        self.assertEqual([event['data']['decision'] for event in events if event['kind'] == 'decision'], ['reply'])
+
     async def test_old_uncertain_cost_allows_lightweight_reply_with_current_day_capacity(self):
         from ournotes_bot.application.chat_jobs import lightweight_minimum_cost_micro, maximum_cost_micro, service_request_id
         from ournotes_bot.domain.model_calls import Usage
@@ -6435,6 +6497,7 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
             max_cost_micro_per_hour=800_000, max_cost_micro_per_day=2_500_000))
         self.agent.services.policy.return_value = self.policy
         self.agent.service_budget.clock = lambda: self.now
+        self.agent.store.clock = lambda: self.now
         usage = self.backend.model_runtime.usage
         user = usage.key('service','fixture','app','g1','approved-group-service','proactive')
         group = usage.key('group','g1')

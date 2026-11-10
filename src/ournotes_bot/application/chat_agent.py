@@ -84,6 +84,8 @@ _QUOTE_IMAGE_TARGET = re.compile(
     r'(?:这(?:张|个|幅)?图(?:片)?|图(?:里|中)|引用(?:里|中)(?:的)?(?:图|图片))'
     r'[^。！？?；;\n]{0,80}(?:多少|多高|几[个项分张级抽]|是什么|怎么看|如何|算不算|算高|吗)'
     r'[呢啊呀嘛]?[？?！!。\s]*$', re.I)
+_LIGHTWEIGHT_IMAGE_REFERENCE = re.compile(
+    r'这(?:张|幅)图|那(?:张|幅)图|(?:图|图片)(?:里|中)|[这那]张卡面|[这那]张卡怎么样')
 _QUOTE_ADDITION = re.compile(r'[。！？?；;\n]+\s*(?:另外|另问|还有个问题)[\s，,：:]*')
 _ON_MECHANICS = re.compile(r'保底|掉率|出货率|概率|倍率|公式|判定规则|计分规则|抽卡规则')
 _ON_TITLE = re.compile(r'(?<![a-z0-9_])(?:our\s*notes|on)(?![a-z0-9_])', re.I)
@@ -664,12 +666,21 @@ class ChatAgent:
         work.chat_task=ResearchTask()
         recent_rows = [json.loads(item['content']) for item in history]
         require(recent_rows and recent_rows[-1]['message_id'] == work.request.message_id, 'proactive_stale')
-        if any({'image_attachments', 'quoted_text'} & row.keys() for row in recent_rows):
+        last_image = max((i for i, row in enumerate(recent_rows) if 'image_attachments' in row), default=-1)
+        text_rows = recent_rows[last_image + 1:]
+        if (not text_rows or any('quoted_text' in row for row in text_rows)
+                or _LIGHTWEIGHT_IMAGE_REFERENCE.search(recent_rows[-1]['text'])):
             self.proactive.trace(work, 'context', status='lightweight', messages=len(recent_rows))
+            self.proactive.trace(work, 'control', status='lightweight_context_required')
             self.proactive.decision(work,'{"participation":"skip"}')
             return PreparedReply('',business_status='proactive_skip')
+        history = history[last_image + 1:]
         rules=('只用当前群最近的文字。需要外部事实、核对资料、读图或无法从文字确定所指时跳过。'
-               '群友说法只用于理解话题，不能用作事实依据。')
+               '群友说法只用于理解话题，不能用作事实依据。游戏体验可以接感受，不能确认群友对机制或卡片需求的说法。')
+        if last_image >= 0:
+            self.proactive.trace(work, 'control', status='lightweight_text_after_image')
+            rules += ('只保留了最近一张图之后的文字。当前句必须能独立于图片理解。'
+                      '看图短评、认人或猜造型都跳过，不能补猜图片。')
         decision_header={'role':'system','content':prompt+'\n'+rules+
             '先看当前这句是谁对谁说的。若它只是回答了前文、接完已有的梗、致谢或确认安排，'
             '而没有重新打开话题，选 skip。已经被群友接住的旧消息只作背景。'
@@ -705,6 +716,7 @@ class ChatAgent:
             decision=await runtime.attempt(work,decision_messages,[],user,group,deadline,reservation=decision_id)
             require(not decision.tool_calls,'model_protocol_error')
             answer=self.proactive.parse_staged_decision(decision.text)
+            self.proactive.trace(work, 'control', status='lightweight_initial', decision=answer['participation'])
             if answer['participation']=='reply':
                 # The decision only selects the branch. Its raw output and
                 # encrypted reasoning never become inputs to generation.

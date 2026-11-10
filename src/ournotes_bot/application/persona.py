@@ -82,3 +82,25 @@ _FACT_REQUEST = re.compile(
 
 def chat_needs_evidence(question):
     return bool(_FACT_REQUEST.search(unicodedata.normalize('NFKC',question)))
+
+
+_LIGHTWEIGHT_MECHANIC_TERM = re.compile(
+    r'概率|保底|掉率|倍率|数值|机制|规则|公式|算分|配队|combo|luck|just|bpm|nps', re.I)
+_LIGHTWEIGHT_MECHANIC_CONTEXT = re.compile(r'满破|判定卡|判卡')
+_LIGHTWEIGHT_OPINION = re.compile(r'^(?:我(?:觉得|感觉|打起来)|个人(?:觉得|感觉)|对我来说)')
+_LIGHTWEIGHT_QUESTION = re.compile(
+    r'\?|吗[。!\s]*$|到底|请问|谁知道|想知道|是不是|怎么|如何|什么|哪[个张种]|'
+    r'能不能|有没有|对不对|帮(?:我)?(?:查|核实|算)|'
+    r'(?:^|[，,。；;]|但|实际)\s*(?:还)?(?:要|需要|得)\s*几张')
+
+
+def lightweight_needs_evidence(question):
+    text = unicodedata.normalize('NFKC', question).strip()
+    matches = _FACT_REQUEST.findall(text)
+    if (matches or _LIGHTWEIGHT_MECHANIC_CONTEXT.search(text)) and _LIGHTWEIGHT_QUESTION.search(text):
+        return True
+    if _LIGHTWEIGHT_OPINION.match(text):
+        # A gameplay term can name the subject of an opinion. Other fact
+        # triggers still take precedence over the opening stance.
+        return any(not _LIGHTWEIGHT_MECHANIC_TERM.fullmatch(match) for match in matches)
+    return bool(matches)

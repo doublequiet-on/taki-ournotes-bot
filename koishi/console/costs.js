@@ -144,7 +144,11 @@ const eventKinds={control:'接话判断',decision:'参与判断',task:'资料任
 const eventValues={excluded_user:'命中不主动搭话名单',followup_disabled:'本群已关闭免 @ 续聊',platform_unapproved:'平台普通群收发尚未批准',followup_candidate:'窗口内的续聊候选',conversation_ended:'用户已结束交流',settings_saved:'交流设置已保存',window_expired:'续聊窗口已结束',observation:'群消息观察',continuation:'免 @ 续聊',settings:'交流设置',skip:'跳过',candidate:'等待语义判断',saved:'已保存',reply:'接话',respond:'接话',ignore:'跳过',set:'建立或更新',cancel:'取消',result:'结果',waiting:'等待补充',partial:'部分完成',completed:'资料已齐',cancelled:'已取消',ok:'成功',not_available:'数据不可用',no_results:'没有匹配资料',source_unavailable:'资料来源暂不可用',tool_timeout:'查询超时',query_source_changed:'资料版本已变化',knowledge_search:'知识库搜索',site_search:'Haneoka 搜索',site_read:'读取 Haneoka 资料',read_entity_fields:'读取对象字段',research_task:'连续资料任务',web_search:'联网搜索',observe:'观察',delivered:'已交给平台',failed:'失败',not_delivered:'未送达'};
 Object.assign(eventValues,{defer:'暂不接话，等待更多上下文',conversation_busy:'正在处理另一位用户发起的交流',supplement_merged:'已合并同一用户的连续补充',budget_exhausted:'本次交流额度已用完',chat_service_cost_limit:'本群每小时费用额度不足（包含待核账占用）',chat_service_daily_cost_limit:'本群每日费用额度不足（包含待核账占用）',chat_service_reservation_limit:'剩余额度不足以预留判断和回复',chat_service_evaluation_limit:'本群每小时接话判断次数已达上限',chat_service_call_limit:'本群每小时模型调用次数已达上限',chat_service_reply_limit:'本群每小时主动回复次数已达上限',chat_service_cooldown:'尚在主动发起间隔内',service_disabled:'本群主动参与已关闭',success:'处理成功',proactive_skip:'本轮跳过',proactive_defer:'等待更多上下文',proactive_stale:'交流上下文已变化',model_protocol_error:'模型返回格式不符合要求',invalid_json:'判断结果格式无效',json_syntax:'结构化结果解析失败',non_text:'结果不是文字',loaded:'图片已读取',provider_unavailable:'模型服务暂不可用',quota_exceeded:'额度已用完',deadline:'处理超时',aborted:'处理已终止',expired:'请求已过期',haneoka:'Haneoka',knowledge:'已审核知识库'});
 Object.assign(eventValues,{echo:'主动回复重复当前消息，已跳过',lightweight:'轻量纯文本上下文',lightweight_echo:'轻量回复原样重复，已跳过',
- chat_service_lightweight_skip:'消息不符合轻量纯文本范围'});
+ chat_service_lightweight_skip:'消息不符合轻量纯文本范围',
+ chat_service_lightweight_evidence_required:'明确求证，已跳过轻量接话',
+ lightweight_context_required:'需要图片或引用上下文，已跳过轻量接话',
+ lightweight_text_after_image:'只取最近一张图之后的文字',
+ lightweight_initial:'轻量初判'});
 const eventText=value=>eventValues[value];
 eventValues.chat_service_pacing_limit='当前已释放额度不足，剩余额度将分时释放';
 eventValues.chat_service_risk_limit='旧规则下累计风险额度不足';
