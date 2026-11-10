@@ -6488,6 +6488,7 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
             max_cost_micro_per_hour=800_000, max_cost_micro_per_day=2_500_000))
         self.agent.services.policy.return_value = self.policy
         self.agent.service_budget.clock = lambda: self.now
+        self.agent.store.clock = lambda: self.now
         usage = self.backend.model_runtime.usage
         user = usage.key('service','fixture','app','g1','approved-group-service','proactive')
         group = usage.key('group','g1')
