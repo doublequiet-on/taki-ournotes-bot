@@ -9,7 +9,7 @@ Effects: HTTPS, disk writes and service control; candidate code only runs as ubu
 from __future__ import annotations
 
 import argparse
-from dataclasses import asdict
+from dataclasses import asdict, dataclass
 import hashlib
 import http.client
 import json
@@ -167,6 +167,46 @@ def freeze_release(root: Path) -> None:
                     path.chmod(0o755 if executable else 0o644)
 
 
+def _sealed_identity(path: Path) -> tuple[int, ...]:
+    info = path.lstat()
+    link = stat.S_ISLNK(info.st_mode)
+    if info.st_uid != 0 or (not link and info.st_mode & 0o022):
+        raise Rejected("candidate_tree_not_sealed")
+    return (info.st_dev, info.st_ino, info.st_mode, info.st_uid, info.st_gid,
+            info.st_size, info.st_mtime_ns, info.st_ctime_ns)
+
+
+def _sealed_tree(root: Path) -> str:
+    """Check ownership and pin inode metadata, without rereading file contents."""
+    if root.is_symlink() or not root.is_dir():
+        raise Rejected("candidate_tree_not_sealed")
+    digest = hashlib.sha256()
+    digest.update(repr(_sealed_identity(root)).encode("ascii"))
+
+    def unreadable(error):
+        raise error
+
+    for parent, dirs, files in os.walk(root, followlinks=False, onerror=unreadable):
+        dirs.sort()
+        for name in sorted(dirs + files):
+            path = Path(parent) / name
+            digest.update(os.fsencode(path.relative_to(root)))
+            digest.update(b"\0")
+            digest.update(repr(_sealed_identity(path)).encode("ascii"))
+    return digest.hexdigest()
+
+
+@dataclass
+class _SwitchProof:
+    release: Release
+    backup: str
+    manifest: dict
+    combination: tuple[Path, dict] | None
+    trees: tuple[tuple[Path, str], ...]
+    identities: tuple[tuple[Path, tuple[int, ...]], ...]
+    checked: bool = False
+
+
 def extract_archive(archive: Path, target: Path, expected_commit: str | None = None) -> None:
     """Extract only regular files/directories below a single GitHub archive root."""
     with tarfile.open(archive, "r:gz") as stream:
@@ -307,6 +347,8 @@ class LinuxBackend:
         self.stable_seconds = int(config.get("stable_seconds", 20))
         self.started_at = None
         self._published_ci_run: tuple[str, int] | None = None
+        self._prepared_release: Release | None = None
+        self._switch_proof: _SwitchProof | None = None
         for folder in (self.manifests, self.logs, self.backups):
             folder.mkdir(mode=0o700, parents=True, exist_ok=True)
 
@@ -393,6 +435,27 @@ class LinuxBackend:
             return run_id
         return None
 
+    def _transaction_switch_proof(self, release: Release) -> _SwitchProof | None:
+        proof = self._switch_proof
+        if proof is None or proof.release != release:
+            return None
+        transaction = json.loads((self.state / "state.json").read_text()).get("transaction")
+        if (transaction and transaction.get("phase") in {"activating", "starting", "checking_health"}
+                and transaction.get("commit") == release.commit
+                and transaction.get("candidate") == asdict(release)
+                and transaction.get("backup") == proof.backup):
+            return proof
+        return None
+
+    def _verified_switch(self, release: Release) -> _SwitchProof | None:
+        proof = self._transaction_switch_proof(release)
+        if proof is None or not proof.checked:
+            return None
+        if any(path.resolve(strict=True) != path or _sealed_identity(path) != identity
+               for path, identity in proof.identities):
+            raise Rejected("candidate_changed_since_preverification")
+        return proof
+
     def _manifest(self, release: Release) -> dict:
         if release == self.baseline:
             for path in (Path(release.code_dir), Path(release.venv_dir)):
@@ -408,6 +471,9 @@ class LinuxBackend:
         for path in (Path(release.code_dir), Path(release.venv_dir)):
             if path.resolve() != path or path.is_symlink():
                 raise Rejected("release_path_not_canonical")
+        proof = self._verified_switch(release)
+        if proof is not None:
+            return proof.manifest
         try:
             record = json.loads((self.manifests / (release.commit + ".json")).read_text())
         except (OSError, ValueError) as exc:
@@ -511,6 +577,8 @@ class LinuxBackend:
         atomic_json(path, state, mode=0o644)
 
     def prepare(self, commit: str) -> Release:
+        self._prepared_release = None
+        self._switch_proof = None
         if not SHA_RE.fullmatch(commit):
             raise Rejected("invalid_commit")
         self._quiesce_preparations()
@@ -584,6 +652,7 @@ class LinuxBackend:
         if self.koishi:
             combo, _ = self.koishi.prepare(release)
             self._sandbox(release,[str(combo/'bin/node'),str(combo/'gateway/scripts/probe.cjs')], 'koishi-probe', offline=True)
+        self._prepared_release = release
         return release
 
     def _knowledge_archive(self, commit):
@@ -752,7 +821,23 @@ class LinuxBackend:
                 raise Rejected("compatibility_gate_untrusted")
 
     def backup(self, previous: Release, candidate: Release) -> str:
-        old, new = self._manifest(previous), self._manifest(candidate)
+        self._switch_proof = None
+        old = self._manifest(previous)
+        trees, identities = (), ()
+        if candidate == self._prepared_release:
+            roots = [Path(candidate.code_dir), Path(candidate.venv_dir)]
+            if self.koishi:
+                roots.append(Path(self.config["koishi_combinations"]) / candidate.commit)
+            manifest = self.manifests / (candidate.commit + ".json")
+            try:
+                trusted(manifest)
+                identities = tuple((p, _sealed_identity(p)) for p in [*roots, manifest])
+                trees = tuple((p, _sealed_tree(p)) for p in roots)
+            except (OSError, Rejected):
+                # Legacy or unsealed layouts keep the original complete validation path.
+                trees = ()
+        new = self._manifest(candidate)
+        combination = self.koishi.combination(candidate) if trees and self.koishi else None
         if shutil.disk_usage(self.backups).free < 4 * GIB:
             raise Rejected("insufficient_backup_disk")
         name = str(time.time_ns()) + "-" + previous.commit
@@ -771,6 +856,8 @@ class LinuxBackend:
         except Exception:
             path.unlink(missing_ok=True)
             raise
+        if trees:
+            self._switch_proof = _SwitchProof(candidate, str(path), new, combination, trees, identities)
         return str(path)
 
     def _check_backup_file(self, path: Path) -> None:
@@ -866,6 +953,11 @@ class LinuxBackend:
             raise
 
     def activate(self, release: Release) -> None:
+        proof = self._transaction_switch_proof(release)
+        if proof is not None:
+            if any(_sealed_tree(path) != digest for path, digest in proof.trees):
+                raise Rejected("candidate_changed_since_preverification")
+            proof.checked = True
         if self.koishi:
             self.koishi.combination(release)
             if self.koishi.state().get("MainPID") != "0": raise Rejected("gateway_not_stopped")
