@@ -2739,8 +2739,9 @@ class ChatAgentTests(Fixture, unittest.IsolatedAsyncioTestCase):
         cases = {
             '我觉得 JUST 最吃卡': '', '你觉得JUST最吃卡吗': '', '海希好嗑': '',
             'JUST Dance 是什么游戏': '', 'Arcaea 的 JUST 怎么算': '',
-            '激奏 JUST 区间怎么计算': '', 'Our Notes 抽卡概率是什么': '',
-            'JUST 怎么算': 'just_window', '判卡满破了是变宽还是变久？': 'just_card',
+            '激奏 JUST 区间怎么计分': 'just_score', 'Our Notes 抽卡概率是什么': '',
+            'JUST 怎么算': 'just_clarify', 'JUST 扩窗怎么叠': 'just_window',
+            '判卡满破了是变宽还是变久？': 'just_card', '留影31 Lv4到Lv5 是变宽还是变久': 'just_card',
             '到底要几张满破判定卡？': 'just_minimum', '海希什么关系': 'story_fact',
         }
         for question, route in cases.items():
@@ -2769,8 +2770,71 @@ class ChatAgentTests(Fixture, unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(attempts),1)
         self.assertEqual(knowledge.retrieve.call_args.args[:2],(question,scope))
         self.assertEqual(knowledge.retrieve.call_args.kwargs['focus_query'],'两个JUST扩窗怎么叠加')
-        self.assertIn(passage,plan['parts'][0]['text'])
-        self.assertIn('没有核实固定需要几张',plan['parts'][0]['text'])
+        self.assertTrue(plan['parts'][0]['text'].startswith('还定不了要几张满破判定卡'))
+        self.assertNotIn(passage,plan['parts'][0]['text'])
+
+    async def test_just_ambiguity_is_clarified_and_the_selected_mode_reaches_its_source(self):
+        from types import SimpleNamespace
+        from ournotes_bot.domain.knowledge import Applicability,EvidenceChunkV1,EvidenceLease,KnowledgeScope
+        from ournotes_bot.domain.model_calls import ToolCall
+
+        first,attempts = await self.prepare_native('/聊 JUST 怎么算')
+        self.assertEqual(attempts,[])
+        self.assertIn('扩窗',first['parts'][0]['text'])
+        self.assertIn('区间怎么计分',first['parts'][0]['text'])
+        self.client.request.assert_not_awaited()
+        self.event(first,'intent');self.event(first,'ack')
+
+        scope = KnowledgeScope(server='jp')
+        chunk = EvidenceChunkV1('on-09-score','0'*64,1,'score#1','1'*64,
+            '|JUST|区间JUST数量|区间得分，再比较PERFECT数量|',(),
+            Applicability('current',None,None,None,'工程范围'),'reviewed_analysis',(),('jp',))
+        knowledge = Mock()
+        self.backend.knowledge = knowledge
+        knowledge.retrieve.return_value = SimpleNamespace(code='ok',lease=EvidenceLease('fixture',scope,(chunk,)))
+        knowledge.prepare_evidence.return_value = {'passages':[{'text':chunk.text}]}
+        knowledge.validate_current.return_value = True
+        args = json.dumps(dict(server='jp',date=None,version=None))
+        self.client.request.side_effect = [
+            self.result(calls=(ToolCall('approved','knowledge_search',args),)),
+            self.result('区间先比 JUST 数，再比区间得分和 PERFECT 数。'),
+        ]
+        plan,attempts = await self.prepare_native('/聊 区间计分',seq=2)
+        self.assertEqual(len(attempts),2)
+        self.assertEqual(plan['parts'][0]['business_status'],'success')
+        self.assertIn('激奏区间怎样比较',knowledge.retrieve.call_args.kwargs['focus_query'])
+
+    async def test_just_card_comparison_waits_for_identity_and_levels_and_filters_other_cards(self):
+        from types import SimpleNamespace
+        from ournotes_bot.domain.knowledge import Applicability,EvidenceChunkV1,EvidenceLease,KnowledgeScope
+        from ournotes_bot.domain.model_calls import ToolCall
+
+        first,attempts = await self.prepare_native('/聊 判卡满破了是变宽还是变久？')
+        self.assertEqual(attempts,[])
+        self.assertIn('卡名或 ID',first['parts'][0]['text'])
+        self.assertIn('技能从几级到几级',first['parts'][0]['text'])
+        self.event(first,'intent');self.event(first,'ack')
+
+        scope = KnowledgeScope(server='jp')
+        applicable = Applicability('current',None,None,None,'工程范围')
+        wrong = EvidenceChunkV1('jp110-just-support-levels','0'*64,1,'skill#1','1'*64,
+            '留影54的固定持续配置，合成数据。',(),applicable,'reviewed_analysis',(),('jp',))
+        correct = replace(wrong,chunk_id='skill#2',text='留影31的固定持续配置，合成数据。')
+        knowledge = Mock()
+        self.backend.knowledge = knowledge
+        knowledge.retrieve.return_value = SimpleNamespace(code='ok',lease=EvidenceLease('fixture',scope,(wrong,correct)))
+        knowledge.prepare_evidence.return_value = {'passages':[{'text':correct.text}]}
+        knowledge.validate_current.return_value = True
+        args = json.dumps(dict(server='jp',date=None,version=None))
+        self.client.request.side_effect = [
+            self.result(calls=(ToolCall('approved','knowledge_search',args),)),
+            self.result('这张留影只查到持续配置，范围还缺资料。'),
+        ]
+        plan,attempts = await self.prepare_native('/聊 留影31，Lv4到Lv5',seq=2)
+        self.assertEqual(len(attempts),2)
+        self.assertEqual(plan['parts'][0]['business_status'],'success')
+        self.assertIn('留影31',knowledge.retrieve.call_args.kwargs['focus_query'])
+        self.assertEqual(knowledge.prepare_evidence.call_args.args[0].chunks,(correct,))
 
     async def test_unverified_just_and_story_answers_are_not_published(self):
         self.client.request.return_value=self.result('未经核对的工程答案。')
@@ -2778,7 +2842,7 @@ class ChatAgentTests(Fixture, unittest.IsolatedAsyncioTestCase):
         fixture=StoryPublicationTests();fixture.setUp();self.addCleanup(fixture.doCleanups)
         fixture.publish()
         self.backend.model_runtime.agent.story=fixture.service
-        for seq,question in enumerate(('JUST 怎么算','海希什么关系'),1):
+        for seq,question in enumerate(('JUST 扩窗怎么叠','海希什么关系'),1):
             with self.subTest(question=question):
                 plan,attempts=await self.prepare_native('/聊 '+question,seq=seq)
                 self.assertEqual(len(attempts),1)
