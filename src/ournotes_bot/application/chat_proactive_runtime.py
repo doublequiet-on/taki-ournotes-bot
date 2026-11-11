@@ -354,7 +354,8 @@ class ProactiveChat:
         else:
             minimum = proactive_minimum_cost_micro(profile)
             model_cost = maximum_cost_micro(profile) * self.agent.budget.model_calls
-        remaining=self.controller.remaining_cost(self.scope(request))
+        remaining=self.controller.remaining_cost(self.scope(request),
+            evidence_reserve_micro=minimum if evidence_route else 0)
         if remaining is not None:model_cost=min(model_cost,remaining)
         if model_cost<=0:
             self.control_event(request,'budget_exhausted');return None
@@ -385,7 +386,8 @@ class ProactiveChat:
                                controller_cost_micro=math.ceil(spent))
                 self.control_event(request,'chat_service_reservation_limit',**details);return None
         candidate=self.controller.candidate(self.scope(request),reserve_cost_micro=math.ceil(cost),
-                                            message_id=request.message_id)
+            message_id=request.message_id,lightweight=lightweight and not evidence_route,
+            evidence_required=bool(evidence_route))
         if candidate is None:return None
         last=candidate.messages[-1]
         if (last.message_id,last.speaker_id,last.text,last.timestamp_ms)!=(request.message_id,request.user_id,request.body,request.timestamp_ms):

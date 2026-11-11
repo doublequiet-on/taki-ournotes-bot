@@ -6542,6 +6542,12 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
         self.assertEqual([item['attempt_id'] for item in old_detail['model_attempts']],attempts)
 
     async def test_lightweight_fact_question_decides_before_approved_lookup(self):
+        await self.lightweight_fact_question()
+
+    async def test_lightweight_fact_followup_reuses_opportunity_and_checks_approved_evidence(self):
+        await self.lightweight_fact_question(after_opinion=True)
+
+    async def lightweight_fact_question(self, *, after_opinion=False):
         from types import SimpleNamespace
         from ournotes_bot.domain.knowledge import Applicability,EvidenceChunkV1,EvidenceLease,KnowledgeScope
         from ournotes_bot.domain.model_calls import ToolCall
@@ -6561,6 +6567,19 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
         knowledge.retrieve.return_value=SimpleNamespace(code='ok',lease=EvidenceLease('fixture',scope,(chunk,)))
         knowledge.prepare_evidence.return_value={'passages':[{'text':chunk.text}]}
         knowledge.validate_current.return_value=True
+        question='激奏 JUST 区间怎么计分'
+        serial=1
+        if after_opinion:
+            self.client.request.return_value=self.result('{"participation":"skip","text":"","delay_seconds":null}')
+            opinion=self.observation('JUST 太难了');self.tick+=1.6
+            skipped,initial_attempts,prior=await self.candidate(opinion)
+            self.assertEqual(skipped['parts'],[])
+            self.assertEqual(len(initial_attempts),1)
+            self.assertTrue(prior[0].lightweight)
+            knowledge.retrieve.assert_not_called()
+            self.now+=.01
+            question='补充问一下，激奏 JUST 区间怎么计分？'
+            serial=2
         wire=[]
         responses=iter([
             self.result('{"participation":"reply","text":"","delay_seconds":null}'),
@@ -6572,8 +6591,8 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
             if len(wire)==1:knowledge.retrieve.assert_not_called()
             return next(responses)
         self.client.request.side_effect=respond
-        value=self.observation('激奏 JUST 区间怎么计分');self.tick+=1.6
-        plan,attempts,candidate=await self.candidate(value)
+        value=self.observation(question,seq=serial);self.tick+=1.6
+        plan,attempts,candidate=await self.candidate(value,serial)
         self.assertEqual(candidate[0].evidence_route,'just_score')
         self.assertEqual(len(attempts),3)
         self.assertTrue(plan['send_allowed'])
@@ -6581,7 +6600,10 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
         self.assertEqual([tool['name'] for tool in wire[1]['tools']],['knowledge_search'])
         self.assertFalse(wire[2].get('tools'))
         self.assertIn('区间排名规则和区间得分公式分开说',wire[2]['input'][0]['content'])
-        self.assertEqual(knowledge.retrieve.call_args.args[:2],('激奏 JUST 区间怎么计分',scope))
+        self.assertEqual(knowledge.retrieve.call_args.args[:2],(question,scope))
+        if after_opinion:
+            self.assertEqual(candidate[0].opportunity_id,prior[0].opportunity_id)
+            self.assertEqual(candidate[0].expires_at,prior[0].expires_at)
 
     async def test_lightweight_mechanic_opinion_after_image_and_explicit_evidence_guard(self):
         from ournotes_bot.application.backend_protocol import Request

@@ -101,6 +101,7 @@ class _Opportunity:
     tools: int = 0
     knowledge_leases: dict = field(default_factory=dict)
     send_interrupted: bool = False
+    lightweight: bool = False
 
 
 @dataclass
@@ -310,17 +311,26 @@ class ProactiveController:
     def _cost(group):
         return sum(ticket.charged_cost for ticket in group.tickets.values())
 
-    def remaining_cost(self,scope):
+    @staticmethod
+    def _opportunity_cost(group, evidence_reserve_micro):
+        opportunity=group.opportunity
+        costs=[ticket.cost_micro for ticket in group.tickets.values() if ticket.opportunity_id==opportunity.id]
+        spent=sum(cost or 0 for cost in costs)
+        limit=opportunity.cost_micro
+        if evidence_reserve_micro and opportunity.lightweight and None not in costs:
+            limit=max(limit,spent+evidence_reserve_micro)
+        return limit,spent
+
+    def remaining_cost(self,scope,*,evidence_reserve_micro=0):
         group=self.groups.get(scope)
         opportunity=group.opportunity if group else None
         if opportunity is None or self.clock()>=opportunity.expires_at:return None
         # Only settled cost reduces the next candidate's estimate. Unknown
         # tickets remain held by _cost and the persistent attempt ledger.
-        spent=sum(ticket.cost_micro or 0 for ticket in group.tickets.values()
-                  if ticket.opportunity_id==opportunity.id)
-        return max(0,opportunity.cost_micro-spent)
+        limit,spent=self._opportunity_cost(group,evidence_reserve_micro)
+        return max(0,limit-spent)
 
-    def candidate(self, scope, *, reserve_cost_micro, message_id=None):
+    def candidate(self, scope, *, reserve_cost_micro, message_id=None, lightweight=False, evidence_required=False):
         if type(reserve_cost_micro) is not int or reserve_cost_micro < 0:
             raise ValueError('proactive_reservation_invalid')
         self.sweep()
@@ -335,21 +345,29 @@ class ProactiveController:
         deferred = group.deferred_at is not None
         if not group.dirty and not (deferred and now >= group.deferred_at):
             return None
-        remaining=self.remaining_cost(scope)
-        if remaining is not None:
+        opportunity=group.opportunity
+        existing=opportunity is not None and now<opportunity.expires_at
+        limit=reserve_cost_micro
+        if existing:
+            limit,spent=self._opportunity_cost(group,reserve_cost_micro if evidence_required else 0)
+            remaining=max(0,limit-spent)
             if not remaining:return None
             reserve_cost_micro=min(reserve_cost_micro,remaining)
         if (len(group.tickets) >= group.policy.max_calls_per_hour
                 or len(group.replies) >= group.policy.max_replies_per_hour
                 or self._cost(group) + reserve_cost_micro > group.policy.max_cost_micro_per_hour):
             return None
-        opportunity=group.opportunity
-        if opportunity is None or now>=opportunity.expires_at:
+        if not existing:
             if opportunity is not None and not group.dirty:return None
-            opportunity=group.opportunity=_Opportunity(uuid4().hex,now+self.candidate_seconds,reserve_cost_micro)
+            opportunity=group.opportunity=_Opportunity(uuid4().hex,now+self.candidate_seconds,
+                                                       reserve_cost_micro,lightweight=lightweight)
         if opportunity.send_interrupted or opportunity.evaluations>=self.max_defer_rechecks+1:return None
         target=self.target(scope)
         if target is None:return None
+        if limit>opportunity.cost_micro:
+            # Upgrade a settled lightweight opportunity once, keeping its identity and call limits.
+            opportunity.cost_micro=limit
+            opportunity.lightweight=False
         opportunity.evaluations+=1
         group.evaluation = group.evaluation + 1 if deferred else 1
         ticket = _Ticket(uuid4().hex, scope, group.version, group.policy_version,

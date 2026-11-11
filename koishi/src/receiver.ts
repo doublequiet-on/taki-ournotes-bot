@@ -20,6 +20,7 @@ interface Observation {
   key:string; input:Inbound; session:Session; seq:number; backendSeq:number; fingerprint:string; bytes:number; attempt:number
   policyVersion:string; continuation:boolean
   reviewedSeq?:number; predecessor?:Promise<void>; superseded?:boolean
+  finishReviewWait?:()=>void
   cancelled:boolean; accepted:boolean; cancelReason?:AbortReason; timer?:ReturnType<typeof setTimeout>; promise?:Promise<void>
 }
 interface ObservationDiagnostic {
@@ -142,6 +143,7 @@ export class Receiver {
     task.cancelReason=reason
     task.superseded=drain && task.reviewedSeq!==undefined
     task.cancelled=true
+    task.finishReviewWait?.()
     if(task.timer)clearTimeout(task.timer)
     task.timer=undefined
     this.observations.delete(key)
@@ -160,6 +162,21 @@ export class Receiver {
   private observationCurrent(task:Observation):boolean {
     return this.observationAlive(task) && (task.continuation || task.reviewedSeq===undefined
       || this.groupArrivals.get(task.key)?.backendSeq===task.reviewedSeq)
+  }
+  private async waitForObservationReview(task:Observation):Promise<void> {
+    if(!this.observationAlive(task) || this.observationCurrent(task))return
+    // A raw arrival can precede its admission flight. Wait for the review or cancellation,
+    // with a short bound for messages that never reach the observation endpoint.
+    const waitMs=Math.min(2500,task.input.timestampMs+298000-Date.now())
+    await new Promise<void>(resolve=>{
+      const finish=()=>{
+        clearTimeout(timer)
+        task.finishReviewWait=undefined
+        resolve()
+      }
+      const timer=setTimeout(finish,waitMs)
+      task.finishReviewWait=finish
+    })
   }
   private drainingObservation(job:Job):boolean {
     return !!job.proactive?.superseded && this.active && Date.now()<job.input.timestampMs+298000
@@ -390,6 +407,7 @@ export class Receiver {
             && source.backendSeq===current.reviewedSeq+1 && !source.conflict
             && this.observationAlive(current) && this.policyVersion(input)===version) {
           current.reviewedSeq=source.backendSeq
+          if(this.observationCurrent(current))current.finishReviewWait?.()
           return false
         }
         if(observed.observed && this.active && !source.conflict
@@ -462,13 +480,18 @@ export class Receiver {
       const proactive=job.proactive
       const events=proactive ? {
         intent:async(attempt:Parameters<BackendClient['intent']>[0])=> {
-          await this.admission
-          return await this.currentProactivePermission(proactive)?this.client.intent(attempt):'denied' as const
+          if(proactive.reviewedSeq===undefined || proactive.continuation)await this.admission
+          if(!await this.currentProactivePermission(proactive))return 'denied' as const
+          const permission=await this.client.intent(attempt)
+          if(permission==='granted')await this.waitForObservationReview(proactive)
+          return permission
         },
         current:()=>this.observationCurrent(proactive),
-        acknowledge:(attempt:Parameters<BackendClient['acknowledge']>[0],result:Parameters<BackendClient['acknowledge']>[1])=>
-          this.client.acknowledge(attempt,result,undefined,()=>this.observationCurrent(proactive)
-            &&(this.config.management?.sendsAllowed(job.input)??true)),observe:this.client.observe?.bind(this.client),
+        acknowledge:async(attempt:Parameters<BackendClient['acknowledge']>[0],result:Parameters<BackendClient['acknowledge']>[1])=> {
+          if(result.status==='success')await this.waitForObservationReview(proactive)
+          return this.client.acknowledge(attempt,result,undefined,()=>this.observationCurrent(proactive)
+            &&(this.config.management?.sendsAllowed(job.input)??true))
+        },observe:this.client.observe?.bind(this.client),
       }:{
         intent:async(attempt:Parameters<BackendClient['intent']>[0])=>
           alive() && await this.currentDeliveryPermission(job) && alive()?this.client.intent(attempt):'denied' as const,
@@ -570,9 +593,11 @@ export class Receiver {
     }
   }
   private async currentProactivePermission(task:Observation):Promise<boolean> {
-    if(!this.observationCurrent(task))return false
+    if(!this.observationAlive(task))return false
     const current=this.ctx.reflect.trace(task.session.bot.session({...task.session.event}))
-    return await this.permitted(current) && this.observationCurrent(task)
+    if(!await this.permitted(current))return false
+    await this.waitForObservationReview(task)
+    return this.observationCurrent(task)
   }
   private async authorizeModel(job:Job, challenge:ModelPermission):Promise<void> {
     if(job.proactive?.reviewedSeq!==undefined)await this.admission

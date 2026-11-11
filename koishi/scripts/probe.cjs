@@ -519,6 +519,47 @@ async function main() {
       assert.equal(f.receiver.activity().pending_total,0)
     }finally{release.resolve();await running;await f.close()}
   })
+  for(const [stage,preserve] of [
+    ['before-intent',true],['intent',true],['intent',false],['raw',true],['timeout',false],['receipt',true],['receipt',false],
+  ]) {
+    await run(`G1 waits for a pending turn review at ${stage} (preserve=${preserve})`,async()=>{
+      const intentEntered=deferred(),grant=deferred(),observed=deferred(),classify=deferred()
+      const receipts=[]
+      const f=receiverFixture({
+        async chatObservation(input){
+          if(input.messageId!=='side')return{protocol:wire.protocol,observed:true,delay_ms:1500,preserve:false}
+          observed.resolve();await classify.promise
+          return{protocol:wire.protocol,observed:false,delay_ms:0,preserve}
+        },
+        async chatCandidate(input,seq){return{protocol:wire.protocol,candidate:true,plan:await this.submit(input,seq)}},
+        async intent(){intentEntered.resolve();await grant.promise;return 'granted'},
+        async acknowledge(_attempt,result,_seq,allowContext){receipts.push([result.status,allowContext()])},
+      })
+      let candidate,side
+      try {
+        await f.receiver.receive(await f.ordinary('discussion'))
+        const captureSide=()=>f.ordinary('side',{author:{id:'other'},content:preserve?'哈哈':'换个话题'})
+        const early=stage==='before-intent'?await captureSide():undefined
+        candidate=fireObservation(f.receiver)
+        if(!early)await intentEntered.promise
+        if(stage==='receipt'){grant.resolve();await until(()=>f.sent.length===1)}
+        const message=early ?? await captureSide()
+        if(!early && stage!=='raw' && stage!=='timeout'){side=f.receiver.receive(message);await observed.promise}
+        grant.resolve();f.release('discussion')
+        await until(()=>[...f.receiver.observations.values()].some(task=>task.finishReviewWait))
+        assert.equal(receipts.length,0)
+        assert.equal(f.sent.length,stage==='receipt'?1:0)
+        if(early || stage==='raw'){side=f.receiver.receive(message);await observed.promise}
+        classify.resolve();await side;await candidate
+        const delivered=stage==='receipt' || preserve
+        assert.deepEqual(f.sent,delivered?['discussion']:[])
+        assert.deepEqual(receipts,[[delivered?'success':'aborted',preserve]])
+      }finally{
+        grant.resolve();classify.resolve();f.release('discussion')
+        await Promise.allSettled([candidate,side]);await f.close()
+      }
+    })
+  }
   await run('G1 explicit mention cancels observation timer and keeps maxPending capacity for direct delivery',async()=>{
     const f=receiverFixture({async chatObservation(){return{protocol:wire.protocol,observed:true,delay_ms:1500}}},1)
     let reply
