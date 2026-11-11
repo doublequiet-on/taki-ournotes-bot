@@ -86,12 +86,14 @@ _OMITTED_EVIDENCE_SUBJECT = re.compile(
     r'(?:是什么|什么关系|怎么(?:算|计算|计分|叠加?|判定|触发|生效|排名?|比较?)|如何(?:算|计算|计分|叠加?|排名?|比较?))[呢啊呀吗?\s]*$|'
     r'区间|满破|突破|技能|(?:至少|最少)?还?(?:要|需要|得)\s*(?:几|[0-9一二两三四五六七八九十]+)\s*张)')
 _LIGHTWEIGHT_IMAGE_REFERENCE = re.compile(
-    r'[这那](?:张|幅)图|(?:图|图片|截图|截屏)(?:上|里|中|内|所示)|'
+    r'[这那](?:张|幅)(?:图|截图|截屏|照片)|(?:图|图片|截图|截屏)(?:上|里|中|内|所示)|'
     r'(?:看|按|根据|参考)(?:[这那]张)?(?:截图|截屏|图片)|[这那]张卡面|[这那]张卡怎么样')
+_CONTEXT_IMAGE_MENTION = re.compile(r'截图|截屏|图片|照片|相片|示意图|图示|图表|卡面|配图|附图|插图|上图|下图')
 
 
-def lightweight_image_reference(text):
-    return bool(_LIGHTWEIGHT_IMAGE_REFERENCE.search(text))
+def lightweight_image_reference(text, *, context_source=False):
+    return bool(_LIGHTWEIGHT_IMAGE_REFERENCE.search(text)
+                or context_source and _CONTEXT_IMAGE_MENTION.search(text))
 
 
 def explicit_evidence_route(question):

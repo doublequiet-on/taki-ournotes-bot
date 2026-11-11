@@ -6631,6 +6631,19 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
     async def test_lightweight_omitted_just_subject_cannot_inherit_a_screenshot_reference(self):
         await self.assert_omitted_just_subject_rejects_image_reference('截图上标的这次激奏 JUST 区间太难了')
 
+    async def test_lightweight_omitted_just_subject_cannot_inherit_a_demonstrative_screenshot(self):
+        await self.assert_omitted_just_subject_rejects_image_reference('这张截图标出来的这次激奏 JUST 区间太难了')
+
+    async def test_lightweight_omitted_just_subject_cannot_inherit_a_context_with_image_mentions(self):
+        from ournotes_bot.application.backend_protocol import Request
+
+        self.enable_lightweight_fact_fixture()
+        self.observation('这次激奏 JUST 区间太难了，截图我存好了')
+        self.now+=.01
+        value=self.observation('那区间怎么计分？',seq=2);self.tick+=1.6
+        self.assertIsNone(self.agent.proactive.candidate(Request.parse(value,'fixture','app',self.now)))
+        self.client.request.assert_not_awaited()
+
     async def assert_omitted_just_subject_rejects_image_reference(self, text):
         from ournotes_bot.application.backend_protocol import Request
 

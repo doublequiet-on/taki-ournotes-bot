@@ -348,7 +348,7 @@ class ProactiveChat:
                 previous,plain_text = context
                 evidence_route = contextual_just_evidence_route(request.body,previous.text)
                 if evidence_route:
-                    if (not plain_text or lightweight_image_reference(previous.text)
+                    if (not plain_text or lightweight_image_reference(previous.text,context_source=True)
                             or not self.agent.store.source_valid(request.scope,previous.message_id,previous.timestamp_ms)):
                         self.control_event(request,'lightweight_context_required')
                         return None
