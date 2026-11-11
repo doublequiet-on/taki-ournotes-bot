@@ -605,13 +605,13 @@ async function main() {
       assert.equal(permits,6);assert.equal(f.calls.length,0);assert.equal(aborts,1)
     }finally{await f.close()}
   })
-  for(const scenario of ['interjection','shift','expired']) {
+  for(const scenario of ['interjection','shift','expired','revoked']) {
     await run(`G1 model permission waits for same-group classification (${scenario})`,async()=>{
       const preserve=scenario!=='shift'
       const permissionRead=deferred(),finishPermissionRead=deferred()
       const observed=deferred(),classify=deferred()
       const decisions=[]
-      let reads=0,prepared
+      let reads=0,prepared,revoked=false
       const f=receiverFixture({readiness:{backend_epoch:'b'.repeat(32)},
         async chatObservation(input){
           if(input.messageId!=='side')return{protocol:wire.protocol,observed:true,delay_ms:1500,preserve:false}
@@ -633,7 +633,7 @@ async function main() {
       })
       f.receiver.permitted=async()=>{
         if(++reads===3){permissionRead.resolve();await finishPermissionRead.promise}
-        return true
+        return !revoked
       }
       let candidate,side
       try {
@@ -647,8 +647,9 @@ async function main() {
         if(scenario!=='expired')await until(()=>[...f.receiver.observations.values()].some(task=>task.finishReviewWait))
         assert.deepEqual(decisions,[])
         side=f.receiver.receive(message);await observed.promise
+        if(scenario==='revoked')revoked=true
         classify.resolve();await side;await candidate
-        assert.deepEqual(decisions,scenario==='expired'?[]:[preserve])
+        assert.deepEqual(decisions,scenario==='expired'?[]:[scenario==='interjection'])
         assert.deepEqual(f.sent,scenario==='interjection'?['discussion']:[])
         assert.equal(f.finished.size,scenario==='interjection'?1:0)
       }finally{

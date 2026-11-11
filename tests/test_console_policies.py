@@ -6625,6 +6625,33 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
         self.assertTrue(candidate[0].lightweight)
         self.assertFalse(candidate[0].evidence_route)
 
+    async def test_lightweight_omitted_just_subject_cannot_inherit_an_image_reference(self):
+        from ournotes_bot.application.backend_protocol import Request
+
+        self.enable_lightweight_fact_fixture()
+        image_reference=self.observation('这张图里的这次激奏 JUST 区间太难了');self.tick+=1.6
+        plan,attempts,_=await self.candidate(image_reference)
+        self.assertFalse(plan['send_allowed'])
+        self.assertEqual(attempts,[])
+        self.now+=.01
+        value=self.observation('那区间怎么计分？',seq=2);self.tick+=1.6
+        request=Request.parse(value,'fixture','app',self.now)
+        self.assertIsNone(self.agent.proactive.candidate(request))
+        self.client.request.assert_not_awaited()
+        self.assertTrue(any(event['data'].get('status')=='lightweight_context_required'
+                            for event in self.backend.diagnostics.group_events('g1')))
+
+    async def test_lightweight_omitted_just_subject_cannot_inherit_an_attachment_caption(self):
+        from ournotes_bot.application.backend_protocol import Request
+
+        self.enable_lightweight_fact_fixture()
+        self.observation('这次激奏 JUST 区间太难了',attachments=self.proactive_picture())
+        self.now+=.01
+        value=self.observation('那区间怎么计分？',seq=2);self.tick+=1.6
+        request=Request.parse(value,'fixture','app',self.now)
+        self.assertIsNone(self.agent.proactive.candidate(request))
+        self.client.request.assert_not_awaited()
+
     async def test_lightweight_evidence_requires_remaining_hourly_calls(self):
         self.enable_lightweight_fact_fixture(max_calls_per_hour=2)
         await self.assert_lightweight_evidence_call_denial('chat_service_call_limit')
@@ -6667,6 +6694,25 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
         self.assertFalse(plan['send_allowed'])
         self.assertEqual(plan['parts'],[])
         self.client.request.assert_awaited_once()
+
+    async def test_lightweight_evidence_oversized_lookup_result_stops_without_claiming_no_source(self):
+        from ournotes_bot.domain.model_calls import ToolCall
+
+        self.enable_lightweight_fact_fixture()
+        self.client.request.side_effect=[self.result('{"participation":"reply","text":"","delay_seconds":null}'),
+            self.result(calls=(ToolCall('approved','knowledge_search','{"server":"jp","date":null,"version":null}'),))]
+        value=self.observation('激奏 JUST 区间怎么计分？');self.tick+=1.6
+        output={'status':'ok','data':{'source':'approved_knowledge','passages':['核对资料'*10000]}}
+        with patch.object(self.agent,'execute',return_value=(output,())) as execute:
+            plan,attempts,_=await self.candidate(value)
+        execute.assert_awaited_once()
+        self.assertEqual(len(attempts),2)
+        self.assertEqual(self.client.request.await_count,2)
+        self.assertFalse(plan['send_allowed'])
+        self.assertEqual(plan['parts'],[])
+        events=self.backend.diagnostics.read(plan['request_id'])['chat_events']
+        self.assertTrue(any(event['data'].get('status')=='proactive_evidence_budget_exhausted'
+                            and event['data'].get('reason')=='tool_result_input_budget' for event in events))
 
     async def test_lightweight_mechanic_opinion_after_image_and_explicit_evidence_guard(self):
         from ournotes_bot.application.backend_protocol import Request

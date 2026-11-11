@@ -593,12 +593,19 @@ export class Receiver {
       this.jobs.delete(job.input.requestId)
     }
   }
-  private async currentProactivePermission(task:Observation):Promise<boolean> {
-    if(!this.observationAlive(task))return false
-    const current=this.ctx.reflect.trace(task.session.bot.session({...task.session.event}))
-    if(!await this.permitted(current))return false
-    await this.waitForObservationReview(task)
-    return this.observationCurrent(task)
+  private async currentProactivePermission(task:Observation, expires=Infinity):Promise<boolean> {
+    const reviewDeadline=Math.min(expires,performance.now()+2500)
+    while(this.observationAlive(task) && performance.now()<expires) {
+      const current=this.ctx.reflect.trace(task.session.bot.session({...task.session.event}))
+      if(!await this.permitted(current) || performance.now()>=expires)return false
+      if(this.observationCurrent(task))return true
+      const remaining=reviewDeadline-performance.now()
+      if(remaining<=0)return false
+      await this.waitForObservationReview(task,remaining)
+      if(!this.observationCurrent(task))return false
+      // Classification can suspend the decision while Koishi permissions change.
+    }
+    return false
   }
   private async authorizeModel(job:Job, challenge:ModelPermission):Promise<void> {
     const input=job.input
@@ -618,9 +625,8 @@ export class Receiver {
     // Re-evaluate current plugin scope/platform permission and current management state.
     // observeUser reuses the old Session's loaded fields. A new Session forces a
     // fresh database read; reusing the admitted Session would miss a revoked user.
-    const current=this.ctx.reflect.trace(job.session.bot.session({...job.session.event}))
-    const permitted=this.active && await this.permitted(current)
-    if(permitted && job.proactive)await this.waitForObservationReview(job.proactive,expires-performance.now())
+    const permitted=job.proactive ? await this.currentProactivePermission(job.proactive,expires)
+      : this.active && await this.permitted(this.ctx.reflect.trace(job.session.bot.session({...job.session.event})))
     if(performance.now()>=expires)return
     const management=this.config.management
     const policy=management?.policySnapshot(input) ?? {natural_query:'model' as const,epoch:this.epoch,global_revision:0,group_revision:0}

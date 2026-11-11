@@ -23,7 +23,8 @@ from .chat_jobs import (
 )
 from .proactive_chat import ProactiveController,ProactivePolicy
 from .chat_followup import Followups
-from .persona import contextual_just_evidence_route, explicit_evidence_route, lightweight_needs_evidence
+from .persona import (contextual_just_evidence_route, explicit_evidence_route,
+                      lightweight_image_reference, lightweight_needs_evidence)
 from . import replies
 
 
@@ -342,10 +343,15 @@ class ProactiveChat:
         evidence_route = explicit_evidence_route(request.body) if lightweight else ''
         evidence_context_id = ''
         if lightweight and not evidence_route:
-            previous = self.controller.preceding_plain_message(scope,request.message_id)
-            if previous and self.agent.store.source_valid(request.scope,previous.message_id,previous.timestamp_ms):
+            context = self.controller.preceding_message_from_speaker(scope,request.message_id)
+            if context is not None:
+                previous,plain_text = context
                 evidence_route = contextual_just_evidence_route(request.body,previous.text)
                 if evidence_route:
+                    if (not plain_text or lightweight_image_reference(previous.text)
+                            or not self.agent.store.source_valid(request.scope,previous.message_id,previous.timestamp_ms)):
+                        self.control_event(request,'lightweight_context_required')
+                        return None
                     evidence_context_id = previous.message_id
         if lightweight and not evidence_route and lightweight_needs_evidence(request.body):
             self.control_event(request,'chat_service_lightweight_evidence_required')

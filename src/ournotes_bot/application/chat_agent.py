@@ -36,7 +36,7 @@ from .chat_jobs import (ChatServices,ServiceBudget,ServiceError,maximum_cost_mic
                        summary_candidate,summary_messages,validate_summary)
 from .backend_protocol import ProtocolError
 from .chat_proactive_runtime import ProactiveChat
-from .persona import explicit_evidence_route
+from .persona import explicit_evidence_route, lightweight_image_reference
 from .replies import PreparedReply
 
 logger=logging.getLogger(__name__)
@@ -85,8 +85,6 @@ _QUOTE_IMAGE_TARGET = re.compile(
     r'(?:这(?:张|个|幅)?图(?:片)?|图(?:里|中)|引用(?:里|中)(?:的)?(?:图|图片))'
     r'[^。！？?；;\n]{0,80}(?:多少|多高|几[个项分张级抽]|是什么|怎么看|如何|算不算|算高|吗)'
     r'[呢啊呀嘛]?[？?！!。\s]*$', re.I)
-_LIGHTWEIGHT_IMAGE_REFERENCE = re.compile(
-    r'这(?:张|幅)图|那(?:张|幅)图|(?:图|图片)(?:里|中)|[这那]张卡面|[这那]张卡怎么样')
 _QUOTE_ADDITION = re.compile(r'[。！？?；;\n]+\s*(?:另外|另问|还有个问题)[\s，,：:]*')
 _ON_MECHANICS = re.compile(r'保底|掉率|出货率|概率|倍率|公式|判定规则|计分规则|抽卡规则')
 _ON_TITLE = re.compile(r'(?<![a-z0-9_])(?:our\s*notes|on)(?![a-z0-9_])', re.I)
@@ -718,7 +716,7 @@ class ChatAgent:
         last_image = max((i for i, row in enumerate(recent_rows) if 'image_attachments' in row), default=-1)
         text_rows = recent_rows[last_image + 1:]
         if (not text_rows or any('quoted_text' in row for row in text_rows)
-                or _LIGHTWEIGHT_IMAGE_REFERENCE.search(recent_rows[-1]['text'])):
+                or lightweight_image_reference(recent_rows[-1]['text'])):
             self.proactive.trace(work, 'context', status='lightweight', messages=len(recent_rows))
             self.proactive.trace(work, 'control', status='lightweight_context_required')
             self.proactive.decision(work,'{"participation":"skip"}')
@@ -981,8 +979,8 @@ class ChatAgent:
             prompt+='\n最终只输出包含 participation、text、delay_seconds 三个字段的 JSON 对象，不加代码围栏或说明。participation 为 reply、skip 或 defer；text 固定为空字符串；仅 defer 的 delay_seconds 为 2 至 5 的整数，其余为 null。选择 reply 后另一步直接写群聊正文，本次不拟正文。'
         if light:
             return await self.lightweight_turn(work,prompt,natural_prompt,history,user,group,deadline)
-        def skip_proactive_evidence(status):
-            self.proactive.trace(work,'control',status=status)
+        def skip_proactive_evidence(status, **details):
+            self.proactive.trace(work,'control',status=status,**details)
             self.proactive.decision(work,'{"participation":"skip"}')
             return PreparedReply('',business_status='proactive_skip')
 
@@ -995,7 +993,7 @@ class ChatAgent:
             rows = rows[last_image+1:]
             if (not rows or rows[-1]['message_id'] != request.message_id
                     or any('quoted_text' in row for row in rows)
-                    or _LIGHTWEIGHT_IMAGE_REFERENCE.search(request.body)):
+                    or lightweight_image_reference(request.body)):
                 return skip_proactive_evidence('lightweight_context_required')
             decision_prompt = (prompt+'\n只在当前发言确实向全群提出这个事实问题且尚未得到回答时选 reply。'
                                '区分真提问、反问、体验分享、复述别人的问题，以及明确在向某位群友提问。'
@@ -1314,8 +1312,6 @@ class ChatAgent:
                         output,leases=await self.execute(work,call,question,site,leases,deadline-self.budget.final_seconds,deadline,
                                                          registry=active_registry,web=web,user=user,group=group,story_handles=story_handles,image_handles=image_handles,vision=vision,
                                                          meta_question=meta_question,evidence_route=route,just_card=just_card)
-                    if proactive_evidence and required and output['status'] in ('budget_exhausted','quota_exceeded'):
-                        return skip_proactive_evidence('proactive_evidence_budget_exhausted')
                     image_input=output.pop('_image_input',None)
                     knowledge_scope=output.pop('_knowledge_scope',None)
                     knowledge_lease=output.pop('_knowledge_lease',None)
@@ -1335,6 +1331,9 @@ class ChatAgent:
                             next_tools = []
                         if runtime.input_bound(work,projected,next_tools)>work.model_snapshot.profile.max_input_tokens-2048:
                             force_final=True
+                    if proactive_evidence and required and output['status'] in ('budget_exhausted','quota_exceeded'):
+                        return skip_proactive_evidence('proactive_evidence_budget_exhausted',
+                                                       reason=output.get('reason',output['status']))
                     if call.name=='read_entity_fields' and output['status'] in ('ok','partial'):
                         for item in output['data']['items']:
                             fields=set(item['fields'])-set(item['missing_fields'])

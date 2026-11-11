@@ -249,7 +249,7 @@ class ProactiveController:
             return next((row.message for row in reversed(group.rows)
                          if row.message.message_id==group.target_id),None)
 
-    def preceding_plain_message(self, scope, message_id):
+    def preceding_message_from_speaker(self, scope, message_id):
         group = self.groups.get(scope)
         if group is None:
             return None
@@ -257,9 +257,9 @@ class ProactiveController:
             current = group.rows[index].message
             if current.message_id == message_id:
                 previous = group.rows[index-1]
-                if (previous.plain_text and previous.message.speaker_id == current.speaker_id
+                if (previous.message.speaker_id == current.speaker_id
                         and 0 <= current.timestamp_ms-previous.message.timestamp_ms <= self.candidate_seconds*1000):
-                    return previous.message
+                    return previous.message,previous.plain_text
                 return None
         return None
 
