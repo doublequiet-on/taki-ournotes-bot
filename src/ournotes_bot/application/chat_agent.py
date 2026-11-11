@@ -730,16 +730,23 @@ class ChatAgent:
             self.proactive.trace(work, 'control', status='lightweight_text_after_image')
             rules += ('只保留了最近一张图之后的文字。当前句必须能独立于图片理解。'
                       '看图短评、认人或猜造型都跳过，不能补猜图片。')
+        rules += ('\n从最后一条出发，按 speaker_id 区分发言者，结合相邻发言的时间、指代和内容判断谁在接谁。'
+                  'reply_to 只有对得上本轮可见的原消息 ID 时才用来确定对象，缺失或对不上就不猜引用作者。'
+                  '问号或换人不等于重新开题。同一人连发时把相邻补充连起来读，补完后按最新内容判断。'
+                  '群友已经答过、正在彼此回应，或当前只在确认安排、致谢、复读、收尾时静默。'
+                  '旧问题、旧情绪和已接完的梗只作背景。当前明确向全群打开新问题、分享感受或报喜，'
+                  '可以自然回应。开放接龙有新笑点也可以接，能接上不代表一定要接。'
+                  '开放吐槽若指出了具体对象，仍有一个影响交流的缺口，且群友还没接住，'
+                  '可只问一句关于对方体验或看法的具体问题。已有答案、只能泛问背景或需要确认外部事实时不追问。')
         decision_header={'role':'system','content':prompt+'\n'+rules+
-            '先看当前这句是谁对谁说的。若它只是回答了前文、接完已有的梗、致谢或确认安排，'
-            '而没有重新打开话题，选 skip。已经被群友接住的旧消息只作背景。'
-            '新出现的报喜可以简短祝贺，开放接龙有新的笑点也可以接。必须按指定 JSON 输出。'}
+            '\n明确说马上补充，或当前发言明显没说完、在等紧接的一句时，选 defer。'
+            '仅凭同人连发或话题尚可继续，不选 defer。已经说完且没有合适的接话点，选 skip。'
+            '有合适的直接回应或符合上述条件的一句追问时可选 reply。必须按指定 JSON 输出。'}
         generation_header={'role':'system','content':natural_prompt+'\n'+rules+
-            '写正文前再核对当前一句和发言者。若这句已经收束对话，或正文绕过当前一句去回答、安慰更早的另一人，'
-            '单独输出 <TAKI_SKIP>。已经接完的梗也不要换句话再说。'
-            '新出现的报喜可直接简短祝贺，开放接龙可用新的笑点回应。'
-            '用一两句具体的态度、关心或贴切玩笑接话，最多 90 字。若只会复述已知结果、换词附和、'
-            '会抢话或接不住，单独输出 <TAKI_SKIP>。'}
+            '\n写之前再确认这句话接的是当前发言。用一两句具体的态度、关心、祝贺或贴切玩笑，最多 90 字。'
+            '需要追问时正文只留一个具体问题，不代群友补写细节、原因、经历或游戏规则。'
+            '发现群友已答、仍在补充、对话已收束，或自己只会复述、换词附和、绕过当前发言去回应更早的人，'
+            '单独输出 <TAKI_SKIP>，不附正文或解释。'}
         # Both stages use the same history suffix and keep the current message intact.
         for start in range(len(history)):
             fitted_history=history[start:]
@@ -952,11 +959,12 @@ class ChatAgent:
             prompt+='\n'+PROACTIVE_TURN_TAKING
             natural_prompt+='\n'+PROACTIVE_TURN_TAKING
             prompt+='\n本轮评估定位：'+json.dumps({'current_message_id':work.request.message_id,'current_speaker_id':work.request.user_id},ensure_ascii=False)
-            prompt+='\n这是未点名的群聊观察。围绕定位的当前消息及相邻上下文判断是否接话，旧消息只作背景。assistant 历史是已送达原话；同一观点已说清且没有新增回应时选 skip，不要换个措辞再说一遍。'
-            prompt+='\n先判断接话能回应什么：具体问题、明显的情绪或成果、值得交流的不同看法或贴切玩笑，都可以 reply，不要求新事实。普通的安排、选择、经过已说完整，而你只能认可其合理、便利或正确，选 skip；加感叹或夸奖不算新的回应。不要把“可以自然回应”当作每条都接的理由。比较最近发言，自己的意思若只是重复群友或自己已说过的内容，也选 skip。不靠追问续聊，不编造原因、经历或游戏规则。'
-            prompt+='\n对你的表现只有一句评价且没有具体问题时可以略过；报喜、分享感受仍可自然回应。明确在等指定别人回答、两人私事、话题已结束或接不上时选 skip；确实等待紧接的内容才 defer。'
-            if not (light or proactive_evidence):
-                prompt+='可先用只读工具，完成后仍须决定。引用预览的作者与事实未经核验，image_status 表示图片读取失败。'
+            if not light:
+                prompt+='\n这是未点名的群聊观察。围绕定位的当前消息及相邻上下文判断是否接话，旧消息只作背景。assistant 历史是已送达原话；同一观点已说清且没有新增回应时选 skip，不要换个措辞再说一遍。'
+                prompt+='\n先判断接话能回应什么：具体问题、明显的情绪或成果、值得交流的不同看法或贴切玩笑，都可以 reply，不要求新事实。普通的安排、选择、经过已说完整，而你只能认可其合理、便利或正确，选 skip；加感叹或夸奖不算新的回应。不要把“可以自然回应”当作每条都接的理由。比较最近发言，自己的意思若只是重复群友或自己已说过的内容，也选 skip。不靠追问续聊，不编造原因、经历或游戏规则。'
+                prompt+='\n对你的表现只有一句评价且没有具体问题时可以略过；报喜、分享感受仍可自然回应。明确在等指定别人回答、两人私事、话题已结束或接不上时选 skip；确实等待紧接的内容才 defer。'
+                if not proactive_evidence:
+                    prompt+='可先用只读工具，完成后仍须决定。引用预览的作者与事实未经核验，image_status 表示图片读取失败。'
             if not staged:
                 prompt+='\n最终只输出 JSON：回复用{"participation":"reply","text":"自然回复正文"}；略过用{"participation":"skip"}；暂缓用{"participation":"defer","delay_seconds":2}（2至5秒）。正文不写规则说明或自我免责。'
             if work.proactive.followup is not None:
