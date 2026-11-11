@@ -6245,7 +6245,7 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
         self.assertTrue(any(r['role']=='assistant' for r in self.agent.store.recent(Request_scope())))
         self.assertTrue(self.agent.recovery.recover(scope=Request_scope()))
 
-    async def test_delivered_text_survives_new_observation_before_ack(self):
+    async def test_stale_proactive_receipt_counts_delivery_without_projecting_text(self):
         value=self.observation();self.tick+=1.6
         self.client.request.return_value=self.result('{"participation":"reply","text":"已送达的原话"}')
         plan,_,_=await self.candidate(value)
@@ -6253,9 +6253,9 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
         self.current_user='u2';self.observation('新消息让旧候选失效',seq=2)
         self.assertFalse(self.backend.lookup(plan['request_id'],'e1')['send_allowed'])
         self.event(plan,'ack')
-        rows=self.agent.store.recent(Request_scope())
-        self.assertEqual([r['text'] for r in rows if r['role']=='assistant'],['已送达的原话'])
-        self.assertFalse(any(r['text']=='新消息让旧候选失效' for r in rows))
+        self.assertEqual(self.backend.ledger.parts(plan['delivery_id'])[0]['receipt'],'success')
+        self.assertEqual(len(self.agent.store.proactive_replies(Request_scope())),1)
+        self.assertEqual(self.agent.store.recent(Request_scope()),[])
 
     async def test_duplicate_ack_repairs_projection_after_store_failure(self):
         import sqlite3

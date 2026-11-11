@@ -32,6 +32,35 @@ def _echo_key(text: str) -> str:
     return ' '.join(folded.split()).rstrip(' .!?。…')
 
 
+_INTERJECTION = re.compile(r'(?:哈{2,}|笑死|围观|路过|插个楼|冒个泡|你们继续|吃瓜|\+1|\[表情\])')
+_TURN_CLOSED = re.compile(r'(?:已经有人回答了|(?:我|他|她|我们)?(?:已经|刚刚|刚才)?'
+                          r'(?:答完了|解决了|搞定了|知道了|明白了|懂了)|不用(?:再)?答了|不用了|先这样|算了)')
+_TOPIC_SHIFT = re.compile(r'^(?:换个话题|说个别的|先不说这个|聊点别的|打断一下[，,:：])')
+_SUPPLEMENT = re.compile(r'^(?:补充|再补|漏说|忘了说|我说的是|我指的是|更正|纠正|我的意思是)')
+_ANSWER = re.compile(r'^(?:答案是|选[的是]|直接选|原因是|因为|可以用|用.+就行)')
+
+
+def _observation_turn(target, request):
+    """Resolve explicit conversation cues before the model evaluates a new scene."""
+    if target is None or request.attachments:
+        return 'advance'
+    text = _echo_key(request.body).strip('，,！!？?~～')
+    previous = _echo_key(target.text)
+    same_speaker = request.user_id == target.speaker_id
+    quoted = bool(previous and _echo_key(request.quoted_text) == previous)
+    if _TOPIC_SHIFT.match(text):
+        return 'shift'
+    if _TURN_CLOSED.fullmatch(text) and (same_speaker or quoted or text == '已经有人回答了'):
+        return 'closed'
+    if not same_speaker and _ANSWER.match(text) and quoted:
+        return 'closed'
+    if not same_speaker and not request.quoted_text and not request.quote_hint and _INTERJECTION.fullmatch(text):
+        return 'interjection'
+    if _SUPPLEMENT.match(text) and (same_speaker or quoted):
+        return 'supplement'
+    return 'advance'
+
+
 class ProactiveChat:
     @staticmethod
     def parse_staged_decision(text):
@@ -59,6 +88,7 @@ class ProactiveChat:
         self.followups=Followups(clock=lambda:self.controller.clock(),on_expire=self.window_expired)
         self.addressed=Counter()
         self.control_times=OrderedDict()
+        self.observation_responses=OrderedDict()
         self.lightweight_groups = frozenset(
             group_id.strip() for group_id in os.getenv('OURNOTES_PROACTIVE_LIGHTWEIGHT_GROUPS', '').split(',')
             if group_id.strip()
@@ -250,9 +280,36 @@ class ProactiveChat:
                     self.control_event(request,status);return False
             if request.attachments:
                 self.agent.images.remember(self.agent.image_scope(request),request.message_id,request.user_id,request.timestamp_ms,request.attachments)
-            return self.controller.observe(scope,ChatMessage(request.message_id,request.user_id,
-                request.body,request.timestamp_ms,display_name=request.sender_name))
+            target = self.controller.target(scope)
+            turn = 'advance' if followup is not None else _observation_turn(target, request)
+            observed = self.controller.observe(scope,ChatMessage(request.message_id,request.user_id,
+                request.body,request.timestamp_ms,display_name=request.sender_name),
+                turn='advance' if turn=='shift' else turn)
+            if observed and turn != 'advance':
+                self.control_event(request, 'proactive_'+turn)
+            return observed
         except (ModelError,ServiceError,ValueError,OSError,sqlite3.Error):return False
+
+    def gateway_observation(self, request):
+        """Replay the last response when an HTTP retry repeats the same ingress."""
+        scope = self.scope(request)
+        identity = request.content_digest
+        previous = self.observation_responses.get(scope)
+        if previous is not None and previous[0] == request.gateway_epoch and request.ingress_seq <= previous[1]:
+            if request.ingress_seq == previous[1] and identity == previous[2]:
+                return previous[3]
+            return False, 0, False
+        target = self.controller.target(scope)
+        observed = self.observe(request)
+        current = self.controller.target(scope)
+        delay = self.observation_delay(request) if observed else None
+        preserve = bool(observed and target is not None and current is target)
+        result = (delay is not None, delay or 0, preserve)
+        self.observation_responses[scope] = (request.gateway_epoch,request.ingress_seq,identity,result)
+        self.observation_responses.move_to_end(scope)
+        while len(self.observation_responses)>self.controller.max_scopes:
+            self.observation_responses.popitem(last=False)
+        return result
 
     def candidate(self,request):
         if self.agent.audit_failures:return None
@@ -327,7 +384,8 @@ class ProactiveChat:
                 details.update(requested_cost_micro=minimum, available_cost_micro=max(0, cost),
                                controller_cost_micro=math.ceil(spent))
                 self.control_event(request,'chat_service_reservation_limit',**details);return None
-        candidate=self.controller.candidate(self.scope(request),reserve_cost_micro=math.ceil(cost))
+        candidate=self.controller.candidate(self.scope(request),reserve_cost_micro=math.ceil(cost),
+                                            message_id=request.message_id)
         if candidate is None:return None
         last=candidate.messages[-1]
         if (last.message_id,last.speaker_id,last.text,last.timestamp_ms)!=(request.message_id,request.user_id,request.body,request.timestamp_ms):
@@ -348,6 +406,8 @@ class ProactiveChat:
 
     def observation_delay(self,request):
         scope=self.scope(request);settings=self.settings(request.conversation_id)
+        target=self.controller.target(scope)
+        if target is None or target.message_id!=request.message_id:return None
         followup=self.followups.match(scope,request.message_id)
         if followup is not None:
             return math.ceil(self.controller.start_delay(scope)*1000) if settings['followup_enabled'] else None

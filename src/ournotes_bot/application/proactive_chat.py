@@ -100,6 +100,7 @@ class _Opportunity:
     evaluations: int = 0
     tools: int = 0
     knowledge_leases: dict = field(default_factory=dict)
+    send_interrupted: bool = False
 
 
 @dataclass
@@ -122,6 +123,9 @@ class _Group:
     pending_since: float | None = None
     coalesce_seconds: float | None = None
     continuation_user_id: str | None = None
+    target_id: str | None = None
+    pending_opportunity: str | None = None
+    send_started: bool = False
 
 
 class ProactiveController:
@@ -173,10 +177,15 @@ class ProactiveController:
 
     @staticmethod
     def _cancel(group):
+        if group.send_started and group.opportunity is not None:
+            group.opportunity.send_interrupted = True
         group.version += 1
         group.active, group.deferred_at, group.dirty = None, None, False
         group.pending_since = None
         group.evaluation = 0
+        group.target_id = None
+        group.pending_opportunity = None
+        group.send_started = False
 
     def cancel(self, scope):
         group = self.groups.get(scope)
@@ -206,6 +215,8 @@ class ProactiveController:
         for group in self.groups.values():
             if group.opportunity is not None and group.opportunity.expires_at <= now:
                 group.opportunity.knowledge_leases.clear()
+                if group.pending_opportunity == group.opportunity.id:
+                    self._cancel(group)
             retained = [row for row in group.rows if row.at > now - self.window_seconds]
             if len(retained) != len(group.rows):
                 group.rows = retained
@@ -229,7 +240,15 @@ class ProactiveController:
     def retained_bytes(self):
         return sum(row.size for group in self.groups.values() for row in group.rows)
 
-    def observe(self, scope, message, *, addressed=False, is_bot=False):
+    def target(self, scope):
+        group = self.groups.get(scope)
+        if group is not None and (group.active or group.dirty or group.deferred_at is not None):
+            return next((row.message for row in reversed(group.rows)
+                         if row.message.message_id==group.target_id),None)
+
+    def observe(self, scope, message, *, addressed=False, is_bot=False, turn='advance'):
+        if turn not in ('advance','supplement','interjection','closed'):
+            raise ValueError('proactive_turn_invalid')
         self.sweep()
         group = self.groups.get(scope)
         if group is None or not group.policy.available or is_bot:
@@ -244,8 +263,6 @@ class ProactiveController:
             return False
         now = self.clock()
         pending_since = group.pending_since
-        self._cancel(group)
-        group.last_message_at = now
         group.seen[message.message_id] = now
         while len(group.seen) > self.max_messages * 4:
             group.seen.popitem(last=False)
@@ -254,14 +271,25 @@ class ProactiveController:
             # An omitted new message must invalidate the old answer, not wake a
             # model with a misleadingly complete older scene.
             group.rows.clear()
+            self._cancel(group)
             return False
         group.rows.append(_Observed(message, now, size))
         while (len(group.rows) > self.max_messages
                or sum(row.size for row in group.rows) > self.group_bytes):
             group.rows.pop(0)
-        group.dirty = not addressed
+        if turn == 'interjection' and not addressed and self.target(scope) is not None:
+            self.sweep()
+            return True
+        self._cancel(group)
+        group.last_message_at = now
+        group.dirty = (not addressed and turn in ('advance','supplement')
+                       and not (group.opportunity is not None and group.opportunity.send_interrupted
+                                and now < group.opportunity.expires_at))
         if group.dirty:
             group.pending_since = pending_since if pending_since is not None else now
+            group.target_id = message.message_id
+            if turn=='supplement' and group.opportunity is not None and now<group.opportunity.expires_at:
+                group.pending_opportunity=group.opportunity.id
         self.sweep()
         return True
 
@@ -292,7 +320,7 @@ class ProactiveController:
                   if ticket.opportunity_id==opportunity.id)
         return max(0,opportunity.cost_micro-spent)
 
-    def candidate(self, scope, *, reserve_cost_micro):
+    def candidate(self, scope, *, reserve_cost_micro, message_id=None):
         if type(reserve_cost_micro) is not int or reserve_cost_micro < 0:
             raise ValueError('proactive_reservation_invalid')
         self.sweep()
@@ -300,6 +328,7 @@ class ProactiveController:
         now = self.clock()
         if (group is None or not group.policy.available or group.addressed_active
                 or group.active is not None or not group.rows
+                or message_id is not None and message_id != group.target_id
                 or self.start_delay(scope) > 0
                 or now < group.last_delivery_at + group.policy.cooldown_seconds):
             return None
@@ -318,7 +347,9 @@ class ProactiveController:
         if opportunity is None or now>=opportunity.expires_at:
             if opportunity is not None and not group.dirty:return None
             opportunity=group.opportunity=_Opportunity(uuid4().hex,now+self.candidate_seconds,reserve_cost_micro)
-        if opportunity.evaluations>=self.max_defer_rechecks+1:return None
+        if opportunity.send_interrupted or opportunity.evaluations>=self.max_defer_rechecks+1:return None
+        target=self.target(scope)
+        if target is None:return None
         opportunity.evaluations+=1
         group.evaluation = group.evaluation + 1 if deferred else 1
         ticket = _Ticket(uuid4().hex, scope, group.version, group.policy_version,
@@ -327,8 +358,10 @@ class ProactiveController:
         group.tickets[ticket.candidate_id] = ticket
         group.active, group.deferred_at, group.dirty = ticket.candidate_id, None, False
         group.pending_since = None
+        group.pending_opportunity = None
+        messages=tuple(row.message for row in group.rows if row.message.message_id!=target.message_id)+(target,)
         return ProactiveCandidate(ticket.candidate_id, scope, ticket.version, ticket.policy_version,
-                                  ticket.service_subject_id, tuple(row.message for row in group.rows),
+                                  ticket.service_subject_id, messages,
                                   now, ticket.expires_at, reserve_cost_micro, deferred, group.evaluation,
                                   opportunity_id=opportunity.id)
 
@@ -373,6 +406,10 @@ class ProactiveController:
             return False
         _, ticket = self._ticket(candidate)
         return ticket.decision == 'reply'
+
+    def mark_send_started(self, candidate):
+        """Keep the opportunity closed to replacements once intent has been granted."""
+        self.groups[candidate.scope].send_started = True
 
     def settle(self, candidate, *, actual_cost_micro, held_cost_micro=None):
         """Unknown usage retains the attempt ledger bound, or the full opportunity hold."""
@@ -440,6 +477,7 @@ class ProactiveController:
         group.replies.append(now)
         group.last_delivery_at = now
         if group.active==ticket.candidate_id and group.version==ticket.version:
+            group.send_started = False
             self._cancel(group)
         return True
 

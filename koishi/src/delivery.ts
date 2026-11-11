@@ -17,6 +17,7 @@ export interface Attempt {
 export interface DeliveryEvents {
   intent(attempt: Attempt): Promise<'granted' | 'existing' | 'denied'>
   acknowledge(attempt: Attempt, result: Outcome): Promise<void>
+  current?(): boolean
   observe?(span: { request_id: string; delivery_id: string; kind: 'upload' | 'send' | 'receipt_submit';
     position: number; attempt: string | null; duration_ms: number; outcome:'ok'|'error'|'unknown' }): void
 }
@@ -199,7 +200,7 @@ export class QQDelivery {
       this.halted = true
       return { status: 'aborted', reason: 'intent_not_granted' }
     }
-    if (!this.valid()) {
+    if (!this.valid() || this.events.current?.() === false) {
       this.halted = true
       return this.ack(attempt, { status: 'aborted', reason: 'inactive_or_expired' }, false)
     }

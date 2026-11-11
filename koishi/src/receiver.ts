@@ -19,6 +19,7 @@ interface Raw { raw: unknown; seq: number; backendSeq:number; at: number; finger
 interface Observation {
   key:string; input:Inbound; session:Session; seq:number; backendSeq:number; fingerprint:string; bytes:number; attempt:number
   policyVersion:string; continuation:boolean
+  reviewedSeq?:number; predecessor?:Promise<void>; superseded?:boolean
   cancelled:boolean; accepted:boolean; cancelReason?:AbortReason; timer?:ReturnType<typeof setTimeout>; promise?:Promise<void>
 }
 interface ObservationDiagnostic {
@@ -86,8 +87,9 @@ export class Receiver {
   private jobs = new Map<string, Job>()
   private flights = new Map<string, Flight>()
   private observations = new Map<string, Observation>()
+  private observedIds = new Map<string,number>()
   private observationTasks = new Set<Observation>()
-  private groupArrivals = new Map<string,{seq:number;backendSeq:number;at:number}>()
+  private groupArrivals = new Map<string,{seq:number;backendSeq:number;at:number;addressedSeq:number}>()
   private speakerArrivals = new Map<string,{seq:number;at:number}>()
   private admission: Promise<void> = Promise.resolve()
   readonly ready: Promise<void>
@@ -116,6 +118,7 @@ export class Receiver {
     this.observationDiagnostics()
     const now=Date.now()
     for(const [key,value] of this.raw) if(now-value.at>=298000)this.raw.delete(key)
+    for(const [key,at] of this.observedIds)if(now-at>=298000)this.observedIds.delete(key)
     for(const [key,value] of this.groupArrivals)if(now-value.at>=298000)this.groupArrivals.delete(key)
     for(const [key,value] of this.speakerArrivals)if(now-value.at>=298000)this.speakerArrivals.delete(key)
     for(const task of this.observations.values()) if(!this.observationAlive(task))this.cancelObservation(task.key,this.observationStopReason(task))
@@ -133,10 +136,11 @@ export class Receiver {
     return [...sources].reduce((total,item)=>total+item.bytes,0)
       + [...this.observationTasks].reduce((total,item)=>total+item.bytes,0)
   }
-  private cancelObservation(key:string,reason:AbortReason='observation_replaced'):void {
+  private cancelObservation(key:string,reason:AbortReason='observation_replaced',drain=false):void {
     const task=this.observations.get(key)
     if(!task)return
     task.cancelReason=reason
+    task.superseded=drain && task.reviewedSeq!==undefined
     task.cancelled=true
     if(task.timer)clearTimeout(task.timer)
     task.timer=undefined
@@ -147,10 +151,18 @@ export class Receiver {
   private observationAlive(task:Observation):boolean {
     const management=this.config.management
     return this.active && !task.cancelled && this.observations.get(task.key)===task
-      && this.latestObservation(task.input,task.seq,task.continuation)
+      && (task.reviewedSeq!==undefined && !task.continuation
+          || this.latestObservation(task.input,task.seq,task.continuation))
       && Date.now()<task.input.timestampMs+298000 && (management?.accepts(task.input)??true)
       && (management?.policySnapshot(task.input).natural_query??'model')==='model'
       && this.policyVersion(task.input)===task.policyVersion
+  }
+  private observationCurrent(task:Observation):boolean {
+    return this.observationAlive(task) && (task.continuation || task.reviewedSeq===undefined
+      || this.groupArrivals.get(task.key)?.backendSeq===task.reviewedSeq)
+  }
+  private drainingObservation(job:Job):boolean {
+    return !!job.proactive?.superseded && this.active && Date.now()<job.input.timestampMs+298000
   }
   private observationStopReason(task:Observation):AbortReason {
     if(!this.active)return 'gateway_stopped'
@@ -178,18 +190,23 @@ export class Receiver {
     },delayMs)
     task.timer.unref()
   }
-  private queueObservation(input:Inbound,session:Session,source:Raw,delayMs:number,continuation=false):void {
+  private queueObservation(input:Inbound,session:Session,source:Raw,delayMs:number,continuation=false,turnAware=false):void {
     const key=this.groupKey(input.conversationId)
-    if(!this.latestObservation(input,source.seq,continuation))return
+    if((!turnAware || continuation) && !this.latestObservation(input,source.seq,continuation))return
+    if((this.groupArrivals.get(key)?.addressedSeq ?? 0)>source.seq)return
     const current=this.observations.get(key)
+    if(current && current.seq>source.seq)return
     if(current?.continuation && current.input.userId!==input.userId)return
-    this.cancelObservation(key)
+    const predecessor=current?.promise ?? current?.predecessor
+      ?? [...this.observationTasks].find(task=>task.key===key && task.superseded && task.promise)?.promise
+    this.cancelObservation(key,'observation_replaced',turnAware)
     const bytes=Buffer.byteLength(JSON.stringify(input))+Buffer.byteLength(JSON.stringify(session.event))
     // The current ingress flight releases its slot on return; the timer takes it.
     if(this.flights.size+this.observationTasks.size-1>=this.config.maxPending
         || this.observationBytes()+bytes>8*1024*1024)return
     const task:Observation={key,input,session,seq:source.seq,backendSeq:source.backendSeq,fingerprint:source.fingerprint,bytes,
-      attempt:0,cancelled:false,accepted:false,policyVersion:this.policyVersion(input),continuation}
+      attempt:0,cancelled:false,accepted:false,policyVersion:this.policyVersion(input),continuation,
+      ...(turnAware?{reviewedSeq:source.backendSeq,predecessor}:{})}
     this.observations.set(key,task)
     this.observationTasks.add(task)
     this.scheduleObservation(task,delayMs)
@@ -197,6 +214,8 @@ export class Receiver {
   private async runObservation(task:Observation):Promise<void> {
     let again=false
     try {
+      await task.predecessor
+      if(task.reviewedSeq!==undefined)await this.admission
       if(!this.observationAlive(task) || task.attempt>=3)return
       const current=this.ctx.reflect.trace(task.session.bot.session({...task.session.event}))
       if(!await this.permitted(current) || !this.observationAlive(task))return
@@ -244,6 +263,7 @@ export class Receiver {
       if (existing.fingerprint !== fingerprint) existing.conflict = true
       return
     }
+    if(type==='GROUP_MESSAGE_CREATE' && this.observedIds.has(data.id))return
     const group=data.group_id??data.group_openid
     const seq=this.sequence+1
     let backendSeq=seq
@@ -260,11 +280,15 @@ export class Receiver {
         this.speakerArrivals.delete(speakerKey);this.speakerArrivals.set(speakerKey,{seq,at:now})
         while(this.speakerArrivals.size>2048)this.speakerArrivals.delete(this.speakerArrivals.keys().next().value!)
       }
-      // Ordinary proactive replies track the group; user-initiated continuations track their speaker.
-      if(!current?.continuation || type==='GROUP_AT_MESSAGE_CREATE' || !speaker || speaker===current.input.userId)
+      // Turn-aware observations suspend send permission until authenticated classification.
+      // Explicit addressing and speaker-owned continuations keep their immediate cancellation.
+      if(type==='GROUP_AT_MESSAGE_CREATE' || !speaker
+          || current?.continuation && speaker===current.input.userId
+          || !current?.continuation && current?.reviewedSeq===undefined)
         this.cancelObservation(groupKey)
       this.groupArrivals.delete(this.groupKey(group))
-      this.groupArrivals.set(groupKey,{seq,backendSeq,at:now})
+      this.groupArrivals.set(groupKey,{seq,backendSeq,at:now,
+        addressedSeq:type==='GROUP_AT_MESSAGE_CREATE'?seq:previous?.addressedSeq ?? 0})
       while(this.groupArrivals.size>512) {
         const oldest=this.groupArrivals.keys().next().value!
         this.cancelObservation(oldest)
@@ -357,12 +381,26 @@ export class Receiver {
           throw error
         }
         this.diagnoseObservation(input,'backend_response',observed.observed)
+        if(observed.preserve!==undefined && !source.conflict) {
+          this.observedIds.set(input.messageId,source.at)
+          while(this.observedIds.size>2048)this.observedIds.delete(this.observedIds.keys().next().value!)
+        }
+        const current=this.observations.get(this.groupKey(input.conversationId))
+        if(observed.preserve && current && !current.continuation && current.reviewedSeq!==undefined
+            && source.backendSeq===current.reviewedSeq+1 && !source.conflict
+            && this.observationAlive(current) && this.policyVersion(input)===version) {
+          current.reviewedSeq=source.backendSeq
+          return false
+        }
         if(observed.observed && this.active && !source.conflict
             && (this.config.management?.accepts(input)??true) && this.policyVersion(input)===version) {
-          this.queueObservation(input,canonical,source,observed.delay_ms,observed.continuation)
+          this.queueObservation(input,canonical,source,observed.delay_ms,observed.continuation,observed.preserve!==undefined)
+        } else if(current && !current.continuation && source.backendSeq>(current.reviewedSeq ?? current.backendSeq)) {
+          this.cancelObservation(current.key,'observation_replaced',observed.preserve!==undefined)
         }
         return false // Observation never consumes another plugin's ordinary message.
       }
+      if(input.kind==='group')this.cancelObservation(this.groupKey(input.conversationId))
       const existing = this.jobs.get(input.requestId)
       if (existing) {
         if (JSON.stringify(existing.input) !== JSON.stringify(input)) throw new BackendError('local_request_conflict')
@@ -421,11 +459,16 @@ export class Receiver {
         this.materials = new MaterialStore(this.config.materialStateDir, this.config.appId,
           (method, path, data) => materialRequest(()=>bot.http(path, { method, data, timeout: 15000 })))
       }
-      const events=job.proactive ? {
-        intent:async(attempt:Parameters<BackendClient['intent']>[0])=>
-          alive() && await this.currentProactivePermission(job) && alive()?this.client.intent(attempt):'denied' as const,
+      const proactive=job.proactive
+      const events=proactive ? {
+        intent:async(attempt:Parameters<BackendClient['intent']>[0])=> {
+          await this.admission
+          return await this.currentProactivePermission(proactive)?this.client.intent(attempt):'denied' as const
+        },
+        current:()=>this.observationCurrent(proactive),
         acknowledge:(attempt:Parameters<BackendClient['acknowledge']>[0],result:Parameters<BackendClient['acknowledge']>[1])=>
-          this.client.acknowledge(attempt,result,undefined,()=>this.active&&(this.config.management?.sendsAllowed(job.input)??true)),observe:this.client.observe?.bind(this.client),
+          this.client.acknowledge(attempt,result,undefined,()=>this.observationCurrent(proactive)
+            &&(this.config.management?.sendsAllowed(job.input)??true)),observe:this.client.observe?.bind(this.client),
       }:{
         intent:async(attempt:Parameters<BackendClient['intent']>[0])=>
           alive() && await this.currentDeliveryPermission(job) && alive()?this.client.intent(attempt):'denied' as const,
@@ -440,7 +483,7 @@ export class Receiver {
       }
       job.delivery = new QQDelivery(api, job.input, job.plan.delivery_id, this.client.epoch, events, alive,
         undefined, undefined, this.materials, job.plan.reply_mention)
-      while (alive() && job.plan.status === 'preparing') {
+      while ((alive() || this.drainingObservation(job)) && job.plan.status === 'preparing') {
         if(job.plan.pending_model_permission) await this.authorizeModel(job,job.plan.pending_model_permission)
         if(job.plan.processing_hint && job.plan.send_allowed && !hint) {
           const part=job.plan.parts[0]
@@ -526,12 +569,13 @@ export class Receiver {
       this.jobs.delete(job.input.requestId)
     }
   }
-  private async currentProactivePermission(job:Job):Promise<boolean> {
-    if(!job.proactive || !this.observationAlive(job.proactive))return false
-    const current=this.ctx.reflect.trace(job.session.bot.session({...job.session.event}))
-    return await this.permitted(current) && this.observationAlive(job.proactive)
+  private async currentProactivePermission(task:Observation):Promise<boolean> {
+    if(!this.observationCurrent(task))return false
+    const current=this.ctx.reflect.trace(task.session.bot.session({...task.session.event}))
+    return await this.permitted(current) && this.observationCurrent(task)
   }
   private async authorizeModel(job:Job, challenge:ModelPermission):Promise<void> {
+    if(job.proactive?.reviewedSeq!==undefined)await this.admission
     const input=job.input
     const scope={instance_id:input.instanceId,app_id:input.appId,platform:input.platform,
       kind:input.kind,conversation_id:input.conversationId}
@@ -551,7 +595,7 @@ export class Receiver {
     const permitted=this.active && await this.permitted(current)
     const management=this.config.management
     const policy=management?.policySnapshot(input) ?? {natural_query:'model' as const,epoch:this.epoch,global_revision:0,group_revision:0}
-    const allowed=permitted && this.active && (!job.proactive || this.observationAlive(job.proactive))
+    const allowed=permitted && this.active && (!job.proactive || this.observationCurrent(job.proactive))
       && (management?.accepts(input) ?? true) && policy.natural_query==='model'
     await this.client.modelPermission(challenge,policy,allowed)
   }
@@ -567,6 +611,7 @@ export class Receiver {
     this.client.deactivate()
     const noticesClosed=this.notices?.close()
     this.raw.clear()
+    this.observedIds.clear()
     for(const key of this.observations.keys())this.cancelObservation(key,'gateway_stopped')
     this.groupArrivals.clear()
     this.speakerArrivals.clear()
