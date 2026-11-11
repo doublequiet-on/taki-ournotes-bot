@@ -71,19 +71,58 @@ def chat_prompt(topic):
 不输出工具调用。\n本轮人格设定：'''+CARDS[topic]
 
 
-_JUST_TERM = re.compile(r'(?<![a-z0-9_])just(?![a-z0-9_]|\s+[a-z])|判定卡|判卡|判定.{0,4}扩窗|扩窗.{0,8}叠|留影.{0,40}(?:变宽|变久|扩判|扩窗)', re.I)
+_JUST_TERM = re.compile(r'(?<![a-z0-9_])just(?![a-z0-9_]|\s+[a-z])|判定卡|判卡|判定.{0,4}扩窗|扩窗.{0,8}叠|激奏.{0,8}区间|留影.{0,40}(?:变宽|变久|扩判|扩窗)', re.I)
 _OTHER_RHYTHM_GAME = re.compile(
     r'(?<![a-z])(?:pjsk|arcaea|maimai|chunithm|phigros|gbp)(?![a-z])|世界计划|中二节奏|音击|少女乐团派对', re.I)
 _JUST_ASK = re.compile(
-    r'怎么(?:算|计算|计分|叠|判定|触发|生效)|如何(?:算|计算|计分|叠|判定|触发)|是什么|什么规则|多久|多宽|多长|几秒|变宽还是变久|能不能叠|是否叠|是不是叠|怎么排|怎么比|如何排|如何比')
+    r'怎么(?:算|计算|计分|叠|判定|触发|生效)|如何(?:算|计算|计分|叠|判定|触发)|是什么|什么(?:规则|效果|区别|变化)|有何变化|多久|多宽|多长|几秒|变宽还是变久|能不能叠|是否叠|是不是叠|怎么排|怎么比|如何排|如何比')
 _JUST_MINIMUM = re.compile(
     r'(?:到底|实际|至少|最少|请问).{0,16}几张|(?:^|[，,。])\s*(?:需要|要)几张|几张.{0,16}[?]|几张.{0,16}才够')
 _BAND_STORY = re.compile(r'海希|希海|海铃.{0,8}立希|立希.{0,8}海铃|邦邦|BanG\s*Dream|MyGO|Ave\s*Mujica|CRYCHIC|一辈子乐队|ANON TOKYO', re.I)
-_STORY_FACT_ASK = re.compile(r'什么关系|是什么关系|出自|出处|哪来的|哪[一几]?[集话章]|第几[集话章]|谁(?:说|配音)|为什么.{0,20}(?:退出|加入)')
+_STORY_FACT_ASK = re.compile(r'什么关系|(?:是|算)(?:官配|官方情侣)吗|(?:是不是|算不算)官配|出自|出处|哪来的|哪[一几]?[集话章]|第几[集话章]|谁(?:说|配音)|为什么.{0,20}(?:退出|加入)')
+_EVIDENCE_CLAUSE = re.compile(r'[，,。；;！!\n]+|(?<=\?)|(?:但(?:是)?|不过|另外)(?=实际|到底|想问|请问|我想|还想|[\s，,])')
+_OMITTED_EVIDENCE_SUBJECT = re.compile(
+    r'^(?:但(?:是)?|不过|那|所以|请问|到底|实际|想问|我想问|\s)*(?:'
+    r'(?:是什么|什么关系|怎么(?:算|计算|计分|叠加?|判定|触发|生效|排名?|比较?)|如何(?:算|计算|计分|叠加?|排名?|比较?))[呢啊呀吗?\s]*$|'
+    r'区间|满破|突破|技能|(?:至少|最少)?还?(?:要|需要|得)\s*(?:几|[0-9一二两三四五六七八九十]+)\s*张)')
+_LIGHTWEIGHT_IMAGE_REFERENCE = re.compile(
+    r'[这那](?:张|幅)(?:图|截图|截屏|照片)|(?:图|图片|截图|截屏)(?:上|里|中|内|所示)|'
+    r'(?:看|按|根据|参考)(?:[这那]张)?(?:截图|截屏|图片)|[这那]张卡面|[这那]张卡怎么样')
+_CONTEXT_IMAGE_MENTION = re.compile(r'截图|截屏|图片|照片|相片|示意图|图示|图表|卡面|配图|附图|插图|上图|下图')
+
+
+def lightweight_image_reference(text, *, context_source=False):
+    return bool(_LIGHTWEIGHT_IMAGE_REFERENCE.search(text)
+                or context_source and _CONTEXT_IMAGE_MENTION.search(text))
 
 
 def explicit_evidence_route(question):
     text = unicodedata.normalize('NFKC', question).strip()
+    clauses = [clause.strip() for clause in _EVIDENCE_CLAUSE.split(text) if clause.strip()]
+    for clause in clauses:
+        if route := _explicit_evidence_clause(clause):
+            if route.startswith('just_') and _OTHER_RHYTHM_GAME.search(text):
+                continue
+            return route
+    # A comma can separate the topic or card ID from its actual question.
+    # Recover an omitted subject only when the question has no subject route.
+    if len(clauses) > 1 and any(_OMITTED_EVIDENCE_SUBJECT.match(clause) for clause in clauses[1:]):
+        return _explicit_evidence_clause(text)
+    return ''
+
+
+def contextual_just_evidence_route(question, previous):
+    text = unicodedata.normalize('NFKC', question).strip().rstrip('。!！')
+    topic = unicodedata.normalize('NFKC', previous)
+    if (_OMITTED_EVIDENCE_SUBJECT.match(text) and _JUST_TERM.search(topic)
+            and not _OTHER_RHYTHM_GAME.search(topic)):
+        # The previous turn supplies the game mechanic, while the question
+        # supplies the aspect to verify, such as scoring versus timing windows.
+        return explicit_evidence_route('JUST：'+text)
+    return ''
+
+
+def _explicit_evidence_clause(text):
     if (_JUST_TERM.search(text) and not _OTHER_RHYTHM_GAME.search(text)
             and not re.search(r'保底|抽卡|招募|掉率|出货率|概率', text)):
         if _JUST_MINIMUM.search(text):
@@ -117,24 +156,27 @@ def chat_needs_evidence(question):
 
 
 _LIGHTWEIGHT_MECHANIC_TERM = re.compile(
-    r'概率|保底|掉率|倍率|数值|机制|规则|公式|算分|配队|combo|luck|just|bpm|nps', re.I)
-_LIGHTWEIGHT_MECHANIC_CONTEXT = re.compile(r'满破|判定卡|判卡')
-_LIGHTWEIGHT_OPINION = re.compile(r'^(?:我(?:觉得|感觉|打起来)|个人(?:觉得|感觉)|对我来说)')
+    r'概率|保底|掉率|倍率|数值|机制|规则|公式|算分|配队|combo|luck|just|bpm|nps|满破|判定卡|判卡|激奏|扩窗', re.I)
 _LIGHTWEIGHT_QUESTION = re.compile(
-    r'\?|吗[。!\s]*$|到底|请问|谁知道|想知道|是不是|怎么|如何|什么|哪[个张种]|'
-    r'能不能|有没有|对不对|帮(?:我)?(?:查|核实|算)|'
-    r'(?:^|[，,。；;]|但|实际)\s*(?:还)?(?:要|需要|得)\s*几张')
+    r'请问|谁知道|想知道|是不是|是什么|怎么(?:算|计分|叠|判定|触发|打|玩)|如何|什么(?:意思|规则|机制|效果)|'
+    r'哪[个张种]|能不能|有没有|对不对|帮(?:我)?(?:查|核实|算)|'
+    r'(?:到底|实际|^)(?:还)?(?:要|需要|得)\s*几张|(?:至少|最少).{0,12}吗\s*$')
 
 
 def lightweight_needs_evidence(question):
     text = unicodedata.normalize('NFKC', question).strip()
     if explicit_evidence_route(text):
         return True
-    matches = _FACT_REQUEST.findall(text)
-    if (matches or _LIGHTWEIGHT_MECHANIC_CONTEXT.search(text)) and _LIGHTWEIGHT_QUESTION.search(text):
-        return True
-    if _LIGHTWEIGHT_OPINION.match(text):
-        # A gameplay term can name the subject of an opinion. Other fact
-        # triggers still take precedence over the opening stance.
-        return any(not _LIGHTWEIGHT_MECHANIC_TERM.fullmatch(match) for match in matches)
-    return bool(matches)
+    mechanic_context = False
+    for part in _EVIDENCE_CLAUSE.split(text):
+        clause = part.strip()
+        if any(not _LIGHTWEIGHT_MECHANIC_TERM.fullmatch(match) for match in _FACT_REQUEST.findall(clause)):
+            return True
+        # A gameplay term can name the subject of an experience, and a later
+        # clause can ask a real question about that subject.
+        mechanic = bool(_LIGHTWEIGHT_MECHANIC_TERM.search(clause))
+        if _LIGHTWEIGHT_QUESTION.search(clause) and (
+                mechanic or mechanic_context and _OMITTED_EVIDENCE_SUBJECT.match(clause)):
+            return True
+        mechanic_context |= mechanic
+    return False

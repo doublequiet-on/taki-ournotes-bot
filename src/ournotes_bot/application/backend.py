@@ -242,7 +242,7 @@ class Backend:
 
     def persist_termination(self, work):
         try:
-            self.ledger.finish(work.delivery, work.terminal_status)
+            self.ledger.finish(work.delivery, work.terminal_status, allow_late_context=work.proactive is None)
         except sqlite3.Error as exc:
             if work.terminal_since is None:
                 work.terminal_since = self.clock()
@@ -689,6 +689,11 @@ class Backend:
         work = self.works.get(delivery)
         live = self.live(row, payload['gateway_epoch'])
         if kind == 'ack':
+            if work and work.proactive is not None and not live:
+                # Another speaker can prevent a new continuation send while a
+                # receipt for the speaker's already-sent answer still belongs to it.
+                if not work.continuation or not self.model_runtime.agent.proactive.valid(work):
+                    payload = {**payload, 'allow_context': False}
             try:
                 changed = self.ledger.ack(delivery, part_id, payload['attempt_id'], payload['result'], payload['message_id'],
                     allow_context=payload.get('allow_context') is not False,now=self.clock())
@@ -705,7 +710,9 @@ class Backend:
             service_ack_ok=False
             if changed and payload['result']=='success' and self.model_runtime and self.model_runtime.agent:
                 service_ack_ok=self.model_runtime.agent.audit(self.model_runtime.agent.store.service_ack,delivery)
-                if work and work.proactive is not None:work.proactive_delivered=True
+                if work and work.proactive is not None:
+                    work.proactive_delivered=True
+                    if not live:self.model_runtime.agent.proactive.delivered(work)
             if work and work.hint and part_id=='0':
                 # Progress occupies one ordinary send slot, but creates no topic
                 # and never completes a request whose answer is still preparing.
@@ -793,6 +800,8 @@ class Backend:
                     and candidate['digest']==projection['digest'] and candidate['expires']>self.model_runtime.agent.store.clock(),
                     'chat_final_unavailable',409)
         granted = self.ledger.intent(delivery, part_id, payload['attempt_id'])
+        if granted == 'granted' and work.proactive is not None:
+            self.model_runtime.agent.proactive.controller.mark_send_started(work.proactive)
         return {'permission': granted, 'msg_seq': part['position']+1}
 
     async def close(self):
@@ -1004,10 +1013,15 @@ def create_app(backend, token, initialize=None, *, assert_recovery_current=None)
         require(parsed.trigger=='observation' and backend.ledger.active(parsed.gateway_epoch),'observation_admission',409)
         require(0<=backend.clock()-parsed.timestamp_ms/1000<WINDOW,'message_expired',409)
         agent=backend.model_runtime.agent if backend.model_runtime else None
-        observed=bool(agent and getattr(backend.settings,'chat_engine','legacy')=='agent' and agent.proactive.observe(parsed))
-        try:delay=agent.proactive.observation_delay(parsed) if observed else None
-        except (ModelError,ServiceError,ValueError,OSError,sqlite3.Error):delay=None
+        turn_aware=request.headers.get('X-Taki-Turn')=='observation-v1'
+        observed,delay,preserve=False,None,False
+        if agent and getattr(backend.settings,'chat_engine','legacy')=='agent':
+            try:
+                if turn_aware:observed,delay,preserve=agent.proactive.gateway_observation(parsed)
+                elif agent.proactive.observe(parsed):observed,delay=True,agent.proactive.observation_delay(parsed)
+            except (ModelError,ServiceError,ValueError,OSError,sqlite3.Error):delay=None
         result={'protocol':PROTOCOL,'observed':observed and delay is not None,'delay_ms':delay or 0}
+        if turn_aware:result['preserve']=preserve
         if request.headers.get('X-Taki-Observation')=='continuation-v1':
             result['continuation']=bool(result['observed'] and agent.proactive.followups.match(agent.proactive.scope(parsed),parsed.message_id))
         return json(result)

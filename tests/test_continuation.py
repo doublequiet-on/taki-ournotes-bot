@@ -1334,6 +1334,21 @@ class ProactiveControllerTests(unittest.TestCase):
         self.assertFalse(self.controller.valid(second))
         self.assertIsNone(self.controller.candidate(self.a,reserve_cost_micro=100))
 
+    def test_evidence_can_increase_a_lightweight_budget_once_after_settlement(self):
+        self.observe();self.now[0]+=1.5
+        first=self.controller.candidate(self.a,reserve_cost_micro=100,lightweight=True)
+        self.observe('question');self.now[0]+=1.5
+        self.assertEqual(self.controller.remaining_cost(self.a,evidence_reserve_micro=250),100)
+        self.controller.settle(first,actual_cost_micro=30)
+        self.assertEqual(self.controller.remaining_cost(self.a,evidence_reserve_micro=250),250)
+        second=self.controller.candidate(self.a,reserve_cost_micro=250,evidence_required=True)
+        self.assertEqual(second.opportunity_id,first.opportunity_id)
+        self.assertEqual(second.expires_at,first.expires_at)
+        self.assertEqual(self.controller.opportunity_budget(second),([first.candidate_id,second.candidate_id],280))
+        self.controller.settle(second,actual_cost_micro=80)
+        self.observe('third')
+        self.assertEqual(self.controller.remaining_cost(self.a,evidence_reserve_micro=250),170)
+
     def test_late_ack_preserves_newer_active_candidate_and_observation(self):
         self.controller.configure(self.a,replace(self.policy,cooldown_seconds=0))
         self.observe();old=self.ready();self.controller.decide(old,'reply',actual_cost_micro=5)

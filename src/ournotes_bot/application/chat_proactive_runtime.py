@@ -23,13 +23,44 @@ from .chat_jobs import (
 )
 from .proactive_chat import ProactiveController,ProactivePolicy
 from .chat_followup import Followups
-from .persona import lightweight_needs_evidence
+from .persona import (contextual_just_evidence_route, explicit_evidence_route,
+                      lightweight_image_reference, lightweight_needs_evidence)
 from . import replies
 
 
 def _echo_key(text: str) -> str:
     folded = unicodedata.normalize('NFKC', text).casefold()
     return ' '.join(folded.split()).rstrip(' .!?。…')
+
+
+_INTERJECTION = re.compile(r'(?:哈{2,}|笑死|围观|路过|插个楼|冒个泡|你们继续|吃瓜|\+1|\[表情\])')
+_TURN_CLOSED = re.compile(r'(?:已经有人回答了|(?:我|他|她|我们)?(?:已经|刚刚|刚才)?'
+                          r'(?:答完了|解决了|搞定了|知道了|明白了|懂了)|不用(?:再)?答了|不用了|先这样|算了)')
+_TOPIC_SHIFT = re.compile(r'^(?:换个话题|说个别的|先不说这个|聊点别的|打断一下[，,:：])')
+_SUPPLEMENT = re.compile(r'^(?:补充|再补|漏说|忘了说|我说的是|我指的是|更正|纠正|我的意思是)')
+_ANSWER = re.compile(r'^(?:答案是|选[的是]|直接选|原因是|因为|可以用|用.+就行)')
+_WEB_URL = re.compile(r'[a-z][a-z0-9+.-]*://|www\.', re.I)
+
+
+def _observation_turn(target, request):
+    """Resolve explicit conversation cues before the model evaluates a new scene."""
+    if target is None or request.attachments:
+        return 'advance'
+    text = _echo_key(request.body).strip('，,！!？?~～')
+    previous = _echo_key(target.text)
+    same_speaker = request.user_id == target.speaker_id
+    quoted = bool(previous and _echo_key(request.quoted_text) == previous)
+    if _TOPIC_SHIFT.match(text):
+        return 'shift'
+    if _TURN_CLOSED.fullmatch(text) and (same_speaker or quoted or text == '已经有人回答了'):
+        return 'closed'
+    if not same_speaker and _ANSWER.match(text) and quoted:
+        return 'closed'
+    if not same_speaker and not request.quoted_text and not request.quote_hint and _INTERJECTION.fullmatch(text):
+        return 'interjection'
+    if _SUPPLEMENT.match(text) and (same_speaker or quoted):
+        return 'supplement'
+    return 'advance'
 
 
 class ProactiveChat:
@@ -59,6 +90,7 @@ class ProactiveChat:
         self.followups=Followups(clock=lambda:self.controller.clock(),on_expire=self.window_expired)
         self.addressed=Counter()
         self.control_times=OrderedDict()
+        self.observation_responses=OrderedDict()
         self.lightweight_groups = frozenset(
             group_id.strip() for group_id in os.getenv('OURNOTES_PROACTIVE_LIGHTWEIGHT_GROUPS', '').split(',')
             if group_id.strip()
@@ -250,9 +282,38 @@ class ProactiveChat:
                     self.control_event(request,status);return False
             if request.attachments:
                 self.agent.images.remember(self.agent.image_scope(request),request.message_id,request.user_id,request.timestamp_ms,request.attachments)
-            return self.controller.observe(scope,ChatMessage(request.message_id,request.user_id,
-                request.body,request.timestamp_ms,display_name=request.sender_name))
+            target = self.controller.target(scope)
+            turn = 'advance' if followup is not None else _observation_turn(target, request)
+            observed = self.controller.observe(scope,ChatMessage(request.message_id,request.user_id,
+                request.body,request.timestamp_ms,display_name=request.sender_name),
+                turn='advance' if turn=='shift' else turn,
+                plain_text=not (request.attachments or request.reference or request.quote_hint or request.quoted_text
+                                or _WEB_URL.search(unicodedata.normalize('NFKC',request.body))))
+            if observed and turn != 'advance':
+                self.control_event(request, 'proactive_'+turn)
+            return observed
         except (ModelError,ServiceError,ValueError,OSError,sqlite3.Error):return False
+
+    def gateway_observation(self, request):
+        """Replay the last response when an HTTP retry repeats the same ingress."""
+        scope = self.scope(request)
+        identity = request.content_digest
+        previous = self.observation_responses.get(scope)
+        if previous is not None and previous[0] == request.gateway_epoch and request.ingress_seq <= previous[1]:
+            if request.ingress_seq == previous[1] and identity == previous[2]:
+                return previous[3]
+            return False, 0, False
+        target = self.controller.target(scope)
+        observed = self.observe(request)
+        current = self.controller.target(scope)
+        delay = self.observation_delay(request) if observed else None
+        preserve = bool(observed and target is not None and current is target)
+        result = (delay is not None, delay or 0, preserve)
+        self.observation_responses[scope] = (request.gateway_epoch,request.ingress_seq,identity,result)
+        self.observation_responses.move_to_end(scope)
+        while len(self.observation_responses)>self.controller.max_scopes:
+            self.observation_responses.popitem(last=False)
+        return result
 
     def candidate(self,request):
         if self.agent.audit_failures:return None
@@ -272,23 +333,46 @@ class ProactiveChat:
             policy=self.configured(request,snapshot)
             if policy is None:return None
         profile = snapshot.profile
+        scope = self.scope(request)
         lightweight = not continuation and self.uses_lightweight(request.conversation_id, profile, policy)
         if lightweight and (not request.body.strip() or request.attachments or request.reference
                             or request.quote_hint or request.quoted_text or replies.is_ai_request(request.body)
-                            or re.search(r'[a-z][a-z0-9+.-]*://|www\.', unicodedata.normalize('NFKC', request.body), re.I)):
+                            or _WEB_URL.search(unicodedata.normalize('NFKC', request.body))):
             self.control_event(request,'chat_service_lightweight_skip')
             return None
-        if lightweight and lightweight_needs_evidence(request.body):
+        evidence_route = explicit_evidence_route(request.body) if lightweight else ''
+        evidence_context_id = ''
+        if lightweight and not evidence_route:
+            context = self.controller.preceding_message_from_speaker(scope,request.message_id)
+            if context is not None:
+                previous,plain_text = context
+                evidence_route = contextual_just_evidence_route(request.body,previous.text)
+                if evidence_route:
+                    if (not plain_text or lightweight_image_reference(previous.text,context_source=True)
+                            or not self.agent.store.source_valid(request.scope,previous.message_id,previous.timestamp_ms)):
+                        self.control_event(request,'lightweight_context_required')
+                        return None
+                    evidence_context_id = previous.message_id
+        if lightweight and not evidence_route and lightweight_needs_evidence(request.body):
+            self.control_event(request,'chat_service_lightweight_evidence_required')
+            return None
+        evidence_calls = {'just_clarify': 1, 'story_fact': 4}.get(evidence_route, 3)
+        if evidence_route and self.agent.budget.model_calls < evidence_calls:
             self.control_event(request,'chat_service_lightweight_evidence_required')
             return None
         try:self.reconcile_costs(request,policy if not continuation else None)
         except (sqlite3.Error, ModelError, ServiceError, ValueError):
             self.control_event(request,'chat_service_usage_unavailable');return None
-        minimum = (lightweight_minimum_cost_micro(snapshot.profile) if lightweight
-                   else proactive_minimum_cost_micro(snapshot.profile))
-        model_cost = (minimum + maximum_cost_micro(lightweight_profile(snapshot.profile, False)) if lightweight
-                      else maximum_cost_micro(snapshot.profile)*self.agent.budget.model_calls)
-        remaining=self.controller.remaining_cost(self.scope(request))
+        if evidence_route:
+            minimum = model_cost = math.ceil(maximum_cost_micro(profile) * evidence_calls)
+        elif lightweight:
+            minimum = lightweight_minimum_cost_micro(profile)
+            model_cost = minimum + maximum_cost_micro(lightweight_profile(profile, False))
+        else:
+            minimum = proactive_minimum_cost_micro(profile)
+            model_cost = maximum_cost_micro(profile) * self.agent.budget.model_calls
+        remaining=self.controller.remaining_cost(scope,
+            evidence_reserve_micro=minimum if evidence_route else 0)
         if remaining is not None:model_cost=min(model_cost,remaining)
         if model_cost<=0:
             self.control_event(request,'budget_exhausted');return None
@@ -303,9 +387,12 @@ class ProactiveChat:
                 request.conversation_id,'budget/'+request.request_id)
             # Check the actual staged minimum so pacing and hard budget denials stay distinguishable.
             required = minimum if policy.proactive.max_cost_micro_per_day else 1
+            evidence_budget = (dict(required_calls=evidence_calls,opportunity_calls=self.agent.budget.model_calls,
+                opportunity_requests=self.opportunity_requests(request,self.controller.opportunity_candidates(scope)))
+                if evidence_route else {})
             try:
                 permit=self.agent.service_budget.check(policy,'proactive',snapshot.profile,
-                    preflight,required,reply_times=self.agent.store.proactive_replies(request.scope))
+                    preflight,required,reply_times=self.agent.store.proactive_replies(request.scope),**evidence_budget)
             except ServiceError as exc:
                 data=dict(exc.budget_details)
                 self.control_event(request,str(exc),**data);return None
@@ -318,7 +405,9 @@ class ProactiveChat:
                 details.update(requested_cost_micro=minimum, available_cost_micro=max(0, cost),
                                controller_cost_micro=math.ceil(spent))
                 self.control_event(request,'chat_service_reservation_limit',**details);return None
-        candidate=self.controller.candidate(self.scope(request),reserve_cost_micro=math.ceil(cost))
+        candidate=self.controller.candidate(scope,reserve_cost_micro=math.ceil(cost),
+            message_id=request.message_id,lightweight=lightweight and not evidence_route,
+            evidence_required=bool(evidence_route))
         if candidate is None:return None
         last=candidate.messages[-1]
         if (last.message_id,last.speaker_id,last.text,last.timestamp_ms)!=(request.message_id,request.user_id,request.body,request.timestamp_ms):
@@ -326,7 +415,9 @@ class ProactiveChat:
         followup=self.followups.match(self.scope(request),request.message_id)
         if followup is not None:candidate=replace(candidate,followup=followup,continuation=True)
         if continuation:return candidate,None,snapshot,'continuation/'+candidate.candidate_id
-        if lightweight:candidate=replace(candidate,lightweight=True)
+        if lightweight:
+            candidate=replace(candidate,lightweight=not evidence_route,evidence_route=evidence_route,
+                              evidence_context_id=evidence_context_id)
         job=service_request_id('proactive',request.instance_id,request.app_id,request.conversation_id,candidate.candidate_id)
         try:self.agent.service_budget.check(policy,'proactive',snapshot.profile,job,candidate.reserved_cost_micro,
             reply_times=self.agent.store.proactive_replies(request.scope))
@@ -338,6 +429,8 @@ class ProactiveChat:
 
     def observation_delay(self,request):
         scope=self.scope(request);settings=self.settings(request.conversation_id)
+        target=self.controller.target(scope)
+        if target is None or target.message_id!=request.message_id:return None
         followup=self.followups.match(scope,request.message_id)
         if followup is not None:
             return math.ceil(self.controller.start_delay(scope)*1000) if settings['followup_enabled'] else None
@@ -453,7 +546,7 @@ class ProactiveChat:
             rows=sorted(merged.values(),key=lambda row:row.timestamp_ms)
             # The current observation stays last even when QQ and ACK clocks differ.
             rows.append(current)
-        if work.proactive.lightweight:
+        if work.proactive.lightweight or work.proactive.evidence_route:
             rows = [row for row in rows if row.timestamp_ms >= work.request.timestamp_ms - 300_000][-6:]
         protected={work.request.message_id}
         recent_reply=next((row for row in reversed(rows) if row.role=='assistant'),None)
@@ -520,12 +613,15 @@ class ProactiveChat:
         if after!=before:
             self.control_event(request,'budget_reconciled',controller_before_micro=before,controller_after_micro=after)
 
+    @staticmethod
+    def opportunity_requests(request,candidates):
+        return tuple(value for candidate in candidates for value in (
+            'continuation/'+candidate, service_request_id('proactive',request.instance_id,
+            request.app_id,request.conversation_id,candidate)))
+
     def opportunity_budget(self,work):
         candidates,cost=self.controller.opportunity_budget(work.proactive)
-        request=work.request
-        return dict(opportunity_requests=tuple(value for candidate in candidates for value in (
-            'continuation/'+candidate, service_request_id('proactive',request.instance_id,
-            request.app_id,request.conversation_id,candidate))),
+        return dict(opportunity_requests=self.opportunity_requests(work.request,candidates),
             opportunity_calls=self.agent.budget.model_calls,opportunity_cost_micro=cost)
 
     def check_continuation_budget(self,work,amount):

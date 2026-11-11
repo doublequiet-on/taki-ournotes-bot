@@ -519,6 +519,47 @@ async function main() {
       assert.equal(f.receiver.activity().pending_total,0)
     }finally{release.resolve();await running;await f.close()}
   })
+  for(const [stage,preserve] of [
+    ['before-intent',true],['intent',true],['intent',false],['raw',true],['timeout',false],['receipt',true],['receipt',false],
+  ]) {
+    await run(`G1 waits for a pending turn review at ${stage} (preserve=${preserve})`,async()=>{
+      const intentEntered=deferred(),grant=deferred(),observed=deferred(),classify=deferred()
+      const receipts=[]
+      const f=receiverFixture({
+        async chatObservation(input){
+          if(input.messageId!=='side')return{protocol:wire.protocol,observed:true,delay_ms:1500,preserve:false}
+          observed.resolve();await classify.promise
+          return{protocol:wire.protocol,observed:false,delay_ms:0,preserve}
+        },
+        async chatCandidate(input,seq){return{protocol:wire.protocol,candidate:true,plan:await this.submit(input,seq)}},
+        async intent(){intentEntered.resolve();await grant.promise;return 'granted'},
+        async acknowledge(_attempt,result,_seq,allowContext){receipts.push([result.status,allowContext()])},
+      })
+      let candidate,side
+      try {
+        await f.receiver.receive(await f.ordinary('discussion'))
+        const captureSide=()=>f.ordinary('side',{author:{id:'other'},content:preserve?'哈哈':'换个话题'})
+        const early=stage==='before-intent'?await captureSide():undefined
+        candidate=fireObservation(f.receiver)
+        if(!early)await intentEntered.promise
+        if(stage==='receipt'){grant.resolve();await until(()=>f.sent.length===1)}
+        const message=early ?? await captureSide()
+        if(!early && stage!=='raw' && stage!=='timeout'){side=f.receiver.receive(message);await observed.promise}
+        grant.resolve();f.release('discussion')
+        await until(()=>[...f.receiver.observations.values()].some(task=>task.finishReviewWait))
+        assert.equal(receipts.length,0)
+        assert.equal(f.sent.length,stage==='receipt'?1:0)
+        if(early || stage==='raw'){side=f.receiver.receive(message);await observed.promise}
+        classify.resolve();await side;await candidate
+        const delivered=stage==='receipt' || preserve
+        assert.deepEqual(f.sent,delivered?['discussion']:[])
+        assert.deepEqual(receipts,[[delivered?'success':'aborted',preserve]])
+      }finally{
+        grant.resolve();classify.resolve();f.release('discussion')
+        await Promise.allSettled([candidate,side]);await f.close()
+      }
+    })
+  }
   await run('G1 explicit mention cancels observation timer and keeps maxPending capacity for direct delivery',async()=>{
     const f=receiverFixture({async chatObservation(){return{protocol:wire.protocol,observed:true,delay_ms:1500}}},1)
     let reply
@@ -564,6 +605,64 @@ async function main() {
       assert.equal(permits,6);assert.equal(f.calls.length,0);assert.equal(aborts,1)
     }finally{await f.close()}
   })
+  for(const scenario of ['interjection','shift','expired','revoked','revoked-before-permission-returns']) {
+    await run(`G1 model permission waits for same-group classification (${scenario})`,async()=>{
+      const preserve=scenario!=='shift'
+      const permissionRead=deferred(),finishPermissionRead=deferred()
+      const observed=deferred(),classify=deferred()
+      const decisions=[]
+      let reads=0,prepared,revoked=false
+      const f=receiverFixture({readiness:{backend_epoch:'b'.repeat(32)},
+        async chatObservation(input){
+          if(input.messageId!=='side')return{protocol:wire.protocol,observed:true,delay_ms:1500,preserve:false}
+          observed.resolve();await classify.promise
+          return{protocol:wire.protocol,observed:false,delay_ms:0,preserve}
+        },
+        async chatCandidate(input,seq){
+          prepared=await this.submit(input,seq)
+          return{protocol:wire.protocol,candidate:true,plan:{...prepared,status:'preparing',send_allowed:false,parts:[],
+            pending_model_permission:{...httpV2.python_to_ts.challenge,request_id:input.requestId,
+              gateway_epoch:f.receiver.epoch,user_id:input.userId,remaining_ms:scenario==='expired'?50:3000,
+              scope:{instance_id:input.instanceId,app_id:input.appId,platform:'qq',kind:'group',conversation_id:input.conversationId}}}}
+        },
+        async modelPermission(_challenge,_policy,allowed){decisions.push(allowed)},
+        async lookup(){
+          if(decisions[0] && !f.finished.has(prepared.request_id))return prepared
+          return{...prepared,status:'finished',send_allowed:false,parts:[]}
+        },
+      })
+      f.receiver.permitted=async()=>{
+        const allowed=!revoked
+        if(++reads===3){permissionRead.resolve();await finishPermissionRead.promise}
+        return allowed
+      }
+      let candidate,side
+      try {
+        await f.receiver.receive(await f.ordinary('discussion'))
+        f.release('discussion')
+        candidate=fireObservation(f.receiver)
+        await permissionRead.promise
+        const message=await f.ordinary('side',{author:{id:'other'},content:preserve?'哈哈':'换个话题'})
+        const classifyDuringPermission=scenario==='revoked-before-permission-returns'
+        if(!classifyDuringPermission){
+          if(scenario==='expired')await new Promise(resolve=>setTimeout(resolve,60))
+          finishPermissionRead.resolve()
+          if(scenario!=='expired')await until(()=>[...f.receiver.observations.values()].some(task=>task.finishReviewWait))
+        }
+        assert.deepEqual(decisions,[])
+        side=f.receiver.receive(message);await observed.promise
+        if(scenario==='revoked' || classifyDuringPermission)revoked=true
+        classify.resolve();await side
+        finishPermissionRead.resolve();await candidate
+        assert.deepEqual(decisions,scenario==='expired'?[]:[scenario==='interjection'])
+        assert.deepEqual(f.sent,scenario==='interjection'?['discussion']:[])
+        assert.equal(f.finished.size,scenario==='interjection'?1:0)
+      }finally{
+        finishPermissionRead.resolve();classify.resolve()
+        await Promise.allSettled([candidate,side]);await f.close()
+      }
+    })
+  }
   await run('G1 eight observation timers share maxPending capacity and another group stays independent',async()=>{
     const f=receiverFixture({async chatObservation(){return{protocol:wire.protocol,observed:true,delay_ms:1500}}})
     try {

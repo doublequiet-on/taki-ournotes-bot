@@ -61,7 +61,7 @@ export class BackendClient implements DeliveryEvents {
         redirect: 'error', signal: signal ? AbortSignal.any([controller.signal, signal]) : controller.signal,
         headers: { Authorization: 'Bearer ' + this.token, 'X-Taki-Instance': this.instance,
           'X-Taki-Epoch': this.epoch, 'Content-Type': 'application/json',
-          ...(path==='/v1/chat/observations'?{'X-Taki-Observation':'continuation-v1'}:{}) },
+          ...(path==='/v1/chat/observations'?{'X-Taki-Observation':'continuation-v1','X-Taki-Turn':'observation-v1'}:{}) },
         body: body === undefined ? undefined : JSON.stringify(body) })
       if (!response.body) throw new BackendError('empty_response')
       const reader = response.body.getReader(), chunks: Uint8Array[] = []

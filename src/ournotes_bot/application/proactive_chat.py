@@ -59,6 +59,8 @@ class ProactiveCandidate:
     opportunity_id: str = ''
     continuation: bool = False
     lightweight: bool = False
+    evidence_route: str = ''
+    evidence_context_id: str = ''
 
 
 @dataclass
@@ -66,6 +68,7 @@ class _Observed:
     message: ChatMessage
     at: float
     size: int
+    plain_text: bool
 
 
 @dataclass
@@ -99,6 +102,8 @@ class _Opportunity:
     evaluations: int = 0
     tools: int = 0
     knowledge_leases: dict = field(default_factory=dict)
+    send_interrupted: bool = False
+    lightweight: bool = False
 
 
 @dataclass
@@ -121,6 +126,9 @@ class _Group:
     pending_since: float | None = None
     coalesce_seconds: float | None = None
     continuation_user_id: str | None = None
+    target_id: str | None = None
+    pending_opportunity: str | None = None
+    send_started: bool = False
 
 
 class ProactiveController:
@@ -172,10 +180,15 @@ class ProactiveController:
 
     @staticmethod
     def _cancel(group):
+        if group.send_started and group.opportunity is not None:
+            group.opportunity.send_interrupted = True
         group.version += 1
         group.active, group.deferred_at, group.dirty = None, None, False
         group.pending_since = None
         group.evaluation = 0
+        group.target_id = None
+        group.pending_opportunity = None
+        group.send_started = False
 
     def cancel(self, scope):
         group = self.groups.get(scope)
@@ -205,6 +218,8 @@ class ProactiveController:
         for group in self.groups.values():
             if group.opportunity is not None and group.opportunity.expires_at <= now:
                 group.opportunity.knowledge_leases.clear()
+                if group.pending_opportunity == group.opportunity.id:
+                    self._cancel(group)
             retained = [row for row in group.rows if row.at > now - self.window_seconds]
             if len(retained) != len(group.rows):
                 group.rows = retained
@@ -228,7 +243,29 @@ class ProactiveController:
     def retained_bytes(self):
         return sum(row.size for group in self.groups.values() for row in group.rows)
 
-    def observe(self, scope, message, *, addressed=False, is_bot=False):
+    def target(self, scope):
+        group = self.groups.get(scope)
+        if group is not None and (group.active or group.dirty or group.deferred_at is not None):
+            return next((row.message for row in reversed(group.rows)
+                         if row.message.message_id==group.target_id),None)
+
+    def preceding_message_from_speaker(self, scope, message_id):
+        group = self.groups.get(scope)
+        if group is None:
+            return None
+        for index in range(len(group.rows)-1,0,-1):
+            current = group.rows[index].message
+            if current.message_id == message_id:
+                previous = group.rows[index-1]
+                if (previous.message.speaker_id == current.speaker_id
+                        and 0 <= current.timestamp_ms-previous.message.timestamp_ms <= self.candidate_seconds*1000):
+                    return previous.message,previous.plain_text
+                return None
+        return None
+
+    def observe(self, scope, message, *, addressed=False, is_bot=False, turn='advance', plain_text=True):
+        if turn not in ('advance','supplement','interjection','closed'):
+            raise ValueError('proactive_turn_invalid')
         self.sweep()
         group = self.groups.get(scope)
         if group is None or not group.policy.available or is_bot:
@@ -243,8 +280,6 @@ class ProactiveController:
             return False
         now = self.clock()
         pending_since = group.pending_since
-        self._cancel(group)
-        group.last_message_at = now
         group.seen[message.message_id] = now
         while len(group.seen) > self.max_messages * 4:
             group.seen.popitem(last=False)
@@ -253,14 +288,25 @@ class ProactiveController:
             # An omitted new message must invalidate the old answer, not wake a
             # model with a misleadingly complete older scene.
             group.rows.clear()
+            self._cancel(group)
             return False
-        group.rows.append(_Observed(message, now, size))
+        group.rows.append(_Observed(message, now, size, plain_text and not addressed and turn!='closed'))
         while (len(group.rows) > self.max_messages
                or sum(row.size for row in group.rows) > self.group_bytes):
             group.rows.pop(0)
-        group.dirty = not addressed
+        if turn == 'interjection' and not addressed and self.target(scope) is not None:
+            self.sweep()
+            return True
+        self._cancel(group)
+        group.last_message_at = now
+        group.dirty = (not addressed and turn in ('advance','supplement')
+                       and not (group.opportunity is not None and group.opportunity.send_interrupted
+                                and now < group.opportunity.expires_at))
         if group.dirty:
             group.pending_since = pending_since if pending_since is not None else now
+            group.target_id = message.message_id
+            if turn=='supplement' and group.opportunity is not None and now<group.opportunity.expires_at:
+                group.pending_opportunity=group.opportunity.id
         self.sweep()
         return True
 
@@ -281,17 +327,30 @@ class ProactiveController:
     def _cost(group):
         return sum(ticket.charged_cost for ticket in group.tickets.values())
 
-    def remaining_cost(self,scope):
+    @staticmethod
+    def _opportunity_tickets(group):
+        return (ticket for ticket in group.tickets.values() if ticket.opportunity_id == group.opportunity.id)
+
+    @staticmethod
+    def _opportunity_cost(group, evidence_reserve_micro):
+        opportunity=group.opportunity
+        costs=[ticket.cost_micro for ticket in ProactiveController._opportunity_tickets(group)]
+        spent=sum(cost or 0 for cost in costs)
+        limit=opportunity.cost_micro
+        if evidence_reserve_micro and opportunity.lightweight and None not in costs:
+            limit=max(limit,spent+evidence_reserve_micro)
+        return limit,spent
+
+    def remaining_cost(self,scope,*,evidence_reserve_micro=0):
         group=self.groups.get(scope)
         opportunity=group.opportunity if group else None
         if opportunity is None or self.clock()>=opportunity.expires_at:return None
         # Only settled cost reduces the next candidate's estimate. Unknown
         # tickets remain held by _cost and the persistent attempt ledger.
-        spent=sum(ticket.cost_micro or 0 for ticket in group.tickets.values()
-                  if ticket.opportunity_id==opportunity.id)
-        return max(0,opportunity.cost_micro-spent)
+        limit,spent=self._opportunity_cost(group,evidence_reserve_micro)
+        return max(0,limit-spent)
 
-    def candidate(self, scope, *, reserve_cost_micro):
+    def candidate(self, scope, *, reserve_cost_micro, message_id=None, lightweight=False, evidence_required=False):
         if type(reserve_cost_micro) is not int or reserve_cost_micro < 0:
             raise ValueError('proactive_reservation_invalid')
         self.sweep()
@@ -299,25 +358,36 @@ class ProactiveController:
         now = self.clock()
         if (group is None or not group.policy.available or group.addressed_active
                 or group.active is not None or not group.rows
+                or message_id is not None and message_id != group.target_id
                 or self.start_delay(scope) > 0
                 or now < group.last_delivery_at + group.policy.cooldown_seconds):
             return None
         deferred = group.deferred_at is not None
         if not group.dirty and not (deferred and now >= group.deferred_at):
             return None
-        remaining=self.remaining_cost(scope)
-        if remaining is not None:
+        opportunity=group.opportunity
+        existing=opportunity is not None and now<opportunity.expires_at
+        limit=reserve_cost_micro
+        if existing:
+            limit,spent=self._opportunity_cost(group,reserve_cost_micro if evidence_required else 0)
+            remaining=max(0,limit-spent)
             if not remaining:return None
             reserve_cost_micro=min(reserve_cost_micro,remaining)
         if (len(group.tickets) >= group.policy.max_calls_per_hour
                 or len(group.replies) >= group.policy.max_replies_per_hour
                 or self._cost(group) + reserve_cost_micro > group.policy.max_cost_micro_per_hour):
             return None
-        opportunity=group.opportunity
-        if opportunity is None or now>=opportunity.expires_at:
+        if not existing:
             if opportunity is not None and not group.dirty:return None
-            opportunity=group.opportunity=_Opportunity(uuid4().hex,now+self.candidate_seconds,reserve_cost_micro)
-        if opportunity.evaluations>=self.max_defer_rechecks+1:return None
+            opportunity=group.opportunity=_Opportunity(uuid4().hex,now+self.candidate_seconds,
+                                                       reserve_cost_micro,lightweight=lightweight)
+        if opportunity.send_interrupted or opportunity.evaluations>=self.max_defer_rechecks+1:return None
+        target=self.target(scope)
+        if target is None:return None
+        if limit>opportunity.cost_micro:
+            # Upgrade a settled lightweight opportunity once, keeping its identity and call limits.
+            opportunity.cost_micro=limit
+            opportunity.lightweight=False
         opportunity.evaluations+=1
         group.evaluation = group.evaluation + 1 if deferred else 1
         ticket = _Ticket(uuid4().hex, scope, group.version, group.policy_version,
@@ -326,8 +396,10 @@ class ProactiveController:
         group.tickets[ticket.candidate_id] = ticket
         group.active, group.deferred_at, group.dirty = ticket.candidate_id, None, False
         group.pending_since = None
+        group.pending_opportunity = None
+        messages=tuple(row.message for row in group.rows if row.message.message_id!=target.message_id)+(target,)
         return ProactiveCandidate(ticket.candidate_id, scope, ticket.version, ticket.policy_version,
-                                  ticket.service_subject_id, tuple(row.message for row in group.rows),
+                                  ticket.service_subject_id, messages,
                                   now, ticket.expires_at, reserve_cost_micro, deferred, group.evaluation,
                                   opportunity_id=opportunity.id)
 
@@ -336,8 +408,15 @@ class ProactiveController:
         opportunity=group.opportunity if group else None
         if ticket is None or opportunity is None or ticket.opportunity_id!=opportunity.id:
             raise ValueError('proactive_opportunity_expired')
-        return ([row.candidate_id for row in group.tickets.values() if row.opportunity_id==opportunity.id],
+        return ([row.candidate_id for row in self._opportunity_tickets(group)],
                 opportunity.cost_micro)
+
+    def opportunity_candidates(self, scope):
+        group = self.groups.get(scope)
+        opportunity = group.opportunity if group else None
+        if opportunity is None or self.clock() >= opportunity.expires_at:
+            return []
+        return [row.candidate_id for row in self._opportunity_tickets(group)]
 
     def take_tool(self,candidate,limit):
         if not self.valid(candidate):return False
@@ -372,6 +451,10 @@ class ProactiveController:
             return False
         _, ticket = self._ticket(candidate)
         return ticket.decision == 'reply'
+
+    def mark_send_started(self, candidate):
+        """Keep the opportunity closed to replacements once intent has been granted."""
+        self.groups[candidate.scope].send_started = True
 
     def settle(self, candidate, *, actual_cost_micro, held_cost_micro=None):
         """Unknown usage retains the attempt ledger bound, or the full opportunity hold."""
@@ -439,6 +522,7 @@ class ProactiveController:
         group.replies.append(now)
         group.last_delivery_at = now
         if group.active==ticket.candidate_id and group.version==ticket.version:
+            group.send_started = False
             self._cancel(group)
         return True
 

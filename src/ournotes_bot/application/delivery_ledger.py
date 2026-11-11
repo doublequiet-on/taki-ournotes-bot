@@ -175,11 +175,13 @@ class Ledger:
             self.db.executemany("INSERT INTO projections VALUES(?,?,?,?,'candidate',NULL)",
                                 [(delivery,part,digest,expires) for part,digest,expires in projections])
 
-    def finish(self, delivery, status):
+    def finish(self, delivery, status, *, allow_late_context=True):
         with self.db:
             self.db.execute('UPDATE requests SET status=? WHERE delivery=?', (status, delivery))
             self.db.execute("UPDATE parts SET status='expired' WHERE delivery=? AND status='pending'", (delivery,))
             self.db.execute("UPDATE parts SET status='uncertain' WHERE delivery=? AND status='sending'", (delivery,))
+            if not allow_late_context:
+                self.db.execute("UPDATE projections SET state='blocked' WHERE delivery=? AND state='candidate'", (delivery,))
 
     def has_unknown(self, delivery):
         """A grant without a receipt is unknown; a definite rejection is not."""
@@ -211,7 +213,8 @@ class Ledger:
         with self.db:
             self.db.execute('UPDATE parts SET status=?,receipt=?,message=? WHERE delivery=? AND id=?',
                             (status, status, message, delivery, part_id))
-            self.db.execute('UPDATE projections SET state=?,acknowledged=? WHERE delivery=? AND part=?',
+            self.db.execute("UPDATE projections SET state=CASE WHEN state='blocked' THEN state ELSE ? END,"
+                            'acknowledged=? WHERE delivery=? AND part=?',
                 ('pending' if status=='success' and allow_context else 'blocked',time.time() if now is None else now,delivery,part_id))
         return True
 

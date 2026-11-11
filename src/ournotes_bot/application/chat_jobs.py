@@ -238,7 +238,7 @@ class ServiceBudget:
 
     def check(self, policy, task, profile, request_id, reserve_cost_micro, *, reply_times=(),
               opportunity_requests=(), opportunity_calls=None, opportunity_cost_micro=None,
-              at=None, replacing_attempt=None) -> ServicePermit:
+              required_calls=1, at=None, replacing_attempt=None) -> ServicePermit:
         _check(isinstance(policy, ServicePolicy) and (policy.instance_id, policy.app_id) == self.namespace,
                'chat_service_identity')
         prefix = _request_prefix(task, *self.namespace, policy.group_id)
@@ -249,6 +249,7 @@ class ServiceBudget:
         limits = getattr(policy, task)
         _check(limits.enabled, 'chat_service_disabled')
         _check(type(reserve_cost_micro) in (int, Fraction) and reserve_cost_micro > 0, 'chat_service_cost')
+        _check(type(required_calls) is int and required_calls > 0, 'chat_service_calls')
         reserve_cost_micro = Fraction(reserve_cost_micro)
         now = self.clock() if at is None else at
         _check(type(now) in (int, float) and math.isfinite(now), 'chat_service_clock')
@@ -351,13 +352,16 @@ class ServiceBudget:
             # Starting an existing hold only transfers its billing date.
             return ServicePermit(user, group, request_id, task, cost, reserve_cost_micro, available, unresolved, details)
         if opportunity_requests:
-            _check(opportunity_count<opportunity_calls,'chat_opportunity_call_limit')
-            _check(opportunity_cost+reserve_cost_micro<=opportunity_cost_micro,'chat_opportunity_cost_limit')
+            _check(opportunity_count+required_calls<=opportunity_calls,'chat_opportunity_call_limit')
+            # Evidence admission can check call headroom before its cost limit
+            # is set by the candidate controller. Reservations supply both limits.
+            if opportunity_cost_micro is not None:
+                _check(opportunity_cost+reserve_cost_micro<=opportunity_cost_micro,'chat_opportunity_cost_limit')
         if task == 'summary':
             jobs = {row['request_id'] for row in recent}
             _check(len(jobs | {request_id}) <= limits.max_jobs_per_hour, 'chat_service_job_limit')
         else:
-            _check(len(recent) < limits.max_calls_per_hour, 'chat_service_call_limit')
+            _check(len(recent)+required_calls <= limits.max_calls_per_hour, 'chat_service_call_limit')
             if limits.max_evaluations_per_hour:
                 jobs = {row['request_id'] for row in recent}
                 _check(len(jobs | {request_id}) <= limits.max_evaluations_per_hour, 'chat_service_evaluation_limit')
