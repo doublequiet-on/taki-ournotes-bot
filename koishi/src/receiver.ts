@@ -596,9 +596,12 @@ export class Receiver {
   private async currentProactivePermission(task:Observation, expires=Infinity):Promise<boolean> {
     const reviewDeadline=Math.min(expires,performance.now()+2500)
     while(this.observationAlive(task) && performance.now()<expires) {
+      const reviewedSeq=task.reviewedSeq
       const current=this.ctx.reflect.trace(task.session.bot.session({...task.session.event}))
       if(!await this.permitted(current) || performance.now()>=expires)return false
-      if(this.observationCurrent(task))return true
+      // A classification completed during the permission read can make a
+      // stale permission look current. Re-read against the new sequence.
+      if(this.observationCurrent(task) && task.reviewedSeq===reviewedSeq)return true
       const remaining=reviewDeadline-performance.now()
       if(remaining<=0)return false
       await this.waitForObservationReview(task,remaining)

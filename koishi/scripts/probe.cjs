@@ -605,7 +605,7 @@ async function main() {
       assert.equal(permits,6);assert.equal(f.calls.length,0);assert.equal(aborts,1)
     }finally{await f.close()}
   })
-  for(const scenario of ['interjection','shift','expired','revoked']) {
+  for(const scenario of ['interjection','shift','expired','revoked','revoked-before-permission-returns']) {
     await run(`G1 model permission waits for same-group classification (${scenario})`,async()=>{
       const preserve=scenario!=='shift'
       const permissionRead=deferred(),finishPermissionRead=deferred()
@@ -632,8 +632,9 @@ async function main() {
         },
       })
       f.receiver.permitted=async()=>{
+        const allowed=!revoked
         if(++reads===3){permissionRead.resolve();await finishPermissionRead.promise}
-        return !revoked
+        return allowed
       }
       let candidate,side
       try {
@@ -642,13 +643,17 @@ async function main() {
         candidate=fireObservation(f.receiver)
         await permissionRead.promise
         const message=await f.ordinary('side',{author:{id:'other'},content:preserve?'哈哈':'换个话题'})
-        if(scenario==='expired')await new Promise(resolve=>setTimeout(resolve,60))
-        finishPermissionRead.resolve()
-        if(scenario!=='expired')await until(()=>[...f.receiver.observations.values()].some(task=>task.finishReviewWait))
+        const classifyDuringPermission=scenario==='revoked-before-permission-returns'
+        if(!classifyDuringPermission){
+          if(scenario==='expired')await new Promise(resolve=>setTimeout(resolve,60))
+          finishPermissionRead.resolve()
+          if(scenario!=='expired')await until(()=>[...f.receiver.observations.values()].some(task=>task.finishReviewWait))
+        }
         assert.deepEqual(decisions,[])
         side=f.receiver.receive(message);await observed.promise
-        if(scenario==='revoked')revoked=true
-        classify.resolve();await side;await candidate
+        if(scenario==='revoked' || classifyDuringPermission)revoked=true
+        classify.resolve();await side
+        finishPermissionRead.resolve();await candidate
         assert.deepEqual(decisions,scenario==='expired'?[]:[scenario==='interjection'])
         assert.deepEqual(f.sent,scenario==='interjection'?['discussion']:[])
         assert.equal(f.finished.size,scenario==='interjection'?1:0)
