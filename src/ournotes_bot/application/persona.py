@@ -102,6 +102,17 @@ def explicit_evidence_route(question):
     return ''
 
 
+def contextual_just_evidence_route(question, previous):
+    text = unicodedata.normalize('NFKC', question).strip().rstrip('。!！')
+    topic = unicodedata.normalize('NFKC', previous)
+    if (_OMITTED_EVIDENCE_SUBJECT.match(text) and _JUST_TERM.search(topic)
+            and not _OTHER_RHYTHM_GAME.search(topic)):
+        # The previous turn supplies the game mechanic, while the question
+        # supplies the aspect to verify, such as scoring versus timing windows.
+        return explicit_evidence_route('JUST：'+text)
+    return ''
+
+
 def _explicit_evidence_clause(text):
     if (_JUST_TERM.search(text) and not _OTHER_RHYTHM_GAME.search(text)
             and not re.search(r'保底|抽卡|招募|掉率|出货率|概率', text)):

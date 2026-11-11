@@ -835,6 +835,13 @@ class ChatAgent:
             has_quote = False
         explicit_text = work.proactive is None and not request.attachments and not quote_focus
         proactive_evidence = work.proactive.evidence_route if work.proactive is not None else ''
+        evidence_context_id = work.proactive.evidence_context_id if proactive_evidence else ''
+        if evidence_context_id and requested_server(chat_query_question(user_question)) is None:
+            origin = next(row for row in work.proactive.messages if row.message_id==evidence_context_id)
+            server = requested_server(chat_query_question(origin.text))
+            if server:
+                region = '日服和国际服' if server=='common' else _REGION_NAME[server]
+                meta_question = user_question = region+' '+user_question
         route = explicit_evidence_route(user_question) if explicit_text else proactive_evidence
         if explicit_text and not route:
             short = unicodedata.normalize('NFKC',user_question).strip().rstrip('。!！?？')
@@ -974,6 +981,11 @@ class ChatAgent:
             prompt+='\n最终只输出包含 participation、text、delay_seconds 三个字段的 JSON 对象，不加代码围栏或说明。participation 为 reply、skip 或 defer；text 固定为空字符串；仅 defer 的 delay_seconds 为 2 至 5 的整数，其余为 null。选择 reply 后另一步直接写群聊正文，本次不拟正文。'
         if light:
             return await self.lightweight_turn(work,prompt,natural_prompt,history,user,group,deadline)
+        def skip_proactive_evidence(status):
+            self.proactive.trace(work,'control',status=status)
+            self.proactive.decision(work,'{"participation":"skip"}')
+            return PreparedReply('',business_status='proactive_skip')
+
         if proactive_evidence:
             # Use the same text boundary as the lightweight pilot. Never
             # retrieve on the strength of a picture or a quoted preview.
@@ -984,13 +996,14 @@ class ChatAgent:
             if (not rows or rows[-1]['message_id'] != request.message_id
                     or any('quoted_text' in row for row in rows)
                     or _LIGHTWEIGHT_IMAGE_REFERENCE.search(request.body)):
-                self.proactive.trace(work,'control',status='lightweight_context_required')
-                self.proactive.decision(work,'{"participation":"skip"}')
-                return PreparedReply('',business_status='proactive_skip')
+                return skip_proactive_evidence('lightweight_context_required')
             decision_prompt = (prompt+'\n只在当前发言确实向全群提出这个事实问题且尚未得到回答时选 reply。'
                                '区分真提问、反问、体验分享、复述别人的问题，以及明确在向某位群友提问。'
                                '若当前句必须结合图片或缺失的引用才能理解，选 skip。此阶段不查询、不作答。')
             decision_messages=self.initial_context(work,[{'role':'system','content':decision_prompt},*history],[])
+            if evidence_context_id and not any(json.loads(item['content']).get('message_id')==evidence_context_id
+                                                for item in decision_messages[1:]):
+                return skip_proactive_evidence('lightweight_context_required')
             work.participating_history=tuple(decision_messages[1:])
             initial=await runtime.attempt(work,decision_messages,[],user,group,deadline)
             require(not initial.tool_calls,'model_protocol_error')
@@ -1152,6 +1165,11 @@ class ChatAgent:
                 runtime.check(work,deadline,leases)
                 final=force_final or work.model_attempts>=self.budget.model_calls-1 or index==self.budget.model_calls-1 or operations>=self.budget.tool_calls or deadline-time.monotonic()<=self.budget.final_seconds
                 if staged and work.model_attempts>=self.budget.model_calls-2:final=True
+                required = lookup if index == 0 else ''
+                if (not final or proactive_evidence) and lookup == 'story_search' and story_handles and not story_fact_read:
+                    required = 'story_read'
+                if proactive_evidence and required and final:
+                    return skip_proactive_evidence('proactive_evidence_budget_exhausted')
                 if final:
                     closing=('本轮检索预算结束。结合当前群聊和已有结果决定是否接话，按 reply/skip/defer 的 JSON 格式输出，不要再调用工具。'
                              if work.proactive is not None and not proactive_evidence else '本轮检索预算结束。根据已有结果回答；缺失细节说明具体缺口。不要再调用工具。')
@@ -1159,9 +1177,6 @@ class ChatAgent:
                     if scope_note:closing+='\n'+scope_note
                     messages.append({'role':'system','content':closing})
                 reservation=final_attempt if final else None
-                required = lookup if index == 0 else ''
-                if not final and lookup == 'story_search' and story_handles and not story_fact_read:
-                    required = 'story_read'
                 active_registry = {required:registry[required]} if required else registry
                 if proactive_evidence and not required:
                     active_registry = {}
@@ -1170,6 +1185,8 @@ class ChatAgent:
                     result=await runtime.attempt(work,messages,[] if final else [tool.wire() for tool in active_registry.values()],
                                                  user,group,deadline,leases,reservation=reservation,require_tool=bool(required))
                 except ModelError as exc:
+                    if proactive_evidence and required and str(exc) in ('quota_exceeded','primary_budget_exceeded'):
+                        return skip_proactive_evidence('proactive_evidence_budget_exhausted')
                     if str(exc) not in ('quota_exceeded','primary_budget_exceeded') or final or final_attempt is None: raise
                     if str(exc)=='primary_budget_exceeded' and work.model_attempts==0 and not staged:raise
                     # No HTTP/permit has started on a failed reserve. Consume the
@@ -1297,6 +1314,8 @@ class ChatAgent:
                         output,leases=await self.execute(work,call,question,site,leases,deadline-self.budget.final_seconds,deadline,
                                                          registry=active_registry,web=web,user=user,group=group,story_handles=story_handles,image_handles=image_handles,vision=vision,
                                                          meta_question=meta_question,evidence_route=route,just_card=just_card)
+                    if proactive_evidence and required and output['status'] in ('budget_exhausted','quota_exceeded'):
+                        return skip_proactive_evidence('proactive_evidence_budget_exhausted')
                     image_input=output.pop('_image_input',None)
                     knowledge_scope=output.pop('_knowledge_scope',None)
                     knowledge_lease=output.pop('_knowledge_lease',None)

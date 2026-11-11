@@ -6547,17 +6547,23 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
     async def test_lightweight_fact_followup_reuses_opportunity_and_checks_approved_evidence(self):
         await self.lightweight_fact_question(after_opinion=True)
 
-    async def lightweight_fact_question(self, *, after_opinion=False):
+    async def test_lightweight_omitted_just_subject_uses_adjacent_same_speaker(self):
+        await self.lightweight_fact_question(after_opinion=True,omitted_subject=True)
+
+    def enable_lightweight_fact_fixture(self, **limits):
+        self.snapshot=replace(self.snapshot,profile=replace(self.snapshot.profile,provider='openai',
+            wire_profile='openai-responses-v1',model='gpt-6.1-terra',max_input_tokens=32768,
+            max_output_tokens=4096,user_daily_limit=10**8,group_daily_limit=10**8))
+        self.policy=replace(self.policy,proactive=replace(self.policy.proactive,max_cost_micro_per_day=2_000_000,**limits))
+        self.agent.services.policy.return_value=self.policy
+        self.agent.proactive.lightweight_groups=frozenset({'g1'})
+
+    async def lightweight_fact_question(self, *, after_opinion=False, omitted_subject=False):
         from types import SimpleNamespace
         from ournotes_bot.domain.knowledge import Applicability,EvidenceChunkV1,EvidenceLease,KnowledgeScope
         from ournotes_bot.domain.model_calls import ToolCall
 
-        self.snapshot=replace(self.snapshot,profile=replace(self.snapshot.profile,provider='openai',
-            wire_profile='openai-responses-v1',model='gpt-6.1-terra',max_input_tokens=32768,
-            max_output_tokens=4096,user_daily_limit=10**8,group_daily_limit=10**8))
-        self.policy=replace(self.policy,proactive=replace(self.policy.proactive,max_cost_micro_per_day=2_000_000))
-        self.agent.services.policy.return_value=self.policy
-        self.agent.proactive.lightweight_groups=frozenset({'g1'})
+        self.enable_lightweight_fact_fixture()
         scope=KnowledgeScope(server='jp')
         chunk=EvidenceChunkV1('on-09-score','0'*64,1,'score#1','1'*64,
             '|JUST|区间JUST数量|区间得分，再比较PERFECT数量|',(),
@@ -6571,14 +6577,14 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
         serial=1
         if after_opinion:
             self.client.request.return_value=self.result('{"participation":"skip","text":"","delay_seconds":null}')
-            opinion=self.observation('JUST 太难了');self.tick+=1.6
+            opinion=self.observation('这次激奏 JUST 区间太难了' if omitted_subject else 'JUST 太难了');self.tick+=1.6
             skipped,initial_attempts,prior=await self.candidate(opinion)
             self.assertEqual(skipped['parts'],[])
             self.assertEqual(len(initial_attempts),1)
             self.assertTrue(prior[0].lightweight)
             knowledge.retrieve.assert_not_called()
             self.now+=.01
-            question='补充问一下，激奏 JUST 区间怎么计分？'
+            question='那区间怎么计分？' if omitted_subject else '补充问一下，激奏 JUST 区间怎么计分？'
             serial=2
         wire=[]
         responses=iter([
@@ -6604,6 +6610,63 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
         if after_opinion:
             self.assertEqual(candidate[0].opportunity_id,prior[0].opportunity_id)
             self.assertEqual(candidate[0].expires_at,prior[0].expires_at)
+        if omitted_subject:
+            self.assertEqual(candidate[0].evidence_context_id,opinion['message_id'])
+
+    async def test_lightweight_just_subject_does_not_cross_speakers(self):
+        self.enable_lightweight_fact_fixture()
+        self.observation('这次激奏 JUST 区间太难了')
+        self.now+=.01
+        self.current_user='u2'
+        value=self.observation('那区间怎么计分？',seq=2);self.tick+=1.6
+        self.client.request.return_value=self.result('{"participation":"skip","text":"","delay_seconds":null}')
+        _,attempts,candidate=await self.candidate(value,2)
+        self.assertEqual(len(attempts),1)
+        self.assertTrue(candidate[0].lightweight)
+        self.assertFalse(candidate[0].evidence_route)
+
+    async def test_lightweight_evidence_requires_remaining_hourly_calls(self):
+        self.enable_lightweight_fact_fixture(max_calls_per_hour=2)
+        await self.assert_lightweight_evidence_call_denial('chat_service_call_limit')
+        self.client.request.assert_not_awaited()
+
+    async def test_lightweight_evidence_requires_remaining_opportunity_calls(self):
+        self.enable_lightweight_fact_fixture()
+        self.agent.budget=replace(self.agent.budget,model_calls=3)
+        self.client.request.return_value=self.result('{"participation":"skip","text":"","delay_seconds":null}')
+        value=self.observation('JUST 太难了');self.tick+=1.6
+        await self.candidate(value)
+        self.now+=.01
+        await self.assert_lightweight_evidence_call_denial('chat_opportunity_call_limit',seq=2)
+        self.assertEqual(self.client.request.await_count,1)
+
+    async def assert_lightweight_evidence_call_denial(self, status, *, seq=1):
+        from ournotes_bot.application.backend_protocol import Request
+
+        value=self.observation('激奏 JUST 区间怎么计分？',seq=seq);self.tick+=1.6
+        request=Request.parse(value,'fixture','app',self.now)
+        self.assertIsNone(self.agent.proactive.candidate(request))
+        self.assertTrue(any(event['data'].get('status')==status
+                            for event in self.backend.diagnostics.group_events('g1')))
+
+    async def test_lightweight_evidence_does_not_claim_lookup_when_quota_changes_after_decision(self):
+        self.enable_lightweight_fact_fixture()
+        # Simulate a concurrent reserve being denied at the lookup step without
+        # changing the service approval binding of the candidate.
+        from ournotes_bot.domain.model_calls import ModelError
+        runtime=self.backend.model_runtime
+        attempt=runtime.attempt
+        async def attempt_with_quota(work,messages,tools,*args,**kwargs):
+            if tools:raise ModelError('quota_exceeded')
+            return await attempt(work,messages,tools,*args,**kwargs)
+        self.client.request.return_value=self.result('{"participation":"reply","text":"","delay_seconds":null}')
+        value=self.observation('激奏 JUST 区间怎么计分？');self.tick+=1.6
+        with patch.object(runtime,'attempt',side_effect=attempt_with_quota):
+            plan,attempts,_=await self.candidate(value)
+        self.assertEqual(len(attempts),1)
+        self.assertFalse(plan['send_allowed'])
+        self.assertEqual(plan['parts'],[])
+        self.client.request.assert_awaited_once()
 
     async def test_lightweight_mechanic_opinion_after_image_and_explicit_evidence_guard(self):
         from ournotes_bot.application.backend_protocol import Request

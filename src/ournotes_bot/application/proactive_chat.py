@@ -60,6 +60,7 @@ class ProactiveCandidate:
     continuation: bool = False
     lightweight: bool = False
     evidence_route: str = ''
+    evidence_context_id: str = ''
 
 
 @dataclass
@@ -67,6 +68,7 @@ class _Observed:
     message: ChatMessage
     at: float
     size: int
+    plain_text: bool
 
 
 @dataclass
@@ -247,7 +249,21 @@ class ProactiveController:
             return next((row.message for row in reversed(group.rows)
                          if row.message.message_id==group.target_id),None)
 
-    def observe(self, scope, message, *, addressed=False, is_bot=False, turn='advance'):
+    def preceding_plain_message(self, scope, message_id):
+        group = self.groups.get(scope)
+        if group is None:
+            return None
+        for index in range(len(group.rows)-1,0,-1):
+            current = group.rows[index].message
+            if current.message_id == message_id:
+                previous = group.rows[index-1]
+                if (previous.plain_text and previous.message.speaker_id == current.speaker_id
+                        and 0 <= current.timestamp_ms-previous.message.timestamp_ms <= self.candidate_seconds*1000):
+                    return previous.message
+                return None
+        return None
+
+    def observe(self, scope, message, *, addressed=False, is_bot=False, turn='advance', plain_text=True):
         if turn not in ('advance','supplement','interjection','closed'):
             raise ValueError('proactive_turn_invalid')
         self.sweep()
@@ -274,7 +290,7 @@ class ProactiveController:
             group.rows.clear()
             self._cancel(group)
             return False
-        group.rows.append(_Observed(message, now, size))
+        group.rows.append(_Observed(message, now, size, plain_text and not addressed and turn!='closed'))
         while (len(group.rows) > self.max_messages
                or sum(row.size for row in group.rows) > self.group_bytes):
             group.rows.pop(0)
@@ -312,9 +328,13 @@ class ProactiveController:
         return sum(ticket.charged_cost for ticket in group.tickets.values())
 
     @staticmethod
+    def _opportunity_tickets(group):
+        return (ticket for ticket in group.tickets.values() if ticket.opportunity_id == group.opportunity.id)
+
+    @staticmethod
     def _opportunity_cost(group, evidence_reserve_micro):
         opportunity=group.opportunity
-        costs=[ticket.cost_micro for ticket in group.tickets.values() if ticket.opportunity_id==opportunity.id]
+        costs=[ticket.cost_micro for ticket in ProactiveController._opportunity_tickets(group)]
         spent=sum(cost or 0 for cost in costs)
         limit=opportunity.cost_micro
         if evidence_reserve_micro and opportunity.lightweight and None not in costs:
@@ -388,8 +408,15 @@ class ProactiveController:
         opportunity=group.opportunity if group else None
         if ticket is None or opportunity is None or ticket.opportunity_id!=opportunity.id:
             raise ValueError('proactive_opportunity_expired')
-        return ([row.candidate_id for row in group.tickets.values() if row.opportunity_id==opportunity.id],
+        return ([row.candidate_id for row in self._opportunity_tickets(group)],
                 opportunity.cost_micro)
+
+    def opportunity_candidates(self, scope):
+        group = self.groups.get(scope)
+        opportunity = group.opportunity if group else None
+        if opportunity is None or self.clock() >= opportunity.expires_at:
+            return []
+        return [row.candidate_id for row in self._opportunity_tickets(group)]
 
     def take_tool(self,candidate,limit):
         if not self.valid(candidate):return False

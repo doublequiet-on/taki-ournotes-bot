@@ -163,11 +163,12 @@ export class Receiver {
     return this.observationAlive(task) && (task.continuation || task.reviewedSeq===undefined
       || this.groupArrivals.get(task.key)?.backendSeq===task.reviewedSeq)
   }
-  private async waitForObservationReview(task:Observation):Promise<void> {
+  private async waitForObservationReview(task:Observation, remainingMs=2500):Promise<void> {
     if(!this.observationAlive(task) || this.observationCurrent(task))return
     // A raw arrival can precede its admission flight. Wait for the review or cancellation,
     // with a short bound for messages that never reach the observation endpoint.
-    const waitMs=Math.min(2500,task.input.timestampMs+298000-Date.now())
+    const waitMs=Math.min(2500,remainingMs,task.input.timestampMs+298000-Date.now())
+    if(waitMs<=0)return
     await new Promise<void>(resolve=>{
       const finish=()=>{
         clearTimeout(timer)
@@ -600,7 +601,6 @@ export class Receiver {
     return this.observationCurrent(task)
   }
   private async authorizeModel(job:Job, challenge:ModelPermission):Promise<void> {
-    if(job.proactive?.reviewedSeq!==undefined)await this.admission
     const input=job.input
     const scope={instance_id:input.instanceId,app_id:input.appId,platform:input.platform,
       kind:input.kind,conversation_id:input.conversationId}
@@ -610,14 +610,18 @@ export class Receiver {
       || !Number.isInteger(challenge.remaining_ms) || challenge.remaining_ms<=0 || challenge.remaining_ms>3000
       || !challenge.scope || Object.keys(challenge.scope).length!==Object.keys(scope).length
       || Object.entries(scope).some(([k,v])=>challenge.scope[k]!==v)) throw new BackendError('model_permission_binding')
+    const expires=performance.now()+challenge.remaining_ms
     if(job.permissionAttempts.has(challenge.attempt_id)) return
     job.permissionAttempts.add(challenge.attempt_id)
     if(job.permissionAttempts.size>6) throw new BackendError('model_attempt_limit')
+    if(job.proactive?.continuation && job.proactive.reviewedSeq!==undefined)await this.admission
     // Re-evaluate current plugin scope/platform permission and current management state.
     // observeUser reuses the old Session's loaded fields. A new Session forces a
     // fresh database read; reusing the admitted Session would miss a revoked user.
     const current=this.ctx.reflect.trace(job.session.bot.session({...job.session.event}))
     const permitted=this.active && await this.permitted(current)
+    if(permitted && job.proactive)await this.waitForObservationReview(job.proactive,expires-performance.now())
+    if(performance.now()>=expires)return
     const management=this.config.management
     const policy=management?.policySnapshot(input) ?? {natural_query:'model' as const,epoch:this.epoch,global_revision:0,group_revision:0}
     const allowed=permitted && this.active && (!job.proactive || this.observationCurrent(job.proactive))
