@@ -23,7 +23,7 @@ from .chat_jobs import (
 )
 from .proactive_chat import ProactiveController,ProactivePolicy
 from .chat_followup import Followups
-from .persona import lightweight_needs_evidence
+from .persona import explicit_evidence_route, lightweight_needs_evidence
 from . import replies
 
 
@@ -278,16 +278,25 @@ class ProactiveChat:
                             or re.search(r'[a-z][a-z0-9+.-]*://|www\.', unicodedata.normalize('NFKC', request.body), re.I)):
             self.control_event(request,'chat_service_lightweight_skip')
             return None
-        if lightweight and lightweight_needs_evidence(request.body):
+        evidence_route = explicit_evidence_route(request.body) if lightweight else ''
+        if lightweight and not evidence_route and lightweight_needs_evidence(request.body):
+            self.control_event(request,'chat_service_lightweight_evidence_required')
+            return None
+        evidence_calls = {'just_clarify': 1, 'story_fact': 4}.get(evidence_route, 3)
+        if evidence_route and self.agent.budget.model_calls < evidence_calls:
             self.control_event(request,'chat_service_lightweight_evidence_required')
             return None
         try:self.reconcile_costs(request,policy if not continuation else None)
         except (sqlite3.Error, ModelError, ServiceError, ValueError):
             self.control_event(request,'chat_service_usage_unavailable');return None
-        minimum = (lightweight_minimum_cost_micro(snapshot.profile) if lightweight
-                   else proactive_minimum_cost_micro(snapshot.profile))
-        model_cost = (minimum + maximum_cost_micro(lightweight_profile(snapshot.profile, False)) if lightweight
-                      else maximum_cost_micro(snapshot.profile)*self.agent.budget.model_calls)
+        if evidence_route:
+            minimum = model_cost = math.ceil(maximum_cost_micro(profile) * evidence_calls)
+        elif lightweight:
+            minimum = lightweight_minimum_cost_micro(profile)
+            model_cost = minimum + maximum_cost_micro(lightweight_profile(profile, False))
+        else:
+            minimum = proactive_minimum_cost_micro(profile)
+            model_cost = maximum_cost_micro(profile) * self.agent.budget.model_calls
         remaining=self.controller.remaining_cost(self.scope(request))
         if remaining is not None:model_cost=min(model_cost,remaining)
         if model_cost<=0:
@@ -326,7 +335,8 @@ class ProactiveChat:
         followup=self.followups.match(self.scope(request),request.message_id)
         if followup is not None:candidate=replace(candidate,followup=followup,continuation=True)
         if continuation:return candidate,None,snapshot,'continuation/'+candidate.candidate_id
-        if lightweight:candidate=replace(candidate,lightweight=True)
+        if lightweight:
+            candidate=replace(candidate,lightweight=not evidence_route,evidence_route=evidence_route)
         job=service_request_id('proactive',request.instance_id,request.app_id,request.conversation_id,candidate.candidate_id)
         try:self.agent.service_budget.check(policy,'proactive',snapshot.profile,job,candidate.reserved_cost_micro,
             reply_times=self.agent.store.proactive_replies(request.scope))
@@ -453,7 +463,7 @@ class ProactiveChat:
             rows=sorted(merged.values(),key=lambda row:row.timestamp_ms)
             # The current observation stays last even when QQ and ACK clocks differ.
             rows.append(current)
-        if work.proactive.lightweight:
+        if work.proactive.lightweight or work.proactive.evidence_route:
             rows = [row for row in rows if row.timestamp_ms >= work.request.timestamp_ms - 300_000][-6:]
         protected={work.request.message_id}
         recent_reply=next((row for row in reversed(rows) if row.role=='assistant'),None)

@@ -827,7 +827,8 @@ class ChatAgent:
         if quote_prefix:
             has_quote = False
         explicit_text = work.proactive is None and not request.attachments and not quote_focus
-        route = explicit_evidence_route(user_question) if explicit_text else ''
+        proactive_evidence = work.proactive.evidence_route if work.proactive is not None else ''
+        route = explicit_evidence_route(user_question) if explicit_text else proactive_evidence
         if explicit_text and not route:
             short = unicodedata.normalize('NFKC',user_question).strip().rstrip('。!！?？')
             selection = ('JUST 扩窗怎么叠' if short in ('扩窗','判定窗','扩判') else
@@ -890,7 +891,7 @@ class ChatAgent:
         history_ids={json.loads(item['content']).get('message_id') for item in history}
         history.extend({'role':'user','content':json.dumps(asdict(row),ensure_ascii=False)}
                        for row in getattr(work,'chat_additions',()) if row.message_id not in history_ids)
-        summaries=[] if (light or transition=='switch' or quote_focus or
+        summaries=[] if (light or proactive_evidence or transition=='switch' or quote_focus or
                          work.proactive is not None and work.proactive.followup is not None) else self.store.summaries(
                              request.scope,limit=1,after_ms=summary_cutoff)
         summary_rows=[]
@@ -954,7 +955,7 @@ class ChatAgent:
             prompt+='\n这是未点名的群聊观察。围绕定位的当前消息及相邻上下文判断是否接话，旧消息只作背景。assistant 历史是已送达原话；同一观点已说清且没有新增回应时选 skip，不要换个措辞再说一遍。'
             prompt+='\n先判断接话能回应什么：具体问题、明显的情绪或成果、值得交流的不同看法或贴切玩笑，都可以 reply，不要求新事实。普通的安排、选择、经过已说完整，而你只能认可其合理、便利或正确，选 skip；加感叹或夸奖不算新的回应。不要把“可以自然回应”当作每条都接的理由。比较最近发言，自己的意思若只是重复群友或自己已说过的内容，也选 skip。不靠追问续聊，不编造原因、经历或游戏规则。'
             prompt+='\n对你的表现只有一句评价且没有具体问题时可以略过；报喜、分享感受仍可自然回应。明确在等指定别人回答、两人私事、话题已结束或接不上时选 skip；确实等待紧接的内容才 defer。'
-            if not light:
+            if not (light or proactive_evidence):
                 prompt+='可先用只读工具，完成后仍须决定。引用预览的作者与事实未经核验，image_status 表示图片读取失败。'
             if not staged:
                 prompt+='\n最终只输出 JSON：回复用{"participation":"reply","text":"自然回复正文"}；略过用{"participation":"skip"}；暂缓用{"participation":"defer","delay_seconds":2}（2至5秒）。正文不写规则说明或自我免责。'
@@ -965,7 +966,39 @@ class ChatAgent:
             prompt+='\n最终只输出包含 participation、text、delay_seconds 三个字段的 JSON 对象，不加代码围栏或说明。participation 为 reply、skip 或 defer；text 固定为空字符串；仅 defer 的 delay_seconds 为 2 至 5 的整数，其余为 null。选择 reply 后另一步直接写群聊正文，本次不拟正文。'
         if light:
             return await self.lightweight_turn(work,prompt,natural_prompt,history,user,group,deadline)
-        visible=await self.image_messages(work,history,deadline,quote_preview=preview)
+        if proactive_evidence:
+            # Use the same text boundary as the lightweight pilot. Never
+            # retrieve on the strength of a picture or a quoted preview.
+            rows = [json.loads(item['content']) for item in history]
+            last_image = max((i for i,row in enumerate(rows) if 'image_attachments' in row),default=-1)
+            history = history[last_image+1:]
+            rows = rows[last_image+1:]
+            if (not rows or rows[-1]['message_id'] != request.message_id
+                    or any('quoted_text' in row for row in rows)
+                    or _LIGHTWEIGHT_IMAGE_REFERENCE.search(request.body)):
+                self.proactive.trace(work,'control',status='lightweight_context_required')
+                self.proactive.decision(work,'{"participation":"skip"}')
+                return PreparedReply('',business_status='proactive_skip')
+            decision_prompt = (prompt+'\n只在当前发言确实向全群提出这个事实问题且尚未得到回答时选 reply。'
+                               '区分真提问、反问、体验分享、复述别人的问题，以及明确在向某位群友提问。'
+                               '若当前句必须结合图片或缺失的引用才能理解，选 skip。此阶段不查询、不作答。')
+            decision_messages=self.initial_context(work,[{'role':'system','content':decision_prompt},*history],[])
+            work.participating_history=tuple(decision_messages[1:])
+            initial=await runtime.attempt(work,decision_messages,[],user,group,deadline)
+            require(not initial.tool_calls,'model_protocol_error')
+            answer=self.proactive.parse_staged_decision(initial.text)
+            self.proactive.trace(work,'control',status='proactive_evidence_initial',name=route,
+                                 decision=answer['participation'])
+            if answer['participation']!='reply':
+                self.proactive.decision(work,json.dumps(answer,ensure_ascii=False))
+                return PreparedReply('',business_status='proactive_'+work.participation)
+            # Participation has been assessed. The bounded lookup and final
+            # reply can share the explicit evidence path without a second vote.
+            staged=False
+            prompt=natural_prompt+'\n只回答当前事实问题，依据本轮审核资料。群友对激奏的推测只作为待核对线索。'
+            visible=decision_messages[1:]
+        else:
+            visible=await self.image_messages(work,history,deadline,quote_preview=preview)
         quote_status=None
         if work.unavailable_quote_image or not quote_prefix and request.quote_hint=='image' and not (context_request.reference and
                 (self.image_scope(request),context_request.reference['message_id']) in work.image_sources):
@@ -999,7 +1032,8 @@ class ChatAgent:
         web_citations={}
         site=SiteLookup(runtime.backend.repository,chat_query_question(question),allow_rewrite=True,max_operations=self.budget.tool_calls)
         named=(explicit_entities(runtime.backend.repository,('SNAP ' if route=='just_card' else '')+user_question)
-               if task_enabled and requested_server(chat_query_question(user_question)) in (None,'jp') else {})
+               if (task_enabled or proactive_evidence=='just_card')
+               and requested_server(chat_query_question(user_question)) in (None,'jp') else {})
         if route == 'just_card':
             just_card,just_levels,missing=just_card_question(user_question,named)
             if missing:
@@ -1035,9 +1069,15 @@ class ChatAgent:
                 obj({'handle':string(200),'before':{'type':'integer','minimum':0,'maximum':2},'after':{'type':'integer','minimum':0,'maximum':2}},('handle',)),'story')
         story_handles=set()
         story_fact_read=False
+        def evidence_reply(text,status='success'):
+            text=self.proactive.decision(work,json.dumps(dict(participation='reply',text=text),ensure_ascii=False))
+            return PreparedReply(text or '',business_status=status if text else 'proactive_'+work.participation)
+
         if lookup == 'story_search':
             if not self.story:
-                return PreparedReply(quote_prefix+'我还没找到能核对这件事的邦邦资料。',business_status='source_unavailable')
+                text=quote_prefix+'我还没找到能核对这件事的邦邦资料。'
+                return evidence_reply(text,'source_unavailable') if proactive_evidence else PreparedReply(
+                    text,business_status='source_unavailable')
             messages[0]['content']+='\n本轮在问邦邦事实。先检索并读取相关场景，再用自己的话答。区分原作、官方简介和社区解读；关系短称或同人称呼不能证明官方关系。资料只支持一部分时说清缺项。'
             if '一辈子乐队' in unicodedata.normalize('NFKC',user_question):
                 messages[0]['content']+=(
@@ -1054,7 +1094,7 @@ class ChatAgent:
                 messages[0]['content']+=(
                     f'本轮核对的是留影 ID {just_card}，技能等级 {", ".join(just_levels)}。'
                     '分别说明资料核到的范围和持续时间。没有逐级范围就说明缺口，0 秒配置不能代替实际持续时间。')
-        web=runtime.capabilities_for(work).web(work.model_snapshot)
+        web=None if proactive_evidence else runtime.capabilities_for(work).web(work.model_snapshot)
         if web is not None:
             registry['web_search']=Tool('web_search','检索公开互联网信息；query只含完成问题所需公开关键词，不包含群聊、身份、私密内容或内部网址。',
                 obj({'query':string(160)},('query',)),'web')
@@ -1085,6 +1125,7 @@ class ChatAgent:
             status = 'just_topic_clarification' if route=='just_clarify' else 'just_card_clarification'
             runtime.backend.diagnostics.chat_event(request.request_id,'control',runtime.backend.clock(),status=status)
             text=quote_prefix+local_answer
+            if proactive_evidence:return evidence_reply(text)
             if retain_turn:self.audit(self.store.generated,work.delivery,text)
             runtime.check(work,deadline,leases)
             return PreparedReply(text,business_status='success',evidence=leases,
@@ -1105,7 +1146,7 @@ class ChatAgent:
                 if staged and work.model_attempts>=self.budget.model_calls-2:final=True
                 if final:
                     closing=('本轮检索预算结束。结合当前群聊和已有结果决定是否接话，按 reply/skip/defer 的 JSON 格式输出，不要再调用工具。'
-                             if work.proactive is not None else '本轮检索预算结束。根据已有结果回答；缺失细节说明具体缺口。不要再调用工具。')
+                             if work.proactive is not None and not proactive_evidence else '本轮检索预算结束。根据已有结果回答；缺失细节说明具体缺口。不要再调用工具。')
                     if work.chat_task.goal:closing+='\n任务完成情况：'+json.dumps(work.chat_task.coverage(),ensure_ascii=False)+'；逐项回应，缺资料的项目直接说具体缺口。'
                     if scope_note:closing+='\n'+scope_note
                     messages.append({'role':'system','content':closing})
@@ -1114,7 +1155,10 @@ class ChatAgent:
                 if not final and lookup == 'story_search' and story_handles and not story_fact_read:
                     required = 'story_read'
                 active_registry = {required:registry[required]} if required else registry
+                if proactive_evidence and not required:
+                    active_registry = {}
                 try:
+                    work.proactive_generation=bool(proactive_evidence and final)
                     result=await runtime.attempt(work,messages,[] if final else [tool.wire() for tool in active_registry.values()],
                                                  user,group,deadline,leases,reservation=reservation,require_tool=bool(required))
                 except ModelError as exc:
@@ -1124,10 +1168,15 @@ class ChatAgent:
                     # already held final request instead of another retrieval.
                     final=True
                     closing=('剩余额度用于收束。结合当前群聊和已有资料决定是否接话，按 reply/skip/defer 的 JSON 格式输出，不再查询。'
-                             if work.proactive is not None else '剩余额度用于收束。根据已有资料回答，不再查询。')
+                             if work.proactive is not None and not proactive_evidence else '剩余额度用于收束。根据已有资料回答，不再查询。')
                     messages.append({'role':'system','content':closing})
                     reservation=final_attempt
+                    work.proactive_generation=bool(proactive_evidence)
                     result=await runtime.attempt(work,messages,[],user,group,deadline,leases,reservation=reservation)
+                finally:
+                    work.proactive_generation=False
+                if proactive_evidence and result.tool_calls:
+                    require(len(result.tool_calls)==1,'model_protocol_error')
                 if not result.tool_calls:
                     require(isinstance(result.text,str) and bool(result.text.strip()),'model_protocol_error')
                     if just_evidence and not just_fact_ready or lookup == 'story_search' and not story_fact_read:
@@ -1135,7 +1184,9 @@ class ChatAgent:
                             target = _REGION_NAME[mechanic_server]+f'留影 {just_card} 技能 '+ '、'.join('Lv'+level for level in just_levels)
                         else:
                             target = _REGION_NAME[mechanic_server]+' JUST 机制' if just_evidence else '这件事的邦邦场景'
-                        return PreparedReply(quote_prefix+f'我还没查到能确认{target}的资料。',business_status='source_unavailable')
+                        text=quote_prefix+f'我还没查到能确认{target}的资料。'
+                        return evidence_reply(text,'source_unavailable') if proactive_evidence else PreparedReply(
+                            text,business_status='source_unavailable')
                     if mechanic and not mechanic_passage:
                         if not final and not mechanic_rechecked and work.model_attempts<self.budget.model_calls-1:
                             mechanic_rechecked = True
@@ -1171,7 +1222,10 @@ class ChatAgent:
                             result=replace(result,text=json.dumps(
                                 dict(participation='skip') if generated.text.strip()=='<TAKI_SKIP>'
                                 else dict(participation='reply',text=generated.text),ensure_ascii=False))
-                    text=self.proactive.decision(work,result.text) if work.proactive is not None else result.text
+                    decision_text=result.text
+                    if proactive_evidence:
+                        decision_text=json.dumps(dict(participation='reply',text=result.text),ensure_ascii=False)
+                    text=self.proactive.decision(work,decision_text) if work.proactive is not None else result.text
                     if text is None:return PreparedReply('',business_status='proactive_'+work.participation)
                     text = quote_prefix + text
                     if work.chat_task.goal:
@@ -1281,7 +1335,7 @@ class ChatAgent:
                                 just_fact_ready = any(just_source_matches(route,just_card,chunk) for chunk in candidates)
                         if just_evidence:
                             force_final=True
-                        if output['status'] in ('not_available','no_results','source_unavailable','empty'):
+                        if not proactive_evidence and output['status'] in ('not_available','no_results','source_unavailable','empty'):
                             output['next_step']='用site_search查Haneoka的具体对象或相关公告，读详情后结合已有资料回答。'
                             tool_message['content']=json.dumps(output,ensure_ascii=False)
                     if knowledge_scope is not None and output['status']=='ok':
@@ -1298,6 +1352,8 @@ class ChatAgent:
                         work.knowledge_target=target
                     seen[call.id]=((call.name,call.arguments),output)
                     if output['status'] in ('budget_exhausted','quota_exceeded'):force_final=True
+                    if proactive_evidence and lookup=='story_search' and (call.name=='story_read' or not story_handles):
+                        force_final=True
                     for ref in output.get('evidence_refs',[]):web_citations[ref['url']]=ref
                     provenance=output.get('data') if isinstance(output.get('data'),dict) else {}
                     tool_events+=1
@@ -1310,6 +1366,8 @@ class ChatAgent:
                         fallback=call.name in ('site_search','site_read') and any(key[0]=='knowledge_search' for key,value in seen.values())
                         data=dict(action=call.name,status=output['status'],elapsed_ms=round((time.monotonic()-tool_started)*1000),
                                   research_fallback=fallback,task_missing=sum(not item['complete'] for item in work.chat_task.coverage()['items']))
+                        if proactive_evidence:
+                            data['evidence_route']=route
                         if retain_turn:
                             self.audit(self.store.event,work.delivery,'research/'+str(tool_events),'research',data)
                         self.runtime.backend.diagnostics.chat_event(work.request.request_id,'research',self.runtime.backend.clock(),**data)
@@ -1323,6 +1381,9 @@ class ChatAgent:
                             text = (quote_prefix+'还定不了要几张满破判定卡。'+_REGION_NAME[mechanic_server]
                                     +'资料能说明扩窗怎么叠，要估张数还得看具体留影、技能等级和你想把判定窗扩到多少。')
                         runtime.check(work,deadline,leases)
+                        if proactive_evidence:
+                            reply=evidence_reply(text)
+                            return replace(reply,evidence=leases,evidence_deadline=work.content_deadline)
                         if retain_turn:
                             self.audit(self.store.generated,work.delivery,text)
                             await self.maybe_summary(work,deadline,after_ms=summary_cutoff)
@@ -1398,7 +1459,8 @@ class ChatAgent:
                     require(args['handle'] in story_handles,'story_handle_unissued')
                     adjacent = 0 if evidence_route == 'story_fact' else 1
                     output=await finish_thread(partial(self.story.read,args['handle'],
-                                                       before=args.get('before',adjacent),after=args.get('after',adjacent)))
+                        before=0 if work.proactive is not None and work.proactive.evidence_route else args.get('before',adjacent),
+                        after=0 if work.proactive is not None and work.proactive.evidence_route else args.get('after',adjacent)))
                     story_handles.update(output[key] for key in ('previous_handle','next_handle') if output.get(key))
                 if output.get('status')=='ok':
                     version=(output['source_revision'],output['revocation_revision'])

@@ -2738,6 +2738,9 @@ class ChatAgentTests(Fixture, unittest.IsolatedAsyncioTestCase):
 
         cases = {
             '我觉得 JUST 最吃卡': '', '你觉得JUST最吃卡吗': '', '海希好嗑': '',
+            'JUST 太难了': '', '神秘 box 只能支持我玩 just': '',
+            'JUST 扩窗太复杂，激奏 JUST 区间怎么计分': 'just_score',
+            '判卡很有用，但海希什么关系': 'story_fact',
             'JUST Dance 是什么游戏': '', 'Arcaea 的 JUST 怎么算': '',
             '激奏 JUST 区间怎么计分': 'just_score', 'Our Notes 抽卡概率是什么': '',
             'JUST 怎么算': 'just_clarify', 'JUST 扩窗怎么叠': 'just_window',
@@ -6538,6 +6541,48 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
         old_detail=self.backend.admin.view(self.backend.ledger.request(plan['request_id']),detail=True)
         self.assertEqual([item['attempt_id'] for item in old_detail['model_attempts']],attempts)
 
+    async def test_lightweight_fact_question_decides_before_approved_lookup(self):
+        from types import SimpleNamespace
+        from ournotes_bot.domain.knowledge import Applicability,EvidenceChunkV1,EvidenceLease,KnowledgeScope
+        from ournotes_bot.domain.model_calls import ToolCall
+
+        self.snapshot=replace(self.snapshot,profile=replace(self.snapshot.profile,provider='openai',
+            wire_profile='openai-responses-v1',model='gpt-6.1-terra',max_input_tokens=32768,
+            max_output_tokens=4096,user_daily_limit=10**8,group_daily_limit=10**8))
+        self.policy=replace(self.policy,proactive=replace(self.policy.proactive,max_cost_micro_per_day=2_000_000))
+        self.agent.services.policy.return_value=self.policy
+        self.agent.proactive.lightweight_groups=frozenset({'g1'})
+        scope=KnowledgeScope(server='jp')
+        chunk=EvidenceChunkV1('on-09-score','0'*64,1,'score#1','1'*64,
+            '|JUST|区间JUST数量|区间得分，再比较PERFECT数量|',(),
+            Applicability('current',None,None,None,'工程范围'),'reviewed_analysis',(),('jp',))
+        knowledge=Mock()
+        self.backend.knowledge=knowledge
+        knowledge.retrieve.return_value=SimpleNamespace(code='ok',lease=EvidenceLease('fixture',scope,(chunk,)))
+        knowledge.prepare_evidence.return_value={'passages':[{'text':chunk.text}]}
+        knowledge.validate_current.return_value=True
+        wire=[]
+        responses=iter([
+            self.result('{"participation":"reply","text":"","delay_seconds":null}'),
+            self.result(calls=(ToolCall('approved','knowledge_search','{"server":"intl","date":null,"version":null}'),)),
+            self.result('资料核到的是排名顺序，区间得分公式还缺资料'),
+        ])
+        async def respond(profile,body,**kwargs):
+            wire.append(json.loads(json.dumps(body)))
+            if len(wire)==1:knowledge.retrieve.assert_not_called()
+            return next(responses)
+        self.client.request.side_effect=respond
+        value=self.observation('激奏 JUST 区间怎么计分');self.tick+=1.6
+        plan,attempts,candidate=await self.candidate(value)
+        self.assertEqual(candidate[0].evidence_route,'just_score')
+        self.assertEqual(len(attempts),3)
+        self.assertTrue(plan['send_allowed'])
+        self.assertFalse(wire[0].get('tools'))
+        self.assertEqual([tool['name'] for tool in wire[1]['tools']],['knowledge_search'])
+        self.assertFalse(wire[2].get('tools'))
+        self.assertIn('区间排名规则和区间得分公式分开说',wire[2]['input'][0]['content'])
+        self.assertEqual(knowledge.retrieve.call_args.args[:2],('激奏 JUST 区间怎么计分',scope))
+
     async def test_lightweight_mechanic_opinion_after_image_and_explicit_evidence_guard(self):
         from ournotes_bot.application.backend_protocol import Request
         from ournotes_bot.sources.chat_images import ImageCache
@@ -6552,10 +6597,10 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
         self.agent.services.policy.return_value = self.policy
         self.agent.proactive.lightweight_groups = frozenset({'g1'})
         for seq, question in enumerate((
-            'JUST 怎么算', '到底要几张满破判定卡？',
-            '我觉得 JUST 最吃卡，但实际要几张满破判定卡',
+            'Our Notes 抽卡概率是什么', '这个技能倍率是多少',
+            '我觉得 JUST 最吃卡，但抽卡保底多少抽',
             '我觉得满破判定卡挺有用，但至少需要三张吗',
-            '海希什么关系',
+            'MyGO第几集播出的',
         ), 1):
             with self.subTest(question=question):
                 self.now += 11

@@ -59,6 +59,7 @@ class ProactiveCandidate:
     opportunity_id: str = ''
     continuation: bool = False
     lightweight: bool = False
+    evidence_route: str = ''
 
 
 @dataclass
