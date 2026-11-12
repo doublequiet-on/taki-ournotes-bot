@@ -126,6 +126,16 @@ class Diagnostics:
                         r'req_[A-Za-z0-9_-]{1,96}|[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}',data['provider_request_id']))):
                 raise ValueError('chat_transport_data')
             return json.dumps(data)
+        if kind=='evidence':
+            allowed={
+                'story_registry': ('story_not_configured','registered'),
+                'story_search': ('prepared','not_available','source_unavailable','no_results','ok','budget_exhausted'),
+                'story_read': ('prepared','not_available','source_unavailable','no_results','ok','budget_exhausted','result_in_context'),
+                'quote_image': ('paired','unpaired','loaded','unavailable'),
+            }
+            if set(data)!={'action','status'} or not isinstance(data['action'],str) or data['status'] not in allowed.get(data['action'],()):
+                raise ValueError('chat_evidence_data')
+            return json.dumps(data)
         if kind not in ('context','image','tool','decision','error','finished','control','task','research'):
             raise ValueError('chat_event_kind')
         fields={'messages','assistant_messages','image_markers','input_images','vision_approved','image_detail',
