@@ -144,9 +144,13 @@ function transportLine(data){
 export function requestConclusion(detail){
  const events=detail.chat_events||[],attempts=detail.model_attempts||[];
  const {transport}=attemptDetails(events);
- const last=attempts.at(-1),network=transport.get(last?.attempt_id);
+ const last=attempts.at(-1);
+ const network=last?transport.get(last.attempt_id):events.findLast(event=>event.kind==='transport')?.data;
  if(network&&transportReasons[network.name]){
-   return '第 '+attempts.length+' 次模型尝试 · '+(transportStages[network.stage]||network.stage)+' · '+transportReasons[network.name];
+   return [last?'第 '+attempts.length+' 次模型尝试':'模型传输',
+     transportStages[network.stage]||network.stage,transportReasons[network.name],
+     network.elapsed_ms==null?null:'总耗时 '+network.elapsed_ms+' ms',
+     network.wait_headers_ms==null?null:'等待响应头 '+network.wait_headers_ms+' ms'].filter(Boolean).join(' · ');
  }
  if(['uncertain','partial'].includes(detail.delivery_state))return '交付阶段 · 平台回执未齐，请核对 QQ 实收';
  if(detail.business_outcome==='source_unavailable'){
