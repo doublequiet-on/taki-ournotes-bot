@@ -167,7 +167,12 @@ class Diagnostics:
         def save(db):
             payload=self.chat_metadata(kind,data)
             if db.execute('SELECT count(*) FROM chat_events WHERE request_id=?',(request_id,)).fetchone()[0]>=32:
-                self.dropped+=1;return
+                self.dropped+=1
+                # Extra evidence must not displace events the original stream could retain.
+                if kind=='evidence' or not db.execute('''DELETE FROM chat_events WHERE id=(
+                        SELECT id FROM chat_events WHERE request_id=? AND kind='evidence'
+                        ORDER BY id LIMIT 1)''',(request_id,)).rowcount:
+                    return
             db.execute('INSERT INTO chat_events(request_id,kind,data,observed_at) VALUES(?,?,?,?)',
                        (request_id,kind,payload,now))
         return self.write(save)

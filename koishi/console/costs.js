@@ -144,16 +144,17 @@ function transportLine(data){
 export function requestConclusion(detail){
  const events=detail.chat_events||[],attempts=detail.model_attempts||[];
  const {transport}=attemptDetails(events);
- const last=attempts.at(-1);
+ const started=attempts.filter(attempt=>attempt.started_at!=null).sort((a,b)=>a.started_at-b.started_at);
+ const last=started.at(-1);
  const network=last?transport.get(last.attempt_id):events.findLast(event=>event.kind==='transport')?.data;
  if(network&&transportReasons[network.name]){
-   return [last?'第 '+attempts.length+' 次模型尝试':'模型传输',
+   return [last?'第 '+started.length+' 次模型尝试':'模型传输',
      transportStages[network.stage]||network.stage,transportReasons[network.name],
      network.elapsed_ms==null?null:'总耗时 '+network.elapsed_ms+' ms',
      network.wait_headers_ms==null?null:'等待响应头 '+network.wait_headers_ms+' ms'].filter(Boolean).join(' · ');
  }
  if(['uncertain','partial'].includes(detail.delivery_state))return '交付阶段 · 平台回执未齐，请核对 QQ 实收';
- if(detail.business_outcome==='source_unavailable'){
+ if(detail.business_outcome==='unavailable'){
    const evidence=[...events].reverse().find(e=>e.kind==='evidence'&&['not_available','source_unavailable','no_results','budget_exhausted','story_not_configured'].includes(e.data?.status));
    if(evidence)return '资料阶段 · '+evidenceStatuses[evidence.data.status];
  }

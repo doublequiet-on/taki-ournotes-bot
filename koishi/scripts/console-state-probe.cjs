@@ -194,6 +194,42 @@ async function main(){
   assert.equal(chatRestored.chatEdit.value.dirty,false);assert.deepEqual(chatRestored.chatSettings.value.settings.excluded_users,[]);
   assert.equal(chatRestored.pageMessages.value.groups,'交流设置已保存并确认生效。');
   await chatRestored.logout();assert.equal(chatRestored.captureEdits().chat,null);
-  console.log(JSON.stringify({passed:true,chatSettingsReadback:true,chatSettingsSaveRace:true,chatSettingsRecovery:true,chatSettingsConflict:true,chatSettingsGroupIsolation:true,proactiveQuotaSaveRace:true,proactiveQuotaRecovery:true,proactiveQuotaConflict:true,proactiveRoleRouting:true,proactiveDraftRecovery:true,saveDraftRace:true,groupSaveDraftRace:true,groupSwitchDuringSave:true,invalidatedSave:true,recoveredDrafts:true,secretCleared:true,groupEpochBlocked:true,operationIdReused:true,logoutCleared:true,actionAndReadStatusSeparated:true}))
+  const costsSource=fs.readFileSync(require.resolve('../console/costs.js'),'utf8')
+    .replace(/^import .*?;\r?\n/gm,'')
+  const {requestConclusion}=await import('data:text/javascript;base64,'+Buffer.from(costsSource).toString('base64'))
+  const chatEvents=[
+    {kind:'transport',data:{attempt_id:'lookup',stage:'complete',name:'none'}},
+    {kind:'transport',data:{attempt_id:'final',stage:'wait_headers',name:'disconnected',elapsed_ms:16925,wait_headers_ms:14703}},
+  ]
+  const attempts=[
+    {attempt_id:'final',started_at:12,state:'settled',model:'fixture',config_version:17},
+    {attempt_id:'lookup',started_at:10,state:'settled',model:'fixture',config_version:16},
+    {attempt_id:'unused',started_at:null,state:'released',model:'fixture'},
+  ]
+  assert.equal(requestConclusion({model_attempts:attempts,chat_events:chatEvents}),
+    '第 2 次模型尝试 · 等待响应头 · 连接断开 · 总耗时 16925 ms · 等待响应头 14703 ms')
+  assert.equal(requestConclusion({model_attempts:[attempts[2]],chat_events:chatEvents}),
+    '模型传输 · 等待响应头 · 连接断开 · 总耗时 16925 ms · 等待响应头 14703 ms')
+  const noHits={business_outcome:'unavailable',delivery_state:'complete',
+    chat_events:[{kind:'evidence',data:{action:'story_search',status:'no_results'}}]}
+  assert.equal(requestConclusion(noHits),'资料阶段 · 检索无结果')
+  assert.equal(requestConclusion({...noHits,business_outcome:'ok'}),'交付阶段 · 平台已确认各部分发送')
+
+  const originalDocument=globalThis.document
+  let download
+  try{
+    globalThis.document={createElement:()=>({click(){download=this.href}})}
+    globalThis.consoleStateFixture.send=async(method,id)=>{
+      assert.equal(method,'taki/ops/export');assert.equal(id,'fixture-request')
+      return {data:{request:{sections:{request:{data:{group_id:'fixture-private-group',
+        model_attempts:attempts,chat_events:[{kind:'transport',data:{...chatEvents[1].data,provider_request_id:'req_fixture_private'}}]}}}}}}
+    }
+    await state.exportDiagnostic('fixture-request','requests',{title:'fixture',sample:'fixture',expected:'fixture'})
+    const output=await (await fetch(download)).json()
+    assert.deepEqual(output.evidence.model_attempts.map(a=>a.config_version),[17,16,null])
+    assert.equal(output.evidence.events[0].attempt,1)
+    assert.doesNotMatch(JSON.stringify(output),/fixture-private-group|req_fixture_private|attempt_id/)
+  }finally{globalThis.document=originalDocument}
+  console.log(JSON.stringify({passed:true,chatRegressionDiagnostics:true,chatSettingsReadback:true,chatSettingsSaveRace:true,chatSettingsRecovery:true,chatSettingsConflict:true,chatSettingsGroupIsolation:true,proactiveQuotaSaveRace:true,proactiveQuotaRecovery:true,proactiveQuotaConflict:true,proactiveRoleRouting:true,proactiveDraftRecovery:true,saveDraftRace:true,groupSaveDraftRace:true,groupSwitchDuringSave:true,invalidatedSave:true,recoveredDrafts:true,secretCleared:true,groupEpochBlocked:true,operationIdReused:true,logoutCleared:true,actionAndReadStatusSeparated:true}))
 }
 main().catch(error=>{console.error(error);process.exitCode=1}).finally(()=>{delete globalThis.consoleStateFixture})

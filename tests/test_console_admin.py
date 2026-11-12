@@ -48,6 +48,23 @@ class ChatDiagnosticsTests(unittest.TestCase):
         self.assertNotIn('PRIVATE',json.dumps(events))
         self.assertEqual(d.db.execute('SELECT count(*) FROM chat_events').fetchone()[0],32)
 
+    def test_evidence_does_not_displace_transport_or_terminal_events(self):
+        d=self.diagnostics
+        for _ in range(29):
+            d.chat_event('r','context',101,messages=1)
+        for action,status in [('story_registry','registered'),('story_search','prepared'),('story_read','prepared')]:
+            d.chat_event('r','evidence',102,action=action,status=status)
+        d.chat_event('r','transport',103,stage='wait_headers',name='disconnected',elapsed_ms=16925,
+                     wait_headers_ms=14703,proxied=True,headers_received=False)
+        d.chat_event('r','finished',104,status='aborted',stage='model')
+        d.chat_event('r','evidence',105,action='story_search',status='no_results')
+        events=d.read('r')['chat_events']
+        self.assertEqual(len(events),32)
+        self.assertEqual(sum(e['kind']=='context' for e in events),29)
+        self.assertEqual([e['kind'] for e in events[-3:]],['evidence','transport','finished'])
+        self.assertEqual(events[-2]['data']['wait_headers_ms'],14703)
+        self.assertEqual(d.dropped,3)
+
     def test_persona_event_requires_only_fixed_reason_and_matching_version(self):
         from ournotes_bot.domain.chat import PERSONA_VERSION
         diagnostics=self.diagnostics
@@ -814,6 +831,17 @@ class AdminTests(unittest.IsolatedAsyncioTestCase):
                 self.backend.admin.telemetry({'backend_epoch':self.backend.runtime,'events':[event|change]},'epoch')
         with self.assertRaisesRegex(ProtocolError,'telemetry_conflict'):
             self.backend.admin.telemetry({'backend_epoch':self.backend.runtime,'events':[event|{'duration_ms':124}]},'epoch')
+
+    async def test_story_unavailable_keeps_business_outcome_after_successful_ack(self):
+        self.backend.gate.prepare=AsyncMock(return_value=PreparedReply('fixture fallback',business_status='source_unavailable'))
+        row=await self.admitted()
+        self.backend.diagnostics.chat_event(row['id'],'evidence',self.now,action='story_search',status='no_results')
+        self.backend.ledger.intent(row['delivery'],'0','a')
+        self.backend.ledger.ack(row['delivery'],'0','a','success','receipt')
+        detail=self.backend.admin.detail(row['id'])['sections']['request']['data']
+        self.assertEqual(detail['business_outcome'],'unavailable')
+        self.assertEqual(detail['delivery_state'],'complete')
+        self.assertEqual(detail['chat_events'][-1]['data']['status'],'no_results')
 
     async def test_mixed_outcomes_and_partial_uncertain_share_all_read_models(self):
         self.backend.gate.prepare=AsyncMock(side_effect=[PreparedReply('first',business_status='success'),

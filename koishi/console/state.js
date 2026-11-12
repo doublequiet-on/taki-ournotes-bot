@@ -245,8 +245,8 @@ export function sessionState() {
         });
         output={schema:'taki-chat-regression-v1',fixture,
           export_observation:{at:value.generated_at,gateway_sha:value.gateway?.release_sha},
-          evidence:{...facts,events,model_attempts:attempts.map(({provider,model,state,duration_ms,billing_incomplete,error_code},index)=>
-            ({attempt:index+1,provider,model,state,duration_ms,billing_incomplete,error_code}))}};
+          evidence:{...facts,events,model_attempts:attempts.map(({provider,model,config_version,state,duration_ms,billing_incomplete,error_code},index)=>
+            ({attempt:index+1,provider,model,config_version:config_version??null,state,duration_ms,billing_incomplete,error_code}))}};
       }
       const url=URL.createObjectURL(new Blob([JSON.stringify(output,null,2)],{type:'application/json'}));
       const a=document.createElement('a');a.href=url;a.download=fixture?'taki-chat-regression.json':'taki-diagnostic.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
