@@ -173,7 +173,7 @@ def rank(query, rows, query_vector):
 
 
 def complete_sections(ranked, rows):
-    """Complete at most three adjacent passages from the first matching section.
+    """Yield each ranked hit with a window of up to three same-section passages.
 
     Remaining ranked sections still compete for the same six-chunk/6000-char
     budget. Companions come only from the already scope-filtered index.
@@ -209,17 +209,21 @@ def evidence_json(chunks) -> str:
                       ensure_ascii=False, separators=(',', ':'))
 
 
-def bounded(chunks, limit=6, max_chars=6000):
+def bounded(chunks, limit=6, max_chars=6000, *, prioritize_adjacent=False):
     if type(limit) is not int or not 1 <= limit <= 6 or type(max_chars) is not int or max_chars < 0:
         raise KnowledgeError('retrieval_budget')
     max_chars = min(max_chars, 6000)
-    result, counts, deferred = [], Counter(), []
-    candidates = []
+    if not prioritize_adjacent:
+        counts, candidates, deferred = Counter(), [], []
+        for chunk in chunks:
+            # Repeated sections of one article must not hide other relevant sources.
+            (candidates if counts[chunk.key] < 2 else deferred).append(chunk)
+            counts[chunk.key] += 1
+        chunks = (*candidates, *deferred)
+    # Mechanic excerpts use completion order so that an adjacent qualifier
+    # can fit before lower-ranked documents take the remaining slots.
+    result = []
     for chunk in chunks:
-        # Repeated sections of one article must not hide other relevant sources.
-        (candidates if counts[chunk.key] < 2 else deferred).append(chunk)
-        counts[chunk.key] += 1
-    for chunk in (*candidates, *deferred):
         if len(evidence_json(result+[chunk])) <= max_chars:
             result.append(chunk)
         if len(result) == limit:
