@@ -282,17 +282,17 @@ class ProactiveChat:
                 snapshot=self.agent.runtime.proactive_snapshot(request.conversation_id)
                 policy=self.configured(request,snapshot)
                 lightweight = self.uses_lightweight(request.conversation_id, snapshot.profile, policy)
+                if lightweight and (excluded or request.quote_hint or request.quoted_text):
+                    # The ingress can carry an older platform timestamp than already saved chat.
+                    self.controller.mark_context_gap(scope, int(self.agent.runtime.backend.clock() * 1000))
+                    if not excluded:
+                        self.control_event(request, 'lightweight_context_required')
+                    return False
                 if excluded:
-                    if lightweight:
-                        self.controller.mark_context_gap(scope, request.timestamp_ms)
                     return False
                 if policy is None:
                     status='service_disabled' if self.owners()[1].proactive(snapshot,request.conversation_id) else 'platform_unapproved'
                     self.control_event(request,status);return False
-                if lightweight and (request.quote_hint or request.quoted_text):
-                    self.controller.mark_context_gap(scope, request.timestamp_ms)
-                    self.control_event(request, 'lightweight_context_required')
-                    return False
             if request.attachments:
                 self.agent.images.remember(self.agent.image_scope(request),request.message_id,request.user_id,request.timestamp_ms,request.attachments)
             target = self.controller.target(scope)
@@ -557,6 +557,10 @@ class ProactiveChat:
                 since_ms = max(since_ms, work.proactive.context_gap_ms)
             saved={row['message_id']:ChatMessage(**row) for row in self.agent.store.recent(work.request.scope,
                 since_ms=since_ms)}
+            if work.proactive.context_gap_ms is not None:
+                # A late receipt can give a reply to the older scene a newer timestamp.
+                source_ids = saved.keys() | {row.message_id for row in rows}
+                saved = {mid: row for mid, row in saved.items() if row.role != 'assistant' or row.reply_to in source_ids}
             merged=dict(saved)
             for row in rows:merged.setdefault(row.message_id,row)
             current=merged.pop(work.request.message_id)

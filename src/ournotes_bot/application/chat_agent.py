@@ -114,8 +114,9 @@ _JUST_CLARIFY = '你问的是 JUST 扩窗怎么叠，还是激奏里 JUST 区间
 _JUST_CARD_ID = re.compile(r'(?:留影|支援卡|判定卡|判卡)\s*(?:ID\s*|#\s*)?(\d+(?:\s*[/、]\s*\d+)*)(?![\d星级])', re.I)
 _JUST_LEVEL = re.compile(r'(?:(?<![a-z])Lv\.?\s*([1-5])(?!\d)|(?<!\d)([1-5])\s*级)', re.I)
 _GAP_DEPENDENT_REPLY = re.compile(
-    r'^(?:反了|说反了|说倒了|那倒是|我也是|就是啊|那可不)[啊呀吧啦呢哈\s。！？!?]*$'
-    r'|(?:我们|你们|他们)(?:的)?\s*人数\s*(?:的|[×x])?\s*[\d一二两三四五六七八九十百千万点.]+\s*倍')
+    r'(?:反了|说反了|说倒了|那倒是|我也是|就是啊|那可不)[啊呀吧啦呢哈]*[。.!！？?]*'
+    r'|(?:[^,，。.!！？?；;：:\n]+?(?:是|有|为)\s*)?'
+    r'(?:我们|你们|他们)(?:的)?\s*人数\s*(?:的|[×x])?\s*[\d一二两三四五六七八九十百千万点.]+\s*倍[。.!！？?]*')
 _JUST_LEVEL_RANGE = re.compile(
     r'(?:技能(?:等级)?|(?<![a-z])Lv\.?)\s*([1-5])\s*级?\s*(?:升到?|到|至|→|[-–])\s*(?:Lv\.?\s*)?([1-5])(?!\d)', re.I)
 
@@ -762,10 +763,9 @@ class ChatAgent:
         history = history[last_image + 1:]
         rules=('只用当前群最近的文字。需要外部事实、核对资料、读图或无法从文字确定所指时跳过。'
                '群友说法只用于理解话题，不能用作事实依据。游戏体验可以接感受，不能确认群友对机制或卡片需求的说法。')
-        gap_ms = work.proactive.context_gap_ms
-        if gap_ms is not None and gap_ms >= work.request.timestamp_ms - 300_000:
+        if work.proactive.context_gap_ms is not None:
             self.proactive.trace(work, 'control', status='proactive_context_gap')
-            if len(text_rows) == 1 and _GAP_DEPENDENT_REPLY.search(
+            if len(text_rows) == 1 and _GAP_DEPENDENT_REPLY.fullmatch(
                     unicodedata.normalize('NFKC', text_rows[-1]['text']).strip()):
                 self.proactive.trace(work, 'context', status='lightweight', messages=1)
                 self.proactive.decision(work,'{"participation":"skip"}')

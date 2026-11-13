@@ -200,7 +200,7 @@ class ProactiveController:
         if group is not None:
             self._cancel(group)
 
-    def mark_context_gap(self, scope, timestamp_ms):
+    def mark_context_gap(self, scope, received_ms):
         """Invalidate the old scene without keeping the omitted message or its identity."""
         group = self.groups.get(scope)
         if group is None or not group.policy.available:
@@ -209,8 +209,8 @@ class ProactiveController:
         group.context_generation += 1
         now = self.clock()
         if group.context_gap is not None and group.context_gap[0] > now - self.window_seconds:
-            timestamp_ms = max(timestamp_ms, group.context_gap[1])
-        group.context_gap = now, timestamp_ms
+            received_ms = max(received_ms, group.context_gap[1])
+        group.context_gap = now, received_ms
 
     def set_addressed(self, scope, active):
         """Host brackets explicit dialogue through its final delivery receipt."""
@@ -420,7 +420,7 @@ class ProactiveController:
         gap = group.context_gap
         context_gap_ms = (gap[1] if gap and (lightweight or evidence_required)
                           and group.continuation_user_id is None
-                          and gap[0] > now - self.window_seconds else None)
+                          and gap[0] > now - min(self.window_seconds, 300) else None)
         messages = tuple(row.message for row in group.rows if row.message.message_id != target.message_id
                          and (context_gap_ms is None or row.context_generation == group.context_generation)) + (target,)
         return ProactiveCandidate(ticket.candidate_id, scope, ticket.version, ticket.policy_version,

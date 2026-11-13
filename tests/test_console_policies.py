@@ -6630,9 +6630,11 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
     async def test_lightweight_fact_question_decides_before_approved_lookup(self):
         await self.lightweight_fact_question()
 
-    def filtered_group_observation(self, text, seq):
+    def filtered_group_observation(self, text, seq, *, timestamp_ms=None):
         raw = self.request('filtered'+str(seq), seq)
         raw.update(body=text, trigger='observation', quoted_text='旧话题')
+        if timestamp_ms is not None:
+            raw['timestamp_ms'] = timestamp_ms
         request = Request.parse(raw, 'fixture', 'app', self.now)
         self.assertEqual(self.agent.proactive.gateway_observation(request), (False, 0, False))
 
@@ -6690,6 +6692,35 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
             rows = [json.loads(item['content']) for item in body['input'][1:]]
             self.assertEqual([row['message_id'] for row in rows], [value['message_id']])
             self.assertNotIn('收购', json.dumps(body, ensure_ascii=False))
+
+    async def test_lightweight_evaluates_comparison_that_supplies_its_own_context(self):
+        self.enable_lightweight_fact_fixture()
+        self.filtered_group_observation('旧话题的引用回复', 1)
+        self.now += 1
+        value = self.observation('我们工作室二十人，星云八十人，星云是我们人数的四倍', seq=2)
+        self.tick += 1.6
+        self.client.request.return_value = self.result('{"participation":"skip","text":"","delay_seconds":null}')
+        _, attempts, _ = await self.candidate(value)
+        self.assertEqual(len(attempts), 1)
+
+    async def test_lightweight_gap_excludes_saved_context_with_newer_timestamps(self):
+        self.enable_lightweight_fact_fixture()
+        self.save_conversation_settings(followup_enabled=False)
+        self.client.request.return_value = self.result('再练一次就熟了。')
+        initial, _ = await self.prepare_native('/聊 这段鼓好难')
+        self.event(initial, 'intent')
+        self.event(initial, 'ack')
+        self.assertTrue(any(row['role'] == 'assistant' for row in self.agent.store.recent(Request_scope())))
+        self.now += 1
+        self.filtered_group_observation('迟到的引用回复', 2, timestamp_ms=int((self.now - 2) * 1000))
+        self.now += 1
+        value = self.observation('说反了呀', seq=3)
+        self.tick += 1.6
+        self.client.request.reset_mock()
+        self.client.request.return_value = self.result('{"participation":"skip","text":"","delay_seconds":null}')
+        _, attempts, _ = await self.candidate(value)
+        self.assertFalse(attempts)
+        self.client.request.assert_not_awaited()
 
     async def test_lightweight_unresolved_quote_cancels_old_candidate_and_blocks_evidence_inheritance(self):
         self.enable_lightweight_fact_fixture()
