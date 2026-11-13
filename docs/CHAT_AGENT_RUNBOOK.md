@@ -112,7 +112,9 @@ python -B scripts/inspect_model_config.py --config /path/to/model-proactive-v1.j
 
 每次原生模型 HTTP 在结束或中断时写一条 `transport` 事件，并在 `ournotes_bot.model_transport` 日志中以 request／attempt ID 关联。阶段为 connect、dns、upload、wait_headers、read_body、complete；固定 name 区分 disconnected、timeout、connect、transport、cancelled、response_too_large、interrupted 和正常 none。费用未知仍按原账本上界处理，不因诊断重试请求。
 
-记录总耗时与实际经过的 dns_ms、connect_ms、upload_ms、wait_headers_ms、read_ms，单位毫秒；未发生的阶段不补零。connect 包含客户端 DNS、代理 CONNECT 及 TLS，当前不能单独拆出 CONNECT 和 TLS；代理节点内部 DNS 也不在客户端观测范围。upload 以 aiohttp 提交请求体的事件为界，不证明对端已收到或执行。
+记录总耗时与实际经过的 dns_ms、connect_ms、upload_ms、wait_headers_ms、read_ms，单位毫秒。未发生或未观测的阶段不补零。connect 包含客户端建连、代理 CONNECT 及 TLS，代理节点内部 DNS 不在客户端观测范围。upload 以 HTTP 客户端提交请求体为界，无法据此确认对端收到或执行。
+
+配置 `OURNOTES_OPENAI_PROXY` 时，原生 OpenAI 请求在原 CONNECT 隧道内协商 HTTP/2，服务端只支持 HTTP/1.1 时沿用其协商结果。请求详情记录实际 HTTP 版本，区分代理 CONNECT 回应与模型响应头。同一尝试一旦开始发送模型请求就禁止重发，断连继续按原用量规则结算。
 
 请求详情按同一模型尝试关联传输阶段、耗时、实际入模图片数和既有供应商请求 ID。headers_received 表明是否收到 HTTP 响应头；收到时记录状态码，以及符合固定格式的 x-request-id。proxied 只表明客户端使用了显式代理，不能证明代理的具体出口。字段白名单不接收正文、URL、凭据、任意响应头或异常原文；诊断库沿用既有容量和保留期限，日志沿用已有 journal 策略。诊断字段校验失败只记录固定警告，不改变已知费用或回复。
 

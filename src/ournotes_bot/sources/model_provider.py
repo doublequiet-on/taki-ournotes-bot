@@ -9,10 +9,12 @@ from dataclasses import replace
 from decimal import Decimal, InvalidOperation
 import hashlib
 import ipaddress
+import ssl
 import time
 from urllib.parse import urlsplit
 
 import aiohttp
+import httpx
 
 from ..domain.model_calls import AttemptResult, ModelError, Price, ToolCall, Usage, ProviderAction,require
 from .json_validation import decode_json
@@ -20,6 +22,7 @@ from .json_validation import decode_json
 ENDPOINTS = {'deepseek': 'https://api.deepseek.com/chat/completions',
              'openai': 'https://api.openai.com/v1/chat/completions',
              'openrouter': 'https://openrouter.ai/api/v1/chat/completions'}
+_OPENAI_TLS = ssl.create_default_context()
 
 
 def endpoint(profile):
@@ -287,7 +290,7 @@ class _TransportTrace:
     """Client-side milestones only; CONNECT and TLS are included in connect_ms."""
     def __init__(self, proxied):
         self.started=time.monotonic();self.times={};self.stage='connect';self.error='none'
-        self.proxied=proxied;self.status=None;self.request_id=None
+        self.proxied=proxied;self.status=None;self.request_id=None;self.http_version=None
         self.config=aiohttp.TraceConfig()
         for signal,mark,stage in (
                 ('on_connection_create_start','connect_start','connect'),
@@ -297,12 +300,35 @@ class _TransportTrace:
                 ('on_request_headers_sent','upload_start','upload'),
                 ('on_request_chunk_sent','upload_end','wait_headers')):
             async def record(*args, mark=mark, stage=stage):
-                self.times[mark]=time.monotonic();self.stage=stage
+                self.mark(mark,stage)
             getattr(self.config,signal).append(record)
 
-    def headers(self, response):
-        self.times['headers']=time.monotonic();self.stage='read_body';self.status=response.status
-        value=response.headers.get('x-request-id','')
+    def mark(self, name, stage):
+        self.times[name]=time.monotonic()
+        self.stage=stage
+
+    async def proxy_event(self, event, _info):
+        # Ignore the HTTP/1.1 CONNECT exchange. Only the TLS handshake and
+        # the provider request contribute to these timing milestones.
+        # httpcore may try a new connection after an HTTP/2 GOAWAY.
+        if 'upload_start' in self.times and event in (
+                'connection.connect_tcp.started','http11.send_request_headers.started','http2.send_request_headers.started'):
+            raise httpx.RemoteProtocolError('model request replay refused')
+        if event=='connection.connect_tcp.started':
+            self.mark('connect_start','connect')
+        elif event=='proxy.start_tls.complete':
+            self.mark('connected','upload')
+        elif 'connected' in self.times:
+            protocol,_,step=event.partition('.')
+            if protocol in ('http11','http2') and step=='send_request_headers.started':
+                self.http_version='HTTP/2' if protocol=='http2' else 'HTTP/1.1'
+                self.mark('upload_start','upload')
+            elif protocol in ('http11','http2') and step=='send_request_body.complete':
+                self.mark('upload_end','wait_headers')
+
+    def headers(self, status, value):
+        self.mark('headers','read_body')
+        self.status=status
         # Only bounded request identities, never arbitrary header contents.
         if re.fullmatch(r'req_[A-Za-z0-9_-]{1,96}|[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}',value):
             self.request_id=value
@@ -318,43 +344,69 @@ class _TransportTrace:
             if start in self.times:data[name]=elapsed(self.times[start],self.times.get(stop,end))
         if self.status is not None:data['http_status']=self.status
         if self.request_id is not None:data['provider_request_id']=self.request_id
+        if self.http_version is not None:data['http_version']=self.http_version
         return data
+
+
+async def _read_model_response(chunks, profile, status, max_tool_calls, trace):
+    parts=[];size=0
+    async for chunk in chunks:
+        size+=len(chunk)
+        if size>100000:
+            if trace:trace.error='response_too_large'
+            return AttemptResult('error',error_code='model_response_too_large')
+        parts.append(chunk)
+    if trace:trace.mark('complete','complete')
+    return decode_attempt(b''.join(parts),profile,http_status=status,max_tool_calls=max_tool_calls)
 
 
 class NativeClient:
     def __init__(self, *, openai_proxy=None):
         self.openai_proxy=openai_proxy
 
-    async def request(self, profile, body, *, timeout, transport=None):
-        timeout=aiohttp.ClientTimeout(total=max(.001,timeout),connect=min(5,max(.001,timeout)))
-        trace=_TransportTrace(bool(self.openai_proxy and profile.provider=='openai')) if transport is not None else None
+    async def _request_proxied_openai(self, profile, body, headers, timeout, trace):
         try:
-            async with aiohttp.ClientSession(timeout=timeout,trust_env=False,
+            proxy=httpx.Proxy(self.openai_proxy)
+        except (ValueError,httpx.InvalidURL):
+            raise httpx.ProxyError('invalid OpenAI proxy') from None
+        async with httpx.AsyncClient(proxy=proxy,http2=True,trust_env=False,
+                verify=_OPENAI_TLS,follow_redirects=False,
+                timeout=httpx.Timeout(timeout,connect=min(5,timeout))) as session:
+            async with session.stream('POST',endpoint(profile),json=body,headers=headers,
+                                      extensions={'trace':trace.proxy_event}) as response:
+                trace.headers(response.status_code,response.headers.get('x-request-id',''))
+                if response.http_version in ('HTTP/1.1','HTTP/2'):
+                    trace.http_version=response.http_version
+                return await _read_model_response(response.aiter_bytes(8192),profile,response.status_code,
+                                                  body.get('max_tool_calls'),trace)
+
+    async def request(self, profile, body, *, timeout, transport=None):
+        timeout=max(.001,timeout)
+        proxied=bool(self.openai_proxy and profile.provider=='openai')
+        trace=_TransportTrace(proxied) if proxied or transport is not None else None
+        headers={'Authorization':'Bearer '+profile.api_key}
+        try:
+            if proxied:
+                return await asyncio.wait_for(
+                    self._request_proxied_openai(profile,body,headers,timeout,trace),timeout)
+            async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=timeout,connect=min(5,timeout)),trust_env=False,
                     trace_configs=[trace.config] if trace else []) as session:
                 async with session.post(endpoint(profile),json=body,allow_redirects=False,
-                        proxy=self.openai_proxy if profile.provider=='openai' else None,
-                        headers={'Authorization':'Bearer '+profile.api_key}) as response:
-                    if trace:trace.headers(response)
-                    chunks=[];size=0
-                    async for chunk in response.content.iter_chunked(8192):
-                        size+=len(chunk)
-                        if size>100000:
-                            if trace:trace.error='response_too_large'
-                            return AttemptResult('error',error_code='model_response_too_large')
-                        chunks.append(chunk)
-                    if trace:trace.times['complete']=time.monotonic();trace.stage='complete'
-                    return decode_attempt(b''.join(chunks),profile,http_status=response.status,max_tool_calls=body.get('max_tool_calls'))
+                        headers=headers) as response:
+                    if trace:trace.headers(response.status,response.headers.get('x-request-id',''))
+                    return await _read_model_response(response.content.iter_chunked(8192),profile,response.status,
+                                                      body.get('max_tool_calls'),trace)
         except asyncio.CancelledError:
             if trace:trace.error='cancelled'
             raise
-        except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
-            kind=('disconnected' if isinstance(exc,aiohttp.ServerDisconnectedError) else
-                  'timeout' if isinstance(exc,asyncio.TimeoutError) else
-                  'connect' if isinstance(exc,aiohttp.ClientConnectorError) else 'transport')
+        except (aiohttp.ClientError, httpx.HTTPError, asyncio.TimeoutError) as exc:
+            kind=('disconnected' if isinstance(exc,(aiohttp.ServerDisconnectedError,httpx.RemoteProtocolError,httpx.ReadError)) else
+                  'timeout' if isinstance(exc,(asyncio.TimeoutError,httpx.TimeoutException)) else
+                  'connect' if isinstance(exc,(aiohttp.ClientConnectorError,httpx.ConnectError,httpx.ProxyError)) else 'transport')
             if trace:trace.error=kind
             return AttemptResult('error',error_code='provider_unavailable',transport_error=kind)
         finally:
-            if trace:transport.update(trace.snapshot())
+            if transport is not None:transport.update(trace.snapshot())
 
     async def price(self, profile):
         if profile.provider!='openrouter': return replace(profile.price,estimated=True)

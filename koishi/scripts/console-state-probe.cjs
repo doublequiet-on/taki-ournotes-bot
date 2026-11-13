@@ -210,6 +210,9 @@ async function main(){
     '第 2 次模型尝试 · 等待响应头 · 连接断开 · 总耗时 16925 ms · 等待响应头 14703 ms')
   assert.equal(requestConclusion({model_attempts:[attempts[2]],chat_events:chatEvents}),
     '模型传输 · 等待响应头 · 连接断开 · 总耗时 16925 ms · 等待响应头 14703 ms')
+  assert.equal(requestConclusion({model_attempts:[attempts[0]],
+    chat_events:[{kind:'transport',data:{...chatEvents[1].data,http_version:'HTTP/2'}}]}),
+    '第 1 次模型尝试 · HTTP/2 · 等待响应头 · 连接断开 · 总耗时 16925 ms · 等待响应头 14703 ms')
   const noHits={business_outcome:'unavailable',delivery_state:'complete',
     chat_events:[{kind:'evidence',data:{action:'story_search',status:'no_results'}}]}
   assert.equal(requestConclusion(noHits),'资料阶段 · 检索无结果')

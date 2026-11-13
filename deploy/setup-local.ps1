@@ -11,7 +11,7 @@ if (-not (Test-Path -LiteralPath $venvPython)) {
 }
 
 Write-Host "[2/4] 安装项目和 QQ SDK..."
-& $venvPython -c "import ournotes_bot, botpy, aiohttp, PIL"
+& $venvPython -c "import ournotes_bot, botpy, aiohttp, PIL, httpx, h2"
 if ($LASTEXITCODE -ne 0) {
     & $venvPython -m pip install --disable-pip-version-check setuptools
     if ($LASTEXITCODE -ne 0) { throw "安装 setuptools 失败" }

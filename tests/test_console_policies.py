@@ -1280,7 +1280,128 @@ class NativeTransportTests(unittest.IsolatedAsyncioTestCase):
             result=await NativeClient(openai_proxy=str(server.make_url('/'))).request(profile,{},timeout=2,transport=transport)
         self.assertEqual(calls,['http://provider.invalid/PRIVATE'])
         self.assertTrue(transport['proxied']);self.assertEqual(transport['http_status'],401)
-        self.assertNotIn('PRIVATE',json.dumps(transport));self.assertNotIn('http',json.dumps(transport).replace('http_status',''))
+        self.assertEqual(transport['http_version'],'HTTP/1.1')
+        self.assertNotIn('PRIVATE',json.dumps(transport));self.assertNotIn('://',json.dumps(transport))
+
+    async def test_openai_proxy_negotiates_h2_and_sends_each_request_once(self):
+        import ssl
+        import h2.config
+        import h2.connection
+        import h2.events
+        from ournotes_bot.sources.model_provider import NativeClient
+
+        # Public test certificate and key, valid only for the loopback fixture.
+        pem=Path(__file__).with_name('fixtures')/'localhost-test-tls.pem'
+        server_tls=ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        server_tls.load_cert_chain(pem)
+        server_tls.set_alpn_protocols(['h2','http/1.1'])
+        client_tls=ssl.create_default_context(cafile=str(pem))
+        profile=replace(native_profile(),provider='openai',wire_profile='openai-responses-v1')
+        body={'input':[{'type':'input_image','image_url':'data:image/png;base64,fixture'}]}
+        calls=[]
+        tunnels=[]
+        finished=[]
+
+        async def upstream(reader,writer):
+            try:
+                connection=h2.connection.H2Connection(config=h2.config.H2Configuration(client_side=False))
+                connection.initiate_connection()
+                writer.write(connection.data_to_send())
+                received=bytearray()
+                while chunk:=await reader.read(8192):
+                    for event in connection.receive_data(chunk):
+                        if isinstance(event,h2.events.DataReceived):
+                            received.extend(event.data)
+                            connection.acknowledge_received_data(event.flow_controlled_length,event.stream_id)
+                        if isinstance(event,h2.events.StreamEnded):
+                            calls.append(json.loads(received))
+                            if len(calls)==2:
+                                # GOAWAY says the request was not processed. The
+                                # transport still must not submit a second POST.
+                                connection.close_connection(last_stream_id=0)
+                                writer.write(connection.data_to_send())
+                                await writer.drain()
+                                await reader.read()
+                                return
+                            else:
+                                await asyncio.sleep(.12)
+                                response={'status':'completed','output':[{'type':'message','role':'assistant',
+                                    'status':'completed','content':[{'type':'output_text','text':'fixture reply'}]}],
+                                    'usage':{'input_tokens':8,'output_tokens':4,'total_tokens':12,
+                                        'input_tokens_details':{'cached_tokens':0}}}
+                                connection.send_headers(event.stream_id,[(':status','200'),
+                                    ('content-type','application/json'),('x-request-id','req_fixture_http2')])
+                                connection.send_data(event.stream_id,json.dumps(response).encode(),end_stream=True)
+                    writer.write(connection.data_to_send())
+                    await writer.drain()
+            finally:
+                writer.close()
+                await writer.wait_closed()
+
+        origin=await asyncio.start_server(upstream,'127.0.0.1',0,ssl=server_tls)
+        self.addAsyncCleanup(origin.wait_closed)
+        self.addCleanup(origin.close)
+        authority='127.0.0.1:'+str(origin.sockets[0].getsockname()[1])
+
+        async def relay(reader,writer):
+            while chunk:=await reader.read(8192):
+                writer.write(chunk)
+                await writer.drain()
+
+        async def proxy(reader,writer):
+            done=asyncio.Event()
+            finished.append(done)
+            upstream_writer=None
+            try:
+                request=(await reader.readuntil(b'\r\n\r\n')).split(b'\r\n',1)[0]
+                tunnels.append(request)
+                if request.split()[1].decode()!=authority:
+                    return
+                upstream_reader,upstream_writer=await asyncio.open_connection('127.0.0.1',origin.sockets[0].getsockname()[1])
+                writer.write(b'HTTP/1.1 200 Connection established\r\n\r\n')
+                await writer.drain()
+                pumps=[asyncio.create_task(relay(reader,upstream_writer)),asyncio.create_task(relay(upstream_reader,writer))]
+                await asyncio.wait(pumps,return_when=asyncio.FIRST_COMPLETED)
+                for pump in pumps:pump.cancel()
+                await asyncio.gather(*pumps,return_exceptions=True)
+            finally:
+                if upstream_writer is not None:
+                    upstream_writer.close()
+                    await upstream_writer.wait_closed()
+                writer.close()
+                await writer.wait_closed()
+                done.set()
+
+        listener=await asyncio.start_server(proxy,'127.0.0.1',0)
+        self.addAsyncCleanup(listener.wait_closed)
+        self.addCleanup(listener.close)
+        client=NativeClient(openai_proxy='http://127.0.0.1:'+str(listener.sockets[0].getsockname()[1]))
+        ok={};failed={}
+        with patch('ournotes_bot.sources.model_provider.endpoint',return_value='https://'+authority+'/responses'), \
+             patch('ournotes_bot.sources.model_provider._OPENAI_TLS',client_tls):
+            reply=await client.request(profile,body,timeout=3,transport=ok)
+            failure=await client.request(profile,body,timeout=3,transport=failed)
+        await asyncio.gather(*(asyncio.wait_for(done.wait(),2) for done in finished))
+        self.assertEqual((reply.text,reply.usage.status),('fixture reply','known'))
+        self.assertEqual((ok['http_version'],ok['http_status'],ok['provider_request_id']),('HTTP/2',200,'req_fixture_http2'))
+        self.assertGreaterEqual(ok['wait_headers_ms'],100)
+        self.assertEqual((failure.error_code,failure.usage.status),('provider_unavailable','unknown'))
+        self.assertEqual((failed['http_version'],failed['stage'],failed['headers_received']),('HTTP/2','wait_headers',False))
+        self.assertEqual(calls,[body,body])
+        self.assertEqual(tunnels,[f'CONNECT {authority} HTTP/1.1'.encode()]*2)
+
+    async def test_openai_proxy_trace_refuses_retry_after_send(self):
+        import httpx
+        from ournotes_bot.sources.model_provider import _TransportTrace
+
+        trace=_TransportTrace(True)
+        for event in ('connection.connect_tcp.started','proxy.start_tls.complete',
+                      'http2.send_request_headers.started','http2.send_request_body.complete'):
+            await trace.proxy_event(event,{})
+        for event in ('connection.connect_tcp.started','http2.send_request_headers.started'):
+            with self.assertRaisesRegex(httpx.RemoteProtocolError,'replay refused'):
+                await trace.proxy_event(event,{})
+        self.assertEqual(trace.snapshot()['stage'],'wait_headers')
 
 
 class NativeRuntimeTests(Fixture,unittest.IsolatedAsyncioTestCase):
