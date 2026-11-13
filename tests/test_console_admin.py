@@ -23,10 +23,10 @@ class ChatDiagnosticsTests(unittest.TestCase):
     def test_transport_metadata_accepts_only_fixed_stages_timings_and_safe_ids(self):
         from ournotes_bot.application.diagnostics import Diagnostics
         data=dict(stage='wait_headers',name='disconnected',elapsed_ms=17000,proxied=True,headers_received=False,
-            connect_ms=200,upload_ms=1,wait_headers_ms=16799,attempt_id='a'*32)
+            connect_ms=200,upload_ms=1,wait_headers_ms=16799,attempt_id='a'*32,http_version='HTTP/2')
         self.assertEqual(json.loads(Diagnostics.chat_metadata('transport',data)),data)
         for change in ({'stage':'PRIVATE'},{'name':'PRIVATE'},{'elapsed_ms':-1},{'elapsed_ms':True},
-                       {'http_status':999},{'proxied':'yes'},{'headers_received':1},{'prompt':'PRIVATE'},
+                       {'http_status':999},{'http_version':'PRIVATE'},{'proxied':'yes'},{'headers_received':1},{'prompt':'PRIVATE'},
                        {'provider_request_id':'https://PRIVATE.invalid'},{'attempt_id':'PRIVATE'}):
             with self.subTest(change=change),self.assertRaises(ValueError):
                 Diagnostics.chat_metadata('transport',{**data,**change})

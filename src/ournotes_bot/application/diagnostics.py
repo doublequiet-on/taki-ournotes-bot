@@ -112,7 +112,7 @@ class Diagnostics:
         if kind=='transport':
             required={'stage','name','elapsed_ms','proxied','headers_received'}
             timing={'elapsed_ms','dns_ms','connect_ms','upload_ms','wait_headers_ms','read_ms'}
-            optional=timing|{'http_status','provider_request_id','attempt_id','input_images','model_stage'}
+            optional=timing|{'http_status','http_version','provider_request_id','attempt_id','input_images','model_stage'}
             if (not required<=set(data) or not set(data)<=required|optional
                     or data['stage'] not in ('connect','dns','upload','wait_headers','read_body','complete')
                     or data['name'] not in ('none','interrupted','cancelled','disconnected','timeout','connect','transport','response_too_large')
@@ -121,6 +121,7 @@ class Diagnostics:
                     or 'input_images' in data and (type(data['input_images']) is not int or not 0<=data['input_images']<=3)
                     or 'model_stage' in data and data['model_stage'] not in ('model','decision','generation')
                     or 'http_status' in data and (type(data['http_status']) is not int or not 100<=data['http_status']<=599)
+                    or 'http_version' in data and data['http_version'] not in ('HTTP/1.1','HTTP/2')
                     or 'attempt_id' in data and not (isinstance(data['attempt_id'],str) and re.fullmatch('[0-9a-f]{32}',data['attempt_id']))
                     or 'provider_request_id' in data and not (isinstance(data['provider_request_id'],str) and re.fullmatch(
                         r'req_[A-Za-z0-9_-]{1,96}|[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}',data['provider_request_id']))):

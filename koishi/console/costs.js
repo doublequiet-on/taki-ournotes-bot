@@ -137,7 +137,8 @@ function transportLine(data){
  const parts=[transportStages[data.stage]||data.stage,transportReasons[data.name],
     data.elapsed_ms==null?null:'总耗时 '+data.elapsed_ms+' ms',
     data.wait_headers_ms==null?null:'等待响应头 '+data.wait_headers_ms+' ms',
-   data.input_images==null?null:'入模图片 '+data.input_images+' 张',data.http_status==null?null:'HTTP '+data.http_status,
+    data.input_images==null?null:'入模图片 '+data.input_images+' 张',data.http_version,
+    data.http_status==null?null:'HTTP '+data.http_status,
     data.headers_received===false?'未收到响应头':null,data.provider_request_id];
  return h('p',parts.filter(Boolean).join(' · '));
 }
@@ -148,7 +149,7 @@ export function requestConclusion(detail){
  const last=started.at(-1);
  const network=last?transport.get(last.attempt_id):events.findLast(event=>event.kind==='transport')?.data;
  if(network&&transportReasons[network.name]){
-   return [last?'第 '+started.length+' 次模型尝试':'模型传输',
+   return [last?'第 '+started.length+' 次模型尝试':'模型传输',network.http_version,
      transportStages[network.stage]||network.stage,transportReasons[network.name],
      network.elapsed_ms==null?null:'总耗时 '+network.elapsed_ms+' ms',
      network.wait_headers_ms==null?null:'等待响应头 '+network.wait_headers_ms+' ms'].filter(Boolean).join(' · ');

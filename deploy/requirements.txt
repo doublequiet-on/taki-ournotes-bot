@@ -1,3 +1,4 @@
 qq-botpy==1.2.1
 Pillow>=11,<13
 aiohttp>=3.9,<4
+httpx[http2]==0.28.1
