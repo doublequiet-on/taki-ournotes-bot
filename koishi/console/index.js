@@ -1,6 +1,6 @@
 import { capabilityView } from './chat.js';
 import { costsView, costAlerts, budgetEditor } from './costs.js';
-import { h, ref, watch, onMounted, onUnmounted, resolveComponent } from './runtime.js';
+import { h, reactive, ref, watch, onMounted, onUnmounted, resolveComponent } from './runtime.js';
 import { sessionState } from './state.js';
 import { button, overviewView, requestsView, groupsView, settingsView } from './views.js';
 import { attentionView, sourcesView, operationsSettings } from './ops.js';
@@ -50,12 +50,13 @@ const Page={setup() {
   if(recovery.current)releaseState(recovery.current);
   const s=sessionState();s.restoreEdits(recovery.snapshot||takeRecovery());recovery.snapshot=null;recovery.current=s;
   const media=window.matchMedia('(max-width: 760px)');
-  const password=ref(''),tab=ref('overview'),drawer=ref(false),groupOpen=ref(false),groupPane=ref('proactive'),groupFilter=ref(''),narrow=ref(media.matches),theme=ref(''),storageAvailable=ref(true),recoveryWarning=ref(recoveryReadError),params={};recoveryReadError=false;
+  const password=ref(''),tab=ref('overview'),drawer=ref(false),groupOpen=ref(false),groupPane=ref('proactive'),groupFilter=ref(''),narrow=ref(media.matches),theme=ref(''),storageAvailable=ref(true),recoveryWarning=ref(recoveryReadError),params=reactive({});recoveryReadError=false;
   try{theme.value=localStorage.getItem('taki.console.theme')||'';}catch{}
   let timer,ticks=0,currentRequest=null,polling=false,inspectorTrigger=null,focusedRequest=null;
   const open=id => {inspectorTrigger=document.activeElement;focusedRequest=null;if(currentRequest!==id)s.detail.value=null;currentRequest=id;selectTab('requests');const url=new URL(window.location.href);url.searchParams.set('request_id',id);window.history.replaceState(null,'',url);void s.load(s.detail,'requests/detail',id);};
   const search=attention => {const p={attention:String(attention)};if(params.state)p.state=params.state;if(params.group_id)p.group_id=params.group_id;
-    delete params.state;if(p.state)params.state=p.state;params.attention=p.attention;delete params.cursor;void s.load(s.requests,'requests/list',p);};
+    if(!attention){if(params.from)p.from=params.from;if(params.to)p.to=params.to;}
+    params.attention=p.attention;delete params.cursor;void s.load(s.requests,'requests/list',p);};
   const returnFocus=()=>{if(narrow.value)requestAnimationFrame(()=>{if(inspectorTrigger?.isConnected)inspectorTrigger.focus();else document.querySelector('.taki-console .page-panel')?.focus();});};
   const closeDetail=()=>{currentRequest=null;s.detail.value=null;const url=new URL(window.location.href);url.searchParams.delete('request_id');window.history.replaceState(null,'',url);returnFocus();};
   const closeGroup=()=>{groupOpen.value=false;returnFocus();};
@@ -92,7 +93,10 @@ const Page={setup() {
       document.querySelector(target)?.focus({preventScroll:true});
     });
     if(key==='sources'&&!s.library.value)void s.refreshLibrary();
-    if(key==='requests'&&!s.requests.value)search(false);
+    if(key==='requests'){
+      if(!s.requests.value)search(false);
+      if(!s.groups.value)void s.load(s.groups,'groups/list');
+    }
     if(['groups','model'].includes(key))void s.refreshModel();
     if(key==='costs')void s.refreshBudget();
     if(['overview','model'].includes(key))void s.load(s.chat,'chat/status');
@@ -160,7 +164,7 @@ const Page={setup() {
       h('div',{class:'dashboard-grid'},[attentionView(s,()=>{selectTab('requests');search(true);}),costAlerts(s)]),modelOverview(s)]),
     model:()=>h('div',[h('h1','模型配置'),h('p',{class:'page-intro'},'管理主模型、备用模型和主动接话模型的连接、参数与能力批准。'),modelSettings(s),capabilityView(s.chat.value)]),
     costs:()=>h('div',[costsView(s),budgetEditor(s),costAlerts(s)]),
-    requests:()=>requestsView(s,open,params,search,cursor=>s.load(s.requests,'requests/list',{...params,cursor}),id=>{selectTab('groups');openGroup(id);},closeDetail,currentRequest,narrow.value),
+    requests:()=>requestsView(s,open,params,search,cursor=>{const query={...params,cursor};if(query.attention==='true'){delete query.from;delete query.to;}void s.load(s.requests,'requests/list',query);},id=>{selectTab('groups');openGroup(id);},closeDetail,currentRequest,narrow.value),
     groups:()=>groupsView(s,id=>{params.group_id=id;selectTab('requests');search(false);},openGroup,closeGroup,groupOpen.value,narrow.value,groupPane,groupFilter,message),
     sources:()=>sourcesView(s),
     operations:()=>h('div',[h('h1','运行维护'),h('p',{class:'page-intro'},'查看主机、备份与运行版本，核对维护操作及其回执。'),operationsSettings(s),trustedView(s)]),

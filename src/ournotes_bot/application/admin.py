@@ -22,7 +22,7 @@ def business_state(value):
     return {'success': 'ok', 'no_result': 'no_result', 'empty': 'no_result',
             'unknown_entity': 'no_result', 'invalid_arguments': 'invalid',
             'ambiguous': 'invalid', 'unsupported': 'invalid',
-            'data_unavailable': 'unavailable', 'unavailable': 'unavailable',
+            'data_unavailable': 'unavailable', 'source_unavailable': 'unavailable', 'unavailable': 'unavailable',
             'not_configured': 'unavailable', 'temporary_failure': 'unavailable', 'no_results':'no_result', 'mixed':'mixed'}.get(value, 'unknown')
 
 

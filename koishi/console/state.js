@@ -228,12 +228,29 @@ export function sessionState() {
     }catch(error){if(token!==generation||unauthorized(error))return;showMessage('sources','操作受理未确认，请查看任务记录；重试将复用同一操作标识。');}
     finally{busy.value=false;}
   }
-  async function exportDiagnostic(id,page) {
+  async function exportDiagnostic(id,page,fixture=null) {
     const token=generation;
     try{const value=await rpc('ops/export',...(id?[id]:[]));if(token!==generation)return;
-      const url=URL.createObjectURL(new Blob([JSON.stringify(value,null,2)],{type:'application/json'}));
-      const a=document.createElement('a');a.href=url;a.download='taki-diagnostic.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
-    }catch(error){if(token!==generation||unauthorized(error))return;showMessage(page,'诊断导出失败，请稍后重试。');}
+      let output=value;
+      if(fixture){
+        const row=value.data?.request?.sections?.request?.data;
+        if(!row)throw Error('request_unavailable');
+        const facts=Object.fromEntries(Object.entries(row).filter(([key])=>['created_at','business_outcome','delivery_state',
+          'delivery_reason','observation','confirmed_parts','part_count','release_sha','protocol'].includes(key)));
+        const attempts=row.model_attempts||[];
+        const attemptNumbers=new Map(attempts.map((attempt,index)=>[attempt.attempt_id,index+1]));
+        const events=(row.chat_events||[]).map(({kind,data})=>{
+          const {attempt_id,provider_request_id,...rest}=data||{};
+          return {kind,data:rest,attempt:attemptNumbers.get(attempt_id)};
+        });
+        output={schema:'taki-chat-regression-v1',fixture,
+          export_observation:{at:value.generated_at,gateway_sha:value.gateway?.release_sha},
+          evidence:{...facts,events,model_attempts:attempts.map(({provider,model,config_version,state,duration_ms,billing_incomplete,error_code},index)=>
+            ({attempt:index+1,provider,model,config_version:config_version??null,state,duration_ms,billing_incomplete,error_code}))}};
+      }
+      const url=URL.createObjectURL(new Blob([JSON.stringify(output,null,2)],{type:'application/json'}));
+      const a=document.createElement('a');a.href=url;a.download=fixture?'taki-chat-regression.json':'taki-diagnostic.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
+    }catch(error){if(token!==generation||unauthorized(error))return;showMessage(page,fixture?'用例导出失败，请检查请求记录是否仍可读取。':'诊断导出失败，请稍后重试。');}
   }
   async function controlRequest(action,groupIds=[],targetId=null) {
     const page=action==='local'?'groups':'operations';

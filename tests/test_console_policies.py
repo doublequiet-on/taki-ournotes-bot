@@ -4208,6 +4208,9 @@ class ChatImageIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
         self.assertNotIn('PRIVATE_FIXTURE',json.dumps(bodies[0]))
         work=self.backend.works[plan['delivery_id']]
         self.assertFalse(agent.image_contains(work.request,'native1'))
+        events=self.backend.diagnostics.read(raw['request_id'])['chat_events']
+        self.assertEqual([e['data']['status'] for e in events if e['kind']=='evidence' and
+                          e['data']['action']=='quote_image'],['unpaired','loaded'])
         self.event(plan,'intent');self.event(plan,'ack')
         self.assertEqual(agent.store.recent(Request_scope()),[])
         self.assertIsNone(agent.store.db.execute('SELECT 1 FROM runs').fetchone())
@@ -4234,6 +4237,9 @@ class ChatImageIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
             self.assertEqual(attempts,[])
             self.assertEqual(plan['parts'][0]['business_status'],'quote_unavailable')
             self.assertEqual(agent.image_loader.load_many.await_count,1 if seq==2 else 0)
+            events=self.backend.diagnostics.read(raw['request_id'])['chat_events']
+            self.assertEqual([e['data']['status'] for e in events if e['kind']=='evidence' and
+                              e['data']['action']=='quote_image'],['unpaired','unavailable'])
             self.event(plan,'intent');self.event(plan,'ack')
 
     async def test_qq_quote_attachment_revocation_during_download_stops_generation(self):
