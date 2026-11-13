@@ -20,7 +20,7 @@ class ChatRecovery:
 
     def stage(self,work):
         # Old readers cannot revoke derivatives of an original with no verified timestamp.
-        if work.quote_preview_reference:
+        if work.quote_turn_only:
             return ()
         context=work.participating_history
         if work.proactive is None:

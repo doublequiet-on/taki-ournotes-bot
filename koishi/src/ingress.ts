@@ -27,6 +27,7 @@ export interface Inbound {
   body: string
   quotedText?: string
   quoteHint?: 'image' | 'unknown'
+  quotedAttachments?: ImageAttachment[]
   senderName?: string
   attachments?: ImageAttachment[]
   trigger?: 'command' | 'ask' | 'quoted_reply' | 'observation' | 'proactive'
@@ -57,7 +58,7 @@ function digest(value: unknown): string {
 
 const imageTypes = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif'])
 /** Normalize only raw QQ attachments. A text URL is never promoted to an image. */
-function imageAttachments(value: unknown, messageId: string): ImageAttachment[] | undefined {
+function imageAttachments(value: unknown, messageId: string, quoted = false): ImageAttachment[] | undefined {
   if (value === undefined) return []
   if (!Array.isArray(value) || value.length > 3) return
   const result: ImageAttachment[] = []
@@ -66,17 +67,18 @@ function imageAttachments(value: unknown, messageId: string): ImageAttachment[] 
     if (!attachment || typeof attachment.content_type !== 'string') return
     // Non-image files are not model image input.
     if (!attachment.content_type.startsWith('image/')) continue
-    if (!imageTypes.has(attachment.content_type) || typeof attachment.url !== 'string'
-        || attachment.url.length > 8192 || /[\s\u0000-\u001f\u007f]/u.test(attachment.url)) return
+    if (!imageTypes.has(attachment.content_type) || typeof attachment.url !== 'string') return
+    const source = quoted && attachment.url.startsWith('//') ? 'https:' + attachment.url : attachment.url
+    if (source.length > 8192 || /[\s\u0000-\u001f\u007f]/u.test(source)) return
     let url: URL
-    try { url = new URL(attachment.url) } catch { return }
+    try { url = new URL(source) } catch { return }
     if (url.protocol !== 'https:' || url.hostname !== 'multimedia.nt.qq.com.cn' || url.port
         || url.username || url.password || url.hash || url.pathname !== '/download' || !url.search) return
     if (attachment.id !== undefined && !id(attachment.id)) return
     // Actual QQ payloads can omit id. This is a message-local transport id, not a new source fact.
     const normalized: ImageAttachment = {
       id: attachment.id as string | undefined ?? 'attachment-' + digest([messageId, index]).slice(0, 32),
-      url: attachment.url, content_type: attachment.content_type as ImageAttachment['content_type'],
+      url: source, content_type: attachment.content_type as ImageAttachment['content_type'],
     }
     for (const key of ['size', 'width', 'height'] as const) {
       const number = attachment[key]
@@ -93,8 +95,8 @@ function imageAttachments(value: unknown, messageId: string): ImageAttachment[] 
   return result
 }
 
-/** A bounded quote preview and shape hint; neither grants an original ID or media access. */
-function quotePreview(data: Record<string,unknown>): Pick<Inbound,'quotedText'|'quoteHint'> {
+/** Keep quoted media separate from the sender's own attachments. */
+function quotePreview(data: Record<string,unknown>, messageId: string): Pick<Inbound,'quotedText'|'quoteHint'|'quotedAttachments'> {
   if (data.message_type !== 103) return {}
   const first = Array.isArray(data.msg_elements) ? record(data.msg_elements[0]) : undefined
   const text = first?.content
@@ -104,7 +106,9 @@ function quotePreview(data: Record<string,unknown>): Pick<Inbound,'quotedText'|'
     const kind = record(attachment)?.content_type
     return typeof kind === 'string' && kind.startsWith('image/')
   })
+  const images = hasImage ? imageAttachments(first?.attachments, 'quote:' + messageId, true) : undefined
   return { ...(quotedText ? { quotedText } : {}),
+    ...(images?.length ? { quotedAttachments:images } : {}),
     ...(hasImage ? { quoteHint:'image' as const } : !quotedText ? { quoteHint:'unknown' as const } : {}) }
 }
 
@@ -155,7 +159,7 @@ export async function decodeIncoming(
   const attachments = imageAttachments(data.attachments, data.id)
   if (!attachments) return { status: 'rejected', reason: 'invalid_attachments' }
   if ((!attachments.length || /^[/／]/u.test(body)) && (!body || addressed && !recognizes(body))) return { status: 'ignored', reason: 'not_taki' }
-  const quote=quotePreview(data)
+  const quote=quotePreview(data, data.id)
   const canonical = {
     ...envelope,
     d: { ...data, author: { ...author, id: userId }, ...(kind === 'group' ? { group_id: conversationId } : {}),

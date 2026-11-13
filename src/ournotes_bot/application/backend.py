@@ -60,6 +60,7 @@ class Work:
     missing_anchor: bool = False
     quote_preview_reference: str | None = None
     unavailable_quote_image: tuple[str, int] | None = None
+    detached_quote_image_count: int = 0
     model_attempts: int = 0
     model_stage: str = 'preparation'
     model_attempt_limit: int = 2
@@ -116,6 +117,10 @@ class Work:
     knowledge_scope_at_start: object = None
     image_deadline: float = float('inf')
     image_bytes: int = 0
+
+    @property
+    def quote_turn_only(self):
+        return bool(self.quote_preview_reference or self.detached_quote_image_count)
 
 
 class Backend:
@@ -539,7 +544,7 @@ class Backend:
             complete = list(parts)
             if parts and isinstance(parts[-1].context, replies.DeliveryCursor):
                 complete.extend(parts[-1].context.remaining)
-            if not work.quote_preview_reference:
+            if not work.quote_turn_only:
                 self.conversations.capture(work, complete)
             require(len(parts) <= QQ_PASSIVE_REPLY_LIMIT, 'send_budget', 422)
             require(self.retained_bytes() <= self.byte_capacity, 'byte_capacity', 503)
@@ -723,7 +728,7 @@ class Backend:
                 self.invalidate_topic(work)
                 self.finish(work, 'aborted', reason='ack_context_revoked')
                 live = False
-            if changed and live and work.quote_preview_reference:
+            if changed and live and work.quote_turn_only:
                 # Record delivery without publishing a derived reply or task for reuse.
                 if payload['result']!='success' or part_id==parts[-1]['id']:
                     self.finish(work,'finished' if payload['result']=='success' else payload['result'])
@@ -916,7 +921,8 @@ def create_app(backend, token, initialize=None, *, assert_recovery_current=None)
                      'management_capabilities': ['admin_read_v1', 'telemetry_v1', 'group_policies_v1', 'ops_v1'],
                      'features': ['classify', 'gateway_retire', 'ack_context_guard', 'notice_gateway_v1',
                                   'quoted_context_v1', 'fixed_snapshot_v1', 'current_model_permit_v1', 'independent_delivery_v1',
-                                   'chat_observation_v1','chat_images_v1','chat_quote_hint_v1','abort_reason_v1'] if backend.query_runtime is None else
+                                   'chat_observation_v1','chat_images_v1','chat_quote_hint_v1','chat_quote_images_v1',
+                                   'abort_reason_v1'] if backend.query_runtime is None else
                                  ['classify','gateway_retire','ack_context_guard','quoted_context_v1',
                                   'fixed_snapshot_v1','independent_delivery_v1'],
                      'reference_profiles': sorted(backend.reference_profiles)}, 200 if accepting else 503)

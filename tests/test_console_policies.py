@@ -3520,12 +3520,22 @@ class ChatAgentTests(Fixture, unittest.IsolatedAsyncioTestCase):
         raw=self.request('quote-digest',1)
         legacy=Request.parse(raw,'fixture','app',self.now)
         old_shape={k:v for k,v in asdict(legacy).items()
-                   if k not in ('gateway_epoch','ingress_seq','quote_hint')}
+                   if k not in ('gateway_epoch','ingress_seq','quote_hint','quoted_attachments')}
         self.assertEqual(legacy.content_digest,digest(old_shape))
         image=Request.parse({**raw,'quote_hint':'image'},'fixture','app',self.now)
         self.assertNotEqual(image.content_digest,legacy.content_digest)
         self.assertIsNone(image.reference)
         self.assertFalse(image.attachments)
+        attachment=dict(id='quoted',content_type='image/png',
+                        url='https://multimedia.nt.qq.com.cn/download?fileid=quoted')
+        quoted={**raw,'quote_hint':'image','quoted_attachments':[attachment]}
+        parsed=Request.parse(quoted,'fixture','app',self.now)
+        self.assertNotEqual(parsed.content_digest,image.content_digest)
+        self.assertFalse(parsed.attachments)
+        for override in ({'quote_hint':'unknown'},{'trigger':'observation'},
+                         {'policy':{**raw['policy'],'natural_query':'off'}}):
+            with self.subTest(override=override),self.assertRaises(ProtocolError):
+                Request.parse({**quoted,**override},'fixture','app',self.now)
         for hint in (None,True,'url',{'image':True}):
             with self.subTest(hint=hint),self.assertRaises(ProtocolError):
                 Request.parse({**raw,'quote_hint':hint},'fixture','app',self.now)
@@ -3539,20 +3549,22 @@ class ChatAgentTests(Fixture, unittest.IsolatedAsyncioTestCase):
         old,_=await self.prepare_native('/聊 聊聊旧乐队话题',seq=1)
         self.event(old,'intent');self.event(old,'ack')
         self.client.request.reset_mock()
-        raw={**self.request('native2',2),'body':'taki你怎么看？','quote_hint':'image'}
-        with patch.object(self,'request',return_value=raw):
-            plan,attempts=await self.prepare_native(raw['body'],seq=2)
-        self.assertEqual(attempts,[])
-        self.assertEqual(plan['parts'][0]['business_status'],'quote_unavailable')
-        self.assertIn('原图',plan['parts'][0]['text'])
-        self.assertNotIn('旧乐队',plan['parts'][0]['text'])
-        self.client.request.assert_not_awaited()
-        self.event(plan,'intent');self.event(plan,'ack')
-        repeated=await self.backend.submit(raw)
-        self.assertEqual(repeated['delivery_id'],plan['delivery_id'])
-        with self.assertRaises(ProtocolError) as conflict:
-            await self.backend.submit({**raw,'quote_hint':'unknown'})
-        self.assertEqual(conflict.exception.code,'request_conflict')
+        for seq,question in enumerate(('taki你怎么看？','taki你如何评价'),2):
+            with self.subTest(question=question):
+                raw={**self.request('native'+str(seq),seq),'body':question,'quote_hint':'image'}
+                with patch.object(self,'request',return_value=raw):
+                    plan,attempts=await self.prepare_native(question,seq=seq)
+                self.assertEqual(attempts,[])
+                self.assertEqual(plan['parts'][0]['business_status'],'quote_unavailable')
+                self.assertIn('原图',plan['parts'][0]['text'])
+                self.assertNotIn('旧乐队',plan['parts'][0]['text'])
+                self.client.request.assert_not_awaited()
+                self.event(plan,'intent');self.event(plan,'ack')
+                repeated=await self.backend.submit(raw)
+                self.assertEqual(repeated['delivery_id'],plan['delivery_id'])
+                with self.assertRaises(ProtocolError) as conflict:
+                    await self.backend.submit({**raw,'quote_hint':'unknown'})
+                self.assertEqual(conflict.exception.code,'request_conflict')
 
     async def test_expired_reference_uses_visible_preview_without_old_topic(self):
         self.backend.reference_profiles=frozenset({'fixture'})
@@ -4170,6 +4182,80 @@ class ChatImageIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
         if self.attachments:value['attachments']=self.attachments
         if self.reference:value.update(trigger='quoted_reply',reference=self.reference)
         return value
+
+    async def test_qq_quote_attachment_reaches_model_without_publishing_unlinked_material(self):
+        quoted=self.attachments
+        self.attachments=[]
+        agent=self.backend.model_runtime.agent
+        bodies=self.capture_native_bodies()
+        self.client.request.return_value=self.result('画面里的主色是蓝色。')
+        raw={**self.request('native1',1),'quote_hint':'image','quoted_attachments':quoted}
+        with patch.object(self,'request',return_value=raw):
+            plan,attempts=await self.prepare_native('taki你如何评价')
+        self.assertEqual(len(attempts),1)
+        self.assertEqual(plan['parts'][0]['business_status'],'success')
+        images=[item for item in bodies[0]['input'] if isinstance(item.get('content'),list)
+                and any(part['type']=='input_image' for part in item['content'])]
+        self.assertEqual(len(images),1)
+        source=json.loads(images[0]['content'][0]['text'])
+        self.assertIn('身份未经核验',source['text'])
+        self.assertNotIn('message_id',source)
+        self.assertNotIn('speaker_id',source)
+        self.assertTrue(images[0]['content'][-1]['image_url'].startswith('data:image/png;base64,'))
+        current=json.loads(next(item['content'] for item in reversed(bodies[0]['input'])
+                                if item.get('role')=='user' and isinstance(item.get('content'),str)))
+        self.assertNotIn('quote_status',current)
+        self.assertNotIn('PRIVATE_FIXTURE',json.dumps(bodies[0]))
+        work=self.backend.works[plan['delivery_id']]
+        self.assertFalse(agent.image_contains(work.request,'native1'))
+        events=self.backend.diagnostics.read(raw['request_id'])['chat_events']
+        self.assertEqual([e['data']['status'] for e in events if e['kind']=='evidence' and
+                          e['data']['action']=='quote_image'],['unpaired','loaded'])
+        self.event(plan,'intent');self.event(plan,'ack')
+        self.assertEqual(agent.store.recent(Request_scope()),[])
+        self.assertIsNone(agent.store.db.execute('SELECT 1 FROM runs').fetchone())
+        self.assertIsNone(agent.store.db.execute('SELECT 1 FROM chat_projection_history').fetchone())
+
+    async def test_qq_quote_attachment_obeys_vision_deletion_and_download_failures(self):
+        from ournotes_bot.domain.chat_images import ImageError
+        quoted=self.attachments
+        self.attachments=[]
+        agent=self.backend.model_runtime.agent
+        vision=self.backend.model_runtime.capabilities.vision
+        approved_vision=vision.return_value
+        vision.return_value=None
+        for seq in range(1,4):
+            if seq==2:
+                vision.return_value=approved_vision
+                agent.image_loader.load_many.side_effect=ImageError('image_not_available')
+            elif seq==3:
+                agent.image_loader.load_many.reset_mock()
+                agent.store.delete_messages(Request_scope(),['withdrawn-unknown-origin'])
+            raw={**self.request('native'+str(seq),seq),'quote_hint':'image','quoted_attachments':quoted}
+            with patch.object(self,'request',return_value=raw):
+                plan,attempts=await self.prepare_native('taki你如何评价',seq=seq)
+            self.assertEqual(attempts,[])
+            self.assertEqual(plan['parts'][0]['business_status'],'quote_unavailable')
+            self.assertEqual(agent.image_loader.load_many.await_count,1 if seq==2 else 0)
+            events=self.backend.diagnostics.read(raw['request_id'])['chat_events']
+            self.assertEqual([e['data']['status'] for e in events if e['kind']=='evidence' and
+                              e['data']['action']=='quote_image'],['unpaired','unavailable'])
+            self.event(plan,'intent');self.event(plan,'ack')
+
+    async def test_qq_quote_attachment_revocation_during_download_stops_generation(self):
+        quoted=self.attachments
+        self.attachments=[]
+        agent=self.backend.model_runtime.agent
+        async def revoke(*args,**kwargs):
+            agent.store.delete_messages(Request_scope(),['withdrawn-during-read'])
+            return (self.image,)
+        agent.image_loader.load_many.side_effect=revoke
+        raw={**self.request('native1',1),'quote_hint':'image','quoted_attachments':quoted}
+        with patch.object(self,'request',return_value=raw):
+            plan,attempts=await self.prepare_native('taki你如何评价')
+        self.assertEqual(attempts,[])
+        self.assertFalse(plan['send_allowed'])
+        self.client.request.assert_not_awaited()
 
     async def test_missing_image_followups_cannot_reopen_neighbor_image(self):
         from ournotes_bot.domain.model_calls import ToolCall

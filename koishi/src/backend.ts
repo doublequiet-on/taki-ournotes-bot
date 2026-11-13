@@ -130,7 +130,7 @@ export class BackendClient implements DeliveryEvents {
   private encode(input: Inbound, seq: number, policy: PolicySnapshot) {
     if (input.proactiveId!==undefined && (input.trigger!=='proactive' || !/^[a-f0-9]{32}$/.test(input.proactiveId))
         || input.trigger==='proactive' && input.proactiveId===undefined) throw new BackendError('proactive_identity')
-    return { protocol, request_id: input.requestId, instance_id: input.instanceId,
+    const request = { protocol, request_id: input.requestId, instance_id: input.instanceId,
       app_id: input.appId, platform: input.platform, kind: input.kind, conversation_id: input.conversationId,
       user_id: input.userId, message_id: input.messageId, timestamp_ms: input.timestampMs, body: input.body,
       ...(input.quotedText===undefined ? {} : {quoted_text:input.quotedText}),
@@ -142,6 +142,14 @@ export class BackendClient implements DeliveryEvents {
       capability, gateway_epoch: this.epoch, ingress_seq: seq, policy:structuredClone(policy),
       trigger:input.trigger ?? (/^[/／]?(?:问|ask)(?:\s|$)/i.test(input.body)?'ask':'command'),
       reference:input.reference ?? null, interaction:null }
+    if (input.quotedAttachments?.length && input.quoteHint==='image' && !input.reference
+        && request.trigger==='command' && policy.natural_query==='model'
+        && this.readiness?.execution_profile==='personal-v1'
+        && this.readiness.features.includes('chat_quote_images_v1') && request.quote_hint==='image') {
+      const withQuote={...request,quoted_attachments:input.quotedAttachments}
+      if (Buffer.byteLength(JSON.stringify(withQuote))<=32768) return withQuote
+    }
+    return request
   }
   async submit(input: Inbound, seq: number, policy: PolicySnapshot = {natural_query:'model',epoch:this.epoch,global_revision:0,group_revision:0}): Promise<Plan> {
     if (input.trigger==='observation' || input.trigger==='proactive') throw new BackendError('request_trigger')

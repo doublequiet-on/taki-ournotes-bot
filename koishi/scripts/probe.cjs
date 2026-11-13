@@ -2466,6 +2466,39 @@ async function main() {
         assert.deepEqual(client.encode(parsed.inbound,1,policy),old)
       } finally { await env.ctx.stop() }
     })
+    await run('Explicit QQ quote images cross the negotiated wire as separate attachments',async()=>{
+      const ready=wire.decodeReady(httpV2.python_to_ts.ready)
+      const fixture=receiverFixture({readiness:ready,async directChat(body){return body.startsWith('taki')}})
+      const attachment={content_type:'image/png',url:'//multimedia.nt.qq.com.cn/download?fileid=fixture-quote'}
+      const quote={message_type:103,msg_elements:[{msg_idx:'TMP_unlinked',content:'',attachments:[attachment]}]}
+      try {
+        const session=await fixture.ordinary('quote-image',{...quote,content:'taki你如何评价'})
+        fixture.release('quote-image')
+        assert.equal(await fixture.receiver.receive(session),true)
+        assert.equal(fixture.submitted.length,1)
+        const {input,seq}=fixture.submitted[0]
+        assert.equal(input.quoteHint,'image')
+        assert.equal(input.attachments,undefined)
+        assert.equal(input.reference,undefined)
+        assert.equal(input.quotedAttachments[0].url,'https:'+attachment.url)
+        const client=new BackendClient('http://127.0.0.1:8765','x'.repeat(32),identity.instanceId,'fixture-epoch',deny)
+        const policy={natural_query:'model',epoch:'fixture-epoch',global_revision:0,group_revision:0}
+        client.readiness=ready
+        const request=client.encode(input,seq,policy)
+        assert.deepEqual(request.quoted_attachments,input.quotedAttachments)
+        assert.equal(request.reference,null)
+        assert.ok(!JSON.stringify(request).includes('TMP_unlinked'))
+        assert.ok(!('quoted_attachments' in client.encode({...input,trigger:'observation'},seq,policy)))
+        assert.ok(!('quoted_attachments' in client.encode({...input,trigger:'ask'},seq,policy)))
+        assert.ok(!('quoted_attachments' in client.encode(input,seq,{...policy,natural_query:'local'})))
+        client.readiness={...ready,features:ready.features.filter(feature=>feature!=='chat_quote_images_v1')}
+        assert.ok(!('quoted_attachments' in client.encode(input,seq,policy)))
+        const bad=await decodeIncoming(fixture.bot,event({content:'taki你如何评价',message_type:103,
+          msg_elements:[{attachments:[{...attachment,url:'https://untrusted.invalid/image'}]}]}),identity,()=>true)
+        assert.equal(bad.inbound.quoteHint,'image')
+        assert.equal(bad.inbound.quotedAttachments,undefined)
+      } finally { await fixture.close() }
+    })
     const lock = JSON.parse(fs.readFileSync(path.join(root, 'package-lock.json')))
   const versions = Object.fromEntries(['koishi', '@koishijs/core', '@koishijs/plugin-adapter-qq', '@satorijs/adapter-qq', '@satorijs/core', 'typescript'].map(name => {
     const version = JSON.parse(fs.readFileSync(path.join(root, 'node_modules', name, 'package.json'))).version

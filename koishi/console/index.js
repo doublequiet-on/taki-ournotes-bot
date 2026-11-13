@@ -89,7 +89,7 @@ const Page={setup() {
     }
     if(wasOpen)requestAnimationFrame(()=>{
       const target=narrow.value&&key==='groups'&&groupOpen.value?'.group-inspector [aria-label="关闭群详情"]':
-        narrow.value&&key==='requests'&&currentRequest&&s.detail.value?'.request-inspector [aria-label="关闭查询详情"]':'.taki-console .page-panel';
+        narrow.value&&key==='requests'&&currentRequest&&s.detail.value?'.request-inspector [aria-label="关闭请求详情"]':'.taki-console .page-panel';
       document.querySelector(target)?.focus({preventScroll:true});
     });
     if(key==='sources'&&!s.library.value)void s.refreshLibrary();
@@ -147,7 +147,7 @@ const Page={setup() {
       if(items.length&&(!panel.contains(document.activeElement)||(event.shiftKey&&document.activeElement===items[0])||(!event.shiftKey&&document.activeElement===items[items.length-1]))){event.preventDefault();(event.shiftKey?items[items.length-1]:items[0]).focus();}}
   };
   const mediaChanged=event=>{narrow.value=event.matches;};
-  const stopDetailWatch=watch(s.detail,()=>{if(narrow.value&&tab.value==='requests'&&currentRequest&&s.detail.value&&focusedRequest!==currentRequest){focusedRequest=currentRequest;requestAnimationFrame(()=>document.querySelector('.request-inspector [aria-label="关闭查询详情"]')?.focus());}});
+  const stopDetailWatch=watch(s.detail,()=>{if(narrow.value&&tab.value==='requests'&&currentRequest&&s.detail.value&&focusedRequest!==currentRequest){focusedRequest=currentRequest;requestAnimationFrame(()=>document.querySelector('.request-inspector [aria-label="关闭请求详情"]')?.focus());}});
   const syncRecovery=()=>{if(!storeRecovery(s.captureEdits()))storageAvailable.value=false;};
   const stopRecoveryWatch=watch([s.dirty,s.groupDirty,s.modelDirty,s.draft,s.groupDraft,s.modelDraft,s.modelKey,s.modelRole,s.budgetEdit,s.proactiveEdit,s.webEdit,s.chatEdit,s.busy,s.message],syncRecovery,{deep:true,flush:'sync'});
   const leaving=event => {const stored=storeRecovery(s.captureEdits());if((!stored&&(s.dirty.value||s.groupDirty.value||s.modelDirty.value||s.budgetEdit.value?.dirty||s.proactiveEdit.value?.dirty||s.webEdit.value?.dirty||s.chatEdit.value?.dirty))||s.modelKey.value){event.preventDefault();event.returnValue='';}};

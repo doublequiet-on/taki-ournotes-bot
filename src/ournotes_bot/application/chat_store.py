@@ -518,6 +518,14 @@ class ChatStore:
             'UNION ALL SELECT 1 FROM memory_scope_deletions WHERE scope=? LIMIT 1',
             (key,message_id(mid),key)).fetchone() is None
 
+    def unlinked_quote_media_allowed(self,scope):
+        key=self._scope(scope)
+        # Without an original ID/time, any deletion in this scope could cover the image.
+        return self.db.execute(
+            'SELECT 1 FROM memory_tombstones WHERE scope=? '
+            'UNION ALL SELECT 1 FROM memory_scope_deletions WHERE scope=? LIMIT 1',
+            (key,key)).fetchone() is None
+
     def source_valid(self,scope,mid,timestamp_ms):
         return not self._blocked(self._scope(scope),message_id(mid),timestamp_ms)
 
