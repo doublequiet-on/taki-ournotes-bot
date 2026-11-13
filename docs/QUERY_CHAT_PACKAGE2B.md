@@ -59,7 +59,7 @@ if not knowledge.valid(lease):                    # 生成后、发送前、写�
 
 `EvidenceLease` 必须与排队项、缓存片段、prompt、模型结果和回答上下文一起传递。`valid` 核验全部引用：当前批准版本、内容、来源、范围及实际片段都需一致；任一失效就拒绝整份回答。包 2B 的隔离验证模拟排队／生成期间撤审，真实模型及 QQ 路径留给包 3 接线和包 5 验收。
 
-`EvidenceChunkV1` 含 `doc_id/content_sha256/approval_revision/chunk_id/chunk_sha256/text/source_refs/applicability/evidence_type/limitations/servers`。`servers` 从已审核文稿复制；旧构造默认空范围，不推断跨服。按 Markdown 章节分段，片段重复原文标题路径并优先在段落／行／句末切开；标题也计入 360 字上限。命中后只从已过滤索引补齐同一节最多三个相邻片段；每篇先分配两个候选名额，其余在其他文章之后补足，避免同篇挤占召回。`## 依据与边界` 出处片段继续后置。
+`EvidenceChunkV1` 含 `doc_id/content_sha256/approval_revision/chunk_id/chunk_sha256/text/source_refs/applicability/evidence_type/limitations/servers`。`servers` 从已审核文稿复制；旧构造默认空范围，不推断跨服。按 Markdown 章节分段，片段重复原文标题路径并优先在段落／行／句末切开；标题也计入 360 字上限。命中后只从已过滤索引补齐同一节最多三个相邻片段。一般查询每篇先分配两个候选名额，其余在其他文章之后补足。显式聊天中的独立机制提问按排名和相邻补齐的顺序保留同区服片段，减少数值和限制条件被挤出预算的情况。`## 依据与边界` 出处片段继续后置。
 
 内部租约保留完整字段，模型工具证据使用 `documents`＋`passages`：同一批准文档的来源、范围、限制与批准哈希只写一次，片段用 `document` 数字索引引用。不丢失元数据，不修改原文或批准记录。最多 6 段，序列化后的正文、来源及元数据合计不超过 6,000 字；更小预算仍通过 `max_chars` 传入，放不下一段完整证据时返回不可用。切分和向量缓存键随实际文本变化；不改 SQLite 结构，回退时旧代码按旧切分重建缓存，保留原批准／撤销历史。
 

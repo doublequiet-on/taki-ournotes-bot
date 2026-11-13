@@ -395,6 +395,26 @@ class KnowledgeAuthorityTests(unittest.TestCase):
             self.assertEqual(restored,json.loads(json.dumps(asdict(chunk))))
         self.assertLess(len(evidence_json(result)),len(json.dumps([asdict(c) for c in result],ensure_ascii=False)))
 
+    def test_mechanic_budget_keeps_adjacent_passages_ahead_of_other_documents(self):
+        import json
+        from ournotes_bot.query.knowledge_retrieval import bounded, complete_sections, evidence_json
+        _, rule = self.write_fixture(doc_id='rule', text='## 保底\n'+'背景。'*115+'\n'
+                                     +'累计达到 200 抽可兑换。'+'补充。'*112+'\n仅限当期卡池。')
+        _, background = self.write_fixture(doc_id='background', text='保底规则的背景介绍。')
+        rule['approved'].extend(background['approved'])
+        (self.service.root/'approvals.json').write_text(json.dumps(rule), encoding='utf-8')
+        self.service.refresh()
+        rows = self.service.index
+        target = tuple(row.chunk for row in rows if row.chunk.doc_id == 'rule')
+        other = next(row.chunk for row in rows if row.chunk.doc_id == 'background')
+        self.assertEqual(len(target), 3)
+        self.assertIn('200 抽', target[1].text)
+        self.assertIn('仅限当期卡池', target[2].text)
+        candidates = tuple(complete_sections((target[0], other), rows))
+        self.assertEqual(bounded(candidates, limit=3), (*target[:2], other))
+        budget = len(evidence_json(target))
+        self.assertEqual(bounded(candidates, limit=3, max_chars=budget, prioritize_adjacent=True), target)
+
     def test_table_rows_carry_their_own_source_column_labels(self):
         from ournotes_bot.query.knowledge_retrieval import labelled_tables
         text='|区间|首要比较|\n|---|---|\n|JUST|JUST数量|\n|COMBO|最大连击|\n'
