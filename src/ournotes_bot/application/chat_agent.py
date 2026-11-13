@@ -1311,7 +1311,8 @@ class ChatAgent:
                         operations+=1
                         output,leases=await self.execute(work,call,question,site,leases,deadline-self.budget.final_seconds,deadline,
                                                          registry=active_registry,web=web,user=user,group=group,story_handles=story_handles,image_handles=image_handles,vision=vision,
-                                                         meta_question=meta_question,evidence_route=route,just_card=just_card)
+                                                         meta_question=meta_question,evidence_route=route,just_card=just_card,
+                                                         mechanic_server=mechanic_server if mechanic else None)
                     image_input=output.pop('_image_input',None)
                     knowledge_scope=output.pop('_knowledge_scope',None)
                     knowledge_lease=output.pop('_knowledge_lease',None)
@@ -1426,7 +1427,7 @@ class ChatAgent:
                 self.audit(self.proactive.settle_cost,work)
             messages.clear()
 
-    async def execute(self,work,call,question,site,leases,deadline,turn_deadline,*,registry=None,web=None,user=None,group=None,story_handles=None,image_handles=None,vision=None,meta_question=None,evidence_route='',just_card=''):
+    async def execute(self,work,call,question,site,leases,deadline,turn_deadline,*,registry=None,web=None,user=None,group=None,story_handles=None,image_handles=None,vision=None,meta_question=None,evidence_route='',just_card='',mechanic_server=None):
         runtime=self.runtime
         try:
             tool,args=validate_call(call,self.tools if registry is None else registry)
@@ -1579,6 +1580,9 @@ class ChatAgent:
                 if background_only:previous=None
                 scope=scope_for(scope_question,args,previous,reset_on_server_change=True,default_version=context_version,
                                 pending_server=work.knowledge_target[0] if args.get('followup') and work.knowledge_target else None)
+                retrieval_options = dict(focus)
+                if scope.server == mechanic_server and not args.get('followup'):
+                    retrieval_options['prioritize_adjacent'] = True
                 if context_version and scope.version is None and scope.date is None:
                     # A configured evidence baseline supplements general documents;
                     # it does not turn their unknown version into a verified one.
@@ -1591,7 +1595,7 @@ class ChatAgent:
                         cache.pop(key,None)
                         new_leases=None
                     if new_leases is None:
-                        results=await finish_thread(partial(knowledge.retrieve_scopes,key[0],scopes,knowledge.approved_set_revision,**focus))
+                        results=await finish_thread(partial(knowledge.retrieve_scopes,key[0],scopes,knowledge.approved_set_revision,**retrieval_options))
                         if results[0].code!='ok':
                             return {'status':results[0].code,'data':results[0].message,'retryable':True},leases
                         new_leases=tuple(r.lease for r in results if r.lease.chunks)
@@ -1622,7 +1626,7 @@ class ChatAgent:
                     cache.pop(key,None)
                     lease=None
                 if lease is None:
-                    retrieval=await finish_thread(partial(knowledge.retrieve,key[0],scope,knowledge.approved_set_revision,**focus))
+                    retrieval=await finish_thread(partial(knowledge.retrieve,key[0],scope,knowledge.approved_set_revision,**retrieval_options))
                     if retrieval.code!='ok':
                         return {'status':retrieval.code,'data':retrieval.message,'retryable':True},leases
                     lease=retrieval.lease

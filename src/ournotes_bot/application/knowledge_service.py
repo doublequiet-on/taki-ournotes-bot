@@ -221,11 +221,14 @@ class KnowledgeService:
                     'indexed_chunks': len(self.index), 'error': self.error, 'index_error': self.index_error,
                     'issues': self.issues, 'last_build': self.last_build, 'encoder': self.encoder.identity}
 
-    def retrieve(self, query: str, scope: KnowledgeScope, approved_set_revision: str, limit=6, *, max_chars=6000, focus_query=None) -> Retrieval:
+    def retrieve(self, query: str, scope: KnowledgeScope, approved_set_revision: str, limit=6, *,
+                 max_chars=6000, focus_query=None, prioritize_adjacent=False) -> Retrieval:
         return self.retrieve_scopes(query, (scope,), approved_set_revision, limit,
-                                    max_chars=max_chars, focus_query=focus_query)[0]
+                                    max_chars=max_chars, focus_query=focus_query,
+                                    prioritize_adjacent=prioritize_adjacent)[0]
 
-    def retrieve_scopes(self, query, scopes, approved_set_revision, limit=6, *, max_chars=6000, focus_query=None):
+    def retrieve_scopes(self, query, scopes, approved_set_revision, limit=6, *,
+                        max_chars=6000, focus_query=None, prioritize_adjacent=False):
         """Rank scopes together under one passage budget, retaining separate proofs."""
         scopes = tuple(dict.fromkeys(scopes))
         require(bool(scopes), 'knowledge_scope_missing')
@@ -268,7 +271,8 @@ class KnowledgeService:
                 # One participation passage precedes the main rules ranking;
                 # both use the same filtered index, lease and final budget.
                 ranked = tuple(dict.fromkeys((*focused[:1],*ranked)))
-            chunks = bounded(complete_sections(ranked, rows), limit, max_chars)
+            chunks = bounded(complete_sections(ranked, rows), limit, max_chars,
+                             prioritize_adjacent=prioritize_adjacent)
             if ranked and not chunks:
                 return response('unavailable')
         except Exception:
