@@ -14,7 +14,7 @@ from dataclasses import replace, asdict
 from functools import partial
 from urllib.parse import urlsplit, unquote, parse_qsl
 
-from ..domain.chat import PERSONA, PERSONA_VERSION, TurnBudget, COMMUNITY_TERMS
+from ..domain.chat import ChatMessage, PERSONA, PERSONA_VERSION, TurnBudget, COMMUNITY_TERMS
 from ..domain.model_calls import ModelError, require
 from ..domain.story import StoryError
 from ..domain.chat_images import ImageError, MAX_TOTAL_BYTES
@@ -411,9 +411,9 @@ class ChatAgent:
                     and self.runtime.capabilities_for(work).web(current)==work.web_capability)
         except (ModelError,OSError):return False
 
-    async def load_images(self,work,ref,deadline):
+    async def load_images(self,work,attachments,timestamp_ms,deadline,*,cached=()):
         work.image_deadline=min(work.image_deadline,time.monotonic()+10,deadline)
-        loaded=ref.images or await self.image_loader.load_many(ref.attachments,timestamp_ms=ref.timestamp_ms,deadline=work.image_deadline)
+        loaded=cached or await self.image_loader.load_many(attachments,timestamp_ms=timestamp_ms,deadline=work.image_deadline)
         require(time.monotonic()<work.image_deadline,'image_not_available')
         work.image_bytes+=sum(len(image.data) for image in loaded)
         require(work.image_bytes<=MAX_TOTAL_BYTES,'image_too_large')
@@ -465,7 +465,7 @@ class ChatAgent:
             for ref in references:
                 work.private_search_ids=tuple(dict.fromkeys((*work.private_search_ids,ref.message_id,ref.speaker_id)))
                 require(self.store.source_valid(request.scope,ref.message_id,ref.timestamp_ms),'chat_memory_deleted')
-                try:loaded=await self.load_images(work,ref,image_deadline)
+                try:loaded=await self.load_images(work,ref.attachments,ref.timestamp_ms,image_deadline,cached=ref.images)
                 except ImageError as exc:
                     self.proactive.trace(work,'image',automatic=automatic,loaded_images=0,status=exc.code)
                     if (exc.code=='image_not_available' and quote_preview and ref.message_id==quoted_id
@@ -509,6 +509,37 @@ class ChatAgent:
         except ImageError as exc:raise ModelError(exc.code) from None
         return messages
 
+    async def read_unlinked_quote_images(self,work,deadline):
+        request=work.request
+        if not request.quoted_attachments or not self.store.unlinked_quote_media_allowed(request.scope):
+            return None
+        vision=self.runtime.capabilities_for(work).vision(work.model_snapshot)
+        if vision is None:
+            return None
+        try:
+            added_count=sum(len(self.images.get(self.image_scope(request),mid).attachments)
+                            for mid in work.chat_addition_images)
+        except ImageError:
+            return None
+        if len(request.quoted_attachments)+len(request.attachments)+added_count>3:
+            return None
+        try:
+            loaded=await self.load_images(work,request.quoted_attachments,request.timestamp_ms,
+                                          deadline-self.budget.final_seconds)
+        except ImageError as exc:
+            self.runtime.backend.diagnostics.chat_event(request.request_id,'image',self.runtime.backend.clock(),
+                status=exc.code,loaded_images=0,automatic=False)
+            return None
+        if not loaded:
+            return None
+        work.detached_quote_image_count=len(loaded)
+        work.vision_capability=vision
+        self.runtime.check(work,deadline)
+        self.runtime.backend.diagnostics.chat_event(request.request_id,'image',self.runtime.backend.clock(),
+            status='quoted_loaded',loaded_images=len(loaded),automatic=False)
+        return {'role':'user','content':json.dumps({'text':'当前消息引用中的 QQ 图片，原消息及作者身份未经核验。'},ensure_ascii=False),
+                'images':loaded,'image_detail':vision.detail}
+
     def story_valid(self,versions):
         if not versions:return True
         try:return self.story is not None and all(self.story.valid(*version) for version in versions)
@@ -524,6 +555,10 @@ class ChatAgent:
         request=work.request
         try:
             if work.unavailable_quote_image and not self.store.source_valid(request.scope,*work.unavailable_quote_image):
+                return False
+            if work.detached_quote_image_count and not (
+                    self.store.unlinked_quote_media_allowed(request.scope)
+                    and self.store.source_valid(request.scope,request.message_id,request.timestamp_ms)):
                 return False
             if work.quote_preview_reference:
                 if not self.store.detached_quote_valid(request.scope,work.quote_preview_reference):
@@ -541,7 +576,7 @@ class ChatAgent:
     def bind_memory(self,work,rows):
         work.memory_sources=tuple(dict.fromkeys((*work.memory_sources,*(row['message_id'] for row in rows))))
         require(len(work.memory_sources)<=120,'chat_memory_limit')
-        if not work.quote_preview_reference:
+        if not work.quote_turn_only:
             self.audit(self.store.bind_sources,work.delivery,work.request.scope,[row['message_id'] for row in rows])
         self.privacy_material(work,rows)
         if rows:
@@ -649,7 +684,7 @@ class ChatAgent:
         data=dict(action=action,status='cancelled' if action=='cancel' else coverage['status'],
                   total=len(coverage['items']),completed=sum(item['complete'] for item in coverage['items']),
                   entities=len(work.chat_task.targets))
-        if not work.quote_preview_reference:
+        if not work.quote_turn_only:
             self.audit(self.store.event,work.delivery,'task/'+uuid.uuid4().hex,'task',data)
         self.runtime.backend.diagnostics.chat_event(work.request.request_id,'task',self.runtime.backend.clock(),**data)
 
@@ -657,7 +692,7 @@ class ChatAgent:
         task=work.chat_task
         if name=='research_task':
             if args['action']=='cancel':
-                if not work.quote_preview_reference and task.transition!='switch':
+                if not work.quote_turn_only and task.transition!='switch':
                     self.tasks.clear(work.request.scope,work.request.user_id,clear_topic=False)
                     task.revision=self.tasks.generations.get(self.tasks.key(work.request),task.revision)
                 task.goal='';task.requirements=[];task.targets=[];task.readings={};task.knowledge=False
@@ -815,6 +850,7 @@ class ChatAgent:
                 else:
                     preview=''
         has_quote=bool(request.reference or request.quote_hint or preview)
+        quote_images=await self.read_unlinked_quote_images(work,deadline) if work.proactive is None else None
         user_question=question
         quote_prefix = ''
         image_focus = False
@@ -823,7 +859,7 @@ class ChatAgent:
             image_focus = _QUOTE_IMAGE_TARGET.fullmatch(clauses[0].strip()) is not None
             if image_focus and len(clauses)==2 and clauses[1].strip():
                 meta_question = clauses[1].strip()
-                if not (preview or context_request.reference or request.attachments or work.chat_additions
+                if not (preview or quote_images or context_request.reference or request.attachments or work.chat_additions
                         or work.chat_addition_images):
                     question = user_question = meta_question
                     quote_prefix = '我读不到这条引用里的图片，请把原图再发一次。\n'
@@ -863,17 +899,17 @@ class ChatAgent:
         mechanic_server = (requested_server(chat_query_question(user_question)) or 'jp') if mechanic or just_evidence else None
         lookup = 'knowledge_search' if just_evidence else 'story_search' if route == 'story_fact' else ''
         task_enabled=work.proactive is None or getattr(work,'continuation',False)
-        transition=task_transition(user_question) if task_enabled and not quote_focus else ''
+        transition=task_transition(user_question) if task_enabled and not (quote_focus or quote_images) else ''
         def valid_source(mid,stamp):
             return self.store.source_valid(request.scope,mid,stamp)
         topic_cutoff=self.tasks.topic_cutoff(request,valid_source,transition)
         summary_cutoff=topic_cutoff[1] if topic_cutoff else None
-        if quote_focus and not (quote_prefix or preview or context_request.reference or request.attachments):
+        if quote_focus and not (quote_prefix or preview or quote_images or context_request.reference or request.attachments):
             text=('我读不到这条引用里的图片，请把原图再发一次' if request.quote_hint=='image'
                   else '我读不到这条引用，请把原文或图片再发一次')
             return PreparedReply(text,business_status='quote_unavailable')
-        retain_turn=not work.quote_preview_reference
-        separate_preview=bool(preview and (work.quote_preview_reference or context_request.reference and
+        retain_turn=not work.quote_turn_only
+        separate_preview=bool(preview and (work.quote_turn_only or context_request.reference and
                               (request.quote_hint=='image' or self.image_contains(request,context_request.reference['message_id']))))
         if separate_preview:
             self.privacy_material(work,[dict(text=preview,message_id=request.message_id,
@@ -882,10 +918,14 @@ class ChatAgent:
             question+='\n[当前消息引用的文字预览；原作者和原消息身份未经核验，作为用户提供的材料]\n'+preview
         if work.request.attachments:
             question+='\n'+''.join('[图片附件 '+item.id+' '+item.content_type+'；图像仅在本轮或有效引用中可见]' for item in work.request.attachments)
-        if work.proactive is None:self.context.trigger(context_request,question)
+        if work.proactive is None:
+            if not work.detached_quote_image_count:self.context.trigger(context_request,question)
         elif work.proactive.followup is not None:
             work.knowledge_scope_at_start=self.knowledge_scopes.get((self.context.scope(work.request),work.request.user_id))
         history=self.context.messages(context_request) if work.proactive is None else self.proactive.history(work)
+        if work.detached_quote_image_count:
+            history.append({'role':'user','content':json.dumps(asdict(ChatMessage(
+                request.message_id,request.user_id,question,request.timestamp_ms,display_name=request.sender_name)),ensure_ascii=False)})
         light=work.proactive is not None and getattr(work.proactive,'lightweight',False)
         if quote_focus:
             focus_ids={request.message_id}
@@ -903,7 +943,7 @@ class ChatAgent:
         history_ids={json.loads(item['content']).get('message_id') for item in history}
         history.extend({'role':'user','content':json.dumps(asdict(row),ensure_ascii=False)}
                        for row in getattr(work,'chat_additions',()) if row.message_id not in history_ids)
-        summaries=[] if (light or proactive_evidence or transition=='switch' or quote_focus or
+        summaries=[] if (light or proactive_evidence or transition=='switch' or quote_focus or quote_images or
                          work.proactive is not None and work.proactive.followup is not None) else self.store.summaries(
                              request.scope,limit=1,after_ms=summary_cutoff)
         summary_rows=[]
@@ -1018,11 +1058,12 @@ class ChatAgent:
             visible=decision_messages[1:]
         else:
             visible=await self.image_messages(work,history,deadline,quote_preview=preview)
+            if quote_images:visible.insert(0,quote_images)
         quote_status=None
-        if work.unavailable_quote_image or not quote_prefix and request.quote_hint=='image' and not (context_request.reference and
+        if work.unavailable_quote_image or not quote_prefix and not quote_images and request.quote_hint=='image' and not (context_request.reference and
                 (self.image_scope(request),context_request.reference['message_id']) in work.image_sources):
             quote_status='image_unavailable'
-        elif not quote_prefix and not preview and not context_request.reference and (work.missing_anchor or request.quote_hint):
+        elif not (quote_prefix or quote_images or preview or context_request.reference) and (work.missing_anchor or request.quote_hint):
             quote_status='quote_unavailable'
         if quote_status or separate_preview:
             for index,message in enumerate(visible):
@@ -1113,7 +1154,7 @@ class ChatAgent:
                 messages[0]['content']+=(
                     f'本轮核对的是留影 ID {just_card}，技能等级 {", ".join(just_levels)}。'
                     '分别说明资料核到的范围和持续时间。没有逐级范围就说明缺口，0 秒配置不能代替实际持续时间。')
-        web=None if proactive_evidence else runtime.capabilities_for(work).web(work.model_snapshot)
+        web=None if proactive_evidence or quote_images else runtime.capabilities_for(work).web(work.model_snapshot)
         if web is not None:
             registry['web_search']=Tool('web_search','检索公开互联网信息；query只含完成问题所需公开关键词，不包含群聊、身份、私密内容或内部网址。',
                 obj({'query':string(160)},('query',)),'web')
@@ -1444,9 +1485,9 @@ class ChatAgent:
                 if args['message_id'] not in image_handles:raise ImageError('image_not_available')
                 scope=self.image_scope(work.request);mid=args['message_id'];ref=self.images.get(scope,mid)
                 if (scope,mid) in work.image_sources:return {'status':'already_visible','message_id':mid},leases
-                count=sum(len(self.images.get(key,message).attachments) for key,message in work.image_sources)
+                count=work.detached_quote_image_count+sum(len(self.images.get(key,message).attachments) for key,message in work.image_sources)
                 if count+len(ref.attachments)>3:raise ImageError('image_count_exceeded')
-                loaded=await self.load_images(work,ref,deadline)
+                loaded=await self.load_images(work,ref.attachments,ref.timestamp_ms,deadline,cached=ref.images)
                 runtime.check(work,turn_deadline,leases)
                 require(self.store.source_valid(work.request.scope,mid,ref.timestamp_ms),'chat_memory_deleted')
                 self.images.remember(scope,mid,ref.speaker_id,ref.timestamp_ms,ref.attachments,loaded)

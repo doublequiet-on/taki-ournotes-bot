@@ -63,24 +63,27 @@ class Request:
     attachments: tuple = field(default=(),repr=False)
     proactive_id: str = ''
     quote_hint: str | None = None
+    quoted_attachments: tuple = field(default=(), repr=False)
 
     @classmethod
     def parse(cls, value, instance_id, app_id, now, *, reference_profiles=()):
         fields = set(cls.__dataclass_fields__)
-        optional={'sender_name','attachments','proactive_id','quoted_text','quote_hint'}
+        optional={'sender_name','attachments','proactive_id','quoted_text','quote_hint','quoted_attachments'}
         require(isinstance(value,dict) and fields-optional | {'protocol'}<=set(value)<=fields | {'protocol'},'request_shape')
         if 'quote_hint' in value:
             require(value['quote_hint'] in ('image','unknown'),'quote_hint')
         value={**value,'quoted_text':value.get('quoted_text',''),'sender_name':value.get('sender_name',''),
                'proactive_id':value.get('proactive_id',''),'quote_hint':value.get('quote_hint')}
-        try:value['attachments']=parse_attachments(value.get('attachments'))
+        try:
+            value['attachments']=parse_attachments(value.get('attachments'))
+            value['quoted_attachments']=parse_attachments(value.get('quoted_attachments'))
         except ImageError as exc:raise ProtocolError(exc.code) from None
         require(isinstance(value['quoted_text'],str) and len(value['quoted_text'].encode())<=4096
                 and not any(ord(c)<32 and c not in '\n\r\t' or ord(c)==127 for c in value['quoted_text']),'quoted_text')
         require(value['sender_name']=='' or identity(value['sender_name']),'sender_name')
         require_protocol(value['protocol'])
         require(value['instance_id'] == instance_id and value['app_id'] == app_id, 'instance_mismatch', 403)
-        for key in fields - {'timestamp_ms', 'body', 'ingress_seq', 'policy', 'reference', 'interaction','sender_name','attachments','proactive_id','quoted_text','quote_hint'}:
+        for key in fields - {'timestamp_ms', 'body', 'ingress_seq', 'policy', 'reference', 'interaction','sender_name','attachments','proactive_id','quoted_text','quote_hint','quoted_attachments'}:
             require(identity(value[key]), 'invalid_identity')
         require(value['platform'] == 'qq' and value['kind'] in ('group', 'c2c'), 'conversation_kind')
         require(value['kind'] != 'c2c' or value['conversation_id'] == value['user_id'], 'c2c_identity')
@@ -106,6 +109,9 @@ class Request:
         policy = value['policy']
         require(isinstance(policy, dict) and set(policy) == set(ExecutionPolicy.__dataclass_fields__), 'policy_shape')
         require(policy['natural_query'] in ('off','local','model') and identity(policy['epoch']), 'policy_value')
+        if value['quoted_attachments']:
+            require(value['quote_hint']=='image' and ref is None and value['trigger']=='command'
+                    and policy['natural_query']=='model','quoted_image_admission')
         require(all(type(policy[k]) is int and 0 <= policy[k] < 2**53 for k in ('global_revision','group_revision')), 'policy_revision')
         expected = digest([instance_id, app_id, 'qq', value['kind'], value['conversation_id'], value['user_id'], value['message_id']]
                           +([value['proactive_id']] if value['trigger']=='proactive' else []))
@@ -117,7 +123,8 @@ class Request:
     def content_digest(self):
         return digest({key: value for key, value in asdict(self).items()
                        if key not in ('gateway_epoch', 'ingress_seq')
-                       and (key != 'quote_hint' or value is not None)})
+                       and (key != 'quote_hint' or value is not None)
+                       and (key != 'quoted_attachments' or value)})
 
     @property
     def context_id(self):

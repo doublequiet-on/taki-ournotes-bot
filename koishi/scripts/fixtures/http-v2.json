@@ -40,6 +40,7 @@
         "chat_observation_v1",
         "chat_images_v1",
         "chat_quote_hint_v1",
+        "chat_quote_images_v1",
         "abort_reason_v1"
       ],
       "reference_profiles": []
