@@ -285,6 +285,45 @@ class CatalogTests(unittest.TestCase):
     def records(self):
         return source.validate(self.saved, self.now)[0]
 
+    def test_guest_index_matches_complete_same_release_pagination(self):
+        for server in ("jp", "intl"):
+            docs = self.saved["documents"][server]
+            spec = docs["catalog"]["resources"]["support-cards"]
+            total = len(docs["support-cards"]) + 1
+            spec.update(count=total, access="api/v1/catalog/support-cards/access.json",
+                        entities={"algorithm": "fnv1a32-mod-256", "count": total})
+
+        def respond(url, limit, timeout):
+            parts = urlsplit(url)
+            query = parse_qs(parts.query)
+            if "limit" not in query:
+                return self.respond(url, limit, timeout)
+            server, resource = parts.path.split("/")[-2:]
+            self.assertEqual(resource, "support-cards")
+            ident = self.saved["identities"][server]
+            self.assertEqual(query["release"], [ident["releaseId"]])
+            rows = self.saved["documents"][server][resource]
+            second_page = query.get("cursor") == ["page-two"]
+            page = dict(total=len(rows)+1, release=ident, nextCursor=None if second_page else "page-two",
+                        items=[dict(id=key, value=row) for key, row in rows.items()] if second_page else [])
+            if second_page and broken:
+                page["items"].pop()
+            return source.encoded(page), {"x-haneoka-release-id": ident["releaseId"],
+                                         "x-haneoka-source-id": ident["sourceId"]}
+
+        self.fetch.side_effect = respond
+        broken = True
+        with self.assertRaisesRegex(ValueError, "incomplete Catalog public index"):
+            self.repo._collect()
+        broken = False
+        snapshot = self.repo._collect()
+        self.repo._write(snapshot)
+        saved = self.repo._read()
+        for docs in saved["documents"].values():
+            spec = docs["catalog"]["resources"]["support-cards"]
+            self.assertEqual(spec["count"], len(docs["support-cards"]))
+            self.assertEqual(spec["entities"]["count"], len(docs["support-cards"])+1)
+
     def test_download_budget_counts_all_decoded_responses_at_exact_boundary(self):
         sizes = []
 
