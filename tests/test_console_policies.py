@@ -3539,20 +3539,22 @@ class ChatAgentTests(Fixture, unittest.IsolatedAsyncioTestCase):
         old,_=await self.prepare_native('/聊 聊聊旧乐队话题',seq=1)
         self.event(old,'intent');self.event(old,'ack')
         self.client.request.reset_mock()
-        raw={**self.request('native2',2),'body':'taki你怎么看？','quote_hint':'image'}
-        with patch.object(self,'request',return_value=raw):
-            plan,attempts=await self.prepare_native(raw['body'],seq=2)
-        self.assertEqual(attempts,[])
-        self.assertEqual(plan['parts'][0]['business_status'],'quote_unavailable')
-        self.assertIn('原图',plan['parts'][0]['text'])
-        self.assertNotIn('旧乐队',plan['parts'][0]['text'])
-        self.client.request.assert_not_awaited()
-        self.event(plan,'intent');self.event(plan,'ack')
-        repeated=await self.backend.submit(raw)
-        self.assertEqual(repeated['delivery_id'],plan['delivery_id'])
-        with self.assertRaises(ProtocolError) as conflict:
-            await self.backend.submit({**raw,'quote_hint':'unknown'})
-        self.assertEqual(conflict.exception.code,'request_conflict')
+        for seq,question in enumerate(('taki你怎么看？','taki你如何评价'),2):
+            with self.subTest(question=question):
+                raw={**self.request('native'+str(seq),seq),'body':question,'quote_hint':'image'}
+                with patch.object(self,'request',return_value=raw):
+                    plan,attempts=await self.prepare_native(question,seq=seq)
+                self.assertEqual(attempts,[])
+                self.assertEqual(plan['parts'][0]['business_status'],'quote_unavailable')
+                self.assertIn('原图',plan['parts'][0]['text'])
+                self.assertNotIn('旧乐队',plan['parts'][0]['text'])
+                self.client.request.assert_not_awaited()
+                self.event(plan,'intent');self.event(plan,'ack')
+                repeated=await self.backend.submit(raw)
+                self.assertEqual(repeated['delivery_id'],plan['delivery_id'])
+                with self.assertRaises(ProtocolError) as conflict:
+                    await self.backend.submit({**raw,'quote_hint':'unknown'})
+                self.assertEqual(conflict.exception.code,'request_conflict')
 
     async def test_expired_reference_uses_visible_preview_without_old_topic(self):
         self.backend.reference_profiles=frozenset({'fixture'})

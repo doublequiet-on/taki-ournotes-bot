@@ -74,7 +74,7 @@ def quote_followup(question):
     # quoted material is missing. A second question must reach the agent.
     text=re.sub(r'^(?:taki(?![a-z0-9_])|立希)[\s，,、：:]*','',question.strip(),flags=re.I)
     return re.fullmatch(
-        r'(?:\[引用消息\]|(?:那|所以|这图|这张图|这条引用)?(?:你)?(?:怎么看|怎么想|觉得呢|怎么评价|有何看法)'
+        r'(?:\[引用消息\]|(?:那|所以|这图|这张图|这条引用)?(?:你)?(?:怎么看|怎么想|觉得呢|怎么评价|如何评价|有何看法)'
         r'(?:这张图|这条引用|这句话)?|(?:这|它|这段|这句话|图里|这张图)?(?:是)?(?:什么意思|说了什么|是什么)'
         r'|(?:那|所以|这)?(?:为什么|为啥|怎么回事)|(?:那|这个|这图|这张图|这条引用)呢|那咋了|所以呢)?'
         r'[呢啊呀嘛]?[？?！!。\s]*',text) is not None
