@@ -112,6 +112,35 @@ def validate_timestamp(saved, now):
     return fetched
 
 
+def _check_visible_index(rows, total, ident, id_field, fetch_page):
+    """Require the full index to agree with an independently traversed public collection."""
+    query = [("limit", 100)]
+    seen_ids, seen_cursors = set(), set()
+    # A page can stop at the item limit or after scanning eight of 256 shards.
+    for _ in range(32 + (total + 99) // 100):
+        page = fetch_page(query)
+        if (not isinstance(page, dict) or not isinstance(page.get("items"), list)
+                or page.get("total") != total or page.get("release") != ident
+                or "nextCursor" not in page or len(page["items"]) > 100):
+            break
+        for item in page["items"]:
+            key = item.get("id") if isinstance(item, dict) else None
+            if (not isinstance(key, str) or key not in rows or key in seen_ids
+                    or key != str(integer(item["value"][id_field], 1))):
+                raise ValueError("Catalog public page identity mismatch")
+            seen_ids.add(key)
+        cursor = page["nextCursor"]
+        if cursor is None:
+            if seen_ids == rows.keys():
+                return
+            break
+        if not isinstance(cursor, str) or not 0 < len(cursor) <= 2048 or cursor in seen_cursors:
+            break
+        seen_cursors.add(cursor)
+        query = [("limit", 100), ("cursor", cursor)]
+    raise ValueError("incomplete Catalog public index")
+
+
 def validate(saved, now, *, stale=False):
     if not isinstance(saved, dict) or saved.get("schema") != 1 or saved.get("source") != SOURCE:
         raise ValueError("foreign Catalog cache")
@@ -272,12 +301,13 @@ class CatalogRepository:
         budget_lock = threading.Lock()
         identities, documents = {}, {}
 
-        def get(server, resource, ident=None, ids=()):
+        def get(server, resource, ident=None, ids=(), *, page=()):
             nonlocal total
             if time.monotonic() - started > 150:
                 raise ValueError("Catalog refresh deadline")
             query = [("release", ident["releaseId"])] if ident else [("projection", "identity")]
             query += [("id", key) for key in ids]
+            query.extend(page)
             url = f"{ORIGIN}/api/v1/servers/{server}/{resource}?{urlencode(query)}"
             raw, headers = self.fetch(url, 8_000_000, 20)
             with budget_lock:
@@ -296,13 +326,27 @@ class CatalogRepository:
 
             @public_http_scope()
             def collection(resource):
-                count = integer(catalog["resources"][resource]["count"], 1, 5000)
+                spec = catalog["resources"][resource]
+                count = integer(spec["count"], 1, 5000)
                 rows = get(server, resource, ident)
-                if not isinstance(rows, dict) or len(rows) != count:
+                if not isinstance(rows, dict) or not 0 < len(rows) <= count:
                     raise ValueError("incomplete Catalog index")
                 for key, row in rows.items():
                     if key != str(integer(row[ENTITIES[resource]], 1)):
                         raise ValueError("Catalog index identity mismatch")
+                if len(rows) != count:
+                    # The manifest counts storage rows. Guest visibility can filter
+                    # both index and page results while leaving the storage total.
+                    if (spec.get("access") != f"api/v1/catalog/{resource}/access.json"
+                            or spec.get("entities", {}).get("algorithm") != "fnv1a32-mod-256"
+                            or spec["entities"].get("count") != count):
+                        raise ValueError("incomplete Catalog index")
+                    _check_visible_index(
+                        rows, count, ident, ENTITIES[resource],
+                        lambda page: get(server, resource, ident, page=page),
+                    )
+                    # The shared snapshot's count describes its validated rows.
+                    spec["count"] = len(rows)
                 if resource in {"songs", "cards", "support-cards"}:
                     full, keys = {}, sorted(rows)
                     for offset in range(0, len(keys), 100):
