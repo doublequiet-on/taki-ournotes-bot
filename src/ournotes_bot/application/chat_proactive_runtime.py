@@ -274,12 +274,25 @@ class ProactiveChat:
                 self.configured(request,snapshot,continuation=True)
             else:
                 if not settings['followup_enabled']:self.control_event(request,'followup_disabled')
-                if request.user_id in {row['user_id'] for row in settings['excluded_users']}:
-                    self.control_event(request,'excluded_user');return False
+                excluded = request.user_id in {row['user_id'] for row in settings['excluded_users']}
+                if excluded:
+                    self.control_event(request,'excluded_user')
+                    if request.conversation_id not in self.lightweight_groups:
+                        return False
                 snapshot=self.agent.runtime.proactive_snapshot(request.conversation_id)
-                if self.configured(request,snapshot) is None:
+                policy=self.configured(request,snapshot)
+                lightweight = self.uses_lightweight(request.conversation_id, snapshot.profile, policy)
+                if excluded:
+                    if lightweight:
+                        self.controller.mark_context_gap(scope, request.timestamp_ms)
+                    return False
+                if policy is None:
                     status='service_disabled' if self.owners()[1].proactive(snapshot,request.conversation_id) else 'platform_unapproved'
                     self.control_event(request,status);return False
+                if lightweight and (request.quote_hint or request.quoted_text):
+                    self.controller.mark_context_gap(scope, request.timestamp_ms)
+                    self.control_event(request, 'lightweight_context_required')
+                    return False
             if request.attachments:
                 self.agent.images.remember(self.agent.image_scope(request),request.message_id,request.user_id,request.timestamp_ms,request.attachments)
             target = self.controller.target(scope)
@@ -538,8 +551,12 @@ class ProactiveChat:
             current=next((row for row in rows if row.message_id==work.request.message_id),None)
             if current:rows=[row for row in rows if row.message_id!=current.message_id]+[current]
         if not followup:
+            since_ms = int((self.agent.runtime.backend.clock()-900)*1000)
+            if work.proactive.context_gap_ms is not None:
+                # Saved participation must not reintroduce the older scene.
+                since_ms = max(since_ms, work.proactive.context_gap_ms)
             saved={row['message_id']:ChatMessage(**row) for row in self.agent.store.recent(work.request.scope,
-                since_ms=int((self.agent.runtime.backend.clock()-900)*1000))}
+                since_ms=since_ms)}
             merged=dict(saved)
             for row in rows:merged.setdefault(row.message_id,row)
             current=merged.pop(work.request.message_id)

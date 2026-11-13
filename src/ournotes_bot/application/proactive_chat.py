@@ -61,6 +61,7 @@ class ProactiveCandidate:
     lightweight: bool = False
     evidence_route: str = ''
     evidence_context_id: str = ''
+    context_gap_ms: int | None = None
 
 
 @dataclass
@@ -69,6 +70,7 @@ class _Observed:
     at: float
     size: int
     plain_text: bool
+    context_generation: int
 
 
 @dataclass
@@ -129,6 +131,8 @@ class _Group:
     target_id: str | None = None
     pending_opportunity: str | None = None
     send_started: bool = False
+    context_generation: int = 0
+    context_gap: tuple[float, int] | None = None
 
 
 class ProactiveController:
@@ -177,6 +181,7 @@ class ProactiveController:
         if not policy.available:
             group.rows.clear()
             group.seen.clear()
+            group.context_gap = None
 
     @staticmethod
     def _cancel(group):
@@ -195,6 +200,18 @@ class ProactiveController:
         if group is not None:
             self._cancel(group)
 
+    def mark_context_gap(self, scope, timestamp_ms):
+        """Invalidate the old scene without keeping the omitted message or its identity."""
+        group = self.groups.get(scope)
+        if group is None or not group.policy.available:
+            return
+        self._cancel(group)
+        group.context_generation += 1
+        now = self.clock()
+        if group.context_gap is not None and group.context_gap[0] > now - self.window_seconds:
+            timestamp_ms = max(timestamp_ms, group.context_gap[1])
+        group.context_gap = now, timestamp_ms
+
     def set_addressed(self, scope, active):
         """Host brackets explicit dialogue through its final delivery receipt."""
         if type(active) is not bool:
@@ -212,6 +229,7 @@ class ProactiveController:
             if group.opportunity is not None:group.opportunity.knowledge_leases.clear()
             group.rows.clear()
             group.seen.clear()
+            group.context_gap = None
 
     def sweep(self):
         now = self.clock()
@@ -257,7 +275,8 @@ class ProactiveController:
             current = group.rows[index].message
             if current.message_id == message_id:
                 previous = group.rows[index-1]
-                if (previous.message.speaker_id == current.speaker_id
+                if (previous.context_generation == group.rows[index].context_generation
+                        and previous.message.speaker_id == current.speaker_id
                         and 0 <= current.timestamp_ms-previous.message.timestamp_ms <= self.candidate_seconds*1000):
                     return previous.message,previous.plain_text
                 return None
@@ -290,7 +309,8 @@ class ProactiveController:
             group.rows.clear()
             self._cancel(group)
             return False
-        group.rows.append(_Observed(message, now, size, plain_text and not addressed and turn!='closed'))
+        group.rows.append(_Observed(message, now, size, plain_text and not addressed and turn!='closed',
+                                    group.context_generation))
         while (len(group.rows) > self.max_messages
                or sum(row.size for row in group.rows) > self.group_bytes):
             group.rows.pop(0)
@@ -397,11 +417,16 @@ class ProactiveController:
         group.active, group.deferred_at, group.dirty = ticket.candidate_id, None, False
         group.pending_since = None
         group.pending_opportunity = None
-        messages=tuple(row.message for row in group.rows if row.message.message_id!=target.message_id)+(target,)
+        gap = group.context_gap
+        context_gap_ms = (gap[1] if gap and (lightweight or evidence_required)
+                          and group.continuation_user_id is None
+                          and gap[0] > now - self.window_seconds else None)
+        messages = tuple(row.message for row in group.rows if row.message.message_id != target.message_id
+                         and (context_gap_ms is None or row.context_generation == group.context_generation)) + (target,)
         return ProactiveCandidate(ticket.candidate_id, scope, ticket.version, ticket.policy_version,
                                   ticket.service_subject_id, messages,
                                   now, ticket.expires_at, reserve_cost_micro, deferred, group.evaluation,
-                                  opportunity_id=opportunity.id)
+                                  opportunity_id=opportunity.id, context_gap_ms=context_gap_ms)
 
     def opportunity_budget(self,candidate):
         group,ticket=self._ticket(candidate)

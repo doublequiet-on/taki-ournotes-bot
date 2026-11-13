@@ -6630,6 +6630,95 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
     async def test_lightweight_fact_question_decides_before_approved_lookup(self):
         await self.lightweight_fact_question()
 
+    def filtered_group_observation(self, text, seq):
+        raw = self.request('filtered'+str(seq), seq)
+        raw.update(body=text, trigger='observation', quoted_text='旧话题')
+        request = Request.parse(raw, 'fixture', 'app', self.now)
+        self.assertEqual(self.agent.proactive.gateway_observation(request), (False, 0, False))
+
+    async def test_lightweight_skips_comparison_with_missing_group_context(self):
+        self.enable_lightweight_fact_fixture()
+        self.save_conversation_settings(excluded_users=[dict(user_id='u2', label='成员')])
+        self.observation('年度简报还提到了本地工作室')
+        self.current_user = 'u2'
+        self.now += 1
+        self.filtered_group_observation('你们打算收购星云工作室吗', 2)
+        self.current_user = 'u1'
+        self.now += 1
+        self.observation('说反了呀', seq=3)
+        self.current_user = 'u2'
+        self.now += 1
+        self.filtered_group_observation('星云也才刚成立没多久', 4)
+        self.current_user = 'u1'
+        self.now += 1
+        value = self.observation('星云是我们人数的四倍', seq=5)
+        self.tick += 1.6
+        self.client.request.return_value = self.result(
+            '{"participation":"reply","text":"","delay_seconds":null}')
+        plan, attempts, _ = await self.candidate(value)
+        self.assertFalse(plan['parts'])
+        self.assertFalse(attempts)
+        self.client.request.assert_not_awaited()
+        events = self.backend.diagnostics.group_events('g1')
+        self.assertTrue(any(e['data'].get('status') == 'proactive_context_gap' for e in events))
+
+    async def test_lightweight_starts_new_topic_after_filtered_observation(self):
+        self.enable_lightweight_fact_fixture()
+        self.save_conversation_settings(excluded_users=[dict(user_id='u2', label='成员')])
+        self.observation('年度简报还提到了本地工作室')
+        self.current_user = 'u2'
+        self.now += 1
+        self.filtered_group_observation('你们打算收购星云工作室吗', 2)
+        self.current_user = 'u1'
+        self.now += 1
+        value = self.observation('这段鼓终于练顺了', seq=3)
+        self.tick += 1.6
+        wire = []
+        responses = iter((
+            self.result('{"participation":"reply","text":"","delay_seconds":null}'),
+            self.result('打顺的那一下最爽了'),
+        ))
+        async def respond(profile, body, **kwargs):
+            wire.append(json.loads(json.dumps(body)))
+            return next(responses)
+        self.client.request.side_effect = respond
+        plan, attempts, _ = await self.candidate(value)
+        self.assertTrue(plan['send_allowed'])
+        self.assertEqual(len(attempts), 2)
+        self.assertEqual(len(wire), 2)
+        for body in wire:
+            rows = [json.loads(item['content']) for item in body['input'][1:]]
+            self.assertEqual([row['message_id'] for row in rows], [value['message_id']])
+            self.assertNotIn('收购', json.dumps(body, ensure_ascii=False))
+
+    async def test_lightweight_unresolved_quote_cancels_old_candidate_and_blocks_evidence_inheritance(self):
+        self.enable_lightweight_fact_fixture()
+        self.client.request.side_effect = [
+            self.result('{"participation":"reply","text":"","delay_seconds":null}'),
+            self.result('多练几次就能找到手感'),
+        ]
+        old = self.observation('这次激奏 JUST 区间太难了')
+        self.tick += 1.6
+        prepared, _, _ = await self.candidate(old)
+        self.assertTrue(prepared['send_allowed'])
+        self.now += 1
+        self.filtered_group_observation('这是群友之间的引用回复', 2)
+        self.assertFalse(self.backend.lookup(prepared['request_id'], 'e1')['send_allowed'])
+        self.backend.finish(self.backend.works[prepared['delivery_id']], 'aborted', reason='observation_replaced')
+        self.tick += 61
+        self.now += 1
+        current = self.observation('那区间怎么计分？', seq=3)
+        self.tick += 1.6
+        self.client.request.side_effect = None
+        self.client.request.return_value = self.result('{"participation":"skip","text":"","delay_seconds":null}')
+        wire = ChatAgentTests.capture_native_bodies(self)
+        plan, attempts, candidate = await self.candidate(current, 2)
+        self.assertFalse(plan['parts'])
+        self.assertEqual(len(attempts), 1)
+        self.assertFalse(candidate[0].evidence_route)
+        self.assertEqual([row.message_id for row in candidate[0].messages], [current['message_id']])
+        self.assertNotIn('这是群友之间的引用回复', json.dumps(wire, ensure_ascii=False))
+
     async def test_lightweight_fact_followup_reuses_opportunity_and_checks_approved_evidence(self):
         await self.lightweight_fact_question(after_opinion=True)
 
