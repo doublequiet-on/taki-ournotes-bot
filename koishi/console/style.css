@@ -295,6 +295,10 @@
 .taki-console .group-count { padding-left: 48px; }
 .taki-console .group-list > li > button:not(.group-entry) { margin: 0 0 0 40px; border-color: transparent; }
 .taki-console .request-toolbar { display: flex; align-items: end; flex-wrap: wrap; gap: 10px; }
+.taki-console form.request-toolbar { margin-block: 12px; }
+.taki-console form.request-toolbar label, .taki-console .request-case-form label { display: grid; gap: 4px; min-width: 0; }
+.taki-console .request-case-form { display: grid; gap: 10px; margin-block: 10px; }
+.taki-console .request-case-form button { justify-self: start; }
 .taki-console .filter-tabs { display: flex; flex-wrap: wrap; gap: 4px; padding: 4px; border-radius: 10px; background: var(--quiet); }
 .taki-console .filter-tabs button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; margin: 0; border-color: transparent; background: transparent; }
 .taki-console .filter-tabs button[aria-pressed=true] { border-color: var(--line); background: var(--paper); color: var(--accent); }

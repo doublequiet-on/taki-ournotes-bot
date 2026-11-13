@@ -1,5 +1,5 @@
 import { groupChatView, lightweightStatus, proactiveSettings, proactiveStatus } from './chat.js';
-import { dailyCostSummary, executionView, proactiveBudgetObservation } from './costs.js';
+import { dailyCostSummary, executionView, proactiveBudgetObservation, requestConclusion } from './costs.js';
 import { h } from './runtime.js';
 import { groupQuota } from './model.js';
 export const labels={processing:'处理中',complete:'平台确认全部发送',partial:'部分发送',failed:'已确认失败',uncertain:'发送结果不确定',closed_unsent:'已关闭，未确认发送',unknown:'未知'};
@@ -128,17 +128,55 @@ function groupSnapshot(s){
 }
 export function requestsView(s,open,params,search,more,group,close,selected,narrow) {
   const list=s.requests.value?.sections?.requests?.data,detail=selected&&s.detail.value?.sections?.request?.data;
-  return h('div',{class:'requests-page'},[h('div',{class:'page-heading'},[h('h1','请求记录'),h('small','最近 24 小时')]),
+  const conclusion=detail&&requestConclusion(detail);
+  const groups=s.groups.value?.sections?.groups?.data||[];
+  return h('div',{class:'requests-page'},[h('div',{class:'page-heading'},[h('h1','请求记录'),h('small',params.attention==='true'?'历史未决':params.from?'自选时间':'最近 24 小时')]),
     guide('机器人没有回复，先从这里找','点击“需要关注”查看仍在处理、部分发送或结果不确定的请求，再打开记录看详情。结果不确定时先核对 QQ 群，不要立即重发；平台确认发送也不等于用户已读。'),
-    h('div',{class:'request-toolbar'},[h('div',{class:'filter-tabs'},[h('button',{'aria-pressed':params.attention!=='true',onClick:()=>search(false)},'最近 24 小时'),h('button',{'aria-pressed':params.attention==='true',onClick:()=>search(true)},'需要关注（含历史未决）')]),
+    h('div',{class:'request-toolbar'},[h('div',{class:'filter-tabs'},[h('button',{'aria-pressed':params.attention!=='true',onClick:()=>{delete params.from;delete params.to;search(false);}},'最近 24 小时'),h('button',{'aria-pressed':params.attention==='true',onClick:()=>search(true)},'需要关注（含历史未决）')]),
       h('label',['状态 ',h('select',{'aria-label':'发送状态',value:params.state||'',onChange:e => {params.state=e.target.value;search(params.attention==='true');}},[h('option',{value:''},'全部状态'),...Object.entries(labels).map(([value,text]) => h('option',{value},text))])])]),
-    params.group_id&&h('p',[`当前群 …${params.group_id.slice(-6)} `,button('清除群筛选',()=>{delete params.group_id;search(false);})]),
+    h('form',{class:'request-toolbar',onSubmit:event=>{
+      event.preventDefault();
+      const data=new FormData(event.currentTarget);
+      const groupId=data.get('group').trim();
+      const from=data.get('from'),to=data.get('to');
+      const start=from?Date.parse(from+'+08:00')/1000:null;
+      const end=to?Date.parse(to+'+08:00')/1000:null;
+      if((from||to)&&(!Number.isFinite(start)||!Number.isFinite(end)||start>=end||end-start>604800||end>Date.now()/1000+30)){
+        s.showMessage('requests','请填写有效的起止时间，时间范围最多 7 天，结束时间不能晚于现在。');return;
+      }
+      for(const key of ['group_id','from','to'])delete params[key];
+      if(groupId)params.group_id=groupId;
+      if(start!==null){params.from=String(start);params.to=String(end);}
+      s.showMessage('requests','');search(false);
+    }},[
+      h('label',['群 ',h('input',{name:'group',value:params.group_id||'',placeholder:'群 OpenID',list:'taki-request-groups',pattern:'[A-Za-z0-9_\\-]{1,128}',maxlength:128})]),
+      h('datalist',{id:'taki-request-groups'},groups.map(group=>h('option',{value:group.group_id},
+        s.groups.value?.policy?.groups?.[group.group_id]?.label||'群 …'+group.group_id.slice(-6)))),
+      ...[['from','开始（香港时间）'],['to','结束（香港时间）']].map(([key,label])=>h('label',[label,h('input',{name:key,type:'datetime-local',
+        value:params[key]?new Date(Number(params[key])*1000+28800000).toISOString().slice(0,16):''})])),
+      h('button',{type:'submit'},'筛选请求'),
+      button('清除群和时间',()=>{for(const key of ['group_id','from','to'])delete params[key];search(false);})
+    ]),
     h('div',{class:'record-workspace'},[h('section',{class:'record-directory'},[h('div',{class:'card-heading'},[h('h2','已受理请求'),h('small',list?`当前 ${list.items.length} 条`:'尚未取得')]),
       list&&!list.items.length&&h('p','没有符合条件的记录。'),h('ul',{class:'record-list'},(list?.items||[]).map(item => row(item,open,s.groups.value))),
       list&&h('small',`${stamp(list.from)} 至 ${stamp(list.to)} · 平台确认不代表客户端已读`),list?.next_cursor && button('下一页',() => more(list.next_cursor))]),
       narrow&&detail&&h('div',{class:'inspector-scrim','aria-hidden':'true',onClick:close}),
-      detail?h('section',{class:'request-inspector',role:narrow?'dialog':undefined,'aria-modal':narrow?'true':undefined,'aria-label':narrow?'查询详情':undefined,'data-inspector':narrow?'request':undefined},[h('div',{class:'card-heading'},[h('h2','查询详情'),h('button',{'aria-label':'关闭查询详情',onClick:close},'关闭')]),detail.group_id&&button('查看关联群',()=>group(detail.group_id)),h('p',{class:['state-pill',detail.delivery_state]},deliveryLabel(detail)),h('p',`业务结果：${names[detail.business_outcome]||detail.business_outcome} · 观测：${names[detail.observation]||detail.observation}`),
-        h('p',names[detail.missing_reason]||'准备是生成回复的时间；上传与发送是交给平台的时间。缺失阶段不代表耗时为零。'),button('导出此请求诊断',()=>s.exportDiagnostic(selected,'requests')),executionView(detail),technical('查看完整记录与阶段耗时',[h('p','各阶段采用各进程单调时钟，不跨进程相减。'),facts(detail)])]):h('section',{class:'inspector-empty'},selected?'正在读取查询详情':'选择一条记录查看详情')])]);
+      detail?h('section',{class:'request-inspector',role:narrow?'dialog':undefined,'aria-modal':narrow?'true':undefined,'aria-label':narrow?'查询详情':undefined,'data-inspector':narrow?'request':undefined},[h('div',{class:'card-heading'},[h('h2','请求详情'),h('button',{'aria-label':'关闭查询详情',onClick:close},'关闭')]),detail.group_id&&button('查看关联群',()=>group(detail.group_id)),h('p',{class:['state-pill',detail.delivery_state]},deliveryLabel(detail)),h('p',`业务结果：${names[detail.business_outcome]||detail.business_outcome} · 观测：${names[detail.observation]||detail.observation}`),
+        conclusion&&h('p',{class:'field-note'},[h('strong',conclusion)]),
+        h('p',names[detail.missing_reason]||'准备是生成回复的时间；上传与发送是交给平台的时间。缺失阶段不代表耗时为零。'),button('导出此请求诊断',()=>s.exportDiagnostic(selected,'requests')),
+        h('details',[h('summary','保存为回归用例'),h('form',{class:'request-case-form',onSubmit:event=>{
+          event.preventDefault();
+          const values=new FormData(event.currentTarget);
+          const fixture=Object.fromEntries(['title','sample','expected','unknown'].map(key=>[key,values.get(key).trim()]));
+          if(!fixture.title||!fixture.sample||!fixture.expected){s.showMessage('requests','请填写名称、样例和预期动作。');return;}
+          void s.exportDiagnostic(selected,'requests',fixture);
+        }},[
+          h('label',['用例名称',h('input',{name:'title',required:true,maxlength:120})]),
+          h('label',['脱敏固定样例',h('textarea',{name:'sample',required:true,maxlength:3000,rows:3})]),
+          h('label',['预期动作',h('textarea',{name:'expected',required:true,maxlength:1500,rows:2})]),
+          h('label',['待验证项',h('textarea',{name:'unknown',maxlength:1500,rows:2})]),
+          h('button',{type:'submit'},'下载用例 JSON')
+        ])]),executionView(detail),technical('查看完整记录与阶段耗时',[h('p','各阶段采用各进程单调时钟，不跨进程相减。'),facts(detail)])]):h('section',{class:'inspector-empty'},selected?'正在读取查询详情':'选择一条记录查看详情')])]);
 }
 const groupPanes=[['proactive','主动接话'],['conversation','交流与记忆'],['policy','查询策略']];
 export function groupsView(s,requests,openGroup,closeGroup,groupOpen,narrow,pane,filter,message) {

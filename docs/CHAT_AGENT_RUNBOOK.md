@@ -100,6 +100,14 @@ python -B scripts/inspect_model_config.py --config /path/to/model-proactive-v1.j
 
 主动观察在接纳及发送前核验删除墓碑；重试不能重新带入已删正文。知识引用继承原页租约；ACK 绑定的知识范围用于明确追问，重启后缺少范围须重新说明。联网批准在每次请求前及交付前重验。图片字节与十秒读取期限按整轮累计，覆盖当前图、引用和工具重读。带图的明确斜杠命令仍须通过命令识别。
 
+## 从控制台定位请求和保留回归样例
+
+在「请求记录」输入群和香港时间范围，打开请求后先看阶段结论，再展开模型尝试。尚未受理的主动接话仍在该群的「交流与记忆」查看。诊断保留期沿用原规则。
+
+剧情诊断分开显示工具注册、放入待发模型请求、检索状态和原文结果加入后续上下文。实际模型调用以尝试账本为准。引用图诊断显示引用目标是否关联、图片是否加载；尝试详情中的入模图片数来自传输记录。
+
+「保存为回归用例」将人工填写的脱敏样例、预期动作和待验证项与请求诊断一起下载为 JSON。文件供离线复现与交接，导出时观察到的网关版本单列。用例不写入运行账本。
+
 ## 模型传输诊断
 
 每次原生模型 HTTP 在结束或中断时写一条 `transport` 事件，并在 `ournotes_bot.model_transport` 日志中以 request／attempt ID 关联。阶段为 connect、dns、upload、wait_headers、read_body、complete；固定 name 区分 disconnected、timeout、connect、transport、cancelled、response_too_large、interrupted 和正常 none。费用未知仍按原账本上界处理，不因诊断重试请求。

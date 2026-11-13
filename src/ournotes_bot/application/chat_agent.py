@@ -1018,12 +1018,22 @@ class ChatAgent:
             visible=decision_messages[1:]
         else:
             visible=await self.image_messages(work,history,deadline,quote_preview=preview)
+        def trace_evidence(action,status):
+            runtime.backend.diagnostics.chat_event(request.request_id,'evidence',runtime.backend.clock(),
+                                                    action=action,status=status)
+
         quote_status=None
         if work.unavailable_quote_image or not quote_prefix and request.quote_hint=='image' and not (context_request.reference and
                 (self.image_scope(request),context_request.reference['message_id']) in work.image_sources):
             quote_status='image_unavailable'
         elif not quote_prefix and not preview and not context_request.reference and (work.missing_anchor or request.quote_hint):
             quote_status='quote_unavailable'
+        if request.quote_hint=='image' or work.unavailable_quote_image:
+            reference=context_request.reference
+            trace_evidence('quote_image','paired' if reference else 'unpaired')
+            if reference:
+                loaded=(self.image_scope(request),reference['message_id']) in work.image_sources
+                trace_evidence('quote_image','loaded' if loaded else 'unavailable')
         if quote_status or separate_preview:
             for index,message in enumerate(visible):
                 data=json.loads(message['content'])
@@ -1086,7 +1096,9 @@ class ChatAgent:
                 obj({'query':string(300),'filters':obj({k:string(100) for k in ('work','source_kind','character','source_id','chapter')})},('query',)),'story')
             registry['story_read']=Tool('story_read','读取本轮已返回的剧情handle及前后场景；未知或撤回不可猜测。',
                 obj({'handle':string(200),'before':{'type':'integer','minimum':0,'maximum':2},'after':{'type':'integer','minimum':0,'maximum':2}},('handle',)),'story')
+            trace_evidence('story_registry','registered')
         story_handles=set()
+        story_tools_prepared=set()
         story_fact_read=False
         def evidence_reply(text,status='success'):
             text=self.proactive.decision(work,json.dumps(dict(participation='reply',text=text),ensure_ascii=False))
@@ -1094,6 +1106,7 @@ class ChatAgent:
 
         if lookup == 'story_search':
             if not self.story:
+                trace_evidence('story_registry','story_not_configured')
                 text=quote_prefix+'我还没找到能核对这件事的邦邦资料。'
                 return evidence_reply(text,'source_unavailable') if proactive_evidence else PreparedReply(
                     text,business_status='source_unavailable')
@@ -1178,6 +1191,11 @@ class ChatAgent:
                 active_registry = {required:registry[required]} if required else registry
                 if proactive_evidence and not required:
                     active_registry = {}
+                if not final:
+                    for name in ('story_search','story_read'):
+                        if name in active_registry and name not in story_tools_prepared:
+                            trace_evidence(name,'prepared')
+                            story_tools_prepared.add(name)
                 try:
                     work.proactive_generation=bool(proactive_evidence and final)
                     result=await runtime.attempt(work,messages,[] if final else [tool.wire() for tool in active_registry.values()],
@@ -1332,6 +1350,9 @@ class ChatAgent:
                             next_tools = []
                         if runtime.input_bound(work,projected,next_tools)>work.model_snapshot.profile.max_input_tokens-2048:
                             force_final=True
+                    if call.name in ('story_search','story_read') and output['status'] in (
+                            'not_available','source_unavailable','no_results','ok','budget_exhausted'):
+                        trace_evidence(call.name,output['status'])
                     if proactive_evidence and required and output['status'] in ('budget_exhausted','quota_exceeded'):
                         return skip_proactive_evidence('proactive_evidence_budget_exhausted',
                                                        reason=output.get('reason',output['status']))
@@ -1400,6 +1421,8 @@ class ChatAgent:
                         self.runtime.backend.diagnostics.chat_event(work.request.request_id,'research',self.runtime.backend.clock(),**data)
                     self.proactive.trace(work,'tool',name=call.name if call.name in registry else 'unregistered',status=output['status'])
                     messages.append(tool_message)
+                    if call.name=='story_read' and output['status']=='ok':
+                        trace_evidence('story_read','result_in_context')
                     if image_input:messages.append(image_input)
                     if mechanic_passage or route == 'just_minimum' and just_fact_ready:
                         if mechanic_passage:
