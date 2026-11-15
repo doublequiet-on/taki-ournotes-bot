@@ -175,10 +175,13 @@ class SongTraitsTests(unittest.TestCase):
         red = replace(blue, id=100002, traits=SongTraits(1, ('JUST',)))
         missing_color = replace(blue, id=100003, traits=SongTraits(None, ('JUST',)))
         missing_missions = replace(blue, id=100004, traits=SongTraits(2, None))
+        red_without_missions = replace(blue, id=100005, traits=SongTraits(1, None))
+        combo_without_color = replace(blue, id=100006, traits=SongTraits(None, ('COMBO',)))
         command = '/查曲 蓝色 MyGO EX 激奏=JUST'
         cases = (
             ([blue, red, missing_missions], 'success', (100001,), '有 1 首歌曲缺少所需激奏资料'),
             ([red], 'empty', (), '没有符合条件的歌曲。'),
+            ([red_without_missions, combo_without_color], 'empty', (), '没有符合条件的歌曲。'),
             ([red, missing_color], 'empty', (), '现有资料中未确认有歌曲符合条件。'),
             ([missing_color], 'data_unavailable', (), '缺少颜色）'),
             ([missing_missions], 'data_unavailable', (), '缺少激奏）'),

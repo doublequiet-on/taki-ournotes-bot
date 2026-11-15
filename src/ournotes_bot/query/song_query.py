@@ -204,15 +204,20 @@ def traits_match(request, song):
         return False
     if not (request.colors or request.mode):
         return True
-    t = song.traits
-    if _missing_traits(request, t):
+    traits = song.traits
+    if traits is None:
         return None
-    if request.colors and t.color not in request.colors:
+    if request.colors and traits.color is not None and traits.color not in request.colors:
         return False
-    seq, wanted = t.missions or (), request.missions
-    return not request.mode or {"contains": bool(set(wanted) & set(seq)), "all": set(wanted) <= set(seq),
-        "pure": bool(seq) and set(seq) == set(wanted), "mixed": len(set(seq)) > 1,
-        "exact": seq == wanted}[request.mode]
+    seq, wanted = traits.missions, request.missions
+    if request.mode and seq:
+        matches = {
+            "contains": bool(set(wanted) & set(seq)), "all": set(wanted) <= set(seq),
+            "pure": set(seq) == set(wanted), "mixed": len(set(seq)) > 1, "exact": seq == wanted,
+        }
+        if not matches[request.mode]:
+            return False
+    return None if _missing_traits(request, traits) else True
 
 
 @dataclass(frozen=True)
