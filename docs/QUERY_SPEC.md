@@ -46,16 +46,18 @@
 
 ## 成员卡与 SNAP 字段
 
-`CardRequest` 保存 `support/mode/card_id/page/query/filters`；`CardAnswer.cards` 是完整结果，`visible` 为每页 16 张。默认列表，稀有度降序、ID 升序，用户不能指定其他排序。纯 ID 及明确数字 ID 进详情；卡名或其他条件即使只命中一张仍为列表。独立卡面必须给 ID。
+`CardRequest` 保存对象、模式、ID、页码、展示条件、筛选条件及可选的成员卡名匹配集；`CardAnswer.cards` 是完整结果，`visible` 为每页 16 张。默认列表，稀有度降序、ID 升序，用户不能指定其他排序。纯 ID 及明确数字 ID 进详情；卡名或其他条件即使只命中一张仍为列表。独立卡面必须给 ID。
 
 | 用户字段 → `filters` 键 | 值、默认和组合 | 适用与入口差异 |
 |---|---|---|
 | 角色 → `character` | 已核实角色/昵称；默认不限，同维度 OR | 两类卡均可；SNAP 多人参与关系，不按拼接展示名推断 |
 | 乐队 → `band` | 已核实乐队/简称；默认不限，同维度 OR | 两类卡；SNAP 按关联乐队；模型入口仍受能力与实体校验限制 |
-| 卡名 → `title_ids` | 精确原名/多语言名/人工别名解析为 ID 集；默认不限 | 各实体类别隔离；不默认拥有角色查询的全部模糊匹配规则 |
+| 卡名 → `matched_title_ids` 或 `title_ids` | 成员卡直接命令优先匹配完整原名、多语言标题或已收录别名，也支持一段连续标题。匹配集与其他条件取交集 | 直接命令用 `卡名=` 或 `卡名:` 消除重名歧义，QQ 同时提供可复制的 ID 命令。留影卡、自然查询和结构化查询沿用原有解析契约 |
 | 稀有度 → `rarity` | R=2、SR=3、SSR=4；成员另有 BD=20，SNAP 另有 EX=10；默认不限，多选 OR | 两类不得互换 BD/EX；模型使用 `rarities` 数组多选；旧 `rarity` 参数保留 2/3/4/null |
 | 颜色 → `type` | 红1/蓝2/绿3/黄4/紫5；默认不限，多选 OR | 直接、本地口语和模型 `colors` 数组支持 |
-| LIVE → `live` | 分数提升 `score`、LIFE回复 `life`、判定强化 `judgement`；SNAP 另有技能延长 `duration`；默认不限，多选 OR | 成员卡拒绝技能延长；SNAP EX 可有两项 LIVE 支援，不合并成一个臆造技能 |
+| 队长 → `leader` | 同色、同技、同激、异色；多选 OR。由同版 Lv.5 效果与目标确定 | 成员卡直接命令支持 `队长 同色` 或 `队长=同色`。纯乐队加成已知无此分类，未识别机制或缺少字段视为未知 |
+| LIVE → `live` | 分数提升 `score`、LIFE回复 `life`、判定强化 `judgement`；SNAP 另有技能延长 `duration`；默认不限，多选 OR | 成员卡直接命令支持分卡、奶卡、判卡。SNAP EX 可保留两项 LIVE 支援 |
+| 演出条件和数值 → `CardRequest.live_conditions/live_score_ranges` | `血量加分`、`PERFECT加分` 与 Lv.5 演出加分匹配同一已核实效果。数值以百分之一百分点表示，含边界，多档任选 | 成员卡直接命令。纯整数按 ID，整数搭配可识别卡牌筛选条件时按演出得分。显式 `ID` 保留 ID 与其他条件组合 |
 | 激奏/击奏 → `gekisou` | JUST/COMBO/LUCK；默认不限，多选 OR | 依来源分类；SNAP 的 `not_applicable` 是不适用，不是未知或可按 JUST 命中 |
 | 得意 → `tags` | 来源标签或核实的乐队标签；多个标签要求**全部包含** | 成员专属；SNAP 明确拒绝；模型使用来源标签 ID 数组并校验原文 |
 | 技能词/类型 → `skill_query/skill_kind` | `leader/live/gekisou`，词须来自原句；在技能名称、描述及多语言文案中匹配 | 结构化成员技能查询独立于 `CardRequest` 分类；本地及模型成员能力支持，不能泛化成 SNAP 任意技能反查 |

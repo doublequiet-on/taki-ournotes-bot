@@ -248,7 +248,7 @@ async def _deliver_reply(message, target_id: str, group: bool, reply: PreparedRe
                 caption={"content": " "}
                 if isinstance(reply.context,DeliveryCursor):
                     cursor=reply.context
-                    caption['content']=f'图片 {cursor.sent}/{cursor.total}'+('；/继续 发送其余图片。' if cursor.remaining else '；本次已全部发送。')
+                    caption['content'] = cursor.image_caption
                 outcome = _receipt(await send(**target, msg_type=7, media=media, **caption))
             except Exception as exc:
                 logger.error("%s图片发送失败，结果不确定，不自动重发；错误类型=%s", channel, type(exc).__name__)

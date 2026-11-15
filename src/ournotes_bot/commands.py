@@ -84,7 +84,7 @@ HELP_TEXTS['zh'] = HELP_TEXT + '\n/语言：查看英文和日文指令'
 COMMAND_HELP = {
     "songs": "查询歌曲列表，QQ单图优先，超限完整续发。支持歌名、昵称、乐队、ID、等级；27包含27.5，lv比较式未指定难度时按最高等级。可加颜色=蓝/绿、激奏=JUST、激奏=纯COMBO、激奏=混合或激奏=JUST/JUST/COMBO，并与EX、lv<=25、页N组合。同颜色多选任选，不同维度同时满足；包含全部用 激奏=包含全部JUST/COMBO。\n例：/查曲 蓝色 MyGO EX 激奏=JUST 页2",
     "chart": "查询谱面等级与 Note 数，支持歌名或曲目 ID。100001 可简写为 1。可选难度：EASY、NORMAL、HARD、EXPERT；不指定时显示全部难度。\n可加镜像或反转，左右翻转音符与划键方向；末尾加 5/6.5/8/5/5 按 S1～S5 指定最终秒数，也兼容 覆盖= 写法。\n用法：/查谱面 <歌名或ID> [难度] [镜像／反转]\n示例：/查谱面 1 EXPERT 镜像、/查谱面 100001 反转",
-    "cards": "角色卡条件查询始终返回列表，QQ单图优先，超限完整续发，显示完整总数，剩余内容用 /继续。ID精确查详情，/查卡面 ID 只发公开full卡面。\n用法：/查卡 [BD/SSR/SR/R] [颜色=红色,蓝色] [角色=tmr,skk] [乐队=MyGO] [LIVE=分数提升] [击奏=JUST] [得意=MyGO] [页N]\n不同维度AND、同维度多选OR，得意标签全部包含。BD为生日卡；旧二/三/四星别名保留。",
+    "cards": "角色卡条件查询始终返回列表，QQ单图优先，超限完整续发，显示完整总数，剩余内容用 /继续。ID精确查详情，/查卡面 ID 只发公开full卡面。\n用法：/查卡 [卡名] [BD/SSR/SR/R] [颜色=红色,蓝色] [角色=tmr,skk] [乐队=MyGO] [队长 同色] [LIVE=分数提升] [击奏=JUST] [得意=MyGO] [页N]\n不同维度AND、同维度多选OR，得意标签全部包含。BD为生日卡；旧二/三/四星别名保留。\n队长类型：同色、同技、同激、异色。例如 /查卡 mygo 队长 异色。\n演出短写：分卡、奶卡、判卡、血量加分、PERFECT加分。纯数字查ID，带筛选的数字查Lv.5演出加分，例如 /查卡 mygo 155、/查卡 SSR 150以上、/查卡 演出120到155。ID加条件用 /查卡 id 72 mygo。",
     "support_cards": "留影卡条件查询返回完整列表，QQ单图优先；ID精确查详情，/查留影卡面 ID 只发卡面。\n用法：/查留影卡 [SSR/EX/SR/R] [颜色=红色,蓝色] [角色=tmr,skk] [乐队=MyGO] [LIVE=技能延长] [击奏=LUCK] [页N]\nLIVE可选分数提升、LIFE回复、判定强化、技能延长；以实际资料为准。角色任选且去重，乐队另行筛选；不支持得意标签；BD仅适用于角色卡。",
     "abbrev": "查询已收录的角色、乐队等昵称；也可直接用昵称查曲或查卡。\n用法：/查缩写 <昵称>\n示例：/查缩写 skk、/查缩写 茉团、/查卡 墨缇丝",
 }
@@ -93,14 +93,14 @@ COMMAND_HELPS = {
     "en": {
         "songs": "Search by title, band, ID, or level; QQ shows complete results; use /继续 for unsent parts. 27 and lv27 match base level 27; 27.5 and lv27.5 match the displayed level exactly. An exact song ID takes priority over a bare number.\nUsage: /song [title or ID] [level or lv level] [page N]\nExample: /song mygo 27 page 2",
         "chart": "Look up level and note count by title or ID. Song 100001 can be shortened to 1. Optional difficulty: EASY, NORMAL, HARD, EXPERT.\nUsage: /chart <title or ID> [difficulty]\nExample: /chart 1 EXPERT",
-        "cards": "Search by card ID, character, card title, or band, QQ shows complete results; use /继续 for unsent parts.\nUsage: /card <query or ID> [page N]\nExample: /card tomori or /card mygo page 2",
+        "cards": "Search by card ID, character, card title, or band. QQ shows complete results; use /继续 for unsent parts.\nUsage: /card <query or ID> [page N]\nExamples: /card tomori, /card mygo page 2. A lone integer is a card ID. To filter Lv.5 LIVE score gain, use /card mygo 155 or /card 155%. To test an ID against the band filter, use /card id 72 mygo.",
         "support_cards": "Search support cards by ID, character, or title, QQ shows complete results; use /继续 for unsent parts.\nUsage: /support <query or ID> [page N]\nExample: /support tomori or /support 1",
         "abbrev": "Look up verified character and band nicknames.\nUsage: /abbrev <nickname>\nExample: /abbrev skk",
     },
     "ja": {
         "songs": "曲名・バンド・ID・レベルで検索します。QQでは全件表示し、未送信分は /继续 で受け取れます。27とlv27は基本レベル27、27.5とlv27.5は表示レベルを完全一致で検索します。数字が曲IDと一致する場合はIDを優先します。\n使い方：/曲 [曲名またはID] [レベルまたはlvレベル] [ページN]\n例：/曲 mygo 27 ページ2",
         "chart": "曲名またはIDでレベルとノーツ数を確認します。100001は1と省略できます。難易度省略時は全難易度を表示します。\n使い方：/譜面 <曲名またはID> [難易度]\n例：/譜面 1 EXPERT",
-        "cards": "カードID、キャラクター名、カード名、バンド名で検索します。QQでは全件表示し、未送信分は /继续 で受け取れます。\n使い方：/カード <名前またはID> [ページN]\n例：/カード 祥子、/カード mygo ページ2、/カード 51",
+        "cards": "カードID、キャラクター名、カード名、バンド名で検索します。QQでは全件表示し、未送信分は /继续 で受け取れます。\n使い方：/カード <名前またはID> [ページN]\n例：/カード 祥子、/カード mygo ページ2、/カード 51。整数だけの場合はカードIDです。Lv.5ライブスコア上昇率の検索は /カード mygo 155 または /カード 155%。IDとバンド指定の併用は /カード id 72 mygo。",
         "support_cards": "サポートカードID、キャラクター名、カード名で検索します。QQでは全件表示し、未送信分は /继续 で受け取れます。\n使い方：/サポート <名前またはID> [ページN]\n例：/サポート ともり、/サポート 1",
         "abbrev": "登録済みのキャラクター・バンドなどの略称を調べます。\n使い方：/略称 <略称>\n例：/略称 skk",
     },
@@ -597,7 +597,8 @@ def resolve_command(content: str, repository: SongRepository) -> CommandResult |
     if kind in {"cards", "support_cards"} or head in {"查角色卡", "查snap", "snap", "查支援卡面", "查snap卡面"}:
         support = kind == "support_cards" or head in {"查snap", "snap", "查支援卡面", "查snap卡面"}
         query = parts[1] if len(parts) > 1 else ""
-        answer = query_cards(query, repository, support=support, art=head in {"查留影卡面", "查卡面", "查支援卡面", "查snap卡面"})
+        art = head in {"查留影卡面", "查卡面", "查支援卡面", "查snap卡面"}
+        answer = query_cards(query, repository, support=support, art=art, member_command=not support and not art)
         kind = "support_cards" if support else "cards"
         return CommandResult((kind, answer.request.query, answer.request.page),
                              cards=() if support else answer.cards,

@@ -428,6 +428,13 @@ def resolve_exact_alias(intent: str, term: str, repository: SongRepository) -> A
     return AnchorResult(next(iter(found)) if len(found) == 1 else None, len(found) > 1)
 
 
+def card_alias_spellings() -> tuple[str, ...]:
+    """Lexical spellings only. Match each candidate through resolve_exact_alias."""
+    entries = _aliases()
+    return (*CHARACTER_ALIASES, *(alias for kind in ("card", "character", "band")
+                                 for alias in entries.get(kind, {})))
+
+
 def known_alias_names(repository: SongRepository) -> tuple[str, ...]:
     """Only list nicknames that ordinary song/card commands can actually use."""
     entries = _aliases()
