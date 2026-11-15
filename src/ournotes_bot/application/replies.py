@@ -18,6 +18,8 @@ from ..commands import (CommandResult, handle_command, locale_for, page_notice,
                        page_slice, resolve_command, split_commands)
 from ..config import QQ_PASSIVE_REPLY_LIMIT, REPLY_ORDER_TIMEOUT_SECONDS
 from ..data import SongRepository
+from ..i18n import tr
+from ..sources.haneoka.song_traits import describe as describe_song_traits
 from ..structured_query import QueryResult, query_page_notice
 from ..query.continuation import (QueryContext, catalog_version,
                                   capture_context, execute_followup, parse_operation)
@@ -674,7 +676,8 @@ def complete_list_reply(result,repository,locale,candidate):
     for part,(start,stop) in zip(parts,ranges):
         text='\n'.join(f'{i+1}. ID {r.id} '+localized_text(r,'title',locale)+' · '+
                        (localized_text(r,'character',locale)+'\n'+'\n'.join(localized_text(skill,'description',locale) for skill in r.skills)
-                        if hasattr(r,'skills') else localized_text(r,'band',locale)+' · '+' / '.join(f'{ch.difficulty} {ch.display_level:g} ({ch.notes if ch.notes is not None else "?"} Note)' for ch in r.charts))
+                        if hasattr(r,'skills') else localized_text(r,'band',locale)+' · '+' / '.join(f'{ch.difficulty} {ch.display_level:g} ({ch.notes if ch.notes is not None else "?"} Note)' for ch in r.charts)
+                        +'\n'+describe_song_traits(r))
                        for i,r in enumerate(records[start:stop],start))
         total=len({r.id for r in records})
         text+=f'\n共 {total} 条，本图 {start+1}–{stop}。'
@@ -684,6 +687,7 @@ def complete_list_reply(result,repository,locale,candidate):
             from ..query.card_catalog import catalog_notice
             text += catalog_notice(records)
         if notice:text+='\n'+notice
+        if songs and not cards:text+='\n'+tr(locale,'song_list_actions')
         ctx=replace(candidate,visible=candidate.visible[:stop]) if candidate else None
         pages.append(PreparedReply(text,part.image,context=ctx,visible_indices=tuple(range(start+1,stop+1))))
     return pages[0] if len(pages)==1 else PreparedReply('',pages=tuple(pages),context=candidate)
@@ -914,7 +918,8 @@ def complete_fallback(reply, result, locale, candidate, repository):
         rows = [f'{i}. ID {song.id} '+localized_text(song,'title',locale)+' · '+
                 localized_text(song,'band',locale)+'\n'+' / '.join(
                     f'{chart.difficulty} {chart.display_level:g} · {chart.notes if chart.notes is not None else "?"} Note'
-                    for chart in song.charts) for i,song in enumerate(records,1)]
+                    for chart in song.charts)+'\n'+describe_song_traits(song)
+                for i,song in enumerate(records,1)]
     else:
         return reply, candidate
     if candidate is not None:
@@ -923,6 +928,10 @@ def complete_fallback(reply, result, locale, candidate, repository):
     from ..query.card_catalog import catalog_notice
     from .reply_preparation import captured_catalog_notice
     notice=captured_catalog_notice(result,locale)
-    return '\n\n'.join(rows)+f'\n共 {len(records)} 条。'+(catalog_notice(records) if cards else '')+('\n'+notice if notice else ''), candidate
+    text = '\n\n'.join(rows)+f'\n共 {len(records)} 条。'+(catalog_notice(records) if cards else '')+('\n'+notice if notice else '')
+    kind = result.spec.intent if isinstance(result, QueryResult) else result.parsed[0]
+    if songs and not cards and kind in {'song', 'songs'}:
+        text += '\n'+tr(locale,'song_list_actions')
+    return text, candidate
 
 

@@ -402,7 +402,7 @@ class QueryAgent:
         from .on_query import information_command
         command = question if _DIRECT_COMMAND.match(question) else information_command(question, repository)
         if command is not None:
-            selected = resolve_command(command, repository)
+            selected = resolve_command(command, repository, direct_song_keywords=False)
             text = handle_command(command, repository, resolved=selected) or UNSUPPORTED
             state.final_code = self._command_code(selected)
             state.local_parsed = selected is not None and state.final_code != OutcomeCode.INVALID_ARGUMENTS
@@ -580,7 +580,7 @@ class QueryAgent:
             self._remember_state(state.question, state)
             return outcome
         assert cached.command is not None
-        selected = resolve_command(cached.command, repository)
+        selected = resolve_command(cached.command, repository, direct_song_keywords=False)
         state.final_code = self._command_code(selected)
         self._remember_state(state.question, state)
         return AgentOutcome(

@@ -6,6 +6,7 @@
 from collections import Counter
 from .labels import label as ui_label
 from ..data import localized_text
+from ..i18n import tr
 from .haneoka_theme import Canvas, MUTED, DIFFICULTIES, lines, font, mission_label, prepare_assets
 from .readable_pages import ImagePart
 from .image_output import MAX_IMAGE_EDGE, MAX_IMAGE_PIXELS, ImageBudgetError, encode_image
@@ -28,6 +29,7 @@ def render_list(songs,query,locale='zh',*,load,notice=''):
     head=136+len(lines(subtitle,width-108,24))*34
     notice_lines=lines(notice,width-108,24) if notice else ()
     footer_h=44+len(notice_lines)*34
+    actions=tr(locale,'song_list_actions')
     repeated = Counter((song.jacket_url, (128,128)) for song in songs)
     repeated.update((song.traits.attribute_icon, (48,48)) for song in songs
                     if song.traits and song.traits.attribute_icon)
@@ -71,7 +73,7 @@ def render_list(songs,query,locale='zh',*,load,notice=''):
                 c.line(x,y+heights[ri]-10,x+796)
             y+=heights[ri]
         for i,line in enumerate(notice_lines):c.text(54,height-footer_h+17+i*34,line,24,MUTED)
-        c.text(54,height-22,f'{start+1}–{stop} / {len(songs)} · '+ui_label('/查谱面 ID 难度',locale),22,MUTED)
+        c.text(54,height-22,f'{start+1}–{stop} / {len(songs)} · {actions}',22,MUTED)
         return c.image
     try:
         parts=[];start=0
