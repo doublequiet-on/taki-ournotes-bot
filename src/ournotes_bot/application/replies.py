@@ -721,32 +721,61 @@ def complete_detail_reply(result,repository,locale,candidate):
     return pages[0] if len(pages) == 1 else PreparedReply(text, pages=pages, context=candidate)
 
 
-def complete_chart_reply(result,repository,locale,candidate):
-    if result is None:return None
+def complete_chart_reply(result, repository, locale, candidate):
+    if result is None:
+        return None
     if isinstance(result,QueryResult):
         if result.spec.field or result.spec.intent!='chart' or result.chart is None:return None
-        song,charts=result.chart
+        song, charts = result.chart
+        difficulty = result.spec.difficulty
+        mirror = result.spec.chart_mirror
+        coverage = result.spec.chart_coverage
     else:
         if result.parsed[0]!='chart' or not result.songs:return None
-        song=result.songs[0];difficulty=result.parsed[2]
-        charts=tuple(c for c in song.charts if difficulty is None or c.difficulty==difficulty)
+        song = result.songs[0]
+        difficulty = result.parsed[2]
+        charts = tuple(c for c in song.charts if difficulty is None or c.difficulty == difficulty)
+        mirror = result.chart_mirror
+        coverage = result.chart_coverage
     from ..application.reply_preparation import prepare_chart_reply
+    from ..i18n import tr
     from ..rendering.chart_layout import render
-    prepared=prepare_chart_reply(song,charts,repository.chart_source,locale,
-                                 load_score=load_chart_score,load_data=load_chart_data)
+    from ..rendering.image_output import ImageBudgetError
     from ..rendering.labels import label as ui_label
-    mirror=result.spec.chart_mirror if isinstance(result, QueryResult) else result.chart_mirror
-    coverage=result.spec.chart_coverage if isinstance(result, QueryResult) else result.chart_coverage
-    if coverage and prepared.score is not None:
-        count=len(prepared.score.get('events',{}).get('skill',[]))
+
+    prepared = prepare_chart_reply(song, charts, repository.chart_source, locale,
+                                   load_score=load_chart_score, load_data=load_chart_data)
+    text = prepared.text
+    if mirror:
+        text += "\n" + ui_label("镜像谱面", locale)
+    if coverage:
+        text += "\n" + tr(locale, "chart_coverage_requested", seconds="/".join(f"{v:g}" for v in coverage))
+
+    if prepared.score is None:
+        if prepared.preview:
+            reason = tr(locale, "chart_source_unavailable", difficulty=prepared.preview)
+        elif difficulty and difficulty != "ALL":
+            reason = tr(locale, "chart_difficulty_missing", difficulty=difficulty)
+        else:
+            reason = tr(locale, "chart_catalog_empty")
+        if coverage:
+            reason += "\n" + tr(locale, "chart_coverage_not_applied")
+        return PreparedReply(text + "\n" + reason, context=candidate)
+
+    if coverage:
+        count = len(prepared.score.get('events', {}).get('skill', []))
         if count != len(coverage):
-            return PreparedReply(prepared.text + "\n" + ui_label("此谱面有 {count} 个技能点位，无法应用五段覆盖时间。", locale).format(count=count), context=candidate)
-    pages=render(prepared.song,prepared.charts,prepared.score,prepared.preview,prepared.locale,
-                 load=visual_asset,notice=prepared.notice,mirror=mirror,skill_durations=coverage)
-    text=prepared.text + ("\n" + ui_label("镜像谱面", locale) if mirror else "")
-    if coverage:text += "\n" + ui_label("技能覆盖（秒）", locale) + "：" + "/".join(f"{v:g}" for v in coverage)
-    replies=tuple(PreparedReply(text,image,context=candidate) for image in pages)
-    return replies[0] if len(replies)==1 else PreparedReply('',pages=replies,context=candidate)
+            reason = ui_label("此谱面有 {count} 个技能点位，无法应用五段覆盖时间。", locale).format(count=count)
+            return PreparedReply(text + "\n" + reason, context=candidate)
+    try:
+        pages = render(prepared.song, prepared.charts, prepared.score, prepared.preview, prepared.locale,
+                       load=visual_asset, notice=prepared.notice, mirror=mirror, skill_durations=coverage)
+    except Exception as exc:
+        logger.warning("谱面图片生成失败，改用文字；错误类型=%s", type(exc).__name__)
+        key = "chart_image_budget" if isinstance(exc, ImageBudgetError) else "chart_image_failed"
+        return PreparedReply(text + "\n" + tr(locale, key, difficulty=prepared.preview), context=candidate)
+    replies = tuple(PreparedReply(text, image, context=candidate) for image in pages)
+    return replies[0] if len(replies) == 1 else PreparedReply('', pages=replies, context=candidate)
 
 
 def song_detail_reply(result,repository,locale,candidate):
