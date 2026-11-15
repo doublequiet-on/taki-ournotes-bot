@@ -800,6 +800,43 @@ class CatalogTests(unittest.TestCase):
         result, _, _ = skill_record("leaderSkill", leader, peer, references(jp["skill-reference"]), references(intl["skill-reference"]))
         self.assertEqual(result.description, result.localized["description"]["ja"])
 
+    def test_member_perfect_score_bands_use_the_published_sum_and_release_condition(self):
+        from ournotes_bot.sources.haneoka.catalog_text import description, effect_context
+        from ournotes_bot.sources.haneoka.live_score import member_live_projection
+
+        refs = {
+            "targets": {key: {"raw": {"_skillTargetType": 4, "_judgement": judge}}
+                        for key, judge in ((41, 5), (46, 6), (43, 3))},
+            "conditionSets": {13: {"raw": {"_group": 13, "_conditionIds": [17]}}},
+            "conditions": {17: {"raw": {"_conditionType": 1020, "_isPositive": True,
+                                        "_conditionValues": [], "_conditionTargetIDs": [43]}}},
+        }
+        base = {"level": 5, "effectId": 55, "effectType": 2004, "effectValue": 14500,
+                "activationTimeSecond": 5, "targetIds": [41, 46]}
+        template = "PERFECT 得分{effects[0].value/100:F1}%\nGOOD以下を出すまでは{(effects[0].value + effects[1].value)/100:F1}%"
+        skill = {"description": [template],
+                 "effects": [base, {**base, "effectId": 60, "effectValue": 1000, "releaseConditionGroup": 13}]}
+        text, complete = description(template, effect_context(skill, refs, "ja"))
+        self.assertTrue(complete)
+        self.assertIn("155.0%", text)
+        categories, bands, summary = member_live_projection(skill, refs)
+        self.assertEqual(categories, ["score"])
+        self.assertEqual(bands, [{"value": 14500, "condition": "perfect"},
+                                 {"value": 15500, "condition": "perfect"}])
+        self.assertIn("出现 GOOD 或更低判定前+155%", summary)
+
+        # The same pair of raw values cannot imply a sum without the published formula.
+        skill["description"] = [template.replace("(effects[0].value + effects[1].value)", "effects[1].value")]
+        self.assertEqual(member_live_projection(skill, refs), (["score"], None, ""))
+
+    def test_cumulative_perfect_score_is_a_snap_live_category(self):
+        from ournotes_bot.sources.haneoka.catalog_records import category
+
+        effects = [{"level": 5, "effectType": 2001}, {"level": 5, "effectType": 2001}]
+        self.assertEqual(category("supportSkill", {"effects": effects}), "score")
+        self.assertIsNone(category("liveSkill", {"effects": effects}))
+        self.assertIsNone(category("supportSkill", {"effects": [*effects, {"level": 5, "effectType": 99999}]}))
+
     def test_unknown_templates_are_explicit_and_never_executed(self):
         for template in ('{__import__("os").system("whoami")}', '{effects[0].__class__}', '{effects[0].value/0}', '{broken}', '{unclosed'):
             text, complete = description(template, {"effects": [{"value": 123}]})
@@ -851,6 +888,47 @@ class CatalogTests(unittest.TestCase):
                 self.assertIn("索引不完整", answer.error)
                 # The separate, fully resolved gekisou slot remains usable.
                 self.assertEqual(len(query_cards("击奏=LUCK", repo, support=True).cards), 1)
+
+    def test_snap_list_copy_keeps_explicit_target_when_same_band_is_unverified(self):
+        from ournotes_bot.rendering.catalog_layout import summaries
+
+        def card():
+            return next(c for c in self.records()[2] if c.id == 1)
+
+        same_band, = card().catalog["bands"]
+        for target, suffix in ((same_band, ""), ("另一乐队", ""), (same_band, "，仅LIFE≥700时")):
+            with self.subTest(target=target, suffix=suffix):
+                source_text = (f"装配此技能的成员的演出技能发动时间延长2.50秒\n"
+                               f"若为「{target}」成员，\n则演出技能发动时间延长5.00秒{suffix}")
+                for docs in self.saved["documents"].values():
+                    skill = docs["support-cards"]["1"]["resolvedSkills"]["support"][0]
+                    skill["description"] = ["日本語の説明", "English description", "", source_text]
+                record = card()
+                self.assertEqual(record.skills[0].description, source_text)
+                self.assertEqual(summaries(record, "en")[0][2], "English description")
+                text = summaries(record)[0][2]
+                if target == same_band and not suffix:
+                    self.assertEqual(text, "演出延长+2.5s\n同队+5s")
+                else:
+                    self.assertIn(target, text)
+                    self.assertIn(suffix, text)
+                    self.assertNotIn("同队", text)
+
+    def test_snap_just_window_index_reads_the_level_five_effect(self):
+        for effect_type, expected in ((4004, [1]), (2001, [])):
+            with self.subTest(effect_type=effect_type):
+                for docs in self.saved["documents"].values():
+                    skill = docs["support-cards"]["1"]["resolvedSkills"]["gekisouSupport"][0]
+                    skill["gekisouMissionType"] = 3
+                    for effect in skill["effects"]:
+                        # Earlier levels cannot determine the Lv.5 effect.
+                        value = effect_type if effect["level"] == 5 else 4004
+                        effect["effectType"] = effect["raw"]["_skillEffectType"] = value
+                repo = self.main_repo()
+                repo.support_cards = [c for c in self.records()[2] if c.id == 1]
+                answer = query_cards("扩判", repo, support=True, direct_command=True)
+                self.assertEqual([c.id for c in answer.cards], expected)
+                self.assertEqual(answer.status, "success" if expected else "empty")
 
     def test_config_defaults_and_switches_are_independent(self):
         with patch("ournotes_bot.config.load_dotenv"), patch.dict(os.environ, {}, clear=True):

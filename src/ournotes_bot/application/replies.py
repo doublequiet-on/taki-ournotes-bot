@@ -18,6 +18,8 @@ from ..commands import (CommandResult, handle_command, locale_for, page_notice,
                        page_slice, resolve_command, split_commands)
 from ..config import QQ_PASSIVE_REPLY_LIMIT, REPLY_ORDER_TIMEOUT_SECONDS
 from ..data import SongRepository
+from ..i18n import tr
+from ..sources.haneoka.song_traits import describe as describe_song_traits
 from ..structured_query import QueryResult, query_page_notice
 from ..query.continuation import (QueryContext, catalog_version,
                                   capture_context, execute_followup, parse_operation)
@@ -127,6 +129,7 @@ class PreparedReply:
     layout_version: str = 'prepared-reply/1'
     evidence: tuple = ()
     evidence_deadline: float | None = None  # Monotonic; never extended by delivery/ACK.
+    keep_text_lines: bool = False
 
     @property
     def passive_slots(self):
@@ -141,6 +144,26 @@ class DeliveryCursor:
     total: int
     uncertain: bool = False
     origin: str = 'unknown'
+    mixed_media: bool = False
+    batch_end: int = 0
+
+    @property
+    def text_progress(self):
+        suffix = '；/继续 发送剩余结果。' if self._show_continue else ''
+        return f'\n结果 {self.sent}/{self.total}' + suffix
+
+    @property
+    def image_caption(self):
+        label = '结果' if self.mixed_media else '图片'
+        if self._show_continue:
+            suffix = '；/继续 发送剩余结果。' if self.mixed_media else '；/继续 发送其余图片。'
+        else:
+            suffix = '' if self.remaining else '；本次已全部发送。'
+        return f'{label} {self.sent}/{self.total}' + suffix
+
+    @property
+    def _show_continue(self):
+        return bool(self.remaining and (not self.mixed_media or self.sent >= self.batch_end))
 
     @property
     def retained_bytes(self):
@@ -150,16 +173,47 @@ class DeliveryCursor:
 def fallback_cursor(reply, *, text_limit=1800):
     previous=reply.context if isinstance(reply.context,DeliveryCursor) else None
     query=previous.query_context if previous else reply.context
-    chunks=text_chunks(reply.text,limit=text_limit-100)
-    pages=tuple(PreparedReply(t,context=query if i==len(chunks)-1 else None,parse_origin=reply.parse_origin,
-                              processing_route=reply.processing_route,evidence=reply.evidence,
-                              evidence_deadline=reply.evidence_deadline) for i,t in enumerate(chunks))
-    pages+=previous.remaining if previous else ()
-    return DeliveryCursor(None,pages,0,len(pages),origin=previous.origin if previous else reply.parse_origin)
+    text = reply.text.removesuffix(previous.text_progress) if previous else reply.text
+    fallback = replace(reply, text=text, image=None, context=query, fallback_texts=())
+    pages = _split_reply_text(fallback, text_limit - 100)
+    if previous:
+        pages += previous.remaining
+    return DeliveryCursor(None, pages, 0, len(pages), origin=previous.origin if previous else reply.parse_origin,
+                          mixed_media=bool((previous and previous.mixed_media) or any(page.image for page in pages)))
 
 
 def text_chunks(text,limit=1700):
     return tuple(text[i:i+limit] for i in range(0,len(text),limit)) or ('',)
+
+
+def _line_chunks(text, limit):
+    chunks = []
+    pending = ''
+    for line in text.splitlines(keepends=True):
+        if len(pending) + len(line) > limit and pending:
+            chunks.append(pending)
+            pending = ''
+        if len(line) > limit:
+            # Break an oversized line from the right so its ID command stays whole.
+            head = len(line) % limit or limit
+            sections = (line[:head], *text_chunks(line[head:], limit))
+            chunks.extend(sections[:-1])
+            line = sections[-1]
+        pending += line
+    if pending:
+        chunks.append(pending)
+    return tuple(chunks) or ('',)
+
+
+def _split_reply_text(reply, limit, *, image_already_prepared=False):
+    split = _line_chunks if reply.keep_text_lines else text_chunks
+    chunks = split(reply.text, limit)
+    last = len(chunks) - 1
+    # Candidate captions follow the matching image. They can retain its row scope.
+    keep_scope = image_already_prepared and reply.keep_text_lines and bool(reply.visible_indices)
+    return tuple(replace(reply, text=text, context=reply.context if keep_scope or index == last else None,
+                         visible_indices=reply.visible_indices if keep_scope or index == last else ())
+                 for index, text in enumerate(chunks))
 
 
 def expand_replies(replies: list[PreparedReply], reserve: int = 0, *, text_limit=1800) -> list[PreparedReply]:
@@ -184,11 +238,7 @@ def expand_replies(replies: list[PreparedReply], reserve: int = 0, *, text_limit
             if part.fallback_texts:
                 part=replace(part,text='\n'.join(part.fallback_texts),fallback_texts=())
             if part.image is None and len(part.text)>text_limit:
-                chunks=text_chunks(part.text,limit=text_limit-100)
-                pages.extend(PreparedReply(t,context=part.context if i==len(chunks)-1 else None,
-                                           business_status=part.business_status, command_index=part.command_index,
-                                           parse_origin=part.parse_origin, processing_route=part.processing_route,
-                                           evidence=part.evidence,evidence_deadline=part.evidence_deadline) for i,t in enumerate(chunks))
+                pages.extend(_split_reply_text(part, text_limit - 100, image_already_prepared=True))
             else:
                 pages.append(part)
     available=max(1,QQ_PASSIVE_REPLY_LIMIT-reserve)
@@ -198,11 +248,15 @@ def expand_replies(replies: list[PreparedReply], reserve: int = 0, *, text_limit
         # A continuation suffix consumes text capacity too; preserve every character.
         bounded=[]
         for page in pages:
-            chunks=text_chunks(page.text,limit=text_limit-100) if page.image is None and len(page.text)>text_limit-100 else (page.text,)
-            bounded.extend(replace(page,text=text,context=page.context if index==len(chunks)-1 else None)
-                           for index,text in enumerate(chunks))
+            if page.image is None and len(page.text) > text_limit - 100:
+                bounded.extend(_split_reply_text(page, text_limit - 100, image_already_prepared=True))
+            else:
+                bounded.append(page)
         pages=bounded
     total=base.total if base else len(pages)
+    mixed_media = bool((base and base.mixed_media)
+                       or (any(page.image for page in pages) and any(page.image is None for page in pages)))
+    batch_end = prior + min(available, len(pages))
     origins = {r.parse_origin for r in replies}
     origin = (base.origin if base else 'mixed' if len(replies)>1 else 'unknown' if 'unknown' in origins else
               'model' if 'model' in origins else 'local' if 'local' in origins else 'direct')
@@ -210,9 +264,9 @@ def expand_replies(replies: list[PreparedReply], reserve: int = 0, *, text_limit
     for offset,page in enumerate(pages[:available]):
         if keep:
             query=(page.context if isinstance(page.context,QueryContext) else base.query_context if base else None) if len(replies)==1 else None
-            cursor=DeliveryCursor(query,tuple(pages[offset+1:]),prior+offset+1,total,origin=origin)
-            suffix=f'\n结果 {cursor.sent}/{total}'+('；/继续 发送剩余结果。' if cursor.remaining else '')
-            page=replace(page,text=page.text+suffix,context=cursor)
+            cursor = DeliveryCursor(query, tuple(pages[offset+1:]), prior+offset+1, total, origin=origin,
+                                    mixed_media=mixed_media, batch_end=batch_end)
+            page = replace(page, text=page.text+cursor.text_progress, context=cursor)
         expanded.append(page)
     return expanded
 
@@ -223,9 +277,8 @@ def reserve_progress_slot(parts, *, overflow=False, text_limit=1800):
     first=parts[0]
     cursor=first.context if isinstance(first.context,DeliveryCursor) else None
     if cursor is not None:
-        suffix=f'\n结果 {cursor.sent}/{cursor.total}'+('；/继续 发送剩余结果。' if cursor.remaining else '')
         # The cursor holds the original pages, before display suffixes/cursors.
-        pages=[replace(first,text=first.text.removesuffix(suffix),context=cursor.query_context),*cursor.remaining]
+        pages=[replace(first,text=first.text.removesuffix(cursor.text_progress),context=cursor.query_context),*cursor.remaining]
         if overflow: pages.append(parts[-1])
         origin=cursor.origin
     else:
@@ -233,7 +286,8 @@ def reserve_progress_slot(parts, *, overflow=False, text_limit=1800):
         if len(pages)<=QQ_PASSIVE_REPLY_LIMIT-1: return pages
         origin='mixed' if len(pages)>1 else first.parse_origin
     batch=PreparedReply('',pages=tuple(pages),parse_origin=origin,
-                        context=DeliveryCursor(None,(),0,len(pages),origin=origin))
+                        context=DeliveryCursor(None,(),0,len(pages),origin=origin,
+                                               mixed_media=bool(cursor and cursor.mixed_media)))
     return expand_replies([batch],reserve=1,text_limit=text_limit)
 
 
@@ -658,7 +712,8 @@ def complete_list_reply(result,repository,locale,candidate):
         from ..rendering.catalog_layout import render_list
         characters=result.catalog.request.filters.character if result.catalog else ()
         bands=result.catalog.request.filters.band if result.catalog else ()
-        parts,records,ranges=render_list(cards,label,locale,load=visual_asset,characters=characters,bands=bands,notice=notice)
+        parts,records,ranges=render_list(cards,label,locale,load=visual_asset,characters=characters,bands=bands,
+                                        notice=notice)
     elif songs:
         from ..rendering.song_layout import render_list
         parts,ranges=render_list(songs,label,locale,load=visual_asset,notice=notice);records=tuple(songs)
@@ -674,7 +729,8 @@ def complete_list_reply(result,repository,locale,candidate):
     for part,(start,stop) in zip(parts,ranges):
         text='\n'.join(f'{i+1}. ID {r.id} '+localized_text(r,'title',locale)+' · '+
                        (localized_text(r,'character',locale)+'\n'+'\n'.join(localized_text(skill,'description',locale) for skill in r.skills)
-                        if hasattr(r,'skills') else localized_text(r,'band',locale)+' · '+' / '.join(f'{ch.difficulty} {ch.display_level:g} ({ch.notes if ch.notes is not None else "?"} Note)' for ch in r.charts))
+                        if hasattr(r,'skills') else localized_text(r,'band',locale)+' · '+' / '.join(f'{ch.difficulty} {ch.display_level:g} ({ch.notes if ch.notes is not None else "?"} Note)' for ch in r.charts)
+                        +'\n'+describe_song_traits(r))
                        for i,r in enumerate(records[start:stop],start))
         total=len({r.id for r in records})
         text+=f'\n共 {total} 条，本图 {start+1}–{stop}。'
@@ -684,8 +740,15 @@ def complete_list_reply(result,repository,locale,candidate):
             from ..query.card_catalog import catalog_notice
             text += catalog_notice(records)
         if notice:text+='\n'+notice
+        if songs and not cards:text+='\n'+tr(locale,'song_list_actions')
         ctx=replace(candidate,visible=candidate.visible[:stop]) if candidate else None
-        pages.append(PreparedReply(text,part.image,context=ctx,visible_indices=tuple(range(start+1,stop+1))))
+        indices = tuple(range(start+1,stop+1))
+        candidate_list = result.catalog is not None and result.catalog.is_candidate_list
+        pages.append(PreparedReply(text,part.image,context=ctx,visible_indices=indices,keep_text_lines=candidate_list))
+        if result.catalog is not None:
+            choices = result.catalog.candidate_choices(records[start:stop], locale)
+            if choices:
+                pages.append(PreparedReply(choices, context=ctx, visible_indices=indices, keep_text_lines=True))
     return pages[0] if len(pages)==1 else PreparedReply('',pages=tuple(pages),context=candidate)
 
 
@@ -717,32 +780,61 @@ def complete_detail_reply(result,repository,locale,candidate):
     return pages[0] if len(pages) == 1 else PreparedReply(text, pages=pages, context=candidate)
 
 
-def complete_chart_reply(result,repository,locale,candidate):
-    if result is None:return None
+def complete_chart_reply(result, repository, locale, candidate):
+    if result is None:
+        return None
     if isinstance(result,QueryResult):
         if result.spec.field or result.spec.intent!='chart' or result.chart is None:return None
-        song,charts=result.chart
+        song, charts = result.chart
+        difficulty = result.spec.difficulty
+        mirror = result.spec.chart_mirror
+        coverage = result.spec.chart_coverage
     else:
         if result.parsed[0]!='chart' or not result.songs:return None
-        song=result.songs[0];difficulty=result.parsed[2]
-        charts=tuple(c for c in song.charts if difficulty is None or c.difficulty==difficulty)
+        song = result.songs[0]
+        difficulty = result.parsed[2]
+        charts = tuple(c for c in song.charts if difficulty is None or c.difficulty == difficulty)
+        mirror = result.chart_mirror
+        coverage = result.chart_coverage
     from ..application.reply_preparation import prepare_chart_reply
+    from ..i18n import tr
     from ..rendering.chart_layout import render
-    prepared=prepare_chart_reply(song,charts,repository.chart_source,locale,
-                                 load_score=load_chart_score,load_data=load_chart_data)
+    from ..rendering.image_output import ImageBudgetError
     from ..rendering.labels import label as ui_label
-    mirror=result.spec.chart_mirror if isinstance(result, QueryResult) else result.chart_mirror
-    coverage=result.spec.chart_coverage if isinstance(result, QueryResult) else result.chart_coverage
-    if coverage and prepared.score is not None:
-        count=len(prepared.score.get('events',{}).get('skill',[]))
+
+    prepared = prepare_chart_reply(song, charts, repository.chart_source, locale,
+                                   load_score=load_chart_score, load_data=load_chart_data)
+    text = prepared.text
+    if mirror:
+        text += "\n" + ui_label("镜像谱面", locale)
+    if coverage:
+        text += "\n" + tr(locale, "chart_coverage_requested", seconds="/".join(f"{v:g}" for v in coverage))
+
+    if prepared.score is None:
+        if prepared.preview:
+            reason = tr(locale, "chart_source_unavailable", difficulty=prepared.preview)
+        elif difficulty and difficulty != "ALL":
+            reason = tr(locale, "chart_difficulty_missing", difficulty=difficulty)
+        else:
+            reason = tr(locale, "chart_catalog_empty")
+        if coverage:
+            reason += "\n" + tr(locale, "chart_coverage_not_applied")
+        return PreparedReply(text + "\n" + reason, context=candidate)
+
+    if coverage:
+        count = len(prepared.score.get('events', {}).get('skill', []))
         if count != len(coverage):
-            return PreparedReply(prepared.text + "\n" + ui_label("此谱面有 {count} 个技能点位，无法应用五段覆盖时间。", locale).format(count=count), context=candidate)
-    pages=render(prepared.song,prepared.charts,prepared.score,prepared.preview,prepared.locale,
-                 load=visual_asset,notice=prepared.notice,mirror=mirror,skill_durations=coverage)
-    text=prepared.text + ("\n" + ui_label("镜像谱面", locale) if mirror else "")
-    if coverage:text += "\n" + ui_label("技能覆盖（秒）", locale) + "：" + "/".join(f"{v:g}" for v in coverage)
-    replies=tuple(PreparedReply(text,image,context=candidate) for image in pages)
-    return replies[0] if len(replies)==1 else PreparedReply('',pages=replies,context=candidate)
+            reason = ui_label("此谱面有 {count} 个技能点位，无法应用五段覆盖时间。", locale).format(count=count)
+            return PreparedReply(text + "\n" + reason, context=candidate)
+    try:
+        pages = render(prepared.song, prepared.charts, prepared.score, prepared.preview, prepared.locale,
+                       load=visual_asset, notice=prepared.notice, mirror=mirror, skill_durations=coverage)
+    except Exception as exc:
+        logger.warning("谱面图片生成失败，改用文字；错误类型=%s", type(exc).__name__)
+        key = "chart_image_budget" if isinstance(exc, ImageBudgetError) else "chart_image_failed"
+        return PreparedReply(text + "\n" + tr(locale, key, difficulty=prepared.preview), context=candidate)
+    replies = tuple(PreparedReply(text, image, context=candidate) for image in pages)
+    return replies[0] if len(replies) == 1 else PreparedReply('', pages=replies, context=candidate)
 
 
 def song_detail_reply(result,repository,locale,candidate):
@@ -868,7 +960,7 @@ def render_prepared_inner(reply, result, repository, locale, candidate=None):
         reply += "\n卡面图片暂不可用，请稍后重试。"
     is_info = isinstance(result, CommandResult) and (result.info is not None or result.activity is not None)
     return PreparedReply(reply, image, complete_text=is_info or result is not None and result.cutoff is not None,
-                         context=candidate)
+                         context=candidate, keep_text_lines=bool(result and result.catalog and result.catalog.is_candidate_list))
 
 
 def complete_fallback(reply, result, locale, candidate, repository):
@@ -914,7 +1006,8 @@ def complete_fallback(reply, result, locale, candidate, repository):
         rows = [f'{i}. ID {song.id} '+localized_text(song,'title',locale)+' · '+
                 localized_text(song,'band',locale)+'\n'+' / '.join(
                     f'{chart.difficulty} {chart.display_level:g} · {chart.notes if chart.notes is not None else "?"} Note'
-                    for chart in song.charts) for i,song in enumerate(records,1)]
+                    for chart in song.charts)+'\n'+describe_song_traits(song)
+                for i,song in enumerate(records,1)]
     else:
         return reply, candidate
     if candidate is not None:
@@ -923,6 +1016,17 @@ def complete_fallback(reply, result, locale, candidate, repository):
     from ..query.card_catalog import catalog_notice
     from .reply_preparation import captured_catalog_notice
     notice=captured_catalog_notice(result,locale)
-    return '\n\n'.join(rows)+f'\n共 {len(records)} 条。'+(catalog_notice(records) if cards else '')+('\n'+notice if notice else ''), candidate
+    choices = result.catalog.candidate_choices(records, locale) if result.catalog is not None else ''
+    text = '\n\n'.join(rows) + f'\n共 {len(records)} 条。'
+    if cards:
+        text += catalog_notice(records)
+    if notice:
+        text += '\n' + notice
+    if choices:
+        text += '\n' + choices
+    kind = result.spec.intent if isinstance(result, QueryResult) else result.parsed[0]
+    if songs and not cards and kind in {'song', 'songs'}:
+        text += '\n'+tr(locale,'song_list_actions')
+    return text, candidate
 
 

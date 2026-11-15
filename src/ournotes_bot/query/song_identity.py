@@ -1,14 +1,17 @@
 # L3
 # Input: 歌曲目录、名称、ID 或已核实别名。
-# Output: 全部精确候选或唯一对象的候选集合与消歧指令。
+# Output: 精确实体、直接查曲的字面匹配或待确认候选，以及消歧指令。
 # Pos: Query / Deterministic；见 L2-2.md。
 # Effects/Dependencies: 读取本地别名；无联网、绘图或平台依赖。
 """Entity-first song resolution, shared by unique-object and list queries."""
 from __future__ import annotations
 
 import re
+from difflib import SequenceMatcher
+from unicodedata import name as character_name
 
-from ..data import normalize
+from ..data import localized_text, normalize, roman_to_hiragana
+from ..i18n import tr
 from .entity_lexicon import scoped_song_matches, resolve_exact_alias
 
 
@@ -35,6 +38,89 @@ def exact_songs(repository, term: str):
     return tuple(s for s in songs if str(s.id) in ids)
 
 
+SONG_SUGGESTION_LIMIT = 10
+SHORT_SONG_SUGGESTION_LIMIT = 3
+
+
+def direct_song_names(repository, term: str):
+    """Return song records and their suggestion limit, or zero for literal matches."""
+    songs = tuple({song.id: song for song in repository.songs}.values())
+    if not term:
+        return songs, 0
+    exact = exact_songs(repository, term)
+    if exact:
+        return tuple({song.id: song for song in exact}.values()), 0
+    needle = normalize(term)
+    if not needle or needle.isdecimal():
+        return (), 0
+
+    alias = resolve_exact_alias("song", term, repository)
+    if alias.ambiguous:
+        return (), 0
+    if alias.entity and alias.entity.kind == "band":
+        return tuple(song for song in songs if normalize(song.band) == normalize(alias.entity.value)), 0
+
+    bands = {song.id: tuple(normalize(name) for name in (
+        song.band, *song.localized.get("band", {}).values())) for song in songs}
+    exact_band = tuple(sorted((song for song in songs if needle in bands[song.id]), key=lambda song: song.id))
+    if exact_band:
+        return exact_band, 0
+
+    keywords = tuple(word for part in term.split() if (word := normalize(part)))
+    confirmed = []
+    unmatched = []
+    for song in songs:
+        titles = {normalize(title) for title in (song.title, *song.titles, *song.localized.get("title", {}).values())}
+        phonetic = normalize(roman_to_hiragana(song.localized.get("title", {}).get("en", "")))
+        continuous = (*titles, *bands[song.id], phonetic)
+        if needle in continuous:
+            confirmed.append((0, song))
+        elif any(needle in title for title in continuous):
+            confirmed.append((1, song))
+        elif len(keywords) > 1 and any(all(word in title for word in keywords) for title in titles):
+            confirmed.append((2, song))
+        else:
+            unmatched.append((song, titles))
+
+    if confirmed:
+        confirmed.sort(key=lambda pair: (pair[0], pair[1].id))
+        return tuple(song for _, song in confirmed), 0
+    if is_three_han_title(needle):
+        candidates = [song for song, titles in unmatched if any(
+            is_three_han_title(title) and sum(a != b for a, b in zip(needle, title)) == 1
+            for title in titles
+        )]
+        return tuple(sorted(candidates, key=lambda song: song.id)), SHORT_SONG_SUGGESTION_LIMIT
+    if len(needle) < 4:
+        return (), 0
+
+    threshold = 0.75 if len(needle) == 4 else 0.72
+    approximate = []
+    for song, titles in unmatched:
+        score = max(SequenceMatcher(None, needle, title).ratio() for title in titles)
+        if score >= threshold:
+            approximate.append((-score, song))
+    approximate.sort(key=lambda pair: (pair[0], pair[1].id))
+    return tuple(song for _, song in approximate), SONG_SUGGESTION_LIMIT
+
+
+def song_suggestions(songs, limit):
+    """Keep the full short-title count so the reply can report ambiguity."""
+    return tuple(songs if limit == SHORT_SONG_SUGGESTION_LIMIT else songs[:limit])
+
+
+def song_suggestion_text(songs, locale, warning="", *, limit):
+    if limit == SHORT_SONG_SUGGESTION_LIMIT and len(songs) > limit:
+        text = tr(locale, "song_suggestions_broad", count=len(songs))
+        return text + ("\n" + warning.strip() if warning else "")
+    rows = [tr(locale, "song_suggestions")]
+    rows.extend(f"{localized_text(song, 'title', locale)} · {localized_text(song, 'band', locale)} · ID {song.id}"
+                for song in songs[:limit])
+    if warning:
+        rows.append(warning.strip())
+    return "\n".join(rows)
+
+
 def unique_candidates(repository, term: str):
     exact = exact_songs(repository, term)
     if exact:
@@ -44,9 +130,54 @@ def unique_candidates(repository, term: str):
     return tuple(repository.search(term, limit=len(repository.songs)))
 
 
-def candidate_text(songs, difficulty: str | None = None, *, mirror: bool = False, coverage: tuple[float, ...] = ()) -> str:
+def is_three_han_title(value: str) -> bool:
+    """Check a normalized title for exactly three Han characters."""
+    return len(value) == 3 and all(
+        character == "〇" or character_name(character, "").startswith(
+            ("CJK UNIFIED IDEOGRAPH-", "CJK COMPATIBILITY IDEOGRAPH-"))
+        for character in value
+    )
+
+
+def chart_candidates(repository, term: str):
+    """Use a single positional substitution for three-Han titles after literal lookup."""
+    needle = normalize(term)
+    if not is_three_han_title(needle):
+        return unique_candidates(repository, term), False
+    exact = exact_songs(repository, term)
+    if exact:
+        return exact, False
+    if resolve_exact_alias("song", term, repository).ambiguous:
+        return (), False
+
+    literal = []
+    typos = {}
+    for song in repository.songs:
+        titles = {normalize(title) for title in (song.title, *song.titles, *song.localized.get("title", {}).values())}
+        if any(needle in title for title in titles):
+            literal.append(song)
+        elif any(is_three_han_title(title) and sum(a != b for a, b in zip(needle, title)) == 1
+                 for title in titles):
+            typos.setdefault(song.id, song)
+    if literal:
+        return tuple(sorted(literal, key=lambda song: song.id)), False
+    return tuple(typos[song_id] for song_id in sorted(typos)), True
+
+
+def candidate_text(songs, difficulty: str | None = None, *, mirror: bool = False,
+                   coverage: tuple[float, ...] = (), short_typo: bool = False, locale: str = "zh") -> str:
     suffix = (f" {difficulty}" if difficulty else "") + (" 镜像" if mirror else "")
-    if coverage:suffix += " " + "/".join(str(v) for v in coverage)
+    if coverage:
+        suffix += " " + "/".join(str(v).removesuffix(".0") if short_typo else str(v) for v in coverage)
+    if short_typo:
+        if len(songs) > SHORT_SONG_SUGGESTION_LIMIT:
+            return tr(locale, "song_suggestions_broad", count=len(songs))
+        rows = [tr(locale, "chart_short_suggestions")]
+        for song in songs:
+            title = localized_text(song, "title", locale)
+            band = localized_text(song, "band", locale)
+            rows.append(f"{title} · {band} · ID {song.id} → /查谱面 {song.id}{suffix}")
+        return "\n".join(rows)
     rows = ["匹配到多首歌曲，请用 ID 选择：" if len(songs) > 1 else "未确认完整歌曲名称，请核对候选并用 ID 选择："]
     rows.extend(f"{s.title}（ID {s.id}）→ /查谱面 {s.id}{suffix}" for s in songs[:10])
     if len(songs) > 10:

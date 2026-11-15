@@ -60,6 +60,15 @@ def automatic_summary(levels):
                               r'\1装配时：', text, flags=re.M)
             text = re.sub(r'在COMBO激奏中，每达成(\d+)次激奏COMBO', r'COMBO激奏每\1连击：', text)
             text = re.sub(r'(得分|获得量|获取量|回复量|全参数|表演值|技巧值|表现值)提升(?=\d)', r'\1+', text)
+            if skill.kind == 'leaderSkill':
+                text = re.sub(r'并且每编入(\d+)名与([^()\n]+)不同的成员[（(]最多(\d+)人[）)]',
+                              r'每编入\1名非\2成员（最多\3人）', text)
+                text = text.replace('全体成员的', '全员')
+                text = re.sub(r'(表演|技巧|形象|表现)值\+', r'\1+', text)
+                text = re.sub(r'成员的(?=(?:表演|技巧|形象|表现)\+)', '成员 ', text)
+            if skill.kind == 'gekisouSkill':
+                text = re.sub(r'触发\s*LUCKY RUSH\s*时\s*获得\s*LUCK pt\s*[+＋]\s*(\d+(?:\.\d+)?)pt',
+                              r'LUCKY RUSH触发\nLUCK +\1pt', text)
             text = re.sub(r'(\d+(?:\.\d+)?)秒', r'\1s', text)
             text = re.sub(r'(\d+)\.(\d+)(?=%|s|次|pt)',
                           lambda m: m[1] + ('.' + m[2].rstrip('0') if m[2].rstrip('0') else ''), text)

@@ -150,6 +150,13 @@ def expression(value, context, depth=0):
     divide = re.fullmatch(r"(.+)/(100|1000)", value)
     if divide:
         return expression(divide[1], context, depth + 1) / int(divide[2])
+    # The JP PERFECT streak skill publishes its normal gain plus a temporary bonus.
+    addition = re.fullmatch(r"\((effects\[\d{1,2}\]\.value)\s*\+\s*(effects\[\d{1,2}\]\.value)\)", value)
+    if addition:
+        left, right = (expression(path, context, depth + 1) for path in addition.groups())
+        if type(left) not in (int, float) or type(right) not in (int, float):
+            raise ValueError("invalid score sum")
+        return left + right
     if not re.fullmatch(r"effects\[\d{1,2}\](?:\.(?:value|time|maxValue|limitCount|EffectExecuteLimitCount|con|tCon|cCon|values|targets|name)|\[\d{1,2}\])+", value):
         raise ValueError("unknown skill parameter")
     current = context

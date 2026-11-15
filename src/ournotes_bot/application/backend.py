@@ -649,8 +649,7 @@ class Backend:
                 view['business_status'] = reply.business_status or 'message'
                 if reply.image and part['mode'] == 'primary':
                     cursor = reply.context
-                    caption = (f'图片 {cursor.sent}/{cursor.total}'+('；/继续 发送其余图片。' if cursor.remaining else '；本次已全部发送。')
-                               if isinstance(cursor, replies.DeliveryCursor) else ' ')
+                    caption = cursor.image_caption if isinstance(cursor, replies.DeliveryCursor) else ' '
                     mime = 'image/png' if reply.image.startswith(b'\x89PNG\r\n\x1a\n') else 'image/jpeg'
                     view.update(kind='image', text=caption, image=f"/v1/deliveries/{row['delivery']}/parts/{part['id']}/image", mime=mime)
                 else:

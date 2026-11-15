@@ -2,6 +2,7 @@ from __future__ import annotations
 from ournotes_bot.query.card_catalog import query_cards
 
 import asyncio
+import re
 import tempfile
 import unittest
 from dataclasses import replace
@@ -10,10 +11,11 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
 
 from ournotes_bot.ai_query import AIQueryParser
-from ournotes_bot.commands import card_matches, song_matches, support_card_matches
+from ournotes_bot.commands import card_matches, support_card_matches
 from ournotes_bot.config import Settings
 from ournotes_bot.data import Card, Chart, Song, SongRepository, SupportCard
 from ournotes_bot.platforms.qq.qq import PreparedReply, _deliver_reply, _prepare_reply, run_bot
+from ournotes_bot.query.song_identity import exact_songs
 from ournotes_bot.structured_query import songs_for
 from ournotes_bot.sources.yatta import BASE
 from ournotes_bot.rendering.readable_pages import ImagePart
@@ -45,9 +47,184 @@ class ReplyPipelineTests(unittest.TestCase):
                             asyncio.run(_deliver_reply(message,'fixture',True,reply))
                         text = message._api.post_group_message.await_args.kwargs['content']
                         self.assertNotIn('None Notes',text)
-                        if failure=='upload' or command.startswith('/问'):self.assertIn(note_text(notes),text)
-                        elif notes is None:self.assertIn('? Note',text)
-                        else:self.assertIn(f'{notes} Note',text)
+                        self.assertIn(note_text(notes), text)
+
+    def test_chart_failure_keeps_captured_difficulty_and_options(self):
+        from ournotes_bot.rendering.image_output import ImageBudgetError
+        from ournotes_bot.sources.chart_data import ChartDataError
+        song = self.repo.songs[0]
+        hard = Chart("HARD", 20, 20.0, 0, "")
+        expert = song.charts[0]
+        self.repo.songs = [replace(song, charts=(hard, expert))]
+        command = "/查谱面 1 镜像 5/6.5/8/5/5 EX"
+        for source_error, draw_error, reason in (
+            (None, ImageBudgetError("fixture"), "EXPERT 谱面图超出图片大小限制"),
+            (None, ValueError("fixture"), "EXPERT 谱面图生成失败"),
+            (ChartDataError("fixture"), None, "EXPERT 的谱面文件暂不可用"),
+        ):
+            with self.subTest(reason=reason), \
+                 patch("ournotes_bot.application.replies.load_chart_score",
+                       return_value={"events": {"skill": list(range(5))}}, side_effect=source_error) as read, \
+                 patch("ournotes_bot.rendering.chart_layout.render", side_effect=draw_error) as draw:
+                reply = _prepare_reply(command, self.repo, self.parser)
+                read.assert_called_once_with(self.repo.songs[0], expert)
+                self.assertEqual(draw.call_count, int(source_error is None))
+                self.assertIsNone(reply.image)
+                self.assertIn("迷星叫 · ID 100001", reply.text)
+                self.assertIn("EXPERT Lv.25 · 768 Notes", reply.text)
+                self.assertNotIn("HARD", reply.text)
+                self.assertIn("镜像谱面", reply.text)
+                self.assertIn("5/6.5/8/5/5", reply.text)
+                self.assertIn(reason, reply.text)
+                self.assertEqual("未能应用" in reply.text, source_error is not None)
+                self.assertTrue(reply.context.query.chart_mirror)
+                self.assertEqual(reply.context.query.chart_coverage, (5, 6.5, 8, 5, 5))
+
+        with patch("ournotes_bot.application.replies.load_chart_score") as read, \
+             patch("ournotes_bot.rendering.chart_layout.render") as draw:
+            reply = _prepare_reply(command.replace("EX", "NM"), self.repo, self.parser)
+        read.assert_not_called()
+        draw.assert_not_called()
+        self.assertIsNone(reply.image)
+        self.assertIn("本曲资料中没有 NORMAL 难度", reply.text)
+        self.assertIn("镜像谱面", reply.text)
+        self.assertIn("5/6.5/8/5/5", reply.text)
+        self.assertIn("未能应用", reply.text)
+
+        with patch("ournotes_bot.application.replies.load_chart_score",
+                   return_value={"events": {"skill": list(range(5))}}) as read, \
+             patch("ournotes_bot.rendering.chart_layout.render", return_value=(b"chart",)):
+            reply = _prepare_reply(command, self.repo, self.parser)
+            message = self.message(upload_error=TimeoutError("fixture"))
+            message._api.post_group_message.return_value = {"id": "ack"}
+            asyncio.run(_deliver_reply(message, "fixture", True, reply))
+        read.assert_called_once_with(self.repo.songs[0], expert)
+        message._api.post_group_message.assert_awaited_once()
+        delivered = message._api.post_group_message.await_args.kwargs["content"]
+        self.assertEqual(delivered, reply.text)
+        self.assertIn("EXPERT Lv.25 · 768 Notes", delivered)
+        self.assertNotIn("HARD", delivered)
+        self.assertIn("镜像谱面", delivered)
+        self.assertIn("5/6.5/8/5/5", delivered)
+
+        with patch("ournotes_bot.application.replies.load_chart_score",
+                   return_value={"events": {"skill": []}}) as read, \
+             patch("ournotes_bot.rendering.chart_layout.render", side_effect=ImageBudgetError("fixture")):
+            reply = _prepare_reply("/查谱面 1", self.repo, self.parser)
+        read.assert_called_once_with(self.repo.songs[0], expert)
+        self.assertIn("HARD Lv.20 · 0 Notes", reply.text)
+        self.assertIn("EXPERT Lv.25 · 768 Notes", reply.text)
+        self.assertIn("EXPERT 谱面图超出图片大小限制", reply.text)
+
+    def test_chart_default_and_difficulty_aliases_reach_the_renderer(self):
+        song = self.repo.songs[0]
+        easy = Chart("EASY", 9, 9.0, None, "")
+        normal = Chart("NORMAL", 13, 13.0, 408, "")
+        hard = Chart("HARD", 20, 20.0, 0, "")
+        expert = song.charts[0]
+        charts = (easy, normal, hard, expert)
+        cases = (
+            ("1", charts, "EXPERT", False, ()),
+            ("1", charts[:-1], "HARD", False, ()),
+            ("1 hd 反转", charts, "HARD", True, ()),
+            ("1 镜像 ＨＤ 5/6.5/8/5/5", charts, "HARD", True, (5, 6.5, 8, 5, 5)),
+            ("1 ＥＸ", charts, "EXPERT", False, ()),
+            ("1 ex", charts, "EXPERT", False, ()),
+            ("1 Ez", charts, "EASY", False, ()),
+            ("1 nm", charts, "NORMAL", False, ()),
+        )
+        for suffix, entries, difficulty, mirror, coverage in cases:
+            with self.subTest(suffix=suffix, difficulty=difficulty), \
+                 patch("ournotes_bot.application.replies.load_chart_score",
+                       return_value={"events": {"skill": list(range(5))}}) as read, \
+                 patch("ournotes_bot.rendering.chart_layout.render", return_value=(b"chart",)) as draw:
+                self.repo.songs = [replace(song, charts=entries)]
+                reply = _prepare_reply("/查谱面 " + suffix, self.repo, self.parser)
+                selected = next(chart for chart in entries if chart.difficulty == difficulty)
+                read.assert_called_once_with(self.repo.songs[0], selected)
+                self.assertEqual(draw.call_args.args[1], entries if suffix == "1" else (selected,))
+                self.assertEqual(draw.call_args.args[3], difficulty)
+                self.assertEqual(draw.call_args.kwargs["mirror"], mirror)
+                self.assertEqual(draw.call_args.kwargs["skill_durations"], coverage)
+                self.assertEqual(reply.image, b"chart")
+                if suffix == "1":
+                    self.assertIn("EASY Lv.9 · Note：暂无资料", reply.text)
+                    self.assertIn("HARD Lv.20 · 0 Notes", reply.text)
+
+    def test_chart_option_permutations_prepare_the_same_reply(self):
+        from itertools import permutations
+        from ournotes_bot.commands import resolve_command
+
+        song = self.repo.songs[0]
+        expert = song.charts[0]
+        durations = (5, 6.5, 8, 5, 5)
+        cases = (
+            ("/查谱面 1", "ex", "镜像", "5/6.5/8/5/5"),
+            ("/查谱面 迷星叫", "ＥＸ", "反转", "覆盖=5/6.5/8/5/5"),
+            ("/譜面 100001", "エキスパート", "镜像", "5/6.5/8/5/5"),
+            ("/chart 1", "专家", "反转", "覆盖=5/6.5/8/5/5"),
+        )
+        for prefix, *options in cases:
+            for order in permutations(options):
+                command = prefix + " " + " ".join(order)
+                with self.subTest(command=command), \
+                     patch("ournotes_bot.application.replies.load_chart_score",
+                           return_value={"events": {"skill": list(range(5))}}) as read, \
+                     patch("ournotes_bot.rendering.chart_layout.render", return_value=(b"chart",)) as draw:
+                    result = resolve_command(command, self.repo)
+                    self.assertEqual(result.songs, (song,))
+                    self.assertEqual(result.parsed[2], "EXPERT")
+                    self.assertTrue(result.chart_mirror)
+                    self.assertEqual(result.chart_coverage, durations)
+                    reply = _prepare_reply(command, self.repo, self.parser)
+                    read.assert_called_once_with(song, expert)
+                    self.assertEqual(draw.call_args.args[:2], (song, (expert,)))
+                    self.assertEqual(draw.call_args.args[3], "EXPERT")
+                    self.assertTrue(draw.call_args.kwargs["mirror"])
+                    self.assertEqual(draw.call_args.kwargs["skill_durations"], durations)
+                    self.assertEqual(reply.image, b"chart")
+
+    def test_chart_three_han_candidate_retry_uses_the_original_chart_options(self):
+        from ournotes_bot.commands import resolve_command
+
+        song = self.repo.songs[0]
+        second = replace(song, id=100002, title="迷星吼", titles=("迷星吼",), localized={})
+        third = replace(song, id=100003, title="迷月咬", titles=("迷月咬",), localized={})
+        cases = (
+            ("迷星咬 ex 镜像 5/6.5/8/5/5", (5, 6.5, 8, 5, 5), [song]),
+            ("迷星咬 覆盖=5/6.500000000000001/8/5/5 反转 ＥＸ", (5, 6.500000000000001, 8, 5, 5), [song]),
+            ("迷星咬 5/6.5/8/5/5 EXP 镜像", (5, 6.5, 8, 5, 5), [song, second, third]),
+        )
+        for suffix, durations, candidates in cases:
+            self.repo.songs = candidates
+            with self.subTest(suffix=suffix), \
+                 patch("ournotes_bot.application.replies.load_chart_score",
+                       return_value={"events": {"skill": list(range(5))}}) as read, \
+                 patch("ournotes_bot.rendering.chart_layout.render", return_value=(b"chart",)) as draw:
+                reply = _prepare_reply("/查谱面 " + suffix, self.repo, self.parser)
+                self.assertEqual(reply.business_status, "ambiguous")
+                self.assertIsNone(reply.image)
+                self.assertIn(f"{song.title} · {song.band} · ID {song.id}", reply.text)
+                read.assert_not_called()
+                draw.assert_not_called()
+
+                rows = reply.text.splitlines()[1:]
+                self.assertEqual(len(rows), len(candidates))
+                for row, candidate in zip(rows, candidates):
+                    retry = row.split("→ ", 1)[1]
+                    result = resolve_command(retry, self.repo)
+                    self.assertEqual(result.songs, (candidate,))
+                    self.assertEqual(result.parsed[2], "EXPERT")
+                    self.assertTrue(result.chart_mirror)
+                    self.assertEqual(result.chart_coverage, durations)
+                    confirmed = _prepare_reply(retry, self.repo, self.parser)
+                    self.assertEqual(confirmed.business_status, "success")
+                    self.assertEqual(confirmed.image, b"chart")
+                    read.assert_called_once_with(candidate, candidate.charts[0])
+                    read.reset_mock()
+                    self.assertEqual(draw.call_args.args[0], candidate)
+                    self.assertTrue(draw.call_args.kwargs["mirror"])
+                    self.assertEqual(draw.call_args.kwargs["skill_durations"], durations)
 
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
@@ -77,7 +254,8 @@ class ReplyPipelineTests(unittest.TestCase):
         self.temp.cleanup()
 
     def test_direct_and_natural_text_images_share_one_selection(self):
-        with patch("ournotes_bot.commands.song_matches", wraps=song_matches) as select, \
+        with patch("ournotes_bot.commands.exact_songs", wraps=exact_songs) as select, \
+             patch("ournotes_bot.application.replies.load_chart_score", return_value=None), \
              patch("ournotes_bot.rendering.song_detail_layout.render", return_value=b"image") as render:
             result = _prepare_reply("/查曲 迷星叫", self.repo, self.parser)
         self.assertEqual(result.image, b"image")
@@ -127,6 +305,9 @@ class ReplyPipelineTests(unittest.TestCase):
                     render.assert_not_called()
                     self.assertIsNone(reply.image)
                     self.assertIn("4 个技能点位",reply.text)
+                    self.assertIn("无法应用五段覆盖时间", reply.text)
+                    self.assertIn("5/6.5/8/5/5", reply.text)
+                    self.assertIn("镜像谱面", reply.text)
         for value in ("5/5", "0/5/5/5/5", "-1/5/5/5/5", "nan/5/5/5/5", "5/5/5/5/inf"):
             result = resolve_command("/查谱面 1 覆盖="+value,self.repo)
             self.assertEqual(result.status,"invalid_arguments")
@@ -179,6 +360,143 @@ class ReplyPipelineTests(unittest.TestCase):
         self.assertEqual(result.image, b"support cards")
         self.assertEqual(select.call_count, 1)
         self.assertEqual([card.id for card in render.call_args.args[0]], [1])
+
+    def test_member_title_list_sends_copyable_text_with_image_and_on_render_failure(self):
+        card = self.repo.cards[0]
+        result_pages = ((ImagePart(b"cards", 0, 1),), (card,), ((0, 1),))
+        with patch("ournotes_bot.rendering.catalog_layout.render_list", return_value=result_pages):
+            reply = _prepare_reply("/查卡 我们现在", self.repo, self.parser)
+        image, choices = reply.pages
+        self.assertEqual(image.image, b"cards")
+        self.assertEqual(choices.text, "我们现在就在这里 · ID 1 · /查卡 1")
+        self.assertIsNone(choices.image)
+        self.assertEqual(image.visible_indices, choices.visible_indices)
+        with patch("ournotes_bot.rendering.catalog_layout.render_list", side_effect=ValueError("test render failure")):
+            reply = _prepare_reply("/查卡 我们现在", self.repo, self.parser)
+        self.assertIsNone(reply.image)
+        self.assertIn("/查卡 1", reply.text)
+
+    def test_long_member_candidates_survive_image_render_and_upload_fallback(self):
+        from ournotes_bot.application.replies import expand_replies, fallback_cursor, prepare_followup
+        from ournotes_bot.query.continuation import Operation
+
+        base = self.repo.cards[0]
+        self.repo.cards = [
+            replace(base, id=card_id, title=f"压力样本 {card_id} " + "长" * (2200 if card_id == 100 else 30),
+                    localized={})
+            for card_id in range(100, 150)
+        ]
+        expected = list(range(100, 150))
+
+        def drain(parts, *, limit=1800):
+            while True:
+                yield from parts
+                cursor = parts[-1].context
+                if cursor is None or not cursor.remaining:
+                    break
+                parts = expand_replies([prepare_followup(cursor, Operation("continue"), self.repo)], text_limit=limit)
+
+        def candidate_ids(parts):
+            return [int(card_id) for part in parts if not part.image for card_id in
+                    re.findall(r" · /查卡 (\d+)$", part.text, re.M)]
+
+        with patch("ournotes_bot.application.replies.visual_asset", return_value=None), \
+             patch("ournotes_bot.sources.haneoka.game_assets.asset_bytes", return_value=None):
+            rendered = _prepare_reply("/查卡 压力样本", self.repo, self.parser)
+            for limit in (1500, 1800):
+                with self.subTest(text_limit=limit):
+                    parts = list(drain(expand_replies([rendered], text_limit=limit), limit=limit))
+                    self.assertEqual(candidate_ids(parts), expected)
+                    self.assertTrue(all(len(part.text) <= limit for part in parts if not part.image))
+                    first_choice = next(part for part in parts if not part.image)
+                    self.assertEqual(first_choice.visible_indices, parts[0].visible_indices)
+
+            with patch("ournotes_bot.rendering.catalog_layout.render_list", side_effect=ValueError("synthetic failure")):
+                text_only = _prepare_reply("/查卡 压力样本", self.repo, self.parser)
+            self.assertEqual(candidate_ids(drain(expand_replies([text_only]))), expected)
+
+        image = expand_replies([rendered])[0]
+        send = AsyncMock(return_value={"id": "fixture-message"})
+        message = SimpleNamespace(id="in", _api=SimpleNamespace(post_group_message=send))
+        with patch("ournotes_bot.platforms.qq.qq._upload_image", side_effect=OSError("synthetic upload failure")):
+            delivery = _deliver_reply(message, "fixture-group", True, image)
+            with self.assertRaises(StopIteration) as stopped:
+                delivery.send(None)
+        self.assertEqual(stopped.exception.value.status, "fallback_pending")
+        self.assertIn("/继续", send.await_args.kwargs["content"])
+        resume = prepare_followup(fallback_cursor(image), Operation("continue"), self.repo)
+        self.assertEqual(candidate_ids(drain(expand_replies([resume]))), expected)
+
+    def test_member_list_image_uses_the_same_copy_for_every_live_filter(self):
+        from ournotes_bot.data import Skill
+        from ournotes_bot.rendering.catalog_layout import Canvas, INK
+
+        summary = "PERFECT及以上得分+145%\n出现 GOOD 或更低判定前+155%"
+        copy = "+155%P 无GOOD及以下"
+        card = self.repo.cards[0]
+        self.repo.cards = [replace(card, skills=(Skill("liveSkill", "演出得分", summary),),
+                                   catalog={**card.catalog, "live_score_summary": summary,
+                                            "member_list_skill_copy": {"liveSkill": copy},
+                                            "live_score_bands": [{"value": 14500, "condition": "perfect"},
+                                                                 {"value": 15500, "condition": "perfect"}]})]
+        painted = []
+        original = Canvas.text
+
+        def record(canvas, x, y, text, size=28, color=INK, bold=False, align="left", stroke=0):
+            painted.append(text)
+            return original(canvas, x, y, text, size, color, bold, align, stroke)
+
+        with patch.object(Canvas, "text", record), \
+             patch("ournotes_bot.application.replies.visual_asset", return_value=None), \
+             patch("ournotes_bot.sources.haneoka.game_assets.asset_bytes", return_value=None):
+            for command in ("/查卡", "/查卡 145%", "/查卡 155%", "/查卡 PERFECT加分"):
+                with self.subTest(command=command):
+                    painted.clear()
+                    reply = _prepare_reply(command, self.repo, self.parser)
+                    pages = reply.pages or (reply,)
+                    self.assertTrue(pages[0].image)
+                    drawn = "".join(painted)
+                    self.assertIn(copy, drawn)
+                    self.assertNotIn("命中", drawn)
+                    self.assertNotIn("+145%", drawn)
+
+    def test_mixed_media_caption_requests_continue_only_beyond_current_budget(self):
+        from ournotes_bot.application.replies import expand_replies, prepare_followup, reserve_progress_slot
+        from ournotes_bot.query.continuation import Operation
+
+        image = PreparedReply("图的备用文字", b"image")
+        choices = PreparedReply("候选 · ID 51 · /查卡 51")
+        reply = PreparedReply("", pages=(image, choices))
+        send = AsyncMock(return_value={"id": "fixture-message"})
+        message = SimpleNamespace(id="in", _api=SimpleNamespace(post_group_message=send))
+
+        def caption(part):
+            with patch("ournotes_bot.platforms.qq.qq._upload_image", return_value={"file_info": "fixture"}):
+                delivery = _deliver_reply(message, "fixture-group", True, part)
+                with self.assertRaises(StopIteration) as stopped:
+                    delivery.send(None)
+            self.assertTrue(stopped.exception.value.confirmed)
+            return send.await_args.kwargs["content"]
+
+        with patch("ournotes_bot.application.replies.QQ_PASSIVE_REPLY_LIMIT", 2):
+            batch = expand_replies([reply])
+            self.assertEqual(caption(batch[0]), "结果 1/2")
+            self.assertNotIn("/继续", batch[1].text)
+            reserved = reserve_progress_slot(batch)
+            self.assertEqual(len(reserved), 1)
+            self.assertEqual(caption(reserved[0]), "结果 1/2；/继续 发送剩余结果。")
+            tail = expand_replies([prepare_followup(reserved[0].context, Operation("continue"), self.repo)])
+            self.assertEqual(tail[0].text, "候选 · ID 51 · /查卡 51\n结果 2/2")
+            self.assertFalse(tail[0].context.remaining)
+
+            extra_image = expand_replies([PreparedReply("", pages=(image, choices, image))])
+            self.assertEqual(caption(extra_image[0]), "结果 1/3")
+            self.assertIn("/继续", extra_image[1].text)
+            tail = expand_replies([prepare_followup(extra_image[1].context, Operation("continue"), self.repo)])
+            self.assertEqual(caption(tail[0]), "结果 3/3；本次已全部发送。")
+
+            pictures = expand_replies([PreparedReply("", pages=(image, image, image))])
+            self.assertEqual(caption(pictures[-1]), "图片 2/3；/继续 发送其余图片。")
 
     def test_ai_timeout_returns_safe_text_without_image(self):
         with patch.object(self.parser, "_request", side_effect=TimeoutError("Bearer secret-value")):

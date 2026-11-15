@@ -8,6 +8,7 @@ from .labels import label as ui_label
 from collections import defaultdict
 from contextlib import contextmanager
 from dataclasses import dataclass
+from math import ceil
 import re
 
 from ..data import SupportCard, localized_text, normalize, character_identity
@@ -19,6 +20,7 @@ _RARITY_BADGES = tuple(f'RarityIconCenter_{name}.png' for name in ('R', 'SR', 'S
 LABELS = {'leaderSkill':('队','#65509a'), 'liveSkill':('演','#237967'),
           'gekisouSkill':('激','#b2476e'), 'supportSkill':('支','#237967'),
           'gekisouSupportSkill':('激','#b2476e')}
+_MEMBER_KINDS = {'队': 'leaderSkill', '演': 'liveSkill', '激': 'gekisouSkill'}
 
 
 def person_key(card):
@@ -35,7 +37,7 @@ def ordered(cards):
 def compact(text):
     substitutions = [('表演','表'),('技巧','技'),('形象','形'),('全参数','全'),
         ('LUCK槽获取','L槽'),('JUST获取','J'),('COMBO获取','C'),('LUCKY RUSH中奖：','中奖'),
-        ('发动L≥','血≥'),('演出LIFE型','血判'),('演出简单型','简型'),('RUSH得分','RUSH'),
+        ('发动L≥','发动时 LIFE≥'),('RUSH得分','RUSH'),
         ('延时+','延时'),(' · 全段',''),('得分',''),('：下个P转J','转J')]
     for old,new in substitutions:
         text=text.replace(old,new)
@@ -73,6 +75,9 @@ def summaries(card,locale='zh',*,shared_duration=None,shared_target=None):
     for i,skill in enumerate(card.skills):
         label,color=LABELS.get(skill.kind,('技',MUTED))
         contract=contracts[i] if i<len(contracts) else None
+        if isinstance(card, SupportCard) and locale == 'zh' and contract and contract.get('list_copy'):
+            result.append((label, color, contract['list_copy']))
+            continue
         value=contract.get('levels',{}).get('5') if contract and locale=='zh' else None
         if contract and contract.get('automatic'):
             # Audited shorthand rewrites below may drop scope from a new template.
@@ -91,18 +96,15 @@ def summaries(card,locale='zh',*,shared_duration=None,shared_target=None):
         if locale=='zh' and value:
             text=compact(text)
             if skill.kind=='leaderSkill':
-                band=getattr(card,'band','')
-                if band and text.startswith(band+' '):text=text[len(band)+1:]
-                text=re.sub(r'(血判|简型)\s*([表技形])(?=\+)',r'\1',text).replace('；','\n')
+                text=text.replace('；','\n')
             if skill.kind=='liveSkill':
                 if shared_duration:text=text.removesuffix(' · '+shared_duration+'秒')
                 text=text.replace(' · ','\n')
             if skill.kind=='gekisouSkill':
-                if text.startswith('首次JUST起：获取') and text.endswith(' · L≥700'):
-                    text=text.replace('首次JUST起：获取','血判J').removesuffix(' · L≥700')
-                text=text.replace('COMBO≥25时获取','25C起')
+                text = re.sub(r'(首次JUST起：获取|连击中：COMBO获取)\+(\d+)→(\d+) · L≥(\d+)',
+                              r'\1+\2；LIFE≥\4 时+\3', text)
         result.append((label,color,text))
-    expected=('leaderSkill','liveSkill','gekisouSkill') if not isinstance(card,SupportCard) else ()
+    expected=_MEMBER_KINDS.values() if not isinstance(card,SupportCard) else ()
     present={s.kind for s in card.skills}
     for kind in expected:
         if kind not in present:
@@ -114,6 +116,86 @@ def summaries(card,locale='zh',*,shared_duration=None,shared_target=None):
         if label in grouped:grouped[label]=(color,grouped[label][1]+'\n'+text)
         else:grouped[label]=(color,text)
     return [(label,*grouped[label]) for label in ('队','演','支','激','技') if label in grouped] or [('技',MUTED,'未知')]
+
+
+def _memory_skill_lines(value):
+    wrapped = []
+    for paragraph in value.replace(' / 上限', '\n上限').split('\n'):
+        effect, _, period = paragraph.rpartition(' ')
+        measured = lines(paragraph, 268, 24)
+        if period in ('JUST激奏期间', 'COMBO激奏期间') and len(measured) > 1:
+            measured = (*lines(effect, 268, 24), period)
+        wrapped.extend(measured)
+    return tuple(wrapped)
+
+
+_PERCENT = r'\+\d+(?:\.\d+)?%'
+_LIVE_SCORE = re.compile(
+    rf'(?P<seconds>\d+(?:\.\d+)?)秒 · (?P<perfect>PERFECT及以上)?得分(?P<base>{_PERCENT})'
+    rf'(?:；(?:发动时 LIFE≥(?P<life>\d+) 则(?P<life_score>{_PERCENT})'
+    rf'|出现 GOOD 或更低判定前(?P<perfect_score>{_PERCENT})))?'
+)
+
+
+def _member_live_text(text):
+    score = _LIVE_SCORE.fullmatch(text)
+    if not score or (score['perfect_score'] and not score['perfect']) or (score['life'] and score['perfect']):
+        return ''
+    text = f"得分{score['base']} {score['seconds']}秒"
+    if score['perfect']:
+        text += '\nPERFECT及以上'
+    if score['life']:
+        text += f"\n{score['life_score']}\n发动时LIFE≥{score['life']}"
+    if score['perfect_score']:
+        text += f"\n{score['perfect_score']}\nGOOD或更低前"
+    return text
+
+
+def _member_leader_text(text):
+    stack = re.fullmatch(
+        rf'(?P<band>[^\n]+)成员 (?P<stat>表演|技巧|形象|表现)(?P<base>{_PERCENT})\n'
+        rf'每编入1名非(?P<type>[^（）\n]+)成员（最多(?P<count>\d+)人）\n'
+        rf'全员(?P=stat)(?P<bonus>{_PERCENT})\(最高(?P<limit>\d+(?:\.\d+)?%)\)', text
+    )
+    if stack:
+        return (f"{stack['stat']}{stack['base']}\n{stack['band']}\n"
+                f"全员{stack['stat']}{stack['bonus']}/人\n非{stack['type']}成员\n"
+                f"限{stack['count']}人/上限+{stack['limit']}")
+    rows = [re.fullmatch(rf'([^\n]+) ([表技形全]{_PERCENT})', line) for line in text.split('\n')]
+    if not all(rows):
+        return text
+    return '\n'.join(
+        f'额外{row[2]}\n{row[1]}' if i and re.fullmatch(r'(?:演出|激奏).+型', row[1])
+        else f'{row[2]} {row[1]}'
+        for i, row in enumerate(rows)
+    )
+
+
+def _member_gekisou_text(text):
+    luck = re.fullmatch(r'LUCKY RUSH触发\nLUCK (\+\d+(?:\.\d+)?pt)', text)
+    if luck:
+        return f'LUCK {luck[1]}\nLUCKY RUSH触发'
+    just = re.fullmatch(r'首次JUST起：获取(\+\d+)；LIFE≥(\d+) 时(\+\d+)', text)
+    if just:
+        return f'JUST{just[1]}\n首次JUST起\n{just[3]} LIFE≥{just[2]}'
+    combo = re.fullmatch(r'COMBO≥(\d+)时获取(\+\d+)', text)
+    if combo:
+        return f'激奏COMBO{combo[2]}\n连击≥{combo[1]}时'
+    return text
+
+
+def _member_skill_text(card, locale, label, text):
+    if locale == 'zh':
+        authored = card.catalog.get('member_list_skill_copy', {}).get(_MEMBER_KINDS.get(label))
+        if authored:
+            return authored
+        if label == '演':
+            return _member_live_text(card.catalog.get('live_score_summary') or '') or text
+        if label == '队':
+            return _member_leader_text(text)
+        if label == '激':
+            return _member_gekisou_text(text)
+    return text
 
 
 def card_face(canvas,card,x,y,w,h,load,*,level=None,rank=None,growth=False):
@@ -148,6 +230,7 @@ class CardRow:
     offsets: tuple
     texts: tuple
     height: int
+    pitch: int
 
 
 def group_headings(people, locale, fallback):
@@ -220,7 +303,7 @@ def _render_memory_list(cards, query, locale, load,notice=''):
         for same_colour in attributes.values():
             for start in range(0, len(same_colour), 8):
                 batch = same_colour[start:start+8]
-                texts = tuple(tuple((label, color, lines(value.replace(' / 上限', '\n上限'), 268, 24))
+                texts = tuple(tuple((label, color, _memory_skill_lines(value))
                                     for label, color, value in summaries(card, locale)) for card in batch)
                 text_height = max(sum(len(wrapped)*30 for _, _, wrapped in text)+8*(len(text)-1) for text in texts)
                 items = tuple((len(records)+i, card) for i, card in enumerate(batch))
@@ -325,8 +408,9 @@ def render_list(cards,query,locale='zh',*,load,characters=(),bands=(),notice='')
         return _render_memory_list(cards, query, locale, load,notice)
     # Approved member-list growth V3 and SNAP-list V4, rendered at 2x scale.
     # The left person gutter and each attribute's own row are intentional.
-    pitch,artw,arth,textw=(432,288,162,280) if support else (256,192,192,196)
-    left=260 if support else 264
+    default_pitch,artw,arth=256,192,192
+    left=264
+    skill_font, skill_indent, skill_step, skill_gap = 26, 35, 32, 5
     durations=set();targets=set()
     for card in cards:
         for contract in card.catalog.get('compact_skills',[]):
@@ -336,8 +420,16 @@ def render_list(cards,query,locale='zh',*,load,characters=(),bands=(),notice='')
                 m=re.search(r' · ([0-9.]+)秒$',value)
                 durations.add(m.group(1) if m else None)
             if isinstance(value,dict) and value.get('enhanced_target'):targets.add(value['enhanced_target'])
-    duration=next(iter(durations)) if len(durations)==1 and not support else None
+    authored_live = locale == 'zh' and any(
+        'liveSkill' in card.catalog.get('member_list_skill_copy', {}) for card in cards
+    )
+    duration=next(iter(durations)) if len(durations)==1 and not support and not authored_live else None
     target=next(iter(targets)) if len(targets)==1 and not support else None
+
+    def measured_summaries(card, textw):
+        for label, color, text in summaries(card, locale, shared_duration=duration, shared_target=target):
+            yield label, color, lines(_member_skill_text(card, locale, label, text), textw, skill_font)
+
     requested={normalize(character_identity(n)) for n in characters or (query,)}
     people={p['id']:p for card in cards for p in card.catalog.get('people',[])}
     selected={pid for pid,p in people.items() if requested & {normalize(character_identity(n)) for n in p.get('name',{}).values()}}
@@ -377,16 +469,28 @@ def render_list(cards,query,locale='zh',*,load,characters=(),bands=(),notice='')
                 batch=same_colour[start:start+8]
                 items=tuple((len(records)+i,card) for i,card in enumerate(batch))
                 records.extend(batch)
-                texts=tuple(tuple((label,color,lines(text,textw,32)) for label,color,text in summaries(c,locale,shared_duration=duration,shared_target=target)) for c in batch)
-                slots=max(map(len,texts)); heights=[max((len(t[i][2]) if i<len(t) else 0 for t in texts),default=1)*40 for i in range(slots)]
+                pitch = default_pitch
+                if locale == 'zh':
+                    # Give authored two-line summaries room on their own row.
+                    # Long or unexpected values can still wrap at the original font size.
+                    widest = max((ceil(font(skill_font, False, line.isascii()).getlength(line))
+                                  for card in batch
+                                  for copy in card.catalog.get('member_list_skill_copy', {}).values()
+                                  if '\n' in copy
+                                  for line in copy.split('\n')), default=0)
+                    pitch = max(default_pitch, min(376, widest + skill_indent + 5))
+                texts=tuple(tuple(measured_summaries(c, pitch-skill_indent-5)) for c in batch)
+                slots=max(map(len,texts))
+                heights=[max((len(t[i][2]) if i<len(t) else 0 for t in texts),default=1)*skill_step+skill_gap
+                         for i in range(slots)]
                 offsets=tuple(sum(heights[:i]) for i in range(slots))
                 content_height=(224 if support else 254)+sum(heights)+36
                 if support:content_height=max(content_height,heading_height+16)
-                rows.append(CardRow(items,headings,first,offsets,texts,content_height+(36 if first else 0)))
+                rows.append(CardRow(items,headings,first,offsets,texts,content_height+(36 if first else 0),pitch))
                 first=False
     unique_count=len(cards)
     cards=tuple(records)
-    width=max(1168 if support else 568,left+max(len(r.cards) for r in rows)*pitch+(44 if support else 48))
+    width=max(1168 if support else 568,left+max(len(r.cards)*r.pitch for r in rows)+(44 if support else 48))
     title=ui_label('留影卡列表',locale) if support else ui_label('角色卡列表',locale)
     title_lines=lines(title,width-112,80,True)
     title_extra=(len(title_lines)-1)*96
@@ -441,12 +545,14 @@ def render_list(cards,query,locale='zh',*,load,characters=(),bands=(),notice='')
                         for n,line in enumerate(wrapped):
                             c.text(cx,y+top+(152 if side==96 else 120)+n*(44 if side==96 else 38),line,size,bold=True,align='center')
                 for col,((index,card),text) in enumerate(zip(row.cards,row.texts)):
-                    x=left+col*pitch;card_face(c,card,x,y+8,artw,arth,cached)
+                    x=left+col*row.pitch;card_face(c,card,x,y+8,artw,arth,cached)
                     c.text(x,y+(202 if support else 230),f'ID {card.id}',30 if support else 32,MUTED)
                     base=y+(224 if support else 254)
                     for i,(label,color,wrapped) in enumerate(text):
-                        cy=base+row.offsets[i]+18;c.text(x,cy,ui_label(label,locale),32,color,True)
-                        for n,line in enumerate(wrapped):c.text(x+44,cy+n*40,line,32)
+                        cy=base+row.offsets[i]+12
+                        c.text(x,cy,ui_label(label,locale),skill_font,color,True)
+                        for n,line in enumerate(wrapped):
+                            c.text(x+skill_indent,cy+n*skill_step,line,skill_font,INK)
                 y+=row.height-(36 if row.group_start else 0)
             c.text(48,height-footer_h+28,ui_label('展示位置',locale)+f' {rows[start].cards[0][0]+1}–{rows[stop-1].cards[-1][0]+1} / {len(cards)}',28,MUTED)
             c.text(48,height-30,ui_label('按 ID 查详情',locale),28,MUTED)

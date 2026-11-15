@@ -1,6 +1,6 @@
 # L3
 # Input: 歌曲条件文本或 SongFilter、SongRepository 的歌曲／traits 记录及页码。
-# Output: parse_filter 返回 SongFilter | None，非法条件抛 ValueError；execute 返回 SongAnswer，保存全匹配集合与页码，text 展示时切页。
+# Output: parse_filter 返回 SongFilter | None，非法条件抛 ValueError；execute 返回 SongAnswer，保存确认匹配的歌曲、页码与资料缺失提示，text 展示时切页。
 # Pos: Query / Deterministic 的歌曲颜色、激奏顺序与等级条件执行；见 L2-2.md。
 # Effects/Dependencies: 读取当前仓库与已关联 traits，不刷新来源；名称解析经 commands 可读本地别名 JSON，保留对根入口的函数内引用。
 
@@ -12,11 +12,25 @@ import unicodedata
 from dataclasses import dataclass
 
 from ..data import localized_text, normalize
-from .song_identity import protect_entity
+from ..i18n import tr
+from .song_identity import direct_song_names, protect_entity, song_suggestions, song_suggestion_text
 from ..sources.haneoka.song_traits import COLORS, describe
 
-MARKER = re.compile(r"颜色|属性|[红蓝绿黄紫黑白橙青灰]色|(?:^|\s)[红蓝绿黄紫](?=\s|$)|激奏|击奏|纯(?:JUST|COMBO|LUCK)", re.I)
-HELP = "例：/查曲 蓝色 MyGO EX 激奏=JUST；/查曲 激奏=纯JUST；/查曲 激奏=JUST/JUST/COMBO。单类型表示包含，斜杠序列按顺序精确匹配。"
+MISSION_TYPE = r"(?:JUST|COMBO|LUCK)"
+MARKER = re.compile(rf"颜色|属性|[红蓝绿黄紫黑白橙青灰]色|(?:^|\s)[红蓝绿黄紫](?=\s|$)|激奏|击奏|纯{MISSION_TYPE}", re.I)
+HELP = "如 /查曲 MyGO just、/查曲 纯JUST 或 /查曲 JUST/JUST/COMBO。单类型表示包含，斜杠序列按顺序精确匹配。"
+MISSION_FILTER = re.compile(r"(?:激奏|击奏)[=:]?(?:\s*(?!(?:激奏|击奏))(\S+))?")
+LEGACY_PURE_MISSION_FILTER = re.compile(rf"(?<!\w)纯{MISSION_TYPE}(?!\w)", re.I)
+BARE_MISSION_FILTER = re.compile(
+    rf"(?<!\S)(?:混合|纯{MISSION_TYPE}|包含全部{MISSION_TYPE}(?:[/,+]{MISSION_TYPE})*"
+    rf"|{MISSION_TYPE}(?:/{MISSION_TYPE})*)(?!\S)",
+    re.I,
+)
+LEVEL_NUMBER = r"\d+(?:\.\d+)?"
+SYMBOL_LEVEL = re.compile(rf"lv\.?\s*(>=|<=|>|<|=)?\s*({LEVEL_NUMBER})", re.I)
+CHINESE_LEVEL = re.compile(
+    r"(?<!\S)(?:(大于|小于)\s*([+-]?\d[\d.]*)\s*级?|([+-]?\d[\d.]*)\s*级?\s*(以上|以下))(?!\S)"
+)
 DIFFS = {"EZ": "EASY", "EASY": "EASY", "NM": "NORMAL", "NORMAL": "NORMAL", "HD": "HARD", "HARD": "HARD", "EX": "EXPERT", "EXPERT": "EXPERT"}
 
 
@@ -34,9 +48,10 @@ class SongFilter:
     band: str = ""
 
 
-def parse_filter(query, repository=None, *, force=False):
+def parse_filter(query, repository=None, *, force=False, direct_syntax=False):
     text = unicodedata.normalize("NFKC", query).strip()
-    if not force and not MARKER.search(text):
+    marked = MARKER.search(text)
+    if not force and not marked and not (direct_syntax and (BARE_MISSION_FILTER.search(text) or CHINESE_LEVEL.search(text))):
         return None
     text, protected = protect_entity(text, repository)
     text = re.sub(r"\s*([=:/,])\s*", r"\1", text)
@@ -78,12 +93,21 @@ def parse_filter(query, repository=None, *, force=False):
             raise ValueError("颜色仅支持红、蓝、绿、黄、紫。")
         colors = tuple(sorted({mapping[v.removesuffix("色")] for v in values}))
         text = text[:m.start()] + " " + text[m.end():]
-    found = list(re.finditer(r"(?:激奏|击奏)(?:=|:)?([^\s]+)|(?<!\w)(纯(?:JUST|COMBO|LUCK))(?!\w)", text, re.I))
-    if len(found) > 1:
+    explicit = list(MISSION_FILTER.finditer(text))
+    bare_pattern = BARE_MISSION_FILTER if direct_syntax else LEGACY_PURE_MISSION_FILTER
+    bare = [
+        match for match in bare_pattern.finditer(text)
+        if not any(field.start() < match.end() and match.start() < field.end() for field in explicit)
+    ]
+    if len(explicit) + len(bare) > 1:
         raise ValueError("请只给出一个激奏条件。" + HELP)
+    found = explicit or bare
     if found:
         m = found[0]
-        value = (m[1] or m[2]).upper()
+        value = m[1] if explicit else m[0]
+        if value is None:
+            raise ValueError("请指定激奏条件的值。" + HELP)
+        value = value.upper()
         if value == "混合":
             mode = "mixed"
         else:
@@ -101,13 +125,21 @@ def parse_filter(query, repository=None, *, force=False):
         m = diffs[0]
         difficulty = "ALL" if m[1].upper() in {"ALL", "全难度"} else DIFFS[m[1].upper()]
         text = text[:m.start()] + " " + text[m.end():]
-    levels = list(re.finditer(r"lv\.?\s*(>=|<=|>|<|=)?\s*(\d+(?:\.\d+)?)", text, re.I))
-    if len(levels) > 1:
+    levels = list(SYMBOL_LEVEL.finditer(text))
+    chinese_levels = list(CHINESE_LEVEL.finditer(text)) if direct_syntax else []
+    if len(levels) + len(chinese_levels) > 1:
         raise ValueError("一次查询请指定一个等级条件。")
-    if levels:
-        m = levels[0]
-        comparison, level = m[1] or "=", float(m[2])
-        level_text = m[2]
+    if levels or chinese_levels:
+        if levels:
+            m = levels[0]
+            comparison, level_text = m[1] or "=", m[2]
+        else:
+            m = chinese_levels[0]
+            comparison = {"大于": ">", "小于": "<", "以上": ">=", "以下": "<="}[m[1] or m[4]]
+            level_text = m[2] or m[3]
+            if not re.fullmatch(LEVEL_NUMBER, level_text):
+                raise ValueError("等级须为 1～40 之间的整数或小数。")
+        level = float(level_text)
         if not 1 <= level <= 40:
             raise ValueError("等级须在 1～40 之间。")
         text = text[:m.start()] + " " + text[m.end():]
@@ -119,7 +151,9 @@ def parse_filter(query, repository=None, *, force=False):
         text = text.strip()[:m.start()]
         if not 1 <= level <= 40:
             raise ValueError("等级须在 1～40 之间。")
-    if (not force and not colors and not mode) or MARKER.search(text) or re.search(r"[=:<>]|\blv\b", text, re.I):
+    if not force and not marked and not colors and not mode and not chinese_levels:
+        return None
+    if (not force and not colors and not mode and not chinese_levels) or MARKER.search(text) or re.search(r"[=:<>]|\blv\b", text, re.I):
         raise ValueError("无法识别全部歌曲条件，请使用明确字段。" + HELP)
     term = text.replace("TAKIENTITYTOKEN", protected).strip()
     pieces = [term] if term else []
@@ -155,21 +189,35 @@ def serialize_filter(request):
     return " ".join(parts)
 
 
+def _missing_traits(request, traits):
+    fields = []
+    if request.colors and (traits is None or traits.color is None):
+        fields.append("颜色")
+    if request.mode and (traits is None or not traits.missions):
+        fields.append("激奏")
+    return fields
+
+
 def traits_match(request, song):
     """True/False/None means match/non-match/missing required evidence."""
     if request.band and normalize(song.band) != normalize(request.band):
         return False
     if not (request.colors or request.mode):
         return True
-    t = song.traits
-    if not t or (request.colors and t.color is None) or (request.mode and not t.missions):
+    traits = song.traits
+    if traits is None:
         return None
-    if request.colors and t.color not in request.colors:
+    if request.colors and traits.color is not None and traits.color not in request.colors:
         return False
-    seq, wanted = t.missions or (), request.missions
-    return not request.mode or {"contains": bool(set(wanted) & set(seq)), "all": set(wanted) <= set(seq),
-        "pure": bool(seq) and set(seq) == set(wanted), "mixed": len(set(seq)) > 1,
-        "exact": seq == wanted}[request.mode]
+    seq, wanted = traits.missions, request.missions
+    if request.mode and seq:
+        matches = {
+            "contains": bool(set(wanted) & set(seq)), "all": set(wanted) <= set(seq),
+            "pure": set(seq) == set(wanted), "mixed": len(set(seq)) > 1, "exact": seq == wanted,
+        }
+        if not matches[request.mode]:
+            return False
+    return None if _missing_traits(request, traits) else True
 
 
 @dataclass(frozen=True)
@@ -180,9 +228,14 @@ class SongAnswer:
     warning: str = ""
     unavailable: bool = False
     unknown_entity: bool = False
+    missing_count: int = 0
+    suggestions: tuple = ()
+    suggestion_limit: int = 0
 
     @property
     def status(self):
+        if self.suggestions:
+            return "ambiguous"
         return "unknown_entity" if self.unknown_entity else "data_unavailable" if self.unavailable else "success" if self.songs else "empty"
 
     @property
@@ -193,19 +246,33 @@ class SongAnswer:
 
     def text(self, locale="zh"):
         from ..commands import page_slice
+        if self.suggestions:
+            return song_suggestion_text(self.suggestions, locale, self.warning, limit=self.suggestion_limit)
         if not self.songs:
-            return "没有符合条件的歌曲。\n" + (self.warning + "\n" if self.warning else "") + HELP
+            if self.unknown_entity:
+                message = f"找不到歌曲或乐队「{self.request.term}」。"
+            elif self.unavailable:
+                message = "这次无法判断哪些歌曲符合条件。"
+            elif self.missing_count:
+                message = "现有资料中未确认有歌曲符合条件。"
+            else:
+                message = "没有符合条件的歌曲。"
+            return message + "\n" + (self.warning + "\n" if self.warning else "") + HELP
         lines = ["歌曲筛选 · " + self.request.query]
         for index, song in enumerate(page_slice(self.songs, self.page), 1):
             lines.append(f"{index:02d}. ID {song.id}  {localized_text(song, 'title', locale)} · {localized_text(song, 'band', locale)}\n{describe(song)}")
-        return "\n".join(lines) + "\n" + self.footer
+        return "\n".join(lines) + "\n" + self.footer + "\n" + tr(locale, "song_list_actions")
 
 
-def execute(request, repository, page=1):
+def execute(request, repository, page=1, *, direct_song_keywords=False):
     from ..commands import _song_name_matches
     catalog = repository.capture_catalog()
     stale = catalog.cache_state == 'stale'
-    candidates = _song_name_matches(repository, request.term) if request.term else list(repository.songs)
+    suggestion_limit = 0
+    if direct_song_keywords:
+        candidates, suggestion_limit = direct_song_names(repository, request.term)
+    else:
+        candidates = _song_name_matches(repository, request.term) if request.term else list(repository.songs)
     if request.term and not candidates:
         return SongAnswer(request, page=page, unknown_entity=True,
                           warning='Haneoka 旧缓存；未命中不代表最新资料不存在。' if stale else '')
@@ -224,20 +291,27 @@ def execute(request, repository, page=1):
                     ">": v > target, ">=": v >= target, "<": v < target, "<=": v <= target}[request.comparison] for v in values)
     candidates = [s for s in candidates if charts_match(s)]
     unknown, matches = 0, []
+    missing_fields = set()
     for song in candidates:
         keep = traits_match(request, song)
         if keep is None:
             unknown += 1
+            missing_fields.update(_missing_traits(request, song.traits))
             continue
         if not keep:
             continue
         matches.append(song)
-    warning = f"有 {unknown} 首歌曲缺少所需颜色／激奏数据，未参与筛选。" if unknown else ""
-    if candidates and unknown == len(candidates):
-        warning = "歌曲颜色／激奏数据暂不可用，等待后台同步后重试。"
+    fields = "／".join(field for field in ("颜色", "激奏") if field in missing_fields)
+    unavailable = unknown > 0 and unknown == len(candidates)
+    if unavailable:
+        warning = f"所需的歌曲资料暂不可用（缺少{fields}），等待后台同步后重试。"
+    else:
+        warning = f"有 {unknown} 首歌曲缺少所需{fields}资料，未参与筛选。" if unknown else ""
     if stale or any(s.traits and s.traits.stale for s in candidates):
         warning += " Haneoka 旧缓存。"
-    return SongAnswer(request, tuple(matches), page, warning, bool(candidates and unknown == len(candidates)))
+    return SongAnswer(request, () if suggestion_limit else tuple(matches), page, warning, unavailable=unavailable,
+                      missing_count=unknown, suggestions=song_suggestions(matches, suggestion_limit),
+                      suggestion_limit=suggestion_limit)
 
 
 def local_query(query, repository=None):

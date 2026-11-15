@@ -68,7 +68,6 @@ LABELS = {
  '激奏段 {n}':('Fever {n}', '激奏 {n}'),
  '占比 {percent:.1f}% · #{rank}':('{percent:.1f}% · #{rank}', '割合 {percent:.1f}% · #{rank}'),
  '共 {n} 首':('{n} songs', '全{n}曲'),
- '/查谱面 ID 难度':('/chart ID difficulty', '/譜面 ID 難易度'),
  '跨乐队 · {n} 位成员':('Multiple bands · {n} members', '複数バンド・{n}人'),
  '活动加成卡':('Event bonus card', 'イベントボーナス'),
  '技能详情未获取':('Skill details unavailable', 'スキル詳細未取得'),
