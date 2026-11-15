@@ -94,6 +94,8 @@ class ReferenceLayoutTests(unittest.TestCase):
         self.assertEqual(layout.memory_summary(value),'每40P转J×5\nMyGO：每20P')
         card=replace(self.memory(),skills=(Skill('supportSkill','一','延时3秒'),Skill('supportSkill','二','回血550')))
         self.assertEqual([(label,text) for label,_,text in layout.summaries(card)],[('支','延时3秒'),('支','回血550')])
+        self.assertEqual(layout._memory_skill_lines('MISS保连×5 COMBO激奏期间\n同队含BAD'),
+                         ('MISS保连×5', 'COMBO激奏期间', '同队含BAD'))
 
     def test_member_numeric_range_is_not_split_into_partial_numbers(self):
         from ournotes_bot.rendering.haneoka_theme import lines

@@ -137,7 +137,6 @@ class CardCatalogTests(unittest.TestCase):
                 self.assertIn("未放宽", answer.text())
         art = resolve_command("/查卡面 1", self.repo).catalog
         self.assertEqual((art.request.mode, art.cards[0].id), ("art", 1))
-        self.assertEqual(resolve_command("/查留影卡 卡名=合成SNAP", self.repo).status, "invalid_arguments")
 
     def test_title_match_keeps_tag_intersection_and_exact_id(self):
         two_tags = {"1": {"zh": "MyGO!!!!!"}, "2": {"zh": "Ave Mujica"}}
@@ -154,6 +153,111 @@ class CardCatalogTests(unittest.TestCase):
             self.assertIn(1, self.ids(query))
         for query in ("SSR", "颜色=红色", "乐队=MyGO", "角色=skk", "LIVE=技能延长", "击奏=LUCK"):
             self.assertEqual(self.ids(query, True), [1])
+
+    def test_direct_snap_title_filters_keep_punctuation_and_object(self):
+        ssr = replace(self.support, id=51, title="在迷失中，相伴一生")
+        ex = replace(self.support, id=70, title="Abracadabra", rarity=10)
+        self.repo.support_cards = [ssr, ex, replace(ssr, id=80, title="Another Abracadabra")]
+        for query, ids in (
+            ("在迷失中，相伴一生", [51]),
+            ("颜色=红 在迷失中，相伴一生 SSR", [51]),
+            ("Abracadabra", [70]),
+            ("EX Abra", [70]),
+            ("卡名:Abra EX", [70]),
+            ('LIVE=技能延长 EX 卡名="Abracadabra"', [70]),
+            ("LIVE=技能延长 SSR / EX", [70, 51, 80]),
+        ):
+            with self.subTest(query=query):
+                result = resolve_command("/查留影卡 " + query, self.repo)
+                self.assertEqual(result.catalog.request.mode, "list")
+                self.assertEqual([card.id for card in result.support_cards], ids)
+                if result.catalog.request.matched_title_ids is not None:
+                    self.assertIn(f"/查留影卡 {ids[0]}", result.catalog.candidate_choices(result.support_cards))
+        command = resolve_command("/查留影卡 LIVE=技能延长 70 EX", self.repo)
+        self.assertEqual(command.catalog.request.mode, "detail")
+        self.assertEqual([card.id for card in command.support_cards], [70])
+        self.assertEqual(resolve_command("/查留影卡 LIVE=155", self.repo).status, "invalid_arguments")
+        self.assertEqual(resolve_command("/查留影卡 队长=异色", self.repo).status, "invalid_arguments")
+
+    def test_direct_snap_live_shortcuts_and_space_fields(self):
+        self.repo.support_cards = [replace(self.support, rarity=10)]
+        for query in ("EX 延长", "EX 技能延长", "LIVE 延长 EX", "EX LiVe=延长",
+                      "激奏 luck EX 延长", "EX ＬＩＶＥ　延长 击奏 LUCK", "EX gekisou luck 延长",
+                      "LIVE 延长 / 奶卡 EX luck", "EX 延长/奶卡 LUCK"):
+            with self.subTest(query=query):
+                result = resolve_command("/查留影卡 " + query, self.repo)
+                self.assertEqual([card.id for card in result.support_cards], [1])
+        for short, full, category in (("分卡", "分数提升", "score"), ("奶卡", "LIFE回复", "life"),
+                                      ("判卡", "判定强化", "judgement")):
+            self.repo.support_cards = [replace(self.support, catalog={
+                **self.support.catalog, "categories": {"live": [category], "gekisou": ["LUCK"]}})]
+            for query in (short, full, "LIVE=" + short, "LIVE " + full):
+                with self.subTest(query=query):
+                    result = resolve_command("/查留影卡 " + query, self.repo)
+                    self.assertEqual([card.id for card in result.support_cards], [1])
+        for query in ("EX LIVE", "激奏 FEVER", "LIVE 150"):
+            with self.subTest(query=query):
+                self.assertEqual(resolve_command("/查留影卡 " + query, self.repo).status, "invalid_arguments")
+
+    def test_direct_snap_expanded_just_window_filters_the_effect(self):
+        def snap(card_id, mission, expands, color=1):
+            return replace(self.support, id=card_id, card_type=color, catalog={
+                **self.support.catalog, "categories": {"live": ["duration"], "gekisou": [mission]},
+                "just_window_expand": expands,
+            })
+
+        self.repo.support_cards = [snap(1, "JUST", True), snap(2, "JUST", False),
+                                   snap(3, "COMBO", False), snap(4, "not_applicable", False)]
+        for query, expected in (("扩判", [1]), ("红赤 激奏 扩判", [1]), ("激奏=扩判", [1]),
+                                ("扩判/COMBO", [1, 3]), ("just", [1, 2]), ("EX 扩判", [])):
+            with self.subTest(query=query):
+                result = resolve_command("/查留影卡 " + query, self.repo)
+                self.assertEqual([card.id for card in result.support_cards], expected)
+        self.repo.support_cards.append(snap(5, "JUST", None, color=2))
+        self.assertEqual(resolve_command("/查留影卡 扩判", self.repo).status, "data_unavailable")
+        self.assertEqual([c.id for c in resolve_command("/查留影卡 扩判 红", self.repo).support_cards], [1])
+        self.assertEqual(resolve_command("/查留影卡 LIVE=扩判", self.repo).status, "invalid_arguments")
+        self.assertEqual(resolve_command("/查卡 激奏=扩判", self.repo).status, "invalid_arguments")
+
+    def test_direct_snap_attributes_and_shortcuts_preserve_complete_titles(self):
+        self.repo.support_cards = [replace(self.support, id=i, card_type=i) for i in range(1, 6)]
+        for i, attribute in enumerate(("红赤", "绀碧", "翡翠", "琉金", "紫苑"), 1):
+            for query in (attribute, f"属性={attribute}属性", f"颜色={attribute}"):
+                with self.subTest(query=query):
+                    result = resolve_command("/查留影卡 " + query, self.repo)
+                    self.assertEqual([card.id for card in result.support_cards], [i])
+        result = resolve_command("/查留影卡 属性=翡翠 / 黄 激奏=luck", self.repo)
+        self.assertEqual([card.id for card in result.support_cards], [3, 4])
+
+        self.repo.support_cards += [
+            replace(self.support, id=51, card_type=4, title="翡翠"),
+            replace(self.support, id=52, title="延长"),
+            replace(self.support, id=53, title="激奏"),
+        ]
+        for query, expected in (("翡翠", [51]), ("属性=翡翠", [3]), ("延长 红", [52]),
+                                ("卡名=延长", [52]), ("激奏", [53]), ("激奏=LUCK 黄", [4, 51])):
+            with self.subTest(query=query):
+                result = resolve_command("/查留影卡 " + query, self.repo)
+                self.assertEqual([card.id for card in result.support_cards], expected)
+
+    def test_snap_help_points_to_continue_for_long_lists(self):
+        from ournotes_bot.commands import COMMAND_HELPS
+
+        general = handle_command("/帮助", self.repo)
+        snap = next(line for line in general.splitlines() if line.startswith("/查留影卡 "))
+        self.assertIn("/继续", snap)
+        self.assertNotIn("页N", snap)
+        for command in ("/查留影卡76", "/查支援卡76"):
+            with self.subTest(command=command):
+                help_text = handle_command(command, self.repo)
+                self.assertIn("/继续", help_text)
+                self.assertIn("/查留影卡 EX 延长", help_text)
+                self.assertNotIn("页N", help_text)
+        for locale, old_page in (("en", "[page N]"), ("ja", "[ページN]")):
+            with self.subTest(locale=locale):
+                help_text = COMMAND_HELPS[locale]["support_cards"]
+                self.assertIn("/继续", help_text)
+                self.assertNotIn(old_page, help_text)
 
     def test_member_leader_types_compose_with_card_and_live_filters(self):
         self.repo.cards = [

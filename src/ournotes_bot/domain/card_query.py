@@ -55,8 +55,8 @@ class CardRequest:
             raise ValueError("unknown card mode")
         if self.card_id is not None and any(self.filters.conditions()):
             raise ValueError("filtered IDs belong in title_ids, not the ID shortcut")
-        if self.matched_title_ids is not None and (self.support or self.card_id is not None):
-            raise ValueError("only a filtered member request can carry title matches")
+        if self.matched_title_ids is not None and self.card_id is not None:
+            raise ValueError("only a filtered card request can carry title matches")
         if self.filters.leader and self.support:
             raise ValueError("only member cards have leader skills")
         if (self.live_conditions or self.live_score_ranges) and (self.support or self.card_id is not None):
