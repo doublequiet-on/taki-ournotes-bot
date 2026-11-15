@@ -39,7 +39,11 @@ def prepare_chart_reply(song,charts,source,locale,*,load_score=load_chart_score,
                 captured=load_data(song,preview,source=source);score=captured.score;notice=captured.notice(locale)
         except ChartDataError:
             notice='谱面暂不可用'
-    text=f'{song.title} · ID {song.id} · '+notice+'\n'+' / '.join(f'{c.difficulty} {c.display_level:g} · {note_text(c.notes)}' for c in charts)
+    text = f'{localized_text(song, "title", locale)} · ID {song.id}'
+    if score is not None and notice:
+        text += f' · {notice}'
+    if charts:
+        text += '\n' + ' / '.join(f'{c.difficulty} Lv.{c.display_level:g} · {note_text(c.notes)}' for c in charts)
     return ChartReply(song,tuple(charts),score,preview.difficulty if preview else None,locale,notice,text)
 
 

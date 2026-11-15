@@ -45,9 +45,184 @@ class ReplyPipelineTests(unittest.TestCase):
                             asyncio.run(_deliver_reply(message,'fixture',True,reply))
                         text = message._api.post_group_message.await_args.kwargs['content']
                         self.assertNotIn('None Notes',text)
-                        if failure=='upload' or command.startswith('/问'):self.assertIn(note_text(notes),text)
-                        elif notes is None:self.assertIn('? Note',text)
-                        else:self.assertIn(f'{notes} Note',text)
+                        self.assertIn(note_text(notes), text)
+
+    def test_chart_failure_keeps_captured_difficulty_and_options(self):
+        from ournotes_bot.rendering.image_output import ImageBudgetError
+        from ournotes_bot.sources.chart_data import ChartDataError
+        song = self.repo.songs[0]
+        hard = Chart("HARD", 20, 20.0, 0, "")
+        expert = song.charts[0]
+        self.repo.songs = [replace(song, charts=(hard, expert))]
+        command = "/查谱面 1 镜像 5/6.5/8/5/5 EX"
+        for source_error, draw_error, reason in (
+            (None, ImageBudgetError("fixture"), "EXPERT 谱面图超出图片大小限制"),
+            (None, ValueError("fixture"), "EXPERT 谱面图生成失败"),
+            (ChartDataError("fixture"), None, "EXPERT 的谱面文件暂不可用"),
+        ):
+            with self.subTest(reason=reason), \
+                 patch("ournotes_bot.application.replies.load_chart_score",
+                       return_value={"events": {"skill": list(range(5))}}, side_effect=source_error) as read, \
+                 patch("ournotes_bot.rendering.chart_layout.render", side_effect=draw_error) as draw:
+                reply = _prepare_reply(command, self.repo, self.parser)
+                read.assert_called_once_with(self.repo.songs[0], expert)
+                self.assertEqual(draw.call_count, int(source_error is None))
+                self.assertIsNone(reply.image)
+                self.assertIn("迷星叫 · ID 100001", reply.text)
+                self.assertIn("EXPERT Lv.25 · 768 Notes", reply.text)
+                self.assertNotIn("HARD", reply.text)
+                self.assertIn("镜像谱面", reply.text)
+                self.assertIn("5/6.5/8/5/5", reply.text)
+                self.assertIn(reason, reply.text)
+                self.assertEqual("未能应用" in reply.text, source_error is not None)
+                self.assertTrue(reply.context.query.chart_mirror)
+                self.assertEqual(reply.context.query.chart_coverage, (5, 6.5, 8, 5, 5))
+
+        with patch("ournotes_bot.application.replies.load_chart_score") as read, \
+             patch("ournotes_bot.rendering.chart_layout.render") as draw:
+            reply = _prepare_reply(command.replace("EX", "NM"), self.repo, self.parser)
+        read.assert_not_called()
+        draw.assert_not_called()
+        self.assertIsNone(reply.image)
+        self.assertIn("本曲资料中没有 NORMAL 难度", reply.text)
+        self.assertIn("镜像谱面", reply.text)
+        self.assertIn("5/6.5/8/5/5", reply.text)
+        self.assertIn("未能应用", reply.text)
+
+        with patch("ournotes_bot.application.replies.load_chart_score",
+                   return_value={"events": {"skill": list(range(5))}}) as read, \
+             patch("ournotes_bot.rendering.chart_layout.render", return_value=(b"chart",)):
+            reply = _prepare_reply(command, self.repo, self.parser)
+            message = self.message(upload_error=TimeoutError("fixture"))
+            message._api.post_group_message.return_value = {"id": "ack"}
+            asyncio.run(_deliver_reply(message, "fixture", True, reply))
+        read.assert_called_once_with(self.repo.songs[0], expert)
+        message._api.post_group_message.assert_awaited_once()
+        delivered = message._api.post_group_message.await_args.kwargs["content"]
+        self.assertEqual(delivered, reply.text)
+        self.assertIn("EXPERT Lv.25 · 768 Notes", delivered)
+        self.assertNotIn("HARD", delivered)
+        self.assertIn("镜像谱面", delivered)
+        self.assertIn("5/6.5/8/5/5", delivered)
+
+        with patch("ournotes_bot.application.replies.load_chart_score",
+                   return_value={"events": {"skill": []}}) as read, \
+             patch("ournotes_bot.rendering.chart_layout.render", side_effect=ImageBudgetError("fixture")):
+            reply = _prepare_reply("/查谱面 1", self.repo, self.parser)
+        read.assert_called_once_with(self.repo.songs[0], expert)
+        self.assertIn("HARD Lv.20 · 0 Notes", reply.text)
+        self.assertIn("EXPERT Lv.25 · 768 Notes", reply.text)
+        self.assertIn("EXPERT 谱面图超出图片大小限制", reply.text)
+
+    def test_chart_default_and_difficulty_aliases_reach_the_renderer(self):
+        song = self.repo.songs[0]
+        easy = Chart("EASY", 9, 9.0, None, "")
+        normal = Chart("NORMAL", 13, 13.0, 408, "")
+        hard = Chart("HARD", 20, 20.0, 0, "")
+        expert = song.charts[0]
+        charts = (easy, normal, hard, expert)
+        cases = (
+            ("1", charts, "EXPERT", False, ()),
+            ("1", charts[:-1], "HARD", False, ()),
+            ("1 hd 反转", charts, "HARD", True, ()),
+            ("1 镜像 ＨＤ 5/6.5/8/5/5", charts, "HARD", True, (5, 6.5, 8, 5, 5)),
+            ("1 ＥＸ", charts, "EXPERT", False, ()),
+            ("1 ex", charts, "EXPERT", False, ()),
+            ("1 Ez", charts, "EASY", False, ()),
+            ("1 nm", charts, "NORMAL", False, ()),
+        )
+        for suffix, entries, difficulty, mirror, coverage in cases:
+            with self.subTest(suffix=suffix, difficulty=difficulty), \
+                 patch("ournotes_bot.application.replies.load_chart_score",
+                       return_value={"events": {"skill": list(range(5))}}) as read, \
+                 patch("ournotes_bot.rendering.chart_layout.render", return_value=(b"chart",)) as draw:
+                self.repo.songs = [replace(song, charts=entries)]
+                reply = _prepare_reply("/查谱面 " + suffix, self.repo, self.parser)
+                selected = next(chart for chart in entries if chart.difficulty == difficulty)
+                read.assert_called_once_with(self.repo.songs[0], selected)
+                self.assertEqual(draw.call_args.args[1], entries if suffix == "1" else (selected,))
+                self.assertEqual(draw.call_args.args[3], difficulty)
+                self.assertEqual(draw.call_args.kwargs["mirror"], mirror)
+                self.assertEqual(draw.call_args.kwargs["skill_durations"], coverage)
+                self.assertEqual(reply.image, b"chart")
+                if suffix == "1":
+                    self.assertIn("EASY Lv.9 · Note：暂无资料", reply.text)
+                    self.assertIn("HARD Lv.20 · 0 Notes", reply.text)
+
+    def test_chart_option_permutations_prepare_the_same_reply(self):
+        from itertools import permutations
+        from ournotes_bot.commands import resolve_command
+
+        song = self.repo.songs[0]
+        expert = song.charts[0]
+        durations = (5, 6.5, 8, 5, 5)
+        cases = (
+            ("/查谱面 1", "ex", "镜像", "5/6.5/8/5/5"),
+            ("/查谱面 迷星叫", "ＥＸ", "反转", "覆盖=5/6.5/8/5/5"),
+            ("/譜面 100001", "エキスパート", "镜像", "5/6.5/8/5/5"),
+            ("/chart 1", "专家", "反转", "覆盖=5/6.5/8/5/5"),
+        )
+        for prefix, *options in cases:
+            for order in permutations(options):
+                command = prefix + " " + " ".join(order)
+                with self.subTest(command=command), \
+                     patch("ournotes_bot.application.replies.load_chart_score",
+                           return_value={"events": {"skill": list(range(5))}}) as read, \
+                     patch("ournotes_bot.rendering.chart_layout.render", return_value=(b"chart",)) as draw:
+                    result = resolve_command(command, self.repo)
+                    self.assertEqual(result.songs, (song,))
+                    self.assertEqual(result.parsed[2], "EXPERT")
+                    self.assertTrue(result.chart_mirror)
+                    self.assertEqual(result.chart_coverage, durations)
+                    reply = _prepare_reply(command, self.repo, self.parser)
+                    read.assert_called_once_with(song, expert)
+                    self.assertEqual(draw.call_args.args[:2], (song, (expert,)))
+                    self.assertEqual(draw.call_args.args[3], "EXPERT")
+                    self.assertTrue(draw.call_args.kwargs["mirror"])
+                    self.assertEqual(draw.call_args.kwargs["skill_durations"], durations)
+                    self.assertEqual(reply.image, b"chart")
+
+    def test_chart_three_han_candidate_retry_uses_the_original_chart_options(self):
+        from ournotes_bot.commands import resolve_command
+
+        song = self.repo.songs[0]
+        second = replace(song, id=100002, title="迷星吼", titles=("迷星吼",), localized={})
+        third = replace(song, id=100003, title="迷月咬", titles=("迷月咬",), localized={})
+        cases = (
+            ("迷星咬 ex 镜像 5/6.5/8/5/5", (5, 6.5, 8, 5, 5), [song]),
+            ("迷星咬 覆盖=5/6.500000000000001/8/5/5 反转 ＥＸ", (5, 6.500000000000001, 8, 5, 5), [song]),
+            ("迷星咬 5/6.5/8/5/5 EXP 镜像", (5, 6.5, 8, 5, 5), [song, second, third]),
+        )
+        for suffix, durations, candidates in cases:
+            self.repo.songs = candidates
+            with self.subTest(suffix=suffix), \
+                 patch("ournotes_bot.application.replies.load_chart_score",
+                       return_value={"events": {"skill": list(range(5))}}) as read, \
+                 patch("ournotes_bot.rendering.chart_layout.render", return_value=(b"chart",)) as draw:
+                reply = _prepare_reply("/查谱面 " + suffix, self.repo, self.parser)
+                self.assertEqual(reply.business_status, "ambiguous")
+                self.assertIsNone(reply.image)
+                self.assertIn(f"{song.title} · {song.band} · ID {song.id}", reply.text)
+                read.assert_not_called()
+                draw.assert_not_called()
+
+                rows = reply.text.splitlines()[1:]
+                self.assertEqual(len(rows), len(candidates))
+                for row, candidate in zip(rows, candidates):
+                    retry = row.split("→ ", 1)[1]
+                    result = resolve_command(retry, self.repo)
+                    self.assertEqual(result.songs, (candidate,))
+                    self.assertEqual(result.parsed[2], "EXPERT")
+                    self.assertTrue(result.chart_mirror)
+                    self.assertEqual(result.chart_coverage, durations)
+                    confirmed = _prepare_reply(retry, self.repo, self.parser)
+                    self.assertEqual(confirmed.business_status, "success")
+                    self.assertEqual(confirmed.image, b"chart")
+                    read.assert_called_once_with(candidate, candidate.charts[0])
+                    read.reset_mock()
+                    self.assertEqual(draw.call_args.args[0], candidate)
+                    self.assertTrue(draw.call_args.kwargs["mirror"])
+                    self.assertEqual(draw.call_args.kwargs["skill_durations"], durations)
 
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
@@ -127,6 +302,9 @@ class ReplyPipelineTests(unittest.TestCase):
                     render.assert_not_called()
                     self.assertIsNone(reply.image)
                     self.assertIn("4 个技能点位",reply.text)
+                    self.assertIn("无法应用五段覆盖时间", reply.text)
+                    self.assertIn("5/6.5/8/5/5", reply.text)
+                    self.assertIn("镜像谱面", reply.text)
         for value in ("5/5", "0/5/5/5/5", "-1/5/5/5/5", "nan/5/5/5/5", "5/5/5/5/inf"):
             result = resolve_command("/查谱面 1 覆盖="+value,self.repo)
             self.assertEqual(result.status,"invalid_arguments")

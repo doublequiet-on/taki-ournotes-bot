@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import math
 import re
 import unicodedata
 from dataclasses import dataclass
@@ -30,7 +31,7 @@ HELP_TEXT = """Taki · Our Notes 日服资料查询
 /查曲 [歌名/ID/乐队] [颜色] [激奏=类型] [EX] [lv<=25] [页N]：歌曲列表
 颜色：红、蓝、绿、黄、紫；例 /查曲 颜色=蓝/绿
 激奏=JUST 表示包含；激奏=纯JUST 表示全段同类；激奏=混合；激奏=JUST/JUST/COMBO 按顺序匹配
-/查谱面 歌名或ID [难度] [镜像／反转] [5/6.5/8/5/5]：查看等级与 Note 数；100001 可简写为 1
+/查谱面 歌名或ID [难度] [镜像／反转] [5/6.5/8/5/5]：歌名或 ID 在前，参数顺序不限；100001 可简写为 1
 /查榜线 [jp/hk/kr/en] [id1或活动="名称"] [歌名或歌曲ID=100001] [50或20-40] [仅数值]：顺序不限，默认日服全部歌曲；无排名看趋势，有排名看表。50查40～60，20-40查区间，50-50查一名，1-100全榜；id1查往期本地末次观测，非确认终榜，裸数仍为排名
 Haneoka 未确认原始歌曲序号，请用歌名或歌曲ID；旧T50也查附近，旧多T排名最多五个
 /查活动 [jp/hk/kr/en]：当前／最近活动详情；/查活动 列表、/查活动 ID或名称 查询日服收录资料
@@ -83,7 +84,7 @@ HELP_TEXTS['zh'] = HELP_TEXT + '\n/语言：查看英文和日文指令'
 
 COMMAND_HELP = {
     "songs": "查询歌曲列表，QQ单图优先，超限完整续发。支持歌名、昵称、乐队、ID、等级；27包含27.5，lv比较式未指定难度时按最高等级。可加颜色=蓝/绿、激奏=JUST、激奏=纯COMBO、激奏=混合或激奏=JUST/JUST/COMBO，并与EX、lv<=25、页N组合。同颜色多选任选，不同维度同时满足；包含全部用 激奏=包含全部JUST/COMBO。\n例：/查曲 蓝色 MyGO EX 激奏=JUST 页2",
-    "chart": "查询谱面等级与 Note 数，支持歌名或曲目 ID。100001 可简写为 1。可选难度：EASY、NORMAL、HARD、EXPERT；不指定时显示全部难度。\n可加镜像或反转，左右翻转音符与划键方向；末尾加 5/6.5/8/5/5 按 S1～S5 指定最终秒数，也兼容 覆盖= 写法。\n用法：/查谱面 <歌名或ID> [难度] [镜像／反转]\n示例：/查谱面 1 EXPERT 镜像、/查谱面 100001 反转",
+    "chart": "查询谱面等级与 Note 数，支持歌名或曲目 ID。100001 可简写为 1。难度可写 EZ、NM、HD、EX 或全称。省略难度时，文字列出各档数据，图片只绘制一档，优先 EXPERT。\n歌名或 ID 在前，难度、镜像／反转和覆盖时间顺序不限。镜像左右翻转音符与划键方向。覆盖时间 5/6.5/8/5/5 按 S1～S5 指定最终秒数，也可写 覆盖=5/6.5/8/5/5。\n示例：/查谱面 1 HD 反转、/查谱面 1 镜像 5/6.5/8/5/5 EX",
     "cards": "角色卡条件查询始终返回列表，QQ单图优先，超限完整续发，显示完整总数，剩余内容用 /继续。ID精确查详情，/查卡面 ID 只发公开full卡面。\n用法：/查卡 [BD/SSR/SR/R] [颜色=红色,蓝色] [角色=tmr,skk] [乐队=MyGO] [LIVE=分数提升] [击奏=JUST] [得意=MyGO] [页N]\n不同维度AND、同维度多选OR，得意标签全部包含。BD为生日卡；旧二/三/四星别名保留。",
     "support_cards": "留影卡条件查询返回完整列表，QQ单图优先；ID精确查详情，/查留影卡面 ID 只发卡面。\n用法：/查留影卡 [SSR/EX/SR/R] [颜色=红色,蓝色] [角色=tmr,skk] [乐队=MyGO] [LIVE=技能延长] [击奏=LUCK] [页N]\nLIVE可选分数提升、LIFE回复、判定强化、技能延长；以实际资料为准。角色任选且去重，乐队另行筛选；不支持得意标签；BD仅适用于角色卡。",
     "abbrev": "查询已收录的角色、乐队等昵称；也可直接用昵称查曲或查卡。\n用法：/查缩写 <昵称>\n示例：/查缩写 skk、/查缩写 茉团、/查卡 墨缇丝",
@@ -92,14 +93,14 @@ COMMAND_HELPS = {
     "zh": COMMAND_HELP,
     "en": {
         "songs": "Search by title, band, ID, or level; QQ shows complete results; use /继续 for unsent parts. 27 and lv27 match base level 27; 27.5 and lv27.5 match the displayed level exactly. An exact song ID takes priority over a bare number.\nUsage: /song [title or ID] [level or lv level] [page N]\nExample: /song mygo 27 page 2",
-        "chart": "Look up level and note count by title or ID. Song 100001 can be shortened to 1. Optional difficulty: EASY, NORMAL, HARD, EXPERT.\nUsage: /chart <title or ID> [difficulty]\nExample: /chart 1 EXPERT",
+        "chart": "Look up level and note count by title or ID. Song 100001 can be shortened to 1. Use EZ, NM, HD, EX, or the full difficulty name. If omitted, text lists all available difficulties and the image shows one chart, preferring EXPERT.\nPut the title or ID first. Difficulty, mirror (镜像 or 反转), and five skill durations can follow in any order. The durations are one group in S1–S5 order.\nExample: /chart 1 镜像 5/6.5/8/5/5 EX",
         "cards": "Search by card ID, character, card title, or band, QQ shows complete results; use /继续 for unsent parts.\nUsage: /card <query or ID> [page N]\nExample: /card tomori or /card mygo page 2",
         "support_cards": "Search support cards by ID, character, or title, QQ shows complete results; use /继续 for unsent parts.\nUsage: /support <query or ID> [page N]\nExample: /support tomori or /support 1",
         "abbrev": "Look up verified character and band nicknames.\nUsage: /abbrev <nickname>\nExample: /abbrev skk",
     },
     "ja": {
         "songs": "曲名・バンド・ID・レベルで検索します。QQでは全件表示し、未送信分は /继续 で受け取れます。27とlv27は基本レベル27、27.5とlv27.5は表示レベルを完全一致で検索します。数字が曲IDと一致する場合はIDを優先します。\n使い方：/曲 [曲名またはID] [レベルまたはlvレベル] [ページN]\n例：/曲 mygo 27 ページ2",
-        "chart": "曲名またはIDでレベルとノーツ数を確認します。100001は1と省略できます。難易度省略時は全難易度を表示します。\n使い方：/譜面 <曲名またはID> [難易度]\n例：/譜面 1 EXPERT",
+        "chart": "曲名またはIDでレベルとノーツ数を確認します。100001は1と省略できます。難易度はEZ、NM、HD、EXまたは正式名で指定できます。難易度を省略すると、テキストには取得済みの全難易度を表示し、画像はEXPERTを優先して1つの難易度を描画します。\n最初に曲名またはIDを書き、その後に難易度、ミラー（镜像 または 反转）、スキル時間を任意の順で指定できます。スキル時間はS1～S5の順にまとめて入力します。\n例：/譜面 1 镜像 5/6.5/8/5/5 EX",
         "cards": "カードID、キャラクター名、カード名、バンド名で検索します。QQでは全件表示し、未送信分は /继续 で受け取れます。\n使い方：/カード <名前またはID> [ページN]\n例：/カード 祥子、/カード mygo ページ2、/カード 51",
         "support_cards": "サポートカードID、キャラクター名、カード名で検索します。QQでは全件表示し、未送信分は /继续 で受け取れます。\n使い方：/サポート <名前またはID> [ページN]\n例：/サポート ともり、/サポート 1",
         "abbrev": "登録済みのキャラクター・バンドなどの略称を調べます。\n使い方：/略称 <略称>\n例：/略称 skk",
@@ -352,38 +353,78 @@ def page_notice(kind: str, query: str, page: int, total: int, locale: str) -> st
     return summary
 
 
-def chart_coverage_option(query: str) -> tuple[str, tuple[float, ...]]:
-    """Read final durations for chronological S1–S5 windows."""
-    import math
-    words = query.split()
-    options = [word for word in words if word.startswith("覆盖=")]
-    if len(words) > 1 and "/" in words[-1] and re.fullmatch(r"[0-9eE+./-]+", words[-1]):
-        options.append(words[-1])
-    if not options:
-        return query, ()
-    error = "覆盖时间须填写五个正数（秒），例如 5/6.5/8/5/5。"
-    if len(options) != 1:
-        raise ValueError(error)
-    values = options[0].removeprefix("覆盖=").split("/")
+_CHART_DIFFICULTIES = {
+    "E": "EASY", "EZ": "EASY", "EASY": "EASY", "イージー": "EASY", "简单": "EASY",
+    "N": "NORMAL", "NM": "NORMAL", "NORMAL": "NORMAL", "ノーマル": "NORMAL", "普通": "NORMAL",
+    "H": "HARD", "HD": "HARD", "HARD": "HARD", "ハード": "HARD", "困难": "HARD",
+    "EX": "EXPERT", "EXP": "EXPERT", "EXPERT": "EXPERT", "エキスパート": "EXPERT", "专家": "EXPERT",
+}
+
+
+def _chart_difficulty(word: str) -> str | None:
+    return _CHART_DIFFICULTIES.get(unicodedata.normalize("NFKC", word).upper())
+
+
+def _looks_like_chart_coverage(word: str) -> bool:
+    if word.startswith("覆盖="):
+        return True
+    if "/" not in word:
+        return False
+    values = word.split("/")
+    # Keep numeric slash groups and recognize a mistyped value in a five-part group.
+    number_like = sum(bool(re.fullmatch(r"[0-9.eE+-]*|[+-]?(?:nan|inf(?:inity)?)", value, re.I))
+                      for value in values)
+    return number_like == len(values) or (len(values) == 5 and number_like >= 3)
+
+
+def _parse_chart_coverage(word: str, locale: str) -> tuple[float, ...]:
+    values = word.removeprefix("覆盖=").split("/")
     if len(values) != 5 or any(not re.fullmatch(r"[0-9]+(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?", v) for v in values):
-        raise ValueError(error)
-    durations = tuple(float(v) for v in values)
-    if any(not math.isfinite(v) or v <= 0 for v in durations):
-        raise ValueError(error)
-    return " ".join(word for word in words if word != options[0]), durations
+        raise ValueError(tr(locale, "chart_coverage_invalid"))
+    durations = tuple(float(value) for value in values)
+    if any(not math.isfinite(duration) or duration <= 0 for duration in durations):
+        raise ValueError(tr(locale, "chart_coverage_invalid"))
+    return durations
 
 
-def chart_mirror_option(query: str) -> tuple[str, bool]:
-    """Remove a trailing mirror option, before or after the difficulty."""
-    words = query.split()
-    difficulties = {"E", "EASY", "N", "NORMAL", "H", "HARD", "EX", "EXP", "EXPERT", "イージー", "ノーマル", "ハード", "エキスパート", "简单", "普通", "困难", "专家"}
-    index = len(words) - 1
-    if index > 0 and words[index].upper() in difficulties:
-        index -= 1
-    if index > 0 and words[index] in {"镜像", "反转"}:
-        del words[index]
-        return " ".join(words), True
-    return query, False
+def _parse_chart_arguments(
+    query: str, repository: SongRepository | None = None, locale: str = "zh",
+) -> tuple[str, str | None, bool, tuple[float, ...]]:
+    """Consume a suffix of chart options, stopping at the longest exact song name."""
+    from .query.song_identity import exact_songs
+
+    difficulty = None
+    mirror = False
+    coverage = ()
+    while True:
+        if repository is not None and exact_songs(repository, query):
+            return query, difficulty, mirror, coverage
+        parts = query.rsplit(None, 1)
+        if len(parts) == 1:
+            break
+        name, word = parts
+        requested_difficulty = _chart_difficulty(word)
+        if requested_difficulty:
+            if difficulty is not None:
+                raise ValueError(tr(locale, "chart_difficulty_repeated"))
+            difficulty = requested_difficulty
+        elif word in {"镜像", "反转"}:
+            if mirror:
+                raise ValueError(tr(locale, "chart_mirror_repeated"))
+            mirror = True
+        elif _looks_like_chart_coverage(word):
+            if coverage:
+                raise ValueError(tr(locale, "chart_coverage_repeated"))
+            coverage = _parse_chart_coverage(word, locale)
+        else:
+            break
+        query = name
+
+    # Only chart lookup accepts the shortened 100000-series song ID.
+    short_id = unicodedata.normalize("NFKC", query)
+    if short_id.isdecimal() and 1 <= int(short_id) < 100000:
+        query = str(100000 + int(short_id))
+    return query, difficulty, mirror, coverage
 
 
 def parse_query(content: str) -> tuple[str, str, str | int | None] | None:
@@ -400,20 +441,9 @@ def parse_query(content: str) -> tuple[str, str, str | int | None] | None:
         return ("songs", query, page) if query else None
     if kind == "chart":
         try:
-            query, _ = chart_coverage_option(query)
+            query, difficulty, _, _ = _parse_chart_arguments(query)
         except ValueError:
             return None
-        query, _ = chart_mirror_option(query)
-        parts = query.rsplit(None, 1)
-        difficulties = {"E": "EASY", "EASY": "EASY", "N": "NORMAL", "NORMAL": "NORMAL", "H": "HARD", "HARD": "HARD", "EX": "EXPERT", "EXP": "EXPERT", "EXPERT": "EXPERT", "イージー": "EASY", "ノーマル": "NORMAL", "ハード": "HARD", "エキスパート": "EXPERT", "简单": "EASY", "普通": "NORMAL", "困难": "HARD", "专家": "EXPERT"}
-        if len(parts) == 2 and parts[1].upper() in difficulties:
-            query, difficulty = parts[0], difficulties[parts[1].upper()]
-        else:
-            difficulty = None
-        # Only chart lookup accepts the shortened 100000-series song ID.
-        short_id = unicodedata.normalize("NFKC", query)
-        if short_id.isdecimal() and 1 <= int(short_id) < 100000:
-            query = str(100000 + int(short_id))
         return "chart", query, difficulty
     if kind == "cards":
         query, page = _split_page(query)
@@ -602,25 +632,16 @@ def resolve_command(content: str, repository: SongRepository) -> CommandResult |
         return CommandResult((kind, answer.request.query, answer.request.page),
                              cards=() if support else answer.cards,
                              support_cards=answer.cards if support else (), catalog=answer)
-    parsed = parse_query(content)
     mirror = False
     coverage = ()
     if kind == "chart" and len(parts) > 1:
-        from .query.song_identity import exact_songs
-        if exact_songs(repository, parts[1]):
-            parsed = ("chart", parts[1], None)
-        else:
-            try:
-                chart_query, coverage = chart_coverage_option(parts[1])
-            except ValueError as exc:
-                return CommandResult(("chart", parts[1], None), hint=str(exc), status="invalid_arguments")
-            original_query, mirror = chart_mirror_option(chart_query)
-            if exact_songs(repository, original_query):
-                parsed = ("chart", original_query, None)
-        if parsed and parsed[2] is not None:
-            original = chart_mirror_option(chart_coverage_option(parts[1])[0])[0].rsplit(None, 1)[0]
-            if exact_songs(repository, original):
-                parsed = ("chart", original, parsed[2])
+        try:
+            query, difficulty, mirror, coverage = _parse_chart_arguments(parts[1], repository, locale_for(content))
+        except ValueError as exc:
+            return CommandResult(("chart", parts[1], None), hint=str(exc), status="invalid_arguments")
+        parsed = ("chart", query, difficulty)
+    else:
+        parsed = parse_query(content)
     if not parsed:
         return None
     kind, query, _ = parsed
@@ -642,10 +663,12 @@ def resolve_command(content: str, repository: SongRepository) -> CommandResult |
             return CommandResult(parsed, support_cards=tuple(support_card_matches(repository, query)))
         except ValueError:
             return CommandResult(parsed, hint=CARD_RARITY_HELP[locale_for(content)])
-    from .query.song_identity import unique_candidates, candidate_text, literal_song_match
-    matches = unique_candidates(repository, query)
-    if len(matches) > 1 or (matches and not literal_song_match(repository, query, matches[0])):
-        return CommandResult(parsed, hint=candidate_text(matches, parsed[2], mirror=mirror, coverage=coverage),
+    from .query.song_identity import chart_candidates, candidate_text, literal_song_match
+    matches, short_typo = chart_candidates(repository, query)
+    if matches and (short_typo or len(matches) > 1 or not literal_song_match(repository, query, matches[0])):
+        hint = candidate_text(matches, parsed[2], mirror=mirror, coverage=coverage,
+                              short_typo=short_typo, locale=locale_for(content))
+        return CommandResult(parsed, hint=hint,
                              status="ambiguous", candidates=matches, chart_mirror=mirror, chart_coverage=coverage)
     song = matches[0] if matches else None
     hint = None if song else tr(locale_for(content), "not_found_generic", query=query)
@@ -849,9 +872,13 @@ def handle_command(content: str, repository: SongRepository,
         song = selection.songs[0] if selection.songs else None
         hint = selection.hint
         if not song:
-            variants = [(title, f"{localized_text(item, 'title', locale)}（{item.id}）") for item in repository.songs
-                        for title in (*item.titles, *item.localized.get("title", {}).values())]
-            return tr(locale, "not_found_chart", query=query) + _suggest(query, variants, locale) + "\n" + COMMAND_HELPS[locale]["chart"]
+            from .query.song_identity import is_three_han_title
+            suggestion = ""
+            if not is_three_han_title(normalize(query)):
+                variants = [(title, f"{localized_text(item, 'title', locale)}（{item.id}）") for item in repository.songs
+                            for title in (*item.titles, *item.localized.get("title", {}).values())]
+                suggestion = _suggest(query, variants, locale)
+            return tr(locale, "not_found_chart", query=query) + suggestion + "\n" + COMMAND_HELPS[locale]["chart"]
         charts = song.charts if parsed[2] is None else tuple(c for c in song.charts if c.difficulty == parsed[2])
         from .data import note_text
         result = f"[{tr(locale, 'chart')}] {localized_text(song, 'title', locale)}（ID {song.id}）\n" + ("\n".join(f"{c.difficulty} Lv.{c.display_level:g} · {note_text(c.notes)}" for c in charts) or tr(locale, "no_charts"))
