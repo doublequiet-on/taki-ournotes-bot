@@ -6878,6 +6878,11 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
         await self.lightweight_fact_question(after_opinion=True,omitted_subject=True)
 
     def enable_lightweight_fact_fixture(self, **limits):
+        from datetime import datetime, timedelta, timezone
+        # These cases exercise evidence and call limits with enough daily budget released.
+        billing_noon = datetime.fromtimestamp(self.now, timezone(timedelta(hours=8))).replace(
+            hour=12, minute=0, second=0, microsecond=0).timestamp()
+        self.agent.service_budget.clock = self.backend.model_runtime.usage.clock = lambda: billing_noon
         self.snapshot=replace(self.snapshot,profile=replace(self.snapshot.profile,provider='openai',
             wire_profile='openai-responses-v1',model='gpt-6.1-terra',max_input_tokens=32768,
             max_output_tokens=4096,user_daily_limit=10**8,group_daily_limit=10**8))
