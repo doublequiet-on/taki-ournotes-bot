@@ -17,6 +17,10 @@ from .chart_paths import chart_asset_url
 from .live_score import LIVE_TYPES, member_live_projection
 from .member_list_skill import member_leader_projection, member_list_skill_copy
 from .song_traits import SongTraits, MISSIONS, COLORS
+from .support_list_skill import support_list_skill_copy
+
+
+_JUST_WINDOW_EFFECT = 4004
 
 
 def integer(value, minimum=0, maximum=2**53 - 1):
@@ -111,7 +115,11 @@ def category(kind, skill):
         return None
     kinds = {e.get("effectType") for e in skill.get("effects", []) if e.get("level") == 5}
     # Explicit effect IDs, not Japanese prefixes or artwork; unknown mechanics stay unknown.
-    if kinds and kinds <= {2000, 2004}:
+    score_types = {2000, 2004}
+    if kind == "supportSkill":
+        # SNAP #76 applies score increases at cumulative PERFECT thresholds.
+        score_types.add(2001)
+    if kinds and kinds <= score_types:
         return "score"
     return LIVE_TYPES.get(next(iter(kinds))) if len(kinds) == 1 else None
 
@@ -241,6 +249,7 @@ def convert(documents, identity_jp, fetched_at, *, stale=False):
             skill_icons = []
             live_score_bands = None
             live_score_summary = ""
+            just_window_by_skill = []
             slots = {}
             resolved = row.get("resolvedSkills", {})
             peer_resolved = (peer or {}).get("resolvedSkills", {}) if linked else {}
@@ -299,6 +308,17 @@ def convert(documents, identity_jp, fetched_at, *, stale=False):
                                 list_skill_copy[kind] = list_copy
                     else:
                         cats[category_key].append(cat)
+                    if kind == "gekisouSupportSkill" and cat == "JUST":
+                        effect_types = {e.get("effectType") for e in skill.get("effects", []) if e.get("level") == 5}
+                        expands = None
+                        if effect_types and all(type(value) is int and value > 0 for value in effect_types):
+                            expands = _JUST_WINDOW_EFFECT in effect_types
+                        just_window_by_skill.append(expands)
+                    if support and valid and lang == "zh":
+                        band = language(band_names[0]) if links_ready and len(band_names) == 1 else ""
+                        list_copy = support_list_skill_copy(kind, converted.description, band)
+                        if list_copy:
+                            short = {**short, "list_copy": list_copy}
                     if not support and valid and kind != "leaderSkill":
                         list_copy = member_list_skill_copy(
                             kind, skill, refs,
@@ -323,6 +343,11 @@ def convert(documents, identity_jp, fetched_at, *, stale=False):
                        "bands": [language(b) for b in band_names], "categories": cats, "skill_evidence": evidence,
                        "skill_languages": skill_languages, "stats_level1": lv1, "skill_slots": slots,
                        "detail_loaded": complete, "detail_stale": stale, "skill_index_complete": complete}
+            if support:
+                if True in just_window_by_skill:
+                    catalog["just_window_expand"] = True
+                elif None not in just_window_by_skill and None not in cats["gekisou"]:
+                    catalog["just_window_expand"] = False
             # Capture presentation references with the same release as the card.
             # Renderers must not look up mutable character ordering or skill data.
             people = []

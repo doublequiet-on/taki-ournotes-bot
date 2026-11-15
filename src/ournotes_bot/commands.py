@@ -41,7 +41,7 @@ Haneoka 未确认原始歌曲序号，请用歌名或歌曲ID；旧T50也查附�
 榜线当前排名同时显示分数、数字ID与用户名；缺失会标注，历史曲线仅记录分数。
 四服：日服（jp）、国服（hk）、韩服（kr）、英服（en）；仅数值只回文字
 /查卡 [BD/SSR/SR/R] [颜色=红色] [角色=tmr] [乐队=MyGO] [LIVE=分数提升] [击奏=JUST] [页N]：条件卡牌列表；指定ID看详情
-/查留影卡（兼容 /查支援卡、/查SNAP）：同上筛选，另支持 EX、LIVE=技能延长
+/查留影卡 [卡名] [稀有度/颜色/角色/乐队] [LIVE分类] [激奏类型]：留影列表，支持 EX 延长、黄 just、扩判，发不完用 /继续（兼容 /查支援卡、/查SNAP）
 /查卡面 ID、/查留影卡面 ID：只输出卡面；条件多选用逗号，同维度任选、跨维度同时满足
 /查缩写 昵称：查看昵称对应的角色、乐队等，也可直接用于查曲或查卡
 /聊 想聊的内容：聊天；也可在正文提到立希或 taki（需启用聊天 Agent）
@@ -63,7 +63,7 @@ HELP_TEXTS = {
 /song [title keywords or ID] [level or lv level] (separate title keywords with spaces)
 /chart <title or ID> [difficulty]: view level and note count
 /card <character, title or ID> [page N]: search cards
-/support <character, title or ID> [page N]: search support cards
+/support <character, title or ID>: search support cards, use /继续 for unsent results
 /查活动 [ID or title], /查卡池 [ID or title], /查角色 [name or ID]: JP information in Chinese
 /abbrev <nickname>: look up a character or band nickname
 /ask <query>: song, chart, member-skill or SNAP lookup; bounded Chinese event/gacha/profile questions also run locally
@@ -73,7 +73,7 @@ Example: /song mygo 27, /chart 100001 EXPERT, /card tomori""",
 /曲 [曲名のキーワードまたはID] [レベルまたはlvレベル]（キーワードは空白で区切る）
 /譜面 <曲名またはID> [難易度]：レベルとノーツ数
 /カード <キャラクター名・カード名・ID> [ページN]：カードを検索
-/サポート <キャラクター名・カード名・ID> [ページN]：サポートカードを検索
+/サポート <キャラクター名・カード名・ID>：サポートカードを検索。未送信分は /继续
 /查活动 [ID・名称]、/查卡池 [ID・名称]、/查角色 [名前・ID]：日本版資料（中国語表示）
 /略称 <略称>：キャラクター・バンドなどの略称
 /問 <内容>：楽曲・譜面・メンバースキル・SNAPを検索。中国語の定型文でイベント・ガチャ・人物資料もローカル検索
@@ -100,7 +100,15 @@ COMMAND_HELP = {
     ),
     "chart": "查询谱面等级与 Note 数，支持歌名或曲目 ID。100001 可简写为 1。难度可写 EZ、NM、HD、EX 或全称。省略难度时，文字列出各档数据，图片只绘制一档，优先 EXPERT。\n歌名或 ID 在前，难度、镜像／反转和覆盖时间顺序不限。镜像左右翻转音符与划键方向。覆盖时间 5/6.5/8/5/5 按 S1～S5 指定最终秒数，也可写 覆盖=5/6.5/8/5/5。\n示例：/查谱面 1 HD 反转、/查谱面 1 镜像 5/6.5/8/5/5 EX",
     "cards": "角色卡条件查询始终返回列表，QQ单图优先，超限完整续发，显示完整总数，剩余内容用 /继续。ID精确查详情，/查卡面 ID 只发公开full卡面。\n用法：/查卡 [卡名] [BD/SSR/SR/R] [颜色=红色,蓝色] [角色=tmr,skk] [乐队=MyGO] [队长 同色] [LIVE=分数提升] [击奏=JUST] [得意=MyGO] [页N]\n不同维度AND、同维度多选OR，得意标签全部包含。BD为生日卡；旧二/三/四星别名保留。\n队长类型：同色、同技、同激、异色。例如 /查卡 mygo 队长 异色。\n演出短写：分卡、奶卡、判卡、血量加分、PERFECT加分。纯数字查ID，带筛选的数字查Lv.5演出加分，例如 /查卡 mygo 155、/查卡 SSR 150以上、/查卡 演出120到155。ID加条件用 /查卡 id 72 mygo。",
-    "support_cards": "留影卡条件查询返回完整列表，QQ单图优先；ID精确查详情，/查留影卡面 ID 只发卡面。\n用法：/查留影卡 [SSR/EX/SR/R] [颜色=红色,蓝色] [角色=tmr,skk] [乐队=MyGO] [LIVE=技能延长] [击奏=LUCK] [页N]\nLIVE可选分数提升、LIFE回复、判定强化、技能延长；以实际资料为准。角色任选且去重，乐队另行筛选；不支持得意标签；BD仅适用于角色卡。",
+    "support_cards": (
+        "/查留影卡 [卡名] [SSR/EX/SR/R] [颜色] [角色] [乐队] [LIVE分类] [激奏类型]\n"
+        "例如 /查留影卡 EX 延长、/查留影卡 黄 just。LIVE 可写分卡、奶卡、判卡、延长，"
+        "也可写 LIVE 延长 或 LIVE=技能延长。激奏可直接写 JUST、COMBO、LUCK，也可写 激奏 just。"
+        "扩判筛 JUST 判定范围扩大，也可写 激奏 扩判。\n"
+        "颜色可用红、蓝、绿、黄、紫，也可用红赤、绀碧、翡翠、琉金、紫苑。"
+        "支持完整卡名和一段连续卡名，重名用 卡名=。条件可换序，同类多选任选。\n"
+        "输入 ID 查详情，/查留影卡面 ID 只发卡面。QQ 单图优先，发不完用 /继续。"
+    ),
     "abbrev": "查询已收录的角色、乐队等昵称；也可直接用昵称查曲或查卡。\n用法：/查缩写 <昵称>\n示例：/查缩写 skk、/查缩写 茉团、/查卡 墨缇丝",
 }
 COMMAND_HELPS = {
@@ -120,7 +128,7 @@ COMMAND_HELPS = {
         ),
         "chart": "Look up level and note count by title or ID. Song 100001 can be shortened to 1. Use EZ, NM, HD, EX, or the full difficulty name. If omitted, text lists all available difficulties and the image shows one chart, preferring EXPERT.\nPut the title or ID first. Difficulty, mirror (镜像 or 反转), and five skill durations can follow in any order. The durations are one group in S1–S5 order.\nExample: /chart 1 镜像 5/6.5/8/5/5 EX",
         "cards": "Search by card ID, character, card title, or band. QQ shows complete results; use /继续 for unsent parts.\nUsage: /card <query or ID> [page N]\nExamples: /card tomori, /card mygo page 2. A lone integer is a card ID. To filter Lv.5 LIVE score gain, use /card mygo 155 or /card 155%. To test an ID against the band filter, use /card id 72 mygo.",
-        "support_cards": "Search support cards by ID, character, or title, QQ shows complete results; use /继续 for unsent parts.\nUsage: /support <query or ID> [page N]\nExample: /support tomori or /support 1",
+        "support_cards": "Search support cards by ID, character, exact title or one title fragment. Combine filters in any order. QQ shows complete results. Use /继续 for unsent parts.\nUsage: /support <query or ID>\nExamples: /support EX Abraca or /support 1",
         "abbrev": "Look up verified character and band nicknames.\nUsage: /abbrev <nickname>\nExample: /abbrev skk",
     },
     "ja": {
@@ -138,7 +146,7 @@ COMMAND_HELPS = {
         ),
         "chart": "曲名またはIDでレベルとノーツ数を確認します。100001は1と省略できます。難易度はEZ、NM、HD、EXまたは正式名で指定できます。難易度を省略すると、テキストには取得済みの全難易度を表示し、画像はEXPERTを優先して1つの難易度を描画します。\n最初に曲名またはIDを書き、その後に難易度、ミラー（镜像 または 反转）、スキル時間を任意の順で指定できます。スキル時間はS1～S5の順にまとめて入力します。\n例：/譜面 1 镜像 5/6.5/8/5/5 EX",
         "cards": "カードID、キャラクター名、カード名、バンド名で検索します。QQでは全件表示し、未送信分は /继续 で受け取れます。\n使い方：/カード <名前またはID> [ページN]\n例：/カード 祥子、/カード mygo ページ2、/カード 51。整数だけの場合はカードIDです。Lv.5ライブスコア上昇率の検索は /カード mygo 155 または /カード 155%。IDとバンド指定の併用は /カード id 72 mygo。",
-        "support_cards": "サポートカードID、キャラクター名、カード名で検索します。QQでは全件表示し、未送信分は /继续 で受け取れます。\n使い方：/サポート <名前またはID> [ページN]\n例：/サポート ともり、/サポート 1",
+        "support_cards": "サポートカードID、キャラクター名、カード名で検索します。カード名は完全名か連続した一部分を指定でき、条件の順番は自由です。QQでは全件表示し、未送信分は /继续 で受け取れます。\n使い方：/サポート <名前またはID>\n例：/サポート EX Abraca、/サポート 1",
         "abbrev": "登録済みのキャラクター・バンドなどの略称を調べます。\n使い方：/略称 <略称>\n例：/略称 skk",
     },
 }
@@ -664,7 +672,7 @@ def resolve_command(content: str, repository: SongRepository, *,
         support = kind == "support_cards" or head in {"查snap", "snap", "查支援卡面", "查snap卡面"}
         query = parts[1] if len(parts) > 1 else ""
         art = head in {"查留影卡面", "查卡面", "查支援卡面", "查snap卡面"}
-        answer = query_cards(query, repository, support=support, art=art, member_command=not support and not art)
+        answer = query_cards(query, repository, support=support, art=art, direct_command=True)
         kind = "support_cards" if support else "cards"
         return CommandResult((kind, answer.request.query, answer.request.page),
                              cards=() if support else answer.cards,

@@ -75,6 +75,9 @@ def summaries(card,locale='zh',*,shared_duration=None,shared_target=None):
     for i,skill in enumerate(card.skills):
         label,color=LABELS.get(skill.kind,('技',MUTED))
         contract=contracts[i] if i<len(contracts) else None
+        if isinstance(card, SupportCard) and locale == 'zh' and contract and contract.get('list_copy'):
+            result.append((label, color, contract['list_copy']))
+            continue
         value=contract.get('levels',{}).get('5') if contract and locale=='zh' else None
         if contract and contract.get('automatic'):
             # Audited shorthand rewrites below may drop scope from a new template.
@@ -113,6 +116,17 @@ def summaries(card,locale='zh',*,shared_duration=None,shared_target=None):
         if label in grouped:grouped[label]=(color,grouped[label][1]+'\n'+text)
         else:grouped[label]=(color,text)
     return [(label,*grouped[label]) for label in ('队','演','支','激','技') if label in grouped] or [('技',MUTED,'未知')]
+
+
+def _memory_skill_lines(value):
+    wrapped = []
+    for paragraph in value.replace(' / 上限', '\n上限').split('\n'):
+        effect, _, period = paragraph.rpartition(' ')
+        measured = lines(paragraph, 268, 24)
+        if period in ('JUST激奏期间', 'COMBO激奏期间') and len(measured) > 1:
+            measured = (*lines(effect, 268, 24), period)
+        wrapped.extend(measured)
+    return tuple(wrapped)
 
 
 _PERCENT = r'\+\d+(?:\.\d+)?%'
@@ -289,7 +303,7 @@ def _render_memory_list(cards, query, locale, load,notice=''):
         for same_colour in attributes.values():
             for start in range(0, len(same_colour), 8):
                 batch = same_colour[start:start+8]
-                texts = tuple(tuple((label, color, lines(value.replace(' / 上限', '\n上限'), 268, 24))
+                texts = tuple(tuple((label, color, _memory_skill_lines(value))
                                     for label, color, value in summaries(card, locale)) for card in batch)
                 text_height = max(sum(len(wrapped)*30 for _, _, wrapped in text)+8*(len(text)-1) for text in texts)
                 items = tuple((len(records)+i, card) for i, card in enumerate(batch))

@@ -26,9 +26,14 @@ _FIELDS = {"稀有度": "rarity", "星级": "rarity", "rarity": "rarity",
            "乐队": "band", "band": "band", "角色": "character", "character": "character",
            "live": "live", "击奏": "gekisou", "激奏": "gekisou", "gekisou": "gekisou",
            "得意": "tags", "得意乐曲": "tags", "tags": "tags"}
-_MEMBER_FIELDS = {**_FIELDS, "卡名": "title", "演出": "live", "队长": "leader", "id": "id"}
+_DIRECT_FIELDS = {**_FIELDS, "卡名": "title", "id": "id"}
+_MEMBER_FIELDS = {**_DIRECT_FIELDS, "演出": "live", "队长": "leader"}
 _LEADER_TYPES = {"同色", "同技", "同激", "异色"}
 _LIVE_SHORT = {"分卡": "score", "奶卡": "life", "判卡": "judgement"}
+_SNAP_LIVE_ALIASES = {**_LIVE_SHORT, "延长": "duration",
+                      **{label.casefold(): category for category, label in LIVE.items()}}
+_SNAP_SKILL_FIELDS = {"live", "激奏", "击奏", "gekisou"}
+_JUST_WINDOW = "just_window_expand"
 _LIVE_CONDITIONS = {"血量加分": "life", "life加分": "life", "perfect加分": "perfect"}
 _LIVE_CONDITION_LABELS = {
     "zh": {"life": "血量加分", "perfect": "PERFECT加分"},
@@ -44,6 +49,7 @@ _WORD = re.compile(rf"[^\s{re.escape(_SEPARATORS)}]+")
 _QUOTED_TITLE = re.compile(r'"([^"]*)"')
 _UNRESTRICTED = {"全部", "不限", "すべて"}
 _COLOURS = {"红": 1, "蓝": 2, "绿": 3, "黄": 4, "紫": 5}
+_SNAP_ATTRIBUTE_NAMES = {"红赤": 1, "绀碧": 2, "翡翠": 3, "琉金": 4, "紫苑": 5}
 _RARITY_NUMBER = r"[0-9零〇一二两三四五六七八九十百.]+"
 _MEMBER_RARITY = re.compile(
     rf"(?:星(?:级)?{_RARITY_NUMBER}|[★☆]+(?:{_RARITY_NUMBER})?|"
@@ -149,7 +155,7 @@ class CardAnswer:
             evidence = self.live_evidence(card, locale)
             if evidence:
                 line += " · " + evidence
-            lines.append(f"{line} · /查卡 {card.id}")
+            lines.append(f"{line} · {self.request.command} {card.id}")
         return "\n".join(lines)
 
     def text(self, locale="zh"):
@@ -173,7 +179,7 @@ class CardAnswer:
             if evidence:
                 text += "\n  " + evidence
             if self.is_candidate_list:
-                text += f"\n  /查卡 {card.id}"
+                text += f"\n  {req.command} {card.id}"
             lines.append(text)
         lines.append(self.footer)
         if any(not c.catalog.get("detail_loaded") for c in self.cards):
@@ -289,7 +295,7 @@ def _card_filter(value, key, repository, *, support=False):
     if key == "type":
         color = _COLOURS.get(value.removesuffix("色"))
         if color is None:
-            raise ValueError("未知颜色；可用红色、蓝色、绿色、黄色、紫色。正式属性名称尚未核实。")
+            raise ValueError("未知颜色；可用红色、蓝色、绿色、黄色、紫色。")
         return "type", color
     if key == "live":
         category = {"分数提升": "score", "分数up": "score", "スコアアップ": "score", "スコアup": "score",
@@ -322,18 +328,22 @@ def _card_filter(value, key, repository, *, support=False):
     return _entity(value, key, repository)
 
 
-def _member_parts(query, repository):
+def _card_parts(query, repository, *, support):
     # Protect complete source names before treating punctuation or spaces as syntax.
-    names = set(card_alias_spellings())
+    names = set(card_alias_spellings(support=support))
     for card in repository.cards:
-        names.update((*_card_titles(card), card.character, card.band))
+        names.update((card.character, card.band))
         names.update(card.localized.get("character", {}).values())
         names.update(card.localized.get("band", {}).values())
-        for tag_names in card.catalog.get("tags", {}).values():
-            names.update(tag_names.values())
+        if not support:
+            names.update(_card_titles(card))
+            for tag_names in card.catalog.get("tags", {}).values():
+                names.update(tag_names.values())
     for card in repository.support_cards:
         names.update(card.characters)
         names.update(card.catalog.get("bands", ()))
+        if support:
+            names.update(_card_titles(card))
     names = {normalize(name) for name in names if name}
     max_name = max(map(len, names), default=0)
     start = 0
@@ -387,7 +397,7 @@ def _score_argument(value):
     return (None if suffix == "以下" else low, None if suffix == "以上" else high)
 
 
-def _parse_member_filters(query, page, repository):
+def _parse_direct_filters(query, page, repository, *, support):
     filters = {}
     title_spans = []
     explicit_title = quoted_title = False
@@ -397,20 +407,36 @@ def _parse_member_filters(query, page, repository):
     live_conditions = []
     score_ranges = []
     explicit_score = False
+    fields = _DIRECT_FIELDS if support else _MEMBER_FIELDS
+    bare_fields = {"id", *_SNAP_SKILL_FIELDS} if support else {"id", "演出", "队长"}
 
     def add(dimension, value):
         filters.setdefault(dimension, []).append(value)
 
-    for start, end, kind, value in _member_parts(query, repository):
-        if kind == "value" and not pending and not separated and value.casefold() in {"id", "演出", "队长"}:
-            kind = "field"
+    for start, end, kind, value in _card_parts(query, repository, support=support):
+        short = value.casefold()
+        snap_live = _SNAP_LIVE_ALIASES.get(short) if support else None
+        snap_color = _SNAP_ATTRIBUTE_NAMES.get(value.removesuffix("属性")) if support else None
+        snap_just_window = support and value == "扩判"
+        if kind == "value" and not pending and not separated:
+            # A complete title can share a spelling with a newly accepted bare alias.
+            if support and (snap_live or snap_color or snap_just_window or short in _SNAP_SKILL_FIELDS):
+                if _exact_card_ids(value, repository, support=True):
+                    title_spans.append((start, end))
+                    field = None
+                    have_value = True
+                    continue
+            if short in bare_fields:
+                kind = "field"
         if kind == "field":
             if pending or separated:
                 raise ValueError(f"{field_name or '筛选条件'}缺少筛选值。")
             field_name = value
-            field = _MEMBER_FIELDS.get(value.casefold())
+            field = fields.get(value.casefold())
             if field is None:
-                raise ValueError(f"未知筛选维度“{value}”；可用 ID、卡名、稀有度、颜色、乐队、角色、队长、演出、击奏、得意。")
+                available = ("ID、卡名、稀有度、颜色、乐队、角色、LIVE、击奏" if support
+                             else "ID、卡名、稀有度、颜色、乐队、角色、队长、演出、击奏、得意")
+                raise ValueError(f"未知筛选维度“{value}”；可用 {available}。")
             pending = True
             continue
         if kind == "separator":
@@ -424,23 +450,31 @@ def _parse_member_filters(query, page, repository):
         have_value = True
         if kind == "quoted" and key != "title":
             raise ValueError("含引号的卡名请用 卡名= 指定。")
-        short = value.casefold()
         score_literal = value.removeprefix("演出") if key is None else value
         if key == "title":
             explicit_title = True
             quoted_title |= kind == "quoted"
             title_spans.append((start, end))
-        elif key == "id":
+        elif key == "id" or (support and key is None and value.isdecimal()):
             if not value.isdecimal() or explicit_id is not None:
                 raise ValueError("详情查询只能指定一个卡牌 ID。")
             explicit_id = int(value)
-        elif key in (None, "live") and short in _LIVE_CONDITIONS:
+        elif snap_live and key in (None, "live"):
+            add("live", snap_live)
+            field = "live"
+        elif snap_just_window and key in (None, "gekisou"):
+            add("gekisou", _JUST_WINDOW)
+            field = "gekisou"
+        elif snap_color and key in (None, "type"):
+            add("type", snap_color)
+            field = "type"
+        elif not support and key in (None, "live") and short in _LIVE_CONDITIONS:
             live_conditions.append(_LIVE_CONDITIONS[short])
             field = "live"
-        elif key in (None, "live") and short in _LIVE_SHORT:
+        elif not support and key in (None, "live") and short in _LIVE_SHORT:
             add("live", _LIVE_SHORT[short])
             field = "live"
-        elif key in (None, "live", "score") and (bounds := _score_argument(score_literal)) is not None:
+        elif not support and key in (None, "live", "score") and (bounds := _score_argument(score_literal)) is not None:
             if key is None and not value.isdecimal() and _exact_card_ids(value, repository):
                 title_spans.append((start, end))
             else:
@@ -452,7 +486,7 @@ def _parse_member_filters(query, page, repository):
         elif value in _UNRESTRICTED:
             continue
         elif dimension := key or _bare_filter(value):
-            add(*_card_filter(value, dimension, repository))
+            add(*_card_filter(value, dimension, repository, support=support))
         else:
             try:
                 add(*_entity(value, None, repository))
@@ -460,20 +494,20 @@ def _parse_member_filters(query, page, repository):
                 title_spans.append((start, end))
     if pending or separated:
         raise ValueError(f"{field_name if pending else '分隔符后'}缺少筛选值。")
-    title_ids = (_member_title_matches(query, title_spans, repository,
-                                       explicit=explicit_title, quoted=quoted_title)
+    title_ids = (_card_title_matches(query, title_spans, repository, support=support,
+                                     explicit=explicit_title, quoted=quoted_title)
                  if title_spans else None)
     if score_ranges and not (explicit_score or filters or live_conditions or title_ids or explicit_title or explicit_id is not None):
         raise ValueError("演出数值请搭配乐队、角色等卡牌条件，或写成 演出150。")
     if explicit_id is not None:
         add("title_ids", explicit_id)
-    return CardRequest(mode="detail" if explicit_id is not None else "list", page=page, query=query,
+    return CardRequest(support=support, mode="detail" if explicit_id is not None else "list", page=page, query=query,
                        filters=CardFilters(**{key: tuple(dict.fromkeys(values)) for key, values in filters.items()}),
                        matched_title_ids=title_ids, live_conditions=tuple(dict.fromkeys(live_conditions)),
                        live_score_ranges=tuple(dict.fromkeys(score_ranges)))
 
 
-def _member_title_matches(query, spans, repository, *, explicit, quoted):
+def _card_title_matches(query, spans, repository, *, support, explicit, quoted):
     contiguous = not any(_WORD.search(query, left[1], right[0]) for left, right in zip(spans, spans[1:]))
     title = query[spans[0][0]:spans[-1][1]]
     if quoted and len(spans) != 1:
@@ -481,12 +515,12 @@ def _member_title_matches(query, spans, repository, *, explicit, quoted):
     if quoted:
         title = _QUOTED_TITLE.fullmatch(title)[1]
     if contiguous:
-        exact = _exact_card_ids(title, repository)
+        exact = _exact_card_ids(title, repository, support=support)
         if exact:
             return tuple(exact)
     if not explicit and len(spans) > 1:
         # Keep legacy multi-select of complete names. Only one fragment is allowed.
-        parts = [_exact_card_ids(query[start:end], repository) for start, end in spans]
+        parts = [_exact_card_ids(query[start:end], repository, support=support) for start, end in spans]
         if all(parts):
             return tuple(dict.fromkeys(card_id for ids in parts for card_id in ids))
     if not contiguous:
@@ -494,23 +528,24 @@ def _member_title_matches(query, spans, repository, *, explicit, quoted):
     needle = normalize(title)
     if not needle:
         raise ValueError("请提供卡名或一段连续的卡名。")
-    return tuple(card.id for card in repository.cards
+    source = repository.support_cards if support else repository.cards
+    return tuple(card.id for card in source
                  if any(needle in normalize(name) for name in _card_titles(card)))
 
 
-def parse_card_request(query, repository, *, support=False, art=False, member_command=False):
+def parse_card_request(query, repository, *, support=False, art=False, direct_command=False):
     from ..commands import _split_page
     full_query = unicodedata.normalize("NFKC", query).strip()
-    member_command = member_command and not support and not art
+    direct_command = direct_command and not art
     query, page = _split_page(full_query)
-    if member_command and query != full_query and len(full_query) <= 512:
+    if direct_command and query != full_query and len(full_query) <= 512:
         # A page-shaped suffix can belong to a complete title after other filters.
-        parts = list(_member_parts(full_query, repository))
+        parts = list(_card_parts(full_query, repository, support=support))
         start, end, kind, value = parts[-1]
         explicit_name = len(parts) > 1 and parts[-2][2:] == ("field", "卡名")
         if (end == len(full_query) and kind == "value"
                 and (start < len(query) or start == 0 or explicit_name)
-                and _exact_card_ids(value, repository)):
+                and _exact_card_ids(value, repository, support=support)):
             query, page = full_query, 1
     if len(query) > 512:
         raise ValueError("筛选条件过长，请精简到512字以内。")
@@ -521,8 +556,8 @@ def parse_card_request(query, repository, *, support=False, art=False, member_co
         return CardRequest(support, "art" if art else "detail", int(ident[1]), page, query)
     if art:
         raise ValueError("只输出卡面需要明确卡牌ID；请先用 /查卡 或 /查留影卡 按条件查列表。")
-    if member_command and not support:
-        return _parse_member_filters(query, page, repository)
+    if direct_command:
+        return _parse_direct_filters(query, page, repository, support=support)
     filters = {}
     explicit_id = None
     def add(key, value):
@@ -660,6 +695,12 @@ def execute_card_request(req, repository):
                     card_missing.add("LIVE/击奏分类")
                     unknown = True
                 match = bool(set(actual) & set(values))
+                if key == "gekisou" and _JUST_WINDOW in values and "JUST" in actual and not match:
+                    expanded = card.catalog.get(_JUST_WINDOW)
+                    match = expanded is True
+                    if expanded is None:
+                        card_missing.add("JUST 扩判效果")
+                        unknown = True
             # Unknown is not a proven mismatch; evaluate every dimension before
             # deciding whether this card could still belong to the result.
             if not match and not unknown:
@@ -683,9 +724,9 @@ def execute_card_request(req, repository):
     return CardAnswer(req, tuple(sorted(selected, key=lambda c: (-c.rarity, c.id))), cache_state=cache_state)
 
 
-def query_cards(query, repository, *, support=False, art=False, member_command=False):
+def query_cards(query, repository, *, support=False, art=False, direct_command=False):
     try:
-        req = parse_card_request(query, repository, support=support, art=art, member_command=member_command)
+        req = parse_card_request(query, repository, support=support, art=art, direct_command=direct_command)
         return execute_card_request(req, repository)
     except ValueError as exc:
         return CardAnswer(CardRequest(support, query=query), error=str(exc),
