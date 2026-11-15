@@ -2,6 +2,7 @@ from __future__ import annotations
 from ournotes_bot.query.card_catalog import query_cards
 
 import asyncio
+import re
 import tempfile
 import unittest
 from dataclasses import replace
@@ -359,6 +360,143 @@ class ReplyPipelineTests(unittest.TestCase):
         self.assertEqual(result.image, b"support cards")
         self.assertEqual(select.call_count, 1)
         self.assertEqual([card.id for card in render.call_args.args[0]], [1])
+
+    def test_member_title_list_sends_copyable_text_with_image_and_on_render_failure(self):
+        card = self.repo.cards[0]
+        result_pages = ((ImagePart(b"cards", 0, 1),), (card,), ((0, 1),))
+        with patch("ournotes_bot.rendering.catalog_layout.render_list", return_value=result_pages):
+            reply = _prepare_reply("/查卡 我们现在", self.repo, self.parser)
+        image, choices = reply.pages
+        self.assertEqual(image.image, b"cards")
+        self.assertEqual(choices.text, "我们现在就在这里 · ID 1 · /查卡 1")
+        self.assertIsNone(choices.image)
+        self.assertEqual(image.visible_indices, choices.visible_indices)
+        with patch("ournotes_bot.rendering.catalog_layout.render_list", side_effect=ValueError("test render failure")):
+            reply = _prepare_reply("/查卡 我们现在", self.repo, self.parser)
+        self.assertIsNone(reply.image)
+        self.assertIn("/查卡 1", reply.text)
+
+    def test_long_member_candidates_survive_image_render_and_upload_fallback(self):
+        from ournotes_bot.application.replies import expand_replies, fallback_cursor, prepare_followup
+        from ournotes_bot.query.continuation import Operation
+
+        base = self.repo.cards[0]
+        self.repo.cards = [
+            replace(base, id=card_id, title=f"压力样本 {card_id} " + "长" * (2200 if card_id == 100 else 30),
+                    localized={})
+            for card_id in range(100, 150)
+        ]
+        expected = list(range(100, 150))
+
+        def drain(parts, *, limit=1800):
+            while True:
+                yield from parts
+                cursor = parts[-1].context
+                if cursor is None or not cursor.remaining:
+                    break
+                parts = expand_replies([prepare_followup(cursor, Operation("continue"), self.repo)], text_limit=limit)
+
+        def candidate_ids(parts):
+            return [int(card_id) for part in parts if not part.image for card_id in
+                    re.findall(r" · /查卡 (\d+)$", part.text, re.M)]
+
+        with patch("ournotes_bot.application.replies.visual_asset", return_value=None), \
+             patch("ournotes_bot.sources.haneoka.game_assets.asset_bytes", return_value=None):
+            rendered = _prepare_reply("/查卡 压力样本", self.repo, self.parser)
+            for limit in (1500, 1800):
+                with self.subTest(text_limit=limit):
+                    parts = list(drain(expand_replies([rendered], text_limit=limit), limit=limit))
+                    self.assertEqual(candidate_ids(parts), expected)
+                    self.assertTrue(all(len(part.text) <= limit for part in parts if not part.image))
+                    first_choice = next(part for part in parts if not part.image)
+                    self.assertEqual(first_choice.visible_indices, parts[0].visible_indices)
+
+            with patch("ournotes_bot.rendering.catalog_layout.render_list", side_effect=ValueError("synthetic failure")):
+                text_only = _prepare_reply("/查卡 压力样本", self.repo, self.parser)
+            self.assertEqual(candidate_ids(drain(expand_replies([text_only]))), expected)
+
+        image = expand_replies([rendered])[0]
+        send = AsyncMock(return_value={"id": "fixture-message"})
+        message = SimpleNamespace(id="in", _api=SimpleNamespace(post_group_message=send))
+        with patch("ournotes_bot.platforms.qq.qq._upload_image", side_effect=OSError("synthetic upload failure")):
+            delivery = _deliver_reply(message, "fixture-group", True, image)
+            with self.assertRaises(StopIteration) as stopped:
+                delivery.send(None)
+        self.assertEqual(stopped.exception.value.status, "fallback_pending")
+        self.assertIn("/继续", send.await_args.kwargs["content"])
+        resume = prepare_followup(fallback_cursor(image), Operation("continue"), self.repo)
+        self.assertEqual(candidate_ids(drain(expand_replies([resume]))), expected)
+
+    def test_member_list_image_uses_the_same_copy_for_every_live_filter(self):
+        from ournotes_bot.data import Skill
+        from ournotes_bot.rendering.catalog_layout import Canvas, INK
+
+        summary = "PERFECT及以上得分+145%\n出现 GOOD 或更低判定前+155%"
+        copy = "+155%P 无GOOD及以下"
+        card = self.repo.cards[0]
+        self.repo.cards = [replace(card, skills=(Skill("liveSkill", "演出得分", summary),),
+                                   catalog={**card.catalog, "live_score_summary": summary,
+                                            "member_list_skill_copy": {"liveSkill": copy},
+                                            "live_score_bands": [{"value": 14500, "condition": "perfect"},
+                                                                 {"value": 15500, "condition": "perfect"}]})]
+        painted = []
+        original = Canvas.text
+
+        def record(canvas, x, y, text, size=28, color=INK, bold=False, align="left", stroke=0):
+            painted.append(text)
+            return original(canvas, x, y, text, size, color, bold, align, stroke)
+
+        with patch.object(Canvas, "text", record), \
+             patch("ournotes_bot.application.replies.visual_asset", return_value=None), \
+             patch("ournotes_bot.sources.haneoka.game_assets.asset_bytes", return_value=None):
+            for command in ("/查卡", "/查卡 145%", "/查卡 155%", "/查卡 PERFECT加分"):
+                with self.subTest(command=command):
+                    painted.clear()
+                    reply = _prepare_reply(command, self.repo, self.parser)
+                    pages = reply.pages or (reply,)
+                    self.assertTrue(pages[0].image)
+                    drawn = "".join(painted)
+                    self.assertIn(copy, drawn)
+                    self.assertNotIn("命中", drawn)
+                    self.assertNotIn("+145%", drawn)
+
+    def test_mixed_media_caption_requests_continue_only_beyond_current_budget(self):
+        from ournotes_bot.application.replies import expand_replies, prepare_followup, reserve_progress_slot
+        from ournotes_bot.query.continuation import Operation
+
+        image = PreparedReply("图的备用文字", b"image")
+        choices = PreparedReply("候选 · ID 51 · /查卡 51")
+        reply = PreparedReply("", pages=(image, choices))
+        send = AsyncMock(return_value={"id": "fixture-message"})
+        message = SimpleNamespace(id="in", _api=SimpleNamespace(post_group_message=send))
+
+        def caption(part):
+            with patch("ournotes_bot.platforms.qq.qq._upload_image", return_value={"file_info": "fixture"}):
+                delivery = _deliver_reply(message, "fixture-group", True, part)
+                with self.assertRaises(StopIteration) as stopped:
+                    delivery.send(None)
+            self.assertTrue(stopped.exception.value.confirmed)
+            return send.await_args.kwargs["content"]
+
+        with patch("ournotes_bot.application.replies.QQ_PASSIVE_REPLY_LIMIT", 2):
+            batch = expand_replies([reply])
+            self.assertEqual(caption(batch[0]), "结果 1/2")
+            self.assertNotIn("/继续", batch[1].text)
+            reserved = reserve_progress_slot(batch)
+            self.assertEqual(len(reserved), 1)
+            self.assertEqual(caption(reserved[0]), "结果 1/2；/继续 发送剩余结果。")
+            tail = expand_replies([prepare_followup(reserved[0].context, Operation("continue"), self.repo)])
+            self.assertEqual(tail[0].text, "候选 · ID 51 · /查卡 51\n结果 2/2")
+            self.assertFalse(tail[0].context.remaining)
+
+            extra_image = expand_replies([PreparedReply("", pages=(image, choices, image))])
+            self.assertEqual(caption(extra_image[0]), "结果 1/3")
+            self.assertIn("/继续", extra_image[1].text)
+            tail = expand_replies([prepare_followup(extra_image[1].context, Operation("continue"), self.repo)])
+            self.assertEqual(caption(tail[0]), "结果 3/3；本次已全部发送。")
+
+            pictures = expand_replies([PreparedReply("", pages=(image, image, image))])
+            self.assertEqual(caption(pictures[-1]), "图片 2/3；/继续 发送其余图片。")
 
     def test_ai_timeout_returns_safe_text_without_image(self):
         with patch.object(self.parser, "_request", side_effect=TimeoutError("Bearer secret-value")):

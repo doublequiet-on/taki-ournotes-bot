@@ -86,7 +86,7 @@ class QueryTests(unittest.TestCase):
                     self.assertEqual([card.id for card in selected.cards], expected)
             for command, expected in (("/查卡 tmr 三星", [2]), ("/查卡 ★4 mygo", [1, 3]),
                                       ("/查卡 SR", [2]), ("/查卡 R", [6]),
-                                      ("/查卡 1 SSR", [1]), ("/查卡 5", [5])):
+                                      ("/查卡 id 1 SSR", [1]), ("/查卡 5", [5])):
                 with self.subTest(command=command):
                     self.assertEqual([card.id for card in resolve_command(command, self.repo).cards], expected)
             direct = resolve_command("/查支援卡 三星", self.repo)

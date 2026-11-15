@@ -74,11 +74,164 @@ class CardCatalogTests(unittest.TestCase):
         self.assertEqual(self.ids("角色=tmr,skk", True), [1])
         self.assertEqual(self.ids("乐队=MyGO 角色=skk"), [])
 
+    def test_direct_member_names_keep_symbols_exact_and_offer_copyable_details(self):
+        symbolic = "流星或旅途/心声：A"
+        self.repo.cards = [replace(self.base, id=51, title=symbolic, card_type=4),
+                           replace(self.base, id=52, title=symbolic + " 后篇", card_type=2),
+                           replace(self.base, id=53, title="JUST", card_type=1),
+                           replace(self.base, id=54, title="MyGO", card_type=2),
+                           replace(self.base, id=55, title="Winter JUST Pages 页2", card_type=4),
+                           replace(self.base, id=56, title="白昼序曲", card_type=4),
+                           replace(self.base, id=57, title="夜幕尾声", card_type=4)]
+        for query, expected in ((symbolic, [51]), (symbolic + " 黄", [51]),
+                                ("卡名=" + symbolic, [51]), ("卡名：JUST", [53]),
+                                ("卡名=MyGO", [54]), ("流星或旅途", [51, 52]),
+                                ('卡名="Winter JUST" 黄', [55]), ("Winter JUST Pages 页2", [55]),
+                                ("流星或旅途 黄", [51]), ("颜色=蓝 流星或旅途", [52]),
+                                ("白昼序曲 / 夜幕尾声 黄", [56, 57])):
+            with self.subTest(query=query):
+                answer = resolve_command("/查卡 " + query, self.repo).catalog
+                self.assertEqual(answer.request.mode, "list")
+                self.assertEqual([card.id for card in answer.cards], expected)
+                for card_id in expected:
+                    self.assertIn(f"/查卡 {card_id}", answer.text())
+
+    def test_member_title_page_suffix_stays_with_title_in_any_filter_order(self):
+        title = "Winter JUST Pages 页2"
+        self.repo.cards = [replace(self.base, id=50, title=title, card_type=4)]
+        self.repo.cards.extend(replace(self.base, id=card_id, title=f"测试备用 {card_id}", card_type=4)
+                               for card_id in range(1, 18))
+        for query, page in ((f"{title} 黄", 1), (f"黄 {title}", 1), (f"颜色=黄 卡名={title}", 1),
+                            (f'黄 卡名:"{title}"', 1), (f"黄 {title} 页3", 3)):
+            with self.subTest(query=query):
+                answer = resolve_command("/查卡 " + query, self.repo).catalog
+                self.assertEqual(answer.request.page, page)
+                self.assertEqual([card.id for card in answer.cards], [50])
+        answer = resolve_command("/查卡 黄 页2", self.repo).catalog
+        self.assertEqual(answer.request.page, 2)
+        self.assertEqual([c.id for c in answer.visible], [17, 50])
+        answer = resolve_command('/查卡 黄 卡名:"Winter JUST" 页2', self.repo).catalog
+        self.assertEqual(answer.request.page, 2)
+        self.assertEqual([c.id for c in answer.cards], [50])
+
+    def test_direct_member_reorders_mixed_filters_without_relaxing_them(self):
+        self.repo.cards = [replace(self.base, card_type=4),
+                           replace(self.base, id=2, rarity=3, card_type=4),
+                           replace(self.base, id=3, card_type=2),
+                           replace(self.base, id=4, character="丰川祥子", band="Ave Mujica", card_type=4)]
+        for query in ("颜色=黄 tmr SSR, SR just", "tmr SSR/SR 黄 JUST",
+                      "ＴＭＲ　稀有度：ＳＳＲ ／ ＳＲ　黄　激奏＝ｊｕｓｔ",
+                      "LIVE=分数提升 颜色=黄 角色=tmr 稀有度=SSR 或 SR JUST",
+                      "SSR | SR 颜色=黄 / 黄 角色=tmr live=分数UP JUST"):
+            with self.subTest(query=query):
+                self.assertEqual([c.id for c in resolve_command("/查卡 " + query, self.repo).cards], [1, 2])
+        self.assertEqual([c.id for c in resolve_command("/card 黄 BAND=Ave Mujica SSR", self.repo).cards], [4])
+        for query in ("角色=不存在", "未知=黄", "颜色= SSR", "稀有度=SSR,",
+                      "前段 SSR 后段", "卡名=前段 SSR 卡名=后段"):
+            with self.subTest(query=query):
+                self.assertEqual(resolve_command("/查卡 " + query, self.repo).status, "invalid_arguments")
+        for query in ("不存在的标题 黄", "合成卡 紫", "卡名:合成卡 紫"):
+            with self.subTest(query=query):
+                answer = resolve_command("/查卡 " + query, self.repo).catalog
+                self.assertEqual(answer.status, "empty")
+                self.assertIn("未放宽", answer.text())
+        art = resolve_command("/查卡面 1", self.repo).catalog
+        self.assertEqual((art.request.mode, art.cards[0].id), ("art", 1))
+        self.assertEqual(resolve_command("/查留影卡 卡名=合成SNAP", self.repo).status, "invalid_arguments")
+
+    def test_title_match_keeps_tag_intersection_and_exact_id(self):
+        two_tags = {"1": {"zh": "MyGO!!!!!"}, "2": {"zh": "Ave Mujica"}}
+        self.repo.cards[0] = replace(self.base, catalog={**self.base.catalog, "tags": two_tags})
+        answer = resolve_command("/查卡 得意=MyGO、 Ave Mujica 合成", self.repo).catalog
+        self.assertEqual([card.id for card in answer.cards], [1])
+        command = resolve_command("/查卡 ID：1", self.repo)
+        self.assertEqual((command.catalog.request.mode, command.cards[0].id), ("detail", 1))
+        with patch.object(self.repo, "card_with_detail", side_effect=AssertionError):
+            self.assertEqual(resolve_command("/查卡 2 卡名=不存在", self.repo).status, "empty")
+
     def test_individual_dimensions_both_objects(self):
         for query in ("SSR", "颜色=红色", "乐队=MyGO", "角色=tmr", "LIVE=分数提升", "击奏=JUST"):
             self.assertIn(1, self.ids(query))
         for query in ("SSR", "颜色=红色", "乐队=MyGO", "角色=skk", "LIVE=技能延长", "击奏=LUCK"):
             self.assertEqual(self.ids(query, True), [1])
+
+    def test_member_leader_types_compose_with_card_and_live_filters(self):
+        self.repo.cards = [
+            replace(self.base, id=card_id, card_type=4 if leader == "异色" else 1,
+                    catalog={**self.base.catalog, "member_leader_type": leader,
+                             "live_score_bands": [{"value": 15500, "condition": "perfect"}]})
+            for card_id, leader in enumerate(("同色", "同技", "同激", "异色", ""), 1)
+        ]
+        for command, expected in (
+            ("/查卡 队长 同色", [1]),
+            ("/查卡 SSR 队长=同技/同激", [2, 3]),
+            ("/查卡 mygo 队长 异色 黄 155", [4]),
+            ("/查角色卡 155 黄 队长:异色 mygo", [4]),
+            ("/查卡 红 队长 异色", []),
+        ):
+            with self.subTest(command=command):
+                answer = resolve_command(command, self.repo).catalog
+                self.assertFalse(answer.error, answer.error)
+                self.assertEqual(answer.request.mode, "list")
+                self.assertEqual([card.id for card in answer.cards], expected)
+        self.assertEqual(resolve_command("/查卡 队长 技巧", self.repo).status, "invalid_arguments")
+        self.assertEqual(resolve_command("/查留影卡 队长=同色", self.repo).status, "invalid_arguments")
+
+    def test_member_leader_unknowns_only_block_when_other_filters_match(self):
+        known = replace(self.base, catalog={**self.base.catalog, "member_leader_type": "同色"})
+        self.repo.cards = [known, replace(self.base, id=2, card_type=4)]
+        for query in ("红 队长 同色", "队长 同色 红"):
+            answer = resolve_command("/查卡 " + query, self.repo).catalog
+            self.assertEqual([card.id for card in answer.cards], [1])
+        result = resolve_command("/查卡 队长 同色", self.repo)
+        self.assertEqual(result.status, "data_unavailable")
+        self.assertIn("队长技能分类", result.catalog.error)
+
+    def test_direct_member_live_score_scope_ranges_and_explicit_id(self):
+        def card(card_id, color, score, condition, *, band="MyGO!!!!!"):
+            bands = [{"value": value * 100, "condition": condition} for value in score]
+            return replace(self.base, id=card_id, card_type=color, band=band,
+                           title=f"Sample {card_id}", catalog={**self.base.catalog,
+                               "live_score_bands": bands, "live_score_summary": "演出条件样本"})
+
+        self.repo.cards = [card(51, 4, (120, 140), "life"), card(53, 3, (150,), "perfect"),
+                           card(72, 4, (145, 155), "perfect"),
+                           card(150, 3, (155,), "", band="Ave Mujica")]
+        for query, expected in (
+            ("mygo 155", [72]), ("155 MyGO", [72]), ("１５５％ MyGO", [72]),
+            ("颜色=黄 SSR MyGO 155", [72]), ("mygo 血量加分 140", [51]),
+            ("mygo 演出=血量加分 140", [51]), ("mygo perfect加分 155", [72]),
+            ("mygo 血量加分 155", []), ("mygo 150", [53]), ("mygo 145", [72]),
+            ("演出155", [72, 150]), ("155%", [72, 150]), ("演出 155%", [72, 150]),
+            ("mygo 120/150/155", [51, 53, 72]), ("mygo 150以上", [53, 72]),
+            ("mygo 120以下", [51]), ("mygo 演出120到155", [51, 53, 72]),
+            ("mygo JUST 155", [72]), ("卡名:Sample 72 黄 155", [72]),
+        ):
+            with self.subTest(query=query):
+                answer = resolve_command("/查卡 " + query, self.repo).catalog
+                self.assertFalse(answer.error, answer.error)
+                self.assertEqual((answer.request.mode, [c.id for c in answer.cards]), ("list", expected))
+        for query in ("150", "id 150 Ave Mujica", "Ave Mujica ID=150"):
+            with self.subTest(query=query):
+                answer = resolve_command("/查卡 " + query, self.repo).catalog
+                self.assertEqual((answer.request.mode, [c.id for c in answer.cards]), ("detail", [150]))
+        self.assertEqual(resolve_command("/查卡 mygo 演出155到120", self.repo).status, "invalid_arguments")
+
+    def test_live_shortcuts_allow_multiple_effects_and_missing_scores_stay_unknown(self):
+        composite = {**self.base.catalog, "categories": {"live": ["score", "life", "judgement"]},
+                     "live_score_bands": [{"value": 15000, "condition": "perfect"}]}
+        self.repo.cards = [replace(self.base, catalog=composite), replace(self.base, id=2, card_type=2)]
+        for name in ("分卡", "奶卡", "判卡"):
+            self.assertEqual([c.id for c in resolve_command("/查卡 红 " + name, self.repo).cards], [1])
+        self.assertEqual(resolve_command("/查卡 红 奶卡 150", self.repo).status, "empty")
+        self.assertEqual(resolve_command("/查卡 mygo 150", self.repo).status, "data_unavailable")
+        self.assertEqual([c.id for c in resolve_command("/查卡 红 PERFECT加分 150", self.repo).cards], [1])
+
+    def test_known_title_keeps_digits_in_skill_shaped_text(self):
+        self.repo.cards[0] = replace(self.base, title="演出155")
+        result = resolve_command("/查卡 红 演出155", self.repo).catalog
+        self.assertEqual([c.id for c in result.cards], [1])
+        self.assertFalse(result.request.has_live_details)
 
     def test_zero_single_and_multiple_are_lists(self):
         for q, count in (("颜色=红色", 1), ("SSR", 2), ("颜色=紫色", 0)):

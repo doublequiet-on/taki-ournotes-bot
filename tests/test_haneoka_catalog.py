@@ -800,6 +800,35 @@ class CatalogTests(unittest.TestCase):
         result, _, _ = skill_record("leaderSkill", leader, peer, references(jp["skill-reference"]), references(intl["skill-reference"]))
         self.assertEqual(result.description, result.localized["description"]["ja"])
 
+    def test_member_perfect_score_bands_use_the_published_sum_and_release_condition(self):
+        from ournotes_bot.sources.haneoka.catalog_text import description, effect_context
+        from ournotes_bot.sources.haneoka.live_score import member_live_projection
+
+        refs = {
+            "targets": {key: {"raw": {"_skillTargetType": 4, "_judgement": judge}}
+                        for key, judge in ((41, 5), (46, 6), (43, 3))},
+            "conditionSets": {13: {"raw": {"_group": 13, "_conditionIds": [17]}}},
+            "conditions": {17: {"raw": {"_conditionType": 1020, "_isPositive": True,
+                                        "_conditionValues": [], "_conditionTargetIDs": [43]}}},
+        }
+        base = {"level": 5, "effectId": 55, "effectType": 2004, "effectValue": 14500,
+                "activationTimeSecond": 5, "targetIds": [41, 46]}
+        template = "PERFECT 得分{effects[0].value/100:F1}%\nGOOD以下を出すまでは{(effects[0].value + effects[1].value)/100:F1}%"
+        skill = {"description": [template],
+                 "effects": [base, {**base, "effectId": 60, "effectValue": 1000, "releaseConditionGroup": 13}]}
+        text, complete = description(template, effect_context(skill, refs, "ja"))
+        self.assertTrue(complete)
+        self.assertIn("155.0%", text)
+        categories, bands, summary = member_live_projection(skill, refs)
+        self.assertEqual(categories, ["score"])
+        self.assertEqual(bands, [{"value": 14500, "condition": "perfect"},
+                                 {"value": 15500, "condition": "perfect"}])
+        self.assertIn("出现 GOOD 或更低判定前+155%", summary)
+
+        # The same pair of raw values cannot imply a sum without the published formula.
+        skill["description"] = [template.replace("(effects[0].value + effects[1].value)", "effects[1].value")]
+        self.assertEqual(member_live_projection(skill, refs), (["score"], None, ""))
+
     def test_unknown_templates_are_explicit_and_never_executed(self):
         for template in ('{__import__("os").system("whoami")}', '{effects[0].__class__}', '{effects[0].value/0}', '{broken}', '{unclosed'):
             text, complete = description(template, {"effects": [{"value": 123}]})
