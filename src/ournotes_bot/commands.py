@@ -18,6 +18,7 @@ from .query.entity_lexicon import alias_status, known_alias_names, resolve_exact
 from .i18n import tr
 from .natural_query.query_debug import QUERY_DEBUG_COUNTERS
 from .query.song_query import SongAnswer, parse_filter, execute as execute_song_filter
+from .query.song_identity import direct_song_names, exact_songs, song_suggestions, song_suggestion_text
 from .sources.haneoka.song_traits import describe as describe_song
 from .query.card_catalog import CardAnswer, query_cards
 from .query.event_cutoff_query import CutoffAnswer, parse_cutoff, execute_cutoff
@@ -27,9 +28,9 @@ from .bot_info import INTRO
 
 HELP_TEXT = """Taki · Our Notes 日服资料查询
 群内查询先 @机器人，回复 @发送者；启用聊天后，/聊 或叫立希、taki 无需 @，回复不 @。
-/查曲 [歌名/ID/乐队] [颜色] [激奏=类型] [EX] [lv<=25] [页N]：歌曲列表
+/查曲 [歌名关键词/ID/乐队] [颜色] [激奏条件] [EX] [25以下]（歌名关键词用空格分隔，如 /查曲 迷 叫）
 颜色：红、蓝、绿、黄、紫；例 /查曲 颜色=蓝/绿
-激奏=JUST 表示包含；激奏=纯JUST 表示全段同类；激奏=混合；激奏=JUST/JUST/COMBO 按顺序匹配
+如 /查曲 MyGO just 或 /查曲 激奏 just。just 表示包含，纯JUST 表示全段同类，混合 表示多种类型，JUST/JUST/COMBO 按顺序匹配。类型大小写均可。
 /查谱面 歌名或ID [难度] [镜像／反转] [5/6.5/8/5/5]：查看等级与 Note 数；100001 可简写为 1
 /查榜线 [jp/hk/kr/en] [id1或活动="名称"] [歌名或歌曲ID=100001] [50或20-40] [仅数值]：顺序不限，默认日服全部歌曲；无排名看趋势，有排名看表。50查40～60，20-40查区间，50-50查一名，1-100全榜；id1查往期本地末次观测，非确认终榜，裸数仍为排名
 Haneoka 未确认原始歌曲序号，请用歌名或歌曲ID；旧T50也查附近，旧多T排名最多五个
@@ -53,12 +54,12 @@ Haneoka 未确认原始歌曲序号，请用歌名或歌曲ID；旧T50也查附�
 /调试数据：本进程 AI API 成功调用与有效检索次数
 /帮助：查看本说明
 /介绍：了解 Taki 与数据来源
-示例：/查曲 蓝色 MyGO EX 激奏=JUST；/查 哪些歌是纯COMBO；/查谱面 100001 EX
+示例：/查曲 蓝色 MyGO EX 激奏 just、/查 哪些歌是纯COMBO、/查谱面 100001 EX
 歌曲颜色／激奏来自 Haneoka 日服；未获取与旧缓存分别标注。"""
 HELP_TEXTS = {
     "zh": HELP_TEXT + "\n/语言：查看英文和日文指令",
     "en": """Our Notes commands
-/song [title or ID] [level or lv level] [page N]: search songs
+/song [title keywords or ID] [level or lv level] (separate title keywords with spaces)
 /chart <title or ID> [difficulty]: view level and note count
 /card <character, title or ID> [page N]: search cards
 /support <character, title or ID> [page N]: search support cards
@@ -68,7 +69,7 @@ HELP_TEXTS = {
 /status: process and data status  /language: language guide  /help: this guide
 Example: /song mygo 27, /chart 100001 EXPERT, /card tomori""",
     "ja": """Our Notes コマンド
-/曲 [曲名またはID] [レベルまたはlvレベル] [ページN]：楽曲を検索
+/曲 [曲名のキーワードまたはID] [レベルまたはlvレベル]（キーワードは空白で区切る）
 /譜面 <曲名またはID> [難易度]：レベルとノーツ数
 /カード <キャラクター名・カード名・ID> [ページN]：カードを検索
 /サポート <キャラクター名・カード名・ID> [ページN]：サポートカードを検索
@@ -82,7 +83,20 @@ HELP_TEXT += '\n/查竞技场 [服] [乐队] [总览/日程/曲池/段位/奖励
 HELP_TEXTS['zh'] = HELP_TEXT + '\n/语言：查看英文和日文指令'
 
 COMMAND_HELP = {
-    "songs": "查询歌曲列表，QQ单图优先，超限完整续发。支持歌名、昵称、乐队、ID、等级；27包含27.5，lv比较式未指定难度时按最高等级。可加颜色=蓝/绿、激奏=JUST、激奏=纯COMBO、激奏=混合或激奏=JUST/JUST/COMBO，并与EX、lv<=25、页N组合。同颜色多选任选，不同维度同时满足；包含全部用 激奏=包含全部JUST/COMBO。\n例：/查曲 蓝色 MyGO EX 激奏=JUST 页2",
+    "songs": (
+        "/查曲 迷 叫（按歌名片段找歌）\n"
+        "/查曲 MyGO 蓝色 EX（按条件筛歌）\n"
+        "/查曲 100001（看歌曲详情）\n"
+        "没发完时用 /继续。\n\n"
+        "歌名关键词用空格分隔，也可用已收录昵称、乐队或 ID。"
+        "按等级筛选可用 /查曲 MyGO EX 25以下。25以上、25以下含 25，大于25、小于25 不含 25，"
+        "也可加「级」或使用小数，例如 27.5级以下。原 lv<=25 等写法仍可用，省略难度按最高等级。"
+        "裸等级 27 包含 27.5。\n"
+        "颜色=蓝/绿 匹配任一颜色。用 /查曲 MyGO just 查包含 JUST 的歌曲，也可写 激奏 just。类型大小写均可。"
+        "纯COMBO 匹配整首同类，混合 匹配多种类型，JUST/JUST/COMBO 按顺序匹配，"
+        "包含全部JUST/COMBO 要求同时包含两种类型。颜色、激奏等不同维度的条件都要满足。\n"
+        "页N 指定文字列表的页码，例如 /查曲 蓝色 MyGO EX just 页2。"
+    ),
     "chart": "查询谱面等级与 Note 数，支持歌名或曲目 ID。100001 可简写为 1。可选难度：EASY、NORMAL、HARD、EXPERT；不指定时显示全部难度。\n可加镜像或反转，左右翻转音符与划键方向；末尾加 5/6.5/8/5/5 按 S1～S5 指定最终秒数，也兼容 覆盖= 写法。\n用法：/查谱面 <歌名或ID> [难度] [镜像／反转]\n示例：/查谱面 1 EXPERT 镜像、/查谱面 100001 反转",
     "cards": "角色卡条件查询始终返回列表，QQ单图优先，超限完整续发，显示完整总数，剩余内容用 /继续。ID精确查详情，/查卡面 ID 只发公开full卡面。\n用法：/查卡 [BD/SSR/SR/R] [颜色=红色,蓝色] [角色=tmr,skk] [乐队=MyGO] [LIVE=分数提升] [击奏=JUST] [得意=MyGO] [页N]\n不同维度AND、同维度多选OR，得意标签全部包含。BD为生日卡；旧二/三/四星别名保留。",
     "support_cards": "留影卡条件查询返回完整列表，QQ单图优先；ID精确查详情，/查留影卡面 ID 只发卡面。\n用法：/查留影卡 [SSR/EX/SR/R] [颜色=红色,蓝色] [角色=tmr,skk] [乐队=MyGO] [LIVE=技能延长] [击奏=LUCK] [页N]\nLIVE可选分数提升、LIFE回复、判定强化、技能延长；以实际资料为准。角色任选且去重，乐队另行筛选；不支持得意标签；BD仅适用于角色卡。",
@@ -91,14 +105,36 @@ COMMAND_HELP = {
 COMMAND_HELPS = {
     "zh": COMMAND_HELP,
     "en": {
-        "songs": "Search by title, band, ID, or level; QQ shows complete results; use /继续 for unsent parts. 27 and lv27 match base level 27; 27.5 and lv27.5 match the displayed level exactly. An exact song ID takes priority over a bare number.\nUsage: /song [title or ID] [level or lv level] [page N]\nExample: /song mygo 27 page 2",
+        "songs": (
+            "/song 迷 叫 (find a song by title keywords)\n"
+            "/song MyGO 蓝色 EX (filter by band, blue color, and difficulty)\n"
+            "/song 100001 (view song details)\n"
+            "Use /继续 if QQ has more results to send.\n\n"
+            "Separate title keywords with spaces. Band names and registered nicknames also work. "
+            "27 and lv27 match base level 27. 27.5 and lv27.5 match the displayed level exactly. "
+            "An exact song ID takes priority over a bare number.\n"
+            "For example, /song MyGO EX 25以下 includes level 25 and below. The lv<=25 form also works.\n"
+            "Use /song MyGO just or /song 激奏 just to find songs containing JUST. Mission types are case-insensitive.\n"
+            "Use page N for text pagination, for example /song mygo 27 page 2."
+        ),
         "chart": "Look up level and note count by title or ID. Song 100001 can be shortened to 1. Optional difficulty: EASY, NORMAL, HARD, EXPERT.\nUsage: /chart <title or ID> [difficulty]\nExample: /chart 1 EXPERT",
         "cards": "Search by card ID, character, card title, or band, QQ shows complete results; use /继续 for unsent parts.\nUsage: /card <query or ID> [page N]\nExample: /card tomori or /card mygo page 2",
         "support_cards": "Search support cards by ID, character, or title, QQ shows complete results; use /继续 for unsent parts.\nUsage: /support <query or ID> [page N]\nExample: /support tomori or /support 1",
         "abbrev": "Look up verified character and band nicknames.\nUsage: /abbrev <nickname>\nExample: /abbrev skk",
     },
     "ja": {
-        "songs": "曲名・バンド・ID・レベルで検索します。QQでは全件表示し、未送信分は /继续 で受け取れます。27とlv27は基本レベル27、27.5とlv27.5は表示レベルを完全一致で検索します。数字が曲IDと一致する場合はIDを優先します。\n使い方：/曲 [曲名またはID] [レベルまたはlvレベル] [ページN]\n例：/曲 mygo 27 ページ2",
+        "songs": (
+            "/曲 迷 叫（曲名の一部で探す）\n"
+            "/曲 MyGO 蓝色 EX（バンド・青属性・難易度で絞り込む）\n"
+            "/曲 100001（楽曲情報を見る）\n"
+            "QQで結果がまだ残っている場合は /继续 を送ってください。\n\n"
+            "曲名のキーワードは空白で区切ります。バンド名や登録済みの略称も使えます。"
+            "27とlv27は基本レベル27、27.5とlv27.5は表示レベル27.5に一致します。"
+            "数字が曲IDと一致する場合はIDを優先します。\n"
+            "/曲 MyGO EX 25以下 でレベル25以下を検索できます。lv<=25 も使えます。\n"
+            "/曲 MyGO just や /曲 激奏 just で JUST を含む楽曲を検索します。タイプ名の大文字・小文字は区別しません。\n"
+            "ページN はテキスト一覧のページ指定に使います。例 /曲 mygo 27 ページ2"
+        ),
         "chart": "曲名またはIDでレベルとノーツ数を確認します。100001は1と省略できます。難易度省略時は全難易度を表示します。\n使い方：/譜面 <曲名またはID> [難易度]\n例：/譜面 1 EXPERT",
         "cards": "カードID、キャラクター名、カード名、バンド名で検索します。QQでは全件表示し、未送信分は /继续 で受け取れます。\n使い方：/カード <名前またはID> [ページN]\n例：/カード 祥子、/カード mygo ページ2、/カード 51",
         "support_cards": "サポートカードID、キャラクター名、カード名で検索します。QQでは全件表示し、未送信分は /继续 で受け取れます。\n使い方：/サポート <名前またはID> [ページN]\n例：/サポート ともり、/サポート 1",
@@ -280,9 +316,8 @@ def _support_card_name_matches(repository: SongRepository, query: str) -> list[S
     return repository.search_support_cards(query, limit=len(repository.support_cards))
 
 
-def song_matches(repository: SongRepository, query: str) -> list[Song]:
+def song_matches(repository: SongRepository, query: str, *, match_names=_song_name_matches) -> list[Song]:
     """Apply an optional trailing level filter after the title/band/ID search."""
-    from .query.song_identity import exact_songs
     exact = exact_songs(repository, query)
     if exact:
         return list(exact)
@@ -293,7 +328,7 @@ def song_matches(repository: SongRepository, query: str) -> list[Song]:
     )
     if level_range:
         term = normalized[:level_range.start()].strip()
-        matches = _song_name_matches(repository, term)
+        matches = match_names(repository, term)
         operator, value, difficulty = level_range.groups()
         level = float(value)
         compare = {
@@ -317,7 +352,7 @@ def song_matches(repository: SongRepository, query: str) -> list[Song]:
         if exact_id:
             return exact_id
     term = normalized[:level_match.start()].strip() if level_match else query
-    matches = _song_name_matches(repository, term)
+    matches = match_names(repository, term)
     if not level_match:
         return matches
     level_text = level_match.group(1)
@@ -568,7 +603,8 @@ class CommandResult:
                 object.__setattr__(self, "status", "empty")
 
 
-def resolve_command(content: str, repository: SongRepository) -> CommandResult | None:
+def resolve_command(content: str, repository: SongRepository, *,
+                    direct_song_keywords=True) -> CommandResult | None:
     """Select records once so text and image use the same request result."""
     text = _clean_message(content)
     parts = text.split(None, 1)
@@ -602,11 +638,17 @@ def resolve_command(content: str, repository: SongRepository) -> CommandResult |
         return CommandResult((kind, answer.request.query, answer.request.page),
                              cards=() if support else answer.cards,
                              support_cards=answer.cards if support else (), catalog=answer)
+    # Page syntax can also be part of a complete title.
+    if kind == "songs" and direct_song_keywords and len(parts) > 1:
+        raw_query = parts[1].strip()
+        if split_page(raw_query)[0] != raw_query:
+            exact = exact_songs(repository, raw_query)
+            if exact:
+                return CommandResult(("songs", raw_query, 1), songs=tuple({song.id: song for song in exact}.values()))
     parsed = parse_query(content)
     mirror = False
     coverage = ()
     if kind == "chart" and len(parts) > 1:
-        from .query.song_identity import exact_songs
         if exact_songs(repository, parts[1]):
             parsed = ("chart", parts[1], None)
         else:
@@ -626,14 +668,37 @@ def resolve_command(content: str, repository: SongRepository) -> CommandResult |
     kind, query, _ = parsed
     if kind == "songs":
         try:
-            from .query.song_identity import exact_songs
+            exact = exact_songs(repository, query)
+            if exact:
+                return CommandResult(parsed, songs=tuple({song.id: song for song in exact}.values()))
             has_conditions = re.search(r"颜色|属性|激奏|击奏|乐队=|\blv|[<>=]|(?:^|\s)(?:EX|HD|NM|EZ|EXPERT|HARD|NORMAL|EASY)(?:\s|$)", query, re.I)
-            request = None if exact_songs(repository, query) else parse_filter(query, repository, force=bool(has_conditions))
+            request = parse_filter(query, repository, force=bool(has_conditions), direct_syntax=direct_song_keywords)
             if request is not None:
-                answer = execute_song_filter(request, repository, int(parsed[2]))
-                return CommandResult(parsed, songs=answer.songs, song_selection=answer)
+                answer = execute_song_filter(request, repository, int(parsed[2]),
+                                             direct_song_keywords=direct_song_keywords)
+                return CommandResult(parsed, songs=answer.songs, song_selection=answer, candidates=answer.suggestions)
         except ValueError as exc:
             return CommandResult(parsed, hint=str(exc), status="invalid_arguments")
+        if direct_song_keywords:
+            suggestion_limit = 0
+
+            def select_names(repo, term):
+                nonlocal suggestion_limit
+                songs, suggestion_limit = direct_song_names(repo, term)
+                return list(songs)
+
+            songs = tuple(song_matches(repository, query, match_names=select_names))
+            if songs and not suggestion_limit:
+                return CommandResult(parsed, songs=songs)
+            locale = locale_for(content)
+            warning = ("Haneoka 旧缓存；未命中不代表最新资料不存在。"
+                       if repository.capture_catalog().cache_state == "stale" else "")
+            if songs:
+                candidates = song_suggestions(songs, suggestion_limit)
+                return CommandResult(parsed, status="ambiguous", candidates=candidates,
+                                     hint=song_suggestion_text(candidates, locale, warning, limit=suggestion_limit))
+            hint = tr(locale, "not_found_song", query=query)
+            return CommandResult(parsed, hint="\n".join(filter(None, (hint, warning))))
         return CommandResult(parsed, songs=tuple(song_matches(repository, query)))
     if kind in {"cards", "support_cards"}:
         try:
@@ -842,7 +907,7 @@ def handle_command(content: str, repository: SongRepository,
         return tr(locale, "songs") + "\n" + "\n".join(
             f"{index:02d}. ID {song.id}  {localized_text(song, 'title', locale)} · {localized_text(song, 'band', locale)}  " + " / ".join(f"{chart.display_level:g}" for chart in song.charts)
             + "\n" + describe_song(song) for index, song in enumerate(visible, 1)
-        ) + "\n" + page_notice("songs", parsed[1], page, len(matches), locale) + "\n" + tr(locale, "next_chart")
+        ) + "\n" + page_notice("songs", parsed[1], page, len(matches), locale) + "\n" + tr(locale, "song_list_actions")
 
     if parsed and parsed[0] == "chart":
         query = parsed[1]

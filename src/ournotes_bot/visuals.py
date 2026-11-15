@@ -26,6 +26,7 @@ from PIL import Image, ImageDraw, ImageFont, ImageOps
 
 from .config import runtime_data_dir
 from .data import Card, Chart, Skill, Song, SupportCard, localized_text
+from .i18n import tr
 from .sources.yatta import ASSETS, BASE
 from .rendering.image_output import reclaim_after_render
 
@@ -596,6 +597,8 @@ def _mission_chip(image, draw, traits, x, y, width, size=21, *,
 def render_song_list(songs: list[Song], query: str, locale: str = "zh", footer: str = "") -> bytes:
     width = 1100
     measure = ImageDraw.Draw(Image.new("RGB", (width, 1)))
+    if songs:
+        footer = "\n".join(filter(None, (footer, tr(locale, "song_list_actions"))))
     footer_lines = [part for line in footer.splitlines() for part in _wrapped_lines(measure, line, width - 110, 21, len(line) + 1)]
     conditions = _wrapped_lines(measure, query or "条件：不限", width - 110, 23, max(1, len(query)))
     rows_y = 172 + len(conditions) * 31

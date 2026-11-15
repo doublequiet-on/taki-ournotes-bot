@@ -10,10 +10,11 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
 
 from ournotes_bot.ai_query import AIQueryParser
-from ournotes_bot.commands import card_matches, song_matches, support_card_matches
+from ournotes_bot.commands import card_matches, support_card_matches
 from ournotes_bot.config import Settings
 from ournotes_bot.data import Card, Chart, Song, SongRepository, SupportCard
 from ournotes_bot.platforms.qq.qq import PreparedReply, _deliver_reply, _prepare_reply, run_bot
+from ournotes_bot.query.song_identity import exact_songs
 from ournotes_bot.structured_query import songs_for
 from ournotes_bot.sources.yatta import BASE
 from ournotes_bot.rendering.readable_pages import ImagePart
@@ -77,7 +78,8 @@ class ReplyPipelineTests(unittest.TestCase):
         self.temp.cleanup()
 
     def test_direct_and_natural_text_images_share_one_selection(self):
-        with patch("ournotes_bot.commands.song_matches", wraps=song_matches) as select, \
+        with patch("ournotes_bot.commands.exact_songs", wraps=exact_songs) as select, \
+             patch("ournotes_bot.application.replies.load_chart_score", return_value=None), \
              patch("ournotes_bot.rendering.song_detail_layout.render", return_value=b"image") as render:
             result = _prepare_reply("/查曲 迷星叫", self.repo, self.parser)
         self.assertEqual(result.image, b"image")

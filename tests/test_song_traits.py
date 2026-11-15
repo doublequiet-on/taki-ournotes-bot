@@ -67,6 +67,100 @@ class SongTraitsTests(unittest.TestCase):
                 self.assertTrue(result.hint)
                 self.assertFalse(result.songs)
 
+    def test_direct_mission_spellings_select_the_same_songs(self):
+        self.repo.songs.append(replace(self.repo.songs[0], id=100005, traits=SongTraits(2, ('COMBO', 'COMBO'))))
+        cases = (
+            ('激奏=JUST', ('just', '激奏 jUsT', '击奏 JuSt', '激奏:just', '激奏just'), [100001, 100002, 100003]),
+            ('激奏=COMBO', ('combo', '激奏 CoMBo'), [100001, 100002, 100005]),
+            ('激奏=LUCK', ('lUcK', '击奏 lucK'), [100002]),
+            ('MyGO 激奏=纯COMBO', ('MyGO 纯combo', 'MyGO 激奏 纯combo'), [100005]),
+            ('激奏=混合', ('混合', '激奏 混合'), [100001, 100002]),
+            ('激奏=包含全部JUST/COMBO', ('包含全部just/combo', '激奏 包含全部JUST/combo'), [100001, 100002]),
+            ('激奏=JUST/JUST/COMBO', ('just/JuSt/coMBo', '激奏 just / JuSt / coMBo'), [100001]),
+            ('激奏=JUST/COMBO/JUST', ('just/combo/just',), []),
+            ('乐队=卖狗 蓝色 激奏=JUST EX lv=25', ('乐队=卖狗 蓝色 jUsT EX lv=25', '蓝色 MyGO 激奏 just EX 25'),
+             [100001, 100003]),
+        )
+        for canonical, aliases, ids in cases:
+            answer = resolve_command('/查曲 ' + canonical, self.repo).song_selection
+            for query in (canonical, *aliases):
+                with self.subTest(query=query):
+                    result = resolve_command('/查曲 ' + query, self.repo)
+                    self.assertEqual([song.id for song in result.songs], ids)
+                    self.assertEqual(result.song_selection.request.mode, answer.request.mode)
+                    self.assertEqual(result.song_selection.request.missions, answer.request.missions)
+
+    def test_mission_markers_are_independent_and_complete_titles_take_priority(self):
+        for query, expected in (
+            ('激奏', '请指定激奏条件的值'),
+            ('击奏:', '请指定激奏条件的值'),
+            ('激奏 unknown', '激奏条件无法识别'),
+            ('just combo', '请只给出一个激奏条件'),
+            ('just 激奏 combo', '请只给出一个激奏条件'),
+            ('激奏 激奏 just', '请只给出一个激奏条件'),
+        ):
+            with self.subTest(query=query):
+                result = resolve_command('/查曲 ' + query, self.repo)
+                self.assertEqual(result.status, 'invalid_arguments')
+                self.assertIn(expected, result.hint)
+        base = self.repo.songs[0]
+        self.repo.songs = [
+            replace(base, id=song_id, title=title, titles=(title,))
+            for song_id, title in ((100001, 'JUSTICE Ahead'), (100002, 'JUST'),
+                                   (100003, 'Just/COMBO'), (100004, 'A Just/COMBO Adventure'))
+        ]
+        for query, song_id in (('JUSTICE', 100001), ('just', 100002),
+                               ('jUsT/cOmBo', 100003), ('a just/combo Adventure', 100004),
+                               ('A Just/COMBO Adventure 蓝色', 100004)):
+            with self.subTest(query=query):
+                result = resolve_command('/查曲 ' + query, self.repo)
+                self.assertEqual([song.id for song in result.songs], [song_id])
+                if result.song_selection:
+                    self.assertFalse(result.song_selection.request.mode)
+
+    def test_direct_chinese_level_conditions_match_symbol_comparisons(self):
+        base = self.repo.songs[0]
+        hard, expert = base.charts
+        self.repo.songs = [
+            base,
+            replace(base, id=100002, charts=(hard, replace(expert, level=25, display_level=25.5))),
+            replace(base, id=100003, charts=(hard, replace(expert, level=27, display_level=27.5))),
+            replace(base, id=100004, charts=(replace(hard, level=24, display_level=24),)),
+            replace(base, id=100005, charts=(replace(hard, level=29, display_level=29), expert)),
+        ]
+        for aliases, canonical, ids in (
+            (('25以上', '25级以上'), 'lv>=25', [100001, 100002, 100003, 100005]),
+            (('25以下', '25级以下'), 'lv<=25', [100001, 100005]),
+            (('大于25', '大于25级'), 'lv>25', [100002, 100003]),
+            (('小于25', '小于25级'), 'lv<25', []),
+            (('27.5以下', '27.5级以下'), 'lv<=27.5', [100001, 100002, 100003, 100005]),
+        ):
+            expected = resolve_command('/查曲 MyGO EX ' + canonical + ' 激奏=JUST', self.repo)
+            for condition in (*aliases, canonical):
+                with self.subTest(condition=condition):
+                    result = resolve_command('/查曲 MyGO EX ' + condition + ' just', self.repo)
+                    self.assertEqual([song.id for song in result.songs], ids)
+                    self.assertEqual(result.song_selection.request, expected.song_selection.request)
+        self.assertEqual([song.id for song in resolve_command('/song MyGO 25以下', self.repo).songs],
+                         [100001, 100004])
+        self.assertEqual([song.id for song in resolve_command('/曲 MyGO EX 25以下', self.repo).songs],
+                         [100001, 100005])
+        self.assertEqual([song.id for song in resolve_command('/查曲 MyGO 25', self.repo).songs],
+                         [100001, 100002, 100005])
+        for condition, hint in (('25以下 lv>24', '一个等级条件'), ('大于24 27级以下', '一个等级条件'),
+                                ('0以下', '等级须'), ('大于41级', '等级须'),
+                                ('-1以上', '等级须'), ('27..5以下', '等级须')):
+            with self.subTest(condition=condition):
+                result = resolve_command('/查曲 MyGO ' + condition, self.repo)
+                self.assertEqual(result.status, 'invalid_arguments')
+                self.assertIn(hint, result.hint)
+        title = replace(base, id=100006, title='25以下', titles=('25以下',))
+        self.repo.songs.append(title)
+        self.assertEqual(resolve_command('/查曲 25以下', self.repo).songs, (title,))
+        filtered = resolve_command('/查曲 25以下 蓝色', self.repo)
+        self.assertEqual(filtered.songs, (title,))
+        self.assertIsNone(filtered.song_selection.request.level)
+
     def test_missing_stale_unknown_entity_and_empty_are_distinct(self):
         self.assertIn('缺少', handle_command('/查曲 蓝色', self.repo))
         self.repo.songs = [replace(self.repo.songs[0], traits=None)]
@@ -75,6 +169,167 @@ class SongTraitsTests(unittest.TestCase):
         self.assertIn('旧缓存', handle_command('/查曲 蓝色', self.repo))
         self.assertNotIn('暂不可用', handle_command('/查曲 不存在的歌曲 蓝色', self.repo))
         self.assertIn('没有符合', handle_command('/查曲 红色', self.repo))
+
+    def test_incomplete_filter_distinguishes_confirmed_and_unknown_songs(self):
+        blue = self.repo.songs[0]
+        red = replace(blue, id=100002, traits=SongTraits(1, ('JUST',)))
+        missing_color = replace(blue, id=100003, traits=SongTraits(None, ('JUST',)))
+        missing_missions = replace(blue, id=100004, traits=SongTraits(2, None))
+        command = '/查曲 蓝色 MyGO EX 激奏=JUST'
+        cases = (
+            ([blue, red, missing_missions], 'success', (100001,), '有 1 首歌曲缺少所需激奏资料'),
+            ([red], 'empty', (), '没有符合条件的歌曲。'),
+            ([red, missing_color], 'empty', (), '现有资料中未确认有歌曲符合条件。'),
+            ([missing_color], 'data_unavailable', (), '缺少颜色）'),
+            ([missing_missions], 'data_unavailable', (), '缺少激奏）'),
+            ([missing_color, missing_missions], 'data_unavailable', (), '缺少颜色／激奏）'),
+        )
+        for songs, status, ids, message in cases:
+            with self.subTest(ids=[song.id for song in songs]):
+                self.repo.songs = songs
+                result = resolve_command(command, self.repo)
+                text = handle_command(command, self.repo, result)
+                self.assertEqual(result.status, status)
+                self.assertEqual(tuple(song.id for song in result.songs), ids)
+                self.assertIn(message, text)
+                if status == 'data_unavailable':
+                    self.assertTrue(text.startswith('这次无法判断哪些歌曲符合条件。'))
+                if songs == [red, missing_color]:
+                    self.assertIn('有 1 首歌曲缺少所需颜色资料，未参与筛选。', text)
+
+    def test_direct_song_keywords_use_one_title_variant_and_all_filters(self):
+        base = replace(self.repo.songs[0], title='晴空下尚未写完的乐章', titles=(),
+                       localized={'title': {'en': 'The Unfinished Sky Sonata', 'ja': '青空に残る楽章'}})
+        other = replace(base, id=100005, title='晴空写给乐章', localized={}, band='Ave Mujica')
+        self.repo.songs = [
+            other, replace(base, id=100002, title='晴空散步', localized={'title': {'ja': '我的乐章'}}),
+            replace(base, id=100003, traits=SongTraits(1, ('JUST',))),
+            replace(base, id=100004, charts=(base.charts[0],)),
+            base, base,
+        ]
+        for command, expected in (
+            ('/查曲 晴空 乐章', [100001, 100003, 100004, 100005]),
+            ('/查曲 晴空 乐章 EX 颜色=蓝', [100001, 100005]),
+            ('/查曲 晴空 乐章 EX 颜色=蓝 乐队=卖狗 激奏=JUST lv=25', [100001]),
+            ('/查曲 晴空 乐章 25', [100001, 100003, 100005]),
+            ('/song Sky Unfinished', [100001, 100003, 100004]),
+            ('/曲 青空 楽章', [100001, 100003, 100004]),
+        ):
+            with self.subTest(command=command):
+                self.assertEqual([song.id for song in resolve_command(command, self.repo).songs], expected)
+
+    def test_direct_song_preserves_exact_entities_before_reading_conditions(self):
+        base = replace(self.repo.songs[0], title='晴空 EX 25', titles=())
+        self.repo.songs = [base, replace(base, id=100002, title='晴空遥远的夜', charts=(base.charts[0],)),
+                           replace(base, id=100003, title='Interlude Page 2', band='Ave Mujica', charts=())]
+        for query in ('100001', '晴空 EX 25', 'まよいうた', '晴空 EX 25 颜色=蓝', '25'):
+            with self.subTest(query=query):
+                self.assertEqual([song.id for song in resolve_command('/查曲 ' + query, self.repo).songs], [100001])
+        self.assertEqual([song.id for song in resolve_command('/查曲 卖狗', self.repo).songs], [100001, 100002])
+        self.assertEqual([song.id for song in resolve_command('/查曲 遥远的夜', self.repo).songs], [100002])
+        self.assertEqual(resolve_command('/查曲 Interlude Page 2', self.repo).parsed,
+                         ('songs', 'Interlude Page 2', 1))
+
+    def test_direct_song_typo_suggestions_require_id_and_respect_filters(self):
+        base = replace(self.repo.songs[0], title='Stellar Odyssey', titles=('Stellar Odyssey',))
+        blue = replace(base, id=100005, title='Stellar Odyssea', titles=('Stellar Odyssea',))
+        red = replace(base, id=100003, title='Stellar Odyssez', titles=('Stellar Odyssez',),
+                      traits=SongTraits(1, ('JUST',)))
+        no_ex = replace(base, id=100004, title='Stellar Odyssex', titles=('Stellar Odyssex',), charts=(base.charts[0],))
+        self.repo.songs = [red, no_ex, blue, base]
+        command = '/查曲 Stelar Odyssey EX 颜色=蓝'
+        answer = resolve_command(command, self.repo)
+        self.assertFalse(answer.songs)
+        self.assertEqual(answer.status, 'ambiguous')
+        self.assertEqual([song.id for song in answer.song_selection.suggestions], [100001, 100005])
+        text = handle_command(command, self.repo, answer)
+        self.assertIn('可能是这些歌曲', text)
+        self.assertIn('Stellar Odyssey · MyGO!!!!! · ID 100001', text)
+        self.assertNotIn('100003', text)
+        self.assertNotIn('100004', text)
+        self.repo.songs = [base]
+        self.assertEqual([song.id for song in resolve_command('/查曲 Stelar Odyssey', self.repo).candidates], [100001])
+        self.assertEqual([song.id for song in resolve_command('/查曲 Stelar Odyssey', self.repo,
+                                                             direct_song_keywords=False).songs], [100001])
+        for term in ('St', 'QX', 'Od'):
+            tip = resolve_command('/查曲 ' + term + 'q', self.repo)
+            self.assertFalse(tip.songs or tip.candidates)
+        self.assertIsNone(resolve_command('/查谱面 Stelar Odyssey', self.repo).song_selection)
+        self.repo.songs = [replace(base, id=song_id) for song_id in range(100013, 100000, -1)]
+        capped = resolve_command(command, self.repo)
+        self.assertEqual([song.id for song in capped.candidates], list(range(100001, 100011)))
+        self.repo.songs = [replace(base, traits=None)]
+        self.repo.cache_state = 'stale'
+        unavailable = resolve_command(command, self.repo)
+        self.assertEqual(unavailable.status, 'data_unavailable')
+        text = handle_command(command, self.repo, unavailable)
+        self.assertIn('缺少颜色', text)
+        self.assertIn('旧缓存', text)
+
+    def test_direct_three_han_title_typo_requires_id_but_literal_matches_win(self):
+        from ournotes_bot.application.replies import prepare_reply
+
+        base = self.repo.songs[0]
+        self.repo.songs = [base]
+        parser = AIQueryParser(Settings('', '', BASE, self.repo.cache_file, 6, ''))
+        with patch('ournotes_bot.application.replies.visual_asset', return_value=None), \
+             patch('ournotes_bot.sources.haneoka.game_assets.asset_bytes', return_value=None), \
+             patch('ournotes_bot.application.replies.load_chart_score', return_value=None):
+            suggestion = prepare_reply('/查曲 迷星咬', self.repo, parser)
+            self.assertEqual(suggestion.business_status, 'ambiguous')
+            self.assertIn('迷星叫 · MyGO!!!!! · ID 100001', suggestion.text)
+            self.assertIn('/查曲 ID', suggestion.text)
+            self.assertIsNone(suggestion.image)
+            self.assertIsNone(suggestion.context)
+            exact = prepare_reply('/查曲 迷星叫', self.repo, parser)
+            self.assertEqual(exact.business_status, 'success')
+            self.assertTrue(exact.image)
+            self.assertIn('迷星叫 · ID 100001', exact.text)
+            for term in ('迷星', '迷 叫', 'まよいうた'):
+                self.assertEqual(prepare_reply('/查曲 ' + term, self.repo, parser).business_status, 'success')
+            for term in ('咬', '星咬', '星迷叫', '迷星A'):
+                self.assertEqual(prepare_reply('/查曲 ' + term, self.repo, parser).business_status, 'empty')
+        literal = replace(base, id=100002, title='迷星咬之歌', titles=('迷星咬之歌',))
+        self.repo.songs = [base, literal]
+        self.assertEqual(resolve_command('/查曲 迷星咬', self.repo).songs, (literal,))
+
+    def test_direct_three_han_suggestions_count_distinct_ids_after_filters(self):
+        base = self.repo.songs[0]
+        other_variants = replace(base, id=100002, title='晴天下', titles=('晴天下', '迷星摇'),
+                                 localized={'title': {'ja': '迷星音'}})
+        third = replace(base, id=100003, title='迷星雨', titles=('迷星雨',))
+        fourth = replace(base, id=100004, title='迷星梦', titles=('迷星梦',), traits=SongTraits(1, ('JUST',)))
+        no_ex = replace(base, id=100005, title='迷星雪', titles=('迷星雪',), charts=base.charts[:1])
+        wrong_band = replace(base, id=100006, title='迷星曲', titles=('迷星曲',), band='Ave Mujica')
+        wrong_mission = replace(base, id=100007, title='迷星光', titles=('迷星光',), traits=SongTraits(2, ('LUCK',)))
+        wrong_level = replace(base, id=100008, title='迷星舞', titles=('迷星舞',),
+                              charts=(replace(base.charts[-1], level=26, display_level=26),))
+        longer = replace(base, id=100009, title='迷星叫之歌', titles=('迷星叫之歌',))
+        mixed = replace(base, id=100010, title='迷星A', titles=('迷星A',))
+        self.repo.songs = [third, other_variants, mixed, longer, wrong_level, wrong_mission,
+                           wrong_band, no_ex, fourth, base, base]
+        for command, count in (('/查曲 迷星咬', 8), ('/查曲 迷星咬 EX 颜色=蓝', 6)):
+            with self.subTest(command=command):
+                result = resolve_command(command, self.repo)
+                self.assertEqual(result.status, 'ambiguous')
+                text = handle_command(command, self.repo, result)
+                self.assertIn(f'{count} 首', text)
+                self.assertIn('补充歌名', text)
+                self.assertNotIn('ID ', text)
+        command = '/查曲 迷星咬 EX 颜色=蓝 乐队=卖狗 激奏=JUST lv=25'
+        result = resolve_command(command, self.repo)
+        self.assertEqual([song.id for song in result.candidates], [100001, 100002, 100003])
+        self.assertIn('/查曲 ID 查询详情', handle_command(command, self.repo, result))
+        for song_id in (100001, 100002, 100003):
+            self.assertIn(f'ID {song_id}', handle_command(command, self.repo, result))
+        self.repo.cache_state = 'stale'
+        self.assertIn('旧缓存', handle_command('/查曲 迷星咬', self.repo))
+        self.repo.songs = [replace(base, traits=None)]
+        result = resolve_command(command, self.repo)
+        self.assertEqual(result.status, 'data_unavailable')
+        self.assertIn('缺少颜色／激奏', handle_command(command, self.repo, result))
+        self.repo.songs = [fourth]
+        self.assertEqual(resolve_command(command, self.repo).status, 'empty')
 
     def test_local_and_direct_identical_without_model(self):
         parser = AIQueryParser(Settings('', '', BASE, self.repo.cache_file, 6, ''))

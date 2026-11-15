@@ -360,7 +360,7 @@ def answer_for(spec: QuerySpec, repository: SongRepository, locale: str = "zh",
             f"{index:02d}. ID {song.id}  {localized_text(song, 'title', locale)} · {localized_text(song, 'band', locale)}  "
             + " / ".join(f"{chart.display_level:g}" for chart in song.charts)
             + "\n" + describe_song(song) for index, song in enumerate(visible, 1)
-        ) + "\n" + page_notice("songs", spec.query_label(), spec.page, len(matches), locale) + "\n" + tr(locale, "next_chart")
+        ) + "\n" + page_notice("songs", spec.query_label(), spec.page, len(matches), locale) + "\n" + tr(locale, "song_list_actions")
 
     if spec.intent == "chart":
         chart = selected.chart
