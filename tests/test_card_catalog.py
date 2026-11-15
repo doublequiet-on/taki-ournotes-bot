@@ -241,7 +241,7 @@ class CardCatalogTests(unittest.TestCase):
                 self.assertEqual([card.id for card in result.support_cards], expected)
 
     def test_snap_help_points_to_continue_for_long_lists(self):
-        from ournotes_bot.commands import COMMAND_HELPS
+        from ournotes_bot.commands import COMMAND_HELPS, HELP_TEXTS
 
         general = handle_command("/帮助", self.repo)
         snap = next(line for line in general.splitlines() if line.startswith("/查留影卡 "))
@@ -253,11 +253,15 @@ class CardCatalogTests(unittest.TestCase):
                 self.assertIn("/继续", help_text)
                 self.assertIn("/查留影卡 EX 延长", help_text)
                 self.assertNotIn("页N", help_text)
-        for locale, old_page in (("en", "[page N]"), ("ja", "[ページN]")):
+        for locale, command, old_page in (("en", "/support ", "[page N]"),
+                                          ("ja", "/サポート ", "[ページN]")):
             with self.subTest(locale=locale):
                 help_text = COMMAND_HELPS[locale]["support_cards"]
                 self.assertIn("/继续", help_text)
                 self.assertNotIn(old_page, help_text)
+                entry = next(line for line in HELP_TEXTS[locale].splitlines() if line.startswith(command))
+                self.assertIn("/继续", entry)
+                self.assertNotIn(old_page, entry)
 
     def test_member_leader_types_compose_with_card_and_live_filters(self):
         self.repo.cards = [

@@ -61,7 +61,7 @@ HELP_TEXTS = {
 /song [title or ID] [level or lv level] [page N]: search songs
 /chart <title or ID> [difficulty]: view level and note count
 /card <character, title or ID> [page N]: search cards
-/support <character, title or ID> [page N]: search support cards
+/support <character, title or ID>: search support cards, use /继续 for unsent results
 /查活动 [ID or title], /查卡池 [ID or title], /查角色 [name or ID]: JP information in Chinese
 /abbrev <nickname>: look up a character or band nickname
 /ask <query>: song, chart, member-skill or SNAP lookup; bounded Chinese event/gacha/profile questions also run locally
@@ -71,7 +71,7 @@ Example: /song mygo 27, /chart 100001 EXPERT, /card tomori""",
 /曲 [曲名またはID] [レベルまたはlvレベル] [ページN]：楽曲を検索
 /譜面 <曲名またはID> [難易度]：レベルとノーツ数
 /カード <キャラクター名・カード名・ID> [ページN]：カードを検索
-/サポート <キャラクター名・カード名・ID> [ページN]：サポートカードを検索
+/サポート <キャラクター名・カード名・ID>：サポートカードを検索。未送信分は /继续
 /查活动 [ID・名称]、/查卡池 [ID・名称]、/查角色 [名前・ID]：日本版資料（中国語表示）
 /略称 <略称>：キャラクター・バンドなどの略称
 /問 <内容>：楽曲・譜面・メンバースキル・SNAPを検索。中国語の定型文でイベント・ガチャ・人物資料もローカル検索
