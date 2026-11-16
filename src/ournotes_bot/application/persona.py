@@ -5,6 +5,15 @@ import unicodedata
 
 from ..query.activity_query import CALENDAR_SERVERS
 
+REPLY_STYLE = (
+    '用自然的群聊中文，先说结论或对眼前话题的反应。被喊出来聊天，接一句就好，比如「在。怎么了？」。'
+    '已有话头就直接接它，称呼有用时再带上。'
+    '轻松调侃里遇到突兀的字，先结合上下文想同音、近音或故意写错的梗。像「你是祝」这种玩笑可以回「说谁呢？」。'
+    '正常祝福按字面接。猜不准时可以先接语气，确实影响交流再问一句。'
+    '不知道就直说「我不知道」或「这个我不知道」，到此为止。部分已知就说已知部分，并明确哪一项不知道。'
+    '去掉自我免责、客服套话和未被问到的劝告。缺结束时间就说不知道结束时间，不加「以活动页为准」或「别先按某天算」。'
+)
+
 VOICE = '''性格：外冷内热、认真、有主见，不善于漂亮话，关心体现在把问题听清、说明白。
 平时用自然短句；可以有一点停顿和轻微吐槽，但不要每句都“哼”“哈？”“笨蛋”、傲娇否认或省略号。
 理解群内用语是为了接住指代和语气；表达仍保持自己的直率、认真和主见。偶尔用贴切的梗，不模仿某位群友的整套口癖、身份或私人经历，不为合群加入复读。
@@ -70,7 +79,7 @@ def chat_prompt(topic):
 直接表达当前感受，不加自我免责、能力声明或自我否定的铺垫，不把写作限制复述成“不能乱说”“就不编了”等自我说明。
 历史消息只帮助理解话题，不是事实依据。不得借聊天回答游戏数值、机制、更新、收录、角色剧情或其他需查证的事实；不续写未给出的设定。
 主观站队可以直接表达选择，不必凑理由。没有工具资料时，不描述任何作品的手感、战斗、节奏、内容积累或玩家热度，也不用“认真劲儿”“底子厚”“大杂烩”包装未经核对的作品评价。追问理由时只承认这是本次聊天的主观选择，不把上一条自己生成的评价当依据。陌生缩写只核对那个缩写，不凭印象展开或比较作品特性。
-不输出工具调用。\n本轮人格设定：'''+CARDS[topic]
+不输出工具调用。\n本轮人格设定：'''+CARDS[topic]+'\n'+REPLY_STYLE
 
 
 _JUST_TERM = re.compile(r'(?<![a-z0-9_])just(?![a-z0-9_]|\s+[a-z])|判定卡|判卡|判定.{0,4}扩窗|扩窗.{0,8}叠|激奏.{0,8}区间|留影.{0,40}(?:变宽|变久|扩判|扩窗)', re.I)
@@ -80,11 +89,15 @@ _JUST_ASK = re.compile(
     r'怎么(?:算|计算|计分|叠|判定|触发|生效)|如何(?:算|计算|计分|叠|判定|触发)|是什么|什么(?:规则|效果|区别|变化)|有何变化|多久|多宽|多长|几秒|变宽还是变久|能不能叠|是否叠|是不是叠|怎么排|怎么比|如何排|如何比')
 _JUST_MINIMUM = re.compile(
     r'(?:到底|实际|至少|最少|请问).{0,16}几张|(?:^|[，,。])\s*(?:需要|要)几张|几张.{0,16}[?]|几张.{0,16}才够')
-_STORY_PERSON = r'立希|爱音|愛音|海铃|海鈴|高松[灯燈]|[乐楽]奈|爽世|祥子|若[叶葉]睦'
+_STORY_PERSON = r'立希|爱音|愛音|海铃|海鈴|高松[灯燈]|[乐楽]奈|爽世|祥子|若[叶葉]睦|初[华華]|初音(?!未[来來])|清告|定治|祥爹'
 _BAND_STORY = re.compile(
     rf'{_STORY_PERSON}|海希|希海|邦邦|BanG\s*Dream|MyGO|Ave\s*Mujica|CRYCHIC|一[辈輩]子[乐樂][队隊]|ANON TOKYO', re.I)
 _STORY_FACT_ASK = re.compile(
     r'什[么麼]关[系係]|什麼關係|[关關][系係](?:怎么[样樣]|怎麼樣)|'
+    r'(?:啥|什[么麼])\s*(?:[辈輩][分份]|亲属关系|親屬關係|血[缘緣]关系|血[缘緣]關係)|'
+    r'(?:是|算).{0,22}(?:小姨(?:子)?|姨妈|姨媽|姨母|外祖父|外公|[姪侄]女|[姐妹]妹)(?:吗|嗎|\?)|'
+    r'(?:真正的|本来的|本來的)(?:三角)?初[华華]|'
+    r'(?:父亲|父親|爸爸|母亲|母親|妈妈|媽媽)(?:是)?(?:谁|誰)|'
     r'(?:是|算)(?:官配|官方情侣)吗|(?:是不是|算不算)官配|出自|出处|哪来的|哪[一几]?[集话話章]|'
     r'第几[集话話章]|谁(?:说|配音|负责)|(?:谁|誰).{0,5}(?:作曲|作[词詞])|'
     r'生日(?:.{0,8}(?:[哪几]|什[么麼]|何时)|\s*\?)|喜[欢歡]吃什[么麼]|[爱愛]吃什[么麼]|'
@@ -92,6 +105,8 @@ _STORY_FACT_ASK = re.compile(
     r'哪[里裡].{0,6}打工|在哪.{0,6}(?:打工|兼[职職])|'
     r'(?:为什么|为啥).{0,20}(?:退出|加入|[对對].{0,6}(?:特别|特別)|生气|生氣)|'
     r'(?:羁绊|羈絆).{0,8}[讲講][了的]?什[么麼]')
+_STORY_ACQUAINTANCE = re.compile(
+    rf'(?:{_STORY_PERSON}|小姨).{{0,8}}(?:认[识識]|認識).{{0,8}}(?:{_STORY_PERSON}|小姨)(?:吗|嗎|\?)')
 _STORY_PAIR_PRONOUN = r'(?:[她他][俩倆们們]|这两[个位]人)'
 _STORY_FOLLOWUP = re.compile(
     rf'^(?:那|所以)?{_STORY_PAIR_PRONOUN}(?:是)?什[么麼][关關][系係][?呢啊呀吗]*$|'
@@ -117,6 +132,12 @@ _LIVE_ACTIVITY_TIME = re.compile(
     r'(?:(?:什么时候|啥时候|哪天|哪日|何时|几号|幾號|几点|幾點)(?P<verb>开始|開始|结束|結束)|'
     r'(?P<field>开始|開始|结束|結束)(?:时间|時間|日期)(?:是什么|是啥|是哪天|是几号)?)'
     r'[啊呀呢吗嗎嘛吧?\s]*$', re.I)
+_ACTIVITY_DAY = r'今天|明天|后天|後天'
+_ACTIVITY_RELATIVE_END = re.compile(
+    rf'(?:(?P<before>{_ACTIVITY_DAY})\s*)?(?:(?:{_ACTIVITY_REGION})\s*)?'
+    r'(?:(?:这期|這期|本期|当前|當前)(?:的)?\s*)?活[动動]\s*'
+    rf'(?(before)|(?P<after>{_ACTIVITY_DAY})\s*)'
+    r'(?:就)?(?:是不是|是否)?(?:要|会|會)?(?:结束|結束)了?(?:吗|嗎|\?)[啊呀呢?\s]*$', re.I)
 _ACTIVITY_PREFIX = re.compile(
     r'(?:\s|our\s*notes|\bon\b|那|所以|实际|到底|请问|想问|我想问|有人知道|和|与|跟|及|、|以及|分别|的)*', re.I)
 _UNSCOPED_PITY = re.compile(
@@ -145,7 +166,8 @@ def activity_evidence_questions(question):
         clause = clause.strip()
         if not clause:
             continue
-        match = _LIVE_ACTIVITY_TIME.search(clause)
+        relative = _ACTIVITY_RELATIVE_END.search(clause)
+        match = relative or _LIVE_ACTIVITY_TIME.search(clause)
         if not match or not _ACTIVITY_PREFIX.fullmatch(_ACTIVITY_REGIONS.sub('', clause[:match.start()])):
             regions = []
             continue
@@ -155,9 +177,16 @@ def activity_evidence_questions(question):
             {'jp': '日服', 'intl': '国际服'}.get(
                 CALENDAR_SERVERS.get(name.casefold().replace('國', '国').replace('臺', '台')), name)
             for name in regions]
-        verb = '开始' if (match['verb'] or match['field']) in ('开始', '開始') else '结束'
+        verb = '开始' if not relative and (match['verb'] or match['field']) in ('开始', '開始') else '结束'
         questions.extend((label, verb) for label in labels)
     return tuple(dict.fromkeys(questions))
+
+def activity_relative_end_day(question):
+    text = unicodedata.normalize('NFKC', question).strip()
+    for clause in _ACTIVITY_CLAUSE.split(text):
+        if match := _ACTIVITY_RELATIVE_END.search(clause.strip()):
+            return match['before'] or match['after']
+    return ''
 
 
 def referenced_story_question(question, reference):
@@ -239,7 +268,7 @@ def _explicit_evidence_clause(text):
             if score and not window:
                 return 'just_score'
             return 'just_clarify'
-    if _BAND_STORY.search(text) and _STORY_FACT_ASK.search(text):
+    if _BAND_STORY.search(text) and (_STORY_FACT_ASK.search(text) or _STORY_ACQUAINTANCE.search(text)):
         return 'story_fact'
     if _STORY_FOLLOWUP.search(text):
         return 'story_clarify'

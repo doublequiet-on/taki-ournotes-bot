@@ -2872,6 +2872,16 @@ class ChatAgentTests(Fixture, unittest.IsolatedAsyncioTestCase):
             '爱音为啥那个时候那么急': 'story_clarify', '这期国际服活动哪天结束？': 'activity_time',
             '这期国际服榜线涨太快，大家都几点收手了？': '',
             '看到有人说海希真的官配，这谁当真了？': '',
+            '初华和祥子他爹是啥辈分': 'story_fact',
+            '初华是祥子小姨吗？': 'story_fact',
+            '小姨认识祥爹吗？': 'story_fact',
+            '那真正的初华呢？': 'story_fact',
+            '初华是和祥子她妈同父异母的啊': '',
+            '你认识立希吗？': '', '初音未来的爸爸是谁？': '',
+            '明天日服活动就要结束了吗': 'activity_time',
+            '国际服这期活动明天结束吗？': 'activity_time',
+            '今天活动就结束了': '',
+            '你是祝': '', '祝你好运': '',
         }
         for question, route in cases.items():
             with self.subTest(question=question):
@@ -2985,7 +2995,7 @@ class ChatAgentTests(Fixture, unittest.IsolatedAsyncioTestCase):
                 plan,attempts=await self.prepare_native('/聊 '+question,seq=seq)
                 self.assertEqual(len(attempts),1)
                 self.assertEqual(plan['parts'][0]['business_status'],'source_unavailable')
-                self.assertNotIn('未经核对',plan['parts'][0]['text'])
+                self.assertEqual(plan['parts'][0]['text'],'我不知道')
                 self.event(plan,'intent');self.event(plan,'ack')
 
     async def test_on_mechanic_definition_accepts_an_approved_numeric_pity_rule(self):
@@ -3639,6 +3649,31 @@ class ChatAgentTests(Fixture, unittest.IsolatedAsyncioTestCase):
         self.assertEqual(plan['parts'][0]['business_status'],'success')
         self.assertEqual(len(attempts),1)
         self.event(plan,'intent');self.event(plan,'ack')
+
+    async def test_quoted_kinship_premise_and_wordplay_use_direct_chat_style(self):
+        from ournotes_bot.application.persona import REPLY_STYLE
+
+        bodies = self.capture_native_bodies()
+        original = self.request
+        examples = (
+            ('初华是和祥子她妈同父异母的啊', '不知道初华和清告是什么辈分',
+             '按你补充的关系，她就是清告的小姨子，两人同辈。'),
+            ('你是祝', '', '说谁呢？'),
+            ('祝你好运', '', '谢了。'),
+        )
+        for seq, (body, quote, response) in enumerate(examples, 1):
+            self.client.request.return_value = self.result(response)
+            def request(msg, sequence):
+                return {**original(msg, sequence), 'quoted_text': quote}
+            with self.subTest(body=body), patch.object(self, 'request', side_effect=request):
+                plan, attempts = await self.prepare_native('/聊 '+body, seq=seq)
+                self.assertEqual(len(attempts), 1)
+                prompt = bodies[-1]['messages'][0]['content']
+                self.assertIn(REPLY_STYLE, prompt)
+                self.assertIn('先按对方给的条件把答案推出来', prompt)
+                self.assertNotIn('本轮在问邦邦事实', prompt)
+                self.assertEqual(plan['parts'][0]['text'], response.removesuffix('。'))
+                self.event(plan,'intent');self.event(plan,'ack')
 
     def test_quote_preview_limits_and_reference_authority(self):
         from ournotes_bot.application.backend_protocol import Request
@@ -4330,11 +4365,17 @@ class ChatSourceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
             ('国际服这期活动什么时候开始？这期活动什么时候结束？',(('intl','开始'),('intl','结束')),'ok',False),
             ('这期日服、国际服活动哪天结束？',(('jp','结束'),('intl','结束')),'ok',False),
             ('英服这期活动哪天结束？',(('intl','结束'),),'ok',False),
+            ('明天日服活动就要结束了吗',(('jp','结束'),),'ok',False),
             ('这期国际服活动哪天结束？',(),'no_results',False),
+            ('明天日服活动就要结束了吗',(),'partial',False),
         )
         for seq,(question,fields,status,image) in enumerate(scenarios,1):
             if status=='no_results':
                 self.repo.activity_calendars['intl'] = replace(self.repo.activity_calendars['intl'], records=())
+            if status=='partial' and '明天' in question:
+                original = self.repo.activity_calendars['jp']
+                ended = replace(original.records[0], start_at=now-7200, end_at=now-3600)
+                self.repo.activity_calendars['jp'] = replace(original, records=(ended,))
             with self.subTest(question=question,status=status):
                 self.client.request.side_effect=[
                     self.result(calls=(ToolCall('c','catalog_info','{"kind":"event","query":"日服 当前"}'),)),
@@ -4360,11 +4401,70 @@ class ChatSourceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
                         self.assertIn('合成日服活动' if item['server']=='jp' else '合成国际服活动',item['text'])
                     else:
                         self.assertEqual(item['missing'], item['field']+'时间')
-                if not any(server=='jp' for server, _ in fields):
+                if not any(item.get('server')=='jp' for item in data['data']['items']):
                     self.assertNotIn('合成日服活动',str(data))
                 if status=='no_results':
                     self.assertEqual(plan['parts'][0]['business_status'],'source_unavailable')
-                    self.assertNotIn('合成回答',plan['parts'][0]['text'])
+                    self.assertEqual(plan['parts'][0]['text'],'我不知道')
+                if '明天' in question:
+                    self.assertIn('用户说的「明天」是北京时间', bodies[-2]['messages'][0]['content'])
+                    if status=='partial':
+                        self.assertEqual(plan['parts'][0]['business_status'],'source_unavailable')
+                        self.assertEqual(plan['parts'][0]['text'],'我不知道明天是不是结束')
+                self.event(plan,'intent');self.event(plan,'ack')
+
+    async def test_colloquial_kinship_reads_both_people_and_distinguishes_the_sisters(self):
+        from test_platform_boundary import StoryPublicationTests
+        from ournotes_bot.domain.model_calls import ToolCall
+        from ournotes_bot.sources.story_files import source_content_hash
+
+        fixture = StoryPublicationTests()
+        fixture.setUp()
+        self.addCleanup(fixture.doCleanups)
+        bundle = fixture.bundle(kind='official_summary')
+        template = bundle['scenes'][0]
+        source = bundle['sources'][0]
+        corpus = (
+            ('related', '身世',
+             '三角初音借用妹妹初华的名字。初音与祥子母亲是同父异母的姐妹。初音向清告坦白父亲是定治。'),
+            ('different-person', '家庭',
+             '若叶睦和祥子是青梅竹马。她们曾聊到祥子的母亲。'),
+            ('unrelated-family', '初华小时候',
+             '初华和祥子小时候认识，初华向母亲说想当偶像。'),
+        )
+        scenes = [
+            {**template, 'scene_id': sid, 'source_id': sid, 'title': title, 'next_scene': None,
+             'utterances': [dict(template['utterances'][0], text_ja=line)]}
+            for sid, title, line in corpus
+        ]
+        bundle['scenes'] = scenes
+        bundle['sources'] = [
+            dict(source, source_id=scene['source_id'], content_sha256=source_content_hash([scene]))
+            for scene in scenes
+        ]
+        fixture.publish(bundle)
+        self.backend.model_runtime.agent.story = fixture.service
+        bodies = self.capture_native_bodies()
+        questions = (
+            ('初华和祥子他爹是啥辈分', '清告的小姨子，两人同辈。'),
+            ('初华是祥子小姨吗？', '以初华的名字活动的是初音，她是祥子的小姨。'),
+            ('那真正的初华呢？', '真正的三角初华是三角初音的妹妹。'),
+        )
+        for seq, (question, response) in enumerate(questions, 1):
+            with self.subTest(question=question):
+                result = fixture.service.search(question, limit=3, facts_only=True)
+                self.assertEqual(result['items'][0]['scene_id'], 'related')
+                handle = result['items'][0]['handle']
+                self.client.request.side_effect = [
+                    self.result(calls=(ToolCall('s','story_search','{"query":"清告"}'),)),
+                    self.result(calls=(ToolCall('r','story_read',json.dumps({'handle':handle})),)),
+                    self.result(response),
+                ]
+                plan, attempts = await self.prepare_native('/聊 '+question, seq=seq)
+                self.assertEqual(len(attempts), 3)
+                tool_result = json.loads(next(row['content'] for row in bodies[-1]['messages'] if row.get('tool_call_id')=='r'))
+                self.assertEqual(tool_result['scenes'][0]['scene_id'], 'related')
+                self.assertEqual(plan['parts'][0]['text'], response.removesuffix('。'))
                 self.event(plan,'intent');self.event(plan,'ack')
 
     async def test_memory_tools_restart_and_delete_cancel_pending_reply(self):

@@ -36,10 +36,12 @@ def rewrite(query,aliases):
 # Resolve only established names and pair shorthands. A shorthand identifies
 # the people to look up, independently of what any source says about them.
 _PAIR_NAMES = re.compile(r'海希|希海')
+_SAKIKO_FATHER = re.compile(r'祥爹|祥子(?:他|她|的)?(?:爹|爸爸|父亲|父親)(?:大人)?')
 _STORY_NAMES = (
     ('立希', '椎名立希'), ('海鈴', '海铃', '八幡海鈴', '八幡海铃'),
     ('愛音', '爱音', '千早愛音', '千早爱音'), ('燈', '灯', '高松燈', '高松灯'),
     ('楽奈', '乐奈'), ('祥子',), ('そよ', '爽世'), ('睦', '若叶睦', '若葉睦'),
+    ('初華', '初华'), ('初音',), ('清告',), ('定治',),
 )
 _WORKS = (
     (re.compile(r'our\s*notes|(?<![a-z0-9])on(?![a-z0-9])'), re.compile(r'our\s*notes')),
@@ -49,6 +51,7 @@ _WORKS = (
 )
 _NUMBER = r'[0-9一二三四五六七八九十]+'
 _EPISODE = re.compile(rf'第\s*({_NUMBER})\s*[集話话]')
+_KINSHIP_PASSAGE = r'小姨|姨母|祖父|外公|姪|侄女|亲属|親屬|同父异母|同父異母|同母异父|同母異父|妹妹|姉妹|父亲|父親|母亲|母親'
 _FIELDS = (
     (r'生日|誕生日|诞生日', r'誕生日|诞生日|生日'),
     (r'喜欢吃|喜歡吃|爱吃|愛吃|喜欢的食物|喜歡的食物|好きな食べ物',
@@ -57,7 +60,12 @@ _FIELDS = (
     (r'打工|兼职|兼職|バイト', r'打工|兼职|兼職|バイト|勤務'),
     (r'作曲', r'作曲'),
     (r'作词|作詞', r'作词|作詞'),
-    (r'什么关系|什麼關係|关系怎么|關係怎麼|官配|官方情侣', r'同じクラス|同級生|同班|同学|同學|相处|相處|搭档|搭檔|情侣|付き合'),
+    (r'什么关系|什麼關係|关系怎么|關係怎麼', r'同じクラス|同級生|同班|同学|同學|相处|相處|搭档|搭檔|情侣|付き合|' + _KINSHIP_PASSAGE),
+    (r'官配|官方情侣', r'同じクラス|同級生|同班|同学|同學|相处|相處|搭档|搭檔|情侣|付き合'),
+    (r'[辈輩][分份]|亲属关系|親屬關係|血[缘緣]|小姨|姨母|外祖父|(?:父亲|父親|爸爸|母亲|母親|妈妈|媽媽)(?:是)?(?:谁|誰)',
+     _KINSHIP_PASSAGE),
+    (r'小姨|姨妈|姨媽|姨母', r'小姨|姨妈|姨媽|姨母|姪|侄女|同父异母|同父異母'),
+    (r'真正的|本来的|本來的|本名|真名', r'本名|真名|妹妹|姉妹|借用.{0,8}名|冒名|冒用|名乗'),
     (r'对.{0,8}(?:特别|特別)|對.{0,8}(?:特别|特別)', r'甘い|更宽容|更寬容|特别|特別|偏心'),
     (r'一辈子乐队|一輩子樂隊|一生.{0,5}バンド', r'一辈子.{0,4}乐队|一輩子.{0,4}樂隊|一生.{0,5}バンド|一直.{0,5}乐队'),
     (r'羁绊|羈絆|キズナ', r'羁绊|羈絆|キズナ'),
@@ -140,12 +148,18 @@ def search_scenes(bundle:StoryBundle,query,filters=None,*,limit=6,excluded_sourc
     require(isinstance(filters,dict) and set(filters)<={'work','source_kind','character','source_id','chapter'},'story_filter')
     require(all(isinstance(value,str) and 0<len(value)<=100 for value in filters.values()),'story_filter')
     if facts_only:
-        expanded = _PAIR_NAMES.sub('八幡海鈴 椎名立希', normalized(query))
+        question = normalized(query)
+        expanded = _PAIR_NAMES.sub('八幡海鈴 椎名立希', question)
         trace = [{'from': name, 'to': '八幡海鈴 椎名立希'}
                  for name in dict.fromkeys(_PAIR_NAMES.findall(query))]
+        father_roles = dict.fromkeys(_SAKIKO_FATHER.findall(expanded))
+        if father_roles:
+            expanded = _SAKIKO_FATHER.sub('豐川清告', expanded)
+            trace.extend({'from': role, 'to': '豐川清告'} for role in father_roles)
         rewritten, alias_trace = rewrite(expanded, bundle.aliases)
         trace.extend(alias_trace)
-        groups = tuple(group for group in _STORY_NAMES if any(name in rewritten for name in group))
+        names = re.sub(r'初音(?:未来|未來)', '', rewritten)
+        groups = tuple(group for group in _STORY_NAMES if any(name in names for name in group))
         work = next((target for pattern, target in _WORKS if pattern.search(rewritten)), None)
         regions = tuple(region for pattern, region in _STORY_REGIONS if pattern.search(rewritten))
         episode_match = _EPISODE.search(rewritten)
