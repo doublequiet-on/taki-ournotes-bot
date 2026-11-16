@@ -2877,6 +2877,15 @@ class ChatAgentTests(Fixture, unittest.IsolatedAsyncioTestCase):
             with self.subTest(question=question):
                 self.assertEqual(explicit_evidence_route(question), route)
 
+    def test_story_pronoun_does_not_choose_two_people_from_three(self):
+        from ournotes_bot.application.persona import referenced_story_question
+
+        for reference in ('海希和灯在一起', '海希 + 立希和爱音'):
+            with self.subTest(reference=reference):
+                self.assertEqual(referenced_story_question('她俩什么关系', reference), '')
+        self.assertEqual(referenced_story_question('她俩什么关系', '海希'), '海希什么关系')
+        self.assertEqual(referenced_story_question('她俩什么关系', '立希和高松灯'), '立希和高松灯什么关系')
+
     async def test_just_count_uses_scoped_approved_expansion_passage_without_guessing(self):
         from types import SimpleNamespace
         from ournotes_bot.domain.knowledge import Applicability,EvidenceChunkV1,EvidenceLease,KnowledgeScope
@@ -4303,6 +4312,8 @@ class ChatSourceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
         import time
 
         now=time.time()
+        self.repo.activity_announcements = Mock()
+        self.repo.activity_announcements.next.return_value = (None, '')
         self.repo.activity_calendars={
             'jp': ActivityCalendar((ActivityInfo(11,'合成日服活动',{},start_at=now-3600,end_at=now+3600),),
                                    'jp-r1','jp-fixture','observation-jp'),
@@ -4311,14 +4322,18 @@ class ChatSourceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
         }
         bodies=self.capture_native_bodies()
         scenarios=(
-            ('这期国际服活动哪天结束？',('intl',),'ok',True),
-            ('手都打疼了，日服和国际服这期活动哪天结束？',('jp','intl'),'ok',False),
-            ('港服和国际服这期活动哪天结束？',('intl',),'partial',False),
+            ('这期国际服活动哪天结束？',(('intl','结束'),),'ok',True),
+            ('手都打疼了，日服和国际服这期活动哪天结束？',(('jp','结束'),('intl','结束')),'ok',False),
+            ('港服和国际服这期活动哪天结束？',(('intl','结束'),),'partial',False),
+            ('日服这期活动哪天开始，国际服这期活动哪天结束？',(('jp','开始'),('intl','结束')),'ok',False),
+            ('日服这期活动哪天结束、国际服这期活动何时开始',(('jp','结束'),('intl','开始')),'ok',False),
+            ('这期日服、国际服活动哪天结束？',(('jp','结束'),('intl','结束')),'ok',False),
+            ('英服这期活动哪天结束？',(('intl','结束'),),'ok',False),
             ('这期国际服活动哪天结束？',(),'no_results',False),
         )
-        for seq,(question,servers,status,image) in enumerate(scenarios,1):
+        for seq,(question,fields,status,image) in enumerate(scenarios,1):
             if status=='no_results':
-                del self.repo.activity_calendars['intl']
+                self.repo.activity_calendars['intl'] = replace(self.repo.activity_calendars['intl'], records=())
             with self.subTest(question=question,status=status):
                 self.client.request.side_effect=[
                     self.result(calls=(ToolCall('c','catalog_info','{"kind":"event","query":"日服 当前"}'),)),
@@ -4336,12 +4351,15 @@ class ChatSourceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
                 self.assertEqual([tool['function']['name'] for tool in bodies[-2]['tools']],['catalog_info'])
                 data=json.loads(next(row['content'] for row in bodies[-1]['messages'] if row.get('tool_call_id')=='c'))
                 self.assertEqual(data['status'],status)
-                self.assertEqual(tuple(item['server'] for item in data['data']['items'] if item['status']=='success'),servers)
+                self.assertEqual(tuple((item['server'], item['field']) for item in data['data']['items']
+                                       if item['status']=='success'), fields)
                 for item in data['data']['items']:
                     if item['status']=='success':
                         self.assertEqual(item['release'],item['server']+'-r1')
                         self.assertIn('合成日服活动' if item['server']=='jp' else '合成国际服活动',item['text'])
-                if 'jp' not in servers:
+                    else:
+                        self.assertEqual(item['missing'], item['field']+'时间')
+                if not any(server=='jp' for server, _ in fields):
                     self.assertNotIn('合成日服活动',str(data))
                 if status=='no_results':
                     self.assertEqual(plan['parts'][0]['business_status'],'source_unavailable')
@@ -4399,6 +4417,28 @@ class ChatImageIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
         if self.attachments:value['attachments']=self.attachments
         if self.reference:value.update(trigger='quoted_reply',reference=self.reference)
         return value
+
+    async def test_story_pronoun_wont_resolve_a_verified_image_reference_as_text_only(self):
+        from ournotes_bot.domain.chat_images import parse_attachments
+
+        agent = self.backend.model_runtime.agent
+        attachments = parse_attachments(self.attachments)
+        self.attachments = []
+        self.client.request.return_value = self.result('听到了。')
+        origin, _ = await self.prepare_native('/聊 我在看立希和海铃')
+        request = self.backend.works[origin['delivery_id']].request
+        self.event(origin, 'intent'); self.event(origin, 'ack')
+        agent.images.remember(agent.image_scope(request), request.message_id, request.user_id,
+                              request.timestamp_ms, attachments, (self.image,))
+        self.assertTrue(agent.image_contains(request, request.message_id))
+
+        self.reference = dict(message_id=request.message_id, adapter_profile_version='fixture')
+        self.client.request.reset_mock()
+        plan, attempts = await self.prepare_native('/聊 她俩什么关系', seq=2)
+        self.assertFalse(attempts)
+        self.client.request.assert_not_awaited()
+        self.assertIn('哪两个人', plan['parts'][0]['text'])
+        self.event(plan, 'intent'); self.event(plan, 'ack')
 
     async def test_qq_quote_attachment_reaches_model_without_publishing_unlinked_material(self):
         quoted=self.attachments

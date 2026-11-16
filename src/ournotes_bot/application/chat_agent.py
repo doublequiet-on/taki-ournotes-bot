@@ -920,13 +920,14 @@ class ChatAgent:
         route = explicit_evidence_route(user_question) if explicit_text else proactive_evidence
         if explicit_text and route=='story_clarify' and context_request.reference and not quote_images and request.quote_hint!='image':
             reference_id = context_request.reference['message_id']
-            for item in self.context.messages(context_request):
-                row = json.loads(item['content'])
-                if row['message_id']==reference_id and row['role']=='user' and 'image_attachments' not in row:
-                    if resolved := referenced_story_question(user_question, row['text']):
-                        meta_question = resolved
-                        route = 'story_fact'
-                    break
+            if not self.image_contains(context_request, reference_id):
+                for item in self.context.messages(context_request):
+                    row = json.loads(item['content'])
+                    if row['message_id']==reference_id and row['role']=='user':
+                        if resolved := referenced_story_question(user_question, row['text']):
+                            meta_question = resolved
+                            route = 'story_fact'
+                        break
         if explicit_text and not route:
             short = unicodedata.normalize('NFKC',user_question).strip().rstrip('。!！?？')
             selection = ('JUST 扩窗怎么叠' if short in ('扩窗','判定窗','扩判') else
@@ -1237,8 +1238,8 @@ class ChatAgent:
                     f'本轮核对的是留影 ID {just_card}，技能等级 {", ".join(just_levels)}。'
                     '分别说明资料核到的范围和持续时间。没有逐级范围就说明缺口，0 秒配置不能代替实际持续时间。')
         elif activity_questions:
-            labels = '、'.join(label for label, _ in activity_questions)
-            messages[0]['content']+=(f'\n本轮查询{labels}的活动日程，先用 catalog_info。逐个区服说实际查到的时间和时区，保留缓存状态与来源。'
+            activity_fields = '、'.join(label+'这期活动'+field+'时间' for label, field in activity_questions)
+            messages[0]['content']+=(f'\n本轮查询{activity_fields}，先用 catalog_info。逐项说实际查到的时间和时区，保留缓存状态与来源。'
                                      '只有最近一期或下期时按工具所述区分；缺某个区服或时间直接说明。若同时有体验或看法，可简短接住。')
         web=None if proactive_evidence or quote_images else runtime.capabilities_for(work).web(work.model_snapshot)
         if web is not None:
@@ -1336,7 +1337,7 @@ class ChatAgent:
                 if not result.tool_calls:
                     require(isinstance(result.text,str) and bool(result.text.strip()),'model_protocol_error')
                     if activity_questions and activity_result not in ('ok','partial'):
-                        text=quote_prefix+f'我还没查到能确认{labels}这期活动时间的资料。'
+                        text=quote_prefix+f'我还没查到能确认{activity_fields}的资料。'
                         return evidence_reply(text,'source_unavailable') if proactive_evidence else PreparedReply(
                             text,business_status='source_unavailable')
                     if just_evidence and not just_fact_ready or lookup == 'story_search' and not story_fact_read:
@@ -1596,14 +1597,22 @@ class ChatAgent:
         repository = repository.capture_query_view()
         catalog = repository.capture_catalog()
         items = []
-        for label, question in questions:
+        for label, field in questions:
             server = {'日服':'jp', '国际服':'intl'}.get(label)
             if server is None:
-                items.append(dict(region=label,status='not_available',missing='该区服的活动日程'))
+                items.append(dict(region=label,field=field,status='not_available',missing=field+'时间'))
                 continue
-            result = execute(self.tools['catalog_info'], {'kind':'event','query':''}, question, repository)
+            result = execute(self.tools['catalog_info'], {'kind':'event','query':''},
+                             label+'这期活动什么时候'+field, repository)
             info = result.results[0].activity
-            item = dict(region=label,server=server,status=info.status,text=result.texts[0])
+            status = info.status
+            if info.calendar_time_status == 'related':
+                status = 'partial'
+            elif info.calendar_time_status != 'exact' and status == 'success':
+                status = 'not_available'
+            item = dict(region=label,server=server,field=field,status=status,text=result.texts[0])
+            if status != 'success':
+                item['missing'] = field+'时间'
             calendar = catalog.activity_calendars.get(server)
             if calendar is not None:
                 item.update(source=calendar.source_id,release=calendar.release,observed_at=calendar.fetched_at,
@@ -1614,8 +1623,9 @@ class ChatAgent:
             if info.evidence_expires_at is not None:
                 item['expires_at'] = info.evidence_expires_at
             items.append(item)
-        found = sum(item['status']=='success' for item in items)
-        status = 'ok' if found==len(items) else 'partial' if found else 'no_results'
+        status = ('ok' if all(item['status']=='success' for item in items)
+                  else 'partial' if any(item['status'] in ('success', 'partial') for item in items)
+                  else 'no_results')
         return dict(status=status,data=dict(items=items))
 
     async def execute(self,work,call,question,site,leases,deadline,turn_deadline,*,registry=None,web=None,user=None,group=None,story_handles=None,image_handles=None,vision=None,meta_question=None,evidence_route='',just_card='',mechanic_server=None,activity_questions=()):

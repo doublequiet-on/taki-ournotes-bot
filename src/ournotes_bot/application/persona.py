@@ -3,6 +3,8 @@
 import re
 import unicodedata
 
+from ..query.activity_query import CALENDAR_SERVERS
+
 VOICE = '''性格：外冷内热、认真、有主见，不善于漂亮话，关心体现在把问题听清、说明白。
 平时用自然短句；可以有一点停顿和轻微吐槽，但不要每句都“哼”“哈？”“笨蛋”、傲娇否认或省略号。
 理解群内用语是为了接住指代和语气；表达仍保持自己的直率、认真和主见。偶尔用贴切的梗，不模仿某位群友的整套口癖、身份或私人经历，不为合群加入复读。
@@ -98,14 +100,19 @@ _STORY_FIELD_FOLLOWUP = re.compile(r'^(?:那|以及|还有)?\s*(?:她|他)?\s*(?
 _STORY_FIELD_TOPIC = re.compile(r'(?:鼓手|主唱|贝斯手|吉他手).{0,3}$')
 _STORY_PAIR = re.compile(
     r'(?:椎名)?立希|(?:八幡)?海[铃鈴]|(?:千早)?[爱愛]音|高松[灯燈]|(?:要)?[乐楽]奈|'
-    r'(?:长崎|長崎)?(?:爽世|そよ)|(?:丰川|豊川)?祥子|若[叶葉]睦')
+    r'(?:长崎|長崎)?(?:爽世|そよ)|(?:丰川|豊川)?祥子|若[叶葉]睦|'
+    r'(?<=[和与與跟及、])\s*[灯燈](?=$|[，。?？、和与與跟及\s]|在|也|[说說]|都|是|的)')
 _STORY_CHAPTER = re.compile(
     r'(?:mygo|ave\s*mujica|our\s*notes)[^。?!]{0,8}第\s*[0-9一二三四五六七八九十]+\s*[集话話章]', re.I)
 _EVIDENCE_CLAUSE = re.compile(r'[，,。；;！!\n]+|(?<=\?)|(?:但(?:是)?|不过|另外)(?=实际|到底|想问|请问|我想|还想|[\s，,])')
 _ACTIVITY_REGION = r'日服|国际服|國際服|台服|臺服|港服|韩服|韓服|英服|美服|欧服|歐服|(?<![a-z0-9])(?:jp|intl|tw|hk|kr|en)(?![a-z0-9])'
 _ACTIVITY_REGIONS = re.compile(_ACTIVITY_REGION, re.I)
+_ACTIVITY_CLAUSE = re.compile(
+    rf'{_EVIDENCE_CLAUSE.pattern}|(?<=[始束间間期])[啊呀呢吗嗎嘛吧\s]*、\s*(?=(?:{_ACTIVITY_REGION}))', re.I)
 _LIVE_ACTIVITY_TIME = re.compile(
-    rf'(?:这期|本期|当前|现在|最近)(?:的)?\s*(?:(?:{_ACTIVITY_REGION})(?:的)?)?\s*活[动動](?:的)?\s*'
+    rf'(?:这期|本期|当前|现在|最近)(?:的)?\s*'
+    rf'(?:(?:{_ACTIVITY_REGION})(?:\s*(?:和|与|跟|以及|及|、)\s*(?:{_ACTIVITY_REGION}))*(?:的)?)?\s*'
+    r'活[动動](?:的)?\s*'
     r'(?:(?:什么时候|啥时候|哪天|哪日|何时|几号|幾號|几点|幾點)(?P<verb>开始|開始|结束|結束)|'
     r'(?P<field>开始|開始|结束|結束)(?:时间|時間|日期)(?:是什么|是啥|是哪天|是几号)?)'
     r'[啊呀呢吗嗎嘛吧?\s]*$', re.I)
@@ -129,23 +136,24 @@ def lightweight_image_reference(text, *, context_source=False):
 
 
 def activity_evidence_questions(question):
-    """Canonical catalog questions for a current event's requested time."""
+    """Return the explicitly requested current-event region and time pairs."""
     text = unicodedata.normalize('NFKC', question).strip()
-    for clause in _EVIDENCE_CLAUSE.split(text):
+    questions = []
+    for clause in _ACTIVITY_CLAUSE.split(text):
         clause = clause.strip()
         match = _LIVE_ACTIVITY_TIME.search(clause)
         if not match or not _ACTIVITY_PREFIX.fullmatch(_ACTIVITY_REGIONS.sub('', clause[:match.start()])):
             continue
         # Keep the resources requested in this clause. A region named as a
         # separate play-server statement or rejected substitute stays out.
-        regions = _ACTIVITY_REGIONS.findall(clause)
-        labels = tuple(dict.fromkeys(
-            '日服' if name.casefold() in ('日服', 'jp') else
-            '国际服' if name.casefold() in ('国际服', '國際服', '台服', '臺服', 'intl', 'tw') else name
-            for name in regions))
+        regions = _ACTIVITY_REGIONS.findall(clause) or ['日服']
+        labels = [
+            {'jp': '日服', 'intl': '国际服'}.get(
+                CALENDAR_SERVERS.get(name.casefold().replace('國', '国').replace('臺', '台')), name)
+            for name in regions]
         verb = '开始' if (match['verb'] or match['field']) in ('开始', '開始') else '结束'
-        return tuple((label, label+'这期活动什么时候'+verb) for label in (labels or ('日服',)))
-    return ()
+        questions.extend((label, verb) for label in labels)
+    return tuple(dict.fromkeys(questions))
 
 
 def referenced_story_question(question, reference):
@@ -156,12 +164,13 @@ def referenced_story_question(question, reference):
     reference = unicodedata.normalize('NFKC', reference)
     if re.match(rf'^(?:那|所以)?{_STORY_PAIR_PRONOUN}', text):
         pairs = tuple(dict.fromkeys(
-            re.sub(r'^(?:椎名|八幡|千早|要|长崎|長崎|丰川|豊川)', '', name)
+            '高松灯' if name.strip() in ('灯', '燈') else
+            re.sub(r'^(?:椎名|八幡|千早|要|长崎|長崎|丰川|豊川)', '', name.strip())
             .translate(str.maketrans('鈴愛燈楽葉','铃爱灯乐叶')) for name in _STORY_PAIR.findall(reference)))
+        if re.search(r'海希|希海', reference):
+            return '海希什么关系' if set(pairs) <= {'立希', '海铃'} else ''
         if len(pairs)==2:
             return '和'.join(pairs)+'什么关系'
-        if re.search(r'海希|希海',reference) and not pairs:
-            return '海希什么关系'
     elif _STORY_FOLLOWUP.search(text):
         chapters = tuple(dict.fromkeys(_STORY_CHAPTER.findall(reference)))
         if len(chapters)==1:
