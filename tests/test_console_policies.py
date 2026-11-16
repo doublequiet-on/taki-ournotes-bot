@@ -4604,6 +4604,9 @@ class ChatSourceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
         data=json.loads(bodies[-1]['messages'][-2]['content'])['story_evidence']
         self.assertEqual([scene['source_kind'] for scene in data['scenes']],['official_summary','fan_analysis'])
         self.assertEqual(data['evidence_read'],[item['handle'] for item in matches['items']])
+        self.assertIn('若整题都缺证据，用一句话说具体哪件事不知道',bodies[-1]['messages'][0]['content'])
+        self.assertIn('问了多项就回答能确认的项',bodies[-1]['messages'][0]['content'])
+        self.assertIn('省略无法回答问题的剧情背景',bodies[-1]['messages'][-1]['content'])
         self.assertEqual(plan['parts'][0]['business_status'],'success')
         self.event(plan,'intent');self.event(plan,'ack')
         for seq, question in enumerate(('立希生日是哪天？','韩服第18话初音见过清告吗？'), 2):
