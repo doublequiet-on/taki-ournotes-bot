@@ -131,6 +131,7 @@ class Diagnostics:
             allowed={
                 'catalog_info': ('not_available','no_results','partial','ok'),
                 'story_registry': ('story_not_configured','registered'),
+                'story_premise': ('provided',),
                 'story_search': ('prepared','not_available','source_unavailable','no_results','ok','budget_exhausted'),
                 'story_read': ('prepared','not_available','source_unavailable','no_results','ok','budget_exhausted','result_in_context'),
                 'quote_image': ('paired','unpaired','loaded','unavailable'),

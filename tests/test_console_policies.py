@@ -3890,6 +3890,9 @@ class ChatAgentTests(Fixture, unittest.IsolatedAsyncioTestCase):
                     self.event(plan, 'ack')
                     self.assertEqual(len(attempts), int(premise))
                     self.assertEqual(source.call_count, int(not premise))
+                    events = self.backend.diagnostics.read(plan['request_id'])['chat_events']
+                    observed = [event['data'] for event in events if event['kind'] == 'evidence']
+                    self.assertEqual(dict(action='story_premise', status='provided') in observed, premise)
                     if premise:
                         self.assertNotIn('tools', bodies[-1])
                         self.assertTrue(any('本轮只按群友给定的关系推导' in message['content']

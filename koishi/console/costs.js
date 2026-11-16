@@ -112,10 +112,11 @@ export function budgetEditor(s){
 const modelStages={decision:'判断',generation:'正文生成',model:'模型调用'};
 const transportReasons={disconnected:'连接断开',timeout:'模型超时',cancelled:'请求取消',interrupted:'传输中断',
  connect:'连接失败',transport:'传输失败',response_too_large:'响应超出大小限制'};
-const evidenceActions={catalog_info:'活动日程',story_registry:'剧情工具注册',story_search:'剧情搜索',story_read:'读取剧情',quote_image:'引用原图'};
+const evidenceActions={catalog_info:'活动日程',story_registry:'剧情工具注册',story_search:'剧情搜索',story_read:'读取剧情',story_premise:'按给定关系推导',quote_image:'引用原图'};
 const evidenceStatuses={story_not_configured:'剧情库未配置',registered:'已注册搜索和读取工具',prepared:'工具已加入待发请求',
  not_available:'语料不可用',source_unavailable:'来源暂不可用',no_results:'检索无结果',ok:'工具成功',
  budget_exhausted:'预算限制',result_in_context:'结果已放入后续上下文',paired:'已关联引用目标',
+ provided:'前提来自群友',
  unpaired:'原图身份尚未关联',loaded:'原图已加载',unavailable:'原图未加载'};
 const calendarEvidenceStatuses={ok:'已核对日程',partial:'只有相关或部分日程',no_results:'未找到所问日程',not_available:'日程暂不可用'};
 const evidenceStatus=({action,status})=>(action==='catalog_info'?calendarEvidenceStatuses:evidenceStatuses)[status];

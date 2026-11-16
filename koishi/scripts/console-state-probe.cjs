@@ -225,6 +225,9 @@ async function main(){
     assert.ok(JSON.stringify(chatEventsView(calendar)).includes('活动日程 · '+label))
   }
 
+  const premise=[{kind:'evidence',data:{action:'story_premise',status:'provided'}}]
+  assert.ok(JSON.stringify(chatEventsView(premise)).includes('按给定关系推导 · 前提来自群友'))
+
   const originalDocument=globalThis.document
   let download
   try{
