@@ -1,5 +1,6 @@
 # L3: Taki's authored personality and bounded non-factual conversation intents.
 # Effects: None. No game-rule evidence, external reads or persistent relationship state.
+from dataclasses import dataclass
 import re
 import unicodedata
 
@@ -126,7 +127,7 @@ _ACTIVITY_REGIONS = re.compile(_ACTIVITY_REGION, re.I)
 _ACTIVITY_CLAUSE = re.compile(
     rf'{_EVIDENCE_CLAUSE.pattern}|(?<=[始束间間期])[啊呀呢吗嗎嘛吧\s]*、\s*(?=(?:{_ACTIVITY_REGION}))', re.I)
 _LIVE_ACTIVITY_TIME = re.compile(
-    rf'(?:这期|本期|当前|现在|最近)(?:的)?\s*'
+    rf'(?P<current>这期|這期|本期|当前|當前|现在|現在|最近)?(?:的)?\s*'
     rf'(?:(?:{_ACTIVITY_REGION})(?:\s*(?:和|与|跟|以及|及|、)\s*(?:{_ACTIVITY_REGION}))*(?:的)?)?\s*'
     r'活[动動](?:的)?\s*'
     r'(?:(?:什么时候|啥时候|哪天|哪日|何时|几号|幾號|几点|幾點)(?P<verb>开始|開始|结束|結束)|'
@@ -158,23 +159,35 @@ def lightweight_image_reference(text, *, context_source=False):
 
 
 def _activity_time_match(clause):
-    match = _ACTIVITY_RELATIVE_END.search(clause) or _LIVE_ACTIVITY_TIME.search(clause)
-    if match and _ACTIVITY_PREFIX.fullmatch(_ACTIVITY_REGIONS.sub('', clause[:match.start()])):
+    for match in (_ACTIVITY_RELATIVE_END.search(clause), _LIVE_ACTIVITY_TIME.search(clause)):
+        if match is None or not _ACTIVITY_PREFIX.fullmatch(_ACTIVITY_REGIONS.sub('', clause[:match.start()])):
+            continue
+        if 'current' in match.re.groupindex and not match['current'] and not _ACTIVITY_REGIONS.search(clause):
+            continue
         return match
-    return None
 
 
-def activity_evidence_questions(question):
-    """Return the explicitly requested current-event region and time pairs."""
+@dataclass(frozen=True)
+class ActivityTimeIntent:
+    questions: tuple[tuple[str, str], ...]
+    relative_end_day: str
+    standalone: bool
+
+
+def activity_time_intent(question):
+    """Bind calendar fields, relative date and scope from the same clauses."""
     text = unicodedata.normalize('NFKC', question).strip()
     questions = []
     regions = []
+    days = set()
+    standalone = True
     for clause in _ACTIVITY_CLAUSE.split(text):
         clause = clause.strip()
         if not clause:
             continue
         match = _activity_time_match(clause)
         if not match:
+            standalone = False
             regions = []
             continue
         # Keep an explicitly named region across consecutive calendar questions.
@@ -186,16 +199,10 @@ def activity_evidence_questions(question):
         fields = match.groupdict()
         verb = '开始' if (fields.get('verb') or fields.get('field')) in ('开始', '開始') else '结束'
         questions.extend((label, verb) for label in labels)
-    return tuple(dict.fromkeys(questions))
-
-def activity_relative_end_day(question):
-    text = unicodedata.normalize('NFKC', question).strip()
-    days = set()
-    for clause in _ACTIVITY_CLAUSE.split(text):
-        if match := _activity_time_match(clause.strip()):
-            fields = match.groupdict()
-            days.add(fields.get('before') or fields.get('after') or '')
-    return days.pop() if len(days) == 1 else ''
+        days.add(fields.get('before') or fields.get('after') or '')
+    pairs = tuple(dict.fromkeys(questions))
+    return ActivityTimeIntent(pairs, next(iter(days)) if len(pairs) == len(days) == 1 else '',
+                              standalone and bool(pairs))
 
 
 def referenced_story_question(question, reference):
@@ -281,7 +288,7 @@ def _explicit_evidence_clause(text):
         return 'story_fact'
     if _STORY_FOLLOWUP.search(text):
         return 'story_clarify'
-    if activity_evidence_questions(text):
+    if activity_time_intent(text).questions:
         return 'activity_time'
     return ''
 

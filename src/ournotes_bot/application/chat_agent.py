@@ -37,7 +37,7 @@ from .chat_jobs import (ChatServices,ServiceBudget,ServiceError,maximum_cost_mic
                        summary_candidate,summary_messages,validate_summary)
 from .backend_protocol import ProtocolError
 from .chat_proactive_runtime import ProactiveChat
-from .persona import (REPLY_STYLE, activity_evidence_questions, activity_relative_end_day, explicit_evidence_route, lightweight_image_reference,
+from .persona import (REPLY_STYLE, activity_time_intent, explicit_evidence_route, lightweight_image_reference,
                       referenced_story_question, story_clarification, unscoped_pity_question)
 from .replies import PreparedReply
 
@@ -951,8 +951,11 @@ class ChatAgent:
         mechanic = guarded_mechanic(user_question) if explicit_text and not route else None
         just_evidence = _JUST_EVIDENCE.get(route)
         mechanic_server = (requested_server(chat_query_question(user_question)) or 'jp') if mechanic or just_evidence else None
-        activity_questions = activity_evidence_questions(chat_query_question(user_question)) if route == 'activity_time' else ()
-        relative_end_day = activity_relative_end_day(chat_query_question(user_question)) if len(activity_questions) == 1 else ''
+        activity = activity_time_intent(chat_query_question(user_question)) if route == 'activity_time' else None
+        activity_questions = activity.questions if activity else ()
+        relative_end_day = activity.relative_end_day if activity else ''
+        prefetch_activity = bool(activity and activity.standalone and explicit_text and not has_quote and not quote_prefix
+                                 and not work.chat_additions and not work.chat_addition_images)
         lookup = ('knowledge_search' if just_evidence or mechanic else 'story_search' if route == 'story_fact'
                   else 'catalog_info' if activity_questions else '')
         task_enabled=work.proactive is None or getattr(work,'continuation',False)
@@ -1242,7 +1245,8 @@ class ChatAgent:
                     '分别说明资料核到的范围和持续时间。没有逐级范围就说明缺口，0 秒配置不能代替实际持续时间。')
         elif activity_questions:
             activity_fields = '、'.join(label+'这期活动'+field+'时间' for label, field in activity_questions)
-            messages[0]['content']+=(f'\n本轮查询{activity_fields}，先用 catalog_info。先答结论，再说查到的时间和时区。'
+            material = '依据宿主提供的 activity_schedule_evidence 作答。' if prefetch_activity else '先用 catalog_info。'
+            messages[0]['content']+=(f'\n本轮查询{activity_fields}，{material}先答结论，再说查到的时间和时区。'
                                      '旧缓存用「旧缓存显示」标明。只知道最近一期或下期时，按工具区分。缺时间直接说不知道。')
             if relative_end_day:
                 offset = {'今天': 0, '明天': 1, '后天': 2, '後天': 2}[relative_end_day]
@@ -1255,7 +1259,8 @@ class ChatAgent:
         if web is not None:
             registry['web_search']=Tool('web_search','检索公开互联网信息；query只含完成问题所需公开关键词，不包含群聊、身份、私密内容或内部网址。',
                 obj({'query':string(160)},('query',)),'web')
-        initial_tools = [] if local_answer else [registry[lookup].wire()] if lookup else [tool.wire() for tool in registry.values()]
+        initial_tools = [] if local_answer or prefetch_activity else (
+            [registry[lookup].wire()] if lookup else [tool.wire() for tool in registry.values()])
         messages=self.initial_context(work,messages,initial_tools)
         self.proactive.trace(work,'context',messages=sum(item['role']!='system' for item in messages),
             assistant_messages=sum(item['role']=='assistant' for item in messages),
@@ -1288,6 +1293,18 @@ class ChatAgent:
             runtime.check(work,deadline,leases)
             return PreparedReply(text,business_status='success',evidence=leases,
                                  evidence_deadline=work.content_deadline if leases else None)
+        if prefetch_activity:
+            activity_evidence = await self.load_activity_evidence(work, activity_questions)
+            activity_result = activity_evidence['status']
+            trace_evidence('catalog_info', activity_result)
+            runtime.check(work, deadline, leases)
+            if not any(item['status']=='success' for item in activity_evidence.get('data', {}).get('items', ())):
+                text = f'我不知道{relative_end_day}是不是结束。' if relative_end_day else '我不知道。'
+                if retain_turn:self.audit(self.store.generated,work.delivery,text)
+                return PreparedReply(text, business_status='source_unavailable')
+            messages.append({'role':'user', 'content':json.dumps(
+                {'activity_schedule_evidence':activity_evidence['data']['items']}, ensure_ascii=False)})
+            force_final = True
         try:
             if work.model_snapshot.profile.provider!='deepseek':
                 require(not staged or self.budget.model_calls>=2,'model_attempt_limit')
@@ -1302,15 +1319,17 @@ class ChatAgent:
                 runtime.check(work,deadline,leases)
                 final=force_final or work.model_attempts>=self.budget.model_calls-1 or index==self.budget.model_calls-1 or operations>=self.budget.tool_calls or deadline-time.monotonic()<=self.budget.final_seconds
                 if staged and work.model_attempts>=self.budget.model_calls-2:final=True
-                required = lookup if index == 0 else ''
+                required = lookup if index == 0 and not prefetch_activity else ''
                 if (not final or proactive_evidence) and lookup == 'story_search' and story_handles and not story_fact_read:
                     required = 'story_read'
                 if proactive_evidence and required and final:
                     return skip_proactive_evidence('proactive_evidence_budget_exhausted')
                 if final:
-                    closing=('本轮检索预算结束。结合当前群聊和已有结果决定是否接话，按 reply/skip/defer 的 JSON 格式输出，不要再调用工具。'
+                    closing=('用宿主刚读取的日程直接回答当前问题，旧缓存需标示，省略日程文本中的活动提醒。'
+                             if prefetch_activity else
+                             '本轮检索预算结束。结合当前群聊和已有结果决定是否接话，按 reply/skip/defer 的 JSON 格式输出，不要再调用工具。'
                              if work.proactive is not None and not proactive_evidence else '本轮检索预算结束。根据已有结果回答；缺失细节说明具体缺口。不要再调用工具。')
-                    if work.chat_task.goal:closing+='\n任务完成情况：'+json.dumps(work.chat_task.coverage(),ensure_ascii=False)+'；逐项回应，缺资料的项目直接说具体缺口。'
+                    if work.chat_task.goal and not prefetch_activity:closing+='\n任务完成情况：'+json.dumps(work.chat_task.coverage(),ensure_ascii=False)+'；逐项回应，缺资料的项目直接说具体缺口。'
                     if scope_note:closing+='\n'+scope_note
                     messages.append({'role':'system','content':closing})
                 reservation=final_attempt if final else None
@@ -1600,6 +1619,17 @@ class ChatAgent:
                 result['coverage_note'] = '另一来源层级的场景未加入本轮正文，不能引用为已读依据。'
         return result
 
+    async def load_activity_evidence(self, work, questions):
+        runtime = self.runtime
+        repository = await runtime.current_repository()
+        output = await runtime.backend.gate.run(self.read_activity_evidence, questions, repository)
+        if isinstance(output, PreparedReply):
+            return {'status':output.business_status or 'not_available', 'retryable':True}
+        expiries = [item['expires_at'] for item in output['data']['items'] if 'expires_at' in item]
+        if expiries:
+            work.content_deadline = min(work.content_deadline, time.monotonic()+min(expiries)-time.time())
+        return output
+
     def read_activity_evidence(self, questions, repository):
         repository = repository.capture_query_view()
         catalog = repository.capture_catalog()
@@ -1851,14 +1881,7 @@ class ChatAgent:
                     cache[key]=lease
                 output={'status':'ok','data':evidence,'_knowledge_scope':scope,'_knowledge_lease':lease}
             elif activity_questions and call.name=='catalog_info':
-                repository=await runtime.current_repository()
-                output=await runtime.backend.gate.run(self.read_activity_evidence,activity_questions,repository)
-                if isinstance(output,PreparedReply):
-                    output={'status':output.business_status or 'not_available','retryable':True}
-                else:
-                    expiries=[item['expires_at'] for item in output['data']['items'] if item.get('expires_at') is not None]
-                    if expiries:
-                        work.content_deadline=min(work.content_deadline,time.monotonic()+min(expiries)-time.time())
+                output=await self.load_activity_evidence(work,activity_questions)
             else:
                 repository=await runtime.current_repository()
                 if work.entity_evidence:

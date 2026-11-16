@@ -2855,7 +2855,7 @@ class ChatAgentTests(Fixture, unittest.IsolatedAsyncioTestCase):
         self.assertNotIn('777',plan['parts'][0]['text'])
 
     def test_evidence_route_distinguishes_opinions_game_and_fact_questions(self):
-        from ournotes_bot.application.persona import activity_relative_end_day, explicit_evidence_route
+        from ournotes_bot.application.persona import activity_time_intent, explicit_evidence_route
 
         cases = {
             '我觉得 JUST 最吃卡': '', '你觉得JUST最吃卡吗': '', '海希好嗑': '',
@@ -2879,6 +2879,9 @@ class ChatAgentTests(Fixture, unittest.IsolatedAsyncioTestCase):
             '初华是和祥子她妈同父异母的啊': '',
             '你认识立希吗？': '', '初音未来的爸爸是谁？': '',
             '明天日服活动就要结束了吗': 'activity_time',
+            '日服活动什么时候结束？': 'activity_time',
+            '国际服的活动结束时间是几号？': 'activity_time',
+            '学校活动什么时候结束？': '',
             '国际服这期活动明天结束吗？': 'activity_time',
             '今天活动就结束了': '',
             '你是祝': '', '祝你好运': '',
@@ -2887,9 +2890,12 @@ class ChatAgentTests(Fixture, unittest.IsolatedAsyncioTestCase):
             with self.subTest(question=question):
                 self.assertEqual(explicit_evidence_route(question), route)
 
-        self.assertEqual(activity_relative_end_day('明天日服活动就要结束了吗'), '明天')
-        self.assertEqual(activity_relative_end_day('学校活动明天结束吗？日服活动结束时间是什么？'), '')
-        self.assertEqual(activity_relative_end_day('日服活动明天结束吗？日服这期活动后天结束吗？'), '')
+        self.assertEqual(activity_time_intent('明天日服活动就要结束了吗').relative_end_day, '明天')
+        compound = activity_time_intent('学校活动明天结束吗？日服活动结束时间是什么？')
+        self.assertEqual(compound.questions, (('日服', '结束'),))
+        self.assertEqual(compound.relative_end_day, '')
+        self.assertFalse(compound.standalone)
+        self.assertEqual(activity_time_intent('日服活动明天结束吗？日服这期活动后天结束吗？').relative_end_day, '')
 
     def test_story_pronoun_does_not_choose_two_people_from_three(self):
         from ournotes_bot.application.persona import referenced_story_question
@@ -4392,7 +4398,7 @@ class ChatSourceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
                             '/聊 这张图里红框是多少？另外，'+question,seq=seq)
                     self.assertIn('原图',plan['parts'][0]['text'])
                 else:
-                    plan,attempts=await self.prepare_native('/聊 '+question,seq=seq)
+                    plan,attempts=await self.prepare_native('/聊 我得安排练习，'+question,seq=seq)
                 self.assertEqual(len(attempts),2)
                 self.assertEqual([tool['function']['name'] for tool in bodies[-2]['tools']],['catalog_info'])
                 data=json.loads(next(row['content'] for row in bodies[-1]['messages'] if row.get('tool_call_id')=='c'))
@@ -4416,6 +4422,42 @@ class ChatSourceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
                         self.assertEqual(plan['parts'][0]['business_status'],'source_unavailable')
                         self.assertEqual(plan['parts'][0]['text'],'我不知道明天是不是结束')
                 self.event(plan,'intent');self.event(plan,'ack')
+
+    async def test_standalone_activity_reads_before_generation_and_skips_model_for_missing_time(self):
+        from ournotes_bot.domain.info_catalog import ActivityCalendar, ActivityInfo
+        import time
+
+        now = time.time()
+        self.repo.activity_announcements = Mock()
+        self.repo.activity_announcements.next.return_value = (None, '')
+        calendar = ActivityCalendar(
+            (ActivityInfo(11,'合成日服活动',{},start_at=now-3600,end_at=now+3600),),
+            'jp-r1','jp-fixture','observation-jp')
+        self.repo.activity_calendars = {'jp': calendar}
+        bodies = self.capture_native_bodies()
+        self.client.request.return_value = self.result('今天结束。')
+        questions = ('这期日服活动什么时候结束？', '日服活动什么时候结束？', '明天日服活动就要结束了吗')
+        for seq,question in enumerate(questions,1):
+            with self.subTest(question=question):
+                plan,attempts = await self.prepare_native('/聊 '+question,seq=seq)
+                self.assertEqual(len(attempts), 1)
+                self.assertFalse(bodies[-1].get('tools'))
+                items = next(data['activity_schedule_evidence']
+                             for row in bodies[-1]['messages'] if row['role']=='user'
+                             for data in (json.loads(row['content']),) if 'activity_schedule_evidence' in data)
+                self.assertEqual(len(items),1)
+                self.assertEqual((items[0]['server'],items[0]['field'],items[0]['release']),('jp','结束','jp-r1'))
+                self.assertIn('合成日服活动', items[0]['text'])
+                self.assertEqual(plan['parts'][0]['text'],'今天结束')
+                self.event(plan,'intent');self.event(plan,'ack')
+        self.repo.activity_calendars['jp'] = replace(calendar, records=())
+        self.client.request.reset_mock()
+        plan,attempts = await self.prepare_native('/聊 明天日服活动就要结束了吗',seq=4)
+        self.client.request.assert_not_awaited()
+        self.assertEqual(len(attempts),0)
+        self.assertEqual(plan['parts'][0]['business_status'],'source_unavailable')
+        self.assertEqual(plan['parts'][0]['text'],'我不知道明天是不是结束')
+        self.event(plan,'intent');self.event(plan,'ack')
 
     async def test_colloquial_kinship_reads_both_people_and_distinguishes_the_sisters(self):
         from test_platform_boundary import StoryPublicationTests
