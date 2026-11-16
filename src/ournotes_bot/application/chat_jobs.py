@@ -184,9 +184,8 @@ def lightweight_profile(profile, generation):
                    max_output_tokens=min(profile.max_output_tokens, output_limit))
 
 
-def lightweight_minimum_cost_micro(profile, *, one_pass=False):
-    stages = (True,) if one_pass else (False, True)
-    return math.ceil(sum(maximum_cost_micro(lightweight_profile(profile, stage)) for stage in stages))
+def lightweight_minimum_cost_micro(profile):
+    return math.ceil(sum(maximum_cost_micro(lightweight_profile(profile, stage)) for stage in (False, True)))
 
 
 def uses_proactive_day_accounting(policy):

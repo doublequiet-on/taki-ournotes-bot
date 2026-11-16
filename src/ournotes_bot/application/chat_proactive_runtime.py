@@ -137,6 +137,7 @@ class ProactiveChat:
         require(0 < len(body) <= 90 and body.splitlines() == [body] and '<TAKI_SKIP>' not in body
                 and not any(ord(char) < 32 for char in body), 'model_protocol_error')
         question_marks = body.count('?') + body.count('？')
+        require(question_marks <= 1, 'model_protocol_error')
         if kind == 'question':
             require(question_marks == 1 and body.endswith(('?', '？')), 'model_protocol_error')
         return {**value, 'text': body}
@@ -237,6 +238,11 @@ class ProactiveChat:
         return (group_id in self.lightweight_groups and policy is not None and uses_proactive_day_accounting(policy)
                 and profile.wire_profile == 'openai-responses-v1' and profile.model == 'gpt-6.1-terra')
 
+    def lightweight_reservation(self, group_id, profile):
+        if group_id in self.one_pass_groups:
+            return math.ceil(maximum_cost_micro(lightweight_profile(profile, True)))
+        return lightweight_minimum_cost_micro(profile)
+
     def lightweight_status(self, group_id):
         if group_id not in self.lightweight_groups:
             return {'status': 'off'}
@@ -247,8 +253,7 @@ class ProactiveChat:
         policy = self.policy(snapshot, SimpleNamespace(conversation_id=group_id))
         if not self.uses_lightweight(group_id, snapshot.profile, policy):
             return {'status': 'blocked'}
-        return {'status': 'ready', 'reserve_micro': lightweight_minimum_cost_micro(
-            snapshot.profile, one_pass=group_id in self.one_pass_groups)}
+        return {'status': 'ready', 'reserve_micro': self.lightweight_reservation(group_id, snapshot.profile)}
 
     def configured(self,request,snapshot,*,continuation=False):
         scope=self.scope(request)
@@ -448,7 +453,7 @@ class ProactiveChat:
         if evidence_route:
             minimum = model_cost = math.ceil(maximum_cost_micro(profile) * evidence_calls)
         elif lightweight:
-            minimum = lightweight_minimum_cost_micro(profile, one_pass=request.conversation_id in self.one_pass_groups)
+            minimum = self.lightweight_reservation(request.conversation_id, profile)
             # Keep the staged opportunity ceiling for replacements and defers.
             model_cost = lightweight_minimum_cost_micro(profile) + maximum_cost_micro(lightweight_profile(profile, False))
         else:
