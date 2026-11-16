@@ -157,6 +157,13 @@ def lightweight_image_reference(text, *, context_source=False):
                 or context_source and _CONTEXT_IMAGE_MENTION.search(text))
 
 
+def _activity_time_match(clause):
+    match = _ACTIVITY_RELATIVE_END.search(clause) or _LIVE_ACTIVITY_TIME.search(clause)
+    if match and _ACTIVITY_PREFIX.fullmatch(_ACTIVITY_REGIONS.sub('', clause[:match.start()])):
+        return match
+    return None
+
+
 def activity_evidence_questions(question):
     """Return the explicitly requested current-event region and time pairs."""
     text = unicodedata.normalize('NFKC', question).strip()
@@ -166,9 +173,8 @@ def activity_evidence_questions(question):
         clause = clause.strip()
         if not clause:
             continue
-        relative = _ACTIVITY_RELATIVE_END.search(clause)
-        match = relative or _LIVE_ACTIVITY_TIME.search(clause)
-        if not match or not _ACTIVITY_PREFIX.fullmatch(_ACTIVITY_REGIONS.sub('', clause[:match.start()])):
+        match = _activity_time_match(clause)
+        if not match:
             regions = []
             continue
         # Keep an explicitly named region across consecutive calendar questions.
@@ -177,16 +183,19 @@ def activity_evidence_questions(question):
             {'jp': '日服', 'intl': '国际服'}.get(
                 CALENDAR_SERVERS.get(name.casefold().replace('國', '国').replace('臺', '台')), name)
             for name in regions]
-        verb = '开始' if not relative and (match['verb'] or match['field']) in ('开始', '開始') else '结束'
+        fields = match.groupdict()
+        verb = '开始' if (fields.get('verb') or fields.get('field')) in ('开始', '開始') else '结束'
         questions.extend((label, verb) for label in labels)
     return tuple(dict.fromkeys(questions))
 
 def activity_relative_end_day(question):
     text = unicodedata.normalize('NFKC', question).strip()
+    days = set()
     for clause in _ACTIVITY_CLAUSE.split(text):
-        if match := _ACTIVITY_RELATIVE_END.search(clause.strip()):
-            return match['before'] or match['after']
-    return ''
+        if match := _activity_time_match(clause.strip()):
+            fields = match.groupdict()
+            days.add(fields.get('before') or fields.get('after') or '')
+    return days.pop() if len(days) == 1 else ''
 
 
 def referenced_story_question(question, reference):

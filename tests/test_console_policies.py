@@ -2855,7 +2855,7 @@ class ChatAgentTests(Fixture, unittest.IsolatedAsyncioTestCase):
         self.assertNotIn('777',plan['parts'][0]['text'])
 
     def test_evidence_route_distinguishes_opinions_game_and_fact_questions(self):
-        from ournotes_bot.application.persona import explicit_evidence_route
+        from ournotes_bot.application.persona import activity_relative_end_day, explicit_evidence_route
 
         cases = {
             '我觉得 JUST 最吃卡': '', '你觉得JUST最吃卡吗': '', '海希好嗑': '',
@@ -2886,6 +2886,10 @@ class ChatAgentTests(Fixture, unittest.IsolatedAsyncioTestCase):
         for question, route in cases.items():
             with self.subTest(question=question):
                 self.assertEqual(explicit_evidence_route(question), route)
+
+        self.assertEqual(activity_relative_end_day('明天日服活动就要结束了吗'), '明天')
+        self.assertEqual(activity_relative_end_day('学校活动明天结束吗？日服活动结束时间是什么？'), '')
+        self.assertEqual(activity_relative_end_day('日服活动明天结束吗？日服这期活动后天结束吗？'), '')
 
     def test_story_pronoun_does_not_choose_two_people_from_three(self):
         from ournotes_bot.application.persona import referenced_story_question
