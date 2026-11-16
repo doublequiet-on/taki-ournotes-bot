@@ -101,6 +101,7 @@ _STORY_FIELD_TOPIC = re.compile(r'(?:鼓手|主唱|贝斯手|吉他手).{0,3}$')
 _STORY_PAIR = re.compile(
     r'(?:椎名)?立希|(?:八幡)?海[铃鈴]|(?:千早)?[爱愛]音|高松[灯燈]|(?:要)?[乐楽]奈|'
     r'(?:长崎|長崎)?(?:爽世|そよ)|(?:丰川|豊川)?祥子|若[叶葉]睦|'
+    r'(?:^|(?<=[，。；、：\s]))[灯燈](?=\s*[和与與跟及、])|'
     r'(?<=[和与與跟及、])\s*[灯燈](?=$|[，。?？、和与與跟及\s]|在|也|[说說]|都|是|的)')
 _STORY_CHAPTER = re.compile(
     r'(?:mygo|ave\s*mujica|our\s*notes)[^。?!]{0,8}第\s*[0-9一二三四五六七八九十]+\s*[集话話章]', re.I)
@@ -139,14 +140,17 @@ def activity_evidence_questions(question):
     """Return the explicitly requested current-event region and time pairs."""
     text = unicodedata.normalize('NFKC', question).strip()
     questions = []
+    regions = []
     for clause in _ACTIVITY_CLAUSE.split(text):
         clause = clause.strip()
+        if not clause:
+            continue
         match = _LIVE_ACTIVITY_TIME.search(clause)
         if not match or not _ACTIVITY_PREFIX.fullmatch(_ACTIVITY_REGIONS.sub('', clause[:match.start()])):
+            regions = []
             continue
-        # Keep the resources requested in this clause. A region named as a
-        # separate play-server statement or rejected substitute stays out.
-        regions = _ACTIVITY_REGIONS.findall(clause) or ['日服']
+        # Keep an explicitly named region across consecutive calendar questions.
+        regions = _ACTIVITY_REGIONS.findall(clause) or regions or ['日服']
         labels = [
             {'jp': '日服', 'intl': '国际服'}.get(
                 CALENDAR_SERVERS.get(name.casefold().replace('國', '国').replace('臺', '台')), name)
@@ -167,6 +171,9 @@ def referenced_story_question(question, reference):
             '高松灯' if name.strip() in ('灯', '燈') else
             re.sub(r'^(?:椎名|八幡|千早|要|长崎|長崎|丰川|豊川)', '', name.strip())
             .translate(str.maketrans('鈴愛燈楽葉','铃爱灯乐叶')) for name in _STORY_PAIR.findall(reference)))
+        possible_tomori = '高松灯' not in pairs and re.search(r'[灯燈]\s*[和与與跟及、]', reference)
+        if possible_tomori:
+            return ''
         if re.search(r'海希|希海', reference):
             return '海希什么关系' if set(pairs) <= {'立希', '海铃'} else ''
         if len(pairs)==2:

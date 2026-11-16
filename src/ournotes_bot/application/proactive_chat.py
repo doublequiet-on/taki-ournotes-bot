@@ -344,7 +344,7 @@ class ProactiveController:
                 if (previous.context_generation == group.rows[index].context_generation
                         and previous.message.speaker_id == current.speaker_id
                         and 0 <= current.timestamp_ms-previous.message.timestamp_ms <= self.candidate_seconds*1000):
-                    return previous.message,previous.plain_text
+                    return previous.message, previous.plain_text, previous.addressed
                 return None
         return None
 

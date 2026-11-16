@@ -87,6 +87,19 @@ def _observation_turn(target, request, *, lightweight=False):
     return 'advance'
 
 
+def _ack_by_source(saved, current_ms):
+    return {row.reply_to: row for row in saved.values()
+            if row.role == 'assistant' and row.timestamp_ms <= current_ms}
+
+
+def _confirmed_addressed_source(position, saved, ack_by_source):
+    source = saved.get(position.message_id)
+    if (source is not None and source.role == 'user' and source.speaker_id == position.speaker_id
+            and source.timestamp_ms == position.timestamp_ms and position.message_id in ack_by_source):
+        return source
+    return None
+
+
 @dataclass(frozen=True)
 class _ObservationReceipt:
     gateway_epoch: str
@@ -447,10 +460,18 @@ class ProactiveChat:
             return None
         evidence_route = explicit_evidence_route(request.body) if lightweight else ''
         evidence_context_id = ''
+        addressed_evidence = None
         if lightweight and not evidence_route:
             context = self.controller.preceding_message_from_speaker(scope,request.message_id)
             if context is not None:
-                previous,plain_text = context
+                previous, plain_text, addressed = context
+                if addressed:
+                    saved = {row['message_id']: ChatMessage(**row) for row in self.agent.store.recent(
+                        request.scope, since_ms=previous.timestamp_ms - 1)}
+                    ack_by_source = _ack_by_source(saved, request.timestamp_ms)
+                    addressed_evidence = _confirmed_addressed_source(previous, saved, ack_by_source)
+                    previous = addressed_evidence or previous
+                    plain_text = addressed_evidence is not None
                 evidence_route = contextual_just_evidence_route(request.body,previous.text)
                 if evidence_route:
                     if (not plain_text or lightweight_image_reference(previous.text,context_source=True)
@@ -526,6 +547,10 @@ class ProactiveChat:
         if followup is not None:candidate=replace(candidate,followup=followup,continuation=True)
         if continuation:return candidate,None,snapshot,'continuation/'+candidate.candidate_id
         if lightweight:
+            if addressed_evidence is not None and evidence_context_id:
+                candidate = replace(candidate, messages=tuple(
+                    addressed_evidence if row.message_id == evidence_context_id else row
+                    for row in candidate.messages))
             candidate=replace(candidate,lightweight=not evidence_route,evidence_route=evidence_route,
                               evidence_context_id=evidence_context_id)
         job=service_request_id('proactive',request.instance_id,request.app_id,request.conversation_id,candidate.candidate_id)
@@ -662,16 +687,13 @@ class ProactiveChat:
         addressed = set(work.proactive.addressed_message_ids)
         gap = work.proactive.context_gap_ms is not None or image_id
         current = rows[-1]
-        ack_by_source = {row.reply_to: row for row in saved.values()
-                         if row.role == 'assistant' and row.timestamp_ms <= current.timestamp_ms}
+        ack_by_source = _ack_by_source(saved, current.timestamp_ms)
         prior = []
         for row in rows[:-1]:
             if row.message_id in addressed:
-                source = saved.get(row.message_id)
-                if (source is None or source.role != 'user' or source.speaker_id != row.speaker_id
-                        or source.timestamp_ms != row.timestamp_ms or row.message_id not in ack_by_source):
+                row = _confirmed_addressed_source(row, saved, ack_by_source)
+                if row is None:
                     continue
-                row = source
             if row.message_id != image_id and not lightweight_image_reference(row.text):
                 prior.append(row)
         source_ids = {row.message_id for row in prior}

@@ -2880,7 +2880,7 @@ class ChatAgentTests(Fixture, unittest.IsolatedAsyncioTestCase):
     def test_story_pronoun_does_not_choose_two_people_from_three(self):
         from ournotes_bot.application.persona import referenced_story_question
 
-        for reference in ('海希和灯在一起', '海希 + 立希和爱音'):
+        for reference in ('海希和灯在一起', '灯和海希在一起', '我看到灯和海希在一起', '海希 + 立希和爱音'):
             with self.subTest(reference=reference):
                 self.assertEqual(referenced_story_question('她俩什么关系', reference), '')
         self.assertEqual(referenced_story_question('她俩什么关系', '海希'), '海希什么关系')
@@ -4327,6 +4327,7 @@ class ChatSourceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
             ('港服和国际服这期活动哪天结束？',(('intl','结束'),),'partial',False),
             ('日服这期活动哪天开始，国际服这期活动哪天结束？',(('jp','开始'),('intl','结束')),'ok',False),
             ('日服这期活动哪天结束、国际服这期活动何时开始',(('jp','结束'),('intl','开始')),'ok',False),
+            ('国际服这期活动什么时候开始？这期活动什么时候结束？',(('intl','开始'),('intl','结束')),'ok',False),
             ('这期日服、国际服活动哪天结束？',(('jp','结束'),('intl','结束')),'ok',False),
             ('英服这期活动哪天结束？',(('intl','结束'),),'ok',False),
             ('这期国际服活动哪天结束？',(),'no_results',False),
@@ -7112,6 +7113,33 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
 
     async def test_lightweight_omitted_just_subject_uses_adjacent_same_speaker(self):
         await self.lightweight_fact_question(after_opinion=True,omitted_subject=True)
+
+    async def test_lightweight_omitted_just_subject_uses_confirmed_addressed_turn(self):
+        self.enable_lightweight_fact_fixture()
+        self.save_conversation_settings(followup_enabled=False)
+        before = self.request('before', 1)
+        before.update(body='还有人练这段吗？', trigger='observation')
+        self.assertTrue(self.agent.proactive.gateway_observation(Request.parse(before, 'fixture', 'app', self.now))[0])
+        self.now += 1
+        self.client.request.return_value = self.result('这段确实挺难。')
+        direct, _ = await self.prepare_native('/聊 日服这个 JUST 区间真难', seq=2)
+        direct_id = self.backend.works[direct['delivery_id']].request.message_id
+        self.event(direct, 'intent')
+        self.event(direct, 'ack')
+        self.now += 1
+        current = self.request('next', 3)
+        current.update(body='那区间怎么计分？', trigger='observation')
+        request = Request.parse(current, 'fixture', 'app', self.now)
+        self.assertTrue(self.agent.proactive.gateway_observation(request)[0])
+        self.tick += 1.6
+        wire = ChatAgentTests.capture_native_bodies(self)
+        self.client.request.return_value = self.result('{"participation":"skip","text":"","delay_seconds":null}')
+        plan, attempts, candidate = await self.candidate(current)
+        self.assertEqual(candidate[0].evidence_route, 'just_score')
+        self.assertEqual(candidate[0].evidence_context_id, direct_id)
+        self.assertEqual(len(attempts), 1)
+        self.assertFalse(plan['parts'])
+        self.assertTrue(any(json.loads(item['content'])['message_id'] == direct_id for item in wire[0]['input'][1:]))
 
     def enable_lightweight_fact_fixture(self, **limits):
         from datetime import datetime, timedelta, timezone
