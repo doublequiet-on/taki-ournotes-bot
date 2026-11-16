@@ -453,7 +453,8 @@ class ModelRuntime:
         profile=work.model_snapshot.profile
         if lightweight_stage is not None:
             require(work.proactive is not None and work.proactive.lightweight and not action_budget,'invalid_reservation')
-            profile=lightweight_profile(profile,lightweight_stage)
+            one_pass=work.request.conversation_id in self.agent.proactive.one_pass_groups
+            profile=lightweight_profile(profile,lightweight_stage or one_pass)
             require(bound==profile.max_input_tokens,'invalid_reservation')
         billing_request_id=billing_request_id or work.service_request_id or work.request.request_id
         if getattr(work,'continuation',False):
@@ -483,13 +484,14 @@ class ModelRuntime:
         return len(json.dumps(body,ensure_ascii=False,separators=(',',':')).encode())+4096+image_tokens
 
     def lightweight_request(self,work,messages,generation,*,check_bound=True):
-        profile=lightweight_profile(work.model_snapshot.profile,generation)
+        one_pass=work.request.conversation_id in self.agent.proactive.one_pass_groups
+        profile=lightweight_profile(work.model_snapshot.profile,generation or one_pass)
         require(all(m['role'] in ('system','user','assistant')
                     and set(m)=={'role','content'} and isinstance(m['content'],str) for m in messages),
                 'model_protocol_error')
         body=request_body(profile,messages,[])
         if not generation:
-            body['text']={'format':self.agent.proactive.response_format()}
+            body['text']={'format':self.agent.proactive.response_format(one_pass=one_pass)}
         bound=self.input_bound(work,messages,[],body=body)
         if check_bound:
             require(bound<=profile.max_input_tokens,'model_input_too_large')
