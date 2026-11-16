@@ -122,6 +122,7 @@ class ProactiveCandidate:
     evidence_context_id: str = ''
     context_gap_ms: int | None = None
     image_boundary_id: str = ''
+    addressed_message_ids: tuple[str, ...] = ()
 
 
 @dataclass
@@ -132,6 +133,7 @@ class _Observed:
     plain_text: bool
     context_generation: int
     image: bool
+    addressed: bool
 
 
 @dataclass
@@ -373,7 +375,7 @@ class ProactiveController:
             return False
         group.rows.append(_Observed(message, now, size,
                                     plain_text and not addressed and turn not in ('closed','answered','waiting'),
-                                    group.context_generation, image))
+                                    group.context_generation, image, addressed))
         while (len(group.rows) > self.max_messages
                or sum(row.size for row in group.rows) > self.group_bytes):
             group.rows.pop(0)
@@ -501,7 +503,8 @@ class ProactiveController:
                                   ticket.service_subject_id, messages,
                                   now, ticket.expires_at, reserve_cost_micro, deferred, group.evaluation,
                                   opportunity_id=opportunity.id, context_gap_ms=context_gap_ms,
-                                  image_boundary_id=image_boundary_id)
+                                  image_boundary_id=image_boundary_id,
+                                  addressed_message_ids=tuple(row.message.message_id for row in rows if row.addressed))
 
     def opportunity_budget(self,candidate):
         group,ticket=self._ticket(candidate)

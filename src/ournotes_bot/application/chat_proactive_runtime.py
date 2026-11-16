@@ -10,7 +10,7 @@ import re
 import sqlite3
 import unicodedata
 from collections import Counter,OrderedDict
-from dataclasses import asdict,replace
+from dataclasses import asdict, dataclass, replace
 from fractions import Fraction
 from types import SimpleNamespace
 
@@ -85,6 +85,15 @@ def _observation_turn(target, request, *, lightweight=False):
         if same_speaker and text != previous and any(len(key) >= 3 for key in common):
             return 'supplement'
     return 'advance'
+
+
+@dataclass(frozen=True)
+class _ObservationReceipt:
+    gateway_epoch: str
+    observation_seq: int
+    content_digest: str
+    result: tuple[bool, int, bool]
+    covered_seq: int
 
 
 class ProactiveChat:
@@ -391,19 +400,21 @@ class ProactiveChat:
         scope = self.scope(request)
         identity = request.content_digest
         previous = self.observation_responses.get(scope)
-        if previous is not None and previous[0] == request.gateway_epoch and request.ingress_seq <= previous[1]:
-            if request.ingress_seq == previous[1] and identity == previous[2]:
-                return previous[3]
+        if (previous is not None and previous.gateway_epoch == request.gateway_epoch
+                and request.ingress_seq <= previous.covered_seq):
+            if request.ingress_seq == previous.observation_seq and identity == previous.content_digest:
+                return previous.result
             return False, 0, False
         target = self.controller.target(scope)
-        gap = previous is not None and (previous[0] != request.gateway_epoch
-                                        or request.ingress_seq != previous[1] + 1)
+        gap = previous is not None and (previous.gateway_epoch != request.gateway_epoch
+                                        or request.ingress_seq != previous.covered_seq + 1)
         observed = self.observe(request, ingress_gap=gap)
         current = self.controller.target(scope)
         delay = self.observation_delay(request) if observed else None
         preserve = bool(observed and target is not None and current is target)
         result = (delay is not None, delay or 0, preserve)
-        self.observation_responses[scope] = (request.gateway_epoch,request.ingress_seq,identity,result)
+        self.observation_responses[scope] = _ObservationReceipt(
+            request.gateway_epoch, request.ingress_seq, identity, result, request.ingress_seq)
         self.observation_responses.move_to_end(scope)
         while len(self.observation_responses)>self.controller.max_scopes:
             self.observation_responses.popitem(last=False)
@@ -544,6 +555,25 @@ class ProactiveChat:
             now=time.monotonic()
             work.chat_coalesce_until=now+settings['coalesce_seconds'];work.chat_coalesce_deadline=now+8
         if scope in self.controller.groups:self.controller.set_addressed(scope,True)
+        self.note_addressed_ingress(work, scope, settings)
+
+    def note_addressed_ingress(self, work, scope, settings):
+        request = work.request
+        previous = self.observation_responses.get(scope)
+        if (not work.chat or request.conversation_id not in self.lightweight_groups
+                or request.policy.natural_query != 'model'
+                or request.attachments or request.reference or request.quote_hint or request.quoted_text
+                or _WEB_URL.search(unicodedata.normalize('NFKC', request.body))
+                or request.user_id in {row['user_id'] for row in settings['excluded_users']}
+                or previous is None or previous.gateway_epoch != request.gateway_epoch
+                or request.ingress_seq != previous.covered_seq + 1):
+            return
+        # /submit and /observations share the gateway's sequence. Record only
+        # the position here; a saved source and ACK are required to use it.
+        position = ChatMessage(request.message_id, request.user_id, '', request.timestamp_ms)
+        if self.controller.observe(scope, position, addressed=True):
+            self.observation_responses[scope] = replace(previous, covered_seq=request.ingress_seq)
+            self.observation_responses.move_to_end(scope)
 
     async def coalesce_addressed(self,work,content):
         while work.active and work.chat_coalesce_until>time.monotonic():
@@ -628,28 +658,35 @@ class ProactiveChat:
         # Keep the gateway's observation order. Restore a saved prefix only
         # before the observable scene, or join an ACK to its visible source.
         image_id = work.proactive.image_boundary_id
+        addressed = set(work.proactive.addressed_message_ids)
         gap = work.proactive.context_gap_ms is not None or image_id
         current = rows[-1]
-        prior = [row for row in rows[:-1] if row.message_id != image_id
-                 and not lightweight_image_reference(row.text)]
+        ack_by_source = {row.reply_to: row for row in saved.values()
+                         if row.role == 'assistant' and row.timestamp_ms <= current.timestamp_ms}
+        prior = []
+        for row in rows[:-1]:
+            if row.message_id in addressed:
+                source = saved.get(row.message_id)
+                if (source is None or source.role != 'user' or source.speaker_id != row.speaker_id
+                        or source.timestamp_ms != row.timestamp_ms or row.message_id not in ack_by_source):
+                    continue
+                row = source
+            if row.message_id != image_id and not lightweight_image_reference(row.text):
+                prior.append(row)
         source_ids = {row.message_id for row in prior}
         first_ms = min(row.timestamp_ms for row in rows)
         prefix = [row for row in saved.values()
-                  if not gap and row.message_id not in source_ids
+                  if not gap and row.message_id not in source_ids and row.message_id not in addressed
                   and row.message_id != current.message_id and row.timestamp_ms < first_ms
                   and not lightweight_image_reference(row.text)]
         prefix_ids = {row.message_id for row in prefix if row.role == 'user'}
         prefix = [row for row in prefix if row.role == 'user' or row.reply_to in prefix_ids]
-        ack_by_source = {}
-        for row in saved.values():
-            if (row.role == 'assistant' and row.message_id not in source_ids
-                    and row.reply_to in source_ids and row.timestamp_ms <= current.timestamp_ms):
-                ack_by_source[row.reply_to] = row
         scene = list(prefix)
         for row in prior:
             scene.append(row)
-            if row.message_id in ack_by_source:
-                scene.append(ack_by_source[row.message_id])
+            ack = ack_by_source.get(row.message_id)
+            if ack is not None and ack.message_id not in source_ids:
+                scene.append(ack)
         scene.append(current)
         selected, anchored = select_topic_context(scene, limit=5 if image_id else 6)
         visible = {row.message_id for row in selected}
@@ -667,6 +704,8 @@ class ProactiveChat:
         followup=work.proactive.followup
         text_lane = work.proactive.lightweight or work.proactive.evidence_route
         rows=list(work.proactive.messages[-12:] if followup else work.proactive.messages[-48:])
+        if not text_lane and work.proactive.addressed_message_ids:
+            rows = [row for row in rows if row.message_id not in work.proactive.addressed_message_ids]
         if text_lane and work.proactive.image_boundary_id and rows[0].message_id != work.proactive.image_boundary_id:
             rows.insert(0, work.proactive.messages[0])
         if followup:rows=[row for row in rows if row.message_id in followup.observed_ids]

@@ -6876,6 +6876,52 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
                                           quoted_text='', quote_hint='')
                 self.assertEqual(_observation_turn(target, request, lightweight=True), expected)
 
+    async def addressed_ingress_fixture(self, *, delivered, next_seq):
+        self.enable_lightweight_fact_fixture()
+        before = self.request('before', 1)
+        before.update(body='副歌那几拍有人试过吗？', trigger='observation')
+        initial = Request.parse(before, 'fixture', 'app', self.now)
+        outcome = self.agent.proactive.gateway_observation(initial)
+        self.assertTrue(outcome[0])
+        self.now += 1
+        self.client.request.return_value = self.result('这段副歌我会先减一档速度再练。')
+        direct, _ = await self.prepare_native('/聊 这段副歌你会怎么练', seq=2)
+        direct_work = self.backend.works[direct['delivery_id']]
+        if delivered:
+            self.event(direct, 'intent')
+            self.event(direct, 'ack')
+        else:
+            self.backend.finish(direct_work, 'aborted')
+        # Replaying the old observation remains idempotent after a /submit in the same sequence.
+        self.assertEqual(self.agent.proactive.gateway_observation(initial), outcome)
+        self.now += 1
+        self.current_user = 'u2'
+        next_turn = self.request('next', next_seq)
+        next_turn.update(body='这一段副歌终于能稳住了', trigger='observation')
+        current = Request.parse(next_turn, 'fixture', 'app', self.now)
+        self.assertTrue(self.agent.proactive.gateway_observation(current)[0])
+        self.tick += 1.6
+        wire = ChatAgentTests.capture_native_bodies(self)
+        self.client.request.return_value = self.result(
+            '{"participation":"skip","text":"","delay_seconds":null}')
+        await self.candidate(next_turn)
+        rows = [json.loads(item['content']) for item in wire[0]['input'][1:]]
+        return rows, direct_work.request.message_id
+
+    async def test_lightweight_addressed_ingress_stitches_confirmed_turn_in_order(self):
+        rows, direct_id = await self.addressed_ingress_fixture(delivered=True, next_seq=3)
+        self.assertEqual([row['role'] for row in rows], ['user', 'user', 'assistant', 'user'])
+        self.assertEqual([rows[i]['message_id'] for i in (0, 1, 3)], ['before', direct_id, 'next'])
+        self.assertEqual(rows[2]['reply_to'], direct_id)
+
+    async def test_lightweight_addressed_ingress_drops_unconfirmed_turn(self):
+        rows, _ = await self.addressed_ingress_fixture(delivered=False, next_seq=3)
+        self.assertEqual([row['message_id'] for row in rows], ['before', 'next'])
+
+    async def test_lightweight_addressed_ingress_does_not_bridge_unknown_message(self):
+        rows, _ = await self.addressed_ingress_fixture(delivered=True, next_seq=4)
+        self.assertEqual([row['message_id'] for row in rows], ['next'])
+
     def filtered_group_observation(self, text, seq, *, timestamp_ms=None):
         raw = self.request('filtered'+str(seq), seq)
         raw.update(body=text, trigger='observation', quoted_text='旧话题')
