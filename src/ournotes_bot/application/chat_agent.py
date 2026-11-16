@@ -784,26 +784,45 @@ class ChatAgent:
                   '可以自然回应。开放接龙有新笑点也可以接，能接上不代表一定要接。'
                   '开放吐槽若指出了具体对象，仍有一个影响交流的缺口，且群友还没接住，'
                   '可只问一句关于对方体验或看法的具体问题。已有答案、只能泛问背景或需要确认外部事实时不追问。')
-        decision_header={'role':'system','content':prompt+'\n'+rules+
+        decision_rules=(
             '\n明确说马上补充，或当前发言明显没说完、在等紧接的一句时，选 defer。'
-            '仅凭同人连发或话题尚可继续，不选 defer。已经说完且没有合适的接话点，选 skip。'
-            '有合适的直接回应或符合上述条件的一句追问时可选 reply。必须按指定 JSON 输出。'}
-        generation_header={'role':'system','content':natural_prompt+'\n'+rules+
+            '仅凭同人连发或话题尚可继续，不选 defer。已经说完且没有合适的接话点，选 skip。')
+        generation_rules=(
             '\n写之前再确认这句话接的是当前发言。用一两句具体的态度、关心、祝贺或贴切玩笑，最多 90 字。'
-            '需要追问时正文只留一个具体问题，不代群友补写细节、原因、经历或游戏规则。'
+            '需要追问时正文只留一个具体问题，不代群友补写细节、原因、经历或游戏规则。')
+        reconsider=(
             '发现群友已答、仍在补充、对话已收束，或自己只会复述、换词附和、绕过当前发言去回应更早的人，'
+        )
+        one_pass=work.request.conversation_id in self.proactive.one_pass_groups
+        if one_pass:
+            decision_header={'role':'system','content':natural_prompt+'\n'+rules+decision_rules+generation_rules+
+                '按指定 JSON 一次给出决定和正文。'+reconsider+
+                '重新判断是否值得回应。确实在等补充时 defer，其余不宜插话的情形选 skip。'
+                '仅 defer 的 delay_seconds 是 2 至 5 的整数，其余为 null。'
+                'reply 的 text 是一行群聊正文，target_message_id 必须等于当前消息 ID。'
+                'anchor_message_ids 只填确实影响理解的可见前文 ID，最多两个，不填当前消息或重复 ID。'
+                'reply_kind 按正文选 react（接感受或成果）、opinion（回应开放意见）、joke（接梗）'
+                '或 question（有必要才问一次，正文只用一个问号并以问号结尾）。'
+                'skip 或 defer 时 text 为空字符串，target_message_id 和 reply_kind 为 null，anchor_message_ids 为空数组。'}
+        else:
+            decision_header={'role':'system','content':prompt+'\n'+rules+decision_rules+
+                '有合适的直接回应或符合上述条件的一句追问时可选 reply。必须按指定 JSON 输出。'}
+        generation_header={'role':'system','content':natural_prompt+'\n'+rules+generation_rules+reconsider+
             '单独输出 <TAKI_SKIP>，不附正文或解释。'}
-        # Both stages use the same history suffix and keep the current message intact.
+        # Fit the actual wire and keep the current message intact; the two-stage control shares one suffix.
         for start in range(len(history)):
             fitted_history=history[start:]
             decision_messages=[decision_header,*fitted_history]
             generation_messages=[generation_header,*fitted_history]
             decision_profile,_,decision_bound=runtime.lightweight_request(
                 work,decision_messages,False,check_bound=False)
+            if decision_bound>decision_profile.max_input_tokens:
+                continue
+            if one_pass:
+                break
             generation_profile,_,generation_bound=runtime.lightweight_request(
                 work,generation_messages,True,check_bound=False)
-            if (decision_bound<=decision_profile.max_input_tokens
-                    and generation_bound<=generation_profile.max_input_tokens):
+            if generation_bound<=generation_profile.max_input_tokens:
                 break
         else:
             self.proactive.trace(work, 'control', status='lightweight_input_limit')
@@ -811,15 +830,22 @@ class ChatAgent:
             return PreparedReply('',business_status='proactive_skip')
         work.participating_history=tuple(fitted_history)
         self.proactive.trace(work, 'context', status='lightweight', messages=len(fitted_history))
-        decision_id,generation_id=uuid.uuid4().hex,uuid.uuid4().hex
+        decision_id=uuid.uuid4().hex
+        generation_id=None if one_pass else uuid.uuid4().hex
         try:
             runtime.reserve(work,decision_id,user,group,decision_profile.max_input_tokens,lightweight_stage=False)
-            runtime.reserve(work,generation_id,user,group,generation_profile.max_input_tokens,lightweight_stage=True)
+            if generation_id is not None:
+                runtime.reserve(work,generation_id,user,group,generation_profile.max_input_tokens,lightweight_stage=True)
             decision=await runtime.attempt(work,decision_messages,[],user,group,deadline,reservation=decision_id)
             require(not decision.tool_calls,'model_protocol_error')
-            answer=self.proactive.parse_staged_decision(decision.text)
-            self.proactive.trace(work, 'control', status='lightweight_initial', decision=answer['participation'])
-            if answer['participation']=='reply':
+            if one_pass:
+                visible_ids={json.loads(item['content'])['message_id'] for item in fitted_history[:-1]}
+                answer=self.proactive.parse_one_pass(decision.text,work.request.message_id,visible_ids)
+                self.proactive.trace(work, 'control', status='lightweight_one_pass', decision=answer['participation'])
+            else:
+                answer=self.proactive.parse_staged_decision(decision.text)
+                self.proactive.trace(work, 'control', status='lightweight_initial', decision=answer['participation'])
+            if generation_id is not None and answer['participation']=='reply':
                 # The decision only selects the branch. Its raw output and
                 # encrypted reasoning never become inputs to generation.
                 work.proactive_generation=True
@@ -842,7 +868,8 @@ class ChatAgent:
             return PreparedReply(text,parse_origin='model',processing_route='model',business_status='success')
         finally:
             runtime.usage.release(decision_id,'final_not_needed')
-            runtime.usage.release(generation_id,'generation_not_needed')
+            if generation_id is not None:
+                runtime.usage.release(generation_id,'generation_not_needed')
             if not work.active:self.audit(self.proactive.settle_cost,work)
 
     async def run(self,work,question,user,group,deadline):

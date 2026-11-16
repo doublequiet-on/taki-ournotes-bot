@@ -40,6 +40,7 @@ _TOPIC_SHIFT = re.compile(r'^(?:换个话题|说个别的|先不说这个|聊点
 _SUPPLEMENT = re.compile(r'^(?:补充|再补|漏说|忘了说|我说的是|我指的是|更正|纠正|我的意思是)')
 _ANSWER = re.compile(r'^(?:答案是|选[的是]|直接选|原因是|因为|可以用|用.+就行)')
 _WEB_URL = re.compile(r'[a-z][a-z0-9+.-]*://|www\.', re.I)
+_REPLY_KINDS = ('react', 'opinion', 'joke', 'question')
 
 
 def _observation_turn(target, request):
@@ -77,12 +78,52 @@ class ProactiveChat:
         return value
 
     @staticmethod
-    def response_format():
-        return {'type':'json_schema','name':'proactive_participation','strict':True,'schema':{
-            'type':'object','properties':{
-                'participation':{'type':'string','enum':['reply','skip','defer']},
-                'text':{'type':'string','enum':['']},'delay_seconds':{'type':['integer','null']}},
-            'required':['participation','text','delay_seconds'],'additionalProperties':False}}
+    def response_format(*, one_pass=False):
+        properties = {
+            'participation': {'type': 'string', 'enum': ['reply', 'skip', 'defer']},
+            'text': {'type': 'string'},
+            'delay_seconds': {'type': ['integer', 'null']},
+        }
+        if one_pass:
+            properties.update(
+                target_message_id={'type': ['string', 'null']},
+                anchor_message_ids={'type': 'array', 'items': {'type': 'string'}, 'maxItems': 2},
+                reply_kind={'type': ['string', 'null'], 'enum': [*_REPLY_KINDS, None]},
+            )
+        else:
+            properties['text']['enum'] = ['']
+        return {'type': 'json_schema', 'name': 'proactive_one_pass' if one_pass else 'proactive_participation',
+                'strict': True, 'schema': {'type': 'object', 'properties': properties,
+                    'required': list(properties), 'additionalProperties': False}}
+
+    @staticmethod
+    def parse_one_pass(text, target_id, visible_ids):
+        try:
+            value = json.loads(text)
+        except (ValueError, TypeError):
+            raise ModelError('model_protocol_error') from None
+        require(isinstance(value, dict) and set(value) == {
+            'participation', 'text', 'delay_seconds', 'target_message_id', 'anchor_message_ids', 'reply_kind',
+        }, 'model_protocol_error')
+        mode, body, delay = value['participation'], value['text'], value['delay_seconds']
+        target, anchors, kind = value['target_message_id'], value['anchor_message_ids'], value['reply_kind']
+        require(mode in ('reply', 'skip', 'defer') and isinstance(body, str), 'model_protocol_error')
+        if mode != 'reply':
+            require(body == '' and target is None and anchors == [] and kind is None, 'model_protocol_error')
+            require((type(delay) is int and 2 <= delay <= 5) if mode == 'defer' else delay is None,
+                    'model_protocol_error')
+            return value
+        require(delay is None and target == target_id and kind in _REPLY_KINDS, 'model_protocol_error')
+        require(isinstance(anchors, list) and len(anchors) <= 2 and all(
+            isinstance(anchor, str) and anchor != target_id and anchor in visible_ids for anchor in anchors
+        ) and len(anchors) == len(set(anchors)), 'model_protocol_error')
+        body = body.strip()
+        require(0 < len(body) <= 90 and body.splitlines() == [body] and '<TAKI_SKIP>' not in body
+                and not any(ord(char) < 32 for char in body), 'model_protocol_error')
+        question_marks = body.count('?') + body.count('？')
+        if kind == 'question':
+            require(question_marks == 1 and body.endswith(('?', '？')), 'model_protocol_error')
+        return {**value, 'text': body}
 
     def __init__(self,agent):
         self.agent=agent
@@ -94,6 +135,9 @@ class ProactiveChat:
         self.lightweight_groups = frozenset(
             group_id.strip() for group_id in os.getenv('OURNOTES_PROACTIVE_LIGHTWEIGHT_GROUPS', '').split(',')
             if group_id.strip()
+        )
+        self.one_pass_groups = self.lightweight_groups.intersection(
+            group_id.strip() for group_id in os.getenv('OURNOTES_PROACTIVE_ONE_PASS_GROUPS', '').split(',')
         )
         self.services=ChatServices(agent.runtime.usage.path.parent,agent.runtime.backend.instance_id,
             agent.runtime.backend.app_id,filename='chat-proactive-services-v1.json',authority=agent.runtime.admin.db,require_authority=True)
@@ -187,7 +231,8 @@ class ProactiveChat:
         policy = self.policy(snapshot, SimpleNamespace(conversation_id=group_id))
         if not self.uses_lightweight(group_id, snapshot.profile, policy):
             return {'status': 'blocked'}
-        return {'status': 'ready', 'reserve_micro': lightweight_minimum_cost_micro(snapshot.profile)}
+        return {'status': 'ready', 'reserve_micro': lightweight_minimum_cost_micro(
+            snapshot.profile, one_pass=group_id in self.one_pass_groups)}
 
     def configured(self,request,snapshot,*,continuation=False):
         scope=self.scope(request)
@@ -379,8 +424,9 @@ class ProactiveChat:
         if evidence_route:
             minimum = model_cost = math.ceil(maximum_cost_micro(profile) * evidence_calls)
         elif lightweight:
-            minimum = lightweight_minimum_cost_micro(profile)
-            model_cost = minimum + maximum_cost_micro(lightweight_profile(profile, False))
+            minimum = lightweight_minimum_cost_micro(profile, one_pass=request.conversation_id in self.one_pass_groups)
+            # Keep the staged opportunity ceiling for replacements and defers.
+            model_cost = lightweight_minimum_cost_micro(profile) + maximum_cost_micro(lightweight_profile(profile, False))
         else:
             minimum = proactive_minimum_cost_micro(profile)
             model_cost = maximum_cost_micro(profile) * self.agent.budget.model_calls
@@ -398,7 +444,7 @@ class ProactiveChat:
         if not continuation:
             preflight=service_request_id('proactive',request.instance_id,request.app_id,
                 request.conversation_id,'budget/'+request.request_id)
-            # Check the actual staged minimum so pacing and hard budget denials stay distinguishable.
+            # Check this path's minimum so pacing and hard budget denials stay distinguishable.
             required = minimum if policy.proactive.max_cost_micro_per_day else 1
             evidence_budget = (dict(required_calls=evidence_calls,opportunity_calls=self.agent.budget.model_calls,
                 opportunity_requests=self.opportunity_requests(request,self.controller.opportunity_candidates(scope)))
@@ -412,7 +458,7 @@ class ProactiveChat:
             spent=max(permit.spent_cost_micro,self.controller.status(self.scope(request))['hourly_cost_micro'])
             cost=min(math.ceil(cost),math.floor(permit.available_cost_micro),
                      math.floor(policy.proactive.max_cost_micro_per_hour-spent))
-            # Fund the decision and final reply; tools/rechecks spend only what remains.
+            # Fund the initial evaluation; tools and rechecks spend only what remains.
             if cost<minimum:
                 details = dict(permit.budget_details)
                 details.update(requested_cost_micro=minimum, available_cost_micro=max(0, cost),
