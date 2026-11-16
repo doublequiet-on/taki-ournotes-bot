@@ -2886,6 +2886,12 @@ class ChatAgentTests(Fixture, unittest.IsolatedAsyncioTestCase):
             '初音和清告到底有没有见过面': 'story_fact',
             '初音和祥子她妈妈到底有没有血缘？': 'story_fact',
             '初音和祥子的辈分怎么论': 'story_fact',
+            '清告跟初音差几辈？': 'story_fact', '清告是初音的姐夫吗？': 'story_fact',
+            '三角初华本名是啥？': 'story_fact',
+            '初音在哪里跟清告第一次说话': 'story_fact',
+            '祥子知道初音的身世吗？': 'story_fact',
+            '祥子知道初音借用了谁的名字吗？': 'story_fact',
+            '听说祥子知道初音的身世了': '', '初音未来和祥子说过话？': '',
             '我看到初音和清告见过面了': '',
             '小姨认识祥爹吗？': 'story_fact',
             '那真正的初华呢？': 'story_fact',
@@ -4663,11 +4669,14 @@ class ChatSourceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
         corpus = (
             ('related', '身世',
              '三角初音借用妹妹初华的名字。初音与祥子母亲是同父异母的姐妹。'
-             '初音与清告在商业设施活动见面，初音向清告坦白父亲是定治。'),
+             '清告与初音是同辈。清告是瑞穗的丈夫。'
+             '初音与清告在商业设施揭幕活动见面，初音向清告坦白父亲是定治。'),
             ('different-person', '家庭',
              '若叶睦和祥子是青梅竹马。她们曾聊到祥子的母亲。'),
             ('unrelated-family', '初华小时候',
              '初华和祥子小时候认识，初华向母亲说想当偶像。'),
+            ('later-reveal', '重逢',
+             '祥子听完初音的身世，得知初音借用了妹妹的名字。'),
         )
         scenes = [
             {**template, 'scene_id': sid, 'source_id': sid, 'title': title, 'next_scene': None,
@@ -4683,6 +4692,8 @@ class ChatSourceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
         self.backend.model_runtime.agent.story = fixture.service
         bodies = self.capture_native_bodies()
         questions = (
+            ('清告跟初音差几辈？', '她跟清告是同辈。'),
+            ('清告是初音的姐夫吗？', '按瑞穗这层关系算，是。'),
             ('初华和祥子他爹是啥辈分', '清告的小姨子，两人同辈。'),
             ('初华是祥子小姨吗？', '以初华的名字活动的是初音，她是祥子的小姨。'),
             ('那真正的初华呢？', '真正的三角初华是三角初音的妹妹。'),
@@ -4690,11 +4701,14 @@ class ChatSourceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
             ('以初華名義出道的是初音嗎？', '以初华名字出道的人是初音。'),
             ('初音见过清告吗？', '见过，两人在商业设施的活动上见面。'),
             ('初音和清告到底有没有见过面', '见过，两人在商业设施的活动上见面。'),
+            ('初音在哪里跟清告第一次说话？', '在商业设施的揭幕活动上。'),
+            ('祥子知道初音借用了谁的名字吗？', '知道，她后来听初音讲了。'),
         )
         for seq, (question, response) in enumerate(questions, 1):
             with self.subTest(question=question):
+                expected_scene = 'later-reveal' if question.startswith('祥子知道') else 'related'
                 result = fixture.service.search(question, limit=3, facts_only=True)
-                self.assertEqual(result['items'][0]['scene_id'], 'related')
+                self.assertEqual(result['items'][0]['scene_id'], expected_scene)
                 handle = result['items'][0]['handle']
                 self.client.request.side_effect = [
                     self.result(calls=(ToolCall('s','story_search','{"query":"清告"}'),)),
@@ -4704,7 +4718,7 @@ class ChatSourceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
                 plan, attempts = await self.prepare_native('/聊 '+question, seq=seq)
                 self.assertEqual(len(attempts), 3)
                 tool_result = json.loads(next(row['content'] for row in bodies[-1]['messages'] if row.get('tool_call_id')=='r'))
-                self.assertEqual(tool_result['scenes'][0]['scene_id'], 'related')
+                self.assertEqual(tool_result['scenes'][0]['scene_id'], expected_scene)
                 self.assertEqual(plan['parts'][0]['text'], response.removesuffix('。'))
                 self.event(plan,'intent');self.event(plan,'ack')
 
