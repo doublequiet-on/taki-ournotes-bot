@@ -3863,6 +3863,41 @@ class ChatAgentTests(Fixture, unittest.IsolatedAsyncioTestCase):
         self.assertFalse(plan['reply_mention'])
         self.event(plan,'intent');self.event(plan,'ack')
 
+    async def test_story_relationship_infers_only_from_explicit_user_conditions(self):
+        from test_platform_boundary import StoryPublicationTests
+
+        fixture = StoryPublicationTests()
+        fixture.setUp()
+        self.addCleanup(fixture.doCleanups)
+        fixture.publish()
+        agent = self.backend.model_runtime.agent
+        agent.story = fixture.service
+        bodies = self.capture_native_bodies()
+        self.client.request.return_value = self.result('按你给的关系，是同辈。')
+        cases = (
+            ('如果初华是祥子妈妈的妹妹，清告是她丈夫，初华和清告是啥辈分？', True),
+            ('初华是祥子妈妈的妹妹。按这个关系，初华和祥子是什么关系？', True),
+            ('初华和清告是啥辈分？', False),
+            ('如果初华是祥子妈妈的妹妹，初华和祥子什么关系？另外，初华的本名是什么？', False),
+            ('假设初华是祥子妈妈的妹妹，原作里她们是什么关系？', False),
+        )
+        with patch.object(agent, 'read_story_fact', return_value=('no_results', None)) as source:
+            for seq, (question, premise) in enumerate(cases, 1):
+                with self.subTest(question=question):
+                    source.reset_mock()
+                    plan, attempts = await self.prepare_native('/聊 '+question, seq=seq)
+                    self.event(plan, 'intent')
+                    self.event(plan, 'ack')
+                    self.assertEqual(len(attempts), int(premise))
+                    self.assertEqual(source.call_count, int(not premise))
+                    if premise:
+                        self.assertNotIn('tools', bodies[-1])
+                        self.assertTrue(any('本轮只按群友给定的关系推导' in message['content']
+                                            for message in bodies[-1]['messages']))
+                        self.assertEqual(plan['parts'][0]['text'], '按你给的关系，是同辈')
+                    else:
+                        self.assertEqual(plan['parts'][0]['business_status'], 'source_unavailable')
+
     async def test_chat_prefix_with_only_quote_preview(self):
         original=self.request
         def request(msg,seq):return {**original(msg,seq),'quoted_text':'你刚才引用的这句话'}

@@ -145,6 +145,13 @@ _STORY_PAIR = re.compile(
 _STORY_CHAPTER = re.compile(
     r'(?:mygo|ave\s*mujica|our\s*notes)[^。?!]{0,8}第\s*[0-9一二三四五六七八九十]+\s*[集话話章]', re.I)
 _EVIDENCE_CLAUSE = re.compile(r'[，,。；;！!\n]+|(?<=\?)|(?:但(?:是)?|不过|另外)(?=实际|到底|想问|请问|我想|还想|[\s，,])')
+_STORY_RELATION_ASK = re.compile(
+    r'(?:(?:啥|什[么麼])\s*(?:[关關][系係]|[辈輩][分份])|(?:差|隔)(?:了)?[几幾][辈輩])[?呢啊呀\s]*$')
+_STORY_FAMILY = re.compile(r'同父异母|同母异父|姐妹|兄弟|[姐妹]妹|[兄弟]弟|[姨姑]妈|[姨姑]媽|[夫妻]|[父母]亲|[父母]親')
+_STORY_ASSUMPTION = re.compile(r'^(?:如果|假设|假設|假如|设想|設想|就按)')
+_STORY_ASSUMPTION_LINK = re.compile(r'(?:按(?:照)?|就按)(?:这个|這個|这些|這些|上述)(?:前提|关系|關係|条件|條件|设定|設定|假设|假設)|在(?:这个|這個)(?:设定|設定|假设|假設|前提)下')
+_STORY_ASSUME_VERIFY = re.compile(r'原作|正片|动画|動畫|剧情|劇情|剧[里裡]|劇[里裡]|官方|出处|出處|哪[集话話章]|求证|求證|核[实實查]|真(?:的|实|實)|到底|能(?:否|不能)证[明实實]')
+
 _ACTIVITY_REGION = r'日服|国际服|國際服|台服|臺服|港服|韩服|韓服|英服|美服|欧服|歐服|(?<![a-z0-9])(?:jp|intl|tw|hk|kr|en)(?![a-z0-9])'
 _ACTIVITY_REGIONS = re.compile(_ACTIVITY_REGION, re.I)
 _ACTIVITY_CLAUSE = re.compile(
@@ -276,14 +283,33 @@ def explicit_evidence_route(question):
             if route.startswith('just_') and _OTHER_RHYTHM_GAME.search(text):
                 continue
             return route
-        if (index and _STORY_FIELD_FOLLOWUP.fullmatch(clause) and _BAND_STORY.search(clauses[index-1])
-                and _STORY_FIELD_TOPIC.search(clauses[index-1])):
-            return 'story_fact'
+        if index and _BAND_STORY.search(clauses[index-1]):
+            if _STORY_FIELD_FOLLOWUP.fullmatch(clause) and _STORY_FIELD_TOPIC.search(clauses[index-1]):
+                return 'story_fact'
+            if (_STORY_ASSUME_VERIFY.search(clause) and _STORY_RELATION_ASK.search(clause)
+                    and re.search(_STORY_PAIR_PRONOUN, clause) and _STORY_FAMILY.search(clauses[index-1])):
+                return 'story_fact'
     # A comma can separate the topic or card ID from its actual question.
     # Recover an omitted subject only when the question has no subject route.
     if len(clauses) > 1 and any(_OMITTED_EVIDENCE_SUBJECT.match(clause) for clause in clauses[1:]):
         return _explicit_evidence_clause(text)
     return ''
+
+
+def supplied_story_premise(question):
+    """A single relationship inference, with its premise supplied in this turn."""
+    text = unicodedata.normalize('NFKC', question).strip()
+    clauses = [clause.strip() for clause in _EVIDENCE_CLAUSE.split(text) if clause.strip()]
+    if len(clauses) < 2 or _STORY_ASSUME_VERIFY.search(text):
+        return False
+    premise, conclusion = clauses[:-1], clauses[-1]
+    relation = _STORY_RELATION_ASK.search(conclusion)
+    if relation is None or _STORY_FACT_ASK.search(conclusion[:relation.start()]):
+        return False
+    return (not any(_QUESTION_END.search(clause) or _STORY_FACT_ASK.search(clause) for clause in premise)
+            and bool(_STORY_FAMILY.search(' '.join(premise)))
+            and (bool(_STORY_ASSUMPTION.match(text))
+                 or any(_STORY_ASSUMPTION_LINK.match(clause) for clause in clauses)))
 
 
 def contextual_just_evidence_route(question, previous):
