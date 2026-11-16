@@ -7467,7 +7467,10 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
         self.assertEqual([tool['name'] for tool in wire[1]['tools']],['knowledge_search'])
         self.assertFalse(wire[2].get('tools'))
         self.assertIn('区间排名规则和区间得分公式分开说',wire[2]['input'][0]['content'])
-        self.assertEqual(knowledge.retrieve.call_args.args[:2],(question,scope))
+        self.assertIn(question,json.dumps(wire[2]['input'],ensure_ascii=False))
+        retrieval = knowledge.retrieve.call_args
+        self.assertEqual(retrieval.args[:2],(retrieval.kwargs['focus_query'],scope))
+        self.assertEqual(retrieval.kwargs['document_ids'],('on-09-score',))
         if after_opinion:
             self.assertEqual(candidate[0].opportunity_id,prior[0].opportunity_id)
             self.assertEqual(candidate[0].expires_at,prior[0].expires_at)
