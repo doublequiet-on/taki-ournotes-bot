@@ -6,10 +6,72 @@
 from collections import OrderedDict
 from dataclasses import asdict, dataclass, field
 import json
+import re
 import time
+import unicodedata
 from uuid import uuid4
 
 from ..domain.chat import ChatMessage
+
+
+_TOPIC_WORDS = re.compile(r'[a-z0-9]{2,}|[\u3400-\u9fff]+')
+_COMMON_TOPIC_WORDS = frozenset('刚才 今天 昨天 现在 终于 刚刚 一下 还有 大家 这个 那个 什么 是不是 怎么 怎么样 还是 感觉 真的是'.split())
+_GENERIC_ANCHOR_WORDS = frozenset(
+    '活动 游戏 讨论 角色 剧情 歌曲 卡池 留影 成员 任务 奖励 卡片 区服 谱面 日服 国际 公告 排名 玩法 更新'.split())
+_FUNCTION_CHARS = frozenset('我你他她它们这那是的了也吧吗呢啊呀说就会还要有都不又时')
+
+
+def topic_keys(text):
+    """Bounded lexical evidence for a link between two observed messages."""
+    text = unicodedata.normalize('NFKC', text[:1024]).casefold()
+    keys = set()
+    for word in _TOPIC_WORDS.findall(text):
+        if word.isascii():
+            keys.add(word)
+            continue
+        for width in (2, 3, 4):
+            for start in range(len(word) - width + 1):
+                key = word[start:start + width]
+                if (key not in _COMMON_TOPIC_WORDS
+                        and key[0] not in _FUNCTION_CHARS and key[-1] not in _FUNCTION_CHARS):
+                    keys.add(key)
+    return keys
+
+
+def select_topic_context(rows, *, limit=6):
+    """Keep current and adjacent turns; admit at most one earlier lexical anchor."""
+    if len(rows) <= limit:
+        return rows, False
+    current = rows[-1]
+    keys = topic_keys(current.text)
+    text = unicodedata.normalize('NFKC', current.text[:1024]).casefold()
+    recent = rows[-limit:]
+
+    def score(row):
+        same_speaker = row.speaker_id == current.speaker_id
+        shared = keys & topic_keys(row.text) if row.role == 'user' else set()
+        if not shared:
+            return (0, False, 0)
+        longest = max(shared, key=lambda key: (len(key), key))
+        if same_speaker:
+            # Generic subject categories aren't enough to reunite two turns.
+            # A distinctive two-character nickname can still carry that link.
+            if shared <= _GENERIC_ANCHOR_WORDS:
+                return (0, False, 0)
+        else:
+            # A shared nickname alone can refer to different things.
+            before, _, after = text.partition(longest)
+            if len(longest) < 4 or not any(key in before[:-1] or key in after[1:] for key in shared):
+                return (0, False, 0)
+        return (min(len(longest), 4), same_speaker, min(len(shared), 4))
+
+    # Fresh related turns take precedence over same-word echoes from earlier scenes.
+    best_recent = max(map(score, recent[:-1]))
+    older = [(score(row), index) for index, row in enumerate(rows[:-limit])]
+    strength, index = max(older)
+    if not strength[0] or strength <= best_recent:
+        return recent, False
+    return [rows[index], *recent[1:]], True
 
 
 @dataclass(frozen=True)
@@ -62,6 +124,8 @@ class ProactiveCandidate:
     evidence_route: str = ''
     evidence_context_id: str = ''
     context_gap_ms: int | None = None
+    image_boundary_id: str = ''
+    addressed_message_ids: tuple[str, ...] = ()
 
 
 @dataclass
@@ -71,6 +135,8 @@ class _Observed:
     size: int
     plain_text: bool
     context_generation: int
+    image: bool
+    addressed: bool
 
 
 @dataclass
@@ -278,12 +344,13 @@ class ProactiveController:
                 if (previous.context_generation == group.rows[index].context_generation
                         and previous.message.speaker_id == current.speaker_id
                         and 0 <= current.timestamp_ms-previous.message.timestamp_ms <= self.candidate_seconds*1000):
-                    return previous.message,previous.plain_text
+                    return previous.message, previous.plain_text, previous.addressed
                 return None
         return None
 
-    def observe(self, scope, message, *, addressed=False, is_bot=False, turn='advance', plain_text=True):
-        if turn not in ('advance','supplement','interjection','closed'):
+    def observe(self, scope, message, *, addressed=False, is_bot=False, turn='advance',
+                plain_text=True, image=False):
+        if turn not in ('advance','supplement','interjection','closed','answered','waiting'):
             raise ValueError('proactive_turn_invalid')
         self.sweep()
         group = self.groups.get(scope)
@@ -309,8 +376,9 @@ class ProactiveController:
             group.rows.clear()
             self._cancel(group)
             return False
-        group.rows.append(_Observed(message, now, size, plain_text and not addressed and turn!='closed',
-                                    group.context_generation))
+        group.rows.append(_Observed(message, now, size,
+                                    plain_text and not addressed and turn not in ('closed','answered','waiting'),
+                                    group.context_generation, image, addressed))
         while (len(group.rows) > self.max_messages
                or sum(row.size for row in group.rows) > self.group_bytes):
             group.rows.pop(0)
@@ -418,15 +486,28 @@ class ProactiveController:
         group.pending_since = None
         group.pending_opportunity = None
         gap = group.context_gap
-        context_gap_ms = (gap[1] if gap and (lightweight or evidence_required)
-                          and group.continuation_user_id is None
-                          and gap[0] > now - min(self.window_seconds, 300) else None)
-        messages = tuple(row.message for row in group.rows if row.message.message_id != target.message_id
-                         and (context_gap_ms is None or row.context_generation == group.context_generation)) + (target,)
+        text_lane = (lightweight or evidence_required) and group.continuation_user_id is None
+        context_gap_ms = gap[1] if text_lane and gap and gap[0] > now - min(self.window_seconds, 300) else None
+        rows = group.rows
+        image_boundary_id = ''
+        if text_lane:
+            target_index = next(i for i, row in enumerate(rows) if row.message is target)
+            # A weak aside can arrive after the target without replacing it.
+            # Keep the history as it stood up to that target's receipt.
+            rows = rows[:target_index + 1]
+            rows = [row for row in rows if row.at > now - 300
+                    and (context_gap_ms is None or row.context_generation == group.context_generation)]
+            last_image = next((i for i in range(len(rows)-1, -1, -1) if rows[i].image), None)
+            if last_image is not None:
+                rows = rows[last_image:]
+                image_boundary_id = rows[0].message.message_id
+        messages = tuple(row.message for row in rows if row.message.message_id != target.message_id) + (target,)
         return ProactiveCandidate(ticket.candidate_id, scope, ticket.version, ticket.policy_version,
                                   ticket.service_subject_id, messages,
                                   now, ticket.expires_at, reserve_cost_micro, deferred, group.evaluation,
-                                  opportunity_id=opportunity.id, context_gap_ms=context_gap_ms)
+                                  opportunity_id=opportunity.id, context_gap_ms=context_gap_ms,
+                                  image_boundary_id=image_boundary_id,
+                                  addressed_message_ids=tuple(row.message.message_id for row in rows if row.addressed))
 
     def opportunity_budget(self,candidate):
         group,ticket=self._ticket(candidate)

@@ -126,7 +126,7 @@ export function proactiveSettings(s,openGroup){
      ].map(([label,status,ready])=>h('div',[h('small',label),h('span',{class:['state-pill',ready?'complete':null]},status)]))),
      value.lightweight?.status==='blocked'&&h('small','此群已列入轻量名单。主动模型、审批或限额条件尚未满足。'),
      value.lightweight?.status==='ready'&&value.lightweight.reserve_micro!=null&&
-       h('small','轻量模式两段预留上界 USD '+money(value.lightweight.reserve_micro)+'。每条消息仍须通过准入判断。'),
+       h('small','轻量模式本轮预留上界 USD '+money(value.lightweight.reserve_micro)+'。每条消息仍须通过准入判断。'),
    ]),
    proactiveBudgetObservation(s,{collapsed:true}),
    h('section',{class:'proactive-quota'},[

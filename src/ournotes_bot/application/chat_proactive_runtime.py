@@ -10,7 +10,7 @@ import re
 import sqlite3
 import unicodedata
 from collections import Counter,OrderedDict
-from dataclasses import asdict,replace
+from dataclasses import asdict, dataclass, replace
 from fractions import Fraction
 from types import SimpleNamespace
 
@@ -21,7 +21,7 @@ from .chat_jobs import (
     ChatServices, ServiceError, lightweight_minimum_cost_micro, lightweight_profile, maximum_cost_micro,
     proactive_minimum_cost_micro, service_request_id, uses_proactive_day_accounting,
 )
-from .proactive_chat import ProactiveController,ProactivePolicy
+from .proactive_chat import ProactiveController, ProactivePolicy, select_topic_context, topic_keys
 from .chat_followup import Followups
 from .persona import (contextual_just_evidence_route, explicit_evidence_route,
                       lightweight_image_reference, lightweight_needs_evidence)
@@ -39,19 +39,35 @@ _TURN_CLOSED = re.compile(r'(?:已经有人回答了|(?:我|他|她|我们)?(?:�
 _TOPIC_SHIFT = re.compile(r'^(?:换个话题|说个别的|先不说这个|聊点别的|打断一下[，,:：])')
 _SUPPLEMENT = re.compile(r'^(?:补充|再补|漏说|忘了说|我说的是|我指的是|更正|纠正|我的意思是)')
 _ANSWER = re.compile(r'^(?:答案是|选[的是]|直接选|原因是|因为|可以用|用.+就行)')
+_ANSWER_UNCERTAIN = re.compile(r'[?？]|是不是|会不会|能不能|可不可以|要不要|有没有|能否|是否|不确定'
+                               r'|(?:吗|么|吧)[。.!！…]*$')
+_WAITING = re.compile(r'(?:(?:等我|我马上|我一会儿|我这就|等下我)(?:再|去)?'
+                      r'(?:发(?:个图|张图|截图|图片|视频|出来|一下)?'
+                      r'|补(?:充)?(?:一句|一条|一段|一下)?'
+                      r'|贴(?:个图|张图|截图|图片|出来|一下)?'
+                      r'|说(?:一句|一下|完)?)'
+                      r'|我还没说完|等我说完|先听我说完)')
 _WEB_URL = re.compile(r'[a-z][a-z0-9+.-]*://|www\.', re.I)
+_REPLY_KINDS = ('react', 'opinion', 'joke', 'question')
 
 
-def _observation_turn(target, request):
+def _observation_turn(target, request, *, lightweight=False):
     """Resolve explicit conversation cues before the model evaluates a new scene."""
-    if target is None or request.attachments:
+    if request.attachments or (target is None and not lightweight):
         return 'advance'
     text = _echo_key(request.body).strip('，,！!？?~～')
-    previous = _echo_key(target.text)
-    same_speaker = request.user_id == target.speaker_id
-    quoted = bool(previous and _echo_key(request.quoted_text) == previous)
     if _TOPIC_SHIFT.match(text):
         return 'shift'
+    if (lightweight and (target is None or request.user_id == target.speaker_id)
+            and not request.body.rstrip().endswith(('?', '？')) and _WAITING.fullmatch(text)):
+        return 'waiting'
+    if lightweight and text == '已经有人回答了':
+        return 'answered'
+    if target is None:
+        return 'advance'
+    previous = _echo_key(target.text)
+    same_speaker = request.user_id == target.speaker_id
+    quoted = bool(not lightweight and previous and _echo_key(request.quoted_text) == previous)
     if _TURN_CLOSED.fullmatch(text) and (same_speaker or quoted or text == '已经有人回答了'):
         return 'closed'
     if not same_speaker and _ANSWER.match(text) and quoted:
@@ -60,7 +76,37 @@ def _observation_turn(target, request):
         return 'interjection'
     if _SUPPLEMENT.match(text) and (same_speaker or quoted):
         return 'supplement'
+    if lightweight:
+        common = topic_keys(text) & topic_keys(previous)
+        if (not same_speaker and target.text.rstrip().endswith(('?', '？'))
+                and _ANSWER.match(text) and common and not _ANSWER_UNCERTAIN.search(request.body.strip())
+                and (text.startswith('答案是') or any(len(key) >= 3 for key in common))):
+            return 'answered'
+        if same_speaker and text != previous and any(len(key) >= 3 for key in common):
+            return 'supplement'
     return 'advance'
+
+
+def _ack_by_source(saved, current_ms):
+    return {row.reply_to: row for row in saved.values()
+            if row.role == 'assistant' and row.timestamp_ms <= current_ms}
+
+
+def _confirmed_addressed_source(position, saved, ack_by_source):
+    source = saved.get(position.message_id)
+    if (source is not None and source.role == 'user' and source.speaker_id == position.speaker_id
+            and source.timestamp_ms == position.timestamp_ms and position.message_id in ack_by_source):
+        return source
+    return None
+
+
+@dataclass(frozen=True)
+class _ObservationReceipt:
+    gateway_epoch: str
+    observation_seq: int
+    content_digest: str
+    result: tuple[bool, int, bool]
+    covered_seq: int
 
 
 class ProactiveChat:
@@ -77,12 +123,53 @@ class ProactiveChat:
         return value
 
     @staticmethod
-    def response_format():
-        return {'type':'json_schema','name':'proactive_participation','strict':True,'schema':{
-            'type':'object','properties':{
-                'participation':{'type':'string','enum':['reply','skip','defer']},
-                'text':{'type':'string','enum':['']},'delay_seconds':{'type':['integer','null']}},
-            'required':['participation','text','delay_seconds'],'additionalProperties':False}}
+    def response_format(*, one_pass=False):
+        properties = {
+            'participation': {'type': 'string', 'enum': ['reply', 'skip', 'defer']},
+            'text': {'type': 'string'},
+            'delay_seconds': {'type': ['integer', 'null']},
+        }
+        if one_pass:
+            properties.update(
+                target_message_id={'type': ['string', 'null']},
+                anchor_message_ids={'type': 'array', 'items': {'type': 'string'}, 'maxItems': 2},
+                reply_kind={'type': ['string', 'null'], 'enum': [*_REPLY_KINDS, None]},
+            )
+        else:
+            properties['text']['enum'] = ['']
+        return {'type': 'json_schema', 'name': 'proactive_one_pass' if one_pass else 'proactive_participation',
+                'strict': True, 'schema': {'type': 'object', 'properties': properties,
+                    'required': list(properties), 'additionalProperties': False}}
+
+    @staticmethod
+    def parse_one_pass(text, target_id, visible_ids):
+        try:
+            value = json.loads(text)
+        except (ValueError, TypeError):
+            raise ModelError('model_protocol_error') from None
+        require(isinstance(value, dict) and set(value) == {
+            'participation', 'text', 'delay_seconds', 'target_message_id', 'anchor_message_ids', 'reply_kind',
+        }, 'model_protocol_error')
+        mode, body, delay = value['participation'], value['text'], value['delay_seconds']
+        target, anchors, kind = value['target_message_id'], value['anchor_message_ids'], value['reply_kind']
+        require(mode in ('reply', 'skip', 'defer') and isinstance(body, str), 'model_protocol_error')
+        if mode != 'reply':
+            require(body == '' and target is None and anchors == [] and kind is None, 'model_protocol_error')
+            require((type(delay) is int and 2 <= delay <= 5) if mode == 'defer' else delay is None,
+                    'model_protocol_error')
+            return value
+        require(delay is None and target == target_id and kind in _REPLY_KINDS, 'model_protocol_error')
+        require(isinstance(anchors, list) and len(anchors) <= 2 and all(
+            isinstance(anchor, str) and anchor != target_id and anchor in visible_ids for anchor in anchors
+        ) and len(anchors) == len(set(anchors)), 'model_protocol_error')
+        body = body.strip()
+        require(0 < len(body) <= 90 and body.splitlines() == [body] and '<TAKI_SKIP>' not in body
+                and not any(ord(char) < 32 for char in body), 'model_protocol_error')
+        question_marks = body.count('?') + body.count('？')
+        require(question_marks <= 1, 'model_protocol_error')
+        if kind == 'question':
+            require(question_marks == 1 and body.endswith(('?', '？')), 'model_protocol_error')
+        return {**value, 'text': body}
 
     def __init__(self,agent):
         self.agent=agent
@@ -94,6 +181,9 @@ class ProactiveChat:
         self.lightweight_groups = frozenset(
             group_id.strip() for group_id in os.getenv('OURNOTES_PROACTIVE_LIGHTWEIGHT_GROUPS', '').split(',')
             if group_id.strip()
+        )
+        self.one_pass_groups = self.lightweight_groups.intersection(
+            group_id.strip() for group_id in os.getenv('OURNOTES_PROACTIVE_ONE_PASS_GROUPS', '').split(',')
         )
         self.services=ChatServices(agent.runtime.usage.path.parent,agent.runtime.backend.instance_id,
             agent.runtime.backend.app_id,filename='chat-proactive-services-v1.json',authority=agent.runtime.admin.db,require_authority=True)
@@ -177,6 +267,11 @@ class ProactiveChat:
         return (group_id in self.lightweight_groups and policy is not None and uses_proactive_day_accounting(policy)
                 and profile.wire_profile == 'openai-responses-v1' and profile.model == 'gpt-6.1-terra')
 
+    def lightweight_reservation(self, group_id, profile):
+        if group_id in self.one_pass_groups:
+            return math.ceil(maximum_cost_micro(lightweight_profile(profile, True)))
+        return lightweight_minimum_cost_micro(profile)
+
     def lightweight_status(self, group_id):
         if group_id not in self.lightweight_groups:
             return {'status': 'off'}
@@ -187,7 +282,7 @@ class ProactiveChat:
         policy = self.policy(snapshot, SimpleNamespace(conversation_id=group_id))
         if not self.uses_lightweight(group_id, snapshot.profile, policy):
             return {'status': 'blocked'}
-        return {'status': 'ready', 'reserve_micro': lightweight_minimum_cost_micro(snapshot.profile)}
+        return {'status': 'ready', 'reserve_micro': self.lightweight_reservation(group_id, snapshot.profile)}
 
     def configured(self,request,snapshot,*,continuation=False):
         scope=self.scope(request)
@@ -218,7 +313,7 @@ class ProactiveChat:
         followup=self.followups.match(scope,group.rows[-1].message.message_id)
         return group.continuation_user_id if followup else None
 
-    def observe(self,request):
+    def observe(self,request,*,ingress_gap=False):
         if request.kind!='group' or request.policy.natural_query!='model':return False
         try:
             scope=self.scope(request);settings=self.settings(request.conversation_id)
@@ -261,6 +356,7 @@ class ProactiveChat:
                         self.control_event(request,'supplement_merged')
                     return False
             followup=self.followups.match(scope,request.message_id) if settings['followup_enabled'] else None
+            lightweight = False
             if followup is not None and re.fullmatch(r'(?:不用了|先这样|先不查了|停止|结束|算了)[。！!~～\s]*',request.body.strip()):
                 self.followups.clear(scope,request.user_id);self.controller.cancel(scope)
                 self.agent.tasks.clear(request.scope,request.user_id)
@@ -282,7 +378,7 @@ class ProactiveChat:
                 snapshot=self.agent.runtime.proactive_snapshot(request.conversation_id)
                 policy=self.configured(request,snapshot)
                 lightweight = self.uses_lightweight(request.conversation_id, snapshot.profile, policy)
-                if lightweight and (excluded or request.quote_hint or request.quoted_text):
+                if lightweight and (excluded or request.reference or request.quote_hint or request.quoted_text):
                     # The ingress can carry an older platform timestamp than already saved chat.
                     self.controller.mark_context_gap(scope, int(self.agent.runtime.backend.clock() * 1000))
                     if not excluded:
@@ -293,13 +389,18 @@ class ProactiveChat:
                 if policy is None:
                     status='service_disabled' if self.owners()[1].proactive(snapshot,request.conversation_id) else 'platform_unapproved'
                     self.control_event(request,status);return False
+            target = None if lightweight and ingress_gap else self.controller.target(scope)
+            turn = 'advance' if followup is not None else _observation_turn(target, request, lightweight=lightweight)
+            if lightweight and (ingress_gap or request.attachments or turn == 'shift'):
+                self.controller.mark_context_gap(scope, int(self.agent.runtime.backend.clock() * 1000))
+                if ingress_gap:
+                    self.control_event(request, 'proactive_ingress_gap')
             if request.attachments:
                 self.agent.images.remember(self.agent.image_scope(request),request.message_id,request.user_id,request.timestamp_ms,request.attachments)
-            target = self.controller.target(scope)
-            turn = 'advance' if followup is not None else _observation_turn(target, request)
             observed = self.controller.observe(scope,ChatMessage(request.message_id,request.user_id,
                 request.body,request.timestamp_ms,display_name=request.sender_name),
                 turn='advance' if turn=='shift' else turn,
+                image=bool(request.attachments),
                 plain_text=not (request.attachments or request.reference or request.quote_hint or request.quoted_text
                                 or _WEB_URL.search(unicodedata.normalize('NFKC',request.body))))
             if observed and turn != 'advance':
@@ -312,17 +413,21 @@ class ProactiveChat:
         scope = self.scope(request)
         identity = request.content_digest
         previous = self.observation_responses.get(scope)
-        if previous is not None and previous[0] == request.gateway_epoch and request.ingress_seq <= previous[1]:
-            if request.ingress_seq == previous[1] and identity == previous[2]:
-                return previous[3]
+        if (previous is not None and previous.gateway_epoch == request.gateway_epoch
+                and request.ingress_seq <= previous.covered_seq):
+            if request.ingress_seq == previous.observation_seq and identity == previous.content_digest:
+                return previous.result
             return False, 0, False
         target = self.controller.target(scope)
-        observed = self.observe(request)
+        gap = previous is not None and (previous.gateway_epoch != request.gateway_epoch
+                                        or request.ingress_seq != previous.covered_seq + 1)
+        observed = self.observe(request, ingress_gap=gap)
         current = self.controller.target(scope)
         delay = self.observation_delay(request) if observed else None
         preserve = bool(observed and target is not None and current is target)
         result = (delay is not None, delay or 0, preserve)
-        self.observation_responses[scope] = (request.gateway_epoch,request.ingress_seq,identity,result)
+        self.observation_responses[scope] = _ObservationReceipt(
+            request.gateway_epoch, request.ingress_seq, identity, result, request.ingress_seq)
         self.observation_responses.move_to_end(scope)
         while len(self.observation_responses)>self.controller.max_scopes:
             self.observation_responses.popitem(last=False)
@@ -355,10 +460,18 @@ class ProactiveChat:
             return None
         evidence_route = explicit_evidence_route(request.body) if lightweight else ''
         evidence_context_id = ''
+        addressed_evidence = None
         if lightweight and not evidence_route:
             context = self.controller.preceding_message_from_speaker(scope,request.message_id)
             if context is not None:
-                previous,plain_text = context
+                previous, plain_text, addressed = context
+                if addressed:
+                    saved = {row['message_id']: ChatMessage(**row) for row in self.agent.store.recent(
+                        request.scope, since_ms=previous.timestamp_ms - 1)}
+                    ack_by_source = _ack_by_source(saved, request.timestamp_ms)
+                    addressed_evidence = _confirmed_addressed_source(previous, saved, ack_by_source)
+                    previous = addressed_evidence or previous
+                    plain_text = addressed_evidence is not None
                 evidence_route = contextual_just_evidence_route(request.body,previous.text)
                 if evidence_route:
                     if (not plain_text or lightweight_image_reference(previous.text,context_source=True)
@@ -369,7 +482,7 @@ class ProactiveChat:
         if lightweight and not evidence_route and lightweight_needs_evidence(request.body):
             self.control_event(request,'chat_service_lightweight_evidence_required')
             return None
-        evidence_calls = {'just_clarify': 1, 'story_fact': 4}.get(evidence_route, 3)
+        evidence_calls = {'just_clarify': 1, 'story_clarify': 1, 'story_fact': 4}.get(evidence_route, 3)
         if evidence_route and self.agent.budget.model_calls < evidence_calls:
             self.control_event(request,'chat_service_lightweight_evidence_required')
             return None
@@ -379,8 +492,9 @@ class ProactiveChat:
         if evidence_route:
             minimum = model_cost = math.ceil(maximum_cost_micro(profile) * evidence_calls)
         elif lightweight:
-            minimum = lightweight_minimum_cost_micro(profile)
-            model_cost = minimum + maximum_cost_micro(lightweight_profile(profile, False))
+            minimum = self.lightweight_reservation(request.conversation_id, profile)
+            # Keep the staged opportunity ceiling for replacements and defers.
+            model_cost = lightweight_minimum_cost_micro(profile) + maximum_cost_micro(lightweight_profile(profile, False))
         else:
             minimum = proactive_minimum_cost_micro(profile)
             model_cost = maximum_cost_micro(profile) * self.agent.budget.model_calls
@@ -398,7 +512,7 @@ class ProactiveChat:
         if not continuation:
             preflight=service_request_id('proactive',request.instance_id,request.app_id,
                 request.conversation_id,'budget/'+request.request_id)
-            # Check the actual staged minimum so pacing and hard budget denials stay distinguishable.
+            # Check this path's minimum so pacing and hard budget denials stay distinguishable.
             required = minimum if policy.proactive.max_cost_micro_per_day else 1
             evidence_budget = (dict(required_calls=evidence_calls,opportunity_calls=self.agent.budget.model_calls,
                 opportunity_requests=self.opportunity_requests(request,self.controller.opportunity_candidates(scope)))
@@ -412,7 +526,7 @@ class ProactiveChat:
             spent=max(permit.spent_cost_micro,self.controller.status(self.scope(request))['hourly_cost_micro'])
             cost=min(math.ceil(cost),math.floor(permit.available_cost_micro),
                      math.floor(policy.proactive.max_cost_micro_per_hour-spent))
-            # Fund the decision and final reply; tools/rechecks spend only what remains.
+            # Fund the initial evaluation; tools and rechecks spend only what remains.
             if cost<minimum:
                 details = dict(permit.budget_details)
                 details.update(requested_cost_micro=minimum, available_cost_micro=max(0, cost),
@@ -421,7 +535,11 @@ class ProactiveChat:
         candidate=self.controller.candidate(scope,reserve_cost_micro=math.ceil(cost),
             message_id=request.message_id,lightweight=lightweight and not evidence_route,
             evidence_required=bool(evidence_route))
-        if candidate is None:return None
+        if candidate is None:
+            target = self.controller.target(scope)
+            if target is None or target.message_id != request.message_id:
+                self.control_event(request, 'proactive_candidate_stale')
+            return None
         last=candidate.messages[-1]
         if (last.message_id,last.speaker_id,last.text,last.timestamp_ms)!=(request.message_id,request.user_id,request.body,request.timestamp_ms):
             self.controller.cancel(self.scope(request));return None
@@ -429,6 +547,10 @@ class ProactiveChat:
         if followup is not None:candidate=replace(candidate,followup=followup,continuation=True)
         if continuation:return candidate,None,snapshot,'continuation/'+candidate.candidate_id
         if lightweight:
+            if addressed_evidence is not None and evidence_context_id:
+                candidate = replace(candidate, messages=tuple(
+                    addressed_evidence if row.message_id == evidence_context_id else row
+                    for row in candidate.messages))
             candidate=replace(candidate,lightweight=not evidence_route,evidence_route=evidence_route,
                               evidence_context_id=evidence_context_id)
         job=service_request_id('proactive',request.instance_id,request.app_id,request.conversation_id,candidate.candidate_id)
@@ -458,6 +580,26 @@ class ProactiveChat:
             now=time.monotonic()
             work.chat_coalesce_until=now+settings['coalesce_seconds'];work.chat_coalesce_deadline=now+8
         if scope in self.controller.groups:self.controller.set_addressed(scope,True)
+        self.note_addressed_ingress(work, scope, settings)
+
+    def note_addressed_ingress(self, work, scope, settings):
+        request = work.request
+        previous = self.observation_responses.get(scope)
+        if (not work.chat or request.conversation_id not in self.lightweight_groups
+                or request.policy.natural_query != 'model'
+                or request.attachments or request.reference or request.quote_hint or request.quoted_text
+                or _WEB_URL.search(unicodedata.normalize('NFKC', request.body))
+                or request.user_id in {row['user_id'] for row in settings['excluded_users']}
+                or previous is None or previous.gateway_epoch != request.gateway_epoch
+                or request.ingress_seq != previous.covered_seq + 1
+                or not self.agent.store.source_valid(request.scope, request.message_id, request.timestamp_ms)):
+            return
+        # /submit and /observations share the gateway's sequence. Record only
+        # the position here; a saved source and ACK are required to use it.
+        position = ChatMessage(request.message_id, request.user_id, '', request.timestamp_ms)
+        if self.controller.observe(scope, position, addressed=True):
+            self.observation_responses[scope] = replace(previous, covered_seq=request.ingress_seq)
+            self.observation_responses.move_to_end(scope)
 
     async def coalesce_addressed(self,work,content):
         while work.active and work.chat_coalesce_until>time.monotonic():
@@ -538,10 +680,57 @@ class ProactiveChat:
                     and (self.controller.can_send(work.proactive) if sending else self.controller.valid(work.proactive)))
         except (ModelError,ServiceError,ValueError,OSError,sqlite3.Error):return False
 
+    def text_history(self, work, rows, saved):
+        # Keep the gateway's observation order. Restore a saved prefix only
+        # before the observable scene, or join an ACK to its visible source.
+        image_id = work.proactive.image_boundary_id
+        addressed = set(work.proactive.addressed_message_ids)
+        gap = work.proactive.context_gap_ms is not None or image_id
+        current = rows[-1]
+        ack_by_source = _ack_by_source(saved, current.timestamp_ms)
+        prior = []
+        for row in rows[:-1]:
+            if row.message_id in addressed:
+                row = _confirmed_addressed_source(row, saved, ack_by_source)
+                if row is None:
+                    continue
+            if row.message_id != image_id and not lightweight_image_reference(row.text):
+                prior.append(row)
+        source_ids = {row.message_id for row in prior}
+        first_ms = min(row.timestamp_ms for row in rows)
+        prefix = [row for row in saved.values()
+                  if not gap and row.message_id not in source_ids and row.message_id not in addressed
+                  and row.message_id != current.message_id and row.timestamp_ms < first_ms
+                  and not lightweight_image_reference(row.text)]
+        prefix_ids = {row.message_id for row in prefix if row.role == 'user'}
+        prefix = [row for row in prefix if row.role == 'user' or row.reply_to in prefix_ids]
+        scene = list(prefix)
+        for row in prior:
+            scene.append(row)
+            ack = ack_by_source.get(row.message_id)
+            if ack is not None and ack.message_id not in source_ids:
+                scene.append(ack)
+        scene.append(current)
+        selected, anchored = select_topic_context(scene, limit=5 if image_id else 6)
+        visible = {row.message_id for row in selected}
+        selected = [row for row in selected if row.role == 'user' or row.reply_to in visible]
+        self.trace(work, 'control', status='proactive_context_anchor' if anchored else 'proactive_context_recent',
+                   messages=len(selected))
+        if image_id:
+            # The cache can expire or evict a picture before the candidate is
+            # prepared. The observed media boundary survives either event.
+            selected = [replace(rows[0], text=''), *selected]
+        return selected
+
     def history(self,work):
         # Merge scoped participating history with frozen observations; only a new ACK persists observations.
         followup=work.proactive.followup
+        text_lane = work.proactive.lightweight or work.proactive.evidence_route
         rows=list(work.proactive.messages[-12:] if followup else work.proactive.messages[-48:])
+        if not text_lane and work.proactive.addressed_message_ids:
+            rows = [row for row in rows if row.message_id not in work.proactive.addressed_message_ids]
+        if text_lane and work.proactive.image_boundary_id and rows[0].message_id != work.proactive.image_boundary_id:
+            rows.insert(0, work.proactive.messages[0])
         if followup:rows=[row for row in rows if row.message_id in followup.observed_ids]
         saved={}
         if followup:
@@ -551,25 +740,31 @@ class ProactiveChat:
             current=next((row for row in rows if row.message_id==work.request.message_id),None)
             if current:rows=[row for row in rows if row.message_id!=current.message_id]+[current]
         if not followup:
-            since_ms = int((self.agent.runtime.backend.clock()-900)*1000)
+            since_ms = int((self.agent.runtime.backend.clock()-(300 if text_lane else 900))*1000)
             if work.proactive.context_gap_ms is not None:
                 # Saved participation must not reintroduce the older scene.
                 since_ms = max(since_ms, work.proactive.context_gap_ms)
             saved={row['message_id']:ChatMessage(**row) for row in self.agent.store.recent(work.request.scope,
                 since_ms=since_ms)}
+            if text_lane:
+                excluded = {row['user_id'] for row in self.settings(work.request.conversation_id)['excluded_users']}
+                saved = {mid: row for mid, row in saved.items() if row.speaker_id not in excluded}
             if work.proactive.context_gap_ms is not None:
                 # A late receipt can give a reply to the older scene a newer timestamp.
                 source_ids = saved.keys() | {row.message_id for row in rows}
                 saved = {mid: row for mid, row in saved.items() if row.role != 'assistant' or row.reply_to in source_ids}
-            merged=dict(saved)
-            for row in rows:merged.setdefault(row.message_id,row)
-            current=merged.pop(work.request.message_id)
-            rows=sorted(merged.values(),key=lambda row:row.timestamp_ms)
-            # The current observation stays last even when QQ and ACK clocks differ.
-            rows.append(current)
-        if work.proactive.lightweight or work.proactive.evidence_route:
-            rows = [row for row in rows if row.timestamp_ms >= work.request.timestamp_ms - 300_000][-6:]
+            if text_lane:
+                rows = self.text_history(work, rows, saved)
+            else:
+                merged=dict(saved)
+                for row in rows:merged.setdefault(row.message_id,row)
+                current=merged.pop(work.request.message_id)
+                rows=sorted(merged.values(),key=lambda row:row.timestamp_ms)
+                # The current observation stays last even when QQ and ACK clocks differ.
+                rows.append(current)
         protected={work.request.message_id}
+        if work.proactive.image_boundary_id:
+            protected.add(work.proactive.image_boundary_id)
         recent_reply=next((row for row in reversed(rows) if row.role=='assistant'),None)
         if recent_reply:protected.update((recent_reply.message_id,recent_reply.reply_to))
         while rows and (len(rows)>48 or sum(len(json.dumps(asdict(row),ensure_ascii=False).encode()) for row in rows)>24576):
@@ -590,6 +785,8 @@ class ProactiveChat:
             try:ref=self.agent.images.get(self.agent.image_scope(work.request),row.message_id)
             except ImageError:ref=None
             if ref:value['image_attachments']=''.join('[图片附件 '+item.id+' '+item.content_type+'；图像仅在本轮或有效引用中可见]' for item in ref.attachments)
+            elif row.message_id == work.proactive.image_boundary_id:
+                value['image_attachments'] = '[图片附件]'
             messages.append({'role':row.role,'content':json.dumps(value,ensure_ascii=False)})
         return messages
 

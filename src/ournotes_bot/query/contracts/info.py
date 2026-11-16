@@ -63,6 +63,7 @@ class InfoAnswer:
     evidence_expires_at: float | None = None
     captured_images: tuple[tuple[str, bytes], ...] = ()
     original_image: bytes | None = None
+    calendar_time_status: Literal["exact", "related", "unavailable"] | None = None
 
 
 def row_text(row: InfoRow) -> str:

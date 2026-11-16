@@ -187,7 +187,7 @@ Object.assign(eventValues,{echo:'主动回复重复当前消息，已跳过',lig
  chat_service_lightweight_evidence_required:'明确求证，已跳过轻量接话',
  lightweight_context_required:'需要图片或引用上下文，已跳过轻量接话',
  lightweight_text_after_image:'只取最近一张图之后的文字',
- lightweight_initial:'轻量初判'});
+ lightweight_initial:'轻量初判',lightweight_one_pass:'轻量一次判断'});
 const eventText=value=>eventValues[value];
 eventValues.chat_service_pacing_limit='当前已释放额度不足，剩余额度将分时释放';
 eventValues.chat_service_risk_limit='旧规则下累计风险额度不足';

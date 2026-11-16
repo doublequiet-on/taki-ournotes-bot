@@ -2867,10 +2867,24 @@ class ChatAgentTests(Fixture, unittest.IsolatedAsyncioTestCase):
             'JUST 怎么算': 'just_clarify', 'JUST 扩窗怎么叠': 'just_window',
             '判卡满破了是变宽还是变久？': 'just_card', '留影31 Lv4到Lv5 是变宽还是变久': 'just_card',
             '到底要几张满破判定卡？': 'just_minimum', '海希什么关系': 'story_fact',
+            '有人知道立希生日是哪天吗？': 'story_fact', '立希喜欢吃什么': 'story_fact',
+            '立希是鼓手，那作曲呢？': 'story_fact', '她俩什么关系': 'story_clarify',
+            '爱音为啥那个时候那么急': 'story_clarify', '这期国际服活动哪天结束？': 'activity_time',
+            '这期国际服榜线涨太快，大家都几点收手了？': '',
+            '看到有人说海希真的官配，这谁当真了？': '',
         }
         for question, route in cases.items():
             with self.subTest(question=question):
                 self.assertEqual(explicit_evidence_route(question), route)
+
+    def test_story_pronoun_does_not_choose_two_people_from_three(self):
+        from ournotes_bot.application.persona import referenced_story_question
+
+        for reference in ('海希和灯在一起', '灯和海希在一起', '我看到灯和海希在一起', '海希 + 立希和爱音'):
+            with self.subTest(reference=reference):
+                self.assertEqual(referenced_story_question('她俩什么关系', reference), '')
+        self.assertEqual(referenced_story_question('她俩什么关系', '海希'), '海希什么关系')
+        self.assertEqual(referenced_story_question('她俩什么关系', '立希和高松灯'), '立希和高松灯什么关系')
 
     async def test_just_count_uses_scoped_approved_expansion_passage_without_guessing(self):
         from types import SimpleNamespace
@@ -4252,6 +4266,107 @@ class ChatSourceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
         self.assertFalse(self.backend.lookup(plan['request_id'],'e1')['send_allowed'])
         self.backend.finish(self.backend.works[plan['delivery_id']],'aborted')
 
+    async def test_story_fact_read_pins_relevant_official_and_conflicting_community(self):
+        from test_platform_boundary import StoryPublicationTests
+        from ournotes_bot.domain.model_calls import ToolCall
+        from ournotes_bot.sources.story_files import source_content_hash
+
+        fixture=StoryPublicationTests();fixture.setUp();self.addCleanup(fixture.doCleanups)
+        bundle=fixture.bundle(kind='official_summary')
+        template=bundle['scenes'][0]
+        corpus=(
+            ('relevant-official','official_summary','海铃官网简介','立希和八幡海铃是同班同学。'),
+            ('other-official','official_original','校内场景','八幡海铃与立希在排练。'),
+            ('fan-pair','fan_analysis','海希／希海','社区推测立希和八幡海铃不是同班同学。'),
+        )
+        bundle['scenes']=[]
+        for sid,kind,title,line in corpus:
+            scene={**template,'scene_id':sid,'source_id':sid,'title':title,'next_scene':None,
+                   'utterances':[dict(template['utterances'][0],text_ja=line)]}
+            bundle['scenes'].append(scene)
+        bundle['sources']=[dict(bundle['sources'][0],source_id=sid,source_kind=kind,
+                                content_sha256=source_content_hash([scene]))
+                           for (sid,kind,_,_),scene in zip(corpus,bundle['scenes'])]
+        fixture.publish(bundle)
+        self.backend.model_runtime.agent.story=fixture.service
+        matches=fixture.service.search('海希什么关系',limit=3,facts_only=True)
+        self.assertEqual([item['scene_id'] for item in matches['items']],['relevant-official','fan-pair'])
+        self.assertEqual(fixture.service.search('立希生日是哪天',facts_only=True)['status'],'no_results')
+        bodies=self.capture_native_bodies()
+        self.client.request.side_effect=[
+            self.result(calls=(ToolCall('s','story_search','{"query":"扯开话题"}'),)),
+            self.result(calls=(ToolCall('r','story_read',json.dumps({'handle':matches['items'][1]['handle']})),)),
+            self.result('官方简介说她们同班。社区推测和简介有分歧。'),
+        ]
+        plan,attempts=await self.prepare_native('/聊 海希什么关系')
+        self.assertEqual(len(attempts),3)
+        data=json.loads(next(row['content'] for row in bodies[-1]['messages'] if row.get('tool_call_id')=='r'))
+        self.assertEqual([scene['source_kind'] for scene in data['scenes']],['official_summary','fan_analysis'])
+        self.assertEqual(data['evidence_read'],[item['handle'] for item in matches['items']])
+        self.assertEqual(plan['parts'][0]['business_status'],'success')
+        self.event(plan,'intent');self.event(plan,'ack')
+
+    async def test_activity_time_reads_each_requested_calendar_and_preserves_image_gap(self):
+        from ournotes_bot.domain.info_catalog import ActivityCalendar, ActivityInfo
+        from ournotes_bot.domain.model_calls import ToolCall
+        import time
+
+        now=time.time()
+        self.repo.activity_announcements = Mock()
+        self.repo.activity_announcements.next.return_value = (None, '')
+        self.repo.activity_calendars={
+            'jp': ActivityCalendar((ActivityInfo(11,'合成日服活动',{},start_at=now-3600,end_at=now+3600),),
+                                   'jp-r1','jp-fixture','observation-jp'),
+            'intl': ActivityCalendar((ActivityInfo(22,'合成国际服活动',{},start_at=now-3600,end_at=now+7200),),
+                                     'intl-r1','intl-fixture','observation-intl'),
+        }
+        bodies=self.capture_native_bodies()
+        scenarios=(
+            ('这期国际服活动哪天结束？',(('intl','结束'),),'ok',True),
+            ('手都打疼了，日服和国际服这期活动哪天结束？',(('jp','结束'),('intl','结束')),'ok',False),
+            ('港服和国际服这期活动哪天结束？',(('intl','结束'),),'partial',False),
+            ('日服这期活动哪天开始，国际服这期活动哪天结束？',(('jp','开始'),('intl','结束')),'ok',False),
+            ('日服这期活动哪天结束、国际服这期活动何时开始',(('jp','结束'),('intl','开始')),'ok',False),
+            ('国际服这期活动什么时候开始？这期活动什么时候结束？',(('intl','开始'),('intl','结束')),'ok',False),
+            ('这期日服、国际服活动哪天结束？',(('jp','结束'),('intl','结束')),'ok',False),
+            ('英服这期活动哪天结束？',(('intl','结束'),),'ok',False),
+            ('这期国际服活动哪天结束？',(),'no_results',False),
+        )
+        for seq,(question,fields,status,image) in enumerate(scenarios,1):
+            if status=='no_results':
+                self.repo.activity_calendars['intl'] = replace(self.repo.activity_calendars['intl'], records=())
+            with self.subTest(question=question,status=status):
+                self.client.request.side_effect=[
+                    self.result(calls=(ToolCall('c','catalog_info','{"kind":"event","query":"日服 当前"}'),)),
+                    self.result('合成回答。'),
+                ]
+                if image:
+                    raw={**self.request('native'+str(seq),seq),'quote_hint':'image'}
+                    with patch.object(self,'request',return_value=raw):
+                        plan,attempts=await self.prepare_native(
+                            '/聊 这张图里红框是多少？另外，'+question,seq=seq)
+                    self.assertIn('原图',plan['parts'][0]['text'])
+                else:
+                    plan,attempts=await self.prepare_native('/聊 '+question,seq=seq)
+                self.assertEqual(len(attempts),2)
+                self.assertEqual([tool['function']['name'] for tool in bodies[-2]['tools']],['catalog_info'])
+                data=json.loads(next(row['content'] for row in bodies[-1]['messages'] if row.get('tool_call_id')=='c'))
+                self.assertEqual(data['status'],status)
+                self.assertEqual(tuple((item['server'], item['field']) for item in data['data']['items']
+                                       if item['status']=='success'), fields)
+                for item in data['data']['items']:
+                    if item['status']=='success':
+                        self.assertEqual(item['release'],item['server']+'-r1')
+                        self.assertIn('合成日服活动' if item['server']=='jp' else '合成国际服活动',item['text'])
+                    else:
+                        self.assertEqual(item['missing'], item['field']+'时间')
+                if not any(server=='jp' for server, _ in fields):
+                    self.assertNotIn('合成日服活动',str(data))
+                if status=='no_results':
+                    self.assertEqual(plan['parts'][0]['business_status'],'source_unavailable')
+                    self.assertNotIn('合成回答',plan['parts'][0]['text'])
+                self.event(plan,'intent');self.event(plan,'ack')
+
     async def test_memory_tools_restart_and_delete_cancel_pending_reply(self):
         from ournotes_bot.application.chat_context import ChatContext
         from ournotes_bot.domain.model_calls import ToolCall
@@ -4303,6 +4418,28 @@ class ChatImageIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
         if self.attachments:value['attachments']=self.attachments
         if self.reference:value.update(trigger='quoted_reply',reference=self.reference)
         return value
+
+    async def test_story_pronoun_wont_resolve_a_verified_image_reference_as_text_only(self):
+        from ournotes_bot.domain.chat_images import parse_attachments
+
+        agent = self.backend.model_runtime.agent
+        attachments = parse_attachments(self.attachments)
+        self.attachments = []
+        self.client.request.return_value = self.result('听到了。')
+        origin, _ = await self.prepare_native('/聊 我在看立希和海铃')
+        request = self.backend.works[origin['delivery_id']].request
+        self.event(origin, 'intent'); self.event(origin, 'ack')
+        agent.images.remember(agent.image_scope(request), request.message_id, request.user_id,
+                              request.timestamp_ms, attachments, (self.image,))
+        self.assertTrue(agent.image_contains(request, request.message_id))
+
+        self.reference = dict(message_id=request.message_id, adapter_profile_version='fixture')
+        self.client.request.reset_mock()
+        plan, attempts = await self.prepare_native('/聊 她俩什么关系', seq=2)
+        self.assertFalse(attempts)
+        self.client.request.assert_not_awaited()
+        self.assertIn('哪两个人', plan['parts'][0]['text'])
+        self.event(plan, 'intent'); self.event(plan, 'ack')
 
     async def test_qq_quote_attachment_reaches_model_without_publishing_unlinked_material(self):
         quoted=self.attachments
@@ -6751,6 +6888,106 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
     async def test_lightweight_fact_question_decides_before_approved_lookup(self):
         await self.lightweight_fact_question()
 
+    def test_lightweight_followup_question_replaces_open_target(self):
+        self.enable_lightweight_fact_fixture()
+        first = self.observation('活动门票怎么拿？')
+        scope = self.agent.proactive.scope(Request.parse(first, 'fixture', 'app', self.now))
+        self.current_user = 'u2'
+        self.now += 1
+        followup = self.observation('因为活动门票没领，所以打不开吗？', seq=2)
+        self.assertEqual(self.agent.proactive.controller.target(scope).message_id, followup['message_id'])
+
+    def test_lightweight_cancels_only_for_definite_answer_or_linked_wait(self):
+        from types import SimpleNamespace
+
+        from ournotes_bot.application.chat_proactive_runtime import _observation_turn
+        from ournotes_bot.domain.chat import ChatMessage
+
+        target = ChatMessage('question', 'u1', '活动门票怎么拿？', 0)
+        cases = (
+            ('u2', '因为活动门票没领，所以打不开吧', 'advance'),
+            ('u2', '答案是活动门票可以在签到页领取', 'answered'),
+            ('u2', '等我说下，今晚排名如何', 'advance'),
+            ('u2', '等我补一句', 'advance'),
+            ('u1', '等我补一句', 'waiting'),
+        )
+        for speaker, text, expected in cases:
+            with self.subTest(text=text, speaker=speaker):
+                request = SimpleNamespace(attachments=(), body=text, user_id=speaker,
+                                          quoted_text='', quote_hint='')
+                self.assertEqual(_observation_turn(target, request, lightweight=True), expected)
+
+    async def addressed_ingress_fixture(self, *, delivered, next_seq):
+        self.enable_lightweight_fact_fixture()
+        before = self.request('before', 1)
+        before.update(body='副歌那几拍有人试过吗？', trigger='observation')
+        initial = Request.parse(before, 'fixture', 'app', self.now)
+        outcome = self.agent.proactive.gateway_observation(initial)
+        self.assertTrue(outcome[0])
+        self.now += 1
+        self.client.request.return_value = self.result('这段副歌我会先减一档速度再练。')
+        direct, _ = await self.prepare_native('/聊 这段副歌你会怎么练', seq=2)
+        direct_work = self.backend.works[direct['delivery_id']]
+        if delivered:
+            self.event(direct, 'intent')
+            self.event(direct, 'ack')
+        else:
+            self.backend.finish(direct_work, 'aborted')
+        # Replaying the old observation remains idempotent after a /submit in the same sequence.
+        self.assertEqual(self.agent.proactive.gateway_observation(initial), outcome)
+        self.now += 1
+        self.current_user = 'u2'
+        next_turn = self.request('next', next_seq)
+        next_turn.update(body='这一段副歌终于能稳住了', trigger='observation')
+        current = Request.parse(next_turn, 'fixture', 'app', self.now)
+        self.assertTrue(self.agent.proactive.gateway_observation(current)[0])
+        self.tick += 1.6
+        wire = ChatAgentTests.capture_native_bodies(self)
+        self.client.request.return_value = self.result(
+            '{"participation":"skip","text":"","delay_seconds":null}')
+        await self.candidate(next_turn)
+        rows = [json.loads(item['content']) for item in wire[0]['input'][1:]]
+        return rows, direct_work.request.message_id
+
+    async def test_lightweight_addressed_ingress_stitches_confirmed_turn_in_order(self):
+        rows, direct_id = await self.addressed_ingress_fixture(delivered=True, next_seq=3)
+        self.assertEqual([row['role'] for row in rows], ['user', 'user', 'assistant', 'user'])
+        self.assertEqual([rows[i]['message_id'] for i in (0, 1, 3)], ['before', direct_id, 'next'])
+        self.assertEqual(rows[2]['reply_to'], direct_id)
+
+    async def test_lightweight_addressed_ingress_drops_unconfirmed_turn(self):
+        rows, _ = await self.addressed_ingress_fixture(delivered=False, next_seq=3)
+        self.assertEqual([row['message_id'] for row in rows], ['before', 'next'])
+
+    async def test_lightweight_addressed_ingress_does_not_bridge_unknown_message(self):
+        rows, _ = await self.addressed_ingress_fixture(delivered=True, next_seq=4)
+        self.assertEqual([row['message_id'] for row in rows], ['next'])
+
+    async def test_lightweight_addressed_ingress_does_not_keep_a_deleted_source(self):
+        self.enable_lightweight_fact_fixture()
+        before = self.request('before', 1)
+        before.update(body='副歌那几拍有人试过吗？', trigger='observation')
+        initial = Request.parse(before, 'fixture', 'app', self.now)
+        self.assertTrue(self.agent.proactive.gateway_observation(initial)[0])
+        self.now += 1
+        direct = self.request('deleted-source', 2)
+        direct['body'] = '/聊 这段副歌你会怎么练'
+        self.agent.store.delete_messages(initial.scope, [direct['message_id']])
+        result = await self.backend.submit(direct)
+        self.backend.finish(self.backend.works[result['delivery_id']], 'aborted')
+        self.now += 1
+        self.current_user = 'u2'
+        next_turn = self.request('next', 3)
+        next_turn.update(body='这一段副歌终于能稳住了', trigger='observation')
+        current = Request.parse(next_turn, 'fixture', 'app', self.now)
+        self.assertTrue(self.agent.proactive.gateway_observation(current)[0])
+        self.tick += 1.6
+        wire = ChatAgentTests.capture_native_bodies(self)
+        self.client.request.return_value = self.result(
+            '{"participation":"skip","text":"","delay_seconds":null}')
+        await self.candidate(next_turn)
+        self.assertEqual([json.loads(item['content'])['message_id'] for item in wire[0]['input'][1:]], ['next'])
+
     def filtered_group_observation(self, text, seq, *, timestamp_ms=None):
         raw = self.request('filtered'+str(seq), seq)
         raw.update(body=text, trigger='observation', quoted_text='旧话题')
@@ -6876,6 +7113,33 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
 
     async def test_lightweight_omitted_just_subject_uses_adjacent_same_speaker(self):
         await self.lightweight_fact_question(after_opinion=True,omitted_subject=True)
+
+    async def test_lightweight_omitted_just_subject_uses_confirmed_addressed_turn(self):
+        self.enable_lightweight_fact_fixture()
+        self.save_conversation_settings(followup_enabled=False)
+        before = self.request('before', 1)
+        before.update(body='还有人练这段吗？', trigger='observation')
+        self.assertTrue(self.agent.proactive.gateway_observation(Request.parse(before, 'fixture', 'app', self.now))[0])
+        self.now += 1
+        self.client.request.return_value = self.result('这段确实挺难。')
+        direct, _ = await self.prepare_native('/聊 日服这个 JUST 区间真难', seq=2)
+        direct_id = self.backend.works[direct['delivery_id']].request.message_id
+        self.event(direct, 'intent')
+        self.event(direct, 'ack')
+        self.now += 1
+        current = self.request('next', 3)
+        current.update(body='那区间怎么计分？', trigger='observation')
+        request = Request.parse(current, 'fixture', 'app', self.now)
+        self.assertTrue(self.agent.proactive.gateway_observation(request)[0])
+        self.tick += 1.6
+        wire = ChatAgentTests.capture_native_bodies(self)
+        self.client.request.return_value = self.result('{"participation":"skip","text":"","delay_seconds":null}')
+        plan, attempts, candidate = await self.candidate(current)
+        self.assertEqual(candidate[0].evidence_route, 'just_score')
+        self.assertEqual(candidate[0].evidence_context_id, direct_id)
+        self.assertEqual(len(attempts), 1)
+        self.assertFalse(plan['parts'])
+        self.assertTrue(any(json.loads(item['content'])['message_id'] == direct_id for item in wire[0]['input'][1:]))
 
     def enable_lightweight_fact_fixture(self, **limits):
         from datetime import datetime, timedelta, timezone

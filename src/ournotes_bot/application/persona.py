@@ -3,6 +3,8 @@
 import re
 import unicodedata
 
+from ..query.activity_query import CALENDAR_SERVERS
+
 VOICE = '''性格：外冷内热、认真、有主见，不善于漂亮话，关心体现在把问题听清、说明白。
 平时用自然短句；可以有一点停顿和轻微吐槽，但不要每句都“哼”“哈？”“笨蛋”、傲娇否认或省略号。
 理解群内用语是为了接住指代和语气；表达仍保持自己的直率、认真和主见。偶尔用贴切的梗，不模仿某位群友的整套口癖、身份或私人经历，不为合群加入复读。
@@ -78,9 +80,47 @@ _JUST_ASK = re.compile(
     r'怎么(?:算|计算|计分|叠|判定|触发|生效)|如何(?:算|计算|计分|叠|判定|触发)|是什么|什么(?:规则|效果|区别|变化)|有何变化|多久|多宽|多长|几秒|变宽还是变久|能不能叠|是否叠|是不是叠|怎么排|怎么比|如何排|如何比')
 _JUST_MINIMUM = re.compile(
     r'(?:到底|实际|至少|最少|请问).{0,16}几张|(?:^|[，,。])\s*(?:需要|要)几张|几张.{0,16}[?]|几张.{0,16}才够')
-_BAND_STORY = re.compile(r'海希|希海|海铃.{0,8}立希|立希.{0,8}海铃|邦邦|BanG\s*Dream|MyGO|Ave\s*Mujica|CRYCHIC|一辈子乐队|ANON TOKYO', re.I)
-_STORY_FACT_ASK = re.compile(r'什么关系|(?:是|算)(?:官配|官方情侣)吗|(?:是不是|算不算)官配|出自|出处|哪来的|哪[一几]?[集话章]|第几[集话章]|谁(?:说|配音)|为什么.{0,20}(?:退出|加入)')
+_STORY_PERSON = r'立希|爱音|愛音|海铃|海鈴|高松[灯燈]|[乐楽]奈|爽世|祥子|若[叶葉]睦'
+_BAND_STORY = re.compile(
+    rf'{_STORY_PERSON}|海希|希海|邦邦|BanG\s*Dream|MyGO|Ave\s*Mujica|CRYCHIC|一[辈輩]子[乐樂][队隊]|ANON TOKYO', re.I)
+_STORY_FACT_ASK = re.compile(
+    r'什[么麼]关[系係]|什麼關係|[关關][系係](?:怎么[样樣]|怎麼樣)|'
+    r'(?:是|算)(?:官配|官方情侣)吗|(?:是不是|算不算)官配|出自|出处|哪来的|哪[一几]?[集话話章]|'
+    r'第几[集话話章]|谁(?:说|配音|负责)|(?:谁|誰).{0,5}(?:作曲|作[词詞])|'
+    r'生日(?:.{0,8}(?:[哪几]|什[么麼]|何时)|\s*\?)|喜[欢歡]吃什[么麼]|[爱愛]吃什[么麼]|'
+    r'喜[欢歡]的食物.{0,5}(?:什[么麼]|有哪)|(?:有|什么|什麼).{0,5}(?:[兴興]趣|[爱愛]好)|'
+    r'哪[里裡].{0,6}打工|在哪.{0,6}(?:打工|兼[职職])|'
+    r'(?:为什么|为啥).{0,20}(?:退出|加入|[对對].{0,6}(?:特别|特別)|生气|生氣)|'
+    r'(?:羁绊|羈絆).{0,8}[讲講][了的]?什[么麼]')
+_STORY_PAIR_PRONOUN = r'(?:[她他][俩倆们們]|这两[个位]人)'
+_STORY_FOLLOWUP = re.compile(
+    rf'^(?:那|所以)?{_STORY_PAIR_PRONOUN}(?:是)?什[么麼][关關][系係][?呢啊呀吗]*$|'
+    rf'(?:{_STORY_PERSON}).{{0,8}}(?:为什么|为啥)(?:在)?(?:那个时候|那时候|当时|那一幕)')
+_STORY_FIELD_FOLLOWUP = re.compile(r'^(?:那|以及|还有)?\s*(?:她|他)?\s*(?:的)?\s*(?:作曲|作[词詞])(?:呢|是谁|由谁负责)[?\s]*$')
+_STORY_FIELD_TOPIC = re.compile(r'(?:鼓手|主唱|贝斯手|吉他手).{0,3}$')
+_STORY_PAIR = re.compile(
+    r'(?:椎名)?立希|(?:八幡)?海[铃鈴]|(?:千早)?[爱愛]音|高松[灯燈]|(?:要)?[乐楽]奈|'
+    r'(?:长崎|長崎)?(?:爽世|そよ)|(?:丰川|豊川)?祥子|若[叶葉]睦|'
+    r'(?:^|(?<=[，。；、：\s]))[灯燈](?=\s*[和与與跟及、])|'
+    r'(?<=[和与與跟及、])\s*[灯燈](?=$|[，。?？、和与與跟及\s]|在|也|[说說]|都|是|的)')
+_STORY_CHAPTER = re.compile(
+    r'(?:mygo|ave\s*mujica|our\s*notes)[^。?!]{0,8}第\s*[0-9一二三四五六七八九十]+\s*[集话話章]', re.I)
 _EVIDENCE_CLAUSE = re.compile(r'[，,。；;！!\n]+|(?<=\?)|(?:但(?:是)?|不过|另外)(?=实际|到底|想问|请问|我想|还想|[\s，,])')
+_ACTIVITY_REGION = r'日服|国际服|國際服|台服|臺服|港服|韩服|韓服|英服|美服|欧服|歐服|(?<![a-z0-9])(?:jp|intl|tw|hk|kr|en)(?![a-z0-9])'
+_ACTIVITY_REGIONS = re.compile(_ACTIVITY_REGION, re.I)
+_ACTIVITY_CLAUSE = re.compile(
+    rf'{_EVIDENCE_CLAUSE.pattern}|(?<=[始束间間期])[啊呀呢吗嗎嘛吧\s]*、\s*(?=(?:{_ACTIVITY_REGION}))', re.I)
+_LIVE_ACTIVITY_TIME = re.compile(
+    rf'(?:这期|本期|当前|现在|最近)(?:的)?\s*'
+    rf'(?:(?:{_ACTIVITY_REGION})(?:\s*(?:和|与|跟|以及|及|、)\s*(?:{_ACTIVITY_REGION}))*(?:的)?)?\s*'
+    r'活[动動](?:的)?\s*'
+    r'(?:(?:什么时候|啥时候|哪天|哪日|何时|几号|幾號|几点|幾點)(?P<verb>开始|開始|结束|結束)|'
+    r'(?P<field>开始|開始|结束|結束)(?:时间|時間|日期)(?:是什么|是啥|是哪天|是几号)?)'
+    r'[啊呀呢吗嗎嘛吧?\s]*$', re.I)
+_ACTIVITY_PREFIX = re.compile(
+    r'(?:\s|our\s*notes|\bon\b|那|所以|实际|到底|请问|想问|我想问|有人知道|和|与|跟|及|、|以及|分别|的)*', re.I)
+_UNSCOPED_PITY = re.compile(
+    r'(?:请问|谁知道|有人知道)?\s*(?:抽卡)?保底(?:到底|是|要|需要)?\s*(?:多少|几)抽(?:啊|呀|呢|吗)?[?。]*')
 _OMITTED_EVIDENCE_SUBJECT = re.compile(
     r'^(?:但(?:是)?|不过|那|所以|请问|到底|实际|想问|我想问|\s)*(?:'
     r'(?:是什么|什么关系|怎么(?:算|计算|计分|叠加?|判定|触发|生效|排名?|比较?)|如何(?:算|计算|计分|叠加?|排名?|比较?))[呢啊呀吗?\s]*$|'
@@ -96,14 +136,76 @@ def lightweight_image_reference(text, *, context_source=False):
                 or context_source and _CONTEXT_IMAGE_MENTION.search(text))
 
 
+def activity_evidence_questions(question):
+    """Return the explicitly requested current-event region and time pairs."""
+    text = unicodedata.normalize('NFKC', question).strip()
+    questions = []
+    regions = []
+    for clause in _ACTIVITY_CLAUSE.split(text):
+        clause = clause.strip()
+        if not clause:
+            continue
+        match = _LIVE_ACTIVITY_TIME.search(clause)
+        if not match or not _ACTIVITY_PREFIX.fullmatch(_ACTIVITY_REGIONS.sub('', clause[:match.start()])):
+            regions = []
+            continue
+        # Keep an explicitly named region across consecutive calendar questions.
+        regions = _ACTIVITY_REGIONS.findall(clause) or regions or ['日服']
+        labels = [
+            {'jp': '日服', 'intl': '国际服'}.get(
+                CALENDAR_SERVERS.get(name.casefold().replace('國', '国').replace('臺', '台')), name)
+            for name in regions]
+        verb = '开始' if (match['verb'] or match['field']) in ('开始', '開始') else '结束'
+        questions.extend((label, verb) for label in labels)
+    return tuple(dict.fromkeys(questions))
+
+
+def referenced_story_question(question, reference):
+    """Resolve a follow-up only against the exact visible, text-only reference."""
+    if lightweight_image_reference(reference, context_source=True):
+        return ''
+    text = unicodedata.normalize('NFKC', question).strip().rstrip('。!！')
+    reference = unicodedata.normalize('NFKC', reference)
+    if re.match(rf'^(?:那|所以)?{_STORY_PAIR_PRONOUN}', text):
+        pairs = tuple(dict.fromkeys(
+            '高松灯' if name.strip() in ('灯', '燈') else
+            re.sub(r'^(?:椎名|八幡|千早|要|长崎|長崎|丰川|豊川)', '', name.strip())
+            .translate(str.maketrans('鈴愛燈楽葉','铃爱灯乐叶')) for name in _STORY_PAIR.findall(reference)))
+        possible_tomori = '高松灯' not in pairs and re.search(r'[灯燈]\s*[和与與跟及、]', reference)
+        if possible_tomori:
+            return ''
+        if re.search(r'海希|希海', reference):
+            return '海希什么关系' if set(pairs) <= {'立希', '海铃'} else ''
+        if len(pairs)==2:
+            return '和'.join(pairs)+'什么关系'
+    elif _STORY_FOLLOWUP.search(text):
+        chapters = tuple(dict.fromkeys(_STORY_CHAPTER.findall(reference)))
+        if len(chapters)==1:
+            return chapters[0]+' '+text
+    return ''
+
+
+def story_clarification(question):
+    if re.search(_STORY_PAIR_PRONOUN, question):
+        return '你说的是哪两个人？'
+    return '你指的是哪一集或哪一段？'
+
+
+def unscoped_pity_question(question):
+    return bool(_UNSCOPED_PITY.fullmatch(unicodedata.normalize('NFKC', question).strip()))
+
+
 def explicit_evidence_route(question):
     text = unicodedata.normalize('NFKC', question).strip()
     clauses = [clause.strip() for clause in _EVIDENCE_CLAUSE.split(text) if clause.strip()]
-    for clause in clauses:
+    for index, clause in enumerate(clauses):
         if route := _explicit_evidence_clause(clause):
             if route.startswith('just_') and _OTHER_RHYTHM_GAME.search(text):
                 continue
             return route
+        if (index and _STORY_FIELD_FOLLOWUP.fullmatch(clause) and _BAND_STORY.search(clauses[index-1])
+                and _STORY_FIELD_TOPIC.search(clauses[index-1])):
+            return 'story_fact'
     # A comma can separate the topic or card ID from its actual question.
     # Recover an omitted subject only when the question has no subject route.
     if len(clauses) > 1 and any(_OMITTED_EVIDENCE_SUBJECT.match(clause) for clause in clauses[1:]):
@@ -139,6 +241,10 @@ def _explicit_evidence_clause(text):
             return 'just_clarify'
     if _BAND_STORY.search(text) and _STORY_FACT_ASK.search(text):
         return 'story_fact'
+    if _STORY_FOLLOWUP.search(text):
+        return 'story_clarify'
+    if activity_evidence_questions(text):
+        return 'activity_time'
     return ''
 
 

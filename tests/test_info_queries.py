@@ -81,6 +81,7 @@ class InformationQueryTests(unittest.TestCase):
         ended = activity(1, '上一期', NOW-100, NOW, display_end_at=NOW+500)
         repo = Repository(catalog(activities=(ended,)))
         result = execute_activity('日程', repo, now=NOW)
+        self.assertEqual(result.calendar_time_status, 'related')
         self.assertIn('最近一期《上一期》已于', result.text)
         for metadata in ('资料来源', '资料版本', '本机获取', 'r-test-release'):
             self.assertNotIn(metadata, result.text)
@@ -90,7 +91,9 @@ class InformationQueryTests(unittest.TestCase):
         repo.snapshot = catalog(activities=(ended, future))
         self.assertIn('下一期《下一期》将于', execute_activity('日程', repo, now=NOW).text)
         self.assertIn('目前还没开始', execute_activity('日程', repo, now=NOW).text)
-        self.assertIn('清 CP', execute_activity('日程', repo, now=NOW+50).text)
+        current = execute_activity('日程', repo, now=NOW+50)
+        self.assertIn('清 CP', current.text)
+        self.assertEqual(current.calendar_time_status, 'exact')
         repo.snapshot = catalog(activities=(ended, future), cache_state='stale')
         self.assertNotIn('清 CP', execute_activity('日程', repo, now=NOW+50).text)
         self.assertIn('旧缓存', execute_activity('日程', repo, now=NOW+50).text)
@@ -112,7 +115,9 @@ class InformationQueryTests(unittest.TestCase):
         repo.snapshot = catalog(activities=(jp,))
         self.assertEqual(execute_activity('国际服 日程', repo, now=NOW).status, 'data_unavailable')
         repo.snapshot = catalog(activities=(jp, activity(3, '重叠')))
-        self.assertIn('暂不能唯一确定', execute_activity('日程', repo, now=NOW).text)
+        ambiguous = execute_activity('日程', repo, now=NOW)
+        self.assertIn('暂不能唯一确定', ambiguous.text)
+        self.assertEqual(ambiguous.calendar_time_status, 'unavailable')
 
     def test_activity_merges_roles_by_card_type_and_id_and_keeps_known_partial_rewards(self):
         ref=CardRef(2,7)
