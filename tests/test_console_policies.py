@@ -6922,6 +6922,31 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
         rows, _ = await self.addressed_ingress_fixture(delivered=True, next_seq=4)
         self.assertEqual([row['message_id'] for row in rows], ['next'])
 
+    async def test_lightweight_addressed_ingress_does_not_keep_a_deleted_source(self):
+        self.enable_lightweight_fact_fixture()
+        before = self.request('before', 1)
+        before.update(body='副歌那几拍有人试过吗？', trigger='observation')
+        initial = Request.parse(before, 'fixture', 'app', self.now)
+        self.assertTrue(self.agent.proactive.gateway_observation(initial)[0])
+        self.now += 1
+        direct = self.request('deleted-source', 2)
+        direct['body'] = '/聊 这段副歌你会怎么练'
+        self.agent.store.delete_messages(initial.scope, [direct['message_id']])
+        result = await self.backend.submit(direct)
+        self.backend.finish(self.backend.works[result['delivery_id']], 'aborted')
+        self.now += 1
+        self.current_user = 'u2'
+        next_turn = self.request('next', 3)
+        next_turn.update(body='这一段副歌终于能稳住了', trigger='observation')
+        current = Request.parse(next_turn, 'fixture', 'app', self.now)
+        self.assertTrue(self.agent.proactive.gateway_observation(current)[0])
+        self.tick += 1.6
+        wire = ChatAgentTests.capture_native_bodies(self)
+        self.client.request.return_value = self.result(
+            '{"participation":"skip","text":"","delay_seconds":null}')
+        await self.candidate(next_turn)
+        self.assertEqual([json.loads(item['content'])['message_id'] for item in wire[0]['input'][1:]], ['next'])
+
     def filtered_group_observation(self, text, seq, *, timestamp_ms=None):
         raw = self.request('filtered'+str(seq), seq)
         raw.update(body=text, trigger='observation', quoted_text='旧话题')

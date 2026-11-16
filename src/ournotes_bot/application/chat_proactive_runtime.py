@@ -566,7 +566,8 @@ class ProactiveChat:
                 or _WEB_URL.search(unicodedata.normalize('NFKC', request.body))
                 or request.user_id in {row['user_id'] for row in settings['excluded_users']}
                 or previous is None or previous.gateway_epoch != request.gateway_epoch
-                or request.ingress_seq != previous.covered_seq + 1):
+                or request.ingress_seq != previous.covered_seq + 1
+                or not self.agent.store.source_valid(request.scope, request.message_id, request.timestamp_ms)):
             return
         # /submit and /observations share the gateway's sequence. Record only
         # the position here; a saved source and ACK are required to use it.
