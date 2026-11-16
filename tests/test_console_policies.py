@@ -2867,6 +2867,11 @@ class ChatAgentTests(Fixture, unittest.IsolatedAsyncioTestCase):
             'JUST 怎么算': 'just_clarify', 'JUST 扩窗怎么叠': 'just_window',
             '判卡满破了是变宽还是变久？': 'just_card', '留影31 Lv4到Lv5 是变宽还是变久': 'just_card',
             '到底要几张满破判定卡？': 'just_minimum', '海希什么关系': 'story_fact',
+            '有人知道立希生日是哪天吗？': 'story_fact', '立希喜欢吃什么': 'story_fact',
+            '立希是鼓手，那作曲呢？': 'story_fact', '她俩什么关系': 'story_clarify',
+            '爱音为啥那个时候那么急': 'story_clarify', '这期国际服活动哪天结束？': 'activity_time',
+            '这期国际服榜线涨太快，大家都几点收手了？': '',
+            '看到有人说海希真的官配，这谁当真了？': '',
         }
         for question, route in cases.items():
             with self.subTest(question=question):
@@ -4251,6 +4256,97 @@ class ChatSourceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
         fixture.service.withdraw('test-story','test withdrawal')
         self.assertFalse(self.backend.lookup(plan['request_id'],'e1')['send_allowed'])
         self.backend.finish(self.backend.works[plan['delivery_id']],'aborted')
+
+    async def test_story_fact_read_pins_relevant_official_and_conflicting_community(self):
+        from test_platform_boundary import StoryPublicationTests
+        from ournotes_bot.domain.model_calls import ToolCall
+        from ournotes_bot.sources.story_files import source_content_hash
+
+        fixture=StoryPublicationTests();fixture.setUp();self.addCleanup(fixture.doCleanups)
+        bundle=fixture.bundle(kind='official_summary')
+        template=bundle['scenes'][0]
+        corpus=(
+            ('relevant-official','official_summary','海铃官网简介','立希和八幡海铃是同班同学。'),
+            ('other-official','official_original','校内场景','八幡海铃与立希在排练。'),
+            ('fan-pair','fan_analysis','海希／希海','社区推测立希和八幡海铃不是同班同学。'),
+        )
+        bundle['scenes']=[]
+        for sid,kind,title,line in corpus:
+            scene={**template,'scene_id':sid,'source_id':sid,'title':title,'next_scene':None,
+                   'utterances':[dict(template['utterances'][0],text_ja=line)]}
+            bundle['scenes'].append(scene)
+        bundle['sources']=[dict(bundle['sources'][0],source_id=sid,source_kind=kind,
+                                content_sha256=source_content_hash([scene]))
+                           for (sid,kind,_,_),scene in zip(corpus,bundle['scenes'])]
+        fixture.publish(bundle)
+        self.backend.model_runtime.agent.story=fixture.service
+        matches=fixture.service.search('海希什么关系',limit=3,facts_only=True)
+        self.assertEqual([item['scene_id'] for item in matches['items']],['relevant-official','fan-pair'])
+        self.assertEqual(fixture.service.search('立希生日是哪天',facts_only=True)['status'],'no_results')
+        bodies=self.capture_native_bodies()
+        self.client.request.side_effect=[
+            self.result(calls=(ToolCall('s','story_search','{"query":"扯开话题"}'),)),
+            self.result(calls=(ToolCall('r','story_read',json.dumps({'handle':matches['items'][1]['handle']})),)),
+            self.result('官方简介说她们同班。社区推测和简介有分歧。'),
+        ]
+        plan,attempts=await self.prepare_native('/聊 海希什么关系')
+        self.assertEqual(len(attempts),3)
+        data=json.loads(next(row['content'] for row in bodies[-1]['messages'] if row.get('tool_call_id')=='r'))
+        self.assertEqual([scene['source_kind'] for scene in data['scenes']],['official_summary','fan_analysis'])
+        self.assertEqual(data['evidence_read'],[item['handle'] for item in matches['items']])
+        self.assertEqual(plan['parts'][0]['business_status'],'success')
+        self.event(plan,'intent');self.event(plan,'ack')
+
+    async def test_activity_time_reads_each_requested_calendar_and_preserves_image_gap(self):
+        from ournotes_bot.domain.info_catalog import ActivityCalendar, ActivityInfo
+        from ournotes_bot.domain.model_calls import ToolCall
+        import time
+
+        now=time.time()
+        self.repo.activity_calendars={
+            'jp': ActivityCalendar((ActivityInfo(11,'合成日服活动',{},start_at=now-3600,end_at=now+3600),),
+                                   'jp-r1','jp-fixture','observation-jp'),
+            'intl': ActivityCalendar((ActivityInfo(22,'合成国际服活动',{},start_at=now-3600,end_at=now+7200),),
+                                     'intl-r1','intl-fixture','observation-intl'),
+        }
+        bodies=self.capture_native_bodies()
+        scenarios=(
+            ('这期国际服活动哪天结束？',('intl',),'ok',True),
+            ('手都打疼了，日服和国际服这期活动哪天结束？',('jp','intl'),'ok',False),
+            ('港服和国际服这期活动哪天结束？',('intl',),'partial',False),
+            ('这期国际服活动哪天结束？',(),'no_results',False),
+        )
+        for seq,(question,servers,status,image) in enumerate(scenarios,1):
+            if status=='no_results':
+                del self.repo.activity_calendars['intl']
+            with self.subTest(question=question,status=status):
+                self.client.request.side_effect=[
+                    self.result(calls=(ToolCall('c','catalog_info','{"kind":"event","query":"日服 当前"}'),)),
+                    self.result('合成回答。'),
+                ]
+                if image:
+                    raw={**self.request('native'+str(seq),seq),'quote_hint':'image'}
+                    with patch.object(self,'request',return_value=raw):
+                        plan,attempts=await self.prepare_native(
+                            '/聊 这张图里红框是多少？另外，'+question,seq=seq)
+                    self.assertIn('原图',plan['parts'][0]['text'])
+                else:
+                    plan,attempts=await self.prepare_native('/聊 '+question,seq=seq)
+                self.assertEqual(len(attempts),2)
+                self.assertEqual([tool['function']['name'] for tool in bodies[-2]['tools']],['catalog_info'])
+                data=json.loads(next(row['content'] for row in bodies[-1]['messages'] if row.get('tool_call_id')=='c'))
+                self.assertEqual(data['status'],status)
+                self.assertEqual(tuple(item['server'] for item in data['data']['items'] if item['status']=='success'),servers)
+                for item in data['data']['items']:
+                    if item['status']=='success':
+                        self.assertEqual(item['release'],item['server']+'-r1')
+                        self.assertIn('合成日服活动' if item['server']=='jp' else '合成国际服活动',item['text'])
+                if 'jp' not in servers:
+                    self.assertNotIn('合成日服活动',str(data))
+                if status=='no_results':
+                    self.assertEqual(plan['parts'][0]['business_status'],'source_unavailable')
+                    self.assertNotIn('合成回答',plan['parts'][0]['text'])
+                self.event(plan,'intent');self.event(plan,'ack')
 
     async def test_memory_tools_restart_and_delete_cancel_pending_reply(self):
         from ournotes_bot.application.chat_context import ChatContext

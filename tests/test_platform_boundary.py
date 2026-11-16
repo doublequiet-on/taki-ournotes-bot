@@ -535,6 +535,7 @@ class StoryPublicationTests(unittest.TestCase):
         scenes[0].update(title='海希什么关系 口吻示例', scene_id='taki-expression-guide-fixture')
         scenes[1].update(title='海希／希海 关系资料', previous_scene=scenes[0]['scene_id'])
         scenes[0]['utterances'][0]['translation'] = '海希什么关系 合成示例'
+        scenes[1]['utterances'][0]['translation'] = '合成资料：八幡海铃和椎名立希是同班同学。'
         bundle['sources'][0]['content_sha256'] = source_content_hash(scenes)
         self.publish(bundle)
         ordinary = self.service.search('海希什么关系')['items']

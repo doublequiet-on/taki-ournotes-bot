@@ -369,7 +369,7 @@ class ProactiveChat:
         if lightweight and not evidence_route and lightweight_needs_evidence(request.body):
             self.control_event(request,'chat_service_lightweight_evidence_required')
             return None
-        evidence_calls = {'just_clarify': 1, 'story_fact': 4}.get(evidence_route, 3)
+        evidence_calls = {'just_clarify': 1, 'story_clarify': 1, 'story_fact': 4}.get(evidence_route, 3)
         if evidence_route and self.agent.budget.model_calls < evidence_calls:
             self.control_event(request,'chat_service_lightweight_evidence_required')
             return None

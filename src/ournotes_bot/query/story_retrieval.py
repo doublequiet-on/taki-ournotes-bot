@@ -33,13 +33,126 @@ def rewrite(query,aliases):
     return value,trace
 
 
+# Resolve only established names and pair shorthands. A shorthand identifies
+# the people to look up, independently of what any source says about them.
+_PAIR_NAMES = re.compile(r'海希|希海')
+_STORY_NAMES = (
+    ('立希', '椎名立希'), ('海鈴', '海铃', '八幡海鈴', '八幡海铃'),
+    ('愛音', '爱音', '千早愛音', '千早爱音'), ('燈', '灯', '高松燈', '高松灯'),
+    ('楽奈', '乐奈'), ('祥子',), ('そよ', '爽世'), ('睦', '若叶睦', '若葉睦'),
+)
+_WORKS = (
+    (re.compile(r'our\s*notes|(?<![a-z0-9])on(?![a-z0-9])'), re.compile(r'our\s*notes')),
+    (re.compile(r'ガルパ|少女乐团派对|(?<![a-z0-9])gbp(?![a-z0-9])'), re.compile(r'ガルパ|girls band party|gbp')),
+    (re.compile(r"it.s mygo|mygo.{0,10}(?:动画|動畫|第.{1,3}[集話话])"), re.compile(r"it.s mygo")),
+    (re.compile(r'ave\s*mujica.{0,10}(?:动画|動畫|第.{1,3}[集話话])'), re.compile(r'ave\s*mujica')),
+)
+_NUMBER = r'[0-9一二三四五六七八九十]+'
+_EPISODE = re.compile(rf'第\s*({_NUMBER})\s*[集話话]')
+_FIELDS = (
+    (r'生日|誕生日|诞生日', r'誕生日|诞生日|生日'),
+    (r'喜欢吃|喜歡吃|爱吃|愛吃|喜欢的食物|喜歡的食物|好きな食べ物',
+     r'喜欢吃|喜歡吃|爱吃|愛吃|喜欢的食物|喜歡的食物|好きな食べ物|好物'),
+    (r'兴趣|興趣|爱好|愛好|趣味', r'[兴興]趣[是为為在:]|[爱愛]好|趣味'),
+    (r'打工|兼职|兼職|バイト', r'打工|兼职|兼職|バイト|勤務'),
+    (r'作曲', r'作曲'),
+    (r'作词|作詞', r'作词|作詞'),
+    (r'什么关系|什麼關係|关系怎么|關係怎麼|官配|官方情侣', r'同じクラス|同級生|同班|同学|同學|相处|相處|搭档|搭檔|情侣|付き合'),
+    (r'对.{0,8}(?:特别|特別)|對.{0,8}(?:特别|特別)', r'甘い|更宽容|更寬容|特别|特別|偏心'),
+    (r'一辈子乐队|一輩子樂隊|一生.{0,5}バンド', r'一辈子.{0,4}乐队|一輩子.{0,4}樂隊|一生.{0,5}バンド|一直.{0,5}乐队'),
+    (r'羁绊|羈絆|キズナ', r'羁绊|羈絆|キズナ'),
+)
+_FIELDS = tuple((re.compile(question), re.compile(content)) for question, content in _FIELDS)
+_SOURCE_PRIORITY = {'official_original': 0, 'official_summary': 1}
+_STORY_REGIONS = (
+    (re.compile(r'日服|(?<!\w)jp(?!\w)'), 'jp'),
+    (re.compile(r'国际服|國際服|台服|臺服|(?<!\w)intl(?!\w)'), 'intl'),
+)
+
+
+def _story_region(source):
+    if normalized(source.work) != 'bang dream! our notes':
+        return None
+    match = re.match(r'https://haneoka\.org/(jp|intl)/', source.uri)
+    return match[1] if match else None
+
+
+def _episode_number(value):
+    if value.isdecimal():
+        return int(value)
+    digits = '零一二三四五六七八九'
+    before, tens, after = value.partition('十')
+    if {before, after} <= (set(digits) | {''}):
+        if tens:
+            return (digits.index(before) if before else 1) * 10 + (digits.index(after) if after else 0)
+        return digits.index(before)
+    return None
+
+
+def _fact_score(scene, source, query, needles, groups, work, regions, episode, facets):
+    title = normalized(scene.title)
+    chapter = normalized(scene.chapter)
+    if work and not work.search(normalized(source.work)):
+        return None
+    if regions and _story_region(source) not in regions:
+        return None
+    if episode is not None and not any(_episode_number(match) == episode
+                                        for match in _EPISODE.findall(title + ' ' + chapter)):
+        return None
+
+    # The first passage of the IP reference records is the actual summary.
+    # Their later fields contain citation inventories, negative examples and
+    # collection notes, which can mention subjects absent from the summary.
+    passages = scene.utterances[:1] if scene.scene_id.startswith('bdip-') else scene.utterances
+    body = normalized(' '.join(passage.text_ja + ' ' + (passage.translation or '') for passage in passages))
+    labels = ' '.join((title, chapter, *(normalized(name) for name in scene.participants)))
+    named_titles = re.findall(r'《([^》]{2,80})》', query)
+    if any(name not in labels + ' ' + body for name in named_titles):
+        return None
+    if any(not any(name in labels or name in body for name in group) for group in groups):
+        return None
+    if 'mygo' in query and not groups and 'mygo' not in labels + ' ' + body:
+        return None
+    covered = sum(bool(facet.search(body)) for facet in facets)
+    # A named profile cannot cover an absent field. A story excerpt can be a
+    # candidate for a named chapter or link story even if little text is kept.
+    if facets and not covered and not (work and any(facet.search(title) for facet in facets)):
+        return None
+    haystack = labels + ' ' + body
+    words = terms(haystack)
+    score = sum(min(count, words[term]) * (2 if len(term) > 2 else 1) for term, count in needles.items())
+    if not score and not covered:
+        return None
+    score += 8 * sum(any(name in title for name in group) for group in groups)
+    main_title = re.split(r'[|｜／]', title, maxsplit=1)[0].strip()
+    if len(main_title)>=4 and main_title in query:
+        score += 12
+    # Only promote a source after subject, scope and topic have matched.
+    # Lexical scoring still decides among equally suitable sources.
+    priority = _SOURCE_PRIORITY.get(source.source_kind, 2) if covered or episode is not None or work else 2
+    return -covered, priority, -score, scene.scene_id
+
+
 def search_scenes(bundle:StoryBundle,query,filters=None,*,limit=6,excluded_sources=(),facts_only=False):
     require(isinstance(query,str) and 0<len(query.strip())<=300,'story_query')
     require(type(limit) is int and 1<=limit<=10,'story_limit')
     filters={} if filters is None else filters
     require(isinstance(filters,dict) and set(filters)<={'work','source_kind','character','source_id','chapter'},'story_filter')
     require(all(isinstance(value,str) and 0<len(value)<=100 for value in filters.values()),'story_filter')
-    rewritten,trace=rewrite(query,bundle.aliases)
+    if facts_only:
+        expanded = _PAIR_NAMES.sub('八幡海鈴 椎名立希', normalized(query))
+        trace = [{'from': name, 'to': '八幡海鈴 椎名立希'}
+                 for name in dict.fromkeys(_PAIR_NAMES.findall(query))]
+        rewritten, alias_trace = rewrite(expanded, bundle.aliases)
+        trace.extend(alias_trace)
+        groups = tuple(group for group in _STORY_NAMES if any(name in rewritten for name in group))
+        work = next((target for pattern, target in _WORKS if pattern.search(rewritten)), None)
+        regions = tuple(region for pattern, region in _STORY_REGIONS if pattern.search(rewritten))
+        episode_match = _EPISODE.search(rewritten)
+        episode = _episode_number(episode_match[1]) if episode_match else None
+        facets = tuple(content for pattern, content in _FIELDS if pattern.search(normalized(query)))
+    else:
+        rewritten,trace=rewrite(query,bundle.aliases)
     needles=terms(rewritten);excluded=set(excluded_sources)
     sources={source.source_id:source for source in bundle.sources}
     scored=[]
@@ -54,6 +167,11 @@ def search_scenes(bundle:StoryBundle,query,filters=None,*,limit=6,excluded_sourc
         if 'character' in filters:
             character,_=rewrite(filters['character'],bundle.aliases)
             if not any(character==normalized(name) for name in scene.participants):continue
+        if facts_only:
+            rank = _fact_score(scene, source, rewritten, needles, groups, work, regions, episode, facets)
+            if rank is not None:
+                scored.append((rank, scene))
+            continue
         # Translation helps finding Japanese original but never replaces its layer.
         haystack=' '.join((scene.title,scene.chapter,*scene.participants,
                           *(utterance.text_ja for utterance in scene.utterances),
@@ -62,21 +180,18 @@ def search_scenes(bundle:StoryBundle,query,filters=None,*,limit=6,excluded_sourc
         score=sum(min(count,words[term])*(2 if len(term)>2 else 1) for term,count in needles.items())
         if rewritten in normalized(haystack):score+=8
         if score:
-            if facts_only:
-                titles = re.split(r'[／/｜|]', scene.title.split('｜',1)[0])
-                if any(len(title.strip())>=2 and normalized(title.strip()) in rewritten for title in titles):
-                    score+=8
-            source_priority = {'official_original': 0, 'official_summary': 1}.get(source.source_kind, 2) if facts_only else 0
-            scored.append((score,source_priority,scene.scene_id,scene))
-    scored.sort(key=lambda row:(-row[0],row[1],row[2]))
+            scored.append(((-score, scene.scene_id),scene))
+    scored.sort(key=lambda row:row[0])
     return {'query_rewrites':trace,'rewritten_query':rewritten,'total_matches':len(scored),
-            'truncated':len(scored)>limit,'scenes':[row[3] for row in scored[:limit]]}
+            'truncated':len(scored)>limit,'scenes':[row[1] for row in scored[:limit]]}
 
 
 def scene_data(scene,source):
     return {'scene_id':scene.scene_id,'source_id':scene.source_id,'title':scene.title,'chapter':scene.chapter,
             'locator':scene.locator,'participants':list(scene.participants),'story_time':scene.story_time,
             'utterances':[asdict(utterance) for utterance in scene.utterances],
-            'source_kind':source.source_kind,'language':source.language,'source_uri':source.uri,
+            'source_kind':source.source_kind,'work':source.work,'medium':source.medium,'server':_story_region(source),
+            'language':source.language,'source_uri':source.uri,
             'source_version':source.version,'source_content_sha256':source.content_sha256,
-            'published_at':source.published_at,'acquired_at':source.acquired_at,'use_scope':source.use_scope}
+            'published_at':source.published_at,'acquired_at':source.acquired_at,
+            'use_scope':source.use_scope,'coverage_note':source.coverage_note}
