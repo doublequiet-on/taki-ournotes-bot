@@ -7182,6 +7182,35 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
                                           quoted_text='', quote_hint='')
                 self.assertEqual(_observation_turn(target, request, lightweight=True), expected)
 
+    async def test_lightweight_other_speaker_emoji_preserves_prepared_reply(self):
+        self.enable_lightweight_fact_fixture()
+        initial = self.request('open-question',1)
+        initial.update(body='大家练副歌会先降速还是直接练原速？',trigger='observation')
+        first = Request.parse(initial,'fixture','app',self.now)
+        self.assertTrue(self.agent.proactive.gateway_observation(first)[0])
+        self.tick += 1.6
+        self.client.request.side_effect = [
+            self.result('{"participation":"reply","text":"","delay_seconds":null}'),
+            self.result('我会先降速，把容易抢拍的地方弄顺。'),
+        ]
+        plan,attempts,_ = await self.candidate(initial)
+        self.assertEqual(len(attempts),2)
+        self.assertTrue(plan['send_allowed'])
+
+        self.current_user='u2'
+        def follow(text,seq):
+            self.now+=.01
+            value=self.request('reply-'+str(seq),seq)
+            value.update(body=text,trigger='observation')
+            return self.agent.proactive.gateway_observation(Request.parse(value,'fixture','app',self.now))
+
+        self.assertEqual(follow('🤣 😂',2),(False,0,True))
+        self.assertTrue(self.backend.lookup(plan['request_id'],'e1')['send_allowed'])
+        self.event(plan,'intent');self.event(plan,'ack')
+        self.assertEqual(follow('👀',3),(False,0,False))
+        self.assertTrue(follow('😂 我刚试过，原速只卡在第一个鼓点。',4)[0])
+        self.assertEqual(self.client.request.await_count,2)
+
     async def addressed_ingress_fixture(self, *, delivered, next_seq):
         self.enable_lightweight_fact_fixture()
         before = self.request('before', 1)

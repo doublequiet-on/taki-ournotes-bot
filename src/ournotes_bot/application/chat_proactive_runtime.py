@@ -34,6 +34,7 @@ def _echo_key(text: str) -> str:
 
 
 _INTERJECTION = re.compile(r'(?:哈{2,}|笑死|围观|路过|插个楼|冒个泡|你们继续|吃瓜|\+1|\[表情\])')
+_REACTION_EMOJI = re.compile(r'(?:[😂🤣😆😹👀]\ufe0f?\s*)+')
 _TURN_CLOSED = re.compile(r'(?:已经有人回答了|(?:我|他|她|我们)?(?:已经|刚刚|刚才)?'
                           r'(?:答完了|解决了|搞定了|知道了|明白了|懂了)|不用(?:再)?答了|不用了|先这样|算了)')
 _TOPIC_SHIFT = re.compile(r'^(?:换个话题|说个别的|先不说这个|聊点别的|打断一下[，,:：])')
@@ -63,6 +64,9 @@ def _observation_turn(target, request, *, lightweight=False):
         return 'waiting'
     if lightweight and text == '已经有人回答了':
         return 'answered'
+    if (lightweight and _REACTION_EMOJI.fullmatch(text) and (target is None or request.user_id != target.speaker_id)
+            and not (request.reference or request.quoted_text or request.quote_hint)):
+        return 'interjection'
     if target is None:
         return 'advance'
     previous = _echo_key(target.text)
