@@ -51,7 +51,11 @@ def select_topic_context(rows, *, limit=6):
         if not shared:
             return (0, False, 0)
         longest = max(shared, key=lambda key: (len(key), key))
-        if not same_speaker:
+        if same_speaker:
+            # One generic bigram can recur in two unrelated topics by the same speaker.
+            if len(longest) < 3:
+                return (0, False, 0)
+        else:
             # A shared nickname alone can refer to different things.
             before, _, after = text.partition(longest)
             if len(longest) < 4 or not any(key in before[:-1] or key in after[1:] for key in shared):

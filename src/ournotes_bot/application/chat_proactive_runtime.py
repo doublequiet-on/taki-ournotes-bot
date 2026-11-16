@@ -39,7 +39,13 @@ _TURN_CLOSED = re.compile(r'(?:已经有人回答了|(?:我|他|她|我们)?(?:�
 _TOPIC_SHIFT = re.compile(r'^(?:换个话题|说个别的|先不说这个|聊点别的|打断一下[，,:：])')
 _SUPPLEMENT = re.compile(r'^(?:补充|再补|漏说|忘了说|我说的是|我指的是|更正|纠正|我的意思是)')
 _ANSWER = re.compile(r'^(?:答案是|选[的是]|直接选|原因是|因为|可以用|用.+就行)')
-_WAITING = re.compile(r'(?:(?:等我|我马上|我一会儿|我这就|等下我)(?:再|去)?(?:发|补|贴|说).{0,12}'
+_ANSWER_UNCERTAIN = re.compile(r'[?？]|是不是|会不会|能不能|可不可以|要不要|有没有|能否|是否|不确定'
+                               r'|(?:吗|么|吧)[。.!！…]*$')
+_WAITING = re.compile(r'(?:(?:等我|我马上|我一会儿|我这就|等下我)(?:再|去)?'
+                      r'(?:发(?:个图|张图|截图|图片|视频|出来|一下)?'
+                      r'|补(?:充)?(?:一句|一条|一段|一下)?'
+                      r'|贴(?:个图|张图|截图|图片|出来|一下)?'
+                      r'|说(?:一句|一下|完)?)'
                       r'|我还没说完|等我说完|先听我说完)')
 _WEB_URL = re.compile(r'[a-z][a-z0-9+.-]*://|www\.', re.I)
 _REPLY_KINDS = ('react', 'opinion', 'joke', 'question')
@@ -52,7 +58,8 @@ def _observation_turn(target, request, *, lightweight=False):
     text = _echo_key(request.body).strip('，,！!？?~～')
     if _TOPIC_SHIFT.match(text):
         return 'shift'
-    if lightweight and not request.body.rstrip().endswith(('?', '？')) and _WAITING.fullmatch(text):
+    if (lightweight and (target is None or request.user_id == target.speaker_id)
+            and not request.body.rstrip().endswith(('?', '？')) and _WAITING.fullmatch(text)):
         return 'waiting'
     if lightweight and text == '已经有人回答了':
         return 'answered'
@@ -72,7 +79,7 @@ def _observation_turn(target, request, *, lightweight=False):
     if lightweight:
         common = topic_keys(text) & topic_keys(previous)
         if (not same_speaker and target.text.rstrip().endswith(('?', '？'))
-                and _ANSWER.match(text) and common
+                and _ANSWER.match(text) and common and not _ANSWER_UNCERTAIN.search(request.body.strip())
                 and (text.startswith('答案是') or any(len(key) >= 3 for key in common))):
             return 'answered'
         if same_speaker and text != previous and any(len(key) >= 3 for key in common):

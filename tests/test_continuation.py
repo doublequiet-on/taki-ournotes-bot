@@ -1202,6 +1202,25 @@ class ProactiveControllerTests(unittest.TestCase):
         self.now[0] += 1.5
         return self.controller.candidate(scope or self.a, reserve_cost_micro=reserve)
 
+    def test_topic_context_restores_specific_but_not_generic_same_speaker_anchor(self):
+        from ournotes_bot.application.proactive_chat import select_topic_context
+        from ournotes_bot.domain.chat import ChatMessage
+
+        recent = [ChatMessage(str(i), 'u2', text, i) for i, text in enumerate(
+            ('上午出门买锅', '煤气灶更适合炒菜', '公交明天改线', '要不要一块出发', '刚刚发车了'), 1)]
+        cases = (
+            ('活动报名日期哪天截止', '活动限定卡池谁出', False),
+            ('棉签税是说又想在游戏花钱', '今天又交棉签税了', True),
+        )
+        for prior, current, expected in cases:
+            with self.subTest(prior=prior, current=current):
+                rows = [ChatMessage('older', 'u1', prior, 0), *recent, ChatMessage('current', 'u1', current, 6)]
+                selected, anchored = select_topic_context(rows)
+                self.assertEqual(anchored, expected)
+                self.assertEqual(len(selected), 6)
+                self.assertEqual(selected[0].message_id, 'older' if expected else '1')
+                self.assertEqual(selected[-1].message_id, 'current')
+
     def test_cost_reconciliation_preserves_unknown_and_cannot_restore_send_permission(self):
         self.observe();candidate=self.ready(reserve=100)
         self.controller.cancel(self.a)

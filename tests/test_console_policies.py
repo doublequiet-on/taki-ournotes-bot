@@ -6847,6 +6847,35 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
     async def test_lightweight_fact_question_decides_before_approved_lookup(self):
         await self.lightweight_fact_question()
 
+    def test_lightweight_followup_question_replaces_open_target(self):
+        self.enable_lightweight_fact_fixture()
+        first = self.observation('活动门票怎么拿？')
+        scope = self.agent.proactive.scope(Request.parse(first, 'fixture', 'app', self.now))
+        self.current_user = 'u2'
+        self.now += 1
+        followup = self.observation('因为活动门票没领，所以打不开吗？', seq=2)
+        self.assertEqual(self.agent.proactive.controller.target(scope).message_id, followup['message_id'])
+
+    def test_lightweight_cancels_only_for_definite_answer_or_linked_wait(self):
+        from types import SimpleNamespace
+
+        from ournotes_bot.application.chat_proactive_runtime import _observation_turn
+        from ournotes_bot.domain.chat import ChatMessage
+
+        target = ChatMessage('question', 'u1', '活动门票怎么拿？', 0)
+        cases = (
+            ('u2', '因为活动门票没领，所以打不开吧', 'advance'),
+            ('u2', '答案是活动门票可以在签到页领取', 'answered'),
+            ('u2', '等我说下，今晚排名如何', 'advance'),
+            ('u2', '等我补一句', 'advance'),
+            ('u1', '等我补一句', 'waiting'),
+        )
+        for speaker, text, expected in cases:
+            with self.subTest(text=text, speaker=speaker):
+                request = SimpleNamespace(attachments=(), body=text, user_id=speaker,
+                                          quoted_text='', quote_hint='')
+                self.assertEqual(_observation_turn(target, request, lightweight=True), expected)
+
     def filtered_group_observation(self, text, seq, *, timestamp_ms=None):
         raw = self.request('filtered'+str(seq), seq)
         raw.update(body=text, trigger='observation', quoted_text='旧话题')
