@@ -7358,6 +7358,48 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
         await self.candidate(next_turn)
         self.assertEqual([json.loads(item['content'])['message_id'] for item in wire[0]['input'][1:]], ['next'])
 
+    async def captured_lightweight_anchor(self, padding='', *, input_limit=None):
+        self.enable_lightweight_fact_fixture()
+        self.client.request.return_value = self.result('转拍兔那段，先把切回来的第一拍踩稳。')
+        first, _ = await self.prepare_native('/聊 我把副歌回来前那段叫转拍兔，这里总跟丢'+padding)
+        self.assertEqual(first['parts'][0]['business_status'],'success')
+        scope = self.backend.works[first['delivery_id']].request.scope
+        self.event(first,'intent');self.event(first,'ack')
+        self.agent.proactive.followups.clear(tuple(scope.values()))
+        delivered = 'accepted-' + first['request_id'][:8]
+        self.assertEqual(len(self.agent.store.read(scope,[delivered])['messages']),1)
+        if input_limit is not None:
+            self.snapshot = replace(self.snapshot,profile=replace(self.snapshot.profile,max_input_tokens=input_limit))
+
+        fillers = []
+        self.current_user = 'u2'
+        for seq, text in enumerate(('门口有外卖','钥匙我带走了','明早公交改线','周末好像有雨','纸杯已经拿到了','冰箱还有苹果'),2):
+            self.now += 1
+            fillers.append(self.observation(text,seq=seq))
+        self.current_user = 'u1'
+        self.now += 1
+        current = self.observation('转拍兔还是一回来就掉，第三次了',seq=8)
+        self.tick += 1.6
+        wire = []
+        async def respond(profile, body, **kwargs):
+            wire.append(json.loads(json.dumps(body)))
+            return self.result('{"participation":"skip","text":"","delay_seconds":null}')
+        self.client.request.side_effect = respond
+        _, attempts, _ = await self.candidate(current)
+        self.assertEqual(len(attempts),1)
+        context = [json.loads(item['content']) for item in wire[0]['input'][1:]]
+        return context, delivered, [event['message_id'] for event in fillers[-3:]], current['message_id']
+
+    async def test_lightweight_topic_anchor_keeps_its_delivered_reply_under_context_pressure(self):
+        context, delivered, tail, current = await self.captured_lightweight_anchor()
+        self.assertEqual([row['message_id'] for row in context],[
+            'native1',delivered,*tail,current])
+        self.assertEqual((context[1]['role'],context[1]['reply_to']),('assistant','native1'))
+
+    async def test_lightweight_input_budget_trims_reply_with_its_source(self):
+        context, _, tail, current = await self.captured_lightweight_anchor('鼓'*1600,input_limit=14500)
+        self.assertEqual([row['message_id'] for row in context],[*tail,current])
+
     def filtered_group_observation(self, text, seq, *, timestamp_ms=None):
         raw = self.request('filtered'+str(seq), seq)
         raw.update(body=text, trigger='observation', quoted_text='旧话题')

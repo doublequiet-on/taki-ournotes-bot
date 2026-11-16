@@ -825,8 +825,12 @@ class ChatAgent:
         generation_header={'role':'system','content':natural_prompt+'\n'+rules+generation_rules+reconsider+
             '单独输出 <TAKI_SKIP>，不附正文或解释。'}
         # Fit the actual wire and keep the current message intact; the two-stage control shares one suffix.
-        for start in range(len(history)):
-            fitted_history=history[start:]
+        paired_history = tuple(zip(history, text_rows))
+        for start in range(len(paired_history)):
+            suffix = paired_history[start:]
+            visible_sources = {row['message_id'] for _, row in suffix if row['role'] == 'user'}
+            fitted_history = [item for item, row in suffix
+                              if row['role'] != 'assistant' or row.get('reply_to') in visible_sources]
             decision_messages=[decision_header,*fitted_history]
             generation_messages=[generation_header,*fitted_history]
             decision_profile,_,decision_bound=runtime.lightweight_request(

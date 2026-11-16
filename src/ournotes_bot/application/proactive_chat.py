@@ -39,7 +39,7 @@ def topic_keys(text):
 
 
 def select_topic_context(rows, *, limit=6):
-    """Keep current and adjacent turns; admit at most one earlier lexical anchor."""
+    """Keep current and adjacent turns and, when relevant, one earlier exchange."""
     if len(rows) <= limit:
         return rows, False
     current = rows[-1]
@@ -71,7 +71,14 @@ def select_topic_context(rows, *, limit=6):
     strength, index = max(older)
     if not strength[0] or strength <= best_recent:
         return recent, False
-    return [rows[index], *recent[1:]], True
+    anchor = rows[index]
+    reply = next((row for row in reversed(rows[index + 1:-1])
+                  if row.role == 'assistant' and row.reply_to == anchor.message_id), None)
+    if limit > 2 and reply is not None and reply not in recent[1:]:
+        retained = {anchor.message_id, reply.message_id}
+        retained.update(row.message_id for row in recent[2:])
+        return [row for row in rows if row.message_id in retained], True
+    return [anchor, *recent[1:]], True
 
 
 @dataclass(frozen=True)
