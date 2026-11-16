@@ -16,11 +16,12 @@ from functools import partial
 from urllib.parse import urlsplit, unquote, parse_qsl
 
 from ..domain.chat import ChatMessage, PERSONA, PERSONA_VERSION, TurnBudget, COMMUNITY_TERMS
-from ..domain.model_calls import ModelError, require
+from ..domain.knowledge import KnowledgeError
+from ..domain.model_calls import ModelError, ToolCall, require
 from ..domain.story import StoryError
 from ..domain.chat_images import ImageError, MAX_TOTAL_BYTES
 from ..sources.chat_images import ImageLoader,ImageCache
-from ..natural_query.native_tools import TOOLS, Tool, obj, string, validate_call, execute, scope_for, requested_server, chat_query_question, chat_background_only
+from ..natural_query.native_tools import TOOLS, Tool, obj, string, validate_call, execute, scope_for, scope_mentions, requested_server, chat_query_question, chat_background_only
 from ..natural_query.query_validation import EntityEvidence
 from ..query.continuation import catalog_version
 from ..query.entity_lexicon import band_aliases, alias_scope, alias_status, alias_version
@@ -1000,12 +1001,21 @@ class ChatAgent:
         explicit_text = work.proactive is None and not request.attachments and (not quote_focus or bool(quote_prefix))
         proactive_evidence = work.proactive.evidence_route if work.proactive is not None else ''
         evidence_context_id = work.proactive.evidence_context_id if proactive_evidence else ''
-        if evidence_context_id and requested_server(chat_query_question(user_question)) is None:
+        if evidence_context_id:
             origin = next(row for row in work.proactive.messages if row.message_id==evidence_context_id)
-            server = requested_server(chat_query_question(origin.text))
-            if server:
-                region = '日服和国际服' if server=='common' else _REGION_NAME[server]
-                meta_question = user_question = region+' '+user_question
+            current = chat_query_question(user_question)
+            previous = chat_query_question(origin.text)
+            current_server, previous_server = requested_server(current), requested_server(previous)
+            scope_terms = []
+            if current_server is None and previous_server:
+                scope_terms.append('日服和国际服' if previous_server=='common' else _REGION_NAME[previous_server])
+            if ((current_server is None or current_server==previous_server)
+                    and not any(scope_mentions(current)) and not re.search(r'当前|现在|現時|目前',current)):
+                dates, versions = scope_mentions(previous)
+                scope_terms.extend(dates)
+                scope_terms.extend('版本 '+version for version in versions)
+            if scope_terms:
+                meta_question = user_question = ' '.join((*scope_terms,user_question))
         route = ('activity_time' if local_activity else
                  explicit_evidence_route(user_question) if explicit_text else proactive_evidence)
         if explicit_text and route=='story_clarify' and context_request.reference and not quote_images and request.quote_hint!='image':
@@ -1027,7 +1037,7 @@ class ChatAgent:
         if explicit_text and not route and unscoped_pity_question(user_question):
             route = 'mechanic_clarify'
         mechanic = guarded_mechanic(user_question) if explicit_text and not route else None
-        just_evidence = _JUST_EVIDENCE.get(route)
+        just_evidence = route in _JUST_EVIDENCE
         mechanic_server = (requested_server(chat_query_question(user_question)) or 'jp') if mechanic or just_evidence else None
         activity = local_activity or (activity_time_intent(chat_query_question(user_question)) if route == 'activity_time' else None)
         activity_questions = activity.questions if activity else ()
@@ -1037,7 +1047,7 @@ class ChatAgent:
             today = datetime.fromtimestamp(request.timestamp_ms/1000, _CALENDAR_ZONE).date()
             queried_day = today + timedelta(days=_RELATIVE_DAY_OFFSETS[relative_end_day])
         story_fact = route == 'story_fact'
-        lookup = ('knowledge_search' if just_evidence or mechanic
+        lookup = ('knowledge_search' if mechanic
                   else 'catalog_info' if activity_questions else '')
         task_enabled=work.proactive is None or getattr(work,'continuation',False)
         transition=task_transition(user_question) if task_enabled and not (quote_focus or quote_images) else ''
@@ -1252,7 +1262,6 @@ class ChatAgent:
         coverage_checked=False
         mechanic_rechecked = False
         mechanic_passage = ''
-        just_fact_ready = False
         local_answer = story_clarification(user_question) if route=='story_clarify' else {
             'just_clarify': _JUST_CLARIFY, 'mechanic_clarify': '你问的是哪款游戏、哪个卡池的保底？',
         }.get(route, '')
@@ -1312,7 +1321,7 @@ class ChatAgent:
                     '用两句自然中文，结论放前面。')
         elif just_evidence and not local_answer:
             messages[0]['content']+=(
-                '\n本轮在问 JUST 机制。先查对应区服的已审核资料，再用两三句群聊中文回答，'
+                '\n本轮在问 JUST 机制。依据后端读取的 just_evidence，用两三句群聊中文回答，'
                 '开头直接说结论或证据缺口。只说当前问的这一层，版本和条件简短放在后面。不要整段引用、文档标题或内部字段编号。')
             if route == 'just_score':
                 messages[0]['content']+='本轮问激奏 JUST 区间。区间排名规则和区间得分公式分开说，查不到所问的公式就指出缺口。'
@@ -1332,7 +1341,7 @@ class ChatAgent:
         if web is not None:
             registry['web_search']=Tool('web_search','检索公开互联网信息；query只含完成问题所需公开关键词，不包含群聊、身份、私密内容或内部网址。',
                 obj({'query':string(160)},('query',)),'web')
-        initial_tools = [] if local_answer or local_activity or story_fact else (
+        initial_tools = [] if local_answer or local_activity or story_fact or just_evidence else (
             [registry[lookup].wire()] if lookup else [tool.wire() for tool in registry.values()])
         messages=self.initial_context(work,messages,initial_tools)
         self.proactive.trace(work,'context',messages=sum(item['role']!='system' for item in messages),
@@ -1377,36 +1386,78 @@ class ChatAgent:
             if retain_turn:self.audit(self.store.generated,work.delivery,text)
             return PreparedReply(text, parse_origin='policy', processing_route='local', business_status=status,
                                  evidence=leases, evidence_deadline=work.content_deadline)
-        if story_fact:
-            story_result = None
-            if self.story:
-                source_question = chat_query_question(meta_question or question)
-                search_status, story_result = await finish_thread(self.read_story_fact, source_question)
-                trace_evidence('story_search', search_status)
-                if story_result is not None:
-                    trace_evidence('story_read', story_result['status'])
+        if story_fact or just_evidence:
+            source_question = chat_query_question(meta_question or question)
+            evidence = None
+            local_text = quote_prefix+'我不知道。'
+            status = 'source_unavailable'
+            if story_fact:
+                if self.story:
+                    search_status, result = await finish_thread(self.read_story_fact, source_question)
+                    trace_evidence('story_search', search_status)
+                    if result is not None:
+                        trace_evidence('story_read', result['status'])
+                        if result['status']=='ok':
+                            evidence = {'story_evidence':result}
+                else:
+                    trace_evidence('story_registry', 'story_not_configured')
             else:
-                trace_evidence('story_registry', 'story_not_configured')
+                dates, versions = scope_mentions(source_question)
+                args = dict(server=mechanic_server,date=dates[0] if dates else None,
+                            version=versions[0] if versions else None)
+                call = ToolCall('host_knowledge','knowledge_search',json.dumps(args))
+                started = time.monotonic()
+                try:
+                    result, leases = await self.execute(work,call,question,site,leases,deadline-self.budget.final_seconds,
+                        deadline,registry=registry,meta_question=meta_question,evidence_route=route,just_card=just_card)
+                except KnowledgeError as exc:
+                    if str(exc)!='scope_date':raise
+                    result = {'status':'query_date_mismatch'}
+                scope = result.pop('_knowledge_scope',None)
+                single = result.pop('_knowledge_lease',None)
+                proofs = (single,) if single is not None else result.pop('_knowledge_leases',())
+                trace = dict(action='knowledge_search',status=result['status'],evidence_route=route,
+                             elapsed_ms=round((time.monotonic()-started)*1000))
+                if retain_turn:
+                    self.audit(self.store.event,work.delivery,'research/1','research',trace)
+                runtime.backend.diagnostics.chat_event(request.request_id,'research',runtime.backend.clock(),**trace)
+                self.proactive.trace(work,'tool',name='knowledge_search',status=result['status'])
+                if result['status']=='ok' and scope is not None and scope.server==mechanic_server and any(
+                        just_source_matches(route,just_card,chunk)
+                        for lease in proofs if lease.scope.server==mechanic_server for chunk in lease.chunks):
+                    if route=='just_minimum':
+                        local_text = (quote_prefix+'还定不了要几张满破判定卡。'+_REGION_NAME[mechanic_server]
+                                      +'资料能说明扩窗怎么叠，要估张数还得看具体留影、技能等级和你想把判定窗扩到多少。')
+                        work.knowledge_scope = scope
+                        work.knowledge_scope_leases = proofs
+                        status = 'success'
+                    else:
+                        evidence = {'just_evidence':result}
             runtime.check(work, deadline, leases)
-            if story_result is not None and story_result['status'] == 'ok':
-                evidence = {'role':'user','content':json.dumps({'story_evidence':story_result},ensure_ascii=False)}
-                if runtime.input_bound(work, [*messages,evidence], []) <= work.model_snapshot.profile.max_input_tokens-1024:
-                    version = (story_result['source_revision'], story_result['revocation_revision'])
-                    work.story_versions = tuple(dict.fromkeys((*work.story_versions,version)))
-                    messages.append(evidence)
-                    trace_evidence('story_read', 'result_in_context')
+            if evidence is not None:
+                entry = {'role':'user','content':json.dumps(evidence,ensure_ascii=False)}
+                if runtime.input_bound(work, [*messages,entry], []) <= work.model_snapshot.profile.max_input_tokens-1024:
+                    if story_fact:
+                        version = (result['source_revision'], result['revocation_revision'])
+                        work.story_versions = tuple(dict.fromkeys((*work.story_versions,version)))
+                        trace_evidence('story_read', 'result_in_context')
+                    else:
+                        work.knowledge_scope = scope
+                        work.knowledge_scope_leases = proofs
+                        work.chat_task.knowledge = True
+                    messages.append(entry)
                     force_final = True
                 else:
-                    trace_evidence('story_read', 'budget_exhausted')
+                    if story_fact:
+                        trace_evidence('story_read', 'budget_exhausted')
                     if proactive_evidence:
                         return skip_proactive_evidence('proactive_evidence_budget_exhausted',reason='tool_result_input_budget')
             if not force_final:
-                text = quote_prefix+'我不知道。'
                 if proactive_evidence:
-                    return evidence_reply(text,'source_unavailable')
+                    return replace(evidence_reply(local_text,status),evidence=leases,evidence_deadline=work.content_deadline)
                 if retain_turn:
-                    self.audit(self.store.generated,work.delivery,text)
-                return PreparedReply(text,parse_origin='policy',processing_route='local',business_status='source_unavailable',
+                    self.audit(self.store.generated,work.delivery,local_text)
+                return PreparedReply(local_text,parse_origin='policy',processing_route='local',business_status=status,
                                      evidence=leases,evidence_deadline=work.content_deadline if leases else None)
             runtime.check(work, deadline, leases)
         try:
@@ -1428,7 +1479,8 @@ class ChatAgent:
                     return skip_proactive_evidence('proactive_evidence_budget_exhausted')
                 if final:
                     closing=('只输出本轮回复。用实际读到的场景回答当前问题，缺失的细节直接说不知道。'
-                             if story_fact else '本轮检索预算结束。结合当前群聊和已有结果决定是否接话，按 reply/skip/defer 的 JSON 格式输出，不要再调用工具。'
+                             if story_fact else '只输出本轮回复。用实际读到的审核资料回答，缺失的结论直接说不知道。'
+                             if just_evidence else '本轮检索预算结束。结合当前群聊和已有结果决定是否接话，按 reply/skip/defer 的 JSON 格式输出，不要再调用工具。'
                              if work.proactive is not None and not proactive_evidence else '本轮检索预算结束。根据已有结果回答；缺失细节说明具体缺口。不要再调用工具。')
                     if work.chat_task.goal:closing+='\n任务完成情况：'+json.dumps(work.chat_task.coverage(),ensure_ascii=False)+'；逐项回应，缺资料的项目直接说具体缺口。'
                     if scope_note:closing+='\n'+scope_note
@@ -1469,10 +1521,6 @@ class ChatAgent:
                     if activity_questions and (activity_result not in ('ok','partial')
                                                or relative_end_day and activity_result!='ok'):
                         text=quote_prefix+(f'我不知道{relative_end_day}是不是结束。' if relative_end_day else '我不知道。')
-                        return evidence_reply(text,'source_unavailable') if proactive_evidence else PreparedReply(
-                            text,business_status='source_unavailable')
-                    if just_evidence and not just_fact_ready:
-                        text=quote_prefix+'我不知道。'
                         return evidence_reply(text,'source_unavailable') if proactive_evidence else PreparedReply(
                             text,business_status='source_unavailable')
                     if mechanic and not mechanic_passage:
@@ -1592,7 +1640,7 @@ class ChatAgent:
                         image_input=None;force_final=True
                     else:
                         next_tools = [tool.wire() for tool in registry.values()]
-                        if just_evidence or activity_questions:
+                        if activity_questions:
                             next_tools = []
                         if runtime.input_bound(work,projected,next_tools)>work.model_snapshot.profile.max_input_tokens-2048:
                             force_final=True
@@ -1623,12 +1671,6 @@ class ChatAgent:
                                 mechanic_passage = matching_mechanic_passage(
                                     (lease for lease in scoped_leases if lease.scope.server == mechanic_server),
                                     mechanic, user_question)
-                            elif just_evidence and knowledge_scope is not None and knowledge_scope.server==mechanic_server:
-                                candidates = (chunk for lease in ((knowledge_lease,) if knowledge_lease else knowledge_leases)
-                                              if lease.scope.server==mechanic_server for chunk in lease.chunks)
-                                just_fact_ready = any(just_source_matches(route,just_card,chunk) for chunk in candidates)
-                        if just_evidence:
-                            force_final=True
                         if not proactive_evidence and output['status'] in ('not_available','no_results','source_unavailable','empty'):
                             output['next_step']='用site_search查Haneoka的具体对象或相关公告，读详情后结合已有资料回答。'
                             tool_message['content']=json.dumps(output,ensure_ascii=False)
@@ -1669,12 +1711,8 @@ class ChatAgent:
                     if call.name=='story_read' and output['status']=='ok':
                         trace_evidence('story_read','result_in_context')
                     if image_input:messages.append(image_input)
-                    if mechanic_passage or route == 'just_minimum' and just_fact_ready:
-                        if mechanic_passage:
-                            text = quote_prefix + f'{_REGION_NAME[mechanic_server]}已审核资料摘录\n{mechanic_passage}'
-                        else:
-                            text = (quote_prefix+'还定不了要几张满破判定卡。'+_REGION_NAME[mechanic_server]
-                                    +'资料能说明扩窗怎么叠，要估张数还得看具体留影、技能等级和你想把判定窗扩到多少。')
+                    if mechanic_passage:
+                        text = quote_prefix + f'{_REGION_NAME[mechanic_server]}已审核资料摘录\n{mechanic_passage}'
                         runtime.check(work,deadline,leases)
                         if proactive_evidence:
                             reply=evidence_reply(text)
@@ -1686,6 +1724,10 @@ class ChatAgent:
                         return PreparedReply(text,parse_origin='model',processing_route='model',business_status='success',
                                              evidence=leases,evidence_deadline=work.content_deadline)
             raise ModelError('model_attempt_limit')
+        except ModelError as exc:
+            if proactive_evidence and force_final and str(exc) in ('quota_exceeded','primary_budget_exceeded'):
+                return skip_proactive_evidence('proactive_evidence_budget_exhausted')
+            raise
         finally:
             if final_attempt is not None:
                 runtime.usage.release(final_attempt,'final_not_needed')
