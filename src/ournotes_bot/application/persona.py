@@ -141,6 +141,7 @@ _ACTIVITY_RELATIVE_END = re.compile(
     r'(?:就)?(?:是不是|是否)?(?:要|会|會)?(?:结束|結束)了?(?:吗|嗎|\?)[啊呀呢?\s]*$', re.I)
 _ACTIVITY_PREFIX = re.compile(
     r'(?:\s|our\s*notes|\bon\b|那|所以|实际|到底|请问|想问|我想问|有人知道|和|与|跟|及|、|以及|分别|的)*', re.I)
+_ACTIVITY_ADDRESS = re.compile(r'^(?:taki(?![a-z0-9_])|立希)[\s，,、：:]*', re.I)
 _UNSCOPED_PITY = re.compile(
     r'(?:请问|谁知道|有人知道)?\s*(?:抽卡)?保底(?:到底|是|要|需要)?\s*(?:多少|几)抽(?:啊|呀|呢|吗)?[?。]*')
 _OMITTED_EVIDENCE_SUBJECT = re.compile(
@@ -176,7 +177,7 @@ class ActivityTimeIntent:
 
 def activity_time_intent(question):
     """Bind calendar fields, relative date and scope from the same clauses."""
-    text = unicodedata.normalize('NFKC', question).strip()
+    text = _ACTIVITY_ADDRESS.sub('', unicodedata.normalize('NFKC', question).strip())
     questions = []
     regions = []
     days = set()

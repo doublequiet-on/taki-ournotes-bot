@@ -56,6 +56,12 @@ class InfoView:
 
 
 @dataclass(frozen=True)
+class CalendarTime:
+    title: str
+    at: float
+
+
+@dataclass(frozen=True)
 class InfoAnswer:
     text: str
     status: str = "success"
@@ -64,6 +70,7 @@ class InfoAnswer:
     captured_images: tuple[tuple[str, bytes], ...] = ()
     original_image: bytes | None = None
     calendar_time_status: Literal["exact", "related", "unavailable"] | None = None
+    calendar_time: CalendarTime | None = None
 
 
 def row_text(row: InfoRow) -> str:

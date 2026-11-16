@@ -409,6 +409,9 @@ class ModelRuntime:
             group=self.usage.key('group',work.request.conversation_id) if work.request.kind=='group' else None
             async def operation(deadline):
                 work.model_started_at=time.monotonic()
+                local_activity = self.agent.standalone_activity(work, question)
+                if local_activity:
+                    return await self.agent.run(work,question,user,group,deadline,local_activity=local_activity)
                 return await self.routed(work,lambda end:self.agent.run(work,question,user,group,end),deadline)
             seconds=min(self.agent.budget.execution_seconds,work.content_deadline-time.monotonic(),
                         work.request.timestamp_ms/1000+298-self.backend.clock()-5)

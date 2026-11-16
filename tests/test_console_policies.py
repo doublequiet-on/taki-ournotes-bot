@@ -4464,41 +4464,52 @@ class ChatSourceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
                         self.assertEqual(plan['parts'][0]['text'],'我不知道明天是不是结束')
                 self.event(plan,'intent');self.event(plan,'ack')
 
-    async def test_standalone_activity_reads_before_generation_and_skips_model_for_missing_time(self):
+    async def test_standalone_activity_answers_from_verified_calendar_without_model(self):
+        from datetime import datetime, timedelta, timezone
         from ournotes_bot.domain.info_catalog import ActivityCalendar, ActivityInfo
-        import time
+        from ournotes_bot.query import activity_query
 
-        now = time.time()
+        zone = timezone(timedelta(hours=8))
+        now = datetime.fromtimestamp(self.now,zone).replace(hour=15,minute=0,second=0,microsecond=0)
+        self.now = now.timestamp()
+        today_end = now.replace(hour=20,minute=59,second=59)
+        tomorrow_end = today_end.replace(hour=0,minute=0,second=3)+timedelta(days=1)
         self.repo.activity_announcements = Mock()
         self.repo.activity_announcements.next.return_value = (None, '')
-        calendar = ActivityCalendar(
-            (ActivityInfo(11,'合成日服活动',{},start_at=now-3600,end_at=now+3600),),
-            'jp-r1','jp-fixture','observation-jp')
-        self.repo.activity_calendars = {'jp': calendar}
-        bodies = self.capture_native_bodies()
-        self.client.request.return_value = self.result('今天结束。')
-        questions = ('这期日服活动什么时候结束？', '日服活动什么时候结束？', '明天日服活动就要结束了吗')
-        for seq,question in enumerate(questions,1):
-            with self.subTest(question=question):
-                plan,attempts = await self.prepare_native('/聊 '+question,seq=seq)
-                self.assertEqual(len(attempts), 1)
-                self.assertFalse(bodies[-1].get('tools'))
-                items = next(data['activity_schedule_evidence']
-                             for row in bodies[-1]['messages'] if row['role']=='user'
-                             for data in (json.loads(row['content']),) if 'activity_schedule_evidence' in data)
-                self.assertEqual(len(items),1)
-                self.assertEqual((items[0]['server'],items[0]['field'],items[0]['release']),('jp','结束','jp-r1'))
-                self.assertIn('合成日服活动', items[0]['text'])
-                self.assertEqual(plan['parts'][0]['text'],'今天结束')
-                self.event(plan,'intent');self.event(plan,'ack')
-        self.repo.activity_calendars['jp'] = replace(calendar, records=())
-        self.client.request.reset_mock()
-        plan,attempts = await self.prepare_native('/聊 明天日服活动就要结束了吗',seq=4)
+        current = ActivityInfo(11,'合成日服活动',{},start_at=self.now-3600,end_at=today_end.timestamp())
+        next_day = replace(current,end_at=tomorrow_end.timestamp())
+        prior = replace(current,end_at=self.now-5)
+        scenarios = (
+            ('/聊 这期日服活动什么时候结束？', current, 'fresh', '', today_end),
+            ('立希，日服活动什么时候结束？', current, 'fresh', '', today_end),
+            ('taki明天日服活动就要结束了吗', current, 'fresh', '', today_end),
+            ('taki明天日服活动就要结束了吗', next_day, 'fresh', '是，', tomorrow_end),
+            ('taki明天日服活动就要结束了吗', next_day, 'stale', '旧缓存显示，', tomorrow_end),
+            ('taki明天日服活动就要结束了吗', prior, 'fresh', '', None),
+        )
+        calendar_query = activity_query._calendar
+        runtime = self.backend.model_runtime
+        with patch.object(runtime.agent.store,'clock',lambda:self.now), \
+                patch.object(activity_query,'_calendar',side_effect=lambda server,mode,repo,_now:
+                          calendar_query(server,mode,repo,self.now)), \
+                patch.object(runtime.usage,'check_primary',side_effect=AssertionError('local answer checked model budget')):
+            for seq,(question,record,cache_state,lead,end) in enumerate(scenarios,1):
+                with self.subTest(question=question,cache_state=cache_state,end=end):
+                    self.repo.cache_state = cache_state
+                    self.repo.activity_calendars = {'jp': ActivityCalendar(
+                        (record,), 'jp-r1','jp-fixture','observation-jp')}
+                    plan,attempts = await self.prepare_native(question,seq=seq)
+                    self.assertEqual(attempts,[])
+                    reply = plan['parts'][0]
+                    if end is not None:
+                        self.assertEqual(reply['business_status'],'success')
+                        self.assertEqual(reply['text'],
+                            f"{lead}日服《合成日服活动》{end.strftime('%Y-%m-%d %H:%M:%S')}（北京时间）结束")
+                    else:
+                        self.assertEqual(reply['business_status'],'source_unavailable')
+                        self.assertEqual(reply['text'],'我不知道明天是不是结束')
+                    self.event(plan,'intent');self.event(plan,'ack')
         self.client.request.assert_not_awaited()
-        self.assertEqual(len(attempts),0)
-        self.assertEqual(plan['parts'][0]['business_status'],'source_unavailable')
-        self.assertEqual(plan['parts'][0]['text'],'我不知道明天是不是结束')
-        self.event(plan,'intent');self.event(plan,'ack')
 
     async def test_colloquial_kinship_reads_both_people_and_distinguishes_the_sisters(self):
         from test_platform_boundary import StoryPublicationTests
