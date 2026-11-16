@@ -48,7 +48,8 @@ class ChatRecovery:
             story=list(work.story_versions),knowledge=KnowledgeService.retention_proof(
                 lease for reply in work.prepared for lease in reply.evidence),
             vision=asdict(work.vision_capability) if work.vision_capability else None,
-            web=asdict(work.web_capability) if work.web_capability else None)
+            web=asdict(work.web_capability) if work.web_capability else None,
+            just_clarification=work.just_clarification)
         expires=min(self.store.clock()+86400,self.store.clock()+work.content_deadline-time.monotonic())
         staged=[]
         for position,reply in enumerate(work.prepared):

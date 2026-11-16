@@ -2933,6 +2933,7 @@ class ChatAgentTests(Fixture, unittest.IsolatedAsyncioTestCase):
 
     async def test_just_ambiguity_is_clarified_and_the_selected_mode_reaches_its_source(self):
         from types import SimpleNamespace
+        from ournotes_bot.application.chat_agent import ChatAgent
         from ournotes_bot.domain.knowledge import Applicability,EvidenceChunkV1,EvidenceLease,KnowledgeScope
         from ournotes_bot.domain.model_calls import ToolCall
 
@@ -2942,6 +2943,10 @@ class ChatAgentTests(Fixture, unittest.IsolatedAsyncioTestCase):
         self.assertIn('区间怎么计分',first['parts'][0]['text'])
         self.client.request.assert_not_awaited()
         self.event(first,'intent');self.event(first,'ack')
+        runtime = self.backend.model_runtime
+        path = runtime.agent.store.path
+        runtime.agent.close()
+        runtime.agent = ChatAgent(runtime,path)
 
         scope = KnowledgeScope(server='jp')
         chunk = EvidenceChunkV1('on-09-score','0'*64,1,'score#1','1'*64,
@@ -2973,6 +2978,12 @@ class ChatAgentTests(Fixture, unittest.IsolatedAsyncioTestCase):
         self.assertIn('技能从几级到几级',first['parts'][0]['text'])
         self.event(first,'intent');self.event(first,'ack')
 
+        second,attempts = await self.prepare_native('/聊 留影31',seq=2)
+        self.assertEqual(attempts,[])
+        self.assertNotIn('卡名或 ID',second['parts'][0]['text'])
+        self.assertIn('技能从几级到几级',second['parts'][0]['text'])
+        self.event(second,'intent');self.event(second,'ack')
+
         scope = KnowledgeScope(server='jp')
         applicable = Applicability('current',None,None,None,'工程范围')
         wrong = EvidenceChunkV1('jp110-just-support-levels','0'*64,1,'skill#1','1'*64,
@@ -2988,11 +2999,41 @@ class ChatAgentTests(Fixture, unittest.IsolatedAsyncioTestCase):
             self.result(calls=(ToolCall('approved','knowledge_search',args),)),
             self.result('这张留影只查到持续配置，范围还缺资料。'),
         ]
-        plan,attempts = await self.prepare_native('/聊 留影31 技能Lv4到Lv5',seq=2)
+        plan,attempts = await self.prepare_native('/聊 技能Lv4到Lv5',seq=3)
         self.assertEqual(len(attempts),2)
         self.assertEqual(plan['parts'][0]['business_status'],'success')
         self.assertIn('留影31',knowledge.retrieve.call_args.kwargs['focus_query'])
         self.assertEqual(knowledge.prepare_evidence.call_args.args[0].chunks,(correct,))
+
+    async def test_just_clarification_requires_a_successful_receipt_and_the_same_actor(self):
+        from ournotes_bot.application.backend_protocol import PROTOCOL
+
+        scenarios = ('failed_receipt', 'other_actor', 'deleted_question', 'ordinary_reply')
+        for seq,scenario in enumerate(scenarios,1):
+            with self.subTest(scenario=scenario):
+                self.current_user = 'u1'
+                index = seq*2-1
+                self.client.request.return_value = self.result(
+                    '你问的是 JUST 扩窗怎么叠，还是激奏里 JUST 区间怎么计分？')
+                question = '接着聊点有趣的' if scenario=='ordinary_reply' else 'JUST 怎么算'
+                first,_ = await self.prepare_native('/聊 '+question,seq=index)
+                self.event(first,'intent')
+                if scenario=='failed_receipt':
+                    self.backend.apply_event(first['delivery_id'],dict(protocol=PROTOCOL,request_id=first['request_id'],
+                        plan_version=1,gateway_epoch='e1',event='ack',part_id=first['parts'][0]['id'],attempt_id='a1',
+                        result='failure',message_id=None))
+                else:
+                    self.event(first,'ack')
+                if scenario=='other_actor':
+                    self.current_user = 'u2'
+                if scenario=='deleted_question':
+                    scope = dict(instance_id='fixture',app_id='app',platform='qq',kind='group',conversation_id='g1')
+                    self.backend.model_runtime.agent.forget(scope,['native'+str(index)])
+                self.client.request.return_value = self.result('普通续话。')
+                plan,attempts = await self.prepare_native('/聊 区间计分',seq=index+1)
+                self.assertEqual(len(attempts),1)
+                self.assertEqual(plan['parts'][0]['text'],'普通续话')
+                self.event(plan,'intent');self.event(plan,'ack')
 
     async def test_unverified_just_and_story_answers_are_not_published(self):
         self.client.request.return_value=self.result('未经核对的工程答案。')
@@ -7015,7 +7056,7 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
         self.assertEqual(plan['parts'], [])
         self.assertEqual([body['max_output_tokens'] for body in wire], [768, 1024])
         self.assertTrue(all('tools' not in body for body in wire))
-        expected_ids = [event['message_id'] for event in [*earlier[1:], value]]
+        expected_ids = [event['message_id'] for event in [*earlier, value]]
         for body in wire:
             context = [json.loads(item['content']) for item in body['input'][1:]]
             self.assertEqual([row['message_id'] for row in context], expected_ids)

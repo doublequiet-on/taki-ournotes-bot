@@ -86,6 +86,7 @@ class Work:
     image_sources: tuple = ()
     vision_capability: object = None
     continuation: bool = False
+    just_clarification: dict | None = None
     chat_task: object = None
     chat_task_generation: int = 0
     chat_task_pending: object = None
