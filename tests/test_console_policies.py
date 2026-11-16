@@ -4481,7 +4481,6 @@ class ChatSourceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
 
     async def test_story_fact_read_pins_relevant_official_and_conflicting_community(self):
         from test_platform_boundary import StoryPublicationTests
-        from ournotes_bot.domain.model_calls import ToolCall
         from ournotes_bot.sources.story_files import source_content_hash
 
         fixture=StoryPublicationTests();fixture.setUp();self.addCleanup(fixture.doCleanups)
@@ -4506,18 +4505,23 @@ class ChatSourceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
         self.assertEqual([item['scene_id'] for item in matches['items']],['relevant-official','fan-pair'])
         self.assertEqual(fixture.service.search('立希生日是哪天',facts_only=True)['status'],'no_results')
         bodies=self.capture_native_bodies()
-        self.client.request.side_effect=[
-            self.result(calls=(ToolCall('s','story_search','{"query":"扯开话题"}'),)),
-            self.result(calls=(ToolCall('r','story_read',json.dumps({'handle':matches['items'][1]['handle']})),)),
-            self.result('官方简介说她们同班。社区推测和简介有分歧。'),
-        ]
+        self.client.request.return_value=self.result('官方简介说她们同班。社区推测和简介有分歧。')
         plan,attempts=await self.prepare_native('/聊 海希什么关系')
-        self.assertEqual(len(attempts),3)
-        data=json.loads(next(row['content'] for row in bodies[-1]['messages'] if row.get('tool_call_id')=='r'))
+        self.assertEqual(len(attempts),1)
+        self.assertFalse(bodies[-1].get('tools'))
+        data=json.loads(bodies[-1]['messages'][-2]['content'])['story_evidence']
         self.assertEqual([scene['source_kind'] for scene in data['scenes']],['official_summary','fan_analysis'])
         self.assertEqual(data['evidence_read'],[item['handle'] for item in matches['items']])
         self.assertEqual(plan['parts'][0]['business_status'],'success')
         self.event(plan,'intent');self.event(plan,'ack')
+        for seq, question in enumerate(('立希生日是哪天？','韩服第18话初音见过清告吗？'), 2):
+            with self.subTest(question=question):
+                missing, attempts = await self.prepare_native('/聊 '+question,seq=seq)
+                self.assertFalse(attempts)
+                self.assertEqual(missing['parts'][0]['text'],'我不知道')
+                self.assertEqual(missing['parts'][0]['business_status'],'source_unavailable')
+                self.event(missing,'intent');self.event(missing,'ack')
+        self.client.request.assert_awaited_once()
 
     async def test_activity_time_reads_each_requested_calendar_and_preserves_image_gap(self):
         from ournotes_bot.domain.info_catalog import ActivityCalendar, ActivityInfo
@@ -4657,7 +4661,6 @@ class ChatSourceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
 
     async def test_colloquial_kinship_reads_both_people_and_distinguishes_the_sisters(self):
         from test_platform_boundary import StoryPublicationTests
-        from ournotes_bot.domain.model_calls import ToolCall
         from ournotes_bot.sources.story_files import source_content_hash
 
         fixture = StoryPublicationTests()
@@ -4709,16 +4712,12 @@ class ChatSourceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
                 expected_scene = 'later-reveal' if question.startswith('祥子知道') else 'related'
                 result = fixture.service.search(question, limit=3, facts_only=True)
                 self.assertEqual(result['items'][0]['scene_id'], expected_scene)
-                handle = result['items'][0]['handle']
-                self.client.request.side_effect = [
-                    self.result(calls=(ToolCall('s','story_search','{"query":"清告"}'),)),
-                    self.result(calls=(ToolCall('r','story_read',json.dumps({'handle':handle})),)),
-                    self.result(response),
-                ]
+                self.client.request.return_value = self.result(response)
                 plan, attempts = await self.prepare_native('/聊 '+question, seq=seq)
-                self.assertEqual(len(attempts), 3)
-                tool_result = json.loads(next(row['content'] for row in bodies[-1]['messages'] if row.get('tool_call_id')=='r'))
-                self.assertEqual(tool_result['scenes'][0]['scene_id'], expected_scene)
+                self.assertEqual(len(attempts), 1)
+                self.assertFalse(bodies[-1].get('tools'))
+                evidence = json.loads(bodies[-1]['messages'][-2]['content'])['story_evidence']
+                self.assertEqual(evidence['scenes'][0]['scene_id'], expected_scene)
                 self.assertEqual(plan['parts'][0]['text'], response.removesuffix('。'))
                 self.event(plan,'intent');self.event(plan,'ack')
 
@@ -7700,6 +7699,56 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
         self.enable_lightweight_fact_fixture(max_calls_per_hour=2)
         await self.assert_lightweight_evidence_call_denial('chat_service_call_limit')
         self.client.request.assert_not_awaited()
+
+    async def test_lightweight_story_reads_after_decision_with_two_model_calls(self):
+        from test_platform_boundary import StoryPublicationTests
+        from ournotes_bot.sources.story_files import source_content_hash
+
+        self.enable_lightweight_fact_fixture(max_calls_per_hour=3)
+        fixture = StoryPublicationTests()
+        fixture.setUp()
+        self.addCleanup(fixture.doCleanups)
+        bundle = fixture.bundle(kind='official_summary')
+        bundle['scenes'][0]['utterances'][0]['translation'] = '立希和八幡海铃是同班同学。'
+        bundle['sources'][0]['content_sha256'] = source_content_hash(bundle['scenes'])
+        fixture.publish(bundle)
+        self.agent.story = fixture.service
+        question = '海希是什么关系？'
+        wire = []
+        responses = iter((
+            self.result('{"participation":"skip","text":"","delay_seconds":null}'),
+            self.result('{"participation":"reply","text":"","delay_seconds":null}'),
+            self.result('她们是同班同学。'),
+        ))
+        async def respond(profile,body,**kwargs):
+            wire.append(json.loads(json.dumps(body)))
+            return next(responses)
+        self.client.request.side_effect = respond
+        first = self.observation('立希生日是哪天？')
+        self.tick += 1.6
+        with patch.object(fixture.service,'search',wraps=fixture.service.search) as search:
+            skipped, attempts, _ = await self.candidate(first)
+            self.assertFalse(skipped['send_allowed'])
+            self.assertEqual(len(attempts),1)
+            search.assert_not_called()
+            self.now += 61
+            self.tick += 61
+            second = self.observation(question,seq=2)
+            self.tick += 1.6
+            plan, attempts, candidate = await self.candidate(second,2)
+            search.assert_called_once_with(question,limit=3,facts_only=True)
+        self.assertEqual(candidate[0].evidence_route,'story_fact')
+        self.assertEqual(len(attempts),2)
+        self.assertEqual(self.client.request.await_count,3)
+        body = wire[-1]
+        self.assertFalse(body.get('tools'))
+        evidence = next(data['story_evidence'] for item in body['input'] if item.get('role')=='user'
+                        if 'story_evidence' in (data:=json.loads(item['content'])))
+        self.assertEqual(evidence['scenes'][0]['scene_id'],'scene-1')
+        self.assertEqual(plan['parts'][0]['text'],'她们是同班同学')
+        fixture.service.withdraw('test-story','fixture')
+        self.assertFalse(self.backend.lookup(plan['request_id'],'e1')['send_allowed'])
+        self.backend.finish(self.backend.works[plan['delivery_id']],'aborted')
 
     async def test_lightweight_evidence_requires_remaining_opportunity_calls(self):
         self.enable_lightweight_fact_fixture()
