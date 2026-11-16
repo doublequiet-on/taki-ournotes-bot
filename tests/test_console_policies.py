@@ -4454,7 +4454,9 @@ class ChatSourceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
         from test_platform_boundary import StoryPublicationTests
         fixture=StoryPublicationTests();fixture.setUp();self.addCleanup(fixture.doCleanups)
         bundle=fixture.bundle(kind='official_original',personas=True)
-        bundle['personas'][0]['prompt']+='\nON抽卡语境注意：工程夹具的 777 点只能兑换留影。\n继续保留认真或吐槽的说话方式。'
+        bundle['personas'][0]['prompt']+=(
+            '\nON抽卡语境注意招募点数：工程夹具的 777 点只能兑换留影。'
+            '\nON抽卡语境注意：另一期工程夹具是 888 点。\n继续保留认真或吐槽的说话方式。')
         status=fixture.publish(bundle)
         approved=fixture.service.approve_persona('test-persona','fixture-human','fixture-only-confirmation',revision=status['source_revision'])
         self.backend.model_runtime.agent.story=fixture.service
@@ -4465,6 +4467,8 @@ class ChatSourceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
         self.assertIn('认真听取对方发言',prompt)
         self.assertIn('继续保留认真或吐槽的说话方式',prompt)
         self.assertNotIn('777 点',prompt)
+        self.assertNotIn('888 点',prompt)
+        self.assertIn('给群友看的正文只写你要说的话',prompt)
         self.assertIn('777 点',fixture.service.persona()['prompt'])
         persona=self.backend.model_runtime.agent.store.db.execute('SELECT persona FROM runs').fetchone()[0]
         self.assertTrue(persona.startswith('test-persona/'))
