@@ -3212,6 +3212,39 @@ class ChatAgentTests(Fixture, unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(attempts),1)
         self.assertIn('200 抽必出 SSR',plan['parts'][0]['text'])
 
+    async def test_explicit_draw_guarantee_requires_a_rule_for_the_requested_reward(self):
+        from types import SimpleNamespace
+        from ournotes_bot.domain.knowledge import Applicability,EvidenceChunkV1,EvidenceLease,KnowledgeScope
+
+        scope = KnowledgeScope(server='intl')
+        knowledge = Mock()
+        knowledge.validate_current.return_value = True
+        self.backend.knowledge = knowledge
+        question = '/聊 Our Notes 国际服现在的卡池是不是 100 抽必出留影？'
+        for seq,(line,valid) in enumerate((
+                ('100 抽获得的招募点可兑换留影。',False),
+                ('100 抽必出留影？当前规则只提供兑换。',False),
+                ('200 抽必出 SSR，招募点可兑换留影。',False),
+                ('本期卡池 100 抽必出一张指定留影。',True)),1):
+            with self.subTest(line=line):
+                passage = '## 国际服抽卡保底\n'+line
+                chunk = EvidenceChunkV1('mechanic','0'*64,1,'mechanic#1','1'*64,passage,(),
+                    Applicability('current',None,None,None,''),'official',(),('intl',))
+                knowledge.retrieve.return_value = SimpleNamespace(
+                    code='ok',lease=EvidenceLease('fixture',scope,(chunk,)))
+                knowledge.prepare_evidence.return_value = {'passages':[{'text':passage}]}
+                plan,attempts = await self.prepare_native(question,seq=seq)
+                self.assertEqual(attempts,[])
+                self.assertEqual(knowledge.retrieve.call_args.args[1],scope)
+                part = plan['parts'][0]
+                if valid:
+                    self.assertIn(line.removesuffix('。'),part['text'])
+                else:
+                    self.assertEqual(part['business_status'],'source_unavailable')
+                    self.assertEqual(part['text'],'国际服抽卡保底我不知道')
+                self.event(plan,'intent');self.event(plan,'ack')
+        self.client.request.assert_not_awaited()
+
     async def test_on_mechanic_keeps_adjacent_number_and_condition_in_source_order(self):
         from types import SimpleNamespace
         from ournotes_bot.domain.knowledge import Applicability,EvidenceLease,KnowledgeScope
@@ -4420,11 +4453,19 @@ class ChatSourceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
     async def test_approved_fixture_persona_is_versioned_in_audit(self):
         from test_platform_boundary import StoryPublicationTests
         fixture=StoryPublicationTests();fixture.setUp();self.addCleanup(fixture.doCleanups)
-        status=fixture.publish(fixture.bundle(kind='official_original',personas=True))
+        bundle=fixture.bundle(kind='official_original',personas=True)
+        bundle['personas'][0]['prompt']+='\nON抽卡语境注意：工程夹具的 777 点只能兑换留影。\n继续保留认真或吐槽的说话方式。'
+        status=fixture.publish(bundle)
         approved=fixture.service.approve_persona('test-persona','fixture-human','fixture-only-confirmation',revision=status['source_revision'])
         self.backend.model_runtime.agent.story=fixture.service
         self.client.request.return_value=self.result('认真听到了。')
+        bodies=self.capture_native_bodies()
         plan,_=await self.prepare_native('/聊 随便聊两句')
+        prompt=bodies[-1]['messages'][0]['content']
+        self.assertIn('认真听取对方发言',prompt)
+        self.assertIn('继续保留认真或吐槽的说话方式',prompt)
+        self.assertNotIn('777 点',prompt)
+        self.assertIn('777 点',fixture.service.persona()['prompt'])
         persona=self.backend.model_runtime.agent.store.db.execute('SELECT persona FROM runs').fetchone()[0]
         self.assertTrue(persona.startswith('test-persona/'))
         events=self.backend.diagnostics.read(plan['request_id'])['chat_events']
@@ -7842,6 +7883,7 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
         self.agent.proactive.lightweight_groups = frozenset({'g1'})
         for seq, question in enumerate((
             'Our Notes 抽卡概率是什么', '这个技能倍率是多少',
+            'Our Notes 国际服现在的卡池是不是 100 抽必出留影？',
             '我觉得 JUST 最吃卡，但抽卡保底多少抽',
             '我觉得满破判定卡挺有用，但至少需要三张吗',
             'MyGO第几集播出的',
@@ -7856,15 +7898,15 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
         self.client.request.assert_not_awaited()
 
         self.now += 1
-        self.observation('', seq=6, attachments=picture)
+        self.observation('', seq=7, attachments=picture)
         self.now += 1
-        self.observation('这句在最后一张图之前', seq=7)
+        self.observation('这句在最后一张图之前', seq=8)
         self.now += 1
-        self.observation('', seq=8, attachments=picture)
+        self.observation('', seq=9, attachments=picture)
         self.now += 1
-        first = self.observation('我觉得just挺吃卡', seq=9)
+        first = self.observation('我觉得just挺吃卡', seq=10)
         self.now += 1
-        second = self.observation('必须要几张满破判卡 不然就靠手硬凹', seq=10)
+        second = self.observation('必须要几张满破判卡 不然就靠手硬凹', seq=11)
         self.tick += 1.6
 
         wire = []

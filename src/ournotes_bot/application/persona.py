@@ -15,6 +15,13 @@ REPLY_STYLE = (
     '去掉自我免责、客服套话和未被问到的劝告。缺结束时间就说不知道结束时间，不加「以活动页为准」或「别先按某天算」。'
 )
 
+
+def approved_voice_prompt(prompt):
+    # The approved reference contains a separately labelled game-data note.
+    # Numerical rules are retrieved from applicable evidence, not from voice.
+    return '\n'.join(line for line in prompt.splitlines()
+                     if not line.startswith('ON抽卡语境注意：'))
+
 VOICE = '''性格：外冷内热、认真、有主见，不善于漂亮话，关心体现在把问题听清、说明白。
 平时用自然短句；可以有一点停顿和轻微吐槽，但不要每句都“哼”“哈？”“笨蛋”、傲娇否认或省略号。
 理解群内用语是为了接住指代和语气；表达仍保持自己的直率、认真和主见。偶尔用贴切的梗，不模仿某位群友的整套口癖、身份或私人经历，不为合群加入复读。
@@ -339,11 +346,17 @@ _LIGHTWEIGHT_QUESTION = re.compile(
     r'请问|谁知道|想知道|是不是|是什么|怎么(?:算|计分|叠|判定|触发|打|玩)|如何|什么(?:意思|规则|机制|效果)|'
     r'哪[个张种]|能不能|有没有|对不对|帮(?:我)?(?:查|核实|算)|'
     r'(?:到底|实际|^)(?:还)?(?:要|需要|得)\s*几张|(?:至少|最少).{0,12}吗\s*$')
+DRAW_GUARANTEE = re.compile(
+    r'(\d+|[一二三四五六七八九十百千两]+|几|多少)\s*(?:连)?抽'
+    r'(?:\s*(?:以后|之后|以内|就|能|会)){0,3}\s*(?:必[出得]|一定(?:能)?(?:出|抽到)|保证(?:出|获得))')
 
 
 def lightweight_needs_evidence(question):
     text = unicodedata.normalize('NFKC', question).strip()
     if explicit_evidence_route(text):
+        return True
+    guarantee = DRAW_GUARANTEE.search(text)
+    if guarantee and (guarantee[1] in ('几','多少') or _QUESTION_END.search(text) or _LIGHTWEIGHT_QUESTION.search(text)):
         return True
     mechanic_context = False
     for part in _EVIDENCE_CLAUSE.split(text):

@@ -38,7 +38,8 @@ from .chat_jobs import (ChatServices,ServiceBudget,ServiceError,maximum_cost_mic
                        summary_candidate,summary_messages,validate_summary)
 from .backend_protocol import ProtocolError
 from .chat_proactive_runtime import ProactiveChat
-from .persona import (REPLY_STYLE, activity_time_intent, explicit_evidence_route, lightweight_image_reference,
+from .persona import (DRAW_GUARANTEE, REPLY_STYLE, activity_time_intent, approved_voice_prompt,
+                      explicit_evidence_route, lightweight_image_reference,
                       referenced_story_question, story_clarification, unscoped_pity_question)
 from .replies import PreparedReply
 
@@ -120,6 +121,8 @@ def guarded_mechanic(question):
     if not re.search(r'多少|几(?:抽|次|分|点)|怎么(?:算|判定)|如何(?:算|计算|判定)|是什么|什么规则|[?？]', text):
         return None
     field = _ON_MECHANICS.search(text)
+    if (field is None or field.group()=='保底') and DRAW_GUARANTEE.search(text):
+        return '保底', '抽卡'
     if field is None:
         return None
     subsystem = next((name for name in ('抽卡', '判定', '计分', '技能') if name in text), None)
@@ -197,6 +200,15 @@ def _mechanic_passage_covers(text, body, mechanic, question):
         return False
     if _MECHANIC_CONDITION_QUESTION.search(question) and not _MECHANIC_CONDITION.search(body):
         return False
+    if field=='保底' and DRAW_GUARANTEE.search(question):
+        statements = (line for line in re.split(r'(?<=[。；;!?！？])|\n',body)
+                      if not line.strip().endswith(('?', '？')))
+        rewards = (line[match.end():] for line in statements for match in DRAW_GUARANTEE.finditer(line)
+                   if match[1] not in ('几','多少'))
+        if '留影' in question:
+            return any(re.match(r'\s*(?:[0-9一二两三]+张\s*)?(?:指定|随机|当期)?留影',reward)
+                       for reward in rewards)
+        return any(rewards)
     quantity = _MECHANIC_QUANTITY.search(question)
     if quantity or field == '保底':
         asked_unit = quantity[1] if quantity else None
@@ -1037,6 +1049,8 @@ class ChatAgent:
         if explicit_text and not route and unscoped_pity_question(user_question):
             route = 'mechanic_clarify'
         mechanic = guarded_mechanic(user_question) if explicit_text and not route else None
+        draw_guarantee = bool(mechanic and mechanic[0]=='保底' and
+                              DRAW_GUARANTEE.search(unicodedata.normalize('NFKC',user_question)))
         just_evidence = route in _JUST_EVIDENCE
         mechanic_server = (requested_server(chat_query_question(user_question)) or 'jp') if mechanic or just_evidence else None
         activity = local_activity or (activity_time_intent(chat_query_question(user_question)) if route == 'activity_time' else None)
@@ -1047,7 +1061,7 @@ class ChatAgent:
             today = datetime.fromtimestamp(request.timestamp_ms/1000, _CALENDAR_ZONE).date()
             queried_day = today + timedelta(days=_RELATIVE_DAY_OFFSETS[relative_end_day])
         story_fact = route == 'story_fact'
-        lookup = ('knowledge_search' if mechanic
+        lookup = ('knowledge_search' if mechanic and not draw_guarantee
                   else 'catalog_info' if activity_questions else '')
         task_enabled=work.proactive is None or getattr(work,'continuation',False)
         transition=task_transition(user_question) if task_enabled and not (quote_focus or quote_images) else ''
@@ -1143,8 +1157,9 @@ class ChatAgent:
         if persona:
             work.persona_version=persona['persona_id']+'/'+persona['persona_sha256']
             work.story_versions=((persona['source_revision'],persona['revocation_revision']),)
+            voice_prompt=approved_voice_prompt(persona['prompt'])
             prompt=prompt.replace('人格初稿是 legacy-derived，尚非剧情研究审核定稿。','人格采用以下人工批准档案。')
-            prompt+='\n人工批准人格档案：\n'+persona['prompt']
+            prompt+='\n人工批准人格档案：\n'+voice_prompt
         if not light:prompt+='\n'+CHAT_SEMANTICS+SOURCE_SEMANTICS
         prompt+='\n'+REPLY_STYLE
         scoped_question=chat_query_question(question)
@@ -1165,7 +1180,7 @@ class ChatAgent:
                     '工具只读；不代操作账号、配队、预测或给未经审核的逐段打法。'
                     '未提供的能力不假装使用。\n'+COMMUNITY_TERMS+band_alias_reference())
             if not light:prompt+='\n'+SOURCE_SEMANTICS
-            if persona:prompt+='\n人工批准人格档案：\n'+persona['prompt']
+            if persona:prompt+='\n人工批准人格档案：\n'+voice_prompt
             if scope_note:prompt+='\n'+scope_note
             if getattr(work,'continuation',False):prompt+=RESEARCH_SEMANTICS
         if work.proactive is not None:
@@ -1341,7 +1356,7 @@ class ChatAgent:
         if web is not None:
             registry['web_search']=Tool('web_search','检索公开互联网信息；query只含完成问题所需公开关键词，不包含群聊、身份、私密内容或内部网址。',
                 obj({'query':string(160)},('query',)),'web')
-        initial_tools = [] if local_answer or local_activity or story_fact or just_evidence else (
+        initial_tools = [] if local_answer or local_activity or story_fact or just_evidence or draw_guarantee else (
             [registry[lookup].wire()] if lookup else [tool.wire() for tool in registry.values()])
         messages=self.initial_context(work,messages,initial_tools)
         self.proactive.trace(work,'context',messages=sum(item['role']!='system' for item in messages),
@@ -1386,7 +1401,7 @@ class ChatAgent:
             if retain_turn:self.audit(self.store.generated,work.delivery,text)
             return PreparedReply(text, parse_origin='policy', processing_route='local', business_status=status,
                                  evidence=leases, evidence_deadline=work.content_deadline)
-        if story_fact or just_evidence:
+        if story_fact or just_evidence or draw_guarantee:
             source_question = chat_query_question(meta_question or question)
             evidence = None
             local_text = quote_prefix+'我不知道。'
@@ -1409,7 +1424,8 @@ class ChatAgent:
                 started = time.monotonic()
                 try:
                     result, leases = await self.execute(work,call,question,site,leases,deadline-self.budget.final_seconds,
-                        deadline,registry=registry,meta_question=meta_question,evidence_route=route,just_card=just_card)
+                        deadline,registry=registry,meta_question=meta_question,evidence_route=route,just_card=just_card,
+                        mechanic_server=mechanic_server if draw_guarantee else None)
                 except KnowledgeError as exc:
                     if str(exc)!='scope_date':raise
                     result = {'status':'query_date_mismatch'}
@@ -1422,9 +1438,18 @@ class ChatAgent:
                     self.audit(self.store.event,work.delivery,'research/1','research',trace)
                 runtime.backend.diagnostics.chat_event(request.request_id,'research',runtime.backend.clock(),**trace)
                 self.proactive.trace(work,'tool',name='knowledge_search',status=result['status'])
-                if result['status']=='ok' and scope is not None and scope.server==mechanic_server and any(
-                        just_source_matches(route,just_card,chunk)
-                        for lease in proofs if lease.scope.server==mechanic_server for chunk in lease.chunks):
+                scoped = tuple(lease for lease in proofs if lease.scope.server==mechanic_server)
+                if draw_guarantee:
+                    passage = matching_mechanic_passage(scoped,mechanic,user_question)
+                    if passage:
+                        local_text = quote_prefix+f'{_REGION_NAME[mechanic_server]}已审核资料摘录\n{passage}'
+                        work.knowledge_scope = scope
+                        work.knowledge_scope_leases = proofs
+                        status = 'success'
+                    else:
+                        local_text = quote_prefix+f'{_REGION_NAME[mechanic_server]}抽卡保底我不知道。'
+                elif result['status']=='ok' and scope is not None and scope.server==mechanic_server and any(
+                        just_source_matches(route,just_card,chunk) for lease in scoped for chunk in lease.chunks):
                     if route=='just_minimum':
                         local_text = (quote_prefix+'还定不了要几张满破判定卡。'+_REGION_NAME[mechanic_server]
                                       +'资料能说明扩窗怎么叠，要估张数还得看具体留影、技能等级和你想把判定窗扩到多少。')
