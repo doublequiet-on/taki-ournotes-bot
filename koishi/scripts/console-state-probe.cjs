@@ -195,8 +195,8 @@ async function main(){
   assert.equal(chatRestored.pageMessages.value.groups,'交流设置已保存并确认生效。');
   await chatRestored.logout();assert.equal(chatRestored.captureEdits().chat,null);
   const costsSource=fs.readFileSync(require.resolve('../console/costs.js'),'utf8')
-    .replace(/^import .*?;\r?\n/gm,'')
-  const {requestConclusion}=await import('data:text/javascript;base64,'+Buffer.from(costsSource).toString('base64'))
+    .replace(/^import .*?;\r?\n/gm,'')+'\nconst {h}=globalThis.consoleStateFixture;const stamp=String;'
+  const {requestConclusion,chatEventsView}=await import('data:text/javascript;base64,'+Buffer.from(costsSource).toString('base64'))
   const chatEvents=[
     {kind:'transport',data:{attempt_id:'lookup',stage:'complete',name:'none'}},
     {kind:'transport',data:{attempt_id:'final',stage:'wait_headers',name:'disconnected',elapsed_ms:16925,wait_headers_ms:14703}},
@@ -217,6 +217,13 @@ async function main(){
     chat_events:[{kind:'evidence',data:{action:'story_search',status:'no_results'}}]}
   assert.equal(requestConclusion(noHits),'资料阶段 · 检索无结果')
   assert.equal(requestConclusion({...noHits,business_outcome:'ok'}),'交付阶段 · 平台已确认各部分发送')
+  for(const [status,label] of Object.entries({
+    partial:'只有相关或部分日程',no_results:'未找到所问日程',not_available:'日程暂不可用',
+  })){
+    const calendar=[{kind:'evidence',data:{action:'catalog_info',status}}]
+    assert.equal(requestConclusion({...noHits,chat_events:calendar}),'资料阶段 · '+label)
+    assert.ok(JSON.stringify(chatEventsView(calendar)).includes('活动日程 · '+label))
+  }
 
   const originalDocument=globalThis.document
   let download

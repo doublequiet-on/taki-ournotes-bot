@@ -112,11 +112,13 @@ export function budgetEditor(s){
 const modelStages={decision:'判断',generation:'正文生成',model:'模型调用'};
 const transportReasons={disconnected:'连接断开',timeout:'模型超时',cancelled:'请求取消',interrupted:'传输中断',
  connect:'连接失败',transport:'传输失败',response_too_large:'响应超出大小限制'};
-const evidenceActions={story_registry:'剧情工具注册',story_search:'剧情搜索',story_read:'读取剧情',quote_image:'引用原图'};
+const evidenceActions={catalog_info:'活动日程',story_registry:'剧情工具注册',story_search:'剧情搜索',story_read:'读取剧情',quote_image:'引用原图'};
 const evidenceStatuses={story_not_configured:'剧情库未配置',registered:'已注册搜索和读取工具',prepared:'工具已加入待发请求',
  not_available:'语料不可用',source_unavailable:'来源暂不可用',no_results:'检索无结果',ok:'工具成功',
  budget_exhausted:'预算限制',result_in_context:'结果已放入后续上下文',paired:'已关联引用目标',
  unpaired:'原图身份尚未关联',loaded:'原图已加载',unavailable:'原图未加载'};
+const calendarEvidenceStatuses={ok:'已核对日程',partial:'只有相关或部分日程',no_results:'未找到所问日程',not_available:'日程暂不可用'};
+const evidenceStatus=({action,status})=>(action==='catalog_info'?calendarEvidenceStatuses:evidenceStatuses)[status];
 const personaReasons={approved:'已采用人工批准档案',story_not_configured:'剧情库未配置',approval_missing:'缺少人工批准',
  current_missing:'当前剧情发布不可用',revision_mismatch:'档案与语料版本不符',source_withdrawn:'档案来源已撤回',persona_withdrawn:'档案已撤回'};
 const transportStages={connect:'连接',dns:'域名解析',upload:'上传',wait_headers:'等待响应头',read_body:'读取响应正文',complete:'传输完成'};
@@ -156,8 +158,8 @@ export function requestConclusion(detail){
  }
  if(['uncertain','partial'].includes(detail.delivery_state))return '交付阶段 · 平台回执未齐，请核对 QQ 实收';
  if(detail.business_outcome==='unavailable'){
-   const evidence=[...events].reverse().find(e=>e.kind==='evidence'&&['not_available','source_unavailable','no_results','budget_exhausted','story_not_configured'].includes(e.data?.status));
-   if(evidence)return '资料阶段 · '+evidenceStatuses[evidence.data.status];
+   const evidence=[...events].reverse().find(e=>e.kind==='evidence'&&['not_available','source_unavailable','no_results','budget_exhausted','story_not_configured','partial'].includes(e.data?.status));
+   if(evidence)return '资料阶段 · '+evidenceStatus(evidence.data);
  }
  if(detail.delivery_state==='complete')return '交付阶段 · 平台已确认各部分发送';
  const terminal=[...events].reverse().find(e=>['finished','error','decision','control'].includes(e.kind)&&
@@ -205,7 +207,7 @@ export function chatEventsView(events,{group=false}={}){
      }
       if(event.kind==='evidence'){
        parts.length=0;
-       parts.push(evidenceActions[data.action],evidenceStatuses[data.status]);
+       parts.push(evidenceActions[data.action],evidenceStatus(data));
      }
      if(event.kind==='persona'){
         parts.push(data.reason==='approved'?'已采用人工批准档案':'使用基础人格');

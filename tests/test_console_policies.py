@@ -4610,6 +4610,7 @@ class ChatSourceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
             ('taki日服这期活动是不是明天结束？', next_day, 'fresh', '是，', tomorrow_end),
             ('taki国际服这期活动是不是明天就结束了', intl_next, 'fresh', '是，', tomorrow_end),
             ('taki国际服这期活动是不是明天就结束了', intl_prior, 'fresh', '', None),
+            ('taki国际服这期活动是不是明天就结束了', None, 'fresh', '', None),
             ('taki明天日服活动就要结束了吗', next_day, 'stale', '旧缓存显示，', tomorrow_end),
             ('taki明天日服活动就要结束了吗', prior, 'fresh', '', None),
         )
@@ -4628,7 +4629,7 @@ class ChatSourceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
                         (current if international else record,), 'jp-r1','jp-fixture','observation-jp')}
                     if international:
                         self.repo.activity_calendars['intl'] = ActivityCalendar(
-                            (record,), 'intl-r1','intl-fixture','observation-intl')
+                            () if record is None else (record,), 'intl-r1','intl-fixture','observation-intl')
                     plan,attempts = await self.prepare_native(question,seq=seq)
                     self.assertEqual(attempts,[])
                     reply = plan['parts'][0]
@@ -4640,6 +4641,12 @@ class ChatSourceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
                         self.assertEqual(reply['business_status'],'source_unavailable')
                         self.assertEqual(reply['text'],'我不知道明天是不是结束')
                     self.event(plan,'intent');self.event(plan,'ack')
+                    diagnostics = self.backend.diagnostics
+                    observed = [event['data'] for event in diagnostics.read(plan['request_id'])['chat_events']
+                                if event['kind']=='evidence']
+                    expected = 'ok' if end is not None else 'no_results' if record is None else 'partial'
+                    self.assertEqual(observed,[{'action':'catalog_info','status':expected}])
+                    self.assertEqual(diagnostics.health()['availability'],'available')
         self.client.request.assert_not_awaited()
 
     async def test_colloquial_kinship_reads_both_people_and_distinguishes_the_sisters(self):
