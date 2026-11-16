@@ -3027,6 +3027,46 @@ class ChatAgentTests(Fixture, unittest.IsolatedAsyncioTestCase):
         self.assertIn('留影31',knowledge.retrieve.call_args.kwargs['focus_query'])
         self.assertEqual(knowledge.prepare_evidence.call_args.args[0].chunks,(correct,))
 
+    async def test_quoted_just_clarification_resolves_the_selected_reply_after_another_turn(self):
+        from types import SimpleNamespace
+        from ournotes_bot.domain.knowledge import Applicability,EvidenceChunkV1,EvidenceLease,KnowledgeScope
+        from ournotes_bot.domain.model_calls import ToolCall
+
+        first,attempts = await self.prepare_native('/聊 国际服 JUST 怎么算')
+        self.assertEqual(attempts,[])
+        self.event(first,'intent');self.event(first,'ack')
+        self.current_user = 'u2'
+        other,attempts = await self.prepare_native('/聊 日服 JUST 怎么算',seq=2)
+        self.assertEqual(attempts,[])
+        self.event(other,'intent');self.event(other,'ack')
+
+        scope = KnowledgeScope(server='intl')
+        chunk = EvidenceChunkV1('on-09-score','0'*64,1,'score#1','1'*64,
+            '合成规则：先比区间JUST数量，再看区间得分和PERFECT数量。',(),
+            Applicability('current',None,None,None,'工程范围'),'reviewed_analysis',(),('intl',))
+        knowledge = Mock()
+        self.backend.knowledge = knowledge
+        knowledge.retrieve.return_value = SimpleNamespace(code='ok',lease=EvidenceLease('fixture',scope,(chunk,)))
+        knowledge.prepare_evidence.return_value = {'passages':[{'text':chunk.text}]}
+        knowledge.validate_current.return_value = True
+        self.client.request.side_effect = [
+            self.result(calls=(ToolCall('approved','knowledge_search',json.dumps(dict(server='intl',date=None,version=None))),)),
+            self.result('先比区间 JUST 数。'),
+        ]
+
+        self.current_user = 'u1'
+        raw = self.request('native3',3)
+        raw.update(trigger='quoted_reply',reference={
+            'message_id':'accepted-'+first['request_id'][:8],'adapter_profile_version':'fixture'})
+        with patch.object(self,'request',return_value=raw):
+            plan,attempts = await self.prepare_native('/聊 区间计分',seq=3)
+        self.assertEqual(len(attempts),2)
+        self.assertEqual(plan['parts'][0]['business_status'],'success')
+        knowledge.retrieve.assert_called_once()
+        self.assertEqual(knowledge.retrieve.call_args.args[1],scope)
+        self.assertIn('激奏区间怎样比较',knowledge.retrieve.call_args.kwargs['focus_query'])
+        self.event(plan,'intent');self.event(plan,'ack')
+
     async def test_just_comparison_paraphrases_read_the_same_approved_documents(self):
         from ournotes_bot.domain.model_calls import ToolCall
         from ournotes_bot.application.knowledge_service import atomic_text
@@ -3079,7 +3119,8 @@ class ChatAgentTests(Fixture, unittest.IsolatedAsyncioTestCase):
     async def test_just_clarification_requires_a_successful_receipt_and_the_same_actor(self):
         from ournotes_bot.application.backend_protocol import PROTOCOL
 
-        scenarios = ('failed_receipt', 'other_actor', 'deleted_question', 'ordinary_reply')
+        scenarios = ('failed_receipt', 'other_actor', 'deleted_question', 'ordinary_reply',
+                     'other_actor_reference', 'missing_reference', 'unverified_preview', 'image_reference')
         for seq,scenario in enumerate(scenarios,1):
             with self.subTest(scenario=scenario):
                 self.current_user = 'u1'
@@ -3095,13 +3136,22 @@ class ChatAgentTests(Fixture, unittest.IsolatedAsyncioTestCase):
                         result='failure',message_id=None))
                 else:
                     self.event(first,'ack')
-                if scenario=='other_actor':
+                if scenario in ('other_actor','other_actor_reference'):
                     self.current_user = 'u2'
                 if scenario=='deleted_question':
                     scope = dict(instance_id='fixture',app_id='app',platform='qq',kind='group',conversation_id='g1')
                     self.backend.model_runtime.agent.forget(scope,['native'+str(index)])
                 self.client.request.return_value = self.result('普通续话。')
-                plan,attempts = await self.prepare_native('/聊 区间计分',seq=index+1)
+                raw = self.request('native'+str(index+1),index+1)
+                if scenario in ('other_actor_reference','missing_reference','image_reference'):
+                    mid = 'missing' if scenario=='missing_reference' else 'accepted-'+first['request_id'][:8]
+                    raw.update(trigger='quoted_reply',reference={'message_id':mid,'adapter_profile_version':'fixture'})
+                if scenario=='unverified_preview':
+                    raw['quoted_text'] = first['parts'][0]['text']
+                if scenario=='image_reference':
+                    raw['quote_hint'] = 'image'
+                with patch.object(self,'request',return_value=raw):
+                    plan,attempts = await self.prepare_native('/聊 区间计分',seq=index+1)
                 self.assertEqual(len(attempts),1)
                 self.assertEqual(plan['parts'][0]['text'],'普通续话')
                 self.event(plan,'intent');self.event(plan,'ack')

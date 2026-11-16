@@ -896,14 +896,21 @@ class ChatAgent:
         if not (selection or card_detail):
             return None
         rows = [json.loads(item['content']) for item in self.context.messages(request)]
-        if len(rows)<2 or rows[-1]['role']!='assistant':
+        by_id = {row['message_id']:row for row in rows}
+        reference_id = request.reference['message_id'] if request.reference else None
+        quoted = by_id.get(reference_id)
+        if quoted is not None and quoted['role']=='assistant':
+            reply = quoted
+            origin = by_id.get(reply.get('reply_to'))
+        elif len(rows)>=2 and rows[-1]['role']=='assistant':
+            reply = rows[-1]
+            origin = next((row for row in reversed(rows[:-1]) if row['role']=='user'), None)
+        else:
             return None
-        reply = rows[-1]
-        origin = next((row for row in reversed(rows[:-1]) if row['role']=='user'), None)
-        if (origin is None or reply.get('reply_to')!=origin['message_id']
+        if (origin is None or origin['role']!='user' or reply.get('reply_to')!=origin['message_id']
                 or origin['speaker_id']!=request.user_id):
             return None
-        if request.reference and request.reference['message_id'] not in (origin['message_id'], reply['message_id']):
+        if reference_id is not None and reference_id not in (origin['message_id'], reply['message_id']):
             return None
         saved = self.store.delivered_just_clarification(request.scope, reply['message_id'])
         if saved=='legacy':
@@ -921,12 +928,12 @@ class ChatAgent:
             route, supplement = 'just_card', question
         else:
             return None
-        by_id = {row['message_id']:row for row in rows
-                 if row['role']=='user' and row['speaker_id']==request.user_id}
         sources = saved['sources']
-        if not sources or sources[-1]!=origin['message_id'] or any(mid not in by_id for mid in sources):
+        if not sources or sources[-1]!=origin['message_id']:
             return None
-        original = [by_id[mid] for mid in sources]
+        original = [by_id.get(mid) for mid in sources]
+        if any(row is None or row['role']!='user' or row['speaker_id']!=request.user_id for row in original):
+            return None
         merged = '\n补充：'.join([*(row['text'] for row in original), supplement])
         return route, merged, original, reply
 
@@ -997,7 +1004,8 @@ class ChatAgent:
                             route = 'story_fact'
                         break
         clarification_sources = []
-        if explicit_text and not route and (followup := self.just_followup(context_request,user_question)):
+        just_context_available = request.quote_hint!='image' and (not has_quote or context_request.reference is not None)
+        if explicit_text and not route and just_context_available and (followup := self.just_followup(context_request,user_question)):
             route, user_question, clarification_sources, reply = followup
             meta_question = user_question
             self.bind_memory(work,[*clarification_sources,reply])
