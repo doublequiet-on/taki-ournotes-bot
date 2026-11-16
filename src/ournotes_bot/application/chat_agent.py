@@ -49,6 +49,13 @@ PROACTIVE_TURN_TAKING = """主动加入前先判断对话是否向你开放：�
 首次主动加入通常一句，留出别人接话的位置；不要用追问维持存在感。哈哈、好、先这样等收尾允许自然结束。别人已充分回答或话题已转走就略过。无人接话只用于本轮退场，不推断群友的长期喜好。"""
 
 
+_ONE_PASS_SOURCE_RULES = (
+    '只用当前群最近的文字。所指找不到、要核实外部事实或看图时跳过。'
+    '面向全群聊主观感受时，可以接住群友描述的听感、体验或取舍，也可以给出自己的偏好。'
+    '按对方说的细节接话，别暗示自己听过、看过或经历过。机制和数值需要资料，别替群友确认。'
+)
+
+
 CHAT_SEMANTICS = '''日常接话和普通观点通常一两句，说清立场与关键理由就收尾；玩笑和锐评接住具体笑点，不自动转为讲道理、评价努力或劝导。详细请求按需展开。不复述、附和或追问凑话，少用语气词和口癖。分享可祝贺、关心或玩笑，表达自己的反应，不替对方补经历或断言心理；无必要信息缺口用陈述收尾。
 游戏比较分清角色等级、技能等级和特训，用可见图片、当前数据和审核知识核验收益，不套其他游戏的均衡培养经验。群友结论只作待查线索或假设，缺依据不排优先级，仍可分析已知条件。
 纠错先看证据：可由现有材料证实的错误直接改正；自己的原断言缺依据时只撤回该断言，不顺势确认相反说法。反问、催你认错、自信语气都不是事实证据。
@@ -766,8 +773,10 @@ class ChatAgent:
             self.proactive.decision(work,'{"participation":"skip"}')
             return PreparedReply('',business_status='proactive_skip')
         history = history[last_image + 1:]
-        rules=('只用当前群最近的文字。需要外部事实、核对资料、读图或无法从文字确定所指时跳过。'
-               '群友说法只用于理解话题，不能用作事实依据。游戏体验可以接感受，不能确认群友对机制或卡片需求的说法。')
+        one_pass=work.request.conversation_id in self.proactive.one_pass_groups
+        rules = _ONE_PASS_SOURCE_RULES if one_pass else (
+            '只用当前群最近的文字。需要外部事实、核对资料、读图或无法从文字确定所指时跳过。'
+            '群友说法只用于理解话题，不能用作事实依据。游戏体验可以接感受，不能确认群友对机制或卡片需求的说法。')
         if work.proactive.context_gap_ms is not None:
             self.proactive.trace(work, 'control', status='proactive_context_gap')
             if len(text_rows) == 1 and _GAP_DEPENDENT_REPLY.fullmatch(
@@ -798,7 +807,6 @@ class ChatAgent:
         reconsider=(
             '发现群友已答、仍在补充、对话已收束，或自己只会复述、换词附和、绕过当前发言去回应更早的人，'
         )
-        one_pass=work.request.conversation_id in self.proactive.one_pass_groups
         if one_pass:
             decision_header={'role':'system','content':natural_prompt+'\n'+rules+decision_rules+generation_rules+
                 '按指定 JSON 一次给出决定和正文。'+reconsider+
