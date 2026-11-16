@@ -1852,11 +1852,12 @@ class ChatAgent:
                 previous=None
                 focus = {}
                 if evidence_route in _JUST_EVIDENCE:
-                    focus_query = _JUST_EVIDENCE[evidence_route][0]
+                    focus_query, document_ids = _JUST_EVIDENCE[evidence_route]
                     if just_card:
                         focus_query = f'留影{just_card} '+focus_query
-                    focus = {'focus_query': focus_query}
-                    args = {**args, 'query': scope_question, 'followup': False,
+                    focus = {'focus_query': focus_query, 'document_ids': document_ids}
+                    retrieval_query = focus_query if evidence_route in ('just_score','just_window') else scope_question
+                    args = {**args, 'query': retrieval_query, 'followup': False,
                             'server': requested_server(scope_question) or 'jp'}
                 if args.get('followup'):
                     group=self.context.scope(work.request)

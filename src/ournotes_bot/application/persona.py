@@ -88,6 +88,12 @@ _OTHER_RHYTHM_GAME = re.compile(
     r'(?<![a-z])(?:pjsk|arcaea|maimai|chunithm|phigros|gbp)(?![a-z])|世界计划|中二节奏|音击|少女乐团派对', re.I)
 _JUST_ASK = re.compile(
     r'怎么(?:算|计算|计分|叠|判定|触发|生效)|如何(?:算|计算|计分|叠|判定|触发)|是什么|什么(?:规则|效果|区别|变化)|有何变化|多久|多宽|多长|几秒|变宽还是变久|能不能叠|是否叠|是不是叠|怎么排|怎么比|如何排|如何比')
+_QUESTION_END = re.compile(r'(?:吗|嗎|么|麼|呢|\?)\s*[。!！]*$')
+_JUST_WINDOW = re.compile(r'扩窗|扩判|判定窗|判定范围|多宽|叠')
+_JUST_WINDOW_COMBINATION = re.compile(r'叠|相加|相乘|累加|(?:一起|同时)(?:生效|触发)|合起来|幾毫秒|几毫秒')
+_JUST_SCORE = re.compile(r'区间|计分|得分|分数|排名')
+_JUST_SCORE_COMPARISON = re.compile(r'先比|同数|同样多|一样多|相同|并列|(?:多|少)(?:一|1)(?:个|顆|颗)?.{0,7}(?:赢|胜)')
+_JUST_COMPARISON_ASK = re.compile(r'先比|看什么|看啥|看哪|相加还是相乘|(?:多|差)[几幾]毫秒')
 _JUST_MINIMUM = re.compile(
     r'(?:到底|实际|至少|最少|请问).{0,16}几张|(?:^|[，,。])\s*(?:需要|要)几张|几张.{0,16}[?]|几张.{0,16}才够')
 _STORY_PERSON = r'立希|爱音|愛音|海铃|海鈴|高松[灯燈]|[乐楽]奈|爽世|祥子|若[叶葉]睦|初[华華]|初音(?!未[来來])|清告|定治|祥爹'
@@ -108,6 +114,10 @@ _STORY_FACT_ASK = re.compile(
     r'(?:羁绊|羈絆).{0,8}[讲講][了的]?什[么麼]')
 _STORY_ACQUAINTANCE = re.compile(
     rf'(?:{_STORY_PERSON}|小姨).{{0,8}}(?:认[识識]|認識).{{0,8}}(?:{_STORY_PERSON}|小姨)(?:吗|嗎|\?)')
+_STORY_PAIR_CHECK = re.compile(
+    r'同一(?:个|個)?人|是一个人|是一個人|名[义義].{0,8}出道|'
+    r'[见見][过過]|[见見]面|碰[过過]面|血[缘緣]|[辈輩][分份].{0,5}(?:怎[么麼]|如何)')
+_STORY_PAIR_QUESTION = re.compile(r'是不是|有[没沒]有|是否|[辈輩][分份].{0,5}(?:怎[么麼]|如何)')
 _STORY_PAIR_PRONOUN = r'(?:[她他][俩倆们們]|这两[个位]人)'
 _STORY_FOLLOWUP = re.compile(
     rf'^(?:那|所以)?{_STORY_PAIR_PRONOUN}(?:是)?什[么麼][关關][系係][?呢啊呀吗]*$|'
@@ -275,18 +285,25 @@ def _explicit_evidence_clause(text):
             and not re.search(r'保底|抽卡|招募|掉率|出货率|概率', text)):
         if _JUST_MINIMUM.search(text):
             return 'just_minimum'
-        if _JUST_ASK.search(text):
+        window = _JUST_WINDOW.search(text)
+        score = _JUST_SCORE.search(text)
+        score_comparison = ('激奏' in text or '区间' in text) and _JUST_SCORE_COMPARISON.search(text)
+        comparison_question = _JUST_COMPARISON_ASK.search(text) or _QUESTION_END.search(text)
+        if (_JUST_ASK.search(text) or comparison_question
+                and (window and _JUST_WINDOW_COMBINATION.search(text) or score_comparison)):
             if re.search(r'满破|突破|留影|判定卡|判卡|持续|多久|几秒|变久|时长', text):
                 return 'just_card'
-            window = re.search(r'扩窗|扩判|判定窗|判定范围|多宽|叠', text)
-            score = re.search(r'区间|计分|得分|分数|排名', text)
             if window and not score:
                 return 'just_window'
-            if score and not window:
+            if (score or score_comparison) and not window:
                 return 'just_score'
             return 'just_clarify'
     if _BAND_STORY.search(text) and (_STORY_FACT_ASK.search(text) or _STORY_ACQUAINTANCE.search(text)):
         return 'story_fact'
+    if _STORY_PAIR_CHECK.search(text) and (_QUESTION_END.search(text) or _STORY_PAIR_QUESTION.search(text)):
+        names = set(re.findall(_STORY_PERSON, text.translate(str.maketrans('華鈴愛燈楽葉','华铃爱灯乐叶'))))
+        if len(names) >= 2:
+            return 'story_fact'
     if _STORY_FOLLOWUP.search(text):
         return 'story_clarify'
     if activity_time_intent(text).questions:

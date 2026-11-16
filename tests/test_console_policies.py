@@ -2865,6 +2865,13 @@ class ChatAgentTests(Fixture, unittest.IsolatedAsyncioTestCase):
             'JUST Dance 是什么游戏': '', 'Arcaea 的 JUST 怎么算': '',
             '激奏 JUST 区间怎么计分': 'just_score', 'Our Notes 抽卡概率是什么': '',
             'JUST 怎么算': 'just_clarify', 'JUST 扩窗怎么叠': 'just_window',
+            '激奏区间里 JUST 一样多了看什么？': 'just_score',
+            '激奏时 JUST 多一个就一定赢吗？': 'just_score',
+            '先比的是激奏的区间总分还是 JUST 数量？': 'just_score',
+            'JUST 两层扩窗是相加还是相乘？': 'just_window',
+            '两个 JUST 扩窗能一起生效吗？': 'just_window',
+            'JUST 扩窗叠起来实际多几毫秒？': 'just_window',
+            'JUST 扩窗叠起来太夸张了': '',
             '判卡满破了是变宽还是变久？': 'just_card', '留影31 Lv4到Lv5 是变宽还是变久': 'just_card',
             '到底要几张满破判定卡？': 'just_minimum', '海希什么关系': 'story_fact',
             '有人知道立希生日是哪天吗？': 'story_fact', '立希喜欢吃什么': 'story_fact',
@@ -2874,6 +2881,12 @@ class ChatAgentTests(Fixture, unittest.IsolatedAsyncioTestCase):
             '看到有人说海希真的官配，这谁当真了？': '',
             '初华和祥子他爹是啥辈分': 'story_fact',
             '初华是祥子小姨吗？': 'story_fact',
+            '初华和初音是不是同一个人？': 'story_fact',
+            '以初華名義出道的是初音嗎？': 'story_fact',
+            '初音和清告到底有没有见过面': 'story_fact',
+            '初音和祥子她妈妈到底有没有血缘？': 'story_fact',
+            '初音和祥子的辈分怎么论': 'story_fact',
+            '我看到初音和清告见过面了': '',
             '小姨认识祥爹吗？': 'story_fact',
             '那真正的初华呢？': 'story_fact',
             '初华是和祥子她妈同父异母的啊': '',
@@ -3004,6 +3017,55 @@ class ChatAgentTests(Fixture, unittest.IsolatedAsyncioTestCase):
         self.assertEqual(plan['parts'][0]['business_status'],'success')
         self.assertIn('留影31',knowledge.retrieve.call_args.kwargs['focus_query'])
         self.assertEqual(knowledge.prepare_evidence.call_args.args[0].chunks,(correct,))
+
+    async def test_just_comparison_paraphrases_read_the_same_approved_documents(self):
+        from ournotes_bot.domain.model_calls import ToolCall
+        from ournotes_bot.application.knowledge_service import atomic_text
+        from test_platform_boundary import KnowledgeAuthorityTests
+
+        fixture = KnowledgeAuthorityTests()
+        fixture.setUp()
+        self.addCleanup(fixture.tearDown)
+        score = '合成区间规则。先比区间JUST数量，再看区间得分，最后比PERFECT数量。'
+        window = '合成扩窗规则。同一类扩窗相加，可同时生效。'
+        fixture_docs = (
+            ('on-09-score', score),
+            ('jp110-just-window-structure', window),
+            ('unrelated-mechanic', '合成无关规则。'),
+        )
+        approved = []
+        for doc_id, text in fixture_docs:
+            _, approvals = fixture.write_fixture(doc_id=doc_id,text=text)
+            approved.extend(approvals['approved'])
+        atomic_text(fixture.service.root/'approvals.json',json.dumps({**approvals,'approved':approved}))
+        fixture.service.refresh()
+        self.backend.knowledge = fixture.service
+        bodies = self.capture_native_bodies()
+        cases = (
+            ('激奏 JUST 区间怎么计分', 'on-09-score', score),
+            ('激奏区间里 JUST 一样多了看什么？', 'on-09-score', score),
+            ('激奏时 JUST 多一个就一定赢吗？', 'on-09-score', score),
+            ('JUST 扩窗怎么叠', 'jp110-just-window-structure', window),
+            ('JUST 两层扩窗是相加还是相乘？', 'jp110-just-window-structure', window),
+            ('两个 JUST 扩窗能一起生效吗？', 'jp110-just-window-structure', window),
+        )
+        args = json.dumps(dict(server='jp',date=None,version=None))
+        for seq,(question,doc_id,passage) in enumerate(cases,1):
+            with self.subTest(question=question):
+                self.client.request.side_effect = [
+                    self.result(calls=(ToolCall('approved','knowledge_search',args),)),
+                    self.result('已回答本题。'),
+                ]
+                plan, attempts = await self.prepare_native('/聊 '+question,seq=seq)
+                self.assertEqual(len(attempts),2)
+                self.assertEqual(plan['parts'][0]['business_status'],'success')
+                self.event(plan,'intent');self.event(plan,'ack')
+                evidence = json.loads(next(row['content'] for row in bodies[-1]['messages']
+                                           if row.get('tool_call_id')=='approved'))
+                self.assertEqual(evidence['status'],'ok')
+                data = json.loads(evidence['data'])
+                self.assertEqual([doc['doc_id'] for doc in data['documents']],[doc_id])
+                self.assertEqual([chunk['text'].rstrip() for chunk in data['passages']],[passage])
 
     async def test_just_clarification_requires_a_successful_receipt_and_the_same_actor(self):
         from ournotes_bot.application.backend_protocol import PROTOCOL
@@ -4524,7 +4586,8 @@ class ChatSourceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
         source = bundle['sources'][0]
         corpus = (
             ('related', '身世',
-             '三角初音借用妹妹初华的名字。初音与祥子母亲是同父异母的姐妹。初音向清告坦白父亲是定治。'),
+             '三角初音借用妹妹初华的名字。初音与祥子母亲是同父异母的姐妹。'
+             '初音与清告在商业设施活动见面，初音向清告坦白父亲是定治。'),
             ('different-person', '家庭',
              '若叶睦和祥子是青梅竹马。她们曾聊到祥子的母亲。'),
             ('unrelated-family', '初华小时候',
@@ -4547,6 +4610,10 @@ class ChatSourceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
             ('初华和祥子他爹是啥辈分', '清告的小姨子，两人同辈。'),
             ('初华是祥子小姨吗？', '以初华的名字活动的是初音，她是祥子的小姨。'),
             ('那真正的初华呢？', '真正的三角初华是三角初音的妹妹。'),
+            ('初华和初音是不是同一个人？', '三角初音借用了妹妹初华的名字，两人是姐妹。'),
+            ('以初華名義出道的是初音嗎？', '以初华名字出道的人是初音。'),
+            ('初音见过清告吗？', '见过，两人在商业设施的活动上见面。'),
+            ('初音和清告到底有没有见过面', '见过，两人在商业设施的活动上见面。'),
         )
         for seq, (question, response) in enumerate(questions, 1):
             with self.subTest(question=question):
