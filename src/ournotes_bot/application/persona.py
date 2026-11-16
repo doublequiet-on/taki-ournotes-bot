@@ -147,8 +147,10 @@ _ACTIVITY_DAY = r'今天|明天|后天|後天'
 _ACTIVITY_RELATIVE_END = re.compile(
     rf'(?:(?P<before>{_ACTIVITY_DAY})\s*)?(?:(?:{_ACTIVITY_REGION})\s*)?'
     r'(?:(?:这期|這期|本期|当前|當前)(?:的)?\s*)?活[动動]\s*'
+    r'(?P<ask_before>是不是|是否)?\s*'
     rf'(?(before)|(?P<after>{_ACTIVITY_DAY})\s*)'
-    r'(?:就)?(?:是不是|是否)?(?:要|会|會)?(?:结束|結束)了?(?:吗|嗎|\?)[啊呀呢?\s]*$', re.I)
+    r'(?:就)?(?:(?P<ask_after>是不是|是否)(?:就)?)?(?:要|会|會)?(?:结束|結束)了?'
+    r'(?P<ask_end>吗|嗎|\?)?[啊呀呢?\s]*$', re.I)
 _ACTIVITY_PREFIX = re.compile(
     r'(?:\s|our\s*notes|\bon\b|那|所以|实际|到底|请问|想问|我想问|有人知道|和|与|跟|及|、|以及|分别|的)*', re.I)
 _ACTIVITY_ADDRESS = re.compile(r'^(?:taki(?![a-z0-9_])|立希)[\s，,、：:]*', re.I)
@@ -172,6 +174,8 @@ def lightweight_image_reference(text, *, context_source=False):
 def _activity_time_match(clause):
     for match in (_ACTIVITY_RELATIVE_END.search(clause), _LIVE_ACTIVITY_TIME.search(clause)):
         if match is None or not _ACTIVITY_PREFIX.fullmatch(_ACTIVITY_REGIONS.sub('', clause[:match.start()])):
+            continue
+        if match.re is _ACTIVITY_RELATIVE_END and not (match['ask_before'] or match['ask_after'] or match['ask_end']):
             continue
         if 'current' in match.re.groupindex and not match['current'] and not _ACTIVITY_REGIONS.search(clause):
             continue

@@ -2892,11 +2892,16 @@ class ChatAgentTests(Fixture, unittest.IsolatedAsyncioTestCase):
             '初华是和祥子她妈同父异母的啊': '',
             '你认识立希吗？': '', '初音未来的爸爸是谁？': '',
             '明天日服活动就要结束了吗': 'activity_time',
+            '日服这期活动是不是明天结束？': 'activity_time',
+            '国际服这期活动是不是明天就结束了': 'activity_time',
+            '台服活动明天是不是就结束了': 'activity_time',
             '日服活动什么时候结束？': 'activity_time',
             '国际服的活动结束时间是几号？': 'activity_time',
             '学校活动什么时候结束？': '',
+            '学校活动是不是明天结束？': '',
             '国际服这期活动明天结束吗？': 'activity_time',
             '今天活动就结束了': '',
+            '国际服这期活动明天就结束了': '',
             '你是祝': '', '祝你好运': '',
         }
         for question, route in cases.items():
@@ -2904,6 +2909,10 @@ class ChatAgentTests(Fixture, unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(explicit_evidence_route(question), route)
 
         self.assertEqual(activity_time_intent('明天日服活动就要结束了吗').relative_end_day, '明天')
+        relative = activity_time_intent('国际服这期活动是不是明天就结束了')
+        self.assertEqual(relative.questions, (('国际服', '结束'),))
+        self.assertEqual(relative.relative_end_day, '明天')
+        self.assertTrue(relative.standalone)
         compound = activity_time_intent('学校活动明天结束吗？日服活动结束时间是什么？')
         self.assertEqual(compound.questions, (('日服', '结束'),))
         self.assertEqual(compound.relative_end_day, '')
@@ -4541,11 +4550,16 @@ class ChatSourceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
         current = ActivityInfo(11,'合成日服活动',{},start_at=self.now-3600,end_at=today_end.timestamp())
         next_day = replace(current,end_at=tomorrow_end.timestamp())
         prior = replace(current,end_at=self.now-5)
+        intl_next = replace(next_day,title='合成国际服活动')
+        intl_prior = replace(prior,title='合成国际服活动')
         scenarios = (
             ('/聊 这期日服活动什么时候结束？', current, 'fresh', '', today_end),
             ('立希，日服活动什么时候结束？', current, 'fresh', '', today_end),
             ('taki明天日服活动就要结束了吗', current, 'fresh', '', today_end),
             ('taki明天日服活动就要结束了吗', next_day, 'fresh', '是，', tomorrow_end),
+            ('taki日服这期活动是不是明天结束？', next_day, 'fresh', '是，', tomorrow_end),
+            ('taki国际服这期活动是不是明天就结束了', intl_next, 'fresh', '是，', tomorrow_end),
+            ('taki国际服这期活动是不是明天就结束了', intl_prior, 'fresh', '', None),
             ('taki明天日服活动就要结束了吗', next_day, 'stale', '旧缓存显示，', tomorrow_end),
             ('taki明天日服活动就要结束了吗', prior, 'fresh', '', None),
         )
@@ -4558,15 +4572,20 @@ class ChatSourceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
             for seq,(question,record,cache_state,lead,end) in enumerate(scenarios,1):
                 with self.subTest(question=question,cache_state=cache_state,end=end):
                     self.repo.cache_state = cache_state
+                    international = '国际服' in question
+                    region = '国际服' if international else '日服'
                     self.repo.activity_calendars = {'jp': ActivityCalendar(
-                        (record,), 'jp-r1','jp-fixture','observation-jp')}
+                        (current if international else record,), 'jp-r1','jp-fixture','observation-jp')}
+                    if international:
+                        self.repo.activity_calendars['intl'] = ActivityCalendar(
+                            (record,), 'intl-r1','intl-fixture','observation-intl')
                     plan,attempts = await self.prepare_native(question,seq=seq)
                     self.assertEqual(attempts,[])
                     reply = plan['parts'][0]
                     if end is not None:
                         self.assertEqual(reply['business_status'],'success')
                         self.assertEqual(reply['text'],
-                            f"{lead}日服《合成日服活动》{end.strftime('%Y-%m-%d %H:%M:%S')}（北京时间）结束")
+                            f"{lead}{region}《{record.title}》{end.strftime('%Y-%m-%d %H:%M:%S')}（北京时间）结束")
                     else:
                         self.assertEqual(reply['business_status'],'source_unavailable')
                         self.assertEqual(reply['text'],'我不知道明天是不是结束')
