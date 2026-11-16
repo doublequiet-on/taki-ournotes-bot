@@ -1211,6 +1211,7 @@ class ProactiveControllerTests(unittest.TestCase):
         cases = (
             ('活动报名日期哪天截止', '活动限定卡池谁出', False),
             ('棉签税是说又想在游戏花钱', '今天又交棉签税了', True),
+            ('练这首我把下滑键叫门铃', '门铃终于全按响了', True),
         )
         for prior, current, expected in cases:
             with self.subTest(prior=prior, current=current):

@@ -16,6 +16,8 @@ from ..domain.chat import ChatMessage
 
 _TOPIC_WORDS = re.compile(r'[a-z0-9]{2,}|[\u3400-\u9fff]+')
 _COMMON_TOPIC_WORDS = frozenset('刚才 今天 昨天 现在 终于 刚刚 一下 还有 大家 这个 那个 什么 是不是 怎么 怎么样 还是 感觉 真的是'.split())
+_GENERIC_ANCHOR_WORDS = frozenset(
+    '活动 游戏 讨论 角色 剧情 歌曲 卡池 留影 成员 任务 奖励 卡片 区服 谱面 日服 国际 公告 排名 玩法 更新'.split())
 _FUNCTION_CHARS = frozenset('我你他她它们这那是的了也吧吗呢啊呀说就会还要有都不又时')
 
 
@@ -52,8 +54,9 @@ def select_topic_context(rows, *, limit=6):
             return (0, False, 0)
         longest = max(shared, key=lambda key: (len(key), key))
         if same_speaker:
-            # One generic bigram can recur in two unrelated topics by the same speaker.
-            if len(longest) < 3:
+            # Generic subject categories aren't enough to reunite two turns.
+            # A distinctive two-character nickname can still carry that link.
+            if shared <= _GENERIC_ANCHOR_WORDS:
                 return (0, False, 0)
         else:
             # A shared nickname alone can refer to different things.
