@@ -3168,13 +3168,14 @@ class ChatAgentTests(Fixture, unittest.IsolatedAsyncioTestCase):
         fixture=StoryPublicationTests();fixture.setUp();self.addCleanup(fixture.doCleanups)
         fixture.publish()
         self.backend.model_runtime.agent.story=fixture.service
-        for seq,question in enumerate(('JUST 扩窗怎么叠','海希什么关系'),1):
+        for seq,(question,model_calls) in enumerate((('JUST 扩窗怎么叠',1),('海希什么关系',0)),1):
             with self.subTest(question=question):
                 plan,attempts=await self.prepare_native('/聊 '+question,seq=seq)
-                self.assertEqual(len(attempts),1)
+                self.assertEqual(len(attempts),model_calls)
                 self.assertEqual(plan['parts'][0]['business_status'],'source_unavailable')
                 self.assertEqual(plan['parts'][0]['text'],'我不知道')
                 self.event(plan,'intent');self.event(plan,'ack')
+        self.client.request.assert_awaited_once()
 
     async def test_on_mechanic_definition_accepts_an_approved_numeric_pity_rule(self):
         from types import SimpleNamespace
