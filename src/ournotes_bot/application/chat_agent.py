@@ -43,11 +43,22 @@ from .replies import PreparedReply
 
 logger=logging.getLogger(__name__)
 
-PROACTIVE_TURN_TAKING = """主动加入前先判断对话是否向你开放：面向全群的问题、共同讨论或明确分享可考虑参与；两人在一来一回、指向指定他人的话不要抢答。图片、感叹、问号和群里安静本身都不是开口理由。
+_PROACTIVE_CONTINUATION_RULES = (
+    '对照已送达的 assistant 历史：同一段讨论主动说过一句而无人明确回应你，就退出，不再换角度补一句。'
+    '同人继续发言或同话题继续都不等于回应你。任何群友明确引用、回答、纠正或接你的话，都可以自然继续，无需每轮点名；'
+    '不确定交流对象时略过。新的独立话题可重新考虑，冷却结束不构成参与理由。'
+)
+PROACTIVE_TURN_TAKING = f"""主动加入前先判断对话是否向你开放：面向全群的问题、共同讨论或明确分享可考虑参与；两人在一来一回、指向指定他人的话不要抢答。图片、感叹、问号和群里安静本身都不是开口理由。
 接话须跟上大家实际讨论的点；可简短共鸣、祝贺或玩笑，不要求新知识。只看懂图片却没接住话题时略过，不自动点评配色、服装或复述画面。外号、反话和梗没懂就略过，不让群友为你的主动插话解释背景。
-对照已送达的 assistant 历史：同一段讨论主动说过一句而无人明确回应你，就退出，不再换角度补一句。同人继续发言或同话题继续都不等于回应你。任何群友明确引用、回答、纠正或接你的话，都可以自然继续，无需每轮点名；不确定交流对象时略过。新的独立话题可重新考虑，冷却结束不构成参与理由。
+{_PROACTIVE_CONTINUATION_RULES}
 首次主动加入通常一句，留出别人接话的位置；不要用追问维持存在感。哈哈、好、先这样等收尾允许自然结束。别人已充分回答或话题已转走就略过。无人接话只用于本轮退场，不推断群友的长期喜好。"""
-
+_ONE_PASS_TURN_TAKING = PROACTIVE_TURN_TAKING.replace(
+    _PROACTIVE_CONTINUATION_RULES,
+    '先找当前发言有什么新增内容。即使还是同一个对象，明确请全群回答新的问题或取舍、分享具体新进展时，都可以只接新增的一点。'
+    '已送达的答复用来判断哪些部分已经说过。只复述同一问题、报告同样的卡点、附和确认或单纯延续旧话题时静默。'
+    '群友明确引用、回答、纠正或接你的话，可以自然继续。冷却结束不构成参与理由。',
+    1,
+)
 
 _ONE_PASS_SOURCE_RULES = (
     '只用当前群最近的文字。所指找不到、要核实外部事实或看图时跳过。'
@@ -1147,8 +1158,9 @@ class ChatAgent:
             if scope_note:prompt+='\n'+scope_note
             if getattr(work,'continuation',False):prompt+=RESEARCH_SEMANTICS
         if work.proactive is not None:
-            prompt+='\n'+PROACTIVE_TURN_TAKING
-            natural_prompt+='\n'+PROACTIVE_TURN_TAKING
+            turn_taking = _ONE_PASS_TURN_TAKING if one_pass else PROACTIVE_TURN_TAKING
+            prompt+='\n'+turn_taking
+            natural_prompt+='\n'+turn_taking
             prompt+='\n本轮评估定位：'+json.dumps({'current_message_id':work.request.message_id,'current_speaker_id':work.request.user_id},ensure_ascii=False)
             if not light:
                 prompt+='\n这是未点名的群聊观察。围绕定位的当前消息及相邻上下文判断是否接话，旧消息只作背景。assistant 历史是已送达原话；同一观点已说清且没有新增回应时选 skip，不要换个措辞再说一遍。'
