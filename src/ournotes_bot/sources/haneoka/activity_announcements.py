@@ -26,8 +26,9 @@ def announced_time(row, server):
     text = row.get('text', '')
     if BODY_CHANGED.search(text):
         return None
-    heading = r'(?:【イベント開催期間】|【開催期間】)' if server == 'jp' else r'(?:Event Period|Event Duration)\s*[:：]?'
-    periods = list(re.finditer(heading + r'\s*' + DATE, text, re.I))
+    heading = (r'(?:【(?:イベント)?開催期間】|^[ \t]*(?:[✦◆■●][ \t]*)?(?:イベント)?開催期間)'
+               if server == 'jp' else r'(?:Event Period|Event Duration)\s*[:：]?')
+    periods = list(re.finditer(heading + r'\s*' + DATE, text, re.I | re.M))
     if len(periods) != 1:
         return None
     period = periods[0]

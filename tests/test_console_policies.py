@@ -2924,6 +2924,13 @@ class ChatAgentTests(Fixture, unittest.IsolatedAsyncioTestCase):
         self.assertEqual(compound.relative_end_day, '')
         self.assertFalse(compound.standalone)
         self.assertEqual(activity_time_intent('日服活动明天结束吗？日服这期活动后天结束吗？').relative_end_day, '')
+        for question in ('taki下期日服活动什么时候开始', '日服下一期活动开始时间是什么？', '下期活动几点开始？'):
+            with self.subTest(question=question):
+                upcoming = activity_time_intent(question)
+                self.assertEqual(upcoming.questions, (('日服', '下期开始'),))
+                self.assertTrue(upcoming.standalone)
+        self.assertEqual(activity_time_intent('日服下期活动什么时候结束').questions, ())
+
 
     def test_story_pronoun_does_not_choose_two_people_from_three(self):
         from ournotes_bot.application.persona import referenced_story_question
@@ -4795,6 +4802,51 @@ class ChatSourceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
                     self.assertEqual(observed,[{'action':'catalog_info','status':expected}])
                     self.assertEqual(diagnostics.health()['availability'],'available')
         self.client.request.assert_not_awaited()
+
+    async def test_next_activity_chat_follows_notice_detail_and_cites_it(self):
+        from datetime import datetime, timedelta, timezone
+        from urllib.parse import parse_qs, urlsplit
+        from ournotes_bot.query import activity_query
+        from ournotes_bot.domain.info_catalog import ActivityCalendar
+        from ournotes_bot.sources.haneoka.activity_announcements import ActivityAnnouncements
+        from ournotes_bot.sources.haneoka.notices import Notices
+
+        zone = timezone(timedelta(hours=9))
+        start = datetime.fromtimestamp(self.now, zone).replace(hour=15, minute=0, second=0) + timedelta(days=1)
+        observed = datetime.fromtimestamp(self.now - 60, timezone.utc).isoformat()
+        row = dict(id=99, title='イベント「合成次期イベント」開催予告！',
+                   startAt=int(self.now - 120), endAt=0, updatedAt=int(self.now - 120))
+        common = dict(server='jp', available=True, fetchedAt=observed, actualSourceLocale='ja')
+        paths = []
+
+        def fetch(url, limit, timeout):
+            parts = urlsplit(url)
+            self.assertEqual(parts.netloc, 'haneoka.org')
+            self.assertEqual(parse_qs(parts.query)['server'], ['jp'])
+            paths.append(parts.path)
+            if parts.path == '/api/v1/announcements':
+                payload = dict(common, announcements=[row])
+            else:
+                self.assertEqual(parts.path, '/api/v1/announcements/99')
+                html = f'<p>公開時刻は別です。</p><div>✦ 開催期間</div>{start:%Y/%m/%d}(水) 15:00 ～'
+                payload = dict(common, **row, html=html)
+            return json.dumps(payload, ensure_ascii=False).encode(), {'x-haneoka-announcement-fetched-at': observed}
+
+        self.repo.activity_calendars = {'jp': ActivityCalendar((), 'jp-r1', 'jp-fixture', observed)}
+        self.repo.activity_announcements = ActivityAnnouncements(Notices(fetch=fetch, clock=lambda: self.now))
+        calendar = activity_query._calendar
+        with patch.object(activity_query, '_calendar', side_effect=lambda server, mode, repo, _now:
+                          calendar(server, mode, repo, self.now)):
+            plan, attempts = await self.prepare_native('taki下期日服活动什么时候开始')
+        self.assertEqual(paths, ['/api/v1/announcements', '/api/v1/announcements/99'])
+        self.assertEqual(attempts, [])
+        self.client.request.assert_not_awaited()
+        self.assertEqual(plan['parts'][0]['business_status'], 'success')
+        expected = start.astimezone(timezone(timedelta(hours=8)))
+        self.assertIn(f'日服《合成次期イベント》{expected:%Y-%m-%d %H:%M:%S}（北京时间）开始', plan['parts'][0]['text'])
+        self.assertIn('https://haneoka.org/jp/ja/announcements/99/', plan['parts'][0]['text'])
+        self.event(plan, 'intent')
+        self.event(plan, 'ack')
 
     async def test_colloquial_kinship_reads_both_people_and_distinguishes_the_sisters(self):
         from test_platform_boundary import StoryPublicationTests
