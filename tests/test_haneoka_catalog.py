@@ -324,6 +324,41 @@ class CatalogTests(unittest.TestCase):
             self.assertEqual(spec["count"], len(docs["support-cards"]))
             self.assertEqual(spec["entities"]["count"], len(docs["support-cards"])+1)
 
+    def test_song_metadata_follows_verified_guest_song_projection(self):
+        docs = self.saved["documents"]["jp"]
+        resources = docs["catalog"]["resources"]
+        songs = docs["songs"]
+        total = len(songs) + 1
+        resources["song-meta"] = {"count": 2}
+        public_id = next(iter(songs))
+        docs["song-meta"] = {public_id: {"musicId": int(public_id)}, "970000": {"musicId": 970000}}
+
+        def respond(url, limit, timeout):
+            query = parse_qs(urlsplit(url).query)
+            if "limit" not in query:
+                return self.respond(url, limit, timeout)
+            ident = self.saved["identities"]["jp"]
+            self.assertEqual(query["release"], [ident["releaseId"]])
+            page = dict(total=total, release=ident, nextCursor=None,
+                        items=[dict(id=key, value=row) for key, row in songs.items()])
+            return source.encoded(page), {"x-haneoka-release-id": ident["releaseId"],
+                                          "x-haneoka-source-id": ident["sourceId"]}
+
+        self.fetch.side_effect = respond
+        with self.assertRaisesRegex(ValueError, "Incomplete song metadata"):
+            self.repo._collect()
+        resources["songs"].update(count=total, access="api/v1/catalog/songs/access.json",
+                                  entities={"algorithm": "fnv1a32-mod-256", "count": total})
+        candidate = self.repo._collect()
+        self.repo._write(candidate)
+        saved = self.repo._read()["documents"]["jp"]
+        self.assertEqual(saved["song-meta"], {public_id: docs["song-meta"][public_id]})
+        self.assertEqual(saved["catalog"]["resources"]["song-meta"]["count"], 1)
+        docs["song-meta"]["970001"] = {"musicId": 970001}
+        resources["song-meta"]["count"] = 3
+        with self.assertRaisesRegex(ValueError, "Incomplete song metadata"):
+            self.repo._collect()
+
     def test_download_budget_counts_all_decoded_responses_at_exact_boundary(self):
         sizes = []
 

@@ -323,6 +323,7 @@ class CatalogRepository:
             catalog = get(server, "catalog", ident)
             if catalog.get("server") != server or catalog.get("sourceId") != ident["sourceId"]:
                 raise ValueError("Catalog identity mismatch")
+            song_storage_count = integer(catalog["resources"]["songs"]["count"], 1, 5000)
 
             @public_http_scope()
             def collection(resource):
@@ -363,10 +364,17 @@ class CatalogRepository:
             docs["catalog"] = catalog
             if server=="jp" and "song-meta" in catalog["resources"]:
                 meta=get(server,"song-meta",ident)
-                expected=integer(catalog["resources"]["song-meta"]["count"],1,5000)
-                if not isinstance(meta,dict) or len(meta)!=expected or any(key not in docs["songs"] for key in meta):
+                spec = catalog["resources"]["song-meta"]
+                expected = integer(spec["count"], 1, 5000)
+                if not isinstance(meta, dict) or len(meta) != expected:
                     raise ValueError("Incomplete song metadata")
-                docs["song-meta"]=meta
+                visible_songs = docs["songs"]
+                # Metadata can describe storage rows hidden by the verified guest song projection.
+                hidden = meta.keys() - visible_songs.keys()
+                if len(hidden) > song_storage_count - len(visible_songs):
+                    raise ValueError("Incomplete song metadata")
+                docs["song-meta"] = {key: value for key, value in meta.items() if key in visible_songs}
+                spec["count"] = len(docs["song-meta"])
             docs["skill-reference"] = get(server, "skill-reference", ident)
             docs["ui-marks"] = get(server, "ui-marks", ident)
             progression = get(server, "progression", ident)
