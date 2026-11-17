@@ -9,6 +9,7 @@ from uuid import uuid4
 from aiohttp.test_utils import TestClient, TestServer
 
 from ournotes_bot.application.backend import create_app
+from ournotes_bot.application.backend_protocol import Request, digest
 from ournotes_bot.application.hermes_chat import HermesChat
 import test_console_policies as fixtures
 
@@ -40,11 +41,9 @@ class HermesScratchTests(unittest.TestCase):
 class HermesRouteTests(fixtures.Fixture, unittest.IsolatedAsyncioTestCase):
     Helpers = fixtures.ChatServiceIntegrationTests.Helpers
     request = fixtures.ChatServiceIntegrationTests.request
-    prepare_native = fixtures.ChatServiceIntegrationTests.prepare_native
     result = fixtures.ChatServiceIntegrationTests.result
     event = fixtures.ChatServiceIntegrationTests.event
     observation = fixtures.ChatServiceIntegrationTests.observation
-    candidate = fixtures.ChatServiceIntegrationTests.candidate
 
     async def asyncSetUp(self):
         await fixtures.ChatServiceIntegrationTests.asyncSetUp(self)
@@ -74,6 +73,44 @@ class HermesRouteTests(fixtures.Fixture, unittest.IsolatedAsyncioTestCase):
             'operation_id': uuid4().hex, 'guard': current['guard'], 'settings': settings,
         })
         return response.status, await response.json()
+
+    def decide(self, request_id, challenge, allow):
+        decision = {key: value for key, value in challenge.items() if key not in ('remaining_ms', 'admission_policy_version')}
+        decision.update(decision='allow' if allow else 'deny', reason='fixture', ttl_ms=1000,
+                        current_policy_version={'epoch': 'fixture', 'global_revision': 0, 'group_revision': 0})
+        self.backend.permissions.decide(request_id, challenge['attempt_id'], decision, 'e1')
+
+    async def wait_for_plan(self, request_id, allow):
+        attempts = []
+        deadline = asyncio.get_running_loop().time() + 65
+        while asyncio.get_running_loop().time() < deadline:
+            plan = self.backend.lookup(request_id, 'e1')
+            challenge = plan.get('pending_model_permission')
+            if challenge and challenge['attempt_id'] not in attempts:
+                attempts.append(challenge['attempt_id'])
+                self.decide(request_id, challenge, allow(len(attempts)))
+            if plan['status'] in ('prepared', 'finished'):
+                return plan, attempts
+            self.assertEqual(plan['status'], 'preparing', plan)
+            await asyncio.sleep(.02)
+        self.fail('Taki did not prepare a plan within its execution budget')
+
+    async def prepare_native(self, body, *, seq=1, allow=lambda _: True):
+        raw = self.request('native' + str(seq), seq)
+        raw['body'] = body
+        await self.backend.submit(raw)
+        return await self.wait_for_plan(raw['request_id'], allow)
+
+    async def candidate(self, observation, serial=1):
+        raw = {**observation, 'trigger': 'proactive', 'proactive_id': format(serial, '032x')}
+        raw['request_id'] = digest(['fixture', 'app', 'qq', 'group', 'g1', raw['user_id'],
+                                    raw['message_id'], raw['proactive_id']])
+        request = Request.parse(raw, 'fixture', 'app', self.now)
+        candidate = self.agent.proactive.candidate(request)
+        self.assertIsNotNone(candidate)
+        await self.backend.submit(raw, proactive=candidate)
+        plan, attempts = await self.wait_for_plan(raw['request_id'], lambda _: True)
+        return plan, attempts, candidate
 
     async def test_disabled_default_and_reject_enable_without_runtime(self):
         self.runtime.hermes.close()
@@ -195,11 +232,8 @@ class HermesRouteTests(fixtures.Fixture, unittest.IsolatedAsyncioTestCase):
                 break
             self.assertLess(asyncio.get_running_loop().time(), deadline)
             await asyncio.sleep(.01)
-        decision = {key: value for key, value in challenge.items() if key not in ('remaining_ms', 'admission_policy_version')}
-        decision.update(decision='allow', reason='fixture', ttl_ms=1000,
-                        current_policy_version={'epoch': 'fixture', 'global_revision': 0, 'group_revision': 0})
+        self.decide(request_id, challenge, True)
         attempt = challenge['attempt_id']
-        self.backend.permissions.decide(request_id, attempt, decision, 'e1')
         granted.append(attempt)
         return attempt
 
