@@ -35,3 +35,4 @@ QUERY_CODE_FILES = (
 )
 CODE_FILES += ('../natural_query/parser.py', '../domain/query_context.py', 'query_runtime.py', 'personal_runtime.py')
 CODE_FILES += ('recovery_entry.py',)
+CODE_FILES += ('hermes_chat.py', 'hermes_standby.py', 'hermes_worker.py')

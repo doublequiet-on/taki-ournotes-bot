@@ -33,18 +33,23 @@ class ModelScheduler:
                 self.running[user] += 1
                 future.set_result(None)
 
-    async def run(self, user, operation, *, execution_seconds=None):
+    async def run(self, user, operation, *, execution_seconds=None, deadline=None, wait=True):
         require(not self.closed, 'not_ready', 503)
+        require(deadline is None or time.monotonic()<deadline, 'execution_timeout')
         future = asyncio.get_running_loop().create_future()
         immediate = not self.running[user] and sum(self.running.values()) < self.limit
         if not immediate:
+            require(wait, 'model_queue_busy', 503)
             require(len(self.queue) < self.capacity and sum(u == user for u, _ in self.queue) < self.user_capacity,
                     'queue_full', 503)
         item = (user, future)
         self.queue.append(item)
         self.dispatch()
+        seconds_until_deadline = deadline-time.monotonic() if deadline is not None else None
+        deadline_limits_queue = seconds_until_deadline is not None and seconds_until_deadline<=self.wait_seconds
+        wait_seconds = seconds_until_deadline if deadline_limits_queue else self.wait_seconds
         try:
-            await asyncio.wait_for(asyncio.shield(future), self.wait_seconds)
+            await asyncio.wait_for(asyncio.shield(future), wait_seconds)
         except BaseException as exc:
             if item in self.queue:
                 self.queue.remove(item)
@@ -54,13 +59,16 @@ class ModelScheduler:
             future.cancel()
             self.dispatch()
             if isinstance(exc, asyncio.TimeoutError):
-                raise ProtocolError('queue_timeout', 503) from None
+                code = 'execution_timeout' if deadline_limits_queue else 'queue_timeout'
+                raise ProtocolError(code, 503) from None
             raise
         seconds = self.execution_seconds if execution_seconds is None else execution_seconds
-        deadline = time.monotonic() + seconds
+        now = time.monotonic()
+        deadline = now+seconds if deadline is None else min(deadline, now+seconds)
 
         async def execute():
             try:
+                require(time.monotonic()<deadline, 'execution_timeout')
                 return await operation(deadline)
             finally:
                 self.running[user] -= 1
@@ -74,7 +82,7 @@ class ModelScheduler:
             if not task.cancelled(): task.exception()  # Late completion never publishes a reply.
         task.add_done_callback(done)
         # Timed-out callers stop waiting; the real worker keeps its slot until finished.
-        return await asyncio.wait_for(asyncio.shield(task), seconds)
+        return await asyncio.wait_for(asyncio.shield(task), deadline-now)
 
     async def close(self):
         self.closed = True

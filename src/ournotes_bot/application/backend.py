@@ -39,6 +39,7 @@ from .model_execution import ModelScheduler, ModelPermissions
 from .conversation_state import Conversations, ReadOnlyContext
 
 logger = logging.getLogger('ournotes_bot.backend')
+HERMES_PILOT_CONTINUATION_SECONDS = 28
 
 
 @dataclass
@@ -81,6 +82,10 @@ class Work:
     terminal_retry_at: float | None = None
     chat: bool = False
     hermes_chat: bool = False
+    hermes_pilot: bool = False
+    hermes_native_fallback: bool = False
+    hermes_provider_started: bool = False
+    hermes_send_deadline: float | None = None
     story_versions: tuple = ()
     persona_version: str = 'taki-v0/legacy-derived'
     memory_sources: tuple = ()
@@ -360,6 +365,9 @@ class Backend:
             try:
                 if chat and request.platform=='qq' and request.kind=='group':
                     work.hermes_chat=self.model_runtime.admin.hermes_route(request.conversation_id)
+                    work.hermes_pilot=work.hermes_chat and request.conversation_id==self.model_runtime.hermes.pilot_group
+                    if work.hermes_pilot and work.continuation:
+                        work.hermes_send_deadline=time.monotonic()+HERMES_PILOT_CONTINUATION_SECONDS
                 if self.model_runtime and self.model_runtime.agent:
                     self.model_runtime.agent.proactive.start_addressed(work)
                     if proactive is not None and not work.continuation:self.model_runtime.agent.store.service_run(delivery,request.scope,work.service_request_id)
@@ -371,6 +379,9 @@ class Backend:
                     observed_commands.append({'kind':'overflow','outcome':'invalid_arguments'})
                 self.diagnostics.admitted(request, delivery, self.runtime, self.clock(), observed_commands,
                                           billing_id=work.service_request_id)
+                if work.hermes_pilot:
+                    lane = 'continuation' if work.continuation else 'named' if proactive is None else 'proactive'
+                    self.diagnostics.chat_event(request.request_id,'control',self.clock(),status='hermes_pilot',stage=lane)
                 self.diagnostics.span(uuid.uuid4().hex,request.request_id,'admission',admission_ms,self.clock(),outcome='ok')
                 work.operation = parse_operation(commands[0]) if len(commands) == 1 else None
                 work.anchor = self.conversations.resolve(request,query_only=not chat) if work.operation or request.reference or (not chat and
@@ -475,7 +486,10 @@ class Backend:
             work.lock = self.contexts.lock(ContextKey(work.request.platform,work.request.kind,
                 work.request.conversation_id,'chat-agent') if work.chat else work.key)
             # Only this topic's predecessor owns the lock through its final ACK.
-            await asyncio.wait_for(work.lock.acquire(), max(.001, work.request.timestamp_ms/1000+WINDOW-self.clock()))
+            wait = max(.001, work.request.timestamp_ms/1000+WINDOW-self.clock())
+            if work.hermes_send_deadline is not None:
+                wait = min(wait, work.hermes_send_deadline-time.monotonic())
+            await asyncio.wait_for(work.lock.acquire(), wait)
             work.lock_acquired = True
             self.expire()
             if not work.active: return
@@ -557,8 +571,22 @@ class Backend:
             if not parts:
                 self.finish(work, 'finished')
             else:
+                if work.hermes_send_deadline is not None:
+                    try:
+                        await asyncio.wait_for(work.ended.wait(),work.hermes_send_deadline-time.monotonic())
+                    except asyncio.TimeoutError:
+                        # Keep an already-granted delivery alive for its ACK.
+                        if not self.ledger.has_unknown(work.delivery):
+                            self.diagnostics.chat_event(work.request.request_id,'control',self.clock(),
+                                status='hermes_continuation_expired',stage='intent')
+                            raise
+                    else:
+                        return
                 await asyncio.wait_for(work.ended.wait(), max(.001, work.request.timestamp_ms/1000+WINDOW-self.clock()))
         except asyncio.TimeoutError:
+            if work.hermes_send_deadline is not None and not work.lock_acquired:
+                self.diagnostics.chat_event(work.request.request_id,'control',self.clock(),
+                    status='hermes_continuation_expired',stage='group_lock')
             self.finish(work, 'expired')
         except asyncio.CancelledError:
             self.finish(work, 'aborted',reason='preparation_cancelled')
@@ -607,6 +635,8 @@ class Backend:
     def live(self, row, epoch):
         if self.recovery_revoked: return False
         work = self.works.get(row['delivery'])
+        if work and work.hermes_send_deadline is not None and time.monotonic()>=work.hermes_send_deadline:
+            return False
         if work and not work.chat and not self.contexts.active(work.lease):
             return False
         if work and work.chat and getattr(self.settings,'chat_engine','legacy')!='agent':
@@ -780,6 +810,13 @@ class Backend:
                     if work.chat and not work.operation:
                         self.contexts.commit(work.lease, work.candidate, confirmed=work.candidate is not None)
                     self.finish(work, 'finished' if payload['result'] == 'success' else payload['result'])
+            elif (changed and work and work.hermes_send_deadline is not None
+                  and time.monotonic()>=work.hermes_send_deadline):
+                # The receipt is durable, and the cutoff prevents new send intents.
+                status = payload['result']
+                if status=='success':
+                    status = 'finished' if part_id==parts[-1]['id'] else 'expired'
+                self.finish(work, status)
             return {'recorded': True, 'duplicate': not changed, **self.snapshot(self.ledger.by_delivery(delivery), payload['gateway_epoch'])}
         if kind in ('aborted', 'batch_finished'):
             if kind == 'batch_finished':
@@ -1102,6 +1139,8 @@ def create_app(backend, token, initialize=None, *, assert_recovery_current=None)
                 scope=dict(instance_id=backend.instance_id,app_id=backend.app_id,platform='qq',
                            kind='group',conversation_id=gid)
                 await backend.model_runtime.hermes.await_cleanup(scope=scope)
+                if gid==backend.model_runtime.hermes.pilot_group:
+                    await backend.model_runtime.refresh_hermes_pilot()
             return json(saved)
         except ModelError as exc:raise ProtocolError(str(exc),409) from None
         except (OSError,sqlite3.Error):raise ProtocolError('model_admin_unavailable',503) from None

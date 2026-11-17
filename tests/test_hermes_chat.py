@@ -89,7 +89,7 @@ class HermesRouteTests(fixtures.Fixture, unittest.IsolatedAsyncioTestCase):
             if challenge and challenge['attempt_id'] not in attempts:
                 attempts.append(challenge['attempt_id'])
                 self.decide(request_id, challenge, allow(len(attempts)))
-            if plan['status'] in ('prepared', 'finished'):
+            if plan['status'] in ('prepared', 'finished', 'expired'):
                 return plan, attempts
             self.assertEqual(plan['status'], 'preparing', plan)
             await asyncio.sleep(.02)
@@ -124,6 +124,138 @@ class HermesRouteTests(fixtures.Fixture, unittest.IsolatedAsyncioTestCase):
 
     def check_scratch_empty(self):
         self.assertLessEqual({path.name for path in self.scratch.iterdir()}, {'.owner.sqlite3', '.owner.sqlite3-journal'})
+
+    @unittest.skipUnless(os.getenv('TAKI_TEST_HERMES_PYTHON'), 'requires pinned Hermes Python')
+    async def test_single_group_pilot_switches_falls_back_and_rolls_back(self):
+        from time import monotonic
+        from unittest.mock import patch
+        from ournotes_bot.query.continuation import ContextKey
+
+        hermes = self.runtime.hermes
+        self.agent.store.clock = lambda: self.now
+        hermes.pilot_group = 'g1'
+        self.assertFalse(hermes.dialogue.enabled)
+        self.assertEqual((await self.select(True))[0], 200)
+        self.assertFalse((await self.group_settings('g2'))['settings']['hermes_enabled'])
+        async def ready():
+            while len(hermes.dialogue.ready)!=2 or len(hermes.proactive.ready)!=2:
+                await asyncio.sleep(.025)
+        await asyncio.wait_for(ready(), 55)
+        self.client.request.assert_not_awaited()
+        self.assertTrue(all(worker.assignment is None
+                            for lane in (hermes.dialogue,hermes.proactive) for worker in lane.ready))
+
+        self.client.request.return_value = self.result('先练尾段。')
+        direct, permits = await self.prepare_native('/聊 今晚先练哪一段')
+        self.assertTrue(direct['send_allowed'], direct)
+        self.assertEqual(len(permits), 1)
+        self.assertTrue(self.backend.works[direct['delivery_id']].hermes_pilot)
+        self.assertFalse(self.backend.works[direct['delivery_id']].hermes_native_fallback)
+        self.event(direct, 'intent')
+        self.event(direct, 'ack')
+
+        self.now += .02
+        self.agent.services.policy.return_value = None
+        self.client.request.return_value = self.result('{"participation":"reply","text":"尾段先过一遍"}')
+        observed = self.observation('那尾段先过一遍？', seq=2)
+        self.tick += 1.6
+        publish = self.backend.ledger.prepared
+
+        def near_cutoff(delivery, *args, **kwargs):
+            self.backend.works[delivery].hermes_send_deadline = monotonic()+.4
+            return publish(delivery, *args, **kwargs)
+
+        with patch.object(self.backend.ledger, 'prepared', side_effect=near_cutoff):
+            continued, permits, _ = await self.candidate(observed)
+        self.assertTrue(continued['send_allowed'], continued)
+        self.assertEqual(len(permits), 1)
+        self.assertIsNotNone(self.backend.works[continued['delivery_id']].hermes_send_deadline)
+        self.event(continued, 'intent')
+        await asyncio.sleep(.45)
+        self.assertFalse(self.backend.lookup(continued['request_id'], 'e1')['send_allowed'])
+        receipt = self.event(continued, 'ack')
+        self.assertTrue(receipt['recorded'])
+        self.assertEqual(receipt['status'], 'finished')
+        scope = Request.parse(observed, 'fixture', 'app', self.now).scope
+        self.assertTrue(any(row['role']=='assistant' and '尾段先过一遍' in row['text']
+                            for row in self.agent.store.recent(scope)))
+
+        self.now += .02
+        observed = self.observation('那下一遍还用同一个速度？', seq=3)
+        self.tick += 1.6
+        baseline = self.client.request.await_count
+        lock = self.backend.contexts.lock(ContextKey('qq','group','g1','chat-agent'))
+        await asyncio.wait_for(lock.acquire(), 2)
+        try:
+            with patch('ournotes_bot.application.backend.HERMES_PILOT_CONTINUATION_SECONDS', .15):
+                expired, permits, _ = await self.candidate(observed, 2)
+        finally:
+            lock.release()
+        self.assertEqual(expired['status'], 'expired')
+        self.assertEqual(permits, [])
+        self.assertEqual(self.client.request.await_count, baseline)
+
+        self.now += 181
+        self.tick += 181
+        self.current_user = 'u2'
+        self.agent.services.policy.return_value = self.policy
+        hermes.proactive.capacity = 0
+        baseline = self.client.request.await_count
+        observed = self.observation('群友今天排练顺利', seq=4)
+        self.tick += 1.6
+        skipped, permits, _ = await self.candidate(observed, 3)
+        self.assertEqual(skipped['parts'], [])
+        self.assertEqual(permits, [])
+        self.assertEqual(self.client.request.await_count, baseline)
+        events = self.backend.diagnostics.read(skipped['request_id'])['chat_events']
+        self.assertTrue(any(e['data'].get('status')=='hermes_proactive_busy' for e in events))
+
+        self.now += .02
+        self.client.request.return_value = self.result('备用节奏是五拍。')
+        hermes.dialogue.capacity = 0
+        started = monotonic()
+        fallback, permits = await self.prepare_native('/聊 再确认备用节奏', seq=5)
+        self.assertGreaterEqual(monotonic()-started, 1.95)
+        self.assertTrue(fallback['send_allowed'], fallback)
+        self.assertTrue(self.backend.works[fallback['delivery_id']].hermes_native_fallback)
+        self.assertEqual(self.client.request.await_count, baseline+1)
+        self.assertEqual(len(permits), 1)
+        self.assertEqual(self.runtime.usage.get(permits[0])['state'], 'settled')
+        self.event(fallback, 'intent')
+        self.event(fallback, 'ack')
+
+        self.now += .02
+        hermes.dialogue.capacity = 2
+        entered, release = asyncio.Event(), asyncio.Event()
+
+        async def in_flight(*args, **kwargs):
+            entered.set()
+            await release.wait()
+            return self.result('关闭后丢弃这条回复。')
+
+        self.client.request.side_effect = in_flight
+        raw = self.request('pilot-disable', 6)
+        raw['body'] = '/聊 关闭时正在生成的合成请求'
+        queued = await self.backend.submit(raw)
+        work = self.backend.works[queued['delivery_id']]
+        try:
+            attempt = await self.grant_provider_permit(raw['request_id'], work, [])
+            await asyncio.wait_for(entered.wait(), 5)
+            self.assertEqual((await self.select(False))[0], 200)
+            self.assertFalse(hermes.dialogue.enabled or hermes.proactive.enabled)
+            self.check_scratch_empty()
+            self.assertFalse(self.backend.lookup(raw['request_id'], 'e1')['send_allowed'])
+            self.assertEqual(self.runtime.usage.get(attempt)['state'], 'started')
+        finally:
+            release.set()
+        await asyncio.wait_for(asyncio.gather(*tuple(self.backend.models.tasks), return_exceptions=True), 5)
+        self.assertEqual(self.runtime.usage.get(attempt)['state'], 'settled')
+        self.client.request.side_effect = None
+
+        self.now += .02
+        direct, _ = await self.prepare_native('/聊 关闭后走原路径', seq=7)
+        self.assertTrue(direct['send_allowed'])
+        self.assertFalse(self.backend.works[direct['delivery_id']].hermes_chat)
 
     @unittest.skipUnless(os.getenv('TAKI_TEST_HERMES_PYTHON'), 'requires pinned Hermes Python')
     async def test_enabled_group_uses_hermes_for_named_continued_and_proactive_chat(self):

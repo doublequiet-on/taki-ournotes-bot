@@ -3,6 +3,7 @@
 import json
 import os
 from pathlib import Path
+from queue import Queue
 import sys
 from threading import Thread
 from weakref import WeakSet
@@ -39,10 +40,23 @@ def exit_on_parent_close():
 
 
 def main():
-    request = json.loads(sys.stdin.buffer.readline())
-    Thread(target=exit_on_parent_close, daemon=True).start()
-    port = request['port']
+    boot = json.loads(sys.stdin.buffer.readline())
+    port = boot['port']
     enforce_loopback(port)
+    assignment = None
+    if boot.get('standby'):
+        assignment = Queue(maxsize=1)
+
+        def read_assignment():
+            try:
+                assignment.put(json.loads(sys.stdin.buffer.readline()))
+            except (OSError, ValueError):
+                os._exit(1)
+            exit_on_parent_close()
+
+        Thread(target=read_assignment, daemon=True).start()
+    else:
+        Thread(target=exit_on_parent_close, daemon=True).start()
     profile = Path(os.environ['HERMES_HOME'])
     profile.mkdir(mode=0o700)
     (profile / 'config.yaml').write_text(json.dumps({
@@ -56,8 +70,14 @@ def main():
     }), encoding='utf-8')
     from run_agent import AIAgent
 
+    if assignment is None:
+        request = boot
+    else:
+        Path('ready').touch()
+        request = assignment.get()
+
     agent = AIAgent(
-        base_url=f'http://127.0.0.1:{port}/v1', api_key=request['key'], provider='custom',
+        base_url=f'http://127.0.0.1:{port}/v1', api_key=boot['key'], provider='custom',
         api_mode='chat_completions', model=request['model'], enabled_toolsets=[], max_iterations=2,
         quiet_mode=True, skip_context_files=True, load_soul_identity=False, skip_memory=True,
         skip_background_review=True, session_db=None, fallback_model={}, cwd=str(Path.cwd()),

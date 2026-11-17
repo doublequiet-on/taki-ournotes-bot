@@ -21,6 +21,7 @@ from ..domain.knowledge import KnowledgeError
 from ..domain.model_calls import ModelError
 from ..domain.story import StoryError
 from .backend_protocol import ProtocolError, require
+from .hermes_standby import StandbyLane
 
 
 logger = logging.getLogger(__name__)
@@ -67,9 +68,113 @@ class Run:
     provider: asyncio.Task | None = None
 
 
+class StepWorker:
+    def __init__(self, python, directory, key):
+        self.python, self.directory, self.key = python, directory, key
+        self.runner = None
+        self.process = None
+        self.assignment = None
+
+    @property
+    def alive(self):
+        return self.process is not None and self.process.returncode is None
+
+    async def respond(self, request):
+        if not compare_digest(request.headers.get('Authorization', ''), 'Bearer ' + self.key):
+            return web.Response(status=401)
+        if self.assignment is None:
+            return web.Response(status=409)
+        run, model, receipt_key, dispatch = self.assignment
+        payload = await request.json()
+        if (not isinstance(payload, dict) or payload.get('model') != model
+                or payload.get('tools') or payload.get('functions') or payload.get('stream')):
+            return web.Response(status=403)
+        if run.provider is not None or run.work.ended.is_set() or run.stopped.is_set():
+            return web.Response(status=409)
+        run.provider = asyncio.create_task(dispatch())
+        try:
+            result = await asyncio.shield(run.provider)
+        except (ProtocolError, ModelError, KnowledgeError, StoryError, asyncio.TimeoutError):
+            return web.Response(status=403)
+        usage = result.usage
+        receipt = json.dumps({'key': receipt_key,
+                              'text': result.text if result.status == 'ok' and not result.tool_calls else None},
+                             ensure_ascii=False)
+        return web.json_response({
+            'id': 'chatcmpl-' + receipt_key, 'object': 'chat.completion', 'created': 1, 'model': model,
+            'choices': [{'index': 0, 'message': {'role': 'assistant', 'content': receipt}, 'finish_reason': 'stop'}],
+            'usage': {'prompt_tokens': usage.input_total or 0, 'completion_tokens': usage.output_total or 0,
+                      'total_tokens': (usage.input_total or 0)+(usage.output_total or 0)},
+        })
+
+    async def start(self, boot):
+        app = web.Application(client_max_size=8 * 1024 * 1024)
+        app.router.add_post('/v1/chat/completions', self.respond)
+        self.runner = web.AppRunner(app, access_log=None, shutdown_timeout=.05)
+        await self.runner.setup()
+        site = web.TCPSite(self.runner, '127.0.0.1', 0)
+        await site.start()
+        with (self.directory / 'worker.log').open('wb') as log:
+            spawn = asyncio.create_task(asyncio.create_subprocess_exec(
+                str(self.python), '-B', '-I', str(WORKER), cwd=self.directory,
+                stdin=asyncio.subprocess.PIPE, stdout=log, stderr=log, env=worker_environment(self.directory)))
+            try:
+                self.process = await asyncio.shield(spawn)
+            except asyncio.CancelledError:
+                self.process = await spawn
+                raise
+        await self.write(dict(boot, port=self.runner.addresses[0][1], key=self.key))
+
+    async def write(self, data):
+        self.process.stdin.write(json.dumps(data, ensure_ascii=False).encode() + b'\n')
+        await self.process.stdin.drain()
+
+    async def wait(self, run, deadline):
+        process = asyncio.create_task(self.process.wait())
+        tasks = [process, asyncio.create_task(run.work.ended.wait()), asyncio.create_task(run.stopped.wait())]
+        try:
+            done, _ = await asyncio.wait(tasks, timeout=max(0, deadline-monotonic()),
+                                         return_when=asyncio.FIRST_COMPLETED)
+            if not done:
+                raise asyncio.TimeoutError()
+            if process in done and self.process.returncode == 0:
+                return json.loads((self.directory / 'receipt.json').read_text(encoding='utf-8'))
+        finally:
+            for task in tasks:
+                task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+
+    async def close(self):
+        try:
+            if self.process is not None:
+                if self.process.returncode is None:
+                    with suppress(ProcessLookupError):
+                        self.process.kill()
+                self.process.stdin.close()
+                await self.process.wait()
+        finally:
+            if self.runner is not None:
+                await self.runner.cleanup()
+
+
+class StandbyWorker(StepWorker):
+    def __init__(self, owner):
+        super().__init__(owner.python, owner.directory(uuid4().hex), uuid4().hex)
+        self.owner = owner
+
+    async def close(self):
+        try:
+            await super().close()
+        finally:
+            self.owner.remove(self.directory)
+
+
 class HermesChat:
-    def __init__(self, python, scratch):
+    def __init__(self, python, scratch, pilot_group=''):
         self.python, self.scratch = python, scratch
+        self.pilot_group = pilot_group
+        self.dialogue = StandbyLane(self.prewarm, 2)
+        self.proactive = StandbyLane(self.prewarm, 1)
         self.active = {}
         self.owner = None
         self.cleanup_failed = False
@@ -104,6 +209,40 @@ class HermesChat:
             self.owner.close()
             self.owner = None
 
+    def start_pilot(self):
+        if self.available:
+            self.dialogue.start()
+            self.proactive.start()
+
+    async def stop_pilot(self):
+        await asyncio.gather(self.dialogue.stop(), self.proactive.stop())
+
+    def directory(self, key):
+        return Path(mkdtemp(dir=self.scratch, prefix=f'run-{key}-'))
+
+    def remove(self, directory):
+        try:
+            rmtree(directory)
+        except OSError:
+            self.cleanup_failed = True
+            logger.error('Hermes scratch cleanup failed')
+
+    async def prewarm(self):
+        worker = StandbyWorker(self)
+        try:
+            await worker.start({'standby': True})
+            deadline = monotonic()+30
+            while not (worker.directory / 'ready').is_file():
+                if not worker.alive:
+                    raise OSError('Hermes standby exited')
+                if monotonic()>=deadline:
+                    raise asyncio.TimeoutError()
+                await asyncio.sleep(.025)
+            return worker
+        except BaseException:
+            await worker.close()
+            raise
+
     async def await_cleanup(self, *, scope=None):
         stopped = []
         for run in tuple(self.active.values()):
@@ -124,21 +263,27 @@ class HermesChat:
         require(self.available, 'chat_hermes_unavailable', 503)
         request_key = uuid4().hex
         run = Run(work, validate)
-        directory = Path(mkdtemp(dir=self.scratch, prefix=f'run-{request_key}-'))
+        directory = None
         self.active[work.delivery] = run
         returned = None
         failure = None
         try:
-            returned = await self.worker(run, directory, request_key, profile, body, deadline, dispatch)
+            if getattr(work,'hermes_pilot',False):
+                returned = await self.pilot_worker(run, request_key, profile, body, deadline, dispatch)
+            else:
+                directory = self.directory(request_key)
+                returned = await self.worker(run, directory, request_key, profile, body, deadline, dispatch)
+        except ProtocolError as exc:
+            if exc.code=='chat_hermes_busy':
+                require(not self.cleanup_failed, 'chat_hermes_cleanup_failed', 503)
+                validate()
+            raise
         except (OSError, ValueError, asyncio.TimeoutError) as exc:
             failure = ProtocolError('chat_hermes_timeout' if isinstance(exc, asyncio.TimeoutError)
                                     else 'chat_hermes_unavailable', 503)
         finally:
-            try:
-                rmtree(directory)
-            except OSError:
-                self.cleanup_failed = True
-                logger.error('Hermes scratch cleanup failed')
+            if directory is not None:
+                self.remove(directory)
             run.cleaned.set()
             self.active.pop(work.delivery, None)
         if run.provider is None:
@@ -155,66 +300,39 @@ class HermesChat:
             return replace(result, status='error', error_code=code, text=None, tool_calls=(), output_items=())
         return replace(result, text=returned['text']) if text is not None else result
 
-    async def worker(self, run, directory, key, profile, body, deadline, dispatch):
-        async def respond(request):
-            if not compare_digest(request.headers.get('Authorization', ''), 'Bearer ' + key):
-                return web.Response(status=401)
-            payload = await request.json()
-            if (not isinstance(payload, dict) or payload.get('model') != profile.model
-                    or payload.get('tools') or payload.get('functions') or payload.get('stream')):
-                return web.Response(status=403)
-            if run.provider is not None or run.work.ended.is_set() or run.stopped.is_set():
-                return web.Response(status=409)
-            run.provider = asyncio.create_task(dispatch())
-            try:
-                result = await asyncio.shield(run.provider)
-            except (ProtocolError, ModelError, KnowledgeError, StoryError, asyncio.TimeoutError):
-                return web.Response(status=403)
-            usage = result.usage
-            text = result.text if result.status == 'ok' and not result.tool_calls else None
-            receipt = json.dumps({'key': key, 'text': text}, ensure_ascii=False)
-            return web.json_response({
-                'id': 'chatcmpl-' + key, 'object': 'chat.completion',
-                'created': 1, 'model': profile.model,
-                'choices': [{'index': 0, 'message': {'role': 'assistant', 'content': receipt}, 'finish_reason': 'stop'}],
-                'usage': {'prompt_tokens': usage.input_total or 0, 'completion_tokens': usage.output_total or 0,
-                          'total_tokens': (usage.input_total or 0) + (usage.output_total or 0)},
-            })
-
-        app = web.Application(client_max_size=8 * 1024 * 1024)
-        app.router.add_post('/v1/chat/completions', respond)
-        runner = web.AppRunner(app, access_log=None, shutdown_timeout=.05)
-        await runner.setup()
-        process = None
-        tasks = []
+    async def pilot_worker(self, run, key, profile, body, deadline, dispatch):
+        work = run.work
+        proactive = work.proactive is not None and not work.continuation
+        lane = self.proactive if proactive else self.dialogue
+        named = work.proactive is None
+        limit = min(deadline, monotonic()+2) if named else deadline
+        claim = asyncio.create_task(lane.claim(limit,priority=int(not named),wait=not proactive))
+        stopped = [asyncio.create_task(wait) for wait in (work.ended.wait(), run.stopped.wait())]
+        worker = None
         try:
-            site = web.TCPSite(runner, '127.0.0.1', 0)
-            await site.start()
-            port = runner.addresses[0][1]
-            validate = dict(text_context(body), port=port, key=key, model=profile.model)
-            with (directory / 'worker.log').open('wb') as log:
-                process = await asyncio.create_subprocess_exec(
-                    str(self.python), '-B', '-I', str(WORKER), cwd=directory,
-                    stdin=asyncio.subprocess.PIPE, stdout=log, stderr=log, env=worker_environment(directory),
-                )
-            process.stdin.write(json.dumps(validate, ensure_ascii=False).encode() + b'\n')
-            await process.stdin.drain()
-            tasks = [asyncio.create_task(wait) for wait in
-                     (process.wait(), run.work.ended.wait(), run.stopped.wait())]
-            done, _ = await asyncio.wait(tasks, timeout=max(0, deadline-monotonic()),
-                                         return_when=asyncio.FIRST_COMPLETED)
-            if not done:
-                raise asyncio.TimeoutError()
-            if tasks[0] in done and process.returncode == 0:
-                return json.loads((directory / 'receipt.json').read_text(encoding='utf-8'))
+            await asyncio.wait([claim,*stopped], return_when=asyncio.FIRST_COMPLETED)
+            if work.ended.is_set() or run.stopped.is_set():
+                return None
+            worker = claim.result()
+            require(not self.cleanup_failed, 'chat_hermes_cleanup_failed', 503)
+            run.validate()
+            worker.assignment = (run, profile.model, key, dispatch)
+            await worker.write(dict(text_context(body), model=profile.model))
+            return await worker.wait(run, deadline)
         finally:
-            if process is not None:
-                if process.returncode is None:
-                    with suppress(ProcessLookupError):
-                        process.kill()
-                process.stdin.close()
-                await process.wait()
-            for task in tasks:
+            for task in (claim,*stopped):
                 task.cancel()
-            await asyncio.gather(*tasks, return_exceptions=True)
-            await runner.cleanup()
+            await asyncio.gather(claim,*stopped,return_exceptions=True)
+            if worker is None and not claim.cancelled() and claim.exception() is None:
+                worker = claim.result()
+            if worker is not None:
+                await lane.release(worker)
+
+    async def worker(self, run, directory, key, profile, body, deadline, dispatch):
+        worker = StepWorker(self.python, directory, key)
+        worker.assignment = (run, profile.model, key, dispatch)
+        try:
+            await worker.start(dict(text_context(body), model=profile.model))
+            return await worker.wait(run, deadline)
+        finally:
+            await worker.close()

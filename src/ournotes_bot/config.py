@@ -128,6 +128,7 @@ class Settings:
     story_dir: Path | None = None
     hermes_python: Path | None = None
     hermes_runtime_dir: Path | None = None
+    hermes_pilot_group: str = ''
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -195,6 +196,7 @@ class Settings:
             chat_engine=chat_engine,
             hermes_python=Path(hermes_python) if hermes_python else None,
             hermes_runtime_dir=Path(hermes_runtime) if hermes_runtime else None,
+            hermes_pilot_group=os.getenv('OURNOTES_HERMES_PILOT_GROUP','').strip(),
             story_dir=(CONFIG_ROOT/story_dir).resolve() if story_dir else None,
             query_ai_api_key=os.getenv('OURNOTES_QUERY_AI_API_KEY','').strip(),
             app_secret=os.getenv("QQ_APP_SECRET", "").strip(),
