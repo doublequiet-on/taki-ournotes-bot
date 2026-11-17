@@ -10,7 +10,7 @@
 
 ## 固定版本与中文
 
-分别取得 JP、intl release identity，随后使用 `/api/v1/servers/{server}/{resource}?release=…`，每次核对 release/source 响应头。校验 Catalog 数量与实体 ID，再按至多 100 个 ID 分批取得歌曲、成员及 SNAP 的完整实体。角色、乐队、技能引用和 JP 成长表使用专项资源，启动不依赖 Team Builder。单次响应限 8 MB，总下载限 24 MB，并发至多 3，请求超时 20 秒，超过 150 秒不再安排后续请求。
+分别取得 JP、intl release identity，随后使用 `/api/v1/servers/{server}/{resource}?release=…`，每次核对 release/source 响应头。校验 Catalog 数量与实体 ID，再按至多 100 个 ID 分批取得歌曲、成员及 SNAP 的完整实体。角色、乐队、技能引用和 JP 成长表使用专项资源，启动不依赖 Team Builder。单次响应限 8 MB，JP、intl 合计下载限 40 MB，并发至多 3，请求超时 20 秒，超过 150 秒不再安排后续请求。
 
 实体、数值、时间、难度、技能效果与成长取 JP。intl 只补 JP 缺少的文本：核对实体关联与日文原文；技能还比较效果、条件组、条件、目标及累计条件。无法关联时按日文／英文规则回退，不翻译、不混入其他版本数值。无法展开的语言模板回退到可解析日文；日文也无法解析时显示“参数未确认”，技能索引标为不完整。
 
