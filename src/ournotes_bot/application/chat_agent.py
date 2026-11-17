@@ -1147,7 +1147,10 @@ class ChatAgent:
             history.append({'role':'user','content':json.dumps(asdict(ChatMessage(
                 request.message_id,request.user_id,question,request.timestamp_ms,display_name=request.sender_name)),ensure_ascii=False)})
         light=work.proactive is not None and getattr(work.proactive,'lightweight',False)
-        if quote_focus:
+        if local_activity:
+            # A standalone calendar answer only depends on this question.
+            history = [item for item in history if json.loads(item['content']).get('message_id') == request.message_id]
+        elif quote_focus:
             focus_ids={request.message_id}
             if context_request.reference:focus_ids.add(context_request.reference['message_id'])
             history=[item for item in history if json.loads(item['content']).get('message_id') in focus_ids]
@@ -1163,7 +1166,7 @@ class ChatAgent:
         history_ids={json.loads(item['content']).get('message_id') for item in history}
         history.extend({'role':'user','content':json.dumps(asdict(row),ensure_ascii=False)}
                        for row in getattr(work,'chat_additions',()) if row.message_id not in history_ids)
-        summaries=[] if (light or proactive_evidence or transition=='switch' or quote_focus or quote_images or
+        summaries=[] if (local_activity or light or proactive_evidence or transition=='switch' or quote_focus or quote_images or
                          work.proactive is not None and work.proactive.followup is not None) else self.store.summaries(
                              request.scope,limit=1,after_ms=summary_cutoff)
         summary_rows=[]
@@ -1339,7 +1342,7 @@ class ChatAgent:
             just_card,just_levels,missing=just_card_question(user_question,named)
             if missing:
                 local_answer='告诉我'+'、'.join(missing)+'。'
-        work.chat_task=(self.tasks.begin(request,valid_source,inherit=not quote_focus,transition=transition)
+        work.chat_task=(self.tasks.begin(request,valid_source,inherit=not (quote_focus or local_activity),transition=transition)
                         if retain_turn and task_enabled else ResearchTask())
         if task_enabled:
             work.chat_task.entities.update(named)
