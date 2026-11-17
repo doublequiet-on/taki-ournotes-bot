@@ -104,10 +104,14 @@ def quote_followup(question):
         r'[呢啊呀嘛]?[？?！!。\s]*',text) is not None
 
 
+_QUOTE_IMAGE_REF = r'(?:这(?:张|个|幅)?(?:图(?:片)?|截图)|图(?:里|中|上)|引用(?:里|中)?(?:的)?(?:图(?:片)?|截图))'
 _QUOTE_IMAGE_TARGET = re.compile(
     r'^(?:(?:taki(?![a-z0-9_])|立希)[\s，,、：:]*)?'
-    r'(?:这(?:张|个|幅)?图(?:片)?|图(?:里|中)|引用(?:里|中)(?:的)?(?:图|图片))'
-    r'[^。！？?；;\n]{0,80}(?:多少|多高|几[个项分张级抽]|哪[天日集]|是什么|怎么看|如何|算不算|算高|吗)'
+    rf'(?:{_QUOTE_IMAGE_REF}[^。！？?；;\n]{{0,80}}'
+    r'(?:多少|多高|几[个项分张级抽]|哪[天日集]|是什么|怎么看|如何|算不算|算高|吗'
+    r'|写(?:了|着|的)(?:什么|啥)|(?:翻译|转写|读)(?:一下|下)?)'
+    r'|(?:请|麻烦|能不能|可以)?\s*(?:帮我|给我)?\s*'
+    rf'(?:翻译|转写|读|念|识别|辨认|看清)(?:一下|下)?\s*{_QUOTE_IMAGE_REF}[^。！？?；;\n]{{0,64}})'
     r'[呢啊呀嘛]?[？?！!。\s]*$', re.I)
 _QUOTE_ADDITION = re.compile(r'[。！？?；;\n]+\s*(?:另外|另问|还有个问题)[\s，,：:]*')
 _ON_MECHANICS = re.compile(r'保底|掉率|出货率|概率|倍率|公式|判定规则|计分规则|抽卡规则')
@@ -996,16 +1000,22 @@ class ChatAgent:
         quote_images=await self.read_unlinked_quote_images(work,deadline) if work.proactive is None else None
         user_question=question
         quote_prefix = ''
-        image_focus = False
-        if work.proactive is None and request.quote_hint=='image':
+        image_focus = image_missing = False
+        if work.proactive is None and request.quote_hint in ('image','unknown'):
             clauses = _QUOTE_ADDITION.split(question, maxsplit=1)
             image_focus = _QUOTE_IMAGE_TARGET.fullmatch(clauses[0].strip()) is not None
-            if image_focus and len(clauses)==2 and clauses[1].strip():
-                meta_question = clauses[1].strip()
-                if not (preview or quote_images or context_request.reference or request.attachments or work.chat_additions
-                        or work.chat_addition_images):
-                    question = user_question = meta_question
+            added_question = clauses[1].strip() if image_focus and len(clauses)==2 else ''
+            if added_question:
+                meta_question = added_question
+            if image_focus and not (quote_images or request.attachments or work.chat_additions or work.chat_addition_images):
+                reference = context_request.reference
+                image_missing = not (reference and self.image_contains(request, reference['message_id']))
+                if image_missing and added_question:
+                    question = user_question = added_question
                     quote_prefix = '我读不到这条引用里的图片，请把原图再发一次。\n'
+                    preview = ''
+                    work.quote_preview_reference = None
+                    context_request = replace(context_request, reference=None)
         quote_focus=(work.proactive is None and has_quote and not work.chat_additions
                      and not work.chat_addition_images and (image_focus or quote_followup(question)))
         if quote_prefix:
@@ -1075,12 +1085,14 @@ class ChatAgent:
             runtime.backend.diagnostics.chat_event(request.request_id,'evidence',runtime.backend.clock(),
                                                     action=action,status=status)
 
-        if quote_focus and not (quote_prefix or preview or quote_images or context_request.reference or request.attachments):
-            if request.quote_hint=='image':
-                trace_evidence('quote_image','unpaired')
+        if quote_focus and not quote_prefix and (image_missing or not (
+                preview or quote_images or context_request.reference or request.attachments)):
+            if image_missing or request.quote_hint=='image':
+                trace_evidence('quote_image','paired' if context_request.reference else 'unpaired')
                 trace_evidence('quote_image','unavailable')
-            text=('我读不到这条引用里的图片，请把原图再发一次' if request.quote_hint=='image'
-                  else '我读不到这条引用，请把原文或图片再发一次')
+                text='我读不到这条引用里的图片，请把原图再发一次'
+            else:
+                text='我读不到这条引用，请把原文或图片再发一次'
             return PreparedReply(text,business_status='quote_unavailable')
         retain_turn=not work.quote_turn_only
         separate_preview=bool(preview and (work.quote_turn_only or context_request.reference and
@@ -1252,7 +1264,7 @@ class ChatAgent:
             quote_status='image_unavailable'
         elif not (quote_prefix or quote_images or preview or context_request.reference) and (work.missing_anchor or request.quote_hint):
             quote_status='quote_unavailable'
-        if request.quote_hint=='image' or work.unavailable_quote_image:
+        if request.quote_hint=='image' or work.unavailable_quote_image or image_missing:
             reference=context_request.reference
             trace_evidence('quote_image','paired' if reference else 'unpaired')
             loaded=bool(quote_images or reference and

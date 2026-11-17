@@ -4075,6 +4075,45 @@ class ChatAgentTests(Fixture, unittest.IsolatedAsyncioTestCase):
         self.assertNotIn('旧乐队',visible)
         self.assertNotIn('红框',visible)
 
+    async def test_unreadable_quoted_image_translation_cannot_use_the_caption_as_pixels(self):
+        self.client.request.return_value=self.result('把这句日文译出来了。')
+        questions=(('taki 帮我翻译一下图里的日文','image'),('/聊 图上写的啥？','image'),
+                   ('/聊 这张截图帮我翻译一下','image'),('/聊 帮我翻译一下引用里的截图','unknown'))
+        for seq,(question,hint) in enumerate(questions,1):
+            with self.subTest(question=question,hint=hint):
+                raw={**self.request('native'+str(seq),seq),'quote_hint':hint}
+                if hint=='image':
+                    raw['quoted_text']='合成预览：和图中文字无关的标题'
+                with patch.object(self,'request',return_value=raw):
+                    plan,attempts=await self.prepare_native(question,seq=seq)
+                self.event(plan,'intent');self.event(plan,'ack')
+                self.assertEqual(attempts,[])
+                self.assertEqual(plan['parts'][0]['business_status'],'quote_unavailable')
+                self.assertIn('原图',plan['parts'][0]['text'])
+                self.client.request.assert_not_awaited()
+                evidence=self.backend.diagnostics.read(raw['request_id'])['chat_events']
+                self.assertEqual([event['data']['status'] for event in evidence
+                    if event['kind']=='evidence' and event['data']['action']=='quote_image'],['unpaired','unavailable'])
+
+    async def test_missing_quoted_image_translation_keeps_only_the_added_question(self):
+        self.client.request.return_value=self.result('旧场景回顾。')
+        previous,_=await self.prepare_native('/聊 昨天练了旧曲')
+        self.event(previous,'intent');self.event(previous,'ack')
+        bodies=self.capture_native_bodies()
+        question='/聊 帮我翻译一下图里的日文。另问，二加二是多少？'
+        raw={**self.request('native2',2),'quote_hint':'image','quoted_text':'合成预览：另一段对话'}
+        self.client.request.return_value=self.result('二加二等于四。')
+        with patch.object(self,'request',return_value=raw):
+            plan,attempts=await self.prepare_native(question,seq=2)
+        self.assertEqual(len(attempts),1)
+        self.assertIn('原图',plan['parts'][0]['text'])
+        self.assertIn('二加二等于四',plan['parts'][0]['text'])
+        visible=json.dumps(bodies[0]['messages'],ensure_ascii=False)
+        self.assertIn('二加二是多少',visible)
+        for omitted in ('昨天练了旧曲','翻译一下图里','另一段对话'):
+            self.assertNotIn(omitted,visible)
+        self.event(plan,'intent');self.event(plan,'ack')
+
     async def test_revoked_detached_quote_preview_cannot_be_sent(self):
         self.backend.reference_profiles=frozenset({'fixture'})
         agent=self.backend.model_runtime.agent
@@ -4925,6 +4964,31 @@ class ChatImageIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
         self.assertEqual(agent.store.recent(Request_scope()),[])
         self.assertIsNone(agent.store.db.execute('SELECT 1 FROM runs').fetchone())
         self.assertIsNone(agent.store.db.execute('SELECT 1 FROM chat_projection_history').fetchone())
+
+    async def test_translation_of_the_same_direct_and_quoted_image_keeps_the_same_pixels(self):
+        original=self.attachments
+        bodies=self.capture_native_bodies()
+        self.client.request.return_value=self.result('能认出的字是「合成样例」。')
+        question='/聊 帮我翻译一下图里的日文'
+        for seq in range(1,3):
+            if seq==2:
+                self.attachments=[]
+            raw=self.request('native'+str(seq),seq)
+            if seq==2:
+                raw.update(quote_hint='image',quoted_attachments=original)
+            with patch.object(self,'request',return_value=raw):
+                plan,attempts=await self.prepare_native(question,seq=seq)
+            self.assertEqual(len(attempts),1)
+            self.assertEqual(plan['parts'][0]['business_status'],'success')
+            self.event(plan,'intent');self.event(plan,'ack')
+        images=[[part['image_url'] for message in wire['input'] if isinstance(message['content'],list)
+                 for part in message['content'] if part['type']=='input_image'] for wire in bodies]
+        self.assertEqual(len(images),2)
+        self.assertEqual(len(images[0]),1)
+        self.assertEqual(images[0],images[1])
+        quote_wire=json.dumps(bodies[1]['input'],ensure_ascii=False)
+        self.assertIn('当前消息引用中的 QQ 图片',quote_wire)
+        self.assertNotIn('native1',quote_wire)
 
     async def test_qq_quote_attachment_obeys_vision_deletion_and_download_failures(self):
         from ournotes_bot.domain.chat_images import ImageError
