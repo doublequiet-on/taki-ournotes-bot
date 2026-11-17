@@ -7491,6 +7491,101 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
         self.assertTrue(follow('😂 我刚试过，原速只卡在第一个鼓点。',4)[0])
         self.assertEqual(self.client.request.await_count,2)
 
+    async def replace_queued_lightweight(self, next_text, *, one_pass, transition):
+        from ournotes_bot.application.backend_protocol import Request,digest
+        self.enable_lightweight_fact_fixture()
+        if one_pass:
+            self.agent.proactive.one_pass_groups={'g1'}
+        old=self.request('old-target',1)
+        old.update(trigger='observation',body='大家练副歌会先降速还是直接练原速？')
+        def observe(value):
+            return self.agent.proactive.gateway_observation(Request.parse(value,'fixture','app',self.now))
+        self.assertTrue(observe(old)[0])
+        self.tick+=1.6
+        raw={**old,'trigger':'proactive','proactive_id':format(1,'032x')}
+        raw['request_id']=digest(['fixture','app','qq','group','g1',raw['user_id'],raw['message_id'],raw['proactive_id']])
+        candidate=self.agent.proactive.candidate(Request.parse(raw,'fixture','app',self.now))
+        self.assertIsNotNone(candidate)
+        scheduler=self.backend.models
+        scheduler.limit=1
+        release=asyncio.Event()
+        entered=asyncio.Event()
+        async def occupy_slot(deadline):
+            entered.set()
+            await release.wait()
+        occupant=asyncio.create_task(scheduler.run('occupied',occupy_slot))
+        await asyncio.wait_for(entered.wait(),1)
+        admitted=await self.backend.submit(raw,proactive=candidate)
+        work=self.backend.works[admitted['delivery_id']]
+        try:
+            for _ in range(100):
+                if scheduler.queue:break
+                await asyncio.sleep(.005)
+            self.assertEqual(len(scheduler.queue),1)
+            self.assertIsNone(work.model_started_at)
+            self.current_user='u2' if transition in ('reaction','answered') else 'u1'
+            self.now+=.01
+            current=self.request('new-target',2)
+            current.update(trigger='observation',body=next_text)
+            observed,_,preserve=observe(current)
+            self.assertEqual(preserve,transition=='reaction')
+            self.assertEqual(observed,transition in ('supplement','shift'))
+            if preserve:
+                self.assertTrue(work.active)
+                self.assertEqual(len(scheduler.queue),1)
+                return
+            await asyncio.wait_for(work.ended.wait(),1)
+            await asyncio.gather(work.task,return_exceptions=True)
+            self.assert_chat_outcome(raw['request_id'],'observation_replaced')
+            self.assertEqual(work.model_attempts,0)
+            self.assertEqual(self.backend.ledger.parts(work.delivery),[])
+            self.assertFalse(scheduler.queue)
+            self.assertEqual(dict(scheduler.running),{'occupied':1})
+            self.client.request.assert_not_awaited()
+            if not observed:return
+
+            ids=[]
+            async def response(profile,body,**kw):
+                presented=[json.loads(item['content'])['message_id'] for item in body['input'][1:]]
+                ids.append(presented)
+                name=body.get('text',{}).get('format',{}).get('name')
+                text='那扇门怎么还在夹人。' if transition=='shift' else '我会先降速，把容易抢拍的地方弄顺。'
+                if name=='proactive_one_pass':
+                    return self.result(json.dumps(dict(participation='reply',text=text,delay_seconds=None,
+                        target_message_id=presented[-1],anchor_message_ids=[],reply_kind='opinion')))
+                if name=='proactive_participation':
+                    return self.result('{"participation":"reply","text":"","delay_seconds":null}')
+                return self.result(text)
+            self.client.request.side_effect=response
+            self.tick+=1.6
+            release.set()
+            await occupant
+            plan,attempts,_=await self.candidate(current,2)
+            self.assertEqual(len(attempts),1 if one_pass else 2)
+            wanted=['old-target','new-target'] if transition=='supplement' else ['new-target']
+            self.assertEqual(ids,[wanted]*len(attempts))
+            self.event(plan,'intent');self.event(plan,'ack')
+            self.assertEqual(self.backend.ledger.parts(plan['delivery_id'])[0]['status'],'success')
+        finally:
+            if work.active:self.backend.finish(work,'aborted',reason='fixture_cleanup')
+            release.set()
+            await asyncio.gather(occupant,work.task,return_exceptions=True)
+
+    async def test_one_pass_queued_candidate_releases_on_speakers_supplement(self):
+        await self.replace_queued_lightweight('补充，我主要是副歌返进拍子跟不上',one_pass=True,transition='supplement')
+
+    async def test_staged_queued_candidate_releases_on_speakers_supplement(self):
+        await self.replace_queued_lightweight('补充，我主要是副歌返进拍子跟不上',one_pass=False,transition='supplement')
+
+    async def test_one_pass_queued_candidate_preserves_weak_reaction(self):
+        await self.replace_queued_lightweight('🤣 😂',one_pass=True,transition='reaction')
+
+    async def test_one_pass_queued_candidate_releases_after_group_answer(self):
+        await self.replace_queued_lightweight('已经有人回答了',one_pass=True,transition='answered')
+
+    async def test_one_pass_queued_candidate_releases_on_explicit_topic_shift(self):
+        await self.replace_queued_lightweight('换个话题，排练室的门今天又夹手了',one_pass=True,transition='shift')
+
     async def addressed_ingress_fixture(self, *, delivered, next_seq):
         self.enable_lightweight_fact_fixture()
         before = self.request('before', 1)

@@ -408,6 +408,9 @@ class ModelRuntime:
             else:user=self.usage.key('user',work.model_subject)
             group=self.usage.key('group',work.request.conversation_id) if work.request.kind=='group' else None
             async def operation(deadline):
+                # A reviewed replacement may close the work just after it receives a slot.
+                if work.proactive is not None:
+                    require(work.active,'proactive_stale')
                 work.model_started_at=time.monotonic()
                 local_activity = self.agent.standalone_activity(work, question)
                 if local_activity:

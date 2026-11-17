@@ -427,6 +427,15 @@ class ProactiveChat:
                                         or request.ingress_seq != previous.covered_seq + 1)
         observed = self.observe(request, ingress_gap=gap)
         current = self.controller.target(scope)
+        if target is not None and current is not target:
+            backend = self.agent.runtime.backend
+            for work in tuple(backend.works.values()):
+                if (work.active and work.proactive is not None and not work.continuation
+                        and work.model_started_at is None and work.request.scope == request.scope
+                        and work.request.gateway_epoch == request.gateway_epoch
+                        and work.request.ingress_seq < request.ingress_seq
+                        and work.request.message_id == target.message_id):
+                    backend.finish(work, 'aborted', reason='observation_replaced')
         delay = self.observation_delay(request) if observed else None
         preserve = bool(observed and target is not None and current is target)
         result = (delay is not None, delay or 0, preserve)
