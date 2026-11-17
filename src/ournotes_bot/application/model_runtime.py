@@ -246,6 +246,8 @@ class ModelRuntime:
             if work.model_snapshot.fingerprint:
                 self.usage.configuration(work.model_snapshot.profile.config_version,work.model_snapshot.fingerprint)
             work.model_subject=work.model_snapshot.subject(work.request)
+            if work.addressed_background:
+                self.agent.proactive.capture_addressed_context(work)
         except ModelError as exc: work.model_error=str(exc)
 
     def use_fallback(self,work):

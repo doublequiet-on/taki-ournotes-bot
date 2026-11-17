@@ -26,7 +26,8 @@ class ChatRecovery:
         if work.proactive is None:
             row=self.store.db.execute('SELECT context FROM runs WHERE id=?',(work.delivery,)).fetchone()
             context=json.loads(row['context']) if row else ()
-        sources={work.request.message_id:work.request.timestamp_ms}
+        sources={row.message_id:row.timestamp_ms for row in work.addressed_context_sources}
+        sources[work.request.message_id]=work.request.timestamp_ms
         reply_to=None
         for item in context:
             source=json.loads(item['content'])
@@ -50,7 +51,12 @@ class ChatRecovery:
             vision=asdict(work.vision_capability) if work.vision_capability else None,
             web=asdict(work.web_capability) if work.web_capability else None,
             just_clarification=work.just_clarification)
+        if work.addressed_context_sources:
+            proof['addressed_context_grant'] = work.addressed_context_grant
         expires=min(self.store.clock()+86400,self.store.clock()+work.content_deadline-time.monotonic())
+        if work.addressed_context_sources:
+            oldest = min(row.timestamp_ms for row in work.addressed_context_sources)/1000
+            expires = min(expires, self.store.clock()+oldest+60-self.runtime.backend.clock())
         staged=[]
         for position,reply in enumerate(work.prepared):
             if reply.business_status!='success' or reply.image or not reply.text:continue
@@ -69,6 +75,13 @@ class ChatRecovery:
         if proof['story'] and (self.agent.story is None or not all(self.agent.story.valid(*v) for v in proof['story'])):return False
         knowledge=self.runtime.backend.knowledge
         if proof['knowledge'] and (knowledge is None or not knowledge.validate_retention(proof['knowledge'])):return False
+        grant = proof.get('addressed_context_grant')
+        if grant is not None:
+            group_id = proof['scope']['conversation_id']
+            primary = self.runtime.config.snapshot().for_group(group_id)
+            if (primary.fingerprint != proof['fingerprint'] or primary.profile.config_version != proof['config_version']
+                    or self.agent.proactive.addressed_context_grant(primary, group_id) != grant):
+                return False
         # A plain delivered text does not lose its retention right merely because
         # a different chat model is selected later.
         if projected and not proof['proactive'] and proof['vision'] is None and proof['web'] is None:return True

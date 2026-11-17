@@ -600,6 +600,13 @@ class ChatAgent:
     def memory_valid(self,work):
         request=work.request
         try:
+            if work.addressed_context_sources:
+                snapshot = self.runtime.config.snapshot().for_group(request.conversation_id)
+                if (snapshot != work.model_snapshot
+                        or self.proactive.addressed_context_grant(snapshot, request.conversation_id)
+                        != work.addressed_context_grant
+                        or not self.proactive.addressed_context_sources_valid(request, work.addressed_context_sources)):
+                    return False
             if work.unavailable_quote_image and not self.store.source_valid(request.scope,*work.unavailable_quote_image):
                 return False
             if work.detached_quote_image_count and not (
@@ -617,7 +624,7 @@ class ChatAgent:
                         return False
             return all(len(self.store.read(request.scope,list(work.memory_sources[i:i+48]))['messages'])==len(work.memory_sources[i:i+48])
                        for i in range(0,len(work.memory_sources),48))
-        except sqlite3.Error:return False
+        except (sqlite3.Error, ModelError, ServiceError, OSError, ValueError):return False
 
     def bind_memory(self,work,rows):
         work.memory_sources=tuple(dict.fromkeys((*work.memory_sources,*(row['message_id'] for row in rows))))
@@ -640,6 +647,32 @@ class ChatAgent:
             if row.get('role')!='assistant' and len(row.get('display_name',''))>=2:ids.append(row['display_name'])
         work.private_search_ids=tuple(dict.fromkeys(ids))
         require(len(work.private_search_ids)<=512,'chat_memory_limit')
+
+    def with_addressed_context(self, work, messages, tools):
+        request = work.request
+        grant = work.addressed_context_grant
+        if work.budget_fallback or grant is None or self.proactive.addressed_context_grant(
+                work.model_snapshot, request.conversation_id)!=grant:
+            return messages
+        indexed = [(index, json.loads(message['content']).get('message_id'))
+                   for index, message in enumerate(messages) if message['role']=='user']
+        current = next((index for index, mid in indexed if mid==request.message_id), None)
+        existing = {mid for _, mid in indexed}
+        rows = tuple(row for row in work.addressed_background if row.message_id not in existing)
+        if current is None or not rows or not self.proactive.addressed_context_sources_valid(request, rows):
+            return messages
+        notice = '\n带有 observed_group_context 的消息是紧邻的群聊原话。靠它理解指代和语气，回答最后的点名消息。'
+        background = [{'role':'user','content':json.dumps(dict(asdict(row), observed_group_context=True),
+                                                            ensure_ascii=False)} for row in rows]
+        combined = [{**messages[0], 'content':messages[0]['content']+notice}, *messages[1:current],
+                    *background, *messages[current:]]
+        if self.runtime.input_bound(work, combined, tools)>work.model_snapshot.profile.max_input_tokens:
+            return messages
+        work.addressed_context_sources = rows
+        self.privacy_material(work, [asdict(row) for row in rows])
+        self.runtime.backend.diagnostics.chat_event(request.request_id,'context',self.runtime.backend.clock(),
+                                               status='addressed_context',messages=len(rows))
+        return combined
 
     def initial_context(self,work,messages,tools):
         """Trim complete old exchanges before the function transcript starts."""
@@ -982,6 +1015,7 @@ class ChatAgent:
     async def run(self,work,question,user,group,deadline,*,local_activity=None):
         meta_question=question
         runtime=self.runtime
+        work.addressed_context_sources = ()
         require(self.recovery.recover(scope=work.request.scope),'chat_retention_unavailable')
         deadline=min(deadline,work.content_deadline)
         work.model_attempt_limit=self.budget.model_calls
@@ -1380,6 +1414,10 @@ class ChatAgent:
         initial_tools = [] if force_final or local_answer or local_activity or story_fact or just_evidence or draw_guarantee else (
             [registry[lookup].wire()] if lookup else [tool.wire() for tool in registry.values()])
         messages=self.initial_context(work,messages,initial_tools)
+        if (work.addressed_background and explicit_text and not (route or mechanic or has_quote
+            or transition=='switch' or work.chat_task.goal or work.chat_additions or work.chat_addition_images)
+                and len(user_question)<=96 and '\n' not in user_question):
+            messages=self.with_addressed_context(work,messages,initial_tools)
         self.proactive.trace(work,'context',messages=sum(item['role']!='system' for item in messages),
             assistant_messages=sum(item['role']=='assistant' for item in messages),
             image_markers=sum('[图片附件 ' in item['content'] for item in messages),
@@ -1390,7 +1428,7 @@ class ChatAgent:
         for message in messages:
             if message['role']=='system':continue
             data=json.loads(message['content'])
-            if {'research_task','current_entities'}.intersection(data):continue
+            if {'research_task','current_entities','observed_group_context'}.intersection(data):continue
             if 'derived_summary' in data:self.bind_memory(work,summary_rows)
             content=message['content']
             if data.pop('quote_preview',None) is not None:

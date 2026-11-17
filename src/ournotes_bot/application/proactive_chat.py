@@ -340,6 +340,19 @@ class ProactiveController:
             return next((row.message for row in reversed(group.rows)
                          if row.message.message_id==group.target_id),None)
 
+    def addressed_background(self, scope, timestamp_ms):
+        group = self.groups.get(scope)
+        if group is None or not group.policy.available or group.continuation_user_id is not None:
+            return ()
+        rows = []
+        for row in reversed(group.rows[-2:]):
+            if (row.context_generation != group.context_generation or not row.plain_text or row.image
+                    or not 0 <= timestamp_ms - row.message.timestamp_ms < 60_000
+                    or len(row.message.text.encode()) > 1024):
+                break
+            rows.append(row.message)
+        return tuple(reversed(rows))
+
     def preceding_message_from_speaker(self, scope, message_id):
         group = self.groups.get(scope)
         if group is None:

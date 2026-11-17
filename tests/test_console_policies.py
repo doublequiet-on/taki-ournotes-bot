@@ -7650,6 +7650,110 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
     async def test_one_pass_queued_candidate_releases_on_explicit_topic_shift(self):
         await self.replace_queued_lightweight('换个话题，排练室的门今天又夹手了',one_pass=True,transition='shift')
 
+    async def addressed_background_fixture(self, *, primary_approved=True, shift=False, next_seq=3, reapprove=False):
+        self.enable_lightweight_fact_fixture()
+        runtime=self.backend.model_runtime
+        runtime.capabilities.generation=Mock(return_value='approved-chat-context')
+        if not primary_approved:
+            runtime.dedicated_proactive=Mock(return_value=True)
+            runtime.proactive_snapshot=Mock(side_effect=lambda _:self.snapshot)
+            runtime.proactive_capabilities.proactive=Mock(return_value=True)
+            self.agent.proactive.services.policy=Mock(return_value=self.policy)
+            runtime.capabilities.proactive=Mock(return_value=False)
+        self.save_conversation_settings(followup_enabled=False)
+        prior=('报名表用祝当代号，阿遥写张。','对，祝是表上的姓。')
+        if shift:
+            prior=(prior[0],'换个话题，排练室的门又夹手了。')
+        for seq,text in enumerate(prior,1):
+            self.current_user='bystander-'+str(seq)
+            self.now+=.01
+            value=self.request('prior-'+str(seq),seq)
+            value.update(trigger='observation',body=text)
+            parsed=Request.parse(value,'fixture','app',self.now)
+            self.assertTrue(self.agent.proactive.gateway_observation(parsed)[0])
+        self.current_user='u1'
+        self.now+=.01
+        bodies=ChatAgentTests.capture_native_bodies(self)
+        self.client.request.return_value=self.result('对，写祝。')
+        prepare=runtime.prepare_chat
+        async def after_capture(work,question):
+            if reapprove:
+                runtime.capabilities.generation.return_value='replacement-context-grant'
+            return await prepare(work,question)
+        with patch.object(runtime,'prepare_chat',side_effect=after_capture):
+            plan,attempts=await self.prepare_native('taki你是祝',seq=next_seq)
+        self.assertEqual(len(attempts),1)
+        messages=[json.loads(item['content']) for item in bodies[0]['input'] if item['role']=='user']
+        background=[row['message_id'] for row in messages if row.get('observed_group_context')]
+        return plan,background,messages
+
+    async def test_pointed_chat_uses_two_observed_messages_without_archiving_bystander_text(self):
+        plan,background,messages=await self.addressed_background_fixture()
+        self.assertEqual(background,['prior-1','prior-2'])
+        self.assertEqual([row['message_id'] for row in messages],['prior-1','prior-2','native3'])
+        scope=Request_scope()
+        stored=self.agent.store.db.execute('SELECT context FROM runs WHERE id=?',(plan['delivery_id'],)).fetchone()[0]
+        self.assertNotIn('报名表',stored)
+        staged=self.agent.store.final_candidate(plan['delivery_id'],'0')
+        self.assertNotIn('报名表',staged['payload'])
+        self.assertNotIn(plan['delivery_id'],self.backend.conversations.snapshots)
+        self.assertFalse(self.agent.store.read(scope,background)['messages'])
+        self.event(plan,'intent')
+        receipt=self.event(plan,'ack')
+        reply=receipt['parts'][0]['message']
+        self.assertTrue(self.agent.store.read(scope,[reply])['messages'])
+        self.assertFalse(self.agent.store.read(scope,background)['messages'])
+        self.agent.store.delete_messages(scope,['prior-1'])
+        self.assertFalse(self.agent.store.read(scope,[reply])['messages'])
+
+    async def test_pointed_chat_background_is_bound_to_primary_approval(self):
+        _,background,messages=await self.addressed_background_fixture(primary_approved=False)
+        self.assertEqual(background,[])
+        self.assertEqual([row['message_id'] for row in messages],['native3'])
+
+    async def test_pointed_chat_background_stops_at_topic_shift(self):
+        _,background,_=await self.addressed_background_fixture(shift=True)
+        self.assertEqual(background,['prior-2'])
+
+    async def test_pointed_chat_background_stops_at_missing_ingress_sequence(self):
+        _,background,_=await self.addressed_background_fixture(next_seq=4)
+        self.assertEqual(background,[])
+
+    async def test_pointed_chat_background_reapproval_does_not_revive_the_frozen_prefix(self):
+        _,background,_=await self.addressed_background_fixture(reapprove=True)
+        self.assertEqual(background,[])
+
+    async def test_pointed_chat_background_expiry_denies_delivery_intent(self):
+        plan,background,_=await self.addressed_background_fixture()
+        self.assertEqual(background,['prior-1','prior-2'])
+        self.now+=61
+        self.assertFalse(self.backend.lookup(plan['request_id'],'e1')['send_allowed'])
+
+    async def test_pointed_chat_background_exclusion_denies_pending_delivery(self):
+        plan,background,_=await self.addressed_background_fixture()
+        self.assertEqual(background,['prior-1','prior-2'])
+        self.save_conversation_settings(excluded_users=[dict(user_id='bystander-1',label='成员')])
+        self.assertFalse(self.backend.lookup(plan['request_id'],'e1')['send_allowed'])
+
+    async def test_pointed_chat_context_grant_revocation_purges_delivered_reply(self):
+        plan,background,_=await self.addressed_background_fixture()
+        self.assertEqual(background,['prior-1','prior-2'])
+        self.event(plan,'intent')
+        reply=self.event(plan,'ack')['parts'][0]['message']
+        scope=Request_scope()
+        self.assertTrue(self.agent.store.read(scope,[reply])['messages'])
+        self.backend.model_runtime.capabilities.generation.return_value='changed-context-grant'
+        self.assertTrue(self.agent.recovery.recover(scope=scope))
+        self.assertFalse(self.agent.store.read(scope,[reply])['messages'])
+
+    async def test_pointed_chat_background_revoke_denies_delivery_intent(self):
+        plan,background,_=await self.addressed_background_fixture()
+        self.assertEqual(background,['prior-1','prior-2'])
+        self.backend.model_runtime.capabilities.generation.return_value='revoked-context-generation'
+        self.assertFalse(self.backend.lookup(plan['request_id'],'e1')['send_allowed'])
+        with self.assertRaisesRegex(ProtocolError,'inactive_delivery'):
+            self.event(plan,'intent')
+
     async def addressed_ingress_fixture(self, *, delivered, next_seq):
         self.enable_lightweight_fact_fixture()
         before = self.request('before', 1)

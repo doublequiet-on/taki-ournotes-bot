@@ -91,6 +91,9 @@ class Work:
     chat_task_generation: int = 0
     chat_task_pending: object = None
     chat_additions: tuple = ()
+    addressed_background: tuple = ()
+    addressed_context_sources: tuple = ()
+    addressed_context_grant: str | None = None
     chat_addition_images: tuple = ()
     chat_addition_image_error: str | None = None
     chat_coalesce_until: float = 0
@@ -554,7 +557,7 @@ class Backend:
             complete = list(parts)
             if parts and isinstance(parts[-1].context, replies.DeliveryCursor):
                 complete.extend(parts[-1].context.remaining)
-            if not work.quote_turn_only:
+            if not work.quote_turn_only and not work.addressed_context_sources:
                 self.conversations.capture(work, complete)
             require(len(parts) <= QQ_PASSIVE_REPLY_LIMIT, 'send_budget', 422)
             require(self.retained_bytes() <= self.byte_capacity, 'byte_capacity', 503)
@@ -605,6 +608,7 @@ class Backend:
         for work in self.works.values():
             visit(work.prepared)
             visit(work.request.body)
+            visit(work.addressed_background)
         for context in self.contexts.retained_contexts(): visit(context)
         for snapshot in self.conversations.snapshots.values():
             for page in snapshot.pages: visit(page)

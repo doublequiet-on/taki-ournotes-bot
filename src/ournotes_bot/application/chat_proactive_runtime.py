@@ -12,6 +12,7 @@ import unicodedata
 from collections import Counter,OrderedDict
 from dataclasses import asdict, dataclass, replace
 from fractions import Fraction
+from hashlib import sha256
 from types import SimpleNamespace
 
 from ..domain.chat import ChatMessage
@@ -607,12 +608,45 @@ class ProactiveChat:
                 or request.ingress_seq != previous.covered_seq + 1
                 or not self.agent.store.source_valid(request.scope, request.message_id, request.timestamp_ms)):
             return
-        # /submit and /observations share the gateway's sequence. Record only
-        # the position here; a saved source and ACK are required to use it.
+        # /submit and /observations share the gateway's sequence. The ring
+        # gets a position only; the named turn can borrow a bounded prefix.
         position = ChatMessage(request.message_id, request.user_id, '', request.timestamp_ms)
+        background = self.controller.addressed_background(scope, request.timestamp_ms)
         if self.controller.observe(scope, position, addressed=True):
+            work.addressed_background = background
             self.observation_responses[scope] = replace(previous, covered_seq=request.ingress_seq)
             self.observation_responses.move_to_end(scope)
+
+    def addressed_context_grant(self, snapshot, group_id):
+        runtime = self.agent.runtime
+        if group_id not in self.lightweight_groups or not runtime.capabilities.proactive(snapshot, group_id):
+            return None
+        observed_profile = runtime.proactive_snapshot(group_id)
+        policy = self.policy(observed_profile, SimpleNamespace(conversation_id=group_id))
+        if not self.uses_lightweight(group_id, observed_profile.profile, policy):
+            return None
+        primary_grant = runtime.capabilities.generation(snapshot)
+        observed_grant = self.owners()[1].generation(observed_profile)
+        if primary_grant is None or observed_grant is None:
+            return None
+        bindings = (primary_grant, observed_grant, observed_profile.fingerprint,
+                    policy.service_subject_id, policy.approval_ref)
+        return sha256(json.dumps(bindings).encode()).hexdigest()
+
+    def capture_addressed_context(self, work):
+        try:
+            work.addressed_context_grant = self.addressed_context_grant(work.model_snapshot, work.request.conversation_id)
+        except (ModelError, ServiceError, OSError, sqlite3.Error, ValueError):
+            work.addressed_context_grant = None
+        if work.addressed_context_grant is None:
+            work.addressed_background = ()
+
+    def addressed_context_sources_valid(self, request, rows):
+        excluded = {row['user_id'] for row in self.settings(request.conversation_id)['excluded_users']}
+        now_ms = int(self.agent.runtime.backend.clock()*1000)
+        return all(row.speaker_id not in excluded and 0 <= now_ms - row.timestamp_ms < 60_000
+                   and self.agent.store.source_valid(request.scope, row.message_id, row.timestamp_ms)
+                   for row in rows)
 
     async def coalesce_addressed(self,work,content):
         while work.active and work.chat_coalesce_until>time.monotonic():
