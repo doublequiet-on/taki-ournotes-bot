@@ -158,9 +158,7 @@ def chat_background_only(question, scoped):
         r'日服|国际服|國際服|台服|臺服|港服|韩服|美服|欧服|\b(?:jp|intl|tw|hk|kr|en)\b',scoped,re.I))
 
 
-def scope_for(question,args,previous=None,*,reset_on_server_change=False,pending_server=None,default_version=None):
-    server=requested_server(question) or pending_server or (previous.server if previous else 'jp')
-    require(args['server']==server,'query_server_mismatch')
+def scope_mentions(question):
     normalized=re.sub(r'(\d{4})年(\d{1,2})月(\d{1,2})日',
                       lambda m:f'{int(m[1]):04d}-{int(m[2]):02d}-{int(m[3]):02d}',question)
     dates=re.findall(r'\d{4}-\d{2}-\d{2}',normalized)
@@ -168,6 +166,13 @@ def scope_for(question,args,previous=None,*,reset_on_server_change=False,pending
         r'(?:版本\s*|\bv)(\d+\.\d+(?:\.\d+)?)(?![\d.])|'
         r'(\d+\.\d+(?:\.\d+)?)(?=\s*(?:版|版本))|'
         r'(?<![\d.])(\d+\.\d+\.\d+)(?![\d.])',question,re.I)]
+    return dates,versions
+
+
+def scope_for(question,args,previous=None,*,reset_on_server_change=False,pending_server=None,default_version=None):
+    server=requested_server(question) or pending_server or (previous.server if previous else 'jp')
+    require(args['server']==server,'query_server_mismatch')
+    dates,versions=scope_mentions(question)
     reset=bool(dates or versions or re.search(r'当前|现在|現時|目前',question)
                or reset_on_server_change and previous and server!=previous.server)
     if (default_version is not None and args['version']==default_version and not dates and not versions

@@ -94,6 +94,8 @@ class InformationQueryTests(unittest.TestCase):
         current = execute_activity('日程', repo, now=NOW+50)
         self.assertIn('清 CP', current.text)
         self.assertEqual(current.calendar_time_status, 'exact')
+        self.assertEqual((current.calendar_time.title,current.calendar_time.at),('下一期',NOW+100))
+        self.assertIsNone(result.calendar_time)
         repo.snapshot = catalog(activities=(ended, future), cache_state='stale')
         self.assertNotIn('清 CP', execute_activity('日程', repo, now=NOW+50).text)
         self.assertIn('旧缓存', execute_activity('日程', repo, now=NOW+50).text)

@@ -104,6 +104,37 @@ class DailyQuotaTests(unittest.TestCase):
 
 
 class ModelSchedulerTests(unittest.IsolatedAsyncioTestCase):
+    async def test_immediate_only_and_absolute_deadline_keep_busy_work_out_of_execution(self):
+        from time import monotonic
+        from ournotes_bot.application.model_execution import ModelScheduler
+        from ournotes_bot.application.backend_protocol import ProtocolError
+
+        scheduler = ModelScheduler(running=1)
+        busy, release = asyncio.Event(), asyncio.Event()
+        calls = []
+
+        async def occupy(deadline):
+            busy.set()
+            await release.wait()
+
+        async def candidate(deadline):
+            calls.append(deadline)
+
+        active = asyncio.create_task(scheduler.run('active', occupy))
+        await busy.wait()
+        try:
+            with self.assertRaisesRegex(ProtocolError, 'model_queue_busy'):
+                await scheduler.run('proactive', candidate, wait=False)
+            self.assertFalse(scheduler.queue)
+            with self.assertRaisesRegex(ProtocolError, 'execution_timeout'):
+                await scheduler.run('continuation', candidate, deadline=monotonic()+.05)
+            self.assertFalse(scheduler.queue)
+            self.assertEqual(calls, [])
+        finally:
+            release.set()
+            await active
+            await scheduler.close()
+
     async def test_five_running_twenty_waiting_and_one_per_user(self):
         from ournotes_bot.application.model_execution import ModelScheduler
         from ournotes_bot.application.backend_protocol import ProtocolError
@@ -148,6 +179,31 @@ class ModelSchedulerTests(unittest.IsolatedAsyncioTestCase):
         finally:
             release.set()
             await asyncio.gather(*tasks)
+            await scheduler.close()
+
+    async def test_queued_candidate_uses_the_original_execution_deadline(self):
+        import time
+        from ournotes_bot.application.model_execution import ModelScheduler
+        scheduler = ModelScheduler(running=1)
+        entered = asyncio.Event()
+        release = asyncio.Event()
+        async def hold_slot(deadline):
+            entered.set()
+            await release.wait()
+        async def capture_deadline(deadline):
+            return deadline
+        worker = asyncio.create_task(scheduler.run('worker', hold_slot))
+        await entered.wait()
+        expires_at = time.monotonic() + 2
+        candidate = asyncio.create_task(scheduler.run('candidate', capture_deadline, expires_at=expires_at))
+        await asyncio.sleep(0)
+        try:
+            self.assertEqual(len(scheduler.queue), 1)
+            release.set()
+            self.assertEqual(await candidate, expires_at)
+        finally:
+            release.set()
+            await asyncio.gather(worker, candidate, return_exceptions=True)
             await scheduler.close()
 
     async def test_timeouts_do_not_release_running_worker_or_start_queued_work(self):

@@ -230,7 +230,8 @@ class KnowledgeAuthorityTests(unittest.TestCase):
         ticket=backend.contexts.begin(ContextKey('qq','group','fixture','topic'))
         row=dict(delivery='delivery',status='prepared',epoch='epoch',runtime='runtime',expires=20)
         for count in (1,5):
-            work=SimpleNamespace(active=True,hint=False,chat=False,lease=ticket,story_versions=(),proactive=None,prepared=[
+            work=SimpleNamespace(active=True,hint=False,chat=False,lease=ticket,story_versions=(),proactive=None,
+                hermes_send_deadline=None,prepared=[
                 SimpleNamespace(evidence=(lease,lease),evidence_deadline=None) for _ in range(count)])
             backend.works={'delivery':work}
             with patch.object(self.service,'observe',wraps=self.service.observe) as observe, \
@@ -542,6 +543,34 @@ class StoryPublicationTests(unittest.TestCase):
         facts = self.service.search('海希什么关系', facts_only=True)['items']
         self.assertEqual(ordinary[0]['scene_id'], scenes[0]['scene_id'])
         self.assertEqual([item['scene_id'] for item in facts], ['scene-2'])
+
+    def test_story_facts_do_not_substitute_another_mirror_region(self):
+        from ournotes_bot.sources.story_files import source_content_hash
+
+        bundle = self.bundle()
+        scenes = [
+            dict(bundle['scenes'][0], scene_id=region, source_id=region,
+                 chapter='第18话', next_scene=None,
+                 utterances=[dict(bundle['scenes'][0]['utterances'][0],
+                                  translation='合成场景：初音和清告在活动上见面。')])
+            for region in ('jp', 'intl')
+        ]
+        source = bundle['sources'][0]
+        bundle['scenes'] = scenes
+        bundle['sources'] = [
+            dict(source, source_id=region, work='BanG Dream! Our Notes',
+                 uri=f'https://haneoka.org/{region}/ja/stories/fixture/',
+                 content_sha256=source_content_hash([scene]))
+            for region, scene in zip(('jp', 'intl'), scenes)
+        ]
+        self.publish(bundle)
+        for label, expected in (
+            ('日服', ['jp']), ('国际服', ['intl']), ('國服', []), ('港服', []),
+            ('韩服', []), ('英服', []),
+        ):
+            with self.subTest(label=label):
+                result = self.service.search(f'{label}的第18话，初音见过清告吗？', facts_only=True)
+                self.assertEqual([hit['scene_id'] for hit in result['items']], expected)
 
     def test_fixture_cannot_publish_by_default_or_approve_persona(self):
         from ournotes_bot.domain.story import StoryError

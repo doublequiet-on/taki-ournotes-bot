@@ -222,13 +222,13 @@ class KnowledgeService:
                     'issues': self.issues, 'last_build': self.last_build, 'encoder': self.encoder.identity}
 
     def retrieve(self, query: str, scope: KnowledgeScope, approved_set_revision: str, limit=6, *,
-                 max_chars=6000, focus_query=None, prioritize_adjacent=False) -> Retrieval:
+                 max_chars=6000, focus_query=None, prioritize_adjacent=False, document_ids=None) -> Retrieval:
         return self.retrieve_scopes(query, (scope,), approved_set_revision, limit,
                                     max_chars=max_chars, focus_query=focus_query,
-                                    prioritize_adjacent=prioritize_adjacent)[0]
+                                    prioritize_adjacent=prioritize_adjacent, document_ids=document_ids)[0]
 
     def retrieve_scopes(self, query, scopes, approved_set_revision, limit=6, *,
-                        max_chars=6000, focus_query=None, prioritize_adjacent=False):
+                        max_chars=6000, focus_query=None, prioritize_adjacent=False, document_ids=None):
         """Rank scopes together under one passage budget, retaining separate proofs."""
         scopes = tuple(dict.fromkeys(scopes))
         require(bool(scopes), 'knowledge_scope_missing')
@@ -254,9 +254,12 @@ class KnowledgeService:
                 return response('stale')
             if not self.allowed:
                 return response('empty')
-            allowed = {a.key for doc, a in self.allowed.values() if any(
-                doc.game == scope.game and set(scope.servers) <= set(doc.servers)
-                and doc.applicability.matches(scope, today) for scope in scopes)}
+            allowed = {
+                approval.key for doc, approval in self.allowed.values()
+                if (document_ids is None or doc.id in document_ids)
+                and any(doc.game == scope.game and set(scope.servers) <= set(doc.servers)
+                        and doc.applicability.matches(scope, today) for scope in scopes)
+            }
             rows = tuple(row for row in self.index if row.chunk.key in allowed)
             if not rows:
                 return response('unavailable' if self.index_revision != version and allowed else 'missing')

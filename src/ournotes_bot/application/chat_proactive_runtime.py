@@ -12,6 +12,7 @@ import unicodedata
 from collections import Counter,OrderedDict
 from dataclasses import asdict, dataclass, replace
 from fractions import Fraction
+from hashlib import sha256
 from types import SimpleNamespace
 
 from ..domain.chat import ChatMessage
@@ -34,6 +35,7 @@ def _echo_key(text: str) -> str:
 
 
 _INTERJECTION = re.compile(r'(?:哈{2,}|笑死|围观|路过|插个楼|冒个泡|你们继续|吃瓜|\+1|\[表情\])')
+_REACTION_EMOJI = re.compile(r'(?:[😂🤣😆😹👀]\ufe0f?\s*)+')
 _TURN_CLOSED = re.compile(r'(?:已经有人回答了|(?:我|他|她|我们)?(?:已经|刚刚|刚才)?'
                           r'(?:答完了|解决了|搞定了|知道了|明白了|懂了)|不用(?:再)?答了|不用了|先这样|算了)')
 _TOPIC_SHIFT = re.compile(r'^(?:换个话题|说个别的|先不说这个|聊点别的|打断一下[，,:：])')
@@ -63,6 +65,9 @@ def _observation_turn(target, request, *, lightweight=False):
         return 'waiting'
     if lightweight and text == '已经有人回答了':
         return 'answered'
+    if (lightweight and _REACTION_EMOJI.fullmatch(text) and (target is None or request.user_id != target.speaker_id)
+            and not (request.reference or request.quoted_text or request.quote_hint)):
+        return 'interjection'
     if target is None:
         return 'advance'
     previous = _echo_key(target.text)
@@ -423,6 +428,15 @@ class ProactiveChat:
                                         or request.ingress_seq != previous.covered_seq + 1)
         observed = self.observe(request, ingress_gap=gap)
         current = self.controller.target(scope)
+        if target is not None and current is not target:
+            backend = self.agent.runtime.backend
+            for work in tuple(backend.works.values()):
+                if (work.active and work.proactive is not None and not work.continuation
+                        and work.model_started_at is None and work.request.scope == request.scope
+                        and work.request.gateway_epoch == request.gateway_epoch
+                        and work.request.ingress_seq < request.ingress_seq
+                        and work.request.message_id == target.message_id):
+                    backend.finish(work, 'aborted', reason='observation_replaced')
         delay = self.observation_delay(request) if observed else None
         preserve = bool(observed and target is not None and current is target)
         result = (delay is not None, delay or 0, preserve)
@@ -482,7 +496,7 @@ class ProactiveChat:
         if lightweight and not evidence_route and lightweight_needs_evidence(request.body):
             self.control_event(request,'chat_service_lightweight_evidence_required')
             return None
-        evidence_calls = {'just_clarify': 1, 'story_clarify': 1, 'story_fact': 4}.get(evidence_route, 3)
+        evidence_calls = 1 if evidence_route in ('just_clarify','just_minimum','story_clarify') else 2
         if evidence_route and self.agent.budget.model_calls < evidence_calls:
             self.control_event(request,'chat_service_lightweight_evidence_required')
             return None
@@ -594,12 +608,45 @@ class ProactiveChat:
                 or request.ingress_seq != previous.covered_seq + 1
                 or not self.agent.store.source_valid(request.scope, request.message_id, request.timestamp_ms)):
             return
-        # /submit and /observations share the gateway's sequence. Record only
-        # the position here; a saved source and ACK are required to use it.
+        # /submit and /observations share the gateway's sequence. The ring
+        # gets a position only; the named turn can borrow a bounded prefix.
         position = ChatMessage(request.message_id, request.user_id, '', request.timestamp_ms)
+        background = self.controller.addressed_background(scope, request.timestamp_ms)
         if self.controller.observe(scope, position, addressed=True):
+            work.addressed_background = background
             self.observation_responses[scope] = replace(previous, covered_seq=request.ingress_seq)
             self.observation_responses.move_to_end(scope)
+
+    def addressed_context_grant(self, snapshot, group_id):
+        runtime = self.agent.runtime
+        if group_id not in self.lightweight_groups or not runtime.capabilities.proactive(snapshot, group_id):
+            return None
+        observed_profile = runtime.proactive_snapshot(group_id)
+        policy = self.policy(observed_profile, SimpleNamespace(conversation_id=group_id))
+        if not self.uses_lightweight(group_id, observed_profile.profile, policy):
+            return None
+        primary_grant = runtime.capabilities.generation(snapshot)
+        observed_grant = self.owners()[1].generation(observed_profile)
+        if primary_grant is None or observed_grant is None:
+            return None
+        bindings = (primary_grant, observed_grant, observed_profile.fingerprint,
+                    policy.service_subject_id, policy.approval_ref)
+        return sha256(json.dumps(bindings).encode()).hexdigest()
+
+    def capture_addressed_context(self, work):
+        try:
+            work.addressed_context_grant = self.addressed_context_grant(work.model_snapshot, work.request.conversation_id)
+        except (ModelError, ServiceError, OSError, sqlite3.Error, ValueError):
+            work.addressed_context_grant = None
+        if work.addressed_context_grant is None:
+            work.addressed_background = ()
+
+    def addressed_context_sources_valid(self, request, rows):
+        excluded = {row['user_id'] for row in self.settings(request.conversation_id)['excluded_users']}
+        now_ms = int(self.agent.runtime.backend.clock()*1000)
+        return all(row.speaker_id not in excluded and 0 <= now_ms - row.timestamp_ms < 60_000
+                   and self.agent.store.source_valid(request.scope, row.message_id, row.timestamp_ms)
+                   for row in rows)
 
     async def coalesce_addressed(self,work,content):
         while work.active and work.chat_coalesce_until>time.monotonic():

@@ -170,7 +170,12 @@ class CutoffQueryV2Tests(unittest.TestCase):
         self.assertEqual(self.ask('歌曲ID=103 50-50').boards[0].song.music_id,'103')
 
     def test_ranked_queries_read_five_representative_ranks_and_record_boards(self):  # A20/A21
-        with patch.object(self.source.history,'read',wraps=self.source.history.read) as read:
+        def boards_in_order(event, songs, deadline):
+            return tuple(self.source.board(event, song, deadline) for song in songs)
+
+        # The history writer can return busy when concurrent workers contend for its bounded lock.
+        with patch.object(self.source, 'boards', side_effect=boards_in_order), \
+                patch.object(self.source.history, 'read', wraps=self.source.history.read) as read:
             answer = self.ask('1-100')
         self.assertEqual(read.call_count,3)
         self.assertEqual(answer.history_ranks,(1,26,51,75,100))

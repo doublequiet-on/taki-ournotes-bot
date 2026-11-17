@@ -176,7 +176,7 @@ export function sessionState() {
     const edit=chatEdit.value;if(!edit)return;
     edit.settings.excluded_users=edit.settings.excluded_users.filter(user=>user.user_id!==userId);edit.dirty=true;
   }
-  const chatSignature=settings=>JSON.stringify([settings.followup_enabled,settings.followup_window_seconds,settings.coalesce_seconds,settings.excluded_users.map(user=>[user.user_id,user.label]).sort((a,b)=>a[0].localeCompare(b[0]))]);
+  const chatSignature=settings=>JSON.stringify([!!settings.hermes_enabled,settings.followup_enabled,settings.followup_window_seconds,settings.coalesce_seconds,settings.excluded_users.map(user=>[user.user_id,user.label]).sort((a,b)=>a[0].localeCompare(b[0]))]);
   async function saveChatSettings(){
     const draft=chatEdit.value;
     if(busy.value||!draft?.dirty||draft.conflict||chatReadError.value)return;
@@ -236,7 +236,7 @@ export function sessionState() {
         const row=value.data?.request?.sections?.request?.data;
         if(!row)throw Error('request_unavailable');
         const facts=Object.fromEntries(Object.entries(row).filter(([key])=>['created_at','business_outcome','delivery_state',
-          'delivery_reason','observation','confirmed_parts','part_count','release_sha','protocol'].includes(key)));
+          'delivery_reason','chat_outcome','observation','confirmed_parts','part_count','release_sha','protocol'].includes(key)));
         const attempts=row.model_attempts||[];
         const attemptNumbers=new Map(attempts.map((attempt,index)=>[attempt.attempt_id,index+1]));
         const events=(row.chat_events||[]).map(({kind,data})=>{

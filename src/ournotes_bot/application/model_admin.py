@@ -40,6 +40,7 @@ class ModelAdmin:
         require(row is None or row[0]==identity,'model_admin_identity')
         with self.db:
             self.db.execute('CREATE TABLE IF NOT EXISTS chat_settings(group_id TEXT PRIMARY KEY,value TEXT NOT NULL,revision TEXT NOT NULL)')
+            self.db.execute('CREATE TABLE IF NOT EXISTS chat_hermes_routes(group_id TEXT PRIMARY KEY)')
             self.db.execute('CREATE TABLE IF NOT EXISTS budget(key TEXT PRIMARY KEY,value TEXT NOT NULL,revision TEXT NOT NULL)')
             self.db.execute('CREATE TABLE IF NOT EXISTS capability_authority(path TEXT PRIMARY KEY,generation TEXT NOT NULL,digest TEXT NOT NULL)')
             self.db.execute('INSERT OR IGNORE INTO identity VALUES(?)',(identity,))
@@ -74,12 +75,16 @@ class ModelAdmin:
             raise
         return self.settings()
 
+    def hermes_route(self, group_id):
+        return self.db.execute('SELECT 1 FROM chat_hermes_routes WHERE group_id=?',(group_id,)).fetchone() is not None
+
     def chat_settings(self, group_id):
         require(not self.error,'model_admin_unavailable')
         require(isinstance(group_id,str) and re.fullmatch('[A-Za-z0-9_-]{1,128}',group_id),'admin_group')
         row=self.db.execute('SELECT value,revision FROM chat_settings WHERE group_id=?',(group_id,)).fetchone()
         settings=json.loads(row['value']) if row else dict(followup_enabled=True,followup_window_seconds=180,
             coalesce_seconds=1.5,excluded_users=[])
+        settings['hermes_enabled']=self.hermes_route(group_id)
         agent=self.runtime.agent
         scope=dict(instance_id=self.backend.instance_id,app_id=self.backend.app_id,platform='qq',kind='group',conversation_id=group_id)
         people={}
@@ -91,14 +96,20 @@ class ModelAdmin:
             for item in rows:people[item['user_id']]=item
         tasks=agent.tasks.status(scope) if agent else dict(active_tasks=0,waiting_tasks=0,partial_tasks=0,completed_tasks=0,window_seconds=900)
         return dict(group_id=group_id,guard=dict(backend_epoch=self.backend.runtime,revision=row['revision'] if row else 'initial'),
-                    settings=settings,recent_users=list(people.values())[-120:],tasks=tasks,
+                    settings=settings,hermes_available=bool(agent and self.runtime.hermes.available),
+                    recent_users=list(people.values())[-120:],tasks=tasks,
                     recent_events=self.backend.diagnostics.group_events(group_id))
 
     def save_chat_settings(self,group_id,value):
         require(isinstance(value,dict) and set(value)=={'operation_id','guard','settings'},'model_admin_shape')
         current=self.chat_settings(group_id)
         settings=value['settings']
-        require(isinstance(settings,dict) and set(settings)=={'followup_enabled','followup_window_seconds','coalesce_seconds','excluded_users'},'chat_settings_invalid')
+        fields={'followup_enabled','followup_window_seconds','coalesce_seconds','excluded_users'}
+        require(isinstance(settings,dict) and set(settings) in (fields,fields|{'hermes_enabled'}),'chat_settings_invalid')
+        settings={**settings}
+        previous_route=current['settings']['hermes_enabled']
+        route=settings.pop('hermes_enabled',previous_route)
+        require(type(route) is bool,'chat_settings_invalid')
         require(type(settings['followup_enabled']) is bool and type(settings['followup_window_seconds']) is int
                 and 60<=settings['followup_window_seconds']<=600,'chat_settings_invalid')
         require(type(settings['coalesce_seconds']) in (int,float) and 1<=settings['coalesce_seconds']<=2,'chat_settings_invalid')
@@ -111,9 +122,19 @@ class ModelAdmin:
         if not self.begin({**value,'group_id':group_id},'chat_settings',group_id):return self.chat_settings(group_id)
         try:
             require(value['guard']==current['guard'],'model_config_conflict')
+            require(not route or previous_route or current['hermes_available'],'chat_hermes_unavailable')
             with self.db:
                 self.db.execute('INSERT OR REPLACE INTO chat_settings VALUES(?,?,?)',(group_id,encode(settings),value['operation_id']))
+                if route and not previous_route:
+                    self.db.execute('INSERT INTO chat_hermes_routes VALUES(?)',(group_id,))
+                elif previous_route and not route:
+                    self.db.execute('DELETE FROM chat_hermes_routes WHERE group_id=?',(group_id,))
                 self.db.execute("UPDATE actions SET state='succeeded',result=? WHERE id=?",(encode({'code':'saved'}),value['operation_id']))
+            if route!=previous_route:
+                for work in tuple(self.backend.works.values()):
+                    if (work.chat and work.request.platform=='qq' and work.request.kind=='group'
+                            and work.request.conversation_id==group_id):
+                        self.backend.finish(work,'aborted',reason='chat_route_changed')
             if self.runtime.agent:self.runtime.agent.proactive.settings_changed(group_id,current['settings'],settings)
             self.backend.diagnostics.conversation_event(value['operation_id'],group_id,'control',self.backend.clock(),
                 status='settings_saved',window_seconds=settings['followup_window_seconds'],continuation=settings['followup_enabled'])

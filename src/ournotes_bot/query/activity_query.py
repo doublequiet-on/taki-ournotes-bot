@@ -9,7 +9,7 @@ from datetime import datetime, timezone, timedelta
 from dataclasses import replace
 
 from ..data import normalize
-from .contracts.info import InfoAnswer, InfoRow, InfoSchedule, InfoView
+from .contracts.info import CalendarTime, InfoAnswer, InfoRow, InfoSchedule, InfoView
 from .event_cutoff_query import SERVER_ALIASES
 from .info_query import (answer, available, card_rows, footer, named_matches,
                          list_view, period, schedule, state, text_value, unavailable)
@@ -261,6 +261,7 @@ def _calendar(server, mode, repository, now):
     lines = []
     evidence_expires_at = None
     time_status = 'unavailable'
+    exact_time = None
     ambiguous = len(active) > 1 or (len(ended) > 1 and ended[0].end_at == ended[1].end_at) or (
         len(future) > 1 and future[0].start_at == future[1].start_at)
     if ambiguous:
@@ -269,11 +270,13 @@ def _calendar(server, mode, repository, now):
         if upcoming and not unknown:
             lines.append(f'下一期《{upcoming.title}》将于 {stamp(upcoming.start_at)} 开始。')
             time_status = 'exact'
+            exact_time = CalendarTime(upcoming.title, upcoming.start_at)
         else:
             lines.append('当前已读取的资料还不能确定下一期开启时间。')
     elif active:
         current = active[0]
         time_status = 'exact'
+        exact_time = CalendarTime(current.title, current.start_at if mode == '日程开始' else current.end_at)
         if mode == '日程开始':
             lines.append(f'《{current.title}》已于 {stamp(current.start_at)} 开始，目前进行中。')
         else:
@@ -302,6 +305,8 @@ def _calendar(server, mode, repository, now):
             if announced:
                 evidence_expires_at = announced.expires_at
                 time_status = 'exact' if mode == '下期' else 'related'
+                if mode == '下期':
+                    exact_time = CalendarTime(announced.title, announced.start_at)
                 lines = [line for line in lines if '还不能确定下一期开启时间' not in line]
                 lines.append(f'公告预告《{announced.title}》将于 {stamp(announced.start_at)} 开始。')
                 lines.append(f'[查看活动公告]({announced.url})')
@@ -311,7 +316,8 @@ def _calendar(server, mode, repository, now):
     if catalog.cache_state == 'stale':
         lines.append('当前使用旧缓存，时间可能已有调整。')
     text = '\n'.join((label + ' · 活动日程', *lines))
-    return InfoAnswer(text, evidence_expires_at=evidence_expires_at, calendar_time_status=time_status)
+    return InfoAnswer(text, evidence_expires_at=evidence_expires_at,
+                      calendar_time_status=time_status, calendar_time=exact_time)
 
 
 def execute_activity(query, repository, *, now=None):

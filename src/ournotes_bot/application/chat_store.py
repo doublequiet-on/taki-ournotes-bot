@@ -578,6 +578,15 @@ class ChatStore:
         row=self.db.execute('SELECT * FROM chat_projection_history WHERE delivery=? AND part=?',(delivery,part)).fetchone()
         return dict(row) if row else None
 
+    def delivered_just_clarification(self, scope, reply_id):
+        """Read host state only from an unexpired success projection."""
+        row = self.db.execute('''SELECT p.proof
+            FROM memory_run_sources s JOIN chat_projection_history p
+                ON p.delivery=s.run_id AND p.scope=s.scope AND p.message_id=s.message_id
+            WHERE s.scope=? AND s.message_id=? AND p.expires>?
+            LIMIT 1''', (self._scope(scope), reply_id, self.clock())).fetchone()
+        return json.loads(row['proof']).get('just_clarification', 'legacy') if row is not None else None
+
     def drop_final(self,delivery,part):
         # Also remove an explicit-chat audit copy of this uncommitted answer.
         # Do not open a nested transaction: callers may be deleting or projecting.

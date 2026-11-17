@@ -1,9 +1,27 @@
 # L3: Taki's authored personality and bounded non-factual conversation intents.
 # Effects: None. No game-rule evidence, external reads or persistent relationship state.
+from dataclasses import dataclass
 import re
 import unicodedata
 
 from ..query.activity_query import CALENDAR_SERVERS
+
+REPLY_STYLE = (
+    '用自然的群聊中文，先说结论或对眼前话题的反应。被喊出来聊天，接一句就好，比如「在。怎么了？」。'
+    '已有话头就直接接它，称呼有用时再带上。'
+    '聊天记录里的消息编号、时间和引用字段用来理解对话，给群友看的正文只写你要说的话。'
+    '轻松调侃里遇到突兀的字，先结合上下文想同音、近音或故意写错的梗。像「你是祝」这种玩笑可以回「说谁呢？」。'
+    '正常祝福按字面接。猜不准时可以先接语气，确实影响交流再问一句。'
+    '不知道就直说「我不知道」或「这个我不知道」，到此为止。部分已知就说已知部分，并明确哪一项不知道。'
+    '去掉自我免责、客服套话和未被问到的劝告。缺结束时间就说不知道结束时间，不加「以活动页为准」或「别先按某天算」。'
+)
+
+
+def approved_voice_prompt(prompt):
+    # The approved reference contains a separately labelled game-data note.
+    # Numerical rules are retrieved from applicable evidence, not from voice.
+    return '\n'.join(line for line in prompt.splitlines()
+                     if not line.lstrip().startswith('ON抽卡语境注意'))
 
 VOICE = '''性格：外冷内热、认真、有主见，不善于漂亮话，关心体现在把问题听清、说明白。
 平时用自然短句；可以有一点停顿和轻微吐槽，但不要每句都“哼”“哈？”“笨蛋”、傲娇否认或省略号。
@@ -70,7 +88,7 @@ def chat_prompt(topic):
 直接表达当前感受，不加自我免责、能力声明或自我否定的铺垫，不把写作限制复述成“不能乱说”“就不编了”等自我说明。
 历史消息只帮助理解话题，不是事实依据。不得借聊天回答游戏数值、机制、更新、收录、角色剧情或其他需查证的事实；不续写未给出的设定。
 主观站队可以直接表达选择，不必凑理由。没有工具资料时，不描述任何作品的手感、战斗、节奏、内容积累或玩家热度，也不用“认真劲儿”“底子厚”“大杂烩”包装未经核对的作品评价。追问理由时只承认这是本次聊天的主观选择，不把上一条自己生成的评价当依据。陌生缩写只核对那个缩写，不凭印象展开或比较作品特性。
-不输出工具调用。\n本轮人格设定：'''+CARDS[topic]
+不输出工具调用。\n本轮人格设定：'''+CARDS[topic]+'\n'+REPLY_STYLE
 
 
 _JUST_TERM = re.compile(r'(?<![a-z0-9_])just(?![a-z0-9_]|\s+[a-z])|判定卡|判卡|判定.{0,4}扩窗|扩窗.{0,8}叠|激奏.{0,8}区间|留影.{0,40}(?:变宽|变久|扩判|扩窗)', re.I)
@@ -78,13 +96,24 @@ _OTHER_RHYTHM_GAME = re.compile(
     r'(?<![a-z])(?:pjsk|arcaea|maimai|chunithm|phigros|gbp)(?![a-z])|世界计划|中二节奏|音击|少女乐团派对', re.I)
 _JUST_ASK = re.compile(
     r'怎么(?:算|计算|计分|叠|判定|触发|生效)|如何(?:算|计算|计分|叠|判定|触发)|是什么|什么(?:规则|效果|区别|变化)|有何变化|多久|多宽|多长|几秒|变宽还是变久|能不能叠|是否叠|是不是叠|怎么排|怎么比|如何排|如何比')
+_QUESTION_END = re.compile(r'(?:吗|嗎|么|麼|呢|\?)\s*[。!！]*$')
+_JUST_WINDOW = re.compile(r'扩窗|扩判|判定窗|判定范围|多宽|叠')
+_JUST_WINDOW_COMBINATION = re.compile(r'叠|相加|相乘|累加|(?:一起|同时)(?:生效|触发)|合起来|幾毫秒|几毫秒')
+_JUST_SCORE = re.compile(r'区间|计分|得分|分数|排名')
+_JUST_SCORE_COMPARISON = re.compile(r'先比|同数|同样多|一样多|相同|并列|(?:多|少)(?:一|1)(?:个|顆|颗)?.{0,7}(?:赢|胜)')
+_JUST_COMPARISON_ASK = re.compile(r'先比|看什么|看啥|看哪|相加还是相乘|(?:多|差)[几幾]毫秒')
 _JUST_MINIMUM = re.compile(
     r'(?:到底|实际|至少|最少|请问).{0,16}几张|(?:^|[，,。])\s*(?:需要|要)几张|几张.{0,16}[?]|几张.{0,16}才够')
-_STORY_PERSON = r'立希|爱音|愛音|海铃|海鈴|高松[灯燈]|[乐楽]奈|爽世|祥子|若[叶葉]睦'
+_STORY_PERSON = r'立希|爱音|愛音|海铃|海鈴|高松[灯燈]|[乐楽]奈|爽世|祥子|若[叶葉]睦|初[华華]|初音(?!未[来來])|清告|定治|祥爹'
 _BAND_STORY = re.compile(
     rf'{_STORY_PERSON}|海希|希海|邦邦|BanG\s*Dream|MyGO|Ave\s*Mujica|CRYCHIC|一[辈輩]子[乐樂][队隊]|ANON TOKYO', re.I)
 _STORY_FACT_ASK = re.compile(
     r'什[么麼]关[系係]|什麼關係|[关關][系係](?:怎么[样樣]|怎麼樣)|'
+    r'(?:啥|什[么麼])\s*(?:[辈輩][分份]|亲属关系|親屬關係|血[缘緣]关系|血[缘緣]關係)|'
+    r'(?:差|隔)(?:了)?[几幾][辈輩]|'
+    r'(?:是|算).{0,22}(?:小姨(?:子)?|姨妈|姨媽|姨母|外祖父|外公|[姪侄]女|[姐妹]妹|[姐姊妹]夫)(?:吗|嗎|\?)|'
+    r'(?:真正的|本来的|本來的)(?:三角)?初[华華]|(?:本名|真名)(?:是)?(?:什[么麼]|啥|谁|誰)|'
+    r'(?:父亲|父親|爸爸|母亲|母親|妈妈|媽媽)(?:是)?(?:谁|誰)|'
     r'(?:是|算)(?:官配|官方情侣)吗|(?:是不是|算不算)官配|出自|出处|哪来的|哪[一几]?[集话話章]|'
     r'第几[集话話章]|谁(?:说|配音|负责)|(?:谁|誰).{0,5}(?:作曲|作[词詞])|'
     r'生日(?:.{0,8}(?:[哪几]|什[么麼]|何时)|\s*\?)|喜[欢歡]吃什[么麼]|[爱愛]吃什[么麼]|'
@@ -92,6 +121,16 @@ _STORY_FACT_ASK = re.compile(
     r'哪[里裡].{0,6}打工|在哪.{0,6}(?:打工|兼[职職])|'
     r'(?:为什么|为啥).{0,20}(?:退出|加入|[对對].{0,6}(?:特别|特別)|生气|生氣)|'
     r'(?:羁绊|羈絆).{0,8}[讲講][了的]?什[么麼]')
+_STORY_ACQUAINTANCE = re.compile(
+    rf'(?:{_STORY_PERSON}|小姨).{{0,8}}(?:认[识識]|認識).{{0,8}}(?:{_STORY_PERSON}|小姨)(?:吗|嗎|\?)')
+_STORY_PAIR_CHECK = re.compile(
+    r'同一(?:个|個)?人|是一个人|是一個人|名[义義].{0,8}出道|'
+    r'[见見][过過]|[见見]面|碰[过過]面|血[缘緣]|[辈輩][分份].{0,5}(?:怎[么麼]|如何)|'
+    r'(?:知道|知[晓曉]|得知).{0,22}(?:身世|出身|冒名|借用.{0,9}(?:名|身份))|'
+    r'(?:在哪|哪[里裡]|何[处處]).{0,24}(?:[说說](?:[过過])?[话話]|交[谈談])')
+_STORY_PAIR_QUESTION = re.compile(
+    r'是不是|有[没沒]有|是否|[辈輩][分份].{0,5}(?:怎[么麼]|如何)|'
+    r'在哪|哪[里裡]|何[处處]|(?:怎[么麼]|如何)(?:知道|得知)')
 _STORY_PAIR_PRONOUN = r'(?:[她他][俩倆们們]|这两[个位]人)'
 _STORY_FOLLOWUP = re.compile(
     rf'^(?:那|所以)?{_STORY_PAIR_PRONOUN}(?:是)?什[么麼][关關][系係][?呢啊呀吗]*$|'
@@ -106,19 +145,35 @@ _STORY_PAIR = re.compile(
 _STORY_CHAPTER = re.compile(
     r'(?:mygo|ave\s*mujica|our\s*notes)[^。?!]{0,8}第\s*[0-9一二三四五六七八九十]+\s*[集话話章]', re.I)
 _EVIDENCE_CLAUSE = re.compile(r'[，,。；;！!\n]+|(?<=\?)|(?:但(?:是)?|不过|另外)(?=实际|到底|想问|请问|我想|还想|[\s，,])')
+_STORY_RELATION_ASK = re.compile(
+    r'(?:(?:啥|什[么麼])\s*(?:[关關][系係]|[辈輩][分份])|(?:差|隔)(?:了)?[几幾][辈輩])[?呢啊呀\s]*$')
+_STORY_FAMILY = re.compile(r'同父异母|同母异父|姐妹|兄弟|[姐妹]妹|[兄弟]弟|[姨姑]妈|[姨姑]媽|[夫妻]|[父母]亲|[父母]親')
+_STORY_ASSUMPTION = re.compile(r'^(?:如果|假设|假設|假如|设想|設想|就按)')
+_STORY_ASSUMPTION_LINK = re.compile(r'(?:按(?:照)?|就按)(?:这个|這個|这些|這些|上述)(?:前提|关系|關係|条件|條件|设定|設定|假设|假設)|在(?:这个|這個)(?:设定|設定|假设|假設|前提)下')
+_STORY_ASSUME_VERIFY = re.compile(r'原作|正片|动画|動畫|剧情|劇情|剧[里裡]|劇[里裡]|官方|出处|出處|哪[集话話章]|求证|求證|核[实實查]|真(?:的|实|實)|到底|能(?:否|不能)证[明实實]')
+
 _ACTIVITY_REGION = r'日服|国际服|國際服|台服|臺服|港服|韩服|韓服|英服|美服|欧服|歐服|(?<![a-z0-9])(?:jp|intl|tw|hk|kr|en)(?![a-z0-9])'
 _ACTIVITY_REGIONS = re.compile(_ACTIVITY_REGION, re.I)
 _ACTIVITY_CLAUSE = re.compile(
     rf'{_EVIDENCE_CLAUSE.pattern}|(?<=[始束间間期])[啊呀呢吗嗎嘛吧\s]*、\s*(?=(?:{_ACTIVITY_REGION}))', re.I)
 _LIVE_ACTIVITY_TIME = re.compile(
-    rf'(?:这期|本期|当前|现在|最近)(?:的)?\s*'
+    rf'(?P<current>这期|這期|本期|当前|當前|现在|現在|最近)?(?:的)?\s*'
     rf'(?:(?:{_ACTIVITY_REGION})(?:\s*(?:和|与|跟|以及|及|、)\s*(?:{_ACTIVITY_REGION}))*(?:的)?)?\s*'
     r'活[动動](?:的)?\s*'
     r'(?:(?:什么时候|啥时候|哪天|哪日|何时|几号|幾號|几点|幾點)(?P<verb>开始|開始|结束|結束)|'
     r'(?P<field>开始|開始|结束|結束)(?:时间|時間|日期)(?:是什么|是啥|是哪天|是几号)?)'
     r'[啊呀呢吗嗎嘛吧?\s]*$', re.I)
+_ACTIVITY_DAY = r'今天|明天|后天|後天'
+_ACTIVITY_RELATIVE_END = re.compile(
+    rf'(?:(?P<before>{_ACTIVITY_DAY})\s*)?(?:(?:{_ACTIVITY_REGION})\s*)?'
+    r'(?:(?:这期|這期|本期|当前|當前)(?:的)?\s*)?活[动動]\s*'
+    r'(?P<ask_before>是不是|是否)?\s*'
+    rf'(?(before)|(?P<after>{_ACTIVITY_DAY})\s*)'
+    r'(?:就)?(?:(?P<ask_after>是不是|是否)(?:就)?)?(?:要|会|會)?(?:结束|結束)了?'
+    r'(?P<ask_end>吗|嗎|\?)?[啊呀呢?\s]*$', re.I)
 _ACTIVITY_PREFIX = re.compile(
     r'(?:\s|our\s*notes|\bon\b|那|所以|实际|到底|请问|想问|我想问|有人知道|和|与|跟|及|、|以及|分别|的)*', re.I)
+_ACTIVITY_ADDRESS = re.compile(r'^(?:taki(?![a-z0-9_])|立希)[\s，,、：:]*', re.I)
 _UNSCOPED_PITY = re.compile(
     r'(?:请问|谁知道|有人知道)?\s*(?:抽卡)?保底(?:到底|是|要|需要)?\s*(?:多少|几)抽(?:啊|呀|呢|吗)?[?。]*')
 _OMITTED_EVIDENCE_SUBJECT = re.compile(
@@ -136,17 +191,38 @@ def lightweight_image_reference(text, *, context_source=False):
                 or context_source and _CONTEXT_IMAGE_MENTION.search(text))
 
 
-def activity_evidence_questions(question):
-    """Return the explicitly requested current-event region and time pairs."""
-    text = unicodedata.normalize('NFKC', question).strip()
+def _activity_time_match(clause):
+    for match in (_ACTIVITY_RELATIVE_END.search(clause), _LIVE_ACTIVITY_TIME.search(clause)):
+        if match is None or not _ACTIVITY_PREFIX.fullmatch(_ACTIVITY_REGIONS.sub('', clause[:match.start()])):
+            continue
+        if match.re is _ACTIVITY_RELATIVE_END and not (match['ask_before'] or match['ask_after'] or match['ask_end']):
+            continue
+        if 'current' in match.re.groupindex and not match['current'] and not _ACTIVITY_REGIONS.search(clause):
+            continue
+        return match
+
+
+@dataclass(frozen=True)
+class ActivityTimeIntent:
+    questions: tuple[tuple[str, str], ...]
+    relative_end_day: str
+    standalone: bool
+
+
+def activity_time_intent(question):
+    """Bind calendar fields, relative date and scope from the same clauses."""
+    text = _ACTIVITY_ADDRESS.sub('', unicodedata.normalize('NFKC', question).strip())
     questions = []
     regions = []
+    days = set()
+    standalone = True
     for clause in _ACTIVITY_CLAUSE.split(text):
         clause = clause.strip()
         if not clause:
             continue
-        match = _LIVE_ACTIVITY_TIME.search(clause)
-        if not match or not _ACTIVITY_PREFIX.fullmatch(_ACTIVITY_REGIONS.sub('', clause[:match.start()])):
+        match = _activity_time_match(clause)
+        if not match:
+            standalone = False
             regions = []
             continue
         # Keep an explicitly named region across consecutive calendar questions.
@@ -155,9 +231,13 @@ def activity_evidence_questions(question):
             {'jp': '日服', 'intl': '国际服'}.get(
                 CALENDAR_SERVERS.get(name.casefold().replace('國', '国').replace('臺', '台')), name)
             for name in regions]
-        verb = '开始' if (match['verb'] or match['field']) in ('开始', '開始') else '结束'
+        fields = match.groupdict()
+        verb = '开始' if (fields.get('verb') or fields.get('field')) in ('开始', '開始') else '结束'
         questions.extend((label, verb) for label in labels)
-    return tuple(dict.fromkeys(questions))
+        days.add(fields.get('before') or fields.get('after') or '')
+    pairs = tuple(dict.fromkeys(questions))
+    return ActivityTimeIntent(pairs, next(iter(days)) if len(pairs) == len(days) == 1 else '',
+                              standalone and bool(pairs))
 
 
 def referenced_story_question(question, reference):
@@ -203,14 +283,33 @@ def explicit_evidence_route(question):
             if route.startswith('just_') and _OTHER_RHYTHM_GAME.search(text):
                 continue
             return route
-        if (index and _STORY_FIELD_FOLLOWUP.fullmatch(clause) and _BAND_STORY.search(clauses[index-1])
-                and _STORY_FIELD_TOPIC.search(clauses[index-1])):
-            return 'story_fact'
+        if index and _BAND_STORY.search(clauses[index-1]):
+            if _STORY_FIELD_FOLLOWUP.fullmatch(clause) and _STORY_FIELD_TOPIC.search(clauses[index-1]):
+                return 'story_fact'
+            if (_STORY_ASSUME_VERIFY.search(clause) and _STORY_RELATION_ASK.search(clause)
+                    and re.search(_STORY_PAIR_PRONOUN, clause) and _STORY_FAMILY.search(clauses[index-1])):
+                return 'story_fact'
     # A comma can separate the topic or card ID from its actual question.
     # Recover an omitted subject only when the question has no subject route.
     if len(clauses) > 1 and any(_OMITTED_EVIDENCE_SUBJECT.match(clause) for clause in clauses[1:]):
         return _explicit_evidence_clause(text)
     return ''
+
+
+def supplied_story_premise(question):
+    """A single relationship inference, with its premise supplied in this turn."""
+    text = unicodedata.normalize('NFKC', question).strip()
+    clauses = [clause.strip() for clause in _EVIDENCE_CLAUSE.split(text) if clause.strip()]
+    if len(clauses) < 2 or _STORY_ASSUME_VERIFY.search(text):
+        return False
+    premise, conclusion = clauses[:-1], clauses[-1]
+    relation = _STORY_RELATION_ASK.search(conclusion)
+    if relation is None or _STORY_FACT_ASK.search(conclusion[:relation.start()]):
+        return False
+    return (not any(_QUESTION_END.search(clause) or _STORY_FACT_ASK.search(clause) for clause in premise)
+            and bool(_STORY_FAMILY.search(' '.join(premise)))
+            and (bool(_STORY_ASSUMPTION.match(text))
+                 or any(_STORY_ASSUMPTION_LINK.match(clause) for clause in clauses)))
 
 
 def contextual_just_evidence_route(question, previous):
@@ -229,21 +328,28 @@ def _explicit_evidence_clause(text):
             and not re.search(r'保底|抽卡|招募|掉率|出货率|概率', text)):
         if _JUST_MINIMUM.search(text):
             return 'just_minimum'
-        if _JUST_ASK.search(text):
+        window = _JUST_WINDOW.search(text)
+        score = _JUST_SCORE.search(text)
+        score_comparison = ('激奏' in text or '区间' in text) and _JUST_SCORE_COMPARISON.search(text)
+        comparison_question = _JUST_COMPARISON_ASK.search(text) or _QUESTION_END.search(text)
+        if (_JUST_ASK.search(text) or comparison_question
+                and (window and _JUST_WINDOW_COMBINATION.search(text) or score_comparison)):
             if re.search(r'满破|突破|留影|判定卡|判卡|持续|多久|几秒|变久|时长', text):
                 return 'just_card'
-            window = re.search(r'扩窗|扩判|判定窗|判定范围|多宽|叠', text)
-            score = re.search(r'区间|计分|得分|分数|排名', text)
             if window and not score:
                 return 'just_window'
-            if score and not window:
+            if (score or score_comparison) and not window:
                 return 'just_score'
             return 'just_clarify'
-    if _BAND_STORY.search(text) and _STORY_FACT_ASK.search(text):
+    if _BAND_STORY.search(text) and (_STORY_FACT_ASK.search(text) or _STORY_ACQUAINTANCE.search(text)):
         return 'story_fact'
+    if _STORY_PAIR_CHECK.search(text) and (_QUESTION_END.search(text) or _STORY_PAIR_QUESTION.search(text)):
+        names = set(re.findall(_STORY_PERSON, text.translate(str.maketrans('華鈴愛燈楽葉','华铃爱灯乐叶'))))
+        if len(names) >= 2:
+            return 'story_fact'
     if _STORY_FOLLOWUP.search(text):
         return 'story_clarify'
-    if activity_evidence_questions(text):
+    if activity_time_intent(text).questions:
         return 'activity_time'
     return ''
 
@@ -267,11 +373,17 @@ _LIGHTWEIGHT_QUESTION = re.compile(
     r'请问|谁知道|想知道|是不是|是什么|怎么(?:算|计分|叠|判定|触发|打|玩)|如何|什么(?:意思|规则|机制|效果)|'
     r'哪[个张种]|能不能|有没有|对不对|帮(?:我)?(?:查|核实|算)|'
     r'(?:到底|实际|^)(?:还)?(?:要|需要|得)\s*几张|(?:至少|最少).{0,12}吗\s*$')
+DRAW_GUARANTEE = re.compile(
+    r'(\d+|[一二三四五六七八九十百千两]+|几|多少)\s*(?:连)?抽'
+    r'(?:\s*(?:以后|之后|以内|就|能|会)){0,3}\s*(?:必[出得]|一定(?:能)?(?:出|抽到)|保证(?:出|获得))')
 
 
 def lightweight_needs_evidence(question):
     text = unicodedata.normalize('NFKC', question).strip()
     if explicit_evidence_route(text):
+        return True
+    guarantee = DRAW_GUARANTEE.search(text)
+    if guarantee and (guarantee[1] in ('几','多少') or _QUESTION_END.search(text) or _LIGHTWEIGHT_QUESTION.search(text)):
         return True
     mechanic_context = False
     for part in _EVIDENCE_CLAUSE.split(text):
