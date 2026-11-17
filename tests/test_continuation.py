@@ -377,7 +377,8 @@ class BackendContinuationTests(Fixture, unittest.IsolatedAsyncioTestCase):
         import time
         from ournotes_bot.application.backend import Backend
         self.setup_repo()
-        self.now = time.time()
+        # The gateway emits milliseconds; use the same resolution for the fixture clock.
+        self.now = (time.time_ns() // 1_000_000) / 1000
         self.backend = Backend(self.repo, self.parser, Settings('', '', self.repo.data_base, self.repo.cache_file, 6),
                                instance_id='fixture', app_id='app',
                                ledger_path=self.repo.cache_file.with_name('delivery.sqlite3'), clock=lambda: self.now)
