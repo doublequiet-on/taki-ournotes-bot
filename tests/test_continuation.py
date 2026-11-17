@@ -377,8 +377,7 @@ class BackendContinuationTests(Fixture, unittest.IsolatedAsyncioTestCase):
         import time
         from ournotes_bot.application.backend import Backend
         self.setup_repo()
-        # The gateway emits milliseconds; use the same resolution for the fixture clock.
-        self.now = (time.time_ns() // 1_000_000) / 1000
+        self.now = time.time()
         self.backend = Backend(self.repo, self.parser, Settings('', '', self.repo.data_base, self.repo.cache_file, 6),
                                instance_id='fixture', app_id='app',
                                ledger_path=self.repo.cache_file.with_name('delivery.sqlite3'), clock=lambda: self.now)
@@ -390,9 +389,13 @@ class BackendContinuationTests(Fixture, unittest.IsolatedAsyncioTestCase):
 
     def request(self, msg, seq):
         from ournotes_bot.application.backend_protocol import PROTOCOL, CAPABILITY, digest
+        timestamp_ms = int(self.now * 1000)
+        # Multiplying a float just below a millisecond can round up to that millisecond.
+        if timestamp_ms / 1000 > self.now:
+            timestamp_ms -= 1
         return dict(protocol=PROTOCOL, request_id=digest(['fixture', 'app', 'qq', 'group', 'g1', 'u1', msg]),
                     instance_id='fixture', app_id='app', platform='qq', kind='group', conversation_id='g1',
-                    user_id='u1', message_id=msg, timestamp_ms=int(self.now*1000), body='/查曲 MyGO',
+                    user_id='u1', message_id=msg, timestamp_ms=timestamp_ms, body='/查曲 MyGO',
                     capability=CAPABILITY, gateway_epoch='e1', ingress_seq=seq,trigger='command',reference=None,interaction=None,
                     policy=dict(natural_query='model',epoch='fixture',global_revision=0,group_revision=0))
 
