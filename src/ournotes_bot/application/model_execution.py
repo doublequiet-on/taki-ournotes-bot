@@ -33,8 +33,14 @@ class ModelScheduler:
                 self.running[user] += 1
                 future.set_result(None)
 
-    async def run(self, user, operation, *, execution_seconds=None):
+    async def run(self, user, operation, *, execution_seconds=None, expires_at=None):
+        """An optional monotonic expiry covers both waiting and execution."""
         require(not self.closed, 'not_ready', 503)
+        wait_seconds = self.wait_seconds
+        if expires_at is not None:
+            remaining = expires_at - time.monotonic()
+            require(remaining > 0, 'candidate_expired', 409)
+            wait_seconds = min(wait_seconds, remaining)
         future = asyncio.get_running_loop().create_future()
         immediate = not self.running[user] and sum(self.running.values()) < self.limit
         if not immediate:
@@ -44,7 +50,9 @@ class ModelScheduler:
         self.queue.append(item)
         self.dispatch()
         try:
-            await asyncio.wait_for(asyncio.shield(future), self.wait_seconds)
+            await asyncio.wait_for(asyncio.shield(future), wait_seconds)
+            if expires_at is not None:
+                require(time.monotonic() < expires_at, 'candidate_expired', 409)
         except BaseException as exc:
             if item in self.queue:
                 self.queue.remove(item)
@@ -54,13 +62,21 @@ class ModelScheduler:
             future.cancel()
             self.dispatch()
             if isinstance(exc, asyncio.TimeoutError):
+                if expires_at is not None and time.monotonic() >= expires_at:
+                    raise ProtocolError('candidate_expired', 409) from None
                 raise ProtocolError('queue_timeout', 503) from None
             raise
         seconds = self.execution_seconds if execution_seconds is None else execution_seconds
-        deadline = time.monotonic() + seconds
+        started = time.monotonic()
+        deadline = started + seconds
+        if expires_at is not None:
+            deadline = min(deadline, expires_at)
+            seconds = deadline - started
 
         async def execute():
             try:
+                if expires_at is not None:
+                    require(time.monotonic() < expires_at, 'candidate_expired', 409)
                 return await operation(deadline)
             finally:
                 self.running[user] -= 1

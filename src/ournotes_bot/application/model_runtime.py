@@ -415,16 +415,18 @@ class ModelRuntime:
                 return await self.routed(work,lambda end:self.agent.run(work,question,user,group,end),deadline)
             seconds=min(self.agent.budget.execution_seconds,work.content_deadline-time.monotonic(),
                         work.request.timestamp_ms/1000+298-self.backend.clock()-5)
-            if work.proactive is not None:
-                remaining=work.proactive.expires_at-self.agent.proactive.controller.clock()
-                work.content_deadline=min(work.content_deadline,time.monotonic()+remaining)
-                seconds=min(seconds,remaining)
+            expires_at = work.content_deadline if work.proactive is not None else None
+            if expires_at is not None:
+                require(time.monotonic() < expires_at, 'candidate_expired')
             require(seconds>0,'execution_timeout')
-            return await self.backend.models.run(user,operation,execution_seconds=seconds)
+            return await self.backend.models.run(user,operation,execution_seconds=seconds,expires_at=expires_at)
         except (ModelError,ProtocolError,KnowledgeError) as exc:
             code=exc.code if isinstance(exc,ProtocolError) else str(exc)
             self.agent.proactive.trace(work,'error',status=code,model_attempts=work.model_attempts,stage=work.model_stage)
-            self.agent.audit(self.agent.store.finish,work.delivery,code)
+            if work.proactive is not None and code == 'candidate_expired':
+                self.backend.finish(work, 'expired', reason=code)
+            else:
+                self.agent.audit(self.agent.store.finish,work.delivery,code)
             return replies.PreparedReply('',business_status='proactive_error') if work.proactive is not None else failure(code)
         except asyncio.TimeoutError:
             self.agent.proactive.trace(work,'error',status='execution_timeout',model_attempts=work.model_attempts,stage=work.model_stage)

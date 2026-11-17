@@ -351,6 +351,9 @@ class Backend:
             work.mixed_modes=mixed_modes
             if proactive is not None:
                 work.proactive,work.service_policy,work.model_snapshot,work.service_request_id=proactive
+                controller = self.model_runtime.agent.proactive.controller
+                remaining = work.proactive.expires_at - controller.clock()
+                work.content_deadline = min(work.content_deadline, time.monotonic() + remaining)
                 work.continuation=work.proactive.continuation
                 if work.continuation:self.model_runtime.capture(work)
                 work.proactive_authority=self.model_runtime.capabilities_for(work).generation(work.model_snapshot)
@@ -472,10 +475,16 @@ class Backend:
             work.lock = self.contexts.lock(ContextKey(work.request.platform,work.request.kind,
                 work.request.conversation_id,'chat-agent') if work.chat else work.key)
             # Only this topic's predecessor owns the lock through its final ACK.
-            await asyncio.wait_for(work.lock.acquire(), max(.001, work.request.timestamp_ms/1000+WINDOW-self.clock()))
+            remaining = work.request.timestamp_ms / 1000 + WINDOW - self.clock()
+            if work.proactive is not None:
+                remaining = min(remaining, work.content_deadline - time.monotonic())
+            await asyncio.wait_for(work.lock.acquire(), max(.001, remaining))
             work.lock_acquired = True
             self.expire()
             if not work.active: return
+            if work.proactive is not None and time.monotonic() >= work.content_deadline:
+                self.finish(work, 'expired', reason='candidate_expired')
+                return
             # Binding happened at admission. Never resolve again after queueing,
             # nor turn an unavailable old operation into a fresh sendable topic.
             if not work.chat and (work.operation or work.request.reference is not None):

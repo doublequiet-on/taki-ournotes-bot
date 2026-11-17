@@ -150,6 +150,31 @@ class ModelSchedulerTests(unittest.IsolatedAsyncioTestCase):
             await asyncio.gather(*tasks)
             await scheduler.close()
 
+    async def test_queued_candidate_uses_the_original_execution_deadline(self):
+        import time
+        from ournotes_bot.application.model_execution import ModelScheduler
+        scheduler = ModelScheduler(running=1)
+        entered = asyncio.Event()
+        release = asyncio.Event()
+        async def hold_slot(deadline):
+            entered.set()
+            await release.wait()
+        async def capture_deadline(deadline):
+            return deadline
+        worker = asyncio.create_task(scheduler.run('worker', hold_slot))
+        await entered.wait()
+        expires_at = time.monotonic() + 2
+        candidate = asyncio.create_task(scheduler.run('candidate', capture_deadline, expires_at=expires_at))
+        await asyncio.sleep(0)
+        try:
+            self.assertEqual(len(scheduler.queue), 1)
+            release.set()
+            self.assertEqual(await candidate, expires_at)
+        finally:
+            release.set()
+            await asyncio.gather(worker, candidate, return_exceptions=True)
+            await scheduler.close()
+
     async def test_timeouts_do_not_release_running_worker_or_start_queued_work(self):
         from ournotes_bot.application.model_execution import ModelScheduler
         from ournotes_bot.application.backend_protocol import ProtocolError

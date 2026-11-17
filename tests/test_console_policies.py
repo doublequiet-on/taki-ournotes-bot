@@ -6785,6 +6785,57 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
             await asyncio.sleep(.005)
         self.fail('candidate did not finish')
 
+    async def expire_waiting_candidate(self, *, group_lock):
+        from ournotes_bot.application.backend_protocol import Request,digest
+        from ournotes_bot.query.continuation import ContextKey
+        self.agent.proactive.controller.candidate_seconds=.15
+        scheduler=self.backend.models
+        scheduler.limit=1
+        release=asyncio.Event();started=asyncio.Event()
+        async def occupied(deadline):
+            started.set()
+            await release.wait()
+        lock=self.backend.contexts.lock(ContextKey('qq','group','g1','chat-agent'))
+        worker=None
+        if group_lock:
+            await lock.acquire()
+        else:
+            worker=asyncio.create_task(scheduler.run('occupied',occupied))
+            await asyncio.wait_for(started.wait(),1)
+        value=self.observation('这个配置还能再调一下吧');self.tick+=1.6
+        raw={**value,'trigger':'proactive','proactive_id':'a'*32}
+        raw['request_id']=digest(['fixture','app','qq','group','g1',raw['user_id'],raw['message_id'],raw['proactive_id']])
+        admitted=self.agent.proactive.candidate(Request.parse(raw,'fixture','app',self.now))
+        self.assertIsNotNone(admitted)
+        plan=await self.backend.submit(raw,proactive=admitted)
+        work=self.backend.works[plan['delivery_id']]
+        try:
+            await asyncio.wait_for(work.ended.wait(),1)
+            self.assert_chat_outcome(raw['request_id'],'candidate_expired')
+            self.assertEqual(self.backend.ledger.parts(work.delivery),[])
+            self.assertIsNone(work.model_started_at)
+            self.assertEqual(work.model_attempts,0)
+            self.client.request.assert_not_called()
+            if not group_lock:
+                self.assertTrue(work.lock_acquired)
+                self.assertFalse(scheduler.queue)
+                self.assertEqual(dict(scheduler.running),{'occupied':1})
+                await asyncio.wait_for(lock.acquire(),1)
+                lock.release()
+        finally:
+            if group_lock:
+                lock.release()
+            else:
+                release.set()
+                await worker
+            await asyncio.gather(work.task,return_exceptions=True)
+
+    async def test_expired_proactive_leaves_model_queue_and_releases_group_lock(self):
+        await self.expire_waiting_candidate(group_lock=False)
+
+    async def test_expired_proactive_leaves_busy_group_lock_queue(self):
+        await self.expire_waiting_candidate(group_lock=True)
+
     def dedicated_model(self,**limits):
         from dataclasses import asdict
         runtime=self.backend.model_runtime
