@@ -29,6 +29,9 @@ export function conversationSettings(s){
    h('div',{class:'card-heading'},[h('h2','交流设置'),button('刷新交流设置',()=>s.refreshChatSettings(),s.busy.value)]),
    s.chatReadError.value&&h('p',{role:'alert'},s.chatReadError.value),
    !settings?h('p','正在读取本群交流设置。'):h('div',[
+     typeof settings.hermes_enabled==='boolean'&&h('div',[
+       h('label',{class:'toggle'},[h('input',{type:'checkbox','aria-label':'启用 Hermes 聊天',checked:settings.hermes_enabled,disabled:disabled||(!value?.hermes_available&&!settings.hermes_enabled),onChange:e=>{settings.hermes_enabled=e.target.checked;mark();}}),'本群使用 Hermes 聊天']),
+       h('p',{class:'field-note'},value?.hermes_available?'应用于点名、续聊和主动接话。切换并保存会结束本群正在进行的聊天轮次。':'Hermes 当前不可用。已启用的群可以关闭开关，切回原聊天路径。')]),
      h('label',{class:'toggle'},[h('input',{type:'checkbox','aria-label':'启用免 @ 续聊',checked:settings.followup_enabled,disabled,onChange:e=>{settings.followup_enabled=e.target.checked;mark();}}),'免 @ 续聊']),
      h('p','用户主动找 Taki 聊过后，可直接继续说。Taki 会结合上下文判断是否仍在和她交流。'),
      h('div',{class:'conversation-timing'},[
@@ -48,7 +51,7 @@ export function conversationSettings(s){
        h('div',[h('strong',userLabel(user)),h('code',user.user_id)]),h('button',{disabled,'aria-label':'移除 '+userLabel(user),onClick:()=>s.removeExcludedUser(user.user_id)},'移除')]))):h('p',{class:'empty-copy'},'名单为空，所有用户均可触发正常的主动参与判断。'),
      edit.conflict&&h('div',{class:'conversation-conflict',role:'alert'},[
        h('p','服务器设置已变化或保存未确认，草稿保留。请核对当前值后继续。'),
-       value&&h('details',{open:true},[h('summary','服务器当前值'),h('p',`免 @ 续聊${value.settings.followup_enabled?'开启':'关闭'} · ${value.settings.followup_window_seconds} 秒 · 合并等待 ${value.settings.coalesce_seconds} 秒`),h('ul',value.settings.excluded_users.map(user=>h('li',`${user.label||'无备注'} · ${user.user_id}`)))]),
+       value&&h('details',{open:true},[h('summary','服务器当前值'),h('p',`Hermes ${value.settings.hermes_enabled?'开启':'关闭'} · 免 @ 续聊${value.settings.followup_enabled?'开启':'关闭'} · ${value.settings.followup_window_seconds} 秒 · 合并等待 ${value.settings.coalesce_seconds} 秒`),h('ul',value.settings.excluded_users.map(user=>h('li',`${user.label||'无备注'} · ${user.user_id}`)))]),
        button('核对当前值后保留草稿',()=>{if(window.confirm('已核对服务器当前值，保留草稿并使用当前版本继续编辑？')){edit.guard=value.guard;edit.conflict=false;}},disabled||!value)]),
      h('div',{class:'conversation-actions'},[
        button('放弃交流草稿并刷新',()=>s.refreshChatSettings(s.groupId.value,true),s.busy.value),

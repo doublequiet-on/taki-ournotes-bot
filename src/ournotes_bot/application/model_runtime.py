@@ -146,6 +146,9 @@ class ModelRuntime:
     def __init__(self,backend,path,*,client=None):
         self.backend=backend
         self.client=client or NativeClient(openai_proxy=getattr(backend.settings,'ai_openai_proxy',None))
+        from .hermes_chat import HermesChat
+        self.hermes=HermesChat(getattr(backend.settings,'hermes_python',None),
+                               getattr(backend.settings,'hermes_runtime_dir',None))
         self.task=None
         self.config=ModelConfiguration(getattr(backend.settings,'ai_profile_file',None),getattr(backend.settings,'query_ai_api_key',''),
                                        backend.instance_id,backend.app_id)
@@ -317,6 +320,7 @@ class ModelRuntime:
         await self.quiesce()
         await self.admin.close()
         if self.agent: self.agent.close()
+        self.hermes.close()
         self.usage.close()
 
     def check(self,work,deadline,leases=()):
@@ -542,10 +546,15 @@ class ModelRuntime:
         started=False;began=time.monotonic();kind='generation' if not tools else 'routing';transport={}
         work.model_stage=('generation' if getattr(work,'proactive_generation',False)
                           else 'decision' if work.proactive is not None else 'model')
-        try:
-            permitted_until=await self.backend.permissions.acquire(work,deadline,attempt_id=attempt)
+        def validate_dispatch():
             self.check(work,deadline,leases)
             if service_policy is not None:require(self.agent.services.policy(work.model_snapshot,work.request.conversation_id)==service_policy,'chat_service_revoked')
+
+        async def dispatch():
+            nonlocal started
+            validate_dispatch()
+            permitted_until=await self.backend.permissions.acquire(work,deadline,attempt_id=attempt)
+            validate_dispatch()
             require(time.monotonic()<permitted_until,'permission_expired')
             try:
                 self.usage.start(attempt,profile,admit_rollover=self.proactive_charge_check(
@@ -554,8 +563,13 @@ class ModelRuntime:
                 self.proactive_charge_denied(work,exc)
             started=True
             # No await/queue/tool work between the consumed permit and this HTTP.
-            result=await asyncio.wait_for(self.client.request(profile,body,timeout=max(.001,deadline-time.monotonic()),transport=transport),
+            return await asyncio.wait_for(self.client.request(profile,body,timeout=max(.001,deadline-time.monotonic()),transport=transport),
                                           max(.001,deadline-time.monotonic()))
+        try:
+            if getattr(work,'hermes_chat',False):
+                result=await self.hermes.request(work,profile,body,deadline,validate_dispatch,dispatch)
+            else:
+                result=await dispatch()
             if result.transport_error and work.proactive is not None:
                 self.agent.proactive.trace(work,'error',status='provider_unavailable',name=result.transport_error)
             actions=result.provider_actions or ((ProviderAction('web_search',None),) if web is not None else ())

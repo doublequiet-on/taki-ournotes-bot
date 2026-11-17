@@ -80,6 +80,7 @@ class Work:
     terminal_retries: int = 0
     terminal_retry_at: float | None = None
     chat: bool = False
+    hermes_chat: bool = False
     story_versions: tuple = ()
     persona_version: str = 'taki-v0/legacy-derived'
     memory_sources: tuple = ()
@@ -247,7 +248,8 @@ class Backend:
 
     def persist_termination(self, work):
         try:
-            self.ledger.finish(work.delivery, work.terminal_status, allow_late_context=work.proactive is None)
+            self.ledger.finish(work.delivery, work.terminal_status,
+                               allow_late_context=work.proactive is None and work.terminal_reason!='chat_route_changed')
         except sqlite3.Error as exc:
             if work.terminal_since is None:
                 work.terminal_since = self.clock()
@@ -356,6 +358,8 @@ class Backend:
             self.ledger.admit(request, self.runtime, delivery, self.clock())
             self.works[delivery] = work
             try:
+                if chat and request.platform=='qq' and request.kind=='group':
+                    work.hermes_chat=self.model_runtime.admin.hermes_route(request.conversation_id)
                 if self.model_runtime and self.model_runtime.agent:
                     self.model_runtime.agent.proactive.start_addressed(work)
                     if proactive is not None and not work.continuation:self.model_runtime.agent.store.service_run(delivery,request.scope,work.service_request_id)
@@ -1070,7 +1074,11 @@ def create_app(backend, token, initialize=None, *, assert_recovery_current=None)
         require(backend.ledger.active(request.headers.get('X-Taki-Epoch')),'ops_gateway_epoch',409)
         action=request.match_info['action'];value=await read_json(request)
         require(action in ('preview','compare','publish','withdraw'),'library_action')
-        try:return json(await finish_thread(lambda:getattr(library,action)(value)))
+        try:
+            result=await finish_thread(lambda:getattr(library,action)(value))
+            if action=='withdraw' and backend.model_runtime:
+                await backend.model_runtime.hermes.await_cleanup()
+            return json(result)
         except (KnowledgeError,StoryError) as exc:raise ProtocolError(str(exc),409) from None
         except (OSError,sqlite3.Error,ValueError,TypeError):raise ProtocolError('library_operation_unconfirmed',503) from None
     async def chat_status(request):
@@ -1087,7 +1095,14 @@ def create_app(backend, token, initialize=None, *, assert_recovery_current=None)
             if request.method=='GET':return json(owner.chat_settings(gid))
             require(backend.ready and not backend.closing,'backend_not_ready',503)
             require(backend.ledger.active(request.headers.get('X-Taki-Epoch')),'ops_gateway_epoch',409)
-            return json(owner.save_chat_settings(gid,await read_json(request.clone(client_max_size=131072))))
+            value=await read_json(request.clone(client_max_size=131072))
+            previous=owner.hermes_route(gid)
+            saved=owner.save_chat_settings(gid,value)
+            if saved['settings']['hermes_enabled']!=previous:
+                scope=dict(instance_id=backend.instance_id,app_id=backend.app_id,platform='qq',
+                           kind='group',conversation_id=gid)
+                await backend.model_runtime.hermes.await_cleanup(scope=scope)
+            return json(saved)
         except ModelError as exc:raise ProtocolError(str(exc),409) from None
         except (OSError,sqlite3.Error):raise ProtocolError('model_admin_unavailable',503) from None
     async def chat_memory(request):
@@ -1108,7 +1123,9 @@ def create_app(backend, token, initialize=None, *, assert_recovery_current=None)
                 require(type(revision) is int and agent.store.status(scope)['revision']==revision,'chat_memory_conflict',409)
             require(isinstance(value,dict) and (set(value)=={'action'} and value['action']=='clear' or
                     set(value)=={'action','message_ids'} and value['action']=='delete'),'chat_memory_action')
-            return json(agent.forget(scope,value['message_ids'] if value['action']=='delete' else None))
+            result=agent.forget(scope,value['message_ids'] if value['action']=='delete' else None)
+            await backend.model_runtime.hermes.await_cleanup(scope=scope)
+            return json(result)
         except ValueError as exc:raise ProtocolError(str(exc)) from None
         except (OSError,sqlite3.Error):raise ProtocolError('chat_memory_unavailable',503) from None
     async def ops_jobs(request): return json(backend.operations.listing())

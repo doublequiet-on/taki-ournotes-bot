@@ -168,30 +168,36 @@ async function main(){
   const status=sessionState();await status.load(status.groups,'groups/list');status.selectGroup('alpha');status.groupDraft.value.label='fixture';status.groupDirty.value=true
   await status.saveGroup();assert.equal(status.pageMessages.value.groups,'群策略已保存。新查询使用新规则，在途查询继续完成。')
   assert.match(status.readMessage.value,/读取失败/);assert.equal(status.stale.value,true)
-  let chatServer={followup_enabled:true,followup_window_seconds:180,coalesce_seconds:1.5,excluded_users:[]},chatRevision=0,chatRelease;
+  let chatServer={hermes_enabled:false,followup_enabled:true,followup_window_seconds:180,coalesce_seconds:1.5,excluded_users:[]},chatRevision=0,chatRelease;
   const chatAttempts=[];
   globalThis.consoleStateFixture.send=async(method,value)=>{
-    if(method==='taki/chat/group/settings')return {group_id:value,guard:{backend_epoch:'fixture',revision:chatRevision},settings:structuredClone(chatServer),recent_users:[{user_id:'u1',display_name:'同名'}],tasks:{active_tasks:0,waiting_tasks:0,partial_tasks:0,completed_tasks:0,window_seconds:900}};
+    if(method==='taki/chat/group/settings')return {group_id:value,guard:{backend_epoch:'fixture',revision:chatRevision},settings:structuredClone(chatServer),hermes_available:true,recent_users:[{user_id:'u1',display_name:'同名'}],tasks:{active_tasks:0,waiting_tasks:0,partial_tasks:0,completed_tasks:0,window_seconds:900}};
     if(method==='taki/chat/group/settings/save'){chatAttempts.push(value);return new Promise(resolve=>{chatRelease=()=>{chatServer=structuredClone(value.settings);chatRevision++;resolve({});};});}
     if(method==='taki/logout')return true;
     if(method==='taki/model/group'||method==='taki/ops/notice-target'||method.startsWith('taki/chat/group/'))return {};
     throw Error('unexpected conversation RPC '+method);
   };
   const conversation=sessionState();conversation.groupId.value='alpha';await conversation.refreshChatSettings();
+  assert.equal(conversation.chatEdit.value.settings.hermes_enabled,false);
+  conversation.chatEdit.value.settings.hermes_enabled=true;
   conversation.addExcludedUser('u1','同名');conversation.addExcludedUser('u1','重复');
   assert.equal(conversation.chatEdit.value.settings.excluded_users.length,1);
   conversation.selectGroup('beta');assert.equal(conversation.groupId.value,'alpha','dirty conversation settings hold their group');
   const chatSaving=conversation.saveChatSettings();conversation.chatEdit.value.settings.followup_window_seconds=240;chatRelease();await chatSaving;
   assert.equal(conversation.chatEdit.value.dirty,true,'edits made while saving survive readback');
   assert.equal(conversation.chatSettings.value.settings.followup_window_seconds,180);
+  assert.equal(chatAttempts[0].settings.hermes_enabled,true);
+  assert.equal(conversation.chatSettings.value.settings.hermes_enabled,true);
   assert.equal(conversation.chatEdit.value.settings.followup_window_seconds,240);
   conversation.suspend();const chatRecovery=conversation.captureEdits(),chatRestored=sessionState();chatRestored.restoreEdits(chatRecovery);
   assert.equal(chatRestored.groupId.value,'alpha');assert.equal(chatRestored.chatEdit.value.settings.followup_window_seconds,240);
   chatRevision++;await chatRestored.refreshChatSettings();assert.equal(chatRestored.chatEdit.value.conflict,true);
   assert.equal(chatRestored.chatEdit.value.settings.followup_window_seconds,240,'refresh never replaces a draft');
   await chatRestored.refreshChatSettings('alpha',true);chatRestored.removeExcludedUser('u1');
+  chatRestored.chatEdit.value.settings.hermes_enabled=false;
   const removal=chatRestored.saveChatSettings();chatRelease();await removal;
   assert.equal(chatRestored.chatEdit.value.dirty,false);assert.deepEqual(chatRestored.chatSettings.value.settings.excluded_users,[]);
+  assert.equal(chatRestored.chatSettings.value.settings.hermes_enabled,false);
   assert.equal(chatRestored.pageMessages.value.groups,'交流设置已保存并确认生效。');
   await chatRestored.logout();assert.equal(chatRestored.captureEdits().chat,null);
   const costsSource=fs.readFileSync(require.resolve('../console/costs.js'),'utf8')
