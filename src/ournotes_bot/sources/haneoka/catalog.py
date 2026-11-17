@@ -35,7 +35,7 @@ MAX_BYTES = 24_000_000
 DERIVED_CACHE_BYTES = 64 * 1024 * 1024
 # Download accounting also includes discovery indexes and batch envelopes which
 # are not retained in the snapshot. Keep the existing cache/rollback limit.
-MAX_DOWNLOAD_BYTES = 32_000_000
+MAX_DOWNLOAD_BYTES = 40_000_000
 ERRORS = (OSError, ValueError, TypeError, KeyError, IndexError, RuntimeError, OverflowError, AttributeError)
 
 
