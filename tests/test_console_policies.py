@@ -6178,6 +6178,14 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
         self.assertTrue(any(e['kind']=='decision' and e['data']['decision']=='skip' for e in events))
         view=self.backend.admin.view(self.backend.ledger.request(plan['request_id']))
         self.assertEqual(view['delivery_reason'],'completed_without_output')
+        self.assert_chat_outcome(plan['request_id'],'proactive_skip')
+
+    def assert_chat_outcome(self, request_id, expected):
+        admin = self.backend.admin
+        detail = admin.view(self.backend.ledger.request(request_id), detail=True)
+        listed = next(row for row in admin.views() if row['request_id'] == request_id)
+        self.assertEqual(detail['chat_outcome'], expected)
+        self.assertEqual(listed['chat_outcome'], expected)
 
     async def test_empty_reply_decision_generates_natural_text_with_same_caps(self):
         self.snapshot=replace(self.snapshot,profile=replace(self.snapshot.profile,provider='openai',wire_profile='openai-responses-v1'))
@@ -6510,6 +6518,7 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
         events=self.backend.diagnostics.read(plan['request_id'])['chat_events']
         decisions=[e['data']['decision'] for e in events if e['kind']=='decision']
         self.assertIn('skip',decisions)
+        self.assert_chat_outcome(plan['request_id'],'proactive_generation_skipped')
         self.assertNotIn('reply',decisions)
 
     async def test_staged_skip_marker_with_explanation_is_not_published(self):
@@ -6527,6 +6536,7 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
     async def test_structured_proactive_defer(self):
         plan=await self.structured_decision({'participation':'defer','text':'','delay_seconds':2})
         self.assertEqual(plan['parts'],[])
+        self.assert_chat_outcome(plan['request_id'],'proactive_defer')
 
     async def test_proactive_compares_group_messages_but_allows_a_natural_reaction(self):
         bodies=ChatAgentTests.capture_native_bodies(self)
@@ -6597,6 +6607,37 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
         row=self.backend.ledger.request(plan['request_id'])
         self.assertEqual(self.backend.admin.view(row)['delivery_reason'],'proactive_error')
         self.assertEqual(next(v for v in self.backend.admin.views() if v['request_id']==plan['request_id'])['delivery_reason'],'proactive_error')
+        self.assert_chat_outcome(plan['request_id'],'proactive_error')
+
+    async def test_proactive_outcome_differentiates_generation_denial_and_platform_failure(self):
+        from ournotes_bot.application.backend_protocol import PROTOCOL
+
+        self.snapshot = replace(self.snapshot, profile=replace(self.snapshot.profile, provider='openai',
+            wire_profile='openai-responses-v1'))
+        self.client.request.side_effect = [
+            self.result('{"participation":"reply","text":"","delay_seconds":null}'),
+            self.result('那段鼓打得挺顺'),
+        ]
+        value = self.observation()
+        self.tick += 1.6
+        plan, attempts, _ = await self.candidate(value, allow=lambda n: n == 1)
+        self.assertEqual(len(attempts), 2)
+        self.assertEqual(plan['parts'], [])
+        self.assert_chat_outcome(plan['request_id'], 'generation_permission_denied')
+        self.tick += 2
+        self.now += 2
+        value = self.observation('刚才那个桥段也打顺了', seq=2)
+        self.tick += 1.6
+        self.client.request.side_effect = [
+            self.result('{"participation":"reply","text":"","delay_seconds":null}'),
+            self.result('刚才那个鼓点接得真稳'),
+        ]
+        plan, _, _ = await self.candidate(value, 2)
+        self.event(plan,'intent')
+        self.backend.apply_event(plan['delivery_id'],dict(protocol=PROTOCOL,request_id=plan['request_id'],
+            plan_version=1,gateway_epoch='e1',event='ack',part_id=plan['parts'][0]['id'],attempt_id='a1',
+            result='failure',message_id=None))
+        self.assert_chat_outcome(plan['request_id'], 'platform_reply_failed')
 
     async def test_proactive_reads_own_ack_and_targets_new_speaker_message(self):
         self.policy=replace(self.policy,proactive=replace(self.policy.proactive,cooldown_seconds=0))
@@ -6722,7 +6763,7 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
         with patch.object(self.agent.store,'proactive_replies',return_value=(self.now,)),patch.object(self.agent.service_budget,'clock',return_value=self.now):
             self.assertEqual(self.agent.proactive.observation_delay(request),1500)
 
-    async def candidate(self,value,serial=1):
+    async def candidate(self,value,serial=1,*,allow=lambda _:True):
         from ournotes_bot.application.backend_protocol import Request,digest
         raw={**value,'trigger':'proactive','proactive_id':format(serial,'032x')}
         raw['request_id']=digest(['fixture','app','qq','group','g1',raw['user_id'],raw['message_id'],raw['proactive_id']])
@@ -6736,7 +6777,7 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
             if challenge and challenge['attempt_id'] not in attempts:
                 attempts.append(challenge['attempt_id'])
                 decision={key:item for key,item in challenge.items() if key not in ('remaining_ms','admission_policy_version')}
-                decision.update(decision='allow',reason='fixture',ttl_ms=1000,
+                decision.update(decision='allow' if allow(len(attempts)) else 'deny',reason='fixture',ttl_ms=1000,
                     current_policy_version=dict(epoch='fixture',global_revision=0,group_revision=0))
                 self.backend.permissions.decide(raw['request_id'],challenge['attempt_id'],decision,'e1')
             if plan['status'] in ('prepared','finished'):return plan,attempts,candidate
@@ -6994,6 +7035,7 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.agent.store.db.execute('SELECT count(*) FROM runs').fetchone()[0],0)
         self.assertTrue(plan['send_allowed'])
         self.event(plan,'intent');self.event(plan,'ack')
+        self.assert_chat_outcome(plan['request_id'],None)
         rows=self.agent.store.recent(Request_scope())
         self.assertTrue(any(row['role']=='assistant' and row['text']=='接着你们的话题说一句' for row in rows))
         self.assertEqual(len(self.agent.store.proactive_replies(Request_scope())),1)
@@ -7544,6 +7586,7 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
         self.client.request.assert_not_awaited()
         events = self.backend.diagnostics.group_events('g1')
         self.assertTrue(any(e['data'].get('status') == 'proactive_context_gap' for e in events))
+        self.assert_chat_outcome(plan['request_id'],'proactive_context_gap')
 
     async def test_lightweight_starts_new_topic_after_filtered_observation(self):
         self.enable_lightweight_fact_fixture()
@@ -7894,6 +7937,7 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(attempts),1)
         self.assertFalse(plan['send_allowed'])
         self.assertEqual(plan['parts'],[])
+        self.assert_chat_outcome(plan['request_id'],'proactive_evidence_budget_exhausted')
         self.client.request.assert_awaited_once()
         knowledge.retrieve.assert_called_once()
 
@@ -8200,6 +8244,7 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
         last=self.backend.diagnostics.read(raw['request_id'])['chat_events'][-1]['data']
         self.assertEqual(last['reason'],'observation_replaced')
         self.assertEqual(last['stage'],'generation' if generation else 'decision')
+        self.assert_chat_outcome(raw['request_id'],'observation_replaced')
 
     async def test_cancelled_known_decision_reconciles_controller_after_late_completion(self):
         await self.cancelled_known_cost()

@@ -145,7 +145,31 @@ function transportLine(data){
     data.headers_received===false?'未收到响应头':null,data.provider_request_id];
  return h('p',parts.filter(Boolean).join(' · '));
 }
+const chatOutcomeLabels={
+ proactive_skip:'本轮跳过接话',proactive_defer:'暂缓接话，等更多上下文',
+ proactive_precheck_skipped:'初判前已跳过',proactive_generation_skipped:'生成阶段撤回回复',
+ lightweight_context_required:'缺图片或引用上下文，已跳过',proactive_context_gap:'当前前文不完整，已跳过',
+ lightweight_input_limit:'接话上下文过长，已跳过',lightweight_echo:'回复复述原话，已跳过',
+ observation_replaced:'群聊有新进展，旧候选已取消',continuation_replaced:'收到后续补充，旧候选已取消',
+ chat_settings_changed:'群交流设置已变化，已取消',conversation_ended:'交流已结束，已取消',
+ policy_changed:'群策略已变化，已取消',scope_denied:'本轮群权限已撤销',chat_memory_deleted:'相关消息已删除，已取消',
+ ack_context_revoked:'回执时上下文权限已撤销',candidate_expired:'接话机会已过期',
+ proactive_stale:'群聊上下文已变化，旧候选已结束',
+ quota_exceeded:'聊天额度已用完',primary_budget_exceeded:'主模型日预算已用完',
+ chat_service_cost_limit:'本群小时费用额度不足',chat_service_daily_cost_limit:'本群日费用额度不足',
+ chat_service_reservation_limit:'剩余额度不足以预留接话',chat_service_call_limit:'本群模型调用次数已达上限',
+ chat_service_evaluation_limit:'本群接话判断次数已达上限',chat_service_reply_limit:'本群主动回复次数已达上限',
+ proactive_evidence_budget_exhausted:'剩余额度不足以完成资料核对',tool_result_input_budget:'资料超出本轮上下文上限',
+ generation_permission_denied:'初判后生成许可未获通过',policy_denied:'本轮模型许可未获通过',
+ execution_timeout:'主动接话处理超时',queue_timeout:'主动接话排队超时',
+ proactive_error:'主动评估失败',platform_reply_failed:'QQ 平台返回发送失败',
+};
+export const chatOutcomeLabel=outcome=>Object.hasOwn(chatOutcomeLabels,outcome)?chatOutcomeLabels[outcome]:undefined;
+
 export function requestConclusion(detail){
+ if(['uncertain','partial'].includes(detail.delivery_state))return '交付阶段 · 平台回执未齐，请核对 QQ 实收';
+ const outcome=chatOutcomeLabel(detail.chat_outcome);
+ if(outcome&&!['execution_timeout','proactive_error'].includes(detail.chat_outcome))return outcome;
  const events=detail.chat_events||[],attempts=detail.model_attempts||[];
  const {transport}=attemptDetails(events);
  const started=attempts.filter(attempt=>attempt.started_at!=null).sort((a,b)=>a.started_at-b.started_at);
@@ -157,7 +181,7 @@ export function requestConclusion(detail){
      network.elapsed_ms==null?null:'总耗时 '+network.elapsed_ms+' ms',
      network.wait_headers_ms==null?null:'等待响应头 '+network.wait_headers_ms+' ms'].filter(Boolean).join(' · ');
  }
- if(['uncertain','partial'].includes(detail.delivery_state))return '交付阶段 · 平台回执未齐，请核对 QQ 实收';
+ if(outcome)return outcome;
  if(detail.business_outcome==='unavailable'){
    const evidence=[...events].reverse().find(e=>e.kind==='evidence'&&['not_available','source_unavailable','no_results','budget_exhausted','story_not_configured','partial'].includes(e.data?.status));
    if(evidence)return '资料阶段 · '+evidenceStatus(evidence.data);

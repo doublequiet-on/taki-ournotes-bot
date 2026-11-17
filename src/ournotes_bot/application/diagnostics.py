@@ -9,6 +9,16 @@ from pathlib import Path
 from ..domain.chat import PERSONA_VERSION
 
 
+_CHAT_OUTCOME_EVENTS = ('control', 'decision', 'error', 'finished')
+# A prepared reply's closure comes from the terminal event and platform receipt.
+_CHAT_OUTCOME_COLUMNS = ', '.join(
+    f"""(SELECT data FROM chat_events WHERE request_id=requests.id AND kind='{kind}'
+        AND ('{kind}'='finished' OR requests.parts IS NULL OR requests.parts='[]')
+        ORDER BY id DESC LIMIT 1) AS last_{kind}"""
+    for kind in _CHAT_OUTCOME_EVENTS
+)
+
+
 class Diagnostics:
     """One backend writer; explicitly degraded on storage failure, without ledger changes."""
 
@@ -276,6 +286,8 @@ class Diagnostics:
                    FROM spans LEFT JOIN span_results USING(event_id) WHERE request_id=? ORDER BY observed_at,event_id''', (request_id,))]
             result['chat_events'] = [dict(kind=s['kind'],data=json.loads(s['data']),observed_at=s['observed_at'])
                 for s in self.db.execute('SELECT kind,data,observed_at FROM chat_events WHERE request_id=? ORDER BY id',(request_id,))]
+            result['last_chat_events'] = {e['kind']: e['data'] for e in result['chat_events']
+                                          if e['kind'] in _CHAT_OUTCOME_EVENTS}
             return result
         except (sqlite3.Error, ValueError, TypeError):
             self.reason = 'diagnostics_read_failed'
@@ -297,9 +309,12 @@ class Diagnostics:
             return {}
         try:
             result = {}
-            for row in self.db.execute("SELECT id,scope,group_id,commands,parts,EXISTS(SELECT 1 FROM chat_events e WHERE e.request_id=requests.id AND e.kind='error') AS chat_failed FROM requests"):
+            for row in self.db.execute(f"SELECT id,scope,group_id,commands,parts,{_CHAT_OUTCOME_COLUMNS} FROM requests"):
+                events = {kind: json.loads(row[f'last_{kind}']) for kind in _CHAT_OUTCOME_EVENTS
+                          if row[f'last_{kind}'] is not None}
                 result[row['id']] = {'scope': row['scope'], 'group_id': row['group_id'],
-                    'commands': json.loads(row['commands']),'chat_failed':bool(row['chat_failed']),
+                    'commands': json.loads(row['commands']), 'last_chat_events': events,
+                    'chat_failed': 'error' in events,
                     'parts': json.loads(row['parts']) if row['parts'] is not None else None}
             return result
         except (sqlite3.Error, ValueError, TypeError):

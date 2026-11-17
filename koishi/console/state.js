@@ -236,7 +236,7 @@ export function sessionState() {
         const row=value.data?.request?.sections?.request?.data;
         if(!row)throw Error('request_unavailable');
         const facts=Object.fromEntries(Object.entries(row).filter(([key])=>['created_at','business_outcome','delivery_state',
-          'delivery_reason','observation','confirmed_parts','part_count','release_sha','protocol'].includes(key)));
+          'delivery_reason','chat_outcome','observation','confirmed_parts','part_count','release_sha','protocol'].includes(key)));
         const attempts=row.model_attempts||[];
         const attemptNumbers=new Map(attempts.map((attempt,index)=>[attempt.attempt_id,index+1]));
         const events=(row.chat_events||[]).map(({kind,data})=>{

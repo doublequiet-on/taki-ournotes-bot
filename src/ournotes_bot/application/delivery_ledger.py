@@ -121,7 +121,7 @@ class Ledger:
 
     def admin_parts(self):
         grouped = {}
-        for row in self.db.execute('SELECT delivery,id,position,mode,status FROM parts ORDER BY delivery,position'):
+        for row in self.db.execute('SELECT delivery,id,position,mode,status,receipt FROM parts ORDER BY delivery,position'):
             grouped.setdefault(row['delivery'], []).append(dict(row))
         return grouped
 

@@ -196,7 +196,8 @@ async function main(){
   await chatRestored.logout();assert.equal(chatRestored.captureEdits().chat,null);
   const costsSource=fs.readFileSync(require.resolve('../console/costs.js'),'utf8')
     .replace(/^import .*?;\r?\n/gm,'')+'\nconst {h}=globalThis.consoleStateFixture;const stamp=String;'
-  const {requestConclusion,chatEventsView}=await import('data:text/javascript;base64,'+Buffer.from(costsSource).toString('base64'))
+  const costsModule='data:text/javascript;base64,'+Buffer.from(costsSource).toString('base64')
+  const {requestConclusion,chatEventsView,chatOutcomeLabel}=await import(costsModule)
   const chatEvents=[
     {kind:'transport',data:{attempt_id:'lookup',stage:'complete',name:'none'}},
     {kind:'transport',data:{attempt_id:'final',stage:'wait_headers',name:'disconnected',elapsed_ms:16925,wait_headers_ms:14703}},
@@ -213,6 +214,33 @@ async function main(){
   assert.equal(requestConclusion({model_attempts:[attempts[0]],
     chat_events:[{kind:'transport',data:{...chatEvents[1].data,http_version:'HTTP/2'}}]}),
     '第 1 次模型尝试 · HTTP/2 · 等待响应头 · 连接断开 · 总耗时 16925 ms · 等待响应头 14703 ms')
+  for(const [outcome,label] of Object.entries({
+    proactive_skip:'本轮跳过接话',proactive_defer:'暂缓接话，等更多上下文',
+    proactive_generation_skipped:'生成阶段撤回回复',proactive_context_gap:'当前前文不完整，已跳过',
+    observation_replaced:'群聊有新进展，旧候选已取消',generation_permission_denied:'初判后生成许可未获通过',
+    chat_service_cost_limit:'本群小时费用额度不足',platform_reply_failed:'QQ 平台返回发送失败',
+  })){
+    assert.equal(chatOutcomeLabel(outcome),label)
+    assert.equal(requestConclusion({chat_outcome:outcome}),label)
+  }
+  assert.equal(chatOutcomeLabel('unrecognized_status'),undefined)
+  assert.match(requestConclusion({delivery_state:'uncertain',chat_outcome:'observation_replaced',
+    chat_events:chatEvents,model_attempts:attempts}),/平台回执未齐/)
+  const viewsSource=fs.readFileSync(require.resolve('../console/views.js'),'utf8').replace(/^import .*?;\r?\n/gm,'')
+    +'\nconst {h}=globalThis.consoleStateFixture;const {chatOutcomeLabel,requestConclusion,executionView}=await import('+JSON.stringify(costsModule)+');'
+  const {requestsView}=await import('data:text/javascript;base64,'+Buffer.from(viewsSource).toString('base64'))
+  const closed={request_id:'fixture-closed',delivery_state:'closed_unsent',delivery_reason:'completed_without_output',
+    chat_outcome:'generation_permission_denied',business_outcome:'failed'}
+  const historical={...closed,request_id:'fixture-historical',chat_outcome:null}
+  const testState={requests:{value:{sections:{requests:{data:{items:[closed,historical]}}}}},
+    detail:{value:{sections:{request:{data:closed}}}},groups:{value:null}}
+  function statePills(node){
+    if(!node||typeof node!=='object')return []
+    if(node.props?.class?.includes?.('state-pill'))return [node.children]
+    return Array.isArray(node.children)?node.children.flatMap(statePills):[]
+  }
+  assert.deepEqual(statePills(requestsView(testState,()=>{},{},()=>{},()=>{},()=>{},()=>{},closed.request_id,true)),
+    ['初判后生成许可未获通过','已完成，无输出','初判后生成许可未获通过'])
   const noHits={business_outcome:'unavailable',delivery_state:'complete',
     chat_events:[{kind:'evidence',data:{action:'story_search',status:'no_results'}}]}
   assert.equal(requestConclusion(noHits),'资料阶段 · 检索无结果')

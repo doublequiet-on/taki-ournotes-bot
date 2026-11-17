@@ -45,6 +45,59 @@ def delivery_state(row, parts):
     return 'unknown'
 
 
+_CHAT_CANCELLED = {'observation_replaced', 'continuation_replaced', 'chat_settings_changed',
+                   'conversation_ended', 'policy_changed', 'scope_denied', 'chat_memory_deleted',
+                   'candidate_expired', 'ack_context_revoked'}
+_CHAT_PRECHECKS = {'lightweight_context_required', 'proactive_context_gap', 'lightweight_input_limit'}
+_CHAT_BUDGET_FAILURES = {'quota_exceeded', 'primary_budget_exceeded', 'chat_service_cost_limit',
+                         'chat_service_daily_cost_limit', 'chat_service_reservation_limit',
+                         'chat_service_call_limit', 'chat_service_evaluation_limit', 'chat_service_reply_limit'}
+
+
+def chat_outcome(lifecycle, state, parts, metadata):
+    if not metadata or state not in ('closed_unsent', 'failed'):
+        return None
+    events = metadata.get('last_chat_events', {})
+    finished = events.get('finished', {})
+    if state == 'failed':
+        return 'platform_reply_failed' if finished and any(p.get('receipt') == 'failure' for p in parts) else None
+    if not finished:
+        return None
+    terminal = finished.get('reason')
+    if terminal in _CHAT_CANCELLED:
+        return terminal
+    if lifecycle == 'expired':
+        return 'candidate_expired'
+    if lifecycle != 'finished' or parts:
+        return None
+    command = next(iter(metadata['commands']), {}).get('outcome')
+    decision = events.get('decision', {})
+    error = events.get('error', {})
+    if command in (None, 'unknown') and not error and decision.get('decision') in ('skip', 'defer'):
+        command = 'proactive_' + decision['decision']
+    if command == 'proactive_defer':
+        return command
+    control = events.get('control', {})
+    status = control.get('status')
+    if command == 'proactive_skip':
+        before_model = finished.get('model_attempts') == 0
+        if before_model and status in _CHAT_PRECHECKS:
+            return status
+        if status == 'proactive_evidence_budget_exhausted':
+            return 'tool_result_input_budget' if control.get('reason') == 'tool_result_input_budget' else status
+        if status == 'lightweight_echo' or decision.get('reason') == 'echo':
+            return 'lightweight_echo'
+        if finished.get('stage') == 'generation':
+            return 'proactive_generation_skipped'
+        return 'proactive_precheck_skipped' if before_model else 'proactive_skip'
+    code = error.get('status')
+    if code in _CHAT_BUDGET_FAILURES or code in ('execution_timeout', 'queue_timeout', 'proactive_stale'):
+        return code
+    if code == 'policy_denied':
+        return 'generation_permission_denied' if error.get('stage') == 'generation' else code
+    return 'proactive_error' if command == 'proactive_error' or error else None
+
+
 def section(data=None, *, availability='available', reason=None, now=None):
     return {'availability': availability, 'observed_at': now, 'stale': False,
             'data': data, 'reason_code': reason}
@@ -107,6 +160,7 @@ class Admin:
         if view['delivery_reason']=='completed_without_output' and metadata and (metadata.get('chat_failed')
                 or any(e['kind']=='error' for e in metadata.get('chat_events',[]))):
             view['delivery_reason']='proactive_error';view['business_outcome']='failed'
+        view['chat_outcome'] = chat_outcome(row['status'], view['delivery_state'], parts, metadata)
         if metadata and metadata['commands'] and view['delivery_reason']!='proactive_error':
             outcomes = {business_state(c['outcome']) for c in metadata['commands']}
             view['business_outcome'] = next(iter(outcomes)) if len(outcomes) == 1 else 'mixed'
