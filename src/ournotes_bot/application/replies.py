@@ -64,7 +64,7 @@ def command_kind(content: str) -> str:
         return 'continuation'
     head = content.split(None, 1)[0].lstrip('/').casefold()
     return {'帮助': 'help', 'help': 'help', '查卡': 'card', '查曲': 'song',
-            '查谱面': 'chart', '查榜线': 'cutoff', '查活动': 'event'}.get(head, 'other')
+            '查谱面': 'chart', '查榜线': 'cutoff', '查活动': 'event', '一图流': 'event'}.get(head, 'other')
 
 
 def recognizes_message(content: str) -> bool:
@@ -77,7 +77,7 @@ def recognizes_message(content: str) -> bool:
     for text in split_commands(content):
         head = text.split(None, 1)[0].casefold()
         if (head in ALIASES or head in UNAVAILABLE_COMMANDS
-                or head in {"查角色", "查卡池", "查活动", "查竞技场", "查玩家", "event", "イベント"}
+                or head in {"查角色", "查卡池", "查活动", "一图流", "查竞技场", "查玩家", "event", "イベント"}
                 or text.casefold() in specials or parse_operation(text) is not None or is_ai_request(text)):
             return True
     return False
@@ -531,6 +531,9 @@ def _captured_query(repository, *, enabled=True):
 
 def image_reply(content: str, repository: SongRepository, ai_parser: LocalQueryParser | None = None) -> bytes | None:
     """Compatibility helper for local previews; live replies use prepare_reply."""
+    infographic = infographic_reply(content)
+    if infographic is not None:
+        return infographic.image
     with _captured_query(repository, enabled=not is_ai_request(content)) as view:
         return _image_reply(content, view, ai_parser)
 
@@ -549,9 +552,30 @@ def _image_reply(content, repository, ai_parser):
 def prepare_reply(content: str, repository: SongRepository,
                    ai_parser: LocalQueryParser, *, log_content: bool = True, outcome=None,
                    catalog_before=None) -> PreparedReply | None:
+    infographic = infographic_reply(content)
+    if infographic is not None:
+        return infographic
     with _captured_query(repository, enabled=not is_ai_request(content)) as view:
         return _prepare_reply(content, view, ai_parser, log_content=log_content,
                               outcome=outcome, catalog_before=catalog_before)
+
+
+def infographic_reply(content):
+    commands = split_commands(content)
+    if len(commands) != 1 or commands[0].split(None, 1)[0] != '一图流':
+        return None
+    if commands[0] != '一图流':
+        return PreparedReply('用法：/一图流', business_status='invalid_arguments',
+                             parse_origin='direct', processing_route='direct')
+    from ..config import runtime_data_dir
+    from ..sources.activity_infographic_store import ActivityInfographicStore
+    try:
+        text, image, status = ActivityInfographicStore(runtime_data_dir() / 'activity-infographic').lookup()
+    except (OSError, ValueError, TypeError) as exc:
+        logger.warning('活动一图流读取失败 type=%s', type(exc).__name__)
+        text, image, status = '活动一图流暂时不可用，请稍后重试。', None, 'data_unavailable'
+    return PreparedReply(text, image, complete_text=True, business_status=status,
+                         parse_origin='direct', processing_route='direct')
 
 
 def _prepare_reply(content, repository, ai_parser, *, log_content, outcome, catalog_before):
