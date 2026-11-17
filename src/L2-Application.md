@@ -58,6 +58,7 @@ CLI 模式与组合、配置根/数据路径、包身份；为多个系统域提
 - [application/knowledge_service.py](ournotes_bot/application/knowledge_service.py)：独占知识目录与状态库，先提交停用记录，再发布候选索引；排队／生成／交付消费者在每个关键边界批量重验完整证据租约：一次当前观察，同文档一次分块，结果不跨边界缓存。后端组合与 RuntimeTasks 接入独立观察和重建任务；[knowledge_cli.py](ournotes_bot/application/knowledge_cli.py) 提供脱离游戏初始化的校验、导入和检索入口。格式和内容交付见 [包 2B](../docs/QUERY_CHAT_PACKAGE2B.md)。
 
 - [application/model_execution.py](ournotes_bot/application/model_execution.py)：独立模型队列、每次尝试的当前许可与绝对执行期限；不拥有模型事实或加权账务。
+- [application/hermes_chat.py](ournotes_bot/application/hermes_chat.py)：按群选用的单次 Hermes 工作进程，逐步复用 Taki 出站许可。指定群的试点可使用 [有界待命队列](ournotes_bot/application/hermes_standby.py)，规则见 [运行手册](../docs/CHAT_AGENT_RUNBOOK.md#单群过载策略试点)。
 - [application/conversation_state.py](ournotes_bot/application/conversation_state.py)：会话／话题、成功消息锚点及固定页面；与 ContextStore 共用绝对期限。见 [查询聊天包 1](../docs/QUERY_CHAT_PACKAGE1.md)。
 
 组合根与四个运行支撑叶子直接 L2 → L3。没有足够复杂度和统一新生命周期来为每个叶子建立 L2-2；共享并不意味着相互调用。

@@ -230,7 +230,8 @@ class KnowledgeAuthorityTests(unittest.TestCase):
         ticket=backend.contexts.begin(ContextKey('qq','group','fixture','topic'))
         row=dict(delivery='delivery',status='prepared',epoch='epoch',runtime='runtime',expires=20)
         for count in (1,5):
-            work=SimpleNamespace(active=True,hint=False,chat=False,lease=ticket,story_versions=(),proactive=None,prepared=[
+            work=SimpleNamespace(active=True,hint=False,chat=False,lease=ticket,story_versions=(),proactive=None,
+                hermes_send_deadline=None,prepared=[
                 SimpleNamespace(evidence=(lease,lease),evidence_deadline=None) for _ in range(count)])
             backend.works={'delivery':work}
             with patch.object(self.service,'observe',wraps=self.service.observe) as observe, \

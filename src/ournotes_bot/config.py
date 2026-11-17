@@ -126,6 +126,9 @@ class Settings:
     ai_openai_proxy: str | None = None
     chat_engine: str = 'legacy'
     story_dir: Path | None = None
+    hermes_python: Path | None = None
+    hermes_runtime_dir: Path | None = None
+    hermes_pilot_group: str = ''
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -174,6 +177,8 @@ class Settings:
         proactive_profile = os.getenv('OURNOTES_AI_PROACTIVE_PROFILE_FILE','').strip()
         chat_engine = os.getenv('OURNOTES_CHAT_ENGINE', 'legacy').strip()
         story_dir = os.getenv('OURNOTES_STORY_DIR','').strip()
+        hermes_python = os.getenv('OURNOTES_HERMES_PYTHON','').strip()
+        hermes_runtime = os.getenv('OURNOTES_HERMES_RUNTIME_DIR','').strip()
         if chat_engine not in ('legacy', 'agent'):
             raise ValueError('OURNOTES_CHAT_ENGINE must be legacy or agent')
         return cls(
@@ -189,6 +194,9 @@ class Settings:
             ai_proactive_profile_file=(CONFIG_ROOT / proactive_profile).resolve() if proactive_profile else None,
             proactive_ai_api_key=os.getenv('OURNOTES_PROACTIVE_AI_API_KEY','').strip(),
             chat_engine=chat_engine,
+            hermes_python=Path(hermes_python) if hermes_python else None,
+            hermes_runtime_dir=Path(hermes_runtime) if hermes_runtime else None,
+            hermes_pilot_group=os.getenv('OURNOTES_HERMES_PILOT_GROUP','').strip(),
             story_dir=(CONFIG_ROOT/story_dir).resolve() if story_dir else None,
             query_ai_api_key=os.getenv('OURNOTES_QUERY_AI_API_KEY','').strip(),
             app_secret=os.getenv("QQ_APP_SECRET", "").strip(),

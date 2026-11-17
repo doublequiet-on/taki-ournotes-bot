@@ -146,6 +146,11 @@ class ModelRuntime:
     def __init__(self,backend,path,*,client=None):
         self.backend=backend
         self.client=client or NativeClient(openai_proxy=getattr(backend.settings,'ai_openai_proxy',None))
+        from .hermes_chat import HermesChat
+        self.hermes=HermesChat(getattr(backend.settings,'hermes_python',None),
+                               getattr(backend.settings,'hermes_runtime_dir',None),
+                               getattr(backend.settings,'hermes_pilot_group',''))
+        self.hermes_switch=asyncio.Lock()
         self.task=None
         self.config=ModelConfiguration(getattr(backend.settings,'ai_profile_file',None),getattr(backend.settings,'query_ai_api_key',''),
                                        backend.instance_id,backend.app_id)
@@ -304,6 +309,15 @@ class ModelRuntime:
                 if self.dedicated_proactive():await self.proactive_config.refresh_price(self.client)
                 await asyncio.sleep(3600)
         self.task=asyncio.create_task(prices())
+        if self.agent and self.hermes.pilot_group and self.admin.hermes_route(self.hermes.pilot_group):
+            self.hermes.start_pilot()
+
+    async def refresh_hermes_pilot(self):
+        async with self.hermes_switch:
+            if self.agent and self.hermes.pilot_group and self.admin.hermes_route(self.hermes.pilot_group):
+                self.hermes.start_pilot()
+            else:
+                await self.hermes.stop_pilot()
 
     def request_stop(self):
         if self.task: self.task.cancel()
@@ -319,6 +333,8 @@ class ModelRuntime:
         await self.quiesce()
         await self.admin.close()
         if self.agent: self.agent.close()
+        await self.hermes.stop_pilot()
+        self.hermes.close()
         self.usage.close()
 
     def check(self,work,deadline,leases=()):
@@ -424,19 +440,28 @@ class ModelRuntime:
             if expires_at is not None:
                 require(time.monotonic() < expires_at, 'candidate_expired')
             require(seconds>0,'execution_timeout')
-            return await self.backend.models.run(user,operation,execution_seconds=seconds,expires_at=expires_at)
-        except (ModelError,ProtocolError,KnowledgeError) as exc:
-            code=exc.code if isinstance(exc,ProtocolError) else str(exc)
+            schedule = {}
+            if work.hermes_pilot:
+                schedule = {'deadline':work.hermes_send_deadline,
+                            'wait':work.proactive is None or work.continuation}
+            return await self.backend.models.run(user,operation,execution_seconds=seconds,expires_at=expires_at,**schedule)
+        except (ModelError,ProtocolError,KnowledgeError,asyncio.TimeoutError) as exc:
+            code=('execution_timeout' if isinstance(exc,asyncio.TimeoutError) else
+                  exc.code if isinstance(exc,ProtocolError) else str(exc))
+            if (work.hermes_pilot and work.proactive is not None and not work.continuation
+                    and code in ('model_queue_busy','chat_hermes_busy') and self.agent.proactive.valid(work)):
+                self.agent.proactive.trace(work,'control',status='hermes_proactive_busy',
+                    source='scheduler' if code=='model_queue_busy' else 'worker')
+                self.agent.proactive.decision(work,'{"participation":"skip"}')
+                return replies.PreparedReply('',business_status='proactive_skip')
+            if code=='execution_timeout' and work.hermes_send_deadline is not None:
+                self.agent.proactive.trace(work,'control',status='hermes_continuation_expired',stage=work.model_stage)
             self.agent.proactive.trace(work,'error',status=code,model_attempts=work.model_attempts,stage=work.model_stage)
             if work.proactive is not None and code == 'candidate_expired':
                 self.backend.finish(work, 'expired', reason=code)
             else:
                 self.agent.audit(self.agent.store.finish,work.delivery,code)
             return replies.PreparedReply('',business_status='proactive_error') if work.proactive is not None else failure(code)
-        except asyncio.TimeoutError:
-            self.agent.proactive.trace(work,'error',status='execution_timeout',model_attempts=work.model_attempts,stage=work.model_stage)
-            self.agent.audit(self.agent.store.finish,work.delivery,'execution_timeout')
-            return replies.PreparedReply('',business_status='proactive_error') if work.proactive is not None else failure('execution_timeout')
 
     def proactive_charge_check(self,work,billing_request_id,*,replacing_attempt=None):
         if (work.proactive is None or getattr(work,'continuation',False)
@@ -552,10 +577,15 @@ class ModelRuntime:
         started=False;began=time.monotonic();kind='generation' if not tools else 'routing';transport={}
         work.model_stage=('generation' if getattr(work,'proactive_generation',False)
                           else 'decision' if work.proactive is not None else 'model')
-        try:
-            permitted_until=await self.backend.permissions.acquire(work,deadline,attempt_id=attempt)
+        def validate_dispatch():
             self.check(work,deadline,leases)
             if service_policy is not None:require(self.agent.services.policy(work.model_snapshot,work.request.conversation_id)==service_policy,'chat_service_revoked')
+
+        async def dispatch():
+            nonlocal started
+            validate_dispatch()
+            permitted_until=await self.backend.permissions.acquire(work,deadline,attempt_id=attempt)
+            validate_dispatch()
             require(time.monotonic()<permitted_until,'permission_expired')
             try:
                 self.usage.start(attempt,profile,admit_rollover=self.proactive_charge_check(
@@ -563,9 +593,25 @@ class ModelRuntime:
             except ServiceError as exc:
                 self.proactive_charge_denied(work,exc)
             started=True
+            if getattr(work,'hermes_pilot',False):
+                work.hermes_provider_started=True
             # No await/queue/tool work between the consumed permit and this HTTP.
-            result=await asyncio.wait_for(self.client.request(profile,body,timeout=max(.001,deadline-time.monotonic()),transport=transport),
+            return await asyncio.wait_for(self.client.request(profile,body,timeout=max(.001,deadline-time.monotonic()),transport=transport),
                                           max(.001,deadline-time.monotonic()))
+        try:
+            if getattr(work,'hermes_chat',False) and not getattr(work,'hermes_native_fallback',False):
+                try:
+                    result=await self.hermes.request(work,profile,body,deadline,validate_dispatch,dispatch)
+                except ProtocolError as exc:
+                    if (exc.code!='chat_hermes_busy' or not work.hermes_pilot or work.proactive is not None
+                            or work.hermes_provider_started):
+                        raise
+                    work.hermes_native_fallback=True
+                    self.agent.proactive.trace(work,'control',status='hermes_native_fallback',
+                        elapsed_ms=min(3600000,int((time.monotonic()-began)*1000)))
+                    result=await dispatch()
+            else:
+                result=await dispatch()
             if result.transport_error and work.proactive is not None:
                 self.agent.proactive.trace(work,'error',status='provider_unavailable',name=result.transport_error)
             actions=result.provider_actions or ((ProviderAction('web_search',None),) if web is not None else ())
