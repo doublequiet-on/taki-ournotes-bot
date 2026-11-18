@@ -86,9 +86,9 @@ def public_information_command(question):
     if player:
         return '/查玩家 ' + ' '.join(value for value in player.groups() if value)
     event = re.fullmatch(r'(?:(jp|hk|tw|kr|en|日服|国服|國服|台服|臺服|韩服|韓服|英服|国际服|國際服)\s*)?'
-                         r'(?:本期|这期|当前|最近)活动(?:的)?(加成|奖励|任务|卡池)', text, re.I)
+                         r'(?:本期|这期|当前|最近)活动(?:的)?(?:加成|奖励|任务|卡池)', text, re.I)
     if event:
-        return '/查活动 ' + ' '.join(value for value in event.groups() if value)
+        return '/查活动 ' + (event[1] + ' ' if event[1] else '') + '当前'
     arena = re.fullmatch(r'(?:(jp|hk|tw|kr|en|日服|国服|韩服|英服)\s*)?(.*?)竞技场(?:的)?(总览|日程|曲池|段位|奖励|榜单|排名|人数)?', text, re.I)
     if arena:
         region, band, mode = arena.groups()

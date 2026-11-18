@@ -77,6 +77,35 @@ class CurrentSource:
 
 
 class InformationQueryTests(unittest.TestCase):
+    def test_activity_list_is_default_and_id_contains_all_former_sections(self):
+        from ournotes_bot.commands import resolve_command
+        from ournotes_bot.sources.haneoka.activity_details import project_details
+
+        details = project_details({
+            'effects': [{'perRank': [{'rank': 1, 'percent': 10}], 'bonusType': 2}],
+            'rewards': [{'reward': {'name': '夹具材料'}, 'resourceCount': 5}],
+            'missions': [{'description': '完成一场演出'}],
+            'recruitments': [{'id': '18', 'title': '关联池'}],
+        })
+        repo = Repository(catalog(activities=(activity(2, '旧活动', end=NOW),
+                                               activity(5, '夹具活动', details=details)),
+                                  gachas=(gacha(18, '关联池'),)))
+        for command in ('/查活动', '/event', '/イベント', '/查活动 列表'):
+            with self.subTest(command=command):
+                result = resolve_command(command, repo).activity
+                self.assertEqual(result.views[0].layout, 'list')
+                self.assertEqual(tuple(row.command for row in result.views[0].rows), ('/查活动 5', '/查活动 2'))
+        result = resolve_command('/查活动 5', repo).activity
+        self.assertEqual(result.views[0].layout, 'activity-summary')
+        for value in ('档位1：+10%', '夹具材料', '完成一场演出', '/查卡池 18'):
+            self.assertIn(value, result.text)
+        for suffix in ('加成', '奖励', '任务', '卡池'):
+            for query in (suffix, '5 ' + suffix, 'hk ' + suffix):
+                retired = execute_activity(query, repo, now=NOW)
+                self.assertEqual(retired.status, 'invalid_arguments')
+                self.assertIn('已合入活动详情', retired.text)
+            self.assertNotIn(f'/查活动 5 {suffix}', result.text)
+
     def test_activity_bonus_filters_use_explicit_effects_and_keep_history_scope(self):
         from ournotes_bot.sources.haneoka.activity_details import project_details
 
@@ -91,7 +120,7 @@ class InformationQueryTests(unittest.TestCase):
         self.assertIn('加成乐队 · MyGO!!!!!', result.text)
         self.assertIn('加成属性 · 红色', result.text)
         self.assertEqual([fact.bonus_attribute for fact in first.details[0].facts], [1, 2])
-        self.assertIn('蓝色', execute_activity('1 加成', repo, now=NOW).text)
+        self.assertIn('蓝色', execute_activity('1', repo, now=NOW).text)
         self.assertEqual(execute_activity('历史 属性=未知', repo, now=NOW).status, 'invalid_arguments')
 
     def test_activity_rejects_ignored_sections_and_numeric_expressions(self):
@@ -100,9 +129,9 @@ class InformationQueryTests(unittest.TestCase):
             with self.subTest(query=query):
                 self.assertEqual(execute_activity(query, repo, now=NOW).status, 'invalid_arguments')
         self.assertEqual(repo.captures, 0)
-        candidates = execute_activity('重名 任务', repo, now=NOW)
+        candidates = execute_activity('重名', repo, now=NOW)
         self.assertEqual({row.command for row in candidates.views[0].rows},
-                         {'/查活动 2 任务', '/查活动 3 任务'})
+                         {'/查活动 2', '/查活动 3'})
         self.assertIn('活动 ID 2', execute_activity('２', repo, now=NOW).text)
 
     def test_history_matches_explicit_character_target_and_raw_type(self):
@@ -240,12 +269,12 @@ class InformationQueryTests(unittest.TestCase):
         repo, _ = self._current_repository(record)
         repo.capture_catalog = lambda: catalog(activities=(record,), gachas=(gacha(18, '已确认卡池'),),
                                                activity_calendars={'intl': ActivityCalendar((record,), '', '', '')})
-        for query in ('jp', 'jp 卡池', '1', '1 卡池'):
+        for query in ('jp', '1'):
             with self.subTest(query=query):
                 result = execute_activity(query, repo, now=NOW)
                 self.assertIn('/查卡池 18', result.text)
                 self.assertNotIn('/查卡池 19', result.text)
-        result = execute_activity('en 卡池', repo, now=NOW)
+        result = execute_activity('en', repo, now=NOW)
         self.assertIn('Haneoka intl', result.text)
         self.assertNotIn('/查卡池 18', result.text)
 
@@ -257,7 +286,7 @@ class InformationQueryTests(unittest.TestCase):
         repo, source = self._current_repository(activity(1, '活动'))
         source.value = replace(source.value, notes=(ACTIVITY_STALE_NOTE,),
                                songs=(replace(source.value.songs[0], enabled=False),))
-        result = execute_activity('', repo)
+        result = execute_activity('当前', repo)
         self.assertIn('歌曲 ID 101', result.text)
         self.assertIn('单曲榜未开放或尚未采集', result.text)
         self.assertNotIn('/查榜线 jp', result.text)
@@ -272,7 +301,7 @@ class InformationQueryTests(unittest.TestCase):
 
         repo, source = self._current_repository(activity(1, '活动'))
         source.value = replace(source.value, title='/查卡池 999')
-        result = resolve_command('/查活动', repo)
+        result = resolve_command('/查活动 当前', repo)
         with patch('ournotes_bot.application.replies.visual_asset', return_value=None):
             prepared = render_prepared_inner(result.activity.text, result, repo, 'zh')
         self.assertTrue(prepared.image)
@@ -399,7 +428,7 @@ class InformationQueryTests(unittest.TestCase):
             with self.subTest(term=term), self.assertRaises(ValueError):
                 named_matches(records, term)
 
-    def test_real_empty_arguments_keep_directory_and_current_modes(self):
+    def test_real_empty_arguments_keep_directory_current_pools_and_activity_list(self):
         repo = Repository(catalog(characters=(person(1, '高松灯'),),
                                   gachas=(gacha(1, '当前池'), gacha(2, '未来池', start=NOW + 1))))
         self.assertIn('/查角色 1', execute_character('  ', repo).text)
@@ -407,7 +436,12 @@ class InformationQueryTests(unittest.TestCase):
         self.assertIn('/查卡池 1', result.text)
         self.assertNotIn('/查卡池 2', result.text)
         live, source = self._current_repository(activity(1, '当前活动'))
-        self.assertEqual(execute_activity('  ', live).status, 'success')
+        result = execute_activity('  ', live)
+        self.assertEqual(result.status, 'success')
+        self.assertEqual(result.views[0].layout, 'list')
+        self.assertEqual(tuple(row.command for row in result.views[0].rows), ('/查活动 1',))
+        self.assertEqual(source.calls, [])
+        self.assertIn('实时活动', execute_activity('当前', live).text)
         self.assertEqual(source.calls, ['jp'])
 
     def test_character_directory_groups_all_roster_even_without_cards(self):
@@ -597,7 +631,7 @@ class InformationQueryTests(unittest.TestCase):
     def test_current_activity_same_id_and_dates_can_attach_static_cards(self):
         record = activity(1, '静态标题', bonus_cards=(CardRef(2, 7),), available_relations=frozenset({'bonus_cards'}))
         repo, source = self._current_repository(record)
-        result = execute_activity('', repo)
+        result = execute_activity('当前', repo)
         self.assertEqual(source.calls, ['jp'])
         self.assertIn('/查榜线 jp 锁定活动1 歌曲ID=101', result.text)
         self.assertIn('/查卡 7', result.text)
@@ -606,7 +640,7 @@ class InformationQueryTests(unittest.TestCase):
     def test_current_activity_does_not_repeat_live_challenge_as_static_related_song(self):
         record = activity(1, '活动', song_ids=(101, 102))
         repo, _ = self._current_repository(record)
-        result = execute_activity('', repo)
+        result = execute_activity('当前', repo)
         self.assertEqual(result.text.count('歌曲 ID 101'), 1)
         self.assertIn('/查榜线 jp 锁定活动1 歌曲ID=101', result.text)
         self.assertNotIn('/查曲 101', result.text)
@@ -620,11 +654,11 @@ class InformationQueryTests(unittest.TestCase):
         source.value=replace(source.value,banner='tracker:banner',songs=(replace(source.value.songs[0],jacket='tracker:jacket'),))
         song=SimpleNamespace(id=101,title='静态歌曲',jacket_url='verified:jacket')
         repo.capture_catalog=lambda:catalog(activities=(record,),songs=(song,))
-        answer=execute_activity('',repo)
+        answer=execute_activity('当前',repo)
         self.assertEqual(answer.views[0].hero_url,'verified:banner')
         self.assertEqual(next(r.image_url for r in answer.views[0].rows if r.kind=='song'),'verified:jacket')
         repo.capture_catalog=lambda:catalog(activities=(replace(record,end_at=NOW+1),),songs=(song,))
-        answer=execute_activity('',repo)
+        answer=execute_activity('当前',repo)
         self.assertEqual(answer.views[0].hero_url,'tracker:banner')
         self.assertEqual(next(r.image_url for r in answer.views[0].rows if r.kind=='song'),'tracker:jacket')
         source.value=replace(source.value,server='en')
@@ -635,12 +669,12 @@ class InformationQueryTests(unittest.TestCase):
         record = activity(1, '旧复刻', start=NOW - 1000, bonus_cards=(CardRef(2, 7),),
                           available_relations=frozenset({'bonus_cards'}))
         repo, _ = self._current_repository(record)
-        self.assertNotIn('/查卡 7', execute_activity('', repo).text)
+        self.assertNotIn('/查卡 7', execute_activity('当前', repo).text)
 
     def test_current_activity_matching_window_wrong_id_does_not_attach_cards(self):
         record = activity(2, '另一活动', bonus_cards=(CardRef(2, 7),), available_relations=frozenset({'bonus_cards'}))
         repo, _ = self._current_repository(record)
-        self.assertNotIn('/查卡 7', execute_activity('', repo).text)
+        self.assertNotIn('/查卡 7', execute_activity('当前', repo).text)
 
 
 class ActivityAnnouncementTests(unittest.TestCase):
@@ -891,7 +925,7 @@ class PublicQueryContractTests(unittest.TestCase):
         from ournotes_bot.natural_query.on_query import public_information_command
         self.assertEqual(public_information_command('玩家 9223372036854775807 jp'), '/查玩家 9223372036854775807 jp')
         self.assertEqual(public_information_command('MyGO竞技场人数'), '/查竞技场 MyGO 人数')
-        self.assertEqual(public_information_command('本期活动奖励'), '/查活动 奖励')
+        self.assertEqual(public_information_command('本期活动奖励'), '/查活动 当前')
         self.assertIsNone(public_information_command('玩家 99 jp 顺便猜一下密码'))
 
     def test_activity_sections_keep_conditions_unknown_and_explicit_links(self):
@@ -913,7 +947,7 @@ class PublicQueryContractTests(unittest.TestCase):
         from ournotes_bot.query.activity_query import overview_rows
         from ournotes_bot.query.contracts.info import InfoRow
         record = SimpleNamespace(details=sections, event_type_id=1, ranking_modes=('歌曲榜',))
-        ordered = overview_rows(record, (InfoRow('挑战曲', label='挑战歌曲', kind='song'),), '/查活动 1')
+        ordered = overview_rows(record, (InfoRow('挑战曲', label='挑战歌曲', kind='song'),))
         self.assertEqual(ordered[0].title, '活动类型与榜制')
         self.assertEqual(ordered[1].kind,'bonus-summary')
         self.assertEqual(ordered[1].children[0].children[0].title,'MyGO!!!!!')
@@ -932,7 +966,7 @@ class PublicQueryContractTests(unittest.TestCase):
                     preview=True,group='奖励卡牌',reference=(2,3)) for count,point in ((1,100),(1,200),(2,300)))
         record=SimpleNamespace(event_type_id=1,ranking_modes=(),details=(ActivitySection('加成',facts,True),ActivitySection('奖励',rewards,True)))
         rows=overview_rows(record,(InfoRow('已投影卡',kind='card',reference=(2,1)),
-                                  InfoRow('额外奖励关联',kind='card',reference=(2,1),tags=('奖励',))),'/查活动 1')
+                                  InfoRow('额外奖励关联',kind='card',reference=(2,1),tags=('奖励',))))
         bonuses=next(r for r in rows if r.group=='加成')
         self.assertEqual(len(bonuses.children),1)
         self.assertIn('+10～15%',bonuses.children[0].body[0])
@@ -944,7 +978,7 @@ class PublicQueryContractTests(unittest.TestCase):
         self.assertTrue(any(r.title=='已投影卡' for r in rows))
         self.assertTrue(any(r.title=='额外奖励关联' for r in rows))
         self.assertIn('所需积分：300',info_text((InfoView('活动',rows=rows),)))
-        self.assertNotIn('档位1',info_text((InfoView('活动',rows=rows),)))
+        self.assertIn('档位1',info_text((InfoView('活动',rows=rows),)))
         from ournotes_bot.query.activity_query import detail_rows
         self.assertIn('档位1：+10%', '\n'.join(v for r in detail_rows(record,'加成') for v in r.body))
 
