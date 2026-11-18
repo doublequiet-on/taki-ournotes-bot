@@ -355,6 +355,7 @@ class InformationQueryTests(unittest.TestCase):
         ambiguous = execute_activity('日程', repo, now=NOW)
         self.assertIn('暂不能唯一确定', ambiguous.text)
         self.assertEqual(ambiguous.calendar_time_status, 'unavailable')
+        self.assertTrue(ambiguous.calendar_time_withheld)
 
     def test_activity_merges_roles_by_card_type_and_id_and_keeps_known_partial_rewards(self):
         ref=CardRef(2,7)
@@ -868,19 +869,23 @@ class ActivityAnnouncementTests(unittest.TestCase):
         index=dict(observed_at='2026-10-26T00:00:00Z',rows=[row])
         full={**row,'text':'【イベント開催期間】\n2026/10/30(金) 15:00 ～ 2026/11/07(土) 14:59','text_truncated':False}
         notices=Mock();notices.read.side_effect=[index,{**index,'rows':[full]}]
-        result,note=ActivityAnnouncements(notices).next('jp',now)
+        result,note,withheld=ActivityAnnouncements(notices).next('jp',now)
+        self.assertFalse(withheld)
         self.assertEqual(result.title,'次のステージ');self.assertTrue(result.url.endswith('/jp/ja/announcements/10/'))
         self.assertEqual(notices.read.call_count,2)
         revision={**row,'id':11,'updatedAt':int(now),'title':'イベント「次のステージ」について'}
         revised={**revision,'text':'開催を中止します','text_truncated':False}
         revised_index={**index,'rows':[revision,row]}
         notices.read.side_effect=[revised_index,{**index,'rows':[revised]},{**index,'rows':[full]}]
-        result,note=ActivityAnnouncements(notices).next('jp',now)
+        result,note,withheld=ActivityAnnouncements(notices).next('jp',now)
+        self.assertTrue(withheld)
         self.assertIsNone(result);self.assertIn('延期或调整',note)
         notices.read.side_effect=[index,{**index,'observed_at':'different','rows':[full]}]
-        self.assertIsNone(ActivityAnnouncements(notices).next('jp',now)[0])
+        result,_,withheld=ActivityAnnouncements(notices).next('jp',now)
+        self.assertIsNone(result);self.assertTrue(withheld)
         notices.read.side_effect=[index,ChartDataError('missing body')]
-        result,note=ActivityAnnouncements(notices).next('jp',now)
+        result,note,withheld=ActivityAnnouncements(notices).next('jp',now)
+        self.assertFalse(withheld)
         self.assertIsNone(result);self.assertIn('暂不能确认',note)
         notices.read.side_effect=ChartDataError('unavailable')
         self.assertIn('读取失败',ActivityAnnouncements(notices).next('jp',now)[1])
@@ -891,17 +896,18 @@ class ActivityAnnouncementTests(unittest.TestCase):
         repo=Repository(catalog(activities=(activity(1,'最近一期',NOW-100,NOW),)))
         repo.activity_announcements=Mock()
         repo.activity_announcements.next.return_value=(AnnouncedActivity('下一期公告',NOW+100,
-             'https://haneoka.org/jp/ja/announcements/10/','fixture'),'')
+             'https://haneoka.org/jp/ja/announcements/10/','fixture'),'',False)
         result=execute_activity('日程',repo,now=NOW)
         self.assertIn('最近一期',result.text);self.assertIn('公告预告《下一期公告》将于',result.text)
         self.assertIn('/announcements/10/',result.text);self.assertNotIn('清 CP',result.text)
         self.assertNotIn('还不能确定',result.text)
         repo.activity_announcements.next.assert_called_once_with('jp',NOW)
-        announced, _ = repo.activity_announcements.next.return_value
-        repo.activity_announcements.next.return_value = (announced, '公告列表未完全核对。')
+        announced, _, _ = repo.activity_announcements.next.return_value
+        repo.activity_announcements.next.return_value = (announced, '公告列表未完全核对。', True)
         partial = execute_activity('下期', repo, now=NOW)
         self.assertIn('下一期公告', partial.text)
         self.assertEqual(partial.calendar_time_status, 'related')
+        self.assertTrue(partial.calendar_time_withheld)
         self.assertIsNone(partial.calendar_time)
 
 

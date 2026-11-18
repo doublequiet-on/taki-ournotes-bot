@@ -2263,7 +2263,7 @@ class NativeRuntimeTests(Fixture,unittest.IsolatedAsyncioTestCase):
         self.repo.metadata['info_catalog_available']={'activities':True}
         self.repo.cache_state='fresh'
         self.repo.activity_announcements=Mock()
-        self.repo.activity_announcements.next.return_value=(None,'')
+        self.repo.activity_announcements.next.return_value=(None,'',False)
         for seq,(question,now,reminder) in enumerate((
             ('这期活动啥时候结束啊',end-10,True),
             ('这期活动结束了吗',end,False),
@@ -5199,7 +5199,7 @@ class ChatSourceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
 
         now=time.time()
         self.repo.activity_announcements = Mock()
-        self.repo.activity_announcements.next.return_value = (None, '')
+        self.repo.activity_announcements.next.return_value = (None, '', False)
         self.repo.activity_calendars={
             'jp': ActivityCalendar((ActivityInfo(11,'合成日服活动',{},start_at=now-3600,end_at=now+3600),),
                                    'jp-r1','jp-fixture','observation-jp'),
@@ -5275,7 +5275,7 @@ class ChatSourceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
         today_end = now.replace(hour=20,minute=59,second=59)
         tomorrow_end = today_end.replace(hour=0,minute=0,second=3)+timedelta(days=1)
         self.repo.activity_announcements = Mock()
-        self.repo.activity_announcements.next.return_value = (None, '')
+        self.repo.activity_announcements.next.return_value = (None, '', False)
         current = ActivityInfo(11,'合成日服活动',{},start_at=self.now-3600,end_at=today_end.timestamp())
         next_day = replace(current,end_at=tomorrow_end.timestamp())
         prior = replace(current,end_at=self.now-5)
@@ -8727,6 +8727,42 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(attempts),3)
         self.assertEqual(call_limits,[None,1,None],str(plan['parts']))
         self.assertIn('[出处](https://example.org/skill)，先看当前等级',plan['parts'][0]['text'])
+
+    async def proactive_next_activity(self, *, withheld):
+        from ournotes_bot.application.chat_capabilities import WebCapability
+        from ournotes_bot.domain.info_catalog import ActivityCalendar
+        from ournotes_bot.domain.model_calls import ProviderAction
+        self.enable_lightweight_fact_fixture()
+        self.agent.proactive.one_pass_groups=frozenset({'g1'})
+        self.agent.proactive.owners()[1].web=Mock(return_value=WebCapability(1,10000,'fixture'))
+        self.repo.activity_calendars={'jp':ActivityCalendar((),'fixture-release','fixture','fixture')}
+        self.repo.activity_announcements=Mock()
+        self.repo.activity_announcements.next.return_value=(None,'公告有调整。' if withheld else '',withheld)
+        responses=iter([
+            self.result(json.dumps(dict(participation='reply',text='',delay_seconds=None,
+                                        public_query='Our Notes JP 次回 日程',clarification=''))),
+            replace(self.result('没有查到'),provider_actions=(ProviderAction('web_search',1),),native_calls=1)])
+        call_limits=[]
+        async def respond(profile,body,**kwargs):
+            call_limits.append(body.get('max_tool_calls'))
+            return next(responses)
+        self.client.request.side_effect=respond
+        value=self.observation('下期日服活动什么时候开始？')
+        self.tick+=1.6
+        plan,attempts,candidate=await self.candidate(value)
+        self.assertEqual(candidate[0].evidence_route,'activity_time')
+        self.repo.activity_announcements.next.assert_called_once()
+        return plan,len(attempts),call_limits.count(1)
+
+    async def test_proactive_calendar_respects_withheld_announcement_time(self):
+        plan,attempts,web_calls=await self.proactive_next_activity(withheld=True)
+        self.assertEqual((attempts,web_calls),(1,0))
+        self.assertIn('还不知道下期活动什么时候开始',plan['parts'][0]['text'])
+
+    async def test_proactive_calendar_can_search_when_notice_is_missing(self):
+        plan,attempts,web_calls=await self.proactive_next_activity(withheld=False)
+        self.assertEqual((attempts,web_calls),(2,1))
+        self.assertEqual(plan['parts'],[])
 
     async def test_public_game_lookup_clarifies_missing_card_without_search(self):
         self.enable_lightweight_fact_fixture()

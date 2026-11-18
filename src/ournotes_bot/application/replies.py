@@ -907,7 +907,7 @@ def render_prepared(reply, result, repository, locale, candidate=None):
 
 
 def render_prepared_inner(reply, result, repository, locale, candidate=None):
-    is_gacha = isinstance(result, CommandResult) and result.parsed[0] == 'gacha'
+    is_info = isinstance(result, CommandResult) and (result.info is not None or result.activity is not None)
     try:
         if isinstance(result, QueryResult) and result.meta is not None:
             from ..rendering.song_metrics_layout import render, LAYOUT_VERSION
@@ -921,12 +921,12 @@ def render_prepared_inner(reply, result, repository, locale, candidate=None):
                 visible_indices=() if candidate and candidate.selected else tuple(range(p.start+1,p.stop+1))) for p in parts)
             return pages[0] if len(pages)==1 else PreparedReply(reply,pages=pages,context=candidate)
 
-        if isinstance(result, CommandResult) and (result.info is not None or result.activity is not None):
+        if is_info:
             from ..rendering.info_layout import render_info
             answer = result.info if result.info is not None else result.activity
             is_activity = result.activity is not None
             prefixes = (('/查活动 ', '/查榜线 ', '/查卡池 ') if is_activity else
-                        ('/查卡池 ', '/查活动 ', '/查卡 ', '/查留影卡 ') if is_gacha else ())
+                        ('/查卡池 ', '/查活动 ', '/查卡 ', '/查留影卡 ') if result.parsed[0] == 'gacha' else ())
             related_commands = {row.command for view in answer.views for row in view.rows
                                 if row.command.startswith(prefixes)}
             pages = []
@@ -936,8 +936,7 @@ def render_prepared_inner(reply, result, repository, locale, candidate=None):
                 else:
                     commands = tuple(dict.fromkeys(line for line in page.text.splitlines()
                                                    if line in related_commands))
-                page_reply = PreparedReply(page.text, page.image, complete_text=True,
-                                           keep_text_lines=is_activity or is_gacha)
+                page_reply = PreparedReply(page.text, page.image, complete_text=True, keep_text_lines=True)
                 caption = '\n'.join(commands)
                 # Leave room for the platform mention, material URL and continuation count.
                 if len(caption) <= 1000:
@@ -946,7 +945,7 @@ def render_prepared_inner(reply, result, repository, locale, candidate=None):
                     pages.extend((page_reply, PreparedReply(caption, keep_text_lines=True)))
             if pages:
                 return pages[0] if len(pages) == 1 else PreparedReply(reply, pages=tuple(pages), complete_text=True)
-            return PreparedReply(answer.text, complete_text=True, keep_text_lines=is_activity or is_gacha)
+            return PreparedReply(answer.text, complete_text=True, keep_text_lines=True)
         full = None if result is not None and result.cutoff is not None else (song_detail_reply(result, repository, locale, candidate) or
                 complete_list_reply(result, repository, locale, candidate) or
                 complete_detail_reply(result, repository, locale, candidate) or
@@ -984,9 +983,8 @@ def render_prepared_inner(reply, result, repository, locale, candidate=None):
     if (image is None and result is not None and result.catalog is not None
             and result.catalog.request.mode == "art" and not result.catalog.error):
         reply += "\n卡面图片暂不可用，请稍后重试。"
-    is_info = isinstance(result, CommandResult) and (result.info is not None or result.activity is not None)
     return PreparedReply(reply, image, complete_text=is_info or result is not None and result.cutoff is not None,
-                         context=candidate, keep_text_lines=is_gacha or bool(
+                         context=candidate, keep_text_lines=is_info or bool(
                              result and result.catalog and result.catalog.is_candidate_list))
 
 

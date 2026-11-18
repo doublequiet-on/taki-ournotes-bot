@@ -50,6 +50,7 @@ GROUP_PANEL_ITEMS = [
     {"type": "command", "name": "查谱面", "desc": "歌名或ID，可选难度"},
     {"type": "command", "name": "查榜线", "desc": "四服榜线趋势与排名表"},
     {"type": "command", "name": "查活动", "desc": "日服活动列表、详情与当前活动"},
+    {"type": "command", "name": "一图流", "desc": "日服当前或最近一期活动图"},
     {"type": "command", "name": "查卡池", "desc": "日服卡池列表、当前／历史与UP卡"},
     {"type": "command", "name": "查角色", "desc": "人物档案、乐队目录与关联卡"},
     {"type": "command", "name": "查卡", "desc": "成员卡列表或ID详情"},

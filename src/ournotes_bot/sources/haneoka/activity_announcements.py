@@ -56,14 +56,15 @@ class ActivityAnnouncements:
     def __init__(self, notices=None):
         self.notices = notices or Notices()
 
-    def next(self, server, now):
+    def next(self, server, now) -> tuple[AnnouncedActivity | None, str, bool]:
+        """Return the notice, display note and whether the available evidence precludes a unique date."""
         deadline = min(time.monotonic()+8, CURRENT_CONTENT_DEADLINE.get() or float('inf'))
         locale = 'ja' if server == 'jp' else 'en'
         index_url = f'https://haneoka.org/{server}/{locale}/announcements/'
         try:
             snapshot = self.notices.read(server, deadline)
         except ChartDataError:
-            return None, '下一期公告暂时读取失败，不能据此判断是否已发布。'
+            return None, '下一期公告暂时读取失败，不能据此判断是否已发布。', False
         pattern = JP_TITLE if server == 'jp' else EN_TITLE
         candidates = [row for row in snapshot['rows'] if pattern.search(row['title'])
                       and (row['startAt'] is None or row['startAt'] <= now)]
@@ -71,14 +72,15 @@ class ActivityAnnouncements:
         changed = {pattern.search(row['title'])[1] for row in candidates if CHANGED.search(row['title'])}
         found = []
         incomplete = len(candidates) > 3
+        inconsistent_snapshot = False
         for row in candidates[:3]:
             try:
                 detail = self.notices.read(server, deadline, row['id'])
-                if detail['observed_at'] != snapshot['observed_at']:
-                    raise ChartDataError('Notice snapshot changed')
                 full = detail['rows'][0]
-                if any(full[key] != row[key] for key in ('id','title','startAt','endAt','updatedAt')):
-                    raise ChartDataError('Notice identity changed')
+                if (detail['observed_at'] != snapshot['observed_at'] or
+                        any(full[key] != row[key] for key in ('id','title','startAt','endAt','updatedAt'))):
+                    inconsistent_snapshot = incomplete = True
+                    continue
                 if BODY_CHANGED.search(full.get('text', '')):
                     changed.add(pattern.search(full['title'])[1])
                 value = announced_time(full, server)
@@ -91,12 +93,12 @@ class ActivityAnnouncements:
             elif value is None:
                 incomplete = True
         if any(row.title in changed for row in found):
-            return None, f'这期预告另有延期或调整公告，开始时间需再核对。\n[查看活动公告]({index_url})'
+            return None, f'这期预告另有延期或调整公告，开始时间需再核对。\n[查看活动公告]({index_url})', True
         if found:
             times = {(r.title, r.start_at) for r in found}
             # Multiple future announcements are not enough to establish which is next.
             if len(times) == 1:
-                return found[0], '公告列表未完全核对；以上时间仅对应这条已读取的活动预告。' if incomplete else ''
-            return None, '读到了多条不同的未来活动时间，暂不能唯一确定下一期。'
+                return found[0], '公告列表未完全核对；以上时间仅对应这条已读取的活动预告。' if incomplete else '', incomplete
+            return None, '读到了多条不同的未来活动时间，暂不能唯一确定下一期。', True
         note = '公告正文缺失、时间不明确或未能完整核对，暂不能确认下一期时间。' if incomplete else '已读取的公告中尚未找到明确的下一期开启时间。'
-        return None, note + f'\n[查看活动公告]({index_url})'
+        return None, note + f'\n[查看活动公告]({index_url})', bool(changed) or inconsistent_snapshot

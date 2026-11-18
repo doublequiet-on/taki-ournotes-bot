@@ -1623,7 +1623,8 @@ class ChatAgent:
             runtime.check(work, deadline, leases)
             text, status = self.calendar_reply(activity_evidence, relative_end_day, queried_day)
             if public_plan:
-                if status=='source_unavailable':
+                items = activity_evidence.get('data', {}).get('items', ())
+                if status=='source_unavailable' and not any(item.get('time_withheld') for item in items):
                     return await self.public_lookup_reply(work,lookup_query,messages,user,group,deadline,leases,local_checked=True)
                 return replace(evidence_reply(text,status),evidence=leases,evidence_deadline=work.content_deadline)
             if retain_turn:self.audit(self.store.generated,work.delivery,text)
@@ -2168,6 +2169,8 @@ class ChatAgent:
             elif info.calendar_time_status != 'exact' and status == 'success':
                 status = 'not_available'
             item.update(server=server,status=status,text=result.texts[0])
+            if info.calendar_time_withheld:
+                item['time_withheld'] = True
             if status == 'success' and info.calendar_time is not None:
                 item['calendar_time'] = asdict(info.calendar_time)
                 if info.calendar_source_url:

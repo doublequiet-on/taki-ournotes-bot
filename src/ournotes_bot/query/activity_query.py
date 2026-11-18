@@ -664,7 +664,9 @@ def _calendar(server, mode, repository, now):
     active_tie = len(active) > 1
     recent_tie = len(ended) > 1 and ended[0].end_at == ended[1].end_at
     next_tie = len(future) > 1 and future[0].start_at == future[1].start_at
+    time_withheld = active_tie
     if mode == '下期':
+        time_withheld = next_tie or (upcoming is not None and unknown)
         if next_tie:
             lines.append('多期活动同时开始，暂不能唯一确定下期。')
         elif upcoming and not unknown:
@@ -707,7 +709,9 @@ def _calendar(server, mode, repository, now):
     if not upcoming and (mode == '下期' or not active):
         notices = getattr(repository, 'activity_announcements', None)
         if notices is not None:
-            announced, notice_note = notices.next(server, now)
+            announced, notice_note, notice_withheld = notices.next(server, now)
+            if mode == '下期':
+                time_withheld |= notice_withheld
             if announced:
                 evidence_expires_at = announced.expires_at
                 # With unread candidate notices this date is verified for the named event only.
@@ -725,7 +729,8 @@ def _calendar(server, mode, repository, now):
         lines.append('当前使用旧缓存，时间可能已有调整。')
     text = '\n'.join((label + ' · 静态活动日程', *lines))
     return InfoAnswer(text, evidence_expires_at=evidence_expires_at,
-                      calendar_time_status=time_status, calendar_time=exact_time, calendar_source_url=calendar_source_url)
+                      calendar_time_status=time_status, calendar_time=exact_time, calendar_source_url=calendar_source_url,
+                      calendar_time_withheld=time_withheld)
 
 
 def execute_activity(query, repository, *, now=None):

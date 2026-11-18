@@ -260,7 +260,9 @@ def execute(tool,args,question,repository,*,entity_evidence:tuple[EntityEvidence
         require(spec is not None and not isinstance(spec,str),'invalid_argument')
         if tool.kind=='cutoff': spec=QuerySpec('event_cutoff',cutoff_request=spec)
         result=resolve_query(spec,repository)
-        return ToolOutput((answer_for(spec,repository,result=result),),(result,))
+        status = result.cutoff.status if tool.kind == 'cutoff' else None
+        return ToolOutput((answer_for(spec,repository,result=result),),(result,),
+                          'ok' if status == 'success' else status)
     require(tool.kind=='info','tool_unregistered')
     kind,query=args['kind'],args['query'].strip()
     require(not re.search(r'[\r\n\\/;`]|https?:|<@',query,re.I),'tool_arguments_invalid')

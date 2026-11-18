@@ -47,7 +47,7 @@ class MenuLimitsTests(unittest.TestCase):
             "查曲", "查谱面", "查榜线", "查卡", "查留影卡", "查卡面",
             "查留影卡面", "查", "聊", "数据状态", "查激奏舞台", "查激奏榜线",
             "帮助",
-            "继续", "详情", "查活动", "查卡池", "查角色",
+            "继续", "详情", "查活动", "一图流", "查卡池", "查角色",
         })
         for item in GROUP_PANEL_ITEMS:
             self.assertIn("/" + item["name"], HELP_TEXTS["zh"])
@@ -63,7 +63,7 @@ class PanelUpdateTests(unittest.IsolatedAsyncioTestCase):
         panels = {scope: {"panel_id": scope, "panel": {
             "remark": "ournotes-qq-bot-" + scope, "items": [
                 item for item in (GROUP_PANEL_ITEMS if scope == "group" else PANEL_ITEMS)
-                if item["name"] != "查榜线"] + [
+                if item["name"] not in {"查榜线", "一图流"}] + [
                     {"type": "command", "name": "查玩家", "desc": "按公开ID查询四服玩家资料与名片"}]}}
             for scope in ("c2c", "group")}
         panels["group"]["panel"]["items"].append({"type": "command", "name": "查缩写", "desc": "查昵称"})

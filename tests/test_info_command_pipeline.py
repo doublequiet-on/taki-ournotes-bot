@@ -281,6 +281,39 @@ class InfoCommandPipelineTests(unittest.TestCase):
             self.assertEqual(continued.pages, cursor.remaining)
             execute.assert_called_once()
 
+    def test_info_fallback_keeps_clickable_commands_whole_at_group_text_boundary(self):
+        from ournotes_bot.application.replies import expand_replies, fallback_cursor
+
+        cases = (
+            ('/查活动 1', 'activity_query.execute_activity', '/查榜线 jp 锁定活动1 总榜'),
+            ('/查角色 1', 'character_query.execute_character', '/查卡 角色ID=123'),
+            ('/查卡池 12', 'gacha_query.execute_gacha', '/查活动 123'),
+        )
+        for query, executor, command in cases:
+            # The complete command straddles the first 1400-character group chunk.
+            text = '文' * 1394 + '\n' + command + '\n' + '尾' * 200
+            views = (InfoView('结果', rows=(InfoRow('相关查询', command=command),)),)
+            answer = InfoAnswer(text, views=views)
+            rendered = (InfoPage(text, b'image', (command,)),)
+            for mode in ('upload_failure', 'render_failure', 'text_only'):
+                with self.subTest(query=query, mode=mode), \
+                     patch('ournotes_bot.query.' + executor, return_value=answer) as execute, \
+                     patch('ournotes_bot.rendering.info_layout.render_info') as render:
+                    if mode == 'render_failure':
+                        render.side_effect = ValueError('image budget')
+                    else:
+                        render.return_value = rendered if mode == 'upload_failure' else ()
+                    reply = _prepare_reply(query, self.repo, self.parser)
+                    if mode == 'upload_failure':
+                        self.assertEqual(reply.image, b'image')
+                        parts = fallback_cursor(reply, text_limit=1500).remaining
+                    else:
+                        self.assertIsNone(reply.image)
+                        parts = expand_replies([reply], text_limit=1500)
+                    self.assertEqual(''.join(part.text for part in parts), text)
+                    self.assertEqual(sum(part.text.splitlines().count(command) for part in parts), 1)
+                    execute.assert_called_once()
+
     def test_image_pages_keep_complete_per_page_fallback_and_continue_saved_bytes(self):
         pages = tuple(SimpleNamespace(text=f'完整第{i}页', image=f'image{i}'.encode()) for i in range(8))
         with patch('ournotes_bot.query.gacha_query.execute_gacha', return_value=self.answer) as execute, \

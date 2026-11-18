@@ -71,6 +71,7 @@ class InfoAnswer:
     calendar_time_status: Literal["exact", "related", "unavailable"] | None = None
     calendar_time: CalendarTime | None = None
     calendar_source_url: str | None = None
+    calendar_time_withheld: bool = False
 
 
 def row_text(row: InfoRow) -> str:

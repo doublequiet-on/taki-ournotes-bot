@@ -319,6 +319,18 @@ class CutoffQueryV2Tests(unittest.TestCase):
             self.assertEqual(result.cutoff.request,expected.request)
             self.assertEqual(text,expected.text)
             self.assertIn('不同服务器',parser.answer('/问 查榜线 hk jp 100',repo))
+            from ournotes_bot.natural_query.native_tools import TOOLS, execute
+            for question, direct in (('这期活动总榜多少', 'jp 总榜'), ('日服活动总榜现在多少', 'jp 总榜'),
+                                     ('活動的綜合榜多少分', 'jp 总榜'), ('hk 活动榜线T100多少', 'hk T100')):
+                expected = self.ask(direct)
+                self.assertEqual(parser.answer_with_plan('/问 ' + question, repo)[1].cutoff.request, expected.request)
+                receipt = execute(TOOLS['event_cutoff'], {}, question, repo)
+                self.assertEqual(receipt.results[0].cutoff.request, expected.request)
+                self.assertEqual(receipt.status, 'ok' if expected.status == 'success' else expected.status)
+            for invalid in ('这期活动歌曲ID=101榜线多少', '活动夢我夢中榜线多少'):
+                receipt = execute(TOOLS['event_cutoff'], {}, invalid, repo)
+                self.assertEqual(receipt.status, 'invalid_arguments')
+                self.assertIn('去掉歌名', receipt.texts[0])
             model.assert_not_called()
 
     def test_closed_song_and_holes_do_not_move_ordinal_or_rank(self):  # A15/A23

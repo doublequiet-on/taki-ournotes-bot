@@ -230,6 +230,9 @@ def parse_natural_cutoff(question: str) -> CutoffRequest | None:
         return parse_cutoff(server + ' ' + re.sub(r'^(?:查)?榜[线線]\s*', '', text))
     if re.search(r'积分榜|積分榜|活动积分|活動積分', text):
         return CutoffRequest(server, error='只查询活动挑战分数榜。', code='unsupported')
+    # These are qualifiers for a current board. Keep named events and song selectors intact.
+    text = re.sub(r'^(?:(?:这期|這期|本期|当前|當前)(?:的)?\s*)?(?:活动|活動)(?:的)?\s*',
+                  '', text)
     overview = re.sub(r"[\s?？。的]", "", text).replace("線", "线").replace("檔", "档")
     if re.fullmatch(r"(?:现在|現在|当前|當前|这期|這期|本期)?(?:全部|所有)?(?:活动|活動)?(?:歌曲)?(?:榜线|档线|歌曲榜)(?:现在|現在)?(?:多少|是多少|多少分)?", overview):
         return CutoffRequest(server)
