@@ -4,6 +4,7 @@
 # Pos: Query / Deterministic character information.
 # Effects: Reads the established local alias registry; no model or source calls.
 import re
+import unicodedata
 
 from ..data import character_identity, normalize, resolve_character_alias
 from .contracts.info import InfoAnswer, InfoRow, InfoView
@@ -11,6 +12,7 @@ from .entity_lexicon import information_alias_targets, character_name_variants, 
 from .info_query import answer, available, footer, text_value, unavailable
 
 HELP = '/查角色：按乐队列出角色；/查角色 名称、昵称或ID；/查角色 乐队名或乐队=MyGO。'
+SINGLE_LATIN_LETTER = re.compile(r'[a-z]')
 FIELD_LABELS = {
     'nickname': '别名', 'englishName': '英文名', 'bandPart': '乐队担当',
     'voiceActor': '配音', 'catchCopy': '角色介绍', 'description': '简介',
@@ -44,7 +46,9 @@ def _band_members(people, query):
         return found
     targets = {normalize(target) for kind, target in information_alias_targets(query) if kind == 'band'}
     found = tuple(p for p in people if targets.intersection(_band_names(p)))
-    return found or tuple(p for p in people if any(needle in name for name in _band_names(p)))
+    if found or SINGLE_LATIN_LETTER.fullmatch(needle):
+        return found
+    return tuple(p for p in people if any(needle in name for name in _band_names(p)))
 
 
 def _directory(people, catalog, *, candidate=False):
@@ -91,7 +95,8 @@ def _detail(person, catalog):
 
 def execute_character(query, repository):
     query = query.strip()
-    if query and not normalize(query):
+    needle = normalize(query)
+    if query and (not needle or (needle.isdecimal() and not unicodedata.normalize('NFKC', query).isdecimal())):
         return InfoAnswer(HELP, 'invalid_arguments')
     catalog = repository.capture_catalog()
     if not available(catalog, 'characters'):
@@ -110,7 +115,6 @@ def execute_character(query, repository):
         if found:
             return _directory(found, catalog)
         return answer((InfoView('角色目录', '没有找到这个乐队。', footer=(*footer(catalog), HELP)),), 'no_results')
-    needle = normalize(query)
     exact = tuple(p for p in people if needle == str(p.id)) if needle.isdecimal() else tuple(p for p in people if needle in _names(p))
     if exact:
         return _detail(exact[0], catalog) if len(exact) == 1 else _directory(exact, catalog, candidate=True)
@@ -136,13 +140,13 @@ def execute_character(query, repository):
         if len(found) == 1 and not band_aliases:
             return _detail(found[0], catalog)
         return _directory(found, catalog, candidate=bool(character_aliases))
-    found = tuple(p for p in people if any(needle in n for n in _names(p))
-                  or (re.fullmatch(r"[\u3400-\u9fff]", needle)
-                      and any(needle in n for name in (p.name, *p.names.values()) for n in character_name_variants(name))))
-    if not found:
+    if not SINGLE_LATIN_LETTER.fullmatch(needle):
+        found = tuple(p for p in people if any(needle in n for n in _names(p))
+                      or (re.fullmatch(r"[\u3400-\u9fff]", needle)
+                          and any(needle in n for name in (p.name, *p.names.values()) for n in character_name_variants(name))))
+        if found:
+            return _detail(found[0], catalog) if len(found) == 1 else _directory(found, catalog, candidate=True)
         found = tuple(p for p in people if any(needle in normalize(n) for n in (p.band, *p.band_names.values()) if n))
         if found:
             return _directory(found, catalog)
-    if found:
-        return _detail(found[0], catalog) if len(found) == 1 else _directory(found, catalog, candidate=True)
     return answer((InfoView('角色目录', '没有找到符合条件的角色。', footer=(*footer(catalog), HELP)),), 'no_results')

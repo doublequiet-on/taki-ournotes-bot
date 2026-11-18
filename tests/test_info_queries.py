@@ -250,6 +250,28 @@ class InformationQueryTests(unittest.TestCase):
         repo = Repository(catalog(characters=(person(11, '1'),)))
         self.assertEqual(execute_character('1', repo).status, 'no_results')
 
+    def test_character_id_rejects_digits_joined_by_name_normalization(self):
+        repo = Repository(catalog(characters=(person(1, '高松灯'), person(12, '千早爱音'))))
+        for term in ('-1', '－１', '1 2', '1-2'):
+            with self.subTest(term=term):
+                self.assertEqual(execute_character(term, repo).status, 'invalid_arguments')
+        self.assertEqual(execute_character(' １ ', repo).views[0].title, '高松灯')
+        self.assertEqual(execute_character('01', repo).status, 'no_results')
+
+    def test_single_latin_letter_requires_an_exact_name_or_alias(self):
+        people = (person(1, 'Tomori', 'MyGO!!!!!'), person(2, 'Nyamu', 'Ave Mujica'))
+        repo = Repository(catalog(characters=people))
+        for term in ('m', '乐队=m'):
+            with self.subTest(term=term):
+                self.assertEqual(execute_character(term, repo).status, 'no_results')
+        self.assertEqual(execute_character('Tomo', repo).views[0].title, 'Tomori')
+        millsage = person(3, '伊沢なつめ', 'millsage')
+        repo = Repository(catalog(characters=(*people, millsage)))
+        for term in ('Ｍ', '乐队=m'):
+            with self.subTest(term=term):
+                result = execute_character(term, repo)
+                self.assertEqual([row.command for row in result.views[0].rows], ['/查角色 3'])
+
     def test_character_card_counts_deduplicate_multicharacter_support(self):
         member = card(1)
         support = card(1, support=True, people=(1, 1, 2))

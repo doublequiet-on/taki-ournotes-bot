@@ -497,6 +497,15 @@ def parse_query(content: str) -> tuple[str, str, str | int | None] | None:
     return None
 
 
+def split_joined_info_head(head: str) -> tuple[str, str] | None:
+    if head.startswith("查角色卡"):
+        return None
+    for name in ("查活动", "查卡池", "查角色"):
+        if head.startswith(name) and head != name:
+            return name, head[len(name):]
+    return None
+
+
 def _command_tip(content: str) -> str | None:
     text = _clean_message(content)
     if not text:
@@ -506,10 +515,11 @@ def _command_tip(content: str) -> str | None:
     canonical = CANONICAL_BY_LOCALE[locale]
     parts = text.split(None, 1)
     first, rest = parts[0], parts[1] if len(parts) > 1 else ""
-    for name in ("查活动", "查卡池", "查角色"):
-        if first.startswith(name) and first != name and not first.startswith("查角色卡"):
-            argument = first[len(name):] + (" " + rest if rest else "")
-            return tr(locale, "missing_space", command="/" + name, argument=argument)
+    joined = split_joined_info_head(first)
+    if joined:
+        name, argument = joined
+        argument += " " + rest if rest else ""
+        return tr(locale, "missing_space", command="/" + name, argument=argument)
     if any(first.casefold().startswith(name) for name in UNAVAILABLE_COMMANDS):
         return tr(locale, "unavailable")
     kind = ALIASES.get(first.casefold())

@@ -15,7 +15,7 @@ from ..natural_query.parser import LocalQueryParser
 from ..natural_query.query_agent import is_ai_request
 from ..sources.chart_data import ChartDataError, load_chart_data, load_chart_score
 from ..commands import (CommandResult, handle_command, locale_for, page_notice,
-                       page_slice, resolve_command, split_commands)
+                       page_slice, resolve_command, split_commands, split_joined_info_head)
 from ..config import QQ_PASSIVE_REPLY_LIMIT, REPLY_ORDER_TIMEOUT_SECONDS
 from ..data import SongRepository
 from ..i18n import tr
@@ -76,8 +76,10 @@ def recognizes_message(content: str) -> bool:
         return True
     for text in split_commands(content):
         head = text.split(None, 1)[0].casefold()
+        joined = split_joined_info_head(head)
         if (head in ALIASES or head in UNAVAILABLE_COMMANDS
                 or head in {"查角色", "查卡池", "查活动", "查竞技场", "查玩家", "event", "イベント"}
+                or (joined and joined[0] == "查角色")
                 or text.casefold() in specials or parse_operation(text) is not None or is_ai_request(text)):
             return True
     return False
@@ -130,6 +132,12 @@ class PreparedReply:
     evidence: tuple = ()
     evidence_deadline: float | None = None  # Monotonic; never extended by delivery/ACK.
     keep_text_lines: bool = False
+    image_caption: str = ""
+
+    @property
+    def outbound_image_caption(self):
+        progress = self.context.image_caption if isinstance(self.context, DeliveryCursor) else ""
+        return "\n".join(part for part in (self.image_caption, progress) if part) or " "
 
     @property
     def passive_slots(self):
@@ -167,14 +175,15 @@ class DeliveryCursor:
 
     @property
     def retained_bytes(self):
-        return sum(len(p.image or b'') + len(p.text.encode('utf-8')) for p in self.remaining)
+        return sum(len(p.image or b'') + len(p.text.encode('utf-8')) + len(p.image_caption.encode('utf-8'))
+                   for p in self.remaining)
 
 
 def fallback_cursor(reply, *, text_limit=1800):
     previous=reply.context if isinstance(reply.context,DeliveryCursor) else None
     query=previous.query_context if previous else reply.context
     text = reply.text.removesuffix(previous.text_progress) if previous else reply.text
-    fallback = replace(reply, text=text, image=None, context=query, fallback_texts=())
+    fallback = replace(reply, text=text, image=None, context=query, fallback_texts=(), image_caption='')
     pages = _split_reply_text(fallback, text_limit - 100)
     if previous:
         pages += previous.remaining
@@ -916,10 +925,17 @@ def render_prepared_inner(reply, result, repository, locale, candidate=None):
                     check_geometry(source.size)
                     source.load()
                     return ImageOps.contain(source.convert('RGB'), size)
-            pages = tuple(PreparedReply(page.text, page.image, complete_text=True)
-                          for page in render_info(answer, load=information_asset))
+            pages = []
+            for page in render_info(answer, load=information_asset):
+                caption = '\n'.join(page.commands) if result.parsed[0] == 'character' else ''
+                # Keep room for the group material URL, mention and delivery progress.
+                if len(caption) <= 1000:
+                    pages.append(PreparedReply(page.text, page.image, complete_text=True, image_caption=caption))
+                else:
+                    pages.append(PreparedReply(page.text, page.image, complete_text=True))
+                    pages.append(PreparedReply(caption, keep_text_lines=True))
             if pages:
-                return pages[0] if len(pages) == 1 else PreparedReply(reply, pages=pages, complete_text=True)
+                return pages[0] if len(pages) == 1 else PreparedReply(reply, pages=tuple(pages), complete_text=True)
             return PreparedReply(answer.text, complete_text=True)
         full = None if result is not None and result.cutoff is not None else (song_detail_reply(result, repository, locale, candidate) or
                 complete_list_reply(result, repository, locale, candidate) or

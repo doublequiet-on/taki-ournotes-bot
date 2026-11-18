@@ -29,7 +29,7 @@ class InformationLayoutTests(unittest.TestCase):
     def test_roster_keeps_band_headers_and_names_but_commands_only_in_text(self):
         rows=tuple(InfoRow(f'角色{i}',(f'角色 ID {i}',),image_url=f'synthetic:{i}',
                           command=f'/查角色 {i}',group=f'乐队{i//5}') for i in range(25))
-        view=InfoView('角色目录',rows=rows,layout='directory')
+        view=InfoView('角色目录',rows=rows,layout='directory',presentation='character')
         drawn=[];original=info_layout.Canvas.text
         def capture(canvas,x,y,value,*args,**kwargs):
             drawn.append(str(value));return original(canvas,x,y,value,*args,**kwargs)
@@ -44,6 +44,9 @@ class InformationLayoutTests(unittest.TestCase):
         with patch.object(readable_pages,'MAX_IMAGE_EDGE',1200):parts=info_layout.render_info(self.answer(view))
         self.assertGreater(len(parts),1)
         for row in rows:self.assertEqual(sum(p.text.splitlines().count(row.command) for p in parts),1)
+        self.assertEqual(tuple(cmd for page in parts for cmd in page.commands), tuple(row.command for row in rows))
+        for page in parts:
+            self.assertTrue(set(page.commands).issubset(page.text.splitlines()))
 
     def test_profile_places_portrait_beside_facts_and_prose_below(self):
         rows=tuple(InfoRow(f'字段{i}',(f'资料{i}',),kind='fact') for i in range(10))+(InfoRow('简介',('完整介绍。',),kind='prose'),)
@@ -86,6 +89,7 @@ class InformationLayoutTests(unittest.TestCase):
             self.assertIn(row.body[0],drawn)
             self.assertNotIn(row.command,drawn)
             self.assertIn(row.command,pages[0].text)
+        self.assertEqual(pages[0].commands, tuple(row.command for row in rows))
 
     def test_profile_without_source_art_uses_full_width_instead_of_an_empty_column(self):
         view=InfoView('角色',rows=(InfoRow('基本资料',('角色 ID 1',),kind='fact'),),layout='character')
