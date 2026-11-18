@@ -1,6 +1,8 @@
 # L3: Bounded QQ image download and short-lived scoped image cache.
 # Effects: HTTPS only to verified QQ CDN; transient bytes/URLs stay in memory.
 import asyncio
+import hashlib
+import re
 import ipaddress
 import math
 import socket
@@ -165,6 +167,63 @@ class ImageLoader:
             raise ImageError('image_not_available') from None
         finally:
             await resolver.close()
+
+
+# QQ expands Taki's group Markdown image URI in quoted previews. The final
+# path component identifies the exact bytes; never fetch a URL from preview text.
+_QUERY_IMAGE = re.compile(
+    r'^!\[查询结果 #(\d{1,5})px #(\d{1,5})px\]\(https://qqbot\.ugcimg\.cn/'
+    r'[0-9]{10}/qqbot-media/[a-f0-9]{40}/([a-f0-9]{32})\)(?:\r?\n|$)')
+
+
+class SentQueryImages:
+    """Bounded, short-lived copies of successfully delivered group query images."""
+    def __init__(self):
+        self.entries = OrderedDict()
+        self.byte_count = 0
+
+    def prune(self, now):
+        while self.entries:
+            expires, data = next(iter(self.entries.values()))
+            if expires > now and self.byte_count <= 32 * 1024 * 1024 and len(self.entries) <= 256:
+                break
+            self.entries.popitem(last=False)
+            self.byte_count -= len(data)
+
+    def remember(self, scope, data):
+        if not data or len(data) > MAX_IMAGE_BYTES:
+            return
+        now = time.monotonic()
+        key = (scope, hashlib.md5(data, usedforsecurity=False).hexdigest())
+        previous = self.entries.pop(key, None)
+        if previous:
+            self.byte_count -= len(previous[1])
+        self.entries[key] = (now + IMAGE_TTL_SECONDS, data)
+        self.byte_count += len(data)
+        self.prune(now)
+
+    @staticmethod
+    def caption(preview):
+        marker = _QUERY_IMAGE.match(preview or '')
+        return preview[marker.end():].strip() if marker else None
+
+    def match(self, scope, preview):
+        marker = _QUERY_IMAGE.match(preview or '')
+        if not marker:
+            return None
+        self.prune(time.monotonic())
+        entry = self.entries.get((scope, marker[3]))
+        if entry is None:
+            return None
+        data = entry[1]
+        try:
+            with Image.open(BytesIO(data)) as image:
+                width, height = image.size
+                if (width, height) != (int(marker[1]), int(marker[2])):
+                    return None
+                return LoadedImage(marker[3], _FORMATS.get(image.format), width, height, data)
+        except (OSError, ImageError, Image.DecompressionBombError):
+            return None
 
 
 class ImageCache:
