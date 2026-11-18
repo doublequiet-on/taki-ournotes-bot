@@ -110,6 +110,32 @@ def _episode_number(value):
     return None
 
 
+def _subject_groups(rewritten):
+    names = re.sub(r'初音(?:未来|未來)', '', rewritten)
+    return tuple(group for group in _STORY_NAMES if any(name in names for name in group))
+
+
+def chapter_numbers(text):
+    return {_episode_number(number) for number in re.findall(rf'第\s*({_NUMBER})\s*章', normalized(text))}
+
+
+def chapter_subject_query(rewritten, participants):
+    """Preserve scene-level fact constraints when looking inside an already pinned source and chapter."""
+    groups = _subject_groups(rewritten)
+    subjects = [group[0] for group in groups]
+    if 'mygo' in rewritten and not subjects:
+        subjects.append('mygo')
+    subjects.extend(re.findall(r'《[^》]{2,80}》', rewritten))
+    episode = _EPISODE.search(rewritten)
+    if episode:
+        subjects.append(episode.group())
+    # For names outside the known groups, the search only has lexical scores.
+    # Preserve literal cast identities corroborated by the seed and request.
+    extra_cast = frozenset(name for name in participants if normalized(name) in rewritten
+                           and not any(alias in normalized(name) for group in groups for alias in group))
+    return ' '.join([*subjects,*sorted(extra_cast)]), extra_cast
+
+
 def _fact_score(scene, source, query, needles, groups, work, regions, episode, facets):
     title = normalized(scene.title)
     chapter = normalized(scene.chapter)
@@ -154,7 +180,8 @@ def _fact_score(scene, source, query, needles, groups, work, regions, episode, f
     return -covered, priority, -score, scene.scene_id
 
 
-def search_scenes(bundle:StoryBundle,query,filters=None,*,limit=6,excluded_sources=(),facts_only=False):
+def search_scenes(bundle:StoryBundle,query,filters=None,*,limit=6,excluded_sources=(),facts_only=False,
+                  pinned_source_id=None,required_participants=()):
     require(isinstance(query,str) and 0<len(query.strip())<=300,'story_query')
     require(type(limit) is int and 1<=limit<=10,'story_limit')
     filters={} if filters is None else filters
@@ -171,8 +198,7 @@ def search_scenes(bundle:StoryBundle,query,filters=None,*,limit=6,excluded_sourc
             trace.extend({'from': role, 'to': '豐川清告'} for role in father_roles)
         rewritten, alias_trace = rewrite(expanded, bundle.aliases)
         trace.extend(alias_trace)
-        names = re.sub(r'初音(?:未来|未來)', '', rewritten)
-        groups = tuple(group for group in _STORY_NAMES if any(name in names for name in group))
+        groups = _subject_groups(rewritten)
         work = next((target for pattern, target in _WORKS if pattern.search(rewritten)), None)
         regions = tuple(region for pattern, region in _STORY_REGIONS if pattern.search(rewritten))
         episode_match = _EPISODE.search(rewritten)
@@ -181,11 +207,14 @@ def search_scenes(bundle:StoryBundle,query,filters=None,*,limit=6,excluded_sourc
     else:
         rewritten,trace=rewrite(query,bundle.aliases)
     needles=terms(rewritten);excluded=set(excluded_sources)
+    required_participants=frozenset(required_participants)
     sources={source.source_id:source for source in bundle.sources}
     scored=[]
     for scene in bundle.scenes:
         source=sources[scene.source_id]
         if scene.source_id in excluded:continue
+        if pinned_source_id is not None and scene.source_id != pinned_source_id:continue
+        if not required_participants.issubset(scene.participants):continue
         # The published expression namespace contains original dialogue
         # examples. Those examples are useful for tone, never story evidence.
         if facts_only and scene.scene_id.startswith('taki-expression-guide-'):continue
