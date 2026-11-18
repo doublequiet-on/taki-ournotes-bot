@@ -22,6 +22,8 @@
 
 将 `OURNOTES_HERMES_PILOT_GROUP` 设为受控试点群 ID，再保存该群的 Hermes 开关。开关使试点群使用点名／续聊和主动接话两条独立待命队列。每条队列最多预热两个进程，分别最多同时处理两个和一个模型步骤。待命进程先加载 Hermes，领取任务后才读入模型标识与当前会话，每步使用后销毁。关闭群开关后，在途工作与两个待命池都清理，群内新请求走原 Taki 路径。
 
+内存受限的实例可用 `OURNOTES_HERMES_COMPACT_PILOT_GROUP` 指定试点群，并留空优先级更高的 `OURNOTES_HERMES_PILOT_GROUP`。每条队列共用一个进程名额，覆盖启动、待命和执行，使用后再补充。两个队列最多共占两个进程。
+
 点名最多等 Hermes 槽 2 秒，模型调用尚未开始时可以用本次原有许可和费用预留切回 Taki。续聊从入队开始共用 28 秒，覆盖同群锁、模型调度、决策、生成与发送意图许可。已获发送许可的结果仍按原留存规则接收 ACK。主动接话遇到 Taki 调度或 Hermes 执行槽繁忙时跳过；决策已出站时原费用照常结算。
 
 试点按 `hermes_pilot` 的入口阶段计数，结合 `hermes_native_fallback`、`hermes_continuation_expired` 和 `hermes_proactive_busy` 检查各入口的回退率、超时率和忙时跳过率。实际出站由每个请求的用量记录确认，回退事件可包含未取得授权而终止的请求。

@@ -432,7 +432,8 @@ class ProactiveChat:
             backend = self.agent.runtime.backend
             for work in tuple(backend.works.values()):
                 if (work.active and work.proactive is not None and not work.continuation
-                        and work.model_started_at is None and work.request.scope == request.scope
+                        and (work.model_started_at is None or work.hermes_chat and not work.hermes_provider_started)
+                        and work.request.scope == request.scope
                         and work.request.gateway_epoch == request.gateway_epoch
                         and work.request.ingress_seq < request.ingress_seq
                         and work.request.message_id == target.message_id):

@@ -17,6 +17,28 @@ import test_console_policies as fixtures
 TOKEN = 'x' * 32
 
 
+class CompactStandbyTests(unittest.IsolatedAsyncioTestCase):
+    async def test_replenish_after_active_worker_exits(self):
+        from unittest.mock import AsyncMock, Mock
+        from ournotes_bot.application.hermes_standby import StandbyLane
+        worker = Mock(alive=True, close=AsyncMock())
+        prepare = AsyncMock(return_value=worker)
+        lane = StandbyLane(prepare, 2, compact=True)
+        lane.start()
+        try:
+            await asyncio.gather(*lane.initializing)
+            acquired = await lane.claim(asyncio.get_running_loop().time()+2, priority=1, wait=False)
+            self.assertIs(acquired, worker)
+            self.assertFalse(lane.initializing)
+            self.assertFalse(lane.ready)
+            await lane.release(acquired)
+            await asyncio.gather(*lane.initializing)
+            self.assertEqual(prepare.await_count, 2)
+            self.assertEqual(len(lane.ready), 1)
+        finally:
+            await lane.stop()
+
+
 class HermesScratchTests(unittest.TestCase):
     def test_only_owned_runtime_scratch_is_reaped_on_restart(self):
         with TemporaryDirectory() as parent:
@@ -121,6 +143,40 @@ class HermesRouteTests(fixtures.Fixture, unittest.IsolatedAsyncioTestCase):
         self.assertEqual(status, 409)
         self.assertEqual((await self.group_settings())['guard'], current['guard'])
         self.assertEqual((await self.select(False, current=current, basic_only=True))[0], 200)
+
+    async def test_replaced_cold_worker_stops_before_provider_dispatch(self):
+        from unittest.mock import patch
+        fixtures.ChatServiceIntegrationTests.enable_lightweight_fact_fixture(self)
+        entered = asyncio.Event()
+        async def wait_for_worker(work, profile, body, deadline, validate, dispatch):
+            entered.set()
+            await work.ended.wait()
+            validate()
+        def observe(mid, seq, text):
+            raw = self.request(mid, seq)
+            raw.update(trigger='observation', body=text)
+            accepted, _, _ = self.agent.proactive.gateway_observation(Request.parse(raw, 'fixture', 'app', self.now))
+            self.assertTrue(accepted)
+            return raw
+        with patch.object(self.runtime.admin, 'hermes_route', return_value=True), patch.object(
+                self.runtime.hermes, 'request', side_effect=wait_for_worker):
+            old = observe('first', 1, '大家排练时先练哪一段？')
+            self.tick += 1.6
+            raw = {**old, 'trigger': 'proactive', 'proactive_id': 'a' * 32}
+            raw['request_id'] = digest(['fixture','app','qq','group','g1',raw['user_id'],'first',raw['proactive_id']])
+            candidate = self.agent.proactive.candidate(Request.parse(raw, 'fixture', 'app', self.now))
+            admitted = await self.backend.submit(raw, proactive=candidate)
+            work = self.backend.works[admitted['delivery_id']]
+            try:
+                await asyncio.wait_for(entered.wait(), 3)
+                self.now += .1
+                observe('replacement', 2, '换个话题，大家排练完会一起吃饭吗？')
+                self.assertTrue(work.ended.is_set())
+                self.assertEqual(work.terminal_reason, 'observation_replaced')
+                self.assertEqual(work.model_attempts, 0)
+                self.client.request.assert_not_awaited()
+            finally:
+                work.ended.set()
 
     def check_scratch_empty(self):
         self.assertLessEqual({path.name for path in self.scratch.iterdir()}, {'.owner.sqlite3', '.owner.sqlite3-journal'})

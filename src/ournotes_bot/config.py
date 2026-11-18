@@ -129,10 +129,13 @@ class Settings:
     hermes_python: Path | None = None
     hermes_runtime_dir: Path | None = None
     hermes_pilot_group: str = ''
+    hermes_compact_standby: bool = False
 
     @classmethod
     def from_env(cls) -> "Settings":
         load_dotenv()
+        standard_pilot = os.getenv("OURNOTES_HERMES_PILOT_GROUP", "").strip()
+        compact_pilot = os.getenv("OURNOTES_HERMES_COMPACT_PILOT_GROUP", "").strip()
         configured_cache = os.getenv("OURNOTES_CACHE_FILE", "").strip()
         raw_cache = Path(configured_cache) if configured_cache else runtime_data_dir() / "ournotes-cache.json"
         if configured_cache and not raw_cache.is_absolute():
@@ -196,7 +199,8 @@ class Settings:
             chat_engine=chat_engine,
             hermes_python=Path(hermes_python) if hermes_python else None,
             hermes_runtime_dir=Path(hermes_runtime) if hermes_runtime else None,
-            hermes_pilot_group=os.getenv('OURNOTES_HERMES_PILOT_GROUP','').strip(),
+            hermes_compact_standby=bool(compact_pilot and not standard_pilot),
+            hermes_pilot_group=standard_pilot or compact_pilot,
             story_dir=(CONFIG_ROOT/story_dir).resolve() if story_dir else None,
             query_ai_api_key=os.getenv('OURNOTES_QUERY_AI_API_KEY','').strip(),
             app_secret=os.getenv("QQ_APP_SECRET", "").strip(),

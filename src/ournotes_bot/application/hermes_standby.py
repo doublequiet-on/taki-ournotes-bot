@@ -12,9 +12,10 @@ logger = logging.getLogger(__name__)
 
 
 class StandbyLane:
-    def __init__(self, prepare, capacity):
+    def __init__(self, prepare, capacity, *, compact=False):
         self.prepare = prepare
         self.capacity = capacity
+        self.compact = compact
         self.enabled = False
         self.running = 0
         self.ready = []
@@ -28,7 +29,8 @@ class StandbyLane:
         self.refill()
 
     def refill(self):
-        while self.enabled and len(self.ready)+len(self.initializing)<2:
+        target = 1 - self.running if self.compact else 2
+        while self.enabled and len(self.ready)+len(self.initializing)<target:
             task = asyncio.create_task(self.prewarm())
             self.initializing.add(task)
             task.add_done_callback(self.initializing.discard)

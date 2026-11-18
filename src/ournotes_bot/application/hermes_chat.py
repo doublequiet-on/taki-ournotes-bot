@@ -170,11 +170,11 @@ class StandbyWorker(StepWorker):
 
 
 class HermesChat:
-    def __init__(self, python, scratch, pilot_group=''):
+    def __init__(self, python, scratch, pilot_group='', *, compact=False):
         self.python, self.scratch = python, scratch
         self.pilot_group = pilot_group
-        self.dialogue = StandbyLane(self.prewarm, 2)
-        self.proactive = StandbyLane(self.prewarm, 1)
+        self.dialogue = StandbyLane(self.prewarm, 2, compact=compact)
+        self.proactive = StandbyLane(self.prewarm, 1, compact=compact)
         self.active = {}
         self.owner = None
         self.cleanup_failed = False
@@ -306,7 +306,10 @@ class HermesChat:
         lane = self.proactive if proactive else self.dialogue
         named = work.proactive is None
         limit = min(deadline, monotonic()+2) if named else deadline
-        claim = asyncio.create_task(lane.claim(limit,priority=int(not named),wait=not proactive))
+        # A compact lane refills only after releasing the decision worker.
+        # Give an admitted follow-on step its remaining execution window.
+        wait = not proactive or (lane.compact and work.hermes_provider_started)
+        claim = asyncio.create_task(lane.claim(limit,priority=int(not named),wait=wait))
         stopped = [asyncio.create_task(wait) for wait in (work.ended.wait(), run.stopped.wait())]
         worker = None
         try:

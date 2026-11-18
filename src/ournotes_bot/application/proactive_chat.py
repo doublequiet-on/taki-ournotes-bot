@@ -202,6 +202,7 @@ class _Group:
     coalesce_seconds: float | None = None
     continuation_user_id: str | None = None
     target_id: str | None = None
+    candidate_sources: frozenset[str] = frozenset()
     pending_opportunity: str | None = None
     send_started: bool = False
     context_generation: int = 0
@@ -265,6 +266,7 @@ class ProactiveController:
         group.pending_since = None
         group.evaluation = 0
         group.target_id = None
+        group.candidate_sources = frozenset()
         group.pending_opportunity = None
         group.send_started = False
 
@@ -313,8 +315,10 @@ class ProactiveController:
                     self._cancel(group)
             retained = [row for row in group.rows if row.at > now - self.window_seconds]
             if len(retained) != len(group.rows):
+                removed = {row.message.message_id for row in group.rows if row.at <= now - self.window_seconds}
                 group.rows = retained
-                self._cancel(group)
+                if group.target_id in removed or not group.candidate_sources.isdisjoint(removed):
+                    self._cancel(group)
             for message_id, at in list(group.seen.items()):
                 if at <= now - self.window_seconds:
                     del group.seen[message_id]
@@ -522,6 +526,7 @@ class ProactiveController:
                 rows = rows[last_image:]
                 image_boundary_id = rows[0].message.message_id
         messages = tuple(row.message for row in rows if row.message.message_id != target.message_id) + (target,)
+        group.candidate_sources = frozenset(row.message_id for row in messages)
         return ProactiveCandidate(ticket.candidate_id, scope, ticket.version, ticket.policy_version,
                                   ticket.service_subject_id, messages,
                                   now, ticket.expires_at, reserve_cost_micro, deferred, group.evaluation,

@@ -97,6 +97,9 @@ class ModelAdmin:
         tasks=agent.tasks.status(scope) if agent else dict(active_tasks=0,waiting_tasks=0,partial_tasks=0,completed_tasks=0,window_seconds=900)
         return dict(group_id=group_id,guard=dict(backend_epoch=self.backend.runtime,revision=row['revision'] if row else 'initial'),
                     settings=settings,hermes_available=bool(agent and self.runtime.hermes.available),
+                    hermes_standby=(dict(dialogue=len(self.runtime.hermes.dialogue.ready),
+                                          proactive=len(self.runtime.hermes.proactive.ready))
+                                if settings['hermes_enabled'] and group_id==self.runtime.hermes.pilot_group else None),
                     recent_users=list(people.values())[-120:],tasks=tasks,
                     recent_events=self.backend.diagnostics.group_events(group_id))
 
