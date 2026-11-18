@@ -718,6 +718,33 @@ class TrackerCutoffHistory(HaneokaCutoffHistory):
             return "storage_error"
 
 
+ARCHIVE_IDENTITY_CONFLICT = '单曲榜各来源保存的活动时间或挑战曲关联不同'
+ARCHIVE_WINDOW_UNKNOWN = '部分单曲榜来源缺少可核对的完整活动时间'
+
+
+def merge_archive_events(previous, event, *, prefer_new=False):
+    """Keep the evidence from every song store, including conflicts and missing dates."""
+    if previous is None:
+        return event
+    notes = [*previous.notes, *event.notes]
+    bounds = ((previous.start_ms, event.start_ms), (previous.end_ms, event.end_ms))
+    if any(a != b for a, b in bounds if a is not None and b is not None):
+        notes.append(ARCHIVE_IDENTITY_CONFLICT)
+    if any(None in pair for pair in bounds):
+        notes.append(ARCHIVE_WINDOW_UNKNOWN)
+    songs = {song.challenge_id: song for song in previous.songs}
+    for song in event.songs:
+        saved = songs.get(song.challenge_id)
+        if saved and saved.music_id != song.music_id:
+            notes.append(ARCHIVE_IDENTITY_CONFLICT)
+        if prefer_new or saved is None or song.names:
+            songs[song.challenge_id] = song
+    base = event if prefer_new or event.metadata_version != 'unknown' else previous
+    return replace(base, songs=tuple(songs.values()), notes=tuple(dict.fromkeys(notes)),
+                   start_ms=previous.start_ms if previous.start_ms is not None else event.start_ms,
+                   end_ms=previous.end_ms if previous.end_ms is not None else event.end_ms)
+
+
 class SourceHistory:
     """Route new writes by source, read bounded segments across independent files."""
     def __init__(self, legacy, formal, *, active="tracker", haneoka=None):
@@ -825,20 +852,10 @@ class SourceHistory:
         return self.writer.failure(*args, **kwargs)
 
     def events(self, server):
-        from .moenotes_events import SourceError
         events = {}
         for store in self.stores.values():
             for event in store.events(server):
-                previous = events.get(event.event_id)
-                if previous:
-                    songs = {s.challenge_id: s for s in previous.songs}
-                    for song in event.songs:
-                        if song.challenge_id in songs and songs[song.challenge_id].music_id != song.music_id:
-                            raise SourceError('history_identity_conflict')
-                        if song.challenge_id not in songs or song.names:
-                            songs[song.challenge_id] = song
-                    event = replace(event if event.metadata_version != 'unknown' else previous, songs=tuple(songs.values()))
-                events[event.event_id] = event
+                events[event.event_id] = merge_archive_events(events.get(event.event_id), event)
         return tuple(events.values())
 
     def latest(self, event, song):
@@ -920,13 +937,15 @@ def configure_sources(repository, settings):
     haneoka = ProviderHistory(haneoka)
     source.history = SourceHistory(legacy, formal, active=settings.cutoff_source, haneoka=haneoka)
     source.score_display_limit = settings.cutoff_score_display_limit
-    from .total_rankings import TotalRankingHistory, TotalRankingRepository, fetch_moenotes_total
+    from .total_rankings import TotalRankingHistory, TotalRankingRepository, fetch_haneoka_total, fetch_moenotes_total
     total_file = ('tracker-total-rankings-v2.sqlite3' if settings.cutoff_source == 'tracker'
-                  else f'{settings.cutoff_source}-total-rankings-v1.sqlite3')
-    total_fetch = (lambda event, deadline: fetch_moenotes_total(source, event, deadline)) if settings.cutoff_source == 'tracker' else None
+                  else 'haneoka-total-rankings-v2.sqlite3' if settings.cutoff_source == 'haneoka'
+                  else 'open-total-rankings-v1.sqlite3')
+    total_adapter = {'tracker': fetch_moenotes_total, 'haneoka': fetch_haneoka_total}.get(settings.cutoff_source)
+    total_fetch = (lambda event, deadline: total_adapter(source, event, deadline)) if total_adapter else None
     source.total_rankings = TotalRankingRepository(TotalRankingHistory(
         settings.cache_file.with_name(total_file),
         settings.cutoff_source, enabled=settings.cutoff_history_enabled,
         min_free_mb=settings.cutoff_history_min_free_mb,
-        compressed=settings.cutoff_source == 'tracker'), fetch=total_fetch,
+        compressed=settings.cutoff_source in {'tracker', 'haneoka'}), fetch=total_fetch,
         clock=source.clock if total_fetch is not None else time.time)

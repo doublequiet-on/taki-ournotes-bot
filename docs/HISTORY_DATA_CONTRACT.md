@@ -14,7 +14,7 @@
 | open、Haneoka 单曲历史 | `moenotes_open.board` / `haneoka/event_cutoffs.board` 按需落库，后台也调用同入口；`SourceHistory`、历史活动查询、趋势、最新观测读取 | v2/v3旧库保留；Haneoka /2现在路由独立v4；关闭history阻止读写但不删除旧文件 |
 | 综合榜历史 | `total_rankings.TotalRankingHistory/Repository`，后台/业务调用独立库；查询读取 | tracker独立压缩v2、其他来源v1路径，不由本包扩展活动total/point；删除政策必须单独列入，不套单曲SQL |
 | 当前榜单JSON | `EventCutoffRepository._save/_load/_cached`，Haneoka继承；avatar-v2旧键、quality-v2新键 | 实际持久副本，含分数、ID/昵称/资料及状态；缓存内存 `_entries` 是另一份进程态，清磁盘不会驱逐它；磁盘保存失败可保留内存成功，不能当持久保存成功 |
-| P165公开竞技场/玩家/名片响应 | `haneoka/public_queries.PublicQueries.cache` / `cooldowns` 有界 OrderedDict | **仅内存**，未发现该入口新建公开玩家JSON/SQLite writer；响应可进入后续冻结图文和素材缓存 |
+| 公开竞技场响应 | `haneoka/public_queries.PublicQueries.cache` / `cooldowns` 有界 OrderedDict | **仅内存**；响应可进入后续冻结图文 |
 | 玩家字典、payload、附表 | `history_compression.put`，`observation_players[_data]`、`payloads`、`player_dictionary`；`_save_details`保存可逆zlib/base64 | 删除引用行不代表字典/payload或空闲页已删除。压缩、导出仍可还原个人字段，不是匿名化 |
 | 压缩/导出/中间副本 | `history_archive.migrate/export_old`，`scripts/compress_cutoff_history.py`；`scripts/backfill_cutoff_players.py` 的 SQLite backup | 显式副本，输入不改；`.partial`及WAL也算副本，失败保留，不自动清除。导出v4仍为v4，不能冒称旧代码可读 |
 | WAL/SHM/rollback journal | SQLite，压缩迁移显式启用WAL；其余库不能假定永远存在WAL | 盘点逐文件列出；备份应经在线backup API或停写checkpoint，不拷贝孤立主DB来证明完整性 |

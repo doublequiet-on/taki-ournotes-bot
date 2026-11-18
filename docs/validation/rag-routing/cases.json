@@ -1,0 +1,152 @@
+[
+  {
+    "id": "D01",
+    "kind": "contract",
+    "test": "test_console_policies.ChatAgentTests.test_direct_chat_once_multiline_and_direct_command_zero_model",
+    "expect": "普通聊天一次脚本应答，直接命令零次。"
+  },
+  {
+    "id": "D02",
+    "kind": "contract",
+    "test": "test_console_policies.ChatAgentTests.test_quote_preview_reaches_chat_as_current_user_material",
+    "expect": "平台引用进入当前发言者的输入。"
+  },
+  {
+    "id": "D03",
+    "kind": "contract",
+    "test": "test_console_policies.ChatResearchTaskTests.test_compare_then_change_second_target_condition_and_ack_only_commit",
+    "expect": "第二首切 HARD，重读 Note，其他人不能沿用实体。"
+  },
+  {
+    "id": "D04",
+    "kind": "contract",
+    "test": "test_console_policies.ChatAgentTests.test_on_mechanic_keeps_adjacent_number_and_condition_in_source_order",
+    "expect": "同时返回本节数字、限制；排除同名另一节。"
+  },
+  {
+    "id": "D05",
+    "kind": "contract",
+    "test": "test_console_policies.ChatAgentTests.test_cancel_after_invalid_call_stops_next_tool_and_reply",
+    "expect": "取消后第二工具不启动，未生成可发回复。"
+  },
+  {
+    "id": "D06",
+    "kind": "contract",
+    "test": "test_console_policies.ChatSourceIntegrationTests.test_story_search_read_and_withdrawal_recheck_before_intent",
+    "expect": "读回场景，撤回后原发送意图失效。"
+  },
+  {
+    "id": "D07",
+    "kind": "contract",
+    "test": "test_console_policies.ChatResearchTaskTests.test_switch_to_named_topic_pauses_old_entities_until_explicit_return",
+    "expect": "换题后的旧实体须等明确恢复。"
+  },
+  {
+    "id": "D08",
+    "kind": "contract",
+    "test": "test_platform_boundary.KnowledgeAuthorityTests.test_unconfirmed_file_never_enters_index",
+    "expect": "无批准条目的文件不进索引。"
+  },
+  {
+    "id": "D09",
+    "kind": "context",
+    "question": "练鼓的时候终于跟上了，立希，陪我高兴一下。"
+  },
+  {
+    "id": "D10",
+    "kind": "context",
+    "question": "只看我写的两句：『先别走。算了，我陪你等。』你觉得说话的人是什么心情？"
+  },
+  {
+    "id": "D11",
+    "kind": "rule",
+    "mode": "healthy",
+    "body": "工程测试的紫纸票在周二生效，折角票除外。",
+    "query": "紫纸票何时生效？",
+    "need": [
+      "周二",
+      "折角票除外"
+    ]
+  },
+  {
+    "id": "D12",
+    "kind": "rule",
+    "mode": "build",
+    "body": "工程测试的紫纸票在周二生效，折角票除外。",
+    "query": "紫纸票何时生效？",
+    "need": [
+      "周二",
+      "折角票除外"
+    ]
+  },
+  {
+    "id": "D13",
+    "kind": "rule",
+    "mode": "query",
+    "body": "工程测试的紫纸票在周二生效，折角票除外。",
+    "query": "紫纸票何时生效？",
+    "need": [
+      "周二",
+      "折角票除外"
+    ]
+  },
+  {
+    "id": "D14",
+    "kind": "rule",
+    "mode": "outside",
+    "body": "工程测试的紫纸票在周二生效，折角票除外。",
+    "query": "紫纸票何时生效？",
+    "need": [
+      "周二",
+      "折角票除外"
+    ]
+  },
+  {
+    "id": "D15",
+    "kind": "chapters",
+    "question": "立希和爱音是什么关系？结合前后两章各自给的说法。",
+    "people": [
+      "椎名立希",
+      "千早愛音"
+    ],
+    "lines": [
+      "愛音とは同じクラスだよ。",
+      "今は二人で譜面も書いているよ。"
+    ],
+    "translations": [
+      "我们同班。",
+      "我们现在也一起写谱。"
+    ]
+  },
+  {
+    "id": "D16",
+    "kind": "summary",
+    "query": "爱音 逃避",
+    "expect": "读回冻结的官网简介中的日文短句和说话者。"
+  },
+  {
+    "id": "D17",
+    "kind": "unscored",
+    "reason": "完整原作跨章节日文对白及其中文论证缺少对应获准正文。"
+  },
+  {
+    "id": "D18",
+    "kind": "unscored",
+    "reason": "交流自然度、人格与真实模型的工具决策需要模型输出及独立评阅。"
+  },
+  {
+    "id": "D19",
+    "kind": "unscored",
+    "reason": "线上推理用量、延时、维护成本缺少真实请求与部署观测。"
+  },
+  {
+    "id": "D20",
+    "kind": "coverage",
+    "question": "把蓝牌的领取条件和归还地点分别查清",
+    "body": "蓝牌的领取条件为持有签条。",
+    "requirements": [
+      "蓝牌的领取条件",
+      "蓝牌的归还地点"
+    ]
+  }
+]

@@ -55,7 +55,7 @@ CLI 模式与组合、配置根/数据路径、包身份；为多个系统域提
 - [application/model_runtime.py](ournotes_bot/application/model_runtime.py)：后端原生工具编排、当前许可、证据生成和上下文核验；[model_config.py](ournotes_bot/application/model_config.py) 固定受信配置／身份快照，v3 允许有核验证据的指定群全员准入，跨场景身份仍须显式绑定；[usage_ledger.py](ournotes_bot/application/usage_ledger.py) 独占写精确预留与结算，保存晚到用量和跨零点日期转移的审计；未知 token／操作保留费用上界，操作意图、缺失记录标记及删除检测 trigger 随共享用量库保存，缺少价格事实时阻止相关主体继续调用。非 DeepSeek 的 USD 费用与预留共用每日 $2.5 上限；新轮不足时，model_runtime 从独立受保护配置选择 DeepSeek，沿用原平台身份及用户／群额度，已开始轮次不换模型；配置及回退约束见 [运行手册](../docs/CHAT_AGENT_RUNBOOK.md#每日主模型预算与-deepseek-备用)。纯合同在 [domain/model_calls.py](ournotes_bot/domain/model_calls.py)，公开说明见 [包 3](../docs/QUERY_CHAT_PACKAGE3.md)。
 - [application/site_lookup.py](ournotes_bot/application/site_lookup.py)：U3 请求内目录候选、详情及已知关联导航，最多三次只读取证；固定版本／公告快照、有界证据和短期 handle，不接受模型 URL、不写百科。程序按已查证资源生成公告及明确索要的歌曲／活动网页链接，保留实际来源区服与采集时点。`model_runtime.py` 仅在此流程开放四次逐次许可，网关同步硬上限，仍受原 30 秒执行预算约束。
 
-- [application/knowledge_service.py](ournotes_bot/application/knowledge_service.py)：独占知识目录与状态库，先提交停用记录，再发布候选索引；排队／生成／交付消费者在每个关键边界批量重验完整证据租约：一次当前观察，同文档一次分块，结果不跨边界缓存。后端组合与 RuntimeTasks 接入独立观察和重建任务；[knowledge_cli.py](ournotes_bot/application/knowledge_cli.py) 提供脱离游戏初始化的校验、导入和检索入口。格式和内容交付见 [包 2B](../docs/QUERY_CHAT_PACKAGE2B.md)。
+- [application/knowledge_service.py](ournotes_bot/application/knowledge_service.py)：独占知识目录与状态库，先提交停用记录，再发布候选混合索引。已批准集合重建或查询编码失败时可使用词法检索。排队／生成／交付消费者在每个关键边界批量重验完整证据租约：一次当前观察，同文档一次分块，结果不跨边界缓存。后端组合与 RuntimeTasks 接入独立观察和重建任务；[knowledge_cli.py](ournotes_bot/application/knowledge_cli.py) 提供脱离游戏初始化的校验、导入和检索入口。格式和内容交付见 [包 2B](../docs/QUERY_CHAT_PACKAGE2B.md)。
 
 - [application/model_execution.py](ournotes_bot/application/model_execution.py)：独立模型队列、每次尝试的当前许可与绝对执行期限；不拥有模型事实或加权账务。
 - [application/hermes_chat.py](ournotes_bot/application/hermes_chat.py)：按群选用的单次 Hermes 工作进程，逐步复用 Taki 出站许可。指定群的试点可使用 [有界待命队列](ournotes_bot/application/hermes_standby.py)，规则见 [运行手册](../docs/CHAT_AGENT_RUNBOOK.md#单群过载策略试点)。
@@ -112,6 +112,6 @@ U3 站内回答只陈述当前字段和匹配方式；来源由程序统一追�
 公告证据的单调时钟截止时间随 PreparedReply 传递，分块／图片回退不得延长；发送许可与 ACK 主题快照共同校验，过期 ACK 仍记账但不恢复上下文。关联详情单独暴露来源完整性和返回截断，未知／部分关联不能等同确认空列表。
 
 
-知识管理由 [application/library_admin.py](ournotes_bot/application/library_admin.py) 提供分页来源元数据、整库差异预览及一次性版本保护的发布计划，调用既有宿主 owner。`knowledge_service.import_confirmed(expected=...)` 核对预览时的内容／批准版本；`withdraw_document` 先持久化禁止使用下限再写原撤回清单。`story_service.import_value/withdraw(expected=...)` 在原发布锁内比较来源与撤回版本。管理接口不生成审核材料，不批准人格；协议与限制见 [Console 契约](../docs/koishi/CONSOLE_V1.md#知识资料管理)。
+知识管理由 [application/library_admin.py](ournotes_bot/application/library_admin.py) 提供分页来源元数据、整库差异预览及一次性版本保护的发布计划，调用既有宿主 owner。`knowledge_service.import_confirmed(expected=...)` 核对预览时的内容／批准版本；`withdraw_document` 先持久化禁止使用下限再写原撤回清单。`story_service.import_value/withdraw(expected=...)` 在原发布锁内比较来源与撤回版本。管理接口不生成审核材料，不批准人格；协议与限制见 [Console 契约](../docs/koishi/CONSOLE_V1.md#知识资料管理)。本地剧情维护可用 [coverage](../docs/STORY_ENGINE.md#本地工具接口) 查看指定范围的来源和章节计数。
 
 规则查询的终局 unknown 撤销整条 volatile 话题，ACK 事实先于游标/锚点提交；上下文提交失败禁止续发。状态、错误与输出接纳边界见 [查询投递安全合同](../docs/QUERY_DELIVERY_SAFETY.md)。

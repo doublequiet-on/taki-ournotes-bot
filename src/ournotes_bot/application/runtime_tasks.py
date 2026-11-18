@@ -43,9 +43,10 @@ async def finish_thread(function, *args):
 
 
 class RuntimeTasks:
-    def __init__(self, repository, settings, knowledge=None):
+    def __init__(self, repository, settings, knowledge=None, infographic=None):
         self.repository = repository
         self.knowledge = knowledge
+        self.infographic = infographic
         self.tasks = []
         self.named_tasks = {}
         self.closing = False
@@ -125,6 +126,11 @@ class RuntimeTasks:
     def refresh_knowledge(self):
         return self.knowledge.refresh()
 
+    def refresh_activity_infographic(self, *, rebuild=False):
+        if rebuild:
+            return self.execute(lambda: self.infographic.refresh(rebuild=True), 'refresh_activity_infographic')
+        return self.infographic.refresh()
+
     def start(self):
         return self.recover()
 
@@ -132,6 +138,8 @@ class RuntimeTasks:
         if self.closing:raise RuntimeError('runtime_closing')
         restored,unchanged=[],[]
         definitions={'catalog':(self.refresh_catalog,1800,True),'traits':(self.repository.refresh_song_traits,300,False)}
+        if self.infographic is not None:
+            definitions['activity_infographic'] = (self.refresh_activity_infographic, 60, False)
         if self.knowledge is not None:
             definitions.update(knowledge_watch=(self.watch_knowledge, 1, False),
                                knowledge_refresh=(self.refresh_knowledge, 30, False))

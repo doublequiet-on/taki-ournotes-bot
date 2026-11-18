@@ -15,7 +15,7 @@ from difflib import SequenceMatcher
 from typing import TypeVar
 
 from .data import Card, CatalogView, Skill, Song, SongRepository, SupportCard, character_identity, localized_text, normalize, resolve_character_alias
-from .query.entity_lexicon import alias_status, known_alias_names, resolve_exact_alias, unverified_alias_count
+from .query.entity_lexicon import alias_status, resolve_exact_alias, unverified_alias_count
 from .i18n import tr
 from .natural_query.query_debug import QUERY_DEBUG_COUNTERS
 from .query.song_query import SongAnswer, parse_filter, execute as execute_song_filter
@@ -33,17 +33,17 @@ HELP_TEXT = """Taki · Our Notes 日服资料查询
 颜色：红、蓝、绿、黄、紫；例 /查曲 颜色=蓝/绿
 如 /查曲 MyGO just 或 /查曲 激奏 just。just 表示包含，纯JUST 表示全段同类，混合 表示多种类型，JUST/JUST/COMBO 按顺序匹配。类型大小写均可。
 /查谱面 歌名或ID [难度] [镜像／反转] [5/6.5/8/5/5]：歌名或 ID 在前，参数顺序不限；100001 可简写为 1
-/查榜线 [jp/hk/kr/en] [id1或活动="名称"] [歌名或歌曲ID=100001] [50或20-40] [仅数值]：顺序不限，默认日服全部歌曲；无排名看趋势，有排名看表。50查40～60，20-40查区间，50-50查一名，1-100全榜；id1查往期本地末次观测，非确认终榜，裸数仍为排名
-Haneoka 未确认原始歌曲序号，请用歌名或歌曲ID；旧T50也查附近，旧多T排名最多五个
-/查活动 [jp/hk/kr/en]：当前／最近活动详情；/查活动 列表、/查活动 ID或名称 查询日服收录资料
-/查卡池 [ID或名称]：日服当前卡池与UP卡；/查卡池 历史 查看已结束卡池
-/查角色 [姓名/昵称/ID/乐队]：人物档案、乐队目录与关联卡；无参数查看角色目录
+/查榜线 [jp/hk/kr/en] [id1或活动="名称"] [单曲或总榜] [50或20-40] [仅数值]：顺序不限，默认日服全部歌曲；无排名看趋势，有排名看表。50查40～60，20-40查区间，50-50查一名，1-100全榜；id1查往期本地末次观测，非确认终榜，裸数仍为排名
+单曲查全部课题曲，总榜查独立综合分数榜；T50也查附近，多T排名最多五个
+/查活动：日服活动列表；/查活动 ID或名称 查看详情；/查活动 [jp/hk/kr/en] 当前 查看当前／最近活动及可用的五档综合榜
+/一图流：读取日服当前／最近一期活动一图流
+/查卡池：日服卡池列表；/查卡池 当前 或 历史 筛选；/查卡池 ID或名称 查看详情
+/查角色 [姓名/昵称/ID/乐队]：人物档案和关联卡；无参数查看目录，可用 乐队=MyGO 担当=吉他
 榜线当前排名同时显示分数、数字ID与用户名；缺失会标注，历史曲线仅记录分数。
 四服：日服（jp）、国服（hk）、韩服（kr）、英服（en）；仅数值只回文字
 /查卡 [BD/SSR/SR/R] [颜色=红色] [角色=tmr] [乐队=MyGO] [LIVE=分数提升] [击奏=JUST] [页N]：条件卡牌列表；指定ID看详情
 /查留影卡 [卡名] [稀有度/颜色/角色/乐队] [LIVE分类] [激奏类型]：留影列表，支持 EX 延长、黄 just、扩判，发不完用 /继续（兼容 /查支援卡、/查SNAP）
 /查卡面 ID、/查留影卡面 ID：只输出卡面；条件多选用逗号，同维度任选、跨维度同时满足
-/查缩写 昵称：查看昵称对应的角色、乐队等，也可直接用于查曲或查卡
 /聊 想聊的内容：聊天；也可在正文提到立希或 taki（需启用聊天 Agent）
 /问、/ask：兼容 /查 的旧查询入口
 /查 想查的内容：歌曲、谱面、成员卡和SNAP；活动、卡池和人物资料支持本地固定问法（其他复杂问法需配置 AI）
@@ -65,7 +65,6 @@ HELP_TEXTS = {
 /card <character, title or ID> [page N]: search cards
 /support <character, title or ID>: search support cards, use /继续 for unsent results
 /查活动 [ID or title], /查卡池 [ID or title], /查角色 [name or ID]: JP information in Chinese
-/abbrev <nickname>: look up a character or band nickname
 /ask <query>: song, chart, member-skill or SNAP lookup; bounded Chinese event/gacha/profile questions also run locally
 /status: process and data status  /language: language guide  /help: this guide
 Example: /song mygo 27, /chart 100001 EXPERT, /card tomori""",
@@ -75,12 +74,14 @@ Example: /song mygo 27, /chart 100001 EXPERT, /card tomori""",
 /カード <キャラクター名・カード名・ID> [ページN]：カードを検索
 /サポート <キャラクター名・カード名・ID>：サポートカードを検索。未送信分は /继续
 /查活动 [ID・名称]、/查卡池 [ID・名称]、/查角色 [名前・ID]：日本版資料（中国語表示）
-/略称 <略称>：キャラクター・バンドなどの略称
 /問 <内容>：楽曲・譜面・メンバースキル・SNAPを検索。中国語の定型文でイベント・ガチャ・人物資料もローカル検索
 /状態：プロセスとデータの状態  /言語：言語案内  /ヘルプ：この案内
 例：/曲 mygo 27、/譜面 100001 EXPERT、/カード ともり""",
 }
-HELP_TEXT += '\n/查竞技场 [服] [乐队] [总览/日程/曲池/段位/奖励/榜单/人数] [赛季=N] [排名=1-20]\n/查玩家 玩家ID [服] [名片 [页N]]\n/查活动 [服或日服ID] 加成/奖励/任务/卡池'
+HELP_TEXT += ('\n/查激奏舞台 [服] [乐队] [概览/规则/排期/乐曲/段位与奖励] [赛季=N]'
+              '\n/查激奏榜线 [服] 乐队 [榜单/人数/人数明细] [赛季=N] [50或20-40或T100] [仅数值]'
+              '\n/查活动 ID 2到5 MyGO 红,蓝 挑战演出：筛选日服活动'
+              '\n/查活动 [jp/intl] 日程/日程开始/下期：静态日程，北京时间')
 HELP_TEXTS['zh'] = HELP_TEXT + '\n/语言：查看英文和日文指令'
 
 COMMAND_HELP = {
@@ -109,7 +110,6 @@ COMMAND_HELP = {
         "支持完整卡名和一段连续卡名，重名用 卡名=。条件可换序，同类多选任选。\n"
         "输入 ID 查详情，/查留影卡面 ID 只发卡面。QQ 单图优先，发不完用 /继续。"
     ),
-    "abbrev": "查询已收录的角色、乐队等昵称；也可直接用昵称查曲或查卡。\n用法：/查缩写 <昵称>\n示例：/查缩写 skk、/查缩写 茉团、/查卡 墨缇丝",
 }
 COMMAND_HELPS = {
     "zh": COMMAND_HELP,
@@ -129,7 +129,6 @@ COMMAND_HELPS = {
         "chart": "Look up level and note count by title or ID. Song 100001 can be shortened to 1. Use EZ, NM, HD, EX, or the full difficulty name. If omitted, text lists all available difficulties and the image shows one chart, preferring EXPERT.\nPut the title or ID first. Difficulty, mirror (镜像 or 反转), and five skill durations can follow in any order. The durations are one group in S1–S5 order.\nExample: /chart 1 镜像 5/6.5/8/5/5 EX",
         "cards": "Search by card ID, character, card title, or band. QQ shows complete results; use /继续 for unsent parts.\nUsage: /card <query or ID> [page N]\nExamples: /card tomori, /card mygo page 2. A lone integer is a card ID. To filter Lv.5 LIVE score gain, use /card mygo 155 or /card 155%. To test an ID against the band filter, use /card id 72 mygo.",
         "support_cards": "Search support cards by ID, character, exact title or one title fragment. Combine filters in any order. QQ shows complete results. Use /继续 for unsent parts.\nUsage: /support <query or ID>\nExamples: /support EX Abraca or /support 1",
-        "abbrev": "Look up verified character and band nicknames.\nUsage: /abbrev <nickname>\nExample: /abbrev skk",
     },
     "ja": {
         "songs": (
@@ -147,27 +146,25 @@ COMMAND_HELPS = {
         "chart": "曲名またはIDでレベルとノーツ数を確認します。100001は1と省略できます。難易度はEZ、NM、HD、EXまたは正式名で指定できます。難易度を省略すると、テキストには取得済みの全難易度を表示し、画像はEXPERTを優先して1つの難易度を描画します。\n最初に曲名またはIDを書き、その後に難易度、ミラー（镜像 または 反转）、スキル時間を任意の順で指定できます。スキル時間はS1～S5の順にまとめて入力します。\n例：/譜面 1 镜像 5/6.5/8/5/5 EX",
         "cards": "カードID、キャラクター名、カード名、バンド名で検索します。QQでは全件表示し、未送信分は /继续 で受け取れます。\n使い方：/カード <名前またはID> [ページN]\n例：/カード 祥子、/カード mygo ページ2、/カード 51。整数だけの場合はカードIDです。Lv.5ライブスコア上昇率の検索は /カード mygo 155 または /カード 155%。IDとバンド指定の併用は /カード id 72 mygo。",
         "support_cards": "サポートカードID、キャラクター名、カード名で検索します。カード名は完全名か連続した一部分を指定でき、条件の順番は自由です。QQでは全件表示し、未送信分は /继续 で受け取れます。\n使い方：/サポート <名前またはID>\n例：/サポート EX Abraca、/サポート 1",
-        "abbrev": "登録済みのキャラクター・バンドなどの略称を調べます。\n使い方：/略称 <略称>\n例：/略称 skk",
     },
 }
 
 ALIASES = {
-    "查榜线": "event_cutoff", "榜线": "event_cutoff",
+    "查榜线": "event_cutoff", "榜线": "event_cutoff", "查榜線": "event_cutoff", "榜線": "event_cutoff",
     "查曲": "songs", "song": "songs", "songs": "songs", "曲": "songs", "楽曲": "songs",
     "查谱面": "chart", "查谱": "chart", "谱面": "chart", "chart": "chart", "譜面": "chart",
     "查卡": "cards", "查角色卡": "cards", "查卡面": "cards", "card": "cards", "cards": "cards", "カード": "cards",
     "查留影卡": "support_cards", "查留影卡面": "support_cards", "查支援卡": "support_cards", "查snap": "support_cards", "snap": "support_cards", "查支援卡面": "support_cards", "查snap卡面": "support_cards", "支援卡": "support_cards", "support": "support_cards",
     "supportcard": "support_cards", "supportcards": "support_cards", "サポート": "support_cards",
-    "查缩写": "abbrev", "abbrev": "abbrev", "略称": "abbrev",
 }
-CANONICAL = {"songs": "/查曲", "chart": "/查谱面", "cards": "/查卡", "support_cards": "/查留影卡", "abbrev": "/查缩写"}
+CANONICAL = {"songs": "/查曲", "chart": "/查谱面", "cards": "/查卡", "support_cards": "/查留影卡"}
 CANONICAL_BY_LOCALE = {
     "zh": CANONICAL,
-    "en": {"songs": "/song", "chart": "/chart", "cards": "/card", "support_cards": "/support", "abbrev": "/abbrev"},
-    "ja": {"songs": "/曲", "chart": "/譜面", "cards": "/カード", "support_cards": "/サポート", "abbrev": "/略称"},
+    "en": {"songs": "/song", "chart": "/chart", "cards": "/card", "support_cards": "/support"},
+    "ja": {"songs": "/曲", "chart": "/譜面", "cards": "/カード", "support_cards": "/サポート"},
 }
-ENGLISH_COMMANDS = {"song", "songs", "chart", "card", "cards", "support", "supportcard", "supportcards", "abbrev", "help", "status", "language", "event", "gacha", "prediction"}
-JAPANESE_COMMANDS = {"曲", "楽曲", "譜面", "カード", "サポート", "略称", "ヘルプ", "状態", "言語", "イベント", "ガチャ", "予想線"}
+ENGLISH_COMMANDS = {"song", "songs", "chart", "card", "cards", "support", "supportcard", "supportcards", "help", "status", "language", "event", "gacha", "prediction"}
+JAPANESE_COMMANDS = {"曲", "楽曲", "譜面", "カード", "サポート", "ヘルプ", "状態", "言語", "イベント", "ガチャ", "予想線"}
 UNAVAILABLE_COMMANDS = {"ycx", "预测线", "查预测线", "gacha", "prediction", "ガチャ", "予想線"}
 UNAVAILABLE_REPLY = "该功能暂未上线"
 PAGE_SIZE = 16
@@ -497,6 +494,15 @@ def parse_query(content: str) -> tuple[str, str, str | int | None] | None:
     return None
 
 
+def split_joined_info_head(head: str) -> tuple[str, str] | None:
+    if head.startswith("查角色卡"):
+        return None
+    for name in ("查活动", "查卡池", "查角色"):
+        if head.startswith(name) and head != name:
+            return name, head[len(name):]
+    return None
+
+
 def _command_tip(content: str) -> str | None:
     text = _clean_message(content)
     if not text:
@@ -506,10 +512,11 @@ def _command_tip(content: str) -> str | None:
     canonical = CANONICAL_BY_LOCALE[locale]
     parts = text.split(None, 1)
     first, rest = parts[0], parts[1] if len(parts) > 1 else ""
-    for name in ("查活动", "查卡池", "查角色"):
-        if first.startswith(name) and first != name and not first.startswith("查角色卡"):
-            argument = first[len(name):] + (" " + rest if rest else "")
-            return tr(locale, "missing_space", command="/" + name, argument=argument)
+    joined = split_joined_info_head(first)
+    if joined:
+        name, argument = joined
+        argument += " " + rest if rest else ""
+        return tr(locale, "missing_space", command="/" + name, argument=argument)
     if any(first.casefold().startswith(name) for name in UNAVAILABLE_COMMANDS):
         return tr(locale, "unavailable")
     kind = ALIASES.get(first.casefold())
@@ -529,9 +536,9 @@ def _command_tip(content: str) -> str | None:
                 return tr(locale, "missing_space", command=canonical[ALIASES[alias]], argument=suffix) + "\n" + helps[ALIASES[alias]]
 
     candidates = {
-        "zh": ("查曲", "查谱面", "查卡", "查留影卡", "查缩写", "查活动", "查卡池", "查角色", "ycx", "数据状态", "帮助"),
-        "en": ("song", "chart", "card", "support", "abbrev", "event", "gacha", "ycx", "status", "help"),
-        "ja": ("曲", "譜面", "カード", "サポート", "略称", "イベント", "ガチャ", "予想線", "状態", "ヘルプ"),
+        "zh": ("查曲", "查谱面", "查卡", "查留影卡", "查活动", "查卡池", "查角色", "ycx", "数据状态", "帮助"),
+        "en": ("song", "chart", "card", "support", "event", "gacha", "ycx", "status", "help"),
+        "ja": ("曲", "譜面", "カード", "サポート", "イベント", "ガチャ", "予想線", "状態", "ヘルプ"),
     }[locale]
     candidate = max(candidates, key=lambda name: SequenceMatcher(None, first, name).ratio())
     similarity = SequenceMatcher(None, first, candidate).ratio()
@@ -647,11 +654,14 @@ def resolve_command(content: str, repository: SongRepository, *,
     text = _clean_message(content)
     parts = text.split(None, 1)
     head = parts[0].casefold() if parts else ""
-    if head in {"查竞技场", "查玩家"}:
-        from .query.public_queries import execute_arena, execute_player
-        execute = execute_arena if head == "查竞技场" else execute_player
-        answer = execute(parts[1] if len(parts) > 1 else "", repository)
-        return CommandResult(("arena" if head == "查竞技场" else "player", text, None), info=answer)
+    if head in {"查激奏舞台", "查激奏榜线"}:
+        from .query.public_queries import execute_arena
+        answer = execute_arena(parts[1] if len(parts) > 1 else "", repository, command=head)
+        return CommandResult(("arena", text, None), info=answer)
+    if head == "查竞技场":
+        from .query.public_queries import execute_arena
+        answer = execute_arena(parts[1] if len(parts) > 1 else "", repository)
+        return CommandResult(("arena", text, None), info=answer)
     if head == "查角色":
         from .query.character_query import execute_character
         answer = execute_character(parts[1] if len(parts) > 1 else "", repository)
@@ -664,9 +674,9 @@ def resolve_command(content: str, repository: SongRepository, *,
         from .query.activity_query import execute_activity
         answer = execute_activity(parts[1] if len(parts) > 1 else "", repository)
         return CommandResult(("activity", text, None), activity=answer)
-    if head in {"查榜线", "榜线"}:
+    if head in {"查榜线", "榜线", "查榜線", "榜線"}:
         answer = execute_cutoff(parse_cutoff(text), repository)
-        return CommandResult(("event_cutoff", answer.request.query, answer.request.rank), cutoff=answer)
+        return CommandResult(("event_cutoff", "", answer.request.rank), cutoff=answer)
     kind = ALIASES.get(head)
     if kind in {"cards", "support_cards"} or head in {"查角色卡", "查snap", "snap", "查支援卡面", "查snap卡面"}:
         support = kind == "support_cards" or head in {"查snap", "snap", "查支援卡面", "查snap卡面"}
@@ -876,40 +886,6 @@ def handle_command(content: str, repository: SongRepository,
         return (status + "\n" + tr(locale, "aliases_" + alias_status()) + tr(locale, "aliases_unverified", count=unverified_alias_count(repository)) + f"\n歌曲颜色／激奏：{count}/{len(catalog.songs)} · Haneoka 日服 · "
                 + ("旧缓存" if (catalog.cache_state == "stale" if main_catalog else traits.stale) else "有效缓存" if saved else "等待后台获取")
                 + (f"\n属性版本：{saved['release']}\n本机获取：{_safe_sync_time(saved['fetched_at'], locale)}" if saved else "") + catalog_text + history_text)
-
-    if text.casefold() in {"查缩写", "abbrev", "略称"}:
-        return COMMAND_HELPS[locale]["abbrev"]
-    if text.split(None, 1)[0].casefold() in {"查缩写", "abbrev", "略称"} and len(text.split(None, 1)) > 1:
-        abbreviation = text.split(None, 1)[1].strip()
-        alias = resolve_character_alias(abbreviation)
-        if alias:
-            cards = repository.search_cards(abbreviation, limit=1)
-            name = localized_text(cards[0], "character", locale) if cards else alias.display
-            key = "alias_found" if cards else "alias_found_support" if support_card_matches(repository, abbreviation) else "alias_missing_card"
-            return tr(locale, key, query=abbreviation, name=name)
-        song_alias = resolve_exact_alias("song", abbreviation, repository)
-        card_alias = resolve_exact_alias("card", abbreviation, repository)
-        support_alias = resolve_exact_alias("support_card", abbreviation, repository)
-        if song_alias.ambiguous or card_alias.ambiguous or support_alias.ambiguous:
-            return tr(locale, "alias_ambiguous", query=abbreviation)
-        entities = {r.entity for r in (song_alias, card_alias, support_alias) if r.entity}
-        found = next(iter(entities), None)
-        if len(entities) > 1:
-            return tr(locale, "alias_ambiguous", query=abbreviation)
-        if found:
-            if found.kind == "band":
-                return tr(locale, "alias_found_band", query=abbreviation, name=found.value)
-            if found.kind == "song":
-                return tr(locale, "alias_found_song", query=abbreviation, name=found.value)
-            if found.kind == "support_card":
-                return tr(locale, "alias_found_support", query=abbreviation, name=found.value)
-            if found.kind == "card":
-                return tr(locale, "alias_found", query=abbreviation, name=found.value)
-            cards = card_matches(repository, abbreviation)
-            name = localized_text(cards[0], "character", locale) if cards else found.value
-            return tr(locale, "alias_found" if cards else "alias_found_support", query=abbreviation, name=name)
-        known = "、".join(known_alias_names(repository))
-        return tr(locale, "alias_unknown", query=abbreviation, names=known)
 
     selection = resolved if resolved is not None else resolve_command(content, repository)
     parsed = selection.parsed if selection else None

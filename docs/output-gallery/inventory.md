@@ -24,7 +24,7 @@
 ## 纯文字路径
 
 - 活动信息：activity_query → result.activity.text，无绘图分派；合成活动通过真实查询入口导出，未查询远端活动。
-- 帮助/介绍/语言/数据状态/调试/缩写/未开放命令：handle_command固定或检索文字。
+- 帮助/介绍/语言/数据状态/调试/未开放命令：handle_command固定或检索文字。
 - 明确仅数值：render_cutoff返回空页，保留完整数值。
 - 字段短答：QuerySpec.field使_image_from_result返回None；数量/单字段/技能由检索产生。
 - 无结果、未知实体、歧义、参数错误、页码超限、来源不可用：捕获错误或文字。

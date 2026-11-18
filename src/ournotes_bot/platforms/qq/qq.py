@@ -245,11 +245,7 @@ async def _deliver_reply(message, target_id: str, group: bool, reply: PreparedRe
                 return DeliveryOutcome('fallback_pending' if receipt.confirmed else receipt.status)
         else:
             try:
-                caption={"content": " "}
-                if isinstance(reply.context,DeliveryCursor):
-                    cursor=reply.context
-                    caption['content'] = cursor.image_caption
-                outcome = _receipt(await send(**target, msg_type=7, media=media, **caption))
+                outcome = _receipt(await send(**target, msg_type=7, media=media, content=reply.image_caption))
             except Exception as exc:
                 logger.error("%s图片发送失败，结果不确定，不自动重发；错误类型=%s", channel, type(exc).__name__)
                 return DeliveryOutcome("uncertain")
@@ -378,6 +374,9 @@ def run_bot(app_id: str, app_secret: str, repository: SongRepository, settings: 
     sampler = HistorySampler(repository.event_cutoffs, servers=settings.cutoff_sampling_servers,
                              interval=settings.cutoff_sampling_interval) if settings.cutoff_sampling_enabled else None
     repository.cutoff_sampler = sampler
+    from ...application.activity_infographic import ActivityInfographic
+    from ...application.runtime_tasks import finish_thread
+    infographic = ActivityInfographic(repository) if settings.data_source == 'haneoka' else None
     reply_sequencer = ReplySequencer(enabled=settings.reply_order)
     contexts = ContextStore()
     notice_ai = (AIClient(settings.ai_base_url, settings.ai_api_key, settings.ai_model, settings.ai_reasoning_effort, settings.ai_openai_proxy)
@@ -482,6 +481,14 @@ def run_bot(app_id: str, app_secret: str, repository: SongRepository, settings: 
             contexts.sweep()
             ai_parser.sweep()
 
+    async def infographic_loop():
+        while True:
+            try:
+                await finish_thread(infographic.refresh)
+            except Exception as exc:
+                logger.error("活动一图流生成失败 type=%s", type(exc).__name__)
+            await asyncio.sleep(60)
+
     class ClientWithRefresh(OurNotesClient):
         async def on_ready(self) -> None:
             await super().on_ready()
@@ -491,6 +498,8 @@ def run_bot(app_id: str, app_secret: str, repository: SongRepository, settings: 
                 self._refresh_task = asyncio.create_task(refresh_loop())
             if not hasattr(self, "_song_traits_task") or self._song_traits_task.done():
                 self._song_traits_task = asyncio.create_task(song_traits_loop())
+            if infographic and (not hasattr(self, '_infographic_task') or self._infographic_task.done()):
+                self._infographic_task = asyncio.create_task(infographic_loop())
             if sampler:
                 sampler.start()
             if notifier and (not hasattr(self, "_notice_task") or self._notice_task.done()):

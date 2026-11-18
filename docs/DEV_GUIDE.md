@@ -1,5 +1,7 @@
 # Taki 开发导航
 
+更新规则、剧情资料，或排查 `/聊` 漏召回、误查群记忆时，从[检索资料与路由维护规范](RAG_MAINTENANCE.md)进入。
+
 可选对话 Agent：[基线与约定替换](CHAT_AGENT_BASELINE.md)、[实际架构](CHAT_AGENT_ARCHITECTURE.md)、[组合 F1](CHAT_AGENT_F1.md)、[运行与回退](CHAT_AGENT_RUNBOOK.md)。`test_console_policies` 的 ChatAgent／ChatSourceIntegration／ChatImageIntegration／ChatServiceIntegration／ChatWeb／ChatServiceJobs 测试覆盖接线；C3 与 G1 控制器在 `test_continuation`，图片边界在 `test_media`，剧情发布在 `test_platform_boundary`。旧 NativeRuntimeTests 保留验证 legacy。默认 `OURNOTES_CHAT_ENGINE=legacy`；完整测试类名以源码为准。
 
 性能与容量改动进入 [查询性能与容量](PERFORMANCE_FOUNDATION.md)：唯一接纳、三个账本预算、目录派生缓存及隔离全链路基准；多平台后续设计见 [契约草案](MULTIPLATFORM_CONTRACT.md)，不表示已接入其他平台。
@@ -39,7 +41,7 @@ Koishi 迁移候选入口：[M0/M1 基线与门禁](KOISHI_MIGRATION_M0_M1.md) �
 
 ## 任务导航
 
-竞技场／玩家查询入口为 `query/public_queries.py`，纯请求与快照在 `domain/public_queries.py`，匿名来源与有界缓存位于 `sources/haneoka/public_queries.py`。活动明细转换在 `sources/haneoka/activity_details.py`，经 `ActivityInfo.details` 到 `activity_query.py`。图文继续使用 `InfoAnswer` 与既有回复分页；捕获名片图仅在固定玩家／页码下载路径校验后进入现有编码器。目标验证为 `test_info_queries.py`、`test_info_catalog.py`、`test_info_command_pipeline.py`、`test_info_layout.py`、`test_rotating_layout.py`、`test_menu.py`；共享传输或回复链变动追加完整离线回归。四服实源验收不连接 QQ、不调用模型，分别记录区域、资料版本、200／202／限流／不可用状态。
+竞技场查询入口为 `query/public_queries.py`，纯请求与快照在 `domain/public_queries.py`，匿名来源与有界缓存位于 `sources/haneoka/public_queries.py`。活动明细转换在 `sources/haneoka/activity_details.py`，经 `ActivityInfo.details` 到 `activity_query.py`。图文继续使用 `InfoAnswer` 与既有回复分页。目标验证为 `test_info_queries.py`、`test_info_catalog.py`、`test_info_command_pipeline.py`、`test_info_layout.py`、`test_rotating_layout.py`、`test_menu.py`；共享传输或回复链变动追加完整离线回归。四服实源验收不连接 QQ、不调用模型，分别记录区域、资料版本、200／202／限流／不可用状态。
 
 查询字段与入口能力核对见 [查询规格](QUERY_SPEC.md)，固定跨入口样例为 `tests/test_query_spec.py`；具体行为仍以所绑定版本的源码和测试为准。
 

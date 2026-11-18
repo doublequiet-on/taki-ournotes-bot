@@ -36,3 +36,6 @@ QUERY_CODE_FILES = (
 CODE_FILES += ('../natural_query/parser.py', '../domain/query_context.py', 'query_runtime.py', 'personal_runtime.py')
 CODE_FILES += ('recovery_entry.py',)
 CODE_FILES += ('hermes_chat.py', 'hermes_standby.py', 'hermes_worker.py')
+CODE_FILES += ('activity_infographic.py', '../domain/activity_infographic.py',
+               '../rendering/activity_infographic.py', '../sources/activity_infographic_store.py',
+               '../sources/haneoka/activity_infographic.py', '../sources/haneoka/activity_infographic_engine.cjs')

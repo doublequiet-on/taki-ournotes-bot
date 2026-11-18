@@ -61,7 +61,24 @@ class QuerySpecificationTests(unittest.TestCase):
             model.assert_not_called()
             quota.assert_not_called()
 
-    def test_snap_alias_discovery_and_collision(self):
+    def test_standalone_alias_lookup_is_removed(self):
+        from ournotes_bot.application.replies import recognizes_message
+        from ournotes_bot.commands import HELP_TEXTS, handle_command
+        from ournotes_bot.domain.model_calls import ModelError, ToolCall
+        from ournotes_bot.natural_query.native_tools import validate_call
+
+        for head in ('查缩写', 'abbrev', '略称'):
+            for suffix in ('', ' tmr'):
+                with self.subTest(head=head, suffix=suffix):
+                    command = '/' + head + suffix
+                    self.assertFalse(recognizes_message(command))
+                    self.assertIn('没有识别', handle_command(command, self.repo))
+                    self.assertTrue(all('/' + head not in help_text for help_text in HELP_TEXTS.values()))
+
+        with self.assertRaises(ModelError):
+            validate_call(ToolCall('call', 'catalog_info', '{"kind":"abbreviation","query":"tmr"}'))
+
+    def test_snap_alias_resolves_in_its_card_category(self):
         from ournotes_bot.commands import handle_command
         from ournotes_bot.query.entity_lexicon import known_alias_names, resolve_entity, unverified_alias_count
         import os
@@ -72,13 +89,16 @@ class QuerySpecificationTests(unittest.TestCase):
         self.assertEqual(unverified_alias_count(self.repo), 1)
         self.assertIn('词库：有效', handle_command('/数据状态', self.repo))
         self.assertEqual(resolve_entity('support_card', '照片', self.repo), '7')
-        self.assertIn('/查留影卡 照片', handle_command('/查缩写 照片', self.repo))
+        with patch.object(self.repo, 'support_card_with_detail', side_effect=lambda card: card):
+            result = resolve_command('/查留影卡 照片', self.repo)
+        self.assertEqual(tuple(card.id for card in result.support_cards), (7,))
         with patch.object(self.parser, '_request', side_effect=AssertionError('model called')), \
              patch.object(self.parser._quota, 'reserve', side_effect=AssertionError('quota used')):
             answer = self.parser.answer_with_outcome('/问 照片的留影卡', self.repo)
             self.assertEqual(answer.code.value, 'success', answer.text)
         path.write_text(json.dumps({'support_card': {'照片': '7'}, 'card': {'照片': '1'}}), encoding='utf-8')
-        self.assertIn('多个对象', handle_command('/查缩写 照片', self.repo))
+        self.assertEqual(resolve_entity('card', '照片', self.repo), '1')
+        self.assertEqual(resolve_entity('support_card', '照片', self.repo), '7')
 
     def test_snap_only_character_alias_and_failed_file_status(self):
         from ournotes_bot.commands import handle_command
@@ -89,7 +109,8 @@ class QuerySpecificationTests(unittest.TestCase):
         path.write_text(json.dumps({'character': {'灯照片': '高松灯'}}), encoding='utf-8')
         for nickname in ('tmr', '灯照片'):
             self.assertIn(nickname, known_alias_names(self.repo))
-            self.assertIn('/查留影卡', handle_command('/查缩写 ' + nickname, self.repo))
+            result = resolve_command('/查留影卡 ' + nickname, self.repo)
+            self.assertEqual(tuple(card.id for card in result.support_cards), (7,))
         path.write_text('{', encoding='utf-8')
         self.assertIn('沿用本进程最后有效版本', handle_command('/数据状态', self.repo))
         self.assertIn('灯照片', known_alias_names(self.repo))
@@ -205,14 +226,13 @@ class QuerySpecificationTests(unittest.TestCase):
             self.assertEqual(ambiguous.code.value, 'ambiguous')
 
     def test_cutoff_numbers_keep_their_namespaces(self):
-        direct = parse_cutoff('/查榜线 hk id1 歌曲ID=100001 20-40')
-        local = parse_natural_cutoff('查榜线 hk id1 歌曲ID=100001 20-40')
+        direct = parse_cutoff('/查榜线 hk id1 20-40')
+        local = parse_natural_cutoff('查榜线 hk id1 20-40')
         for request in (direct, local):
             self.assertIsNotNone(request)
             self.assertFalse(request.error)
             self.assertEqual(request.server, 'tw')
             self.assertEqual(request.event_id, '1')
-            self.assertEqual(request.song_id, '100001')
             self.assertEqual(request.mode, 'range')
             self.assertEqual(request.ranks, tuple(range(20, 41)))
         near = parse_cutoff('/查榜线 1')

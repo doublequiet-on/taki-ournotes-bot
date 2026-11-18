@@ -1,7 +1,7 @@
 import { libraryView } from './library.js';
 import { h } from './runtime.js';
 import { button, section, stamp } from './views.js';
-export const actions={catalog_sync:'检查并同步',catalog_reload:'重新获取资料',assets_verify:'核验图片',assets_repair:'修复图片',assets_retry:'重试失败图片',tasks_recover:'检查并恢复后台任务',events_check:'检查当前活动',sample_once:'立即采样',upstream_check:'检查上游连接'};
+export const actions={catalog_sync:'检查并同步',catalog_reload:'重新获取资料',assets_verify:'核验图片',assets_repair:'修复图片',assets_retry:'重试失败图片',tasks_recover:'检查并恢复后台任务',events_check:'检查当前活动',sample_once:'立即采样',upstream_check:'检查上游连接',activity_infographic_rebuild:'重建活动一图流'};
 const states={queued:'排队中',running:'执行中',succeeded:'已完成',partial:'部分完成',failed:'失败',interrupted:'已中断',intent:'结果待核对',applied:'已生效'};
 export function jobsView(s) {
   return h('section',[h('h2','操作记录'),button('刷新记录',()=>s.load(s.jobs,'ops/jobs/list')),

@@ -9,7 +9,7 @@ from pathlib import Path
 from unittest.mock import patch
 from ournotes_bot.data import Song, SongRepository, normalize
 from ournotes_bot.query.entity_lexicon import resolve_entity, known_alias_names, _validate_aliases, _resolve_alias_target
-from ournotes_bot.commands import handle_command, resolve_command
+from ournotes_bot.commands import resolve_command
 from ournotes_bot.ai_query import AIQueryParser
 from ournotes_bot.config import Settings
 from ournotes_bot.sources.haneoka.catalog import validate
@@ -55,14 +55,13 @@ class AliasEvidenceTests(unittest.TestCase):
                 if e['status']=='automatic':
                     self.assertIsNotNone(resolve_entity('card',e['alias'],self.repo))
 
-    def test_each_added_alias_direct_local_and_discovery(self):
+    def test_each_added_alias_direct_and_local(self):
         with patch.object(self.parser,'_request',side_effect=AssertionError('model called')), patch.object(self.parser._quota,'reserve',side_effect=AssertionError('quota used')):
             for e in self.entries:
                 if e['status'] not in ('accepted','maintainer_import','maintainer_requested'): continue
                 a=e['alias']; song=e['kind'] in ('song','band')
                 with self.subTest(alias=a):
                     self.assertIn(a,known_alias_names(self.repo))
-                    self.assertIn(a,handle_command('/查缩写 '+a,self.repo))
                     direct=resolve_command(('/查曲 ' if song else '/查卡 ')+a,self.repo)
                     answer=self.parser.answer_with_outcome('/问 '+a+('的歌曲有哪些' if song else '的成员卡有哪些'),self.repo)
                     self.assertEqual(answer.code.value,'success',answer.text)

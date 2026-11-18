@@ -98,6 +98,17 @@ class Followups:
         return next((question for (group,_),question in self.questions.items()
                      if group==scope and question.answer_id==message_id),None)
 
+    def adjacent_peer_reply(self, scope, request):
+        """A public reply immediately preceding this observation, without granting a user continuation."""
+        self.sweep()
+        replies = [question for (group, _), question in self.questions.items()
+                   if group == scope and question.gateway_epoch == request.gateway_epoch
+                   and question.delivered_ms <= request.timestamp_ms and question.source_seq < request.ingress_seq]
+        latest = max(replies, key=lambda question: (question.delivered_ms, question.at), default=None)
+        if (latest and latest.user_id != request.user_id and latest.observed_ids == (request.message_id,)):
+            return latest
+        return None
+
     def current(self,scope,user_id):
         self.sweep()
         return self.questions.get((scope,user_id))

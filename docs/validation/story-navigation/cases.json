@@ -1,0 +1,61 @@
+[
+  {
+    "id": "D0",
+    "query": "拿奶泡在杯面描图案",
+    "need": "locate",
+    "development": true
+  },
+  {
+    "id": "R1",
+    "query": "用奶沫在杯上画朵花，是哪一段？",
+    "need": "locate"
+  },
+  {
+    "id": "R2",
+    "query": "谁做完还觉得手艺得再磨磨？",
+    "need": "summary"
+  },
+  {
+    "id": "R3",
+    "query": "一杯奶沫拉出花纹那段，收到道谢之后最后那句日文是什么？",
+    "need": "stored_last_line"
+  },
+  {
+    "id": "R4",
+    "query": "那次试着用奶泡画花纹，前后说过的每句话是什么？",
+    "need": "missing_full_dialogue"
+  },
+  {
+    "id": "R5",
+    "query": "日服爱音和立希的第一段羁绊大概讲了什么？",
+    "need": "summary"
+  },
+  {
+    "id": "R6",
+    "query": "前面的请求和收尾大概发生了什么？",
+    "chapter": "絆ストーリー／愛音&立希1",
+    "need": "summary"
+  },
+  {
+    "id": "R7",
+    "query": "用乳沫画图案前，爱音最初怎么开口的？请给日文逐字台词。",
+    "need": "missing_opening_line"
+  },
+  {
+    "id": "R8",
+    "query": "爱音和立希用奶泡描图形那段，动画版是怎么拍的？",
+    "work": "BanG Dream! It's MyGO!!!!!",
+    "need": "outside_scope"
+  },
+  {
+    "id": "R9",
+    "query": "爱音跟立希在羁绊第 2 话里用奶泡描花纹，是哪句？",
+    "chapter": "絆ストーリー／愛音&立希2",
+    "need": "outside_scope"
+  },
+  {
+    "id": "R10",
+    "query": "Our Notes 里哪张卡的卡面有奶泡画成的图案？",
+    "need": "different_topic"
+  }
+]

@@ -85,6 +85,9 @@ class Work:
     hermes_pilot: bool = False
     hermes_native_fallback: bool = False
     hermes_provider_started: bool = False
+    named_tls_retried: bool = False
+    hermes_claim_started: float | None = None
+    hermes_claim_finished: float | None = None
     hermes_send_deadline: float | None = None
     story_versions: tuple = ()
     persona_version: str = 'taki-v0/legacy-derived'
@@ -569,6 +572,8 @@ class Backend:
             if work.hint:
                 parts = [work.prepared[0], *replies.reserve_progress_slot(parts,overflow=bool(overflow),text_limit=text_limit)]
             self.diagnostics.prepared(work.request.request_id, parts)
+            if work.proactive is not None and any(part.text and part.business_status=='success' for part in parts):
+                self.diagnostics.chat_event(work.request.request_id,'reply_ready',self.clock())
             parts = [replace(p, context=ReadOnlyContext(p.text, p.parse_origin, p.evidence))
                      if p.context is None and p.business_status!='processing_hint' else p for p in parts]
             work.prepared = tuple(parts)
@@ -629,7 +634,8 @@ class Backend:
             elif isinstance(value, (tuple, list)):
                 for item in value: visit(item)
             elif isinstance(value, replies.PreparedReply):
-                for item in (value.image, value.text, value.pages, value.context, value.fallback_texts): visit(item)
+                for item in (value.image, value.text, value.pages, value.context, value.fallback_texts,
+                             value.image_commands): visit(item)
             elif isinstance(value, replies.DeliveryCursor):
                 visit(value.remaining)
                 visit(value.query_context)
@@ -696,10 +702,9 @@ class Backend:
                 reply = work.prepared[part['position']]
                 view['business_status'] = reply.business_status or 'message'
                 if reply.image and part['mode'] == 'primary':
-                    cursor = reply.context
-                    caption = cursor.image_caption if isinstance(cursor, replies.DeliveryCursor) else ' '
                     mime = 'image/png' if reply.image.startswith(b'\x89PNG\r\n\x1a\n') else 'image/jpeg'
-                    view.update(kind='image', text=caption, image=f"/v1/deliveries/{row['delivery']}/parts/{part['id']}/image", mime=mime)
+                    view.update(kind='image', text=reply.image_caption,
+                                image=f"/v1/deliveries/{row['delivery']}/parts/{part['id']}/image", mime=mime)
                 else:
                     text = ('图片上传失败，完整文字已保留；发送 /继续 查看。'
                             if part['mode'] == 'fallback' and len(reply.text) > (1500 if work.request.kind == 'group' else 1800) else reply.text)

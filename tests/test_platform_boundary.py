@@ -171,7 +171,8 @@ class KnowledgeAuthorityTests(unittest.TestCase):
         self.service.close()
         self.temp.cleanup()
 
-    def write_fixture(self, number=1, *, server='jp', version=None, text='隔离测试内容，不代表任何游戏事实。', doc_id='ci-fixture', valid_to=None):
+    def write_fixture(self, number=1, *, server='jp', version=None, text='隔离测试内容，不代表任何游戏事实。',
+                      doc_id='ci-fixture', valid_to=None, root=None):
         import json
         from ournotes_bot.sources.knowledge_files import parse_document
         from ournotes_bot.application.knowledge_service import atomic_text
@@ -186,8 +187,9 @@ class KnowledgeAuthorityTests(unittest.TestCase):
         approvals = dict(schema='taki-knowledge-approvals/1', revision=number, revoked=[], approved=[dict(
             id=doc.id, content_sha256=doc.content_sha256, approval_revision=number, approved_by=doc.reviewed_by,
             approved_at=doc.reviewed_at, confirmation_ref=f'fixture://isolated/{number}')])
-        atomic_text(self.service.root/(doc_id+'.md'), content)
-        atomic_text(self.service.root/'approvals.json', json.dumps(approvals))
+        root = root or self.service.root
+        atomic_text(root/(doc_id+'.md'), content)
+        atomic_text(root/'approvals.json', json.dumps(approvals))
         return content, approvals
 
     def retrieve(self, **scope):
@@ -300,17 +302,213 @@ class KnowledgeAuthorityTests(unittest.TestCase):
         from ournotes_bot.application.knowledge_service import atomic_text
         from ournotes_bot.query import knowledge_retrieval
         _,first=self.write_fixture(text='隔离内容。'*200);self.service.refresh();lease=self.retrieve().lease
+        cached = self.service.db.execute('SELECT * FROM vectors').fetchall()
+        cached_revision = self.service.index_revision
         _,second=self.write_fixture(2,doc_id='other-fixture')
         second['approved']+=first['approved']
         atomic_text(self.service.root/'approvals.json',json.dumps(second))
-        self.encoder.fail=True;self.service.refresh()
-        self.assertTrue(self.service.index_error)
-        self.assertTrue(self.service.validate_current((lease,)))
-        self.encoder.fail=False
+        self.service.observe()
         with patch.object(knowledge_retrieval,'MAX_CHUNKS',1):
             self.service.rebuild()
             self.assertEqual(self.service.index_error,'knowledge_chunk_limit')
+            self.assertEqual(self.service.status()['code'], 'index_pending')
             self.assertTrue(self.service.validate_current((lease,)))
+        self.encoder.fail=True;self.service.rebuild()
+        self.assertEqual(self.service.index_error, 'knowledge_index_build_failed')
+        self.assertEqual(self.service.status()['index_mode'], 'lexical')
+        self.assertEqual(self.service.db.execute('SELECT * FROM vectors').fetchall(), cached)
+        self.assertEqual(self.service.db.execute('SELECT revision FROM index_state').fetchone(), (cached_revision,))
+        self.assertTrue(self.service.validate_current((lease,)))
+
+    def test_cold_lexical_index_keeps_adjacent_exception_and_recovers_hybrid(self):
+        from unittest.mock import patch
+        from ournotes_bot.domain.knowledge import KnowledgeScope
+        from ournotes_bot.sources.knowledge_embeddings import LocalBgeEncoder
+
+        self.write_fixture(text='## 测试兑换\n'+'背景。'*115+'\n'
+                           +'累计达到 200 抽可兑换。'+'补充。'*112+'\n仅限当期卡池。')
+        self.service.encoder = LocalBgeEncoder(None)
+        status = self.service.refresh()
+        self.assertEqual((status['code'], status['index_mode']), ('ready', 'lexical'))
+        self.assertEqual(status['index_error'], 'semantic_model_not_configured')
+        for table in ('vectors', 'index_state'):
+            self.assertIsNone(self.service.db.execute(f'SELECT 1 FROM {table}').fetchone())
+        revision = status['approved_set_revision']
+        scope = KnowledgeScope()
+        with patch.object(self.service.encoder, 'encode', side_effect=AssertionError) as encode:
+            lexical = self.service.retrieve('兑换 200', scope, revision, limit=3, prioritize_adjacent=True)
+            encode.assert_not_called()
+        self.assertEqual((lexical.code, lexical.mode), ('ok', 'lexical'))
+        self.assertEqual(len(lexical.lease.chunks), 3)
+        self.assertIn('200 抽', lexical.lease.chunks[0].text)
+        self.assertIn('仅限当期卡池', lexical.lease.chunks[-1].text)
+        self.assertLessEqual(len(self.service.prepare_evidence(lexical.lease)), 6000)
+
+        self.service.encoder = self.encoder
+        status = self.service.refresh()
+        self.assertEqual((status['code'], status['index_mode']), ('ready', 'hybrid'))
+        self.assertEqual(status['approved_set_revision'], revision)
+        self.assertIsNone(status['index_error'])
+        self.assertTrue(self.service.valid(lexical.lease))
+        hybrid = self.service.retrieve('兑换 200', scope, revision, limit=3, prioritize_adjacent=True)
+        self.assertEqual((hybrid.code, hybrid.mode), ('ok', 'hybrid'))
+        self.assertEqual(hybrid.lease.chunks, lexical.lease.chunks)
+
+    def test_query_vector_failure_keeps_scope_budget_and_authority_checks(self):
+        from unittest.mock import patch
+        from ournotes_bot.domain.knowledge import KnowledgeError, KnowledgeScope
+        from ournotes_bot.sources.knowledge_files import scan_directory
+
+        self.write_fixture(text='## 参与\n入场方式。\n## 测试规则\n测试兑换限制。')
+        self.service.refresh()
+        revision = self.service.approved_set_revision
+        scope = KnowledgeScope()
+        with patch.object(self.encoder, 'encode', side_effect=RuntimeError('isolated query failure')):
+            fallback = self.service.retrieve('兑换限制', scope, revision, limit=2, focus_query='入场方式')
+            self.assertEqual((fallback.code, fallback.mode), ('ok', 'lexical'))
+            self.assertEqual(len(fallback.lease.chunks), 2)
+            self.assertIn('入场方式', fallback.lease.chunks[0].text)
+            self.assertIn('兑换限制', fallback.lease.chunks[1].text)
+            missing = self.service.retrieve('unmatched', scope, revision)
+            self.assertEqual((missing.code, missing.mode), ('missing', 'lexical'))
+            wrong_scope = self.service.retrieve('兑换限制', KnowledgeScope(server='intl'), revision)
+            self.assertEqual((wrong_scope.code, wrong_scope.mode), ('missing', None))
+            too_small = self.service.retrieve('兑换限制', scope, revision, max_chars=1)
+            self.assertEqual((too_small.code, too_small.mode), ('unavailable', 'lexical'))
+        self.assertEqual(self.service.status()['index_mode'], 'hybrid')
+        # The synthetic semantic match disappears when no query vector is usable.
+        recovered = self.service.retrieve('unmatched', scope, revision)
+        self.assertEqual((recovered.code, recovered.mode), ('ok', 'hybrid'))
+        with patch.object(self.encoder, 'encode', return_value=((1., 0.), (1.,))):
+            invalid_focus = self.service.retrieve('兑换限制', scope, revision, focus_query='入场方式')
+            self.assertEqual((invalid_focus.code, invalid_focus.mode), ('ok', 'lexical'))
+
+        expected = [scan_directory(self.service.root).fingerprint, revision]
+        self.service.withdraw_document('ci-fixture', 'isolated withdrawal', expected=expected)
+        self.assertFalse(self.service.valid(fallback.lease))
+        with self.assertRaisesRegex(KnowledgeError, 'knowledge_evidence_unavailable'):
+            self.service.prepare_evidence(fallback.lease)
+        current = self.service.retrieve('兑换限制', scope, self.service.approved_set_revision)
+        self.assertEqual((current.code, current.mode), ('empty', None))
+        # A rollback invalidates authority before attempting either ranker.
+        self.write_fixture()
+        invalid = self.service.retrieve('兑换限制', scope, self.service.approved_set_revision)
+        self.assertEqual((invalid.code, invalid.mode), ('unavailable', None))
+        self.assertEqual(self.service.error, 'approval_revision_rollback')
+
+    def test_restart_with_complete_cache_still_detects_unconfigured_encoder(self):
+        from unittest.mock import patch
+        from ournotes_bot.application.knowledge_service import KnowledgeService
+        from ournotes_bot.sources.knowledge_embeddings import LocalBgeEncoder
+
+        class FixtureWithBgeCacheIdentity(LocalBgeEncoder):
+            def encode(self, texts, *, query=False):
+                return tuple((1.,) + (0.,) * (self.dimensions - 1) for _ in texts)
+
+        self.write_fixture(text='工程测试可兑换。')
+        self.service.encoder = FixtureWithBgeCacheIdentity(None)
+        initial = self.service.refresh()
+        self.assertEqual(initial['index_mode'], 'hybrid')
+        cached = self.service.db.execute('SELECT key, value FROM vectors').fetchall()
+        self.assertTrue(cached)
+        self.service.close()
+        self.service = KnowledgeService(self.root/'content', self.root/'state.sqlite3', LocalBgeEncoder(None))
+        with patch.object(self.service.encoder, 'encode', wraps=self.service.encoder.encode) as encode:
+            status = self.service.refresh()
+            self.assertEqual((status['code'], status['index_mode'], status['index_error']),
+                             ('ready', 'lexical', 'semantic_model_not_configured'))
+            result = self.retrieve()
+            self.assertEqual((result.code, result.mode), ('ok', 'lexical'))
+            encode.assert_called_once_with(())
+        self.assertEqual(self.service.db.execute('SELECT key, value FROM vectors').fetchall(), cached)
+
+        self.service.encoder = FixtureWithBgeCacheIdentity(None)
+        with patch.object(self.service.encoder, 'encode', wraps=self.service.encoder.encode) as encode:
+            recovered = self.service.refresh()
+            self.assertEqual((recovered['code'], recovered['index_mode'], recovered['index_error']),
+                             ('ready', 'hybrid', None))
+            self.assertEqual(recovered['last_build']['encoded_chunks'], 0)
+            self.assertEqual(recovered['approved_set_revision'], initial['approved_set_revision'])
+            encode.assert_called_once_with(())
+        self.assertTrue(self.service.valid(result.lease))
+        self.assertEqual(self.retrieve().mode, 'hybrid')
+
+    def test_lexical_build_cannot_publish_a_snapshot_changed_during_encoding(self):
+        from unittest.mock import patch
+        from ournotes_bot.domain.knowledge import KnowledgeError
+
+        self.write_fixture()
+        document = self.service.root/'ci-fixture.md'
+        content = document.read_text(encoding='utf-8')
+
+        def remove_then_fail(texts):
+            document.unlink()
+            raise KnowledgeError('semantic_model_missing')
+
+        with patch.object(self.encoder, 'encode', side_effect=remove_then_fail):
+            status = self.service.refresh()
+        self.assertEqual(status['code'], 'empty')
+        self.assertEqual(status['index_error'], 'knowledge_candidate_superseded')
+        self.assertIsNone(status['index_mode'])
+        document.write_text(content, encoding='utf-8')
+        self.assertEqual(self.service.refresh()['approved_documents'], 0)
+
+    def test_confirmed_import_build_failure_does_not_publish_or_undo_floor(self):
+        from dataclasses import asdict
+        from ournotes_bot.application.knowledge_service import KnowledgeService
+        from ournotes_bot.domain.knowledge import KnowledgeError
+        from ournotes_bot.sources.knowledge_embeddings import LocalBgeEncoder
+        from ournotes_bot.sources.knowledge_files import scan_directory
+
+        self.write_fixture(text='旧测试资料。')
+        self.service.refresh()
+        captured = self.retrieve().lease
+        staging = self.root/'staging'
+        self.write_fixture(2, root=staging, text='新版测试资料。')
+        candidate = scan_directory(staging)
+        doc, = candidate.documents
+        approval, = candidate.manifest.approved
+        delivery = dict(schema='taki-knowledge-delivery/1', delivery_id='isolated', prepared_by='fixture',
+                        missing_materials=[], items=[dict(
+                            id=doc.id, file=doc.file, content_sha256=doc.content_sha256, game=doc.game,
+                            servers=list(doc.servers), applicability=asdict(doc.applicability),
+                            source_locators=[source.locator for source in doc.sources],
+                            limitations=list(doc.limitations), confirmation_ref=approval.confirmation_ref,
+                            status='confirmed')])
+        baseline = scan_directory(self.service.root).fingerprint
+        self.service.encoder = LocalBgeEncoder(None)
+        with self.assertRaisesRegex(KnowledgeError, 'semantic_model_not_configured'):
+            self.service.import_confirmed(staging, delivery)
+        self.assertEqual(scan_directory(self.service.root).fingerprint, baseline)
+        self.assertFalse(self.service.valid(captured))
+        self.assertEqual(self.retrieve().code, 'empty')
+        self.service.close()
+        self.service = KnowledgeService(self.root/'content', self.root/'state.sqlite3', LocalBgeEncoder(None))
+        self.assertEqual(self.service.refresh()['code'], 'empty')
+        self.assertFalse(self.service.valid(captured))
+
+        self.service.encoder = self.encoder
+        status = self.service.import_confirmed(staging, delivery)
+        self.assertEqual((status['code'], status['index_mode']), ('ready', 'hybrid'))
+        self.assertIn('新版测试资料', self.retrieve().lease.chunks[0].text)
+        self.assertFalse(self.service.valid(captured))
+
+        # A new approval of the same text reuses all cached vectors. An
+        # unusable encoder must still prevent publication of the candidate.
+        prior_lease = self.retrieve().lease
+        baseline = scan_directory(self.service.root).fingerprint
+        self.write_fixture(3, root=staging, text='新版测试资料。')
+        delivery['items'][0]['confirmation_ref'] = 'fixture://isolated/3'
+        self.encoder.fail = True
+        with self.assertRaisesRegex(KnowledgeError, 'knowledge_index_build_failed'):
+            self.service.import_confirmed(staging, delivery)
+        self.assertEqual(scan_directory(self.service.root).fingerprint, baseline)
+        self.assertFalse(self.service.valid(prior_lease))
+        self.assertEqual(self.retrieve().code, 'empty')
+        self.encoder.fail = False
+        status = self.service.import_confirmed(staging, delivery)
+        self.assertEqual((status['index_mode'], status['last_build']['encoded_chunks']), ('hybrid', 0))
+        self.assertEqual(self.retrieve().mode, 'hybrid')
 
     def test_failed_authority_save_remains_closed_through_pending_recovery(self):
         from ournotes_bot.application.knowledge_service import KnowledgeService
@@ -708,6 +906,68 @@ class StoryPublicationTests(unittest.TestCase):
         self.assertEqual(status['sources'][1]['scene_count'],0)
         self.assertEqual(status['sources'][1]['coverage'],'missing_source')
 
+    def test_scoped_coverage_distinguishes_directory_gaps_from_lexical_miss(self):
+        from ournotes_bot.sources.story_files import source_content_hash
+
+        self.assertEqual(self.service.coverage()['status'], 'not_available')
+        bundle = self.bundle()
+        scenes = bundle['scenes']
+        scenes[2]['chapter'] = 'adjacent-chapter'
+        source = bundle['sources'][0]
+        source['content_sha256'] = source_content_hash(scenes)
+        bundle['sources'].append(dict(source, source_id='missing-story',
+                                      coverage='missing_source', content_sha256=None, acquired_at=None))
+        revision = self.publish(bundle)['source_revision']
+        scope = {'work': 'ＳＹＮＴＨＥＴＩＣ-WORK', 'source_kind': 'synthetic_fixture'}
+        coverage = self.service.coverage(**scope)
+        self.assertEqual(coverage['source_revision'], revision)
+        self.assertEqual(coverage['revocation_revision'], 0)
+        self.assertEqual(coverage['scenes'], 3)
+        collected, missing = coverage['sources']
+        self.assertEqual(collected['coverage'], 'collected')
+        self.assertEqual(collected['chapters'], [
+            {'chapter': 'adjacent-chapter', 'scene_count': 1},
+            {'chapter': 'test-chapter', 'scene_count': 2},
+        ])
+        self.assertEqual((missing['coverage'], missing['scene_count'], missing['chapters']),
+                         ('missing_source', 0, []))
+
+        chapter = self.service.coverage(**scope, chapter='TEST-CHAPTER')
+        self.assertEqual([row['source_id'] for row in chapter['sources']], ['test-story'])
+        self.assertEqual(chapter['scenes'], 2)
+        self.assertEqual(self.service.coverage(work='other-work')['sources'], [])
+        self.assertEqual(self.service.coverage(**scope, chapter='no-such-chapter')['sources'], [])
+        self.assertEqual(self.service.search('反复排演')['status'], 'no_results')
+        first = self.service.search('练习', {'chapter': 'test-chapter'})['items'][0]
+        exact = self.service.read(first['handle'], before=0, after=0)
+        self.assertEqual(len(exact['scenes']), 1)
+        self.assertIsNotNone(exact['next_handle'])
+        expanded = self.service.read(first['handle'], before=0, after=2)
+        self.assertEqual([scene['scene_id'] for scene in expanded['scenes']], ['scene-1', 'scene-2', 'scene-3'])
+        self.assertEqual(expanded['scenes'][0]['utterances'][0]['text_ja'], '練習を続けよう。')
+        self.assertNotIn('練習を続けよう。', str(coverage))
+
+    def test_coverage_observes_release_changes_and_persistent_withdrawal(self):
+        revision = self.publish()['source_revision']
+        coverage = self.service.coverage(source_id='test-story')
+        handle = self.service.search('练习')['items'][0]['handle']
+        updated = self.bundle()
+        updated['aliases']['排演'] = '練習'
+        newer = self.publish(updated)['source_revision']
+        self.assertNotEqual(revision, newer)
+        self.assertEqual(self.service.coverage()['source_revision'], newer)
+        self.assertFalse(self.service.valid(coverage['source_revision'], coverage['revocation_revision']))
+        self.service.rollback(revision)
+        self.assertEqual(self.service.read(handle)['status'], 'ok')
+        self.service.withdraw('test-story', 'fixture withdrawal')
+        self.service.rollback(newer)
+        self.service.rollback(revision)
+        current = self.service.coverage(source_id='test-story')
+        self.assertEqual((current['source_revision'], current['revocation_revision']), (revision, 1))
+        self.assertEqual((current['sources'], current['scenes']), ([], 0))
+        self.assertFalse(self.service.valid(coverage['source_revision'], coverage['revocation_revision']))
+        self.assertEqual(self.service.read(handle)['status'], 'stale')
+
     def test_source_layer_cannot_upgrade_player_analysis_to_original_fact(self):
         from ournotes_bot.domain.story import StoryError
         bundle=self.bundle(kind='fan_analysis',personas=True)
@@ -756,11 +1016,14 @@ class StoryPublicationTests(unittest.TestCase):
         self.publish()
         path=self.service.root/'revocations.json';path.write_text('{broken',encoding='utf-8')
         with self.assertRaises(StoryError):self.service.search('立希')
+        with self.assertRaises(StoryError):self.service.coverage()
         path.unlink()
         (self.service.root/'current.json').write_text('{"schema":"taki-story-pointer/1","revision":"../outside"}',encoding='utf-8')
         with self.assertRaisesRegex(StoryError,'story_revision'):self.service.status()
 
     def test_cli_runs_without_game_or_platform_initialization(self):
+        import json
+
         self.write(self.bundle())
         root=Path(__file__).resolve().parents[1]
         env=dict(os.environ,PYTHONPATH=str(root/'src'),QQ_APP_ID='',QQ_APP_SECRET='',AI_API_KEY='')
@@ -768,7 +1031,14 @@ class StoryPublicationTests(unittest.TestCase):
             '--root',str(self.service.root),'--bundle',str(self.bundle_path),'--allow-fixture'],
             env=env,cwd=root,capture_output=True,text=True,encoding='utf-8',timeout=15)
         self.assertEqual(process.returncode,0,process.stdout+process.stderr)
-        self.assertIn('source_revision',process.stdout)
+        revision = json.loads(process.stdout)['source_revision']
+        coverage = subprocess.run([sys.executable, '-B', '-m', 'ournotes_bot.application.story_cli',
+            'coverage', '--root', str(self.service.root), '--work', 'synthetic-work',
+            '--source-kind', 'synthetic_fixture', '--source-id', 'test-story', '--chapter', 'test-chapter'],
+            env=env, cwd=root, capture_output=True, text=True, encoding='utf-8', timeout=15)
+        self.assertEqual(coverage.returncode, 0, coverage.stdout + coverage.stderr)
+        result = json.loads(coverage.stdout)
+        self.assertEqual((result['source_revision'], result['scenes']), (revision, 3))
 
     def test_persona_withdrawal_cannot_be_undone_by_release_rollback(self):
         from ournotes_bot.domain.story import StoryError

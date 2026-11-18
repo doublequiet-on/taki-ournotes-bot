@@ -15,7 +15,7 @@ from ournotes_bot.domain.info_catalog import ActivityInfo
 from ournotes_bot.query.event_cutoff_query import execute_cutoff, parse_cutoff, parse_natural_cutoff
 from ournotes_bot.rendering.event_cutoff_visuals import render_cutoff
 from ournotes_bot.sources.cutoff_history import CutoffHistory, OpenCutoffHistory, HaneokaCutoffHistory, SourceHistory
-from ournotes_bot.sources.moenotes_events import EventCutoffRepository, EventSnapshot, EventSong, BoardSnapshot
+from ournotes_bot.sources.moenotes_events import EventCutoffRepository, EventSnapshot, EventSong, BoardSnapshot, SourceError
 
 STAMP = 1790937673000
 
@@ -59,8 +59,165 @@ class ArchiveTests(unittest.TestCase):
                 self.assertFalse(answer.boards[0].player_ids)
                 self.assertEqual(answer.histories[0][1].total, 2)
 
+    def test_combined_archive_verifies_windows_and_recorded_challenge_ids(self):
+        from ournotes_bot.sources.total_rankings import (TotalRankingHistory, TotalRankingRepository,
+                                                         TotalRankingSnapshot, event_key)
+        for case in ('matching', 'shifted', 'changed_song', 'old_song_metadata'):
+            with self.subTest(case=case):
+                shifted = 86400000 if case == 'shifted' else 0
+                when = STAMP + shifted
+                songs = self.event.songs
+                if case == 'changed_song':
+                    songs = (replace(songs[0], music_id='999'), *songs[1:])
+                event = replace(self.event, start_ms=self.event.start_ms + shifted,
+                                end_ms=self.event.end_ms + shifted, songs=songs, total_ranking_enabled=True)
+                store = TotalRankingHistory(self.root / f'{case}.sqlite3', 'tracker', min_free_mb=0)
+                self.source.total_rankings = TotalRankingRepository(store)
+                total = TotalRankingSnapshot(event_key(event), 'tracker', (9000,), when, when, received_ms=when)
+                self.assertEqual(store.record(event, total), 'valid')
+                if case == 'old_song_metadata':
+                    with closing(sqlite3.connect(self.history.path)) as db, db:
+                        db.execute('DELETE FROM event_metadata')
+                combined = self.ask('id12 1-1')
+                if case == 'matching':
+                    self.assertEqual(combined.status, 'success')
+                    self.assertEqual((combined.boards[0].score(1), combined.total.score(1)), (100, 9000))
+                else:
+                    self.assertEqual(combined.status, 'data_unavailable')
+                    self.assertIn('/查榜线 jp id12 单曲', combined.text)
+                    self.assertIn('/查榜线 jp id12 总榜', combined.text)
+                self.assertEqual(self.ask('id12 单曲 1-1').boards[0].score(1), 100)
+                self.assertEqual(self.ask('id12 总榜 1-1').total.score(1), 9000)
+
+    def test_same_id_total_archives_are_matched_by_the_selected_record_before_enrichment(self):
+        from ournotes_bot.sources.total_rankings import (TotalRankingHistory, TotalRankingRepository,
+                                                         TotalRankingSnapshot, event_key)
+        store = TotalRankingHistory(self.root / 'total.sqlite3', 'tracker', min_free_mb=0)
+        self.source.total_rankings = TotalRankingRepository(store)
+        self.repo.capture_catalog = lambda: SimpleNamespace(activities=(
+            ActivityInfo(12, '共通名称', {'ja': '同一别名'},
+                         start_at=self.event.start_ms / 1000, end_at=self.event.end_ms / 1000),), songs=())
+        for shift, title, score in ((0, '原记录', 7000), (86400000, '延期记录', 9000)):
+            event = replace(self.event, start_ms=self.event.start_ms + shift, end_ms=self.event.end_ms + shift,
+                            title=title, total_ranking_enabled=True)
+            stamp = STAMP + shift
+            total = TotalRankingSnapshot(event_key(event), 'tracker', (score,), stamp, stamp, received_ms=stamp)
+            self.assertEqual(store.record(event, total), 'valid')
+        for term in ('id12', '活动=记录'):
+            self.assertEqual(self.ask(term).status, 'ambiguous', term)
+        by_catalog_name = self.ask('活动=同一别名 1-1')
+        self.assertEqual((by_catalog_name.total.score(1), by_catalog_name.event.title), (7000, '共通名称'))
+        matched = self.ask('活动=原记录 1-1')
+        self.assertEqual(matched.status, 'success', matched.text)
+        self.assertEqual((matched.total.score(1), matched.boards[0].score(1)), (7000, 100))
+        other = self.ask('活动=延期记录 1-1')
+        self.assertEqual(other.status, 'data_unavailable', other.text)
+        self.assertIn('活动="延期记录" 总榜', other.text)
+        delayed = self.ask('id12 活动="延期记录" 总榜 1-1')
+        self.assertEqual((delayed.total.score(1), delayed.event.title), (9000, '延期记录'))
+        self.assertEqual(self.ask('id12 单曲 1-1').boards[0].score(1), 100)
+        # Matching catalog dates cannot stand in for missing dates in the song archive.
+        with closing(sqlite3.connect(self.history.path)) as db, db:
+            db.execute('DELETE FROM event_metadata')
+        self.assertIn('缺少可核对', self.ask('活动=原记录 1-1').text)
+        self.assertEqual(self.ask('活动=同一别名 单曲 1-1').boards[0].score(1), 100)
+
+    def test_archive_metadata_uses_only_compatible_jp_catalog_dates(self):
+        from ournotes_bot.sources.total_rankings import (TotalRankingHistory, TotalRankingRepository,
+                                                         TotalRankingSnapshot, event_key)
+        store = TotalRankingHistory(self.root / 'total.sqlite3', 'tracker', min_free_mb=0)
+        self.source.total_rankings = TotalRankingRepository(store)
+        later = STAMP + 86400000
+        event = replace(self.event, title='延期归档', start_ms=None, end_ms=None, banner='',
+                        api_start_ms=later - 10000, api_end_ms=later + 10000, total_ranking_enabled=True)
+        total = TotalRankingSnapshot(event_key(event), 'tracker', (9000,), later, later, received_ms=later)
+        self.assertEqual(store.record(event, total), 'valid')
+
+        record = ActivityInfo(12, '目录活动', {'ja': '目录别名'}, image_url='fixture:catalog-banner')
+        def use_dates(start, end):
+            selected = replace(record, start_at=start / 1000 if start else None, end_at=end / 1000 if end else None)
+            self.repo.capture_catalog = lambda: SimpleNamespace(activities=(selected,), songs=())
+
+        for start, end in ((self.event.start_ms, self.event.end_ms),
+                           (self.event.start_ms, None), (None, self.event.end_ms)):
+            use_dates(start, end)
+            for name in ('目录活动', '目录别名'):
+                self.assertEqual(self.ask(f'活动={name} 总榜 1-1').status, 'empty')
+            for selector in ('id12', '活动=延期归档'):
+                archived = self.ask(selector + ' 总榜 1-1')
+                self.assertEqual(archived.total.score(1), 9000)
+                self.assertEqual((archived.event.title, archived.event.banner, archived.event.start_ms,
+                                  archived.event.end_ms), ('延期归档', '', None, None))
+
+        for start, end in ((event.api_start_ms, event.api_end_ms), (event.api_start_ms, None),
+                           (None, event.api_end_ms), (None, None)):
+            use_dates(start, end)
+            archived = self.ask('活动=目录别名 总榜 1-1')
+            self.assertEqual(archived.total.score(1), 9000)
+            self.assertEqual((archived.event.title, archived.event.banner, archived.event.start_ms,
+                              archived.event.end_ms), ('目录活动', record.image_url, start, end))
+
+        # Opposite partial bounds must still form an interval before filling the gap.
+        partial = replace(self.event, end_ms=None, banner='fixture:archive-banner')
+        self.record(self.history, partial, partial.songs[0], (101,), STAMP + 1000)
+        use_dates(None, partial.start_ms)
+        self.assertEqual(self.ask('活动=目录别名 单曲 1-1').status, 'empty')
+        original = self.ask('id12 单曲 1-1')
+        self.assertEqual((original.event.title, original.event.banner, original.event.end_ms),
+                         (partial.title, partial.banner, None))
+        use_dates(None, self.event.end_ms)
+        enriched = self.ask('活动=目录别名 单曲 1-1')
+        self.assertEqual((enriched.event.title, enriched.event.banner, enriched.event.end_ms),
+                         ('目录活动', partial.banner, self.event.end_ms))
+
+    def test_missing_total_index_cannot_use_catalog_dates_to_join_an_unknown_song_archive(self):
+        from ournotes_bot.sources.total_rankings import TotalRankingHistory, TotalRankingRepository
+        store = TotalRankingHistory(self.root / 'total.sqlite3', 'tracker', min_free_mb=0)
+        self.source.total_rankings = TotalRankingRepository(store)
+        self.repo.capture_catalog = lambda: SimpleNamespace(activities=(
+            ActivityInfo(12, '活动', {}, start_at=self.event.start_ms / 1000, end_at=self.event.end_ms / 1000),), songs=())
+        with closing(sqlite3.connect(self.history.path)) as db, db:
+            db.execute('DELETE FROM event_metadata')
+        with patch.object(store, 'events', side_effect=SourceError('total_history_unavailable')), patch.object(
+                store, 'latest', side_effect=AssertionError('total archive identity unavailable')):
+            answer = self.ask('id12 1-1')
+        self.assertEqual(answer.status, 'success', answer.text)
+        self.assertEqual(answer.boards[0].score(1), 100)
+        self.assertIsNone(answer.total)
+
+    def test_song_source_or_provider_windows_cannot_disappear_before_total_join(self):
+        from ournotes_bot.sources.history_partitions import ProviderHistory
+        from ournotes_bot.sources.total_rankings import (TotalRankingHistory, TotalRankingRepository,
+                                                         TotalRankingSnapshot, event_key)
+        other = OpenCutoffHistory(self.root / 'open.sqlite3', min_free_mb=0)
+        shifted = replace(self.event, start_ms=self.event.start_ms + 86400000, end_ms=self.event.end_ms + 86400000,
+                          source='open')
+        self.record(other, shifted, shifted.songs[0], (999,), STAMP + 86400000)
+        store = TotalRankingHistory(self.root / 'total.sqlite3', 'tracker', min_free_mb=0)
+        event = replace(self.event, total_ranking_enabled=True)
+        self.assertEqual(store.record(event, TotalRankingSnapshot(event_key(event), 'tracker', (753,),
+                              STAMP, STAMP, received_ms=STAMP)), 'valid')
+        self.source.total_rankings = TotalRankingRepository(store)
+        sources = SourceHistory(self.history, other)
+        providers = ProviderHistory(self.history)
+        unrelated = replace(self.event, event_id='13')
+        self.record(self.history, unrelated, unrelated.songs[0], (432,))
+        with patch.object(providers, 'partitions', return_value=(other,)):
+            for history in (sources, providers):
+                self.source.history = history
+                self.assertIn('各来源保存的活动时间', self.ask('id12 1-1').text)
+                self.assertEqual(self.ask('id12 单曲 1-1').status, 'data_unavailable')
+                self.assertEqual(self.ask('id12 总榜 1-1').total.score(1), 753)
+                self.assertEqual(self.ask('id13 单曲 1-1').boards[0].score(1), 432)
+            with closing(sqlite3.connect(other.path)) as db, db:
+                db.execute('DELETE FROM event_metadata')
+            for history in (sources, providers):
+                self.source.history = history
+                self.assertIn('缺少可核对', self.ask('id12 1-1').text)
+                self.assertEqual(self.ask('id12 单曲 1-1').boards[0].score(1), 999)
+
     def test_parameters_any_order_round_trip_and_numeric_mode(self):
-        for parts in itertools.permutations(('活动ID=12', 'jp', '歌曲ID=101', '3-3', '仅数值')):
+        for parts in itertools.permutations(('活动ID=12', 'jp', '3-3', '仅数值')):
             request = parse_cutoff(' '.join(parts))
             self.assertEqual(parse_cutoff(request.command_label()), request)
             with patch.object(self.history, 'read', side_effect=AssertionError('numeric mode should not read trends')):
@@ -68,7 +225,7 @@ class ArchiveTests(unittest.TestCase):
             self.assertEqual(answer.status, 'success', answer.text)
             self.assertEqual(answer.ranks, (3,))
             self.assertEqual(answer.boards[0].score(3), 0)
-        answer = self.ask('活动="星の 約束" 歌名=歌曲甲 1')
+        answer = self.ask('活动="星の 約束" 1')
         self.assertEqual(answer.ranks, tuple(range(1, 12)))
         self.assertEqual(answer.request.event_name, '星の 約束')
         self.assertEqual(parse_natural_cutoff('/查榜线 活动ID=12').event_id, '12')
@@ -93,8 +250,8 @@ class ArchiveTests(unittest.TestCase):
         self.assertEqual(parse_cutoff('/查榜线 12').target_rank, 12)
         self.assertEqual(self.ask('id999').status, 'empty')
 
-    def test_short_id_combinations_conflicts_and_literal_song_names(self):
-        for groups in itertools.permutations(('id12', 'jp', '歌曲ID=101', '3-3')):
+    def test_short_id_combinations_conflicts_and_literal_event_names(self):
+        for groups in itertools.permutations(('id12', 'jp', '3-3')):
             answer = self.ask(' '.join(groups))
             self.assertEqual(answer.status, 'success', answer.text)
             self.assertEqual(answer.event.event_id, '12')
@@ -104,10 +261,6 @@ class ArchiveTests(unittest.TestCase):
         self.assertEqual(self.ask('hk id12').status, 'empty')
         for text in ('id12 id13', 'id12 活动ID=13', 'id0', 'id-1', 'id1.5', 'id+1'):
             self.assertEqual(self.ask(text).status, 'invalid_arguments', text)
-        literal = parse_cutoff('歌名="id12" 50')
-        self.assertEqual(literal.event_id, '')
-        self.assertEqual(literal.query, 'id12')
-        self.assertEqual(literal.target_rank, 50)
         self.assertEqual(parse_cutoff('活动="id12"').event_name, 'id12')
 
     def test_missing_unknown_server_disabled_and_bad_store_do_not_fall_back(self):
@@ -166,17 +319,16 @@ class ArchiveTests(unittest.TestCase):
         self.repo.capture_catalog = lambda: SimpleNamespace(activities=(), songs=(
             SimpleNamespace(id=101, title='本地中文歌名', jacket_url='',
                             titles=('本地中文歌名', 'Catalog English', 'カタログ曲名')),))
-        for name in ('記録された曲名', 'Recorded English', '本地中文歌名', 'Catalog English', 'カタログ曲名'):
-            with self.subTest(name=name):
-                answer = self.ask('id12 歌名=' + json.dumps(name, ensure_ascii=False))
-                self.assertEqual(answer.status, 'success', answer.text)
-                self.assertEqual(answer.boards[0].score(1), 123)
-                self.assertEqual(answer.boards[0].song.title, '本地中文歌名')
+        result = self.ask('id12')
+        self.assertEqual(result.boards[0].score(1), 123)
+        self.assertEqual(result.boards[0].song.title, '本地中文歌名')
+        self.assertIn('Recorded English', result.boards[0].song.names)
+        self.assertIn('Catalog English', result.boards[0].song.names)
 
     def test_latest_conflict_uses_older_whole_observation_and_reports_conflict(self):
         self.record(self.history, self.event, self.event.songs[0], (200,), STAMP + 1000)
         self.record(self.history, self.event, self.event.songs[0], (300,), STAMP + 1000)
-        answer = self.ask('活动ID=12 歌曲ID=101')
+        answer = self.ask('活动ID=12')
         self.assertEqual(answer.boards[0].scores[:3], (100, None, 0))
         self.assertEqual(answer.boards[0].fetched_ms, STAMP)
         self.assertIn('同一时间分数冲突', answer.text)
@@ -221,7 +373,7 @@ class ArchiveTests(unittest.TestCase):
     def test_archive_renders_overview_single_song_and_table(self):
         from PIL import Image
         import io
-        for query in ('活动ID=12', '活动ID=12 歌曲ID=101', '活动ID=12 1-3'):
+        for query in ('活动ID=12', '活动ID=12', '活动ID=12 1-3'):
             answer = self.ask(query)
             pages = render_cutoff(answer)
             self.assertTrue(pages)
@@ -233,7 +385,7 @@ class ArchiveTests(unittest.TestCase):
         song = self.event.songs[0]
         self.record(self.history, self.event, song, (90, None, 0), STAMP + 1000)
         self.record(self.history, self.event, replace(song, effective_end_ms=self.event.end_ms), (999, 888, 777), STAMP + 20000)
-        answer = self.ask('id12 歌曲ID=101 1-3')
+        answer = self.ask('id12 1-3')
         self.assertEqual(answer.boards[0].scores[:3], (90, None, 0))
         self.assertEqual(answer.boards[0].fetched_ms, STAMP + 1000)
         self.assertIn('超出榜单有效期', answer.text)
@@ -257,7 +409,7 @@ class ArchiveTests(unittest.TestCase):
         self.record(self.history, self.event, song, (200,), STAMP + 3000)
         with closing(sqlite3.connect(self.history.path)) as db, db:
             db.execute('UPDATE observations SET scores=? WHERE source_ms=?', ('[true,"100"]', STAMP + 3000))
-        board = self.ask('id12 歌曲ID=101').boards[0]
+        board = self.ask('id12').boards[0]
         self.assertEqual(board.scores[:3], (90, None, 0))
         self.assertEqual(board.fetched_ms, STAMP + 1000)
         self.assertIn('分数记录损坏', ' '.join(board.notes))
@@ -284,7 +436,7 @@ class ArchiveTests(unittest.TestCase):
             seen.append(str(value))
             return original(canvas, x, y, value, *args, **kwargs)
         with patch.object(Canvas, 'text', capture):
-            for query in ('id12 1-3', 'id12', 'id12 歌曲ID=101 1-3'):
+            for query in ('id12 1-3', 'id12', 'id12 1-3'):
                 answer = self.ask(query)
                 pages = ranking_layout.render(answer, assets={}, load=lambda *args: None, display_time=display_time,
                                               server_label='日服', timezone_label=zone_label('jp'))

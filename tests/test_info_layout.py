@@ -29,7 +29,7 @@ class InformationLayoutTests(unittest.TestCase):
     def test_roster_keeps_band_headers_and_names_but_commands_only_in_text(self):
         rows=tuple(InfoRow(f'角色{i}',(f'角色 ID {i}',),image_url=f'synthetic:{i}',
                           command=f'/查角色 {i}',group=f'乐队{i//5}') for i in range(25))
-        view=InfoView('角色目录',rows=rows,layout='directory')
+        view=InfoView('角色目录',rows=rows,layout='directory',presentation='character')
         drawn=[];original=info_layout.Canvas.text
         def capture(canvas,x,y,value,*args,**kwargs):
             drawn.append(str(value));return original(canvas,x,y,value,*args,**kwargs)
@@ -44,6 +44,9 @@ class InformationLayoutTests(unittest.TestCase):
         with patch.object(readable_pages,'MAX_IMAGE_EDGE',1200):parts=info_layout.render_info(self.answer(view))
         self.assertGreater(len(parts),1)
         for row in rows:self.assertEqual(sum(p.text.splitlines().count(row.command) for p in parts),1)
+        self.assertEqual(tuple(cmd for page in parts for cmd in page.commands), tuple(row.command for row in rows))
+        for page in parts:
+            self.assertTrue(set(page.commands).issubset(page.text.splitlines()))
 
     def test_profile_places_portrait_beside_facts_and_prose_below(self):
         rows=tuple(InfoRow(f'字段{i}',(f'资料{i}',),kind='fact') for i in range(10))+(InfoRow('简介',('完整介绍。',),kind='prose'),)
@@ -86,6 +89,7 @@ class InformationLayoutTests(unittest.TestCase):
             self.assertIn(row.body[0],drawn)
             self.assertNotIn(row.command,drawn)
             self.assertIn(row.command,pages[0].text)
+        self.assertEqual(pages[0].commands, tuple(row.command for row in rows))
 
     def test_profile_without_source_art_uses_full_width_instead_of_an_empty_column(self):
         view=InfoView('角色',rows=(InfoRow('基本资料',('角色 ID 1',),kind='fact'),),layout='character')
@@ -217,8 +221,6 @@ class InformationLayoutTests(unittest.TestCase):
         table=(('成员卡参数加成',*(f'档位{i}：+22.5%' for i in range(1,6))),)
         bonus=InfoRow('加成 · '+name,('成员卡参数加成：完整五档内容',),kind='bonus',table=table,
                       image_url='synthetic:member',image_kind='portrait')
-        player=(InfoRow('公开ID',('9223372036854775807',)),InfoRow('等级／经验',('等级：未获取','经验：0'),kind='metric'),
-                InfoRow('获赞',('0',),kind='metric'),InfoRow('展示角色卡',tuple('培养：0' for _ in range(6)),kind='showcase'))
         original=info_layout.Canvas.text
         def capture(canvas,x,cy,value,size=28,color=None,bold=False,align='left',**kwargs):
             width=font(size,bold,str(value).isascii()).getlength(str(value))
@@ -230,7 +232,6 @@ class InformationLayoutTests(unittest.TestCase):
             return original(canvas,x,cy,value,size,color or '#1b1b1f',bold,align,**kwargs)
         with patch.object(info_layout.Canvas,'text',capture):
             for view in (InfoView(name,rows=(standing,)*24,layout='facts',presentation='arena'),
-                         InfoView(name,rows=player,layout='facts',presentation='player'),
                          InfoView(name,rows=(bonus,),presentation='activity')):
                 pages=info_layout.render_info(self.answer(view))
                 self.assertTrue(pages)

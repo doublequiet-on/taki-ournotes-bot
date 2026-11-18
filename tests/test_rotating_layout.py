@@ -15,7 +15,7 @@ class RotatingLayoutTests(unittest.TestCase):
         return info_layout.render_info(InfoAnswer(info_text((view,)),views=(view,)),**kwargs)
 
     def test_bonus_summary_is_compact_and_card_strips_stay_grouped(self):
-        brief=InfoRow('活动加成',('完整档位：/查活动 加成',),kind='bonus-summary',
+        brief=InfoRow('活动加成',('完整档位见下方。',),kind='bonus-summary',
             children=tuple(InfoRow(role,('参数 +15～50% · 活动道具 +15～50%',),icons=('synthetic:icon',) if role=='指定属性' else ())
                            for role in ('指定成员卡','指定留影卡','指定乐队','指定属性')))
         cards=tuple(InfoRow(f'卡{i}',('成员卡 ID '+str(i),),kind='card',group='成员卡',display_title=f'卡{i}',image_kind='portrait') for i in range(3))
@@ -25,7 +25,7 @@ class RotatingLayoutTests(unittest.TestCase):
         strips=[p for p in panels if p.kind=='cards']
         self.assertEqual([len(p.rows) for p in strips],[3])
         text='\n'.join(p.text for p in self.render(view))
-        self.assertIn('+15～50%',text);self.assertIn('/查活动 加成',text)
+        self.assertIn('+15～50%',text);self.assertIn('完整档位见下方。',text)
 
     def test_activity_reference_overview_keeps_horizontal_groups_and_paginated_facts(self):
         children=tuple(InfoRow(f'完整卡名{i}',(f'成员卡 ID {i}',f'所需积分：{i*100}'),
@@ -165,7 +165,7 @@ class RotatingLayoutTests(unittest.TestCase):
                         self.assertEqual(len(set(people_y)),1)
                         self.assertNotIn('加成/奖励/展示',[value for value,x,y in drawn])
 
-    def test_activity_and_gacha_images_hide_commands_but_keep_text_query_entries(self):
+    def test_activity_images_show_activity_and_pool_entries_but_keep_card_commands_in_text(self):
         card=InfoRow('成员卡',('琴平凪',),command='/查卡 65',display_title='划破黎明',
                      kind='card',group='成员卡',image_kind='portrait')
         entry=InfoRow('列表条目',command='/查活动 2',kind='banner',children=(card,),
@@ -180,7 +180,10 @@ class RotatingLayoutTests(unittest.TestCase):
                 pages=self.render(InfoView('查询',rows=(entry,song,prose),presentation=presentation))
             combined='\n'.join(p.text for p in pages)
             for command in (card.command,entry.command,song.command,prose.command):
-                self.assertNotIn(command,drawn)
+                if presentation == 'activity' and command in (entry.command, prose.command):
+                    self.assertIn(command, drawn)
+                else:
+                    self.assertNotIn(command, drawn)
                 self.assertEqual(combined.splitlines().count(command),1)
 
     def test_vertical_entries_keep_banner_and_cards_together_and_text_once(self):
@@ -191,6 +194,7 @@ class RotatingLayoutTests(unittest.TestCase):
         with patch.object(readable_pages,'MAX_IMAGE_EDGE',1300):
             pages=self.render(InfoView('活动列表',rows=rows,presentation='activity'))
         self.assertGreater(len(pages),1)
+
         combined='\n'.join(p.text for p in pages)
         for row in rows:
             owners=[p for p in pages if row.command in p.text.splitlines()]

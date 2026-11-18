@@ -21,7 +21,9 @@ class ResearchTask:
     entities: dict = field(default_factory=dict)
     targets: list = field(default_factory=list)
     readings: dict = field(default_factory=dict)
-    knowledge: bool = False
+    # Chunk IDs actually present in this turn's model transcript. Each binding
+    # in a requirement identifies the object the model says the passage supports.
+    knowledge_chunks: set = field(default_factory=set)
     source_messages: dict = field(default_factory=dict)
     updated: float = 0
     revision: int = 0
@@ -35,10 +37,15 @@ class ResearchTask:
                        if name not in self.readings.get(ref, ()) and
                        (not item.get('difficulty') or f"{name}:{item['difficulty']}" not in self.readings.get(ref, ()))]
             if item['fields'] and not item['entity_refs']: missing.append('entity')
-            if item['knowledge'] and not self.knowledge: missing.append('knowledge')
+            if item['knowledge']:
+                supported = {binding['entity_ref'] for binding in item.get('evidence', ())
+                             if binding['chunk_id'] in self.knowledge_chunks}
+                for ref in item['entity_refs'] or ['']:
+                    if ref not in supported:
+                        missing.append(f'{ref}/knowledge' if ref else 'knowledge')
             rows.append(dict(label=item['label'], complete=not missing, missing=missing))
         status = ('completed' if rows and all(row['complete'] for row in rows) else
-                  'partial' if self.readings or self.knowledge else 'waiting')
+                  'partial' if self.readings or self.knowledge_chunks else 'waiting')
         return dict(status=status, items=rows)
 
     def context(self):
@@ -100,7 +107,9 @@ class TaskContexts:
         task = deepcopy(previous) if previous else ResearchTask()
         task.revision = generation
         task.transition = transition
-        task.readings = {}; task.knowledge = False
+        task.readings = {}; task.knowledge_chunks.clear()
+        for item in task.requirements:
+            item.pop('evidence', None)
         task.source_messages[request.message_id] = request.timestamp_ms
         return task
 

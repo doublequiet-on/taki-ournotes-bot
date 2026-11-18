@@ -108,7 +108,8 @@ class ActivityTests(unittest.TestCase):
         answer = resolve_command('/查活动 hk', repository)
         self.assertEqual(answer.status, 'success')
         self.assertIn('合成活动', answer.activity.text)
-        self.assertIn('/查榜线 hk 歌曲ID=101', handle_command('/查活动 hk', repository))
+        self.assertIn('/查榜线 hk 锁定活动1', handle_command('/查活动 hk', repository))
+        self.assertIn('歌曲 ID 101', handle_command('/查活动 hk', repository))
         self.assertTrue(all(url.endswith('/current') for url in self.live.calls))
         self.assertEqual(resolve_command('/查活动 bogus', repository).status, 'invalid_arguments')
 

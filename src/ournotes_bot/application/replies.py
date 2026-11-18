@@ -15,7 +15,7 @@ from ..natural_query.parser import LocalQueryParser
 from ..natural_query.query_agent import is_ai_request
 from ..sources.chart_data import ChartDataError, load_chart_data, load_chart_score
 from ..commands import (CommandResult, handle_command, locale_for, page_notice,
-                       page_slice, resolve_command, split_commands)
+                       page_slice, resolve_command, split_commands, split_joined_info_head)
 from ..config import QQ_PASSIVE_REPLY_LIMIT, REPLY_ORDER_TIMEOUT_SECONDS
 from ..data import SongRepository
 from ..i18n import tr
@@ -64,7 +64,8 @@ def command_kind(content: str) -> str:
         return 'continuation'
     head = content.split(None, 1)[0].lstrip('/').casefold()
     return {'帮助': 'help', 'help': 'help', '查卡': 'card', '查曲': 'song',
-            '查谱面': 'chart', '查榜线': 'cutoff', '查活动': 'event'}.get(head, 'other')
+            '查谱面': 'chart', '查榜线': 'cutoff', '榜线': 'cutoff', '查榜線': 'cutoff', '榜線': 'cutoff',
+            '查活动': 'event', '一图流': 'event'}.get(head, 'other')
 
 
 def recognizes_message(content: str) -> bool:
@@ -76,8 +77,10 @@ def recognizes_message(content: str) -> bool:
         return True
     for text in split_commands(content):
         head = text.split(None, 1)[0].casefold()
+        joined = split_joined_info_head(head)
         if (head in ALIASES or head in UNAVAILABLE_COMMANDS
-                or head in {"查角色", "查卡池", "查活动", "查竞技场", "查玩家", "event", "イベント"}
+                or head in {"查角色", "查卡池", "查活动", "一图流", "查竞技场", "查激奏舞台", "查激奏榜线", "event", "イベント"}
+                or (joined and joined[0] == "查角色")
                 or text.casefold() in specials or parse_operation(text) is not None or is_ai_request(text)):
             return True
     return False
@@ -130,10 +133,16 @@ class PreparedReply:
     evidence: tuple = ()
     evidence_deadline: float | None = None  # Monotonic; never extended by delivery/ACK.
     keep_text_lines: bool = False
+    image_commands: tuple[str, ...] = ()
 
     @property
     def passive_slots(self):
         return max(1, len(self.fallback_texts))
+
+    @property
+    def image_caption(self):
+        progress = self.context.image_caption if isinstance(self.context, DeliveryCursor) else ''
+        return '\n'.join((*self.image_commands, progress) if progress else self.image_commands) or ' '
 
 
 @dataclass(frozen=True)
@@ -167,14 +176,15 @@ class DeliveryCursor:
 
     @property
     def retained_bytes(self):
-        return sum(len(p.image or b'') + len(p.text.encode('utf-8')) for p in self.remaining)
+        return sum(len(p.image or b'') + len(p.text.encode('utf-8')) + sum(len(cmd.encode('utf-8')) for cmd in p.image_commands)
+                   for p in self.remaining)
 
 
 def fallback_cursor(reply, *, text_limit=1800):
     previous=reply.context if isinstance(reply.context,DeliveryCursor) else None
     query=previous.query_context if previous else reply.context
     text = reply.text.removesuffix(previous.text_progress) if previous else reply.text
-    fallback = replace(reply, text=text, image=None, context=query, fallback_texts=())
+    fallback = replace(reply, text=text, image=None, context=query, fallback_texts=(), image_commands=())
     pages = _split_reply_text(fallback, text_limit - 100)
     if previous:
         pages += previous.remaining
@@ -531,6 +541,9 @@ def _captured_query(repository, *, enabled=True):
 
 def image_reply(content: str, repository: SongRepository, ai_parser: LocalQueryParser | None = None) -> bytes | None:
     """Compatibility helper for local previews; live replies use prepare_reply."""
+    infographic = infographic_reply(content)
+    if infographic is not None:
+        return infographic.image
     with _captured_query(repository, enabled=not is_ai_request(content)) as view:
         return _image_reply(content, view, ai_parser)
 
@@ -549,9 +562,30 @@ def _image_reply(content, repository, ai_parser):
 def prepare_reply(content: str, repository: SongRepository,
                    ai_parser: LocalQueryParser, *, log_content: bool = True, outcome=None,
                    catalog_before=None) -> PreparedReply | None:
+    infographic = infographic_reply(content)
+    if infographic is not None:
+        return infographic
     with _captured_query(repository, enabled=not is_ai_request(content)) as view:
         return _prepare_reply(content, view, ai_parser, log_content=log_content,
                               outcome=outcome, catalog_before=catalog_before)
+
+
+def infographic_reply(content):
+    commands = split_commands(content)
+    if len(commands) != 1 or commands[0].split(None, 1)[0] != '一图流':
+        return None
+    if commands[0] != '一图流':
+        return PreparedReply('用法：/一图流', business_status='invalid_arguments',
+                             parse_origin='direct', processing_route='direct')
+    from ..config import runtime_data_dir
+    from ..sources.activity_infographic_store import ActivityInfographicStore
+    try:
+        text, image, status = ActivityInfographicStore(runtime_data_dir() / 'activity-infographic').lookup()
+    except (OSError, ValueError, TypeError) as exc:
+        logger.warning('活动一图流读取失败 type=%s', type(exc).__name__)
+        text, image, status = '活动一图流暂时不可用，请稍后重试。', None, 'data_unavailable'
+    return PreparedReply(text, image, complete_text=True, business_status=status,
+                         parse_origin='direct', processing_route='direct')
 
 
 def _prepare_reply(content, repository, ai_parser, *, log_content, outcome, catalog_before):
@@ -617,7 +651,7 @@ def activity_time_reply(answer, field):
         text = f'《{view.title}》的{label}时间暂未提供。'
     else:
         text = f'《{view.title}》的{label}时间是 {value}（{schedule.zone}）。'
-        if field == 'end' and schedule.status == '进行中':
+        if field == 'end' and schedule.status == '进行中' and not schedule.stale:
             text += '\n记得及时清 CP，别留到活动结束啦。'
         elif schedule.status == '已结束':
             text += '\n这期活动已经结束了。'
@@ -873,6 +907,7 @@ def render_prepared(reply, result, repository, locale, candidate=None):
 
 
 def render_prepared_inner(reply, result, repository, locale, candidate=None):
+    is_info = isinstance(result, CommandResult) and (result.info is not None or result.activity is not None)
     try:
         if isinstance(result, QueryResult) and result.meta is not None:
             from ..rendering.song_metrics_layout import render, LAYOUT_VERSION
@@ -886,41 +921,31 @@ def render_prepared_inner(reply, result, repository, locale, candidate=None):
                 visible_indices=() if candidate and candidate.selected else tuple(range(p.start+1,p.stop+1))) for p in parts)
             return pages[0] if len(pages)==1 else PreparedReply(reply,pages=pages,context=candidate)
 
-        if isinstance(result, CommandResult) and (result.info is not None or result.activity is not None):
+        if is_info:
             from ..rendering.info_layout import render_info
             answer = result.info if result.info is not None else result.activity
-            if answer.original_image is not None:
-                from io import BytesIO
-                from PIL import Image
-                from ..rendering.image_output import encode_image, check_geometry
-                with Image.open(BytesIO(answer.original_image)) as original:
-                    check_geometry(original.size)
-                    original.load()
-                    encoded = encode_image(original, preserve_size=True, strategy='png-first')
-                original_page=PreparedReply(answer.text, encoded, complete_text=True)
-                # Preserve original pixels/page identity; render captured status as a companion.
-                views=tuple(replace(view,hero_url='') for view in answer.views if view.presentation=='player')
-                if views:
-                    status_pages=tuple(PreparedReply(page.text,page.image,complete_text=True)
-                                       for page in render_info(replace(answer,views=views,original_image=None),load=visual_asset))
-                    return PreparedReply(answer.text,pages=(original_page,*status_pages),complete_text=True)
-                return original_page
-            captured = dict(answer.captured_images)
-            def information_asset(url, size):
-                if url not in captured:
-                    return visual_asset(url, size)
-                from io import BytesIO
-                from PIL import Image, ImageOps
-                from ..rendering.image_output import check_geometry
-                with Image.open(BytesIO(captured[url])) as source:
-                    check_geometry(source.size)
-                    source.load()
-                    return ImageOps.contain(source.convert('RGB'), size)
-            pages = tuple(PreparedReply(page.text, page.image, complete_text=True)
-                          for page in render_info(answer, load=information_asset))
+            is_activity = result.activity is not None
+            prefixes = (('/查活动 ', '/查榜线 ', '/查卡池 ') if is_activity else
+                        ('/查卡池 ', '/查活动 ', '/查卡 ', '/查留影卡 ') if result.parsed[0] == 'gacha' else ())
+            related_commands = {row.command for view in answer.views for row in view.rows
+                                if row.command.startswith(prefixes)}
+            pages = []
+            for page in render_info(answer, load=visual_asset):
+                if result.parsed[0] == 'character':
+                    commands = page.commands
+                else:
+                    commands = tuple(dict.fromkeys(line for line in page.text.splitlines()
+                                                   if line in related_commands))
+                page_reply = PreparedReply(page.text, page.image, complete_text=True, keep_text_lines=True)
+                caption = '\n'.join(commands)
+                # Leave room for the platform mention, material URL and continuation count.
+                if len(caption) <= 1000:
+                    pages.append(replace(page_reply, image_commands=commands))
+                else:
+                    pages.extend((page_reply, PreparedReply(caption, keep_text_lines=True)))
             if pages:
-                return pages[0] if len(pages) == 1 else PreparedReply(reply, pages=pages, complete_text=True)
-            return PreparedReply(answer.text, complete_text=True)
+                return pages[0] if len(pages) == 1 else PreparedReply(reply, pages=tuple(pages), complete_text=True)
+            return PreparedReply(answer.text, complete_text=True, keep_text_lines=True)
         full = None if result is not None and result.cutoff is not None else (song_detail_reply(result, repository, locale, candidate) or
                 complete_list_reply(result, repository, locale, candidate) or
                 complete_detail_reply(result, repository, locale, candidate) or
@@ -958,9 +983,9 @@ def render_prepared_inner(reply, result, repository, locale, candidate=None):
     if (image is None and result is not None and result.catalog is not None
             and result.catalog.request.mode == "art" and not result.catalog.error):
         reply += "\n卡面图片暂不可用，请稍后重试。"
-    is_info = isinstance(result, CommandResult) and (result.info is not None or result.activity is not None)
     return PreparedReply(reply, image, complete_text=is_info or result is not None and result.cutoff is not None,
-                         context=candidate, keep_text_lines=bool(result and result.catalog and result.catalog.is_candidate_list))
+                         context=candidate, keep_text_lines=is_info or bool(
+                             result and result.catalog and result.catalog.is_candidate_list))
 
 
 def complete_fallback(reply, result, locale, candidate, repository):

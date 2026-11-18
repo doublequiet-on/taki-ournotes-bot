@@ -12,24 +12,22 @@ from dataclasses import dataclass, replace
 
 from ..sources.moenotes_events import (BoardSnapshot, EventSnapshot, EventSong, SERVERS, SourceError,
                                       display_time, zone_label, event_ranking_format)
-from .entity_lexicon import scoped_song_matches
-from ..sources.cutoff_history import HistoryView
+from .ranking_positions import KEY_POSITIONS as NODES, RANK_PART, nearby_window
+from ..sources.cutoff_history import ARCHIVE_IDENTITY_CONFLICT, ARCHIVE_WINDOW_UNKNOWN, HistoryView
 from ..domain.query_cancellation import thread_cancel_event
 from ..domain.total_rankings import TotalRankingSnapshot
 
-NODES = (1, 2, 3, 10, 100)
-HELP = '/查榜线 [jp/hk/kr/en] [id1或活动="名称"] [单曲或总榜] [歌名或歌曲ID=完整ID] [50或20-40] [仅数值]；参数顺序不限。总榜可用性取决于来源。id1指定活动1（兼容 活动ID=1），裸数字表示排名；指定活动读取本地最近一次有效观测，无排名看五档趋势，单排名看前后十名，区间看每行分数。'
+HELP = '/查榜线 [jp/hk/kr/en] [id1或活动="名称"] [单曲或总榜] [50或20-40] [仅数值]；参数顺序不限。总榜可用性取决于来源。id1查活动1的已保存观测，锁定活动1优先查同一期实时榜、换期后查该期已保存观测。裸数字表示排名，无排名看五档趋势，单排名看前后十名，区间看每行分数。'
 SERVER_ALIASES = {"jp": "jp", "日服": "jp", "hk": "tw", "国服": "tw", "國服": "tw",
                   "tw": "tw", "台服": "tw", "臺服": "tw",
                   "kr": "kr", "韩服": "kr", "韓服": "kr", "en": "en", "英服": "en", "国际服": "en", "國際服": "en"}
 FORBIDDEN = re.compile(r"预测|預測|推荐|推薦|配队|配隊|编成|攻略|代练|代肝|账号|帐号|賬號|最强|怎么打|如何打|抽卡建议")
-MARKER = re.compile(r"榜线|榜線|档线|檔線|歌曲榜|(?:前\s*[+-]?\d+(?:\.\d+)?|[+-]?\d+(?:\.\d+)?\s*线).*?(?:多少|分)|T\d+.*多少", re.I)
-_NUMBER = r'[tT]?[+-]?\d+(?:\.\d+)?'
-_RANK_PART = re.compile(rf'(?<!\S)({_NUMBER})(?:\s*[-—–~～到]\s*({_NUMBER}))?(?!\S)')
-_SONG_NUMBER = re.compile(r'(?:歌曲|歌)([\d零〇一二两三四五六七八九十百+-]+(?:\.\d+)?)$|第([\d零〇一二两三四五六七八九十百+-]+(?:\.\d+)?)首$')
+SONG_SELECTION_REMOVED = '榜线按活动查询，请去掉歌名、歌曲 ID 或序号。'
+MARKER = re.compile(r"榜线|榜線|档线|檔線|歌曲榜|(?:总榜|總榜|综合榜|綜合榜).*多少|(?:前\s*[+-]?\d+(?:\.\d+)?|[+-]?\d+(?:\.\d+)?\s*线).*?(?:多少|分)|T\d+.*多少", re.I)
 _EVENT_ID_PREFIX = r'id\s*(?:[=:]\s*)?'
 _EVENT_ID = re.compile(_EVENT_ID_PREFIX + r'([+-]?\d+(?:\.\d+)?)', re.I)
-_TOKEN = re.compile(r'(?:(歌名|歌曲ID|活动ID|活动名称|活动)\s*=\s*("(?:\\.|[^"\\])*"|[^\s]+))|'
+_LOCKED_EVENT = re.compile(r'锁定活动([+-]?\d+(?:\.\d+)?)')
+_TOKEN = re.compile(r'(?:(活动ID|活动名称|活动|活动名稱|活動ID|活動名稱|活動|歌名|歌曲ID)\s*=\s*("(?:\\.|[^"\\])*"|[^\s]+))|'
                     + _EVENT_ID_PREFIX + r'[+-]?\d+(?:\.\d+)?(?=\s|$)|[^\s]+', re.I)
 _UNKNOWN_CODES = {'cn', 'us', 'eu', 'gb', 'sg'}
 
@@ -37,7 +35,6 @@ _UNKNOWN_CODES = {'cn', 'us', 'eu', 'gb', 'sg'}
 @dataclass(frozen=True, init=False)
 class CutoffRequest:
     server: str = "jp"
-    query: str = ""
     ranks: tuple[int, ...] = ()
     error: str = ""
     code: str = "invalid_arguments"
@@ -46,17 +43,14 @@ class CutoffRequest:
     mode: str = "trend"
     target_rank: int | None = None
     range_bounds: tuple[int, ...] = ()
-    song_number: int | None = None
-    song_id: str = ""
-    literal_query: bool = False
-    extra_queries: tuple[str, ...] = ()
     event_id: str = ""
     event_name: str = ""
     board_scope: str = "all"
+    lock_event: bool = False
 
-    def __init__(self, server="jp", query="", rank=None, error="", code="invalid_arguments",
+    def __init__(self, server="jp", rank=None, error="", code="invalid_arguments",
                  server_hint="", *, ranks=(), numeric_only=False, mode=None, target_rank=None,
-                 range_bounds=(), song_number=None, song_id="", literal_query=False, extra_queries=(), event_id="", event_name="", board_scope="all"):
+                 range_bounds=(), event_id="", event_name="", board_scope="all", lock_event=False):
         values = tuple(ranks) + ((rank,) if rank is not None else ())
         mode = mode or ("near" if rank is not None else "discrete" if values else "trend")
         if mode == "near":
@@ -64,7 +58,8 @@ class CutoffRequest:
             if type(target_rank) is not int or not 1 <= target_rank <= 100:
                 error, values = error or "名次必须为 1～100 的整数。", ()
             else:
-                values = tuple(range(max(1, target_rank - 10), min(100, target_rank + 10) + 1))
+                first, last = nearby_window(target_rank, 100)
+                values = tuple(range(first, last + 1))
         elif mode == "range":
             if len(range_bounds) != 2 or any(type(r) is not int or not 1 <= r <= 100 for r in range_bounds):
                 error, values = error or "区间两端必须为 1～100 的整数。", ()
@@ -79,18 +74,15 @@ class CutoffRequest:
                 error, values = error or "离散排名一次最多指定五个不同排名。", ()
         elif mode != "trend":
             error, values = error or "无法识别排名模式。", ()
-        if song_number is not None and (type(song_number) is not int or song_number < 1):
-            error = error or "歌曲编号必须为正整数，例如 歌曲1。"
+        if lock_event and (not event_id or event_name):
+            error = error or '锁定活动需要一个明确的活动 ID。'
         if board_scope not in {'all', 'song', 'total'}:
             error = error or '无法识别榜单类型。'
-        if board_scope == 'total' and (query or song_number is not None or song_id or extra_queries):
-            error = error or '综合榜不能同时指定歌曲，请保留总榜或单曲选择。'
-        for name, value in (("server", server), ("query", query), ("ranks", tuple(sorted(set(values)))),
+        for name, value in (("server", server), ("ranks", tuple(sorted(set(values)))),
                             ("error", error), ("code", code), ("server_hint", server_hint), ("numeric_only", numeric_only),
                             ("mode", mode), ("target_rank", target_rank), ("range_bounds", tuple(range_bounds)),
-                            ("song_number", song_number), ("song_id", song_id), ("literal_query", literal_query),
-                            ("extra_queries", tuple(extra_queries)), ("event_id", event_id), ("event_name", event_name),
-                            ("board_scope", board_scope)):
+                            ("event_id", event_id), ("event_name", event_name),
+                            ("board_scope", board_scope), ("lock_event", lock_event)):
             object.__setattr__(self, name, value)
 
     @property
@@ -103,15 +95,9 @@ class CutoffRequest:
         if self.board_scope != 'all':
             parts.append('总榜' if self.board_scope == 'total' else '单曲')
         if self.event_id:
-            parts.append(f'id{self.event_id}')
+            parts.append(('锁定活动' if self.lock_event else 'id') + self.event_id)
         if self.event_name:
             parts.append('活动=' + json.dumps(self.event_name, ensure_ascii=False))
-        if self.song_number is not None:
-            parts.append(f'歌曲{self.song_number}')
-        if self.song_id:
-            parts.append(f'歌曲ID={self.song_id}')
-        for name in ((self.query,) if self.query else ()) + self.extra_queries:
-            parts.append('歌名=' + json.dumps(name, ensure_ascii=False))
         if self.mode == 'near':
             parts.append(str(self.target_rank))
         elif self.mode == 'range':
@@ -124,31 +110,13 @@ class CutoffRequest:
         return ' '.join(parts)
 
 
-def _song_integer(raw):
-    if re.fullmatch(r'\d+', raw):
-        return int(raw)
-    if not re.fullmatch(r'[零〇一二两三四五六七八九]|[一二两三四五六七八九]?十[一二三四五六七八九]?|[一二两三四五六七八九]百(?:[零〇]?[一二三四五六七八九]|[一二三四五六七八九]?十[一二三四五六七八九]?)?', raw):
-        raise ValueError('invalid song number')
-    digits = dict(zip('零〇一二两三四五六七八九', (0, 0, 1, 2, 2, 3, 4, 5, 6, 7, 8, 9)))
-    total, digit = 0, 0
-    for char in raw:
-        if char in digits:
-            digit = digits[char]
-        elif char in '十百':
-            total += (digit or 1) * (10 if char == '十' else 100)
-            digit = 0
-        else:
-            raise ValueError('invalid song number')
-    return total + digit
-
-
 def _rank_selection(request, text):
     """Extract complete rank groups; never apply the discrete limit to a window."""
     normalized = re.sub(r'[,，]', ' ', text)
-    matches = tuple(_RANK_PART.finditer(normalized))
+    matches = tuple(RANK_PART.finditer(normalized))
     if not matches:
         return request, text.strip()
-    remainder = _RANK_PART.sub(' ', normalized)
+    remainder = RANK_PART.sub(' ', normalized)
     remainder = re.sub(r'\s+', ' ', remainder).strip()
     ranges, points = [], []
     for match in matches:
@@ -179,34 +147,35 @@ def parse_cutoff(text: str) -> CutoffRequest:
     text = unicodedata.normalize("NFKC", text).strip().lstrip("/")
     text = re.sub(r"\s+", " ", text)
     text = re.sub(r"^(?:查)?榜[线線](?:\s|$)", "", text).strip()
-    servers, numbers, ids, names, words = [], [], [], [], []
-    event_ids, event_names = [], []
+    servers, words = [], []
+    event_ids, event_names, locked_ids = [], [], []
     numeric_only = False
     scopes = []
     for match in _TOKEN.finditer(text):
         field, value = match.groups()
         token = match[0]
         if field:
+            if field.casefold() in {'歌名', '歌曲id'}:
+                return CutoffRequest(error=SONG_SELECTION_REMOVED + HELP)
             try:
                 value = json.loads(value) if value.startswith('"') else value
             except ValueError:
-                return CutoffRequest(error='名称引号不完整，请使用 歌名="完整名称" 或 活动="完整名称"。')
+                return CutoffRequest(error='名称引号不完整，请使用 活动="完整名称"。')
             if not value:
                 return CutoffRequest(error='名称或ID不能为空。')
-            if field.casefold() == '活动id':
+            if field.casefold() in {'活动id', '活動id'}:
                 if not value.isdecimal() or int(value) <= 0:
                     return CutoffRequest(error='活动ID必须是正整数。')
                 event_ids.append(str(int(value)))
-            elif field in {'活动', '活动名称'}:
+            else:
                 if not re.sub(r'[\W_]+', '', value):
                     return CutoffRequest(error='活动名称不能为空或只有标点。')
                 event_names.append(value)
-            elif field.casefold() == '歌曲id':
-                if not value.isdecimal():
-                    return CutoffRequest(error='歌曲ID必须是完整的数字ID。')
-                ids.append(str(int(value)))
-            else:
-                names.append(value)
+        elif token.startswith('锁定活动'):
+            locked = _LOCKED_EVENT.fullmatch(token)
+            if not locked or not re.fullmatch(r'[1-9][0-9]{0,15}', locked[1]):
+                return CutoffRequest(error='请填写要锁定的完整活动 ID，例如 锁定活动1。')
+            locked_ids.append(locked[1])
         elif event_id_match := _EVENT_ID.fullmatch(token):
             value = event_id_match[1]
             if not value.isdecimal() or int(value) <= 0:
@@ -223,34 +192,22 @@ def parse_cutoff(text: str) -> CutoffRequest:
             scopes.append('song' if token in {'单曲', '單曲'} else 'total')
         elif token == '仅数值':
             numeric_only = True
-        elif _SONG_NUMBER.fullmatch(token):
-            try:
-                groups = _SONG_NUMBER.fullmatch(token).groups()
-                numbers.append(_song_integer(next(x for x in groups if x is not None)))
-            except ValueError:
-                return CutoffRequest(error='歌曲编号必须为正整数，例如 歌曲1。')
         else:
             words.append(token)
     if len(set(servers)) > 1:
         return CutoffRequest(error='同时指定了不同服务器，请保留一个服务器。')
     if len(set(scopes)) > 1:
         return CutoffRequest(error='不能同时指定总榜和单曲，请保留一种榜单选择。')
+    if locked_ids and (event_ids or event_names or len(set(locked_ids)) > 1):
+        return CutoffRequest(error='请保留一个活动选择。')
     if len(set(event_ids)) > 1 or len(set(event_names)) > 1:
         return CutoffRequest(error='同时指定了不同活动，请保留一个活动选择。')
-    if len(set(numbers)) > 1 or len(set(ids)) > 1:
-        return CutoffRequest(error='同时指定了不同歌曲，请保留一个歌曲选择。')
-    request = CutoffRequest(servers[0] if servers else 'jp', song_number=numbers[0] if numbers else None,
-                            song_id=ids[0] if ids else '', numeric_only=numeric_only,
-                            event_id=event_ids[0] if event_ids else '', event_name=event_names[0] if event_names else '',
+    request = CutoffRequest(servers[0] if servers else 'jp', numeric_only=numeric_only,
+                            event_id=next(iter(locked_ids or event_ids), ''), event_name=event_names[0] if event_names else '',
+                            lock_event=bool(locked_ids),
                             board_scope=scopes[0] if scopes else 'all')
-    remaining = ' '.join(words)
-    ranked, query = _rank_selection(request, remaining)
-    if names:
-        if query:
-            return replace(request, error='歌名之外有未识别参数，请检查歌曲选择或排名写法。')
-        return replace(ranked, query=names[0], extra_queries=tuple(dict.fromkeys(names[1:])), literal_query=True)
-    # Catalog names containing numbers are resolved against the captured event first.
-    return replace(request, query=remaining) if query else ranked
+    ranked, remainder = _rank_selection(request, ' '.join(words))
+    return replace(ranked, error=SONG_SELECTION_REMOVED + HELP) if remainder and not ranked.error else ranked
 
 
 def parse_natural_cutoff(question: str) -> CutoffRequest | None:
@@ -259,7 +216,7 @@ def parse_natural_cutoff(question: str) -> CutoffRequest | None:
         return None
     if FORBIDDEN.search(text):
         return CutoffRequest(error="只查询已采集的活动歌曲分数；不支持预测、配队、攻略或账号操作。", code="unsupported")
-    if re.match(r"^(?:查)?榜线(?:\s|$)", text):
+    if re.match(r"^(?:查)?榜[线線](?:\s|$)", text):
         return parse_cutoff(text)
     server = "jp"
     for alias in sorted(SERVER_ALIASES, key=len, reverse=True):
@@ -269,17 +226,24 @@ def parse_natural_cutoff(question: str) -> CutoffRequest | None:
     # Keep unfamiliar explicit regions visible as an error; never fall back to JP.
     if re.match(r"^(?:\S{1,4}服|server=|服务器[=:])", text, re.I):
         return CutoffRequest(error="未知服务器。仅支持日服（jp）、国服（hk）、韩服（kr）、英服（en）。")
-    overview = re.sub(r"[\s?？。的]", "", text)
-    if re.fullmatch(r"(?:现在|当前|这期|本期)?(?:全部|所有)?(?:歌曲)?(?:榜线|档线|歌曲榜)(?:现在)?(?:多少|是多少|多少分)?", overview):
+    if re.match(r"^(?:查)?榜[线線](?:\s|$)", text):
+        return parse_cutoff(server + ' ' + re.sub(r'^(?:查)?榜[线線]\s*', '', text))
+    if re.search(r'积分榜|積分榜|活动积分|活動積分', text):
+        return CutoffRequest(server, error='只查询活动挑战分数榜。', code='unsupported')
+    # These are qualifiers for a current board. Keep named events and song selectors intact.
+    text = re.sub(r'^(?:(?:这期|這期|本期|当前|當前)(?:的)?\s*)?(?:活动|活動)(?:的)?\s*',
+                  '', text)
+    overview = re.sub(r"[\s?？。的]", "", text).replace("線", "线").replace("檔", "档")
+    if re.fullmatch(r"(?:现在|現在|当前|當前|这期|這期|本期)?(?:全部|所有)?(?:活动|活動)?(?:歌曲)?(?:榜线|档线|歌曲榜)(?:现在|現在)?(?:多少|是多少|多少分)?", overview):
         return CutoffRequest(server)
-    match = re.fullmatch(r"(.+?)(?:的)?(?:前\s*([+-]?\d+(?:\.\d+)?)|([+-]?\d+(?:\.\d+)?)\s*线|[tT](\d+))(?:现在)?(?:是)?多少(?:分)?[?？]?", text)
+    if re.fullmatch(r"(?:总榜|總榜|综合榜|綜合榜)(?:榜线|档线)?(?:现在|現在)?(?:多少|是多少|多少分)?", overview):
+        return CutoffRequest(server, board_scope='total')
+    match = re.fullmatch(r"(?:(总榜|總榜|综合榜|綜合榜|歌曲榜|活动歌曲榜|活動歌曲榜|榜线|榜線)(?:的)?\s*)?(?:前\s*([+-]?\d+(?:\.\d+)?)|([+-]?\d+(?:\.\d+)?)\s*[线線]|[tT](\d+))(?:现在|現在)?(?:是)?多少(?:分)?[?？]?", text)
     if match:
+        scope = '总榜' if match[1] in {'总榜', '總榜', '综合榜', '綜合榜'} else ''
         number = next(value for value in match.groups()[1:] if value is not None)
-        return parse_cutoff(server + ' ' + match[1].rstrip('的 ') + ' T' + number)
-    match = re.fullmatch(r"(.+?)(?:的)?(?:榜线|档线)(?:现在)?(?:是)?多少(?:分)?[?？]?", text)
-    if match:
-        return parse_cutoff(server + ' ' + match[1].rstrip('的 '))
-    return CutoffRequest(server, error="未能确认歌曲和名次条件。" + HELP)
+        return parse_cutoff(f'{server} {scope} T{number}')
+    return CutoffRequest(server, error=SONG_SELECTION_REMOVED + HELP)
 
 
 def event_status(event: EventSnapshot) -> str:
@@ -309,6 +273,7 @@ class CutoffAnswer:
     total: TotalRankingSnapshot | None = None
     total_history: HistoryView = HistoryView()
     total_status: str = ''
+    historical_result: bool | None = None
 
     def total_time_label(self, stamp):
         return display_time(stamp,self.event.server)+' '+zone_label(self.event.server)
@@ -338,14 +303,15 @@ class CutoffAnswer:
     def ranking_notes(self):
         if self.total is not None:
             return ()
-        if (self.event and self.request.board_scope == 'all' and not self.request.query
-                and self.request.song_number is None and not self.request.song_id):
+        if self.event and self.request.board_scope == 'all':
             rules = event_ranking_format(self.event)
             return (self.total_status or rules.total_status,) if rules.total_enabled is True else ()
         return ()
 
     @property
     def historical(self):
+        if self.historical_result is not None:
+            return self.historical_result
         return bool(self.request.event_id or self.request.event_name)
 
     @property
@@ -434,14 +400,14 @@ class CutoffAnswer:
                          + ('（分数/数字ID/用户名；缺失为未获取）' if any(self.has_players(b) for b in self.boards) else '（分数）'))
             lines.extend(f'T{rank}：' + '｜'.join(f'{self.score_label(board, rank)}/{self.id_label(board, rank)}/{self.table_name(board, rank)}' if self.has_players(board) else self.score_label(board, rank)
                                                 for board in self.boards) for rank in self.ranks)
-        lines.extend(["", *self.ranking_notes, *event.notes, f"{self.source_label}（非官方）· 挑战歌曲Top100 · 按响应位置，非预测或确认终榜。"])
+        lines.extend(["", *self.ranking_notes, *event.notes, f"{self.source_label} · 挑战歌曲 Top 100 · 按响应位置，非确认终榜。"])
         return "\n".join(lines)
 
     @property
     def source_label(self):
         if self.historical:
             return '本地历史（' + '、'.join(sorted({b.source for b in self.boards})) + '）'
-        return "Haneoka / MoeNotes" if self.event and self.event.source == "haneoka" else "MoeNotes"
+        return {'haneoka': 'Haneoka Game Records', 'open': '开放平台', 'tracker': 'MoeNotes'}.get(self.event.source, self.event.source)
 
     def score_label(self, board, rank):
         value = board.score(rank)
@@ -468,56 +434,117 @@ def execute_cutoff(request: CutoffRequest, repository) -> CutoffAnswer:
                        getattr(repository.event_cutoffs, 'score_display_limit', 30_000_000))
 
 
+def _archive_join_issue(songs, total):
+    if ARCHIVE_WINDOW_UNKNOWN in songs.notes:
+        return ARCHIVE_WINDOW_UNKNOWN
+    # Compare like-for-like windows before catalog enrichment can supply missing dates.
+    windows = (((songs.start_ms, songs.end_ms), (total.start_ms, total.end_ms)),
+               ((songs.api_start_ms, songs.api_end_ms), (total.api_start_ms, total.api_end_ms)))
+    verified_window = False
+    for left, right in windows:
+        if any(a != b for a, b in zip(left, right) if a is not None and b is not None):
+            return '单曲榜与综合榜保存的活动时间不同'
+        if None not in left and left == right:
+            verified_window = True
+    if not verified_window:
+        return '已有历史缺少可核对的完整活动时间'
+    # A legacy song archive may have captured only some of the full event's challenges.
+    known = {(song.challenge_id, song.music_id) for song in total.songs}
+    if any((song.challenge_id, song.music_id) not in known for song in songs.songs):
+        return '单曲榜与综合榜保存的挑战曲关联不同'
+    return ''
+
+
+def _archive_catalog_record(event, records):
+    record = records.get(event.event_id)
+    if record is None:
+        return None
+    start = round(record.start_at * 1000) if record.start_at is not None else None
+    end = round(record.end_at * 1000) if record.end_at is not None else None
+    # Tracker can withhold a display date while retaining the original API date.
+    for saved_start, saved_end in ((event.start_ms, event.end_ms), (event.api_start_ms, event.api_end_ms)):
+        if saved_start is not None and ((start is not None and saved_start != start)
+                                        or (end is not None and saved_start >= end)):
+            return None
+        if saved_end is not None and ((end is not None and saved_end != end)
+                                      or (start is not None and saved_end <= start)):
+            return None
+    return record
+
+
 def _historical_event(request, repository):
     """Resolve only recorded challenge identities; static song associations never create boards."""
     history = repository.event_cutoffs.history
-    totals = getattr(repository.event_cutoffs,'total_rankings',None)
-    if request.board_scope == 'total' and totals is not None:
-        events = totals.history.events(request.server)
-        # Single-song metadata may identify an older event with no total board;
-        # scores and players still come exclusively from the total store.
-        if history is not None and (not events or request.event_id and not any(e.event_id==request.event_id for e in events)):
-            events = (*events,*(e for e in history.events(request.server) if e.event_id not in {t.event_id for t in events}))
-    elif history is None:
-        return None, '历史记录未配置。', 'data_unavailable'
-    else:
-        events = history.events(request.server)
-    # The existing JP catalog also supplies names for databases recorded before metadata storage.
-    aliases = {}
-    if request.server == 'jp' and hasattr(repository, 'capture_catalog'):
-        catalog = repository.capture_catalog()
-        records = {str(record.id): record for record in catalog.activities}
-        songs = {str(song.id): song for song in catalog.songs}
-        enriched = []
-        for event in events:
-            record = records.get(event.event_id)
-            if record:
-                aliases[event.event_id] = (event.title, *record.names.values())
-                event = replace(event, title=record.title,
-                                start_ms=event.start_ms if event.start_ms is not None else round(record.start_at * 1000) if record.start_at is not None else None,
-                                end_ms=event.end_ms if event.end_ms is not None else round(record.end_at * 1000) if record.end_at is not None else None,
-                                banner=event.banner or record.image_url)
-            event = replace(event, songs=tuple(replace(song, title=songs[song.music_id].title,
-                                jacket=song.jacket or songs[song.music_id].jacket_url,
-                                names=tuple(dict.fromkeys((song.title, *song.names,
-                                    songs[song.music_id].title, *songs[song.music_id].titles))))
-                                if song.music_id in songs else song for song in event.songs))
-            enriched.append(event)
-        events = tuple(enriched)
+    totals = getattr(repository.event_cutoffs, 'total_rankings', None)
+    if history is None and (totals is None or request.board_scope == 'song'):
+        return CutoffAnswer(request, message='历史记录未配置。', status='data_unavailable')
+    total_events = ()
+    if totals is not None and request.board_scope != 'song':
+        try:
+            total_events = totals.history.events(request.server)
+        except SourceError:
+            if request.board_scope == 'total':
+                raise
+    try:
+        song_events = history.events(request.server) if history is not None else ()
+    except SourceError:
+        if not total_events:
+            raise
+        song_events = ()
+    songs_by_id = {event.event_id: event for event in song_events}
+    total_ids = {event.event_id for event in total_events}
+    events = (*total_events, *(event for event in song_events if event.event_id not in total_ids))
+    catalog = repository.capture_catalog() if request.server == 'jp' and hasattr(repository, 'capture_catalog') else None
+    records = {str(record.id): record for record in catalog.activities} if catalog else {}
     if request.event_name:
         def normalize(value):
             return re.sub(r'[\W_]+', '', unicodedata.normalize('NFKC', value).casefold())
+
+        def names(event):
+            record = _archive_catalog_record(event, records)
+            return (event.title, record.title, *record.names.values()) if record else (event.title,)
+
         needle = normalize(request.event_name)
-        exact = tuple(e for e in events if any(needle == normalize(n) for n in (e.title, *aliases.get(e.event_id, ())) if n))
-        events = exact or tuple(e for e in events if any(needle in normalize(n) for n in (e.title, *aliases.get(e.event_id, ())) if n))
+        exact = tuple(e for e in events if any(needle == normalize(n) for n in names(e) if n))
+        events = exact or tuple(e for e in events if any(needle in normalize(n) for n in names(e) if n))
     if request.event_id:
         events = tuple(e for e in events if e.event_id == request.event_id)
     if not events:
-        return None, '未找到该服务器指定活动的本地历史；只查询已保存的数据，不补造未采集记录。', 'empty'
+        return CutoffAnswer(request, message='未找到该服务器指定活动的本地历史；只查询已保存的数据，不补造未采集记录。', status='empty')
     if len(events) > 1:
-        return None, f'活动名称匹配 {len(events)} 个活动，请使用活动ID指定（最多列10个）：\n' + '\n'.join(f'id{e.event_id} · {e.title}' for e in events[:10]), 'ambiguous'
+        if len({e.event_id for e in events}) == 1:
+            hint = '同一活动 ID 对应多份历史，请按保存的完整活动名查询；同名档案无法唯一确定。'
+        else:
+            hint = f'活动名称匹配 {len(events)} 个活动，请使用活动ID指定（最多列10个）：'
+        return CutoffAnswer(request, message=hint + '\n' + '\n'.join(f'id{e.event_id} · {e.title}' for e in events[:10]), status='ambiguous')
     event = events[0]
-    return replace(event, notes=('各曲展示最近一次有效观测及其时间；非实时榜、非确认终榜。',)), '', 'success'
+    song_event = songs_by_id.get(event.event_id)
+    if request.board_scope != 'total' and song_event and ARCHIVE_IDENTITY_CONFLICT in song_event.notes:
+        return CutoffAnswer(request, message=ARCHIVE_IDENTITY_CONFLICT + '，无法确定对应的单曲榜。', status='data_unavailable')
+    if request.board_scope == 'all' and song_event is not None and event.event_id in total_ids:
+        issue = _archive_join_issue(song_event, event)
+        if issue:
+            command = f"/查榜线 {'hk' if event.server == 'tw' else event.server} id{event.event_id}"
+            total_command = command
+            if request.event_name:
+                total_command += ' 活动=' + json.dumps(request.event_name, ensure_ascii=False)
+            return CutoffAnswer(request, message=f'{issue}，请分开查询：{command} 单曲 或 {total_command} 总榜。', status='data_unavailable')
+    # Enrich only after matching the recorded identities. Catalog dates describe presentation.
+    record = _archive_catalog_record(event, records)
+    if record:
+        event = replace(event, title=record.title,
+                        start_ms=event.start_ms if event.start_ms is not None else round(record.start_at * 1000) if record.start_at is not None else None,
+                        end_ms=event.end_ms if event.end_ms is not None else round(record.end_at * 1000) if record.end_at is not None else None,
+                        banner=event.banner or record.image_url)
+    if catalog:
+        songs = {str(song.id): song for song in catalog.songs}
+        event = replace(event, songs=tuple(replace(song, title=songs[song.music_id].title,
+                            jacket=song.jacket or songs[song.music_id].jacket_url,
+                            names=tuple(dict.fromkeys((song.title, *song.names,
+                                songs[song.music_id].title, *songs[song.music_id].titles))))
+                            if song.music_id in songs else song for song in event.songs))
+    saved_song_ids = {song.challenge_id for song in song_event.songs} if song_event is not None else set()
+    return replace(event, notes=('各曲展示最近一次有效观测及其时间；非实时榜、非确认终榜。',)), saved_song_ids, event.event_id in total_ids
 
 
 def _execute_cutoff(request: CutoffRequest, repository) -> CutoffAnswer:
@@ -528,12 +555,28 @@ def _execute_cutoff(request: CutoffRequest, repository) -> CutoffAnswer:
     source = repository.event_cutoffs
     deadline = source.deadline()
     historical = bool(request.event_id or request.event_name)
+    event = None
+    current_error = None
+    saved_song_ids = ()
+    allow_total = True
+    if request.lock_event:
+        try:
+            current = source.event(request.server, deadline)
+        except SourceError as exc:
+            current_error = exc
+        else:
+            if current.server == request.server and current.event_id == request.event_id and not current.stale:
+                event = current
+                historical = False
     try:
         if historical:
-            event, message, status = _historical_event(request, repository)
-            if event is None:
-                return CutoffAnswer(request, message=message, status=status)
-        else:
+            match = _historical_event(request, repository)
+            if isinstance(match, CutoffAnswer):
+                if current_error and current_error.code != 'not_found':
+                    return replace(match, message='暂时无法确认当前活动。' + match.message)
+                return match
+            event, saved_song_ids, allow_total = match
+        elif event is None:
             event = source.event(request.server, deadline)
     except SourceError as exc:
         if historical:
@@ -542,14 +585,21 @@ def _execute_cutoff(request: CutoffRequest, repository) -> CutoffAnswer:
                    'rate_limited': '来源限流，请稍后重试。'}.get(exc.code, '该服务器的活动信息暂不可用，请稍后重试。')
         return CutoffAnswer(request, message=SERVERS[request.server][0] + "：" + message,
                             status=exc.code if exc.code in {'not_found', 'pending', 'rate_limited'} else 'data_unavailable')
+    answer = _cutoff_for_event(request, source, event, deadline, historical, saved_song_ids, allow_total)
+    return replace(answer, historical_result=historical)
+
+
+def _cutoff_for_event(request, source, event, deadline, historical, saved_song_ids, allow_total):
     rules = event_ranking_format(event)
     totals = getattr(source,'total_rankings',None)
     total = None
     total_history = HistoryView()
     total_status = rules.total_status
-    include_total = request.board_scope == 'total' or (request.board_scope == 'all' and not (
-        request.query or request.song_number is not None or request.song_id or request.extra_queries))
-    if include_total and totals is not None and (rules.total_enabled is True or rules.total_enabled is None and (historical or totals.connected)):
+    if historical and not allow_total and rules.total_enabled is not False:
+        total_status = '未找到可核对身份的综合榜历史。'
+    include_total = allow_total and request.board_scope != 'song'
+    try_unknown = historical or request.board_scope == 'total' or event.source == 'tracker'
+    if include_total and totals is not None and (rules.total_enabled is True or rules.total_enabled is None and try_unknown):
         if historical or totals.connected:
             stop = thread_cancel_event.get()
 
@@ -562,14 +612,14 @@ def _execute_cutoff(request: CutoffRequest, repository) -> CutoffAnswer:
                          if historical else totals.capture(event, deadline))
                 if total is None and not historical:
                     total_status = totals.unavailable_status(event)
-                if not request.numeric_only:
+                if request.mode == 'trend' and not request.numeric_only:
                     total_history = totals.history.read(event, request.ranks or NODES, should_stop=should_stop)
                 if total is not None and not any(s is not None for s in total.scores) and not total_history.points:
                     total_status=total.status
                     total=None
             except SourceError as exc:
                 total_status = ('综合榜历史查询达到时间预算，请稍后重试。' if exc.code == 'total_history_interrupted'
-                                else '综合榜历史暂不可用，未改查单曲历史。')
+                                else '综合榜历史暂不可用。' if historical else '综合榜活动身份或快照暂不可用。')
             if stop is not None and stop.is_set():
                 return CutoffAnswer(request, event, status='data_unavailable')
     if request.board_scope == 'total':
@@ -583,98 +633,30 @@ def _execute_cutoff(request: CutoffRequest, repository) -> CutoffAnswer:
             return CutoffAnswer(request,event,total=total,total_history=total_history,
                                 status='success' if total.scores or total_history.points else 'data_unavailable')
         return CutoffAnswer(request, event, message="本活动没有挑战歌曲榜。", status="empty")
-    query = request.query.strip()
-    full_catalog = event.catalog or tuple((s.music_id, s.names + (s.title,)) for s in event.songs)
-    event_ids = {s.music_id for s in event.songs}
-    catalog = tuple((key, names) for key, names in full_catalog if key in event_ids)
-    names = list(((query,) if query else ()) + request.extra_queries)
-    if query and not request.literal_query:
-        # Protect longest complete catalog names/aliases, including internal numbers.
-        # Only complete word spans are removed; unknown remainder stays a condition.
-        protected, remaining = [], query
-        while remaining:
-            tokens = tuple(re.finditer(r'\S+', remaining))
-            found = None
-            for length in range(len(tokens), 0, -1):
-                for first in range(len(tokens) - length + 1):
-                    start, end = tokens[first].start(), tokens[first + length - 1].end()
-                    candidate = remaining[start:end]
-                    if re.fullmatch(r'[tT]?[+-]?\d+(?:\.\d+)?', candidate):
-                        continue
-                    if scoped_song_matches(candidate, full_catalog):
-                        found = (start, end, candidate)
-                        break
-                if found:
-                    break
-            if not found:
-                break
-            start, end, name = found
-            protected.append(name)
-            remaining = (remaining[:start] + ' ' + remaining[end:]).strip()
-        request, leftover = _rank_selection(request, remaining)
-        if request.error:
-            return CutoffAnswer(request, event, message=request.error, status=request.code)
-        if protected and leftover:
-            return CutoffAnswer(request, event, message='歌曲之外有未识别参数，请检查歌曲选择或排名写法。', status='invalid_arguments')
-        names = protected or ([leftover] if leftover else [])
-        query = names[0] if names else ''
-    request = replace(request, query=query, extra_queries=tuple(names[1:]), literal_query=bool(query))
-    selected = []
-    if request.song_number is not None:
-        if not event.challenge_order_verified:
-            return CutoffAnswer(request, event, message='来源挑战原序号尚未核实，歌曲N暂不可用；请使用 歌曲ID=… 。', status='data_unavailable')
-        if request.song_number > len(event.songs):
-            return CutoffAnswer(request, event, message=f'本服本期有 {len(event.songs)} 首挑战歌曲，请使用 歌曲1～歌曲{len(event.songs)}。', status='invalid_arguments')
-        selected.append(event.songs[request.song_number - 1].music_id)
-    if request.song_id:
-        if request.song_id not in event_ids:
-            return CutoffAnswer(request, event, message='这首歌不是所选活动的挑战歌曲。' if historical else '这首歌不是本期活动的挑战歌曲。', status='empty')
-        selected.append(request.song_id)
-    for name in names:
-        matches = scoped_song_matches(name, catalog)
-        outside = scoped_song_matches(name, full_catalog) if not matches else ()
-        if not matches and not outside:
-            matches = scoped_song_matches(name, catalog, partial=True)
-        if len(matches) > 1:
-            labels = {key: titles[0] if titles else key for key, titles in catalog}
-            return CutoffAnswer(request, event, message='歌曲名称有歧义，请补充完整名称或歌曲编号：\n' + '\n'.join(labels[key] for key in matches[:5]), status='ambiguous')
-        if not matches:
-            if outside:
-                return CutoffAnswer(request, event, message='这首歌不是所选活动的挑战歌曲。' if historical else '这首歌不是本期活动的挑战歌曲。', status='empty')
-            if not event.catalog:
-                selector = '歌曲N／歌曲ID=…' if event.challenge_order_verified else '歌曲ID=…'
-                return CutoffAnswer(request, event, message=f'该服务器歌曲元数据暂不可用，无法核对名称；请稍后重试或使用 {selector} 。', status='data_unavailable')
-            return CutoffAnswer(request, event, message=f'该服务器未找到歌曲「{name}」。请使用完整歌名或已配置别名。', status='unknown_entity')
-        selected.append(matches[0])
-    if len(set(selected)) > 1:
-        return CutoffAnswer(request, event, message='同时指定了不同歌曲，请保留一个歌曲选择。', status='invalid_arguments')
-    songs = tuple(song for song in event.songs if not selected or song.music_id == selected[0])
-    if request.song_number is not None:
-        # An ordinal selects the exact challenge entry, even when a music ID repeats.
-        songs = (event.songs[request.song_number - 1],)
-    elif selected and len(songs) > 1:
-        if not event.challenge_order_verified:
-            return CutoffAnswer(request, event, message='本期同一曲目有多个挑战榜，原序号尚未核实；请查询本期全部挑战榜。', status='ambiguous')
-        choices = '\n'.join(f'歌曲{i} · {song.title}' for i, song in enumerate(event.songs, 1)
-                            if song.music_id == selected[0])
-        return CutoffAnswer(request, event, message='本期同一曲目有多个挑战榜，请使用歌曲编号指定：\n' + choices, status='ambiguous')
-    if names:
-        # Collapse equivalent names only after the exact challenge entry is confirmed.
-        request = replace(request, query=songs[0].title, extra_queries=(), literal_query=True)
     try:
-        boards = tuple(source.history.latest(event, song) for song in songs) if historical else source.boards(event, songs, deadline)
+        if historical:
+            boards = tuple(source.history.latest(event, song) if song.challenge_id in saved_song_ids
+                           else BoardSnapshot(song, source=event.source, status='未采集或无法核对该曲的本地历史')
+                           for song in event.songs)
+        else:
+            boards = source.boards(event, event.songs, deadline)
     except SourceError:
+        if total is not None and any(total.score(rank) is not None for rank in request.ranks or NODES):
+            return CutoffAnswer(request, event, total=total, total_history=total_history, status='success')
         return CutoffAnswer(request, event, message='历史库暂不可用，未改查当前活动。', status='data_unavailable')
     histories = ()
     ranks=request.ranks or NODES
-    if historical and not any(b.score(rank) is not None for b in boards for rank in ranks):
+    if (historical and not any(b.score(rank) is not None for b in boards for rank in ranks)
+            and not (total and any(total.score(rank) is not None for rank in ranks))):
         details = tuple(dict.fromkeys(n for b in boards for n in (b.song.title + '：' + b.status, *b.notes)))
         return CutoffAnswer(request, event, message='所选排名暂无有效历史分数。\n' + '\n'.join(details), status='data_unavailable')
-    history_ranks=tuple(dict.fromkeys(ranks[round(i*(len(ranks)-1)/4)] for i in range(5)))
-    if not request.numeric_only:
+    history_ranks = NODES if request.mode == 'trend' else ()
+    if history_ranks and not request.numeric_only:
         views = []
         for board in boards:
-            if not source.history:
+            if historical and board.song.challenge_id not in saved_song_ids:
+                view = HistoryView()
+            elif not source.history:
                 view = HistoryView(warning="历史记录未配置；当前值仍可查询。")
             elif hasattr(source.history, 'read_board'):
                 view = source.history.read_board(event, board, history_ranks)

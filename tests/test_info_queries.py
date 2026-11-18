@@ -77,6 +77,241 @@ class CurrentSource:
 
 
 class InformationQueryTests(unittest.TestCase):
+    def test_activity_list_is_default_and_id_contains_all_former_sections(self):
+        from ournotes_bot.commands import resolve_command
+        from ournotes_bot.sources.haneoka.activity_details import project_details
+
+        details = project_details({
+            'effects': [{'perRank': [{'rank': 1, 'percent': 10}], 'bonusType': 2}],
+            'rewards': [{'reward': {'name': '夹具材料'}, 'resourceCount': 5}],
+            'missions': [{'description': '完成一场演出'}],
+            'recruitments': [{'id': '18', 'title': '关联池'}],
+        })
+        repo = Repository(catalog(activities=(activity(2, '旧活动', end=NOW),
+                                               activity(5, '夹具活动', details=details)),
+                                  gachas=(gacha(18, '关联池'),)))
+        for command in ('/查活动', '/event', '/イベント', '/查活动 列表'):
+            with self.subTest(command=command):
+                result = resolve_command(command, repo).activity
+                self.assertEqual(result.views[0].layout, 'list')
+                self.assertEqual(tuple(row.command for row in result.views[0].rows), ('/查活动 5', '/查活动 2'))
+        result = resolve_command('/查活动 5', repo).activity
+        self.assertEqual(result.views[0].layout, 'activity-summary')
+        for value in ('档位1：+10%', '夹具材料', '完成一场演出', '/查卡池 18'):
+            self.assertIn(value, result.text)
+        for suffix in ('加成', '奖励', '任务', '卡池'):
+            for query in (suffix, '5 ' + suffix, 'hk ' + suffix):
+                retired = execute_activity(query, repo, now=NOW)
+                self.assertEqual(retired.status, 'invalid_arguments')
+                self.assertIn('已合入活动详情', retired.text)
+            self.assertNotIn(f'/查活动 5 {suffix}', result.text)
+
+    def test_activity_bonus_filters_use_explicit_effects_and_keep_history_scope(self):
+        from ournotes_bot.sources.haneoka.activity_details import project_details
+
+        red = {'targets': {'band': {'name': ['MyGO!!!!!']}}, 'cardType': 1, 'bonusType': 2}
+        blue = {**red, 'cardType': 2}
+        first = activity(1, '活动 A', end=NOW, details=project_details({'effects': [red, blue]}))
+        second = activity(2, '活动 B', end=NOW, details=project_details({'effects': [blue]}))
+        active = activity(3, '活动 C', details=first.details)
+        repo = Repository(catalog(activities=(first, second, active)))
+        result = execute_activity('历史 属性＝紅色 乐队=MyGO', repo, now=NOW)
+        self.assertEqual([r.command for r in result.views[0].rows], ['/查活动 1'])
+        self.assertIn('加成乐队 · MyGO!!!!!', result.text)
+        self.assertIn('加成属性 · 红色', result.text)
+        self.assertEqual([fact.bonus_attribute for fact in first.details[0].facts], [1, 2])
+        self.assertIn('蓝色', execute_activity('1', repo, now=NOW).text)
+        self.assertEqual(execute_activity('历史 属性=未知', repo, now=NOW).status, 'invalid_arguments')
+
+    def test_activity_rejects_ignored_sections_and_numeric_expressions(self):
+        repo = Repository(catalog(activities=(activity(2, '重名甲'), activity(3, '重名乙'))))
+        for query in ('列表 奖励', '历史 2 奖励', '日程 奖励', '加成 奖励', '-2', '３－２', '当前 jp'):
+            with self.subTest(query=query):
+                self.assertEqual(execute_activity(query, repo, now=NOW).status, 'invalid_arguments')
+        self.assertEqual(repo.captures, 0)
+        candidates = execute_activity('重名', repo, now=NOW)
+        self.assertEqual({row.command for row in candidates.views[0].rows},
+                         {'/查活动 2', '/查活动 3'})
+        self.assertIn('活动 ID 2', execute_activity('２', repo, now=NOW).text)
+
+    def test_history_matches_explicit_character_target_and_raw_type(self):
+        from ournotes_bot.sources.haneoka.activity_details import project_details
+
+        details = project_details({'effects': [{
+            'targets': {'character': {'name': ['高松 燈', 'Tomori Takamatsu', '', '高松灯']}},
+            'bonusType': 2,
+        }]})
+        repo = Repository(catalog(activities=(
+            activity(1, '显式角色', end=NOW, details=details, event_type_id=2),
+            activity(2, '只有角色奖励卡', end=NOW, reward_cards=(CardRef(2, 7),), event_type_id=2),
+            activity(3, '不同类型', end=NOW, details=details, event_type_id=1),
+        ), cards=(card(7),)))
+        result = execute_activity('历史 角色=Tomori Takamatsu 类型id=２', repo, now=NOW)
+        self.assertEqual([row.command for row in result.views[0].rows], ['/查活动 1'])
+        self.assertIn('加成角色 · 高松灯', result.text)
+        self.assertIn('活动类型 ID 2', result.text)
+        self.assertEqual(details[0].facts[0].group, '指定角色')
+
+    def test_activity_shorthand_can_mix_known_aliases_colors_and_typed_values(self):
+        from ournotes_bot.sources.haneoka.activity_details import project_details
+
+        details = project_details({'effects': [{
+            'targets': {'band': {'name': ['Ave Mujica']}, 'character': {'name': ['高松灯']}},
+            'cardType': 1,
+        }]})
+        repo = Repository(catalog(activities=(
+            activity(2, '夹具活动', end=NOW, details=details, event_type_id=2),
+            activity(3, '红色', end=NOW),
+        )))
+        for query in ('历史 Ave Mujica tmr 红 类型2', '历史 角色 tmr 红色 乐队 Ave Mujica 类型 2',
+                      '历史 tmr 乐队=Ave Mujica 红色 类型ID=2', '列表 Ave Mujica 红'):
+            with self.subTest(query=query):
+                result = execute_activity(query, repo, now=NOW)
+                self.assertEqual([row.command for row in result.views[0].rows], ['/查活动 2'])
+        self.assertIn('活动 ID 3', execute_activity('红色', repo, now=NOW).text)
+        self.assertEqual(execute_activity('历史 红 未知词', repo, now=NOW).status, 'invalid_arguments')
+        self.assertEqual(execute_activity('历史 红 蓝', repo, now=NOW).status, 'invalid_arguments')
+
+    def test_activity_filter_counts_only_plausible_matches_with_missing_data(self):
+        from ournotes_bot.sources.haneoka.activity_details import project_details
+
+        records = (
+            activity(1, '已匹配', end=NOW, event_type_id=2,
+                     details=project_details({'effects': [{'targets': {'character': {'name': '高松灯'}}}]})),
+            activity(2, '未知目标', end=NOW, event_type_id=2,
+                     details=project_details({'effects': [{'raw': {'_characterId': 7}}]})),
+            activity(3, '缺少效果', end=NOW, event_type_id=2, details=project_details({})),
+            activity(4, '无加成', end=NOW, details=project_details({'effects': []})),
+            activity(5, '类型不符', end=NOW, event_type_id=3),
+            activity(6, '未来活动', event_type_id=2),
+        )
+        repo = Repository(catalog(activities=records))
+        result = execute_activity('历史 tmr 类型2', repo, now=NOW)
+        self.assertIn('匹配 1 期', result.text)
+        self.assertIn('另有 2 期资料不足', result.text)
+        self.assertIn('另有 2 期资料不足', result.views[0].subtitle)
+        for record, expected in ((records[1], '没有确认匹配的活动'), (records[3], '没有找到符合条件的活动')):
+            repo.snapshot = catalog(activities=(record,))
+            self.assertIn(expected, execute_activity('历史 角色=高松灯', repo, now=NOW).text)
+
+    def test_activity_choices_are_or_within_each_field_and_and_across_fields(self):
+        from ournotes_bot.sources.haneoka.activity_details import project_details
+
+        def past(ident, band, person, color, kind):
+            return activity(ident, f'往期 {ident}', end=NOW, event_type_id=kind,
+                            details=project_details({'effects': [{'cardType': color, 'targets': {
+                                'band': {'name': band}, 'character': {'name': person},
+                            }}]}))
+        repo = Repository(catalog(activities=(
+            past(2, 'MyGO!!!!!', '高松灯', 1, 1),
+            past(3, 'Ave Mujica', '若叶睦', 2, 2),
+            past(4, 'MyGO!!!!!', '高松灯', 3, 1),
+            past(5, 'MyGO!!!!!', '高松灯', 1, 3),
+            past(6, 'Afterglow', '若叶睦', 1, 1),
+            past(7, 'MyGO!!!!!', '千早爱音', 1, 2),
+        )))
+        for query in (
+            '历史 MyGO,Ave Mujica 红,蓝 tmr,若叶睦 类型 挑战演出,2',
+            '历史 乐队 MyGO, Ave Mujica 属性=红/蓝 角色 tmr、若叶睦 类型1,2',
+        ):
+            with self.subTest(query=query):
+                result = execute_activity(query, repo, now=NOW)
+                self.assertEqual([row.command for row in result.views[0].rows], ['/查活动 3', '/查活动 2'])
+                self.assertIn('加成属性 · 蓝色', result.text)
+                self.assertIn('加成属性 · 红色', result.text)
+                self.assertIn('挑战演出活动（类型 ID 1）', result.text)
+        self.assertEqual(execute_activity('历史 类型 对邦', repo, now=NOW).status, 'invalid_arguments')
+        self.assertEqual(execute_activity('历史 红,未知', repo, now=NOW).status, 'invalid_arguments')
+
+    def test_activity_id_interval_keeps_exact_ids_and_does_not_cross_history_scope(self):
+        repo = Repository(catalog(activities=(activity(1, '过去甲', end=NOW), activity(2, '过去乙', end=NOW),
+                                               activity(3, '活动三'), activity(5, '活动五'))))
+        samples = {
+            '历史 ID 2到5': ('/查活动 2',),
+            '历史 ２－５': ('/查活动 2',),
+            '列表 ID=2~3': ('/查活动 3', '/查活动 2'),
+            '2 — 3': ('/查活动 3', '/查活动 2'),
+            '列表 ID>=3': ('/查活动 5', '/查活动 3'),
+            '列表 2以下': ('/查活动 2', '/查活动 1'),
+            '列表 ID 小于3': ('/查活动 2', '/查活动 1'),
+            '历史 ID 2-5 类型2': (),
+        }
+        for query, expected in samples.items():
+            with self.subTest(query=query):
+                result = execute_activity(query, repo, now=NOW)
+                self.assertEqual(tuple(row.command for row in result.views[0].rows), expected)
+        for query in ('列表 ID 0-3', '列表 ID 4到2', '列表 ID 1.2到3', '历史 ID 2-5 ID>=3',
+                      '历史 ID 2-', '列表 类型 2-5', '列表 2到5 奖励', '历史 -2 红色'):
+            with self.subTest(query=query):
+                self.assertEqual(execute_activity(query, repo, now=NOW).status, 'invalid_arguments')
+        for query in ('2', 'ID 2', '活动ID=2'):
+            self.assertEqual(execute_activity(query, repo, now=NOW).views[0].layout, 'activity-summary')
+
+    def test_calendar_limits_time_conflicts_to_the_requested_slot(self):
+        current = activity(1, '当前唯一')
+        next_a = activity(2, '未来甲', NOW + 200, NOW + 300)
+        next_b = activity(3, '未来乙', NOW + 200, NOW + 400)
+        repo = Repository(catalog(activities=(current, next_a, next_b)))
+        self.assertEqual(execute_activity('日程', repo, now=NOW).calendar_time.title, '当前唯一')
+        self.assertIsNone(execute_activity('下期', repo, now=NOW).calendar_time)
+        repo.snapshot = catalog(activities=(activity(4, '过去甲', end=NOW),
+                                            activity(5, '过去乙', end=NOW), next_a))
+        self.assertEqual(execute_activity('下期', repo, now=NOW).calendar_time.title, '未来甲')
+        self.assertIn('暂不能唯一确定最近一期', execute_activity('日程', repo, now=NOW).text)
+
+    def test_activity_pool_links_require_jp_identity_and_local_pool(self):
+        from ournotes_bot.domain.info_catalog import ActivityCalendar
+        from ournotes_bot.sources.haneoka.activity_details import project_details
+
+        details = project_details({'recruitments': [{'id': '18', 'title': '已确认卡池'},
+                                                     {'id': '19', 'title': '本地缺少详情'}]})
+        record = activity(1, '静态活动', details=details)
+        repo, _ = self._current_repository(record)
+        repo.capture_catalog = lambda: catalog(activities=(record,), gachas=(gacha(18, '已确认卡池'),),
+                                               activity_calendars={'intl': ActivityCalendar((record,), '', '', '')})
+        for query in ('jp', '1'):
+            with self.subTest(query=query):
+                result = execute_activity(query, repo, now=NOW)
+                self.assertIn('/查卡池 18', result.text)
+                self.assertNotIn('/查卡池 19', result.text)
+        result = execute_activity('en', repo, now=NOW)
+        self.assertIn('Haneoka intl', result.text)
+        self.assertNotIn('/查卡池 18', result.text)
+
+    def test_activity_keeps_disabled_song_without_link_and_stale_time_without_reminder(self):
+        from dataclasses import replace
+        from ournotes_bot.application.replies import activity_time_reply
+        from ournotes_bot.sources.moenotes_events import ACTIVITY_STALE_NOTE
+
+        repo, source = self._current_repository(activity(1, '活动'))
+        source.value = replace(source.value, notes=(ACTIVITY_STALE_NOTE,),
+                               songs=(replace(source.value.songs[0], enabled=False),))
+        result = execute_activity('当前', repo)
+        self.assertIn('歌曲 ID 101', result.text)
+        self.assertIn('单曲榜未开放或尚未采集', result.text)
+        self.assertNotIn('/查榜线 jp', result.text)
+        self.assertNotIn('清 CP', activity_time_reply(result, 'end'))
+
+    def test_activity_image_caption_exposes_real_links_and_keeps_continuation_progress(self):
+        from dataclasses import replace
+        from unittest.mock import patch
+
+        from ournotes_bot.application.replies import expand_replies, render_prepared_inner
+        from ournotes_bot.commands import resolve_command
+
+        repo, source = self._current_repository(activity(1, '活动'))
+        source.value = replace(source.value, title='/查卡池 999')
+        result = resolve_command('/查活动 当前', repo)
+        with patch('ournotes_bot.application.replies.visual_asset', return_value=None):
+            prepared = render_prepared_inner(result.activity.text, result, repo, 'zh')
+        self.assertTrue(prepared.image)
+        self.assertEqual(prepared.image_caption, '/查榜线 jp 锁定活动1')
+        batch = expand_replies([replace(prepared, image=None, pages=(prepared,) * 7)])
+        self.assertEqual(len(batch), 5)
+        self.assertIn('/查榜线 jp 锁定活动1', batch[-1].image_caption)
+        self.assertIn('图片 5/7；/继续', batch[-1].image_caption)
+        self.assertEqual(len(batch[-1].context.remaining), 2)
+
     def test_calendar_gap_boundary_next_and_missing_times(self):
         ended = activity(1, '上一期', NOW-100, NOW, display_end_at=NOW+500)
         repo = Repository(catalog(activities=(ended,)))
@@ -120,6 +355,7 @@ class InformationQueryTests(unittest.TestCase):
         ambiguous = execute_activity('日程', repo, now=NOW)
         self.assertIn('暂不能唯一确定', ambiguous.text)
         self.assertEqual(ambiguous.calendar_time_status, 'unavailable')
+        self.assertTrue(ambiguous.calendar_time_withheld)
 
     def test_activity_merges_roles_by_card_type_and_id_and_keeps_known_partial_rewards(self):
         ref=CardRef(2,7)
@@ -193,15 +429,20 @@ class InformationQueryTests(unittest.TestCase):
             with self.subTest(term=term), self.assertRaises(ValueError):
                 named_matches(records, term)
 
-    def test_real_empty_arguments_keep_directory_and_current_modes(self):
+    def test_real_empty_arguments_keep_all_three_directories(self):
         repo = Repository(catalog(characters=(person(1, '高松灯'),),
                                   gachas=(gacha(1, '当前池'), gacha(2, '未来池', start=NOW + 1))))
         self.assertIn('/查角色 1', execute_character('  ', repo).text)
         result = execute_gacha('  ', repo, now=NOW)
         self.assertIn('/查卡池 1', result.text)
-        self.assertNotIn('/查卡池 2', result.text)
+        self.assertIn('/查卡池 2', result.text)
         live, source = self._current_repository(activity(1, '当前活动'))
-        self.assertEqual(execute_activity('  ', live).status, 'success')
+        result = execute_activity('  ', live)
+        self.assertEqual(result.status, 'success')
+        self.assertEqual(result.views[0].layout, 'list')
+        self.assertEqual(tuple(row.command for row in result.views[0].rows), ('/查活动 1',))
+        self.assertEqual(source.calls, [])
+        self.assertIn('实时活动', execute_activity('当前', live).text)
         self.assertEqual(source.calls, ['jp'])
 
     def test_character_directory_groups_all_roster_even_without_cards(self):
@@ -222,6 +463,17 @@ class InformationQueryTests(unittest.TestCase):
         self.assertEqual(execute_character('灯皇', repo).views[0].title, '高松灯')
         self.assertEqual(len(execute_character('卖狗', repo).views[0].rows), 2)
 
+    def test_profile_advertises_only_uniquely_resolved_aliases(self):
+        repo = Repository(catalog(characters=(person(1, '高松灯'),
+                                            person(2, '千早爱音', fields={'nickname': {'zh': 'tmr'}}))))
+        profile = execute_character('1', repo).views[0]
+        aliases = next(row.body[0] for row in profile.rows if row.title == '常用查名').split(' / ')
+        self.assertIn('灯皇', aliases)
+        self.assertNotIn('tmr', aliases)
+        self.assertEqual(execute_character('tmr', repo).views[0].title, '千早爱音')
+        for alias in aliases:
+            self.assertEqual(execute_character(alias, repo).views[0].title, '高松灯')
+
     def test_character_explicit_band_filter_and_alias(self):
         repo = Repository(catalog(characters=(person(1, '高松灯'), person(2, '千早爱音'), person(3, '三角初华', 'Ave Mujica'))))
         for term in ('乐队=MyGO', '乐队=卖狗', '乐队＝MyGO!!!!!'):
@@ -230,13 +482,35 @@ class InformationQueryTests(unittest.TestCase):
         self.assertEqual(execute_character('乐队=', repo).status, 'invalid_arguments')
         self.assertEqual(execute_character('乐队=不存在', repo).status, 'no_results')
 
+    def test_character_role_filter_covers_dual_roles_and_band_intersection(self):
+        people = (
+            person(1, '样例一', fields={'bandPart': {'ja': 'Gt.'}}),
+            person(2, '样例二', 'Ave Mujica', fields={'bandPart': {'ja': 'Gt.&Vo.'}}),
+            person(3, '样例三', 'Ave Mujica', fields={'bandPart': {'ja': 'DJ&Mp.'}}),
+            person(4, '资料未确认'),
+        )
+        repo = Repository(catalog(characters=people))
+        for query, expected in (
+            ('担当=吉他', [1, 2]), ('乐队＝Ave Mujica 担当=Gt.', [2]),
+            ('担当=ボーカル 乐队=Ave Mujica', [2]), ('担当=DJ', [3]), ('担当=操控', [3]),
+        ):
+            with self.subTest(query=query):
+                result = execute_character(query, repo)
+                self.assertEqual([row.command for row in result.views[0].rows],
+                                 [f'/查角色 {ident}' for ident in expected])
+        self.assertIn('担当未确认', execute_character('担当=吉他', repo).text)
+        self.assertNotIn('担当未确认', execute_character('乐队=Ave Mujica 担当=吉他', repo).text)
+        self.assertEqual(execute_character('担当=鼓', repo).status, 'no_results')
+        for query in ('担当=', '担当=未知', '担当=吉他 担当=主唱', '乐队= 担当=吉他'):
+            self.assertEqual(execute_character(query, repo).status, 'invalid_arguments')
+
     def test_mujica_uses_civilian_title_and_preserves_stage_name_search(self):
         repo = Repository(catalog(characters=(person(7, 'Mortis / 若叶睦', 'Ave Mujica'),)))
         for term in ('7', 'Mortis', '若叶睦', '睦头'):
             result = execute_character(term, repo)
             self.assertEqual(result.views[0].title, '若叶睦')
             self.assertIn('艺名\nMortis', result.text)
-            self.assertIn('/查卡 若叶睦', result.text)
+            self.assertIn('/查卡 角色ID=7', result.text)
 
     def test_character_ambiguous_partial_keeps_candidates(self):
         repo = Repository(catalog(characters=(person(1, '高松灯'), person(2, '高桥测试'))))
@@ -250,6 +524,28 @@ class InformationQueryTests(unittest.TestCase):
         repo = Repository(catalog(characters=(person(11, '1'),)))
         self.assertEqual(execute_character('1', repo).status, 'no_results')
 
+    def test_character_id_rejects_digits_joined_by_name_normalization(self):
+        repo = Repository(catalog(characters=(person(1, '高松灯'), person(12, '千早爱音'))))
+        for term in ('-1', '－１', '1 2', '1-2'):
+            with self.subTest(term=term):
+                self.assertEqual(execute_character(term, repo).status, 'invalid_arguments')
+        self.assertEqual(execute_character(' １ ', repo).views[0].title, '高松灯')
+        self.assertEqual(execute_character('01', repo).status, 'no_results')
+
+    def test_single_latin_letter_requires_an_exact_name_or_alias(self):
+        people = (person(1, 'Tomori', 'MyGO!!!!!'), person(2, 'Nyamu', 'Ave Mujica'))
+        repo = Repository(catalog(characters=people))
+        for term in ('m', '乐队=m'):
+            with self.subTest(term=term):
+                self.assertEqual(execute_character(term, repo).status, 'no_results')
+        self.assertEqual(execute_character('Tomo', repo).views[0].title, 'Tomori')
+        millsage = person(3, '伊沢なつめ', 'millsage')
+        repo = Repository(catalog(characters=(*people, millsage)))
+        for term in ('Ｍ', '乐队=m'):
+            with self.subTest(term=term):
+                result = execute_character(term, repo)
+                self.assertEqual([row.command for row in result.views[0].rows], ['/查角色 3'])
+
     def test_character_card_counts_deduplicate_multicharacter_support(self):
         member = card(1)
         support = card(1, support=True, people=(1, 1, 2))
@@ -257,7 +553,7 @@ class InformationQueryTests(unittest.TestCase):
         result = execute_character('1', repo)
         counts = [row.body[0] for row in result.views[0].rows if row.title in {'成员卡', '留影卡'}]
         self.assertEqual(counts, ['1 张', '1 张'])
-        self.assertIn('/查留影卡 高松灯', result.text)
+        self.assertIn('/查留影卡 角色ID=1', result.text)
         self.assert_same_text(result)
 
     def test_character_incomplete_links_do_not_claim_exact_count(self):
@@ -288,17 +584,17 @@ class InformationQueryTests(unittest.TestCase):
         records = (gacha(1, '刚开始', start=NOW), gacha(2, '刚结束', end=NOW),
                    gacha(3, '未来', start=NOW + 1), gacha(4, '未知', start=None, end=None))
         repo = Repository(catalog(gachas=records))
-        result = execute_gacha('', repo, now=NOW)
+        result = execute_gacha('当前', repo, now=NOW)
         self.assertEqual(repo.captures, 1)
         self.assertIn('/查卡池 1', result.text)
         for identity in (2, 3, 4):
             self.assertNotIn(f'/查卡池 {identity}', result.text)
-        self.assertIn('不代表所有玩家当前可抽', result.text)
+        self.assertIn('实际抽取资格以游戏内为准', result.text)
         self.assert_same_text(result)
 
     def test_gacha_unknown_dates_are_not_1970_or_permanent(self):
         repo = Repository(catalog(gachas=(gacha(1, '未知', start=None, end=None),)))
-        self.assertEqual(execute_gacha('', repo, now=NOW).status, 'no_results')
+        self.assertEqual(execute_gacha('当前', repo, now=NOW).status, 'no_results')
         detail = execute_gacha('1', repo, now=NOW)
         self.assertIn('开始：未确认', detail.text)
         self.assertIn('开放时间未确认', detail.text)
@@ -311,6 +607,56 @@ class InformationQueryTests(unittest.TestCase):
         self.assertIn('旧池', history.text)
         self.assertNotIn('新池', history.text)
         self.assertEqual(execute_gacha('1', repo, now=NOW).views[0].title, '旧池')
+
+    def test_gacha_directory_and_time_filters_keep_distinct_scopes(self):
+        repo = Repository(catalog(gachas=(
+            gacha(12, '已结束的池', end=NOW),
+            gacha(13, '同日结束的池', start=NOW - 200, end=NOW),
+            gacha(14, '未来池', start=NOW + 1),
+            gacha(15, '未知时间池', start=None, end=None),
+        )))
+        def ids(query):
+            return tuple(row.command for row in execute_gacha(query, repo, now=NOW).views[0].rows)
+        self.assertEqual(ids(''), ids('列表'))
+        self.assertEqual(ids('JP'), ids('列表'))
+        self.assertEqual(ids('最近'), ('/查卡池 12', '/查卡池 13'))
+        self.assertEqual(ids('历史　１２'), ('/查卡池 12',))
+        self.assertEqual(ids('ID １２到１４'), ('/查卡池 14', '/查卡池 12', '/查卡池 13'))
+        for query in ('-12', '1-2-3', '012', 'ID 14到12', 'ID 0到12', 'hk 当前'):
+            with self.subTest(query=query):
+                self.assertEqual(execute_gacha(query, repo, now=NOW).status, 'invalid_arguments')
+        self.assertEqual(execute_gacha('ID=12', repo, now=NOW).views[0].title, '已结束的池')
+
+    def test_gacha_list_marks_up_coverage_and_detail_only_links_explicit_activity(self):
+        from ournotes_bot.domain.info_catalog import ActivityFact, ActivitySection
+
+        picked = CardRef(2, 7)
+        event = activity(4, '明确关联', details=(ActivitySection('卡池', (
+            ActivityFact('已收录卡池', gacha_id='12'), ActivityFact('重复关联', gacha_id='12'),
+        )),))
+        coincident = activity(5, '仅时间重合')
+        record = gacha(12, '限定池', category='fixture', limited=True,
+                       display_condition=2, pickup_cards=(picked, picked))
+        unknown = gacha(13, '标记缺失', available_relations=frozenset({'featured_cards'}))
+        repo = Repository(catalog(gachas=(record, unknown), activities=(event, coincident)))
+        listing = execute_gacha('', repo, now=NOW)
+        self.assertIn('已确认 UP 卡 1 张，部分 UP 标记未确认', listing.text)
+        self.assertIn('已收录展示卡，UP 标记未确认', listing.text)
+        self.assertIn('有展示条件', listing.text)
+        detail = execute_gacha('12', repo, now=NOW)
+        self.assertEqual(detail.text.count('/查活动 4'), 1)
+        self.assertNotIn('/查活动 5', detail.text)
+        self.assertIn('来源分类：fixture', detail.text)
+        stars = gacha(14, '星钻池', category='stars')
+        tickets = gacha(15, '票券池', category='ticket')
+        categorized = Repository(catalog(gachas=(record, stars, tickets)))
+        result = execute_gacha('分类＝星钻 ID 12到15', categorized, now=NOW)
+        self.assertIn('星钻招募', result.text)
+        self.assertIn('卡池的分类未确认', result.text)
+        self.assertEqual(tuple(row.command for row in result.views[0].rows), ('/查卡池 14',))
+        self.assertIn('限定标记：是', detail.text)
+        self.assertIn('当前快照缺少卡牌详情', detail.text)
+        self.assert_same_text(detail)
 
     def test_gacha_up_card_types_same_id_and_duplicates_remain_correct(self):
         refs = (CardRef(3, 7), CardRef(2, 7), CardRef(2, 7))
@@ -383,26 +729,89 @@ class InformationQueryTests(unittest.TestCase):
 
     def _current_repository(self, static):
         event = EventSnapshot('jp', '1', '当前活动', 'nowOn', (NOW - 100) * 1000, (NOW + 100) * 1000,
-                              (EventSong('5', '101', '挑战曲'),), source='haneoka')
+                              (EventSong('5', '101', '挑战曲', collect_status='collecting'),), source='haneoka')
         source = CurrentSource(event)
         repo = SimpleNamespace(event_cutoffs=source, capture_catalog=lambda: catalog(activities=(static,), cards=(card(7),)))
         return repo, source
 
+    def test_current_activity_picture_includes_total_only_for_supported_event(self):
+        from dataclasses import replace
+        from unittest.mock import Mock
+        from ournotes_bot.domain.total_rankings import TotalRankingSnapshot
+        from ournotes_bot.rendering.info_layout import render_info
+        repo, source = self._current_repository(activity(1, '活动'))
+        source.total_rankings = Mock(connected=True)
+        source.total_rankings.capture.return_value = TotalRankingSnapshot(
+            'key', 'haneoka', (9007199254740993, 0, 30), NOW * 1000, NOW * 1000)
+        self.assertNotIn('挑战综合分数榜', execute_activity('当前', repo).text)
+        source.total_rankings.capture.assert_not_called()
+        source.value = replace(source.value, total_ranking_enabled=True)
+        answer = execute_activity('当前', repo)
+        source.total_rankings.capture.assert_called_once_with(source.value, 0)
+        self.assertIn('T1  9,007,199,254,740,993', answer.text)
+        self.assertIn('/查榜线 jp 锁定活动1 总榜', answer.text)
+        self.assertIn('T2  0', answer.text)
+        self.assertIn('T100  暂无数据', answer.text)
+        pages = render_info(answer)
+        self.assertTrue(any(p.image and '挑战综合分数榜' in p.text for p in pages))
+        self.assertNotIn('挑战综合分数榜', execute_activity('加成', repo).text)
+        source.total_rankings.capture.assert_called_once()
+
+    def test_ended_activity_uses_confirmed_archived_total_and_omits_older_events(self):
+        from dataclasses import replace
+        from unittest.mock import Mock
+        from ournotes_bot.domain.total_rankings import TotalRankingSnapshot
+        total = activity(4, '已结束有总榜', start=NOW - 2000, end=NOW - 100, ranking_modes=('挑战歌曲总榜',))
+        old = activity(1, '旧榜制', start=NOW - 4000, end=NOW - 3000)
+        source = CurrentSource(None)
+        source.total_rankings = Mock(connected=True)
+        source.total_rankings.history.source = 'haneoka'
+        source.total_rankings.history.events.return_value = ()
+        source.total_rankings.archived.return_value = TotalRankingSnapshot(
+            'key', 'haneoka', (1234,), (NOW - 10) * 1000, NOW * 1000, stale=True)
+        repo = SimpleNamespace(event_cutoffs=source, capture_catalog=lambda: catalog(activities=(old, total)))
+        self.assertNotIn('挑战综合分数榜', execute_activity('1', repo, now=NOW).text)
+        source.total_rankings.archived.assert_not_called()
+        result = execute_activity('4', repo, now=NOW)
+        self.assertIn('T1  1,234', result.text)
+        self.assertIn('最后可读观测', result.text)
+        self.assertNotIn('/查榜线', result.text)
+        event, deadline = source.total_rankings.archived.call_args.args
+        self.assertEqual((event.event_id, event.end_ms, deadline), ('4', (NOW - 100) * 1000, 0))
+        self.assertEqual(source.calls, [])
+        source.total_rankings.history.events.return_value = (event,)
+        source.total_rankings.history.latest.return_value = source.total_rankings.archived.return_value
+        self.assertIn('/查榜线 jp id4 总榜', execute_activity('4', repo, now=NOW).text)
+        source.total_rankings.history.events.return_value = (replace(event, start_ms=event.start_ms - 1000), event)
+        selected = execute_activity('4', repo, now=NOW)
+        self.assertIn('T1  1,234', selected.text)
+        self.assertNotIn('/查榜线', selected.text)
+        source.total_rankings.history.events.return_value = (event, replace(event, songs=(EventSong('1', '10', '别曲'),)))
+        conflicts = execute_activity('4', repo, now=NOW)
+        self.assertIn('多份综合榜档案', conflicts.text)
+        self.assertNotIn('1,234', conflicts.text)
+        self.assertNotIn('/查榜线', conflicts.text)
+        source.total_rankings.archived.assert_called_once()
+
     def test_current_activity_same_id_and_dates_can_attach_static_cards(self):
         record = activity(1, '静态标题', bonus_cards=(CardRef(2, 7),), available_relations=frozenset({'bonus_cards'}))
         repo, source = self._current_repository(record)
-        result = execute_activity('', repo)
+        result = execute_activity('当前', repo)
         self.assertEqual(source.calls, ['jp'])
-        self.assertIn('/查榜线 jp 歌曲ID=101', result.text)
+        self.assertIn('/查榜线 jp 锁定活动1', result.text)
+        self.assertIn('歌曲 ID 101', result.text)
+        self.assertNotIn('歌曲ID=', result.text)
         self.assertIn('/查卡 7', result.text)
         self.assert_same_text(result)
 
     def test_current_activity_does_not_repeat_live_challenge_as_static_related_song(self):
         record = activity(1, '活动', song_ids=(101, 102))
         repo, _ = self._current_repository(record)
-        result = execute_activity('', repo)
+        result = execute_activity('当前', repo)
         self.assertEqual(result.text.count('歌曲 ID 101'), 1)
-        self.assertIn('/查榜线 jp 歌曲ID=101', result.text)
+        self.assertIn('/查榜线 jp 锁定活动1', result.text)
+        self.assertIn('歌曲 ID 101', result.text)
+        self.assertNotIn('歌曲ID=', result.text)
         self.assertNotIn('/查曲 101', result.text)
         self.assertIn('/查曲 102', result.text)
         self.assert_same_text(result)
@@ -414,11 +823,11 @@ class InformationQueryTests(unittest.TestCase):
         source.value=replace(source.value,banner='tracker:banner',songs=(replace(source.value.songs[0],jacket='tracker:jacket'),))
         song=SimpleNamespace(id=101,title='静态歌曲',jacket_url='verified:jacket')
         repo.capture_catalog=lambda:catalog(activities=(record,),songs=(song,))
-        answer=execute_activity('',repo)
+        answer=execute_activity('当前',repo)
         self.assertEqual(answer.views[0].hero_url,'verified:banner')
         self.assertEqual(next(r.image_url for r in answer.views[0].rows if r.kind=='song'),'verified:jacket')
         repo.capture_catalog=lambda:catalog(activities=(replace(record,end_at=NOW+1),),songs=(song,))
-        answer=execute_activity('',repo)
+        answer=execute_activity('当前',repo)
         self.assertEqual(answer.views[0].hero_url,'tracker:banner')
         self.assertEqual(next(r.image_url for r in answer.views[0].rows if r.kind=='song'),'tracker:jacket')
         source.value=replace(source.value,server='en')
@@ -429,12 +838,12 @@ class InformationQueryTests(unittest.TestCase):
         record = activity(1, '旧复刻', start=NOW - 1000, bonus_cards=(CardRef(2, 7),),
                           available_relations=frozenset({'bonus_cards'}))
         repo, _ = self._current_repository(record)
-        self.assertNotIn('/查卡 7', execute_activity('', repo).text)
+        self.assertNotIn('/查卡 7', execute_activity('当前', repo).text)
 
     def test_current_activity_matching_window_wrong_id_does_not_attach_cards(self):
         record = activity(2, '另一活动', bonus_cards=(CardRef(2, 7),), available_relations=frozenset({'bonus_cards'}))
         repo, _ = self._current_repository(record)
-        self.assertNotIn('/查卡 7', execute_activity('', repo).text)
+        self.assertNotIn('/查卡 7', execute_activity('当前', repo).text)
 
 
 class ActivityAnnouncementTests(unittest.TestCase):
@@ -446,6 +855,11 @@ class ActivityAnnouncementTests(unittest.TestCase):
         from datetime import datetime, timezone
         self.assertEqual(name, '次のステージ')
         self.assertEqual(stamp, datetime(2026,10,30,6,tzinfo=timezone.utc).timestamp())
+        decorated = '✦ 開催期間2026/10/30(金) 15:00 ～ 2026/11/07(土) 14:59'
+        self.assertEqual(announced_time({**row, 'text':decorated}, 'jp'), (name, stamp))
+        self.assertIsNone(announced_time({**row, 'text':'表示対象の開催期間2026/10/30(金) 15:00'}, 'jp'))
+        self.assertIsNone(announced_time({**row, 'text':decorated+'\n'+row['text']}, 'jp'))
+
         for change in ({'text_truncated':True}, {'text':'【ランキング結果集計期間】\n2026/10/30(金) 15:00'},
                        {'text':'2026/10/30(金) 15:00'}, {'title':'イベント「次のステージ」延期のお知らせ'},
                        {'text':row['text']+'\n延期となります'}, {'text':'【イベント開催期間】\n2026/02/30 15:00'}):
@@ -465,19 +879,23 @@ class ActivityAnnouncementTests(unittest.TestCase):
         index=dict(observed_at='2026-10-26T00:00:00Z',rows=[row])
         full={**row,'text':'【イベント開催期間】\n2026/10/30(金) 15:00 ～ 2026/11/07(土) 14:59','text_truncated':False}
         notices=Mock();notices.read.side_effect=[index,{**index,'rows':[full]}]
-        result,note=ActivityAnnouncements(notices).next('jp',now)
+        result,note,withheld=ActivityAnnouncements(notices).next('jp',now)
+        self.assertFalse(withheld)
         self.assertEqual(result.title,'次のステージ');self.assertTrue(result.url.endswith('/jp/ja/announcements/10/'))
         self.assertEqual(notices.read.call_count,2)
         revision={**row,'id':11,'updatedAt':int(now),'title':'イベント「次のステージ」について'}
         revised={**revision,'text':'開催を中止します','text_truncated':False}
         revised_index={**index,'rows':[revision,row]}
         notices.read.side_effect=[revised_index,{**index,'rows':[revised]},{**index,'rows':[full]}]
-        result,note=ActivityAnnouncements(notices).next('jp',now)
+        result,note,withheld=ActivityAnnouncements(notices).next('jp',now)
+        self.assertTrue(withheld)
         self.assertIsNone(result);self.assertIn('延期或调整',note)
         notices.read.side_effect=[index,{**index,'observed_at':'different','rows':[full]}]
-        self.assertIsNone(ActivityAnnouncements(notices).next('jp',now)[0])
+        result,_,withheld=ActivityAnnouncements(notices).next('jp',now)
+        self.assertIsNone(result);self.assertTrue(withheld)
         notices.read.side_effect=[index,ChartDataError('missing body')]
-        result,note=ActivityAnnouncements(notices).next('jp',now)
+        result,note,withheld=ActivityAnnouncements(notices).next('jp',now)
+        self.assertFalse(withheld)
         self.assertIsNone(result);self.assertIn('暂不能确认',note)
         notices.read.side_effect=ChartDataError('unavailable')
         self.assertIn('读取失败',ActivityAnnouncements(notices).next('jp',now)[1])
@@ -488,21 +906,141 @@ class ActivityAnnouncementTests(unittest.TestCase):
         repo=Repository(catalog(activities=(activity(1,'最近一期',NOW-100,NOW),)))
         repo.activity_announcements=Mock()
         repo.activity_announcements.next.return_value=(AnnouncedActivity('下一期公告',NOW+100,
-             'https://haneoka.org/jp/ja/announcements/10/','fixture'),'')
+             'https://haneoka.org/jp/ja/announcements/10/','fixture'),'',False)
         result=execute_activity('日程',repo,now=NOW)
         self.assertIn('最近一期',result.text);self.assertIn('公告预告《下一期公告》将于',result.text)
         self.assertIn('/announcements/10/',result.text);self.assertNotIn('清 CP',result.text)
         self.assertNotIn('还不能确定',result.text)
         repo.activity_announcements.next.assert_called_once_with('jp',NOW)
+        announced, _, _ = repo.activity_announcements.next.return_value
+        repo.activity_announcements.next.return_value = (announced, '公告列表未完全核对。', True)
+        partial = execute_activity('下期', repo, now=NOW)
+        self.assertIn('下一期公告', partial.text)
+        self.assertEqual(partial.calendar_time_status, 'related')
+        self.assertTrue(partial.calendar_time_withheld)
+        self.assertIsNone(partial.calendar_time)
 
 
 class PublicQueryContractTests(unittest.TestCase):
+
+    def test_arena_stage_and_cutoff_have_distinct_modes_and_preserve_rank_scope(self):
+        from types import SimpleNamespace
+        from ournotes_bot.query.public_queries import execute_arena, parse_arena
+        from ournotes_bot.domain.public_queries import PublicQueryError
+
+        for text, expected in [
+            ('MyGO', (1, 100, (1, 2, 3, 10, 100))),
+            ('MyGO 榜单', (1, 20, ())),
+            ('MyGO T1000', (1000, 1000, (1000,))),
+            ('MyGO 50', (40, 60, ())),
+            ('MyGO 20 - 40', (20, 40, ())),
+            ('T100 T10 Ｔ１ MyGO 仅数值', (1, 100, (1, 10, 100))),
+        ]:
+            with self.subTest(text=text):
+                request = parse_arena(text, command='查激奏榜线')
+                self.assertEqual((request.first, request.last, request.positions), expected)
+        for text in ('MyGO 2-1', 'MyGO 1-101', 'MyGO T1 T101', 'MyGO 人数 T1', 'MyGO 50 T100'):
+            with self.subTest(text=text), self.assertRaises(PublicQueryError):
+                parse_arena(text, command='查激奏榜线')
+
+        # A repository without a source also proves these errors never get to I/O.
+        repo = SimpleNamespace()
+        missing = execute_arena('hk 赛季=7 T100 仅数值', repo, command='查激奏榜线')
+        self.assertEqual(missing.status, 'invalid_arguments')
+        self.assertIn('/查激奏榜线 hk MyGO!!!!! 赛季=7 T100 仅数值', missing.text)
+        self.assertIn('/查激奏榜线', execute_arena('MyGO 人数', repo, command='查激奏舞台').text)
+        self.assertIn('/查激奏舞台', execute_arena('MyGO 排期', repo, command='查激奏榜线').text)
+
+    def test_arena_stage_rules_and_records_project_the_requested_snapshot(self):
+        import json
+        from types import SimpleNamespace
+        from ournotes_bot.query.public_queries import execute_arena
+        from ournotes_bot.sources.haneoka.public_queries import PublicQueries
+
+        old = {'startAt': 1000, 'endAt': 1999, 'musicType': 99, 'missions': [1, 2, 3]}
+        rules = [dict(old, startAt=i * 1000, endAt=i * 1000 + 999, musicType=i) for i in range(1, 6)]
+        rank = dict(id=1, name='新手1', rank=1, points=0, resetPoints=0, startAt=0)
+        ranks = [rank, dict(rank, id=2, name='新手2', points=50),
+                 dict(rank, id=3, name='青铜1', rank=2, points=100),
+                 dict(rank, id=4, name='青铜2', rank=2, points=200, startAt=3000)]
+        league = dict(id=7, bandId=1, name='MyGO', rules=rules, songs=[], ranks=ranks)
+        reward = {'name': '测试奖励', 'leagueId': 7, 'rankId': 1, 'count': 3, 'from': 0, 'to': 0}
+        season = dict(seasonId=7, title='测试赛季', startAt=1, endAt=30000, leagues=[league], dailyRewards=[reward])
+        identity = dict(server='intl', releaseId='r-' + 'e' * 20, sourceId='fixture')
+        calls = []
+
+        def fetch(url, *args):
+            calls.append(url)
+            if '/release?' in url:
+                self.assertIn('/servers/intl/', url)
+                data = dict(schema='haneoka-resource-release-identity-v1', **identity)
+            elif '/servers/intl/arena?' in url:
+                data = dict(schema='haneoka-arena-v1', identity=identity, entries={'7': season})
+            elif url.endswith('/tw/arena/seasons/7/leagues/1/ranking?start=1'):
+                scores = [dict(rank=i, point=101-i, name='fixture') for i in range(1, 100)]
+                scores.append(dict(rank=99, point=0, name='隐藏昵称', profileId='21234567890'))
+                data = dict(region='tw', seasonId='7', bandId='1', start=1, end=100, maxRank=200, rows=scores)
+            elif url.endswith('/tw/arena/seasons/7/leagues/1/population?thresholds=0%2C50%2C100'):
+                data = dict(region='tw', seasonId='7', bandId='1', maxRank=5,
+                            tiers=[dict(threshold=0, count=0), dict(threshold=50, count=3), dict(threshold=100, count=2)])
+            else:
+                self.fail('unexpected source request: ' + url)
+            return 200, json.dumps(data).encode(), {}
+
+        source = PublicQueries(fetch=fetch, clock=lambda: 1.5)
+        repo = SimpleNamespace(public_queries=source, capture_catalog=lambda: SimpleNamespace(source_snapshot=None))
+        overview = execute_arena('hk MyGO', repo, now=1.5, command='查激奏舞台')
+        self.assertEqual(overview.status, 'success')
+        self.assertIn('当前规则', overview.text)
+        self.assertIn('接下来的轮换', overview.text)
+        self.assertIn('08:00:04', overview.text)
+        self.assertNotIn('08:00:05', overview.text)
+        self.assertEqual(len(calls), 2)
+        reward_view = execute_arena('hk MyGO 段位与奖励', repo, now=1.5, command='查激奏舞台')
+        self.assertIn('积分门槛：0', reward_view.text)
+        self.assertIn('测试奖励 ×3', reward_view.text)
+        empty = execute_arena('hk MyGO 乐曲', repo, now=1.5, command='查激奏舞台')
+        self.assertEqual(empty.status, 'no_results')
+        self.assertIn('暂无已公开乐曲', empty.text)
+        values = execute_arena('hk MyGO T100 仅数值', repo, now=1.5, command='查激奏榜线')
+        self.assertEqual(values.status, 'success')
+        self.assertFalse(values.views)
+        self.assertIn('T100\n舞台积分（AP）：0', values.text)
+        self.assertNotIn('隐藏昵称', values.text)
+        self.assertEqual(len(calls), 3)
+        also_first = execute_arena('hk MyGO T1 T100', repo, now=1.5, command='查激奏榜线')
+        self.assertIn('T100 · 显示名次 99', also_first.text)
+        self.assertEqual(len(calls), 3)
+        population = execute_arena('hk MyGO 人数', repo, now=1.5, command='查激奏榜线')
+        self.assertEqual(population.status, 'success')
+        self.assertIn('联赛上榜人数\n5', population.text)
+        self.assertIn('新手\n舞台积分 0–99 · 人数：3', population.text)
+        self.assertIn('青铜\n舞台积分 100+ · 人数：2', population.text)
+        self.assertNotIn('新手1', population.text)
+        divisions = execute_arena('hk MyGO 人数明细', repo, now=1.5, command='查激奏榜线')
+        self.assertIn('新手1\n舞台积分 0–49 · 人数：0', divisions.text)
+        self.assertIn('新手2\n舞台积分 50–99 · 人数：3', divisions.text)
+        self.assertNotIn('青铜2', divisions.text)
+        self.assertEqual(len(calls), 4)
+
+        league['ranks'] = [ranks[-1]]
+        source.cache.clear()
+        future = execute_arena('hk MyGO 人数', repo, now=1.5, command='查激奏榜线')
+        self.assertIn('暂无已开放的段位', future.text)
+        self.assertTrue(calls[-1].split('?')[0].endswith('/servers/intl/arena'))
+
+        league['ranks'] = []
+        source.cache.clear()
+        missing = execute_arena('hk MyGO 人数', repo, now=1.5, command='查激奏榜线')
+        self.assertEqual(missing.status, 'data_unavailable')
+        self.assertIn('暂无段位门槛资料', missing.text)
+        self.assertTrue(calls[-1].split('?')[0].endswith('/servers/intl/arena'))
 
     def test_public_projection_preserves_positions_states_and_snapshot_times(self):
         import json
         from types import SimpleNamespace
         from ournotes_bot.domain.public_queries import PublicSnapshot
-        from ournotes_bot.query.public_queries import execute_arena, execute_player, quality_lines, stamp
+        from ournotes_bot.query.public_queries import execute_arena, quality_lines, stamp
         league = {'id': 1, 'bandId': 1, 'name': 'MyGO!!!!!', 'rules': [], 'ranks': []}
         catalog = {'entries': {'1': {'seasonId': 1, 'title': 'fixture', 'startAt': 1, 'endAt': 9999999999999, 'leagues': [league]}}}
         board = {'rows': [{'position': 99, 'rank': 99, 'point': 0, 'pointState': 'source_zero', 'name': 'zero'}, {'position': 100, 'rank': 99, 'point': None, 'pointState': 'null', 'name': 'unknown'}]}
@@ -518,11 +1056,6 @@ class PublicQueryContractTests(unittest.TestCase):
         self.assertIn('source_zero', result.text)
         self.assertIn('null', result.text)
         from dataclasses import replace
-        source.player = lambda request: replace(snapshot, body=b'{"profile":{"name":"fixture"}}')
-        player = execute_player('1', repo)
-        self.assertEqual(player.status, 'success')
-        self.assertIn('来源观测：' + stamp(snapshot.observed_ms), player.text)
-        self.assertIn('来源更新：未获取', player.text)
         self.assertIn('来源观测：未获取', quality_lines(replace(snapshot, observed_ms=None)))
 
 
@@ -547,15 +1080,9 @@ class PublicQueryContractTests(unittest.TestCase):
         fact=project_details(event,lambda path:'verified:'+path if path else '')[0].facts[0]
         self.assertEqual((fact.image_url,fact.image_kind),('verified:card','portrait'))
 
-    def test_public_id_precision_regions_and_invalid_arguments(self):
-        from ournotes_bot.query.public_queries import parse_player, parse_arena
+    def test_arena_regions_and_invalid_arguments(self):
+        from ournotes_bot.query.public_queries import parse_arena
         from ournotes_bot.domain.public_queries import PublicQueryError
-        self.assertEqual(parse_player('9223372036854775807').profile_id, '9223372036854775807')
-        for region, ident in [('hk', '21234567890'), ('en', '31234567890'), ('kr', '41234567890')]:
-            self.assertEqual(parse_player(ident + ' ' + region + ' 名片 页3').page, 3)
-        for query in ('0', '01', '9223372036854775808', '31234567890 hk', '1 jp hk', '1 页3', '1 名片 页0'):
-            with self.subTest(query=query), self.assertRaises(PublicQueryError):
-                parse_player(query)
         self.assertEqual(parse_arena('MyGO!!!!! hk 榜单 排名=90-100').last, 100)
         for query in ('MyGO!!!!! 榜单 排名=2-1', 'MyGO!!!!! 榜单 排名=1-101', 'MyGO!!!!! jp hk', '不存在的乐队'):
             with self.subTest(query=query), self.assertRaises(PublicQueryError):
@@ -626,45 +1153,17 @@ class PublicQueryContractTests(unittest.TestCase):
                 source.arena(region)
 
 
-    def test_player_identity_and_cache_expiration(self):
-        import json
+    def test_empty_arena_document_rejected_at_source(self):
         from ournotes_bot.sources.haneoka.public_queries import PublicQueries
-        from ournotes_bot.domain.public_queries import PlayerRequest, PublicQueryError
-        calls, now = [], [100]
-        value = {'region': 'jp', 'profileId': '99', 'profile': {'name': 'fixture', 'rankExp': 0, 'totalFavorite': 0}}
-        def fetch(*args):
-            calls.append(args)
-            return 200, json.dumps(value).encode(), {}
-        source = PublicQueries(fetch=fetch, clock=lambda: now[0])
-        first = source.player(PlayerRequest('99'))
-        self.assertEqual(first, source.player(PlayerRequest('99')))
-        self.assertEqual(len(calls), 1)
-        now[0] += 60
-        source.player(PlayerRequest('99'))
-        self.assertEqual(len(calls), 2)
-        value['region'] = 'kr'
-        with self.assertRaises(PublicQueryError):
-            source.player(PlayerRequest('100'))
-
-    def test_source_bound_namecard_does_not_fetch_foreign_or_other_player(self):
-        from ournotes_bot.sources.haneoka.public_queries import PublicQueries
-        from ournotes_bot.domain.public_queries import PlayerRequest, PublicQueryError
-        calls = []
-        source = PublicQueries(fetch=lambda *args: calls.append(args))
-        for path in ('https://evil.invalid/image.png', '/api/v1/game/records/jp/players/100/cards/1/download?file=99_a',
-                     '/api/v1/game/records/jp/players/99/cards/1/download?file=100_a'):
-            with self.assertRaises(PublicQueryError):
-                source.namecard(PlayerRequest('99'), {'page': 1, 'downloadUrl': path})
-        self.assertFalse(calls)
+        from ournotes_bot.domain.public_queries import PublicQueryError
         source = PublicQueries(fetch=lambda *args: (200, b'{}', {}))
         with self.assertRaises(PublicQueryError) as failure:
             source.arena('jp')
         self.assertEqual(failure.exception.status, 'invalid_source')
 
-    def test_arena_null_song_rules_and_malformed_namecard_reject_at_source(self):
-        import json
-        from ournotes_bot.sources.haneoka.public_queries import arena_document, PublicQueries
-        from ournotes_bot.domain.public_queries import PublicQueryError, PlayerRequest
+    def test_arena_null_song_rules_reject_at_source(self):
+        from ournotes_bot.sources.haneoka.public_queries import arena_document
+        from ournotes_bot.domain.public_queries import PublicQueryError
         song = {'musicId': 1, 'musicTitle': 'fixture', 'musicType': 1, 'arenaMissions': [1, 2, 3], 'arenaPublishedAt': 0}
         league = {'id': 1, 'bandId': 1, 'name': 'fixture', 'rules': [], 'ranks': [], 'songs': [song]}
         document = {'entries': {'1': {'seasonId': 1, 'title': 'fixture', 'startAt': 1, 'endAt': 2, 'leagues': [league]}}}
@@ -675,17 +1174,15 @@ class PublicQueryContractTests(unittest.TestCase):
             with self.subTest(field=field), self.assertRaises(PublicQueryError):
                 arena_document(document)
             song[field] = original
-        for card in ({'name': 1}, {'pages': [{'page': 1, 'imageUrl': 1}]}):
-            data = {'region': 'jp', 'profileId': '99', 'profile': {'profileCard': card}}
-            source = PublicQueries(fetch=lambda *args: (200, json.dumps(data).encode(), {}))
-            with self.assertRaises(PublicQueryError):
-                source.player(PlayerRequest('99'))
 
     def test_local_grammar_requires_whole_question(self):
         from ournotes_bot.natural_query.on_query import public_information_command
-        self.assertEqual(public_information_command('玩家 9223372036854775807 jp'), '/查玩家 9223372036854775807 jp')
         self.assertEqual(public_information_command('MyGO竞技场人数'), '/查竞技场 MyGO 人数')
-        self.assertEqual(public_information_command('本期活动奖励'), '/查活动 奖励')
+        self.assertEqual(public_information_command('MyGO激奏榜线 T100多少'), '/查激奏榜线 MyGO T100')
+        self.assertEqual(public_information_command('MyGO激奏榜线多少分'), '/查激奏榜线 MyGO')
+        self.assertEqual(public_information_command('韩服 MyGO 的激奏榜线人数明细'), '/查激奏榜线 韩服 MyGO 人数明细')
+        self.assertEqual(public_information_command('MyGO激奏榜线 T100再猜一下'), '/查激奏榜线 用法')
+        self.assertEqual(public_information_command('本期活动奖励'), '/查活动 当前')
         self.assertIsNone(public_information_command('玩家 99 jp 顺便猜一下密码'))
 
     def test_activity_sections_keep_conditions_unknown_and_explicit_links(self):
@@ -707,7 +1204,7 @@ class PublicQueryContractTests(unittest.TestCase):
         from ournotes_bot.query.activity_query import overview_rows
         from ournotes_bot.query.contracts.info import InfoRow
         record = SimpleNamespace(details=sections, event_type_id=1, ranking_modes=('歌曲榜',))
-        ordered = overview_rows(record, (InfoRow('挑战曲', label='挑战歌曲', kind='song'),), '/查活动 1')
+        ordered = overview_rows(record, (InfoRow('挑战曲', label='挑战歌曲', kind='song'),))
         self.assertEqual(ordered[0].title, '活动类型与榜制')
         self.assertEqual(ordered[1].kind,'bonus-summary')
         self.assertEqual(ordered[1].children[0].children[0].title,'MyGO!!!!!')
@@ -726,7 +1223,7 @@ class PublicQueryContractTests(unittest.TestCase):
                     preview=True,group='奖励卡牌',reference=(2,3)) for count,point in ((1,100),(1,200),(2,300)))
         record=SimpleNamespace(event_type_id=1,ranking_modes=(),details=(ActivitySection('加成',facts,True),ActivitySection('奖励',rewards,True)))
         rows=overview_rows(record,(InfoRow('已投影卡',kind='card',reference=(2,1)),
-                                  InfoRow('额外奖励关联',kind='card',reference=(2,1),tags=('奖励',))),'/查活动 1')
+                                  InfoRow('额外奖励关联',kind='card',reference=(2,1),tags=('奖励',))))
         bonuses=next(r for r in rows if r.group=='加成')
         self.assertEqual(len(bonuses.children),1)
         self.assertIn('+10～15%',bonuses.children[0].body[0])
@@ -738,7 +1235,7 @@ class PublicQueryContractTests(unittest.TestCase):
         self.assertTrue(any(r.title=='已投影卡' for r in rows))
         self.assertTrue(any(r.title=='额外奖励关联' for r in rows))
         self.assertIn('所需积分：300',info_text((InfoView('活动',rows=rows),)))
-        self.assertNotIn('档位1',info_text((InfoView('活动',rows=rows),)))
+        self.assertIn('档位1',info_text((InfoView('活动',rows=rows),)))
         from ournotes_bot.query.activity_query import detail_rows
         self.assertIn('档位1：+10%', '\n'.join(v for r in detail_rows(record,'加成') for v in r.body))
 

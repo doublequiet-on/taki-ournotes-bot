@@ -316,6 +316,12 @@ class _TransportTrace:
             raise httpx.RemoteProtocolError('model request replay refused')
         if event=='connection.connect_tcp.started':
             self.mark('connect_start','connect')
+        elif event=='connection.connect_tcp.complete':
+            self.mark('tcp_end','proxy_connect')
+        elif event=='proxy.start_tls.started':
+            self.mark('tls_start','tls')
+        elif event=='proxy.start_tls.failed' and 'upload_start' not in self.times:
+            self.mark('tls_failed','tls')
         elif event=='proxy.start_tls.complete':
             self.mark('connected','upload')
         elif 'connected' in self.times:
@@ -339,9 +345,13 @@ class _TransportTrace:
         data=dict(stage=self.stage,name=self.error if self.error!='none' or self.stage=='complete' else 'interrupted',
             elapsed_ms=elapsed(self.started,end),proxied=self.proxied,headers_received=self.status is not None)
         for name,start,stop in (('dns_ms','dns_start','dns_end'),('connect_ms','connect_start','connected'),
-                ('upload_ms','upload_start','upload_end'),('wait_headers_ms','upload_end','headers'),
+                ('tcp_ms','connect_start','tcp_end'),('proxy_connect_ms','tcp_end','tls_start'),
+                ('tls_ms','tls_start','connected'),('upload_ms','upload_start','upload_end'),('wait_headers_ms','upload_end','headers'),
                 ('read_ms','headers','complete')):
-            if start in self.times:data[name]=elapsed(self.times[start],self.times.get(stop,end))
+            if start in self.times and (name!='tcp_ms' or self.proxied):data[name]=elapsed(self.times[start],self.times.get(stop,end))
+        if 'tls_failed' in self.times and 'connected' not in self.times:data['tls_failed_before_send']=True
+        if 'upload_end' in self.times:
+            data['request_sent_ms']=elapsed(self.started,self.times['upload_end'])
         if self.status is not None:data['http_status']=self.status
         if self.request_id is not None:data['provider_request_id']=self.request_id
         if self.http_version is not None:data['http_version']=self.http_version

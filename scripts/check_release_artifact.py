@@ -85,6 +85,9 @@ def check(path: Path) -> None:
             raise ValueError(f"runtime or private file in {path.name}: {name}")
     if not any(PurePosixPath(name).parts[-len(BUNDLED_MEDIA):] == BUNDLED_MEDIA for name in names):
         raise ValueError(f"missing bundled card-947 image in {path.name}")
+    engine_driver = ("ournotes_bot", "sources", "haneoka", "activity_infographic_engine.cjs")
+    if not any(PurePosixPath(name).parts[-len(engine_driver):] == engine_driver for name in names):
+        raise ValueError(f"missing activity infographic engine driver in {path.name}")
     if not aliases or not code:
         raise ValueError(f"missing query aliases or bot code in {path.name}")
     required = {'CHAT_AGENT_C2.md', 'STORY_ENGINE.md', 'STORY_SOURCE_COVERAGE.md', 'STORY_PERSONA_RESEARCH.md', 'CHAT_MEMORY_C3.md', 'CHAT_IMAGES_V1.md', 'CHAT_QQ_QUOTE_EVIDENCE.md', 'CHAT_PROACTIVE_G1.md', 'CHAT_SERVICE_JOBS.md', 'CHAT_AGENT_F1.md',

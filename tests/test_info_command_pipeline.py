@@ -2,16 +2,120 @@
 import tempfile
 import unittest
 from pathlib import Path
+import time
 from types import SimpleNamespace
-from unittest.mock import Mock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 from ournotes_bot.commands import handle_command, resolve_command
 from ournotes_bot.data import SongRepository
 from ournotes_bot.platforms.qq.qq import (
-    DeliveryCursor, _expand_replies, _prepare_followup, _prepare_reply,
+    DeliveryCursor, _deliver_reply, _expand_replies, _prepare_followup, _prepare_reply,
 )
 from ournotes_bot.query.contracts.info import InfoAnswer, InfoRow, InfoSchedule, InfoView, info_text
 from ournotes_bot.query.continuation import parse_operation
+from ournotes_bot.rendering.info_layout import InfoPage
+
+
+class InfographicPipelineTests(unittest.TestCase):
+    def test_cold_start_populates_the_latest_ended_activity(self):
+        from ournotes_bot.application.activity_infographic import ActivityInfographic
+
+        event = SimpleNamespace(event_id='5', title='测试活动', start_ms=100_000,
+                                end_ms=200_000, songs=(), metadata_version='fixture')
+        live = Mock(foreground_active=False)
+        live.event.return_value = event
+        repository = SimpleNamespace(event_cutoffs=live)
+        jpg = b'\xff\xd8data\xff\xd9'
+        render = Mock(return_value=jpg)
+        source = Mock()
+        with tempfile.TemporaryDirectory() as directory:
+            worker = ActivityInfographic(repository, directory=directory, source=source,
+                                         clock=lambda: 201, render=render)
+            self.assertEqual(worker.refresh()['code'], 'ready')
+            self.assertEqual(worker.store.lookup(now=201), ('日服 · 《测试活动》 · 已结束', jpg, 'success'))
+            restarted = ActivityInfographic(repository, directory=directory, source=source,
+                                            clock=lambda: 202, render=render)
+            self.assertEqual(restarted.refresh()['code'], 'cached')
+            render.assert_called_once()
+
+    def test_schedule_correction_retries_until_the_new_image_and_period_are_published(self):
+        from ournotes_bot.application.activity_infographic import ActivityInfographic
+
+        event = SimpleNamespace(event_id='5', title='测试活动', start_ms=100_000,
+                                end_ms=200_000, songs=(), metadata_version='fixture')
+        live = Mock(foreground_active=False)
+        live.event.return_value = event
+        repository = SimpleNamespace(event_cutoffs=live)
+        original = b'\xff\xd8original\xff\xd9'
+        corrected = b'\xff\xd8corrected\xff\xd9'
+        render = Mock(return_value=original)
+        with tempfile.TemporaryDirectory() as directory:
+            worker = ActivityInfographic(repository, directory=directory, source=Mock(),
+                                         clock=lambda: 150, render=render)
+            self.assertEqual(worker.refresh()['code'], 'ready')
+            old_period = worker.store.period()
+            event.end_ms = 300_000
+            render.return_value = corrected
+            with patch.object(worker.store, 'publish', side_effect=OSError('image write failed')):
+                with self.assertRaises(OSError):
+                    worker.refresh()
+            self.assertEqual(worker.store.period(), old_period)
+            self.assertEqual(worker.store.lookup(now=250), ('日服 · 《测试活动》 · 已结束', original, 'success'))
+
+            with patch.object(worker.store, 'observe', side_effect=OSError('manifest write failed')):
+                with self.assertRaises(OSError):
+                    worker.refresh()
+            self.assertEqual(worker.store.period(), old_period)
+            self.assertEqual(worker.store.lookup(now=250)[1], original)
+            self.assertEqual(worker.refresh()['code'], 'ready')
+            self.assertEqual(worker.store.lookup(now=250), ('日服 · 《测试活动》 · 进行中', corrected, 'success'))
+            self.assertEqual(worker.refresh()['code'], 'cached')
+
+    def test_background_retry_stores_once_and_command_reads_the_saved_jpeg(self):
+        from ournotes_bot.application.activity_infographic import ActivityInfographic
+        from ournotes_bot.application.replies import prepare_reply, recognizes_message
+        from ournotes_bot.sources.errors import ChartDataError
+
+        with tempfile.TemporaryDirectory() as directory, patch.dict(
+                'os.environ', {'OURNOTES_RUNTIME_DATA_DIR': directory}):
+            now = round(time.time() * 1000)
+            event = SimpleNamespace(event_id='5', title='测试活动', start_ms=now-60_000,
+                                    end_ms=now+60_000, songs=(), metadata_version='fixture')
+            live = Mock(foreground_active=False)
+            live.event.return_value = event
+            repository = SimpleNamespace(event_cutoffs=live)
+            data = SimpleNamespace(event={})
+            source = Mock()
+            source.capture.side_effect = [ChartDataError('pending rewards'), data]
+            jpg = b'\xff\xd8data\xff\xd9'
+            render = Mock(return_value=jpg)
+            worker = ActivityInfographic(repository, directory=directory, source=source, render=render)
+            self.assertTrue(recognizes_message('/一图流'))
+            with self.assertRaises(ChartDataError):
+                worker.refresh()
+            pending = prepare_reply('/一图流', None, None)
+            self.assertEqual(pending.business_status, 'pending')
+            self.assertEqual(worker.refresh()['code'], 'ready')
+            self.assertEqual(worker.refresh()['code'], 'cached')
+            self.assertEqual(source.capture.call_count, 2)
+            self.assertEqual(prepare_reply('／一图流', None, None).image, jpg)
+            self.assertEqual(prepare_reply('/一图流 jp', None, None).business_status, 'invalid_arguments')
+            self.assertEqual(source.capture.call_count, 2)
+            self.assertEqual(worker.store.lookup(now=(now+61_000)/1000)[0], '日服 · 《测试活动》 · 已结束')
+            render.assert_called_once()
+
+            restarted = ActivityInfographic(repository, directory=directory, source=source, render=render)
+            self.assertEqual(restarted.refresh()['code'], 'cached')
+            source.capture.side_effect = ChartDataError('rebuild failed')
+            with self.assertRaises(ChartDataError):
+                restarted.refresh(rebuild=True)
+            self.assertEqual(prepare_reply('/一图流', None, None).image, jpg)
+
+            live.event.return_value = SimpleNamespace(**{**vars(event), 'event_id': '6', 'start_ms': now-1000})
+            with self.assertRaises(ChartDataError):
+                restarted.refresh()
+            self.assertIsNone(prepare_reply('/一图流', None, None).image)
+            self.assertEqual(prepare_reply('/一图流', None, None).business_status, 'pending')
 
 
 class InfoCommandPipelineTests(unittest.TestCase):
@@ -32,12 +136,13 @@ class InfoCommandPipelineTests(unittest.TestCase):
             ('/查卡池 12', 'gacha_query', 'execute_gacha', 'info'),
             ('/查活动 hk', 'activity_query', 'execute_activity', 'activity'),
             ('/查竞技场 hk MyGO!!!!! 榜单', 'public_queries', 'execute_arena', 'info'),
-            ('/查玩家 9223372036854775807 jp', 'public_queries', 'execute_player', 'info'),
+            ('/查激奏舞台 hk MyGO!!!!! 排期', 'public_queries', 'execute_arena', 'info'),
+            ('/查激奏榜线 hk MyGO!!!!! T100', 'public_queries', 'execute_arena', 'info'),
         ):
             with self.subTest(command=command), \
                  patch(f'ournotes_bot.query.{module}.{function}', return_value=self.answer) as execute, \
                  patch('ournotes_bot.rendering.info_layout.render_info',
-                       return_value=(SimpleNamespace(text=self.answer.text, image=b'image'),)) as render:
+                       return_value=(InfoPage(self.answer.text, b'image'),)) as render:
                 reply = _prepare_reply(command, self.repo, self.parser)
                 self.assertEqual(reply.text, self.answer.text)
                 self.assertEqual(reply.image, b'image')
@@ -52,17 +157,22 @@ class InfoCommandPipelineTests(unittest.TestCase):
         for question, module, function in (
             ('/问 高松灯的生日是什么', 'character_query', 'execute_character'),
             ('/问 当前的卡池有哪些', 'gacha_query', 'execute_gacha'),
+            ('/查 JP当前卡池有哪些', 'gacha_query', 'execute_gacha'),
             ('/问 历史活动有哪些', 'activity_query', 'execute_activity'),
             ('/问 本期卡池什么时候结束呢', 'gacha_query', 'execute_gacha'),
             ('/问 这期活动详情', 'activity_query', 'execute_activity'),
             ('/问 本期卡池啥时候结束', 'gacha_query', 'execute_gacha'),
             ('/查 MyGO竞技场人数', 'public_queries', 'execute_arena'),
-            ('/查 玩家 9223372036854775807 jp', 'public_queries', 'execute_player'),
+            ('/查 MyGO 激奏舞台 排期', 'public_queries', 'execute_arena'),
+            ('/问 韩服MyGO激奏榜线人数', 'public_queries', 'execute_arena'),
+            ('/查 MyGO激奏榜线 T100多少', 'public_queries', 'execute_arena'),
+            ('/问 MyGO激奏榜线多少分', 'public_queries', 'execute_arena'),
+            ('/ask /查激奏榜线 MyGO T100', 'public_queries', 'execute_arena'),
             ('/查 本期活动奖励', 'activity_query', 'execute_activity'),
         ):
             with self.subTest(question=question), \
                  patch(f'ournotes_bot.query.{module}.{function}', return_value=self.answer) as execute, \
-                 patch('ournotes_bot.rendering.info_layout.render_info', return_value=(SimpleNamespace(text=self.answer.text, image=b'image'),)) as render, \
+                 patch('ournotes_bot.rendering.info_layout.render_info', return_value=(InfoPage(self.answer.text, b'image'),)) as render, \
                  patch.object(parser, '_request', side_effect=AssertionError('model called')), \
                  patch.object(parser._quota, 'reserve', side_effect=AssertionError('quota used')):
                 reply = _prepare_reply(question, self.repo, parser)
@@ -171,6 +281,39 @@ class InfoCommandPipelineTests(unittest.TestCase):
             self.assertEqual(continued.pages, cursor.remaining)
             execute.assert_called_once()
 
+    def test_info_fallback_keeps_clickable_commands_whole_at_group_text_boundary(self):
+        from ournotes_bot.application.replies import expand_replies, fallback_cursor
+
+        cases = (
+            ('/查活动 1', 'activity_query.execute_activity', '/查榜线 jp 锁定活动1 总榜'),
+            ('/查角色 1', 'character_query.execute_character', '/查卡 角色ID=123'),
+            ('/查卡池 12', 'gacha_query.execute_gacha', '/查活动 123'),
+        )
+        for query, executor, command in cases:
+            # The complete command straddles the first 1400-character group chunk.
+            text = '文' * 1394 + '\n' + command + '\n' + '尾' * 200
+            views = (InfoView('结果', rows=(InfoRow('相关查询', command=command),)),)
+            answer = InfoAnswer(text, views=views)
+            rendered = (InfoPage(text, b'image', (command,)),)
+            for mode in ('upload_failure', 'render_failure', 'text_only'):
+                with self.subTest(query=query, mode=mode), \
+                     patch('ournotes_bot.query.' + executor, return_value=answer) as execute, \
+                     patch('ournotes_bot.rendering.info_layout.render_info') as render:
+                    if mode == 'render_failure':
+                        render.side_effect = ValueError('image budget')
+                    else:
+                        render.return_value = rendered if mode == 'upload_failure' else ()
+                    reply = _prepare_reply(query, self.repo, self.parser)
+                    if mode == 'upload_failure':
+                        self.assertEqual(reply.image, b'image')
+                        parts = fallback_cursor(reply, text_limit=1500).remaining
+                    else:
+                        self.assertIsNone(reply.image)
+                        parts = expand_replies([reply], text_limit=1500)
+                    self.assertEqual(''.join(part.text for part in parts), text)
+                    self.assertEqual(sum(part.text.splitlines().count(command) for part in parts), 1)
+                    execute.assert_called_once()
+
     def test_image_pages_keep_complete_per_page_fallback_and_continue_saved_bytes(self):
         pages = tuple(SimpleNamespace(text=f'完整第{i}页', image=f'image{i}'.encode()) for i in range(8))
         with patch('ournotes_bot.query.gacha_query.execute_gacha', return_value=self.answer) as execute, \
@@ -186,6 +329,27 @@ class InfoCommandPipelineTests(unittest.TestCase):
             self.assertEqual(next_reply.pages, cursor.remaining)
             execute.assert_called_once()
 
+    def test_gacha_image_captions_keep_only_confirmed_commands_on_their_pages(self):
+        rows = (
+            InfoRow('卡池', command='/查卡池 12'),
+            InfoRow('UP 成员卡', command='/查卡 7'),
+            InfoRow('UP 留影卡', command='/查留影卡 7'),
+            InfoRow('关联活动', command='/查活动 4'),
+        )
+        views = (InfoView('卡池详情', rows=rows),)
+        answer = InfoAnswer(info_text(views), views=views)
+        pages = (SimpleNamespace(text='卡池\n/查卡池 12\n/查活动 99', image=b'page1'),
+                 SimpleNamespace(text='UP\n/查卡 7\n/查留影卡 7\n/查活动 4', image=b'page2'))
+        with patch('ournotes_bot.query.gacha_query.execute_gacha', return_value=answer), \
+             patch('ournotes_bot.rendering.info_layout.render_info', return_value=pages):
+            reply = _prepare_reply('/查卡池 12', self.repo, self.parser)
+        first, last = _expand_replies([reply])
+        self.assertEqual(first.image_commands, ('/查卡池 12',))
+        self.assertEqual(last.image_commands, ('/查卡 7', '/查留影卡 7', '/查活动 4'))
+        self.assertIn('图片 2/2', last.image_caption)
+        self.assertNotIn('/查活动 99', first.image_caption)
+        self.assertTrue(all(part.keep_text_lines for part in (first, last)))
+
     def test_errors_propagate_status_and_remain_text(self):
         answer = InfoAnswer('资料暂不可用', 'data_unavailable')
         with patch('ournotes_bot.query.gacha_query.execute_gacha', return_value=answer):
@@ -193,30 +357,67 @@ class InfoCommandPipelineTests(unittest.TestCase):
             self.assertEqual(result.status, 'data_unavailable')
             self.assertEqual(handle_command('/查卡池', self.repo, resolved=result), answer.text)
 
-    def test_original_namecard_keeps_geometry_and_broken_image_falls_back_to_text(self):
-        from io import BytesIO
-        from dataclasses import replace
-        from PIL import Image
-        data = BytesIO()
-        Image.new('RGB', (640, 960), 'white').save(data, format='PNG')
-        for body in (data.getvalue(), b'broken-image'):
-            answer = replace(self.answer, original_image=body)
-            with self.subTest(valid=body == data.getvalue()), \
-                 patch('ournotes_bot.query.public_queries.execute_player', return_value=answer), \
-                 patch('ournotes_bot.rendering.info_layout.render_info', side_effect=AssertionError('re-rendered original')):
-                reply = _prepare_reply('/查玩家 99 名片', self.repo, self.parser)
-                self.assertEqual(reply.text, answer.text)
-                if body == data.getvalue():
-                    with Image.open(BytesIO(reply.image)) as image:
-                        self.assertEqual(image.size, (640, 960))
-                else:
-                    self.assertIsNone(reply.image)
-
     def test_joined_arguments_have_correct_command_hint_and_character_card_is_preserved(self):
+        from ournotes_bot.application.replies import recognizes_message
         for command in ('查活动', '查卡池', '查角色'):
             text = handle_command('/' + command + '12', self.repo)
             self.assertIn('/' + command + ' 12', text)
+        for content in ('/查角色tmr', '／查角色乐队=MyGO'):
+            self.assertTrue(recognizes_message(content))
         self.assertEqual(resolve_command('/查角色卡', self.repo).parsed[0], 'cards')
+
+    def test_character_commands_reach_both_image_delivery_paths(self):
+        from ournotes_bot.application.backend import Backend
+
+        commands = ('/查卡 角色ID=1', '/查留影卡 角色ID=1')
+        view = InfoView('高松灯', layout='character', presentation='character',
+                        rows=tuple(InfoRow(title, ('1 张',), kind='links', command=cmd)
+                                   for title, cmd in zip(('成员卡', '留影卡'), commands)))
+        answer = InfoAnswer(info_text((view,)), views=(view,))
+        with patch('ournotes_bot.query.character_query.execute_character', return_value=answer):
+            reply = _prepare_reply('/查角色 tmr', self.repo, self.parser)
+        self.assertTrue(reply.image)
+        self.assertEqual(reply.image_caption, '\n'.join(commands))
+        send = AsyncMock(return_value={'id': 'sent'})
+        message = SimpleNamespace(id='fixture', _api=SimpleNamespace(post_group_message=send))
+        with patch('ournotes_bot.platforms.qq.qq._upload_image', new=AsyncMock(return_value={'file_info': 'fixture'})):
+            with self.assertRaises(StopIteration):
+                _deliver_reply(message, 'group', True, reply).send(None)
+        self.assertEqual(send.await_args.kwargs['content'], reply.image_caption)
+
+        row = {'delivery': 'fixture', 'id': 'request', 'status': 'ready', 'expires': 123}
+        part = dict(id='0', position=0, mode='primary', status='pending', attempt=None, message=None)
+        work = SimpleNamespace(prepared=(reply,), request=SimpleNamespace(body='/查角色 tmr'),
+                               chat=False, hint=False, active=False)
+        backend = SimpleNamespace(live=lambda *_: True, works={'fixture': work},
+                                  ledger=SimpleNamespace(parts=lambda *_: [part]))
+        plan = Backend.snapshot(backend, row, 'epoch')
+        self.assertEqual(plan['parts'][0]['text'], reply.image_caption)
+
+    def test_character_caption_follows_its_saved_page_through_continuation(self):
+        rendered = tuple(InfoPage(f'正文 {i}\n/查角色 {i}', b'image', (f'/查角色 {i}',)) for i in range(7))
+        with patch('ournotes_bot.query.character_query.execute_character', return_value=self.answer) as execute, \
+             patch('ournotes_bot.rendering.info_layout.render_info', return_value=rendered):
+            reply = _prepare_reply('/查角色', self.repo, self.parser)
+            first = _expand_replies([reply])
+            self.assertEqual(len(first), 5)
+            self.assertIn('/继续', first[-1].image_caption)
+            remaining = _expand_replies([_prepare_followup(first[-1].context, parse_operation('/继续'), self.repo)])
+            self.assertEqual([p.image_caption.splitlines()[0] for p in (*first, *remaining)],
+                             [f'/查角色 {i}' for i in range(7)])
+            execute.assert_called_once()
+
+    def test_character_caption_over_budget_gets_a_text_reply(self):
+        commands = tuple(f'/查角色 {i}' for i in range(200))
+        page = InfoPage('\n'.join(commands), b'image', commands)
+        with patch('ournotes_bot.query.character_query.execute_character', return_value=self.answer), \
+             patch('ournotes_bot.rendering.info_layout.render_info', return_value=(page,)):
+            reply = _prepare_reply('/查角色', self.repo, self.parser)
+        image, companion = reply.pages
+        self.assertEqual(image.image, b'image')
+        self.assertEqual(image.image_commands, ())
+        self.assertEqual(companion.text.splitlines(), list(commands))
+        self.assertTrue(companion.keep_text_lines)
 
 
 if __name__ == '__main__':

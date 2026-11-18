@@ -22,14 +22,15 @@ MENU_ITEMS = [
     {"type": "send_message", "name": "帮助", "send_message": "/帮助"},
 ]
 PANEL_ITEMS = [
-    {"type": "command", "name": "查竞技场", "desc": "四服赛季规则、榜单与段位人数"},
-    {"type": "command", "name": "查玩家", "desc": "按公开ID查询四服玩家资料与名片"},
+    {"type": "command", "name": "查激奏舞台", "desc": "赛季规则、排期、乐曲与奖励"},
+    {"type": "command", "name": "查激奏榜线", "desc": "四服舞台积分、榜单与段位人数"},
     # QQ stores the command name without '/', then adds the slash in the client UI.
     {"type": "command", "name": "查谱面", "desc": "查完整谱面、颜色与激奏"},
     {"type": "command", "name": "查曲", "desc": "按颜色、激奏、乐队查歌曲"},
     {"type": "command", "name": "查榜线", "desc": "四服榜线趋势与排名表"},
-    {"type": "command", "name": "查活动", "desc": "当前活动、日服列表与详情"},
-    {"type": "command", "name": "查卡池", "desc": "日服当前卡池、历史与UP卡"},
+    {"type": "command", "name": "查活动", "desc": "日服活动列表、详情与当前活动"},
+    {"type": "command", "name": "一图流", "desc": "日服当前或最近一期活动图"},
+    {"type": "command", "name": "查卡池", "desc": "日服卡池列表、当前／历史与UP卡"},
     {"type": "command", "name": "查角色", "desc": "人物档案、乐队目录与关联卡"},
     {"type": "command", "name": "查卡", "desc": "条件查列表，卡牌ID看详情"},
     {"type": "command", "name": "查留影卡", "desc": "SNAP列表与完整技能详情"},
@@ -42,27 +43,26 @@ PANEL_ITEMS = [
     {"type": "command", "name": "介绍", "desc": "了解Taki与资料来源"},
 ]
 GROUP_PANEL_ITEMS = [
-    {"type": "command", "name": "查竞技场", "desc": "四服赛季规则、榜单与段位人数"},
-    {"type": "command", "name": "查玩家", "desc": "按公开ID查询四服玩家资料与名片"},
+    {"type": "command", "name": "查激奏舞台", "desc": "赛季规则、排期、乐曲与奖励"},
+    {"type": "command", "name": "查激奏榜线", "desc": "四服舞台积分、榜单与段位人数"},
     # Follow the Chinese /帮助 order; QQ inserts '/' before the command name.
     {"type": "command", "name": "查曲", "desc": "歌名、颜色、激奏、等级筛选"},
     {"type": "command", "name": "查谱面", "desc": "歌名或ID，可选难度"},
     {"type": "command", "name": "查榜线", "desc": "四服榜线趋势与排名表"},
-    {"type": "command", "name": "查活动", "desc": "当前活动、日服列表与详情"},
-    {"type": "command", "name": "查卡池", "desc": "日服当前卡池、历史与UP卡"},
+    {"type": "command", "name": "查活动", "desc": "日服活动列表、详情与当前活动"},
+    {"type": "command", "name": "一图流", "desc": "日服当前或最近一期活动图"},
+    {"type": "command", "name": "查卡池", "desc": "日服卡池列表、当前／历史与UP卡"},
     {"type": "command", "name": "查角色", "desc": "人物档案、乐队目录与关联卡"},
     {"type": "command", "name": "查卡", "desc": "成员卡列表或ID详情"},
     {"type": "command", "name": "查留影卡", "desc": "SNAP列表或ID详情"},
     {"type": "command", "name": "查卡面", "desc": "输入成员卡ID，只看卡面"},
     {"type": "command", "name": "查留影卡面", "desc": "输入留影卡ID，只看卡面"},
-    {"type": "command", "name": "查缩写", "desc": "查角色或乐队的常用昵称"},
     {"type": "command", "name": "查", "desc": "资料查询、字段短答与续查"},
     {"type": "command", "name": "聊", "desc": "聊天，需启用聊天Agent"},
     {"type": "command", "name": "继续", "desc": "续发尚未发送的完整结果"},
     {"type": "command", "name": "详情", "desc": "查看已选择项目的详情"},
     {"type": "command", "name": "数据状态", "desc": "查看数据同步和缓存状态"},
     {"type": "command", "name": "帮助", "desc": "全部指令、条件与示例"},
-    {"type": "command", "name": "介绍", "desc": "Taki简介和资料来源"},
 ]
 
 

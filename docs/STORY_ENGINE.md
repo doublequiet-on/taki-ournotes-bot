@@ -8,7 +8,8 @@
 
 - `import_bundle(path, allow_fixture=False)`：读取一个最多 32 MiB 的 UTF-8 JSON bundle，校验来源、哈希、场景顺序与双向邻接、派生来源及人格稿，再原子发布。导入只接受 draft 或 withdrawn 人格，`approved` 导入会被拒绝。
 - `status()`：当前发布 revision、每份来源的覆盖状态／场景数量／撤回状态、可读场景数量及当前人工批准人格。没有当前版本时 `not_available`。
-- `search(query, filters=None, limit=6)`：最多 300 字查询；可选精确 `work/source_kind/character/source_id/chapter` 过滤，最多返回 10 个场景且结果投影不超过 12 KiB，参与者摘要最多八名，超限标记截断。结果含 `query_rewrites`、改写后检索词、完整 revision、结果 handle、来源层级、原始 URI／定位、哈希与原文短片段。零匹配表示本次查询没有命中。
+- `coverage(work=None, source_kind=None, source_id=None, chapter=None)` 按指定范围查看当前资料的来源元数据和分章场景计数。过滤值按 NFKC 和大小写归一后精确匹配。未指定章节时，保留 `missing_source` 等无场景的来源记录；指定章节时，只返回该章有场景的来源，因为来源记录本身没有章节字段。读取结果包含 `source_revision` 和 `revocation_revision`，已撤回的来源不出现在结果中。当前没有发布返回 `not_available`，当前有发布但范围无记录时返回 `ok` 和空列表。
+- `search(query, filters=None, limit=6)`：最多 300 字查询；可选精确 `work/source_kind/character/source_id/chapter` 过滤，最多返回 10 个场景且结果投影不超过 12 KiB，参与者摘要最多八名，超限标记截断。显式剧情补章另用宿主提供的 `pinned_source_id` 和 `required_participants` 在排名前约束精确来源 ID 与完整参与者。结果含 `query_rewrites`、改写后检索词、完整 revision、结果 handle、来源层级、原始 URI／定位、哈希与原文短片段。零匹配表示本次查询没有命中。
 - `read(handle, before=1, after=1)`：每侧最多两场，合计最多 24 KiB 场景投影；始终保留目标场景，返回原文发言顺序、说话者、日文文本、独立可选译文、出处、版本、故事内时间、截断状态及 previous_handle／next_handle。handle 绑定发布 revision 与撤回账摘要；版本或撤回发生变化后明确 `stale`，不能猜文件或 URL。
 - `withdraw(source_id, reason)`：独立持久来源撤回标记。每次检索／读取／人格读取复核，旧发布 rollback 不清除撤回。
 - `valid(source_revision, revocation_revision)`：生成和交付宿主复核本次工具读到的快照；版本或撤回修订变化返回 false，来源状态损坏仍明确报错。工具可见返回不能代替发送前重验。
@@ -17,6 +18,8 @@
 - `withdraw_persona(persona_id, reason)`：独立人格撤回标记，回退也不恢复该 persona_id。需要重新发布时使用新的版本化 persona_id，重新人工批准。
 
 所有 handle 与来源标签均是材料，不授予任意网络、文件或系统访问权限。源 URI 只作出处，不会被本模块抓取。`source_revision` 是 bundle 的 SHA-256；不是上游实时版本或事实日期。
+
+覆盖目录供本地维护使用。场景计数包括原文摘句、官方简介、译文和分析等来源层级，按 `source_kind` 可分别查看。目录中的 `collected` 只表示哈希绑定的场景已导入，完整性需结合 `coverage_note` 和逐章审核记录判断。空范围表示当前版本在该范围内没有可见记录；它不能判定上游是否存在剧情。需要证据时用 `search` 和 `read` 回查；需要继续使用已取到的目录时通过 `valid` 复核版本。
 
 ## Bundle 合同
 
@@ -56,6 +59,7 @@
 $env:PYTHONPATH='src'
 python -B -m ournotes_bot.application.story_cli validate --root runtime/story-fixture --bundle runtime/source-bundle.json --allow-fixture
 python -B -m ournotes_bot.application.story_cli import --root runtime/story-fixture --bundle runtime/source-bundle.json --allow-fixture
+python -B -m ournotes_bot.application.story_cli coverage --root runtime/story-fixture --work 'BanG Dream! Our Notes' --source-kind official_original
 python -B -m ournotes_bot.application.story_cli search --root runtime/story-fixture --query '立希 练习'
 python -B -m ournotes_bot.application.story_cli status --root runtime/story-fixture
 ```
