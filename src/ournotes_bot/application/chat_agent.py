@@ -90,7 +90,8 @@ SOURCE_SEMANTICS = '''
 
 RESEARCH_SEMANTICS = '''
 面对比较、多项查询和连续修改，使用 research_task 维护本次目标、对象顺序和所需字段。宿主提供的 current_entities 和上轮任务引用已确认对象身份，可直接 read_entity_fields，不必重复 site_search/site_read；没有身份时才用站内搜索确认。research_task 和 read_entity_fields 可在同次回复连续调用，最多两个对象可一次读完。第二张、换成另一张等以 targets 顺序和当前消息为准，变更时更新任务。谱面条件用 requirements.difficulty 保存；后续只改对象时继承未改的难度，不重复追问。歌曲等级和Note比较用 level/notes 字段；song_metrics 用于全曲筛选排序，不能代替多对象字段比较。闲聊不创建任务。
-工具返回 coverage 是实际读取覆盖情况。多项知识要求按条件拆开；读完知识后，可在 research_task 的对应要求中用 evidence 关联确实支持该对象和条件的 chunk_id。没有对象时 entity_ref 填空串。可同时更新任务和查询下一项。缺资料时回答已查部分并指出缺项。用户说不用了、先这样时，用 research_task cancel 结束当前任务。明确换题时使用当前对象。
+用户让你查清一个对象的多项规则时，先用 knowledge_search 按对象查已审核资料；术语陌生也可以先试查。结合上下文识别群内约定或现实活动，需要回忆群里提过的人、事或约定时用群记忆。资料范围仍有歧义时再问清。
+多项规则共用一个 research_task，每个要查的条件各占一项。读到正文后用 set 一次提交全部要求：已获支持的项把返回的 chunk_id 填入 evidence，无支持的项保留空 evidence。知识项的 knowledge 填 true；没有实体引用时 entity_refs 填 []、绑定的 entity_ref 填空串，有已确认对象时沿用其引用。没有结构化字段或谱面难度时 fields 填 []、difficulty 填空串。单项规则可直接答。按 coverage 的缺项有针对性地补查，仍缺资料就回答已知部分并指出缺项。用户说不用了、先这样时，用 research_task cancel 结束当前任务。明确换题时使用当前对象。
 '''
 
 
@@ -426,7 +427,7 @@ def chat_tools():
             if name=='site_search' else '读取本轮返回的 handle，可继续阅读已知关联。'))
     tool=tools['knowledge_search']
     tools[tool.name]=replace(tool,schema=obj({**tool.schema['properties'],'query':string(120)},tool.schema['required']),
-        description='查审核ON知识。query可改写；近期知识追问followup=true，新问题false。若返回范围候选，结合问题判断条件后再次查询。')
+        description='查已审核的 ON 规则、适用条件和例外；用户请你查规定时可直接用对象名试查。query可改写；近期知识追问followup=true，新问题false。若返回范围候选，结合问题判断条件后再次查询。')
     return tools
 
 
