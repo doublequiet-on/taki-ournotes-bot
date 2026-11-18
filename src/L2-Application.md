@@ -112,6 +112,6 @@ U3 站内回答只陈述当前字段和匹配方式；来源由程序统一追�
 公告证据的单调时钟截止时间随 PreparedReply 传递，分块／图片回退不得延长；发送许可与 ACK 主题快照共同校验，过期 ACK 仍记账但不恢复上下文。关联详情单独暴露来源完整性和返回截断，未知／部分关联不能等同确认空列表。
 
 
-知识管理由 [application/library_admin.py](ournotes_bot/application/library_admin.py) 提供分页来源元数据、整库差异预览及一次性版本保护的发布计划，调用既有宿主 owner。`knowledge_service.import_confirmed(expected=...)` 核对预览时的内容／批准版本；`withdraw_document` 先持久化禁止使用下限再写原撤回清单。`story_service.import_value/withdraw(expected=...)` 在原发布锁内比较来源与撤回版本。管理接口不生成审核材料，不批准人格；协议与限制见 [Console 契约](../docs/koishi/CONSOLE_V1.md#知识资料管理)。
+知识管理由 [application/library_admin.py](ournotes_bot/application/library_admin.py) 提供分页来源元数据、整库差异预览及一次性版本保护的发布计划，调用既有宿主 owner。`knowledge_service.import_confirmed(expected=...)` 核对预览时的内容／批准版本；`withdraw_document` 先持久化禁止使用下限再写原撤回清单。`story_service.import_value/withdraw(expected=...)` 在原发布锁内比较来源与撤回版本。管理接口不生成审核材料，不批准人格；协议与限制见 [Console 契约](../docs/koishi/CONSOLE_V1.md#知识资料管理)。本地剧情维护可用 [coverage](../docs/STORY_ENGINE.md#本地工具接口) 查看指定范围的来源和章节计数。
 
 规则查询的终局 unknown 撤销整条 volatile 话题，ACK 事实先于游标/锚点提交；上下文提交失败禁止续发。状态、错误与输出接纳边界见 [查询投递安全合同](../docs/QUERY_DELIVERY_SAFETY.md)。

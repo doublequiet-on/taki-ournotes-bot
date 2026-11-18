@@ -708,6 +708,68 @@ class StoryPublicationTests(unittest.TestCase):
         self.assertEqual(status['sources'][1]['scene_count'],0)
         self.assertEqual(status['sources'][1]['coverage'],'missing_source')
 
+    def test_scoped_coverage_distinguishes_directory_gaps_from_lexical_miss(self):
+        from ournotes_bot.sources.story_files import source_content_hash
+
+        self.assertEqual(self.service.coverage()['status'], 'not_available')
+        bundle = self.bundle()
+        scenes = bundle['scenes']
+        scenes[2]['chapter'] = 'adjacent-chapter'
+        source = bundle['sources'][0]
+        source['content_sha256'] = source_content_hash(scenes)
+        bundle['sources'].append(dict(source, source_id='missing-story',
+                                      coverage='missing_source', content_sha256=None, acquired_at=None))
+        revision = self.publish(bundle)['source_revision']
+        scope = {'work': 'ＳＹＮＴＨＥＴＩＣ-WORK', 'source_kind': 'synthetic_fixture'}
+        coverage = self.service.coverage(**scope)
+        self.assertEqual(coverage['source_revision'], revision)
+        self.assertEqual(coverage['revocation_revision'], 0)
+        self.assertEqual(coverage['scenes'], 3)
+        collected, missing = coverage['sources']
+        self.assertEqual(collected['coverage'], 'collected')
+        self.assertEqual(collected['chapters'], [
+            {'chapter': 'adjacent-chapter', 'scene_count': 1},
+            {'chapter': 'test-chapter', 'scene_count': 2},
+        ])
+        self.assertEqual((missing['coverage'], missing['scene_count'], missing['chapters']),
+                         ('missing_source', 0, []))
+
+        chapter = self.service.coverage(**scope, chapter='TEST-CHAPTER')
+        self.assertEqual([row['source_id'] for row in chapter['sources']], ['test-story'])
+        self.assertEqual(chapter['scenes'], 2)
+        self.assertEqual(self.service.coverage(work='other-work')['sources'], [])
+        self.assertEqual(self.service.coverage(**scope, chapter='no-such-chapter')['sources'], [])
+        self.assertEqual(self.service.search('反复排演')['status'], 'no_results')
+        first = self.service.search('练习', {'chapter': 'test-chapter'})['items'][0]
+        exact = self.service.read(first['handle'], before=0, after=0)
+        self.assertEqual(len(exact['scenes']), 1)
+        self.assertIsNotNone(exact['next_handle'])
+        expanded = self.service.read(first['handle'], before=0, after=2)
+        self.assertEqual([scene['scene_id'] for scene in expanded['scenes']], ['scene-1', 'scene-2', 'scene-3'])
+        self.assertEqual(expanded['scenes'][0]['utterances'][0]['text_ja'], '練習を続けよう。')
+        self.assertNotIn('練習を続けよう。', str(coverage))
+
+    def test_coverage_observes_release_changes_and_persistent_withdrawal(self):
+        revision = self.publish()['source_revision']
+        coverage = self.service.coverage(source_id='test-story')
+        handle = self.service.search('练习')['items'][0]['handle']
+        updated = self.bundle()
+        updated['aliases']['排演'] = '練習'
+        newer = self.publish(updated)['source_revision']
+        self.assertNotEqual(revision, newer)
+        self.assertEqual(self.service.coverage()['source_revision'], newer)
+        self.assertFalse(self.service.valid(coverage['source_revision'], coverage['revocation_revision']))
+        self.service.rollback(revision)
+        self.assertEqual(self.service.read(handle)['status'], 'ok')
+        self.service.withdraw('test-story', 'fixture withdrawal')
+        self.service.rollback(newer)
+        self.service.rollback(revision)
+        current = self.service.coverage(source_id='test-story')
+        self.assertEqual((current['source_revision'], current['revocation_revision']), (revision, 1))
+        self.assertEqual((current['sources'], current['scenes']), ([], 0))
+        self.assertFalse(self.service.valid(coverage['source_revision'], coverage['revocation_revision']))
+        self.assertEqual(self.service.read(handle)['status'], 'stale')
+
     def test_source_layer_cannot_upgrade_player_analysis_to_original_fact(self):
         from ournotes_bot.domain.story import StoryError
         bundle=self.bundle(kind='fan_analysis',personas=True)
@@ -756,11 +818,14 @@ class StoryPublicationTests(unittest.TestCase):
         self.publish()
         path=self.service.root/'revocations.json';path.write_text('{broken',encoding='utf-8')
         with self.assertRaises(StoryError):self.service.search('立希')
+        with self.assertRaises(StoryError):self.service.coverage()
         path.unlink()
         (self.service.root/'current.json').write_text('{"schema":"taki-story-pointer/1","revision":"../outside"}',encoding='utf-8')
         with self.assertRaisesRegex(StoryError,'story_revision'):self.service.status()
 
     def test_cli_runs_without_game_or_platform_initialization(self):
+        import json
+
         self.write(self.bundle())
         root=Path(__file__).resolve().parents[1]
         env=dict(os.environ,PYTHONPATH=str(root/'src'),QQ_APP_ID='',QQ_APP_SECRET='',AI_API_KEY='')
@@ -768,7 +833,14 @@ class StoryPublicationTests(unittest.TestCase):
             '--root',str(self.service.root),'--bundle',str(self.bundle_path),'--allow-fixture'],
             env=env,cwd=root,capture_output=True,text=True,encoding='utf-8',timeout=15)
         self.assertEqual(process.returncode,0,process.stdout+process.stderr)
-        self.assertIn('source_revision',process.stdout)
+        revision = json.loads(process.stdout)['source_revision']
+        coverage = subprocess.run([sys.executable, '-B', '-m', 'ournotes_bot.application.story_cli',
+            'coverage', '--root', str(self.service.root), '--work', 'synthetic-work',
+            '--source-kind', 'synthetic_fixture', '--source-id', 'test-story', '--chapter', 'test-chapter'],
+            env=env, cwd=root, capture_output=True, text=True, encoding='utf-8', timeout=15)
+        self.assertEqual(coverage.returncode, 0, coverage.stdout + coverage.stderr)
+        result = json.loads(coverage.stdout)
+        self.assertEqual((result['source_revision'], result['scenes']), (revision, 3))
 
     def test_persona_withdrawal_cannot_be_undone_by_release_rollback(self):
         from ournotes_bot.domain.story import StoryError
