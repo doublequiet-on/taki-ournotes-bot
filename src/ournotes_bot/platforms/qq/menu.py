@@ -55,7 +55,6 @@ GROUP_PANEL_ITEMS = [
     {"type": "command", "name": "查留影卡", "desc": "SNAP列表或ID详情"},
     {"type": "command", "name": "查卡面", "desc": "输入成员卡ID，只看卡面"},
     {"type": "command", "name": "查留影卡面", "desc": "输入留影卡ID，只看卡面"},
-    {"type": "command", "name": "查缩写", "desc": "查角色或乐队的常用昵称"},
     {"type": "command", "name": "查", "desc": "资料查询、字段短答与续查"},
     {"type": "command", "name": "聊", "desc": "聊天，需启用聊天Agent"},
     {"type": "command", "name": "继续", "desc": "续发尚未发送的完整结果"},

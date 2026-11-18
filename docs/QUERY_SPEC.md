@@ -19,7 +19,6 @@
 | 人物 | `/查角色` | 人物资料/生日/乐队成员固定口语和明确命令转交 | 未注册 | `query/character_query.py`、`test_info_queries.py` |
 | 歌曲榜线 | `/查榜线`、`/榜线` | `parse_natural_cutoff`，含服别/活动/歌曲/排名 | 保持本地，不调用模型 | `query/event_cutoff_query.py`、`test_cutoff_query_v2.py`、`test_cutoff_archive.py` |
 | 短答/数量 | 相应命令显示资料；短答入口是 `/问` | `parse_field_question` | 无 `field` 模型参数 | `query/field_query.py`、`test_field_queries.py` |
-| 别名 | `/查缩写` | 实体解析使用同一词库；不等于反查别名功能 | 只允许已核实对象 | `query/entity_lexicon.py`、`test_ai_lexicon.py` |
 | 续查 | `/继续`、选择和详情语法 | 平台持有已发送上下文；脱离上下文时代理拒绝 | 不开放自由修改条件 | `query/continuation.py`、`test_continuation.py` |
 
 状态不是跨层同名枚举：信息查询 `InfoAnswer` 可以返回 `no_results`，`QueryAgent` 在信息转交边界映射为 `empty`；代理使用 `OutcomeCode`。合法空集、未知实体、歧义、缺资料和无效参数须分别记录。卡牌解析错误当前统一进入 `invalid_arguments`，不能宣称每个入口都已细分未知实体。
@@ -101,7 +100,7 @@
 - `field` 支持等级、Note、颜色、激奏、已收录难度、数量和明确卡牌 ID 的技能。歌曲短答要求唯一实体；难度未填返回相应已收录信息，不偷偷选最高难度。`None` 是未获取，零是确知的零；无该难度与歌曲不存在分开处理。
 - 数量语法如 `/问 蓝色的歌曲有多少首`、`/问 SSR成员卡有多少张`，沿用确定性筛选、按实体 ID 去重并使用完整集合。空集合返回零及 `empty`；不完整索引不能伪装为确定零。
 - 别名来源：来源多语言名称；`data.CHARACTER_ALIASES` 内置角色简称及艺名等价；`query_aliases.json` 人工映射。`OURNOTES_ALIAS_FILE` 指定替代文件，并非自动覆盖合并。当前人工组为 song、band、character、card、support_card、outside_catalog；song/card/support_card 为空不等于没有自动名称。
-- `resolve_exact_alias`、`known_alias_names` 和 `/查缩写` 覆盖歌曲、乐队、角色、成员卡与 SNAP；成员卡和 SNAP 的同名别名须消歧。正式名/ID 优先于人工别名。这里只提供别名到目标的查询，不提供完整的目标反查别名。
+- 歌曲、乐队、角色、成员卡和 SNAP 查询按各自的实体类别解析别名。正式名/ID 优先于人工别名。
 - 词库按路径保留本进程最后有效快照；坏 JSON、重复键、未知分类、空目标、无效 ID、同分类规范化名称冲突或读取失败保留旧快照。跨分类同名保留为查询时歧义。目标在当前实体资料中核实，未收录或重名目标不成为有效匹配；不因资料不完整拒绝整份词库。`/数据状态` 显示加载状态及当前资料未确认的字符串目标数量，多服 song ID 列表由服别目录另行核实。
 - `alias_version` 取路径和有效内容的 SHA-256；即使 mtime 不变也能让查询缓存和续查版本失效，失败期间保持旧版本，修复后自动恢复。最后有效快照不落盘，进程重启时若文件仍坏则无人工词库；切换路径不借用另一文件的快照。
 - 实体解析按意图范围和已收录事实核实；歧义不默认选首个。当前精确来源名、人工别名、模糊搜索的优先级分布在各调用方，尚不能宣称全入口已实现统一优先级。条件词（颜色、EX、比较词）不作为全局实体替换。

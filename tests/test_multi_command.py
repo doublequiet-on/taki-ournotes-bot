@@ -23,8 +23,8 @@ class SplitCommandsTests(unittest.TestCase):
         cases = (
             ("/查卡 1", ["查卡 1"]),
             ("  查曲 迷星叫  ", ["查曲 迷星叫"]),
-            ("/查谱面 100003 EXPERT\n/查卡 1\n/查缩写 skk",
-             ["查谱面 100003 EXPERT", "查卡 1", "查缩写 skk"]),
+            ("/查谱面 100003 EXPERT\n/查卡 1\n/查卡 skk",
+             ["查谱面 100003 EXPERT", "查卡 1", "查卡 skk"]),
             ("/查卡 1\r\n\r\n   \r\n/查曲 mygo\r\n", ["查卡 1", "查曲 mygo"]),
             ("<@!12345> /查卡 1\n<@!12345> /查曲 mygo", ["查卡 1", "查曲 mygo"]),
             ("   \n\n  ", []),
