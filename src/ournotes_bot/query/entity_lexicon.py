@@ -194,6 +194,11 @@ def information_alias_targets(term: str) -> tuple[tuple[str, str], ...]:
     return tuple(targets)
 
 
+def information_character_aliases() -> tuple[tuple[str, str], ...]:
+    """Return original character alias spellings and their configured targets."""
+    return tuple(_aliases().get("character", {}).items())
+
+
 def scoped_song_matches(term: str, catalog: tuple, *, partial: bool = False) -> tuple[str, ...]:
     """Resolve names/aliases only against the requested server's Master catalog."""
     needle = normalize(term)

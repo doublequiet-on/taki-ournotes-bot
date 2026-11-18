@@ -26,7 +26,9 @@ _FIELDS = {"稀有度": "rarity", "星级": "rarity", "rarity": "rarity",
            "乐队": "band", "band": "band", "角色": "character", "character": "character",
            "live": "live", "击奏": "gekisou", "激奏": "gekisou", "gekisou": "gekisou",
            "得意": "tags", "得意乐曲": "tags", "tags": "tags"}
-_DIRECT_FIELDS = {**_FIELDS, "卡名": "title", "id": "id"}
+_CHARACTER_ID_FIELDS = {"角色id", "characterid"}
+_DIRECT_FIELDS = {**_FIELDS, "卡名": "title", "id": "id",
+                  **dict.fromkeys(_CHARACTER_ID_FIELDS, "character_ids")}
 _MEMBER_FIELDS = {**_DIRECT_FIELDS, "演出": "live", "队长": "leader"}
 _LEADER_TYPES = {"同色", "同技", "同激", "异色"}
 _LIVE_SHORT = {"分卡": "score", "奶卡": "life", "判卡": "judgement"}
@@ -275,6 +277,10 @@ def _bare_filter(value, *, legacy=False):
 def _card_filter(value, key, repository, *, support=False):
     from ..commands import split_card_rarity
     upper = value.upper()
+    if key == "character_ids":
+        if not re.fullmatch(r"[1-9][0-9]{0,15}", value) or int(value) > 2**53 - 1:
+            raise ValueError("角色ID须为正整数，例如 角色ID=2。")
+        return key, int(value)
     if key == "rarity":
         if value in {"2", "3", "4"}:
             rarity = int(value)
@@ -353,7 +359,7 @@ def _card_parts(query, repository, *, support):
             continue
         field = _MEMBER_FIELD.match(query, start)
         name_end = start
-        if not (field and field[1] == "卡名"):
+        if not (field and (field[1] == "卡名" or field[1].casefold() in _CHARACTER_ID_FIELDS)):
             for boundary in _NAME_END.finditer(query, start + 1):
                 stop = boundary.start()
                 if query[stop - 1].isspace():
@@ -434,8 +440,8 @@ def _parse_direct_filters(query, page, repository, *, support):
             field_name = value
             field = fields.get(value.casefold())
             if field is None:
-                available = ("ID、卡名、稀有度、颜色、乐队、角色、LIVE、击奏" if support
-                             else "ID、卡名、稀有度、颜色、乐队、角色、队长、演出、击奏、得意")
+                available = ("ID、卡名、稀有度、颜色、乐队、角色、角色ID、LIVE、击奏" if support
+                             else "ID、卡名、稀有度、颜色、乐队、角色、角色ID、队长、演出、击奏、得意")
                 raise ValueError(f"未知筛选维度“{value}”；可用 {available}。")
             pending = True
             continue
@@ -483,7 +489,7 @@ def _parse_direct_filters(query, page, repository, *, support):
                 field = "score"
         elif key == "score":
             raise ValueError("演出数值可用 150、150以上、150以下 或 120到155。")
-        elif value in _UNRESTRICTED:
+        elif value in _UNRESTRICTED and key != "character_ids":
             continue
         elif dimension := key or _bare_filter(value):
             add(*_card_filter(value, dimension, repository, support=support))
@@ -634,8 +640,17 @@ def _matching_score_bands(bands, req):
 
 
 def execute_card_request(req, repository):
-    cache_state = repository.capture_catalog().cache_state
-    cards = repository.support_cards if req.support else repository.cards
+    catalog = repository.capture_catalog()
+    cache_state = catalog.cache_state
+    if req.filters.character_ids:
+        if catalog.metadata.get('info_catalog_available', {}).get('characters') is not True:
+            return CardAnswer(req, error="角色 ID 目录暂不可用，请等待资料同步。", status="data_unavailable",
+                              cache_state=cache_state)
+        unknown_ids = set(req.filters.character_ids) - {person.id for person in catalog.characters}
+        if unknown_ids:
+            ids = "、".join(str(ident) for ident in sorted(unknown_ids))
+            return CardAnswer(req, error=f"未找到角色 ID {ids}。", status="unknown_entity", cache_state=cache_state)
+    cards = catalog.support_cards if req.support else catalog.cards
     if req.card_id is not None:
         matches = [c for c in cards if c.id == req.card_id]
         if len(matches) > 1:
@@ -672,6 +687,13 @@ def execute_card_request(req, repository):
                     unknown = True
                 names = card.characters if isinstance(card, SupportCard) else (card.character,)
                 match = bool({normalize(character_identity(n)) for n in names} & {normalize(character_identity(n)) for n in values})
+            elif key == "character_ids":
+                # Haneoka validates these source IDs independently of localized names.
+                ids = card.catalog.get("character_ids")
+                if not ids:
+                    card_missing.add("角色 ID 关联")
+                    unknown = True
+                match = bool(ids and set(ids).intersection(values))
             elif key == "band":
                 bands = card.catalog.get("bands", []) if isinstance(card, SupportCard) else [card.band]
                 if not bands or "未知乐队" in bands or card.catalog.get("character_links_complete") is False:

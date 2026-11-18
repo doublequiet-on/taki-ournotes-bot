@@ -222,6 +222,17 @@ class InformationQueryTests(unittest.TestCase):
         self.assertEqual(execute_character('灯皇', repo).views[0].title, '高松灯')
         self.assertEqual(len(execute_character('卖狗', repo).views[0].rows), 2)
 
+    def test_profile_advertises_only_uniquely_resolved_aliases(self):
+        repo = Repository(catalog(characters=(person(1, '高松灯'),
+                                            person(2, '千早爱音', fields={'nickname': {'zh': 'tmr'}}))))
+        profile = execute_character('1', repo).views[0]
+        aliases = next(row.body[0] for row in profile.rows if row.title == '常用查名').split(' / ')
+        self.assertIn('灯皇', aliases)
+        self.assertNotIn('tmr', aliases)
+        self.assertEqual(execute_character('tmr', repo).views[0].title, '千早爱音')
+        for alias in aliases:
+            self.assertEqual(execute_character(alias, repo).views[0].title, '高松灯')
+
     def test_character_explicit_band_filter_and_alias(self):
         repo = Repository(catalog(characters=(person(1, '高松灯'), person(2, '千早爱音'), person(3, '三角初华', 'Ave Mujica'))))
         for term in ('乐队=MyGO', '乐队=卖狗', '乐队＝MyGO!!!!!'):
@@ -230,13 +241,35 @@ class InformationQueryTests(unittest.TestCase):
         self.assertEqual(execute_character('乐队=', repo).status, 'invalid_arguments')
         self.assertEqual(execute_character('乐队=不存在', repo).status, 'no_results')
 
+    def test_character_role_filter_covers_dual_roles_and_band_intersection(self):
+        people = (
+            person(1, '样例一', fields={'bandPart': {'ja': 'Gt.'}}),
+            person(2, '样例二', 'Ave Mujica', fields={'bandPart': {'ja': 'Gt.&Vo.'}}),
+            person(3, '样例三', 'Ave Mujica', fields={'bandPart': {'ja': 'DJ&Mp.'}}),
+            person(4, '资料未确认'),
+        )
+        repo = Repository(catalog(characters=people))
+        for query, expected in (
+            ('担当=吉他', [1, 2]), ('乐队＝Ave Mujica 担当=Gt.', [2]),
+            ('担当=ボーカル 乐队=Ave Mujica', [2]), ('担当=DJ', [3]), ('担当=操控', [3]),
+        ):
+            with self.subTest(query=query):
+                result = execute_character(query, repo)
+                self.assertEqual([row.command for row in result.views[0].rows],
+                                 [f'/查角色 {ident}' for ident in expected])
+        self.assertIn('担当未确认', execute_character('担当=吉他', repo).text)
+        self.assertNotIn('担当未确认', execute_character('乐队=Ave Mujica 担当=吉他', repo).text)
+        self.assertEqual(execute_character('担当=鼓', repo).status, 'no_results')
+        for query in ('担当=', '担当=未知', '担当=吉他 担当=主唱', '乐队= 担当=吉他'):
+            self.assertEqual(execute_character(query, repo).status, 'invalid_arguments')
+
     def test_mujica_uses_civilian_title_and_preserves_stage_name_search(self):
         repo = Repository(catalog(characters=(person(7, 'Mortis / 若叶睦', 'Ave Mujica'),)))
         for term in ('7', 'Mortis', '若叶睦', '睦头'):
             result = execute_character(term, repo)
             self.assertEqual(result.views[0].title, '若叶睦')
             self.assertIn('艺名\nMortis', result.text)
-            self.assertIn('/查卡 若叶睦', result.text)
+            self.assertIn('/查卡 角色ID=7', result.text)
 
     def test_character_ambiguous_partial_keeps_candidates(self):
         repo = Repository(catalog(characters=(person(1, '高松灯'), person(2, '高桥测试'))))
@@ -279,7 +312,7 @@ class InformationQueryTests(unittest.TestCase):
         result = execute_character('1', repo)
         counts = [row.body[0] for row in result.views[0].rows if row.title in {'成员卡', '留影卡'}]
         self.assertEqual(counts, ['1 张', '1 张'])
-        self.assertIn('/查留影卡 高松灯', result.text)
+        self.assertIn('/查留影卡 角色ID=1', result.text)
         self.assert_same_text(result)
 
     def test_character_incomplete_links_do_not_claim_exact_count(self):

@@ -225,7 +225,7 @@ class InfoCommandPipelineTests(unittest.TestCase):
     def test_character_commands_reach_both_image_delivery_paths(self):
         from ournotes_bot.application.backend import Backend
 
-        commands = ('/查卡 高松灯', '/查留影卡 高松灯')
+        commands = ('/查卡 角色ID=1', '/查留影卡 角色ID=1')
         view = InfoView('高松灯', layout='character', presentation='character',
                         rows=tuple(InfoRow(title, ('1 张',), kind='links', command=cmd)
                                    for title, cmd in zip(('成员卡', '留影卡'), commands)))
