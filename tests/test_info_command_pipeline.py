@@ -52,6 +52,7 @@ class InfoCommandPipelineTests(unittest.TestCase):
         for question, module, function in (
             ('/问 高松灯的生日是什么', 'character_query', 'execute_character'),
             ('/问 当前的卡池有哪些', 'gacha_query', 'execute_gacha'),
+            ('/查 JP当前卡池有哪些', 'gacha_query', 'execute_gacha'),
             ('/问 历史活动有哪些', 'activity_query', 'execute_activity'),
             ('/问 本期卡池什么时候结束呢', 'gacha_query', 'execute_gacha'),
             ('/问 这期活动详情', 'activity_query', 'execute_activity'),
@@ -185,6 +186,27 @@ class InfoCommandPipelineTests(unittest.TestCase):
             next_reply = _prepare_followup(cursor, parse_operation('/继续'), self.repo)
             self.assertEqual(next_reply.pages, cursor.remaining)
             execute.assert_called_once()
+
+    def test_gacha_image_captions_keep_only_confirmed_commands_on_their_pages(self):
+        rows = (
+            InfoRow('卡池', command='/查卡池 12'),
+            InfoRow('UP 成员卡', command='/查卡 7'),
+            InfoRow('UP 留影卡', command='/查留影卡 7'),
+            InfoRow('关联活动', command='/查活动 4'),
+        )
+        views = (InfoView('卡池详情', rows=rows),)
+        answer = InfoAnswer(info_text(views), views=views)
+        pages = (SimpleNamespace(text='卡池\n/查卡池 12\n/查活动 99', image=b'page1'),
+                 SimpleNamespace(text='UP\n/查卡 7\n/查留影卡 7\n/查活动 4', image=b'page2'))
+        with patch('ournotes_bot.query.gacha_query.execute_gacha', return_value=answer), \
+             patch('ournotes_bot.rendering.info_layout.render_info', return_value=pages):
+            reply = _prepare_reply('/查卡池 12', self.repo, self.parser)
+        first, last = _expand_replies([reply])
+        self.assertEqual(first.image_commands, ('/查卡池 12',))
+        self.assertEqual(last.image_commands, ('/查卡 7', '/查留影卡 7', '/查活动 4'))
+        self.assertIn('图片 2/2', last.image_caption)
+        self.assertNotIn('/查活动 99', first.image_caption)
+        self.assertTrue(all(part.keep_text_lines for part in (first, last)))
 
     def test_errors_propagate_status_and_remain_text(self):
         answer = InfoAnswer('资料暂不可用', 'data_unavailable')

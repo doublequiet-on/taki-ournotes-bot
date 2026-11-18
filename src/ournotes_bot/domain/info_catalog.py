@@ -54,6 +54,9 @@ class GachaInfo:
     fetched_at: str = ""
 
 
+ACTIVITY_ATTRIBUTES = {1: '红色', 2: '蓝色', 3: '绿色', 4: '黄色', 5: '紫色'}
+
+
 @dataclass(frozen=True)
 class ActivityFact:
     title: str
@@ -65,6 +68,10 @@ class ActivityFact:
     group: str = ''
     reference: tuple[int, int] | None = None
     bonus_ranges: tuple[tuple[str, float, float], ...] = ()
+    bonus_band_names: tuple[str, ...] = ()
+    bonus_character_names: tuple[str, ...] = ()
+    bonus_attribute: int | None = None
+    gacha_id: str = ''
 
 
 @dataclass(frozen=True)
@@ -72,6 +79,7 @@ class ActivitySection:
     name: str
     facts: tuple[ActivityFact, ...] = ()
     complete: bool = False
+    unresolved_filters: frozenset[str] = frozenset()
 
 
 @dataclass(frozen=True)

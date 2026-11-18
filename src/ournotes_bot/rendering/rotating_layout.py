@@ -30,6 +30,7 @@ class Panel:
     requests: tuple = ()
     badges: tuple[str, ...] = ()
     children: tuple = ()
+    commands: tuple[str, ...] = ()
 
 
 def _card_size(row):
@@ -86,11 +87,20 @@ def _card_panels(rows, presentation):
 def _entry_panels(row, limit, presentation):
     if row.schedule is None:raise ValueError('Banner row requires captured schedule facts')
     title_height=len(lines(row.title,648,30,True))*42
-    header=Panel(max(129,title_height+108)+24,'entry-head',row_text(replace(row,children=())),
-                 rows=(row,),requests=((row.image_url,(300,129)),) if row.image_url else ())
+    facts = tuple(child for child in row.children if child.kind == 'fact')
+    show_command = presentation == 'activity' or (presentation == 'gacha' and row.command.startswith('/查卡池 '))
+    command_lines = lines(row.command, 648, 22) if show_command and row.command else ()
+    summary_lines = tuple(line for fact in facts for value in fact.body for line in lines(value, 648, 22))
+    extra_height = 32*(len(summary_lines)+len(command_lines))
+    header=Panel(max(129,title_height+108+extra_height)+24,
+                 'entry-head',row_text(replace(row,children=facts)),
+                 rows=(row,),requests=((row.image_url,(300,129)),) if row.image_url else (),
+                 body=summary_lines, commands=command_lines)
+    continued = replace(header, text='', title='（续）',
+                        height=max(129,len(lines(row.title+'（续）',648,30,True))*42+108+extra_height)+24)
     parts=_card_panels(tuple(r for r in row.children if r.kind=='card'),presentation)
     for child in row.children:
-        if child.kind=='card':continue
+        if child.kind in {'card','fact'}:continue
         wrapped=tuple(line for value in (child.title,*child.body) for line in lines(value,WIDTH,22))
         parts.append(Panel(len(wrapped)*32+20,'copy',row_text(child),body=wrapped))
     # Keep a complete entry together when it fits. Large entries continue at a
@@ -100,7 +110,7 @@ def _entry_panels(row, limit, presentation):
     for part in parts:
         if height+part.height>target and len(chunk)>1:
             result.append(_entry(chunk))
-            chunk=[replace(header,text='',title='（续）')];height=header.height
+            chunk=[continued];height=continued.height
         if height+part.height>content_limit:
             raise ImageBudgetError('One information entry strip exceeds the readable page budget')
         chunk.append(part);height+=part.height
@@ -153,7 +163,7 @@ def _activity_summary(view,limit,prose_blocks):
                 requests=tuple((url,(32,32)) for child in row.children for url in child.icons if url)))
         elif row.kind=='gallery':result.extend(_gallery_panels(row,limit))
         elif row.kind=='recruitment':
-            copy=tuple(line for value in (row.title,*row.body) for line in lines(value,WIDTH,28))
+            copy=tuple(line for value in (row.title,*row.body,row.command) if value for line in lines(value,WIDTH,28))
             result.append(Panel(460+len(copy)*40,'recruitment',row_text(row),rows=(row,),
                 title='关联卡池',body=copy,requests=((row.image_url,(924,396)),) if row.image_url else ()))
         elif row.kind=='card':
@@ -163,7 +173,7 @@ def _activity_summary(view,limit,prose_blocks):
             heading=row.label or '关联歌曲'
             if heading not in song_sections:
                 result.append(Panel(60,'section-title',title=heading));song_sections.add(heading)
-            result.extend(prose_blocks(row,limit,show_command=False))
+            result.extend(prose_blocks(row,limit))
         else:result.extend(prose_blocks(row,limit,show_command=False))
     for note in view.footer if view.visual_footer is None else view.visual_footer:
         wrapped=lines(note,WIDTH,22)
@@ -187,11 +197,14 @@ def blocks(view, limit, prose_blocks):
                             row_text(row),rows=(row,),requests=requests))
     for row in rows:
         if row.kind=='banner':result.extend(_entry_panels(row,limit,view.presentation))
+    trailing = {'song', 'links'} if view.presentation == 'gacha' else {'song'}
     for row in rows:
-        if row.kind not in {'schedule','banner','card','song'}:result.extend(prose_blocks(row,limit,show_command=False))
+        if row.kind not in {'schedule', 'banner', 'card'} | trailing:
+            result.extend(prose_blocks(row, limit, show_command=view.presentation == 'activity'))
     result.extend(_card_panels(tuple(r for r in rows if r.kind=='card'),view.presentation))
     for row in rows:
-        if row.kind=='song':result.extend(prose_blocks(row,limit,show_command=False))
+        if row.kind in trailing:
+            result.extend(prose_blocks(row, limit, show_command=row.kind == 'links'))
     notes=view.footer if view.visual_footer is None else view.visual_footer
     wrapped=tuple(line for value in notes for line in lines(value,WIDTH,22))
     capacity=max(1,(limit-32)//32)
@@ -285,6 +298,10 @@ def draw(c,panel,y,load):
         _status(c,schedule.status,RIGHT-max(120,len(schedule.status)*22+32),cy-14,RIGHT,22)
         c.text(x,cy+42,'开始 '+schedule.start,24,MUTED)
         c.text(x,cy+76,'结束 '+schedule.end,24,MUTED)
+        for i, value in enumerate(panel.body):
+            c.text(x, cy+110+i*32, value, 22, MUTED)
+        for i, value in enumerate(panel.commands):
+            c.text(x, cy+110+(len(panel.body)+i)*32, value, 22, ACCENT)
     elif panel.kind=='overview':
         schedule=panel.rows[0].schedule;x=LEFT
         if panel.requests:

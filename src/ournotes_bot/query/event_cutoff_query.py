@@ -18,7 +18,7 @@ from ..domain.query_cancellation import thread_cancel_event
 from ..domain.total_rankings import TotalRankingSnapshot
 
 NODES = (1, 2, 3, 10, 100)
-HELP = '/查榜线 [jp/hk/kr/en] [id1或活动="名称"] [单曲或总榜] [歌名或歌曲ID=完整ID] [50或20-40] [仅数值]；参数顺序不限。总榜可用性取决于来源。id1指定活动1（兼容 活动ID=1），裸数字表示排名；指定活动读取本地最近一次有效观测，无排名看五档趋势，单排名看前后十名，区间看每行分数。'
+HELP = '/查榜线 [jp/hk/kr/en] [id1或活动="名称"] [单曲或总榜] [歌名或歌曲ID=完整ID] [50或20-40] [仅数值]；参数顺序不限。总榜可用性取决于来源。id1查活动1的已保存观测，锁定活动1优先查同一期实时榜、换期后查该期已保存观测。裸数字表示排名，无排名看五档趋势，单排名看前后十名，区间看每行分数。'
 SERVER_ALIASES = {"jp": "jp", "日服": "jp", "hk": "tw", "国服": "tw", "國服": "tw",
                   "tw": "tw", "台服": "tw", "臺服": "tw",
                   "kr": "kr", "韩服": "kr", "韓服": "kr", "en": "en", "英服": "en", "国际服": "en", "國際服": "en"}
@@ -29,6 +29,7 @@ _RANK_PART = re.compile(rf'(?<!\S)({_NUMBER})(?:\s*[-—–~～到]\s*({_NUMBER}
 _SONG_NUMBER = re.compile(r'(?:歌曲|歌)([\d零〇一二两三四五六七八九十百+-]+(?:\.\d+)?)$|第([\d零〇一二两三四五六七八九十百+-]+(?:\.\d+)?)首$')
 _EVENT_ID_PREFIX = r'id\s*(?:[=:]\s*)?'
 _EVENT_ID = re.compile(_EVENT_ID_PREFIX + r'([+-]?\d+(?:\.\d+)?)', re.I)
+_LOCKED_EVENT = re.compile(r'锁定活动([+-]?\d+(?:\.\d+)?)')
 _TOKEN = re.compile(r'(?:(歌名|歌曲ID|活动ID|活动名称|活动)\s*=\s*("(?:\\.|[^"\\])*"|[^\s]+))|'
                     + _EVENT_ID_PREFIX + r'[+-]?\d+(?:\.\d+)?(?=\s|$)|[^\s]+', re.I)
 _UNKNOWN_CODES = {'cn', 'us', 'eu', 'gb', 'sg'}
@@ -53,10 +54,11 @@ class CutoffRequest:
     event_id: str = ""
     event_name: str = ""
     board_scope: str = "all"
+    lock_event: bool = False
 
     def __init__(self, server="jp", query="", rank=None, error="", code="invalid_arguments",
                  server_hint="", *, ranks=(), numeric_only=False, mode=None, target_rank=None,
-                 range_bounds=(), song_number=None, song_id="", literal_query=False, extra_queries=(), event_id="", event_name="", board_scope="all"):
+                 range_bounds=(), song_number=None, song_id="", literal_query=False, extra_queries=(), event_id="", event_name="", board_scope="all", lock_event=False):
         values = tuple(ranks) + ((rank,) if rank is not None else ())
         mode = mode or ("near" if rank is not None else "discrete" if values else "trend")
         if mode == "near":
@@ -81,6 +83,8 @@ class CutoffRequest:
             error, values = error or "无法识别排名模式。", ()
         if song_number is not None and (type(song_number) is not int or song_number < 1):
             error = error or "歌曲编号必须为正整数，例如 歌曲1。"
+        if lock_event and (not event_id or event_name):
+            error = error or '锁定活动需要一个明确的活动 ID。'
         if board_scope not in {'all', 'song', 'total'}:
             error = error or '无法识别榜单类型。'
         if board_scope == 'total' and (query or song_number is not None or song_id or extra_queries):
@@ -90,7 +94,7 @@ class CutoffRequest:
                             ("mode", mode), ("target_rank", target_rank), ("range_bounds", tuple(range_bounds)),
                             ("song_number", song_number), ("song_id", song_id), ("literal_query", literal_query),
                             ("extra_queries", tuple(extra_queries)), ("event_id", event_id), ("event_name", event_name),
-                            ("board_scope", board_scope)):
+                            ("board_scope", board_scope), ("lock_event", lock_event)):
             object.__setattr__(self, name, value)
 
     @property
@@ -103,7 +107,7 @@ class CutoffRequest:
         if self.board_scope != 'all':
             parts.append('总榜' if self.board_scope == 'total' else '单曲')
         if self.event_id:
-            parts.append(f'id{self.event_id}')
+            parts.append(('锁定活动' if self.lock_event else 'id') + self.event_id)
         if self.event_name:
             parts.append('活动=' + json.dumps(self.event_name, ensure_ascii=False))
         if self.song_number is not None:
@@ -180,7 +184,7 @@ def parse_cutoff(text: str) -> CutoffRequest:
     text = re.sub(r"\s+", " ", text)
     text = re.sub(r"^(?:查)?榜[线線](?:\s|$)", "", text).strip()
     servers, numbers, ids, names, words = [], [], [], [], []
-    event_ids, event_names = [], []
+    event_ids, event_names, locked_ids = [], [], []
     numeric_only = False
     scopes = []
     for match in _TOKEN.finditer(text):
@@ -207,6 +211,11 @@ def parse_cutoff(text: str) -> CutoffRequest:
                 ids.append(str(int(value)))
             else:
                 names.append(value)
+        elif token.startswith('锁定活动'):
+            locked = _LOCKED_EVENT.fullmatch(token)
+            if not locked or not re.fullmatch(r'[1-9][0-9]{0,15}', locked[1]):
+                return CutoffRequest(error='请填写要锁定的完整活动 ID，例如 锁定活动1。')
+            locked_ids.append(locked[1])
         elif event_id_match := _EVENT_ID.fullmatch(token):
             value = event_id_match[1]
             if not value.isdecimal() or int(value) <= 0:
@@ -235,13 +244,16 @@ def parse_cutoff(text: str) -> CutoffRequest:
         return CutoffRequest(error='同时指定了不同服务器，请保留一个服务器。')
     if len(set(scopes)) > 1:
         return CutoffRequest(error='不能同时指定总榜和单曲，请保留一种榜单选择。')
+    if locked_ids and (event_ids or event_names or len(set(locked_ids)) > 1):
+        return CutoffRequest(error='请保留一个活动选择。')
     if len(set(event_ids)) > 1 or len(set(event_names)) > 1:
         return CutoffRequest(error='同时指定了不同活动，请保留一个活动选择。')
     if len(set(numbers)) > 1 or len(set(ids)) > 1:
         return CutoffRequest(error='同时指定了不同歌曲，请保留一个歌曲选择。')
     request = CutoffRequest(servers[0] if servers else 'jp', song_number=numbers[0] if numbers else None,
                             song_id=ids[0] if ids else '', numeric_only=numeric_only,
-                            event_id=event_ids[0] if event_ids else '', event_name=event_names[0] if event_names else '',
+                            event_id=next(iter(locked_ids or event_ids), ''), event_name=event_names[0] if event_names else '',
+                            lock_event=bool(locked_ids),
                             board_scope=scopes[0] if scopes else 'all')
     remaining = ' '.join(words)
     ranked, query = _rank_selection(request, remaining)
@@ -309,6 +321,7 @@ class CutoffAnswer:
     total: TotalRankingSnapshot | None = None
     total_history: HistoryView = HistoryView()
     total_status: str = ''
+    historical_result: bool | None = None
 
     def total_time_label(self, stamp):
         return display_time(stamp,self.event.server)+' '+zone_label(self.event.server)
@@ -346,6 +359,8 @@ class CutoffAnswer:
 
     @property
     def historical(self):
+        if self.historical_result is not None:
+            return self.historical_result
         return bool(self.request.event_id or self.request.event_name)
 
     @property
@@ -528,12 +543,25 @@ def _execute_cutoff(request: CutoffRequest, repository) -> CutoffAnswer:
     source = repository.event_cutoffs
     deadline = source.deadline()
     historical = bool(request.event_id or request.event_name)
+    event = None
+    current_error = None
+    if request.lock_event:
+        try:
+            current = source.event(request.server, deadline)
+        except SourceError as exc:
+            current_error = exc
+        else:
+            if current.server == request.server and current.event_id == request.event_id and not current.stale:
+                event = current
+                historical = False
     try:
         if historical:
             event, message, status = _historical_event(request, repository)
             if event is None:
+                if current_error and current_error.code != 'not_found':
+                    message = '暂时无法确认当前活动。' + message
                 return CutoffAnswer(request, message=message, status=status)
-        else:
+        elif event is None:
             event = source.event(request.server, deadline)
     except SourceError as exc:
         if historical:
@@ -542,6 +570,11 @@ def _execute_cutoff(request: CutoffRequest, repository) -> CutoffAnswer:
                    'rate_limited': '来源限流，请稍后重试。'}.get(exc.code, '该服务器的活动信息暂不可用，请稍后重试。')
         return CutoffAnswer(request, message=SERVERS[request.server][0] + "：" + message,
                             status=exc.code if exc.code in {'not_found', 'pending', 'rate_limited'} else 'data_unavailable')
+    answer = _cutoff_for_event(request, source, event, deadline, historical)
+    return replace(answer, historical_result=historical)
+
+
+def _cutoff_for_event(request, source, event, deadline, historical):
     rules = event_ranking_format(event)
     totals = getattr(source,'total_rankings',None)
     total = None

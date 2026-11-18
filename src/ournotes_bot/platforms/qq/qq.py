@@ -245,11 +245,7 @@ async def _deliver_reply(message, target_id: str, group: bool, reply: PreparedRe
                 return DeliveryOutcome('fallback_pending' if receipt.confirmed else receipt.status)
         else:
             try:
-                caption={"content": " "}
-                if isinstance(reply.context,DeliveryCursor):
-                    cursor=reply.context
-                    caption['content'] = cursor.image_caption
-                outcome = _receipt(await send(**target, msg_type=7, media=media, **caption))
+                outcome = _receipt(await send(**target, msg_type=7, media=media, content=reply.image_caption))
             except Exception as exc:
                 logger.error("%s图片发送失败，结果不确定，不自动重发；错误类型=%s", channel, type(exc).__name__)
                 return DeliveryOutcome("uncertain")

@@ -41,6 +41,44 @@ class CutoffQueryV2Tests(unittest.TestCase):
         self.assertEqual(parse_cutoff('歌名="总榜"').query, '总榜')
         self.assertEqual(parse_cutoff('单曲 20-40').board_scope, 'song')
 
+    def test_activity_link_uses_live_only_when_the_locked_event_matches(self):
+        from ournotes_bot.sources.moenotes_events import ACTIVITY_STALE_NOTE, BoardSnapshot, SourceError
+
+        event = self.halloween_event()
+        song = event.songs[0]
+        board = BoardSnapshot(song, (225,) * 100, fetched_ms=event.start_ms + 1000)
+        archive = SimpleNamespace(events=Mock(return_value=(event,)), latest=Mock(return_value=board))
+        source = self.source
+        repository = SimpleNamespace(event_cutoffs=source)
+        request = parse_cutoff('锁定活动4 歌曲ID=100118 仅数值')
+        self.assertTrue(request.lock_event)
+        self.assertEqual(parse_cutoff(request.command_label()), request)
+        self.assertTrue(parse_cutoff('锁定活动4 id4').error)
+        with patch.object(source, 'event', return_value=event) as current, \
+                patch.object(source, 'boards', return_value=(board,)) as boards, \
+                patch.object(source, 'history', archive):
+            live = execute_cutoff(request, repository)
+            self.assertFalse(live.historical)
+            self.assertEqual(live.event.event_id, '4')
+            boards.assert_called_once()
+            archive.latest.assert_not_called()
+            boards.reset_mock()
+            current.return_value = replace(event, event_id='5')  # same selected song in a different event
+            history = execute_cutoff(request, repository)
+            self.assertTrue(history.historical)
+            self.assertEqual(history.event.event_id, '4')
+            self.assertEqual(history.boards[0].fetched_ms, board.fetched_ms)
+            boards.assert_not_called()
+            archive.latest.assert_called_once()
+            current.return_value = replace(event, notes=(ACTIVITY_STALE_NOTE,))
+            self.assertTrue(execute_cutoff(request, repository).historical)
+            boards.assert_not_called()
+            archive.events.return_value = ()
+            self.assertIn('未找到', execute_cutoff(request, repository).message)
+            current.side_effect = SourceError('pending')
+            self.assertIn('暂时无法确认当前活动', execute_cutoff(request, repository).message)
+            boards.assert_not_called()
+
     def test_verified_format_is_scoped_to_complete_event_identity(self):
         from ournotes_bot.sources.moenotes_events import event_ranking_format
         event = self.halloween_event()

@@ -479,7 +479,7 @@ def export_cutoffs(g, repo):
         variants["server-"+server] = replace(base,event=replace(event,server=server),request=CutoffRequest(server=server))
     with patch.object(cv,"load_artwork",return_value={}):
         with patch.object(repo.event_cutoffs,"event",return_value=event):
-            g.sample("text","activity","/查活动",lambda:g.qq.prepare_reply("/查活动",repo,None),expected="image",
+            g.sample("text","activity","/查活动 当前",lambda:g.qq.prepare_reply("/查活动 当前",repo,None),expected="image",
                      synthetic=("活动", "歌曲", "时间"),source="合成活动，由真实活动查询生成图片",route="_prepare_reply → execute_activity → 活动图片")
         for name, answer in variants.items():
             family = "cutoff-trend" if answer.request.mode=="trend" else "cutoff-ranks"
