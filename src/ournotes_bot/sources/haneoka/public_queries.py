@@ -9,7 +9,7 @@ from functools import partial
 import json
 from threading import RLock
 import time
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlsplit
 
 from ...domain.public_queries import PublicQueryError, PublicSnapshot
 from ..errors import ChartDataError
