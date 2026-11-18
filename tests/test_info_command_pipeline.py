@@ -32,6 +32,8 @@ class InfoCommandPipelineTests(unittest.TestCase):
             ('/查卡池 12', 'gacha_query', 'execute_gacha', 'info'),
             ('/查活动 hk', 'activity_query', 'execute_activity', 'activity'),
             ('/查竞技场 hk MyGO!!!!! 榜单', 'public_queries', 'execute_arena', 'info'),
+            ('/查激奏舞台 hk MyGO!!!!! 排期', 'public_queries', 'execute_arena', 'info'),
+            ('/查激奏榜线 hk MyGO!!!!! T100', 'public_queries', 'execute_arena', 'info'),
             ('/查玩家 9223372036854775807 jp', 'public_queries', 'execute_player', 'info'),
         ):
             with self.subTest(command=command), \
@@ -57,6 +59,9 @@ class InfoCommandPipelineTests(unittest.TestCase):
             ('/问 这期活动详情', 'activity_query', 'execute_activity'),
             ('/问 本期卡池啥时候结束', 'gacha_query', 'execute_gacha'),
             ('/查 MyGO竞技场人数', 'public_queries', 'execute_arena'),
+            ('/查 MyGO 激奏舞台 排期', 'public_queries', 'execute_arena'),
+            ('/问 韩服MyGO激奏榜线人数', 'public_queries', 'execute_arena'),
+            ('/ask /查激奏榜线 MyGO T100', 'public_queries', 'execute_arena'),
             ('/查 玩家 9223372036854775807 jp', 'public_queries', 'execute_player'),
             ('/查 本期活动奖励', 'activity_query', 'execute_activity'),
         ):

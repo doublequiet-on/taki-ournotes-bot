@@ -80,7 +80,10 @@ def color_conditions(text):
 
 def public_information_command(question):
     """Whole-question grammar; execution and identity checks stay in direct queries."""
-    text = question.strip().strip('？?。！!')
+    text = question.strip()
+    if re.match(r'^[/／]?(?:查激奏舞台|查激奏榜线|查竞技场|查玩家)(?:\s|$)', text):
+        return text
+    text = text.strip('？?。！!')
     text = re.sub(r'^(?:请|帮我|查询|查看|查一下)\s*', '', text)
     player = re.fullmatch(r'(?:查)?玩家\s+([0-9]{1,19})(?:\s+(jp|hk|tw|kr|en|日服|国服|韩服|英服))?(?:\s+(名片)(?:\s+(页[1-9][0-9]{0,2}))?)?', text, re.I)
     if player:
@@ -88,10 +91,15 @@ def public_information_command(question):
     event = re.fullmatch(r'(?:(jp|hk|tw|kr|en|日服|国服|韩服|英服)\s*)?(?:本期|这期|当前)活动(?:的)?(加成|奖励|任务|卡池)', text, re.I)
     if event:
         return '/查活动 ' + ' '.join(value for value in event.groups() if value)
-    arena = re.fullmatch(r'(?:(jp|hk|tw|kr|en|日服|国服|韩服|英服)\s*)?(.*?)竞技场(?:的)?(总览|日程|曲池|段位|奖励|榜单|排名|人数)?', text, re.I)
+    arena = re.fullmatch(
+        r'(?:查\s*)?(?:(jp|hk|tw|kr|en|日服|国服|韩服|英服)\s*)?(.*?)(竞技场|激奏舞台|激奏榜线)'
+        r'\s*(?:的\s*)?(总览|概览|规则|日程|排期|曲池|乐曲|段位与奖励|段位|奖励|榜单|排行榜|排名|人数|段位人数)?', text, re.I)
     if arena:
-        region, band, mode = arena.groups()
-        return '/查竞技场 ' + ' '.join(value for value in (region, band.strip(), '榜单' if mode == '排名' else mode) if value)
+        region, band, kind, mode = arena.groups()
+        command = '/查竞技场' if kind == '竞技场' else '/查激奏舞台'
+        if kind == '激奏榜线' or kind == '激奏舞台' and mode in {'榜单', '排行榜', '排名', '人数', '段位人数'}:
+            command = '/查激奏榜线'
+        return ' '.join(value for value in (command, region, band.strip(), '榜单' if mode == '排名' else mode) if value)
     return None
 
 

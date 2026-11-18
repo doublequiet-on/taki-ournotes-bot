@@ -77,7 +77,7 @@ def recognizes_message(content: str) -> bool:
     for text in split_commands(content):
         head = text.split(None, 1)[0].casefold()
         if (head in ALIASES or head in UNAVAILABLE_COMMANDS
-                or head in {"查角色", "查卡池", "查活动", "查竞技场", "查玩家", "event", "イベント"}
+                or head in {"查角色", "查卡池", "查活动", "查竞技场", "查激奏舞台", "查激奏榜线", "查玩家", "event", "イベント"}
                 or text.casefold() in specials or parse_operation(text) is not None or is_ai_request(text)):
             return True
     return False

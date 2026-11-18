@@ -224,11 +224,14 @@ class PublicQueries:
         if (type(request.first) is not int or type(request.last) is not int or request.first < 1
                 or not request.first <= request.last < request.first + 100):
             raise PublicQueryError('invalid_arguments', '排名位置窗口必须为连续最多100行。')
-        operation = 'population' if request.mode == '人数' else 'ranking'
-        query = {'thresholds': ','.join(map(str, thresholds))} if thresholds else {'start': request.first}
+        population = request.mode == '人数'
+        if population and not thresholds:
+            raise PublicQueryError('data_unavailable', '该联赛暂无段位门槛资料，无法查询段位人数。')
+        operation = 'population' if population else 'ranking'
+        query = {'thresholds': ','.join(map(str, thresholds))} if population else {'start': request.first}
         path = (f'/api/v1/game/records/{request.region}/arena/seasons/{season}/leagues/{request.band}/'
                 + operation + '?' + urlencode(query))
-        snapshot = self.read(path, ttl=1800 if thresholds else 60)
+        snapshot = self.read(path, ttl=1800 if population else 60)
         value = decode_json(snapshot.body)
         if (value.get('region') != request.region or str(value.get('seasonId')) != str(season)
                 or str(value.get('bandId')) != str(request.band)):
@@ -236,11 +239,11 @@ class PublicQueries:
         timestamp(value.get('observedAtMs'))
         if value.get('provider') is not None and not isinstance(value['provider'], str):
             raise PublicQueryError('invalid_source', '榜单来源格式异常。')
-        if request.mode == '人数':
+        if population:
             if value.get('maxRank') is not None:
                 integer(value['maxRank'])
             tiers = objects(value.get('tiers'))
-            if tuple(row.get('threshold') for row in tiers) != thresholds:
+            if tuple(integer(row.get('threshold')) for row in tiers) != thresholds:
                 raise PublicQueryError('invalid_source', '段位门槛与请求不一致。')
             for row in tiers:
                 integer(row.get('count'))
@@ -266,7 +269,7 @@ class PublicQueries:
                 row.update(position=position, rawRank=None,
                            pointState='source_zero' if point == 0 else 'value' if point is not None else 'null' if 'point' in row else 'missing')
             snapshot = replace(snapshot, body=json.dumps(value, ensure_ascii=False).encode())
-        return observed_snapshot(snapshot, value, request.region, self.clock(), 1800 if request.mode == '人数' else 1200)
+        return observed_snapshot(snapshot, value, request.region, self.clock(), 1800 if population else 1200)
 
     def player(self, request):
         request = replace(request, region=region_value(request.region))

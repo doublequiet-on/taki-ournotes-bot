@@ -20,6 +20,8 @@ class ArenaRequest:
     season: int | None = None
     first: int = 1
     last: int = 20
+    positions: tuple[int, ...] = ()
+    numeric_only: bool = False
 
 
 @dataclass(frozen=True)
