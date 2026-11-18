@@ -1,9 +1,9 @@
-# L3: Deterministic bounded chunks, lexical/semantic ranking and evidence serialization.
+# L3: Bounded lexical index, optional semantic vectors, ranking and evidence serialization.
 # Pos: Query knowledge retrieval. Encoder/cache are injected; no source or network imports.
 from __future__ import annotations
 
 from collections import Counter
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 import hashlib
 import json
 import math
@@ -38,7 +38,11 @@ class IndexRow:
     chunk: EvidenceChunkV1
     search_text: str
     terms: tuple[str, ...]
-    vector: tuple[float, ...]
+    vector: tuple[float, ...] | None = None
+
+
+class SemanticBuildError(KnowledgeError):
+    """The encoder failed to produce usable document vectors."""
 
 
 def labelled_tables(body):
@@ -111,31 +115,45 @@ def checked_vector(value, dimensions):
     return tuple(float(v) for v in value)
 
 
-def build_index(documents, encoder: SemanticEncoder, cached):
-    rows, missing, updates, pending = [], [], {}, set()
+def build_lexical_index(documents):
+    rows = []
     for doc, approval in sorted(documents, key=lambda pair: pair[0].id):
         for chunk in split_document(doc, approval):
-            search_text = '\n'.join((doc.title, ' '.join(doc.keywords+doc.aliases), chunk.text))
-            embedding_text = doc.title[:64]+'\n'+' '.join(doc.keywords+doc.aliases)[:64]+'\n'+chunk.text
-            key = hashlib.sha256((encoder.identity+'\0'+embedding_text).encode('utf-8')).hexdigest()
-            vector = cached.get(key)
-            rows.append((chunk, search_text, doc.keywords+doc.aliases+(doc.title,), key))
-            if vector is None and key not in pending:
-                missing.append((key, embedding_text))
-                pending.add(key)
+            labels = doc.keywords + doc.aliases
+            search_text = '\n'.join((doc.title, ' '.join(labels), chunk.text))
+            rows.append(IndexRow(chunk, search_text, labels + (doc.title,)))
             if len(rows) > MAX_CHUNKS:
                 raise KnowledgeError('knowledge_chunk_limit')
+    return tuple(rows)
+
+
+def add_vectors(rows, encoder: SemanticEncoder, cached):
+    keys, missing, updates = [], {}, {}
+    for row in rows:
+        title = row.terms[-1]
+        labels = ' '.join(row.terms[:-1])
+        embedding_text = '\n'.join((title[:64], labels[:64], row.chunk.text))
+        key = hashlib.sha256((encoder.identity+'\0'+embedding_text).encode('utf-8')).hexdigest()
+        keys.append(key)
+        if cached.get(key) is None:
+            missing[key] = embedding_text
+    missing = tuple(missing.items())
     for offset in range(0, len(missing), 16):
         batch = missing[offset:offset+16]
-        vectors = encoder.encode(tuple(t for _, t in batch))
-        if len(vectors) != len(batch):
-            raise KnowledgeError('semantic_batch_shape')
-        updates.update((key, checked_vector(v, encoder.dimensions)) for (key, _), v in zip(batch, vectors))
+        try:
+            vectors = encoder.encode(tuple(text for _, text in batch))
+            if not isinstance(vectors, (tuple, list)) or len(vectors) != len(batch):
+                raise KnowledgeError('semantic_batch_shape')
+            updates.update((key, checked_vector(v, encoder.dimensions)) for (key, _), v in zip(batch, vectors))
+        except KnowledgeError as exc:
+            raise SemanticBuildError(str(exc)) from None
+        except Exception:
+            raise SemanticBuildError('knowledge_index_build_failed') from None
     available = {**cached, **updates}
-    index = tuple(IndexRow(chunk, text, terms, checked_vector(available[key], encoder.dimensions))
-                  for chunk, text, terms, key in rows)
+    index = tuple(replace(row, vector=checked_vector(available[key], encoder.dimensions))
+                  for row, key in zip(rows, keys))
     # Only vectors used by this generation survive. No persistent questions.
-    return index, {key: available[key] for _, _, _, key in rows}, len(missing)
+    return index, {key: available[key] for key in keys}, len(missing)
 
 
 def rank(query, rows, query_vector):
@@ -159,9 +177,10 @@ def rank(query, rows, query_vector):
         score += 3*sum(1 for term in row.terms if normalized(term) in normalized(query))
         if score > 0:
             lexical[i] = score
-        similarity = sum(a*b for a, b in zip(row.vector, query_vector))
-        if similarity >= SEMANTIC_FLOOR:
-            semantic[i] = similarity
+        if row.vector is not None and query_vector is not None:
+            similarity = sum(a*b for a, b in zip(row.vector, query_vector))
+            if similarity >= SEMANTIC_FLOOR:
+                semantic[i] = similarity
     fused = {}
     for scores in (lexical, semantic):
         ordered = sorted(scores, key=lambda i: (-scores[i], rows[i].chunk.chunk_id))

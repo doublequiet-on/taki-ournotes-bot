@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date
-from typing import Protocol, Sequence
+from typing import Literal, Protocol, Sequence
 
 GAME = 'bang-dream-our-notes'
 
@@ -154,8 +154,11 @@ class EvidenceLease:
 
 @dataclass(frozen=True)
 class Retrieval:
+    """Lookup result and the ranker used, if any."""
+
     code: str
     lease: EvidenceLease
+    mode: Literal['hybrid', 'lexical'] | None = None
 
     @property
     def message(self) -> str:
