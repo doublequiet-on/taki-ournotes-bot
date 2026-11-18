@@ -3,7 +3,7 @@
 # Output: Independent same-position total scores and public player identities.
 # Pos: Domain / Total rankings; see sources/L2-2.md.
 # Effects: None; no source, storage or platform imports.
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 
 @dataclass(frozen=True)
@@ -23,8 +23,8 @@ class TotalRankingSnapshot:
     notes: tuple[str, ...] = ()
     observed_scores: tuple[int | None, ...] | None = None
     http_date_ms: int | None = None
-    snapshot_id: str | None = None
-    source_read_ms: int | None = None
+    snapshot_id: str | None = field(default=None, kw_only=True)
+    source_read_ms: int | None = field(default=None, kw_only=True)
     player_details: tuple[dict | None, ...] = ()
 
     def score(self, rank):
