@@ -18,7 +18,7 @@ from .transport import public_response, response_failure
 from .identity import matches_game_region
 from ..json_validation import decode_json as strict_json
 from ..moenotes_events import (
-    BoardSnapshot, EventCutoffRepository, EventSnapshot, EventSong, SERVERS,
+    ACTIVITY_STALE_NOTE, BoardSnapshot, EventCutoffRepository, EventSnapshot, EventSong, SERVERS,
     SourceError, _Entry, _ms, _player_id, _player_name,
 )
 
@@ -300,7 +300,7 @@ class HaneokaEventCutoffRepository(EventCutoffRepository):
         event = decode_current(entry.payload, server)
         notes = ["挑战原序号尚未核实；请使用歌曲ID，歌曲N暂不可用。"]
         if entry.fallback or entry.payload["stale"]:
-            notes.append("当前活动使用同源旧快照，活动状态可能变化。")
+            notes.append(ACTIVITY_STALE_NOTE)
         with self._guard:
             self._event_identities[server] = event_identity(event)
         event = replace(event, notes=tuple(notes))

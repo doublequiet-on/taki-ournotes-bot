@@ -77,6 +77,99 @@ class CurrentSource:
 
 
 class InformationQueryTests(unittest.TestCase):
+    def test_activity_bonus_filters_use_explicit_effects_and_keep_history_scope(self):
+        from ournotes_bot.sources.haneoka.activity_details import project_details
+
+        red = {'targets': {'band': {'name': ['MyGO!!!!!']}}, 'cardType': 1, 'bonusType': 2}
+        blue = {**red, 'cardType': 2}
+        first = activity(1, '活动 A', end=NOW, details=project_details({'effects': [red, blue]}))
+        second = activity(2, '活动 B', end=NOW, details=project_details({'effects': [blue]}))
+        active = activity(3, '活动 C', details=first.details)
+        repo = Repository(catalog(activities=(first, second, active)))
+        result = execute_activity('历史 属性＝紅色 乐队=MyGO', repo, now=NOW)
+        self.assertEqual([r.command for r in result.views[0].rows], ['/查活动 1'])
+        self.assertIn('加成乐队 · MyGO!!!!!', result.text)
+        self.assertIn('加成属性 · 红色', result.text)
+        self.assertEqual([fact.bonus_attribute for fact in first.details[0].facts], [1, 2])
+        self.assertIn('蓝色', execute_activity('1 加成', repo, now=NOW).text)
+        self.assertEqual(execute_activity('历史 属性=未知', repo, now=NOW).status, 'invalid_arguments')
+
+    def test_activity_rejects_ignored_sections_and_numeric_expressions(self):
+        repo = Repository(catalog(activities=(activity(2, '重名甲'), activity(3, '重名乙'))))
+        for query in ('列表 奖励', '历史 2 奖励', '日程 奖励', '加成 奖励', '-2', '２－３', '当前 jp'):
+            with self.subTest(query=query):
+                self.assertEqual(execute_activity(query, repo, now=NOW).status, 'invalid_arguments')
+        self.assertEqual(repo.captures, 0)
+        candidates = execute_activity('重名 任务', repo, now=NOW)
+        self.assertEqual({row.command for row in candidates.views[0].rows},
+                         {'/查活动 2 任务', '/查活动 3 任务'})
+        self.assertIn('活动 ID 2', execute_activity('２', repo, now=NOW).text)
+
+    def test_calendar_limits_time_conflicts_to_the_requested_slot(self):
+        current = activity(1, '当前唯一')
+        next_a = activity(2, '未来甲', NOW + 200, NOW + 300)
+        next_b = activity(3, '未来乙', NOW + 200, NOW + 400)
+        repo = Repository(catalog(activities=(current, next_a, next_b)))
+        self.assertEqual(execute_activity('日程', repo, now=NOW).calendar_time.title, '当前唯一')
+        self.assertIsNone(execute_activity('下期', repo, now=NOW).calendar_time)
+        repo.snapshot = catalog(activities=(activity(4, '过去甲', end=NOW),
+                                            activity(5, '过去乙', end=NOW), next_a))
+        self.assertEqual(execute_activity('下期', repo, now=NOW).calendar_time.title, '未来甲')
+        self.assertIn('暂不能唯一确定最近一期', execute_activity('日程', repo, now=NOW).text)
+
+    def test_activity_pool_links_require_jp_identity_and_local_pool(self):
+        from ournotes_bot.domain.info_catalog import ActivityCalendar
+        from ournotes_bot.sources.haneoka.activity_details import project_details
+
+        details = project_details({'recruitments': [{'id': '18', 'title': '已确认卡池'},
+                                                     {'id': '19', 'title': '本地缺少详情'}]})
+        record = activity(1, '静态活动', details=details)
+        repo, _ = self._current_repository(record)
+        repo.capture_catalog = lambda: catalog(activities=(record,), gachas=(gacha(18, '已确认卡池'),),
+                                               activity_calendars={'intl': ActivityCalendar((record,), '', '', '')})
+        for query in ('jp', 'jp 卡池', '1', '1 卡池'):
+            with self.subTest(query=query):
+                result = execute_activity(query, repo, now=NOW)
+                self.assertIn('/查卡池 18', result.text)
+                self.assertNotIn('/查卡池 19', result.text)
+        result = execute_activity('en 卡池', repo, now=NOW)
+        self.assertIn('Haneoka intl', result.text)
+        self.assertNotIn('/查卡池 18', result.text)
+
+    def test_activity_keeps_disabled_song_without_link_and_stale_time_without_reminder(self):
+        from dataclasses import replace
+        from ournotes_bot.application.replies import activity_time_reply
+        from ournotes_bot.sources.moenotes_events import ACTIVITY_STALE_NOTE
+
+        repo, source = self._current_repository(activity(1, '活动'))
+        source.value = replace(source.value, notes=(ACTIVITY_STALE_NOTE,),
+                               songs=(replace(source.value.songs[0], enabled=False),))
+        result = execute_activity('', repo)
+        self.assertIn('歌曲 ID 101', result.text)
+        self.assertIn('单曲榜未开放或尚未采集', result.text)
+        self.assertNotIn('/查榜线 jp', result.text)
+        self.assertNotIn('清 CP', activity_time_reply(result, 'end'))
+
+    def test_activity_image_caption_exposes_real_links_and_keeps_continuation_progress(self):
+        from dataclasses import replace
+        from unittest.mock import patch
+
+        from ournotes_bot.application.replies import expand_replies, render_prepared_inner
+        from ournotes_bot.commands import resolve_command
+
+        repo, source = self._current_repository(activity(1, '活动'))
+        source.value = replace(source.value, title='/查卡池 999')
+        result = resolve_command('/查活动', repo)
+        with patch('ournotes_bot.application.replies.visual_asset', return_value=None):
+            prepared = render_prepared_inner(result.activity.text, result, repo, 'zh')
+        self.assertTrue(prepared.image)
+        self.assertEqual(prepared.image_caption, '/查榜线 jp 歌曲ID=101')
+        batch = expand_replies([replace(prepared, image=None, pages=(prepared,) * 7)])
+        self.assertEqual(len(batch), 5)
+        self.assertIn('/查榜线 jp 歌曲ID=101', batch[-1].image_caption)
+        self.assertIn('图片 5/7；/继续', batch[-1].image_caption)
+        self.assertEqual(len(batch[-1].context.remaining), 2)
+
     def test_calendar_gap_boundary_next_and_missing_times(self):
         ended = activity(1, '上一期', NOW-100, NOW, display_end_at=NOW+500)
         repo = Repository(catalog(activities=(ended,)))
@@ -383,7 +476,7 @@ class InformationQueryTests(unittest.TestCase):
 
     def _current_repository(self, static):
         event = EventSnapshot('jp', '1', '当前活动', 'nowOn', (NOW - 100) * 1000, (NOW + 100) * 1000,
-                              (EventSong('5', '101', '挑战曲'),), source='haneoka')
+                              (EventSong('5', '101', '挑战曲', collect_status='collecting'),), source='haneoka')
         source = CurrentSource(event)
         repo = SimpleNamespace(event_cutoffs=source, capture_catalog=lambda: catalog(activities=(static,), cards=(card(7),)))
         return repo, source

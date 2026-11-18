@@ -85,7 +85,8 @@ def public_information_command(question):
     player = re.fullmatch(r'(?:查)?玩家\s+([0-9]{1,19})(?:\s+(jp|hk|tw|kr|en|日服|国服|韩服|英服))?(?:\s+(名片)(?:\s+(页[1-9][0-9]{0,2}))?)?', text, re.I)
     if player:
         return '/查玩家 ' + ' '.join(value for value in player.groups() if value)
-    event = re.fullmatch(r'(?:(jp|hk|tw|kr|en|日服|国服|韩服|英服)\s*)?(?:本期|这期|当前)活动(?:的)?(加成|奖励|任务|卡池)', text, re.I)
+    event = re.fullmatch(r'(?:(jp|hk|tw|kr|en|日服|国服|國服|台服|臺服|韩服|韓服|英服|国际服|國際服)\s*)?'
+                         r'(?:本期|这期|当前|最近)活动(?:的)?(加成|奖励|任务|卡池)', text, re.I)
     if event:
         return '/查活动 ' + ' '.join(value for value in event.groups() if value)
     arena = re.fullmatch(r'(?:(jp|hk|tw|kr|en|日服|国服|韩服|英服)\s*)?(.*?)竞技场(?:的)?(总览|日程|曲池|段位|奖励|榜单|排名|人数)?', text, re.I)
@@ -104,7 +105,7 @@ def information_command(question, repository):
         return None  # Colored members refer to cards, not character profiles.
     text = re.sub(r"^(?:(?:请|帮我|查一下|查询|查看|看看|想看)\s*)+", "", text).strip(" ？?。！!")
     calendar = re.fullmatch(
-        r"(?:(jp|intl|tw|en|日服|台服|国际服|英服)\s*)?"
+        r"(?:(jp|intl|tw|en|日服|台服|臺服|国际服|國際服|英服)\s*)?"
         r"(现在|当前|最近|这期|本期|这次|下期|下一期|下次|下一次|下一个)(?:的)?\s*活动\s*"
         r"((?:啥时候|什么时候|何时|几号)(?:开始|结束)|(?:开始|结束)(?:时间|日期)(?:是什么|是啥|是几号)?|"
         r"结束了|结束|还在|还在进行|还没结束)(?:啊|呀|呢|吗|嘛|吧)?", text, re.I)
@@ -115,7 +116,7 @@ def information_command(question, repository):
         mode = '下期' if which in {'下期', '下一期', '下次', '下一次', '下一个'} else '日程开始' if '开始' in request else '日程'
         return '/查活动 ' + (region or '') + ' ' + mode
     current = re.fullmatch(
-        r"(?:(jp|hk|tw|kr|en|日服|国服|台服|韩服|英服|国际服)\s*)?"
+        r"(?:(jp|hk|tw|kr|en|日服|国服|國服|台服|臺服|韩服|韓服|英服|国际服|國際服)\s*)?"
         r"(?:现在|当前|最近|这期|本期|这次)(?:的)?\s*(活动|卡池)\s*"
         r"(?:是什么|有哪些|有什么|详情|(?:啥时候|什么时候|何时|几号)(?:开始|结束)|"
         r"(?:开始|结束)(?:时间|日期)(?:是什么|是啥|是几号)?)?(?:啊|呀|呢|吗|嘛|吧)?", text, re.I)

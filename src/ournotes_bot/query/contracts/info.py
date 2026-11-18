@@ -15,6 +15,7 @@ class InfoSchedule:
     start: str
     end: str
     zone: str = '日本时间 UTC+9'
+    stale: bool = False
 
 
 @dataclass(frozen=True)

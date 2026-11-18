@@ -165,7 +165,7 @@ class RotatingLayoutTests(unittest.TestCase):
                         self.assertEqual(len(set(people_y)),1)
                         self.assertNotIn('加成/奖励/展示',[value for value,x,y in drawn])
 
-    def test_activity_and_gacha_images_hide_commands_but_keep_text_query_entries(self):
+    def test_activity_images_show_activity_and_pool_entries_but_keep_card_commands_in_text(self):
         card=InfoRow('成员卡',('琴平凪',),command='/查卡 65',display_title='划破黎明',
                      kind='card',group='成员卡',image_kind='portrait')
         entry=InfoRow('列表条目',command='/查活动 2',kind='banner',children=(card,),
@@ -180,7 +180,10 @@ class RotatingLayoutTests(unittest.TestCase):
                 pages=self.render(InfoView('查询',rows=(entry,song,prose),presentation=presentation))
             combined='\n'.join(p.text for p in pages)
             for command in (card.command,entry.command,song.command,prose.command):
-                self.assertNotIn(command,drawn)
+                if presentation == 'activity' and command in (entry.command, prose.command):
+                    self.assertIn(command, drawn)
+                else:
+                    self.assertNotIn(command, drawn)
                 self.assertEqual(combined.splitlines().count(command),1)
 
     def test_vertical_entries_keep_banner_and_cards_together_and_text_once(self):
@@ -191,6 +194,7 @@ class RotatingLayoutTests(unittest.TestCase):
         with patch.object(readable_pages,'MAX_IMAGE_EDGE',1300):
             pages=self.render(InfoView('活动列表',rows=rows,presentation='activity'))
         self.assertGreater(len(pages),1)
+
         combined='\n'.join(p.text for p in pages)
         for row in rows:
             owners=[p for p in pages if row.command in p.text.splitlines()]

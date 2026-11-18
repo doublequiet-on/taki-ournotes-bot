@@ -130,10 +130,25 @@ class PreparedReply:
     evidence: tuple = ()
     evidence_deadline: float | None = None  # Monotonic; never extended by delivery/ACK.
     keep_text_lines: bool = False
+    image_commands: tuple[str, ...] = ()
 
     @property
     def passive_slots(self):
         return max(1, len(self.fallback_texts))
+
+    @property
+    def image_caption(self):
+        progress = self.context.image_caption if isinstance(self.context, DeliveryCursor) else ''
+        lines = []
+        length = len(progress)
+        for command in self.image_commands:
+            if length + len(command) + 1 > 1200:
+                break  # All entries remain on the image itself.
+            lines.append(command)
+            length += len(command) + 1
+        if progress:
+            lines.append(progress)
+        return '\n'.join(lines) or ' '
 
 
 @dataclass(frozen=True)
@@ -617,7 +632,7 @@ def activity_time_reply(answer, field):
         text = f'《{view.title}》的{label}时间暂未提供。'
     else:
         text = f'《{view.title}》的{label}时间是 {value}（{schedule.zone}）。'
-        if field == 'end' and schedule.status == '进行中':
+        if field == 'end' and schedule.status == '进行中' and not schedule.stale:
             text += '\n记得及时清 CP，别留到活动结束啦。'
         elif schedule.status == '已结束':
             text += '\n这期活动已经结束了。'
@@ -916,11 +931,18 @@ def render_prepared_inner(reply, result, repository, locale, candidate=None):
                     check_geometry(source.size)
                     source.load()
                     return ImageOps.contain(source.convert('RGB'), size)
-            pages = tuple(PreparedReply(page.text, page.image, complete_text=True)
-                          for page in render_info(answer, load=information_asset))
+            is_activity = result.activity is not None
+            activity_commands = {row.command for view in answer.views for row in view.rows
+                                 if is_activity and row.command.startswith(('/查活动 ', '/查榜线 ', '/查卡池 '))}
+            pages = []
+            for page in render_info(answer, load=information_asset):
+                commands = tuple(dict.fromkeys(line for line in page.text.splitlines()
+                                                if line in activity_commands))
+                pages.append(PreparedReply(page.text, page.image, complete_text=True,
+                                           keep_text_lines=is_activity, image_commands=commands))
             if pages:
-                return pages[0] if len(pages) == 1 else PreparedReply(reply, pages=pages, complete_text=True)
-            return PreparedReply(answer.text, complete_text=True)
+                return pages[0] if len(pages) == 1 else PreparedReply(reply, pages=tuple(pages), complete_text=True)
+            return PreparedReply(answer.text, complete_text=True, keep_text_lines=is_activity)
         full = None if result is not None and result.cutoff is not None else (song_detail_reply(result, repository, locale, candidate) or
                 complete_list_reply(result, repository, locale, candidate) or
                 complete_detail_reply(result, repository, locale, candidate) or
