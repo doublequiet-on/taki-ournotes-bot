@@ -1,6 +1,6 @@
 # L3
 # Input: Pure InfoAnswer views and an injected validated artwork loader.
-# Output: Complete theme-matched image parts with the text shown on each part.
+# Output: Image parts with fallback text and character commands for textual delivery.
 # Pos: Rendering / Information; activity, gacha and character layouts.
 # Effects: Pillow encoding and injected artwork loading only; no queries or QQ.
 """Information pages use the same typography and palette as card/song pages."""
@@ -19,6 +19,7 @@ LEFT, RIGHT = 54, 1026
 class InfoPage:
     text: str
     image: bytes
+    commands: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -38,6 +39,7 @@ class _Block:
     attribute_url: str = ""
     icons: tuple = ()
     game_icon: str = ''
+    hidden_commands: tuple[str, ...] = ()
 
 
 def _picture_size(kind):
@@ -67,7 +69,8 @@ def _row(row, *, width=None, body=None, title=True, image=True, command=True, co
         row.title if title else "", row.label if title else "", *body_lines, row.command if command else "") if v)
     return _Block(max(art_h, text_h, 40) + 40 + (60 if any(row.icons) else 0), text, title_lines, label_lines,
                   body_lines, command_lines, row.image_url if image else "", row.image_kind,
-                  row.rarity, show_image=image and bool(row.image_url or force_image),attribute_url=row.attribute_url,icons=row.icons,game_icon=row.game_icon)
+                  row.rarity, show_image=image and bool(row.image_url or force_image),attribute_url=row.attribute_url,icons=row.icons,game_icon=row.game_icon,
+                  hidden_commands=(row.command,) if row.command and not command and body is None else ())
 
 
 def _row_blocks(row, limit, *, force_image=False, show_command=True):
@@ -130,7 +133,8 @@ def _row_blocks(row, limit, *, force_image=False, show_command=True):
         else:
             result.append(_row(InfoRow(row.title, command=row.command), body=(), image=False, continued=True))
     elif row.command:
-        result[-1]=replace(result[-1],text=result[-1].text+'\n'+row.command)
+        result[-1] = replace(result[-1], text=result[-1].text+'\n'+row.command,
+                             hidden_commands=(row.command,))
     return tuple(result)
 
 
@@ -203,7 +207,8 @@ def _blocks(view, limit):
                 children=tuple(_row(row,width=166,force_image=True,command=False) for row in people[start:start+5])
                 art_h=max(180 if b.image_kind=='portrait' else 120 for b in children)
                 result.append(_Block(art_h+max(b.height for b in children)+72,
-                    '\n'.join(b.text for b in children),title=(group or '未分组',),kind='directory',children=children))
+                    '\n'.join(b.text for b in children), title=(group or '未分组',), kind='directory', children=children,
+                    hidden_commands=tuple(command for child in children for command in child.hidden_commands)))
         rows=()
     elif view.hero_url or view.layout=='detail':
         result.append(_Block(344,image_url=view.hero_url,kind='hero'))
@@ -214,7 +219,8 @@ def _blocks(view, limit):
                                   show_command=view.layout!='character' and view.presentation!='character'))
     for start in range(0,len(links),2):
         children=tuple(_row(row,width=468,command=False) for row in links[start:start+2])
-        result.append(_Block(max(b.height for b in children),'\n'.join(b.text for b in children),kind='links',children=children))
+        result.append(_Block(max(b.height for b in children), '\n'.join(b.text for b in children), kind='links', children=children,
+                             hidden_commands=tuple(command for child in children for command in child.hidden_commands)))
     # Footnotes can be long (source warnings, aliases). Measure them as content,
     # so they never consume the fixed page frame or overlap the last item.
     for note in view.footer:
@@ -440,9 +446,12 @@ def render_info(answer: InfoAnswer, *, load=None, try_full_activity=False) -> tu
                 parts = readable_pages.render_parts(heights, WIDTH, fixed, paint,
                                                     max_height=None if view.layout=='activity-summary' else 2400 if view.presentation == 'arena' else 2800 if view.presentation in {'activity','gacha'} else None)
             for part in parts:
+                page_blocks = blocks[part.start:part.stop]
                 text = '\n'.join(v for v in (view.title, view.subtitle,
-                    *(block.text for block in blocks[part.start:part.stop]),*quality_text) if v)
-                pages.append(InfoPage(text, part.image))
+                    *(block.text for block in page_blocks), *quality_text) if v)
+                commands = (tuple(command for block in page_blocks for command in block.hidden_commands)
+                            if view.presentation == 'character' or view.layout == 'character' else ())
+                pages.append(InfoPage(text, part.image, commands))
         return tuple(pages)
     finally:
         for asset in assets.values():

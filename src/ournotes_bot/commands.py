@@ -37,7 +37,7 @@ HELP_TEXT = """Taki · Our Notes 日服资料查询
 Haneoka 未确认原始歌曲序号，请用歌名或歌曲ID；旧T50也查附近，旧多T排名最多五个
 /查活动 [jp/hk/kr/en]：当前／最近活动详情；/查活动 列表、/查活动 ID或名称 查询日服收录资料
 /查卡池 [ID或名称]：日服当前卡池与UP卡；/查卡池 历史 查看已结束卡池
-/查角色 [姓名/昵称/ID/乐队]：人物档案、乐队目录与关联卡；无参数查看角色目录
+/查角色 [姓名/昵称/ID/乐队]：人物档案和关联卡；无参数查看目录，可用 乐队=MyGO 担当=吉他
 榜线当前排名同时显示分数、数字ID与用户名；缺失会标注，历史曲线仅记录分数。
 四服：日服（jp）、国服（hk）、韩服（kr）、英服（en）；仅数值只回文字
 /查卡 [BD/SSR/SR/R] [颜色=红色] [角色=tmr] [乐队=MyGO] [LIVE=分数提升] [击奏=JUST] [页N]：条件卡牌列表；指定ID看详情
@@ -492,6 +492,15 @@ def parse_query(content: str) -> tuple[str, str, str | int | None] | None:
     return None
 
 
+def split_joined_info_head(head: str) -> tuple[str, str] | None:
+    if head.startswith("查角色卡"):
+        return None
+    for name in ("查活动", "查卡池", "查角色"):
+        if head.startswith(name) and head != name:
+            return name, head[len(name):]
+    return None
+
+
 def _command_tip(content: str) -> str | None:
     text = _clean_message(content)
     if not text:
@@ -501,10 +510,11 @@ def _command_tip(content: str) -> str | None:
     canonical = CANONICAL_BY_LOCALE[locale]
     parts = text.split(None, 1)
     first, rest = parts[0], parts[1] if len(parts) > 1 else ""
-    for name in ("查活动", "查卡池", "查角色"):
-        if first.startswith(name) and first != name and not first.startswith("查角色卡"):
-            argument = first[len(name):] + (" " + rest if rest else "")
-            return tr(locale, "missing_space", command="/" + name, argument=argument)
+    joined = split_joined_info_head(first)
+    if joined:
+        name, argument = joined
+        argument += " " + rest if rest else ""
+        return tr(locale, "missing_space", command="/" + name, argument=argument)
     if any(first.casefold().startswith(name) for name in UNAVAILABLE_COMMANDS):
         return tr(locale, "unavailable")
     kind = ALIASES.get(first.casefold())

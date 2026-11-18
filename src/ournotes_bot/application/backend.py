@@ -629,7 +629,8 @@ class Backend:
             elif isinstance(value, (tuple, list)):
                 for item in value: visit(item)
             elif isinstance(value, replies.PreparedReply):
-                for item in (value.image, value.text, value.pages, value.context, value.fallback_texts): visit(item)
+                for item in (value.image, value.text, value.pages, value.context, value.fallback_texts,
+                             value.image_caption): visit(item)
             elif isinstance(value, replies.DeliveryCursor):
                 visit(value.remaining)
                 visit(value.query_context)
@@ -696,10 +697,9 @@ class Backend:
                 reply = work.prepared[part['position']]
                 view['business_status'] = reply.business_status or 'message'
                 if reply.image and part['mode'] == 'primary':
-                    cursor = reply.context
-                    caption = cursor.image_caption if isinstance(cursor, replies.DeliveryCursor) else ' '
                     mime = 'image/png' if reply.image.startswith(b'\x89PNG\r\n\x1a\n') else 'image/jpeg'
-                    view.update(kind='image', text=caption, image=f"/v1/deliveries/{row['delivery']}/parts/{part['id']}/image", mime=mime)
+                    view.update(kind='image', text=reply.outbound_image_caption,
+                                image=f"/v1/deliveries/{row['delivery']}/parts/{part['id']}/image", mime=mime)
                 else:
                     text = ('图片上传失败，完整文字已保留；发送 /继续 查看。'
                             if part['mode'] == 'fallback' and len(reply.text) > (1500 if work.request.kind == 'group' else 1800) else reply.text)
