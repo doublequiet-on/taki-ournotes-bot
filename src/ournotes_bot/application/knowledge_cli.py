@@ -1,4 +1,5 @@
 # L3: Local knowledge validation/import/retrieval CLI; no game-data or chat initialization.
+# Output: JSON status with index mode for sync and ranking mode for retrieval.
 # Pos: Application operator tooling. Imports need supplied delivery/approval records and exclusive content ownership.
 from __future__ import annotations
 
@@ -51,7 +52,8 @@ def main():
                 if args.action == 'retrieve':
                     retrieval = service.retrieve(args.query, KnowledgeScope(server=args.server, version=args.version, date=args.date),
                                                  service.approved_set_revision)
-                    result = {'code': retrieval.code, 'message': retrieval.message, 'evidence': asdict(retrieval.lease)}
+                    result = {'code': retrieval.code, 'message': retrieval.message, 'mode': retrieval.mode,
+                              'evidence': asdict(retrieval.lease)}
         print(json.dumps(result, ensure_ascii=False, indent=2))
         if result['code'] in ('invalid', 'unavailable', 'index_pending'):
             raise SystemExit(1)

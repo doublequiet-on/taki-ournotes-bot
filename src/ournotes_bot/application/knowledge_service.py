@@ -1,4 +1,4 @@
-# L3: Knowledge authority, durable revocation floors, incremental candidate indexes and guarded evidence.
+# L3: Knowledge authority, durable revocation floors, hybrid/lexical retrieval and guarded evidence.
 # Pos: Application knowledge lifecycle; see ../../L2-Application.md.
 # Effects: Local Markdown/approval reads, single-owner SQLite and explicit confirmed imports; no network/QQ/model generation.
 from __future__ import annotations
@@ -14,7 +14,8 @@ import time
 import uuid
 
 from ..domain.knowledge import EvidenceLease, KnowledgeError, KnowledgeScope, Retrieval, SemanticEncoder
-from ..query.knowledge_retrieval import (bounded, build_index, checked_vector, complete_sections, evidence_json, rank, split_document)
+from ..query.knowledge_retrieval import (SemanticBuildError, add_vectors, bounded, build_lexical_index,
+    checked_vector, complete_sections, evidence_json, rank, split_document)
 from ..sources.knowledge_files import (canonical, decode_json, digest, eligible, parse_approvals,
     require, safe_path, scan_directory)
 
@@ -33,6 +34,7 @@ class KnowledgeService:
         self.allowed = {}
         self.index = ()
         self.index_revision = None
+        self.index_mode = None
         self.approved_set_revision = ''
         self.available = False
         self.observed_at = None
@@ -185,26 +187,42 @@ class KnowledgeService:
     def rebuild(self):
         with self.build_lock:
             with self.lock:
-                if not self.available or self.index_revision == self.approved_set_revision:
+                if not self.available:
                     return self.status()
                 version, selected = self.approved_set_revision, tuple(self.allowed.values())
+                if self.index_revision == version and self.index_mode == 'hybrid':
+                    return self.status()
+                lexical = self.index if self.index_revision == version else None
                 try:
                     cached = {k: decode_json(v) for k, v in self.db.execute('SELECT key, value FROM vectors')}
                 except (sqlite3.Error, KnowledgeError):
                     self.index_error = 'knowledge_vector_cache_invalid'
                     return self.status()
             try:
-                index, vectors, count = build_index(selected, self.encoder, cached)
+                if lexical is None:
+                    lexical = build_lexical_index(selected)
+                mode, error = 'hybrid', None
+                try:
+                    index, vectors, count = add_vectors(lexical, self.encoder, cached)
+                except SemanticBuildError as exc:
+                    # Only rebuilds of the observed allow set can use this path.
+                    index, count = lexical, 0
+                    mode, error = 'lexical', str(exc)
                 with self.lock:
                     self.observe()
                     require(self.available and self.approved_set_revision == version, 'knowledge_candidate_superseded')
-                    with self.db:
-                        self.db.execute('DELETE FROM vectors')
-                        self.db.executemany('INSERT INTO vectors VALUES (?, ?)', [(k, canonical(v)) for k, v in vectors.items()])
-                        self.db.execute('INSERT OR REPLACE INTO index_state VALUES (1, ?)', (version,))
-                    self.index, self.index_revision = index, version
-                    self.index_error = None
-                    self.last_build = {'at': self.clock(), 'encoded_chunks': count, 'chunks': len(index), 'revision': version}
+                    if mode == 'hybrid':
+                        with self.db:
+                            self.db.execute('DELETE FROM vectors')
+                            self.db.executemany('INSERT INTO vectors VALUES (?, ?)', [(k, canonical(v)) for k, v in vectors.items()])
+                            self.db.execute('INSERT OR REPLACE INTO index_state VALUES (1, ?)', (version,))
+                    if self.index_revision != version or self.index_mode != mode:
+                        self.last_build = {'at': self.clock(), 'encoded_chunks': count,
+                                           'chunks': len(index), 'revision': version}
+                    self.index, self.index_revision, self.index_mode = index, version, mode
+                    self.index_error = error
+                if error:
+                    logger.warning('Knowledge index using lexical fallback code=%s', error)
             except Exception as exc:
                 # Encoder/native-runtime failures must not interrupt ordinary
                 # queries. Old index remains subject to the current allow set.
@@ -217,6 +235,7 @@ class KnowledgeService:
             return {'code': ('unavailable' if not self.available else 'empty' if not self.allowed else
                              'ready' if self.index_revision == self.approved_set_revision else 'index_pending'),
                     'approved_set_revision': self.approved_set_revision, 'index_revision': self.index_revision,
+                    'index_mode': self.index_mode,
                     'observed_at': self.observed_at, 'approved_documents': len(self.allowed) if self.available else 0,
                     'indexed_chunks': len(self.index), 'error': self.error, 'index_error': self.index_error,
                     'issues': self.issues, 'last_build': self.last_build, 'encoder': self.encoder.identity}
@@ -239,14 +258,14 @@ class KnowledgeService:
         with self.lock:
             version = self.approved_set_revision
             today = datetime.fromtimestamp(self.clock(), timezone.utc).date().isoformat()
-            def response(code, chunks=()):
+            def response(code, chunks=(), mode=None):
                 selected = [[] for _ in scopes]
                 for chunk in chunks:
                     index = next(i for i, scope in enumerate(scopes)
                                  if set(scope.servers) <= set(chunk.servers)
                                  and chunk.applicability.matches(scope, today))
                     selected[index].append(chunk)
-                return tuple(Retrieval(code, EvidenceLease(version, scope, tuple(items)))
+                return tuple(Retrieval(code, EvidenceLease(version, scope, tuple(items)), mode)
                              for scope, items in zip(scopes, selected))
             if not self.available:
                 return response('unavailable')
@@ -263,25 +282,28 @@ class KnowledgeService:
             rows = tuple(row for row in self.index if row.chunk.key in allowed)
             if not rows:
                 return response('unavailable' if self.index_revision != version and allowed else 'missing')
-        try:
-            queries = (query,focus_query) if focus_query is not None else (query,)
-            values = self.encoder.encode(queries, query=True)
-            require(len(values) == len(queries), 'semantic_query_shape')
-            vector = checked_vector(values[0], self.encoder.dimensions)
-            ranked = rank(query, rows, vector)
-            if focus_query is not None:
-                focused = rank(focus_query,rows,checked_vector(values[1],self.encoder.dimensions))
-                # One participation passage precedes the main rules ranking;
-                # both use the same filtered index, lease and final budget.
-                ranked = tuple(dict.fromkeys((*focused[:1],*ranked)))
-            chunks = bounded(complete_sections(ranked, rows), limit, max_chars,
-                             prioritize_adjacent=prioritize_adjacent)
-            if ranked and not chunks:
-                return response('unavailable')
-        except Exception:
-            logger.error('Knowledge retrieval unavailable code=semantic_query_failed')
-            return response('unavailable')
-        results = response('ok' if chunks else 'missing', chunks)
+            mode = self.index_mode
+        queries = (query, focus_query) if focus_query is not None else (query,)
+        vectors = (None,) * len(queries)
+        if mode == 'hybrid':
+            try:
+                values = self.encoder.encode(queries, query=True)
+                require(isinstance(values, (tuple, list)) and len(values) == len(queries), 'semantic_query_shape')
+                vectors = tuple(checked_vector(value, self.encoder.dimensions) for value in values)
+            except Exception:
+                logger.warning('Knowledge retrieval using lexical fallback code=semantic_query_failed')
+                mode = 'lexical'
+        ranked = rank(query, rows, vectors[0])
+        if focus_query is not None:
+            focused = rank(focus_query, rows, vectors[1])
+            # One participation passage precedes the main rules ranking;
+            # both use the same filtered index, lease and final budget.
+            ranked = tuple(dict.fromkeys((*focused[:1], *ranked)))
+        chunks = bounded(complete_sections(ranked, rows), limit, max_chars,
+                         prioritize_adjacent=prioritize_adjacent)
+        if ranked and not chunks:
+            return response('unavailable', mode=mode)
+        results = response('ok' if chunks else 'missing', chunks, mode)
         if not self.validate_current(result.lease for result in results):
             return response('unavailable')
         return results
@@ -403,7 +425,8 @@ class KnowledgeService:
                 # Revocations/deletions above survive a failed candidate build.
                 cached = {k: decode_json(v) for k, v in self.db.execute('SELECT key, value FROM vectors')}
             try:
-                index, vectors, count = build_index(tuple(candidate.values()), self.encoder, cached)
+                lexical = build_lexical_index(candidate.values())
+                index, vectors, count = add_vectors(lexical, self.encoder, cached)
             except Exception as exc:
                 self.index_error = str(exc) if isinstance(exc, KnowledgeError) else 'knowledge_index_build_failed'
                 raise KnowledgeError(self.index_error) from None
@@ -428,6 +451,7 @@ class KnowledgeService:
                         self.db.executemany('INSERT INTO vectors VALUES (?, ?)', [(k, canonical(v)) for k, v in vectors.items()])
                         self.db.execute('INSERT OR REPLACE INTO index_state VALUES (1, ?)', (self.approved_set_revision,))
                     self.index, self.index_revision = index, self.approved_set_revision
+                    self.index_mode = 'hybrid'
                     self.last_build = {'at': self.clock(), 'encoded_chunks': count, 'chunks': len(index), 'revision': self.index_revision}
                     self.index_error = None
                 except (OSError, sqlite3.Error, KnowledgeError):
