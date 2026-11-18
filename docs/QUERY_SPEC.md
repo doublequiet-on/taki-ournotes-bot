@@ -15,7 +15,7 @@
 | 成员卡 | `/查卡`、`/查角色卡`、`/查卡面 ID` | 角色/乐队/卡、稀有度、技能；显式颜色、分类、多选及 BD | `member_card.search`：对象、多选稀有度/颜色、LIVE/击奏分类、得意标签、技能词/类型、页码 | `query/card_catalog.py`、`test_card_catalog.py`、`test_natural_query_eval.py` |
 | SNAP | `/查留影卡`、`/查支援卡`、`/查snap`、`/查留影卡面 ID` | 角色、稀有度；显式颜色、分类、多选及 EX | `support_card.search`：对象、多选稀有度/颜色、LIVE/击奏分类、页码；不开放任意技能关键词 | 同上，另见 `test_support_data.py` |
 | 活动 | `/查活动`、`event`、`イベント` | 当前/历史/列表/详情固定口语和明确命令转交 | 未注册 | `query/activity_query.py`、`test_info_queries.py` |
-| 卡池 | `/查卡池` | 当前/历史/详情固定口语和中文命令转交；英文 `gacha` 仍非入口 | 未注册 | `query/gacha_query.py`、`test_info_command_pipeline.py` |
+| 卡池 | `/查卡池` 默认日服目录，可选当前／最近／历史或按分类、ID、ID 区间、名称查询 | 当前／最近／历史／列表／详情固定口语和中文命令转交 | 原生 `catalog_info(kind=gacha)`，校验原句后转交 | `query/gacha_query.py`、`test_info_command_pipeline.py` |
 | 人物 | `/查角色` | 人物资料/生日/乐队成员固定口语和明确命令转交 | 未注册 | `query/character_query.py`、`test_info_queries.py` |
 | 歌曲榜线 | `/查榜线`、`/榜线` | `parse_natural_cutoff`，含服别/活动/歌曲/排名 | 保持本地，不调用模型 | `query/event_cutoff_query.py`、`test_cutoff_query_v2.py`、`test_cutoff_archive.py` |
 | 短答/数量 | 相应命令显示资料；短答入口是 `/问` | `parse_field_question` | 无 `field` 模型参数 | `query/field_query.py`、`test_field_queries.py` |

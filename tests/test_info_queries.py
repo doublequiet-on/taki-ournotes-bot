@@ -428,13 +428,13 @@ class InformationQueryTests(unittest.TestCase):
             with self.subTest(term=term), self.assertRaises(ValueError):
                 named_matches(records, term)
 
-    def test_real_empty_arguments_keep_directory_current_pools_and_activity_list(self):
+    def test_real_empty_arguments_keep_all_three_directories(self):
         repo = Repository(catalog(characters=(person(1, '高松灯'),),
                                   gachas=(gacha(1, '当前池'), gacha(2, '未来池', start=NOW + 1))))
         self.assertIn('/查角色 1', execute_character('  ', repo).text)
         result = execute_gacha('  ', repo, now=NOW)
         self.assertIn('/查卡池 1', result.text)
-        self.assertNotIn('/查卡池 2', result.text)
+        self.assertIn('/查卡池 2', result.text)
         live, source = self._current_repository(activity(1, '当前活动'))
         result = execute_activity('  ', live)
         self.assertEqual(result.status, 'success')
@@ -528,17 +528,17 @@ class InformationQueryTests(unittest.TestCase):
         records = (gacha(1, '刚开始', start=NOW), gacha(2, '刚结束', end=NOW),
                    gacha(3, '未来', start=NOW + 1), gacha(4, '未知', start=None, end=None))
         repo = Repository(catalog(gachas=records))
-        result = execute_gacha('', repo, now=NOW)
+        result = execute_gacha('当前', repo, now=NOW)
         self.assertEqual(repo.captures, 1)
         self.assertIn('/查卡池 1', result.text)
         for identity in (2, 3, 4):
             self.assertNotIn(f'/查卡池 {identity}', result.text)
-        self.assertIn('不代表所有玩家当前可抽', result.text)
+        self.assertIn('实际抽取资格以游戏内为准', result.text)
         self.assert_same_text(result)
 
     def test_gacha_unknown_dates_are_not_1970_or_permanent(self):
         repo = Repository(catalog(gachas=(gacha(1, '未知', start=None, end=None),)))
-        self.assertEqual(execute_gacha('', repo, now=NOW).status, 'no_results')
+        self.assertEqual(execute_gacha('当前', repo, now=NOW).status, 'no_results')
         detail = execute_gacha('1', repo, now=NOW)
         self.assertIn('开始：未确认', detail.text)
         self.assertIn('开放时间未确认', detail.text)
@@ -551,6 +551,56 @@ class InformationQueryTests(unittest.TestCase):
         self.assertIn('旧池', history.text)
         self.assertNotIn('新池', history.text)
         self.assertEqual(execute_gacha('1', repo, now=NOW).views[0].title, '旧池')
+
+    def test_gacha_directory_and_time_filters_keep_distinct_scopes(self):
+        repo = Repository(catalog(gachas=(
+            gacha(12, '已结束的池', end=NOW),
+            gacha(13, '同日结束的池', start=NOW - 200, end=NOW),
+            gacha(14, '未来池', start=NOW + 1),
+            gacha(15, '未知时间池', start=None, end=None),
+        )))
+        def ids(query):
+            return tuple(row.command for row in execute_gacha(query, repo, now=NOW).views[0].rows)
+        self.assertEqual(ids(''), ids('列表'))
+        self.assertEqual(ids('JP'), ids('列表'))
+        self.assertEqual(ids('最近'), ('/查卡池 12', '/查卡池 13'))
+        self.assertEqual(ids('历史　１２'), ('/查卡池 12',))
+        self.assertEqual(ids('ID １２到１４'), ('/查卡池 14', '/查卡池 12', '/查卡池 13'))
+        for query in ('-12', '1-2-3', '012', 'ID 14到12', 'ID 0到12', 'hk 当前'):
+            with self.subTest(query=query):
+                self.assertEqual(execute_gacha(query, repo, now=NOW).status, 'invalid_arguments')
+        self.assertEqual(execute_gacha('ID=12', repo, now=NOW).views[0].title, '已结束的池')
+
+    def test_gacha_list_marks_up_coverage_and_detail_only_links_explicit_activity(self):
+        from ournotes_bot.domain.info_catalog import ActivityFact, ActivitySection
+
+        picked = CardRef(2, 7)
+        event = activity(4, '明确关联', details=(ActivitySection('卡池', (
+            ActivityFact('已收录卡池', gacha_id='12'), ActivityFact('重复关联', gacha_id='12'),
+        )),))
+        coincident = activity(5, '仅时间重合')
+        record = gacha(12, '限定池', category='fixture', limited=True,
+                       display_condition=2, pickup_cards=(picked, picked))
+        unknown = gacha(13, '标记缺失', available_relations=frozenset({'featured_cards'}))
+        repo = Repository(catalog(gachas=(record, unknown), activities=(event, coincident)))
+        listing = execute_gacha('', repo, now=NOW)
+        self.assertIn('已确认 UP 卡 1 张，部分 UP 标记未确认', listing.text)
+        self.assertIn('已收录展示卡，UP 标记未确认', listing.text)
+        self.assertIn('有展示条件', listing.text)
+        detail = execute_gacha('12', repo, now=NOW)
+        self.assertEqual(detail.text.count('/查活动 4'), 1)
+        self.assertNotIn('/查活动 5', detail.text)
+        self.assertIn('来源分类：fixture', detail.text)
+        stars = gacha(14, '星钻池', category='stars')
+        tickets = gacha(15, '票券池', category='ticket')
+        categorized = Repository(catalog(gachas=(record, stars, tickets)))
+        result = execute_gacha('分类＝星钻 ID 12到15', categorized, now=NOW)
+        self.assertIn('星钻招募', result.text)
+        self.assertIn('卡池的分类未确认', result.text)
+        self.assertEqual(tuple(row.command for row in result.views[0].rows), ('/查卡池 14',))
+        self.assertIn('限定标记：是', detail.text)
+        self.assertIn('当前快照缺少卡牌详情', detail.text)
+        self.assert_same_text(detail)
 
     def test_gacha_up_card_types_same_id_and_duplicates_remain_correct(self):
         refs = (CardRef(3, 7), CardRef(2, 7), CardRef(2, 7))

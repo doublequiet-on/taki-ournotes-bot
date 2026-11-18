@@ -888,6 +888,7 @@ def render_prepared(reply, result, repository, locale, candidate=None):
 
 
 def render_prepared_inner(reply, result, repository, locale, candidate=None):
+    is_gacha = isinstance(result, CommandResult) and result.parsed[0] == 'gacha'
     try:
         if isinstance(result, QueryResult) and result.meta is not None:
             from ..rendering.song_metrics_layout import render, LAYOUT_VERSION
@@ -932,17 +933,19 @@ def render_prepared_inner(reply, result, repository, locale, candidate=None):
                     source.load()
                     return ImageOps.contain(source.convert('RGB'), size)
             is_activity = result.activity is not None
-            activity_commands = {row.command for view in answer.views for row in view.rows
-                                 if is_activity and row.command.startswith(('/查活动 ', '/查榜线 ', '/查卡池 '))}
+            prefixes = (('/查活动 ', '/查榜线 ', '/查卡池 ') if is_activity else
+                        ('/查卡池 ', '/查活动 ', '/查卡 ', '/查留影卡 ') if is_gacha else ())
+            related_commands = {row.command for view in answer.views for row in view.rows
+                                if row.command.startswith(prefixes)}
             pages = []
             for page in render_info(answer, load=information_asset):
                 commands = tuple(dict.fromkeys(line for line in page.text.splitlines()
-                                                if line in activity_commands))
+                                                if line in related_commands))
                 pages.append(PreparedReply(page.text, page.image, complete_text=True,
-                                           keep_text_lines=is_activity, image_commands=commands))
+                                           keep_text_lines=is_activity or is_gacha, image_commands=commands))
             if pages:
                 return pages[0] if len(pages) == 1 else PreparedReply(reply, pages=tuple(pages), complete_text=True)
-            return PreparedReply(answer.text, complete_text=True, keep_text_lines=is_activity)
+            return PreparedReply(answer.text, complete_text=True, keep_text_lines=is_activity or is_gacha)
         full = None if result is not None and result.cutoff is not None else (song_detail_reply(result, repository, locale, candidate) or
                 complete_list_reply(result, repository, locale, candidate) or
                 complete_detail_reply(result, repository, locale, candidate) or
@@ -982,7 +985,8 @@ def render_prepared_inner(reply, result, repository, locale, candidate=None):
         reply += "\n卡面图片暂不可用，请稍后重试。"
     is_info = isinstance(result, CommandResult) and (result.info is not None or result.activity is not None)
     return PreparedReply(reply, image, complete_text=is_info or result is not None and result.cutoff is not None,
-                         context=candidate, keep_text_lines=bool(result and result.catalog and result.catalog.is_candidate_list))
+                         context=candidate, keep_text_lines=is_gacha or bool(
+                             result and result.catalog and result.catalog.is_candidate_list))
 
 
 def complete_fallback(reply, result, locale, candidate, repository):
