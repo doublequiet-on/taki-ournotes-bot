@@ -103,21 +103,72 @@ class ArchiveTests(unittest.TestCase):
             stamp = STAMP + shift
             total = TotalRankingSnapshot(event_key(event), 'tracker', (score,), stamp, stamp, received_ms=stamp)
             self.assertEqual(store.record(event, total), 'valid')
-        for term in ('id12', '活动=记录', '活动=同一别名'):
+        for term in ('id12', '活动=记录'):
             self.assertEqual(self.ask(term).status, 'ambiguous', term)
+        by_catalog_name = self.ask('活动=同一别名 1-1')
+        self.assertEqual((by_catalog_name.total.score(1), by_catalog_name.event.title), (7000, '共通名称'))
         matched = self.ask('活动=原记录 1-1')
         self.assertEqual(matched.status, 'success', matched.text)
         self.assertEqual((matched.total.score(1), matched.boards[0].score(1)), (7000, 100))
         other = self.ask('活动=延期记录 1-1')
         self.assertEqual(other.status, 'data_unavailable', other.text)
         self.assertIn('活动="延期记录" 总榜', other.text)
-        self.assertEqual(self.ask('id12 活动="延期记录" 总榜 1-1').total.score(1), 9000)
+        delayed = self.ask('id12 活动="延期记录" 总榜 1-1')
+        self.assertEqual((delayed.total.score(1), delayed.event.title), (9000, '延期记录'))
         self.assertEqual(self.ask('id12 单曲 1-1').boards[0].score(1), 100)
         # Matching catalog dates cannot stand in for missing dates in the song archive.
         with closing(sqlite3.connect(self.history.path)) as db, db:
             db.execute('DELETE FROM event_metadata')
         self.assertIn('缺少可核对', self.ask('活动=原记录 1-1').text)
         self.assertEqual(self.ask('活动=同一别名 单曲 1-1').boards[0].score(1), 100)
+
+    def test_archive_metadata_uses_only_compatible_jp_catalog_dates(self):
+        from ournotes_bot.sources.total_rankings import (TotalRankingHistory, TotalRankingRepository,
+                                                         TotalRankingSnapshot, event_key)
+        store = TotalRankingHistory(self.root / 'total.sqlite3', 'tracker', min_free_mb=0)
+        self.source.total_rankings = TotalRankingRepository(store)
+        later = STAMP + 86400000
+        event = replace(self.event, title='延期归档', start_ms=None, end_ms=None, banner='',
+                        api_start_ms=later - 10000, api_end_ms=later + 10000, total_ranking_enabled=True)
+        total = TotalRankingSnapshot(event_key(event), 'tracker', (9000,), later, later, received_ms=later)
+        self.assertEqual(store.record(event, total), 'valid')
+
+        record = ActivityInfo(12, '目录活动', {'ja': '目录别名'}, image_url='fixture:catalog-banner')
+        def use_dates(start, end):
+            selected = replace(record, start_at=start / 1000 if start else None, end_at=end / 1000 if end else None)
+            self.repo.capture_catalog = lambda: SimpleNamespace(activities=(selected,), songs=())
+
+        for start, end in ((self.event.start_ms, self.event.end_ms),
+                           (self.event.start_ms, None), (None, self.event.end_ms)):
+            use_dates(start, end)
+            for name in ('目录活动', '目录别名'):
+                self.assertEqual(self.ask(f'活动={name} 总榜 1-1').status, 'empty')
+            for selector in ('id12', '活动=延期归档'):
+                archived = self.ask(selector + ' 总榜 1-1')
+                self.assertEqual(archived.total.score(1), 9000)
+                self.assertEqual((archived.event.title, archived.event.banner, archived.event.start_ms,
+                                  archived.event.end_ms), ('延期归档', '', None, None))
+
+        for start, end in ((event.api_start_ms, event.api_end_ms), (event.api_start_ms, None),
+                           (None, event.api_end_ms), (None, None)):
+            use_dates(start, end)
+            archived = self.ask('活动=目录别名 总榜 1-1')
+            self.assertEqual(archived.total.score(1), 9000)
+            self.assertEqual((archived.event.title, archived.event.banner, archived.event.start_ms,
+                              archived.event.end_ms), ('目录活动', record.image_url, start, end))
+
+        # Opposite partial bounds must still form an interval before filling the gap.
+        partial = replace(self.event, end_ms=None, banner='fixture:archive-banner')
+        self.record(self.history, partial, partial.songs[0], (101,), STAMP + 1000)
+        use_dates(None, partial.start_ms)
+        self.assertEqual(self.ask('活动=目录别名 单曲 1-1').status, 'empty')
+        original = self.ask('id12 单曲 1-1')
+        self.assertEqual((original.event.title, original.event.banner, original.event.end_ms),
+                         (partial.title, partial.banner, None))
+        use_dates(None, self.event.end_ms)
+        enriched = self.ask('活动=目录别名 单曲 1-1')
+        self.assertEqual((enriched.event.title, enriched.event.banner, enriched.event.end_ms),
+                         ('目录活动', partial.banner, self.event.end_ms))
 
     def test_missing_total_index_cannot_use_catalog_dates_to_join_an_unknown_song_archive(self):
         from ournotes_bot.sources.total_rankings import TotalRankingHistory, TotalRankingRepository

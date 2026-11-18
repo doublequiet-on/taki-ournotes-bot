@@ -455,6 +455,23 @@ def _archive_join_issue(songs, total):
     return ''
 
 
+def _archive_catalog_record(event, records):
+    record = records.get(event.event_id)
+    if record is None:
+        return None
+    start = round(record.start_at * 1000) if record.start_at is not None else None
+    end = round(record.end_at * 1000) if record.end_at is not None else None
+    # Tracker can withhold a display date while retaining the original API date.
+    for saved_start, saved_end in ((event.start_ms, event.end_ms), (event.api_start_ms, event.api_end_ms)):
+        if saved_start is not None and ((start is not None and saved_start != start)
+                                        or (end is not None and saved_start >= end)):
+            return None
+        if saved_end is not None and ((end is not None and saved_end != end)
+                                      or (start is not None and saved_end <= start)):
+            return None
+    return record
+
+
 def _historical_event(request, repository):
     """Resolve only recorded challenge identities; static song associations never create boards."""
     history = repository.event_cutoffs.history
@@ -484,7 +501,7 @@ def _historical_event(request, repository):
             return re.sub(r'[\W_]+', '', unicodedata.normalize('NFKC', value).casefold())
 
         def names(event):
-            record = records.get(event.event_id)
+            record = _archive_catalog_record(event, records)
             return (event.title, record.title, *record.names.values()) if record else (event.title,)
 
         needle = normalize(request.event_name)
@@ -513,7 +530,7 @@ def _historical_event(request, repository):
                 total_command += ' 活动=' + json.dumps(request.event_name, ensure_ascii=False)
             return CutoffAnswer(request, message=f'{issue}，请分开查询：{command} 单曲 或 {total_command} 总榜。', status='data_unavailable')
     # Enrich only after matching the recorded identities. Catalog dates describe presentation.
-    record = records.get(event.event_id)
+    record = _archive_catalog_record(event, records)
     if record:
         event = replace(event, title=record.title,
                         start_ms=event.start_ms if event.start_ms is not None else round(record.start_at * 1000) if record.start_at is not None else None,
