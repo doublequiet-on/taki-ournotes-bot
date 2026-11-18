@@ -121,12 +121,13 @@ class Diagnostics:
             return json.dumps(data)
         if kind=='transport':
             required={'stage','name','elapsed_ms','proxied','headers_received'}
-            timing={'elapsed_ms','dns_ms','connect_ms','upload_ms','wait_headers_ms','read_ms'}
-            optional=timing|{'http_status','http_version','provider_request_id','attempt_id','input_images','model_stage'}
+            timing={'elapsed_ms','dns_ms','first_tls_failure_ms','tcp_ms','proxy_connect_ms','tls_ms','connect_ms','upload_ms','wait_headers_ms','read_ms'}
+            optional=timing|{'tls_failed_before_send','http_status','http_version','provider_request_id','attempt_id','input_images','model_stage'}
             if (not required<=set(data) or not set(data)<=required|optional
-                    or data['stage'] not in ('connect','dns','upload','wait_headers','read_body','complete')
+                    or data['stage'] not in ('connect','proxy_connect','tls','dns','upload','wait_headers','read_body','complete')
                     or data['name'] not in ('none','interrupted','cancelled','disconnected','timeout','connect','transport','response_too_large')
                     or any(type(data[k]) is not bool for k in ('proxied','headers_received'))
+                    or 'tls_failed_before_send' in data and data['tls_failed_before_send'] is not True
                     or any(type(data[k]) is not int or not 0<=data[k]<=3600000 for k in timing&set(data))
                     or 'input_images' in data and (type(data['input_images']) is not int or not 0<=data['input_images']<=3)
                     or 'model_stage' in data and data['model_stage'] not in ('model','decision','generation')
