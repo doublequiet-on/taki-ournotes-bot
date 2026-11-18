@@ -501,6 +501,17 @@ class ProactiveChat:
                         self.control_event(request,'lightweight_context_required')
                         return None
                     evidence_context_id = previous.message_id
+        peer_reply_id = ''
+        if (lightweight and not evidence_route and settings['followup_enabled']
+                and request.conversation_id in self.one_pass_groups
+                and re.search(r'(?:那|那么|所以|也|同样|一样|也是)', request.body)
+                and re.search(r'[?？]|吗|嗎|呢|么|麼', request.body)):
+            peer = self.followups.adjacent_peer_reply(scope, request)
+            if (peer and peer.user_id not in {row['user_id'] for row in settings['excluded_users']}
+                    and (public_lookup_candidate(peer.source_text) or explicit_evidence_route(peer.source_text)
+                         or re.search(r'区服|日服|国际服|國際服|台服|臺服|版本', request.body))):
+                evidence_route = 'public_lookup'
+                peer_reply_id = peer.message_id
         if (lightweight and not evidence_route and request.conversation_id in self.one_pass_groups
                 and public_lookup_candidate(request.body)):
             evidence_route = 'public_lookup'
@@ -581,7 +592,7 @@ class ProactiveChat:
                     addressed_evidence if row.message_id == evidence_context_id else row
                     for row in candidate.messages))
             candidate=replace(candidate,lightweight=not evidence_route,evidence_route=evidence_route,
-                              evidence_context_id=evidence_context_id)
+                              evidence_context_id=evidence_context_id,peer_reply_id=peer_reply_id)
         job=service_request_id('proactive',request.instance_id,request.app_id,request.conversation_id,candidate.candidate_id)
         try:self.agent.service_budget.check(policy,'proactive',snapshot.profile,job,candidate.reserved_cost_micro,
             reply_times=self.agent.store.proactive_replies(request.scope))
@@ -714,6 +725,13 @@ class ProactiveChat:
         if work.proactive is None:return True
         try:
             settings=self.settings(work.request.conversation_id)
+            if work.proactive.peer_reply_id:
+                peer = self.followups.adjacent_peer_reply(self.scope(work.request), work.request)
+                if (not settings['followup_enabled'] or not peer or peer.message_id != work.proactive.peer_reply_id
+                        or any(row['user_id'] == peer.user_id for row in settings['excluded_users'])
+                        or not self.agent.store.source_valid(work.request.scope, peer.source_id, peer.source_time)
+                        or not self.agent.store.source_valid(work.request.scope, peer.message_id, peer.delivered_ms)):
+                    return False
             if work.continuation:
                 if not settings['followup_enabled'] or not self.platform_allowed(work.request):return False
                 current=self.agent.runtime.config.snapshot().for_group(work.request.conversation_id)

@@ -6124,6 +6124,52 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
         self.assertIn('声优表演方面和唱歌方面',messages[2]['content'])
         self.assertEqual(result['parts'],[])
 
+    async def test_short_card_name_answers_confirmed_question_without_mention(self):
+        self.client.request.return_value=self.result('你说的是哪张卡？')
+        plan,_=await self.prepare_native('/聊 这张卡的技能怎么触发')
+        self.event(plan,'intent');self.event(plan,'ack')
+        self.now+=.01
+        value=self.observation('满破那张燐子',seq=2)
+        self.tick+=1.6
+        bodies=ChatAgentTests.capture_native_bodies(self)
+        self.client.request.return_value=self.result('{"participation":"reply","text":"知道了，你说的是燐子那张。"}')
+        result,_,candidate=await self.candidate(value)
+        self.assertTrue(candidate[0].continuation)
+        self.assertTrue(result['send_allowed'])
+        history=bodies[0]['messages']
+        self.assertIn('只补卡名就接着答',history[0]['content'])
+        self.assertIn('哪张卡',history[-2]['content'])
+        self.assertIn('满破那张燐子',history[-1]['content'])
+
+    async def test_peer_region_followup_uses_public_answer_and_new_speakers_scope(self):
+        from ournotes_bot.domain.knowledge import KnowledgeScope
+        self.enable_lightweight_fact_fixture()
+        self.agent.proactive.one_pass_groups=frozenset({'g1'})
+        self.client.request.return_value=self.result('日服技能倍率看技能等级。')
+        first,_=await self.prepare_native('/聊 聊聊技能倍率')
+        self.event(first,'intent');self.event(first,'ack')
+        self.now+=.01
+        self.current_user='u2'
+        knowledge,_=self.install_lightweight_score_evidence(KnowledgeScope(server='intl'))
+        value=self.observation('那国际服也一样吗？',seq=2)
+        self.tick+=1.6
+        wire=[]
+        responses=iter([self.result(json.dumps(dict(participation='reply',text='',delay_seconds=None,
+            public_query='国际服 技能倍率',clarification=''))),self.result('国际服也看技能等级。')])
+        async def respond(profile,body,**kw):
+            wire.append(json.loads(json.dumps(body)))
+            return next(responses)
+        self.client.request.side_effect=respond
+        plan,_,candidate=await self.candidate(value)
+        self.assertFalse(candidate[0].continuation)
+        self.assertIsNone(candidate[0].followup)
+        self.assertTrue(candidate[0].peer_reply_id)
+        self.assertIn('日服技能倍率看技能等级',json.dumps(wire[0]['input'],ensure_ascii=False))
+        self.assertEqual(knowledge.retrieve.call_args.args[:2],('国际服 技能倍率',KnowledgeScope(server='intl')))
+        self.assertTrue(plan['send_allowed'])
+        self.agent.store.delete_messages(self.backend.works[plan['delivery_id']].request.scope,[candidate[0].peer_reply_id])
+        self.assertFalse(self.backend.lookup(plan['request_id'],'e1')['send_allowed'])
+
     async def test_followup_reply_uses_existing_delivery_and_does_not_save_other_observations(self):
         self.observation('其他人原先的话',seq=1)
         self.client.request.return_value=self.result('你说哪方面？')

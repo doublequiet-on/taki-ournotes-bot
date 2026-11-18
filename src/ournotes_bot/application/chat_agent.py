@@ -45,9 +45,14 @@ from .replies import PreparedReply
 
 logger=logging.getLogger(__name__)
 
+_CONCRETE_FOLLOWUP = (
+    '从已送达的上一句找承接点：你问哪张卡，对方只补卡名就接着答；'
+    '对方补了一个具体遭遇，可以顺着那个细节聊。第三位群友顺着你的结论追问另一服是否一样，也接着核对。'
+    '无需点名、引用或完整问句。结合中间发言辨认对方接的是谁；单说哈哈、确实，或转而回答别人时就收住。'
+)
 _PROACTIVE_CONTINUATION_RULES = (
     '对照已送达的 assistant 历史：同一段讨论主动说过一句而无人明确回应你，就退出，不再换角度补一句。'
-    '同人继续发言或同话题继续都不等于回应你。任何群友明确引用、回答、纠正或接你的话，都可以自然继续，无需每轮点名；'
+    + _CONCRETE_FOLLOWUP + '同人继续发言或同话题继续都不等于回应你。任何群友明确引用、回答、纠正或接你的话，都可以自然继续，无需每轮点名；'
     '不确定交流对象时略过。新的独立话题可重新考虑，冷却结束不构成参与理由。'
 )
 PROACTIVE_TURN_TAKING = f"""主动加入前先判断对话是否向你开放：面向全群的问题、共同讨论或明确分享可考虑参与；两人在一来一回、指向指定他人的话不要抢答。图片、感叹、问号和群里安静本身都不是开口理由。
@@ -58,7 +63,7 @@ _ONE_PASS_TURN_TAKING = PROACTIVE_TURN_TAKING.replace(
     _PROACTIVE_CONTINUATION_RULES,
     '先找当前发言有什么新增内容。即使还是同一个对象，明确请全群回答新的问题或取舍、分享具体新进展时，都可以只接新增的一点。'
     '已送达的答复用来判断哪些部分已经说过。只复述同一问题、报告同样的卡点、附和确认或单纯延续旧话题时静默。'
-    '群友明确引用、回答、纠正或接你的话，可以自然继续。冷却结束不构成参与理由。',
+    + _CONCRETE_FOLLOWUP + '群友明确引用、回答、纠正或接你的话，可以自然继续。冷却结束不构成参与理由。',
     1,
 )
 
@@ -996,7 +1001,8 @@ class ChatAgent:
             dates, versions = scope_mentions(work.request.body)
             args = dict(server=region, date=dates[0] if dates else None, version=versions[0] if versions else None)
             lookup = ToolCall('public_lookup_local', 'knowledge_search', json.dumps(args))
-            local, leases = await self.execute(work, lookup, work.request.body, None, leases, deadline, deadline)
+            local, leases = await self.execute(work, lookup, work.request.body, None, leases, deadline, deadline,
+                                               evidence_route='public_lookup', meta_question=query)
             self.proactive.trace(work, 'tool', name='knowledge_search', status=local['status'])
             if local['status'] == 'ok':
                 body = await compose(local['data'])
@@ -1340,11 +1346,17 @@ class ChatAgent:
                                '区分真提问、反问、体验分享、复述别人的问题，以及明确在向某位群友提问。'
                                '若当前句必须结合图片或缺失的引用才能理解，选 skip。此阶段不查询、不作答。')
             if public_plan:
-                decision_prompt = (natural_prompt+'\n已答全、两人对话、依赖缺失图片或私人背景时略过。当前是公开求助或有明确名称的公开术语时优先参与。结合最近文字理解省略的对象；'
-                    'public_query 只写可公开搜索的游戏名、区服、版本、对象及所问机制，不复制群聊原话、身份或私人称呼。'
+                decision_prompt = (natural_prompt+'\n已答全、两人对话、依赖缺失图片或私人背景时略过。当前是公开求助或有明确名称的公开术语时优先参与。结合最近文字理解省略的对象。'
+                    + _CONCRETE_FOLLOWUP + 'public_query 只写可公开搜索的游戏名、区服、版本、对象及所问机制，不复制群聊原话、身份或私人称呼。'
                     '公开新梗按其名称查询。当前在玩梗时可查懂再接梗。对象仍不明确且确实在求助，'
                     'clarification 只写一个简短问题。查询和澄清只选一项，skip/defer 时两项均为空。')
             decision_messages=self.initial_context(work,[{'role':'system','content':decision_prompt},*history],[])
+            if work.proactive.peer_reply_id:
+                visible = {row.get('message_id'): row for item in decision_messages[1:]
+                           if (row := json.loads(item['content'])).get('message_id')}
+                ack = visible.get(work.proactive.peer_reply_id)
+                if not ack or ack['role'] != 'assistant' or ack.get('reply_to') not in visible:
+                    return skip_proactive_evidence('lightweight_context_required')
             if evidence_context_id and not any(json.loads(item['content']).get('message_id')==evidence_context_id
                                                 for item in decision_messages[1:]):
                 return skip_proactive_evidence('lightweight_context_required')
@@ -2132,6 +2144,8 @@ class ChatAgent:
                             'data':{'source':'approved_knowledge','server':requested_server(scope_question) or 'jp'}},leases
                 previous=None
                 focus = {}
+                if evidence_route == 'public_lookup':
+                    args = {**args, 'query': meta_question}
                 if evidence_route in _JUST_EVIDENCE:
                     focus_query, document_ids = _JUST_EVIDENCE[evidence_route]
                     if just_card:

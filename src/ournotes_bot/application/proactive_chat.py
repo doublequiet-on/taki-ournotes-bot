@@ -130,6 +130,7 @@ class ProactiveCandidate:
     lightweight: bool = False
     evidence_route: str = ''
     evidence_context_id: str = ''
+    peer_reply_id: str = ''
     context_gap_ms: int | None = None
     image_boundary_id: str = ''
     addressed_message_ids: tuple[str, ...] = ()
