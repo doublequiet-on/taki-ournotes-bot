@@ -103,7 +103,7 @@ taki-knowledge sync --root <知识目录> --state <持久状态.sqlite3> --model
 taki-knowledge retrieve --root <知识目录> --state <持久状态.sqlite3> --model-dir <固定模型目录> --server jp --query <问题>
 ```
 
-`validate` 只读，输出每篇内容哈希和分类错误，`fact_review=false`。`import` 接受完整快照与用户交付清单，拒绝暂存目录和正式目录重叠。先验证全部格式、清单和确认记录，停用将被移除／替换的旧版本，构建完整候选混合索引，再逐文件原子替换（批准清单最后写入），重新观察后发布整份索引。候选编码失败会停止发布，已提交的停用下限继续生效。外部编辑与暂存修改会使导入停止，不能覆盖期间的新改动。文件阶段中断后按当前真实文件重验；已经生效的停用记录保留。受控操作仅在观察结果持久化后返回成功。
+`validate` 只读，输出每篇内容哈希和分类错误，`fact_review=false`。`import` 接受完整快照与用户交付清单，拒绝暂存目录和正式目录重叠。先验证全部格式、清单和确认记录，停用将被移除／替换的旧版本，构建完整候选混合索引，再逐文件原子替换（批准清单最后写入），重新观察后发布整份索引。非空候选即使全部命中向量缓存，也须确认编码器能初始化。候选编码失败会停止发布，已提交的停用下限继续生效。外部编辑与暂存修改会使导入停止，不能覆盖期间的新改动。文件阶段中断后按当前真实文件重验；已经生效的停用记录保留。受控操作仅在观察结果持久化后返回成功。
 
 交付清单为 `taki-knowledge-delivery/1`，含 `delivery_id/prepared_by/items/missing_materials`。每项需准确匹配 `id/file/content_sha256/game/servers/applicability/source_locators/limitations/confirmation_ref/status`：`source_locators` 按来源顺序列定位字符串，applicability 为同份对象；approved 文稿使用 confirmed 和对应确认记录，草稿使用 draft 和 null 确认记录。完整目录每篇都要列出；缺正文、来源或确认的材料列在 missing_materials，不虚构条目或正文。默认空交付模板：
 

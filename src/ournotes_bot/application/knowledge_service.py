@@ -203,7 +203,7 @@ class KnowledgeService:
                     lexical = build_lexical_index(selected)
                 mode, error = 'hybrid', None
                 try:
-                    index, vectors, count = add_vectors(lexical, self.encoder, cached, check_cached_encoder=True)
+                    index, vectors, count = add_vectors(lexical, self.encoder, cached)
                 except SemanticBuildError as exc:
                     # Only rebuilds of the observed allow set can use this path.
                     index, count = lexical, 0

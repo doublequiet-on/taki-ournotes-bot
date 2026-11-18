@@ -493,6 +493,23 @@ class KnowledgeAuthorityTests(unittest.TestCase):
         self.assertIn('新版测试资料', self.retrieve().lease.chunks[0].text)
         self.assertFalse(self.service.valid(captured))
 
+        # A new approval of the same text reuses all cached vectors. An
+        # unusable encoder must still prevent publication of the candidate.
+        prior_lease = self.retrieve().lease
+        baseline = scan_directory(self.service.root).fingerprint
+        self.write_fixture(3, root=staging, text='新版测试资料。')
+        delivery['items'][0]['confirmation_ref'] = 'fixture://isolated/3'
+        self.encoder.fail = True
+        with self.assertRaisesRegex(KnowledgeError, 'knowledge_index_build_failed'):
+            self.service.import_confirmed(staging, delivery)
+        self.assertEqual(scan_directory(self.service.root).fingerprint, baseline)
+        self.assertFalse(self.service.valid(prior_lease))
+        self.assertEqual(self.retrieve().code, 'empty')
+        self.encoder.fail = False
+        status = self.service.import_confirmed(staging, delivery)
+        self.assertEqual((status['index_mode'], status['last_build']['encoded_chunks']), ('hybrid', 0))
+        self.assertEqual(self.retrieve().mode, 'hybrid')
+
     def test_failed_authority_save_remains_closed_through_pending_recovery(self):
         from ournotes_bot.application.knowledge_service import KnowledgeService
         self.write_fixture();self.service.refresh();lease=self.retrieve().lease

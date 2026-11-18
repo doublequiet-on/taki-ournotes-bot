@@ -139,7 +139,7 @@ def _encode_vectors(encoder: SemanticEncoder, texts):
         raise SemanticBuildError('knowledge_index_build_failed') from None
 
 
-def add_vectors(rows, encoder: SemanticEncoder, cached, *, check_cached_encoder=False):
+def add_vectors(rows, encoder: SemanticEncoder, cached):
     keys, missing, updates = [], {}, {}
     for row in rows:
         title = row.terms[-1]
@@ -157,7 +157,7 @@ def add_vectors(rows, encoder: SemanticEncoder, cached, *, check_cached_encoder=
     available = {**cached, **updates}
     index = tuple(replace(row, vector=checked_vector(available[key], encoder.dimensions))
                   for row, key in zip(rows, keys))
-    if check_cached_encoder and index and not missing:
+    if index and not missing:
         # A complete cache can rebuild the document side while the query
         # encoder is unavailable. Initialize it without re-encoding passages.
         _encode_vectors(encoder, ())
