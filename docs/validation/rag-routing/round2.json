@@ -1,0 +1,386 @@
+{
+  "conditions": {
+    "fixture_base": "e72eb9cbe1557966e8121034c6aca870d1f5cf2d",
+    "panel": "2bd75e785565a507babaa30992fd2c8196c7105565566390ac69122766c3de3b",
+    "python": "3.12.0",
+    "official_sample": true,
+    "scripts": {
+      "run.py": "630942c2fd1b4355427615c652eaf89add89d0b21b63e679cf35bbe2278ee736",
+      "probes.py": "82971eacd6b6cac099b30cbc4f0d507d75a631d861d3e1ba67282a65e05dd111",
+      "run_behavior.py": "69275ba118edc31315e074091a5f0c890c4016a27d63475ea493336e2f116d76",
+      "behavior.py": "87a49239d6fdc596147a46443db3975b8b75157ef13f23b2d646852b41472a44"
+    },
+    "dependencies": {
+      "httpx": "0.28.1",
+      "aiohttp": "3.14.4",
+      "Pillow": "12.3.0",
+      "qq-botpy": "1.2.1"
+    }
+  },
+  "holdout_panel": "5c0a9cfd8732ea9e4d104d0769c9901577753ca40b8eee00d1edd642485c90d0",
+  "combo_parents": [
+    "3e30ad8cd3a2cbfbe5b1893705a18fef65a65b89",
+    "af66d87caad0caa24e417fdfe1867c921c682741",
+    "afabf8ab1d0bfecaabc4c66dd1a506fa65b3ba77"
+  ],
+  "versions": [
+    {
+      "source": "e72eb9cbe1557966e8121034c6aca870d1f5cf2d",
+      "relative_to": "baseline.json (v1)",
+      "public": {
+        "pass": 13,
+        "fail": 4,
+        "undetermined": 3
+      },
+      "holdout": {
+        "pass": 4,
+        "fail": 4
+      },
+      "changed_public_observations": [
+        {
+          "id": "D15",
+          "status": "fail",
+          "observed": {
+            "requests": [
+              {
+                "chapters": [
+                  "第1章"
+                ],
+                "tools": [],
+                "action": "final"
+              }
+            ],
+            "model_calls": 1,
+            "permits": 1,
+            "search_calls": 1,
+            "read_calls": 1,
+            "prepared": "还缺第2章正文",
+            "status": "success"
+          },
+          "reason": "AssertionError: Lists differ: ['第1章'] != ['第1章', '第2章']"
+        },
+        {
+          "id": "D20",
+          "status": "fail",
+          "observed": {
+            "requests": [
+              {
+                "first_passage_visible": false,
+                "tool_status": [],
+                "actions": [
+                  "set",
+                  "search-1"
+                ]
+              },
+              {
+                "first_passage_visible": true,
+                "tool_status": [
+                  "ok",
+                  "ok"
+                ],
+                "actions": [
+                  "search-2"
+                ]
+              },
+              {
+                "first_passage_visible": true,
+                "tool_status": [
+                  "ok",
+                  "ok",
+                  "ok"
+                ],
+                "actions": [
+                  "final"
+                ]
+              }
+            ],
+            "model_calls": 3,
+            "permits": 3,
+            "status": "success",
+            "coverage": [
+              true,
+              true
+            ],
+            "prepared": "蓝牌的领取条件为持有签条。第二项缺少资料"
+          },
+          "reason": "AssertionError: Lists differ: [True, True] != [True, False]",
+          "without_binding": {
+            "status": "pass",
+            "observed": {
+              "requests": [
+                {
+                  "first_passage_visible": false,
+                  "tool_status": [],
+                  "actions": [
+                    "set",
+                    "search-1"
+                  ]
+                },
+                {
+                  "first_passage_visible": true,
+                  "tool_status": [
+                    "ok",
+                    "ok"
+                  ],
+                  "actions": [
+                    "search-2"
+                  ]
+                },
+                {
+                  "first_passage_visible": true,
+                  "tool_status": [
+                    "ok",
+                    "ok",
+                    "ok"
+                  ],
+                  "actions": [
+                    "final"
+                  ]
+                }
+              ],
+              "model_calls": 3,
+              "permits": 3,
+              "status": "success",
+              "coverage": [
+                true,
+                true
+              ],
+              "prepared": "蓝牌的领取条件为持有签条。第二项缺少资料"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "source": "c330ba1649a8a7c6078e720a6008c7f96400af48",
+      "relative_to": "e72eb9cbe1557966e8121034c6aca870d1f5cf2d",
+      "public": {
+        "pass": 14,
+        "fail": 3,
+        "undetermined": 3
+      },
+      "holdout": {
+        "pass": 5,
+        "fail": 3
+      },
+      "changed_public_observations": [
+        {
+          "id": "D20",
+          "status": "pass",
+          "observed": {
+            "requests": [
+              {
+                "first_passage_visible": false,
+                "tool_status": [],
+                "actions": [
+                  "set",
+                  "search-1"
+                ]
+              },
+              {
+                "first_passage_visible": true,
+                "tool_status": [
+                  "ok",
+                  "ok"
+                ],
+                "actions": [
+                  "bind-first",
+                  "search-2"
+                ]
+              },
+              {
+                "first_passage_visible": true,
+                "tool_status": [
+                  "ok",
+                  "ok",
+                  "ok",
+                  "already_visible"
+                ],
+                "actions": [
+                  "final"
+                ]
+              },
+              {
+                "first_passage_visible": true,
+                "tool_status": [
+                  "ok",
+                  "ok",
+                  "ok",
+                  "already_visible"
+                ],
+                "actions": [
+                  "final"
+                ]
+              }
+            ],
+            "model_calls": 4,
+            "permits": 4,
+            "status": "success",
+            "coverage": [
+              true,
+              false
+            ],
+            "prepared": "蓝牌的领取条件为持有签条。第二项缺少资料"
+          },
+          "without_binding": {
+            "status": "pass",
+            "observed": {
+              "requests": [
+                {
+                  "first_passage_visible": false,
+                  "tool_status": [],
+                  "actions": [
+                    "set",
+                    "search-1"
+                  ]
+                },
+                {
+                  "first_passage_visible": true,
+                  "tool_status": [
+                    "ok",
+                    "ok"
+                  ],
+                  "actions": [
+                    "search-2"
+                  ]
+                },
+                {
+                  "first_passage_visible": true,
+                  "tool_status": [
+                    "ok",
+                    "ok",
+                    "already_visible"
+                  ],
+                  "actions": [
+                    "final"
+                  ]
+                },
+                {
+                  "first_passage_visible": true,
+                  "tool_status": [
+                    "ok",
+                    "ok",
+                    "already_visible"
+                  ],
+                  "actions": [
+                    "final"
+                  ]
+                }
+              ],
+              "model_calls": 4,
+              "permits": 4,
+              "status": "success",
+              "coverage": [
+                false,
+                false
+              ],
+              "prepared": "蓝牌的领取条件为持有签条。第二项缺少资料"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "source": "3e30ad8cd3a2cbfbe5b1893705a18fef65a65b89",
+      "relative_to": "c330ba1649a8a7c6078e720a6008c7f96400af48",
+      "public": {
+        "pass": 15,
+        "fail": 2,
+        "undetermined": 3
+      },
+      "holdout": {
+        "pass": 6,
+        "fail": 2
+      },
+      "changed_public_observations": [
+        {
+          "id": "D15",
+          "status": "pass",
+          "observed": {
+            "requests": [
+              {
+                "chapters": [
+                  "第1章"
+                ],
+                "tools": [
+                  "story_read",
+                  "story_search"
+                ],
+                "action": "story_search"
+              },
+              {
+                "chapters": [
+                  "第1章"
+                ],
+                "tools": [
+                  "story_read",
+                  "story_search"
+                ],
+                "action": "story_read",
+                "window": 0
+              },
+              {
+                "chapters": [
+                  "第1章",
+                  "第2章"
+                ],
+                "tools": [
+                  "story_read",
+                  "story_search"
+                ],
+                "action": "final"
+              }
+            ],
+            "model_calls": 3,
+            "permits": 3,
+            "search_calls": 2,
+            "read_calls": 2,
+            "prepared": "两章均有正文",
+            "status": "success"
+          }
+        }
+      ]
+    },
+    {
+      "source": "adad9bdde26aa611b3659e522ed573fb23939f9d",
+      "relative_to": "3e30ad8cd3a2cbfbe5b1893705a18fef65a65b89",
+      "public": {
+        "pass": 17,
+        "undetermined": 3
+      },
+      "holdout": {
+        "pass": 8
+      },
+      "changed_public_observations": [
+        {
+          "id": "D12",
+          "observed": {
+            "code": "ok",
+            "index": "ready",
+            "chunks": 1,
+            "valid": true,
+            "matched": [
+              true,
+              true
+            ]
+          },
+          "status": "pass"
+        },
+        {
+          "id": "D13",
+          "observed": {
+            "code": "ok",
+            "index": "ready",
+            "chunks": 1,
+            "valid": true,
+            "matched": [
+              true,
+              true
+            ]
+          },
+          "status": "pass"
+        }
+      ]
+    }
+  ]
+}
