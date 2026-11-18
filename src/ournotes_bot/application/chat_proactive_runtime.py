@@ -25,7 +25,7 @@ from .chat_jobs import (
 from .proactive_chat import ProactiveController, ProactivePolicy, select_topic_context, topic_keys
 from .chat_followup import Followups
 from .persona import (contextual_just_evidence_route, explicit_evidence_route,
-                      lightweight_image_reference, lightweight_needs_evidence)
+                      lightweight_image_reference, lightweight_needs_evidence, public_lookup_candidate)
 from . import replies
 
 
@@ -128,7 +128,7 @@ class ProactiveChat:
         return value
 
     @staticmethod
-    def response_format(*, one_pass=False):
+    def response_format(*, one_pass=False, lookup=False):
         properties = {
             'participation': {'type': 'string', 'enum': ['reply', 'skip', 'defer']},
             'text': {'type': 'string'},
@@ -142,6 +142,9 @@ class ProactiveChat:
             )
         else:
             properties['text']['enum'] = ['']
+        if lookup:
+            properties['public_query']={'type':'string'}
+            properties['clarification']={'type':'string'}
         return {'type': 'json_schema', 'name': 'proactive_one_pass' if one_pass else 'proactive_participation',
                 'strict': True, 'schema': {'type': 'object', 'properties': properties,
                     'required': list(properties), 'additionalProperties': False}}
@@ -187,9 +190,10 @@ class ProactiveChat:
             group_id.strip() for group_id in os.getenv('OURNOTES_PROACTIVE_LIGHTWEIGHT_GROUPS', '').split(',')
             if group_id.strip()
         )
-        self.one_pass_groups = self.lightweight_groups.intersection(
-            group_id.strip() for group_id in os.getenv('OURNOTES_PROACTIVE_ONE_PASS_GROUPS', '').split(',')
-        )
+        settings = agent.runtime.backend.settings
+        compact_group = getattr(settings, 'hermes_pilot_group', '') if getattr(settings, 'hermes_compact_standby', False) else ''
+        one_pass = os.getenv('OURNOTES_PROACTIVE_ONE_PASS_GROUPS', compact_group)
+        self.one_pass_groups = self.lightweight_groups.intersection(group_id.strip() for group_id in one_pass.split(','))
         self.services=ChatServices(agent.runtime.usage.path.parent,agent.runtime.backend.instance_id,
             agent.runtime.backend.app_id,filename='chat-proactive-services-v1.json',authority=agent.runtime.admin.db,require_authority=True)
 
@@ -448,6 +452,10 @@ class ProactiveChat:
             self.observation_responses.popitem(last=False)
         return result
 
+    def uses_public_lookup(self, group_id, route):
+        return group_id in self.one_pass_groups and route in (
+            'public_lookup', 'just_window', 'just_score', 'just_card', 'activity_time', 'story_fact')
+
     def candidate(self,request):
         if self.agent.audit_failures:return None
         owner=self.continuation_owner(self.scope(request))
@@ -494,6 +502,20 @@ class ProactiveChat:
                         self.control_event(request,'lightweight_context_required')
                         return None
                     evidence_context_id = previous.message_id
+        peer_reply_id = ''
+        if (lightweight and not evidence_route and settings['followup_enabled']
+                and request.conversation_id in self.one_pass_groups
+                and re.search(r'(?:那|那么|所以|也|同样|一样|也是)', request.body)
+                and re.search(r'[?？]|吗|嗎|呢|么|麼', request.body)):
+            peer = self.followups.adjacent_peer_reply(scope, request)
+            if (peer and peer.user_id not in {row['user_id'] for row in settings['excluded_users']}
+                    and (public_lookup_candidate(peer.source_text) or explicit_evidence_route(peer.source_text)
+                         or re.search(r'区服|日服|国际服|國際服|台服|臺服|版本', request.body))):
+                evidence_route = 'public_lookup'
+                peer_reply_id = peer.message_id
+        if (lightweight and not evidence_route and request.conversation_id in self.one_pass_groups
+                and public_lookup_candidate(request.body)):
+            evidence_route = 'public_lookup'
         if lightweight and not evidence_route and lightweight_needs_evidence(request.body):
             self.control_event(request,'chat_service_lightweight_evidence_required')
             return None
@@ -513,6 +535,10 @@ class ProactiveChat:
         else:
             minimum = proactive_minimum_cost_micro(profile)
             model_cost = maximum_cost_micro(profile) * self.agent.budget.model_calls
+        if self.uses_public_lookup(request.conversation_id, evidence_route):
+            web = self.owners()[1].web(snapshot)
+            if web and web.max_calls >= 1 and self.agent.budget.model_calls >= 3:
+                model_cost = math.ceil(maximum_cost_micro(profile) * min(4,self.agent.budget.model_calls) + web.unit_cost_micro)
         remaining=self.controller.remaining_cost(scope,
             evidence_reserve_micro=minimum if evidence_route else 0)
         if remaining is not None:model_cost=min(model_cost,remaining)
@@ -567,7 +593,7 @@ class ProactiveChat:
                     addressed_evidence if row.message_id == evidence_context_id else row
                     for row in candidate.messages))
             candidate=replace(candidate,lightweight=not evidence_route,evidence_route=evidence_route,
-                              evidence_context_id=evidence_context_id)
+                              evidence_context_id=evidence_context_id,peer_reply_id=peer_reply_id)
         job=service_request_id('proactive',request.instance_id,request.app_id,request.conversation_id,candidate.candidate_id)
         try:self.agent.service_budget.check(policy,'proactive',snapshot.profile,job,candidate.reserved_cost_micro,
             reply_times=self.agent.store.proactive_replies(request.scope))
@@ -700,6 +726,13 @@ class ProactiveChat:
         if work.proactive is None:return True
         try:
             settings=self.settings(work.request.conversation_id)
+            if work.proactive.peer_reply_id:
+                peer = self.followups.adjacent_peer_reply(self.scope(work.request), work.request)
+                if (not settings['followup_enabled'] or not peer or peer.message_id != work.proactive.peer_reply_id
+                        or any(row['user_id'] == peer.user_id for row in settings['excluded_users'])
+                        or not self.agent.store.source_valid(work.request.scope, peer.source_id, peer.source_time)
+                        or not self.agent.store.source_valid(work.request.scope, peer.message_id, peer.delivered_ms)):
+                    return False
             if work.continuation:
                 if not settings['followup_enabled'] or not self.platform_allowed(work.request):return False
                 current=self.agent.runtime.config.snapshot().for_group(work.request.conversation_id)

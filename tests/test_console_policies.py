@@ -2825,14 +2825,18 @@ class ChatAgentTests(Fixture, unittest.IsolatedAsyncioTestCase):
                 transport.update(stage='tls',name='timeout',elapsed_ms=5001,proxied=True,
                     headers_received=False,tls_failed_before_send=True,tls_ms=5000)
                 return AttemptResult('error',error_code='provider_unavailable')
-            transport.update(stage='complete',name='none',elapsed_ms=30,proxied=True,headers_received=True)
+            transport.update(stage='complete',name='none',elapsed_ms=30,proxied=True,headers_received=True,
+                             tcp_ms=3,tls_ms=5,request_sent_ms=10)
             return answer
         self.client.request.side_effect=provider
         plan,permits=await self.prepare_native('/聊 hello')
         self.assertEqual(plan['parts'][0]['business_status'],'success')
         self.assertEqual((len(calls),len(set(permits))),(2,2))
         events=self.backend.diagnostics.read(plan['request_id'])['chat_events']
-        self.assertEqual(next(e['data']['first_tls_failure_ms'] for e in events if e['kind']=='transport'),5001)
+        data=next(e['data'] for e in events if e['kind']=='transport')
+        self.assertEqual((data['first_tls_failure_ms'],data['tcp_ms'],data['tls_ms'],data['request_sent_ms']),
+                         (5001,3,5,10))
+        self.assertEqual(len(self.backend.model_runtime.usage.request_view(plan['request_id'])),1)
 
     async def test_named_chat_does_not_reconnect_after_upload(self):
         from ournotes_bot.domain.model_calls import AttemptResult
@@ -6247,8 +6251,10 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
         self.assertEqual(rows[0]['image_status'],'image_not_available')
         self.assertEqual(self.agent.store.db.execute('SELECT count(*) FROM runs').fetchone()[0],0)
         events=self.backend.diagnostics.read(plan['request_id'])
-        self.assertEqual([e['kind'] for e in events['chat_events']],['persona','image','context','decision','finished'])
-        persona,image,context,decision,_=events['chat_events']
+        self.assertEqual([e['kind'] for e in events['chat_events']],
+                         ['persona','image','context','attempt_timing','decision','finished'])
+        persona,image,context,timing,decision,_=events['chat_events']
+        self.assertEqual(timing['data']['lane'],'ordinary')
         self.assertEqual(persona['data'],dict(reason='story_not_configured',persona_version=PERSONA_VERSION))
         self.assertEqual(image['data']['status'],'image_not_available')
         self.assertEqual(context['data']['input_images'],0)
@@ -6639,6 +6645,52 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
         self.assertIn('声优表演，还是唱歌',messages[1]['content'])
         self.assertIn('声优表演方面和唱歌方面',messages[2]['content'])
         self.assertEqual(result['parts'],[])
+
+    async def test_short_card_name_answers_confirmed_question_without_mention(self):
+        self.client.request.return_value=self.result('你说的是哪张卡？')
+        plan,_=await self.prepare_native('/聊 这张卡的技能怎么触发')
+        self.event(plan,'intent');self.event(plan,'ack')
+        self.now+=.01
+        value=self.observation('满破那张燐子',seq=2)
+        self.tick+=1.6
+        bodies=ChatAgentTests.capture_native_bodies(self)
+        self.client.request.return_value=self.result('{"participation":"reply","text":"知道了，你说的是燐子那张。"}')
+        result,_,candidate=await self.candidate(value)
+        self.assertTrue(candidate[0].continuation)
+        self.assertTrue(result['send_allowed'])
+        history=bodies[0]['messages']
+        self.assertIn('只补卡名就接着答',history[0]['content'])
+        self.assertIn('哪张卡',history[-2]['content'])
+        self.assertIn('满破那张燐子',history[-1]['content'])
+
+    async def test_peer_region_followup_uses_public_answer_and_new_speakers_scope(self):
+        from ournotes_bot.domain.knowledge import KnowledgeScope
+        self.enable_lightweight_fact_fixture()
+        self.agent.proactive.one_pass_groups=frozenset({'g1'})
+        self.client.request.return_value=self.result('日服技能倍率看技能等级。')
+        first,_=await self.prepare_native('/聊 聊聊技能倍率')
+        self.event(first,'intent');self.event(first,'ack')
+        self.now+=.01
+        self.current_user='u2'
+        knowledge,_=self.install_lightweight_score_evidence(KnowledgeScope(server='intl'))
+        value=self.observation('那国际服也一样吗？',seq=2)
+        self.tick+=1.6
+        wire=[]
+        responses=iter([self.result(json.dumps(dict(participation='reply',text='',delay_seconds=None,
+            public_query='国际服 技能倍率',clarification=''))),self.result('国际服也看技能等级。')])
+        async def respond(profile,body,**kw):
+            wire.append(json.loads(json.dumps(body)))
+            return next(responses)
+        self.client.request.side_effect=respond
+        plan,_,candidate=await self.candidate(value)
+        self.assertFalse(candidate[0].continuation)
+        self.assertIsNone(candidate[0].followup)
+        self.assertTrue(candidate[0].peer_reply_id)
+        self.assertIn('日服技能倍率看技能等级',json.dumps(wire[0]['input'],ensure_ascii=False))
+        self.assertEqual(knowledge.retrieve.call_args.args[:2],('国际服 技能倍率',KnowledgeScope(server='intl')))
+        self.assertTrue(plan['send_allowed'])
+        self.agent.store.delete_messages(self.backend.works[plan['delivery_id']].request.scope,[candidate[0].peer_reply_id])
+        self.assertFalse(self.backend.lookup(plan['request_id'],'e1')['send_allowed'])
 
     async def test_followup_reply_uses_existing_delivery_and_does_not_save_other_observations(self):
         self.observation('其他人原先的话',seq=1)
@@ -8556,6 +8608,113 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
         self.agent.services.policy.return_value=self.policy
         self.agent.proactive.lightweight_groups=frozenset({'g1'})
 
+    def test_compact_one_pass_default_requires_lightweight_membership_and_allows_opt_out(self):
+        from ournotes_bot.application.chat_proactive_runtime import ProactiveChat
+        self.backend.settings=replace(self.backend.settings,hermes_compact_standby=True,hermes_pilot_group='g1')
+        with patch.dict(os.environ,{'OURNOTES_PROACTIVE_LIGHTWEIGHT_GROUPS':'g1,g2'}):
+            os.environ.pop('OURNOTES_PROACTIVE_ONE_PASS_GROUPS',None)
+            self.assertEqual(ProactiveChat(self.agent).one_pass_groups,{'g1'})
+            os.environ['OURNOTES_PROACTIVE_ONE_PASS_GROUPS']=''
+            self.assertFalse(ProactiveChat(self.agent).one_pass_groups)
+            os.environ['OURNOTES_PROACTIVE_ONE_PASS_GROUPS']='g2,g3'
+            self.assertEqual(ProactiveChat(self.agent).one_pass_groups,{'g2'})
+
+    async def test_public_game_lookup_prefers_reviewed_local_answer(self):
+        self.enable_lightweight_fact_fixture()
+        self.agent.proactive.one_pass_groups=frozenset({'g1'})
+        knowledge,_=self.install_lightweight_score_evidence()
+        self.client.request.side_effect=[
+            self.result(json.dumps(dict(participation='reply',text='',delay_seconds=None,
+                                        public_query='技能倍率',clarification=''))),
+            self.result('先看技能等级。')]
+        value=self.observation('这个游戏的技能倍率怎么算？')
+        self.tick+=1.6
+        plan,attempts,candidate=await self.candidate(value)
+        self.assertEqual(candidate[0].evidence_route,'public_lookup')
+        self.assertTrue(plan['send_allowed'],plan)
+        self.assertEqual(len(attempts),2)
+        db=self.backend.diagnostics.db
+        timings=[json.loads(row[0]) for row in db.execute(
+            "SELECT data FROM chat_events WHERE request_id=? AND kind='attempt_timing' ORDER BY id",(plan['request_id'],))]
+        self.assertEqual([row['lane'] for row in timings],['evidence','evidence'])
+        for row in timings:
+            offsets=[row[name] for name in ('permit_wait_ms','permit_granted_ms','http_start_ms','http_done_ms','attempt_done_ms')]
+            self.assertEqual(offsets,sorted(offsets))
+        self.assertTrue(db.execute("SELECT 1 FROM chat_events WHERE request_id=? AND kind='reply_ready'",
+                                   (plan['request_id'],)).fetchone())
+        knowledge.retrieve.assert_called_once()
+
+    async def test_public_game_lookup_searches_once_after_local_miss(self):
+        from ournotes_bot.application.chat_capabilities import WebCapability
+        from ournotes_bot.domain.model_calls import ProviderAction
+        self.enable_lightweight_fact_fixture()
+        self.agent.proactive.one_pass_groups=frozenset({'g1'})
+        self.agent.proactive.owners()[1].web=Mock(return_value=WebCapability(2,10000,'fixture'))
+        self.backend.knowledge=None
+        responses=iter([
+            self.result(json.dumps(dict(participation='reply',text='',delay_seconds=None,
+                                        public_query='游戏 技能倍率',clarification=''))),
+            replace(self.result('按技能等级取值'),citations=({'url':'https://example.org/skill','title':'技能'},),
+                    provider_actions=(ProviderAction('web_search',1),),native_calls=1),
+            self.result('倍率按技能等级取值[1]，先看当前等级。')])
+        call_limits=[]
+        async def respond(profile,body,**kwargs):
+            call_limits.append(body.get('max_tool_calls'))
+            return next(responses)
+        self.client.request.side_effect=respond
+        value=self.observation('这个游戏的技能倍率怎么算？')
+        self.tick+=1.6
+        plan,attempts,candidate=await self.candidate(value)
+        self.assertEqual(candidate[0].evidence_route,'public_lookup')
+        self.assertTrue(plan['send_allowed'],plan)
+        self.assertEqual(len(attempts),3)
+        self.assertEqual(call_limits,[None,1,None],str(plan['parts']))
+        self.assertIn('[出处](https://example.org/skill)，先看当前等级',plan['parts'][0]['text'])
+
+    async def test_public_game_lookup_clarifies_missing_card_without_search(self):
+        self.enable_lightweight_fact_fixture()
+        self.agent.proactive.one_pass_groups=frozenset({'g1'})
+        knowledge,_=self.install_lightweight_score_evidence()
+        self.client.request.return_value=self.result(json.dumps(dict(
+            participation='reply',text='',delay_seconds=None,public_query='',clarification='你说的是哪张卡？')))
+        value=self.observation('这张卡的技能怎么触发？')
+        self.tick+=1.6
+        plan,attempts,_=await self.candidate(value)
+        self.assertIn('哪张卡',plan['parts'][0]['text'])
+        self.assertEqual(len(attempts),1)
+        knowledge.retrieve.assert_not_called()
+
+    async def test_public_game_lookup_stops_before_search_when_answered(self):
+        self.enable_lightweight_fact_fixture()
+        self.agent.proactive.one_pass_groups=frozenset({'g1'})
+        knowledge,_=self.install_lightweight_score_evidence()
+        self.client.request.return_value=self.result(json.dumps(dict(
+            participation='skip',text='',delay_seconds=None,public_query='',clarification='')))
+        value=self.observation('原来游戏的技能倍率是这么算的？懂了')
+        self.tick+=1.6
+        plan,attempts,_=await self.candidate(value)
+        self.assertEqual(plan['parts'],[])
+        self.assertEqual(len(attempts),1)
+        knowledge.retrieve.assert_not_called()
+
+    async def test_public_game_lookup_skips_when_specialized_and_web_sources_missing(self):
+        from ournotes_bot.application.chat_capabilities import WebCapability
+        from ournotes_bot.domain.model_calls import ProviderAction
+        self.enable_lightweight_fact_fixture()
+        self.agent.proactive.one_pass_groups=frozenset({'g1'})
+        self.agent.proactive.owners()[1].web=Mock(return_value=WebCapability(1,10000,'fixture'))
+        self.backend.knowledge=None
+        self.client.request.side_effect=[
+            self.result(json.dumps(dict(participation='reply',text='',delay_seconds=None,
+                                        public_query='Our Notes JUST 激奏 排名',clarification=''))),
+            replace(self.result('没有查到'),provider_actions=(ProviderAction('web_search',1),),native_calls=1)]
+        value=self.observation('激奏 JUST 区间怎么计分')
+        self.tick+=1.6
+        plan,attempts,candidate=await self.candidate(value)
+        self.assertEqual(candidate[0].evidence_route,'just_score')
+        self.assertEqual(plan['parts'],[])
+        self.assertEqual(len(attempts),2)
+
     def install_lightweight_score_evidence(self, scope=None):
         from types import SimpleNamespace
         from ournotes_bot.domain.knowledge import Applicability,EvidenceChunkV1,EvidenceLease,KnowledgeScope
@@ -8894,6 +9053,21 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.client.request.await_count,2)
         self.assertEqual({attempt:usage.get(attempt) for attempt in old},old)
 
+    async def test_proactive_tls_failure_stops_after_one_permission(self):
+        from ournotes_bot.domain.model_calls import AttemptResult
+        async def handshake_failure(*args,transport,**kwargs):
+            transport.update(stage='tls',name='timeout',elapsed_ms=100,proxied=True,
+                             headers_received=False,tls_failed_before_send=True)
+            return AttemptResult('error',error_code='provider_unavailable')
+        self.client.request.side_effect=handshake_failure
+        value=self.observation();self.tick+=1.6
+        plan,attempts,_=await self.candidate(value)
+        self.assertEqual(plan['status'],'finished')
+        self.assertEqual(len(attempts),1)
+        self.client.request.assert_awaited_once()
+        events=self.backend.diagnostics.read(plan['request_id'])['chat_events']
+        self.assertEqual(next(e['data']['attempt_id'] for e in events if e['kind']=='attempt_timing'),attempts[0])
+
     async def test_provider_failure_keeps_attempt_hold_without_blocking_unspent_opportunity(self):
         import math
         from ournotes_bot.application.chat_jobs import maximum_cost_micro
@@ -9071,9 +9245,12 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
         self.assertEqual(actual,cost)
         self.assertEqual(self.backend.ledger.request(raw['request_id'])['status'],'aborted')
         self.assertEqual(self.backend.ledger.parts(work.delivery),[])
-        last=self.backend.diagnostics.read(raw['request_id'])['chat_events'][-1]['data']
-        self.assertEqual(last['reason'],'observation_replaced')
-        self.assertEqual(last['stage'],'generation' if generation else 'decision')
+        events=self.backend.diagnostics.read(raw['request_id'])['chat_events']
+        finished=[event['data'] for event in events if event['kind']=='finished']
+        self.assertEqual(len(finished),1)
+        self.assertEqual(finished[0]['reason'],'observation_replaced')
+        self.assertEqual(finished[0]['stage'],'generation' if generation else 'decision')
+        self.assertEqual(events[-1]['kind'],'attempt_timing')
         self.assert_chat_outcome(raw['request_id'],'observation_replaced')
 
     async def test_cancelled_known_decision_reconciles_controller_after_late_completion(self):

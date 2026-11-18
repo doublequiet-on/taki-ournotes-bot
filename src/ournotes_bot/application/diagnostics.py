@@ -114,6 +114,17 @@ class Diagnostics:
                   or version!=PERSONA_VERSION):
                 raise ValueError('chat_persona_data')
             return json.dumps(data)
+        if kind=='reply_ready' and not data:
+            return '{}'
+        if kind=='attempt_timing':
+            offsets={'claim_start_ms','claim_done_ms','permit_wait_ms','permit_granted_ms',
+                     'http_start_ms','http_done_ms','attempt_done_ms'}
+            if (not {'attempt_id','lane','attempt_done_ms'} <= set(data) <= offsets|{'attempt_id','lane'}
+                    or data['lane'] not in ('ordinary','continuation','evidence')
+                    or not isinstance(data['attempt_id'],str) or not re.fullmatch('[0-9a-f]{32}',data['attempt_id'])
+                    or any(type(data[key]) is not int or not 0<=data[key]<=3600000 for key in offsets & data.keys())):
+                raise ValueError('chat_attempt_timing_data')
+            return json.dumps(data)
         if kind=='attempt_stage':
             if (set(data)!={'attempt_id','stage'} or data['stage'] not in ('decision','generation')
                     or not isinstance(data['attempt_id'],str) or not re.fullmatch('[0-9a-f]{32}',data['attempt_id'])):
@@ -121,7 +132,8 @@ class Diagnostics:
             return json.dumps(data)
         if kind=='transport':
             required={'stage','name','elapsed_ms','proxied','headers_received'}
-            timing={'elapsed_ms','dns_ms','first_tls_failure_ms','tcp_ms','proxy_connect_ms','tls_ms','connect_ms','upload_ms','wait_headers_ms','read_ms'}
+            timing={'elapsed_ms','dns_ms','first_tls_failure_ms','tcp_ms','proxy_connect_ms','tls_ms',
+                    'connect_ms','upload_ms','request_sent_ms','wait_headers_ms','read_ms'}
             optional=timing|{'tls_failed_before_send','http_status','http_version','provider_request_id','attempt_id','input_images','model_stage'}
             if (not required<=set(data) or not set(data)<=required|optional
                     or data['stage'] not in ('connect','proxy_connect','tls','dns','upload','wait_headers','read_body','complete')
@@ -183,9 +195,9 @@ class Diagnostics:
             if db.execute('SELECT count(*) FROM chat_events WHERE request_id=?',(request_id,)).fetchone()[0]>=32:
                 self.dropped+=1
                 # Extra evidence must not displace events the original stream could retain.
-                if kind=='evidence' or not db.execute('''DELETE FROM chat_events WHERE id=(
-                        SELECT id FROM chat_events WHERE request_id=? AND kind='evidence'
-                        ORDER BY id LIMIT 1)''',(request_id,)).rowcount:
+                if kind in ('evidence','attempt_timing','reply_ready') or not db.execute('''DELETE FROM chat_events WHERE id=(
+                        SELECT id FROM chat_events WHERE request_id=? AND kind IN ('evidence','attempt_timing','reply_ready')
+                        ORDER BY CASE WHEN kind='evidence' THEN 1 ELSE 0 END,id LIMIT 1)''',(request_id,)).rowcount:
                     return
             db.execute('INSERT INTO chat_events(request_id,kind,data,observed_at) VALUES(?,?,?,?)',
                        (request_id,kind,payload,now))

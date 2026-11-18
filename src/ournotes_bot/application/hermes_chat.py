@@ -309,6 +309,7 @@ class HermesChat:
         # A compact lane refills only after releasing the decision worker.
         # Give an admitted follow-on step its remaining execution window.
         wait = not proactive or (lane.compact and work.hermes_provider_started)
+        work.hermes_claim_started = monotonic()
         claim = asyncio.create_task(lane.claim(limit,priority=int(not named),wait=wait))
         stopped = [asyncio.create_task(wait) for wait in (work.ended.wait(), run.stopped.wait())]
         worker = None
@@ -317,6 +318,7 @@ class HermesChat:
             if work.ended.is_set() or run.stopped.is_set():
                 return None
             worker = claim.result()
+            work.hermes_claim_finished = monotonic()
             require(not self.cleanup_failed, 'chat_hermes_cleanup_failed', 503)
             run.validate()
             worker.assignment = (run, profile.model, key, dispatch)

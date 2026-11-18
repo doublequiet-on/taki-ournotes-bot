@@ -398,3 +398,12 @@ def lightweight_needs_evidence(question):
             return True
         mechanic_context |= mechanic
     return False
+
+def public_lookup_candidate(question):
+    """Public game questions and named cultural references in the lightweight pilot."""
+    text = unicodedata.normalize('NFKC', question).strip()
+    if re.search(r'梗|黑话|简称|术语', text) and re.search(r'什么|啥|意思|叫|说法|「|“|笑死', text):
+        return True
+    game = re.search(r'Our Notes|邦邦|游戏|这张卡|这张留影|卡池|技能|留影|判定|活动|版本|机制|倍率|激奏|曲目|谱面|抽卡|保底|更新公告', text, re.I)
+    return bool(game and (lightweight_needs_evidence(text) or re.search(
+        r'[?？]|吗|怎么|改了|改动|更新了什么|啥时候|有谁知道|求教', text)))
