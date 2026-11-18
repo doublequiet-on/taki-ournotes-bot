@@ -385,7 +385,7 @@ def export_cases(g):
             # Current pagination shows only 16: total 31 does not itself exceed the visible-choice bound.
             g.sample("text", f"choice-total-{count}", f"续查边界：总记录{count}条", lambda result=result: q.PreparedReply(f"总数 {count}；当前分页可见 {len(capture_context(result,repo).visible)}；30上限针对可见选择，当前列表页16条。"), expected="text", synthetic=("记录数量", "ID"), route="capture_context（当前分页16条；说明文字为预览工具）")
         for name,command in (("help","/帮助"), ("about","/介绍"), ("language","/语言"), ("status","/数据状态"),
-                             ("debug","/调试数据"), ("abbrev","/查缩写 skk"), ("no-results","/查曲 不存在的完整歌曲名称xyz"),
+                             ("debug","/调试数据"), ("no-results","/查曲 不存在的完整歌曲名称xyz"),
                              ("invalid-page","/查卡 SSR 页999"), ("short-count","/问 MyGO歌曲有多少首"), ("unavailable","/查卡池")):
             g.sample("text", name, command, lambda command=command: prepare(command), expected="text", route="_prepare_reply → 纯文字分支")
         with patch.object(q,"song_detail_reply",side_effect=ValueError("controlled renderer failure")):

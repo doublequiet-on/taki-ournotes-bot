@@ -94,8 +94,8 @@ TOOLS.update({
                        obj({'queries':{**array(META_SCHEMA,4),'minItems':1}},('queries',)),'meta',('jp','intl')),
     'field_query':Tool('field_query','查询原句明确要求的单个歌曲、卡或角色字段；字段由程序解析。',obj({}),'field'),
     'event_cutoff':Tool('event_cutoff','查询原句中的活动挑战歌曲榜线观测及历史；不预测、不宣称终榜。',obj({}),'cutoff',('jp','tw','kr','en')),
-    'catalog_info':Tool('catalog_info','只读人物、活动、卡池、缩写或帮助。query必须取自原句，活动/卡池可用当前、历史、列表。',
-        obj({'kind':enum(('character','event','gacha','abbreviation','help','status')),'query':string(80)},('kind','query')),'info'),
+    'catalog_info':Tool('catalog_info','只读人物、活动、卡池、帮助或数据状态。query必须取自原句，活动/卡池可用当前、历史、列表。',
+        obj({'kind':enum(('character','event','gacha','help','status')),'query':string(80)},('kind','query')),'info'),
     'knowledge_search':Tool('knowledge_search','检索已审核的ON玩法教学、操作解释与规则；精确计算也先查资料，不能零工具猜测或拒绝。怎么玩/新人/入门用mode=intro。追问上一知识主题（如那LUCK呢、那国际服呢）填followup=true；新主题false。server默认jp，只有用户明确写出国际服/台服/臺服才用intl，明确同时询问日服和国际服才用common，不能因为机制共通自行填common。追问继承有效主题范围，当前明确条件优先。未指定且无继承的version/date填JSON null，不能猜测。',
         obj({'server':enum(('jp','intl','common')),'version':{'type':['string','null'],'maxLength':40},
              'date':{'type':['string','null'],'maxLength':10},'followup':{'type':'boolean'},
@@ -264,7 +264,7 @@ def execute(tool,args,question,repository,*,entity_evidence:tuple[EntityEvidence
     require(tool.kind=='info','tool_unregistered')
     kind,query=args['kind'],args['query'].strip()
     require(not re.search(r'[\r\n\\/;`]|https?:|<@',query,re.I),'tool_arguments_invalid')
-    heads={'character':'/查角色','event':'/查活动','gacha':'/查卡池','abbreviation':'/查缩写','help':'/帮助','status':'/状态'}
+    heads={'character':'/查角色','event':'/查活动','gacha':'/查卡池','help':'/帮助','status':'/状态'}
     # Calendar modes are grounded by the same complete-utterance parser used by
     # local queries. A word anywhere in the question must not authorize dropping
     # a historical date, named event, explicit region or another requested object.
