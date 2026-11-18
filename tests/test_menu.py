@@ -33,7 +33,7 @@ class MenuLimitsTests(unittest.TestCase):
         self.assertEqual(
             {item["name"] for item in PANEL_ITEMS},
             {"查谱面", "查曲", "查榜线", "查卡", "查留影卡", "查", "聊", "数据状态", "帮助", "介绍",
-             "继续", "详情", "查活动", "查卡池", "查角色", "查竞技场", "查玩家"},
+             "继续", "详情", "查活动", "查卡池", "查角色", "查竞技场"},
         )
         for item in PANEL_ITEMS:
             self.assertLessEqual(display_width(item["name"]), 14)
@@ -45,7 +45,7 @@ class MenuLimitsTests(unittest.TestCase):
         self.assertLessEqual(len(names), 20)
         self.assertEqual(set(names), {
             "查曲", "查谱面", "查榜线", "查卡", "查留影卡", "查卡面",
-            "查留影卡面", "查缩写", "查", "聊", "数据状态", "查竞技场", "查玩家",
+            "查留影卡面", "查缩写", "查", "聊", "数据状态", "查竞技场",
             "帮助", "介绍",
             "继续", "详情", "查活动", "查卡池", "查角色",
         })
@@ -56,13 +56,14 @@ class MenuLimitsTests(unittest.TestCase):
 
 
 class PanelUpdateTests(unittest.IsolatedAsyncioTestCase):
-    async def test_existing_install_adds_cutoff_to_both_panels_then_is_idempotent(self):
+    async def test_existing_install_updates_both_panels_then_is_idempotent(self):
         from ournotes_bot.platforms.qq import menu
         calls = []
         panels = {scope: {"panel_id": scope, "panel": {
             "remark": "ournotes-qq-bot-" + scope, "items": [
                 item for item in (GROUP_PANEL_ITEMS if scope == "group" else PANEL_ITEMS)
-                if item["name"] != "查榜线"]}}
+                if item["name"] != "查榜线"] + [
+                    {"type": "command", "name": "查玩家", "desc": "按公开ID查询四服玩家资料与名片"}]}}
             for scope in ("c2c", "group")}
         class Response:
             status = 200

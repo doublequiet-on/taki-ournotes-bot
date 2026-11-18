@@ -502,7 +502,7 @@ class PublicQueryContractTests(unittest.TestCase):
         import json
         from types import SimpleNamespace
         from ournotes_bot.domain.public_queries import PublicSnapshot
-        from ournotes_bot.query.public_queries import execute_arena, execute_player, quality_lines, stamp
+        from ournotes_bot.query.public_queries import execute_arena, quality_lines, stamp
         league = {'id': 1, 'bandId': 1, 'name': 'MyGO!!!!!', 'rules': [], 'ranks': []}
         catalog = {'entries': {'1': {'seasonId': 1, 'title': 'fixture', 'startAt': 1, 'endAt': 9999999999999, 'leagues': [league]}}}
         board = {'rows': [{'position': 99, 'rank': 99, 'point': 0, 'pointState': 'source_zero', 'name': 'zero'}, {'position': 100, 'rank': 99, 'point': None, 'pointState': 'null', 'name': 'unknown'}]}
@@ -518,11 +518,6 @@ class PublicQueryContractTests(unittest.TestCase):
         self.assertIn('source_zero', result.text)
         self.assertIn('null', result.text)
         from dataclasses import replace
-        source.player = lambda request: replace(snapshot, body=b'{"profile":{"name":"fixture"}}')
-        player = execute_player('1', repo)
-        self.assertEqual(player.status, 'success')
-        self.assertIn('来源观测：' + stamp(snapshot.observed_ms), player.text)
-        self.assertIn('来源更新：未获取', player.text)
         self.assertIn('来源观测：未获取', quality_lines(replace(snapshot, observed_ms=None)))
 
 
@@ -547,15 +542,9 @@ class PublicQueryContractTests(unittest.TestCase):
         fact=project_details(event,lambda path:'verified:'+path if path else '')[0].facts[0]
         self.assertEqual((fact.image_url,fact.image_kind),('verified:card','portrait'))
 
-    def test_public_id_precision_regions_and_invalid_arguments(self):
-        from ournotes_bot.query.public_queries import parse_player, parse_arena
+    def test_arena_regions_and_invalid_arguments(self):
+        from ournotes_bot.query.public_queries import parse_arena
         from ournotes_bot.domain.public_queries import PublicQueryError
-        self.assertEqual(parse_player('9223372036854775807').profile_id, '9223372036854775807')
-        for region, ident in [('hk', '21234567890'), ('en', '31234567890'), ('kr', '41234567890')]:
-            self.assertEqual(parse_player(ident + ' ' + region + ' 名片 页3').page, 3)
-        for query in ('0', '01', '9223372036854775808', '31234567890 hk', '1 jp hk', '1 页3', '1 名片 页0'):
-            with self.subTest(query=query), self.assertRaises(PublicQueryError):
-                parse_player(query)
         self.assertEqual(parse_arena('MyGO!!!!! hk 榜单 排名=90-100').last, 100)
         for query in ('MyGO!!!!! 榜单 排名=2-1', 'MyGO!!!!! 榜单 排名=1-101', 'MyGO!!!!! jp hk', '不存在的乐队'):
             with self.subTest(query=query), self.assertRaises(PublicQueryError):
@@ -626,45 +615,17 @@ class PublicQueryContractTests(unittest.TestCase):
                 source.arena(region)
 
 
-    def test_player_identity_and_cache_expiration(self):
-        import json
+    def test_empty_arena_document_rejected_at_source(self):
         from ournotes_bot.sources.haneoka.public_queries import PublicQueries
-        from ournotes_bot.domain.public_queries import PlayerRequest, PublicQueryError
-        calls, now = [], [100]
-        value = {'region': 'jp', 'profileId': '99', 'profile': {'name': 'fixture', 'rankExp': 0, 'totalFavorite': 0}}
-        def fetch(*args):
-            calls.append(args)
-            return 200, json.dumps(value).encode(), {}
-        source = PublicQueries(fetch=fetch, clock=lambda: now[0])
-        first = source.player(PlayerRequest('99'))
-        self.assertEqual(first, source.player(PlayerRequest('99')))
-        self.assertEqual(len(calls), 1)
-        now[0] += 60
-        source.player(PlayerRequest('99'))
-        self.assertEqual(len(calls), 2)
-        value['region'] = 'kr'
-        with self.assertRaises(PublicQueryError):
-            source.player(PlayerRequest('100'))
-
-    def test_source_bound_namecard_does_not_fetch_foreign_or_other_player(self):
-        from ournotes_bot.sources.haneoka.public_queries import PublicQueries
-        from ournotes_bot.domain.public_queries import PlayerRequest, PublicQueryError
-        calls = []
-        source = PublicQueries(fetch=lambda *args: calls.append(args))
-        for path in ('https://evil.invalid/image.png', '/api/v1/game/records/jp/players/100/cards/1/download?file=99_a',
-                     '/api/v1/game/records/jp/players/99/cards/1/download?file=100_a'):
-            with self.assertRaises(PublicQueryError):
-                source.namecard(PlayerRequest('99'), {'page': 1, 'downloadUrl': path})
-        self.assertFalse(calls)
+        from ournotes_bot.domain.public_queries import PublicQueryError
         source = PublicQueries(fetch=lambda *args: (200, b'{}', {}))
         with self.assertRaises(PublicQueryError) as failure:
             source.arena('jp')
         self.assertEqual(failure.exception.status, 'invalid_source')
 
-    def test_arena_null_song_rules_and_malformed_namecard_reject_at_source(self):
-        import json
-        from ournotes_bot.sources.haneoka.public_queries import arena_document, PublicQueries
-        from ournotes_bot.domain.public_queries import PublicQueryError, PlayerRequest
+    def test_arena_null_song_rules_reject_at_source(self):
+        from ournotes_bot.sources.haneoka.public_queries import arena_document
+        from ournotes_bot.domain.public_queries import PublicQueryError
         song = {'musicId': 1, 'musicTitle': 'fixture', 'musicType': 1, 'arenaMissions': [1, 2, 3], 'arenaPublishedAt': 0}
         league = {'id': 1, 'bandId': 1, 'name': 'fixture', 'rules': [], 'ranks': [], 'songs': [song]}
         document = {'entries': {'1': {'seasonId': 1, 'title': 'fixture', 'startAt': 1, 'endAt': 2, 'leagues': [league]}}}
@@ -675,18 +636,11 @@ class PublicQueryContractTests(unittest.TestCase):
             with self.subTest(field=field), self.assertRaises(PublicQueryError):
                 arena_document(document)
             song[field] = original
-        for card in ({'name': 1}, {'pages': [{'page': 1, 'imageUrl': 1}]}):
-            data = {'region': 'jp', 'profileId': '99', 'profile': {'profileCard': card}}
-            source = PublicQueries(fetch=lambda *args: (200, json.dumps(data).encode(), {}))
-            with self.assertRaises(PublicQueryError):
-                source.player(PlayerRequest('99'))
 
     def test_local_grammar_requires_whole_question(self):
         from ournotes_bot.natural_query.on_query import public_information_command
-        self.assertEqual(public_information_command('玩家 9223372036854775807 jp'), '/查玩家 9223372036854775807 jp')
         self.assertEqual(public_information_command('MyGO竞技场人数'), '/查竞技场 MyGO 人数')
         self.assertEqual(public_information_command('本期活动奖励'), '/查活动 奖励')
-        self.assertIsNone(public_information_command('玩家 99 jp 顺便猜一下密码'))
 
     def test_activity_sections_keep_conditions_unknown_and_explicit_links(self):
         from ournotes_bot.sources.haneoka.activity_details import project_details

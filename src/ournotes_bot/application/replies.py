@@ -77,7 +77,7 @@ def recognizes_message(content: str) -> bool:
     for text in split_commands(content):
         head = text.split(None, 1)[0].casefold()
         if (head in ALIASES or head in UNAVAILABLE_COMMANDS
-                or head in {"查角色", "查卡池", "查活动", "查竞技场", "查玩家", "event", "イベント"}
+                or head in {"查角色", "查卡池", "查活动", "查竞技场", "event", "イベント"}
                 or text.casefold() in specials or parse_operation(text) is not None or is_ai_request(text)):
             return True
     return False
@@ -889,35 +889,8 @@ def render_prepared_inner(reply, result, repository, locale, candidate=None):
         if isinstance(result, CommandResult) and (result.info is not None or result.activity is not None):
             from ..rendering.info_layout import render_info
             answer = result.info if result.info is not None else result.activity
-            if answer.original_image is not None:
-                from io import BytesIO
-                from PIL import Image
-                from ..rendering.image_output import encode_image, check_geometry
-                with Image.open(BytesIO(answer.original_image)) as original:
-                    check_geometry(original.size)
-                    original.load()
-                    encoded = encode_image(original, preserve_size=True, strategy='png-first')
-                original_page=PreparedReply(answer.text, encoded, complete_text=True)
-                # Preserve original pixels/page identity; render captured status as a companion.
-                views=tuple(replace(view,hero_url='') for view in answer.views if view.presentation=='player')
-                if views:
-                    status_pages=tuple(PreparedReply(page.text,page.image,complete_text=True)
-                                       for page in render_info(replace(answer,views=views,original_image=None),load=visual_asset))
-                    return PreparedReply(answer.text,pages=(original_page,*status_pages),complete_text=True)
-                return original_page
-            captured = dict(answer.captured_images)
-            def information_asset(url, size):
-                if url not in captured:
-                    return visual_asset(url, size)
-                from io import BytesIO
-                from PIL import Image, ImageOps
-                from ..rendering.image_output import check_geometry
-                with Image.open(BytesIO(captured[url])) as source:
-                    check_geometry(source.size)
-                    source.load()
-                    return ImageOps.contain(source.convert('RGB'), size)
             pages = tuple(PreparedReply(page.text, page.image, complete_text=True)
-                          for page in render_info(answer, load=information_asset))
+                          for page in render_info(answer, load=visual_asset))
             if pages:
                 return pages[0] if len(pages) == 1 else PreparedReply(reply, pages=pages, complete_text=True)
             return PreparedReply(answer.text, complete_text=True)

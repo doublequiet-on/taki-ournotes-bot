@@ -82,9 +82,6 @@ def public_information_command(question):
     """Whole-question grammar; execution and identity checks stay in direct queries."""
     text = question.strip().strip('？?。！!')
     text = re.sub(r'^(?:请|帮我|查询|查看|查一下)\s*', '', text)
-    player = re.fullmatch(r'(?:查)?玩家\s+([0-9]{1,19})(?:\s+(jp|hk|tw|kr|en|日服|国服|韩服|英服))?(?:\s+(名片)(?:\s+(页[1-9][0-9]{0,2}))?)?', text, re.I)
-    if player:
-        return '/查玩家 ' + ' '.join(value for value in player.groups() if value)
     event = re.fullmatch(r'(?:(jp|hk|tw|kr|en|日服|国服|韩服|英服)\s*)?(?:本期|这期|当前)活动(?:的)?(加成|奖励|任务|卡池)', text, re.I)
     if event:
         return '/查活动 ' + ' '.join(value for value in event.groups() if value)

@@ -80,7 +80,7 @@ Example: /song mygo 27, /chart 100001 EXPERT, /card tomori""",
 /状態：プロセスとデータの状態  /言語：言語案内  /ヘルプ：この案内
 例：/曲 mygo 27、/譜面 100001 EXPERT、/カード ともり""",
 }
-HELP_TEXT += '\n/查竞技场 [服] [乐队] [总览/日程/曲池/段位/奖励/榜单/人数] [赛季=N] [排名=1-20]\n/查玩家 玩家ID [服] [名片 [页N]]\n/查活动 [服或日服ID] 加成/奖励/任务/卡池'
+HELP_TEXT += '\n/查竞技场 [服] [乐队] [总览/日程/曲池/段位/奖励/榜单/人数] [赛季=N] [排名=1-20]\n/查活动 [服或日服ID] 加成/奖励/任务/卡池'
 HELP_TEXTS['zh'] = HELP_TEXT + '\n/语言：查看英文和日文指令'
 
 COMMAND_HELP = {
@@ -647,11 +647,10 @@ def resolve_command(content: str, repository: SongRepository, *,
     text = _clean_message(content)
     parts = text.split(None, 1)
     head = parts[0].casefold() if parts else ""
-    if head in {"查竞技场", "查玩家"}:
-        from .query.public_queries import execute_arena, execute_player
-        execute = execute_arena if head == "查竞技场" else execute_player
-        answer = execute(parts[1] if len(parts) > 1 else "", repository)
-        return CommandResult(("arena" if head == "查竞技场" else "player", text, None), info=answer)
+    if head == "查竞技场":
+        from .query.public_queries import execute_arena
+        answer = execute_arena(parts[1] if len(parts) > 1 else "", repository)
+        return CommandResult(("arena", text, None), info=answer)
     if head == "查角色":
         from .query.character_query import execute_character
         answer = execute_character(parts[1] if len(parts) > 1 else "", repository)
