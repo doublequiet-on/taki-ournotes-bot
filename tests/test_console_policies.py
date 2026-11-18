@@ -1390,6 +1390,18 @@ class NativeTransportTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(calls,[body,body])
         self.assertEqual(tunnels,[f'CONNECT {authority} HTTP/1.1'.encode()]*2)
 
+    async def test_failed_proxy_handshake_records_each_pre_send_phase(self):
+        from ournotes_bot.sources.model_provider import _TransportTrace
+        trace=_TransportTrace(True)
+        for event in ('connection.connect_tcp.started','connection.connect_tcp.complete',
+                      'proxy.start_tls.started','proxy.start_tls.failed'):
+            await trace.proxy_event(event,{})
+        data=trace.snapshot()
+        self.assertEqual(data['stage'],'tls')
+        self.assertTrue(data['tls_failed_before_send'])
+        for key in ('tcp_ms','proxy_connect_ms','tls_ms'): self.assertIn(key,data)
+        self.assertNotIn('upload_ms',data)
+
     async def test_openai_proxy_trace_refuses_retry_after_send(self):
         import httpx
         from ournotes_bot.sources.model_provider import _TransportTrace
@@ -2807,6 +2819,41 @@ class ChatAgentTests(Fixture, unittest.IsolatedAsyncioTestCase):
                 else:self.repo.song_metrics.current.assert_called_once_with(server)
                 if status=='ok':self.assertIn('合成短曲',str(output['data']))
                 self.event(plan,'intent');self.event(plan,'ack')
+
+    async def test_named_chat_reconnects_once_after_pre_send_tls_failure(self):
+        from ournotes_bot.domain.model_calls import AttemptResult
+        answer=self.client.request.return_value
+        calls=[]
+        async def provider(*args,transport,**kwargs):
+            calls.append(1)
+            if len(calls)==1:
+                transport.update(stage='tls',name='timeout',elapsed_ms=5001,proxied=True,
+                    headers_received=False,tls_failed_before_send=True,tls_ms=5000)
+                return AttemptResult('error',error_code='provider_unavailable')
+            transport.update(stage='complete',name='none',elapsed_ms=30,proxied=True,headers_received=True,
+                             tcp_ms=3,tls_ms=5,request_sent_ms=10)
+            return answer
+        self.client.request.side_effect=provider
+        plan,permits=await self.prepare_native('/聊 hello')
+        self.assertEqual(plan['parts'][0]['business_status'],'success')
+        self.assertEqual((len(calls),len(set(permits))),(2,2))
+        events=self.backend.diagnostics.read(plan['request_id'])['chat_events']
+        data=next(e['data'] for e in events if e['kind']=='transport')
+        self.assertEqual((data['first_tls_failure_ms'],data['tcp_ms'],data['tls_ms'],data['request_sent_ms']),
+                         (5001,3,5,10))
+        self.assertEqual(len(self.backend.model_runtime.usage.request_view(plan['request_id'])),1)
+
+    async def test_named_chat_does_not_reconnect_after_upload(self):
+        from ournotes_bot.domain.model_calls import AttemptResult
+        async def provider(*args,transport,**kwargs):
+            transport.update(stage='wait_headers',name='timeout',elapsed_ms=1000,proxied=True,
+                             headers_received=False,upload_ms=1)
+            return AttemptResult('error',error_code='provider_unavailable')
+        self.client.request.side_effect=provider
+        plan,permits=await self.prepare_native('/聊 hello')
+        self.assertEqual(plan['parts'][0]['business_status'],'provider_unavailable')
+        self.assertEqual(len(permits),1)
+        self.client.request.assert_awaited_once()
 
     async def test_transport_observation_is_correlated_without_changing_usage_or_logging_prompt(self):
         answer=self.client.request.return_value
@@ -4255,6 +4302,153 @@ class ChatResearchTaskTests(Fixture,unittest.IsolatedAsyncioTestCase):
         self.repo.metadata.update(data_source='haneoka',data_version='r-fixture',text_version='t-fixture')
         verify=patch('ournotes_bot.application.site_lookup.verify_catalog');verify.start();self.addCleanup(verify.stop)
 
+    async def test_one_knowledge_hit_leaves_other_object_and_condition_open(self):
+        self.catalog()
+        NativeRuntimeTests.reviewed_fixture(self, '红色夹具：合成曲100001只在彩排时使用甲规则。')
+        service = self.backend.knowledge
+        refs = ['song:100001', 'song:100002']
+        requirements = [dict(label=label, entity_refs=refs, fields=[], knowledge=True, difficulty='')
+                        for label in ('彩排条件', '公演条件')]
+        def plan(items):
+            return self.call('research_task', action='set', goal='分别比较两首的彩排与公演条件',
+                             entity_refs=refs, requirements=items)
+        def search():
+            return self.call('knowledge_search', query='红色', server='jp', date=None, version=None)
+        bodies = []
+        async def respond(profile, body, **kwargs):
+            bodies.append(json.loads(json.dumps(body)))
+            if len(bodies) == 1:
+                return self.result(calls=(plan(requirements), search()))
+            if len(bodies) == 2:
+                # An over-eager final used to pass with all requirements marked completed.
+                return self.result('都查到了。')
+            if len(bodies) == 3:
+                evidence = json.loads([m['content'] for m in body['messages'] if m['role']=='tool'][-1])
+                chunk = json.loads(evidence['data'])['passages'][0]['chunk_id']
+                claimed = [dict(requirements[0], evidence=[dict(entity_ref=refs[0], chunk_id=chunk)]), requirements[1]]
+                wrong_object = dict(requirements[0], entity_refs=[refs[0]],
+                                    evidence=[dict(entity_ref=refs[1], chunk_id=chunk)])
+                return self.result(calls=(plan([wrong_object, requirements[1]]), plan(claimed), search()))
+            return self.result('只查到第一首的彩排条件，其余缺资料。')
+        self.client.request.side_effect = respond
+        with patch.object(service, 'retrieve', wraps=service.retrieve) as lookup:
+            reply, attempts = await self.prepare_native('/聊 比较合成曲100001和合成曲100002的彩排与公演条件')
+        lookup.assert_called_once()
+        task = self.backend.works[reply['delivery_id']].chat_task
+        self.assertEqual(task.coverage()['status'], 'partial')
+        self.assertEqual(len(attempts), 4)
+        self.assertEqual([item['missing'] for item in task.coverage()['items']],
+                         [[refs[1]+'/knowledge'], [ref+'/knowledge' for ref in refs]])
+        statuses = [json.loads(m['content'])['status'] for m in bodies[-1]['messages'] if m['role']=='tool']
+        self.assertEqual(statuses[-3:], ['unissued_evidence','ok','already_visible'])
+        self.assertIn('其余缺资料', reply['parts'][0]['text'])
+        self.event(reply,'intent');self.event(reply,'ack')
+        agent = self.backend.model_runtime.agent
+        agent.budget = replace(agent.budget, model_calls=1)
+        wire = self.capture_native_bodies()
+        self.client.request.side_effect = None
+        self.client.request.return_value = self.result('按这次问题重新查。')
+        await self.prepare_native('/聊 接着比较这两首', seq=2)
+        inherited = next(json.loads(m['content'])['research_task'] for m in wire[-1]['messages']
+                         if m['role']=='user' and 'research_task' in json.loads(m['content']))
+        self.assertEqual(inherited['coverage']['status'], 'waiting')
+        self.assertFalse(any('evidence' in item for item in inherited['requirements']))
+
+    async def test_two_objectless_knowledge_requirements_need_a_visible_binding(self):
+        NativeRuntimeTests.reviewed_fixture(self, '蓝牌的领取条件为持有签条。')
+        items = [dict(label=label, entity_refs=[], fields=[], knowledge=True, difficulty='')
+                 for label in ('蓝牌的领取条件','蓝牌的归还地点')]
+        def task(requirements):
+            return self.call('research_task', action='set', goal='查清蓝牌的领取条件和归还地点',
+                             entity_refs=[], requirements=requirements)
+        states = []
+        async def respond(profile, body, **kwargs):
+            outputs = [json.loads(m['content']) for m in body['messages'] if m['role']=='tool']
+            if not outputs:
+                return self.result(calls=(task(items),))
+            if len(outputs)==1:
+                return self.result(calls=(self.call('knowledge_search', server='jp', date=None, version=None,
+                                                    query=items[0]['label']),))
+            if len(outputs)==2:
+                work, = self.backend.works.values()
+                coverage = work.chat_task.coverage()
+                states.append([row['complete'] for row in coverage['items']])
+                passage, = json.loads(outputs[1]['data'])['passages']
+                self.assertIn('持有签条', passage['text'])
+                binding = dict(entity_ref='', chunk_id=passage['chunk_id'])
+                return self.result(calls=(task([dict(items[0], evidence=[binding]), items[1]]),))
+            return self.result('领取要持有签条，归还地点缺资料。')
+        self.client.request.side_effect = respond
+        reply, _ = await self.prepare_native('/聊 把蓝牌的领取条件和归还地点分别查清')
+        self.assertEqual(states, [[False,False]])
+        self.assertEqual(reply['parts'][0]['business_status'], 'success')
+        coverage = self.backend.works[reply['delivery_id']].chat_task.coverage()
+        self.assertEqual([row['complete'] for row in coverage['items']], [True,False])
+
+    async def test_knowledge_evidence_is_issued_after_model_input_and_reset_on_topic_switch(self):
+        NativeRuntimeTests.reviewed_fixture(self, '蓝牌的领取条件为持有签条。')
+        chunk_id = self.backend.knowledge.index[0].chunk.chunk_id
+        requirement = dict(label='领取条件', entity_refs=[], fields=[], knowledge=True, difficulty='')
+        attached = dict(requirement, evidence=[dict(entity_ref='', chunk_id=chunk_id)])
+        def task(item, goal):
+            return self.call('research_task', action='set', goal=goal, entity_refs=[], requirements=[item])
+        bodies = self.capture_native_bodies()
+        goal = '查蓝牌领取条件'
+        self.client.request.side_effect = [
+            self.result(calls=(task(requirement, goal),
+                               self.call('knowledge_search', server='jp', date=None, version=None, query='蓝牌的领取条件'),
+                               task(attached, goal))),
+            self.result(calls=(task(attached, goal),)),
+            self.result('领取需要签条。')]
+        reply, _ = await self.prepare_native('/聊 把蓝牌的领取条件查清')
+        statuses = [json.loads(m['content'])['status'] for m in bodies[-1]['messages'] if m['role']=='tool']
+        self.assertEqual(statuses, ['ok','ok','unissued_evidence','ok'])
+        self.assertTrue(self.backend.works[reply['delivery_id']].chat_task.coverage()['items'][0]['complete'])
+        self.event(reply, 'intent')
+        self.event(reply, 'ack')
+
+        switched_goal = '核对紫牌的保管步骤'
+        switched = dict(attached, label=switched_goal)
+        self.client.request.side_effect = [self.result(calls=(task(switched, switched_goal),)),
+                                           self.result('紫牌保管步骤缺资料。')]
+        reply, _ = await self.prepare_native('/聊 换个话题，查紫牌的保管步骤', seq=2)
+        statuses = [json.loads(m['content'])['status'] for m in bodies[-1]['messages'] if m['role']=='tool']
+        self.assertEqual(statuses, ['unissued_evidence'])
+        self.assertNotEqual(self.backend.works[reply['delivery_id']].chat_task.coverage()['status'], 'completed')
+
+    async def test_knowledge_repeat_after_new_revision_and_unissued_binding(self):
+        manifest = NativeRuntimeTests.reviewed_fixture(self).with_name('approvals.json')
+        service = self.backend.knowledge
+        agent = self.backend.model_runtime.agent
+        agent.budget = replace(agent.budget, model_calls=3)
+        requirement = dict(label='彩排条件', fields=[], entity_refs=[], knowledge=True, difficulty='')
+        def set_task(item):
+            return self.call('research_task', action='set', goal='核对彩排条件', entity_refs=[], requirements=[item])
+        def search():
+            return self.call('knowledge_search', query='红色', server='jp', date=None, version=None)
+        wire = []
+        async def respond(profile, body, **kwargs):
+            wire.append(json.loads(json.dumps(body)))
+            if len(wire)==1:
+                return self.result(calls=(set_task(requirement), search()))
+            if len(wire)==2:
+                updated = dict(json.loads(manifest.read_text(encoding='utf-8')), revision=2)
+                manifest.write_text(json.dumps(updated), encoding='utf-8')
+                self.assertEqual(service.refresh()['code'], 'ready')
+                invalid = dict(requirement, evidence=[dict(entity_ref='', chunk_id='never-issued')])
+                return self.result(calls=(set_task(invalid), search()))
+            return self.result('资料未写彩排条件。')
+        self.client.request.side_effect = respond
+        with patch.object(service,'retrieve',wraps=service.retrieve) as lookup:
+            reply, attempts = await self.prepare_native('/聊 红色夹具用什么彩排条件')
+        self.assertEqual(lookup.call_count, 2)
+        self.assertNotEqual(lookup.call_args_list[0].args[2], lookup.call_args_list[1].args[2])
+        self.assertEqual(len(attempts), 3)
+        self.assertFalse(wire[-1].get('tools'))
+        statuses = [json.loads(m['content'])['status'] for m in wire[-1]['messages'] if m['role']=='tool']
+        self.assertEqual(statuses, ['ok','ok','unissued_evidence','ok'])
+        self.assertEqual(self.backend.works[reply['delivery_id']].chat_task.coverage()['items'][0]['missing'], ['knowledge'])
+
     async def test_explicit_comparison_and_replacement_need_two_model_calls(self):
         self.catalog();bodies=self.capture_native_bodies()
         refs=['song:100001','song:100002']
@@ -4531,6 +4725,332 @@ class ChatSourceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
     asyncSetUp=ChatAgentTests.asyncSetUp
     prepare_native=NativeRuntimeTests.prepare_native
     event=NativeRuntimeTests.event
+
+    def chapter_scope_fixture(self):
+        from test_platform_boundary import StoryPublicationTests
+        from ournotes_bot.sources.story_files import source_content_hash
+
+        fixture = StoryPublicationTests()
+        fixture.setUp()
+        self.addCleanup(fixture.doCleanups)
+        bundle = fixture.bundle(kind='official_original')
+        pair = ['椎名立希', '千早愛音']
+        cast = pair + ['雾岛白夜']
+        # The desired scene's named guest is outside the search projection's first eight.
+        large_cast = pair + [f'夹具人物{i}' for i in range(6)] + ['雾岛白夜']
+        first, target, distractor = bundle['scenes']
+        for scene, source, chapter, participants, line in (
+                (first, 'test-story', '第1章', cast, '同じクラスだよ。'),
+                (target, 'test-story', '第2章', large_cast, '正しい資料です。'),
+                (distractor, 'TEST-STORY', '第2章', cast, '別の作品です。')):
+            scene.update(source_id=source, chapter=chapter, title=chapter, participants=participants,
+                         previous_scene=None, next_scene=None,
+                         utterances=[dict(scene['utterances'][0], speaker=pair[0], text_ja=line, translation=None)])
+        bundle['sources'] = [dict(bundle['sources'][0], source_id=source, work=work,
+                                  content_sha256=source_content_hash([s for s in bundle['scenes'] if s['source_id']==source]))
+                             for source, work in (('test-story','目标作品'),('TEST-STORY','另一作品'))]
+        fixture.publish(bundle)
+        self.backend.model_runtime.agent.story = fixture.service
+        return fixture.service, bundle
+
+    async def test_chapter_candidates_use_exact_source_full_cast_and_only_visible_handles(self):
+        from ournotes_bot.domain.model_calls import ToolCall
+
+        service, _ = self.chapter_scope_fixture()
+        match = service.search('立希 爱音', {'chapter':'第2章'}, facts_only=True)
+        handle = next(row['handle'] for row in match['items'] if row['source_id']=='test-story')
+        def read(call_id):
+            return ToolCall(call_id, 'story_read', json.dumps(dict(handle=handle)))
+        bodies = self.capture_native_bodies()
+        self.client.request.side_effect = [
+            self.result(calls=(ToolCall('s', 'story_search', json.dumps(dict(query='第2章'))), read('early'))),
+            self.result(calls=(read('visible'),)),
+            self.result('第二章正文已读。')]
+        reply, attempts = await self.prepare_native('/聊 立希和爱音是什么关系？请对照雾岛白夜也参与的第1章和第2章。')
+        self.assertEqual(len(attempts), 3)
+        self.assertEqual(reply['parts'][0]['business_status'], 'success')
+        search, early, readback = (json.loads(m['content']) for m in bodies[-1]['messages'] if m['role']=='tool')
+        self.assertEqual([row['source_id'] for row in search['items']], ['test-story'])
+        self.assertEqual(early['status'], 'story_handle_unissued')
+        self.assertEqual(readback['scenes'][0]['work'], '目标作品')
+        self.assertIn('雾岛白夜', readback['scenes'][0]['participants'])
+
+    async def test_chapter_search_reserves_read_slot_after_sibling_call(self):
+        from ournotes_bot.domain.model_calls import ToolCall
+
+        service, _ = self.chapter_scope_fixture()
+        agent = self.backend.model_runtime.agent
+        agent.budget = replace(agent.budget, tool_calls=4)
+        question = '立希和爱音是什么关系？请比较第1章和第2章。'
+        handle = service.search(question, facts_only=True)['items'][0]['handle']
+        bodies = self.capture_native_bodies()
+        self.client.request.side_effect = [
+            self.result(calls=(ToolCall('read', 'story_read', json.dumps(dict(handle=handle,before=0,after=0))),
+                               ToolCall('search', 'story_search', json.dumps(dict(query='第2章'))))),
+            self.result('只读到第一章。')]
+        with patch.object(service, 'search', wraps=service.search) as lookup:
+            _, attempts = await self.prepare_native('/聊 '+question)
+        self.assertEqual(len(attempts), 2)
+        lookup.assert_called_once()
+        self.assertNotIn('story_search', {tool['function']['name'] for tool in bodies[-1].get('tools', [])})
+        statuses = [json.loads(m['content'])['status'] for m in bodies[-1]['messages'] if m['role']=='tool']
+        self.assertEqual(statuses, ['already_visible','budget_exhausted'])
+
+    async def test_chapter_miss_from_intervening_release_is_rejected(self):
+        from copy import deepcopy
+        from ournotes_bot.domain.model_calls import ToolCall
+        from ournotes_bot.sources.story_files import source_content_hash
+
+        service, fixture = self.chapter_scope_fixture()
+        prior = service.current().revision
+        alternate = deepcopy(fixture)
+        for target in alternate['scenes'][1:]:
+            target['chapter'] = target['title'] = '第3章'
+        for source in alternate['sources']:
+            source['content_sha256'] = source_content_hash(
+                [scene for scene in alternate['scenes'] if scene['source_id']==source['source_id']])
+        other = service.import_value(alternate)['source_revision']
+        service.rollback(prior)
+        search = service.search
+        def changed(query, filters=None, **options):
+            if filters is None:
+                return search(query, **options)
+            service.rollback(other)
+            try:
+                result = search(query, filters, **options)
+                self.assertEqual((result['status'], result['source_revision']), ('no_results', other))
+                return result
+            finally:
+                service.rollback(prior)
+        self.client.request.side_effect = [
+            self.result(calls=(ToolCall('search','story_search',json.dumps(dict(query='第2章'))),)),
+            self.result('不能引用另一版本的缺口。')]
+        with patch.object(service, 'search', side_effect=changed):
+            reply, attempts = await self.prepare_native('/聊 立希和爱音是什么关系？请比较第1章和第2章。')
+        self.assertEqual(len(attempts), 1)
+        self.assertEqual(reply['parts'][0]['business_status'], 'story_revoked')
+
+    async def test_story_fact_can_read_neighbors_and_another_chapter_without_extra_simple_round(self):
+        from test_platform_boundary import StoryPublicationTests
+        from ournotes_bot.domain.model_calls import ToolCall
+        from ournotes_bot.sources.story_files import source_content_hash
+
+        fixture = StoryPublicationTests()
+        fixture.setUp()
+        self.addCleanup(fixture.doCleanups)
+        bundle = fixture.bundle(kind='official_summary')
+        first, neighbor, later = bundle['scenes']
+        first['title'] = '椎名立希与八幡海铃的同学关系'
+        first['utterances'][0]['translation'] = '立希和八幡海铃是同班同学。她们起初决定分别练习。'
+        neighbor['utterances'][0]['translation'] = '合成前后文：两人约好一起搬乐器。'
+        later.update(chapter='second-chapter', previous_scene=None)
+        neighbor['next_scene'] = None
+        later['utterances'][0]['translation'] = '立希和八幡海铃是同学，后来决定一起排练。'
+        bundle['sources'][0]['content_sha256'] = source_content_hash(bundle['scenes'])
+        fixture.publish(bundle)
+        self.backend.model_runtime.agent.story = fixture.service
+        cases = [('海希是什么关系？', None, 0, ('scene-1',), ('同班同学',)),
+                 ('海希是什么关系？随后她们约好了什么？', 'scene-1', 1, ('scene-1','scene-2'), ('同班同学','一起搬乐器')),
+                 ('海希是什么关系？比较两个章节中她们的决定。', 'scene-3', 0, ('scene-3',), ('分别练习','一起排练'))]
+        for seq, (question, target, after, expected, facts) in enumerate(cases, 1):
+            with self.subTest(question=question):
+                wire = []
+                async def respond(profile, body, **kwargs):
+                    wire.append(json.loads(json.dumps(body)))
+                    evidence = next(json.loads(m['content'])['story_evidence'] for m in body['messages']
+                                    if m['role']=='user' and 'story_evidence' in json.loads(m['content']))
+                    if len(wire)==1 and target and body.get('tools'):
+                        handles = [*evidence['evidence_read'], *(row['handle'] for row in evidence['unread_candidates'])]
+                        handle = next(h for h in handles if h.endswith(':'+target))
+                        return self.result(calls=(ToolCall('r','story_read',json.dumps(
+                            dict(handle=handle, before=0, after=after))),))
+                    scenes = list(evidence['scenes'])
+                    for message in body['messages']:
+                        if message['role']=='tool':
+                            scenes.extend(json.loads(message['content']).get('scenes', []))
+                    text = ' '.join(u['translation'] for scene in scenes for u in scene['utterances'])
+                    return self.result('、'.join(f if f in text else '资料缺项' for f in facts))
+                self.client.request.side_effect = respond
+                reply, attempts = await self.prepare_native('/聊 '+question, seq=seq)
+                self.event(reply,'intent');self.event(reply,'ack')
+                self.assertEqual(reply['parts'][0]['business_status'], 'success')
+                self.assertEqual(len(attempts), 1+int(target is not None))
+                self.assertEqual(reply['parts'][0]['text'], '、'.join(facts))
+                pre_read = next(json.loads(m['content'])['story_evidence'] for m in wire[0]['messages']
+                                if m['role']=='user' and 'story_evidence' in json.loads(m['content']))
+                self.assertEqual([s['scene_id'] for s in pre_read['scenes']], ['scene-1'])
+                if target:
+                    offered = {t['function']['name'] for t in wire[0]['tools']}
+                    self.assertEqual(offered, {'story_read','story_search'} if seq==3 else {'story_read'})
+                    data = json.loads(next(m['content'] for m in wire[-1]['messages'] if m['role']=='tool'))
+                else:
+                    data = pre_read
+                self.assertEqual(tuple(s['scene_id'] for s in data['scenes']), expected)
+
+    async def test_disconnected_chapter_research_preserves_fact_scope_and_reads_original(self):
+        from test_platform_boundary import StoryPublicationTests
+        from ournotes_bot.domain.model_calls import ToolCall
+        from ournotes_bot.sources.story_files import source_content_hash
+
+        fixture = StoryPublicationTests()
+        fixture.setUp()
+        self.addCleanup(fixture.doCleanups)
+        bundle = fixture.bundle()
+        template = bundle['scenes'][0]
+        pair = ['椎名立希','千早愛音']
+        def scene(sid, source, chapter, cast, line, translation):
+            return dict(template, scene_id=sid, source_id=source, chapter=chapter, title=chapter,
+                        participants=cast, previous_scene=None, next_scene=None,
+                        utterances=[dict(template['utterances'][0], speaker=cast[0], text_ja=line, translation=translation)])
+        original = '今は二人で譜面も書いているよ。'
+        bundle['scenes'] = [
+            scene('one','test-story','第1章',pair,'愛音とは同じクラスだよ。','我们同班。'),
+            scene('two','test-story','第2章',pair,original,'我们现在也一起写谱。'),
+            scene('other-source','elsewhere','第3章',pair,'別の資料。','另一来源。'),
+            scene('wrong-subject','test-story','第3章',['椎名立希','高松燈'],'別の二人。','另一组人物。'),
+            scene('taki-expression-guide-test','test-story','第3章',pair,'作例。','措辞示例。')]
+        bundle['scenes'][0]['title'] = '第1话 第1章'
+        bundle['scenes'][1]['title'] = '第2话 第2章'
+        bundle['sources'] = [dict(bundle['sources'][0], source_id=sid,
+                                  content_sha256=source_content_hash([s for s in bundle['scenes'] if s['source_id']==sid]))
+                             for sid in ('test-story','elsewhere')]
+        fixture.publish(bundle)
+        self.backend.model_runtime.agent.story = fixture.service
+        question = '立希和爱音是什么关系？结合前后两章各自给的说法。'
+        initial = fixture.service.search(question, limit=3, facts_only=True)
+        self.assertEqual([m['scene_id'] for m in initial['items']], ['one'])
+        self.assertEqual(fixture.service.search(question, {'chapter':'第2章'}, facts_only=True)['items'], [])
+        agent = self.backend.model_runtime.agent
+        for seq, limits in enumerate(({'tool_calls':3}, {'model_calls':2}), 1):
+            with self.subTest(limits=limits), patch.object(agent, 'budget', replace(agent.budget, **limits)):
+                bodies = self.capture_native_bodies()
+                self.client.request.side_effect = [self.result('第一章说两人同班，第二章缺资料。')]
+                reply, attempts = await self.prepare_native('/聊 '+question, seq=seq)
+                self.assertEqual(len(attempts), 1)
+                self.assertFalse(bodies[0].get('tools'))
+                self.assertNotIn(original, str(bodies[0]))
+                self.event(reply,'intent');self.event(reply,'ack')
+        simple_question = '立希和爱音是什么关系？'
+        cases = [(simple_question,None,[]),
+                 (simple_question+'结合第1章和第3章。','第3章',['story_scope_mismatch','story_scope_mismatch','no_results']),
+                 ('第1话中'+question,'第2章',['no_results']),
+                 (question,'第2章',['ok','ok'])]
+        for seq,(ask,target,expected) in enumerate(cases,3):
+            with self.subTest(target=target):
+                wire = []
+                def call(cid, name, **args):
+                    return ToolCall(cid,name,json.dumps(args,ensure_ascii=False))
+                async def respond(profile, body, **kwargs):
+                    wire.append(json.loads(json.dumps(body)))
+                    outputs = [json.loads(m['content']) for m in body['messages'] if m['role']=='tool']
+                    if not target:
+                        return self.result('两人同班。')
+                    if not outputs:
+                        if not body.get('tools'):
+                            return self.result('只查到第一章。')
+                        if target=='第3章':
+                            return self.result(calls=(call('outside','story_search',query=target,
+                                filters=dict(source_id='elsewhere')), call('unasked','story_search',query='第2章'),
+                                call('missing','story_search',query=target)))
+                        return self.result(calls=(call('s','story_search',query=target),))
+                    if outputs[-1]['status']=='no_results':
+                        return self.result('第一章说两人同班，'+target+'缺资料。')
+                    if len(outputs)==1:
+                        match, = outputs[0]['items']
+                        self.assertNotIn(original, str(match))
+                        return self.result(calls=(call('r','story_read',handle=match['handle']),))
+                    return self.result(outputs[-1]['scenes'][0]['utterances'][0]['text_ja'])
+                self.client.request.side_effect = respond
+                reply, attempts = await self.prepare_native('/聊 '+ask, seq=seq)
+                self.assertEqual(reply['parts'][0]['business_status'], 'success')
+                self.assertNotIn(original, str(wire[0]))
+                statuses = [json.loads(m['content'])['status'] for m in wire[-1]['messages'] if m['role']=='tool']
+                self.assertEqual(statuses,expected)
+                if expected==['ok','ok']:
+                    self.assertEqual(len(attempts),3)
+                    self.assertIn(original.rstrip('。'),reply['parts'][0]['text'])
+                    fixture.service.withdraw('test-story','fixture withdrawal after reading second chapter')
+                    self.assertFalse(self.backend.lookup(reply['request_id'],'e1')['send_allowed'])
+                    self.backend.finish(self.backend.works[reply['delivery_id']],'aborted')
+                    continue
+                elif target:
+                    self.assertEqual(len(attempts),2)
+                    self.assertIn(target+'缺资料',reply['parts'][0]['text'])
+                else:
+                    self.assertEqual(len(attempts),1)
+                    self.assertFalse(wire[0].get('tools'))
+                self.event(reply,'intent');self.event(reply,'ack')
+
+    async def test_story_prefetch_and_duplicate_read_share_tool_and_final_budget(self):
+        from test_platform_boundary import StoryPublicationTests
+        from ournotes_bot.domain.model_calls import ToolCall
+        from ournotes_bot.sources.story_files import source_content_hash
+
+        fixture = StoryPublicationTests()
+        fixture.setUp()
+        self.addCleanup(fixture.doCleanups)
+        bundle = fixture.bundle(kind='official_summary')
+        bundle['scenes'][0]['utterances'][0]['translation'] = '立希和八幡海铃是同班同学。'
+        bundle['sources'][0]['content_sha256'] = source_content_hash(bundle['scenes'])
+        fixture.publish(bundle)
+        agent = self.backend.model_runtime.agent
+        agent.story = fixture.service
+        agent.budget = replace(agent.budget, tool_calls=4)
+        question = '海希是什么关系？'
+        handle = fixture.service.search(question, facts_only=True)['items'][0]['handle']
+        def window(call_id, after):
+            return ToolCall(call_id,'story_read',json.dumps(dict(handle=handle,before=0,after=after)))
+        bodies = self.capture_native_bodies()
+        self.client.request.side_effect = [self.result(calls=(window('repeat',0),window('adjacent',1),
+                                                              window('overflow',2))), self.result('资料已读。')]
+        with patch.object(fixture.service,'read',wraps=fixture.service.read) as read:
+            reply, attempts = await self.prepare_native('/聊 '+question)
+        self.assertEqual(read.call_count, 2)  # Host pre-read and one genuinely larger window.
+        self.assertEqual(len(attempts), 2)
+        self.assertFalse(bodies[-1].get('tools'))
+        statuses = [json.loads(m['content'])['status'] for m in bodies[-1]['messages'] if m['role']=='tool']
+        self.assertEqual(statuses, ['already_visible','ok','budget_exhausted'])
+        fixture.service.withdraw('test-story','fixture withdrawal')
+        self.assertFalse(self.backend.lookup(reply['request_id'],'e1')['send_allowed'])
+        self.backend.finish(self.backend.works[reply['delivery_id']],'aborted')
+        agent.budget = replace(agent.budget, tool_calls=1)
+        with patch.object(fixture.service,'search',wraps=fixture.service.search) as search:
+            stopped, attempts = await self.prepare_native('/聊 '+question, seq=2)
+        search.assert_not_called()
+        self.assertEqual(attempts, [])
+        self.assertEqual(stopped['parts'][0]['business_status'], 'budget_exhausted')
+
+    async def test_story_optional_read_uses_held_final_when_no_second_permit_fits(self):
+        from test_platform_boundary import StoryPublicationTests
+        from ournotes_bot.domain.model_calls import ModelError
+        from ournotes_bot.sources.story_files import source_content_hash
+
+        fixture = StoryPublicationTests()
+        fixture.setUp()
+        self.addCleanup(fixture.doCleanups)
+        bundle = fixture.bundle(kind='official_summary')
+        bundle['scenes'][0]['utterances'][0]['translation'] = '立希和八幡海铃是同班同学。'
+        bundle['sources'][0]['content_sha256'] = source_content_hash(bundle['scenes'])
+        fixture.publish(bundle)
+        runtime = self.backend.model_runtime
+        runtime.agent.story = fixture.service
+        reserve = runtime.reserve
+        holds = []
+        def allow_one(work, attempt, *args, **kwargs):
+            if holds:
+                raise ModelError('quota_exceeded')
+            reserve(work, attempt, *args, **kwargs)
+            holds.append(attempt)
+        self.client.request.return_value = self.result('她们是同班同学。')
+        bodies = self.capture_native_bodies()
+        with patch.object(runtime,'reserve',side_effect=allow_one) as admission:
+            reply, attempts = await self.prepare_native('/聊 海希是什么关系？')
+        self.assertEqual(admission.call_count, 2)
+        self.assertEqual(attempts, holds)
+        self.assertFalse(bodies[-1].get('tools'))
+        self.assertIn('story_evidence', str(bodies[-1]['messages']))
+        self.assertEqual(runtime.usage.get(holds[0])['state'], 'settled')
+        self.assertEqual(reply['parts'][0]['business_status'], 'success')
 
     async def test_approved_fixture_persona_is_versioned_in_audit(self):
         from test_platform_boundary import StoryPublicationTests
@@ -5736,8 +6256,10 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
         self.assertEqual(rows[0]['image_status'],'image_not_available')
         self.assertEqual(self.agent.store.db.execute('SELECT count(*) FROM runs').fetchone()[0],0)
         events=self.backend.diagnostics.read(plan['request_id'])
-        self.assertEqual([e['kind'] for e in events['chat_events']],['persona','image','context','decision','finished'])
-        persona,image,context,decision,_=events['chat_events']
+        self.assertEqual([e['kind'] for e in events['chat_events']],
+                         ['persona','image','context','attempt_timing','decision','finished'])
+        persona,image,context,timing,decision,_=events['chat_events']
+        self.assertEqual(timing['data']['lane'],'ordinary')
         self.assertEqual(persona['data'],dict(reason='story_not_configured',persona_version=PERSONA_VERSION))
         self.assertEqual(image['data']['status'],'image_not_available')
         self.assertEqual(context['data']['input_images'],0)
@@ -6128,6 +6650,52 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
         self.assertIn('声优表演，还是唱歌',messages[1]['content'])
         self.assertIn('声优表演方面和唱歌方面',messages[2]['content'])
         self.assertEqual(result['parts'],[])
+
+    async def test_short_card_name_answers_confirmed_question_without_mention(self):
+        self.client.request.return_value=self.result('你说的是哪张卡？')
+        plan,_=await self.prepare_native('/聊 这张卡的技能怎么触发')
+        self.event(plan,'intent');self.event(plan,'ack')
+        self.now+=.01
+        value=self.observation('满破那张燐子',seq=2)
+        self.tick+=1.6
+        bodies=ChatAgentTests.capture_native_bodies(self)
+        self.client.request.return_value=self.result('{"participation":"reply","text":"知道了，你说的是燐子那张。"}')
+        result,_,candidate=await self.candidate(value)
+        self.assertTrue(candidate[0].continuation)
+        self.assertTrue(result['send_allowed'])
+        history=bodies[0]['messages']
+        self.assertIn('只补卡名就接着答',history[0]['content'])
+        self.assertIn('哪张卡',history[-2]['content'])
+        self.assertIn('满破那张燐子',history[-1]['content'])
+
+    async def test_peer_region_followup_uses_public_answer_and_new_speakers_scope(self):
+        from ournotes_bot.domain.knowledge import KnowledgeScope
+        self.enable_lightweight_fact_fixture()
+        self.agent.proactive.one_pass_groups=frozenset({'g1'})
+        self.client.request.return_value=self.result('日服技能倍率看技能等级。')
+        first,_=await self.prepare_native('/聊 聊聊技能倍率')
+        self.event(first,'intent');self.event(first,'ack')
+        self.now+=.01
+        self.current_user='u2'
+        knowledge,_=self.install_lightweight_score_evidence(KnowledgeScope(server='intl'))
+        value=self.observation('那国际服也一样吗？',seq=2)
+        self.tick+=1.6
+        wire=[]
+        responses=iter([self.result(json.dumps(dict(participation='reply',text='',delay_seconds=None,
+            public_query='国际服 技能倍率',clarification=''))),self.result('国际服也看技能等级。')])
+        async def respond(profile,body,**kw):
+            wire.append(json.loads(json.dumps(body)))
+            return next(responses)
+        self.client.request.side_effect=respond
+        plan,_,candidate=await self.candidate(value)
+        self.assertFalse(candidate[0].continuation)
+        self.assertIsNone(candidate[0].followup)
+        self.assertTrue(candidate[0].peer_reply_id)
+        self.assertIn('日服技能倍率看技能等级',json.dumps(wire[0]['input'],ensure_ascii=False))
+        self.assertEqual(knowledge.retrieve.call_args.args[:2],('国际服 技能倍率',KnowledgeScope(server='intl')))
+        self.assertTrue(plan['send_allowed'])
+        self.agent.store.delete_messages(self.backend.works[plan['delivery_id']].request.scope,[candidate[0].peer_reply_id])
+        self.assertFalse(self.backend.lookup(plan['request_id'],'e1')['send_allowed'])
 
     async def test_followup_reply_uses_existing_delivery_and_does_not_save_other_observations(self):
         self.observation('其他人原先的话',seq=1)
@@ -8045,6 +8613,113 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
         self.agent.services.policy.return_value=self.policy
         self.agent.proactive.lightweight_groups=frozenset({'g1'})
 
+    def test_compact_one_pass_default_requires_lightweight_membership_and_allows_opt_out(self):
+        from ournotes_bot.application.chat_proactive_runtime import ProactiveChat
+        self.backend.settings=replace(self.backend.settings,hermes_compact_standby=True,hermes_pilot_group='g1')
+        with patch.dict(os.environ,{'OURNOTES_PROACTIVE_LIGHTWEIGHT_GROUPS':'g1,g2'}):
+            os.environ.pop('OURNOTES_PROACTIVE_ONE_PASS_GROUPS',None)
+            self.assertEqual(ProactiveChat(self.agent).one_pass_groups,{'g1'})
+            os.environ['OURNOTES_PROACTIVE_ONE_PASS_GROUPS']=''
+            self.assertFalse(ProactiveChat(self.agent).one_pass_groups)
+            os.environ['OURNOTES_PROACTIVE_ONE_PASS_GROUPS']='g2,g3'
+            self.assertEqual(ProactiveChat(self.agent).one_pass_groups,{'g2'})
+
+    async def test_public_game_lookup_prefers_reviewed_local_answer(self):
+        self.enable_lightweight_fact_fixture()
+        self.agent.proactive.one_pass_groups=frozenset({'g1'})
+        knowledge,_=self.install_lightweight_score_evidence()
+        self.client.request.side_effect=[
+            self.result(json.dumps(dict(participation='reply',text='',delay_seconds=None,
+                                        public_query='技能倍率',clarification=''))),
+            self.result('先看技能等级。')]
+        value=self.observation('这个游戏的技能倍率怎么算？')
+        self.tick+=1.6
+        plan,attempts,candidate=await self.candidate(value)
+        self.assertEqual(candidate[0].evidence_route,'public_lookup')
+        self.assertTrue(plan['send_allowed'],plan)
+        self.assertEqual(len(attempts),2)
+        db=self.backend.diagnostics.db
+        timings=[json.loads(row[0]) for row in db.execute(
+            "SELECT data FROM chat_events WHERE request_id=? AND kind='attempt_timing' ORDER BY id",(plan['request_id'],))]
+        self.assertEqual([row['lane'] for row in timings],['evidence','evidence'])
+        for row in timings:
+            offsets=[row[name] for name in ('permit_wait_ms','permit_granted_ms','http_start_ms','http_done_ms','attempt_done_ms')]
+            self.assertEqual(offsets,sorted(offsets))
+        self.assertTrue(db.execute("SELECT 1 FROM chat_events WHERE request_id=? AND kind='reply_ready'",
+                                   (plan['request_id'],)).fetchone())
+        knowledge.retrieve.assert_called_once()
+
+    async def test_public_game_lookup_searches_once_after_local_miss(self):
+        from ournotes_bot.application.chat_capabilities import WebCapability
+        from ournotes_bot.domain.model_calls import ProviderAction
+        self.enable_lightweight_fact_fixture()
+        self.agent.proactive.one_pass_groups=frozenset({'g1'})
+        self.agent.proactive.owners()[1].web=Mock(return_value=WebCapability(2,10000,'fixture'))
+        self.backend.knowledge=None
+        responses=iter([
+            self.result(json.dumps(dict(participation='reply',text='',delay_seconds=None,
+                                        public_query='游戏 技能倍率',clarification=''))),
+            replace(self.result('按技能等级取值'),citations=({'url':'https://example.org/skill','title':'技能'},),
+                    provider_actions=(ProviderAction('web_search',1),),native_calls=1),
+            self.result('倍率按技能等级取值[1]，先看当前等级。')])
+        call_limits=[]
+        async def respond(profile,body,**kwargs):
+            call_limits.append(body.get('max_tool_calls'))
+            return next(responses)
+        self.client.request.side_effect=respond
+        value=self.observation('这个游戏的技能倍率怎么算？')
+        self.tick+=1.6
+        plan,attempts,candidate=await self.candidate(value)
+        self.assertEqual(candidate[0].evidence_route,'public_lookup')
+        self.assertTrue(plan['send_allowed'],plan)
+        self.assertEqual(len(attempts),3)
+        self.assertEqual(call_limits,[None,1,None],str(plan['parts']))
+        self.assertIn('[出处](https://example.org/skill)，先看当前等级',plan['parts'][0]['text'])
+
+    async def test_public_game_lookup_clarifies_missing_card_without_search(self):
+        self.enable_lightweight_fact_fixture()
+        self.agent.proactive.one_pass_groups=frozenset({'g1'})
+        knowledge,_=self.install_lightweight_score_evidence()
+        self.client.request.return_value=self.result(json.dumps(dict(
+            participation='reply',text='',delay_seconds=None,public_query='',clarification='你说的是哪张卡？')))
+        value=self.observation('这张卡的技能怎么触发？')
+        self.tick+=1.6
+        plan,attempts,_=await self.candidate(value)
+        self.assertIn('哪张卡',plan['parts'][0]['text'])
+        self.assertEqual(len(attempts),1)
+        knowledge.retrieve.assert_not_called()
+
+    async def test_public_game_lookup_stops_before_search_when_answered(self):
+        self.enable_lightweight_fact_fixture()
+        self.agent.proactive.one_pass_groups=frozenset({'g1'})
+        knowledge,_=self.install_lightweight_score_evidence()
+        self.client.request.return_value=self.result(json.dumps(dict(
+            participation='skip',text='',delay_seconds=None,public_query='',clarification='')))
+        value=self.observation('原来游戏的技能倍率是这么算的？懂了')
+        self.tick+=1.6
+        plan,attempts,_=await self.candidate(value)
+        self.assertEqual(plan['parts'],[])
+        self.assertEqual(len(attempts),1)
+        knowledge.retrieve.assert_not_called()
+
+    async def test_public_game_lookup_skips_when_specialized_and_web_sources_missing(self):
+        from ournotes_bot.application.chat_capabilities import WebCapability
+        from ournotes_bot.domain.model_calls import ProviderAction
+        self.enable_lightweight_fact_fixture()
+        self.agent.proactive.one_pass_groups=frozenset({'g1'})
+        self.agent.proactive.owners()[1].web=Mock(return_value=WebCapability(1,10000,'fixture'))
+        self.backend.knowledge=None
+        self.client.request.side_effect=[
+            self.result(json.dumps(dict(participation='reply',text='',delay_seconds=None,
+                                        public_query='Our Notes JUST 激奏 排名',clarification=''))),
+            replace(self.result('没有查到'),provider_actions=(ProviderAction('web_search',1),),native_calls=1)]
+        value=self.observation('激奏 JUST 区间怎么计分')
+        self.tick+=1.6
+        plan,attempts,candidate=await self.candidate(value)
+        self.assertEqual(candidate[0].evidence_route,'just_score')
+        self.assertEqual(plan['parts'],[])
+        self.assertEqual(len(attempts),2)
+
     def install_lightweight_score_evidence(self, scope=None):
         from types import SimpleNamespace
         from ournotes_bot.domain.knowledge import Applicability,EvidenceChunkV1,EvidenceLease,KnowledgeScope
@@ -8383,6 +9058,21 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.client.request.await_count,2)
         self.assertEqual({attempt:usage.get(attempt) for attempt in old},old)
 
+    async def test_proactive_tls_failure_stops_after_one_permission(self):
+        from ournotes_bot.domain.model_calls import AttemptResult
+        async def handshake_failure(*args,transport,**kwargs):
+            transport.update(stage='tls',name='timeout',elapsed_ms=100,proxied=True,
+                             headers_received=False,tls_failed_before_send=True)
+            return AttemptResult('error',error_code='provider_unavailable')
+        self.client.request.side_effect=handshake_failure
+        value=self.observation();self.tick+=1.6
+        plan,attempts,_=await self.candidate(value)
+        self.assertEqual(plan['status'],'finished')
+        self.assertEqual(len(attempts),1)
+        self.client.request.assert_awaited_once()
+        events=self.backend.diagnostics.read(plan['request_id'])['chat_events']
+        self.assertEqual(next(e['data']['attempt_id'] for e in events if e['kind']=='attempt_timing'),attempts[0])
+
     async def test_provider_failure_keeps_attempt_hold_without_blocking_unspent_opportunity(self):
         import math
         from ournotes_bot.application.chat_jobs import maximum_cost_micro
@@ -8560,9 +9250,12 @@ class ChatServiceIntegrationTests(Fixture,unittest.IsolatedAsyncioTestCase):
         self.assertEqual(actual,cost)
         self.assertEqual(self.backend.ledger.request(raw['request_id'])['status'],'aborted')
         self.assertEqual(self.backend.ledger.parts(work.delivery),[])
-        last=self.backend.diagnostics.read(raw['request_id'])['chat_events'][-1]['data']
-        self.assertEqual(last['reason'],'observation_replaced')
-        self.assertEqual(last['stage'],'generation' if generation else 'decision')
+        events=self.backend.diagnostics.read(raw['request_id'])['chat_events']
+        finished=[event['data'] for event in events if event['kind']=='finished']
+        self.assertEqual(len(finished),1)
+        self.assertEqual(finished[0]['reason'],'observation_replaced')
+        self.assertEqual(finished[0]['stage'],'generation' if generation else 'decision')
+        self.assertEqual(events[-1]['kind'],'attempt_timing')
         self.assert_chat_outcome(raw['request_id'],'observation_replaced')
 
     async def test_cancelled_known_decision_reconciles_controller_after_late_completion(self):

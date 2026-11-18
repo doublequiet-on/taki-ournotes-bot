@@ -1,0 +1,198 @@
+{
+  "source": "e72eb9cbe1557966e8121034c6aca870d1f5cf2d",
+  "conditions": {
+    "fixture_base": "e72eb9cbe1557966e8121034c6aca870d1f5cf2d",
+    "panel": "2bd75e785565a507babaa30992fd2c8196c7105565566390ac69122766c3de3b",
+    "driver": "630942c2fd1b4355427615c652eaf89add89d0b21b63e679cf35bbe2278ee736",
+    "probes": "82971eacd6b6cac099b30cbc4f0d507d75a631d861d3e1ba67282a65e05dd111",
+    "python": "3.12.0",
+    "official_sample": true,
+    "dependencies": {
+      "httpx": "0.28.1",
+      "aiohttp": "3.14.4",
+      "Pillow": "12.3.0",
+      "qq-botpy": "1.2.1"
+    }
+  },
+  "totals": {
+    "pass": 13,
+    "fail": 4,
+    "undetermined": 3
+  },
+  "cases": [
+    {
+      "id": "D01",
+      "status": "pass"
+    },
+    {
+      "id": "D02",
+      "status": "pass"
+    },
+    {
+      "id": "D03",
+      "status": "pass"
+    },
+    {
+      "id": "D04",
+      "status": "pass"
+    },
+    {
+      "id": "D05",
+      "status": "pass"
+    },
+    {
+      "id": "D06",
+      "status": "pass"
+    },
+    {
+      "id": "D07",
+      "status": "pass"
+    },
+    {
+      "id": "D08",
+      "status": "pass"
+    },
+    {
+      "id": "D09",
+      "observed": {
+        "model_calls": 1,
+        "permits": 1,
+        "evidence": [],
+        "status": "success"
+      },
+      "status": "pass"
+    },
+    {
+      "id": "D10",
+      "observed": {
+        "model_calls": 1,
+        "permits": 1,
+        "evidence": [],
+        "status": "success"
+      },
+      "status": "pass"
+    },
+    {
+      "id": "D11",
+      "observed": {
+        "code": "ok",
+        "index": "ready",
+        "chunks": 1,
+        "valid": true,
+        "matched": [
+          true,
+          true
+        ]
+      },
+      "status": "pass"
+    },
+    {
+      "id": "D12",
+      "observed": {
+        "code": "unavailable",
+        "index": "index_pending",
+        "chunks": 0,
+        "valid": false,
+        "matched": [
+          false,
+          false
+        ]
+      },
+      "status": "fail",
+      "reason": "AssertionError: 'unavailable' != 'ok'"
+    },
+    {
+      "id": "D13",
+      "observed": {
+        "code": "unavailable",
+        "index": "ready",
+        "chunks": 0,
+        "valid": false,
+        "matched": [
+          false,
+          false
+        ]
+      },
+      "status": "fail",
+      "reason": "AssertionError: 'unavailable' != 'ok'"
+    },
+    {
+      "id": "D14",
+      "observed": {
+        "code": "missing",
+        "index": "ready",
+        "chunks": 0,
+        "valid": false,
+        "matched": [
+          false,
+          false
+        ]
+      },
+      "status": "pass"
+    },
+    {
+      "id": "D15",
+      "observed": {
+        "model_calls": 1,
+        "permits": 1,
+        "evidence": [
+          "story_search",
+          "story_read",
+          "story_read"
+        ],
+        "status": "success",
+        "chapters_at_first_call": [
+          true,
+          false
+        ],
+        "story_tools_available": false
+      },
+      "status": "fail",
+      "reason": "AssertionError: False is not true : incomplete chapter evidence and no further story tools"
+    },
+    {
+      "id": "D16",
+      "observed": {
+        "hits": 1,
+        "scene": "mygo.ep05.official-summary.quote01",
+        "source_kind": "official_summary",
+        "revision": "81128ea12c04c82df50cd73e241fb4d009ac5406a09382566b2abb84f324d6f7"
+      },
+      "status": "pass"
+    },
+    {
+      "id": "D17",
+      "status": "undetermined",
+      "reason": "完整原作跨章节日文对白及其中文论证缺少对应获准正文。"
+    },
+    {
+      "id": "D18",
+      "status": "undetermined",
+      "reason": "交流自然度、人格与真实模型的工具决策需要模型输出及独立评阅。"
+    },
+    {
+      "id": "D19",
+      "status": "undetermined",
+      "reason": "线上推理用量、延时、维护成本缺少真实请求与部署观测。"
+    },
+    {
+      "id": "D20",
+      "observed": {
+        "model_calls": 3,
+        "permits": 3,
+        "evidence": [],
+        "status": "success",
+        "tool_status": [
+          "ok",
+          "ok"
+        ],
+        "completed": [
+          true,
+          true
+        ]
+      },
+      "status": "fail",
+      "reason": "AssertionError: True is not false : unsupported second requirement marked complete"
+    }
+  ]
+}

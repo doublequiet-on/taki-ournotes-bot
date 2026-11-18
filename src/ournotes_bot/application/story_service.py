@@ -1,9 +1,11 @@
 # L3: Versioned local story publication, revocation, read handles and explicit persona approval.
+# Coverage projects in-scope source and chapter counts from the current release and withdrawal ledger.
 # Effects: Local operator-owned directory only; never fetches URLs, calls models or sends.
 # Validated immutable bundle reuse is bound to file identity; pointer and withdrawals stay live.
 # Cold loads reject pointer changes before caching; loading remains synchronous.
 from __future__ import annotations
 
+from collections import Counter
 from dataclasses import asdict
 from datetime import datetime,timezone
 from pathlib import Path
@@ -12,7 +14,7 @@ import stat
 
 from ..domain.story import StoryError,require
 from ..sources.story_files import (atomic_json,canonical,digest,identifier,optional_time,parse_bundle,publish_lock,read_json,text)
-from ..query.story_retrieval import scene_data,search_scenes
+from ..query.story_retrieval import normalized,scene_data,search_scenes
 
 
 def stamp():
@@ -102,17 +104,54 @@ class StoryService:
                             'scene_count':sum(scene.source_id==source.source_id for scene in bundle.scenes)} for source in bundle.sources],
                 'scenes':sum(scene.source_id not in excluded for scene in bundle.scenes),'persona':persona}
 
+    def coverage(self, *, work=None, source_kind=None, source_id=None, chapter=None):
+        """Inventory an exact scope for local maintenance, independently of lexical hits."""
+        filters = {}
+        for key, value, maximum in (('work', work, 1000), ('source_kind', source_kind, 100),
+                                    ('source_id', source_id, 100), ('chapter', chapter, 300)):
+            if value is not None:
+                filters[key] = normalized(text(value, maximum=maximum))
+        chapter_filter = filters.pop('chapter', None)
+        bundle = self.current()
+        withdrawals = self.revocations()
+        result = {'status': 'not_available', 'source_revision': None,
+                  'revocation_revision': withdrawals['revision'], 'sources': [], 'scenes': 0}
+        if bundle is None:
+            return result
+
+        sources = {
+            source.source_id: source for source in bundle.sources
+            if source.source_id not in withdrawals['sources']
+            and all(normalized(getattr(source, key)) == value for key, value in filters.items())
+        }
+        chapter_counts = {source_id: Counter() for source_id in sources}
+        for scene in bundle.scenes:
+            if scene.source_id in sources and (chapter_filter is None or normalized(scene.chapter) == chapter_filter):
+                chapter_counts[scene.source_id][scene.chapter] += 1
+
+        rows = []
+        for source_id, source in sources.items():
+            counts = chapter_counts[source_id]
+            if chapter_filter is not None and not counts:
+                continue
+            rows.append({**asdict(source), 'scene_count': sum(counts.values()),
+                         'chapters': [{'chapter': name, 'scene_count': count}
+                                      for name, count in sorted(counts.items())]})
+        return {**result, 'status': 'ok', 'source_revision': bundle.revision,
+                'sources': rows, 'scenes': sum(row['scene_count'] for row in rows)}
+
     def valid(self,source_revision,revocation_revision):
         """Generation/delivery owners recheck this captured read scope."""
         bundle=self.current();withdrawals=self.revocations()
         return bundle is not None and bundle.revision==source_revision and withdrawals['revision']==revocation_revision
 
-    def search(self,query,filters=None,*,limit=6,facts_only=False):
+    def search(self,query,filters=None,*,limit=6,facts_only=False,pinned_source_id=None,required_participants=()):
         bundle=self.current()
         if bundle is None:return {'status':'not_available','source_revision':None,'items':[],'query_rewrites':[]}
         withdrawals=self.revocations()
         result=search_scenes(bundle,query,filters,limit=limit,excluded_sources=withdrawals['sources'],
-                             facts_only=facts_only)
+                             facts_only=facts_only,pinned_source_id=pinned_source_id,
+                             required_participants=required_participants)
         sources={source.source_id:source for source in bundle.sources}
         token=digest(withdrawals)[:16]
         items=[];retained=0

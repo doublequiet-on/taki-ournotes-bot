@@ -1,0 +1,38 @@
+{
+  "id": "on-jp-anon-taki-linkstory-1-latte-art",
+  "status": "offline_candidate",
+  "story_release": "72df0d71d0acbae0f54c0473353dcd50057eb55733e7c86ad23f03222ba6618c",
+  "revocation_revision": 0,
+  "scope": {
+    "work": "BanG Dream! Our Notes",
+    "chapter": "絆ストーリー／愛音&立希1"
+  },
+  "references": [
+    {
+      "source_id": "on-jp-anon_taki_linkstory_1.excerpt",
+      "scene_id": "on-jp-anon_taki_linkstory_1.excerpt",
+      "source_kind": "official_original",
+      "source_version": "r-01c9364ea529ce7e0f19",
+      "content_sha256": "479ce714a0a407381ff18feabc3b8307947a2b59d8a0fac67e2cd1bb6e61ab2f",
+      "use_scope": "public_reference"
+    },
+    {
+      "source_id": "on-jp-anon_taki_linkstory_1.summary",
+      "scene_id": "on-jp-anon_taki_linkstory_1.summary",
+      "source_kind": "fan_analysis",
+      "source_version": "r-01c9364ea529ce7e0f19/summary-20261030",
+      "content_sha256": "fa22daeb666554284befd5222c977a276440157cf9fd652d200b5dbbc7fdaf9b",
+      "use_scope": "public_reference"
+    }
+  ],
+  "navigation": {
+    "topic_terms": ["拉花", "ラテアート"],
+    "material_terms": ["奶泡", "乳沫", "奶沫", "泡沫"],
+    "shape_terms": ["画", "描", "图案", "图形", "花纹", "拉出"]
+  },
+  "known_gaps": [
+    "only_one_original_utterance",
+    "no_original_neighbors",
+    "analysis_is_a_separate_source"
+  ]
+}

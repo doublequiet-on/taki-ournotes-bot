@@ -85,6 +85,9 @@ class Work:
     hermes_pilot: bool = False
     hermes_native_fallback: bool = False
     hermes_provider_started: bool = False
+    named_tls_retried: bool = False
+    hermes_claim_started: float | None = None
+    hermes_claim_finished: float | None = None
     hermes_send_deadline: float | None = None
     story_versions: tuple = ()
     persona_version: str = 'taki-v0/legacy-derived'
@@ -569,6 +572,8 @@ class Backend:
             if work.hint:
                 parts = [work.prepared[0], *replies.reserve_progress_slot(parts,overflow=bool(overflow),text_limit=text_limit)]
             self.diagnostics.prepared(work.request.request_id, parts)
+            if work.proactive is not None and any(part.text and part.business_status=='success' for part in parts):
+                self.diagnostics.chat_event(work.request.request_id,'reply_ready',self.clock())
             parts = [replace(p, context=ReadOnlyContext(p.text, p.parse_origin, p.evidence))
                      if p.context is None and p.business_status!='processing_hint' else p for p in parts]
             work.prepared = tuple(parts)

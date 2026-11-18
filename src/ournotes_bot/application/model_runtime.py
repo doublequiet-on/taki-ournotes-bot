@@ -546,12 +546,15 @@ class ModelRuntime:
             body=request_body(profile,messages,tools)
         if (not light and work.proactive is not None and web is None and service_policy is None
                 and billing_request_id is None and not getattr(work,'proactive_generation',False) and profile.wire_profile=='openai-responses-v1'):
-            body['text']={'format':self.agent.proactive.response_format()}
+            body['text']={'format':self.agent.proactive.response_format(lookup=
+                self.agent.proactive.uses_public_lookup(work.request.conversation_id, getattr(work.proactive,'evidence_route','')))}
         action_budget=()
         if web is not None:
             require(profile.wire_profile=='openai-responses-v1' and not tools,'chat_capability_unverified')
-            body.update(tools=[{'type':'web_search','search_context_size':'low'}],max_tool_calls=web.max_calls)
-            action_budget=(('web_search',web.max_calls,web.unit_cost_micro),)
+            web_calls = 1 if self.agent.proactive.uses_public_lookup(
+                work.request.conversation_id, getattr(work.proactive, 'evidence_route', '')) else web.max_calls
+            body.update(tools=[{'type':'web_search','search_context_size':'low'}],max_tool_calls=web_calls)
+            action_budget=(('web_search',web_calls,web.unit_cost_micro),)
         # Verified native wires support required tool choice; no fallback/retry.
         if require_tool and tools and (profile.provider=='deepseek' and profile.reasoning_effort in (None,'none') or profile.wire_profile=='openai-responses-v1'):
             body['tool_choice']='required'
@@ -578,6 +581,8 @@ class ModelRuntime:
         started=False;began=time.monotonic();kind='generation' if not tools else 'routing';transport={}
         work.model_stage=('generation' if getattr(work,'proactive_generation',False)
                           else 'decision' if work.proactive is not None else 'model')
+        marks = {}
+        work.hermes_claim_started = work.hermes_claim_finished = None
         def validate_dispatch():
             self.check(work,deadline,leases)
             if service_policy is not None:require(self.agent.services.policy(work.model_snapshot,work.request.conversation_id)==service_policy,'chat_service_revoked')
@@ -585,7 +590,9 @@ class ModelRuntime:
         async def dispatch():
             nonlocal started
             validate_dispatch()
+            marks['permit_wait'] = time.monotonic()
             permitted_until=await self.backend.permissions.acquire(work,deadline,attempt_id=attempt)
+            marks['permit_granted'] = time.monotonic()
             validate_dispatch()
             require(time.monotonic()<permitted_until,'permission_expired')
             try:
@@ -597,8 +604,32 @@ class ModelRuntime:
             if getattr(work,'hermes_chat',False):
                 work.hermes_provider_started=True
             # No await/queue/tool work between the consumed permit and this HTTP.
-            return await asyncio.wait_for(self.client.request(profile,body,timeout=max(.001,deadline-time.monotonic()),transport=transport),
-                                          max(.001,deadline-time.monotonic()))
+            async def send():
+                remaining=max(.001, deadline-time.monotonic())
+                marks['http_start'] = time.monotonic()
+                try:
+                    return await asyncio.wait_for(self.client.request(profile,body,timeout=remaining,transport=transport),remaining)
+                finally:
+                    marks['http_done'] = time.monotonic()
+            result=await send()
+            if (getattr(work,'chat',False) and work.proactive is None and work.request.kind=='group'
+                    and result.error_code=='provider_unavailable' and transport.get('tls_failed_before_send')
+                    and not work.named_tls_retried and time.monotonic()<deadline
+                    and work.model_attempts < min(6,work.model_attempt_limit)):
+                work.named_tls_retried=True
+                # The gateway consumes each permission nonce once. The failed
+                # handshake sent no provider request, so keep the usage reservation.
+                validate_dispatch()
+                retry_until=await self.backend.permissions.acquire(work,deadline)
+                validate_dispatch()
+                require(time.monotonic()<retry_until,'permission_expired')
+                first_failure=transport['elapsed_ms']
+                transport.clear()
+                try:
+                    result=await send()
+                finally:
+                    if transport:transport['first_tls_failure_ms']=first_failure
+            return result
         try:
             if getattr(work,'hermes_chat',False) and not getattr(work,'hermes_native_fallback',False):
                 try:
@@ -618,8 +649,8 @@ class ModelRuntime:
             actions=result.provider_actions or ((ProviderAction('web_search',None),) if web is not None else ())
             self.usage.settle(attempt,result.usage,result.error_code,actions=actions)
             if result.status=='ok':
-                require(type(result.native_calls) is int and 0<=result.native_calls<=(web.max_calls if web else 0)
-                        and all(action.count==0 or web is not None and action.count is not None and action.count<=web.max_calls
+                require(type(result.native_calls) is int and 0<=result.native_calls<=(web_calls if web else 0)
+                        and all(action.count==0 or web is not None and action.count is not None and action.count<=web_calls
                                 for action in result.provider_actions),'provider_action_budget_exceeded')
             # Settle the external charge first; revoked/deleted inputs cannot
             # authorize saving the returned visible text in the audit log.
@@ -646,6 +677,15 @@ class ModelRuntime:
                 self.usage.settle(attempt,Usage(),code,actions=(ProviderAction('web_search',None),) if web is not None else ())
             raise
         finally:
+            if work.proactive is not None:
+                marks.update(claim_start=work.hermes_claim_started, claim_done=work.hermes_claim_finished,
+                             attempt_done=time.monotonic())
+                offsets = {key+'_ms': min(3600000, max(0, round((stamp-began)*1000)))
+                           for key, stamp in marks.items() if stamp is not None}
+                lane = ('continuation' if work.continuation else 'evidence' if getattr(work.proactive,'evidence_route','')
+                        else 'ordinary')
+                self.backend.diagnostics.chat_event(work.request.request_id, 'attempt_timing', self.backend.clock(),
+                    attempt_id=attempt, lane=lane, **offsets)
             if transport:
                 data={**transport,'attempt_id':attempt,'model_stage':work.model_stage,
                       'input_images':sum(len(message.get('images',())) for message in messages)}
