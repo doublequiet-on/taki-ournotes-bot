@@ -217,8 +217,6 @@ class InformationLayoutTests(unittest.TestCase):
         table=(('成员卡参数加成',*(f'档位{i}：+22.5%' for i in range(1,6))),)
         bonus=InfoRow('加成 · '+name,('成员卡参数加成：完整五档内容',),kind='bonus',table=table,
                       image_url='synthetic:member',image_kind='portrait')
-        player=(InfoRow('公开ID',('9223372036854775807',)),InfoRow('等级／经验',('等级：未获取','经验：0'),kind='metric'),
-                InfoRow('获赞',('0',),kind='metric'),InfoRow('展示角色卡',tuple('培养：0' for _ in range(6)),kind='showcase'))
         original=info_layout.Canvas.text
         def capture(canvas,x,cy,value,size=28,color=None,bold=False,align='left',**kwargs):
             width=font(size,bold,str(value).isascii()).getlength(str(value))
@@ -230,7 +228,6 @@ class InformationLayoutTests(unittest.TestCase):
             return original(canvas,x,cy,value,size,color or '#1b1b1f',bold,align,**kwargs)
         with patch.object(info_layout.Canvas,'text',capture):
             for view in (InfoView(name,rows=(standing,)*24,layout='facts',presentation='arena'),
-                         InfoView(name,rows=player,layout='facts',presentation='player'),
                          InfoView(name,rows=(bonus,),presentation='activity')):
                 pages=info_layout.render_info(self.answer(view))
                 self.assertTrue(pages)

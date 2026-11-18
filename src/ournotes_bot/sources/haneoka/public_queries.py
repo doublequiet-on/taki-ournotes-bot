@@ -1,16 +1,15 @@
 # L3
 # Input: Explicit regions, immutable public requests and injected bounded HTTP.
-# Output: Identity-checked immutable Arena/player snapshots and typed failures.
+# Output: Identity-checked immutable Arena snapshots and typed failures.
 # Pos: Sources / Haneoka public query reads, independent of catalog publication.
 # Effects: Anonymous HTTPS reads; bounded memory cache, no collection or credentials.
 from collections import OrderedDict
 from dataclasses import replace
 from functools import partial
 import json
-import re
 from threading import RLock
 import time
-from urllib.parse import urlencode, urlsplit, parse_qs
+from urllib.parse import urlencode
 
 from ...domain.public_queries import PublicQueryError, PublicSnapshot
 from ..errors import ChartDataError
@@ -48,12 +47,6 @@ def region_value(region):
     if not isinstance(region, str) or region not in GAME_REGIONS:
         raise PublicQueryError('invalid_arguments', '不支持的游戏区。')
     return region
-
-
-def profile_id(value, region):
-    pattern = r'[1-9][0-9]{0,18}' if region == 'jp' else {'tw': '2', 'en': '3', 'kr': '4'}[region] + r'[0-9]{10}'
-    if not isinstance(value, str) or not re.fullmatch(pattern, value) or int(value) > 9223372036854775807:
-        raise PublicQueryError('invalid_arguments', '公开玩家ID格式或区域不匹配。')
 
 
 def observed_snapshot(snapshot, value, region, now, ttl):
@@ -268,67 +261,6 @@ class PublicQueries:
             snapshot = replace(snapshot, body=json.dumps(value, ensure_ascii=False).encode())
         return observed_snapshot(snapshot, value, request.region, self.clock(), 1800 if request.mode == '人数' else 1200)
 
-    def player(self, request):
-        request = replace(request, region=region_value(request.region))
-        profile_id(request.profile_id, request.region)
-        snapshot = self.read(f'/api/v1/game/records/{request.region}/players/{request.profile_id}')
-        value = decode_json(snapshot.body)
-        if (value.get('region') != request.region or value.get('profileId') != request.profile_id
-                or not isinstance(value.get('profile'), dict)):
-            raise PublicQueryError('invalid_source', '玩家资料身份不一致。')
-        profile = value['profile']
-        for observed in (value.get('fetchedAtMs'), value.get('serverTimeMs'), profile.get('lastUpdatedAtMs')):
-            timestamp(observed)
-        if profile.get('name') is not None and not isinstance(profile['name'], str):
-            raise PublicQueryError('invalid_source', '玩家昵称格式异常。')
-        for key in ('level', 'rankExp', 'totalFavorite'):
-            if profile.get(key) is not None:
-                integer(profile[key])
-        favorite = profile.get('favoriteMemberCard')
-        if favorite is not None and not isinstance(favorite, dict):
-            raise PublicQueryError('invalid_source', '展示卡格式异常。')
-        if favorite is not None:
-            for key in ('cardId', 'exp', 'awakeCount', 'cardRank', 'liveSkillLevel', 'performanceSkillLevel'):
-                if favorite.get(key) is not None:
-                    integer(favorite[key], minimum=1 if key == 'cardId' else 0)
-        exact = profile.get('totalFavoriteExact')
-        if exact is not None and (not isinstance(exact, str) or not re.fullmatch(r'[0-9]{1,19}', exact)):
-            raise PublicQueryError('invalid_source', '获赞数格式异常。')
-        card = profile.get('profileCard')
-        if card is not None:
-            if not isinstance(card, dict):
-                raise PublicQueryError('invalid_source', '名片格式异常。')
-            if card.get('name') is not None and not isinstance(card['name'], str):
-                raise PublicQueryError('invalid_source', '名片名称格式异常。')
-            if card.get('pages') is not None:
-                pages = objects(card['pages'])
-                if len({integer(p.get('page'), minimum=1) for p in pages}) != len(pages):
-                    raise PublicQueryError('invalid_source', '名片页码重复。')
-                for page in pages:
-                    for field in ('imageUrl', 'downloadUrl'):
-                        if page.get(field) is not None and not isinstance(page[field], str):
-                            raise PublicQueryError('invalid_source', '名片图片路径格式异常。')
-            elif not isinstance(card.get('thumbnailUrls', []), list) or any(not isinstance(s, str) for s in card.get('thumbnailUrls', [])):
-                raise PublicQueryError('invalid_source', '名片预览格式异常。')
-        return observed_snapshot(snapshot, value, request.region, self.clock(), 21600)
-
-    def player_art(self, request, card_id, snapshot):
-        server = 'jp' if request.region == 'jp' else 'intl'
-        if not snapshot:
-            return ''
-        identity = snapshot.get('identities', {}).get(server)
-        row = snapshot.get('documents', {}).get(server, {}).get('cards', {}).get(str(card_id))
-        if not identity or not row or str(row.get('cardId')) != str(card_id):
-            return ''
-        images = row.get('images', {})
-        path = images.get('thumbnail') if isinstance(images, dict) else None
-        if not path:
-            return ''
-        try:
-            return asset_url(path, identity['releaseId'])
-        except ValueError:
-            return ''
-
     def arena_attribute(self, region, value, snapshot, release):
         server='jp' if region=='jp' else 'intl'
         if not snapshot or snapshot.get('identities',{}).get(server,{}).get('releaseId')!=release:
@@ -340,22 +272,3 @@ class PublicQueries:
             return asset_url(f'/runtime/{server}/'+path.removeprefix('runtime/'),release)
         except ValueError:
             return ''
-
-    def namecard(self, request, page):
-        path = page.get('downloadUrl')
-        if not isinstance(path, str):
-            raise PublicQueryError('data_unavailable', '未获取可下载的名片图片。')
-        url = urlsplit(path)
-        expected = f'/api/v1/game/records/{request.region}/players/{request.profile_id}/cards/{page["page"]}/download'
-        query = parse_qs(url.query, keep_blank_values=True)
-        file = query.get('file', [])
-        if (url.scheme or url.netloc or url.fragment or url.path != expected or set(query) != {'file'}
-                or len(file) != 1 or not re.fullmatch(re.escape(request.profile_id) + r'_[A-Za-z0-9_\-]{1,200}', file[0])):
-            raise PublicQueryError('invalid_source', '名片图片身份不一致。')
-        try:
-            status, body, headers = self.fetch(ORIGIN + path, 8_000_000, 20)
-        except (ChartDataError, OSError) as exc:
-            raise PublicQueryError('data_unavailable', '名片图片暂不可用。') from exc
-        if status != 200 or not headers.get('content-type', '').split(';')[0] in {'image/png', 'image/jpeg', 'image/webp'}:
-            raise PublicQueryError('data_unavailable', '名片图片暂不可用。')
-        return path, body

@@ -36,12 +36,12 @@
 | 后端 | `application/backend.py::Backend.submit/prepare_command`、`create_app` | direct走QueryGate；自然入口优先ModelRuntime.prepare（有实例时），否则parser.prepare_local。DeferredModel之后是受限可选模型分支，不属于规则必需项 |
 | 业务闸门 | `application/replies.py::QueryGate/prepare_reply/_prepare_reply` | 工作线程边界、捕获同次query view，直接`resolve_command/handle_command`或接收AgentOutcome，不重查绘图事实 |
 | 自然规则 | `ai_query.py::AIQueryParser.prepare_local/prepare_native_local` → `natural_query/query_agent.py::QueryAgent._run` | 续查解析、榜线、meta、字段、public_information_command、本地卡/曲条件、information_command；保留缓存来源、scope、失效与OutcomeCode，不能整删query_agent |
-| P165规则 | `natural_query/on_query.py::public_information_command/information_command` → `commands.py::resolve_command/handle_command` | 完整问题匹配：玩家精确ID、竞技场乐队/模式、本期活动四子项；不是从任意文本猜意图 |
-| P165事实 | `query/public_queries.py::parse_arena/execute_arena/parse_player/execute_player`、`query/activity_query.py::execute_activity/detail_rows/overview_rows` | `domain/public_queries.py`请求/失败、`query/contracts/info.py`的InfoAnswer/InfoView/InfoRow；活动投影来自`domain/info_catalog.py`与`source`（下行） |
-| 来源 | `data.py::SongRepository.capture_query_view/current_query_view/capture_catalog`、`sources/haneoka/public_queries.py::PublicQueries`、`sources/haneoka/activity_details.py::project_details`、catalog/transport/catalog_assets | 当前release与区域身份；公开记录pending/429/404/失败独立；profileId不可经JS number；名片页码、下载路径及原始字节绑定同次结果 |
+| P165规则 | `natural_query/on_query.py::public_information_command/information_command` → `commands.py::resolve_command/handle_command` | 完整问题匹配：竞技场乐队/模式、本期活动四子项；不是从任意文本猜意图 |
+| P165事实 | `query/public_queries.py::parse_arena/execute_arena`、`query/activity_query.py::execute_activity/detail_rows/overview_rows` | `domain/public_queries.py`请求/失败、`query/contracts/info.py`的InfoAnswer/InfoView/InfoRow；活动投影来自`domain/info_catalog.py`与`source`（下行） |
+| 来源 | `data.py::SongRepository.capture_query_view/current_query_view/capture_catalog`、`sources/haneoka/public_queries.py::PublicQueries`、`sources/haneoka/activity_details.py::project_details`、catalog/transport/catalog_assets | 当前release与区域身份；公开记录pending/429/404/失败独立；profileId不可经JS number |
 | 通用查询 | `commands.py`、`structured_query.py`、`natural_query/local_query.py/on_query.py/query_validation.py/query_terms.py/query_capabilities.py`、`query/`各已选业务executor | QuerySpec/QueryResult/CommandResult共用；query_capabilities既有本地路由也有模型提示，不按文件名全删。未选业务入口后续单独收窄 |
-| 图文准备 | `application/replies.py::render_prepared/render_prepared_inner/complete_fallback/visual_asset/bind_info_expiry`、`reply_preparation.py` | 捕获完整正文、captured_images与original_image，保留活动分组、区域素材准入、失效时间；归04，本轮只登记 |
-| 图片 | `rendering/info_layout.py/rotating_layout.py/haneoka_theme.py/readable_pages.py/image_output.py`及已选卡/曲/谱/榜renderer、`visuals.py` | 全文回退、分块/分页、字体测量、编码限制；文字失败不能误变成空成功；名片原尺寸与通用图缩放规则分开 |
+| 图文准备 | `application/replies.py::render_prepared/render_prepared_inner/complete_fallback/visual_asset/bind_info_expiry`、`reply_preparation.py` | 捕获完整正文，保留活动分组、区域素材准入、失效时间；归04，本轮只登记 |
+| 图片 | `rendering/info_layout.py/rotating_layout.py/haneoka_theme.py/readable_pages.py/image_output.py`及已选卡/曲/谱/榜renderer、`visuals.py` | 全文回退、分块/分页、字体测量、编码限制；文字失败不能误变成空成功 |
 | 投递与续查 | `replies.py::PreparedReply/DeliveryCursor/expand_replies/prepare_followup`，`query/continuation.py::QueryContext/capture_context/execute_followup/parse_operation`，`application/conversation_state.py::Conversations/DisplaySnapshot/Anchor` | 成功ACK才绑定作用域/消息锚点；冻结续页与当前目录详情不同；02账本、unknown、grant和allow_context语义不改 |
 
 ### 必须从ModelRuntime保住的详情路径
@@ -67,7 +67,7 @@
 
 运行闭包不仅是Python import。`query_aliases.json`是实体规则；`sources/haneoka/visual_skill_contracts.json`是视觉技能/字段合同；`sources/haneoka/game_assets.json`是固定release/摘要素材索引。它们不是可随意删除的研究夹具。SongRepository依赖已选源的目录、谱面、榜单适配器与缓存；不把Haneoka serverless的R2/D1/采集进程打包。
 
-图像保留方案需要Pillow及随包`rendering/assets/NotoSansSC.ttf`、`Roboto.ttf`和两个OFL文本；字体用于中文/拉丁数字的测量和绘制，不是聊天素材。04新head还修复visuals优先读取随包字体；05的安全下载校验与04字体改动由04顺序组合。P165使用原生段位/任务/属性图标、活动banner、卡面、玩家最爱卡及下载名片，资源与游戏区服须各自校验。预置这些游戏素材是否交付仍待选择及11材料核验；保留查询支持不等于允许预装真实名片、昵称、ID、缓存或冻结输出。
+图像保留方案需要Pillow及随包`rendering/assets/NotoSansSC.ttf`、`Roboto.ttf`和两个OFL文本；字体用于中文/拉丁数字的测量和绘制，不是聊天素材。04新head还修复visuals优先读取随包字体；05的安全下载校验与04字体改动由04顺序组合。P165使用原生段位/任务/属性图标、活动banner、卡面，资源与游戏区服须各自校验。预置这些游戏素材是否交付仍待选择及11材料核验；保留查询支持不等于允许预装真实名片、昵称、ID、缓存或冻结输出。
 
 基础Python依赖pyproject声明aiohttp/Pillow/qq-botpy。Koishi后端HTTP需要aiohttp，绘图需要Pillow；qq-botpy被legacy bot和menu Token引用，只有同时处理旧入口与菜单工具后才能评估从定制锁移除。BGE的onnxruntime/tokenizers/numpy及知识锁只在选中时加入。Node/Koishi/QQ adapter/HTTP/Console是接入/管理依赖，不能当聊天包全删；精确版本及完整许可由09/11按实际工件核对，不升级依赖。
 
@@ -106,8 +106,6 @@
 | query.arena.rewards | `奖励` | 段位/奖励目录事实 | 同上 |
 | query.arena.standings | `榜单 [排名=1-20]` | 上游公开records；范围上限100，精确profileId；不承诺完整终榜或边界并列 | 同上；排名/更新时间语义须消费03 |
 | query.arena.population | `人数` | 上游summary，不从榜单长度推总人数 | 同上 |
-| query.player.profile | `/查玩家 ID [region]` | JP最多19位且有效范围；国际服前缀/长度检查；等级可由同区progression推导 | 是否开放、群/C2C/四服；留存交07 |
-| query.player.namecard | `/查玩家 ID [region] 名片 [页N]` | 页码可能稀疏；missing与empty不同；原尺寸；202/429不忙轮询、不负缓存成不存在 | 同上；图片、玩家内容材料独立选；不是账号操作 |
 | query.activity.overview | `/查活动 [region]`当前/最近、ID/名称、列表 | 当前四服事件元数据；静态ID/名称/历史JP；非JP只当前/最近。资源intl不能当所有区域数据相同 | 当前入口、群/C2C/区服分别选 |
 | query.activity.bonus | `/查活动 [ID/region] 加成` | project_details分组、档位与条件保留，不只摘要百分比 | 独立选 |
 | query.activity.rewards | 同上`奖励` | 数量与条件成对，未知rewardID保留未知 | 独立选 |
@@ -115,7 +113,7 @@
 | query.activity.recruitments | 同上`卡池` | 仅明确关联；不能按时间邻近拼接 | 独立选 |
 | query.activity.calendar | `日程/日程开始/下期`及本地时间问法 | JP/intl日历身份与四服排名region不是一套；不能借JP时间填intl缺口 | 独立选支持范围 |
 | query.activity.history | `/查活动 历史 [名称]` | JP静态活动目录；不是榜线历史数据库 | 独立选 |
-| query.public.grammar | 玩家ID/竞技场模式/本期活动加成奖励任务卡池的问法 | on_query整句语法转同一直接命令；零模型，不另造事实 | 随所选底层能力开放，不能绕过能力上限 |
+| query.public.grammar | 竞技场模式/本期活动加成奖励任务卡池的问法 | on_query整句语法转同一直接命令；零模型，不另造事实 | 随所选底层能力开放，不能绕过能力上限 |
 | query.song/card/support/character/gacha/chart | 既有查曲/查卡/留影/角色/卡池/谱面 | 来源与支持区域各不相同，不能以P165四服推出全部四服 | 首版列表、详情、图片与群/C2C各选 |
 | query.cutoff/history | 四服活动歌曲Top100、Tn、趋势/回看 | 03位置/显示rank/缺值质量合同；07 provider/2历史仍有门禁；非积分预测 | 当前榜/历史/后台采样分开选 |
 | query.total/points | 总榜/积分相关能力 | 未批准；不能从已有歌曲榜推定 | 明确选或不选，后续再核实现与数据限制 |
@@ -154,7 +152,7 @@
 | Q1 | 直接命令与/查/问/ask及选中/問，经真实Backend/receiver群与C2C入口 | 用付费调用替身计数，所选规则全零模型；精确大ID、非法区服/混服拒绝；普通未识别文本不进入聊天 |
 | Q2 | 所有P165选中子项成功、pending、429、404、坏schema、过期/缺字段 | 同次捕获事实与来源；202/429不伪装不存在；03质量/排名合同保持 |
 | Q3 | 当前view切换、过期anchor/lease、撤回evidence；继续/页/详情/新完整问 | 原followup两次校验、版本语义/错误码不变；02零片段失效计划与允许上下文ACK语义保留 |
-| Q4 | 真实准备→渲染→编码，名片稀疏页码/原尺寸、活动分组、多语言 | 图片和完整正文来自同一结果；禁用素材时仍完整文字；04图像限制通过；QQ实机另验 |
+| Q4 | 真实准备→渲染→编码，竞技场分页、活动分组、多语言 | 图片和完整正文来自同一结果；禁用素材时仍完整文字；04图像限制通过；QQ实机另验 |
 | C1 | 有效模型key、旧agent配置、/聊/点名/普通观察/候选/直达HTTP/RPC | 定制聊天调用、后台任务、聊天正文持久写入均0；不是只检查菜单隐藏 |
 | C2 | 重启、旧配置/旧Console草稿、恢复个人包、旧scope及失效快照 | 不扩大产品上限；身份/范围manual/deny保持隔离；缺scope不能回落个人模式 |
 | C3 | 公告生成/发送四组合、旧ready稿；知识撤回/BGE按选择 | 独立上限无旁路；不选的模型用途零调用 |

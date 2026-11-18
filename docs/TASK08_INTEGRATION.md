@@ -64,7 +64,7 @@
 1. 网关 `koishi/src/index.ts` → ingress/receiver → backend HTTP；05Management范围及撤权检查保留，02接纳、grant、ACK和unknown事实保留。
 2. 开发组合 `backend_bootstrap.build_query_backend` → DataOwner、SongRepository/configure_sources、LocalQueryParser、Backend、QueryRuntime、RuntimeTasks、SourceOperations/RuntimeOperations → create_app。个人CLI仍 main → build_backend → configure_personal。
 3. 直接命令 `Backend.prepare_command` → QueryGate → replies.prepare_reply → commands.resolve_command/handle_command → query执行器。`/查`、`/问`、`/ask` → QueryRuntime.prepare → current_query_view → LocalQueryParser → QueryAgent本地规则 → 同一确定性执行器。未命中规则返回本地终态，不调用模型解释。
-4. P165：on_query.public_information_command/information_command → public_queries/activity_query → Haneoka public_queries/activity_details/catalog/transport。profileId为精确字符串，名片页码/原图、region、pending/429、活动分组/数据质量来自组合输入。
+4. P165：on_query.public_information_command/information_command → public_queries/activity_query → Haneoka public_queries/activity_details/catalog/transport。竞技场榜单的 profileId 保留精确字符串，region、pending/429、活动分组和数据质量来自组合输入。
 5. replies捕获同次事实与素材 → rendering/info_layout等布局 → visuals受控下载/字体 → PreparedReply/DeliveryCursor；失败完整文字回退。没有新增二次事实读取来绘图。
 6. 成功ACK → Conversations/DisplaySnapshot/Anchor + query.continuation.QueryContext。续页保持冻结快照；详情非continue且origin local/model、meta为空时走 QueryRuntime.followup：确认显示页 → 通用校验 → 当前view → 再校验 → gate.prepare_followup。个人仍附加原聊天/fallback有效性检查。
 
@@ -72,7 +72,7 @@
 
 ### 数据、字体及非Python依赖
 
-保留已选查询的 `query_aliases.json`、Haneoka `game_assets.json`/`visual_skill_contracts.json`、受控素材下载和来源证明。图像使用 Pillow 与 `rendering/assets/NotoSansSC.ttf`、对应许可/THIRD_PARTY；04字体优先级保持。名片原图保留来源尺寸，字体不用于重绘其内容。目录/谱面/榜单网络与缓存是查询运行依赖，不包含Haneoka服务端采集系统。
+保留已选查询的 `query_aliases.json`、Haneoka `game_assets.json`/`visual_skill_contracts.json`、受控素材下载和来源证明。图像使用 Pillow 与 `rendering/assets/NotoSansSC.ttf`、对应许可/THIRD_PARTY；04字体优先级保持。目录/谱面/榜单网络与缓存是查询运行依赖，不包含Haneoka服务端采集系统。
 
 规则查询不需要BGE权重、个人知识/剧情正文、模型密钥、UsageLedger或ChatStore。aiohttp是后端/来源依赖；qq-botpy只属旧个人QQ入口，最终包元数据须09按入口处理。`card-947.jpg`是独立未选用途，不能因为全量pyproject当前包含就认定首版批准。
 
@@ -96,7 +96,6 @@
 |---|---|---|
 | 规则查询共享能力 | 原行为及本地优先保持 | 已确认必须保留；具体菜单/别名组合仍待选 |
 | P165竞技场列表、详情/乐队、模式 | 已有入口保持，依赖源支持 | 每个入口是否首发待选；不推断四服都有数据 |
-| P165玩家公开资料、精确ID、名片页 | 已有入口保持，pending/限流/缺页明确 | 玩家/名片分别待选；不扩为账号操作 |
 | P165活动概览、奖励、卡片、歌曲及详情 | 已有入口保持；字段完整性依03 | 四子项分别待选；原生素材/全文回退保持 |
 | 群/C2C | 原路由、授权与投递隔离 | 哪些群/哪些私聊及权限待批准，开发测试不构成批准 |
 | 区服 | 查询按来源区分；榜单provider区分 | 各入口逐服选，不能把别名/镜像当全部服务验证 |

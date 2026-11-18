@@ -23,7 +23,6 @@ MENU_ITEMS = [
 ]
 PANEL_ITEMS = [
     {"type": "command", "name": "查竞技场", "desc": "四服赛季规则、榜单与段位人数"},
-    {"type": "command", "name": "查玩家", "desc": "按公开ID查询四服玩家资料与名片"},
     # QQ stores the command name without '/', then adds the slash in the client UI.
     {"type": "command", "name": "查谱面", "desc": "查完整谱面、颜色与激奏"},
     {"type": "command", "name": "查曲", "desc": "按颜色、激奏、乐队查歌曲"},
@@ -43,7 +42,6 @@ PANEL_ITEMS = [
 ]
 GROUP_PANEL_ITEMS = [
     {"type": "command", "name": "查竞技场", "desc": "四服赛季规则、榜单与段位人数"},
-    {"type": "command", "name": "查玩家", "desc": "按公开ID查询四服玩家资料与名片"},
     # Follow the Chinese /帮助 order; QQ inserts '/' before the command name.
     {"type": "command", "name": "查曲", "desc": "歌名、颜色、激奏、等级筛选"},
     {"type": "command", "name": "查谱面", "desc": "歌名或ID，可选难度"},

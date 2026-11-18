@@ -1,5 +1,5 @@
 # L3
-# Input: Explicit Arena/player command arguments and an injected public repository.
+# Input: Explicit Arena command arguments and an injected public repository.
 # Output: Complete immutable InfoAnswer views, shared by text and image replies.
 # Pos: Query / deterministic public queries.
 # Effects: Calls the injected source; no model, platform or rendering dependencies.
@@ -8,9 +8,8 @@ import json
 import re
 import time
 import unicodedata
-from dataclasses import replace
 
-from ..domain.public_queries import ArenaRequest, PlayerRequest, PublicQueryError
+from ..domain.public_queries import ArenaRequest, PublicQueryError
 from .contracts.info import InfoAnswer, InfoRow, InfoView
 from .info_query import answer
 from .entity_lexicon import band_aliases, band_name_variants
@@ -21,7 +20,6 @@ LABELS = {'jp': '日服', 'tw': '国服', 'en': '英服', 'kr': '韩服'}
 BANDS = {1: 'MyGO!!!!!', 2: 'Ave Mujica', 3: '梦限大MewType', 4: 'millsage', 5: '一家Dumb Rock!'}
 MODES = {'总览', '日程', '曲池', '段位', '奖励', '榜单', '人数'}
 ARENA_HELP = '/查竞技场 [jp/hk/kr/en] [乐队] [总览/日程/曲池/段位/奖励/榜单/人数] [赛季=N] [排名=1-20]'
-PLAYER_HELP = '/查玩家 玩家ID [jp/hk/kr/en] [名片 [页N]]'
 
 
 def localized(value):
@@ -84,29 +82,6 @@ def parse_arena(query):
             raise PublicQueryError('invalid_arguments', '无法确认乐队。' + ARENA_HELP)
         band = matches[0]
     return ArenaRequest(region, band, mode, season, first, last)
-
-
-def parse_player(query):
-    region, tokens = region_tokens(unicodedata.normalize('NFKC', query).split())
-    if not tokens:
-        raise PublicQueryError('invalid_arguments', PLAYER_HELP)
-    ident = tokens.pop(0)
-    pattern = r'[1-9][0-9]{0,18}' if region == 'jp' else {'tw': '2', 'en': '3', 'kr': '4'}[region] + r'[0-9]{10}'
-    if not re.fullmatch(pattern, ident) or not 0 < int(ident) <= 9223372036854775807:
-        raise PublicQueryError('invalid_arguments', '请输入该服有效的公开玩家ID。' + PLAYER_HELP)
-    card, page = False, None
-    if tokens:
-        if tokens.pop(0) != '名片':
-            raise PublicQueryError('invalid_arguments', PLAYER_HELP)
-        card = True
-        if tokens:
-            match = re.fullmatch(r'页([1-9][0-9]{0,2})', tokens.pop(0))
-            if not match:
-                raise PublicQueryError('invalid_arguments', PLAYER_HELP)
-            page = int(match[1])
-    if tokens:
-        raise PublicQueryError('invalid_arguments', PLAYER_HELP)
-    return PlayerRequest(ident, region, card, page)
 
 
 def rule_text(rule, song=None):
@@ -212,68 +187,5 @@ def execute_arena(query, repository, *, now=None):
                 rows.append(InfoRow('观测时间', quality_lines(board_snapshot)))
         return answer((InfoView(f"{LABELS[request.region]} · 竞技场 · {localized(season['title'])}",
             request.mode + ' · 北京时间 UTC+8', rows=tuple(rows), layout='facts', presentation='arena', footer=(f'Haneoka {snapshot.resource} · {snapshot.release}',)),))
-    except PublicQueryError as exc:
-        return InfoAnswer(str(exc) + (f' 建议等待{exc.retry_after}秒。' if exc.retry_after else ''), exc.status)
-
-
-def execute_player(query, repository):
-    try:
-        request = parse_player(query)
-        snapshot = repository.public_queries.player(request)
-        data = json.loads(snapshot.body)
-        profile = data['profile']
-        if not any(profile.get(key) is not None and profile.get(key) not in ('', {}, [])
-                   for key in ('name', 'level', 'rankExp', 'totalFavorite', 'totalFavoriteExact',
-                               'favoriteMemberCard', 'profileCard')):
-            return answer((InfoView('公开玩家资料', '来源未提供可查询的资料字段。', footer=quality_lines(snapshot)),), 'data_unavailable')
-        catalog = repository.capture_catalog()
-        level = profile.get('level')
-        if level is None and type(profile.get('rankExp')) is int:
-            source = catalog.source_snapshot or {}
-            resource = 'jp' if request.region == 'jp' else 'intl'
-            ranks = source.get('documents', {}).get(resource, {}).get('progression', {}).get('playerRanks', [])
-            eligible = [r['rank'] for r in ranks if type(r.get('rank')) is int and type(r.get('exp')) is int and r['exp'] <= profile['rankExp']]
-            level = max(eligible) if eligible else None
-        rows = [InfoRow('公开玩家 ID', (request.profile_id,)),
-                InfoRow('等级／经验', (f"等级：{level if level is not None else '未获取'}",
-                    f"经验：{profile.get('rankExp') if profile.get('rankExp') is not None else '未获取'}"), kind='metric'),
-                InfoRow('获赞', (str(profile.get('totalFavoriteExact') if profile.get('totalFavoriteExact') is not None
-                    else profile.get('totalFavorite')) if profile.get('totalFavoriteExact') is not None or profile.get('totalFavorite') is not None else '未获取',), kind='metric')]
-        favorite = profile.get('favoriteMemberCard')
-        if favorite:
-            rows.append(InfoRow('展示角色卡', tuple(f'{label}：{favorite.get(key) if favorite.get(key) is not None else "未获取"}'
-                for key, label in (('cardId', '卡牌ID'), ('exp', '经验'), ('awakeCount', '特训'), ('cardRank', '专精'),
-                                  ('liveSkillLevel', 'LIVE技能'), ('performanceSkillLevel', '激奏技能'))),
-                image_url=repository.public_queries.player_art(request, favorite.get('cardId'), catalog.source_snapshot), image_kind='portrait', kind='showcase',
-                game_icon=f"CardRank{favorite['cardRank']}.png" if type(favorite.get('cardRank')) is int and 0<=favorite['cardRank']<=5 else ''))
-        card = profile.get('profileCard')
-        if card:
-            pages = card.get('pages') or [{'page': i + 1, 'imageUrl': url} for i, url in enumerate(card.get('thumbnailUrls', []))]
-            rows.append(InfoRow('名片', (card.get('name') or '未命名名片', f'共{len(pages)}页',
-                f'/查玩家 {request.profile_id} {"hk" if request.region == "tw" else request.region} 名片')))
-        else:
-            pages = []
-        selected = None
-        media = ()
-        if request.namecard:
-            selected = next((p for p in pages if p['page'] == request.page), None) if request.page else next((p for p in pages if p.get('imageUrl')), None)
-            if selected is None:
-                raise PublicQueryError('not_found', '该名片页不存在。' if request.page else '未获取公开名片。')
-            if not selected.get('imageUrl'):
-                raise PublicQueryError('no_results', '该名片页为空。')
-            rows = [InfoRow('名片页', (f"第{selected['page']}页",))]
-        else:
-            selected = next((p for p in pages if p.get('downloadUrl')), None)
-        if selected:
-            try:
-                media = (repository.public_queries.namecard(request, selected),)
-            except PublicQueryError as exc:
-                rows.append(InfoRow('名片图片', (str(exc),)))
-        rows.append(InfoRow('资料时间', (f"来源更新：{stamp(profile.get('lastUpdatedAtMs'))}",
-            f"来源采集：{stamp(data.get('fetchedAtMs'))}", *quality_lines(snapshot))))
-        result = answer((InfoView(f"{LABELS[request.region]} · {profile.get('name') or '未获取昵称'}",
-            '公开玩家资料', hero_url=media[0][0] if media else '', rows=tuple(rows), layout='facts', presentation='player', footer=('资料来源：Haneoka',)),))
-        return replace(result, captured_images=media,
-                       original_image=media[0][1] if request.namecard and media else None)
     except PublicQueryError as exc:
         return InfoAnswer(str(exc) + (f' 建议等待{exc.retry_after}秒。' if exc.retry_after else ''), exc.status)

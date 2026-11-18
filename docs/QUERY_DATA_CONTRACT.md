@@ -48,18 +48,18 @@
 
 `domain/public_queries.PublicSnapshot` 保留body/fetched_at/resource/release原字段。新增：provider、game_region、resource_server、source_id、snapshot_id均为`str|None`，observed_ms/server_ms为`int|None`，age_seconds为`float|None`；normalization_version=`public/2`，source=`haneoka`，freshness三态同上，time_kind为unknown/source_observed/source_fetched/bridge_fetched。`fetched_at`是本机收到响应的epoch秒；`release`空字符串为未知，仅静态资源有release；`resource`沿用原路径或资源服用途，新消费者以resource_server区分jp/intl，不能当作游戏区。
 
-竞技场body.rows增加`position: int`（从请求first开始）、`rawRank: null`、`pointState: str`（value/source_zero/null/missing），原rank为可空显示名次，point为可空非负整数。不会用rank过滤位置窗口。默认1–20、连续最多100位置；上游最多返回start至start+99。profileId精确字符串，不转浮点数；玩家查询JP接受1–19位正十进制且不超过int64，tw/en/kr为2/3/4开头11位。源身份必须与请求相等。
+竞技场body.rows增加`position: int`（从请求first开始）、`rawRank: null`、`pointState: str`（value/source_zero/null/missing），原rank为可空显示名次，point为可空非负整数。不会用rank过滤位置窗口。默认1–20、连续最多100位置；上游最多返回start至start+99。profileId精确字符串，不转浮点数。源身份必须与请求相等。
 
 InfoAnswer/InfoView不新增平行状态结构；公开查询把来源与新鲜度放入rows/footer，备用正文通过同一视图生成。CardAnswer新增cache_state及cache_notice；SongAnswer.warning在未命中时也保留旧缓存提示。04仍需验证其实际成功图片/详情图片是否显示这些字段，不能用本包文字测试代替图片验收。
 
 ## 年龄、失败与隔离
 
 - 活动榜沿用现有120秒陈旧、600秒拒绝当前值阈值；归档最后观测不冒充实时。来源stale为True始终保留。official时刻类型为official_observed_via_haneoka；moenotes桥接为bridge_fetched_via_haneoka，原始观测未知，不能因桥接刚获取便标fresh。旧无provider记录沿用tracker_observed_via_haneoka。
-- 竞技场榜单1200秒、人数1800秒、玩家21600秒与核对版本生产者一致；内存缓存寿命仍60秒/人数1800秒，两者是不同概念。每次消费重算年龄，源stale不会被本地命中清掉。缺参考时间标unknown。
+- 竞技场榜单1200秒、人数1800秒与核对版本生产者一致；内存缓存寿命仍60秒/人数1800秒，两者是不同概念。每次消费重算年龄，源stale不会被本地命中清掉。缺参考时间标unknown。
 - 静态主目录使用配置cache_ttl_hours（默认6小时）；查询捕获时重算。明确在线identity检查成功可作为该固定release仍为当前的证据，记录identity_checked_at（秒），不重写来源fetched_at。未命中也保留状态。
 - 只有明确JSON error.kind=not_found表示确认不存在。202为pending，429为rate_limited；404/503需读错误正文，pending不得被解释成不存在；不明/损坏错误正文为data_unavailable。有界错误正文上限64KiB，现有public_get仍在非200时拒绝；请求路径权限不变。错误不刷新成功快照时间。
 - cutoff缓存使用quality-v2后缀与含活动provider的身份摘要；payload独立保留榜单provider（允许官方tracker下的MoeNotes榜单回退）。刷新替换整份快照，不拼行；不同provider不比较源时间、不把它判成同源迟到。故障回退显示原快照自己的provider。
-- PublicQueries按完整路径（游戏区/请求身份或资源区/release）有界缓存整份不可变JSON，刷新不跨区、跨release补字段；无新增公开玩家持久writer。
+- PublicQueries按完整路径（游戏区/请求身份或资源区/release）有界缓存整份不可变JSON，刷新不跨区、跨release补字段。
 
 ## 旧缓存与07接线门
 
@@ -84,4 +84,4 @@ InfoAnswer/InfoView不新增平行状态结构；公开查询把来源与新鲜�
 
 InfoRow末尾追加position:int|None=None、point_state:str|None=None，仅standing行从body.position/pointState原样投影；旧构造兼容。显示名次仍是原rank，不能从标题反推响应位置。正文同样列出响应位置及积分状态，source_zero与null分别保留。源缺字段为None，不由积分推断状态。
 
-quality_lines以PublicSnapshot为唯一观测/参考时钟来源：observed_ms/server_ms为epoch毫秒，fetched_at为本机接收epoch秒（显示前乘1000）；统一北京时间UTC+8。缺失观测显示未获取，不以接收或服务器时间代替；body无需重复observedAtMs。玩家lastUpdatedAtMs（来源更新）和body.fetchedAtMs（来源采集）仍独立展示，不与本机接收混淆。来源、provider、游戏/资源区、source_id、snapshot_id、release、归一化与time_kind进入共享正文。04可直接消费新增逐行属性及body/quality行；07历史schema和来源DTO不变，无数据迁移。
+quality_lines以PublicSnapshot为唯一观测/参考时钟来源：observed_ms/server_ms为epoch毫秒，fetched_at为本机接收epoch秒（显示前乘1000）；统一北京时间UTC+8。缺失观测显示未获取，不以接收或服务器时间代替；body无需重复observedAtMs。来源、provider、游戏/资源区、source_id、snapshot_id、release、归一化与time_kind进入共享正文。04可直接消费新增逐行属性及body/quality行；07历史schema和来源DTO不变，无数据迁移。
