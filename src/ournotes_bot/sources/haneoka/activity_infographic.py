@@ -76,7 +76,7 @@ def run_engine(input_data, directory, fetch=public_get):
     script = Path(__file__).with_name('activity_infographic_engine.cjs')
     deadline = time.monotonic() + 180
     environment = {'SystemRoot': os.environ['SystemRoot']} if os.name == 'nt' and 'SystemRoot' in os.environ else {}
-    with TemporaryFile() as stdin, TemporaryFile() as stdout:
+    with TemporaryFile(dir=directory) as stdin, TemporaryFile(dir=directory) as stdout:
         stdin.write(json.dumps(input_data, ensure_ascii=False).encode())
         stdin.seek(0)
         with subprocess.Popen([node, str(script), str(binary)], stdin=stdin, stdout=stdout,
